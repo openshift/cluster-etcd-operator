@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: openshift-etcd
+  name: etcd
+  annotations:
+    service.alpha.openshift.io/serving-cert-secret-name: serving-cert
+    prometheus.io/scrape: "true"
+    prometheus.io/scheme: https
+spec:
+  selector:
+    etcd: "true"
+  ports:
+  - name: https
+    port: 443
+    targetPort: 10257
