@@ -1,0 +1,55 @@
+kind: Pod
+apiVersion: v1
+metadata:
+  name: bootstrap-etcd
+  namespace: kube-system
+  labels:
+    openshift.io/control-plane: "true"
+    openshift.io/component: "controller-manager"
+  annotations:
+    openshift.io/run-level: "0"
+spec:
+  restartPolicy: Always
+  hostNetwork: true
+  containers:
+  - name: etcd
+    image: {{ .Image }}
+    imagePullPolicy: {{ .ImagePullPolicy }}
+    ports:
+      - containerPort: 10257
+    command: ["/bin/bash", "-c"]
+    args:
+    - exec hyperkube etcd --openshift-config=/etc/kubernetes/config/{{ .ConfigFileName }} --kubeconfig=/etc/kubernetes/secrets/kubeconfig
+    volumeMounts:
+    - mountPath: /etc/ssl/certs
+      name: ssl-certs-host
+      readOnly: true
+    - mountPath: /etc/kubernetes/secrets
+      name: secrets
+      readOnly: true
+    - mountPath: /etc/kubernetes/cloud
+      name: etc-kubernetes-cloud
+      readOnly: true
+    - mountPath: /etc/kubernetes/config
+      name: config
+      readOnly: true
+    livenessProbe:
+      httpGet:
+        scheme: HTTPS
+        port: 10257
+        path: healthz
+      initialDelaySeconds: 45
+      timeoutSeconds: 10
+  volumes:
+  - hostPath:
+      path: {{ .SecretsHostPath }}
+    name: secrets
+  - hostPath:
+      path: {{ .CloudProviderHostPath }}
+    name: etc-kubernetes-cloud
+  - hostPath:
+      path: {{ .ConfigHostPath }}
+    name: config
+  - hostPath:
+      path: /etc/ssl/certs
+    name: ssl-certs-host

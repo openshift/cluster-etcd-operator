@@ -1,0 +1,11 @@
+apiVersion: operator.openshift.io/v1
+kind: KubeControllerManager
+metadata:
+  name: cluster
+spec:
+  managementState: Managed
+  imagePullSpec: openshift/origin-hypershift:latest
+  version: 3.11.0
+  logging:
+    level: 2
+  replicas: 2

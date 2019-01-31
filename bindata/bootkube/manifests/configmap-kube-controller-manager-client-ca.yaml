@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: client-ca
+  namespace: {{ .Namespace }}
+data:
+  ca-bundle.crt: |
+    {{ .Assets | load "root-ca.crt" | indent 4 }}
+    {{ .Assets | load "kube-ca.crt" | indent 4 }}
+

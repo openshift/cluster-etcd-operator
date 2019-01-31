@@ -1,0 +1,23 @@
+apiVersion: kubecontrolplane.config.openshift.io/v1
+kind: KubeControllerManagerConfig
+extendedArguments:
+  root-ca-file:
+  - "/etc/kubernetes/secrets/root-ca.crt"
+  service-account-private-key-file:
+  - "/etc/kubernetes/secrets/service-account.key"
+  cluster-signing-cert-file:
+  - "/etc/kubernetes/secrets/kube-ca.crt"
+  cluster-signing-key-file:
+  - "/etc/kubernetes/secrets/kube-ca.key"
+  secure-port:
+  - "10257"
+  port:
+  - "0"
+  {{if .ClusterCIDR }}
+  cluster-cidr: {{range .ClusterCIDR}}
+  - {{.}}{{end}}
+  {{end}}
+  {{if .ServiceClusterIPRange }}
+  service-cluster-ip-range: {{range .ServiceClusterIPRange}}
+  - {{.}}{{end}}
+  {{end}}
