@@ -1,4 +1,4 @@
-# cluster-kube-controller-manager-operator
+# cluster-etcd-operator
 
 The kube-controller-manager operator installs and maintains the kube-controller-manager on a cluster
 
@@ -8,10 +8,10 @@ The operator image version used by the [https://github.com/openshift/installer/b
 
 ```
 $ IMAGE_ORG=sttts make images
-$ docker push sttts/origin-cluster-kube-controller-manager-operator
+$ docker push sttts/origin-cluster-etcd-operator
 
 $ cd ../cluster-kube-apiserver-operator
-$ IMAGES=cluster-kube-controller-manager-operator IMAGE_ORG=sttts make origin-release
+$ IMAGES=cluster-etcd-operator IMAGE_ORG=sttts make origin-release
 $ docker push sttts/origin-release:latest
 
 $ cd ../installer
