@@ -31,6 +31,6 @@ $(call add-bindata,v3.11.0,./bindata/v3.11.0/...,bindata,v311_00_assets,pkg/oper
 
 
 clean:
-	$(RM) ./cluster-kube-controller-manager-operator
+	$(RM) ./cluster-etcd-operator
 .PHONY: clean
 
