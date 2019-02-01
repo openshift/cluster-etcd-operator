@@ -21,10 +21,22 @@ spec:
         memory: 200Mi
         cpu: 100m
     ports:
-      - containerPort: 10257
+      - containerPort: 2379
+        name: client
+        protocol: TCP
+    ports:
+      - containerPort: 2380
+        name: peer
+        protocol: TCP
     volumeMounts:
-    - mountPath: /etc/kubernetes/static-pod-resources
-      name: resource-dir
+    - name: discovery
+      mountPath: /run/etcd/
+    - name: certs
+      mountPath: /etc/ssl/etcd/
+    - name: data-dir
+      mountPath: /var/lib/etcd/
+    - name: resource-dir
+      mountPath: /etc/kubernetes/static-pod-resources
 #    livenessProbe:
 #      httpGet:
 #        scheme: HTTPS
@@ -44,7 +56,15 @@ spec:
   tolerations:
   - operator: "Exists"
   volumes:
-  - hostPath:
+  - name: resource-dir
+    hostPath:
       path: /etc/kubernetes/static-pod-resources/etcd-pod-REVISION
-    name: resource-dir
-
+  - name: certs
+    hostPath:
+      path: /etc/kubernetes/static-pod-resources/etcd-member
+  - name: discovery
+    hostPath:
+      path: /run/etcd
+  - name: data-dir
+    hostPath:
+      path: /var/lib/etcd

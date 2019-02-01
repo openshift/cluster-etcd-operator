@@ -11,6 +11,7 @@ spec:
   selector:
     etcd: "true"
   ports:
-  - name: https
-    port: 443
-    targetPort: 10257
+  - name: client
+    port: 2379
+  - name: peer
+    port: 2380
