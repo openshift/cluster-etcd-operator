@@ -77,56 +77,7 @@ func v3110EtcdCmYaml() (*asset, error) {
 }
 
 var _v3110EtcdDefaultconfigYaml = []byte(`apiVersion: kubecontrolplane.config.openshift.io/v1
-kind: KubeControllerManagerConfig
-extendedArguments:
-  enable-dynamic-provisioning:
-  - "true"
-  allocate-node-cidrs:
-  - "true"
-  configure-cloud-routes:
-  - "false"
-  cluster-cidr:
-  - "10.2.0.0/16"
-  service-cluster-ip-range:
-  - "10.3.0.0/16"
-  use-service-account-credentials:
-  - "true"
-  flex-volume-plugin-dir:
-  - "/etc/kubernetes/kubelet-plugins/volume/exec" # created by machine-config-operator, owned by storage team/hekumar@redhat.com
-  leader-elect:
-  - "true"
-  leader-elect-retry-period:
-  - "3s"
-  leader-elect-resource-lock:
-  - "configmaps"
-  controllers:
-  - "*"
-  - "-ttl" # TODO: this is excluded in kube-core, but not in #21092
-  - "-bootstrapsigner"
-  - "-tokencleaner"
-  node-monitor-grace-period:
-  - "5m" # TODO: set to 2m for AWS like kube-core does
-  pod-eviction-timeout:
-  - "5m" # TODO: set to 220s for AWS like kube-core does
-  experimental-cluster-signing-duration:
-  - "720h"
-  secure-port:
-  - "10257"
-  port:
-  - "0"
-  root-ca-file:
-  - "/etc/kubernetes/static-pod-resources/configmaps/serviceaccount-ca/ca-bundle.crt"
-  service-account-private-key-file:
-  - "/etc/kubernetes/static-pod-resources/secrets/service-account-private-key/service-account.key"
-  cluster-signing-cert-file:
-  - "/etc/kubernetes/static-pod-resources/secrets/cluster-signing-ca/kube-ca.crt"
-  cluster-signing-key-file:
-  - "/etc/kubernetes/static-pod-resources/secrets/cluster-signing-ca/kube-ca.key"
-  kube-api-qps:
-  - "150" # this is a historical values
-  kube-api-burst:
-  - "300" # this is a historical values
-
+kind: EtcdConfig
 `)
 
 func v3110EtcdDefaultconfigYamlBytes() ([]byte, error) {
@@ -167,16 +118,13 @@ func v3110EtcdNsYaml() (*asset, error) {
 }
 
 var _v3110EtcdOperatorConfigYaml = []byte(`apiVersion: operator.openshift.io/v1
-kind: KubeControllerManager
+kind: Etcd
 metadata:
   name: cluster
 spec:
   managementState: Managed
+  # TODO this clearly needs to be fixed
   imagePullSpec: openshift/origin-hypershift:latest
-  version: 3.11.0
-  logging:
-    level: 2
-  replicas: 2
 `)
 
 func v3110EtcdOperatorConfigYamlBytes() ([]byte, error) {

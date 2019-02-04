@@ -1,11 +1,8 @@
 apiVersion: operator.openshift.io/v1
-kind: KubeControllerManager
+kind: Etcd
 metadata:
   name: cluster
 spec:
   managementState: Managed
+  # TODO this clearly needs to be fixed
   imagePullSpec: openshift/origin-hypershift:latest
-  version: 3.11.0
-  logging:
-    level: 2
-  replicas: 2
