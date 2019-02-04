@@ -1,5 +1,5 @@
 apiVersion: kubecontrolplane.config.openshift.io/v1
-kind: KubeControllerManagerConfig
+kind: EtcdConfig
 extendedArguments:
   root-ca-file:
   - "/var/run/configmaps/client-ca/ca-bundle.crt"
