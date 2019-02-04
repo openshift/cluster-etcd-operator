@@ -1,5 +1,5 @@
 hash: d6a07b4be7b543818b3d224f003e2d59ab0835fd44c939051aee8eb819f0cfed
-updated: 2019-01-31T14:47:19.822803131-05:00
+updated: 2019-02-04T15:14:52.438773398+01:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -99,7 +99,7 @@ imports:
   - daemon
   - journal
 - name: github.com/davecgh/go-spew
-  version: 782f4967f2dc4564575ca782fe2d04090b5faca8
+  version: d8f796af33cc11cb798c1aaeb27a4ebc5099927d
   subpackages:
   - spew
 - name: github.com/docker/docker
@@ -120,7 +120,7 @@ imports:
 - name: github.com/getsentry/raven-go
   version: 32a13797442ccb601b11761d74232773c1402d14
 - name: github.com/ghodss/yaml
-  version: 73d445a93680fa1a78ae23a5839bad48f32ba1ee
+  version: f1ee295488859b9b98b65da21204a48c9e18782f
 - name: github.com/go-openapi/jsonpointer
   version: 46af16f9f7b149af66e5d1bd010e3574dc06de98
 - name: github.com/go-openapi/jsonreference
@@ -135,7 +135,7 @@ imports:
   - proto
   - sortkeys
 - name: github.com/golang/glog
-  version: 44145f04b68cf362d9c4df2182967c2275eaefed
+  version: 23def4e6c14b4da8ac2ed8007337bc5eb5007998
 - name: github.com/golang/groupcache
   version: 02826c3e79038b59d737d3b1c0a1d937f71a4433
   subpackages:
@@ -196,7 +196,7 @@ imports:
 - name: github.com/NYTimes/gziphandler
   version: 56545f4a5d46df9a6648819d1664c3a03a13ffdb
 - name: github.com/openshift/api
-  version: 4912e102a00fa8bb4bf27f83808dce6ef1b6887d
+  version: dbfeecf7fba5d4a8b65c4d49a1d614321e741358
   subpackages:
   - apps
   - apps/v1
@@ -242,7 +242,7 @@ imports:
   - webconsole
   - webconsole/v1
 - name: github.com/openshift/client-go
-  version: 43eeb8cff295868f3cd8faa3347bcfbdc9b2a9c0
+  version: 179755465e406a7682e48d81516d342df798161f
   subpackages:
   - config/clientset/versioned
   - config/clientset/versioned/scheme
@@ -256,7 +256,7 @@ imports:
   - operator/informers/externalversions/operator/v1
   - operator/listers/operator/v1
 - name: github.com/openshift/library-go
-  version: d8d206f3a04f7d06753d3891c155445fac258718
+  version: 28fcc8fa9009d38d2297d178a2d112f009a08d12
   subpackages:
   - pkg/assets
   - pkg/config/client
@@ -383,7 +383,7 @@ imports:
   subpackages:
   - rate
 - name: google.golang.org/appengine
-  version: 12d5545dc1cfa6047a286d5e853841b6471f4c19
+  version: 2d2298565d5a399bdfec98dbc259d6393e3cf8ba
   subpackages:
   - internal
   - internal/base
