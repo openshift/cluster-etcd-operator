@@ -129,6 +129,22 @@ func (StaticPodOperatorStatus) SwaggerDoc() map[string]string {
 	return map_StaticPodOperatorStatus
 }
 
+var map_Authentication = map[string]string{
+	"": "Authentication provides information to configure an operator to manage authentication.",
+}
+
+func (Authentication) SwaggerDoc() map[string]string {
+	return map_Authentication
+}
+
+var map_AuthenticationList = map[string]string{
+	"": "AuthenticationList is a collection of items",
+}
+
+func (AuthenticationList) SwaggerDoc() map[string]string {
+	return map_AuthenticationList
+}
+
 var map_ConsoleCustomization = map[string]string{
 	"brand":                "brand is the default branding of the web console which can be overridden by providing the brand field.  There is a limited set of specific brand options. This field controls elements of the console such as the logo. Invalid value will prevent a console rollout.",
 	"documentationBaseURL": "documentationBaseURL links to external documentation are shown in various sections of the web console.  Providing documentationBaseURL will override the default documentation URL. Invalid value will prevent a console rollout.",
@@ -173,7 +189,7 @@ func (EtcdSpec) SwaggerDoc() map[string]string {
 }
 
 var map_KubeAPIServer = map[string]string{
-	"": "KubeAPISOperatorConfig provides information to configure an operator to manage kube-apiserver.",
+	"": "KubeAPIServer provides information to configure an operator to manage kube-apiserver.",
 }
 
 func (KubeAPIServer) SwaggerDoc() map[string]string {
@@ -181,7 +197,7 @@ func (KubeAPIServer) SwaggerDoc() map[string]string {
 }
 
 var map_KubeAPIServerList = map[string]string{
-	"":         "KubeAPISOperatorConfigList is a collection of items",
+	"":         "KubeAPIServerList is a collection of items",
 	"metadata": "Standard object's metadata.",
 	"items":    "Items contains the items",
 }
