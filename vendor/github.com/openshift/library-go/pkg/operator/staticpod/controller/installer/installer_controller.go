@@ -70,6 +70,16 @@ type InstallerController struct {
 	installerPodImageFn func() string
 	// ownerRefsFn sets the ownerrefs on the pruner pod
 	ownerRefsFn func(revision int32) ([]metav1.OwnerReference, error)
+
+	installerPodMutationFns []InstallerPodMutationFunc
+}
+
+// InstallerPodMutationFunc is a function that has a chance at changing the installer pod before it is created
+type InstallerPodMutationFunc func(pod *corev1.Pod, nodeName string, operatorSpec *operatorv1.StaticPodOperatorSpec, revision int32) error
+
+func (o *InstallerController) WithInstallerPodMutationFn(installerPodMutationFn InstallerPodMutationFunc) *InstallerController {
+	o.installerPodMutationFns = append(o.installerPodMutationFns, installerPodMutationFn)
+	return o
 }
 
 // staticPodState is the status of a static pod that has been installed to a node.
@@ -562,6 +572,13 @@ func (c *InstallerController) ensureInstallerPod(nodeName string, operatorSpec *
 		}
 	}
 	pod.Spec.Containers[0].Args = args
+
+	// Some owners need to change aspects of the pod.  Things like arguments for instance
+	for _, fn := range c.installerPodMutationFns {
+		if err := fn(pod, nodeName, operatorSpec, revision); err != nil {
+			return err
+		}
+	}
 
 	_, _, err = resourceapply.ApplyPod(c.kubeClient.CoreV1(), c.eventRecorder, pod)
 	return err

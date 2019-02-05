@@ -36,10 +36,19 @@ type staticPodOperatorControllers struct {
 // 4. BackingResourceController - this creates the backing resources needed for the operand, such as cluster rolebindings and installer service
 //    account.
 // 5. MonitoringResourceController - this creates the service monitor used by prometheus to scrape metrics.
-func NewControllers(targetNamespaceName, staticPodName, podResourcePrefix string, installerCommand, prunerCommand []string, revisionConfigMaps, revisionSecrets []revision.RevisionResource,
-	staticPodOperatorClient v1helpers.StaticPodOperatorClient, configMapGetter corev1client.ConfigMapsGetter, secretGetter corev1client.SecretsGetter, podsGetter corev1client.PodsGetter,
-	kubeClient kubernetes.Interface, dynamicClient dynamic.Interface, kubeInformersNamespaceScoped,
-	kubeInformersClusterScoped informers.SharedInformerFactory, eventRecorder events.Recorder) *staticPodOperatorControllers {
+func NewControllers(
+	targetNamespaceName, staticPodName, podResourcePrefix string,
+	installerCommand, prunerCommand []string,
+	revisionConfigMaps, revisionSecrets []revision.RevisionResource,
+	staticPodOperatorClient v1helpers.StaticPodOperatorClient,
+	configMapGetter corev1client.ConfigMapsGetter,
+	secretGetter corev1client.SecretsGetter,
+	podsGetter corev1client.PodsGetter,
+	kubeClient kubernetes.Interface,
+	dynamicClient dynamic.Interface,
+	kubeInformersNamespaceScoped, kubeInformersClusterScoped informers.SharedInformerFactory,
+	eventRecorder events.Recorder) *staticPodOperatorControllers {
+
 	controller := &staticPodOperatorControllers{}
 
 	controller.revisionController = revision.NewRevisionController(
@@ -101,6 +110,11 @@ func NewControllers(targetNamespaceName, staticPodName, podResourcePrefix string
 	)
 
 	return controller
+}
+
+func (o *staticPodOperatorControllers) WithInstallerPodMutationFn(installerPodMutationFn installer.InstallerPodMutationFunc) *staticPodOperatorControllers {
+	o.installerController.WithInstallerPodMutationFn(installerPodMutationFn)
+	return o
 }
 
 func (o *staticPodOperatorControllers) Run(stopCh <-chan struct{}) {
