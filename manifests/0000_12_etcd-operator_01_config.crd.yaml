@@ -1,0 +1,16 @@
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  name: etcds.operator.openshift.io
+spec:
+  scope: Cluster
+  group: operator.openshift.io
+  version: v1
+  names:
+    kind: Etcd
+    plural: etcds
+    singular: etcd
+    categories:
+    - coreoperators
+  subresources:
+    status: {}
