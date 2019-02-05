@@ -20,6 +20,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/openshift/library-go/pkg/config/client"
+	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 )
 
 type InstallOptions struct {
@@ -38,10 +39,20 @@ type InstallOptions struct {
 
 	ResourceDir    string
 	PodManifestDir string
+
+	PodMutationFns []PodMutationFunc
 }
+
+// PodMutationFunc is a function that has a chance at changing the pod before it is created
+type PodMutationFunc func(pod *corev1.Pod) error
 
 func NewInstallOptions() *InstallOptions {
 	return &InstallOptions{}
+}
+
+func (o *InstallOptions) WithPodMutationFn(podMutationFn PodMutationFunc) *InstallOptions {
+	o.PodMutationFns = append(o.PodMutationFns, podMutationFn)
+	return o
 }
 
 func NewInstaller() *cobra.Command {
@@ -105,9 +116,6 @@ func (o *InstallOptions) Validate() error {
 	}
 	if len(o.PodConfigMapNamePrefix) == 0 {
 		return fmt.Errorf("--pod is required")
-	}
-	if len(o.SecretNamePrefixes) == 0 {
-		return fmt.Errorf("--secrets is required")
 	}
 	if len(o.ConfigMapNamePrefixes) == 0 {
 		return fmt.Errorf("--configmaps is required")
@@ -227,7 +235,17 @@ func (o *InstallOptions) copyContent() error {
 	if err := os.MkdirAll(o.PodManifestDir, 0755); err != nil {
 		return err
 	}
+
+	for _, fn := range o.PodMutationFns {
+		glog.V(2).Infof("customizing static pod")
+		pod := resourceread.ReadPodV1OrDie([]byte(podContent))
+		if err := fn(pod); err != nil {
+			return err
+		}
+		podContent = resourceread.WritePodV1OrDie(pod)
+	}
 	glog.Infof("writing static pod %q", path.Join(o.PodManifestDir, podFileName))
+	glog.Infof("writing static pod\n%s", podContent)
 	if err := ioutil.WriteFile(path.Join(o.PodManifestDir, podFileName), []byte(podContent), 0644); err != nil {
 		return err
 	}

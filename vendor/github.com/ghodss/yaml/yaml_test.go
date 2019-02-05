@@ -19,7 +19,7 @@ type MarshalTest struct {
 func TestMarshal(t *testing.T) {
 	f32String := strconv.FormatFloat(math.MaxFloat32, 'g', -1, 32)
 	s := MarshalTest{"a", math.MaxInt64, math.MaxFloat32}
-	e := []byte(fmt.Sprintf("A: a\nB: %d\nC: %s\n", int64(math.MaxInt64), f32String))
+	e := []byte(fmt.Sprintf("A: a\nB: %d\nC: %s\n", math.MaxInt64, f32String))
 
 	y, err := Marshal(s)
 	if err != nil {
@@ -88,26 +88,10 @@ func TestUnmarshal(t *testing.T) {
 	s4 := UnmarshalStringMap{}
 	e4 := UnmarshalStringMap{map[string]string{"b": "1"}}
 	unmarshal(t, y, &s4, &e4)
-
-	y = []byte(`
-a:
-  name: TestA
-b:
-  name: TestB
-`)
-	type NamedThing struct {
-		Name string `json:"name"`
-	}
-	s5 := map[string]*NamedThing{}
-	e5 := map[string]*NamedThing{
-		"a": &NamedThing{Name: "TestA"},
-		"b": &NamedThing{Name: "TestB"},
-	}
-	unmarshal(t, y, &s5, &e5)
 }
 
-func unmarshal(t *testing.T, y []byte, s, e interface{}, opts ...JSONOpt) {
-	err := Unmarshal(y, s, opts...)
+func unmarshal(t *testing.T, y []byte, s, e interface{}) {
+	err := Unmarshal(y, s)
 	if err != nil {
 		t.Errorf("error unmarshaling YAML: %v", err)
 	}
@@ -284,17 +268,4 @@ func runCases(t *testing.T, runType RunType, cases []Case) {
 // To be able to easily fill in the *Case.reverse string above.
 func strPtr(s string) *string {
 	return &s
-}
-
-func TestYAMLToJSONStrict(t *testing.T) {
-	const data = `
-foo: bar
-foo: baz
-`
-	if _, err := YAMLToJSON([]byte(data)); err != nil {
-		t.Error("expected YAMLtoJSON to pass on duplicate field names")
-	}
-	if _, err := YAMLToJSONStrict([]byte(data)); err == nil {
-		t.Error("expected YAMLtoJSONStrict to fail on duplicate field names")
-	}
 }

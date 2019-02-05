@@ -5,6 +5,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/installercontroller"
+
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -110,7 +112,7 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace),
 		kubeInformersForNamespaces.InformersFor(""),
 		ctx.EventRecorder,
-	)
+	).WithInstallerPodMutationFn(installercontroller.MutateInstallerPod)
 
 	clusterOperatorStatus := status.NewClusterOperatorStatusController(
 		"etcd",
