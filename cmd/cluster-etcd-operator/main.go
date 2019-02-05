@@ -13,9 +13,9 @@ import (
 	utilflag "k8s.io/apiserver/pkg/util/flag"
 	"k8s.io/apiserver/pkg/util/logs"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/etcdinstaller"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
-	"github.com/openshift/library-go/pkg/operator/staticpod/installerpod"
 	"github.com/openshift/library-go/pkg/operator/staticpod/prune"
 )
 
@@ -47,7 +47,7 @@ func NewSSCSCommand() *cobra.Command {
 
 	cmd.AddCommand(operator.NewOperator())
 	cmd.AddCommand(render.NewRenderCommand(os.Stderr))
-	cmd.AddCommand(installerpod.NewInstaller())
+	cmd.AddCommand(etcdinstaller.NewInstaller())
 	cmd.AddCommand(prune.NewPrune())
 
 	return cmd
