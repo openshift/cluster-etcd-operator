@@ -1,11 +1,2 @@
 apiVersion: kubecontrolplane.config.openshift.io/v1
-kind: KubeControllerManagerConfig
-extendedArguments:
-  root-ca-file:
-  - "/var/run/configmaps/client-ca/ca-bundle.crt"
-  service-account-private-key-file:
-  - "/var/run/secrets/service-account-private-key/service-account.key"
-  cluster-signing-cert-file:
-  - "/var/run/secrets/cluster-signing-ca/kube-ca.crt"
-  cluster-signing-key-file:
-  - "/var/run/secrets/cluster-signing-ca/kube-ca.key"
+kind: EtcdConfig
