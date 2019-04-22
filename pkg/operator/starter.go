@@ -7,7 +7,6 @@ import (
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/installercontroller"
 
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
@@ -17,7 +16,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
 	configv1 "github.com/openshift/api/config/v1"
-	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
 	operatorv1client "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
@@ -25,7 +23,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/v311_00_assets"
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/revision"
 )
 
@@ -61,12 +58,6 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 		Informers: operatorConfigInformers,
 		Client:    operatorConfigClient.OperatorV1(),
 	}
-
-	v1helpers.EnsureOperatorConfigExists(
-		dynamicClient,
-		v311_00_assets.MustAsset("v3.11.0/etcd/operator-config.yaml"),
-		schema.GroupVersionResource{Group: operatorv1.GroupName, Version: operatorv1.GroupVersion.Version, Resource: "etcds"},
-	)
 
 	resourceSyncController, err := resourcesynccontroller.NewResourceSyncController(
 		operatorClient,
