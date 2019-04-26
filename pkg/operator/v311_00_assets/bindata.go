@@ -98,9 +98,12 @@ func v3110EtcdDefaultconfigYaml() (*asset, error) {
 var _v3110EtcdNsYaml = []byte(`apiVersion: v1
 kind: Namespace
 metadata:
+  annotations:
+    openshift.io/node-selector: ""
   name: openshift-etcd
   labels:
-    openshift.io/run-level: "0"`)
+    openshift.io/run-level: "0"
+`)
 
 func v3110EtcdNsYamlBytes() ([]byte, error) {
 	return _v3110EtcdNsYaml, nil
