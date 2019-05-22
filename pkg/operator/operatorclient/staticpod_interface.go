@@ -1,6 +1,7 @@
 package operatorclient
 
 import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/cache"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -10,15 +11,15 @@ import (
 
 type OperatorClient struct {
 	Informers operatorv1informers.SharedInformerFactory
-	Client    operatorv1client.EtcdsGetter
+	Client    operatorv1client.KubeAPIServersGetter
 }
 
 func (c *OperatorClient) Informer() cache.SharedIndexInformer {
-	return c.Informers.Operator().V1().Etcds().Informer()
+	return c.Informers.Operator().V1().KubeAPIServers().Informer()
 }
 
 func (c *OperatorClient) GetStaticPodOperatorState() (*operatorv1.StaticPodOperatorSpec, *operatorv1.StaticPodOperatorStatus, string, error) {
-	instance, err := c.Informers.Operator().V1().Etcds().Lister().Get("cluster")
+	instance, err := c.Informers.Operator().V1().KubeAPIServers().Lister().Get("cluster")
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -26,8 +27,34 @@ func (c *OperatorClient) GetStaticPodOperatorState() (*operatorv1.StaticPodOpera
 	return &instance.Spec.StaticPodOperatorSpec, &instance.Status.StaticPodOperatorStatus, instance.ResourceVersion, nil
 }
 
+func (c *OperatorClient) GetStaticPodOperatorStateWithQuorum() (*operatorv1.StaticPodOperatorSpec, *operatorv1.StaticPodOperatorStatus, string, error) {
+	instance, err := c.Client.KubeAPIServers().Get("cluster", metav1.GetOptions{})
+	if err != nil {
+		return nil, nil, "", err
+	}
+
+	return &instance.Spec.StaticPodOperatorSpec, &instance.Status.StaticPodOperatorStatus, instance.ResourceVersion, nil
+}
+
+func (c *OperatorClient) UpdateStaticPodOperatorSpec(resourceVersion string, spec *operatorv1.StaticPodOperatorSpec) (*operatorv1.StaticPodOperatorSpec, string, error) {
+	original, err := c.Informers.Operator().V1().KubeAPIServers().Lister().Get("cluster")
+	if err != nil {
+		return nil, "", err
+	}
+	copy := original.DeepCopy()
+	copy.ResourceVersion = resourceVersion
+	copy.Spec.StaticPodOperatorSpec = *spec
+
+	ret, err := c.Client.KubeAPIServers().Update(copy)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return &ret.Spec.StaticPodOperatorSpec, ret.ResourceVersion, nil
+}
+
 func (c *OperatorClient) UpdateStaticPodOperatorStatus(resourceVersion string, status *operatorv1.StaticPodOperatorStatus) (*operatorv1.StaticPodOperatorStatus, error) {
-	original, err := c.Informers.Operator().V1().Etcds().Lister().Get("cluster")
+	original, err := c.Informers.Operator().V1().KubeAPIServers().Lister().Get("cluster")
 	if err != nil {
 		return nil, err
 	}
@@ -35,7 +62,7 @@ func (c *OperatorClient) UpdateStaticPodOperatorStatus(resourceVersion string, s
 	copy.ResourceVersion = resourceVersion
 	copy.Status.StaticPodOperatorStatus = *status
 
-	ret, err := c.Client.Etcds().UpdateStatus(copy)
+	ret, err := c.Client.KubeAPIServers().UpdateStatus(copy)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +71,7 @@ func (c *OperatorClient) UpdateStaticPodOperatorStatus(resourceVersion string, s
 }
 
 func (c *OperatorClient) GetOperatorState() (*operatorv1.OperatorSpec, *operatorv1.OperatorStatus, string, error) {
-	instance, err := c.Informers.Operator().V1().Etcds().Lister().Get("cluster")
+	instance, err := c.Informers.Operator().V1().KubeAPIServers().Lister().Get("cluster")
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -53,7 +80,7 @@ func (c *OperatorClient) GetOperatorState() (*operatorv1.OperatorSpec, *operator
 }
 
 func (c *OperatorClient) UpdateOperatorSpec(resourceVersion string, spec *operatorv1.OperatorSpec) (*operatorv1.OperatorSpec, string, error) {
-	original, err := c.Informers.Operator().V1().Etcds().Lister().Get("cluster")
+	original, err := c.Informers.Operator().V1().KubeAPIServers().Lister().Get("cluster")
 	if err != nil {
 		return nil, "", err
 	}
@@ -61,7 +88,7 @@ func (c *OperatorClient) UpdateOperatorSpec(resourceVersion string, spec *operat
 	copy.ResourceVersion = resourceVersion
 	copy.Spec.OperatorSpec = *spec
 
-	ret, err := c.Client.Etcds().Update(copy)
+	ret, err := c.Client.KubeAPIServers().Update(copy)
 	if err != nil {
 		return nil, "", err
 	}
@@ -69,7 +96,7 @@ func (c *OperatorClient) UpdateOperatorSpec(resourceVersion string, spec *operat
 	return &ret.Spec.OperatorSpec, ret.ResourceVersion, nil
 }
 func (c *OperatorClient) UpdateOperatorStatus(resourceVersion string, status *operatorv1.OperatorStatus) (*operatorv1.OperatorStatus, error) {
-	original, err := c.Informers.Operator().V1().Etcds().Lister().Get("cluster")
+	original, err := c.Informers.Operator().V1().KubeAPIServers().Lister().Get("cluster")
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +104,7 @@ func (c *OperatorClient) UpdateOperatorStatus(resourceVersion string, status *op
 	copy.ResourceVersion = resourceVersion
 	copy.Status.StaticPodOperatorStatus.OperatorStatus = *status
 
-	ret, err := c.Client.Etcds().UpdateStatus(copy)
+	ret, err := c.Client.KubeAPIServers().UpdateStatus(copy)
 	if err != nil {
 		return nil, err
 	}
