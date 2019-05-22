@@ -1,0 +1,182 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bootstrap-etcd-member
+  namespace: openshift-etcd
+  labels:
+    k8s-app: etcd
+spec:
+  initContainers:
+  - name: discovery
+    image: "{{.Images.SetupEtcdEnv}}"
+    args:
+    - "run"
+    - "--discovery-srv={{.EtcdDiscoveryDomain}}"
+    - "--output-file=/run/etcd/environment"
+    - "--v=4"
+    volumeMounts:
+    - name: discovery
+      mountPath: /run/etcd/
+  - name: certs
+    image: "{{.Images.SetupEtcdEnv}}"
+    command:
+    - /bin/sh
+    - -c
+    - |
+      #!/bin/sh
+      set -euxo pipefail
+
+      source /run/etcd/environment
+
+      [ -e /etc/ssl/etcd/system:etcd-server:${ETCD_DNS_NAME}.crt -a \
+        -e /etc/ssl/etcd/system:etcd-server:${ETCD_DNS_NAME}.key ] || \
+        kube-client-agent \
+          request \
+            --kubeconfig=/etc/kubernetes/kubeconfig \
+            --orgname=system:etcd-servers \
+            --assetsdir=/etc/ssl/etcd \
+            --dnsnames={{etcdServerCertDNSNames .}} \
+            --commonname=system:etcd-server:${ETCD_DNS_NAME} \
+            --ipaddrs=${ETCD_IPV4_ADDRESS},127.0.0.1 \
+
+      [ -e /etc/ssl/etcd/system:etcd-peer:${ETCD_DNS_NAME}.crt -a \
+        -e /etc/ssl/etcd/system:etcd-peer:${ETCD_DNS_NAME}.key ] || \
+        kube-client-agent \
+          request \
+            --kubeconfig=/etc/kubernetes/kubeconfig \
+            --orgname=system:etcd-peers \
+            --assetsdir=/etc/ssl/etcd \
+            --dnsnames={{etcdPeerCertDNSNames .}} \
+            --commonname=system:etcd-peer:${ETCD_DNS_NAME} \
+            --ipaddrs=${ETCD_IPV4_ADDRESS} \
+
+      [ -e /etc/ssl/etcd/system:etcd-metric:${ETCD_DNS_NAME}.crt -a \
+        -e /etc/ssl/etcd/system:etcd-metric:${ETCD_DNS_NAME}.key ] || \
+        kube-client-agent \
+          request \
+            --kubeconfig=/etc/kubernetes/kubeconfig \
+            --orgname=system:etcd-metrics \
+            --assetsdir=/etc/ssl/etcd \
+            --dnsnames={{etcdServerCertDNSNames .}} \
+            --commonname=system:etcd-metric:${ETCD_DNS_NAME} \
+            --ipaddrs=${ETCD_IPV4_ADDRESS} \
+    terminationMessagePolicy: FallbackToLogsOnError
+    volumeMounts:
+    - name: discovery
+      mountPath: /run/etcd/
+    - name: certs
+      mountPath: /etc/ssl/etcd/
+    - name: kubeconfig
+      mountPath: /etc/kubernetes/kubeconfig
+  containers:
+  - name: etcd-member
+    image: {{ .Images.Etcd }}
+    command:
+    - /bin/sh
+    - -c
+    - |
+      #!/bin/sh
+      set -euo pipefail
+
+      source /run/etcd/environment
+
+      set -a
+      source /etc/etcd/etcd.conf
+      set +a
+
+      exec etcd \
+        --discovery-srv sbatsche-05-20-19-2.devcluster.openshift.com \
+        --initial-advertise-peer-urls=https://${ETCD_IPV4_ADDRESS}:2380 \
+        --cert-file=/etc/ssl/etcd/system:etcd-server:${ETCD_DNS_NAME}.crt \
+        --key-file=/etc/ssl/etcd/system:etcd-server:${ETCD_DNS_NAME}.key \
+        --trusted-ca-file=/etc/ssl/etcd/ca.crt \
+        --client-cert-auth=true \
+        --peer-cert-file=/etc/ssl/etcd/system:etcd-peer:${ETCD_DNS_NAME}.crt \
+        --peer-key-file=/etc/ssl/etcd/system:etcd-peer:${ETCD_DNS_NAME}.key \
+        --peer-trusted-ca-file=/etc/ssl/etcd/ca.crt \
+        --peer-client-cert-auth=true \
+        --advertise-client-urls=https://${ETCD_IPV4_ADDRESS}:2379 \
+        --listen-client-urls=https://0.0.0.0:2379 \
+        --listen-peer-urls=https://0.0.0.0:2380 \
+        --listen-metrics-urls=https://0.0.0.0:9978 \
+    resources:
+      requests:
+        memory: 600Mi
+        cpu: 300m
+    terminationMessagePolicy: FallbackToLogsOnError
+    volumeMounts:
+    - name: discovery
+      mountPath: /run/etcd/
+    - name: certs
+      mountPath: /etc/ssl/etcd/
+    - name: data-dir
+      mountPath: /var/lib/etcd/
+    - name: conf
+      mountPath: /etc/etcd/
+
+    env:
+    - name: ETCD_DATA_DIR
+      value: "/var/lib/etcd"
+    - name: ETCD_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.name
+    ports:
+    - name: peer
+      containerPort: 2380
+      protocol: TCP
+    - name: server
+      containerPort: 2379
+      protocol: TCP
+  - name: etcd-metrics
+    image: {{ .Images.Etcd }}
+    command:
+    - /bin/sh
+    - -c
+    - |
+      #!/bin/sh
+      set -euo pipefail
+
+      source /run/etcd/environment
+
+      exec etcd grpc-proxy start \
+        --endpoints https://${ETCD_DNS_NAME}:9978 \
+        --metrics-addr https://0.0.0.0:9979 \
+        --listen-addr 127.0.0.1:9977 \
+        --key /etc/ssl/etcd/system:etcd-peer:${ETCD_DNS_NAME}.key \
+        --key-file /etc/ssl/etcd/system:etcd-metric:${ETCD_DNS_NAME}.key \
+        --cert /etc/ssl/etcd/system:etcd-peer:${ETCD_DNS_NAME}.crt \
+        --cert-file /etc/ssl/etcd/system:etcd-metric:${ETCD_DNS_NAME}.crt \
+        --cacert /etc/ssl/etcd/ca.crt \
+        --trusted-ca-file /etc/ssl/etcd/metric-ca.crt \
+    terminationMessagePolicy: FallbackToLogsOnError
+    volumeMounts:
+    - name: discovery
+      mountPath: /run/etcd/
+    - name: certs
+      mountPath: /etc/ssl/etcd/
+    ports:
+    - name: metric
+      containerPort: 9979
+      protocol: TCP
+  hostNetwork: true
+  priorityClassName: system-node-critical
+  tolerations:
+  - operator: "Exists"
+  restartPolicy: Always
+  volumes:
+  - name: certs
+    hostPath:
+      path: /etc/kubernetes/static-pod-resources/etcd-member
+  - name: kubeconfig
+    hostPath:
+      path: /etc/kubernetes/kubeconfig
+  - name: discovery
+    hostPath:
+      path: /run/etcd
+  - name: data-dir
+    hostPath:
+      path: /var/lib/etcd
+  - name: conf
+    hostPath:
+      path: /etc/etcd

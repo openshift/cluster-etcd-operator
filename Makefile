@@ -4,6 +4,9 @@ GOFLAGS=
 IMAGE_REPO=
 IMAGE_TAG:=$(shell $(ROOT_DIR)/hack/git-version.sh)
 
+all: build
+.PHONY: all
+
 $(shell mkdir -p bin)
 
 build: bin/cluster-etcd-operator
