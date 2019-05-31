@@ -1,61 +1,55 @@
 package render
 
 import (
+	"errors"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"path/filepath"
 
-	"github.com/ghodss/yaml"
-	"github.com/golang/glog"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"k8s.io/klog"
 
-	kubecontrolplanev1 "github.com/openshift/api/kubecontrolplane/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/v311_00_assets"
-	genericrender "github.com/openshift/library-go/pkg/operator/render"
-	genericrenderoptions "github.com/openshift/library-go/pkg/operator/render/options"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render/options"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/v420_00_assets"
+	"github.com/openshift/library-go/pkg/assets"
 )
 
 const (
-	bootstrapVersion = "v3.11.0"
+	bootstrapVersion = "v4.2.0"
 )
 
 // renderOpts holds values to drive the render command.
 type renderOpts struct {
-	manifest genericrenderoptions.ManifestOptions
-	generic  genericrenderoptions.GenericOptions
+	manifest options.ManifestOptions
+	generic  options.GenericOptions
 
-	clusterConfigFile string
-	disablePhase2     bool
-	errOut            io.Writer
+	etcdConfigFile       string
+	etcdDiscoveryDomain  string
+	etcdImage            string
+	setupEtcdEnvImage    string
+	kubeClientAgentImage string
 }
 
 // NewRenderCommand creates a render command.
-func NewRenderCommand(errOut io.Writer) *cobra.Command {
-	renderOpts := &renderOpts{
-		manifest: *genericrenderoptions.NewManifestOptions("etcd", "openshift/origin-hyperkube:latest"),
-		generic:  *genericrenderoptions.NewGenericOptions(),
-		errOut:   errOut,
+func NewRenderCommand() *cobra.Command {
+	renderOpts := renderOpts{
+		generic:  *options.NewGenericOptions(),
+		manifest: *options.NewManifestOptions("etcd"),
 	}
 	cmd := &cobra.Command{
 		Use:   "render",
-		Short: "Render kubernetes controller manager bootstrap manifests, secrets and configMaps",
+		Short: "Render etcd bootstrap manifests, secrets and configMaps",
 		Run: func(cmd *cobra.Command, args []string) {
-			must := func(fn func() error) {
-				if err := fn(); err != nil {
-					if cmd.HasParent() {
-						glog.Fatal(err)
-					}
-					fmt.Fprint(renderOpts.errOut, err.Error())
-				}
+			if err := renderOpts.Validate(); err != nil {
+				klog.Fatal(err)
 			}
-
-			must(renderOpts.Validate)
-			must(renderOpts.Complete)
-			must(renderOpts.Run)
+			if err := renderOpts.Complete(); err != nil {
+				klog.Fatal(err)
+			}
+			if err := renderOpts.Run(); err != nil {
+				klog.Fatal(err)
+			}
 		},
 	}
 
@@ -65,15 +59,14 @@ func NewRenderCommand(errOut io.Writer) *cobra.Command {
 }
 
 func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
-	r.manifest.AddFlags(fs, "controller manager")
-	r.generic.AddFlags(fs, kubecontrolplanev1.GroupVersion.WithKind("KubeControllerManagerConfig"))
+	r.manifest.AddFlags(fs, "etcd")
+	r.generic.AddFlags(fs)
 
-	fs.StringVar(&r.clusterConfigFile, "cluster-config-file", r.clusterConfigFile, "Openshift Cluster API Config file.")
-
-	// TODO: remove when the installer has stopped using it
-	fs.BoolVar(&r.disablePhase2, "disable-phase-2", r.disablePhase2, "Disable rendering of the phase 2 daemonset and dependencies.")
-	fs.MarkHidden("disable-phase-2")
-	fs.MarkDeprecated("disable-phase-2", "Only used temporarily to synchronize roll out of the phase 2 removal. Does nothing anymore.")
+	fs.StringVar(&r.etcdImage, "manifest-etcd-image", r.etcdImage, "etcd manifest image")
+	fs.StringVar(&r.kubeClientAgentImage, "manifest-kube-client-agent-image", r.kubeClientAgentImage, "kube-client-agent manifest image")
+	fs.StringVar(&r.setupEtcdEnvImage, "manifest-setup-etcd-env-image", r.setupEtcdEnvImage, "setup-etcd-env manifest image")
+	fs.StringVar(&r.etcdConfigFile, "etcd-config-file", r.etcdConfigFile, "etcd runtime config file.")
+	fs.StringVar(&r.etcdDiscoveryDomain, "etcd-discovery-domain", r.etcdDiscoveryDomain, "etcd discovery domain")
 }
 
 // Validate verifies the inputs.
@@ -84,7 +77,21 @@ func (r *renderOpts) Validate() error {
 	if err := r.generic.Validate(); err != nil {
 		return err
 	}
-
+	if len(r.etcdImage) == 0 {
+		return errors.New("missing required flag: --manifest-etcd-image")
+	}
+	if len(r.kubeClientAgentImage) == 0 {
+		return errors.New("missing required flag: --manifest-kube-client-agent-image")
+	}
+	if len(r.setupEtcdEnvImage) == 0 {
+		return errors.New("missing required flag: --manifest-setup-etcd-env-image")
+	}
+	if len(r.etcdConfigFile) == 0 {
+		return errors.New("missing required flag: --etcd-config-file")
+	}
+	if len(r.etcdDiscoveryDomain) == 0 {
+		return errors.New("missing required flag: --etcd-discovery-domain")
+	}
 	return nil
 }
 
@@ -100,88 +107,76 @@ func (r *renderOpts) Complete() error {
 }
 
 type TemplateData struct {
-	genericrenderoptions.TemplateData
+	options.ManifestConfig
+	options.FileConfig
 
-	ClusterCIDR           []string
-	ServiceClusterIPRange []string
-}
-
-func discoverRestrictedCIDRs(clusterConfigFileData []byte, renderConfig *TemplateData) error {
-	configJson, err := yaml.YAMLToJSON(clusterConfigFileData)
-	if err != nil {
-		return err
-	}
-
-	clusterConfigObj, err := runtime.Decode(unstructured.UnstructuredJSONScheme, configJson)
-	if err != nil {
-		return err
-	}
-	clusterConfig, ok := clusterConfigObj.(*unstructured.Unstructured)
-	if !ok {
-		return fmt.Errorf("unexpected object in %t", clusterConfigObj)
-	}
-
-	if clusterCIDR, found, err := unstructured.NestedStringSlice(
-		clusterConfig.Object, "spec", "clusterNetwork", "pods", "cidrBlocks"); found && err == nil {
-		renderConfig.ClusterCIDR = clusterCIDR
-	}
-	if err != nil {
-		return err
-	}
-	if serviceClusterIPRange, found, err := unstructured.NestedStringSlice(
-		clusterConfig.Object, "spec", "clusterNetwork", "services", "cidrBlocks"); found && err == nil {
-		renderConfig.ServiceClusterIPRange = serviceClusterIPRange
-	}
-	if err != nil {
-		return err
-	}
-	return nil
+	// EtcdDiscoveryDomain is the domain used for SRV discovery.
+	EtcdDiscoveryDomain string
 }
 
 // Run contains the logic of the render command.
 func (r *renderOpts) Run() error {
-	renderConfig := TemplateData{}
-	if len(r.clusterConfigFile) > 0 {
-		clusterConfigFileData, err := ioutil.ReadFile(r.clusterConfigFile)
-		if err != nil {
-			return err
-		}
-		err = discoverRestrictedCIDRs(clusterConfigFileData, &renderConfig)
-		if err != nil {
-			return fmt.Errorf("unable to parse restricted CIDRs from config: %v", err)
-		}
+	renderConfig := &TemplateData{
+		ManifestConfig: options.ManifestConfig{
+			Images: options.Images{
+				Etcd:            r.etcdImage,
+				SetupEtcdEnv:    r.setupEtcdEnvImage,
+				KubeClientAgent: r.kubeClientAgentImage,
+			},
+		},
+		EtcdDiscoveryDomain: r.etcdDiscoveryDomain,
+	}
+
+	if len(r.etcdConfigFile) > 0 {
+		// etcdConfigFileData, err := ioutil.ReadFile(r.etcdConfigFile)
+		// if err != nil {
+		// 	return err
+		// }
+		// // FIXME
+		//
 	}
 	if err := r.manifest.ApplyTo(&renderConfig.ManifestConfig); err != nil {
 		return err
 	}
 	if err := r.generic.ApplyTo(
 		&renderConfig.FileConfig,
-		genericrenderoptions.Template{FileName: "defaultconfig.yaml", Content: v311_00_assets.MustAsset(filepath.Join(bootstrapVersion, "etcd", "defaultconfig.yaml"))},
+		options.Template{FileName: "defaultconfig.yaml", Content: v420_00_assets.MustAsset(filepath.Join(bootstrapVersion, "kube-apiserver", "defaultconfig.yaml"))},
 		mustReadTemplateFile(filepath.Join(r.generic.TemplatesDir, "config", "bootstrap-config-overrides.yaml")),
 		mustReadTemplateFile(filepath.Join(r.generic.TemplatesDir, "config", "config-overrides.yaml")),
 		&renderConfig,
+		nil,
 	); err != nil {
 		return err
 	}
 
-	// add additional kubeconfig asset
-	if kubeConfig, err := r.readBootstrapSecretsKubeconfig(); err != nil {
-		return fmt.Errorf("failed to read %s/kubeconfig: %v", r.manifest.SecretsHostPath, err)
-	} else {
-		renderConfig.Assets["kubeconfig"] = kubeConfig
-	}
-
-	return genericrender.WriteFiles(&r.generic, &renderConfig.FileConfig, renderConfig)
+	return WriteFiles(&r.generic, &renderConfig.FileConfig, renderConfig)
 }
 
-func (r *renderOpts) readBootstrapSecretsKubeconfig() ([]byte, error) {
-	return ioutil.ReadFile(filepath.Join(r.generic.AssetInputDir, "..", "auth", "kubeconfig"))
-}
-
-func mustReadTemplateFile(fname string) genericrenderoptions.Template {
+func mustReadTemplateFile(fname string) options.Template {
 	bs, err := ioutil.ReadFile(fname)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to load %q: %v", fname, err))
 	}
-	return genericrenderoptions.Template{FileName: fname, Content: bs}
+	return options.Template{FileName: fname, Content: bs}
+}
+
+// WriteFiles writes the manifests and the bootstrap config file.
+func WriteFiles(opt *options.GenericOptions, fileConfig *options.FileConfig, templateData interface{}, additionalPredicates ...assets.FileInfoPredicate) error {
+	// write assets
+	for _, manifestDir := range []string{"bootstrap-manifests", "manifests"} {
+		manifests, err := assets.New(filepath.Join(opt.TemplatesDir, manifestDir), templateData, append(additionalPredicates, assets.OnlyYaml)...)
+		if err != nil {
+			return fmt.Errorf("failed rendering assets: %v", err)
+		}
+		if err := manifests.WriteFiles(filepath.Join(opt.AssetOutputDir, manifestDir)); err != nil {
+			return fmt.Errorf("failed writing assets to %q: %v", filepath.Join(opt.AssetOutputDir, manifestDir), err)
+		}
+	}
+
+	// create bootstrap configuration
+	if err := ioutil.WriteFile(opt.ConfigOutputFile, fileConfig.BootstrapConfig, 0644); err != nil {
+		return fmt.Errorf("failed to write merged config to %q: %v", opt.ConfigOutputFile, err)
+	}
+
+	return nil
 }
