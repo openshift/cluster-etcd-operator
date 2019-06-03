@@ -1,4 +1,4 @@
-FROM registry.svc.ci.openshift.org/openshift/release:golang-1.12  AS builder
+FROM registry.svc.ci.openshift.org/openshift/release:golang-1.12 AS builder
 WORKDIR /go/src/github.com/openshift/cluster-etcd-operator
 COPY . .
 RUN go build ./cmd/cluster-etcd-operator
