@@ -128,19 +128,14 @@ func (r *renderOpts) Run() error {
 	}
 
 	if len(r.etcdConfigFile) > 0 {
-		// etcdConfigFileData, err := ioutil.ReadFile(r.etcdConfigFile)
-		// if err != nil {
-		// 	return err
-		// }
-		// // FIXME
-		//
+		// FIXME
 	}
 	if err := r.manifest.ApplyTo(&renderConfig.ManifestConfig); err != nil {
 		return err
 	}
 	if err := r.generic.ApplyTo(
 		&renderConfig.FileConfig,
-		options.Template{FileName: "defaultconfig.yaml", Content: v420_00_assets.MustAsset(filepath.Join(bootstrapVersion, "kube-apiserver", "defaultconfig.yaml"))},
+		options.Template{FileName: "defaultconfig.yaml", Content: v420_00_assets.MustAsset(filepath.Join(bootstrapVersion, "etcd", "defaultconfig.yaml"))},
 		mustReadTemplateFile(filepath.Join(r.generic.TemplatesDir, "config", "bootstrap-config-overrides.yaml")),
 		mustReadTemplateFile(filepath.Join(r.generic.TemplatesDir, "config", "config-overrides.yaml")),
 		&renderConfig,
