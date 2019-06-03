@@ -35,7 +35,7 @@ spec:
             --kubeconfig=/etc/kubernetes/kubeconfig \
             --orgname=system:etcd-servers \
             --assetsdir=/etc/ssl/etcd \
-            --dnsnames=localhost,etcd.kube-system.svc,etcd.kube-system.svc.cluster.local,etcd.openshift-etcd.svc,etcd.openshift-etcd.svc.cluster.local,${ETCD_WILDCARD_DNS_NAME} \
+            --dnsnames={{etcdServerCertDNSNames .}} \
             --commonname=system:etcd-server:${ETCD_DNS_NAME} \
             --ipaddrs=${ETCD_IPV4_ADDRESS},127.0.0.1 \
 
@@ -46,7 +46,7 @@ spec:
             --kubeconfig=/etc/kubernetes/kubeconfig \
             --orgname=system:etcd-peers \
             --assetsdir=/etc/ssl/etcd \
-            --dnsnames=${ETCD_DNS_NAME},sbatsche-05-20-19-2.devcluster.openshift.com \
+            --dnsnames={{etcdPeerCertDNSNames .}} \
             --commonname=system:etcd-peer:${ETCD_DNS_NAME} \
             --ipaddrs=${ETCD_IPV4_ADDRESS} \
 
@@ -57,7 +57,7 @@ spec:
             --kubeconfig=/etc/kubernetes/kubeconfig \
             --orgname=system:etcd-metrics \
             --assetsdir=/etc/ssl/etcd \
-            --dnsnames=localhost,etcd.kube-system.svc,etcd.kube-system.svc.cluster.local,etcd.openshift-etcd.svc,etcd.openshift-etcd.svc.cluster.local,${ETCD_WILDCARD_DNS_NAME} \
+            --dnsnames={{etcdServerCertDNSNames .}} \
             --commonname=system:etcd-metric:${ETCD_DNS_NAME} \
             --ipaddrs=${ETCD_IPV4_ADDRESS} \
     terminationMessagePolicy: FallbackToLogsOnError
