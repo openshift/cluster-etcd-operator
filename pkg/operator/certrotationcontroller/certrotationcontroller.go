@@ -15,7 +15,7 @@ import (
 
 	configinformers "github.com/openshift/client-go/config/informers/externalversions"
 	configlisterv1 "github.com/openshift/client-go/config/listers/config/v1"
-	"github.com/openshift/cluster-kube-apiserver-operator/pkg/operator/operatorclient"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/operator/certrotation"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"

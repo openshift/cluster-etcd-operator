@@ -24,6 +24,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorv1client "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/v420_00_assets"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
@@ -31,9 +32,8 @@ import (
 	"github.com/openshift/library-go/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
-	"github.com/openshift/cluster-kube-apiserver-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-kube-apiserver-operator/pkg/operator/v410_00_assets"
-	"github.com/openshift/cluster-kube-apiserver-operator/pkg/version"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/cluster-etcd-operator/pkg/version"
 )
 
 const workQueueKey = "key"
@@ -168,10 +168,10 @@ func isRequiredConfigPresent(config []byte) error {
 func createTargetConfig(c TargetConfigController, recorder events.Recorder, operatorConfig *operatorv1.KubeAPIServer) (bool, error) {
 	errors := []error{}
 
-	directResourceResults := resourceapply.ApplyDirectly(c.kubeClient, c.eventRecorder, v410_00_assets.Asset,
-		"v4.1.0/kube-apiserver/ns.yaml",
-		"v4.1.0/kube-apiserver/svc.yaml",
-		"v4.1.0/kube-apiserver/kubeconfig-cm.yaml",
+	directResourceResults := resourceapply.ApplyDirectly(c.kubeClient, c.eventRecorder, v420_00_assets.Asset,
+		"v4.2.0/kube-apiserver/ns.yaml",
+		"v4.2.0/kube-apiserver/svc.yaml",
+		"v4.2.0/kube-apiserver/kubeconfig-cm.yaml",
 	)
 
 	for _, currResult := range directResourceResults {
@@ -222,8 +222,8 @@ func createTargetConfig(c TargetConfigController, recorder events.Recorder, oper
 }
 
 func manageKubeAPIServerConfig(client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorConfig *operatorv1.KubeAPIServer) (*corev1.ConfigMap, bool, error) {
-	configMap := resourceread.ReadConfigMapV1OrDie(v410_00_assets.MustAsset("v4.1.0/kube-apiserver/cm.yaml"))
-	defaultConfig := v410_00_assets.MustAsset("v4.1.0/kube-apiserver/defaultconfig.yaml")
+	configMap := resourceread.ReadConfigMapV1OrDie(v420_00_assets.MustAsset("v4.2.0/kube-apiserver/cm.yaml"))
+	defaultConfig := v420_00_assets.MustAsset("v4.2.0/kube-apiserver/defaultconfig.yaml")
 	specialMergeRules := map[string]resourcemerge.MergeFunc{
 		".oauthConfig": RemoveConfig,
 	}
@@ -236,7 +236,7 @@ func manageKubeAPIServerConfig(client coreclientv1.ConfigMapsGetter, recorder ev
 }
 
 func managePod(client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorConfig *operatorv1.KubeAPIServer, imagePullSpec, operatorImagePullSpec string) (*corev1.ConfigMap, bool, error) {
-	required := resourceread.ReadPodV1OrDie(v410_00_assets.MustAsset("v4.1.0/kube-apiserver/pod.yaml"))
+	required := resourceread.ReadPodV1OrDie(v420_00_assets.MustAsset("v4.2.0/kube-apiserver/pod.yaml"))
 	// TODO: If the image pull spec is not specified, the "${IMAGE}" will be used as value and the pod will fail to start.
 	images := map[string]string{
 		"${IMAGE}":          imagePullSpec,
@@ -276,7 +276,7 @@ func managePod(client coreclientv1.ConfigMapsGetter, recorder events.Recorder, o
 	}
 	required.Spec.Containers[0].Args = append(required.Spec.Containers[0].Args, fmt.Sprintf("-v=%d", v))
 
-	configMap := resourceread.ReadConfigMapV1OrDie(v410_00_assets.MustAsset("v4.1.0/kube-apiserver/pod-cm.yaml"))
+	configMap := resourceread.ReadConfigMapV1OrDie(v420_00_assets.MustAsset("v4.2.0/kube-apiserver/pod-cm.yaml"))
 	configMap.Data["pod.yaml"] = resourceread.WritePodV1OrDie(required)
 	configMap.Data["forceRedeploymentReason"] = operatorConfig.Spec.ForceRedeploymentReason
 	configMap.Data["version"] = version.Get().String()
