@@ -52,7 +52,7 @@ func (fi bindataFileInfo) Sys() interface{} {
 	return nil
 }
 
-var _v3110EtcdCmYaml = []byte(`apiVersion: v1
+var _v420EtcdCmYaml = []byte(`apiVersion: v1
 kind: ConfigMap
 metadata:
   namespace: openshift-etcd
@@ -61,12 +61,12 @@ data:
   config.yaml:
 `)
 
-func v3110EtcdCmYamlBytes() ([]byte, error) {
-	return _v3110EtcdCmYaml, nil
+func v420EtcdCmYamlBytes() ([]byte, error) {
+	return _v420EtcdCmYaml, nil
 }
 
-func v3110EtcdCmYaml() (*asset, error) {
-	bytes, err := v3110EtcdCmYamlBytes()
+func v420EtcdCmYaml() (*asset, error) {
+	bytes, err := v420EtcdCmYamlBytes()
 	if err != nil {
 		return nil, err
 	}
@@ -76,16 +76,16 @@ func v3110EtcdCmYaml() (*asset, error) {
 	return a, nil
 }
 
-var _v3110EtcdDefaultconfigYaml = []byte(`apiVersion: kubecontrolplane.config.openshift.io/v1
+var _v420EtcdDefaultconfigYaml = []byte(`apiVersion: kubecontrolplane.config.openshift.io/v1
 kind: EtcdConfig
 `)
 
-func v3110EtcdDefaultconfigYamlBytes() ([]byte, error) {
-	return _v3110EtcdDefaultconfigYaml, nil
+func v420EtcdDefaultconfigYamlBytes() ([]byte, error) {
+	return _v420EtcdDefaultconfigYaml, nil
 }
 
-func v3110EtcdDefaultconfigYaml() (*asset, error) {
-	bytes, err := v3110EtcdDefaultconfigYamlBytes()
+func v420EtcdDefaultconfigYaml() (*asset, error) {
+	bytes, err := v420EtcdDefaultconfigYamlBytes()
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func v3110EtcdDefaultconfigYaml() (*asset, error) {
 	return a, nil
 }
 
-var _v3110EtcdNsYaml = []byte(`apiVersion: v1
+var _v420EtcdNsYaml = []byte(`apiVersion: v1
 kind: Namespace
 metadata:
   annotations:
@@ -105,12 +105,12 @@ metadata:
     openshift.io/run-level: "0"
 `)
 
-func v3110EtcdNsYamlBytes() ([]byte, error) {
-	return _v3110EtcdNsYaml, nil
+func v420EtcdNsYamlBytes() ([]byte, error) {
+	return _v420EtcdNsYaml, nil
 }
 
-func v3110EtcdNsYaml() (*asset, error) {
-	bytes, err := v3110EtcdNsYamlBytes()
+func v420EtcdNsYaml() (*asset, error) {
+	bytes, err := v420EtcdNsYamlBytes()
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +120,7 @@ func v3110EtcdNsYaml() (*asset, error) {
 	return a, nil
 }
 
-var _v3110EtcdOperatorConfigYaml = []byte(`apiVersion: operator.openshift.io/v1
+var _v420EtcdOperatorConfigYaml = []byte(`apiVersion: operator.openshift.io/v1
 kind: Etcd
 metadata:
   name: cluster
@@ -130,12 +130,12 @@ spec:
   imagePullSpec: openshift/origin-hypershift:latest
 `)
 
-func v3110EtcdOperatorConfigYamlBytes() ([]byte, error) {
-	return _v3110EtcdOperatorConfigYaml, nil
+func v420EtcdOperatorConfigYamlBytes() ([]byte, error) {
+	return _v420EtcdOperatorConfigYaml, nil
 }
 
-func v3110EtcdOperatorConfigYaml() (*asset, error) {
-	bytes, err := v3110EtcdOperatorConfigYamlBytes()
+func v420EtcdOperatorConfigYaml() (*asset, error) {
+	bytes, err := v420EtcdOperatorConfigYamlBytes()
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +145,7 @@ func v3110EtcdOperatorConfigYaml() (*asset, error) {
 	return a, nil
 }
 
-var _v3110EtcdPodCmYaml = []byte(`apiVersion: v1
+var _v420EtcdPodCmYaml = []byte(`apiVersion: v1
 kind: ConfigMap
 metadata:
   namespace: openshift-etcd
@@ -156,12 +156,12 @@ data:
   version:
 `)
 
-func v3110EtcdPodCmYamlBytes() ([]byte, error) {
-	return _v3110EtcdPodCmYaml, nil
+func v420EtcdPodCmYamlBytes() ([]byte, error) {
+	return _v420EtcdPodCmYaml, nil
 }
 
-func v3110EtcdPodCmYaml() (*asset, error) {
-	bytes, err := v3110EtcdPodCmYamlBytes()
+func v420EtcdPodCmYaml() (*asset, error) {
+	bytes, err := v420EtcdPodCmYamlBytes()
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +171,7 @@ func v3110EtcdPodCmYaml() (*asset, error) {
 	return a, nil
 }
 
-var _v3110EtcdPodYaml = []byte(`apiVersion: v1
+var _v420EtcdPodYaml = []byte(`apiVersion: v1
 kind: Pod
 metadata:
   name: openshift-etcd
@@ -223,12 +223,12 @@ spec:
 
 `)
 
-func v3110EtcdPodYamlBytes() ([]byte, error) {
-	return _v3110EtcdPodYaml, nil
+func v420EtcdPodYamlBytes() ([]byte, error) {
+	return _v420EtcdPodYaml, nil
 }
 
-func v3110EtcdPodYaml() (*asset, error) {
-	bytes, err := v3110EtcdPodYamlBytes()
+func v420EtcdPodYaml() (*asset, error) {
+	bytes, err := v420EtcdPodYamlBytes()
 	if err != nil {
 		return nil, err
 	}
@@ -238,19 +238,19 @@ func v3110EtcdPodYaml() (*asset, error) {
 	return a, nil
 }
 
-var _v3110EtcdSaYaml = []byte(`apiVersion: v1
+var _v420EtcdSaYaml = []byte(`apiVersion: v1
 kind: ServiceAccount
 metadata:
   namespace: openshift-etcd
   name: etcd-sa
 `)
 
-func v3110EtcdSaYamlBytes() ([]byte, error) {
-	return _v3110EtcdSaYaml, nil
+func v420EtcdSaYamlBytes() ([]byte, error) {
+	return _v420EtcdSaYaml, nil
 }
 
-func v3110EtcdSaYaml() (*asset, error) {
-	bytes, err := v3110EtcdSaYamlBytes()
+func v420EtcdSaYaml() (*asset, error) {
+	bytes, err := v420EtcdSaYamlBytes()
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +260,7 @@ func v3110EtcdSaYaml() (*asset, error) {
 	return a, nil
 }
 
-var _v3110EtcdSvcYaml = []byte(`apiVersion: v1
+var _v420EtcdSvcYaml = []byte(`apiVersion: v1
 kind: Service
 metadata:
   namespace: openshift-etcd
@@ -278,12 +278,12 @@ spec:
     targetPort: 10257
 `)
 
-func v3110EtcdSvcYamlBytes() ([]byte, error) {
-	return _v3110EtcdSvcYaml, nil
+func v420EtcdSvcYamlBytes() ([]byte, error) {
+	return _v420EtcdSvcYaml, nil
 }
 
-func v3110EtcdSvcYaml() (*asset, error) {
-	bytes, err := v3110EtcdSvcYamlBytes()
+func v420EtcdSvcYaml() (*asset, error) {
+	bytes, err := v420EtcdSvcYamlBytes()
 	if err != nil {
 		return nil, err
 	}
@@ -345,14 +345,14 @@ func AssetNames() []string {
 
 // _bindata is a table, holding each asset generator, mapped to its name.
 var _bindata = map[string]func() (*asset, error){
-	"v4.2.0/etcd/cm.yaml":              v3110EtcdCmYaml,
-	"v4.2.0/etcd/defaultconfig.yaml":   v3110EtcdDefaultconfigYaml,
-	"v4.2.0/etcd/ns.yaml":              v3110EtcdNsYaml,
-	"v4.2.0/etcd/operator-config.yaml": v3110EtcdOperatorConfigYaml,
-	"v4.2.0/etcd/pod-cm.yaml":          v3110EtcdPodCmYaml,
-	"v4.2.0/etcd/pod.yaml":             v3110EtcdPodYaml,
-	"v4.2.0/etcd/sa.yaml":              v3110EtcdSaYaml,
-	"v4.2.0/etcd/svc.yaml":             v3110EtcdSvcYaml,
+	"v4.2.0/etcd/cm.yaml":              v420EtcdCmYaml,
+	"v4.2.0/etcd/defaultconfig.yaml":   v420EtcdDefaultconfigYaml,
+	"v4.2.0/etcd/ns.yaml":              v420EtcdNsYaml,
+	"v4.2.0/etcd/operator-config.yaml": v420EtcdOperatorConfigYaml,
+	"v4.2.0/etcd/pod-cm.yaml":          v420EtcdPodCmYaml,
+	"v4.2.0/etcd/pod.yaml":             v420EtcdPodYaml,
+	"v4.2.0/etcd/sa.yaml":              v420EtcdSaYaml,
+	"v4.2.0/etcd/svc.yaml":             v420EtcdSvcYaml,
 }
 
 // AssetDir returns the file names below a certain
@@ -398,14 +398,14 @@ type bintree struct {
 var _bintree = &bintree{nil, map[string]*bintree{
 	"v4.2.0": {nil, map[string]*bintree{
 		"etcd": {nil, map[string]*bintree{
-			"cm.yaml":              {v3110EtcdCmYaml, map[string]*bintree{}},
-			"defaultconfig.yaml":   {v3110EtcdDefaultconfigYaml, map[string]*bintree{}},
-			"ns.yaml":              {v3110EtcdNsYaml, map[string]*bintree{}},
-			"operator-config.yaml": {v3110EtcdOperatorConfigYaml, map[string]*bintree{}},
-			"pod-cm.yaml":          {v3110EtcdPodCmYaml, map[string]*bintree{}},
-			"pod.yaml":             {v3110EtcdPodYaml, map[string]*bintree{}},
-			"sa.yaml":              {v3110EtcdSaYaml, map[string]*bintree{}},
-			"svc.yaml":             {v3110EtcdSvcYaml, map[string]*bintree{}},
+			"cm.yaml":              {v420EtcdCmYaml, map[string]*bintree{}},
+			"defaultconfig.yaml":   {v420EtcdDefaultconfigYaml, map[string]*bintree{}},
+			"ns.yaml":              {v420EtcdNsYaml, map[string]*bintree{}},
+			"operator-config.yaml": {v420EtcdOperatorConfigYaml, map[string]*bintree{}},
+			"pod-cm.yaml":          {v420EtcdPodCmYaml, map[string]*bintree{}},
+			"pod.yaml":             {v420EtcdPodYaml, map[string]*bintree{}},
+			"sa.yaml":              {v420EtcdSaYaml, map[string]*bintree{}},
+			"svc.yaml":             {v420EtcdSvcYaml, map[string]*bintree{}},
 		}},
 	}},
 }}
