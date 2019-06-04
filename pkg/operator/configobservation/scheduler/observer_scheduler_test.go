@@ -1,15 +1,16 @@
 package scheduler
 
 import (
+	"testing"
+
 	configv1 "github.com/openshift/api/config/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/tools/cache"
 
 	configlistersv1 "github.com/openshift/client-go/config/listers/config/v1"
-	"github.com/openshift/cluster-kube-apiserver-operator/pkg/operator/configobservation"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation"
 	"github.com/openshift/library-go/pkg/operator/events"
 )
 

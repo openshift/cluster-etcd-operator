@@ -16,8 +16,8 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resourcesynccontroller"
 
-	"github.com/openshift/cluster-kube-apiserver-operator/pkg/operator/configobservation"
-	"github.com/openshift/cluster-kube-apiserver-operator/pkg/operator/operatorclient"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
 func TestObserveUserClientCABundle(t *testing.T) {
