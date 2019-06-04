@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -17,7 +18,8 @@ import (
 )
 
 const (
-	bootstrapVersion = "v4.2.0"
+	bootstrapVersion       = "v4.2.0"
+	etcdStaticResourcesDir = "/etc/kubernetes/static-pod-resources/etcd-member"
 )
 
 // renderOpts holds values to drive the render command.
@@ -25,6 +27,8 @@ type renderOpts struct {
 	manifest options.ManifestOptions
 	generic  options.GenericOptions
 
+	etcdCAFile           string
+	etcdMetricCAFile     string
 	etcdConfigFile       string
 	etcdDiscoveryDomain  string
 	etcdImage            string
@@ -63,6 +67,8 @@ func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
 	r.manifest.AddFlags(fs, "etcd")
 	r.generic.AddFlags(fs)
 
+	fs.StringVar(&r.etcdCAFile, "etcd-ca", r.etcdCAFile, "path to etcd CA certificate")
+	fs.StringVar(&r.etcdMetricCAFile, "etcd-metric-ca", r.etcdMetricCAFile, "path to etcd metric CA certificate")
 	fs.StringVar(&r.etcdImage, "manifest-etcd-image", r.etcdImage, "etcd manifest image")
 	fs.StringVar(&r.kubeClientAgentImage, "manifest-kube-client-agent-image", r.kubeClientAgentImage, "kube-client-agent manifest image")
 	fs.StringVar(&r.setupEtcdEnvImage, "manifest-setup-etcd-env-image", r.setupEtcdEnvImage, "setup-etcd-env manifest image")
@@ -77,6 +83,12 @@ func (r *renderOpts) Validate() error {
 	}
 	if err := r.generic.Validate(); err != nil {
 		return err
+	}
+	if len(r.etcdCAFile) == 0 {
+		return errors.New("missing required flag: --etcd-ca")
+	}
+	if len(r.etcdMetricCAFile) == 0 {
+		return errors.New("missing required flag: --etcd-metric-ca")
 	}
 	if len(r.etcdImage) == 0 {
 		return errors.New("missing required flag: --manifest-etcd-image")
@@ -117,6 +129,14 @@ type TemplateData struct {
 	EtcdPeerCertDNSNames   string
 }
 
+type StaticFile struct {
+	name           string
+	source         string
+	destinationDir string
+	mode           os.FileMode
+	Data           []byte
+}
+
 // Run contains the logic of the render command.
 func (r *renderOpts) Run() error {
 	renderConfig := &TemplateData{
@@ -142,6 +162,31 @@ func (r *renderOpts) Run() error {
 		}, ","),
 	}
 
+	staticFiles := []StaticFile{
+		{
+			"etcd-ca-bundle.crt",
+			r.etcdCAFile,
+			etcdStaticResourcesDir,
+			0644,
+			nil,
+		},
+		{
+			"etcd-metric-ca-bundle.crt",
+			r.etcdMetricCAFile,
+			etcdStaticResourcesDir,
+			0644,
+			nil,
+		},
+	}
+
+	files, err := populateFileData(staticFiles)
+	if err != nil {
+		return err
+	}
+	if err := writeStaticFiles(files); err != nil {
+		return err
+	}
+
 	if len(r.etcdConfigFile) > 0 {
 		// FIXME
 	}
@@ -160,6 +205,35 @@ func (r *renderOpts) Run() error {
 	}
 
 	return WriteFiles(&r.generic, &renderConfig.FileConfig, renderConfig)
+}
+
+func populateFileData(files []StaticFile) ([]StaticFile, error) {
+	for i, file := range files {
+		data, err := ioutil.ReadFile(file.source)
+		if err != nil {
+			return nil, err
+		}
+		files[i].Data = data
+	}
+	return files, nil
+}
+
+func writeStaticFiles(files []StaticFile) error {
+	for _, m := range files {
+		if len(m.Data) == 0 {
+			return fmt.Errorf("file %s has no data:", m.name)
+		}
+		b := m.Data
+		path := filepath.Join(m.destinationDir, m.name)
+		dirname := filepath.Dir(path)
+		if err := os.MkdirAll(dirname, 0755); err != nil {
+			return err
+		}
+		if err := ioutil.WriteFile(path, b, m.mode); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func mustReadTemplateFile(fname string) options.Template {
