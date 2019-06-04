@@ -10,9 +10,21 @@ type AuthenticationListerExpansion interface{}
 // ConsoleLister.
 type ConsoleListerExpansion interface{}
 
+// DNSListerExpansion allows custom methods to be added to
+// DNSLister.
+type DNSListerExpansion interface{}
+
 // EtcdListerExpansion allows custom methods to be added to
 // EtcdLister.
 type EtcdListerExpansion interface{}
+
+// IngressControllerListerExpansion allows custom methods to be added to
+// IngressControllerLister.
+type IngressControllerListerExpansion interface{}
+
+// IngressControllerNamespaceListerExpansion allows custom methods to be added to
+// IngressControllerNamespaceLister.
+type IngressControllerNamespaceListerExpansion interface{}
 
 // KubeAPIServerListerExpansion allows custom methods to be added to
 // KubeAPIServerLister.
@@ -22,6 +34,14 @@ type KubeAPIServerListerExpansion interface{}
 // KubeControllerManagerLister.
 type KubeControllerManagerListerExpansion interface{}
 
+// KubeSchedulerListerExpansion allows custom methods to be added to
+// KubeSchedulerLister.
+type KubeSchedulerListerExpansion interface{}
+
+// NetworkListerExpansion allows custom methods to be added to
+// NetworkLister.
+type NetworkListerExpansion interface{}
+
 // OpenShiftAPIServerListerExpansion allows custom methods to be added to
 // OpenShiftAPIServerLister.
 type OpenShiftAPIServerListerExpansion interface{}
@@ -29,3 +49,15 @@ type OpenShiftAPIServerListerExpansion interface{}
 // OpenShiftControllerManagerListerExpansion allows custom methods to be added to
 // OpenShiftControllerManagerLister.
 type OpenShiftControllerManagerListerExpansion interface{}
+
+// ServiceCAListerExpansion allows custom methods to be added to
+// ServiceCALister.
+type ServiceCAListerExpansion interface{}
+
+// ServiceCatalogAPIServerListerExpansion allows custom methods to be added to
+// ServiceCatalogAPIServerLister.
+type ServiceCatalogAPIServerListerExpansion interface{}
+
+// ServiceCatalogControllerManagerListerExpansion allows custom methods to be added to
+// ServiceCatalogControllerManagerLister.
+type ServiceCatalogControllerManagerListerExpansion interface{}
