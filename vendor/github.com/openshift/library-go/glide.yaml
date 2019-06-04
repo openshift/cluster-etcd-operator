@@ -1,22 +1,30 @@
 package: github.com/openshift/library-go
 import:
 - package: k8s.io/apimachinery
-  version: kubernetes-1.12.5
+  version: kubernetes-1.13.4
 - package: k8s.io/api
-  version: kubernetes-1.12.5
+  version: kubernetes-1.13.4
 - package: k8s.io/apiserver
-  version: kubernetes-1.12.5
-- package: k8s.io/apiextensions-apiserver
-  version: kubernetes-1.12.5
+  version: kubernetes-1.13.4
 - package: k8s.io/kube-aggregator
-  version: kubernetes-1.12.5
+  version: kubernetes-1.13.4
 - package: k8s.io/client-go
-  version: kubernetes-1.12.5
+  version: kubernetes-1.13.4
 - package: github.com/openshift/api
   version: master
 - package: github.com/openshift/client-go
   version: master
 
+# crd-schema-gen
+  # TODO: we need to this to get nullable patch, but we will replace this with new repo soon.
+- package: k8s.io/apiextensions-apiserver
+  repo: https://github.com/openshift/kubernetes-apiextensions-apiserver
+  version: origin-4.1-kubernetes-1.13.4
+- package: sigs.k8s.io/controller-tools
+  repo: https://github.com/openshift/kubernetes-sigs-controller-tools
+  version: origin-4.1-kubernetes-1.13.4
+- package: k8s.io/gengo
+  version: e17681d19d3ac4837a019ece36c2a0ec31ffe985
 
 # sig-master - needed for file observer
 - package: github.com/sigma/go-inotify
@@ -44,3 +52,8 @@ import:
   version: b38d23b8782a487059e8fc8773e9a5b228a77cb6
 - package: github.com/imdario/mergo
   version: 9316a62528ac99aaecb4e47eadd6dc8aa6533d58
+
+
+# matches openshift/origin
+- package: github.com/gonum/graph
+  version: 50b27dea7ebbfb052dfaf91681afc6fde28d8796

@@ -20,8 +20,16 @@ func (c *FakeOperatorV1) Consoles() v1.ConsoleInterface {
 	return &FakeConsoles{c}
 }
 
+func (c *FakeOperatorV1) DNSes() v1.DNSInterface {
+	return &FakeDNSes{c}
+}
+
 func (c *FakeOperatorV1) Etcds() v1.EtcdInterface {
 	return &FakeEtcds{c}
+}
+
+func (c *FakeOperatorV1) IngressControllers(namespace string) v1.IngressControllerInterface {
+	return &FakeIngressControllers{c, namespace}
 }
 
 func (c *FakeOperatorV1) KubeAPIServers() v1.KubeAPIServerInterface {
@@ -32,12 +40,32 @@ func (c *FakeOperatorV1) KubeControllerManagers() v1.KubeControllerManagerInterf
 	return &FakeKubeControllerManagers{c}
 }
 
+func (c *FakeOperatorV1) KubeSchedulers() v1.KubeSchedulerInterface {
+	return &FakeKubeSchedulers{c}
+}
+
+func (c *FakeOperatorV1) Networks() v1.NetworkInterface {
+	return &FakeNetworks{c}
+}
+
 func (c *FakeOperatorV1) OpenShiftAPIServers() v1.OpenShiftAPIServerInterface {
 	return &FakeOpenShiftAPIServers{c}
 }
 
 func (c *FakeOperatorV1) OpenShiftControllerManagers() v1.OpenShiftControllerManagerInterface {
 	return &FakeOpenShiftControllerManagers{c}
+}
+
+func (c *FakeOperatorV1) ServiceCAs() v1.ServiceCAInterface {
+	return &FakeServiceCAs{c}
+}
+
+func (c *FakeOperatorV1) ServiceCatalogAPIServers() v1.ServiceCatalogAPIServerInterface {
+	return &FakeServiceCatalogAPIServers{c}
+}
+
+func (c *FakeOperatorV1) ServiceCatalogControllerManagers() v1.ServiceCatalogControllerManagerInterface {
+	return &FakeServiceCatalogControllerManagers{c}
 }
 
 // RESTClient returns a RESTClient that is used to communicate

@@ -132,12 +132,14 @@ func TestEnsureManifestsCreated(t *testing.T) {
 	if !strings.Contains(out.String(), `no matches for kind "KubeAPIServerOperatorConfig"`) {
 		t.Fatalf("expected error logged to output when verbose is on, got: %s\n", out.String())
 	}
-	if !strings.Contains(out.String(), `Creating kubeapiserver.operator.openshift.io/v1alpha1`) {
+	if !strings.Contains(out.String(), `Created "0000_10_kube-apiserver-operator_01_config.crd.yaml" customresourcedefinitions.v1beta1.apiextensions.k8s.io`) {
 		t.Fatalf("expected success logged to output when verbose is on, got: %s\n", out.String())
 	}
 }
 
 func TestCreate(t *testing.T) {
+	ctx := context.Background()
+
 	resourcesWithoutKubeAPIServer := resources[1:]
 	testConfigMap := &unstructured.Unstructured{}
 	testConfigMap.SetGroupVersionKind(schema.GroupVersionKind{
@@ -188,7 +190,7 @@ func TestCreate(t *testing.T) {
 			dynamicClient := dynamicfake.NewSimpleDynamicClient(fakeScheme, tc.existingObjects...)
 			restMapper := restmapper.NewDiscoveryRESTMapper(tc.discovery)
 
-			err, reload := create(manifests, dynamicClient, restMapper, CreateOptions{Verbose: true, StdErr: os.Stderr})
+			err, reload := create(ctx, manifests, dynamicClient, restMapper, CreateOptions{Verbose: true, StdErr: os.Stderr})
 			if tc.expectError && err == nil {
 				t.Errorf("expected error, got no error")
 				return
