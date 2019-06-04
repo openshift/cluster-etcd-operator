@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -111,7 +112,9 @@ type TemplateData struct {
 	options.FileConfig
 
 	// EtcdDiscoveryDomain is the domain used for SRV discovery.
-	EtcdDiscoveryDomain string
+	EtcdDiscoveryDomain    string
+	EtcdServerCertDNSNames string
+	EtcdPeerCertDNSNames   string
 }
 
 // Run contains the logic of the render command.
@@ -125,6 +128,18 @@ func (r *renderOpts) Run() error {
 			},
 		},
 		EtcdDiscoveryDomain: r.etcdDiscoveryDomain,
+		EtcdServerCertDNSNames: strings.Join([]string{
+			"localhost",
+			"etcd.kube-system.svc",
+			"etcd.kube-system.svc.cluster.local",
+			"etcd.openshift-etcd.svc",
+			"etcd.openshift-etcd.svc.cluster.local",
+			"${ETCD_DNS_NAME}",
+		}, ","),
+		EtcdPeerCertDNSNames: strings.Join([]string{
+			"${ETCD_DNS_NAME}",
+			r.etcdDiscoveryDomain,
+		}, ","),
 	}
 
 	if len(r.etcdConfigFile) > 0 {

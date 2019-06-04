@@ -35,7 +35,7 @@ spec:
             --kubeconfig=/etc/kubernetes/kubeconfig \
             --orgname=system:etcd-servers \
             --assetsdir=/etc/ssl/etcd \
-            --dnsnames={{etcdServerCertDNSNames .}} \
+            --dnsnames={{.EtcdServerCertDNSNames}} \
             --commonname=system:etcd-server:${ETCD_DNS_NAME} \
             --ipaddrs=${ETCD_IPV4_ADDRESS},127.0.0.1 \
 
@@ -46,7 +46,7 @@ spec:
             --kubeconfig=/etc/kubernetes/kubeconfig \
             --orgname=system:etcd-peers \
             --assetsdir=/etc/ssl/etcd \
-            --dnsnames={{etcdPeerCertDNSNames .}} \
+            --dnsnames={{.EtcdPeerCertDNSNames}} \
             --commonname=system:etcd-peer:${ETCD_DNS_NAME} \
             --ipaddrs=${ETCD_IPV4_ADDRESS} \
 
@@ -57,7 +57,7 @@ spec:
             --kubeconfig=/etc/kubernetes/kubeconfig \
             --orgname=system:etcd-metrics \
             --assetsdir=/etc/ssl/etcd \
-            --dnsnames={{etcdServerCertDNSNames .}} \
+            --dnsnames={{.EtcdServerCertDNSNames}} \
             --commonname=system:etcd-metric:${ETCD_DNS_NAME} \
             --ipaddrs=${ETCD_IPV4_ADDRESS} \
     terminationMessagePolicy: FallbackToLogsOnError
