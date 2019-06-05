@@ -65,6 +65,10 @@ func setOutputFlags(args []string, dir string) []string {
 			newArgs = append(newArgs, "--etcd-static-resources-dir="+filepath.Join(dir, "static-pod-resources", "etcd-member"))
 			continue
 		}
+		if strings.HasPrefix(arg, "--etcd-config-dir=") {
+			newArgs = append(newArgs, "--etcd-config-dir="+filepath.Join(dir, "etc", "etcd"))
+			continue
+		}
 
 		newArgs = append(newArgs, arg)
 	}
@@ -104,8 +108,8 @@ func TestRenderCommand(t *testing.T) {
 				"--manifest-etcd-image=foo",
 				"--manifest-kube-client-agent-image=foo",
 				"--manifest-setup-etcd-env-image=foo",
-				"--etcd-config-file=foo",
 				"--etcd-discovery-domain=foo",
+				"--etcd-config-dir=",
 			},
 		},
 	}
