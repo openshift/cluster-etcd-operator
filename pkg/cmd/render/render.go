@@ -3,6 +3,7 @@ package render
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -18,8 +19,7 @@ import (
 )
 
 const (
-	bootstrapVersion       = "v4.2.0"
-	etcdStaticResourcesDir = "/etc/kubernetes/static-pod-resources/etcd-member"
+	bootstrapVersion = "v4.2.0"
 )
 
 // renderOpts holds values to drive the render command.
@@ -27,34 +27,41 @@ type renderOpts struct {
 	manifest options.ManifestOptions
 	generic  options.GenericOptions
 
-	etcdCAFile           string
-	etcdMetricCAFile     string
-	etcdConfigFile       string
-	etcdDiscoveryDomain  string
-	etcdImage            string
-	setupEtcdEnvImage    string
-	kubeClientAgentImage string
+	errOut                 io.Writer
+	etcdCAFile             string
+	etcdMetricCAFile       string
+	etcdConfigFile         string
+	etcdDiscoveryDomain    string
+	etcdImage              string
+	setupEtcdEnvImage      string
+	kubeClientAgentImage   string
+	etcdStaticResourcesDir string
 }
 
 // NewRenderCommand creates a render command.
-func NewRenderCommand() *cobra.Command {
+func NewRenderCommand(errOut io.Writer) *cobra.Command {
 	renderOpts := renderOpts{
-		generic:  *options.NewGenericOptions(),
-		manifest: *options.NewManifestOptions("etcd"),
+		generic:                *options.NewGenericOptions(),
+		manifest:               *options.NewManifestOptions("etcd"),
+		errOut:                 errOut,
+		etcdStaticResourcesDir: "/etc/kubernetes/static-pod-resources/etcd-member",
 	}
 	cmd := &cobra.Command{
 		Use:   "render",
 		Short: "Render etcd bootstrap manifests, secrets and configMaps",
 		Run: func(cmd *cobra.Command, args []string) {
-			if err := renderOpts.Validate(); err != nil {
-				klog.Fatal(err)
+			must := func(fn func() error) {
+				if err := fn(); err != nil {
+					if cmd.HasParent() {
+						klog.Fatal(err)
+					}
+					fmt.Fprint(renderOpts.errOut, err.Error())
+				}
 			}
-			if err := renderOpts.Complete(); err != nil {
-				klog.Fatal(err)
-			}
-			if err := renderOpts.Run(); err != nil {
-				klog.Fatal(err)
-			}
+
+			must(renderOpts.Validate)
+			must(renderOpts.Complete)
+			must(renderOpts.Run)
 		},
 	}
 
@@ -74,6 +81,7 @@ func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&r.setupEtcdEnvImage, "manifest-setup-etcd-env-image", r.setupEtcdEnvImage, "setup-etcd-env manifest image")
 	fs.StringVar(&r.etcdConfigFile, "etcd-config-file", r.etcdConfigFile, "etcd runtime config file.")
 	fs.StringVar(&r.etcdDiscoveryDomain, "etcd-discovery-domain", r.etcdDiscoveryDomain, "etcd discovery domain")
+	fs.StringVar(&r.etcdStaticResourcesDir, "etcd-static-resources-dir", r.etcdStaticResourcesDir, "path to etcd static resources directory")
 }
 
 // Validate verifies the inputs.
@@ -166,14 +174,14 @@ func (r *renderOpts) Run() error {
 		{
 			"etcd-ca-bundle.crt",
 			r.etcdCAFile,
-			etcdStaticResourcesDir,
+			r.etcdStaticResourcesDir,
 			0644,
 			nil,
 		},
 		{
 			"etcd-metric-ca-bundle.crt",
 			r.etcdMetricCAFile,
-			etcdStaticResourcesDir,
+			r.etcdStaticResourcesDir,
 			0644,
 			nil,
 		},

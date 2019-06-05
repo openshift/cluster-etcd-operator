@@ -40,6 +40,10 @@ func setupAssetOutputDir(testName string) (teardown func(), outputDir string, er
 	if err := os.MkdirAll(filepath.Join(outputDir, "configs"), os.ModePerm); err != nil {
 		return nil, "", err
 	}
+	if err := os.MkdirAll(filepath.Join(outputDir, "static-pod-resources", "etcd-member"), os.ModePerm); err != nil {
+		return nil, "", err
+	}
+
 	teardown = func() {
 		os.RemoveAll(outputDir)
 	}
@@ -57,6 +61,11 @@ func setOutputFlags(args []string, dir string) []string {
 			newArgs = append(newArgs, "--config-output-file="+filepath.Join(dir, "configs", "config.yaml"))
 			continue
 		}
+		if strings.HasPrefix(arg, "--etcd-static-resources-dir=") {
+			newArgs = append(newArgs, "--etcd-static-resources-dir="+filepath.Join(dir, "static-pod-resources", "etcd-member"))
+			continue
+		}
+
 		newArgs = append(newArgs, arg)
 	}
 	return newArgs
@@ -89,6 +98,14 @@ func TestRenderCommand(t *testing.T) {
 				"--templates-input-dir=" + templateDir,
 				"--asset-output-dir=",
 				"--config-output-file=",
+				"--etcd-static-resources-dir=",
+				"--etcd-ca=" + assetsInputDir + "/etcd-ca-bundle.crt",
+				"--etcd-metric-ca=" + assetsInputDir + "/etcd-metric-ca-bundle.crt",
+				"--manifest-etcd-image=foo",
+				"--manifest-kube-client-agent-image=foo",
+				"--manifest-setup-etcd-env-image=foo",
+				"--etcd-config-file=foo",
+				"--etcd-discovery-domain=foo",
 			},
 		},
 	}

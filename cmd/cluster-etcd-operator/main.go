@@ -45,7 +45,7 @@ func NewSSCSCommand() *cobra.Command {
 	}
 
 	cmd.AddCommand(operator.NewOperator())
-	cmd.AddCommand(render.NewRenderCommand())
+	cmd.AddCommand(render.NewRenderCommand(os.Stderr))
 	cmd.AddCommand(prune.NewPrune())
 
 	return cmd
