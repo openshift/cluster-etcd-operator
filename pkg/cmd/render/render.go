@@ -9,13 +9,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
-	"k8s.io/klog"
-
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render/options"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/v420_00_assets"
 	"github.com/openshift/library-go/pkg/assets"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+	yaml "gopkg.in/yaml.v2"
+	"k8s.io/klog"
 )
 
 const (
@@ -30,12 +30,12 @@ type renderOpts struct {
 	errOut                 io.Writer
 	etcdCAFile             string
 	etcdMetricCAFile       string
-	etcdConfigFile         string
 	etcdDiscoveryDomain    string
 	etcdImage              string
 	setupEtcdEnvImage      string
 	kubeClientAgentImage   string
 	etcdStaticResourcesDir string
+	etcdConfigDir          string
 }
 
 // NewRenderCommand creates a render command.
@@ -45,6 +45,7 @@ func NewRenderCommand(errOut io.Writer) *cobra.Command {
 		manifest:               *options.NewManifestOptions("etcd"),
 		errOut:                 errOut,
 		etcdStaticResourcesDir: "/etc/kubernetes/static-pod-resources/etcd-member",
+		etcdConfigDir:          "/etc/etcd",
 	}
 	cmd := &cobra.Command{
 		Use:   "render",
@@ -79,9 +80,9 @@ func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&r.etcdImage, "manifest-etcd-image", r.etcdImage, "etcd manifest image")
 	fs.StringVar(&r.kubeClientAgentImage, "manifest-kube-client-agent-image", r.kubeClientAgentImage, "kube-client-agent manifest image")
 	fs.StringVar(&r.setupEtcdEnvImage, "manifest-setup-etcd-env-image", r.setupEtcdEnvImage, "setup-etcd-env manifest image")
-	fs.StringVar(&r.etcdConfigFile, "etcd-config-file", r.etcdConfigFile, "etcd runtime config file.")
 	fs.StringVar(&r.etcdDiscoveryDomain, "etcd-discovery-domain", r.etcdDiscoveryDomain, "etcd discovery domain")
 	fs.StringVar(&r.etcdStaticResourcesDir, "etcd-static-resources-dir", r.etcdStaticResourcesDir, "path to etcd static resources directory")
+	fs.StringVar(&r.etcdConfigDir, "etcd-config-dir", r.etcdConfigDir, "path to etcd config directory")
 }
 
 // Validate verifies the inputs.
@@ -106,9 +107,6 @@ func (r *renderOpts) Validate() error {
 	}
 	if len(r.setupEtcdEnvImage) == 0 {
 		return errors.New("missing required flag: --manifest-setup-etcd-env-image")
-	}
-	if len(r.etcdConfigFile) == 0 {
-		return errors.New("missing required flag: --etcd-config-file")
 	}
 	if len(r.etcdDiscoveryDomain) == 0 {
 		return errors.New("missing required flag: --etcd-discovery-domain")
@@ -187,6 +185,12 @@ func (r *renderOpts) Run() error {
 		},
 	}
 
+	etcdConfPath := filepath.Join(r.generic.TemplatesDir, "config", "etc-etcd-etcd-conf.yaml")
+	etcdConf, err := parseStaticTemplateFile(etcdConfPath)
+	if err != nil {
+		return err
+	}
+	staticFiles = append(staticFiles, StaticFile{filepath.Base(etcdConf.Path), "", r.etcdConfigDir, os.FileMode(*etcdConf.Mode), []byte(etcdConf.Contents.Inline)})
 	files, err := populateFileData(staticFiles)
 	if err != nil {
 		return err
@@ -195,9 +199,6 @@ func (r *renderOpts) Run() error {
 		return err
 	}
 
-	if len(r.etcdConfigFile) > 0 {
-		// FIXME
-	}
 	if err := r.manifest.ApplyTo(&renderConfig.ManifestConfig); err != nil {
 		return err
 	}
@@ -215,8 +216,27 @@ func (r *renderOpts) Run() error {
 	return WriteFiles(&r.generic, &renderConfig.FileConfig, renderConfig)
 }
 
+// parseStaticTemplateFile takes a path to a yaml template file returns a populated File struct.
+func parseStaticTemplateFile(path string) (*File, error) {
+	data, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	file := new(File)
+	if err := yaml.Unmarshal(data, file); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal file into struct: %v", err)
+	}
+	return file, nil
+}
+
+// populateFileData takes a slice of StaticFile and populates Data from StaticFile.source.
+// If source is not populated, skip.
 func populateFileData(files []StaticFile) ([]StaticFile, error) {
 	for i, file := range files {
+		if file.source == "" {
+			continue
+		}
 		data, err := ioutil.ReadFile(file.source)
 		if err != nil {
 			return nil, err
