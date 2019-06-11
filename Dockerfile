@@ -11,4 +11,4 @@ COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/bindata/b
 COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/bindata/bootkube/bootstrap-manifests/* /usr/share/bootkube/manifests/bootstrap-manifests/
 COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/cluster-etcd-operator /usr/bin/
 COPY manifests/*.yaml /manifests/
-#LABEL io.openshift.release.operator true
+LABEL io.openshift.release.operator=true
