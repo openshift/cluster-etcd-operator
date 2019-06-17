@@ -18,7 +18,7 @@ spec:
     - name: discovery
       mountPath: /run/etcd/
   - name: certs
-    image: "{{.Images.SetupEtcdEnv}}"
+    image: "{{.Images.KubeClientAgent}}"
     command:
     - /bin/sh
     - -c
@@ -85,7 +85,7 @@ spec:
       set +a
 
       exec etcd \
-        --discovery-srv sbatsche-05-20-19-2.devcluster.openshift.com \
+        --name bootstrap \
         --initial-advertise-peer-urls=https://${ETCD_IPV4_ADDRESS}:2380 \
         --cert-file=/etc/ssl/etcd/system:etcd-server:${ETCD_DNS_NAME}.crt \
         --key-file=/etc/ssl/etcd/system:etcd-server:${ETCD_DNS_NAME}.key \

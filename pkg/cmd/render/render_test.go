@@ -79,40 +79,61 @@ func TestRenderCommand(t *testing.T) {
 	assetsInputDir := filepath.Join("testdata", "tls")
 	templateDir := filepath.Join("..", "..", "..", "bindata", "bootkube")
 
-	tests := []struct {
+	type RenderTest struct {
 		name    string
 		args    []string
 		errFunc func(error)
-	}{
-		{
-			name: "no-flags",
-			args: []string{
-				"--templates-input-dir=" + templateDir,
-			},
-			errFunc: func(err error) {
-				if err == nil {
-					t.Fatalf("expected required flags error")
-				}
-			},
-		},
-		{
-			name: "happy-path",
-			args: []string{
-				"--asset-input-dir=" + assetsInputDir,
-				"--templates-input-dir=" + templateDir,
-				"--asset-output-dir=",
-				"--config-output-file=",
-				"--etcd-static-resources-dir=",
-				"--etcd-ca=" + assetsInputDir + "/etcd-ca-bundle.crt",
-				"--etcd-metric-ca=" + assetsInputDir + "/etcd-metric-ca-bundle.crt",
-				"--manifest-etcd-image=foo",
-				"--manifest-kube-client-agent-image=foo",
-				"--manifest-setup-etcd-env-image=foo",
-				"--etcd-discovery-domain=foo",
-				"--etcd-config-dir=",
-			},
-		},
 	}
+
+	tests := []RenderTest{}
+
+	/* Keep these in the same order as render.Validate() so the
+	/* coverage can cascade through each */
+	required_flags := [][]string{
+		[]string{"--asset-input-dir", assetsInputDir},
+		[]string{"--asset-output-dir", ""},
+		[]string{"--templates-input-dir", templateDir},
+		[]string{"--config-output-file", ""},
+
+		[]string{"--etcd-ca", assetsInputDir + "/etcd-ca-bundle.crt"},
+		[]string{"--etcd-metric-ca", assetsInputDir + "/etcd-metric-ca-bundle.crt"},
+		[]string{"--manifest-etcd-image", "foo"},
+		[]string{"--manifest-kube-client-agent-image", "foo"},
+		[]string{"--manifest-setup-etcd-env-image", "foo"},
+		[]string{"--etcd-discovery-domain", "foo"},
+	}
+
+	optional_flags := [][]string{
+		[]string{"--etcd-static-resources-dir", ""},
+		[]string{"--etcd-config-dir", ""},
+	}
+
+	seen_flags := []string{}
+	for _, flag := range required_flags {
+		tests = append(tests,
+			RenderTest{
+				name: "missing-flag-" + flag[0],
+				args: seen_flags,
+				errFunc: func(err error) {
+					if err == nil {
+						t.Fatalf("expected required flags error")
+					}
+				},
+			},
+		)
+		seen_flags = append(seen_flags, strings.Join(flag, "="))
+	}
+
+	for _, flag := range optional_flags {
+		seen_flags = append(seen_flags, strings.Join(flag, "="))
+	}
+
+	tests = append(tests,
+		RenderTest{
+			name: "all-flags",
+			args: seen_flags,
+		},
+	)
 
 	for _, test := range tests {
 		teardown, outputDir, err := setupAssetOutputDir(test.name)
