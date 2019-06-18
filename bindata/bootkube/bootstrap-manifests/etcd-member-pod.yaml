@@ -18,7 +18,7 @@ spec:
     - name: discovery
       mountPath: /run/etcd/
   - name: certs
-    image: "{{.Images.SetupEtcdEnv}}"
+    image: "{{.Images.KubeClientAgent}}"
     command:
     - /bin/sh
     - -c
