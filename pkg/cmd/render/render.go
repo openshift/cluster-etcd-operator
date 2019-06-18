@@ -170,14 +170,14 @@ func (r *renderOpts) Run() error {
 
 	staticFiles := []StaticFile{
 		{
-			"etcd-ca-bundle.crt",
+			"ca.crt",
 			r.etcdCAFile,
 			r.etcdStaticResourcesDir,
 			0644,
 			nil,
 		},
 		{
-			"etcd-metric-ca-bundle.crt",
+			"metric-ca.crt",
 			r.etcdMetricCAFile,
 			r.etcdStaticResourcesDir,
 			0644,
