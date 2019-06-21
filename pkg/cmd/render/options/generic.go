@@ -72,7 +72,7 @@ func (o *GenericOptions) Validate() error {
 		return errors.New("missing required flag: --asset-output-dir")
 	}
 	if len(o.TemplatesDir) == 0 {
-		return errors.New("missing required flag: --templates-dir")
+		return errors.New("missing required flag: --templates-input-dir")
 	}
 	if len(o.ConfigOutputFile) == 0 {
 		return errors.New("missing required flag: --config-output-file")
