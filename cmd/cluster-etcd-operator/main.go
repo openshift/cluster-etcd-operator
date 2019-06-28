@@ -44,7 +44,7 @@ func NewSSCSCommand() *cobra.Command {
 	}
 
 	cmd.AddCommand(certsigner.NewCertSignerCommand(os.Stderr))
-	cmd.AddCommand(render.NewRenderCommand())
+	cmd.AddCommand(render.NewRenderCommand(os.Stderr))
 
 	return cmd
 }

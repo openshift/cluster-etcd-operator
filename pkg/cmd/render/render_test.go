@@ -90,22 +90,22 @@ func TestRenderCommand(t *testing.T) {
 	/* Keep these in the same order as render.Validate() so the
 	/* coverage can cascade through each */
 	required_flags := [][]string{
-		[]string{"--asset-input-dir", assetsInputDir},
-		[]string{"--asset-output-dir", ""},
-		[]string{"--templates-input-dir", templateDir},
-		[]string{"--config-output-file", ""},
+		{"--asset-input-dir", assetsInputDir},
+		{"--asset-output-dir", ""},
+		{"--templates-input-dir", templateDir},
+		{"--config-output-file", ""},
 
-		[]string{"--etcd-ca", assetsInputDir + "/etcd-ca-bundle.crt"},
-		[]string{"--etcd-metric-ca", assetsInputDir + "/etcd-metric-ca-bundle.crt"},
-		[]string{"--manifest-etcd-image", "foo"},
-		[]string{"--manifest-kube-client-agent-image", "foo"},
-		[]string{"--manifest-setup-etcd-env-image", "foo"},
-		[]string{"--etcd-discovery-domain", "foo"},
+		{"--etcd-ca", assetsInputDir + "/etcd-ca-bundle.crt"},
+		{"--etcd-metric-ca", assetsInputDir + "/etcd-metric-ca-bundle.crt"},
+		{"--manifest-etcd-image", "foo"},
+		{"--manifest-kube-client-agent-image", "foo"},
+		{"--manifest-setup-etcd-env-image", "foo"},
+		{"--etcd-discovery-domain", "foo"},
 	}
 
 	optional_flags := [][]string{
-		[]string{"--etcd-static-resources-dir", ""},
-		[]string{"--etcd-config-dir", ""},
+		{"--etcd-static-resources-dir", ""},
+		{"--etcd-config-dir", ""},
 	}
 
 	seen_flags := []string{}
