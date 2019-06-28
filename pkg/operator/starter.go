@@ -2,31 +2,30 @@ package operator
 
 import (
 	"fmt"
-	"os"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/informers/internalinterfaces"
 	"k8s.io/client-go/kubernetes"
 
 	configv1 "github.com/openshift/api/config/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
+	etcdv1client "github.com/openshift/client-go/etcd/clientset/versioned/typed/etcd/v1"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
+
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
-	"github.com/openshift/library-go/pkg/operator/certrotation"
-	"github.com/openshift/library-go/pkg/operator/staticpod"
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/revision"
 	"github.com/openshift/library-go/pkg/operator/status"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/certrotationcontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
 )
 
 func RunOperator(ctx *controllercmd.ControllerContext) error {
@@ -39,14 +38,19 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 	if err != nil {
 		return err
 	}
-	dynamicClient, err := dynamic.NewForConfig(ctx.KubeConfig)
-	if err != nil {
-		return err
-	}
 	configClient, err := configv1client.NewForConfig(ctx.KubeConfig)
 	if err != nil {
 		return err
 	}
+	etcdClient, err := etcdv1client.NewForConfig(ctx.KubeConfig)
+	if err != nil {
+		return err
+	}
+	clientset, err := kubernetes.NewForConfig(ctx.KubeConfig)
+	if err != nil {
+		return err
+	}
+
 	operatorConfigInformers := operatorv1informers.NewSharedInformerFactory(operatorConfigClient, 10*time.Minute)
 	kubeInformersForNamespaces := v1helpers.NewKubeInformersForNamespaces(
 		kubeClient,
@@ -82,19 +86,6 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 		ctx.EventRecorder,
 	)
 
-	targetConfigReconciler := targetconfigcontroller.NewTargetConfigController(
-		os.Getenv("IMAGE"),
-		os.Getenv("OPERATOR_IMAGE"),
-		operatorConfigInformers.Operator().V1().KubeAPIServers(),
-		operatorClient,
-		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace),
-		kubeInformersForNamespaces,
-		operatorConfigClient.OperatorV1(),
-		kubeClient,
-		ctx.EventRecorder,
-	)
-
-	// don't change any versions until we sync
 	versionRecorder := status.NewVersionGetter()
 	clusterOperator, err := configClient.ConfigV1().ClusterOperators().Get("kube-apiserver", metav1.GetOptions{})
 	if err != nil && !errors.IsNotFound(err) {
@@ -105,23 +96,10 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 	}
 	versionRecorder.SetVersion("raw-internal", status.VersionForOperatorFromEnv())
 
-	staticPodControllers, err := staticpod.NewBuilder(operatorClient, kubeClient, kubeInformersForNamespaces).
-		WithEvents(ctx.EventRecorder).
-		WithInstaller([]string{"cluster-etcd-operator", "installer"}).
-		WithPruning([]string{"cluster-etcd-operator", "prune"}, "kube-apiserver-pod").
-		WithResources(operatorclient.TargetNamespace, "kube-apiserver", RevisionConfigMaps, RevisionSecrets).
-		WithCerts("kube-apiserver-certs", CertConfigMaps, CertSecrets).
-		WithServiceMonitor(dynamicClient).
-		WithVersioning(operatorclient.OperatorNamespace, "kube-apiserver", versionRecorder).
-		ToControllers()
-	if err != nil {
-		return err
-	}
-
 	clusterOperatorStatus := status.NewClusterOperatorStatusController(
-		"kube-apiserver",
+		"openshift-etcd",
 		[]configv1.ObjectReference{
-			{Group: "operator.openshift.io", Resource: "kubeapiservers", Name: "cluster"},
+			{Group: "operator.openshift.io", Resource: "etcds", Name: "cluster"},
 			{Resource: "namespaces", Name: operatorclient.GlobalUserSpecifiedConfigNamespace},
 			{Resource: "namespaces", Name: operatorclient.GlobalMachineSpecifiedConfigNamespace},
 			{Resource: "namespaces", Name: operatorclient.OperatorNamespace},
@@ -134,33 +112,29 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 		ctx.EventRecorder,
 	)
 
-	certRotationScale, err := certrotation.GetCertRotationScale(kubeClient, operatorclient.GlobalUserSpecifiedConfigNamespace)
-	if err != nil {
-		return err
-	}
+	var tweakListOptions internalinterfaces.TweakListOptionsFunc
+	factory := informers.NewFilteredSharedInformerFactory(clientset, 0, "openshift-etcd", tweakListOptions)
+	podInformer := factory.Core().V1().Pods()
 
-	certRotationController, err := certrotationcontroller.NewCertRotationController(
-		kubeClient,
-		operatorClient,
-		configInformers,
-		kubeInformersForNamespaces,
-		ctx.EventRecorder.WithComponentSuffix("cert-rotation-controller"),
-		certRotationScale,
+	coreClient := clientset.CoreV1()
+
+	clusterMemberController := clustermembercontroller.NewClusterMemberController(
+		coreClient,
+		podInformer,
+
+		etcdClient.ClusterMemberRequests(),
+
+		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
+		ctx.EventRecorder,
 	)
-	if err != nil {
-		return err
-	}
-
 	operatorConfigInformers.Start(ctx.Done())
 	kubeInformersForNamespaces.Start(ctx.Done())
 	configInformers.Start(ctx.Done())
 
-	go staticPodControllers.Run(ctx.Done())
+	go clusterMemberController.Run(ctx.Done())
 	go resourceSyncController.Run(1, ctx.Done())
-	go targetConfigReconciler.Run(1, ctx.Done())
 	go configObserver.Run(1, ctx.Done())
 	go clusterOperatorStatus.Run(1, ctx.Done())
-	go certRotationController.Run(1, ctx.Done())
 
 	<-ctx.Done()
 	return fmt.Errorf("stopped")

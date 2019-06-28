@@ -42,7 +42,7 @@ type TargetConfigController struct {
 	targetImagePullSpec   string
 	operatorImagePullSpec string
 
-	operatorConfigClient operatorv1client.KubeAPIServersGetter
+	operatorConfigClient operatorv1client.EtcdsGetter
 	operatorClient       v1helpers.StaticPodOperatorClient
 
 	kubeClient      kubernetes.Interface
@@ -55,11 +55,11 @@ type TargetConfigController struct {
 
 func NewTargetConfigController(
 	targetImagePullSpec, operatorImagePullSpec string,
-	operatorConfigInformer operatorv1informers.KubeAPIServerInformer,
+	operatorConfigInformer operatorv1informers.EtcdInformer,
 	operatorClient v1helpers.StaticPodOperatorClient,
-	kubeInformersForOpenshiftKubeAPIServerNamespace informers.SharedInformerFactory,
+	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
-	operatorConfigClient operatorv1client.KubeAPIServersGetter,
+	operatorConfigClient operatorv1client.EtcdsGetter,
 	kubeClient kubernetes.Interface,
 	eventRecorder events.Recorder,
 ) *TargetConfigController {
@@ -77,12 +77,12 @@ func NewTargetConfigController(
 	}
 
 	operatorConfigInformer.Informer().AddEventHandler(c.eventHandler())
-	kubeInformersForOpenshiftKubeAPIServerNamespace.Rbac().V1().Roles().Informer().AddEventHandler(c.eventHandler())
-	kubeInformersForOpenshiftKubeAPIServerNamespace.Rbac().V1().RoleBindings().Informer().AddEventHandler(c.eventHandler())
-	kubeInformersForOpenshiftKubeAPIServerNamespace.Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
-	kubeInformersForOpenshiftKubeAPIServerNamespace.Core().V1().Secrets().Informer().AddEventHandler(c.eventHandler())
-	kubeInformersForOpenshiftKubeAPIServerNamespace.Core().V1().ServiceAccounts().Informer().AddEventHandler(c.eventHandler())
-	kubeInformersForOpenshiftKubeAPIServerNamespace.Core().V1().Services().Informer().AddEventHandler(c.eventHandler())
+	kubeInformersForOpenshiftEtcdNamespace.Rbac().V1().Roles().Informer().AddEventHandler(c.eventHandler())
+	kubeInformersForOpenshiftEtcdNamespace.Rbac().V1().RoleBindings().Informer().AddEventHandler(c.eventHandler())
+	kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
+	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer().AddEventHandler(c.eventHandler())
+	kubeInformersForOpenshiftEtcdNamespace.Core().V1().ServiceAccounts().Informer().AddEventHandler(c.eventHandler())
+	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Services().Informer().AddEventHandler(c.eventHandler())
 
 	// we react to some config changes
 	kubeInformersForNamespaces.InformersFor(operatorclient.GlobalUserSpecifiedConfigNamespace).Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
@@ -94,7 +94,7 @@ func NewTargetConfigController(
 }
 
 func (c TargetConfigController) sync() error {
-	operatorConfig, err := c.operatorConfigClient.KubeAPIServers().Get("cluster", metav1.GetOptions{})
+	operatorConfig, err := c.operatorConfigClient.Etcds().Get("cluster", metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
@@ -165,13 +165,13 @@ func isRequiredConfigPresent(config []byte) error {
 
 // createTargetConfig takes care of creation of valid resources in a fixed name.  These are inputs to other control loops.
 // returns whether or not requeue and if an error happened when updating status.  Normally it updates status itself.
-func createTargetConfig(c TargetConfigController, recorder events.Recorder, operatorConfig *operatorv1.KubeAPIServer) (bool, error) {
+func createTargetConfig(c TargetConfigController, recorder events.Recorder, operatorConfig *operatorv1.Etcd) (bool, error) {
 	errors := []error{}
 
 	directResourceResults := resourceapply.ApplyDirectly(c.kubeClient, c.eventRecorder, v420_00_assets.Asset,
-		"v4.2.0/kube-apiserver/ns.yaml",
-		"v4.2.0/kube-apiserver/svc.yaml",
-		"v4.2.0/kube-apiserver/kubeconfig-cm.yaml",
+		"v4.2.0/etcd/ns.yaml",
+		"v4.2.0/etcd/svc.yaml",
+		"v4.2.0/etcd/kubeconfig-cm.yaml",
 	)
 
 	for _, currResult := range directResourceResults {
@@ -186,7 +186,7 @@ func createTargetConfig(c TargetConfigController, recorder events.Recorder, oper
 	}
 	_, _, err = managePod(c.kubeClient.CoreV1(), recorder, operatorConfig, c.targetImagePullSpec, c.operatorImagePullSpec)
 	if err != nil {
-		errors = append(errors, fmt.Errorf("%q: %v", "configmap/kube-apiserver-pod", err))
+		errors = append(errors, fmt.Errorf("%q: %v", "configmap/etcd-pod", err))
 	}
 	_, _, err = ManageClientCABundle(c.configMapLister, c.kubeClient.CoreV1(), recorder)
 	if err != nil {
@@ -194,7 +194,7 @@ func createTargetConfig(c TargetConfigController, recorder events.Recorder, oper
 	}
 	_, _, err = manageKubeAPIServerCABundle(c.configMapLister, c.kubeClient.CoreV1(), recorder)
 	if err != nil {
-		errors = append(errors, fmt.Errorf("%q: %v", "configmap/kube-apiserver-server-ca", err))
+		errors = append(errors, fmt.Errorf("%q: %v", "configmap/etcd-server-ca", err))
 	}
 
 	if len(errors) > 0 {
@@ -221,9 +221,9 @@ func createTargetConfig(c TargetConfigController, recorder events.Recorder, oper
 	return false, nil
 }
 
-func manageKubeAPIServerConfig(client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorConfig *operatorv1.KubeAPIServer) (*corev1.ConfigMap, bool, error) {
-	configMap := resourceread.ReadConfigMapV1OrDie(v420_00_assets.MustAsset("v4.2.0/kube-apiserver/cm.yaml"))
-	defaultConfig := v420_00_assets.MustAsset("v4.2.0/kube-apiserver/defaultconfig.yaml")
+func manageKubeAPIServerConfig(client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorConfig *operatorv1.Etcd) (*corev1.ConfigMap, bool, error) {
+	configMap := resourceread.ReadConfigMapV1OrDie(v420_00_assets.MustAsset("v4.2.0/etcd/cm.yaml"))
+	defaultConfig := v420_00_assets.MustAsset("v4.2.0/etcd/defaultconfig.yaml")
 	specialMergeRules := map[string]resourcemerge.MergeFunc{
 		".oauthConfig": RemoveConfig,
 	}
@@ -235,8 +235,8 @@ func manageKubeAPIServerConfig(client coreclientv1.ConfigMapsGetter, recorder ev
 	return resourceapply.ApplyConfigMap(client, recorder, requiredConfigMap)
 }
 
-func managePod(client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorConfig *operatorv1.KubeAPIServer, imagePullSpec, operatorImagePullSpec string) (*corev1.ConfigMap, bool, error) {
-	required := resourceread.ReadPodV1OrDie(v420_00_assets.MustAsset("v4.2.0/kube-apiserver/pod.yaml"))
+func managePod(client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorConfig *operatorv1.Etcd, imagePullSpec, operatorImagePullSpec string) (*corev1.ConfigMap, bool, error) {
+	required := resourceread.ReadPodV1OrDie(v420_00_assets.MustAsset("v4.2.0/etcd/pod.yaml"))
 	// TODO: If the image pull spec is not specified, the "${IMAGE}" will be used as value and the pod will fail to start.
 	images := map[string]string{
 		"${IMAGE}":          imagePullSpec,
@@ -276,7 +276,7 @@ func managePod(client coreclientv1.ConfigMapsGetter, recorder events.Recorder, o
 	}
 	required.Spec.Containers[0].Args = append(required.Spec.Containers[0].Args, fmt.Sprintf("-v=%d", v))
 
-	configMap := resourceread.ReadConfigMapV1OrDie(v420_00_assets.MustAsset("v4.2.0/kube-apiserver/pod-cm.yaml"))
+	configMap := resourceread.ReadConfigMapV1OrDie(v420_00_assets.MustAsset("v4.2.0/etcd/pod-cm.yaml"))
 	configMap.Data["pod.yaml"] = resourceread.WritePodV1OrDie(required)
 	configMap.Data["forceRedeploymentReason"] = operatorConfig.Spec.ForceRedeploymentReason
 	configMap.Data["version"] = version.Get().String()
@@ -292,8 +292,8 @@ func ManageClientCABundle(lister corev1listers.ConfigMapLister, client coreclien
 		// this is from the installer and contains the value to verify the node bootstrapping cert that is baked into images
 		// this is from kube-controller-manager and indicates the ca-bundle.crt to verify their signatures (kubelet client certs)
 		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.GlobalMachineSpecifiedConfigNamespace, Name: "csr-controller-ca"},
-		// this is from the installer and contains the value to verify the kube-apiserver communicating to the kubelet
-		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.OperatorNamespace, Name: "kube-apiserver-to-kubelet-client-ca"},
+		// this is from the installer and contains the value to verify the etcd communicating to the kubelet
+		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.OperatorNamespace, Name: "etcd-to-kubelet-client-ca"},
 		// this bundle is what this operator uses to mint new client certs it directly manages
 		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.OperatorNamespace, Name: "kube-control-plane-signer-ca"},
 		// this bundle is what a user uses to mint new client certs it directly manages
@@ -308,7 +308,7 @@ func ManageClientCABundle(lister corev1listers.ConfigMapLister, client coreclien
 
 func manageKubeAPIServerCABundle(lister corev1listers.ConfigMapLister, client coreclientv1.ConfigMapsGetter, recorder events.Recorder) (*corev1.ConfigMap, bool, error) {
 	requiredConfigMap, err := resourcesynccontroller.CombineCABundleConfigMaps(
-		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.TargetNamespace, Name: "kube-apiserver-server-ca"},
+		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.TargetNamespace, Name: "etcd-server-ca"},
 		lister,
 		// this bundle is what this operator uses to mint loadbalancers certs
 		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.OperatorNamespace, Name: "loadbalancer-serving-ca"},
@@ -324,7 +324,7 @@ func manageKubeAPIServerCABundle(lister corev1listers.ConfigMapLister, client co
 	return resourceapply.ApplyConfigMap(client, recorder, requiredConfigMap)
 }
 
-// Run starts the kube-apiserver and blocks until stopCh is closed.
+// Run starts the etcd and blocks until stopCh is closed.
 func (c *TargetConfigController) Run(workers int, stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
 	defer c.queue.ShutDown()

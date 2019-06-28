@@ -5,8 +5,4 @@ spec:
   - name: cluster-etcd-operator
     from:
       kind: DockerImage
-      name: docker.io/openshift/origin-cluster-etcd-operator:v4.0
-  - name: hyperkube
-    from:
-      kind: DockerImage
-      name: quay.io/openshift/origin-hyperkube:v4.0
+      name: quay.io/hexfusion/cluster-etcd-operator

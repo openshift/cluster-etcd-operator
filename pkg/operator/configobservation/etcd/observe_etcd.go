@@ -24,7 +24,7 @@ const (
 func ObserveStorageURLs(genericListers configobserver.Listers, recorder events.Recorder, currentConfig map[string]interface{}) (observedConfig map[string]interface{}, errs []error) {
 	listers := genericListers.(configobservation.Listers)
 	observedConfig = map[string]interface{}{}
-	storageConfigURLsPath := []string{"storageConfig", "urls"}
+	storageConfigURLsPath := []string{"cluster", "peers"}
 
 	currentEtcdURLs, found, err := unstructured.NestedStringSlice(currentConfig, storageConfigURLsPath...)
 	if err != nil {
@@ -63,7 +63,7 @@ func ObserveStorageURLs(genericListers configobserver.Listers, recorder events.R
 				errs = append(errs, addressErr)
 				continue
 			}
-			etcdURLs = append(etcdURLs, "https://"+address.Hostname+"."+dnsSuffix+":2379")
+			etcdURLs = append(etcdURLs, fmt.Sprintf("%s.%s", address.Hostname, dnsSuffix))
 		}
 	}
 
