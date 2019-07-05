@@ -13,7 +13,8 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
-	etcdv1client "github.com/openshift/client-go/etcd/clientset/versioned/typed/etcd/v1"
+	etcdv1client "github.com/openshift/client-go/etcd/clientset/versioned"
+	etcdv1informers "github.com/openshift/client-go/etcd/informers/externalversions"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 
@@ -116,13 +117,16 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 	factory := informers.NewFilteredSharedInformerFactory(clientset, 0, "openshift-etcd", tweakListOptions)
 	podInformer := factory.Core().V1().Pods()
 
+	etcdInformers := etcdv1informers.NewSharedInformerFactory(etcdClient, 0)
+
 	coreClient := clientset.CoreV1()
 
 	clusterMemberController := clustermembercontroller.NewClusterMemberController(
 		coreClient,
 		podInformer,
 
-		etcdClient.ClusterMemberRequests(),
+		etcdClient.EtcdV1().ClusterMemberRequests(),
+		etcdInformers,
 
 		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
 		ctx.EventRecorder,
@@ -130,6 +134,7 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 	operatorConfigInformers.Start(ctx.Done())
 	kubeInformersForNamespaces.Start(ctx.Done())
 	configInformers.Start(ctx.Done())
+	etcdInformers.Start(ctx.Done())
 
 	go clusterMemberController.Run(ctx.Done())
 	go resourceSyncController.Run(1, ctx.Done())
