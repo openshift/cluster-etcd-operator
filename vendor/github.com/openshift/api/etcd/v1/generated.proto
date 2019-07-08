@@ -31,7 +31,7 @@ message ClusterMemberRequest {
 }
 
 message ClusterMemberRequestCondition {
-  // request approval state, currently Approved or Denied.
+  // request approval state, currently Approved, Delivered, Denied or Pending.
   optional string type = 1;
 
   // brief reason for the request state

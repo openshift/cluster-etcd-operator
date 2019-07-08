@@ -30,7 +30,7 @@ func (ClusterMemberRequest) SwaggerDoc() map[string]string {
 }
 
 var map_ClusterMemberRequestCondition = map[string]string{
-	"type":           "request approval state, currently Approved or Denied.",
+	"type":           "request approval state, currently Approved, Delivered, Denied or Pending.",
 	"reason":         "brief reason for the request state",
 	"message":        "human readable message with details about the request state",
 	"lastUpdateTime": "timestamp for the last update to this condition",

@@ -128,6 +128,8 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 		etcdClient.EtcdV1().ClusterMemberRequests(),
 		etcdInformers,
 
+		operatorClient,
+
 		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
 		ctx.EventRecorder,
 	)

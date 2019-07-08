@@ -46,12 +46,14 @@ type RequestConditionType string
 
 // These are the possible conditions for the etcd membership request.
 const (
-	ClusterMemberApproved RequestConditionType = "Approved"
-	ClusterMemberDenied   RequestConditionType = "Denied"
+	ClusterMemberApproved  RequestConditionType = "Approved"
+	ClusterMemberDelivered RequestConditionType = "Delivered"
+	ClusterMemberDenied    RequestConditionType = "Denied"
+	ClusterMemberPending   RequestConditionType = "Pending"
 )
 
 type ClusterMemberRequestCondition struct {
-	// request approval state, currently Approved or Denied.
+	// request approval state, currently Approved, Delivered, Denied or Pending.
 	Type RequestConditionType `json:"type" protobuf:"bytes,1,opt,name=type,casttype=RequestConditionType"`
 	// brief reason for the request state
 	// +optional
