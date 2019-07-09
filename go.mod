@@ -20,5 +20,4 @@ require (
 	k8s.io/component-base v0.0.0-20190314000054-4a91899592f4
 	k8s.io/klog v0.3.1
 	sigs.k8s.io/yaml v1.1.0 // indirect
-
 )
