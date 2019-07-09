@@ -1,12 +1,10 @@
 language: go
+go_import_path: github.com/openshift/cluster-etcd-operator
 
 go:
-  - "1.10"
+  - "1.12"
 
 script:
   - make build test-unit
-
-notifications:
-  irc: "chat.freenode.net#openshift-dev"
 
 sudo: false

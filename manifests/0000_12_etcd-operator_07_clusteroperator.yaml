@@ -1,5 +1,0 @@
-apiVersion: config.openshift.io/v1
-kind: ClusterOperator
-metadata:
-  name: etcd
-spec: {}

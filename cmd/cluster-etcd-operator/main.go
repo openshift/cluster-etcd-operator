@@ -7,16 +7,13 @@ import (
 	"os"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/certsigner"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	utilflag "k8s.io/apiserver/pkg/util/flag"
-	"k8s.io/apiserver/pkg/util/logs"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/etcdinstaller"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
-	"github.com/openshift/library-go/pkg/operator/staticpod/prune"
+	utilflag "k8s.io/component-base/cli/flag"
+	"k8s.io/component-base/logs"
 )
 
 func main() {
@@ -45,10 +42,7 @@ func NewSSCSCommand() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(operator.NewOperator())
-	cmd.AddCommand(render.NewRenderCommand(os.Stderr))
-	cmd.AddCommand(etcdinstaller.NewInstaller())
-	cmd.AddCommand(prune.NewPrune())
+	cmd.AddCommand(certsigner.NewCertSignerCommand(os.Stderr))
 
 	return cmd
 }
