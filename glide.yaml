@@ -22,4 +22,5 @@ import:
   version: master
 - package: github.com/jteeuwen/go-bindata
   version: a0ff2567cfb70903282db057e799fd826784d41d
-
+- package: bitbucket.org/ww/goautoneg
+  vcs: hg
