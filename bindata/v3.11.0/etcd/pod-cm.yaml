@@ -1,9 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  namespace: openshift-etcd
-  name: etcd-pod
-data:
-  pod.yaml:
-  forceRedeploymentReason:
-  version:
