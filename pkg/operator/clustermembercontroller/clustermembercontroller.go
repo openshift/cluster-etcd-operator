@@ -25,9 +25,6 @@ import (
 	corev1informer "k8s.io/client-go/informers/core/v1"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1lister "k8s.io/client-go/listers/core/v1"
-
-	"github.com/coreos/etcd/clientv3"
-	"github.com/coreos/etcd/pkg/transport"
 )
 
 const workQueueKey = "key"
@@ -152,41 +149,41 @@ func (c *ClusterMemberController) sync() error {
 			endpoints[i] = fmt.Sprintf("https//%s:%d", rawEndpoints[i], 2379)
 		}
 
-		etcdCA, err := c.clientset.CoreV1().ConfigMaps("openshift-config", "etcd-ca-bundle")
-		if err != nil {
-			return errors.Wrap(err, "failed to load etcd client CA")
-		}
-		etcdClientSecret, err := c.clientset.CoreV1().Secrets("openshift-config", "etcd-client")
-		if err != nil {
-			return errors.Wrap(err, "failed to load etcd client secret")
-		}
-
-		data := make(map[string]string)
-
-		for k, v := range etcdClientSecret.Data {
-			data[k] = string(v)
-		}
-
-		for k, v := range etcdCA.Data {
-			data[k] = v
-		}
-
-		klog.Infof("etcd endpoint[0] %v\n", peers[0])
-		tlsInfo := transport.TLSInfo{
-			CertFile:      "/tmp/test-certs/test-name-1.pem",
-			KeyFile:       "/tmp/test-certs/test-name-1-key.pem",
-			TrustedCAFile: "/tmp/test-certs/trusted-ca.pem",
-		}
-		tlsConfig, err := tlsInfo.ClientConfig()
-		cli, err := clientv3.New(clientv3.Config{
-			Endpoints:   endpoints,
-			DialTimeout: 5 * time.Second,
-			TLS:         tlsConfig,
-		})
-		if err != nil {
-			klog.Errorf(err)
-		}
-		defer cli.Close() // make sure to close the client
+		// etcdCA, err := c.clientset.CoreV1().ConfigMaps("openshift-config", "etcd-ca-bundle")
+		// if err != nil {
+		// 	return errors.Wrap(err, "failed to load etcd client CA")
+		// }
+		// etcdClientSecret, err := c.clientset.CoreV1().Secrets("openshift-config", "etcd-client")
+		// if err != nil {
+		// 	return errors.Wrap(err, "failed to load etcd client secret")
+		// }
+		//
+		// data := make(map[string]string)
+		//
+		// for k, v := range etcdClientSecret.Data {
+		// 	data[k] = string(v)
+		// }
+		//
+		// for k, v := range etcdCA.Data {
+		// 	data[k] = v
+		// }
+		//
+		// klog.Infof("etcd endpoint[0] %v\n", peers[0])
+		// tlsInfo := transport.TLSInfo{
+		// 	CertFile:      "/tmp/test-certs/test-name-1.pem",
+		// 	KeyFile:       "/tmp/test-certs/test-name-1-key.pem",
+		// 	TrustedCAFile: "/tmp/test-certs/trusted-ca.pem",
+		// }
+		// tlsConfig, err := tlsInfo.ClientConfig()
+		// cli, err := clientv3.New(clientv3.Config{
+		// 	Endpoints:   endpoints,
+		// 	DialTimeout: 5 * time.Second,
+		// 	TLS:         tlsConfig,
+		// })
+		// if err != nil {
+		// 	klog.Errorf(err)
+		// }
+		// defer cli.Close() // make sure to close the client
 	}
 	return nil
 }
