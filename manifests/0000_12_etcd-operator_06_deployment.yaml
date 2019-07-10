@@ -38,6 +38,10 @@ spec:
           name: config
         - mountPath: /var/run/secrets/serving-cert
           name: serving-cert
+        - mountPath: /var/run/configmaps/etcd-ca
+          name: etcd-ca
+        - mountPath: /var/run/secrets/etcd-client
+          name: etcd-client
         env:
         - name: IMAGE
           value: quay.io/openshift/origin-hyperkube:v4.0
@@ -56,6 +60,12 @@ spec:
       - name: config
         configMap:
           name: etcd-operator-config
+      - name: etcd-ca
+        configMap:
+          name: etcd-ca-bundle
+      - name: etcd-client
+        secret:
+          secretName: etcd-client
       nodeSelector:
         node-role.kubernetes.io/master: ""
       tolerations:
