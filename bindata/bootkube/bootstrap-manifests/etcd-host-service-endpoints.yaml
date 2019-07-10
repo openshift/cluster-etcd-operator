@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: host-etcd
+  namespace: openshift-etcd
+  annotations:
+    alpha.installer.openshift.io/dns-suffix: {{.EtcdDiscoveryDomain}}
+subsets:
+- addresses:
+  - ip:       {{ .EtcdBootstrapIP }}
+    hostname: {{ .EtcdBootstrapHostname }}
+  ports:
+  - name: etcd
+    port: 2379
+    protocol: TCP
