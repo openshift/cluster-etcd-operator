@@ -20,13 +20,14 @@ import (
 	"k8s.io/client-go/util/workqueue"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+
+	"github.com/openshift/library-go/pkg/operator/condition"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/management"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 )
 
-const operatorStatusRevisionControllerDegraded = "RevisionControllerDegraded"
 const revisionControllerWorkQueueKey = "key"
 
 // RevisionController is a controller that watches a set of configmaps and secrets and them against a revision snapshot
@@ -313,7 +314,7 @@ func (c RevisionController) sync() error {
 
 	// update failing condition
 	cond := operatorv1.OperatorCondition{
-		Type:   operatorStatusRevisionControllerDegraded,
+		Type:   condition.RevisionControllerDegradedConditionType,
 		Status: operatorv1.ConditionFalse,
 	}
 	if err != nil {

@@ -1,7 +1,9 @@
-FROM registry.svc.ci.openshift.org/openshift/release:golang-1.11 AS builder
+FROM registry.svc.ci.openshift.org/openshift/release:golang-1.12 AS builder
 WORKDIR /go/src/github.com/openshift/cluster-etcd-operator
 COPY . .
-RUN go build ./cmd/cluster-etcd-operator
+
+ENV GO111MODULE=on
+RUN go build -mod vendor ./cmd/cluster-etcd-operator
 
 FROM registry.svc.ci.openshift.org/openshift/origin-v4.0:base
 RUN mkdir -p /usr/share/bootkube/manifests
@@ -10,5 +12,5 @@ COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/bindata/b
 COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/bindata/bootkube/manifests/* /usr/share/bootkube/manifests/manifests/
 COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/bindata/bootkube/bootstrap-manifests/* /usr/share/bootkube/manifests/bootstrap-manifests/
 COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/cluster-etcd-operator /usr/bin/
-COPY manifests/*.yaml /manifests/
+COPY manifests/* /manifests/
 LABEL io.openshift.release.operator=true
