@@ -119,7 +119,7 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 
 	etcdInformers := etcdv1informers.NewSharedInformerFactory(etcdClient, 0)
 
-	coreClient := clientset.CoreV1()
+	coreClient := clientset
 
 	clusterMemberController := clustermembercontroller.NewClusterMemberController(
 		coreClient,
@@ -138,10 +138,10 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 	configInformers.Start(ctx.Done())
 	etcdInformers.Start(ctx.Done())
 
-	go clusterMemberController.Run(ctx.Done())
 	go resourceSyncController.Run(1, ctx.Done())
 	go configObserver.Run(1, ctx.Done())
 	go clusterOperatorStatus.Run(1, ctx.Done())
+	go clusterMemberController.Run(ctx.Done())
 
 	<-ctx.Done()
 	return fmt.Errorf("stopped")
