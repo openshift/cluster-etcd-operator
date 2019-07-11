@@ -1,9 +1,8 @@
-package main
+package setupetcd
 
 import (
 	"bytes"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -11,43 +10,65 @@ import (
 	"strings"
 	"time"
 
-	glog "k8s.io/klog"
-	"github.com/openshift/machine-config-operator/pkg/version"
+	"github.com/openshift/cluster-etcd-operator/pkg/version"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"k8s.io/apimachinery/pkg/util/wait"
+	klog "k8s.io/klog"
 )
 
-var (
-	runCmd = &cobra.Command{
-		Use:   "run",
-		Short: "Runs the setup-etcd-environment",
-		Long:  "",
-		RunE:  runRunCmd,
-	}
-
-	runOpts struct {
-		discoverySRV string
-		ifName       string
-		outputFile   string
-	}
-)
-
-func init() {
-	rootCmd.AddCommand(runCmd)
-	rootCmd.PersistentFlags().StringVar(&runOpts.discoverySRV, "discovery-srv", "", "DNS domain used to bootstrap initial etcd cluster.")
-	rootCmd.PersistentFlags().StringVar(&runOpts.outputFile, "output-file", "", "file where the envs are written. If empty, prints to Stdout.")
+type setupOpts struct {
+	discoverySRV string
+	ifName       string
+	outputFile   string
+	errOut       io.Writer
 }
 
-func runRunCmd(cmd *cobra.Command, args []string) error {
-	flag.Set("logtostderr", "true")
-	flag.Parse()
+// NewCertSignerCommand creates an etcd cert signer server.
+func NewSetupEtcdCommand(errOut io.Writer) *cobra.Command {
+	setupOpts := &setupOpts{
+		errOut: errOut,
+	}
+	cmd := &cobra.Command{
+		Use:   "setup-etcd-environment",
+		Short: "sets up the environment for etcd",
+		Run: func(cmd *cobra.Command, args []string) {
+			must := func(fn func() error) {
+				if err := fn(); err != nil {
+					if cmd.HasParent() {
+						klog.Fatal(err)
+					}
+					fmt.Fprint(setupOpts.errOut, err.Error())
+				}
+			}
+			must(setupOpts.Validate)
+			must(setupOpts.Run)
+		},
+	}
 
-	// To help debugging, immediately log version
-	glog.Infof("Version: %+v (%s)", version.Version, version.Hash)
+	setupOpts.AddFlags(cmd.Flags())
+	return cmd
+}
 
-	if runOpts.discoverySRV == "" {
+func (s *setupOpts) AddFlags(fs *pflag.FlagSet) {
+	fs.StringVar(&s.discoverySRV, "discovery-srv", "", "DNS domain used to bootstrap initial etcd cluster.")
+	fs.StringVar(&s.outputFile, "output-file", "", "file where the envs are written. If empty, prints to Stdout.")
+	fs.Set("logtostderr", "true")
+}
+
+// Validate verifies the inputs.
+func (s *setupOpts) Validate() error {
+	if s.discoverySRV == "" {
 		return errors.New("--discovery-srv cannot be empty")
 	}
+	return nil
+}
+
+func (s *setupOpts) Run() error {
+	info := version.Get()
+
+	// To help debugging, immediately log version
+	klog.Infof("Version: %+v (%s)", info.GitVersion, info.GitCommit)
 
 	ips, err := ipAddrs()
 	if err != nil {
@@ -58,9 +79,9 @@ func runRunCmd(cmd *cobra.Command, args []string) error {
 	var ip string
 	if err := wait.PollImmediate(30*time.Second, 5*time.Minute, func() (bool, error) {
 		for _, cand := range ips {
-			found, err := reverseLookupSelf("etcd-server-ssl", "tcp", runOpts.discoverySRV, cand)
+			found, err := reverseLookupSelf("etcd-server-ssl", "tcp", s.discoverySRV, cand)
 			if err != nil {
-				glog.Errorf("error looking up self: %v", err)
+				klog.Errorf("error looking up self: %v", err)
 				continue
 			}
 			if found != "" {
@@ -68,17 +89,17 @@ func runRunCmd(cmd *cobra.Command, args []string) error {
 				ip = cand
 				return true, nil
 			}
-			glog.V(4).Infof("no matching dns for %s", cand)
+			klog.V(4).Infof("no matching dns for %s", cand)
 		}
 		return false, nil
 	}); err != nil {
 		return fmt.Errorf("could not find self: %v", err)
 	}
-	glog.Infof("dns name is %s", dns)
+	klog.Infof("dns name is %s", dns)
 
 	out := os.Stdout
-	if runOpts.outputFile != "" {
-		f, err := os.Create(runOpts.outputFile)
+	if s.outputFile != "" {
+		f, err := os.Create(s.outputFile)
 		if err != nil {
 			return err
 		}
@@ -89,7 +110,7 @@ func runRunCmd(cmd *cobra.Command, args []string) error {
 	return writeEnvironmentFile(map[string]string{
 		"IPV4_ADDRESS":      ip,
 		"DNS_NAME":          dns,
-		"WILDCARD_DNS_NAME": fmt.Sprintf("*.%s", runOpts.discoverySRV),
+		"WILDCARD_DNS_NAME": fmt.Sprintf("*.%s", s.discoverySRV),
 	}, out)
 }
 
@@ -131,7 +152,7 @@ func reverseLookupSelf(service, proto, name, self string) (string, error) {
 	}
 	selfTarget := ""
 	for _, srv := range srvs {
-		glog.V(4).Infof("checking against %s", srv.Target)
+		klog.V(4).Infof("checking against %s", srv.Target)
 		addrs, err := net.LookupHost(srv.Target)
 		if err != nil {
 			return "", fmt.Errorf("could not resolve member %q", srv.Target)
