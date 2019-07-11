@@ -1,6 +1,6 @@
 ROOT_DIR:=$(shell git rev-parse --show-toplevel)
 GOFILES:=$(shell find . -name '*.go' | grep -v -E '(./vendor)')
-GOFLAGS="-mod vendor"
+GOFLAGS='-mod=vendor'
 IMAGE_REPO=
 IMAGE_TAG:=$(shell $(ROOT_DIR)/hack/git-version.sh)
 
