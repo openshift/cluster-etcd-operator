@@ -9,6 +9,7 @@ import (
 
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/certsigner"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/setupetcd"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -45,6 +46,7 @@ func NewSSCSCommand() *cobra.Command {
 
 	cmd.AddCommand(certsigner.NewCertSignerCommand(os.Stderr))
 	cmd.AddCommand(render.NewRenderCommand(os.Stderr))
+	cmd.AddCommand(setupetcd.NewSetupEtcdCommand(os.Stderr))
 
 	return cmd
 }

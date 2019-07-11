@@ -9,16 +9,16 @@ import (
 var (
 	// commitFromGit is a constant representing the source version that
 	// generated this build. It should be set during build via -ldflags.
-	commitFromGit string
+	commitFromGit = "was-not-built-properly"
 	// versionFromGit is a constant representing the version tag that
 	// generated this build. It should be set during build via -ldflags.
-	versionFromGit string
+	versionFromGit = "v0.0.0-was-not-built-properly"
 	// major version
-	majorFromGit string
+	majorFromGit = "0"
 	// minor version
-	minorFromGit string
+	minorFromGit = "0"
 	// build date in ISO8601 format, output of $(date -u +'%Y-%m-%dT%H:%M:%SZ')
-	buildDate string
+	buildDate = "0000-00-00T00:00:00Z"
 )
 
 // Get returns the overall codebase version. It's for detecting
