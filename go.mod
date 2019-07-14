@@ -23,6 +23,7 @@ require (
 	github.com/apparentlymart/go-cidr v1.0.0
 	github.com/certifi/gocertifi v0.0.0-20190506164543-d2eda7129713 // indirect
 	github.com/coreos/bbolt v1.3.3 // indirect
+	github.com/coreos/etcd v3.3.10+incompatible
 	github.com/coreos/go-systemd v0.0.0-20190618135430-ff7011eec365 // indirect
 	github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f // indirect
 	github.com/davecgh/go-spew v1.1.1
@@ -53,7 +54,6 @@ require (
 	github.com/onsi/gomega v1.5.0 // indirect
 	github.com/openshift/api v0.0.0-20190618182729-a77179bc5896
 	github.com/openshift/client-go v0.0.0-20190617165122-8892c0adc000
-	github.com/openshift/etcd v3.3.13+incompatible
 	github.com/openshift/library-go v0.0.0-20190619114638-6b58b672ee58
 	github.com/pborman/uuid v1.2.0 // indirect
 	github.com/pkg/errors v0.8.1
