@@ -8,11 +8,10 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	"github.com/coreos/etcd/clientv3/concurrency"
+	"github.com/coreos/etcd/etcdserver/etcdserverpb"
 	"github.com/coreos/etcd/pkg/transport"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/openshift/library-go/pkg/operator/events"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/retry"
@@ -21,26 +20,23 @@ import (
 
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 
-	etcdv1 "github.com/openshift/api/etcd/v1"
-	etcdv1client "github.com/openshift/client-go/etcd/clientset/versioned/typed/etcd/v1"
-	etcdv1informer "github.com/openshift/client-go/etcd/informers/externalversions"
-	corev1informer "k8s.io/client-go/informers/core/v1"
 	corev1client "k8s.io/client-go/kubernetes"
-	corev1lister "k8s.io/client-go/listers/core/v1"
 )
 
-const workQueueKey = "key"
+const (
+	workQueueKey             = "key"
+	EtcdScalingAnnotationKey = "etcd.operator.openshift.io/scale"
+	etcdCertFile             = "/var/run/secrets/etcd-client/tls.crt"
+	etcdKeyFile              = "/var/run/secrets/etcd-client/tls.key"
+	etcdTrustedCAFile        = "/var/run/configmaps/etcd-ca/ca-bundle.crt"
+)
 
 type ClusterMemberController struct {
 	podClient            corev1client.Interface
-	podLister            corev1lister.PodLister
-	podSynced            cache.InformerSynced
-	podInformer          corev1informer.PodInformer
-	etcdClient           etcdv1client.ClusterMemberRequestInterface
-	etcdInformer         etcdv1informer.SharedInformerFactory
 	operatorConfigClient v1helpers.OperatorClient
 	queue                workqueue.RateLimitingInterface
 	eventRecorder        events.Recorder
@@ -48,11 +44,6 @@ type ClusterMemberController struct {
 
 func NewClusterMemberController(
 	podClient corev1client.Interface,
-	podInformer corev1informer.PodInformer,
-
-	etcdClient etcdv1client.ClusterMemberRequestInterface,
-	etcdInformer etcdv1informer.SharedInformerFactory,
-
 	operatorConfigClient v1helpers.OperatorClient,
 
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
@@ -60,170 +51,149 @@ func NewClusterMemberController(
 ) *ClusterMemberController {
 	c := &ClusterMemberController{
 		podClient:            podClient,
-		etcdClient:           etcdClient,
-		etcdInformer:         etcdInformer,
-		podLister:            podInformer.Lister(),
-		podSynced:            podInformer.Informer().HasSynced,
-		podInformer:          podInformer,
 		operatorConfigClient: operatorConfigClient,
 		queue:                workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ClusterMemberController"),
 		eventRecorder:        eventRecorder.WithComponentSuffix("cluster-member-controller"),
 	}
 	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Pods().Informer().AddEventHandler(c.eventHandler())
-	etcdInformer.Etcd().V1().ClusterMemberRequests().Informer().AddEventHandler(c.eventHandler())
-	// podInformer.Informer().AddEventHandler(c.eventHandler())
 
 	return c
 }
 
+type EtcdScaling struct {
+	Metadata *metav1.ObjectMeta     `json:"metadata,omitempty"`
+	Members  []*etcdserverpb.Member `json:"members,omitempty"`
+}
+
 func (c *ClusterMemberController) sync() error {
-	pods, err := c.podClient.CoreV1().Pods("openshift-etcd").List(metav1.ListOptions{LabelSelector: "k8s-app=etcd"})
+	endpoints, err := c.Endpoints()
 	if err != nil {
 		return err
-		klog.Infof("Found no Pod in openshift-etcd with label k8s-app=etcd")
+	}
+	tlsInfo := transport.TLSInfo{
+		CertFile:      etcdCertFile,
+		KeyFile:       etcdKeyFile,
+		TrustedCAFile: etcdTrustedCAFile,
+	}
+	tlsConfig, err := tlsInfo.ClientConfig()
+
+	cfg := &clientv3.Config{
+		Endpoints:   endpoints,
+		DialTimeout: 5 * time.Second,
+		TLS:         tlsConfig,
 	}
 
-	//TODO break out logic into functions.
+	cli, err := clientv3.New(*cfg)
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+
+	pods, err := c.podClient.CoreV1().Pods("openshift-etcd").List(metav1.ListOptions{LabelSelector: "k8s-app=etcd"})
+	if err != nil {
+		klog.Infof("No Pod found in openshift-etcd with label k8s-app=etcd")
+		return err
+	}
+
 	for i := range pods.Items {
 		p := &pods.Items[i]
 		klog.Infof("Found etcd Pod with name %v\n", p.Name)
 
 		str := spew.Sdump(p)
 		klog.Infof("Pod Data %v\n", str)
-		// check if we have a request already
-		result, err := c.etcdClient.Get(p.Name, metav1.GetOptions{})
-		// if not create
-		if errors.IsNotFound(err) {
-			rstr := spew.Sdump(result)
-			klog.Infof("Request Data %v\n", rstr)
-			cm := &etcdv1.ClusterMemberRequest{
-				metav1.TypeMeta{
-					Kind:       "ClusterMemberRequest",
-					APIVersion: "etcd.openshift.io/v1",
-				},
-				metav1.ObjectMeta{
-					Name: p.Name,
-				},
-				etcdv1.ClusterMemberRequestSpec{
-					Name: p.Name,
-				},
-				etcdv1.ClusterMemberRequestStatus{},
-			}
-			cmr, err := c.etcdClient.Create(cm)
+
+		cm, err := c.podClient.CoreV1().ConfigMaps("openshift-etcd").Get("scaling-lock", metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if cm.Annotations == nil {
+			cm.Annotations = make(map[string]string)
+		}
+
+		if isMember(cli, p.Name) {
+			klog.Infof("Member is already part of the cluster: %s\n", p.Name)
+			return nil
+		}
+
+		members, err := etcdMemberList(cli)
+		if err != nil {
+			return err
+		}
+		es := EtcdScaling{
+			Metadata: &metav1.ObjectMeta{
+				Name: p.Name,
+			},
+			Members: members,
+		}
+
+		esb, err := json.Marshal(es)
+		if err != nil {
+			return err
+		}
+
+		// start scaling
+		retryErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			result, err := c.podClient.CoreV1().ConfigMaps("openshift-etcd").Get("scaling-lock", metav1.GetOptions{})
 			if err != nil {
-				klog.Errorf("error sending ClusterMembeRequest: %v", err)
 				return err
 			}
-			klog.Infof("New ClusterMemberRequest created %v\n", cmr)
+			result.Annotations[EtcdScalingAnnotationKey] = string(esb)
+			_, updateErr := c.podClient.CoreV1().ConfigMaps("openshift-etcd").Update(result)
+			return updateErr
+		})
+		if retryErr != nil {
+			return fmt.Errorf("Update approve failed: %v", retryErr)
+		}
+		// scale
+		if err := etcdMemberAdd(cli, []string{p.Status.HostIP}); err != nil {
+			return err
+		}
+
+		if isMember(cli, p.Name) {
+			klog.Infof("Member is already part of the cluster: %s\n", p.Name)
 			return nil
-
-		} else if err != nil {
-			return err
 		}
-
-		// block until PeerURLs is updated by client
-		if result.Spec.PeerURLs == "" {
-			err := fmt.Errorf("no PeerURLs observed")
-			c.eventRecorder.Warning("ClusterMemberRequest", err.Error())
-			return err
-		}
-
-		// is approved?
-		if exists := conditionContains(result.Status.Conditions, etcdv1.ClusterMemberApproved); exists == false {
-			retryErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-				result, err := c.etcdClient.Get(p.Name, metav1.GetOptions{})
-				if err != nil {
-					return err
-				}
-				if exists := conditionContains(result.Status.Conditions, etcdv1.ClusterMemberApproved); exists == false {
-					// clear the path for next step we designate Approved
-					result.Status.Conditions = []etcdv1.ClusterMemberRequestCondition{
-						etcdv1.ClusterMemberRequestCondition{
-							Type: etcdv1.ClusterMemberApproved,
-						},
-					}
-				}
-				return nil
-			})
-			if retryErr != nil {
-				return fmt.Errorf("Update failed: %v", retryErr)
-			}
-		}
-		// is delivered?
-		if exists := conditionContains(result.Status.Conditions, etcdv1.ClusterMemberDelivered); exists == false {
-			err := fmt.Errorf("client has not reported ClusterMember config as delivered")
-			c.eventRecorder.Warning("ClusterMemberRequest", err.Error())
-			return err
-		}
-		// here we should make sure there is only one queued up. we probably should never see more than one request approved if this works right.
-		// if we do we should panic as we are heading for a world of pain.
-
-		endpoints, err := c.Endpoints()
-		if err != nil {
-			return err
-		}
-
-		//TODO check that we have already synced and these are not still just stubs
-		tlsInfo := transport.TLSInfo{
-			CertFile:      "/var/run/secrets/etcd-client/tls.crt",
-			KeyFile:       "/var/run/secrets/etcd-client/tls.key",
-			TrustedCAFile: "/run/configmaps/etcd-ca/ca-bundle.crt",
-		}
-		tlsConfig, err := tlsInfo.ClientConfig()
-
-		cfg := &clientv3.Config{
-			Endpoints:   endpoints,
-			DialTimeout: 5 * time.Second,
-			TLS:         tlsConfig,
-		}
-		cli, err := createClientv3(cfg)
-		if err != nil {
-			return err
-		}
-		defer cli.Close()
-		// create a scaling lock.
-		s, err := concurrency.NewSession(cli)
-		defer s.Close()
-		scaling := concurrency.NewMutex(s, "/openshift.io/etcd/scaling/lock/")
-		if err := scaling.Lock(context.TODO()); err != nil {
-			return err
-		}
-		klog.Infof("scaling lock aquired %v\n", scaling)
-
-		// TODO this does the actual scale up, uncomment to complete pivot
-		// if err := etcdMemberAdd(cli, peerUrls); err != nil {
-		// 	return err
-		// }
-
-		if _, err := etcdMemberList(cli); err != nil {
-			return err
-		}
-		if err := scaling.Unlock(context.TODO()); err != nil {
-			return err
-		}
-
+		rerr := fmt.Errorf("failed to observe new member")
+		c.eventRecorder.Warning("ScalingInProgress", rerr.Error())
+		return rerr
 	}
+	klog.Infof("All cluster members observed, scaling complete!")
 	return nil
 }
 
 func (c *ClusterMemberController) Endpoints() ([]string, error) {
-	endpoints := []string{}
-	// populate etcd client endpoints
+	storageConfigURLsPath := []string{"storageConfig", "urls"}
 	operatorSpec, _, _, err := c.operatorConfigClient.GetOperatorState()
 	if err != nil {
-		return endpoints, err
+		return nil, err
 	}
-	existingConfig := map[string]interface{}{}
-	if err := json.NewDecoder(bytes.NewBuffer(operatorSpec.ObservedConfig.Raw)).Decode(&existingConfig); err != nil {
+	config := map[string]interface{}{}
+	if err := json.NewDecoder(bytes.NewBuffer(operatorSpec.ObservedConfig.Raw)).Decode(&config); err != nil {
 		klog.V(4).Infof("decode of existing config failed with error: %v", err)
 	}
-	rawEndpoints := existingConfig["cluster"].(map[string]interface{})["peers"].([]interface{})
-	// cast to []string
-	// endpoints := make([]string, len(rawEndpoints))
-	for i, _ := range rawEndpoints {
-		endpoints[i] = fmt.Sprintf("https://%s:%d", rawEndpoints[i], 2379)
+	endpoints, found, err := unstructured.NestedStringSlice(config, storageConfigURLsPath...)
+	if err != nil {
+		return nil, err
 	}
-	return endpoints, nil
+	if !found {
+		return nil, fmt.Errorf("etcd storageConfig urls not observed")
+	}
+
+	return []string{endpoints[0]}, nil
+}
+
+func isMember(cli *clientv3.Client, name string) bool {
+	members, err := etcdMemberList(cli)
+	if err != nil {
+		klog.V(4).Infof("etcd member list failed with error: %v", err)
+		return false
+	}
+	for _, m := range members {
+		if m.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *ClusterMemberController) Run(stopCh <-chan struct{}) {
@@ -272,15 +242,6 @@ func (c *ClusterMemberController) eventHandler() cache.ResourceEventHandler {
 	}
 }
 
-func conditionContains(conditions []etcdv1.ClusterMemberRequestCondition, value etcdv1.RequestConditionType) bool {
-	for _, c := range conditions {
-		if c.Type == value {
-			return true
-		}
-	}
-	return false
-}
-
 func createClientv3(cfg *clientv3.Config) (*clientv3.Client, error) {
 	cli, err := clientv3.New(*cfg)
 	if err != nil {
@@ -291,7 +252,6 @@ func createClientv3(cfg *clientv3.Config) (*clientv3.Client, error) {
 
 func etcdMemberAdd(cli *clientv3.Client, peerURLs []string) error {
 	defer cli.Close()
-
 	resp, err := cli.MemberAdd(context.Background(), peerURLs)
 	if err != nil {
 		return err
@@ -300,18 +260,10 @@ func etcdMemberAdd(cli *clientv3.Client, peerURLs []string) error {
 	return nil
 }
 
-func etcdMemberList(cli *clientv3.Client) ([]string, error) {
-	members := []string{}
+func etcdMemberList(cli *clientv3.Client) ([]*etcdserverpb.Member, error) {
 	resp, err := cli.MemberList(context.Background())
 	if err != nil {
-		return members, err
+		return nil, err
 	}
-	for _, memb := range resp.Members {
-		for _, u := range memb.PeerURLs {
-			n := memb.Name
-			members = append(members, fmt.Sprintf("%s=%s", n, u))
-		}
-	}
-	klog.Infof("current etcd member: %s", members)
-	return members, nil
+	return resp.Members, nil
 }
