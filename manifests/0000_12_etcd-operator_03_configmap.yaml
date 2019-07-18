@@ -18,3 +18,9 @@ metadata:
 data:
   ca-bundle.crt: |
     stub
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scaling-lock
+  namespace: openshift-etcd
