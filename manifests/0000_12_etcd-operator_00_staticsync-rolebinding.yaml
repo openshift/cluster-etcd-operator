@@ -1,0 +1,26 @@
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1beta1
+metadata:
+  namespace: openshift-etcd
+  name: cluster-etcd-operator-staticsync
+rules:
+- apiGroups: [""]
+  resources: ["secrets", "configmaps"]
+  verbs: ["get", "watch", "list"]
+
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1beta1
+metadata:
+  name: cluster-etcd-operator-staticsync
+  namespace: openshift-etcd
+subjects:
+- kind: ServiceAccount
+  name: default
+  namespace: openshift-etcd
+roleRef:
+  kind: Role
+  namespace: openshift-etcd
+  name: cluster-etcd-operator-staticsync
+  apiVersion: rbac.authorization.k8s.io/v1beta1

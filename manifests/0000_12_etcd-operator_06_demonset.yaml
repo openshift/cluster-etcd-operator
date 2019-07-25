@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: etcd-staticsync 
+  namespace: openshift-etcd
+spec:
+  selector:
+    matchLabels:
+      k8s-app: etcd-staticsync
+  template:
+    metadata:
+      labels:
+        name: etcd-staticsync
+        k8s-app: etcd-staticsync
+    spec:
+      hostNetwork: true
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: k8s-app
+                operator: In
+                values:
+                - ""
+            topologyKey: kubernetes.io/hostname
+      nodeSelector:
+        node-role.kubernetes.io/master: ""
+      priorityClassName: "system-cluster-critical"
+      terminationGracePeriodSeconds: 3
+      tolerations:
+      - key: node-role.kubernetes.io/master
+        effect: NoSchedule
+        operator: Exists
+      - key: node.kubernetes.io/not-ready
+        effect: NoExecute
+        operator: Exists
+        tolerationSeconds: 120
+      - key: node.kubernetes.io/unreachable
+        effect: NoExecute
+        operator: Exists
+        tolerationSeconds: 120
+      - key: node-role.kubernetes.io/etcd
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - image: "quay.io/hexfusion/cluster-etcd-operator:latest"
+        imagePullPolicy: Always
+        name: etcd-staticsync
+        command: ["/usr/bin/cluster-etcd-operator"]
+        args:
+        - "staticsync"
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - mountPath: /run/secrets/etcd
+          name: etcd-static-token
+        resources:
+          requests:
+            cpu: 10m
+            memory: 5Mi
+      volumes:
+      - name: etcd-static-token
+        hostPath:
+          path: /etc/kubernetes/static-pod-resources/etcd-member/secrets/kubernetes.io/sa-token

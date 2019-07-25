@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: openshift-etcd-operator
+  name: etcd-operator
+  labels:
+    app: etcd-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: etcd-operator
+  template:
+    metadata:
+      name: etcd-operator
+      labels:
+        app: etcd-operator
+    spec:
+      serviceAccountName: etcd-operator
+      containers:
+      - name: operator
+        image: quay.io/openshift/cluster-etcd-operator:v4.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8443
+          name: metrics
+          protocol: TCP
+        command: ["cluster-etcd-operator", "operator"]
+        args:
+        - "--config=/var/run/configmaps/config/config.yaml"
+        - "-v=4"
+        resources:
+          requests:
+            memory: 50Mi
+            cpu: 10m
+        volumeMounts:
+        - mountPath: /var/run/configmaps/config
+          name: config
+        - mountPath: /var/run/secrets/serving-cert
+          name: serving-cert
+        - mountPath: /var/run/configmaps/etcd-ca
+          name: etcd-ca
+        - mountPath: /var/run/secrets/etcd-client
+          name: etcd-client
+        env:
+        - name: IMAGE
+          value: quay.io/openshift/origin-hyperkube:v4.0
+        - name: OPERATOR_IMAGE
+          value: quay.io/openshift/cluster-etcd-operator:v4.0
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        terminationMessagePolicy: FallbackToLogsOnError
+      volumes:
+      - name: serving-cert
+        secret:
+          secretName: etcd-operator-serving-cert
+          optional: true
+      - name: config
+        configMap:
+          name: etcd-operator-config
+      - name: etcd-ca
+        configMap:
+          name: etcd-ca-bundle
+      - name: etcd-client
+        secret:
+          secretName: etcd-client
+      nodeSelector:
+        node-role.kubernetes.io/master: ""
+      tolerations:
+      - operator: Exists 

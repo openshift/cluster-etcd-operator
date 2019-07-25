@@ -1,0 +1,8 @@
+apiVersion: operator.openshift.io/v1
+kind: Etcd
+metadata:
+  name: cluster
+  annotations:
+    release.openshift.io/create-only: "true"
+spec:
+  managementState: Managed
