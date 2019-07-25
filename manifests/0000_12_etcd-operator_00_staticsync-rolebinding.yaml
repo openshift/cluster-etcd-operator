@@ -6,7 +6,7 @@ metadata:
   name: cluster-etcd-operator-staticsync
 rules:
 - apiGroups: [""]
-  resources: ["secrets"]
+  resources: ["secrets", "configmaps"]
   verbs: ["get", "watch", "list"]
 
 ---
