@@ -55,6 +55,8 @@ func NewConfigObserver(
 				),
 			},
 			etcd.ObserveStorageURLs,
+			etcd.ObserveClusterMembers,
+			etcd.ObservePendingClusterMembers,
 		),
 	}
 

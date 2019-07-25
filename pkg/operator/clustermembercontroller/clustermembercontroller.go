@@ -217,7 +217,7 @@ func (c *ClusterMemberController) MemberList() ([]Member, error) {
 		return nil, err
 	}
 	if !found {
-		return nil, fmt.Errorf("etcd storageConfig urls not observed")
+		return nil, fmt.Errorf("etcd cluster members not observed")
 	}
 
 	// populate current etcd members as observed.
