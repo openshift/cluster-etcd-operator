@@ -1,0 +1,198 @@
+package staticsynccontroller
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"time"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/version"
+	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
+	"k8s.io/klog"
+
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/informers"
+	corev1informer "k8s.io/client-go/informers/core/v1"
+)
+
+const (
+	workQueueKey = "key"
+	srcDir       = "/var/run/secrets/kubernetes.io/serviceaccount"
+	destDir      = "/run/secrets/etcd"
+)
+
+type syncOpts struct {
+	errOut io.Writer
+}
+
+// NewStaticSyncCommand creates a staticsync controller.
+func NewStaticSyncCommand(errOut io.Writer) *cobra.Command {
+	syncOpts := &syncOpts{
+		errOut: errOut,
+	}
+	cmd := &cobra.Command{
+		Use:   "staticsync",
+		Short: "syncs assets for etcd",
+		Run: func(cmd *cobra.Command, args []string) {
+			must := func(fn func() error) {
+				if err := fn(); err != nil {
+					if cmd.HasParent() {
+						klog.Fatal(err)
+					}
+					fmt.Fprint(syncOpts.errOut, err.Error())
+				}
+			}
+			must(syncOpts.Run)
+		},
+	}
+
+	syncOpts.AddFlags(cmd.Flags())
+	return cmd
+}
+
+func (s *syncOpts) AddFlags(fs *pflag.FlagSet) {
+	fs.Set("logtostderr", "true")
+}
+
+func (s *syncOpts) Run() error {
+	info := version.Get()
+
+	// To help debugging, immediately log version
+	klog.Infof("Version: %+v (%s)", info.GitVersion, info.GitCommit)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	clientConfig, err := rest.InClusterConfig()
+	if err != nil {
+		return err
+	}
+	clientset, err := kubernetes.NewForConfig(clientConfig)
+	if err != nil {
+		return err
+	}
+
+	kubeInformerFactory := informers.NewFilteredSharedInformerFactory(clientset, 0, "openshift-etcd", nil)
+
+	staticSyncController := NewStaticSyncController(
+		kubeInformerFactory,
+		// ctx.EventRecorder,
+	)
+
+	kubeInformerFactory.Start(ctx.Done())
+
+	go staticSyncController.Run(ctx.Done())
+
+	<-ctx.Done()
+	cancel()
+	return fmt.Errorf("stopped")
+}
+
+type StaticSyncController struct {
+	podInformer                            corev1informer.SecretInformer
+	kubeInformersForOpenshiftEtcdNamespace cache.SharedIndexInformer
+
+	cachesToSync  []cache.InformerSynced
+	queue         workqueue.RateLimitingInterface
+	eventRecorder events.Recorder
+}
+
+func NewStaticSyncController(
+	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
+	// eventRecorder events.Recorder,
+) *StaticSyncController {
+	c := &StaticSyncController{
+		// eventRecorder: eventRecorder.WithComponentSuffix("resource-sync-controller"),
+		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ResourceSyncController"),
+	}
+	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer().AddEventHandler(c.eventHandler())
+
+	return c
+}
+
+func (c *StaticSyncController) sync() error {
+	// if anything changes we copy
+	assets := [4]string{
+		"namespace",
+		"ca.crt",
+		"service-ca.crt",
+		"token",
+	}
+	for _, file := range assets {
+		if err := Copy(fmt.Sprintf("%s/%s", srcDir, file), fmt.Sprintf("%s/%s", destDir, file)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func Copy(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	if err != nil {
+		return err
+	}
+	return out.Close()
+}
+
+func (c *StaticSyncController) Run(stopCh <-chan struct{}) {
+	defer utilruntime.HandleCrash()
+	defer c.queue.ShutDown()
+
+	klog.Infof("Starting StaticSyncController")
+	defer klog.Infof("Shutting down StaticSyncController")
+
+	go wait.Until(c.runWorker, time.Second, stopCh)
+
+	<-stopCh
+}
+
+func (c *StaticSyncController) runWorker() {
+	for c.processNextWorkItem() {
+	}
+}
+
+func (c *StaticSyncController) processNextWorkItem() bool {
+	dsKey, quit := c.queue.Get()
+	if quit {
+		return false
+	}
+	defer c.queue.Done(dsKey)
+
+	err := c.sync()
+	if err == nil {
+		c.queue.Forget(dsKey)
+		return true
+	}
+
+	utilruntime.HandleError(fmt.Errorf("%v failed with : %v", dsKey, err))
+	c.queue.AddRateLimited(dsKey)
+
+	return true
+}
+
+// eventHandler queues the operator to check spec and status
+func (c *StaticSyncController) eventHandler() cache.ResourceEventHandler {
+	return cache.ResourceEventHandlerFuncs{
+		AddFunc:    func(obj interface{}) { c.queue.Add(workQueueKey) },
+		UpdateFunc: func(old, new interface{}) { c.queue.Add(workQueueKey) },
+		DeleteFunc: func(obj interface{}) { c.queue.Add(workQueueKey) },
+	}
+}
