@@ -27,11 +27,10 @@ verify:
 	@go vet $(shell go list ./... | grep -v /vendor/)
 
 verify-deps:
-	@echo Skipping go mod vendor tests
-	# TODO re-enable
-	# @go mod tidy
-	# @go mod vendor
-	# @go mod verify
+	@echo starting vendor tests
+	@go mod tidy
+	@go mod vendor
+	@go mod verify
 
 clean:
 	rm -rf $(ROOT_DIR)/bin
