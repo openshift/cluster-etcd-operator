@@ -29,6 +29,8 @@ import (
 const (
 	workQueueKey     = "key"
 	EtcdCertValidity = 3 * 365 * 24 * time.Hour
+	caNamespace      = "openshift-config"
+	etcdNamespace    = "openshift-etcd"
 )
 
 type EtcdCertSignerController struct {
@@ -94,15 +96,16 @@ func (c *EtcdCertSignerController) processNextWorkItem() bool {
 
 func (c *EtcdCertSignerController) sync() error {
 	// TODO: make the namespace and name constants in one of the packages
-	cm, err := c.clientset.CoreV1().ConfigMaps("openshift-etcd").Get("member-config", metav1.GetOptions{})
+	cm, err := c.clientset.CoreV1().ConfigMaps(etcdNamespace).Get("member-config", metav1.GetOptions{})
 	if err != nil {
 		klog.Errorf("error getting configmap %#v\n", err)
 		return err
 	}
-	var scaling *clustermembercontroller.EtcdScaling
+	scaling := &clustermembercontroller.EtcdScaling{}
 	membershipData, ok := cm.Annotations[clustermembercontroller.EtcdScalingAnnotationKey]
 	if !ok {
-		return errors.New("unable to find scaling data")
+		// Scaling key not found in configmap, hence do nothing
+		return nil
 	}
 	err = json.Unmarshal([]byte(membershipData), scaling)
 	if err != nil {
@@ -117,26 +120,46 @@ func (c *EtcdCertSignerController) sync() error {
 		return errors.New("unable to get pod name")
 	}
 
-	pod, err := c.clientset.CoreV1().Pods("openshift-etcd").Get(scaling.Metadata.Name, metav1.GetOptions{})
-
+	pod, err := c.clientset.CoreV1().Pods(etcdNamespace).Get(scaling.Metadata.Name, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
+	if pod.Status.HostIP == "" {
+		return errors.New("pod does not have host IP assigned")
+	}
 
-	etcdCASecret, err := c.clientset.CoreV1().Secrets("openshift-config").Get("etcd-signer", metav1.GetOptions{})
-
+	etcdCASecret, err := c.clientset.CoreV1().Secrets(caNamespace).Get("etcd-signer", metav1.GetOptions{})
 	if err != nil {
 		klog.Errorf("unable to get etcd-signer secret %#v", err)
 		return err
 	}
 
-	peerHostNames := getPeerHostnames(pod, scaling.PodFQDN)
+	etcdMetricCASecret, err := c.clientset.CoreV1().Secrets(caNamespace).Get("etcd-metric-signer", metav1.GetOptions{})
+	if err != nil {
+		klog.Errorf("unable to get etcd-metric-signer secret %#v", err)
+		return err
+	}
 
-	pCert, pKey, err := getCerts(etcdCASecret, scaling.PodFQDN, "system:peers", peerHostNames)
+	err = ensureCASecret(etcdCASecret)
+	if err != nil {
+		klog.Errorf("etcd-signer ca secret invalid: %v", err)
+		return err
+	}
+
+	err = ensureCASecret(etcdMetricCASecret)
+	if err != nil {
+		klog.Errorf("etcd-metric-signer ca secret invalid: %v", err)
+		return err
+	}
 
 	peerSecretName := pod.Name + "-peer"
 	serverSecretName := pod.Name + "-server"
+	metricSecretname := pod.Name + "-metric"
 	secretNamespace := pod.Namespace
+
+	peerHostNames := getPeerHostnames(pod, scaling.PodFQDN)
+
+	pCert, pKey, err := getCerts(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], scaling.PodFQDN, "system:peers", peerHostNames)
 
 	err = c.populateSecret(peerSecretName, secretNamespace, pCert, pKey)
 	if err != nil {
@@ -146,7 +169,7 @@ func (c *EtcdCertSignerController) sync() error {
 
 	serverHostNames := getServerHostnames(pod, scaling.PodFQDN)
 
-	sCert, sKey, err := getCerts(etcdCASecret, scaling.PodFQDN, "system:servers", serverHostNames)
+	sCert, sKey, err := getCerts(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], scaling.PodFQDN, "system:servers", serverHostNames)
 
 	err = c.populateSecret(serverSecretName, secretNamespace, sCert, sKey)
 	if err != nil {
@@ -154,33 +177,23 @@ func (c *EtcdCertSignerController) sync() error {
 		return err
 	}
 
+	metricHostNames := getMetricHostnames(pod, scaling.PodFQDN)
+
+	metricCert, metricKey, err := getCerts(etcdMetricCASecret.Data["tls.crt"], etcdMetricCASecret.Data["tls.key"], scaling.PodFQDN, "system:etcd-metrics", metricHostNames)
+
+	err = c.populateSecret(metricSecretname, secretNamespace, metricCert, metricKey)
+	if err != nil {
+		klog.Errorf("unable to create peer secret %#v", err)
+		return err
+	}
+
 	return nil
 }
 
-func getServerHostnames(pod *v1.Pod, podFQDN string) []string {
-	return []string{
-		"localhost",
-		"etcd.kube-system.svc",
-		"etcd.kube-system.svc.cluster.local",
-		"etcd.openshift-etcd.svc",
-		"etcd.openshift-etcd.svc.cluster.local",
-		getServerWildCard(podFQDN),
-		pod.Status.HostIP,
-		"127.0.0.1",
-	}
-}
+func getCerts(caCert, caKey []byte, podFQDN, org string, peerHostNames []string) (*bytes.Buffer, *bytes.Buffer, error) {
 
-func getServerWildCard(podFQDN string) string {
-	return "*." + getDiscoveryDomain(podFQDN)
-}
-
-func getCerts(etcdCASecret *v1.Secret, podFQDN, org string, peerHostNames []string) (*bytes.Buffer, *bytes.Buffer, error) {
-	err := ensureCASecret(etcdCASecret)
-	if err != nil {
-		return nil, nil, err
-	}
 	cn, err := getCommonNameFromOrg(org)
-	etcdCAKeyPair, err := crypto.GetCAFromBytes(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"])
+	etcdCAKeyPair, err := crypto.GetCAFromBytes(caCert, caKey)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -262,17 +275,37 @@ func getPeerHostnames(pod *v1.Pod, podFQDN string) []string {
 	return []string{podFQDN, discovery, ip}
 }
 
+func getServerHostnames(pod *v1.Pod, podFQDN string) []string {
+	return []string{
+		"localhost",
+		"etcd.kube-system.svc",
+		"etcd.kube-system.svc.cluster.local",
+		"etcd.openshift-etcd.svc",
+		"etcd.openshift-etcd.svc.cluster.local",
+		getPodFQDNWildcard(podFQDN),
+		pod.Status.HostIP,
+		"127.0.0.1",
+	}
+}
+
+func getMetricHostnames(pod *v1.Pod, podFQDN string) []string {
+	return []string{
+		"localhost",
+		"etcd.kube-system.svc",
+		"etcd.kube-system.svc.cluster.local",
+		"etcd.openshift-etcd.svc",
+		"etcd.openshift-etcd.svc.cluster.local",
+		getPodFQDNWildcard(podFQDN),
+		pod.Status.HostIP,
+	}
+}
+
 func getDiscoveryDomain(podFQDN string) string {
 	return strings.Join(strings.Split(podFQDN, ".")[1:], ".")
 }
 
-// eventHandler queues the operator to check spec and status
-func (c *EtcdCertSignerController) eventHandler() cache.ResourceEventHandler {
-	return cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj interface{}) { c.queue.Add(workQueueKey) },
-		UpdateFunc: func(old, new interface{}) { c.queue.Add(workQueueKey) },
-		DeleteFunc: func(obj interface{}) { c.queue.Add(workQueueKey) },
-	}
+func getPodFQDNWildcard(podFQDN string) string {
+	return "*." + getDiscoveryDomain(podFQDN)
 }
 
 func (c *EtcdCertSignerController) populateSecret(secretName, secretNamespace string, cert *bytes.Buffer, key *bytes.Buffer) error {
@@ -286,4 +319,13 @@ func (c *EtcdCertSignerController) populateSecret(secretName, secretNamespace st
 	}
 	_, err := c.clientset.CoreV1().Secrets(secretNamespace).Create(secret)
 	return err
+}
+
+// eventHandler queues the operator to check spec and status
+func (c *EtcdCertSignerController) eventHandler() cache.ResourceEventHandler {
+	return cache.ResourceEventHandlerFuncs{
+		AddFunc:    func(obj interface{}) { c.queue.Add(workQueueKey) },
+		UpdateFunc: func(old, new interface{}) { c.queue.Add(workQueueKey) },
+		DeleteFunc: func(obj interface{}) { c.queue.Add(workQueueKey) },
+	}
 }
