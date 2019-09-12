@@ -20,6 +20,7 @@ import (
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
 )
@@ -110,6 +111,13 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 	etcdDiscoveryDomain := clusterInfrastructure.Status.EtcdDiscoveryDomain
 	coreClient := clientset
 
+	etcdCertSignerController := etcdcertsigner.NewEtcdCertSignerController(
+		coreClient,
+		operatorClient,
+		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
+		ctx.EventRecorder,
+	)
+
 	clusterMemberController := clustermembercontroller.NewClusterMemberController(
 		coreClient,
 		operatorClient,
@@ -121,6 +129,7 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 	kubeInformersForNamespaces.Start(ctx.Done())
 	configInformers.Start(ctx.Done())
 
+	go etcdCertSignerController.Run(1, ctx.Done())
 	go resourceSyncController.Run(1, ctx.Done())
 	go configObserver.Run(1, ctx.Done())
 	go clusterOperatorStatus.Run(1, ctx.Done())
