@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
+	"strings"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
@@ -38,6 +40,7 @@ type ClusterMemberController struct {
 	operatorConfigClient v1helpers.OperatorClient
 	queue                workqueue.RateLimitingInterface
 	eventRecorder        events.Recorder
+	etcdDiscoveryDomain  string
 }
 
 func NewClusterMemberController(
@@ -46,12 +49,14 @@ func NewClusterMemberController(
 
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
 	eventRecorder events.Recorder,
+	etcdDiscoveryDomain string,
 ) *ClusterMemberController {
 	c := &ClusterMemberController{
 		clientset:            clientset,
 		operatorConfigClient: operatorConfigClient,
 		queue:                workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ClusterMemberController"),
 		eventRecorder:        eventRecorder.WithComponentSuffix("cluster-member-controller"),
+		etcdDiscoveryDomain:  etcdDiscoveryDomain,
 	}
 	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Pods().Informer().AddEventHandler(c.eventHandler())
 
@@ -105,7 +110,7 @@ func (c *ClusterMemberController) sync() error {
 
 		// start scaling
 		retryErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-			result, err := c.clientset.CoreV1().ConfigMaps("openshift-etcd").Get("scaling-lock", metav1.GetOptions{})
+			result, err := c.clientset.CoreV1().ConfigMaps("openshift-etcd").Get("member-config", metav1.GetOptions{})
 			if err != nil {
 				return err
 			}
@@ -120,6 +125,8 @@ func (c *ClusterMemberController) sync() error {
 			return fmt.Errorf("Update approve failed: %v", retryErr)
 		}
 
+		// doing the pause is a hack lets wait for certs to finish?
+		// after certs runs we will block until we get the next command from configmap.
 		// block until we see running status
 		duration := 10 * time.Second
 		wait.PollInfinite(duration, func() (bool, error) {
@@ -161,7 +168,13 @@ func (c *ClusterMemberController) sync() error {
 		defer cli.Close()
 
 		// scale
-		if err := etcdMemberAdd(cli, []string{fmt.Sprintf("https://%s:2380", p.Status.HostIP)}); err != nil {
+		// although we dont use SRV for server bootstrap we do use the records to map peerurls
+		peerFQDN, err := reverseLookupSelf("etcd-server-ssl", "tcp", c.etcdDiscoveryDomain, p.Status.HostIP)
+		if err != nil {
+			klog.Errorf("error looking up self: %v", err)
+			continue
+		}
+		if err := etcdMemberAdd(cli, []string{fmt.Sprintf("https://%s:2380", peerFQDN)}); err != nil {
 			c.eventRecorder.Warning("ScalingFailed", err.Error())
 			return err
 		}
@@ -255,6 +268,32 @@ func (c *ClusterMemberController) IsMember(name string) bool {
 		}
 	}
 	return false
+}
+
+func reverseLookupSelf(service, proto, name, self string) (string, error) {
+	_, srvs, err := net.LookupSRV(service, proto, name)
+	if err != nil {
+		return "", err
+	}
+	selfTarget := ""
+	for _, srv := range srvs {
+		klog.V(4).Infof("checking against %s", srv.Target)
+		addrs, err := net.LookupHost(srv.Target)
+		if err != nil {
+			return "", fmt.Errorf("could not resolve member %q", srv.Target)
+		}
+
+		for _, addr := range addrs {
+			if addr == self {
+				selfTarget = strings.Trim(srv.Target, ".")
+				break
+			}
+		}
+	}
+	if selfTarget == "" {
+		return "", fmt.Errorf("could not find self")
+	}
+	return selfTarget, nil
 }
 
 func (c *ClusterMemberController) Run(stopCh <-chan struct{}) {

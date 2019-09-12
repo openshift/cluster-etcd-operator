@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render/options"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/v420_00_assets"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/v430_00_assets"
 	"github.com/openshift/library-go/pkg/assets"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	bootstrapVersion = "v4.2.0"
+	bootstrapVersion = "v4.3.0"
 )
 
 // renderOpts holds values to drive the render command.
@@ -27,15 +27,16 @@ type renderOpts struct {
 	manifest options.ManifestOptions
 	generic  options.GenericOptions
 
-	errOut                 io.Writer
-	etcdCAFile             string
-	etcdMetricCAFile       string
-	etcdDiscoveryDomain    string
-	etcdImage              string
-	setupEtcdEnvImage      string
-	kubeClientAgentImage   string
-	etcdStaticResourcesDir string
-	etcdConfigDir          string
+	errOut                   io.Writer
+	etcdCAFile               string
+	etcdMetricCAFile         string
+	etcdDiscoveryDomain      string
+	etcdImage                string
+	clusterEtcdOperatorImage string
+	etcdStaticResourcesDir   string
+	etcdConfigDir            string
+	setupEtcdEnvImage        string
+	kubeClientAgentImage     string
 }
 
 // NewRenderCommand creates a render command.
@@ -78,6 +79,7 @@ func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&r.etcdCAFile, "etcd-ca", r.etcdCAFile, "path to etcd CA certificate")
 	fs.StringVar(&r.etcdMetricCAFile, "etcd-metric-ca", r.etcdMetricCAFile, "path to etcd metric CA certificate")
 	fs.StringVar(&r.etcdImage, "manifest-etcd-image", r.etcdImage, "etcd manifest image")
+	fs.StringVar(&r.clusterEtcdOperatorImage, "manifest-cluster-etcd-operator-image", r.clusterEtcdOperatorImage, "cluster-etcd-operator manifest image")
 	fs.StringVar(&r.kubeClientAgentImage, "manifest-kube-client-agent-image", r.kubeClientAgentImage, "kube-client-agent manifest image")
 	fs.StringVar(&r.setupEtcdEnvImage, "manifest-setup-etcd-env-image", r.setupEtcdEnvImage, "setup-etcd-env manifest image")
 	fs.StringVar(&r.etcdDiscoveryDomain, "etcd-discovery-domain", r.etcdDiscoveryDomain, "etcd discovery domain")
@@ -107,6 +109,9 @@ func (r *renderOpts) Validate() error {
 	}
 	if len(r.setupEtcdEnvImage) == 0 {
 		return errors.New("missing required flag: --manifest-setup-etcd-env-image")
+	}
+	if len(r.clusterEtcdOperatorImage) == 0 {
+		return errors.New("missing required flag: --manifest-cluster-etcd-operator-image")
 	}
 	if len(r.etcdDiscoveryDomain) == 0 {
 		return errors.New("missing required flag: --etcd-discovery-domain")
@@ -204,7 +209,7 @@ func (r *renderOpts) Run() error {
 	}
 	if err := r.generic.ApplyTo(
 		&renderConfig.FileConfig,
-		options.Template{FileName: "defaultconfig.yaml", Content: v420_00_assets.MustAsset(filepath.Join(bootstrapVersion, "etcd", "defaultconfig.yaml"))},
+		options.Template{FileName: "defaultconfig.yaml", Content: v430_00_assets.MustAsset(filepath.Join(bootstrapVersion, "etcd", "defaultconfig.yaml"))},
 		mustReadTemplateFile(filepath.Join(r.generic.TemplatesDir, "config", "bootstrap-config-overrides.yaml")),
 		mustReadTemplateFile(filepath.Join(r.generic.TemplatesDir, "config", "config-overrides.yaml")),
 		&renderConfig,

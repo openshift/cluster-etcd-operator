@@ -22,5 +22,5 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: scaling-lock
+  name: member-config
   namespace: openshift-etcd

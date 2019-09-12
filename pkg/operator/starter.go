@@ -79,7 +79,7 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 	)
 
 	versionRecorder := status.NewVersionGetter()
-	clusterOperator, err := configClient.ConfigV1().ClusterOperators().Get("kube-apiserver", metav1.GetOptions{})
+	clusterOperator, err := configClient.ConfigV1().ClusterOperators().Get("etcd", metav1.GetOptions{})
 	if err != nil && !errors.IsNotFound(err) {
 		return err
 	}
@@ -103,7 +103,11 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 		versionRecorder,
 		ctx.EventRecorder,
 	)
-
+	clusterInfrastructure, err := configClient.ConfigV1().Infrastructures().Get("cluster", metav1.GetOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return err
+	}
+	etcdDiscoveryDomain := clusterInfrastructure.Status.EtcdDiscoveryDomain
 	coreClient := clientset
 
 	clusterMemberController := clustermembercontroller.NewClusterMemberController(
@@ -111,6 +115,7 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 		operatorClient,
 		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
 		ctx.EventRecorder,
+		etcdDiscoveryDomain,
 	)
 	operatorConfigInformers.Start(ctx.Done())
 	kubeInformersForNamespaces.Start(ctx.Done())
