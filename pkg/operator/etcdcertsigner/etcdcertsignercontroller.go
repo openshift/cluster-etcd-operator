@@ -1,9 +1,16 @@
 package etcdcertsigner
 
 import (
+	"bytes"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/openshift/library-go/pkg/crypto"
+	"k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"strings"
 	"time"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
@@ -19,7 +26,10 @@ import (
 	"k8s.io/klog"
 )
 
-const workQueueKey = "key"
+const (
+	workQueueKey     = "key"
+	EtcdCertValidity = 3 * 365 * 24 * time.Hour
+)
 
 type EtcdCertSignerController struct {
 	clientset corev1client.Interface
@@ -89,20 +99,171 @@ func (c *EtcdCertSignerController) sync() error {
 		klog.Errorf("error getting configmap %#v\n", err)
 		return err
 	}
-	var members *clustermembercontroller.EtcdScaling
+	var scaling *clustermembercontroller.EtcdScaling
 	membershipData, ok := cm.Annotations[clustermembercontroller.EtcdScalingAnnotationKey]
 	if !ok {
-		return errors.New("unable to find members data")
+		return errors.New("unable to find scaling data")
 	}
-	err = json.Unmarshal([]byte(membershipData), members)
+	err = json.Unmarshal([]byte(membershipData), scaling)
 	if err != nil {
-		klog.Infof("unable to unmarshal members data %#v\n", err)
+		klog.Infof("unable to unmarshal scaling data %#v\n", err)
 		return err
 	}
 	//TODO: Add the logic for generating certs
-	klog.Infof("Found etcd configmap with data %#v\n", members)
+	klog.Infof("Found etcd configmap with data %#v\n", scaling)
+
+	if scaling.Metadata == nil && scaling.Metadata.Name == "" {
+		klog.Errorf("unable to get pod name for scaling")
+		return errors.New("unable to get pod name")
+	}
+
+	pod, err := c.clientset.CoreV1().Pods("openshift-etcd").Get(scaling.Metadata.Name, metav1.GetOptions{})
+
+	if err != nil {
+		return err
+	}
+
+	etcdCASecret, err := c.clientset.CoreV1().Secrets("openshift-config").Get("etcd-signer", metav1.GetOptions{})
+
+	if err != nil {
+		klog.Errorf("unable to get etcd-signer secret %#v", err)
+		return err
+	}
+
+	peerHostNames := getPeerHostnames(pod, scaling.PodFQDN)
+
+	pCert, pKey, err := getCerts(etcdCASecret, scaling.PodFQDN, "system:peers", peerHostNames)
+
+	peerSecretName := pod.Name + "-peer"
+	serverSecretName := pod.Name + "-server"
+	secretNamespace := pod.Namespace
+
+	err = c.populateSecret(peerSecretName, secretNamespace, pCert, pKey)
+	if err != nil {
+		klog.Errorf("unable to create peer secret %#v", err)
+		return err
+	}
+
+	serverHostNames := getServerHostnames(pod, scaling.PodFQDN)
+
+	sCert, sKey, err := getCerts(etcdCASecret, scaling.PodFQDN, "system:servers", serverHostNames)
+
+	err = c.populateSecret(serverSecretName, secretNamespace, sCert, sKey)
+	if err != nil {
+		klog.Errorf("unable to create server secret %#v", err)
+		return err
+	}
 
 	return nil
+}
+
+func getServerHostnames(pod *v1.Pod, podFQDN string) []string {
+	return []string{
+		"localhost",
+		"etcd.kube-system.svc",
+		"etcd.kube-system.svc.cluster.local",
+		"etcd.openshift-etcd.svc",
+		"etcd.openshift-etcd.svc.cluster.local",
+		getServerWildCard(podFQDN),
+		pod.Status.HostIP,
+		"127.0.0.1",
+	}
+}
+
+func getServerWildCard(podFQDN string) string {
+	return "*." + getDiscoveryDomain(podFQDN)
+}
+
+func getCerts(etcdCASecret *v1.Secret, podFQDN, org string, peerHostNames []string) (*bytes.Buffer, *bytes.Buffer, error) {
+	err := ensureCASecret(etcdCASecret)
+	if err != nil {
+		return nil, nil, err
+	}
+	cn, err := getCommonNameFromOrg(org)
+	etcdCAKeyPair, err := crypto.GetCAFromBytes(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"])
+	if err != nil {
+		return nil, nil, err
+	}
+
+	certConfig, err := etcdCAKeyPair.MakeServerCertForDuration(sets.NewString(peerHostNames...), EtcdCertValidity, func(cert *x509.Certificate) error {
+
+		cert.Issuer = pkix.Name{
+			OrganizationalUnit: []string{"openshift"},
+			CommonName:         cn,
+		}
+		cert.Subject = pkix.Name{
+			Organization: []string{org},
+			CommonName:   strings.TrimSuffix(org, "s") + ":" + podFQDN,
+		}
+		cert.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth}
+
+		// TODO: Extended Key Usage:
+		// All profiles expect a x509.ExtKeyUsageCodeSigning set on extended Key Usages
+		// need to investigage: https://github.com/etcd-io/etcd/issues/9398#issuecomment-435340312
+		// TODO: some extensions are missing form cfssl.
+		// e.g.
+		//	X509v3 Subject Key Identifier:
+		//		B7:30:0B:CF:47:4E:21:AE:13:60:74:42:B0:D9:C4:F3:26:69:63:03
+		//	X509v3 Authority Key Identifier:
+		//		keyid:9B:C0:6B:0C:8E:5C:73:6A:83:B1:E4:54:97:D3:62:18:8A:9C:BC:1E
+		// TODO: Change serial number logic, to something as follows.
+		// The following is taken from CFSSL library.
+		// If CFSSL is providing the serial numbers, it makes
+		// sense to use the max supported size.
+
+		//	serialNumber := make([]byte, 20)
+		//	_, err = io.ReadFull(rand.Reader, serialNumber)
+		//	if err != nil {
+		//		return err
+		//	}
+		//
+		//	// SetBytes interprets buf as the bytes of a big-endian
+		//	// unsigned integer. The leading byte should be masked
+		//	// off to ensure it isn't negative.
+		//	serialNumber[0] &= 0x7F
+		//	cert.SerialNumber = new(big.Int).SetBytes(serialNumber)
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	certBytes := &bytes.Buffer{}
+	keyBytes := &bytes.Buffer{}
+	if err := certConfig.WriteCertConfig(certBytes, keyBytes); err != nil {
+		return nil, nil, err
+	}
+	return certBytes, keyBytes, nil
+}
+
+func ensureCASecret(secret *v1.Secret) error {
+	if _, ok := secret.Data["tls.crt"]; !ok {
+		return errors.New("CA Cert not found")
+	}
+	if _, ok := secret.Data["tls.key"]; !ok {
+		return errors.New("CA Pem not found")
+	}
+	return nil
+}
+
+func getCommonNameFromOrg(org string) (string, error) {
+	if strings.Contains(org, "peer") || strings.Contains(org, "server") {
+		return "etcd-signer", nil
+	}
+	if strings.Contains(org, "metric") {
+		return "etcd-metric-signer", nil
+	}
+	return "", errors.New("unable to recognise secret name")
+}
+
+func getPeerHostnames(pod *v1.Pod, podFQDN string) []string {
+	discovery := getDiscoveryDomain(podFQDN)
+	ip := pod.Status.HostIP
+	return []string{podFQDN, discovery, ip}
+}
+
+func getDiscoveryDomain(podFQDN string) string {
+	return strings.Join(strings.Split(podFQDN, ".")[1:], ".")
 }
 
 // eventHandler queues the operator to check spec and status
@@ -112,4 +273,17 @@ func (c *EtcdCertSignerController) eventHandler() cache.ResourceEventHandler {
 		UpdateFunc: func(old, new interface{}) { c.queue.Add(workQueueKey) },
 		DeleteFunc: func(obj interface{}) { c.queue.Add(workQueueKey) },
 	}
+}
+
+func (c *EtcdCertSignerController) populateSecret(secretName, secretNamespace string, cert *bytes.Buffer, key *bytes.Buffer) error {
+	//TODO: Update annotations Not Before and Not After for Cert Rotation
+	secret := &v1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: "openshift-etcd"},
+		Data: map[string][]byte{
+			"tls.crt": cert.Bytes(),
+			"tls.key": key.Bytes(),
+		},
+	}
+	_, err := c.clientset.CoreV1().Secrets(secretNamespace).Create(secret)
+	return err
 }
