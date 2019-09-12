@@ -66,6 +66,7 @@ func NewClusterMemberController(
 type EtcdScaling struct {
 	Metadata *metav1.ObjectMeta `json:"metadata,omitempty"`
 	Members  []Member           `json:"members,omitempty"`
+	PodFQDN  string             `json:"podFQDN,omitempty"`
 }
 
 type Member struct {
@@ -95,12 +96,22 @@ func (c *ClusterMemberController) sync() error {
 		if err != nil {
 			return err
 		}
+
+		// scale
+		// although we dont use SRV for server bootstrap we do use the records to map peerurls
+		peerFQDN, err := reverseLookupSelf("etcd-server-ssl", "tcp", c.etcdDiscoveryDomain, p.Status.HostIP)
+		if err != nil {
+			klog.Errorf("error looking up self: %v", err)
+			continue
+		}
+
 		es := EtcdScaling{
 			Metadata: &metav1.ObjectMeta{
 				Name:              p.Name,
 				CreationTimestamp: metav1.Time{Time: time.Now()},
 			},
 			Members: members,
+			PodFQDN: peerFQDN,
 		}
 
 		esb, err := json.Marshal(es)
@@ -167,13 +178,6 @@ func (c *ClusterMemberController) sync() error {
 		}
 		defer cli.Close()
 
-		// scale
-		// although we dont use SRV for server bootstrap we do use the records to map peerurls
-		peerFQDN, err := reverseLookupSelf("etcd-server-ssl", "tcp", c.etcdDiscoveryDomain, p.Status.HostIP)
-		if err != nil {
-			klog.Errorf("error looking up self: %v", err)
-			continue
-		}
 		if err := etcdMemberAdd(cli, []string{fmt.Sprintf("https://%s:2380", peerFQDN)}); err != nil {
 			c.eventRecorder.Warning("ScalingFailed", err.Error())
 			return err
