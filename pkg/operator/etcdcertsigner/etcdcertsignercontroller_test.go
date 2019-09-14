@@ -177,3 +177,48 @@ func verify(a getCertArgs, cert *bytes.Buffer) error {
 
 	return e
 }
+
+func Test_getSecretName(t *testing.T) {
+	type args struct {
+		org     string
+		podFQDN string
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		// TODO: Add test cases.
+		{
+			name: "server test case",
+			args: args{
+				org:     serverOrg,
+				podFQDN: "etcd-0.foo.bar",
+			},
+			want: "server-etcd-0.foo.bar",
+		},
+		{
+			name: "peer test case",
+			args: args{
+				org:     peerOrg,
+				podFQDN: "etcd-0.foo.bar",
+			},
+			want: "peer-etcd-0.foo.bar",
+		},
+		{
+			name: "metric test case",
+			args: args{
+				org:     metricOrg,
+				podFQDN: "etcd-0.foo.bar",
+			},
+			want: "metric-etcd-0.foo.bar",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := getSecretName(tt.args.org, tt.args.podFQDN); got != tt.want {
+				t.Errorf("getSecretName() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

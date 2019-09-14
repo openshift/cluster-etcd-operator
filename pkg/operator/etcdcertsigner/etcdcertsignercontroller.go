@@ -7,13 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
-	"time"
 
 	"github.com/openshift/library-go/pkg/crypto"
 	"k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"strings"
+	"time"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/library-go/pkg/operator/events"
@@ -33,6 +33,9 @@ const (
 	EtcdCertValidity = 3 * 365 * 24 * time.Hour
 	caNamespace      = "openshift-config"
 	etcdNamespace    = "openshift-etcd"
+	peerOrg          = "system:etcd-peers"
+	serverOrg        = "system:etcd-servers"
+	metricOrg        = "system:etcd-metrics"
 )
 
 type EtcdCertSignerController struct {
@@ -154,16 +157,13 @@ func (c *EtcdCertSignerController) sync() error {
 		return err
 	}
 
-	peerSecretName := pod.Name + "-peer"
-	serverSecretName := pod.Name + "-server"
-	metricSecretname := pod.Name + "-metric"
 	secretNamespace := pod.Namespace
 
 	peerHostNames := getPeerHostnames(pod, scaling.PodFQDN)
 
-	pCert, pKey, err := getCerts(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], scaling.PodFQDN, "system:etcd-peers", peerHostNames)
+	pCert, pKey, err := getCerts(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], scaling.PodFQDN, peerOrg, peerHostNames)
 
-	err = c.populateSecret(peerSecretName, secretNamespace, pCert, pKey)
+	err = c.populateSecret(getSecretName(peerOrg, scaling.PodFQDN), secretNamespace, pCert, pKey)
 	if err != nil {
 		klog.Errorf("unable to create peer secret %#v", err)
 		return err
@@ -171,9 +171,9 @@ func (c *EtcdCertSignerController) sync() error {
 
 	serverHostNames := getServerHostnames(pod, scaling.PodFQDN)
 
-	sCert, sKey, err := getCerts(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], scaling.PodFQDN, "system:etcd-servers", serverHostNames)
+	sCert, sKey, err := getCerts(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], scaling.PodFQDN, serverOrg, serverHostNames)
 
-	err = c.populateSecret(serverSecretName, secretNamespace, sCert, sKey)
+	err = c.populateSecret(getSecretName(serverOrg, scaling.PodFQDN), secretNamespace, sCert, sKey)
 	if err != nil {
 		klog.Errorf("unable to create server secret %#v", err)
 		return err
@@ -181,9 +181,9 @@ func (c *EtcdCertSignerController) sync() error {
 
 	metricHostNames := getMetricHostnames(pod, scaling.PodFQDN)
 
-	metricCert, metricKey, err := getCerts(etcdMetricCASecret.Data["tls.crt"], etcdMetricCASecret.Data["tls.key"], scaling.PodFQDN, "system:etcd-metrics", metricHostNames)
+	metricCert, metricKey, err := getCerts(etcdMetricCASecret.Data["tls.crt"], etcdMetricCASecret.Data["tls.key"], scaling.PodFQDN, metricOrg, metricHostNames)
 
-	err = c.populateSecret(metricSecretname, secretNamespace, metricCert, metricKey)
+	err = c.populateSecret(getSecretName(metricOrg, scaling.PodFQDN), secretNamespace, metricCert, metricKey)
 	if err != nil {
 		klog.Errorf("unable to create peer secret %#v", err)
 		return err
@@ -308,6 +308,19 @@ func getDiscoveryDomain(podFQDN string) string {
 
 func getPodFQDNWildcard(podFQDN string) string {
 	return "*." + getDiscoveryDomain(podFQDN)
+}
+
+func getSecretName(org, podFQDN string) string {
+	if strings.Contains(org, "peer") {
+		return "peer-" + podFQDN
+	}
+	if strings.Contains(org, "server") {
+		return "server-" + podFQDN
+	}
+	if strings.Contains(org, "metric") {
+		return "metric-" + podFQDN
+	}
+	return ""
 }
 
 func (c *EtcdCertSignerController) populateSecret(secretName, secretNamespace string, cert *bytes.Buffer, key *bytes.Buffer) error {

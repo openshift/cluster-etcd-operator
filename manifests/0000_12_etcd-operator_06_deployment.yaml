@@ -47,6 +47,8 @@ spec:
           value: quay.io/openshift/origin-hyperkube:v4.0
         - name: OPERATOR_IMAGE
           value: quay.io/openshift/cluster-etcd-operator:v4.0
+        - name: OPERATOR_IMAGE_VERSION
+          value: "0.0.1-snapshot"
         - name: POD_NAME
           valueFrom:
             fieldRef:
