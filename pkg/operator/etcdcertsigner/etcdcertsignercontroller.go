@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/openshift/library-go/pkg/crypto"
 	"k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"strings"
 	"time"
@@ -159,7 +160,7 @@ func (c *EtcdCertSignerController) sync() error {
 
 	peerHostNames := getPeerHostnames(pod, scaling.PodFQDN)
 
-	pCert, pKey, err := getCerts(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], scaling.PodFQDN, "system:peers", peerHostNames)
+	pCert, pKey, err := getCerts(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], scaling.PodFQDN, "system:etcd-peers", peerHostNames)
 
 	err = c.populateSecret(peerSecretName, secretNamespace, pCert, pKey)
 	if err != nil {
@@ -169,7 +170,7 @@ func (c *EtcdCertSignerController) sync() error {
 
 	serverHostNames := getServerHostnames(pod, scaling.PodFQDN)
 
-	sCert, sKey, err := getCerts(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], scaling.PodFQDN, "system:servers", serverHostNames)
+	sCert, sKey, err := getCerts(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], scaling.PodFQDN, "system:etcd-servers", serverHostNames)
 
 	err = c.populateSecret(serverSecretName, secretNamespace, sCert, sKey)
 	if err != nil {
@@ -310,14 +311,26 @@ func getPodFQDNWildcard(podFQDN string) string {
 
 func (c *EtcdCertSignerController) populateSecret(secretName, secretNamespace string, cert *bytes.Buffer, key *bytes.Buffer) error {
 	//TODO: Update annotations Not Before and Not After for Cert Rotation
-	secret := &v1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: "openshift-etcd"},
-		Data: map[string][]byte{
-			"tls.crt": cert.Bytes(),
-			"tls.key": key.Bytes(),
-		},
+	secret, err := c.clientset.CoreV1().Secrets(secretNamespace).Get(secretName, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			secret := &v1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: "openshift-etcd"},
+				Data: map[string][]byte{
+					"tls.crt": cert.Bytes(),
+					"tls.key": key.Bytes(),
+				},
+			}
+			_, err := c.clientset.CoreV1().Secrets(secretNamespace).Create(secret)
+			return err
+		}
+		return err
 	}
-	_, err := c.clientset.CoreV1().Secrets(secretNamespace).Create(secret)
+	secret.Data = map[string][]byte{
+		"tls.crt": cert.Bytes(),
+		"tls.key": key.Bytes(),
+	}
+	_, err = c.clientset.CoreV1().Secrets(secretNamespace).Update(secret)
 	return err
 }
 
