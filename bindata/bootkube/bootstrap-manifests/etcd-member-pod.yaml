@@ -25,9 +25,7 @@ spec:
     - name: ETCD_DATA_DIR
       value: "/var/lib/etcd"
     - name: ETCD_NAME
-      valueFrom:
-        fieldRef:
-          fieldPath: metadata.name
+      value: "etcd-bootstrap"
   - name: certs
     image: "{{.Images.KubeClientAgent}}"
     command:
@@ -128,9 +126,7 @@ spec:
     - name: ETCD_DATA_DIR
       value: "/var/lib/etcd"
     - name: ETCD_NAME
-      valueFrom:
-        fieldRef:
-          fieldPath: metadata.name
+      value: "etcd-bootstrap"
     ports:
     - name: peer
       containerPort: 2380

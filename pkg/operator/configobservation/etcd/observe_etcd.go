@@ -2,7 +2,6 @@ package etcd
 
 import (
 	"fmt"
-	"net"
 	"reflect"
 	"strings"
 
@@ -64,15 +63,15 @@ func ObserveClusterMembers(genericListers configobserver.Listers, recorder event
 		for _, address := range subset.Addresses {
 			if address.Hostname == "etcd-bootstrap" {
 				etcdURL := map[string]interface{}{}
-				ip, err := net.LookupIP(fmt.Sprintf("%s.%s", address.Hostname, dnsSuffix))
-				if err != nil {
-					errs = append(errs, err)
-				}
+				//ip, err := net.LookupIP(fmt.Sprintf("%s.%s", address.Hostname, dnsSuffix))
+				//if err != nil {
+				//	errs = append(errs, err)
+				//}
 				name := address.Hostname
 				if err := unstructured.SetNestedField(etcdURL, name, "name"); err != nil {
 					return currentConfig, append(errs, err)
 				}
-				peerURLs := fmt.Sprintf("https://%s:2380", ip[0].String())
+				peerURLs := fmt.Sprintf("https://%s.%s:2380", name, dnsSuffix)
 				if err := unstructured.SetNestedField(etcdURL, peerURLs, "peerURLs"); err != nil {
 					return currentConfig, append(errs, err)
 				}
