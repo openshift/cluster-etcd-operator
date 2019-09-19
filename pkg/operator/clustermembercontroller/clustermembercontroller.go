@@ -24,6 +24,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
 	corev1client "k8s.io/client-go/kubernetes"
 )
 
@@ -90,6 +91,15 @@ func (c *ClusterMemberController) sync() error {
 		if c.IsMember(p.Name) {
 			klog.Infof("Member is already part of the cluster %s\n", p.Name)
 			continue
+		}
+
+		// report scaling
+		cond := operatorv1.OperatorCondition{
+			Type:   operatorv1.OperatorStatusTypeProgressing,
+			Status: operatorv1.ConditionTrue,
+		}
+		if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(cond)); updateError != nil {
+			return updateError
 		}
 
 		members, err := c.MemberList()
@@ -194,6 +204,23 @@ func (c *ClusterMemberController) sync() error {
 		return rerr
 	}
 	klog.Infof("All cluster members observed, scaling complete!")
+	// report available
+	cond := operatorv1.OperatorCondition{
+		Type:   operatorv1.OperatorStatusTypeAvailable,
+		Status: operatorv1.ConditionTrue,
+	}
+	if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(cond)); updateError != nil {
+		return updateError
+	}
+
+	cond = operatorv1.OperatorCondition{
+		Type:   operatorv1.OperatorStatusTypeUpgradeable,
+		Status: operatorv1.ConditionFalse,
+	}
+	if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(cond)); updateError != nil {
+		return updateError
+	}
+
 	return nil
 }
 
