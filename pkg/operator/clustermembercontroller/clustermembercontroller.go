@@ -93,12 +93,17 @@ func (c *ClusterMemberController) sync() error {
 			continue
 		}
 
-		// report scaling
-		cond := operatorv1.OperatorCondition{
+		condUpgradable := operatorv1.OperatorCondition{
+			Type:   operatorv1.OperatorStatusTypeUpgradeable,
+			Status: operatorv1.ConditionFalse,
+		}
+		condProgressing := operatorv1.OperatorCondition{
 			Type:   operatorv1.OperatorStatusTypeProgressing,
 			Status: operatorv1.ConditionTrue,
 		}
-		if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(cond)); updateError != nil {
+		if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient,
+			v1helpers.UpdateConditionFn(condUpgradable),
+			v1helpers.UpdateConditionFn(condProgressing)); updateError != nil {
 			return updateError
 		}
 
@@ -205,19 +210,24 @@ func (c *ClusterMemberController) sync() error {
 	}
 	klog.Infof("All cluster members observed, scaling complete!")
 	// report available
-	cond := operatorv1.OperatorCondition{
+	condAvailable := operatorv1.OperatorCondition{
 		Type:   operatorv1.OperatorStatusTypeAvailable,
 		Status: operatorv1.ConditionTrue,
 	}
-	if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(cond)); updateError != nil {
-		return updateError
-	}
-
-	cond = operatorv1.OperatorCondition{
+	condUpgradable := operatorv1.OperatorCondition{
 		Type:   operatorv1.OperatorStatusTypeUpgradeable,
+		Status: operatorv1.ConditionTrue,
+	}
+	condProgressing := operatorv1.OperatorCondition{
+		Type:   operatorv1.OperatorStatusTypeProgressing,
 		Status: operatorv1.ConditionFalse,
 	}
-	if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(cond)); updateError != nil {
+
+	if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient,
+		v1helpers.UpdateConditionFn(condAvailable),
+		v1helpers.UpdateConditionFn(condUpgradable),
+		v1helpers.UpdateConditionFn(condProgressing)); updateError != nil {
+		klog.Infof("Error updating status %#v", err)
 		return updateError
 	}
 
