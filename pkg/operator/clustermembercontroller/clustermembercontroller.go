@@ -84,6 +84,16 @@ func (c *ClusterMemberController) sync() error {
 		return err
 	}
 
+	//since the operator is running, it means the cluster etcd is available
+	availableCond := operatorv1.OperatorCondition{
+		Type:   operatorv1.OperatorStatusTypeAvailable,
+		Status: operatorv1.ConditionTrue,
+	}
+	if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient,
+		v1helpers.UpdateConditionFn(availableCond)); updateError != nil {
+		return updateError
+	}
+
 	for i := range pods.Items {
 		p := &pods.Items[i]
 		klog.Infof("Found etcd Pod with name %v\n", p.Name)
