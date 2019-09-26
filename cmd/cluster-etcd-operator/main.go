@@ -15,6 +15,7 @@ import (
 
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/staticpodcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/staticsynccontroller"
 )
 
@@ -47,6 +48,7 @@ func NewSSCSCommand() *cobra.Command {
 	cmd.AddCommand(operator.NewOperator())
 	cmd.AddCommand(render.NewRenderCommand(os.Stderr))
 	cmd.AddCommand(staticsynccontroller.NewStaticSyncCommand(os.Stderr))
+	cmd.AddCommand(staticpodcontroller.NewStaticPodCommand(os.Stderr))
 
 	return cmd
 }
