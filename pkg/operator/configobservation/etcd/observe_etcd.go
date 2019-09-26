@@ -22,22 +22,23 @@ const (
 
 // TODO break out logic into functions to reduce dupe code.
 // ObserveClusterMembers observes the current etcd cluster members.
-func ObserveClusterMembers(genericListers configobserver.Listers, recorder events.Recorder, currentConfig map[string]interface{}) (observedConfig map[string]interface{}, errs []error) {
+func ObserveClusterMembers(genericListers configobserver.Listers, recorder events.Recorder, existingConfig map[string]interface{}) (observedConfig map[string]interface{}, errs []error) {
 	listers := genericListers.(configobservation.Listers)
 	observedConfig = map[string]interface{}{}
 	clusterMemberPath := []string{"cluster", "members"}
+	var errs []error
 
-	currentClusterMembers, found, err := unstructured.NestedSlice(currentConfig, clusterMemberPath...)
+	previouslyObservedMembers, found, err := unstructured.NestedSlice(existingConfig, clusterMemberPath...)
 	if err != nil {
 		errs = append(errs, err)
 	}
 	if found {
-		if err := unstructured.SetNestedSlice(observedConfig, currentClusterMembers, clusterMemberPath...); err != nil {
+		if err := unstructured.SetNestedSlice(observedConfig, previouslyObservedMembers, clusterMemberPath...); err != nil {
 			errs = append(errs, err)
 		}
 	}
 
-	previousMemberCount := len(currentClusterMembers)
+	previousMemberCount := len(previouslyObservedMembers)
 	var etcdURLs []interface{}
 	// etcd-bootstrao is a special case. In the future the bootstrap node will be observable but for now we make assumptions.
 	etcdHostEndpoints, err := listers.OpenshiftEtcdEndpointsLister.Endpoints(etcdEndpointNamespace).Get(etcdHostEndpointName)
@@ -69,11 +70,11 @@ func ObserveClusterMembers(genericListers configobserver.Listers, recorder event
 				//}
 				name := address.Hostname
 				if err := unstructured.SetNestedField(etcdURL, name, "name"); err != nil {
-					return currentConfig, append(errs, err)
+					return existingConfig, append(errs, err)
 				}
 				peerURLs := fmt.Sprintf("https://%s.%s:2380", name, dnsSuffix)
 				if err := unstructured.SetNestedField(etcdURL, peerURLs, "peerURLs"); err != nil {
-					return currentConfig, append(errs, err)
+					return existingConfig, append(errs, err)
 				}
 				currentMemberCount++
 				etcdURLs = append(etcdURLs, etcdURL)
@@ -100,12 +101,12 @@ func ObserveClusterMembers(genericListers configobserver.Listers, recorder event
 			etcdURL := map[string]interface{}{}
 			name := address.TargetRef.Name
 			if err := unstructured.SetNestedField(etcdURL, name, "name"); err != nil {
-				return currentConfig, append(errs, err)
+				return existingConfig, append(errs, err)
 			}
 
 			peerURLs := fmt.Sprintf("https://%s:2380", address.IP)
 			if err := unstructured.SetNestedField(etcdURL, peerURLs, "peerURLs"); err != nil {
-				return currentConfig, append(errs, err)
+				return existingConfig, append(errs, err)
 			}
 			currentMemberCount++
 			etcdURLs = append(etcdURLs, etcdURL)
@@ -114,20 +115,20 @@ func ObserveClusterMembers(genericListers configobserver.Listers, recorder event
 
 	if currentMemberCount >= previousMemberCount {
 		if err := unstructured.SetNestedField(observedConfig, etcdURLs, clusterMemberPath...); err != nil {
-			return currentConfig, append(errs, err)
+			return existingConfig, append(errs, err)
 		}
 	} else {
 		// for now we don't allow the list to deciment because we are only handling bootstrap
 		// in future this needs proper consideration.
 		recorder.Warningf("ObserveClusterMembers", "Possible flapping current members observed (%d) is less than previous (%v)", currentMemberCount, previousMemberCount)
-		return currentConfig, errs
+		return existingConfig, errs
 	}
 
 	if len(errs) > 0 {
 		return
 	}
 
-	if !reflect.DeepEqual(currentClusterMembers, etcdURLs) {
+	if !reflect.DeepEqual(previouslyObservedMembers, etcdURLs) {
 		recorder.Eventf("ObserveClusterMembersUpdated", "Updated cluster members to %v", etcdURLs)
 	}
 	return

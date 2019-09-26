@@ -60,14 +60,16 @@ func NewClusterMemberController(
 		etcdDiscoveryDomain:  etcdDiscoveryDomain,
 	}
 	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Pods().Informer().AddEventHandler(c.eventHandler())
+	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Endpoints().Informer().AddEventHandler(c.eventHandler())
 
 	return c
 }
 
 type EtcdScaling struct {
-	Metadata *metav1.ObjectMeta `json:"metadata,omitempty"`
-	Members  []Member           `json:"members,omitempty"`
-	PodFQDN  string             `json:"podFQDN,omitempty"`
+	Metadata   *metav1.ObjectMeta `json:"metadata,omitempty"`
+	Members    []Member           `json:"members,omitempty"`
+	PodFQDN    string             `json:"podFQDN,omitempty"`
+	Conditions []ScaleCondition   `json:"conditions,omitempty"`
 }
 
 type Member struct {
@@ -76,6 +78,16 @@ type Member struct {
 	PeerURLS   []string `json:"peerURLs,omitempty"`
 	ClientURLS []string `json:"clientURLs,omitempty"`
 }
+
+type ScaleCondition struct {
+	// ScaleConditionType
+	Type ScaleConditionType `json:"type"`
+	// timestamp for the last update to this condition
+	// +optional
+	LastUpdateTime metav1.Time `json:"lastUpdateTime,omitempty" protobuf:"bytes,4,opt,name=lastUpdateTime"`
+}
+
+type ScaleConditionType string
 
 func (c *ClusterMemberController) sync() error {
 	pods, err := c.clientset.CoreV1().Pods("openshift-etcd").List(metav1.ListOptions{LabelSelector: "k8s-app=etcd"})
@@ -100,6 +112,16 @@ func (c *ClusterMemberController) sync() error {
 
 		if c.IsMember(p.Name) {
 			klog.Infof("Member is already part of the cluster %s\n", p.Name)
+			name, err := c.getScaleAnnotationName()
+			if err != nil {
+				klog.Errorf("failed to obtain name from annotation %v", err)
+			}
+			// clear annotation
+			if name == p.Name {
+				if err := c.setScaleAnnotation(""); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 
@@ -146,16 +168,10 @@ func (c *ClusterMemberController) sync() error {
 
 		// start scaling
 		retryErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-			result, err := c.clientset.CoreV1().ConfigMaps("openshift-etcd").Get("member-config", metav1.GetOptions{})
-			if err != nil {
+			if err := c.setScaleAnnotation(string(esb)); err != nil {
 				return err
 			}
-			if result.Annotations == nil {
-				result.Annotations = make(map[string]string)
-			}
-			result.Annotations[EtcdScalingAnnotationKey] = string(esb)
-			_, updateErr := c.clientset.CoreV1().ConfigMaps("openshift-etcd").Update(result)
-			return updateErr
+			return nil
 		})
 		if retryErr != nil {
 			return fmt.Errorf("Update approve failed: %v", retryErr)
@@ -179,29 +195,10 @@ func (c *ClusterMemberController) sync() error {
 			return true, nil
 		})
 
-		// TODO break out to func
-		endpoints, err := c.Endpoints()
+		cli, err := c.getEtcdClient()
 		if err != nil {
 			return err
 		}
-		tlsInfo := transport.TLSInfo{
-			CertFile:      etcdCertFile,
-			KeyFile:       etcdKeyFile,
-			TrustedCAFile: etcdTrustedCAFile,
-		}
-		tlsConfig, err := tlsInfo.ClientConfig()
-
-		cfg := &clientv3.Config{
-			Endpoints:   endpoints,
-			DialTimeout: 5 * time.Second,
-			TLS:         tlsConfig,
-		}
-
-		cli, err := clientv3.New(*cfg)
-		if err != nil {
-			return err
-		}
-		defer cli.Close()
 
 		if err := etcdMemberAdd(cli, []string{fmt.Sprintf("https://%s:2380", peerFQDN)}); err != nil {
 			c.eventRecorder.Warning("ScalingFailed", err.Error())
@@ -265,6 +262,54 @@ func (c *ClusterMemberController) Endpoints() ([]string, error) {
 	return []string{endpoints[0]}, nil
 }
 
+func (c *ClusterMemberController) getEtcdClient() (*clientv3.Client, error) {
+	endpoints, err := c.Endpoints()
+	if err != nil {
+		return nil, err
+	}
+	tlsInfo := transport.TLSInfo{
+		CertFile:      etcdCertFile,
+		KeyFile:       etcdKeyFile,
+		TrustedCAFile: etcdTrustedCAFile,
+	}
+	tlsConfig, err := tlsInfo.ClientConfig()
+
+	cfg := &clientv3.Config{
+		Endpoints:   endpoints,
+		DialTimeout: 5 * time.Second,
+		TLS:         tlsConfig,
+	}
+
+	cli, err := clientv3.New(*cfg)
+	if err != nil {
+		return nil, err
+	}
+	return cli, err
+}
+
+func (c *ClusterMemberController) etcdMemberRemove(name string) error {
+	cli, err := c.getEtcdClient()
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+	l, err := cli.MemberList(context.Background())
+	if err != nil {
+		return err
+	}
+	for _, member := range l.Members {
+		if member.Name == name {
+
+			resp, err := cli.MemberRemove(context.Background(), member.ID)
+			if err != nil {
+				return err
+			}
+			klog.Infof("Members left %#v", resp.Members)
+		}
+	}
+	return nil
+}
+
 func (c *ClusterMemberController) MemberList() ([]Member, error) {
 	configPath := []string{"cluster", "members"}
 	operatorSpec, _, _, err := c.operatorConfigClient.GetOperatorState()
@@ -319,6 +364,43 @@ func (c *ClusterMemberController) IsMember(name string) bool {
 		}
 	}
 	return false
+}
+
+func (c *ClusterMemberController) setScaleAnnotation(scaling string) error {
+	result, err := c.clientset.CoreV1().ConfigMaps("openshift-etcd").Get("member-config", metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	if result.Annotations == nil {
+		result.Annotations = make(map[string]string)
+	}
+	result.Annotations[EtcdScalingAnnotationKey] = scaling
+	_, updateErr := c.clientset.CoreV1().ConfigMaps("openshift-etcd").Update(result)
+	if updateErr != nil {
+		return updateErr
+	}
+
+	return nil
+}
+
+func (c *ClusterMemberController) getScaleAnnotationName() (string, error) {
+	result, err := c.clientset.CoreV1().ConfigMaps("openshift-etcd").Get("member-config", metav1.GetOptions{})
+	if err != nil {
+		return "", err
+	}
+	scaling := &EtcdScaling{}
+	data, ok := result.Annotations[EtcdScalingAnnotationKey]
+	if !ok {
+		return "", fmt.Errorf("scaling annotation not found")
+	}
+	if err := json.Unmarshal([]byte(data), scaling); err != nil {
+		klog.Infof("unable to unmarshal scaling data %#v\n", err)
+		return "", err
+	}
+	if scaling.Metadata.Name == "" {
+		return "", fmt.Errorf("scaling annotation name not found")
+	}
+	return scaling.Metadata.Name, nil
 }
 
 func reverseLookupSelf(service, proto, name, self string) (string, error) {
