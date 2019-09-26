@@ -20,11 +20,13 @@ exclude github.com/openshift/client-go v3.9.0+incompatible
 
 require (
 	github.com/NYTimes/gziphandler v1.1.1 // indirect
+	github.com/ajeddeloh/go-json v0.0.0-20170920214419-6a2fe990e083 // indirect
 	github.com/certifi/gocertifi v0.0.0-20190506164543-d2eda7129713 // indirect
 	github.com/cloudflare/cfssl v0.0.0-20190716005913-5fc50ce768d7
 	github.com/coreos/bbolt v1.3.3 // indirect
 	github.com/coreos/etcd v3.3.10+incompatible
 	github.com/coreos/go-systemd v0.0.0-20190618135430-ff7011eec365 // indirect
+	github.com/coreos/ignition v0.33.0 // indirect
 	github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f // indirect
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible // indirect
 	github.com/emicklei/go-restful v2.9.6+incompatible // indirect
@@ -56,6 +58,7 @@ require (
 	github.com/openshift/api v0.0.0-20190618182729-a77179bc5896
 	github.com/openshift/client-go v0.0.0-20190617165122-8892c0adc000
 	github.com/openshift/library-go v0.0.0-20190619114638-6b58b672ee58
+	github.com/openshift/machine-config-operator v4.2.0-alpha.0.0.20190917115525-033375cbe820+incompatible
 	github.com/pborman/uuid v1.2.0 // indirect
 	github.com/pkg/errors v0.8.1
 	github.com/pkg/profile v1.3.0 // indirect
@@ -65,6 +68,7 @@ require (
 	github.com/spf13/cobra v0.0.5
 	github.com/spf13/pflag v1.0.3
 	github.com/tmc/grpc-websocket-proxy v0.0.0-20190109142713-0ad062ec5ee5 // indirect
+	github.com/vincent-petithory/dataurl v0.0.0-20160330182126-9a301d65acbb // indirect
 	github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 // indirect
 	github.com/zmap/zcrypto v0.0.0-20190711184618-e267965e6343 // indirect
 	github.com/zmap/zlint v0.0.0-20190720015309-a0632adea60b // indirect
@@ -72,6 +76,7 @@ require (
 	go.uber.org/atomic v1.4.0 // indirect
 	go.uber.org/multierr v1.1.0 // indirect
 	go.uber.org/zap v1.10.0 // indirect
+	go4.org v0.0.0-20190313082347-94abd6928b1d // indirect
 	golang.org/x/net v0.0.0-20190619014844-b5b0513f8c1b // indirect
 	golang.org/x/oauth2 v0.0.0-20190604053449-0f29369cfe45 // indirect
 	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4 // indirect
