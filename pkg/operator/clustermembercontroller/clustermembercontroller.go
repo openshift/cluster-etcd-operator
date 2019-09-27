@@ -131,6 +131,14 @@ func (c *ClusterMemberController) sync() error {
 		p := &pods.Items[i]
 		klog.Infof("Found etcd Pod with name %v\n", p.Name)
 
+		if c.IsMemberRemove(p.Name) {
+			klog.Infof("Member is unhealthy and is being removed: %s\n", p.Name)
+			if err := c.etcdMemberRemove(p.Name); err != nil {
+				c.eventRecorder.Warning("ScalingDownFailed", err.Error())
+				return err
+			}
+		}
+
 		if c.IsMember(p.Name) {
 			klog.Infof("Member is already part of the cluster %s\n", p.Name)
 			name, err := c.getScaleAnnotationName()
@@ -160,21 +168,10 @@ func (c *ClusterMemberController) sync() error {
 			return updateError
 		}
 
+		//TODO probalby need some breaks here so we don't scale if degraded.
 		members, err := c.MemberList()
 		if err != nil {
 			return err
-		}
-
-		endpoints, err := c.Endpoints()
-		if err != nil {
-			return err
-		}
-
-		if len(members) > len(endpoints) && c.isPodCrashLoop(p.Name) {
-			klog.Infof("Member is unhealthy and is being removed: %s\n", p.Name)
-			if err := c.etcdMemberRemove(p.Name); err != nil {
-				return err
-			}
 		}
 
 		// scale
@@ -228,12 +225,7 @@ func (c *ClusterMemberController) sync() error {
 			return true, nil
 		})
 
-		cli, err := c.getEtcdClient()
-		if err != nil {
-			return err
-		}
-
-		if err := etcdMemberAdd(cli, []string{fmt.Sprintf("https://%s:2380", peerFQDN)}); err != nil {
+		if err := c.etcdMemberAdd([]string{fmt.Sprintf("https://%s:2380", peerFQDN)}); err != nil {
 			c.eventRecorder.Warning("ScalingFailed", err.Error())
 			return err
 		}
@@ -379,10 +371,23 @@ func (c *ClusterMemberController) MemberList() ([]Member, error) {
 		if !exists {
 			return nil, fmt.Errorf("member peerURLs do not exist")
 		}
+		status, exists, err := unstructured.NestedString(memberMap, "status")
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, fmt.Errorf("member status does not exist")
+		}
 
+		condition := GetMemberCondition(status)
 		m := Member{
 			Name:     name,
 			PeerURLS: []string{peerURLs},
+			Conditions: []MemberCondition{
+				{
+					Type: condition,
+				},
+			},
 		}
 		members = append(members, m)
 	}
@@ -393,6 +398,16 @@ func (c *ClusterMemberController) IsMember(name string) bool {
 	members, _ := c.MemberList()
 	for _, m := range members {
 		if m.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *ClusterMemberController) IsMemberRemove(name string) bool {
+	members, _ := c.MemberList()
+	for _, m := range members {
+		if m.Name == name && m.Conditions[0].Type == MemberRemove {
 			return true
 		}
 	}
@@ -543,7 +558,11 @@ func (c *ClusterMemberController) eventHandler() cache.ResourceEventHandler {
 	}
 }
 
-func etcdMemberAdd(cli *clientv3.Client, peerURLs []string) error {
+func (c *ClusterMemberController) etcdMemberAdd(peerURLs []string) error {
+	cli, err := c.getEtcdClient()
+	if err != nil {
+		return err
+	}
 	defer cli.Close()
 	resp, err := cli.MemberAdd(context.Background(), peerURLs)
 	if err != nil {
