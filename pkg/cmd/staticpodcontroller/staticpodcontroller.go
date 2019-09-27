@@ -32,7 +32,7 @@ import (
 
 const (
 	workQueueKey       = "key"
-	manifestDir        = "/etcd/kubernetes/manifests"
+	manifestDir        = "/etc/kubernetes/manifests"
 	dataDir            = "/var/lib/etcd"
 	etcdMemberFileName = "etcd-member.yaml"
 	etcdNamespace      = "openshift-etcd"
@@ -158,7 +158,15 @@ func (c *StaticPodController) sync() error {
 	staticPodPath := fmt.Sprintf("%s/%s", manifestDir, etcdMemberFileName)
 	// If last status is CrashLoopBackOff we perform further inspection to verify.
 	if pod.Status.ContainerStatuses[0].State.Waiting != nil && pod.Status.ContainerStatuses[0].State.Waiting.Reason == "CrashLoopBackOff" {
-		klog.Warningf("%s appears unhealthy", c.localEtcdName)
+
+		klog.Warningf("%s is unhealthy", c.localEtcdName)
+
+		// if the data-dir is missing we are going to give it some time to recover.
+		if _, err := os.Stat(fmt.Sprintf("%s/member/snap", dataDir)); os.IsNotExist(err) {
+			klog.Warningf("data-dir already removed %s", dataDir)
+			return nil
+		}
+
 		if c.isContainerCrashLoop("etcd-member") {
 			etcdMember, err := c.getMachineConfigData(staticPodPath, "master")
 			if err != nil {
