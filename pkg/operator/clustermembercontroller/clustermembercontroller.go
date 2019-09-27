@@ -101,13 +101,13 @@ type MemberConditionType string
 
 const (
 	// Ready indicated the member is part of the cluster and availble
-	Ready MemberConditionType = "Ready"
+	MemberReady MemberConditionType = "Ready"
 	// Unknown indicated the member is part of the cluster but condition is unknown
-	Unknown MemberConditionType = "Unknown"
+	MemberUnknown MemberConditionType = "Unknown"
 	// Degraded indicates the memberd pod is in a degraded state and should be restarted
-	Degraded MemberConditionType = "Degraded"
+	MemberDegraded MemberConditionType = "Degraded"
 	// Remove indicates the member should be removed from the cluster
-	Remove MemberConditionType = "Remove"
+	MemberRemove MemberConditionType = "Remove"
 )
 
 func (c *ClusterMemberController) sync() error {
@@ -551,4 +551,18 @@ func etcdMemberAdd(cli *clientv3.Client, peerURLs []string) error {
 	}
 	klog.Infof("added etcd member.PeerURLs:%s", resp.Member.PeerURLs)
 	return nil
+}
+
+func GetMemberCondition(status string) MemberConditionType {
+	switch {
+	case status == string(MemberReady):
+		return MemberReady
+	case status == string(MemberRemove):
+		return MemberRemove
+	case status == string(MemberUnknown):
+		return MemberUnknown
+	case status == string(MemberDegraded):
+		return MemberDegraded
+	}
+	return ""
 }
