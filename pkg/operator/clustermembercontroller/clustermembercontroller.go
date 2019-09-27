@@ -24,6 +24,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 
+	v1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	corev1client "k8s.io/client-go/kubernetes"
 )
@@ -66,28 +67,48 @@ func NewClusterMemberController(
 }
 
 type EtcdScaling struct {
-	Metadata   *metav1.ObjectMeta `json:"metadata,omitempty"`
-	Members    []Member           `json:"members,omitempty"`
-	PodFQDN    string             `json:"podFQDN,omitempty"`
-	Conditions []ScaleCondition   `json:"conditions,omitempty"`
+	Metadata *metav1.ObjectMeta `json:"metadata,omitempty"`
+	Members  []Member           `json:"members,omitempty"`
+	PodFQDN  string             `json:"podFQDN,omitempty"`
 }
 
 type Member struct {
-	ID         uint64   `json:"ID,omitempty"`
-	Name       string   `json:"name,omitempty"`
-	PeerURLS   []string `json:"peerURLs,omitempty"`
-	ClientURLS []string `json:"clientURLs,omitempty"`
+	ID         uint64            `json:"ID,omitempty"`
+	Name       string            `json:"name,omitempty"`
+	PeerURLS   []string          `json:"peerURLs,omitempty"`
+	ClientURLS []string          `json:"clientURLs,omitempty"`
+	Conditions []MemberCondition `json:"conditions,omitempty"`
 }
 
-type ScaleCondition struct {
-	// ScaleConditionType
-	Type ScaleConditionType `json:"type"`
+type MemberCondition struct {
+	// type describes the current condition
+	Type MemberConditionType `json:"type"`
+	// status is the status of the condition (True, False, Unknown)
+	Status v1.ConditionStatus `json:"status"`
 	// timestamp for the last update to this condition
 	// +optional
-	LastUpdateTime metav1.Time `json:"lastUpdateTime,omitempty" protobuf:"bytes,4,opt,name=lastUpdateTime"`
+	LastUpdateTime metav1.Time `json:"lastUpdateTime,omitempty"`
+	// reason is the reason for the condition's last transition.
+	// +optional
+	Reason string `json:"reason,omitempty"`
+	// message is a human-readable explanation containing details about
+	// the transition
+	// +optional
+	Message string `json:"message,omitempty"`
 }
 
-type ScaleConditionType string
+type MemberConditionType string
+
+const (
+	// Ready indicated the member is part of the cluster and availble
+	Ready MemberConditionType = "Ready"
+	// Unknown indicated the member is part of the cluster but condition is unknown
+	Unknown MemberConditionType = "Unknown"
+	// Degraded indicates the memberd pod is in a degraded state and should be restarted
+	Degraded MemberConditionType = "Degraded"
+	// Remove indicates the member should be removed from the cluster
+	Remove MemberConditionType = "Remove"
+)
 
 func (c *ClusterMemberController) sync() error {
 	pods, err := c.clientset.CoreV1().Pods("openshift-etcd").List(metav1.ListOptions{LabelSelector: "k8s-app=etcd"})
@@ -142,6 +163,18 @@ func (c *ClusterMemberController) sync() error {
 		members, err := c.MemberList()
 		if err != nil {
 			return err
+		}
+
+		endpoints, err := c.Endpoints()
+		if err != nil {
+			return err
+		}
+
+		if len(members) > len(endpoints) && c.isPodCrashLoop(p.Name) {
+			klog.Infof("Member is unhealthy and is being removed: %s\n", p.Name)
+			if err := c.etcdMemberRemove(p.Name); err != nil {
+				return err
+			}
 		}
 
 		// scale
@@ -401,6 +434,42 @@ func (c *ClusterMemberController) getScaleAnnotationName() (string, error) {
 		return "", fmt.Errorf("scaling annotation name not found")
 	}
 	return scaling.Metadata.Name, nil
+}
+
+func (c *ClusterMemberController) isPodCrashLoop(name string) bool {
+	restartCount := make(map[string]int32)
+	timeout := 120 * time.Second
+	interval := 5 * time.Second
+
+	// check if the pod is activly crashlooping
+	if err := wait.PollImmediate(interval, timeout, func() (bool, error) {
+		pod, err := c.clientset.CoreV1().Pods("openshift-etcd").Get(name, metav1.GetOptions{})
+		if err != nil {
+			klog.Errorf("unable to find pod %s: %v. Retrying.", name, err)
+			return false, nil
+		}
+		for _, containerStatus := range pod.Status.ContainerStatuses {
+			if containerStatus.State.Waiting == nil {
+				continue
+			}
+			if restartCount[containerStatus.Name] == 0 {
+				restartCount[containerStatus.Name] = containerStatus.RestartCount
+			}
+
+			if containerStatus.State.Waiting.Reason == "CrashLoopBackOff" {
+				if restartCount[containerStatus.Name] > 0 && containerStatus.RestartCount > restartCount[containerStatus.Name] {
+					klog.Warningf("found container %s actively in CrashLoopBackOff\n", containerStatus.Name)
+					return true, nil
+				}
+				restartCount[containerStatus.Name] = containerStatus.RestartCount
+				return false, nil
+			}
+		}
+		return false, nil
+	}); err != nil {
+		return false
+	}
+	return true
 }
 
 func reverseLookupSelf(service, proto, name, self string) (string, error) {
