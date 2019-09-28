@@ -370,7 +370,7 @@ func setMember(name string, peerURLs []string, status clustermembercontroller.Me
 	if err := unstructured.SetNestedField(etcdURL, peerURLs[0], "peerURLs"); err != nil {
 		return nil, err
 	}
-	if err := unstructured.SetNestedField(etcdURL, status, "status"); err != nil {
+	if err := unstructured.SetNestedField(etcdURL, string(status), "status"); err != nil {
 		return nil, err
 	}
 	return etcdURL, nil
