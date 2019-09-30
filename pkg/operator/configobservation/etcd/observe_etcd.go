@@ -503,7 +503,7 @@ func getMembersFromConfig(config []interface{}) ([]ceoutils.Member, error) {
 	return members, nil
 }
 
-func setBootstrapMember(listers configobservation.Listers, etcdURLs []interface{}, recorder events.Recorder) ([]interface{}, error) {
+func setBootstrapMember(listers configobservation.Listers, etcdURLs []interface{}, recorder events.Recorder) (interface{}, error) {
 	endpoints, err := listers.OpenshiftEtcdEndpointsLister.Endpoints(etcdEndpointNamespace).Get(etcdHostEndpointName)
 	if errors.IsNotFound(err) {
 		recorder.Warningf("setBootstrapMember", "Required %s/%s endpoint not found", etcdEndpointNamespace, etcdHostEndpointName)
@@ -529,11 +529,11 @@ func setBootstrapMember(listers configobservation.Listers, etcdURLs []interface{
 				if err != nil {
 					return nil, err
 				}
-				etcdURLs = append(etcdURLs, etcdURL)
+				return etcdURL, nil
 			}
 		}
 	}
-	return etcdURLs, nil
+	return nil, fmt.Errorf("etcd-bootstrap endpoint does not exist")
 }
 
 func setMember(name string, peerURLs []string, status ceoutils.MemberConditionType) (map[string]interface{}, error) {
