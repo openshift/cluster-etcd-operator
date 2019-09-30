@@ -108,6 +108,8 @@ const (
 	MemberDegraded MemberConditionType = "Degraded"
 	// Remove indicates the member should be removed from the cluster
 	MemberRemove MemberConditionType = "Remove"
+	// MemberPending is a member who is ready to join cluster but currently is not
+	MemberPending MemberConditionType = "Pending"
 )
 
 func (c *ClusterMemberController) sync() error {
@@ -394,6 +396,65 @@ func (c *ClusterMemberController) MemberList() ([]Member, error) {
 	return members, nil
 }
 
+func (c *ClusterMemberController) PendingMemberList() ([]Member, error) {
+	configPath := []string{"cluster", "pending"}
+	operatorSpec, _, _, err := c.operatorConfigClient.GetOperatorState()
+	if err != nil {
+		return nil, err
+	}
+	config := map[string]interface{}{}
+	if err := json.NewDecoder(bytes.NewBuffer(operatorSpec.ObservedConfig.Raw)).Decode(&config); err != nil {
+		klog.V(4).Infof("decode of existing config failed with error: %v", err)
+	}
+	data, exists, err := unstructured.NestedSlice(config, configPath...)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, fmt.Errorf("etcd cluster members not observed")
+	}
+
+	// populate current etcd members as observed.
+	var members []Member
+	for _, member := range data {
+		memberMap, _ := member.(map[string]interface{})
+		name, exists, err := unstructured.NestedString(memberMap, "name")
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, fmt.Errorf("member name does not exist")
+		}
+		peerURLs, exists, err := unstructured.NestedString(memberMap, "peerURLs")
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, fmt.Errorf("member peerURLs do not exist")
+		}
+		status, exists, err := unstructured.NestedString(memberMap, "status")
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, fmt.Errorf("member status does not exist")
+		}
+
+		condition := GetMemberCondition(status)
+		m := Member{
+			Name:     name,
+			PeerURLS: []string{peerURLs},
+			Conditions: []MemberCondition{
+				{
+					Type: condition,
+				},
+			},
+		}
+		members = append(members, m)
+	}
+	return members, nil
+}
+
 func (c *ClusterMemberController) IsMember(name string) bool {
 	members, _ := c.MemberList()
 	for _, m := range members {
@@ -405,13 +466,50 @@ func (c *ClusterMemberController) IsMember(name string) bool {
 }
 
 func (c *ClusterMemberController) IsMemberRemove(name string) bool {
-	members, _ := c.MemberList()
+	members, _ := c.PendingMemberList()
 	for _, m := range members {
+		klog.Warningf("IsMemberRemove: checking %v vs %v type = %v\n", m.Name, name, m.Conditions[0].Type)
 		if m.Name == name && m.Conditions[0].Type == MemberRemove {
 			return true
 		}
 	}
 	return false
+}
+
+func (c *ClusterMemberController) isPodCrashLoop(name string) bool {
+	restartCount := make(map[string]int32)
+	timeout := 120 * time.Second
+	interval := 5 * time.Second
+
+	// check if the pod is activly crashlooping
+	if err := wait.PollImmediate(interval, timeout, func() (bool, error) {
+		pod, err := c.clientset.CoreV1().Pods("openshift-etcd").Get(name, metav1.GetOptions{})
+		if err != nil {
+			klog.Errorf("unable to find pod %s: %v. Retrying.", name, err)
+			return false, nil
+		}
+		for _, containerStatus := range pod.Status.ContainerStatuses {
+			if containerStatus.State.Waiting == nil {
+				continue
+			}
+			if restartCount[containerStatus.Name] == 0 {
+				restartCount[containerStatus.Name] = containerStatus.RestartCount
+			}
+
+			if containerStatus.State.Waiting.Reason == "CrashLoopBackOff" {
+				if restartCount[containerStatus.Name] > 0 && containerStatus.RestartCount > restartCount[containerStatus.Name] {
+					klog.Warningf("found container %s actively in CrashLoopBackOff\n", containerStatus.Name)
+					return true, nil
+				}
+				restartCount[containerStatus.Name] = containerStatus.RestartCount
+				return false, nil
+			}
+		}
+		return false, nil
+	}); err != nil {
+		return false
+	}
+	return true
 }
 
 func (c *ClusterMemberController) setScaleAnnotation(scaling string) error {
@@ -449,42 +547,6 @@ func (c *ClusterMemberController) getScaleAnnotationName() (string, error) {
 		return "", fmt.Errorf("scaling annotation name not found")
 	}
 	return scaling.Metadata.Name, nil
-}
-
-func (c *ClusterMemberController) isPodCrashLoop(name string) bool {
-	restartCount := make(map[string]int32)
-	timeout := 120 * time.Second
-	interval := 5 * time.Second
-
-	// check if the pod is activly crashlooping
-	if err := wait.PollImmediate(interval, timeout, func() (bool, error) {
-		pod, err := c.clientset.CoreV1().Pods("openshift-etcd").Get(name, metav1.GetOptions{})
-		if err != nil {
-			klog.Errorf("unable to find pod %s: %v. Retrying.", name, err)
-			return false, nil
-		}
-		for _, containerStatus := range pod.Status.ContainerStatuses {
-			if containerStatus.State.Waiting == nil {
-				continue
-			}
-			if restartCount[containerStatus.Name] == 0 {
-				restartCount[containerStatus.Name] = containerStatus.RestartCount
-			}
-
-			if containerStatus.State.Waiting.Reason == "CrashLoopBackOff" {
-				if restartCount[containerStatus.Name] > 0 && containerStatus.RestartCount > restartCount[containerStatus.Name] {
-					klog.Warningf("found container %s actively in CrashLoopBackOff\n", containerStatus.Name)
-					return true, nil
-				}
-				restartCount[containerStatus.Name] = containerStatus.RestartCount
-				return false, nil
-			}
-		}
-		return false, nil
-	}); err != nil {
-		return false
-	}
-	return true
 }
 
 func reverseLookupSelf(service, proto, name, self string) (string, error) {
@@ -582,6 +644,8 @@ func GetMemberCondition(status string) MemberConditionType {
 		return MemberUnknown
 	case status == string(MemberDegraded):
 		return MemberDegraded
+	case status == string(MemberPending):
+		return MemberPending
 	}
 	return ""
 }

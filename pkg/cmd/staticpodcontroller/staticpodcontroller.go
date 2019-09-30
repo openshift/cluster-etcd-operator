@@ -1,15 +1,20 @@
 package staticpodcontroller
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
 	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/vincent-petithory/dataurl"
@@ -21,8 +26,10 @@ import (
 
 	mcfgclientset "github.com/openshift/machine-config-operator/pkg/generated/clientset/versioned"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	// mcfgv1 "github.com/openshift/machine-config-operator/pkg/apis/machineconfiguration.openshift.io/v1"
+	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
+	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
@@ -91,6 +98,15 @@ func (s *podOpts) Run() error {
 	if err != nil {
 		return err
 	}
+	operatorConfigClient, err := operatorversionedclient.NewForConfig(clientConfig)
+	if err != nil {
+		return err
+	}
+	operatorConfigInformers := operatorv1informers.NewSharedInformerFactory(operatorConfigClient, 10*time.Minute)
+	operatorClient := &operatorclient.OperatorClient{
+		Informers: operatorConfigInformers,
+		Client:    operatorConfigClient.OperatorV1(),
+	}
 
 	kubeInformerFactory := informers.NewFilteredSharedInformerFactory(clientset, 0, "openshift-etcd", nil)
 	nodeName := os.Getenv("NODE_NAME")
@@ -100,6 +116,7 @@ func (s *podOpts) Run() error {
 	}
 
 	staticPodController := NewStaticPodController(
+		operatorClient,
 		kubeInformerFactory,
 		clientset,
 		clientmc,
@@ -117,6 +134,7 @@ func (s *podOpts) Run() error {
 }
 
 type StaticPodController struct {
+	operatorConfigClient                   v1helpers.OperatorClient
 	podInformer                            corev1informer.SecretInformer
 	kubeInformersForOpenshiftEtcdNamespace cache.SharedIndexInformer
 	clientset                              corev1client.Interface
@@ -129,6 +147,7 @@ type StaticPodController struct {
 }
 
 func NewStaticPodController(
+	operatorConfigClient v1helpers.OperatorClient,
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
 	clientset corev1client.Interface,
 	clientmc mcfgclientset.Interface,
@@ -136,6 +155,7 @@ func NewStaticPodController(
 	// eventRecorder events.Recorder,
 ) *StaticPodController {
 	c := &StaticPodController{
+		operatorConfigClient: operatorConfigClient,
 		// eventRecorder: eventRecorder.WithComponentSuffix("static-pod-controller"),
 		clientset:     clientset,
 		clientmc:      clientmc,
@@ -167,7 +187,7 @@ func (c *StaticPodController) sync() error {
 			return nil
 		}
 
-		if c.isContainerCrashLoop("etcd-member") {
+		if c.IsMemberRemove(c.localEtcdName) {
 			etcdMember, err := c.getMachineConfigData(staticPodPath, "master")
 			if err != nil {
 				return err
@@ -190,6 +210,76 @@ func (c *StaticPodController) sync() error {
 		}
 	}
 	return nil
+}
+
+func (c *StaticPodController) IsMemberRemove(name string) bool {
+	members, _ := c.PendingMemberList()
+	for _, m := range members {
+		klog.Warningf("IsMemberRemove: checking %v vs %v type = %v\n", m.Name, name, m.Conditions[0].Type)
+		if m.Name == name && m.Conditions[0].Type == clustermembercontroller.MemberRemove {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *StaticPodController) PendingMemberList() ([]clustermembercontroller.Member, error) {
+	configPath := []string{"cluster", "pending"}
+	operatorSpec, _, _, err := c.operatorConfigClient.GetOperatorState()
+	if err != nil {
+		return nil, err
+	}
+	config := map[string]interface{}{}
+	if err := json.NewDecoder(bytes.NewBuffer(operatorSpec.ObservedConfig.Raw)).Decode(&config); err != nil {
+		klog.V(4).Infof("decode of existing config failed with error: %v", err)
+	}
+	data, exists, err := unstructured.NestedSlice(config, configPath...)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, fmt.Errorf("etcd cluster members not observed")
+	}
+
+	// populate current etcd members as observed.
+	var members []clustermembercontroller.Member
+	for _, member := range data {
+		memberMap, _ := member.(map[string]interface{})
+		name, exists, err := unstructured.NestedString(memberMap, "name")
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, fmt.Errorf("member name does not exist")
+		}
+		peerURLs, exists, err := unstructured.NestedString(memberMap, "peerURLs")
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, fmt.Errorf("member peerURLs do not exist")
+		}
+		status, exists, err := unstructured.NestedString(memberMap, "status")
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, fmt.Errorf("member status does not exist")
+		}
+
+		condition := clustermembercontroller.GetMemberCondition(status)
+		m := clustermembercontroller.Member{
+			Name:     name,
+			PeerURLS: []string{peerURLs},
+			Conditions: []clustermembercontroller.MemberCondition{
+				{
+					Type: condition,
+				},
+			},
+		}
+		members = append(members, m)
+	}
+	return members, nil
 }
 
 func (c *StaticPodController) Run(stopCh <-chan struct{}) {
@@ -262,40 +352,4 @@ func (c *StaticPodController) getMachineConfigData(path string, pool string) ([]
 
 	}
 	return data, nil
-}
-
-func (c *StaticPodController) isContainerCrashLoop(name string) bool {
-	restartCount := make(map[string]int32)
-	timeout := 120 * time.Second
-	interval := 5 * time.Second
-
-	// check if the pod is activly crashlooping
-	if err := wait.PollImmediate(interval, timeout, func() (bool, error) {
-		pod, err := c.clientset.CoreV1().Pods("openshift-etcd").Get(c.localEtcdName, metav1.GetOptions{})
-		if err != nil {
-			klog.Errorf("unable to find pod %s: %v. Retrying.", c.localEtcdName, err)
-			return false, nil
-		}
-		for _, containerStatus := range pod.Status.ContainerStatuses {
-			if containerStatus.State.Waiting == nil {
-				continue
-			}
-			if restartCount[containerStatus.Name] == 0 {
-				restartCount[containerStatus.Name] = containerStatus.RestartCount
-			}
-
-			if containerStatus.Name == name && containerStatus.State.Waiting.Reason == "CrashLoopBackOff" {
-				if restartCount[containerStatus.Name] > 0 && containerStatus.RestartCount > restartCount[containerStatus.Name] {
-					klog.Warningf("found container %s actively in CrashLoopBackOff\n", containerStatus.Name)
-					return true, nil
-				}
-				restartCount[containerStatus.Name] = containerStatus.RestartCount
-				return false, nil
-			}
-		}
-		return false, nil
-	}); err != nil {
-		return false
-	}
-	return true
 }
