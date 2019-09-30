@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceoutils"
+
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/pkg/transport"
 	"github.com/openshift/library-go/pkg/operator/events"
@@ -24,7 +26,6 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 
-	v1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	corev1client "k8s.io/client-go/kubernetes"
 )
@@ -66,53 +67,6 @@ func NewClusterMemberController(
 	return c
 }
 
-type EtcdScaling struct {
-	Metadata *metav1.ObjectMeta `json:"metadata,omitempty"`
-	Members  []Member           `json:"members,omitempty"`
-	PodFQDN  string             `json:"podFQDN,omitempty"`
-}
-
-type Member struct {
-	ID         uint64            `json:"ID,omitempty"`
-	Name       string            `json:"name,omitempty"`
-	PeerURLS   []string          `json:"peerURLs,omitempty"`
-	ClientURLS []string          `json:"clientURLs,omitempty"`
-	Conditions []MemberCondition `json:"conditions,omitempty"`
-}
-
-type MemberCondition struct {
-	// type describes the current condition
-	Type MemberConditionType `json:"type"`
-	// status is the status of the condition (True, False, Unknown)
-	Status v1.ConditionStatus `json:"status"`
-	// timestamp for the last update to this condition
-	// +optional
-	LastUpdateTime metav1.Time `json:"lastUpdateTime,omitempty"`
-	// reason is the reason for the condition's last transition.
-	// +optional
-	Reason string `json:"reason,omitempty"`
-	// message is a human-readable explanation containing details about
-	// the transition
-	// +optional
-	Message string `json:"message,omitempty"`
-}
-
-type MemberConditionType string
-
-const (
-	// MemberReady indicated the member is part of the cluster and availble.
-	MemberReady MemberConditionType = "Ready"
-	// MemberUnknown indicated the member is part of the cluster but condition is unknown.
-	MemberUnknown MemberConditionType = "Unknown"
-	// MemberDegraded indicates the members pod is in a degraded state and should be restarted
-	// but no scaling actions are required.
-	MemberDegraded MemberConditionType = "Degraded"
-	// MemberRemove indicates the member should be removed from the cluster.
-	MemberRemove MemberConditionType = "Remove"
-	// MemberAdd is a member who is ready to join cluster but currently has not.
-	MemberAdd MemberConditionType = "Add"
-)
-
 func (c *ClusterMemberController) sync() error {
 	pods, err := c.clientset.CoreV1().Pods("openshift-etcd").List(metav1.ListOptions{LabelSelector: "k8s-app=etcd"})
 	if err != nil {
@@ -139,6 +93,9 @@ func (c *ClusterMemberController) sync() error {
 			if err := c.etcdMemberRemove(p.Name); err != nil {
 				c.eventRecorder.Warning("ScalingDownFailed", err.Error())
 				return err
+				// Todo alaypatel07:  need to take care of condition degraded
+				// Todo alaypatel07: need to skip this reconciliation loop and continue later
+				// after the member is removed from this very point.
 			}
 		}
 
@@ -185,7 +142,7 @@ func (c *ClusterMemberController) sync() error {
 			continue
 		}
 
-		es := EtcdScaling{
+		es := ceoutils.EtcdScaling{
 			Metadata: &metav1.ObjectMeta{
 				Name:              p.Name,
 				CreationTimestamp: metav1.Time{Time: time.Now()},
@@ -338,7 +295,7 @@ func (c *ClusterMemberController) etcdMemberRemove(name string) error {
 	return nil
 }
 
-func (c *ClusterMemberController) MemberList() ([]Member, error) {
+func (c *ClusterMemberController) MemberList() ([]ceoutils.Member, error) {
 	configPath := []string{"cluster", "members"}
 	operatorSpec, _, _, err := c.operatorConfigClient.GetOperatorState()
 	if err != nil {
@@ -357,7 +314,7 @@ func (c *ClusterMemberController) MemberList() ([]Member, error) {
 	}
 
 	// populate current etcd members as observed.
-	var members []Member
+	var members []ceoutils.Member
 	for _, member := range data {
 		memberMap, _ := member.(map[string]interface{})
 		name, exists, err := unstructured.NestedString(memberMap, "name")
@@ -374,6 +331,7 @@ func (c *ClusterMemberController) MemberList() ([]Member, error) {
 		if !exists {
 			return nil, fmt.Errorf("member peerURLs do not exist")
 		}
+		// why have different terms i.e. status and condition? can we choose one and mirror?
 		status, exists, err := unstructured.NestedString(memberMap, "status")
 		if err != nil {
 			return nil, err
@@ -382,11 +340,11 @@ func (c *ClusterMemberController) MemberList() ([]Member, error) {
 			return nil, fmt.Errorf("member status does not exist")
 		}
 
-		condition := GetMemberCondition(status)
-		m := Member{
+		condition := ceoutils.GetMemberCondition(status)
+		m := ceoutils.Member{
 			Name:     name,
 			PeerURLS: []string{peerURLs},
-			Conditions: []MemberCondition{
+			Conditions: []ceoutils.MemberCondition{
 				{
 					Type: condition,
 				},
@@ -416,7 +374,7 @@ func (c *ClusterMemberController) PendingMemberList() ([]Member, error) {
 	}
 
 	// populate current etcd members as observed.
-	var members []Member
+	var members []ceoutils.Member
 	for _, member := range data {
 		memberMap, _ := member.(map[string]interface{})
 		name, exists, err := unstructured.NestedString(memberMap, "name")
@@ -441,7 +399,7 @@ func (c *ClusterMemberController) PendingMemberList() ([]Member, error) {
 			return nil, fmt.Errorf("member status does not exist")
 		}
 
-		condition := GetMemberCondition(status)
+		condition := ceoutils.GetMemberCondition(status)
 		m := Member{
 			Name:     name,
 			PeerURLS: []string{peerURLs},
@@ -535,7 +493,7 @@ func (c *ClusterMemberController) getScaleAnnotationName() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	scaling := &EtcdScaling{}
+	scaling := &ceoutils.EtcdScaling{}
 	data, ok := result.Annotations[EtcdScalingAnnotationKey]
 	if !ok {
 		return "", fmt.Errorf("scaling annotation not found")
@@ -633,20 +591,4 @@ func (c *ClusterMemberController) etcdMemberAdd(peerURLs []string) error {
 	}
 	klog.Infof("added etcd member.PeerURLs:%s", resp.Member.PeerURLs)
 	return nil
-}
-
-func GetMemberCondition(status string) MemberConditionType {
-	switch {
-	case status == string(MemberReady):
-		return MemberReady
-	case status == string(MemberRemove):
-		return MemberRemove
-	case status == string(MemberUnknown):
-		return MemberUnknown
-	case status == string(MemberDegraded):
-		return MemberDegraded
-	case status == string(MemberAdd):
-		return MemberAdd
-	}
-	return ""
 }

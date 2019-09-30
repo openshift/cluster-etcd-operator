@@ -8,12 +8,15 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceoutils"
+
+	"strings"
+	"time"
+
 	"github.com/openshift/library-go/pkg/crypto"
 	"k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"strings"
-	"time"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/library-go/pkg/operator/events"
@@ -106,7 +109,7 @@ func (c *EtcdCertSignerController) sync() error {
 		klog.Errorf("error getting configmap %#v\n", err)
 		return err
 	}
-	scaling := &clustermembercontroller.EtcdScaling{}
+	scaling := &ceoutils.EtcdScaling{}
 	membershipData, ok := cm.Annotations[clustermembercontroller.EtcdScalingAnnotationKey]
 	if !ok {
 		// Scaling key not found in configmap, hence do nothing

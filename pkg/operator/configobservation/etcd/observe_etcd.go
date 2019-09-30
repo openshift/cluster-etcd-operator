@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceoutils"
+
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -14,7 +16,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/configobserver"
 	"github.com/openshift/library-go/pkg/operator/events"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation"
 )
 
@@ -460,8 +461,8 @@ func (e *etcdObserver) isPendingRemoval(members clustermembercontroller.Member, 
 }
 
 //TODO move to util
-func getMembersFromConfig(config []interface{}) ([]clustermembercontroller.Member, error) {
-	var members []clustermembercontroller.Member
+func getMembersFromConfig(config []interface{}) ([]ceoutils.Member, error) {
+	var members []ceoutils.Member
 	for _, member := range config {
 		memberMap, _ := member.(map[string]interface{})
 		name, exists, err := unstructured.NestedString(memberMap, "name")
@@ -487,11 +488,11 @@ func getMembersFromConfig(config []interface{}) ([]clustermembercontroller.Membe
 			return nil, fmt.Errorf("member status does not exist")
 		}
 
-		condition := clustermembercontroller.GetMemberCondition(status)
-		m := clustermembercontroller.Member{
+		condition := ceoutils.GetMemberCondition(status)
+		m := ceoutils.Member{
 			Name:     name,
 			PeerURLS: []string{peerURLs},
-			Conditions: []clustermembercontroller.MemberCondition{
+			Conditions: []ceoutils.MemberCondition{
 				{
 					Type: condition,
 				},
@@ -502,7 +503,40 @@ func getMembersFromConfig(config []interface{}) ([]clustermembercontroller.Membe
 	return members, nil
 }
 
-func setMember(name string, peerURLs []string, status clustermembercontroller.MemberConditionType) (map[string]interface{}, error) {
+func setBootstrapMember(listers configobservation.Listers, etcdURLs []interface{}, recorder events.Recorder) ([]interface{}, error) {
+	endpoints, err := listers.OpenshiftEtcdEndpointsLister.Endpoints(etcdEndpointNamespace).Get(etcdHostEndpointName)
+	if errors.IsNotFound(err) {
+		recorder.Warningf("setBootstrapMember", "Required %s/%s endpoint not found", etcdEndpointNamespace, etcdHostEndpointName)
+		return nil, err
+	}
+	if err != nil {
+		recorder.Warningf("setBootstrapMember", "Error getting %s/%s endpoint: %v", etcdEndpointNamespace, etcdHostEndpointName, err)
+		return nil, err
+	}
+	dnsSuffix := endpoints.Annotations["alpha.installer.openshift.io/dns-suffix"]
+	if len(dnsSuffix) == 0 {
+		err := fmt.Errorf("endpoints %s/%s: alpha.installer.openshift.io/dns-suffix annotation not found", etcdEndpointNamespace, etcdHostEndpointName)
+		recorder.Warning("setBootstrapMember", err.Error())
+		return nil, err
+	}
+
+	for _, subset := range endpoints.Subsets {
+		for _, address := range subset.Addresses {
+			if address.Hostname == "etcd-bootstrap" {
+				name := address.Hostname
+				peerURLs := fmt.Sprintf("https://%s.%s:2380", name, dnsSuffix)
+				etcdURL, err := setMember(name, []string{peerURLs}, ceoutils.MemberUnknown)
+				if err != nil {
+					return nil, err
+				}
+				etcdURLs = append(etcdURLs, etcdURL)
+			}
+		}
+	}
+	return etcdURLs, nil
+}
+
+func setMember(name string, peerURLs []string, status ceoutils.MemberConditionType) (map[string]interface{}, error) {
 	etcdURL := map[string]interface{}{}
 	if err := unstructured.SetNestedField(etcdURL, name, "name"); err != nil {
 		return nil, err
@@ -514,4 +548,16 @@ func setMember(name string, peerURLs []string, status clustermembercontroller.Me
 		return nil, err
 	}
 	return etcdURL, nil
+}
+
+func isPendingRemoval(members ceoutils.Member, pending []ceoutils.Member) bool {
+	for _, pendingMember := range pending {
+		if pendingMember.Conditions == nil {
+			return false
+		}
+		if pendingMember.Name == members.Name && pendingMember.Conditions[0].Type == ceoutils.MemberRemove {
+			return true
+		}
+	}
+	return false
 }
