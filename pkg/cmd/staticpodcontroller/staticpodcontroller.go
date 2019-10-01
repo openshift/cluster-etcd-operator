@@ -10,7 +10,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
+	ceoapi "github.com/openshift/cluster-etcd-operator/pkg/operator/api"
+
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
 	"github.com/openshift/library-go/pkg/operator/events"
@@ -216,14 +217,14 @@ func (c *StaticPodController) IsMemberRemove(name string) bool {
 	members, _ := c.PendingMemberList()
 	for _, m := range members {
 		klog.Warningf("IsMemberRemove: checking %v vs %v type = %v\n", m.Name, name, m.Conditions[0].Type)
-		if m.Name == name && m.Conditions[0].Type == clustermembercontroller.MemberRemove {
+		if m.Name == name && m.Conditions[0].Type == ceoapi.MemberRemove {
 			return true
 		}
 	}
 	return false
 }
 
-func (c *StaticPodController) PendingMemberList() ([]clustermembercontroller.Member, error) {
+func (c *StaticPodController) PendingMemberList() ([]ceoapi.Member, error) {
 	configPath := []string{"cluster", "pending"}
 	operatorSpec, _, _, err := c.operatorConfigClient.GetOperatorState()
 	if err != nil {
@@ -242,7 +243,7 @@ func (c *StaticPodController) PendingMemberList() ([]clustermembercontroller.Mem
 	}
 
 	// populate current etcd members as observed.
-	var members []clustermembercontroller.Member
+	var members []ceoapi.Member
 	for _, member := range data {
 		memberMap, _ := member.(map[string]interface{})
 		name, exists, err := unstructured.NestedString(memberMap, "name")
@@ -267,11 +268,11 @@ func (c *StaticPodController) PendingMemberList() ([]clustermembercontroller.Mem
 			return nil, fmt.Errorf("member status does not exist")
 		}
 
-		condition := clustermembercontroller.GetMemberCondition(status)
-		m := clustermembercontroller.Member{
+		condition := ceoapi.GetMemberCondition(status)
+		m := ceoapi.Member{
 			Name:     name,
 			PeerURLS: []string{peerURLs},
-			Conditions: []clustermembercontroller.MemberCondition{
+			Conditions: []ceoapi.MemberCondition{
 				{
 					Type: condition,
 				},

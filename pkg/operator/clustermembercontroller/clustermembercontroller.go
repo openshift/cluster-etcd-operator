@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceoutils"
+	ceoapi "github.com/openshift/cluster-etcd-operator/pkg/operator/api"
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/pkg/transport"
@@ -142,7 +142,7 @@ func (c *ClusterMemberController) sync() error {
 			continue
 		}
 
-		es := ceoutils.EtcdScaling{
+		es := ceoapi.EtcdScaling{
 			Metadata: &metav1.ObjectMeta{
 				Name:              p.Name,
 				CreationTimestamp: metav1.Time{Time: time.Now()},
@@ -295,7 +295,7 @@ func (c *ClusterMemberController) etcdMemberRemove(name string) error {
 	return nil
 }
 
-func (c *ClusterMemberController) MemberList() ([]ceoutils.Member, error) {
+func (c *ClusterMemberController) MemberList() ([]ceoapi.Member, error) {
 	configPath := []string{"cluster", "members"}
 	operatorSpec, _, _, err := c.operatorConfigClient.GetOperatorState()
 	if err != nil {
@@ -314,7 +314,7 @@ func (c *ClusterMemberController) MemberList() ([]ceoutils.Member, error) {
 	}
 
 	// populate current etcd members as observed.
-	var members []ceoutils.Member
+	var members []ceoapi.Member
 	for _, member := range data {
 		memberMap, _ := member.(map[string]interface{})
 		name, exists, err := unstructured.NestedString(memberMap, "name")
@@ -340,11 +340,11 @@ func (c *ClusterMemberController) MemberList() ([]ceoutils.Member, error) {
 			return nil, fmt.Errorf("member status does not exist")
 		}
 
-		condition := ceoutils.GetMemberCondition(status)
-		m := ceoutils.Member{
+		condition := ceoapi.GetMemberCondition(status)
+		m := ceoapi.Member{
 			Name:     name,
 			PeerURLS: []string{peerURLs},
-			Conditions: []ceoutils.MemberCondition{
+			Conditions: []ceoapi.MemberCondition{
 				{
 					Type: condition,
 				},
@@ -355,7 +355,7 @@ func (c *ClusterMemberController) MemberList() ([]ceoutils.Member, error) {
 	return members, nil
 }
 
-func (c *ClusterMemberController) PendingMemberList() ([]Member, error) {
+func (c *ClusterMemberController) PendingMemberList() ([]ceoapi.Member, error) {
 	configPath := []string{"cluster", "pending"}
 	operatorSpec, _, _, err := c.operatorConfigClient.GetOperatorState()
 	if err != nil {
@@ -374,7 +374,7 @@ func (c *ClusterMemberController) PendingMemberList() ([]Member, error) {
 	}
 
 	// populate current etcd members as observed.
-	var members []ceoutils.Member
+	var members []ceoapi.Member
 	for _, member := range data {
 		memberMap, _ := member.(map[string]interface{})
 		name, exists, err := unstructured.NestedString(memberMap, "name")
@@ -399,11 +399,11 @@ func (c *ClusterMemberController) PendingMemberList() ([]Member, error) {
 			return nil, fmt.Errorf("member status does not exist")
 		}
 
-		condition := ceoutils.GetMemberCondition(status)
-		m := Member{
+		condition := ceoapi.GetMemberCondition(status)
+		m := ceoapi.Member{
 			Name:     name,
 			PeerURLS: []string{peerURLs},
-			Conditions: []MemberCondition{
+			Conditions: []ceoapi.MemberCondition{
 				{
 					Type: condition,
 				},
@@ -428,7 +428,7 @@ func (c *ClusterMemberController) IsMemberRemove(name string) bool {
 	members, _ := c.PendingMemberList()
 	for _, m := range members {
 		klog.Warningf("IsMemberRemove: checking %v vs %v type = %v\n", m.Name, name, m.Conditions[0].Type)
-		if m.Name == name && m.Conditions[0].Type == MemberRemove {
+		if m.Name == name && m.Conditions[0].Type == ceoapi.MemberRemove {
 			return true
 		}
 	}
@@ -493,7 +493,7 @@ func (c *ClusterMemberController) getScaleAnnotationName() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	scaling := &ceoutils.EtcdScaling{}
+	scaling := &ceoapi.EtcdScaling{}
 	data, ok := result.Annotations[EtcdScalingAnnotationKey]
 	if !ok {
 		return "", fmt.Errorf("scaling annotation not found")

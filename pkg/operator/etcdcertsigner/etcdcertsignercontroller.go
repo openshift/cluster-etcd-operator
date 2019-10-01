@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceoutils"
+	ceoapi "github.com/openshift/cluster-etcd-operator/pkg/operator/api"
 
 	"strings"
 	"time"
@@ -109,7 +109,7 @@ func (c *EtcdCertSignerController) sync() error {
 		klog.Errorf("error getting configmap %#v\n", err)
 		return err
 	}
-	scaling := &ceoutils.EtcdScaling{}
+	scaling := &ceoapi.EtcdScaling{}
 	membershipData, ok := cm.Annotations[clustermembercontroller.EtcdScalingAnnotationKey]
 	if !ok {
 		// Scaling key not found in configmap, hence do nothing

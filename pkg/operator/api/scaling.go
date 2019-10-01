@@ -1,4 +1,4 @@
-package ceoutils
+package api
 
 import (
 	v1 "github.com/openshift/api/config/v1"
@@ -47,6 +47,8 @@ const (
 	MemberDegraded MemberConditionType = "Degraded"
 	// Remove indicates the member should be removed from the cluster
 	MemberRemove MemberConditionType = "Remove"
+	// MemberAdd is a member who is ready to join cluster but currently has not.
+	MemberAdd MemberConditionType = "Add"
 )
 
 func GetMemberCondition(status string) MemberConditionType {
