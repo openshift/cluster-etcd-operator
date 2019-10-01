@@ -88,14 +88,6 @@ func ObserveClusterMembers(genericListers configobserver.Listers, recorder event
 	}
 
 	for _, previousMember := range previousMembers {
-		// if we are pending removal that means we have been removed from etcd cluster so we a re no longer listed here
-		// if we are healthy then we are already here :)
-		// removeMember, err := observer.isPendingRemoval(previousMember, existingConfig)
-		// if err != nil {
-		// 	return existingConfig, append(errs, err)
-		// }
-
-		// if observer.HealthyMember[previousMember.Name] || previousMember.Name == "etcd-bootstrap" || removeMember {
 		if observer.HealthyMember[previousMember.Name] || previousMember.Name == "etcd-bootstrap" {
 			continue
 		}
@@ -130,20 +122,6 @@ func ObserveClusterMembers(genericListers configobserver.Listers, recorder event
 				continue
 			}
 		}
-		//
-		// // since the pod exists lets figure out if the endpoint being down is a result of etcd crashlooping
-		// if etcdPod.Status.ContainerStatuses[0].State.Waiting != nil && etcdPod.Status.ContainerStatuses[0].State.Waiting.Reason == "CrashLoopBackOff" {
-		// 	if observer.isPodCrashLoop(etcdPod) {
-		// 		klog.Warningf("error: Pod %s not healthy setting member remove ", previousMember.Name)
-		// 		clusterMember, err := setMember(previousMember.Name, previousMember.PeerURLS, clustermembercontroller.MemberRemove)
-		// 		if err != nil {
-		// 			klog.Warningf("error: WTF!!! setting existingConfig ", previousMember.Name)
-		// 			return existingConfig, append(errs, err)
-		// 		}
-		// 		observer.ObserverdMembers = append(observer.ObserverdMembers, clusterMember)
-		// 		continue
-		// 	}
-		// }
 	}
 
 	if len(errs) > 0 {
@@ -189,9 +167,10 @@ func ObservePendingClusterMembers(genericListers configobserver.Listers, recorde
 	}
 	for _, subset := range etcdEndpoints.Subsets {
 		for _, address := range subset.NotReadyAddresses {
-			status := clustermembercontroller.MemberPending
+			status := clustermembercontroller.MemberAdd
 			etcdURL := map[string]interface{}{}
 			name := address.TargetRef.Name
+
 			if err := unstructured.SetNestedField(etcdURL, name, "name"); err != nil {
 				return currentConfig, append(errs, err)
 			}
@@ -238,51 +217,6 @@ func ObservePendingClusterMembers(genericListers configobserver.Listers, recorde
 	return
 }
 
-// ObservePendingClusterMembers observes pending etcd cluster members who are atempting to join the cluster.
-// TODO it is possible that a member which is part of the cluster can show pending status if Pod goes down. We need to handle this flapping.
-// If you are member you should not renturn to pending. During bootstrap this isn't a fatal flaw but its not optimal.
-// func ObservePendingClusterMembers(genericListers configobserver.Listers, recorder events.Recorder, existingConfig map[string]interface{}) (map[string]interface{}, []error) {
-// 	observedConfig := map[string]interface{}{}
-// 	healthyMember := make(map[string]bool)
-// 	var errs []error
-//
-// 	observer := etcdObserver{
-// 		listers:       genericListers.(configobservation.Listers),
-// 		pendingPath:   []string{"cluster", "pending"},
-// 		HealthyMember: healthyMember,
-// 	}
-//
-// 	previouslyObservedPending, err := observer.getPathObservationData(observer.pendingPath, existingConfig)
-// 	if err != nil {
-// 		errs = append(errs, err)
-// 	}
-//
-// 	if err := observer.setObserverdMembersFromEndpoint(); err != nil {
-// 		errs = append(errs, err)
-// 	}
-//
-// 	if len(errs) > 0 {
-// 		if previouslyObservedPending != nil {
-// 			if err := unstructured.SetNestedSlice(observedConfig, previouslyObservedPending, observer.pendingPath...); err != nil {
-// 				recorder.Eventf("ObservePendingClusterMembersRollback", "Updated pending cluster members to %v", existingConfig)
-// 				return existingConfig, append(errs, err)
-// 			}
-// 		}
-// 		return observedConfig, append(errs, err)
-// 	}
-//
-// 	if len(observer.ObserverdPending) > 0 {
-// 		if err := unstructured.SetNestedField(observedConfig, observer.ObserverdPending, observer.pendingPath...); err != nil {
-// 			return existingConfig, append(errs, err)
-// 		}
-// 	}
-//
-// 	if !reflect.DeepEqual(previouslyObservedPending, observer.ObserverdPending) {
-// 		recorder.Eventf("ObservePendingClusterMembersUpdated", "Updated pending cluster members to %v", observer.ObserverdPending)
-// 	}
-// 	return observedConfig, nil
-// }
-//
 // ObserveStorageURLs observes the storage config URLs. If there is a problem observing the current storage config URLs,
 // then the previously observed storage config URLs will be re-used.
 func ObserveStorageURLs(genericListers configobserver.Listers, recorder events.Recorder, currentConfig map[string]interface{}) (observedConfig map[string]interface{}, errs []error) {
@@ -466,7 +400,7 @@ func (e *etcdObserver) setObserverdMembersFromEndpoint() error {
 }
 
 func (e *etcdObserver) setObserverdPendingFromEndpoint() error {
-	status := clustermembercontroller.MemberPending
+	status := clustermembercontroller.MemberAdd
 
 	endpoints, err := e.listers.OpenshiftEtcdEndpointsLister.Endpoints(etcdEndpointNamespace).Get(etcdEndpointName)
 	if errors.IsNotFound(err) {

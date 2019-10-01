@@ -100,16 +100,17 @@ type MemberCondition struct {
 type MemberConditionType string
 
 const (
-	// Ready indicated the member is part of the cluster and availble
+	// MemberReady indicated the member is part of the cluster and availble.
 	MemberReady MemberConditionType = "Ready"
-	// Unknown indicated the member is part of the cluster but condition is unknown
+	// MemberUnknown indicated the member is part of the cluster but condition is unknown.
 	MemberUnknown MemberConditionType = "Unknown"
-	// Degraded indicates the memberd pod is in a degraded state and should be restarted
+	// MemberDegraded indicates the members pod is in a degraded state and should be restarted
+	// but no scaling actions are required.
 	MemberDegraded MemberConditionType = "Degraded"
-	// Remove indicates the member should be removed from the cluster
+	// MemberRemove indicates the member should be removed from the cluster.
 	MemberRemove MemberConditionType = "Remove"
-	// MemberPending is a member who is ready to join cluster but currently is not
-	MemberPending MemberConditionType = "Pending"
+	// MemberAdd is a member who is ready to join cluster but currently has not.
+	MemberAdd MemberConditionType = "Add"
 )
 
 func (c *ClusterMemberController) sync() error {
@@ -644,8 +645,8 @@ func GetMemberCondition(status string) MemberConditionType {
 		return MemberUnknown
 	case status == string(MemberDegraded):
 		return MemberDegraded
-	case status == string(MemberPending):
-		return MemberPending
+	case status == string(MemberAdd):
+		return MemberAdd
 	}
 	return ""
 }
