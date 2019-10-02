@@ -168,7 +168,8 @@ func ObservePendingClusterMembers(genericListers configobserver.Listers, recorde
 	}
 	for _, subset := range etcdEndpoints.Subsets {
 		for _, address := range subset.NotReadyAddresses {
-			status := ceoapi.MemberAdd
+			// default to MemberUnknown until we observe further.
+			status := ceoapi.MemberUnknown
 			etcdURL := map[string]interface{}{}
 			name := address.TargetRef.Name
 
@@ -183,6 +184,8 @@ func ObservePendingClusterMembers(genericListers configobserver.Listers, recorde
 				if isPodCrashLoop(listers, name) {
 					status = ceoapi.MemberRemove
 				}
+				// we are not crashlooping from observation so we are going to clear the member
+				status = ceoapi.MemberAdd
 			}
 			peerURLs := fmt.Sprintf("https://%s:2380", address.IP)
 			if err := unstructured.SetNestedField(etcdURL, peerURLs, "peerURLs"); err != nil {

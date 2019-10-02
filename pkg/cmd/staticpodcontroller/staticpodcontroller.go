@@ -12,7 +12,6 @@ import (
 
 	ceoapi "github.com/openshift/cluster-etcd-operator/pkg/operator/api"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/spf13/cobra"
