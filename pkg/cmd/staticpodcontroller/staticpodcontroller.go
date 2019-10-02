@@ -15,7 +15,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
 	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/vincent-petithory/dataurl"
@@ -25,12 +24,11 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
 
+	operatorclient "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
 	mcfgclientset "github.com/openshift/machine-config-operator/pkg/generated/clientset/versioned"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
-	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
@@ -99,15 +97,11 @@ func (s *podOpts) Run() error {
 	if err != nil {
 		return err
 	}
-	operatorConfigClient, err := operatorversionedclient.NewForConfig(clientConfig)
+	operatorClient, err := operatorclient.NewForConfig(clientConfig)
 	if err != nil {
 		return err
 	}
-	operatorConfigInformers := operatorv1informers.NewSharedInformerFactory(operatorConfigClient, 10*time.Minute)
-	operatorClient := &operatorclient.OperatorClient{
-		Informers: operatorConfigInformers,
-		Client:    operatorConfigClient.OperatorV1(),
-	}
+	etcdOperatorClient := operatorClient.Etcds()
 
 	kubeInformerFactory := informers.NewFilteredSharedInformerFactory(clientset, 0, "openshift-etcd", nil)
 	nodeName := os.Getenv("NODE_NAME")
@@ -117,7 +111,7 @@ func (s *podOpts) Run() error {
 	}
 
 	staticPodController := NewStaticPodController(
-		operatorClient,
+		etcdOperatorClient,
 		kubeInformerFactory,
 		clientset,
 		clientmc,
@@ -135,7 +129,7 @@ func (s *podOpts) Run() error {
 }
 
 type StaticPodController struct {
-	operatorConfigClient                   v1helpers.OperatorClient
+	etcdOperatorClient                     operatorclient.EtcdInterface
 	podInformer                            corev1informer.SecretInformer
 	kubeInformersForOpenshiftEtcdNamespace cache.SharedIndexInformer
 	clientset                              corev1client.Interface
@@ -148,7 +142,7 @@ type StaticPodController struct {
 }
 
 func NewStaticPodController(
-	operatorConfigClient v1helpers.OperatorClient,
+	etcdOperatorClient operatorclient.EtcdInterface,
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
 	clientset corev1client.Interface,
 	clientmc mcfgclientset.Interface,
@@ -156,7 +150,7 @@ func NewStaticPodController(
 	// eventRecorder events.Recorder,
 ) *StaticPodController {
 	c := &StaticPodController{
-		operatorConfigClient: operatorConfigClient,
+		etcdOperatorClient: etcdOperatorClient,
 		// eventRecorder: eventRecorder.WithComponentSuffix("static-pod-controller"),
 		clientset:     clientset,
 		clientmc:      clientmc,
@@ -178,35 +172,39 @@ func (c *StaticPodController) sync() error {
 	}
 	staticPodPath := fmt.Sprintf("%s/%s", manifestDir, etcdMemberFileName)
 	// If last status is CrashLoopBackOff we perform further inspection to verify.
-	if pod.Status.ContainerStatuses[0].State.Waiting != nil && pod.Status.ContainerStatuses[0].State.Waiting.Reason == "CrashLoopBackOff" {
+	if len(pod.Status.ContainerStatuses) > 0 {
+		if pod.Status.ContainerStatuses[0].State.Waiting != nil && pod.Status.ContainerStatuses[0].State.Waiting.Reason == "CrashLoopBackOff" {
 
-		klog.Warningf("%s is unhealthy", c.localEtcdName)
+			klog.Infof("%s is unhealthy", c.localEtcdName)
 
-		// if the data-dir is missing we are going to give it some time to recover.
-		if _, err := os.Stat(fmt.Sprintf("%s/member/snap", dataDir)); os.IsNotExist(err) {
-			klog.Warningf("data-dir already removed %s", dataDir)
-			return nil
-		}
-
-		if c.IsMemberRemove(c.localEtcdName) {
-			etcdMember, err := c.getMachineConfigData(staticPodPath, "master")
-			if err != nil {
-				return err
-			}
-			klog.Infof("removing static pod %s\n", staticPodPath)
-			if err := os.Remove(staticPodPath); err != nil {
-				return err
+			// if the data-dir is missing we are going to give it some time to recover.
+			if _, err := os.Stat(fmt.Sprintf("%s/member/snap", dataDir)); os.IsNotExist(err) {
+				klog.Warningf("data-dir already removed %s", dataDir)
+				return nil
 			}
 
-			//TODO verify etcd-member container has exited instead of sleep
-			klog.Infof("sleeping for %d\n", 10)
-			time.Sleep(10 * time.Second)
+			if c.IsMemberRemove(c.localEtcdName) {
+				klog.Infof("%s is pending removal", c.localEtcdName)
+				etcdMember, err := c.getMachineConfigData(staticPodPath, "master")
+				if err != nil {
+					klog.Warningf("etcdMember failed %v", err)
+					return err
+				}
+				klog.Infof("removing static pod %s\n", staticPodPath)
+				if err := os.Remove(staticPodPath); err != nil {
+					return err
+				}
 
-			klog.Infof("removing data-dir contents")
-			os.RemoveAll(fmt.Sprintf("%s/member", dataDir))
-			klog.Infof("starting %s", c.localEtcdName)
-			if err := ioutil.WriteFile(staticPodPath, []byte(etcdMember), 0644); err != nil {
-				return err
+				//TODO verify etcd-member container has exited instead of sleep
+				klog.Infof("sleeping for %d\n", 10)
+				time.Sleep(10 * time.Second)
+
+				klog.Infof("removing data-dir contents")
+				os.RemoveAll(fmt.Sprintf("%s/member", dataDir))
+				klog.Infof("starting %s", c.localEtcdName)
+				if err := ioutil.WriteFile(staticPodPath, []byte(etcdMember), 0644); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -214,7 +212,10 @@ func (c *StaticPodController) sync() error {
 }
 
 func (c *StaticPodController) IsMemberRemove(name string) bool {
-	members, _ := c.PendingMemberList()
+	members, err := c.PendingMemberList()
+	if err != nil {
+		klog.Errorf("IsMemberRemove: error %v", err)
+	}
 	for _, m := range members {
 		klog.Warningf("IsMemberRemove: checking %v vs %v type = %v\n", m.Name, name, m.Conditions[0].Type)
 		if m.Name == name && m.Conditions[0].Type == ceoapi.MemberRemove {
@@ -226,12 +227,13 @@ func (c *StaticPodController) IsMemberRemove(name string) bool {
 
 func (c *StaticPodController) PendingMemberList() ([]ceoapi.Member, error) {
 	configPath := []string{"cluster", "pending"}
-	operatorSpec, _, _, err := c.operatorConfigClient.GetOperatorState()
+	operatorSpec, err := c.etcdOperatorClient.Get("cluster", metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
+
 	config := map[string]interface{}{}
-	if err := json.NewDecoder(bytes.NewBuffer(operatorSpec.ObservedConfig.Raw)).Decode(&config); err != nil {
+	if err := json.NewDecoder(bytes.NewBuffer(operatorSpec.Spec.ObservedConfig.Raw)).Decode(&config); err != nil {
 		klog.V(4).Infof("decode of existing config failed with error: %v", err)
 	}
 	data, exists, err := unstructured.NestedSlice(config, configPath...)
