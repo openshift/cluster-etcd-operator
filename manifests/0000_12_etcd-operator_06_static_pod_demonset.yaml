@@ -50,6 +50,7 @@ spec:
         command: ["/usr/bin/cluster-etcd-operator"]
         args:
         - "staticpod"
+        serviceAccount: default
         terminationMessagePolicy: FallbackToLogsOnError
         env:
         - name: NODE_NAME
