@@ -101,6 +101,7 @@ func TestRenderCommand(t *testing.T) {
 		{"--manifest-kube-client-agent-image", "foo"},
 		{"--manifest-setup-etcd-env-image", "foo"},
 		{"--etcd-discovery-domain", "foo"},
+		{"--manifest-cluster-etcd-operator-image", "quay.io/test/image:latest"},
 	}
 
 	optional_flags := [][]string{
