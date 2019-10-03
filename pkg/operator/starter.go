@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
+	"k8s.io/klog"
+
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -45,6 +48,7 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 	}
 
 	operatorConfigInformers := operatorv1informers.NewSharedInformerFactory(operatorConfigClient, 10*time.Minute)
+	//operatorConfigInformers.ForResource()
 	kubeInformersForNamespaces := v1helpers.NewKubeInformersForNamespaces(
 		kubeClient,
 		"",
@@ -135,6 +139,12 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 	go configObserver.Run(1, ctx.Done())
 	go clusterOperatorStatus.Run(1, ctx.Done())
 	go clusterMemberController.Run(ctx.Done())
+	go func() {
+		err := bootstrapteardown.TearDownBootstrap(ctx.KubeConfig, clusterMemberController)
+		if err != nil {
+			klog.Fatalf("Error tearing down bootstrap: %#v", err)
+		}
+	}()
 
 	<-ctx.Done()
 	return fmt.Errorf("stopped")

@@ -68,7 +68,7 @@ require (
 	github.com/spf13/cobra v0.0.5
 	github.com/spf13/pflag v1.0.3
 	github.com/tmc/grpc-websocket-proxy v0.0.0-20190109142713-0ad062ec5ee5 // indirect
-	github.com/vincent-petithory/dataurl v0.0.0-20160330182126-9a301d65acbb // indirect
+	github.com/vincent-petithory/dataurl v0.0.0-20160330182126-9a301d65acbb
 	github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 // indirect
 	github.com/zmap/zcrypto v0.0.0-20190711184618-e267965e6343 // indirect
 	github.com/zmap/zlint v0.0.0-20190720015309-a0632adea60b // indirect

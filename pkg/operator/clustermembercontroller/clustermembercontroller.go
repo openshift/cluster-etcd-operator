@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/etcd"
+
 	ceoapi "github.com/openshift/cluster-etcd-operator/pkg/operator/api"
 
 	"github.com/coreos/etcd/clientv3"
@@ -74,16 +76,6 @@ func (c *ClusterMemberController) sync() error {
 		return err
 	}
 
-	//since the operator is running, it means the cluster etcd is available
-	availableCond := operatorv1.OperatorCondition{
-		Type:   operatorv1.OperatorStatusTypeAvailable,
-		Status: operatorv1.ConditionTrue,
-	}
-	if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient,
-		v1helpers.UpdateConditionFn(availableCond)); updateError != nil {
-		return updateError
-	}
-
 	for i := range pods.Items {
 		p := &pods.Items[i]
 		klog.Infof("Found etcd Pod with name %v\n", p.Name)
@@ -122,9 +114,16 @@ func (c *ClusterMemberController) sync() error {
 			Type:   operatorv1.OperatorStatusTypeProgressing,
 			Status: operatorv1.ConditionTrue,
 		}
+		// Setting the available false when scaling. This will prevent installer from reporting
+		// success when any of the members are not ready
+		condAvailable := operatorv1.OperatorCondition{
+			Type:   operatorv1.OperatorStatusTypeAvailable,
+			Status: operatorv1.ConditionFalse,
+		}
 		if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient,
 			v1helpers.UpdateConditionFn(condUpgradable),
-			v1helpers.UpdateConditionFn(condProgressing)); updateError != nil {
+			v1helpers.UpdateConditionFn(condProgressing),
+			v1helpers.UpdateConditionFn(condAvailable)); updateError != nil {
 			return updateError
 		}
 
@@ -591,4 +590,48 @@ func (c *ClusterMemberController) etcdMemberAdd(peerURLs []string) error {
 	}
 	klog.Infof("added etcd member.PeerURLs:%s", resp.Member.PeerURLs)
 	return nil
+}
+
+func (c *ClusterMemberController) RemoveBootstrap() error {
+	err := c.RemoveBootstrapFromEndpoint()
+	if err != nil {
+		return err
+	}
+	return c.etcdMemberRemove("etcd-bootstrap")
+}
+
+func (c *ClusterMemberController) RemoveBootstrapFromEndpoint() error {
+	hostEndpoint, err := c.clientset.CoreV1().
+		Endpoints(etcd.EtcdEndpointNamespace).
+		Get(etcd.EtcdHostEndpointName, metav1.GetOptions{})
+	if err != nil {
+		klog.Errorf("error getting endpoint: %#v\n", err)
+		return err
+	}
+	subsetIndex := -1
+	bootstrapIndex := -1
+	for sI, s := range hostEndpoint.Subsets {
+		for i, s := range s.Addresses {
+			if s.Hostname == "etcd-bootstrap" {
+				bootstrapIndex = i
+				subsetIndex = sI
+				break
+			}
+		}
+	}
+
+	if subsetIndex == -1 || bootstrapIndex == -1 {
+		// Unable to find bootstrap
+		return nil
+	}
+
+	hostEndpoint.Subsets[subsetIndex].Addresses = append(hostEndpoint.Subsets[subsetIndex].Addresses[0:bootstrapIndex], hostEndpoint.Subsets[subsetIndex].Addresses[bootstrapIndex+1:]...)
+
+	_, err = c.clientset.CoreV1().Endpoints(etcd.EtcdEndpointNamespace).Update(hostEndpoint)
+	if err != nil {
+		klog.Errorf("error updating endpoint: %#v\n", err)
+		return err
+	}
+	return nil
+
 }
