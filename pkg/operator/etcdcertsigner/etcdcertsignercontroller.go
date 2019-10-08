@@ -9,16 +9,16 @@ import (
 	"fmt"
 
 	ceoapi "github.com/openshift/cluster-etcd-operator/pkg/operator/api"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 
 	"strings"
 	"time"
 
 	"github.com/openshift/library-go/pkg/crypto"
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

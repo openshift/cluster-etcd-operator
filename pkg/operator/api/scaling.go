@@ -8,7 +8,8 @@ import (
 type EtcdScaling struct {
 	Metadata *metav1.ObjectMeta `json:"metadata,omitempty"`
 	Members  []Member           `json:"members,omitempty"`
-	PodFQDN  string             `json:"podFQDN,omitempty"`
+	// deprecated pending removal
+	PodFQDN string `json:"podFQDN,omitempty"`
 }
 
 type Member struct {
@@ -39,15 +40,15 @@ type MemberCondition struct {
 type MemberConditionType string
 
 const (
-	// Ready indicated the member is part of the cluster and available
+	// Ready indicated the member is part of the cluster and endpoint is Ready
 	MemberReady MemberConditionType = "Ready"
-	// Unknown indicated the member is part of the cluster but condition is unknown
+	// Unknown indicated the member condition is unknown and requires further observations to verify
 	MemberUnknown MemberConditionType = "Unknown"
 	// Degraded indicates the member pod is in a degraded state and should be restarted
 	MemberDegraded MemberConditionType = "Degraded"
 	// Remove indicates the member should be removed from the cluster
 	MemberRemove MemberConditionType = "Remove"
-	// MemberAdd is a member who is ready to join cluster but currently has not.
+	// MemberAdd is a member who is ready to join cluster but currently has not
 	MemberAdd MemberConditionType = "Add"
 )
 

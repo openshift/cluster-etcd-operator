@@ -5,13 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
-	"strings"
 	"time"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/etcd"
-
-	ceoapi "github.com/openshift/cluster-etcd-operator/pkg/operator/api"
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/pkg/transport"
@@ -23,6 +17,7 @@ import (
 	"k8s.io/klog"
 
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -30,6 +25,8 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	corev1client "k8s.io/client-go/kubernetes"
+
+	ceoapi "github.com/openshift/cluster-etcd-operator/pkg/operator/api"
 )
 
 const (
@@ -38,6 +35,9 @@ const (
 	etcdCertFile             = "/var/run/secrets/etcd-client/tls.crt"
 	etcdKeyFile              = "/var/run/secrets/etcd-client/tls.key"
 	etcdTrustedCAFile        = "/var/run/configmaps/etcd-ca/ca-bundle.crt"
+	EtcdEndpointNamespace    = "openshift-etcd"
+	EtcdHostEndpointName     = "host-etcd"
+	EtcdEndpointName         = "etcd"
 )
 
 type ClusterMemberController struct {
@@ -76,11 +76,23 @@ func (c *ClusterMemberController) sync() error {
 		return err
 	}
 
+	resyncName, err := c.getResyncName(pods)
 	for i := range pods.Items {
 		p := &pods.Items[i]
 		klog.Infof("Found etcd Pod with name %v\n", p.Name)
 
-		if c.IsMemberRemove(p.Name) {
+		// we anchor this loop on the configmap. In the case of failure we can resync by aligning with that Pod
+		switch resyncName {
+		case "":
+			break
+		case p.Name:
+			klog.Infof("resyncing on %s\n", p.Name)
+		default:
+			continue
+		}
+
+		// exisiting member can be removed order is important here
+		if c.IsStatus("pending", p.Name, ceoapi.MemberRemove) {
 			klog.Infof("Member is unhealthy and is being removed: %s\n", p.Name)
 			if err := c.etcdMemberRemove(p.Name); err != nil {
 				c.eventRecorder.Warning("ScalingDownFailed", err.Error())
@@ -89,6 +101,7 @@ func (c *ClusterMemberController) sync() error {
 				// Todo alaypatel07: need to skip this reconciliation loop and continue later
 				// after the member is removed from this very point.
 			}
+			// continue?
 		}
 
 		if c.IsMember(p.Name) {
@@ -97,7 +110,7 @@ func (c *ClusterMemberController) sync() error {
 			if err != nil {
 				klog.Errorf("failed to obtain name from annotation %v", err)
 			}
-			// clear annotation
+			// clear annotation because scaling is complete
 			if name == p.Name {
 				if err := c.setScaleAnnotation(""); err != nil {
 					return err
@@ -127,18 +140,18 @@ func (c *ClusterMemberController) sync() error {
 			return updateError
 		}
 
-		//TODO probalby need some breaks here so we don't scale if degraded.
-		members, err := c.MemberList()
-		if err != nil {
-			return err
-		}
-
-		// scale
 		// although we dont use SRV for server bootstrap we do use the records to map peerurls
-		peerFQDN, err := reverseLookupSelf("etcd-server-ssl", "tcp", c.etcdDiscoveryDomain, p.Status.HostIP)
+		peerFQDN, err := ReverseLookupSelf("etcd-server-ssl", "tcp", c.etcdDiscoveryDomain, p.Status.HostIP)
 		if err != nil {
 			klog.Errorf("error looking up self: %v", err)
 			continue
+		}
+
+		// Pending MemberReady: etcd is free join cluster here we provide configurations nessisary to fullfill dependencies.
+		// if c.IsStatus("pending", p.Name, ceoapi.MemberReady) {
+		members, err := c.EtcdList("members")
+		if err != nil {
+			return err
 		}
 
 		es := ceoapi.EtcdScaling{
@@ -155,7 +168,6 @@ func (c *ClusterMemberController) sync() error {
 			return err
 		}
 
-		// start scaling
 		retryErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 			if err := c.setScaleAnnotation(string(esb)); err != nil {
 				return err
@@ -165,30 +177,15 @@ func (c *ClusterMemberController) sync() error {
 		if retryErr != nil {
 			return fmt.Errorf("Update approve failed: %v", retryErr)
 		}
+		// }
 
-		// doing the pause is a hack lets wait for certs to finish?
-		// after certs runs we will block until we get the next command from configmap.
-		// block until we see running status
-		duration := 10 * time.Second
-		wait.PollInfinite(duration, func() (bool, error) {
-			result, _ := c.clientset.CoreV1().Pods("openshift-etcd").Get(p.Name, metav1.GetOptions{})
-			if err != nil {
-				klog.Errorf("error sending ClusterMember request: %v", err)
-				return false, nil
+		// Pending MemberAdd: here we have observed the static pod having add dependencies filled ok to scale Cluster API.
+		if c.IsStatus("pending", p.Name, ceoapi.MemberAdd) {
+			if err := c.etcdMemberAdd([]string{fmt.Sprintf("https://%s:2380", peerFQDN)}); err != nil {
+				c.eventRecorder.Warning("ScalingFailed", err.Error())
+				return err
 			}
-			if result.Status.Phase != "Running" {
-				klog.Infof("Waiting for Pod %s to start", p.Name)
-				return false, nil
-			}
-
-			return true, nil
-		})
-
-		if err := c.etcdMemberAdd([]string{fmt.Sprintf("https://%s:2380", peerFQDN)}); err != nil {
-			c.eventRecorder.Warning("ScalingFailed", err.Error())
-			return err
 		}
-
 		if c.IsMember(p.Name) {
 			klog.Infof("Member is already part of the cluster: %s\n", p.Name)
 			continue
@@ -294,8 +291,8 @@ func (c *ClusterMemberController) etcdMemberRemove(name string) error {
 	return nil
 }
 
-func (c *ClusterMemberController) MemberList() ([]ceoapi.Member, error) {
-	configPath := []string{"cluster", "members"}
+func (c *ClusterMemberController) EtcdList(bucket string) ([]ceoapi.Member, error) {
+	configPath := []string{"cluster", bucket}
 	operatorSpec, _, _, err := c.operatorConfigClient.GetOperatorState()
 	if err != nil {
 		return nil, err
@@ -354,67 +351,8 @@ func (c *ClusterMemberController) MemberList() ([]ceoapi.Member, error) {
 	return members, nil
 }
 
-func (c *ClusterMemberController) PendingMemberList() ([]ceoapi.Member, error) {
-	configPath := []string{"cluster", "pending"}
-	operatorSpec, _, _, err := c.operatorConfigClient.GetOperatorState()
-	if err != nil {
-		return nil, err
-	}
-	config := map[string]interface{}{}
-	if err := json.NewDecoder(bytes.NewBuffer(operatorSpec.ObservedConfig.Raw)).Decode(&config); err != nil {
-		klog.V(4).Infof("decode of existing config failed with error: %v", err)
-	}
-	data, exists, err := unstructured.NestedSlice(config, configPath...)
-	if err != nil {
-		return nil, err
-	}
-	if !exists {
-		return nil, fmt.Errorf("etcd cluster members not observed")
-	}
-
-	// populate current etcd members as observed.
-	var members []ceoapi.Member
-	for _, member := range data {
-		memberMap, _ := member.(map[string]interface{})
-		name, exists, err := unstructured.NestedString(memberMap, "name")
-		if err != nil {
-			return nil, err
-		}
-		if !exists {
-			return nil, fmt.Errorf("member name does not exist")
-		}
-		peerURLs, exists, err := unstructured.NestedString(memberMap, "peerURLs")
-		if err != nil {
-			return nil, err
-		}
-		if !exists {
-			return nil, fmt.Errorf("member peerURLs do not exist")
-		}
-		status, exists, err := unstructured.NestedString(memberMap, "status")
-		if err != nil {
-			return nil, err
-		}
-		if !exists {
-			return nil, fmt.Errorf("member status does not exist")
-		}
-
-		condition := ceoapi.GetMemberCondition(status)
-		m := ceoapi.Member{
-			Name:     name,
-			PeerURLS: []string{peerURLs},
-			Conditions: []ceoapi.MemberCondition{
-				{
-					Type: condition,
-				},
-			},
-		}
-		members = append(members, m)
-	}
-	return members, nil
-}
-
 func (c *ClusterMemberController) IsMember(name string) bool {
-	members, _ := c.MemberList()
+	members, _ := c.EtcdList("members")
 	for _, m := range members {
 		if m.Name == name {
 			return true
@@ -423,51 +361,21 @@ func (c *ClusterMemberController) IsMember(name string) bool {
 	return false
 }
 
-func (c *ClusterMemberController) IsMemberRemove(name string) bool {
-	members, _ := c.PendingMemberList()
+// IsStatus returns true or false based on the bucket name and status of an etcd. If multiple status are passed
+// the compare is done using or so if true one of the status exists for that etcd.
+func (c *ClusterMemberController) IsStatus(bucket string, name string, condition ...ceoapi.MemberConditionType) bool {
+	members, _ := c.EtcdList(bucket)
 	for _, m := range members {
 		klog.Warningf("IsMemberRemove: checking %v vs %v type = %v\n", m.Name, name, m.Conditions[0].Type)
-		if m.Name == name && m.Conditions[0].Type == ceoapi.MemberRemove {
-			return true
+		if m.Name == name {
+			for _, status := range condition {
+				if m.Conditions[0].Type == status {
+					return true
+				}
+			}
 		}
 	}
 	return false
-}
-
-func (c *ClusterMemberController) isPodCrashLoop(name string) bool {
-	restartCount := make(map[string]int32)
-	timeout := 120 * time.Second
-	interval := 5 * time.Second
-
-	// check if the pod is activly crashlooping
-	if err := wait.PollImmediate(interval, timeout, func() (bool, error) {
-		pod, err := c.clientset.CoreV1().Pods("openshift-etcd").Get(name, metav1.GetOptions{})
-		if err != nil {
-			klog.Errorf("unable to find pod %s: %v. Retrying.", name, err)
-			return false, nil
-		}
-		for _, containerStatus := range pod.Status.ContainerStatuses {
-			if containerStatus.State.Waiting == nil {
-				continue
-			}
-			if restartCount[containerStatus.Name] == 0 {
-				restartCount[containerStatus.Name] = containerStatus.RestartCount
-			}
-
-			if containerStatus.State.Waiting.Reason == "CrashLoopBackOff" {
-				if restartCount[containerStatus.Name] > 0 && containerStatus.RestartCount > restartCount[containerStatus.Name] {
-					klog.Warningf("found container %s actively in CrashLoopBackOff\n", containerStatus.Name)
-					return true, nil
-				}
-				restartCount[containerStatus.Name] = containerStatus.RestartCount
-				return false, nil
-			}
-		}
-		return false, nil
-	}); err != nil {
-		return false
-	}
-	return true
 }
 
 func (c *ClusterMemberController) setScaleAnnotation(scaling string) error {
@@ -488,49 +396,11 @@ func (c *ClusterMemberController) setScaleAnnotation(scaling string) error {
 }
 
 func (c *ClusterMemberController) getScaleAnnotationName() (string, error) {
-	result, err := c.clientset.CoreV1().ConfigMaps("openshift-etcd").Get("member-config", metav1.GetOptions{})
+	cm, err := c.clientset.CoreV1().ConfigMaps("openshift-etcd").Get("member-config", metav1.GetOptions{})
 	if err != nil {
 		return "", err
 	}
-	scaling := &ceoapi.EtcdScaling{}
-	data, ok := result.Annotations[EtcdScalingAnnotationKey]
-	if !ok {
-		return "", fmt.Errorf("scaling annotation not found")
-	}
-	if err := json.Unmarshal([]byte(data), scaling); err != nil {
-		klog.Infof("unable to unmarshal scaling data %#v\n", err)
-		return "", err
-	}
-	if scaling.Metadata.Name == "" {
-		return "", fmt.Errorf("scaling annotation name not found")
-	}
-	return scaling.Metadata.Name, nil
-}
-
-func reverseLookupSelf(service, proto, name, self string) (string, error) {
-	_, srvs, err := net.LookupSRV(service, proto, name)
-	if err != nil {
-		return "", err
-	}
-	selfTarget := ""
-	for _, srv := range srvs {
-		klog.V(4).Infof("checking against %s", srv.Target)
-		addrs, err := net.LookupHost(srv.Target)
-		if err != nil {
-			return "", fmt.Errorf("could not resolve member %q", srv.Target)
-		}
-
-		for _, addr := range addrs {
-			if addr == self {
-				selfTarget = strings.Trim(srv.Target, ".")
-				break
-			}
-		}
-	}
-	if selfTarget == "" {
-		return "", fmt.Errorf("could not find self")
-	}
-	return selfTarget, nil
+	return GetScaleAnnotationName(cm)
 }
 
 func (c *ClusterMemberController) Run(stopCh <-chan struct{}) {
@@ -602,8 +472,8 @@ func (c *ClusterMemberController) RemoveBootstrap() error {
 
 func (c *ClusterMemberController) RemoveBootstrapFromEndpoint() error {
 	hostEndpoint, err := c.clientset.CoreV1().
-		Endpoints(etcd.EtcdEndpointNamespace).
-		Get(etcd.EtcdHostEndpointName, metav1.GetOptions{})
+		Endpoints(EtcdEndpointNamespace).
+		Get(EtcdHostEndpointName, metav1.GetOptions{})
 	if err != nil {
 		klog.Errorf("error getting endpoint: %#v\n", err)
 		return err
@@ -627,11 +497,26 @@ func (c *ClusterMemberController) RemoveBootstrapFromEndpoint() error {
 
 	hostEndpoint.Subsets[subsetIndex].Addresses = append(hostEndpoint.Subsets[subsetIndex].Addresses[0:bootstrapIndex], hostEndpoint.Subsets[subsetIndex].Addresses[bootstrapIndex+1:]...)
 
-	_, err = c.clientset.CoreV1().Endpoints(etcd.EtcdEndpointNamespace).Update(hostEndpoint)
+	_, err = c.clientset.CoreV1().Endpoints(EtcdEndpointNamespace).Update(hostEndpoint)
 	if err != nil {
 		klog.Errorf("error updating endpoint: %#v\n", err)
 		return err
 	}
 	return nil
+}
 
+func (c *ClusterMemberController) getResyncName(pods *corev1.PodList) (string, error) {
+	name, err := c.getScaleAnnotationName()
+	if err != nil {
+		return "", fmt.Errorf("failed to obtain name from annotation %v", err)
+	}
+
+	for i := range pods.Items {
+		p := &pods.Items[i]
+		klog.Errorf("getResyncName: compare %s vs %s\n", p.Name, name)
+		if p.Name == name {
+			return name, nil
+		}
+	}
+	return "", nil
 }

@@ -8,9 +8,10 @@ import (
 )
 
 type Listers struct {
-	OpenshiftEtcdEndpointsLister corelistersv1.EndpointsLister
-	OpenshiftEtcdPodsLister      corelistersv1.PodLister
-	NodeLister                   corelistersv1.NodeLister
+	OpenshiftEtcdEndpointsLister  corelistersv1.EndpointsLister
+	OpenshiftEtcdPodsLister       corelistersv1.PodLister
+	OpenshiftEtcdConfigMapsLister corelistersv1.ConfigMapLister
+	NodeLister                    corelistersv1.NodeLister
 
 	ResourceSync       resourcesynccontroller.ResourceSyncer
 	PreRunCachesSynced []cache.InformerSynced

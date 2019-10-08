@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
 	"k8s.io/klog"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -21,6 +20,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/status"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
