@@ -17,6 +17,9 @@ func GetScaleAnnotationName(configMap *corev1.ConfigMap) (string, error) {
 	if !ok {
 		return "", nil
 	}
+	if data == "" {
+		return "", nil
+	}
 	if err := json.Unmarshal([]byte(data), scaling); err != nil {
 		klog.Infof("unable to unmarshal scaling data %#v\n", err)
 		return "", err

@@ -9,6 +9,7 @@ import (
 	"github.com/cloudflare/cfssl/log"
 	ceoapi "github.com/openshift/cluster-etcd-operator/pkg/operator/api"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
+	corelistersv1 "k8s.io/client-go/listers/core/v1"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation"
 
@@ -190,9 +191,29 @@ func ObservePendingClusterMembers(genericListers configobserver.Listers, recorde
 	return observedConfig, nil
 }
 
-func isPendingReady(bucket string, podName string, scalingName string) bool {
+func isPendingReady(bucket string, podName string, scalingName string, podLister corelistersv1.PodLister) bool {
 	if bucket == "pending" && podName != scalingName {
 		return false
+	}
+	pod, err := podLister.Pods(clustermembercontroller.EtcdEndpointNamespace).Get(podName)
+	if err != nil {
+		klog.Errorf("isPendingReady: error getting pod %#v", err)
+		return false
+	}
+	if len(pod.Status.InitContainerStatuses) < 2 {
+		klog.Infof("isPendingRead: waiting for init cert containers to pass")
+		return false
+	} else {
+		if pod.Status.InitContainerStatuses[1].State.Terminated != nil && pod.Status.InitContainerStatuses[1].State.Terminated.ExitCode == 0 {
+			if pod.Status.ContainerStatuses[0].State.Terminated != nil && pod.Status.ContainerStatuses[0].RestartCount > 0 {
+				klog.Info("isPendingRead: restart count >0, Remove state")
+				return false
+			}
+			klog.Infof("isPendingRead: waiting for init cert containers exit code 0, current code %v", pod.Status.InitContainerStatuses[1].State.Terminated.ExitCode)
+			return true
+		} else {
+			return false
+		}
 	}
 	return true
 }
@@ -411,7 +432,7 @@ func (e *etcdObserver) setObservedEtcdFromEndpoint(bucket string) error {
 			case isPodCrashLoop(bucket, pod):
 				status = ceoapi.MemberRemove
 				break
-			case isPendingReady(bucket, pod.Name, scalingName):
+			case isPendingReady(bucket, pod.Name, scalingName, e.listers.OpenshiftEtcdPodsLister):
 				status = ceoapi.MemberReady
 				break
 			// case isPendingAdd(bucket, pod.Name, previous, scalingName):

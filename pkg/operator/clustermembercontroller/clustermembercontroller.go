@@ -180,7 +180,7 @@ func (c *ClusterMemberController) sync() error {
 		// }
 
 		// Pending MemberAdd: here we have observed the static pod having add dependencies filled ok to scale Cluster API.
-		if c.IsStatus("pending", p.Name, ceoapi.MemberAdd) {
+		if c.IsStatus("pending", p.Name, ceoapi.MemberReady) {
 			if err := c.etcdMemberAdd([]string{fmt.Sprintf("https://%s:2380", peerFQDN)}); err != nil {
 				c.eventRecorder.Warning("ScalingFailed", err.Error())
 				return err
