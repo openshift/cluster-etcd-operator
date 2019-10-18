@@ -24,7 +24,7 @@ func RunController() error {
 
 	staticSyncController := NewStaticSyncController(
 		kubeInformerFactory,
-		// ctx.EventRecorder,
+		nil,
 	)
 
 	kubeInformerFactory.Start(ctx.Done())

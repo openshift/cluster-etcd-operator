@@ -24,9 +24,10 @@ import (
 )
 
 const (
-	workQueueKey = "key"
-	srcDir       = "/var/run/secrets/kubernetes.io/serviceaccount"
-	destDir      = "/run/secrets/etcd"
+	workQueueKey  = "key"
+	srcDir        = "/var/run/secrets/kubernetes.io/serviceaccount"
+	destDir       = "/run/secrets/etcd"
+	etcdNamespace = "openshift-etcd"
 )
 
 type syncOpts struct {
@@ -68,7 +69,7 @@ func (s *syncOpts) Run() error {
 	// To help debugging, immediately log version
 	klog.Infof("Version: %+v (%s)", info.GitVersion, info.GitCommit)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.TODO())
 	clientConfig, err := rest.InClusterConfig()
 	if err != nil {
 		return err
@@ -78,11 +79,19 @@ func (s *syncOpts) Run() error {
 		return err
 	}
 
-	kubeInformerFactory := informers.NewFilteredSharedInformerFactory(clientset, 0, "openshift-etcd", nil)
+	//TODO: util v6j
+	controllerRef, err := events.GetControllerReferenceForCurrentPod(clientset, etcdNamespace, nil)
+	if err != nil {
+		klog.Warningf("unable to get owner reference (falling back to namespace): %v", err)
+	}
+
+	eventRecorder := events.NewKubeRecorder(clientset.CoreV1().Events(etcdNamespace), "resource-sync-controller-"+os.Getenv("NODE_NAME"), controllerRef)
+
+	kubeInformerFactory := informers.NewFilteredSharedInformerFactory(clientset, 0, etcdNamespace, nil)
 
 	staticSyncController := NewStaticSyncController(
 		kubeInformerFactory,
-		// ctx.EventRecorder,
+		eventRecorder,
 	)
 
 	kubeInformerFactory.Start(ctx.Done())
@@ -105,11 +114,11 @@ type StaticSyncController struct {
 
 func NewStaticSyncController(
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
-	// eventRecorder events.Recorder,
+	eventRecorder events.Recorder,
 ) *StaticSyncController {
 	c := &StaticSyncController{
-		// eventRecorder: eventRecorder.WithComponentSuffix("resource-sync-controller"),
-		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ResourceSyncController"),
+		eventRecorder: eventRecorder.WithComponentSuffix("resource-sync-controller-" + os.Getenv("NODE_NAME")),
+		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ResourceSyncController"),
 	}
 	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer().AddEventHandler(c.eventHandler())
 

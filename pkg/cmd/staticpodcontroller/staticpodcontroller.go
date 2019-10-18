@@ -83,7 +83,7 @@ func (s *podOpts) Run() error {
 	klog.Infof("Version: %+v (%s)", info.GitVersion, info.GitCommit)
 
 	// here
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.TODO())
 	clientConfig, err := rest.InClusterConfig()
 	if err != nil {
 		return err
@@ -102,12 +102,20 @@ func (s *podOpts) Run() error {
 	}
 	etcdOperatorClient := operatorClient.Etcds()
 
-	kubeInformerFactory := informers.NewFilteredSharedInformerFactory(clientset, 0, "openshift-etcd", nil)
+	kubeInformerFactory := informers.NewFilteredSharedInformerFactory(clientset, 0, etcdNamespace, nil)
 	nodeName := os.Getenv("NODE_NAME")
 	var localEtcdName string
 	if nodeName != "" {
 		localEtcdName = fmt.Sprintf("etcd-member-%s", nodeName)
 	}
+
+	//TODO: util v6j
+	controllerRef, err := events.GetControllerReferenceForCurrentPod(clientset, etcdNamespace, nil)
+	if err != nil {
+		klog.Warningf("unable to get owner reference (falling back to namespace): %v", err)
+	}
+
+	eventRecorder := events.NewKubeRecorder(clientset.CoreV1().Events(etcdNamespace), "static-pod-controller-"+localEtcdName, controllerRef)
 
 	staticPodController := NewStaticPodController(
 		etcdOperatorClient,
@@ -115,7 +123,7 @@ func (s *podOpts) Run() error {
 		clientset,
 		clientmc,
 		localEtcdName,
-		// ctx.EventRecorder,
+		eventRecorder,
 	)
 
 	kubeInformerFactory.Start(ctx.Done())
@@ -146,14 +154,14 @@ func NewStaticPodController(
 	clientset corev1client.Interface,
 	clientmc mcfgclientset.Interface,
 	localEtcdName string,
-	// eventRecorder events.Recorder,
+	eventRecorder events.Recorder,
 ) *StaticPodController {
 	c := &StaticPodController{
 		etcdOperatorClient: etcdOperatorClient,
-		// eventRecorder: eventRecorder.WithComponentSuffix("static-pod-controller"),
-		clientset:     clientset,
-		clientmc:      clientmc,
-		localEtcdName: localEtcdName,
+		eventRecorder:      eventRecorder.WithComponentSuffix("static-pod-controller-" + localEtcdName),
+		clientset:          clientset,
+		clientmc:           clientmc,
+		localEtcdName:      localEtcdName,
 
 		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "StaticPodController"),
 	}
@@ -164,7 +172,7 @@ func NewStaticPodController(
 }
 
 func (c *StaticPodController) sync() error {
-	pod, err := c.clientset.CoreV1().Pods("openshift-etcd").Get(c.localEtcdName, metav1.GetOptions{})
+	pod, err := c.clientset.CoreV1().Pods(etcdNamespace).Get(c.localEtcdName, metav1.GetOptions{})
 	if err != nil {
 		klog.Infof("No Pod found in openshift-etcd with name %s", c.localEtcdName)
 		return err

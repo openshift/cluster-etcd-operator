@@ -44,7 +44,7 @@ spec:
         operator: Exists
         effect: NoSchedule
       containers:
-      - image: "quay.io/hexfusion/cluster-etcd-operator:latest"
+      - image: "quay.io/alaypatel07/cluster-etcd-operator:pr"
         imagePullPolicy: Always
         name: etcd-staticsync
         command: ["/usr/bin/cluster-etcd-operator"]
@@ -58,6 +58,15 @@ spec:
           requests:
             cpu: 10m
             memory: 5Mi
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
       volumes:
       - name: etcd-static-token
         hostPath:
