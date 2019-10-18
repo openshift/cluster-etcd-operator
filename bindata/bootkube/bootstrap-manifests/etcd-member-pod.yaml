@@ -16,6 +16,8 @@ spec:
     - "--output-file=/run/etcd/environment"
     - "--bootstrap-srv=false"
     - "--v=4"
+    securityContext:
+      privileged: true
     volumeMounts:
     - name: discovery
       mountPath: /run/etcd/
@@ -70,6 +72,8 @@ spec:
             --commonname=system:etcd-metric:${ETCD_DNS_NAME} \
             --ipaddrs=${ETCD_IPV4_ADDRESS} \
     terminationMessagePolicy: FallbackToLogsOnError
+    securityContext:
+      privileged: true
     volumeMounts:
     - name: discovery
       mountPath: /run/etcd/
@@ -112,6 +116,8 @@ spec:
         memory: 600Mi
         cpu: 300m
     terminationMessagePolicy: FallbackToLogsOnError
+    securityContext:
+      privileged: true
     volumeMounts:
     - name: discovery
       mountPath: /run/etcd/
@@ -156,6 +162,8 @@ spec:
         --cacert /etc/ssl/etcd/ca.crt \
         --trusted-ca-file /etc/ssl/etcd/metric-ca.crt \
     terminationMessagePolicy: FallbackToLogsOnError
+    securityContext:
+      privileged: true
     volumeMounts:
     - name: discovery
       mountPath: /run/etcd/

@@ -7,6 +7,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/mount"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -49,6 +51,7 @@ func NewSSCSCommand() *cobra.Command {
 	cmd.AddCommand(render.NewRenderCommand(os.Stderr))
 	cmd.AddCommand(staticsynccontroller.NewStaticSyncCommand(os.Stderr))
 	cmd.AddCommand(staticpodcontroller.NewStaticPodCommand(os.Stderr))
+	cmd.AddCommand(mount.NewMountCommand(os.Stderr))
 
 	return cmd
 }
