@@ -41,11 +41,12 @@ const (
 )
 
 type ClusterMemberController struct {
-	clientset            corev1client.Interface
-	operatorConfigClient v1helpers.OperatorClient
-	queue                workqueue.RateLimitingInterface
-	eventRecorder        events.Recorder
-	etcdDiscoveryDomain  string
+	clientset                              corev1client.Interface
+	operatorConfigClient                   v1helpers.OperatorClient
+	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory
+	queue                                  workqueue.RateLimitingInterface
+	eventRecorder                          events.Recorder
+	etcdDiscoveryDomain                    string
 }
 
 func NewClusterMemberController(
@@ -57,11 +58,12 @@ func NewClusterMemberController(
 	etcdDiscoveryDomain string,
 ) *ClusterMemberController {
 	c := &ClusterMemberController{
-		clientset:            clientset,
-		operatorConfigClient: operatorConfigClient,
-		queue:                workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ClusterMemberController"),
-		eventRecorder:        eventRecorder.WithComponentSuffix("cluster-member-controller"),
-		etcdDiscoveryDomain:  etcdDiscoveryDomain,
+		clientset:                              clientset,
+		operatorConfigClient:                   operatorConfigClient,
+		queue:                                  workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ClusterMemberController"),
+		kubeInformersForOpenshiftEtcdNamespace: kubeInformersForOpenshiftEtcdNamespace,
+		eventRecorder:                          eventRecorder.WithComponentSuffix("cluster-member-controller"),
+		etcdDiscoveryDomain:                    etcdDiscoveryDomain,
 	}
 	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Pods().Informer().AddEventHandler(c.eventHandler())
 	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Endpoints().Informer().AddEventHandler(c.eventHandler())
@@ -409,6 +411,13 @@ func (c *ClusterMemberController) Run(stopCh <-chan struct{}) {
 
 	klog.Infof("Starting ClusterMemberController")
 	defer klog.Infof("Shutting down ClusterMemberController")
+
+	if !cache.WaitForCacheSync(stopCh,
+		c.kubeInformersForOpenshiftEtcdNamespace.Core().V1().Pods().Informer().HasSynced,
+		c.kubeInformersForOpenshiftEtcdNamespace.Core().V1().Endpoints().Informer().HasSynced) {
+		utilruntime.HandleError(fmt.Errorf("caches did not sync"))
+		return
+	}
 
 	go wait.Until(c.runWorker, time.Second, stopCh)
 
