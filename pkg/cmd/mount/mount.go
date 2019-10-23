@@ -2,13 +2,14 @@ package mount
 
 import (
 	"fmt"
-	"github.com/spf13/pflag"
 	"io"
 	"io/ioutil"
-	"k8s.io/klog"
 	"path"
 	"strings"
 	"time"
+
+	"github.com/spf13/pflag"
+	"k8s.io/klog"
 
 	"github.com/spf13/cobra"
 	v1 "k8s.io/api/core/v1"
