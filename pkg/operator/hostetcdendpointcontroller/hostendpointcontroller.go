@@ -189,6 +189,9 @@ func pickUniqueIPAddress(assignedIPAddresses []string, newIPAddressNeeded int) [
 func diff(hostnames, healthyMembers []string) (add, remove []string) {
 	for _, h := range hostnames {
 		if ok := in(healthyMembers, h); !ok {
+			if h == "etcd-bootstrap" {
+				continue
+			}
 			remove = append(remove, h)
 		}
 	}

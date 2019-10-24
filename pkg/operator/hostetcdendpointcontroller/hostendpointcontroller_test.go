@@ -46,22 +46,22 @@ func Test_diff(t *testing.T) {
 			wantRemove: nil,
 		},
 		{
-			name: "scaling: remove etcd-bootstrap member",
+			name: "scaling: ignore etcd-bootstrap member",
 			args: args{
 				hostnames:      []string{"etcd-bootstrap", "etcd-0", "etcd-1"},
 				healthyMembers: []string{"etcd-0", "etcd-1"},
 			},
 			wantAdd:    nil,
-			wantRemove: []string{"etcd-bootstrap"},
+			wantRemove: nil,
 		},
 		{
-			name: "scaling: remove etcd-bootstrap member and add etcd-2 at the same time",
+			name: "scaling: add etcd-2 at the same time",
 			args: args{
 				hostnames:      []string{"etcd-bootstrap", "etcd-0", "etcd-1"},
 				healthyMembers: []string{"etcd-0", "etcd-1", "etcd-2"},
 			},
 			wantAdd:    []string{"etcd-2"},
-			wantRemove: []string{"etcd-bootstrap"},
+			wantRemove: nil,
 		},
 	}
 	for _, tt := range tests {

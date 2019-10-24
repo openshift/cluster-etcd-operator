@@ -2,7 +2,6 @@ package hostetcdendpointcontroller
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -58,34 +57,64 @@ func getEtcdName(peerURLs []string) string {
 }
 
 func (h *healthyEtcdMemberGetter) EtcdList(bucket string) ([]ceoapi.Member, error) {
-	cli, err := h.getEtcdClient()
+	configPath := []string{"cluster", bucket}
+	operatorSpec, _, _, err := h.operatorConfigClient.GetOperatorState()
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := cli.MemberList(context.Background())
+	config := map[string]interface{}{}
+	if err := json.NewDecoder(bytes.NewBuffer(operatorSpec.ObservedConfig.Raw)).Decode(&config); err != nil {
+		klog.V(4).Infof("decode of existing config failed with error: %v", err)
+	}
+	data, exists, err := unstructured.NestedSlice(config, configPath...)
 	if err != nil {
 		return nil, err
 	}
+	if !exists {
+		return nil, fmt.Errorf("etcd cluster members not observed")
+	}
 
-	members := make([]ceoapi.Member, len(resp.Members))
-
-	for _, m := range resp.Members {
-		statusResp, err := cli.Status(context.Background(), m.ClientURLs[0])
+	// populate current etcd members as observed.
+	var members []ceoapi.Member
+	for _, member := range data {
+		memberMap, _ := member.(map[string]interface{})
+		name, exists, err := unstructured.NestedString(memberMap, "name")
 		if err != nil {
-			klog.Warningf("member %s with etcdName %s is not healthy", m.Name,
-				getEtcdName(m.PeerURLs))
-			klog.Errorf("error reading %s health: %#v", m.Name, err)
-			continue
+			return nil, err
 		}
-		klog.Infof("member %s is healtly with %d index", m.Name, statusResp.RaftIndex)
-		members = append(members, ceoapi.Member{
-			Name:       m.Name,
-			PeerURLS:   m.PeerURLs,
-			ClientURLS: m.PeerURLs,
-		})
-	}
+		if !exists {
+			return nil, fmt.Errorf("member name does not exist")
+		}
+		peerURLs, exists, err := unstructured.NestedString(memberMap, "peerURLs")
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, fmt.Errorf("member peerURLs do not exist")
+		}
+		// why have different terms i.e. status and condition? can we choose one and mirror?
+		status, exists, err := unstructured.NestedString(memberMap, "status")
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, fmt.Errorf("member status does not exist")
+		}
 
+		condition := ceoapi.GetMemberCondition(status)
+		if condition == ceoapi.MemberReady {
+			m := ceoapi.Member{
+				Name:     name,
+				PeerURLS: []string{peerURLs},
+				Conditions: []ceoapi.MemberCondition{
+					{
+						Type: condition,
+					},
+				},
+			}
+			members = append(members, m)
+		}
+	}
 	return members, nil
 }
 
