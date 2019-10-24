@@ -44,7 +44,7 @@ spec:
         operator: Exists
         effect: NoSchedule
       containers:
-      - image: "quay.io/hexfusion/cluster-etcd-operator:latest"
+      - image: "quay.io/openshift/cluster-etcd-operator:latest"
         imagePullPolicy: Always
         name: etcd-staticpod
         command: ["/usr/bin/cluster-etcd-operator"]

@@ -174,7 +174,7 @@ func NewStaticPodController(
 func (c *StaticPodController) sync() error {
 	pod, err := c.clientset.CoreV1().Pods(etcdNamespace).Get(c.localEtcdName, metav1.GetOptions{})
 	if err != nil {
-		klog.Infof("No Pod found in openshift-etcd with name %s", c.localEtcdName)
+		klog.Infof("No Pod found in %s with name %s", etcdNamespace, c.localEtcdName)
 		return err
 	}
 	staticPodPath := fmt.Sprintf("%s/%s", manifestDir, etcdMemberFileName)
