@@ -205,11 +205,10 @@ func isPendingReady(bucket string, podName string, scalingName string, podLister
 		return false
 	} else {
 		if pod.Status.InitContainerStatuses[1].State.Terminated != nil && pod.Status.InitContainerStatuses[1].State.Terminated.ExitCode == 0 {
-			if pod.Status.ContainerStatuses[0].State.Terminated != nil && pod.Status.ContainerStatuses[0].RestartCount > 0 {
-				klog.Info("isPendingRead: restart count >0, Remove state")
+			if pod.Status.ContainerStatuses[0].State.Waiting == nil {
+				klog.Info("isPendingReady: the container is either running/crashlooping")
 				return false
 			}
-			klog.Infof("isPendingRead: waiting for init cert containers exit code 0, current code %v", pod.Status.InitContainerStatuses[1].State.Terminated.ExitCode)
 			return true
 		} else {
 			return false
