@@ -53,7 +53,7 @@ func NewMountCommand(errOut io.Writer) *cobra.Command {
 
 func (m *mountSecretOpts) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&m.commonName, "commonname", "", "Common name for the certificate being requested")
-	fs.StringVar(&m.assetsDir, "assetsdir", "", "Directory location for the agent where it stores signed certs")
+	fs.StringVar(&m.assetsDir, "assetsdir", "", "Directory location to store signed certs")
 }
 
 func (m *mountSecretOpts) Run() error {
