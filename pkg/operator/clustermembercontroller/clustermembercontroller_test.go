@@ -1,7 +1,6 @@
 package clustermembercontroller
 
 import (
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/etcd"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	v1 "k8s.io/api/core/v1"
@@ -38,8 +37,8 @@ func TestClusterMemberController_RemoveBootstrapFromEndpoint(t *testing.T) {
 	}
 	ep := &v1.Endpoints{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      etcd.EtcdHostEndpointName,
-			Namespace: etcd.EtcdEndpointNamespace,
+			Name:      EtcdHostEndpointName,
+			Namespace: EtcdEndpointNamespace,
 		},
 		Subsets: []v1.EndpointSubset{
 			{
@@ -48,7 +47,7 @@ func TestClusterMemberController_RemoveBootstrapFromEndpoint(t *testing.T) {
 		},
 	}
 
-	_, err := client.CoreV1().Endpoints(etcd.EtcdEndpointNamespace).Create(ep)
+	_, err := client.CoreV1().Endpoints(EtcdEndpointNamespace).Create(ep)
 	if err != nil {
 		t.Fatal()
 	}
