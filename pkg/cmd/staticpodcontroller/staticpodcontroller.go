@@ -84,6 +84,7 @@ func (s *podOpts) Run() error {
 
 	// here
 	ctx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
 	clientConfig, err := rest.InClusterConfig()
 	if err != nil {
 		return err
@@ -131,7 +132,6 @@ func (s *podOpts) Run() error {
 	go staticPodController.Run(ctx.Done())
 
 	<-ctx.Done()
-	cancel()
 	return fmt.Errorf("stopped")
 }
 

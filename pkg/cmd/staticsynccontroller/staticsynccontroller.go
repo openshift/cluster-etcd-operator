@@ -70,6 +70,7 @@ func (s *syncOpts) Run() error {
 	klog.Infof("Version: %+v (%s)", info.GitVersion, info.GitCommit)
 
 	ctx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
 	clientConfig, err := rest.InClusterConfig()
 	if err != nil {
 		return err
@@ -99,7 +100,6 @@ func (s *syncOpts) Run() error {
 	go staticSyncController.Run(ctx.Done())
 
 	<-ctx.Done()
-	cancel()
 	return fmt.Errorf("stopped")
 }
 
