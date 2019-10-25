@@ -1,19 +1,17 @@
 # cluster-etcd-operator
 
-The kube-controller-manager operator installs and maintains the kube-controller-manager on a cluster
+cluster-etcd-operator (CEO) is an operator that handles the scaling of etcd during cluster bootstrap and regular operation. The operator also manages provisioning etcd dependencies such as TLS certificates.
 
-## Developing and debugging the bootkube bootstrap phase
+# Developing the CEO
 
-The operator image version used by the [https://github.com/openshift/installer/blob/master/pkg/asset/ignition/bootstrap/content/bootkube.go#L86](installer) bootstrap phase can be overridden by creating a custom origin-release image pointing to the developer's operator `:latest` image:
+See [HACKING.md](docs/HACKING.md).
 
-```
-$ IMAGE_ORG=sttts make images
-$ docker push sttts/origin-cluster-etcd-operator
+# Frequently Asked Questions
 
-$ cd ../cluster-kube-apiserver-operator
-$ IMAGES=cluster-etcd-operator IMAGE_ORG=sttts make origin-release
-$ docker push sttts/origin-release:latest
+See [FAQ.md](docs/FAQ.md).
 
-$ cd ../installer
-$ OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=docker.io/sttts/origin-release:latest bin/openshift-install cluster ...
-```
+# Security Response
+
+If you've found a security issue that you'd like to disclose confidentially
+please contact Red Hat's Product Security team. Details at
+https://access.redhat.com/security/team/contact

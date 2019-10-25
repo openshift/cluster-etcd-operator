@@ -7,15 +7,18 @@ import (
 	"os"
 	"time"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/certsigner"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/setupetcd"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/mount"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
 	utilflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/logs"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/staticpodcontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/staticsynccontroller"
 )
 
 func main() {
@@ -44,9 +47,11 @@ func NewSSCSCommand() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(certsigner.NewCertSignerCommand(os.Stderr))
+	cmd.AddCommand(operator.NewOperator())
 	cmd.AddCommand(render.NewRenderCommand(os.Stderr))
-	cmd.AddCommand(setupetcd.NewSetupEtcdCommand(os.Stderr))
+	cmd.AddCommand(staticsynccontroller.NewStaticSyncCommand(os.Stderr))
+	cmd.AddCommand(staticpodcontroller.NewStaticPodCommand(os.Stderr))
+	cmd.AddCommand(mount.NewMountCommand(os.Stderr))
 
 	return cmd
 }

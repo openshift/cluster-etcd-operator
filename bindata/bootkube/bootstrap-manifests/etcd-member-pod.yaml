@@ -9,14 +9,25 @@ spec:
   initContainers:
   - name: discovery
     image: "{{.Images.SetupEtcdEnv}}"
+    command: ["/usr/bin/setup-etcd-environment"]
     args:
     - "run"
     - "--discovery-srv={{.EtcdDiscoveryDomain}}"
     - "--output-file=/run/etcd/environment"
+    - "--bootstrap-srv=false"
     - "--v=4"
+    securityContext:
+      privileged: true
     volumeMounts:
     - name: discovery
       mountPath: /run/etcd/
+    - name: data-dir
+      mountPath: /var/lib/etcd/
+    env:
+    - name: ETCD_DATA_DIR
+      value: "/var/lib/etcd"
+    - name: ETCD_NAME
+      value: "etcd-bootstrap"
   - name: certs
     image: "{{.Images.KubeClientAgent}}"
     command:
@@ -61,6 +72,8 @@ spec:
             --commonname=system:etcd-metric:${ETCD_DNS_NAME} \
             --ipaddrs=${ETCD_IPV4_ADDRESS} \
     terminationMessagePolicy: FallbackToLogsOnError
+    securityContext:
+      privileged: true
     volumeMounts:
     - name: discovery
       mountPath: /run/etcd/
@@ -85,8 +98,7 @@ spec:
       set +a
 
       exec etcd \
-        --name etcd-bootstrap \
-        --initial-advertise-peer-urls=https://${ETCD_IPV4_ADDRESS}:2380 \
+        --initial-advertise-peer-urls=https://${ETCD_DNS_NAME}:2380 \
         --cert-file=/etc/ssl/etcd/system:etcd-server:${ETCD_DNS_NAME}.crt \
         --key-file=/etc/ssl/etcd/system:etcd-server:${ETCD_DNS_NAME}.key \
         --trusted-ca-file=/etc/ssl/etcd/ca.crt \
@@ -104,6 +116,8 @@ spec:
         memory: 600Mi
         cpu: 300m
     terminationMessagePolicy: FallbackToLogsOnError
+    securityContext:
+      privileged: true
     volumeMounts:
     - name: discovery
       mountPath: /run/etcd/
@@ -118,9 +132,7 @@ spec:
     - name: ETCD_DATA_DIR
       value: "/var/lib/etcd"
     - name: ETCD_NAME
-      valueFrom:
-        fieldRef:
-          fieldPath: metadata.name
+      value: "etcd-bootstrap"
     ports:
     - name: peer
       containerPort: 2380
@@ -150,6 +162,8 @@ spec:
         --cacert /etc/ssl/etcd/ca.crt \
         --trusted-ca-file /etc/ssl/etcd/metric-ca.crt \
     terminationMessagePolicy: FallbackToLogsOnError
+    securityContext:
+      privileged: true
     volumeMounts:
     - name: discovery
       mountPath: /run/etcd/

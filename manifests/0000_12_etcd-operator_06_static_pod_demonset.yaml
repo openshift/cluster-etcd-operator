@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: etcd-staticpod 
+  namespace: openshift-etcd
+spec:
+  selector:
+    matchLabels:
+      k8s-app: etcd-staticpod
+  template:
+    metadata:
+      labels:
+        name: etcd-staticpod
+        k8s-app: etcd-staticpod
+    spec:
+      hostNetwork: true
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: k8s-app
+                operator: In
+                values:
+                - ""
+            topologyKey: kubernetes.io/hostname
+      nodeSelector:
+        node-role.kubernetes.io/master: ""
+      priorityClassName: "system-cluster-critical"
+      terminationGracePeriodSeconds: 3
+      tolerations:
+      - key: node-role.kubernetes.io/master
+        effect: NoSchedule
+        operator: Exists
+      - key: node.kubernetes.io/not-ready
+        effect: NoExecute
+        operator: Exists
+        tolerationSeconds: 120
+      - key: node.kubernetes.io/unreachable
+        effect: NoExecute
+        operator: Exists
+        tolerationSeconds: 120
+      - key: node-role.kubernetes.io/etcd
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - image: "quay.io/openshift/cluster-etcd-operator:latest"
+        imagePullPolicy: Always
+        name: etcd-staticpod
+        command: ["/usr/bin/cluster-etcd-operator"]
+        args:
+        - "staticpod"
+        serviceAccount: default
+        terminationMessagePolicy: FallbackToLogsOnError
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        volumeMounts:
+        - mountPath: /etc/kubernetes/manifests
+          name: manifests
+        - mountPath: /var/lib/etcd
+          name: data-dir
+        resources:
+          requests:
+            cpu: 10m
+            memory: 5Mi
+      volumes:
+      - name: manifests
+        hostPath:
+          path: /etc/kubernetes/manifests
+      - name: data-dir
+        hostPath:
+          path: /var/lib/etcd
