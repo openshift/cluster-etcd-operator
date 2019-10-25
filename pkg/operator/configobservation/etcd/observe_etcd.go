@@ -43,7 +43,6 @@ type etcdObserver struct {
 	recorder                  events.Recorder
 }
 
-// TODO break out logic into functions to reduce dupe code.
 // ObserveClusterMembers observes the current etcd cluster members.
 func ObserveClusterMembers(genericListers configobserver.Listers, recorder events.Recorder, existingConfig map[string]interface{}) (map[string]interface{}, []error) {
 	observedConfig := map[string]interface{}{}
@@ -168,7 +167,6 @@ func ObservePendingClusterMembers(genericListers configobserver.Listers, recorde
 	}
 
 	if len(observer.ObservedPending) > 0 {
-		klog.Errorf("etcdURLs > 0: %v", observer.ObservedPending)
 		if err := unstructured.SetNestedField(observedConfig, observer.ObservedPending, observer.pendingPath...); err != nil {
 			klog.Errorf("etcdURLs > 0 ERRRPRRRRRR: %v", errs)
 			return existingConfig, append(errs, err)
@@ -176,7 +174,6 @@ func ObservePendingClusterMembers(genericListers configobserver.Listers, recorde
 	}
 
 	if len(errs) > 0 {
-		klog.Errorf("errors > 0: %v", errs)
 		if previouslyObservedPending != nil {
 			if err := unstructured.SetNestedSlice(observedConfig, observer.ObservedPending, observer.pendingPath...); err != nil {
 				errs = append(errs, err)
@@ -201,7 +198,7 @@ func isPendingReady(bucket string, podName string, scalingName string, podLister
 		return false
 	}
 	if len(pod.Status.InitContainerStatuses) < 2 {
-		klog.Infof("isPendingRead: waiting for init cert containers to pass")
+		klog.Infof("isPendingReady: waiting for init cert containers to pass")
 		return false
 	} else {
 		if pod.Status.InitContainerStatuses[1].State.Terminated != nil && pod.Status.InitContainerStatuses[1].State.Terminated.ExitCode == 0 {
@@ -311,7 +308,6 @@ func (e *etcdObserver) getPathObservationData(path []string, existingConfig map[
 	if err != nil {
 		return nil, err
 	}
-
 	return data, nil
 }
 
@@ -321,7 +317,6 @@ func isPodCrashLoop(bucket string, pod *corev1.Pod) bool {
 	}
 	for _, containerStatus := range pod.Status.ContainerStatuses {
 		if containerStatus.Name != "etcd-member" {
-			klog.Warningf("isPodCrashLoop: skipping\n")
 			continue
 		}
 		if containerStatus.State.Waiting != nil && containerStatus.State.Waiting.Reason == "CrashLoopBackOff" {
@@ -330,7 +325,7 @@ func isPodCrashLoop(bucket string, pod *corev1.Pod) bool {
 					if cond.Type == "Initialized" && cond.Status == "True" {
 						delay := cond.LastTransitionTime.Time.Add(+time.Minute * 5)
 						if containerStatus.LastTerminationState.Terminated.FinishedAt.After(delay) {
-							klog.Errorf("CRASHLOOOOOOOOOOOP!!!!")
+							klog.Warningf("isPodCrashLoop: pod %s was observed in CrashLoop", pod.Name)
 							return true
 						}
 						return false
@@ -391,7 +386,6 @@ func (e *etcdObserver) setBootstrapMember() error {
 
 func (e *etcdObserver) setObservedEtcdFromEndpoint(bucket string) error {
 	var endpointAddressList []corev1.EndpointAddress
-	// var previous []ceoapi.Member
 
 	endpoints, err := e.listers.OpenshiftEtcdEndpointsLister.Endpoints(clustermembercontroller.EtcdEndpointNamespace).Get(clustermembercontroller.EtcdEndpointName)
 	if errors.IsNotFound(err) {
@@ -409,7 +403,6 @@ func (e *etcdObserver) setObservedEtcdFromEndpoint(bucket string) error {
 		case "pending":
 			// probably should be a struct?
 			endpointAddressList = subset.NotReadyAddresses
-			// previous = e.PreviouslyObservedPending
 		}
 		for _, address := range endpointAddressList {
 			name := address.TargetRef.Name
@@ -434,20 +427,21 @@ func (e *etcdObserver) setObservedEtcdFromEndpoint(bucket string) error {
 			case isPendingReady(bucket, pod.Name, scalingName, e.listers.OpenshiftEtcdPodsLister):
 				status = ceoapi.MemberReady
 				break
-			// case isPendingAdd(bucket, pod.Name, previous, scalingName):
-			// 	status = ceoapi.MemberAdd
-			// 	break
-			// // case isPendingReady(previous, pod):
-			// 	status = ceoapi.MemberReady
-			// 	break
 			default:
 				status = ceoapi.MemberUnknown
 			}
 
-			peerFQDN, err := clustermembercontroller.ReverseLookupSelf("etcd-server-ssl", "tcp", e.ClusterDomain, address.IP)
-			if err != nil {
-				return fmt.Errorf("error looking up self: %v", err)
+			var peerFQDN string
+			// allow testing
+			if e.ClusterDomain == "operator.testing.openshift" {
+				peerFQDN = "etcd-1.operator.testing.openshift"
+			} else {
+				peerFQDN, err = clustermembercontroller.ReverseLookupSelf("etcd-server-ssl", "tcp", e.ClusterDomain, address.IP)
+				if err != nil {
+					return fmt.Errorf("error looking up self: %v", err)
+				}
 			}
+
 			peerURLs := fmt.Sprintf("https://%s:2380", peerFQDN)
 			etcd, err := setMember(name, []string{peerURLs}, status)
 			if err != nil {
@@ -545,26 +539,3 @@ func setMember(name string, peerURLs []string, status ceoapi.MemberConditionType
 	}
 	return etcdURL, nil
 }
-
-//
-// func fetchMetrics(host string, fn func(wg *sync.WaitGroup, ch <-chan *dto.MetricFamily)) {
-// 	resp, err := http.Get("http://" + host + "/metrics")
-// 	if err != nil {
-// 		logrus.Fatal(err)
-// 	}
-// 	defer resp.Body.Close()
-//
-// 	var (
-// 		ch = make(chan *dto.MetricFamily)
-// 		wg sync.WaitGroup
-// 	)
-// 	wg.Add(1)
-// 	go fn(&wg, ch)
-//
-// 	err = prom2json.ParseResponse(resp, ch)
-// 	if err != nil {
-// 		logrus.Fatal(err)
-// 	}
-//
-// 	wg.Wait()
-// }
