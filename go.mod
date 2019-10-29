@@ -1,5 +1,7 @@
 module github.com/openshift/cluster-etcd-operator
 
+go 1.12
+
 exclude github.com/Sirupsen/logrus v1.1.0
 
 exclude github.com/Sirupsen/logrus v1.1.1
@@ -24,7 +26,7 @@ require (
 	github.com/certifi/gocertifi v0.0.0-20190506164543-d2eda7129713 // indirect
 	github.com/cloudflare/cfssl v0.0.0-20190716005913-5fc50ce768d7
 	github.com/coreos/bbolt v1.3.3 // indirect
-	github.com/coreos/etcd v3.3.10+incompatible
+	github.com/coreos/etcd v3.3.17+incompatible
 	github.com/coreos/go-systemd v0.0.0-20190618135430-ff7011eec365 // indirect
 	github.com/coreos/ignition v0.33.0 // indirect
 	github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f // indirect
