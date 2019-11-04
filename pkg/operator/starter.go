@@ -13,6 +13,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
@@ -138,6 +139,11 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 		ctx.EventRecorder,
 		etcdDiscoveryDomain,
 	)
+	operatorSpec, _, _, err := operatorClient.GetOperatorState()
+	if err != nil {
+		return err
+	}
+
 	operatorConfigInformers.Start(ctx.Done())
 	kubeInformersForNamespaces.Start(ctx.Done())
 	configInformers.Start(ctx.Done())
@@ -145,11 +151,13 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 	go etcdCertSignerController.Run(1, ctx.Done())
 	go hostEtcdEndpointController.Run(1, ctx.Done())
 	go resourceSyncController.Run(1, ctx.Done())
+	if operatorSpec.ManagementState == operatorv1.Managed {
+		go clusterOperatorStatus.Run(1, ctx.Done())
+	}
 	go configObserver.Run(1, ctx.Done())
-	go clusterOperatorStatus.Run(1, ctx.Done())
 	go clusterMemberController.Run(ctx.Done())
 	go func() {
-		err := bootstrapteardown.TearDownBootstrap(ctx.KubeConfig, clusterMemberController)
+		err := bootstrapteardown.TearDownBootstrap(ctx.KubeConfig, clusterMemberController, operatorClient)
 		if err != nil {
 			klog.Fatalf("Error tearing down bootstrap: %#v", err)
 		}
