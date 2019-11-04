@@ -79,6 +79,29 @@ func (c *ClusterMemberController) sync() error {
 	switch operatorSpec.ManagementState {
 	case operatorv1.Managed:
 	case operatorv1.Unmanaged:
+		condUpgradable := operatorv1.OperatorCondition{
+			Type:   operatorv1.OperatorStatusTypeUpgradeable,
+			Status: operatorv1.ConditionFalse,
+		}
+		condProgressing := operatorv1.OperatorCondition{
+			Type:   operatorv1.OperatorStatusTypeProgressing,
+			Status: operatorv1.ConditionFalse,
+		}
+		condAvailable := operatorv1.OperatorCondition{
+			Type:   operatorv1.OperatorStatusTypeAvailable,
+			Status: operatorv1.ConditionTrue,
+		}
+		condDegraded := operatorv1.OperatorCondition{
+			Type:   operatorv1.OperatorStatusTypeDegraded,
+			Status: operatorv1.ConditionFalse,
+		}
+		if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient,
+			v1helpers.UpdateConditionFn(condUpgradable),
+			v1helpers.UpdateConditionFn(condProgressing),
+			v1helpers.UpdateConditionFn(condDegraded),
+			v1helpers.UpdateConditionFn(condAvailable)); updateError != nil {
+			return updateError
+		}
 		return nil
 	case operatorv1.Removed:
 		// TODO should we support removal?
