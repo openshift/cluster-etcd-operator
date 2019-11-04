@@ -7,8 +7,13 @@ import (
 	"os"
 	"time"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
+	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
+	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
 	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"k8s.io/client-go/kubernetes"
@@ -79,6 +84,16 @@ func (s *syncOpts) Run() error {
 	if err != nil {
 		return err
 	}
+	operatorConfigClient, err := operatorversionedclient.NewForConfig(clientConfig)
+	if err != nil {
+		return err
+	}
+
+	operatorConfigInformers := operatorv1informers.NewSharedInformerFactory(operatorConfigClient, 10*time.Minute)
+	operatorClient := &operatorclient.OperatorClient{
+		Informers: operatorConfigInformers,
+		Client:    operatorConfigClient.OperatorV1(),
+	}
 
 	//TODO: util v6j
 	controllerRef, err := events.GetControllerReferenceForCurrentPod(clientset, etcdNamespace, nil)
@@ -91,6 +106,7 @@ func (s *syncOpts) Run() error {
 	kubeInformerFactory := informers.NewFilteredSharedInformerFactory(clientset, 0, etcdNamespace, nil)
 
 	staticSyncController := NewStaticSyncController(
+		operatorClient,
 		kubeInformerFactory,
 		eventRecorder,
 	)
@@ -104,6 +120,7 @@ func (s *syncOpts) Run() error {
 }
 
 type StaticSyncController struct {
+	operatorConfigClient                   v1helpers.OperatorClient
 	podInformer                            corev1informer.SecretInformer
 	kubeInformersForOpenshiftEtcdNamespace cache.SharedIndexInformer
 
@@ -113,12 +130,14 @@ type StaticSyncController struct {
 }
 
 func NewStaticSyncController(
+	operatorConfigClient v1helpers.OperatorClient,
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
 	eventRecorder events.Recorder,
 ) *StaticSyncController {
 	c := &StaticSyncController{
-		eventRecorder: eventRecorder.WithComponentSuffix("resource-sync-controller-" + os.Getenv("NODE_NAME")),
-		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ResourceSyncController"),
+		operatorConfigClient: operatorConfigClient,
+		eventRecorder:        eventRecorder.WithComponentSuffix("resource-sync-controller-" + os.Getenv("NODE_NAME")),
+		queue:                workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ResourceSyncController"),
 	}
 	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer().AddEventHandler(c.eventHandler())
 
@@ -126,6 +145,21 @@ func NewStaticSyncController(
 }
 
 func (c *StaticSyncController) sync() error {
+	operatorSpec, _, _, err := c.operatorConfigClient.GetOperatorState()
+	if err != nil {
+		return err
+	}
+	switch operatorSpec.ManagementState {
+	case operatorv1.Managed:
+	case operatorv1.Unmanaged:
+		return nil
+	case operatorv1.Removed:
+		// TODO should we support removal?
+		return nil
+	default:
+		c.eventRecorder.Warningf("ManagementStateUnknown", "Unrecognized operator management state %q", operatorSpec.ManagementState)
+		return nil
+	}
 	// if anything changes we copy
 	assets := [4]string{
 		"namespace",

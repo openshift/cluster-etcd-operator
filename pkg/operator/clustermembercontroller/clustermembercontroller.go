@@ -72,6 +72,22 @@ func NewClusterMemberController(
 }
 
 func (c *ClusterMemberController) sync() error {
+	operatorSpec, _, _, err := c.operatorConfigClient.GetOperatorState()
+	if err != nil {
+		return err
+	}
+	switch operatorSpec.ManagementState {
+	case operatorv1.Managed:
+	case operatorv1.Unmanaged:
+		return nil
+	case operatorv1.Removed:
+		// TODO should we support removal?
+		return nil
+	default:
+		c.eventRecorder.Warningf("ManagementStateUnknown", "Unrecognized operator management state %q", operatorSpec.ManagementState)
+		return nil
+	}
+
 	pods, err := c.clientset.CoreV1().Pods("openshift-etcd").List(metav1.ListOptions{LabelSelector: "k8s-app=etcd"})
 	if err != nil {
 		klog.Infof("No Pod found in openshift-etcd with label k8s-app=etcd")
