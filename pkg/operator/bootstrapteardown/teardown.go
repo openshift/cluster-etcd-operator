@@ -6,8 +6,10 @@ import (
 	"k8s.io/client-go/rest"
 
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	cov1helpers "github.com/openshift/library-go/pkg/config/clusteroperator/v1helpers"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/tools/cache"
@@ -18,7 +20,7 @@ import (
 )
 
 func TearDownBootstrap(config *rest.Config,
-	clusterMemberShipController *clustermembercontroller.ClusterMemberController) error {
+	clusterMemberShipController *clustermembercontroller.ClusterMemberController, operatorClient v1helpers.OperatorClient) error {
 	failing := configv1.ClusterStatusConditionType("Failing")
 	var lastError string
 	var err error
@@ -53,12 +55,23 @@ func TearDownBootstrap(config *rest.Config,
 		},
 	)
 
+	operatorSpec, _, _, err := operatorClient.GetOperatorState()
+	if err != nil {
+		return err
+	}
+
 	if err == nil {
 		klog.Infof("clusterversions is available, safe to remove bootstrap")
-		if clusterMemberShipController.IsMember("etcd-bootstrap") {
-			return clusterMemberShipController.RemoveBootstrap()
+		switch operatorSpec.ManagementState {
+		case operatorv1.Managed:
+			if clusterMemberShipController.IsMember("etcd-bootstrap") {
+				return clusterMemberShipController.RemoveBootstrap()
+			}
+			break
+		case operatorv1.Unmanaged:
+			break
 		}
-		return nil
+		// TODO handle default
 	}
 
 	return nil

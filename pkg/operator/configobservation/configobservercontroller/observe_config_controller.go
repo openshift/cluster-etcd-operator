@@ -52,6 +52,7 @@ func NewConfigObserver(
 
 				ResourceSync: resourceSyncer,
 				PreRunCachesSynced: append(configMapPreRunCacheSynced,
+					operatorClient.Informer().HasSynced,
 					operatorConfigInformers.Operator().V1().Etcds().Informer().HasSynced,
 
 					kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().Endpoints().Informer().HasSynced,

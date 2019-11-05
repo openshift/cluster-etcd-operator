@@ -5,4 +5,4 @@ metadata:
   annotations:
     release.openshift.io/create-only: "true"
 spec:
-  managementState: Managed
+  managementState: Unmanaged
