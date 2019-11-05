@@ -2,6 +2,7 @@ package operator
 
 import (
 	"fmt"
+	"github.com/openshift/library-go/pkg/operator/status"
 	"time"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/hostetcdendpointcontroller"
@@ -13,14 +14,12 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	configv1 "github.com/openshift/api/config/v1"
-	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
-	"github.com/openshift/library-go/pkg/operator/status"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
@@ -29,6 +28,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/statuscontroller"
 )
 
 func RunOperator(ctx *controllercmd.ControllerContext) error {
@@ -97,7 +97,7 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 	versionRecorder.SetVersion("raw-internal", status.VersionForOperatorFromEnv())
 	versionRecorder.SetVersion("operator", status.VersionForOperatorFromEnv())
 
-	clusterOperatorStatus := status.NewClusterOperatorStatusController(
+	clusterOperatorStatus := statuscontroller.NewClusterOperatorStatusController(
 		"openshift-etcd",
 		[]configv1.ObjectReference{
 			{Group: "operator.openshift.io", Resource: "etcds", Name: "cluster"},
@@ -139,10 +139,6 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 		ctx.EventRecorder,
 		etcdDiscoveryDomain,
 	)
-	operatorSpec, _, _, err := operatorClient.GetOperatorState()
-	if err != nil {
-		return err
-	}
 
 	operatorConfigInformers.Start(ctx.Done())
 	kubeInformersForNamespaces.Start(ctx.Done())
@@ -151,9 +147,7 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 	go etcdCertSignerController.Run(1, ctx.Done())
 	go hostEtcdEndpointController.Run(1, ctx.Done())
 	go resourceSyncController.Run(1, ctx.Done())
-	if operatorSpec.ManagementState == operatorv1.Managed {
-		go clusterOperatorStatus.Run(1, ctx.Done())
-	}
+	go clusterOperatorStatus.Run(1, ctx.Done())
 	go configObserver.Run(1, ctx.Done())
 	go clusterMemberController.Run(ctx.Done())
 	go func() {
