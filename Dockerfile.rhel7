@@ -11,4 +11,4 @@ COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/bindata/b
 COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/cluster-etcd-operator /usr/bin/
 COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/manifests/ /manifests/
 
-# LABEL io.openshift.release.operator true
+LABEL io.openshift.release.operator true
