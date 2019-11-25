@@ -143,13 +143,15 @@ func (h *HostEtcdEndpointController) sync() error {
 		return fmt.Errorf("unexpected length of host endpoint subset")
 	}
 
-	newSubset, err := h.getNewAddressSubset(ep.Subsets[0].Addresses)
+	newEP := ep.DeepCopy()
+
+	newSubset, err := h.getNewAddressSubset(newEP.Subsets[0].Addresses)
 	if err != nil {
 		klog.Errorf("error getting new address subset: %#v", err)
 	}
 
-	ep.Subsets[0].Addresses = newSubset
-	_, err = h.clientset.CoreV1().Endpoints(clustermembercontroller.EtcdEndpointNamespace).Update(ep)
+	newEP.Subsets[0].Addresses = newSubset
+	_, err = h.clientset.CoreV1().Endpoints(clustermembercontroller.EtcdEndpointNamespace).Update(newEP)
 	return err
 }
 

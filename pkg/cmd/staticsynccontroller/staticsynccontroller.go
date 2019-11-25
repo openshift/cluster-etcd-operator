@@ -7,8 +7,6 @@ import (
 	"os"
 	"time"
 
-	"k8s.io/apimachinery/pkg/runtime/schema"
-
 	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	etcdv1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
@@ -19,15 +17,15 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
-
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/informers"
 )
 
 const (

@@ -201,11 +201,11 @@ func isPendingReady(bucket string, podName string, scalingName string, podLister
 		klog.Infof("isPendingReady: waiting for init cert containers to pass")
 		return false
 	}
-	if pod.Status.InitContainerStatuses[1].State.Terminated != nil && pod.Status.InitContainerStatuses[1].State.Terminated.ExitCode == 0 {
-		if pod.Status.ContainerStatuses[0].State.Waiting == nil {
-			klog.Info("isPendingReady: the container is either running/crashlooping")
-			return false
-		}
+	if pod.Status.InitContainerStatuses[1].State.Terminated != nil && pod.Status.InitContainerStatuses[1].State.Terminated.ExitCode == 0 && pod.Status.InitContainerStatuses[2].State.Running != nil {
+		return true
+	}
+
+	if pod.Status.Phase == corev1.PodRunning {
 		return true
 	}
 

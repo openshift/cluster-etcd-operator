@@ -2,25 +2,22 @@ package bootstrapteardown
 
 import (
 	"context"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"time"
-
-	etcdv1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	"k8s.io/client-go/rest"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	configclient "github.com/openshift/client-go/config/clientset/versioned"
+	etcdv1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	cov1helpers "github.com/openshift/library-go/pkg/config/clusteroperator/v1helpers"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	clientwatch "k8s.io/client-go/tools/watch"
 	"k8s.io/klog"
-
-	configclient "github.com/openshift/client-go/config/clientset/versioned"
 )
 
 func TearDownBootstrap(config *rest.Config,
@@ -29,7 +26,7 @@ func TearDownBootstrap(config *rest.Config,
 	var lastError string
 
 	cc := configclient.NewForConfigOrDie(config)
-	_, _ = clientwatch.UntilWithSync(
+	_, err := clientwatch.UntilWithSync(
 		context.Background(),
 		cache.NewListWatchFromClient(cc.ConfigV1().RESTClient(), "clusterversions", "", fields.OneTermEqualSelector("metadata.name", "version")),
 		&configv1.ClusterVersion{},
@@ -58,7 +55,11 @@ func TearDownBootstrap(config *rest.Config,
 		},
 	)
 
-	err := wait.PollInfinite(5*time.Second, func() (bool, error) {
+	if err != nil {
+		klog.Errorf("error in watching clusterversions: %#v", err)
+	}
+
+	err = wait.PollInfinite(5*time.Second, func() (bool, error) {
 		etcd, err := etcdClient.Get("cluster", metav1.GetOptions{})
 		if err != nil {
 			return false, err
@@ -69,8 +70,7 @@ func TearDownBootstrap(config *rest.Config,
 		case operatorv1.Managed:
 			if clusterMemberShipController.IsMember("etcd-bootstrap") {
 				//TODO: need to keep retry as long as we are sure bootstrap is not removed
-				err := clusterMemberShipController.RemoveBootstrap()
-				if err != nil {
+				if err := clusterMemberShipController.RemoveBootstrap(); err != nil {
 					klog.Errorf("error removing bootstrap %#v\n", err)
 					return false, nil
 				}
