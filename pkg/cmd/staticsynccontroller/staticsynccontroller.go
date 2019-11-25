@@ -7,15 +7,18 @@ import (
 	"os"
 	"time"
 
+	"k8s.io/apimachinery/pkg/runtime/schema"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
+	etcdv1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
 	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
@@ -25,7 +28,6 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
-	corev1informer "k8s.io/client-go/informers/core/v1"
 )
 
 const (
@@ -105,8 +107,19 @@ func (s *syncOpts) Run() error {
 
 	kubeInformerFactory := informers.NewFilteredSharedInformerFactory(clientset, 0, etcdNamespace, nil)
 
+	etcdInformer, err := operatorClient.Informers.ForResource(schema.GroupVersionResource{
+		Group:    "operator.openshift.io",
+		Version:  "v1",
+		Resource: "etcds",
+	})
+	if err != nil {
+		klog.Errorf("error getting etcd informer %#v", err)
+		return err
+	}
+
 	staticSyncController := NewStaticSyncController(
-		operatorClient,
+		operatorClient.Client.Etcds(),
+		etcdInformer,
 		kubeInformerFactory,
 		eventRecorder,
 	)
@@ -120,9 +133,10 @@ func (s *syncOpts) Run() error {
 }
 
 type StaticSyncController struct {
-	operatorConfigClient                   v1helpers.OperatorClient
-	podInformer                            corev1informer.SecretInformer
-	kubeInformersForOpenshiftEtcdNamespace cache.SharedIndexInformer
+	etcdKubeClient                         etcdv1.EtcdInterface
+	etcdInformer                           informers.GenericInformer
+	secretInformer                         cache.SharedIndexInformer
+	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory
 
 	cachesToSync  []cache.InformerSynced
 	queue         workqueue.RateLimitingInterface
@@ -130,26 +144,31 @@ type StaticSyncController struct {
 }
 
 func NewStaticSyncController(
-	operatorConfigClient v1helpers.OperatorClient,
+	etcdKubeClient etcdv1.EtcdInterface,
+	etcdInformer informers.GenericInformer,
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
 	eventRecorder events.Recorder,
 ) *StaticSyncController {
 	c := &StaticSyncController{
-		operatorConfigClient: operatorConfigClient,
-		eventRecorder:        eventRecorder.WithComponentSuffix("resource-sync-controller-" + os.Getenv("NODE_NAME")),
-		queue:                workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ResourceSyncController"),
+		etcdKubeClient:                         etcdKubeClient,
+		etcdInformer:                           etcdInformer,
+		secretInformer:                         kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer(),
+		kubeInformersForOpenshiftEtcdNamespace: kubeInformersForOpenshiftEtcdNamespace,
+		eventRecorder:                          eventRecorder.WithComponentSuffix("resource-sync-controller-" + os.Getenv("NODE_NAME")),
+		queue:                                  workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ResourceSyncController"),
 	}
-	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer().AddEventHandler(c.eventHandler())
+	c.secretInformer.AddEventHandler(c.eventHandler())
 
 	return c
 }
 
 func (c *StaticSyncController) sync() error {
-	operatorSpec, _, _, err := c.operatorConfigClient.GetOperatorState()
+	etcd, err := c.etcdKubeClient.Get("cluster", metav1.GetOptions{})
 	if err != nil {
+		fmt.Printf("error getting etcd cr: %#v", err)
 		return err
 	}
-	switch operatorSpec.ManagementState {
+	switch etcd.Spec.ManagementState {
 	case operatorv1.Managed:
 	case operatorv1.Unmanaged:
 		return nil
@@ -157,7 +176,7 @@ func (c *StaticSyncController) sync() error {
 		// TODO should we support removal?
 		return nil
 	default:
-		c.eventRecorder.Warningf("ManagementStateUnknown", "Unrecognized operator management state %q", operatorSpec.ManagementState)
+		c.eventRecorder.Warningf("ManagementStateUnknown", "Unrecognized operator management state %q", etcd.Spec.ManagementState)
 		return nil
 	}
 	// if anything changes we copy
@@ -201,6 +220,13 @@ func (c *StaticSyncController) Run(stopCh <-chan struct{}) {
 
 	klog.Infof("Starting StaticSyncController")
 	defer klog.Infof("Shutting down StaticSyncController")
+
+	if !cache.WaitForCacheSync(stopCh,
+		c.secretInformer.HasSynced,
+	) {
+		utilruntime.HandleError(fmt.Errorf("caches did not sync"))
+		return
+	}
 
 	go wait.Until(c.runWorker, time.Second, stopCh)
 

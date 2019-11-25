@@ -543,6 +543,10 @@ func (c *ClusterMemberController) RemoveBootstrapFromEndpoint() error {
 		return nil
 	}
 
+	if len(hostEndpoint.Subsets[subsetIndex].Addresses) <= 1 {
+		return fmt.Errorf("only etcd-bootstrap endpoint observed, try again")
+	}
+
 	hostEndpoint.Subsets[subsetIndex].Addresses = append(hostEndpoint.Subsets[subsetIndex].Addresses[0:bootstrapIndex], hostEndpoint.Subsets[subsetIndex].Addresses[bootstrapIndex+1:]...)
 
 	_, err = c.clientset.CoreV1().Endpoints(EtcdEndpointNamespace).Update(hostEndpoint)
@@ -550,6 +554,7 @@ func (c *ClusterMemberController) RemoveBootstrapFromEndpoint() error {
 		klog.Errorf("error updating endpoint: %#v\n", err)
 		return err
 	}
+
 	return nil
 }
 
