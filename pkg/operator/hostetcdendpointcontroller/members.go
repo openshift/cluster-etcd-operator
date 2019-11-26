@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 	"time"
 
@@ -41,19 +43,33 @@ func (h *healthyEtcdMemberGetter) GetHealthyEtcdMembers() ([]string, error) {
 	}
 	hostnames := make([]string, 0)
 	for _, m := range member {
-		hostname := getEtcdName(m.PeerURLS)
+		hostname, err := getEtcdName(m.PeerURLS[0])
+		if err != nil {
+			return nil, err
+		}
 		hostnames = append(hostnames, hostname)
 	}
 	return hostnames, nil
 }
 
-func getEtcdName(peerURLs []string) string {
-	for _, peerURL := range peerURLs {
-		if strings.Contains(peerURL, "etcd-") {
-			return strings.TrimPrefix(strings.Split(peerURLs[0], ".")[0], "https://")
-		}
+// getEtcdName returns the name of the peer from a valid peerURL
+func getEtcdName(peerURL string) (string, error) {
+	if peerURL == "" {
+		return "", fmt.Errorf("getEtcdName: peerURL is empty")
 	}
-	return ""
+	if strings.Contains(peerURL, "etcd-") {
+		return strings.TrimPrefix(strings.Split(peerURL, ".")[0], "https://"), nil
+	}
+	u, err := url.Parse(peerURL)
+	if err != nil {
+		return "", err
+	}
+	host, port, _ := net.SplitHostPort(u.Host)
+	//TODO peer port should be a global constant
+	if IsIP(host) && port == "2380" {
+		return "etcd-bootstrap", nil
+	}
+	return "", fmt.Errorf("getEtcdName: peerURL %q is not properly formatted", peerURL)
 }
 
 func (h *healthyEtcdMemberGetter) EtcdList(bucket string) ([]ceoapi.Member, error) {
@@ -162,4 +178,12 @@ func (h *healthyEtcdMemberGetter) Endpoints() ([]string, error) {
 	}
 
 	return endpoints, nil
+}
+
+//TODO add to util
+func IsIP(addr string) bool {
+	if ip := net.ParseIP(addr); ip != nil {
+		return true
+	}
+	return false
 }

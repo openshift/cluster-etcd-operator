@@ -18,25 +18,42 @@ func Test_getHostname(t *testing.T) {
 		peerURLs []string
 	}
 	tests := []struct {
-		name string
-		args args
-		want string
+		name    string
+		args    args
+		want    string
+		wantErr bool
 	}{
 		{
 			name: "valid test case for etcd member",
-			args: args{peerURLs: []string{"https://etcd-0.foouser.tests.com"}},
+			args: args{peerURLs: []string{"https://etcd-0.foouser.tests.com:2380"}},
 			want: "etcd-0",
 		},
 		{
 			name: "valid test case for etcd bootstrap node",
-			args: args{peerURLs: []string{"https://etcd-bootstrap.foouser.tests.com"}},
+			args: args{peerURLs: []string{"https://10.0.139.142:2380"}},
 			want: "etcd-bootstrap",
+		},
+		{
+			name:    "error case malformed IP address",
+			args:    args{peerURLs: []string{"https://10.0.139:2380"}},
+			want:    "getEtcdName: peerURL \"https://10.0.139:2380\" is not properly formatted",
+			wantErr: true,
+		},
+		{
+			name:    "error case empty peerURLs",
+			args:    args{peerURLs: []string{""}},
+			want:    "getEtcdName: peerURL is empty",
+			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := getEtcdName(tt.args.peerURLs); got != tt.want {
-				t.Errorf("getHostname() = %v, want %v", got, tt.want)
+			got, err := getEtcdName(tt.args.peerURLs[0])
+			if tt.wantErr {
+				got = err.Error()
+			}
+			if got != tt.want {
+				t.Errorf("getEtcdName() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -46,7 +63,7 @@ func Test_healthyEtcdMemberGetter_EtcdList(t *testing.T) {
 	node := "node1"
 	peerURL := "https://etcd-0.foouser.test.com:2380"
 	bootstrapNode := "etcd-bootstrap"
-	bootstrapPeerUrl := "https://etcd-bootstrap.foouser.test.com:2380"
+	bootstrapPeerUrl := "https://10.0.139.142:2380"
 	//podIP := "10.0.139.142"
 	clusterMemberPath := []string{"cluster", "members"}
 
