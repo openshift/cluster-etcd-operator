@@ -9,24 +9,21 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/pkg/transport"
+	operatorv1 "github.com/openshift/api/operator/v1"
+	ceoapi "github.com/openshift/cluster-etcd-operator/pkg/operator/api"
 	"github.com/openshift/library-go/pkg/operator/events"
-	"k8s.io/client-go/informers"
-	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/util/retry"
-	"k8s.io/client-go/util/workqueue"
-	"k8s.io/klog"
-
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
-
-	operatorv1 "github.com/openshift/api/operator/v1"
+	"k8s.io/client-go/informers"
 	corev1client "k8s.io/client-go/kubernetes"
-
-	ceoapi "github.com/openshift/cluster-etcd-operator/pkg/operator/api"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/retry"
+	"k8s.io/client-go/util/workqueue"
+	"k8s.io/klog"
 )
 
 const (
@@ -526,9 +523,12 @@ func (c *ClusterMemberController) RemoveBootstrapFromEndpoint() error {
 		klog.Errorf("error getting endpoint: %#v\n", err)
 		return err
 	}
+
+	hostEndpointCopy := hostEndpoint.DeepCopy()
+
 	subsetIndex := -1
 	bootstrapIndex := -1
-	for sI, s := range hostEndpoint.Subsets {
+	for sI, s := range hostEndpointCopy.Subsets {
 		for i, s := range s.Addresses {
 			if s.Hostname == "etcd-bootstrap" {
 				bootstrapIndex = i
@@ -543,13 +543,18 @@ func (c *ClusterMemberController) RemoveBootstrapFromEndpoint() error {
 		return nil
 	}
 
-	hostEndpoint.Subsets[subsetIndex].Addresses = append(hostEndpoint.Subsets[subsetIndex].Addresses[0:bootstrapIndex], hostEndpoint.Subsets[subsetIndex].Addresses[bootstrapIndex+1:]...)
+	if len(hostEndpointCopy.Subsets[subsetIndex].Addresses) <= 1 {
+		return fmt.Errorf("only etcd-bootstrap endpoint observed, try again")
+	}
 
-	_, err = c.clientset.CoreV1().Endpoints(EtcdEndpointNamespace).Update(hostEndpoint)
+	hostEndpointCopy.Subsets[subsetIndex].Addresses = append(hostEndpointCopy.Subsets[subsetIndex].Addresses[0:bootstrapIndex], hostEndpointCopy.Subsets[subsetIndex].Addresses[bootstrapIndex+1:]...)
+
+	_, err = c.clientset.CoreV1().Endpoints(EtcdEndpointNamespace).Update(hostEndpointCopy)
 	if err != nil {
 		klog.Errorf("error updating endpoint: %#v\n", err)
 		return err
 	}
+
 	return nil
 }
 

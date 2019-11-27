@@ -2,31 +2,31 @@ package bootstrapteardown
 
 import (
 	"context"
-
-	"k8s.io/client-go/rest"
+	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	configclient "github.com/openshift/client-go/config/clientset/versioned"
+	etcdv1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	cov1helpers "github.com/openshift/library-go/pkg/config/clusteroperator/v1helpers"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	clientwatch "k8s.io/client-go/tools/watch"
 	"k8s.io/klog"
-
-	configclient "github.com/openshift/client-go/config/clientset/versioned"
 )
 
 func TearDownBootstrap(config *rest.Config,
-	clusterMemberShipController *clustermembercontroller.ClusterMemberController, operatorClient v1helpers.OperatorClient) error {
+	clusterMemberShipController *clustermembercontroller.ClusterMemberController, etcdClient etcdv1.EtcdInterface) error {
 	failing := configv1.ClusterStatusConditionType("Failing")
 	var lastError string
-	var err error
 
 	cc := configclient.NewForConfigOrDie(config)
-	_, err = clientwatch.UntilWithSync(
+	_, err := clientwatch.UntilWithSync(
 		context.Background(),
 		cache.NewListWatchFromClient(cc.ConfigV1().RESTClient(), "clusterversions", "", fields.OneTermEqualSelector("metadata.name", "version")),
 		&configv1.ClusterVersion{},
@@ -55,24 +55,35 @@ func TearDownBootstrap(config *rest.Config,
 		},
 	)
 
-	operatorSpec, _, _, err := operatorClient.GetOperatorState()
 	if err != nil {
-		return err
+		klog.Errorf("error in watching clusterversions: %#v", err)
 	}
 
-	if err == nil {
+	err = wait.PollInfinite(5*time.Second, func() (bool, error) {
+		etcd, err := etcdClient.Get("cluster", metav1.GetOptions{})
+		if err != nil {
+			return false, err
+		}
+
 		klog.Infof("clusterversions is available, safe to remove bootstrap")
-		switch operatorSpec.ManagementState {
+		switch etcd.Spec.ManagementState {
 		case operatorv1.Managed:
 			if clusterMemberShipController.IsMember("etcd-bootstrap") {
-				return clusterMemberShipController.RemoveBootstrap()
+				//TODO: need to keep retry as long as we are sure bootstrap is not removed
+				if err := clusterMemberShipController.RemoveBootstrap(); err != nil {
+					klog.Errorf("error removing bootstrap %#v\n", err)
+					return false, nil
+				}
+				return true, nil
 			}
-			break
+			return true, nil
 		case operatorv1.Unmanaged:
-			break
+			return true, nil
+			// TODO handle default
 		}
-		// TODO handle default
-	}
+		// TODO: how to handle this?
+		return true, nil
+	})
 
-	return nil
+	return err
 }

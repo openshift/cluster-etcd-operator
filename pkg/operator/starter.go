@@ -2,8 +2,9 @@ package operator
 
 import (
 	"fmt"
-	"github.com/openshift/library-go/pkg/operator/status"
 	"time"
+
+	"github.com/openshift/library-go/pkg/operator/status"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/hostetcdendpointcontroller"
 
@@ -151,7 +152,7 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 	go configObserver.Run(1, ctx.Done())
 	go clusterMemberController.Run(ctx.Done())
 	go func() {
-		err := bootstrapteardown.TearDownBootstrap(ctx.KubeConfig, clusterMemberController, operatorClient)
+		err := bootstrapteardown.TearDownBootstrap(ctx.KubeConfig, clusterMemberController, operatorClient.Client.Etcds())
 		if err != nil {
 			klog.Fatalf("Error tearing down bootstrap: %#v", err)
 		}

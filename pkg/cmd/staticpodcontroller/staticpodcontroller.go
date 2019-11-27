@@ -10,33 +10,30 @@ import (
 	"os"
 	"time"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
+	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
+	etcdv1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
+	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	ceoapi "github.com/openshift/cluster-etcd-operator/pkg/operator/api"
-
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
 	"github.com/openshift/library-go/pkg/operator/events"
+	mcfgclientset "github.com/openshift/machine-config-operator/pkg/generated/clientset/versioned"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/vincent-petithory/dataurl"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	corev1client "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
-
-	operatorv1 "github.com/openshift/api/operator/v1"
-	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
-	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	mcfgclientset "github.com/openshift/machine-config-operator/pkg/generated/clientset/versioned"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/informers"
-	corev1informer "k8s.io/client-go/informers/core/v1"
-	corev1client "k8s.io/client-go/kubernetes"
 )
 
 const (
@@ -127,8 +124,19 @@ func (s *podOpts) Run() error {
 
 	eventRecorder := events.NewKubeRecorder(clientset.CoreV1().Events(etcdNamespace), "static-pod-controller-"+localEtcdName, controllerRef)
 
+	etcdInformer, err := operatorClient.Informers.ForResource(schema.GroupVersionResource{
+		Group:    "operator.openshift.io",
+		Version:  "v1",
+		Resource: "etcds",
+	})
+	if err != nil {
+		klog.Errorf("error getting etcd informer %#v\n", err)
+		return err
+	}
+
 	staticPodController := NewStaticPodController(
-		operatorClient,
+		operatorClient.Client.Etcds(),
+		etcdInformer,
 		kubeInformerFactory,
 		clientset,
 		clientmc,
@@ -145,9 +153,9 @@ func (s *podOpts) Run() error {
 }
 
 type StaticPodController struct {
-	operatorConfigClient                   v1helpers.OperatorClient
-	podInformer                            corev1informer.SecretInformer
-	kubeInformersForOpenshiftEtcdNamespace cache.SharedIndexInformer
+	etcdKubeClient                         etcdv1.EtcdInterface
+	etcdInformer                           informers.GenericInformer
+	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory
 	clientset                              corev1client.Interface
 	clientmc                               mcfgclientset.Interface
 	localEtcdName                          string
@@ -158,7 +166,8 @@ type StaticPodController struct {
 }
 
 func NewStaticPodController(
-	operatorConfigClient v1helpers.OperatorClient,
+	etcdKubeClient etcdv1.EtcdInterface,
+	etcdInformer informers.GenericInformer,
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
 	clientset corev1client.Interface,
 	clientmc mcfgclientset.Interface,
@@ -166,26 +175,30 @@ func NewStaticPodController(
 	eventRecorder events.Recorder,
 ) *StaticPodController {
 	c := &StaticPodController{
-		operatorConfigClient: operatorConfigClient,
-		eventRecorder:        eventRecorder.WithComponentSuffix("static-pod-controller-" + localEtcdName),
-		clientset:            clientset,
-		clientmc:             clientmc,
-		localEtcdName:        localEtcdName,
+		etcdKubeClient:                         etcdKubeClient,
+		etcdInformer:                           etcdInformer,
+		eventRecorder:                          eventRecorder.WithComponentSuffix("static-pod-controller-" + localEtcdName),
+		kubeInformersForOpenshiftEtcdNamespace: kubeInformersForOpenshiftEtcdNamespace,
+		clientset:                              clientset,
+		clientmc:                               clientmc,
+		localEtcdName:                          localEtcdName,
 
 		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "StaticPodController"),
 	}
 	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Pods().Informer().AddEventHandler(c.eventHandler())
+	etcdInformer.Informer().AddEventHandler(c.eventHandler())
 	// kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
 
 	return c
 }
 
 func (c *StaticPodController) sync() error {
-	operatorSpec, _, _, err := c.operatorConfigClient.GetOperatorState()
+	etcd, err := c.etcdKubeClient.Get("cluster", metav1.GetOptions{})
 	if err != nil {
+		klog.Errorf("error getting etcd cr: %#v", err)
 		return err
 	}
-	switch operatorSpec.ManagementState {
+	switch etcd.Spec.ManagementState {
 	case operatorv1.Managed:
 	case operatorv1.Unmanaged:
 		return nil
@@ -193,7 +206,7 @@ func (c *StaticPodController) sync() error {
 		// TODO should we support removal?
 		return nil
 	default:
-		c.eventRecorder.Warningf("ManagementStateUnknown", "Unrecognized operator management state %q", operatorSpec.ManagementState)
+		c.eventRecorder.Warningf("ManagementStateUnknown", "Unrecognized operator management state %q", etcd.Spec.ManagementState)
 		return nil
 	}
 	pod, err := c.clientset.CoreV1().Pods(etcdNamespace).Get(c.localEtcdName, metav1.GetOptions{})
@@ -258,13 +271,14 @@ func (c *StaticPodController) IsMemberRemove(name string) bool {
 
 func (c *StaticPodController) PendingMemberList() ([]ceoapi.Member, error) {
 	configPath := []string{"cluster", "pending"}
-	operatorSpec, _, _, err := c.operatorConfigClient.GetOperatorState()
+	etcd, err := c.etcdKubeClient.Get("cluster", metav1.GetOptions{})
 	if err != nil {
+		fmt.Printf("error getting etcd cr: %#v", err)
 		return nil, err
 	}
 
 	config := map[string]interface{}{}
-	if err := json.NewDecoder(bytes.NewBuffer(operatorSpec.ObservedConfig.Raw)).Decode(&config); err != nil {
+	if err := json.NewDecoder(bytes.NewBuffer(etcd.Spec.ObservedConfig.Raw)).Decode(&config); err != nil {
 		klog.V(4).Infof("decode of existing config failed with error: %v", err)
 	}
 	data, exists, err := unstructured.NestedSlice(config, configPath...)
@@ -319,6 +333,15 @@ func (c *StaticPodController) PendingMemberList() ([]ceoapi.Member, error) {
 func (c *StaticPodController) Run(stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
 	defer c.queue.ShutDown()
+
+	klog.Infof("Waiting for Cache to sync staticpodcontroller")
+	if !cache.WaitForCacheSync(stopCh,
+		c.kubeInformersForOpenshiftEtcdNamespace.Core().V1().Pods().Informer().HasSynced,
+		c.etcdInformer.Informer().HasSynced,
+	) {
+		klog.Errorf("error syncing cache")
+		return
+	}
 
 	klog.Infof("Starting staticpodcontroller")
 	defer klog.Infof("Shutting down staticpodcontroller")
