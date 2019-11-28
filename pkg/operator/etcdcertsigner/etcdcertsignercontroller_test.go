@@ -8,6 +8,10 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	v1 "k8s.io/api/core/v1"
+	v12 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
 	"math"
 	"math/big"
 	"strings"
@@ -218,6 +222,98 @@ func Test_getSecretName(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := getSecretName(tt.args.org, tt.args.podFQDN); got != tt.want {
 				t.Errorf("getSecretName() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func getTLSSecret(name, namespace, crt, key string) *v1.Secret {
+	data := map[string][]byte{}
+	if crt != "" {
+		data["tls.crt"] = []byte(crt)
+	}
+	if key != "" {
+		data["tls.key"] = []byte(key)
+	}
+	return &v1.Secret{
+		ObjectMeta: v12.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Data: data,
+	}
+}
+
+func TestEtcdCertSignerController_populateSecret(t *testing.T) {
+	type fields struct {
+		clientset kubernetes.Interface
+	}
+	type args struct {
+		secretName      string
+		secretNamespace string
+		cert            *bytes.Buffer
+		key             *bytes.Buffer
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		wantErr bool
+		secret  *v1.Secret
+	}{
+		// TODO: Add test cases.
+		{
+			name:   "test valid secret",
+			fields: fields{clientset: fake.NewSimpleClientset(getTLSSecret("foo", "bar", "secure_crt_data", "secure_key_data"))},
+			args: args{
+				secretName:      "foo",
+				secretNamespace: "bar",
+				cert:            bytes.NewBufferString("secure_crt_data"),
+				key:             bytes.NewBufferString("secure_key_data"),
+			},
+			wantErr: false,
+		},
+		{
+			name:   "test invalid secret",
+			fields: fields{clientset: fake.NewSimpleClientset(getTLSSecret("foo", "bar", "", ""))},
+			args: args{
+				secretName:      "foo",
+				secretNamespace: "bar",
+				cert:            bytes.NewBufferString("secure_crt_data"),
+				key:             bytes.NewBufferString("secure_key_data"),
+			},
+			wantErr: false,
+		},
+		{
+			name:   "test secret with valid certs",
+			fields: fields{clientset: fake.NewSimpleClientset(getTLSSecret("foo", "bar", "secure_crt_data", "secure_key_data"))},
+			args: args{
+				secretName:      "foo",
+				secretNamespace: "bar",
+				cert:            bytes.NewBufferString("insecure_crt_data"),
+				key:             bytes.NewBufferString("insecure_key_data"),
+			},
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &EtcdCertSignerController{
+				clientset: tt.fields.clientset,
+			}
+			err := c.populateSecret(tt.args.secretName, tt.args.secretNamespace, tt.args.cert, tt.args.key)
+			if !tt.wantErr {
+				s, _ := tt.fields.clientset.CoreV1().Secrets(tt.args.secretNamespace).Get(tt.args.secretName, v12.GetOptions{})
+				if tlsErr := ensureTLSData(s); tlsErr != nil {
+					t.Errorf("populateSecret should always populate empty secrets")
+				}
+				if !bytes.Equal(s.Data["tls.crt"], []byte("secure_crt_data")) ||
+					!bytes.Equal(s.Data["tls.key"], []byte("secure_key_data")) {
+					t.Errorf("populateSecret should not update existing valid data")
+				}
+			}
+			if (err != nil) != tt.wantErr {
+				t.Errorf("populateSecret() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
