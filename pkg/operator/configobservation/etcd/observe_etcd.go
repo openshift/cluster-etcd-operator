@@ -168,7 +168,6 @@ func ObservePendingClusterMembers(genericListers configobserver.Listers, recorde
 
 	if len(observer.ObservedPending) > 0 {
 		if err := unstructured.SetNestedField(observedConfig, observer.ObservedPending, observer.pendingPath...); err != nil {
-			klog.Errorf("etcdURLs > 0 ERRRPRRRRRR: %v", errs)
 			return existingConfig, append(errs, err)
 		}
 	}
@@ -369,9 +368,9 @@ func (e *etcdObserver) setBootstrapMember() error {
 	for _, subset := range endpoints.Subsets {
 		for _, address := range subset.Addresses {
 			if address.Hostname == "etcd-bootstrap" {
-				name := address.Hostname
-				peerURLs := fmt.Sprintf("https://%s.%s:2380", name, e.ClusterDomain)
-				clusterMember, err := setMember(name, []string{peerURLs}, ceoapi.MemberUnknown)
+				ip := address.IP
+				peerURLs := fmt.Sprintf("https://%s:2380", ip)
+				clusterMember, err := setMember(ip, []string{peerURLs}, ceoapi.MemberUnknown)
 				if err != nil {
 					return err
 				}

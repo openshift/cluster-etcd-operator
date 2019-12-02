@@ -165,10 +165,8 @@ func (r *renderOpts) Run() error {
 			"etcd.kube-system.svc.cluster.local",
 			"etcd.openshift-etcd.svc",
 			"etcd.openshift-etcd.svc.cluster.local",
-			"${ETCD_DNS_NAME}",
 		}, ","),
 		EtcdPeerCertDNSNames: strings.Join([]string{
-			"${ETCD_DNS_NAME}",
 			r.etcdDiscoveryDomain,
 		}, ","),
 	}
