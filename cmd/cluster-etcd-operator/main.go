@@ -8,17 +8,16 @@ import (
 	"time"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/mount"
-
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/staticpodcontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/staticsynccontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/waitforceo"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
 	utilflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/logs"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/staticpodcontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/staticsynccontroller"
 )
 
 func main() {
@@ -52,6 +51,7 @@ func NewSSCSCommand() *cobra.Command {
 	cmd.AddCommand(staticsynccontroller.NewStaticSyncCommand(os.Stderr))
 	cmd.AddCommand(staticpodcontroller.NewStaticPodCommand(os.Stderr))
 	cmd.AddCommand(mount.NewMountCommand(os.Stderr))
+	cmd.AddCommand(waitforceo.NewWaitForCeoCommand(os.Stderr))
 
 	return cmd
 }
