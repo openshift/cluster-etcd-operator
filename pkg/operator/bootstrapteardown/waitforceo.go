@@ -2,6 +2,7 @@ package bootstrapteardown
 
 import (
 	"context"
+	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
@@ -14,15 +15,17 @@ import (
 	"k8s.io/klog"
 )
 
-func WaitForEtcdBootstrap(ctx context.Context, config *rest.Config) error {
+const TearDownTimeout = 30 * time.Minute
+
+func WaitForEtcdBootstrap(ctx context.Context, config *rest.Config, timeout time.Duration) error {
 	operatorConfigClient, err := operatorversionedclient.NewForConfig(config)
 	if err != nil {
 		klog.Errorf("error getting operator client config: %#v", err)
 		return err
 	}
 
-	// TODO: figure out if we can timeout after 30 mins by
-	// passing a different context here
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	if err := waitForEtcdBootstrap(ctx, operatorConfigClient.OperatorV1().RESTClient()); err != nil {
 		klog.Errorf("error watching etcd: %#v", err)
 	}

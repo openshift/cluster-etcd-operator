@@ -52,7 +52,7 @@ func (w *waitForCeoOpts) Run() error {
 	if err != nil {
 		klog.Errorf("error loading kubeconfig: %#v", err)
 	}
-	if err := bootstrapteardown.WaitForEtcdBootstrap(context.TODO(), config); err != nil {
+	if err := bootstrapteardown.WaitForEtcdBootstrap(context.TODO(), config, bootstrapteardown.TearDownTimeout); err != nil {
 		klog.Errorf("error waiting for cluster-etcd-operator %#v", err)
 	}
 	return nil

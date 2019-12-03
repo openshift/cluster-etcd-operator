@@ -16,7 +16,7 @@ import (
 
 func TearDownBootstrap(config *rest.Config,
 	clusterMemberShipController *clustermembercontroller.ClusterMemberController, etcdClient etcdv1.EtcdInterface) error {
-	err := WaitForEtcdBootstrap(context.TODO(), config)
+	err := WaitForEtcdBootstrap(context.TODO(), config, TearDownTimeout)
 	if err != nil {
 		klog.Errorf("WaitForEtcdBootstrap failed with: %#v", err)
 	}
