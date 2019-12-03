@@ -172,13 +172,13 @@ func (c *EtcdCertSignerController) sync() error {
 		return err
 	}
 
-	err = ensureCASecret(etcdCASecret)
+	err = ensureTLSData(etcdCASecret)
 	if err != nil {
 		klog.Errorf("etcd-signer ca secret invalid: %v", err)
 		return err
 	}
 
-	err = ensureCASecret(etcdMetricCASecret)
+	err = ensureTLSData(etcdMetricCASecret)
 	if err != nil {
 		klog.Errorf("etcd-metric-signer ca secret invalid: %v", err)
 		return err
@@ -192,7 +192,7 @@ func (c *EtcdCertSignerController) sync() error {
 
 	err = c.populateSecret(getSecretName(peerOrg, scaling.PodFQDN), secretNamespace, pCert, pKey)
 	if err != nil {
-		klog.Errorf("unable to create peer secret %#v", err)
+		klog.Errorf("unable to popopulate peer secret %#v", err)
 		return err
 	}
 
@@ -202,7 +202,7 @@ func (c *EtcdCertSignerController) sync() error {
 
 	err = c.populateSecret(getSecretName(serverOrg, scaling.PodFQDN), secretNamespace, sCert, sKey)
 	if err != nil {
-		klog.Errorf("unable to create server secret %#v", err)
+		klog.Errorf("unable to populate server secret %#v", err)
 		return err
 	}
 
@@ -212,7 +212,7 @@ func (c *EtcdCertSignerController) sync() error {
 
 	err = c.populateSecret(getSecretName(metricOrg, scaling.PodFQDN), secretNamespace, metricCert, metricKey)
 	if err != nil {
-		klog.Errorf("unable to create peer secret %#v", err)
+		klog.Errorf("unable to populate peer secret %#v", err)
 		return err
 	}
 
@@ -278,13 +278,17 @@ func getCerts(caCert, caKey []byte, podFQDN, org string, peerHostNames []string)
 	return certBytes, keyBytes, nil
 }
 
-func ensureCASecret(secret *v1.Secret) error {
+func ensureTLSData(secret *v1.Secret) error {
+	if secret.Data == nil {
+		return errors.New("secret data not found")
+	}
 	if _, ok := secret.Data["tls.crt"]; !ok {
 		return errors.New("CA Cert not found")
 	}
 	if _, ok := secret.Data["tls.key"]; !ok {
 		return errors.New("CA Pem not found")
 	}
+	// TODO: add check if certs are not expired.
 	return nil
 }
 
@@ -367,12 +371,19 @@ func (c *EtcdCertSignerController) populateSecret(secretName, secretNamespace st
 		}
 		return err
 	}
-	secret.Data = map[string][]byte{
-		"tls.crt": cert.Bytes(),
-		"tls.key": key.Bytes(),
+	if err := ensureTLSData(secret); err != nil {
+		secretCopy := secret.DeepCopy()
+		secretCopy.Data = map[string][]byte{
+			"tls.crt": cert.Bytes(),
+			"tls.key": key.Bytes(),
+		}
+		klog.Warningf("secret %s/%s does not have valid data: %#v", secretNamespace, secretName, err)
+		klog.Infof("attempting to update secret %s/%s with valid certs", secretNamespace, secretName)
+		_, err = c.clientset.CoreV1().Secrets(secretNamespace).Update(secretCopy)
+		return err
 	}
-	_, err = c.clientset.CoreV1().Secrets(secretNamespace).Update(secret)
-	return err
+	klog.Infof("secret %s/%s has valid certs", secretNamespace, secretName)
+	return nil
 }
 
 // eventHandler queues the operator to check spec and status
