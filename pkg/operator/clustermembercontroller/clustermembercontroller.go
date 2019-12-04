@@ -171,10 +171,15 @@ func (c *ClusterMemberController) sync() error {
 			Type:   operatorv1.OperatorStatusTypeAvailable,
 			Status: operatorv1.ConditionFalse,
 		}
+		condDegraded := operatorv1.OperatorCondition{
+			Type:   operatorv1.OperatorStatusTypeDegraded,
+			Status: operatorv1.ConditionTrue,
+		}
 		if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient,
 			v1helpers.UpdateConditionFn(condUpgradable),
 			v1helpers.UpdateConditionFn(condProgressing),
-			v1helpers.UpdateConditionFn(condAvailable)); updateError != nil {
+			v1helpers.UpdateConditionFn(condAvailable),
+			v1helpers.UpdateConditionFn(condDegraded)); updateError != nil {
 			return updateError
 		}
 
@@ -248,11 +253,16 @@ func (c *ClusterMemberController) sync() error {
 		Type:   operatorv1.OperatorStatusTypeProgressing,
 		Status: operatorv1.ConditionFalse,
 	}
+	condDegraded := operatorv1.OperatorCondition{
+		Type:   operatorv1.OperatorStatusTypeDegraded,
+		Status: operatorv1.ConditionFalse,
+	}
 
 	if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient,
 		v1helpers.UpdateConditionFn(condAvailable),
 		v1helpers.UpdateConditionFn(condUpgradable),
-		v1helpers.UpdateConditionFn(condProgressing)); updateError != nil {
+		v1helpers.UpdateConditionFn(condProgressing),
+		v1helpers.UpdateConditionFn(condDegraded)); updateError != nil {
 		klog.Infof("Error updating status %#v", err)
 		return updateError
 	}

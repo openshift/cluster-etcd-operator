@@ -62,7 +62,7 @@ func NewConfigObserver(
 				),
 			},
 			//TODO enable after migratation from KAO
-			//etcd.ObserveStorageURLs,
+			etcd.ObserveStorageURLs,
 			etcd.ObserveClusterMembers,
 			etcd.ObservePendingClusterMembers,
 		),
