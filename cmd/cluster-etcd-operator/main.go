@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/certsigner"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/mount"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
@@ -46,6 +47,7 @@ func NewSSCSCommand() *cobra.Command {
 		},
 	}
 
+	cmd.AddCommand(certsigner.NewCertSignerCommand(os.Stderr))
 	cmd.AddCommand(operator.NewOperator())
 	cmd.AddCommand(render.NewRenderCommand(os.Stderr))
 	cmd.AddCommand(staticsynccontroller.NewStaticSyncCommand(os.Stderr))
