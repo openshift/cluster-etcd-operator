@@ -61,7 +61,6 @@ func NewConfigObserver(
 					kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
 				),
 			},
-			//TODO enable after migratation from KAO
 			etcd.ObserveStorageURLs,
 			etcd.ObserveClusterMembers,
 			etcd.ObservePendingClusterMembers,
