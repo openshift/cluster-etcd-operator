@@ -148,14 +148,14 @@ func TestHostEtcdEndpointController_getNewAddressSubset(t *testing.T) {
 			}},
 			want: []corev1.EndpointAddress{
 				{
-					Hostname: "etcd-bootstrap",
-					IP:       subnetPrefix + "1",
-				},
-				{
 					Hostname: "etcd-0",
 				},
 				{
 					Hostname: "etcd-1",
+				},
+				{
+					Hostname: "etcd-bootstrap",
+					IP:       subnetPrefix + "1",
 				},
 			},
 			wantErr: false,
@@ -217,6 +217,37 @@ func TestHostEtcdEndpointController_getNewAddressSubset(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name:   "no scaling, just rearranging",
+			fields: fields{healthyEtcdMemberGetter: fakeEtcdMemberGetter{"etcd-bootstrap", "etcd-0", "etcd-1"}},
+			args: args{addresses: []corev1.EndpointAddress{
+				{
+					Hostname: "etcd-boostrap",
+					IP:       subnetPrefix + "1",
+				},
+				{
+					Hostname: "etcd-0",
+					IP:       subnetPrefix + "2",
+				},
+				{
+					Hostname: "etcd-1",
+					IP:       subnetPrefix + "3",
+				},
+			}},
+			want: []corev1.EndpointAddress{
+				{
+					Hostname: "etcd-0",
+				},
+				{
+					Hostname: "etcd-1",
+				},
+				{
+					Hostname: "etcd-bootstrap",
+					IP:       subnetPrefix + "1",
+				},
+			},
+			wantErr: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -237,6 +268,188 @@ func TestHostEtcdEndpointController_getNewAddressSubset(t *testing.T) {
 					t.Errorf("for index %d want hostname  %v, got  %v", i, addr.Hostname, tt.want[i].Hostname)
 					return
 				}
+			}
+		})
+	}
+}
+
+func Test_makeEtcdBootstrapLast(t *testing.T) {
+	tests := []struct {
+		name string
+		args []corev1.EndpointAddress
+		want []corev1.EndpointAddress
+	}{
+		{
+			name: "test 1 member",
+			args: []corev1.EndpointAddress{
+				{
+					Hostname: "etcd-0",
+				},
+			},
+			want: []corev1.EndpointAddress{
+				{
+					Hostname: "etcd-0",
+				},
+			},
+		},
+		{
+			name: "test 1 member as etcd-bootstrap",
+			args: []corev1.EndpointAddress{
+				{
+					Hostname: "etcd-bootstrap",
+				},
+			},
+			want: []corev1.EndpointAddress{
+				{
+					Hostname: "etcd-bootstrap",
+				},
+			},
+		},
+		{
+			name: "test no-op",
+			args: []corev1.EndpointAddress{
+				{
+					Hostname: "etcd-0",
+				},
+				{
+					Hostname: "etcd-bootstrap",
+				},
+			},
+			want: []corev1.EndpointAddress{
+				{
+					Hostname: "etcd-0",
+				},
+				{
+					Hostname: "etcd-bootstrap",
+				},
+			},
+		},
+		{
+			name: "test with no bootstrap",
+			args: []corev1.EndpointAddress{
+				{
+					Hostname: "etcd-0",
+				},
+				{
+					Hostname: "etcd-1",
+				},
+				{
+					Hostname: "etcd-2",
+				},
+			},
+			want: []corev1.EndpointAddress{
+
+				{
+					Hostname: "etcd-0",
+				},
+				{
+					Hostname: "etcd-1",
+				},
+				{
+					Hostname: "etcd-2",
+				},
+			},
+		},
+		{
+			name: "test rearranging with 2 members",
+			args: []corev1.EndpointAddress{
+				{
+					Hostname: "etcd-bootstrap",
+				},
+				{
+					Hostname: "etcd-0",
+				},
+			},
+			want: []corev1.EndpointAddress{
+				{
+					Hostname: "etcd-0",
+				},
+				{
+					Hostname: "etcd-bootstrap",
+				},
+			},
+		},
+		{
+			name: "test rearranging with 3 members",
+			args: []corev1.EndpointAddress{
+				{
+					Hostname: "etcd-bootstrap",
+				},
+				{
+					Hostname: "etcd-0",
+				},
+				{
+					Hostname: "etcd-2",
+				},
+			},
+			want: []corev1.EndpointAddress{
+				{
+					Hostname: "etcd-0",
+				},
+				{
+					Hostname: "etcd-2",
+				},
+				{
+					Hostname: "etcd-bootstrap",
+				},
+			},
+		},
+		{
+			name: "test rearranging with 3 members again",
+			args: []corev1.EndpointAddress{
+				{
+					Hostname: "etcd-0",
+				},
+				{
+					Hostname: "etcd-bootstrap",
+				},
+				{
+					Hostname: "etcd-2",
+				},
+			},
+			want: []corev1.EndpointAddress{
+				{
+					Hostname: "etcd-0",
+				},
+				{
+					Hostname: "etcd-2",
+				},
+				{
+					Hostname: "etcd-bootstrap",
+				},
+			},
+		},
+		{
+			name: "test rearranging with 3 members for lat time",
+			args: []corev1.EndpointAddress{
+				{
+					Hostname: "etcd-0",
+				},
+				{
+					Hostname: "etcd-2",
+				},
+				{
+					Hostname: "etcd-bootstrap",
+				},
+			},
+			want: []corev1.EndpointAddress{
+				{
+					Hostname: "etcd-0",
+				},
+				{
+					Hostname: "etcd-2",
+				},
+				{
+					Hostname: "etcd-bootstrap",
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			makeEtcdBootstrapLast(tt.args)
+			if !reflect.DeepEqual(tt.args, tt.want) {
+				t.Errorf("want = %#v got = %#v", tt.want, tt.args)
 			}
 		})
 	}
