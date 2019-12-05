@@ -184,7 +184,28 @@ func (h *HostEtcdEndpointController) getNewAddressSubset(addresses []corev1.Endp
 			Hostname: m,
 		})
 	}
+
+	makeEtcdBootstrapLast(newSubset)
+
 	return newSubset, nil
+}
+
+// since etcd-bootstrap will be removed after successfull scale up
+// we need to make sure it is the last in the list of endpoint addresses
+// the kube apiserver reads from this list and will use it as the last
+// endpoint if all the other fails
+func makeEtcdBootstrapLast(addresses []corev1.EndpointAddress) {
+	if len(addresses) < 2 {
+		return
+	}
+	for index, addr := range addresses {
+		if addr.Hostname == "etcd-bootstrap" && index != len(addresses)-1 {
+			e := addr
+			addresses = append(addresses[0:index], addresses[index+1:]...)
+			addresses = append(addresses, e)
+			return
+		}
+	}
 }
 
 func pickUniqueIPAddress(assignedIPAddresses []string, newIPAddressNeeded int) []string {

@@ -171,10 +171,15 @@ func (c *ClusterMemberController) sync() error {
 			Type:   operatorv1.OperatorStatusTypeAvailable,
 			Status: operatorv1.ConditionFalse,
 		}
+		condDegraded := operatorv1.OperatorCondition{
+			Type:   operatorv1.OperatorStatusTypeDegraded,
+			Status: operatorv1.ConditionTrue,
+		}
 		if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient,
 			v1helpers.UpdateConditionFn(condUpgradable),
 			v1helpers.UpdateConditionFn(condProgressing),
-			v1helpers.UpdateConditionFn(condAvailable)); updateError != nil {
+			v1helpers.UpdateConditionFn(condAvailable),
+			v1helpers.UpdateConditionFn(condDegraded)); updateError != nil {
 			return updateError
 		}
 
@@ -234,29 +239,44 @@ func (c *ClusterMemberController) sync() error {
 		c.eventRecorder.Warning("ScalingFailed", rerr.Error())
 		return rerr
 	}
-	klog.Infof("All cluster members observed, scaling complete!")
-	// report available
-	condAvailable := operatorv1.OperatorCondition{
-		Type:   operatorv1.OperatorStatusTypeAvailable,
-		Status: operatorv1.ConditionTrue,
-	}
-	condUpgradable := operatorv1.OperatorCondition{
-		Type:   operatorv1.OperatorStatusTypeUpgradeable,
-		Status: operatorv1.ConditionTrue,
-	}
-	condProgressing := operatorv1.OperatorCondition{
-		Type:   operatorv1.OperatorStatusTypeProgressing,
-		Status: operatorv1.ConditionFalse,
+
+	originalSpec, _, _, err := c.operatorConfigClient.GetOperatorState()
+	if err != nil {
+		klog.Errorf("unable to get operator spec: %#v", err)
+		return err
 	}
 
-	if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient,
-		v1helpers.UpdateConditionFn(condAvailable),
-		v1helpers.UpdateConditionFn(condUpgradable),
-		v1helpers.UpdateConditionFn(condProgressing)); updateError != nil {
-		klog.Infof("Error updating status %#v", err)
-		return updateError
-	}
+	if isClusterEtcdOperatorReady(originalSpec) {
+		// report available
+		condAvailable := operatorv1.OperatorCondition{
+			Type:   operatorv1.OperatorStatusTypeAvailable,
+			Status: operatorv1.ConditionTrue,
+		}
+		condUpgradable := operatorv1.OperatorCondition{
+			Type:   operatorv1.OperatorStatusTypeUpgradeable,
+			Status: operatorv1.ConditionTrue,
+		}
+		condProgressing := operatorv1.OperatorCondition{
+			Type:   operatorv1.OperatorStatusTypeProgressing,
+			Status: operatorv1.ConditionFalse,
+		}
+		condDegraded := operatorv1.OperatorCondition{
+			Type:   operatorv1.OperatorStatusTypeDegraded,
+			Status: operatorv1.ConditionFalse,
+		}
 
+		if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient,
+			v1helpers.UpdateConditionFn(condAvailable),
+			v1helpers.UpdateConditionFn(condUpgradable),
+			v1helpers.UpdateConditionFn(condProgressing),
+			v1helpers.UpdateConditionFn(condDegraded)); updateError != nil {
+			klog.Infof("Error updating status %#v", err)
+			return updateError
+		}
+		klog.Infof("All cluster members observed, scaling complete!")
+		return nil
+	}
+	klog.Infof("Wait for cluster-etcd-operator to get ready")
 	return nil
 }
 
@@ -572,4 +592,35 @@ func (c *ClusterMemberController) getResyncName(pods *corev1.PodList) (string, e
 		}
 	}
 	return "", nil
+}
+
+func isClusterEtcdOperatorReady(originalSpec *operatorv1.OperatorSpec) bool {
+	spec := originalSpec.DeepCopy()
+
+	// don't worry about errors.  If we can't decode, we'll simply stomp over the field.
+	existingConfig := map[string]interface{}{}
+	if err := json.NewDecoder(bytes.NewBuffer(spec.ObservedConfig.Raw)).Decode(&existingConfig); err != nil {
+		klog.V(4).Infof("decode of existing config failed with error: %v", err)
+	}
+
+	membersPath := []string{"cluster", "members"}
+	membersPendingPath := []string{"cluster", "pending"}
+
+	members, _, err := unstructured.NestedSlice(existingConfig, membersPath...)
+	if err != nil {
+		klog.Errorf("error reading members: %#v", err)
+		return false
+	}
+	klog.Infof("observed members: %#v", members)
+	pendingMembers, _, err := unstructured.NestedSlice(existingConfig, membersPendingPath...)
+	if err != nil {
+		klog.Errorf("error reading pending members: %#v", err)
+		return false
+	}
+	if len(pendingMembers) > 0 {
+		klog.Infof("some members are pending: %#v", pendingMembers)
+		return false
+	}
+	return true
+
 }

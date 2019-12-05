@@ -2,6 +2,7 @@ package etcd
 
 import (
 	"fmt"
+	"net"
 	"reflect"
 	"strings"
 	"time"
@@ -274,6 +275,18 @@ func ObserveStorageURLs(genericListers configobserver.Listers, recorder events.R
 				errs = append(errs, addressErr)
 				continue
 			}
+			if ip := net.ParseIP(address.IP); ip == nil {
+				ipErr := fmt.Errorf("endpoints %s/%s: subsets[%v]addresses[%v].IP is not a valid IP address", clustermembercontroller.EtcdHostEndpointName, clustermembercontroller.EtcdEndpointNamespace, subsetIndex, addressIndex)
+				errs = append(errs, ipErr)
+				continue
+			}
+			// the installer uses dummy addresses in the subnet `192.0.2.` for host-etcd endpoints
+			// this check see if etcd-bootstrap is populated with a real ip address and uses it
+			// instead of FQDN
+			if address.Hostname == "etcd-bootstrap" && !strings.HasPrefix(address.IP, "192.0.2") {
+				observerdClusterMembers = append(observerdClusterMembers, "https://"+address.IP+":2379")
+				continue
+			}
 			observerdClusterMembers = append(observerdClusterMembers, "https://"+address.Hostname+"."+dnsSuffix+":2379")
 		}
 	}
@@ -368,9 +381,8 @@ func (e *etcdObserver) setBootstrapMember() error {
 	for _, subset := range endpoints.Subsets {
 		for _, address := range subset.Addresses {
 			if address.Hostname == "etcd-bootstrap" {
-				ip := address.IP
-				peerURLs := fmt.Sprintf("https://%s:2380", ip)
-				clusterMember, err := setMember(ip, []string{peerURLs}, ceoapi.MemberUnknown)
+				peerURLs := fmt.Sprintf("https://%s:2380", address.IP)
+				clusterMember, err := setMember(address.Hostname, []string{peerURLs}, ceoapi.MemberUnknown)
 				if err != nil {
 					return err
 				}
