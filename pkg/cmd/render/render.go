@@ -5,16 +5,19 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/ghodss/yaml"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render/options"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/v430_00_assets"
 	"github.com/openshift/library-go/pkg/assets"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	yaml "gopkg.in/yaml.v2"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog"
 )
 
@@ -37,6 +40,7 @@ type renderOpts struct {
 	etcdConfigDir            string
 	setupEtcdEnvImage        string
 	kubeClientAgentImage     string
+	clusterConfigFile        string
 }
 
 // NewRenderCommand creates a render command.
@@ -85,6 +89,7 @@ func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&r.etcdDiscoveryDomain, "etcd-discovery-domain", r.etcdDiscoveryDomain, "etcd discovery domain")
 	fs.StringVar(&r.etcdStaticResourcesDir, "etcd-static-resources-dir", r.etcdStaticResourcesDir, "path to etcd static resources directory")
 	fs.StringVar(&r.etcdConfigDir, "etcd-config-dir", r.etcdConfigDir, "path to etcd config directory")
+	fs.StringVar(&r.clusterConfigFile, "cluster-config-file", r.clusterConfigFile, "Openshift Cluster API Config file.")
 }
 
 // Validate verifies the inputs.
@@ -116,6 +121,9 @@ func (r *renderOpts) Validate() error {
 	if len(r.etcdDiscoveryDomain) == 0 {
 		return errors.New("missing required flag: --etcd-discovery-domain")
 	}
+	if len(r.clusterConfigFile) == 0 {
+		return errors.New("missing required flag: --cluster-config-file")
+	}
 	return nil
 }
 
@@ -138,6 +146,12 @@ type TemplateData struct {
 	EtcdDiscoveryDomain    string
 	EtcdServerCertDNSNames string
 	EtcdPeerCertDNSNames   string
+
+	// ClusterCIDR is the IP range for pod IPs.
+	ClusterCIDR []string
+
+	// ServiceClusterIPRange is the IP range for service IPs.
+	ServiceCIDR []string
 }
 
 type StaticFile struct {
@@ -150,7 +164,7 @@ type StaticFile struct {
 
 // Run contains the logic of the render command.
 func (r *renderOpts) Run() error {
-	renderConfig := &TemplateData{
+	renderConfig := TemplateData{
 		ManifestConfig: options.ManifestConfig{
 			Images: options.Images{
 				Etcd:            r.etcdImage,
@@ -170,36 +184,43 @@ func (r *renderOpts) Run() error {
 			r.etcdDiscoveryDomain,
 		}, ","),
 	}
-
-	staticFiles := []StaticFile{
-		{
-			"ca.crt",
-			r.etcdCAFile,
-			r.etcdStaticResourcesDir,
-			0644,
-			nil,
-		},
-		{
-			"metric-ca.crt",
-			r.etcdMetricCAFile,
-			r.etcdStaticResourcesDir,
-			0644,
-			nil,
-		},
-	}
-
-	etcdConfPath := filepath.Join(r.generic.TemplatesDir, "config", "etc-etcd-etcd-conf.yaml")
-	etcdConf, err := parseStaticTemplateFile(etcdConfPath)
-	if err != nil {
-		return err
-	}
-	staticFiles = append(staticFiles, StaticFile{filepath.Base(etcdConf.Path), "", r.etcdConfigDir, os.FileMode(*etcdConf.Mode), []byte(etcdConf.Contents.Inline)})
-	files, err := populateFileData(staticFiles)
-	if err != nil {
-		return err
-	}
-	if err := writeStaticFiles(files); err != nil {
-		return err
+	if len(r.clusterConfigFile) > 0 {
+		clusterConfigFileData, err := ioutil.ReadFile(r.clusterConfigFile)
+		if err != nil {
+			return err
+		}
+		if err = discoverCIDRs(clusterConfigFileData, &renderConfig); err != nil {
+			return fmt.Errorf("unable to parse restricted CIDRs from config %q: %v", r.clusterConfigFile, err)
+		}
+		if renderConfig.ServiceCIDR == nil {
+			return fmt.Errorf("sdn serviceCIDR not found")
+		}
+		singleStack, err := isSingleStackIPv6(renderConfig.ServiceCIDR)
+		if err != nil {
+			return nil
+		}
+		// TODO make me pretty and a function for ez testing
+		if singleStack {
+			// IPv6
+			etcdAddress := options.EtcdAddress{
+				ListenClient:       net.JoinHostPort(net.IPv6zero.String(), "2379"),
+				ListenPeer:         net.JoinHostPort(net.IPv6zero.String(), "2380"),
+				LocalHost:          "[::]",
+				ListenMetricServer: net.JoinHostPort(net.IPv6zero.String(), "9978"),
+				ListenMetricProxy:  net.JoinHostPort(net.IPv6zero.String(), "9979"),
+			}
+			renderConfig.ManifestConfig.EtcdAddress = etcdAddress
+		} else {
+			// IPv4
+			etcdAddress := options.EtcdAddress{
+				ListenClient:       net.JoinHostPort(net.IPv4zero.String(), "2379"),
+				ListenPeer:         net.JoinHostPort(net.IPv4zero.String(), "2380"),
+				LocalHost:          "127.0.0.1",
+				ListenMetricServer: net.JoinHostPort(net.IPv4zero.String(), "9978"),
+				ListenMetricProxy:  net.JoinHostPort(net.IPv4zero.String(), "9979"),
+			}
+			renderConfig.ManifestConfig.EtcdAddress = etcdAddress
+		}
 	}
 
 	if err := r.manifest.ApplyTo(&renderConfig.ManifestConfig); err != nil {
@@ -275,6 +296,55 @@ func mustReadTemplateFile(fname string) options.Template {
 	return options.Template{FileName: fname, Content: bs}
 }
 
+func discoverCIDRs(clusterConfigFileData []byte, renderConfig *TemplateData) error {
+	if err := discoverCIDRsFromNetwork(clusterConfigFileData, renderConfig); err != nil {
+		if err = discoverCIDRsFromClusterAPI(clusterConfigFileData, renderConfig); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func discoverCIDRsFromNetwork(clusterConfigFileData []byte, renderConfig *TemplateData) error {
+	configJson, err := yaml.YAMLToJSON(clusterConfigFileData)
+	if err != nil {
+		return err
+	}
+	clusterConfigObj, err := runtime.Decode(unstructured.UnstructuredJSONScheme, configJson)
+	if err != nil {
+		return err
+	}
+	clusterConfig, ok := clusterConfigObj.(*unstructured.Unstructured)
+	if !ok {
+		return fmt.Errorf("unexpected object in %t", clusterConfigObj)
+	}
+	clusterCIDR, found, err := unstructured.NestedSlice(
+		clusterConfig.Object, "spec", "clusterNetwork")
+	if found && err == nil {
+		for key := range clusterCIDR {
+			slice, ok := clusterCIDR[key].(map[string]interface{})
+			if !ok {
+				return fmt.Errorf("unexpected object in %t", clusterCIDR[key])
+			}
+			if CIDR, found, err := unstructured.NestedString(slice, "cidr"); found && err == nil {
+				renderConfig.ClusterCIDR = append(renderConfig.ClusterCIDR, CIDR)
+			}
+		}
+	}
+	if err != nil {
+		return err
+	}
+	serviceCIDR, found, err := unstructured.NestedStringSlice(
+		clusterConfig.Object, "spec", "serviceNetwork")
+	if found && err == nil {
+		renderConfig.ServiceCIDR = serviceCIDR
+	}
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // WriteFiles writes the manifests and the bootstrap config file.
 func WriteFiles(opt *options.GenericOptions, fileConfig *options.FileConfig, templateData interface{}, additionalPredicates ...assets.FileInfoPredicate) error {
 	// write assets
@@ -294,4 +364,49 @@ func WriteFiles(opt *options.GenericOptions, fileConfig *options.FileConfig, tem
 	}
 
 	return nil
+}
+
+func discoverCIDRsFromClusterAPI(clusterConfigFileData []byte, renderConfig *TemplateData) error {
+	configJson, err := yaml.YAMLToJSON(clusterConfigFileData)
+	if err != nil {
+		return err
+	}
+	clusterConfigObj, err := runtime.Decode(unstructured.UnstructuredJSONScheme, configJson)
+	if err != nil {
+		return err
+	}
+	clusterConfig, ok := clusterConfigObj.(*unstructured.Unstructured)
+	if !ok {
+		return fmt.Errorf("unexpected object in %t", clusterConfigObj)
+	}
+	clusterCIDR, found, err := unstructured.NestedStringSlice(
+		clusterConfig.Object, "spec", "clusterNetwork", "pods", "cidrBlocks")
+	if found && err == nil {
+		renderConfig.ClusterCIDR = clusterCIDR
+	}
+	if err != nil {
+		return err
+	}
+	serviceCIDR, found, err := unstructured.NestedStringSlice(
+		clusterConfig.Object, "spec", "clusterNetwork", "services", "cidrBlocks")
+	if found && err == nil {
+		renderConfig.ServiceCIDR = serviceCIDR
+	}
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func isSingleStackIPv6(serviceCIDRs []string) (bool, error) {
+	for _, cidr := range serviceCIDRs {
+		ip, _, err := net.ParseCIDR(cidr)
+		if err != nil {
+			return false, err
+		}
+		if ip.To4() != nil {
+			return false, nil
+		}
+	}
+	return true, nil
 }

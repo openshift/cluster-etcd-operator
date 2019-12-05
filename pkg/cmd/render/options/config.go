@@ -20,6 +20,9 @@ type ManifestConfig struct {
 	// Images are  pull spec of the images to use for the controller manager.
 	Images
 
+	// EtcdAddress are addresses used to populate etcd static pod spec.
+	EtcdAddress
+
 	// ImagePullPolicy specifies the image pull policy to use for the images.
 	ImagePullPolicy string
 }
@@ -40,6 +43,14 @@ type Images struct {
 	Etcd            string
 	SetupEtcdEnv    string
 	KubeClientAgent string
+}
+
+type EtcdAddress struct {
+	ListenClient       string
+	ListenPeer         string
+	ListenMetricServer string
+	ListenMetricProxy  string
+	LocalHost          string
 }
 
 type TemplateData struct {

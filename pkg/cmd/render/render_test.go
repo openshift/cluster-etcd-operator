@@ -1,158 +1,142 @@
 package render
 
 import (
-	"bytes"
-	"io/ioutil"
 	"os"
-	"path/filepath"
-	"strings"
+	"reflect"
 	"testing"
-
-	"github.com/pkg/errors"
-	"github.com/spf13/cobra"
 )
 
-func runRender(args ...string) (*cobra.Command, error) {
-	errOut := &bytes.Buffer{}
-	c := NewRenderCommand(errOut)
-	os.Args = append([]string{"render.test"}, args...)
-	if err := c.Execute(); err != nil {
-		panic(err)
+var (
+	expectedServiceIPv4CIDR        = []string{"172.30.0.0/16"}
+	expectedServiceMixedCIDR       = []string{"172.30.0.0/16", "2001:db8::/32"}
+	expectedServiceMixedSwapCIDR   = []string{"2001:db8::/32", "172.30.0.0/16"}
+	expectedServiceSingleStackCIDR = []string{"2001:db8::/32"}
+
+	clusterAPIConfig = `
+apiVersion: machine.openshift.io/v1beta1
+kind: Cluster
+metadata:
+  creationTimestamp: null
+  name: cluster
+  namespace: openshift-machine-api
+spec:
+  clusterNetwork:
+    pods:
+      cidrBlocks:
+		- 2001:db8::/32
+    serviceDomain: ""
+    services:
+      cidrBlocks:
+        - 172.30.0.0/16
+  providerSpec: {}
+status: {}
+`
+	networkConfigIpv4 = `
+apiVersion: config.openshift.io/v1
+kind: Network
+metadata:
+  creationTimestamp: null
+  name: cluster
+spec:
+  clusterNetwork:
+    - cidr: 10.128.0.0/14
+      hostPrefix: 23
+  networkType: OpenShiftSDN
+  serviceNetwork:
+    - 172.30.0.0/16
+status: {}
+`
+	networkConfigMixed = `
+apiVersion: config.openshift.io/v1
+kind: Network
+metadata:
+  creationTimestamp: null
+  name: cluster
+spec:
+  clusterNetwork:
+    - cidr: 10.128.0.0/14
+      hostPrefix: 23
+  networkType: OpenShiftSDN
+  serviceNetwork:
+    - 172.30.0.0/16
+    - 2001:db8::/32
+status: {}
+`
+	networkConfigMixedSwap = `
+apiVersion: config.openshift.io/v1
+kind: Network
+metadata:
+  creationTimestamp: null
+  name: cluster
+spec:
+  clusterNetwork:
+    - cidr: 10.128.0.0/14
+      hostPrefix: 23
+  networkType: OpenShiftSDN
+  serviceNetwork:
+    - 2001:db8::/32
+    - 172.30.0.0/16
+status: {}
+`
+	networkConfigIPv6SingleStack = `
+apiVersion: config.openshift.io/v1
+kind: Network
+metadata:
+  creationTimestamp: null
+  name: cluster
+spec:
+  clusterNetwork:
+    - cidr: 10.128.0.0/14
+      hostPrefix: 23
+  networkType: OpenShiftSDN
+  serviceNetwork:
+    - 2001:db8::/32
+status: {}
+`
+)
+
+func TestNetworkConfigIpv4(t *testing.T) {
+	renderConfig := TemplateData{}
+	if err := discoverCIDRsFromNetwork([]byte(networkConfigIpv4), &renderConfig); err != nil {
+		t.Errorf("failed discoverCIDRs: %v", err)
 	}
-	errBytes, err := ioutil.ReadAll(errOut)
-	if err != nil {
-		panic(err)
+	if !reflect.DeepEqual(renderConfig.ServiceCIDR, expectedServiceIPv4CIDR) {
+		t.Errorf("Got: %v, expected: %v", renderConfig.ServiceCIDR, expectedServiceIPv4CIDR)
 	}
-	if len(errBytes) == 0 {
-		return c, nil
-	}
-	return c, errors.New(string(errBytes))
 }
 
-func setupAssetOutputDir(testName string) (teardown func(), outputDir string, err error) {
-	outputDir, err = ioutil.TempDir("", testName)
-	if err != nil {
-		return nil, "", err
+func TestNetworkConfigMixed(t *testing.T) {
+	renderConfig := TemplateData{}
+	if err := discoverCIDRsFromNetwork([]byte(networkConfigMixed), &renderConfig); err != nil {
+		t.Errorf("failed discoverCIDRs: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(outputDir, "manifests"), os.ModePerm); err != nil {
-		return nil, "", err
+	if !reflect.DeepEqual(renderConfig.ServiceCIDR, expectedServiceMixedCIDR) {
+		t.Errorf("Got: %v, expected: %v", renderConfig.ServiceCIDR, expectedServiceMixedCIDR)
 	}
-	if err := os.MkdirAll(filepath.Join(outputDir, "configs"), os.ModePerm); err != nil {
-		return nil, "", err
-	}
-	if err := os.MkdirAll(filepath.Join(outputDir, "static-pod-resources", "etcd-member"), os.ModePerm); err != nil {
-		return nil, "", err
-	}
-
-	teardown = func() {
-		os.RemoveAll(outputDir)
-	}
-	return
 }
 
-func setOutputFlags(args []string, dir string) []string {
-	newArgs := []string{}
-	for _, arg := range args {
-		if strings.HasPrefix(arg, "--asset-output-dir=") {
-			newArgs = append(newArgs, "--asset-output-dir="+filepath.Join(dir, "manifests"))
-			continue
-		}
-		if strings.HasPrefix(arg, "--config-output-file=") {
-			newArgs = append(newArgs, "--config-output-file="+filepath.Join(dir, "configs", "config.yaml"))
-			continue
-		}
-		if strings.HasPrefix(arg, "--etcd-static-resources-dir=") {
-			newArgs = append(newArgs, "--etcd-static-resources-dir="+filepath.Join(dir, "static-pod-resources", "etcd-member"))
-			continue
-		}
-		if strings.HasPrefix(arg, "--etcd-config-dir=") {
-			newArgs = append(newArgs, "--etcd-config-dir="+filepath.Join(dir, "etc", "etcd"))
-			continue
-		}
-
-		newArgs = append(newArgs, arg)
+func TestNetworkConfigMixedSwap(t *testing.T) {
+	renderConfig := TemplateData{}
+	if err := discoverCIDRsFromNetwork([]byte(networkConfigMixedSwap), &renderConfig); err != nil {
+		t.Errorf("failed discoverCIDRs: %v", err)
 	}
-	return newArgs
+	if !reflect.DeepEqual(renderConfig.ServiceCIDR, expectedServiceMixedSwapCIDR) {
+		t.Errorf("Got: %v, expected: %v", renderConfig.ServiceCIDR, expectedServiceMixedSwapCIDR)
+	}
 }
 
-func TestRenderCommand(t *testing.T) {
-	assetsInputDir := filepath.Join("testdata", "tls")
-	templateDir := filepath.Join("..", "..", "..", "bindata", "bootkube")
-
-	type RenderTest struct {
-		name    string
-		args    []string
-		errFunc func(error)
+func TestNetworkConfigSingleStack(t *testing.T) {
+	renderConfig := TemplateData{}
+	if err := discoverCIDRsFromNetwork([]byte(networkConfigIPv6SingleStack), &renderConfig); err != nil {
+		t.Errorf("failed discoverCIDRs: %v", err)
 	}
-
-	tests := []RenderTest{}
-
-	/* Keep these in the same order as render.Validate() so the
-	/* coverage can cascade through each */
-	required_flags := [][]string{
-		{"--asset-input-dir", assetsInputDir},
-		{"--asset-output-dir", ""},
-		{"--templates-input-dir", templateDir},
-		{"--config-output-file", ""},
-
-		{"--etcd-ca", assetsInputDir + "/etcd-ca-bundle.crt"},
-		{"--etcd-metric-ca", assetsInputDir + "/etcd-metric-ca-bundle.crt"},
-		{"--manifest-etcd-image", "foo"},
-		{"--manifest-kube-client-agent-image", "foo"},
-		{"--manifest-setup-etcd-env-image", "foo"},
-		{"--etcd-discovery-domain", "foo"},
-		{"--manifest-cluster-etcd-operator-image", "quay.io/test/image:latest"},
+	if !reflect.DeepEqual(renderConfig.ServiceCIDR, expectedServiceSingleStackCIDR) {
+		t.Errorf("Got: %v, expected: %v", renderConfig.ServiceCIDR, expectedServiceSingleStackCIDR)
 	}
+}
 
-	optional_flags := [][]string{
-		{"--etcd-static-resources-dir", ""},
-		{"--etcd-config-dir", ""},
-	}
-
-	seen_flags := []string{}
-	for _, flag := range required_flags {
-		tests = append(tests,
-			RenderTest{
-				name: "missing-flag-" + flag[0],
-				args: seen_flags,
-				errFunc: func(err error) {
-					if err == nil {
-						t.Fatalf("expected required flags error")
-					}
-				},
-			},
-		)
-		seen_flags = append(seen_flags, strings.Join(flag, "="))
-	}
-
-	for _, flag := range optional_flags {
-		seen_flags = append(seen_flags, strings.Join(flag, "="))
-	}
-
-	tests = append(tests,
-		RenderTest{
-			name: "all-flags",
-			args: seen_flags,
-		},
-	)
-
-	for _, test := range tests {
-		teardown, outputDir, err := setupAssetOutputDir(test.name)
-		if err != nil {
-			t.Errorf("%s: unexpected error: %v", test.name, err)
-		}
-		defer teardown()
-
-		test.args = setOutputFlags(test.args, outputDir)
-
-		_, err = runRender(test.args...)
-		if err != nil && test.errFunc == nil {
-			t.Errorf("%s: got unexpected error %v", test.name, err)
-			continue
-		}
-		if err != nil {
-			test.errFunc(err)
-			continue
-		}
-	}
+func runRender(args ...string) error {
+	c := NewRenderCommand(os.Stderr)
+	os.Args = append([]string{""}, args...)
+	return c.Execute()
 }
