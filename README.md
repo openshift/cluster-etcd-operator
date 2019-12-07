@@ -1,6 +1,6 @@
 # cluster-etcd-operator
 
-cluster-etcd-operator (CEO) is an operator that handles the scaling of etcd during cluster bootstrap and regular operation. The operator also manages provisioning etcd dependencies such as TLS certificates.
+cluster-etcd-operator (CEO) is an operator that handles the scaling of etcd during cluster bootstrap and regular operation. The operator also manages provisioning etcd dependencies such as TLS certificates. The operator is based on OpenShift library-go framework and it is installed via Cluster Version Operator (CVO).
 
 # Developing the CEO
 
