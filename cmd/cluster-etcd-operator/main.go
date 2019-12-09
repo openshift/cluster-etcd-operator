@@ -13,6 +13,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/staticpodcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/staticsynccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/waitforceo"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/waitforkube"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -52,6 +53,7 @@ func NewSSCSCommand() *cobra.Command {
 	cmd.AddCommand(staticpodcontroller.NewStaticPodCommand(os.Stderr))
 	cmd.AddCommand(mount.NewMountCommand(os.Stderr))
 	cmd.AddCommand(waitforceo.NewWaitForCeoCommand(os.Stderr))
+	cmd.AddCommand(waitforkube.NewWaitForKubeCommand(os.Stderr))
 
 	return cmd
 }
