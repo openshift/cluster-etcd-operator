@@ -240,13 +240,7 @@ func (c *ClusterMemberController) sync() error {
 		return rerr
 	}
 
-	originalSpec, _, _, err := c.operatorConfigClient.GetOperatorState()
-	if err != nil {
-		klog.Errorf("unable to get operator spec: %#v", err)
-		return err
-	}
-
-	if isClusterEtcdOperatorReady(originalSpec) {
+	if c.isClusterEtcdOperatorReady() {
 		// report available
 		condAvailable := operatorv1.OperatorCondition{
 			Type:   operatorv1.OperatorStatusTypeAvailable,
@@ -363,12 +357,13 @@ func (c *ClusterMemberController) EtcdList(bucket string) ([]ceoapi.Member, erro
 	if err != nil {
 		return nil, err
 	}
+	// populate current etcd members as observed.
+	members := []ceoapi.Member{}
 	if !exists {
-		return nil, fmt.Errorf("etcd cluster members not observed")
+		klog.Infof("bucket %s empty", bucket)
+		return members, nil
 	}
 
-	// populate current etcd members as observed.
-	var members []ceoapi.Member
 	for _, member := range data {
 		memberMap, _ := member.(map[string]interface{})
 		name, exists, err := unstructured.NestedString(memberMap, "name")
@@ -594,33 +589,28 @@ func (c *ClusterMemberController) getResyncName(pods *corev1.PodList) (string, e
 	return "", nil
 }
 
-func isClusterEtcdOperatorReady(originalSpec *operatorv1.OperatorSpec) bool {
-	spec := originalSpec.DeepCopy()
-
-	// don't worry about errors.  If we can't decode, we'll simply stomp over the field.
-	existingConfig := map[string]interface{}{}
-	if err := json.NewDecoder(bytes.NewBuffer(spec.ObservedConfig.Raw)).Decode(&existingConfig); err != nil {
-		klog.V(4).Infof("decode of existing config failed with error: %v", err)
-	}
-
-	membersPath := []string{"cluster", "members"}
-	membersPendingPath := []string{"cluster", "pending"}
-
-	members, _, err := unstructured.NestedSlice(existingConfig, membersPath...)
+func (c *ClusterMemberController) isClusterEtcdOperatorReady() bool {
+	pendingMembers, err := c.EtcdList("pending")
 	if err != nil {
-		klog.Errorf("error reading members: %#v", err)
-		return false
-	}
-	klog.Infof("observed members: %#v", members)
-	pendingMembers, _, err := unstructured.NestedSlice(existingConfig, membersPendingPath...)
-	if err != nil {
-		klog.Errorf("error reading pending members: %#v", err)
+		klog.Errorf("error getting pending members: %#v", err)
 		return false
 	}
 	if len(pendingMembers) > 0 {
 		klog.Infof("some members are pending: %#v", pendingMembers)
 		return false
 	}
+	members, err := c.EtcdList("members")
+	if err != nil {
+		klog.Errorf("error getting members: %#v", err)
+		return false
+	}
+	if len(members) == 0 {
+		klog.Infof("no etcd member found")
+		return false
+	}
+	if len(members) == 1 && c.IsMember("etcd-bootstrap") {
+		klog.Infof("etcd-bootstrap is the only known member")
+		return false
+	}
 	return true
-
 }
