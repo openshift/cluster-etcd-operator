@@ -139,6 +139,10 @@ func (c *EtcdCertSignerController) sync() error {
 		// Scaling key not found in configmap, hence do nothing
 		return nil
 	}
+	if len(membershipData) == 0 {
+		// scaling value empty
+		return nil
+	}
 	err = json.Unmarshal([]byte(membershipData), scaling)
 	if err != nil {
 		klog.Infof("unable to unmarshal scaling data %#v\n", err)

@@ -26,6 +26,8 @@ import (
 const (
 	Pending = "pending"
 	Member  = "member"
+	// Todo: change this when wait-for-kube init container is added
+	numberOfInitContainers = 3
 )
 
 type etcdObserver struct {
@@ -197,11 +199,16 @@ func isPendingReady(bucket string, podName string, scalingName string, podLister
 		klog.Errorf("isPendingReady: error getting pod %#v", err)
 		return false
 	}
+	if len(pod.Spec.InitContainers) < numberOfInitContainers {
+		return true
+	}
 	if len(pod.Status.InitContainerStatuses) < 2 {
 		klog.Infof("isPendingReady: waiting for init cert containers to pass")
 		return false
 	}
-	if pod.Status.InitContainerStatuses[1].State.Terminated != nil && pod.Status.InitContainerStatuses[1].State.Terminated.ExitCode == 0 && pod.Status.InitContainerStatuses[2].State.Running != nil {
+	certsInitContainerNumber := getInitContainerNumber(pod, "certs")
+	membershipInitContainerNumber := getInitContainerNumber(pod, "membership")
+	if pod.Status.InitContainerStatuses[certsInitContainerNumber].State.Terminated != nil && pod.Status.InitContainerStatuses[certsInitContainerNumber].State.Terminated.ExitCode == 0 && pod.Status.InitContainerStatuses[membershipInitContainerNumber].State.Running != nil {
 		return true
 	}
 
@@ -210,6 +217,15 @@ func isPendingReady(bucket string, podName string, scalingName string, podLister
 	}
 
 	return false
+}
+
+func getInitContainerNumber(pod *corev1.Pod, initContainerName string) int {
+	for i, c := range pod.Spec.InitContainers {
+		if c.Name == initContainerName {
+			return i
+		}
+	}
+	return -1
 }
 
 func isPendingAdd(bucket string, podName string, previousPending []ceoapi.Member, scalingName string) bool {
