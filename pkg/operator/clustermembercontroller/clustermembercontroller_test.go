@@ -3,7 +3,6 @@ package clustermembercontroller
 import (
 	"bytes"
 	"encoding/json"
-
 	"testing"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -17,6 +16,13 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/util/workqueue"
+	"k8s.io/klog"
+)
+
+var (
+	clusterDomain             = "operator.testing.openshift"
+	clusterMembersPendingPath = []string{"cluster", "pending"}
+	clusterMembersPath        = []string{"cluster", "members"}
 )
 
 func TestClusterMemberController_RemoveBootstrapFromEndpoint(t *testing.T) {
@@ -104,75 +110,119 @@ func getBytes(obj interface{}) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func Test_isClusterEtcdOperatorReady(t *testing.T) {
-	//Todo: refactor this by making a function for getting observedConfig
-	node := "ip-10-0-139-142.ec2.internal"
-	clusterDomain := "operator.testing.openshift"
-	clusterMemberPath := []string{"cluster", "pending"}
-	var etcdURLs []interface{}
+func getEtcdSpec(pending, ready []string) *operatorv1.OperatorSpec {
 	observedConfig := map[string]interface{}{}
-	etcdURL := map[string]interface{}{}
+	etcdPendingMembers := []interface{}{}
+	etcdMembers := []interface{}{}
 
-	if err := unstructured.SetNestedField(etcdURL, node, "name"); err != nil {
-		t.Fatalf("error occured in writing nested fields %#v", err)
+	for _, pm := range pending {
+		pendingBucket := map[string]interface{}{}
+		if err := unstructured.SetNestedField(pendingBucket, pm+"-node", "name"); err != nil {
+			klog.Fatalf("error occured in writing nested fields %#v", err)
+		}
+		if err := unstructured.SetNestedField(pendingBucket, "https://"+pm+"."+clusterDomain+":2380", "peerURLs"); err != nil {
+			klog.Fatalf("error occured in writing nested fields %#v", err)
+		}
+		if err := unstructured.SetNestedField(pendingBucket, string(ceoapi.MemberUnknown), "status"); err != nil {
+			klog.Fatalf("error occured in writing nested fields %#v", err)
+		}
+		etcdPendingMembers = append(etcdPendingMembers, pendingBucket)
 	}
-	if err := unstructured.SetNestedField(etcdURL, "https://etcd-1."+clusterDomain+":2380", "peerURLs"); err != nil {
-		t.Fatalf("error occured in writing nested fields %#v", err)
+	for _, m := range ready {
+		memberBucket := map[string]interface{}{}
+		if err := unstructured.SetNestedField(memberBucket, m, "name"); err != nil {
+			klog.Fatalf("error occured in writing nested fields %#v", err)
+		}
+		if err := unstructured.SetNestedField(memberBucket, "https://"+m+"."+clusterDomain+":2380", "peerURLs"); err != nil {
+			klog.Fatalf("error occured in writing nested fields %#v", err)
+		}
+		if err := unstructured.SetNestedField(memberBucket, string(ceoapi.MemberUnknown), "status"); err != nil {
+			klog.Fatalf("error occured in writing nested fields %#v", err)
+		}
+		etcdMembers = append(etcdMembers, memberBucket)
 	}
-	if err := unstructured.SetNestedField(etcdURL, string(ceoapi.MemberUnknown), "status"); err != nil {
-		t.Fatalf("error occured in writing nested fields %#v", err)
+	if len(pending) > 0 {
+		if err := unstructured.SetNestedField(observedConfig, etcdPendingMembers, clusterMembersPendingPath...); err != nil {
+			klog.Fatalf("error occured in writing pending members: %#v", err)
+		}
 	}
-	etcdURLs = append(etcdURLs, etcdURL)
-	if err := unstructured.SetNestedField(observedConfig, etcdURLs, clusterMemberPath...); err != nil {
-		t.Fatalf("error occured in writing nested fields observedConfig: %#v", err)
+	if len(ready) > 0 {
+		if err := unstructured.SetNestedField(observedConfig, etcdMembers, clusterMembersPath...); err != nil {
+			klog.Fatalf("error occured in writing members: %#v", err)
+		}
 	}
 	etcdURLsBytes, err := getBytes(observedConfig)
 	if err != nil {
-		t.Fatalf("error occured in getting bytes for etcdURLs: %#v", err)
+		klog.Fatalf("error occured in getting bytes for etcdURLs: %#v", err)
 	}
-
-	emptyObservedConfig := map[string]interface{}{}
-	emptyEtcdURLs := []interface{}{}
-
-	if err := unstructured.SetNestedField(emptyObservedConfig, emptyEtcdURLs, clusterMemberPath...); err != nil {
-		t.Fatalf("error occured in writing nested fields observedConfig: %#v", err)
+	return &operatorv1.OperatorSpec{
+		ObservedConfig: runtime.RawExtension{
+			Raw: etcdURLsBytes,
+		},
 	}
-	emptyEtcdURLsBytes, err := getBytes(emptyObservedConfig)
-	type args struct {
-		originalSpec *operatorv1.OperatorSpec
-	}
+}
 
+func TestClusterMemberController_isClusterEtcdOperatorReady(t *testing.T) {
+	type fields struct {
+		operatorConfigClient v1helpers.OperatorClient
+	}
 	tests := []struct {
-		name string
-		args args
-		want bool
+		name   string
+		fields fields
+		want   bool
 	}{
 		{
-			name: "test with 1 pending member",
-			args: args{
-				originalSpec: &operatorv1.OperatorSpec{
-					ObservedConfig: runtime.RawExtension{
-						Raw: etcdURLsBytes,
-					},
-				},
+			name: "test with 1 pending member and no ready",
+			fields: fields{
+				operatorConfigClient: v1helpers.NewFakeOperatorClient(getEtcdSpec([]string{"etcd-1"}, []string{}),
+					nil,
+					nil),
 			},
 			want: false,
 		},
 		{
-			name: "test with 0 pending member",
-			args: args{
-				originalSpec: &operatorv1.OperatorSpec{
-					ObservedConfig: runtime.RawExtension{
-						Raw: emptyEtcdURLsBytes,
-					},
-				},
+			name: "test with 0 pending member and no ready members",
+			fields: fields{
+				operatorConfigClient: v1helpers.NewFakeOperatorClient(getEtcdSpec([]string{}, []string{}),
+					nil,
+					nil),
+			},
+			want: false,
+		},
+		{
+			name: "test with 0 pending member and etcd-bootstrap ready",
+			fields: fields{
+				operatorConfigClient: v1helpers.NewFakeOperatorClient(getEtcdSpec([]string{}, []string{"etcd-bootstrap"}),
+					nil,
+					nil),
+			},
+			want: false,
+		},
+		{
+			name: "test with 1 pending member and more than 1 ready",
+			fields: fields{
+				operatorConfigClient: v1helpers.NewFakeOperatorClient(getEtcdSpec([]string{"etcd-3"}, []string{"etcd-bootstrap", "etcd-1", "etcd-2"}),
+					nil,
+					nil),
+			},
+			want: false,
+		},
+		{
+			name: "test with 0 pending member and more than 1 ready",
+			fields: fields{
+				operatorConfigClient: v1helpers.NewFakeOperatorClient(getEtcdSpec([]string{}, []string{"etcd-bootstrap", "etcd-1", "etcd-2"}),
+					nil,
+					nil),
 			},
 			want: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isClusterEtcdOperatorReady(tt.args.originalSpec); got != tt.want {
+			c := &ClusterMemberController{
+				operatorConfigClient: tt.fields.operatorConfigClient,
+			}
+			if got := c.isClusterEtcdOperatorReady(); got != tt.want {
 				t.Errorf("isClusterEtcdOperatorReady() = %v, want %v", got, tt.want)
 			}
 		})
