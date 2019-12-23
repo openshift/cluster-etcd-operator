@@ -14,6 +14,7 @@ import (
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	etcdv1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
+	operatorinformers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 	ceoapi "github.com/openshift/cluster-etcd-operator/pkg/operator/api"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
@@ -24,7 +25,6 @@ import (
 	"github.com/vincent-petithory/dataurl"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
@@ -124,11 +124,6 @@ func (s *podOpts) Run() error {
 
 	eventRecorder := events.NewKubeRecorder(clientset.CoreV1().Events(etcdNamespace), "static-pod-controller-"+localEtcdName, controllerRef)
 
-	etcdInformer, err := operatorClient.Informers.ForResource(schema.GroupVersionResource{
-		Group:    "operator.openshift.io",
-		Version:  "v1",
-		Resource: "etcds",
-	})
 	if err != nil {
 		klog.Errorf("error getting etcd informer %#v\n", err)
 		return err
@@ -136,7 +131,7 @@ func (s *podOpts) Run() error {
 
 	staticPodController := NewStaticPodController(
 		operatorClient.Client.Etcds(),
-		etcdInformer,
+		operatorConfigInformers.Operator().V1().Etcds(),
 		kubeInformerFactory,
 		clientset,
 		clientmc,
@@ -145,6 +140,7 @@ func (s *podOpts) Run() error {
 	)
 
 	kubeInformerFactory.Start(ctx.Done())
+	operatorClient.Informers.Start(ctx.Done())
 
 	go staticPodController.Run(ctx.Done())
 
@@ -154,7 +150,7 @@ func (s *podOpts) Run() error {
 
 type StaticPodController struct {
 	etcdKubeClient                         etcdv1.EtcdInterface
-	etcdInformer                           informers.GenericInformer
+	etcdInformer                           operatorinformers.EtcdInformer
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory
 	clientset                              corev1client.Interface
 	clientmc                               mcfgclientset.Interface
@@ -167,7 +163,7 @@ type StaticPodController struct {
 
 func NewStaticPodController(
 	etcdKubeClient etcdv1.EtcdInterface,
-	etcdInformer informers.GenericInformer,
+	etcdInformer operatorinformers.EtcdInformer,
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
 	clientset corev1client.Interface,
 	clientmc mcfgclientset.Interface,
@@ -246,7 +242,8 @@ func (c *StaticPodController) sync() error {
 				klog.Infof("removing data-dir contents")
 				os.RemoveAll(fmt.Sprintf("%s/member", dataDir))
 				klog.Infof("starting %s", c.localEtcdName)
-				if err := ioutil.WriteFile(staticPodPath, []byte(etcdMember), 0644); err != nil {
+				if err := ioutil.WriteFile(staticPodPath, etcdMember, 0644); err != nil {
+					klog.Errorf("error starting pod %s: %#v", c.localEtcdName, err)
 					return err
 				}
 			}

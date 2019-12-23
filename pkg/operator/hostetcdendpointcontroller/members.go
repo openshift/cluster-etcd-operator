@@ -86,12 +86,12 @@ func (h *healthyEtcdMemberGetter) EtcdList(bucket string) ([]ceoapi.Member, erro
 	if err != nil {
 		return nil, err
 	}
+	members := []ceoapi.Member{}
 	if !exists {
-		return nil, fmt.Errorf("etcd cluster members not observed")
+		return members, nil
 	}
 
 	// populate current etcd members as observed.
-	var members []ceoapi.Member
 	for _, member := range data {
 		memberMap, _ := member.(map[string]interface{})
 		name, exists, err := unstructured.NestedString(memberMap, "name")

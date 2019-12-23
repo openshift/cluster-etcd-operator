@@ -11,13 +11,13 @@ import (
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	etcdv1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
+	operatorinformers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
@@ -105,11 +105,6 @@ func (s *syncOpts) Run() error {
 
 	kubeInformerFactory := informers.NewFilteredSharedInformerFactory(clientset, 0, etcdNamespace, nil)
 
-	etcdInformer, err := operatorClient.Informers.ForResource(schema.GroupVersionResource{
-		Group:    "operator.openshift.io",
-		Version:  "v1",
-		Resource: "etcds",
-	})
 	if err != nil {
 		klog.Errorf("error getting etcd informer %#v", err)
 		return err
@@ -117,12 +112,13 @@ func (s *syncOpts) Run() error {
 
 	staticSyncController := NewStaticSyncController(
 		operatorClient.Client.Etcds(),
-		etcdInformer,
+		operatorConfigInformers.Operator().V1().Etcds(),
 		kubeInformerFactory,
 		eventRecorder,
 	)
 
 	kubeInformerFactory.Start(ctx.Done())
+	operatorConfigInformers.Start(ctx.Done())
 
 	go staticSyncController.Run(ctx.Done())
 
@@ -132,7 +128,7 @@ func (s *syncOpts) Run() error {
 
 type StaticSyncController struct {
 	etcdKubeClient                         etcdv1.EtcdInterface
-	etcdInformer                           informers.GenericInformer
+	etcdInformer                           operatorinformers.EtcdInformer
 	secretInformer                         cache.SharedIndexInformer
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory
 
@@ -143,7 +139,7 @@ type StaticSyncController struct {
 
 func NewStaticSyncController(
 	etcdKubeClient etcdv1.EtcdInterface,
-	etcdInformer informers.GenericInformer,
+	etcdInformer operatorinformers.EtcdInformer,
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
 	eventRecorder events.Recorder,
 ) *StaticSyncController {
@@ -221,6 +217,7 @@ func (c *StaticSyncController) Run(stopCh <-chan struct{}) {
 
 	if !cache.WaitForCacheSync(stopCh,
 		c.secretInformer.HasSynced,
+		c.etcdInformer.Informer().HasSynced,
 	) {
 		utilruntime.HandleError(fmt.Errorf("caches did not sync"))
 		return
