@@ -43,41 +43,38 @@ spec:
 
       source /run/etcd/environment
 
-      # TODO remove when this is handeled in setup-etcd-env
-      ETCD_IP_ADDRESS=${ETCD_IPV4_ADDRESS:-$ETCD_IPV6_ADDRESS}
-
-      [ -e /etc/ssl/etcd/system:etcd-server:${ETCD_IP_ADDRESS}.crt -a \
-        -e /etc/ssl/etcd/system:etcd-server:${ETCD_IP_ADDRESS}.key ] || \
+      [ -e /etc/ssl/etcd/system:etcd-server:{{ .Hostname }}.crt -a \
+        -e /etc/ssl/etcd/system:etcd-server:{{ .Hostname }}.key ] || \
         kube-client-agent \
           request \
             --kubeconfig=/etc/kubernetes/kubeconfig \
             --orgname=system:etcd-servers \
             --assetsdir=/etc/ssl/etcd \
             --dnsnames={{.EtcdServerCertDNSNames}} \
-            --commonname=system:etcd-server:${ETCD_IP_ADDRESS} \
-            --ipaddrs=${ETCD_IPV4_ADDRESS},{{ .EtcdAddress.LocalHost }} \
+            --commonname=system:etcd-server:{{ .Hostname }} \
+            --ipaddrs=${ETCD_ESCAPED_IP_ADDRESS},{{ .EtcdAddress.LocalHost }} \
 
-      [ -e /etc/ssl/etcd/system:etcd-peer:${ETCD_IP_ADDRESS}.crt -a \
-        -e /etc/ssl/etcd/system:etcd-peer:${ETCD_IP_ADDRESS}.key ] || \
+      [ -e /etc/ssl/etcd/system:etcd-peer:{{ .Hostname }}.crt -a \
+        -e /etc/ssl/etcd/system:etcd-peer:{{ .Hostname }}.key ] || \
         kube-client-agent \
           request \
             --kubeconfig=/etc/kubernetes/kubeconfig \
             --orgname=system:etcd-peers \
             --assetsdir=/etc/ssl/etcd \
             --dnsnames={{.EtcdPeerCertDNSNames}} \
-            --commonname=system:etcd-peer:${ETCD_IP_ADDRESS} \
-            --ipaddrs=${ETCD_IPV4_ADDRESS} \
+            --commonname=system:etcd-peer:{{ .Hostname }} \
+            --ipaddrs=${ETCD_ESCAPED_IP_ADDRESS} \
 
-      [ -e /etc/ssl/etcd/system:etcd-metric:${ETCD_IP_ADDRESS}.crt -a \
-        -e /etc/ssl/etcd/system:etcd-metric:${ETCD_IP_ADDRESS}.key ] || \
+      [ -e /etc/ssl/etcd/system:etcd-metric:{{ .Hostname }}.crt -a \
+        -e /etc/ssl/etcd/system:etcd-metric:{{ .Hostname }}.key ] || \
         kube-client-agent \
           request \
             --kubeconfig=/etc/kubernetes/kubeconfig \
             --orgname=system:etcd-metrics \
             --assetsdir=/etc/ssl/etcd \
             --dnsnames={{.EtcdServerCertDNSNames}} \
-            --commonname=system:etcd-metric:${ETCD_IP_ADDRESS} \
-            --ipaddrs=${ETCD_IP_ADDRESS} \
+            --commonname=system:etcd-metric:{{ .Hostname }} \
+            --ipaddrs=${ETCD_ESCAPED_IP_ADDRESS} \
     terminationMessagePolicy: FallbackToLogsOnError
     securityContext:
       privileged: true
@@ -100,20 +97,17 @@ spec:
 
       source /run/etcd/environment
 
-      # TODO remove when this is handeled in setup-etcd-env
-      ETCD_IP_ADDRESS=${ETCD_IPV4_ADDRESS:-$ETCD_IPV6_ADDRESS}
-
       exec etcd \
-        --initial-advertise-peer-urls=https://${ETCD_IP_ADDRESS}:2380 \
-        --cert-file=/etc/ssl/etcd/system:etcd-server:${ETCD_IP_ADDRESS}.crt \
-        --key-file=/etc/ssl/etcd/system:etcd-server:${ETCD_IP_ADDRESS}.key \
+        --initial-advertise-peer-urls=https://${ETCD_ESCAPED_IP_ADDRESS}:2380 \
+        --cert-file=/etc/ssl/etcd/system:etcd-server:{{ .Hostname }}.crt \
+        --key-file=/etc/ssl/etcd/system:etcd-server:{{ .Hostname }}.key \
         --trusted-ca-file=/etc/ssl/etcd/ca.crt \
         --client-cert-auth=true \
-        --peer-cert-file=/etc/ssl/etcd/system:etcd-peer:${ETCD_IP_ADDRESS}.crt \
-        --peer-key-file=/etc/ssl/etcd/system:etcd-peer:${ETCD_IP_ADDRESS}.key \
+        --peer-cert-file=/etc/ssl/etcd/system:etcd-peer:{{ .Hostname }}.crt \
+        --peer-key-file=/etc/ssl/etcd/system:etcd-peer:{{ .Hostname }}.key \
         --peer-trusted-ca-file=/etc/ssl/etcd/ca.crt \
         --peer-client-cert-auth=true \
-        --advertise-client-urls=https://${ETCD_IP_ADDRESS}:2379 \
+        --advertise-client-urls=https://${ETCD_ESCAPED_IP_ADDRESS}:2379 \
         --listen-client-urls=https://{{ .EtcdAddress.ListenClient }} \
         --listen-peer-urls=https://{{ .EtcdAddress.ListenPeer }} \
         --listen-metrics-urls=https://{{ .EtcdAddress.ListenMetricServer }} \
@@ -157,17 +151,14 @@ spec:
 
       source /run/etcd/environment
 
-      # TODO remove when this is handeled in setup-etcd-env
-      ETCD_IP_ADDRESS=${ETCD_IPV4_ADDRESS:-$ETCD_IPV6_ADDRESS}
-
       exec etcd grpc-proxy start \
-        --endpoints https://${ETCD_IPV4_ADDRESS}:9978 \
+        --endpoints https://${ETCD_ESCAPED_IP_ADDRESS}:9978 \
         --metrics-addr https://{{ .EtcdAddress.ListenMetricProxy }}\
         --listen-addr {{ .EtcdAddress.LocalHost }}:9977 \
-        --key /etc/ssl/etcd/system:etcd-peer:${ETCD_IPV4_ADDRESS}.key \
-        --key-file /etc/ssl/etcd/system:etcd-metric:${ETCD_IPV4_ADDRESS}.key \
-        --cert /etc/ssl/etcd/system:etcd-peer:${ETCD_IPV4_ADDRESS}.crt \
-        --cert-file /etc/ssl/etcd/system:etcd-metric:${ETCD_IPV4_ADDRESS}.crt \
+        --key /etc/ssl/etcd/system:etcd-peer:{{ .Hostname }}.key \
+        --key-file /etc/ssl/etcd/system:etcd-metric:{{ .Hostname }}.key \
+        --cert /etc/ssl/etcd/system:etcd-peer:{{ .Hostname }}.crt \
+        --cert-file /etc/ssl/etcd/system:etcd-metric:{{ .Hostname }}.crt \
         --cacert /etc/ssl/etcd/ca.crt \
         --trusted-ca-file /etc/ssl/etcd/metric-ca.crt \
     terminationMessagePolicy: FallbackToLogsOnError
