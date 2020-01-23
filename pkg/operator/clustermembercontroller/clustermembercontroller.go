@@ -173,7 +173,7 @@ func (c *ClusterMemberController) sync() error {
 		}
 		condDegraded := operatorv1.OperatorCondition{
 			Type:   operatorv1.OperatorStatusTypeDegraded,
-			Status: operatorv1.ConditionTrue,
+			Status: operatorv1.ConditionFalse,
 		}
 		if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient,
 			v1helpers.UpdateConditionFn(condUpgradable),
@@ -218,7 +218,7 @@ func (c *ClusterMemberController) sync() error {
 			return nil
 		})
 		if retryErr != nil {
-			return fmt.Errorf("Update approve failed: %v", retryErr)
+			return fmt.Errorf("update approve failed: %v", retryErr)
 		}
 		// }
 
@@ -233,11 +233,7 @@ func (c *ClusterMemberController) sync() error {
 			klog.Infof("Member is already part of the cluster: %s\n", p.Name)
 			continue
 		}
-
-		// should not happen
-		rerr := fmt.Errorf("failed scale member %s", p.Name)
-		c.eventRecorder.Warning("ScalingFailed", rerr.Error())
-		return rerr
+		klog.Infof("completed syncing pod %s", p.Name)
 	}
 
 	if c.isClusterEtcdOperatorReady() {
@@ -419,7 +415,7 @@ func (c *ClusterMemberController) IsMember(name string) bool {
 func (c *ClusterMemberController) IsStatus(bucket string, name string, condition ...ceoapi.MemberConditionType) bool {
 	members, _ := c.EtcdList(bucket)
 	for _, m := range members {
-		klog.Warningf("IsMemberRemove: checking %v vs %v type = %v\n", m.Name, name, m.Conditions[0].Type)
+		klog.Warningf("IsStatus: checking %v vs %v type = %v\n", m.Name, name, m.Conditions[0].Type)
 		if m.Name == name {
 			for _, status := range condition {
 				if m.Conditions[0].Type == status {
