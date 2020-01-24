@@ -89,7 +89,7 @@ func (s *syncOpts) Run() error {
 		return err
 	}
 
-	operatorConfigInformers := operatorv1informers.NewSharedInformerFactory(operatorConfigClient, 10*time.Minute)
+	operatorConfigInformers := operatorv1informers.NewSharedInformerFactory(operatorConfigClient, 1*time.Minute)
 	operatorClient := &operatorclient.OperatorClient{
 		Informers: operatorConfigInformers,
 		Client:    operatorConfigClient.OperatorV1(),
@@ -103,7 +103,7 @@ func (s *syncOpts) Run() error {
 
 	eventRecorder := events.NewKubeRecorder(clientset.CoreV1().Events(etcdNamespace), "resource-sync-controller-"+os.Getenv("NODE_NAME"), controllerRef)
 
-	kubeInformerFactory := informers.NewFilteredSharedInformerFactory(clientset, 0, etcdNamespace, nil)
+	kubeInformerFactory := informers.NewSharedInformerFactoryWithOptions(clientset, 1*time.Minute, informers.WithNamespace(etcdNamespace))
 
 	if err != nil {
 		klog.Errorf("error getting etcd informer %#v", err)
@@ -130,6 +130,8 @@ type StaticSyncController struct {
 	etcdKubeClient                         etcdv1.EtcdInterface
 	etcdInformer                           operatorinformers.EtcdInformer
 	secretInformer                         cache.SharedIndexInformer
+	podInformer                            cache.SharedInformer
+	configmapInformer                      cache.SharedInformer
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory
 
 	cachesToSync  []cache.InformerSynced
@@ -147,11 +149,16 @@ func NewStaticSyncController(
 		etcdKubeClient:                         etcdKubeClient,
 		etcdInformer:                           etcdInformer,
 		secretInformer:                         kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer(),
+		podInformer:                            kubeInformersForOpenshiftEtcdNamespace.Core().V1().Pods().Informer(),
+		configmapInformer:                      kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer(),
 		kubeInformersForOpenshiftEtcdNamespace: kubeInformersForOpenshiftEtcdNamespace,
 		eventRecorder:                          eventRecorder.WithComponentSuffix("resource-sync-controller-" + os.Getenv("NODE_NAME")),
 		queue:                                  workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ResourceSyncController"),
 	}
 	c.secretInformer.AddEventHandler(c.eventHandler())
+	c.podInformer.AddEventHandler(c.eventHandler())
+	c.configmapInformer.AddEventHandler(c.eventHandler())
+	c.etcdInformer.Informer().AddEventHandler(c.eventHandler())
 
 	return c
 }
@@ -217,6 +224,8 @@ func (c *StaticSyncController) Run(stopCh <-chan struct{}) {
 
 	if !cache.WaitForCacheSync(stopCh,
 		c.secretInformer.HasSynced,
+		c.podInformer.HasSynced,
+		c.configmapInformer.HasSynced,
 		c.etcdInformer.Informer().HasSynced,
 	) {
 		utilruntime.HandleError(fmt.Errorf("caches did not sync"))
