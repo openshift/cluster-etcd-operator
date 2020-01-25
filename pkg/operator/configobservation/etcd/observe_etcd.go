@@ -24,10 +24,9 @@ import (
 )
 
 const (
-	Pending = "pending"
-	Member  = "member"
-	// Todo: change this when wait-for-kube init container is added
-	numberOfInitContainers = 3
+	Pending                = "pending"
+	Member                 = "member"
+	numberOfInitContainers = 4
 )
 
 type etcdObserver struct {
