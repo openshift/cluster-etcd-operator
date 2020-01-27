@@ -55,5 +55,8 @@ func (w *waitForCeoOpts) Run() error {
 	if err := bootstrapteardown.WaitForEtcdBootstrap(context.TODO(), config); err != nil {
 		klog.Errorf("error waiting for cluster-etcd-operator %#v", err)
 	}
+	if err := bootstrapteardown.WaitForKubeApiServerRollout(context.TODO(), config); err != nil {
+		klog.Errorf("error waiting for correct KAS configuration %#v", err)
+	}
 	return nil
 }

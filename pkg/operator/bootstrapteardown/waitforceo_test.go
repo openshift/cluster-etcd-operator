@@ -3,12 +3,14 @@ package bootstrapteardown
 import (
 	"testing"
 
+	v12 "k8s.io/api/core/v1"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 	v1 "github.com/openshift/api/operator/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func Test_wait(t *testing.T) {
+func Test_doneEtcd(t *testing.T) {
 	type args struct {
 		etcd *operatorv1.Etcd
 	}
@@ -128,7 +130,7 @@ func Test_wait(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "test managed cluster and done",
+			name: "test managed cluster and doneEtcd",
 			args: args{
 				etcd: &v1.Etcd{
 					ObjectMeta: metav1.ObjectMeta{
@@ -168,13 +170,103 @@ func Test_wait(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := done(tt.args.etcd)
+			got, err := doneEtcd(tt.args.etcd)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("done() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("doneEtcd() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if got != tt.want {
-				t.Errorf("done() got = %v, want %v", got, tt.want)
+				t.Errorf("doneEtcd() got = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func Test_doneApiServer(t *testing.T) {
+	// TODO: implement me
+}
+
+func Test_configMapHasRequiredValues(t *testing.T) {
+	type args struct {
+		configMap *v12.ConfigMap
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{
+			name: "three urls",
+			args: args{
+				configMap: &v12.ConfigMap{Data: map[string]string{
+					configMapKey: `{
+							"storageConfig": {
+								"urls":[
+									"https://etcd-1.foo.bar:2379",
+									"https://etcd-0.foo.bar:2379",
+									"https://etcd-2.foo.bar:2379"
+								]
+							}
+						}`,
+				},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "2 urls but not bootstrap",
+			args: args{
+				configMap: &v12.ConfigMap{Data: map[string]string{
+					configMapKey: `{
+							"storageConfig": {
+								"urls":[
+									"https://etcd-1.foo.bar:2379",
+									"https://etcd-2.foo.bar:2379"
+								]
+							}
+						}`,
+				},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "single urls but not bootstrap",
+			args: args{
+				configMap: &v12.ConfigMap{Data: map[string]string{
+					configMapKey: `{
+							"storageConfig": {
+								"urls":[
+									"https://etcd-1.foo.bar:2379"
+								]
+							}
+						}`,
+				},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "just the bootstrap url",
+			args: args{
+				configMap: &v12.ConfigMap{Data: map[string]string{
+					configMapKey: `{
+							"storageConfig": {
+								"urls": [
+									"https://10.13.14.15:2379"
+								]
+							}
+						}`,
+				},
+				},
+			},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := configMapHasRequiredValues(tt.args.configMap); got != tt.want {
+				t.Errorf("configMapHasRequiredValues() = %v, want %v", got, tt.want)
 			}
 		})
 	}
