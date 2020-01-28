@@ -1,34 +1,43 @@
 package bootstrapteardown
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
-	v1 "github.com/openshift/client-go/operator/listers/operator/v1"
-
-	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
-
 	operatorv1 "github.com/openshift/api/operator/v1"
+	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
+	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/kubernetes"
+	corev1getters "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
 )
 
 const (
-	workQueueKey = "key"
+	workQueueKey              = "key"
+	configMapName             = "config"
+	ConditionBootstrapRemoved = "BootstrapRemoved"
+	configMapKey              = "config.yaml"
 )
 
 type BootstrapTeardownController struct {
 	operatorConfigClient        v1helpers.OperatorClient
 	clusterMemberShipController *clustermembercontroller.ClusterMemberController
 
-	etcdOperatorLister v1.EtcdLister
+	etcdOperatorLister  operatorv1listers.EtcdLister
+	kubeAPIServerLister operatorv1listers.KubeAPIServerLister
+	configMapsGetter    corev1getters.ConfigMapsGetter
 
 	cachesToSync  []cache.InformerSynced
 	queue         workqueue.RateLimitingInterface
@@ -38,6 +47,7 @@ type BootstrapTeardownController struct {
 // TODO wire a triggering lister
 func NewBootstrapTeardownController(
 	operatorConfigClient v1helpers.OperatorClient,
+	kubeClient *kubernetes.Clientset,
 	clusterMemberShipController *clustermembercontroller.ClusterMemberController,
 
 	operatorInformers operatorv1informers.SharedInformerFactory,
@@ -48,13 +58,20 @@ func NewBootstrapTeardownController(
 		operatorConfigClient:        operatorConfigClient,
 		clusterMemberShipController: clusterMemberShipController,
 
-		etcdOperatorLister: operatorInformers.Operator().V1().Etcds().Lister(),
+		etcdOperatorLister:  operatorInformers.Operator().V1().Etcds().Lister(),
+		kubeAPIServerLister: operatorInformers.Operator().V1().KubeAPIServers().Lister(),
+		configMapsGetter:    kubeClient.CoreV1(),
 
-		cachesToSync:  []cache.InformerSynced{operatorConfigClient.Informer().HasSynced, operatorInformers.Operator().V1().Etcds().Informer().HasSynced},
+		cachesToSync: []cache.InformerSynced{
+			operatorConfigClient.Informer().HasSynced,
+			operatorInformers.Operator().V1().Etcds().Informer().HasSynced,
+			operatorInformers.Operator().V1().KubeAPIServers().Informer().HasSynced,
+		},
 		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "BootstrapTeardownController"),
 		eventRecorder: eventRecorder.WithComponentSuffix("cluster-member-controller"),
 	}
 
+	operatorInformers.Operator().V1().KubeAPIServers().Informer().AddEventHandler(c.eventHandler())
 	operatorInformers.Operator().V1().Etcds().Informer().AddEventHandler(c.eventHandler())
 	operatorConfigClient.Informer().AddEventHandler(c.eventHandler())
 
@@ -93,12 +110,32 @@ func (c *BootstrapTeardownController) removeBootstrap() error {
 		return nil
 	}
 
-	etcdReady, err := isEtcdBootstrapped(currentEtcdOperator)
+	// check if bootstrap is already removed
+	if v1helpers.IsOperatorConditionTrue(currentEtcdOperator.Status.Conditions, ConditionBootstrapRemoved) {
+		return nil
+	}
+
+	etcdReady, err := isEtcdAvailable(currentEtcdOperator)
 	if err != nil {
 		return err
 	}
+
 	if !etcdReady {
 		klog.Infof("Still waiting for the cluster-etcd-operator to bootstrap...")
+		return nil
+	}
+
+	kubeAPIServer, err := c.kubeAPIServerLister.Get("cluster")
+	if err != nil {
+		return err
+	}
+	kasReady := isKASReady(kubeAPIServer, c.configMapsGetter)
+	if err != nil {
+		return err
+	}
+
+	if !kasReady {
+		klog.Infof("Still waiting for the kube-apiserver to be ready...")
 		return nil
 	}
 
@@ -110,8 +147,82 @@ func (c *BootstrapTeardownController) removeBootstrap() error {
 	if err := c.clusterMemberShipController.RemoveBootstrap(); err != nil {
 		return err
 	}
+
+	// set bootstrap removed condition
+	_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		Type:    ConditionBootstrapRemoved,
+		Status:  operatorv1.ConditionTrue,
+		Reason:  "ClusterEtcdOperatorAvailable",
+		Message: "Etcd operator has scaled",
+	}))
+	if updateErr != nil {
+		c.eventRecorder.Warning("BootstrapTeardownErrorUpdatingStatus", updateErr.Error())
+		return updateErr
+	}
 	return nil
 }
+
+func isKASReady(kasOperator *operatorv1.KubeAPIServer, configMapsGetter corev1getters.ConfigMapsGetter) bool {
+	revisionMap := map[int32]struct{}{}
+	uniqueRevisions := []int32{}
+
+	for _, nodeStatus := range kasOperator.Status.NodeStatuses {
+		revision := nodeStatus.CurrentRevision
+		if _, ok := revisionMap[revision]; !ok {
+			revisionMap[revision] = struct{}{}
+			uniqueRevisions = append(uniqueRevisions, revision)
+		}
+	}
+
+	// For each revision, check that the configmap for that revision contains the
+	// appropriate storageConfig
+	done := false
+	for _, revision := range uniqueRevisions {
+		configMapNameWithRevision := fmt.Sprintf("%s-%d", configMapName, revision)
+		configMap, err := configMapsGetter.ConfigMaps("openshift-kube-apiserver").Get(configMapNameWithRevision, metav1.GetOptions{})
+		if err != nil {
+			klog.Errorf("doneApiServer: error getting configmap: %#v", err)
+			return false
+		}
+		if configMapHasRequiredValues(configMap) {
+			// if any 1 kube-apiserver pod has more than 1
+			done = true
+			break
+		}
+	}
+	return done
+}
+
+type ConfigData struct {
+	StorageConfig struct {
+		Urls []string
+	}
+}
+
+func configMapHasRequiredValues(configMap *corev1.ConfigMap) bool {
+	config, ok := configMap.Data[configMapKey]
+	if !ok {
+		klog.Errorf("configMapHasRequiredValues: config.yaml key missing")
+		return false
+	}
+	var configData ConfigData
+	err := json.Unmarshal([]byte(config), &configData)
+	if err != nil {
+		klog.Errorf("configMapHasRequiredValues: error unmarshalling configmap data : %#v", err)
+		return false
+	}
+	if len(configData.StorageConfig.Urls) == 0 {
+		klog.Infof("configMapHasRequiredValues: length of storageUrls %#v is 0", configData.StorageConfig.Urls)
+		return false
+	}
+	if len(configData.StorageConfig.Urls) == 1 &&
+		!strings.Contains(configData.StorageConfig.Urls[0], "etcd") {
+		klog.Infof("configMapHasRequiredValues: config just has bootstrap IP: %#v", configData.StorageConfig.Urls)
+		return false
+	}
+	return true
+}
+
 func (c *BootstrapTeardownController) Run(stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
 	defer c.queue.ShutDown()
@@ -132,6 +243,23 @@ func (c *BootstrapTeardownController) Run(stopCh <-chan struct{}) {
 	}, stopCh)
 
 	<-stopCh
+}
+
+// this function checks if etcd has scaled the initial bootstrap cluster
+// with all 3 masters
+func isEtcdAvailable(currentEtcdOperator *operatorv1.Etcd) (bool, error) {
+	if currentEtcdOperator.Spec.ManagementState == operatorv1.Unmanaged {
+		klog.Info("Cluster etcd operator is in Unmanaged mode")
+		return true, nil
+	}
+	if operatorv1helpers.IsOperatorConditionTrue(currentEtcdOperator.Status.Conditions, operatorv1.OperatorStatusTypeAvailable) &&
+		operatorv1helpers.IsOperatorConditionFalse(currentEtcdOperator.Status.Conditions, operatorv1.OperatorStatusTypeProgressing) &&
+		operatorv1helpers.IsOperatorConditionFalse(currentEtcdOperator.Status.Conditions, operatorv1.OperatorStatusTypeDegraded) {
+		klog.Info("Cluster etcd operator bootstrapped successfully")
+		return true, nil
+	}
+	klog.Infof("Still waiting for the cluster-etcd-operator to bootstrap")
+	return false, nil
 }
 
 func (c *BootstrapTeardownController) runWorker() {
