@@ -170,7 +170,7 @@ func Test_doneEtcd(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := doneEtcd(tt.args.etcd)
+			got, err := isEtcdAvailable(tt.args.etcd)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("doneEtcd() error = %v, wantErr %v", err, tt.wantErr)
 				return
