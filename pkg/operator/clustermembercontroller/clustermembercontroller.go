@@ -173,7 +173,7 @@ func (c *ClusterMemberController) sync() error {
 		}
 		condDegraded := operatorv1.OperatorCondition{
 			Type:   operatorv1.OperatorStatusTypeDegraded,
-			Status: operatorv1.ConditionTrue,
+			Status: operatorv1.ConditionFalse,
 		}
 		if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient,
 			v1helpers.UpdateConditionFn(condUpgradable),

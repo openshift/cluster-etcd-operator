@@ -20,6 +20,10 @@ func TearDownBootstrap(config *rest.Config,
 	if err != nil {
 		klog.Errorf("WaitForEtcdBootstrap failed with: %#v", err)
 	}
+	err = WaitForKubeApiServerRollout(context.TODO(), config)
+	if err != nil {
+		klog.Errorf("WaitForKubeApiServerRollout failed with: %#v", err)
+	}
 
 	err = wait.PollInfinite(5*time.Second, func() (bool, error) {
 		etcd, err := etcdClient.Get("cluster", metav1.GetOptions{})
