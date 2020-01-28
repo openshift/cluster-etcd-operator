@@ -143,6 +143,14 @@ func (h *HostEtcdEndpointController) sync() error {
 		return fmt.Errorf("unexpected length of host endpoint subset")
 	}
 
+	//TODO this should be removed when apiserver static pod controller can properly handle bootstrap complete.
+	for _, addr := range ep.Subsets[0].Addresses {
+		if addr.Hostname == "etcd-bootstrap" {
+			klog.Infof("update of host-etcd endpoints is disabled during cluster bootstrap")
+			return nil
+		}
+	}
+
 	newEP := ep.DeepCopy()
 
 	newSubset, err := h.getNewAddressSubset(newEP.Subsets[0].Addresses)
