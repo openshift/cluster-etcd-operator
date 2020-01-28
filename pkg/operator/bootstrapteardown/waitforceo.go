@@ -148,6 +148,7 @@ func doneApiServer(kasOperator *operatorv1.KubeAPIServer, configMapsGetter v1.Co
 
 	// For each revision, check that the configmap for that revision contains the
 	// appropriate storageConfig
+	done := false
 	for _, revision := range uniqueRevisions {
 		configMapNameWithRevision := fmt.Sprintf("%s-%d", configMapName, revision)
 		configMap, err := configMapsGetter.ConfigMaps("openshift-kube-apiserver").Get(configMapNameWithRevision, metav1.GetOptions{})
@@ -155,11 +156,13 @@ func doneApiServer(kasOperator *operatorv1.KubeAPIServer, configMapsGetter v1.Co
 			klog.Errorf("doneApiServer: error getting configmap: %#v", err)
 			return false
 		}
-		if !configMapHasRequiredValues(configMap) {
-			return false
+		if configMapHasRequiredValues(configMap) {
+			// if any 1 kube-apiserver pod has more than 1
+			done = true
+			break
 		}
 	}
-	return false
+	return done
 }
 
 type ConfigData struct {
