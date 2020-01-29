@@ -3,14 +3,15 @@ package bootstrapteardown
 import (
 	"testing"
 
-	v12 "k8s.io/api/core/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	v1 "github.com/openshift/api/operator/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func Test_doneEtcd(t *testing.T) {
+func Test_isEtcdAvailable(t *testing.T) {
 	type args struct {
 		etcd *operatorv1.Etcd
 	}
@@ -40,7 +41,7 @@ func Test_doneEtcd(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "test managed cluster but degraded",
+			name: "test managed cluster and safe to remove",
 			args: args{
 				etcd: &v1.Etcd{
 					ObjectMeta: metav1.ObjectMeta{
@@ -58,105 +59,7 @@ func Test_doneEtcd(t *testing.T) {
 							OperatorStatus: v1.OperatorStatus{
 								Conditions: []v1.OperatorCondition{
 									{
-										Type:   v1.OperatorStatusTypeDegraded,
-										Status: v1.ConditionTrue,
-									},
-								},
-							},
-						}},
-				},
-			},
-			want:    false,
-			wantErr: false,
-		},
-		{
-			name: "test managed cluster but progressing",
-			args: args{
-				etcd: &v1.Etcd{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "cluster",
-					},
-					Spec: v1.EtcdSpec{
-						StaticPodOperatorSpec: v1.StaticPodOperatorSpec{
-							OperatorSpec: v1.OperatorSpec{
-								ManagementState: v1.Managed,
-							},
-						},
-					},
-					Status: v1.EtcdStatus{
-						StaticPodOperatorStatus: v1.StaticPodOperatorStatus{
-							OperatorStatus: v1.OperatorStatus{
-								Conditions: []v1.OperatorCondition{
-									{
-										Type:   v1.OperatorStatusTypeProgressing,
-										Status: v1.ConditionTrue,
-									},
-								},
-							},
-						}},
-				},
-			},
-			want:    false,
-			wantErr: false,
-		},
-		{
-			name: "test managed cluster but unavailable",
-			args: args{
-				etcd: &v1.Etcd{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "cluster",
-					},
-					Spec: v1.EtcdSpec{
-						StaticPodOperatorSpec: v1.StaticPodOperatorSpec{
-							OperatorSpec: v1.OperatorSpec{
-								ManagementState: v1.Managed,
-							},
-						},
-					},
-					Status: v1.EtcdStatus{
-						StaticPodOperatorStatus: v1.StaticPodOperatorStatus{
-							OperatorStatus: v1.OperatorStatus{
-								Conditions: []v1.OperatorCondition{
-									{
-										Type:   v1.OperatorStatusTypeAvailable,
-										Status: v1.ConditionFalse,
-									},
-								},
-							},
-						}},
-				},
-			},
-			want:    false,
-			wantErr: false,
-		},
-		{
-			name: "test managed cluster and doneEtcd",
-			args: args{
-				etcd: &v1.Etcd{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "cluster",
-					},
-					Spec: v1.EtcdSpec{
-						StaticPodOperatorSpec: v1.StaticPodOperatorSpec{
-							OperatorSpec: v1.OperatorSpec{
-								ManagementState: v1.Managed,
-							},
-						},
-					},
-					Status: v1.EtcdStatus{
-						StaticPodOperatorStatus: v1.StaticPodOperatorStatus{
-							OperatorStatus: v1.OperatorStatus{
-								Conditions: []v1.OperatorCondition{
-									{
-										Type:   v1.OperatorStatusTypeDegraded,
-										Status: v1.ConditionFalse,
-									},
-									{
-										Type:   v1.OperatorStatusTypeProgressing,
-										Status: v1.ConditionFalse,
-									},
-									{
-										Type:   v1.OperatorStatusTypeAvailable,
+										Type:   clustermembercontroller.ConditionBootstrapSafeToRemove,
 										Status: v1.ConditionTrue,
 									},
 								},
@@ -165,6 +68,36 @@ func Test_doneEtcd(t *testing.T) {
 				},
 			},
 			want:    true,
+			wantErr: false,
+		},
+		{
+			name: "test managed cluster and unsafe to remove",
+			args: args{
+				etcd: &v1.Etcd{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "cluster",
+					},
+					Spec: v1.EtcdSpec{
+						StaticPodOperatorSpec: v1.StaticPodOperatorSpec{
+							OperatorSpec: v1.OperatorSpec{
+								ManagementState: v1.Managed,
+							},
+						},
+					},
+					Status: v1.EtcdStatus{
+						StaticPodOperatorStatus: v1.StaticPodOperatorStatus{
+							OperatorStatus: v1.OperatorStatus{
+								Conditions: []v1.OperatorCondition{
+									{
+										Type:   clustermembercontroller.ConditionBootstrapSafeToRemove,
+										Status: v1.ConditionFalse,
+									},
+								},
+							},
+						}},
+				},
+			},
+			want:    false,
 			wantErr: false,
 		},
 	}
@@ -188,7 +121,7 @@ func Test_doneApiServer(t *testing.T) {
 
 func Test_configMapHasRequiredValues(t *testing.T) {
 	type args struct {
-		configMap *v12.ConfigMap
+		configMap *corev1.ConfigMap
 	}
 	tests := []struct {
 		name string
@@ -198,7 +131,7 @@ func Test_configMapHasRequiredValues(t *testing.T) {
 		{
 			name: "three urls",
 			args: args{
-				configMap: &v12.ConfigMap{Data: map[string]string{
+				configMap: &corev1.ConfigMap{Data: map[string]string{
 					configMapKey: `{
 							"storageConfig": {
 								"urls":[
@@ -216,7 +149,7 @@ func Test_configMapHasRequiredValues(t *testing.T) {
 		{
 			name: "2 urls but not bootstrap",
 			args: args{
-				configMap: &v12.ConfigMap{Data: map[string]string{
+				configMap: &corev1.ConfigMap{Data: map[string]string{
 					configMapKey: `{
 							"storageConfig": {
 								"urls":[
@@ -233,7 +166,7 @@ func Test_configMapHasRequiredValues(t *testing.T) {
 		{
 			name: "single urls but not bootstrap",
 			args: args{
-				configMap: &v12.ConfigMap{Data: map[string]string{
+				configMap: &corev1.ConfigMap{Data: map[string]string{
 					configMapKey: `{
 							"storageConfig": {
 								"urls":[
@@ -249,7 +182,7 @@ func Test_configMapHasRequiredValues(t *testing.T) {
 		{
 			name: "just the bootstrap url",
 			args: args{
-				configMap: &v12.ConfigMap{Data: map[string]string{
+				configMap: &corev1.ConfigMap{Data: map[string]string{
 					configMapKey: `{
 							"storageConfig": {
 								"urls": [
