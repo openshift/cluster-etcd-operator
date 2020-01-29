@@ -68,6 +68,7 @@ func done(etcd *operatorv1.Etcd) (bool, error) {
 		klog.Info("Cluster etcd operator bootstrapped successfully")
 		return true, nil
 	}
-	klog.Infof("Still waiting for the cluster-etcd-operator to bootstrap")
+	klog.Infof("Still waiting for the cluster-etcd-operator ")
+	klog.Infof("waiting on condition %s on etcd CR %s/%s to be True. Conditions: %#v", ConditionBootstrapRemoved, etcd.Namespace, etcd.Name, etcd.Status.Conditions)
 	return false, nil
 }
