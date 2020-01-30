@@ -64,6 +64,8 @@ func NewClusterMemberController(
 	}
 	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Pods().Informer().AddEventHandler(c.eventHandler())
 	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Endpoints().Informer().AddEventHandler(c.eventHandler())
+	kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
+	operatorConfigClient.Informer().AddEventHandler(c.eventHandler())
 
 	return c
 }
@@ -465,7 +467,9 @@ func (c *ClusterMemberController) Run(stopCh <-chan struct{}) {
 
 	if !cache.WaitForCacheSync(stopCh,
 		c.kubeInformersForOpenshiftEtcdNamespace.Core().V1().Pods().Informer().HasSynced,
-		c.kubeInformersForOpenshiftEtcdNamespace.Core().V1().Endpoints().Informer().HasSynced) {
+		c.kubeInformersForOpenshiftEtcdNamespace.Core().V1().Endpoints().Informer().HasSynced,
+		c.kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer().HasSynced,
+		c.operatorConfigClient.Informer().HasSynced) {
 		utilruntime.HandleError(fmt.Errorf("caches did not sync"))
 		return
 	}
