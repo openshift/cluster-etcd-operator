@@ -18,6 +18,8 @@ func Test_diff(t *testing.T) {
 		wantAdd    []string
 		wantRemove []string
 	}{
+		// if etcd-bootstrap is in healthy member, it needs to have
+		// etcd-1 in healthy member, temporary hack for KAS
 		{
 			name: "only etcd-bootstrap",
 			args: args{
@@ -31,9 +33,9 @@ func Test_diff(t *testing.T) {
 			name: "scaling: add a member after etcd-bootstrap",
 			args: args{
 				hostnames:      []string{"etcd-bootstrap"},
-				healthyMembers: []string{"etcd-bootstrap", "etcd-0"},
+				healthyMembers: []string{"etcd-bootstrap", "etcd-1"},
 			},
-			wantAdd:    []string{"etcd-0"},
+			wantAdd:    nil,
 			wantRemove: nil,
 		},
 		{
@@ -42,7 +44,7 @@ func Test_diff(t *testing.T) {
 				hostnames:      []string{"etcd-bootstrap", "etcd-0"},
 				healthyMembers: []string{"etcd-bootstrap", "etcd-0", "etcd-1"},
 			},
-			wantAdd:    []string{"etcd-1"},
+			wantAdd:    nil,
 			wantRemove: nil,
 		},
 		{
@@ -60,7 +62,7 @@ func Test_diff(t *testing.T) {
 				hostnames:      []string{"etcd-bootstrap", "etcd-0", "etcd-1"},
 				healthyMembers: []string{"etcd-0", "etcd-1", "etcd-2"},
 			},
-			wantAdd:    []string{"etcd-2"},
+			wantAdd:    nil,
 			wantRemove: nil,
 		},
 	}
