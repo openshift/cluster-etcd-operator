@@ -2,6 +2,7 @@ package staticsynccontroller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -180,17 +181,22 @@ func (c *StaticSyncController) sync() error {
 		return nil
 	}
 	// if anything changes we copy
-	assets := [4]string{
+	assets := [3]string{
 		"namespace",
 		"ca.crt",
-		"service-ca.crt",
 		"token",
 	}
+	errs := []error{}
 	for _, file := range assets {
 		if err := Copy(fmt.Sprintf("%s/%s", srcDir, file), fmt.Sprintf("%s/%s", destDir, file)); err != nil {
-			return err
+			klog.Errorf("error copying file %s: %#v", file, err)
+			errs = append(errs, err)
 		}
 	}
+	if len(errs) != 0 {
+		return errors.New(fmt.Sprintf("error copying resources: %#v", errs))
+	}
+	klog.Info("resources synced successfully")
 	return nil
 }
 
