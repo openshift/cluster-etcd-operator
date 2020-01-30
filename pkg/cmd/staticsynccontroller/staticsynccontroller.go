@@ -183,7 +183,6 @@ func (c *StaticSyncController) sync() error {
 	assets := [4]string{
 		"namespace",
 		"ca.crt",
-		"service-ca.crt",
 		"token",
 	}
 	for _, file := range assets {
