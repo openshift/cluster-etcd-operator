@@ -14,6 +14,7 @@ import (
 const (
 	retryDuration = 10 * time.Second
 	saTokenPath   = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+	CACertPath    = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 )
 
 type waitForKubeOpts struct {
@@ -48,7 +49,11 @@ func NewWaitForKubeCommand(errOut io.Writer) *cobra.Command {
 func (w *waitForKubeOpts) Run() error {
 	wait.PollInfinite(retryDuration, func() (bool, error) {
 		if _, err := os.Stat(saTokenPath); os.IsNotExist(err) {
-			klog.Infof("waiting for kube service account resources to sync: %v", err)
+			klog.Infof("waiting for kube service account token to sync: %v", err)
+			return false, nil
+		}
+		if _, err := os.Stat(CACertPath); os.IsNotExist(err) {
+			klog.Infof("waiting for kube service account ca.crt to sync: %v", err)
 			return false, nil
 		}
 		return true, nil
