@@ -3,6 +3,7 @@ package bootstrapteardown
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -118,7 +119,15 @@ func waitForKASOperator(ctx context.Context, operatorConfig rest.Interface, conf
 					klog.Warningf("Expected a KubeAPIServer object but got a %q object instead", event.Object.GetObjectKind().GroupVersionKind())
 					return false, nil
 				}
-				return doneApiServer(apiserver, configMapsGetter), nil
+				done, errs := doneApiServer(apiserver, configMapsGetter)
+				if done {
+					return true, nil
+				}
+				if len(errs) != 0 {
+					klog.Errorf("waitForKASOperator: errors looking up apiserver config: %#v", errs)
+					klog.Info("still waiting for kube-apiserver to have correct config")
+					return false, nil
+				}
 			}
 			klog.Infof("Still waiting for kube-apiserver operator to be healthy...")
 			return false, nil
@@ -134,7 +143,7 @@ func waitForKASOperator(ctx context.Context, operatorConfig rest.Interface, conf
 	return nil
 }
 
-func doneApiServer(kasOperator *operatorv1.KubeAPIServer, configMapsGetter v1.ConfigMapsGetter) bool {
+func doneApiServer(kasOperator *operatorv1.KubeAPIServer, configMapsGetter v1.ConfigMapsGetter) (bool, []error) {
 	revisionMap := map[int32]struct{}{}
 	uniqueRevisions := []int32{}
 
@@ -149,12 +158,12 @@ func doneApiServer(kasOperator *operatorv1.KubeAPIServer, configMapsGetter v1.Co
 	// For each revision, check that the configmap for that revision contains the
 	// appropriate storageConfig
 	done := false
+	errs := []error{}
 	for _, revision := range uniqueRevisions {
 		configMapNameWithRevision := fmt.Sprintf("%s-%d", configMapName, revision)
 		configMap, err := configMapsGetter.ConfigMaps("openshift-kube-apiserver").Get(configMapNameWithRevision, metav1.GetOptions{})
 		if err != nil {
-			klog.Errorf("doneApiServer: error getting configmap: %#v", err)
-			return false
+			errs = append(errs, errors.New(fmt.Sprintf("doneApiServer: error getting configmap: %#v", err)))
 		}
 		if configMapHasRequiredValues(configMap) {
 			// if any 1 kube-apiserver pod has more than 1
@@ -162,7 +171,7 @@ func doneApiServer(kasOperator *operatorv1.KubeAPIServer, configMapsGetter v1.Co
 			break
 		}
 	}
-	return done
+	return done, errs
 }
 
 type ConfigData struct {
