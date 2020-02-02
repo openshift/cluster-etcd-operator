@@ -48,7 +48,7 @@ func ReverseLookupSelf(service, proto, name, self string) (string, error) {
 		}
 	}
 	if selfTarget == "" {
-		return "", fmt.Errorf("could not find self")
+		return "", fmt.Errorf("srv lookup results for %s do not match %s", name, self)
 	}
 	return selfTarget, nil
 }

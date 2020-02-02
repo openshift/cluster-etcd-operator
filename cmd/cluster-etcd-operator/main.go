@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/membership"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/mount"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
@@ -54,6 +55,7 @@ func NewSSCSCommand() *cobra.Command {
 	cmd.AddCommand(mount.NewMountCommand(os.Stderr))
 	cmd.AddCommand(waitforceo.NewWaitForCeoCommand(os.Stderr))
 	cmd.AddCommand(waitforkube.NewWaitForKubeCommand(os.Stderr))
+	cmd.AddCommand(membership.NewMembershipCommand(os.Stderr))
 
 	return cmd
 }
