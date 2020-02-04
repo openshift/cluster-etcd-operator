@@ -3,9 +3,8 @@ package bootstrapteardown
 import (
 	"testing"
 
-	"github.com/openshift/library-go/pkg/operator/events"
-
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
+	"github.com/openshift/library-go/pkg/operator/events"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	v1 "github.com/openshift/api/operator/v1"
@@ -26,30 +25,10 @@ func Test_isEtcdAvailable(t *testing.T) {
 		etcd *operatorv1.Etcd
 	}
 	tests := []struct {
-		name    string
-		args    args
-		want    bool
-		wantErr bool
+		name string
+		args args
+		want bool
 	}{
-		{
-			name: "test unmanaged cluster",
-			args: args{
-				etcd: &v1.Etcd{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "cluster",
-					},
-					Spec: v1.EtcdSpec{
-						StaticPodOperatorSpec: v1.StaticPodOperatorSpec{
-							OperatorSpec: v1.OperatorSpec{
-								ManagementState: v1.Unmanaged,
-							},
-						},
-					},
-				},
-			},
-			want:    true,
-			wantErr: false,
-		},
 		{
 			name: "test managed cluster and safe to remove",
 			args: args{
@@ -77,8 +56,7 @@ func Test_isEtcdAvailable(t *testing.T) {
 						}},
 				},
 			},
-			want:    true,
-			wantErr: false,
+			want: true,
 		},
 		{
 			name: "test managed cluster and unsafe to remove",
@@ -107,17 +85,12 @@ func Test_isEtcdAvailable(t *testing.T) {
 						}},
 				},
 			},
-			want:    false,
-			wantErr: false,
+			want: false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := c.isEtcdAvailable(tt.args.etcd)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("doneEtcd() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
+			got := c.isEtcdAvailable(tt.args.etcd)
 			if got != tt.want {
 				t.Errorf("doneEtcd() got = %v, want %v", got, tt.want)
 			}
