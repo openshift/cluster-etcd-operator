@@ -1,8 +1,9 @@
 package bootstrapteardown
 
 import (
-	"github.com/openshift/library-go/pkg/operator/events"
 	"testing"
+
+	"github.com/openshift/library-go/pkg/operator/events"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 

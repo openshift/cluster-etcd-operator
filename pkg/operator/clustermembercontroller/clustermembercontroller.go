@@ -36,6 +36,7 @@ const (
 	EtcdHostEndpointName           = "host-etcd"
 	EtcdEndpointName               = "etcd"
 	ConditionBootstrapSafeToRemove = "BootstrapSafeToRemove"
+	ConditionBootstrapRemoved      = "BootstrapRemoved"
 )
 
 type ClusterMemberController struct {
@@ -287,6 +288,27 @@ func (c *ClusterMemberController) sync() error {
 					Reason:  "ScalingComplete",
 					Message: "cluster-etcd-operator has scaled, bootstrap safe to remove",
 				}))
+			if updateErr != nil {
+				klog.Errorf("clustermembercontroller:sync: error updating status: %#v", updateErr)
+				return updateErr
+			}
+		} else {
+			c.eventRecorder.Event("BootstrapRemoved", "scaling complete, bootstrap was not found")
+			_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient,
+				v1helpers.UpdateConditionFn(
+					operatorv1.OperatorCondition{
+						Type:    ConditionBootstrapSafeToRemove,
+						Status:  operatorv1.ConditionTrue,
+						Reason:  "ScalingComplete",
+						Message: "cluster-etcd-operator has scaled, bootstrap safe to remove",
+					}),
+				v1helpers.UpdateConditionFn(
+					operatorv1.OperatorCondition{
+						Type:    ConditionBootstrapRemoved,
+						Status:  operatorv1.ConditionTrue,
+						Reason:  "ScalingComplete",
+						Message: "cluster-etcd-operator has scaled, bootstrap was removed",
+					}))
 			if updateErr != nil {
 				klog.Errorf("clustermembercontroller:sync: error updating status: %#v", updateErr)
 				return updateErr
