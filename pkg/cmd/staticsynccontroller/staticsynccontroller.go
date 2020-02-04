@@ -10,7 +10,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	etcdv1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
@@ -19,7 +18,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
@@ -164,22 +162,6 @@ func NewStaticSyncController(
 }
 
 func (c *StaticSyncController) sync() error {
-	etcd, err := c.etcdKubeClient.Get("cluster", metav1.GetOptions{})
-	if err != nil {
-		fmt.Printf("error getting etcd cr: %#v", err)
-		return err
-	}
-	switch etcd.Spec.ManagementState {
-	case operatorv1.Managed:
-	case operatorv1.Unmanaged:
-		return nil
-	case operatorv1.Removed:
-		// TODO should we support removal?
-		return nil
-	default:
-		c.eventRecorder.Warningf("ManagementStateUnknown", "Unrecognized operator management state %q", etcd.Spec.ManagementState)
-		return nil
-	}
 	// if anything changes we copy
 	assets := [3]string{
 		"namespace",

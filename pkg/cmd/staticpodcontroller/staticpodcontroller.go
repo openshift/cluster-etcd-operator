@@ -10,7 +10,6 @@ import (
 	"os"
 	"time"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	etcdv1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
@@ -19,14 +18,15 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
 	"github.com/openshift/library-go/pkg/operator/events"
-	mcfgclientset "github.com/openshift/machine-config-operator/pkg/generated/clientset/versioned"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/vincent-petithory/dataurl"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	corev1client "k8s.io/client-go/kubernetes"
@@ -94,11 +94,11 @@ func (s *podOpts) Run() error {
 	if err != nil {
 		return err
 	}
-	clientmc, err := mcfgclientset.NewForConfig(clientConfig)
+	operatorConfigClient, err := operatorversionedclient.NewForConfig(clientConfig)
 	if err != nil {
 		return err
 	}
-	operatorConfigClient, err := operatorversionedclient.NewForConfig(clientConfig)
+	dynamicClient, err := dynamic.NewForConfig(clientConfig)
 	if err != nil {
 		return err
 	}
@@ -134,7 +134,7 @@ func (s *podOpts) Run() error {
 		operatorConfigInformers.Operator().V1().Etcds(),
 		kubeInformerFactory,
 		clientset,
-		clientmc,
+		dynamicClient,
 		localEtcdName,
 		eventRecorder,
 	)
@@ -153,8 +153,8 @@ type StaticPodController struct {
 	etcdInformer                           operatorinformers.EtcdInformer
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory
 	clientset                              corev1client.Interface
-	clientmc                               mcfgclientset.Interface
 	localEtcdName                          string
+	dynamicClient                          dynamic.Interface
 
 	cachesToSync  []cache.InformerSynced
 	queue         workqueue.RateLimitingInterface
@@ -166,7 +166,7 @@ func NewStaticPodController(
 	etcdInformer operatorinformers.EtcdInformer,
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
 	clientset corev1client.Interface,
-	clientmc mcfgclientset.Interface,
+	dynamicClient dynamic.Interface,
 	localEtcdName string,
 	eventRecorder events.Recorder,
 ) *StaticPodController {
@@ -176,7 +176,7 @@ func NewStaticPodController(
 		eventRecorder:                          eventRecorder.WithComponentSuffix("static-pod-controller-" + localEtcdName),
 		kubeInformersForOpenshiftEtcdNamespace: kubeInformersForOpenshiftEtcdNamespace,
 		clientset:                              clientset,
-		clientmc:                               clientmc,
+		dynamicClient:                          dynamicClient,
 		localEtcdName:                          localEtcdName,
 
 		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "StaticPodController"),
@@ -189,22 +189,6 @@ func NewStaticPodController(
 }
 
 func (c *StaticPodController) sync() error {
-	etcd, err := c.etcdKubeClient.Get("cluster", metav1.GetOptions{})
-	if err != nil {
-		klog.Errorf("error getting etcd cr: %#v", err)
-		return err
-	}
-	switch etcd.Spec.ManagementState {
-	case operatorv1.Managed:
-	case operatorv1.Unmanaged:
-		return nil
-	case operatorv1.Removed:
-		// TODO should we support removal?
-		return nil
-	default:
-		c.eventRecorder.Warningf("ManagementStateUnknown", "Unrecognized operator management state %q", etcd.Spec.ManagementState)
-		return nil
-	}
 	pod, err := c.clientset.CoreV1().Pods(etcdNamespace).Get(c.localEtcdName, metav1.GetOptions{})
 	if err != nil {
 		klog.Infof("No Pod found in %s with name %s", etcdNamespace, c.localEtcdName)
@@ -381,29 +365,58 @@ func (c *StaticPodController) eventHandler() cache.ResourceEventHandler {
 	}
 }
 
-func (c *StaticPodController) getMachineConfigData(path string, pool string) ([]byte, error) {
-	var data []byte
-	mcp, err := c.clientmc.MachineconfigurationV1().MachineConfigPools().Get(pool, metav1.GetOptions{})
+func (c *StaticPodController) getMachineConfigData(desiredPath string, pool string) ([]byte, error) {
+	mcpClient := c.dynamicClient.Resource(schema.GroupVersionResource{Group: "machineconfiguration.openshift.io", Version: "v1", Resource: "machineconfigpools"})
+	unstructuredMCP, err := mcpClient.Get(pool, metav1.GetOptions{})
 	if err != nil {
-		return data, err
+		return nil, err
 	}
-	klog.Infof("rendered master MachineConfig found %s\n", mcp.Status.Configuration.Name)
-	mc, err := c.clientmc.MachineconfigurationV1().MachineConfigs().Get(mcp.Status.Configuration.Name, metav1.GetOptions{})
+	machineConfigName, found, err := unstructured.NestedString(unstructuredMCP.Object, "status", "configuration", "name")
 	if err != nil {
-		return data, err
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("missing machineConfig from %q", pool)
+	}
+	klog.Infof("rendered master MachineConfig found %s\n", machineConfigName)
+
+	mcClient := c.dynamicClient.Resource(schema.GroupVersionResource{Group: "machineconfiguration.openshift.io", Version: "v1", Resource: "machineconfigs"})
+	unstructuredMC, err := mcClient.Get(machineConfigName, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	machineConfigFiles, found, err := unstructured.NestedSlice(unstructuredMC.Object, "spec", "config", "storage", "files")
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("missing files from machineconfigs/%q", machineConfigName)
 	}
 
-	for _, file := range mc.Spec.Config.Storage.Files {
-		if file.Path == path {
-			klog.Infof("found path %s\n", path)
+	for _, uncastFile := range machineConfigFiles {
+		fileMap, ok := uncastFile.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("missing files %T", uncastFile)
+		}
+		currPath, _, _ := unstructured.NestedString(fileMap, "path")
+		if currPath == desiredPath {
+			klog.Infof("found path %s\n", desiredPath)
 
-			data, err := dataurl.DecodeString(file.Contents.Source)
+			source, found, err := unstructured.NestedString(fileMap, "contents", "source")
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nil, fmt.Errorf("missing contents for %q from machineconfigs/%q", currPath, machineConfigName)
+			}
+
+			data, err := dataurl.DecodeString(source)
 			if err != nil {
 				return nil, err
 			}
 			return data.Data, nil
 		}
-
 	}
-	return data, nil
+
+	return nil, nil
 }

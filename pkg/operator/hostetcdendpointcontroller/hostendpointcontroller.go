@@ -6,12 +6,11 @@ import (
 	"strconv"
 	"time"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
@@ -28,6 +27,7 @@ const (
 )
 
 type HostEtcdEndpointController struct {
+	// todo: use endpoint lister
 	clientset                              corev1client.Interface
 	operatorConfigClient                   v1helpers.OperatorClient
 	queue                                  workqueue.RateLimitingInterface
@@ -112,24 +112,8 @@ func (h *HostEtcdEndpointController) eventHandler() cache.ResourceEventHandler {
 }
 
 func (h *HostEtcdEndpointController) sync() error {
-	operatorSpec, _, _, err := h.operatorConfigClient.GetOperatorState()
-	if err != nil {
-		return err
-	}
-	switch operatorSpec.ManagementState {
-	case operatorv1.Managed:
-	case operatorv1.Unmanaged:
-		return nil
-	case operatorv1.Removed:
-		// TODO should we support removal?
-		return nil
-	default:
-		h.eventRecorder.Warningf("ManagementStateUnknown", "Unrecognized operator management state %q", operatorSpec.ManagementState)
-		return nil
-	}
-
 	ep, err := h.clientset.CoreV1().Endpoints(clustermembercontroller.EtcdEndpointNamespace).
-		Get(clustermembercontroller.EtcdHostEndpointName, v1.GetOptions{})
+		Get(clustermembercontroller.EtcdHostEndpointName, metav1.GetOptions{})
 	if err != nil {
 		klog.Errorf("error getting %s/%s endpoint: %#v",
 			clustermembercontroller.EtcdEndpointNamespace,

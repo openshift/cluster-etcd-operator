@@ -5,14 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
-	"github.com/coreos/etcd/pkg/transport"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	ceoapi "github.com/openshift/cluster-etcd-operator/pkg/operator/api"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	"go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/pkg/transport"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -27,14 +28,16 @@ import (
 )
 
 const (
-	workQueueKey             = "key"
-	EtcdScalingAnnotationKey = "etcd.operator.openshift.io/scale"
-	etcdCertFile             = "/var/run/secrets/etcd-client/tls.crt"
-	etcdKeyFile              = "/var/run/secrets/etcd-client/tls.key"
-	etcdTrustedCAFile        = "/var/run/configmaps/etcd-ca/ca-bundle.crt"
-	EtcdEndpointNamespace    = "openshift-etcd"
-	EtcdHostEndpointName     = "host-etcd"
-	EtcdEndpointName         = "etcd"
+	workQueueKey                   = "key"
+	EtcdScalingAnnotationKey       = "etcd.operator.openshift.io/scale"
+	etcdCertFile                   = "/var/run/secrets/etcd-client/tls.crt"
+	etcdKeyFile                    = "/var/run/secrets/etcd-client/tls.key"
+	etcdTrustedCAFile              = "/var/run/configmaps/etcd-ca/ca-bundle.crt"
+	EtcdEndpointNamespace          = "openshift-etcd"
+	EtcdHostEndpointName           = "host-etcd"
+	EtcdEndpointName               = "etcd"
+	ConditionBootstrapSafeToRemove = "BootstrapSafeToRemove"
+	ConditionBootstrapRemoved      = "BootstrapRemoved"
 )
 
 type ClusterMemberController struct {
@@ -71,45 +74,6 @@ func NewClusterMemberController(
 }
 
 func (c *ClusterMemberController) sync() error {
-	operatorSpec, _, _, err := c.operatorConfigClient.GetOperatorState()
-	if err != nil {
-		return err
-	}
-	switch operatorSpec.ManagementState {
-	case operatorv1.Managed:
-	case operatorv1.Unmanaged:
-		condUpgradable := operatorv1.OperatorCondition{
-			Type:   operatorv1.OperatorStatusTypeUpgradeable,
-			Status: operatorv1.ConditionFalse,
-		}
-		condProgressing := operatorv1.OperatorCondition{
-			Type:   operatorv1.OperatorStatusTypeProgressing,
-			Status: operatorv1.ConditionFalse,
-		}
-		condAvailable := operatorv1.OperatorCondition{
-			Type:   operatorv1.OperatorStatusTypeAvailable,
-			Status: operatorv1.ConditionTrue,
-		}
-		condDegraded := operatorv1.OperatorCondition{
-			Type:   operatorv1.OperatorStatusTypeDegraded,
-			Status: operatorv1.ConditionFalse,
-		}
-		if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient,
-			v1helpers.UpdateConditionFn(condUpgradable),
-			v1helpers.UpdateConditionFn(condProgressing),
-			v1helpers.UpdateConditionFn(condDegraded),
-			v1helpers.UpdateConditionFn(condAvailable)); updateError != nil {
-			return updateError
-		}
-		return nil
-	case operatorv1.Removed:
-		// TODO should we support removal?
-		return nil
-	default:
-		c.eventRecorder.Warningf("ManagementStateUnknown", "Unrecognized operator management state %q", operatorSpec.ManagementState)
-		return nil
-	}
-
 	pods, err := c.clientset.CoreV1().Pods("openshift-etcd").List(metav1.ListOptions{LabelSelector: "k8s-app=etcd"})
 	if err != nil {
 		klog.Infof("No Pod found in openshift-etcd with label k8s-app=etcd")
@@ -134,7 +98,7 @@ func (c *ClusterMemberController) sync() error {
 		// exisiting member can be removed order is important here
 		if c.IsStatus("pending", p.Name, ceoapi.MemberRemove) {
 			klog.Infof("Member is unhealthy and is being removed: %s\n", p.Name)
-			if err := c.etcdMemberRemove(p.Name); err != nil {
+			if err := c.EtcdMemberRemove(p.Name); err != nil {
 				c.eventRecorder.Warning("ScalingDownFailed", err.Error())
 				return err
 				// Todo alaypatel07:  need to take care of condition degraded
@@ -269,8 +233,32 @@ func (c *ClusterMemberController) sync() error {
 			klog.Infof("Error updating status %#v", err)
 			return updateError
 		}
-		klog.Infof("All cluster members observed, scaling complete!")
+		klog.V(2).Info("scaling complete, etcd-bootstrap is safe to remove")
+		_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(
+			operatorv1.OperatorCondition{
+				Type:    ConditionBootstrapSafeToRemove,
+				Status:  operatorv1.ConditionTrue,
+				Reason:  "ScalingComplete",
+				Message: "cluster-etcd-operator has scaled, etcd-bootstrap safe to remove",
+			}))
+		if updateErr != nil {
+			klog.Errorf("clustermembercontroller:sync: error updating status: %#v", updateErr)
+			return updateErr
+		}
 		return nil
+	} else {
+		klog.V(2).Info("scaling incomplete, etcd-bootstrap is not safe to remove")
+		_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(
+			operatorv1.OperatorCondition{
+				Type:    ConditionBootstrapSafeToRemove,
+				Status:  operatorv1.ConditionFalse,
+				Reason:  "ScalingInComplete",
+				Message: "cluster-etcd-operator is scaling, etcd-bootstrap is not safe to remove",
+			}))
+		if updateErr != nil {
+			klog.Errorf("clustermembercontroller:sync: error updating status: %#v", updateErr)
+			return updateErr
+		}
 	}
 	klog.Infof("Wait for cluster-etcd-operator to get ready")
 	return nil
@@ -294,7 +282,8 @@ func (c *ClusterMemberController) Endpoints() ([]string, error) {
 		return nil, fmt.Errorf("etcd storageConfig urls not observed")
 	}
 
-	return []string{endpoints[0]}, nil
+	klog.V(2).Infof("Endpoints: creating etcd client with endpoints %s", strings.Join(endpoints, ", "))
+	return endpoints, nil
 }
 
 func (c *ClusterMemberController) getEtcdClient() (*clientv3.Client, error) {
@@ -322,7 +311,7 @@ func (c *ClusterMemberController) getEtcdClient() (*clientv3.Client, error) {
 	return cli, err
 }
 
-func (c *ClusterMemberController) etcdMemberRemove(name string) error {
+func (c *ClusterMemberController) EtcdMemberRemove(name string) error {
 	cli, err := c.getEtcdClient()
 	if err != nil {
 		return err
@@ -409,6 +398,24 @@ func (c *ClusterMemberController) EtcdList(bucket string) ([]ceoapi.Member, erro
 func (c *ClusterMemberController) IsMember(name string) bool {
 	members, _ := c.EtcdList("members")
 	for _, m := range members {
+		if m.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *ClusterMemberController) IsEtcdMember(name string) bool {
+	cli, err := c.getEtcdClient()
+	if err != nil {
+		return false
+	}
+	defer cli.Close()
+	l, err := cli.MemberList(context.Background())
+	if err != nil {
+		return false
+	}
+	for _, m := range l.Members {
 		if m.Name == name {
 			return true
 		}
@@ -531,7 +538,7 @@ func (c *ClusterMemberController) RemoveBootstrap() error {
 	if err != nil {
 		return err
 	}
-	return c.etcdMemberRemove("etcd-bootstrap")
+	return c.EtcdMemberRemove("etcd-bootstrap")
 }
 
 func (c *ClusterMemberController) RemoveBootstrapFromEndpoint() error {

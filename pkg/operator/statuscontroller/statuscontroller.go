@@ -87,7 +87,7 @@ func NewClusterOperatorStatusController(
 // sync reacts to a change in prereqs by finding information that is required to match another value in the cluster. This
 // must be information that is logically "owned" by another component.
 func (c StatusSyncer) sync() error {
-	detailedSpec, currentDetailedStatus, _, err := c.operatorClient.GetOperatorState()
+	_, currentDetailedStatus, _, err := c.operatorClient.GetOperatorState()
 	if apierrors.IsNotFound(err) {
 		c.eventRecorder.Warningf("StatusNotFound", "Unable to determine current operator status for clusteroperator/%s", c.clusterOperatorName)
 		if err := c.clusterOperatorClient.ClusterOperators().Delete(c.clusterOperatorName, nil); err != nil && !apierrors.IsNotFound(err) {
@@ -126,32 +126,6 @@ func (c StatusSyncer) sync() error {
 	clusterOperatorObj := originalClusterOperatorObj.DeepCopy()
 
 	clusterOperatorObj.Status.RelatedObjects = c.relatedObjects
-	if detailedSpec.ManagementState == operatorv1.Unmanaged {
-
-		configv1helpers.SetStatusCondition(&clusterOperatorObj.Status.Conditions, configv1.ClusterOperatorStatusCondition{Type: configv1.OperatorAvailable, Status: configv1.ConditionTrue, Reason: "Unmanaged"})
-		configv1helpers.SetStatusCondition(&clusterOperatorObj.Status.Conditions, configv1.ClusterOperatorStatusCondition{Type: configv1.OperatorProgressing, Status: configv1.ConditionFalse, Reason: "Unmanaged"})
-		configv1helpers.SetStatusCondition(&clusterOperatorObj.Status.Conditions, configv1.ClusterOperatorStatusCondition{Type: configv1.OperatorDegraded, Status: configv1.ConditionFalse, Reason: "Unmanaged"})
-		configv1helpers.SetStatusCondition(&clusterOperatorObj.Status.Conditions, configv1.ClusterOperatorStatusCondition{Type: configv1.OperatorUpgradeable, Status: configv1.ConditionTrue, Reason: "Unmanaged"})
-
-		versions := c.versionGetter.GetVersions()
-		for operand, version := range versions {
-			previousVersion := operatorv1helpers.SetOperandVersion(&clusterOperatorObj.Status.Versions, configv1.OperandVersion{Name: operand, Version: version})
-			if previousVersion != version {
-				// having this message will give us a marker in events when the operator updated compared to when the operand is updated
-				c.eventRecorder.Eventf("OperatorVersionChanged", "clusteroperator/%s version %q changed from %q to %q", c.clusterOperatorName, operand, previousVersion, version)
-			}
-		}
-
-		if equality.Semantic.DeepEqual(clusterOperatorObj, originalClusterOperatorObj) {
-			return nil
-		}
-		if _, updateErr := c.clusterOperatorClient.ClusterOperators().UpdateStatus(clusterOperatorObj); err != nil {
-			return updateErr
-		}
-
-		c.eventRecorder.Eventf("OperatorStatusChanged", "Status for operator %s changed: %s", c.clusterOperatorName, configv1helpers.GetStatusDiff(originalClusterOperatorObj.Status, clusterOperatorObj.Status))
-		return nil
-	}
 
 	configv1helpers.SetStatusCondition(&clusterOperatorObj.Status.Conditions, unionInertialCondition("Degraded", operatorv1.ConditionFalse, currentDetailedStatus.Conditions...))
 	configv1helpers.SetStatusCondition(&clusterOperatorObj.Status.Conditions, unionCondition("Progressing", operatorv1.ConditionFalse, currentDetailedStatus.Conditions...))
@@ -172,7 +146,7 @@ func (c StatusSyncer) sync() error {
 	if equality.Semantic.DeepEqual(clusterOperatorObj, originalClusterOperatorObj) {
 		return nil
 	}
-	klog.V(2).Infof("clusteroperator/%s diff %v", c.clusterOperatorName, resourceapply.JSONPatch(originalClusterOperatorObj, clusterOperatorObj))
+	klog.V(2).Infof("clusteroperator/%s diff %v", c.clusterOperatorName, resourceapply.JSONPatchNoError(originalClusterOperatorObj, clusterOperatorObj))
 
 	if _, updateErr := c.clusterOperatorClient.ClusterOperators().UpdateStatus(clusterOperatorObj); err != nil {
 		return updateErr
