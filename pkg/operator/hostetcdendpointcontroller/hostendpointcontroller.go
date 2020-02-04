@@ -227,6 +227,14 @@ func pickUniqueIPAddress(assignedIPAddresses []string, newIPAddressNeeded int) [
 }
 
 func diff(hostnames, healthyMembers []string) (add, remove []string) {
+	// todo: temporary hack to make sure kube-apiserver
+	// is always started with 2 urls
+	// currently, it is taking a lot of time for KAS to
+	// roll out new config. this leverages the client
+	// load balancer
+	if in(hostnames, "etcd-bootstrap") {
+		return
+	}
 	for _, h := range hostnames {
 		if ok := in(healthyMembers, h); !ok {
 			if h == "etcd-bootstrap" {
