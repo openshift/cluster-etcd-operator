@@ -53,6 +53,7 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 		operatorclient.GlobalMachineSpecifiedConfigNamespace,
 		operatorclient.TargetNamespace,
 		operatorclient.OperatorNamespace,
+		"openshift-kube-apiserver",
 		"openshift-etcd",
 	)
 	configInformers := configv1informers.NewSharedInformerFactory(configClient, 10*time.Minute)
