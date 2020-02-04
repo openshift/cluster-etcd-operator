@@ -117,7 +117,7 @@ func (c *BootstrapTeardownController) removeBootstrap() error {
 		return nil
 	}
 
-	etcdReady, err := isEtcdAvailable(currentEtcdOperator)
+	etcdReady, err := c.isEtcdAvailable(currentEtcdOperator)
 	if err != nil {
 		return err
 	}
@@ -132,7 +132,7 @@ func (c *BootstrapTeardownController) removeBootstrap() error {
 		return err
 	}
 
-	kasReady := isKASReady(kubeAPIServer, c.configMapsGetter)
+	kasReady := c.isKASReady(kubeAPIServer, c.configMapsGetter)
 	if !kasReady {
 		klog.Infof("Still waiting for the kube-apiserver to be ready...")
 		return fmt.Errorf("waiting for kube-apiserver to be ready")
@@ -161,7 +161,7 @@ func (c *BootstrapTeardownController) removeBootstrap() error {
 	return nil
 }
 
-func isKASReady(kasOperator *operatorv1.KubeAPIServer, configMapsGetter corev1getters.ConfigMapsGetter) bool {
+func (c *BootstrapTeardownController) isKASReady(kasOperator *operatorv1.KubeAPIServer, configMapsGetter corev1getters.ConfigMapsGetter) bool {
 	revisionMap := map[int32]struct{}{}
 	uniqueRevisions := []int32{}
 
@@ -182,9 +182,9 @@ func isKASReady(kasOperator *operatorv1.KubeAPIServer, configMapsGetter corev1ge
 			klog.Errorf("doneApiServer: error getting configmap: %#v", err)
 			return false
 		}
-		if configMapHasRequiredValues(configMap) {
+		if c.configMapHasRequiredValues(configMap) {
 			// if any 1 kube-apiserver pod has more than 1
-			klog.Info("kube-apiserver has required values")
+			klog.V(4).Info("kube-apiserver has required values")
 			return true
 		}
 	}
@@ -197,27 +197,32 @@ type ConfigData struct {
 	}
 }
 
-func configMapHasRequiredValues(configMap *corev1.ConfigMap) bool {
+func (c *BootstrapTeardownController) configMapHasRequiredValues(configMap *corev1.ConfigMap) bool {
 	config, ok := configMap.Data[configMapKey]
 	if !ok {
-		klog.Errorf("configMapHasRequiredValues: config.yaml key missing")
+		klog.V(2).Infof("configMapHasRequiredValues: config.yaml key missing configmap %s/%s", configMap.Namespace, configMap.Name)
+		c.eventRecorder.Eventf("KASconfigmapDoesNotHaveRequiredValues", "configMapHasRequiredValues: config.yaml key missing for configmap %s/%s", configMap.Namespace, configMap.Name)
 		return false
 	}
 	var configData ConfigData
 	err := json.Unmarshal([]byte(config), &configData)
 	if err != nil {
-		klog.Errorf("configMapHasRequiredValues: error unmarshalling configmap data: %#v", err)
+		klog.V(2).Infof("configMapHasRequiredValues: error unmarshalling configmap %s/%s data: %#v", configMap.Namespace, configMap.Name, err)
+		c.eventRecorder.Eventf("KASconfigmapDoesNotHaveRequiredValues", "error unmarshalling configmap %s/%s data: %#v", configMap.Namespace, configMap.Name, err)
 		return false
 	}
 	if len(configData.StorageConfig.Urls) == 0 {
-		klog.Infof("configMapHasRequiredValues: length of storageUrls %#v is 0", configData.StorageConfig.Urls)
+		klog.Infof("configMapHasRequiredValues: length of storageUrls %#v is 0 for configmap %s/%s", configData.StorageConfig.Urls, configMap.Namespace, configMap.Name)
+		c.eventRecorder.Eventf("KASconfigmapDoesNotHaveRequiredValues", "configMapHasRequiredValues: length of storageUrls %#v is 0 for configmap %s/%s", configData.StorageConfig.Urls, configMap.Namespace, configMap.Name)
 		return false
 	}
 	if len(configData.StorageConfig.Urls) == 1 &&
 		!strings.Contains(configData.StorageConfig.Urls[0], "etcd") {
 		klog.Infof("configMapHasRequiredValues: config %s/%s has a single IP: %#v", configMap.Namespace, configMap.Name, strings.Join(configData.StorageConfig.Urls, ", "))
+		c.eventRecorder.Eventf("KASconfigmapDoesNotHaveRequiredValues", "configMapHasRequiredValues: config %s/%s has a single IP: %#v", configMap.Namespace, configMap.Name, strings.Join(configData.StorageConfig.Urls, ", "))
 		return false
 	}
+	c.eventRecorder.Eventf("KASconfigmapDoesHasRequiredValues", "configMapHasRequiredValues: return true for %s/%s", configMap.Namespace, configMap.Name)
 	return true
 }
 
@@ -245,16 +250,19 @@ func (c *BootstrapTeardownController) Run(stopCh <-chan struct{}) {
 
 // this function checks if etcd has scaled the initial bootstrap cluster
 // with all 3 masters
-func isEtcdAvailable(currentEtcdOperator *operatorv1.Etcd) (bool, error) {
+func (c *BootstrapTeardownController) isEtcdAvailable(currentEtcdOperator *operatorv1.Etcd) (bool, error) {
 	if currentEtcdOperator.Spec.ManagementState == operatorv1.Unmanaged {
 		klog.Info("Cluster etcd operator is in Unmanaged mode")
+		c.eventRecorder.Eventf("OperatorUnmanaged", "cluster etcd operator is in Unmanaged mode")
 		return true, nil
 	}
 	if operatorv1helpers.IsOperatorConditionTrue(currentEtcdOperator.Status.Conditions, clustermembercontroller.ConditionBootstrapSafeToRemove) {
-		klog.Info("Cluster etcd operator bootstrapped successfully")
+		klog.Info("cluster etcd operator bootstrapped successfully")
+		c.eventRecorder.Eventf("EtcdBootstrapped", "cluster etcd operator bootstrapped successfully")
 		return true, nil
 	}
 	klog.Infof("Still waiting for the cluster-etcd-operator to bootstrap")
+	c.eventRecorder.Eventf("EtcdBootstrapWaiting", "Still waiting for the cluster-etcd-operator to bootstrap")
 	return false, nil
 }
 

@@ -1,6 +1,7 @@
 package bootstrapteardown
 
 import (
+	"github.com/openshift/library-go/pkg/operator/events"
 	"testing"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
@@ -11,7 +12,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+func NewFakeController() *BootstrapTeardownController {
+	r := events.NewInMemoryRecorder("Test_isEtcdAvailable")
+	return &BootstrapTeardownController{
+		eventRecorder: r,
+	}
+}
+
 func Test_isEtcdAvailable(t *testing.T) {
+	c := NewFakeController()
 	type args struct {
 		etcd *operatorv1.Etcd
 	}
@@ -103,7 +112,7 @@ func Test_isEtcdAvailable(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := isEtcdAvailable(tt.args.etcd)
+			got, err := c.isEtcdAvailable(tt.args.etcd)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("doneEtcd() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -120,6 +129,7 @@ func Test_doneApiServer(t *testing.T) {
 }
 
 func Test_configMapHasRequiredValues(t *testing.T) {
+	c := NewFakeController()
 	type args struct {
 		configMap *corev1.ConfigMap
 	}
@@ -198,7 +208,7 @@ func Test_configMapHasRequiredValues(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := configMapHasRequiredValues(tt.args.configMap); got != tt.want {
+			if got := c.configMapHasRequiredValues(tt.args.configMap); got != tt.want {
 				t.Errorf("configMapHasRequiredValues() = %v, want %v", got, tt.want)
 			}
 		})
