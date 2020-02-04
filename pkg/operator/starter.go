@@ -5,11 +5,19 @@ import (
 	"fmt"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+
 	configv1 "github.com/openshift/api/config/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
+	"github.com/openshift/library-go/pkg/controller/controllercmd"
+	"github.com/openshift/library-go/pkg/operator/status"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
@@ -17,13 +25,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/hostetcdendpointcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/statuscontroller"
-	"github.com/openshift/library-go/pkg/controller/controllercmd"
-	"github.com/openshift/library-go/pkg/operator/status"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 )
 
 func RunOperator(ctx context.Context, controllerContext *controllercmd.ControllerContext) error {
@@ -93,7 +94,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	versionRecorder.SetVersion("raw-internal", status.VersionForOperatorFromEnv())
 	versionRecorder.SetVersion("operator", status.VersionForOperatorFromEnv())
 
-	clusterOperatorStatus := statuscontroller.NewClusterOperatorStatusController(
+	statusController := status.NewClusterOperatorStatusController(
 		"etcd",
 		[]configv1.ObjectReference{
 			{Group: "operator.openshift.io", Resource: "etcds", Name: "cluster"},
@@ -150,7 +151,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go etcdCertSignerController.Run(1, ctx.Done())
 	go hostEtcdEndpointController.Run(1, ctx.Done())
 	go resourceSyncController.Run(ctx, 1)
-	go clusterOperatorStatus.Run(1, ctx.Done())
+	go statusController.Run(ctx, 1)
 	go configObserver.Run(ctx, 1)
 	go clusterMemberController.Run(ctx.Done())
 	go bootstrapTeardownController.Run(ctx.Done())
