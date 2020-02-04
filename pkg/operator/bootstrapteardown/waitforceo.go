@@ -5,6 +5,7 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/watch"
@@ -64,11 +65,10 @@ func done(etcd *operatorv1.Etcd) (bool, error) {
 		klog.Info("Cluster etcd operator is in Unmanaged mode")
 		return true, nil
 	}
-	if operatorv1helpers.IsOperatorConditionTrue(etcd.Status.Conditions, ConditionBootstrapRemoved) {
+	if operatorv1helpers.IsOperatorConditionTrue(etcd.Status.Conditions, clustermembercontroller.ConditionBootstrapRemoved) {
 		klog.Info("Cluster etcd operator bootstrapped successfully")
 		return true, nil
 	}
-	klog.Infof("Still waiting for the cluster-etcd-operator ")
-	klog.Infof("waiting on condition %s on etcd CR %s/%s to be True. Conditions: %#v", ConditionBootstrapRemoved, etcd.Namespace, etcd.Name, etcd.Status.Conditions)
+	klog.Infof("waiting on condition %s in etcd CR %s/%s to be True.", clustermembercontroller.ConditionBootstrapRemoved, etcd.Namespace, etcd.Name)
 	return false, nil
 }
