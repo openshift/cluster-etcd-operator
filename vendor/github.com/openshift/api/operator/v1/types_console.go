@@ -3,23 +3,26 @@ package v1
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/openshift/api/config/v1"
+	configv1 "github.com/openshift/api/config/v1"
 )
 
 // +genclient
 // +genclient:nonNamespaced
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
+// Console provides a means to configure an operator to manage the console.
 type Console struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
+	// +kubebuilder:validation:Required
 	// +required
 	Spec ConsoleSpec `json:"spec,omitempty"`
 	// +optional
 	Status ConsoleStatus `json:"status,omitempty"`
 }
 
+// ConsoleSpec is the specification of the desired behavior of the Console.
 type ConsoleSpec struct {
 	OperatorSpec `json:",inline"`
 	// customization is used to optionally provide a small set of
@@ -30,10 +33,13 @@ type ConsoleSpec struct {
 	Providers ConsoleProviders `json:"providers"`
 }
 
+// ConsoleStatus defines the observed status of the Console.
 type ConsoleStatus struct {
 	OperatorStatus `json:",inline"`
 }
 
+// ConsoleProviders defines a list of optional additional providers of
+// functionality to the console.
 type ConsoleProviders struct {
 	// statuspage contains ID for statuspage.io page that provides status info about.
 	// +optional
@@ -46,6 +52,7 @@ type StatuspageProvider struct {
 	PageID string `json:"pageID"`
 }
 
+// ConsoleCustomization defines a list of optional configuration for the console UI.
 type ConsoleCustomization struct {
 	// brand is the default branding of the web console which can be overridden by
 	// providing the brand field.  There is a limited set of specific brand options.
@@ -56,6 +63,7 @@ type ConsoleCustomization struct {
 	// of the web console.  Providing documentationBaseURL will override the default
 	// documentation URL.
 	// Invalid value will prevent a console rollout.
+	// +kubebuilder:validation:Pattern=`^$|^((https):\/\/?)[^\s()<>]+(?:\([\w\d]+\)|([^[:punct:]\s]|\/?))\/$`
 	DocumentationBaseURL string `json:"documentationBaseURL,omitempty"`
 	// customProductName is the name that will be displayed in page titles, logo alt text, and the about dialog
 	// instead of the normal OpenShift product name.
@@ -71,10 +79,11 @@ type ConsoleCustomization struct {
 	// Dimensions: Max height of 68px and max width of 200px
 	// SVG format preferred
 	// +optional
-	CustomLogoFile v1.ConfigMapFileReference `json:"customLogoFile,omitempty"`
+	CustomLogoFile configv1.ConfigMapFileReference `json:"customLogoFile,omitempty"`
 }
 
-// Brand is a specific supported brand within the console
+// Brand is a specific supported brand within the console.
+// +kubebuilder:validation:Pattern=`^$|^(ocp|origin|okd|dedicated|online|azure)$`
 type Brand string
 
 const (
