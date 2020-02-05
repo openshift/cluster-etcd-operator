@@ -12,16 +12,6 @@ import (
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner2"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/hostetcdendpointcontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -34,6 +24,17 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner2"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/hostendpointscontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
 )
 
 func RunOperator(ctx context.Context, controllerContext *controllercmd.ControllerContext) error {
@@ -66,7 +67,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		"",
 		operatorclient.GlobalUserSpecifiedConfigNamespace,
 		operatorclient.GlobalMachineSpecifiedConfigNamespace,
-		operatorclient.TargetNamespace,
+		"openshift-etcd",
 		operatorclient.OperatorNamespace,
 		"openshift-kube-apiserver",
 		"openshift-etcd",
@@ -112,7 +113,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		os.Getenv("IMAGE"),
 		os.Getenv("OPERATOR_IMAGE"),
 		operatorClient,
-		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace),
+		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
 		kubeInformersForNamespaces,
 		dynamicClient,
 		kubeClient,
@@ -134,7 +135,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		WithEvents(controllerContext.EventRecorder).
 		WithInstaller([]string{"cluster-etcd-operator", "installer"}).
 		WithPruning([]string{"cluster-etcd-operator", "prune"}, "etcd-pod").
-		WithResources(operatorclient.TargetNamespace, "etcd", RevisionConfigMaps, RevisionSecrets).
+		WithResources("openshift-etcd", "etcd", RevisionConfigMaps, RevisionSecrets).
 		WithCerts("etcd-certs", CertConfigMaps, CertSecrets).
 		WithVersioning(operatorclient.OperatorNamespace, "etcd", versionRecorder).
 		ToControllers()
@@ -149,7 +150,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			{Resource: "namespaces", Name: operatorclient.GlobalUserSpecifiedConfigNamespace},
 			{Resource: "namespaces", Name: operatorclient.GlobalMachineSpecifiedConfigNamespace},
 			{Resource: "namespaces", Name: operatorclient.OperatorNamespace},
-			{Resource: "namespaces", Name: operatorclient.TargetNamespace},
+			{Resource: "namespaces", Name: "openshift-etcd"},
 		},
 		configClient.ConfigV1(),
 		configInformers.Config().V1().ClusterOperators(),
@@ -177,11 +178,12 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeInformersForNamespaces,
 		controllerContext.EventRecorder,
 	)
-	hostEtcdEndpointController := hostetcdendpointcontroller.NewHostEtcdEndpointcontroller(
-		coreClient,
+	hostEtcdEndpointController := hostendpointscontroller.NewHostEndpointsController(
 		operatorClient,
-		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
 		controllerContext.EventRecorder,
+		coreClient,
+		kubeInformersForNamespaces,
+		configInformers.Config().V1().Infrastructures(),
 	)
 
 	clusterMemberController := clustermembercontroller.NewClusterMemberController(
@@ -208,7 +210,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go targetConfigReconciler.Run(1, ctx.Done())
 	go etcdCertSignerController.Run(1, ctx.Done())
 	go etcdCertSignerController2.Run(1, ctx.Done())
-	go hostEtcdEndpointController.Run(1, ctx.Done())
+	go hostEtcdEndpointController.Run(ctx, 1)
 	go resourceSyncController.Run(ctx, 1)
 	go statusController.Run(ctx, 1)
 	go configObserver.Run(ctx, 1)
