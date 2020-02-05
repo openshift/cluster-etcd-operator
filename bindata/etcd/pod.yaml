@@ -1,17 +1,17 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: openshift-etcd
+  name: etcd
   namespace: openshift-etcd
   labels:
     app: etcd
-    etcd: "true"
+    etcd: "not-true-yet"
     revision: "REVISION"
 spec:
   containers:
-  - name: openshift-etcd
+  - name: etcd
     image: ${IMAGE}
-    imagePullPolicy: Always
+    imagePullPolicy: IfNotPresent
     terminationMessagePolicy: FallbackToLogsOnError
     command: ["sleep"]
     args:
@@ -20,25 +20,11 @@ spec:
       requests:
         memory: 200Mi
         cpu: 100m
-    ports:
-      - containerPort: 10257
     volumeMounts:
     - mountPath: /etc/kubernetes/static-pod-resources
       name: resource-dir
-#    livenessProbe:
-#      httpGet:
-#        scheme: HTTPS
-#        port: 10257
-#        path: healthz
-#      initialDelaySeconds: 45
-#      timeoutSeconds: 10
-#    readinessProbe:
-#      httpGet:
-#        scheme: HTTPS
-#        port: 10257
-#        path: healthz
-#      initialDelaySeconds: 10
-#      timeoutSeconds: 10
+    - mountPath: /etc/kubernetes/static-pod-certs
+      name: cert-dir
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
@@ -47,4 +33,7 @@ spec:
   - hostPath:
       path: /etc/kubernetes/static-pod-resources/etcd-pod-REVISION
     name: resource-dir
+  - hostPath:
+      path: /etc/kubernetes/static-pod-resources/etcd-certs
+    name: cert-dir
 

@@ -3,30 +3,35 @@ package operator
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
-	"github.com/openshift/library-go/pkg/controller/controllercmd"
-	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
-	"github.com/openshift/library-go/pkg/operator/status"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
-
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/hostetcdendpointcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
+	"github.com/openshift/library-go/pkg/controller/controllercmd"
+	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
+	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
+	"github.com/openshift/library-go/pkg/operator/staticpod"
+	"github.com/openshift/library-go/pkg/operator/staticpod/controller/revision"
+	"github.com/openshift/library-go/pkg/operator/staticresourcecontroller"
+	"github.com/openshift/library-go/pkg/operator/status"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
 func RunOperator(ctx context.Context, controllerContext *controllercmd.ControllerContext) error {
@@ -85,6 +90,28 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
+	staticResourceController := staticresourcecontroller.NewStaticResourceController(
+		"KubeAPIServerStaticResources",
+		etcd_assets.Asset,
+		[]string{
+			"etcd/ns.yaml",
+			"etcd/sa.yaml",
+		},
+		(&resourceapply.ClientHolder{}).WithKubernetes(kubeClient),
+		operatorClient,
+		controllerContext.EventRecorder,
+	).AddKubeInformers(kubeInformersForNamespaces)
+
+	targetConfigReconciler := targetconfigcontroller.NewTargetConfigController(
+		os.Getenv("IMAGE"),
+		os.Getenv("OPERATOR_IMAGE"),
+		operatorClient,
+		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace),
+		kubeInformersForNamespaces,
+		kubeClient,
+		controllerContext.EventRecorder,
+	)
+
 	versionRecorder := status.NewVersionGetter()
 	clusterOperator, err := configClient.ConfigV1().ClusterOperators().Get("etcd", metav1.GetOptions{})
 	if err != nil && !errors.IsNotFound(err) {
@@ -95,6 +122,18 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	}
 	versionRecorder.SetVersion("raw-internal", status.VersionForOperatorFromEnv())
 	versionRecorder.SetVersion("operator", status.VersionForOperatorFromEnv())
+
+	staticPodControllers, err := staticpod.NewBuilder(operatorClient, kubeClient, kubeInformersForNamespaces).
+		WithEvents(controllerContext.EventRecorder).
+		WithInstaller([]string{"cluster-etcd-operator", "installer"}).
+		WithPruning([]string{"cluster-etcd-operator", "prune"}, "etcd-pod").
+		WithResources(operatorclient.TargetNamespace, "etcd", RevisionConfigMaps, RevisionSecrets).
+		WithCerts("etcd-certs", CertConfigMaps, CertSecrets).
+		WithVersioning(operatorclient.OperatorNamespace, "etcd", versionRecorder).
+		ToControllers()
+	if err != nil {
+		return err
+	}
 
 	statusController := status.NewClusterOperatorStatusController(
 		"etcd",
@@ -151,6 +190,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	configInformers.Start(ctx.Done())
 	dynamicInformers.Start(ctx.Done())
 
+	go staticResourceController.Run(ctx, 1)
+	go targetConfigReconciler.Run(1, ctx.Done())
 	go etcdCertSignerController.Run(1, ctx.Done())
 	go hostEtcdEndpointController.Run(1, ctx.Done())
 	go resourceSyncController.Run(ctx, 1)
@@ -158,7 +199,38 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go configObserver.Run(ctx, 1)
 	go clusterMemberController.Run(ctx.Done())
 	go bootstrapTeardownController.Run(ctx.Done())
+	go staticPodControllers.Run(ctx, 1)
 
 	<-ctx.Done()
 	return fmt.Errorf("stopped")
+}
+
+// RevisionConfigMaps is a list of configmaps that are directly copied for the current values.  A different actor/controller modifies these.
+// the first element should be the configmap that contains the static pod manifest
+var RevisionConfigMaps = []revision.RevisionResource{
+	{Name: "etcd-pod"},
+
+	{Name: "config"},
+	//{Name: "etcd-cert-syncer-kubeconfig"},
+
+	// these are live reloaded and revisioned. This makes it possible to do a controlled restart of etcd pods, while ensuring that on
+	// unexpected pod restart (node reboot for instance), the latest available values are used.
+	//{Name: "etcd-peer-ca"},
+}
+
+// RevisionSecrets is a list of secrets that are directly copied for the current values.  A different actor/controller modifies these.
+var RevisionSecrets = []revision.RevisionResource{
+	// these need to removed, but if we remove them now, the cluster will die because we don't reload them yet
+	//{Name: "etcd-peer-client"},
+
+	// this needs to be revisioned as certsyncer's kubeconfig isn't wired to be live reloaded, nor will be autorecovery
+	//{Name: "localhost-recovery-client-token"},
+}
+
+var CertConfigMaps = []revision.RevisionResource{
+	//{Name: "etcd-peer-ca"},
+}
+
+var CertSecrets = []revision.RevisionResource{
+	//{Name: "etcd-peer-client"},
 }

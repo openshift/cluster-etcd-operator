@@ -10,19 +10,16 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
+
 	"github.com/ghodss/yaml"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render/options"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/v430_00_assets"
 	"github.com/openshift/library-go/pkg/assets"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog"
-)
-
-const (
-	bootstrapVersion = "v4.3.0"
 )
 
 // renderOpts holds values to drive the render command.
@@ -228,7 +225,7 @@ func (r *renderOpts) Run() error {
 	}
 	if err := r.generic.ApplyTo(
 		&renderConfig.FileConfig,
-		options.Template{FileName: "defaultconfig.yaml", Content: v430_00_assets.MustAsset(filepath.Join(bootstrapVersion, "etcd", "defaultconfig.yaml"))},
+		options.Template{FileName: "defaultconfig.yaml", Content: etcd_assets.MustAsset(filepath.Join("etcd", "defaultconfig.yaml"))},
 		mustReadTemplateFile(filepath.Join(r.generic.TemplatesDir, "config", "bootstrap-config-overrides.yaml")),
 		mustReadTemplateFile(filepath.Join(r.generic.TemplatesDir, "config", "config-overrides.yaml")),
 		&renderConfig,
