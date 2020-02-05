@@ -11,7 +11,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
@@ -28,6 +28,7 @@ const (
 )
 
 type HostEtcdEndpointController struct {
+	// todo: use endpoint lister
 	clientset                              corev1client.Interface
 	operatorConfigClient                   v1helpers.OperatorClient
 	queue                                  workqueue.RateLimitingInterface
@@ -129,7 +130,7 @@ func (h *HostEtcdEndpointController) sync() error {
 	}
 
 	ep, err := h.clientset.CoreV1().Endpoints(clustermembercontroller.EtcdEndpointNamespace).
-		Get(clustermembercontroller.EtcdHostEndpointName, v1.GetOptions{})
+		Get(clustermembercontroller.EtcdHostEndpointName, metav1.GetOptions{})
 	if err != nil {
 		klog.Errorf("error getting %s/%s endpoint: %#v",
 			clustermembercontroller.EtcdEndpointNamespace,
