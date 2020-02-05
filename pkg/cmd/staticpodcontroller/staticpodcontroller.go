@@ -11,14 +11,11 @@ import (
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
-	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
-	etcdv1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
-	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
-	operatorinformers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 	ceoapi "github.com/openshift/cluster-etcd-operator/pkg/operator/api"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
 	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/vincent-petithory/dataurl"
@@ -95,22 +92,17 @@ func (s *podOpts) Run() error {
 	if err != nil {
 		return err
 	}
-	operatorConfigClient, err := operatorversionedclient.NewForConfig(clientConfig)
-	if err != nil {
-		return err
-	}
 	dynamicClient, err := dynamic.NewForConfig(clientConfig)
 	if err != nil {
 		return err
 	}
 
-	operatorConfigInformers := operatorv1informers.NewSharedInformerFactory(operatorConfigClient, 10*time.Minute)
-	operatorClient := &operatorclient.OperatorClient{
-		Informers: operatorConfigInformers,
-		Client:    operatorConfigClient.OperatorV1(),
+	operatorClient, dynamicInformers, err := genericoperatorclient.NewStaticPodOperatorClient(clientConfig, operatorv1.GroupVersion.WithResource("etcds"))
+	if err != nil {
+		return err
 	}
 
-	kubeInformerFactory := informers.NewFilteredSharedInformerFactory(clientset, 0, etcdNamespace, nil)
+	kubeInformerFactory := informers.NewSharedInformerFactoryWithOptions(clientset, 0, informers.WithNamespace(etcdNamespace))
 	nodeName := os.Getenv("NODE_NAME")
 	var localEtcdName string
 	if nodeName != "" {
@@ -131,8 +123,7 @@ func (s *podOpts) Run() error {
 	}
 
 	staticPodController := NewStaticPodController(
-		operatorClient.Client.Etcds(),
-		operatorConfigInformers.Operator().V1().Etcds(),
+		operatorClient,
 		kubeInformerFactory,
 		clientset,
 		dynamicClient,
@@ -141,7 +132,7 @@ func (s *podOpts) Run() error {
 	)
 
 	kubeInformerFactory.Start(ctx.Done())
-	operatorClient.Informers.Start(ctx.Done())
+	dynamicInformers.Start(ctx.Done())
 
 	go staticPodController.Run(ctx.Done())
 
@@ -150,8 +141,7 @@ func (s *podOpts) Run() error {
 }
 
 type StaticPodController struct {
-	etcdKubeClient                         etcdv1.EtcdInterface
-	etcdInformer                           operatorinformers.EtcdInformer
+	operatorClient                         v1helpers.OperatorClient
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory
 	clientset                              corev1client.Interface
 	localEtcdName                          string
@@ -163,8 +153,7 @@ type StaticPodController struct {
 }
 
 func NewStaticPodController(
-	etcdKubeClient etcdv1.EtcdInterface,
-	etcdInformer operatorinformers.EtcdInformer,
+	operatorClient v1helpers.OperatorClient,
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
 	clientset corev1client.Interface,
 	dynamicClient dynamic.Interface,
@@ -172,30 +161,29 @@ func NewStaticPodController(
 	eventRecorder events.Recorder,
 ) *StaticPodController {
 	c := &StaticPodController{
-		etcdKubeClient:                         etcdKubeClient,
-		etcdInformer:                           etcdInformer,
+		operatorClient:                         operatorClient,
 		eventRecorder:                          eventRecorder.WithComponentSuffix("static-pod-controller-" + localEtcdName),
 		kubeInformersForOpenshiftEtcdNamespace: kubeInformersForOpenshiftEtcdNamespace,
 		clientset:                              clientset,
 		dynamicClient:                          dynamicClient,
 		localEtcdName:                          localEtcdName,
-
+		cachesToSync: []cache.InformerSynced{
+			kubeInformersForOpenshiftEtcdNamespace.Core().V1().Pods().Informer().HasSynced,
+			operatorClient.Informer().HasSynced,
+		},
 		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "StaticPodController"),
 	}
 	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Pods().Informer().AddEventHandler(c.eventHandler())
-	etcdInformer.Informer().AddEventHandler(c.eventHandler())
-	// kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
-
+	operatorClient.Informer().AddEventHandler(c.eventHandler())
 	return c
 }
 
 func (c *StaticPodController) sync() error {
-	etcd, err := c.etcdKubeClient.Get("cluster", metav1.GetOptions{})
+	operatorSpec, _, _, err := c.operatorClient.GetOperatorState()
 	if err != nil {
-		klog.Errorf("error getting etcd cr: %#v", err)
 		return err
 	}
-	switch etcd.Spec.ManagementState {
+	switch operatorSpec.ManagementState {
 	case operatorv1.Managed:
 	case operatorv1.Unmanaged:
 		return nil
@@ -203,7 +191,7 @@ func (c *StaticPodController) sync() error {
 		// TODO should we support removal?
 		return nil
 	default:
-		c.eventRecorder.Warningf("ManagementStateUnknown", "Unrecognized operator management state %q", etcd.Spec.ManagementState)
+		c.eventRecorder.Warningf("ManagementStateUnknown", "Unrecognized operator management state %q", operatorSpec.ManagementState)
 		return nil
 	}
 	pod, err := c.clientset.CoreV1().Pods(etcdNamespace).Get(c.localEtcdName, metav1.GetOptions{})
@@ -224,7 +212,7 @@ func (c *StaticPodController) sync() error {
 				return nil
 			}
 
-			if c.IsMemberRemove(c.localEtcdName) {
+			if c.IsMemberRemove(operatorSpec, c.localEtcdName) {
 				klog.Infof("%s is pending removal", c.localEtcdName)
 				etcdMember, err := c.getMachineConfigData(staticPodPath, "master")
 				if err != nil {
@@ -253,8 +241,8 @@ func (c *StaticPodController) sync() error {
 	return nil
 }
 
-func (c *StaticPodController) IsMemberRemove(name string) bool {
-	members, err := c.PendingMemberList()
+func (c *StaticPodController) IsMemberRemove(operatorSpec *operatorv1.OperatorSpec, name string) bool {
+	members, err := c.PendingMemberList(operatorSpec)
 	if err != nil {
 		klog.Errorf("IsMemberRemove: error %v", err)
 	}
@@ -267,16 +255,10 @@ func (c *StaticPodController) IsMemberRemove(name string) bool {
 	return false
 }
 
-func (c *StaticPodController) PendingMemberList() ([]ceoapi.Member, error) {
+func (c *StaticPodController) PendingMemberList(operatorSpec *operatorv1.OperatorSpec) ([]ceoapi.Member, error) {
 	configPath := []string{"cluster", "pending"}
-	etcd, err := c.etcdKubeClient.Get("cluster", metav1.GetOptions{})
-	if err != nil {
-		fmt.Printf("error getting etcd cr: %#v", err)
-		return nil, err
-	}
-
 	config := map[string]interface{}{}
-	if err := json.NewDecoder(bytes.NewBuffer(etcd.Spec.ObservedConfig.Raw)).Decode(&config); err != nil {
+	if err := json.NewDecoder(bytes.NewBuffer(operatorSpec.ObservedConfig.Raw)).Decode(&config); err != nil {
 		klog.V(4).Infof("decode of existing config failed with error: %v", err)
 	}
 	data, exists, err := unstructured.NestedSlice(config, configPath...)
@@ -332,17 +314,13 @@ func (c *StaticPodController) Run(stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
 	defer c.queue.ShutDown()
 
-	klog.Infof("Waiting for Cache to sync staticpodcontroller")
-	if !cache.WaitForCacheSync(stopCh,
-		c.kubeInformersForOpenshiftEtcdNamespace.Core().V1().Pods().Informer().HasSynced,
-		c.etcdInformer.Informer().HasSynced,
-	) {
-		klog.Errorf("error syncing cache")
-		return
-	}
-
 	klog.Infof("Starting staticpodcontroller")
 	defer klog.Infof("Shutting down staticpodcontroller")
+
+	klog.Infof("Waiting for Cache to sync staticpodcontroller")
+	if !cache.WaitForCacheSync(stopCh, c.cachesToSync...) {
+		return
+	}
 
 	go wait.Until(c.runWorker, time.Second, stopCh)
 
