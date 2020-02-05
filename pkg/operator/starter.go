@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -15,6 +16,7 @@ import (
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
+	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
 	"github.com/openshift/library-go/pkg/operator/status"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
@@ -59,9 +61,9 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		"openshift-etcd",
 	)
 	configInformers := configv1informers.NewSharedInformerFactory(configClient, 10*time.Minute)
-	operatorClient := &operatorclient.OperatorClient{
-		Informers: operatorConfigInformers,
-		Client:    operatorConfigClient.OperatorV1(),
+	operatorClient, dynamicInformers, err := genericoperatorclient.NewStaticPodOperatorClient(controllerContext.KubeConfig, operatorv1.GroupVersion.WithResource("etcds"))
+	if err != nil {
+		return err
 	}
 
 	resourceSyncController, err := resourcesynccontroller.NewResourceSyncController(
@@ -147,6 +149,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	operatorConfigInformers.Start(ctx.Done())
 	kubeInformersForNamespaces.Start(ctx.Done())
 	configInformers.Start(ctx.Done())
+	dynamicInformers.Start(ctx.Done())
 
 	go etcdCertSignerController.Run(1, ctx.Done())
 	go hostEtcdEndpointController.Run(1, ctx.Done())
