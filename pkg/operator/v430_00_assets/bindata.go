@@ -397,7 +397,7 @@ type bintree struct {
 
 var _bintree = &bintree{nil, map[string]*bintree{
 	"v4.3.0": {nil, map[string]*bintree{
-		"openshift-etcd": {nil, map[string]*bintree{
+		"etcd": {nil, map[string]*bintree{
 			"cm.yaml":              {v430EtcdCmYaml, map[string]*bintree{}},
 			"defaultconfig.yaml":   {v430EtcdDefaultconfigYaml, map[string]*bintree{}},
 			"ns.yaml":              {v430EtcdNsYaml, map[string]*bintree{}},
