@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -290,7 +291,7 @@ func (c *ClusterMemberController) sync() error {
 			operatorv1.OperatorCondition{
 				Type:    ConditionBootstrapSafeToRemove,
 				Status:  operatorv1.ConditionFalse,
-				Reason:  "ScalingInComplete",
+				Reason:  "ScalingIncomplete",
 				Message: "cluster-etcd-operator is scaling, etcd-bootstrap is not safe to remove",
 			}))
 		if updateErr != nil {
@@ -320,7 +321,8 @@ func (c *ClusterMemberController) Endpoints() ([]string, error) {
 		return nil, fmt.Errorf("etcd storageConfig urls not observed")
 	}
 
-	return []string{endpoints[0]}, nil
+	klog.V(2).Infof("Endpoints: creating etcd client with endpoints %s", strings.Join(endpoints, ", "))
+	return endpoints, nil
 }
 
 func (c *ClusterMemberController) getEtcdClient() (*clientv3.Client, error) {

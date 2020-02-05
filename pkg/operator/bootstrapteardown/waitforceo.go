@@ -61,10 +61,6 @@ func waitForEtcdBootstrap(ctx context.Context, operatorRestClient rest.Interface
 }
 
 func done(etcd *operatorv1.Etcd) (bool, error) {
-	if etcd.Spec.ManagementState == operatorv1.Unmanaged {
-		klog.Info("Cluster etcd operator is in Unmanaged mode")
-		return true, nil
-	}
 	if operatorv1helpers.IsOperatorConditionTrue(etcd.Status.Conditions, clustermembercontroller.ConditionBootstrapRemoved) {
 		klog.Info("Cluster etcd operator bootstrapped successfully")
 		return true, nil
