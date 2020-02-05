@@ -5,4 +5,8 @@ spec:
   - name: cluster-etcd-operator
     from:
       kind: DockerImage
-      name: quay.io/openshift/cluster-etcd-operator
+      name: quay.io/openshift/origin-cluster-etcd-operator
+  - name: etcd
+    from:
+      kind: DockerImage
+      name: quay.io/openshift/origin-etcd
