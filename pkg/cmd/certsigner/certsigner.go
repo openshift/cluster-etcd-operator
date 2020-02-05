@@ -337,7 +337,7 @@ func newSignerCA(sc *SignerCAFiles, csr *capi.CertificateSigningRequest) (*Signe
 func signerPolicy(c Config) config.Signing {
 	policy := config.Signing{
 		Profiles: map[string]*config.SigningProfile{
-			etcdPeer: &config.SigningProfile{
+			etcdPeer: {
 				Usage: []string{
 					string(capi.UsageKeyEncipherment),
 					string(capi.UsageDigitalSignature),
@@ -347,7 +347,7 @@ func signerPolicy(c Config) config.Signing {
 				Expiry:       c.EtcdPeerCertDuration,
 				ExpiryString: c.EtcdPeerCertDuration.String(),
 			},
-			etcdServer: &config.SigningProfile{
+			etcdServer: {
 				Usage: []string{
 					string(capi.UsageKeyEncipherment),
 					string(capi.UsageDigitalSignature),
@@ -357,7 +357,7 @@ func signerPolicy(c Config) config.Signing {
 				Expiry:       c.EtcdServerCertDuration,
 				ExpiryString: c.EtcdServerCertDuration.String(),
 			},
-			etcdMetric: &config.SigningProfile{
+			etcdMetric: {
 				Usage: []string{
 					string(capi.UsageKeyEncipherment),
 					string(capi.UsageDigitalSignature),
@@ -407,7 +407,7 @@ func (s *CertSigner) Sign(csr *capi.CertificateSigningRequest) (*capi.Certificat
 	profile, err := getProfile(csr)
 	if err != nil {
 		csr.Status.Conditions = []capi.CertificateSigningRequestCondition{
-			capi.CertificateSigningRequestCondition{
+			{
 				Type:    capi.CertificateDenied,
 				Message: fmt.Sprintf("error parsing profile: %v ", err),
 			},
@@ -421,7 +421,7 @@ func (s *CertSigner) Sign(csr *capi.CertificateSigningRequest) (*capi.Certificat
 	})
 	if err != nil {
 		csr.Status.Conditions = []capi.CertificateSigningRequestCondition{
-			capi.CertificateSigningRequestCondition{
+			{
 				Type:    capi.CertificateDenied,
 				Message: fmt.Sprintf("certificate signing error: %v ", err),
 			},
@@ -430,7 +430,7 @@ func (s *CertSigner) Sign(csr *capi.CertificateSigningRequest) (*capi.Certificat
 	}
 
 	csr.Status.Conditions = []capi.CertificateSigningRequestCondition{
-		capi.CertificateSigningRequestCondition{
+		{
 			Type: capi.CertificateApproved,
 		},
 	}
