@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -32,21 +33,21 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/statuscontroller"
 )
 
-func RunOperator(ctx *controllercmd.ControllerContext) error {
+func RunOperator(ctx context.Context, controllerContext *controllercmd.ControllerContext) error {
 	// This kube client use protobuf, do not use it for CR
-	kubeClient, err := kubernetes.NewForConfig(ctx.ProtoKubeConfig)
+	kubeClient, err := kubernetes.NewForConfig(controllerContext.ProtoKubeConfig)
 	if err != nil {
 		return err
 	}
-	operatorConfigClient, err := operatorversionedclient.NewForConfig(ctx.KubeConfig)
+	operatorConfigClient, err := operatorversionedclient.NewForConfig(controllerContext.KubeConfig)
 	if err != nil {
 		return err
 	}
-	configClient, err := configv1client.NewForConfig(ctx.KubeConfig)
+	configClient, err := configv1client.NewForConfig(controllerContext.KubeConfig)
 	if err != nil {
 		return err
 	}
-	clientset, err := kubernetes.NewForConfig(ctx.KubeConfig)
+	clientset, err := kubernetes.NewForConfig(controllerContext.KubeConfig)
 	if err != nil {
 		return err
 	}
@@ -72,7 +73,7 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 		operatorClient,
 		kubeInformersForNamespaces,
 		kubeClient,
-		ctx.EventRecorder,
+		controllerContext.EventRecorder,
 	)
 	if err != nil {
 		return err
@@ -84,7 +85,7 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 		kubeInformersForNamespaces,
 		configInformers,
 		resourceSyncController,
-		ctx.EventRecorder,
+		controllerContext.EventRecorder,
 	)
 
 	versionRecorder := status.NewVersionGetter()
@@ -111,7 +112,7 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 		configInformers.Config().V1().ClusterOperators(),
 		operatorClient,
 		versionRecorder,
-		ctx.EventRecorder,
+		controllerContext.EventRecorder,
 	)
 	clusterInfrastructure, err := configClient.ConfigV1().Infrastructures().Get("cluster", metav1.GetOptions{})
 	if err != nil && !errors.IsNotFound(err) {
@@ -124,20 +125,20 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 		coreClient,
 		operatorClient,
 		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
-		ctx.EventRecorder,
+		controllerContext.EventRecorder,
 	)
 	hostEtcdEndpointController := hostetcdendpointcontroller.NewHostEtcdEndpointcontroller(
 		coreClient,
 		operatorClient,
 		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
-		ctx.EventRecorder,
+		controllerContext.EventRecorder,
 	)
 
 	clusterMemberController := clustermembercontroller.NewClusterMemberController(
 		coreClient,
 		operatorClient,
 		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
-		ctx.EventRecorder,
+		controllerContext.EventRecorder,
 		etcdDiscoveryDomain,
 	)
 
@@ -147,12 +148,12 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 
 	go etcdCertSignerController.Run(1, ctx.Done())
 	go hostEtcdEndpointController.Run(1, ctx.Done())
-	go resourceSyncController.Run(1, ctx.Done())
+	go resourceSyncController.Run(ctx, 1)
 	go clusterOperatorStatus.Run(1, ctx.Done())
-	go configObserver.Run(1, ctx.Done())
+	go configObserver.Run(ctx, 1)
 	go clusterMemberController.Run(ctx.Done())
 	go func() {
-		err := bootstrapteardown.TearDownBootstrap(ctx.KubeConfig, clusterMemberController, operatorClient.Client.Etcds())
+		err := bootstrapteardown.TearDownBootstrap(controllerContext.KubeConfig, clusterMemberController, operatorClient.Client.Etcds())
 		if err != nil {
 			klog.Fatalf("Error tearing down bootstrap: %#v", err)
 		}
