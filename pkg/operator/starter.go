@@ -88,7 +88,7 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 	)
 
 	versionRecorder := status.NewVersionGetter()
-	clusterOperator, err := configClient.ConfigV1().ClusterOperators().Get("openshift-etcd", metav1.GetOptions{})
+	clusterOperator, err := configClient.ConfigV1().ClusterOperators().Get("etcd", metav1.GetOptions{})
 	if err != nil && !errors.IsNotFound(err) {
 		return err
 	}
@@ -99,7 +99,7 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 	versionRecorder.SetVersion("operator", status.VersionForOperatorFromEnv())
 
 	clusterOperatorStatus := statuscontroller.NewClusterOperatorStatusController(
-		"openshift-etcd",
+		"etcd",
 		[]configv1.ObjectReference{
 			{Group: "operator.openshift.io", Resource: "etcds", Name: "cluster"},
 			{Resource: "namespaces", Name: operatorclient.GlobalUserSpecifiedConfigNamespace},
