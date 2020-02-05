@@ -12,19 +12,31 @@ import (
 )
 
 func GetScaleAnnotationName(configMap *corev1.ConfigMap) (string, error) {
-	scaling := &ceoapi.EtcdScaling{}
-	data, ok := configMap.Annotations[EtcdScalingAnnotationKey]
-	if !ok {
-		return "", nil
+	scaling, err := GetScalingAnnotation(configMap)
+	if err != nil {
+		return "", err
 	}
-	if data == "" {
-		return "", nil
-	}
-	if err := json.Unmarshal([]byte(data), scaling); err != nil {
-		klog.Infof("unable to unmarshal scaling data %#v\n", err)
+	if scaling == nil {
 		return "", err
 	}
 	return scaling.Metadata.Name, nil
+}
+
+func GetScalingAnnotation(configMap *corev1.ConfigMap) (*ceoapi.EtcdScaling, error) {
+	scaling := &ceoapi.EtcdScaling{}
+	data, ok := configMap.Annotations[EtcdScalingAnnotationKey]
+	if !ok {
+		return nil, nil
+	}
+	if data == "" {
+		return nil, nil
+	}
+	err := json.Unmarshal([]byte(data), scaling)
+	if err != nil {
+		klog.Infof("unable to unmarshal scaling data %#v\n", err)
+		return nil, err
+	}
+	return scaling, nil
 }
 
 func ReverseLookupSelf(service, proto, name, self string) (string, error) {
