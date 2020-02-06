@@ -183,17 +183,6 @@ func (c *StaticPodController) sync() error {
 	if err != nil {
 		return err
 	}
-	switch operatorSpec.ManagementState {
-	case operatorv1.Managed:
-	case operatorv1.Unmanaged:
-		return nil
-	case operatorv1.Removed:
-		// TODO should we support removal?
-		return nil
-	default:
-		c.eventRecorder.Warningf("ManagementStateUnknown", "Unrecognized operator management state %q", operatorSpec.ManagementState)
-		return nil
-	}
 	pod, err := c.clientset.CoreV1().Pods(etcdNamespace).Get(c.localEtcdName, metav1.GetOptions{})
 	if err != nil {
 		klog.Infof("No Pod found in %s with name %s", etcdNamespace, c.localEtcdName)

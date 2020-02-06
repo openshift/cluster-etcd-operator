@@ -19,7 +19,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -111,22 +110,6 @@ func (c *EtcdCertSignerController) processNextWorkItem() bool {
 }
 
 func (c *EtcdCertSignerController) sync() error {
-	operatorSpec, _, _, err := c.operatorConfigClient.GetOperatorState()
-	if err != nil {
-		return err
-	}
-	switch operatorSpec.ManagementState {
-	case operatorv1.Managed:
-	case operatorv1.Unmanaged:
-		return nil
-	case operatorv1.Removed:
-		// TODO should we support removal?
-		return nil
-	default:
-		c.eventRecorder.Warningf("ManagementStateUnknown", "Unrecognized operator management state %q", operatorSpec.ManagementState)
-		return nil
-	}
-
 	// TODO: make the namespace and name constants in one of the packages
 	cm, err := c.clientset.CoreV1().ConfigMaps(etcdNamespace).Get("member-config", metav1.GetOptions{})
 	if err != nil {
