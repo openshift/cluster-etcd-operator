@@ -190,7 +190,7 @@ github.com/openshift/client-go/operator/informers/externalversions/operator/v1
 github.com/openshift/client-go/operator/informers/externalversions/operator/v1alpha1
 github.com/openshift/client-go/operator/listers/operator/v1
 github.com/openshift/client-go/operator/listers/operator/v1alpha1
-# github.com/openshift/library-go v0.0.0-20200204123023-7b1fdcf1c517
+# github.com/openshift/library-go v0.0.0-20200206082234-e7b0b487de39
 github.com/openshift/library-go/pkg/assets
 github.com/openshift/library-go/pkg/config/client
 github.com/openshift/library-go/pkg/config/clusteroperator/v1helpers
@@ -198,6 +198,7 @@ github.com/openshift/library-go/pkg/config/configdefaults
 github.com/openshift/library-go/pkg/config/leaderelection
 github.com/openshift/library-go/pkg/config/serving
 github.com/openshift/library-go/pkg/controller/controllercmd
+github.com/openshift/library-go/pkg/controller/factory
 github.com/openshift/library-go/pkg/controller/fileobserver
 github.com/openshift/library-go/pkg/controller/metrics
 github.com/openshift/library-go/pkg/crypto
@@ -205,12 +206,34 @@ github.com/openshift/library-go/pkg/operator/condition
 github.com/openshift/library-go/pkg/operator/configobserver
 github.com/openshift/library-go/pkg/operator/events
 github.com/openshift/library-go/pkg/operator/genericoperatorclient
+github.com/openshift/library-go/pkg/operator/loglevel
 github.com/openshift/library-go/pkg/operator/management
 github.com/openshift/library-go/pkg/operator/resource/resourceapply
 github.com/openshift/library-go/pkg/operator/resource/resourcehelper
 github.com/openshift/library-go/pkg/operator/resource/resourcemerge
+github.com/openshift/library-go/pkg/operator/resource/resourceread
+github.com/openshift/library-go/pkg/operator/resource/retry
 github.com/openshift/library-go/pkg/operator/resourcesynccontroller
+github.com/openshift/library-go/pkg/operator/revisioncontroller
+github.com/openshift/library-go/pkg/operator/staticpod
+github.com/openshift/library-go/pkg/operator/staticpod/certsyncpod
+github.com/openshift/library-go/pkg/operator/staticpod/controller/backingresource
+github.com/openshift/library-go/pkg/operator/staticpod/controller/backingresource/bindata
+github.com/openshift/library-go/pkg/operator/staticpod/controller/installer
+github.com/openshift/library-go/pkg/operator/staticpod/controller/installer/bindata
+github.com/openshift/library-go/pkg/operator/staticpod/controller/installerstate
+github.com/openshift/library-go/pkg/operator/staticpod/controller/monitoring
+github.com/openshift/library-go/pkg/operator/staticpod/controller/monitoring/bindata
+github.com/openshift/library-go/pkg/operator/staticpod/controller/node
+github.com/openshift/library-go/pkg/operator/staticpod/controller/prune
+github.com/openshift/library-go/pkg/operator/staticpod/controller/prune/bindata
+github.com/openshift/library-go/pkg/operator/staticpod/controller/revision
+github.com/openshift/library-go/pkg/operator/staticpod/controller/staticpodstate
+github.com/openshift/library-go/pkg/operator/staticpod/installerpod
+github.com/openshift/library-go/pkg/operator/staticpod/prune
+github.com/openshift/library-go/pkg/operator/staticresourcecontroller
 github.com/openshift/library-go/pkg/operator/status
+github.com/openshift/library-go/pkg/operator/unsupportedconfigoverridescontroller
 github.com/openshift/library-go/pkg/operator/v1helpers
 github.com/openshift/library-go/pkg/serviceability
 # github.com/pkg/profile v1.3.0
