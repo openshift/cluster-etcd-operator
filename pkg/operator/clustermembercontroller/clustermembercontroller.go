@@ -106,24 +106,62 @@ func (c *ClusterMemberController) reconcileMembers() error {
 		return err
 	}
 
+	memberForScaleDown, err := c.getNewMemberToScaleDown()
+	if err != nil {
+		return err
+	}
+
+	if memberForScaleDown != nil {
+		// emit event, update status
+		c.eventRecorder.Warningf("EtcdMemberScaleDown", "Member is unhealthy and is being removed: %s\n", memberForScaleDown.Name)
+		_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+			Type:    "ClusterMemberRemoveProgressing",
+			Status:  operatorv1.ConditionTrue,
+			Reason:  "EtcdMemberRemove",
+			Message: fmt.Sprintf("Removing member %s", memberForScaleDown.Name),
+		}))
+		if updateErr != nil {
+			c.eventRecorder.Warning("ClusterMemberErrorUpdatingStatus", updateErr.Error())
+			return updateErr
+		}
+		if err := c.EtcdMemberRemove(memberForScaleDown.Name); err != nil {
+			c.eventRecorder.Warning("ScalingDownFailed", err.Error())
+			return err
+		}
+		return nil
+	} else {
+		_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+			Type:   "ClusterMemberRemoveProgressing",
+			Status: operatorv1.ConditionFalse,
+			Reason: "AsExpected",
+		}))
+		if updateErr != nil {
+			c.eventRecorder.Warning("ClusterMemberErrorUpdatingStatus", updateErr.Error())
+			return updateErr
+		}
+	}
+
+	// for scaling up, check if configmap is populated
 	resyncName, err := c.getScaleAnnotationName()
 	if err != nil {
 		return fmt.Errorf("failed to obtain name from annotation: %s", err.Error())
 	}
+
 	if resyncName == "" {
-		newResyncName, err := c.getResyncName()
+		c.eventRecorder.Eventf("ScaleUpAnnotationEmpty", "no annotation found on the configmap")
+		newMemberForScaleUp, err := c.getNewMemberToScaleUp()
 		if err != nil {
 			return err
 		}
-		if newResyncName == "" {
-			// scaling complete, no more work to be done
+		if newMemberForScaleUp == nil {
 			if c.numberOfEtcdMembers == EtcdClusterSize {
+				klog.V(4).Infof("reconcileMembers: scaling complete")
 				_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient,
 					v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 						Type:    "ClusterMemberProgressing",
 						Status:  operatorv1.ConditionFalse,
 						Reason:  "ClusterMemberScalingComplete",
-						Message: fmt.Sprintf("etcd has scaled to %d members", c.numberOfEtcdMembers),
+						Message: fmt.Sprintf("etcd has scaled to %d/%d members", c.numberOfEtcdMembers, EtcdClusterSize),
 					}),
 					v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 						Type:    ConditionBootstrapSafeToRemove,
@@ -136,9 +174,11 @@ func (c *ClusterMemberController) reconcileMembers() error {
 					return updateErr
 				}
 			} else {
+				// we should never hit this else, but if we do, we should know that state
+				c.eventRecorder.Warningf("NoMemberToScaleUp", "No new member found for scaling up")
 				_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 					Type:    "ClusterMemberProgressing",
-					Status:  operatorv1.ConditionFalse,
+					Status:  operatorv1.ConditionTrue,
 					Reason:  "ClusterMemberScalingIncomplete",
 					Message: fmt.Sprintf("etcd is scaling with %d/%d members active", c.numberOfEtcdMembers, EtcdClusterSize)}),
 					v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
@@ -152,43 +192,45 @@ func (c *ClusterMemberController) reconcileMembers() error {
 					return updateErr
 				}
 			}
-			return nil
 		}
-		resyncName = newResyncName
-		c.eventRecorder.Eventf("ResyncMember", "reconciling %s", resyncName)
+
+		err = c.setScaleAnnotation(newMemberForScaleUp)
+		if err != nil {
+			return err
+		}
+		// just changed the configmap, we will sync on it during next run
+		return nil
 	}
 
-	p, err := c.clientset.CoreV1().Pods("openshift-etcd").Get(resyncName, metav1.GetOptions{})
+	podToResync, err := c.clientset.CoreV1().Pods("openshift-etcd").Get(resyncName, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
-	klog.V(4).Infof("reconciling %s/%s", p.Namespace, p.Name)
+	klog.V(4).Infof("reconciling %s/%s", podToResync.Namespace, podToResync.Name)
 
-	// exisiting member can be removed order is important here
-	if c.IsStatus("pending", p.Name, ceoapi.MemberRemove) {
-		// emit event, update status
-		c.eventRecorder.Warningf("EtcdScaleDown", "Member is unhealthy and is being removed: %s\n", p.Name)
+	if c.IsMember(podToResync.Name) {
+		klog.Infof("Member is already part of the cluster %s\n", podToResync.Name)
+		// clear annotation because scaling is complete
+		if err := c.setScaleAnnotation(nil); err != nil {
+			return err
+		}
+		c.eventRecorder.Eventf("ScaleUpAnnotationCleared", "Member %s has scaled", resyncName)
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:    "ClusterMemberRemoveProgressing",
+			Type:    "ClusterMemberAvailable",
 			Status:  operatorv1.ConditionTrue,
-			Reason:  "EtcdMemberRemove",
-			Message: fmt.Sprintf("Removing member %s", p.Name),
+			Reason:  "EtcdMemberAvailable",
+			Message: fmt.Sprintf("scaling member %s is successful, it is now available", podToResync.Name),
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("ClusterMemberErrorUpdatingStatus", updateErr.Error())
 			return updateErr
 		}
-		if err := c.EtcdMemberRemove(p.Name); err != nil {
-			c.eventRecorder.Warning("ScalingDownFailed", err.Error())
-			return err
-		}
-		return nil
 	} else {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:    "ClusterMemberRemoveProgressing",
+			Type:    "ClusterMemberAvailable",
 			Status:  operatorv1.ConditionFalse,
-			Reason:  "EtcdMemberRemoved",
-			Message: fmt.Sprintf("Removed member %s", p.Name),
+			Reason:  "ScaleUpProgressing",
+			Message: fmt.Sprintf("Scaling member %s, it is not available yet", podToResync.Name),
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("ClusterMemberErrorUpdatingStatus", updateErr.Error())
@@ -196,8 +238,7 @@ func (c *ClusterMemberController) reconcileMembers() error {
 		}
 	}
 
-	// Pending MemberAdd: here we have observed the static pod having add dependencies filled ok to scale Cluster API.
-	if c.IsStatus("pending", p.Name, ceoapi.MemberReady) {
+	if c.IsStatus("pending", podToResync.Name, ceoapi.MemberReady) {
 		scalingData, err := c.GetScalingDataFromConfigMap()
 		if err != nil {
 			return err
@@ -206,66 +247,29 @@ func (c *ClusterMemberController) reconcileMembers() error {
 			Type:    "ClusterMemberAddProgressing",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "EtcdMemberAdd",
-			Message: fmt.Sprintf("Adding member %s to etcd", p.Name),
+			Message: fmt.Sprintf("Adding member %s to etcd", podToResync.Name),
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("ClusterMemberErrorUpdatingStatus", updateErr.Error())
 			return updateErr
 		}
-		c.eventRecorder.Eventf("ScalingMember", "Adding member %s with scaling data %v", p.Name, scalingData)
+		c.eventRecorder.Eventf("ScalingMember", "Adding member %s with scaling data %v", podToResync.Name, scalingData)
 		if err := c.etcdMemberAdd([]string{fmt.Sprintf("https://%s:2380", scalingData.PodFQDN)}); err != nil {
 			c.eventRecorder.Warning("ScalingFailed", err.Error())
 			return err
 		}
-		return nil
 	} else {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "ClusterMemberAddProgressing",
 			Status:  operatorv1.ConditionFalse,
 			Reason:  "EtcdMemberAdded",
-			Message: fmt.Sprintf("Member %s added to etcd", p.Name),
+			Message: fmt.Sprintf("Member %s added to etcd", podToResync.Name),
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("ClusterMemberErrorUpdatingStatus", updateErr.Error())
 			return updateErr
 		}
 	}
-
-	if c.IsMember(p.Name) {
-		klog.Infof("Member is already part of the cluster %s\n", p.Name)
-		name, err := c.getScaleAnnotationName()
-		if err != nil {
-			klog.Errorf("failed to obtain name from annotation %v", err)
-		}
-		// clear annotation because scaling is complete
-		if name == p.Name {
-			if err := c.setScaleAnnotation(nil); err != nil {
-				return err
-			}
-		}
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:    "ClusterMemberAvailable",
-			Status:  operatorv1.ConditionTrue,
-			Reason:  "EtcdMemberAvailable",
-			Message: fmt.Sprintf("Member %s is available", p.Name),
-		}))
-		if updateErr != nil {
-			c.eventRecorder.Warning("ClusterMemberErrorUpdatingStatus", updateErr.Error())
-			return updateErr
-		}
-	} else {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:    "ClusterMemberAvailable",
-			Status:  operatorv1.ConditionFalse,
-			Reason:  "EtcdMemberUnavailable",
-			Message: fmt.Sprintf("Member %s is unavailable", p.Name),
-		}))
-		if updateErr != nil {
-			c.eventRecorder.Warning("ClusterMemberErrorUpdatingStatus", updateErr.Error())
-			return updateErr
-		}
-	}
-
 	return nil
 }
 
@@ -328,12 +332,11 @@ func (c *ClusterMemberController) EtcdMemberRemove(name string) error {
 	}
 	for _, member := range l.Members {
 		if member.Name == name {
-
 			resp, err := cli.MemberRemove(context.Background(), member.ID)
 			if err != nil {
 				return err
 			}
-			klog.Infof("Members left %#v", resp.Members)
+			c.eventRecorder.Eventf("EtcdMemberRemoved", "removed %s from etcd api, members left %#v", name, resp.Members)
 		}
 	}
 	return nil
@@ -470,8 +473,7 @@ func (c *ClusterMemberController) setScaleAnnotation(p *corev1.Pod) error {
 		return err
 	}
 
-	// todo: status about update
-	klog.V(2).Infof("%#v", update)
+	c.eventRecorder.Eventf("ScaleUpAnnotationSet", "configmap annotation set: %#v", update)
 
 	return nil
 }
@@ -549,7 +551,7 @@ func (c *ClusterMemberController) etcdMemberAdd(peerURLs []string) error {
 	if err != nil {
 		return err
 	}
-	klog.Infof("added etcd member.PeerURLs:%s", resp.Member.PeerURLs)
+	c.eventRecorder.Eventf("EtcdMemberAdded", "added member with PeerURLs:%s to etcd api", resp.Member.PeerURLs)
 	return nil
 }
 
@@ -602,74 +604,6 @@ func (c *ClusterMemberController) RemoveBootstrapFromEndpoint() error {
 	}
 
 	return nil
-}
-
-func (c *ClusterMemberController) getResyncName() (string, error) {
-	// set resync name
-	newMemberForScaleUp, err := c.getNewMemberToScaleUp()
-	if err != nil {
-		return "", err
-	}
-	if newMemberForScaleUp != nil {
-		err = c.setScaleAnnotation(newMemberForScaleUp)
-		if err != nil {
-			return newMemberForScaleUp.Name, err
-		}
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:    "ClustetMemberScaleUpProgressing",
-			Status:  operatorv1.ConditionTrue,
-			Message: fmt.Sprintf("Scaling up member %s", newMemberForScaleUp.Name),
-		}))
-		if updateErr != nil {
-			c.eventRecorder.Warning("ClusterMemberErrorUpdatingStatus", updateErr.Error())
-			return "", updateErr
-		}
-	} else {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:   "ClustetMemberScaleUpProgressing",
-			Status: operatorv1.ConditionFalse,
-			Reason: "AsExpected",
-		}))
-		if updateErr != nil {
-			c.eventRecorder.Warning("ClusterMemberErrorUpdatingStatus", updateErr.Error())
-			return "", updateErr
-		}
-	}
-
-	// scaling up is complete, check for scale down
-	newMemberForScaleDown, err := c.getNewMemberToScaleDown()
-	if err != nil {
-		return "", err
-	}
-
-	if newMemberForScaleDown != nil {
-		err = c.setScaleAnnotation(newMemberForScaleDown)
-		if err != nil {
-			return "", err
-		}
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:    "ClustetMemberScaleDownProgressing",
-			Status:  operatorv1.ConditionTrue,
-			Message: fmt.Sprintf("Scaling down member %s", newMemberForScaleUp.Name),
-		}))
-		if updateErr != nil {
-			c.eventRecorder.Warning("ClusterMemberErrorUpdatingStatus", updateErr.Error())
-			return "", updateErr
-		}
-	} else {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:   "ClustetMemberScaleUpProgressing",
-			Status: operatorv1.ConditionFalse,
-			Reason: "AsExpected",
-		}))
-		if updateErr != nil {
-			c.eventRecorder.Warning("ClusterMemberErrorUpdatingStatus", updateErr.Error())
-			return "", updateErr
-		}
-	}
-
-	// no members to scale
-	return "", nil
 }
 
 func (c *ClusterMemberController) isClusterEtcdOperatorReady() bool {
@@ -729,10 +663,11 @@ func (c *ClusterMemberController) getNewMemberToScaleDown() (*corev1.Pod, error)
 			if err != nil {
 				return nil, err
 			}
+			klog.V(2).Infof("getNewMemberToScaleDown: scaling down %s", pod.Name)
 			return pod, nil
 		}
 	}
-	// todo: implement me
+	klog.V(2).Infof("getNewMemberToScaleDown: no member found for scaling down")
 	return nil, nil
 }
 
