@@ -106,9 +106,6 @@ func (c *BootstrapTeardownController) removeBootstrap() error {
 	if err != nil {
 		return err
 	}
-	if currentEtcdOperator.Spec.ManagementState != operatorv1.Managed {
-		return nil
-	}
 
 	etcdReady := c.isEtcdAvailable(currentEtcdOperator)
 	if !etcdReady {

@@ -291,7 +291,7 @@ func (c *ClusterMemberController) sync() error {
 			operatorv1.OperatorCondition{
 				Type:    ConditionBootstrapSafeToRemove,
 				Status:  operatorv1.ConditionFalse,
-				Reason:  "ScalingInComplete",
+				Reason:  "ScalingIncomplete",
 				Message: "cluster-etcd-operator is scaling, etcd-bootstrap is not safe to remove",
 			}))
 		if updateErr != nil {
