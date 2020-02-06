@@ -28,14 +28,14 @@ type envVarFunc func(envVarContext envVarContext) (map[string]string, error)
 var envVarFns = []envVarFunc{
 	getEscapedIPAddress,
 	getDNSName,
-	getEtcdDataDir,
-	getEtcdctlAPI,
+	getFixedEtcdEnvVars,
 	getEtcdName,
 }
 
 // getEtcdEnvVars returns the env vars that need to be set on the etcd static pods that will be rendered.
 //   ETCD_DATA_DIR
 //   ETCDCTL_API
+//   ETCD_QUOTA_BACKEND_BYTES
 //   NODE_%s_IP
 //   NODE_%s_ETCD_DNS_NAME
 //   NODE_%s_ETCD_NAME
@@ -62,15 +62,11 @@ func getEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
 	return ret, nil
 }
 
-func getEtcdDataDir(envVarContext envVarContext) (map[string]string, error) {
+func getFixedEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
 	return map[string]string{
-		"ETCD_DATA_DIR": "/var/lib/etcd",
-	}, nil
-}
-
-func getEtcdctlAPI(envVarContext envVarContext) (map[string]string, error) {
-	return map[string]string{
-		"ETCDCTL_API": "3",
+		"ETCD_DATA_DIR":            "/var/lib/etcd",
+		"ETCD_QUOTA_BACKEND_BYTES": "7516192768", // 7 gig
+		"ETCDCTL_API":              "3",
 	}, nil
 }
 
@@ -82,7 +78,7 @@ func getEtcdName(envVarContext envVarContext) (map[string]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		ret[fmt.Sprintf("NODE_%s_ETCD_NAME", nodeInfo.NodeName)] = fmt.Sprintf("etcd-member-%s", dnsName)
+		ret[fmt.Sprintf("NODE_%s_ETCD_NAME", envVarSafe(nodeInfo.NodeName))] = fmt.Sprintf("etcd-member-%s", dnsName)
 	}
 
 	return ret, nil
@@ -95,7 +91,7 @@ func getEscapedIPAddress(envVarContext envVarContext) (map[string]string, error)
 		if err != nil {
 			return nil, err
 		}
-		ret[fmt.Sprintf("NODE_%s_IP", nodeInfo.NodeName)] = address
+		ret[fmt.Sprintf("NODE_%s_IP", envVarSafe(nodeInfo.NodeName))] = address
 	}
 
 	return ret, nil
@@ -156,7 +152,7 @@ func getDNSName(envVarContext envVarContext) (map[string]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		ret[fmt.Sprintf("NODE_%s_ETCD_DNS_NAME", nodeInfo.NodeName)] = dnsName
+		ret[fmt.Sprintf("NODE_%s_ETCD_DNS_NAME", envVarSafe(nodeInfo.NodeName))] = dnsName
 	}
 
 	return ret, nil
@@ -187,4 +183,8 @@ func reverseLookup(service, proto, name, ip string) (string, error) {
 		return "", fmt.Errorf("could not find self")
 	}
 	return selfTarget, nil
+}
+
+func envVarSafe(nodeName string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(nodeName, "-", "_"), ".", "_")
 }

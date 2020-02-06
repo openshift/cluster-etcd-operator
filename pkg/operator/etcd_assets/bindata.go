@@ -160,11 +160,37 @@ spec:
     image: ${IMAGE}
     imagePullPolicy: IfNotPresent
     terminationMessagePolicy: FallbackToLogsOnError
-    command: ["sleep"]
+    command:
+      - /bin/sh
+      - -c
+      - |
+        #!/bin/sh
+        set -euo pipefail
+
+        echo "NODE__NAME=NODE_NAME"
+        echo "NODE__ENVVAR_NAME=NODE_ENVVAR_NAME"
+        echo "NODE_NODE__ENVVAR_NAME_ETCD_DNS_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}"
+        echo "NODE_NODE__ENVVAR_NAME_ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}"
+        echo "NODE_NODE__ENVVAR_NAME_IP=${NODE_NODE_ENVVAR_NAME_IP}"
+
+        sleep 24h
+
+        # exec etcd \
+        #        --initial-advertise-peer-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2380 \
+        #        --cert-file=/etc/ssl/etcd/system:etcd-server:${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}.crt \
+        #        --key-file=/etc/ssl/etcd/system:etcd-server:${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}.key \
+        #        --trusted-ca-file=/etc/ssl/etcd/ca.crt \
+        #        --client-cert-auth=true \
+        #        --peer-cert-file=/etc/ssl/etcd/system:etcd-peer:${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}.crt \
+        #        --peer-key-file=/etc/ssl/etcd/system:etcd-peer:${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}.key \
+        #        --peer-trusted-ca-file=/etc/ssl/etcd/ca.crt \
+        #        --peer-client-cert-auth=true \
+        #        --advertise-client-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2379 \
+        #        --listen-client-urls=https://${LISTEN_ON_ALL_IPS}:2379 \
+        #        --listen-peer-urls=https://${LISTEN_ON_ALL_IPS}:2380 \
+        #        --listen-metrics-urls=https://${LISTEN_ON_ALL_IPS}:9978 \
     env:
 ${COMPUTED_ENV_VARS}
-    args:
-    - "7200"
     resources:
       requests:
         memory: 200Mi
@@ -174,6 +200,14 @@ ${COMPUTED_ENV_VARS}
       name: resource-dir
     - mountPath: /etc/kubernetes/static-pod-certs
       name: cert-dir
+    - mountPath: /run/etcd/
+      name: discovery
+    - mountPath: /etc/ssl/etcd/
+      name: certs
+    - mountPath: /var/lib/etcd/
+      name: data-dir
+    - mountPath: /etc/etcd/
+      name: conf
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
@@ -185,6 +219,22 @@ ${COMPUTED_ENV_VARS}
   - hostPath:
       path: /etc/kubernetes/static-pod-resources/etcd-certs
     name: cert-dir
+  - hostPath:
+      path: /etc/kubernetes/static-pod-resources/etcd-member
+      type: ""
+    name: certs
+  - hostPath:
+      path: /run/etcd
+      type: ""
+    name: discovery
+  - hostPath:
+      path: /var/lib/etcd
+      type: ""
+    name: data-dir
+  - hostPath:
+      path: /etc/etcd
+      type: ""
+    name: conf
 
 `)
 
