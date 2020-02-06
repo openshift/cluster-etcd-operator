@@ -1,14 +1,14 @@
-FROM registry.svc.ci.openshift.org/ocp/builder:golang-1.12 AS builder
+FROM registry.svc.ci.openshift.org/ocp/builder:golang-1.13 AS builder
 WORKDIR /go/src/github.com/openshift/cluster-etcd-operator
 COPY . .
-RUN go build ./cmd/cluster-etcd-operator
+RUN make build --warn-undefined-variables
 
-FROM registry.svc.ci.openshift.org/ocp/4.0:base
-COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/bindata/bootkube/* /usr/share/bootkube/manifests/
-COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/bindata/bootkube/config/* /usr/share/bootkube/manifests/config/
-COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/bindata/bootkube/manifests/* /usr/share/bootkube/manifests/manifests/
-COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/bindata/bootkube/bootstrap-manifests/* /usr/share/bootkube/manifests/bootstrap-manifests/
+FROM registry.svc.ci.openshift.org/ocp/4.4:base
+COPY bindata/bootkube/* /usr/share/bootkube/manifests/
+COPY bindata/bootkube/config/* /usr/share/bootkube/manifests/config/
+COPY bindata/bootkube/manifests/* /usr/share/bootkube/manifests/manifests/
+COPY bindata/bootkube/bootstrap-manifests/* /usr/share/bootkube/manifests/bootstrap-manifests/
+COPY manifests/ /manifests/
 COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/cluster-etcd-operator /usr/bin/
-COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/manifests/ /manifests/
 
 LABEL io.openshift.release.operator true
