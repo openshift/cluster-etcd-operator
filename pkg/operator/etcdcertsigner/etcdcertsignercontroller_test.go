@@ -275,17 +275,6 @@ func TestEtcdCertSignerController_populateSecret(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:   "test invalid secret",
-			fields: fields{clientset: fake.NewSimpleClientset(getTLSSecret("foo", "bar", "", ""))},
-			args: args{
-				secretName:      "foo",
-				secretNamespace: "bar",
-				cert:            bytes.NewBufferString("secure_crt_data"),
-				key:             bytes.NewBufferString("secure_key_data"),
-			},
-			wantErr: false,
-		},
-		{
 			name:   "test secret with valid certs",
 			fields: fields{clientset: fake.NewSimpleClientset(getTLSSecret("foo", "bar", "secure_crt_data", "secure_key_data"))},
 			args: args{

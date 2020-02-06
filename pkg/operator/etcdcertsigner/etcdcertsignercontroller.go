@@ -4,26 +4,20 @@ import (
 	"bytes"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/json"
-	"errors"
 	"fmt"
-
-	ceoapi "github.com/openshift/cluster-etcd-operator/pkg/operator/api"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
-
 	"strings"
 	"time"
 
-	"github.com/openshift/library-go/pkg/crypto"
-	v1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/util/sets"
-
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
+	"github.com/openshift/library-go/pkg/crypto"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	v1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
 	corev1client "k8s.io/client-go/kubernetes"
@@ -111,115 +105,163 @@ func (c *EtcdCertSignerController) processNextWorkItem() bool {
 }
 
 func (c *EtcdCertSignerController) sync() error {
-	operatorSpec, _, _, err := c.operatorConfigClient.GetOperatorState()
+	// TODO: make the namespace and scalingMember constants in one of the packages
+	err := c.reconcileCerts()
 	if err != nil {
+		_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+			Type:    "EtcdCertSignerDegraded",
+			Status:  operatorv1.ConditionTrue,
+			Reason:  "Error",
+			Message: err.Error(),
+		}))
+		if updateErr != nil {
+			c.eventRecorder.Warning("EtcdCertSignerErrorUpdatingStatus", updateErr.Error())
+			return updateErr
+		}
 		return err
 	}
-	switch operatorSpec.ManagementState {
-	case operatorv1.Managed:
-	case operatorv1.Unmanaged:
-		return nil
-	case operatorv1.Removed:
-		// TODO should we support removal?
-		return nil
-	default:
-		c.eventRecorder.Warningf("ManagementStateUnknown", "Unrecognized operator management state %q", operatorSpec.ManagementState)
-		return nil
-	}
 
-	// TODO: make the namespace and name constants in one of the packages
+	_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient,
+		v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+			Type:   "EtcdCertSignerDegraded",
+			Status: operatorv1.ConditionFalse,
+			Reason: "AsExpected",
+		}))
+	return updateErr
+}
+
+func (c *EtcdCertSignerController) reconcileCerts() error {
 	cm, err := c.clientset.CoreV1().ConfigMaps(etcdNamespace).Get("member-config", metav1.GetOptions{})
 	if err != nil {
-		klog.Errorf("error getting configmap %#v\n", err)
 		return err
 	}
-	scaling := &ceoapi.EtcdScaling{}
-	membershipData, ok := cm.Annotations[clustermembercontroller.EtcdScalingAnnotationKey]
-	if !ok {
-		// Scaling key not found in configmap, hence do nothing
-		return nil
-	}
-	if len(membershipData) == 0 {
-		// scaling value empty
-		return nil
-	}
-	err = json.Unmarshal([]byte(membershipData), scaling)
+	scalingMember, err := clustermembercontroller.GetScalingAnnotation(cm)
 	if err != nil {
-		klog.Infof("unable to unmarshal scaling data %#v\n", err)
 		return err
 	}
-	//TODO: Add the logic for generating certs
-	klog.Infof("Found etcd configmap with data %#v\n", scaling)
-
-	if scaling.Metadata == nil && scaling.Metadata.Name == "" {
-		klog.Errorf("unable to get pod name for scaling")
-		return errors.New("unable to get pod name")
+	if scalingMember == nil {
+		klog.V(4).Info("no scaling member found")
+		_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+			Type:   "EtcdCertSignerProgressing",
+			Status: operatorv1.ConditionFalse,
+			Reason: "AsExpected",
+		}))
+		if updateErr != nil {
+			c.eventRecorder.Warning("EtcdCertSignerErrorUpdatingStatus", updateErr.Error())
+			return updateErr
+		}
+		return nil
 	}
 
-	pod, err := c.clientset.CoreV1().Pods(etcdNamespace).Get(scaling.Metadata.Name, metav1.GetOptions{})
+	pod, err := c.clientset.CoreV1().Pods(etcdNamespace).Get(scalingMember.Metadata.Name, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
 	if pod.Status.HostIP == "" {
-		return errors.New("pod does not have host IP assigned")
+		return fmt.Errorf("pod %s does not have host IP assigned", pod.Name)
 	}
 
 	etcdCASecret, err := c.clientset.CoreV1().Secrets(caNamespace).Get("etcd-signer", metav1.GetOptions{})
 	if err != nil {
-		klog.Errorf("unable to get etcd-signer secret %#v", err)
 		return err
 	}
 
 	etcdMetricCASecret, err := c.clientset.CoreV1().Secrets(caNamespace).Get("etcd-metric-signer", metav1.GetOptions{})
 	if err != nil {
-		klog.Errorf("unable to get etcd-metric-signer secret %#v", err)
 		return err
 	}
 
 	err = ensureTLSData(etcdCASecret)
 	if err != nil {
-		klog.Errorf("etcd-signer ca secret invalid: %v", err)
+		c.eventRecorder.Warningf("SignerCAInvalid", "etcd-signer ca secret invalid: %v", err)
 		return err
 	}
 
 	err = ensureTLSData(etcdMetricCASecret)
 	if err != nil {
-		klog.Errorf("etcd-metric-signer ca secret invalid: %v", err)
+		c.eventRecorder.Warningf("SignerCAInvalid", "etcd-metric-signer ca secret invalid: %v", err)
 		return err
 	}
 
 	secretNamespace := pod.Namespace
 
-	peerHostNames := getPeerHostnames(pod, scaling.PodFQDN)
-
-	pCert, pKey, err := getCerts(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], scaling.PodFQDN, peerOrg, peerHostNames)
-
-	err = c.populateSecret(getSecretName(peerOrg, scaling.PodFQDN), secretNamespace, pCert, pKey)
+	peerSecret, err := c.clientset.CoreV1().Secrets(secretNamespace).Get(getSecretName(peerOrg, scalingMember.PodFQDN), metav1.GetOptions{})
 	if err != nil {
-		klog.Errorf("unable to popopulate peer secret %#v", err)
 		return err
 	}
+	peerSecretError := ensureTLSData(peerSecret)
 
-	serverHostNames := getServerHostnames(pod, scaling.PodFQDN)
-
-	sCert, sKey, err := getCerts(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], scaling.PodFQDN, serverOrg, serverHostNames)
-
-	err = c.populateSecret(getSecretName(serverOrg, scaling.PodFQDN), secretNamespace, sCert, sKey)
+	serverSecret, err := c.clientset.CoreV1().Secrets(secretNamespace).Get(getSecretName(serverOrg, scalingMember.PodFQDN), metav1.GetOptions{})
 	if err != nil {
-		klog.Errorf("unable to populate server secret %#v", err)
 		return err
 	}
+	serverSecretError := ensureTLSData(serverSecret)
 
-	metricHostNames := getMetricHostnames(pod, scaling.PodFQDN)
-
-	metricCert, metricKey, err := getCerts(etcdMetricCASecret.Data["tls.crt"], etcdMetricCASecret.Data["tls.key"], scaling.PodFQDN, metricOrg, metricHostNames)
-
-	err = c.populateSecret(getSecretName(metricOrg, scaling.PodFQDN), secretNamespace, metricCert, metricKey)
+	metricSecret, err := c.clientset.CoreV1().Secrets(secretNamespace).Get(getSecretName(metricOrg, scalingMember.PodFQDN), metav1.GetOptions{})
 	if err != nil {
-		klog.Errorf("unable to populate peer secret %#v", err)
 		return err
 	}
+	metricServerError := ensureTLSData(metricSecret)
 
+	if peerSecretError == nil && serverSecret == nil && metricSecret == nil {
+		_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+			Type:    "EtcdCertSignerProgress",
+			Status:  operatorv1.ConditionFalse,
+			Message: fmt.Sprintf("all secrets for etcd %s are created", scalingMember.Metadata.Name),
+		}))
+		if updateErr != nil {
+			c.eventRecorder.Warning("EtcdCertSignerErrorUpdatingStatus", updateErr.Error())
+			return updateErr
+		}
+		// no more work to do
+		return nil
+	}
+
+	_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		Type:    "EtcdCertSignerProgress",
+		Status:  operatorv1.ConditionTrue,
+		Message: fmt.Sprintf("Creating certs for %s: peerSecretsErr: %s, serverSecretErr: %s, metricSecretError: %s", scalingMember.Metadata.Name, peerSecretError, serverSecretError, metricServerError),
+	}))
+	if updateErr != nil {
+		c.eventRecorder.Warning("EtcdCertSignerErrorUpdatingStatus", updateErr.Error())
+		return updateErr
+	}
+
+	if peerSecretError != nil {
+		peerHostNames := getPeerHostnames(pod, scalingMember.PodFQDN)
+		pCert, pKey, err := getCerts(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], scalingMember.PodFQDN, peerOrg, peerHostNames)
+		secretName := getSecretName(peerOrg, scalingMember.PodFQDN)
+		err = c.populateSecret(secretName, secretNamespace, pCert, pKey)
+		if err != nil {
+			klog.Errorf("unable to popopulate peer secret %#v", err)
+			return err
+		}
+		c.eventRecorder.Eventf("SecretUpdated", "secret %s updated with valid peer certs", secretName)
+	}
+
+	if serverSecretError != nil {
+		serverHostNames := getServerHostnames(pod, scalingMember.PodFQDN)
+		sCert, sKey, err := getCerts(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], scalingMember.PodFQDN, serverOrg, serverHostNames)
+		secretName := getSecretName(serverOrg, scalingMember.PodFQDN)
+		err = c.populateSecret(secretName, secretNamespace, sCert, sKey)
+		if err != nil {
+			klog.Errorf("unable to populate server secret %#v", err)
+			return err
+		}
+		c.eventRecorder.Eventf("SecretUpdated", "secret %s updated with valid server certs", secretName)
+	}
+
+	if metricServerError != nil {
+		metricHostNames := getMetricHostnames(pod, scalingMember.PodFQDN)
+		metricCert, metricKey, err := getCerts(etcdMetricCASecret.Data["tls.crt"], etcdMetricCASecret.Data["tls.key"], scalingMember.PodFQDN, metricOrg, metricHostNames)
+		secretName := getSecretName(metricOrg, scalingMember.PodFQDN)
+		err = c.populateSecret(secretName, secretNamespace, metricCert, metricKey)
+		if err != nil {
+			klog.Errorf("unable to populate peer secret %#v", err)
+			return err
+		}
+		c.eventRecorder.Eventf("SecretUpdated", "secret %s updated with valid peer certs", secretName)
+	}
 	return nil
 }
 
@@ -284,13 +326,13 @@ func getCerts(caCert, caKey []byte, podFQDN, org string, peerHostNames []string)
 
 func ensureTLSData(secret *v1.Secret) error {
 	if secret.Data == nil {
-		return errors.New("secret data not found")
+		return fmt.Errorf("secret data not found for secret %s", secret.Name)
 	}
 	if _, ok := secret.Data["tls.crt"]; !ok {
-		return errors.New("CA Cert not found")
+		return fmt.Errorf("CA Cert not found for secret %s", secret.Name)
 	}
 	if _, ok := secret.Data["tls.key"]; !ok {
-		return errors.New("CA Pem not found")
+		return fmt.Errorf("CA Pem not found for secret %s", secret.Name)
 	}
 	// TODO: add check if certs are not expired.
 	return nil
@@ -303,7 +345,7 @@ func getCommonNameFromOrg(org string) (string, error) {
 	if strings.Contains(org, "metric") {
 		return "etcd-metric-signer", nil
 	}
-	return "", errors.New("unable to recognise secret name")
+	return "", fmt.Errorf("unable to recognise secret name %s", org)
 }
 
 func getPeerHostnames(pod *v1.Pod, podFQDN string) []string {
@@ -375,19 +417,9 @@ func (c *EtcdCertSignerController) populateSecret(secretName, secretNamespace st
 		}
 		return err
 	}
-	if err := ensureTLSData(secret); err != nil {
-		secretCopy := secret.DeepCopy()
-		secretCopy.Data = map[string][]byte{
-			"tls.crt": cert.Bytes(),
-			"tls.key": key.Bytes(),
-		}
-		klog.Warningf("secret %s/%s does not have valid data: %#v", secretNamespace, secretName, err)
-		klog.Infof("attempting to update secret %s/%s with valid certs", secretNamespace, secretName)
-		_, err = c.clientset.CoreV1().Secrets(secretNamespace).Update(secretCopy)
-		return err
-	}
-	klog.Infof("secret %s/%s has valid certs", secretNamespace, secretName)
-	return nil
+	secretCopy := secret.DeepCopy()
+	_, err = c.clientset.CoreV1().Secrets(secretNamespace).Update(secretCopy)
+	return err
 }
 
 // eventHandler queues the operator to check spec and status
