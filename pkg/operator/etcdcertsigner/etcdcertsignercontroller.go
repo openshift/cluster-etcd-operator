@@ -365,11 +365,10 @@ func (c *EtcdCertSignerController) populateSecret(secretName, secretNamespace st
 			"tls.key": key.Bytes(),
 		}
 		klog.Warningf("secret %s/%s does not have valid data: %#v", secretNamespace, secretName, err)
-		klog.Infof("attempting to update secret %s/%s with valid certs", secretNamespace, secretName)
+		c.eventRecorder.Eventf("CertsGenerated", "generated secret %s/%s for certs", secretNamespace, secretName)
 		_, err = c.clientset.CoreV1().Secrets(secretNamespace).Update(secretCopy)
 		return err
 	}
-	klog.Infof("secret %s/%s has valid certs", secretNamespace, secretName)
 	return nil
 }
 
