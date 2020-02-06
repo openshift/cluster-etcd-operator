@@ -143,21 +143,6 @@ func NewStaticSyncController(
 }
 
 func (c *StaticSyncController) sync() error {
-	operatorSpec, _, _, err := c.operatorClient.GetOperatorState()
-	if err != nil {
-		return err
-	}
-	switch operatorSpec.ManagementState {
-	case operatorv1.Managed:
-	case operatorv1.Unmanaged:
-		return nil
-	case operatorv1.Removed:
-		// TODO should we support removal?
-		return nil
-	default:
-		c.eventRecorder.Warningf("ManagementStateUnknown", "Unrecognized operator management state %q", operatorSpec.ManagementState)
-		return nil
-	}
 	// if anything changes we copy
 	assets := [3]string{
 		"namespace",
