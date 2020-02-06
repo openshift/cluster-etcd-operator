@@ -1,8 +1,0 @@
-apiVersion: operator.openshift.io/v1
-kind: Etcd
-metadata:
-  name: cluster
-spec:
-  managementState: Managed
-  # TODO this clearly needs to be fixed
-  imagePullSpec: openshift/origin-hypershift:latest

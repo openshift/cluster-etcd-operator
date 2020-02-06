@@ -316,8 +316,8 @@ github.com/openshift/build-machinery-go v0.0.0-20200205161356-ef115f5adc73 h1:WC
 github.com/openshift/build-machinery-go v0.0.0-20200205161356-ef115f5adc73/go.mod h1:1CkcsT3aVebzRBzVTSbiKSkJMsC/CASqxesfqEMfJEc=
 github.com/openshift/client-go v0.0.0-20200116152001-92a2713fa240 h1:XYfJWv2Ch+qInGLDEedHRtDsJwnxyU1L8U7SY56NcA8=
 github.com/openshift/client-go v0.0.0-20200116152001-92a2713fa240/go.mod h1:4riOwdj99Hd/q+iAcJZfNCsQQQMwURnZV6RL4WHYS5w=
-github.com/openshift/library-go v0.0.0-20200204123023-7b1fdcf1c517 h1:ZbnDCdaqjaVq/XzliXSU87T2Ag8Yqu2hgmS9L1LyZBU=
-github.com/openshift/library-go v0.0.0-20200204123023-7b1fdcf1c517/go.mod h1:/P1rPwPkaaNtylv8PLYkOTbf6tCdaNYDNqL9Y8GzJfE=
+github.com/openshift/library-go v0.0.0-20200206082234-e7b0b487de39 h1:hf1ijG/qYsvBAD6gZg388G1NFwXSd/NfaGFBGlQhGu8=
+github.com/openshift/library-go v0.0.0-20200206082234-e7b0b487de39/go.mod h1:mLRZGYfPe9Kaum4pyhn6hTO3FTPjOZKFB0RxQSIxiuQ=
 github.com/pborman/uuid v1.2.0 h1:J7Q5mO4ysT1dv8hyrUGHb9+ooztCXu1D8MY8DZYsu3g=
 github.com/pborman/uuid v1.2.0/go.mod h1:X/NO0urCmaxf9VXbdlT7C2Yzkj2IKimNn4k+gtPdI/k=
 github.com/pelletier/go-toml v1.2.0/go.mod h1:5z9KED0ma1S8pY6P1sdut58dfprrGBbd/94hg7ilaic=
@@ -398,6 +398,7 @@ github.com/weppos/publicsuffix-go v0.5.0 h1:rutRtjBJViU/YjcI5d80t4JAVvDltS6bciJg
 github.com/weppos/publicsuffix-go v0.5.0/go.mod h1:z3LCPQ38eedDQSwmsSRW4Y7t2L8Ln16JPQ02lHAdn5k=
 github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 h1:eY9dn8+vbi4tKz5Qo6v2eYzo7kUS51QINcR5jNpbZS8=
 github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2/go.mod h1:UETIi67q53MR2AWcXfiuqkDkRtnGDLqkBTpCHuJHxtU=
+github.com/xlab/handysort v0.0.0-20150421192137-fb3537ed64a1 h1:j2hhcujLRHAg872RWAV5yaUrEjHEObwDv3aImCaNLek=
 github.com/xlab/handysort v0.0.0-20150421192137-fb3537ed64a1/go.mod h1:QcJo0QPSfTONNIgpN5RA8prR7fF8nkF6cTWTcNerRO8=
 github.com/xordataexchange/crypt v0.0.3-0.20170626215501-b2862e3d0a77/go.mod h1:aYKd//L2LvnjZzWKhF00oedf4jCCReLcmhLdhm1A27Q=
 github.com/ziutek/mymysql v1.5.4/go.mod h1:LMSpPZ6DbqWFxNCHW77HeMg9I646SAhApZ/wKdgO/C0=
@@ -597,4 +598,5 @@ sigs.k8s.io/structured-merge-diff v1.0.1-0.20191108220359-b1b620dd3f06 h1:zD2Iem
 sigs.k8s.io/structured-merge-diff v1.0.1-0.20191108220359-b1b620dd3f06/go.mod h1:/ULNhyfzRopfcjskuui0cTITekDduZ7ycKN3oUT9R18=
 sigs.k8s.io/yaml v1.1.0 h1:4A07+ZFc2wgJwo8YNlQpr1rVlgUDlxXHhPJciaPY5gs=
 sigs.k8s.io/yaml v1.1.0/go.mod h1:UJmg0vDUVViEyp3mgSv9WPwZCDxu4rQW1olrI1uml+o=
+vbom.ml/util v0.0.0-20180919145318-efcd4e0f9787 h1:O69FD9pJA4WUZlEwYatBEEkRWKQ5cKodWpdKTrCS/iQ=
 vbom.ml/util v0.0.0-20180919145318-efcd4e0f9787/go.mod h1:so/NYdZXCz+E3ZpW0uAoCj6uzU2+8OWDFv/HxUSs7kI=

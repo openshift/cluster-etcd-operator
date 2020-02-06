@@ -163,21 +163,21 @@ func (c *ClusterMemberController) sync() error {
 		}
 
 		condUpgradable := operatorv1.OperatorCondition{
-			Type:   operatorv1.OperatorStatusTypeUpgradeable,
+			Type:   "ClusterMemberUpgradeable",
 			Status: operatorv1.ConditionFalse,
 		}
 		condProgressing := operatorv1.OperatorCondition{
-			Type:   operatorv1.OperatorStatusTypeProgressing,
+			Type:   "ClusterMemberProgressing",
 			Status: operatorv1.ConditionTrue,
 		}
 		// Setting the available false when scaling. This will prevent installer from reporting
 		// success when any of the members are not ready
 		condAvailable := operatorv1.OperatorCondition{
-			Type:   operatorv1.OperatorStatusTypeAvailable,
+			Type:   "ClusterMemberAvailable",
 			Status: operatorv1.ConditionFalse,
 		}
 		condDegraded := operatorv1.OperatorCondition{
-			Type:   operatorv1.OperatorStatusTypeDegraded,
+			Type:   "ClusterMemberDegraded",
 			Status: operatorv1.ConditionFalse,
 		}
 		if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient,
@@ -248,19 +248,19 @@ func (c *ClusterMemberController) sync() error {
 	if c.isClusterEtcdOperatorReady() {
 		// report available
 		condAvailable := operatorv1.OperatorCondition{
-			Type:   operatorv1.OperatorStatusTypeAvailable,
+			Type:   "ClusterMemberAvailable",
 			Status: operatorv1.ConditionTrue,
 		}
 		condUpgradable := operatorv1.OperatorCondition{
-			Type:   operatorv1.OperatorStatusTypeUpgradeable,
+			Type:   "ClusterMemberUpgradeable",
 			Status: operatorv1.ConditionTrue,
 		}
 		condProgressing := operatorv1.OperatorCondition{
-			Type:   operatorv1.OperatorStatusTypeProgressing,
+			Type:   "ClusterMemberProgressing",
 			Status: operatorv1.ConditionFalse,
 		}
 		condDegraded := operatorv1.OperatorCondition{
-			Type:   operatorv1.OperatorStatusTypeDegraded,
+			Type:   "ClusterMemberDegraded",
 			Status: operatorv1.ConditionFalse,
 		}
 
