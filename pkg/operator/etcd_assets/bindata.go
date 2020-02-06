@@ -161,6 +161,8 @@ spec:
     imagePullPolicy: IfNotPresent
     terminationMessagePolicy: FallbackToLogsOnError
     command: ["sleep"]
+    env:
+${COMPUTED_ENV_VARS}
     args:
     - "7200"
     resources:
