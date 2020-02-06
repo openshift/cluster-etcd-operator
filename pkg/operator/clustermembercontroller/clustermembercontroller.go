@@ -76,14 +76,13 @@ func NewClusterMemberController(
 func (c *ClusterMemberController) sync() error {
 	pods, err := c.clientset.CoreV1().Pods("openshift-etcd").List(metav1.ListOptions{LabelSelector: "k8s-app=etcd"})
 	if err != nil {
-		klog.Infof("No Pod found in openshift-etcd with label k8s-app=etcd")
+		klog.Errorf("No Pod found in openshift-etcd with label k8s-app=etcd")
 		return err
 	}
 
 	resyncName, err := c.getResyncName(pods)
 	for i := range pods.Items {
 		p := &pods.Items[i]
-		klog.Infof("Found etcd Pod with name %v\n", p.Name)
 
 		// we anchor this loop on the configmap. In the case of failure we can resync by aligning with that Pod
 		switch resyncName {
@@ -95,27 +94,14 @@ func (c *ClusterMemberController) sync() error {
 			continue
 		}
 
-		// exisiting member can be removed order is important here
-		if c.IsStatus("pending", p.Name, ceoapi.MemberRemove) {
-			klog.Infof("Member is unhealthy and is being removed: %s\n", p.Name)
-			if err := c.EtcdMemberRemove(p.Name); err != nil {
-				c.eventRecorder.Warning("ScalingDownFailed", err.Error())
-				return err
-				// Todo alaypatel07:  need to take care of condition degraded
-				// Todo alaypatel07: need to skip this reconciliation loop and continue later
-				// after the member is removed from this very point.
-			}
-			// continue?
-		}
-
 		if c.IsMember(p.Name) {
-			klog.Infof("Member is already part of the cluster %s\n", p.Name)
 			name, err := c.getScaleAnnotationName()
 			if err != nil {
 				klog.Errorf("failed to obtain name from annotation %v", err)
 			}
 			// clear annotation because scaling is complete
 			if name == p.Name {
+				c.eventRecorder.Eventf("ScalingComplete", "clearnig annotation, member %s has been scaled", name)
 				if err := c.setScaleAnnotation(""); err != nil {
 					return err
 				}
@@ -152,7 +138,7 @@ func (c *ClusterMemberController) sync() error {
 		// although we dont use SRV for server bootstrap we do use the records to map peerurls
 		peerFQDN, err := ReverseLookupSelf("etcd-server-ssl", "tcp", c.etcdDiscoveryDomain, p.Status.HostIP)
 		if err != nil {
-			klog.Errorf("error looking up self: %v", err)
+			c.eventRecorder.Warningf("DNSReverseLookupFailed", "error looking up self: %v", err)
 			continue
 		}
 
@@ -196,7 +182,7 @@ func (c *ClusterMemberController) sync() error {
 			}
 		}
 		if c.IsMember(p.Name) {
-			klog.Infof("Member is already part of the cluster: %s\n", p.Name)
+			c.eventRecorder.Eventf("MemberHasScaledAlready", "Member is already part of the cluster: %s\n", p.Name)
 			continue
 		}
 
@@ -351,7 +337,6 @@ func (c *ClusterMemberController) EtcdList(bucket string) ([]ceoapi.Member, erro
 	// populate current etcd members as observed.
 	members := []ceoapi.Member{}
 	if !exists {
-		klog.Infof("bucket %s empty", bucket)
 		return members, nil
 	}
 
