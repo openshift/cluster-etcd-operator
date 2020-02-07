@@ -13,6 +13,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/pkg/transport"
+	"google.golang.org/grpc"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog"
 )
@@ -21,6 +22,7 @@ const (
 	etcdCertFile      = "/var/run/secrets/etcd-client/tls.crt"
 	etcdKeyFile       = "/var/run/secrets/etcd-client/tls.key"
 	etcdTrustedCAFile = "/var/run/configmaps/etcd-ca/ca-bundle.crt"
+	dialTimeout       = 20 * time.Second
 )
 
 type HealthyEtcdMembersGetter interface {
@@ -145,9 +147,13 @@ func (h *healthyEtcdMemberGetter) getEtcdClient() (*clientv3.Client, error) {
 	}
 	tlsConfig, err := tlsInfo.ClientConfig()
 
+	dialOptions := []grpc.DialOption{
+		grpc.WithBlock(), // block until the underlying connection is up
+	}
 	cfg := &clientv3.Config{
+		DialOptions: dialOptions,
 		Endpoints:   endpoints,
-		DialTimeout: 2 * time.Second,
+		DialTimeout: dialTimeout,
 		TLS:         tlsConfig,
 	}
 

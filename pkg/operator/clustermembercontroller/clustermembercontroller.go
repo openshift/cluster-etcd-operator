@@ -14,6 +14,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/pkg/transport"
+	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -38,6 +39,7 @@ const (
 	EtcdEndpointName               = "etcd"
 	ConditionBootstrapSafeToRemove = "BootstrapSafeToRemove"
 	ConditionBootstrapRemoved      = "BootstrapRemoved"
+	dialTimeout                    = 20 * time.Second
 )
 
 type ClusterMemberController struct {
@@ -298,9 +300,14 @@ func (c *ClusterMemberController) getEtcdClient() (*clientv3.Client, error) {
 	}
 	tlsConfig, err := tlsInfo.ClientConfig()
 
+	dialOptions := []grpc.DialOption{
+		grpc.WithBlock(), // block until the underlying connection is up
+	}
+
 	cfg := &clientv3.Config{
+		DialOptions: dialOptions,
 		Endpoints:   endpoints,
-		DialTimeout: 5 * time.Second,
+		DialTimeout: dialTimeout,
 		TLS:         tlsConfig,
 	}
 
@@ -313,11 +320,13 @@ func (c *ClusterMemberController) getEtcdClient() (*clientv3.Client, error) {
 
 func (c *ClusterMemberController) EtcdMemberRemove(name string) error {
 	cli, err := c.getEtcdClient()
+	defer cli.Close()
 	if err != nil {
 		return err
 	}
-	defer cli.Close()
-	l, err := cli.MemberList(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	l, err := cli.MemberList(ctx)
+	cancel()
 	if err != nil {
 		return err
 	}
@@ -407,11 +416,13 @@ func (c *ClusterMemberController) IsMember(name string) bool {
 
 func (c *ClusterMemberController) IsEtcdMember(name string) bool {
 	cli, err := c.getEtcdClient()
+	defer cli.Close()
 	if err != nil {
 		return false
 	}
-	defer cli.Close()
-	l, err := cli.MemberList(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	l, err := cli.MemberList(ctx)
+	cancel()
 	if err != nil {
 		return false
 	}
@@ -521,11 +532,13 @@ func (c *ClusterMemberController) eventHandler() cache.ResourceEventHandler {
 
 func (c *ClusterMemberController) etcdMemberAdd(peerURLs []string) error {
 	cli, err := c.getEtcdClient()
+	defer cli.Close()
 	if err != nil {
 		return err
 	}
-	defer cli.Close()
-	resp, err := cli.MemberAdd(context.Background(), peerURLs)
+	ctx, cancel := context.WithCancel(context.Background())
+	resp, err := cli.MemberAdd(ctx, peerURLs)
+	cancel()
 	if err != nil {
 		return err
 	}
