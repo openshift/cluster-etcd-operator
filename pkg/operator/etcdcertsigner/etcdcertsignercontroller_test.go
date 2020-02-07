@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openshift/library-go/pkg/operator/events"
 	v1 "k8s.io/api/core/v1"
 	v12 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -300,7 +301,8 @@ func TestEtcdCertSignerController_populateSecret(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := &EtcdCertSignerController{
-				clientset: tt.fields.clientset,
+				clientset:     tt.fields.clientset,
+				eventRecorder: events.NewInMemoryRecorder("etcdcert-signer-test"),
 			}
 			err := c.populateSecret(tt.args.secretName, tt.args.secretNamespace, tt.args.cert, tt.args.key)
 			if !tt.wantErr {
