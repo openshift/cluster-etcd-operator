@@ -292,6 +292,9 @@ func (c *ClusterMemberController) EtcdMemberRemove(name string) error {
 	}
 	for _, member := range list.Members {
 		if member.Name == name {
+			if err := c.setEtcdClientEndpoints(); err != nil {
+				return nil, err
+			}
 			ctx, cancel := context.WithCancel(context.Background())
 			resp, err := c.etcdClientv3.MemberRemove(ctx, member.ID)
 			cancel()
@@ -305,6 +308,9 @@ func (c *ClusterMemberController) EtcdMemberRemove(name string) error {
 }
 
 func (c *ClusterMemberController) EtcdMemberList() (*clientv3.MemberListResponse, error) {
+	if err := c.setEtcdClientEndpoints(); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	list, err := c.etcdClientv3.MemberList(ctx)
 	cancel()
@@ -312,6 +318,15 @@ func (c *ClusterMemberController) EtcdMemberList() (*clientv3.MemberListResponse
 		return nil, err
 	}
 	return list, nil
+}
+
+func (c *ClusterMemberController) setEtcdClientEndpoints() error {
+	endpoints, err := c.Endpoints()
+	if err != nil {
+		return err
+	}
+	c.etcdClientv3.Config.Endpoints = endpoints
+	return nil
 }
 
 func (c *ClusterMemberController) EtcdList(bucket string) ([]ceoapi.Member, error) {
@@ -386,6 +401,9 @@ func (c *ClusterMemberController) IsMember(name string) bool {
 }
 
 func (c *ClusterMemberController) IsEtcdMember(name string) bool {
+	if err := c.setEtcdClientEndpoints(); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	l, err := c.etcdClientv3.MemberList(ctx)
 	cancel()
