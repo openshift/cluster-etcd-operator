@@ -7,6 +7,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/credentialpusher"
+
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/mount"
 	operatorcmd "github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
@@ -60,6 +62,9 @@ func NewSSCSCommand() *cobra.Command {
 	cmd.AddCommand(mount.NewMountCommand(os.Stderr))
 	cmd.AddCommand(waitforceo.NewWaitForCeoCommand(os.Stderr))
 	cmd.AddCommand(waitforkube.NewWaitForKubeCommand(os.Stderr))
+
+	// this command pushes certificates, keys, and ca bundles from disk into the cluster.
+	cmd.AddCommand(credentialpusher.NewCredentialPusher())
 
 	return cmd
 }
