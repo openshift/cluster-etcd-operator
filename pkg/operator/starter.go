@@ -6,6 +6,10 @@ import (
 	"os"
 	"time"
 
+	"k8s.io/client-go/dynamic"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner2"
+
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
@@ -49,6 +53,10 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return err
 	}
 	clientset, err := kubernetes.NewForConfig(controllerContext.KubeConfig)
+	if err != nil {
+		return err
+	}
+	dynamicClient, err := dynamic.NewForConfig(controllerContext.KubeConfig)
 	if err != nil {
 		return err
 	}
@@ -163,6 +171,13 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
 		controllerContext.EventRecorder,
 	)
+	etcdCertSignerController2 := etcdcertsigner2.NewEtcdCertSignerController(
+		dynamicClient,
+		coreClient,
+		operatorClient,
+		kubeInformersForNamespaces,
+		controllerContext.EventRecorder,
+	)
 	hostEtcdEndpointController := hostetcdendpointcontroller.NewHostEtcdEndpointcontroller(
 		coreClient,
 		operatorClient,
@@ -193,6 +208,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go staticResourceController.Run(ctx, 1)
 	go targetConfigReconciler.Run(1, ctx.Done())
 	go etcdCertSignerController.Run(1, ctx.Done())
+	go etcdCertSignerController2.Run(1, ctx.Done())
 	go hostEtcdEndpointController.Run(1, ctx.Done())
 	go resourceSyncController.Run(ctx, 1)
 	go statusController.Run(ctx, 1)
@@ -211,20 +227,17 @@ var RevisionConfigMaps = []revision.RevisionResource{
 	{Name: "etcd-pod"},
 
 	{Name: "config"},
-	//{Name: "etcd-cert-syncer-kubeconfig"},
-
-	// these are live reloaded and revisioned. This makes it possible to do a controlled restart of etcd pods, while ensuring that on
-	// unexpected pod restart (node reboot for instance), the latest available values are used.
-	//{Name: "etcd-peer-ca"},
+	{Name: "etcd-serving-ca"},
+	{Name: "etcd-peer-client-ca"},
+	{Name: "etcd-metrics-proxy-serving-ca"},
+	{Name: "etcd-metrics-proxy-client-ca"},
 }
 
 // RevisionSecrets is a list of secrets that are directly copied for the current values.  A different actor/controller modifies these.
 var RevisionSecrets = []revision.RevisionResource{
-	// these need to removed, but if we remove them now, the cluster will die because we don't reload them yet
-	//{Name: "etcd-peer-client"},
-
-	// this needs to be revisioned as certsyncer's kubeconfig isn't wired to be live reloaded, nor will be autorecovery
-	//{Name: "localhost-recovery-client-token"},
+	{Name: "etcd-all-peer"},
+	{Name: "etcd-all-serving"},
+	{Name: "etcd-all-serving-metrics"},
 }
 
 var CertConfigMaps = []revision.RevisionResource{
