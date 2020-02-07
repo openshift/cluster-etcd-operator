@@ -36,6 +36,7 @@ var envVarFns = []envVarFunc{
 //   ETCD_DATA_DIR
 //   ETCDCTL_API
 //   ETCD_QUOTA_BACKEND_BYTES
+//   ETCD_INITIAL_CLUSTER_STATE
 //   NODE_%s_IP
 //   NODE_%s_ETCD_DNS_NAME
 //   NODE_%s_ETCD_NAME
@@ -64,9 +65,10 @@ func getEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
 
 func getFixedEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
 	return map[string]string{
-		"ETCD_DATA_DIR":            "/var/lib/etcd",
-		"ETCD_QUOTA_BACKEND_BYTES": "7516192768", // 7 gig
-		"ETCDCTL_API":              "3",
+		"ETCD_DATA_DIR":              "/var/lib/etcd",
+		"ETCD_QUOTA_BACKEND_BYTES":   "7516192768", // 7 gig
+		"ETCDCTL_API":                "3",
+		"ETCD_INITIAL_CLUSTER_STATE": "existing",
 	}, nil
 }
 
