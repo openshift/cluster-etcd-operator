@@ -29,9 +29,17 @@ import (
 	"github.com/openshift/library-go/pkg/operator/staticresourcecontroller"
 	"github.com/openshift/library-go/pkg/operator/status"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	"go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/pkg/transport"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+)
+
+const (
+	etcdCertFile      = "/var/run/secrets/etcd-client/tls.crt"
+	etcdKeyFile       = "/var/run/secrets/etcd-client/tls.key"
+	etcdTrustedCAFile = "/var/run/configmaps/etcd-ca/ca-bundle.crt"
 )
 
 func RunOperator(ctx context.Context, controllerContext *controllercmd.ControllerContext) error {
@@ -52,6 +60,17 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	if err != nil {
 		return err
 	}
+
+	tlsInfo := transport.TLSInfo{
+		CertFile:      etcdCertFile,
+		KeyFile:       etcdKeyFile,
+		TrustedCAFile: etcdTrustedCAFile,
+	}
+	etcdClientv3, err := getEtcdClient(tlsInfo)
+	if err != nil {
+		return err
+	}
+	defer etcdClientv3.Close()
 
 	operatorConfigInformers := operatorv1informers.NewSharedInformerFactory(operatorConfigClient, 10*time.Minute)
 	//operatorConfigInformers.ForResource()
@@ -176,6 +195,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
 		controllerContext.EventRecorder,
 		etcdDiscoveryDomain,
+		etcdClientv3,
 	)
 	bootstrapTeardownController := bootstrapteardown.NewBootstrapTeardownController(
 		operatorClient,
@@ -233,4 +253,19 @@ var CertConfigMaps = []revision.RevisionResource{
 
 var CertSecrets = []revision.RevisionResource{
 	//{Name: "etcd-peer-client"},
+}
+
+func getEtcdClient(tlsInfo transport.TLSInfo) (*clientv3.Client, error) {
+	tlsConfig, err := tlsInfo.ClientConfig()
+
+	cfg := &clientv3.Config{
+		DialTimeout: 5 * time.Second,
+		TLS:         tlsConfig,
+	}
+
+	cli, err := clientv3.New(*cfg)
+	if err != nil {
+		return nil, err
+	}
+	return cli, err
 }
