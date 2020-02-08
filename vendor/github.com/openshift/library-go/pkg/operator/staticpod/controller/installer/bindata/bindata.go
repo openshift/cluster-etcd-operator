@@ -69,6 +69,10 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
       terminationMessagePolicy: FallbackToLogsOnError
       volumeMounts:
         - mountPath: /etc/kubernetes/
@@ -87,7 +91,8 @@ spec:
   volumes:
     - hostPath:
         path: /etc/kubernetes/
-      name: kubelet-dir`)
+      name: kubelet-dir
+`)
 
 func pkgOperatorStaticpodControllerInstallerManifestsInstallerPodYamlBytes() ([]byte, error) {
 	return _pkgOperatorStaticpodControllerInstallerManifestsInstallerPodYaml, nil

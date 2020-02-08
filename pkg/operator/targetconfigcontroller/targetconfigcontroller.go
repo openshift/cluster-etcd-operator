@@ -2,9 +2,12 @@ package targetconfigcontroller
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"time"
+
+	"k8s.io/apimachinery/pkg/util/sets"
+
+	"k8s.io/client-go/dynamic"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
@@ -35,12 +38,15 @@ type TargetConfigController struct {
 
 	operatorClient v1helpers.StaticPodOperatorClient
 
+	dyanmicClient   dynamic.Interface
 	kubeClient      kubernetes.Interface
 	configMapLister corev1listers.ConfigMapLister
+	nodeLister      corev1listers.NodeLister
 	eventRecorder   events.Recorder
 
 	// queue only ever has one item, but it has nice error handling backoff/retry semantics
-	queue workqueue.RateLimitingInterface
+	queue        workqueue.RateLimitingInterface
+	cachesToSync []cache.InformerSynced
 }
 
 func NewTargetConfigController(
@@ -48,6 +54,7 @@ func NewTargetConfigController(
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
+	dyanmicClient dynamic.Interface,
 	kubeClient kubernetes.Interface,
 	eventRecorder events.Recorder,
 ) *TargetConfigController {
@@ -56,33 +63,37 @@ func NewTargetConfigController(
 		operatorImagePullSpec: operatorImagePullSpec,
 
 		operatorClient:  operatorClient,
+		dyanmicClient:   dyanmicClient,
 		kubeClient:      kubeClient,
 		configMapLister: kubeInformersForNamespaces.ConfigMapLister(),
+		nodeLister:      kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
 		eventRecorder:   eventRecorder.WithComponentSuffix("target-config-controller"),
 
 		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "TargetConfigController"),
+		cachesToSync: []cache.InformerSynced{
+			operatorClient.Informer().HasSynced,
+			kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer().HasSynced,
+			kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer().HasSynced,
+			kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
+		},
 	}
 
 	operatorClient.Informer().AddEventHandler(c.eventHandler())
 	kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
 	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer().AddEventHandler(c.eventHandler())
-	kubeInformersForOpenshiftEtcdNamespace.Core().V1().ServiceAccounts().Informer().AddEventHandler(c.eventHandler())
 
-	// we react to some config changes
-	kubeInformersForNamespaces.InformersFor(operatorclient.GlobalUserSpecifiedConfigNamespace).Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
-	kubeInformersForNamespaces.InformersFor(operatorclient.GlobalMachineSpecifiedConfigNamespace).Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
-	kubeInformersForNamespaces.InformersFor(operatorclient.OperatorNamespace).Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
-	kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
+	// TODO only trigger on master nodes
+	kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().AddEventHandler(c.eventHandler())
 
 	return c
 }
 
 func (c TargetConfigController) sync() error {
-	operatorSpec, _, _, err := c.operatorClient.GetStaticPodOperatorState()
+	operatorSpec, operatorStatus, _, err := c.operatorClient.GetStaticPodOperatorState()
 	if err != nil {
 		return err
 	}
-	requeue, err := createTargetConfig(c, c.eventRecorder, operatorSpec)
+	requeue, err := createTargetConfig(c, c.eventRecorder, operatorSpec, operatorStatus)
 	if err != nil {
 		return err
 	}
@@ -95,14 +106,14 @@ func (c TargetConfigController) sync() error {
 
 // createTargetConfig takes care of creation of valid resources in a fixed name.  These are inputs to other control loops.
 // returns whether or not requeue and if an error happened when updating status.  Normally it updates status itself.
-func createTargetConfig(c TargetConfigController, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (bool, error) {
+func createTargetConfig(c TargetConfigController, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec, operatorStatus *operatorv1.StaticPodOperatorStatus) (bool, error) {
 	errors := []error{}
 
 	_, _, err := manageEtcdConfig(c.kubeClient.CoreV1(), recorder, operatorSpec)
 	if err != nil {
 		errors = append(errors, fmt.Errorf("%q: %v", "configmap/config", err))
 	}
-	_, _, err = managePod(c.kubeClient.CoreV1(), recorder, operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec)
+	_, _, err = c.managePod(c.kubeClient.CoreV1(), recorder, operatorSpec, operatorStatus, c.targetImagePullSpec, c.operatorImagePullSpec)
 	if err != nil {
 		errors = append(errors, fmt.Errorf("%q: %v", "configmap/kube-apiserver-pod", err))
 	}
@@ -164,12 +175,31 @@ func loglevelToKlog(logLevel operatorv1.LogLevel) string {
 	}
 }
 
-func managePod(client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec, imagePullSpec, operatorImagePullSpec string) (*corev1.ConfigMap, bool, error) {
+func (c *TargetConfigController) managePod(client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec, operatorStatus *operatorv1.StaticPodOperatorStatus, imagePullSpec, operatorImagePullSpec string) (*corev1.ConfigMap, bool, error) {
+	envVarMap, err := getEtcdEnvVars(envVarContext{
+		spec:          *operatorSpec,
+		status:        *operatorStatus,
+		nodeLister:    c.nodeLister,
+		dynamicClient: c.dyanmicClient,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	envVarLines := []string{}
+	for _, k := range sets.StringKeySet(envVarMap).List() {
+		v := envVarMap[k]
+		envVarLines = append(envVarLines, fmt.Sprintf("      - name: %q", k))
+		envVarLines = append(envVarLines, fmt.Sprintf("        value: %q", v))
+	}
+
 	podBytes := etcd_assets.MustAsset("etcd/pod.yaml")
 	r := strings.NewReplacer(
 		"${IMAGE}", imagePullSpec,
 		"${OPERATOR_IMAGE}", operatorImagePullSpec,
 		"${VERBOSITY}", loglevelToKlog(operatorSpec.LogLevel),
+		"${LISTEN_ON_ALL_IPS}", "0.0.0.0", // TODO this needs updating to detect ipv6-ness
+		"${LOCALHOST_IP}", "127.0.0.1", // TODO this needs updating to detect ipv6-ness
+		"${COMPUTED_ENV_VARS}", strings.Join(envVarLines, "\n"), // lacks beauty, but it works
 	)
 	substitutedPodString := r.Replace(string(podBytes))
 
@@ -187,6 +217,11 @@ func (c *TargetConfigController) Run(workers int, stopCh <-chan struct{}) {
 
 	klog.Infof("Starting TargetConfigController")
 	defer klog.Infof("Shutting down TargetConfigController")
+
+	if !cache.WaitForCacheSync(stopCh, c.cachesToSync...) {
+		return
+	}
+	klog.V(2).Infof("caches synced")
 
 	// doesn't matter what workers say, only start one.
 	go wait.Until(c.runWorker, time.Second, stopCh)
@@ -270,19 +305,4 @@ func (c *TargetConfigController) namespaceEventHandler() cache.ResourceEventHand
 			}
 		},
 	}
-}
-
-func proxyMapToEnvVars(proxyConfig map[string]string) []corev1.EnvVar {
-	if proxyConfig == nil {
-		return nil
-	}
-
-	envVars := []corev1.EnvVar{}
-	for k, v := range proxyConfig {
-		envVars = append(envVars, corev1.EnvVar{Name: k, Value: v})
-	}
-
-	// need to sort the slice so that etcd-pod configmap does not change all the time
-	sort.Slice(envVars, func(i, j int) bool { return envVars[i].Name < envVars[j].Name })
-	return envVars
 }
