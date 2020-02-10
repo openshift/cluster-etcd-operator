@@ -5,6 +5,8 @@ import (
 	"net"
 	"strings"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,8 +21,9 @@ type envVarContext struct {
 	spec   operatorv1.StaticPodOperatorSpec
 	status operatorv1.StaticPodOperatorStatus
 
-	nodeLister    corev1listers.NodeLister
-	dynamicClient dynamic.Interface
+	endpointLister corev1listers.EndpointsLister
+	nodeLister     corev1listers.NodeLister
+	dynamicClient  dynamic.Interface
 }
 
 type envVarFunc func(envVarContext envVarContext) (map[string]string, error)
@@ -80,6 +83,17 @@ func getAllClusterMembers(envVarContext envVarContext) (map[string]string, error
 			return nil, err
 		}
 		endpoints = append(endpoints, fmt.Sprintf("https://%s:2379", endpoint))
+	}
+
+	hostEtcdEndpoints, err := envVarContext.endpointLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd")
+	if err != nil {
+		return nil, err
+	}
+	for _, endpointAddress := range hostEtcdEndpoints.Subsets[0].Addresses {
+		if endpointAddress.Hostname == "etcd-bootstrap" {
+			endpoints = append(endpoints, fmt.Sprintf("etcd-bootstrap.%s", "alpha.installer.openshift.io/dns-suffix"))
+			break
+		}
 	}
 	ret["ALL_ETCD_ENDPOINTS"] = strings.Join(endpoints, ",")
 
