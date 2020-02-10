@@ -152,7 +152,8 @@ metadata:
   namespace: openshift-etcd
   labels:
     app: etcd
-    etcd: "not-true-yet"
+    k8s-app: etcd
+    etcd: "true"
     revision: "REVISION"
 spec:
   containers:
@@ -166,7 +167,6 @@ spec:
       - |
         #!/bin/sh
         set -euo pipefail
-
 
         ETCDCTL="etcdctl --cacert=/etc/kubernetes/static-pod-resources/configmaps/etcd-serving-ca/ca-bundle.crt \
                            --cert=/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt \
@@ -269,10 +269,6 @@ ${COMPUTED_ENV_VARS}
       - |
         #!/bin/sh
         set -euo pipefail
-
-        sleep 24h
-
-        exit 0
 
         export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
 
