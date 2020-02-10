@@ -3,11 +3,12 @@ package clustermembercontroller2
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
-	"strings"
-	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
@@ -153,7 +154,7 @@ func (c *ClusterMemberController) sync() error {
 }
 
 func (c *ClusterMemberController) reconcileMembers() error {
-	etcdHealthy, err := c.isEtcdHealthy()
+	etcdHealthy, err := c.areAllEtcdMembersHealthy()
 	if err != nil {
 		return err
 	}
@@ -163,7 +164,7 @@ func (c *ClusterMemberController) reconcileMembers() error {
 	}
 
 	// etcd is healthy, decide if we need to scale
-	unreadyPods, err := c.getUnreadyPods()
+	unreadyPods, err := c.getUnreadyEtcdPods()
 	if err != nil {
 		return err
 	}
@@ -184,7 +185,6 @@ func (c *ClusterMemberController) reconcileMembers() error {
 				Message: "Scaling etcd membership has completed",
 			}))
 		if updateErr != nil {
-			c.eventRecorder.Warning("ClusterMemberController2UpdatingStatus", updateErr.Error())
 			return updateErr
 		}
 		// no more work left to do
@@ -206,7 +206,6 @@ func (c *ClusterMemberController) reconcileMembers() error {
 			Message: fmt.Sprintf("waiting for %d/%d pods to be scaled", len(unreadyPods), totalDesiredEtcd),
 		}))
 	if updateErr != nil {
-		c.eventRecorder.Warning("ClusterMemberController2UpdatingStatus", updateErr.Error())
 		return updateErr
 	}
 
@@ -282,19 +281,17 @@ func (c *ClusterMemberController) eventHandler() cache.ResourceEventHandler {
 	}
 }
 
-func (c *ClusterMemberController) isEtcdHealthy() (bool, error) {
+func (c *ClusterMemberController) areAllEtcdMembersHealthy() (bool, error) {
 	// getting a new client everytime because we dont know what etcd-membership looks like
 	etcdClient, err := c.getEtcdClient()
 	defer etcdClient.Close()
 	if err != nil {
-		c.eventRecorder.Warningf("ErrorGettingEtcdClient", "error getting etcd client: %#v", err)
-		return false, err
+		return false, fmt.Errorf("error getting etcd client: %w", err)
 	}
 
 	memberList, err := etcdClient.MemberList(context.Background())
 	if err != nil {
-		c.eventRecorder.Warningf("ErrorGettingMemberList", "error getting etcd member list: %#v", err)
-		return false, err
+		return false, fmt.Errorf("error getting etcd member list: %w", err)
 	}
 	for _, member := range memberList.Members {
 		statusResp, err := etcdClient.Status(context.Background(), member.ClientURLs[0])
@@ -309,11 +306,11 @@ func (c *ClusterMemberController) isEtcdHealthy() (bool, error) {
 	return true, nil
 }
 
-func (c *ClusterMemberController) getUnreadyPods() ([]*corev1.Pod, error) {
+func (c *ClusterMemberController) getUnreadyEtcdPods() ([]*corev1.Pod, error) {
 	// list etcd member pods
 	pods, err := c.podLister.List(labels.Set{"app": "etcd"}.AsSelector())
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	// go through the list of all pods, pick one peerFQDN to return from unready pods
