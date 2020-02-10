@@ -8,7 +8,7 @@ require (
 	github.com/gorilla/mux v0.0.0-20191024121256-f395758b854c
 	github.com/jteeuwen/go-bindata v3.0.8-0.20151023091102-a0ff2567cfb7+incompatible
 	github.com/openshift/api v0.0.0-20200131223221-f2a771e1a90c
-	github.com/openshift/build-machinery-go v0.0.0-20200205161356-ef115f5adc73
+	github.com/openshift/build-machinery-go v0.0.0-20200210090402-3b072832771e
 	github.com/openshift/client-go v0.0.0-20200116152001-92a2713fa240
 	github.com/openshift/library-go v0.0.0-20200207150939-615337e1c3aa
 	github.com/prometheus/client_golang v1.1.0
