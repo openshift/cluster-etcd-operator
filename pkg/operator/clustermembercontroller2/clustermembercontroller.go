@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
@@ -257,7 +259,7 @@ func (c *ClusterMemberController) Endpoints() ([]string, error) {
 	if err != nil {
 		return []string{}, err
 	}
-	hostEtcd, err := c.endpointsLister.Endpoints(clustermembercontroller.EtcdEndpointNamespace).Get(clustermembercontroller.EtcdEndpointName)
+	hostEtcd, err := c.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd")
 	if err != nil {
 		c.eventRecorder.Warningf("ErrorGettingHostEtcd", "error occured while getting host-etcd endpoint: %#v", err)
 		return []string{}, err
