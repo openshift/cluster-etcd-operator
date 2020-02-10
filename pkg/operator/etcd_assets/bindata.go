@@ -203,6 +203,11 @@ spec:
         initial_cluster="${initial_cluster::-1}"
         echo $initial_cluster
 
+        # skip the rest of the file until we're ready to switch
+        sleep 24h
+        exit 0
+
+
         # at this point we know this member is added.  To support a transition, we must remove the old etcd pod.
         # move it somewhere safe so we can retrieve it again later if something goes badly.
         mv /etc/kubernetes/manifests/etcd-member.yaml /etc/kubernetes/etcd-backup-dir || true
