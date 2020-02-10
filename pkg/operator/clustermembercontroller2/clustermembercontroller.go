@@ -257,7 +257,7 @@ func (c *ClusterMemberController) Endpoints() ([]string, error) {
 	if err != nil {
 		return []string{}, err
 	}
-	hostEtcd, err := c.endpointsLister.Endpoints(clustermembercontroller.EtcdEndpointNamespace).Get(clustermembercontroller.EtcdEndpointName)
+	hostEtcd, err := c.endpointsLister.Endpoints(clustermembercontroller.EtcdEndpointNamespace).Get(clustermembercontroller.EtcdHostEndpointName)
 	if err != nil {
 		c.eventRecorder.Warningf("ErrorGettingHostEtcd", "error occured while getting host-etcd endpoint: %#v", err)
 		return []string{}, err
@@ -268,7 +268,11 @@ func (c *ClusterMemberController) Endpoints() ([]string, error) {
 	}
 	var endpoints []string
 	for _, addr := range hostEtcd.Subsets[0].Addresses {
-		endpoints = append(endpoints, fmt.Sprintf("https://%s.%s:2379", addr.Hostname, etcdDiscoveryDomain))
+		if addr.Hostname == "etcd-bootstrap" {
+			endpoints = append(endpoints, fmt.Sprintf("https://%s:2379", addr.IP))
+		} else {
+			endpoints = append(endpoints, fmt.Sprintf("https://%s.%s:2379", addr.Hostname, etcdDiscoveryDomain))
+		}
 	}
 	return endpoints, nil
 }
@@ -284,10 +288,10 @@ func (c *ClusterMemberController) eventHandler() cache.ResourceEventHandler {
 func (c *ClusterMemberController) areAllEtcdMembersHealthy() (bool, error) {
 	// getting a new client everytime because we dont know what etcd-membership looks like
 	etcdClient, err := c.getEtcdClient()
-	defer etcdClient.Close()
 	if err != nil {
 		return false, fmt.Errorf("error getting etcd client: %w", err)
 	}
+	defer etcdClient.Close()
 
 	memberList, err := etcdClient.MemberList(context.Background())
 	if err != nil {
@@ -301,7 +305,7 @@ func (c *ClusterMemberController) areAllEtcdMembersHealthy() (bool, error) {
 			// the actual error
 			return false, nil
 		}
-		klog.V(4).Infof("etcd member %s is healthy committed and with %s index", member.Name, statusResp.RaftIndex)
+		klog.V(4).Infof("etcd member %s is healthy committed and with %d index", member.Name, statusResp.RaftIndex)
 	}
 	return true, nil
 }
@@ -335,11 +339,11 @@ func (c *ClusterMemberController) getUnreadyEtcdPods() ([]*corev1.Pod, error) {
 
 func (c *ClusterMemberController) AddMember(peerFQDN string) error {
 	etcdClient, err := c.getEtcdClient()
-	defer etcdClient.Close()
 	if err != nil {
 		c.eventRecorder.Warningf("ErrorGettingEtcdClient", "error getting etcd client: %#v", err)
 		return err
 	}
+	defer etcdClient.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	resp, err := etcdClient.MemberAdd(ctx, []string{fmt.Sprintf("https://%s:2380", peerFQDN)})
