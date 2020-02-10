@@ -191,6 +191,13 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 		etcdDiscoveryDomain,
 	)
+	// todo: remove this when we disable clustermembercontroller
+	//clusterMemberController2 := clustermembercontroller2.NewClusterMemberController(
+	//	operatorClient,
+	//	kubeInformersForNamespaces.InformersFor("openshift-etcd"),
+	//	controllerContext.EventRecorder,
+	//	etcdDiscoveryDomain,
+	//)
 	bootstrapTeardownController := bootstrapteardown.NewBootstrapTeardownController(
 		operatorClient,
 		kubeInformersForNamespaces,
@@ -213,6 +220,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go statusController.Run(ctx, 1)
 	go configObserver.Run(ctx, 1)
 	go clusterMemberController.Run(ctx.Done())
+	//go clusterMemberController2.Run(ctx.Done())
 	go bootstrapTeardownController.Run(ctx.Done())
 	go staticPodControllers.Run(ctx, 1)
 
