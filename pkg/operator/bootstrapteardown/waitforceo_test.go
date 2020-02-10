@@ -3,7 +3,6 @@ package bootstrapteardown
 import (
 	"testing"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/library-go/pkg/operator/events"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -48,7 +47,7 @@ func Test_isEtcdAvailable(t *testing.T) {
 							OperatorStatus: v1.OperatorStatus{
 								Conditions: []v1.OperatorCondition{
 									{
-										Type:   clustermembercontroller.ConditionBootstrapSafeToRemove,
+										Type:   ConditionBootstrapSafeToRemove,
 										Status: v1.ConditionTrue,
 									},
 								},
@@ -77,7 +76,7 @@ func Test_isEtcdAvailable(t *testing.T) {
 							OperatorStatus: v1.OperatorStatus{
 								Conditions: []v1.OperatorCondition{
 									{
-										Type:   clustermembercontroller.ConditionBootstrapSafeToRemove,
+										Type:   ConditionBootstrapSafeToRemove,
 										Status: v1.ConditionFalse,
 									},
 								},

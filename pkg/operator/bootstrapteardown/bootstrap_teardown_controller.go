@@ -32,9 +32,11 @@ import (
 )
 
 const (
-	workQueueKey  = "key"
-	configMapName = "config"
-	configMapKey  = "config.yaml"
+	workQueueKey                   = "key"
+	configMapName                  = "config"
+	configMapKey                   = "config.yaml"
+	ConditionBootstrapRemoved      = "BootstrapRemoved"
+	ConditionBootstrapSafeToRemove = "BootstrapSafeToRemove"
 )
 
 type BootstrapTeardownController struct {
@@ -272,7 +274,7 @@ func (c *BootstrapTeardownController) getEtcdClient() (*clientv3.Client, error) 
 }
 
 func (c *BootstrapTeardownController) directEtcdEndpoints() ([]string, error) {
-	hostEtcd, err := c.endpointLister.Endpoints(clustermembercontroller.EtcdEndpointNamespace).Get(clustermembercontroller.EtcdEndpointName)
+	hostEtcd, err := c.endpointLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd")
 	if err != nil {
 		c.eventRecorder.Warningf("ErrorGettingHostEtcd", "error occured while getting host-etcd endpoint: %#v", err)
 		return []string{}, err
