@@ -30,9 +30,11 @@ var envVarFns = []envVarFunc{
 	getDNSName,
 	getFixedEtcdEnvVars,
 	getEtcdName,
+	getAllClusterMembers,
 }
 
 // getEtcdEnvVars returns the env vars that need to be set on the etcd static pods that will be rendered.
+//   ALL_ETCD_ENDPOINTS - this is used to drive the ETCD_INITIAL_CLUSTER
 //   ETCD_DATA_DIR
 //   ETCDCTL_API
 //   ETCD_QUOTA_BACKEND_BYTES
@@ -40,10 +42,6 @@ var envVarFns = []envVarFunc{
 //   NODE_%s_IP
 //   NODE_%s_ETCD_DNS_NAME
 //   NODE_%s_ETCD_NAME
-// TODO
-//   ALL_ETCD_INITIAL_CLUSTER
-//   ETCD_INITIAL_CLUSTER_STATE
-//   ETCD_ENDPOINTS
 func getEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
 	ret := map[string]string{}
 
@@ -70,6 +68,22 @@ func getFixedEtcdEnvVars(envVarContext envVarContext) (map[string]string, error)
 		"ETCDCTL_API":                "3",
 		"ETCD_INITIAL_CLUSTER_STATE": "existing",
 	}, nil
+}
+
+func getAllClusterMembers(envVarContext envVarContext) (map[string]string, error) {
+	ret := map[string]string{}
+
+	endpoints := []string{}
+	for _, nodeInfo := range envVarContext.status.NodeStatuses {
+		endpoint, err := getInternalIPAddressForNodeName(envVarContext, nodeInfo.NodeName)
+		if err != nil {
+			return nil, err
+		}
+		endpoints = append(endpoints, fmt.Sprintf("https://%s:2379", endpoint))
+	}
+	ret["ALL_ETCD_ENDPOINTS"] = strings.Join(endpoints, ",")
+
+	return ret, nil
 }
 
 func getEtcdName(envVarContext envVarContext) (map[string]string, error) {
