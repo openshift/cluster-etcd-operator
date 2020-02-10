@@ -6,3 +6,7 @@ spec:
     from:
       kind: DockerImage
       name: quay.io/openshift/cluster-etcd-operator
+  - name: etcd
+    from:
+      kind: DockerImage
+      name: registry.svc.ci.openshift.org/openshift:etcd
