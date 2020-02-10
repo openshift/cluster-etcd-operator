@@ -91,7 +91,7 @@ func getAllClusterMembers(envVarContext envVarContext) (map[string]string, error
 	}
 	for _, endpointAddress := range hostEtcdEndpoints.Subsets[0].Addresses {
 		if endpointAddress.Hostname == "etcd-bootstrap" {
-			endpoints = append(endpoints, fmt.Sprintf("etcd-bootstrap.%s", "alpha.installer.openshift.io/dns-suffix"))
+			endpoints = append(endpoints, fmt.Sprintf("https://%s:2379", endpointAddress.IP))
 			break
 		}
 	}
