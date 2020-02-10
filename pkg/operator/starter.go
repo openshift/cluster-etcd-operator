@@ -6,6 +6,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller2"
+
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
@@ -29,7 +31,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner2"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/hostendpointscontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
@@ -165,12 +166,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	etcdDiscoveryDomain := clusterInfrastructure.Status.EtcdDiscoveryDomain
 	coreClient := clientset
 
-	etcdCertSignerController := etcdcertsigner.NewEtcdCertSignerController(
-		coreClient,
-		operatorClient,
-		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
-		controllerContext.EventRecorder,
-	)
 	etcdCertSignerController2 := etcdcertsigner2.NewEtcdCertSignerController(
 		dynamicClient,
 		coreClient,
@@ -193,13 +188,12 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 		etcdDiscoveryDomain,
 	)
-	// todo: remove this when we disable clustermembercontroller
-	//clusterMemberController2 := clustermembercontroller2.NewClusterMemberController(
-	//	operatorClient,
-	//	kubeInformersForNamespaces.InformersFor("openshift-etcd"),
-	//	controllerContext.EventRecorder,
-	//	etcdDiscoveryDomain,
-	//)
+	clusterMemberController2 := clustermembercontroller2.NewClusterMemberController(
+		dynamicClient,
+		operatorClient,
+		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
+		controllerContext.EventRecorder,
+	)
 	bootstrapTeardownController := bootstrapteardown.NewBootstrapTeardownController(
 		operatorClient,
 		kubeInformersForNamespaces,
@@ -215,14 +209,12 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 	go staticResourceController.Run(ctx, 1)
 	go targetConfigReconciler.Run(1, ctx.Done())
-	go etcdCertSignerController.Run(1, ctx.Done())
 	go etcdCertSignerController2.Run(1, ctx.Done())
 	go hostEtcdEndpointController.Run(ctx, 1)
 	go resourceSyncController.Run(ctx, 1)
 	go statusController.Run(ctx, 1)
 	go configObserver.Run(ctx, 1)
-	go clusterMemberController.Run(ctx.Done())
-	//go clusterMemberController2.Run(ctx.Done())
+	go clusterMemberController2.Run(ctx.Done())
 	go bootstrapTeardownController.Run(ctx.Done())
 	go staticPodControllers.Run(ctx, 1)
 
