@@ -3,6 +3,10 @@ package clustermembercontroller2
 import (
 	"context"
 	"fmt"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
+	"strings"
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -13,8 +17,8 @@ import (
 	"go.etcd.io/etcd/pkg/transport"
 	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/selection"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
@@ -25,10 +29,7 @@ import (
 )
 
 const (
-	workQueueKey      = "key"
-	etcdCertFile      = "/var/run/secrets/etcd-client/tls.crt"
-	etcdKeyFile       = "/var/run/secrets/etcd-client/tls.key"
-	etcdTrustedCAFile = "/var/run/configmaps/etcd-ca/ca-bundle.crt"
+	workQueueKey = "key"
 	// todo: need to understand how to make this dynamic across all platforms
 	totalDesiredEtcd = 3
 )
@@ -37,13 +38,12 @@ const (
 // to etcd membership only if all existing members are running healthy
 // skips if any one member is unhealthy.
 type ClusterMemberController struct {
-	operatorClient                         v1helpers.OperatorClient
-	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory
-	endpointsLister                        corev1listers.EndpointsLister
-	podLister                              corev1listers.PodLister
-
-	etcdDiscoveryDomain  string
-	numberOfReadyMembers int
+	dynamicClient   dynamic.Interface
+	operatorClient  v1helpers.OperatorClient
+	kubeInformers   informers.SharedInformerFactory
+	endpointsLister corev1listers.EndpointsLister
+	podLister       corev1listers.PodLister
+	nodeLister      corev1listers.NodeLister
 
 	cachesToSync  []cache.InformerSynced
 	queue         workqueue.RateLimitingInterface
@@ -51,33 +51,33 @@ type ClusterMemberController struct {
 }
 
 func NewClusterMemberController(
+	dynamicClient dynamic.Interface,
 	operatorClient v1helpers.OperatorClient,
-	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
+	kubeInformers informers.SharedInformerFactory,
 	eventRecorder events.Recorder,
-	etcdDiscoveryDomain string,
 ) *ClusterMemberController {
 	c := &ClusterMemberController{
+		dynamicClient:   dynamicClient,
 		operatorClient:  operatorClient,
-		endpointsLister: kubeInformersForOpenshiftEtcdNamespace.Core().V1().Endpoints().Lister(),
-		podLister:       kubeInformersForOpenshiftEtcdNamespace.Core().V1().Pods().Lister(),
-
-		etcdDiscoveryDomain:  etcdDiscoveryDomain,
-		numberOfReadyMembers: 0,
+		endpointsLister: kubeInformers.Core().V1().Endpoints().Lister(),
+		podLister:       kubeInformers.Core().V1().Pods().Lister(),
+		nodeLister:      kubeInformers.Core().V1().Nodes().Lister(),
 
 		cachesToSync: []cache.InformerSynced{
 			operatorClient.Informer().HasSynced,
-			kubeInformersForOpenshiftEtcdNamespace.Core().V1().Endpoints().Informer().HasSynced,
-			kubeInformersForOpenshiftEtcdNamespace.Core().V1().Pods().Informer().HasSynced,
-			kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer().HasSynced,
+			kubeInformers.Core().V1().Endpoints().Informer().HasSynced,
+			kubeInformers.Core().V1().Pods().Informer().HasSynced,
+			kubeInformers.Core().V1().ConfigMaps().Informer().HasSynced,
+			kubeInformers.Core().V1().Nodes().Informer().HasSynced,
 			operatorClient.Informer().HasSynced,
 		},
-		queue:                                  workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ClusterMemberController2"),
-		kubeInformersForOpenshiftEtcdNamespace: kubeInformersForOpenshiftEtcdNamespace,
-		eventRecorder:                          eventRecorder.WithComponentSuffix("cluster-member-controller-2"),
+		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ClusterMemberController2"),
+		kubeInformers: kubeInformers,
+		eventRecorder: eventRecorder.WithComponentSuffix("cluster-member-controller-2"),
 	}
-	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Pods().Informer().AddEventHandler(c.eventHandler())
-	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Endpoints().Informer().AddEventHandler(c.eventHandler())
-	kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
+	kubeInformers.Core().V1().Pods().Informer().AddEventHandler(c.eventHandler())
+	kubeInformers.Core().V1().Endpoints().Informer().AddEventHandler(c.eventHandler())
+	kubeInformers.Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
 	operatorClient.Informer().AddEventHandler(c.eventHandler())
 
 	return c
@@ -163,30 +163,12 @@ func (c *ClusterMemberController) reconcileMembers() error {
 	}
 
 	// etcd is healthy, decide if we need to scale
-	peerFQDN, dnsErrs := c.getPeerToScale()
-	if len(dnsErrs) != 0 {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:    "ClusterMemberControllerDNSLookupDegraded",
-			Status:  operatorv1.ConditionTrue,
-			Reason:  "ErrorGettingDNSNames",
-			Message: fmt.Sprintf("errod resolving etcd dns names: %#v", dnsErrs),
-		}))
-		if updateErr != nil {
-			c.eventRecorder.Warning("ClusterMemberController2UpdatingStatus", updateErr.Error())
-			return updateErr
-		}
-	} else {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:   "ClusterMemberControllerDNSLookupDegraded",
-			Status: operatorv1.ConditionFalse,
-			Reason: "AsExpected",
-		}))
-		if updateErr != nil {
-			c.eventRecorder.Warning("ClusterMemberController2UpdatingStatus", updateErr.Error())
-			return updateErr
-		}
+	unreadyPods, err := c.getUnreadyPods()
+	if err != nil {
+		return err
 	}
-	if peerFQDN == "" && c.numberOfReadyMembers == totalDesiredEtcd {
+
+	if len(unreadyPods) == 0 {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient,
 			v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 				Type:    "ClusterMemberControllerScalingProgressing",
@@ -214,21 +196,26 @@ func (c *ClusterMemberController) reconcileMembers() error {
 			Type:    "ClusterMemberControllerScalingProgressing",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "Scaling",
-			Message: fmt.Sprintf("Scaling etcd membership, adding member %s", peerFQDN),
+			Message: "Scaling etcd membership",
 		}),
 		// todo: remove this make bootsrap remove independent
 		v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "BootstrapSafeToRemove",
 			Status:  operatorv1.ConditionFalse,
 			Reason:  "EtcdScaling",
-			Message: fmt.Sprintf("%d/%d member scaled, waiting for others", c.numberOfReadyMembers, totalDesiredEtcd),
+			Message: fmt.Sprintf("waiting for %d/%d pods to be scaled", len(unreadyPods), totalDesiredEtcd),
 		}))
 	if updateErr != nil {
 		c.eventRecorder.Warning("ClusterMemberController2UpdatingStatus", updateErr.Error())
 		return updateErr
 	}
 
-	err = c.AddMember(peerFQDN)
+	podFQDN, err := c.getValidPodFQDNToScale(unreadyPods)
+	if err != nil {
+		return err
+	}
+
+	err = c.AddMember(podFQDN)
 	if err != nil {
 		return err
 	}
@@ -246,9 +233,9 @@ func (c *ClusterMemberController) getEtcdClient() (*clientv3.Client, error) {
 	}
 
 	tlsInfo := transport.TLSInfo{
-		CertFile:      etcdCertFile,
-		KeyFile:       etcdKeyFile,
-		TrustedCAFile: etcdTrustedCAFile,
+		CertFile:      "/var/run/secrets/etcd-client/tls.crt",
+		KeyFile:       "/var/run/secrets/etcd-client/tls.key",
+		TrustedCAFile: "/var/run/configmaps/etcd-ca/ca-bundle.crt",
 	}
 	tlsConfig, err := tlsInfo.ClientConfig()
 
@@ -267,6 +254,10 @@ func (c *ClusterMemberController) getEtcdClient() (*clientv3.Client, error) {
 }
 
 func (c *ClusterMemberController) Endpoints() ([]string, error) {
+	etcdDiscoveryDomain, err := c.getEtcdDiscoveryDomain()
+	if err != nil {
+		return []string{}, err
+	}
 	hostEtcd, err := c.endpointsLister.Endpoints(clustermembercontroller.EtcdEndpointNamespace).Get(clustermembercontroller.EtcdEndpointName)
 	if err != nil {
 		c.eventRecorder.Warningf("ErrorGettingHostEtcd", "error occured while getting host-etcd endpoint: %#v", err)
@@ -278,7 +269,7 @@ func (c *ClusterMemberController) Endpoints() ([]string, error) {
 	}
 	var endpoints []string
 	for _, addr := range hostEtcd.Subsets[0].Addresses {
-		endpoints = append(endpoints, fmt.Sprintf("https://%s.%s:2379", addr.Hostname, c.etcdDiscoveryDomain))
+		endpoints = append(endpoints, fmt.Sprintf("https://%s.%s:2379", addr.Hostname, etcdDiscoveryDomain))
 	}
 	return endpoints, nil
 }
@@ -318,48 +309,31 @@ func (c *ClusterMemberController) isEtcdHealthy() (bool, error) {
 	return true, nil
 }
 
-func (c *ClusterMemberController) getPeerToScale() (string, []error) {
+func (c *ClusterMemberController) getUnreadyPods() ([]*corev1.Pod, error) {
 	// list etcd member pods
-	etcdPodRequirement, err := labels.NewRequirement("k8s-app", selection.In, []string{"etcd"})
+	pods, err := c.podLister.List(labels.Set{"app": "etcd"}.AsSelector())
 	if err != nil {
-		c.eventRecorder.Warningf("ErrorGettingLabelSelector", "error get k8s-app=etcd selector: %#v", err)
-		return "", []error{err}
-	}
-	etcdPodSelector := labels.NewSelector().Add(*etcdPodRequirement)
-	pods, err := c.podLister.List(etcdPodSelector)
-	if err != nil {
-		c.eventRecorder.Warningf("ErrorListingPods", "error listing pods with label selector k8s-app=etcd: %#v", err)
-		return "", []error{err}
+		panic(err)
 	}
 
 	// go through the list of all pods, pick one peerFQDN to return from unready pods
 	// and collect dns resolution errors on the way.
-	var dnsErrors []error
-	peerFQDN := ""
+	var unreadyPods []*corev1.Pod
 	for _, pod := range pods {
 		ready := false
 		for _, condition := range pod.Status.Conditions {
 			if condition.Type == corev1.PodReady {
 				ready = condition.Status == corev1.ConditionTrue
+				klog.V(4).Infof("found pod %s ready", pod.Name)
 				break
 			}
 		}
 		if !ready {
 			c.eventRecorder.Eventf("FoundPodToScale", "found pod %s to scale in etcd membership", pod.Name)
-			peerFQDN, err = clustermembercontroller.ReverseLookupSelf("etcd-server-ssl", "tcp", c.etcdDiscoveryDomain, pod.Status.HostIP)
-			if err != nil {
-				c.eventRecorder.Warningf("ErrorGettingPodDNS", "error looking up dns for pod %s from ip %s: %#v", pod.Name, pod.Status.HostIP, err)
-				dnsErrors = append(dnsErrors, err)
-			}
-		} else {
-			klog.V(4).Infof("found pod %s ready with %s peerFQDN", pod.Name, peerFQDN)
-			c.numberOfReadyMembers += 1
+			unreadyPods = append(unreadyPods, pod)
 		}
 	}
-	if len(dnsErrors) != 0 {
-		return peerFQDN, dnsErrors
-	}
-	return "", nil
+	return unreadyPods, nil
 }
 
 func (c *ClusterMemberController) AddMember(peerFQDN string) error {
@@ -379,4 +353,67 @@ func (c *ClusterMemberController) AddMember(peerFQDN string) error {
 	}
 	c.eventRecorder.Eventf("MemberAdded", "member %s added to etcd membership %#v", resp.Member.Name, resp.Members)
 	return nil
+}
+
+func (c *ClusterMemberController) getEtcdDiscoveryDomain() (string, error) {
+	controllerConfig, err := c.dynamicClient.
+		Resource(schema.GroupVersionResource{Group: "machineconfiguration.openshift.io", Version: "v1", Resource: "controllerconfigs"}).
+		Get("machine-config-controller", metav1.GetOptions{})
+	if err != nil {
+		return "", err
+	}
+	etcdDiscoveryDomain, ok, err := unstructured.NestedString(controllerConfig.Object, "spec", "etcdDiscoveryDomain")
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("controllerconfigs/machine-config-controller missing .spec.etcdDiscoveryDomain")
+	}
+	return etcdDiscoveryDomain, nil
+}
+
+// getValidPodFQDNToScale goes through the list on unready pods and
+// returns a resolvable  podFQDN. If none of the DNSes are available
+// yet it will return collected errors.
+func (c *ClusterMemberController) getValidPodFQDNToScale(unreadyPods []*corev1.Pod) (string, error) {
+	etcdDiscoveryDomain, err := c.getEtcdDiscoveryDomain()
+	if err != nil {
+		return "", err
+	}
+	errorStrings := []string{}
+	for _, p := range unreadyPods {
+		if p.Spec.NodeName == "" {
+			return "", fmt.Errorf("node name empty for %s", p.Name)
+		}
+		nodeInternalIP, err := c.getNodeInternalIP(p.Spec.NodeName)
+		if err != nil {
+			errorStrings = append(errorStrings, err.Error())
+		}
+		podFQDN, err := clustermembercontroller.ReverseLookupSelf("etcd-server-ssl", "tcp", etcdDiscoveryDomain, nodeInternalIP)
+		if err != nil {
+			errorStrings = append(errorStrings, err.Error())
+		}
+		return podFQDN, nil
+	}
+	if len(errorStrings) > 0 {
+		return "", fmt.Errorf("%s", strings.Join(errorStrings, ","))
+	}
+	return "", fmt.Errorf("cannot get a valid podFQDN to scale")
+}
+
+func (c *ClusterMemberController) getNodeInternalIP(nodeName string) (string, error) {
+	node, err := c.nodeLister.Get(nodeName)
+	if err != nil {
+		return "", err
+	}
+	if node.Status.Addresses == nil {
+		return "", fmt.Errorf("cannot get node IP address, addresses for node %s is nil", nodeName)
+	}
+
+	for _, addr := range node.Status.Addresses {
+		if addr.Type == corev1.NodeInternalIP {
+			return addr.Address, nil
+		}
+	}
+	return "", fmt.Errorf("unable to get internal IP address for node %s", nodeName)
 }
