@@ -28,7 +28,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner2"
@@ -159,11 +158,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		versionRecorder,
 		controllerContext.EventRecorder,
 	)
-	clusterInfrastructure, err := configClient.ConfigV1().Infrastructures().Get("cluster", metav1.GetOptions{})
-	if err != nil && !errors.IsNotFound(err) {
-		return err
-	}
-	etcdDiscoveryDomain := clusterInfrastructure.Status.EtcdDiscoveryDomain
 	coreClient := clientset
 
 	etcdCertSignerController2 := etcdcertsigner2.NewEtcdCertSignerController(
@@ -181,13 +175,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		dynamicInformers,
 	)
 
-	clusterMemberController := clustermembercontroller.NewClusterMemberController(
-		coreClient,
-		operatorClient,
-		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
-		controllerContext.EventRecorder,
-		etcdDiscoveryDomain,
-	)
 	clusterMemberController2 := clustermembercontroller2.NewClusterMemberController(
 		dynamicClient,
 		operatorClient,
@@ -196,8 +183,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 	bootstrapTeardownController := bootstrapteardown.NewBootstrapTeardownController(
 		operatorClient,
+		kubeClient,
 		kubeInformersForNamespaces,
-		clusterMemberController,
 		operatorConfigInformers,
 		controllerContext.EventRecorder,
 	)
