@@ -5,7 +5,6 @@ import (
 	"net"
 	"reflect"
 	"strings"
-	"time"
 
 	"github.com/cloudflare/cfssl/log"
 	ceoapi "github.com/openshift/cluster-etcd-operator/pkg/operator/api"
@@ -107,15 +106,7 @@ func ObserveClusterMembers(genericListers configobserver.Listers, recorder event
 
 			_, err := observer.listers.NodeLister.Get(nodeName)
 			if errors.IsNotFound(err) {
-				// if the node is no londer available we use the endpoint observatiopn
-				klog.Warningf("error: Node %s not found: adding remove status to %s ", nodeName, previousMember.Name)
-				clusterMember, err := setMember(previousMember.Name, previousMember.PeerURLS, ceoapi.MemberRemove)
-				if err != nil {
-					return existingConfig, append(errs, err)
-
-				}
-				observer.ObservedMembers = append(observer.ObservedMembers, clusterMember)
-				continue
+				klog.Warningf("error: Node %s not found", nodeName)
 			}
 		}
 	}
@@ -336,31 +327,6 @@ func (e *etcdObserver) getPathObservationData(path []string, existingConfig map[
 	return data, nil
 }
 
-func isPodCrashLoop(bucket string, pod *corev1.Pod) bool {
-	if bucket == "members" {
-		return false
-	}
-	for _, containerStatus := range pod.Status.ContainerStatuses {
-		if containerStatus.Name != "etcd-member" {
-			continue
-		}
-		if containerStatus.State.Waiting != nil && containerStatus.State.Waiting.Reason == "CrashLoopBackOff" {
-			if containerStatus.LastTerminationState.Terminated != nil {
-				for _, cond := range pod.Status.Conditions {
-					if cond.Type == "Initialized" && cond.Status == "True" {
-						delay := cond.LastTransitionTime.Time.Add(+time.Minute * 5)
-						if containerStatus.LastTerminationState.Terminated.FinishedAt.After(delay) {
-							klog.Warningf("isPodCrashLoop: pod %s was observed in CrashLoop", pod.Name)
-							return true
-						}
-						return false
-					}
-				}
-			}
-		}
-	}
-	return false
-}
 
 func (e *etcdObserver) setClusterDomain() error {
 	endpoints, err := e.listers.OpenshiftEtcdEndpointsLister.Endpoints(clustermembercontroller.EtcdEndpointNamespace).Get(clustermembercontroller.EtcdHostEndpointName)
@@ -445,9 +411,6 @@ func (e *etcdObserver) setObservedEtcdFromEndpoint(bucket string) error {
 
 			status := ceoapi.MemberUnknown
 			switch {
-			case isPodCrashLoop(bucket, pod):
-				status = ceoapi.MemberRemove
-				break
 			case isPendingReady(bucket, pod.Name, scalingName, e.listers.OpenshiftEtcdPodsLister):
 				status = ceoapi.MemberReady
 				break
@@ -482,29 +445,6 @@ func (e *etcdObserver) setObservedEtcdFromEndpoint(bucket string) error {
 		}
 	}
 	return nil
-}
-
-func (e *etcdObserver) isPendingRemoval(members ceoapi.Member, existingConfig map[string]interface{}) (bool, error) {
-	previousPendingObserved, found, err := unstructured.NestedSlice(existingConfig, e.pendingPath...)
-	if err != nil {
-		return false, err
-	}
-	if found {
-		previousPending, err := getMembersFromConfig(previousPendingObserved)
-		if err != nil {
-			return false, err
-		}
-
-		for _, pendingMember := range previousPending {
-			if pendingMember.Conditions == nil {
-				return false, nil
-			}
-			if pendingMember.Name == members.Name && pendingMember.Conditions[0].Type == ceoapi.MemberRemove {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
 }
 
 //TODO move to util
