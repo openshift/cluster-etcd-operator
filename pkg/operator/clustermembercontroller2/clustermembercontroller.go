@@ -269,8 +269,12 @@ func (c *ClusterMemberController) Endpoints() ([]string, error) {
 		return []string{}, fmt.Errorf("could not find etcd address in host-etcd")
 	}
 	var endpoints []string
-	for _, addr := range hostEtcd.Subsets[0].Addresses {
-		endpoints = append(endpoints, fmt.Sprintf("https://%s.%s:2379", addr.Hostname, etcdDiscoveryDomain))
+	for _, endpointAddress := range hostEtcd.Subsets[0].Addresses {
+		if endpointAddress.Hostname == "etcd-bootstrap" { // this one has a valid IP, use it
+			endpoints = append(endpoints, "https://"+endpointAddress.IP+":2379")
+			continue
+		}
+		endpoints = append(endpoints, fmt.Sprintf("https://%s.%s:2379", endpointAddress.Hostname, etcdDiscoveryDomain))
 	}
 	return endpoints, nil
 }
