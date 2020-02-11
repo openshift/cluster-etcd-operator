@@ -179,23 +179,19 @@ spec:
         while [ $COUNT -gt 0 ]; do
           echo "current member list is..."
           ${ETCDCTL} member list
-          echo ""
-          echo ""
+          echo -e "\n\n"
 
-          IS_MEMBER_PRESENT=$(${ETCDCTL} member list | grep -o "${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}.*:2380")
-          if [[ -n "${IS_MEMBER_PRESENT:-}" ]]; then
+          IS_MEMBER_PRESENT=$(${ETCDCTL} member list | grep -o "${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}.*:2380") || {
+            echo "member ${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME} is present, continuing"
             break
-          fi
+          }
+
           sleep 1
           let COUNT=$COUNT-1
-        done
-
-        # if the member is not present after 30 seconds
-        if [ -z "$IS_MEMBER_PRESENT" ]; then
+        done || {
           echo "member ${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME} is not present after 30 seconds"
           exit 1
-        fi
-        echo "member ${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME} is present, continuing"
+        }
 
         initial_cluster=""
         member_output=$( ${ETCDCTL} member list | cut -d',' -f3 )
