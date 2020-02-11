@@ -21,7 +21,7 @@ spec:
       serviceAccountName: etcd-operator
       containers:
       - name: operator
-        image: quay.io/openshift/cluster-etcd-operator:v4.0
+        image: quay.io/openshift/origin-cluster-etcd-operator
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8443
@@ -46,10 +46,12 @@ spec:
           name: etcd-client
         env:
         - name: IMAGE
-          value: quay.io/openshift/cluster-etcd-operator:v4.0
+          value: quay.io/openshift/origin-etcd
         - name: OPERATOR_IMAGE
-          value: quay.io/openshift/cluster-etcd-operator:v4.0
+          value: quay.io/openshift/origin-cluster-etcd-operator
         - name: OPERATOR_IMAGE_VERSION
+          value: "0.0.1-snapshot"
+        - name: OPERAND_IMAGE_VERSION
           value: "0.0.1-snapshot"
         - name: POD_NAME
           valueFrom:
