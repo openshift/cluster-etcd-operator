@@ -174,10 +174,10 @@ spec:
                            --endpoints=${ALL_ETCD_ENDPOINTS}"
         ${ETCDCTL} member list
 
-        echo "waiting for member NODE_NAME..."
+        echo "waiting for member $NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME..."
         COUNT=30
         while [ $COUNT -gt 0 ]; do
-          IS_MEMBER_PRESENT=$(${ETCDCTL} member list | grep -o "NODE_NAME.*:2380")
+          IS_MEMBER_PRESENT=$(${ETCDCTL} member list | grep -o "NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME.*:2380")
           if [[ -n "${IS_MEMBER_PRESENT:-}" ]]; then
             break
           fi
@@ -187,10 +187,10 @@ spec:
 
         # if the member is not present after 30 seconds
         if [ -z "$IS_MEMBER_PRESENT" ]; then
-          echo "member NODE_NAME is not present after 30 seconds"
+          echo "member $NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME is not present after 30 seconds"
           exit 1
         fi
-        echo "member NODE_NAME is present, continuing"
+        echo "member $NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME is present, continuing"
 
         initial_cluster=""
         member_output=$( ${ETCDCTL} member list | cut -d',' -f3 )
@@ -199,15 +199,15 @@ spec:
           initial_cluster+="$endpoint_key=$endpoint,"
           echo "adding $endpoint_key=$endpoint,"
         done
-        # trim last comma
-        initial_cluster="${initial_cluster::-1}"
+        # add this pod to the list
+        initial_cluster+="$NODE_NODE_ENVVAR_NAME_ETCD_NAME=https://$NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME:2380"
         echo $initial_cluster
 
         # at this point we know this member is added.  To support a transition, we must remove the old etcd pod.
         # move it somewhere safe so we can retrieve it again later if something goes badly.
         mv /etc/kubernetes/manifests/etcd-member.yaml /etc/kubernetes/etcd-backup-dir || true
 
-        export ETCD_INITIAL_CLUSTER=$(${ETCDCTL} member list | awk -F'[, ]' '{ print $7 }'  | paste -sd ",")
+        export ETCD_INITIAL_CLUSTER="${initial_cluster}"
         export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
         env | grep ETCD | grep -v NODE
 
