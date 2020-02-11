@@ -59,7 +59,9 @@ spec:
         done
 
         # if the member isn't started, then we need to add exactly what we expect to the initial cluster for this member
-        IS_MEMBER_UNSTARTED=$(${ETCDCTL} member list | grep -o "${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}.*:2380" | grep unstarted || true)
+        echo "checking for unstarted"
+        ${ETCDCTL} member list | grep "${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}" | grep unstarted || true
+        IS_MEMBER_UNSTARTED=$(${ETCDCTL} member list | grep "${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}" | grep unstarted || true)
         if [[ -n "${IS_MEMBER_UNSTARTED:-}" ]]; then
           initial_cluster+="NODE_NAME=https://${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}:2380,"
           echo "adding unstarted NODE_NAME=https://${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}:2380,"
@@ -74,7 +76,7 @@ spec:
         # move it somewhere safe so we can retrieve it again later if something goes badly.
         mv /etc/kubernetes/manifests/etcd-member.yaml /etc/kubernetes/etcd-backup-dir || true
 
-        export ETCD_INITIAL_CLUSTER=$(${ETCDCTL} member list | awk -F'[, ]' '{ print $7 }'  | paste -sd ",")
+        export ETCD_INITIAL_CLUSTER=${initial_cluster}
         export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
         env | grep ETCD | grep -v NODE
 
