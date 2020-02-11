@@ -71,7 +71,7 @@ func NewBootstrapTeardownController(
 		etcdOperatorLister:  operatorInformers.Operator().V1().Etcds().Lister(),
 		kubeAPIServerLister: operatorInformers.Operator().V1().KubeAPIServers().Lister(),
 		configMapLister:     openshiftKubeAPIServerNamespacedInformers.Core().V1().ConfigMaps().Lister(),
-		endpointLister:      openshiftKubeAPIServerNamespacedInformers.Core().V1().Endpoints().Lister(),
+		endpointLister:      kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
 
 		cachesToSync: []cache.InformerSynced{
 			operatorConfigClient.Informer().HasSynced,
