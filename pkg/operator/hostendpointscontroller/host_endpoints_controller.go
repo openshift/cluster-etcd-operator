@@ -41,7 +41,7 @@ const (
 type HostEndpointsController struct {
 	operatorClient       v1helpers.OperatorClient
 	infrastructureLister configv1listers.InfrastructureLister
-	podLister            corev1listers.PodLister
+	nodeLister           corev1listers.NodeLister
 	endpointsLister      corev1listers.EndpointsLister
 	endpointsClient      corev1client.EndpointsGetter
 
@@ -59,27 +59,28 @@ func NewHostEndpointsController(
 ) *HostEndpointsController {
 	kubeInformersForTargetNamespace := kubeInformersForNamespaces.InformersFor("openshift-etcd")
 	endpointsInformer := kubeInformersForTargetNamespace.Core().V1().Endpoints()
-	podInformer := kubeInformersForTargetNamespace.Core().V1().Pods()
+	nodeInformer := kubeInformersForTargetNamespace.Core().V1().Nodes()
 
 	c := &HostEndpointsController{
+		operatorClient:       operatorClient,
+		infrastructureLister: infrastructureInformer.Lister(),
+		nodeLister:           nodeInformer.Lister(),
+		endpointsLister:      endpointsInformer.Lister(),
+		endpointsClient:      kubeClient.CoreV1(),
+
 		eventRecorder: eventRecorder.WithComponentSuffix("host-etcd-endpoints-controller"),
 		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "HostEndpointsController"),
 		cachesToSync: []cache.InformerSynced{
 			operatorClient.Informer().HasSynced,
 			endpointsInformer.Informer().HasSynced,
-			podInformer.Informer().HasSynced,
+			nodeInformer.Informer().HasSynced,
 			infrastructureInformer.Informer().HasSynced,
 		},
-		operatorClient:       operatorClient,
-		infrastructureLister: infrastructureInformer.Lister(),
-		podLister:            podInformer.Lister(),
-		endpointsLister:      endpointsInformer.Lister(),
-		endpointsClient:      kubeClient.CoreV1(),
 	}
 	operatorClient.Informer().AddEventHandler(c.eventHandler())
 	endpointsInformer.Informer().AddEventHandler(c.eventHandler())
 	infrastructureInformer.Informer().AddEventHandler(c.eventHandler())
-	podInformer.Informer().AddEventHandler(c.eventHandler())
+	nodeInformer.Informer().AddEventHandler(c.eventHandler())
 	return c
 }
 
@@ -111,32 +112,34 @@ func (c *HostEndpointsController) sync() error {
 	return nil
 }
 
+func getInternalIPAddressForNodeName(node *corev1.Node) (string, error) {
+	for _, currAddress := range node.Status.Addresses {
+		if currAddress.Type == corev1.NodeInternalIP {
+			return currAddress.Address, nil
+		}
+	}
+	return "", fmt.Errorf("node/%s missing %s", node.Name, corev1.NodeInternalIP)
+}
+
 func (c *HostEndpointsController) syncHostEndpoints() error {
 	discoveryDomain, err := c.getEtcdDiscoveryDomain()
 	if err != nil {
 		return fmt.Errorf("unable to determine etcd discovery domain: %v", err)
 	}
 
-	// list etcd member pods
-	pods, err := c.podLister.List(labels.Set{"k8s-app": "etcd"}.AsSelector())
-
-	// get dns names of ready etcd member pods
+	nodes, err := c.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
+	// get dns names of ready etc member pods
 	var addresses []string
-	for _, pod := range pods {
-		var ready bool
-		for _, condition := range pod.Status.Conditions {
-			if condition.Type == corev1.PodReady {
-				ready = condition.Status == corev1.ConditionTrue
-				break
-			}
+	for _, node := range nodes {
+		internalIP, err := getInternalIPAddressForNodeName(node)
+		if err != nil {
+			return err
 		}
-		if ready {
-			dnsName, err := c.getEtcdDNSName(discoveryDomain, pod.Status.HostIP)
-			if err != nil {
-				return fmt.Errorf("unable to determine dns name for etcd member on node %s: %v", pod.Spec.NodeName, err)
-			}
-			addresses = append(addresses, dnsName)
+		dnsName, err := c.getEtcdDNSName(discoveryDomain, internalIP)
+		if err != nil {
+			return fmt.Errorf("unable to determine dns name for etcd member on node %s: %v", node.Name, err)
 		}
+		addresses = append(addresses, dnsName)
 	}
 
 	if len(addresses) == 0 {
@@ -160,10 +163,11 @@ func (c *HostEndpointsController) syncHostEndpoints() error {
 
 	// if etcd-bootstrap exists, keep it (at the end of the list)
 	existing, err := c.endpointsLister.Endpoints("openshift-etcd").Get("host-etcd")
-	if err != nil && !errors.IsNotFound(err) {
+	switch {
+	case errors.IsNotFound(err): // do nothing
+	case err != nil:
 		return err
-	}
-	if !errors.IsNotFound(err) {
+	default:
 		for _, endpointAddress := range existing.Subsets[0].Addresses {
 			if endpointAddress.Hostname == "etcd-bootstrap" {
 				required.Subsets[0].Addresses = append(required.Subsets[0].Addresses, *endpointAddress.DeepCopy())
