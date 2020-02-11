@@ -177,6 +177,11 @@ spec:
         echo "waiting for member NODE_NAME..."
         COUNT=30
         while [ $COUNT -gt 0 ]; do
+          echo "current member list is..."
+          ${ETCDCTL} member list
+          echo ""
+          echo ""
+
           IS_MEMBER_PRESENT=$(${ETCDCTL} member list | grep -o "NODE_NAME.*:2380")
           if [[ -n "${IS_MEMBER_PRESENT:-}" ]]; then
             break
