@@ -139,10 +139,6 @@ func (c *HostEndpointsController) syncHostEndpoints() error {
 		}
 	}
 
-	if len(addresses) == 0 {
-		return fmt.Errorf("no etcd member pods are ready")
-	}
-
 	required := hostEndpointsAsset()
 
 	if required.Annotations == nil {
@@ -170,6 +166,10 @@ func (c *HostEndpointsController) syncHostEndpoints() error {
 				break
 			}
 		}
+	}
+
+	if len(required.Subsets[0].Addresses) == 0 {
+		return fmt.Errorf("no etcd member pods are ready")
 	}
 
 	return c.applyEndpoints(required)
