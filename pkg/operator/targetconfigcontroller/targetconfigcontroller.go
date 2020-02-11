@@ -10,9 +10,6 @@ import (
 	"k8s.io/client-go/dynamic"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/version"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
@@ -28,6 +25,9 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
+	"github.com/openshift/cluster-etcd-operator/pkg/version"
 )
 
 const workQueueKey = "key"
@@ -273,7 +273,7 @@ func (c *TargetConfigController) namespaceEventHandler() cache.ResourceEventHand
 			if !ok {
 				c.queue.Add(workQueueKey)
 			}
-			if ns.Name == operatorclient.TargetNamespace {
+			if ns.Name == ("openshift-etcd") {
 				c.queue.Add(workQueueKey)
 			}
 		},
@@ -282,7 +282,7 @@ func (c *TargetConfigController) namespaceEventHandler() cache.ResourceEventHand
 			if !ok {
 				c.queue.Add(workQueueKey)
 			}
-			if ns.Name == operatorclient.TargetNamespace {
+			if ns.Name == ("openshift-etcd") {
 				c.queue.Add(workQueueKey)
 			}
 		},
@@ -300,7 +300,7 @@ func (c *TargetConfigController) namespaceEventHandler() cache.ResourceEventHand
 					return
 				}
 			}
-			if ns.Name == operatorclient.TargetNamespace {
+			if ns.Name == ("openshift-etcd") {
 				c.queue.Add(workQueueKey)
 			}
 		},

@@ -31,7 +31,7 @@ func NewConfigObserver(
 	interestingNamespaces := []string{
 		operatorclient.GlobalUserSpecifiedConfigNamespace,
 		operatorclient.GlobalMachineSpecifiedConfigNamespace,
-		operatorclient.TargetNamespace,
+		"openshift-etcd",
 		operatorclient.OperatorNamespace,
 	}
 
