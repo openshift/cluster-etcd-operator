@@ -5,41 +5,65 @@ import (
 	"time"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/pkg/transport"
 	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 )
 
-func GetEtcdClient(nodeLister corev1listers.NodeLister, endpointsLister corev1listers.EndpointsLister) (*clientv3.Client, error) {
+type EtcdClientGetter interface {
+	GetEtcdClient() (*clientv3.Client, error)
+}
 
-	hostEtcd, err := endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd")
-	if err != nil {
-		return nil, err
+type etcdClientGetter struct {
+	nodeLister      corev1listers.NodeLister
+	endpointsLister corev1listers.EndpointsLister
+
+	nodeListerSynced      cache.InformerSynced
+	endpointsListerSynced cache.InformerSynced
+}
+
+func NewEtcdClientGetter(kubeInformers v1helpers.KubeInformersForNamespaces) EtcdClientGetter {
+	return &etcdClientGetter{
+		nodeLister:            kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
+		endpointsLister:       kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
+		nodeListerSynced:      kubeInformers.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
+		endpointsListerSynced: kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().HasSynced,
 	}
+}
 
-	if len(hostEtcd.Subsets) == 0 {
-		return nil, fmt.Errorf("invalid ip address for host-etcd endpoint")
+func (g *etcdClientGetter) GetEtcdClient() (*clientv3.Client, error) {
+	if !g.nodeListerSynced() {
+		return nil, fmt.Errorf("node lister not synced")
+	}
+	if !g.endpointsListerSynced() {
+		return nil, fmt.Errorf("node lister not synced")
 	}
 
 	etcdEndpoints := []string{}
-	for _, addr := range hostEtcd.Subsets[0].Addresses {
-		if addr.Hostname == "etcd-bootstrap" {
-			// etcd-bootstrap has a valid IP in host-etcd
-			etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", addr.IP))
-			break
-		}
-	}
-
-	nodes, err := nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
+	nodes, err := g.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
 	for _, node := range nodes {
 		internalIP, err := getInternalIPAddressForNodeName(node)
 		if err != nil {
 			return nil, err
 		}
 		etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", internalIP))
+	}
+
+	hostEtcd, err := g.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd")
+	if err != nil {
+		return nil, err
+	}
+	for _, addr := range hostEtcd.Subsets[0].Addresses {
+		if addr.Hostname == "etcd-bootstrap" {
+			// etcd-bootstrap has a valid IP in host-etcd
+			etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", addr.IP))
+			break
+		}
 	}
 
 	c, err := getEtcdClient(etcdEndpoints)

@@ -6,6 +6,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
@@ -77,6 +79,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	if err != nil {
 		return err
 	}
+	etcdClientGetter := etcdcli.NewEtcdClientGetter(kubeInformersForNamespaces)
 
 	resourceSyncController, err := resourcesynccontroller.NewResourceSyncController(
 		operatorClient,
@@ -198,6 +201,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeInformersForNamespaces,
 		clusterMemberController,
 		operatorConfigInformers,
+		etcdClientGetter,
 		controllerContext.EventRecorder,
 	)
 
