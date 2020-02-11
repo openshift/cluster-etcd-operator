@@ -104,11 +104,11 @@ func getEtcdName(envVarContext envVarContext) (map[string]string, error) {
 	ret := map[string]string{}
 
 	for _, nodeInfo := range envVarContext.status.NodeStatuses {
-		dnsName, err := getInternalIPDNSNodeName(envVarContext, nodeInfo.NodeName)
+		nodeDNSName, err := getInternalIPDNSNodeName(envVarContext, nodeInfo.NodeName)
 		if err != nil {
 			return nil, err
 		}
-		ret[fmt.Sprintf("NODE_%s_ETCD_NAME", envVarSafe(nodeInfo.NodeName))] = fmt.Sprintf("etcd-member-%s", dnsName)
+		ret[fmt.Sprintf("NODE_%s_ETCD_NAME", envVarSafe(nodeInfo.NodeName))] = nodeDNSName
 	}
 
 	return ret, nil
