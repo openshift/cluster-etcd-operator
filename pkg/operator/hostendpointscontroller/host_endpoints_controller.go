@@ -11,6 +11,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
@@ -57,7 +58,7 @@ func NewHostEndpointsController(
 	kubeInformers operatorv1helpers.KubeInformersForNamespaces,
 	infrastructureInformer configv1informers.InfrastructureInformer,
 ) *HostEndpointsController {
-	kubeInformersForTargetNamespace := kubeInformers.InformersFor("openshift-etcd")
+	kubeInformersForTargetNamespace := kubeInformers.InformersFor(operatorclient.TargetNamespace)
 	endpointsInformer := kubeInformersForTargetNamespace.Core().V1().Endpoints()
 	kubeInformersForCluster := kubeInformers.InformersFor("")
 	nodeInformer := kubeInformersForCluster.Core().V1().Nodes()
@@ -128,9 +129,9 @@ func (c *HostEndpointsController) syncHostEndpoints() error {
 	// create endpoint addresses for each node
 	nodes, err := c.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
 	if err != nil {
-		fmt.Errorf("unable to list expected etcd member nodes: %v", err)
+		return fmt.Errorf("unable to list expected etcd member nodes: %v", err)
 	}
-	endpointAddresses := &required.Subsets[0].Addresses
+	endpointAddresses := []corev1.EndpointAddress{}
 	for _, node := range nodes {
 		var nodeInternalIP string
 		for _, nodeAddress := range node.Status.Addresses {
@@ -147,31 +148,33 @@ func (c *HostEndpointsController) syncHostEndpoints() error {
 			return fmt.Errorf("unable to determine etcd member dns name for node %s: %v", node.Name, err)
 		}
 
-		*endpointAddresses = append(*endpointAddresses, corev1.EndpointAddress{
+		endpointAddresses = append(endpointAddresses, corev1.EndpointAddress{
 			IP:       nodeInternalIP,
 			Hostname: strings.TrimSuffix(dnsName, "."+discoveryDomain),
 			NodeName: &node.Name,
 		})
 	}
-
-	sort.Slice(*endpointAddresses, func(i, j int) bool {
-		return (*endpointAddresses)[i].Hostname < (*endpointAddresses)[j].Hostname
+	sort.Slice(endpointAddresses, func(i, j int) bool {
+		return (endpointAddresses)[i].Hostname < (endpointAddresses)[j].Hostname
 	})
 
 	// if etcd-bootstrap exists, keep it (at the end of the list)
-	existing, err := c.endpointsLister.Endpoints("openshift-etcd").Get("host-etcd")
-	if err != nil && !errors.IsNotFound(err) {
-		return err
-	}
-	if !errors.IsNotFound(err) {
+	existing, err := c.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd")
+	switch {
+	case errors.IsNotFound(err):
+		// do nothing with not found because we don't want to clobber the results
+	case err != nil:
+		return nil
+	default:
 		for _, endpointAddress := range existing.Subsets[0].Addresses {
 			if endpointAddress.Hostname == "etcd-bootstrap" {
-				*endpointAddresses = append(*endpointAddresses, *endpointAddress.DeepCopy())
+				endpointAddresses = append(endpointAddresses, *endpointAddress.DeepCopy())
 				break
 			}
 		}
 	}
 
+	required.Subsets[0].Addresses = endpointAddresses
 	if len(required.Subsets[0].Addresses) == 0 {
 		return fmt.Errorf("no etcd member nodes are ready")
 	}
@@ -183,7 +186,7 @@ func hostEndpointsAsset() *corev1.Endpoints {
 	return &corev1.Endpoints{
 		ObjectMeta: v1.ObjectMeta{
 			Name:      "host-etcd",
-			Namespace: "openshift-etcd",
+			Namespace: operatorclient.TargetNamespace,
 		},
 		Subsets: []corev1.EndpointSubset{
 			{
@@ -247,9 +250,9 @@ func reverseLookup(service, proto, name, ip string) (string, error) {
 }
 
 func (c *HostEndpointsController) applyEndpoints(required *corev1.Endpoints) error {
-	existing, err := c.endpointsLister.Endpoints("openshift-etcd").Get("host-etcd")
+	existing, err := c.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd")
 	if errors.IsNotFound(err) {
-		_, err := c.endpointsClient.Endpoints("openshift-etcd").Create(required)
+		_, err := c.endpointsClient.Endpoints(operatorclient.TargetNamespace).Create(required)
 		if err != nil {
 			c.eventRecorder.Warningf("EndpointsCreateFailed", "Failed to create endpoints/%s -n %s: %v", required.Name, required.Namespace, err)
 			return err
@@ -277,7 +280,7 @@ func (c *HostEndpointsController) applyEndpoints(required *corev1.Endpoints) err
 	if klog.V(4) {
 		klog.Infof("Endpoints %q changes: %v", required.Namespace+"/"+required.Name, jsonPatch)
 	}
-	_, err = c.endpointsClient.Endpoints("openshift-etcd").Update(toWrite)
+	_, err = c.endpointsClient.Endpoints(operatorclient.TargetNamespace).Update(toWrite)
 	if err != nil {
 		c.eventRecorder.Warningf("EndpointsUpdateFailed", "Failed to update endpoints/%s -n %s: %v", required.Name, required.Namespace, err)
 		return err
