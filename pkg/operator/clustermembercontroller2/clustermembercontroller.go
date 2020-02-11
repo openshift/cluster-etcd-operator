@@ -286,10 +286,10 @@ func (c *ClusterMemberController) eventHandler() cache.ResourceEventHandler {
 func (c *ClusterMemberController) areAllEtcdMembersHealthy() (bool, error) {
 	// getting a new client everytime because we dont know what etcd-membership looks like
 	etcdClient, err := c.getEtcdClient()
-	defer etcdClient.Close()
 	if err != nil {
 		return false, fmt.Errorf("error getting etcd client: %w", err)
 	}
+	defer etcdClient.Close()
 
 	memberList, err := etcdClient.MemberList(context.Background())
 	if err != nil {
@@ -337,11 +337,11 @@ func (c *ClusterMemberController) getUnreadyEtcdPods() ([]*corev1.Pod, error) {
 
 func (c *ClusterMemberController) AddMember(peerFQDN string) error {
 	etcdClient, err := c.getEtcdClient()
-	defer etcdClient.Close()
 	if err != nil {
 		c.eventRecorder.Warningf("ErrorGettingEtcdClient", "error getting etcd client: %#v", err)
 		return err
 	}
+	defer etcdClient.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	resp, err := etcdClient.MemberAdd(ctx, []string{fmt.Sprintf("https://%s:2380", peerFQDN)})
