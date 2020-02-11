@@ -3,98 +3,15 @@ package bootstrapteardown
 import (
 	"testing"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/library-go/pkg/operator/events"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
-	v1 "github.com/openshift/api/operator/v1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func NewFakeController() *BootstrapTeardownController {
 	r := events.NewInMemoryRecorder("Test_isEtcdAvailable")
 	return &BootstrapTeardownController{
 		eventRecorder: r,
-	}
-}
-
-func Test_isEtcdAvailable(t *testing.T) {
-	c := NewFakeController()
-	type args struct {
-		etcd *operatorv1.Etcd
-	}
-	tests := []struct {
-		name string
-		args args
-		want bool
-	}{
-		{
-			name: "test managed cluster and safe to remove",
-			args: args{
-				etcd: &v1.Etcd{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "cluster",
-					},
-					Spec: v1.EtcdSpec{
-						StaticPodOperatorSpec: v1.StaticPodOperatorSpec{
-							OperatorSpec: v1.OperatorSpec{
-								ManagementState: v1.Managed,
-							},
-						},
-					},
-					Status: v1.EtcdStatus{
-						StaticPodOperatorStatus: v1.StaticPodOperatorStatus{
-							OperatorStatus: v1.OperatorStatus{
-								Conditions: []v1.OperatorCondition{
-									{
-										Type:   clustermembercontroller.ConditionBootstrapSafeToRemove,
-										Status: v1.ConditionTrue,
-									},
-								},
-							},
-						}},
-				},
-			},
-			want: true,
-		},
-		{
-			name: "test managed cluster and unsafe to remove",
-			args: args{
-				etcd: &v1.Etcd{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "cluster",
-					},
-					Spec: v1.EtcdSpec{
-						StaticPodOperatorSpec: v1.StaticPodOperatorSpec{
-							OperatorSpec: v1.OperatorSpec{
-								ManagementState: v1.Managed,
-							},
-						},
-					},
-					Status: v1.EtcdStatus{
-						StaticPodOperatorStatus: v1.StaticPodOperatorStatus{
-							OperatorStatus: v1.OperatorStatus{
-								Conditions: []v1.OperatorCondition{
-									{
-										Type:   clustermembercontroller.ConditionBootstrapSafeToRemove,
-										Status: v1.ConditionFalse,
-									},
-								},
-							},
-						}},
-				},
-			},
-			want: false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := c.isEtcdAvailable(tt.args.etcd)
-			if got != tt.want {
-				t.Errorf("doneEtcd() got = %v, want %v", got, tt.want)
-			}
-		})
 	}
 }
 
