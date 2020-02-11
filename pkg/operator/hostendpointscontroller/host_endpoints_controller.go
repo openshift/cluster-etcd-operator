@@ -164,7 +164,9 @@ func (c *HostEndpointsController) syncHostEndpoints() error {
 	// if etcd-bootstrap exists, keep it (at the end of the list)
 	existing, err := c.endpointsLister.Endpoints("openshift-etcd").Get("host-etcd")
 	switch {
-	case errors.IsNotFound(err): // do nothing
+	case errors.IsNotFound(err):
+		// don't create new. This is probably racing with the creation of etcd endpoints
+		return err
 	case err != nil:
 		return err
 	default:
