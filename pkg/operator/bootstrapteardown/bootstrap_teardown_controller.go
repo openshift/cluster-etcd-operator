@@ -113,6 +113,18 @@ func (c *BootstrapTeardownController) removeBootstrap() error {
 		return err
 	}
 	if !etcdMemberExists {
+		// set bootstrap removed condition
+		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+			Type:    conditionBootstrapRemoved,
+			Status:  operatorv1.ConditionTrue,
+			Reason:  "BootstrapNodeRemoved",
+			Message: "Etcd operator has scaled",
+		}))
+		if updateErr != nil {
+			c.eventRecorder.Warning("BootstrapTeardownErrorUpdatingStatus", updateErr.Error())
+			return updateErr
+		}
+		// return because no work left to do
 		return nil
 	}
 
@@ -138,30 +150,14 @@ func (c *BootstrapTeardownController) removeBootstrap() error {
 		return nil
 	}
 
-	if !etcdMemberExists {
-		// set bootstrap removed condition
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:    conditionBootstrapRemoved,
-			Status:  operatorv1.ConditionTrue,
-			Reason:  "BootstrapNodeRemoved",
-			Message: "Etcd operator has scaled",
-		}))
-		if updateErr != nil {
-			c.eventRecorder.Warning("BootstrapTeardownErrorUpdatingStatus", updateErr.Error())
-			return updateErr
-		}
-		// return because no work left to do
-		return nil
-	} else {
-		_, _, _ = v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:    conditionBootstrapRemoved,
-			Status:  operatorv1.ConditionFalse,
-			Reason:  "BootstrapNodeNotRemoved",
-			Message: fmt.Sprintf("Bootstrap node is not removed yet: etcdMemberExists %t", etcdMemberExists),
-		}))
-	}
-	c.eventRecorder.Event("BootstrapTeardownController", "safe to remove bootstrap")
+	_, _, _ = v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		Type:    conditionBootstrapRemoved,
+		Status:  operatorv1.ConditionFalse,
+		Reason:  "BootstrapNodeNotRemoved",
+		Message: fmt.Sprintf("Bootstrap node is not removed yet: etcdMemberExists %t", etcdMemberExists),
+	}))
 
+	c.eventRecorder.Event("BootstrapTeardownController", "safe to remove bootstrap")
 	if err := c.etcdMemberRemove("etcd-bootstrap"); err != nil {
 		return err
 	}
@@ -370,6 +366,7 @@ func (c *BootstrapTeardownController) Run(stopCh <-chan struct{}) {
 	if !cache.WaitForCacheSync(stopCh, c.cachesToSync...) {
 		return
 	}
+	klog.V(2).Infof("caches synced BootstrapTeardownController")
 
 	go wait.Until(c.runWorker, time.Second, stopCh)
 

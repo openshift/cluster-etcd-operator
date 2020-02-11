@@ -60,14 +60,14 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return err
 	}
 
-	operatorConfigInformers := operatorv1informers.NewSharedInformerFactory(operatorConfigClient, 10*time.Minute)
+	operatorInformers := operatorv1informers.NewSharedInformerFactory(operatorConfigClient, 10*time.Minute)
 	//operatorConfigInformers.ForResource()
 	kubeInformersForNamespaces := v1helpers.NewKubeInformersForNamespaces(
 		kubeClient,
 		"",
 		operatorclient.GlobalUserSpecifiedConfigNamespace,
 		operatorclient.GlobalMachineSpecifiedConfigNamespace,
-		"openshift-etcd",
+		operatorclient.TargetNamespace,
 		operatorclient.OperatorNamespace,
 		"openshift-kube-apiserver",
 	)
@@ -89,7 +89,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 	configObserver := configobservercontroller.NewConfigObserver(
 		operatorClient,
-		operatorConfigInformers,
+		operatorInformers,
 		kubeInformersForNamespaces,
 		configInformers,
 		resourceSyncController,
@@ -183,11 +183,11 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	bootstrapTeardownController := bootstrapteardown.NewBootstrapTeardownController(
 		operatorClient,
 		kubeInformersForNamespaces,
-		operatorConfigInformers,
+		operatorInformers,
 		controllerContext.EventRecorder,
 	)
 
-	operatorConfigInformers.Start(ctx.Done())
+	operatorInformers.Start(ctx.Done())
 	kubeInformersForNamespaces.Start(ctx.Done())
 	configInformers.Start(ctx.Done())
 	dynamicInformers.Start(ctx.Done())
