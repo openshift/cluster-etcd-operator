@@ -174,7 +174,7 @@ spec:
                            --endpoints=${ALL_ETCD_ENDPOINTS}"
         ${ETCDCTL} member list
 
-        echo "waiting for member NODE_NAME..."
+        echo "waiting for member ${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}..."
         COUNT=30
         while [ $COUNT -gt 0 ]; do
           echo "current member list is..."
@@ -182,7 +182,7 @@ spec:
           echo ""
           echo ""
 
-          IS_MEMBER_PRESENT=$(${ETCDCTL} member list | grep -o "NODE_NAME.*:2380")
+          IS_MEMBER_PRESENT=$(${ETCDCTL} member list | grep -o "${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}.*:2380")
           if [[ -n "${IS_MEMBER_PRESENT:-}" ]]; then
             break
           fi
@@ -192,10 +192,10 @@ spec:
 
         # if the member is not present after 30 seconds
         if [ -z "$IS_MEMBER_PRESENT" ]; then
-          echo "member NODE_NAME is not present after 30 seconds"
+          echo "member ${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME} is not present after 30 seconds"
           exit 1
         fi
-        echo "member NODE_NAME is present, continuing"
+        echo "member ${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME} is present, continuing"
 
         initial_cluster=""
         member_output=$( ${ETCDCTL} member list | cut -d',' -f3 )
@@ -204,6 +204,15 @@ spec:
           initial_cluster+="$endpoint_key=$endpoint,"
           echo "adding $endpoint_key=$endpoint,"
         done
+
+        # if the member isn't started, then we need to add exactly what we expect to the initial cluster for this member
+        IS_MEMBER_UNSTARTED=$(${ETCDCTL} member list | grep -o "${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}.*:2380" | grep unstarted || true)
+        if [[ -n "${IS_MEMBER_UNSTARTED:-}" ]]; then
+          initial_cluster+="NODE_NAME=https://${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}:2380,"
+          echo "adding unstarted NODE_NAME=https://${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}:2380,"
+          break
+        fi
+
         # trim last comma
         initial_cluster="${initial_cluster::-1}"
         echo $initial_cluster
