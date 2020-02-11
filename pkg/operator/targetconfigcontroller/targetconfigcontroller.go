@@ -115,7 +115,7 @@ func createTargetConfig(c TargetConfigController, recorder events.Recorder, oper
 	}
 	_, _, err = c.managePod(c.kubeClient.CoreV1(), recorder, operatorSpec, operatorStatus, c.targetImagePullSpec, c.operatorImagePullSpec)
 	if err != nil {
-		errors = append(errors, fmt.Errorf("%q: %v", "configmap/kube-apiserver-pod", err))
+		errors = append(errors, fmt.Errorf("%q: %v", "configmap/etcd-pod", err))
 	}
 
 	if len(errors) > 0 {
