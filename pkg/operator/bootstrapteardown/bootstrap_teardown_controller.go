@@ -59,6 +59,7 @@ func NewBootstrapTeardownController(
 
 		kubeAPIServerLister: operatorInformers.Operator().V1().KubeAPIServers().Lister(),
 		configMapLister:     openshiftKubeAPIServerNamespacedInformers.Core().V1().ConfigMaps().Lister(),
+		endpointLister:      kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
 
 		cachesToSync: []cache.InformerSynced{
 			operatorClient.Informer().HasSynced,
@@ -66,6 +67,7 @@ func NewBootstrapTeardownController(
 			operatorInformers.Operator().V1().KubeAPIServers().Informer().HasSynced,
 			openshiftKubeAPIServerNamespacedInformers.Core().V1().ConfigMaps().Informer().HasSynced,
 			openshiftKubeAPIServerNamespacedInformers.Core().V1().Endpoints().Informer().HasSynced,
+			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().HasSynced,
 		},
 		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "BootstrapTeardownController"),
 		eventRecorder: eventRecorder.WithComponentSuffix("bootstrap-teardown-controller"),
@@ -74,6 +76,7 @@ func NewBootstrapTeardownController(
 	operatorInformers.Operator().V1().KubeAPIServers().Informer().AddEventHandler(c.eventHandler())
 	openshiftKubeAPIServerNamespacedInformers.Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
 	openshiftKubeAPIServerNamespacedInformers.Core().V1().Endpoints().Informer().AddEventHandler(c.eventHandler())
+	kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().AddEventHandler(c.eventHandler())
 	operatorClient.Informer().AddEventHandler(c.eventHandler())
 
 	return c
