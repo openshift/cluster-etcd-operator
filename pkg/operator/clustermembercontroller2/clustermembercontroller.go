@@ -307,7 +307,7 @@ func (c *ClusterMemberController) areAllEtcdMembersHealthy() (bool, error) {
 			// the actual error
 			return false, nil
 		}
-		klog.V(4).Infof("etcd member %s is healthy committed and with %s index", member.Name, statusResp.RaftIndex)
+		klog.V(4).Infof("etcd member %s is healthy committed and with %d index", member.Name, statusResp.RaftIndex)
 	}
 	return true, nil
 }
