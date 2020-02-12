@@ -6,6 +6,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller2"
+
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
@@ -22,13 +24,13 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller2"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner2"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/hostendpointscontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
@@ -54,18 +56,21 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	if err != nil {
 		return err
 	}
+	dynamicClient, err := dynamic.NewForConfig(controllerContext.KubeConfig)
+	if err != nil {
+		return err
+	}
 
-	operatorConfigInformers := operatorv1informers.NewSharedInformerFactory(operatorConfigClient, 10*time.Minute)
+	operatorInformers := operatorv1informers.NewSharedInformerFactory(operatorConfigClient, 10*time.Minute)
 	//operatorConfigInformers.ForResource()
 	kubeInformersForNamespaces := v1helpers.NewKubeInformersForNamespaces(
 		kubeClient,
 		"",
 		operatorclient.GlobalUserSpecifiedConfigNamespace,
 		operatorclient.GlobalMachineSpecifiedConfigNamespace,
-		"openshift-etcd",
+		operatorclient.TargetNamespace,
 		operatorclient.OperatorNamespace,
 		"openshift-kube-apiserver",
-		"openshift-etcd",
 	)
 	configInformers := configv1informers.NewSharedInformerFactory(configClient, 10*time.Minute)
 	operatorClient, dynamicInformers, err := genericoperatorclient.NewStaticPodOperatorClient(controllerContext.KubeConfig, operatorv1.GroupVersion.WithResource("etcds"))
@@ -85,7 +90,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 	configObserver := configobservercontroller.NewConfigObserver(
 		operatorClient,
-		operatorConfigInformers,
+		operatorInformers,
 		kubeInformersForNamespaces,
 		configInformers,
 		resourceSyncController,
@@ -153,19 +158,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		versionRecorder,
 		controllerContext.EventRecorder,
 	)
-	clusterInfrastructure, err := configClient.ConfigV1().Infrastructures().Get("cluster", metav1.GetOptions{})
-	if err != nil && !errors.IsNotFound(err) {
-		return err
-	}
-	etcdDiscoveryDomain := clusterInfrastructure.Status.EtcdDiscoveryDomain
 	coreClient := clientset
 
-	etcdCertSignerController := etcdcertsigner.NewEtcdCertSignerController(
-		coreClient,
-		operatorClient,
-		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
-		controllerContext.EventRecorder,
-	)
 	etcdCertSignerController2 := etcdcertsigner2.NewEtcdCertSignerController(
 		coreClient,
 		operatorClient,
@@ -181,21 +175,20 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		configInformers.Config().V1().Infrastructures(),
 	)
 
-	clusterMemberController := clustermembercontroller.NewClusterMemberController(
-		coreClient,
+	clusterMemberController2 := clustermembercontroller2.NewClusterMemberController(
+		dynamicClient,
 		operatorClient,
 		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
 		controllerContext.EventRecorder,
-		etcdDiscoveryDomain,
 	)
 	bootstrapTeardownController := bootstrapteardown.NewBootstrapTeardownController(
 		operatorClient,
 		kubeInformersForNamespaces,
-		operatorConfigInformers,
+		operatorInformers,
 		controllerContext.EventRecorder,
 	)
 
-	operatorConfigInformers.Start(ctx.Done())
+	operatorInformers.Start(ctx.Done())
 	kubeInformersForNamespaces.Start(ctx.Done())
 	configInformers.Start(ctx.Done())
 	dynamicInformers.Start(ctx.Done())
@@ -208,7 +201,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go resourceSyncController.Run(ctx, 1)
 	go statusController.Run(ctx, 1)
 	go configObserver.Run(ctx, 1)
-	go clusterMemberController.Run(ctx.Done())
+	go clusterMemberController2.Run(ctx.Done())
 	go bootstrapTeardownController.Run(ctx.Done())
 	go staticPodControllers.Run(ctx, 1)
 

@@ -5,6 +5,8 @@ import (
 	"net"
 	"strings"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -16,6 +18,7 @@ type envVarContext struct {
 	spec   operatorv1.StaticPodOperatorSpec
 	status operatorv1.StaticPodOperatorStatus
 
+	endpointLister       corev1listers.EndpointsLister
 	nodeLister           corev1listers.NodeLister
 	infrastructureLister configv1listers.InfrastructureLister
 }
@@ -27,9 +30,11 @@ var envVarFns = []envVarFunc{
 	getDNSName,
 	getFixedEtcdEnvVars,
 	getEtcdName,
+	getAllClusterMembers,
 }
 
 // getEtcdEnvVars returns the env vars that need to be set on the etcd static pods that will be rendered.
+//   ALL_ETCD_ENDPOINTS - this is used to drive the ETCD_INITIAL_CLUSTER
 //   ETCD_DATA_DIR
 //   ETCDCTL_API
 //   ETCD_QUOTA_BACKEND_BYTES
@@ -67,6 +72,33 @@ func getFixedEtcdEnvVars(envVarContext envVarContext) (map[string]string, error)
 		"ETCDCTL_API":                "3",
 		"ETCD_INITIAL_CLUSTER_STATE": "existing",
 	}, nil
+}
+
+func getAllClusterMembers(envVarContext envVarContext) (map[string]string, error) {
+	ret := map[string]string{}
+
+	endpoints := []string{}
+	for _, nodeInfo := range envVarContext.status.NodeStatuses {
+		endpoint, err := getInternalIPAddressForNodeName(envVarContext, nodeInfo.NodeName)
+		if err != nil {
+			return nil, err
+		}
+		endpoints = append(endpoints, fmt.Sprintf("https://%s:2379", endpoint))
+	}
+
+	hostEtcdEndpoints, err := envVarContext.endpointLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd")
+	if err != nil {
+		return nil, err
+	}
+	for _, endpointAddress := range hostEtcdEndpoints.Subsets[0].Addresses {
+		if endpointAddress.Hostname == "etcd-bootstrap" {
+			endpoints = append(endpoints, "https://"+endpointAddress.IP+":2379")
+			break
+		}
+	}
+	ret["ALL_ETCD_ENDPOINTS"] = strings.Join(endpoints, ",")
+
+	return ret, nil
 }
 
 func getEtcdName(envVarContext envVarContext) (map[string]string, error) {
