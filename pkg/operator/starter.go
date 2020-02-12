@@ -76,7 +76,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	if err != nil {
 		return err
 	}
-	etcdClientGetter := etcdcli.NewEtcdClientGetter(kubeInformersForNamespaces)
+	etcdClient := etcdcli.NewEtcdClient(kubeInformersForNamespaces)
 
 	resourceSyncController, err := resourcesynccontroller.NewResourceSyncController(
 		operatorClient,
@@ -185,6 +185,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorClient,
 		kubeInformersForNamespaces,
 		operatorInformers,
+		etcdClient,
 		controllerContext.EventRecorder,
 	)
 
