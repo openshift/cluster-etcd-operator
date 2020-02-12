@@ -5,7 +5,8 @@ metadata:
   namespace: openshift-etcd
   labels:
     app: etcd
-    etcd: "not-true-yet"
+    k8s-app: etcd
+    etcd: "true"
     revision: "REVISION"
 spec:
   containers:
@@ -20,16 +21,66 @@ spec:
         #!/bin/sh
         set -euo pipefail
 
-        sleep 24h
+        ETCDCTL="etcdctl --cacert=/etc/kubernetes/static-pod-resources/configmaps/etcd-serving-ca/ca-bundle.crt \
+                           --cert=/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt \
+                           --key=/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key \
+                           --endpoints=${ALL_ETCD_ENDPOINTS}"
+        ${ETCDCTL} member list
 
-        exit 0
+        echo "waiting for member ${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}..."
+        COUNT=30
+        while [ $COUNT -gt 0 ]; do
+          echo "current member list is..."
+          ${ETCDCTL} member list
+          echo ""
+          echo ""
 
-        # add logic here to confirm that we are part of the etcd members (the controller added us).
-        # this is probably a golang command that tries to confirm for two minutes before exiting
-        # and prints nothing except for the ETCD_INITIAL_CLUSTER
+          IS_MEMBER_PRESENT=$(${ETCDCTL} member list | grep -o "${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}.*:2380")
+          if [[ -n "${IS_MEMBER_PRESENT:-}" ]]; then
+            break
+          fi
+          sleep 1
+          let COUNT=$COUNT-1
+        done
 
+        # if the member is not present after 30 seconds
+        if [ -z "$IS_MEMBER_PRESENT" ]; then
+          echo "member ${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME} is not present after 30 seconds"
+          exit 1
+        fi
+        echo "member ${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME} is present, continuing"
+
+        initial_cluster=""
+        member_output=$( ${ETCDCTL} member list | cut -d',' -f3 )
+        for endpoint_key in ${member_output}; do
+          endpoint=$(${ETCDCTL} member list | grep $endpoint_key | awk -F'[, ]' '{ print $7 }')
+          initial_cluster+="$endpoint_key=$endpoint,"
+          echo "adding $endpoint_key=$endpoint,"
+        done
+
+        # if the member isn't started, then we need to add exactly what we expect to the initial cluster for this member
+        echo "checking for unstarted"
+        ${ETCDCTL} member list | grep "${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}" | grep unstarted || true
+        IS_MEMBER_UNSTARTED=$(${ETCDCTL} member list | grep "${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}" | grep unstarted || true)
+        if [[ -n "${IS_MEMBER_UNSTARTED:-}" ]]; then
+          initial_cluster+="NODE_NAME=https://${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}:2380,"
+          echo "adding unstarted NODE_NAME=https://${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}:2380,"
+          break
+        fi
+
+        # trim last comma
+        initial_cluster="${initial_cluster::-1}"
+        echo $initial_cluster
+
+        # at this point we know this member is added.  To support a transition, we must remove the old etcd pod.
+        # move it somewhere safe so we can retrieve it again later if something goes badly.
+        mv /etc/kubernetes/manifests/etcd-member.yaml /etc/kubernetes/etcd-backup-dir || true
+
+        export ETCD_INITIAL_CLUSTER=${initial_cluster}
         export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
+        env | grep ETCD | grep -v NODE
 
+        set -x
         exec etcd \
           --initial-advertise-peer-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2380 \
           --cert-file=/etc/kubernetes/static-pod-resources/secrets/etcd-all-serving/etcd-serving-NODE_NAME.crt \
@@ -43,23 +94,40 @@ spec:
           --advertise-client-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2379 \
           --listen-client-urls=https://${LISTEN_ON_ALL_IPS}:2379 \
           --listen-peer-urls=https://${LISTEN_ON_ALL_IPS}:2380 \
-          --listen-metrics-urls=https://${LISTEN_ON_ALL_IPS}:9978
+          --listen-metrics-urls=https://${LISTEN_ON_ALL_IPS}:9978 ||  mv /etc/kubernetes/etcd-backup-dir/etcd-member.yaml /etc/kubernetes/manifests
     env:
 ${COMPUTED_ENV_VARS}
     resources:
       requests:
-        memory: 200Mi
-        cpu: 100m
+        memory: 600Mi
+        cpu: 300m
       limits:
-        memory: 200Mi
-        cpu: 100m
+        memory: 600Mi
+        cpu: 300m
+    readinessProbe:
+      exec:
+        command:
+          - /bin/sh
+          - -ec
+          - "lsof -n -i :2380 | grep LISTEN"
+      failureThreshold: 3
+      initialDelaySeconds: 3
+      periodSeconds: 5
+      successThreshold: 1
+      timeoutSeconds: 5
+    securityContext:
+      privileged: true
     volumeMounts:
-    - mountPath: /etc/kubernetes/static-pod-resources
-      name: resource-dir
-    - mountPath: /etc/kubernetes/static-pod-certs
-      name: cert-dir
-    - mountPath: /var/lib/etcd/
-      name: data-dir
+      - mountPath: /etc/kubernetes/manifests
+        name: static-pod-dir
+      - mountPath: /etc/kubernetes/etcd-backup-dir
+        name: etcd-backup-dir
+      - mountPath: /etc/kubernetes/static-pod-resources
+        name: resource-dir
+      - mountPath: /etc/kubernetes/static-pod-certs
+        name: cert-dir
+      - mountPath: /var/lib/etcd/
+        name: data-dir
   - name: etcd-metrics
     image: ${IMAGE}
     imagePullPolicy: IfNotPresent
@@ -70,14 +138,6 @@ ${COMPUTED_ENV_VARS}
       - |
         #!/bin/sh
         set -euo pipefail
-
-        sleep 24h
-
-        exit 0
-
-        # add logic here to confirm that we are part of the etcd members (the controller added us).
-        # this is probably a golang command that tries to confirm for two minutes before exiting
-        # and prints nothing except for the ETCD_INITIAL_CLUSTER
 
         export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
 
@@ -100,6 +160,8 @@ ${COMPUTED_ENV_VARS}
       limits:
         memory: 200Mi
         cpu: 100m
+    securityContext:
+      privileged: true
     volumeMounts:
       - mountPath: /etc/kubernetes/static-pod-resources
         name: resource-dir
@@ -112,14 +174,20 @@ ${COMPUTED_ENV_VARS}
   tolerations:
   - operator: "Exists"
   volumes:
-  - hostPath:
-      path: /etc/kubernetes/static-pod-resources/etcd-pod-REVISION
-    name: resource-dir
-  - hostPath:
-      path: /etc/kubernetes/static-pod-resources/etcd-certs
-    name: cert-dir
-  - hostPath:
-      path: /var/lib/etcd
-      type: ""
-    name: data-dir
+    - hostPath:
+        path: /etc/kubernetes/manifests
+      name: static-pod-dir
+    - hostPath:
+        path: /etc/kubernetes/static-pod-resources/etcd-member
+      name: etcd-backup-dir
+    - hostPath:
+        path: /etc/kubernetes/static-pod-resources/etcd-pod-REVISION
+      name: resource-dir
+    - hostPath:
+        path: /etc/kubernetes/static-pod-resources/etcd-certs
+      name: cert-dir
+    - hostPath:
+        path: /var/lib/etcd
+        type: ""
+      name: data-dir
 
