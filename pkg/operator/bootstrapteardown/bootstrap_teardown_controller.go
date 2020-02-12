@@ -1,7 +1,6 @@
 package bootstrapteardown
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -15,9 +14,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
-	"go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/pkg/transport"
-	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -35,8 +31,8 @@ const (
 )
 
 type BootstrapTeardownController struct {
-	operatorClient   v1helpers.OperatorClient
-	etcdClientGetter etcdcli.EtcdClient
+	operatorClient v1helpers.OperatorClient
+	etcdClient     etcdcli.EtcdClient
 
 	kubeAPIServerLister operatorv1listers.KubeAPIServerLister
 	configMapLister     corev1listers.ConfigMapLister
@@ -52,14 +48,14 @@ func NewBootstrapTeardownController(
 
 	kubeInformersForNamespaces operatorv1helpers.KubeInformersForNamespaces,
 	operatorInformers operatorv1informers.SharedInformerFactory,
-	etcdClientGetter etcdcli.EtcdClient,
+	etcdClient etcdcli.EtcdClient,
 
 	eventRecorder events.Recorder,
 ) *BootstrapTeardownController {
 	openshiftKubeAPIServerNamespacedInformers := kubeInformersForNamespaces.InformersFor("openshift-kube-apiserver")
 	c := &BootstrapTeardownController{
-		operatorClient:   operatorClient,
-		etcdClientGetter: etcdClientGetter,
+		operatorClient: operatorClient,
+		etcdClient:     etcdClient,
 
 		kubeAPIServerLister: operatorInformers.Operator().V1().KubeAPIServers().Lister(),
 		configMapLister:     openshiftKubeAPIServerNamespacedInformers.Core().V1().ConfigMaps().Lister(),
@@ -164,7 +160,7 @@ func (c *BootstrapTeardownController) removeBootstrap() error {
 	}
 
 	c.eventRecorder.Event("BootstrapTeardownController", "safe to remove bootstrap")
-	if err := c.etcdMemberRemove("etcd-bootstrap"); err != nil {
+	if err := c.etcdClient.MemberRemove("etcd-bootstrap"); err != nil {
 		return err
 	}
 
@@ -172,19 +168,11 @@ func (c *BootstrapTeardownController) removeBootstrap() error {
 }
 
 func (c *BootstrapTeardownController) isEtcdMember(name string) (bool, error) {
-	cli, err := c.getEtcdClient()
+	members, err := c.etcdClient.MemberList()
 	if err != nil {
 		return false, err
 	}
-	defer cli.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	l, err := cli.MemberList(ctx)
-	cancel()
-	if err != nil {
-		return false, err
-	}
-	for _, m := range l.Members {
+	for _, m := range members {
 		if m.Name == name {
 			return true, nil
 		}
@@ -192,120 +180,23 @@ func (c *BootstrapTeardownController) isEtcdMember(name string) (bool, error) {
 	return false, nil
 }
 
-func (c *BootstrapTeardownController) etcdMemberRemove(name string) error {
-	cli, err := c.getEtcdClient()
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-	ctx, cancel := context.WithCancel(context.Background())
-	l, err := cli.MemberList(ctx)
-	cancel()
-	if err != nil {
-		return err
-	}
-	for _, member := range l.Members {
-		if member.Name == name {
-			resp, err := cli.MemberRemove(context.Background(), member.ID)
-			if err != nil {
-				return err
-			}
-			klog.Infof("Members left %#v", resp.Members)
-		}
-	}
-	return nil
-}
-
-func (c *BootstrapTeardownController) getEtcdClient() (*clientv3.Client, error) {
-	endpoints, err := c.directEtcdEndpoints()
-	if err != nil {
-		return nil, err
-	}
-
-	dialOptions := []grpc.DialOption{
-		grpc.WithBlock(), // block until the underlying connection is up
-	}
-
-	tlsInfo := transport.TLSInfo{
-		CertFile:      "/var/run/secrets/etcd-client/tls.crt",
-		KeyFile:       "/var/run/secrets/etcd-client/tls.key",
-		TrustedCAFile: "/var/run/configmaps/etcd-ca/ca-bundle.crt",
-	}
-	tlsConfig, err := tlsInfo.ClientConfig()
-
-	cfg := &clientv3.Config{
-		DialOptions: dialOptions,
-		Endpoints:   endpoints,
-		DialTimeout: 5 * time.Second,
-		TLS:         tlsConfig,
-	}
-
-	cli, err := clientv3.New(*cfg)
-	if err != nil {
-		return nil, err
-	}
-	return cli, err
-}
-
-func (c *BootstrapTeardownController) directEtcdEndpoints() ([]string, error) {
-	hostEtcd, err := c.endpointLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd")
-	if err != nil {
-		return []string{}, err
-	}
-	if len(hostEtcd.Subsets) == 0 {
-		return []string{}, fmt.Errorf("could not find etcd address in host-etcd")
-	}
-
-	etcdDiscoveryDomain := hostEtcd.Annotations["alpha.installer.openshift.io/dns-suffix"]
-	var endpoints []string
-	for _, endpointAddress := range hostEtcd.Subsets[0].Addresses {
-		if endpointAddress.Hostname == "etcd-bootstrap" { // this one has a valid IP, use it
-			endpoints = append(endpoints, "https://"+endpointAddress.IP+":2379")
-			continue
-		}
-		endpoints = append(endpoints, fmt.Sprintf("https://%s.%s:2379", endpointAddress.Hostname, etcdDiscoveryDomain))
-	}
-
-	return endpoints, nil
-}
-
 func (c *BootstrapTeardownController) hasMoreThanTwoEtcdMembers() (bool, error) {
-	cli, err := c.getEtcdClient()
-	if err != nil {
-		return false, err
-	}
-	defer cli.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	l, err := cli.MemberList(ctx)
-	cancel()
+	members, err := c.etcdClient.MemberList()
 	if err != nil {
 		return false, err
 	}
 
-	if len(l.Members) <= 3 {
+	if len(members) <= 3 {
 		return false, nil
 	}
 
-	unreadyMember := false
-	for _, m := range l.Members {
-		if len(m.ClientURLs) == 0 {
-			c.eventRecorder.Warningf("EtcdMemberNotHealthy", "member %s has no clientURLs", m.Name)
-			unreadyMember = true
-			continue
-		}
-
-		statusResp, err := cli.Status(context.Background(), m.ClientURLs[0])
-		if err != nil {
-			c.eventRecorder.Warningf("EtcdMemberNotHealthy", "member %s is not healthy", m.Name)
-			unreadyMember = true
-		}
-		klog.V(4).Infof("member %s is healtly with %d index", m.Name, statusResp.RaftIndex)
-	}
-	if unreadyMember {
+	unhealthyMembers, err := c.etcdClient.UnhealthyMembers()
+	if err != nil {
 		return false, nil
 	}
-
+	if len(unhealthyMembers) > 0 {
+		return false, nil
+	}
 	return true, nil
 }
 

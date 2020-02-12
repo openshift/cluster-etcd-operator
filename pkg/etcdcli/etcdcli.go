@@ -26,7 +26,7 @@ type etcdClientGetter struct {
 	endpointsListerSynced cache.InformerSynced
 }
 
-func NewEtcdClientGetter(kubeInformers v1helpers.KubeInformersForNamespaces) EtcdClient {
+func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces) EtcdClient {
 	return &etcdClientGetter{
 		nodeLister:            kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
 		endpointsLister:       kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
