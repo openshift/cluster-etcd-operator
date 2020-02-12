@@ -70,6 +70,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorclient.TargetNamespace,
 		operatorclient.OperatorNamespace,
 		"openshift-kube-apiserver",
+		"kube-system", //bootstrap completion is signaled from this namespace
 	)
 	configInformers := configv1informers.NewSharedInformerFactory(configClient, 10*time.Minute)
 	operatorClient, dynamicInformers, err := genericoperatorclient.NewStaticPodOperatorClient(controllerContext.KubeConfig, operatorv1.GroupVersion.WithResource("etcds"))

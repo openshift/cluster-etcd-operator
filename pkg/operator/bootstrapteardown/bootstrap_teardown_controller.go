@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/errors"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
@@ -53,20 +55,19 @@ func NewBootstrapTeardownController(
 
 	eventRecorder events.Recorder,
 ) *BootstrapTeardownController {
-	openshiftKubeAPIServerNamespacedInformers := kubeInformersForNamespaces.InformersFor("openshift-kube-apiserver")
 	c := &BootstrapTeardownController{
 		operatorClient: operatorClient,
 
 		kubeAPIServerLister: operatorInformers.Operator().V1().KubeAPIServers().Lister(),
-		configMapLister:     openshiftKubeAPIServerNamespacedInformers.Core().V1().ConfigMaps().Lister(),
+		configMapLister:     kubeInformersForNamespaces.ConfigMapLister(),
 		endpointLister:      kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
 
 		cachesToSync: []cache.InformerSynced{
 			operatorClient.Informer().HasSynced,
 			operatorInformers.Operator().V1().Etcds().Informer().HasSynced,
 			operatorInformers.Operator().V1().KubeAPIServers().Informer().HasSynced,
-			openshiftKubeAPIServerNamespacedInformers.Core().V1().ConfigMaps().Informer().HasSynced,
-			openshiftKubeAPIServerNamespacedInformers.Core().V1().Endpoints().Informer().HasSynced,
+			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer().HasSynced,
+			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().HasSynced,
 			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().HasSynced,
 		},
 		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "BootstrapTeardownController"),
@@ -74,9 +75,10 @@ func NewBootstrapTeardownController(
 	}
 
 	operatorInformers.Operator().V1().KubeAPIServers().Informer().AddEventHandler(c.eventHandler())
-	openshiftKubeAPIServerNamespacedInformers.Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
-	openshiftKubeAPIServerNamespacedInformers.Core().V1().Endpoints().Informer().AddEventHandler(c.eventHandler())
+	kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
 	kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().AddEventHandler(c.eventHandler())
+	kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().AddEventHandler(c.eventHandler())
+	kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
 	operatorClient.Informer().AddEventHandler(c.eventHandler())
 
 	return c
@@ -147,6 +149,20 @@ func (c *BootstrapTeardownController) removeBootstrap() error {
 	}
 	if !kasReady {
 		c.eventRecorder.Event("KASConfigIsNotValid", "Still waiting for the kube-apiserver to be ready")
+		return nil
+	}
+
+	// check to see if bootstrap is complete.  The installer creates this from the bootstrap node.
+	bootstrapStatus, err := c.configMapLister.ConfigMaps("kube-system").Get("bootstrap")
+	if errors.IsNotFound(err) {
+		c.eventRecorder.Event("BootstrapNotComplete", "`oc -n kube-system get configmap/bootstrap` from bootkube not found")
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if val := bootstrapStatus.Data["status"]; val != "complete" {
+		c.eventRecorder.Event("BootstrapNotComplete", "`oc -n kube-system get configmap/bootstrap` from bootkube not complete")
 		return nil
 	}
 
