@@ -8,6 +8,7 @@ type EtcdClient interface {
 	MemberAdder
 	MemberLister
 	MemberRemover
+	UnhealthyMemberLister
 }
 
 type MemberAdder interface {
@@ -20,4 +21,8 @@ type MemberRemover interface {
 
 type MemberLister interface {
 	MemberList() ([]*etcdserverpb.Member, error)
+}
+
+type UnhealthyMemberLister interface {
+	UnhealthyMembers() ([]*etcdserverpb.Member, error)
 }
