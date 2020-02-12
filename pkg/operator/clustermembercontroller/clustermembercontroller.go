@@ -520,57 +520,6 @@ func (c *ClusterMemberController) etcdMemberAdd(peerURLs []string) error {
 	return nil
 }
 
-func (c *ClusterMemberController) RemoveBootstrap() error {
-	err := c.RemoveBootstrapFromEndpoint()
-	if err != nil {
-		return err
-	}
-	return c.EtcdMemberRemove("etcd-bootstrap")
-}
-
-func (c *ClusterMemberController) RemoveBootstrapFromEndpoint() error {
-	hostEndpoint, err := c.clientset.CoreV1().
-		Endpoints(EtcdEndpointNamespace).
-		Get(EtcdHostEndpointName, metav1.GetOptions{})
-	if err != nil {
-		klog.Errorf("error getting endpoint: %#v\n", err)
-		return err
-	}
-
-	hostEndpointCopy := hostEndpoint.DeepCopy()
-
-	subsetIndex := -1
-	bootstrapIndex := -1
-	for sI, s := range hostEndpointCopy.Subsets {
-		for i, s := range s.Addresses {
-			if s.Hostname == "etcd-bootstrap" {
-				bootstrapIndex = i
-				subsetIndex = sI
-				break
-			}
-		}
-	}
-
-	if subsetIndex == -1 || bootstrapIndex == -1 {
-		// Unable to find bootstrap
-		return nil
-	}
-
-	if len(hostEndpointCopy.Subsets[subsetIndex].Addresses) <= 1 {
-		return fmt.Errorf("only etcd-bootstrap endpoint observed, try again")
-	}
-
-	hostEndpointCopy.Subsets[subsetIndex].Addresses = append(hostEndpointCopy.Subsets[subsetIndex].Addresses[0:bootstrapIndex], hostEndpointCopy.Subsets[subsetIndex].Addresses[bootstrapIndex+1:]...)
-
-	_, err = c.clientset.CoreV1().Endpoints(EtcdEndpointNamespace).Update(hostEndpointCopy)
-	if err != nil {
-		klog.Errorf("error updating endpoint: %#v\n", err)
-		return err
-	}
-
-	return nil
-}
-
 func (c *ClusterMemberController) getResyncName(pods *corev1.PodList) (string, error) {
 	name, err := c.getScaleAnnotationName()
 	if err != nil {

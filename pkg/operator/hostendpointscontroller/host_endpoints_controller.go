@@ -18,7 +18,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -265,7 +264,7 @@ func (c *HostEndpointsController) applyEndpoints(required *corev1.Endpoints) err
 	modified := resourcemerge.BoolPtr(false)
 	toWrite := existing.DeepCopy()
 	resourcemerge.EnsureObjectMeta(modified, &toWrite.ObjectMeta, required.ObjectMeta)
-	if !equality.Semantic.DeepEqual(existing.Subsets, required.Subsets) {
+	if !endpointSubsetsEqual(existing.Subsets, required.Subsets) {
 		toWrite.Subsets = make([]corev1.EndpointSubset, len(required.Subsets))
 		for i := range required.Subsets {
 			required.Subsets[i].DeepCopyInto(&(toWrite.Subsets)[i])
@@ -287,6 +286,80 @@ func (c *HostEndpointsController) applyEndpoints(required *corev1.Endpoints) err
 	}
 	c.eventRecorder.Warningf("EndpointsUpdated", "Updated endpoints/%s -n %s because it changed: %v", required.Name, required.Namespace, jsonPatch)
 	return nil
+}
+
+func endpointSubsetsEqual(lhs, rhs []corev1.EndpointSubset) bool {
+	if len(lhs) != len(rhs) {
+		return false
+	}
+	for i := range lhs {
+		if !endpointSubsetEqual(lhs[i], rhs[i]) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func endpointSubsetEqual(lhs, rhs corev1.EndpointSubset) bool {
+	if len(lhs.Addresses) != len(rhs.Addresses) {
+		return false
+	}
+	if len(lhs.NotReadyAddresses) != len(rhs.NotReadyAddresses) {
+		return false
+	}
+	if len(lhs.Ports) != len(rhs.Ports) {
+		return false
+	}
+
+	for i := range lhs.Addresses {
+		if !endpointAddressEqual(lhs.Addresses[i], rhs.Addresses[i]) {
+			return false
+		}
+	}
+	for i := range lhs.NotReadyAddresses {
+		if !endpointNotReadyAddressesEqual(lhs.NotReadyAddresses[i], rhs.NotReadyAddresses[i]) {
+			return false
+		}
+	}
+	for i := range lhs.Ports {
+		if lhs.Ports[i] != rhs.Ports[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
+func endpointAddressEqual(lhs, rhs corev1.EndpointAddress) bool {
+	switch {
+	case lhs.NodeName == nil && rhs.NodeName == nil:
+	case lhs.NodeName == nil && rhs.NodeName != nil:
+		return false
+	case lhs.NodeName != nil && rhs.NodeName == nil:
+		return false
+	case lhs.NodeName != nil && rhs.NodeName != nil:
+		if *lhs.NodeName != *rhs.NodeName {
+			return false
+		}
+	}
+
+	if lhs.Hostname != rhs.Hostname {
+		return false
+	}
+	if lhs.IP != rhs.IP {
+		return false
+	}
+
+	if lhs.TargetRef != nil || rhs.TargetRef != nil {
+		panic("not supported")
+	}
+
+	return true
+}
+
+func endpointNotReadyAddressesEqual(lhs, rhs corev1.EndpointAddress) bool {
+	panic("not supported")
 }
 
 func (c *HostEndpointsController) Run(ctx context.Context, workers int) {
