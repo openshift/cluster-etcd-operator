@@ -300,6 +300,12 @@ func (c *ClusterMemberController) areAllEtcdMembersHealthy() (bool, error) {
 		return false, fmt.Errorf("error getting etcd member list: %w", err)
 	}
 	for _, member := range memberList.Members {
+		if len(member.ClientURLs) == 0 {
+			c.eventRecorder.Warningf("EtcdMemberNotHealthy", "etcd member %s has no clientURL", member.Name)
+			// since error is indicative of unhealthy member, not returning
+			// the actual error
+			return false, nil
+		}
 		statusResp, err := etcdClient.Status(context.Background(), member.ClientURLs[0])
 		if err != nil {
 			c.eventRecorder.Warningf("EtcdMemberNotHealthy", "etcd member %s is not healthy: %#v", member.Name, err)
