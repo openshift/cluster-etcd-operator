@@ -197,7 +197,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 	go staticResourceController.Run(ctx, 1)
 	go targetConfigReconciler.Run(1, ctx.Done())
-	go etcdCertSignerController.Run(1, ctx.Done())
 	go etcdCertSignerController2.Run(1, ctx.Done())
 	go hostEtcdEndpointController.Run(ctx, 1)
 	go resourceSyncController.Run(ctx, 1)
