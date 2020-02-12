@@ -11,8 +11,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/etcd"
-
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
@@ -61,9 +59,6 @@ func NewConfigObserver(
 					kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
 				),
 			},
-			etcd.ObserveStorageURLs,
-			etcd.ObserveClusterMembers,
-			etcd.ObservePendingClusterMembers,
 		),
 	}
 
