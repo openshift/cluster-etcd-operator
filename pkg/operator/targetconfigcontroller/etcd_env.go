@@ -6,11 +6,8 @@ import (
 	"strings"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog"
 )
@@ -19,8 +16,8 @@ type envVarContext struct {
 	spec   operatorv1.StaticPodOperatorSpec
 	status operatorv1.StaticPodOperatorStatus
 
-	nodeLister    corev1listers.NodeLister
-	dynamicClient dynamic.Interface
+	nodeLister           corev1listers.NodeLister
+	infrastructureLister configv1listers.InfrastructureLister
 }
 
 type envVarFunc func(envVarContext envVarContext) (map[string]string, error)
@@ -130,18 +127,14 @@ func getInternalIPDNSNodeName(envVarContext envVarContext, nodeName string) (str
 func getDNSName(envVarContext envVarContext) (map[string]string, error) {
 	ret := map[string]string{}
 
-	controllerConfig, err := envVarContext.dynamicClient.
-		Resource(schema.GroupVersionResource{Group: "machineconfiguration.openshift.io", Version: "v1", Resource: "controllerconfigs"}).
-		Get("machine-config-controller", metav1.GetOptions{})
+	infrastructure, err := envVarContext.infrastructureLister.Get("cluster")
 	if err != nil {
 		return nil, err
 	}
-	etcdDiscoveryDomain, ok, err := unstructured.NestedString(controllerConfig.Object, "spec", "etcdDiscoveryDomain")
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, fmt.Errorf("controllerconfigs/machine-config-controller missing .spec.etcdDiscoveryDomain")
+
+	etcdDiscoveryDomain := infrastructure.Status.EtcdDiscoveryDomain
+	if len(etcdDiscoveryDomain) == 0 {
+		return nil, fmt.Errorf("infrastructures.config.openshit.io/cluster missing .status.etcdDiscoveryDomain")
 	}
 
 	for _, nodeInfo := range envVarContext.status.NodeStatuses {
