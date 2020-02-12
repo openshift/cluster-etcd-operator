@@ -216,12 +216,12 @@ func (c *EtcdCertSignerController) syncAllMasters() error {
 			combinedServingSecret.Data[getServingSecretNameForNode(node)+".key"] = currServing.Data["tls.key"]
 		}
 
-		currServingMetrics, err := c.secretLister.Secrets(operatorclient.TargetNamespace).Get(getPeerClientSecretNameForNode(node))
+		currServingMetrics, err := c.secretLister.Secrets(operatorclient.TargetNamespace).Get(getServingMetricsSecretNameForNode(node))
 		if err != nil {
 			errs = append(errs, err)
 		} else {
-			combinedServingMetricsSecret.Data[getPeerClientSecretNameForNode(node)+".crt"] = currServingMetrics.Data["tls.crt"]
-			combinedServingMetricsSecret.Data[getPeerClientSecretNameForNode(node)+".key"] = currServingMetrics.Data["tls.key"]
+			combinedServingMetricsSecret.Data[getServingMetricsSecretNameForNode(node)+".crt"] = currServingMetrics.Data["tls.crt"]
+			combinedServingMetricsSecret.Data[getServingMetricsSecretNameForNode(node)+".key"] = currServingMetrics.Data["tls.key"]
 		}
 	}
 	if len(errs) > 0 {
