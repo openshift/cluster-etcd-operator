@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+
 	"k8s.io/apimachinery/pkg/util/sets"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -41,6 +43,7 @@ type TargetConfigController struct {
 	kubeClient           kubernetes.Interface
 	infrastructureLister configv1listers.InfrastructureLister
 	configMapLister      corev1listers.ConfigMapLister
+	endpointLister       corev1listers.EndpointsLister
 	nodeLister           corev1listers.NodeLister
 	eventRecorder        events.Recorder
 
@@ -66,12 +69,14 @@ func NewTargetConfigController(
 		kubeClient:           kubeClient,
 		infrastructureLister: infrastructureInformer.Lister(),
 		configMapLister:      kubeInformersForNamespaces.ConfigMapLister(),
+		endpointLister:       kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
 		nodeLister:           kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
 		eventRecorder:        eventRecorder.WithComponentSuffix("target-config-controller"),
 
 		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "TargetConfigController"),
 		cachesToSync: []cache.InformerSynced{
 			operatorClient.Informer().HasSynced,
+			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().HasSynced,
 			kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer().HasSynced,
 			kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer().HasSynced,
 			kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
@@ -83,6 +88,7 @@ func NewTargetConfigController(
 	kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
 	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer().AddEventHandler(c.eventHandler())
 	infrastructureInformer.Informer().AddEventHandler(c.eventHandler())
+	kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().AddEventHandler(c.eventHandler())
 
 	// TODO only trigger on master nodes
 	kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().AddEventHandler(c.eventHandler())
@@ -181,6 +187,7 @@ func (c *TargetConfigController) managePod(client coreclientv1.ConfigMapsGetter,
 	envVarMap, err := getEtcdEnvVars(envVarContext{
 		spec:                 *operatorSpec,
 		status:               *operatorStatus,
+		endpointLister:       c.endpointLister,
 		nodeLister:           c.nodeLister,
 		infrastructureLister: c.infrastructureLister,
 	})
