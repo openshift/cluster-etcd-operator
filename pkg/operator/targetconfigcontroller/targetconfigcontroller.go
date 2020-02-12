@@ -7,9 +7,9 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/sets"
 
-	"k8s.io/client-go/dynamic"
-
 	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
@@ -38,11 +38,11 @@ type TargetConfigController struct {
 
 	operatorClient v1helpers.StaticPodOperatorClient
 
-	dyanmicClient   dynamic.Interface
-	kubeClient      kubernetes.Interface
-	configMapLister corev1listers.ConfigMapLister
-	nodeLister      corev1listers.NodeLister
-	eventRecorder   events.Recorder
+	kubeClient           kubernetes.Interface
+	infrastructureLister configv1listers.InfrastructureLister
+	configMapLister      corev1listers.ConfigMapLister
+	nodeLister           corev1listers.NodeLister
+	eventRecorder        events.Recorder
 
 	// queue only ever has one item, but it has nice error handling backoff/retry semantics
 	queue        workqueue.RateLimitingInterface
@@ -54,7 +54,7 @@ func NewTargetConfigController(
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
-	dyanmicClient dynamic.Interface,
+	infrastructureInformer configv1informers.InfrastructureInformer,
 	kubeClient kubernetes.Interface,
 	eventRecorder events.Recorder,
 ) *TargetConfigController {
@@ -62,12 +62,12 @@ func NewTargetConfigController(
 		targetImagePullSpec:   targetImagePullSpec,
 		operatorImagePullSpec: operatorImagePullSpec,
 
-		operatorClient:  operatorClient,
-		dyanmicClient:   dyanmicClient,
-		kubeClient:      kubeClient,
-		configMapLister: kubeInformersForNamespaces.ConfigMapLister(),
-		nodeLister:      kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
-		eventRecorder:   eventRecorder.WithComponentSuffix("target-config-controller"),
+		operatorClient:       operatorClient,
+		kubeClient:           kubeClient,
+		infrastructureLister: infrastructureInformer.Lister(),
+		configMapLister:      kubeInformersForNamespaces.ConfigMapLister(),
+		nodeLister:           kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
+		eventRecorder:        eventRecorder.WithComponentSuffix("target-config-controller"),
 
 		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "TargetConfigController"),
 		cachesToSync: []cache.InformerSynced{
@@ -75,12 +75,14 @@ func NewTargetConfigController(
 			kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer().HasSynced,
 			kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer().HasSynced,
 			kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
+			infrastructureInformer.Informer().HasSynced,
 		},
 	}
 
 	operatorClient.Informer().AddEventHandler(c.eventHandler())
 	kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
 	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer().AddEventHandler(c.eventHandler())
+	infrastructureInformer.Informer().AddEventHandler(c.eventHandler())
 
 	// TODO only trigger on master nodes
 	kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().AddEventHandler(c.eventHandler())
@@ -177,10 +179,10 @@ func loglevelToKlog(logLevel operatorv1.LogLevel) string {
 
 func (c *TargetConfigController) managePod(client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec, operatorStatus *operatorv1.StaticPodOperatorStatus, imagePullSpec, operatorImagePullSpec string) (*corev1.ConfigMap, bool, error) {
 	envVarMap, err := getEtcdEnvVars(envVarContext{
-		spec:          *operatorSpec,
-		status:        *operatorStatus,
-		nodeLister:    c.nodeLister,
-		dynamicClient: c.dyanmicClient,
+		spec:                 *operatorSpec,
+		status:               *operatorStatus,
+		nodeLister:           c.nodeLister,
+		infrastructureLister: c.infrastructureLister,
 	})
 	if err != nil {
 		return nil, false, err

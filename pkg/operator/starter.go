@@ -22,7 +22,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
@@ -52,10 +51,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return err
 	}
 	clientset, err := kubernetes.NewForConfig(controllerContext.KubeConfig)
-	if err != nil {
-		return err
-	}
-	dynamicClient, err := dynamic.NewForConfig(controllerContext.KubeConfig)
 	if err != nil {
 		return err
 	}
@@ -115,7 +110,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorClient,
 		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
 		kubeInformersForNamespaces,
-		dynamicClient,
+		configInformers.Config().V1().Infrastructures(),
 		kubeClient,
 		controllerContext.EventRecorder,
 	)
@@ -172,10 +167,10 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 	etcdCertSignerController2 := etcdcertsigner2.NewEtcdCertSignerController(
-		dynamicClient,
 		coreClient,
 		operatorClient,
 		kubeInformersForNamespaces,
+		configInformers.Config().V1().Infrastructures(),
 		controllerContext.EventRecorder,
 	)
 	hostEtcdEndpointController := hostendpointscontroller.NewHostEndpointsController(

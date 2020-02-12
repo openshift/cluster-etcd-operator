@@ -11,6 +11,8 @@ import (
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/crypto"
 	"github.com/openshift/library-go/pkg/operator/events"
@@ -18,14 +20,11 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/dynamic"
 	kubernetes "k8s.io/client-go/kubernetes"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
@@ -43,11 +42,11 @@ const (
 )
 
 type EtcdCertSignerController struct {
-	dynamicClient  dynamic.Interface
-	kubeClient     kubernetes.Interface
-	operatorClient v1helpers.OperatorClient
-	nodeLister     corev1listers.NodeLister
-	secretLister   corev1listers.SecretLister
+	kubeClient           kubernetes.Interface
+	operatorClient       v1helpers.OperatorClient
+	infrastructureLister configv1listers.InfrastructureLister
+	nodeLister           corev1listers.NodeLister
+	secretLister         corev1listers.SecretLister
 
 	secretClient corev1client.SecretsGetter
 
@@ -63,19 +62,19 @@ type EtcdCertSignerController struct {
 // This control loop is considerably less robust than the actual cert rotation controller, but I don't have time at the moment
 // to make the cert rotation controller dynamic.
 func NewEtcdCertSignerController(
-	dynamicClient dynamic.Interface,
 	kubeClient kubernetes.Interface,
 	operatorClient v1helpers.OperatorClient,
 
 	kubeInformers v1helpers.KubeInformersForNamespaces,
+	infrastructureInformer configv1informers.InfrastructureInformer,
 	eventRecorder events.Recorder,
 ) *EtcdCertSignerController {
 	c := &EtcdCertSignerController{
-		dynamicClient:  dynamicClient,
-		kubeClient:     kubeClient,
-		operatorClient: operatorClient,
-		secretLister:   kubeInformers.SecretLister(),
-		nodeLister:     kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
+		kubeClient:           kubeClient,
+		operatorClient:       operatorClient,
+		infrastructureLister: infrastructureInformer.Lister(),
+		secretLister:         kubeInformers.SecretLister(),
+		nodeLister:           kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
 
 		secretClient: v1helpers.CachedSecretGetter(kubeClient.CoreV1(), kubeInformers),
 
@@ -83,6 +82,7 @@ func NewEtcdCertSignerController(
 			operatorClient.Informer().HasSynced,
 			kubeInformers.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
 			kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Informer().HasSynced,
+			infrastructureInformer.Informer().HasSynced,
 		},
 		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "EtcdCertSignerController2"),
 		eventRecorder: eventRecorder.WithComponentSuffix("etcd-cert-signer-controller-2"),
@@ -91,6 +91,7 @@ func NewEtcdCertSignerController(
 	kubeInformers.InformersFor("").Core().V1().Nodes().Informer().AddEventHandler(c.eventHandler())
 	kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Informer().AddEventHandler(c.eventHandler())
 	kubeInformers.InformersFor(operatorclient.GlobalUserSpecifiedConfigNamespace).Core().V1().Secrets().Informer().AddEventHandler(c.eventHandler())
+	infrastructureInformer.Informer().AddEventHandler(c.eventHandler())
 
 	return c
 }
@@ -434,18 +435,14 @@ func reverseLookup(service, proto, name, ip string) (string, error) {
 }
 
 func (c *EtcdCertSignerController) getEtcdDiscoveryDomain() (string, error) {
-	controllerConfig, err := c.dynamicClient.
-		Resource(schema.GroupVersionResource{Group: "machineconfiguration.openshift.io", Version: "v1", Resource: "controllerconfigs"}).
-		Get("machine-config-controller", metav1.GetOptions{})
+	infrastructure, err := c.infrastructureLister.Get("cluster")
 	if err != nil {
 		return "", err
 	}
-	etcdDiscoveryDomain, ok, err := unstructured.NestedString(controllerConfig.Object, "spec", "etcdDiscoveryDomain")
-	if err != nil {
-		return "", err
-	}
-	if !ok {
-		return "", fmt.Errorf("controllerconfigs/machine-config-controller missing .spec.etcdDiscoveryDomain")
+
+	etcdDiscoveryDomain := infrastructure.Status.EtcdDiscoveryDomain
+	if len(etcdDiscoveryDomain) == 0 {
+		return "", fmt.Errorf("infrastructures.config.openshit.io/cluster missing .status.etcdDiscoveryDomain")
 	}
 	return etcdDiscoveryDomain, nil
 }
