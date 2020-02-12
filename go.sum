@@ -575,6 +575,7 @@ k8s.io/apiserver v0.17.1 h1:0cuh5kfAFPG2ImKT0rdNwdbPMUwDEfja14zX67V7eBQ=
 k8s.io/apiserver v0.17.1/go.mod h1:BQEUObJv8H6ZYO7DeKI5vb50tjk6paRJ4ZhSyJsiSco=
 k8s.io/client-go v0.17.1 h1:LbbuZ5tI7OYx4et5DfRFcJuoojvpYO0c7vps2rgJsHY=
 k8s.io/client-go v0.17.1/go.mod h1:HZtHJSC/VuSHcETN9QA5QDZky1tXiYrkF/7t7vRpO1A=
+k8s.io/client-go v11.0.0+incompatible h1:LBbX2+lOwY9flffWlJM7f1Ct8V2SRNiMRDFeiwnJo9o=
 k8s.io/code-generator v0.17.1/go.mod h1:DVmfPQgxQENqDIzVR2ddLXMH34qeszkKSdH/N+s+38s=
 k8s.io/component-base v0.17.1 h1:lK/lUzZZQK+DlH0XD+gq610OUEmjWOyDuUYOTGetw10=
 k8s.io/component-base v0.17.1/go.mod h1:LrBPZkXtlvGjBzDJa0+b7E5Ij4VoAAKrOGudRC5z2eY=

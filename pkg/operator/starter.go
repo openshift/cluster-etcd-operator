@@ -33,6 +33,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner2"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/guardbudget"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/hostendpointscontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
@@ -68,6 +69,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorclient.TargetNamespace,
 		operatorclient.OperatorNamespace,
 		"openshift-kube-apiserver",
+		"openshift-etcd",
+		"openshift-machine-config-operator", // TODO remove after quorum-guard is removed from MCO
 	)
 	configInformers := configv1informers.NewSharedInformerFactory(configClient, 10*time.Minute)
 	operatorClient, dynamicInformers, err := genericoperatorclient.NewStaticPodOperatorClient(controllerContext.KubeConfig, operatorv1.GroupVersion.WithResource("etcds"))
@@ -195,6 +198,14 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
+	guardBudgetController := guardbudget.NewGuardBudgetController(
+		operatorClient,
+		kubeClient,
+		kubeInformersForNamespaces,
+		controllerContext.EventRecorder,
+	)
+
+	operatorInformers.Start(ctx.Done())
 	operatorInformers.Start(ctx.Done())
 	kubeInformersForNamespaces.Start(ctx.Done())
 	configInformers.Start(ctx.Done())
@@ -210,6 +221,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go clusterMemberController2.Run(ctx.Done())
 	go etcdMembersController.Run(ctx, 1)
 	go bootstrapTeardownController.Run(ctx.Done())
+	go guardBudgetController.Run(ctx.Done())
 	go staticPodControllers.Run(ctx, 1)
 
 	<-ctx.Done()

@@ -31,8 +31,22 @@ func NewResourceSyncController(
 		return nil, err
 	}
 
+	if err := resourceSyncController.SyncConfigMap(
+		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.TargetNamespace, Name: "etcd-ca-bundle"},
+		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.GlobalUserSpecifiedConfigNamespace, Name: "etcd-ca-bundle"},
+	); err != nil {
+		return nil, err
+	}
+
 	if err := resourceSyncController.SyncSecret(
 		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.OperatorNamespace, Name: "etcd-client"},
+		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.GlobalUserSpecifiedConfigNamespace, Name: "etcd-client"},
+	); err != nil {
+		return nil, err
+	}
+
+	if err := resourceSyncController.SyncSecret(
+		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.TargetNamespace, Name: "etcd-client"},
 		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.GlobalUserSpecifiedConfigNamespace, Name: "etcd-client"},
 	); err != nil {
 		return nil, err

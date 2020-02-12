@@ -4,6 +4,7 @@ go 1.13
 
 require (
 	github.com/cloudflare/cfssl v1.4.1
+	github.com/davecgh/go-spew v1.1.1
 	github.com/ghodss/yaml v1.0.0
 	github.com/gorilla/mux v0.0.0-20191024121256-f395758b854c
 	github.com/jteeuwen/go-bindata v3.0.8-0.20151023091102-a0ff2567cfb7+incompatible
