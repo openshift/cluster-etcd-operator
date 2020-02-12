@@ -277,12 +277,18 @@ func (c *BootstrapTeardownController) hasMoreThanTwoEtcdMembers() (bool, error) 
 		return false, err
 	}
 
-	if len(l.Members) <= 2 {
+	if len(l.Members) <= 3 {
 		return false, nil
 	}
 
 	unreadyMember := false
 	for _, m := range l.Members {
+		if len(m.ClientURLs) == 0 {
+			c.eventRecorder.Warningf("EtcdMemberNotHealthy", "member %s has no clientURLs", m.Name)
+			unreadyMember = true
+			continue
+		}
+
 		statusResp, err := cli.Status(context.Background(), m.ClientURLs[0])
 		if err != nil {
 			c.eventRecorder.Warningf("EtcdMemberNotHealthy", "member %s is not healthy", m.Name)
