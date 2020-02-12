@@ -126,15 +126,6 @@ func (c *BootstrapTeardownController) removeBootstrap() error {
 		}
 		// return because no work left to do
 		return nil
-
-	} else {
-		_, _, _ = v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:    conditionBootstrapRemoved,
-			Status:  operatorv1.ConditionFalse,
-			Reason:  "BootstrapNodeNotRemoved",
-			Message: fmt.Sprintf("Bootstrap node is not removed yet: etcdMemberExists %t", etcdMemberExists),
-		}))
-		// fall through because it might be time to remove it
 	}
 
 	hasMoreThanTwoEtcdMembers, err := c.hasMoreThanTwoEtcdMembers()
@@ -158,6 +149,13 @@ func (c *BootstrapTeardownController) removeBootstrap() error {
 		c.eventRecorder.Event("KASConfigIsNotValid", "Still waiting for the kube-apiserver to be ready")
 		return nil
 	}
+
+	_, _, _ = v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		Type:    conditionBootstrapRemoved,
+		Status:  operatorv1.ConditionFalse,
+		Reason:  "BootstrapNodeNotRemoved",
+		Message: fmt.Sprintf("Bootstrap node is not removed yet: etcdMemberExists %t", etcdMemberExists),
+	}))
 
 	c.eventRecorder.Event("BootstrapTeardownController", "safe to remove bootstrap")
 	if err := c.etcdMemberRemove("etcd-bootstrap"); err != nil {
