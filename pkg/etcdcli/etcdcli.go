@@ -180,3 +180,33 @@ func (g *etcdClientGetter) MemberList() ([]*etcdserverpb.Member, error) {
 
 	return membersResp.Members, nil
 }
+
+func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
+	cli, err := g.getEtcdClient()
+	if err != nil {
+		return nil, err
+	}
+	defer cli.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	membersResp, err := cli.MemberList(ctx)
+	cancel()
+	if err != nil {
+		return nil, err
+	}
+
+	unhealthyMembers := []*etcdserverpb.Member{}
+	for _, member := range membersResp.Members {
+		if len(member.ClientURLs) == 0 {
+			unhealthyMembers = append(unhealthyMembers, member)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		_, err := cli.Status(ctx, member.ClientURLs[0])
+		cancel()
+		if err != nil {
+			unhealthyMembers = append(unhealthyMembers, member)
+		}
+	}
+
+	return unhealthyMembers, nil
+}
