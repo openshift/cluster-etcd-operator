@@ -29,17 +29,15 @@ import (
 )
 
 const (
-	workQueueKey                   = "key"
-	EtcdScalingAnnotationKey       = "etcd.operator.openshift.io/scale"
-	etcdCertFile                   = "/var/run/secrets/etcd-client/tls.crt"
-	etcdKeyFile                    = "/var/run/secrets/etcd-client/tls.key"
-	etcdTrustedCAFile              = "/var/run/configmaps/etcd-ca/ca-bundle.crt"
-	EtcdEndpointNamespace          = "openshift-etcd"
-	EtcdHostEndpointName           = "host-etcd"
-	EtcdEndpointName               = "etcd"
-	ConditionBootstrapSafeToRemove = "BootstrapSafeToRemove"
-	ConditionBootstrapRemoved      = "BootstrapRemoved"
-	dialTimeout                    = 20 * time.Second
+	workQueueKey             = "key"
+	EtcdScalingAnnotationKey = "etcd.operator.openshift.io/scale"
+	etcdCertFile             = "/var/run/secrets/etcd-client/tls.crt"
+	etcdKeyFile              = "/var/run/secrets/etcd-client/tls.key"
+	etcdTrustedCAFile        = "/var/run/configmaps/etcd-ca/ca-bundle.crt"
+	EtcdEndpointNamespace    = "openshift-etcd"
+	EtcdHostEndpointName     = "host-etcd"
+	EtcdEndpointName         = "etcd"
+	dialTimeout              = 20 * time.Second
 )
 
 type ClusterMemberController struct {
@@ -236,31 +234,7 @@ func (c *ClusterMemberController) sync() error {
 			return updateError
 		}
 		klog.V(2).Info("scaling complete, etcd-bootstrap is safe to remove")
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(
-			operatorv1.OperatorCondition{
-				Type:    ConditionBootstrapSafeToRemove,
-				Status:  operatorv1.ConditionTrue,
-				Reason:  "ScalingComplete",
-				Message: "cluster-etcd-operator has scaled, etcd-bootstrap safe to remove",
-			}))
-		if updateErr != nil {
-			klog.Errorf("clustermembercontroller:sync: error updating status: %#v", updateErr)
-			return updateErr
-		}
 		return nil
-	} else {
-		klog.V(2).Info("scaling incomplete, etcd-bootstrap is not safe to remove")
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(
-			operatorv1.OperatorCondition{
-				Type:    ConditionBootstrapSafeToRemove,
-				Status:  operatorv1.ConditionFalse,
-				Reason:  "ScalingIncomplete",
-				Message: "cluster-etcd-operator is scaling, etcd-bootstrap is not safe to remove",
-			}))
-		if updateErr != nil {
-			klog.Errorf("clustermembercontroller:sync: error updating status: %#v", updateErr)
-			return updateErr
-		}
 	}
 	klog.Infof("Wait for cluster-etcd-operator to get ready")
 	return nil
