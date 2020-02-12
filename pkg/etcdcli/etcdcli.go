@@ -1,23 +1,22 @@
 package etcdcli
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	"go.etcd.io/etcd/pkg/transport"
 	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/klog"
 )
-
-type EtcdClientGetter interface {
-	GetEtcdClient() (*clientv3.Client, error)
-}
 
 type etcdClientGetter struct {
 	nodeLister      corev1listers.NodeLister
@@ -27,7 +26,7 @@ type etcdClientGetter struct {
 	endpointsListerSynced cache.InformerSynced
 }
 
-func NewEtcdClientGetter(kubeInformers v1helpers.KubeInformersForNamespaces) EtcdClientGetter {
+func NewEtcdClientGetter(kubeInformers v1helpers.KubeInformersForNamespaces) EtcdClient {
 	return &etcdClientGetter{
 		nodeLister:            kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
 		endpointsLister:       kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
@@ -36,7 +35,7 @@ func NewEtcdClientGetter(kubeInformers v1helpers.KubeInformersForNamespaces) Etc
 	}
 }
 
-func (g *etcdClientGetter) GetEtcdClient() (*clientv3.Client, error) {
+func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 	if !g.nodeListerSynced() {
 		return nil, fmt.Errorf("node lister not synced")
 	}
@@ -106,4 +105,78 @@ func getInternalIPAddressForNodeName(node *corev1.Node) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("node/%s missing %s", node.Name, corev1.NodeInternalIP)
+}
+
+func (g *etcdClientGetter) MemberAdd(peerURL string) error {
+	cli, err := g.getEtcdClient()
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	membersResp, err := cli.MemberList(ctx)
+	cancel()
+	if err != nil {
+		return err
+	}
+
+	for _, member := range membersResp.Members {
+		if len(member.PeerURLs) > 0 && member.PeerURLs[0] == peerURL {
+			klog.V(2).Infof("member with peerURL %s already part of the cluster", peerURL)
+			return nil
+		}
+	}
+
+	_, err = cli.MemberAdd(ctx, []string{peerURL})
+	if err != nil {
+		return err
+	}
+	return err
+}
+
+func (g *etcdClientGetter) MemberRemove(member string) error {
+	cli, err := g.getEtcdClient()
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	membersResp, err := cli.MemberList(ctx)
+	cancel()
+	if err != nil {
+		return nil
+	}
+
+	for _, m := range membersResp.Members {
+		if m.Name == member {
+			ctx, cancel := context.WithCancel(context.Background())
+			_, err = cli.MemberRemove(ctx, m.ID)
+			cancel()
+			if err != nil {
+				return err
+			}
+			return nil
+		}
+	}
+
+	return nil
+}
+
+func (g *etcdClientGetter) MemberList() ([]*etcdserverpb.Member, error) {
+	cli, err := g.getEtcdClient()
+	if err != nil {
+		return nil, err
+	}
+	defer cli.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	membersResp, err := cli.MemberList(ctx)
+	cancel()
+	if err != nil {
+		return nil, err
+	}
+
+	return membersResp.Members, nil
 }
