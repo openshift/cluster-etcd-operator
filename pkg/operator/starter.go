@@ -175,6 +175,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorClient,
 		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
 		configInformers.Config().V1().Infrastructures(),
+		etcdClient,
 		controllerContext.EventRecorder,
 	)
 	bootstrapTeardownController := bootstrapteardown.NewBootstrapTeardownController(

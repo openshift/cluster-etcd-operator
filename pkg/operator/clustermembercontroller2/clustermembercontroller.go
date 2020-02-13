@@ -1,7 +1,6 @@
 package clustermembercontroller2
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -9,13 +8,10 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	"go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/pkg/transport"
-	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -38,6 +34,7 @@ const (
 // skips if any one member is unhealthy.
 type ClusterMemberController struct {
 	operatorClient       v1helpers.OperatorClient
+	etcdClient           etcdcli.EtcdClient
 	kubeInformers        informers.SharedInformerFactory
 	endpointsLister      corev1listers.EndpointsLister
 	podLister            corev1listers.PodLister
@@ -53,10 +50,12 @@ func NewClusterMemberController(
 	operatorClient v1helpers.OperatorClient,
 	kubeInformers informers.SharedInformerFactory,
 	infrastructureInformer configv1informers.InfrastructureInformer,
+	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
 ) *ClusterMemberController {
 	c := &ClusterMemberController{
 		operatorClient:       operatorClient,
+		etcdClient:           etcdClient,
 		endpointsLister:      kubeInformers.Core().V1().Endpoints().Lister(),
 		podLister:            kubeInformers.Core().V1().Pods().Lister(),
 		nodeLister:           kubeInformers.Core().V1().Nodes().Lister(),
@@ -68,8 +67,8 @@ func NewClusterMemberController(
 			kubeInformers.Core().V1().Pods().Informer().HasSynced,
 			kubeInformers.Core().V1().ConfigMaps().Informer().HasSynced,
 			kubeInformers.Core().V1().Nodes().Informer().HasSynced,
-			operatorClient.Informer().HasSynced,
 			infrastructureInformer.Informer().HasSynced,
+			operatorClient.Informer().HasSynced,
 		},
 		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ClusterMemberController2"),
 		kubeInformers: kubeInformers,
@@ -79,7 +78,6 @@ func NewClusterMemberController(
 	kubeInformers.Core().V1().Endpoints().Informer().AddEventHandler(c.eventHandler())
 	kubeInformers.Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
 	operatorClient.Informer().AddEventHandler(c.eventHandler())
-	infrastructureInformer.Informer().AddEventHandler(c.eventHandler())
 
 	return c
 }
@@ -154,11 +152,11 @@ func (c *ClusterMemberController) sync() error {
 }
 
 func (c *ClusterMemberController) reconcileMembers() error {
-	etcdHealthy, err := c.areAllEtcdMembersHealthy()
+	unhealthyMembers, err := c.etcdClient.UnhealthyMembers()
 	if err != nil {
 		return err
 	}
-	if !etcdHealthy {
+	if len(unhealthyMembers) > 0 {
 		c.eventRecorder.Eventf("WaitingOnEtcdMember", "waiting for all member of etcd to be healthy")
 		return nil
 	}
@@ -177,7 +175,7 @@ func (c *ClusterMemberController) reconcileMembers() error {
 				Reason:  "AsExpected",
 				Message: "Scaling etcd membership completed",
 			}),
-			// todo: remove this make bootsrap remove independent
+			// todo: remove this make bootstrap remove independent
 			v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 				Type:    "BootstrapSafeToRemove",
 				Status:  operatorv1.ConditionTrue,
@@ -198,7 +196,7 @@ func (c *ClusterMemberController) reconcileMembers() error {
 			Reason:  "Scaling",
 			Message: "Scaling etcd membership",
 		}),
-		// todo: remove this make bootsrap remove independent
+		// todo: remove this make bootstrap remove independent
 		v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "BootstrapSafeToRemove",
 			Status:  operatorv1.ConditionFalse,
@@ -214,67 +212,11 @@ func (c *ClusterMemberController) reconcileMembers() error {
 		return err
 	}
 
-	err = c.AddMember(podFQDN)
+	err = c.etcdClient.MemberAdd(podFQDN)
 	if err != nil {
 		return err
 	}
 	return nil
-}
-
-func (c *ClusterMemberController) getEtcdClient() (*clientv3.Client, error) {
-	endpoints, err := c.Endpoints()
-	if err != nil {
-		return nil, err
-	}
-
-	dialOptions := []grpc.DialOption{
-		grpc.WithBlock(), // block until the underlying connection is up
-	}
-
-	tlsInfo := transport.TLSInfo{
-		CertFile:      "/var/run/secrets/etcd-client/tls.crt",
-		KeyFile:       "/var/run/secrets/etcd-client/tls.key",
-		TrustedCAFile: "/var/run/configmaps/etcd-ca/ca-bundle.crt",
-	}
-	tlsConfig, err := tlsInfo.ClientConfig()
-
-	cfg := &clientv3.Config{
-		DialOptions: dialOptions,
-		Endpoints:   endpoints,
-		DialTimeout: 5 * time.Second,
-		TLS:         tlsConfig,
-	}
-
-	cli, err := clientv3.New(*cfg)
-	if err != nil {
-		return nil, err
-	}
-	return cli, err
-}
-
-func (c *ClusterMemberController) Endpoints() ([]string, error) {
-	etcdDiscoveryDomain, err := c.getEtcdDiscoveryDomain()
-	if err != nil {
-		return []string{}, err
-	}
-	hostEtcd, err := c.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd")
-	if err != nil {
-		c.eventRecorder.Warningf("ErrorGettingHostEtcd", "error occured while getting host-etcd endpoint: %#v", err)
-		return []string{}, err
-	}
-	if len(hostEtcd.Subsets) == 0 {
-		c.eventRecorder.Warningf("EtcdAddressNotFound", "could not find etcd address in host-etcd")
-		return []string{}, fmt.Errorf("could not find etcd address in host-etcd")
-	}
-	var endpoints []string
-	for _, endpointAddress := range hostEtcd.Subsets[0].Addresses {
-		if endpointAddress.Hostname == "etcd-bootstrap" { // this one has a valid IP, use it
-			endpoints = append(endpoints, "https://"+endpointAddress.IP+":2379")
-			continue
-		}
-		endpoints = append(endpoints, fmt.Sprintf("https://%s.%s:2379", endpointAddress.Hostname, etcdDiscoveryDomain))
-	}
-	return endpoints, nil
 }
 
 func (c *ClusterMemberController) eventHandler() cache.ResourceEventHandler {
@@ -283,37 +225,6 @@ func (c *ClusterMemberController) eventHandler() cache.ResourceEventHandler {
 		UpdateFunc: func(old, new interface{}) { c.queue.Add(workQueueKey) },
 		DeleteFunc: func(obj interface{}) { c.queue.Add(workQueueKey) },
 	}
-}
-
-func (c *ClusterMemberController) areAllEtcdMembersHealthy() (bool, error) {
-	// getting a new client everytime because we dont know what etcd-membership looks like
-	etcdClient, err := c.getEtcdClient()
-	if err != nil {
-		return false, fmt.Errorf("error getting etcd client: %w", err)
-	}
-	defer etcdClient.Close()
-
-	memberList, err := etcdClient.MemberList(context.Background())
-	if err != nil {
-		return false, fmt.Errorf("error getting etcd member list: %w", err)
-	}
-	for _, member := range memberList.Members {
-		if len(member.ClientURLs) == 0 {
-			c.eventRecorder.Warningf("EtcdMemberNotHealthy", "etcd member %s has no clientURL", member.Name)
-			// since error is indicative of unhealthy member, not returning
-			// the actual error
-			return false, nil
-		}
-		statusResp, err := etcdClient.Status(context.Background(), member.ClientURLs[0])
-		if err != nil {
-			c.eventRecorder.Warningf("EtcdMemberNotHealthy", "etcd member %s is not healthy: %#v", member.Name, err)
-			// since error is indicative of unhealthy member, not returning
-			// the actual error
-			return false, nil
-		}
-		klog.V(4).Infof("etcd member %s is healthy committed and with %d index", member.Name, statusResp.RaftIndex)
-	}
-	return true, nil
 }
 
 func (c *ClusterMemberController) getUnreadyEtcdPods() ([]*corev1.Pod, error) {
@@ -341,25 +252,6 @@ func (c *ClusterMemberController) getUnreadyEtcdPods() ([]*corev1.Pod, error) {
 		}
 	}
 	return unreadyPods, nil
-}
-
-func (c *ClusterMemberController) AddMember(peerFQDN string) error {
-	etcdClient, err := c.getEtcdClient()
-	if err != nil {
-		c.eventRecorder.Warningf("ErrorGettingEtcdClient", "error getting etcd client: %#v", err)
-		return err
-	}
-	defer etcdClient.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	resp, err := etcdClient.MemberAdd(ctx, []string{fmt.Sprintf("https://%s:2380", peerFQDN)})
-	cancel()
-	if err != nil {
-		c.eventRecorder.Warningf("ErrorAddingMember", "error adding member with peerFQDN %s to etcd api: %#v", peerFQDN, err)
-		return err
-	}
-	c.eventRecorder.Eventf("MemberAdded", "member %s added to etcd membership %#v", resp.Member.Name, resp.Members)
-	return nil
 }
 
 func (c *ClusterMemberController) getEtcdDiscoveryDomain() (string, error) {
