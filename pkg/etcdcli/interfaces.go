@@ -4,11 +4,19 @@ import (
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 )
 
+const (
+	EtcdMemberStatusAvailable  = "EtcdMemberAvailable"
+	EtcdMemberStatusNotStarted = "EtcdMemberNotStarted"
+	EtcdMemberStatusUnhealthy  = "EtcdMemberUnhealthy"
+	EtcdMemberStatusUnknown    = "EtcdMemberUnknown"
+)
+
 type EtcdClient interface {
 	MemberAdder
 	MemberLister
 	MemberRemover
 	UnhealthyMemberLister
+	MemberStatusChecker
 }
 
 type MemberAdder interface {
@@ -25,4 +33,8 @@ type MemberLister interface {
 
 type UnhealthyMemberLister interface {
 	UnhealthyMembers() ([]*etcdserverpb.Member, error)
+}
+
+type MemberStatusChecker interface {
+	MemberStatus(member *etcdserverpb.Member) string
 }
