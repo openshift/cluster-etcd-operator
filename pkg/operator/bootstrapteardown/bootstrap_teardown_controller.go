@@ -10,6 +10,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -34,7 +35,8 @@ const (
 )
 
 type BootstrapTeardownController struct {
-	operatorClient v1helpers.OperatorClient
+	operatorClient   v1helpers.OperatorClient
+	etcdClientGetter etcdcli.EtcdClient
 
 	kubeAPIServerLister operatorv1listers.KubeAPIServerLister
 	configMapLister     corev1listers.ConfigMapLister
@@ -50,12 +52,14 @@ func NewBootstrapTeardownController(
 
 	kubeInformersForNamespaces operatorv1helpers.KubeInformersForNamespaces,
 	operatorInformers operatorv1informers.SharedInformerFactory,
+	etcdClientGetter etcdcli.EtcdClient,
 
 	eventRecorder events.Recorder,
 ) *BootstrapTeardownController {
 	openshiftKubeAPIServerNamespacedInformers := kubeInformersForNamespaces.InformersFor("openshift-kube-apiserver")
 	c := &BootstrapTeardownController{
-		operatorClient: operatorClient,
+		operatorClient:   operatorClient,
+		etcdClientGetter: etcdClientGetter,
 
 		kubeAPIServerLister: operatorInformers.Operator().V1().KubeAPIServers().Lister(),
 		configMapLister:     openshiftKubeAPIServerNamespacedInformers.Core().V1().ConfigMaps().Lister(),
