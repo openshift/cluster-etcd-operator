@@ -182,7 +182,7 @@ spec:
           echo ""
           echo ""
 
-          IS_MEMBER_PRESENT=$(${ETCDCTL} member list | grep -o "${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}.*:2380")
+          IS_MEMBER_PRESENT=$(${ETCDCTL} member list | grep -o "${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}.*:2380" || true)
           if [[ -n "${IS_MEMBER_PRESENT:-}" ]]; then
             break
           fi
