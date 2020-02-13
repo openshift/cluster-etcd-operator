@@ -265,7 +265,7 @@ func ApplySecret(client coreclientv1.SecretsGetter, recorder events.Recorder, re
 	}
 
 	if klog.V(4) {
-		klog.Infof("Secret %s/%s changes: %v", required.Namespace, required.Name, JSONPatchSecretNoError(existing, existingCopy))
+		klog.Infof("Secret %s/%s changes: %v", required.Namespace, required.Name, JSONPatchNoError(existing, existingCopy))
 	}
 	actual, err := client.Secrets(required.Namespace).Update(existingCopy)
 	reportUpdateEvent(recorder, existingCopy, err)
