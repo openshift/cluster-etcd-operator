@@ -174,13 +174,6 @@ func (c *ClusterMemberController) reconcileMembers() error {
 				Status:  operatorv1.ConditionFalse,
 				Reason:  "AsExpected",
 				Message: "Scaling etcd membership completed",
-			}),
-			// todo: remove this make bootstrap remove independent
-			v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-				Type:    "BootstrapSafeToRemove",
-				Status:  operatorv1.ConditionTrue,
-				Reason:  "AsExpected",
-				Message: "Scaling etcd membership has completed",
 			}))
 		if updateErr != nil {
 			return updateErr
@@ -195,13 +188,6 @@ func (c *ClusterMemberController) reconcileMembers() error {
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "Scaling",
 			Message: "Scaling etcd membership",
-		}),
-		// todo: remove this make bootstrap remove independent
-		v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:    "BootstrapSafeToRemove",
-			Status:  operatorv1.ConditionFalse,
-			Reason:  "EtcdScaling",
-			Message: fmt.Sprintf("waiting for %d/%d pods to be scaled", len(unreadyPods), totalDesiredEtcd),
 		}))
 	if updateErr != nil {
 		return updateErr
@@ -238,6 +224,12 @@ func (c *ClusterMemberController) getUnreadyEtcdPods() ([]*corev1.Pod, error) {
 	// and collect dns resolution errors on the way.
 	var unreadyPods []*corev1.Pod
 	for _, pod := range pods {
+		if !strings.HasPrefix(pod.Name, "etcd-") {
+			continue
+		}
+		if strings.HasPrefix(pod.Name, "etcd-member") {
+			continue
+		}
 		ready := false
 		for _, condition := range pod.Status.Conditions {
 			if condition.Type == corev1.PodReady {
