@@ -219,10 +219,6 @@ spec:
         initial_cluster="${initial_cluster::-1}"
         echo $initial_cluster
 
-        # at this point we know this member is added.  To support a transition, we must remove the old etcd pod.
-        # move it somewhere safe so we can retrieve it again later if something goes badly.
-        mv /etc/kubernetes/manifests/etcd-member.yaml /etc/kubernetes/etcd-backup-dir || true
-
         export ETCD_INITIAL_CLUSTER=${initial_cluster}
         export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
         env | grep ETCD | grep -v NODE
@@ -241,7 +237,7 @@ spec:
           --advertise-client-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2379 \
           --listen-client-urls=https://${LISTEN_ON_ALL_IPS}:2379 \
           --listen-peer-urls=https://${LISTEN_ON_ALL_IPS}:2380 \
-          --listen-metrics-urls=https://${LISTEN_ON_ALL_IPS}:9978 ||  mv /etc/kubernetes/etcd-backup-dir/etcd-member.yaml /etc/kubernetes/manifests
+          --listen-metrics-urls=https://${LISTEN_ON_ALL_IPS}:9978
     env:
 ${COMPUTED_ENV_VARS}
     resources:
