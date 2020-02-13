@@ -115,8 +115,9 @@ func (g *etcdClientGetter) MemberAdd(peerURL string) error {
 	defer cli.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	membersResp, err := cli.MemberList(ctx)
-	cancel()
 	if err != nil {
 		return err
 	}
@@ -143,8 +144,9 @@ func (g *etcdClientGetter) MemberRemove(member string) error {
 	defer cli.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	membersResp, err := cli.MemberList(ctx)
-	cancel()
 	if err != nil {
 		return nil
 	}
