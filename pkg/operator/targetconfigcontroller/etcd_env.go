@@ -108,11 +108,7 @@ func getEtcdName(envVarContext envVarContext) (map[string]string, error) {
 	ret := map[string]string{}
 
 	for _, nodeInfo := range envVarContext.status.NodeStatuses {
-		nodeDNSName, err := getInternalIPDNSNodeName(envVarContext, nodeInfo.NodeName)
-		if err != nil {
-			return nil, err
-		}
-		ret[fmt.Sprintf("NODE_%s_ETCD_NAME", envVarSafe(nodeInfo.NodeName))] = nodeDNSName
+		ret[fmt.Sprintf("NODE_%s_ETCD_NAME", envVarSafe(nodeInfo.NodeName))] = nodeInfo.NodeName
 	}
 
 	return ret, nil
@@ -143,20 +139,6 @@ func getInternalIPAddressForNodeName(envVarContext envVarContext, nodeName strin
 		}
 	}
 	return "", fmt.Errorf("node/%s missing %s", node.Name, corev1.NodeInternalIP)
-}
-
-func getInternalIPDNSNodeName(envVarContext envVarContext, nodeName string) (string, error) {
-	node, err := envVarContext.nodeLister.Get(nodeName)
-	if err != nil {
-		return "", err
-	}
-
-	for _, currAddress := range node.Status.Addresses {
-		if currAddress.Type == corev1.NodeInternalDNS {
-			return currAddress.Address, nil
-		}
-	}
-	return "", fmt.Errorf("node/%s missing %s", node.Name, corev1.NodeInternalDNS)
 }
 
 func getDNSName(envVarContext envVarContext) (map[string]string, error) {
