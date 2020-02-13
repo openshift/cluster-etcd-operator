@@ -190,14 +190,17 @@ func (c *EtcdCertSignerController) syncAllMasters() error {
 	// build the combined secrets that we're going to install
 	combinedPeerSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Namespace: operatorclient.TargetNamespace, Name: "etcd-all-peer"},
+		Type:       corev1.SecretTypeOpaque,
 		Data:       map[string][]byte{},
 	}
 	combinedServingSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Namespace: operatorclient.TargetNamespace, Name: "etcd-all-serving"},
+		Type:       corev1.SecretTypeOpaque,
 		Data:       map[string][]byte{},
 	}
 	combinedServingMetricsSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Namespace: operatorclient.TargetNamespace, Name: "etcd-all-serving-metrics"},
+		Type:       corev1.SecretTypeOpaque,
 		Data:       map[string][]byte{},
 	}
 	for _, node := range nodes {
