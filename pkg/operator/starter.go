@@ -22,7 +22,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
@@ -52,10 +51,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return err
 	}
 	clientset, err := kubernetes.NewForConfig(controllerContext.KubeConfig)
-	if err != nil {
-		return err
-	}
-	dynamicClient, err := dynamic.NewForConfig(controllerContext.KubeConfig)
 	if err != nil {
 		return err
 	}
@@ -176,9 +171,9 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 
 	clusterMemberController2 := clustermembercontroller2.NewClusterMemberController(
-		dynamicClient,
 		operatorClient,
 		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
+		configInformers.Config().V1().Infrastructures(),
 		etcdClient,
 		controllerContext.EventRecorder,
 	)

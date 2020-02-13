@@ -5,17 +5,14 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
-
 	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -36,13 +33,13 @@ const (
 // to etcd membership only if all existing members are running healthy
 // skips if any one member is unhealthy.
 type ClusterMemberController struct {
-	dynamicClient   dynamic.Interface
-	operatorClient  v1helpers.OperatorClient
-	etcdClient      etcdcli.EtcdClient
-	kubeInformers   informers.SharedInformerFactory
-	endpointsLister corev1listers.EndpointsLister
-	podLister       corev1listers.PodLister
-	nodeLister      corev1listers.NodeLister
+	operatorClient       v1helpers.OperatorClient
+	etcdClient           etcdcli.EtcdClient
+	kubeInformers        informers.SharedInformerFactory
+	endpointsLister      corev1listers.EndpointsLister
+	podLister            corev1listers.PodLister
+	nodeLister           corev1listers.NodeLister
+	infrastructureLister configv1listers.InfrastructureLister
 
 	cachesToSync  []cache.InformerSynced
 	queue         workqueue.RateLimitingInterface
@@ -50,19 +47,19 @@ type ClusterMemberController struct {
 }
 
 func NewClusterMemberController(
-	dynamicClient dynamic.Interface,
 	operatorClient v1helpers.OperatorClient,
 	kubeInformers informers.SharedInformerFactory,
+	infrastructureInformer configv1informers.InfrastructureInformer,
 	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
 ) *ClusterMemberController {
 	c := &ClusterMemberController{
-		dynamicClient:   dynamicClient,
-		operatorClient:  operatorClient,
-		etcdClient:      etcdClient,
-		endpointsLister: kubeInformers.Core().V1().Endpoints().Lister(),
-		podLister:       kubeInformers.Core().V1().Pods().Lister(),
-		nodeLister:      kubeInformers.Core().V1().Nodes().Lister(),
+		operatorClient:       operatorClient,
+		etcdClient:           etcdClient,
+		endpointsLister:      kubeInformers.Core().V1().Endpoints().Lister(),
+		podLister:            kubeInformers.Core().V1().Pods().Lister(),
+		nodeLister:           kubeInformers.Core().V1().Nodes().Lister(),
+		infrastructureLister: infrastructureInformer.Lister(),
 
 		cachesToSync: []cache.InformerSynced{
 			operatorClient.Informer().HasSynced,
@@ -70,6 +67,7 @@ func NewClusterMemberController(
 			kubeInformers.Core().V1().Pods().Informer().HasSynced,
 			kubeInformers.Core().V1().ConfigMaps().Informer().HasSynced,
 			kubeInformers.Core().V1().Nodes().Informer().HasSynced,
+			infrastructureInformer.Informer().HasSynced,
 			operatorClient.Informer().HasSynced,
 		},
 		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ClusterMemberController2"),
@@ -257,18 +255,13 @@ func (c *ClusterMemberController) getUnreadyEtcdPods() ([]*corev1.Pod, error) {
 }
 
 func (c *ClusterMemberController) getEtcdDiscoveryDomain() (string, error) {
-	controllerConfig, err := c.dynamicClient.
-		Resource(schema.GroupVersionResource{Group: "machineconfiguration.openshift.io", Version: "v1", Resource: "controllerconfigs"}).
-		Get("machine-config-controller", metav1.GetOptions{})
+	infrastructure, err := c.infrastructureLister.Get("cluster")
 	if err != nil {
 		return "", err
 	}
-	etcdDiscoveryDomain, ok, err := unstructured.NestedString(controllerConfig.Object, "spec", "etcdDiscoveryDomain")
-	if err != nil {
-		return "", err
-	}
-	if !ok {
-		return "", fmt.Errorf("controllerconfigs/machine-config-controller missing .spec.etcdDiscoveryDomain")
+	etcdDiscoveryDomain := infrastructure.Status.EtcdDiscoveryDomain
+	if len(etcdDiscoveryDomain) == 0 {
+		return "", fmt.Errorf("infrastructures.config.openshit.io/cluster missing .status.etcdDiscoveryDomain")
 	}
 	return etcdDiscoveryDomain, nil
 }
