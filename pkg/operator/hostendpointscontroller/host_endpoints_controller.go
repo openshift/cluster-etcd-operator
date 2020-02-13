@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -11,17 +12,16 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/mergepatch"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
@@ -30,6 +30,8 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
 const (
@@ -265,7 +267,7 @@ func (c *HostEndpointsController) applyEndpoints(required *corev1.Endpoints) err
 	modified := resourcemerge.BoolPtr(false)
 	toWrite := existing.DeepCopy()
 	resourcemerge.EnsureObjectMeta(modified, &toWrite.ObjectMeta, required.ObjectMeta)
-	if !equality.Semantic.DeepEqual(existing.Subsets, required.Subsets) {
+	if !endpointsSubsetsEqual(existing.Subsets, required.Subsets) {
 		toWrite.Subsets = make([]corev1.EndpointSubset, len(required.Subsets))
 		for i := range required.Subsets {
 			required.Subsets[i].DeepCopyInto(&(toWrite.Subsets)[i])
@@ -280,13 +282,62 @@ func (c *HostEndpointsController) applyEndpoints(required *corev1.Endpoints) err
 	if klog.V(4) {
 		klog.Infof("Endpoints %q changes: %v", required.Namespace+"/"+required.Name, jsonPatch)
 	}
-	_, err = c.endpointsClient.Endpoints(operatorclient.TargetNamespace).Update(toWrite)
+	updated, err := c.endpointsClient.Endpoints(operatorclient.TargetNamespace).Update(toWrite)
 	if err != nil {
 		c.eventRecorder.Warningf("EndpointsUpdateFailed", "Failed to update endpoints/%s -n %s: %v", required.Name, required.Namespace, err)
 		return err
 	}
+	klog.Infof("toWrite: \n%v", mergepatch.ToYAMLOrError(updated.Subsets))
 	c.eventRecorder.Warningf("EndpointsUpdated", "Updated endpoints/%s -n %s because it changed: %v", required.Name, required.Namespace, jsonPatch)
 	return nil
+}
+
+func endpointsSubsetsEqual(lhs, rhs []corev1.EndpointSubset) bool {
+	if len(lhs) != len(rhs) {
+		return false
+	}
+	for i := range lhs {
+		if !endpointSubsetEqual(lhs[i], rhs[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func endpointSubsetEqual(lhs, rhs corev1.EndpointSubset) bool {
+	if len(lhs.Addresses) != len(rhs.Addresses) {
+		return false
+	}
+	if len(lhs.NotReadyAddresses) != len(rhs.NotReadyAddresses) {
+		return false
+	}
+	if len(lhs.Ports) != len(rhs.Ports) {
+		return false
+	}
+	// sorts the endpoint addresses for comparison (make copy as to not clobber originals)
+	count := len(lhs.Addresses)
+	lhsAddresses := make([]corev1.EndpointAddress, count)
+	rhsAddresses := make([]corev1.EndpointAddress, count)
+	for i := 0; i < count; i++ {
+		lhs.Addresses[i].DeepCopyInto(&lhsAddresses[i])
+		rhs.Addresses[i].DeepCopyInto(&rhsAddresses[i])
+	}
+	sort.Slice(lhsAddresses, newEndpointAddressSliceComparator(lhsAddresses))
+	sort.Slice(rhsAddresses, newEndpointAddressSliceComparator(rhsAddresses))
+	return reflect.DeepEqual(lhsAddresses, rhsAddresses)
+}
+
+func newEndpointAddressSliceComparator(endpointAddresses []corev1.EndpointAddress) func(int, int) bool {
+	return func(i, j int) bool {
+		switch {
+		case endpointAddresses[i].IP != endpointAddresses[j].IP:
+			return endpointAddresses[i].IP < endpointAddresses[j].IP
+		case endpointAddresses[i].Hostname != endpointAddresses[j].Hostname:
+			return endpointAddresses[i].Hostname < endpointAddresses[j].Hostname
+		default:
+			return *endpointAddresses[i].NodeName < *endpointAddresses[j].NodeName
+		}
+	}
 }
 
 func (c *HostEndpointsController) Run(ctx context.Context, workers int) {
