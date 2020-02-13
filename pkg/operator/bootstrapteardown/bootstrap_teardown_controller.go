@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
@@ -185,6 +187,7 @@ func (c *BootstrapTeardownController) hasMoreThanTwoEtcdMembers() (bool, error) 
 	if err != nil {
 		return false, err
 	}
+	klog.Infof("members %v", spew.Sdump(members))
 
 	if len(members) <= 3 {
 		return false, nil
@@ -194,6 +197,7 @@ func (c *BootstrapTeardownController) hasMoreThanTwoEtcdMembers() (bool, error) 
 	if err != nil {
 		return false, nil
 	}
+	klog.Infof("unhealthy members %v", spew.Sdump(members))
 	if len(unhealthyMembers) > 0 {
 		return false, nil
 	}
