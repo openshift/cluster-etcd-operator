@@ -198,7 +198,7 @@ func (c *ClusterMemberController) reconcileMembers() error {
 		return err
 	}
 
-	err = c.etcdClient.MemberAdd(podFQDN)
+	err = c.etcdClient.MemberAdd(fmt.Sprintf("https://%s:2380", podFQDN))
 	if err != nil {
 		return err
 	}
