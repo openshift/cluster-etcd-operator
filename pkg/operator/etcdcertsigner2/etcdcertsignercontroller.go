@@ -190,14 +190,17 @@ func (c *EtcdCertSignerController) syncAllMasters() error {
 	// build the combined secrets that we're going to install
 	combinedPeerSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Namespace: operatorclient.TargetNamespace, Name: "etcd-all-peer"},
+		Type:       corev1.SecretTypeOpaque,
 		Data:       map[string][]byte{},
 	}
 	combinedServingSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Namespace: operatorclient.TargetNamespace, Name: "etcd-all-serving"},
+		Type:       corev1.SecretTypeOpaque,
 		Data:       map[string][]byte{},
 	}
 	combinedServingMetricsSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Namespace: operatorclient.TargetNamespace, Name: "etcd-all-serving-metrics"},
+		Type:       corev1.SecretTypeOpaque,
 		Data:       map[string][]byte{},
 	}
 	for _, node := range nodes {
@@ -217,12 +220,12 @@ func (c *EtcdCertSignerController) syncAllMasters() error {
 			combinedServingSecret.Data[getServingSecretNameForNode(node)+".key"] = currServing.Data["tls.key"]
 		}
 
-		currServingMetrics, err := c.secretLister.Secrets(operatorclient.TargetNamespace).Get(getPeerClientSecretNameForNode(node))
+		currServingMetrics, err := c.secretLister.Secrets(operatorclient.TargetNamespace).Get(getServingMetricsSecretNameForNode(node))
 		if err != nil {
 			errs = append(errs, err)
 		} else {
-			combinedServingMetricsSecret.Data[getPeerClientSecretNameForNode(node)+".crt"] = currServingMetrics.Data["tls.crt"]
-			combinedServingMetricsSecret.Data[getPeerClientSecretNameForNode(node)+".key"] = currServingMetrics.Data["tls.key"]
+			combinedServingMetricsSecret.Data[getServingMetricsSecretNameForNode(node)+".crt"] = currServingMetrics.Data["tls.crt"]
+			combinedServingMetricsSecret.Data[getServingMetricsSecretNameForNode(node)+".key"] = currServingMetrics.Data["tls.key"]
 		}
 	}
 	if len(errs) > 0 {
