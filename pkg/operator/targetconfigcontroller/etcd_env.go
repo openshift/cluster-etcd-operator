@@ -43,6 +43,13 @@ var envVarFns = []envVarFunc{
 //   NODE_%s_ETCD_DNS_NAME
 //   NODE_%s_ETCD_NAME
 func getEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
+	// TODO once we are past bootstrapping, this restriction shouldn't be needed anymore.
+	//   we have it because the env vars were not getting set in the pod and the static pod operator started
+	//   rolling out to another node, which caused a failure.
+	if len(envVarContext.status.NodeStatuses) < 3 {
+		return nil, fmt.Errorf("at least three nodes are required to have a valid configuration")
+	}
+
 	ret := map[string]string{}
 
 	for _, envVarFn := range envVarFns {
