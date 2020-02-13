@@ -210,3 +210,26 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 
 	return unhealthyMembers, nil
 }
+
+func (g *etcdClientGetter) MemberStatus(member *etcdserverpb.Member) string {
+	cli, err := g.getEtcdClient()
+	if err != nil {
+		klog.Errorf("error getting etcd client: %#v", err)
+		return EtcdMemberStatusUnknown
+	}
+	defer cli.Close()
+
+	if len(member.ClientURLs) == 0 && member.Name == "" {
+		return EtcdMemberStatusNotStarted
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	_, err = cli.Status(ctx, member.ClientURLs[0])
+	cancel()
+	if err != nil {
+		klog.Errorf("error getting etcd member %s status: %#v", member.Name, err)
+		return EtcdMemberStatusUnhealthy
+	}
+
+	return EtcdMemberStatusAvailable
+}

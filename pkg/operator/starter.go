@@ -6,6 +6,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdmemberscontroller"
+
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller2"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -178,6 +180,12 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		etcdClient,
 		controllerContext.EventRecorder,
 	)
+	etcdMembersController := etcdmemberscontroller.NewEtcdMembersController(
+		operatorClient,
+		etcdClient,
+		kubeInformersForNamespaces,
+		controllerContext.EventRecorder,
+	)
 	bootstrapTeardownController := bootstrapteardown.NewBootstrapTeardownController(
 		operatorClient,
 		kubeInformersForNamespaces,
@@ -199,6 +207,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go statusController.Run(ctx, 1)
 	go configObserver.Run(ctx, 1)
 	go clusterMemberController2.Run(ctx.Done())
+	go etcdMembersController.Run(ctx, 1)
 	go bootstrapTeardownController.Run(ctx.Done())
 	go staticPodControllers.Run(ctx, 1)
 
