@@ -2,19 +2,16 @@ package clustermembercontroller
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	ceoapi "github.com/openshift/cluster-etcd-operator/pkg/operator/api"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	"go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/pkg/transport"
-	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -31,18 +28,15 @@ import (
 const (
 	workQueueKey             = "key"
 	EtcdScalingAnnotationKey = "etcd.operator.openshift.io/scale"
-	etcdCertFile             = "/var/run/secrets/etcd-client/tls.crt"
-	etcdKeyFile              = "/var/run/secrets/etcd-client/tls.key"
-	etcdTrustedCAFile        = "/var/run/configmaps/etcd-ca/ca-bundle.crt"
 	EtcdEndpointNamespace    = "openshift-etcd"
 	EtcdHostEndpointName     = "host-etcd"
 	EtcdEndpointName         = "etcd"
-	dialTimeout              = 20 * time.Second
 )
 
 type ClusterMemberController struct {
 	clientset                              corev1client.Interface
 	operatorConfigClient                   v1helpers.OperatorClient
+	etcdClient                             etcdcli.EtcdClient
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory
 	queue                                  workqueue.RateLimitingInterface
 	eventRecorder                          events.Recorder
@@ -52,6 +46,7 @@ type ClusterMemberController struct {
 func NewClusterMemberController(
 	clientset corev1client.Interface,
 	operatorConfigClient v1helpers.OperatorClient,
+	etcdClient etcdcli.EtcdClient,
 
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
 	eventRecorder events.Recorder,
@@ -60,6 +55,7 @@ func NewClusterMemberController(
 	c := &ClusterMemberController{
 		clientset:                              clientset,
 		operatorConfigClient:                   operatorConfigClient,
+		etcdClient:                             etcdClient,
 		queue:                                  workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ClusterMemberController"),
 		kubeInformersForOpenshiftEtcdNamespace: kubeInformersForOpenshiftEtcdNamespace,
 		eventRecorder:                          eventRecorder.WithComponentSuffix("cluster-member-controller"),
@@ -98,7 +94,7 @@ func (c *ClusterMemberController) sync() error {
 		// exisiting member can be removed order is important here
 		if c.IsStatus("pending", p.Name, ceoapi.MemberRemove) {
 			klog.Infof("Member is unhealthy and is being removed: %s\n", p.Name)
-			if err := c.EtcdMemberRemove(p.Name); err != nil {
+			if err := c.etcdClient.MemberRemove(p.Name); err != nil {
 				c.eventRecorder.Warning("ScalingDownFailed", err.Error())
 				return err
 				// Todo alaypatel07:  need to take care of condition degraded
@@ -190,7 +186,7 @@ func (c *ClusterMemberController) sync() error {
 
 		// Pending MemberAdd: here we have observed the static pod having add dependencies filled ok to scale Cluster API.
 		if c.IsStatus("pending", p.Name, ceoapi.MemberReady) {
-			if err := c.etcdMemberAdd([]string{fmt.Sprintf("https://%s:2380", peerFQDN)}); err != nil {
+			if err := c.etcdClient.MemberAdd(fmt.Sprintf("https://%s:2380", peerFQDN)); err != nil {
 				c.eventRecorder.Warning("ScalingFailed", err.Error())
 				return err
 			}
@@ -260,61 +256,6 @@ func (c *ClusterMemberController) Endpoints() ([]string, error) {
 
 	klog.V(2).Infof("Endpoints: creating etcd client with endpoints %s", strings.Join(endpoints, ", "))
 	return endpoints, nil
-}
-
-func (c *ClusterMemberController) getEtcdClient() (*clientv3.Client, error) {
-	endpoints, err := c.Endpoints()
-	if err != nil {
-		return nil, err
-	}
-	tlsInfo := transport.TLSInfo{
-		CertFile:      etcdCertFile,
-		KeyFile:       etcdKeyFile,
-		TrustedCAFile: etcdTrustedCAFile,
-	}
-	tlsConfig, err := tlsInfo.ClientConfig()
-
-	dialOptions := []grpc.DialOption{
-		grpc.WithBlock(), // block until the underlying connection is up
-	}
-
-	cfg := &clientv3.Config{
-		DialOptions: dialOptions,
-		Endpoints:   endpoints,
-		DialTimeout: dialTimeout,
-		TLS:         tlsConfig,
-	}
-
-	cli, err := clientv3.New(*cfg)
-	if err != nil {
-		return nil, err
-	}
-	return cli, err
-}
-
-func (c *ClusterMemberController) EtcdMemberRemove(name string) error {
-	cli, err := c.getEtcdClient()
-	defer cli.Close()
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	l, err := cli.MemberList(ctx)
-	cancel()
-	if err != nil {
-		return err
-	}
-	for _, member := range l.Members {
-		if member.Name == name {
-
-			resp, err := cli.MemberRemove(context.Background(), member.ID)
-			if err != nil {
-				return err
-			}
-			klog.Infof("Members left %#v", resp.Members)
-		}
-	}
-	return nil
 }
 
 func (c *ClusterMemberController) EtcdList(bucket string) ([]ceoapi.Member, error) {
@@ -388,24 +329,17 @@ func (c *ClusterMemberController) IsMember(name string) bool {
 	return false
 }
 
-func (c *ClusterMemberController) IsEtcdMember(name string) bool {
-	cli, err := c.getEtcdClient()
-	defer cli.Close()
+func (c *ClusterMemberController) IsEtcdMember(name string) (bool, error) {
+	members, err := c.etcdClient.MemberList()
 	if err != nil {
-		return false
+		return false, err
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	l, err := cli.MemberList(ctx)
-	cancel()
-	if err != nil {
-		return false
-	}
-	for _, m := range l.Members {
+	for _, m := range members {
 		if m.Name == name {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // IsStatus returns true or false based on the bucket name and status of an etcd. If multiple status are passed
@@ -504,28 +438,12 @@ func (c *ClusterMemberController) eventHandler() cache.ResourceEventHandler {
 	}
 }
 
-func (c *ClusterMemberController) etcdMemberAdd(peerURLs []string) error {
-	cli, err := c.getEtcdClient()
-	defer cli.Close()
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	resp, err := cli.MemberAdd(ctx, peerURLs)
-	cancel()
-	if err != nil {
-		return err
-	}
-	klog.Infof("added etcd member.PeerURLs:%s", resp.Member.PeerURLs)
-	return nil
-}
-
 func (c *ClusterMemberController) RemoveBootstrap() error {
 	err := c.RemoveBootstrapFromEndpoint()
 	if err != nil {
 		return err
 	}
-	return c.EtcdMemberRemove("etcd-bootstrap")
+	return c.etcdClient.MemberRemove("etcd-bootstrap")
 }
 
 func (c *ClusterMemberController) RemoveBootstrapFromEndpoint() error {
