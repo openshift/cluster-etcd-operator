@@ -6,6 +6,10 @@ import (
 	"strings"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"k8s.io/client-go/kubernetes"
+
 	"github.com/davecgh/go-spew/spew"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -35,6 +39,7 @@ const (
 type BootstrapTeardownController struct {
 	operatorClient v1helpers.OperatorClient
 	etcdClient     etcdcli.EtcdClient
+	kubeClient     kubernetes.Interface
 
 	kubeAPIServerLister operatorv1listers.KubeAPIServerLister
 	configMapLister     corev1listers.ConfigMapLister
@@ -47,6 +52,7 @@ type BootstrapTeardownController struct {
 
 func NewBootstrapTeardownController(
 	operatorClient v1helpers.OperatorClient,
+	kubeClient kubernetes.Interface,
 
 	kubeInformersForNamespaces operatorv1helpers.KubeInformersForNamespaces,
 	operatorInformers operatorv1informers.SharedInformerFactory,
@@ -58,6 +64,7 @@ func NewBootstrapTeardownController(
 	c := &BootstrapTeardownController{
 		operatorClient: operatorClient,
 		etcdClient:     etcdClient,
+		kubeClient:     kubeClient,
 
 		kubeAPIServerLister: operatorInformers.Operator().V1().KubeAPIServers().Lister(),
 		configMapLister:     openshiftKubeAPIServerNamespacedInformers.Core().V1().ConfigMaps().Lister(),
@@ -158,6 +165,31 @@ func (c *BootstrapTeardownController) removeBootstrap() error {
 	}
 	if !kasReady {
 		c.eventRecorder.Event("KASConfigIsNotValid", "Still waiting for the kube-apiserver to be ready")
+		return nil
+	}
+
+	// check to see if bootstrapping is complete
+	bootstrapFinished := false
+	bootstrapFinishedConfigMap, err := c.kubeClient.CoreV1().ConfigMaps("kube-system").Get("bootstrap", metav1.GetOptions{})
+	if err != nil {
+		klog.V(2).Infof("non-fatal error getting configmap: %v", err)
+	} else {
+		if bootstrapFinishedConfigMap.Data["status"] == "complete" {
+			bootstrapFinished = true
+		}
+	}
+	if !bootstrapFinished {
+		// check to see if we have an event yet.
+		_, err := c.kubeClient.CoreV1().Events("kube-system").Get("bootstrap-finished", metav1.GetOptions{})
+		if err != nil {
+			klog.V(2).Infof("non-fatal error getting bootstrap-finished event: %v", err)
+		} else {
+			bootstrapFinished = true
+		}
+	}
+
+	if !bootstrapFinished {
+		c.eventRecorder.Event("DelayingBootstrapTeardown", "cluster-bootstrap is not yet finished")
 		return nil
 	}
 
