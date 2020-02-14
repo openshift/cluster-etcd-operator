@@ -219,9 +219,21 @@ spec:
         initial_cluster="${initial_cluster::-1}"
         echo $initial_cluster
 
+        if [[ -d /var/lib/etcd/member/ ]]; then
+        # this indicates that etcd pod has run before, it can either be upgrade
+        # or restart of pod, if it in upgrade, we need to wait for MCO pod
+        # if not upgrade, we already moved the file in else block
+          while [[ -f "/etc/kubernetes/manifests/etcd-member.yaml" ]]; do
+            echo "waiting for MCO to remove etcd-member.yaml"
+            sleep 2
+          done
+        else
         # at this point we know this member is added.  To support a transition, we must remove the old etcd pod.
         # move it somewhere safe so we can retrieve it again later if something goes badly.
-        mv /etc/kubernetes/manifests/etcd-member.yaml /etc/kubernetes/etcd-backup-dir || true
+          echo "fresh install, moving MCO file"
+          mv /etc/kubernetes/manifests/etcd-member.yaml /etc/kubernetes/etcd-backup-dir || true
+        fi
+
 
         export ETCD_INITIAL_CLUSTER=${initial_cluster}
         export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
@@ -253,7 +265,7 @@ ${COMPUTED_ENV_VARS}
         command:
           - /bin/sh
           - -ec
-          - "lsof -n -i :2380 | grep LISTEN"
+          - "etcdctl --cacert=\"/etc/kubernetes/static-pod-resources/configmaps/etcd-peer-client-ca/ca-bundle.crt\" --cert=\"/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt\" --key=\"/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key\" --endpoints=https://localhost:2379 endpoint health"
       failureThreshold: 3
       initialDelaySeconds: 3
       periodSeconds: 5
@@ -285,6 +297,11 @@ ${COMPUTED_ENV_VARS}
 
         export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
 
+        while [[ -f "/etc/kubernetes/manifests/etcd-member.yaml" ]]; do
+          echo "waiting for MCO to remove etcd-member.yaml"
+          sleep 2
+        done
+
         exec etcd grpc-proxy start \
           --endpoints https://${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}:9978 \
           --metrics-addr https://${LISTEN_ON_ALL_IPS}:9979 \
@@ -304,6 +321,8 @@ ${COMPUTED_ENV_VARS}
     securityContext:
       privileged: true
     volumeMounts:
+      - mountPath: /etc/kubernetes/manifests
+        name: static-pod-dir
       - mountPath: /etc/kubernetes/static-pod-resources
         name: resource-dir
       - mountPath: /etc/kubernetes/static-pod-certs
