@@ -156,9 +156,6 @@ func (c *HostEndpointsController) syncHostEndpoints() error {
 			NodeName: &node.Name,
 		})
 	}
-	sort.Slice(endpointAddresses, func(i, j int) bool {
-		return (endpointAddresses)[i].Hostname < (endpointAddresses)[j].Hostname
-	})
 
 	// if etcd-bootstrap exists, keep it (at the end of the list)
 	existing, err := c.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd")
