@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	errorsutil "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/mergepatch"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -134,6 +135,7 @@ func (c *HostEndpointsController) syncHostEndpoints() error {
 		return fmt.Errorf("unable to list expected etcd member nodes: %v", err)
 	}
 	endpointAddresses := []corev1.EndpointAddress{}
+	dnsErrors := []error{}
 	for _, node := range nodes {
 		var nodeInternalIP string
 		for _, nodeAddress := range node.Status.Addresses {
@@ -147,7 +149,8 @@ func (c *HostEndpointsController) syncHostEndpoints() error {
 		}
 		dnsName, err := c.getEtcdDNSName(discoveryDomain, nodeInternalIP)
 		if err != nil {
-			return fmt.Errorf("unable to determine etcd member dns name for node %s: %v", node.Name, err)
+			dnsErrors = append(dnsErrors, fmt.Errorf("unable to determine etcd member dns name for node %s: %v", node.Name, err))
+			continue
 		}
 
 		endpointAddresses = append(endpointAddresses, corev1.EndpointAddress{
@@ -164,7 +167,8 @@ func (c *HostEndpointsController) syncHostEndpoints() error {
 	existing, err := c.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd")
 	switch {
 	case errors.IsNotFound(err):
-		// do nothing with not found because we don't want to clobber the results
+		// host-etcd should always be present, if not found we should wait for CVO to create it initially.
+		return err
 	case err != nil:
 		return nil
 	default:
@@ -181,7 +185,17 @@ func (c *HostEndpointsController) syncHostEndpoints() error {
 		return fmt.Errorf("no etcd member nodes are ready")
 	}
 
-	return c.applyEndpoints(required)
+	err = c.applyEndpoints(required)
+	if err != nil {
+		return err
+	}
+
+	if len(dnsErrors) > 0 {
+		err := errorsutil.NewAggregate(dnsErrors)
+		return fmt.Errorf("%s", err.Error())
+	}
+
+	return nil
 }
 
 func hostEndpointsAsset() *corev1.Endpoints {
@@ -254,6 +268,7 @@ func reverseLookup(service, proto, name, ip string) (string, error) {
 func (c *HostEndpointsController) applyEndpoints(required *corev1.Endpoints) error {
 	existing, err := c.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd")
 	if errors.IsNotFound(err) {
+		// we will never reach this, but for completeness
 		_, err := c.endpointsClient.Endpoints(operatorclient.TargetNamespace).Create(required)
 		if err != nil {
 			c.eventRecorder.Warningf("EndpointsCreateFailed", "Failed to create endpoints/%s -n %s: %v", required.Name, required.Namespace, err)
