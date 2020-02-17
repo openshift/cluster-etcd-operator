@@ -9,9 +9,11 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
+	appsv1listers "k8s.io/client-go/listers/apps/v1"
 	policylisters "k8s.io/client-go/listers/policy/v1beta1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
@@ -33,6 +35,7 @@ type GuardBudgetController struct {
 
 	machineConfigOperatorPodDisruptionBudgetLister policylisters.PodDisruptionBudgetLister
 	etcdPodDisruptionBudgetLister                  policylisters.PodDisruptionBudgetLister
+	machineConfigOperatorDeploymentLister          appsv1listers.DeploymentLister
 
 	cachesToSync  []cache.InformerSynced
 	queue         workqueue.RateLimitingInterface
@@ -51,10 +54,12 @@ func NewGuardBudgetController(
 		operatorClient: operatorClient,
 		kubeClient:     kubeClient,
 		machineConfigOperatorPodDisruptionBudgetLister: openshiftMachineConfigOperatorNamespacedInformers.Policy().V1beta1().PodDisruptionBudgets().Lister(),
+		machineConfigOperatorDeploymentLister:          openshiftMachineConfigOperatorNamespacedInformers.Apps().V1().Deployments().Lister(),
 		etcdPodDisruptionBudgetLister:                  openshiftEtcdNamespacedInformers.Policy().V1beta1().PodDisruptionBudgets().Lister(),
 		cachesToSync: []cache.InformerSynced{
 			operatorClient.Informer().HasSynced,
 			kubeInformersForNamespaces.InformersFor("openshift-machine-config-operator").Policy().V1beta1().PodDisruptionBudgets().Informer().HasSynced,
+			kubeInformersForNamespaces.InformersFor("openshift-machine-config-operator").Apps().V1().Deployments().Informer().HasSynced,
 			kubeInformersForNamespaces.InformersFor("openshift-etcd").Policy().V1beta1().PodDisruptionBudgets().Informer().HasSynced,
 		},
 		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "GuardBudgetController"),
@@ -63,6 +68,7 @@ func NewGuardBudgetController(
 
 	kubeInformersForNamespaces.InformersFor("openshift-machine-config-operator").Policy().V1beta1().PodDisruptionBudgets().Informer().AddEventHandler(c.eventHandler())
 	kubeInformersForNamespaces.InformersFor("openshift-etcd").Policy().V1beta1().PodDisruptionBudgets().Informer().AddEventHandler(c.eventHandler())
+	kubeInformersForNamespaces.InformersFor("openshift-machine-config-operator").Apps().V1().Deployments().Informer().AddEventHandler(c.eventHandler())
 	return c
 }
 
@@ -119,8 +125,26 @@ func (c *GuardBudgetController) checkGuardBudget() error {
 		Message: fmt.Sprintf("Quorum guard pod disruption budget is not removed yet: machineConfigOperatorPDB %#v", machineConfigOperatorPDB),
 	}))
 
-	if err := c.kubeClient.PolicyV1beta1().PodDisruptionBudgets("openshift-machine-config-operator").Delete("etcd-quorum-guard", nil); err != nil {
+	pdbErr := c.kubeClient.PolicyV1beta1().PodDisruptionBudgets("openshift-machine-config-operator").Delete("etcd-quorum-guard", nil)
+	if errors.IsNotFound(pdbErr) {
+		c.eventRecorder.Event("GuardBudgetController", "pdb etcd-quorum-guard does not exist in openshift-machine-config-operator")
+	}
+	if pdbErr != nil {
 		c.eventRecorder.Event("GuardBudgetController", "failed to remove guard budget")
+	}
+
+	etcdQGScale, err := c.kubeClient.AppsV1().Deployments("openshift-machine-config-operator").GetScale("etcd-quorum-guard", metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	if etcdQGScale.Spec.Replicas == int32(0) {
+		c.eventRecorder.Event("GuardBudgetController", "scaled etcd-quorum-guard to 0 replicas")
+		return nil
+	}
+
+	etcdQGScale.Spec.Replicas = int32(0)
+	if _, err := c.kubeClient.AppsV1().Deployments("openshift-machine-config-operator").UpdateScale("etcd-quorum-guard", etcdQGScale); err != nil {
+		return err
 	}
 
 	return nil
