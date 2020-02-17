@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
@@ -12,6 +13,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -154,47 +156,31 @@ func (c *ClusterMemberController) reconcileMembers() error {
 		return err
 	}
 	if len(unhealthyMembers) > 0 {
-		c.eventRecorder.Eventf("WaitingOnEtcdMember", "waiting for all member of etcd to be healthy")
+		klog.V(4).Infof("unhealthy members: %v", spew.Sdump(unhealthyMembers))
+		memberNames := []string{}
+		for _, member := range unhealthyMembers {
+			memberNames = append(memberNames, member.Name)
+		}
+		c.eventRecorder.Eventf("UnhealthyEtcdMember", "unhealthy members: %v", strings.Join(memberNames, ","))
 		return nil
 	}
 
 	// etcd is healthy, decide if we need to scale
-	unreadyPods, err := c.getUnreadyEtcdPods()
-	if err != nil {
+	podToAdd, err := c.getEtcdPodToAddToMembership()
+	switch {
+	case err != nil:
 		return err
-	}
-
-	if len(unreadyPods) == 0 {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient,
-			v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-				Type:    "ClusterMemberControllerScalingProgressing",
-				Status:  operatorv1.ConditionFalse,
-				Reason:  "AsExpected",
-				Message: "Scaling etcd membership completed",
-			}))
-		if updateErr != nil {
-			return updateErr
-		}
+	case podToAdd == nil:
 		// no more work left to do
 		return nil
+	default:
+		c.eventRecorder.Eventf("FoundPodToScale", "found pod to add to etcd membership: %v", podToAdd.Name)
 	}
 
-	_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient,
-		v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:    "ClusterMemberControllerScalingProgressing",
-			Status:  operatorv1.ConditionTrue,
-			Reason:  "Scaling",
-			Message: "Scaling etcd membership",
-		}))
-	if updateErr != nil {
-		return updateErr
-	}
-
-	podFQDN, err := c.getValidPodFQDNToScale(unreadyPods)
+	podFQDN, err := c.getValidPodFQDNToScale(podToAdd)
 	if err != nil {
 		return err
 	}
-
 	err = c.etcdClient.MemberAdd(fmt.Sprintf("https://%s:2380", podFQDN))
 	if err != nil {
 		return err
@@ -210,7 +196,7 @@ func (c *ClusterMemberController) eventHandler() cache.ResourceEventHandler {
 	}
 }
 
-func (c *ClusterMemberController) getUnreadyEtcdPods() ([]*corev1.Pod, error) {
+func (c *ClusterMemberController) getEtcdPodToAddToMembership() (*corev1.Pod, error) {
 	// list etcd member pods
 	pods, err := c.podLister.List(labels.Set{"app": "etcd"}.AsSelector())
 	if err != nil {
@@ -219,7 +205,6 @@ func (c *ClusterMemberController) getUnreadyEtcdPods() ([]*corev1.Pod, error) {
 
 	// go through the list of all pods, pick one peerFQDN to return from unready pods
 	// and collect dns resolution errors on the way.
-	var unreadyPods []*corev1.Pod
 	for _, pod := range pods {
 		if !strings.HasPrefix(pod.Name, "etcd-") {
 			continue
@@ -235,12 +220,23 @@ func (c *ClusterMemberController) getUnreadyEtcdPods() ([]*corev1.Pod, error) {
 				break
 			}
 		}
-		if !ready {
-			c.eventRecorder.Eventf("FoundPodToScale", "found pod %s to scale in etcd membership", pod.Name)
-			unreadyPods = append(unreadyPods, pod)
+		if ready {
+			continue
+		}
+
+		// now check to see if this member is already part of the quorum.  This logically requires being able to map every
+		// type of member name we have ever created.  The most important for now is the nodeName.
+		etcdMember, err := c.etcdClient.GetMember(pod.Spec.NodeName)
+		switch {
+		case apierrors.IsNotFound(err):
+			return pod, nil
+		case err != nil:
+			return nil, err
+		default:
+			klog.Infof("skipping unready pod %q because it is already an etcd member: %#v", pod.Name, etcdMember)
 		}
 	}
-	return unreadyPods, nil
+	return nil, nil
 }
 
 func (c *ClusterMemberController) getEtcdDiscoveryDomain() (string, error) {
@@ -258,30 +254,25 @@ func (c *ClusterMemberController) getEtcdDiscoveryDomain() (string, error) {
 // getValidPodFQDNToScale goes through the list on unready pods and
 // returns a resolvable  podFQDN. If none of the DNSes are available
 // yet it will return collected errors.
-func (c *ClusterMemberController) getValidPodFQDNToScale(unreadyPods []*corev1.Pod) (string, error) {
+func (c *ClusterMemberController) getValidPodFQDNToScale(podToAdd *corev1.Pod) (string, error) {
 	etcdDiscoveryDomain, err := c.getEtcdDiscoveryDomain()
 	if err != nil {
 		return "", err
 	}
-	errorStrings := []string{}
-	for _, p := range unreadyPods {
-		if p.Spec.NodeName == "" {
-			return "", fmt.Errorf("node name empty for %s", p.Name)
-		}
-		nodeInternalIP, err := c.getNodeInternalIP(p.Spec.NodeName)
-		if err != nil {
-			errorStrings = append(errorStrings, err.Error())
-		}
-		podFQDN, err := ReverseLookupSelf("etcd-server-ssl", "tcp", etcdDiscoveryDomain, nodeInternalIP)
-		if err != nil {
-			errorStrings = append(errorStrings, err.Error())
-		}
-		return podFQDN, nil
+
+	if podToAdd.Spec.NodeName == "" {
+		return "", fmt.Errorf("node name empty for %s", podToAdd.Name)
 	}
-	if len(errorStrings) > 0 {
-		return "", fmt.Errorf("%s", strings.Join(errorStrings, ","))
+	nodeInternalIP, err := c.getNodeInternalIP(podToAdd.Spec.NodeName)
+	if err != nil {
+		return "", err
 	}
-	return "", fmt.Errorf("cannot get a valid podFQDN to scale")
+	podFQDN, err := ReverseLookupSelf("etcd-server-ssl", "tcp", etcdDiscoveryDomain, nodeInternalIP)
+	if err != nil {
+		return "", err
+	}
+
+	return podFQDN, nil
 }
 
 func (c *ClusterMemberController) getNodeInternalIP(nodeName string) (string, error) {
