@@ -230,8 +230,8 @@ func (t *TemplateData) setEtcdAddress() {
 
 	// IPv6
 	if t.SingleStackIPv6 {
-		allAddresses = "::"
-		localhost = "::1"
+		allAddresses = "[::]"
+		localhost = "[::1]"
 	}
 
 	etcdAddress := options.EtcdAddress{
