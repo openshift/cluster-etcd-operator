@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"k8s.io/client-go/kubernetes"
@@ -117,11 +119,8 @@ func (c *BootstrapTeardownController) sync() error {
 
 func (c *BootstrapTeardownController) removeBootstrap() error {
 	// checks the actual etcd cluster membership API if etcd-bootstrap exists
-	etcdMemberExists, err := c.isEtcdMember("etcd-bootstrap")
-	if err != nil {
-		return err
-	}
-	if !etcdMemberExists {
+	bootstrapEtcdMember, err := c.etcdClient.GetMember("etcd-bootstrap")
+	if apierrors.IsNotFound(err) {
 		// set bootstrap removed condition
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    conditionBootstrapRemoved,
@@ -135,16 +134,17 @@ func (c *BootstrapTeardownController) removeBootstrap() error {
 		}
 		// return because no work left to do
 		return nil
-
-	} else {
-		_, _, _ = v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:    conditionBootstrapRemoved,
-			Status:  operatorv1.ConditionFalse,
-			Reason:  "BootstrapNodeNotRemoved",
-			Message: fmt.Sprintf("Bootstrap node is not removed yet: etcdMemberExists %t", etcdMemberExists),
-		}))
-		// fall through because it might be time to remove it
 	}
+	if err != nil {
+		return err
+	}
+
+	_, _, _ = v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		Type:    conditionBootstrapRemoved,
+		Status:  operatorv1.ConditionFalse,
+		Reason:  "BootstrapNodeNotRemoved",
+		Message: fmt.Sprintf("Bootstrap node is not removed yet: etcdMemberExists %#v", bootstrapEtcdMember),
+	}))
 
 	hasMoreThanTwoEtcdMembers, err := c.hasMoreThanTwoEtcdMembers()
 	if err != nil {
@@ -201,19 +201,6 @@ func (c *BootstrapTeardownController) removeBootstrap() error {
 	}
 
 	return nil
-}
-
-func (c *BootstrapTeardownController) isEtcdMember(name string) (bool, error) {
-	members, err := c.etcdClient.MemberList()
-	if err != nil {
-		return false, err
-	}
-	for _, m := range members {
-		if m.Name == name {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 func (c *BootstrapTeardownController) hasMoreThanTwoEtcdMembers() (bool, error) {
