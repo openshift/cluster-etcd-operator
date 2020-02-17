@@ -209,7 +209,7 @@ func TestTemplateDataSingleStack(t *testing.T) {
 	want := TemplateData{
 		ManifestConfig: options.ManifestConfig{
 			EtcdAddress: options.EtcdAddress{
-				LocalHost: "::1",
+				LocalHost: "[::1]",
 			},
 		},
 		ClusterCIDR:     []string{"10.128.0.0/14"},
