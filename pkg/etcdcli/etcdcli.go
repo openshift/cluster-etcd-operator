@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"go.etcd.io/etcd/clientv3"
@@ -183,6 +186,19 @@ func (g *etcdClientGetter) MemberList() ([]*etcdserverpb.Member, error) {
 	}
 
 	return membersResp.Members, nil
+}
+
+func (g *etcdClientGetter) GetMember(name string) (*etcdserverpb.Member, error) {
+	members, err := g.MemberList()
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range members {
+		if m.Name == name {
+			return m, nil
+		}
+	}
+	return nil, apierrors.NewNotFound(schema.GroupResource{Group: "etcd.operator.openshift.io", Resource: "etcdmembers"}, name)
 }
 
 func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
