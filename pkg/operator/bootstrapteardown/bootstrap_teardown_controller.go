@@ -223,7 +223,7 @@ func (c *BootstrapTeardownController) hasMoreThanTwoEtcdMembers() (bool, error) 
 	}
 	klog.Infof("members %v", spew.Sdump(members))
 
-	if len(members) <= 3 {
+	if len(members) <= 2 {
 		return false, nil
 	}
 
