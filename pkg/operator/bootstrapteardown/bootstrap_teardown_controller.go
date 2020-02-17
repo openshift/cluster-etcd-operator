@@ -199,6 +199,8 @@ func (c *BootstrapTeardownController) removeBootstrap() error {
 	if err := c.etcdClient.MemberRemove("etcd-bootstrap"); err != nil {
 		return err
 	}
+	// wait again to see if we can be sure to have the remove finished before updating the condition
+	time.Sleep(20 * time.Second)
 
 	return nil
 }
