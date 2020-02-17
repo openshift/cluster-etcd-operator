@@ -19,10 +19,10 @@ import (
 )
 
 const (
-	workQueueKey              = "key"
-	configMapName             = "config"
-	configMapKey              = "config.yaml"
-	conditionBootstrapRemoved = "BootstrapRemoved"
+	workQueueKey           = "key"
+	configMapName          = "config"
+	configMapKey           = "config.yaml"
+	conditionBudgetRemoved = "GuardBudgetRemoved"
 )
 
 type GuardBudgetController struct {
@@ -96,7 +96,7 @@ func (c *GuardBudgetController) checkGuardBudget() error {
 	if errors.IsNotFound(err) {
 		// removed condition
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:    conditionBootstrapRemoved,
+			Type:    conditionBudgetRemoved,
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "GuardBudgetRemoved",
 			Message: "Quorum guard pod disruption budget has been removed from MCO namespace",
@@ -113,7 +113,7 @@ func (c *GuardBudgetController) checkGuardBudget() error {
 	}
 
 	_, _, _ = v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-		Type:    conditionBootstrapRemoved,
+		Type:    conditionBudgetRemoved,
 		Status:  operatorv1.ConditionFalse,
 		Reason:  "GuardBudgetNotRemoved",
 		Message: fmt.Sprintf("Quorum guard pod disruption budget is not removed yet: machineConfigOperatorPDB %#v", machineConfigOperatorPDB),
