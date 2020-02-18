@@ -116,6 +116,12 @@ func (c *HostEndpointsController) sync() error {
 }
 
 func (c *HostEndpointsController) syncHostEndpoints() error {
+	// host-etc must exist in order to continue. we don't want to lose the etcd-bootstrap host.
+	existing, err := c.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd")
+	if err != nil {
+		return err
+	}
+
 	required := hostEndpointsAsset()
 
 	discoveryDomain, err := c.getEtcdDiscoveryDomain()
@@ -156,23 +162,12 @@ func (c *HostEndpointsController) syncHostEndpoints() error {
 			NodeName: &node.Name,
 		})
 	}
-	sort.Slice(endpointAddresses, func(i, j int) bool {
-		return (endpointAddresses)[i].Hostname < (endpointAddresses)[j].Hostname
-	})
 
-	// if etcd-bootstrap exists, keep it (at the end of the list)
-	existing, err := c.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd")
-	switch {
-	case errors.IsNotFound(err):
-		// do nothing with not found because we don't want to clobber the results
-	case err != nil:
-		return nil
-	default:
-		for _, endpointAddress := range existing.Subsets[0].Addresses {
-			if endpointAddress.Hostname == "etcd-bootstrap" {
-				endpointAddresses = append(endpointAddresses, *endpointAddress.DeepCopy())
-				break
-			}
+	// if etcd-bootstrap exists, keep it
+	for _, endpointAddress := range existing.Subsets[0].Addresses {
+		if endpointAddress.Hostname == "etcd-bootstrap" {
+			endpointAddresses = append(endpointAddresses, *endpointAddress.DeepCopy())
+			break
 		}
 	}
 

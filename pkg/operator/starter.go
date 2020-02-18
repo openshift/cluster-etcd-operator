@@ -6,6 +6,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdmemberscontroller"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller2"
+
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
@@ -26,11 +30,10 @@ import (
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner2"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/guardbudget"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/hostendpointscontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
@@ -56,17 +59,18 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return err
 	}
 
-	operatorConfigInformers := operatorv1informers.NewSharedInformerFactory(operatorConfigClient, 10*time.Minute)
+	operatorInformers := operatorv1informers.NewSharedInformerFactory(operatorConfigClient, 10*time.Minute)
 	//operatorConfigInformers.ForResource()
 	kubeInformersForNamespaces := v1helpers.NewKubeInformersForNamespaces(
 		kubeClient,
 		"",
 		operatorclient.GlobalUserSpecifiedConfigNamespace,
 		operatorclient.GlobalMachineSpecifiedConfigNamespace,
-		"openshift-etcd",
+		operatorclient.TargetNamespace,
 		operatorclient.OperatorNamespace,
 		"openshift-kube-apiserver",
 		"openshift-etcd",
+		"openshift-machine-config-operator", // TODO remove after quorum-guard is removed from MCO
 	)
 	configInformers := configv1informers.NewSharedInformerFactory(configClient, 10*time.Minute)
 	operatorClient, dynamicInformers, err := genericoperatorclient.NewStaticPodOperatorClient(controllerContext.KubeConfig, operatorv1.GroupVersion.WithResource("etcds"))
@@ -87,7 +91,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 	configObserver := configobservercontroller.NewConfigObserver(
 		operatorClient,
-		operatorConfigInformers,
+		operatorInformers,
 		kubeInformersForNamespaces,
 		configInformers,
 		resourceSyncController,
@@ -155,19 +159,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		versionRecorder,
 		controllerContext.EventRecorder,
 	)
-	clusterInfrastructure, err := configClient.ConfigV1().Infrastructures().Get("cluster", metav1.GetOptions{})
-	if err != nil && !errors.IsNotFound(err) {
-		return err
-	}
-	etcdDiscoveryDomain := clusterInfrastructure.Status.EtcdDiscoveryDomain
 	coreClient := clientset
 
-	etcdCertSignerController := etcdcertsigner.NewEtcdCertSignerController(
-		coreClient,
-		operatorClient,
-		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
-		controllerContext.EventRecorder,
-	)
 	etcdCertSignerController2 := etcdcertsigner2.NewEtcdCertSignerController(
 		coreClient,
 		operatorClient,
@@ -183,37 +176,52 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		configInformers.Config().V1().Infrastructures(),
 	)
 
-	clusterMemberController := clustermembercontroller.NewClusterMemberController(
-		coreClient,
+	clusterMemberController2 := clustermembercontroller2.NewClusterMemberController(
+		operatorClient,
+		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
+		configInformers.Config().V1().Infrastructures(),
+		etcdClient,
+		controllerContext.EventRecorder,
+	)
+	etcdMembersController := etcdmemberscontroller.NewEtcdMembersController(
 		operatorClient,
 		etcdClient,
-		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
+		kubeInformersForNamespaces,
 		controllerContext.EventRecorder,
-		etcdDiscoveryDomain,
 	)
 	bootstrapTeardownController := bootstrapteardown.NewBootstrapTeardownController(
 		operatorClient,
+		kubeClient,
 		kubeInformersForNamespaces,
-		operatorConfigInformers,
+		operatorInformers,
 		etcdClient,
 		controllerContext.EventRecorder,
 	)
 
-	operatorConfigInformers.Start(ctx.Done())
+	guardBudgetController := guardbudget.NewGuardBudgetController(
+		operatorClient,
+		kubeClient,
+		kubeInformersForNamespaces,
+		controllerContext.EventRecorder,
+	)
+
+	operatorInformers.Start(ctx.Done())
+	operatorInformers.Start(ctx.Done())
 	kubeInformersForNamespaces.Start(ctx.Done())
 	configInformers.Start(ctx.Done())
 	dynamicInformers.Start(ctx.Done())
 
 	go staticResourceController.Run(ctx, 1)
 	go targetConfigReconciler.Run(1, ctx.Done())
-	go etcdCertSignerController.Run(1, ctx.Done())
 	go etcdCertSignerController2.Run(1, ctx.Done())
 	go hostEtcdEndpointController.Run(ctx, 1)
 	go resourceSyncController.Run(ctx, 1)
 	go statusController.Run(ctx, 1)
 	go configObserver.Run(ctx, 1)
-	go clusterMemberController.Run(ctx.Done())
+	go clusterMemberController2.Run(ctx.Done())
+	go etcdMembersController.Run(ctx, 1)
 	go bootstrapTeardownController.Run(ctx.Done())
+	go guardBudgetController.Run(ctx.Done())
 	go staticPodControllers.Run(ctx, 1)
 
 	<-ctx.Done()

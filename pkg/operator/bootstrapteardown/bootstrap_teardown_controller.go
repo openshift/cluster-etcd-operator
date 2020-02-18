@@ -6,6 +6,12 @@ import (
 	"strings"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"k8s.io/client-go/kubernetes"
+
+	"github.com/davecgh/go-spew/spew"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
@@ -33,6 +39,7 @@ const (
 type BootstrapTeardownController struct {
 	operatorClient v1helpers.OperatorClient
 	etcdClient     etcdcli.EtcdClient
+	kubeClient     kubernetes.Interface
 
 	kubeAPIServerLister operatorv1listers.KubeAPIServerLister
 	configMapLister     corev1listers.ConfigMapLister
@@ -45,6 +52,7 @@ type BootstrapTeardownController struct {
 
 func NewBootstrapTeardownController(
 	operatorClient v1helpers.OperatorClient,
+	kubeClient kubernetes.Interface,
 
 	kubeInformersForNamespaces operatorv1helpers.KubeInformersForNamespaces,
 	operatorInformers operatorv1informers.SharedInformerFactory,
@@ -56,6 +64,7 @@ func NewBootstrapTeardownController(
 	c := &BootstrapTeardownController{
 		operatorClient: operatorClient,
 		etcdClient:     etcdClient,
+		kubeClient:     kubeClient,
 
 		kubeAPIServerLister: operatorInformers.Operator().V1().KubeAPIServers().Lister(),
 		configMapLister:     openshiftKubeAPIServerNamespacedInformers.Core().V1().ConfigMaps().Lister(),
@@ -159,7 +168,34 @@ func (c *BootstrapTeardownController) removeBootstrap() error {
 		return nil
 	}
 
+	// check to see if bootstrapping is complete
+	bootstrapFinished := false
+	bootstrapFinishedConfigMap, err := c.kubeClient.CoreV1().ConfigMaps("kube-system").Get("bootstrap", metav1.GetOptions{})
+	if err != nil {
+		klog.V(2).Infof("non-fatal error getting configmap: %v", err)
+	} else {
+		if bootstrapFinishedConfigMap.Data["status"] == "complete" {
+			bootstrapFinished = true
+		}
+	}
+	if !bootstrapFinished {
+		// check to see if we have an event yet.
+		_, err := c.kubeClient.CoreV1().Events("kube-system").Get("bootstrap-finished", metav1.GetOptions{})
+		if err != nil {
+			klog.V(2).Infof("non-fatal error getting bootstrap-finished event: %v", err)
+		} else {
+			bootstrapFinished = true
+		}
+	}
+
+	if !bootstrapFinished {
+		c.eventRecorder.Event("DelayingBootstrapTeardown", "cluster-bootstrap is not yet finished")
+		return nil
+	}
+
 	c.eventRecorder.Event("BootstrapTeardownController", "safe to remove bootstrap")
+	// this is ugly until bootkube is updated, but we want to be sure that bootkube has time to be waiting to watch the condition coming back.
+	time.Sleep(10 * time.Second)
 	if err := c.etcdClient.MemberRemove("etcd-bootstrap"); err != nil {
 		return err
 	}
@@ -185,6 +221,7 @@ func (c *BootstrapTeardownController) hasMoreThanTwoEtcdMembers() (bool, error) 
 	if err != nil {
 		return false, err
 	}
+	klog.Infof("members %v", spew.Sdump(members))
 
 	if len(members) <= 3 {
 		return false, nil
@@ -194,6 +231,7 @@ func (c *BootstrapTeardownController) hasMoreThanTwoEtcdMembers() (bool, error) 
 	if err != nil {
 		return false, nil
 	}
+	klog.Infof("unhealthy members %v", spew.Sdump(members))
 	if len(unhealthyMembers) > 0 {
 		return false, nil
 	}
