@@ -182,7 +182,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	etcdMembersController := etcdmemberscontroller.NewEtcdMembersController(
 		operatorClient,
 		etcdClient,
-		kubeInformersForNamespaces,
 		controllerContext.EventRecorder,
 	)
 	bootstrapTeardownController := bootstrapteardown.NewBootstrapTeardownController(
