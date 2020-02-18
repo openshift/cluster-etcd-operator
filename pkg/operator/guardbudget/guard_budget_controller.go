@@ -8,7 +8,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
-	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -127,21 +126,18 @@ func (c *GuardBudgetController) checkGuardBudget() error {
 
 	pdbErr := c.kubeClient.PolicyV1beta1().PodDisruptionBudgets("openshift-machine-config-operator").Delete("etcd-quorum-guard", nil)
 	if errors.IsNotFound(pdbErr) {
-		c.eventRecorder.Event("GuardBudgetController", "pdb etcd-quorum-guard does not exist in openshift-machine-config-operator")
+		c.eventRecorder.Event("GuardBudgetController", "pdb etcd-quorum-guard does not exist")
 	}
 	if pdbErr != nil {
 		c.eventRecorder.Event("GuardBudgetController", "failed to remove guard budget")
 	}
 
-	scale := &autoscalingv1.Scale{
-		Spec: autoscalingv1.ScaleSpec{Replicas: 0},
-		Status: autoscalingv1.ScaleStatus{
-			Replicas: 0,
-		},
+	depoyErr := c.kubeClient.AppsV1().Deployments("openshift-machine-config-operator").Delete("etcd-quorum-guard", nil)
+	if errors.IsNotFound(depoyErr) {
+		c.eventRecorder.Event("GuardBudgetController", "deployment etcd-quorum-guard does not exist")
 	}
-
-	if _, err := c.kubeClient.AppsV1().Deployments("openshift-machine-config-operator").UpdateScale("etcd-quorum-guard", scale); err != nil {
-		return err
+	if depoyErr != nil {
+		c.eventRecorder.Event("GuardBudgetController", "failed to remove quorum-guard deployment")
 	}
 
 	return nil
