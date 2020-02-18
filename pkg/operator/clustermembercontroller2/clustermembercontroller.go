@@ -6,10 +6,7 @@ import (
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
-	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
-	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
@@ -25,21 +22,18 @@ import (
 
 const (
 	workQueueKey = "key"
-	// todo: need to understand how to make this dynamic across all platforms
-	totalDesiredEtcd = 3
 )
 
 // watches the etcd static pods, picks one unready pod and adds
 // to etcd membership only if all existing members are running healthy
 // skips if any one member is unhealthy.
 type ClusterMemberController struct {
-	operatorClient       v1helpers.OperatorClient
-	etcdClient           etcdcli.EtcdClient
-	kubeInformers        informers.SharedInformerFactory
-	endpointsLister      corev1listers.EndpointsLister
-	podLister            corev1listers.PodLister
-	nodeLister           corev1listers.NodeLister
-	infrastructureLister configv1listers.InfrastructureLister
+	operatorClient  v1helpers.OperatorClient
+	etcdClient      etcdcli.EtcdClient
+	kubeInformers   informers.SharedInformerFactory
+	endpointsLister corev1listers.EndpointsLister
+	podLister       corev1listers.PodLister
+	nodeLister      corev1listers.NodeLister
 
 	cachesToSync  []cache.InformerSynced
 	queue         workqueue.RateLimitingInterface
@@ -49,17 +43,15 @@ type ClusterMemberController struct {
 func NewClusterMemberController(
 	operatorClient v1helpers.OperatorClient,
 	kubeInformers informers.SharedInformerFactory,
-	infrastructureInformer configv1informers.InfrastructureInformer,
 	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
 ) *ClusterMemberController {
 	c := &ClusterMemberController{
-		operatorClient:       operatorClient,
-		etcdClient:           etcdClient,
-		endpointsLister:      kubeInformers.Core().V1().Endpoints().Lister(),
-		podLister:            kubeInformers.Core().V1().Pods().Lister(),
-		nodeLister:           kubeInformers.Core().V1().Nodes().Lister(),
-		infrastructureLister: infrastructureInformer.Lister(),
+		operatorClient:  operatorClient,
+		etcdClient:      etcdClient,
+		endpointsLister: kubeInformers.Core().V1().Endpoints().Lister(),
+		podLister:       kubeInformers.Core().V1().Pods().Lister(),
+		nodeLister:      kubeInformers.Core().V1().Nodes().Lister(),
 
 		cachesToSync: []cache.InformerSynced{
 			operatorClient.Informer().HasSynced,
@@ -67,7 +59,6 @@ func NewClusterMemberController(
 			kubeInformers.Core().V1().Pods().Informer().HasSynced,
 			kubeInformers.Core().V1().ConfigMaps().Informer().HasSynced,
 			kubeInformers.Core().V1().Nodes().Informer().HasSynced,
-			infrastructureInformer.Informer().HasSynced,
 			operatorClient.Informer().HasSynced,
 		},
 		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ClusterMemberController2"),
@@ -193,7 +184,7 @@ func (c *ClusterMemberController) reconcileMembers() error {
 		return updateErr
 	}
 
-	podFQDN, err := c.getValidPodFQDNToScale(unreadyPods)
+	podFQDN, err := c.getValidEtcdIPToScale(unreadyPods)
 	if err != nil {
 		return err
 	}
@@ -246,26 +237,10 @@ func (c *ClusterMemberController) getUnreadyEtcdPods() ([]*corev1.Pod, error) {
 	return unreadyPods, nil
 }
 
-func (c *ClusterMemberController) getEtcdDiscoveryDomain() (string, error) {
-	infrastructure, err := c.infrastructureLister.Get("cluster")
-	if err != nil {
-		return "", err
-	}
-	etcdDiscoveryDomain := infrastructure.Status.EtcdDiscoveryDomain
-	if len(etcdDiscoveryDomain) == 0 {
-		return "", fmt.Errorf("infrastructures.config.openshit.io/cluster missing .status.etcdDiscoveryDomain")
-	}
-	return etcdDiscoveryDomain, nil
-}
-
 // getValidPodFQDNToScale goes through the list on unready pods and
-// returns a resolvable  podFQDN. If none of the DNSes are available
+// returns a node internalIP. If none of the DNSes are available
 // yet it will return collected errors.
-func (c *ClusterMemberController) getValidPodFQDNToScale(unreadyPods []*corev1.Pod) (string, error) {
-	etcdDiscoveryDomain, err := c.getEtcdDiscoveryDomain()
-	if err != nil {
-		return "", err
-	}
+func (c *ClusterMemberController) getValidEtcdIPToScale(unreadyPods []*corev1.Pod) (string, error) {
 	errorStrings := []string{}
 	for _, p := range unreadyPods {
 		if p.Spec.NodeName == "" {
@@ -275,11 +250,7 @@ func (c *ClusterMemberController) getValidPodFQDNToScale(unreadyPods []*corev1.P
 		if err != nil {
 			errorStrings = append(errorStrings, err.Error())
 		}
-		podFQDN, err := clustermembercontroller.ReverseLookupSelf("etcd-server-ssl", "tcp", etcdDiscoveryDomain, nodeInternalIP)
-		if err != nil {
-			errorStrings = append(errorStrings, err.Error())
-		}
-		return podFQDN, nil
+		return nodeInternalIP, nil
 	}
 	if len(errorStrings) > 0 {
 		return "", fmt.Errorf("%s", strings.Join(errorStrings, ","))

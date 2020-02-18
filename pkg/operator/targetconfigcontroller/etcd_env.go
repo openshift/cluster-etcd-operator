@@ -2,32 +2,28 @@ package targetconfigcontroller
 
 import (
 	"fmt"
-	"net"
 	"strings"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
-	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	corev1 "k8s.io/api/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/klog"
 )
 
 type envVarContext struct {
 	spec   operatorv1.StaticPodOperatorSpec
 	status operatorv1.StaticPodOperatorStatus
 
-	nodeLister           corev1listers.NodeLister
-	infrastructureLister configv1listers.InfrastructureLister
-	endpointLister       corev1listers.EndpointsLister
+	nodeLister     corev1listers.NodeLister
+	endpointLister corev1listers.EndpointsLister
 }
 
 type envVarFunc func(envVarContext envVarContext) (map[string]string, error)
 
 var envVarFns = []envVarFunc{
 	getEscapedIPAddress,
-	getDNSName,
+	getPeerURLHost,
 	getFixedEtcdEnvVars,
 	getEtcdName,
 	getAllClusterMembers,
@@ -40,7 +36,7 @@ var envVarFns = []envVarFunc{
 //   ETCD_QUOTA_BACKEND_BYTES
 //   ETCD_INITIAL_CLUSTER_STATE
 //   NODE_%s_IP
-//   NODE_%s_ETCD_DNS_NAME
+//   NODE_%s_ETCD_PEER_URL_HOST
 //   NODE_%s_ETCD_NAME
 func getEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
 	// TODO once we are past bootstrapping, this restriction shouldn't be needed anymore.
@@ -141,18 +137,8 @@ func getInternalIPAddressForNodeName(envVarContext envVarContext, nodeName strin
 	return "", fmt.Errorf("node/%s missing %s", node.Name, corev1.NodeInternalIP)
 }
 
-func getDNSName(envVarContext envVarContext) (map[string]string, error) {
+func getPeerURLHost(envVarContext envVarContext) (map[string]string, error) {
 	ret := map[string]string{}
-
-	infrastructure, err := envVarContext.infrastructureLister.Get("cluster")
-	if err != nil {
-		return nil, err
-	}
-
-	etcdDiscoveryDomain := infrastructure.Status.EtcdDiscoveryDomain
-	if len(etcdDiscoveryDomain) == 0 {
-		return nil, fmt.Errorf("infrastructures.config.openshit.io/cluster missing .status.etcdDiscoveryDomain")
-	}
 
 	for _, nodeInfo := range envVarContext.status.NodeStatuses {
 		ip, err := getInternalIPAddressForNodeName(envVarContext, nodeInfo.NodeName)
@@ -160,41 +146,10 @@ func getDNSName(envVarContext envVarContext) (map[string]string, error) {
 			return nil, err
 		}
 
-		dnsName, err := reverseLookup("etcd-server-ssl", "tcp", etcdDiscoveryDomain, ip)
-		if err != nil {
-			return nil, err
-		}
-		ret[fmt.Sprintf("NODE_%s_ETCD_DNS_NAME", envVarSafe(nodeInfo.NodeName))] = dnsName
+		ret[fmt.Sprintf("NODE_%s_ETCD_PEER_URL_HOST", envVarSafe(nodeInfo.NodeName))] = ip
 	}
 
 	return ret, nil
-}
-
-// returns the target from the SRV record that resolves to ip.
-func reverseLookup(service, proto, name, ip string) (string, error) {
-	_, srvs, err := net.LookupSRV(service, proto, name)
-	if err != nil {
-		return "", err
-	}
-	selfTarget := ""
-	for _, srv := range srvs {
-		klog.V(4).Infof("checking against %s", srv.Target)
-		addrs, err := net.LookupHost(srv.Target)
-		if err != nil {
-			return "", fmt.Errorf("could not resolve member %q", srv.Target)
-		}
-
-		for _, addr := range addrs {
-			if addr == ip {
-				selfTarget = strings.Trim(srv.Target, ".")
-				break
-			}
-		}
-	}
-	if selfTarget == "" {
-		return "", fmt.Errorf("could not find self")
-	}
-	return selfTarget, nil
 }
 
 func envVarSafe(nodeName string) string {
