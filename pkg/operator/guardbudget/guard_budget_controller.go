@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"time"
 
-	"k8s.io/apimachinery/pkg/labels"
-
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
@@ -98,10 +98,12 @@ func (c *GuardBudgetController) sync() error {
 }
 
 func (c *GuardBudgetController) checkGuardBudget() error {
+	errlist := []error{}
 	deploymentScaledDown := false
+	pdbRemoved := false
 	etcdQG, mcoDeployErr := c.kubeClient.AppsV1().Deployments("openshift-machine-config-operator").Get("etcd-quorum-guard", metav1.GetOptions{})
 	if mcoDeployErr != nil {
-		return mcoDeployErr
+		errlist = append(errlist, mcoDeployErr)
 	}
 	if *etcdQG.Spec.Replicas == int32(0) {
 		deploymentScaledDown = true
@@ -121,11 +123,10 @@ func (c *GuardBudgetController) checkGuardBudget() error {
 			c.eventRecorder.Warning("GuardBudgetErrorUpdatingStatus", updateErr.Error())
 			return updateErr
 		}
-		// return because no work left to do
-		return nil
+		pdbRemoved = true
 	}
 	if err != nil {
-		return err
+		errlist = append(errlist, err)
 	}
 
 	_, _, _ = v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
@@ -135,12 +136,14 @@ func (c *GuardBudgetController) checkGuardBudget() error {
 		Message: fmt.Sprintf("Quorum guard pod disruption: machineConfigOperatorPDB %#v, deployment scale: %#v", machineConfigOperatorPDB, *etcdQG.Spec.Replicas),
 	}))
 
-	pdbErr := c.kubeClient.PolicyV1beta1().PodDisruptionBudgets("openshift-machine-config-operator").Delete("etcd-quorum-guard", nil)
-	if errors.IsNotFound(pdbErr) {
-		c.eventRecorder.Event("GuardBudgetController", "pdb etcd-quorum-guard does not exist")
-	}
-	if pdbErr != nil {
-		c.eventRecorder.Event("GuardBudgetController", "failed to remove guard budget")
+	if !pdbRemoved {
+		pdbErr := c.kubeClient.PolicyV1beta1().PodDisruptionBudgets("openshift-machine-config-operator").Delete("etcd-quorum-guard", nil)
+		if errors.IsNotFound(pdbErr) {
+			c.eventRecorder.Event("GuardBudgetController", "pdb etcd-quorum-guard does not exist in openshift-machine-config-operator")
+		}
+		if pdbErr != nil {
+			c.eventRecorder.Event("GuardBudgetController", "failed to remove guard budget")
+		}
 	}
 
 	if !deploymentScaledDown {
@@ -158,6 +161,9 @@ func (c *GuardBudgetController) checkGuardBudget() error {
 		}); err != nil {
 			return err
 		}
+	}
+	for _, e := range errlist {
+		c.eventRecorder.Warning("GuardBudgetError", e.Error())
 	}
 
 	return nil
