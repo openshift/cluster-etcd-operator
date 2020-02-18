@@ -101,16 +101,21 @@ func (c *GuardBudgetController) sync() error {
 func (c *GuardBudgetController) checkGuardBudget() error {
 	deploymentScaledDown := false
 	etcdQG, mcoDeployErr := c.kubeClient.AppsV1().Deployments("openshift-machine-config-operator").Get("etcd-quorum-guard", metav1.GetOptions{})
-	if mcoDeployErr != nil {
+	if mcoDeployErr != nil && !errors.IsNotFound(mcoDeployErr) {
 		return mcoDeployErr
-	}
-	if *etcdQG.Spec.Replicas == int32(0) {
-		deploymentScaledDown = true
 	}
 
 	// checks if quorum-guard pdb exists in mco namespace
-	machineConfigOperatorPDB, err := c.machineConfigOperatorPodDisruptionBudgetLister.PodDisruptionBudgets("openshift-machine-config-operator").Get("etcd-quorum-guard")
-	if errors.IsNotFound(err) {
+	machineConfigOperatorPDB, mcoPDBErr := c.machineConfigOperatorPodDisruptionBudgetLister.PodDisruptionBudgets("openshift-machine-config-operator").Get("etcd-quorum-guard")
+	if mcoPDBErr != nil && !errors.IsNotFound(mcoPDBErr) {
+		return mcoPDBErr
+	}
+
+	if errors.IsNotFound(mcoDeployErr) || *etcdQG.Spec.Replicas == int32(0) {
+		deploymentScaledDown = true
+	}
+
+	if errors.IsNotFound(mcoPDBErr) && deploymentScaledDown {
 		// removed condition
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    conditionQuorumGuardRemoved,
@@ -124,9 +129,6 @@ func (c *GuardBudgetController) checkGuardBudget() error {
 		}
 		// return because no work left to do
 		return nil
-	}
-	if err != nil {
-		return err
 	}
 
 	_, _, _ = v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
@@ -144,7 +146,7 @@ func (c *GuardBudgetController) checkGuardBudget() error {
 		c.eventRecorder.Event("GuardBudgetController", "failed to remove guard budget")
 	}
 
-	if !deploymentScaledDown {
+	if etcdQG != nil && *etcdQG.Spec.Replicas != int32(0) {
 		updateCopy := etcdQG.DeepCopy()
 		*updateCopy.Spec.Replicas = int32(0)
 		if _, err := c.kubeClient.AppsV1().Deployments("openshift-machine-config-operator").Update(updateCopy); err != nil {
@@ -152,7 +154,7 @@ func (c *GuardBudgetController) checkGuardBudget() error {
 		}
 		// attempt to delete the pods with no graceful time
 		zero := int64(0)
-		if err = c.kubeClient.CoreV1().Pods("openshift-machine-config-operator").DeleteCollection(&metav1.DeleteOptions{
+		if err := c.kubeClient.CoreV1().Pods("openshift-machine-config-operator").DeleteCollection(&metav1.DeleteOptions{
 			GracePeriodSeconds: &zero,
 		}, metav1.ListOptions{
 			LabelSelector: labels.Set{"k8s-app": "etcd-quorum-guard"}.AsSelector().String(),
