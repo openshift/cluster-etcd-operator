@@ -9,6 +9,33 @@ metadata:
     etcd: "true"
     revision: "REVISION"
 spec:
+  initContainers:
+    - name: etc-quorum-guard-copy
+      image: ${IMAGE}
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      command:
+        - /bin/sh
+        - -c
+        - |
+          #!/bin/sh
+          set -euo pipefail
+
+          cp /etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt /etc/kubernetes/etcd-backup-dir/system:etcd-peer-NODE_NAME.crt
+          cp /etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key /etc/kubernetes/etcd-backup-dir/system:etcd-peer-NODE_NAME.key
+      resources:
+        requests:
+          memory: 60Mi
+          cpu: 30m
+      securityContext:
+        privileged: true
+      volumeMounts:
+        - mountPath: /etc/kubernetes/etcd-backup-dir
+          name: etcd-backup-dir
+        - mountPath: /etc/kubernetes/static-pod-resources
+          name: resource-dir
+        - mountPath: /etc/kubernetes/static-pod-certs
+          name: cert-dir
   containers:
   - name: etcd
     image: ${IMAGE}
