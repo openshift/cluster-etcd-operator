@@ -67,6 +67,11 @@ func NewGuardBudgetController(
 }
 
 func (c *GuardBudgetController) sync() error {
+	// nerf this controller for now
+	if true {
+		return nil
+	}
+
 	err := c.checkGuardBudget()
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
