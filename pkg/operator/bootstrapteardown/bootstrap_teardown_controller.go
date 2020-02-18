@@ -254,6 +254,9 @@ func (c *BootstrapTeardownController) isKASConfigValid(kasOperator *operatorv1.K
 	// appropriate storageConfig
 	for _, revision := range uniqueRevisions {
 		configMapNameWithRevision := fmt.Sprintf("%s-%d", configMapName, revision)
+		if revision == 0 {
+			configMapNameWithRevision = configMapName
+		}
 		configMap, err := configMapLister.ConfigMaps("openshift-kube-apiserver").Get(configMapNameWithRevision)
 		if err != nil {
 			return false, err
