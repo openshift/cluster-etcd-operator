@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"time"
 
+	"k8s.io/apimachinery/pkg/labels"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -96,6 +98,15 @@ func (c *GuardBudgetController) sync() error {
 }
 
 func (c *GuardBudgetController) checkGuardBudget() error {
+	deploymentScaledDown := false
+	etcdQG, mcoDeployErr := c.kubeClient.AppsV1().Deployments("openshift-machine-config-operator").Get("etcd-quorum-guard", metav1.GetOptions{})
+	if mcoDeployErr != nil {
+		return mcoDeployErr
+	}
+	if *etcdQG.Spec.Replicas == int32(0) {
+		deploymentScaledDown = true
+	}
+
 	// checks if quorum-guard pdb exists in mco namespace
 	machineConfigOperatorPDB, err := c.machineConfigOperatorPodDisruptionBudgetLister.PodDisruptionBudgets("openshift-machine-config-operator").Get("etcd-quorum-guard")
 	if errors.IsNotFound(err) {
@@ -121,7 +132,7 @@ func (c *GuardBudgetController) checkGuardBudget() error {
 		Type:    conditionQuorumGuardRemoved,
 		Status:  operatorv1.ConditionFalse,
 		Reason:  "GuardBudgetNotRemoved",
-		Message: fmt.Sprintf("Quorum guard pod disruption budget is not removed yet: machineConfigOperatorPDB %#v", machineConfigOperatorPDB),
+		Message: fmt.Sprintf("Quorum guard pod disruption: machineConfigOperatorPDB %#v, deployment scale: %#v", machineConfigOperatorPDB, *etcdQG.Spec.Replicas),
 	}))
 
 	pdbErr := c.kubeClient.PolicyV1beta1().PodDisruptionBudgets("openshift-machine-config-operator").Delete("etcd-quorum-guard", nil)
@@ -132,12 +143,21 @@ func (c *GuardBudgetController) checkGuardBudget() error {
 		c.eventRecorder.Event("GuardBudgetController", "failed to remove guard budget")
 	}
 
-	depoyErr := c.kubeClient.AppsV1().Deployments("openshift-machine-config-operator").Delete("etcd-quorum-guard", nil)
-	if errors.IsNotFound(depoyErr) {
-		c.eventRecorder.Event("GuardBudgetController", "deployment etcd-quorum-guard does not exist")
-	}
-	if depoyErr != nil {
-		c.eventRecorder.Event("GuardBudgetController", "failed to remove quorum-guard deployment")
+	if !deploymentScaledDown {
+		updateCopy := etcdQG.DeepCopy()
+		*updateCopy.Spec.Replicas = int32(0)
+		if _, err := c.kubeClient.AppsV1().Deployments("openshift-machine-config-operator").Update(updateCopy); err != nil {
+			return err
+		}
+		// attempt to delete the pods with no graceful time
+		zero := int64(0)
+		if err = c.kubeClient.CoreV1().Pods("openshift-machine-config-operator").DeleteCollection(&metav1.DeleteOptions{
+			GracePeriodSeconds: &zero,
+		}, metav1.ListOptions{
+			LabelSelector: labels.Set{"k8s-app": "etcd-quorum-guard"}.AsSelector().String(),
+		}); err != nil {
+			return err
+		}
 	}
 
 	return nil
