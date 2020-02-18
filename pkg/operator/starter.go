@@ -6,16 +6,24 @@ import (
 	"os"
 	"time"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdmemberscontroller"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller2"
-
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdmemberscontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/guardbudget"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/hostendpointscontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -27,17 +35,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner2"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/guardbudget"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/hostendpointscontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
 )
 
 func RunOperator(ctx context.Context, controllerContext *controllercmd.ControllerContext) error {
@@ -161,7 +158,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 	coreClient := clientset
 
-	etcdCertSignerController2 := etcdcertsigner2.NewEtcdCertSignerController(
+	etcdCertSignerController := etcdcertsigner.NewEtcdCertSignerController(
 		coreClient,
 		operatorClient,
 		kubeInformersForNamespaces,
@@ -176,7 +173,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		configInformers.Config().V1().Infrastructures(),
 	)
 
-	clusterMemberController2 := clustermembercontroller2.NewClusterMemberController(
+	clusterMemberController := clustermembercontroller.NewClusterMemberController(
 		operatorClient,
 		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
 		configInformers.Config().V1().Infrastructures(),
@@ -213,12 +210,12 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 	go staticResourceController.Run(ctx, 1)
 	go targetConfigReconciler.Run(1, ctx.Done())
-	go etcdCertSignerController2.Run(1, ctx.Done())
+	go etcdCertSignerController.Run(1, ctx.Done())
 	go hostEtcdEndpointController.Run(ctx, 1)
 	go resourceSyncController.Run(ctx, 1)
 	go statusController.Run(ctx, 1)
 	go configObserver.Run(ctx, 1)
-	go clusterMemberController2.Run(ctx.Done())
+	go clusterMemberController.Run(ctx.Done())
 	go etcdMembersController.Run(ctx, 1)
 	go bootstrapTeardownController.Run(ctx.Done())
 	go guardBudgetController.Run(ctx.Done())
