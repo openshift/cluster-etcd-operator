@@ -8,8 +8,8 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
+	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
@@ -133,17 +133,14 @@ func (c *GuardBudgetController) checkGuardBudget() error {
 		c.eventRecorder.Event("GuardBudgetController", "failed to remove guard budget")
 	}
 
-	etcdQGScale, err := c.kubeClient.AppsV1().Deployments("openshift-machine-config-operator").GetScale("etcd-quorum-guard", metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-	if etcdQGScale.Spec.Replicas == int32(0) {
-		c.eventRecorder.Event("GuardBudgetController", "scaled etcd-quorum-guard to 0 replicas")
-		return nil
+	scale := &autoscalingv1.Scale{
+		Spec: autoscalingv1.ScaleSpec{Replicas: 0},
+		Status: autoscalingv1.ScaleStatus{
+			Replicas: 0,
+		},
 	}
 
-	etcdQGScale.Spec.Replicas = int32(0)
-	if _, err := c.kubeClient.AppsV1().Deployments("openshift-machine-config-operator").UpdateScale("etcd-quorum-guard", etcdQGScale); err != nil {
+	if _, err := c.kubeClient.AppsV1().Deployments("openshift-machine-config-operator").UpdateScale("etcd-quorum-guard", scale); err != nil {
 		return err
 	}
 

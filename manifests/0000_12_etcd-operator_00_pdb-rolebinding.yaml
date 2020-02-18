@@ -10,7 +10,7 @@ rules:
   verbs: ["get", "watch", "list", "delete", "create", "update"]
 - apiGroups: ["apps"]
   resources: ["deployments"]
-  verbs: ["get", "watch", "list", "delete", "create", "update"]
+  verbs: ["*"]
 
 ---
 kind: RoleBinding
