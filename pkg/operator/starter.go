@@ -178,12 +178,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		coreClient,
 		kubeInformersForNamespaces,
 	)
-	hostEtcdEndpointController2 := hostendpointscontroller2.NewHostEndpoints2Controller(
-		operatorClient,
-		controllerContext.EventRecorder,
-		coreClient,
-		kubeInformersForNamespaces,
-	)
 
 	clusterMemberController := clustermembercontroller.NewClusterMemberController(
 		operatorClient,
