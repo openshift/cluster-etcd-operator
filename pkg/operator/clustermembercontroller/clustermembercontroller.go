@@ -1,4 +1,4 @@
-package clustermembercontroller2
+package clustermembercontroller
 
 import (
 	"fmt"
@@ -9,7 +9,6 @@ import (
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
@@ -25,8 +24,6 @@ import (
 
 const (
 	workQueueKey = "key"
-	// todo: need to understand how to make this dynamic across all platforms
-	totalDesiredEtcd = 3
 )
 
 // watches the etcd static pods, picks one unready pod and adds
@@ -70,9 +67,9 @@ func NewClusterMemberController(
 			infrastructureInformer.Informer().HasSynced,
 			operatorClient.Informer().HasSynced,
 		},
-		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ClusterMemberController2"),
+		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ClusterMemberController"),
 		kubeInformers: kubeInformers,
-		eventRecorder: eventRecorder.WithComponentSuffix("cluster-member-controller-2"),
+		eventRecorder: eventRecorder.WithComponentSuffix("cluster-member-controller"),
 	}
 	kubeInformers.Core().V1().Pods().Informer().AddEventHandler(c.eventHandler())
 	kubeInformers.Core().V1().Endpoints().Informer().AddEventHandler(c.eventHandler())
@@ -86,8 +83,8 @@ func (c *ClusterMemberController) Run(stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
 	defer c.queue.ShutDown()
 
-	klog.Infof("Starting ClusterMemberController2")
-	defer klog.Infof("Shutting down ClusterMemberController2")
+	klog.Infof("Starting ClusterMemberController")
+	defer klog.Infof("Shutting down ClusterMemberController")
 
 	if !cache.WaitForCacheSync(stopCh, c.cachesToSync...) {
 		utilruntime.HandleError(fmt.Errorf("caches did not sync"))
@@ -131,20 +128,20 @@ func (c *ClusterMemberController) sync() error {
 	err := c.reconcileMembers()
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:    "ClusterMemberController2Degraded",
+			Type:    "ClusterMemberControllerDegraded",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "Error",
 			Message: err.Error(),
 		}))
 		if updateErr != nil {
-			c.eventRecorder.Warning("ClusterMemberController2UpdatingStatus", updateErr.Error())
+			c.eventRecorder.Warning("ClusterMemberControllerUpdatingStatus", updateErr.Error())
 		}
 		return err
 	}
 
 	_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient,
 		v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:   "ClusterMemberController2Degraded",
+			Type:   "ClusterMemberControllerDegraded",
 			Status: operatorv1.ConditionFalse,
 			Reason: "AsExpected",
 		}))
@@ -275,7 +272,7 @@ func (c *ClusterMemberController) getValidPodFQDNToScale(unreadyPods []*corev1.P
 		if err != nil {
 			errorStrings = append(errorStrings, err.Error())
 		}
-		podFQDN, err := clustermembercontroller.ReverseLookupSelf("etcd-server-ssl", "tcp", etcdDiscoveryDomain, nodeInternalIP)
+		podFQDN, err := ReverseLookupSelf("etcd-server-ssl", "tcp", etcdDiscoveryDomain, nodeInternalIP)
 		if err != nil {
 			errorStrings = append(errorStrings, err.Error())
 		}
