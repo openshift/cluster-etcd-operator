@@ -10,7 +10,3 @@ spec:
     from:
       kind: DockerImage
       name: quay.io/openshift/origin-etcd
-  - name: cli
-    from:
-      kind: DockerImage
-      name: quay.io/openshift/origin-cli:latest
