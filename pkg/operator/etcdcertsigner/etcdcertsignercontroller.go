@@ -6,13 +6,13 @@ import (
 	"crypto/x509/pkix"
 	"errors"
 	"fmt"
-	"net"
 	"strings"
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/crypto"
 	"github.com/openshift/library-go/pkg/operator/events"
@@ -292,26 +292,25 @@ func (c *EtcdCertSignerController) createSecretForNode(node *corev1.Node) error 
 	if err != nil {
 		return err
 	}
-	nodeInternalIP, err := getInternalIPAddressForNodeName(node)
+	nodeInternalIPs, err := dnshelpers.GetInternalIPAddressesForNodeName(node)
 	if err != nil {
 		return err
 	}
-	// since we use hostNetwork, this matches
-	podFQDN, err := reverseLookup("etcd-server-ssl", "tcp", etcdDiscoveryDomain, nodeInternalIP)
+	// the nodeInternalIPs should never have conflicting values.
+	podFQDN, err := dnshelpers.ReverseLookupFirstHit(etcdDiscoveryDomain, nodeInternalIPs...)
 	if err != nil {
 		return err
 	}
-	peerHostNames := []string{"localhost", podFQDN, etcdDiscoveryDomain, nodeInternalIP}
-	serverHostNames := []string{
+	peerHostNames := append([]string{"localhost", podFQDN, etcdDiscoveryDomain}, nodeInternalIPs...)
+	serverHostNames := append([]string{
 		"localhost",
 		"etcd.kube-system.svc",
 		"etcd.kube-system.svc.cluster.local",
 		"etcd.openshift-etcd.svc",
 		"etcd.openshift-etcd.svc.cluster.local",
 		"*." + etcdDiscoveryDomain,
-		nodeInternalIP,
 		"127.0.0.1",
-	}
+	}, nodeInternalIPs...)
 
 	// create the certificates and update them in the API
 	pCert, pKey, err := createNewCombinedClientAndServingCerts(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], podFQDN, peerOrg, peerHostNames)
@@ -331,15 +330,6 @@ func (c *EtcdCertSignerController) createSecretForNode(node *corev1.Node) error 
 	}
 
 	return nil
-}
-
-func getInternalIPAddressForNodeName(node *corev1.Node) (string, error) {
-	for _, currAddress := range node.Status.Addresses {
-		if currAddress.Type == corev1.NodeInternalIP {
-			return currAddress.Address, nil
-		}
-	}
-	return "", fmt.Errorf("node/%s missing %s", node.Name, corev1.NodeInternalIP)
 }
 
 func createNewCombinedClientAndServingCerts(caCert, caKey []byte, podFQDN, org string, peerHostNames []string) (*bytes.Buffer, *bytes.Buffer, error) {
@@ -408,33 +398,6 @@ func getCommonNameFromOrg(org string) (string, error) {
 		return "etcd-metric-signer", nil
 	}
 	return "", errors.New("unable to recognise secret name")
-}
-
-// returns the target from the SRV record that resolves to ip.
-func reverseLookup(service, proto, name, ip string) (string, error) {
-	_, srvs, err := net.LookupSRV(service, proto, name)
-	if err != nil {
-		return "", err
-	}
-	selfTarget := ""
-	for _, srv := range srvs {
-		klog.V(4).Infof("checking against %s", srv.Target)
-		addrs, err := net.LookupHost(srv.Target)
-		if err != nil {
-			return "", fmt.Errorf("could not resolve member %q", srv.Target)
-		}
-
-		for _, addr := range addrs {
-			if addr == ip {
-				selfTarget = strings.Trim(srv.Target, ".")
-				break
-			}
-		}
-	}
-	if selfTarget == "" {
-		return "", fmt.Errorf("could not find self")
-	}
-	return selfTarget, nil
 }
 
 func (c *EtcdCertSignerController) getEtcdDiscoveryDomain() (string, error) {
