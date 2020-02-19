@@ -5,13 +5,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-
-	"k8s.io/apimachinery/pkg/util/sets"
-
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/cluster-etcd-operator/pkg/version"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
@@ -19,6 +18,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
@@ -27,9 +27,6 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
-	"github.com/openshift/cluster-etcd-operator/pkg/version"
 )
 
 const workQueueKey = "key"
@@ -42,6 +39,7 @@ type TargetConfigController struct {
 
 	kubeClient           kubernetes.Interface
 	infrastructureLister configv1listers.InfrastructureLister
+	networkLister        configv1listers.NetworkLister
 	configMapLister      corev1listers.ConfigMapLister
 	endpointLister       corev1listers.EndpointsLister
 	nodeLister           corev1listers.NodeLister
@@ -58,6 +56,7 @@ func NewTargetConfigController(
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	infrastructureInformer configv1informers.InfrastructureInformer,
+	networkInformer configv1informers.NetworkInformer,
 	kubeClient kubernetes.Interface,
 	eventRecorder events.Recorder,
 ) *TargetConfigController {
@@ -68,6 +67,7 @@ func NewTargetConfigController(
 		operatorClient:       operatorClient,
 		kubeClient:           kubeClient,
 		infrastructureLister: infrastructureInformer.Lister(),
+		networkLister:        networkInformer.Lister(),
 		configMapLister:      kubeInformersForNamespaces.ConfigMapLister(),
 		endpointLister:       kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
 		nodeLister:           kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
@@ -81,6 +81,7 @@ func NewTargetConfigController(
 			kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer().HasSynced,
 			kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
 			infrastructureInformer.Informer().HasSynced,
+			networkInformer.Informer().HasSynced,
 		},
 	}
 
@@ -88,6 +89,7 @@ func NewTargetConfigController(
 	kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
 	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer().AddEventHandler(c.eventHandler())
 	infrastructureInformer.Informer().AddEventHandler(c.eventHandler())
+	networkInformer.Informer().AddEventHandler(c.eventHandler())
 	kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().AddEventHandler(c.eventHandler())
 
 	// TODO only trigger on master nodes
@@ -190,6 +192,7 @@ func (c *TargetConfigController) managePod(client coreclientv1.ConfigMapsGetter,
 		endpointLister:       c.endpointLister,
 		nodeLister:           c.nodeLister,
 		infrastructureLister: c.infrastructureLister,
+		networkLister:        c.networkLister,
 	})
 	if err != nil {
 		return nil, false, err

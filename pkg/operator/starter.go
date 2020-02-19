@@ -73,7 +73,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	if err != nil {
 		return err
 	}
-	etcdClient := etcdcli.NewEtcdClient(kubeInformersForNamespaces)
+	etcdClient := etcdcli.NewEtcdClient(kubeInformersForNamespaces, configInformers.Config().V1().Networks())
 
 	resourceSyncController, err := resourcesynccontroller.NewResourceSyncController(
 		operatorClient,
@@ -113,6 +113,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Infrastructures(),
+		configInformers.Config().V1().Networks(),
 		kubeClient,
 		controllerContext.EventRecorder,
 	)
@@ -170,6 +171,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		coreClient,
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Infrastructures(),
+		configInformers.Config().V1().Networks(),
 	)
 
 	clusterMemberController := clustermembercontroller.NewClusterMemberController(

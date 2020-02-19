@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
@@ -44,6 +46,7 @@ const (
 type HostEndpointsController struct {
 	operatorClient       v1helpers.OperatorClient
 	infrastructureLister configv1listers.InfrastructureLister
+	networkLister        configv1listers.NetworkLister
 	nodeLister           corev1listers.NodeLister
 	endpointsLister      corev1listers.EndpointsLister
 	endpointsClient      corev1client.EndpointsGetter
@@ -59,6 +62,7 @@ func NewHostEndpointsController(
 	kubeClient kubernetes.Interface,
 	kubeInformers operatorv1helpers.KubeInformersForNamespaces,
 	infrastructureInformer configv1informers.InfrastructureInformer,
+	networkInformer configv1informers.NetworkInformer,
 ) *HostEndpointsController {
 	kubeInformersForTargetNamespace := kubeInformers.InformersFor(operatorclient.TargetNamespace)
 	endpointsInformer := kubeInformersForTargetNamespace.Core().V1().Endpoints()
@@ -73,9 +77,11 @@ func NewHostEndpointsController(
 			endpointsInformer.Informer().HasSynced,
 			nodeInformer.Informer().HasSynced,
 			infrastructureInformer.Informer().HasSynced,
+			networkInformer.Informer().HasSynced,
 		},
 		operatorClient:       operatorClient,
 		infrastructureLister: infrastructureInformer.Lister(),
+		networkLister:        networkInformer.Lister(),
 		nodeLister:           nodeInformer.Lister(),
 		endpointsLister:      endpointsInformer.Lister(),
 		endpointsClient:      kubeClient.CoreV1(),
@@ -83,6 +89,7 @@ func NewHostEndpointsController(
 	operatorClient.Informer().AddEventHandler(c.eventHandler())
 	endpointsInformer.Informer().AddEventHandler(c.eventHandler())
 	infrastructureInformer.Informer().AddEventHandler(c.eventHandler())
+	networkInformer.Informer().AddEventHandler(c.eventHandler())
 	nodeInformer.Informer().AddEventHandler(c.eventHandler())
 	return c
 }
@@ -135,18 +142,20 @@ func (c *HostEndpointsController) syncHostEndpoints() error {
 	required.Annotations["alpha.installer.openshift.io/dns-suffix"] = discoveryDomain
 
 	// create endpoint addresses for each node
+	network, err := c.networkLister.Get("cluster")
+	if err != nil {
+		return err
+	}
+
 	nodes, err := c.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
 	if err != nil {
 		return fmt.Errorf("unable to list expected etcd member nodes: %v", err)
 	}
 	endpointAddresses := []corev1.EndpointAddress{}
 	for _, node := range nodes {
-		var nodeInternalIP string
-		for _, nodeAddress := range node.Status.Addresses {
-			if nodeAddress.Type == corev1.NodeInternalIP {
-				nodeInternalIP = nodeAddress.Address
-				break
-			}
+		nodeInternalIP, _, err := dnshelpers.GetPreferredInternalIPAddressForNodeName(network, node)
+		if err != nil {
+			return err
 		}
 		if len(nodeInternalIP) == 0 {
 			return fmt.Errorf("unable to determine internal ip address for node %s", node.Name)
