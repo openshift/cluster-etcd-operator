@@ -2,8 +2,9 @@ package targetconfigcontroller
 
 import (
 	"fmt"
-	"net"
 	"strings"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 
@@ -11,7 +12,6 @@ import (
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	corev1 "k8s.io/api/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/klog"
 )
 
 type envVarContext struct {
@@ -160,7 +160,7 @@ func getDNSName(envVarContext envVarContext) (map[string]string, error) {
 			return nil, err
 		}
 
-		dnsName, err := reverseLookup("etcd-server-ssl", "tcp", etcdDiscoveryDomain, ip)
+		dnsName, err := dnshelpers.ReverseLookupFirstHit(etcdDiscoveryDomain, ip)
 		if err != nil {
 			return nil, err
 		}
@@ -168,33 +168,6 @@ func getDNSName(envVarContext envVarContext) (map[string]string, error) {
 	}
 
 	return ret, nil
-}
-
-// returns the target from the SRV record that resolves to ip.
-func reverseLookup(service, proto, name, ip string) (string, error) {
-	_, srvs, err := net.LookupSRV(service, proto, name)
-	if err != nil {
-		return "", err
-	}
-	selfTarget := ""
-	for _, srv := range srvs {
-		klog.V(4).Infof("checking against %s", srv.Target)
-		addrs, err := net.LookupHost(srv.Target)
-		if err != nil {
-			return "", fmt.Errorf("could not resolve member %q", srv.Target)
-		}
-
-		for _, addr := range addrs {
-			if addr == ip {
-				selfTarget = strings.Trim(srv.Target, ".")
-				break
-			}
-		}
-	}
-	if selfTarget == "" {
-		return "", fmt.Errorf("could not find self")
-	}
-	return selfTarget, nil
 }
 
 func envVarSafe(nodeName string) string {
