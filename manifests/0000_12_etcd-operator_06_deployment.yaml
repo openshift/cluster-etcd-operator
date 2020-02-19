@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   namespace: openshift-etcd-operator
   name: etcd-operator
+  annotations:
+    exclude.release.openshift.io/internal-openshift-hosted: "true"
   labels:
     app: etcd-operator
 spec:
