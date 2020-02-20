@@ -65,8 +65,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorclient.GlobalMachineSpecifiedConfigNamespace,
 		operatorclient.TargetNamespace,
 		operatorclient.OperatorNamespace,
-		"openshift-kube-apiserver",
-		"openshift-etcd",
 		"openshift-machine-config-operator", // TODO remove after quorum-guard is removed from MCO
 	)
 	configInformers := configv1informers.NewSharedInformerFactory(configClient, 10*time.Minute)
@@ -96,7 +94,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 
 	staticResourceController := staticresourcecontroller.NewStaticResourceController(
-		"KubeAPIServerStaticResources",
+		"EtcdStaticResources",
 		etcd_assets.Asset,
 		[]string{
 			"etcd/ns.yaml",
@@ -194,8 +192,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	bootstrapTeardownController := bootstrapteardown.NewBootstrapTeardownController(
 		operatorClient,
 		kubeClient,
-		kubeInformersForNamespaces,
-		operatorInformers,
 		etcdClient,
 		controllerContext.EventRecorder,
 	)
