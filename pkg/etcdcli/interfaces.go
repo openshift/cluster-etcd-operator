@@ -17,6 +17,8 @@ type EtcdClient interface {
 	MemberRemover
 	UnhealthyMemberLister
 	MemberStatusChecker
+
+	GetMember(name string) (*etcdserverpb.Member, error)
 }
 
 type MemberAdder interface {

@@ -6,12 +6,7 @@ import (
 	"strings"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	"k8s.io/client-go/kubernetes"
-
 	"github.com/davecgh/go-spew/spew"
-
 	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
@@ -21,8 +16,11 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
@@ -117,11 +115,8 @@ func (c *BootstrapTeardownController) sync() error {
 
 func (c *BootstrapTeardownController) removeBootstrap() error {
 	// checks the actual etcd cluster membership API if etcd-bootstrap exists
-	etcdMemberExists, err := c.isEtcdMember("etcd-bootstrap")
-	if err != nil {
-		return err
-	}
-	if !etcdMemberExists {
+	bootstrapEtcdMember, err := c.etcdClient.GetMember("etcd-bootstrap")
+	if apierrors.IsNotFound(err) {
 		// set bootstrap removed condition
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    conditionBootstrapRemoved,
@@ -135,16 +130,17 @@ func (c *BootstrapTeardownController) removeBootstrap() error {
 		}
 		// return because no work left to do
 		return nil
-
-	} else {
-		_, _, _ = v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:    conditionBootstrapRemoved,
-			Status:  operatorv1.ConditionFalse,
-			Reason:  "BootstrapNodeNotRemoved",
-			Message: fmt.Sprintf("Bootstrap node is not removed yet: etcdMemberExists %t", etcdMemberExists),
-		}))
-		// fall through because it might be time to remove it
 	}
+	if err != nil {
+		return err
+	}
+
+	_, _, _ = v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		Type:    conditionBootstrapRemoved,
+		Status:  operatorv1.ConditionFalse,
+		Reason:  "BootstrapNodeNotRemoved",
+		Message: fmt.Sprintf("Bootstrap node is not removed yet: etcdMemberExists %#v", bootstrapEtcdMember),
+	}))
 
 	hasMoreThanTwoEtcdMembers, err := c.hasMoreThanTwoEtcdMembers()
 	if err != nil {
@@ -201,19 +197,6 @@ func (c *BootstrapTeardownController) removeBootstrap() error {
 	}
 
 	return nil
-}
-
-func (c *BootstrapTeardownController) isEtcdMember(name string) (bool, error) {
-	members, err := c.etcdClient.MemberList()
-	if err != nil {
-		return false, err
-	}
-	for _, m := range members {
-		if m.Name == name {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 func (c *BootstrapTeardownController) hasMoreThanTwoEtcdMembers() (bool, error) {
