@@ -104,6 +104,7 @@ type testConfig struct {
 	t                    *testing.T
 	clusterNetworkConfig string
 	want                 TemplateData
+	bootstrapIP          string
 }
 
 func TestRenderIpv4(t *testing.T) {
@@ -215,12 +216,14 @@ func TestTemplateDataSingleStack(t *testing.T) {
 		ClusterCIDR:     []string{"10.128.0.0/14"},
 		ServiceCIDR:     []string{"2001:db8::/32"},
 		SingleStackIPv6: true,
+		BootstrapIP:     "2001:0DB8:C21A",
 	}
 
 	config := &testConfig{
 		t:                    t,
 		clusterNetworkConfig: networkConfigIPv6SingleStack,
 		want:                 want,
+		bootstrapIP:          "2001:0DB8:C21A",
 	}
 	testTemplateData(config)
 }
@@ -255,6 +258,7 @@ func testTemplateData(tc *testConfig) {
 		manifest:          *options.NewManifestOptions("etcd"),
 		errOut:            errOut,
 		clusterConfigFile: clusterConfigFile.Name(),
+		bootstrapIP:       tc.bootstrapIP,
 	}
 
 	got, err := newTemplateData(render)
@@ -275,6 +279,11 @@ func testTemplateData(tc *testConfig) {
 		tc.t.Errorf("SingleStackIPv6 want: %v got: %v", tc.want.SingleStackIPv6, got.SingleStackIPv6)
 	case got.ManifestConfig.EtcdAddress.LocalHost != tc.want.ManifestConfig.EtcdAddress.LocalHost:
 		tc.t.Errorf("LocalHost want: %q got: %q", tc.want.ManifestConfig.EtcdAddress.LocalHost, got.ManifestConfig.EtcdAddress.LocalHost)
+	case got.BootstrapIP != tc.want.BootstrapIP:
+		// if we don't say we want a specific IP we dont fail.
+		if tc.want.BootstrapIP != "" {
+			tc.t.Errorf("BootstrapIP want: %q got: %q", tc.want.BootstrapIP, got.BootstrapIP)
+		}
 	}
 }
 
