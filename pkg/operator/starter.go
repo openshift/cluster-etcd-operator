@@ -33,7 +33,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner2"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/guardbudget"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/hostendpointscontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
@@ -198,13 +197,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
-	guardBudgetController := guardbudget.NewGuardBudgetController(
-		operatorClient,
-		kubeClient,
-		kubeInformersForNamespaces,
-		controllerContext.EventRecorder,
-	)
-
 	operatorInformers.Start(ctx.Done())
 	operatorInformers.Start(ctx.Done())
 	kubeInformersForNamespaces.Start(ctx.Done())
@@ -221,7 +213,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go clusterMemberController2.Run(ctx.Done())
 	go etcdMembersController.Run(ctx, 1)
 	go bootstrapTeardownController.Run(ctx.Done())
-	go guardBudgetController.Run(ctx.Done())
 	go staticPodControllers.Run(ctx, 1)
 
 	<-ctx.Done()
