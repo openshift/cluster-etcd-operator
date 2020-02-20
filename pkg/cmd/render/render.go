@@ -179,6 +179,7 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 		EtcdPeerCertDNSNames: strings.Join([]string{
 			opts.etcdDiscoveryDomain,
 		}, ","),
+		BootstrapIP: opts.bootstrapIP,
 	}
 
 	if err := templateData.setClusterCIDR(opts.clusterConfigFile); err != nil {
@@ -192,6 +193,14 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 	}
 	if err := templateData.setHostname(); err != nil {
 		return nil, err
+	}
+
+	// TODO installer should feed value by flag this should be removed
+	// derive bootstrapIP from local interfaces if not passed by flag
+	if templateData.BootstrapIP == "" {
+		if err := templateData.setBootstrapIP(); err != nil {
+			return nil, err
+		}
 	}
 
 	templateData.setEtcdAddress()
@@ -223,15 +232,48 @@ func (r *renderOpts) Run() error {
 	return WriteFiles(&r.generic, &templateData.FileConfig, templateData)
 }
 
+// setBootstrapIP gets a list of IPs from local interfaces and returns the first IPv4 or IPv6 address.
+func (t *TemplateData) setBootstrapIP() error {
+	var bootstrapIP string
+	ips, err := ipAddrs()
+	if err != nil {
+		return err
+	}
+
+	for _, addr := range ips {
+		ip := net.ParseIP(addr)
+
+		// IPv6
+		if t.SingleStackIPv6 && ip.To4() == nil {
+			bootstrapIP = addr
+			break
+		}
+		// IPv4
+		if !t.SingleStackIPv6 && ip.To4() != nil {
+			bootstrapIP = addr
+			break
+		}
+	}
+
+	if bootstrapIP == "" {
+		return fmt.Errorf("no IP address found for bootstrap node")
+	}
+
+	t.BootstrapIP = bootstrapIP
+	return nil
+}
+
 func (t *TemplateData) setEtcdAddress() {
 	// IPv4
 	allAddresses := "0.0.0.0"
 	localhost := "127.0.0.1"
+	bootstrapIP := t.BootstrapIP
 
 	// IPv6
 	if t.SingleStackIPv6 {
-		allAddresses = "[::]"
+		allAddresses = "::"
 		localhost = "[::1]"
+		bootstrapIP = "[" + t.BootstrapIP + "]"
 	}
 
 	etcdAddress := options.EtcdAddress{
@@ -240,6 +282,7 @@ func (t *TemplateData) setEtcdAddress() {
 		LocalHost:          localhost,
 		ListenMetricServer: net.JoinHostPort(allAddresses, "9978"),
 		ListenMetricProxy:  net.JoinHostPort(allAddresses, "9979"),
+		BootstrapIP:        bootstrapIP,
 	}
 
 	t.ManifestConfig.EtcdAddress = etcdAddress
@@ -383,4 +426,29 @@ func mustReadTemplateFile(fname string) options.Template {
 		panic(fmt.Sprintf("Failed to load %q: %v", fname, err))
 	}
 	return options.Template{FileName: fname, Content: bs}
+}
+
+func ipAddrs() ([]string, error) {
+	var ips []string
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return ips, err
+	}
+	for _, addr := range addrs {
+		var ip net.IP
+		switch v := addr.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		}
+		if ip == nil {
+			continue
+		}
+		if !ip.IsGlobalUnicast() {
+			continue // we only want global unicast address
+		}
+		ips = append(ips, ip.String())
+	}
+	return ips, nil
 }

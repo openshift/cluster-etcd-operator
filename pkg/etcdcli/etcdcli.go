@@ -3,6 +3,7 @@ package etcdcli
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
@@ -19,6 +20,8 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog"
 )
+
+const BootstrapIPAnnotationKey = "alpha.installer.openshift.io/etcd-bootstrap"
 
 type etcdClientGetter struct {
 	nodeLister      corev1listers.NodeLister
@@ -55,14 +58,22 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 		etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", internalIP))
 	}
 
-	hostEtcd, err := g.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd")
+	hostEtcd, err := g.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd-2")
 	if err != nil {
 		return nil, err
 	}
 	for _, addr := range hostEtcd.Subsets[0].Addresses {
 		if addr.Hostname == "etcd-bootstrap" {
-			// etcd-bootstrap has a valid IP in host-etcd
-			etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", addr.IP))
+			// etcd-bootstrap has a valid IP in host-etcd-2
+			ip, ok := hostEtcd.Annotations[BootstrapIPAnnotationKey]
+			if !ok || ip == "" {
+				continue
+			}
+			// escape IPv6
+			if net.ParseIP(ip).To4() == nil {
+				ip = "[" + ip + "]"
+			}
+			etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", ip))
 			break
 		}
 	}
