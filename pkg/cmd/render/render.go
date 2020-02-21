@@ -152,6 +152,7 @@ type TemplateData struct {
 	// Hostname as reported by the kernel
 	Hostname string
 
+	// BootstrapIP is address of the bootstrap node
 	BootstrapIP string
 }
 
@@ -246,7 +247,6 @@ func (t *TemplateData) setBootstrapIP() error {
 
 	for _, addr := range ips {
 		ip := net.ParseIP(addr)
-
 		// IPv6
 		if t.SingleStackIPv6 && ip.To4() == nil {
 			bootstrapIP = addr
@@ -286,7 +286,7 @@ func (t *TemplateData) setEtcdAddress() {
 		LocalHost:          localhost,
 		ListenMetricServer: net.JoinHostPort(allAddresses, "9978"),
 		ListenMetricProxy:  net.JoinHostPort(allAddresses, "9979"),
-		BootstrapIP:        bootstrapIP,
+		EscapedBootstrapIP: bootstrapIP,
 	}
 
 	t.ManifestConfig.EtcdAddress = etcdAddress
