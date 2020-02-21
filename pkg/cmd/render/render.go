@@ -1,6 +1,7 @@
 package render
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,10 +11,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render/options"
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 
 	"github.com/ghodss/yaml"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render/options"
 	"github.com/openshift/library-go/pkg/assets"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -36,6 +38,7 @@ type renderOpts struct {
 	setupEtcdEnvImage        string
 	kubeClientAgentImage     string
 	clusterConfigFile        string
+	clusterNetworkFile       string
 	bootstrapIP              string
 }
 
@@ -81,7 +84,8 @@ func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&r.kubeClientAgentImage, "manifest-kube-client-agent-image", r.kubeClientAgentImage, "kube-client-agent manifest image")
 	fs.StringVar(&r.setupEtcdEnvImage, "manifest-setup-etcd-env-image", r.setupEtcdEnvImage, "setup-etcd-env manifest image")
 	fs.StringVar(&r.etcdDiscoveryDomain, "etcd-discovery-domain", r.etcdDiscoveryDomain, "etcd discovery domain")
-	fs.StringVar(&r.clusterConfigFile, "cluster-config-file", r.clusterConfigFile, "Openshift Cluster API Config file.")
+	fs.StringVar(&r.clusterNetworkFile, "cluster-config-file", r.clusterNetworkFile, "Openshift Cluster API Config file.") //TODO move back to normal values after installer change.
+	fs.StringVar(&r.clusterNetworkFile, "cluster-network-file", r.clusterNetworkFile, "Openshift Cluster Network API Config file.")
 	fs.StringVar(&r.bootstrapIP, "bootstrap-ip", r.bootstrapIP, "bootstrap IP used to indicate where to find the first etcd endpoint")
 }
 
@@ -114,9 +118,10 @@ func (r *renderOpts) Validate() error {
 	if len(r.etcdDiscoveryDomain) == 0 {
 		return errors.New("missing required flag: --etcd-discovery-domain")
 	}
-	if len(r.clusterConfigFile) == 0 {
-		return errors.New("missing required flag: --cluster-config-file")
-	}
+	// TODO hexfusion replace after installer updates
+	// if len(r.clusterconfigfile) == 0 {
+	// 	return errors.new("missing required flag: --cluster-config-file")
+	// }
 	return nil
 }
 
@@ -139,6 +144,9 @@ type TemplateData struct {
 	EtcdDiscoveryDomain    string
 	EtcdServerCertDNSNames string
 	EtcdPeerCertDNSNames   string
+
+	// MachineCIDR is the network cidr for infra machines.
+	MachineCIDR string
 
 	// ClusterCIDR is the IP range for pod IPs.
 	ClusterCIDR []string
@@ -187,10 +195,17 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 		BootstrapIP: opts.bootstrapIP,
 	}
 
-	if err := templateData.setClusterCIDR(opts.clusterConfigFile); err != nil {
+	if opts.clusterConfigFile != "" {
+		if err := templateData.setMachineCIDR(opts.clusterConfigFile); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := templateData.setClusterCIDR(opts.clusterNetworkFile); err != nil {
 		return nil, err
 	}
-	if err := templateData.setServiceCIDR(opts.clusterConfigFile); err != nil {
+
+	if err := templateData.setServiceCIDR(opts.clusterNetworkFile); err != nil {
 		return nil, err
 	}
 	if err := templateData.setSingleStackIPv6(); err != nil {
@@ -207,8 +222,9 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 			return nil, err
 		}
 	}
-
-	templateData.setEtcdAddress()
+	if err := templateData.setEtcdAddress(); err != nil {
+		return nil, err
+	}
 
 	return &templateData, nil
 }
@@ -237,47 +253,88 @@ func (r *renderOpts) Run() error {
 	return WriteFiles(&r.generic, &templateData.FileConfig, templateData)
 }
 
-// setBootstrapIP gets a list of IPs from local interfaces and returns the first IPv4 or IPv6 address.
 func (t *TemplateData) setBootstrapIP() error {
-	var bootstrapIP string
-	ips, err := ipAddrs()
+	bootstrapIP, err := t.getBootstrapIP()
 	if err != nil {
 		return err
 	}
-
-	for _, addr := range ips {
-		ip := net.ParseIP(addr)
-		// IPv6
-		if t.SingleStackIPv6 && ip.To4() == nil {
-			bootstrapIP = addr
-			break
-		}
-		// IPv4
-		if !t.SingleStackIPv6 && ip.To4() != nil {
-			bootstrapIP = addr
-			break
-		}
-	}
-
-	if bootstrapIP == "" {
-		return fmt.Errorf("no IP address found for bootstrap node")
-	}
-
 	t.BootstrapIP = bootstrapIP
 	return nil
 }
 
-func (t *TemplateData) setEtcdAddress() {
+// getBootstrapIP gets a list of IPs from local interfaces and returns the first address that is contained
+// in the MachineCIDR network. If MachineCIDR is not populated we fall back to returning the first IPv6
+// (singleStack) or IPv4 address. No extra checks are preformed if --bootstrap-ip is passed by flag.
+func (t *TemplateData) getBootstrapIP() (string, error) {
+	if t.BootstrapIP != "" {
+		return t.BootstrapIP, nil
+	}
+	ips, err := ipAddrs()
+	if err != nil {
+		return "", err
+	}
+
+	// If MachineCIDR is populated we validate if the IPs are on the same netwotk
+	if t.MachineCIDR != "" {
+		for _, addr := range ips {
+			isBootstrapIp, err := dnshelpers.IsNetworkContainIp(t.MachineCIDR, addr)
+			if err != nil {
+				return "", err
+			}
+			if isBootstrapIp {
+				return addr, nil
+			}
+		}
+		return "", fmt.Errorf("no IP address matches machineNetwork cidr %s", t.MachineCIDR)
+	}
+
+	//TODO this will not be nessisary in the future and should be removed.
+	// fall back to returning first IPv4 or IPv6 address
+	for _, addr := range ips {
+		ip := net.ParseIP(addr)
+		// IPv6
+		if t.SingleStackIPv6 && ip.To4() == nil {
+			return addr, nil
+		}
+		// IPv4
+		if !t.SingleStackIPv6 && ip.To4() != nil {
+			return addr, nil
+		}
+	}
+	return "", fmt.Errorf("no valid IP address found")
+}
+
+func (t *TemplateData) getEscapedBootstrapIP() (string, error) {
+	bootstrapIP, err := t.getBootstrapIP()
+	if err != nil {
+		return "", err
+	}
+
+	isIPV4, err := dnshelpers.IsIPv4(bootstrapIP)
+	if err != nil {
+		return "", err
+	}
+	if !isIPV4 {
+		return "[" + bootstrapIP + "]", nil
+	}
+
+	return bootstrapIP, nil
+}
+
+func (t *TemplateData) setEtcdAddress() error {
+	escapedBootsrapIP, err := t.getEscapedBootstrapIP()
+	if err != nil {
+		return err
+	}
+
 	// IPv4
 	allAddresses := "0.0.0.0"
 	localhost := "127.0.0.1"
-	bootstrapIP := t.BootstrapIP
 
 	// IPv6
 	if t.SingleStackIPv6 {
 		allAddresses = "::"
 		localhost = "[::1]"
-		bootstrapIP = "[" + t.BootstrapIP + "]"
 	}
 
 	etcdAddress := options.EtcdAddress{
@@ -286,18 +343,46 @@ func (t *TemplateData) setEtcdAddress() {
 		LocalHost:          localhost,
 		ListenMetricServer: net.JoinHostPort(allAddresses, "9978"),
 		ListenMetricProxy:  net.JoinHostPort(allAddresses, "9979"),
-		EscapedBootstrapIP: bootstrapIP,
+		EscapedBootstrapIP: escapedBootsrapIP,
 	}
 
 	t.ManifestConfig.EtcdAddress = etcdAddress
+	return nil
 }
 
-func (t *TemplateData) getClusterConfigFromFile(clusterConfigFile string) (*unstructured.Unstructured, error) {
-	clusterConfigFileData, err := ioutil.ReadFile(clusterConfigFile)
+func (t *TemplateData) getInstallConfigNetworking(clusterConfigFile string) (map[string]interface{}, error) {
+	clusterConfig, err := t.getNetworkConfigFromFile(clusterConfigFile)
 	if err != nil {
 		return nil, err
 	}
-	configJson, err := yaml.YAMLToJSON(clusterConfigFileData)
+
+	installConfig, found, err := unstructured.NestedString(
+		clusterConfig.Object, "data", "install-config")
+	if found && err == nil {
+		var installConfigObj map[string]interface{}
+
+		installConfigJson, err := yaml.YAMLToJSON([]byte(installConfig))
+		if err != nil {
+			return nil, err
+		}
+		json.Unmarshal([]byte(installConfigJson), &installConfigObj)
+
+		if installConfigObj["networking"] != nil {
+			return installConfigObj["networking"].(map[string]interface{}), nil
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return nil, fmt.Errorf("networking data not found in install-config")
+}
+
+func (t *TemplateData) getNetworkConfigFromFile(networkConfigFile string) (*unstructured.Unstructured, error) {
+	networkConfigFileData, err := ioutil.ReadFile(networkConfigFile)
+	if err != nil {
+		return nil, err
+	}
+	configJson, err := yaml.YAMLToJSON(networkConfigFileData)
 	if err != nil {
 		return nil, err
 	}
@@ -312,8 +397,26 @@ func (t *TemplateData) getClusterConfigFromFile(clusterConfigFile string) (*unst
 	return clusterConfig, nil
 }
 
-func (t *TemplateData) setServiceCIDR(clusterConfigFile string) error {
-	clusterConfig, err := t.getClusterConfigFromFile(clusterConfigFile)
+func (t *TemplateData) setMachineCIDR(clusterConfigFile string) error {
+
+	networking, err := t.getInstallConfigNetworking(clusterConfigFile)
+	if err != nil {
+		return err
+	}
+	machineCIDR := networking["machineNetwork"].([]interface{})[0].(map[string]interface{})["cidr"]
+	if machineCIDR != "" {
+		t.MachineCIDR = fmt.Sprintf("%v", machineCIDR)
+		return nil
+	}
+	if networking["machineCIDR"] != "" {
+		t.MachineCIDR = fmt.Sprintf("%v", networking["machineCIDR"])
+		return nil
+	}
+	return nil
+}
+
+func (t *TemplateData) setServiceCIDR(networkConfigFile string) error {
+	clusterConfig, err := t.getNetworkConfigFromFile(networkConfigFile)
 	if err != nil {
 		return err
 	}
@@ -337,8 +440,8 @@ func (t *TemplateData) setHostname() error {
 	return nil
 }
 
-func (t *TemplateData) setClusterCIDR(clusterConfigFile string) error {
-	clusterConfig, err := t.getClusterConfigFromFile(clusterConfigFile)
+func (t *TemplateData) setClusterCIDR(networkConfigFile string) error {
+	clusterConfig, err := t.getNetworkConfigFromFile(networkConfigFile)
 	if err != nil {
 		return err
 	}

@@ -117,12 +117,14 @@ func TestRenderIpv4(t *testing.T) {
 		ClusterCIDR:     []string{"10.128.0.0/14"},
 		ServiceCIDR:     []string{"172.30.0.0/16"},
 		SingleStackIPv6: false,
+		BootstrapIP:     "10.128.0.12",
 	}
 
 	config := &testConfig{
 		t:                    t,
 		clusterNetworkConfig: networkConfigIpv4,
 		want:                 want,
+		bootstrapIP:          "10.128.0.12",
 	}
 
 	testRender(config)
@@ -159,6 +161,7 @@ func testRender(tc *testConfig) {
 		manifest:          *options.NewManifestOptions("etcd"),
 		errOut:            errOut,
 		clusterConfigFile: clusterConfigFile.Name(),
+		bootstrapIP:       tc.bootstrapIP,
 	}
 
 	if err := render.Run(); err != nil {
@@ -176,12 +179,14 @@ func TestTemplateDataIpv4(t *testing.T) {
 		ClusterCIDR:     []string{"10.128.0.0/14"},
 		ServiceCIDR:     []string{"172.30.0.0/16"},
 		SingleStackIPv6: false,
+		BootstrapIP:     "10.128.0.12",
 	}
 
 	config := &testConfig{
 		t:                    t,
 		clusterNetworkConfig: networkConfigIpv4,
 		want:                 want,
+		bootstrapIP:          "10.128.0.12",
 	}
 	testTemplateData(config)
 }
@@ -196,12 +201,14 @@ func TestTemplateDataMixed(t *testing.T) {
 		ClusterCIDR:     []string{"10.128.10.0/14"},
 		ServiceCIDR:     []string{"2001:db8::/32", "172.30.0.0/16"},
 		SingleStackIPv6: false,
+		BootstrapIP:     "10.128.0.12",
 	}
 
 	config := &testConfig{
 		t:                    t,
 		clusterNetworkConfig: networkConfigMixedSwap,
 		want:                 want,
+		bootstrapIP:          "10.128.0.12",
 	}
 	testTemplateData(config)
 }
@@ -216,14 +223,14 @@ func TestTemplateDataSingleStack(t *testing.T) {
 		ClusterCIDR:     []string{"10.128.0.0/14"},
 		ServiceCIDR:     []string{"2001:db8::/32"},
 		SingleStackIPv6: true,
-		BootstrapIP:     "2001:0DB8:C21A",
+		BootstrapIP:     "fe80::d66c:724c:13d4:829c",
 	}
 
 	config := &testConfig{
 		t:                    t,
 		clusterNetworkConfig: networkConfigIPv6SingleStack,
 		want:                 want,
-		bootstrapIP:          "2001:0DB8:C21A",
+		bootstrapIP:          "fe80::d66c:724c:13d4:829c",
 	}
 	testTemplateData(config)
 }

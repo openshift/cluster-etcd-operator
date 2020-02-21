@@ -3,7 +3,6 @@ package etcdcli
 import (
 	"context"
 	"fmt"
-	"net"
 	"time"
 
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
@@ -81,11 +80,15 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 		klog.V(2).Infof("service/host-etcd-2 is missing annotation %s", BootstrapIPAnnotationKey)
 	}
 	if bootstrapIP != "" {
-		// escape if IPv6
-		if net.ParseIP(bootstrapIP).To4() == nil {
-			bootstrapIP = "[" + bootstrapIP + "]"
+		isIPV4, err := dnshelpers.IsIPv4(bootstrapIP)
+		if err != nil {
+			return nil, err
 		}
-		etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", bootstrapIP))
+		if isIPV4 {
+			etcdEndpoints = append(etcdEndpoints, "https://"+bootstrapIP+":2379")
+		} else {
+			etcdEndpoints = append(etcdEndpoints, "https://["+bootstrapIP+"]:2379")
+		}
 	}
 	c, err := getEtcdClient(etcdEndpoints)
 	if err != nil {

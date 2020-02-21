@@ -183,3 +183,14 @@ func reverseLookupForOneIP(discoveryDomain, ipAddress string) (string, error) {
 	}
 	return selfTarget, nil
 }
+
+func IsNetworkContainIp(network, ipAddress string) (bool, error) {
+	_, parsedNet, err := net.ParseCIDR(network)
+	if err != nil {
+		return false, err
+	}
+	if parsedNet.Contains(net.ParseIP(ipAddress)) {
+		return true, nil
+	}
+	return false, nil
+}
