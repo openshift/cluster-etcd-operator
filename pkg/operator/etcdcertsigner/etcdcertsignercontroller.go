@@ -1,4 +1,4 @@
-package etcdcertsigner2
+package etcdcertsigner
 
 import (
 	"bytes"
@@ -35,7 +35,7 @@ import (
 
 const (
 	workQueueKey     = "key"
-	EtcdCertValidity = 3 * 365 * 24 * time.Hour
+	EtcdCertValidity = 10 * 365 * 24 * time.Hour
 	peerOrg          = "system:etcd-peers"
 	serverOrg        = "system:etcd-servers"
 	metricOrg        = "system:etcd-metrics"
@@ -84,8 +84,8 @@ func NewEtcdCertSignerController(
 			kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Informer().HasSynced,
 			infrastructureInformer.Informer().HasSynced,
 		},
-		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "EtcdCertSignerController2"),
-		eventRecorder: eventRecorder.WithComponentSuffix("etcd-cert-signer-controller-2"),
+		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "EtcdCertSignerController"),
+		eventRecorder: eventRecorder.WithComponentSuffix("etcd-cert-signer-controller"),
 	}
 
 	kubeInformers.InformersFor("").Core().V1().Nodes().Informer().AddEventHandler(c.eventHandler())
@@ -100,8 +100,8 @@ func (c *EtcdCertSignerController) Run(i int, stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
 	defer c.queue.ShutDown()
 
-	klog.Infof("Starting EtcdCertSignerController2")
-	defer klog.Infof("Shutting down EtcdCertSignerController2")
+	klog.Infof("Starting EtcdCertSignerController")
+	defer klog.Infof("Shutting down EtcdCertSignerController")
 
 	if !cache.WaitForCacheSync(stopCh, c.cachesToSync...) {
 		utilruntime.HandleError(fmt.Errorf("caches did not sync"))
@@ -145,20 +145,20 @@ func (c *EtcdCertSignerController) sync() error {
 	err := c.syncAllMasters()
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:    "EtcdCertSignerController2Degraded",
+			Type:    "EtcdCertSignerControllerDegraded",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "Error",
 			Message: err.Error(),
 		}))
 		if updateErr != nil {
-			c.eventRecorder.Warning("EtcdCertSignerController2UpdatingStatus", updateErr.Error())
+			c.eventRecorder.Warning("EtcdCertSignerControllerUpdatingStatus", updateErr.Error())
 		}
 		return err
 	}
 
 	_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient,
 		v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:   "EtcdCertSignerController2Degraded",
+			Type:   "EtcdCertSignerControllerDegraded",
 			Status: operatorv1.ConditionFalse,
 			Reason: "AsExpected",
 		}))

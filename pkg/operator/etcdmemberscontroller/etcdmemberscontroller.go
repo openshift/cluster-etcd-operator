@@ -6,18 +6,15 @@ import (
 	"strings"
 	"time"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	errorsutil "k8s.io/apimachinery/pkg/util/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
-
-	operatorv1 "github.com/openshift/api/operator/v1"
-	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
 )
 
 const workQueueKey = "key"
@@ -30,34 +27,19 @@ type EtcdMembersController struct {
 
 	eventRecorder events.Recorder
 	queue         workqueue.RateLimitingInterface
-	cachesToSync  []cache.InformerSynced
 }
 
 func NewEtcdMembersController(operatorClient v1helpers.OperatorClient,
 	etcdClient etcdcli.EtcdClient,
-	kubeInformers operatorv1helpers.KubeInformersForNamespaces,
 	eventRecorder events.Recorder,
 ) *EtcdMembersController {
-	nodeInformer := kubeInformers.InformersFor("").Core().V1().Nodes()
-	endpointsInformer := kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints()
-	podInformer := kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods()
 	c := &EtcdMembersController{
 		operatorClient: operatorClient,
 		etcdClient:     etcdClient,
 
-		cachesToSync: []cache.InformerSynced{
-			operatorClient.Informer().HasSynced,
-			endpointsInformer.Informer().HasSynced,
-			nodeInformer.Informer().HasSynced,
-			podInformer.Informer().HasSynced,
-		},
 		eventRecorder: eventRecorder.WithComponentSuffix("member-observer-controller"),
 		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "EtcdMembersController"),
 	}
-	operatorClient.Informer().AddEventHandler(c.eventHandler())
-	nodeInformer.Informer().AddEventHandler(c.eventHandler())
-	podInformer.Informer().AddEventHandler(c.eventHandler())
-	endpointsInformer.Informer().AddEventHandler(c.eventHandler())
 	return c
 }
 
@@ -65,7 +47,7 @@ func (c *EtcdMembersController) sync() error {
 	err := c.reportEtcdMembers()
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:    "EtcdMembersDegraded",
+			Type:    "EtcdMembersControllerDegraded",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "ErrorUpdatingReportEtcdMembers",
 			Message: err.Error(),
@@ -77,7 +59,7 @@ func (c *EtcdMembersController) sync() error {
 	}
 
 	_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-		Type:   "EtcdMembersDegraded",
+		Type:   "EtcdMembersControllerDegraded",
 		Status: operatorv1.ConditionFalse,
 		Reason: "MembersReported",
 	}))
@@ -94,31 +76,32 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 		return err
 	}
 
-	healthyEtcdMembers, notStartedEtcdMembers, unhealthyMembers, unknownEtcdMembers := []string{}, []string{}, []string{}, []string{}
+	availableMembers, notStartedMembers, unhealthyMembers, unknownMembers := []string{}, []string{}, []string{}, []string{}
 
 	for _, m := range etcdMembers {
 		switch c.etcdClient.MemberStatus(m) {
 		case etcdcli.EtcdMemberStatusAvailable:
-			healthyEtcdMembers = append(healthyEtcdMembers, m.Name)
+			availableMembers = append(availableMembers, m.Name)
 		case etcdcli.EtcdMemberStatusNotStarted:
-			notStartedEtcdMembers = append(notStartedEtcdMembers, m.Name)
+			notStartedMembers = append(notStartedMembers, m.Name)
 		case etcdcli.EtcdMemberStatusUnhealthy:
 			unhealthyMembers = append(unhealthyMembers, m.Name)
 		case etcdcli.EtcdMemberStatusUnknown:
-			unknownEtcdMembers = append(unknownEtcdMembers, m.Name)
+			unknownMembers = append(unknownMembers, m.Name)
 		}
 	}
 
-	if len(unhealthyMembers) != 0 {
+	updateErrors := []error{}
+	if len(unhealthyMembers) > 0 || len(unknownMembers) > 0 {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersDegraded",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "UnhealthyMembers",
-			Message: fmt.Sprintf("%s members are unhealthy", strings.Join(unhealthyMembers, ",")),
+			Message: fmt.Sprintf("%s members are unhealthy, %s members are unknown", strings.Join(unhealthyMembers, ","), strings.Join(unknownMembers, ",")),
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
-			return err
+			updateErrors = append(updateErrors, updateErr)
 		}
 	} else {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
@@ -129,44 +112,44 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
-			return err
+			updateErrors = append(updateErrors, updateErr)
 		}
 	}
 
-	if len(notStartedEtcdMembers) != 0 {
+	if len(notStartedMembers) != 0 {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersProgressing",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "MembersNotStarted",
-			Message: fmt.Sprintf("%s members have not started yet", strings.Join(notStartedEtcdMembers, ",")),
+			Message: fmt.Sprintf("%s members have not started yet", strings.Join(notStartedMembers, ",")),
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
-			return err
+			updateErrors = append(updateErrors, updateErr)
 		}
 	} else {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersProgressing",
 			Status:  operatorv1.ConditionFalse,
 			Reason:  "AsExpected",
-			Message: "no unstarted members found",
+			Message: "all members have started",
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
-			return err
+			updateErrors = append(updateErrors, updateErr)
 		}
 	}
 
-	if len(healthyEtcdMembers) > len(etcdMembers)/2 {
+	if len(availableMembers) > len(etcdMembers)/2 {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersAvailable",
 			Status:  operatorv1.ConditionTrue,
-			Reason:  "MembersNotStarted",
-			Message: fmt.Sprintf("%s members are available, %s have not started, %s are unhealthy", strings.Join(healthyEtcdMembers, ","), strings.Join(notStartedEtcdMembers, ","), strings.Join(unhealthyMembers, ",")),
+			Reason:  "EtcdQuorate",
+			Message: fmt.Sprintf("%s members are available, %s have not started, %s are unhealthy, %s are unknown", strings.Join(availableMembers, ","), strings.Join(notStartedMembers, ","), strings.Join(unhealthyMembers, ","), strings.Join(unknownMembers, ",")),
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
-			return err
+			updateErrors = append(updateErrors, updateErr)
 		}
 	} else {
 		// we will never reach here, if no quorum, we will always timeout
@@ -176,13 +159,18 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 			Type:    "EtcdMembersAvailable",
 			Status:  operatorv1.ConditionFalse,
 			Reason:  "No quorum",
-			Message: fmt.Sprintf("%s members are available, %s have not started, %s are unhealthy", strings.Join(healthyEtcdMembers, ","), strings.Join(notStartedEtcdMembers, ","), strings.Join(unhealthyMembers, ",")),
+			Message: fmt.Sprintf("%s members are available, %s have not started, %s are unhealthy", strings.Join(availableMembers, ","), strings.Join(notStartedMembers, ","), strings.Join(unhealthyMembers, ",")),
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
-			return err
+			updateErrors = append(updateErrors, updateErr)
 		}
 	}
+
+	if len(updateErrors) > 0 {
+		return errorsutil.NewAggregate(updateErrors)
+	}
+
 	return nil
 }
 
@@ -191,10 +179,15 @@ func (c *EtcdMembersController) Run(ctx context.Context, workers int) {
 	defer c.queue.ShutDown()
 	klog.Infof("Starting EtcdMembersController")
 	defer klog.Infof("Shutting down EtcdMembersController")
-	if !cache.WaitForCacheSync(ctx.Done(), c.cachesToSync...) {
-		return
-	}
+
 	go wait.Until(c.runWorker, time.Second, ctx.Done())
+
+	// add time based trigger
+	go wait.PollImmediateUntil(time.Minute, func() (bool, error) {
+		c.queue.Add(workQueueKey)
+		return false, nil
+	}, ctx.Done())
+
 	<-ctx.Done()
 }
 
@@ -219,13 +212,4 @@ func (c *EtcdMembersController) processNextWorkItem() bool {
 	c.queue.AddRateLimited(dsKey)
 
 	return true
-}
-
-func (c *EtcdMembersController) eventHandler() cache.ResourceEventHandler {
-	// eventHandler queues the operator to check spec and status
-	return cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj interface{}) { c.queue.Add(workQueueKey) },
-		UpdateFunc: func(old, new interface{}) { c.queue.Add(workQueueKey) },
-		DeleteFunc: func(obj interface{}) { c.queue.Add(workQueueKey) },
-	}
 }
