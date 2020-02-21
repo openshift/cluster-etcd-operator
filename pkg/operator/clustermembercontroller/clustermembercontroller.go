@@ -9,6 +9,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -263,11 +264,11 @@ func (c *ClusterMemberController) getValidPodFQDNToScale(podToAdd *corev1.Pod) (
 	if podToAdd.Spec.NodeName == "" {
 		return "", fmt.Errorf("node name empty for %s", podToAdd.Name)
 	}
-	nodeInternalIP, err := c.getNodeInternalIP(podToAdd.Spec.NodeName)
+	nodeInternalIPs, err := c.getNodeInternalIPs(podToAdd.Spec.NodeName)
 	if err != nil {
 		return "", err
 	}
-	podFQDN, err := ReverseLookupSelf("etcd-server-ssl", "tcp", etcdDiscoveryDomain, nodeInternalIP)
+	podFQDN, err := dnshelpers.ReverseLookupFirstHit(etcdDiscoveryDomain, nodeInternalIPs...)
 	if err != nil {
 		return "", err
 	}
@@ -275,19 +276,10 @@ func (c *ClusterMemberController) getValidPodFQDNToScale(podToAdd *corev1.Pod) (
 	return podFQDN, nil
 }
 
-func (c *ClusterMemberController) getNodeInternalIP(nodeName string) (string, error) {
+func (c *ClusterMemberController) getNodeInternalIPs(nodeName string) ([]string, error) {
 	node, err := c.nodeLister.Get(nodeName)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	if node.Status.Addresses == nil {
-		return "", fmt.Errorf("cannot get node IP address, addresses for node %s is nil", nodeName)
-	}
-
-	for _, addr := range node.Status.Addresses {
-		if addr.Type == corev1.NodeInternalIP {
-			return addr.Address, nil
-		}
-	}
-	return "", fmt.Errorf("unable to get internal IP address for node %s", nodeName)
+	return dnshelpers.GetInternalIPAddressesForNodeName(node)
 }
