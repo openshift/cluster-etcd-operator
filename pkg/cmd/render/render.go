@@ -10,10 +10,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render/options"
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 
 	"github.com/ghodss/yaml"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render/options"
 	"github.com/openshift/library-go/pkg/assets"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -237,47 +238,72 @@ func (r *renderOpts) Run() error {
 	return WriteFiles(&r.generic, &templateData.FileConfig, templateData)
 }
 
-// setBootstrapIP gets a list of IPs from local interfaces and returns the first IPv4 or IPv6 address.
 func (t *TemplateData) setBootstrapIP() error {
-	var bootstrapIP string
-	ips, err := ipAddrs()
+	bootstrapIP, err := t.getBootstrapIP()
 	if err != nil {
 		return err
 	}
-
-	for _, addr := range ips {
-		ip := net.ParseIP(addr)
-		// IPv6
-		if t.SingleStackIPv6 && ip.To4() == nil {
-			bootstrapIP = addr
-			break
-		}
-		// IPv4
-		if !t.SingleStackIPv6 && ip.To4() != nil {
-			bootstrapIP = addr
-			break
-		}
-	}
-
-	if bootstrapIP == "" {
-		return fmt.Errorf("no IP address found for bootstrap node")
-	}
-
 	t.BootstrapIP = bootstrapIP
 	return nil
 }
 
-func (t *TemplateData) setEtcdAddress() {
+// getBootstrapIP gets a list of IPs from local interfaces and returns the first IPv4 or IPv6 address.
+func (t *TemplateData) getBootstrapIP() (string, error) {
+	ips, err := ipAddrs()
+	if err != nil {
+		return "", err
+	}
+
+	for _, addr := range ips {
+		isIPV4, err := dnshelpers.IsIPv4(addr)
+		if err != nil {
+			return "", err
+		}
+		// IPv6
+		if t.SingleStackIPv6 && !isIPV4 {
+			return addr, nil
+		}
+		// IPv4
+		if !t.SingleStackIPv6 && isIPV4 {
+			return addr, nil
+		}
+	}
+
+	return "", fmt.Errorf("no IP address found for bootstrap node")
+}
+
+func (t *TemplateData) getEscapedBootstrapIP() (string, error) {
+	bootstrapIP, err := t.getBootstrapIP()
+	if err != nil {
+		return "", err
+	}
+
+	isIPV4, err := dnshelpers.IsIPv4(bootstrapIP)
+	if err != nil {
+		return "", err
+	}
+	if isIPV4 {
+		return bootstrapIP, nil
+	}
+
+	// IPv6
+	return "[" + bootstrapIP + "]", nil
+}
+
+func (t *TemplateData) setEtcdAddress() error {
+	escapedBootsrapIP, err := t.getEscapedBootstrapIP()
+	if err != nil {
+		return err
+	}
+
 	// IPv4
 	allAddresses := "0.0.0.0"
 	localhost := "127.0.0.1"
-	bootstrapIP := t.BootstrapIP
 
 	// IPv6
 	if t.SingleStackIPv6 {
 		allAddresses = "::"
 		localhost = "[::1]"
-		bootstrapIP = "[" + t.BootstrapIP + "]"
 	}
 
 	etcdAddress := options.EtcdAddress{
@@ -286,10 +312,11 @@ func (t *TemplateData) setEtcdAddress() {
 		LocalHost:          localhost,
 		ListenMetricServer: net.JoinHostPort(allAddresses, "9978"),
 		ListenMetricProxy:  net.JoinHostPort(allAddresses, "9979"),
-		EscapedBootstrapIP: bootstrapIP,
+		EscapedBootstrapIP: escapedBootsrapIP,
 	}
 
 	t.ManifestConfig.EtcdAddress = etcdAddress
+	return nil
 }
 
 func (t *TemplateData) getClusterConfigFromFile(clusterConfigFile string) (*unstructured.Unstructured, error) {
