@@ -62,26 +62,22 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, addr := range hostEtcd.Subsets[0].Addresses {
-		if addr.Hostname == "etcd-bootstrap" {
-			// etcd-bootstrap has a valid IP in host-etcd-2
-			ip, ok := hostEtcd.Annotations[BootstrapIPAnnotationKey]
-			if !ok || ip == "" {
-				continue
-			}
-			// escape IPv6
-			if net.ParseIP(ip).To4() == nil {
-				ip = "[" + ip + "]"
-			}
-			etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", ip))
-			break
-		}
+	bootstrapIP, ok := hostEtcd.Annotations[BootstrapIPAnnotationKey]
+	if !ok {
+		klog.V(2).Infof("service/host-etcd-2 is missing annotation %s", BootstrapIPAnnotationKey)
 	}
-
+	if bootstrapIP != "" {
+		// escape if IPv6
+		if net.ParseIP(bootstrapIP).To4() == nil {
+			bootstrapIP = "[" + bootstrapIP + "]"
+		}
+		etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", bootstrapIP))
+	}
 	c, err := getEtcdClient(etcdEndpoints)
 	if err != nil {
 		return nil, err
 	}
+
 	return c, nil
 }
 
