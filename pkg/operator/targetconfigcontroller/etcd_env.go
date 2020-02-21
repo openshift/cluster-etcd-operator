@@ -2,16 +2,15 @@ package targetconfigcontroller
 
 import (
 	"fmt"
-	"net"
 	"strings"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
-	corev1 "k8s.io/api/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/klog"
 )
 
 type envVarContext struct {
@@ -20,6 +19,7 @@ type envVarContext struct {
 
 	nodeLister           corev1listers.NodeLister
 	infrastructureLister configv1listers.InfrastructureLister
+	networkLister        configv1listers.NetworkLister
 	endpointLister       corev1listers.EndpointsLister
 }
 
@@ -78,15 +78,25 @@ func getFixedEtcdEnvVars(envVarContext envVarContext) (map[string]string, error)
 }
 
 func getAllClusterMembers(envVarContext envVarContext) (map[string]string, error) {
+	network, err := envVarContext.networkLister.Get("cluster")
+	if err != nil {
+		return nil, err
+	}
+
 	ret := map[string]string{}
 
 	endpoints := []string{}
 	for _, nodeInfo := range envVarContext.status.NodeStatuses {
-		endpoint, err := getInternalIPAddressForNodeName(envVarContext, nodeInfo.NodeName)
+		node, err := envVarContext.nodeLister.Get(nodeInfo.NodeName)
 		if err != nil {
 			return nil, err
 		}
-		endpoints = append(endpoints, fmt.Sprintf("https://%s:2379", endpoint))
+
+		endpointIP, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
+		if err != nil {
+			return nil, err
+		}
+		endpoints = append(endpoints, fmt.Sprintf("https://%s:2379", endpointIP))
 	}
 
 	hostEtcdEndpoints, err := envVarContext.endpointLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd")
@@ -95,7 +105,17 @@ func getAllClusterMembers(envVarContext envVarContext) (map[string]string, error
 	}
 	for _, endpointAddress := range hostEtcdEndpoints.Subsets[0].Addresses {
 		if endpointAddress.Hostname == "etcd-bootstrap" {
-			endpoints = append(endpoints, "https://"+endpointAddress.IP+":2379")
+
+			isIPV4, err := dnshelpers.IsIPv4(endpointAddress.IP)
+			if err != nil {
+				return nil, err
+			}
+			if isIPV4 {
+				endpoints = append(endpoints, "https://"+endpointAddress.IP+":2379")
+			} else {
+				endpoints = append(endpoints, "https://["+endpointAddress.IP+"]:2379")
+			}
+
 			break
 		}
 	}
@@ -115,30 +135,26 @@ func getEtcdName(envVarContext envVarContext) (map[string]string, error) {
 }
 
 func getEscapedIPAddress(envVarContext envVarContext) (map[string]string, error) {
+	network, err := envVarContext.networkLister.Get("cluster")
+	if err != nil {
+		return nil, err
+	}
+
 	ret := map[string]string{}
 	for _, nodeInfo := range envVarContext.status.NodeStatuses {
-		address, err := getInternalIPAddressForNodeName(envVarContext, nodeInfo.NodeName)
+		node, err := envVarContext.nodeLister.Get(nodeInfo.NodeName)
 		if err != nil {
 			return nil, err
 		}
-		ret[fmt.Sprintf("NODE_%s_IP", envVarSafe(nodeInfo.NodeName))] = address
+
+		escapedIPAddress, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
+		if err != nil {
+			return nil, err
+		}
+		ret[fmt.Sprintf("NODE_%s_IP", envVarSafe(nodeInfo.NodeName))] = "[" + escapedIPAddress + "]"
 	}
 
 	return ret, nil
-}
-
-func getInternalIPAddressForNodeName(envVarContext envVarContext, nodeName string) (string, error) {
-	node, err := envVarContext.nodeLister.Get(nodeName)
-	if err != nil {
-		return "", err
-	}
-
-	for _, currAddress := range node.Status.Addresses {
-		if currAddress.Type == corev1.NodeInternalIP {
-			return currAddress.Address, nil
-		}
-	}
-	return "", fmt.Errorf("node/%s missing %s", node.Name, corev1.NodeInternalIP)
 }
 
 func getDNSName(envVarContext envVarContext) (map[string]string, error) {
@@ -155,12 +171,17 @@ func getDNSName(envVarContext envVarContext) (map[string]string, error) {
 	}
 
 	for _, nodeInfo := range envVarContext.status.NodeStatuses {
-		ip, err := getInternalIPAddressForNodeName(envVarContext, nodeInfo.NodeName)
+		node, err := envVarContext.nodeLister.Get(nodeInfo.NodeName)
 		if err != nil {
 			return nil, err
 		}
 
-		dnsName, err := reverseLookup("etcd-server-ssl", "tcp", etcdDiscoveryDomain, ip)
+		ips, err := dnshelpers.GetInternalIPAddressesForNodeName(node)
+		if err != nil {
+			return nil, err
+		}
+
+		dnsName, err := dnshelpers.ReverseLookupFirstHit(etcdDiscoveryDomain, ips...)
 		if err != nil {
 			return nil, err
 		}
@@ -168,33 +189,6 @@ func getDNSName(envVarContext envVarContext) (map[string]string, error) {
 	}
 
 	return ret, nil
-}
-
-// returns the target from the SRV record that resolves to ip.
-func reverseLookup(service, proto, name, ip string) (string, error) {
-	_, srvs, err := net.LookupSRV(service, proto, name)
-	if err != nil {
-		return "", err
-	}
-	selfTarget := ""
-	for _, srv := range srvs {
-		klog.V(4).Infof("checking against %s", srv.Target)
-		addrs, err := net.LookupHost(srv.Target)
-		if err != nil {
-			return "", fmt.Errorf("could not resolve member %q", srv.Target)
-		}
-
-		for _, addr := range addrs {
-			if addr == ip {
-				selfTarget = strings.Trim(srv.Target, ".")
-				break
-			}
-		}
-	}
-	if selfTarget == "" {
-		return "", fmt.Errorf("could not find self")
-	}
-	return selfTarget, nil
 }
 
 func envVarSafe(nodeName string) string {
