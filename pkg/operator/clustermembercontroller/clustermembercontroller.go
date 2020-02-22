@@ -214,12 +214,12 @@ func (c *ClusterMemberController) getEtcdPodToAddToMembership() (*corev1.Pod, er
 			continue
 		}
 		ready := false
-		for _, condition := range pod.Status.Conditions {
-			if condition.Type == corev1.PodReady {
-				ready = condition.Status == corev1.ConditionTrue
-				klog.V(4).Infof("found pod %s ready", pod.Name)
-				break
+		for _, containerStatus := range pod.Status.ContainerStatuses {
+			if containerStatus.Name != "etcd" {
+				continue
 			}
+			ready = containerStatus.Ready
+			break
 		}
 		if ready {
 			continue
