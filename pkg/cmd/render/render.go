@@ -36,6 +36,7 @@ type renderOpts struct {
 	setupEtcdEnvImage        string
 	kubeClientAgentImage     string
 	clusterConfigFile        string
+	bootstrapIP              string
 }
 
 // NewRenderCommand creates a render command.
@@ -81,6 +82,7 @@ func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&r.setupEtcdEnvImage, "manifest-setup-etcd-env-image", r.setupEtcdEnvImage, "setup-etcd-env manifest image")
 	fs.StringVar(&r.etcdDiscoveryDomain, "etcd-discovery-domain", r.etcdDiscoveryDomain, "etcd discovery domain")
 	fs.StringVar(&r.clusterConfigFile, "cluster-config-file", r.clusterConfigFile, "Openshift Cluster API Config file.")
+	fs.StringVar(&r.bootstrapIP, "bootstrap-ip", r.bootstrapIP, "bootstrap IP used to indicate where to find the first etcd endpoint")
 }
 
 // Validate verifies the inputs.
@@ -149,6 +151,8 @@ type TemplateData struct {
 
 	// Hostname as reported by the kernel
 	Hostname string
+
+	BootstrapIP string
 }
 
 type StaticFile struct {

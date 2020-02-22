@@ -1,19 +1,16 @@
-package hostendpointscontroller
+package hostendpointscontroller2
 
 import (
 	"context"
 	"fmt"
-	"net"
 	"reflect"
 	"sort"
-	"strings"
 	"time"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
+	"k8s.io/apimachinery/pkg/util/mergepatch"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
-	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
-	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
@@ -23,7 +20,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/util/mergepatch"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
@@ -32,157 +28,114 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
 const (
 	workQueueKey = "key"
 )
 
-// HostEndpointsController maintains an Endpoints resource with
-// the dns names of the current etcd cluster members for use by
-// components unable to use the etcd service directly.
-type HostEndpointsController struct {
-	operatorClient       v1helpers.OperatorClient
-	infrastructureLister configv1listers.InfrastructureLister
-	networkLister        configv1listers.NetworkLister
-	nodeLister           corev1listers.NodeLister
-	endpointsLister      corev1listers.EndpointsLister
-	endpointsClient      corev1client.EndpointsGetter
+// HostEndpoints2Controller maintains an Endpoints resource with
+// IP addresses for etcd.  It should never depend on DNS directly or transitively.
+// in 4.4, we will abandon the old resource in etcd.
+type HostEndpoints2Controller struct {
+	operatorClient  v1helpers.OperatorClient
+	nodeLister      corev1listers.NodeLister
+	endpointsLister corev1listers.EndpointsLister
+	endpointsClient corev1client.EndpointsGetter
 
 	eventRecorder events.Recorder
 	queue         workqueue.RateLimitingInterface
 	cachesToSync  []cache.InformerSynced
 }
 
-func NewHostEndpointsController(
+func NewHostEndpoints2Controller(
 	operatorClient v1helpers.OperatorClient,
 	eventRecorder events.Recorder,
 	kubeClient kubernetes.Interface,
 	kubeInformers operatorv1helpers.KubeInformersForNamespaces,
-	infrastructureInformer configv1informers.InfrastructureInformer,
-	networkInformer configv1informers.NetworkInformer,
-) *HostEndpointsController {
+) *HostEndpoints2Controller {
 	kubeInformersForTargetNamespace := kubeInformers.InformersFor(operatorclient.TargetNamespace)
 	endpointsInformer := kubeInformersForTargetNamespace.Core().V1().Endpoints()
 	kubeInformersForCluster := kubeInformers.InformersFor("")
 	nodeInformer := kubeInformersForCluster.Core().V1().Nodes()
 
-	c := &HostEndpointsController{
-		eventRecorder: eventRecorder.WithComponentSuffix("host-etcd-endpoints-controller"),
-		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "HostEndpointsController"),
+	c := &HostEndpoints2Controller{
+		eventRecorder: eventRecorder.WithComponentSuffix("host-etcd-2-endpoints-controller2"),
+		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "HostEndpoints2Controller"),
 		cachesToSync: []cache.InformerSynced{
 			operatorClient.Informer().HasSynced,
 			endpointsInformer.Informer().HasSynced,
 			nodeInformer.Informer().HasSynced,
-			infrastructureInformer.Informer().HasSynced,
-			networkInformer.Informer().HasSynced,
 		},
-		operatorClient:       operatorClient,
-		infrastructureLister: infrastructureInformer.Lister(),
-		networkLister:        networkInformer.Lister(),
-		nodeLister:           nodeInformer.Lister(),
-		endpointsLister:      endpointsInformer.Lister(),
-		endpointsClient:      kubeClient.CoreV1(),
+		operatorClient:  operatorClient,
+		nodeLister:      nodeInformer.Lister(),
+		endpointsLister: endpointsInformer.Lister(),
+		endpointsClient: kubeClient.CoreV1(),
 	}
 	operatorClient.Informer().AddEventHandler(c.eventHandler())
 	endpointsInformer.Informer().AddEventHandler(c.eventHandler())
-	infrastructureInformer.Informer().AddEventHandler(c.eventHandler())
-	networkInformer.Informer().AddEventHandler(c.eventHandler())
 	nodeInformer.Informer().AddEventHandler(c.eventHandler())
 	return c
 }
 
-func (c *HostEndpointsController) sync() error {
-	err := c.syncHostEndpoints()
+func (c *HostEndpoints2Controller) sync() error {
+	err := c.syncHostEndpoints2()
 
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:    "HostEndpointsDegraded",
+			Type:    "HostEndpoints2Degraded",
 			Status:  operatorv1.ConditionTrue,
-			Reason:  "ErrorUpdatingHostEndpoints",
+			Reason:  "ErrorUpdatingHostEndpoints2",
 			Message: err.Error(),
 		}))
 		if updateErr != nil {
-			c.eventRecorder.Warning("HostEndpointsErrorUpdatingStatus", updateErr.Error())
+			c.eventRecorder.Warning("HostEndpoints2ErrorUpdatingStatus", updateErr.Error())
 		}
 		return err
 	}
 
 	_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-		Type:   "HostEndpointsDegraded",
+		Type:   "HostEndpoints2Degraded",
 		Status: operatorv1.ConditionFalse,
-		Reason: "HostEndpointsUpdated",
+		Reason: "HostEndpoints2Updated",
 	}))
 	if updateErr != nil {
-		c.eventRecorder.Warning("HostEndpointsErrorUpdatingStatus", updateErr.Error())
+		c.eventRecorder.Warning("HostEndpoints2ErrorUpdatingStatus", updateErr.Error())
 		return updateErr
 	}
 	return nil
 }
 
-func (c *HostEndpointsController) syncHostEndpoints() error {
-	// host-etc must exist in order to continue. we don't want to lose the etcd-bootstrap host.
-	existing, err := c.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd")
-	if err != nil {
-		return err
-	}
-
+func (c *HostEndpoints2Controller) syncHostEndpoints2() error {
 	required := hostEndpointsAsset()
 
-	discoveryDomain, err := c.getEtcdDiscoveryDomain()
-	if err != nil {
-		return fmt.Errorf("unable to determine etcd discovery domain: %v", err)
-	}
-
-	if required.Annotations == nil {
-		required.Annotations = map[string]string{}
-	}
-	required.Annotations["alpha.installer.openshift.io/dns-suffix"] = discoveryDomain
-
 	// create endpoint addresses for each node
-	network, err := c.networkLister.Get("cluster")
-	if err != nil {
-		return err
-	}
-
 	nodes, err := c.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
 	if err != nil {
 		return fmt.Errorf("unable to list expected etcd member nodes: %v", err)
 	}
 	endpointAddresses := []corev1.EndpointAddress{}
 	for _, node := range nodes {
-		nodeInternalIP, _, err := dnshelpers.GetPreferredInternalIPAddressForNodeName(network, node)
-		if err != nil {
-			return err
+		var nodeInternalIP string
+		for _, nodeAddress := range node.Status.Addresses {
+			if nodeAddress.Type == corev1.NodeInternalIP {
+				nodeInternalIP = nodeAddress.Address
+				break
+			}
 		}
 		if len(nodeInternalIP) == 0 {
 			return fmt.Errorf("unable to determine internal ip address for node %s", node.Name)
 		}
-		dnsName, err := c.getEtcdDNSName(discoveryDomain, nodeInternalIP)
-		if err != nil {
-			return fmt.Errorf("unable to determine etcd member dns name for node %s: %v", node.Name, err)
-		}
 
 		endpointAddresses = append(endpointAddresses, corev1.EndpointAddress{
 			IP:       nodeInternalIP,
-			Hostname: strings.TrimSuffix(dnsName, "."+discoveryDomain),
 			NodeName: &node.Name,
 		})
 	}
 
-	// if etcd-bootstrap exists, keep it
-	for _, endpointAddress := range existing.Subsets[0].Addresses {
-		if endpointAddress.Hostname == "etcd-bootstrap" {
-			endpointAddresses = append(endpointAddresses, *endpointAddress.DeepCopy())
-			break
-		}
-	}
-
 	required.Subsets[0].Addresses = endpointAddresses
 	if len(required.Subsets[0].Addresses) == 0 {
-		return fmt.Errorf("no etcd member nodes are ready")
+		return fmt.Errorf("no master nodes are present")
 	}
 
 	return c.applyEndpoints(required)
@@ -191,7 +144,7 @@ func (c *HostEndpointsController) syncHostEndpoints() error {
 func hostEndpointsAsset() *corev1.Endpoints {
 	return &corev1.Endpoints{
 		ObjectMeta: v1.ObjectMeta{
-			Name:      "host-etcd",
+			Name:      "host-etcd-2",
 			Namespace: operatorclient.TargetNamespace,
 		},
 		Subsets: []corev1.EndpointSubset{
@@ -208,55 +161,8 @@ func hostEndpointsAsset() *corev1.Endpoints {
 	}
 }
 
-func (c *HostEndpointsController) getEtcdDiscoveryDomain() (string, error) {
-	infrastructure, err := c.infrastructureLister.Get("cluster")
-	if err != nil {
-		return "", err
-	}
-	etcdDiscoveryDomain := infrastructure.Status.EtcdDiscoveryDomain
-	if len(etcdDiscoveryDomain) == 0 {
-		return "", fmt.Errorf("infrastructures.config.openshit.io/cluster missing .status.etcdDiscoveryDomain")
-	}
-	return etcdDiscoveryDomain, nil
-}
-
-func (c *HostEndpointsController) getEtcdDNSName(discoveryDomain, ip string) (string, error) {
-	dnsName, err := reverseLookup("etcd-server-ssl", "tcp", discoveryDomain, ip)
-	if err != nil {
-		return "", err
-	}
-	return dnsName, nil
-}
-
-// returns the target from the SRV record that resolves to ip.
-func reverseLookup(service, proto, name, ip string) (string, error) {
-	_, srvs, err := net.LookupSRV(service, proto, name)
-	if err != nil {
-		return "", err
-	}
-	selfTarget := ""
-	for _, srv := range srvs {
-		klog.V(4).Infof("checking against %s", srv.Target)
-		addrs, err := net.LookupHost(srv.Target)
-		if err != nil {
-			return "", fmt.Errorf("could not resolve member %q", srv.Target)
-		}
-
-		for _, addr := range addrs {
-			if addr == ip {
-				selfTarget = strings.Trim(srv.Target, ".")
-				break
-			}
-		}
-	}
-	if selfTarget == "" {
-		return "", fmt.Errorf("could not find self")
-	}
-	return selfTarget, nil
-}
-
-func (c *HostEndpointsController) applyEndpoints(required *corev1.Endpoints) error {
-	existing, err := c.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd")
+func (c *HostEndpoints2Controller) applyEndpoints(required *corev1.Endpoints) error {
+	existing, err := c.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd-2")
 	if errors.IsNotFound(err) {
 		_, err := c.endpointsClient.Endpoints(operatorclient.TargetNamespace).Create(required)
 		if err != nil {
@@ -344,7 +250,7 @@ func newEndpointAddressSliceComparator(endpointAddresses []corev1.EndpointAddres
 	}
 }
 
-func (c *HostEndpointsController) Run(ctx context.Context, workers int) {
+func (c *HostEndpoints2Controller) Run(ctx context.Context, workers int) {
 	defer utilruntime.HandleCrash()
 	defer c.queue.ShutDown()
 	klog.Infof("Starting HostEtcdEndpointsController")
@@ -356,12 +262,12 @@ func (c *HostEndpointsController) Run(ctx context.Context, workers int) {
 	<-ctx.Done()
 }
 
-func (c *HostEndpointsController) runWorker() {
+func (c *HostEndpoints2Controller) runWorker() {
 	for c.processNextWorkItem() {
 	}
 }
 
-func (c *HostEndpointsController) processNextWorkItem() bool {
+func (c *HostEndpoints2Controller) processNextWorkItem() bool {
 	dsKey, quit := c.queue.Get()
 	if quit {
 		return false
@@ -379,7 +285,7 @@ func (c *HostEndpointsController) processNextWorkItem() bool {
 	return true
 }
 
-func (c *HostEndpointsController) eventHandler() cache.ResourceEventHandler {
+func (c *HostEndpoints2Controller) eventHandler() cache.ResourceEventHandler {
 	// eventHandler queues the operator to check spec and status
 	return cache.ResourceEventHandlerFuncs{
 		AddFunc:    func(obj interface{}) { c.queue.Add(workQueueKey) },

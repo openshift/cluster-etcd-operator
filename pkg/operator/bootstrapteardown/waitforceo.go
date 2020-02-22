@@ -60,10 +60,10 @@ func waitForEtcdBootstrap(ctx context.Context, operatorRestClient rest.Interface
 }
 
 func done(etcd *operatorv1.Etcd) (bool, error) {
-	if operatorv1helpers.IsOperatorConditionTrue(etcd.Status.Conditions, conditionBootstrapRemoved) {
+	if operatorv1helpers.IsOperatorConditionTrue(etcd.Status.Conditions, "EtcdRunningInCluster") {
 		klog.Info("Cluster etcd operator bootstrapped successfully")
 		return true, nil
 	}
-	klog.Infof("waiting on condition %s in etcd CR %s/%s to be True.", conditionBootstrapRemoved, etcd.Namespace, etcd.Name)
+	klog.Infof("waiting on condition %s in etcd CR %s/%s to be True.", "EtcdRunningInCluster", etcd.Namespace, etcd.Name)
 	return false, nil
 }

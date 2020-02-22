@@ -20,6 +20,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdmemberscontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/hostendpointscontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/hostendpointscontroller2"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
@@ -64,8 +65,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorclient.GlobalMachineSpecifiedConfigNamespace,
 		operatorclient.TargetNamespace,
 		operatorclient.OperatorNamespace,
-		"openshift-kube-apiserver",
-		"openshift-etcd",
 		"openshift-machine-config-operator", // TODO remove after quorum-guard is removed from MCO
 	)
 	configInformers := configv1informers.NewSharedInformerFactory(configClient, 10*time.Minute)
@@ -73,7 +72,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	if err != nil {
 		return err
 	}
-	etcdClient := etcdcli.NewEtcdClient(kubeInformersForNamespaces)
+	etcdClient := etcdcli.NewEtcdClient(kubeInformersForNamespaces, configInformers.Config().V1().Networks())
 
 	resourceSyncController, err := resourcesynccontroller.NewResourceSyncController(
 		operatorClient,
@@ -95,7 +94,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 
 	staticResourceController := staticresourcecontroller.NewStaticResourceController(
-		"KubeAPIServerStaticResources",
+		"EtcdStaticResources",
 		etcd_assets.Asset,
 		[]string{
 			"etcd/ns.yaml",
@@ -113,6 +112,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Infrastructures(),
+		configInformers.Config().V1().Networks(),
 		kubeClient,
 		controllerContext.EventRecorder,
 	)
@@ -170,6 +170,13 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		coreClient,
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Infrastructures(),
+		configInformers.Config().V1().Networks(),
+	)
+	hostEtcdEndpointController2 := hostendpointscontroller2.NewHostEndpoints2Controller(
+		operatorClient,
+		controllerContext.EventRecorder,
+		coreClient,
+		kubeInformersForNamespaces,
 	)
 
 	clusterMemberController := clustermembercontroller.NewClusterMemberController(
@@ -187,8 +194,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	bootstrapTeardownController := bootstrapteardown.NewBootstrapTeardownController(
 		operatorClient,
 		kubeClient,
-		kubeInformersForNamespaces,
-		operatorInformers,
 		etcdClient,
 		controllerContext.EventRecorder,
 	)
@@ -203,6 +208,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go targetConfigReconciler.Run(1, ctx.Done())
 	go etcdCertSignerController.Run(1, ctx.Done())
 	go hostEtcdEndpointController.Run(ctx, 1)
+	go hostEtcdEndpointController2.Run(ctx, 1)
 	go resourceSyncController.Run(ctx, 1)
 	go statusController.Run(ctx, 1)
 	go configObserver.Run(ctx, 1)

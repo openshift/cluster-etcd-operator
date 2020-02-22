@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"time"
 
+	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	"go.etcd.io/etcd/pkg/transport"
 	"google.golang.org/grpc"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -23,17 +25,21 @@ import (
 type etcdClientGetter struct {
 	nodeLister      corev1listers.NodeLister
 	endpointsLister corev1listers.EndpointsLister
+	networkLister   configv1listers.NetworkLister
 
 	nodeListerSynced      cache.InformerSynced
 	endpointsListerSynced cache.InformerSynced
+	networkListerSynced   cache.InformerSynced
 }
 
-func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces) EtcdClient {
+func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkInformer configv1informers.NetworkInformer) EtcdClient {
 	return &etcdClientGetter{
 		nodeLister:            kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
 		endpointsLister:       kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
+		networkLister:         networkInformer.Lister(),
 		nodeListerSynced:      kubeInformers.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
 		endpointsListerSynced: kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().HasSynced,
+		networkListerSynced:   networkInformer.Informer().HasSynced,
 	}
 }
 
@@ -44,11 +50,19 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 	if !g.endpointsListerSynced() {
 		return nil, fmt.Errorf("node lister not synced")
 	}
+	if !g.networkListerSynced() {
+		return nil, fmt.Errorf("network lister not synced")
+	}
+
+	network, err := g.networkLister.Get("cluster")
+	if err != nil {
+		return nil, err
+	}
 
 	etcdEndpoints := []string{}
 	nodes, err := g.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
 	for _, node := range nodes {
-		internalIP, err := getInternalIPAddressForNodeName(node)
+		internalIP, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
 		if err != nil {
 			return nil, err
 		}
@@ -98,15 +112,6 @@ func getEtcdClient(endpoints []string) (*clientv3.Client, error) {
 		return nil, err
 	}
 	return cli, err
-}
-
-func getInternalIPAddressForNodeName(node *corev1.Node) (string, error) {
-	for _, currAddress := range node.Status.Addresses {
-		if currAddress.Type == corev1.NodeInternalIP {
-			return currAddress.Address, nil
-		}
-	}
-	return "", fmt.Errorf("node/%s missing %s", node.Name, corev1.NodeInternalIP)
 }
 
 func (g *etcdClientGetter) MemberAdd(peerURL string) error {
