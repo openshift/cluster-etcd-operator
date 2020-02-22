@@ -51,6 +51,7 @@ type EtcdAddress struct {
 	ListenMetricServer string
 	ListenMetricProxy  string
 	LocalHost          string
+	EscapedBootstrapIP string
 }
 
 type TemplateData struct {

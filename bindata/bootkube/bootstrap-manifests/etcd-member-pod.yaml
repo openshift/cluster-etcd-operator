@@ -7,31 +7,6 @@ metadata:
     k8s-app: etcd
 spec:
   initContainers:
-  - name: discovery
-    image: "{{.Images.SetupEtcdEnv}}"
-    command: ["/usr/bin/setup-etcd-environment"]
-    args:
-    - "run"
-    - "--discovery-srv={{.EtcdDiscoveryDomain}}"
-    - "--output-file=/run/etcd/environment"
-    - "--bootstrap-srv=false"
-    - "--v=4"
-    securityContext:
-      privileged: true
-    volumeMounts:
-    - name: discovery
-      mountPath: /run/etcd/
-    - name: data-dir
-      mountPath: /var/lib/etcd/
-    env:
-    - name: ETCD_IPV4_ADDRESS
-      valueFrom:
-        fieldRef:
-          fieldPath: status.hostIP
-    - name: ETCD_DATA_DIR
-      value: "/var/lib/etcd"
-    - name: ETCD_NAME
-      value: "etcd-bootstrap"
   - name: certs
     image: "{{.Images.KubeClientAgent}}"
     command:
@@ -40,8 +15,6 @@ spec:
     - |
       #!/bin/sh
       set -euxo pipefail
-
-      source /run/etcd/environment
 
       [ -e /etc/ssl/etcd/system:etcd-server:{{ .Hostname }}.crt -a \
         -e /etc/ssl/etcd/system:etcd-server:{{ .Hostname }}.key ] || \
@@ -52,7 +25,7 @@ spec:
             --assetsdir=/etc/ssl/etcd \
             --dnsnames={{.EtcdServerCertDNSNames}} \
             --commonname=system:etcd-server:{{ .Hostname }} \
-            --ipaddrs=${ETCD_ESCAPED_IP_ADDRESS},{{ .EtcdAddress.LocalHost }} \
+            --ipaddrs={{ .EtcdAddress.EscapedBootstrapIP }},{{ .EtcdAddress.LocalHost }} \
 
       [ -e /etc/ssl/etcd/system:etcd-peer:{{ .Hostname }}.crt -a \
         -e /etc/ssl/etcd/system:etcd-peer:{{ .Hostname }}.key ] || \
@@ -63,7 +36,7 @@ spec:
             --assetsdir=/etc/ssl/etcd \
             --dnsnames={{.EtcdPeerCertDNSNames}} \
             --commonname=system:etcd-peer:{{ .Hostname }} \
-            --ipaddrs=${ETCD_ESCAPED_IP_ADDRESS} \
+            --ipaddrs={{ .EtcdAddress.EscapedBootstrapIP }} \
 
       [ -e /etc/ssl/etcd/system:etcd-metric:{{ .Hostname }}.crt -a \
         -e /etc/ssl/etcd/system:etcd-metric:{{ .Hostname }}.key ] || \
@@ -74,7 +47,7 @@ spec:
             --assetsdir=/etc/ssl/etcd \
             --dnsnames={{.EtcdServerCertDNSNames}} \
             --commonname=system:etcd-metric:{{ .Hostname }} \
-            --ipaddrs=${ETCD_ESCAPED_IP_ADDRESS} \
+            --ipaddrs={{ .EtcdAddress.EscapedBootstrapIP }} \
     terminationMessagePolicy: FallbackToLogsOnError
     securityContext:
       privileged: true
@@ -95,10 +68,8 @@ spec:
       #!/bin/sh
       set -euo pipefail
 
-      source /run/etcd/environment
-
       exec etcd \
-        --initial-advertise-peer-urls=https://${ETCD_ESCAPED_IP_ADDRESS}:2380 \
+        --initial-advertise-peer-urls=https://{{ .EtcdAddress.EscapedBootstrapIP }}:2380 \
         --cert-file=/etc/ssl/etcd/system:etcd-server:{{ .Hostname }}.crt \
         --key-file=/etc/ssl/etcd/system:etcd-server:{{ .Hostname }}.key \
         --trusted-ca-file=/etc/ssl/etcd/ca.crt \
@@ -107,7 +78,7 @@ spec:
         --peer-key-file=/etc/ssl/etcd/system:etcd-peer:{{ .Hostname }}.key \
         --peer-trusted-ca-file=/etc/ssl/etcd/ca.crt \
         --peer-client-cert-auth=true \
-        --advertise-client-urls=https://${ETCD_ESCAPED_IP_ADDRESS}:2379 \
+        --advertise-client-urls=https://{{ .EtcdAddress.EscapedBootstrapIP }}:2379 \
         --listen-client-urls=https://{{ .EtcdAddress.ListenClient }} \
         --listen-peer-urls=https://{{ .EtcdAddress.ListenPeer }} \
         --listen-metrics-urls=https://{{ .EtcdAddress.ListenMetricServer }} \
@@ -149,10 +120,8 @@ spec:
       #!/bin/sh
       set -euo pipefail
 
-      source /run/etcd/environment
-
       exec etcd grpc-proxy start \
-        --endpoints https://${ETCD_ESCAPED_IP_ADDRESS}:9978 \
+        --endpoints https://{{ .EtcdAddress.EscapedBootstrapIP }}:9978 \
         --metrics-addr https://{{ .EtcdAddress.ListenMetricProxy }}\
         --listen-addr {{ .EtcdAddress.LocalHost }}:9977 \
         --key /etc/ssl/etcd/system:etcd-peer:{{ .Hostname }}.key \
