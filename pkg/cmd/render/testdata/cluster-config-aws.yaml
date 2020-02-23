@@ -1,0 +1,54 @@
+apiVersion: v1
+data:
+  install-config: |
+    apiVersion: v1
+    baseDomain: devcluster.openshift.com
+    compute:
+    - architecture: amd64
+      hyperthreading: Enabled
+      name: worker
+      platform: {}
+      replicas: 3
+    controlPlane:
+      architecture: amd64
+      hyperthreading: Enabled
+      name: master
+      platform:
+        aws:
+          rootVolume:
+            iops: 0
+            size: 120
+            type: gp2
+          type: m4.xlarge
+          zones:
+          - us-east-1a
+          - us-east-1b
+          - us-east-1c
+          - us-east-1d
+          - us-east-1e
+          - us-east-1f
+      replicas: 3
+    metadata:
+      creationTimestamp: null
+      name: sbatsche-tester-2020-02-22
+    networking:
+      clusterNetwork:
+      - cidr: 10.128.0.0/14
+        hostPrefix: 23
+      machineCIDR: 10.0.0.0/16
+      machineNetwork:
+      - cidr: 10.0.0.0/16
+      networkType: OpenShiftSDN
+      serviceNetwork:
+      - 172.30.0.0/16
+    platform:
+      aws:
+        region: us-east-1
+    publish: External
+    pullSecret: ""
+    sshKey: |
+      ssh-rsa "" 
+kind: ConfigMap
+metadata:
+  name: cluster-config-v1
+  namespace: kube-system

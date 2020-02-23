@@ -11,100 +11,12 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render/options"
 )
 
-var (
-	expectedServiceIPv4CIDR        = []string{"172.30.0.0/16"}
-	expectedServiceMixedCIDR       = []string{"172.30.0.0/16", "2001:db8::/32"}
-	expectedServiceMixedSwapCIDR   = []string{"2001:db8::/32", "172.30.0.0/16"}
-	expectedServiceSingleStackCIDR = []string{"2001:db8::/32"}
-
-	clusterAPIConfig = `
-apiVersion: machine.openshift.io/v1beta1
-kind: Cluster
-metadata:
-  creationTimestamp: null
-  name: cluster
-  namespace: openshift-machine-api
-spec:
-  clusterNetwork:
-    pods:
-      cidrBlocks:
-      - 2001:db8::/32
-    serviceDomain: ""
-    services:
-      cidrBlocks:
-        - 172.30.0.0/16
-  providerSpec: {}
-status: {}
-`
-	networkConfigIpv4 = `
-apiVersion: config.openshift.io/v1
-kind: Network
-metadata:
-  creationTimestamp: null
-  name: cluster
-spec:
-  clusterNetwork:
-    - cidr: 10.128.0.0/14
-      hostPrefix: 23
-  networkType: OpenShiftSDN
-  serviceNetwork:
-    - 172.30.0.0/16
-status: {}
-`
-	networkConfigMixed = `
-apiVersion: config.openshift.io/v1
-kind: Network
-metadata:
-  creationTimestamp: null
-  name: cluster
-spec:
-  clusterNetwork:
-    - cidr: 10.128.0.0/14
-      hostPrefix: 23
-  networkType: OpenShiftSDN
-  serviceNetwork:
-    - 172.30.0.0/16
-    - 2001:db8::/32
-status: {}
-`
-	networkConfigMixedSwap = `
-apiVersion: config.openshift.io/v1
-kind: Network
-metadata:
-  creationTimestamp: null
-  name: cluster
-spec:
-  clusterNetwork:
-    - cidr: 10.128.10.0/14
-      hostPrefix: 23
-  networkType: OpenShiftSDN
-  serviceNetwork:
-    - 2001:db8::/32
-    - 172.30.0.0/16
-status: {}
-`
-	networkConfigIPv6SingleStack = `
-apiVersion: config.openshift.io/v1
-kind: Network
-metadata:
-  creationTimestamp: null
-  name: cluster
-spec:
-  clusterNetwork:
-    - cidr: 10.128.0.0/14
-      hostPrefix: 23
-  networkType: OpenShiftSDN
-  serviceNetwork:
-    - 2001:db8::/32
-status: {}
-`
-)
-
 type testConfig struct {
-	t                    *testing.T
-	clusterNetworkConfig string
-	want                 TemplateData
-	bootstrapIP          string
+	t                 *testing.T
+	networkConfigFile string
+	clusterConfigFile string
+	want              TemplateData
+	bootstrapIP       string
 }
 
 func TestRenderIpv4(t *testing.T) {
@@ -121,10 +33,11 @@ func TestRenderIpv4(t *testing.T) {
 	}
 
 	config := &testConfig{
-		t:                    t,
-		clusterNetworkConfig: networkConfigIpv4,
-		want:                 want,
-		bootstrapIP:          "10.128.0.12",
+		t:                 t,
+		clusterConfigFile: "cluster-config-aws.yaml",
+		networkConfigFile: "network-config.yaml",
+		want:              want,
+		bootstrapIP:       "10.128.0.12",
 	}
 
 	testRender(config)
@@ -139,16 +52,6 @@ func testRender(tc *testConfig) {
 
 	defer os.RemoveAll(dir) // clean up
 
-	clusterConfigFile, err := ioutil.TempFile(dir, "cluster-network-02-config.*.yaml")
-	if err != nil {
-		tc.t.Fatal(err)
-	}
-	defer clusterConfigFile.Close()
-
-	if err := writeFile(tc.clusterNetworkConfig, clusterConfigFile); err != nil {
-		tc.t.Fatal(err)
-	}
-
 	generic := options.GenericOptions{
 		AssetInputDir:    dir,
 		AssetOutputDir:   dir,
@@ -157,11 +60,12 @@ func testRender(tc *testConfig) {
 	}
 
 	render := renderOpts{
-		generic:           generic,
-		manifest:          *options.NewManifestOptions("etcd"),
-		errOut:            errOut,
-		clusterConfigFile: clusterConfigFile.Name(),
-		bootstrapIP:       tc.bootstrapIP,
+		generic:            generic,
+		manifest:           *options.NewManifestOptions("etcd"),
+		errOut:             errOut,
+		clusterConfigFile:  filepath.Join("testdata", tc.clusterConfigFile),
+		clusterNetworkFile: filepath.Join("testdata", tc.networkConfigFile),
+		bootstrapIP:        tc.bootstrapIP,
 	}
 
 	if err := render.Run(); err != nil {
@@ -183,32 +87,11 @@ func TestTemplateDataIpv4(t *testing.T) {
 	}
 
 	config := &testConfig{
-		t:                    t,
-		clusterNetworkConfig: networkConfigIpv4,
-		want:                 want,
-		bootstrapIP:          "10.128.0.12",
-	}
-	testTemplateData(config)
-}
-
-func TestTemplateDataMixed(t *testing.T) {
-	want := TemplateData{
-		ManifestConfig: options.ManifestConfig{
-			EtcdAddress: options.EtcdAddress{
-				LocalHost: "127.0.0.1",
-			},
-		},
-		ClusterCIDR:     []string{"10.128.10.0/14"},
-		ServiceCIDR:     []string{"2001:db8::/32", "172.30.0.0/16"},
-		SingleStackIPv6: false,
-		BootstrapIP:     "10.128.0.12",
-	}
-
-	config := &testConfig{
-		t:                    t,
-		clusterNetworkConfig: networkConfigMixedSwap,
-		want:                 want,
-		bootstrapIP:          "10.128.0.12",
+		t:                 t,
+		clusterConfigFile: "cluster-config-aws.yaml",
+		networkConfigFile: "network-config.yaml",
+		want:              want,
+		bootstrapIP:       "10.128.0.12",
 	}
 	testTemplateData(config)
 }
@@ -220,17 +103,18 @@ func TestTemplateDataSingleStack(t *testing.T) {
 				LocalHost: "[::1]",
 			},
 		},
-		ClusterCIDR:     []string{"10.128.0.0/14"},
-		ServiceCIDR:     []string{"2001:db8::/32"},
+		ClusterCIDR:     []string{"fd01::/48"},
+		ServiceCIDR:     []string{"fd02::/112"},
 		SingleStackIPv6: true,
 		BootstrapIP:     "fe80::d66c:724c:13d4:829c",
 	}
 
 	config := &testConfig{
-		t:                    t,
-		clusterNetworkConfig: networkConfigIPv6SingleStack,
-		want:                 want,
-		bootstrapIP:          "fe80::d66c:724c:13d4:829c",
+		t:                 t,
+		clusterConfigFile: "singlestack/cluster-config-azure.yaml",
+		networkConfigFile: "singlestack/network-config.yaml",
+		want:              want,
+		bootstrapIP:       "fe80::d66c:724c:13d4:829c",
 	}
 	testTemplateData(config)
 }
@@ -243,16 +127,6 @@ func testTemplateData(tc *testConfig) {
 	}
 	defer os.RemoveAll(dir) // clean up
 
-	clusterConfigFile, err := ioutil.TempFile(dir, "cluster-network-02-config.*.yaml")
-	if err != nil {
-		tc.t.Fatal(err)
-	}
-	defer clusterConfigFile.Close()
-
-	if err := writeFile(tc.clusterNetworkConfig, clusterConfigFile); err != nil {
-		tc.t.Fatal(err)
-	}
-
 	generic := options.GenericOptions{
 		AssetInputDir:    dir,
 		AssetOutputDir:   dir,
@@ -261,11 +135,12 @@ func testTemplateData(tc *testConfig) {
 	}
 
 	render := &renderOpts{
-		generic:           generic,
-		manifest:          *options.NewManifestOptions("etcd"),
-		errOut:            errOut,
-		clusterConfigFile: clusterConfigFile.Name(),
-		bootstrapIP:       tc.bootstrapIP,
+		generic:            generic,
+		manifest:           *options.NewManifestOptions("etcd"),
+		errOut:             errOut,
+		clusterConfigFile:  filepath.Join("testdata", tc.clusterConfigFile),
+		clusterNetworkFile: filepath.Join("testdata", tc.networkConfigFile),
+		bootstrapIP:        tc.bootstrapIP,
 	}
 
 	got, err := newTemplateData(render)
