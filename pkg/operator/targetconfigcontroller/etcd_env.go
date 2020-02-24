@@ -99,26 +99,18 @@ func getAllClusterMembers(envVarContext envVarContext) (map[string]string, error
 		endpoints = append(endpoints, fmt.Sprintf("https://%s:2379", endpointIP))
 	}
 
-	hostEtcdEndpoints, err := envVarContext.endpointLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd")
+	hostEtcdEndpoints, err := envVarContext.endpointLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd-2")
 	if err != nil {
 		return nil, err
 	}
-	for _, endpointAddress := range hostEtcdEndpoints.Subsets[0].Addresses {
-		if endpointAddress.Hostname == "etcd-bootstrap" {
-
-			isIPV4, err := dnshelpers.IsIPv4(endpointAddress.IP)
-			if err != nil {
-				return nil, err
-			}
-			if isIPV4 {
-				endpoints = append(endpoints, "https://"+endpointAddress.IP+":2379")
-			} else {
-				endpoints = append(endpoints, "https://["+endpointAddress.IP+"]:2379")
-			}
-
-			break
+	if bootstrapIP := hostEtcdEndpoints.Annotations["alpha.installer.openshift.io/etcd-bootstrap"]; len(bootstrapIP) > 0 {
+		urlHost, err := dnshelpers.GetURLHostForIP(bootstrapIP)
+		if err != nil {
+			return nil, err
 		}
+		endpoints = append(endpoints, "https://"+urlHost+":2379")
 	}
+
 	ret["ALL_ETCD_ENDPOINTS"] = strings.Join(endpoints, ",")
 
 	return ret, nil
