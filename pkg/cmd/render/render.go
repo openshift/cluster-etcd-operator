@@ -13,6 +13,7 @@ import (
 
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render/options"
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/networkhelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 
 	"github.com/ghodss/yaml"
@@ -269,7 +270,7 @@ func (t *TemplateData) getBootstrapIP() (string, error) {
 	if t.BootstrapIP != "" {
 		return t.BootstrapIP, nil
 	}
-	ips, err := ipAddrs()
+	ips, err := networkhelpers.IpAddrs()
 	if err != nil {
 		return "", err
 	}
@@ -277,7 +278,7 @@ func (t *TemplateData) getBootstrapIP() (string, error) {
 	// If MachineCIDR is populated we validate if the IPs are on the same netwotk
 	if t.MachineCIDR != "" {
 		for _, addr := range ips {
-			isBootstrapIp, err := dnshelpers.IsNetworkContainIp(t.MachineCIDR, addr)
+			isBootstrapIp, err := networkhelpers.IsNetworkContainIp(t.MachineCIDR, addr)
 			if err != nil {
 				return "", err
 			}
@@ -291,13 +292,16 @@ func (t *TemplateData) getBootstrapIP() (string, error) {
 	//TODO this will not be nessisary in the future and should be removed.
 	// fall back to returning first IPv4 or IPv6 address
 	for _, addr := range ips {
-		ip := net.ParseIP(addr)
+		isIPV4, err := dnshelpers.IsIPv4(addr)
+		if err != nil {
+			return "", err
+		}
 		// IPv6
-		if t.SingleStackIPv6 && ip.To4() == nil {
+		if t.SingleStackIPv6 && !isIPV4 {
 			return addr, nil
 		}
 		// IPv4
-		if !t.SingleStackIPv6 && ip.To4() != nil {
+		if !t.SingleStackIPv6 && isIPV4 {
 			return addr, nil
 		}
 	}
@@ -403,11 +407,32 @@ func (t *TemplateData) setMachineCIDR(clusterConfigFile string) error {
 	if err != nil {
 		return err
 	}
-	machineCIDR := networking["machineNetwork"].([]interface{})[0].(map[string]interface{})["cidr"]
-	if machineCIDR != "" {
-		t.MachineCIDR = fmt.Sprintf("%v", machineCIDR)
-		return nil
+
+	// iterate machineNetwork from install-config and use correct family based on isSingleStackIPv6
+	for _, network := range networking["machineNetwork"].([]interface{})[0].(map[string]interface{}) {
+		// type assert
+		networkString := fmt.Sprintf("%v", network)
+		broadcast, _, err := net.ParseCIDR(networkString)
+		if err != nil {
+			return err
+		}
+		isIPV4, err := dnshelpers.IsIPv4(broadcast.String())
+		if err != nil {
+			return err
+		}
+		// IPv4
+		if isIPV4 && !t.SingleStackIPv6 {
+			t.MachineCIDR = networkString
+			return nil
+		}
+		// IPv6
+		if !isIPV4 && t.SingleStackIPv6 {
+			t.MachineCIDR = networkString
+			return nil
+		}
 	}
+
+	// depricated
 	if networking["machineCIDR"] != "" {
 		t.MachineCIDR = fmt.Sprintf("%v", networking["machineCIDR"])
 		return nil
@@ -475,21 +500,6 @@ func (t *TemplateData) setSingleStackIPv6() error {
 	return nil
 }
 
-// TODO: add to util
-func EscapeIpv6Address(addr string) (string, error) {
-	if ip := net.ParseIP(addr); ip == nil {
-		return "", fmt.Errorf("invalid ipaddress: %s", addr)
-	}
-	ip := net.ParseIP(addr)
-	switch {
-	case ip == nil:
-		return "", fmt.Errorf("invalid ipaddress: %s", addr)
-	case ip.To4() != nil:
-		return "", fmt.Errorf("address must be IPv6: %s", addr)
-	}
-	return fmt.Sprintf("[%s]", addr), nil
-}
-
 // WriteFiles writes the manifests and the bootstrap config file.
 func WriteFiles(opt *options.GenericOptions, fileConfig *options.FileConfig, templateData interface{}, additionalPredicates ...assets.FileInfoPredicate) error {
 	// write assets
@@ -533,29 +543,4 @@ func mustReadTemplateFile(fname string) options.Template {
 		panic(fmt.Sprintf("Failed to load %q: %v", fname, err))
 	}
 	return options.Template{FileName: fname, Content: bs}
-}
-
-func ipAddrs() ([]string, error) {
-	var ips []string
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return ips, err
-	}
-	for _, addr := range addrs {
-		var ip net.IP
-		switch v := addr.(type) {
-		case *net.IPNet:
-			ip = v.IP
-		case *net.IPAddr:
-			ip = v.IP
-		}
-		if ip == nil {
-			continue
-		}
-		if !ip.IsGlobalUnicast() {
-			continue // we only want global unicast address
-		}
-		ips = append(ips, ip.String())
-	}
-	return ips, nil
 }
