@@ -24,6 +24,45 @@ spec:
         export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
         export ETCD_INITIAL_CLUSTER="${ETCD_NAME}=https://${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}:2380"
         env | grep ETCD | grep -v NODE
+        export ETCD_NODE_PEER_URL=https://${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}:2380
+
+        # checking if data directory is empty, if not etcdctl restore will fail
+        if [ ! -z $(ls -A "/var/lib/etcd") ]; then
+          echo "please delete the contents of data directory before restoring, running the restore script will do this for you"
+          exit 1
+        fi
+
+        # check if we have backup file to be restored and if the backup file is not currently
+        # being copied, exit non-zero if copying continues for more than 5 seconds
+        if [ ! -f /var/lib/etcd-backup/snapshot.db ]; then
+          echo "please make a copy of the snapshot db file, then move that copy to /var/lib/etcd-backup/snapshot.db"
+          exit 1
+        else
+          filesize=$(stat --format=%s "/var/lib/etcd-backup/snapshot.db")
+          for i in `seq 1 5`;
+          do
+            newfilesize=$(stat --format=%s "/var/lib/etcd-backup/snapshot.db")
+            if [ "$filesize" == "$newfilesize" ]; then
+              break
+            fi
+            sleep 1
+          done
+          if [ "$filesize" != "$newfilesize" ]; then
+            echo "file size is changing for more than 5 seconds"
+            exit 1
+          fi
+        fi
+
+        UUID=$(uuidgen)
+        echo "restoring to a single node cluster"
+        ETCDCTL_API=3 /usr/bin/etcdctl snapshot restore /var/lib/etcd-backup/snapshot.db \
+         --name  $ETCD_NAME \
+         --initial-cluster=$ETCD_INITIAL_CLUSTER \
+         --initial-cluster-token "openshift-etcd-{$UUID:0:10}" \
+         --initial-advertise-peer-urls $ETCD_NODE_PEER_URL \
+         --data-dir="/var/lib/etcd/restore-{$UUID:0:10}"
+
+        mv /var/lib/etcd/restore-{$UUID:0:10}/ /var/lib/etcd/
 
         set -x
         exec etcd \
@@ -70,6 +109,8 @@ ${COMPUTED_ENV_VARS}
         name: cert-dir
       - mountPath: /var/lib/etcd/
         name: data-dir
+      - mountPath: /var/lib/etcd-backup/
+        name: backup-dir
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
@@ -91,4 +132,8 @@ ${COMPUTED_ENV_VARS}
         path: /var/lib/etcd
         type: ""
       name: data-dir
+    - hostPath:
+        path: /var/lib/etcd-backup
+        type: ""
+      name: backup-dir
 
