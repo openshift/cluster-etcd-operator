@@ -186,6 +186,8 @@ spec:
         - mountPath: /etc/kubernetes/static-pod-certs
           name: cert-dir
   containers:
+  # The etcdctl container should always be first. It is intended to be used
+  # to open a remote shell via ` + "`" + `oc rsh` + "`" + ` that is ready to run ` + "`" + `etcdctl` + "`" + `.
   - name: etcdctl
     image: ${IMAGE}
     imagePullPolicy: IfNotPresent
@@ -222,11 +224,7 @@ ${COMPUTED_ENV_VARS}
         #!/bin/sh
         set -euo pipefail
 
-        ETCDCTL="etcdctl --cacert=/etc/kubernetes/static-pod-resources/configmaps/etcd-serving-ca/ca-bundle.crt \
-                           --cert=/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt \
-                           --key=/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key \
-                           --endpoints=${ALL_ETCD_ENDPOINTS}"
-        ${ETCDCTL} member list || true
+        etcdctl member list || true
 
         # this has a non-zero return code if the command is non-zero.  If you use an export first, it doesn't and you
         # will succeed when you should fail.
