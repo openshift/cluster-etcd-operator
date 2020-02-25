@@ -231,6 +231,7 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 	for _, member := range membersResp.Members {
 		if len(member.ClientURLs) == 0 {
 			unhealthyMembers = append(unhealthyMembers, member)
+			continue
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
