@@ -143,7 +143,7 @@ func getEscapedIPAddress(envVarContext envVarContext) (map[string]string, error)
 		if err != nil {
 			return nil, err
 		}
-		ret[fmt.Sprintf("NODE_%s_IP", envVarSafe(nodeInfo.NodeName))] = "[" + escapedIPAddress + "]"
+		ret[fmt.Sprintf("NODE_%s_IP", envVarSafe(nodeInfo.NodeName))] = escapedIPAddress
 	}
 
 	return ret, nil
