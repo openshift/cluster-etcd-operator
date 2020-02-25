@@ -245,5 +245,9 @@ var CertConfigMaps = []revision.RevisionResource{
 }
 
 var CertSecrets = []revision.RevisionResource{
-	//{Name: "etcd-peer-client"},
+	// these are also copied to certs to have a constant file location so we can refer to them in various recovery scripts
+	// and in the PDB
+	{Name: "etcd-all-peer"},
+	{Name: "etcd-all-serving"},
+	{Name: "etcd-all-serving-metrics"},
 }

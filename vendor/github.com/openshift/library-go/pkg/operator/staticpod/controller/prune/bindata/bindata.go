@@ -64,8 +64,10 @@ spec:
     resources:
       requests:
         memory: 100M
+        cpu: 150m
       limits:
         memory: 100M
+        cpu: 150m
     securityContext:
       privileged: true
       runAsUser: 0
