@@ -119,11 +119,20 @@ func (c TargetConfigController) sync() error {
 func createTargetConfig(c TargetConfigController, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec, operatorStatus *operatorv1.StaticPodOperatorStatus) (bool, error) {
 	errors := []error{}
 
-	_, _, err := manageEtcdConfig(c.kubeClient.CoreV1(), recorder, operatorSpec)
+	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, operatorStatus, c.targetImagePullSpec, c.operatorImagePullSpec)
+	if err != nil {
+		return false, err
+	}
+
+	_, _, err = manageEtcdConfig(c.kubeClient.CoreV1(), recorder, operatorSpec)
 	if err != nil {
 		errors = append(errors, fmt.Errorf("%q: %v", "configmap/config", err))
 	}
-	_, _, err = c.managePod(c.kubeClient.CoreV1(), recorder, operatorSpec, operatorStatus, c.targetImagePullSpec, c.operatorImagePullSpec)
+	_, _, err = c.manageStandardPod(contentReplacer, c.kubeClient.CoreV1(), recorder, operatorSpec)
+	if err != nil {
+		errors = append(errors, fmt.Errorf("%q: %v", "configmap/etcd-pod", err))
+	}
+	_, _, err = c.manageRecoveryPod(contentReplacer, c.kubeClient.CoreV1(), recorder, operatorSpec)
 	if err != nil {
 		errors = append(errors, fmt.Errorf("%q: %v", "configmap/etcd-pod", err))
 	}
@@ -185,7 +194,7 @@ func loglevelToKlog(logLevel operatorv1.LogLevel) string {
 	}
 }
 
-func (c *TargetConfigController) managePod(client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec, operatorStatus *operatorv1.StaticPodOperatorStatus, imagePullSpec, operatorImagePullSpec string) (*corev1.ConfigMap, bool, error) {
+func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv1.StaticPodOperatorSpec, operatorStatus *operatorv1.StaticPodOperatorStatus, imagePullSpec, operatorImagePullSpec string) (*strings.Replacer, error) {
 	envVarMap, err := getEtcdEnvVars(envVarContext{
 		spec:                 *operatorSpec,
 		status:               *operatorStatus,
@@ -195,7 +204,7 @@ func (c *TargetConfigController) managePod(client coreclientv1.ConfigMapsGetter,
 		networkLister:        c.networkLister,
 	})
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	envVarLines := []string{}
 	for _, k := range sets.StringKeySet(envVarMap).List() {
@@ -204,22 +213,36 @@ func (c *TargetConfigController) managePod(client coreclientv1.ConfigMapsGetter,
 		envVarLines = append(envVarLines, fmt.Sprintf("        value: %q", v))
 	}
 
-	podBytes := etcd_assets.MustAsset("etcd/pod.yaml")
-	r := strings.NewReplacer(
+	return strings.NewReplacer(
 		"${IMAGE}", imagePullSpec,
 		"${OPERATOR_IMAGE}", operatorImagePullSpec,
 		"${VERBOSITY}", loglevelToKlog(operatorSpec.LogLevel),
 		"${LISTEN_ON_ALL_IPS}", "0.0.0.0", // TODO this needs updating to detect ipv6-ness
 		"${LOCALHOST_IP}", "127.0.0.1", // TODO this needs updating to detect ipv6-ness
 		"${COMPUTED_ENV_VARS}", strings.Join(envVarLines, "\n"), // lacks beauty, but it works
-	)
-	substitutedPodString := r.Replace(string(podBytes))
+	), nil
+}
 
-	configMap := resourceread.ReadConfigMapV1OrDie(etcd_assets.MustAsset("etcd/pod-cm.yaml"))
-	configMap.Data["pod.yaml"] = substitutedPodString
-	configMap.Data["forceRedeploymentReason"] = operatorSpec.ForceRedeploymentReason
-	configMap.Data["version"] = version.Get().String()
-	return resourceapply.ApplyConfigMap(client, recorder, configMap)
+func (c *TargetConfigController) manageRecoveryPod(substitutionReplacer *strings.Replacer, client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
+	podBytes := etcd_assets.MustAsset("etcd/restore-pod.yaml")
+	substitutedPodString := substitutionReplacer.Replace(string(podBytes))
+
+	podConfigMap := resourceread.ReadConfigMapV1OrDie(etcd_assets.MustAsset("etcd/restore-pod-cm.yaml"))
+	podConfigMap.Data["pod.yaml"] = substitutedPodString
+	podConfigMap.Data["forceRedeploymentReason"] = operatorSpec.ForceRedeploymentReason
+	podConfigMap.Data["version"] = version.Get().String()
+	return resourceapply.ApplyConfigMap(client, recorder, podConfigMap)
+}
+
+func (c *TargetConfigController) manageStandardPod(substitutionReplacer *strings.Replacer, client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
+	podBytes := etcd_assets.MustAsset("etcd/pod.yaml")
+	substitutedPodString := substitutionReplacer.Replace(string(podBytes))
+
+	podConfigMap := resourceread.ReadConfigMapV1OrDie(etcd_assets.MustAsset("etcd/pod-cm.yaml"))
+	podConfigMap.Data["pod.yaml"] = substitutedPodString
+	podConfigMap.Data["forceRedeploymentReason"] = operatorSpec.ForceRedeploymentReason
+	podConfigMap.Data["version"] = version.Get().String()
+	return resourceapply.ApplyConfigMap(client, recorder, podConfigMap)
 }
 
 // Run starts the etcd and blocks until stopCh is closed.
