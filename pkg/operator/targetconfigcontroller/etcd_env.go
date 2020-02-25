@@ -30,7 +30,7 @@ var envVarFns = []envVarFunc{
 	getDNSName,
 	getFixedEtcdEnvVars,
 	getEtcdName,
-	getAllClusterMembers,
+	getAllEtcdEndpoints,
 	getEtcdctlEnvVars,
 }
 
@@ -78,7 +78,7 @@ func getFixedEtcdEnvVars(envVarContext envVarContext) (map[string]string, error)
 }
 
 func getEtcdctlEnvVars(envVarContext envVarContext) (map[string]string, error) {
-	envVars, err := getAllClusterMembers(envVarContext)
+	endpoints, err := getEtcdGrpcEndpoints(envVarContext)
 	if err != nil {
 		return nil, err
 	}
@@ -87,47 +87,53 @@ func getEtcdctlEnvVars(envVarContext envVarContext) (map[string]string, error) {
 		"ETCDCTL_CACERT":    "/etc/kubernetes/static-pod-resources/configmaps/etcd-serving-ca/ca-bundle.crt",
 		"ETCDCTL_CERT":      "/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt",
 		"ETCDCTL_KEY":       "/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key",
-		"ETCDCTL_ENDPOINTS": envVars["ALL_ETCD_ENDPOINTS"],
+		"ETCDCTL_ENDPOINTS": endpoints,
 	}, nil
 }
 
-func getAllClusterMembers(envVarContext envVarContext) (map[string]string, error) {
+func getEtcdGrpcEndpoints(envVarContext envVarContext) (string, error) {
 	network, err := envVarContext.networkLister.Get("cluster")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-
-	ret := map[string]string{}
 
 	endpoints := []string{}
 	for _, nodeInfo := range envVarContext.status.NodeStatuses {
 		node, err := envVarContext.nodeLister.Get(nodeInfo.NodeName)
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 
 		endpointIP, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 		endpoints = append(endpoints, fmt.Sprintf("https://%s:2379", endpointIP))
 	}
 
 	hostEtcdEndpoints, err := envVarContext.endpointLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd-2")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	if bootstrapIP := hostEtcdEndpoints.Annotations["alpha.installer.openshift.io/etcd-bootstrap"]; len(bootstrapIP) > 0 {
 		urlHost, err := dnshelpers.GetURLHostForIP(bootstrapIP)
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 		endpoints = append(endpoints, "https://"+urlHost+":2379")
 	}
 
-	ret["ALL_ETCD_ENDPOINTS"] = strings.Join(endpoints, ",")
+	return strings.Join(endpoints, ","), nil
+}
 
-	return ret, nil
+func getAllEtcdEndpoints(envVarContext envVarContext) (map[string]string, error) {
+	endpoints, err := getEtcdGrpcEndpoints(envVarContext)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{
+		"ALL_ETCD_ENDPOINTS": endpoints,
+	}, nil
 }
 
 func getEtcdName(envVarContext envVarContext) (map[string]string, error) {
