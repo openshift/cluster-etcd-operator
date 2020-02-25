@@ -52,7 +52,7 @@ spec:
                            --cert=/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt \
                            --key=/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key \
                            --endpoints=${ALL_ETCD_ENDPOINTS}"
-        ${ETCDCTL} member list
+        ${ETCDCTL} member list || true
 
         # this has a non-zero return code if the command is non-zero.  If you use an export first, it doesn't and you
         # will succeed when you should fail.
