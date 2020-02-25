@@ -30,6 +30,18 @@ func GetEscapedPreferredInternalIPAddressForNodeName(network *configv1.Network, 
 	}
 }
 
+func GetURLHostForIP(ip string) (string, error) {
+	isIPV4, err := IsIPv4(ip)
+	if err != nil {
+		return "", err
+	}
+	if isIPV4 {
+		return ip, nil
+	}
+
+	return "[" + ip + "]", nil
+}
+
 // GetPreferredInternalIPAddressForNodeName returns the first internal ip address of the correct family and the family
 func GetPreferredInternalIPAddressForNodeName(network *configv1.Network, node *corev1.Node) (string, string, error) {
 	ipFamily, err := GetPreferredIPFamily(network)
