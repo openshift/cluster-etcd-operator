@@ -186,6 +186,31 @@ spec:
         - mountPath: /etc/kubernetes/static-pod-certs
           name: cert-dir
   containers:
+  - name: etcdctl
+    image: ${IMAGE}
+    imagePullPolicy: IfNotPresent
+    terminationMessagePolicy: FallbackToLogsOnError
+    command:
+      - "/bin/bash"
+      - "-c"
+      - "trap: TERM INT; sleep infinity & wait"
+    resources:
+      requests:
+        memory: 60Mi
+        cpu: 30m
+    volumeMounts:
+      - mountPath: /etc/kubernetes/manifests
+        name: static-pod-dir
+      - mountPath: /etc/kubernetes/etcd-backup-dir
+        name: etcd-backup-dir
+      - mountPath: /etc/kubernetes/static-pod-resources
+        name: resource-dir
+      - mountPath: /etc/kubernetes/static-pod-certs
+        name: cert-dir
+      - mountPath: /var/lib/etcd/
+        name: data-dir
+    env:
+${COMPUTED_ENV_VARS}
   - name: etcd
     image: ${IMAGE}
     imagePullPolicy: IfNotPresent
