@@ -241,7 +241,7 @@ var RevisionSecrets = []revision.RevisionResource{
 }
 
 var CertConfigMaps = []revision.RevisionResource{
-	//{Name: "etcd-peer-ca"},
+	{Name: "restore-etcd-pod"},
 }
 
 var CertSecrets = []revision.RevisionResource{

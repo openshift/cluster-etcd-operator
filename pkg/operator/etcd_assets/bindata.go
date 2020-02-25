@@ -5,6 +5,8 @@
 // bindata/etcd/ns.yaml
 // bindata/etcd/pod-cm.yaml
 // bindata/etcd/pod.yaml
+// bindata/etcd/restore-pod-cm.yaml
+// bindata/etcd/restore-pod.yaml
 // bindata/etcd/sa.yaml
 // bindata/etcd/svc.yaml
 // DO NOT EDIT!
@@ -342,6 +344,141 @@ func etcdPodYaml() (*asset, error) {
 	return a, nil
 }
 
+var _etcdRestorePodCmYaml = []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: openshift-etcd
+  name: restore-etcd-pod
+data:
+  pod.yaml:
+`)
+
+func etcdRestorePodCmYamlBytes() ([]byte, error) {
+	return _etcdRestorePodCmYaml, nil
+}
+
+func etcdRestorePodCmYaml() (*asset, error) {
+	bytes, err := etcdRestorePodCmYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "etcd/restore-pod-cm.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
+var _etcdRestorePodYaml = []byte(`apiVersion: v1
+kind: Pod
+metadata:
+  name: etcd
+  namespace: openshift-etcd
+  labels:
+    app: etcd
+    k8s-app: etcd
+    etcd: "true"
+    revision: "REVISION"
+spec:
+  containers:
+  - name: etcd
+    image: ${IMAGE}
+    imagePullPolicy: IfNotPresent
+    terminationMessagePolicy: FallbackToLogsOnError
+    command:
+      - /bin/sh
+      - -c
+      - |
+        #!/bin/sh
+        set -euo pipefail
+
+        export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
+        export ETCD_INITIAL_CLUSTER="${ETCD_NAME}=https://${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}:2380"
+        env | grep ETCD | grep -v NODE
+
+        set -x
+        exec etcd \
+          --initial-advertise-peer-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2380 \
+          --cert-file=/etc/kubernetes/static-pod-resources/secrets/etcd-all-serving/etcd-serving-NODE_NAME.crt \
+          --key-file=/etc/kubernetes/static-pod-resources/secrets/etcd-all-serving/etcd-serving-NODE_NAME.key \
+          --trusted-ca-file=/etc/kubernetes/static-pod-resources/configmaps/etcd-serving-ca/ca-bundle.crt \
+          --client-cert-auth=true \
+          --peer-cert-file=/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt \
+          --peer-key-file=/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key \
+          --peer-trusted-ca-file=/etc/kubernetes/static-pod-resources/configmaps/etcd-peer-client-ca/ca-bundle.crt \
+          --peer-client-cert-auth=true \
+          --advertise-client-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2379 \
+          --listen-client-urls=https://${LISTEN_ON_ALL_IPS}:2379 \
+          --listen-peer-urls=https://${LISTEN_ON_ALL_IPS}:2380 \
+          --listen-metrics-urls=https://${LISTEN_ON_ALL_IPS}:9978 ||  mv /etc/kubernetes/etcd-backup-dir/etcd-member.yaml /etc/kubernetes/manifests
+    env:
+${COMPUTED_ENV_VARS}
+    resources:
+      requests:
+        memory: 600Mi
+        cpu: 300m
+    readinessProbe:
+      exec:
+        command:
+          - /bin/sh
+          - -ec
+          - "lsof -n -i :2380 | grep LISTEN"
+      failureThreshold: 3
+      initialDelaySeconds: 3
+      periodSeconds: 5
+      successThreshold: 1
+      timeoutSeconds: 5
+    securityContext:
+      privileged: true
+    volumeMounts:
+      - mountPath: /etc/kubernetes/manifests
+        name: static-pod-dir
+      - mountPath: /etc/kubernetes/etcd-backup-dir
+        name: etcd-backup-dir
+      - mountPath: /etc/kubernetes/static-pod-resources
+        name: resource-dir
+      - mountPath: /etc/kubernetes/static-pod-certs
+        name: cert-dir
+      - mountPath: /var/lib/etcd/
+        name: data-dir
+  hostNetwork: true
+  priorityClassName: system-node-critical
+  tolerations:
+  - operator: "Exists"
+  volumes:
+    - hostPath:
+        path: /etc/kubernetes/manifests
+      name: static-pod-dir
+    - hostPath:
+        path: /etc/kubernetes/static-pod-resources/etcd-member
+      name: etcd-backup-dir
+    - hostPath:
+        path: /etc/kubernetes/static-pod-resources/etcd-pod-REVISION
+      name: resource-dir
+    - hostPath:
+        path: /etc/kubernetes/static-pod-resources/etcd-certs
+      name: cert-dir
+    - hostPath:
+        path: /var/lib/etcd
+        type: ""
+      name: data-dir
+
+`)
+
+func etcdRestorePodYamlBytes() ([]byte, error) {
+	return _etcdRestorePodYaml, nil
+}
+
+func etcdRestorePodYaml() (*asset, error) {
+	bytes, err := etcdRestorePodYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "etcd/restore-pod.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
 var _etcdSaYaml = []byte(`apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -449,13 +586,15 @@ func AssetNames() []string {
 
 // _bindata is a table, holding each asset generator, mapped to its name.
 var _bindata = map[string]func() (*asset, error){
-	"etcd/cm.yaml":            etcdCmYaml,
-	"etcd/defaultconfig.yaml": etcdDefaultconfigYaml,
-	"etcd/ns.yaml":            etcdNsYaml,
-	"etcd/pod-cm.yaml":        etcdPodCmYaml,
-	"etcd/pod.yaml":           etcdPodYaml,
-	"etcd/sa.yaml":            etcdSaYaml,
-	"etcd/svc.yaml":           etcdSvcYaml,
+	"etcd/cm.yaml":             etcdCmYaml,
+	"etcd/defaultconfig.yaml":  etcdDefaultconfigYaml,
+	"etcd/ns.yaml":             etcdNsYaml,
+	"etcd/pod-cm.yaml":         etcdPodCmYaml,
+	"etcd/pod.yaml":            etcdPodYaml,
+	"etcd/restore-pod-cm.yaml": etcdRestorePodCmYaml,
+	"etcd/restore-pod.yaml":    etcdRestorePodYaml,
+	"etcd/sa.yaml":             etcdSaYaml,
+	"etcd/svc.yaml":            etcdSvcYaml,
 }
 
 // AssetDir returns the file names below a certain
@@ -500,13 +639,15 @@ type bintree struct {
 
 var _bintree = &bintree{nil, map[string]*bintree{
 	"etcd": {nil, map[string]*bintree{
-		"cm.yaml":            {etcdCmYaml, map[string]*bintree{}},
-		"defaultconfig.yaml": {etcdDefaultconfigYaml, map[string]*bintree{}},
-		"ns.yaml":            {etcdNsYaml, map[string]*bintree{}},
-		"pod-cm.yaml":        {etcdPodCmYaml, map[string]*bintree{}},
-		"pod.yaml":           {etcdPodYaml, map[string]*bintree{}},
-		"sa.yaml":            {etcdSaYaml, map[string]*bintree{}},
-		"svc.yaml":           {etcdSvcYaml, map[string]*bintree{}},
+		"cm.yaml":             {etcdCmYaml, map[string]*bintree{}},
+		"defaultconfig.yaml":  {etcdDefaultconfigYaml, map[string]*bintree{}},
+		"ns.yaml":             {etcdNsYaml, map[string]*bintree{}},
+		"pod-cm.yaml":         {etcdPodCmYaml, map[string]*bintree{}},
+		"pod.yaml":            {etcdPodYaml, map[string]*bintree{}},
+		"restore-pod-cm.yaml": {etcdRestorePodCmYaml, map[string]*bintree{}},
+		"restore-pod.yaml":    {etcdRestorePodYaml, map[string]*bintree{}},
+		"sa.yaml":             {etcdSaYaml, map[string]*bintree{}},
+		"svc.yaml":            {etcdSvcYaml, map[string]*bintree{}},
 	}},
 }}
 
