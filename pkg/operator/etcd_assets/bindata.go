@@ -248,7 +248,7 @@ ${COMPUTED_ENV_VARS}
         command:
           - /bin/sh
           - -ec
-          - "lsof -n -i :2380 | grep LISTEN"
+          - "etcdctl --cacert=\"/etc/kubernetes/static-pod-resources/configmaps/etcd-peer-client-ca/ca-bundle.crt\" --cert=\"/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt\" --key=\"/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key\" --endpoints=https://localhost:2379 endpoint health"
       failureThreshold: 3
       initialDelaySeconds: 3
       periodSeconds: 5
