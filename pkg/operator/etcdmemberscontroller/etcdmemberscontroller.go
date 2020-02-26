@@ -116,12 +116,12 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 		}
 	}
 
-	if len(notStartedMembers) != 0 {
+	if len(notStartedMembers) != 0 || len(availableMembers) != 3 {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersProgressing",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "MembersNotStarted",
-			Message: fmt.Sprintf("%s members have not started yet", strings.Join(notStartedMembers, ",")),
+			Message: fmt.Sprintf("%s members are available, %s have not started, %s are unhealthy, %s are unknown", strings.Join(availableMembers, ","), strings.Join(notStartedMembers, ","), strings.Join(unhealthyMembers, ","), strings.Join(unknownMembers, ",")),
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
@@ -131,8 +131,8 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersProgressing",
 			Status:  operatorv1.ConditionFalse,
-			Reason:  "AsExpected",
-			Message: "all members have started",
+			Reason:  "Scaling complete",
+			Message: "all members are available: %s", strings.Join(availableMembers, ","),
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
