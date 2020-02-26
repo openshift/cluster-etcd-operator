@@ -402,23 +402,17 @@ spec:
           exit 1
         fi
 
-        # check if we have backup file to be restored and if the backup file is not currently
-        # being copied, exit non-zero if copying continues for more than 5 seconds
+        # check if we have backup file to be restored
+        # if the file exist, check if it has not changed size in last 5 seconds
         if [ ! -f /var/lib/etcd-backup/snapshot.db ]; then
           echo "please make a copy of the snapshot db file, then move that copy to /var/lib/etcd-backup/snapshot.db"
           exit 1
         else
           filesize=$(stat --format=%s "/var/lib/etcd-backup/snapshot.db")
-          for i in ` + "`" + `seq 1 5` + "`" + `;
-          do
-            newfilesize=$(stat --format=%s "/var/lib/etcd-backup/snapshot.db")
-            if [ "$filesize" == "$newfilesize" ]; then
-              break
-            fi
-            sleep 1
-          done
+          sleep 5
+          newfilesize=$(stat --format=%s "/var/lib/etcd-backup/snapshot.db")
           if [ "$filesize" != "$newfilesize" ]; then
-            echo "file size is changing for more than 5 seconds"
+            echo "file size has changed since last 5 seconds, retry sometime after copying is complete"
             exit 1
           fi
         fi
@@ -432,7 +426,7 @@ spec:
          --initial-advertise-peer-urls $ETCD_NODE_PEER_URL \
          --data-dir="/var/lib/etcd/restore-{$UUID:0:10}"
 
-        mv /var/lib/etcd/restore-{$UUID:0:10}/ /var/lib/etcd/
+        mv /var/lib/etcd/restore-{$UUID:0:10}/* /var/lib/etcd/
 
         set -x
         exec etcd \
