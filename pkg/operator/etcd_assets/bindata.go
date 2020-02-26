@@ -2,12 +2,14 @@
 // sources:
 // bindata/etcd/cm.yaml
 // bindata/etcd/defaultconfig.yaml
+// bindata/etcd/etcd-restore-backup.sh
 // bindata/etcd/ns.yaml
 // bindata/etcd/pod-cm.yaml
 // bindata/etcd/pod.yaml
 // bindata/etcd/restore-pod-cm.yaml
 // bindata/etcd/restore-pod.yaml
 // bindata/etcd/sa.yaml
+// bindata/etcd/scripts-cm.yaml
 // bindata/etcd/svc.yaml
 // DO NOT EDIT!
 
@@ -92,6 +94,28 @@ func etcdDefaultconfigYaml() (*asset, error) {
 	}
 
 	info := bindataFileInfo{name: "etcd/defaultconfig.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
+var _etcdEtcdRestoreBackupSh = []byte(`#!/bin/sh
+
+source /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd.env
+
+echo "do cool stuff here"
+`)
+
+func etcdEtcdRestoreBackupShBytes() ([]byte, error) {
+	return _etcdEtcdRestoreBackupSh, nil
+}
+
+func etcdEtcdRestoreBackupSh() (*asset, error) {
+	bytes, err := etcdEtcdRestoreBackupShBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "etcd/etcd-restore-backup.sh", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
@@ -501,6 +525,31 @@ func etcdSaYaml() (*asset, error) {
 	return a, nil
 }
 
+var _etcdScriptsCmYaml = []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: openshift-etcd
+  name: etcd-scripts
+data:
+  etcd.env:
+
+`)
+
+func etcdScriptsCmYamlBytes() ([]byte, error) {
+	return _etcdScriptsCmYaml, nil
+}
+
+func etcdScriptsCmYaml() (*asset, error) {
+	bytes, err := etcdScriptsCmYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "etcd/scripts-cm.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
 var _etcdSvcYaml = []byte(`apiVersion: v1
 kind: Service
 metadata:
@@ -586,15 +635,17 @@ func AssetNames() []string {
 
 // _bindata is a table, holding each asset generator, mapped to its name.
 var _bindata = map[string]func() (*asset, error){
-	"etcd/cm.yaml":             etcdCmYaml,
-	"etcd/defaultconfig.yaml":  etcdDefaultconfigYaml,
-	"etcd/ns.yaml":             etcdNsYaml,
-	"etcd/pod-cm.yaml":         etcdPodCmYaml,
-	"etcd/pod.yaml":            etcdPodYaml,
-	"etcd/restore-pod-cm.yaml": etcdRestorePodCmYaml,
-	"etcd/restore-pod.yaml":    etcdRestorePodYaml,
-	"etcd/sa.yaml":             etcdSaYaml,
-	"etcd/svc.yaml":            etcdSvcYaml,
+	"etcd/cm.yaml":                etcdCmYaml,
+	"etcd/defaultconfig.yaml":     etcdDefaultconfigYaml,
+	"etcd/etcd-restore-backup.sh": etcdEtcdRestoreBackupSh,
+	"etcd/ns.yaml":                etcdNsYaml,
+	"etcd/pod-cm.yaml":            etcdPodCmYaml,
+	"etcd/pod.yaml":               etcdPodYaml,
+	"etcd/restore-pod-cm.yaml":    etcdRestorePodCmYaml,
+	"etcd/restore-pod.yaml":       etcdRestorePodYaml,
+	"etcd/sa.yaml":                etcdSaYaml,
+	"etcd/scripts-cm.yaml":        etcdScriptsCmYaml,
+	"etcd/svc.yaml":               etcdSvcYaml,
 }
 
 // AssetDir returns the file names below a certain
@@ -639,15 +690,17 @@ type bintree struct {
 
 var _bintree = &bintree{nil, map[string]*bintree{
 	"etcd": {nil, map[string]*bintree{
-		"cm.yaml":             {etcdCmYaml, map[string]*bintree{}},
-		"defaultconfig.yaml":  {etcdDefaultconfigYaml, map[string]*bintree{}},
-		"ns.yaml":             {etcdNsYaml, map[string]*bintree{}},
-		"pod-cm.yaml":         {etcdPodCmYaml, map[string]*bintree{}},
-		"pod.yaml":            {etcdPodYaml, map[string]*bintree{}},
-		"restore-pod-cm.yaml": {etcdRestorePodCmYaml, map[string]*bintree{}},
-		"restore-pod.yaml":    {etcdRestorePodYaml, map[string]*bintree{}},
-		"sa.yaml":             {etcdSaYaml, map[string]*bintree{}},
-		"svc.yaml":            {etcdSvcYaml, map[string]*bintree{}},
+		"cm.yaml":                {etcdCmYaml, map[string]*bintree{}},
+		"defaultconfig.yaml":     {etcdDefaultconfigYaml, map[string]*bintree{}},
+		"etcd-restore-backup.sh": {etcdEtcdRestoreBackupSh, map[string]*bintree{}},
+		"ns.yaml":                {etcdNsYaml, map[string]*bintree{}},
+		"pod-cm.yaml":            {etcdPodCmYaml, map[string]*bintree{}},
+		"pod.yaml":               {etcdPodYaml, map[string]*bintree{}},
+		"restore-pod-cm.yaml":    {etcdRestorePodCmYaml, map[string]*bintree{}},
+		"restore-pod.yaml":       {etcdRestorePodYaml, map[string]*bintree{}},
+		"sa.yaml":                {etcdSaYaml, map[string]*bintree{}},
+		"scripts-cm.yaml":        {etcdScriptsCmYaml, map[string]*bintree{}},
+		"svc.yaml":               {etcdSvcYaml, map[string]*bintree{}},
 	}},
 }}
 
