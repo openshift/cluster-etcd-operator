@@ -6,6 +6,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
+
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
@@ -198,6 +200,13 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
+	scriptController := scriptcontroller.NewScriptControllerController(
+		operatorClient,
+		kubeClient,
+		kubeInformersForNamespaces,
+		controllerContext.EventRecorder,
+	)
+
 	operatorInformers.Start(ctx.Done())
 	operatorInformers.Start(ctx.Done())
 	kubeInformersForNamespaces.Start(ctx.Done())
@@ -216,6 +225,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go etcdMembersController.Run(ctx, 1)
 	go bootstrapTeardownController.Run(ctx.Done())
 	go staticPodControllers.Run(ctx, 1)
+	go scriptController.Run(1, ctx.Done())
 
 	<-ctx.Done()
 	return fmt.Errorf("stopped")
@@ -242,6 +252,7 @@ var RevisionSecrets = []revision.RevisionResource{
 
 var CertConfigMaps = []revision.RevisionResource{
 	{Name: "restore-etcd-pod"},
+	{Name: "etcd-scripts"},
 }
 
 var CertSecrets = []revision.RevisionResource{
