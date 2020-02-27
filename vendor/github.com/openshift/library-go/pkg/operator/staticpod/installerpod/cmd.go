@@ -221,9 +221,12 @@ func (o *InstallOptions) copySecretsAndConfigMaps(ctx context.Context, resourceD
 			return err
 		}
 		for filename, content := range secret.Data {
-			// TODO fix permissions
 			klog.Infof("Writing secret manifest %q ...", path.Join(contentDir, filename))
-			if err := ioutil.WriteFile(path.Join(contentDir, filename), content, 0600); err != nil {
+			filePerms := os.FileMode(0600)
+			if strings.HasSuffix(filename, ".sh") {
+				filePerms = 0700
+			}
+			if err := ioutil.WriteFile(path.Join(contentDir, filename), content, filePerms); err != nil {
 				return err
 			}
 		}
@@ -240,9 +243,14 @@ func (o *InstallOptions) copySecretsAndConfigMaps(ctx context.Context, resourceD
 		}
 		for filename, content := range configmap.Data {
 			klog.Infof("Writing config file %q ...", path.Join(contentDir, filename))
-			if err := ioutil.WriteFile(path.Join(contentDir, filename), []byte(content), 0644); err != nil {
+			filePerms := os.FileMode(0644)
+			if strings.HasSuffix(filename, ".sh") {
+				filePerms = 0755
+			}
+			if err := ioutil.WriteFile(path.Join(contentDir, filename), []byte(content), filePerms); err != nil {
 				return err
 			}
+
 		}
 	}
 
