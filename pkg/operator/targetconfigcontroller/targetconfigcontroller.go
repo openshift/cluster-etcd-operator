@@ -134,7 +134,7 @@ func createTargetConfig(c TargetConfigController, recorder events.Recorder, oper
 	}
 	_, _, err = c.manageRecoveryPod(contentReplacer, c.kubeClient.CoreV1(), recorder, operatorSpec)
 	if err != nil {
-		errors = append(errors, fmt.Errorf("%q: %v", "configmap/etcd-pod", err))
+		errors = append(errors, fmt.Errorf("%q: %v", "configmap/restore-etcd-pod", err))
 	}
 
 	if len(errors) > 0 {
