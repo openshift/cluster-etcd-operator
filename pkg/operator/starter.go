@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/metricshandler"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -14,6 +15,8 @@ import (
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
+	routev1client "github.com/openshift/client-go/route/clientset/versioned/typed/route/v1"
+
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
@@ -26,6 +29,9 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
+
+	"github.com/openshift/library-go/pkg/metrics/observer"
+
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -54,6 +60,11 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return err
 	}
 	clientset, err := kubernetes.NewForConfig(controllerContext.KubeConfig)
+	if err != nil {
+		return err
+	}
+
+	routeClient, err := routev1client.NewForConfig(controllerContext.KubeConfig)
 	if err != nil {
 		return err
 	}
@@ -207,12 +218,28 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
+	metricsObserver := observer.NewPrometheusMetricObserver("EtcdMetricsObserver",
+		[]observer.Handler{
+			{
+				Name:    "EtcdFSyncDurationSeconds",
+				Handler: metricshandler.EtcdFSyncHandler,
+			},
+		},
+		kubeClient.CoreV1(),
+		kubeClient.CoreV1(),
+		kubeClient.CoreV1(),
+		routeClient,
+		controllerContext.EventRecorder,
+		operatorClient,
+	)
+
 	operatorInformers.Start(ctx.Done())
 	operatorInformers.Start(ctx.Done())
 	kubeInformersForNamespaces.Start(ctx.Done())
 	configInformers.Start(ctx.Done())
 	dynamicInformers.Start(ctx.Done())
 
+	go metricsObserver.Run(ctx, 1)
 	go staticResourceController.Run(ctx, 1)
 	go targetConfigReconciler.Run(1, ctx.Done())
 	go etcdCertSignerController.Run(1, ctx.Done())
