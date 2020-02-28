@@ -61,13 +61,13 @@ spec:
         set -x
         exec etcd \
           --initial-advertise-peer-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2380 \
-          --cert-file=/etc/kubernetes/static-pod-resources/secrets/etcd-all-serving/etcd-serving-NODE_NAME.crt \
-          --key-file=/etc/kubernetes/static-pod-resources/secrets/etcd-all-serving/etcd-serving-NODE_NAME.key \
-          --trusted-ca-file=/etc/kubernetes/static-pod-resources/configmaps/etcd-serving-ca/ca-bundle.crt \
+          --cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-serving/etcd-serving-NODE_NAME.crt \
+          --key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-serving/etcd-serving-NODE_NAME.key \
+          --trusted-ca-file=/etc/kubernetes/static-pod-certs/configmaps/etcd-serving-ca/ca-bundle.crt \
           --client-cert-auth=true \
-          --peer-cert-file=/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt \
-          --peer-key-file=/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key \
-          --peer-trusted-ca-file=/etc/kubernetes/static-pod-resources/configmaps/etcd-peer-client-ca/ca-bundle.crt \
+          --peer-cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt \
+          --peer-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key \
+          --peer-trusted-ca-file=/etc/kubernetes/static-pod-certs/configmaps/etcd-peer-client-ca/ca-bundle.crt \
           --peer-client-cert-auth=true \
           --advertise-client-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2379 \
           --listen-client-urls=https://${LISTEN_ON_ALL_IPS}:2379 \
@@ -97,8 +97,6 @@ ${COMPUTED_ENV_VARS}
         name: static-pod-dir
       - mountPath: /etc/kubernetes/etcd-backup-dir
         name: etcd-backup-dir
-      - mountPath: /etc/kubernetes/static-pod-resources
-        name: resource-dir
       - mountPath: /etc/kubernetes/static-pod-certs
         name: cert-dir
       - mountPath: /var/lib/etcd/
@@ -116,9 +114,6 @@ ${COMPUTED_ENV_VARS}
     - hostPath:
         path: /etc/kubernetes/static-pod-resources/etcd-member
       name: etcd-backup-dir
-    - hostPath:
-        path: /etc/kubernetes/static-pod-resources/etcd-pod-REVISION
-      name: resource-dir
     - hostPath:
         path: /etc/kubernetes/static-pod-resources/etcd-certs
       name: cert-dir

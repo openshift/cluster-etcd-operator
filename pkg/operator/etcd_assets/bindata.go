@@ -898,8 +898,8 @@ spec:
           #!/bin/sh
           set -euo pipefail
 
-          cp /etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt /etc/kubernetes/etcd-backup-dir/system:etcd-peer-NODE_NAME.crt
-          cp /etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key /etc/kubernetes/etcd-backup-dir/system:etcd-peer-NODE_NAME.key
+          cp /etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt /etc/kubernetes/etcd-backup-dir/system:etcd-peer-NODE_NAME.crt
+          cp /etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key /etc/kubernetes/etcd-backup-dir/system:etcd-peer-NODE_NAME.key
       resources:
         requests:
           memory: 60Mi
@@ -957,9 +957,9 @@ ${COMPUTED_ENV_VARS}
         # this has a non-zero return code if the command is non-zero.  If you use an export first, it doesn't and you
         # will succeed when you should fail.
         ETCD_INITIAL_CLUSTER=$(discover-etcd-initial-cluster \
-          --cacert=/etc/kubernetes/static-pod-resources/configmaps/etcd-serving-ca/ca-bundle.crt \
-          --cert=/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt \
-          --key=/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key \
+          --cacert=/etc/kubernetes/static-pod-certs/configmaps/etcd-serving-ca/ca-bundle.crt \
+          --cert=/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt \
+          --key=/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key \
           --endpoints=${ALL_ETCD_ENDPOINTS} \
           --data-dir=/var/lib/etcd/member \
           --target-peer-url-host=${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME} \
@@ -976,13 +976,13 @@ ${COMPUTED_ENV_VARS}
         set -x
         exec etcd \
           --initial-advertise-peer-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2380 \
-          --cert-file=/etc/kubernetes/static-pod-resources/secrets/etcd-all-serving/etcd-serving-NODE_NAME.crt \
-          --key-file=/etc/kubernetes/static-pod-resources/secrets/etcd-all-serving/etcd-serving-NODE_NAME.key \
-          --trusted-ca-file=/etc/kubernetes/static-pod-resources/configmaps/etcd-serving-ca/ca-bundle.crt \
+          --cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-serving/etcd-serving-NODE_NAME.crt \
+          --key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-serving/etcd-serving-NODE_NAME.key \
+          --trusted-ca-file=/etc/kubernetes/static-pod-certs/configmaps/etcd-serving-ca/ca-bundle.crt \
           --client-cert-auth=true \
-          --peer-cert-file=/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt \
-          --peer-key-file=/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key \
-          --peer-trusted-ca-file=/etc/kubernetes/static-pod-resources/configmaps/etcd-peer-client-ca/ca-bundle.crt \
+          --peer-cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt \
+          --peer-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key \
+          --peer-trusted-ca-file=/etc/kubernetes/static-pod-certs/configmaps/etcd-peer-client-ca/ca-bundle.crt \
           --peer-client-cert-auth=true \
           --advertise-client-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2379 \
           --listen-client-urls=https://${LISTEN_ON_ALL_IPS}:2379 \
@@ -1035,12 +1035,12 @@ ${COMPUTED_ENV_VARS}
           --endpoints https://${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}:9978 \
           --metrics-addr https://${LISTEN_ON_ALL_IPS}:9979 \
           --listen-addr ${LOCALHOST_IP}:9977 \
-          --key /etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key \
-          --key-file /etc/kubernetes/static-pod-resources/secrets/etcd-all-serving-metrics/etcd-serving-metrics-NODE_NAME.key \
-          --cert /etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt \
-          --cert-file /etc/kubernetes/static-pod-resources/secrets/etcd-all-serving-metrics/etcd-serving-metrics-NODE_NAME.crt \
-          --cacert /etc/kubernetes/static-pod-resources/configmaps/etcd-peer-client-ca/ca-bundle.crt \
-          --trusted-ca-file /etc/kubernetes/static-pod-resources/configmaps/etcd-metrics-proxy-serving-ca/ca-bundle.crt
+          --key /etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key \
+          --key-file /etc/kubernetes/static-pod-certs/secrets/etcd-all-serving-metrics/etcd-serving-metrics-NODE_NAME.key \
+          --cert /etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt \
+          --cert-file /etc/kubernetes/static-pod-certs/secrets/etcd-all-serving-metrics/etcd-serving-metrics-NODE_NAME.crt \
+          --cacert /etc/kubernetes/static-pod-certs/configmaps/etcd-peer-client-ca/ca-bundle.crt \
+          --trusted-ca-file /etc/kubernetes/static-pod-certs/configmaps/etcd-metrics-proxy-serving-ca/ca-bundle.crt
     env:
 ${COMPUTED_ENV_VARS}
     resources:
@@ -1182,13 +1182,13 @@ spec:
         set -x
         exec etcd \
           --initial-advertise-peer-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2380 \
-          --cert-file=/etc/kubernetes/static-pod-resources/secrets/etcd-all-serving/etcd-serving-NODE_NAME.crt \
-          --key-file=/etc/kubernetes/static-pod-resources/secrets/etcd-all-serving/etcd-serving-NODE_NAME.key \
-          --trusted-ca-file=/etc/kubernetes/static-pod-resources/configmaps/etcd-serving-ca/ca-bundle.crt \
+          --cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-serving/etcd-serving-NODE_NAME.crt \
+          --key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-serving/etcd-serving-NODE_NAME.key \
+          --trusted-ca-file=/etc/kubernetes/static-pod-certs/configmaps/etcd-serving-ca/ca-bundle.crt \
           --client-cert-auth=true \
-          --peer-cert-file=/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt \
-          --peer-key-file=/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key \
-          --peer-trusted-ca-file=/etc/kubernetes/static-pod-resources/configmaps/etcd-peer-client-ca/ca-bundle.crt \
+          --peer-cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt \
+          --peer-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key \
+          --peer-trusted-ca-file=/etc/kubernetes/static-pod-certs/configmaps/etcd-peer-client-ca/ca-bundle.crt \
           --peer-client-cert-auth=true \
           --advertise-client-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2379 \
           --listen-client-urls=https://${LISTEN_ON_ALL_IPS}:2379 \
@@ -1218,8 +1218,6 @@ ${COMPUTED_ENV_VARS}
         name: static-pod-dir
       - mountPath: /etc/kubernetes/etcd-backup-dir
         name: etcd-backup-dir
-      - mountPath: /etc/kubernetes/static-pod-resources
-        name: resource-dir
       - mountPath: /etc/kubernetes/static-pod-certs
         name: cert-dir
       - mountPath: /var/lib/etcd/
@@ -1237,9 +1235,6 @@ ${COMPUTED_ENV_VARS}
     - hostPath:
         path: /etc/kubernetes/static-pod-resources/etcd-member
       name: etcd-backup-dir
-    - hostPath:
-        path: /etc/kubernetes/static-pod-resources/etcd-pod-REVISION
-      name: resource-dir
     - hostPath:
         path: /etc/kubernetes/static-pod-resources/etcd-certs
       name: cert-dir

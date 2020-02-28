@@ -253,6 +253,10 @@ var RevisionSecrets = []revision.RevisionResource{
 var CertConfigMaps = []revision.RevisionResource{
 	{Name: "restore-etcd-pod"},
 	{Name: "etcd-scripts"},
+	{Name: "etcd-serving-ca"},
+	{Name: "etcd-peer-client-ca"},
+	{Name: "etcd-metrics-proxy-serving-ca"},
+	{Name: "etcd-metrics-proxy-client-ca"},
 }
 
 var CertSecrets = []revision.RevisionResource{
