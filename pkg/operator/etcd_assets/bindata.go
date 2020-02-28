@@ -914,6 +914,33 @@ spec:
         - mountPath: /etc/kubernetes/static-pod-certs
           name: cert-dir
   containers:
+  # The etcdctl container should always be first. It is intended to be used
+  # to open a remote shell via ` + "`" + `oc rsh` + "`" + ` that is ready to run ` + "`" + `etcdctl` + "`" + `.
+  - name: etcdctl
+    image: ${IMAGE}
+    imagePullPolicy: IfNotPresent
+    terminationMessagePolicy: FallbackToLogsOnError
+    command:
+      - "/bin/bash"
+      - "-c"
+      - "trap: TERM INT; sleep infinity & wait"
+    resources:
+      requests:
+        memory: 60Mi
+        cpu: 30m
+    volumeMounts:
+      - mountPath: /etc/kubernetes/manifests
+        name: static-pod-dir
+      - mountPath: /etc/kubernetes/etcd-backup-dir
+        name: etcd-backup-dir
+      - mountPath: /etc/kubernetes/static-pod-resources
+        name: resource-dir
+      - mountPath: /etc/kubernetes/static-pod-certs
+        name: cert-dir
+      - mountPath: /var/lib/etcd/
+        name: data-dir
+    env:
+${COMPUTED_ENV_VARS}
   - name: etcd
     image: ${IMAGE}
     imagePullPolicy: IfNotPresent
@@ -925,11 +952,7 @@ spec:
         #!/bin/sh
         set -euo pipefail
 
-        ETCDCTL="etcdctl --cacert=/etc/kubernetes/static-pod-resources/configmaps/etcd-serving-ca/ca-bundle.crt \
-                           --cert=/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt \
-                           --key=/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key \
-                           --endpoints=${ALL_ETCD_ENDPOINTS}"
-        ${ETCDCTL} member list || true
+        etcdctl member list || true
 
         # this has a non-zero return code if the command is non-zero.  If you use an export first, it doesn't and you
         # will succeed when you should fail.
