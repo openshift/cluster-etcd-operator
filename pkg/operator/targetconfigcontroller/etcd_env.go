@@ -32,6 +32,8 @@ var envVarFns = []envVarFunc{
 	getEtcdName,
 	getAllEtcdEndpoints,
 	getEtcdctlEnvVars,
+	getHeartbeatInterval,
+	getElectionTimeout,
 }
 
 // getEtcdEnvVars returns the env vars that need to be set on the etcd static pods that will be rendered.
@@ -39,6 +41,8 @@ var envVarFns = []envVarFunc{
 //   ETCD_DATA_DIR
 //   ETCDCTL_API
 //   ETCD_QUOTA_BACKEND_BYTES
+//   ETCD_HEARTBEAT_INTERVAL
+//   ETCD_ELECTION_TIMEOUT
 //   ETCD_INITIAL_CLUSTER_STATE
 //   NODE_%s_IP
 //   NODE_%s_ETCD_DNS_NAME
@@ -201,6 +205,46 @@ func getDNSName(envVarContext envVarContext) (map[string]string, error) {
 	}
 
 	return ret, nil
+}
+
+func getHeartbeatInterval(envVarContext envVarContext) (map[string]string, error) {
+	heartbeat := "100" // etcd default
+
+	infrastructure, err := envVarContext.infrastructureLister.Get("cluster")
+	if err != nil {
+		return nil, err
+	}
+
+	if status := infrastructure.Status.PlatformStatus; status != nil {
+		switch {
+		case status.Azure != nil:
+			heartbeat = "500"
+		}
+	}
+
+	return map[string]string{
+		"ETCD_HEARTBEAT_INTERVAL": heartbeat,
+	}, nil
+}
+
+func getElectionTimeout(envVarContext envVarContext) (map[string]string, error) {
+	timeout := "1000" // etcd default
+
+	infrastructure, err := envVarContext.infrastructureLister.Get("cluster")
+	if err != nil {
+		return nil, err
+	}
+
+	if status := infrastructure.Status.PlatformStatus; status != nil {
+		switch {
+		case status.Azure != nil:
+			timeout = "2500"
+		}
+	}
+
+	return map[string]string{
+		"ETCD_ELECTION_TIMEOUT": timeout,
+	}, nil
 }
 
 func envVarSafe(nodeName string) string {
