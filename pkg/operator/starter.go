@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -106,6 +107,16 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	).AddKubeInformers(kubeInformersForNamespaces)
 
+	envVarController := etcdenvvar.NewEnvVarController(
+		operatorClient,
+		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
+		kubeInformersForNamespaces,
+		configInformers.Config().V1().Infrastructures(),
+		configInformers.Config().V1().Networks(),
+		kubeClient,
+		controllerContext.EventRecorder,
+	)
+
 	targetConfigReconciler := targetconfigcontroller.NewTargetConfigController(
 		os.Getenv("IMAGE"),
 		os.Getenv("OPERATOR_IMAGE"),
@@ -115,6 +126,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		configInformers.Config().V1().Infrastructures(),
 		configInformers.Config().V1().Networks(),
 		kubeClient,
+		envVarController,
 		controllerContext.EventRecorder,
 	)
 
@@ -195,6 +207,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorClient,
 		kubeClient,
 		kubeInformersForNamespaces,
+		envVarController,
 		controllerContext.EventRecorder,
 	)
 
@@ -216,6 +229,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go bootstrapTeardownController.Run(ctx.Done())
 	go staticPodControllers.Run(ctx, 1)
 	go scriptController.Run(1, ctx.Done())
+	go envVarController.Run(1, ctx.Done())
 
 	<-ctx.Done()
 	return fmt.Errorf("stopped")

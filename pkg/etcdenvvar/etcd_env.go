@@ -1,4 +1,4 @@
-package targetconfigcontroller
+package etcdenvvar
 
 import (
 	"fmt"
