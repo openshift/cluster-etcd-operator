@@ -25,9 +25,10 @@ const workQueueKey = "key"
 type EnvVarController struct {
 	operatorClient v1helpers.StaticPodOperatorClient
 
-	envVarMapLock sync.Mutex
-	envVarMap     map[string]string
-	listeners     []Enqueueable
+	envVarMapLock       sync.Mutex
+	envVarMap           map[string]string
+	targetImagePullSpec string
+	listeners           []Enqueueable
 
 	infrastructureLister configv1listers.InfrastructureLister
 	networkLister        configv1listers.NetworkLister
@@ -45,6 +46,7 @@ type Enqueueable interface {
 }
 
 func NewEnvVarController(
+	targetImagePullSpec string,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	infrastructureInformer configv1informers.InfrastructureInformer,
@@ -57,6 +59,7 @@ func NewEnvVarController(
 		networkLister:        networkInformer.Lister(),
 		endpointLister:       kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
 		nodeLister:           kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
+		targetImagePullSpec:  targetImagePullSpec,
 
 		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "EnvVarController"),
 		cachesToSync: []cache.InformerSynced{
@@ -126,6 +129,7 @@ func (c *EnvVarController) checkEnvVars() error {
 	}
 
 	currEnvVarMap, err := getEtcdEnvVars(envVarContext{
+		targetImagePullSpec:  c.targetImagePullSpec,
 		spec:                 *operatorSpec,
 		status:               *operatorStatus,
 		endpointLister:       c.endpointLister,

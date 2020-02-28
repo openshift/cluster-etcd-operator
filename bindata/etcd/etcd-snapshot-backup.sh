@@ -12,13 +12,33 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-usage () {
+function usage {
     echo 'Path to backup dir required: ./etcd-snapshot-backup.sh <path-to-backup-dir>'
     exit 1
 }
 
-ASSET_DIR=/home/core/assets
+#backup latest static pod resources for kube-apiserver
+function backup_latest_kube_static_resources {
+  echo "Trying to backup latest static pod resources.."
+  LATEST_STATIC_POD_DIR=$(ls -vd "${CONFIG_FILE_DIR}"/static-pod-resources/kube-apiserver-pod-[0-9]* | tail -1) || true
+  if [ -z "$LATEST_STATIC_POD_DIR" ]; then
+      echo "error finding static-pod-resources"
+      exit 1
+  fi
 
+  LATEST_ETCD_STATIC_POD_DIR=$(ls -vd "${CONFIG_FILE_DIR}"/static-pod-resources/etcd-pod-[0-9]* | tail -1) || true
+  if [ -z "$LATEST_ETCD_STATIC_POD_DIR" ]; then
+      echo "error finding static-pod-resources"
+      exit 1
+  fi
+
+  # tar up the static kube resources, with the path relative to CONFIG_FILE_DIR
+  tar -cpzf $BACKUP_TAR_FILE -C ${CONFIG_FILE_DIR} ${LATEST_STATIC_POD_DIR#$CONFIG_FILE_DIR/} ${LATEST_ETCD_STATIC_POD_DIR#$CONFIG_FILE_DIR/}
+}
+
+
+# main
+# If the first argument is missing, or it is an existing file, then print usage and exit
 if [ -z "$1" ] || [ -f "$1" ]; then
   usage
 fi
@@ -34,26 +54,10 @@ SNAPSHOT_FILE="${BACKUP_DIR}/snapshot_${DATESTRING}.db"
 
 trap "rm -f ${BACKUP_TAR_FILE} ${SNAPSHOT_FILE}" ERR
 
-CONFIG_FILE_DIR=/etc/kubernetes
-MANIFEST_DIR="${CONFIG_FILE_DIR}/manifests"
-MANIFEST_STOPPED_DIR="${ASSET_DIR}/manifests-stopped"
-ETCDCTL="${ASSET_DIR}/bin/etcdctl"
-ETCD_DATA_DIR=/var/lib/etcd
-ETCD_MANIFEST="${MANIFEST_DIR}/etcd-pod.yaml"
-ETCD_STATIC_RESOURCES="${CONFIG_FILE_DIR}/static-pod-resources/etcd-member"
-STOPPED_STATIC_PODS="${ASSET_DIR}/tmp/stopped-static-pods"
+source /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd.env
+source /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd-common-tools
 
-source "/usr/local/bin/openshift-recovery-tools"
-
-function run {
-  init
-  dl_etcdctl
-  backup_etcd_client_certs
-  backup_manifest
-  backup_latest_kube_static_resources
-  snapshot_data_dir
-  echo "snapshot db and kube resources are successfully saved to ${BACKUP_DIR}!"
-}
-
-run
-
+dl_etcdctl
+backup_latest_kube_static_resources
+etcdctl snapshot save ${SNAPSHOT_FILE}
+echo "snapshot db and kube resources are successfully saved to ${BACKUP_DIR}!"
