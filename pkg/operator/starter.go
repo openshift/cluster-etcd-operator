@@ -108,6 +108,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	).AddKubeInformers(kubeInformersForNamespaces)
 
 	envVarController := etcdenvvar.NewEnvVarController(
+		os.Getenv("IMAGE"),
 		operatorClient,
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Infrastructures(),

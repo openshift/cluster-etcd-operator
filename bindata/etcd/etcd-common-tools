@@ -1,0 +1,22 @@
+# Common environment variables
+ASSET_DIR="/home/core/assets"
+CONFIG_FILE_DIR="/etc/kubernetes"
+MANIFEST_DIR="${CONFIG_FILE_DIR}/manifests"
+ETCD_DATA_DIR="/var/lib/etcd"
+ETCD_DATA_DIR_BACKUP="/var/lib/etcd-backup"
+MANIFEST_STOPPED_DIR="${ASSET_DIR}/manifests-stopped"
+RESTORE_ETCD_POD_YAML="${CONFIG_FILE_DIR}/static-pod-resources/etcd-certs/configmaps/restore-etcd-pod/pod.yaml"
+ETCDCTL_BIN_DIR="${CONFIG_FILE_DIR}/static-pod-resources/bin"
+PATH=${PATH}:${ETCDCTL_BIN_DIR}
+
+# download etcdctl from upstream release assets
+function dl_etcdctl {
+  local etcdimg=${ETCD_IMAGE}
+  local etcdctr=$(podman create ${etcdimg})
+  local etcdmnt=$(podman mount "${etcdctr}")
+  [ ! -d ${ETCDCTL_BIN_DIR} ] && mkdir -p ${ETCDCTL_BIN_DIR}
+  cp ${etcdmnt}/bin/etcdctl ${ETCDCTL_BIN_DIR}/
+  umount "${etcdmnt}"
+  podman rm "${etcdctr}"
+  etcdctl version
+}
