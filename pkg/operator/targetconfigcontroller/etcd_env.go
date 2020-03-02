@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
-
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -17,6 +17,7 @@ type envVarContext struct {
 	spec   operatorv1.StaticPodOperatorSpec
 	status operatorv1.StaticPodOperatorStatus
 
+	etcdClient           etcdcli.EtcdClient
 	nodeLister           corev1listers.NodeLister
 	infrastructureLister configv1listers.InfrastructureLister
 	networkLister        configv1listers.NetworkLister
@@ -34,6 +35,7 @@ var envVarFns = []envVarFunc{
 	getEtcdctlEnvVars,
 	getHeartbeatInterval,
 	getElectionTimeout,
+	getInitialCluster,
 }
 
 // getEtcdEnvVars returns the env vars that need to be set on the etcd static pods that will be rendered.
@@ -137,6 +139,24 @@ func getAllEtcdEndpoints(envVarContext envVarContext) (map[string]string, error)
 	}
 	return map[string]string{
 		"ALL_ETCD_ENDPOINTS": endpoints,
+	}, nil
+}
+
+func getInitialCluster(envVarContext envVarContext) (map[string]string, error) {
+	initialCluster := []string{}
+	members, err := envVarContext.etcdClient.MemberList()
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range members {
+		memberStatus := envVarContext.etcdClient.MemberStatus(m)
+		if memberStatus == etcdcli.EtcdMemberStatusAvailable ||
+			memberStatus == etcdcli.EtcdMemberStatusNotStarted {
+			initialCluster = append(initialCluster, fmt.Sprintf("%s=%s", m.Name, m.PeerURLs[0]))
+		}
+	}
+	return map[string]string{
+		"INITIAL_CLUSTER": strings.Join(initialCluster, ","),
 	}, nil
 }
 

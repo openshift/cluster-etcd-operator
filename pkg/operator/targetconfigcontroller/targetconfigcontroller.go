@@ -8,6 +8,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
@@ -36,6 +37,7 @@ type TargetConfigController struct {
 	operatorImagePullSpec string
 
 	operatorClient v1helpers.StaticPodOperatorClient
+	etcdClient     etcdcli.EtcdClient
 
 	kubeClient           kubernetes.Interface
 	infrastructureLister configv1listers.InfrastructureLister
@@ -53,6 +55,7 @@ type TargetConfigController struct {
 func NewTargetConfigController(
 	targetImagePullSpec, operatorImagePullSpec string,
 	operatorClient v1helpers.StaticPodOperatorClient,
+	etcdClient etcdcli.EtcdClient,
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	infrastructureInformer configv1informers.InfrastructureInformer,
@@ -65,6 +68,7 @@ func NewTargetConfigController(
 		operatorImagePullSpec: operatorImagePullSpec,
 
 		operatorClient:       operatorClient,
+		etcdClient:           etcdClient,
 		kubeClient:           kubeClient,
 		infrastructureLister: infrastructureInformer.Lister(),
 		networkLister:        networkInformer.Lister(),
@@ -77,6 +81,7 @@ func NewTargetConfigController(
 		cachesToSync: []cache.InformerSynced{
 			operatorClient.Informer().HasSynced,
 			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().HasSynced,
+			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer().HasSynced,
 			kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer().HasSynced,
 			kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer().HasSynced,
 			kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
@@ -91,6 +96,7 @@ func NewTargetConfigController(
 	infrastructureInformer.Informer().AddEventHandler(c.eventHandler())
 	networkInformer.Informer().AddEventHandler(c.eventHandler())
 	kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().AddEventHandler(c.eventHandler())
+	kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer().AddEventHandler(c.eventHandler())
 
 	// TODO only trigger on master nodes
 	kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().AddEventHandler(c.eventHandler())
@@ -198,6 +204,7 @@ func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv
 	envVarMap, err := getEtcdEnvVars(envVarContext{
 		spec:                 *operatorSpec,
 		status:               *operatorStatus,
+		etcdClient:           c.etcdClient,
 		endpointLister:       c.endpointLister,
 		nodeLister:           c.nodeLister,
 		infrastructureLister: c.infrastructureLister,

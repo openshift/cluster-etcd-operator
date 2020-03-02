@@ -87,14 +87,14 @@ ${COMPUTED_ENV_VARS}
           --data-dir=/var/lib/etcd/member \
           --target-peer-url-host=${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME} \
           --target-name=NODE_NAME)
-         export ETCD_INITIAL_CLUSTER
+          export ETCD_INITIAL_CLUSTER=$INITIAL_CLUSTER
 
         # at this point we know this member is added.  To support a transition, we must remove the old etcd pod.
         # move it somewhere safe so we can retrieve it again later if something goes badly.
         mv /etc/kubernetes/manifests/etcd-member.yaml /etc/kubernetes/etcd-backup-dir || true
 
         export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
-        env | grep ETCD | grep -v NODE
+      env | grep ETCD | grep -v NODE
 
         set -x
         exec etcd \
