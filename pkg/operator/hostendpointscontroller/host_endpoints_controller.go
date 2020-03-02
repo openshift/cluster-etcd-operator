@@ -239,7 +239,7 @@ func reverseLookup(service, proto, name, ip string) (string, error) {
 		klog.V(4).Infof("checking against %s", srv.Target)
 		addrs, err := net.LookupHost(srv.Target)
 		if err != nil {
-			return "", fmt.Errorf("could not resolve member %q", srv.Target)
+			return "", fmt.Errorf("could not resolve member %q: %v", srv.Target, err)
 		}
 
 		for _, addr := range addrs {
