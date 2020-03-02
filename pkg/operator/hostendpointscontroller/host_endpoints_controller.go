@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	errorsutil "k8s.io/apimachinery/pkg/util/errors"
+
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -95,9 +97,10 @@ func NewHostEndpointsController(
 }
 
 func (c *HostEndpointsController) sync() error {
-	err := c.syncHostEndpoints()
+	errs := c.syncHostEndpoints()
 
-	if err != nil {
+	if len(errs) > 0 {
+		err := errorsutil.NewAggregate(errs)
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "HostEndpointsDegraded",
 			Status:  operatorv1.ConditionTrue,
@@ -122,18 +125,19 @@ func (c *HostEndpointsController) sync() error {
 	return nil
 }
 
-func (c *HostEndpointsController) syncHostEndpoints() error {
+func (c *HostEndpointsController) syncHostEndpoints() []error {
+	var errs []error
 	// host-etc must exist in order to continue. we don't want to lose the etcd-bootstrap host.
 	existing, err := c.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd")
 	if err != nil {
-		return err
+		return append(errs, err)
 	}
 
 	required := hostEndpointsAsset()
 
 	discoveryDomain, err := c.getEtcdDiscoveryDomain()
 	if err != nil {
-		return fmt.Errorf("unable to determine etcd discovery domain: %v", err)
+		return append(errs, fmt.Errorf("unable to determine etcd discovery domain: %v", err))
 	}
 
 	if required.Annotations == nil {
@@ -144,27 +148,27 @@ func (c *HostEndpointsController) syncHostEndpoints() error {
 	// create endpoint addresses for each node
 	network, err := c.networkLister.Get("cluster")
 	if err != nil {
-		return err
+		return append(errs, err)
 	}
 
 	nodes, err := c.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
 	if err != nil {
-		return fmt.Errorf("unable to list expected etcd member nodes: %v", err)
+		return append(errs, fmt.Errorf("unable to list expected etcd member nodes: %v", err))
 	}
 	endpointAddresses := []corev1.EndpointAddress{}
 	for _, node := range nodes {
 		nodeInternalIP, _, err := dnshelpers.GetPreferredInternalIPAddressForNodeName(network, node)
 		if err != nil {
-			return err
+			return append(errs, err)
 		}
 		if len(nodeInternalIP) == 0 {
-			return fmt.Errorf("unable to determine internal ip address for node %s", node.Name)
+			return append(errs, fmt.Errorf("unable to determine internal ip address for node %s", node.Name))
 		}
 		dnsName, err := c.getEtcdDNSName(discoveryDomain, nodeInternalIP)
 		if err != nil {
-			return fmt.Errorf("unable to determine etcd member dns name for node %s: %v", node.Name, err)
+			errs = append(errs, fmt.Errorf("unable to determine etcd member dns name for node %s: %v", node.Name, err))
+			continue
 		}
-
 		endpointAddresses = append(endpointAddresses, corev1.EndpointAddress{
 			IP:       nodeInternalIP,
 			Hostname: strings.TrimSuffix(dnsName, "."+discoveryDomain),
@@ -182,10 +186,13 @@ func (c *HostEndpointsController) syncHostEndpoints() error {
 
 	required.Subsets[0].Addresses = endpointAddresses
 	if len(required.Subsets[0].Addresses) == 0 {
-		return fmt.Errorf("no etcd member nodes are ready")
+		return append(errs, fmt.Errorf("no etcd member nodes are ready"))
 	}
 
-	return c.applyEndpoints(required)
+	if err := c.applyEndpoints(required); err != nil {
+		return append(errs, err)
+	}
+	return errs
 }
 
 func hostEndpointsAsset() *corev1.Endpoints {
