@@ -70,6 +70,14 @@ spec:
         # move it somewhere safe so we can retrieve it again later if something goes badly.
         mv /etc/kubernetes/manifests/etcd-member.yaml /etc/kubernetes/etcd-backup-dir || true
 
+        # we cannot use the "normal" port conflict initcontainer because when we upgrade, the existing static pod will never yield,
+        # so we do the detection in etcd container itsefl.
+        echo -n "Waiting for ports 2379, 2380 and 9978 to be released."
+        while [ -n "$(lsof -ni :2379)$(lsof -ni :2380)$(lsof -ni :9978)" ]; do
+          echo -n "."
+          sleep 1
+        done
+
         export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
         env | grep ETCD | grep -v NODE
 
