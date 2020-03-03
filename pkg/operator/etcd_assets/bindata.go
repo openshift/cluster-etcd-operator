@@ -887,7 +887,7 @@ metadata:
     revision: "REVISION"
 spec:
   initContainers:
-    - name: etc-quorum-guard-copy
+    - name: etcd-quorum-guard-copy
       image: ${IMAGE}
       imagePullPolicy: IfNotPresent
       terminationMessagePolicy: FallbackToLogsOnError
