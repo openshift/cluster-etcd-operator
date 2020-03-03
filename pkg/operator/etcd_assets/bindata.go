@@ -923,7 +923,7 @@ spec:
     command:
       - "/bin/bash"
       - "-c"
-      - "trap: TERM INT; sleep infinity & wait"
+      - "trap TERM INT; sleep infinity & wait"
     resources:
       requests:
         memory: 60Mi
