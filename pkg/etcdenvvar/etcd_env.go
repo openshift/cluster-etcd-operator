@@ -45,7 +45,7 @@ var envVarFns = []envVarFunc{
 //   ETCD_ELECTION_TIMEOUT
 //   ETCD_INITIAL_CLUSTER_STATE
 //   NODE_%s_IP
-//   NODE_%s_ETCD_DNS_NAME
+//   NODE_%s_ETCD_URL_HOST
 //   NODE_%s_ETCD_NAME
 func getEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
 	// TODO once we are past bootstrapping, this restriction shouldn't be needed anymore.
@@ -201,7 +201,7 @@ func getDNSName(envVarContext envVarContext) (map[string]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		ret[fmt.Sprintf("NODE_%s_ETCD_DNS_NAME", envVarSafe(nodeInfo.NodeName))] = dnsName
+		ret[fmt.Sprintf("NODE_%s_ETCD_URL_HOST", envVarSafe(nodeInfo.NodeName))] = dnsName
 	}
 
 	return ret, nil

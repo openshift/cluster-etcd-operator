@@ -310,6 +310,7 @@ func (c *EtcdCertSignerController) createSecretForNode(node *corev1.Node) error 
 		"etcd.openshift-etcd.svc.cluster.local",
 		"*." + etcdDiscoveryDomain,
 		"127.0.0.1",
+		"::1",
 	}, nodeInternalIPs...)
 
 	// create the certificates and update them in the API
