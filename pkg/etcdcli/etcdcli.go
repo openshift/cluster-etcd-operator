@@ -137,13 +137,32 @@ func (g *etcdClientGetter) MemberAdd(peerURL string) error {
 	}
 
 	for _, member := range membersResp.Members {
-		if len(member.PeerURLs) > 0 && member.PeerURLs[0] == peerURL {
-			klog.V(2).Infof("member with peerURL %s already part of the cluster", peerURL)
-			return nil
+		for _, currPeerURL := range member.PeerURLs {
+			if currPeerURL == peerURL {
+				klog.V(2).Infof("member with peerURL %s already part of the cluster", peerURL)
+				return nil
+			}
 		}
 	}
 
 	_, err = cli.MemberAdd(ctx, []string{peerURL})
+	if err != nil {
+		return err
+	}
+	return err
+}
+
+func (g *etcdClientGetter) MemberUpdatePeerURL(id uint64, peerURLs []string) error {
+	cli, err := g.getEtcdClient()
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	_, err = cli.MemberUpdate(ctx, id, peerURLs)
 	if err != nil {
 		return err
 	}
