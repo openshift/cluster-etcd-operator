@@ -22,9 +22,9 @@ spec:
         set -euo pipefail
 
         export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
-        export ETCD_INITIAL_CLUSTER="${ETCD_NAME}=https://${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}:2380"
+        export ETCD_INITIAL_CLUSTER="${ETCD_NAME}=https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:2380"
         env | grep ETCD | grep -v NODE
-        export ETCD_NODE_PEER_URL=https://${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}:2380
+        export ETCD_NODE_PEER_URL=https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:2380
 
         # checking if data directory is empty, if not etcdctl restore will fail
         if [ ! -z $(ls -A "/var/lib/etcd") ]; then
