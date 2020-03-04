@@ -6,6 +6,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdmemberipmigrator"
+
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -188,6 +190,14 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		etcdClient,
 		controllerContext.EventRecorder,
 	)
+	etcdMemberIPMigrator := etcdmemberipmigrator.NewEtcdMemberIPMigrator(
+		operatorClient,
+		kubeInformersForNamespaces.InformersFor(""),
+		configInformers.Config().V1().Infrastructures(),
+		configInformers.Config().V1().Networks(),
+		etcdClient,
+		controllerContext.EventRecorder,
+	)
 	etcdMembersController := etcdmemberscontroller.NewEtcdMembersController(
 		operatorClient,
 		etcdClient,
@@ -222,6 +232,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go statusController.Run(ctx, 1)
 	go configObserver.Run(ctx, 1)
 	go clusterMemberController.Run(ctx.Done())
+	go etcdMemberIPMigrator.Run(ctx.Done())
 	go etcdMembersController.Run(ctx, 1)
 	go bootstrapTeardownController.Run(ctx.Done())
 	go staticPodControllers.Run(ctx, 1)
