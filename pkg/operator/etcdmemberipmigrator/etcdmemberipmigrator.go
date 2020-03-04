@@ -247,7 +247,7 @@ func (c *EtcdMemberIPMigrator) getEtcdInfo() ([]etcdInfo, error) {
 			return nil, err
 		}
 
-		nodeDNSName, nodeDNSErr := dnshelpers.ReverseLookupFirstHit(etcdDiscoveryDomain, internalIP)
+		nodeDNSName, nodeDNSErr := reverseLookupFirstHit(etcdDiscoveryDomain, internalIP)
 		currEtcdInfo := etcdInfo{
 			nodeName:              node.Name,
 			preferredNodeIPForURL: internalIP,
@@ -323,4 +323,50 @@ func (c *EtcdMemberIPMigrator) processNextWorkItem() bool {
 	c.queue.AddRateLimited(dsKey)
 
 	return true
+}
+
+// this is the only DNS call anywhere.  Don't copy/paste this or use it somewhere else.  We want to remove this in 4.5
+func reverseLookupFirstHit(discoveryDomain string, ips ...string) (string, error) {
+	errs := []error{}
+	for _, ip := range ips {
+		ret, err := reverseLookupForOneIP(discoveryDomain, ip)
+		if err == nil {
+			return ret, nil
+		}
+		errs = append(errs, err)
+	}
+
+	if len(errs) == 0 {
+		return "", fmt.Errorf("something weird happened for %q, %#v", discoveryDomain, ips)
+	}
+	return "", utilerrors.NewAggregate(errs)
+}
+
+func reverseLookupForOneIP(discoveryDomain, ipAddress string) (string, error) {
+	service := "etcd-server-ssl"
+	proto := "tcp"
+
+	_, srvs, err := net.LookupSRV(service, proto, discoveryDomain)
+	if err != nil {
+		return "", err
+	}
+	selfTarget := ""
+	for _, srv := range srvs {
+		klog.V(4).Infof("checking against %s", srv.Target)
+		addrs, err := net.LookupHost(srv.Target)
+		if err != nil {
+			return "", fmt.Errorf("could not resolve member %q", srv.Target)
+		}
+
+		for _, addr := range addrs {
+			if addr == ipAddress {
+				selfTarget = strings.Trim(srv.Target, ".")
+				break
+			}
+		}
+	}
+	if selfTarget == "" {
+		return "", fmt.Errorf("could not find self")
+	}
+	return selfTarget, nil
 }

@@ -184,8 +184,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 	clusterMemberController := clustermembercontroller.NewClusterMemberController(
 		operatorClient,
-		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
-		configInformers.Config().V1().Infrastructures(),
+		kubeInformersForNamespaces,
+		configInformers.Config().V1().Networks(),
 		etcdClient,
 		controllerContext.EventRecorder,
 	)
