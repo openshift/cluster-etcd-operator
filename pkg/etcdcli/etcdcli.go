@@ -76,11 +76,7 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	bootstrapIP, ok := hostEtcd.Annotations[BootstrapIPAnnotationKey]
-	if !ok {
-		klog.V(2).Infof("service/host-etcd-2 is missing annotation %s", BootstrapIPAnnotationKey)
-	}
-	if bootstrapIP != "" {
+	if bootstrapIP := hostEtcd.Annotations[BootstrapIPAnnotationKey]; bootstrapIP != "" {
 		// escape if IPv6
 		if net.ParseIP(bootstrapIP).To4() == nil {
 			bootstrapIP = "[" + bootstrapIP + "]"

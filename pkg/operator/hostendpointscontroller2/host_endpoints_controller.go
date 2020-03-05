@@ -7,9 +7,8 @@ import (
 	"sort"
 	"time"
 
-	"k8s.io/apimachinery/pkg/util/mergepatch"
-
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -20,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/mergepatch"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
@@ -39,6 +39,7 @@ const (
 // in 4.4, we will abandon the old resource in etcd.
 type HostEndpoints2Controller struct {
 	operatorClient  v1helpers.OperatorClient
+	etcdClient      etcdcli.EtcdClient
 	nodeLister      corev1listers.NodeLister
 	endpointsLister corev1listers.EndpointsLister
 	endpointsClient corev1client.EndpointsGetter
@@ -50,6 +51,7 @@ type HostEndpoints2Controller struct {
 
 func NewHostEndpoints2Controller(
 	operatorClient v1helpers.OperatorClient,
+	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
 	kubeClient kubernetes.Interface,
 	kubeInformers operatorv1helpers.KubeInformersForNamespaces,
@@ -68,6 +70,7 @@ func NewHostEndpoints2Controller(
 			nodeInformer.Informer().HasSynced,
 		},
 		operatorClient:  operatorClient,
+		etcdClient:      etcdClient,
 		nodeLister:      nodeInformer.Lister(),
 		endpointsLister: endpointsInformer.Lister(),
 		endpointsClient: kubeClient.CoreV1(),
@@ -133,6 +136,21 @@ func (c *HostEndpoints2Controller) syncHostEndpoints2() error {
 		})
 	}
 
+	if members, err := c.etcdClient.MemberList(); err != nil {
+		utilruntime.HandleError(err)
+	} else {
+		bootstrapFound := false
+		for _, member := range members {
+			if member.Name == "etcd-bootstrap" {
+				bootstrapFound = true
+				break
+			}
+		}
+		if !bootstrapFound && len(members) >= 3 {
+			delete(required.Annotations, etcdcli.BootstrapIPAnnotationKey)
+		}
+	}
+
 	required.Subsets[0].Addresses = endpointAddresses
 	if len(required.Subsets[0].Addresses) == 0 {
 		return fmt.Errorf("no master nodes are present")
@@ -176,6 +194,13 @@ func (c *HostEndpoints2Controller) applyEndpoints(required *corev1.Endpoints) er
 	}
 	modified := resourcemerge.BoolPtr(false)
 	toWrite := existing.DeepCopy()
+	// this is needed to force removal of the bootstrap annotation
+	if _, requiredHasBootstrap := required.ObjectMeta.Annotations[etcdcli.BootstrapIPAnnotationKey]; !requiredHasBootstrap {
+		if _, existingHasBootstrap := toWrite.Annotations[etcdcli.BootstrapIPAnnotationKey]; existingHasBootstrap {
+			delete(toWrite.Annotations, etcdcli.BootstrapIPAnnotationKey)
+			*modified = true
+		}
+	}
 	resourcemerge.EnsureObjectMeta(modified, &toWrite.ObjectMeta, required.ObjectMeta)
 	if !endpointsSubsetsEqual(existing.Subsets, required.Subsets) {
 		toWrite.Subsets = make([]corev1.EndpointSubset, len(required.Subsets))
