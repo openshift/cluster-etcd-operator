@@ -74,7 +74,10 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	if err != nil {
 		return err
 	}
-	etcdClient := etcdcli.NewEtcdClient(kubeInformersForNamespaces, configInformers.Config().V1().Networks())
+	etcdClient := etcdcli.NewEtcdClient(
+		kubeInformersForNamespaces,
+		configInformers.Config().V1().Networks(),
+		controllerContext.EventRecorder)
 
 	resourceSyncController, err := resourcesynccontroller.NewResourceSyncController(
 		operatorClient,

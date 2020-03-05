@@ -250,11 +250,3 @@ func (c *ClusterMemberController) getEtcdPeerHostToScale(podToAdd *corev1.Pod) (
 
 	return dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
 }
-
-func (c *ClusterMemberController) getNodeInternalIPs(nodeName string) ([]string, error) {
-	node, err := c.nodeLister.Get(nodeName)
-	if err != nil {
-		return nil, err
-	}
-	return dnshelpers.GetInternalIPAddressesForNodeName(node)
-}
