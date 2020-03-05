@@ -5,6 +5,10 @@ import (
 	"path/filepath"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/sets"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
+
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -31,34 +35,39 @@ type ScriptController struct {
 
 	kubeClient      kubernetes.Interface
 	configMapLister corev1listers.ConfigMapLister
-	eventRecorder   events.Recorder
+	envVarGetter    *etcdenvvar.EnvVarController
 
 	// queue only ever has one item, but it has nice error handling backoff/retry semantics
-	queue        workqueue.RateLimitingInterface
-	cachesToSync []cache.InformerSynced
+	queue         workqueue.RateLimitingInterface
+	cachesToSync  []cache.InformerSynced
+	eventRecorder events.Recorder
 }
 
 func NewScriptControllerController(
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeClient kubernetes.Interface,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
+	envVarGetter *etcdenvvar.EnvVarController,
 	eventRecorder events.Recorder,
 ) *ScriptController {
 	c := &ScriptController{
 		operatorClient:  operatorClient,
 		kubeClient:      kubeClient,
 		configMapLister: kubeInformersForNamespaces.ConfigMapLister(),
-		eventRecorder:   eventRecorder.WithComponentSuffix("target-config-controller"),
+		envVarGetter:    envVarGetter,
 
 		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ScriptControllerController"),
 		cachesToSync: []cache.InformerSynced{
 			operatorClient.Informer().HasSynced,
 			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().HasSynced,
 		},
+		eventRecorder: eventRecorder.WithComponentSuffix("target-config-controller"),
 	}
 
 	operatorClient.Informer().AddEventHandler(c.eventHandler())
 	kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
+
+	envVarGetter.AddListener(c)
 
 	return c
 }
@@ -107,6 +116,15 @@ func (c *ScriptController) createScriptConfigMap() error {
 func (c *ScriptController) manageScriptConfigMap() (*corev1.ConfigMap, bool, error) {
 	scriptConfigMap := resourceread.ReadConfigMapV1OrDie(etcd_assets.MustAsset("etcd/scripts-cm.yaml"))
 	// TODO get the env vars to produce a file that we write
+	envVarMap := c.envVarGetter.GetEnvVars()
+	if len(envVarMap) == 0 {
+		return nil, false, fmt.Errorf("missing env var values")
+	}
+	envVarFileContent := ""
+	for _, k := range sets.StringKeySet(envVarMap).List() { // sort for stable output
+		envVarFileContent += fmt.Sprintf("export %v=%q\n", k, envVarMap[k])
+	}
+	scriptConfigMap.Data["etcd.env"] = envVarFileContent
 
 	for _, filename := range []string{
 		"etcd/etcd-restore-backup.sh",
@@ -165,6 +183,10 @@ func (c *ScriptController) processNextWorkItem() bool {
 	c.queue.AddRateLimited(dsKey)
 
 	return true
+}
+
+func (c *ScriptController) Enqueue() {
+	c.queue.Add(workQueueKey)
 }
 
 // eventHandler queues the operator to check spec and status

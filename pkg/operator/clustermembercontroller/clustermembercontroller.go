@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+
 	"github.com/davecgh/go-spew/spew"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
@@ -18,7 +20,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/informers"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
@@ -33,13 +34,11 @@ const (
 // to etcd membership only if all existing members are running healthy
 // skips if any one member is unhealthy.
 type ClusterMemberController struct {
-	operatorClient       v1helpers.OperatorClient
-	etcdClient           etcdcli.EtcdClient
-	kubeInformers        informers.SharedInformerFactory
-	endpointsLister      corev1listers.EndpointsLister
-	podLister            corev1listers.PodLister
-	nodeLister           corev1listers.NodeLister
-	infrastructureLister configv1listers.InfrastructureLister
+	operatorClient v1helpers.OperatorClient
+	etcdClient     etcdcli.EtcdClient
+	podLister      corev1listers.PodLister
+	nodeLister     corev1listers.NodeLister
+	networkLister  configv1listers.NetworkLister
 
 	cachesToSync  []cache.InformerSynced
 	queue         workqueue.RateLimitingInterface
@@ -48,35 +47,31 @@ type ClusterMemberController struct {
 
 func NewClusterMemberController(
 	operatorClient v1helpers.OperatorClient,
-	kubeInformers informers.SharedInformerFactory,
-	infrastructureInformer configv1informers.InfrastructureInformer,
+	kubeInformers v1helpers.KubeInformersForNamespaces,
+	networkInformer configv1informers.NetworkInformer,
 	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
 ) *ClusterMemberController {
 	c := &ClusterMemberController{
-		operatorClient:       operatorClient,
-		etcdClient:           etcdClient,
-		endpointsLister:      kubeInformers.Core().V1().Endpoints().Lister(),
-		podLister:            kubeInformers.Core().V1().Pods().Lister(),
-		nodeLister:           kubeInformers.Core().V1().Nodes().Lister(),
-		infrastructureLister: infrastructureInformer.Lister(),
+		operatorClient: operatorClient,
+		etcdClient:     etcdClient,
+		podLister:      kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
+		nodeLister:     kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
+		networkLister:  networkInformer.Lister(),
 
 		cachesToSync: []cache.InformerSynced{
 			operatorClient.Informer().HasSynced,
-			kubeInformers.Core().V1().Endpoints().Informer().HasSynced,
-			kubeInformers.Core().V1().Pods().Informer().HasSynced,
-			kubeInformers.Core().V1().ConfigMaps().Informer().HasSynced,
-			kubeInformers.Core().V1().Nodes().Informer().HasSynced,
-			infrastructureInformer.Informer().HasSynced,
+			kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer().HasSynced,
+			kubeInformers.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
+			networkInformer.Informer().HasSynced,
 			operatorClient.Informer().HasSynced,
 		},
 		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ClusterMemberController"),
-		kubeInformers: kubeInformers,
 		eventRecorder: eventRecorder.WithComponentSuffix("cluster-member-controller"),
 	}
-	kubeInformers.Core().V1().Pods().Informer().AddEventHandler(c.eventHandler())
-	kubeInformers.Core().V1().Endpoints().Informer().AddEventHandler(c.eventHandler())
-	kubeInformers.Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
+	kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer().AddEventHandler(c.eventHandler())
+	kubeInformers.InformersFor("").Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
+	networkInformer.Informer().AddEventHandler(c.eventHandler())
 	operatorClient.Informer().AddEventHandler(c.eventHandler())
 
 	return c
@@ -178,11 +173,11 @@ func (c *ClusterMemberController) reconcileMembers() error {
 		c.eventRecorder.Eventf("FoundPodToScale", "found pod to add to etcd membership: %v", podToAdd.Name)
 	}
 
-	podFQDN, err := c.getValidPodFQDNToScale(podToAdd)
+	etcdHost, err := c.getEtcdPeerHostToScale(podToAdd)
 	if err != nil {
 		return err
 	}
-	err = c.etcdClient.MemberAdd(fmt.Sprintf("https://%s:2380", podFQDN))
+	err = c.etcdClient.MemberAdd(fmt.Sprintf("https://%s:2380", etcdHost))
 	if err != nil {
 		return err
 	}
@@ -240,40 +235,20 @@ func (c *ClusterMemberController) getEtcdPodToAddToMembership() (*corev1.Pod, er
 	return nil, nil
 }
 
-func (c *ClusterMemberController) getEtcdDiscoveryDomain() (string, error) {
-	infrastructure, err := c.infrastructureLister.Get("cluster")
-	if err != nil {
-		return "", err
-	}
-	etcdDiscoveryDomain := infrastructure.Status.EtcdDiscoveryDomain
-	if len(etcdDiscoveryDomain) == 0 {
-		return "", fmt.Errorf("infrastructures.config.openshit.io/cluster missing .status.etcdDiscoveryDomain")
-	}
-	return etcdDiscoveryDomain, nil
-}
-
 // getValidPodFQDNToScale goes through the list on unready pods and
 // returns a resolvable  podFQDN. If none of the DNSes are available
 // yet it will return collected errors.
-func (c *ClusterMemberController) getValidPodFQDNToScale(podToAdd *corev1.Pod) (string, error) {
-	etcdDiscoveryDomain, err := c.getEtcdDiscoveryDomain()
+func (c *ClusterMemberController) getEtcdPeerHostToScale(podToAdd *corev1.Pod) (string, error) {
+	network, err := c.networkLister.Get("cluster")
+	if err != nil {
+		return "", err
+	}
+	node, err := c.nodeLister.Get(podToAdd.Spec.NodeName)
 	if err != nil {
 		return "", err
 	}
 
-	if podToAdd.Spec.NodeName == "" {
-		return "", fmt.Errorf("node name empty for %s", podToAdd.Name)
-	}
-	nodeInternalIPs, err := c.getNodeInternalIPs(podToAdd.Spec.NodeName)
-	if err != nil {
-		return "", err
-	}
-	podFQDN, err := dnshelpers.ReverseLookupFirstHit(etcdDiscoveryDomain, nodeInternalIPs...)
-	if err != nil {
-		return "", err
-	}
-
-	return podFQDN, nil
+	return dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
 }
 
 func (c *ClusterMemberController) getNodeInternalIPs(nodeName string) ([]string, error) {

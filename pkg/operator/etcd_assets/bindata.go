@@ -635,7 +635,7 @@ etcd_member_add() {
     rm -rf $ETCD_DATA_DIR
   fi
 
-  RESPONSE=$($ETCDCTL_WITH_TLS --endpoints ${RECOVERY_SERVER_IP}:2379 member add $ETCD_NAME --peer-urls=https://${ETCD_DNS_NAME}:2380)
+  RESPONSE=$($ETCDCTL_WITH_TLS --endpoints ${RECOVERY_SERVER_IP}:2379 member add $ETCD_NAME --peer-urls=https://${ETCD_URL_HOST}:2380)
   if [ $? -eq 0 ]; then
     echo "$RESPONSE"
     APPEND_CONF=$(echo "$RESPONSE" | sed -e '1,2d')
@@ -811,7 +811,7 @@ validate_environment() {
         [ ! -d $(dirname "${RUN_ENV}") ] && mkdir -p $(dirname "${RUN_ENV}")
         cat > $RUN_ENV << EOF
 ETCD_IPV4_ADDRESS=$DIG_IP
-ETCD_DNS_NAME=$a
+ETCD_URL_HOST=$a
 ETCD_WILDCARD_DNS_NAME=*.${DISCOVERY_DOMAIN}
 EOF
         return 0
@@ -822,11 +822,11 @@ EOF
   exit 1
 }
 
-# validate_etcd_name uses regex to return the etcd member name key from ETCD_INITIAL_CLUSTER matching the local ETCD_DNS_NAME.
+# validate_etcd_name uses regex to return the etcd member name key from ETCD_INITIAL_CLUSTER matching the local ETCD_URL_HOST.
 validate_etcd_name() {
-  ETCD_NAME=$(echo ${ETCD_INITIAL_CLUSTER} | grep -oP "(?<=)[^,,\s]*(?==[^=]*${ETCD_DNS_NAME}\b)") || true
+  ETCD_NAME=$(echo ${ETCD_INITIAL_CLUSTER} | grep -oP "(?<=)[^,,\s]*(?==[^=]*${ETCD_URL_HOST}\b)") || true
   if [ -z "$ETCD_NAME" ]; then
-    echo "Validating INITIAL_CLUSTER failed: ${ETCD_DNS_NAME} is not found in ${ETCD_INITIAL_CLUSTER}" >&2
+    echo "Validating INITIAL_CLUSTER failed: ${ETCD_URL_HOST} is not found in ${ETCD_INITIAL_CLUSTER}" >&2
     exit 1
   fi
   echo "$ETCD_NAME"
@@ -962,7 +962,7 @@ ${COMPUTED_ENV_VARS}
           --key=/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key \
           --endpoints=${ALL_ETCD_ENDPOINTS} \
           --data-dir=/var/lib/etcd/member \
-          --target-peer-url-host=${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME} \
+          --target-peer-url-host=${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST} \
           --target-name=NODE_NAME)
          export ETCD_INITIAL_CLUSTER
 
@@ -1040,7 +1040,7 @@ ${COMPUTED_ENV_VARS}
         export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
 
         exec etcd grpc-proxy start \
-          --endpoints https://${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}:9978 \
+          --endpoints https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:9978 \
           --metrics-addr https://${LISTEN_ON_ALL_IPS}:9979 \
           --listen-addr ${LOCALHOST_IP}:9977 \
           --key /etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key \
@@ -1151,9 +1151,9 @@ spec:
         set -euo pipefail
 
         export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
-        export ETCD_INITIAL_CLUSTER="${ETCD_NAME}=https://${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}:2380"
+        export ETCD_INITIAL_CLUSTER="${ETCD_NAME}=https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:2380"
         env | grep ETCD | grep -v NODE
-        export ETCD_NODE_PEER_URL=https://${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}:2380
+        export ETCD_NODE_PEER_URL=https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:2380
 
         # checking if data directory is empty, if not etcdctl restore will fail
         if [ ! -z $(ls -A "/var/lib/etcd") ]; then
