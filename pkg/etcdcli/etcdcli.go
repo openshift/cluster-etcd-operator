@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
@@ -20,6 +22,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog"
@@ -37,6 +40,10 @@ type etcdClientGetter struct {
 	networkListerSynced   cache.InformerSynced
 
 	eventRecorder events.Recorder
+
+	clientLock          sync.Mutex
+	lastClientConfigKey []string
+	cachedClient        *clientv3.Client
 }
 
 func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkInformer configv1informers.NetworkInformer, eventRecorder events.Recorder) EtcdClient {
@@ -51,6 +58,8 @@ func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkIn
 	}
 }
 
+// getEtcdClient may return a cached client.  When a new client is needed, the previous client is closed.
+// The caller should not closer the client or future calls may fail.
 func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 	if !g.nodeListerSynced() {
 		return nil, fmt.Errorf("node lister not synced")
@@ -92,12 +101,27 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 		}
 		etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", bootstrapIP))
 	}
+
+	g.clientLock.Lock()
+	defer g.clientLock.Unlock()
+	// TODO check if the connection is already closed
+	if reflect.DeepEqual(g.lastClientConfigKey, etcdEndpoints) {
+		return g.cachedClient, nil
+	}
+
 	c, err := getEtcdClient(etcdEndpoints)
 	if err != nil {
 		return nil, err
 	}
+	if g.cachedClient != nil {
+		if err := g.cachedClient.Close(); err != nil {
+			utilruntime.HandleError(err)
+		}
+	}
+	g.cachedClient = c
+	g.lastClientConfigKey = etcdEndpoints
 
-	return c, nil
+	return g.cachedClient, nil
 }
 
 func getEtcdClient(endpoints []string) (*clientv3.Client, error) {
@@ -133,7 +157,6 @@ func (g *etcdClientGetter) MemberAdd(peerURL string) error {
 	if err != nil {
 		return err
 	}
-	defer cli.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -177,7 +200,6 @@ func (g *etcdClientGetter) MemberUpdatePeerURL(id uint64, peerURLs []string) err
 	if err != nil {
 		return err
 	}
-	defer cli.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -196,7 +218,6 @@ func (g *etcdClientGetter) MemberRemove(member string) error {
 	if err != nil {
 		return err
 	}
-	defer cli.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -228,7 +249,6 @@ func (g *etcdClientGetter) MemberList() ([]*etcdserverpb.Member, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer cli.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -259,7 +279,6 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer cli.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -293,7 +312,6 @@ func (g *etcdClientGetter) MemberStatus(member *etcdserverpb.Member) string {
 		klog.Errorf("error getting etcd client: %#v", err)
 		return EtcdMemberStatusUnknown
 	}
-	defer cli.Close()
 
 	if len(member.ClientURLs) == 0 && member.Name == "" {
 		return EtcdMemberStatusNotStarted
