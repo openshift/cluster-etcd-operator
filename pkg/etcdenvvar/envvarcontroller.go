@@ -86,7 +86,7 @@ func (c *EnvVarController) AddListener(listener Enqueueable) {
 
 func (c *EnvVarController) GetEnvVars() map[string]string {
 	c.envVarMapLock.Lock()
-	defer c.envVarMapLock.Lock()
+	defer c.envVarMapLock.Unlock()
 
 	ret := map[string]string{}
 	for k, v := range c.envVarMap {
