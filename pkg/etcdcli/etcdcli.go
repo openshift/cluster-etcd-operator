@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
@@ -33,9 +35,11 @@ type etcdClientGetter struct {
 	nodeListerSynced      cache.InformerSynced
 	endpointsListerSynced cache.InformerSynced
 	networkListerSynced   cache.InformerSynced
+
+	eventRecorder events.Recorder
 }
 
-func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkInformer configv1informers.NetworkInformer) EtcdClient {
+func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkInformer configv1informers.NetworkInformer, eventRecorder events.Recorder) EtcdClient {
 	return &etcdClientGetter{
 		nodeLister:            kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
 		endpointsLister:       kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
@@ -43,6 +47,7 @@ func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkIn
 		nodeListerSynced:      kubeInformers.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
 		endpointsListerSynced: kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().HasSynced,
 		networkListerSynced:   networkInformer.Informer().HasSynced,
+		eventRecorder:         eventRecorder.WithComponentSuffix("etcd-client"),
 	}
 }
 
@@ -122,6 +127,8 @@ func getEtcdClient(endpoints []string) (*clientv3.Client, error) {
 }
 
 func (g *etcdClientGetter) MemberAdd(peerURL string) error {
+	g.eventRecorder.Eventf("MemberAdd", "adding new peer %v", peerURL)
+
 	cli, err := g.getEtcdClient()
 	if err != nil {
 		return err
@@ -139,7 +146,7 @@ func (g *etcdClientGetter) MemberAdd(peerURL string) error {
 	for _, member := range membersResp.Members {
 		for _, currPeerURL := range member.PeerURLs {
 			if currPeerURL == peerURL {
-				klog.V(2).Infof("member with peerURL %s already part of the cluster", peerURL)
+				g.eventRecorder.Warningf("MemberAlreadyAdded", "member with peerURL %s already part of the cluster", peerURL)
 				return nil
 			}
 		}
@@ -153,6 +160,19 @@ func (g *etcdClientGetter) MemberAdd(peerURL string) error {
 }
 
 func (g *etcdClientGetter) MemberUpdatePeerURL(id uint64, peerURLs []string) error {
+	if members, err := g.MemberList(); err != nil {
+		g.eventRecorder.Eventf("MemberUpdate", "updating member %d with peers %v", id, strings.Join(peerURLs, ","))
+	} else {
+		memberName := fmt.Sprintf("%d", id)
+		for _, member := range members {
+			if member.ID == id {
+				memberName = member.Name
+				break
+			}
+		}
+		g.eventRecorder.Eventf("MemberUpdate", "updating member %q with peers %v", memberName, strings.Join(peerURLs, ","))
+	}
+
 	cli, err := g.getEtcdClient()
 	if err != nil {
 		return err
@@ -170,6 +190,8 @@ func (g *etcdClientGetter) MemberUpdatePeerURL(id uint64, peerURLs []string) err
 }
 
 func (g *etcdClientGetter) MemberRemove(member string) error {
+	g.eventRecorder.Eventf("MemberRemove", "removing member %q", member)
+
 	cli, err := g.getEtcdClient()
 	if err != nil {
 		return err
@@ -197,6 +219,7 @@ func (g *etcdClientGetter) MemberRemove(member string) error {
 		}
 	}
 
+	g.eventRecorder.Warningf("MemberAlreadyRemoved", "member %q already removed", member)
 	return nil
 }
 
