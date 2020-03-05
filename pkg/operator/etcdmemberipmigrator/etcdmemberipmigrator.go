@@ -210,10 +210,7 @@ func getRequiredPeerList(etcdInfos []etcdInfo, existingPeerURLs []string) ([]str
 		return nil, fmt.Errorf("unable to locate a node for peerURL=%v, dnsErrors=%v", strings.Join(existingPeerURLs, ","), utilerrors.NewAggregate(dnsErrors))
 	}
 
-	// append instead of prepend so the discover-initial-etcd-cluster command still matches the pod.
-	requiredPeerList := append([]string{}, existingPeerURLs...)
-	requiredPeerList = append(requiredPeerList, fmt.Sprintf("https://%s:2380", needle.preferredNodeIPForURL))
-	return requiredPeerList, nil
+	return []string{fmt.Sprintf("https://%s:2380", needle.preferredNodeIPForURL)}, nil
 }
 
 type etcdInfo struct {
