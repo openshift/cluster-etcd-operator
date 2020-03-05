@@ -887,7 +887,7 @@ metadata:
     revision: "REVISION"
 spec:
   initContainers:
-    - name: etc-quorum-guard-copy
+    - name: etcd-quorum-guard-copy
       image: ${IMAGE}
       imagePullPolicy: IfNotPresent
       terminationMessagePolicy: FallbackToLogsOnError
@@ -923,7 +923,7 @@ spec:
     command:
       - "/bin/bash"
       - "-c"
-      - "trap: TERM INT; sleep infinity & wait"
+      - "trap TERM INT; sleep infinity & wait"
     resources:
       requests:
         memory: 60Mi
