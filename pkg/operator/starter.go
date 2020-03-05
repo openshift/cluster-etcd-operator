@@ -109,11 +109,9 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 	envVarController := etcdenvvar.NewEnvVarController(
 		operatorClient,
-		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Infrastructures(),
 		configInformers.Config().V1().Networks(),
-		kubeClient,
 		controllerContext.EventRecorder,
 	)
 

@@ -14,8 +14,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/informers"
-	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
@@ -31,10 +29,8 @@ type EnvVarController struct {
 	envVarMap     map[string]string
 	listeners     []Enqueueable
 
-	kubeClient           kubernetes.Interface
 	infrastructureLister configv1listers.InfrastructureLister
 	networkLister        configv1listers.NetworkLister
-	configMapLister      corev1listers.ConfigMapLister
 	endpointLister       corev1listers.EndpointsLister
 	nodeLister           corev1listers.NodeLister
 
@@ -50,38 +46,30 @@ type Enqueueable interface {
 
 func NewEnvVarController(
 	operatorClient v1helpers.StaticPodOperatorClient,
-	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	infrastructureInformer configv1informers.InfrastructureInformer,
 	networkInformer configv1informers.NetworkInformer,
-	kubeClient kubernetes.Interface,
 	eventRecorder events.Recorder,
 ) *EnvVarController {
 	c := &EnvVarController{
 		operatorClient:       operatorClient,
-		kubeClient:           kubeClient,
 		infrastructureLister: infrastructureInformer.Lister(),
 		networkLister:        networkInformer.Lister(),
-		configMapLister:      kubeInformersForNamespaces.ConfigMapLister(),
 		endpointLister:       kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
 		nodeLister:           kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
-		eventRecorder:        eventRecorder.WithComponentSuffix("target-config-controller"),
 
 		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "EnvVarController"),
 		cachesToSync: []cache.InformerSynced{
 			operatorClient.Informer().HasSynced,
-			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().HasSynced,
-			kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer().HasSynced,
-			kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer().HasSynced,
-			kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
 			infrastructureInformer.Informer().HasSynced,
 			networkInformer.Informer().HasSynced,
+			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().HasSynced,
+			kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
 		},
+		eventRecorder: eventRecorder.WithComponentSuffix("env-var-controller"),
 	}
 
 	operatorClient.Informer().AddEventHandler(c.eventHandler())
-	kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
-	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer().AddEventHandler(c.eventHandler())
 	infrastructureInformer.Informer().AddEventHandler(c.eventHandler())
 	networkInformer.Informer().AddEventHandler(c.eventHandler())
 	kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().AddEventHandler(c.eventHandler())
