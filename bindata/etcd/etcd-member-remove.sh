@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-# example
-# sudo ./etcd-member-remove.sh $etcd_name
+# example:
+# sudo -E ./etcd-member-remove.sh $etcd_name
 
 if [[ $EUID -ne 0 ]]; then
   echo "This script must be run as root"
