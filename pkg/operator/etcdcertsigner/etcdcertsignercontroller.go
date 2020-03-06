@@ -305,6 +305,7 @@ func (c *EtcdCertSignerController) createSecretForNode(node *corev1.Node) error 
 		"etcd.openshift-etcd.svc.cluster.local",
 		"*." + etcdDiscoveryDomain,
 		"127.0.0.1",
+		"::1",
 		"0:0:0:0:0:0:0:1",
 	}, nodeInternalIPs...)
 	// TODO debt left for @hexfusion or @sanchezl
