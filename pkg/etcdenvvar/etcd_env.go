@@ -21,6 +21,7 @@ type envVarContext struct {
 	infrastructureLister configv1listers.InfrastructureLister
 	networkLister        configv1listers.NetworkLister
 	endpointLister       corev1listers.EndpointsLister
+	targetImagePullSpec  string
 }
 
 type envVarFunc func(envVarContext envVarContext) (map[string]string, error)
@@ -88,10 +89,11 @@ func getEtcdctlEnvVars(envVarContext envVarContext) (map[string]string, error) {
 	}
 	return map[string]string{
 		"ETCDCTL_API":       "3",
-		"ETCDCTL_CACERT":    "/etc/kubernetes/static-pod-certs/configmaps/etcd-serving-ca/ca-bundle.crt",
-		"ETCDCTL_CERT":      "/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt",
-		"ETCDCTL_KEY":       "/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key",
+		"ETCDCTL_CACERT":    "/etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-serving-ca/ca-bundle.crt",
+		"ETCDCTL_CERT":      "/etc/kubernetes/static-pod-resources/etcd-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt",
+		"ETCDCTL_KEY":       "/etc/kubernetes/static-pod-resources/etcd-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key",
 		"ETCDCTL_ENDPOINTS": endpoints,
+		"ETCD_IMAGE":        envVarContext.targetImagePullSpec,
 	}, nil
 }
 
