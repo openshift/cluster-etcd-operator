@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+set -o errexit
+set -o pipefail
+set -o errtrace
+
 # example
 # sudo ./etcd-member-remove.sh $etcd_name
 
@@ -8,30 +12,30 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-usage () {
+function usage {
     echo 'The name of the etcd member to remove is required: ./etcd-member-remove.sh $etcd_name'
     exit 1
 }
 
+### main
 if [ "$1" == "" ]; then
     usage
 fi
 
-ETCD_NAME=$1
-ASSET_DIR=/home/core/assets
-ASSET_DIR_TMP="$ASSET_DIR/tmp"
-ETCDCTL=$ASSET_DIR/bin/etcdctl
-ETCD_DATA_DIR=/var/lib/etcd
-CONFIG_FILE_DIR=/etc/kubernetes
+NAME="$1"
 
-source "/usr/local/bin/openshift-recovery-tools"
+source /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd.env
+source /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd-common-tools
 
-function run {
-  init
-  dl_etcdctl
-  backup_etcd_client_certs
-  etcd_member_remove $ETCD_NAME
-}
+# Download etcdctl binary
+dl_etcdctl
 
-run
+# If the 1st field or the 3rd field of the member list exactly matches with the name, then get its ID. Note 3rd field has extra space to match.
+ID=$(etcdctl member list | awk -F,  "\$1 ~ /^${NAME}$/ || \$3 ~ /^\s${NAME}$/ { print \$1 }")
+if [ "$?" -ne 0 ] || [ -z "$ID" ]; then
+    echo "could not find etcd member $NAME to remove."
+    exit 1
+fi
 
+# Remove the member using ID
+etcdctl member remove $ID

@@ -5,7 +5,7 @@ metadata:
   name: etcd-scripts
 data:
   etcd.env:
-  etcd-restore-backup.sh:
+  etcd-snapshot-restore.sh:
   etcd-snapshot-backup.sh:
   etcd-member-remove.sh:
-  openshift-recovery-tools:
+  etcd-common-tools:
