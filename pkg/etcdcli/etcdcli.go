@@ -207,7 +207,8 @@ func (g *etcdClientGetter) MemberList() ([]*etcdserverpb.Member, error) {
 	}
 	defer cli.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// WithRequireLeader makes sure that the membership list is from the quorate cluster
+	ctx, cancel := context.WithCancel(clientv3.WithRequireLeader(context.Background()))
 	defer cancel()
 
 	membersResp, err := cli.MemberList(ctx)

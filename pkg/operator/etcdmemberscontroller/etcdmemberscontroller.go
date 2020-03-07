@@ -183,7 +183,7 @@ func (c *EtcdMembersController) Run(ctx context.Context, workers int) {
 	go wait.Until(c.runWorker, time.Second, ctx.Done())
 
 	// add time based trigger
-	go wait.PollImmediateUntil(time.Minute, func() (bool, error) {
+	go wait.PollImmediateUntil(time.Second, func() (bool, error) {
 		c.queue.Add(workQueueKey)
 		return false, nil
 	}, ctx.Done())
