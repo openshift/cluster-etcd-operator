@@ -1,4 +1,4 @@
-package targetconfigcontroller
+package etcdenvvar
 
 import (
 	"fmt"
@@ -27,7 +27,7 @@ type envVarFunc func(envVarContext envVarContext) (map[string]string, error)
 
 var envVarFns = []envVarFunc{
 	getEscapedIPAddress,
-	getDNSName,
+	getEtcdURLHost,
 	getFixedEtcdEnvVars,
 	getEtcdName,
 	getAllEtcdEndpoints,
@@ -45,7 +45,7 @@ var envVarFns = []envVarFunc{
 //   ETCD_ELECTION_TIMEOUT
 //   ETCD_INITIAL_CLUSTER_STATE
 //   NODE_%s_IP
-//   NODE_%s_ETCD_DNS_NAME
+//   NODE_%s_ETCD_URL_HOST
 //   NODE_%s_ETCD_NAME
 func getEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
 	// TODO once we are past bootstrapping, this restriction shouldn't be needed anymore.
@@ -173,17 +173,12 @@ func getEscapedIPAddress(envVarContext envVarContext) (map[string]string, error)
 	return ret, nil
 }
 
-func getDNSName(envVarContext envVarContext) (map[string]string, error) {
+func getEtcdURLHost(envVarContext envVarContext) (map[string]string, error) {
 	ret := map[string]string{}
 
-	infrastructure, err := envVarContext.infrastructureLister.Get("cluster")
+	network, err := envVarContext.networkLister.Get("cluster")
 	if err != nil {
 		return nil, err
-	}
-
-	etcdDiscoveryDomain := infrastructure.Status.EtcdDiscoveryDomain
-	if len(etcdDiscoveryDomain) == 0 {
-		return nil, fmt.Errorf("infrastructures.config.openshit.io/cluster missing .status.etcdDiscoveryDomain")
 	}
 
 	for _, nodeInfo := range envVarContext.status.NodeStatuses {
@@ -191,17 +186,12 @@ func getDNSName(envVarContext envVarContext) (map[string]string, error) {
 		if err != nil {
 			return nil, err
 		}
-
-		ips, err := dnshelpers.GetInternalIPAddressesForNodeName(node)
+		etcdURLHost, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
 		if err != nil {
 			return nil, err
 		}
 
-		dnsName, err := dnshelpers.ReverseLookupFirstHit(etcdDiscoveryDomain, ips...)
-		if err != nil {
-			return nil, err
-		}
-		ret[fmt.Sprintf("NODE_%s_ETCD_DNS_NAME", envVarSafe(nodeInfo.NodeName))] = dnsName
+		ret[fmt.Sprintf("NODE_%s_ETCD_URL_HOST", envVarSafe(nodeInfo.NodeName))] = etcdURLHost
 	}
 
 	return ret, nil

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
@@ -43,11 +45,12 @@ type TargetConfigController struct {
 	configMapLister      corev1listers.ConfigMapLister
 	endpointLister       corev1listers.EndpointsLister
 	nodeLister           corev1listers.NodeLister
-	eventRecorder        events.Recorder
+	envVarGetter         *etcdenvvar.EnvVarController
 
 	// queue only ever has one item, but it has nice error handling backoff/retry semantics
-	queue        workqueue.RateLimitingInterface
-	cachesToSync []cache.InformerSynced
+	queue         workqueue.RateLimitingInterface
+	cachesToSync  []cache.InformerSynced
+	eventRecorder events.Recorder
 }
 
 func NewTargetConfigController(
@@ -58,6 +61,7 @@ func NewTargetConfigController(
 	infrastructureInformer configv1informers.InfrastructureInformer,
 	networkInformer configv1informers.NetworkInformer,
 	kubeClient kubernetes.Interface,
+	envVarGetter *etcdenvvar.EnvVarController,
 	eventRecorder events.Recorder,
 ) *TargetConfigController {
 	c := &TargetConfigController{
@@ -71,7 +75,7 @@ func NewTargetConfigController(
 		configMapLister:      kubeInformersForNamespaces.ConfigMapLister(),
 		endpointLister:       kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
 		nodeLister:           kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
-		eventRecorder:        eventRecorder.WithComponentSuffix("target-config-controller"),
+		envVarGetter:         envVarGetter,
 
 		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "TargetConfigController"),
 		cachesToSync: []cache.InformerSynced{
@@ -83,6 +87,7 @@ func NewTargetConfigController(
 			infrastructureInformer.Informer().HasSynced,
 			networkInformer.Informer().HasSynced,
 		},
+		eventRecorder: eventRecorder.WithComponentSuffix("target-config-controller"),
 	}
 
 	operatorClient.Informer().AddEventHandler(c.eventHandler())
@@ -94,6 +99,8 @@ func NewTargetConfigController(
 
 	// TODO only trigger on master nodes
 	kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().AddEventHandler(c.eventHandler())
+
+	envVarGetter.AddListener(c)
 
 	return c
 }
@@ -195,17 +202,11 @@ func loglevelToKlog(logLevel operatorv1.LogLevel) string {
 }
 
 func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv1.StaticPodOperatorSpec, operatorStatus *operatorv1.StaticPodOperatorStatus, imagePullSpec, operatorImagePullSpec string) (*strings.Replacer, error) {
-	envVarMap, err := getEtcdEnvVars(envVarContext{
-		spec:                 *operatorSpec,
-		status:               *operatorStatus,
-		endpointLister:       c.endpointLister,
-		nodeLister:           c.nodeLister,
-		infrastructureLister: c.infrastructureLister,
-		networkLister:        c.networkLister,
-	})
-	if err != nil {
-		return nil, err
+	envVarMap := c.envVarGetter.GetEnvVars()
+	if len(envVarMap) == 0 {
+		return nil, fmt.Errorf("missing env var values")
 	}
+
 	envVarLines := []string{}
 	for _, k := range sets.StringKeySet(envVarMap).List() {
 		v := envVarMap[k]
@@ -290,6 +291,10 @@ func (c *TargetConfigController) processNextWorkItem() bool {
 	c.queue.AddRateLimited(dsKey)
 
 	return true
+}
+
+func (c *TargetConfigController) Enqueue() {
+	c.queue.Add(workQueueKey)
 }
 
 // eventHandler queues the operator to check spec and status

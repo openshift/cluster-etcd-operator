@@ -296,12 +296,7 @@ func (c *EtcdCertSignerController) createSecretForNode(node *corev1.Node) error 
 	if err != nil {
 		return err
 	}
-	// the nodeInternalIPs should never have conflicting values.
-	podFQDN, err := dnshelpers.ReverseLookupFirstHit(etcdDiscoveryDomain, nodeInternalIPs...)
-	if err != nil {
-		return err
-	}
-	peerHostNames := append([]string{"localhost", podFQDN, etcdDiscoveryDomain}, nodeInternalIPs...)
+	peerHostNames := append([]string{"localhost", etcdDiscoveryDomain}, nodeInternalIPs...)
 	serverHostNames := append([]string{
 		"localhost",
 		"etcd.kube-system.svc",
@@ -310,20 +305,23 @@ func (c *EtcdCertSignerController) createSecretForNode(node *corev1.Node) error 
 		"etcd.openshift-etcd.svc.cluster.local",
 		"*." + etcdDiscoveryDomain,
 		"127.0.0.1",
+		"0:0:0:0:0:0:0:1",
 	}, nodeInternalIPs...)
+	// TODO debt left for @hexfusion or @sanchezl
+	fakePodFQDN := "etcd-client"
 
 	// create the certificates and update them in the API
-	pCert, pKey, err := createNewCombinedClientAndServingCerts(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], podFQDN, peerOrg, peerHostNames)
+	pCert, pKey, err := createNewCombinedClientAndServingCerts(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], fakePodFQDN, peerOrg, peerHostNames)
 	err = c.createSecret(etcdPeerClientCertName, pCert, pKey)
 	if err != nil {
 		return err
 	}
-	sCert, sKey, err := createNewCombinedClientAndServingCerts(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], podFQDN, serverOrg, serverHostNames)
+	sCert, sKey, err := createNewCombinedClientAndServingCerts(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], fakePodFQDN, serverOrg, serverHostNames)
 	err = c.createSecret(etcdServingCertName, sCert, sKey)
 	if err != nil {
 		return err
 	}
-	metricCert, metricKey, err := createNewCombinedClientAndServingCerts(etcdMetricCASecret.Data["tls.crt"], etcdMetricCASecret.Data["tls.key"], podFQDN, metricOrg, serverHostNames)
+	metricCert, metricKey, err := createNewCombinedClientAndServingCerts(etcdMetricCASecret.Data["tls.crt"], etcdMetricCASecret.Data["tls.key"], fakePodFQDN, metricOrg, serverHostNames)
 	err = c.createSecret(metricsServingCertName, metricCert, metricKey)
 	if err != nil {
 		return err

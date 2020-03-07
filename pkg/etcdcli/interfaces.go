@@ -19,6 +19,7 @@ type EtcdClient interface {
 	MemberStatusChecker
 
 	GetMember(name string) (*etcdserverpb.Member, error)
+	MemberUpdatePeerURL(id uint64, peerURL []string) error
 }
 
 type MemberAdder interface {

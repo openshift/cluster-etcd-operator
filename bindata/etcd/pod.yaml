@@ -46,7 +46,7 @@ spec:
     command:
       - "/bin/bash"
       - "-c"
-      - "trap: TERM INT; sleep infinity & wait"
+      - "trap TERM INT; sleep infinity & wait"
     resources:
       requests:
         memory: 60Mi
@@ -85,7 +85,7 @@ ${COMPUTED_ENV_VARS}
           --key=/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key \
           --endpoints=${ALL_ETCD_ENDPOINTS} \
           --data-dir=/var/lib/etcd/member \
-          --target-peer-url-host=${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME} \
+          --target-peer-url-host=${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST} \
           --target-name=NODE_NAME)
          export ETCD_INITIAL_CLUSTER
 
@@ -163,7 +163,7 @@ ${COMPUTED_ENV_VARS}
         export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
 
         exec etcd grpc-proxy start \
-          --endpoints https://${NODE_NODE_ENVVAR_NAME_ETCD_DNS_NAME}:9978 \
+          --endpoints https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:9978 \
           --metrics-addr https://${LISTEN_ON_ALL_IPS}:9979 \
           --listen-addr ${LOCALHOST_IP}:9977 \
           --key /etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key \

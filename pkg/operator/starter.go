@@ -6,8 +6,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
-
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
@@ -15,16 +13,18 @@ import (
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdmemberipmigrator"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdmemberscontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/hostendpointscontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/hostendpointscontroller2"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
@@ -107,6 +107,14 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	).AddKubeInformers(kubeInformersForNamespaces)
 
+	envVarController := etcdenvvar.NewEnvVarController(
+		operatorClient,
+		kubeInformersForNamespaces,
+		configInformers.Config().V1().Infrastructures(),
+		configInformers.Config().V1().Networks(),
+		controllerContext.EventRecorder,
+	)
+
 	targetConfigReconciler := targetconfigcontroller.NewTargetConfigController(
 		os.Getenv("IMAGE"),
 		os.Getenv("OPERATOR_IMAGE"),
@@ -116,6 +124,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		configInformers.Config().V1().Infrastructures(),
 		configInformers.Config().V1().Networks(),
 		kubeClient,
+		envVarController,
 		controllerContext.EventRecorder,
 	)
 
@@ -166,14 +175,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		configInformers.Config().V1().Infrastructures(),
 		controllerContext.EventRecorder,
 	)
-	hostEtcdEndpointController := hostendpointscontroller.NewHostEndpointsController(
-		operatorClient,
-		controllerContext.EventRecorder,
-		coreClient,
-		kubeInformersForNamespaces,
-		configInformers.Config().V1().Infrastructures(),
-		configInformers.Config().V1().Networks(),
-	)
 	hostEtcdEndpointController2 := hostendpointscontroller2.NewHostEndpoints2Controller(
 		operatorClient,
 		controllerContext.EventRecorder,
@@ -183,8 +184,16 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 	clusterMemberController := clustermembercontroller.NewClusterMemberController(
 		operatorClient,
-		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
+		kubeInformersForNamespaces,
+		configInformers.Config().V1().Networks(),
+		etcdClient,
+		controllerContext.EventRecorder,
+	)
+	etcdMemberIPMigrator := etcdmemberipmigrator.NewEtcdMemberIPMigrator(
+		operatorClient,
+		kubeInformersForNamespaces.InformersFor(""),
 		configInformers.Config().V1().Infrastructures(),
+		configInformers.Config().V1().Networks(),
 		etcdClient,
 		controllerContext.EventRecorder,
 	)
@@ -204,6 +213,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorClient,
 		kubeClient,
 		kubeInformersForNamespaces,
+		envVarController,
 		controllerContext.EventRecorder,
 	)
 
@@ -216,16 +226,17 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go staticResourceController.Run(ctx, 1)
 	go targetConfigReconciler.Run(1, ctx.Done())
 	go etcdCertSignerController.Run(1, ctx.Done())
-	go hostEtcdEndpointController.Run(ctx, 1)
 	go hostEtcdEndpointController2.Run(ctx, 1)
 	go resourceSyncController.Run(ctx, 1)
 	go statusController.Run(ctx, 1)
 	go configObserver.Run(ctx, 1)
 	go clusterMemberController.Run(ctx.Done())
+	go etcdMemberIPMigrator.Run(ctx.Done())
 	go etcdMembersController.Run(ctx, 1)
 	go bootstrapTeardownController.Run(ctx.Done())
 	go staticPodControllers.Run(ctx, 1)
 	go scriptController.Run(1, ctx.Done())
+	go envVarController.Run(1, ctx.Done())
 
 	<-ctx.Done()
 	return fmt.Errorf("stopped")
