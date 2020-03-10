@@ -354,7 +354,7 @@ fi
 
 # Move manifests and stop static pods
 if [ ! -d "$MANIFEST_STOPPED_DIR" ]; then
-  mkdir $MANIFEST_STOPPED_DIR
+  mkdir -p $MANIFEST_STOPPED_DIR
 fi
 
 # Move static pod manifests out of MANIFEST_DIR
