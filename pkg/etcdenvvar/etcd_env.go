@@ -89,9 +89,9 @@ func getEtcdctlEnvVars(envVarContext envVarContext) (map[string]string, error) {
 	}
 	return map[string]string{
 		"ETCDCTL_API":       "3",
-		"ETCDCTL_CACERT":    "/etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-serving-ca/ca-bundle.crt",
-		"ETCDCTL_CERT":      "/etc/kubernetes/static-pod-resources/etcd-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt",
-		"ETCDCTL_KEY":       "/etc/kubernetes/static-pod-resources/etcd-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key",
+		"ETCDCTL_CACERT":    "/etc/kubernetes/static-pod-resources/configmaps/etcd-serving-ca/ca-bundle.crt",
+		"ETCDCTL_CERT":      "/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt",
+		"ETCDCTL_KEY":       "/etc/kubernetes/static-pod-resources/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key",
 		"ETCDCTL_ENDPOINTS": endpoints,
 		"ETCD_IMAGE":        envVarContext.targetImagePullSpec,
 	}, nil
