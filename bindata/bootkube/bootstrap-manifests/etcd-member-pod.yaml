@@ -85,7 +85,7 @@ spec:
     resources:
       requests:
         memory: 600Mi
-        cpu: 300m
+        cpu: 245m
     terminationMessagePolicy: FallbackToLogsOnError
     securityContext:
       privileged: true
@@ -130,6 +130,9 @@ spec:
         --cert-file /etc/ssl/etcd/system:etcd-metric:{{ .Hostname }}.crt \
         --cacert /etc/ssl/etcd/ca.crt \
         --trusted-ca-file /etc/ssl/etcd/metric-ca.crt \
+    resources:
+      requests:
+        cpu: 5m
     terminationMessagePolicy: FallbackToLogsOnError
     securityContext:
       privileged: true
