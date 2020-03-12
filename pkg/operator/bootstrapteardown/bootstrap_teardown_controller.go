@@ -4,16 +4,18 @@ import (
 	"fmt"
 	"time"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
@@ -27,6 +29,7 @@ type BootstrapTeardownController struct {
 	operatorClient v1helpers.OperatorClient
 	etcdClient     etcdcli.EtcdClient
 	kubeClient     kubernetes.Interface
+	nodeLister     corev1listers.NodeLister
 
 	cachesToSync  []cache.InformerSynced
 	queue         workqueue.RateLimitingInterface
@@ -36,18 +39,23 @@ type BootstrapTeardownController struct {
 func NewBootstrapTeardownController(
 	operatorClient v1helpers.OperatorClient,
 	kubeClient kubernetes.Interface,
+	kubeInformers operatorv1helpers.KubeInformersForNamespaces,
 
 	etcdClient etcdcli.EtcdClient,
 
 	eventRecorder events.Recorder,
 ) *BootstrapTeardownController {
+	nodeInformer := kubeInformers.InformersFor("").Core().V1().Nodes()
+
 	c := &BootstrapTeardownController{
 		operatorClient: operatorClient,
 		etcdClient:     etcdClient,
 		kubeClient:     kubeClient,
+		nodeLister:     nodeInformer.Lister(),
 
 		cachesToSync: []cache.InformerSynced{
 			operatorClient.Informer().HasSynced,
+			nodeInformer.Informer().HasSynced,
 		},
 		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "BootstrapTeardownController"),
 		eventRecorder: eventRecorder.WithComponentSuffix("bootstrap-teardown-controller"),
@@ -165,7 +173,14 @@ func (c *BootstrapTeardownController) canRemoveEtcdBootstrap() (bool, bool, erro
 		return false, hasBootstrap, nil
 	}
 
-	if len(members) < 4 {
+	expectedEtcdSize, err := c.getExpectedEtcdSize()
+	if err != nil {
+		return false, hasBootstrap, err
+	}
+	if expectedEtcdSize == 0 {
+		return false, hasBootstrap, fmt.Errorf("number of master nodes is 0")
+	}
+	if len(members) < expectedEtcdSize {
 		return false, hasBootstrap, nil
 	}
 
@@ -186,6 +201,14 @@ func (c *BootstrapTeardownController) canRemoveEtcdBootstrap() (bool, bool, erro
 		}
 		return false, hasBootstrap, nil
 	}
+}
+
+func (c *BootstrapTeardownController) getExpectedEtcdSize() (int, error) {
+	nodes, err := c.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
+	if err != nil {
+		return 0, err
+	}
+	return len(nodes), nil
 }
 
 func (c *BootstrapTeardownController) Run(stopCh <-chan struct{}) {
