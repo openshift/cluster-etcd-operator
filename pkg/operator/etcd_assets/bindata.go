@@ -724,11 +724,14 @@ spec:
         ETCDCTL_API=3 /usr/bin/etcdctl snapshot restore /var/lib/etcd-backup/snapshot.db \
          --name  $ETCD_NAME \
          --initial-cluster=$ETCD_INITIAL_CLUSTER \
-         --initial-cluster-token "openshift-etcd-{$UUID:0:10}" \
+         --initial-cluster-token "openshift-etcd-${UUID}" \
          --initial-advertise-peer-urls $ETCD_NODE_PEER_URL \
-         --data-dir="/var/lib/etcd/restore-{$UUID:0:10}"
+         --data-dir="/var/lib/etcd/restore-${UUID}"
 
-        mv /var/lib/etcd/restore-{$UUID:0:10}/* /var/lib/etcd/
+        mv /var/lib/etcd/restore-${UUID}/* /var/lib/etcd/
+
+        rmdir /var/lib/etcd/restore-${UUID}
+        rm /var/lib/etcd-backup/snapshot.db
 
         set -x
         exec etcd \
