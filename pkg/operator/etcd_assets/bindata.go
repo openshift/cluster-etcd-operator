@@ -504,7 +504,7 @@ ${COMPUTED_ENV_VARS}
           --cert=/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt \
           --key=/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key \
           --endpoints=${ALL_ETCD_ENDPOINTS} \
-          --data-dir=/var/lib/etcd/member \
+          --data-dir=/var/lib/etcd \
           --target-peer-url-host=${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST} \
           --target-name=NODE_NAME)
          export ETCD_INITIAL_CLUSTER
