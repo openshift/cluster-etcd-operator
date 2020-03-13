@@ -220,21 +220,9 @@ func (c *ClusterMemberController) getEtcdPodToAddToMembership() (*corev1.Pod, er
 			continue
 		}
 
-		// check to see if this member is updating from 4.3
-		etcdMember, err := c.etcdClient.GetMember("etcd-member-" + pod.Spec.NodeName)
-		switch {
-		case apierrors.IsNotFound(err):
-			// this is not an upgrade from 4.3
-		case err != nil:
-			return nil, err
-		default:
-			klog.V(4).Infof("skipping unready pod %q because it is already an etcd member: %#v with hostname: %s", pod.Name, etcdMember, pod.Spec.Hostname)
-			return nil, nil
-		}
-
 		// now check to see if this member is already part of the quorum.  This logically requires being able to map every
 		// type of member name we have ever created.  The most important for now is the nodeName.
-		etcdMember, err = c.etcdClient.GetMember(pod.Spec.NodeName)
+		etcdMember, err := c.etcdClient.GetMember(pod.Spec.NodeName)
 		switch {
 		case apierrors.IsNotFound(err):
 			return pod, nil
