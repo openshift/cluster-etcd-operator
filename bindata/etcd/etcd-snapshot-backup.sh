@@ -32,7 +32,7 @@ function backup_latest_kube_static_resources {
 
   LATEST_RESOURCE_DIRS=()
   for RESOURCE in "${RESOURCES[@]}"; do
-    LATEST_RESOURCE=$(ls -vd "${CONFIG_FILE_DIR}"/static-pod-resources/${RESOURCE}-[0-9]* | tail -1) || true
+    LATEST_RESOURCE=$(ls -trd "${CONFIG_FILE_DIR}"/static-pod-resources/${RESOURCE}-[0-9]* | tail -1) || true
     if [ -z "$LATEST_RESOURCE" ]; then
       echo "error finding static-pod-resource ${RESOURCE}"
       exit 1
