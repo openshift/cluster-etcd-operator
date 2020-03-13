@@ -36,6 +36,7 @@ type renderOpts struct {
 	setupEtcdEnvImage        string
 	kubeClientAgentImage     string
 	clusterConfigFile        string
+	clusterNetworkFile       string
 	bootstrapIP              string
 }
 
@@ -82,6 +83,7 @@ func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&r.setupEtcdEnvImage, "manifest-setup-etcd-env-image", r.setupEtcdEnvImage, "setup-etcd-env manifest image")
 	fs.StringVar(&r.etcdDiscoveryDomain, "etcd-discovery-domain", r.etcdDiscoveryDomain, "etcd discovery domain")
 	fs.StringVar(&r.clusterConfigFile, "cluster-config-file", r.clusterConfigFile, "Openshift Cluster API Config file.")
+	fs.StringVar(&r.clusterNetworkFile, "cluster-network-file", r.clusterNetworkFile, "Openshift Cluster Network API Config file.")
 	fs.StringVar(&r.bootstrapIP, "bootstrap-ip", r.bootstrapIP, "bootstrap IP used to indicate where to find the first etcd endpoint")
 }
 
@@ -187,10 +189,18 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 		BootstrapIP: opts.bootstrapIP,
 	}
 
-	if err := templateData.setClusterCIDR(opts.clusterConfigFile); err != nil {
+	// remove after flag changes are merged to installer
+	var networkConfigFile string
+	if opts.clusterNetworkFile == "" {
+		networkConfigFile = opts.clusterConfigFile
+	} else {
+		networkConfigFile = opts.clusterNetworkFile
+	}
+
+	if err := templateData.setClusterCIDR(networkConfigFile); err != nil {
 		return nil, err
 	}
-	if err := templateData.setServiceCIDR(opts.clusterConfigFile); err != nil {
+	if err := templateData.setServiceCIDR(networkConfigFile); err != nil {
 		return nil, err
 	}
 	if err := templateData.setSingleStackIPv6(); err != nil {
@@ -312,8 +322,8 @@ func (t *TemplateData) getClusterConfigFromFile(clusterConfigFile string) (*unst
 	return clusterConfig, nil
 }
 
-func (t *TemplateData) setServiceCIDR(clusterConfigFile string) error {
-	clusterConfig, err := t.getClusterConfigFromFile(clusterConfigFile)
+func (t *TemplateData) setServiceCIDR(clusterNetworkFile string) error {
+	clusterConfig, err := t.getClusterConfigFromFile(clusterNetworkFile)
 	if err != nil {
 		return err
 	}
@@ -337,8 +347,8 @@ func (t *TemplateData) setHostname() error {
 	return nil
 }
 
-func (t *TemplateData) setClusterCIDR(clusterConfigFile string) error {
-	clusterConfig, err := t.getClusterConfigFromFile(clusterConfigFile)
+func (t *TemplateData) setClusterCIDR(clusterNetworkFile string) error {
+	clusterConfig, err := t.getClusterConfigFromFile(clusterNetworkFile)
 	if err != nil {
 		return err
 	}
