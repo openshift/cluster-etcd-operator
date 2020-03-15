@@ -213,31 +213,10 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 function usage {
-    echo 'Path to backup dir required: ./etcd-snapshot-backup.sh <path-to-backup-dir>'
-    exit 1
+  echo 'Path to backup dir required: ./etcd-snapshot-backup.sh <path-to-backup-dir>'
+  exit 1
 }
 
-#backup latest static pod resources for kube-apiserver
-function backup_latest_kube_static_resources {
-  echo "Trying to backup latest static pod resources.."
-  LATEST_STATIC_POD_DIR=$(ls -vd "${CONFIG_FILE_DIR}"/static-pod-resources/kube-apiserver-pod-[0-9]* | tail -1) || true
-  if [ -z "$LATEST_STATIC_POD_DIR" ]; then
-      echo "error finding static-pod-resources"
-      exit 1
-  fi
-
-  LATEST_ETCD_STATIC_POD_DIR=$(ls -vd "${CONFIG_FILE_DIR}"/static-pod-resources/etcd-pod-[0-9]* | tail -1) || true
-  if [ -z "$LATEST_ETCD_STATIC_POD_DIR" ]; then
-      echo "error finding static-pod-resources"
-      exit 1
-  fi
-
-  # tar up the static kube resources, with the path relative to CONFIG_FILE_DIR
-  tar -cpzf $BACKUP_TAR_FILE -C ${CONFIG_FILE_DIR} ${LATEST_STATIC_POD_DIR#$CONFIG_FILE_DIR/} ${LATEST_ETCD_STATIC_POD_DIR#$CONFIG_FILE_DIR/}
-}
-
-
-# main
 # If the first argument is missing, or it is an existing file, then print usage and exit
 if [ -z "$1" ] || [ -f "$1" ]; then
   usage
@@ -247,20 +226,46 @@ if [ ! -d "$1" ]; then
   mkdir -p $1
 fi
 
+# backup latest static pod resources
+function backup_latest_kube_static_resources {
+  RESOURCES=("$@")
+
+  LATEST_RESOURCE_DIRS=()
+  for RESOURCE in "${RESOURCES[@]}"; do
+    LATEST_RESOURCE=$(ls -trd "${CONFIG_FILE_DIR}"/static-pod-resources/${RESOURCE}-[0-9]* | tail -1) || true
+    if [ -z "$LATEST_RESOURCE" ]; then
+      echo "error finding static-pod-resource ${RESOURCE}"
+      exit 1
+    fi
+
+    echo "found latest ${RESOURCE}: ${LATEST_RESOURCE}"
+    LATEST_RESOURCE_DIRS+=("${LATEST_RESOURCE#${CONFIG_FILE_DIR}/}")
+  done
+
+  # tar latest resources with the path relative to CONFIG_FILE_DIR
+  tar -cpzf $BACKUP_TAR_FILE -C ${CONFIG_FILE_DIR} "${LATEST_RESOURCE_DIRS[@]}"
+}
+
 BACKUP_DIR="$1"
 DATESTRING=$(date "+%F_%H%M%S")
 BACKUP_TAR_FILE=${BACKUP_DIR}/static_kuberesources_${DATESTRING}.tar.gz
 SNAPSHOT_FILE="${BACKUP_DIR}/snapshot_${DATESTRING}.db"
+BACKUP_RESOURCE_LIST=("kube-apiserver-pod" "kube-controller-manager-pod" "kube-scheduler-pod" "etcd-pod")
 
 trap "rm -f ${BACKUP_TAR_FILE} ${SNAPSHOT_FILE}" ERR
 
 source /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd.env
 source /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd-common-tools
 
+# TODO handle properly
+if [ ! -f "$ETCDCTL_CACERT" ] && [ ! -d "${CONFIG_FILE_DIR}/static-pod-certs" ]; then
+  ln -s ${CONFIG_FILE_DIR}/static-pod-resources/etcd-certs ${CONFIG_FILE_DIR}/static-pod-certs
+fi
+
 dl_etcdctl
-backup_latest_kube_static_resources
+backup_latest_kube_static_resources "${BACKUP_RESOURCE_LIST[@]}"
 etcdctl snapshot save ${SNAPSHOT_FILE}
-echo "snapshot db and kube resources are successfully saved to ${BACKUP_DIR}!"
+echo "snapshot db and kube resources are successfully saved to ${BACKUP_DIR}"
 `)
 
 func etcdEtcdSnapshotBackupShBytes() ([]byte, error) {
@@ -308,12 +313,42 @@ if [ "$1" == "" ] || [ ! -d "$1" ]; then
   usage
 fi
 
+function restore_static_pods() {
+  STATIC_PODS=("$@")
+
+  for POD_FILE_NAME in "${STATIC_PODS[@]}"; do
+    BACKUP_POD_PATH=$(tar -tvf ${BACKUP_FILE} "*${POD_FILE_NAME}" | awk '{ print $6 }') || true
+    if [ -z "${BACKUP_POD_PATH}" ]; then
+      echo "${POD_FILE_NAME} does not exist in ${BACKUP_FILE}"
+      exit 1
+    fi
+
+    echo "starting ${POD_FILE_NAME}"
+    tar -xvf ${BACKUP_FILE} --strip-components=2 -C ${MANIFEST_DIR}/ ${BACKUP_POD_PATH}
+  done
+}
+
+function wait_for_containers_to_stop() {
+  CONTAINERS=("$@")
+
+  for NAME in "${CONTAINERS[@]}"; do
+    echo "Waiting for container ${NAME} to stop"
+    while [ ! -z "$(crictl ps --label io.kubernetes.container.name=${NAME} -q)" ]; do
+      echo -n "."
+      sleep 1
+    done
+    echo "complete"
+  done
+}
+
 BACKUP_DIR="$1"
 BACKUP_FILE=$(ls -vd "${BACKUP_DIR}"/static_kuberesources*.tar.gz | tail -1) || true
 SNAPSHOT_FILE=$(ls -vd "${BACKUP_DIR}"/snapshot*.db | tail -1) || true
+STATIC_POD_LIST=("kube-apiserver-pod.yaml" "kube-controller-manager-pod.yaml" "kube-scheduler-pod.yaml")
+STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "kube-controller-manager" "kube-apiserver" "kube-scheduler") 
 
 if [ ! -f "${SNAPSHOT_FILE}" ]; then
-  echo "etcd snapshot ${SNAPSHOT_FILE} does not exist."
+  echo "etcd snapshot ${SNAPSHOT_FILE} does not exist"
   exit 1
 fi
 
@@ -329,27 +364,34 @@ find ${MANIFEST_DIR} \
   -printf '...stopping %P\n' \
   -exec mv {} ${MANIFEST_STOPPED_DIR} \;
 
-# Wait for pods to stop
-sleep 30
+# wait for every static pod container to stop
+wait_for_containers_to_stop "${STATIC_POD_CONTAINERS[@]}"
 
-# //TO DO: verify using crictl that etcd and other pods stopped.
-
-# Remove data dir
-echo "Moving etcd data-dir ${ETCD_DATA_DIR}/member to ${ETCD_DATA_DIR_BACKUP}"
-[ ! -d ${ETCD_DATA_DIR_BACKUP} ]  && mkdir -p ${ETCD_DATA_DIR_BACKUP}
-mv ${ETCD_DATA_DIR}/member ${ETCD_DATA_DIR_BACKUP}/member
-
-# Copy snapshot to backupdir
 if [ ! -d ${ETCD_DATA_DIR_BACKUP} ]; then
   mkdir -p ${ETCD_DATA_DIR_BACKUP}
 fi
-cp -p ${SNAPSHOT_FILE} ${ETCD_DATA_DIR_BACKUP}/snapshot.db
 
-# Copy etcd restore pod yaml
-cp -p ${RESTORE_ETCD_POD_YAML} ${MANIFEST_DIR}/etcd-pod.yaml
+# backup old data-dir
+if [ -d "${ETCD_DATA_DIR}/member" ]; then
+  if [ -d "${ETCD_DATA_DIR_BACKUP}/member" ]; then
+    echo "removing previous backup ${ETCD_DATA_DIR_BACKUP}/member"
+    rm -rf ${ETCD_DATA_DIR_BACKUP}/member
+  fi
+  echo "Moving etcd data-dir ${ETCD_DATA_DIR}/member to ${ETCD_DATA_DIR_BACKUP}"
+  mv ${ETCD_DATA_DIR}/member ${ETCD_DATA_DIR_BACKUP}/
+fi
 
 # Restore static pod resources
 tar -C ${CONFIG_FILE_DIR} -xzf ${BACKUP_FILE} static-pod-resources
+
+# Copy snapshot to backupdir
+cp -p ${SNAPSHOT_FILE} ${ETCD_DATA_DIR_BACKUP}/snapshot.db
+
+echo "starting restore-etcd static pod"
+cp -p ${RESTORE_ETCD_POD_YAML} ${MANIFEST_DIR}/etcd-pod.yaml
+
+# start remaining static pods
+restore_static_pods "${STATIC_POD_LIST[@]}"
 `)
 
 func etcdEtcdSnapshotRestoreShBytes() ([]byte, error) {
@@ -724,11 +766,14 @@ spec:
         ETCDCTL_API=3 /usr/bin/etcdctl snapshot restore /var/lib/etcd-backup/snapshot.db \
          --name  $ETCD_NAME \
          --initial-cluster=$ETCD_INITIAL_CLUSTER \
-         --initial-cluster-token "openshift-etcd-{$UUID:0:10}" \
+         --initial-cluster-token "openshift-etcd-${UUID}" \
          --initial-advertise-peer-urls $ETCD_NODE_PEER_URL \
-         --data-dir="/var/lib/etcd/restore-{$UUID:0:10}"
+         --data-dir="/var/lib/etcd/restore-${UUID}"
 
-        mv /var/lib/etcd/restore-{$UUID:0:10}/* /var/lib/etcd/
+        mv /var/lib/etcd/restore-${UUID}/* /var/lib/etcd/
+
+        rmdir /var/lib/etcd/restore-${UUID}
+        rm /var/lib/etcd-backup/snapshot.db
 
         set -x
         exec etcd \
