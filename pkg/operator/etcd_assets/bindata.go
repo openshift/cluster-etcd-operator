@@ -142,6 +142,7 @@ func etcdEtcdCommonTools() (*asset, error) {
 
 var _etcdEtcdMemberRemoveSh = []byte(`#!/usr/bin/env bash
 
+### Created by cluster-etcd-operator. DO NOT edit.
 set -o errexit
 set -o pipefail
 set -o errtrace
@@ -168,6 +169,11 @@ NAME="$1"
 
 source /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd.env
 source /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd-common-tools
+
+# TODO handle properly
+if [ ! -f "$ETCDCTL_CACERT" ] && [ ! -d "${CONFIG_FILE_DIR}/static-pod-certs" ]; then
+  ln -s ${CONFIG_FILE_DIR}/static-pod-resources/etcd-certs ${CONFIG_FILE_DIR}/static-pod-certs
+fi
 
 # Download etcdctl binary
 dl_etcdctl
@@ -199,6 +205,8 @@ func etcdEtcdMemberRemoveSh() (*asset, error) {
 }
 
 var _etcdEtcdSnapshotBackupSh = []byte(`#!/usr/bin/env bash
+
+### Created by cluster-etcd-operator. DO NOT edit.
 
 set -o errexit
 set -o pipefail
@@ -285,6 +293,8 @@ func etcdEtcdSnapshotBackupSh() (*asset, error) {
 
 var _etcdEtcdSnapshotRestoreSh = []byte(`#!/usr/bin/env bash
 
+### Created by cluster-etcd-operator. DO NOT edit.
+
 set -o errexit
 set -o pipefail
 set -o errtrace
@@ -354,7 +364,7 @@ fi
 
 # Move manifests and stop static pods
 if [ ! -d "$MANIFEST_STOPPED_DIR" ]; then
-  mkdir $MANIFEST_STOPPED_DIR
+  mkdir -p $MANIFEST_STOPPED_DIR
 fi
 
 # Move static pod manifests out of MANIFEST_DIR
@@ -472,7 +482,7 @@ metadata:
     revision: "REVISION"
 spec:
   initContainers:
-    - name: etc-quorum-guard-copy
+    - name: etcd-resources-copy
       image: ${IMAGE}
       imagePullPolicy: IfNotPresent
       terminationMessagePolicy: FallbackToLogsOnError
@@ -485,6 +495,9 @@ spec:
 
           cp /etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt /etc/kubernetes/etcd-backup-dir/system:etcd-peer-NODE_NAME.crt
           cp /etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key /etc/kubernetes/etcd-backup-dir/system:etcd-peer-NODE_NAME.key
+          rm -f $(grep -l '^### Created by cluster-etcd-operator' /usr/local/bin/*)
+          cp -p /etc/kubernetes/static-pod-certs/configmaps/etcd-scripts/*.sh /usr/local/bin
+
       resources:
         requests:
           memory: 60Mi
@@ -498,6 +511,8 @@ spec:
           name: resource-dir
         - mountPath: /etc/kubernetes/static-pod-certs
           name: cert-dir
+        - mountPath: /usr/local/bin
+          name: usr-local-bin
   containers:
   # The etcdctl container should always be first. It is intended to be used
   # to open a remote shell via ` + "`" + `oc rsh` + "`" + ` that is ready to run ` + "`" + `etcdctl` + "`" + `.
@@ -670,6 +685,9 @@ ${COMPUTED_ENV_VARS}
         path: /var/lib/etcd
         type: ""
       name: data-dir
+    - hostPath:
+        path: /usr/local/bin
+      name: usr-local-bin
 
 `)
 

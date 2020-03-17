@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+### Created by cluster-etcd-operator. DO NOT edit.
+
 set -o errexit
 set -o pipefail
 set -o errtrace

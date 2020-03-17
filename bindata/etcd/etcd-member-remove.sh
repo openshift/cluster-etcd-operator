@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+### Created by cluster-etcd-operator. DO NOT edit.
 set -o errexit
 set -o pipefail
 set -o errtrace
@@ -26,6 +27,11 @@ NAME="$1"
 
 source /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd.env
 source /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd-common-tools
+
+# TODO handle properly
+if [ ! -f "$ETCDCTL_CACERT" ] && [ ! -d "${CONFIG_FILE_DIR}/static-pod-certs" ]; then
+  ln -s ${CONFIG_FILE_DIR}/static-pod-resources/etcd-certs ${CONFIG_FILE_DIR}/static-pod-certs
+fi
 
 # Download etcdctl binary
 dl_etcdctl
