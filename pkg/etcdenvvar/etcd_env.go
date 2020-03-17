@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	operatorhelpers "github.com/openshift/cluster-etcd-operator/pkg/operator/helpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 )
 
@@ -17,11 +18,13 @@ type envVarContext struct {
 	spec   operatorv1.StaticPodOperatorSpec
 	status operatorv1.StaticPodOperatorStatus
 
-	nodeLister           corev1listers.NodeLister
-	infrastructureLister configv1listers.InfrastructureLister
-	networkLister        configv1listers.NetworkLister
-	endpointLister       corev1listers.EndpointsLister
-	targetImagePullSpec  string
+	nodeLister                corev1listers.NodeLister
+	infrastructureLister      configv1listers.InfrastructureLister
+	networkLister             configv1listers.NetworkLister
+	endpointLister            corev1listers.EndpointsLister
+	kubeSystemConfigMapLister corev1listers.ConfigMapLister
+	EtcdClient                etcdcli.EtcdClient
+	targetImagePullSpec       string
 }
 
 type envVarFunc func(envVarContext envVarContext) (map[string]string, error)
@@ -49,11 +52,27 @@ var envVarFns = []envVarFunc{
 //   NODE_%s_ETCD_URL_HOST
 //   NODE_%s_ETCD_NAME
 func getEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
+	var isBootstrapExists bool
+	_, err := envVarContext.EtcdClient.GetMember("etcd-bootstrap")
+
+	switch {
+	case apierrors.IsNotFound(err):
+		isBootstrapExists = false
+	case err != nil:
+		return nil, err
+	default:
+		isBootstrapExists = true
+	}
+	expectedEtcdClusterSize, err := operatorhelpers.GetExpectedEtcdSize(envVarContext.kubeSystemConfigMapLister)
+	if err != nil {
+		return nil, err
+	}
+
 	// TODO once we are past bootstrapping, this restriction shouldn't be needed anymore.
 	//   we have it because the env vars were not getting set in the pod and the static pod operator started
 	//   rolling out to another node, which caused a failure.
-	if len(envVarContext.status.NodeStatuses) < 3 {
-		return nil, fmt.Errorf("at least three nodes are required to have a valid configuration")
+	if isBootstrapExists && len(envVarContext.status.NodeStatuses) < expectedEtcdClusterSize {
+		return nil, fmt.Errorf("at least (expectedEtcdClusterSize) %d nodes are required to have a valid configuration, got (len(nodeStatuses)) %d", expectedEtcdClusterSize, len(envVarContext.status.NodeStatuses))
 	}
 
 	ret := map[string]string{}

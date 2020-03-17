@@ -67,6 +67,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorclient.GlobalMachineSpecifiedConfigNamespace,
 		operatorclient.TargetNamespace,
 		operatorclient.OperatorNamespace,
+		"kube-system",
 		"openshift-machine-config-operator", // TODO remove after quorum-guard is removed from MCO
 	)
 	configInformers := configv1informers.NewSharedInformerFactory(configClient, 10*time.Minute)
@@ -113,6 +114,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	envVarController := etcdenvvar.NewEnvVarController(
 		os.Getenv("IMAGE"),
 		operatorClient,
+		etcdClient,
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Infrastructures(),
 		configInformers.Config().V1().Networks(),
@@ -209,6 +211,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	bootstrapTeardownController := bootstrapteardown.NewBootstrapTeardownController(
 		operatorClient,
 		kubeClient,
+		kubeInformersForNamespaces,
 		etcdClient,
 		controllerContext.EventRecorder,
 	)
