@@ -18,7 +18,6 @@ function usage {
     exit 1
 }
 
-### main
 if [ "$1" == "" ]; then
     usage
 fi
@@ -28,15 +27,12 @@ NAME="$1"
 source /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd.env
 source /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd-common-tools
 
-# Download etcdctl binary
-dl_etcdctl
-
 # If the 1st field or the 3rd field of the member list exactly matches with the name, then get its ID. Note 3rd field has extra space to match.
-ID=$(etcdctl member list | awk -F,  "\$1 ~ /^${NAME}$/ || \$3 ~ /^\s${NAME}$/ { print \$1 }")
+ID=$(exec_etcdctl "member list" | awk -F,  "\$1 ~ /^${NAME}$/ || \$3 ~ /^\s${NAME}$/ { print \$1 }")
 if [ "$?" -ne 0 ] || [ -z "$ID" ]; then
     echo "could not find etcd member $NAME to remove."
     exit 1
 fi
 
 # Remove the member using ID
-etcdctl member remove $ID
+exec_etcdctl "member remove $ID"
