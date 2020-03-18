@@ -3,26 +3,26 @@ package configobservercontroller
 import (
 	"k8s.io/client-go/tools/cache"
 
-	configinformers "github.com/openshift/client-go/config/informers/externalversions"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	"github.com/openshift/library-go/pkg/operator/configobserver"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
+	"github.com/openshift/library-go/pkg/controller/factory"
+
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
 type ConfigObserver struct {
-	*configobserver.ConfigObserver
+	factory.Controller
 }
 
 func NewConfigObserver(
 	operatorClient v1helpers.OperatorClient,
 	operatorConfigInformers operatorv1informers.SharedInformerFactory,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
-	configInformer configinformers.SharedInformerFactory,
 	resourceSyncer resourcesynccontroller.ResourceSyncer,
 	eventRecorder events.Recorder,
 ) *ConfigObserver {
@@ -38,8 +38,20 @@ func NewConfigObserver(
 		configMapPreRunCacheSynced = append(configMapPreRunCacheSynced, kubeInformersForNamespaces.InformersFor(ns).Core().V1().ConfigMaps().Informer().HasSynced)
 	}
 
+	informers := []factory.Informer{
+		operatorConfigInformers.Operator().V1().Etcds().Informer(),
+		kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().Endpoints().Informer(),
+		kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().Pods().Informer(),
+		kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().ConfigMaps().Informer(),
+		kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer(),
+	}
+
+	for _, ns := range interestingNamespaces {
+		informers = append(informers, kubeInformersForNamespaces.InformersFor(ns).Core().V1().ConfigMaps().Informer())
+	}
+
 	c := &ConfigObserver{
-		ConfigObserver: configobserver.NewConfigObserver(
+		Controller: configobserver.NewConfigObserver(
 			operatorClient,
 			eventRecorder,
 			configobservation.Listers{
@@ -59,18 +71,9 @@ func NewConfigObserver(
 					kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
 				),
 			},
+			informers,
 		),
 	}
-
-	operatorConfigInformers.Operator().V1().Etcds().Informer().AddEventHandler(c.EventHandler())
-
-	for _, ns := range interestingNamespaces {
-		kubeInformersForNamespaces.InformersFor(ns).Core().V1().ConfigMaps().Informer().AddEventHandler(c.EventHandler())
-	}
-	kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().Endpoints().Informer().AddEventHandler(c.EventHandler())
-	kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().Pods().Informer().AddEventHandler(c.EventHandler())
-	kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().ConfigMaps().Informer().AddEventHandler(c.EventHandler())
-	kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().AddEventHandler(c.EventHandler())
 
 	return c
 }

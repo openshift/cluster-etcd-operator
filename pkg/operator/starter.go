@@ -2,7 +2,6 @@ package operator
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"time"
 
@@ -95,7 +94,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorClient,
 		operatorInformers,
 		kubeInformersForNamespaces,
-		configInformers,
 		resourceSyncController,
 		controllerContext.EventRecorder,
 	)
@@ -246,13 +244,13 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go etcdMemberIPMigrator.Run(ctx.Done())
 	go etcdMembersController.Run(ctx, 1)
 	go bootstrapTeardownController.Run(ctx.Done())
-	go staticPodControllers.Run(ctx, 1)
+	go staticPodControllers.Start(ctx)
 	go scriptController.Run(1, ctx.Done())
 	go envVarController.Run(1, ctx.Done())
 	go unsupportedConfigOverridesController.Run(ctx, 1)
 
 	<-ctx.Done()
-	return fmt.Errorf("stopped")
+	return nil
 }
 
 // RevisionConfigMaps is a list of configmaps that are directly copied for the current values.  A different actor/controller modifies these.
