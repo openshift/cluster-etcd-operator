@@ -190,7 +190,7 @@ github.com/openshift/client-go/operator/informers/externalversions/operator/v1
 github.com/openshift/client-go/operator/informers/externalversions/operator/v1alpha1
 github.com/openshift/client-go/operator/listers/operator/v1
 github.com/openshift/client-go/operator/listers/operator/v1alpha1
-# github.com/openshift/library-go v0.0.0-20200227110433-19fff9ed3c27
+# github.com/openshift/library-go v0.0.0-20200318085456-5071c92bad8c
 github.com/openshift/library-go/pkg/assets
 github.com/openshift/library-go/pkg/config/client
 github.com/openshift/library-go/pkg/config/clusteroperator/v1helpers
@@ -200,6 +200,7 @@ github.com/openshift/library-go/pkg/config/serving
 github.com/openshift/library-go/pkg/controller/controllercmd
 github.com/openshift/library-go/pkg/controller/factory
 github.com/openshift/library-go/pkg/controller/fileobserver
+github.com/openshift/library-go/pkg/controller/manager
 github.com/openshift/library-go/pkg/controller/metrics
 github.com/openshift/library-go/pkg/crypto
 github.com/openshift/library-go/pkg/operator/condition
