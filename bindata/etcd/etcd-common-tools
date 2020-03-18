@@ -20,3 +20,14 @@ function dl_etcdctl {
   podman rm "${etcdctr}"
   etcdctl version
 }
+
+# execute etcdctl command inside of running etcdctl container
+function exec_etcdctl {
+  local command="$@"
+  local container_id=$(sudo crictl ps --label io.kubernetes.container.name=etcdctl -o json | jq -r '.containers[0].id') || true
+  if [ -z "$container_id" ]; then
+    echo "etcdctl container is not running"
+    exit 1
+  fi
+  crictl exec -it $container_id /bin/sh -c "etcdctl $command"
+}
