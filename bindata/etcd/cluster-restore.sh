@@ -7,7 +7,7 @@ set -o pipefail
 set -o errtrace
 
 # example
-# ./etcd-snapshot-restore.sh $path-to-backup 
+# ./cluster-restore.sh $path-to-backup 
 
 if [[ $EUID -ne 0 ]]; then
   echo "This script must be run as root"
@@ -18,7 +18,7 @@ source /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/e
 source /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd-common-tools
 
 function usage {
-  echo 'Path to the directory containing backup files is required: ./etcd-snapshot-restore.sh <path-to-backup>'
+  echo 'Path to the directory containing backup files is required: ./cluster-restore.sh <path-to-backup>'
   echo 'The backup directory is expected to be contain two files:'
   echo '        1. etcd snapshot'
   echo '        2. A copy of the Static POD resources at the time of backup'
