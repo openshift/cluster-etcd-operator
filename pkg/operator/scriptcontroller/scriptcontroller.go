@@ -127,9 +127,8 @@ func (c *ScriptController) manageScriptConfigMap() (*corev1.ConfigMap, bool, err
 	scriptConfigMap.Data["etcd.env"] = envVarFileContent
 
 	for _, filename := range []string{
-		"etcd/etcd-snapshot-restore.sh",
-		"etcd/etcd-snapshot-backup.sh",
-		"etcd/etcd-member-remove.sh",
+		"etcd/cluster-restore.sh",
+		"etcd/cluster-backup.sh",
 		"etcd/etcd-common-tools",
 	} {
 		basename := filepath.Base(filename)
