@@ -7,7 +7,7 @@ set -o pipefail
 set -o errtrace
 
 # example
-# etcd-snapshot-backup.sh $path-to-snapshot
+# cluster-backup.sh $path-to-snapshot
 
 if [[ $EUID -ne 0 ]]; then
   echo "This script must be run as root"
@@ -15,7 +15,7 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 function usage {
-  echo 'Path to backup dir required: ./etcd-snapshot-backup.sh <path-to-backup-dir>'
+  echo 'Path to backup dir required: ./cluster-backup.sh <path-to-backup-dir>'
   exit 1
 }
 
