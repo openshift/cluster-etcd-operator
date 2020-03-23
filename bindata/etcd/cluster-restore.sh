@@ -96,7 +96,13 @@ if [ -d "${ETCD_DATA_DIR}/member" ]; then
   fi
   echo "Moving etcd data-dir ${ETCD_DATA_DIR}/member to ${ETCD_DATA_DIR_BACKUP}"
   mv ${ETCD_DATA_DIR}/member ${ETCD_DATA_DIR_BACKUP}/
+  # Remove any other previously archived member directories
+  rm -rf ${ETCD_DATA_DIR}/*
+
 fi
+
+# Stop kubelet.service
+systemctl stop kubelet.service
 
 # Restore static pod resources
 tar -C ${CONFIG_FILE_DIR} -xzf ${BACKUP_FILE} static-pod-resources
@@ -109,3 +115,6 @@ cp -p ${RESTORE_ETCD_POD_YAML} ${MANIFEST_DIR}/etcd-pod.yaml
 
 # start remaining static pods
 restore_static_pods "${STATIC_POD_LIST[@]}"
+
+# Restart kubelet.service
+systemctl start kubelet.service
