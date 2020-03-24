@@ -232,6 +232,29 @@ func (c *ClusterMemberController) getEtcdPodToAddToMembership() (*corev1.Pod, er
 			return nil, nil
 		}
 
+		// check if EnvVarController is degraded. If so membership data could be stale, dont scale.
+		_, operatorStatus, _, err := c.operatorClient.GetOperatorState()
+		if err != nil {
+			return nil, err
+		}
+		if len(operatorStatus.Conditions) == 0 {
+			return nil, fmt.Errorf("operator/status.Conditions is empty pod %q", pod.Name)
+		}
+
+		foundEnvVarControllerCondition := false
+		for _, condition := range operatorStatus.Conditions {
+			if condition.Type == "EnvVarControllerDegraded" {
+				foundEnvVarControllerCondition = true
+				if condition.Status == operatorv1.ConditionTrue {
+					return nil, fmt.Errorf("operator/status.Conditions EnvVarControllerDegraded is True pod %q", pod.Name)
+				}
+			}
+		}
+
+		if !foundEnvVarControllerCondition {
+			return nil, fmt.Errorf("operator/status.Conditions EnvVarControllerDegraded is not found pod %q", pod.Name)
+		}
+
 		// now check to see if this member is already part of the quorum.  This logically requires being able to map every
 		// type of member name we have ever created.  The most important for now is the nodeName.
 		etcdMember, err = c.etcdClient.GetMember(pod.Spec.NodeName)
@@ -243,6 +266,7 @@ func (c *ClusterMemberController) getEtcdPodToAddToMembership() (*corev1.Pod, er
 		default:
 			klog.Infof("skipping unready pod %q because it is already an etcd member: %#v", pod.Name, etcdMember)
 		}
+
 	}
 	return nil, nil
 }
