@@ -34,7 +34,6 @@ spec:
             --kubeconfig=/etc/kubernetes/kubeconfig \
             --orgname=system:etcd-peers \
             --assetsdir=/etc/ssl/etcd \
-            --dnsnames={{.EtcdPeerCertDNSNames}} \
             --commonname=system:etcd-peer:{{ .Hostname }} \
             --ipaddrs={{ .EtcdAddress.EscapedBootstrapIP }} \
 

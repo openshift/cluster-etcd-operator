@@ -30,7 +30,6 @@ type renderOpts struct {
 	errOut                   io.Writer
 	etcdCAFile               string
 	etcdMetricCAFile         string
-	etcdDiscoveryDomain      string
 	etcdImage                string
 	clusterEtcdOperatorImage string
 	setupEtcdEnvImage        string
@@ -80,7 +79,8 @@ func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&r.clusterEtcdOperatorImage, "manifest-cluster-etcd-operator-image", r.clusterEtcdOperatorImage, "cluster-etcd-operator manifest image")
 	fs.StringVar(&r.kubeClientAgentImage, "manifest-kube-client-agent-image", r.kubeClientAgentImage, "kube-client-agent manifest image")
 	fs.StringVar(&r.setupEtcdEnvImage, "manifest-setup-etcd-env-image", r.setupEtcdEnvImage, "setup-etcd-env manifest image")
-	fs.StringVar(&r.etcdDiscoveryDomain, "etcd-discovery-domain", r.etcdDiscoveryDomain, "etcd discovery domain")
+	fs.String("etcd-discovery-domain", "", "etcd discovery domain")
+	fs.MarkDeprecated("etcd-discovery-domain", "ignored")
 	fs.StringVar(&r.clusterConfigFile, "cluster-config-file", r.clusterConfigFile, "Openshift Cluster API Config file.")
 	fs.StringVar(&r.bootstrapIP, "bootstrap-ip", r.bootstrapIP, "bootstrap IP used to indicate where to find the first etcd endpoint")
 }
@@ -111,9 +111,6 @@ func (r *renderOpts) Validate() error {
 	if len(r.clusterEtcdOperatorImage) == 0 {
 		return errors.New("missing required flag: --manifest-cluster-etcd-operator-image")
 	}
-	if len(r.etcdDiscoveryDomain) == 0 {
-		return errors.New("missing required flag: --etcd-discovery-domain")
-	}
 	if len(r.clusterConfigFile) == 0 {
 		return errors.New("missing required flag: --cluster-config-file")
 	}
@@ -135,10 +132,8 @@ type TemplateData struct {
 	options.ManifestConfig
 	options.FileConfig
 
-	// EtcdDiscoveryDomain is the domain used for SRV discovery.
-	EtcdDiscoveryDomain    string
+	// EtcdServerCertDNSNames are the etcd service host names
 	EtcdServerCertDNSNames string
-	EtcdPeerCertDNSNames   string
 
 	// ClusterCIDR is the IP range for pod IPs.
 	ClusterCIDR []string
@@ -173,16 +168,12 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 				KubeClientAgent: opts.kubeClientAgentImage,
 			},
 		},
-		EtcdDiscoveryDomain: opts.etcdDiscoveryDomain,
 		EtcdServerCertDNSNames: strings.Join([]string{
 			"localhost",
 			"etcd.kube-system.svc",
 			"etcd.kube-system.svc.cluster.local",
 			"etcd.openshift-etcd.svc",
 			"etcd.openshift-etcd.svc.cluster.local",
-		}, ","),
-		EtcdPeerCertDNSNames: strings.Join([]string{
-			opts.etcdDiscoveryDomain,
 		}, ","),
 		BootstrapIP: opts.bootstrapIP,
 	}
