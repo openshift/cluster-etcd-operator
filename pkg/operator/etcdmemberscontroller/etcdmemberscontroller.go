@@ -140,7 +140,18 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 		}
 	}
 
-	if len(availableMembers) > len(etcdMembers)/2 {
+	if len(availableMembers) == len(etcdMembers) {
+		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+			Type:    "EtcdMembersAvailable",
+			Status:  operatorv1.ConditionTrue,
+			Reason:  "EtcdQuorate",
+			Message: fmt.Sprintf("all members are available, no members have not started, no members are unhealthy, no members are unknown"),
+		}))
+		if updateErr != nil {
+			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
+			updateErrors = append(updateErrors, updateErr)
+		}
+	} else if len(availableMembers) > len(etcdMembers)/2 {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersAvailable",
 			Status:  operatorv1.ConditionTrue,
