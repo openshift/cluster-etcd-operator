@@ -4,16 +4,15 @@ import (
 	"fmt"
 	"time"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/kubernetes"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
@@ -24,9 +23,9 @@ const (
 )
 
 type BootstrapTeardownController struct {
-	operatorClient v1helpers.OperatorClient
-	etcdClient     etcdcli.EtcdClient
-	kubeClient     kubernetes.Interface
+	operatorClient  v1helpers.StaticPodOperatorClient
+	etcdClient      etcdcli.EtcdClient
+	configmapLister corev1listers.ConfigMapLister
 
 	cachesToSync  []cache.InformerSynced
 	queue         workqueue.RateLimitingInterface
@@ -34,26 +33,28 @@ type BootstrapTeardownController struct {
 }
 
 func NewBootstrapTeardownController(
-	operatorClient v1helpers.OperatorClient,
-	kubeClient kubernetes.Interface,
+	operatorClient v1helpers.StaticPodOperatorClient,
+	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 
 	etcdClient etcdcli.EtcdClient,
 
 	eventRecorder events.Recorder,
 ) *BootstrapTeardownController {
 	c := &BootstrapTeardownController{
-		operatorClient: operatorClient,
-		etcdClient:     etcdClient,
-		kubeClient:     kubeClient,
+		operatorClient:  operatorClient,
+		etcdClient:      etcdClient,
+		configmapLister: kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Lister(),
 
 		cachesToSync: []cache.InformerSynced{
 			operatorClient.Informer().HasSynced,
+			kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Informer().HasSynced,
 		},
 		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "BootstrapTeardownController"),
 		eventRecorder: eventRecorder.WithComponentSuffix("bootstrap-teardown-controller"),
 	}
 
 	operatorClient.Informer().AddEventHandler(c.eventHandler())
+	kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
 
 	return c
 }
@@ -127,7 +128,7 @@ func (c *BootstrapTeardownController) removeBootstrap() error {
 	}
 
 	// check to see if bootstrapping is complete
-	bootstrapFinishedConfigMap, err := c.kubeClient.CoreV1().ConfigMaps("kube-system").Get("bootstrap", metav1.GetOptions{})
+	bootstrapFinishedConfigMap, err := c.configmapLister.ConfigMaps("kube-system").Get("bootstrap")
 	switch {
 	case apierrors.IsNotFound(err):
 		c.eventRecorder.Event("DelayingBootstrapTeardown", "cluster-bootstrap is not yet finished")
@@ -165,8 +166,21 @@ func (c *BootstrapTeardownController) canRemoveEtcdBootstrap() (bool, bool, erro
 		return false, hasBootstrap, nil
 	}
 
-	if len(members) < 4 {
+	isUnsupportedUnsafeEtcd, err := c.isUnsupportedUnsafeEtcd()
+	if err != nil {
+		return false, hasBootstrap, err
+	}
+
+	switch {
+	case !isUnsupportedUnsafeEtcd && len(members) < 4:
+		// bootstrap is not safe to remove until we scale to 4
 		return false, hasBootstrap, nil
+	case isUnsupportedUnsafeEtcd && len(members) < 2:
+		// if etcd is unsupported, bootstrap is not safe to remove
+		// until we scale to 2
+		return false, hasBootstrap, nil
+	default:
+		// do nothing fall through on checking the unhealthy members
 	}
 
 	unhealthyMembers, err := c.etcdClient.UnhealthyMembers()
@@ -242,4 +256,12 @@ func (c *BootstrapTeardownController) eventHandler() cache.ResourceEventHandler 
 		UpdateFunc: func(old, new interface{}) { c.queue.Add(workQueueKey) },
 		DeleteFunc: func(obj interface{}) { c.queue.Add(workQueueKey) },
 	}
+}
+
+func (c *BootstrapTeardownController) isUnsupportedUnsafeEtcd() (bool, error) {
+	spec, _, _, err := c.operatorClient.GetStaticPodOperatorState()
+	if err != nil {
+		return false, err
+	}
+	return ceohelpers.IsUnsupportedUnsafeEtcd(spec)
 }
