@@ -208,15 +208,17 @@ func (c *ClusterMemberController) getEtcdPodToAddToMembership() (*corev1.Pod, er
 		if strings.HasPrefix(pod.Name, "etcd-member") {
 			continue
 		}
-		ready := false
+		isEtcdContainerRunning, isEtcdContainerReady := false, false
 		for _, containerStatus := range pod.Status.ContainerStatuses {
 			if containerStatus.Name != "etcd" {
 				continue
 			}
-			ready = containerStatus.Ready
+			// set running and ready flags
+			isEtcdContainerRunning = containerStatus.State.Running != nil
+			isEtcdContainerReady = containerStatus.Ready
 			break
 		}
-		if ready {
+		if !isEtcdContainerRunning || isEtcdContainerReady {
 			continue
 		}
 
