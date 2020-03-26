@@ -294,13 +294,13 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 			unhealthyMembers = append(unhealthyMembers, member)
 			continue
 		}
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		_, err := cli.Status(ctx, member.ClientURLs[0])
+		ctxc, cancelc := context.WithCancel(context.Background())
+		_, err := cli.Status(ctxc, member.ClientURLs[0])
 		if err != nil {
+			klog.Errorf("StatusRequest error : %#v", err)
 			unhealthyMembers = append(unhealthyMembers, member)
 		}
+		cancelc()
 	}
 
 	return unhealthyMembers, nil
