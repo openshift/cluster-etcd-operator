@@ -19,6 +19,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -207,11 +208,43 @@ func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv
 		return nil, fmt.Errorf("missing env var values")
 	}
 
+	nodes, err := c.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
+	if err != nil {
+		return nil, err
+	}
+
+	validNodeEnv := make(map[string]bool)
+	for _, node := range nodes {
+		validNodeEnv[node.Name] = false
+	}
+
 	envVarLines := []string{}
+	hasNodeEnv := false
 	for _, k := range sets.StringKeySet(envVarMap).List() {
 		v := envVarMap[k]
+		// validate env
+		for _, node := range nodes {
+			klog.Infof("getSubstitutionReplacer: node %s", node.Name)
+			for _, nodeAddress := range node.Status.Addresses {
+				klog.Infof("getSubstitutionReplacer: checking %v = %q for %q", nodeAddress.Address, v, k)
+				if strings.HasPrefix(k, "NODE_") {
+					hasNodeEnv = true
+					if nodeAddress.Type == corev1.NodeInternalIP && nodeAddress.Address == v {
+						validNodeEnv[node.Name] = true
+					}
+				}
+			}
+		}
 		envVarLines = append(envVarLines, fmt.Sprintf("      - name: %q", k))
 		envVarLines = append(envVarLines, fmt.Sprintf("        value: %q", v))
+	}
+
+	if hasNodeEnv {
+		for _, valid := range validNodeEnv {
+			if !valid {
+				return nil, fmt.Errorf("invalid env var values for node %+v", validNodeEnv)
+			}
+		}
 	}
 
 	return strings.NewReplacer(
