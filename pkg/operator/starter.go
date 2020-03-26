@@ -111,6 +111,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	envVarController := etcdenvvar.NewEnvVarController(
 		os.Getenv("IMAGE"),
 		operatorClient,
+		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Infrastructures(),
 		configInformers.Config().V1().Networks(),
