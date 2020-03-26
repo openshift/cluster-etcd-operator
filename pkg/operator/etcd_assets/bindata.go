@@ -399,6 +399,7 @@ data:
   pod.yaml:
   forceRedeploymentReason:
   version:
+  nodes:
 `)
 
 func etcdPodCmYamlBytes() ([]byte, error) {

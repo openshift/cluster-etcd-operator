@@ -12,6 +12,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/loglevel"
 	"github.com/openshift/library-go/pkg/operator/revisioncontroller"
@@ -25,6 +26,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/status"
 	"github.com/openshift/library-go/pkg/operator/unsupportedconfigoverridescontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	corev1 "k8s.io/api/core/v1"
 )
 
 type staticPodOperatorControllerBuilder struct {
@@ -52,7 +54,8 @@ type staticPodOperatorControllerBuilder struct {
 	operandName       string
 
 	// installer information
-	installCommand []string
+	installCommand           []string
+	installerPodMutationFunc installer.InstallerPodMutationFunc
 
 	// pruning information
 	pruneCommand []string
@@ -85,6 +88,7 @@ type Builder interface {
 	WithInstaller(command []string) Builder
 	WithPruning(command []string, staticPodPrefix string) Builder
 	ToControllers() (manager.ControllerManager, error)
+	WithMutatingPodInstaller(command []string, installerPodMutationFunc installer.InstallerPodMutationFunc) Builder
 }
 
 func (b *staticPodOperatorControllerBuilder) WithEvents(eventRecorder events.Recorder) Builder {
@@ -124,6 +128,15 @@ func (b *staticPodOperatorControllerBuilder) WithCerts(certDir string, certConfi
 
 func (b *staticPodOperatorControllerBuilder) WithInstaller(command []string) Builder {
 	b.installCommand = command
+	b.installerPodMutationFunc = func(pod *corev1.Pod, nodeName string, operatorSpec *operatorv1.StaticPodOperatorSpec, revision int32) error {
+		return nil
+	}
+	return b
+}
+
+func (b *staticPodOperatorControllerBuilder) WithMutatingPodInstaller(command []string, installerPodMutationFunc installer.InstallerPodMutationFunc) Builder {
+	b.installCommand = command
+	b.installerPodMutationFunc = installerPodMutationFunc
 	return b
 }
 
@@ -186,6 +199,8 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 			b.certDir,
 			b.certConfigMaps,
 			b.certSecrets,
+		).WithInstallerPodMutationFn(
+			b.installerPodMutationFunc,
 		), 1)
 
 		manager.WithController(installerstate.NewInstallerStateController(

@@ -3,6 +3,7 @@ package etcdenvvar
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,7 +12,9 @@ import (
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/staticpod/controller/installer"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	corev1 "k8s.io/api/core/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	corev1listers "k8s.io/client-go/listers/core/v1"
@@ -34,6 +37,7 @@ type EnvVarController struct {
 	networkLister        configv1listers.NetworkLister
 	endpointLister       corev1listers.EndpointsLister
 	nodeLister           corev1listers.NodeLister
+	configmapLister      corev1listers.ConfigMapLister
 
 	// queue only ever has one item, but it has nice error handling backoff/retry semantics
 	queue         workqueue.RateLimitingInterface
@@ -59,6 +63,7 @@ func NewEnvVarController(
 		networkLister:        networkInformer.Lister(),
 		endpointLister:       kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
 		nodeLister:           kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
+		configmapLister:      kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister(),
 		targetImagePullSpec:  targetImagePullSpec,
 
 		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "EnvVarController"),
@@ -206,5 +211,39 @@ func (c *EnvVarController) eventHandler() cache.ResourceEventHandler {
 		AddFunc:    func(obj interface{}) { c.queue.Add(workQueueKey) },
 		UpdateFunc: func(old, new interface{}) { c.queue.Add(workQueueKey) },
 		DeleteFunc: func(obj interface{}) { c.queue.Add(workQueueKey) },
+	}
+}
+
+func (c *EnvVarController) InstallerPodSkipInvalidRevisions() installer.InstallerPodMutationFunc {
+	return func(pod *corev1.Pod, nodeName string, operatorSpec *operatorv1.StaticPodOperatorSpec, revision int32) error {
+		configMapName := "etcd-pod"
+		if revision != 0 {
+			configMapName = configMapName + "-" + fmt.Sprint(revision)
+		}
+		configmap, err := c.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get(configMapName)
+		if err != nil {
+			return err
+		}
+
+		nodes, found := configmap.Data["nodes"]
+		if !found {
+			return fmt.Errorf("nodes key not found in configmap: %+v", configmap)
+		}
+		nodeFound := false
+		for _, n := range strings.Split(nodes, ",") {
+			if n == nodeName {
+				nodeFound = true
+				break
+			}
+		}
+		if !nodeFound {
+			klog.Infof("node %s not found in revision %d", nodeName, revision)
+			pod.Spec.Containers[0].Command = []string{
+				"/bin/sh",
+				"-c",
+				fmt.Sprintf(">&2 echo `node %s not found in revision %d; exit 1`", nodeName, revision)}
+		}
+		klog.Infof("node %s found in revision %d", nodeName, revision)
+		return nil
 	}
 }

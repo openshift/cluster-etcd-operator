@@ -56,7 +56,7 @@ type InstallOptions struct {
 }
 
 // PodMutationFunc is a function that has a chance at changing the pod before it is created
-type PodMutationFunc func(pod *corev1.Pod) error
+type PodMutationFunc func(pod *corev1.Pod, revision, nodeName string) error
 
 func NewInstallOptions() *InstallOptions {
 	return &InstallOptions{}
@@ -335,7 +335,7 @@ func (o *InstallOptions) copyContent(ctx context.Context) error {
 	for _, fn := range o.PodMutationFns {
 		klog.V(2).Infof("Customizing static pod ...")
 		pod := resourceread.ReadPodV1OrDie([]byte(podContent))
-		if err := fn(pod); err != nil {
+		if err := fn(pod, o.Revision, o.NodeName); err != nil {
 			return err
 		}
 		podContent = resourceread.WritePodV1OrDie(pod)

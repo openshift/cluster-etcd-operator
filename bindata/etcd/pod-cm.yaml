@@ -7,3 +7,4 @@ data:
   pod.yaml:
   forceRedeploymentReason:
   version:
+  nodes:

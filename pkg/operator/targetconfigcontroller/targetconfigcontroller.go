@@ -135,7 +135,7 @@ func createTargetConfig(c TargetConfigController, recorder events.Recorder, oper
 	if err != nil {
 		errors = append(errors, fmt.Errorf("%q: %v", "configmap/config", err))
 	}
-	_, _, err = c.manageStandardPod(contentReplacer, c.kubeClient.CoreV1(), recorder, operatorSpec)
+	_, _, err = c.manageStandardPod(contentReplacer, c.kubeClient.CoreV1(), recorder, operatorSpec, operatorStatus)
 	if err != nil {
 		errors = append(errors, fmt.Errorf("%q: %v", "configmap/etcd-pod", err))
 	}
@@ -235,14 +235,20 @@ func (c *TargetConfigController) manageRecoveryPod(substitutionReplacer *strings
 	return resourceapply.ApplyConfigMap(client, recorder, podConfigMap)
 }
 
-func (c *TargetConfigController) manageStandardPod(substitutionReplacer *strings.Replacer, client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
+func (c *TargetConfigController) manageStandardPod(substitutionReplacer *strings.Replacer, client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec, operatorStatus *operatorv1.StaticPodOperatorStatus) (*corev1.ConfigMap, bool, error) {
 	podBytes := etcd_assets.MustAsset("etcd/pod.yaml")
 	substitutedPodString := substitutionReplacer.Replace(string(podBytes))
+
+	nodes := []string{}
+	for _, n := range operatorStatus.NodeStatuses {
+		nodes = append(nodes, n.NodeName)
+	}
 
 	podConfigMap := resourceread.ReadConfigMapV1OrDie(etcd_assets.MustAsset("etcd/pod-cm.yaml"))
 	podConfigMap.Data["pod.yaml"] = substitutedPodString
 	podConfigMap.Data["forceRedeploymentReason"] = operatorSpec.ForceRedeploymentReason
 	podConfigMap.Data["version"] = version.Get().String()
+	podConfigMap.Data["nodes"] = strings.Join(nodes, ",")
 	return resourceapply.ApplyConfigMap(client, recorder, podConfigMap)
 }
 

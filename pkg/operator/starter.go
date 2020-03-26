@@ -143,7 +143,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 	staticPodControllers, err := staticpod.NewBuilder(operatorClient, kubeClient, kubeInformersForNamespaces).
 		WithEvents(controllerContext.EventRecorder).
-		WithInstaller([]string{"cluster-etcd-operator", "installer"}).
+		WithMutatingPodInstaller([]string{"cluster-etcd-operator", "installer"}, envVarController.InstallerPodSkipInvalidRevisions()).
 		WithPruning([]string{"cluster-etcd-operator", "prune"}, "etcd-pod").
 		WithResources("openshift-etcd", "etcd", RevisionConfigMaps, RevisionSecrets).
 		WithCerts("etcd-certs", CertConfigMaps, CertSecrets).
