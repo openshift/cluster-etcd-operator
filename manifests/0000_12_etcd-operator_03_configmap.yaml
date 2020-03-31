@@ -11,16 +11,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  # this CA bundle is a placeholder and is mounted by the operator
-  # it will later be populated by the resourcesynccontroller
+  annotations:
+    release.openshift.io/create-only: "true"
   name: etcd-ca-bundle
   namespace: openshift-etcd-operator
-data:
-  ca-bundle.crt: |
-    stub
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: member-config
-  namespace: openshift-etcd
