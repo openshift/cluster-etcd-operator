@@ -289,9 +289,12 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 	}
 
 	unhealthyMembers := []*etcdserverpb.Member{}
+	unstartedMemberNames := []string{}
+	unhealthyMemberNames := []string{}
 	for _, member := range membersResp.Members {
 		if len(member.ClientURLs) == 0 {
 			unhealthyMembers = append(unhealthyMembers, member)
+			unstartedMemberNames = append(unstartedMemberNames, member.Name)
 			continue
 		}
 		ctx, cancel := context.WithCancel(context.Background())
@@ -300,7 +303,16 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 		_, err := cli.Status(ctx, member.ClientURLs[0])
 		if err != nil {
 			unhealthyMembers = append(unhealthyMembers, member)
+			unhealthyMemberNames = append(unhealthyMemberNames, member.Name)
 		}
+	}
+
+	if len(unstartedMemberNames) > 0 {
+		g.eventRecorder.Warningf("UnstartedEtcdMember", "unstarted members: %v", strings.Join(unstartedMemberNames, ","))
+	}
+
+	if len(unhealthyMemberNames) > 0 {
+		g.eventRecorder.Warningf("UnhealthyEtcdMember", "unhealthy members: %v", strings.Join(unhealthyMemberNames, ","))
 	}
 
 	return unhealthyMembers, nil
