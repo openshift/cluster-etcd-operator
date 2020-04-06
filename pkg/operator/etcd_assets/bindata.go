@@ -443,6 +443,18 @@ spec:
           : "${NODE_NODE_ENVVAR_NAME_ETCD_NAME?not set}"
           : "${NODE_NODE_ENVVAR_NAME_IP?not set}"
 
+          if [ "${NODE_NODE_ENVVAR_NAME_IP}" != "${NODE_IP}" ]; then
+            # echo the error message to stderr
+            echo "Expected node IP to be ${NODE_IP} got ${NODE_NODE_ENVVAR_NAME_IP}" >&2
+            exit 1
+          fi
+
+          if [ "${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}" != "${NODE_IP}" ]; then
+            # echo the error message to stderr
+            echo "Expected etcd url host to be ${NODE_IP} got ${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}" >&2
+            exit 1
+          fi
+
       resources:
         requests:
           memory: 60Mi
@@ -451,6 +463,10 @@ spec:
         privileged: true
       env:
 ${COMPUTED_ENV_VARS}
+      - name: NODE_IP
+        valueFrom:
+          fieldRef:
+            fieldPath: status.podIP
     - name: etcd-resources-copy
       image: ${IMAGE}
       imagePullPolicy: IfNotPresent
