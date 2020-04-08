@@ -70,6 +70,17 @@ func (c *EtcdMembersController) sync() error {
 	return nil
 }
 
+func joinMemberStrings(members []string) string {
+	switch len(members) {
+	case 0:
+		return "no members are"
+	case 1:
+		return members[0] + " member is"
+	default:
+		return strings.Join(members, ",") + " members are"
+	}
+}
+
 func (c *EtcdMembersController) reportEtcdMembers() error {
 	etcdMembers, err := c.etcdClient.MemberList()
 	if err != nil {
@@ -97,7 +108,7 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 			Type:    "EtcdMembersDegraded",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "UnhealthyMembers",
-			Message: fmt.Sprintf("%s members are unhealthy, %s members are unknown", strings.Join(unhealthyMembers, ","), strings.Join(unknownMembers, ",")),
+			Message: fmt.Sprintf("%s unhealthy, %s unknown", joinMemberStrings(unhealthyMembers), joinMemberStrings(unknownMembers)),
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
@@ -121,7 +132,7 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 			Type:    "EtcdMembersProgressing",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "MembersNotStarted",
-			Message: fmt.Sprintf("%s members have not started yet", strings.Join(notStartedMembers, ",")),
+			Message: fmt.Sprintf("%s not started yet", joinMemberStrings(notStartedMembers)),
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
@@ -156,7 +167,8 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 			Type:    "EtcdMembersAvailable",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "EtcdQuorate",
-			Message: fmt.Sprintf("%s members are available, %s have not started, %s are unhealthy, %s are unknown", strings.Join(availableMembers, ","), strings.Join(notStartedMembers, ","), strings.Join(unhealthyMembers, ","), strings.Join(unknownMembers, ",")),
+			Message: fmt.Sprintf("%s available, %s not started, %s unhealthy, %s unknown",
+				joinMemberStrings(availableMembers), joinMemberStrings(notStartedMembers), joinMemberStrings(unhealthyMembers), joinMemberStrings(unknownMembers)),
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
@@ -170,7 +182,8 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 			Type:    "EtcdMembersAvailable",
 			Status:  operatorv1.ConditionFalse,
 			Reason:  "No quorum",
-			Message: fmt.Sprintf("%s members are available, %s have not started, %s are unhealthy", strings.Join(availableMembers, ","), strings.Join(notStartedMembers, ","), strings.Join(unhealthyMembers, ",")),
+			Message: fmt.Sprintf("%s available, %s not started, %s unhealthy",
+				joinMemberStrings(availableMembers), joinMemberStrings(notStartedMembers), joinMemberStrings(unhealthyMembers)),
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
