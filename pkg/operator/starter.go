@@ -227,7 +227,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 
 	operatorInformers.Start(ctx.Done())
-	operatorInformers.Start(ctx.Done())
 	kubeInformersForNamespaces.Start(ctx.Done())
 	configInformers.Start(ctx.Done())
 	dynamicInformers.Start(ctx.Done())
