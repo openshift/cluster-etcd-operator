@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render/options"
 )
 
@@ -98,11 +99,27 @@ spec:
     - 2001:db8::/32
 status: {}
 `
+	infraConfig = `
+apiVersion: config.openshift.io/v1
+kind: Infrastructure
+metadata:
+  name: cluster
+spec:
+  cloudConfig:
+    name: ""
+status:
+  platform: AWS
+  platformStatus:
+    aws:
+      region: us-east-1
+    type: AWS
+`
 )
 
 type testConfig struct {
 	t                    *testing.T
 	clusterNetworkConfig string
+	infraConfig          string
 	want                 TemplateData
 	bootstrapIP          string
 }
@@ -122,6 +139,7 @@ func TestRenderIpv4(t *testing.T) {
 	config := &testConfig{
 		t:                    t,
 		clusterNetworkConfig: networkConfigIpv4,
+		infraConfig:          infraConfig,
 		want:                 want,
 	}
 
@@ -141,9 +159,18 @@ func testRender(tc *testConfig) {
 	if err != nil {
 		tc.t.Fatal(err)
 	}
-	defer clusterConfigFile.Close()
+
+	infraConfigFile, err := ioutil.TempFile(dir, "cluster-infrastructure-02-config.*.yaml")
+	if err != nil {
+		tc.t.Fatal(err)
+	}
+	defer infraConfigFile.Close()
 
 	if err := writeFile(tc.clusterNetworkConfig, clusterConfigFile); err != nil {
+		tc.t.Fatal(err)
+	}
+
+	if err := writeFile(tc.infraConfig, infraConfigFile); err != nil {
 		tc.t.Fatal(err)
 	}
 
@@ -159,6 +186,7 @@ func testRender(tc *testConfig) {
 		manifest:          *options.NewManifestOptions("etcd"),
 		errOut:            errOut,
 		clusterConfigFile: clusterConfigFile.Name(),
+		infraConfigFile:   infraConfigFile.Name(),
 	}
 
 	if err := render.Run(); err != nil {
@@ -181,6 +209,7 @@ func TestTemplateDataIpv4(t *testing.T) {
 	config := &testConfig{
 		t:                    t,
 		clusterNetworkConfig: networkConfigIpv4,
+		infraConfig:          infraConfig,
 		want:                 want,
 	}
 	testTemplateData(config)
@@ -201,6 +230,7 @@ func TestTemplateDataMixed(t *testing.T) {
 	config := &testConfig{
 		t:                    t,
 		clusterNetworkConfig: networkConfigMixedSwap,
+		infraConfig:          infraConfig,
 		want:                 want,
 	}
 	testTemplateData(config)
@@ -222,6 +252,7 @@ func TestTemplateDataSingleStack(t *testing.T) {
 	config := &testConfig{
 		t:                    t,
 		clusterNetworkConfig: networkConfigIPv6SingleStack,
+		infraConfig:          infraConfig,
 		want:                 want,
 		bootstrapIP:          "2001:0DB8:C21A",
 	}
@@ -242,7 +273,17 @@ func testTemplateData(tc *testConfig) {
 	}
 	defer clusterConfigFile.Close()
 
+	infraConfigFile, err := ioutil.TempFile(dir, "cluster-infrastructures-02-config.*.yaml")
+	if err != nil {
+		tc.t.Fatal(err)
+	}
+	defer infraConfigFile.Close()
+
 	if err := writeFile(tc.clusterNetworkConfig, clusterConfigFile); err != nil {
+		tc.t.Fatal(err)
+	}
+
+	if err := writeFile(tc.infraConfig, infraConfigFile); err != nil {
 		tc.t.Fatal(err)
 	}
 
@@ -258,6 +299,7 @@ func testTemplateData(tc *testConfig) {
 		manifest:          *options.NewManifestOptions("etcd"),
 		errOut:            errOut,
 		clusterConfigFile: clusterConfigFile.Name(),
+		infraConfigFile:   infraConfigFile.Name(),
 		bootstrapIP:       tc.bootstrapIP,
 	}
 
@@ -294,4 +336,59 @@ func writeFile(input string, w io.Writer) error {
 		return err
 	}
 	return nil
+}
+
+func TestTemplateData_setPlatform(t1 *testing.T) {
+	file, err := ioutil.TempFile("/tmp", "infra-config-file")
+	if err != nil {
+		t1.Fatal(err)
+	}
+	defer os.Remove(file.Name())
+
+	err = ioutil.WriteFile(file.Name(), []byte(`
+apiVersion: config.openshift.io/v1
+kind: Infrastructure
+metadata:
+  name: cluster
+spec:
+  cloudConfig:
+    name: ""
+status:
+  platform: AWS
+  platformStatus:
+    aws:
+      region: us-east-1
+    type: AWS
+`), os.ModePerm)
+	if err != nil {
+		t1.Fatal(err)
+	}
+
+	type args struct {
+		infraConfigFilePath string
+	}
+	tests := []struct {
+		name         string
+		args         args
+		wantErr      bool
+		wantPlatform configv1.PlatformType
+	}{
+		{
+			name:         "test infra config file",
+			args:         args{infraConfigFilePath: file.Name()},
+			wantErr:      false,
+			wantPlatform: configv1.AWSPlatformType,
+		},
+	}
+	for _, tt := range tests {
+		t1.Run(tt.name, func(t1 *testing.T) {
+			t := &TemplateData{}
+			if err := t.setPlatform(tt.args.infraConfigFilePath); (err != nil) != tt.wantErr {
+				t1.Errorf("setPlatform() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if t.Platform != string(tt.wantPlatform) {
+				t1.Errorf("setPlatform() want = %v, got %v", tt.wantPlatform, t.Platform)
+			}
+		})
+	}
 }
