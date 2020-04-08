@@ -16,7 +16,7 @@ require (
 	github.com/spf13/cobra v0.0.5
 	github.com/spf13/pflag v1.0.5
 	github.com/vincent-petithory/dataurl v0.0.0-20191104211930-d1553a71de50
-	go.etcd.io/etcd v0.0.0-20191023171146-3cf2f69b5738
+	go.etcd.io/etcd v0.0.0-20200401174654-e694b7bb0875
 	google.golang.org/grpc v1.23.1
 	k8s.io/api v0.17.2
 	k8s.io/apimachinery v0.17.2
