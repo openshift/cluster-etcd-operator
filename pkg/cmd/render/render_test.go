@@ -339,14 +339,15 @@ func writeFile(input string, w io.Writer) error {
 }
 
 func TestTemplateData_setPlatform(t1 *testing.T) {
-	file, err := ioutil.TempFile("/tmp", "infra-config-file")
-	if err != nil {
-		t1.Fatal(err)
-	}
-	defer os.Remove(file.Name())
-
-	err = ioutil.WriteFile(file.Name(), []byte(`
-apiVersion: config.openshift.io/v1
+	tests := []struct {
+		name         string
+		infraSpec    string
+		wantErr      bool
+		wantPlatform configv1.PlatformType
+	}{
+		{
+			name: "test infra config file with AWS",
+			infraSpec: `apiVersion: config.openshift.io/v1
 kind: Infrastructure
 metadata:
   name: cluster
@@ -359,36 +360,48 @@ status:
     aws:
       region: us-east-1
     type: AWS
-`), os.ModePerm)
-	if err != nil {
-		t1.Fatal(err)
-	}
-
-	type args struct {
-		infraConfigFilePath string
-	}
-	tests := []struct {
-		name         string
-		args         args
-		wantErr      bool
-		wantPlatform configv1.PlatformType
-	}{
-		{
-			name:         "test infra config file",
-			args:         args{infraConfigFilePath: file.Name()},
+`,
 			wantErr:      false,
 			wantPlatform: configv1.AWSPlatformType,
+		},
+		{
+			name: "test infra config file with empty platform",
+			infraSpec: `apiVersion: config.openshift.io/v1
+kind: Infrastructure
+metadata:
+  name: cluster
+spec:
+  cloudConfig:
+    name: ""
+status:
+  platform: ""
+  platformStatus:
+    type: ""
+`,
+			wantErr:      false,
+			wantPlatform: "",
 		},
 	}
 	for _, tt := range tests {
 		t1.Run(tt.name, func(t1 *testing.T) {
+			file, err := ioutil.TempFile("/tmp", "infra-config-file")
+			if err != nil {
+				t1.Fatal(err)
+			}
+
+			err = ioutil.WriteFile(file.Name(), []byte(tt.infraSpec), os.ModePerm)
+			if err != nil {
+				t1.Fatal(err)
+			}
+
 			t := &TemplateData{}
-			if err := t.setPlatform(tt.args.infraConfigFilePath); (err != nil) != tt.wantErr {
+			if err := t.setPlatform(file.Name()); (err != nil) != tt.wantErr {
 				t1.Errorf("setPlatform() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if t.Platform != string(tt.wantPlatform) {
 				t1.Errorf("setPlatform() want = %v, got %v", tt.wantPlatform, t.Platform)
 			}
+			os.Remove(file.Name())
 		})
 	}
 }
