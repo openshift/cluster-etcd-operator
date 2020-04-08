@@ -160,7 +160,9 @@ type TemplateData struct {
 	BootstrapIP string
 
 	// Platform is the underlying provider the cluster is run on.
-	Platform string
+	Platform            string
+	EtcdHeartbeat       string
+	EtcdElectionTimeout string
 }
 
 type StaticFile struct {
@@ -219,6 +221,15 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 
 	if err := templateData.setPlatform(opts.infraConfigFile); err != nil {
 		return nil, err
+	}
+
+	switch templateData.Platform {
+	case "Azure":
+		templateData.EtcdHeartbeat = `"500"`
+		templateData.EtcdElectionTimeout = `"2500"`
+	default:
+		templateData.EtcdHeartbeat = `"100"`
+		templateData.EtcdElectionTimeout = `"1000"`
 	}
 
 	return &templateData, nil
