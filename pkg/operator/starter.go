@@ -33,6 +33,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/revision"
 	"github.com/openshift/library-go/pkg/operator/staticresourcecontroller"
 	"github.com/openshift/library-go/pkg/operator/status"
+	"github.com/openshift/library-go/pkg/operator/unsupportedconfigoverridescontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -67,6 +68,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorclient.GlobalMachineSpecifiedConfigNamespace,
 		operatorclient.TargetNamespace,
 		operatorclient.OperatorNamespace,
+		"kube-system",
 		"openshift-machine-config-operator", // TODO remove after quorum-guard is removed from MCO
 	)
 	configInformers := configv1informers.NewSharedInformerFactory(configClient, 10*time.Minute)
@@ -208,7 +210,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 	bootstrapTeardownController := bootstrapteardown.NewBootstrapTeardownController(
 		operatorClient,
-		kubeClient,
+		kubeInformersForNamespaces,
 		etcdClient,
 		controllerContext.EventRecorder,
 	)
@@ -218,6 +220,11 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeClient,
 		kubeInformersForNamespaces,
 		envVarController,
+		controllerContext.EventRecorder,
+	)
+
+	unsupportedConfigOverridesController := unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(
+		operatorClient,
 		controllerContext.EventRecorder,
 	)
 
@@ -241,6 +248,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go staticPodControllers.Run(ctx, 1)
 	go scriptController.Run(1, ctx.Done())
 	go envVarController.Run(1, ctx.Done())
+	go unsupportedConfigOverridesController.Run(ctx, 1)
 
 	<-ctx.Done()
 	return fmt.Errorf("stopped")
