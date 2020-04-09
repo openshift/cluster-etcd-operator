@@ -19,6 +19,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdmemberipmigrator"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdmemberremovecontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdmemberscontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/hostendpointscontroller2"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
@@ -206,6 +207,12 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		etcdClient,
 		controllerContext.EventRecorder,
 	)
+	etcdMemberRemoveController := etcdmemberremovecontroller.NewEtcdMemberRemoveController(
+		operatorClient,
+		etcdClient,
+		kubeInformersForNamespaces,
+		controllerContext.EventRecorder,
+	)
 	bootstrapTeardownController := bootstrapteardown.NewBootstrapTeardownController(
 		operatorClient,
 		kubeInformersForNamespaces,
@@ -241,6 +248,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go clusterMemberController.Run(ctx.Done())
 	go etcdMemberIPMigrator.Run(ctx.Done())
 	go etcdMembersController.Run(ctx, 1)
+	go etcdMemberRemoveController.Run(ctx, 1)
 	go bootstrapTeardownController.Run(ctx.Done())
 	go staticPodControllers.Start(ctx)
 	go scriptController.Run(1, ctx.Done())
