@@ -19,6 +19,8 @@ import (
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	"go.etcd.io/etcd/pkg/transport"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -28,7 +30,13 @@ import (
 	"k8s.io/klog"
 )
 
-const BootstrapIPAnnotationKey = "alpha.installer.openshift.io/etcd-bootstrap"
+const (
+	BootstrapIPAnnotationKey = "alpha.installer.openshift.io/etcd-bootstrap"
+	defaultDialTimeout       = 2 * time.Second
+	defaultCommandTimeOut    = 10 * time.Second
+	defaultKeepAliveTime     = 10 * time.Second
+	defaultKeepAliveTimeOut  = 6 * time.Second
+)
 
 type etcdClientGetter struct {
 	nodeLister      corev1listers.NodeLister
@@ -137,10 +145,12 @@ func getEtcdClient(endpoints []string) (*clientv3.Client, error) {
 	tlsConfig, err := tlsInfo.ClientConfig()
 
 	cfg := &clientv3.Config{
-		DialOptions: dialOptions,
-		Endpoints:   endpoints,
-		DialTimeout: 15 * time.Second,
-		TLS:         tlsConfig,
+		DialOptions:          dialOptions,
+		Endpoints:            endpoints,
+		DialTimeout:          defaultDialTimeout,
+		TLS:                  tlsConfig,
+		DialKeepAliveTime:    defaultKeepAliveTime,
+		DialKeepAliveTimeout: defaultKeepAliveTimeOut,
 	}
 
 	cli, err := clientv3.New(*cfg)
@@ -158,7 +168,7 @@ func (g *etcdClientGetter) MemberAdd(peerURL string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := defaultCtx()
 	defer cancel()
 
 	membersResp, err := cli.MemberList(ctx)
@@ -201,7 +211,7 @@ func (g *etcdClientGetter) MemberUpdatePeerURL(id uint64, peerURLs []string) err
 		return err
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := defaultCtx()
 	defer cancel()
 
 	_, err = cli.MemberUpdate(ctx, id, peerURLs)
@@ -219,21 +229,22 @@ func (g *etcdClientGetter) MemberRemove(member string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := defaultCtx()
 	defer cancel()
 
 	membersResp, err := cli.MemberList(ctx)
 	if err != nil {
+		g.eventRecorder.Eventf("MemberList", "error: %v", err)
 		return nil
 	}
 
 	for _, m := range membersResp.Members {
 		if m.Name == member {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
-			_, err = cli.MemberRemove(ctx, m.ID)
+			ctxc, cancelc := defaultCtx()
+			_, err = cli.MemberRemove(ctxc, m.ID)
+			cancelc()
 			if err != nil {
+				g.eventRecorder.Eventf("MemberRemove", "error: %v", err)
 				return err
 			}
 			return nil
@@ -247,14 +258,16 @@ func (g *etcdClientGetter) MemberRemove(member string) error {
 func (g *etcdClientGetter) MemberList() ([]*etcdserverpb.Member, error) {
 	cli, err := g.getEtcdClient()
 	if err != nil {
+		klog.Infof("MemberList() error: %s", printError(err))
 		return nil, err
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := defaultCtx()
 	defer cancel()
 
 	membersResp, err := cli.MemberList(ctx)
 	if err != nil {
+		klog.Infof("MemberList() error: %s", printError(err))
 		return nil, err
 	}
 
@@ -264,6 +277,7 @@ func (g *etcdClientGetter) MemberList() ([]*etcdserverpb.Member, error) {
 func (g *etcdClientGetter) GetMember(name string) (*etcdserverpb.Member, error) {
 	members, err := g.MemberList()
 	if err != nil {
+		klog.Infof("GetMember() error: %s", printError(err))
 		return nil, err
 	}
 	for _, m := range members {
@@ -277,28 +291,33 @@ func (g *etcdClientGetter) GetMember(name string) (*etcdserverpb.Member, error) 
 func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 	cli, err := g.getEtcdClient()
 	if err != nil {
+		klog.Infof("UnhealthyMembers error creating client: %v error: %s", err, printError(err))
 		return nil, err
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := defaultCtx()
 	defer cancel()
 
 	membersResp, err := cli.MemberList(ctx)
 	if err != nil {
+		klog.Infof("UnhealthyMembers: %s", printError(err))
 		return nil, err
 	}
 
 	unhealthyMembers := []*etcdserverpb.Member{}
 	for _, member := range membersResp.Members {
+
+		klog.Infof("UnhealthyMembers parent context %#v member: %#v", ctx, member)
 		if len(member.ClientURLs) == 0 {
+			klog.Infof("UnhealthyMembers: error no clientURL: %v", err)
 			unhealthyMembers = append(unhealthyMembers, member)
 			continue
 		}
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		_, err := cli.Status(ctx, member.ClientURLs[0])
+		ctxc, cancelc := defaultCtx()
+		_, err := cli.Status(ctxc, member.ClientURLs[0])
+		cancelc()
 		if err != nil {
+			klog.Infof("UnhealthyMembers error context %#v Status: %v error %s", ctx, err, printError(err))
 			unhealthyMembers = append(unhealthyMembers, member)
 		}
 	}
@@ -317,13 +336,35 @@ func (g *etcdClientGetter) MemberStatus(member *etcdserverpb.Member) string {
 		return EtcdMemberStatusNotStarted
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := defaultCtx()
+	defer cancel()
+	klog.Infof("MemberStatus context %#v member: %#v", ctx, member)
 	_, err = cli.Status(ctx, member.ClientURLs[0])
-	cancel()
 	if err != nil {
-		klog.Errorf("error getting etcd member %s status: %#v", member.Name, err)
+		printError(err)
+		klog.Errorf("error getting etcd member %s status: %#v error: %s", member.Name, err, printError(err))
 		return EtcdMemberStatusUnhealthy
 	}
 
 	return EtcdMemberStatusAvailable
+}
+
+func defaultCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), defaultCommandTimeOut)
+}
+
+func printError(err error) string {
+	var code codes.Code
+	if ev, ok := status.FromError(err); ok {
+		code = ev.Code()
+	}
+
+	switch {
+	case err == context.Canceled:
+		return fmt.Sprintf("printError context cancelled: %s code: %+v", err.Error(), code)
+	case err == context.DeadlineExceeded:
+		return fmt.Sprintf("printError deadline exceeded: %s code: %+v", err.Error(), code)
+	default:
+		return fmt.Sprintf("printError unknown: %s code: %+v", err.Error(), code)
+	}
 }

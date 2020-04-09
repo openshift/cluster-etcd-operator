@@ -150,8 +150,12 @@ ${COMPUTED_ENV_VARS}
         export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
         env | grep ETCD | grep -v NODE
 
+        export GRPC_GO_LOG_VERBOSITY_LEVEL=99 GRPC_GO_LOG_SEVERITY_LEVEL=info
+
         set -x
         exec etcd \
+          --logger=zap \
+          --log-level=debug \
           --initial-advertise-peer-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2380 \
           --cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-serving/etcd-serving-NODE_NAME.crt \
           --key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-serving/etcd-serving-NODE_NAME.key \

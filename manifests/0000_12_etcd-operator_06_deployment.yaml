@@ -55,6 +55,8 @@ spec:
           value: "0.0.1-snapshot"
         - name: OPERAND_IMAGE_VERSION
           value: "0.0.1-snapshot"
+        - name: ETCD_CLIENT_DEBUG
+          value: "1"
         - name: POD_NAME
           valueFrom:
             fieldRef:
