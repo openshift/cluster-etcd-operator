@@ -147,6 +147,7 @@ spec:
   tolerations:
   - operator: "Exists"
   restartPolicy: Always
+  terminationGracePeriodSeconds: 60
   volumes:
   - name: certs
     hostPath:
