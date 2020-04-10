@@ -69,6 +69,24 @@ func TestClusterMemberController_getEtcdPodToAddToMembership(t *testing.T) {
 					},
 					Status: corev1.PodStatus{
 						Phase: "Running",
+						InitContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name: "etcd-ensure-env",
+								State: corev1.ContainerState{
+									Terminated: &corev1.ContainerStateTerminated{
+										ExitCode: 0,
+									},
+								},
+							},
+							{
+								Name: "etcd-resources-copy",
+								State: corev1.ContainerState{
+									Terminated: &corev1.ContainerStateTerminated{
+										ExitCode: 0,
+									},
+								},
+							},
+						},
 						ContainerStatuses: []corev1.ContainerStatus{
 							{
 								Name:  "etcd-member",
@@ -88,6 +106,24 @@ func TestClusterMemberController_getEtcdPodToAddToMembership(t *testing.T) {
 						},
 						Status: corev1.PodStatus{
 							Phase: "Running",
+							InitContainerStatuses: []corev1.ContainerStatus{
+								{
+									Name: "etcd-ensure-env",
+									State: corev1.ContainerState{
+										Terminated: &corev1.ContainerStateTerminated{
+											ExitCode: 0,
+										},
+									},
+								},
+								{
+									Name: "etcd-resources-copy",
+									State: corev1.ContainerState{
+										Terminated: &corev1.ContainerStateTerminated{
+											ExitCode: 0,
+										},
+									},
+								},
+							},
 							ContainerStatuses: []corev1.ContainerStatus{
 								{
 									Name:  "etcd",
@@ -111,6 +147,205 @@ func TestClusterMemberController_getEtcdPodToAddToMembership(t *testing.T) {
 									Ready: true,
 								},
 							},
+						},
+					}), "openshift-etcd"},
+			},
+			want: nil,
+		},
+		{
+			name: "test pods with init container failed",
+			fields: fields{
+				etcdClient: etcdcli.NewFakeEtcdClient([]*etcdserverpb.Member{
+					{
+						Name: "etcd-a",
+					},
+				}),
+				podLister: &fakePodLister{fake.NewSimpleClientset(&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						// this will be skipped
+						Name:      "etcd-a",
+						Namespace: "openshift-etcd",
+						Labels:    labels.Set{"app": "etcd"},
+					},
+					Status: corev1.PodStatus{
+						Phase: "Running",
+						InitContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name: "etcd-ensure-env",
+								State: corev1.ContainerState{
+									Terminated: &corev1.ContainerStateTerminated{
+										ExitCode: 0,
+									},
+								},
+							},
+							{
+								Name: "etcd-resources-copy",
+								State: corev1.ContainerState{
+									Terminated: &corev1.ContainerStateTerminated{
+										ExitCode: 0,
+									},
+								},
+							},
+						},
+						ContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name:  "etcd",
+								Ready: true,
+								State: corev1.ContainerState{
+									Running: &corev1.ContainerStateRunning{},
+								},
+							},
+						},
+					},
+				},
+					&corev1.Pod{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "etcd-b",
+							Namespace: "openshift-etcd",
+							Labels:    labels.Set{"app": "etcd"},
+						},
+						Spec: corev1.PodSpec{
+							NodeName: "node-b",
+						},
+						Status: corev1.PodStatus{
+							Phase: "Running",
+							InitContainerStatuses: []corev1.ContainerStatus{
+								{
+									Name: "etcd-ensure-env",
+									State: corev1.ContainerState{
+										Terminated: &corev1.ContainerStateTerminated{
+											ExitCode: 1,
+										},
+									},
+								},
+								{
+									Name: "etcd-resources-copy",
+									State: corev1.ContainerState{
+										Terminated: nil,
+									},
+								},
+							},
+							ContainerStatuses: []corev1.ContainerStatus{
+								{
+									Name:  "etcd",
+									Ready: true,
+									State: corev1.ContainerState{
+										Waiting: &corev1.ContainerStateWaiting{
+											Reason: "WaitingOnInit",
+										},
+										Running:    nil,
+										Terminated: nil,
+									},
+								},
+							},
+						},
+					}), "openshift-etcd"},
+			},
+			want: nil,
+		},
+		{
+			name: "test pods with no container state set",
+			fields: fields{
+				etcdClient: etcdcli.NewFakeEtcdClient([]*etcdserverpb.Member{
+					{
+						Name: "etcd-a",
+					},
+				}),
+				podLister: &fakePodLister{fake.NewSimpleClientset(&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						// this will be skipped
+						Name:      "etcd-a",
+						Namespace: "openshift-etcd",
+						Labels:    labels.Set{"app": "etcd"},
+					},
+					Status: corev1.PodStatus{
+						Phase: "Running",
+						InitContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name: "etcd-ensure-env",
+								State: corev1.ContainerState{
+									Terminated: &corev1.ContainerStateTerminated{
+										ExitCode: 0,
+									},
+								},
+							},
+							{
+								Name: "etcd-resources-copy",
+								State: corev1.ContainerState{
+									Terminated: &corev1.ContainerStateTerminated{
+										ExitCode: 0,
+									},
+								},
+							},
+						},
+						ContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name: "etcd",
+							},
+						},
+					},
+				},
+					&corev1.Pod{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "etcd-b",
+							Namespace: "openshift-etcd",
+							Labels:    labels.Set{"app": "etcd"},
+						},
+						Spec: corev1.PodSpec{
+							NodeName: "node-b",
+						},
+						Status: corev1.PodStatus{
+							Phase: "Running",
+							InitContainerStatuses: []corev1.ContainerStatus{
+								{
+									Name: "etcd-ensure-env",
+									State: corev1.ContainerState{
+										Terminated: &corev1.ContainerStateTerminated{
+											ExitCode: 1,
+										},
+									},
+								},
+								{
+									Name: "etcd-resources-copy",
+									State: corev1.ContainerState{
+										Terminated: nil,
+									},
+								},
+							},
+							ContainerStatuses: []corev1.ContainerStatus{
+								{
+									Name: "etcd",
+								},
+							},
+						},
+					}), "openshift-etcd"},
+			},
+			want: nil,
+		},
+		{
+			name: "test pods with no status",
+			fields: fields{
+				etcdClient: etcdcli.NewFakeEtcdClient([]*etcdserverpb.Member{
+					{
+						Name: "etcd-a",
+					},
+				}),
+				podLister: &fakePodLister{fake.NewSimpleClientset(&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						// this will be skipped
+						Name:      "etcd-a",
+						Namespace: "openshift-etcd",
+						Labels:    labels.Set{"app": "etcd"},
+					},
+				},
+					&corev1.Pod{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "etcd-b",
+							Namespace: "openshift-etcd",
+							Labels:    labels.Set{"app": "etcd"},
+						},
+						Spec: corev1.PodSpec{
+							NodeName: "node-b",
 						},
 					}), "openshift-etcd"},
 			},
