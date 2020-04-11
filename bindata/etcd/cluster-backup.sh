@@ -66,5 +66,5 @@ fi
 
 dl_etcdctl
 backup_latest_kube_static_resources "${BACKUP_RESOURCE_LIST[@]}"
-etcdctl snapshot save ${SNAPSHOT_FILE}
+ETCDCTL_ENDPOINTS="https://${NODE_NODE_ENVVAR_NAME_IP}:2379" etcdctl snapshot save ${SNAPSHOT_FILE}
 echo "snapshot db and kube resources are successfully saved to ${BACKUP_DIR}"
