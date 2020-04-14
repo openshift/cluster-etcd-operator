@@ -108,11 +108,6 @@ func (c *EtcdMemberIPMigrator) reconcileMembers() error {
 	}
 	if len(unhealthyMembers) > 0 {
 		klog.V(4).Infof("unhealthy members: %v", spew.Sdump(unhealthyMembers))
-		memberNames := []string{}
-		for _, member := range unhealthyMembers {
-			memberNames = append(memberNames, member.Name)
-		}
-		c.eventRecorder.Eventf("UnhealthyEtcdMember", "unhealthy members: %v", strings.Join(memberNames, ","))
 		return nil
 	}
 
