@@ -12,3 +12,4 @@ approvers:
   - mfojtik
   - sttts
   - tnozicka
+component: "Etcd"
