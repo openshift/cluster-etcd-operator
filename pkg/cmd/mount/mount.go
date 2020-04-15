@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -35,16 +36,18 @@ func NewMountCommand(errOut io.Writer) *cobra.Command {
 		Short: "Mount a secret with certs",
 		Long:  "This command mounts the secret with valid certs signed by etcd-cert-signer-controller",
 		Run: func(cmd *cobra.Command, args []string) {
-			must := func(fn func() error) {
-				if err := fn(); err != nil {
-					if cmd.HasParent() {
-						klog.Fatal(err)
-					}
-					fmt.Fprint(mountSecretOpts.errOut, err.Error())
+			if err := mountSecretOpts.validateMountSecretOpts(); err != nil {
+				if cmd.HasParent() {
+					klog.Fatal(err)
 				}
+				fmt.Fprint(mountSecretOpts.errOut, err.Error())
 			}
-			must(mountSecretOpts.validateMountSecretOpts)
-			must(mountSecretOpts.Run)
+			if err := mountSecretOpts.Run(context.TODO()); err != nil {
+				if cmd.HasParent() {
+					klog.Fatal(err)
+				}
+				fmt.Fprint(mountSecretOpts.errOut, err.Error())
+			}
 		},
 	}
 
@@ -57,8 +60,8 @@ func (m *mountSecretOpts) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&m.assetsDir, "assetsdir", "", "Directory location to store signed certs")
 }
 
-func (m *mountSecretOpts) Run() error {
-	return m.mountSecret()
+func (m *mountSecretOpts) Run(ctx context.Context) error {
+	return m.mountSecret(ctx)
 }
 
 func (m *mountSecretOpts) validateMountSecretOpts() error {
@@ -76,7 +79,7 @@ func (m *mountSecretOpts) validateMountSecretOpts() error {
 // <profile>-<podFQDN>, where profile can be peer, server
 // and metric and mount the certs as commonname.crt/commonname.key
 // this will run as init container in etcd pod managed by CEO.
-func (m *mountSecretOpts) mountSecret() error {
+func (m *mountSecretOpts) mountSecret(ctx context.Context) error {
 	var err error
 	inClusterConfig, err := rest.InClusterConfig()
 	if err != nil {
@@ -92,7 +95,7 @@ func (m *mountSecretOpts) mountSecret() error {
 	var s *v1.Secret
 	// wait forever for success and retry every duration interval
 	err = wait.PollInfinite(duration, func() (bool, error) {
-		s, err = client.CoreV1().Secrets("openshift-etcd").Get(getSecretName(m.commonName), metav1.GetOptions{})
+		s, err = client.CoreV1().Secrets("openshift-etcd").Get(ctx, getSecretName(m.commonName), metav1.GetOptions{})
 		if err != nil {
 			klog.Errorf("error in getting secret %s/%s: %v", "openshift-etcd", getSecretName(m.commonName), err)
 			return false, err
