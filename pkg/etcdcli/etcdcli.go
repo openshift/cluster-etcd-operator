@@ -19,6 +19,7 @@ import (
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	"go.etcd.io/etcd/pkg/transport"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -104,8 +105,8 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 
 	g.clientLock.Lock()
 	defer g.clientLock.Unlock()
-	// TODO check if the connection is already closed
-	if reflect.DeepEqual(g.lastClientConfigKey, etcdEndpoints) {
+	// return cached client if endpoints are equal and connection is active
+	if reflect.DeepEqual(g.lastClientConfigKey, etcdEndpoints) && g.cachedClient.ActiveConnection().GetState() == connectivity.Ready {
 		return g.cachedClient, nil
 	}
 
