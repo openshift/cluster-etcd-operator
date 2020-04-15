@@ -9,3 +9,19 @@ status:
   versions:
   - name: operator
     version: "0.0.1-snapshot"
+  relatedObjects:
+    - group: operator.openshift.io
+      name: cluster
+      resource: etcds
+    - group: ""
+      name: openshift-config
+      resource: namespaces
+    - group: ""
+      name: openshift-config-managed
+      resource: namespaces
+    - group: ""
+      name: openshift-etcd-operator
+      resource: namespaces
+    - group: ""
+      name: openshift-etcd
+      resource: namespaces
