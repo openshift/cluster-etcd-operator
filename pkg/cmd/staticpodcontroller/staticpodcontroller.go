@@ -10,12 +10,6 @@ import (
 	"os"
 	"time"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
-	ceoapi "github.com/openshift/cluster-etcd-operator/pkg/operator/api"
-	"github.com/openshift/cluster-etcd-operator/pkg/version"
-	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/vincent-petithory/dataurl"
@@ -32,6 +26,14 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
+
+	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
+	ceoapi "github.com/openshift/cluster-etcd-operator/pkg/operator/api"
+	"github.com/openshift/cluster-etcd-operator/pkg/version"
 )
 
 const (
@@ -178,12 +180,12 @@ func NewStaticPodController(
 	return c
 }
 
-func (c *StaticPodController) sync() error {
+func (c *StaticPodController) sync(ctx context.Context) error {
 	operatorSpec, _, _, err := c.operatorClient.GetOperatorState()
 	if err != nil {
 		return err
 	}
-	pod, err := c.clientset.CoreV1().Pods(etcdNamespace).Get(c.localEtcdName, metav1.GetOptions{})
+	pod, err := c.clientset.CoreV1().Pods(etcdNamespace).Get(ctx, c.localEtcdName, metav1.GetOptions{})
 	if err != nil {
 		klog.Infof("No Pod found in %s with name %s", etcdNamespace, c.localEtcdName)
 		return err
@@ -203,7 +205,7 @@ func (c *StaticPodController) sync() error {
 
 			if c.IsMemberRemove(operatorSpec, c.localEtcdName) {
 				klog.Infof("%s is pending removal", c.localEtcdName)
-				etcdMember, err := c.getMachineConfigData(staticPodPath, "master")
+				etcdMember, err := c.getMachineConfigData(ctx, staticPodPath, "master")
 				if err != nil {
 					klog.Warningf("etcdMember failed %v", err)
 					return err
@@ -328,7 +330,7 @@ func (c *StaticPodController) processNextWorkItem() bool {
 	}
 	defer c.queue.Done(dsKey)
 
-	err := c.sync()
+	err := c.sync(context.TODO())
 	if err == nil {
 		c.queue.Forget(dsKey)
 		return true
@@ -349,9 +351,9 @@ func (c *StaticPodController) eventHandler() cache.ResourceEventHandler {
 	}
 }
 
-func (c *StaticPodController) getMachineConfigData(desiredPath string, pool string) ([]byte, error) {
+func (c *StaticPodController) getMachineConfigData(ctx context.Context, desiredPath string, pool string) ([]byte, error) {
 	mcpClient := c.dynamicClient.Resource(schema.GroupVersionResource{Group: "machineconfiguration.openshift.io", Version: "v1", Resource: "machineconfigpools"})
-	unstructuredMCP, err := mcpClient.Get(pool, metav1.GetOptions{})
+	unstructuredMCP, err := mcpClient.Get(ctx, pool, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -365,7 +367,7 @@ func (c *StaticPodController) getMachineConfigData(desiredPath string, pool stri
 	klog.Infof("rendered master MachineConfig found %s\n", machineConfigName)
 
 	mcClient := c.dynamicClient.Resource(schema.GroupVersionResource{Group: "machineconfiguration.openshift.io", Version: "v1", Resource: "machineconfigs"})
-	unstructuredMC, err := mcClient.Get(machineConfigName, metav1.GetOptions{})
+	unstructuredMC, err := mcClient.Get(ctx, machineConfigName, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
