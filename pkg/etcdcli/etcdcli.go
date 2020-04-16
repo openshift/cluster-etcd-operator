@@ -16,9 +16,11 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/etcdserver/api/v3rpc/rpctypes"
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	"go.etcd.io/etcd/pkg/transport"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -38,46 +40,26 @@ type etcdClientGetter struct {
 	nodeListerSynced      cache.InformerSynced
 	endpointsListerSynced cache.InformerSynced
 	networkListerSynced   cache.InformerSynced
-
-	eventRecorder events.Recorder
-
-	clientLock          sync.Mutex
-	lastClientConfigKey []string
-	cachedClient        *clientv3.Client
 }
 
-func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkInformer configv1informers.NetworkInformer, eventRecorder events.Recorder) EtcdClient {
-	return &etcdClientGetter{
-		nodeLister:            kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
-		endpointsLister:       kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
-		networkLister:         networkInformer.Lister(),
-		nodeListerSynced:      kubeInformers.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
-		endpointsListerSynced: kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().HasSynced,
-		networkListerSynced:   networkInformer.Informer().HasSynced,
-		eventRecorder:         eventRecorder.WithComponentSuffix("etcd-client"),
-	}
-}
-
-// getEtcdClient may return a cached client.  When a new client is needed, the previous client is closed.
-// The caller should not closer the client or future calls may fail.
-func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
-	if !g.nodeListerSynced() {
+func (e *etcdClientGetter) Get() ([]string, error) {
+	if !e.nodeListerSynced() {
 		return nil, fmt.Errorf("node lister not synced")
 	}
-	if !g.endpointsListerSynced() {
+	if !e.endpointsListerSynced() {
 		return nil, fmt.Errorf("node lister not synced")
 	}
-	if !g.networkListerSynced() {
+	if !e.networkListerSynced() {
 		return nil, fmt.Errorf("network lister not synced")
 	}
 
-	network, err := g.networkLister.Get("cluster")
+	network, err := e.networkLister.Get("cluster")
 	if err != nil {
 		return nil, err
 	}
 
 	etcdEndpoints := []string{}
-	nodes, err := g.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
+	nodes, err := e.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
 	for _, node := range nodes {
 		internalIP, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
 		if err != nil {
@@ -86,7 +68,7 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 		etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", internalIP))
 	}
 
-	hostEtcd, err := g.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd-2")
+	hostEtcd, err := e.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd-2")
 	if err != nil {
 		return nil, err
 	}
@@ -101,27 +83,73 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 		}
 		etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", bootstrapIP))
 	}
+	return etcdEndpoints, nil
+}
 
-	g.clientLock.Lock()
-	defer g.clientLock.Unlock()
-	// TODO check if the connection is already closed
-	if reflect.DeepEqual(g.lastClientConfigKey, etcdEndpoints) {
-		return g.cachedClient, nil
+type etcdClient struct {
+	EtcdEndpointsGetter
+
+	// TODO: need to find a way to make controllers specify their own even recorder
+	//       instead of generic event recorder, so the events can be back traced to
+	//      the controller calling the client methods
+	eventRecorder events.Recorder
+
+	clientLock          sync.Mutex
+	lastClientConfigKey []string
+	cachedClient        *clientv3.Client
+}
+
+func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkInformer configv1informers.NetworkInformer, eventRecorder events.Recorder) EtcdClient {
+	return &etcdClient{
+		EtcdEndpointsGetter: &etcdClientGetter{
+			nodeLister:            kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
+			endpointsLister:       kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
+			networkLister:         networkInformer.Lister(),
+			nodeListerSynced:      kubeInformers.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
+			endpointsListerSynced: kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().HasSynced,
+			networkListerSynced:   networkInformer.Informer().HasSynced,
+		},
+		eventRecorder: eventRecorder.WithComponentSuffix("etcd-client"),
+	}
+}
+
+// getCachedEtcdClient may return a cached client.  When a new client is needed, the previous client is closed.
+// The caller should not close the client or future calls may fail.
+func (e *etcdClient) getCachedEtcdClient() (*clientv3.Client, error) {
+	etcdEndpoints, err := e.Get()
+	if err != nil {
+		return nil, err
+	}
+
+	e.clientLock.Lock()
+	defer e.clientLock.Unlock()
+	// check if the connection is already closed
+	if reflect.DeepEqual(e.lastClientConfigKey, etcdEndpoints) &&
+		e.cachedClient.ActiveConnection().GetState() == connectivity.Ready {
+		return e.cachedClient, nil
 	}
 
 	c, err := getEtcdClient(etcdEndpoints)
 	if err != nil {
 		return nil, err
 	}
-	if g.cachedClient != nil {
-		if err := g.cachedClient.Close(); err != nil {
+	if e.cachedClient != nil {
+		if err := e.cachedClient.Close(); err != nil {
 			utilruntime.HandleError(err)
 		}
 	}
-	g.cachedClient = c
-	g.lastClientConfigKey = etcdEndpoints
+	e.cachedClient = c
+	e.lastClientConfigKey = etcdEndpoints
 
-	return g.cachedClient, nil
+	// set endpoints to existing members
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	err = e.cachedClient.Sync(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("error syncing endpoints to existing members: %v", err)
+	}
+
+	return e.cachedClient, nil
 }
 
 func getEtcdClient(endpoints []string) (*clientv3.Client, error) {
@@ -150,10 +178,10 @@ func getEtcdClient(endpoints []string) (*clientv3.Client, error) {
 	return cli, err
 }
 
-func (g *etcdClientGetter) MemberAdd(peerURL string) error {
-	g.eventRecorder.Eventf("MemberAdd", "adding new peer %v", peerURL)
+func (e *etcdClient) MemberAdd(peerURL string) error {
+	e.eventRecorder.Eventf("MemberAdd", "adding new peer %v", peerURL)
 
-	cli, err := g.getEtcdClient()
+	cli, err := e.getCachedEtcdClient()
 	if err != nil {
 		return err
 	}
@@ -169,7 +197,7 @@ func (g *etcdClientGetter) MemberAdd(peerURL string) error {
 	for _, member := range membersResp.Members {
 		for _, currPeerURL := range member.PeerURLs {
 			if currPeerURL == peerURL {
-				g.eventRecorder.Warningf("MemberAlreadyAdded", "member with peerURL %s already part of the cluster", peerURL)
+				e.eventRecorder.Warningf("MemberAlreadyAdded", "member with peerURL %s already part of the cluster", peerURL)
 				return nil
 			}
 		}
@@ -182,9 +210,9 @@ func (g *etcdClientGetter) MemberAdd(peerURL string) error {
 	return err
 }
 
-func (g *etcdClientGetter) MemberUpdatePeerURL(id uint64, peerURLs []string) error {
-	if members, err := g.MemberList(); err != nil {
-		g.eventRecorder.Eventf("MemberUpdate", "updating member %d with peers %v", id, strings.Join(peerURLs, ","))
+func (e *etcdClient) MemberUpdatePeerURL(id uint64, peerURLs []string) error {
+	if members, err := e.MemberList(); err != nil {
+		e.eventRecorder.Eventf("MemberUpdate", "updating member %d with peers %v", id, strings.Join(peerURLs, ","))
 	} else {
 		memberName := fmt.Sprintf("%d", id)
 		for _, member := range members {
@@ -193,10 +221,10 @@ func (g *etcdClientGetter) MemberUpdatePeerURL(id uint64, peerURLs []string) err
 				break
 			}
 		}
-		g.eventRecorder.Eventf("MemberUpdate", "updating member %q with peers %v", memberName, strings.Join(peerURLs, ","))
+		e.eventRecorder.Eventf("MemberUpdate", "updating member %q with peers %v", memberName, strings.Join(peerURLs, ","))
 	}
 
-	cli, err := g.getEtcdClient()
+	cli, err := e.getCachedEtcdClient()
 	if err != nil {
 		return err
 	}
@@ -211,10 +239,10 @@ func (g *etcdClientGetter) MemberUpdatePeerURL(id uint64, peerURLs []string) err
 	return err
 }
 
-func (g *etcdClientGetter) MemberRemove(member string) error {
-	g.eventRecorder.Eventf("MemberRemove", "removing member %q", member)
+func (e *etcdClient) MemberRemove(member string) error {
+	e.eventRecorder.Eventf("MemberRemove", "removing member %q", member)
 
-	cli, err := g.getEtcdClient()
+	cli, err := e.getCachedEtcdClient()
 	if err != nil {
 		return err
 	}
@@ -240,12 +268,12 @@ func (g *etcdClientGetter) MemberRemove(member string) error {
 		}
 	}
 
-	g.eventRecorder.Warningf("MemberAlreadyRemoved", "member %q already removed", member)
+	e.eventRecorder.Warningf("MemberAlreadyRemoved", "member %q already removed", member)
 	return nil
 }
 
-func (g *etcdClientGetter) MemberList() ([]*etcdserverpb.Member, error) {
-	cli, err := g.getEtcdClient()
+func (e *etcdClient) MemberList() ([]*etcdserverpb.Member, error) {
+	cli, err := e.getCachedEtcdClient()
 	if err != nil {
 		return nil, err
 	}
@@ -261,8 +289,8 @@ func (g *etcdClientGetter) MemberList() ([]*etcdserverpb.Member, error) {
 	return membersResp.Members, nil
 }
 
-func (g *etcdClientGetter) GetMember(name string) (*etcdserverpb.Member, error) {
-	members, err := g.MemberList()
+func (e *etcdClient) GetMember(name string) (*etcdserverpb.Member, error) {
+	members, err := e.MemberList()
 	if err != nil {
 		return nil, err
 	}
@@ -274,8 +302,8 @@ func (g *etcdClientGetter) GetMember(name string) (*etcdserverpb.Member, error) 
 	return nil, apierrors.NewNotFound(schema.GroupResource{Group: "etcd.operator.openshift.io", Resource: "etcdmembers"}, name)
 }
 
-func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
-	cli, err := g.getEtcdClient()
+func (e *etcdClient) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
+	cli, err := e.getCachedEtcdClient()
 	if err != nil {
 		return nil, err
 	}
@@ -300,26 +328,41 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		_, err := cli.Status(ctx, member.ClientURLs[0])
+		// TODO: explore caching clients per member when adding or removing
+		//       to improve performance
+		// get the client for the member
+		memberClient, err := getEtcdClient([]string{member.ClientURLs[0]})
 		if err != nil {
+			unhealthyMembers = append(unhealthyMembers, member)
+			unhealthyMemberNames = append(unhealthyMemberNames, member.Name)
+			continue
+		}
+
+		// get a key to check for linearized operation
+		_, err = memberClient.Get(ctx, "health")
+		switch {
+		case err != nil && err != rpctypes.ErrPermissionDenied:
+			// invalid certs panic so that operator pod gets right certs on restart
+			panic("Invalid Certs")
+		case err != nil:
 			unhealthyMembers = append(unhealthyMembers, member)
 			unhealthyMemberNames = append(unhealthyMemberNames, member.Name)
 		}
 	}
 
 	if len(unstartedMemberNames) > 0 {
-		g.eventRecorder.Warningf("UnstartedEtcdMember", "unstarted members: %v", strings.Join(unstartedMemberNames, ","))
+		e.eventRecorder.Warningf("UnstartedEtcdMember", "unstarted members: %v", strings.Join(unstartedMemberNames, ","))
 	}
 
 	if len(unhealthyMemberNames) > 0 {
-		g.eventRecorder.Warningf("UnhealthyEtcdMember", "unhealthy members: %v", strings.Join(unhealthyMemberNames, ","))
+		e.eventRecorder.Warningf("UnhealthyEtcdMember", "unhealthy members: %v", strings.Join(unhealthyMemberNames, ","))
 	}
 
 	return unhealthyMembers, nil
 }
 
-func (g *etcdClientGetter) MemberStatus(member *etcdserverpb.Member) string {
-	cli, err := g.getEtcdClient()
+func (e *etcdClient) MemberStatus(member *etcdserverpb.Member) string {
+	cli, err := e.getCachedEtcdClient()
 	if err != nil {
 		klog.Errorf("error getting etcd client: %#v", err)
 		return EtcdMemberStatusUnknown
@@ -338,4 +381,8 @@ func (g *etcdClientGetter) MemberStatus(member *etcdserverpb.Member) string {
 	}
 
 	return EtcdMemberStatusAvailable
+}
+
+func (e *etcdClient) SetEventRecorder(eventRecorder events.Recorder) {
+	e.eventRecorder = eventRecorder
 }

@@ -41,3 +41,9 @@ type UnhealthyMemberLister interface {
 type MemberStatusChecker interface {
 	MemberStatus(member *etcdserverpb.Member) string
 }
+
+// EtcdEndpointsGetter hides the implementation for getting etcd endpoints
+// so that custom fake endpoints can be used in tests
+type EtcdEndpointsGetter interface {
+	Get() ([]string, error)
+}
