@@ -106,6 +106,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		[]string{
 			"etcd/ns.yaml",
 			"etcd/sa.yaml",
+			"etcd/svc.yaml",
 		},
 		(&resourceapply.ClientHolder{}).WithKubernetes(kubeClient),
 		operatorClient,
