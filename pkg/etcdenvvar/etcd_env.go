@@ -2,6 +2,7 @@ package etcdenvvar
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
@@ -12,6 +13,12 @@ import (
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 )
+
+var FixedEtcdEnvVars = map[string]string{
+	"ETCD_DATA_DIR":              "/var/lib/etcd",
+	"ETCD_QUOTA_BACKEND_BYTES":   "7516192768", // 7 gig
+	"ETCD_INITIAL_CLUSTER_STATE": "existing",
+}
 
 type envVarContext struct {
 	spec   operatorv1.StaticPodOperatorSpec
@@ -35,6 +42,7 @@ var envVarFns = []envVarFunc{
 	getEtcdctlEnvVars,
 	getHeartbeatInterval,
 	getElectionTimeout,
+	getUnsupportedArch,
 }
 
 // getEtcdEnvVars returns the env vars that need to be set on the etcd static pods that will be rendered.
@@ -45,6 +53,7 @@ var envVarFns = []envVarFunc{
 //   ETCD_HEARTBEAT_INTERVAL
 //   ETCD_ELECTION_TIMEOUT
 //   ETCD_INITIAL_CLUSTER_STATE
+//   ETCD_UNSUPPORTED_ARCH
 //   NODE_%s_IP
 //   NODE_%s_ETCD_URL_HOST
 //   NODE_%s_ETCD_NAME
@@ -70,6 +79,9 @@ func getEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
 		if err != nil {
 			return nil, err
 		}
+		if newEnvVars == nil {
+			continue
+		}
 		for k, v := range newEnvVars {
 			if currV, ok := ret[k]; ok {
 				return nil, fmt.Errorf("key %q already set to %q", k, currV)
@@ -82,11 +94,7 @@ func getEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
 }
 
 func getFixedEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
-	return map[string]string{
-		"ETCD_DATA_DIR":              "/var/lib/etcd",
-		"ETCD_QUOTA_BACKEND_BYTES":   "7516192768", // 7 gig
-		"ETCD_INITIAL_CLUSTER_STATE": "existing",
-	}, nil
+	return FixedEtcdEnvVars, nil
 }
 
 func getEtcdctlEnvVars(envVarContext envVarContext) (map[string]string, error) {
@@ -248,4 +256,15 @@ func getElectionTimeout(envVarContext envVarContext) (map[string]string, error) 
 
 func envVarSafe(nodeName string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(nodeName, "-", "_"), ".", "_")
+}
+
+func getUnsupportedArch(envVarContext envVarContext) (map[string]string, error) {
+	arch := runtime.GOARCH
+	if !strings.HasPrefix(arch, "s390") {
+		// dont set unless it is defined.
+		return nil, nil
+	}
+	return map[string]string{
+		"ETCD_UNSUPPORTED_ARCH": arch,
+	}, nil
 }

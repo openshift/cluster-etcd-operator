@@ -100,10 +100,7 @@ spec:
       mountPath: /etc/etcd/
 
     env:
-    - name: ETCD_DATA_DIR
-      value: "/var/lib/etcd"
-    - name: ETCD_NAME
-      value: "etcd-bootstrap"
+{{.ComputedEnvVars }}
     ports:
     - name: peer
       containerPort: 2380

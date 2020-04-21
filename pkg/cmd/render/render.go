@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
@@ -18,7 +19,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
+	apiruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog"
 )
 
@@ -135,8 +137,6 @@ type TemplateData struct {
 	options.ManifestConfig
 	options.FileConfig
 
-	// EtcdDiscoveryDomain is the domain used for SRV discovery.
-	EtcdDiscoveryDomain    string
 	EtcdServerCertDNSNames string
 	EtcdPeerCertDNSNames   string
 
@@ -149,11 +149,14 @@ type TemplateData struct {
 	// SingleStackIPv6 is true if the stack is IPv6 only.
 	SingleStackIPv6 bool
 
-	// Hostname as reported by the kernel
+	// Hostname as reported by the kernel.
 	Hostname string
 
-	// BootstrapIP is address of the bootstrap node
+	// BootstrapIP is address of the bootstrap node.
 	BootstrapIP string
+
+	// ComputedEnvVars name/value pairs to populate env: for static pod.
+	ComputedEnvVars string
 }
 
 type StaticFile struct {
@@ -169,20 +172,15 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 		ManifestConfig: options.ManifestConfig{
 			Images: options.Images{
 				Etcd:            opts.etcdImage,
-				SetupEtcdEnv:    opts.setupEtcdEnvImage,
 				KubeClientAgent: opts.kubeClientAgentImage,
 			},
 		},
-		EtcdDiscoveryDomain: opts.etcdDiscoveryDomain,
 		EtcdServerCertDNSNames: strings.Join([]string{
 			"localhost",
 			"etcd.kube-system.svc",
 			"etcd.kube-system.svc.cluster.local",
 			"etcd.openshift-etcd.svc",
 			"etcd.openshift-etcd.svc.cluster.local",
-		}, ","),
-		EtcdPeerCertDNSNames: strings.Join([]string{
-			opts.etcdDiscoveryDomain,
 		}, ","),
 		BootstrapIP: opts.bootstrapIP,
 	}
@@ -200,8 +198,6 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 		return nil, err
 	}
 
-	// TODO installer should feed value by flag this should be removed
-	// derive bootstrapIP from local interfaces if not passed by flag
 	if templateData.BootstrapIP == "" {
 		if err := templateData.setBootstrapIP(); err != nil {
 			return nil, err
@@ -209,6 +205,10 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 	}
 
 	templateData.setEtcdAddress()
+
+	if err := templateData.setComputedEnvVars(); err != nil {
+		return nil, err
+	}
 
 	return &templateData, nil
 }
@@ -301,7 +301,7 @@ func (t *TemplateData) getClusterConfigFromFile(clusterConfigFile string) (*unst
 	if err != nil {
 		return nil, err
 	}
-	clusterConfigObj, err := runtime.Decode(unstructured.UnstructuredJSONScheme, configJson)
+	clusterConfigObj, err := apiruntime.Decode(unstructured.UnstructuredJSONScheme, configJson)
 	if err != nil {
 		return nil, err
 	}
@@ -369,6 +369,25 @@ func (t *TemplateData) setSingleStackIPv6() error {
 	if singleStack {
 		t.SingleStackIPv6 = true
 	}
+	return nil
+}
+
+func (t *TemplateData) setComputedEnvVars() error {
+	envVarMap, err := getEtcdEnv(runtime.GOARCH)
+	if err != nil {
+		return err
+	}
+	if len(envVarMap) == 0 {
+		return fmt.Errorf("missing env var values")
+	}
+
+	envVarLines := []string{}
+	for _, k := range sets.StringKeySet(envVarMap).List() {
+		v := envVarMap[k]
+		envVarLines = append(envVarLines, fmt.Sprintf("    - name: %q", k))
+		envVarLines = append(envVarLines, fmt.Sprintf("      value: %q", v))
+	}
+	t.ComputedEnvVars = strings.Join(envVarLines, "\n")
 	return nil
 }
 
