@@ -8,14 +8,12 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	errorsutil "k8s.io/apimachinery/pkg/util/errors"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/util/workqueue"
-	"k8s.io/klog"
 )
 
 const workQueueKey = "key"
@@ -25,27 +23,24 @@ const workQueueKey = "key"
 type EtcdMembersController struct {
 	operatorClient v1helpers.OperatorClient
 	etcdClient     etcdcli.EtcdClient
-
-	eventRecorder events.Recorder
-	queue         workqueue.RateLimitingInterface
+	name           string
 }
 
-func NewEtcdMembersController(operatorClient v1helpers.OperatorClient,
+func NewEtcdMembersController(
+	operatorClient v1helpers.OperatorClient,
 	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
-) *EtcdMembersController {
+) factory.Controller {
 	c := &EtcdMembersController{
+		name:           "EtcdMembersController",
 		operatorClient: operatorClient,
 		etcdClient:     etcdClient,
-
-		eventRecorder: eventRecorder.WithComponentSuffix("member-observer-controller"),
-		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "EtcdMembersController"),
 	}
-	return c
+	return factory.New().ResyncEvery(3*time.Second).WithSync(c.sync).ToController(c.name, eventRecorder.WithComponentSuffix("member-observer-controller"))
 }
 
-func (c *EtcdMembersController) sync() error {
-	err := c.reportEtcdMembers()
+func (c *EtcdMembersController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
+	err := c.reportEtcdMembers(syncCtx)
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersControllerDegraded",
@@ -54,7 +49,7 @@ func (c *EtcdMembersController) sync() error {
 			Message: err.Error(),
 		}))
 		if updateErr != nil {
-			c.eventRecorder.Warning("ReportEtcdMembersErrorUpdatingStatus", updateErr.Error())
+			syncCtx.Recorder().Warning("ReportEtcdMembersErrorUpdatingStatus", updateErr.Error())
 		}
 		return err
 	}
@@ -65,13 +60,13 @@ func (c *EtcdMembersController) sync() error {
 		Reason: "MembersReported",
 	}))
 	if updateErr != nil {
-		c.eventRecorder.Warning("ReportEtcdMembersErrorUpdatingStatus", updateErr.Error())
+		syncCtx.Recorder().Warning("ReportEtcdMembersErrorUpdatingStatus", updateErr.Error())
 		return updateErr
 	}
 	return nil
 }
 
-func (c *EtcdMembersController) reportEtcdMembers() error {
+func (c *EtcdMembersController) reportEtcdMembers(syncCtx factory.SyncContext) error {
 	etcdMembers, err := c.etcdClient.MemberList()
 	if err != nil {
 		return err
@@ -100,7 +95,7 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 			Message: statusMessage,
 		}))
 		if updateErr != nil {
-			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
+			syncCtx.Recorder().Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
 			updateErrors = append(updateErrors, updateErr)
 		}
 	} else {
@@ -111,7 +106,7 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 			Message: "No unhealthy members found",
 		}))
 		if updateErr != nil {
-			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
+			syncCtx.Recorder().Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
 			updateErrors = append(updateErrors, updateErr)
 		}
 	}
@@ -124,7 +119,7 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 			Message: statusMessage,
 		}))
 		if updateErr != nil {
-			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
+			syncCtx.Recorder().Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
 			updateErrors = append(updateErrors, updateErr)
 		}
 	} else {
@@ -135,7 +130,7 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 			Message: "No unstarted etcd members found",
 		}))
 		if updateErr != nil {
-			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
+			syncCtx.Recorder().Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
 			updateErrors = append(updateErrors, updateErr)
 		}
 	}
@@ -148,7 +143,7 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 			Message: statusMessage,
 		}))
 		if updateErr != nil {
-			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
+			syncCtx.Recorder().Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
 			updateErrors = append(updateErrors, updateErr)
 		}
 	} else {
@@ -162,7 +157,7 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 			Message: statusMessage,
 		}))
 		if updateErr != nil {
-			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
+			syncCtx.Recorder().Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
 			updateErrors = append(updateErrors, updateErr)
 		}
 	}
@@ -193,44 +188,4 @@ func getMemberMessage(availableMembers, unhealthyMembers, unstartedMembers []str
 		}
 	}
 	return strings.Join(messages, ", ")
-}
-
-func (c *EtcdMembersController) Run(ctx context.Context, workers int) {
-	defer utilruntime.HandleCrash()
-	defer c.queue.ShutDown()
-	klog.Infof("Starting EtcdMembersController")
-	defer klog.Infof("Shutting down EtcdMembersController")
-
-	go wait.Until(c.runWorker, time.Second, ctx.Done())
-
-	// add time based trigger
-	go wait.PollImmediateUntil(time.Minute, func() (bool, error) {
-		c.queue.Add(workQueueKey)
-		return false, nil
-	}, ctx.Done())
-
-	<-ctx.Done()
-}
-
-func (c *EtcdMembersController) runWorker() {
-	for c.processNextWorkItem() {
-	}
-}
-
-func (c *EtcdMembersController) processNextWorkItem() bool {
-	dsKey, quit := c.queue.Get()
-	if quit {
-		return false
-	}
-	defer c.queue.Done(dsKey)
-
-	err := c.sync()
-	if err == nil {
-		c.queue.Forget(dsKey)
-		return true
-	}
-	utilruntime.HandleError(fmt.Errorf("%v failed with : %v", dsKey, err))
-	c.queue.AddRateLimited(dsKey)
-
-	return true
 }
