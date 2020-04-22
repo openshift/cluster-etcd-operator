@@ -84,7 +84,7 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 		case etcdcli.EtcdMemberStatusAvailable:
 			availableMembers = append(availableMembers, m.Name)
 		case etcdcli.EtcdMemberStatusNotStarted:
-			unstartedMembers = append(unstartedMembers, m.Name)
+			unstartedMembers = append(unstartedMembers, etcdcli.GetMemberNameOrHost(m))
 		case etcdcli.EtcdMemberStatusUnhealthy:
 			unhealthyMembers = append(unhealthyMembers, m.Name)
 		}
