@@ -19,6 +19,7 @@ import (
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	"go.etcd.io/etcd/pkg/transport"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -104,9 +105,14 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 
 	g.clientLock.Lock()
 	defer g.clientLock.Unlock()
-	// TODO check if the connection is already closed
+	// check if the connection is already closed
 	if reflect.DeepEqual(g.lastClientConfigKey, etcdEndpoints) {
-		return g.cachedClient, nil
+		switch g.cachedClient.ActiveConnection().GetState() {
+		case connectivity.TransientFailure, connectivity.Shutdown:
+			break
+		default:
+			return g.cachedClient, nil
+		}
 	}
 
 	c, err := getEtcdClient(etcdEndpoints)
@@ -297,10 +303,14 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 			unstartedMemberNames = append(unstartedMemberNames, member.Name)
 			continue
 		}
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		reqLeaderCtx := clientv3.WithRequireLeader(context.Background())
+		ctxwl, cancelwl := context.WithCancel(reqLeaderCtx)
+		defer cancelwl()
 
-		_, err := cli.Status(ctx, member.ClientURLs[0])
+		_, err := cli.Status(ctxwl, member.ClientURLs[0])
+		if clientv3.IsConnCanceled(err) {
+			return nil, err
+		}
 		if err != nil {
 			unhealthyMembers = append(unhealthyMembers, member)
 			unhealthyMemberNames = append(unhealthyMemberNames, member.Name)
@@ -328,10 +338,15 @@ func (g *etcdClientGetter) MemberStatus(member *etcdserverpb.Member) string {
 	if len(member.ClientURLs) == 0 && member.Name == "" {
 		return EtcdMemberStatusNotStarted
 	}
+	reqLeaderCtx := clientv3.WithRequireLeader(context.Background())
+	ctx, cancel := context.WithCancel(reqLeaderCtx)
+	defer cancel()
 
-	ctx, cancel := context.WithCancel(context.Background())
 	_, err = cli.Status(ctx, member.ClientURLs[0])
-	cancel()
+	if clientv3.IsConnCanceled(err) {
+		klog.Errorf("error getting etcd member %s status: %#v", member.Name, err)
+		return EtcdMemberStatusUnknown
+	}
 	if err != nil {
 		klog.Errorf("error getting etcd member %s status: %#v", member.Name, err)
 		return EtcdMemberStatusUnhealthy

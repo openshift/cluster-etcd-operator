@@ -11,7 +11,6 @@ import (
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
-
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	errorsutil "k8s.io/apimachinery/pkg/util/errors"
 )
