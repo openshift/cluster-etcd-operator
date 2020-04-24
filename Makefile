@@ -7,6 +7,7 @@ include $(addprefix ./vendor/github.com/openshift/build-machinery-go/make/, \
 	targets/openshift/bindata.mk \
 	targets/openshift/images.mk \
 	targets/openshift/deps-gomod.mk \
+	targets/openshift/operator/telepresence.mk \
 )
 
 IMAGE_REGISTRY :=registry.svc.ci.openshift.org
@@ -29,3 +30,8 @@ $(call build-image,ocp-cluster-etcd-operator,$(IMAGE_REGISTRY)/ocp/4.4:cluster-e
 # It will generate targets {update,verify}-bindata-$(1) logically grouping them in unsuffixed versions of these targets
 # and also hooked into {update,verify}-generated for broader integration.
 $(call add-bindata,etcd,./bindata/etcd/...,bindata,etcd_assets,pkg/operator/etcd_assets/bindata.go)
+
+# Configure the 'telepresence' target
+# See vendor/github.com/openshift/build-machinery-go/scripts/run-telepresence.sh for usage and configuration details
+export TP_DEPLOYMENT_YAML ?=./manifests/0000_12_etcd-operator_06_deployment.yaml
+export TP_CMD_PATH ?=./cmd/cluster-etcd-operator
