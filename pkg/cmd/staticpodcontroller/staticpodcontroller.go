@@ -117,7 +117,7 @@ func (s *podOpts) Run() error {
 		klog.Warningf("unable to get owner reference (falling back to namespace): %v", err)
 	}
 
-	eventRecorder := events.NewKubeRecorder(clientset.CoreV1().Events(etcdNamespace), "static-pod-controller-"+localEtcdName, controllerRef)
+	eventRecorder := events.NewKubeRecorderWithOptions(clientset.CoreV1().Events(etcdNamespace), events.RecommendedClusterSingletonCorrelatorOptions(), "static-pod-controller-"+localEtcdName, controllerRef)
 
 	if err != nil {
 		klog.Errorf("error getting etcd informer %#v\n", err)
