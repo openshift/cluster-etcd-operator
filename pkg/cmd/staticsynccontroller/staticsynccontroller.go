@@ -97,7 +97,7 @@ func (s *syncOpts) Run() error {
 		klog.Warningf("unable to get owner reference (falling back to namespace): %v", err)
 	}
 
-	eventRecorder := events.NewKubeRecorder(clientset.CoreV1().Events(etcdNamespace), "resource-sync-controller-"+os.Getenv("NODE_NAME"), controllerRef)
+	eventRecorder := events.NewKubeRecorderWithOptions(clientset.CoreV1().Events(etcdNamespace), events.RecommendedClusterSingletonCorrelatorOptions(), "resource-sync-controller-"+os.Getenv("NODE_NAME"), controllerRef)
 
 	kubeInformerFactory := informers.NewSharedInformerFactoryWithOptions(clientset, 0, informers.WithNamespace(etcdNamespace))
 
