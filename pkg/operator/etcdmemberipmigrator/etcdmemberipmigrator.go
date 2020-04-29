@@ -1,34 +1,30 @@
 package etcdmemberipmigrator
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/url"
 	"strings"
 	"time"
 
-	utilerrors "k8s.io/apimachinery/pkg/util/errors"
-
 	"github.com/davecgh/go-spew/spew"
+
+	"k8s.io/apimachinery/pkg/labels"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/client-go/informers"
+	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/klog"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	"k8s.io/apimachinery/pkg/labels"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/informers"
-	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/util/workqueue"
-	"k8s.io/klog"
-)
 
-const (
-	workQueueKey = "key"
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 )
 
 // watches etcd members and if they do not have a peer URL that has an IP address, the ip address is determined
@@ -39,10 +35,6 @@ type EtcdMemberIPMigrator struct {
 	nodeLister           corev1listers.NodeLister
 	infrastructureLister configv1listers.InfrastructureLister
 	networkLister        configv1listers.NetworkLister
-
-	cachesToSync  []cache.InformerSynced
-	queue         workqueue.RateLimitingInterface
-	eventRecorder events.Recorder
 }
 
 func NewEtcdMemberIPMigrator(
@@ -52,33 +44,26 @@ func NewEtcdMemberIPMigrator(
 	networkInformer configv1informers.NetworkInformer,
 	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
-) *EtcdMemberIPMigrator {
+) factory.Controller {
 	c := &EtcdMemberIPMigrator{
 		operatorClient:       operatorClient,
 		etcdClient:           etcdClient,
 		nodeLister:           kubeInformers.Core().V1().Nodes().Lister(),
 		infrastructureLister: infrastructureInformer.Lister(),
 		networkLister:        networkInformer.Lister(),
-
-		cachesToSync: []cache.InformerSynced{
-			operatorClient.Informer().HasSynced,
-			kubeInformers.Core().V1().Nodes().Informer().HasSynced,
-			infrastructureInformer.Informer().HasSynced,
-			networkInformer.Informer().HasSynced,
-			operatorClient.Informer().HasSynced,
-		},
-		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "EtcdMemberIPMigrator"),
-		eventRecorder: eventRecorder.WithComponentSuffix("etcd-member-ip-migrator"),
 	}
-	kubeInformers.Core().V1().Nodes().Informer().AddEventHandler(c.eventHandler())
-	networkInformer.Informer().AddEventHandler(c.eventHandler())
-	operatorClient.Informer().AddEventHandler(c.eventHandler())
 
-	return c
+	return factory.New().ResyncEvery(time.Minute).WithInformers(
+		operatorClient.Informer(),
+		kubeInformers.Core().V1().Nodes().Informer(),
+		infrastructureInformer.Informer(),
+		networkInformer.Informer(),
+		operatorClient.Informer(),
+	).WithSync(c.sync).ToController("EtcdMemberIPMigrator", eventRecorder.WithComponentSuffix("etcd-member-ip-migrator"))
 }
 
-func (c *EtcdMemberIPMigrator) sync() error {
-	err := c.reconcileMembers()
+func (c *EtcdMemberIPMigrator) sync(ctx context.Context, syncCtx factory.SyncContext) error {
+	err := c.reconcileMembers(syncCtx.Recorder())
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMemberIPMigratorDegraded",
@@ -87,7 +72,7 @@ func (c *EtcdMemberIPMigrator) sync() error {
 			Message: err.Error(),
 		}))
 		if updateErr != nil {
-			c.eventRecorder.Warning("EtcdMemberIPMigratorUpdatingStatus", updateErr.Error())
+			syncCtx.Recorder().Warning("EtcdMemberIPMigratorUpdatingStatus", updateErr.Error())
 		}
 		return err
 	}
@@ -101,7 +86,7 @@ func (c *EtcdMemberIPMigrator) sync() error {
 	return updateErr
 }
 
-func (c *EtcdMemberIPMigrator) reconcileMembers() error {
+func (c *EtcdMemberIPMigrator) reconcileMembers(recorder events.Recorder) error {
 	unhealthyMembers, err := c.etcdClient.UnhealthyMembers()
 	if err != nil {
 		return err
@@ -131,7 +116,7 @@ func (c *EtcdMemberIPMigrator) reconcileMembers() error {
 			continue
 		}
 
-		c.eventRecorder.Eventf("MemberMissingIPPeer", "member %q is missing an IP in the peer list", member.Name)
+		recorder.Eventf("MemberMissingIPPeer", "member %q is missing an IP in the peer list", member.Name)
 
 		// if the member does not have a peerIP, then we need to migrate it.  This approach is very heavy with dns requests
 		// but this should almost never happen and this allows us to re-use the code that we have already for DNS.
@@ -143,7 +128,7 @@ func (c *EtcdMemberIPMigrator) reconcileMembers() error {
 		if err != nil {
 			return err
 		}
-		c.eventRecorder.Eventf("MemberSettingIPPeer", "member %q; new peer list %v", member.Name, strings.Join(requiredPeerList, ","))
+		recorder.Eventf("MemberSettingIPPeer", "member %q; new peer list %v", member.Name, strings.Join(requiredPeerList, ","))
 		if err := c.etcdClient.MemberUpdatePeerURL(member.ID, requiredPeerList); err != nil {
 			return err
 		}
@@ -262,59 +247,6 @@ func (c *EtcdMemberIPMigrator) getEtcdDiscoveryDomain() (string, error) {
 		return "", fmt.Errorf("infrastructures.config.openshit.io/cluster missing .status.etcdDiscoveryDomain")
 	}
 	return etcdDiscoveryDomain, nil
-}
-
-func (c *EtcdMemberIPMigrator) eventHandler() cache.ResourceEventHandler {
-	return cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj interface{}) { c.queue.Add(workQueueKey) },
-		UpdateFunc: func(old, new interface{}) { c.queue.Add(workQueueKey) },
-		DeleteFunc: func(obj interface{}) { c.queue.Add(workQueueKey) },
-	}
-}
-
-func (c *EtcdMemberIPMigrator) Run(stopCh <-chan struct{}) {
-	defer utilruntime.HandleCrash()
-	defer c.queue.ShutDown()
-
-	klog.Infof("Starting EtcdMemberIPMigrator")
-	defer klog.Infof("Shutting down EtcdMemberIPMigrator")
-
-	if !cache.WaitForCacheSync(stopCh, c.cachesToSync...) {
-		utilruntime.HandleError(fmt.Errorf("caches did not sync"))
-		return
-	}
-
-	go wait.Until(c.runWorker, time.Second, stopCh)
-
-	go wait.Until(func() {
-		c.queue.Add(workQueueKey)
-	}, time.Minute, stopCh)
-
-	<-stopCh
-}
-
-func (c *EtcdMemberIPMigrator) runWorker() {
-	for c.processNextWorkItem() {
-	}
-}
-
-func (c *EtcdMemberIPMigrator) processNextWorkItem() bool {
-	dsKey, quit := c.queue.Get()
-	if quit {
-		return false
-	}
-	defer c.queue.Done(dsKey)
-
-	err := c.sync()
-	if err == nil {
-		c.queue.Forget(dsKey)
-		return true
-	}
-
-	utilruntime.HandleError(fmt.Errorf("%v failed with : %v", dsKey, err))
-	c.queue.AddRateLimited(dsKey)
-
-	return true
 }
 
 // this is the only DNS call anywhere.  Don't copy/paste this or use it somewhere else.  We want to remove this in 4.5

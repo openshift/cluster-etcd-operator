@@ -1,33 +1,29 @@
 package clustermembercontroller
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-
 	"github.com/davecgh/go-spew/spew"
-	operatorv1 "github.com/openshift/api/operator/v1"
-	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
-	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
-	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/apimachinery/pkg/util/wait"
 	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
-)
 
-const (
-	workQueueKey = "key"
+	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/library-go/pkg/controller/factory"
+	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
 // watches the etcd static pods, picks one unready pod and adds
@@ -39,10 +35,6 @@ type ClusterMemberController struct {
 	podLister      corev1listers.PodLister
 	nodeLister     corev1listers.NodeLister
 	networkLister  configv1listers.NetworkLister
-
-	cachesToSync  []cache.InformerSynced
-	queue         workqueue.RateLimitingInterface
-	eventRecorder events.Recorder
 }
 
 func NewClusterMemberController(
@@ -51,79 +43,24 @@ func NewClusterMemberController(
 	networkInformer configv1informers.NetworkInformer,
 	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
-) *ClusterMemberController {
+) factory.Controller {
 	c := &ClusterMemberController{
 		operatorClient: operatorClient,
 		etcdClient:     etcdClient,
 		podLister:      kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
 		nodeLister:     kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
 		networkLister:  networkInformer.Lister(),
-
-		cachesToSync: []cache.InformerSynced{
-			operatorClient.Informer().HasSynced,
-			kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer().HasSynced,
-			kubeInformers.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
-			networkInformer.Informer().HasSynced,
-			operatorClient.Informer().HasSynced,
-		},
-		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ClusterMemberController"),
-		eventRecorder: eventRecorder.WithComponentSuffix("cluster-member-controller"),
 	}
-	kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer().AddEventHandler(c.eventHandler())
-	kubeInformers.InformersFor("").Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
-	networkInformer.Informer().AddEventHandler(c.eventHandler())
-	operatorClient.Informer().AddEventHandler(c.eventHandler())
-
-	return c
+	return factory.New().ResyncEvery(time.Minute).WithInformers(
+		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer(),
+		kubeInformers.InformersFor("").Core().V1().ConfigMaps().Informer(),
+		networkInformer.Informer(),
+		operatorClient.Informer(),
+	).WithSync(c.sync).ToController("ClusterMemberController", eventRecorder.WithComponentSuffix("cluster-member-controller"))
 }
 
-func (c *ClusterMemberController) Run(stopCh <-chan struct{}) {
-	defer utilruntime.HandleCrash()
-	defer c.queue.ShutDown()
-
-	klog.Infof("Starting ClusterMemberController")
-	defer klog.Infof("Shutting down ClusterMemberController")
-
-	if !cache.WaitForCacheSync(stopCh, c.cachesToSync...) {
-		utilruntime.HandleError(fmt.Errorf("caches did not sync"))
-		return
-	}
-
-	go wait.Until(c.runWorker, time.Second, stopCh)
-
-	go wait.Until(func() {
-		c.queue.Add(workQueueKey)
-	}, time.Minute, stopCh)
-
-	<-stopCh
-}
-
-func (c *ClusterMemberController) runWorker() {
-	for c.processNextWorkItem() {
-	}
-}
-
-func (c *ClusterMemberController) processNextWorkItem() bool {
-	dsKey, quit := c.queue.Get()
-	if quit {
-		return false
-	}
-	defer c.queue.Done(dsKey)
-
-	err := c.sync()
-	if err == nil {
-		c.queue.Forget(dsKey)
-		return true
-	}
-
-	utilruntime.HandleError(fmt.Errorf("%v failed with : %v", dsKey, err))
-	c.queue.AddRateLimited(dsKey)
-
-	return true
-}
-
-func (c *ClusterMemberController) sync() error {
-	err := c.reconcileMembers()
+func (c *ClusterMemberController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
+	err := c.reconcileMembers(syncCtx.Recorder())
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "ClusterMemberControllerDegraded",
@@ -132,7 +69,7 @@ func (c *ClusterMemberController) sync() error {
 			Message: err.Error(),
 		}))
 		if updateErr != nil {
-			c.eventRecorder.Warning("ClusterMemberControllerUpdatingStatus", updateErr.Error())
+			syncCtx.Recorder().Warning("ClusterMemberControllerUpdatingStatus", updateErr.Error())
 		}
 		return err
 	}
@@ -146,7 +83,7 @@ func (c *ClusterMemberController) sync() error {
 	return updateErr
 }
 
-func (c *ClusterMemberController) reconcileMembers() error {
+func (c *ClusterMemberController) reconcileMembers(recorder events.Recorder) error {
 	unhealthyMembers, err := c.etcdClient.UnhealthyMembers()
 	if err != nil {
 		return err
@@ -165,7 +102,7 @@ func (c *ClusterMemberController) reconcileMembers() error {
 		// no more work left to do
 		return nil
 	default:
-		c.eventRecorder.Eventf("FoundPodToScale", "found pod to add to etcd membership: %v", podToAdd.Name)
+		recorder.Eventf("FoundPodToScale", "found pod to add to etcd membership: %v", podToAdd.Name)
 	}
 
 	etcdHost, err := c.getEtcdPeerHostToScale(podToAdd)
@@ -177,14 +114,6 @@ func (c *ClusterMemberController) reconcileMembers() error {
 		return err
 	}
 	return nil
-}
-
-func (c *ClusterMemberController) eventHandler() cache.ResourceEventHandler {
-	return cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj interface{}) { c.queue.Add(workQueueKey) },
-		UpdateFunc: func(old, new interface{}) { c.queue.Add(workQueueKey) },
-		DeleteFunc: func(obj interface{}) { c.queue.Add(workQueueKey) },
-	}
 }
 
 func (c *ClusterMemberController) getEtcdPodToAddToMembership() (*corev1.Pod, error) {

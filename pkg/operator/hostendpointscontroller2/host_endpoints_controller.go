@@ -12,16 +12,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/mergepatch"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
@@ -29,10 +26,6 @@ import (
 	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-)
-
-const (
-	workQueueKey = "key"
 )
 
 // HostEndpoints2Controller maintains an Endpoints resource with
@@ -43,10 +36,6 @@ type HostEndpoints2Controller struct {
 	nodeLister      corev1listers.NodeLister
 	endpointsLister corev1listers.EndpointsLister
 	endpointsClient corev1client.EndpointsGetter
-
-	eventRecorder events.Recorder
-	queue         workqueue.RateLimitingInterface
-	cachesToSync  []cache.InformerSynced
 }
 
 func NewHostEndpoints2Controller(
@@ -54,33 +43,27 @@ func NewHostEndpoints2Controller(
 	eventRecorder events.Recorder,
 	kubeClient kubernetes.Interface,
 	kubeInformers operatorv1helpers.KubeInformersForNamespaces,
-) *HostEndpoints2Controller {
+) factory.Controller {
 	kubeInformersForTargetNamespace := kubeInformers.InformersFor(operatorclient.TargetNamespace)
 	endpointsInformer := kubeInformersForTargetNamespace.Core().V1().Endpoints()
 	kubeInformersForCluster := kubeInformers.InformersFor("")
 	nodeInformer := kubeInformersForCluster.Core().V1().Nodes()
 
 	c := &HostEndpoints2Controller{
-		eventRecorder: eventRecorder.WithComponentSuffix("host-etcd-2-endpoints-controller2"),
-		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "HostEndpoints2Controller"),
-		cachesToSync: []cache.InformerSynced{
-			operatorClient.Informer().HasSynced,
-			endpointsInformer.Informer().HasSynced,
-			nodeInformer.Informer().HasSynced,
-		},
 		operatorClient:  operatorClient,
 		nodeLister:      nodeInformer.Lister(),
 		endpointsLister: endpointsInformer.Lister(),
 		endpointsClient: kubeClient.CoreV1(),
 	}
-	operatorClient.Informer().AddEventHandler(c.eventHandler())
-	endpointsInformer.Informer().AddEventHandler(c.eventHandler())
-	nodeInformer.Informer().AddEventHandler(c.eventHandler())
-	return c
+	return factory.New().ResyncEvery(time.Minute).WithInformers(
+		operatorClient.Informer(),
+		endpointsInformer.Informer(),
+		nodeInformer.Informer(),
+	).WithSync(c.sync).ToController("HostEndpoints2Controller", eventRecorder.WithComponentSuffix("host-etcd-2-endpoints-controller2"))
 }
 
-func (c *HostEndpoints2Controller) sync(ctx context.Context) error {
-	err := c.syncHostEndpoints2(ctx)
+func (c *HostEndpoints2Controller) sync(ctx context.Context, syncCtx factory.SyncContext) error {
+	err := c.syncHostEndpoints2(ctx, syncCtx.Recorder())
 
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
@@ -90,7 +73,7 @@ func (c *HostEndpoints2Controller) sync(ctx context.Context) error {
 			Message: err.Error(),
 		}))
 		if updateErr != nil {
-			c.eventRecorder.Warning("HostEndpoints2ErrorUpdatingStatus", updateErr.Error())
+			syncCtx.Recorder().Warning("HostEndpoints2ErrorUpdatingStatus", updateErr.Error())
 		}
 		return err
 	}
@@ -101,13 +84,13 @@ func (c *HostEndpoints2Controller) sync(ctx context.Context) error {
 		Reason: "HostEndpoints2Updated",
 	}))
 	if updateErr != nil {
-		c.eventRecorder.Warning("HostEndpoints2ErrorUpdatingStatus", updateErr.Error())
+		syncCtx.Recorder().Warning("HostEndpoints2ErrorUpdatingStatus", updateErr.Error())
 		return updateErr
 	}
 	return nil
 }
 
-func (c *HostEndpoints2Controller) syncHostEndpoints2(ctx context.Context) error {
+func (c *HostEndpoints2Controller) syncHostEndpoints2(ctx context.Context, recorder events.Recorder) error {
 	required := hostEndpointsAsset()
 
 	// create endpoint addresses for each node
@@ -139,7 +122,7 @@ func (c *HostEndpoints2Controller) syncHostEndpoints2(ctx context.Context) error
 		return fmt.Errorf("no master nodes are present")
 	}
 
-	return c.applyEndpoints(ctx, required)
+	return c.applyEndpoints(ctx, recorder, required)
 }
 
 func hostEndpointsAsset() *corev1.Endpoints {
@@ -162,15 +145,15 @@ func hostEndpointsAsset() *corev1.Endpoints {
 	}
 }
 
-func (c *HostEndpoints2Controller) applyEndpoints(ctx context.Context, required *corev1.Endpoints) error {
+func (c *HostEndpoints2Controller) applyEndpoints(ctx context.Context, recorder events.Recorder, required *corev1.Endpoints) error {
 	existing, err := c.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd-2")
 	if errors.IsNotFound(err) {
 		_, err := c.endpointsClient.Endpoints(operatorclient.TargetNamespace).Create(ctx, required, metav1.CreateOptions{})
 		if err != nil {
-			c.eventRecorder.Warningf("EndpointsCreateFailed", "Failed to create endpoints/%s -n %s: %v", required.Name, required.Namespace, err)
+			recorder.Warningf("EndpointsCreateFailed", "Failed to create endpoints/%s -n %s: %v", required.Name, required.Namespace, err)
 			return err
 		}
-		c.eventRecorder.Warningf("EndpointsCreated", "Created endpoints/%s -n %s because it was missing", required.Name, required.Namespace)
+		recorder.Warningf("EndpointsCreated", "Created endpoints/%s -n %s because it was missing", required.Name, required.Namespace)
 	}
 	if err != nil {
 		return err
@@ -195,11 +178,11 @@ func (c *HostEndpoints2Controller) applyEndpoints(ctx context.Context, required 
 	}
 	updated, err := c.endpointsClient.Endpoints(operatorclient.TargetNamespace).Update(ctx, toWrite, metav1.UpdateOptions{})
 	if err != nil {
-		c.eventRecorder.Warningf("EndpointsUpdateFailed", "Failed to update endpoints/%s -n %s: %v", required.Name, required.Namespace, err)
+		recorder.Warningf("EndpointsUpdateFailed", "Failed to update endpoints/%s -n %s: %v", required.Name, required.Namespace, err)
 		return err
 	}
 	klog.Infof("toWrite: \n%v", mergepatch.ToYAMLOrError(updated.Subsets))
-	c.eventRecorder.Warningf("EndpointsUpdated", "Updated endpoints/%s -n %s because it changed: %v", required.Name, required.Namespace, jsonPatch)
+	recorder.Warningf("EndpointsUpdated", "Updated endpoints/%s -n %s because it changed: %v", required.Name, required.Namespace, jsonPatch)
 	return nil
 }
 
@@ -248,49 +231,5 @@ func newEndpointAddressSliceComparator(endpointAddresses []corev1.EndpointAddres
 		default:
 			return *endpointAddresses[i].NodeName < *endpointAddresses[j].NodeName
 		}
-	}
-}
-
-func (c *HostEndpoints2Controller) Run(ctx context.Context, workers int) {
-	defer utilruntime.HandleCrash()
-	defer c.queue.ShutDown()
-	klog.Infof("Starting HostEtcdEndpointsController")
-	defer klog.Infof("Shutting down HostEtcdEndpointsController")
-	if !cache.WaitForCacheSync(ctx.Done(), c.cachesToSync...) {
-		return
-	}
-	go wait.Until(c.runWorker, time.Second, ctx.Done())
-	<-ctx.Done()
-}
-
-func (c *HostEndpoints2Controller) runWorker() {
-	for c.processNextWorkItem() {
-	}
-}
-
-func (c *HostEndpoints2Controller) processNextWorkItem() bool {
-	dsKey, quit := c.queue.Get()
-	if quit {
-		return false
-	}
-	defer c.queue.Done(dsKey)
-
-	err := c.sync(context.TODO())
-	if err == nil {
-		c.queue.Forget(dsKey)
-		return true
-	}
-	utilruntime.HandleError(fmt.Errorf("%v failed with : %v", dsKey, err))
-	c.queue.AddRateLimited(dsKey)
-
-	return true
-}
-
-func (c *HostEndpoints2Controller) eventHandler() cache.ResourceEventHandler {
-	// eventHandler queues the operator to check spec and status
-	return cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj interface{}) { c.queue.Add(workQueueKey) },
-		UpdateFunc: func(old, new interface{}) { c.queue.Add(workQueueKey) },
-		DeleteFunc: func(obj interface{}) { c.queue.Add(workQueueKey) },
 	}
 }

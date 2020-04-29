@@ -1,37 +1,35 @@
 package targetconfigcontroller
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
-
-	operatorv1 "github.com/openshift/api/operator/v1"
-	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
-	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/version"
-	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
-	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
-	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	coreclientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/util/workqueue"
-	"k8s.io/klog"
-)
 
-const workQueueKey = "key"
+	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/library-go/pkg/controller/factory"
+	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
+	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
+	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/cluster-etcd-operator/pkg/version"
+)
 
 type TargetConfigController struct {
 	targetImagePullSpec   string
@@ -47,10 +45,7 @@ type TargetConfigController struct {
 	nodeLister           corev1listers.NodeLister
 	envVarGetter         *etcdenvvar.EnvVarController
 
-	// queue only ever has one item, but it has nice error handling backoff/retry semantics
-	queue         workqueue.RateLimitingInterface
-	cachesToSync  []cache.InformerSynced
-	eventRecorder events.Recorder
+	enqueueFn func()
 }
 
 func NewTargetConfigController(
@@ -63,7 +58,7 @@ func NewTargetConfigController(
 	kubeClient kubernetes.Interface,
 	envVarGetter *etcdenvvar.EnvVarController,
 	eventRecorder events.Recorder,
-) *TargetConfigController {
+) factory.Controller {
 	c := &TargetConfigController{
 		targetImagePullSpec:   targetImagePullSpec,
 		operatorImagePullSpec: operatorImagePullSpec,
@@ -76,41 +71,31 @@ func NewTargetConfigController(
 		endpointLister:       kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
 		nodeLister:           kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
 		envVarGetter:         envVarGetter,
-
-		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "TargetConfigController"),
-		cachesToSync: []cache.InformerSynced{
-			operatorClient.Informer().HasSynced,
-			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().HasSynced,
-			kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer().HasSynced,
-			kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer().HasSynced,
-			kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
-			infrastructureInformer.Informer().HasSynced,
-			networkInformer.Informer().HasSynced,
-		},
-		eventRecorder: eventRecorder.WithComponentSuffix("target-config-controller"),
 	}
 
-	operatorClient.Informer().AddEventHandler(c.eventHandler())
-	kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
-	kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer().AddEventHandler(c.eventHandler())
-	infrastructureInformer.Informer().AddEventHandler(c.eventHandler())
-	networkInformer.Informer().AddEventHandler(c.eventHandler())
-	kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().AddEventHandler(c.eventHandler())
-
-	// TODO only trigger on master nodes
-	kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().AddEventHandler(c.eventHandler())
-
+	syncCtx := factory.NewSyncContext("TargetConfigController", eventRecorder.WithComponentSuffix("target-config-controller"))
+	c.enqueueFn = func() {
+		syncCtx.Queue().Add(syncCtx.QueueKey())
+	}
 	envVarGetter.AddListener(c)
 
-	return c
+	return factory.New().WithSyncContext(syncCtx).ResyncEvery(time.Minute).WithInformers(
+		operatorClient.Informer(),
+		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer(),
+		kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer(),
+		kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer(),
+		kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer(),
+		infrastructureInformer.Informer(),
+		networkInformer.Informer(),
+	).WithSync(c.sync).ToController("TargetConfigController", syncCtx.Recorder())
 }
 
-func (c TargetConfigController) sync() error {
-	operatorSpec, operatorStatus, _, err := c.operatorClient.GetStaticPodOperatorState()
+func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
+	operatorSpec, _, _, err := c.operatorClient.GetStaticPodOperatorState()
 	if err != nil {
 		return err
 	}
-	requeue, err := createTargetConfig(c, c.eventRecorder, operatorSpec, operatorStatus)
+	requeue, err := createTargetConfig(c, syncCtx.Recorder(), operatorSpec)
 	if err != nil {
 		return err
 	}
@@ -123,10 +108,10 @@ func (c TargetConfigController) sync() error {
 
 // createTargetConfig takes care of creation of valid resources in a fixed name.  These are inputs to other control loops.
 // returns whether or not requeue and if an error happened when updating status.  Normally it updates status itself.
-func createTargetConfig(c TargetConfigController, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec, operatorStatus *operatorv1.StaticPodOperatorStatus) (bool, error) {
+func createTargetConfig(c TargetConfigController, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (bool, error) {
 	errors := []error{}
 
-	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, operatorStatus, c.targetImagePullSpec, c.operatorImagePullSpec)
+	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec)
 	if err != nil {
 		return false, err
 	}
@@ -201,7 +186,7 @@ func loglevelToKlog(logLevel operatorv1.LogLevel) string {
 	}
 }
 
-func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv1.StaticPodOperatorSpec, operatorStatus *operatorv1.StaticPodOperatorStatus, imagePullSpec, operatorImagePullSpec string) (*strings.Replacer, error) {
+func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv1.StaticPodOperatorSpec, imagePullSpec, operatorImagePullSpec string) (*strings.Replacer, error) {
 	envVarMap := c.envVarGetter.GetEnvVars()
 	if len(envVarMap) == 0 {
 		return nil, fmt.Errorf("missing env var values")
@@ -246,64 +231,8 @@ func (c *TargetConfigController) manageStandardPod(substitutionReplacer *strings
 	return resourceapply.ApplyConfigMap(client, recorder, podConfigMap)
 }
 
-// Run starts the etcd and blocks until stopCh is closed.
-func (c *TargetConfigController) Run(workers int, stopCh <-chan struct{}) {
-	defer utilruntime.HandleCrash()
-	defer c.queue.ShutDown()
-
-	klog.Infof("Starting TargetConfigController")
-	defer klog.Infof("Shutting down TargetConfigController")
-
-	if !cache.WaitForCacheSync(stopCh, c.cachesToSync...) {
-		return
-	}
-	klog.V(2).Infof("caches synced")
-
-	// doesn't matter what workers say, only start one.
-	go wait.Until(c.runWorker, time.Second, stopCh)
-
-	go wait.Until(func() {
-		c.queue.Add(workQueueKey)
-	}, time.Minute, stopCh)
-
-	<-stopCh
-}
-
-func (c *TargetConfigController) runWorker() {
-	for c.processNextWorkItem() {
-	}
-}
-
-func (c *TargetConfigController) processNextWorkItem() bool {
-	dsKey, quit := c.queue.Get()
-	if quit {
-		return false
-	}
-	defer c.queue.Done(dsKey)
-
-	err := c.sync()
-	if err == nil {
-		c.queue.Forget(dsKey)
-		return true
-	}
-
-	utilruntime.HandleError(fmt.Errorf("%v failed with : %v", dsKey, err))
-	c.queue.AddRateLimited(dsKey)
-
-	return true
-}
-
 func (c *TargetConfigController) Enqueue() {
-	c.queue.Add(workQueueKey)
-}
-
-// eventHandler queues the operator to check spec and status
-func (c *TargetConfigController) eventHandler() cache.ResourceEventHandler {
-	return cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj interface{}) { c.queue.Add(workQueueKey) },
-		UpdateFunc: func(old, new interface{}) { c.queue.Add(workQueueKey) },
-		DeleteFunc: func(obj interface{}) { c.queue.Add(workQueueKey) },
-	}
+	c.enqueueFn()
 }
 
 func (c *TargetConfigController) namespaceEventHandler() cache.ResourceEventHandler {
@@ -311,19 +240,19 @@ func (c *TargetConfigController) namespaceEventHandler() cache.ResourceEventHand
 		AddFunc: func(obj interface{}) {
 			ns, ok := obj.(*corev1.Namespace)
 			if !ok {
-				c.queue.Add(workQueueKey)
+				c.Enqueue()
 			}
 			if ns.Name == ("openshift-etcd") {
-				c.queue.Add(workQueueKey)
+				c.Enqueue()
 			}
 		},
 		UpdateFunc: func(old, new interface{}) {
 			ns, ok := old.(*corev1.Namespace)
 			if !ok {
-				c.queue.Add(workQueueKey)
+				c.Enqueue()
 			}
 			if ns.Name == ("openshift-etcd") {
-				c.queue.Add(workQueueKey)
+				c.Enqueue()
 			}
 		},
 		DeleteFunc: func(obj interface{}) {
@@ -341,7 +270,7 @@ func (c *TargetConfigController) namespaceEventHandler() cache.ResourceEventHand
 				}
 			}
 			if ns.Name == ("openshift-etcd") {
-				c.queue.Add(workQueueKey)
+				c.Enqueue()
 			}
 		},
 	}
