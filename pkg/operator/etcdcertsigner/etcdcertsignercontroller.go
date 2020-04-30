@@ -2,6 +2,7 @@ package etcdcertsigner
 
 import (
 	"bytes"
+	"context"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
@@ -9,32 +10,29 @@ import (
 	"strings"
 	"time"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
-	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
-	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/library-go/pkg/crypto"
-	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/apimachinery/pkg/util/wait"
-	kubernetes "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/util/workqueue"
-	"k8s.io/klog"
+
+	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/library-go/pkg/controller/factory"
+	"github.com/openshift/library-go/pkg/crypto"
+	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
 const (
-	workQueueKey     = "key"
 	EtcdCertValidity = 10 * 365 * 24 * time.Hour
 	peerOrg          = "system:etcd-peers"
 	serverOrg        = "system:etcd-servers"
@@ -47,12 +45,7 @@ type EtcdCertSignerController struct {
 	infrastructureLister configv1listers.InfrastructureLister
 	nodeLister           corev1listers.NodeLister
 	secretLister         corev1listers.SecretLister
-
-	secretClient corev1client.SecretsGetter
-
-	cachesToSync  []cache.InformerSynced
-	queue         workqueue.RateLimitingInterface
-	eventRecorder events.Recorder
+	secretClient         corev1client.SecretsGetter
 }
 
 // watches master nodes and maintains secrets for each master node, placing them in a single secret (NOT a tls secret)
@@ -68,81 +61,26 @@ func NewEtcdCertSignerController(
 	kubeInformers v1helpers.KubeInformersForNamespaces,
 	infrastructureInformer configv1informers.InfrastructureInformer,
 	eventRecorder events.Recorder,
-) *EtcdCertSignerController {
+) factory.Controller {
 	c := &EtcdCertSignerController{
 		kubeClient:           kubeClient,
 		operatorClient:       operatorClient,
 		infrastructureLister: infrastructureInformer.Lister(),
 		secretLister:         kubeInformers.SecretLister(),
 		nodeLister:           kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
-
-		secretClient: v1helpers.CachedSecretGetter(kubeClient.CoreV1(), kubeInformers),
-
-		cachesToSync: []cache.InformerSynced{
-			operatorClient.Informer().HasSynced,
-			kubeInformers.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
-			kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Informer().HasSynced,
-			infrastructureInformer.Informer().HasSynced,
-		},
-		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "EtcdCertSignerController"),
-		eventRecorder: eventRecorder.WithComponentSuffix("etcd-cert-signer-controller"),
+		secretClient:         v1helpers.CachedSecretGetter(kubeClient.CoreV1(), kubeInformers),
 	}
-
-	kubeInformers.InformersFor("").Core().V1().Nodes().Informer().AddEventHandler(c.eventHandler())
-	kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Informer().AddEventHandler(c.eventHandler())
-	kubeInformers.InformersFor(operatorclient.GlobalUserSpecifiedConfigNamespace).Core().V1().Secrets().Informer().AddEventHandler(c.eventHandler())
-	infrastructureInformer.Informer().AddEventHandler(c.eventHandler())
-
-	return c
+	return factory.New().ResyncEvery(time.Minute).WithInformers(
+		kubeInformers.InformersFor("").Core().V1().Nodes().Informer(),
+		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Informer(),
+		kubeInformers.InformersFor(operatorclient.GlobalUserSpecifiedConfigNamespace).Core().V1().Secrets().Informer(),
+		infrastructureInformer.Informer(),
+		operatorClient.Informer(),
+	).WithSync(c.sync).ToController("EtcdCertSignerController", eventRecorder.WithComponentSuffix("etcd-cert-signer-controller"))
 }
 
-func (c *EtcdCertSignerController) Run(i int, stopCh <-chan struct{}) {
-	defer utilruntime.HandleCrash()
-	defer c.queue.ShutDown()
-
-	klog.Infof("Starting EtcdCertSignerController")
-	defer klog.Infof("Shutting down EtcdCertSignerController")
-
-	if !cache.WaitForCacheSync(stopCh, c.cachesToSync...) {
-		utilruntime.HandleError(fmt.Errorf("caches did not sync"))
-		return
-	}
-
-	go wait.Until(c.runWorker, time.Second, stopCh)
-
-	go wait.Until(func() {
-		c.queue.Add(workQueueKey)
-	}, time.Minute, stopCh)
-
-	<-stopCh
-}
-
-func (c *EtcdCertSignerController) runWorker() {
-	for c.processNextWorkItem() {
-	}
-}
-
-func (c *EtcdCertSignerController) processNextWorkItem() bool {
-	dsKey, quit := c.queue.Get()
-	if quit {
-		return false
-	}
-	defer c.queue.Done(dsKey)
-
-	err := c.sync()
-	if err == nil {
-		c.queue.Forget(dsKey)
-		return true
-	}
-
-	utilruntime.HandleError(fmt.Errorf("%v failed with : %v", dsKey, err))
-	c.queue.AddRateLimited(dsKey)
-
-	return true
-}
-
-func (c *EtcdCertSignerController) sync() error {
-	err := c.syncAllMasters()
+func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
+	err := c.syncAllMasters(syncCtx.Recorder())
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdCertSignerControllerDegraded",
@@ -151,7 +89,7 @@ func (c *EtcdCertSignerController) sync() error {
 			Message: err.Error(),
 		}))
 		if updateErr != nil {
-			c.eventRecorder.Warning("EtcdCertSignerControllerUpdatingStatus", updateErr.Error())
+			syncCtx.Recorder().Warning("EtcdCertSignerControllerUpdatingStatus", updateErr.Error())
 		}
 		return err
 	}
@@ -166,7 +104,7 @@ func (c *EtcdCertSignerController) sync() error {
 
 }
 
-func (c *EtcdCertSignerController) syncAllMasters() error {
+func (c *EtcdCertSignerController) syncAllMasters(recorder events.Recorder) error {
 	nodes, err := c.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
 	if err != nil {
 		return err
@@ -174,7 +112,7 @@ func (c *EtcdCertSignerController) syncAllMasters() error {
 
 	errs := []error{}
 	for _, node := range nodes {
-		if err := c.createSecretForNode(node); err != nil {
+		if err := c.createSecretForNode(node, recorder); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -233,15 +171,15 @@ func (c *EtcdCertSignerController) syncAllMasters() error {
 	}
 
 	// apply the secrets themselves
-	_, _, err = resourceapply.ApplySecret(c.secretClient, c.eventRecorder, combinedPeerSecret)
+	_, _, err = resourceapply.ApplySecret(c.secretClient, recorder, combinedPeerSecret)
 	if err != nil {
 		errs = append(errs, err)
 	}
-	_, _, err = resourceapply.ApplySecret(c.secretClient, c.eventRecorder, combinedServingSecret)
+	_, _, err = resourceapply.ApplySecret(c.secretClient, recorder, combinedServingSecret)
 	if err != nil {
 		errs = append(errs, err)
 	}
-	_, _, err = resourceapply.ApplySecret(c.secretClient, c.eventRecorder, combinedServingMetricsSecret)
+	_, _, err = resourceapply.ApplySecret(c.secretClient, recorder, combinedServingMetricsSecret)
 	if err != nil {
 		errs = append(errs, err)
 	}
@@ -259,7 +197,7 @@ func getServingMetricsSecretNameForNode(node *corev1.Node) string {
 	return fmt.Sprintf("etcd-serving-metrics-%s", node.Name)
 }
 
-func (c *EtcdCertSignerController) createSecretForNode(node *corev1.Node) error {
+func (c *EtcdCertSignerController) createSecretForNode(node *corev1.Node, recorder events.Recorder) error {
 	etcdPeerClientCertName := getPeerClientSecretNameForNode(node)
 	etcdServingCertName := getServingSecretNameForNode(node)
 	metricsServingCertName := getServingMetricsSecretNameForNode(node)
@@ -313,17 +251,17 @@ func (c *EtcdCertSignerController) createSecretForNode(node *corev1.Node) error 
 
 	// create the certificates and update them in the API
 	pCert, pKey, err := createNewCombinedClientAndServingCerts(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], fakePodFQDN, peerOrg, peerHostNames)
-	err = c.createSecret(etcdPeerClientCertName, pCert, pKey)
+	err = c.createSecret(etcdPeerClientCertName, pCert, pKey, recorder)
 	if err != nil {
 		return err
 	}
 	sCert, sKey, err := createNewCombinedClientAndServingCerts(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], fakePodFQDN, serverOrg, serverHostNames)
-	err = c.createSecret(etcdServingCertName, sCert, sKey)
+	err = c.createSecret(etcdServingCertName, sCert, sKey, recorder)
 	if err != nil {
 		return err
 	}
 	metricCert, metricKey, err := createNewCombinedClientAndServingCerts(etcdMetricCASecret.Data["tls.crt"], etcdMetricCASecret.Data["tls.key"], fakePodFQDN, metricOrg, serverHostNames)
-	err = c.createSecret(metricsServingCertName, metricCert, metricKey)
+	err = c.createSecret(metricsServingCertName, metricCert, metricKey, recorder)
 	if err != nil {
 		return err
 	}
@@ -412,9 +350,9 @@ func (c *EtcdCertSignerController) getEtcdDiscoveryDomain() (string, error) {
 	return etcdDiscoveryDomain, nil
 }
 
-func (c *EtcdCertSignerController) createSecret(secretName string, cert *bytes.Buffer, key *bytes.Buffer) error {
+func (c *EtcdCertSignerController) createSecret(secretName string, cert *bytes.Buffer, key *bytes.Buffer, recorder events.Recorder) error {
 	//TODO: Update annotations Not Before and Not After for Cert Rotation
-	_, _, err := resourceapply.ApplySecret(c.secretClient, c.eventRecorder, &corev1.Secret{
+	_, _, err := resourceapply.ApplySecret(c.secretClient, recorder, &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: operatorclient.TargetNamespace},
 		Type:       corev1.SecretTypeTLS,
 		Data: map[string][]byte{
@@ -423,13 +361,4 @@ func (c *EtcdCertSignerController) createSecret(secretName string, cert *bytes.B
 		},
 	})
 	return err
-}
-
-// eventHandler queues the operator to check spec and status
-func (c *EtcdCertSignerController) eventHandler() cache.ResourceEventHandler {
-	return cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj interface{}) { c.queue.Add(workQueueKey) },
-		UpdateFunc: func(old, new interface{}) { c.queue.Add(workQueueKey) },
-		DeleteFunc: func(obj interface{}) { c.queue.Add(workQueueKey) },
-	}
 }

@@ -1,66 +1,47 @@
 package bootstrapteardown
 
 import (
-	"fmt"
+	"context"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	corev1listers "k8s.io/client-go/listers/core/v1"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/apimachinery/pkg/util/wait"
-	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/util/workqueue"
-	"k8s.io/klog"
-)
 
-const (
-	workQueueKey = "key"
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 )
 
 type BootstrapTeardownController struct {
 	operatorClient  v1helpers.StaticPodOperatorClient
 	etcdClient      etcdcli.EtcdClient
 	configmapLister corev1listers.ConfigMapLister
-
-	cachesToSync  []cache.InformerSynced
-	queue         workqueue.RateLimitingInterface
-	eventRecorder events.Recorder
 }
 
 func NewBootstrapTeardownController(
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
-
 	etcdClient etcdcli.EtcdClient,
-
 	eventRecorder events.Recorder,
-) *BootstrapTeardownController {
+) factory.Controller {
 	c := &BootstrapTeardownController{
 		operatorClient:  operatorClient,
 		etcdClient:      etcdClient,
 		configmapLister: kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Lister(),
-
-		cachesToSync: []cache.InformerSynced{
-			operatorClient.Informer().HasSynced,
-			kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Informer().HasSynced,
-		},
-		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "BootstrapTeardownController"),
-		eventRecorder: eventRecorder.WithComponentSuffix("bootstrap-teardown-controller"),
 	}
 
-	operatorClient.Informer().AddEventHandler(c.eventHandler())
-	kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
-
-	return c
+	return factory.New().ResyncEvery(time.Minute).WithInformers(
+		operatorClient.Informer(),
+		kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Informer(),
+	).WithSync(c.sync).ToController("BootstrapTeardownController", eventRecorder.WithComponentSuffix("bootstrap-teardown-controller"))
 }
 
-func (c *BootstrapTeardownController) sync() error {
-	err := c.removeBootstrap()
+func (c *BootstrapTeardownController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
+	err := c.removeBootstrap(syncCtx)
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "BootstrapTeardownDegraded",
@@ -69,7 +50,7 @@ func (c *BootstrapTeardownController) sync() error {
 			Message: err.Error(),
 		}))
 		if updateErr != nil {
-			c.eventRecorder.Warning("BootstrapTeardownErrorUpdatingStatus", updateErr.Error())
+			syncCtx.Recorder().Warning("BootstrapTeardownErrorUpdatingStatus", updateErr.Error())
 		}
 		return err
 	}
@@ -83,7 +64,7 @@ func (c *BootstrapTeardownController) sync() error {
 	return updateErr
 }
 
-func (c *BootstrapTeardownController) removeBootstrap() error {
+func (c *BootstrapTeardownController) removeBootstrap(syncCtx factory.SyncContext) error {
 	// checks the actual etcd cluster membership API if etcd-bootstrap exists
 	safeToRemoveBootstrap, hasBootstrap, err := c.canRemoveEtcdBootstrap()
 	switch {
@@ -131,17 +112,17 @@ func (c *BootstrapTeardownController) removeBootstrap() error {
 	bootstrapFinishedConfigMap, err := c.configmapLister.ConfigMaps("kube-system").Get("bootstrap")
 	switch {
 	case apierrors.IsNotFound(err):
-		c.eventRecorder.Event("DelayingBootstrapTeardown", "cluster-bootstrap is not yet finished")
+		syncCtx.Recorder().Event("DelayingBootstrapTeardown", "cluster-bootstrap is not yet finished")
 		return nil
 	case err != nil:
 		return err
 
 	case bootstrapFinishedConfigMap.Data["status"] != "complete":
-		c.eventRecorder.Event("DelayingBootstrapTeardown", "cluster-bootstrap is not yet finished")
+		syncCtx.Recorder().Event("DelayingBootstrapTeardown", "cluster-bootstrap is not yet finished")
 		return nil
 	}
 
-	c.eventRecorder.Event("RemoveBootstrapEtcd", "removing etcd-bootstrap member")
+	syncCtx.Recorder().Event("RemoveBootstrapEtcd", "removing etcd-bootstrap member")
 	// this is ugly until bootkube is updated, but we want to be sure that bootkube has time to be waiting to watch the condition coming back.
 	if err := c.etcdClient.MemberRemove("etcd-bootstrap"); err != nil {
 		return err
@@ -199,62 +180,6 @@ func (c *BootstrapTeardownController) canRemoveEtcdBootstrap() (bool, bool, erro
 			return true, true, nil
 		}
 		return false, hasBootstrap, nil
-	}
-}
-
-func (c *BootstrapTeardownController) Run(stopCh <-chan struct{}) {
-	defer utilruntime.HandleCrash()
-	defer c.queue.ShutDown()
-
-	klog.Infof("Starting BootstrapTeardownController")
-	defer klog.Infof("Shutting down BootstrapTeardownController")
-
-	if !cache.WaitForCacheSync(stopCh, c.cachesToSync...) {
-		return
-	}
-	klog.V(2).Infof("caches synced BootstrapTeardownController")
-
-	go wait.Until(c.runWorker, time.Second, stopCh)
-
-	// add time based trigger
-	go wait.PollImmediateUntil(time.Minute, func() (bool, error) {
-		c.queue.Add(workQueueKey)
-		return false, nil
-	}, stopCh)
-
-	<-stopCh
-}
-
-func (c *BootstrapTeardownController) runWorker() {
-	for c.processNextWorkItem() {
-	}
-}
-
-func (c *BootstrapTeardownController) processNextWorkItem() bool {
-	dsKey, quit := c.queue.Get()
-	if quit {
-		return false
-	}
-	defer c.queue.Done(dsKey)
-
-	err := c.sync()
-	if err == nil {
-		c.queue.Forget(dsKey)
-		return true
-	}
-
-	utilruntime.HandleError(fmt.Errorf("%v failed with : %v", dsKey, err))
-	c.queue.AddRateLimited(dsKey)
-
-	return true
-}
-
-// eventHandler queues the operator to check spec and status
-func (c *BootstrapTeardownController) eventHandler() cache.ResourceEventHandler {
-	return cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj interface{}) { c.queue.Add(workQueueKey) },
-		UpdateFunc: func(old, new interface{}) { c.queue.Add(workQueueKey) },
-		DeleteFunc: func(obj interface{}) { c.queue.Add(workQueueKey) },
 	}
 }
 
