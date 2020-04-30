@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/url"
 	"reflect"
 	"strings"
 	"sync"
@@ -274,6 +275,19 @@ func (g *etcdClientGetter) GetMember(name string) (*etcdserverpb.Member, error) 
 	return nil, apierrors.NewNotFound(schema.GroupResource{Group: "etcd.operator.openshift.io", Resource: "etcdmembers"}, name)
 }
 
+// If the member's name is not set, extract ip/hostname from peerURL. Useful with unstarted members.
+func GetMemberNameOrHost(member *etcdserverpb.Member) string {
+	if len(member.Name) == 0 {
+		u, err := url.Parse(member.PeerURLs[0])
+		if err != nil {
+			klog.Errorf("unstarted member has invalid peerURL: %#v", err)
+			return "NAME-PENDING-BAD-PEER-URL"
+		}
+		return fmt.Sprintf("NAME-PENDING-%s", u.Hostname())
+	}
+	return member.Name
+}
+
 func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 	cli, err := g.getEtcdClient()
 	if err != nil {
@@ -294,7 +308,7 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 	for _, member := range membersResp.Members {
 		if len(member.ClientURLs) == 0 {
 			unhealthyMembers = append(unhealthyMembers, member)
-			unstartedMemberNames = append(unstartedMemberNames, member.Name)
+			unstartedMemberNames = append(unstartedMemberNames, GetMemberNameOrHost(member))
 			continue
 		}
 		ctx, cancel := context.WithCancel(context.Background())
