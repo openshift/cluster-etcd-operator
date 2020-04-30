@@ -221,6 +221,10 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 		return nil, err
 	}
 
+	if templateData.Platform == "Libvirt" {
+		templateData.setUnsupportedKeyForCR("/manifests/0000_12_etcd-operator_01_operator.cr.yaml")
+	}
+
 	return &templateData, nil
 }
 
@@ -364,6 +368,37 @@ func (t *TemplateData) setPlatform(infraConfigFilePath string) error {
 	}
 	// assume that this is >4.2
 	t.Platform = string(infrastructure.Status.PlatformStatus.Type)
+	return nil
+}
+
+func (t *TemplateData) setUnsupportedKeyForCR(etcdOperatorCR string) error {
+	type UnSupported struct {
+		UseUnsupportedUnsafeNonHANonProductionUnstableEtcd bool `json:"useUnsupportedUnsafeNonHANonProductionUnstableEtcd"`
+	}
+	etcd := &unstructured.Unstructured{}
+	etcdData, err := ioutil.ReadFile(etcdOperatorCR)
+	if err != nil {
+		return err
+	}
+	etcdJson, err := yaml.YAMLToJSON(etcdData)
+	if err != nil {
+		return err
+	}
+	if err := etcd.UnmarshalJSON([]byte(etcdJson)); err != nil {
+		return err
+	}
+	if err := unstructured.SetNestedField(etcd.Object, true, "spec", "unsupportedConfigOverrides", "useUnsupportedUnsafeNonHANonProductionUnstableEtcd"); err != nil {
+		return err
+	}
+	updateEtcdData, err := json.MarshalIndent(etcd, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	dstFile := fmt.Sprintf("/usr/share/bootkube/manifests/manifests/%s", filepath.Base(etcdOperatorCR))
+	if err := ioutil.WriteFile(dstFile, updateEtcdData, 0644); err != nil {
+		return err
+	}
 	return nil
 }
 
