@@ -243,6 +243,8 @@ github.com/openshift/library-go/pkg/serviceability
 github.com/pkg/errors
 # github.com/pkg/profile v1.3.0
 github.com/pkg/profile
+# github.com/pmezard/go-difflib v1.0.0
+github.com/pmezard/go-difflib/difflib
 # github.com/prometheus/client_golang v1.1.0
 github.com/prometheus/client_golang/api
 github.com/prometheus/client_golang/api/prometheus/v1
@@ -265,6 +267,9 @@ github.com/sirupsen/logrus
 github.com/spf13/cobra
 # github.com/spf13/pflag v1.0.5
 github.com/spf13/pflag
+# github.com/stretchr/testify v1.4.0
+github.com/stretchr/testify/assert
+github.com/stretchr/testify/require
 # github.com/vincent-petithory/dataurl v0.0.0-20191104211930-d1553a71de50
 github.com/vincent-petithory/dataurl
 # github.com/weppos/publicsuffix-go v0.5.0

@@ -16,6 +16,7 @@ require (
 	github.com/prometheus/common v0.6.0
 	github.com/spf13/cobra v0.0.5
 	github.com/spf13/pflag v1.0.5
+	github.com/stretchr/testify v1.4.0
 	github.com/vincent-petithory/dataurl v0.0.0-20191104211930-d1553a71de50
 	go.etcd.io/etcd v0.0.0-20200401174654-e694b7bb0875
 	google.golang.org/grpc v1.26.0
