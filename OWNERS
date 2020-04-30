@@ -12,4 +12,4 @@ approvers:
   - mfojtik
   - sttts
   - tnozicka
-component: "Etcd"
+component: "Etcd Operator"
