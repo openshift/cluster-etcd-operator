@@ -100,14 +100,7 @@ spec:
       mountPath: /etc/etcd/
 
     env:
-    - name: ETCD_DATA_DIR
-      value: "/var/lib/etcd"
-    - name: ETCD_NAME
-      value: "etcd-bootstrap"
-    - name: ETCD_HEARTBEAT_INTERVAL
-      value: {{ .EtcdHeartbeat }}
-    - name: ETCD_ELECTION_TIMEOUT
-      value: {{ .EtcdElectionTimeout }}
+{{.ComputedEnvVars }}
     ports:
     - name: peer
       containerPort: 2380
