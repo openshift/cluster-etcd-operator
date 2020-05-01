@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"go.etcd.io/etcd/pkg/transport"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -78,9 +79,19 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	if err != nil {
 		return err
 	}
+
+	// this is needed for e2e
+	tlsInfo := transport.TLSInfo{
+		CertFile:      "/var/run/secrets/etcd-client/tls.crt",
+		KeyFile:       "/var/run/secrets/etcd-client/tls.key",
+		TrustedCAFile: "/var/run/configmaps/etcd-ca/ca-bundle.crt",
+	}
+
 	etcdClient := etcdcli.NewEtcdClient(
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Networks(),
+		tlsInfo,
+		nil,
 		controllerContext.EventRecorder)
 
 	resourceSyncController, err := resourcesynccontroller.NewResourceSyncController(

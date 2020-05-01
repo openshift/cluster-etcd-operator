@@ -40,6 +40,9 @@ type etcdClientGetter struct {
 	endpointsListerSynced cache.InformerSynced
 	networkListerSynced   cache.InformerSynced
 
+	tlsInfo   transport.TLSInfo
+	endpoints []string
+
 	eventRecorder events.Recorder
 
 	clientLock          sync.Mutex
@@ -47,7 +50,7 @@ type etcdClientGetter struct {
 	cachedClient        *clientv3.Client
 }
 
-func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkInformer configv1informers.NetworkInformer, eventRecorder events.Recorder) EtcdClient {
+func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkInformer configv1informers.NetworkInformer, tlsInfo transport.TLSInfo, endpoints []string, eventRecorder events.Recorder) EtcdClient {
 	return &etcdClientGetter{
 		nodeLister:            kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
 		endpointsLister:       kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
@@ -55,6 +58,8 @@ func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkIn
 		nodeListerSynced:      kubeInformers.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
 		endpointsListerSynced: kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().HasSynced,
 		networkListerSynced:   networkInformer.Informer().HasSynced,
+		tlsInfo:               tlsInfo,
+		endpoints:             endpoints,
 		eventRecorder:         eventRecorder.WithComponentSuffix("etcd-client"),
 	}
 }
@@ -77,16 +82,22 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 		return nil, err
 	}
 
-	etcdEndpoints := []string{}
-	nodes, err := g.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
-	for _, node := range nodes {
-		internalIP, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
+	var etcdEndpoints []string
+	if g.endpoints != nil {
+		etcdEndpoints = g.endpoints
+	} else {
+		nodes, err := g.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
 		if err != nil {
 			return nil, err
 		}
-		etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", internalIP))
+		for _, node := range nodes {
+			internalIP, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
+			if err != nil {
+				return nil, err
+			}
+			etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", internalIP))
+		}
 	}
-
 	hostEtcd, err := g.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd-2")
 	if err != nil {
 		return nil, err
@@ -110,7 +121,7 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 		return g.cachedClient, nil
 	}
 
-	c, err := getEtcdClient(etcdEndpoints)
+	c, err := getEtcdClient(etcdEndpoints, g.tlsInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -125,16 +136,11 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 	return g.cachedClient, nil
 }
 
-func getEtcdClient(endpoints []string) (*clientv3.Client, error) {
+func getEtcdClient(endpoints []string, tlsInfo transport.TLSInfo) (*clientv3.Client, error) {
 	dialOptions := []grpc.DialOption{
 		grpc.WithBlock(), // block until the underlying connection is up
 	}
 
-	tlsInfo := transport.TLSInfo{
-		CertFile:      "/var/run/secrets/etcd-client/tls.crt",
-		KeyFile:       "/var/run/secrets/etcd-client/tls.key",
-		TrustedCAFile: "/var/run/configmaps/etcd-ca/ca-bundle.crt",
-	}
 	tlsConfig, err := tlsInfo.ClientConfig()
 
 	cfg := &clientv3.Config{
