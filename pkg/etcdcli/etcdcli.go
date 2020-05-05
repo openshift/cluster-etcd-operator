@@ -345,7 +345,7 @@ func (g *etcdClientGetter) MemberStatus(member *etcdserverpb.Member) string {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	_, err = cli.Status(ctx, member.ClientURLs[0])
-	cancel()
+	defer cancel()
 	if err != nil {
 		klog.Errorf("error getting etcd member %s status: %#v", member.Name, err)
 		return EtcdMemberStatusUnhealthy
