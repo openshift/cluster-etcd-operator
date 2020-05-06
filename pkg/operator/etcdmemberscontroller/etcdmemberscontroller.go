@@ -22,11 +22,11 @@ import (
 // of etcd members.
 type EtcdMembersController struct {
 	operatorClient v1helpers.OperatorClient
-	etcdClient     etcdcli.EtcdClient
+	etcdClient     etcdcli.EtcdCluster
 }
 
 func NewEtcdMembersController(operatorClient v1helpers.OperatorClient,
-	etcdClient etcdcli.EtcdClient,
+	etcdClient etcdcli.EtcdCluster,
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &EtcdMembersController{

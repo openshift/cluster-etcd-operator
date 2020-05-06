@@ -31,7 +31,7 @@ import (
 // skips if any one member is unhealthy.
 type ClusterMemberController struct {
 	operatorClient v1helpers.OperatorClient
-	etcdClient     etcdcli.EtcdClient
+	etcdClient     etcdcli.EtcdCluster
 	podLister      corev1listers.PodLister
 	nodeLister     corev1listers.NodeLister
 	networkLister  configv1listers.NetworkLister
@@ -41,7 +41,7 @@ func NewClusterMemberController(
 	operatorClient v1helpers.OperatorClient,
 	kubeInformers v1helpers.KubeInformersForNamespaces,
 	networkInformer configv1informers.NetworkInformer,
-	etcdClient etcdcli.EtcdClient,
+	etcdClient etcdcli.EtcdCluster,
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &ClusterMemberController{

@@ -40,7 +40,7 @@ func (f *fakePodLister) Pods(namespace string) corev1lister.PodNamespaceLister {
 
 func TestClusterMemberController_getEtcdPodToAddToMembership(t *testing.T) {
 	type fields struct {
-		etcdClient etcdcli.EtcdClient
+		etcdClient etcdcli.EtcdCluster
 		podLister  corev1lister.PodLister
 	}
 	tests := []struct {
@@ -52,7 +52,7 @@ func TestClusterMemberController_getEtcdPodToAddToMembership(t *testing.T) {
 		{
 			name: "test upgrade race",
 			fields: fields{
-				etcdClient: etcdcli.NewFakeEtcdClient([]*etcdserverpb.Member{
+				etcdClient: etcdcli.NewEtcdCluster(etcdcli.NewFakeEtcdClient([]*etcdserverpb.Member{
 					{
 						Name: "etcd-member-node-a",
 					},
@@ -62,7 +62,7 @@ func TestClusterMemberController_getEtcdPodToAddToMembership(t *testing.T) {
 					{
 						Name: "node-c",
 					},
-				}),
+				})),
 				podLister: &fakePodLister{fake.NewSimpleClientset(&corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
 						// this will be skipped
@@ -158,11 +158,11 @@ func TestClusterMemberController_getEtcdPodToAddToMembership(t *testing.T) {
 		{
 			name: "test pods with init container failed",
 			fields: fields{
-				etcdClient: etcdcli.NewFakeEtcdClient([]*etcdserverpb.Member{
+				etcdClient: etcdcli.NewEtcdCluster(etcdcli.NewFakeEtcdClient([]*etcdserverpb.Member{
 					{
 						Name: "etcd-a",
 					},
-				}),
+				})),
 				podLister: &fakePodLister{fake.NewSimpleClientset(&corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
 						// this will be skipped
@@ -249,11 +249,11 @@ func TestClusterMemberController_getEtcdPodToAddToMembership(t *testing.T) {
 		{
 			name: "test pods with no container state set",
 			fields: fields{
-				etcdClient: etcdcli.NewFakeEtcdClient([]*etcdserverpb.Member{
+				etcdClient: etcdcli.NewEtcdCluster(etcdcli.NewFakeEtcdClient([]*etcdserverpb.Member{
 					{
 						Name: "etcd-a",
 					},
-				}),
+				})),
 				podLister: &fakePodLister{fake.NewSimpleClientset(&corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
 						// this will be skipped
@@ -328,11 +328,11 @@ func TestClusterMemberController_getEtcdPodToAddToMembership(t *testing.T) {
 		{
 			name: "test pods with no status",
 			fields: fields{
-				etcdClient: etcdcli.NewFakeEtcdClient([]*etcdserverpb.Member{
+				etcdClient: etcdcli.NewEtcdCluster(etcdcli.NewFakeEtcdClient([]*etcdserverpb.Member{
 					{
 						Name: "etcd-a",
 					},
-				}),
+				})),
 				podLister: &fakePodLister{fake.NewSimpleClientset(&corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
 						// this will be skipped

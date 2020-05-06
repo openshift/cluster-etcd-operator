@@ -9,6 +9,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	"k8s.io/klog"
+
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
@@ -78,10 +80,23 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	if err != nil {
 		return err
 	}
-	etcdClient := etcdcli.NewEtcdClient(
+	etcdCluster := etcdcli.NewEtcdCluster(etcdcli.NewCachingEtcdClient(
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Networks(),
-		controllerContext.EventRecorder)
+		controllerContext.EventRecorder))
+	go func() {
+		ticker := time.NewTicker(1 * time.Minute)
+		for {
+			select {
+			case <-ticker.C:
+				if err := etcdCluster.Refresh(); err != nil {
+					klog.V(0).Infof("failed to refresh etcd cluster state: %v", err)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	resourceSyncController, err := resourcesynccontroller.NewResourceSyncController(
 		operatorClient,
@@ -196,7 +211,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorClient,
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Networks(),
-		etcdClient,
+		etcdCluster,
 		controllerContext.EventRecorder,
 	)
 	etcdMemberIPMigrator := etcdmemberipmigrator.NewEtcdMemberIPMigrator(
@@ -204,18 +219,18 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeInformersForNamespaces.InformersFor(""),
 		configInformers.Config().V1().Infrastructures(),
 		configInformers.Config().V1().Networks(),
-		etcdClient,
+		etcdCluster,
 		controllerContext.EventRecorder,
 	)
 	etcdMembersController := etcdmemberscontroller.NewEtcdMembersController(
 		operatorClient,
-		etcdClient,
+		etcdCluster,
 		controllerContext.EventRecorder,
 	)
 	bootstrapTeardownController := bootstrapteardown.NewBootstrapTeardownController(
 		operatorClient,
 		kubeInformersForNamespaces,
-		etcdClient,
+		etcdCluster,
 		controllerContext.EventRecorder,
 	)
 

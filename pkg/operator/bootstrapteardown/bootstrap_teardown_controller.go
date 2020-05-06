@@ -18,14 +18,14 @@ import (
 
 type BootstrapTeardownController struct {
 	operatorClient  v1helpers.StaticPodOperatorClient
-	etcdClient      etcdcli.EtcdClient
+	etcdClient      etcdcli.EtcdCluster
 	configmapLister corev1listers.ConfigMapLister
 }
 
 func NewBootstrapTeardownController(
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
-	etcdClient etcdcli.EtcdClient,
+	etcdClient etcdcli.EtcdCluster,
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &BootstrapTeardownController{
@@ -72,6 +72,7 @@ func (c *BootstrapTeardownController) removeBootstrap(syncCtx factory.SyncContex
 		return err
 
 	case !hasBootstrap:
+		// TODO: Remove the bootstrap IP annotation from the etcd-hosts-2 endpoint if the annotation is still present.
 		// if the bootstrap isn't present, then clearly we're available enough to terminate. This avoids any risk of flapping.
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdRunningInCluster",

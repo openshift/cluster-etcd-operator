@@ -1,6 +1,7 @@
 package etcdcli
 
 import (
+	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 )
 
@@ -12,6 +13,11 @@ const (
 )
 
 type EtcdClient interface {
+	clientv3.Cluster
+	clientv3.Maintenance
+}
+
+type EtcdCluster interface {
 	MemberAdder
 	MemberLister
 	MemberRemover
@@ -20,6 +26,8 @@ type EtcdClient interface {
 
 	GetMember(name string) (*etcdserverpb.Member, error)
 	MemberUpdatePeerURL(id uint64, peerURL []string) error
+
+	Refresh() error
 }
 
 type MemberAdder interface {

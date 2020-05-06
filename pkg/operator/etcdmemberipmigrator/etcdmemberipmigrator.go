@@ -31,7 +31,7 @@ import (
 // and added as the first address.
 type EtcdMemberIPMigrator struct {
 	operatorClient       v1helpers.OperatorClient
-	etcdClient           etcdcli.EtcdClient
+	etcdClient           etcdcli.EtcdCluster
 	nodeLister           corev1listers.NodeLister
 	infrastructureLister configv1listers.InfrastructureLister
 	networkLister        configv1listers.NetworkLister
@@ -42,7 +42,7 @@ func NewEtcdMemberIPMigrator(
 	kubeInformers informers.SharedInformerFactory,
 	infrastructureInformer configv1informers.InfrastructureInformer,
 	networkInformer configv1informers.NetworkInformer,
-	etcdClient etcdcli.EtcdClient,
+	etcdClient etcdcli.EtcdCluster,
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &EtcdMemberIPMigrator{
