@@ -53,7 +53,7 @@ func NewClusterMemberController(
 	}
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
 		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer(),
-		kubeInformers.InformersFor("").Core().V1().ConfigMaps().Informer(),
+		kubeInformers.InformersFor("").Core().V1().Nodes().Informer(),
 		networkInformer.Informer(),
 		operatorClient.Informer(),
 	).WithSync(c.sync).ToController("ClusterMemberController", eventRecorder.WithComponentSuffix("cluster-member-controller"))
