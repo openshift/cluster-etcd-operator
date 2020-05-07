@@ -2,24 +2,33 @@ package bootstrapteardown
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"k8s.io/client-go/kubernetes"
+	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
 type BootstrapTeardownController struct {
 	operatorClient  v1helpers.StaticPodOperatorClient
 	etcdClient      etcdcli.EtcdClient
 	configmapLister corev1listers.ConfigMapLister
+	endpointsLister corev1listers.EndpointsLister
+	endpointsClient corev1client.EndpointsGetter
 }
 
 func NewBootstrapTeardownController(
@@ -27,11 +36,14 @@ func NewBootstrapTeardownController(
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
+	kubeClient kubernetes.Interface,
 ) factory.Controller {
 	c := &BootstrapTeardownController{
 		operatorClient:  operatorClient,
 		etcdClient:      etcdClient,
 		configmapLister: kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Lister(),
+		endpointsLister: kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
+		endpointsClient: kubeClient.CoreV1(),
 	}
 
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
@@ -41,7 +53,7 @@ func NewBootstrapTeardownController(
 }
 
 func (c *BootstrapTeardownController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
-	err := c.removeBootstrap(syncCtx)
+	err := c.removeBootstrap(ctx, syncCtx)
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "BootstrapTeardownDegraded",
@@ -64,7 +76,7 @@ func (c *BootstrapTeardownController) sync(ctx context.Context, syncCtx factory.
 	return updateErr
 }
 
-func (c *BootstrapTeardownController) removeBootstrap(syncCtx factory.SyncContext) error {
+func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, syncCtx factory.SyncContext) error {
 	// checks the actual etcd cluster membership API if etcd-bootstrap exists
 	safeToRemoveBootstrap, hasBootstrap, err := c.canRemoveEtcdBootstrap()
 	switch {
@@ -72,7 +84,22 @@ func (c *BootstrapTeardownController) removeBootstrap(syncCtx factory.SyncContex
 		return err
 
 	case !hasBootstrap:
-		// if the bootstrap isn't present, then clearly we're available enough to terminate. This avoids any risk of flapping.
+		// If the bootstrap isn't present, then clearly we're available enough to terminate. This avoids any risk of flapping.
+		//
+		// Remove the bootstrap IP annotation from the well-known endpoint so etcd clients will stop trying
+		// to use the defunct bootstrap member endpoint.
+		endpoint, err := c.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd-2")
+		if err != nil {
+			return err
+		}
+		if _, found := endpoint.Annotations[etcdcli.BootstrapIPAnnotationKey]; found {
+			delete(endpoint.Annotations, etcdcli.BootstrapIPAnnotationKey)
+			_, err := c.endpointsClient.Endpoints(operatorclient.TargetNamespace).Update(ctx, endpoint, metav1.UpdateOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to remove bootstrap endpoint annotation from endpoiint %s/%s: %v", endpoint.Namespace, endpoint.Name, err)
+			}
+			syncCtx.Recorder().Eventf("EndpointsUpdated", "Updated endpoints/%s -n %s to remove bootstrap IP annotation", endpoint.Name, endpoint.Namespace)
+		}
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdRunningInCluster",
 			Status:  operatorv1.ConditionTrue,

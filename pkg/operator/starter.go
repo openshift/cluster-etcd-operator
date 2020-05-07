@@ -217,6 +217,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeInformersForNamespaces,
 		etcdClient,
 		controllerContext.EventRecorder,
+		kubeClient,
 	)
 
 	scriptController := scriptcontroller.NewScriptControllerController(
