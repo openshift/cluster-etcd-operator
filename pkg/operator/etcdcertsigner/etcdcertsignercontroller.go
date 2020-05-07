@@ -234,10 +234,7 @@ func (c *EtcdCertSignerController) createSecretForNode(node *corev1.Node, record
 	if err != nil {
 		return err
 	}
-	peerHostNames := append([]string{
-		"localhost",
-		"*." + etcdDiscoveryDomain,
-	}, nodeInternalIPs...)
+	peerHostNames := append([]string{"localhost", etcdDiscoveryDomain}, nodeInternalIPs...)
 	serverHostNames := append([]string{
 		"localhost",
 		"etcd.kube-system.svc",
