@@ -70,7 +70,7 @@ func NewClusterMemberController(
 		eventRecorder: eventRecorder.WithComponentSuffix("cluster-member-controller"),
 	}
 	kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer().AddEventHandler(c.eventHandler())
-	kubeInformers.InformersFor("").Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
+	kubeInformers.InformersFor("").Core().V1().Nodes().Informer().AddEventHandler(c.eventHandler())
 	networkInformer.Informer().AddEventHandler(c.eventHandler())
 	operatorClient.Informer().AddEventHandler(c.eventHandler())
 
