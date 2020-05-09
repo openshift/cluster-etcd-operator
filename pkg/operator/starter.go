@@ -177,6 +177,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	etcdCertSignerController := etcdcertsigner.NewEtcdCertSignerController(
 		coreClient,
 		operatorClient,
+		etcdClient,
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Infrastructures(),
 		controllerContext.EventRecorder,

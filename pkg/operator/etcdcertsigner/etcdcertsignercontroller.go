@@ -6,6 +6,8 @@ import (
 	"crypto/x509/pkix"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 	"time"
 
@@ -13,11 +15,13 @@ import (
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/crypto"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -44,6 +48,7 @@ const (
 type EtcdCertSignerController struct {
 	kubeClient           kubernetes.Interface
 	operatorClient       v1helpers.OperatorClient
+	etcdClient           etcdcli.EtcdClient
 	infrastructureLister configv1listers.InfrastructureLister
 	nodeLister           corev1listers.NodeLister
 	secretLister         corev1listers.SecretLister
@@ -64,6 +69,7 @@ type EtcdCertSignerController struct {
 func NewEtcdCertSignerController(
 	kubeClient kubernetes.Interface,
 	operatorClient v1helpers.OperatorClient,
+	etcdClient etcdcli.EtcdClient,
 
 	kubeInformers v1helpers.KubeInformersForNamespaces,
 	infrastructureInformer configv1informers.InfrastructureInformer,
@@ -72,6 +78,7 @@ func NewEtcdCertSignerController(
 	c := &EtcdCertSignerController{
 		kubeClient:           kubeClient,
 		operatorClient:       operatorClient,
+		etcdClient:           etcdClient,
 		infrastructureLister: infrastructureInformer.Lister(),
 		secretLister:         kubeInformers.SecretLister(),
 		nodeLister:           kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
@@ -296,7 +303,10 @@ func (c *EtcdCertSignerController) createSecretForNode(node *corev1.Node) error 
 	if err != nil {
 		return err
 	}
-	peerHostNames := append([]string{"localhost", etcdDiscoveryDomain}, nodeInternalIPs...)
+	// 4.4 defaults
+	peerHostNames := append([]string{"localhost"}, nodeInternalIPs...)
+	// 4.3 compatability
+	peerHostNames = append(peerHostNames, c.Get43CompatibilityNames(node)...)
 	serverHostNames := append([]string{
 		"localhost",
 		"etcd.kube-system.svc",
@@ -329,6 +339,81 @@ func (c *EtcdCertSignerController) createSecretForNode(node *corev1.Node) error 
 	}
 
 	return nil
+}
+
+// Get43CompatibilityNames checks for the existance of FQDN used for etcd peerURLs. If found this means
+// the SAN for peer should contain either an explicit DNS record IE etcd-1.cluster.com or fall back
+// to wildcard if no 4.3 etcd naming is observed we return nil
+func (c *EtcdCertSignerController) Get43CompatibilityNames(node *corev1.Node) []string {
+	var errs []string
+	etcdDiscoveryDomain, err := c.getEtcdDiscoveryDomain()
+	if err != nil {
+		errs = append(errs, err.Error())
+	}
+	nodeInternalIPs, err := dnshelpers.GetInternalIPAddressesForNodeName(node)
+	if err != nil {
+		errs = append(errs, err.Error())
+	}
+	etcdMembers, err := c.etcdClient.MemberList()
+	if err != nil {
+		errs = append(errs, err.Error())
+	}
+	peerHostNames, err := getPeerDNSSubjectAlternativeNamesFromMemberList(etcdDiscoveryDomain, etcdMembers, nodeInternalIPs)
+	if err != nil {
+		errs = append(errs, err.Error())
+	}
+
+	// fallback to wildcard for 4.3 compatability if error is observed
+	if len(errs) > 0 {
+		return []string{"*." + etcdDiscoveryDomain}
+	}
+	return peerHostNames
+}
+
+func getPeerDNSSubjectAlternativeNamesFromMemberList(etcdDiscoveryDomain string, etcdMembers []*etcdserverpb.Member, nodeInternalIPs []string) ([]string, error) {
+	var errs []string
+	var found bool
+
+	hosts := []string{}
+	for _, m := range etcdMembers {
+		if len(m.PeerURLs) > 0 && len(m.ClientURLs) > 0 {
+			// 4.3 naming
+			if strings.HasPrefix(m.Name, "etcd-member") {
+				found = true
+			}
+			peer, err := url.Parse(m.PeerURLs[0])
+			if err != nil {
+				errs = append(errs, err.Error())
+				continue
+			}
+			if addr := net.ParseIP(peer.Hostname()); addr != nil {
+				continue
+			}
+			client, err := url.Parse(m.ClientURLs[0])
+			if err != nil {
+				errs = append(errs, err.Error())
+				continue
+			}
+			for _, nodeIP := range nodeInternalIPs {
+				if nodeIP == client.Hostname() {
+					hosts = append(hosts, peer.Hostname())
+				}
+			}
+		}
+	}
+
+	switch {
+	case len(errs) > 0:
+		break // fallback to wildcard 4.3 compatability
+	case len(hosts) == 0 && found:
+		break // fallback to wildcard 4.3 compatability
+	case len(hosts) > 0:
+		return hosts, nil // 4.3 peer DNS found populate san with explicit records
+	case !found:
+		return nil, nil // 4.4
+	}
+
+	return nil, fmt.Errorf("no peer SAN hostnames found in MemberList")
 }
 
 func createNewCombinedClientAndServingCerts(caCert, caKey []byte, podFQDN, org string, peerHostNames []string) (*bytes.Buffer, *bytes.Buffer, error) {
