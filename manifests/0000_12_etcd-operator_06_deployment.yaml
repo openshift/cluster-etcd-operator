@@ -44,6 +44,8 @@ spec:
           name: serving-cert
         - mountPath: /var/run/configmaps/etcd-ca
           name: etcd-ca
+        - mountPath: /var/run/configmaps/etcd-service-ca
+          name: etcd-service-ca
         - mountPath: /var/run/secrets/etcd-client
           name: etcd-client
         env:
@@ -71,6 +73,9 @@ spec:
       - name: etcd-ca
         configMap:
           name: etcd-ca-bundle
+      - name: etcd-service-ca
+        configMap:
+          name: etcd-service-ca-bundle
       - name: etcd-client
         secret:
           secretName: etcd-client

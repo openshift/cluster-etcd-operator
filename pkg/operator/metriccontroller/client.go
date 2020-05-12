@@ -37,7 +37,7 @@ func getPrometheusClient(ctx context.Context, secretClient coreclientv1.SecretsG
 		return nil, fmt.Errorf("unable to retrieve prometheus-k8 bearer token")
 	}
 
-	serviceCABytes, err := ioutil.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt")
+	serviceCABytes, err := ioutil.ReadFile("/var/run/configmaps/etcd-service-ca/service-ca.crt")
 	if err != nil {
 		return nil, err
 	}
