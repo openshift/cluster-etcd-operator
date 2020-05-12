@@ -30,6 +30,10 @@ func (f *fakeEtcdClient) MemberStatus(member *etcdserverpb.Member) string {
 	panic("implement me")
 }
 
+func (f *fakeEtcdClient) MemberHealth(etcdCluster []*etcdserverpb.Member) (*memberHealth, error) {
+	panic("implement me")
+}
+
 func (f *fakeEtcdClient) GetMember(name string) (*etcdserverpb.Member, error) {
 	for _, m := range f.members {
 		if m.Name == name {

@@ -69,17 +69,22 @@ func (c *EtcdMembersController) reportEtcdMembers(recorder events.Recorder) erro
 		return err
 	}
 
+	etcdMemberHealth, err := c.etcdClient.MemberHealth(etcdMembers)
+	if err != nil {
+		return err
+	}
+
 	availableMembers, unstartedMembers, unhealthyMembers := []string{}, []string{}, []string{}
 
-	for _, m := range etcdMembers {
-		switch c.etcdClient.MemberStatus(m) {
-		case etcdcli.EtcdMemberStatusAvailable:
-			availableMembers = append(availableMembers, m.Name)
-		case etcdcli.EtcdMemberStatusNotStarted:
-			unstartedMembers = append(unstartedMembers, etcdcli.GetMemberNameOrHost(m))
-		case etcdcli.EtcdMemberStatusUnhealthy:
-			unhealthyMembers = append(unhealthyMembers, m.Name)
+	for _, healthyMember := range etcdMemberHealth.Healthy {
+		availableMembers = append(availableMembers, healthyMember.Name)
+	}
+
+	for _, unhealthyMember := range etcdMemberHealth.Unhealthy {
+		if len(unhealthyMember.ClientURLs) == 0 {
+			unstartedMembers = append(unstartedMembers, etcdcli.GetMemberNameOrHost(unhealthyMember))
 		}
+		unhealthyMembers = append(unhealthyMembers, unhealthyMember.Name)
 	}
 
 	updateErrors := []error{}

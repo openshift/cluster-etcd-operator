@@ -17,6 +17,7 @@ type EtcdClient interface {
 	MemberRemover
 	UnhealthyMemberLister
 	MemberStatusChecker
+	MemberHealthChecker
 
 	GetMember(name string) (*etcdserverpb.Member, error)
 	MemberUpdatePeerURL(id uint64, peerURL []string) error
@@ -40,4 +41,8 @@ type UnhealthyMemberLister interface {
 
 type MemberStatusChecker interface {
 	MemberStatus(member *etcdserverpb.Member) string
+}
+
+type MemberHealthChecker interface {
+	MemberHealth(etcdCluster []*etcdserverpb.Member) (*memberHealth, error)
 }

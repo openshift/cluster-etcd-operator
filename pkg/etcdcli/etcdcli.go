@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
@@ -17,6 +18,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	deadlock "github.com/sasha-s/go-deadlock"
 	"go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/etcdserver/api/v3rpc/rpctypes"
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	"go.etcd.io/etcd/pkg/transport"
 	"google.golang.org/grpc"
@@ -45,6 +47,18 @@ type etcdClientGetter struct {
 	clientLock          deadlock.Mutex
 	lastClientConfigKey []string
 	cachedClient        *clientv3.Client
+}
+
+type memberHealthCheck struct {
+	Member *etcdserverpb.Member
+	Health bool
+	Took   string
+	Error  string
+}
+
+type memberHealth struct {
+	Healthy   []*etcdserverpb.Member
+	Unhealthy []*etcdserverpb.Member
 }
 
 func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkInformer configv1informers.NetworkInformer, eventRecorder events.Recorder) EtcdClient {
@@ -297,28 +311,23 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	membersResp, err := cli.MemberList(ctx)
+	etcd, err := cli.MemberList(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	unhealthyMembers := []*etcdserverpb.Member{}
-	unstartedMemberNames := []string{}
-	unhealthyMemberNames := []string{}
-	for _, member := range membersResp.Members {
-		if len(member.ClientURLs) == 0 {
-			unhealthyMembers = append(unhealthyMembers, member)
-			unstartedMemberNames = append(unstartedMemberNames, GetMemberNameOrHost(member))
-			continue
-		}
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+	members, err := g.getMemberHealth(etcd.Members)
+	if err != nil {
+		return nil, err
+	}
 
-		_, err := cli.Status(ctx, member.ClientURLs[0])
-		if err != nil {
-			unhealthyMembers = append(unhealthyMembers, member)
-			unhealthyMemberNames = append(unhealthyMemberNames, member.Name)
+	unhealthyMemberNames := []string{}
+	unstartedMemberNames := []string{}
+	for _, member := range members.Unhealthy {
+		if len(member.ClientURLs) == 0 {
+			unstartedMemberNames = append(unstartedMemberNames, GetMemberNameOrHost(member))
 		}
+		unhealthyMemberNames = append(unhealthyMemberNames, member.Name)
 	}
 
 	if len(unstartedMemberNames) > 0 {
@@ -329,7 +338,64 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 		g.eventRecorder.Warningf("UnhealthyEtcdMember", "unhealthy members: %v", strings.Join(unhealthyMemberNames, ","))
 	}
 
-	return unhealthyMembers, nil
+	return members.Unhealthy, nil
+}
+
+func (g *etcdClientGetter) MemberHealth(etcdCluster []*etcdserverpb.Member) (*memberHealth, error) {
+	memberHealth, err := g.getMemberHealth(etcdCluster)
+	if err != nil {
+		return nil, err
+	}
+	return memberHealth, nil
+}
+
+func (g *etcdClientGetter) getMemberHealth(etcdMembers []*etcdserverpb.Member) (*memberHealth, error) {
+	var wg sync.WaitGroup
+	unhealthy := []*etcdserverpb.Member{}
+	healthy := []*etcdserverpb.Member{}
+	hch := make(chan memberHealthCheck, len(etcdMembers))
+	for _, member := range etcdMembers {
+		if len(member.ClientURLs) == 0 {
+			unhealthy = append(unhealthy, member)
+			continue
+		}
+		wg.Add(1)
+		go func(member *etcdserverpb.Member) {
+			defer wg.Done()
+			cli, err := g.getEtcdClient()
+			if err != nil {
+				hch <- memberHealthCheck{Member: member, Health: false, Error: err.Error()}
+				return
+			}
+			cli.SetEndpoints(member.ClientURLs[0])
+			st := time.Now()
+			ctx, cancel := context.WithCancel(context.Background())
+			_, err = cli.Get(ctx, "health")
+			cancel()
+			hc := memberHealthCheck{Member: member, Health: false, Took: time.Since(st).String()}
+			if err == nil || err == rpctypes.ErrPermissionDenied {
+				hc.Health = true
+			} else {
+				hc.Error = err.Error()
+			}
+			hch <- hc
+		}(member)
+	}
+
+	go func() {
+		wg.Wait()
+		close(hch)
+	}()
+
+	for h := range hch {
+		if h.Health {
+			healthy = append(healthy, h.Member)
+		} else {
+			unhealthy = append(unhealthy, h.Member)
+		}
+	}
+
+	return &memberHealth{healthy, unhealthy}, nil
 }
 
 func (g *etcdClientGetter) MemberStatus(member *etcdserverpb.Member) string {
