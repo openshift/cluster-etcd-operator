@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"reflect"
 	"strings"
-	"sync"
 	"time"
 
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
@@ -16,6 +15,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	deadlock "github.com/sasha-s/go-deadlock"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	"go.etcd.io/etcd/pkg/transport"
@@ -42,7 +42,7 @@ type etcdClientGetter struct {
 
 	eventRecorder events.Recorder
 
-	clientLock          sync.Mutex
+	clientLock          deadlock.Mutex
 	lastClientConfigKey []string
 	cachedClient        *clientv3.Client
 }
