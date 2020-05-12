@@ -44,5 +44,5 @@ type MemberStatusChecker interface {
 }
 
 type MemberHealthChecker interface {
-	MemberHealth(etcdCluster []*etcdserverpb.Member) (*memberHealth, error)
+	MemberHealth(etcdMembers []*etcdserverpb.Member) (*memberHealth, error)
 }

@@ -341,8 +341,8 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 	return members.Unhealthy, nil
 }
 
-func (g *etcdClientGetter) MemberHealth(etcdCluster []*etcdserverpb.Member) (*memberHealth, error) {
-	memberHealth, err := g.getMemberHealth(etcdCluster)
+func (g *etcdClientGetter) MemberHealth(etcdMembers []*etcdserverpb.Member) (*memberHealth, error) {
+	memberHealth, err := g.getMemberHealth(etcdMembers)
 	if err != nil {
 		return nil, err
 	}
@@ -362,12 +362,12 @@ func (g *etcdClientGetter) getMemberHealth(etcdMembers []*etcdserverpb.Member) (
 		wg.Add(1)
 		go func(member *etcdserverpb.Member) {
 			defer wg.Done()
-			cli, err := g.getEtcdClient()
+			cli, err := getEtcdClient([]string{member.ClientURLs[0]})
 			if err != nil {
 				hch <- memberHealthCheck{Member: member, Health: false, Error: err.Error()}
 				return
 			}
-			cli.SetEndpoints(member.ClientURLs[0])
+			defer cli.Close()
 			st := time.Now()
 			ctx, cancel := context.WithCancel(context.Background())
 			_, err = cli.Get(ctx, "health")
