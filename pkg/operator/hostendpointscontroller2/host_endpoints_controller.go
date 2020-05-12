@@ -7,6 +7,15 @@ import (
 	"sort"
 	"time"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/library-go/pkg/controller/factory"
+	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
+	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,16 +25,6 @@ import (
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog"
-
-	operatorv1 "github.com/openshift/api/operator/v1"
-	"github.com/openshift/library-go/pkg/controller/factory"
-	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
-	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
 // HostEndpoints2Controller maintains an Endpoints resource with
@@ -33,6 +32,7 @@ import (
 // in 4.4, we will abandon the old resource in etcd.
 type HostEndpoints2Controller struct {
 	operatorClient  v1helpers.OperatorClient
+	etcdClient      etcdcli.EtcdClient
 	nodeLister      corev1listers.NodeLister
 	endpointsLister corev1listers.EndpointsLister
 	endpointsClient corev1client.EndpointsGetter
@@ -40,6 +40,7 @@ type HostEndpoints2Controller struct {
 
 func NewHostEndpoints2Controller(
 	operatorClient v1helpers.OperatorClient,
+	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
 	kubeClient kubernetes.Interface,
 	kubeInformers operatorv1helpers.KubeInformersForNamespaces,
@@ -51,6 +52,7 @@ func NewHostEndpoints2Controller(
 
 	c := &HostEndpoints2Controller{
 		operatorClient:  operatorClient,
+		etcdClient:      etcdClient,
 		nodeLister:      nodeInformer.Lister(),
 		endpointsLister: endpointsInformer.Lister(),
 		endpointsClient: kubeClient.CoreV1(),
@@ -115,6 +117,22 @@ func (c *HostEndpoints2Controller) syncHostEndpoints2(ctx context.Context, recor
 			IP:       nodeInternalIP,
 			NodeName: &node.Name,
 		})
+	}
+
+	// if the endpoint isn't present, add a check to see if we are still in a bootstrap phase (based on the etcd member).
+	// if we are, this cluster got itself in an illegal state where the endpoint is going to be created, but it won't have
+	// the bootstrap IP annotation.  Lack of this prevents successful bootstrapping and we want a better signal.  In general
+	// we want to be able to recreate this endpoint and we can do so *after* bootstrapping is complete, but not before.
+	if _, err := c.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd-2"); errors.IsNotFound(err) {
+		members, err := c.etcdClient.MemberList()
+		if err != nil {
+			return err
+		}
+		for _, member := range members {
+			if member.Name == "etcd-bootstrap" {
+				return fmt.Errorf("missing host-etcd-2 endpoint, but bootstrap is still in progress")
+			}
+		}
 	}
 
 	required.Subsets[0].Addresses = endpointAddresses
