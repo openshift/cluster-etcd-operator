@@ -49,18 +49,6 @@ type etcdClientGetter struct {
 	cachedClient        *clientv3.Client
 }
 
-type memberHealthCheck struct {
-	Member *etcdserverpb.Member
-	Health bool
-	Took   string
-	Error  string
-}
-
-type memberHealth struct {
-	Healthy   []*etcdserverpb.Member
-	Unhealthy []*etcdserverpb.Member
-}
-
 func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkInformer configv1informers.NetworkInformer, eventRecorder events.Recorder) EtcdClient {
 	return &etcdClientGetter{
 		nodeLister:            kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
@@ -289,7 +277,7 @@ func (g *etcdClientGetter) GetMember(name string) (*etcdserverpb.Member, error) 
 	return nil, apierrors.NewNotFound(schema.GroupResource{Group: "etcd.operator.openshift.io", Resource: "etcdmembers"}, name)
 }
 
-// If the member's name is not set, extract ip/hostname from peerURL. Useful with unstarted members.
+// GetMemberNameOrHost If the member's name is not set, extract ip/hostname from peerURL. Useful with unstarted members.
 func GetMemberNameOrHost(member *etcdserverpb.Member) string {
 	if len(member.Name) == 0 {
 		u, err := url.Parse(member.PeerURLs[0])
@@ -316,19 +304,12 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 		return nil, err
 	}
 
-	members, err := g.getMemberHealth(etcd.Members)
+	etcdMemberHealthCheck, err := g.getMemberHealth(etcd.Members)
 	if err != nil {
 		return nil, err
 	}
 
-	unhealthyMemberNames := []string{}
-	unstartedMemberNames := []string{}
-	for _, member := range members.Unhealthy {
-		if len(member.ClientURLs) == 0 {
-			unstartedMemberNames = append(unstartedMemberNames, GetMemberNameOrHost(member))
-		}
-		unhealthyMemberNames = append(unhealthyMemberNames, member.Name)
-	}
+	_, unhealthyMemberNames, unstartedMemberNames := etcdMemberHealthCheck.Status()
 
 	if len(unstartedMemberNames) > 0 {
 		g.eventRecorder.Warningf("UnstartedEtcdMember", "unstarted members: %v", strings.Join(unstartedMemberNames, ","))
@@ -338,7 +319,9 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 		g.eventRecorder.Warningf("UnhealthyEtcdMember", "unhealthy members: %v", strings.Join(unhealthyMemberNames, ","))
 	}
 
-	return members.Unhealthy, nil
+	_, unhealthyMembers := etcdMemberHealthCheck.MemberStatus()
+
+	return unhealthyMembers, nil
 }
 
 func (g *etcdClientGetter) MemberHealth(etcdMembers []*etcdserverpb.Member) (*memberHealth, error) {
@@ -351,12 +334,11 @@ func (g *etcdClientGetter) MemberHealth(etcdMembers []*etcdserverpb.Member) (*me
 
 func (g *etcdClientGetter) getMemberHealth(etcdMembers []*etcdserverpb.Member) (*memberHealth, error) {
 	var wg sync.WaitGroup
-	unhealthy := []*etcdserverpb.Member{}
-	healthy := []*etcdserverpb.Member{}
-	hch := make(chan memberHealthCheck, len(etcdMembers))
+	memberHealth := &memberHealth{}
+	hch := make(chan healthCheck, len(etcdMembers))
 	for _, member := range etcdMembers {
 		if len(member.ClientURLs) == 0 {
-			unhealthy = append(unhealthy, member)
+			memberHealth.Check = append(memberHealth.Check, &healthCheck{Member: member, Health: false, Started: false})
 			continue
 		}
 		wg.Add(1)
@@ -364,7 +346,7 @@ func (g *etcdClientGetter) getMemberHealth(etcdMembers []*etcdserverpb.Member) (
 			defer wg.Done()
 			cli, err := getEtcdClient([]string{member.ClientURLs[0]})
 			if err != nil {
-				hch <- memberHealthCheck{Member: member, Health: false, Error: err.Error()}
+				hch <- healthCheck{Member: member, Health: false, Started: true, Error: err.Error()}
 				return
 			}
 			defer cli.Close()
@@ -372,7 +354,7 @@ func (g *etcdClientGetter) getMemberHealth(etcdMembers []*etcdserverpb.Member) (
 			ctx, cancel := context.WithCancel(context.Background())
 			_, err = cli.Get(ctx, "health")
 			cancel()
-			hc := memberHealthCheck{Member: member, Health: false, Took: time.Since(st).String()}
+			hc := healthCheck{Member: member, Health: false, Started: true, Took: time.Since(st).String()}
 			if err == nil || err == rpctypes.ErrPermissionDenied {
 				hc.Health = true
 			} else {
@@ -387,15 +369,11 @@ func (g *etcdClientGetter) getMemberHealth(etcdMembers []*etcdserverpb.Member) (
 		close(hch)
 	}()
 
-	for h := range hch {
-		if h.Health {
-			healthy = append(healthy, h.Member)
-		} else {
-			unhealthy = append(unhealthy, h.Member)
-		}
+	for healthCheck := range hch {
+		memberHealth.Check = append(memberHealth.Check, &healthCheck)
 	}
 
-	return &memberHealth{healthy, unhealthy}, nil
+	return memberHealth, nil
 }
 
 func (g *etcdClientGetter) MemberStatus(member *etcdserverpb.Member) string {
