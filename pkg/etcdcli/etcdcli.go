@@ -299,18 +299,17 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	etcd, err := cli.MemberList(ctx)
+	etcdCluster, err := cli.MemberList(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	etcdMemberHealthCheck, err := g.getMemberHealth(etcd.Members)
+	etcdMemberHealth, err := g.getMemberHealth(etcdCluster.Members)
 	if err != nil {
 		return nil, err
 	}
 
-	_, unhealthyMemberNames, unstartedMemberNames := etcdMemberHealthCheck.Status()
-
+	_, unhealthyMemberNames, unstartedMemberNames := etcdMemberHealth.Status()
 	if len(unstartedMemberNames) > 0 {
 		g.eventRecorder.Warningf("UnstartedEtcdMember", "unstarted members: %v", strings.Join(unstartedMemberNames, ","))
 	}
@@ -319,7 +318,7 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 		g.eventRecorder.Warningf("UnhealthyEtcdMember", "unhealthy members: %v", strings.Join(unhealthyMemberNames, ","))
 	}
 
-	_, unhealthyMembers := etcdMemberHealthCheck.MemberStatus()
+	_, unhealthyMembers := etcdMemberHealth.MemberStatus()
 
 	return unhealthyMembers, nil
 }
@@ -370,6 +369,7 @@ func (g *etcdClientGetter) getMemberHealth(etcdMembers []*etcdserverpb.Member) (
 	}()
 
 	for healthCheck := range hch {
+		klog.Infof("Took: %v, Health: %v MemberName %s", healthCheck.Took, healthCheck.Health, healthCheck.Member.Name)
 		memberHealth.Check = append(memberHealth.Check, &healthCheck)
 	}
 

@@ -14,7 +14,7 @@ type memberHealth struct {
 	Check []*healthCheck
 }
 
-// NameStatus returns a reporting of memberHealth results by name in three buckets healthy, unhealthy and unstarted.
+// Status returns a reporting of memberHealth results by name in three buckets healthy, unhealthy and unstarted.
 func (h *memberHealth) Status() ([]string, []string, []string) {
 	healthy := []string{}
 	unhealthy := []string{}
@@ -33,7 +33,7 @@ func (h *memberHealth) Status() ([]string, []string, []string) {
 	return healthy, unhealthy, unstarted
 }
 
-// MemberStatus returns etcd members healthy or unhealthy
+// MemberStatus returns healthy and unhealthy
 func (h *memberHealth) MemberStatus() ([]*etcdserverpb.Member, []*etcdserverpb.Member) {
 	healthy := []*etcdserverpb.Member{}
 	unhealthy := []*etcdserverpb.Member{}
