@@ -15,3 +15,12 @@ metadata:
     release.openshift.io/create-only: "true"
   name: etcd-ca-bundle
   namespace: openshift-etcd-operator
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  annotations:
+    release.openshift.io/create-only: "true"
+    service.beta.openshift.io/inject-cabundle: "true"
+  name: etcd-service-ca-bundle
+  namespace: openshift-etcd-operator
