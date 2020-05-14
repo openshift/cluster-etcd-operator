@@ -1,6 +1,9 @@
 package etcdcli
 
-import "go.etcd.io/etcd/etcdserver/etcdserverpb"
+import (
+	"go.etcd.io/etcd/etcdserver/etcdserverpb"
+	"k8s.io/klog"
+)
 
 type healthCheck struct {
 	Member  *etcdserverpb.Member
@@ -29,7 +32,7 @@ func (h *memberHealth) Status() ([]string, []string, []string) {
 			unhealthy = append(unhealthy, etcd.Member.Name)
 		}
 	}
-
+	klog.Infof("Status() healthy %v unhealthy %v unstarted %v", healthy, unhealthy, unstarted)
 	return healthy, unhealthy, unstarted
 }
 
@@ -45,5 +48,6 @@ func (h *memberHealth) MemberStatus() ([]*etcdserverpb.Member, []*etcdserverpb.M
 			unhealthy = append(unhealthy, etcd.Member)
 		}
 	}
+	klog.Infof("MemberStatus() healthy %+v unhealthy %+v", healthy, unhealthy)
 	return healthy, unhealthy
 }

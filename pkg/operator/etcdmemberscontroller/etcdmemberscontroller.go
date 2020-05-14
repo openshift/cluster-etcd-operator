@@ -9,6 +9,7 @@ import (
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 
 	errorsutil "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/klog"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
@@ -37,6 +38,7 @@ func NewEtcdMembersController(operatorClient v1helpers.OperatorClient,
 }
 
 func (c *EtcdMembersController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
+	klog.Info("EtcdMembersControllerSync")
 	err := c.reportEtcdMembers(syncCtx.Recorder())
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
