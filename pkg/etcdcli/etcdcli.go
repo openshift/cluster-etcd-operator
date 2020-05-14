@@ -337,7 +337,7 @@ func (g *etcdClientGetter) getMemberHealth(etcdMembers []*etcdserverpb.Member) (
 	hch := make(chan healthCheck, len(etcdMembers))
 	for _, member := range etcdMembers {
 		if len(member.ClientURLs) == 0 {
-			memberHealth.Check = append(memberHealth.Check, &healthCheck{Member: member, Health: false, Started: false})
+			memberHealth.Check = append(memberHealth.Check, healthCheck{Member: member, Health: false, Started: false})
 			continue
 		}
 		wg.Add(1)
@@ -370,7 +370,7 @@ func (g *etcdClientGetter) getMemberHealth(etcdMembers []*etcdserverpb.Member) (
 
 	for healthCheck := range hch {
 		klog.Infof("Took: %v, Health: %v MemberName %s", healthCheck.Took, healthCheck.Health, healthCheck.Member.Name)
-		memberHealth.Check = append(memberHealth.Check, &healthCheck)
+		memberHealth.Check = append(memberHealth.Check, healthCheck)
 	}
 
 	return memberHealth, nil

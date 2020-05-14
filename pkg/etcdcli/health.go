@@ -14,7 +14,7 @@ type healthCheck struct {
 }
 
 type memberHealth struct {
-	Check []*healthCheck
+	Check []healthCheck
 }
 
 // Status returns a reporting of memberHealth results by name in three buckets healthy, unhealthy and unstarted.
