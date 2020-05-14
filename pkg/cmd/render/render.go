@@ -1,6 +1,7 @@
 package render
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 
 	"github.com/ghodss/yaml"
+	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render/options"
 	"github.com/openshift/library-go/pkg/assets"
 	"github.com/spf13/cobra"
@@ -36,6 +38,7 @@ type renderOpts struct {
 	setupEtcdEnvImage        string
 	kubeClientAgentImage     string
 	clusterConfigFile        string
+	infraConfigFile          string
 	bootstrapIP              string
 }
 
@@ -82,6 +85,7 @@ func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&r.setupEtcdEnvImage, "manifest-setup-etcd-env-image", r.setupEtcdEnvImage, "setup-etcd-env manifest image")
 	fs.StringVar(&r.etcdDiscoveryDomain, "etcd-discovery-domain", r.etcdDiscoveryDomain, "etcd discovery domain")
 	fs.StringVar(&r.clusterConfigFile, "cluster-config-file", r.clusterConfigFile, "Openshift Cluster API Config file.")
+	fs.StringVar(&r.infraConfigFile, "infra-config-file", "/assets/manifests/cluster-infrastructure-02-config.yml", "File containing infrastructure.config.openshift.io manifest.")
 	fs.StringVar(&r.bootstrapIP, "bootstrap-ip", r.bootstrapIP, "bootstrap IP used to indicate where to find the first etcd endpoint")
 }
 
@@ -154,6 +158,11 @@ type TemplateData struct {
 
 	// BootstrapIP is address of the bootstrap node
 	BootstrapIP string
+
+	// Platform is the underlying provider the cluster is run on.
+	Platform            string
+	EtcdHeartbeat       string
+	EtcdElectionTimeout string
 }
 
 type StaticFile struct {
@@ -209,6 +218,19 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 	}
 
 	templateData.setEtcdAddress()
+
+	if err := templateData.setPlatform(opts.infraConfigFile); err != nil {
+		return nil, err
+	}
+
+	switch templateData.Platform {
+	case "Azure":
+		templateData.EtcdHeartbeat = `"500"`
+		templateData.EtcdElectionTimeout = `"2500"`
+	default:
+		templateData.EtcdHeartbeat = `"100"`
+		templateData.EtcdElectionTimeout = `"1000"`
+	}
 
 	return &templateData, nil
 }
@@ -334,6 +356,24 @@ func (t *TemplateData) setHostname() error {
 		return err
 	}
 	t.Hostname = hostname
+	return nil
+}
+func (t *TemplateData) setPlatform(infraConfigFilePath string) error {
+	infrastructure := &configv1.Infrastructure{}
+	infraConfigFileData, err := ioutil.ReadFile(infraConfigFilePath)
+	if err != nil {
+		return err
+	}
+	infraJson, err := yaml.YAMLToJSON(infraConfigFileData)
+	if err != nil {
+		return err
+	}
+	err = json.Unmarshal(infraJson, infrastructure)
+	if err != nil {
+		return err
+	}
+	// assume that this is >4.2
+	t.Platform = string(infrastructure.Status.PlatformStatus.Type)
 	return nil
 }
 
