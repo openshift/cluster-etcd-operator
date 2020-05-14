@@ -7,9 +7,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/klog"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -18,7 +16,6 @@ import (
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
-	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/staticpod"
@@ -259,9 +256,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go envVarController.Run(1, ctx.Done())
 	go staticPodControllers.Start(ctx)
 
-	// TODO remove in 4.6
-	ensureServiceCleanup(ctx, kubeClient, controllerContext.EventRecorder)
-
 	<-ctx.Done()
 	return nil
 }
@@ -300,23 +294,4 @@ var CertSecrets = []revision.RevisionResource{
 	{Name: "etcd-all-peer"},
 	{Name: "etcd-all-serving"},
 	{Name: "etcd-all-serving-metrics"},
-}
-
-// ensureServiceCleanup continually ensures the removal of `oc get -n openshift-etcd service/host-etcd-2`
-// can be removed in 4.6
-func ensureServiceCleanup(ctx context.Context, kubeClient *kubernetes.Clientset, eventRecorder events.Recorder) {
-	go wait.UntilWithContext(ctx, func(ctx context.Context) {
-		// Check whether the legacy daemonset exists and is not marked for deletion
-		err := kubeClient.CoreV1().Services("openshift-etcd").Delete(ctx, "host-etcd-2", metav1.DeleteOptions{})
-		switch {
-		case errors.IsNotFound(err):
-			// Done - service does not exist
-			return
-		case err != nil:
-			klog.Warningf("Error deleting service: %v", err)
-			return
-		case err == nil:
-			eventRecorder.Event("LegacyServiceCleanup", "legacy service has been removed: `oc get -n openshift-etcd service/host-etcd-2`")
-		}
-	}, 10*time.Minute)
 }
