@@ -1,15 +1,8 @@
 reviewers:
-  - deads2k
   - hexfusion
-  - alaypatel07
-  - mfojtik
-  - soltysh
-  - sttts
+  - ironcladlou
+  - retroflexer
 approvers:
   - deads2k
   - hexfusion
-  - alaypatel07
-  - mfojtik
-  - sttts
-  - tnozicka
 component: "Etcd Operator"
