@@ -5,3 +5,5 @@ metadata:
   namespace: openshift-etcd
   annotations:
     alpha.installer.openshift.io/etcd-bootstrap: {{ .BootstrapIP }}
+  finalizers:
+  - openshift.io/etcd-operator
