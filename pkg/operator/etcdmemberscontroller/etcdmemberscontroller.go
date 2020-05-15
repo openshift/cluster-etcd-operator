@@ -10,6 +10,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	errorsutil "k8s.io/apimachinery/pkg/util/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -76,28 +77,27 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 		return err
 	}
 
-	availableMembers, notStartedMembers, unhealthyMembers, unknownMembers := []string{}, []string{}, []string{}, []string{}
+	availableMembers, unstartedMembers, unhealthyMembers := []string{}, []string{}, []string{}
 
 	for _, m := range etcdMembers {
 		switch c.etcdClient.MemberStatus(m) {
 		case etcdcli.EtcdMemberStatusAvailable:
 			availableMembers = append(availableMembers, m.Name)
 		case etcdcli.EtcdMemberStatusNotStarted:
-			notStartedMembers = append(notStartedMembers, m.Name)
+			unstartedMembers = append(unstartedMembers, etcdcli.GetMemberNameOrHost(m))
 		case etcdcli.EtcdMemberStatusUnhealthy:
 			unhealthyMembers = append(unhealthyMembers, m.Name)
-		case etcdcli.EtcdMemberStatusUnknown:
-			unknownMembers = append(unknownMembers, m.Name)
 		}
 	}
 
 	updateErrors := []error{}
-	if len(unhealthyMembers) > 0 || len(unknownMembers) > 0 {
+	statusMessage := getMemberMessage(availableMembers, unhealthyMembers, unstartedMembers, etcdMembers)
+	if len(unhealthyMembers) > 0 {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersDegraded",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "UnhealthyMembers",
-			Message: fmt.Sprintf("%s members are unhealthy, %s members are unknown", strings.Join(unhealthyMembers, ","), strings.Join(unknownMembers, ",")),
+			Message: statusMessage,
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
@@ -116,12 +116,12 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 		}
 	}
 
-	if len(notStartedMembers) != 0 {
+	if len(unstartedMembers) > 0 {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersProgressing",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "MembersNotStarted",
-			Message: fmt.Sprintf("%s members have not started yet", strings.Join(notStartedMembers, ",")),
+			Message: statusMessage,
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
@@ -132,7 +132,7 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 			Type:    "EtcdMembersProgressing",
 			Status:  operatorv1.ConditionFalse,
 			Reason:  "AsExpected",
-			Message: "all members have started",
+			Message: "No unstarted etcd members found",
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
@@ -145,7 +145,7 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 			Type:    "EtcdMembersAvailable",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "EtcdQuorate",
-			Message: fmt.Sprintf("%s members are available, %s have not started, %s are unhealthy, %s are unknown", strings.Join(availableMembers, ","), strings.Join(notStartedMembers, ","), strings.Join(unhealthyMembers, ","), strings.Join(unknownMembers, ",")),
+			Message: statusMessage,
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
@@ -159,7 +159,7 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 			Type:    "EtcdMembersAvailable",
 			Status:  operatorv1.ConditionFalse,
 			Reason:  "No quorum",
-			Message: fmt.Sprintf("%s members are available, %s have not started, %s are unhealthy", strings.Join(availableMembers, ","), strings.Join(notStartedMembers, ","), strings.Join(unhealthyMembers, ",")),
+			Message: statusMessage,
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
@@ -172,6 +172,27 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 	}
 
 	return nil
+}
+
+func getMemberMessage(availableMembers, unhealthyMembers, unstartedMembers []string, allMembers []*etcdserverpb.Member) string {
+	messages := []string{}
+	if len(availableMembers) > 0 && len(availableMembers) == len(allMembers) {
+		messages = append(messages, fmt.Sprintf("%d members are available", len(availableMembers)))
+	}
+	if len(availableMembers) > 0 && len(availableMembers) != len(allMembers) {
+		messages = append(messages, fmt.Sprintf("%d of %d members are available", len(availableMembers), len(allMembers)))
+	}
+	if len(unhealthyMembers) > 0 {
+		for _, name := range unhealthyMembers {
+			messages = append(messages, fmt.Sprintf("%s is unhealthy", name))
+		}
+	}
+	if len(unstartedMembers) > 0 {
+		for _, name := range unstartedMembers {
+			messages = append(messages, fmt.Sprintf("%s has not started", name))
+		}
+	}
+	return strings.Join(messages, ", ")
 }
 
 func (c *EtcdMembersController) Run(ctx context.Context, workers int) {
