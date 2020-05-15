@@ -7,10 +7,16 @@ metadata:
     service.alpha.openshift.io/serving-cert-secret-name: serving-cert
     prometheus.io/scrape: "true"
     prometheus.io/scheme: https
+  labels:
+    # this label is used to indicate that it should be scraped by prometheus
+    k8s-app: etcd
 spec:
   selector:
     etcd: "true"
   ports:
-  - name: https
-    port: 443
-    targetPort: 10257
+    - name: etcd
+      port: 2379
+      protocol: TCP
+    - name: etcd-metrics
+      port: 9979
+      protocol: TCP
