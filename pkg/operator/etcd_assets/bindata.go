@@ -329,7 +329,7 @@ PATH=${PATH}:${ETCDCTL_BIN_DIR}
 # download etcdctl from upstream release assets
 function dl_etcdctl {
   local etcdimg=${ETCD_IMAGE}
-  local etcdctr=$(podman create ${etcdimg})
+  local etcdctr=$(podman create ${etcdimg} --authfile=/var/lib/kubelet/config.json)
   local etcdmnt=$(podman mount "${etcdctr}")
   [ ! -d ${ETCDCTL_BIN_DIR} ] && mkdir -p ${ETCDCTL_BIN_DIR}
   cp ${etcdmnt}/bin/etcdctl ${ETCDCTL_BIN_DIR}/
