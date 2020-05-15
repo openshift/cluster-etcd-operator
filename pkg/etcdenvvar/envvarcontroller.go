@@ -32,7 +32,7 @@ type EnvVarController struct {
 
 	infrastructureLister configv1listers.InfrastructureLister
 	networkLister        configv1listers.NetworkLister
-	endpointLister       corev1listers.EndpointsLister
+	configmapLister      corev1listers.ConfigMapLister
 	nodeLister           corev1listers.NodeLister
 
 	// queue only ever has one item, but it has nice error handling backoff/retry semantics
@@ -57,7 +57,7 @@ func NewEnvVarController(
 		operatorClient:       operatorClient,
 		infrastructureLister: infrastructureInformer.Lister(),
 		networkLister:        networkInformer.Lister(),
-		endpointLister:       kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
+		configmapLister:      kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister(),
 		nodeLister:           kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
 		targetImagePullSpec:  targetImagePullSpec,
 
@@ -132,7 +132,7 @@ func (c *EnvVarController) checkEnvVars() error {
 		targetImagePullSpec:  c.targetImagePullSpec,
 		spec:                 *operatorSpec,
 		status:               *operatorStatus,
-		endpointLister:       c.endpointLister,
+		configmapLister:      c.configmapLister,
 		nodeLister:           c.nodeLister,
 		infrastructureLister: c.infrastructureLister,
 		networkLister:        c.networkLister,

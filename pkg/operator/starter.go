@@ -32,6 +32,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdendpointscontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdmemberipmigrator"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdmemberscontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/hostendpointscontroller2"
@@ -191,6 +192,12 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		coreClient,
 		kubeInformersForNamespaces,
 	)
+	etcdEndpointsController := etcdendpointscontroller.NewEtcdEndpointsController(
+		operatorClient,
+		controllerContext.EventRecorder,
+		coreClient,
+		kubeInformersForNamespaces,
+	)
 
 	clusterMemberController := clustermembercontroller.NewClusterMemberController(
 		operatorClient,
@@ -242,6 +249,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go targetConfigReconciler.Run(ctx, 1)
 	go etcdCertSignerController.Run(ctx, 1)
 	go hostEtcdEndpointController2.Run(ctx, 1)
+	go etcdEndpointsController.Run(ctx, 1)
 	go resourceSyncController.Run(ctx, 1)
 	go statusController.Run(ctx, 1)
 	go configObserver.Run(ctx, 1)

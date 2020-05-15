@@ -32,13 +32,13 @@ import (
 const BootstrapIPAnnotationKey = "alpha.installer.openshift.io/etcd-bootstrap"
 
 type etcdClientGetter struct {
-	nodeLister      corev1listers.NodeLister
-	endpointsLister corev1listers.EndpointsLister
-	networkLister   configv1listers.NetworkLister
+	nodeLister       corev1listers.NodeLister
+	configmapsLister corev1listers.ConfigMapLister
+	networkLister    configv1listers.NetworkLister
 
-	nodeListerSynced      cache.InformerSynced
-	endpointsListerSynced cache.InformerSynced
-	networkListerSynced   cache.InformerSynced
+	nodeListerSynced       cache.InformerSynced
+	configmapsListerSynced cache.InformerSynced
+	networkListerSynced    cache.InformerSynced
 
 	eventRecorder events.Recorder
 
@@ -49,13 +49,13 @@ type etcdClientGetter struct {
 
 func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkInformer configv1informers.NetworkInformer, eventRecorder events.Recorder) EtcdClient {
 	return &etcdClientGetter{
-		nodeLister:            kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
-		endpointsLister:       kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
-		networkLister:         networkInformer.Lister(),
-		nodeListerSynced:      kubeInformers.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
-		endpointsListerSynced: kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().HasSynced,
-		networkListerSynced:   networkInformer.Informer().HasSynced,
-		eventRecorder:         eventRecorder.WithComponentSuffix("etcd-client"),
+		nodeLister:             kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
+		configmapsLister:       kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister(),
+		networkLister:          networkInformer.Lister(),
+		nodeListerSynced:       kubeInformers.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
+		configmapsListerSynced: kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer().HasSynced,
+		networkListerSynced:    networkInformer.Informer().HasSynced,
+		eventRecorder:          eventRecorder.WithComponentSuffix("etcd-client"),
 	}
 }
 
@@ -65,7 +65,7 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 	if !g.nodeListerSynced() {
 		return nil, fmt.Errorf("node lister not synced")
 	}
-	if !g.endpointsListerSynced() {
+	if !g.configmapsListerSynced() {
 		return nil, fmt.Errorf("node lister not synced")
 	}
 	if !g.networkListerSynced() {
@@ -87,13 +87,13 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 		etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", internalIP))
 	}
 
-	hostEtcd, err := g.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd-2")
+	hostEtcd, err := g.configmapsLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints")
 	if err != nil {
 		return nil, err
 	}
 	bootstrapIP, ok := hostEtcd.Annotations[BootstrapIPAnnotationKey]
 	if !ok {
-		klog.V(2).Infof("service/host-etcd-2 is missing annotation %s", BootstrapIPAnnotationKey)
+		klog.V(2).Infof("configmaps/etcd-endpoints is missing annotation %s", BootstrapIPAnnotationKey)
 	}
 	if bootstrapIP != "" {
 		// escape if IPv6
