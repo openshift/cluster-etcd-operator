@@ -6,6 +6,8 @@ metadata:
   labels:
     # this label is used to indicate that it should be scraped by prometheus
     k8s-app: etcd
+  finalizers:
+  - openshift.io/etcd-operator
 spec:
   clusterIP: None
   ports:
