@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	EtcdCertValidity = 10 * 365 * 24 * time.Hour
+	EtcdCertValidity = 3 * 365 * 24 * time.Hour
 	peerOrg          = "system:etcd-peers"
 	serverOrg        = "system:etcd-servers"
 	metricOrg        = "system:etcd-metrics"
