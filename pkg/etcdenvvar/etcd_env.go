@@ -21,7 +21,7 @@ type envVarContext struct {
 	nodeLister           corev1listers.NodeLister
 	infrastructureLister configv1listers.InfrastructureLister
 	networkLister        configv1listers.NetworkLister
-	endpointLister       corev1listers.EndpointsLister
+	configmapLister      corev1listers.ConfigMapLister
 	targetImagePullSpec  string
 }
 
@@ -132,11 +132,11 @@ func getEtcdGrpcEndpoints(envVarContext envVarContext) (string, error) {
 		endpoints = append(endpoints, fmt.Sprintf("https://%s:2379", endpointIP))
 	}
 
-	hostEtcdEndpoints, err := envVarContext.endpointLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd-2")
+	etcdEndpoints, err := envVarContext.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints")
 	if err != nil {
 		return "", err
 	}
-	if bootstrapIP := hostEtcdEndpoints.Annotations["alpha.installer.openshift.io/etcd-bootstrap"]; len(bootstrapIP) > 0 {
+	if bootstrapIP := etcdEndpoints.Annotations["alpha.installer.openshift.io/etcd-bootstrap"]; len(bootstrapIP) > 0 {
 		urlHost, err := dnshelpers.GetURLHostForIP(bootstrapIP)
 		if err != nil {
 			return "", err
