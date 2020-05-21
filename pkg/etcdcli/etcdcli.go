@@ -60,7 +60,7 @@ func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkIn
 }
 
 // getEtcdClient may return a cached client.  When a new client is needed, the previous client is closed.
-// The caller should not closer the client or future calls may fail.
+// The caller should not close the client or future calls may fail.
 func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 	if !g.nodeListerSynced() {
 		return nil, fmt.Errorf("node lister not synced")
@@ -275,7 +275,7 @@ func (g *etcdClientGetter) GetMember(name string) (*etcdserverpb.Member, error) 
 	return nil, apierrors.NewNotFound(schema.GroupResource{Group: "etcd.operator.openshift.io", Resource: "etcdmembers"}, name)
 }
 
-// If the member's name is not set, extract ip/hostname from peerURL. Useful with unstarted members.
+// GetMemberNameOrHost If the member's name is not set, extract ip/hostname from peerURL. Useful with unstarted members.
 func GetMemberNameOrHost(member *etcdserverpb.Member) string {
 	if len(member.Name) == 0 {
 		u, err := url.Parse(member.PeerURLs[0])
@@ -297,39 +297,24 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	membersResp, err := cli.MemberList(ctx)
+	etcdCluster, err := cli.MemberList(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	unhealthyMembers := []*etcdserverpb.Member{}
-	unstartedMemberNames := []string{}
-	unhealthyMemberNames := []string{}
-	for _, member := range membersResp.Members {
-		if len(member.ClientURLs) == 0 {
-			unhealthyMembers = append(unhealthyMembers, member)
-			unstartedMemberNames = append(unstartedMemberNames, GetMemberNameOrHost(member))
-			continue
-		}
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+	memberHealth := GetMemberHealth(etcdCluster.Members)
 
-		_, err := cli.Status(ctx, member.ClientURLs[0])
-		if err != nil {
-			unhealthyMembers = append(unhealthyMembers, member)
-			unhealthyMemberNames = append(unhealthyMemberNames, member.Name)
-		}
-	}
-
+	unstartedMemberNames := GetUnstartedMemberNames(memberHealth)
 	if len(unstartedMemberNames) > 0 {
 		g.eventRecorder.Warningf("UnstartedEtcdMember", "unstarted members: %v", strings.Join(unstartedMemberNames, ","))
 	}
 
+	unhealthyMemberNames := GetUnhealthyMemberNames(memberHealth)
 	if len(unhealthyMemberNames) > 0 {
 		g.eventRecorder.Warningf("UnhealthyEtcdMember", "unhealthy members: %v", strings.Join(unhealthyMemberNames, ","))
 	}
 
-	return unhealthyMembers, nil
+	return memberHealth.GetUnhealthyMembers(), nil
 }
 
 func (g *etcdClientGetter) MemberStatus(member *etcdserverpb.Member) string {

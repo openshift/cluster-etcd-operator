@@ -2,11 +2,7 @@ package etcdmemberscontroller
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"time"
-
-	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 
 	errorsutil "k8s.io/apimachinery/pkg/util/errors"
 
@@ -68,28 +64,14 @@ func (c *EtcdMembersController) reportEtcdMembers(recorder events.Recorder) erro
 	if err != nil {
 		return err
 	}
-
-	availableMembers, unstartedMembers, unhealthyMembers := []string{}, []string{}, []string{}
-
-	for _, m := range etcdMembers {
-		switch c.etcdClient.MemberStatus(m) {
-		case etcdcli.EtcdMemberStatusAvailable:
-			availableMembers = append(availableMembers, m.Name)
-		case etcdcli.EtcdMemberStatusNotStarted:
-			unstartedMembers = append(unstartedMembers, etcdcli.GetMemberNameOrHost(m))
-		case etcdcli.EtcdMemberStatusUnhealthy:
-			unhealthyMembers = append(unhealthyMembers, m.Name)
-		}
-	}
-
+	memberHealth := etcdcli.GetMemberHealth(etcdMembers)
 	updateErrors := []error{}
-	statusMessage := getMemberMessage(availableMembers, unhealthyMembers, unstartedMembers, etcdMembers)
-	if len(unhealthyMembers) > 0 {
+	if len(etcdcli.GetUnhealthyMemberNames(memberHealth)) > 0 {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersDegraded",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "UnhealthyMembers",
-			Message: statusMessage,
+			Message: memberHealth.Status(),
 		}))
 		if updateErr != nil {
 			recorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
@@ -108,12 +90,12 @@ func (c *EtcdMembersController) reportEtcdMembers(recorder events.Recorder) erro
 		}
 	}
 
-	if len(unstartedMembers) > 0 {
+	if len(etcdcli.GetUnstartedMemberNames(memberHealth)) > 0 {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersProgressing",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "MembersNotStarted",
-			Message: statusMessage,
+			Message: memberHealth.Status(),
 		}))
 		if updateErr != nil {
 			recorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
@@ -132,12 +114,12 @@ func (c *EtcdMembersController) reportEtcdMembers(recorder events.Recorder) erro
 		}
 	}
 
-	if len(availableMembers) > len(etcdMembers)/2 {
+	if len(etcdcli.GetHealthyMemberNames(memberHealth)) > len(etcdMembers)/2 {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersAvailable",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "EtcdQuorate",
-			Message: statusMessage,
+			Message: memberHealth.Status(),
 		}))
 		if updateErr != nil {
 			recorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
@@ -151,7 +133,7 @@ func (c *EtcdMembersController) reportEtcdMembers(recorder events.Recorder) erro
 			Type:    "EtcdMembersAvailable",
 			Status:  operatorv1.ConditionFalse,
 			Reason:  "No quorum",
-			Message: statusMessage,
+			Message: memberHealth.Status(),
 		}))
 		if updateErr != nil {
 			recorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
@@ -164,25 +146,4 @@ func (c *EtcdMembersController) reportEtcdMembers(recorder events.Recorder) erro
 	}
 
 	return nil
-}
-
-func getMemberMessage(availableMembers, unhealthyMembers, unstartedMembers []string, allMembers []*etcdserverpb.Member) string {
-	messages := []string{}
-	if len(availableMembers) > 0 && len(availableMembers) == len(allMembers) {
-		messages = append(messages, fmt.Sprintf("%d members are available", len(availableMembers)))
-	}
-	if len(availableMembers) > 0 && len(availableMembers) != len(allMembers) {
-		messages = append(messages, fmt.Sprintf("%d of %d members are available", len(availableMembers), len(allMembers)))
-	}
-	if len(unhealthyMembers) > 0 {
-		for _, name := range unhealthyMembers {
-			messages = append(messages, fmt.Sprintf("%s is unhealthy", name))
-		}
-	}
-	if len(unstartedMembers) > 0 {
-		for _, name := range unstartedMembers {
-			messages = append(messages, fmt.Sprintf("%s has not started", name))
-		}
-	}
-	return strings.Join(messages, ", ")
 }
