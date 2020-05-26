@@ -98,6 +98,20 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 	}
 	_, existingHasBootstrapIP := existing.Annotations[etcdcli.BootstrapIPAnnotationKey]
 
+	// If the bootstrap IP annotation appears to have been prematurely removed, generate a warning.
+	// This could be a transient condition depending on the state of caches at the time of sync,
+	// so a warning seems sufficient. This check may be overly paranoid, but a significant amount
+	// of time has been spent in the past tracing problems back to unexpected deletions and
+	// modifications of the endpoints structure (previously a literal endpoints resource).
+	isSafe, err := c.isSafeToRemoveBootstrapIP()
+	if err != nil {
+		return fmt.Errorf("failed to determine whether it's safe to remove the boostrap IP annotation: %w", err)
+	}
+	if !existingHasBootstrapIP && !isSafe {
+		recorder.Warningf("EtcdEndpointsMissingBootstrapIP", "the bootstrap IP annotation has been removed from the %s/%s "+
+			"configmap, but current cluster state indicates the annotation may still be required", existing.Namespace, existing.Name)
+	}
+
 	required := configMapAsset()
 
 	// create endpoint addresses for each node
@@ -153,6 +167,25 @@ func configMapAsset() *corev1.ConfigMap {
 	}
 }
 
+// isSafeToRemoveBootstrapIP returns true if it's safe to remove the bootstrap
+// member IP from the endpoints list, otherwise false. If the determination
+// can't be made, returns false and an error.
+func (c *EtcdEndpointsController) isSafeToRemoveBootstrapIP() (bool, error) {
+	// See if the etcd client knows about the bootstrap member.
+	members, err := c.etcdClient.MemberList()
+	if err != nil {
+		return false, fmt.Errorf("couldn't list etcd members: %w", err)
+	}
+	bootstrapFound := false
+	for _, member := range members {
+		if member.Name == "etcd-bootstrap" {
+			bootstrapFound = true
+			break
+		}
+	}
+	return !bootstrapFound && len(members) >= 3, nil
+}
+
 // tryRemoveBootstrapIP will remove the bootstrap IP annotation from the endpoints
 // configmap. If bootstrapping is detected to still be in progress, the function
 // does nothing and returns no error to facilitate quiet retries.
@@ -168,21 +201,13 @@ func (c *EtcdEndpointsController) tryRemoveBootstrapIP(ctx context.Context, reco
 	}
 
 	// See if the etcd client knows about the bootstrap member.
-	members, err := c.etcdClient.MemberList()
+	isSafe, err := c.isSafeToRemoveBootstrapIP()
 	if err != nil {
-		return fmt.Errorf("couldn't list etcd members: %w", err)
+		return fmt.Errorf("failed to determine whether it's safe to remove the boostrap IP annotation: %w", err)
 	}
-	bootstrapFound := false
-	for _, member := range members {
-		if member.Name == "etcd-bootstrap" {
-			bootstrapFound = true
-			break
-		}
-	}
-
 	// If it's not yet safe to remove the annotation, no-op and we'll try
 	// again during another sync.
-	if bootstrapFound || len(members) < 3 {
+	if !isSafe {
 		return nil
 	}
 
