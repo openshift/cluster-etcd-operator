@@ -244,7 +244,9 @@ func (StringSourceSpec) SwaggerDoc() map[string]string {
 }
 
 var map_APIServer = map[string]string{
-	"": "APIServer holds configuration (like serving certificates, client CA and CORS domains) shared by all API servers in the system, among them especially kube-apiserver and openshift-apiserver. The canonical name of an instance is 'cluster'.",
+	"":       "APIServer holds configuration (like serving certificates, client CA and CORS domains) shared by all API servers in the system, among them especially kube-apiserver and openshift-apiserver. The canonical name of an instance is 'cluster'.",
+	"spec":   "spec holds user settable values for configuration",
+	"status": "status holds observed values from the cluster. They may not be overridden.",
 }
 
 func (APIServer) SwaggerDoc() map[string]string {
@@ -1114,7 +1116,9 @@ func (LDAPIdentityProvider) SwaggerDoc() map[string]string {
 }
 
 var map_OAuth = map[string]string{
-	"": "OAuth holds cluster-wide information about OAuth.  The canonical name is `cluster`. It is used to configure the integrated OAuth server. This configuration is only honored when the top level Authentication config has type set to IntegratedOAuth.",
+	"":       "OAuth holds cluster-wide information about OAuth.  The canonical name is `cluster`. It is used to configure the integrated OAuth server. This configuration is only honored when the top level Authentication config has type set to IntegratedOAuth.",
+	"spec":   "spec holds user settable values for configuration",
+	"status": "status holds observed values from the cluster. They may not be overridden.",
 }
 
 func (OAuth) SwaggerDoc() map[string]string {
@@ -1208,7 +1212,7 @@ func (RequestHeaderIdentityProvider) SwaggerDoc() map[string]string {
 var map_TokenConfig = map[string]string{
 	"":                                    "TokenConfig holds the necessary configuration options for authorization and access tokens",
 	"accessTokenMaxAgeSeconds":            "accessTokenMaxAgeSeconds defines the maximum age of access tokens",
-	"accessTokenInactivityTimeoutSeconds": "accessTokenInactivityTimeoutSeconds defines the default token inactivity timeout for tokens granted by any client. The value represents the maximum amount of time that can occur between consecutive uses of the token. Tokens become invalid if they are not used within this temporal window. The user will need to acquire a new token to regain access once a token times out. Valid values are integer values:\n  x < 0  Tokens time out is enabled but tokens never timeout unless configured per client (e.g. `-1`)\n  x = 0  Tokens time out is disabled (default)\n  x > 0  Tokens time out if there is no activity for x seconds\nThe current minimum allowed value for X is 300 (5 minutes)",
+	"accessTokenInactivityTimeoutSeconds": "accessTokenInactivityTimeoutSeconds - DEPRECATED: setting this field has no effect.",
 }
 
 func (TokenConfig) SwaggerDoc() map[string]string {
