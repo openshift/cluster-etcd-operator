@@ -76,28 +76,14 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 	if err != nil {
 		return err
 	}
-
-	availableMembers, unstartedMembers, unhealthyMembers := []string{}, []string{}, []string{}
-
-	for _, m := range etcdMembers {
-		switch c.etcdClient.MemberStatus(m) {
-		case etcdcli.EtcdMemberStatusAvailable:
-			availableMembers = append(availableMembers, m.Name)
-		case etcdcli.EtcdMemberStatusNotStarted:
-			unstartedMembers = append(unstartedMembers, etcdcli.GetMemberNameOrHost(m))
-		case etcdcli.EtcdMemberStatusUnhealthy:
-			unhealthyMembers = append(unhealthyMembers, m.Name)
-		}
-	}
-
+	memberHealth := etcdcli.GetMemberHealth(etcdMembers)
 	updateErrors := []error{}
-	statusMessage := getMemberMessage(availableMembers, unhealthyMembers, unstartedMembers, etcdMembers)
-	if len(unhealthyMembers) > 0 {
+	if len(etcdcli.GetUnhealthyMemberNames(memberHealth)) > 0 {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersDegraded",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "UnhealthyMembers",
-			Message: statusMessage,
+			Message: memberHealth.Status(),
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
@@ -116,12 +102,12 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 		}
 	}
 
-	if len(unstartedMembers) > 0 {
+	if len(etcdcli.GetUnstartedMemberNames(memberHealth)) > 0 {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersProgressing",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "MembersNotStarted",
-			Message: statusMessage,
+			Message: memberHealth.Status(),
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
@@ -140,12 +126,12 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 		}
 	}
 
-	if len(availableMembers) > len(etcdMembers)/2 {
+	if len(etcdcli.GetHealthyMemberNames(memberHealth)) > len(etcdMembers)/2 {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersAvailable",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "EtcdQuorate",
-			Message: statusMessage,
+			Message: memberHealth.Status(),
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
@@ -159,7 +145,7 @@ func (c *EtcdMembersController) reportEtcdMembers() error {
 			Type:    "EtcdMembersAvailable",
 			Status:  operatorv1.ConditionFalse,
 			Reason:  "No quorum",
-			Message: statusMessage,
+			Message: memberHealth.Status(),
 		}))
 		if updateErr != nil {
 			c.eventRecorder.Warning("EtcdMembersErrorUpdatingStatus", updateErr.Error())
