@@ -221,11 +221,11 @@ if [ ! -d "$MANIFEST_STOPPED_DIR" ]; then
 fi
 
 # Move static pod manifests out of MANIFEST_DIR
-find ${MANIFEST_DIR} \
-  -maxdepth 1 \
-  -type f \
-  -printf '...stopping %P\n' \
-  -exec mv {} ${MANIFEST_STOPPED_DIR} \;
+for POD_FILE_NAME in "${STATIC_POD_LIST[@]}" etcd-pod.yaml; do
+  echo "...stopping ${POD_FILE_NAME}"
+  [ ! -f "${MANIFEST_DIR}/${POD_FILE_NAME}" ] && continue
+  mv "${MANIFEST_DIR}/${POD_FILE_NAME}" "${MANIFEST_STOPPED_DIR}"
+done
 
 # wait for every static pod container to stop
 wait_for_containers_to_stop "${STATIC_POD_CONTAINERS[@]}"
