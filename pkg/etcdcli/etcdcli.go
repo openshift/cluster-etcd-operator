@@ -74,7 +74,7 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 
 	network, err := g.networkLister.Get("cluster")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to list cluster network: %w", err)
 	}
 
 	etcdEndpoints := []string{}
@@ -82,20 +82,16 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 	for _, node := range nodes {
 		internalIP, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to get internal IP for node: %w", err)
 		}
 		etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", internalIP))
 	}
 
-	hostEtcd, err := g.configmapsLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints")
+	configmap, err := g.configmapsLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to list endpoints: %w", err)
 	}
-	bootstrapIP, ok := hostEtcd.Annotations[BootstrapIPAnnotationKey]
-	if !ok {
-		klog.V(2).Infof("configmaps/etcd-endpoints is missing annotation %s", BootstrapIPAnnotationKey)
-	}
-	if bootstrapIP != "" {
+	if bootstrapIP, ok := configmap.Annotations[BootstrapIPAnnotationKey]; ok && bootstrapIP != "" {
 		// escape if IPv6
 		if net.ParseIP(bootstrapIP).To4() == nil {
 			bootstrapIP = "[" + bootstrapIP + "]"
@@ -112,11 +108,11 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 
 	c, err := getEtcdClient(etcdEndpoints)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get etcd client: %w", err)
 	}
 	if g.cachedClient != nil {
 		if err := g.cachedClient.Close(); err != nil {
-			utilruntime.HandleError(err)
+			utilruntime.HandleError(fmt.Errorf("failed to close cached client: %w", err))
 		}
 	}
 	g.cachedClient = c
@@ -146,7 +142,7 @@ func getEtcdClient(endpoints []string) (*clientv3.Client, error) {
 
 	cli, err := clientv3.New(*cfg)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to make etcd client for endpoints %v: %w", endpoints, err)
 	}
 	return cli, err
 }
