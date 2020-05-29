@@ -194,7 +194,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 	etcdEndpointsController := etcdendpointscontroller.NewEtcdEndpointsController(
 		operatorClient,
-		etcdClient,
 		controllerContext.EventRecorder,
 		coreClient,
 		kubeInformersForNamespaces,
