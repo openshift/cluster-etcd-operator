@@ -7,6 +7,8 @@ import (
 	"sort"
 	"time"
 
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -32,14 +34,14 @@ import (
 // IP addresses for etcd.  It should never depend on DNS directly or transitively.
 // in 4.4, we will abandon the old resource in etcd.
 type HostEndpoints2Controller struct {
-	operatorClient  v1helpers.OperatorClient
+	operatorClient  v1helpers.StaticPodOperatorClient
 	nodeLister      corev1listers.NodeLister
 	endpointsLister corev1listers.EndpointsLister
 	endpointsClient corev1client.EndpointsGetter
 }
 
 func NewHostEndpoints2Controller(
-	operatorClient v1helpers.OperatorClient,
+	operatorClient v1helpers.StaticPodOperatorClient,
 	eventRecorder events.Recorder,
 	kubeClient kubernetes.Interface,
 	kubeInformers operatorv1helpers.KubeInformersForNamespaces,
@@ -120,6 +122,42 @@ func (c *HostEndpoints2Controller) syncHostEndpoints2(ctx context.Context, recor
 	required.Subsets[0].Addresses = endpointAddresses
 	if len(required.Subsets[0].Addresses) == 0 {
 		return fmt.Errorf("no master nodes are present")
+	}
+
+	// do a cheap check to see if the annotation is already gone.
+	// check to see if bootstrapping is complete
+	bootstrapFinishedConfigMap, err := c.configmapLister.ConfigMaps("kube-system").Get("bootstrap")
+	switch {
+	case apierrors.IsNotFound(err):
+		// do nothing, not torn down
+		return nil
+	case err != nil:
+		// this is weird, but we can continue
+		utilruntime.HandleError(err)
+	case bootstrapFinishedConfigMap.Data["status"] != "complete":
+		// do nothing, not torn down
+	case bootstrapFinishedConfigMap.Data["status"] == "complete":
+		// now run check to stability of revisions
+		sameRevision := true
+		currRevision := int32(-1)
+		_, status, _, err := c.operatorClient.GetStaticPodOperatorState()
+		for _, curr := range status.NodeStatuses {
+			if curr.TargetRevision != curr.CurrentRevision {
+				sameRevision = false
+				break
+			}
+			if currRevision == -1 {
+				currRevision = curr.CurrentRevision
+			} else if currRevision != curr.CurrentRevision {
+				sameRevision = false
+				break
+			}
+		}
+		if !sameRevision {
+			klog.V(4).Infof("provide some good reason here")
+		} else {
+			// remove that annotation using the minus thing
+		}
 	}
 
 	return c.applyEndpoints(ctx, recorder, required)
