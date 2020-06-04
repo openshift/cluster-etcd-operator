@@ -3,6 +3,7 @@ package main
 import (
 	goflag "flag"
 	"fmt"
+	"io/ioutil"
 	"math/rand"
 	"os"
 	"time"
@@ -20,11 +21,17 @@ import (
 	"github.com/openshift/library-go/pkg/operator/staticpod/prune"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"google.golang.org/grpc/grpclog"
 	utilflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/logs"
 )
 
 func main() {
+	// overwrite gRPC logger, to discard all gRPC info-level logging
+	// https://github.com/kubernetes/kubernetes/issues/80741
+	// https://github.com/kubernetes/kubernetes/pull/84061
+	grpclog.SetLoggerV2(grpclog.NewLoggerV2(ioutil.Discard, os.Stderr, os.Stderr))
+
 	rand.Seed(time.Now().UTC().UnixNano())
 
 	pflag.CommandLine.SetNormalizeFunc(utilflag.WordSepNormalizeFunc)
