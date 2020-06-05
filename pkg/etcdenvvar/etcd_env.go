@@ -132,18 +132,6 @@ func getEtcdGrpcEndpoints(envVarContext envVarContext) (string, error) {
 		endpoints = append(endpoints, fmt.Sprintf("https://%s:2379", endpointIP))
 	}
 
-	etcdEndpoints, err := envVarContext.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints")
-	if err != nil {
-		return "", err
-	}
-	if bootstrapIP := etcdEndpoints.Annotations["alpha.installer.openshift.io/etcd-bootstrap"]; len(bootstrapIP) > 0 {
-		urlHost, err := dnshelpers.GetURLHostForIP(bootstrapIP)
-		if err != nil {
-			return "", err
-		}
-		endpoints = append(endpoints, "https://"+urlHost+":2379")
-	}
-
 	return strings.Join(endpoints, ","), nil
 }
 
@@ -152,6 +140,19 @@ func getAllEtcdEndpoints(envVarContext envVarContext) (map[string]string, error)
 	if err != nil {
 		return nil, err
 	}
+
+	etcdEndpoints, err := envVarContext.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints")
+	if err != nil {
+		return nil, err
+	}
+	if bootstrapIP := etcdEndpoints.Annotations["alpha.installer.openshift.io/etcd-bootstrap"]; len(bootstrapIP) > 0 {
+		urlHost, err := dnshelpers.GetURLHostForIP(bootstrapIP)
+		if err != nil {
+			return nil, err
+		}
+		endpoints += ",https://" + urlHost + ":2379"
+	}
+
 	return map[string]string{
 		"ALL_ETCD_ENDPOINTS": endpoints,
 	}, nil
