@@ -33,6 +33,8 @@ spec:
         args:
         - "--config=/var/run/configmaps/config/config.yaml"
         - "-v=4"
+        - "--terminate-on-files=/var/run/secrets/serving-cert/tls.crt"
+        - "--terminate-on-files=/var/run/secrets/serving-cert/tls.key"
         resources:
           requests:
             memory: 50Mi
