@@ -267,19 +267,17 @@ func (t *TemplateData) setBootstrapIP(configPath string) error {
 		return err
 	}
 
+	//TODO single loop..
 	// check interfaces for IP address that matches the machineNetwork CIDR
-	if machineCIDR != "" {
-		for _, addr := range ips {
-			_, parsedNet, err := net.ParseCIDR(machineCIDR)
-			if err != nil {
-				return err
-			}
-			if parsedNet.Contains(net.ParseIP(addr)) {
-				t.BootstrapIP = addr
-				return nil
-			}
+	for _, addr := range ips {
+		_, parsedNet, err := net.ParseCIDR(machineCIDR)
+		if err != nil {
+			return err
 		}
-		return fmt.Errorf("no IP address matches machineNetwork CIDR %s", machineCIDR)
+		if parsedNet.Contains(net.ParseIP(addr)) {
+			t.BootstrapIP = addr
+			return nil
+		}
 	}
 
 	// fall back to returning first IPv4 or IPv6 address
@@ -445,7 +443,7 @@ func getMachineCIDR(configFile string, isSingleStackIPv6 bool) (string, error) {
 		return fmt.Sprintf("%v", networking["machineCIDR"]), nil
 	}
 
-	return "", nil
+	return "", fmt.Errorf("machineNetwork is not found in install-config")
 }
 
 func (t *TemplateData) setSingleStackIPv6() error {
