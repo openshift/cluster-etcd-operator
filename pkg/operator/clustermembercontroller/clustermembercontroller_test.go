@@ -1,17 +1,20 @@
 package clustermembercontroller
 
 import (
+	"context"
+	"reflect"
+
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
-	"reflect"
+
+	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	corev1lister "k8s.io/client-go/listers/core/v1"
-	"testing"
 )
 
 type fakePodLister struct {
@@ -20,7 +23,7 @@ type fakePodLister struct {
 }
 
 func (f *fakePodLister) List(selector labels.Selector) (ret []*corev1.Pod, err error) {
-	pods, err := f.client.CoreV1().Pods(f.namespace).List(metav1.ListOptions{LabelSelector: selector.String()})
+	pods, err := f.client.CoreV1().Pods(f.namespace).List(context.TODO(), metav1.ListOptions{LabelSelector: selector.String()})
 	if err != nil {
 		return nil, err
 	}

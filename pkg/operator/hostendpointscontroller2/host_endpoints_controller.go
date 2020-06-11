@@ -7,19 +7,11 @@ import (
 	"sort"
 	"time"
 
-	"k8s.io/apimachinery/pkg/util/mergepatch"
-
-	operatorv1 "github.com/openshift/api/operator/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
-	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/mergepatch"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
@@ -28,6 +20,15 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
+
+	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
+	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
 const (
@@ -78,8 +79,8 @@ func NewHostEndpoints2Controller(
 	return c
 }
 
-func (c *HostEndpoints2Controller) sync() error {
-	err := c.syncHostEndpoints2()
+func (c *HostEndpoints2Controller) sync(ctx context.Context) error {
+	err := c.syncHostEndpoints2(ctx)
 
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
@@ -106,7 +107,7 @@ func (c *HostEndpoints2Controller) sync() error {
 	return nil
 }
 
-func (c *HostEndpoints2Controller) syncHostEndpoints2() error {
+func (c *HostEndpoints2Controller) syncHostEndpoints2(ctx context.Context) error {
 	required := hostEndpointsAsset()
 
 	// create endpoint addresses for each node
@@ -138,12 +139,12 @@ func (c *HostEndpoints2Controller) syncHostEndpoints2() error {
 		return fmt.Errorf("no master nodes are present")
 	}
 
-	return c.applyEndpoints(required)
+	return c.applyEndpoints(ctx, required)
 }
 
 func hostEndpointsAsset() *corev1.Endpoints {
 	return &corev1.Endpoints{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:      "host-etcd-2",
 			Namespace: operatorclient.TargetNamespace,
 		},
@@ -161,10 +162,10 @@ func hostEndpointsAsset() *corev1.Endpoints {
 	}
 }
 
-func (c *HostEndpoints2Controller) applyEndpoints(required *corev1.Endpoints) error {
+func (c *HostEndpoints2Controller) applyEndpoints(ctx context.Context, required *corev1.Endpoints) error {
 	existing, err := c.endpointsLister.Endpoints(operatorclient.TargetNamespace).Get("host-etcd-2")
 	if errors.IsNotFound(err) {
-		_, err := c.endpointsClient.Endpoints(operatorclient.TargetNamespace).Create(required)
+		_, err := c.endpointsClient.Endpoints(operatorclient.TargetNamespace).Create(ctx, required, metav1.CreateOptions{})
 		if err != nil {
 			c.eventRecorder.Warningf("EndpointsCreateFailed", "Failed to create endpoints/%s -n %s: %v", required.Name, required.Namespace, err)
 			return err
@@ -192,7 +193,7 @@ func (c *HostEndpoints2Controller) applyEndpoints(required *corev1.Endpoints) er
 	if klog.V(4) {
 		klog.Infof("Endpoints %q changes: %v", required.Namespace+"/"+required.Name, jsonPatch)
 	}
-	updated, err := c.endpointsClient.Endpoints(operatorclient.TargetNamespace).Update(toWrite)
+	updated, err := c.endpointsClient.Endpoints(operatorclient.TargetNamespace).Update(ctx, toWrite, metav1.UpdateOptions{})
 	if err != nil {
 		c.eventRecorder.Warningf("EndpointsUpdateFailed", "Failed to update endpoints/%s -n %s: %v", required.Name, required.Namespace, err)
 		return err
@@ -274,7 +275,7 @@ func (c *HostEndpoints2Controller) processNextWorkItem() bool {
 	}
 	defer c.queue.Done(dsKey)
 
-	err := c.sync()
+	err := c.sync(context.TODO())
 	if err == nil {
 		c.queue.Forget(dsKey)
 		return true
