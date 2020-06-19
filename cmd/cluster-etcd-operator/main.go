@@ -10,6 +10,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/mount"
 	operatorcmd "github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/rollbackcopy"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/staticpodcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/staticsynccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/waitforceo"
@@ -58,6 +59,7 @@ func NewSSCSCommand() *cobra.Command {
 	cmd.AddCommand(staticsynccontroller.NewStaticSyncCommand(os.Stderr))
 	cmd.AddCommand(staticpodcontroller.NewStaticPodCommand(os.Stderr))
 	cmd.AddCommand(mount.NewMountCommand(os.Stderr))
+	cmd.AddCommand(rollbackcopy.NewRollbackCopy(os.Stderr))
 	cmd.AddCommand(waitforceo.NewWaitForCeoCommand(os.Stderr))
 	cmd.AddCommand(waitforkube.NewWaitForKubeCommand(os.Stderr))
 
