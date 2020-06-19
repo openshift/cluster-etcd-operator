@@ -33,7 +33,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdendpointscontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdmemberipmigrator"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdmemberscontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/hostendpointscontroller2"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/metriccontroller"
@@ -206,14 +205,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		etcdClient,
 		controllerContext.EventRecorder,
 	)
-	etcdMemberIPMigrator := etcdmemberipmigrator.NewEtcdMemberIPMigrator(
-		operatorClient,
-		kubeInformersForNamespaces.InformersFor(""),
-		configInformers.Config().V1().Infrastructures(),
-		configInformers.Config().V1().Networks(),
-		etcdClient,
-		controllerContext.EventRecorder,
-	)
 	etcdMembersController := etcdmemberscontroller.NewEtcdMembersController(
 		operatorClient,
 		etcdClient,
@@ -254,7 +245,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go statusController.Run(ctx, 1)
 	go configObserver.Run(ctx, 1)
 	go clusterMemberController.Run(ctx, 1)
-	go etcdMemberIPMigrator.Run(ctx, 1)
 	go etcdMembersController.Run(ctx, 1)
 	go bootstrapTeardownController.Run(ctx, 1)
 	go unsupportedConfigOverridesController.Run(ctx, 1)
