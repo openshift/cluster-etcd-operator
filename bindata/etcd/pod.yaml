@@ -10,6 +10,35 @@ metadata:
     revision: "REVISION"
 spec:
   initContainers:
+    - name: defrag
+      image: ${IMAGE}
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      resources:
+        requests:
+          memory: 60Mi
+          cpu: 30m
+      volumeMounts:
+      - mountPath: /var/lib/etcd/
+        name: data-dir
+      env:
+${COMPUTED_ENV_VARS}
+      command:
+        - /bin/sh
+        - -c
+        - |
+          #!/bin/sh
+          set -euo pipefail
+
+          # Try and ensure etcd is really shut down.
+          echo -n "Waiting for ports 2379, 2380 and 9978 to be released."
+          while [ -n "$(lsof -ni :2379)$(lsof -ni :2380)$(lsof -ni :9978)" ]; do
+            echo -n "."
+            sleep 1
+          done
+
+          echo "Defragging etcd"
+          time etcdctl defrag --data-dir /var/lib/etcd
     - name: etcd-ensure-env-vars
       image: ${IMAGE}
       imagePullPolicy: IfNotPresent
@@ -139,8 +168,7 @@ ${COMPUTED_ENV_VARS}
         # move it somewhere safe so we can retrieve it again later if something goes badly.
         mv /etc/kubernetes/manifests/etcd-member.yaml /etc/kubernetes/etcd-backup-dir || true
 
-        # we cannot use the "normal" port conflict initcontainer because when we upgrade, the existing static pod will never yield,
-        # so we do the detection in etcd container itsefl.
+        # Try and ensure etcd is really shut down.
         echo -n "Waiting for ports 2379, 2380 and 9978 to be released."
         while [ -n "$(lsof -ni :2379)$(lsof -ni :2380)$(lsof -ni :9978)" ]; do
           echo -n "."
