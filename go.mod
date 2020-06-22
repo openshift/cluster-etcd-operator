@@ -17,7 +17,9 @@ require (
 	github.com/spf13/cobra v0.0.5
 	github.com/spf13/pflag v1.0.5
 	github.com/vincent-petithory/dataurl v0.0.0-20191104211930-d1553a71de50
+	github.com/vishvananda/netlink v1.0.0
 	go.etcd.io/etcd v0.0.0-20200401174654-e694b7bb0875
+	golang.org/x/sys v0.0.0-20200323222414-85ca7c5b95cd
 	google.golang.org/grpc v1.26.0
 	k8s.io/api v0.18.3
 	k8s.io/apimachinery v0.18.3
