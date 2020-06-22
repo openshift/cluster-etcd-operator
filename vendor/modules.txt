@@ -267,6 +267,11 @@ github.com/spf13/cobra
 github.com/spf13/pflag
 # github.com/vincent-petithory/dataurl v0.0.0-20191104211930-d1553a71de50
 github.com/vincent-petithory/dataurl
+# github.com/vishvananda/netlink v1.0.0
+github.com/vishvananda/netlink
+github.com/vishvananda/netlink/nl
+# github.com/vishvananda/netns v0.0.0-20191106174202-0a2b9b5464df
+github.com/vishvananda/netns
 # github.com/weppos/publicsuffix-go v0.5.0
 github.com/weppos/publicsuffix-go/publicsuffix
 # github.com/zmap/zcrypto v0.0.0-20190729165852-9051775e6a2e
