@@ -225,23 +225,17 @@ func (c *EtcdCertSignerController) createSecretForNode(node *corev1.Node, record
 		return err
 	}
 
-	// get what we're going to sign for
-	etcdDiscoveryDomain, err := c.getEtcdDiscoveryDomain()
-	if err != nil {
-		return err
-	}
 	nodeInternalIPs, err := dnshelpers.GetInternalIPAddressesForNodeName(node)
 	if err != nil {
 		return err
 	}
-	peerHostNames := append([]string{"localhost", etcdDiscoveryDomain}, nodeInternalIPs...)
+	peerHostNames := append([]string{"localhost"}, nodeInternalIPs...)
 	serverHostNames := append([]string{
 		"localhost",
 		"etcd.kube-system.svc",
 		"etcd.kube-system.svc.cluster.local",
 		"etcd.openshift-etcd.svc",
 		"etcd.openshift-etcd.svc.cluster.local",
-		"*." + etcdDiscoveryDomain,
 		"127.0.0.1",
 		"::1",
 		"0:0:0:0:0:0:0:1",
@@ -335,19 +329,6 @@ func getCommonNameFromOrg(org string) (string, error) {
 		return "etcd-metric-signer", nil
 	}
 	return "", errors.New("unable to recognise secret name")
-}
-
-func (c *EtcdCertSignerController) getEtcdDiscoveryDomain() (string, error) {
-	infrastructure, err := c.infrastructureLister.Get("cluster")
-	if err != nil {
-		return "", err
-	}
-
-	etcdDiscoveryDomain := infrastructure.Status.EtcdDiscoveryDomain
-	if len(etcdDiscoveryDomain) == 0 {
-		return "", fmt.Errorf("infrastructures.config.openshit.io/cluster missing .status.etcdDiscoveryDomain")
-	}
-	return etcdDiscoveryDomain, nil
 }
 
 func (c *EtcdCertSignerController) createSecret(secretName string, cert *bytes.Buffer, key *bytes.Buffer, recorder events.Recorder) error {
