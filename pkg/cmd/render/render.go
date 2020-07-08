@@ -117,9 +117,6 @@ func (r *renderOpts) Validate() error {
 	if len(r.clusterEtcdOperatorImage) == 0 {
 		return errors.New("missing required flag: --manifest-cluster-etcd-operator-image")
 	}
-	if len(r.etcdDiscoveryDomain) == 0 {
-		return errors.New("missing required flag: --etcd-discovery-domain")
-	}
 	if len(r.clusterConfigFile) == 0 {
 		return errors.New("missing required flag: --cluster-config-file")
 	}
