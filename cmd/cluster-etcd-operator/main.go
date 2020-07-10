@@ -8,13 +8,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/mount"
 	operatorcmd "github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/staticpodcontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/staticsynccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/waitforceo"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/waitforkube"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator"
 	"github.com/openshift/library-go/pkg/operator/staticpod/certsyncpod"
 	"github.com/openshift/library-go/pkg/operator/staticpod/installerpod"
@@ -63,11 +59,7 @@ func NewSSCSCommand() *cobra.Command {
 	cmd.AddCommand(installerpod.NewInstaller())
 	cmd.AddCommand(prune.NewPrune())
 	cmd.AddCommand(certsyncpod.NewCertSyncControllerCommand(operator.CertConfigMaps, operator.CertSecrets))
-	cmd.AddCommand(staticsynccontroller.NewStaticSyncCommand(os.Stderr))
-	cmd.AddCommand(staticpodcontroller.NewStaticPodCommand(os.Stderr))
-	cmd.AddCommand(mount.NewMountCommand(os.Stderr))
 	cmd.AddCommand(waitforceo.NewWaitForCeoCommand(os.Stderr))
-	cmd.AddCommand(waitforkube.NewWaitForKubeCommand(os.Stderr))
 
 	return cmd
 }

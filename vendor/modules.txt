@@ -10,20 +10,6 @@ github.com/beorn7/perks/quantile
 github.com/blang/semver
 # github.com/certifi/gocertifi v0.0.0-20180905225744-ee1a9a0726d2
 github.com/certifi/gocertifi
-# github.com/cloudflare/cfssl v1.4.1
-github.com/cloudflare/cfssl/auth
-github.com/cloudflare/cfssl/certdb
-github.com/cloudflare/cfssl/config
-github.com/cloudflare/cfssl/crypto/pkcs7
-github.com/cloudflare/cfssl/csr
-github.com/cloudflare/cfssl/errors
-github.com/cloudflare/cfssl/helpers
-github.com/cloudflare/cfssl/helpers/derhelpers
-github.com/cloudflare/cfssl/info
-github.com/cloudflare/cfssl/log
-github.com/cloudflare/cfssl/ocsp/config
-github.com/cloudflare/cfssl/signer
-github.com/cloudflare/cfssl/signer/local
 # github.com/coreos/go-semver v0.3.0
 github.com/coreos/go-semver/semver
 # github.com/coreos/go-systemd v0.0.0-20190321100706-95778dfbb74e
@@ -66,15 +52,6 @@ github.com/golang/protobuf/ptypes
 github.com/golang/protobuf/ptypes/any
 github.com/golang/protobuf/ptypes/duration
 github.com/golang/protobuf/ptypes/timestamp
-# github.com/google/certificate-transparency-go v1.0.21
-github.com/google/certificate-transparency-go
-github.com/google/certificate-transparency-go/asn1
-github.com/google/certificate-transparency-go/client
-github.com/google/certificate-transparency-go/client/configpb
-github.com/google/certificate-transparency-go/jsonclient
-github.com/google/certificate-transparency-go/tls
-github.com/google/certificate-transparency-go/x509
-github.com/google/certificate-transparency-go/x509/pkix
 # github.com/google/go-cmp v0.3.1
 github.com/google/go-cmp/cmp
 github.com/google/go-cmp/cmp/internal/diff
@@ -89,8 +66,6 @@ github.com/google/uuid
 github.com/googleapis/gnostic/OpenAPIv2
 github.com/googleapis/gnostic/compiler
 github.com/googleapis/gnostic/extensions
-# github.com/gorilla/mux v0.0.0-20191024121256-f395758b854c
-github.com/gorilla/mux
 # github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
 github.com/grpc-ecosystem/go-grpc-prometheus
 # github.com/hashicorp/golang-lru v0.5.1
@@ -265,25 +240,11 @@ github.com/sirupsen/logrus
 github.com/spf13/cobra
 # github.com/spf13/pflag v1.0.5
 github.com/spf13/pflag
-# github.com/vincent-petithory/dataurl v0.0.0-20191104211930-d1553a71de50
-github.com/vincent-petithory/dataurl
 # github.com/vishvananda/netlink v1.0.0
 github.com/vishvananda/netlink
 github.com/vishvananda/netlink/nl
 # github.com/vishvananda/netns v0.0.0-20191106174202-0a2b9b5464df
 github.com/vishvananda/netns
-# github.com/weppos/publicsuffix-go v0.5.0
-github.com/weppos/publicsuffix-go/publicsuffix
-# github.com/zmap/zcrypto v0.0.0-20190729165852-9051775e6a2e
-github.com/zmap/zcrypto/json
-github.com/zmap/zcrypto/util
-github.com/zmap/zcrypto/x509
-github.com/zmap/zcrypto/x509/ct
-github.com/zmap/zcrypto/x509/pkix
-# github.com/zmap/zlint v0.0.0-20190806154020-fd021b4cfbeb
-github.com/zmap/zlint
-github.com/zmap/zlint/lints
-github.com/zmap/zlint/util
 # go.etcd.io/etcd v0.0.0-20200401174654-e694b7bb0875
 go.etcd.io/etcd/auth/authpb
 go.etcd.io/etcd/clientv3
@@ -320,13 +281,8 @@ go.uber.org/zap/zapcore
 # golang.org/x/crypto v0.0.0-20200220183623-bac4c82f6975
 golang.org/x/crypto/cryptobyte
 golang.org/x/crypto/cryptobyte/asn1
-golang.org/x/crypto/ed25519
-golang.org/x/crypto/ed25519/internal/edwards25519
 golang.org/x/crypto/internal/subtle
 golang.org/x/crypto/nacl/secretbox
-golang.org/x/crypto/ocsp
-golang.org/x/crypto/pkcs12
-golang.org/x/crypto/pkcs12/internal/rc2
 golang.org/x/crypto/poly1305
 golang.org/x/crypto/salsa20/salsa
 golang.org/x/crypto/ssh/terminal
