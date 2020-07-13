@@ -325,6 +325,7 @@ func (t *TemplateData) setBootstrapIP(machineCIDR string, ipv6 bool, excludedIPs
 	if err != nil {
 		return err
 	}
+	klog.Infof("using bootstrap IP %s", ip.String())
 	t.BootstrapIP = ip.String()
 	return nil
 }
