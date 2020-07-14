@@ -138,7 +138,10 @@ spec:
       mountPath: /run/etcd/
     - name: certs
       mountPath: /etc/ssl/etcd/
-    ports:
+
+    env:
+{{.ComputedEnvVars }}
+      ports:
     - name: metric
       containerPort: 9979
       protocol: TCP
