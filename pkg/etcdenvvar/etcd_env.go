@@ -261,7 +261,10 @@ func envVarSafe(nodeName string) string {
 
 func getUnsupportedArch(envVarContext envVarContext) (map[string]string, error) {
 	arch := runtime.GOARCH
-	if !strings.HasPrefix(arch, "s390") {
+	switch arch {
+	case "arm64":
+	case "s390x":
+	default:
 		// dont set unless it is defined.
 		return nil, nil
 	}
