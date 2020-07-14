@@ -48,7 +48,7 @@ func (c *FSyncController) sync(ctx context.Context, syncCtx factory.SyncContext)
 		return err
 	}
 	leaderChanges := etcdLeaderChangesResult.(model.Vector)[0].Value
-	klog.Infof("Etcd leader changes increase in last 5m: %s", leaderChanges)
+	klog.V(4).Infof("Etcd leader changes increase in last 5m: %s", leaderChanges)
 
 	// Do nothing if there are no leader changes
 	if leaderChanges == 0.0 {
