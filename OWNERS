@@ -6,4 +6,5 @@ approvers:
   - deads2k
   - hexfusion
   - sttts
+  - ironcladlou
 component: "Etcd Operator"
