@@ -53,6 +53,21 @@ func TestBootstrapIPLocator(t *testing.T) {
 			exclude:  []string{"192.168.125.5"},
 			expect:   net.ParseIP("192.168.125.112"),
 		},
+		{
+			name:        "fallback to first IP",
+			machineCIDR: "192.168.125.0/24",
+			ips: newIPs(
+				"10.88.0.1",
+				"172.17.0.1",
+			),
+			addrMap: newAddrMap(
+				withDevice(0, "10.88.0.1"),
+				withDevice(1, "172.17.0.1"),
+			),
+			routeMap: map[int][]netlink.Route{},
+			exclude:  []string{},
+			expect:   net.ParseIP("10.88.0.1"),
+		},
 	}
 
 	for _, scenario := range scenarios {

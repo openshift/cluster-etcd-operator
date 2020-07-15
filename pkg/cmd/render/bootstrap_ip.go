@@ -20,6 +20,10 @@ func NetlinkBootstrapIPLocator() *bootstrapIPLocator {
 	}
 }
 
+// BootstrapIPLocator tries to find the bootstrap IP for the machine. It should
+// go through the effort of identifying the IP based on its inclusion in the machine
+// network CIDR, routability, etc. and fall back to using the first listed IP
+// as a last resort (and for compatibility with old behavior).
 type BootstrapIPLocator interface {
 	getBootstrapIP(ipv6 bool, machineCIDR string, excludedIPs []string) (net.IP, error)
 }
@@ -49,32 +53,40 @@ func (l *bootstrapIPLocator) getBootstrapIP(ipv6 bool, machineCIDR string, exclu
 		ContainedByCIDR(machineCIDR),
 		AddressNotIn(excludedIPs...),
 	)
-	addresses, err := routableAddresses(addrMap, routeMap, ips, addressFilter, NonDefaultRoute)
+	discoveredAddresses, err := routableAddresses(addrMap, routeMap, ips, addressFilter, NonDefaultRoute)
 	if err != nil {
 		return nil, err
 	}
-	if len(addresses) == 0 {
-		return nil, fmt.Errorf("couldn't find any bootstrap node IPs")
+	if len(discoveredAddresses) > 1 {
+		klog.Warningf("found multiple candidate bootstrap IPs; only the first one will be considered: %+v", discoveredAddresses)
 	}
-	if len(addresses) > 1 {
-		klog.Warningf("found multiple candidate bootstrap IPs; using only the first one: %+v", addresses)
+
+	findIP := func(addresses []net.IP) (net.IP, bool) {
+		for _, ip := range addresses {
+			// IPv6
+			if ipv6 && ip.To4() == nil {
+				return ip, true
+			}
+			// IPv4
+			if !ipv6 && ip.To4() != nil {
+				return ip, true
+			}
+		}
+		return nil, false
 	}
 
 	var bootstrapIP net.IP
-	for _, ip := range addresses {
-		// IPv6
-		if ipv6 && ip.To4() == nil {
+	if ip, found := findIP(discoveredAddresses); found {
+		bootstrapIP = ip
+	} else {
+		klog.Warningf("couldn't detect the bootstrap IP automatically, falling back to the first listed address")
+		if ip, found := findIP(ips); found {
 			bootstrapIP = ip
-			break
-		}
-		// IPv4
-		if !ipv6 && ip.To4() != nil {
-			bootstrapIP = ip
-			break
 		}
 	}
+
 	if bootstrapIP == nil {
-		return nil, fmt.Errorf("couldn't find a suitable bootstrap node IP from candidates: %+v", addresses)
+		return nil, fmt.Errorf("couldn't find a suitable bootstrap node IP from candidates\nall: %+v\ndiscovered: %+v", ips, discoveredAddresses)
 	}
 
 	return bootstrapIP, nil
