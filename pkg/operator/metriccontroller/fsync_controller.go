@@ -92,7 +92,7 @@ func (c *FSyncController) sync(ctx context.Context, syncCtx factory.SyncContext)
 	}
 
 	// Send warning event if excessive leader changes are detected. The event will include fsync disk metrics.
-	syncCtx.Recorder().Warningf("EtcdLeaderChangeMetrics", "Detected %s leader changes in last 5 minutes on %q disk metrics are: %s", leaderChanges, platformType, strings.Join(values, ","))
+	syncCtx.Recorder().Warningf("EtcdLeaderChangeMetrics", "Detected leader change increase of %s over 5 minutes on %q; disk metrics are: %s", leaderChanges, platformType, strings.Join(values, ","))
 
 	// TODO: Consider Degraded condition here.
 
