@@ -64,6 +64,7 @@ ${COMPUTED_ENV_VARS}
 
           cp /etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt /etc/kubernetes/etcd-backup-dir/system:etcd-peer-NODE_NAME.crt
           cp /etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key /etc/kubernetes/etcd-backup-dir/system:etcd-peer-NODE_NAME.key
+          cp /etc/kubernetes/static-pod-certs/configmaps/etcd-serving-ca/ca-bundle.crt /etc/kubernetes/etcd-backup-dir/ca.crt
           rm -f $(grep -l '^### Created by cluster-etcd-operator' /usr/local/bin/*)
           cp -p /etc/kubernetes/static-pod-certs/configmaps/etcd-scripts/*.sh /usr/local/bin
 
