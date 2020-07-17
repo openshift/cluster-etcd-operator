@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"io"
 	"io/ioutil"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
 
-	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render/options"
 )
 
@@ -114,14 +114,72 @@ status:
       region: us-east-1
     type: AWS
 `
+
+	clusterConfigMap = `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-config-v1
+  namespace: kube-system
+data:
+  install-config: |
+    apiVersion: v1
+    baseDomain: gcp.devcluster.openshift.com
+    compute:
+    - architecture: amd64
+      hyperthreading: Enabled
+      name: worker
+      platform: {}
+      replicas: 3
+    controlPlane:
+      architecture: amd64
+      hyperthreading: Enabled
+      name: master
+      platform:
+        gcp:
+          osDisk:
+            DiskSizeGB: 128
+            DiskType: pd-ssd
+          type: n1-standard-4
+          zones:
+          - us-east1-b
+          - us-east1-c
+          - us-east1-d
+      replicas: 3
+    metadata:
+      creationTimestamp: null
+      name: my-cluster
+    networking:
+      clusterNetwork:
+      - cidr: 10.128.0.0/14
+        hostPrefix: 23
+      machineCIDR: 10.0.0.0/16
+      machineNetwork:
+      - cidr: 10.0.0.0/16
+      networkType: OpenShiftSDN
+      serviceNetwork:
+      - 172.30.0.0/16
+    platform:
+      gcp:
+        projectID: openshift
+        region: us-east1
+    publish: External
+`
 )
 
 type testConfig struct {
 	t                    *testing.T
 	clusterNetworkConfig string
 	infraConfig          string
+	clusterConfigMap     string
 	want                 TemplateData
 	bootstrapIP          string
+}
+
+func TestMain(m *testing.M) {
+	// TODO: implement tests for bootstrap IP determination
+	defaultBootstrapIPLocator = &fakeBootstrapIPLocator{ip: net.ParseIP("10.0.0.1")}
+	os.Exit(m.Run())
 }
 
 func TestRenderIpv4(t *testing.T) {
@@ -140,6 +198,7 @@ func TestRenderIpv4(t *testing.T) {
 		t:                    t,
 		clusterNetworkConfig: networkConfigIpv4,
 		infraConfig:          infraConfig,
+		clusterConfigMap:     clusterConfigMap,
 		want:                 want,
 	}
 
@@ -166,11 +225,21 @@ func testRender(tc *testConfig) {
 	}
 	defer infraConfigFile.Close()
 
+	clusterConfigMapFile, err := ioutil.TempFile(dir, "cluster-config.*.yaml")
+	if err != nil {
+		tc.t.Fatal(err)
+	}
+	defer clusterConfigMapFile.Close()
+
 	if err := writeFile(tc.clusterNetworkConfig, clusterConfigFile); err != nil {
 		tc.t.Fatal(err)
 	}
 
 	if err := writeFile(tc.infraConfig, infraConfigFile); err != nil {
+		tc.t.Fatal(err)
+	}
+
+	if err := writeFile(tc.clusterConfigMap, clusterConfigMapFile); err != nil {
 		tc.t.Fatal(err)
 	}
 
@@ -182,11 +251,12 @@ func testRender(tc *testConfig) {
 	}
 
 	render := renderOpts{
-		generic:           generic,
-		manifest:          *options.NewManifestOptions("etcd"),
-		errOut:            errOut,
-		clusterConfigFile: clusterConfigFile.Name(),
-		infraConfigFile:   infraConfigFile.Name(),
+		generic:              generic,
+		manifest:             *options.NewManifestOptions("etcd"),
+		errOut:               errOut,
+		networkConfigFile:    clusterConfigFile.Name(),
+		infraConfigFile:      infraConfigFile.Name(),
+		clusterConfigMapFile: clusterConfigMapFile.Name(),
 	}
 
 	if err := render.Run(); err != nil {
@@ -210,6 +280,7 @@ func TestTemplateDataIpv4(t *testing.T) {
 		t:                    t,
 		clusterNetworkConfig: networkConfigIpv4,
 		infraConfig:          infraConfig,
+		clusterConfigMap:     clusterConfigMap,
 		want:                 want,
 	}
 	testTemplateData(config)
@@ -231,6 +302,7 @@ func TestTemplateDataMixed(t *testing.T) {
 		t:                    t,
 		clusterNetworkConfig: networkConfigMixedSwap,
 		infraConfig:          infraConfig,
+		clusterConfigMap:     clusterConfigMap,
 		want:                 want,
 	}
 	testTemplateData(config)
@@ -253,6 +325,7 @@ func TestTemplateDataSingleStack(t *testing.T) {
 		t:                    t,
 		clusterNetworkConfig: networkConfigIPv6SingleStack,
 		infraConfig:          infraConfig,
+		clusterConfigMap:     clusterConfigMap,
 		want:                 want,
 		bootstrapIP:          "2001:0DB8:C21A",
 	}
@@ -279,11 +352,21 @@ func testTemplateData(tc *testConfig) {
 	}
 	defer infraConfigFile.Close()
 
+	clusterConfigMapFile, err := ioutil.TempFile(dir, "cluster-config.*.yaml")
+	if err != nil {
+		tc.t.Fatal(err)
+	}
+	defer clusterConfigMapFile.Close()
+
 	if err := writeFile(tc.clusterNetworkConfig, clusterConfigFile); err != nil {
 		tc.t.Fatal(err)
 	}
 
 	if err := writeFile(tc.infraConfig, infraConfigFile); err != nil {
+		tc.t.Fatal(err)
+	}
+
+	if err := writeFile(tc.clusterConfigMap, clusterConfigMapFile); err != nil {
 		tc.t.Fatal(err)
 	}
 
@@ -295,12 +378,13 @@ func testTemplateData(tc *testConfig) {
 	}
 
 	render := &renderOpts{
-		generic:           generic,
-		manifest:          *options.NewManifestOptions("etcd"),
-		errOut:            errOut,
-		clusterConfigFile: clusterConfigFile.Name(),
-		infraConfigFile:   infraConfigFile.Name(),
-		bootstrapIP:       tc.bootstrapIP,
+		generic:              generic,
+		manifest:             *options.NewManifestOptions("etcd"),
+		errOut:               errOut,
+		networkConfigFile:    clusterConfigFile.Name(),
+		infraConfigFile:      infraConfigFile.Name(),
+		clusterConfigMapFile: clusterConfigMapFile.Name(),
+		bootstrapIP:          tc.bootstrapIP,
 	}
 
 	got, err := newTemplateData(render)
@@ -338,70 +422,10 @@ func writeFile(input string, w io.Writer) error {
 	return nil
 }
 
-func TestTemplateData_setPlatform(t1 *testing.T) {
-	tests := []struct {
-		name         string
-		infraSpec    string
-		wantErr      bool
-		wantPlatform configv1.PlatformType
-	}{
-		{
-			name: "test infra config file with AWS",
-			infraSpec: `apiVersion: config.openshift.io/v1
-kind: Infrastructure
-metadata:
-  name: cluster
-spec:
-  cloudConfig:
-    name: ""
-status:
-  platform: AWS
-  platformStatus:
-    aws:
-      region: us-east-1
-    type: AWS
-`,
-			wantErr:      false,
-			wantPlatform: configv1.AWSPlatformType,
-		},
-		{
-			name: "test infra config file with empty platform",
-			infraSpec: `apiVersion: config.openshift.io/v1
-kind: Infrastructure
-metadata:
-  name: cluster
-spec:
-  cloudConfig:
-    name: ""
-status:
-  platform: ""
-  platformStatus:
-    type: ""
-`,
-			wantErr:      false,
-			wantPlatform: "",
-		},
-	}
-	for _, tt := range tests {
-		t1.Run(tt.name, func(t1 *testing.T) {
-			file, err := ioutil.TempFile("/tmp", "infra-config-file")
-			if err != nil {
-				t1.Fatal(err)
-			}
+type fakeBootstrapIPLocator struct {
+	ip net.IP
+}
 
-			err = ioutil.WriteFile(file.Name(), []byte(tt.infraSpec), os.ModePerm)
-			if err != nil {
-				t1.Fatal(err)
-			}
-
-			t := &TemplateData{}
-			if err := t.setPlatform(file.Name()); (err != nil) != tt.wantErr {
-				t1.Errorf("setPlatform() error = %v, wantErr %v", err, tt.wantErr)
-			}
-			if t.Platform != string(tt.wantPlatform) {
-				t1.Errorf("setPlatform() want = %v, got %v", tt.wantPlatform, t.Platform)
-			}
-			os.Remove(file.Name())
-		})
-	}
+func (f *fakeBootstrapIPLocator) getBootstrapIP(ipv6 bool, machineCIDR string, excludedIPs []string) (net.IP, error) {
+	return f.ip, nil
 }

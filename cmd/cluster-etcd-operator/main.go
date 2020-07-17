@@ -53,6 +53,7 @@ func NewSSCSCommand() *cobra.Command {
 
 	cmd.AddCommand(operatorcmd.NewOperator())
 	cmd.AddCommand(render.NewRenderCommand(os.Stderr))
+	cmd.AddCommand(render.NewBootstrapIPCommand(os.Stderr))
 	cmd.AddCommand(installerpod.NewInstaller())
 	cmd.AddCommand(prune.NewPrune())
 	cmd.AddCommand(certsyncpod.NewCertSyncControllerCommand(operator.CertConfigMaps, operator.CertSecrets))
