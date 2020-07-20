@@ -672,6 +672,31 @@ ${COMPUTED_ENV_VARS}
         name: cert-dir
       - mountPath: /var/lib/etcd/
         name: data-dir
+  - name: etcd-cluster-backup
+    image: ${OPERATOR_IMAGE}
+    imagePullPolicy: IfNotPresent
+    terminationMessagePolicy: FallbackToLogsOnError
+    command:
+      - "/bin/bash"
+      - "-c"
+      - "trap TERM INT; sleep infinity & wait"
+    resources:
+      requests:
+        memory: 60Mi
+        cpu: 30m
+    securityContext:
+      privileged: true
+    volumeMounts:
+      - mountPath: /etc/kubernetes/cluster-backups
+        name: cluster-backups
+      - mountPath: /etc/kubernetes/static-pod-resources
+        name: full-resource-dir
+      - mountPath: /etc/kubernetes/static-pod-certs
+        name: cert-dir
+      - mountPath: /var/run/crio/crio.sock
+        name: crio-sock
+    env:
+${COMPUTED_ENV_VARS}
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
@@ -680,6 +705,9 @@ ${COMPUTED_ENV_VARS}
     - hostPath:
         path: /etc/kubernetes/manifests
       name: static-pod-dir
+    - hostPath:
+        path: /etc/kubernetes/static-pod-resources
+      name: full-resource-dir
     - hostPath:
         path: /etc/kubernetes/static-pod-resources/etcd-member
       name: etcd-backup-dir
@@ -696,6 +724,12 @@ ${COMPUTED_ENV_VARS}
     - hostPath:
         path: /usr/local/bin
       name: usr-local-bin
+    - hostPath:
+        path: /var/run/crio/crio.sock
+      name: crio-sock
+    - hostPath:
+        path: /etc/kubernetes/cluster-backups
+      name: cluster-backups
 
 `)
 
