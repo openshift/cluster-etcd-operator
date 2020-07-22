@@ -2,7 +2,6 @@ package render
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 )
@@ -82,7 +81,10 @@ func getElectionTimeout(platform, arch string) (map[string]string, error) {
 }
 
 func getUnsupportedArch(platform, arch string) (map[string]string, error) {
-	if !strings.HasPrefix(arch, "s390") {
+	switch arch {
+	case "arm64":
+	case "s390x":
+	default:
 		// dont set unless it is defined.
 		return nil, nil
 	}

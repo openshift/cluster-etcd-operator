@@ -12,6 +12,7 @@ func TestEtcdEnv(t *testing.T) {
 		{"Azure", "amd64", "ETCD_ELECTION_TIMEOUT", "2500"},
 		{"None", "ppc64le", "ETCD_HEARTBEAT_INTERVAL", "100"},
 		{"Azure", "s390x", "ETCD_UNSUPPORTED_ARCH", "s390x"},
+		{"None", "arm64", "ETCD_UNSUPPORTED_ARCH", "arm64"},
 	} {
 		env, _ := getEtcdEnv(test.platform, test.arch)
 		if env[test.wantKey] != test.wantValue {
