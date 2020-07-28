@@ -1,0 +1,12 @@
+apiVersion: policy/v1beta1
+kind: PodDisruptionBudget
+metadata:
+  namespace: openshift-etcd
+  name: etcd-quorum-guard
+  annotations:
+    exclude.release.openshift.io/internal-openshift-hosted: "true"
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      k8s-app: etcd-quorum-guard
