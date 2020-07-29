@@ -8,7 +8,10 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
+	"strings"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 
 	"github.com/spf13/cobra"
@@ -30,6 +33,7 @@ type aioOpts struct {
 	etcdMetricCACert string
 	etcdMetricCAKey  string
 	assetOutputDir   string
+	etcdImage        string
 }
 
 // NewAIOCommand creates a all-in-one render command.
@@ -66,6 +70,7 @@ func (a *aioOpts) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&a.etcdMetricCACert, "etcd-metric-ca-cert", a.etcdMetricCACert, "path to etcd metric CA certificate")
 	fs.StringVar(&a.etcdMetricCAKey, "etcd-metric-ca-key", a.etcdMetricCAKey, "path to etcd metric CA key")
 	fs.StringVar(&a.assetOutputDir, "asset-output-dir", a.assetOutputDir, "path for rendered assets")
+	fs.StringVar(&a.etcdImage, "manifest-etcd-image", a.etcdImage, "etcd manifest image")
 }
 
 // Validate verifies the inputs.
@@ -85,6 +90,9 @@ func (a *aioOpts) Validate() error {
 	if len(a.assetOutputDir) == 0 {
 		return errors.New("missing required flag: --asset-output-dir")
 	}
+	if len(a.etcdImage) == 0 {
+		return errors.New("missing required flag: --manifest-etcd-image")
+	}
 	return nil
 }
 
@@ -93,6 +101,30 @@ func (a *aioOpts) Run() error {
 	err := a.generateEtcdNodeCerts(aioNodeName, aioNodeInternalIP)
 	if err != nil {
 		return err
+	}
+	return a.renderEtcdPod(aioNodeName, aioNodeInternalIP)
+}
+
+func (a *aioOpts) renderEtcdPod(nodeName, nodeInternalIP string) error {
+	envVarMap, err := getAIOEtcdEnvVars(nodeName, nodeInternalIP, a.etcdImage)
+	if err != nil {
+		return fmt.Errorf("Failed to get all-in-one env variables for pod: %s", err)
+	}
+
+	replacer, err := etcdenvvar.GetSubstitutionReplacer(envVarMap, a.etcdImage)
+	if err != nil {
+		return fmt.Errorf("Failed to render pod manifest: %s", err)
+	}
+
+	podContent := string(etcd_assets.MustAsset("etcd/pod.yaml"))
+	podContent = replacer.Replace(podContent)
+	podContent = strings.ReplaceAll(podContent, "REVISION", "1")
+	podContent = strings.ReplaceAll(podContent, "NODE_NAME", nodeName)
+	podContent = strings.ReplaceAll(podContent, "NODE_ENVVAR_NAME", strings.ReplaceAll(strings.ReplaceAll(nodeName, "-", "_"), ".", "_"))
+
+	err = ioutil.WriteFile(path.Join(a.assetOutputDir, "etcd-member.yaml"), []byte(podContent), 0644)
+	if err != nil {
+		return fmt.Errorf("Failed to write pod manifest: %s", err)
 	}
 	return nil
 }
