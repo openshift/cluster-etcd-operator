@@ -9,6 +9,8 @@ status:
   versions:
   - name: operator
     version: "0.0.1-snapshot"
+  - name: etcd
+    version: "0.0.1-snapshot"
   relatedObjects:
     - group: operator.openshift.io
       name: cluster
