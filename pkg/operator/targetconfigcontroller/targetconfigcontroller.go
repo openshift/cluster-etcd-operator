@@ -8,7 +8,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	coreclientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -111,7 +110,7 @@ func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncCo
 func createTargetConfig(c TargetConfigController, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (bool, error) {
 	errors := []error{}
 
-	contentReplacer, err := c.getSubstitutionReplacer(c.targetImagePullSpec)
+	contentReplacer, err := etcdenvvar.GetSubstitutionReplacer(c.envVarGetter.GetEnvVars(), c.targetImagePullSpec)
 	if err != nil {
 		return false, err
 	}
@@ -184,27 +183,6 @@ func loglevelToKlog(logLevel operatorv1.LogLevel) string {
 	default:
 		return "2"
 	}
-}
-
-func (c *TargetConfigController) getSubstitutionReplacer(imagePullSpec string) (*strings.Replacer, error) {
-	envVarMap := c.envVarGetter.GetEnvVars()
-	if len(envVarMap) == 0 {
-		return nil, fmt.Errorf("missing env var values")
-	}
-
-	envVarLines := []string{}
-	for _, k := range sets.StringKeySet(envVarMap).List() {
-		v := envVarMap[k]
-		envVarLines = append(envVarLines, fmt.Sprintf("      - name: %q", k))
-		envVarLines = append(envVarLines, fmt.Sprintf("        value: %q", v))
-	}
-
-	return strings.NewReplacer(
-		"${IMAGE}", imagePullSpec,
-		"${LISTEN_ON_ALL_IPS}", "0.0.0.0", // TODO this needs updating to detect ipv6-ness
-		"${LOCALHOST_IP}", "127.0.0.1", // TODO this needs updating to detect ipv6-ness
-		"${COMPUTED_ENV_VARS}", strings.Join(envVarLines, "\n"), // lacks beauty, but it works
-	), nil
 }
 
 func (c *TargetConfigController) manageRecoveryPod(substitutionReplacer *strings.Replacer, client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
