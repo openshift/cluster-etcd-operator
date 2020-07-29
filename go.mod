@@ -27,3 +27,5 @@ require (
 	k8s.io/klog v1.0.0
 	k8s.io/utils v0.0.0-20200324210504-a9aa75ae1b89
 )
+
+replace github.com/openshift/library-go => github.com/hexfusion/library-go v0.0.0-20200729104859-26a400dab398

@@ -323,7 +323,7 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 					c.eventRecorder.Eventf("NodeCurrentRevisionChanged", "Updated node %q from revision %d to %d because %s", currNodeState.NodeName,
 						currNodeState.CurrentRevision, newCurrNodeState.CurrentRevision, reason)
 				}
-				if err := c.updateRevisionStatus(ctx, newOperatorStatus); err != nil {
+				if err := c.updateRevisionStatus(ctx, newOperatorStatus, operatorSpec.LogLevel); err != nil {
 					klog.Errorf("error updating revision status configmap: %v", err)
 				}
 				return false, nil
@@ -372,7 +372,7 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 	return false, nil
 }
 
-func (c *InstallerController) updateRevisionStatus(ctx context.Context, operatorStatus *operatorv1.StaticPodOperatorStatus) error {
+func (c *InstallerController) updateRevisionStatus(ctx context.Context, operatorStatus *operatorv1.StaticPodOperatorStatus, logLevel operatorv1.LogLevel) error {
 	failedRevisions := make(map[int32]struct{})
 	currentRevisions := make(map[int32]struct{})
 	for _, nodeState := range operatorStatus.NodeStatuses {
@@ -380,18 +380,17 @@ func (c *InstallerController) updateRevisionStatus(ctx context.Context, operator
 		currentRevisions[nodeState.CurrentRevision] = struct{}{}
 	}
 	delete(failedRevisions, 0)
-
 	// If all current revisions point to the same revision, then mark it successful
 	if len(currentRevisions) == 1 {
-		err := c.updateConfigMapForRevision(ctx, currentRevisions, string(corev1.PodSucceeded))
+		err := c.updateConfigMapForRevision(ctx, currentRevisions, string(corev1.PodSucceeded), logLevel)
 		if err != nil {
 			return err
 		}
 	}
-	return c.updateConfigMapForRevision(ctx, failedRevisions, string(corev1.PodFailed))
+	return c.updateConfigMapForRevision(ctx, failedRevisions, string(corev1.PodFailed), logLevel)
 }
 
-func (c *InstallerController) updateConfigMapForRevision(ctx context.Context, currentRevisions map[int32]struct{}, status string) error {
+func (c *InstallerController) updateConfigMapForRevision(ctx context.Context, currentRevisions map[int32]struct{}, status string, logLevel operatorv1.LogLevel) error {
 	for currentRevision := range currentRevisions {
 		statusConfigMap, err := c.configMapsGetter.ConfigMaps(c.targetNamespace).Get(ctx, statusConfigMapNameForRevision(currentRevision), metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
@@ -401,7 +400,10 @@ func (c *InstallerController) updateConfigMapForRevision(ctx context.Context, cu
 		if err != nil {
 			return err
 		}
+		args := c.getInstallerArgs(currentRevision, logLevel)
 		statusConfigMap.Data["status"] = status
+		statusConfigMap.Data["installerArgs"] = strings.Join(args, "\n")
+
 		_, _, err = resourceapply.ApplyConfigMap(c.configMapsGetter, c.eventRecorder, statusConfigMap)
 		if err != nil {
 			return err
@@ -639,30 +641,11 @@ func getInstallerPodName(revision int32, nodeName string) string {
 	return fmt.Sprintf("installer-%d-%s", revision, nodeName)
 }
 
-// ensureInstallerPod creates the installer pod with the secrets required to if it does not exist already
-func (c *InstallerController) ensureInstallerPod(nodeName string, operatorSpec *operatorv1.StaticPodOperatorSpec, revision int32) error {
-	pod := resourceread.ReadPodV1OrDie(bindata.MustAsset(filepath.Join(manifestDir, manifestInstallerPodPath)))
-
-	pod.Namespace = c.targetNamespace
-	pod.Name = getInstallerPodName(revision, nodeName)
-	pod.Spec.NodeName = nodeName
-	pod.Spec.Containers[0].Image = c.installerPodImageFn()
-	pod.Spec.Containers[0].Command = c.command
-
-	ownerRefs, err := c.ownerRefsFn(revision)
-	if err != nil {
-		return fmt.Errorf("unable to set installer pod ownerrefs: %+v", err)
-	}
-	pod.OwnerReferences = ownerRefs
-
-	if c.configMaps[0].Optional {
-		return fmt.Errorf("pod configmap %s is required, cannot be optional", c.configMaps[0].Name)
-	}
-
+func (c *InstallerController) getInstallerArgs(revision int32, logLevel operatorv1.LogLevel) []string {
 	args := []string{
-		fmt.Sprintf("-v=%d", loglevel.LogLevelToVerbosity(operatorSpec.LogLevel)),
+		fmt.Sprintf("-v=%d", loglevel.LogLevelToVerbosity(logLevel)),
 		fmt.Sprintf("--revision=%d", revision),
-		fmt.Sprintf("--namespace=%s", pod.Namespace),
+		fmt.Sprintf("--namespace=%s", c.targetNamespace),
 		fmt.Sprintf("--pod=%s", c.configMaps[0].Name),
 		fmt.Sprintf("--resource-dir=%s", hostResourceDirDir),
 		fmt.Sprintf("--pod-manifest-dir=%s", hostPodManifestDir),
@@ -698,8 +681,30 @@ func (c *InstallerController) ensureInstallerPod(nodeName string, operatorSpec *
 			}
 		}
 	}
+	return args
+}
 
-	pod.Spec.Containers[0].Args = args
+// ensureInstallerPod creates the installer pod with the secrets required to if it does not exist already
+func (c *InstallerController) ensureInstallerPod(nodeName string, operatorSpec *operatorv1.StaticPodOperatorSpec, revision int32) error {
+	pod := resourceread.ReadPodV1OrDie(bindata.MustAsset(filepath.Join(manifestDir, manifestInstallerPodPath)))
+
+	pod.Namespace = c.targetNamespace
+	pod.Name = getInstallerPodName(revision, nodeName)
+	pod.Spec.NodeName = nodeName
+	pod.Spec.Containers[0].Image = c.installerPodImageFn()
+	pod.Spec.Containers[0].Command = c.command
+
+	ownerRefs, err := c.ownerRefsFn(revision)
+	if err != nil {
+		return fmt.Errorf("unable to set installer pod ownerrefs: %+v", err)
+	}
+	pod.OwnerReferences = ownerRefs
+
+	if c.configMaps[0].Optional {
+		return fmt.Errorf("pod configmap %s is required, cannot be optional", c.configMaps[0].Name)
+	}
+
+	pod.Spec.Containers[0].Args = c.getInstallerArgs(revision, operatorSpec.LogLevel)
 
 	// Some owners need to change aspects of the pod.  Things like arguments for instance
 	for _, fn := range c.installerPodMutationFns {
