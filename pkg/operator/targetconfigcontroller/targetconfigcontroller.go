@@ -111,7 +111,7 @@ func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncCo
 func createTargetConfig(c TargetConfigController, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (bool, error) {
 	errors := []error{}
 
-	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec)
+	contentReplacer, err := c.getSubstitutionReplacer(c.targetImagePullSpec)
 	if err != nil {
 		return false, err
 	}
@@ -186,7 +186,7 @@ func loglevelToKlog(logLevel operatorv1.LogLevel) string {
 	}
 }
 
-func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv1.StaticPodOperatorSpec, imagePullSpec, operatorImagePullSpec string) (*strings.Replacer, error) {
+func (c *TargetConfigController) getSubstitutionReplacer(imagePullSpec string) (*strings.Replacer, error) {
 	envVarMap := c.envVarGetter.GetEnvVars()
 	if len(envVarMap) == 0 {
 		return nil, fmt.Errorf("missing env var values")
@@ -201,8 +201,6 @@ func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv
 
 	return strings.NewReplacer(
 		"${IMAGE}", imagePullSpec,
-		"${OPERATOR_IMAGE}", operatorImagePullSpec,
-		"${VERBOSITY}", loglevelToKlog(operatorSpec.LogLevel),
 		"${LISTEN_ON_ALL_IPS}", "0.0.0.0", // TODO this needs updating to detect ipv6-ness
 		"${LOCALHOST_IP}", "127.0.0.1", // TODO this needs updating to detect ipv6-ness
 		"${COMPUTED_ENV_VARS}", strings.Join(envVarLines, "\n"), // lacks beauty, but it works
