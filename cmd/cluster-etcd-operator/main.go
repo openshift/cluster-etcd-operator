@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/aio"
 	operatorcmd "github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/waitforceo"
@@ -60,6 +61,7 @@ func NewSSCSCommand() *cobra.Command {
 	cmd.AddCommand(prune.NewPrune())
 	cmd.AddCommand(certsyncpod.NewCertSyncControllerCommand(operator.CertConfigMaps, operator.CertSecrets))
 	cmd.AddCommand(waitforceo.NewWaitForCeoCommand(os.Stderr))
+	cmd.AddCommand(aio.NewAIOCommand(os.Stderr))
 
 	return cmd
 }
