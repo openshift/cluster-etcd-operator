@@ -1,6 +1,7 @@
 package render
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,12 +9,14 @@ import (
 	"io/ioutil"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
+	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 
 	"github.com/ghodss/yaml"
 	configv1 "github.com/openshift/api/config/v1"
@@ -34,7 +37,8 @@ type renderOpts struct {
 
 	errOut                   io.Writer
 	etcdCAFile               string
-	etcdMetricCAFile         string
+	etcdCAKeyFile            string
+	unusedEtcdMetricCAFile   string
 	etcdDiscoveryDomain      string
 	etcdImage                string
 	clusterEtcdOperatorImage string
@@ -122,7 +126,9 @@ func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
 	r.generic.AddFlags(fs)
 
 	fs.StringVar(&r.etcdCAFile, "etcd-ca", r.etcdCAFile, "path to etcd CA certificate")
-	fs.StringVar(&r.etcdMetricCAFile, "etcd-metric-ca", r.etcdMetricCAFile, "path to etcd metric CA certificate")
+	fs.StringVar(&r.etcdCAKeyFile, "etcd-ca-key", "/assets/tls/etcd-signer.key", "path to etcd CA certificate key")
+	// deprecated
+	fs.StringVar(&r.unusedEtcdMetricCAFile, "etcd-metric-ca", r.unusedEtcdMetricCAFile, "path to etcd metric CA certificate")
 	fs.StringVar(&r.etcdImage, "manifest-etcd-image", r.etcdImage, "etcd manifest image")
 	fs.StringVar(&r.clusterEtcdOperatorImage, "manifest-cluster-etcd-operator-image", r.clusterEtcdOperatorImage, "cluster-etcd-operator manifest image")
 	fs.StringVar(&r.kubeClientAgentImage, "manifest-kube-client-agent-image", r.kubeClientAgentImage, "kube-client-agent manifest image")
@@ -145,9 +151,6 @@ func (r *renderOpts) Validate() error {
 	}
 	if len(r.etcdCAFile) == 0 {
 		return errors.New("missing required flag: --etcd-ca")
-	}
-	if len(r.etcdMetricCAFile) == 0 {
-		return errors.New("missing required flag: --etcd-metric-ca")
 	}
 	if len(r.etcdImage) == 0 {
 		return errors.New("missing required flag: --manifest-etcd-image")
@@ -317,7 +320,57 @@ func (r *renderOpts) Run() error {
 		return err
 	}
 
+	bootstrapManifestsDir := filepath.Join(r.generic.AssetOutputDir, "bootstrap-manifests")
+
+	caCertData, err := ioutil.ReadFile(r.etcdCAFile)
+	if err != nil {
+		return fmt.Errorf("failed to read CA cert: %w", err)
+	}
+
+	caKeyData, err := ioutil.ReadFile(r.etcdCAKeyFile)
+	if err != nil {
+		return fmt.Errorf("failed to read CA key: %w", err)
+	}
+
+	certData, keyData, err := tlshelpers.CreateServerCertKey(caCertData, caKeyData, []string{templateData.BootstrapIP})
+	if err != nil {
+		return err
+	}
+	err = writeCertKeyFiles(bootstrapManifestsDir, tlshelpers.EtcdAllServingSecretName, tlshelpers.GetServingSecretNameForNode(templateData.Hostname), certData, keyData)
+	if err != nil {
+		return err
+	}
+
+	certData, keyData, err = tlshelpers.CreatePeerCertKey(caCertData, caKeyData, []string{templateData.BootstrapIP})
+	if err != nil {
+		return err
+	}
+	err = writeCertKeyFiles(bootstrapManifestsDir, tlshelpers.EtcdAllPeerSecretName, tlshelpers.GetPeerClientSecretNameForNode(templateData.Hostname), certData, keyData)
+	if err != nil {
+		return err
+	}
+
 	return WriteFiles(&r.generic, &templateData.FileConfig, templateData)
+}
+
+func writeCertKeyFiles(outputDir, allSecretName, nodeSecretName string, certData, keyData *bytes.Buffer) error {
+	dir := path.Join(outputDir, "secrets", allSecretName)
+
+	err := os.MkdirAll(dir, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create %s directory: %w", allSecretName, err)
+	}
+
+	err = ioutil.WriteFile(path.Join(dir, nodeSecretName+".crt"), certData.Bytes(), 0600)
+	if err != nil {
+		return fmt.Errorf("failed to write %s cert: %w", allSecretName, err)
+	}
+	err = ioutil.WriteFile(path.Join(dir, nodeSecretName+".key"), keyData.Bytes(), 0600)
+	if err != nil {
+		return fmt.Errorf("failed to write %s key: %w", allSecretName, err)
+	}
+
+	return nil
 }
 
 func (t *TemplateData) setBootstrapIP(machineCIDR string, ipv6 bool, excludedIPs []string) error {
