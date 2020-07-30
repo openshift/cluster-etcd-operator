@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -150,10 +150,10 @@ func (c StatusSyncer) Sync(ctx context.Context, syncCtx factory.SyncContext) err
 	}
 
 	clusterOperatorObj.Status.RelatedObjects = c.relatedObjects
-	configv1helpers.SetStatusCondition(&clusterOperatorObj.Status.Conditions, unionCondition("Degraded", operatorv1.ConditionFalse, c.degradedInertia, currentDetailedStatus.Conditions...))
-	configv1helpers.SetStatusCondition(&clusterOperatorObj.Status.Conditions, unionCondition("Progressing", operatorv1.ConditionFalse, nil, currentDetailedStatus.Conditions...))
-	configv1helpers.SetStatusCondition(&clusterOperatorObj.Status.Conditions, unionCondition("Available", operatorv1.ConditionTrue, nil, currentDetailedStatus.Conditions...))
-	configv1helpers.SetStatusCondition(&clusterOperatorObj.Status.Conditions, unionCondition("Upgradeable", operatorv1.ConditionTrue, nil, currentDetailedStatus.Conditions...))
+	configv1helpers.SetStatusCondition(&clusterOperatorObj.Status.Conditions, UnionClusterCondition("Degraded", operatorv1.ConditionFalse, c.degradedInertia, currentDetailedStatus.Conditions...))
+	configv1helpers.SetStatusCondition(&clusterOperatorObj.Status.Conditions, UnionClusterCondition("Progressing", operatorv1.ConditionFalse, nil, currentDetailedStatus.Conditions...))
+	configv1helpers.SetStatusCondition(&clusterOperatorObj.Status.Conditions, UnionClusterCondition("Available", operatorv1.ConditionTrue, nil, currentDetailedStatus.Conditions...))
+	configv1helpers.SetStatusCondition(&clusterOperatorObj.Status.Conditions, UnionClusterCondition("Upgradeable", operatorv1.ConditionTrue, nil, currentDetailedStatus.Conditions...))
 
 	// TODO work out removal.  We don't always know the existing value, so removing early seems like a bad idea.  Perhaps a remove flag.
 	versions := c.versionGetter.GetVersions()
@@ -176,16 +176,6 @@ func (c StatusSyncer) Sync(ctx context.Context, syncCtx factory.SyncContext) err
 	}
 	syncCtx.Recorder().Eventf("OperatorStatusChanged", "Status for clusteroperator/%s changed: %s", c.clusterOperatorName, configv1helpers.GetStatusDiff(originalClusterOperatorObj.Status, clusterOperatorObj.Status))
 	return nil
-}
-
-func OperatorConditionToClusterOperatorCondition(condition operatorv1.OperatorCondition) configv1.ClusterOperatorStatusCondition {
-	return configv1.ClusterOperatorStatusCondition{
-		Type:               configv1.ClusterStatusConditionType(condition.Type),
-		Status:             configv1.ConditionStatus(condition.Status),
-		LastTransitionTime: condition.LastTransitionTime,
-		Reason:             condition.Reason,
-		Message:            condition.Message,
-	}
 }
 
 func (c *StatusSyncer) watchVersionGetterPostRunHook(ctx context.Context, syncCtx factory.SyncContext) error {

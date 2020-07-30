@@ -30,8 +30,9 @@ func NewStaticPodOperatorClient(config *rest.Config, gvr schema.GroupVersionReso
 
 	return &dynamicStaticPodOperatorClient{
 		dynamicOperatorClient: dynamicOperatorClient{
-			informer: informer,
-			client:   client,
+			configName: defaultConfigName,
+			informer:   informer,
+			client:     client,
 		},
 	}, informers, nil
 }
