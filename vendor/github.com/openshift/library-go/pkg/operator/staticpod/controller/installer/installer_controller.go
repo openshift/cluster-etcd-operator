@@ -19,7 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/informers"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 
@@ -323,7 +323,7 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 					c.eventRecorder.Eventf("NodeCurrentRevisionChanged", "Updated node %q from revision %d to %d because %s", currNodeState.NodeName,
 						currNodeState.CurrentRevision, newCurrNodeState.CurrentRevision, reason)
 				}
-				if err := c.updateRevisionStatus(ctx, newOperatorStatus, operatorSpec.LogLevel); err != nil {
+				if err := c.updateRevisionStatus(ctx, newOperatorStatus); err != nil {
 					klog.Errorf("error updating revision status configmap: %v", err)
 				}
 				return false, nil
@@ -372,7 +372,7 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 	return false, nil
 }
 
-func (c *InstallerController) updateRevisionStatus(ctx context.Context, operatorStatus *operatorv1.StaticPodOperatorStatus, logLevel operatorv1.LogLevel) error {
+func (c *InstallerController) updateRevisionStatus(ctx context.Context, operatorStatus *operatorv1.StaticPodOperatorStatus) error {
 	failedRevisions := make(map[int32]struct{})
 	currentRevisions := make(map[int32]struct{})
 	for _, nodeState := range operatorStatus.NodeStatuses {
@@ -380,17 +380,18 @@ func (c *InstallerController) updateRevisionStatus(ctx context.Context, operator
 		currentRevisions[nodeState.CurrentRevision] = struct{}{}
 	}
 	delete(failedRevisions, 0)
+
 	// If all current revisions point to the same revision, then mark it successful
 	if len(currentRevisions) == 1 {
-		err := c.updateConfigMapForRevision(ctx, currentRevisions, string(corev1.PodSucceeded), logLevel)
+		err := c.updateConfigMapForRevision(ctx, currentRevisions, string(corev1.PodSucceeded))
 		if err != nil {
 			return err
 		}
 	}
-	return c.updateConfigMapForRevision(ctx, failedRevisions, string(corev1.PodFailed), logLevel)
+	return c.updateConfigMapForRevision(ctx, failedRevisions, string(corev1.PodFailed))
 }
 
-func (c *InstallerController) updateConfigMapForRevision(ctx context.Context, currentRevisions map[int32]struct{}, status string, logLevel operatorv1.LogLevel) error {
+func (c *InstallerController) updateConfigMapForRevision(ctx context.Context, currentRevisions map[int32]struct{}, status string) error {
 	for currentRevision := range currentRevisions {
 		statusConfigMap, err := c.configMapsGetter.ConfigMaps(c.targetNamespace).Get(ctx, statusConfigMapNameForRevision(currentRevision), metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
@@ -400,10 +401,9 @@ func (c *InstallerController) updateConfigMapForRevision(ctx context.Context, cu
 		if err != nil {
 			return err
 		}
-		args := c.getInstallerArgs(currentRevision, logLevel)
+		args := c.getInstallerArgs(currentRevision, operatorv1.Normal)
 		statusConfigMap.Data["status"] = status
 		statusConfigMap.Data["installerArgs"] = strings.Join(args, "\n")
-
 		_, _, err = resourceapply.ApplyConfigMap(c.configMapsGetter, c.eventRecorder, statusConfigMap)
 		if err != nil {
 			return err
@@ -822,7 +822,7 @@ func (c InstallerController) Sync(ctx context.Context, syncCtx factory.SyncConte
 	if err == nil {
 		requeue, syncErr := c.manageInstallationPods(ctx, operatorSpec, operatorStatus, resourceVersion)
 		if requeue && syncErr == nil {
-			return fmt.Errorf("synthetic requeue request")
+			return factory.SyntheticRequeueError
 		}
 		err = syncErr
 	}

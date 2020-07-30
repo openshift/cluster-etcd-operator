@@ -10,7 +10,7 @@ import (
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	rbaclisterv1 "k8s.io/client-go/listers/rbac/v1"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 
@@ -27,8 +27,6 @@ import (
 const (
 	manifestDir = "pkg/operator/staticpod/controller/monitoring"
 )
-
-var syntheticRequeueError = fmt.Errorf("synthetic requeue request")
 
 type MonitoringResourceController struct {
 	targetNamespace          string
@@ -100,7 +98,7 @@ func (c MonitoringResourceController) sync(ctx context.Context, syncCtx factory.
 		// yet (the CRD is provided by prometheus operator). This produce noise and plenty of events.
 		if errors.IsNotFound(serviceMonitorErr) {
 			klog.V(4).Infof("Unable to apply service monitor: %v", err)
-			return syntheticRequeueError
+			return factory.SyntheticRequeueError
 		} else if serviceMonitorErr != nil {
 			errs = append(errs, serviceMonitorErr)
 		}

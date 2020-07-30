@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -150,7 +150,7 @@ func (c RevisionController) isLatestRevisionCurrent(revision int32) (bool, strin
 			existingData = existing.Data
 		}
 		if !equality.Semantic.DeepEqual(existingData, requiredData) {
-			if klog.V(4) {
+			if klog.V(4).Enabled() {
 				klog.Infof("configmap %q changes for revision %d: %s", cm.Name, revision, resourceapply.JSONPatchNoError(existing, required))
 			}
 			configChanges = append(configChanges, fmt.Sprintf("configmap/%s has changed", cm.Name))
@@ -177,7 +177,7 @@ func (c RevisionController) isLatestRevisionCurrent(revision int32) (bool, strin
 			existingData = existing.Data
 		}
 		if !equality.Semantic.DeepEqual(existingData, requiredData) {
-			if klog.V(4) {
+			if klog.V(4).Enabled() {
 				klog.Infof("Secret %q changes for revision %d: %s", s.Name, revision, resourceapply.JSONPatchSecretNoError(existing, required))
 			}
 			secretChanges = append(secretChanges, fmt.Sprintf("secret/%s has changed", s.Name))
@@ -304,15 +304,18 @@ func (c RevisionController) sync(ctx context.Context, syncCtx factory.SyncContex
 		}
 		if latestRevision != 0 {
 			// Then make sure that revision number is what's in the operator status
-			_, _, err = c.operatorClient.UpdateLatestRevisionOperatorStatus(latestRevision)
-			// If we made a change return and requeue with the correct status
-			return fmt.Errorf("synthetic requeue request (err: %v)", err)
+			_, _, err := c.operatorClient.UpdateLatestRevisionOperatorStatus(latestRevision)
+			if err != nil {
+				return err
+			}
+			// regardless of whether we made a change, requeue to rerun the sync with updated status
+			return factory.SyntheticRequeueError
 		}
 	}
 
 	requeue, syncErr := c.createRevisionIfNeeded(syncCtx.Recorder(), latestAvailableRevision, resourceVersion)
 	if requeue && syncErr == nil {
-		return fmt.Errorf("synthetic requeue request (err: %v)", syncErr)
+		return factory.SyntheticRequeueError
 	}
 	err = syncErr
 

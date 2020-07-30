@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	"github.com/openshift/library-go/pkg/controller/factory"
 )

@@ -15,14 +15,23 @@ type LogLevelController struct {
 	// for unit tests only
 	setLogLevelFn func(operatorv1.LogLevel) error
 	getLogLevelFn func() (operatorv1.LogLevel, bool)
+
+	defaultLogLevel operatorv1.LogLevel
 }
 
-// sets the klog level based on desired state
+// NewClusterOperatorLoggingController sets a klog level for the operator based on the operator config.
+// If the loglevel is not set the default "Normal" level will be used.
 func NewClusterOperatorLoggingController(operatorClient operatorv1helpers.OperatorClient, recorder events.Recorder) factory.Controller {
+	return NewClusterOperatorLoggingControllerWithLogLevel(operatorClient, operatorv1.Normal, recorder)
+}
+
+// NewClusterOperatorLoggingControllerWithLogLevel sets a klog level for the operator based on the operator config, using the given default log level if the operator config does not specify anything
+func NewClusterOperatorLoggingControllerWithLogLevel(operatorClient operatorv1helpers.OperatorClient, defaultLogLevel operatorv1.LogLevel, recorder events.Recorder) factory.Controller {
 	c := &LogLevelController{
-		operatorClient: operatorClient,
-		setLogLevelFn:  SetLogLEvel,
-		getLogLevelFn:  GetLogLevel,
+		operatorClient:  operatorClient,
+		setLogLevelFn:   SetLogLEvel,
+		getLogLevelFn:   GetLogLevel,
+		defaultLogLevel: defaultLogLevel,
 	}
 	return factory.New().WithInformers(operatorClient.Informer()).WithSync(c.sync).ToController("LoggingSyncer", recorder)
 }
@@ -38,10 +47,8 @@ func (c LogLevelController) sync(ctx context.Context, syncCtx factory.SyncContex
 	currentLogLevel, isUnknown := c.getLogLevelFn()
 	desiredLogLevel := detailedSpec.OperatorLogLevel
 
-	// if operator operatorSpec OperatorLogLevel is empty, default to "Normal"
-	// TODO: This should be probably done by defaulting the CR field?
 	if len(desiredLogLevel) == 0 {
-		desiredLogLevel = operatorv1.Normal
+		desiredLogLevel = c.defaultLogLevel
 	}
 
 	// correct log level is set and it matches the expected log level from operator operatorSpec, do nothing.
