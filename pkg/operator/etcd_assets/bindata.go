@@ -513,8 +513,6 @@ ${COMPUTED_ENV_VARS}
       securityContext:
         privileged: true
       volumeMounts:
-        - mountPath: /etc/kubernetes/etcd-backup-dir
-          name: etcd-backup-dir
         - mountPath: /etc/kubernetes/static-pod-resources
           name: resource-dir
         - mountPath: /etc/kubernetes/static-pod-certs
@@ -539,8 +537,6 @@ ${COMPUTED_ENV_VARS}
     volumeMounts:
       - mountPath: /etc/kubernetes/manifests
         name: static-pod-dir
-      - mountPath: /etc/kubernetes/etcd-backup-dir
-        name: etcd-backup-dir
       - mountPath: /etc/kubernetes/static-pod-resources
         name: resource-dir
       - mountPath: /etc/kubernetes/static-pod-certs
@@ -574,10 +570,6 @@ ${COMPUTED_ENV_VARS}
           --target-name=NODE_NAME)
          export ETCD_INITIAL_CLUSTER
 
-        # at this point we know this member is added.  To support a transition, we must remove the old etcd pod.
-        # move it somewhere safe so we can retrieve it again later if something goes badly.
-        mv /etc/kubernetes/manifests/etcd-member.yaml /etc/kubernetes/etcd-backup-dir || true
-
         # we cannot use the "normal" port conflict initcontainer because when we upgrade, the existing static pod will never yield,
         # so we do the detection in etcd container itsefl.
         echo -n "Waiting for ports 2379, 2380 and 9978 to be released."
@@ -603,7 +595,7 @@ ${COMPUTED_ENV_VARS}
           --advertise-client-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2379 \
           --listen-client-urls=https://${LISTEN_ON_ALL_IPS}:2379 \
           --listen-peer-urls=https://${LISTEN_ON_ALL_IPS}:2380 \
-          --listen-metrics-urls=https://${LISTEN_ON_ALL_IPS}:9978 ||  mv /etc/kubernetes/etcd-backup-dir/etcd-member.yaml /etc/kubernetes/manifests
+          --listen-metrics-urls=https://${LISTEN_ON_ALL_IPS}:9978
     env:
 ${COMPUTED_ENV_VARS}
     resources:
@@ -626,8 +618,6 @@ ${COMPUTED_ENV_VARS}
     volumeMounts:
       - mountPath: /etc/kubernetes/manifests
         name: static-pod-dir
-      - mountPath: /etc/kubernetes/etcd-backup-dir
-        name: etcd-backup-dir
       - mountPath: /etc/kubernetes/static-pod-resources
         name: resource-dir
       - mountPath: /etc/kubernetes/static-pod-certs
@@ -680,9 +670,6 @@ ${COMPUTED_ENV_VARS}
     - hostPath:
         path: /etc/kubernetes/manifests
       name: static-pod-dir
-    - hostPath:
-        path: /etc/kubernetes/static-pod-resources/etcd-member
-      name: etcd-backup-dir
     - hostPath:
         path: /etc/kubernetes/static-pod-resources/etcd-pod-REVISION
       name: resource-dir
@@ -815,7 +802,7 @@ spec:
           --advertise-client-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2379 \
           --listen-client-urls=https://${LISTEN_ON_ALL_IPS}:2379 \
           --listen-peer-urls=https://${LISTEN_ON_ALL_IPS}:2380 \
-          --listen-metrics-urls=https://${LISTEN_ON_ALL_IPS}:9978 ||  mv /etc/kubernetes/etcd-backup-dir/etcd-member.yaml /etc/kubernetes/manifests
+          --listen-metrics-urls=https://${LISTEN_ON_ALL_IPS}:9978 
     env:
 ${COMPUTED_ENV_VARS}
     resources:
@@ -838,8 +825,6 @@ ${COMPUTED_ENV_VARS}
     volumeMounts:
       - mountPath: /etc/kubernetes/manifests
         name: static-pod-dir
-      - mountPath: /etc/kubernetes/etcd-backup-dir
-        name: etcd-backup-dir
       - mountPath: /etc/kubernetes/static-pod-certs
         name: cert-dir
       - mountPath: /var/lib/etcd/
@@ -854,9 +839,6 @@ ${COMPUTED_ENV_VARS}
     - hostPath:
         path: /etc/kubernetes/manifests
       name: static-pod-dir
-    - hostPath:
-        path: /etc/kubernetes/static-pod-resources/etcd-member
-      name: etcd-backup-dir
     - hostPath:
         path: /etc/kubernetes/static-pod-resources/etcd-certs
       name: cert-dir
