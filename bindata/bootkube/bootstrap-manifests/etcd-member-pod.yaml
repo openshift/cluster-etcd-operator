@@ -6,58 +6,6 @@ metadata:
   labels:
     k8s-app: etcd
 spec:
-  initContainers:
-  - name: certs
-    image: "{{.Images.KubeClientAgent}}"
-    command:
-    - /bin/sh
-    - -c
-    - |
-      #!/bin/sh
-      set -euxo pipefail
-
-      [ -e /etc/ssl/etcd/system:etcd-server:{{ .Hostname }}.crt -a \
-        -e /etc/ssl/etcd/system:etcd-server:{{ .Hostname }}.key ] || \
-        kube-client-agent \
-          request \
-            --kubeconfig=/etc/kubernetes/kubeconfig \
-            --orgname=system:etcd-servers \
-            --assetsdir=/etc/ssl/etcd \
-            --dnsnames={{.EtcdServerCertDNSNames}} \
-            --commonname=system:etcd-server:{{ .Hostname }} \
-            --ipaddrs={{ .EtcdAddress.EscapedBootstrapIP }},{{ .EtcdAddress.LocalHost }} \
-
-      [ -e /etc/ssl/etcd/system:etcd-peer:{{ .Hostname }}.crt -a \
-        -e /etc/ssl/etcd/system:etcd-peer:{{ .Hostname }}.key ] || \
-        kube-client-agent \
-          request \
-            --kubeconfig=/etc/kubernetes/kubeconfig \
-            --orgname=system:etcd-peers \
-            --assetsdir=/etc/ssl/etcd \
-            --dnsnames={{.EtcdPeerCertDNSNames}} \
-            --commonname=system:etcd-peer:{{ .Hostname }} \
-            --ipaddrs={{ .EtcdAddress.EscapedBootstrapIP }} \
-
-      [ -e /etc/ssl/etcd/system:etcd-metric:{{ .Hostname }}.crt -a \
-        -e /etc/ssl/etcd/system:etcd-metric:{{ .Hostname }}.key ] || \
-        kube-client-agent \
-          request \
-            --kubeconfig=/etc/kubernetes/kubeconfig \
-            --orgname=system:etcd-metrics \
-            --assetsdir=/etc/ssl/etcd \
-            --dnsnames={{.EtcdServerCertDNSNames}} \
-            --commonname=system:etcd-metric:{{ .Hostname }} \
-            --ipaddrs={{ .EtcdAddress.EscapedBootstrapIP }} \
-    terminationMessagePolicy: FallbackToLogsOnError
-    securityContext:
-      privileged: true
-    volumeMounts:
-    - name: discovery
-      mountPath: /run/etcd/
-    - name: certs
-      mountPath: /etc/ssl/etcd/
-    - name: kubeconfig
-      mountPath: /etc/kubernetes/kubeconfig
   containers:
   - name: etcd-member
     image: {{ .Images.Etcd }}
@@ -70,13 +18,13 @@ spec:
 
       exec etcd \
         --initial-advertise-peer-urls=https://{{ .EtcdAddress.EscapedBootstrapIP }}:2380 \
-        --cert-file=/etc/ssl/etcd/system:etcd-server:{{ .Hostname }}.crt \
-        --key-file=/etc/ssl/etcd/system:etcd-server:{{ .Hostname }}.key \
-        --trusted-ca-file=/etc/ssl/etcd/ca.crt \
+        --cert-file=/etc/ssl/etcd/etcd-all-serving/etcd-serving-{{ .Hostname }}.crt \
+        --key-file=/etc/ssl/etcd/etcd-all-serving/etcd-serving-{{ .Hostname }}.key \
+        --trusted-ca-file=/etc/openshift-tls/etcd-ca-bundle.crt \
         --client-cert-auth=true \
-        --peer-cert-file=/etc/ssl/etcd/system:etcd-peer:{{ .Hostname }}.crt \
-        --peer-key-file=/etc/ssl/etcd/system:etcd-peer:{{ .Hostname }}.key \
-        --peer-trusted-ca-file=/etc/ssl/etcd/ca.crt \
+        --peer-cert-file=/etc/ssl/etcd/etcd-all-peer/etcd-peer-{{ .Hostname }}.crt \
+        --peer-key-file=/etc/ssl/etcd/etcd-all-peer/etcd-peer-{{ .Hostname }}.key \
+        --peer-trusted-ca-file=/etc/openshift-tls/etcd-ca-bundle.crt \
         --peer-client-cert-auth=true \
         --advertise-client-urls=https://{{ .EtcdAddress.EscapedBootstrapIP }}:2379 \
         --listen-client-urls=https://{{ .EtcdAddress.ListenClient }} \
@@ -94,6 +42,8 @@ spec:
       mountPath: /run/etcd/
     - name: certs
       mountPath: /etc/ssl/etcd/
+    - name: openshift-tls
+      mountPath: /etc/openshift-tls
     - name: data-dir
       mountPath: /var/lib/etcd/
     - name: conf
@@ -108,49 +58,20 @@ spec:
     - name: server
       containerPort: 2379
       protocol: TCP
-  - name: etcd-metrics
-    image: {{ .Images.Etcd }}
-    command:
-    - /bin/sh
-    - -c
-    - |
-      #!/bin/sh
-      set -euo pipefail
-
-      exec etcd grpc-proxy start \
-        --endpoints https://{{ .EtcdAddress.EscapedBootstrapIP }}:9978 \
-        --metrics-addr https://{{ .EtcdAddress.ListenMetricProxy }}\
-        --listen-addr {{ .EtcdAddress.LocalHost }}:9977 \
-        --key /etc/ssl/etcd/system:etcd-peer:{{ .Hostname }}.key \
-        --key-file /etc/ssl/etcd/system:etcd-metric:{{ .Hostname }}.key \
-        --cert /etc/ssl/etcd/system:etcd-peer:{{ .Hostname }}.crt \
-        --cert-file /etc/ssl/etcd/system:etcd-metric:{{ .Hostname }}.crt \
-        --cacert /etc/ssl/etcd/ca.crt \
-        --trusted-ca-file /etc/ssl/etcd/metric-ca.crt \
-    resources:
-      requests:
-        cpu: 5m
-    terminationMessagePolicy: FallbackToLogsOnError
-    securityContext:
-      privileged: true
-    volumeMounts:
-    - name: discovery
-      mountPath: /run/etcd/
-    - name: certs
-      mountPath: /etc/ssl/etcd/
-    ports:
-    - name: metric
-      containerPort: 9979
-      protocol: TCP
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
   - operator: "Exists"
   restartPolicy: Always
   volumes:
+  # TODO: update installer to copy the certs into /etc/kubernetes/static-pod-resources/etcd-member
   - name: certs
     hostPath:
-      path: /etc/kubernetes/static-pod-resources/etcd-member
+      path: /opt/openshift/etcd-bootstrap/bootstrap-manifests/secrets
+  # TODO: update installer to copy the ca into /etc/kubernetes/static-pod-resources/etcd-member
+  - name: openshift-tls
+    hostPath:
+      path: /opt/openshift/tls
   - name: kubeconfig
     hostPath:
       path: /etc/kubernetes/kubeconfig
