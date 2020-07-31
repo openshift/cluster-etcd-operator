@@ -4,7 +4,7 @@ import (
 	"flag"
 	"fmt"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 )
@@ -33,13 +33,13 @@ var verbosityFn = klog.V
 // We can use flags here as well, but this is less ugly ano more programmatically correct than flags.
 func GetLogLevel() (operatorv1.LogLevel, bool) {
 	switch {
-	case verbosityFn(8) == true:
+	case verbosityFn(8).Enabled():
 		return operatorv1.TraceAll, false
-	case verbosityFn(6) == true:
+	case verbosityFn(6).Enabled():
 		return operatorv1.Trace, false
-	case verbosityFn(4) == true:
+	case verbosityFn(4).Enabled():
 		return operatorv1.Debug, false
-	case verbosityFn(2) == true:
+	case verbosityFn(2).Enabled():
 		return operatorv1.Normal, false
 	default:
 		// this is the default log level that will be set if the operator operatorSpec does not specify one (2).

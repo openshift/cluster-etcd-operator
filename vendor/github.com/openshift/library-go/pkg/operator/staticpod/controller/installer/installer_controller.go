@@ -19,7 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/informers"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 
@@ -817,7 +817,7 @@ func (c InstallerController) Sync(ctx context.Context, syncCtx factory.SyncConte
 	if err == nil {
 		requeue, syncErr := c.manageInstallationPods(ctx, operatorSpec, operatorStatus, resourceVersion)
 		if requeue && syncErr == nil {
-			return fmt.Errorf("synthetic requeue request")
+			return factory.SyntheticRequeueError
 		}
 		err = syncErr
 	}
