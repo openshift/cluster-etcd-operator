@@ -20,11 +20,11 @@ spec:
         --initial-advertise-peer-urls=https://{{ .EtcdAddress.EscapedBootstrapIP }}:2380 \
         --cert-file=/etc/ssl/etcd/etcd-all-serving/etcd-serving-{{ .Hostname }}.crt \
         --key-file=/etc/ssl/etcd/etcd-all-serving/etcd-serving-{{ .Hostname }}.key \
-        --trusted-ca-file=/etc/openshift-tls/etcd-ca-bundle.crt \
+        --trusted-ca-file=/etc/ssl/etcd/ca.crt \
         --client-cert-auth=true \
         --peer-cert-file=/etc/ssl/etcd/etcd-all-peer/etcd-peer-{{ .Hostname }}.crt \
         --peer-key-file=/etc/ssl/etcd/etcd-all-peer/etcd-peer-{{ .Hostname }}.key \
-        --peer-trusted-ca-file=/etc/openshift-tls/etcd-ca-bundle.crt \
+        --peer-trusted-ca-file=/etc/ssl/etcd/ca.crt \
         --peer-client-cert-auth=true \
         --advertise-client-urls=https://{{ .EtcdAddress.EscapedBootstrapIP }}:2379 \
         --listen-client-urls=https://{{ .EtcdAddress.ListenClient }} \
@@ -42,8 +42,6 @@ spec:
       mountPath: /run/etcd/
     - name: certs
       mountPath: /etc/ssl/etcd/
-    - name: openshift-tls
-      mountPath: /etc/openshift-tls
     - name: data-dir
       mountPath: /var/lib/etcd/
     - name: conf
@@ -64,14 +62,9 @@ spec:
   - operator: "Exists"
   restartPolicy: Always
   volumes:
-  # TODO: update installer to copy the certs into /etc/kubernetes/static-pod-resources/etcd-member
   - name: certs
     hostPath:
-      path: /opt/openshift/etcd-bootstrap/bootstrap-manifests/secrets
-  # TODO: update installer to copy the ca into /etc/kubernetes/static-pod-resources/etcd-member
-  - name: openshift-tls
-    hostPath:
-      path: /opt/openshift/tls
+      path: /etc/kubernetes/static-pod-resources/etcd-member
   - name: kubeconfig
     hostPath:
       path: /etc/kubernetes/kubeconfig

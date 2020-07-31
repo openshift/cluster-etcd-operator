@@ -38,7 +38,6 @@ type renderOpts struct {
 	errOut                   io.Writer
 	etcdCAFile               string
 	etcdCAKeyFile            string
-	unusedEtcdMetricCAFile   string
 	etcdDiscoveryDomain      string
 	etcdImage                string
 	clusterEtcdOperatorImage string
@@ -125,10 +124,8 @@ func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
 	r.manifest.AddFlags(fs, "etcd")
 	r.generic.AddFlags(fs)
 
-	fs.StringVar(&r.etcdCAFile, "etcd-ca", r.etcdCAFile, "path to etcd CA certificate")
+	fs.StringVar(&r.etcdCAFile, "etcd-ca", "/assets/tls/etcd-ca-bundle.crt", "path to etcd CA certificate")
 	fs.StringVar(&r.etcdCAKeyFile, "etcd-ca-key", "/assets/tls/etcd-signer.key", "path to etcd CA certificate key")
-	// deprecated
-	fs.StringVar(&r.unusedEtcdMetricCAFile, "etcd-metric-ca", r.unusedEtcdMetricCAFile, "path to etcd metric CA certificate")
 	fs.StringVar(&r.etcdImage, "manifest-etcd-image", r.etcdImage, "etcd manifest image")
 	fs.StringVar(&r.clusterEtcdOperatorImage, "manifest-cluster-etcd-operator-image", r.clusterEtcdOperatorImage, "cluster-etcd-operator manifest image")
 	fs.StringVar(&r.kubeClientAgentImage, "manifest-kube-client-agent-image", r.kubeClientAgentImage, "kube-client-agent manifest image")
