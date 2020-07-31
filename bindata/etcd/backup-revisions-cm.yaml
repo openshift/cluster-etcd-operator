@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: openshift-etcd-operator
+  name: backup-revisions
+data:
+  etcd:
+  kubeControllerManager:
+  kubeAPIServer:
+  kubeScheduler:

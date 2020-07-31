@@ -1,5 +1,8 @@
 // Code generated for package etcd_assets by go-bindata DO NOT EDIT. (@generated)
 // sources:
+// bindata/etcd/backup-pod-cm.yaml
+// bindata/etcd/backup-pod.yaml
+// bindata/etcd/backup-revisions-cm.yaml
 // bindata/etcd/cluster-backup.sh
 // bindata/etcd/cluster-restore.sh
 // bindata/etcd/cm.yaml
@@ -64,6 +67,287 @@ func (fi bindataFileInfo) IsDir() bool {
 // Sys return file is sys mode
 func (fi bindataFileInfo) Sys() interface{} {
 	return nil
+}
+
+var _etcdBackupPodCmYaml = []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: openshift-etcd-operator
+  name: cluster-backup-pod
+data:
+  pod.yaml:
+`)
+
+func etcdBackupPodCmYamlBytes() ([]byte, error) {
+	return _etcdBackupPodCmYaml, nil
+}
+
+func etcdBackupPodCmYaml() (*asset, error) {
+	bytes, err := etcdBackupPodCmYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "etcd/backup-pod-cm.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
+var _etcdBackupPodYaml = []byte(`apiVersion: v1
+kind: Pod
+metadata:
+  namespace: openshift-etcd
+  name: cluster-backup
+  labels:
+    app: cluster-backup
+spec:
+  hostNetwork: true
+  nodeSelector:
+    node-role.kubernetes.io/master: ""
+  tolerations:
+    - key: node-role.kubernetes.io/master
+      effect: NoSchedule
+      operator: Exists
+    - key: node.kubernetes.io/not-ready
+      effect: NoExecute
+      operator: Exists
+      tolerationSeconds: 120
+    - key: node.kubernetes.io/unreachable
+      effect: NoExecute
+      operator: Exists
+      tolerationSeconds: 120
+    - key: node-role.kubernetes.io/etcd
+      operator: Exists
+      effect: NoSchedule
+  serviceAccountName: installer-sa
+  initContainers:
+    - name: backup-init
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      command:
+      - cluster-etcd-operator
+      - backup-init
+      env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+      volumeMounts:
+        - mountPath: /backup/
+          name: backup
+        - mountPath: /var/run/configmaps/etcd-ca
+          name: etcd-ca
+        - mountPath: /var/run/secrets/etcd-client
+          name: etcd-client
+      resources:
+        requests:
+          memory: 200M
+          cpu: 150m
+        limits:
+          memory: 200M
+          cpu: 150m
+    - name: backup-etcd-resources
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      command:
+      - cluster-etcd-operator
+      - installer
+      env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+      volumeMounts:
+        - mountPath: /etc/kubernetes/
+          name: etc-kubernetes
+      resources:
+        requests:
+          memory: 200M
+          cpu: 150m
+        limits:
+          memory: 200M
+          cpu: 150m
+    - name: backup-kas-resources
+      image: ${IMAGE}
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      command:
+      - cluster-etcd-operator
+      - installer
+      env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+      volumeMounts:
+        - mountPath: /etc/kubernetes/
+          name: etc-kubernetes
+      resources:
+        requests:
+          memory: 200M
+          cpu: 150m
+        limits:
+          memory: 200M
+          cpu: 150m
+    - name: backup-kcm-resources
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      command:
+      - cluster-etcd-operator
+      - installer
+      env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+      volumeMounts:
+        - mountPath: /etc/kubernetes/
+          name: etc-kubernetes
+      resources:
+        requests:
+          memory: 200M
+          cpu: 150m
+        limits:
+          memory: 200M
+          cpu: 150m
+    - name: backup-ks-resources
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      command:
+      - cluster-etcd-operator
+      - installer
+      env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+      volumeMounts:
+        - mountPath: /etc/kubernetes/
+          name: etc-kubernetes
+      resources:
+        requests:
+          memory: 200M
+          cpu: 150m
+        limits:
+          memory: 200M
+          cpu: 150m
+    - name: backup-create
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      command:
+      - cluster-etcd-operator
+      - backup-create
+      env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+      volumeMounts:
+        - mountPath: /etc/kubernetes/
+          name: etc-kubernetes
+        - mountPath: /backup/
+          name: backup
+      resources:
+        requests:
+          memory: 200M
+          cpu: 150m
+        limits:
+          memory: 200M
+          cpu: 150m
+
+  containers:
+      - name: cluster-backup
+        imagePullPolicy: IfNotPresent
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - mountPath: /etc/kubernetes/
+          name: etc-kubernetes
+        - mountPath: /backup/
+          name: backup
+        command:
+        - "/bin/bash"
+        - "-c"
+        - "trap TERM INT; sleep infinity & wait"
+  priorityClassName: system-node-critical
+  tolerations:
+  - operator: "Exists"
+  volumes:
+    - name: backup
+      emptyDir: {}
+    - name: etc-kubernetes
+      emptyDir: {}
+    - name: etcd-ca
+      configMap:
+        name: etcd-ca-bundle
+    - name: etcd-client
+      secret:
+        secretName: etcd-client
+`)
+
+func etcdBackupPodYamlBytes() ([]byte, error) {
+	return _etcdBackupPodYaml, nil
+}
+
+func etcdBackupPodYaml() (*asset, error) {
+	bytes, err := etcdBackupPodYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "etcd/backup-pod.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
+var _etcdBackupRevisionsCmYaml = []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: openshift-etcd-operator
+  name: backup-revisions
+data:
+  etcd:
+  kubeControllerManager:
+  kubeAPIServer:
+  kubeScheduler:
+`)
+
+func etcdBackupRevisionsCmYamlBytes() ([]byte, error) {
+	return _etcdBackupRevisionsCmYaml, nil
+}
+
+func etcdBackupRevisionsCmYaml() (*asset, error) {
+	bytes, err := etcdBackupRevisionsCmYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "etcd/backup-revisions-cm.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
 }
 
 var _etcdClusterBackupSh = []byte(`#!/usr/bin/env bash
@@ -1026,19 +1310,22 @@ func AssetNames() []string {
 
 // _bindata is a table, holding each asset generator, mapped to its name.
 var _bindata = map[string]func() (*asset, error){
-	"etcd/cluster-backup.sh":   etcdClusterBackupSh,
-	"etcd/cluster-restore.sh":  etcdClusterRestoreSh,
-	"etcd/cm.yaml":             etcdCmYaml,
-	"etcd/defaultconfig.yaml":  etcdDefaultconfigYaml,
-	"etcd/etcd-common-tools":   etcdEtcdCommonTools,
-	"etcd/ns.yaml":             etcdNsYaml,
-	"etcd/pod-cm.yaml":         etcdPodCmYaml,
-	"etcd/pod.yaml":            etcdPodYaml,
-	"etcd/restore-pod-cm.yaml": etcdRestorePodCmYaml,
-	"etcd/restore-pod.yaml":    etcdRestorePodYaml,
-	"etcd/sa.yaml":             etcdSaYaml,
-	"etcd/scripts-cm.yaml":     etcdScriptsCmYaml,
-	"etcd/svc.yaml":            etcdSvcYaml,
+	"etcd/backup-pod-cm.yaml":       etcdBackupPodCmYaml,
+	"etcd/backup-pod.yaml":          etcdBackupPodYaml,
+	"etcd/backup-revisions-cm.yaml": etcdBackupRevisionsCmYaml,
+	"etcd/cluster-backup.sh":        etcdClusterBackupSh,
+	"etcd/cluster-restore.sh":       etcdClusterRestoreSh,
+	"etcd/cm.yaml":                  etcdCmYaml,
+	"etcd/defaultconfig.yaml":       etcdDefaultconfigYaml,
+	"etcd/etcd-common-tools":        etcdEtcdCommonTools,
+	"etcd/ns.yaml":                  etcdNsYaml,
+	"etcd/pod-cm.yaml":              etcdPodCmYaml,
+	"etcd/pod.yaml":                 etcdPodYaml,
+	"etcd/restore-pod-cm.yaml":      etcdRestorePodCmYaml,
+	"etcd/restore-pod.yaml":         etcdRestorePodYaml,
+	"etcd/sa.yaml":                  etcdSaYaml,
+	"etcd/scripts-cm.yaml":          etcdScriptsCmYaml,
+	"etcd/svc.yaml":                 etcdSvcYaml,
 }
 
 // AssetDir returns the file names below a certain
@@ -1083,19 +1370,22 @@ type bintree struct {
 
 var _bintree = &bintree{nil, map[string]*bintree{
 	"etcd": {nil, map[string]*bintree{
-		"cluster-backup.sh":   {etcdClusterBackupSh, map[string]*bintree{}},
-		"cluster-restore.sh":  {etcdClusterRestoreSh, map[string]*bintree{}},
-		"cm.yaml":             {etcdCmYaml, map[string]*bintree{}},
-		"defaultconfig.yaml":  {etcdDefaultconfigYaml, map[string]*bintree{}},
-		"etcd-common-tools":   {etcdEtcdCommonTools, map[string]*bintree{}},
-		"ns.yaml":             {etcdNsYaml, map[string]*bintree{}},
-		"pod-cm.yaml":         {etcdPodCmYaml, map[string]*bintree{}},
-		"pod.yaml":            {etcdPodYaml, map[string]*bintree{}},
-		"restore-pod-cm.yaml": {etcdRestorePodCmYaml, map[string]*bintree{}},
-		"restore-pod.yaml":    {etcdRestorePodYaml, map[string]*bintree{}},
-		"sa.yaml":             {etcdSaYaml, map[string]*bintree{}},
-		"scripts-cm.yaml":     {etcdScriptsCmYaml, map[string]*bintree{}},
-		"svc.yaml":            {etcdSvcYaml, map[string]*bintree{}},
+		"backup-pod-cm.yaml":       {etcdBackupPodCmYaml, map[string]*bintree{}},
+		"backup-pod.yaml":          {etcdBackupPodYaml, map[string]*bintree{}},
+		"backup-revisions-cm.yaml": {etcdBackupRevisionsCmYaml, map[string]*bintree{}},
+		"cluster-backup.sh":        {etcdClusterBackupSh, map[string]*bintree{}},
+		"cluster-restore.sh":       {etcdClusterRestoreSh, map[string]*bintree{}},
+		"cm.yaml":                  {etcdCmYaml, map[string]*bintree{}},
+		"defaultconfig.yaml":       {etcdDefaultconfigYaml, map[string]*bintree{}},
+		"etcd-common-tools":        {etcdEtcdCommonTools, map[string]*bintree{}},
+		"ns.yaml":                  {etcdNsYaml, map[string]*bintree{}},
+		"pod-cm.yaml":              {etcdPodCmYaml, map[string]*bintree{}},
+		"pod.yaml":                 {etcdPodYaml, map[string]*bintree{}},
+		"restore-pod-cm.yaml":      {etcdRestorePodCmYaml, map[string]*bintree{}},
+		"restore-pod.yaml":         {etcdRestorePodYaml, map[string]*bintree{}},
+		"sa.yaml":                  {etcdSaYaml, map[string]*bintree{}},
+		"scripts-cm.yaml":          {etcdScriptsCmYaml, map[string]*bintree{}},
+		"svc.yaml":                 {etcdSvcYaml, map[string]*bintree{}},
 	}},
 }}
 

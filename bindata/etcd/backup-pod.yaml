@@ -1,0 +1,213 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  namespace: openshift-etcd
+  name: cluster-backup
+  labels:
+    app: cluster-backup
+spec:
+  hostNetwork: true
+  nodeSelector:
+    node-role.kubernetes.io/master: ""
+  tolerations:
+    - key: node-role.kubernetes.io/master
+      effect: NoSchedule
+      operator: Exists
+    - key: node.kubernetes.io/not-ready
+      effect: NoExecute
+      operator: Exists
+      tolerationSeconds: 120
+    - key: node.kubernetes.io/unreachable
+      effect: NoExecute
+      operator: Exists
+      tolerationSeconds: 120
+    - key: node-role.kubernetes.io/etcd
+      operator: Exists
+      effect: NoSchedule
+  serviceAccountName: installer-sa
+  initContainers:
+    - name: backup-init
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      command:
+      - cluster-etcd-operator
+      - backup-init
+      env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+      volumeMounts:
+        - mountPath: /backup/
+          name: backup
+        - mountPath: /var/run/configmaps/etcd-ca
+          name: etcd-ca
+        - mountPath: /var/run/secrets/etcd-client
+          name: etcd-client
+      resources:
+        requests:
+          memory: 200M
+          cpu: 150m
+        limits:
+          memory: 200M
+          cpu: 150m
+    - name: backup-etcd-resources
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      command:
+      - cluster-etcd-operator
+      - installer
+      env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+      volumeMounts:
+        - mountPath: /etc/kubernetes/
+          name: etc-kubernetes
+      resources:
+        requests:
+          memory: 200M
+          cpu: 150m
+        limits:
+          memory: 200M
+          cpu: 150m
+    - name: backup-kas-resources
+      image: ${IMAGE}
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      command:
+      - cluster-etcd-operator
+      - installer
+      env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+      volumeMounts:
+        - mountPath: /etc/kubernetes/
+          name: etc-kubernetes
+      resources:
+        requests:
+          memory: 200M
+          cpu: 150m
+        limits:
+          memory: 200M
+          cpu: 150m
+    - name: backup-kcm-resources
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      command:
+      - cluster-etcd-operator
+      - installer
+      env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+      volumeMounts:
+        - mountPath: /etc/kubernetes/
+          name: etc-kubernetes
+      resources:
+        requests:
+          memory: 200M
+          cpu: 150m
+        limits:
+          memory: 200M
+          cpu: 150m
+    - name: backup-ks-resources
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      command:
+      - cluster-etcd-operator
+      - installer
+      env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+      volumeMounts:
+        - mountPath: /etc/kubernetes/
+          name: etc-kubernetes
+      resources:
+        requests:
+          memory: 200M
+          cpu: 150m
+        limits:
+          memory: 200M
+          cpu: 150m
+    - name: backup-create
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      command:
+      - cluster-etcd-operator
+      - backup-create
+      env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+      volumeMounts:
+        - mountPath: /etc/kubernetes/
+          name: etc-kubernetes
+        - mountPath: /backup/
+          name: backup
+      resources:
+        requests:
+          memory: 200M
+          cpu: 150m
+        limits:
+          memory: 200M
+          cpu: 150m
+
+  containers:
+      - name: cluster-backup
+        imagePullPolicy: IfNotPresent
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - mountPath: /etc/kubernetes/
+          name: etc-kubernetes
+        - mountPath: /backup/
+          name: backup
+        command:
+        - "/bin/bash"
+        - "-c"
+        - "trap TERM INT; sleep infinity & wait"
+  priorityClassName: system-node-critical
+  tolerations:
+  - operator: "Exists"
+  volumes:
+    - name: backup
+      emptyDir: {}
+    - name: etc-kubernetes
+      emptyDir: {}
+    - name: etcd-ca
+      configMap:
+        name: etcd-ca-bundle
+    - name: etcd-client
+      secret:
+        secretName: etcd-client

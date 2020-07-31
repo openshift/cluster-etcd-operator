@@ -14,12 +14,13 @@ import (
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
+	operatorv1client "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
+
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/staticpod"
-	"github.com/openshift/library-go/pkg/operator/staticpod/controller/revision"
 	"github.com/openshift/library-go/pkg/operator/staticresourcecontroller"
 	"github.com/openshift/library-go/pkg/operator/status"
 	"github.com/openshift/library-go/pkg/operator/unsupportedconfigoverridescontroller"
@@ -27,7 +28,9 @@ import (
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/backupconfigcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
+
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
@@ -40,6 +43,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/resources/etcd"
 )
 
 func RunOperator(ctx context.Context, controllerContext *controllercmd.ControllerContext) error {
@@ -49,6 +53,10 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return err
 	}
 	operatorConfigClient, err := operatorversionedclient.NewForConfig(controllerContext.KubeConfig)
+	if err != nil {
+		return err
+	}
+	operatorV1Client, err := operatorv1client.NewForConfig(controllerContext.KubeConfig)
 	if err != nil {
 		return err
 	}
@@ -71,7 +79,9 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorclient.TargetNamespace,
 		operatorclient.OperatorNamespace,
 		"kube-system",
-		"openshift-machine-config-operator", // TODO remove after quorum-guard is removed from MCO
+		"openshift-kube-apiserver",
+		"openshift-kube-controller-manager",
+		"openshift-kube-scheduler",
 	)
 	configInformers := configv1informers.NewSharedInformerFactory(configClient, 10*time.Minute)
 	operatorClient, dynamicInformers, err := genericoperatorclient.NewStaticPodOperatorClient(controllerContext.KubeConfig, operatorv1.GroupVersion.WithResource("etcds"))
@@ -133,6 +143,15 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		configInformers.Config().V1().Networks(),
 		kubeClient,
 		envVarController,
+		controllerContext.EventRecorder,
+	)
+
+	backupConfigReconciler := backupconfigcontroller.NewBackupConfigController(
+		os.Getenv("OPERATOR_IMAGE"),
+		operatorClient,
+		operatorV1Client,
+		kubeInformersForNamespaces,
+		kubeClient,
 		controllerContext.EventRecorder,
 	)
 
@@ -238,6 +257,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go fsyncMetricController.Run(ctx, 1)
 	go staticResourceController.Run(ctx, 1)
 	go targetConfigReconciler.Run(ctx, 1)
+	go backupConfigReconciler.Run(ctx, 1)
 	go etcdCertSignerController.Run(ctx, 1)
 	go hostEtcdEndpointController2.Run(ctx, 1)
 	go etcdEndpointsController.Run(ctx, 1)
@@ -259,36 +279,11 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 // RevisionConfigMaps is a list of configmaps that are directly copied for the current values.  A different actor/controller modifies these.
 // the first element should be the configmap that contains the static pod manifest
-var RevisionConfigMaps = []revision.RevisionResource{
-	{Name: "etcd-pod"},
-
-	{Name: "config"},
-	{Name: "etcd-serving-ca"},
-	{Name: "etcd-peer-client-ca"},
-	{Name: "etcd-metrics-proxy-serving-ca"},
-	{Name: "etcd-metrics-proxy-client-ca"},
-}
+var RevisionConfigMaps = etcd.RevisionConfigMaps
 
 // RevisionSecrets is a list of secrets that are directly copied for the current values.  A different actor/controller modifies these.
-var RevisionSecrets = []revision.RevisionResource{
-	{Name: "etcd-all-peer"},
-	{Name: "etcd-all-serving"},
-	{Name: "etcd-all-serving-metrics"},
-}
+var RevisionSecrets = etcd.RevisionSecrets
 
-var CertConfigMaps = []revision.RevisionResource{
-	{Name: "restore-etcd-pod"},
-	{Name: "etcd-scripts"},
-	{Name: "etcd-serving-ca"},
-	{Name: "etcd-peer-client-ca"},
-	{Name: "etcd-metrics-proxy-serving-ca"},
-	{Name: "etcd-metrics-proxy-client-ca"},
-}
+var CertConfigMaps = etcd.CertConfigMaps
 
-var CertSecrets = []revision.RevisionResource{
-	// these are also copied to certs to have a constant file location so we can refer to them in various recovery scripts
-	// and in the PDB
-	{Name: "etcd-all-peer"},
-	{Name: "etcd-all-serving"},
-	{Name: "etcd-all-serving-metrics"},
-}
+var CertSecrets = etcd.CertSecrets
