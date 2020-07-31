@@ -21,6 +21,10 @@ github.com/coreos/go-systemd/journal
 github.com/coreos/pkg/capnslog
 # github.com/davecgh/go-spew v1.1.1
 github.com/davecgh/go-spew/spew
+# github.com/dgrijalva/jwt-go v3.2.0+incompatible
+github.com/dgrijalva/jwt-go
+# github.com/dustin/go-humanize v1.0.0
+github.com/dustin/go-humanize
 # github.com/emicklei/go-restful v2.9.5+incompatible
 github.com/emicklei/go-restful
 github.com/emicklei/go-restful/log
@@ -56,6 +60,8 @@ github.com/golang/protobuf/ptypes
 github.com/golang/protobuf/ptypes/any
 github.com/golang/protobuf/ptypes/duration
 github.com/golang/protobuf/ptypes/timestamp
+# github.com/google/btree v1.0.0
+github.com/google/btree
 # github.com/google/go-cmp v0.4.0
 github.com/google/go-cmp/cmp
 github.com/google/go-cmp/cmp/internal/diff
@@ -79,6 +85,8 @@ github.com/hashicorp/golang-lru/simplelru
 github.com/imdario/mergo
 # github.com/inconshreveable/mousetrap v1.0.0
 github.com/inconshreveable/mousetrap
+# github.com/jonboulle/clockwork v0.1.0
+github.com/jonboulle/clockwork
 # github.com/json-iterator/go v1.1.10
 github.com/json-iterator/go
 # github.com/konsorten/go-windows-terminal-sequences v1.0.3
@@ -255,29 +263,71 @@ github.com/vishvananda/netlink
 github.com/vishvananda/netlink/nl
 # github.com/vishvananda/netns v0.0.0-20191106174202-0a2b9b5464df
 github.com/vishvananda/netns
+# github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2
+github.com/xiang90/probing
+# go.etcd.io/bbolt v1.3.5
+go.etcd.io/bbolt
 # go.etcd.io/etcd v0.5.0-alpha.5.0.20200716221620-18dfb9cca345
+go.etcd.io/etcd/auth
 go.etcd.io/etcd/auth/authpb
+go.etcd.io/etcd/client
 go.etcd.io/etcd/clientv3
 go.etcd.io/etcd/clientv3/balancer
 go.etcd.io/etcd/clientv3/balancer/connectivity
 go.etcd.io/etcd/clientv3/balancer/picker
 go.etcd.io/etcd/clientv3/balancer/resolver/endpoint
 go.etcd.io/etcd/clientv3/credentials
+go.etcd.io/etcd/clientv3/snapshot
+go.etcd.io/etcd/etcdserver
+go.etcd.io/etcd/etcdserver/api
+go.etcd.io/etcd/etcdserver/api/membership
+go.etcd.io/etcd/etcdserver/api/rafthttp
+go.etcd.io/etcd/etcdserver/api/snap
+go.etcd.io/etcd/etcdserver/api/snap/snappb
+go.etcd.io/etcd/etcdserver/api/v2discovery
+go.etcd.io/etcd/etcdserver/api/v2error
+go.etcd.io/etcd/etcdserver/api/v2http/httptypes
+go.etcd.io/etcd/etcdserver/api/v2stats
+go.etcd.io/etcd/etcdserver/api/v2store
+go.etcd.io/etcd/etcdserver/api/v3alarm
+go.etcd.io/etcd/etcdserver/api/v3compactor
 go.etcd.io/etcd/etcdserver/api/v3rpc/rpctypes
 go.etcd.io/etcd/etcdserver/etcdserverpb
+go.etcd.io/etcd/lease
+go.etcd.io/etcd/lease/leasehttp
+go.etcd.io/etcd/lease/leasepb
+go.etcd.io/etcd/mvcc
+go.etcd.io/etcd/mvcc/backend
 go.etcd.io/etcd/mvcc/mvccpb
+go.etcd.io/etcd/pkg/adt
+go.etcd.io/etcd/pkg/contention
+go.etcd.io/etcd/pkg/cpuutil
+go.etcd.io/etcd/pkg/crc
 go.etcd.io/etcd/pkg/fileutil
+go.etcd.io/etcd/pkg/httputil
+go.etcd.io/etcd/pkg/idutil
+go.etcd.io/etcd/pkg/ioutil
 go.etcd.io/etcd/pkg/logutil
+go.etcd.io/etcd/pkg/netutil
+go.etcd.io/etcd/pkg/pathutil
+go.etcd.io/etcd/pkg/pbutil
+go.etcd.io/etcd/pkg/runtime
+go.etcd.io/etcd/pkg/schedule
+go.etcd.io/etcd/pkg/srv
 go.etcd.io/etcd/pkg/systemd
 go.etcd.io/etcd/pkg/tlsutil
+go.etcd.io/etcd/pkg/traceutil
 go.etcd.io/etcd/pkg/transport
 go.etcd.io/etcd/pkg/types
+go.etcd.io/etcd/pkg/wait
 go.etcd.io/etcd/raft
 go.etcd.io/etcd/raft/confchange
 go.etcd.io/etcd/raft/quorum
 go.etcd.io/etcd/raft/raftpb
 go.etcd.io/etcd/raft/tracker
 go.etcd.io/etcd/version
+go.etcd.io/etcd/wal
+go.etcd.io/etcd/wal/walpb
 # go.uber.org/atomic v1.4.0
 go.uber.org/atomic
 # go.uber.org/multierr v1.1.0
@@ -290,6 +340,8 @@ go.uber.org/zap/internal/color
 go.uber.org/zap/internal/exit
 go.uber.org/zap/zapcore
 # golang.org/x/crypto v0.0.0-20200220183623-bac4c82f6975
+golang.org/x/crypto/bcrypt
+golang.org/x/crypto/blowfish
 golang.org/x/crypto/cryptobyte
 golang.org/x/crypto/cryptobyte/asn1
 golang.org/x/crypto/internal/subtle

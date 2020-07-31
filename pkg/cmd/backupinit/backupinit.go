@@ -96,7 +96,7 @@ func saveSnapshot(cfg *clientv3.Config, path string) error {
 		return fmt.Errorf("saveSnapshot failed: %w", err)
 	}
 
-	klog.Info("saved snapshot to path: %s", path)
+	klog.Infof("saved snapshot to path: %s", path)
 	return nil
 }
 
