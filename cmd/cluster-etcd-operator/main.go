@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/backuprestore"
 	operatorcmd "github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/waitforceo"
@@ -56,6 +57,8 @@ func NewSSCSCommand() *cobra.Command {
 	cmd.AddCommand(operatorcmd.NewOperator())
 	cmd.AddCommand(render.NewRenderCommand(os.Stderr))
 	cmd.AddCommand(render.NewBootstrapIPCommand(os.Stderr))
+	cmd.AddCommand(backuprestore.NewBackupCommand(os.Stderr))
+	cmd.AddCommand(backuprestore.NewRestoreCommand(os.Stderr))
 	cmd.AddCommand(installerpod.NewInstaller())
 	cmd.AddCommand(prune.NewPrune())
 	cmd.AddCommand(certsyncpod.NewCertSyncControllerCommand(operator.CertConfigMaps, operator.CertSecrets))
