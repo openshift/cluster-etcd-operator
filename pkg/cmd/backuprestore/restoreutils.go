@@ -1,35 +1,48 @@
 package backuprestore
 
 import (
+	"context"
 	"fmt"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog"
 	"os"
 	"path/filepath"
 	"time"
 )
 
-var static_pod_list = []string{
-	"etcd-pod.yaml",
-	"kube-apiserver-pod.yaml",
-	"kube-controller-manager-pod.yaml",
-	"kube-scheduler-pod.yaml",
-}
+var (
+	static_pod_list = []string{
+		"etcd-pod.yaml",
+		"kube-apiserver-pod.yaml",
+		"kube-controller-manager-pod.yaml",
+		"kube-scheduler-pod.yaml",
+	}
+	staticPodContainers = sets.NewString(
+		"etcd",
+		"etcdctl",
+		"etcd-metrics",
+		"kube-controller-manager",
+		"kube-apiserver",
+		"kube-scheduler",
+	)
+)
 
-func restore(configDir, dataDir, backupDir string) error {
+func restore(ctx context.Context, r *restoreOptions) error {
 
 	var (
-		assetDir           = filepath.Join(configDir, "assets")
-		manifestDir        = filepath.Join(configDir, "manifests")
+		assetDir           = filepath.Join(r.configDir, "assets")
+		manifestDir        = filepath.Join(r.configDir, "manifests")
 		manifestStoppedDir = filepath.Join(assetDir, "manifests-stopped")
-		restoreEtcdPodYaml = filepath.Join(configDir, "static-pod-resources", "etcd-certs", "configmaps", "restore-etcd-pod", "pod.yaml")
-		dataDirBackup      = dataDir + "-backup"
+		restoreEtcdPodYaml = filepath.Join(r.configDir, "static-pod-resources", "etcd-certs", "configmaps", "restore-etcd-pod", "pod.yaml")
+		dataDirBackup      = r.dataDir + "-backup"
 	)
-	fmt.Printf("configDir=%s,dataDir=%s,backupDir=%s\n", configDir, dataDir, backupDir)
+
 	// locate snapshot db and static pod resources archive
-	snapshotFile, err := findTheLatestRevision(backupDir, "snapshot_", false)
+	snapshotFile, err := findTheLatestRevision(r.backupDir, "snapshot_", false)
 	if err != nil {
 		return fmt.Errorf("restore: could not find snapshot db: %w", err)
 	}
-	resourcesArchive, err := findTheLatestRevision(backupDir, "static_kuberesources_", false)
+	resourcesArchive, err := findTheLatestRevision(r.backupDir, "static_kuberesources_", false)
 	if err != nil {
 		return fmt.Errorf("restore: could not find static pod resources: %w", err)
 	}
@@ -45,11 +58,12 @@ func restore(configDir, dataDir, backupDir string) error {
 		}
 	}
 
-	// TODO: Wait for static pods to stop
-	// crictl ps equivalent??
-	time.Sleep(180 * time.Second)
+	// Wait for static pods to stop
+	if err := waitForStaticPodsToStop(ctx); err != nil {
+		return fmt.Errorf("restore: waitForStaticPodsToStop failed %w", err)
+	}
 
-	dataDirMember := filepath.Join(dataDir, "member")
+	dataDirMember := filepath.Join(r.dataDir, "member")
 	dataDirMemberExists, err := dirExists(dataDirMember)
 	if err != nil {
 		return fmt.Errorf("restore: Unexpected error checking dir: %s. Error: %w", dataDirMember, err)
@@ -67,16 +81,18 @@ func restore(configDir, dataDir, backupDir string) error {
 		}
 		// if old backup exists, remove all
 		if backupMemberExists {
-			os.RemoveAll(dataDirBackupMember)
+			if err := os.RemoveAll(dataDirBackupMember); err != nil {
+				return fmt.Errorf("restore: failed to remove data-dir backup %s failed: %w", dataDirBackupMember, err)
+			}
 		}
 		// Rename data-dir/member to data-dir-backup/member
 		if err := os.Rename(dataDirMember, dataDirBackupMember); err != nil {
-			return fmt.Errorf("restore: attempt to backup data-dir %s failed: %w", dataDir, err)
+			return fmt.Errorf("restore: attempt to backup data-dir %s failed: %w", r.dataDir, err)
 		}
 	}
 
 	// Restore static pod resources
-	if err := extractFromTarGz(resourcesArchive, configDir); err != nil {
+	if err := extractFromTarGz(resourcesArchive, r.configDir); err != nil {
 		return fmt.Errorf("restore: attempt to extract static-pod-resources from archive %s failed: %w",
 			resourcesArchive, err)
 	}
@@ -105,4 +121,43 @@ func restore(configDir, dataDir, backupDir string) error {
 	}
 	return nil
 
+}
+
+func waitForStaticPodsToStop(ctx context.Context) error {
+	runtimeClient, runtimeConn, err := getRuntimeCrioClient()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := runtimeConn.Close(); err != nil {
+			klog.Infof("crioclient: CloseConnection failed %v", err)
+		}
+	}()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	allStaticPodsStopped := false
+	for !allStaticPodsStopped {
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+
+		allStaticPodsStopped = true
+		containersList, err := listContainers(ctx, runtimeClient)
+		if err != nil {
+			return fmt.Errorf("listing containers: %w", err)
+		}
+
+		for _, c := range containersList {
+			if staticPodContainers.Has(c.Metadata.Name) {
+				allStaticPodsStopped = false
+				klog.Infof("Static Pod %s is still active", c.Metadata.Name)
+				break
+			}
+		}
+	}
+	return nil
 }

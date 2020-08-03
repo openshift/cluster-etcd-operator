@@ -1,12 +1,15 @@
 package backuprestore
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"io"
 	"k8s.io/klog"
+	"os"
+	"os/signal"
 )
 
 type backupOptions struct {
@@ -112,8 +115,20 @@ func (r *restoreOptions) Validate() error {
 }
 
 func (r *restoreOptions) Run() error {
-	if err := restore(r.configDir, r.dataDir, r.backupDir); err != nil {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		oscall := <-c
+		klog.Warningf("system call:%+v", oscall)
+		cancel()
+	}()
+
+	if err := restore(ctx, r); err != nil {
 		klog.Errorf("run: restore failed: %v", err)
 	}
+
 	return nil
 }
