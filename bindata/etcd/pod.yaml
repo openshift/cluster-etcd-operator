@@ -151,7 +151,8 @@ ${COMPUTED_ENV_VARS}
         env | grep ETCD | grep -v NODE
 
         set -x
-        exec etcd \
+        # See https://etcd.io/docs/v3.4.0/tuning/ for why we use ionice
+        exec ionice -c2 -n0 etcd \
           --initial-advertise-peer-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2380 \
           --cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-serving/etcd-serving-NODE_NAME.crt \
           --key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-serving/etcd-serving-NODE_NAME.key \
