@@ -24,6 +24,7 @@ require (
 	k8s.io/apimachinery v0.19.0-rc.2
 	k8s.io/client-go v0.19.0-rc.2
 	k8s.io/component-base v0.19.0-rc.2
+	k8s.io/cri-api v0.18.6
 	k8s.io/klog v1.0.0
 	k8s.io/utils v0.0.0-20200720150651-0bdb4ca86cbc
 )
