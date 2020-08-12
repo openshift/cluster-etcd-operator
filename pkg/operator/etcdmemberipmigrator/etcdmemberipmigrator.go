@@ -17,6 +17,7 @@ import (
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"k8s.io/apimachinery/pkg/labels"
@@ -39,6 +40,7 @@ type EtcdMemberIPMigrator struct {
 	operatorClient       v1helpers.OperatorClient
 	etcdClient           etcdcli.EtcdClient
 	nodeLister           corev1listers.NodeLister
+	podLister            corev1listers.PodLister
 	infrastructureLister configv1listers.InfrastructureLister
 	networkLister        configv1listers.NetworkLister
 
@@ -59,6 +61,7 @@ func NewEtcdMemberIPMigrator(
 		operatorClient:       operatorClient,
 		etcdClient:           etcdClient,
 		nodeLister:           kubeInformers.Core().V1().Nodes().Lister(),
+		podLister:            kubeInformers.Core().V1().Pods().Lister(),
 		infrastructureLister: infrastructureInformer.Lister(),
 		networkLister:        networkInformer.Lister(),
 
@@ -104,6 +107,24 @@ func (c *EtcdMemberIPMigrator) sync() error {
 }
 
 func (c *EtcdMemberIPMigrator) reconcileMembers() error {
+	// If no 4.3 etcd pods exist, there's no migration left to do and the function
+	// can immediately no-op and return to avoid unnecessary etcd API calls.
+	pods, err := c.podLister.Pods(operatorclient.TargetNamespace).List(labels.Set{"app": "etcd"}.AsSelector())
+	if err != nil {
+		return err
+	}
+	has4_3etcdMemberPod := false
+	for _, pod := range pods {
+		if strings.HasPrefix(pod.Name, "etcd-member") {
+			has4_3etcdMemberPod = true
+			break
+		}
+	}
+	if !has4_3etcdMemberPod {
+		klog.V(4).Infof("skipping IP migration because no 4.3 etcd-member pods were found")
+		return nil
+	}
+
 	unhealthyMembers, err := c.etcdClient.UnhealthyMembers()
 	if err != nil {
 		return err
