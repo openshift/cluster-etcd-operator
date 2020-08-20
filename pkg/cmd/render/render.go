@@ -152,12 +152,6 @@ func (r *renderOpts) Validate() error {
 	if len(r.etcdImage) == 0 {
 		return errors.New("missing required flag: --manifest-etcd-image")
 	}
-	if len(r.kubeClientAgentImage) == 0 {
-		return errors.New("missing required flag: --manifest-kube-client-agent-image")
-	}
-	if len(r.setupEtcdEnvImage) == 0 {
-		return errors.New("missing required flag: --manifest-setup-etcd-env-image")
-	}
 	if len(r.clusterEtcdOperatorImage) == 0 {
 		return errors.New("missing required flag: --manifest-cluster-etcd-operator-image")
 	}
@@ -225,8 +219,7 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 	templateData := TemplateData{
 		ManifestConfig: options.ManifestConfig{
 			Images: options.Images{
-				Etcd:            opts.etcdImage,
-				KubeClientAgent: opts.kubeClientAgentImage,
+				Etcd: opts.etcdImage,
 			},
 		},
 		EtcdServerCertDNSNames: strings.Join([]string{
