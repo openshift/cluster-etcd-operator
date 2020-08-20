@@ -40,9 +40,7 @@ type FileConfig struct {
 }
 
 type Images struct {
-	Etcd            string
-	SetupEtcdEnv    string
-	KubeClientAgent string
+	Etcd string
 }
 
 type EtcdAddress struct {
