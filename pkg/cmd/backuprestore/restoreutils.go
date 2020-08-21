@@ -33,7 +33,6 @@ func restore(ctx context.Context, r *restoreOptions) error {
 		assetDir           = filepath.Join(r.configDir, "assets")
 		manifestDir        = filepath.Join(r.configDir, "manifests")
 		manifestStoppedDir = filepath.Join(assetDir, "manifests-stopped")
-		restoreEtcdPodYaml = filepath.Join(r.configDir, "static-pod-resources", "etcd-certs", "configmaps", "restore-etcd-pod", "pod.yaml")
 		dataDirBackup      = r.dataDir + "-backup"
 	)
 
@@ -48,26 +47,38 @@ func restore(ctx context.Context, r *restoreOptions) error {
 	}
 
 	// Move manifests to manifests-stopped-dir
+	klog.Info("moving manifests to manifests-stopped-dir")
 	if err := checkAndCreateDir(manifestStoppedDir); err != nil {
 		return fmt.Errorf("restore: checkAndCreateDir failed: %w", err)
 	}
 	for _, podyaml := range static_pod_list {
-		err := os.Rename(filepath.Join(manifestDir, podyaml), filepath.Join(manifestStoppedDir, podyaml))
+		podyamlFullpath := filepath.Join(manifestDir, podyaml)
+		fileExists, err := fileExists(podyamlFullpath)
 		if err != nil {
-			return fmt.Errorf("restore: attempt to stop %s failed: %w", podyaml, err)
+			return fmt.Errorf("restore: Unexpected error checking file: %s. Error: %w", podyamlFullpath, err)
+		}
+		// it is fine, if the file doesn't exist
+		if fileExists {
+			err := os.Rename(podyamlFullpath, filepath.Join(manifestStoppedDir, podyaml))
+			if err != nil {
+				return fmt.Errorf("restore: attempt to stop %s failed: %w", podyaml, err)
+			}
 		}
 	}
 
 	// Wait for static pods to stop
+	klog.Info("waiting for static pods to stop ...")
 	if err := waitForStaticPodsToStop(ctx); err != nil {
 		return fmt.Errorf("restore: waitForStaticPodsToStop failed %w", err)
 	}
+	klog.Info("\nall static pods stopped.")
 
 	dataDirMember := filepath.Join(r.dataDir, "member")
 	dataDirMemberExists, err := dirExists(dataDirMember)
 	if err != nil {
 		return fmt.Errorf("restore: Unexpected error checking dir: %s. Error: %w", dataDirMember, err)
 	}
+	klog.Info("backing up current data-dir before restore")
 	if dataDirMemberExists {
 		// backup data-dir to data-dir-backup
 		if err := checkAndCreateDir(dataDirBackup); err != nil {
@@ -92,23 +103,27 @@ func restore(ctx context.Context, r *restoreOptions) error {
 	}
 
 	// Restore static pod resources
-	if err := extractFromTarGz(resourcesArchive, r.configDir); err != nil {
+	klog.Info("extracting static-pod-resources")
+	if err := extractAllFromTarGz(resourcesArchive, r.configDir); err != nil {
 		return fmt.Errorf("restore: attempt to extract static-pod-resources from archive %s failed: %w",
 			resourcesArchive, err)
 	}
 
 	// Copy snapshot to backupdir
-	etcdDataDirBackupSnapshot := dataDirBackup + "snapshot.db"
+	klog.Infof("copying snapshot.db to %s", dataDirBackup)
+	etcdDataDirBackupSnapshot := filepath.Join(dataDirBackup, "snapshot.db")
 	if _, err := fileCopy(snapshotFile, etcdDataDirBackupSnapshot); err != nil {
 		return fmt.Errorf("restore: attempt to copy snapshot %s failed: %w", snapshotFile, err)
 	}
 
 	// Copy restore etcd pod to manifest directory
-	if _, err := fileCopy(restoreEtcdPodYaml, filepath.Join(manifestDir, "etcd-pod.yaml")); err != nil {
-		return fmt.Errorf("restore: attempt to copy restore etcd %s failed: %w", restoreEtcdPodYaml, err)
+	klog.Info("copying restore etcd pod to manifest directory")
+	if err := extractFileFromTarGzToTargetFile(resourcesArchive, filepath.Join(manifestDir, "etcd-pod.yaml"), "restore-etcd-pod/pod.yaml"); err != nil {
+		return fmt.Errorf("restore: attempt to extract restore-etcd-pod/pod.yaml failed: %w", err)
 	}
 
 	// Restore remaining static pods
+	klog.Info("restoring remaining static pods")
 	for _, podyaml := range static_pod_list {
 		if podyaml == "etcd-pod.yaml" {
 			continue
@@ -130,7 +145,7 @@ func waitForStaticPodsToStop(ctx context.Context) error {
 	}
 	defer func() {
 		if err := runtimeConn.Close(); err != nil {
-			klog.Infof("crioclient: CloseConnection failed %v", err)
+			klog.Warningf("crioclient: CloseConnection failed %v", err)
 		}
 	}()
 
@@ -138,6 +153,7 @@ func waitForStaticPodsToStop(ctx context.Context) error {
 	defer ticker.Stop()
 
 	allStaticPodsStopped := false
+	unStoppedPod := ""
 	for !allStaticPodsStopped {
 		select {
 		case <-ticker.C:
@@ -154,7 +170,16 @@ func waitForStaticPodsToStop(ctx context.Context) error {
 		for _, c := range containersList {
 			if staticPodContainers.Has(c.Metadata.Name) {
 				allStaticPodsStopped = false
-				klog.Infof("Static Pod %s is still active", c.Metadata.Name)
+				// If the name is a repeat, just print a dot(.) without newline.
+				if c.Metadata.Name == unStoppedPod {
+					fmt.Printf(".")
+					break
+				} else if unStoppedPod != "" {
+					fmt.Println("")
+				}
+
+				unStoppedPod = c.Metadata.Name
+				klog.Infof("... static pod %s is still active", c.Metadata.Name)
 				break
 			}
 		}

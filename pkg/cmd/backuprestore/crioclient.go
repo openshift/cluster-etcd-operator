@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"google.golang.org/grpc"
-	"k8s.io/klog/v2"
 	"net"
 	"net/url"
 	"time"
@@ -33,7 +32,6 @@ func getRuntimeCrioClient() (pb.RuntimeServiceClient, *grpc.ClientConn, error) {
 
 func getConnection(endPoint string) (*grpc.ClientConn, error) {
 	var conn *grpc.ClientConn
-	klog.Infof("connect using endpoint '%s' with '%s' timeout", endPoint, defaultTimeout)
 	addr, dialer, err := getAddressAndDialer(endPoint)
 	if err != nil {
 		return nil, err

@@ -17,6 +17,9 @@ type backupOptions struct {
 	configDir string
 	dataDir   string
 	backupDir string
+	cert      string
+	key       string
+	cacert    string
 	errOut    io.Writer
 }
 
@@ -48,9 +51,12 @@ func NewBackupCommand(errOut io.Writer) *cobra.Command {
 func (r *backupOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.Set("logtostderr", "true")
 	fs.StringSliceVar(&r.endpoints, "endpoints", []string{"127.0.0.1:2379"}, "etcd endpoints")
-	fs.StringVar(&r.configDir, "config-dir", "/etc/kubernetes", "Path to the kubernetes config directory")
-	fs.StringVar(&r.dataDir, "data-dir", "/var/lib/etcd", "Path to the data directory")
-	fs.StringVar(&r.backupDir, "backup-dir", "", "Path to the directory where the backup is generated")
+	fs.StringVar(&r.configDir, "config-dir", "/etc/kubernetes", "path to the kubernetes config directory")
+	fs.StringVar(&r.cert, "cert", os.Getenv("ETCDCTL_CERT"), "identify secure client using this TLS certificate file")
+	fs.StringVar(&r.key, "key", os.Getenv("ETCDCTL_KEY"), "identify secure client using this TLS key file")
+	fs.StringVar(&r.cacert, "cacert", os.Getenv("ETCDCTL_CACERT"), "verify certificates of TLS-enabled secure servers using this CA bundle")
+	fs.StringVar(&r.dataDir, "data-dir", "/var/lib/etcd", "path to the data directory")
+	fs.StringVar(&r.backupDir, "backup-dir", "", "path to the directory where the backup is generated")
 }
 
 func (r *backupOptions) Validate() error {
@@ -63,8 +69,8 @@ func (r *backupOptions) Validate() error {
 func (r *backupOptions) Run() error {
 	if err := backup(r); err != nil {
 		klog.Errorf("run: backup failed: %v", err)
+		return err
 	}
-	klog.Infof("config-dir is: %s", r.configDir)
 	return nil
 }
 
@@ -128,7 +134,8 @@ func (r *restoreOptions) Run() error {
 
 	if err := restore(ctx, r); err != nil {
 		klog.Errorf("run: restore failed: %v", err)
+		return err
 	}
-
+	klog.Info("Successfully restored the cluster from the backup!")
 	return nil
 }

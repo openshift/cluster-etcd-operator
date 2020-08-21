@@ -25,10 +25,11 @@ const workQueueKey = "key"
 type EnvVarController struct {
 	operatorClient v1helpers.StaticPodOperatorClient
 
-	envVarMapLock       sync.Mutex
-	envVarMap           map[string]string
-	targetImagePullSpec string
-	listeners           []Enqueueable
+	envVarMapLock         sync.Mutex
+	envVarMap             map[string]string
+	targetImagePullSpec   string
+	operatorImagePullSpec string
+	listeners             []Enqueueable
 
 	infrastructureLister configv1listers.InfrastructureLister
 	networkLister        configv1listers.NetworkLister
@@ -47,6 +48,7 @@ type Enqueueable interface {
 
 func NewEnvVarController(
 	targetImagePullSpec string,
+	operatorImagePullSpec string,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	infrastructureInformer configv1informers.InfrastructureInformer,
@@ -54,12 +56,13 @@ func NewEnvVarController(
 	eventRecorder events.Recorder,
 ) *EnvVarController {
 	c := &EnvVarController{
-		operatorClient:       operatorClient,
-		infrastructureLister: infrastructureInformer.Lister(),
-		networkLister:        networkInformer.Lister(),
-		configmapLister:      kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister(),
-		nodeLister:           kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
-		targetImagePullSpec:  targetImagePullSpec,
+		operatorClient:        operatorClient,
+		infrastructureLister:  infrastructureInformer.Lister(),
+		networkLister:         networkInformer.Lister(),
+		configmapLister:       kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister(),
+		nodeLister:            kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
+		targetImagePullSpec:   targetImagePullSpec,
+		operatorImagePullSpec: operatorImagePullSpec,
 
 		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "EnvVarController"),
 		cachesToSync: []cache.InformerSynced{
@@ -129,13 +132,14 @@ func (c *EnvVarController) checkEnvVars() error {
 	}
 
 	currEnvVarMap, err := getEtcdEnvVars(envVarContext{
-		targetImagePullSpec:  c.targetImagePullSpec,
-		spec:                 *operatorSpec,
-		status:               *operatorStatus,
-		configmapLister:      c.configmapLister,
-		nodeLister:           c.nodeLister,
-		infrastructureLister: c.infrastructureLister,
-		networkLister:        c.networkLister,
+		targetImagePullSpec:   c.targetImagePullSpec,
+		operatorImagePullSpec: c.operatorImagePullSpec,
+		spec:                  *operatorSpec,
+		status:                *operatorStatus,
+		configmapLister:       c.configmapLister,
+		nodeLister:            c.nodeLister,
+		infrastructureLister:  c.infrastructureLister,
+		networkLister:         c.networkLister,
 	})
 	if err != nil {
 		return err

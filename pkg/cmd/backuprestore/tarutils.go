@@ -80,7 +80,7 @@ func addFileToTarWriter(src string, tarWriter *tar.Writer, prefixTrim string) er
 			return fmt.Errorf("addFileToTarWriter: file write failed: %w", err)
 		}
 
-		// manually close here after each file operation; defering would cause each file close
+		// manually close here after each file operation; deferring would cause each file close
 		// to wait until all operations have completed.
 		f.Close()
 
@@ -89,7 +89,7 @@ func addFileToTarWriter(src string, tarWriter *tar.Writer, prefixTrim string) er
 
 }
 
-func extractFromTarGz(tarball, target string) (err error) {
+func extractAllFromTarGz(tarball, targetdir string) (err error) {
 	r, err := os.Open(tarball)
 	if err != nil {
 		return err
@@ -100,9 +100,9 @@ func extractFromTarGz(tarball, target string) (err error) {
 	defer func() {
 		td := time.Since(t0)
 		if err == nil {
-			klog.Infof("extracted tarball into %s: %d files, %d dirs (%v)", target, nFiles, len(madeDir), td)
+			klog.Infof("extracted resources into %s: %d files, %d dirs (%v)", targetdir, nFiles, len(madeDir), td)
 		} else {
-			klog.Infof("error extracting tarball into %s after %d files, %d dirs, %v: %v", target, nFiles, len(madeDir), td, err)
+			klog.Infof("error extracting resources into %s after %d files, %d dirs, %v: %v", targetdir, nFiles, len(madeDir), td, err)
 		}
 	}()
 	zr, err := gzip.NewReader(r)
@@ -123,7 +123,7 @@ func extractFromTarGz(tarball, target string) (err error) {
 			return fmt.Errorf("tar contained invalid name error %q", f.Name)
 		}
 		rel := filepath.FromSlash(f.Name)
-		abs := filepath.Join(target, rel)
+		abs := filepath.Join(targetdir, rel)
 
 		fi := f.FileInfo()
 		mode := fi.Mode()
@@ -168,11 +168,15 @@ func extractFromTarGz(tarball, target string) (err error) {
 }
 
 func extractFileFromTarGz(tarball, targetdir, filebasename string) (err error) {
+	targetFile := filepath.Join(targetdir, filebasename)
+	return extractFileFromTarGzToTargetFile(tarball, targetFile, filebasename)
+}
+
+func extractFileFromTarGzToTargetFile(tarball, targetFile, filepattern string) (err error) {
 	r, err := os.Open(tarball)
 	if err != nil {
 		return err
 	}
-	nFiles := 0
 	zr, err := gzip.NewReader(r)
 	if err != nil {
 		return fmt.Errorf("requires gzip-compressed body: %v", err)
@@ -190,10 +194,9 @@ func extractFileFromTarGz(tarball, targetdir, filebasename string) (err error) {
 		if !validRelPath(f.Name) {
 			return fmt.Errorf("tar contained invalid name error %q", f.Name)
 		}
-		if filepath.Base(f.Name) != filebasename {
+		if !strings.Contains(f.Name, filepattern) {
 			continue
 		}
-		targetFile := filepath.Join(targetdir, filebasename)
 
 		fi := f.FileInfo()
 		mode := fi.Mode()
@@ -213,12 +216,13 @@ func extractFileFromTarGz(tarball, targetdir, filebasename string) (err error) {
 			if n != f.Size {
 				return fmt.Errorf("only wrote %d bytes to %s; expected %d", n, targetFile, f.Size)
 			}
-			nFiles++
+			// file found, return
+			return nil
 		default:
 			return fmt.Errorf("tar file entry %s contained unsupported file type %v", f.Name, mode)
 		}
 	}
-	return nil
+	return fmt.Errorf("file pattern \"%s\" not found in the tar archive", filepattern)
 }
 
 func validRelPath(p string) bool {

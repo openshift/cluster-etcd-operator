@@ -13,15 +13,15 @@ import (
 	"go.etcd.io/etcd/pkg/transport"
 )
 
-func getEtcdClient(endpoints []string) (*clientv3.Client, error) {
+func getEtcdClient(cert, key, cacert string, endpoints []string) (*clientv3.Client, error) {
 	dialOptions := []grpc.DialOption{
 		grpc.WithBlock(), // block until the underlying connection is up
 	}
 
 	tlsInfo := transport.TLSInfo{
-		CertFile:      os.Getenv("ETCDCTL_CERT"),
-		KeyFile:       os.Getenv("ETCDCTL_KEY"),
-		TrustedCAFile: os.Getenv("ETCDCTL_CACERT"),
+		CertFile:      cert,
+		KeyFile:       key,
+		TrustedCAFile: cacert,
 	}
 	tlsConfig, err := tlsInfo.ClientConfig()
 

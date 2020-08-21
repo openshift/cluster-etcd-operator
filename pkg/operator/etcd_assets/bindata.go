@@ -82,41 +82,16 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-function usage {
-  echo 'Path to backup dir required: ./cluster-backup.sh <path-to-backup-dir>'
-  exit 1
-}
-
 # If the first argument is missing, or it is an existing file, then print usage and exit
 if [ -z "$1" ] || [ -f "$1" ]; then
-  usage
+  echo 'Path to backup dir required: ./cluster-backup.sh <path-to-backup-dir>'
+  exit 1
 fi
 
-if [ ! -d "$1" ]; then
-  mkdir -p "$1"
+BACKUP_DIR=$(realpath "$1")
+if [ ! -d "$BACKUP_DIR" ]; then
+  mkdir -p "$BACKUP_DIR"
 fi
-
-# backup latest static pod resources
-function backup_latest_kube_static_resources {
-  RESOURCES=("$@")
-
-  LATEST_RESOURCE_DIRS=()
-  for RESOURCE in "${RESOURCES[@]}"; do
-    # shellcheck disable=SC2012
-    LATEST_RESOURCE=$(ls -trd "${CONFIG_FILE_DIR}"/static-pod-resources/"${RESOURCE}"-[0-9]* | tail -1) || true
-    if [ -z "$LATEST_RESOURCE" ]; then
-      echo "error finding static-pod-resource ${RESOURCE}"
-      exit 1
-    fi
-
-    echo "found latest ${RESOURCE}: ${LATEST_RESOURCE}"
-    LATEST_RESOURCE_DIRS+=("${LATEST_RESOURCE#${CONFIG_FILE_DIR}/}")
-  done
-
-  # tar latest resources with the path relative to CONFIG_FILE_DIR
-  tar -cpzf "$BACKUP_TAR_FILE" -C "${CONFIG_FILE_DIR}" "${LATEST_RESOURCE_DIRS[@]}"
-  chmod 600 "$BACKUP_TAR_FILE"
-}
 
 function source_required_dependency {
   local path="$1"
@@ -128,26 +103,30 @@ function source_required_dependency {
   source "${path}"
 }
 
-BACKUP_DIR="$1"
-DATESTRING=$(date "+%F_%H%M%S")
-BACKUP_TAR_FILE=${BACKUP_DIR}/static_kuberesources_${DATESTRING}.tar.gz
-SNAPSHOT_FILE="${BACKUP_DIR}/snapshot_${DATESTRING}.db"
-BACKUP_RESOURCE_LIST=("kube-apiserver-pod" "kube-controller-manager-pod" "kube-scheduler-pod" "etcd-pod")
 
-trap 'rm -f ${BACKUP_TAR_FILE} ${SNAPSHOT_FILE}' ERR
+trap 'podman rm --force cluster-backup' ERR
 
 source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd.env
-source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd-common-tools
 
-# TODO handle properly
-if [ ! -f "$ETCDCTL_CACERT" ] && [ ! -d "${CONFIG_FILE_DIR}/static-pod-certs" ]; then
-  ln -s "${CONFIG_FILE_DIR}"/static-pod-resources/etcd-certs "${CONFIG_FILE_DIR}"/static-pod-certs
-fi
+podman run  \
+  --name cluster-backup \
+  --volume /etc/kubernetes/static-pod-resources:/etc/kubernetes/static-pod-resources:ro,z \
+  --volume /etc/kubernetes/static-pod-resources/etcd-certs:/etc/kubernetes/static-pod-certs:ro,z \
+  --volume "$BACKUP_DIR":/backupdir:rw,z \
+  --authfile=/var/lib/kubelet/config.json \
+  "${ETCD_OPERATOR_IMAGE}" \
+  cluster-etcd-operator \
+  cluster-backup \
+  --cert "${ETCDCTL_CERT}" \
+  --key "${ETCDCTL_KEY}" \
+  --cacert "${ETCDCTL_CACERT}" \
+  --endpoints https://"${NODE_NODE_ENVVAR_NAME_IP}":2379 \
+  --backup-dir /backupdir
 
-dl_etcdctl
-backup_latest_kube_static_resources "${BACKUP_RESOURCE_LIST[@]}"
-ETCDCTL_ENDPOINTS="https://${NODE_NODE_ENVVAR_NAME_IP}:2379" etcdctl snapshot save "${SNAPSHOT_FILE}"
+podman rm --force cluster-backup
+
 echo "snapshot db and kube resources are successfully saved to ${BACKUP_DIR}"
+
 `)
 
 func etcdClusterBackupShBytes() ([]byte, error) {
@@ -176,10 +155,18 @@ set -o errtrace
 # example
 # ./cluster-restore.sh $path-to-backup
 
-if [[ $EUID -ne 0 ]]; then
+if [[ "$EUID" -ne 0 ]]; then
   echo "This script must be run as root"
   exit 1
 fi
+
+function usage {
+  echo 'Path to the directory containing backup files is required: ./cluster-restore.sh <path-to-backup>'
+  echo 'The backup directory is expected to be contain two files:'
+  echo '        1. etcd snapshot'
+  echo '        2. A copy of the Static POD resources at the time of backup'
+  exit 1
+}
 
 function source_required_dependency {
   local path="$1"
@@ -190,15 +177,16 @@ function source_required_dependency {
   # shellcheck disable=SC1090
   source "${path}"
 }
-source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd.env
-source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd-common-tools
 
-function usage() {
-  echo 'Path to the directory containing backup files is required: ./cluster-restore.sh <path-to-backup>'
-  echo 'The backup directory is expected to be contain two files:'
-  echo '        1. etcd snapshot'
-  echo '        2. A copy of the Static POD resources at the time of backup'
-  exit 1
+function dl_ceo {
+  local ceoimg ceoctr ceomnt
+  ceoimg="${ETCD_OPERATOR_IMAGE}"
+  podman image pull "${ceoimg}" --authfile=/var/lib/kubelet/config.json
+  ceoctr=$(podman create "${ceoimg}" --authfile=/var/lib/kubelet/config.json)
+  ceomnt=$(podman mount "${ceoctr}")
+  cp "${ceomnt}"/bin/cluster-etcd-operator /tmp
+  umount "${ceomnt}"
+  podman rm "${ceoctr}"
 }
 
 # If the argument is not passed, or if it is not a directory, print usage and exit.
@@ -206,100 +194,13 @@ if [ "$1" == "" ] || [ ! -d "$1" ]; then
   usage
 fi
 
-function restore_static_pods() {
-  STATIC_PODS=("$@")
-
-  for POD_FILE_NAME in "${STATIC_PODS[@]}"; do
-    BACKUP_POD_PATH=$(tar -tvf "${BACKUP_FILE}" "*${POD_FILE_NAME}" | awk '{ print $6 }') || true
-    if [ -z "${BACKUP_POD_PATH}" ]; then
-      echo "${POD_FILE_NAME} does not exist in ${BACKUP_FILE}"
-      exit 1
-    fi
-
-    echo "starting ${POD_FILE_NAME}"
-    tar -xvf "${BACKUP_FILE}" --strip-components=2 -C "${MANIFEST_DIR}"/ "${BACKUP_POD_PATH}"
-  done
-}
-
-function extract_and_start_restore_etcd_pod() {
-  POD_FILE_NAME="restore-etcd-pod/pod.yaml"
-   BACKUP_POD_PATH=$(tar -tvf "${BACKUP_FILE}" "*${POD_FILE_NAME}" | awk '{ print $6 }') || true
-   if [ -z "${BACKUP_POD_PATH}" ]; then
-     echo "${POD_FILE_NAME} does not exist in ${BACKUP_FILE}"
-     exit 1
-   fi
-
-   echo "starting restored etcd-pod.yaml"
-   tar -O -xvf "${BACKUP_FILE}" -C "${MANIFEST_DIR}"/ "${BACKUP_POD_PATH}" > "${MANIFEST_DIR}"/etcd-pod.yaml
-}
-
-
-function wait_for_containers_to_stop() {
-  CONTAINERS=("$@")
-
-  for NAME in "${CONTAINERS[@]}"; do
-    echo "Waiting for container ${NAME} to stop"
-    while [[ -n $(crictl ps --label io.kubernetes.container.name="${NAME}" -q) ]]; do
-      echo -n "."
-      sleep 1
-    done
-    echo "complete"
-  done
-}
-
 BACKUP_DIR="$1"
-# shellcheck disable=SC2012
-BACKUP_FILE=$(ls -vd "${BACKUP_DIR}"/static_kuberesources*.tar.gz | tail -1) || true
-# shellcheck disable=SC2012
-SNAPSHOT_FILE=$(ls -vd "${BACKUP_DIR}"/snapshot*.db | tail -1) || true
-STATIC_POD_LIST=("kube-apiserver-pod.yaml" "kube-controller-manager-pod.yaml" "kube-scheduler-pod.yaml")
-STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "kube-controller-manager" "kube-apiserver" "kube-scheduler")
-
-if [ ! -f "${SNAPSHOT_FILE}" ]; then
-  echo "etcd snapshot ${SNAPSHOT_FILE} does not exist"
-  exit 1
-fi
-
-# Move manifests and stop static pods
-if [ ! -d "$MANIFEST_STOPPED_DIR" ]; then
-  mkdir -p "$MANIFEST_STOPPED_DIR"
-fi
-
-# Move static pod manifests out of MANIFEST_DIR
-for POD_FILE_NAME in "${STATIC_POD_LIST[@]}" etcd-pod.yaml; do
-  echo "...stopping ${POD_FILE_NAME}"
-  [ ! -f "${MANIFEST_DIR}/${POD_FILE_NAME}" ] && continue
-  mv "${MANIFEST_DIR}/${POD_FILE_NAME}" "${MANIFEST_STOPPED_DIR}"
-done
-
-# wait for every static pod container to stop
-wait_for_containers_to_stop "${STATIC_POD_CONTAINERS[@]}"
-
-if [ ! -d "${ETCD_DATA_DIR_BACKUP}" ]; then
-  mkdir -p "${ETCD_DATA_DIR_BACKUP}"
-fi
-
-# backup old data-dir
-if [ -d "${ETCD_DATA_DIR}/member" ]; then
-  if [ -d "${ETCD_DATA_DIR_BACKUP}/member" ]; then
-    echo "removing previous backup ${ETCD_DATA_DIR_BACKUP}/member"
-    rm -rf "${ETCD_DATA_DIR_BACKUP}"/member
-  fi
-  echo "Moving etcd data-dir ${ETCD_DATA_DIR}/member to ${ETCD_DATA_DIR_BACKUP}"
-  mv "${ETCD_DATA_DIR}"/member "${ETCD_DATA_DIR_BACKUP}"/
-fi
-
-# Restore static pod resources
-tar -C "${CONFIG_FILE_DIR}" -xzf "${BACKUP_FILE}" static-pod-resources
-
-# Copy snapshot to backupdir
-cp -p "${SNAPSHOT_FILE}" "${ETCD_DATA_DIR_BACKUP}"/snapshot.db
-
-# Extract and start restore-etcd pod.yaml
-extract_and_start_restore_etcd_pod
-
-# start remaining static pods
-restore_static_pods "${STATIC_POD_LIST[@]}"
+source_required_dependency "/etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd.env"
+# Download CEO and run it on master for crio to work properly.
+dl_ceo
+trap 'rm -f /tmp/cluster-etcd-operator' ERR
+/tmp/cluster-etcd-operator cluster-restore --backup-dir "$BACKUP_DIR"
+rm -f /tmp/cluster-etcd-operator
 `)
 
 func etcdClusterRestoreShBytes() ([]byte, error) {

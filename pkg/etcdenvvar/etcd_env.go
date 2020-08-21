@@ -18,11 +18,12 @@ type envVarContext struct {
 	spec   operatorv1.StaticPodOperatorSpec
 	status operatorv1.StaticPodOperatorStatus
 
-	nodeLister           corev1listers.NodeLister
-	infrastructureLister configv1listers.InfrastructureLister
-	networkLister        configv1listers.NetworkLister
-	configmapLister      corev1listers.ConfigMapLister
-	targetImagePullSpec  string
+	nodeLister            corev1listers.NodeLister
+	infrastructureLister  configv1listers.InfrastructureLister
+	networkLister         configv1listers.NetworkLister
+	configmapLister       corev1listers.ConfigMapLister
+	targetImagePullSpec   string
+	operatorImagePullSpec string
 }
 
 var FixedEtcdEnvVars = map[string]string{
@@ -104,12 +105,13 @@ func getEtcdctlEnvVars(envVarContext envVarContext) (map[string]string, error) {
 		return nil, err
 	}
 	return map[string]string{
-		"ETCDCTL_API":       "3",
-		"ETCDCTL_CACERT":    "/etc/kubernetes/static-pod-certs/configmaps/etcd-serving-ca/ca-bundle.crt",
-		"ETCDCTL_CERT":      "/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt",
-		"ETCDCTL_KEY":       "/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key",
-		"ETCDCTL_ENDPOINTS": endpoints,
-		"ETCD_IMAGE":        envVarContext.targetImagePullSpec,
+		"ETCDCTL_API":         "3",
+		"ETCDCTL_CACERT":      "/etc/kubernetes/static-pod-certs/configmaps/etcd-serving-ca/ca-bundle.crt",
+		"ETCDCTL_CERT":        "/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt",
+		"ETCDCTL_KEY":         "/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key",
+		"ETCDCTL_ENDPOINTS":   endpoints,
+		"ETCD_IMAGE":          envVarContext.targetImagePullSpec,
+		"ETCD_OPERATOR_IMAGE": envVarContext.operatorImagePullSpec,
 	}, nil
 }
 
