@@ -5,6 +5,9 @@ import (
 	"os"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/klog"
+
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -16,6 +19,7 @@ import (
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
+	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/staticpod"
@@ -235,6 +239,11 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	configInformers.Start(ctx.Done())
 	dynamicInformers.Start(ctx.Done())
 
+	// clean up the old PDBs as soon as the replacements are in place.  This checks every minute, so it's fast enough
+	// to work after the new deployment is created and before the MCO restarts enough nodes to get stuck.
+	ensureMCOEtcQuorumGuardCleanup(ctx, kubeClient, controllerContext.EventRecorder)
+	ensureMCOEtcQuorumGuardPDBCleanup(ctx, kubeClient, controllerContext.EventRecorder)
+
 	go fsyncMetricController.Run(ctx, 1)
 	go staticResourceController.Run(ctx, 1)
 	go targetConfigReconciler.Run(ctx, 1)
@@ -291,4 +300,106 @@ var CertSecrets = []revision.RevisionResource{
 	{Name: "etcd-all-peer"},
 	{Name: "etcd-all-serving"},
 	{Name: "etcd-all-serving-metrics"},
+}
+
+// ensureMCOEtcQuorumGuardCleanup continually ensures the removal of the legacy etcd quorum guard
+func ensureMCOEtcQuorumGuardCleanup(ctx context.Context, kubeClient *kubernetes.Clientset, eventRecorder events.Recorder) {
+	// mco and etcd and deployment both use the same name
+	resourceName := "etcd-quorum-guard"
+
+	mcoClient := kubeClient.AppsV1().Deployments("openshift-machine-config-operator")
+	etcdOClient := kubeClient.AppsV1().Deployments(operatorclient.TargetNamespace)
+
+	go wait.UntilWithContext(ctx, func(_ context.Context) {
+		// This function isn't expected to take long enough to suggest
+		// checking that the context is done. The wait method will do that
+		// checking.
+
+		// Check whether the legacy etcd quorum guard exists and is not marked for deletion
+		mcoEtcdQuorumGuard, err := mcoClient.Get(ctx, resourceName, metav1.GetOptions{})
+		if errors.IsNotFound(err) {
+			// Done - new etcd quorum guard does not exist
+			return
+		}
+		if err != nil {
+			klog.Warningf("Error retrieving legacy etcd quorum guard: %v", err)
+			return
+		}
+		if mcoEtcdQuorumGuard.ObjectMeta.DeletionTimestamp != nil {
+			// Done - daemonset has been marked for deletion
+			return
+		}
+
+		// Check that the deployment managing the apiserver pods has the correct number of replicas
+		etcdOperatorQuorumGuard, err := etcdOClient.Get(ctx, resourceName, metav1.GetOptions{})
+		if errors.IsNotFound(err) {
+			// No available replicas if the deployment doesn't exist
+			return
+		}
+		if err != nil {
+			klog.Warningf("Error retrieving the deployment that manages etcd quorum guard pods: %v", err)
+			return
+		}
+		if etcdOperatorQuorumGuard.Status.AvailableReplicas == 3 {
+			eventRecorder.Warning("LegacyDaemonSetCleanup", "the deployment replacing the etcd quorum guard does not have three available replicas yet")
+			return
+		}
+
+		// Safe to remove legacy etcd quorum guard since the deployment has the correct number of replicas
+		err = mcoClient.Delete(ctx, resourceName, metav1.DeleteOptions{})
+		if err != nil && !errors.IsNotFound(err) {
+			klog.Warningf("Failed to delete legacy etcd quorum guard: %v", err)
+			return
+		}
+		eventRecorder.Event("LegacyEtcdQuorumGuardRemoved", "legacy etcd quorum guard has been removed")
+	}, time.Minute)
+}
+
+// ensureMCOEtcQuorumGuardPDBCleanup continually ensures the removal of the legacy etcd quorum guard pdb
+func ensureMCOEtcQuorumGuardPDBCleanup(ctx context.Context, kubeClient *kubernetes.Clientset, eventRecorder events.Recorder) {
+	// mco and etcd and deployment both use the same name
+	resourceName := "etcd-quorum-guard"
+
+	mcoClient := kubeClient.PolicyV1beta1().PodDisruptionBudgets("openshift-machine-config-operator")
+	etcdOClient := kubeClient.PolicyV1beta1().PodDisruptionBudgets(operatorclient.TargetNamespace)
+
+	go wait.UntilWithContext(ctx, func(_ context.Context) {
+		// This function isn't expected to take long enough to suggest
+		// checking that the context is done. The wait method will do that
+		// checking.
+
+		// Check whether the legacy etcd quorum guard exists and is not marked for deletion
+		mcoEtcdQuorumGuard, err := mcoClient.Get(ctx, resourceName, metav1.GetOptions{})
+		if errors.IsNotFound(err) {
+			// Done - new etcd quorum guard does not exist
+			return
+		}
+		if err != nil {
+			klog.Warningf("Error retrieving legacy pdb: %v", err)
+			return
+		}
+		if mcoEtcdQuorumGuard.ObjectMeta.DeletionTimestamp != nil {
+			// Done - daemonset has been marked for deletion
+			return
+		}
+
+		// Check that the pdb exists
+		_, err = etcdOClient.Get(ctx, resourceName, metav1.GetOptions{})
+		if errors.IsNotFound(err) {
+			// No available replicas if the deployment doesn't exist
+			return
+		}
+		if err != nil {
+			klog.Warningf("Error retrieving the pdb that manages etcd quorum guard pods: %v", err)
+			return
+		}
+
+		// Safe to remove legacy etcd quorum guard since the deployment has the correct number of replicas
+		err = mcoClient.Delete(ctx, resourceName, metav1.DeleteOptions{})
+		if err != nil && !errors.IsNotFound(err) {
+			klog.Warningf("Failed to delete legacy etcd quorum guard: %v", err)
+			return
+		}
+		eventRecorder.Event("LegacyEtcdQuorumGuardPDBRemoved", "legacy etcd quorum guard pdb has been removed")
+	}, time.Minute)
 }
