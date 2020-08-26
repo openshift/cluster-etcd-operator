@@ -4,6 +4,7 @@ metadata:
   namespace: openshift-etcd-operator
   name: etcd-operator
   annotations:
+    include.release.openshift.io/self-managed-high-availability: "true"
     exclude.release.openshift.io/internal-openshift-hosted: "true"
   labels:
     app: etcd-operator

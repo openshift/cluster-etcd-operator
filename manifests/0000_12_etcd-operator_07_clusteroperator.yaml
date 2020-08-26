@@ -3,6 +3,7 @@ kind: ClusterOperator
 metadata:
   name: etcd
   annotations:
+    include.release.openshift.io/self-managed-high-availability: "true"
     exclude.release.openshift.io/internal-openshift-hosted: "true"
 spec: {}
 status:
