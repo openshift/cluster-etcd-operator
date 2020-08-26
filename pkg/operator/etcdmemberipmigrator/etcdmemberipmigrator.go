@@ -7,9 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 
 	"github.com/davecgh/go-spew/spew"
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
@@ -133,16 +135,18 @@ func (c *EtcdMemberIPMigrator) reconcileMembers() error {
 
 		c.eventRecorder.Eventf("MemberMissingIPPeer", "member %q is missing an IP in the peer list", member.Name)
 
-		// if the member does not have a peerIP, then we need to migrate it.  This approach is very heavy with dns requests
-		// but this should almost never happen and this allows us to re-use the code that we have already for DNS.
-		etcdInfo, err := c.getEtcdInfo()
+		// First, try a migration using a reverse DNS lookup.
+		requiredPeerList, err := c.getRequiredPeerListFromDNS(member)
 		if err != nil {
-			return err
+			c.eventRecorder.Warningf("MemberIPLookupFailed", "member %q IP couldn't be determined via DNS: %v; will attempt a fallback lookup", member.Name, err)
+			// If the DNS lookup fails (which could be the case if, for example, there's a problematic DNS
+			// forwarding configuration), try a non-DNS mapping of member to IP.
+			requiredPeerList, err = c.getRequiredPeerListFromFallback(member)
+			if err != nil {
+				return fmt.Errorf("failed to determine member %q IP using fallback approach: %v", member.Name, err)
+			}
 		}
-		requiredPeerList, err := getRequiredPeerList(etcdInfo, member.PeerURLs)
-		if err != nil {
-			return err
-		}
+
 		c.eventRecorder.Eventf("MemberSettingIPPeer", "member %q; new peer list %v", member.Name, strings.Join(requiredPeerList, ","))
 		if err := c.etcdClient.MemberUpdatePeerURL(member.ID, requiredPeerList); err != nil {
 			return err
@@ -150,6 +154,51 @@ func (c *EtcdMemberIPMigrator) reconcileMembers() error {
 	}
 
 	return nil
+}
+
+// getRequiredPeerListFromDNS finds the member IP using a reverse DNS lookup.
+// This approach is very heavy with dns requests but this should almost never
+// happen and this allows us to re-use the code that we have already for DNS.
+func (c *EtcdMemberIPMigrator) getRequiredPeerListFromDNS(member *etcdserverpb.Member) ([]string, error) {
+	etcdInfo, err := c.getEtcdInfo()
+	if err != nil {
+		return nil, err
+	}
+	return getRequiredPeerList(etcdInfo, member.PeerURLs)
+}
+
+// getRequiredPeerListFromFallback tries to map a member to an IP address by
+// exploiting naming conventions. For example, on Azure IPI, we know the member
+// names will be a function of the node name, and so we can find the node based
+// on the member name and use the node's IP without a DNS query.
+func (c *EtcdMemberIPMigrator) getRequiredPeerListFromFallback(member *etcdserverpb.Member) ([]string, error) {
+	infra, err := c.infrastructureLister.Get("cluster")
+	if err != nil {
+		return nil, err
+	}
+	if infra.Status.PlatformStatus == nil {
+		return nil, fmt.Errorf("no reliable platform metadata is available")
+	}
+
+	switch infra.Status.PlatformStatus.Type {
+	case configv1.AzurePlatformType:
+		network, err := c.networkLister.Get("cluster")
+		if err != nil {
+			return nil, err
+		}
+		nodeName := strings.ReplaceAll(member.Name, "etcd-member-", "")
+		node, err := c.nodeLister.Get(nodeName)
+		if err != nil {
+			return nil, fmt.Errorf("couldn't get node %q for member %q: %v", nodeName, member.Name, err)
+		}
+		nodeIP, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get node IP for node %q: %v", nodeName, err)
+		}
+		return []string{fmt.Sprintf("https://%s:2380", nodeIP)}, nil
+	}
+
+	return nil, fmt.Errorf("couldn't find any IP for member %q", member.Name)
 }
 
 func hasPeerIP(peerURLs []string) (bool, error) {
