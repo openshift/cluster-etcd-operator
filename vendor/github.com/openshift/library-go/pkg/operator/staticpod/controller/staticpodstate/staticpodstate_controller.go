@@ -117,19 +117,28 @@ func (c *StaticPodStateController) sync(ctx context.Context, syncCtx factory.Syn
 		}
 	}
 
-	if len(images) == 0 {
+	switch {
+	case len(images) == 0:
 		syncCtx.Recorder().Warningf("MissingVersion", "no image found for operand pod")
-	} else if len(images) > 1 {
+
+	case len(images) > 1:
 		syncCtx.Recorder().Eventf("MultipleVersions", "multiple versions found, probably in transition: %v", strings.Join(images.List(), ","))
-	} else {
-		c.versionRecorder.SetVersion(
-			c.operandName,
-			status.VersionForOperandFromEnv(),
-		)
-		c.versionRecorder.SetVersion(
-			"operator",
-			status.VersionForOperatorFromEnv(),
-		)
+
+	default: // we have one image
+		// if have a consistent image and if that image the same as the current operand image, then we can update the version to reflect our new version
+		if images.List()[0] == status.ImageForOperandFromEnv() {
+			c.versionRecorder.SetVersion(
+				c.operandName,
+				status.VersionForOperandFromEnv(),
+			)
+			c.versionRecorder.SetVersion(
+				"operator",
+				status.VersionForOperatorFromEnv(),
+			)
+
+		} else {
+			// otherwise, we have one image, but it is NOT the current operand image so we don't update the version
+		}
 	}
 
 	// update failing condition

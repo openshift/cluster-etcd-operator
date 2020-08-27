@@ -51,7 +51,8 @@ type ConfigObserver struct {
 	// listers are used by config observers to retrieve necessary resources
 	listers Listers
 
-	nestedConfigPath []string
+	nestedConfigPath      []string
+	degradedConditionType string
 }
 
 func NewConfigObserver(
@@ -67,6 +68,7 @@ func NewConfigObserver(
 		listers,
 		informers,
 		nil,
+		"",
 		observers...,
 	)
 }
@@ -96,13 +98,15 @@ func NewNestedConfigObserver(
 	listers Listers,
 	informers []factory.Informer,
 	nestedConfigPath []string,
+	degradedConditionPrefix string,
 	observers ...ObserveConfigFunc,
 ) factory.Controller {
 	c := &ConfigObserver{
-		operatorClient:   operatorClient,
-		observers:        observers,
-		listers:          listers,
-		nestedConfigPath: nestedConfigPath,
+		operatorClient:        operatorClient,
+		observers:             observers,
+		listers:               listers,
+		nestedConfigPath:      nestedConfigPath,
+		degradedConditionType: degradedConditionPrefix + condition.ConfigObservationDegradedConditionType,
 	}
 
 	return factory.New().ResyncEvery(time.Second).WithSync(c.sync).WithInformers(append(informers, listersToInformer(listers)...)...).ToController("ConfigObserver", eventRecorder.WithComponentSuffix("config-observer"))
@@ -157,7 +161,7 @@ func (c ConfigObserver) sync(ctx context.Context, syncCtx factory.SyncContext) e
 
 	// update failing condition
 	cond := operatorv1.OperatorCondition{
-		Type:   condition.ConfigObservationDegradedConditionType,
+		Type:   c.degradedConditionType,
 		Status: operatorv1.ConditionFalse,
 	}
 	if configError != nil {
