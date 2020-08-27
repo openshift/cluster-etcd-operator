@@ -9,7 +9,7 @@ require (
 	github.com/openshift/api v0.0.0-20200723134351-89de68875e7c
 	github.com/openshift/build-machinery-go v0.0.0-20200713135615-1f43d26dccc7
 	github.com/openshift/client-go v0.0.0-20200722173614-5a1b0aaeff15
-	github.com/openshift/library-go v0.0.0-20200730074834-b4288351763c
+	github.com/openshift/library-go v0.0.0-20200826135324-025aa3f9ff11
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.7.1
 	github.com/prometheus/common v0.10.0
@@ -28,3 +28,5 @@ require (
 	k8s.io/klog v1.0.0
 	k8s.io/utils v0.0.0-20200720150651-0bdb4ca86cbc
 )
+
+replace vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787
