@@ -19,6 +19,7 @@ type versionGetter struct {
 }
 
 const (
+	operandImageEnvVarName         = "IMAGE"
 	operandImageVersionEnvVarName  = "OPERAND_IMAGE_VERSION"
 	operatorImageVersionEnvVarName = "OPERATOR_IMAGE_VERSION"
 )
@@ -62,6 +63,10 @@ func (v *versionGetter) VersionChangedChannel() <-chan struct{} {
 	channel := make(chan struct{}, 50)
 	v.notificationChannels = append(v.notificationChannels, channel)
 	return channel
+}
+
+func ImageForOperandFromEnv() string {
+	return os.Getenv(operandImageEnvVarName)
 }
 
 func VersionForOperandFromEnv() string {
