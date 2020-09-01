@@ -15,7 +15,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
@@ -173,7 +173,7 @@ func (c *HostEndpoints2Controller) applyEndpoints(ctx context.Context, recorder 
 		return nil
 	}
 	jsonPatch := resourceapply.JSONPatchNoError(existing, toWrite)
-	if klog.V(4) {
+	if klog.V(4).Enabled() {
 		klog.Infof("Endpoints %q changes: %v", required.Namespace+"/"+required.Name, jsonPatch)
 	}
 	updated, err := c.endpointsClient.Endpoints(operatorclient.TargetNamespace).Update(ctx, toWrite, metav1.UpdateOptions{})

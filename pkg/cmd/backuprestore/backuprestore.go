@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"io"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 	"os"
 	"os/signal"
 )
