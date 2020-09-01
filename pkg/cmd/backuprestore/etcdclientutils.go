@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"google.golang.org/grpc"
 	"io"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 	"os"
 	"time"
 

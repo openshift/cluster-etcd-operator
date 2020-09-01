@@ -8,7 +8,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kyaml "k8s.io/apimachinery/pkg/util/yaml"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 )
 
 // IsUnsupportedUnsafeEtcd returns true if

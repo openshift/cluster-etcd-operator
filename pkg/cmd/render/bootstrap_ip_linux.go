@@ -3,7 +3,7 @@ package render
 import (
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 )
 
 func getAddrMap() (addrMap addrMap, err error) {
