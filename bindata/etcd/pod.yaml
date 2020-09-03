@@ -209,6 +209,9 @@ ${COMPUTED_ENV_VARS}
 
         export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
 
+        export GRPC_GO_LOG_VERBOSITY_LEVEL=99
+        export GRPC_GO_LOG_SEVERITY_LEVEL=info
+
         exec etcd grpc-proxy start \
           --endpoints https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:9978 \
           --metrics-addr https://${LISTEN_ON_ALL_IPS}:9979 \
