@@ -23,7 +23,7 @@ spec:
     spec:
       serviceAccountName: etcd-operator
       containers:
-      - name: operator
+      - name: etcd-operator
         image: quay.io/openshift/origin-cluster-etcd-operator
         imagePullPolicy: IfNotPresent
         ports:
