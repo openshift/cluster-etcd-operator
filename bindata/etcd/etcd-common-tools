@@ -5,6 +5,7 @@ MANIFEST_DIR="${CONFIG_FILE_DIR}/manifests"
 ETCD_DATA_DIR="/var/lib/etcd"
 ETCD_DATA_DIR_BACKUP="/var/lib/etcd-backup"
 MANIFEST_STOPPED_DIR="${ASSET_DIR}/manifests-stopped"
+RESTORE_ETCD_POD_YAML="${CONFIG_FILE_DIR}/static-pod-resources/etcd-pod-REVISION/configmaps/restore-etcd-pod/pod.yaml"
 ETCDCTL_BIN_DIR="${CONFIG_FILE_DIR}/static-pod-resources/bin"
 PATH=${PATH}:${ETCDCTL_BIN_DIR}
 
