@@ -7,9 +7,28 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"go.etcd.io/etcd/etcdserver/api/v3rpc/rpctypes"
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
+	"k8s.io/component-base/metrics/legacyregistry"
 )
+
+func init() {
+	legacyregistry.RawMustRegister(raftTerms)
+}
+
+const raftTermsMetricName = "etcd_debugging_raft_terms_total"
+
+var raftTerms = &raftTermsCollector{
+	desc: prometheus.NewDesc(
+		raftTermsMetricName,
+		"Number of etcd raft terms as observed by each member.",
+		[]string{"member"},
+		prometheus.Labels{},
+	),
+	terms: map[string]uint64{},
+	lock:  sync.RWMutex{},
+}
 
 type healthCheck struct {
 	Member  *etcdserverpb.Member
@@ -43,13 +62,19 @@ func GetMemberHealth(etcdMembers []*etcdserverpb.Member) memberHealth {
 			st := time.Now()
 			ctx, cancel := context.WithCancel(context.Background())
 			// linearized request to verify health of member
-			_, err = cli.Get(ctx, "health")
+			resp, err := cli.Get(ctx, "health")
 			cancel()
 			hc := healthCheck{Member: member, Healthy: false, Took: time.Since(st).String()}
-			if err == nil || err == rpctypes.ErrPermissionDenied {
+			if err == nil {
+				raftTerms.Set(member.Name, resp.Header.RaftTerm)
 				hc.Healthy = true
 			} else {
-				hc.Error = fmt.Errorf("health check failed: %w", err)
+				if err == rpctypes.ErrPermissionDenied {
+					// TODO: this might not be accurate
+					hc.Healthy = true
+				} else {
+					hc.Error = fmt.Errorf("health check failed: %w", err)
+				}
 			}
 			hch <- hc
 		}(member)
@@ -60,6 +85,20 @@ func GetMemberHealth(etcdMembers []*etcdserverpb.Member) memberHealth {
 
 	for healthCheck := range hch {
 		memberHealth = append(memberHealth, healthCheck)
+	}
+
+	// Purge any unknown members from the raft term metrics collector.
+	for _, cachedMember := range raftTerms.List() {
+		found := false
+		for _, member := range etcdMembers {
+			if member.Name == cachedMember {
+				found = true
+				break
+			}
+		}
+		if !found {
+			raftTerms.Forget(cachedMember)
+		}
 	}
 
 	return memberHealth
@@ -160,4 +199,50 @@ func HasStarted(member *etcdserverpb.Member) bool {
 		return false
 	}
 	return true
+}
+
+// raftTermsCollector is a Prometheus collector to re-expose raft terms as a counter.
+type raftTermsCollector struct {
+	desc  *prometheus.Desc
+	terms map[string]uint64
+	lock  sync.RWMutex
+}
+
+func (c *raftTermsCollector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- c.desc
+}
+
+func (c *raftTermsCollector) Set(member string, value uint64) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.terms[member] = value
+}
+
+func (c *raftTermsCollector) Forget(member string) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	delete(c.terms, member)
+}
+
+func (c *raftTermsCollector) List() []string {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	var members []string
+	for member := range c.terms {
+		members = append(members, member)
+	}
+	return members
+}
+
+func (c *raftTermsCollector) Collect(ch chan<- prometheus.Metric) {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	for member, val := range c.terms {
+		ch <- prometheus.MustNewConstMetric(
+			c.desc,
+			prometheus.CounterValue,
+			float64(val),
+			member,
+		)
+	}
 }
