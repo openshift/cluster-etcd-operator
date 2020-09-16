@@ -10,6 +10,14 @@ type AuthenticationListerExpansion interface{}
 // CSISnapshotControllerLister.
 type CSISnapshotControllerListerExpansion interface{}
 
+// CloudCredentialListerExpansion allows custom methods to be added to
+// CloudCredentialLister.
+type CloudCredentialListerExpansion interface{}
+
+// ClusterCSIDriverListerExpansion allows custom methods to be added to
+// ClusterCSIDriverLister.
+type ClusterCSIDriverListerExpansion interface{}
+
 // ConfigListerExpansion allows custom methods to be added to
 // ConfigLister.
 type ConfigListerExpansion interface{}

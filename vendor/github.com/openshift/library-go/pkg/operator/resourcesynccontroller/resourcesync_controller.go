@@ -133,6 +133,14 @@ func (c *ResourceSyncController) SyncSecret(destination, source ResourceLocation
 	return nil
 }
 
+// errorWithProvider provides a finger of blame in case a source resource cannot be retrieved.
+func errorWithProvider(provider string, err error) error {
+	if len(provider) > 0 {
+		return fmt.Errorf("%w (check the %q that is supposed to provide this resource)", err, provider)
+	}
+	return err
+}
+
 func (c *ResourceSyncController) Sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	operatorSpec, _, _, err := c.operatorConfigClient.GetOperatorState()
 	if err != nil {
@@ -165,7 +173,7 @@ func (c *ResourceSyncController) Sync(ctx context.Context, syncCtx factory.SyncC
 
 		_, _, err := resourceapply.SyncConfigMap(c.configMapGetter, syncCtx.Recorder(), source.Namespace, source.Name, destination.Namespace, destination.Name, []metav1.OwnerReference{})
 		if err != nil {
-			errors = append(errors, err)
+			errors = append(errors, errorWithProvider(source.Provider, err))
 		}
 	}
 	for destination, source := range c.secretSyncRules {
@@ -185,7 +193,7 @@ func (c *ResourceSyncController) Sync(ctx context.Context, syncCtx factory.SyncC
 
 		_, _, err := resourceapply.SyncSecret(c.secretGetter, syncCtx.Recorder(), source.Namespace, source.Name, destination.Namespace, destination.Name, []metav1.OwnerReference{})
 		if err != nil {
-			errors = append(errors, err)
+			errors = append(errors, errorWithProvider(source.Provider, err))
 		}
 	}
 

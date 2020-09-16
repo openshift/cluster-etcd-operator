@@ -328,7 +328,7 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 				}
 				return false, nil
 			} else {
-				klog.V(2).Infof("%q is in transition to %d, but has not made progress because %s", currNodeState.NodeName, currNodeState.TargetRevision, reason)
+				klog.V(2).Infof("%q is in transition to %d, but has not made progress because %s", currNodeState.NodeName, currNodeState.TargetRevision, reasonWithBlame(reason))
 			}
 
 			// We want to retry the installer pod by deleting and then rekicking. Also we don't set LastFailedRevision.

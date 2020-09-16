@@ -51,6 +51,11 @@ func (c LogLevelController) sync(ctx context.Context, syncCtx factory.SyncContex
 		desiredLogLevel = c.defaultLogLevel
 	}
 
+	if !ValidLogLevel(desiredLogLevel) {
+		syncCtx.Recorder().Warningf("OperatorLogLevelInvalid", "Invalid logLevel %q, falling back to %q", desiredLogLevel, c.defaultLogLevel)
+		desiredLogLevel = c.defaultLogLevel
+	}
+
 	// correct log level is set and it matches the expected log level from operator operatorSpec, do nothing.
 	if !isUnknown && currentLogLevel == desiredLogLevel {
 		return nil
