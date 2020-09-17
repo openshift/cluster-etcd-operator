@@ -78,16 +78,16 @@ func NewInstaller() *cobra.Command {
 			klog.V(1).Info(spew.Sdump(o))
 
 			if err := o.Complete(); err != nil {
-				klog.Fatal(err)
+				klog.Exit(err)
 			}
 			if err := o.Validate(); err != nil {
-				klog.Fatal(err)
+				klog.Exit(err)
 			}
 
 			ctx, cancel := context.WithTimeout(context.TODO(), o.Timeout)
 			defer cancel()
 			if err := o.Run(ctx); err != nil {
-				klog.Fatal(err)
+				klog.Exit(err)
 			}
 		},
 	}

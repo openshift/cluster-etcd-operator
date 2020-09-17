@@ -4,6 +4,10 @@ package resourcesynccontroller
 type ResourceLocation struct {
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
+
+	// Provider if set for the source location enhance the error message to point to the component which
+	// provide this resource.
+	Provider string `json:"provider,omitempty"`
 }
 
 var emptyResourceLocation = ResourceLocation{}
