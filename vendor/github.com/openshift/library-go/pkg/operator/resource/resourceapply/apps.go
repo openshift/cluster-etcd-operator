@@ -1,7 +1,6 @@
 package resourceapply
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -115,9 +114,9 @@ func ApplyDeploymentWithForce(client appsclientv1.DeploymentsGetter, recorder ev
 		// pull-spec annotation to be applied.
 		required.Annotations["operator.openshift.io/pull-spec"] = required.Spec.Template.Spec.Containers[0].Image
 	}
-	existing, err := client.Deployments(required.Namespace).Get(context.TODO(), required.Name, metav1.GetOptions{})
+	existing, err := client.Deployments(required.Namespace).Get(required.Name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		actual, err := client.Deployments(required.Namespace).Create(context.TODO(), required, metav1.CreateOptions{})
+		actual, err := client.Deployments(required.Namespace).Create(required)
 		reportCreateEvent(recorder, required, err)
 		return actual, true, err
 	}
@@ -154,7 +153,7 @@ func ApplyDeploymentWithForce(client appsclientv1.DeploymentsGetter, recorder ev
 		klog.Infof("Deployment %q changes: %v", required.Namespace+"/"+required.Name, JSONPatchNoError(existing, toWrite))
 	}
 
-	actual, err := client.Deployments(required.Namespace).Update(context.TODO(), toWrite, metav1.UpdateOptions{})
+	actual, err := client.Deployments(required.Namespace).Update(toWrite)
 	reportUpdateEvent(recorder, required, err)
 	return actual, true, err
 }
@@ -202,9 +201,9 @@ func ApplyDaemonSetWithForce(client appsclientv1.DaemonSetsGetter, recorder even
 		// pull-spec annotation to be applied.
 		required.Annotations["operator.openshift.io/pull-spec"] = required.Spec.Template.Spec.Containers[0].Image
 	}
-	existing, err := client.DaemonSets(required.Namespace).Get(context.TODO(), required.Name, metav1.GetOptions{})
+	existing, err := client.DaemonSets(required.Namespace).Get(required.Name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		actual, err := client.DaemonSets(required.Namespace).Create(context.TODO(), required, metav1.CreateOptions{})
+		actual, err := client.DaemonSets(required.Namespace).Create(required)
 		reportCreateEvent(recorder, required, err)
 		return actual, true, err
 	}
@@ -240,7 +239,7 @@ func ApplyDaemonSetWithForce(client appsclientv1.DaemonSetsGetter, recorder even
 	if klog.V(4) {
 		klog.Infof("DaemonSet %q changes: %v", required.Namespace+"/"+required.Name, JSONPatchNoError(existing, toWrite))
 	}
-	actual, err := client.DaemonSets(required.Namespace).Update(context.TODO(), toWrite, metav1.UpdateOptions{})
+	actual, err := client.DaemonSets(required.Namespace).Update(toWrite)
 	reportUpdateEvent(recorder, required, err)
 	return actual, true, err
 }

@@ -1,7 +1,6 @@
 package v1helpers
 
 import (
-	"context"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -43,7 +42,7 @@ func (g combinedConfigMapGetter) ConfigMaps(namespace string) corev1client.Confi
 	}
 }
 
-func (g combinedConfigMapInterface) Get(_ context.Context, name string, options metav1.GetOptions) (*corev1.ConfigMap, error) {
+func (g combinedConfigMapInterface) Get(name string, options metav1.GetOptions) (*corev1.ConfigMap, error) {
 	if !equality.Semantic.DeepEqual(options, emptyGetOptions) {
 		return nil, fmt.Errorf("GetOptions are not honored by cached client: %#v", options)
 	}
@@ -54,7 +53,7 @@ func (g combinedConfigMapInterface) Get(_ context.Context, name string, options 
 	}
 	return ret.DeepCopy(), nil
 }
-func (g combinedConfigMapInterface) List(_ context.Context, options metav1.ListOptions) (*corev1.ConfigMapList, error) {
+func (g combinedConfigMapInterface) List(options metav1.ListOptions) (*corev1.ConfigMapList, error) {
 	if !equality.Semantic.DeepEqual(options, emptyListOptions) {
 		return nil, fmt.Errorf("ListOptions are not honored by cached client: %#v", options)
 	}
@@ -97,7 +96,7 @@ func (g combinedSecretGetter) Secrets(namespace string) corev1client.SecretInter
 	}
 }
 
-func (g combinedSecretInterface) Get(_ context.Context, name string, options metav1.GetOptions) (*corev1.Secret, error) {
+func (g combinedSecretInterface) Get(name string, options metav1.GetOptions) (*corev1.Secret, error) {
 	if !equality.Semantic.DeepEqual(options, emptyGetOptions) {
 		return nil, fmt.Errorf("GetOptions are not honored by cached client: %#v", options)
 	}
@@ -109,7 +108,7 @@ func (g combinedSecretInterface) Get(_ context.Context, name string, options met
 	return ret.DeepCopy(), nil
 }
 
-func (g combinedSecretInterface) List(_ context.Context, options metav1.ListOptions) (*corev1.SecretList, error) {
+func (g combinedSecretInterface) List(options metav1.ListOptions) (*corev1.SecretList, error) {
 	if !equality.Semantic.DeepEqual(options, emptyListOptions) {
 		return nil, fmt.Errorf("ListOptions are not honored by cached client: %#v", options)
 	}

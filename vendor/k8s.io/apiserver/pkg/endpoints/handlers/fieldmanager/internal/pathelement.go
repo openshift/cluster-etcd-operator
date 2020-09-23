@@ -23,8 +23,8 @@ import (
 	"strconv"
 	"strings"
 
-	"sigs.k8s.io/structured-merge-diff/v3/fieldpath"
-	"sigs.k8s.io/structured-merge-diff/v3/value"
+	"sigs.k8s.io/structured-merge-diff/fieldpath"
+	"sigs.k8s.io/structured-merge-diff/value"
 )
 
 const (
@@ -110,7 +110,7 @@ func PathElementString(pe fieldpath.PathElement) (string, error) {
 	case pe.Key != nil:
 		kv := map[string]json.RawMessage{}
 		for _, k := range *pe.Key {
-			b, err := value.ToJSON(k.Value)
+			b, err := k.Value.ToJSON()
 			if err != nil {
 				return "", err
 			}
@@ -127,7 +127,7 @@ func PathElementString(pe fieldpath.PathElement) (string, error) {
 		}
 		return Key + ":" + string(b), nil
 	case pe.Value != nil:
-		b, err := value.ToJSON(*pe.Value)
+		b, err := pe.Value.ToJSON()
 		if err != nil {
 			return "", err
 		}

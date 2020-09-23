@@ -29,8 +29,8 @@ import (
 	"k8s.io/klog"
 )
 
-// DynamicCertKeyPairContent provides a CertKeyContentProvider that can dynamically react to new file content
-type DynamicCertKeyPairContent struct {
+// DynamicFileServingContent provides a CertKeyContentProvider that can dynamically react to new file content
+type DynamicFileServingContent struct {
 	name string
 
 	// certFile is the name of the certificate file to read.
@@ -39,7 +39,7 @@ type DynamicCertKeyPairContent struct {
 	keyFile string
 
 	// servingCert is a certKeyContent that contains the last read, non-zero length content of the key and cert
-	certKeyPair atomic.Value
+	servingCert atomic.Value
 
 	listeners []Listener
 
@@ -47,24 +47,24 @@ type DynamicCertKeyPairContent struct {
 	queue workqueue.RateLimitingInterface
 }
 
-var _ Notifier = &DynamicCertKeyPairContent{}
-var _ CertKeyContentProvider = &DynamicCertKeyPairContent{}
-var _ ControllerRunner = &DynamicCertKeyPairContent{}
+var _ Notifier = &DynamicFileServingContent{}
+var _ CertKeyContentProvider = &DynamicFileServingContent{}
+var _ ControllerRunner = &DynamicFileServingContent{}
 
 // NewDynamicServingContentFromFiles returns a dynamic CertKeyContentProvider based on a cert and key filename
-func NewDynamicServingContentFromFiles(purpose, certFile, keyFile string) (*DynamicCertKeyPairContent, error) {
+func NewDynamicServingContentFromFiles(purpose, certFile, keyFile string) (*DynamicFileServingContent, error) {
 	if len(certFile) == 0 || len(keyFile) == 0 {
 		return nil, fmt.Errorf("missing filename for serving cert")
 	}
 	name := fmt.Sprintf("%s::%s::%s", purpose, certFile, keyFile)
 
-	ret := &DynamicCertKeyPairContent{
+	ret := &DynamicFileServingContent{
 		name:     name,
 		certFile: certFile,
 		keyFile:  keyFile,
 		queue:    workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), fmt.Sprintf("DynamicCABundle-%s", purpose)),
 	}
-	if err := ret.loadCertKeyPair(); err != nil {
+	if err := ret.loadServingCert(); err != nil {
 		return nil, err
 	}
 
@@ -72,12 +72,12 @@ func NewDynamicServingContentFromFiles(purpose, certFile, keyFile string) (*Dyna
 }
 
 // AddListener adds a listener to be notified when the serving cert content changes.
-func (c *DynamicCertKeyPairContent) AddListener(listener Listener) {
+func (c *DynamicFileServingContent) AddListener(listener Listener) {
 	c.listeners = append(c.listeners, listener)
 }
 
 // loadServingCert determines the next set of content for the file.
-func (c *DynamicCertKeyPairContent) loadCertKeyPair() error {
+func (c *DynamicFileServingContent) loadServingCert() error {
 	cert, err := ioutil.ReadFile(c.certFile)
 	if err != nil {
 		return err
@@ -102,13 +102,12 @@ func (c *DynamicCertKeyPairContent) loadCertKeyPair() error {
 	}
 
 	// check to see if we have a change. If the values are the same, do nothing.
-	existing, ok := c.certKeyPair.Load().(*certKeyContent)
+	existing, ok := c.servingCert.Load().(*certKeyContent)
 	if ok && existing != nil && existing.Equal(newCertKey) {
 		return nil
 	}
 
-	c.certKeyPair.Store(newCertKey)
-	klog.V(2).Infof("Loaded a new cert/key pair for %q", c.Name())
+	c.servingCert.Store(newCertKey)
 
 	for _, listener := range c.listeners {
 		listener.Enqueue()
@@ -118,12 +117,12 @@ func (c *DynamicCertKeyPairContent) loadCertKeyPair() error {
 }
 
 // RunOnce runs a single sync loop
-func (c *DynamicCertKeyPairContent) RunOnce() error {
-	return c.loadCertKeyPair()
+func (c *DynamicFileServingContent) RunOnce() error {
+	return c.loadServingCert()
 }
 
 // Run starts the controller and blocks until stopCh is closed.
-func (c *DynamicCertKeyPairContent) Run(workers int, stopCh <-chan struct{}) {
+func (c *DynamicFileServingContent) Run(workers int, stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
 	defer c.queue.ShutDown()
 
@@ -134,7 +133,7 @@ func (c *DynamicCertKeyPairContent) Run(workers int, stopCh <-chan struct{}) {
 	go wait.Until(c.runWorker, time.Second, stopCh)
 
 	// start timer that rechecks every minute, just in case.  this also serves to prime the controller quickly.
-	go wait.PollImmediateUntil(FileRefreshDuration, func() (bool, error) {
+	_ = wait.PollImmediateUntil(FileRefreshDuration, func() (bool, error) {
 		c.queue.Add(workItemKey)
 		return false, nil
 	}, stopCh)
@@ -144,19 +143,19 @@ func (c *DynamicCertKeyPairContent) Run(workers int, stopCh <-chan struct{}) {
 	<-stopCh
 }
 
-func (c *DynamicCertKeyPairContent) runWorker() {
+func (c *DynamicFileServingContent) runWorker() {
 	for c.processNextWorkItem() {
 	}
 }
 
-func (c *DynamicCertKeyPairContent) processNextWorkItem() bool {
+func (c *DynamicFileServingContent) processNextWorkItem() bool {
 	dsKey, quit := c.queue.Get()
 	if quit {
 		return false
 	}
 	defer c.queue.Done(dsKey)
 
-	err := c.loadCertKeyPair()
+	err := c.loadServingCert()
 	if err == nil {
 		c.queue.Forget(dsKey)
 		return true
@@ -169,12 +168,12 @@ func (c *DynamicCertKeyPairContent) processNextWorkItem() bool {
 }
 
 // Name is just an identifier
-func (c *DynamicCertKeyPairContent) Name() string {
+func (c *DynamicFileServingContent) Name() string {
 	return c.name
 }
 
-// CurrentCertKeyContent provides cert and key byte content
-func (c *DynamicCertKeyPairContent) CurrentCertKeyContent() ([]byte, []byte) {
-	certKeyContent := c.certKeyPair.Load().(*certKeyContent)
+// CurrentCertKeyContent provides serving cert byte content
+func (c *DynamicFileServingContent) CurrentCertKeyContent() ([]byte, []byte) {
+	certKeyContent := c.servingCert.Load().(*certKeyContent)
 	return certKeyContent.cert, certKeyContent.key
 }

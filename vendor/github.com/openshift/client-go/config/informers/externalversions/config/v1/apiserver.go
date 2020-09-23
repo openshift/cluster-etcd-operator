@@ -3,7 +3,6 @@
 package v1
 
 import (
-	"context"
 	time "time"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -45,13 +44,13 @@ func NewFilteredAPIServerInformer(client versioned.Interface, resyncPeriod time.
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.ConfigV1().APIServers().List(context.TODO(), options)
+				return client.ConfigV1().APIServers().List(options)
 			},
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.ConfigV1().APIServers().Watch(context.TODO(), options)
+				return client.ConfigV1().APIServers().Watch(options)
 			},
 		},
 		&configv1.APIServer{},

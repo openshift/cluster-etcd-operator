@@ -212,10 +212,6 @@ func appendErrors(_ *operatorv1.OperatorStatus, _ bool, err error) []error {
 	return []error{}
 }
 
-func (c *StaticResourceController) Name() string {
-	return "StaticResourceController"
-}
-
 func (c *StaticResourceController) Run(ctx context.Context, workers int) {
-	c.factory.WithSync(c.Sync).ToController(c.Name(), c.eventRecorder).Run(ctx, workers)
+	c.factory.WithSync(c.Sync).ToController("", c.eventRecorder).Run(ctx, workers)
 }

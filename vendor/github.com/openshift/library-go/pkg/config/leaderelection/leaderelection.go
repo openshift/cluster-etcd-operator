@@ -3,7 +3,6 @@ package leaderelection
 import (
 	"fmt"
 	"io/ioutil"
-	"os"
 	"strings"
 	"time"
 
@@ -65,8 +64,7 @@ func ToConfigMapLeaderElection(clientConfig *rest.Config, config configv1.Leader
 		RetryPeriod:     config.RetryPeriod.Duration,
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStoppedLeading: func() {
-				defer os.Exit(0)
-				klog.Warningf("leader election lost")
+				klog.Fatalf("leaderelection lost")
 			},
 		},
 	}, nil

@@ -9,7 +9,6 @@ import (
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // ServiceCatalogAPIServer provides information to configure an operator to manage Service Catalog API Server
-// DEPRECATED: will be removed in 4.6
 type ServiceCatalogAPIServer struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -32,7 +31,6 @@ type ServiceCatalogAPIServerStatus struct {
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // ServiceCatalogAPIServerList is a collection of items
-// DEPRECATED: will be removed in 4.6
 type ServiceCatalogAPIServerList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata"`

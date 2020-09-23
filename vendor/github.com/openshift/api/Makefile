@@ -2,7 +2,7 @@ all: build
 .PHONY: all
 
 # Include the library makefile
-include $(addprefix ./vendor/github.com/openshift/build-machinery-go/make/, \
+include $(addprefix ./hack/alpha-build-machinery/make/, \
 	golang.mk \
 	targets/openshift/deps.mk \
 	targets/openshift/crd-schema-gen.mk \

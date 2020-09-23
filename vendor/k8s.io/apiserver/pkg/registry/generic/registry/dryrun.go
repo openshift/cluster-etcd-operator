@@ -38,7 +38,8 @@ func (s *DryRunnableStorage) Create(ctx context.Context, key string, obj, out ru
 		if err := s.Storage.Get(ctx, key, "", out, false); err == nil {
 			return storage.NewKeyExistsError(key, 0)
 		}
-		return s.copyInto(obj, out)
+		s.copyInto(obj, out)
+		return nil
 	}
 	return s.Storage.Create(ctx, key, obj, out, ttl)
 }
@@ -96,7 +97,8 @@ func (s *DryRunnableStorage) GuaranteedUpdate(
 		if err != nil {
 			return err
 		}
-		return s.copyInto(out, ptrToType)
+		s.copyInto(out, ptrToType)
+		return nil
 	}
 	return s.Storage.GuaranteedUpdate(ctx, key, ptrToType, ignoreNotFound, preconditions, tryUpdate, suggestion...)
 }

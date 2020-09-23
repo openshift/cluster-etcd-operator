@@ -3,7 +3,6 @@
 package v1
 
 import (
-	"context"
 	"time"
 
 	v1 "github.com/openshift/api/operator/v1"
@@ -22,15 +21,15 @@ type OpenShiftAPIServersGetter interface {
 
 // OpenShiftAPIServerInterface has methods to work with OpenShiftAPIServer resources.
 type OpenShiftAPIServerInterface interface {
-	Create(ctx context.Context, openShiftAPIServer *v1.OpenShiftAPIServer, opts metav1.CreateOptions) (*v1.OpenShiftAPIServer, error)
-	Update(ctx context.Context, openShiftAPIServer *v1.OpenShiftAPIServer, opts metav1.UpdateOptions) (*v1.OpenShiftAPIServer, error)
-	UpdateStatus(ctx context.Context, openShiftAPIServer *v1.OpenShiftAPIServer, opts metav1.UpdateOptions) (*v1.OpenShiftAPIServer, error)
-	Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error
-	DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error
-	Get(ctx context.Context, name string, opts metav1.GetOptions) (*v1.OpenShiftAPIServer, error)
-	List(ctx context.Context, opts metav1.ListOptions) (*v1.OpenShiftAPIServerList, error)
-	Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error)
-	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.OpenShiftAPIServer, err error)
+	Create(*v1.OpenShiftAPIServer) (*v1.OpenShiftAPIServer, error)
+	Update(*v1.OpenShiftAPIServer) (*v1.OpenShiftAPIServer, error)
+	UpdateStatus(*v1.OpenShiftAPIServer) (*v1.OpenShiftAPIServer, error)
+	Delete(name string, options *metav1.DeleteOptions) error
+	DeleteCollection(options *metav1.DeleteOptions, listOptions metav1.ListOptions) error
+	Get(name string, options metav1.GetOptions) (*v1.OpenShiftAPIServer, error)
+	List(opts metav1.ListOptions) (*v1.OpenShiftAPIServerList, error)
+	Watch(opts metav1.ListOptions) (watch.Interface, error)
+	Patch(name string, pt types.PatchType, data []byte, subresources ...string) (result *v1.OpenShiftAPIServer, err error)
 	OpenShiftAPIServerExpansion
 }
 
@@ -47,19 +46,19 @@ func newOpenShiftAPIServers(c *OperatorV1Client) *openShiftAPIServers {
 }
 
 // Get takes name of the openShiftAPIServer, and returns the corresponding openShiftAPIServer object, and an error if there is any.
-func (c *openShiftAPIServers) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.OpenShiftAPIServer, err error) {
+func (c *openShiftAPIServers) Get(name string, options metav1.GetOptions) (result *v1.OpenShiftAPIServer, err error) {
 	result = &v1.OpenShiftAPIServer{}
 	err = c.client.Get().
 		Resource("openshiftapiservers").
 		Name(name).
 		VersionedParams(&options, scheme.ParameterCodec).
-		Do(ctx).
+		Do().
 		Into(result)
 	return
 }
 
 // List takes label and field selectors, and returns the list of OpenShiftAPIServers that match those selectors.
-func (c *openShiftAPIServers) List(ctx context.Context, opts metav1.ListOptions) (result *v1.OpenShiftAPIServerList, err error) {
+func (c *openShiftAPIServers) List(opts metav1.ListOptions) (result *v1.OpenShiftAPIServerList, err error) {
 	var timeout time.Duration
 	if opts.TimeoutSeconds != nil {
 		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
@@ -69,13 +68,13 @@ func (c *openShiftAPIServers) List(ctx context.Context, opts metav1.ListOptions)
 		Resource("openshiftapiservers").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
-		Do(ctx).
+		Do().
 		Into(result)
 	return
 }
 
 // Watch returns a watch.Interface that watches the requested openShiftAPIServers.
-func (c *openShiftAPIServers) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
+func (c *openShiftAPIServers) Watch(opts metav1.ListOptions) (watch.Interface, error) {
 	var timeout time.Duration
 	if opts.TimeoutSeconds != nil {
 		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
@@ -85,84 +84,81 @@ func (c *openShiftAPIServers) Watch(ctx context.Context, opts metav1.ListOptions
 		Resource("openshiftapiservers").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
-		Watch(ctx)
+		Watch()
 }
 
 // Create takes the representation of a openShiftAPIServer and creates it.  Returns the server's representation of the openShiftAPIServer, and an error, if there is any.
-func (c *openShiftAPIServers) Create(ctx context.Context, openShiftAPIServer *v1.OpenShiftAPIServer, opts metav1.CreateOptions) (result *v1.OpenShiftAPIServer, err error) {
+func (c *openShiftAPIServers) Create(openShiftAPIServer *v1.OpenShiftAPIServer) (result *v1.OpenShiftAPIServer, err error) {
 	result = &v1.OpenShiftAPIServer{}
 	err = c.client.Post().
 		Resource("openshiftapiservers").
-		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(openShiftAPIServer).
-		Do(ctx).
+		Do().
 		Into(result)
 	return
 }
 
 // Update takes the representation of a openShiftAPIServer and updates it. Returns the server's representation of the openShiftAPIServer, and an error, if there is any.
-func (c *openShiftAPIServers) Update(ctx context.Context, openShiftAPIServer *v1.OpenShiftAPIServer, opts metav1.UpdateOptions) (result *v1.OpenShiftAPIServer, err error) {
+func (c *openShiftAPIServers) Update(openShiftAPIServer *v1.OpenShiftAPIServer) (result *v1.OpenShiftAPIServer, err error) {
 	result = &v1.OpenShiftAPIServer{}
 	err = c.client.Put().
 		Resource("openshiftapiservers").
 		Name(openShiftAPIServer.Name).
-		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(openShiftAPIServer).
-		Do(ctx).
+		Do().
 		Into(result)
 	return
 }
 
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *openShiftAPIServers) UpdateStatus(ctx context.Context, openShiftAPIServer *v1.OpenShiftAPIServer, opts metav1.UpdateOptions) (result *v1.OpenShiftAPIServer, err error) {
+
+func (c *openShiftAPIServers) UpdateStatus(openShiftAPIServer *v1.OpenShiftAPIServer) (result *v1.OpenShiftAPIServer, err error) {
 	result = &v1.OpenShiftAPIServer{}
 	err = c.client.Put().
 		Resource("openshiftapiservers").
 		Name(openShiftAPIServer.Name).
 		SubResource("status").
-		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(openShiftAPIServer).
-		Do(ctx).
+		Do().
 		Into(result)
 	return
 }
 
 // Delete takes name of the openShiftAPIServer and deletes it. Returns an error if one occurs.
-func (c *openShiftAPIServers) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
+func (c *openShiftAPIServers) Delete(name string, options *metav1.DeleteOptions) error {
 	return c.client.Delete().
 		Resource("openshiftapiservers").
 		Name(name).
-		Body(&opts).
-		Do(ctx).
+		Body(options).
+		Do().
 		Error()
 }
 
 // DeleteCollection deletes a collection of objects.
-func (c *openShiftAPIServers) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
+func (c *openShiftAPIServers) DeleteCollection(options *metav1.DeleteOptions, listOptions metav1.ListOptions) error {
 	var timeout time.Duration
-	if listOpts.TimeoutSeconds != nil {
-		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
+	if listOptions.TimeoutSeconds != nil {
+		timeout = time.Duration(*listOptions.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
 		Resource("openshiftapiservers").
-		VersionedParams(&listOpts, scheme.ParameterCodec).
+		VersionedParams(&listOptions, scheme.ParameterCodec).
 		Timeout(timeout).
-		Body(&opts).
-		Do(ctx).
+		Body(options).
+		Do().
 		Error()
 }
 
 // Patch applies the patch and returns the patched openShiftAPIServer.
-func (c *openShiftAPIServers) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.OpenShiftAPIServer, err error) {
+func (c *openShiftAPIServers) Patch(name string, pt types.PatchType, data []byte, subresources ...string) (result *v1.OpenShiftAPIServer, err error) {
 	result = &v1.OpenShiftAPIServer{}
 	err = c.client.Patch(pt).
 		Resource("openshiftapiservers").
-		Name(name).
 		SubResource(subresources...).
-		VersionedParams(&opts, scheme.ParameterCodec).
+		Name(name).
 		Body(data).
-		Do(ctx).
+		Do().
 		Into(result)
 	return
 }

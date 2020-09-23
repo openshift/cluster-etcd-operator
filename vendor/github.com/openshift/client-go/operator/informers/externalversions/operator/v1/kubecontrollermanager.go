@@ -3,7 +3,6 @@
 package v1
 
 import (
-	"context"
 	time "time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -45,13 +44,13 @@ func NewFilteredKubeControllerManagerInformer(client versioned.Interface, resync
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.OperatorV1().KubeControllerManagers().List(context.TODO(), options)
+				return client.OperatorV1().KubeControllerManagers().List(options)
 			},
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.OperatorV1().KubeControllerManagers().Watch(context.TODO(), options)
+				return client.OperatorV1().KubeControllerManagers().Watch(options)
 			},
 		},
 		&operatorv1.KubeControllerManager{},

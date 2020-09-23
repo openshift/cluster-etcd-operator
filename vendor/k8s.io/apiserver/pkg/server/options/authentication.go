@@ -17,7 +17,6 @@ limitations under the License.
 package options
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -213,7 +212,7 @@ func (s *DelegatingAuthenticationOptions) AddFlags(fs *pflag.FlagSet) {
 	}
 	fs.StringVar(&s.RemoteKubeConfigFile, "authentication-kubeconfig", s.RemoteKubeConfigFile, ""+
 		"kubeconfig file pointing at the 'core' kubernetes server with enough rights to create "+
-		"tokenreviews.authentication.k8s.io."+optionalKubeConfigSentence)
+		"tokenaccessreviews.authentication.k8s.io."+optionalKubeConfigSentence)
 
 	fs.DurationVar(&s.CacheTTL, "authentication-token-webhook-cache-ttl", s.CacheTTL,
 		"The duration to cache responses from the webhook token authenticator.")
@@ -340,7 +339,7 @@ func (s *DelegatingAuthenticationOptions) createRequestHeaderConfig(client kuber
 		return nil, fmt.Errorf("unable to create request header authentication config: %v", err)
 	}
 
-	authConfigMap, err := client.CoreV1().ConfigMaps(authenticationConfigMapNamespace).Get(context.TODO(), authenticationConfigMapName, metav1.GetOptions{})
+	authConfigMap, err := client.CoreV1().ConfigMaps(authenticationConfigMapNamespace).Get(authenticationConfigMapName, metav1.GetOptions{})
 	switch {
 	case errors.IsNotFound(err):
 		// ignore, authConfigMap is nil now

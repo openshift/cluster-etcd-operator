@@ -21,14 +21,16 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/endpoints/handlers/fieldmanager/internal"
 	"k8s.io/klog"
 	openapiproto "k8s.io/kube-openapi/pkg/util/proto"
-	"sigs.k8s.io/structured-merge-diff/v3/fieldpath"
-	"sigs.k8s.io/structured-merge-diff/v3/merge"
+	"sigs.k8s.io/structured-merge-diff/fieldpath"
+	"sigs.k8s.io/structured-merge-diff/merge"
+	"sigs.k8s.io/yaml"
 )
 
 type structuredMergeManager struct {
@@ -41,7 +43,6 @@ type structuredMergeManager struct {
 }
 
 var _ Manager = &structuredMergeManager{}
-var atMostEverySecond = internal.NewAtMostEvery(time.Second)
 
 // NewStructuredMergeManager creates a new Manager that merges apply requests
 // and update managed fields for other types of requests.
@@ -99,47 +100,58 @@ func (f *structuredMergeManager) Update(liveObj, newObj runtime.Object, managed 
 	newObjTyped, err := f.typeConverter.ObjectToTyped(newObjVersioned)
 	if err != nil {
 		// Return newObj and just by-pass fields update. This really shouldn't happen.
-		atMostEverySecond.Do(func() {
-			klog.Errorf("[SHOULD NOT HAPPEN] failed to create typed new object of type %v: %v", newObjVersioned.GetObjectKind().GroupVersionKind(), err)
-		})
+		klog.Errorf("[SHOULD NOT HAPPEN] failed to create typed new object: %v", err)
 		return newObj, managed, nil
 	}
 	liveObjTyped, err := f.typeConverter.ObjectToTyped(liveObjVersioned)
 	if err != nil {
 		// Return newObj and just by-pass fields update. This really shouldn't happen.
-		atMostEverySecond.Do(func() {
-			klog.Errorf("[SHOULD NOT HAPPEN] failed to create typed live object of type %v: %v", liveObjVersioned.GetObjectKind().GroupVersionKind(), err)
-		})
+		klog.Errorf("[SHOULD NOT HAPPEN] failed to create typed live object: %v", err)
 		return newObj, managed, nil
 	}
 	apiVersion := fieldpath.APIVersion(f.groupVersion.String())
 
 	// TODO(apelisse) use the first return value when unions are implemented
-	_, managedFields, err := f.updater.Update(liveObjTyped, newObjTyped, apiVersion, managed.Fields(), manager)
+	self := "current-operation"
+	_, managedFields, err := f.updater.Update(liveObjTyped, newObjTyped, apiVersion, managed.Fields(), self)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to update ManagedFields: %v", err)
 	}
 	managed = internal.NewManaged(managedFields, managed.Times())
 
+	// If the current operation took any fields from anything, it means the object changed,
+	// so update the timestamp of the managedFieldsEntry and merge with any previous updates from the same manager
+	if vs, ok := managed.Fields()[self]; ok {
+		delete(managed.Fields(), self)
+
+		managed.Times()[manager] = &metav1.Time{Time: time.Now().UTC()}
+		if previous, ok := managed.Fields()[manager]; ok {
+			managed.Fields()[manager] = fieldpath.NewVersionedSet(vs.Set().Union(previous.Set()), vs.APIVersion(), vs.Applied())
+		} else {
+			managed.Fields()[manager] = vs
+		}
+	}
+
 	return newObj, managed, nil
 }
 
 // Apply implements Manager.
-func (f *structuredMergeManager) Apply(liveObj, patchObj runtime.Object, managed Managed, manager string, force bool) (runtime.Object, Managed, error) {
+func (f *structuredMergeManager) Apply(liveObj runtime.Object, patch []byte, managed Managed, manager string, force bool) (runtime.Object, Managed, error) {
+	patchObj := &unstructured.Unstructured{Object: map[string]interface{}{}}
+	if err := yaml.Unmarshal(patch, &patchObj.Object); err != nil {
+		return nil, nil, errors.NewBadRequest(fmt.Sprintf("error decoding YAML: %v", err))
+	}
+
 	// Check that the patch object has the same version as the live object
-	if patchVersion := patchObj.GetObjectKind().GroupVersionKind().GroupVersion(); patchVersion != f.groupVersion {
+	if patchObj.GetAPIVersion() != f.groupVersion.String() {
 		return nil, nil,
 			errors.NewBadRequest(
 				fmt.Sprintf("Incorrect version specified in apply patch. "+
 					"Specified patch version: %s, expected: %s",
-					patchVersion, f.groupVersion))
+					patchObj.GetAPIVersion(), f.groupVersion.String()))
 	}
 
-	patchObjMeta, err := meta.Accessor(patchObj)
-	if err != nil {
-		return nil, nil, fmt.Errorf("couldn't get accessor: %v", err)
-	}
-	if patchObjMeta.GetManagedFields() != nil {
+	if patchObj.GetManagedFields() != nil {
 		return nil, nil, errors.NewBadRequest(fmt.Sprintf("metadata.managedFields must be nil"))
 	}
 
@@ -167,9 +179,8 @@ func (f *structuredMergeManager) Apply(liveObj, patchObj runtime.Object, managed
 	}
 	managed = internal.NewManaged(managedFields, managed.Times())
 
-	if newObjTyped == nil {
-		return nil, managed, nil
-	}
+	// Update the time in the managedFieldsEntry for this operation
+	managed.Times()[manager] = &metav1.Time{Time: time.Now().UTC()}
 
 	newObj, err := f.typeConverter.TypedToObject(newObjTyped)
 	if err != nil {

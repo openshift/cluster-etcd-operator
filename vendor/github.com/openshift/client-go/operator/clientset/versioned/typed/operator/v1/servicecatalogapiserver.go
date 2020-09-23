@@ -3,7 +3,6 @@
 package v1
 
 import (
-	"context"
 	"time"
 
 	v1 "github.com/openshift/api/operator/v1"
@@ -22,15 +21,15 @@ type ServiceCatalogAPIServersGetter interface {
 
 // ServiceCatalogAPIServerInterface has methods to work with ServiceCatalogAPIServer resources.
 type ServiceCatalogAPIServerInterface interface {
-	Create(ctx context.Context, serviceCatalogAPIServer *v1.ServiceCatalogAPIServer, opts metav1.CreateOptions) (*v1.ServiceCatalogAPIServer, error)
-	Update(ctx context.Context, serviceCatalogAPIServer *v1.ServiceCatalogAPIServer, opts metav1.UpdateOptions) (*v1.ServiceCatalogAPIServer, error)
-	UpdateStatus(ctx context.Context, serviceCatalogAPIServer *v1.ServiceCatalogAPIServer, opts metav1.UpdateOptions) (*v1.ServiceCatalogAPIServer, error)
-	Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error
-	DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error
-	Get(ctx context.Context, name string, opts metav1.GetOptions) (*v1.ServiceCatalogAPIServer, error)
-	List(ctx context.Context, opts metav1.ListOptions) (*v1.ServiceCatalogAPIServerList, error)
-	Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error)
-	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.ServiceCatalogAPIServer, err error)
+	Create(*v1.ServiceCatalogAPIServer) (*v1.ServiceCatalogAPIServer, error)
+	Update(*v1.ServiceCatalogAPIServer) (*v1.ServiceCatalogAPIServer, error)
+	UpdateStatus(*v1.ServiceCatalogAPIServer) (*v1.ServiceCatalogAPIServer, error)
+	Delete(name string, options *metav1.DeleteOptions) error
+	DeleteCollection(options *metav1.DeleteOptions, listOptions metav1.ListOptions) error
+	Get(name string, options metav1.GetOptions) (*v1.ServiceCatalogAPIServer, error)
+	List(opts metav1.ListOptions) (*v1.ServiceCatalogAPIServerList, error)
+	Watch(opts metav1.ListOptions) (watch.Interface, error)
+	Patch(name string, pt types.PatchType, data []byte, subresources ...string) (result *v1.ServiceCatalogAPIServer, err error)
 	ServiceCatalogAPIServerExpansion
 }
 
@@ -47,19 +46,19 @@ func newServiceCatalogAPIServers(c *OperatorV1Client) *serviceCatalogAPIServers 
 }
 
 // Get takes name of the serviceCatalogAPIServer, and returns the corresponding serviceCatalogAPIServer object, and an error if there is any.
-func (c *serviceCatalogAPIServers) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.ServiceCatalogAPIServer, err error) {
+func (c *serviceCatalogAPIServers) Get(name string, options metav1.GetOptions) (result *v1.ServiceCatalogAPIServer, err error) {
 	result = &v1.ServiceCatalogAPIServer{}
 	err = c.client.Get().
 		Resource("servicecatalogapiservers").
 		Name(name).
 		VersionedParams(&options, scheme.ParameterCodec).
-		Do(ctx).
+		Do().
 		Into(result)
 	return
 }
 
 // List takes label and field selectors, and returns the list of ServiceCatalogAPIServers that match those selectors.
-func (c *serviceCatalogAPIServers) List(ctx context.Context, opts metav1.ListOptions) (result *v1.ServiceCatalogAPIServerList, err error) {
+func (c *serviceCatalogAPIServers) List(opts metav1.ListOptions) (result *v1.ServiceCatalogAPIServerList, err error) {
 	var timeout time.Duration
 	if opts.TimeoutSeconds != nil {
 		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
@@ -69,13 +68,13 @@ func (c *serviceCatalogAPIServers) List(ctx context.Context, opts metav1.ListOpt
 		Resource("servicecatalogapiservers").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
-		Do(ctx).
+		Do().
 		Into(result)
 	return
 }
 
 // Watch returns a watch.Interface that watches the requested serviceCatalogAPIServers.
-func (c *serviceCatalogAPIServers) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
+func (c *serviceCatalogAPIServers) Watch(opts metav1.ListOptions) (watch.Interface, error) {
 	var timeout time.Duration
 	if opts.TimeoutSeconds != nil {
 		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
@@ -85,84 +84,81 @@ func (c *serviceCatalogAPIServers) Watch(ctx context.Context, opts metav1.ListOp
 		Resource("servicecatalogapiservers").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
-		Watch(ctx)
+		Watch()
 }
 
 // Create takes the representation of a serviceCatalogAPIServer and creates it.  Returns the server's representation of the serviceCatalogAPIServer, and an error, if there is any.
-func (c *serviceCatalogAPIServers) Create(ctx context.Context, serviceCatalogAPIServer *v1.ServiceCatalogAPIServer, opts metav1.CreateOptions) (result *v1.ServiceCatalogAPIServer, err error) {
+func (c *serviceCatalogAPIServers) Create(serviceCatalogAPIServer *v1.ServiceCatalogAPIServer) (result *v1.ServiceCatalogAPIServer, err error) {
 	result = &v1.ServiceCatalogAPIServer{}
 	err = c.client.Post().
 		Resource("servicecatalogapiservers").
-		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(serviceCatalogAPIServer).
-		Do(ctx).
+		Do().
 		Into(result)
 	return
 }
 
 // Update takes the representation of a serviceCatalogAPIServer and updates it. Returns the server's representation of the serviceCatalogAPIServer, and an error, if there is any.
-func (c *serviceCatalogAPIServers) Update(ctx context.Context, serviceCatalogAPIServer *v1.ServiceCatalogAPIServer, opts metav1.UpdateOptions) (result *v1.ServiceCatalogAPIServer, err error) {
+func (c *serviceCatalogAPIServers) Update(serviceCatalogAPIServer *v1.ServiceCatalogAPIServer) (result *v1.ServiceCatalogAPIServer, err error) {
 	result = &v1.ServiceCatalogAPIServer{}
 	err = c.client.Put().
 		Resource("servicecatalogapiservers").
 		Name(serviceCatalogAPIServer.Name).
-		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(serviceCatalogAPIServer).
-		Do(ctx).
+		Do().
 		Into(result)
 	return
 }
 
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *serviceCatalogAPIServers) UpdateStatus(ctx context.Context, serviceCatalogAPIServer *v1.ServiceCatalogAPIServer, opts metav1.UpdateOptions) (result *v1.ServiceCatalogAPIServer, err error) {
+
+func (c *serviceCatalogAPIServers) UpdateStatus(serviceCatalogAPIServer *v1.ServiceCatalogAPIServer) (result *v1.ServiceCatalogAPIServer, err error) {
 	result = &v1.ServiceCatalogAPIServer{}
 	err = c.client.Put().
 		Resource("servicecatalogapiservers").
 		Name(serviceCatalogAPIServer.Name).
 		SubResource("status").
-		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(serviceCatalogAPIServer).
-		Do(ctx).
+		Do().
 		Into(result)
 	return
 }
 
 // Delete takes name of the serviceCatalogAPIServer and deletes it. Returns an error if one occurs.
-func (c *serviceCatalogAPIServers) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
+func (c *serviceCatalogAPIServers) Delete(name string, options *metav1.DeleteOptions) error {
 	return c.client.Delete().
 		Resource("servicecatalogapiservers").
 		Name(name).
-		Body(&opts).
-		Do(ctx).
+		Body(options).
+		Do().
 		Error()
 }
 
 // DeleteCollection deletes a collection of objects.
-func (c *serviceCatalogAPIServers) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
+func (c *serviceCatalogAPIServers) DeleteCollection(options *metav1.DeleteOptions, listOptions metav1.ListOptions) error {
 	var timeout time.Duration
-	if listOpts.TimeoutSeconds != nil {
-		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
+	if listOptions.TimeoutSeconds != nil {
+		timeout = time.Duration(*listOptions.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
 		Resource("servicecatalogapiservers").
-		VersionedParams(&listOpts, scheme.ParameterCodec).
+		VersionedParams(&listOptions, scheme.ParameterCodec).
 		Timeout(timeout).
-		Body(&opts).
-		Do(ctx).
+		Body(options).
+		Do().
 		Error()
 }
 
 // Patch applies the patch and returns the patched serviceCatalogAPIServer.
-func (c *serviceCatalogAPIServers) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.ServiceCatalogAPIServer, err error) {
+func (c *serviceCatalogAPIServers) Patch(name string, pt types.PatchType, data []byte, subresources ...string) (result *v1.ServiceCatalogAPIServer, err error) {
 	result = &v1.ServiceCatalogAPIServer{}
 	err = c.client.Patch(pt).
 		Resource("servicecatalogapiservers").
-		Name(name).
 		SubResource(subresources...).
-		VersionedParams(&opts, scheme.ParameterCodec).
+		Name(name).
 		Body(data).
-		Do(ctx).
+		Do().
 		Into(result)
 	return
 }

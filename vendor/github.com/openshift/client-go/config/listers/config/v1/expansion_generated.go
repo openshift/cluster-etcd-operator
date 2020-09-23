@@ -54,10 +54,6 @@ type NetworkListerExpansion interface{}
 // OAuthLister.
 type OAuthListerExpansion interface{}
 
-// OperatorHubListerExpansion allows custom methods to be added to
-// OperatorHubLister.
-type OperatorHubListerExpansion interface{}
-
 // ProjectListerExpansion allows custom methods to be added to
 // ProjectLister.
 type ProjectListerExpansion interface{}

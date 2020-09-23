@@ -3,7 +3,6 @@
 package v1
 
 import (
-	"context"
 	time "time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -46,13 +45,13 @@ func NewFilteredIngressControllerInformer(client versioned.Interface, namespace 
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.OperatorV1().IngressControllers(namespace).List(context.TODO(), options)
+				return client.OperatorV1().IngressControllers(namespace).List(options)
 			},
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.OperatorV1().IngressControllers(namespace).Watch(context.TODO(), options)
+				return client.OperatorV1().IngressControllers(namespace).Watch(options)
 			},
 		},
 		&operatorv1.IngressController{},

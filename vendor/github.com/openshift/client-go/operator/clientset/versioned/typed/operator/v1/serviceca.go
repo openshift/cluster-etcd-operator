@@ -3,7 +3,6 @@
 package v1
 
 import (
-	"context"
 	"time"
 
 	v1 "github.com/openshift/api/operator/v1"
@@ -22,15 +21,15 @@ type ServiceCAsGetter interface {
 
 // ServiceCAInterface has methods to work with ServiceCA resources.
 type ServiceCAInterface interface {
-	Create(ctx context.Context, serviceCA *v1.ServiceCA, opts metav1.CreateOptions) (*v1.ServiceCA, error)
-	Update(ctx context.Context, serviceCA *v1.ServiceCA, opts metav1.UpdateOptions) (*v1.ServiceCA, error)
-	UpdateStatus(ctx context.Context, serviceCA *v1.ServiceCA, opts metav1.UpdateOptions) (*v1.ServiceCA, error)
-	Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error
-	DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error
-	Get(ctx context.Context, name string, opts metav1.GetOptions) (*v1.ServiceCA, error)
-	List(ctx context.Context, opts metav1.ListOptions) (*v1.ServiceCAList, error)
-	Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error)
-	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.ServiceCA, err error)
+	Create(*v1.ServiceCA) (*v1.ServiceCA, error)
+	Update(*v1.ServiceCA) (*v1.ServiceCA, error)
+	UpdateStatus(*v1.ServiceCA) (*v1.ServiceCA, error)
+	Delete(name string, options *metav1.DeleteOptions) error
+	DeleteCollection(options *metav1.DeleteOptions, listOptions metav1.ListOptions) error
+	Get(name string, options metav1.GetOptions) (*v1.ServiceCA, error)
+	List(opts metav1.ListOptions) (*v1.ServiceCAList, error)
+	Watch(opts metav1.ListOptions) (watch.Interface, error)
+	Patch(name string, pt types.PatchType, data []byte, subresources ...string) (result *v1.ServiceCA, err error)
 	ServiceCAExpansion
 }
 
@@ -47,19 +46,19 @@ func newServiceCAs(c *OperatorV1Client) *serviceCAs {
 }
 
 // Get takes name of the serviceCA, and returns the corresponding serviceCA object, and an error if there is any.
-func (c *serviceCAs) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.ServiceCA, err error) {
+func (c *serviceCAs) Get(name string, options metav1.GetOptions) (result *v1.ServiceCA, err error) {
 	result = &v1.ServiceCA{}
 	err = c.client.Get().
 		Resource("servicecas").
 		Name(name).
 		VersionedParams(&options, scheme.ParameterCodec).
-		Do(ctx).
+		Do().
 		Into(result)
 	return
 }
 
 // List takes label and field selectors, and returns the list of ServiceCAs that match those selectors.
-func (c *serviceCAs) List(ctx context.Context, opts metav1.ListOptions) (result *v1.ServiceCAList, err error) {
+func (c *serviceCAs) List(opts metav1.ListOptions) (result *v1.ServiceCAList, err error) {
 	var timeout time.Duration
 	if opts.TimeoutSeconds != nil {
 		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
@@ -69,13 +68,13 @@ func (c *serviceCAs) List(ctx context.Context, opts metav1.ListOptions) (result 
 		Resource("servicecas").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
-		Do(ctx).
+		Do().
 		Into(result)
 	return
 }
 
 // Watch returns a watch.Interface that watches the requested serviceCAs.
-func (c *serviceCAs) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
+func (c *serviceCAs) Watch(opts metav1.ListOptions) (watch.Interface, error) {
 	var timeout time.Duration
 	if opts.TimeoutSeconds != nil {
 		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
@@ -85,84 +84,81 @@ func (c *serviceCAs) Watch(ctx context.Context, opts metav1.ListOptions) (watch.
 		Resource("servicecas").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
-		Watch(ctx)
+		Watch()
 }
 
 // Create takes the representation of a serviceCA and creates it.  Returns the server's representation of the serviceCA, and an error, if there is any.
-func (c *serviceCAs) Create(ctx context.Context, serviceCA *v1.ServiceCA, opts metav1.CreateOptions) (result *v1.ServiceCA, err error) {
+func (c *serviceCAs) Create(serviceCA *v1.ServiceCA) (result *v1.ServiceCA, err error) {
 	result = &v1.ServiceCA{}
 	err = c.client.Post().
 		Resource("servicecas").
-		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(serviceCA).
-		Do(ctx).
+		Do().
 		Into(result)
 	return
 }
 
 // Update takes the representation of a serviceCA and updates it. Returns the server's representation of the serviceCA, and an error, if there is any.
-func (c *serviceCAs) Update(ctx context.Context, serviceCA *v1.ServiceCA, opts metav1.UpdateOptions) (result *v1.ServiceCA, err error) {
+func (c *serviceCAs) Update(serviceCA *v1.ServiceCA) (result *v1.ServiceCA, err error) {
 	result = &v1.ServiceCA{}
 	err = c.client.Put().
 		Resource("servicecas").
 		Name(serviceCA.Name).
-		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(serviceCA).
-		Do(ctx).
+		Do().
 		Into(result)
 	return
 }
 
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *serviceCAs) UpdateStatus(ctx context.Context, serviceCA *v1.ServiceCA, opts metav1.UpdateOptions) (result *v1.ServiceCA, err error) {
+
+func (c *serviceCAs) UpdateStatus(serviceCA *v1.ServiceCA) (result *v1.ServiceCA, err error) {
 	result = &v1.ServiceCA{}
 	err = c.client.Put().
 		Resource("servicecas").
 		Name(serviceCA.Name).
 		SubResource("status").
-		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(serviceCA).
-		Do(ctx).
+		Do().
 		Into(result)
 	return
 }
 
 // Delete takes name of the serviceCA and deletes it. Returns an error if one occurs.
-func (c *serviceCAs) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
+func (c *serviceCAs) Delete(name string, options *metav1.DeleteOptions) error {
 	return c.client.Delete().
 		Resource("servicecas").
 		Name(name).
-		Body(&opts).
-		Do(ctx).
+		Body(options).
+		Do().
 		Error()
 }
 
 // DeleteCollection deletes a collection of objects.
-func (c *serviceCAs) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
+func (c *serviceCAs) DeleteCollection(options *metav1.DeleteOptions, listOptions metav1.ListOptions) error {
 	var timeout time.Duration
-	if listOpts.TimeoutSeconds != nil {
-		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
+	if listOptions.TimeoutSeconds != nil {
+		timeout = time.Duration(*listOptions.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
 		Resource("servicecas").
-		VersionedParams(&listOpts, scheme.ParameterCodec).
+		VersionedParams(&listOptions, scheme.ParameterCodec).
 		Timeout(timeout).
-		Body(&opts).
-		Do(ctx).
+		Body(options).
+		Do().
 		Error()
 }
 
 // Patch applies the patch and returns the patched serviceCA.
-func (c *serviceCAs) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.ServiceCA, err error) {
+func (c *serviceCAs) Patch(name string, pt types.PatchType, data []byte, subresources ...string) (result *v1.ServiceCA, err error) {
 	result = &v1.ServiceCA{}
 	err = c.client.Patch(pt).
 		Resource("servicecas").
-		Name(name).
 		SubResource(subresources...).
-		VersionedParams(&opts, scheme.ParameterCodec).
+		Name(name).
 		Body(data).
-		Do(ctx).
+		Do().
 		Into(result)
 	return
 }

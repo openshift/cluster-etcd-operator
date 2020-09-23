@@ -1,8 +1,6 @@
 package resourceapply
 
 import (
-	"context"
-
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -16,9 +14,9 @@ import (
 
 // ApplyCustomResourceDefinitionV1Beta1 applies the required CustomResourceDefinition to the cluster.
 func ApplyCustomResourceDefinitionV1Beta1(client apiextclientv1beta1.CustomResourceDefinitionsGetter, recorder events.Recorder, required *apiextv1beta1.CustomResourceDefinition) (*apiextv1beta1.CustomResourceDefinition, bool, error) {
-	existing, err := client.CustomResourceDefinitions().Get(context.TODO(), required.Name, metav1.GetOptions{})
+	existing, err := client.CustomResourceDefinitions().Get(required.Name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		actual, err := client.CustomResourceDefinitions().Create(context.TODO(), required, metav1.CreateOptions{})
+		actual, err := client.CustomResourceDefinitions().Create(required)
 		reportCreateEvent(recorder, required, err)
 		return actual, true, err
 	}
@@ -37,7 +35,7 @@ func ApplyCustomResourceDefinitionV1Beta1(client apiextclientv1beta1.CustomResou
 		klog.Infof("CustomResourceDefinition %q changes: %s", existing.Name, JSONPatchNoError(existing, existingCopy))
 	}
 
-	actual, err := client.CustomResourceDefinitions().Update(context.TODO(), existingCopy, metav1.UpdateOptions{})
+	actual, err := client.CustomResourceDefinitions().Update(existingCopy)
 	reportUpdateEvent(recorder, required, err)
 
 	return actual, true, err
@@ -45,9 +43,9 @@ func ApplyCustomResourceDefinitionV1Beta1(client apiextclientv1beta1.CustomResou
 
 // ApplyCustomResourceDefinitionV1 applies the required CustomResourceDefinition to the cluster.
 func ApplyCustomResourceDefinitionV1(client apiextclientv1.CustomResourceDefinitionsGetter, recorder events.Recorder, required *apiextensionsv1.CustomResourceDefinition) (*apiextensionsv1.CustomResourceDefinition, bool, error) {
-	existing, err := client.CustomResourceDefinitions().Get(context.TODO(), required.Name, metav1.GetOptions{})
+	existing, err := client.CustomResourceDefinitions().Get(required.Name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		actual, err := client.CustomResourceDefinitions().Create(context.TODO(), required, metav1.CreateOptions{})
+		actual, err := client.CustomResourceDefinitions().Create(required)
 		reportCreateEvent(recorder, required, err)
 		return actual, true, err
 	}
@@ -66,7 +64,7 @@ func ApplyCustomResourceDefinitionV1(client apiextclientv1.CustomResourceDefinit
 		klog.Infof("CustomResourceDefinition %q changes: %s", existing.Name, JSONPatchNoError(existing, existingCopy))
 	}
 
-	actual, err := client.CustomResourceDefinitions().Update(context.TODO(), existingCopy, metav1.UpdateOptions{})
+	actual, err := client.CustomResourceDefinitions().Update(existingCopy)
 	reportUpdateEvent(recorder, required, err)
 
 	return actual, true, err

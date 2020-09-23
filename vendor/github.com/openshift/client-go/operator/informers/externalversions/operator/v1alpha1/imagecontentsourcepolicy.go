@@ -3,7 +3,6 @@
 package v1alpha1
 
 import (
-	"context"
 	time "time"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
@@ -45,13 +44,13 @@ func NewFilteredImageContentSourcePolicyInformer(client versioned.Interface, res
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.OperatorV1alpha1().ImageContentSourcePolicies().List(context.TODO(), options)
+				return client.OperatorV1alpha1().ImageContentSourcePolicies().List(options)
 			},
 			WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.OperatorV1alpha1().ImageContentSourcePolicies().Watch(context.TODO(), options)
+				return client.OperatorV1alpha1().ImageContentSourcePolicies().Watch(options)
 			},
 		},
 		&operatorv1alpha1.ImageContentSourcePolicy{},

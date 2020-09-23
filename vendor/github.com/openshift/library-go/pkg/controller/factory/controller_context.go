@@ -17,9 +17,12 @@ import (
 // syncContext implements SyncContext and provide user access to queue and object that caused
 // the sync to be triggered.
 type syncContext struct {
-	eventRecorder events.Recorder
 	queue         workqueue.RateLimitingInterface
-	queueKey      string
+	eventRecorder events.Recorder
+
+	// queueRuntimeObject holds the object we got from informer
+	// There is no direct access to this object to prevent cache mutation.
+	queueRuntimeObject runtime.Object
 }
 
 var _ SyncContext = syncContext{}
@@ -32,16 +35,30 @@ func NewSyncContext(name string, recorder events.Recorder) SyncContext {
 	}
 }
 
+// GetObject gives the object from the queue.
+// For controllers generated without WithRuntimeObject() this always return nil.
+func (c syncContext) GetObject() runtime.Object {
+	if c.queueRuntimeObject == nil {
+		return nil
+	}
+	return c.queueRuntimeObject.DeepCopyObject()
+}
+
 func (c syncContext) Queue() workqueue.RateLimitingInterface {
 	return c.queue
 }
 
-func (c syncContext) QueueKey() string {
-	return c.queueKey
-}
-
 func (c syncContext) Recorder() events.Recorder {
 	return c.eventRecorder
+}
+
+// withRuntimeObject make a copy of existing sync context and set the queueRuntimeObject.
+func (c syncContext) withRuntimeObject(obj runtime.Object) SyncContext {
+	return syncContext{
+		eventRecorder:      c.Recorder(),
+		queue:              c.Queue(),
+		queueRuntimeObject: obj,
+	}
 }
 
 func (c syncContext) isInterestingNamespace(obj interface{}, interestingNamespaces sets.String) (bool, bool) {
@@ -59,46 +76,78 @@ func (c syncContext) isInterestingNamespace(obj interface{}, interestingNamespac
 }
 
 // eventHandler provides default event handler that is added to an informers passed to controller factory.
-func (c syncContext) eventHandler(queueKeyFunc ObjectQueueKeyFunc, interestingNamespaces sets.String) cache.ResourceEventHandler {
+func (c syncContext) eventHandler(keyName string, objectQueue bool, interestingNamespaces sets.String) cache.ResourceEventHandler {
 	return cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			isNamespace, isInteresting := c.isInterestingNamespace(obj, interestingNamespaces)
+			if !objectQueue {
+				if !isNamespace {
+					c.Queue().Add(keyName)
+				} else if isInteresting {
+					c.Queue().Add(keyName)
+				}
+				return
+			}
 			runtimeObj, ok := obj.(runtime.Object)
 			if !ok {
 				utilruntime.HandleError(fmt.Errorf("added object %+v is not runtime Object", obj))
 				return
 			}
-			if !isNamespace || (isNamespace && isInteresting) {
-				c.Queue().Add(queueKeyFunc(runtimeObj))
+			if !isNamespace {
+				c.Queue().Add(runtimeObj)
+			} else if isInteresting {
+				c.Queue().Add(runtimeObj)
 			}
 		},
 		UpdateFunc: func(old, new interface{}) {
 			isNamespace, isInteresting := c.isInterestingNamespace(new, interestingNamespaces)
+			if !objectQueue {
+				if !isNamespace {
+					c.Queue().Add(keyName)
+				} else if isInteresting {
+					c.Queue().Add(keyName)
+				}
+				return
+			}
 			runtimeObj, ok := new.(runtime.Object)
 			if !ok {
 				utilruntime.HandleError(fmt.Errorf("updated object %+v is not runtime Object", runtimeObj))
 				return
 			}
-			if !isNamespace || (isNamespace && isInteresting) {
-				c.Queue().Add(queueKeyFunc(runtimeObj))
+			if !isNamespace {
+				c.Queue().Add(runtimeObj)
+			} else if isInteresting {
+				c.Queue().Add(runtimeObj)
 			}
 		},
 		DeleteFunc: func(obj interface{}) {
 			isNamespace, isInteresting := c.isInterestingNamespace(obj, interestingNamespaces)
+			if !objectQueue {
+				if !isNamespace {
+					c.Queue().Add(keyName)
+				} else if isInteresting {
+					c.Queue().Add(keyName)
+				}
+				return
+			}
 			runtimeObj, ok := obj.(runtime.Object)
 			if !ok {
 				tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
 				if ok {
-					if !isNamespace || (isNamespace && isInteresting) {
-						c.Queue().Add(queueKeyFunc(tombstone.Obj.(runtime.Object)))
+					if !isNamespace {
+						c.Queue().Add(tombstone.Obj.(runtime.Object))
+					} else if isInteresting {
+						c.Queue().Add(tombstone.Obj.(runtime.Object))
 					}
 					return
 				}
 				utilruntime.HandleError(fmt.Errorf("updated object %+v is not runtime Object", runtimeObj))
 				return
 			}
-			if !isNamespace || (isNamespace && isInteresting) {
-				c.Queue().Add(queueKeyFunc(runtimeObj))
+			if !isNamespace {
+				c.Queue().Add(runtimeObj)
+			} else if isInteresting {
+				c.Queue().Add(runtimeObj)
 			}
 		},
 	}

@@ -3,7 +3,6 @@
 package v1
 
 import (
-	"context"
 	time "time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -45,13 +44,13 @@ func NewFilteredOpenShiftControllerManagerInformer(client versioned.Interface, r
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.OperatorV1().OpenShiftControllerManagers().List(context.TODO(), options)
+				return client.OperatorV1().OpenShiftControllerManagers().List(options)
 			},
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.OperatorV1().OpenShiftControllerManagers().Watch(context.TODO(), options)
+				return client.OperatorV1().OpenShiftControllerManagers().Watch(options)
 			},
 		},
 		&operatorv1.OpenShiftControllerManager{},
