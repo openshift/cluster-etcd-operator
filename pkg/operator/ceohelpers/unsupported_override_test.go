@@ -104,7 +104,7 @@ func TestIsUnsupportedUnsafeEtcd(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := IsUnsupportedUnsafeEtcd(tt.args.spec)
+			got, err := isUnsupportedUnsafeEtcd(tt.args.spec)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("IsUnsupportedUnsafeEtcd() error = %v, wantErr %v", err, tt.wantErr)
 				return

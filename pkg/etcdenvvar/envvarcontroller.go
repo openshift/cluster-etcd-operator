@@ -9,7 +9,6 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -18,6 +17,9 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
 const workQueueKey = "key"
@@ -34,6 +36,7 @@ type EnvVarController struct {
 	networkLister        configv1listers.NetworkLister
 	configmapLister      corev1listers.ConfigMapLister
 	nodeLister           corev1listers.NodeLister
+	namespaceLister      corev1listers.NamespaceLister
 
 	// queue only ever has one item, but it has nice error handling backoff/retry semantics
 	queue         workqueue.RateLimitingInterface
@@ -57,6 +60,7 @@ func NewEnvVarController(
 		operatorClient:       operatorClient,
 		infrastructureLister: infrastructureInformer.Lister(),
 		networkLister:        networkInformer.Lister(),
+		namespaceLister:      kubeInformersForNamespaces.InformersFor("").Core().V1().Namespaces().Lister(),
 		configmapLister:      kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister(),
 		nodeLister:           kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
 		targetImagePullSpec:  targetImagePullSpec,
@@ -123,6 +127,10 @@ func (c *EnvVarController) sync() error {
 }
 
 func (c *EnvVarController) checkEnvVars() error {
+	if err := ceohelpers.CheckSafeToScaleCluster(c.configmapLister, c.operatorClient, c.namespaceLister); err != nil {
+		return fmt.Errorf("can't update etcd pod configurations because scaling is currently unsafe: %w", err)
+	}
+
 	operatorSpec, operatorStatus, _, err := c.operatorClient.GetStaticPodOperatorState()
 	if err != nil {
 		return err

@@ -11,10 +11,10 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// IsUnsupportedUnsafeEtcd returns true if
+// isUnsupportedUnsafeEtcd returns true if
 // useUnsupportedUnsafeNonHANonProductionUnstableEtcd key is set
 // to any parsable value
-func IsUnsupportedUnsafeEtcd(spec *operatorv1.StaticPodOperatorSpec) (bool, error) {
+func isUnsupportedUnsafeEtcd(spec *operatorv1.StaticPodOperatorSpec) (bool, error) {
 	unsupportedConfig := map[string]interface{}{}
 	if spec.UnsupportedConfigOverrides.Raw == nil {
 		return false, nil

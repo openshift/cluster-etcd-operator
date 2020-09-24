@@ -2,6 +2,7 @@ package bootstrapteardown
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -20,6 +21,7 @@ type BootstrapTeardownController struct {
 	operatorClient  v1helpers.StaticPodOperatorClient
 	etcdClient      etcdcli.EtcdClient
 	configmapLister corev1listers.ConfigMapLister
+	namespaceLister corev1listers.NamespaceLister
 }
 
 func NewBootstrapTeardownController(
@@ -32,6 +34,7 @@ func NewBootstrapTeardownController(
 		operatorClient:  operatorClient,
 		etcdClient:      etcdClient,
 		configmapLister: kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Lister(),
+		namespaceLister: kubeInformersForNamespaces.InformersFor("").Core().V1().Namespaces().Lister(),
 	}
 
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
@@ -147,23 +150,24 @@ func (c *BootstrapTeardownController) canRemoveEtcdBootstrap() (bool, bool, erro
 		return false, hasBootstrap, nil
 	}
 
-	isUnsupportedUnsafeEtcd, err := c.isUnsupportedUnsafeEtcd()
+	scalingStrategy, err := ceohelpers.GetBootstrapScalingStrategy(c.operatorClient, c.namespaceLister)
 	if err != nil {
-		return false, hasBootstrap, err
+		return false, hasBootstrap, fmt.Errorf("failed to get bootstrap scaling strategy: %w", err)
 	}
 
-	switch {
-	case !isUnsupportedUnsafeEtcd && len(members) < 4:
-		// bootstrap is not safe to remove until we scale to 4
-		return false, hasBootstrap, nil
-	case isUnsupportedUnsafeEtcd && len(members) < 2:
-		// if etcd is unsupported, bootstrap is not safe to remove
-		// until we scale to 2
-		return false, hasBootstrap, nil
-	default:
-		// do nothing fall through on checking the unhealthy members
+	// First, enforce the main HA invariants in terms of member counts.
+	switch scalingStrategy {
+	case ceohelpers.HAScalingStrategy:
+		if len(members) < 4 {
+			return false, hasBootstrap, nil
+		}
+	case ceohelpers.DelayedHAScalingStrategy, ceohelpers.UnsafeScalingStrategy:
+		if len(members) < 2 {
+			return false, hasBootstrap, nil
+		}
 	}
 
+	// Next, given member counts are satisfied, check member health.
 	unhealthyMembers, err := c.etcdClient.UnhealthyMembers()
 	if err != nil {
 		return false, hasBootstrap, nil
@@ -181,12 +185,4 @@ func (c *BootstrapTeardownController) canRemoveEtcdBootstrap() (bool, bool, erro
 		}
 		return false, hasBootstrap, nil
 	}
-}
-
-func (c *BootstrapTeardownController) isUnsupportedUnsafeEtcd() (bool, error) {
-	spec, _, _, err := c.operatorClient.GetStaticPodOperatorState()
-	if err != nil {
-		return false, err
-	}
-	return ceohelpers.IsUnsupportedUnsafeEtcd(spec)
 }

@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 
 	"github.com/ghodss/yaml"
@@ -42,6 +43,8 @@ type renderOpts struct {
 	clusterConfigMapFile string
 	infraConfigFile      string
 	bootstrapIP          string
+
+	delayedHABootstrapScalingStrategyMarker string
 }
 
 // NewRenderCommand creates a render command.
@@ -132,6 +135,7 @@ func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&r.clusterConfigMapFile, "cluster-configmap-file", "/assets/manifests/cluster-config.yaml", "File containing the cluster-config-v1 configmap.")
 	fs.StringVar(&r.infraConfigFile, "infra-config-file", "/assets/manifests/cluster-infrastructure-02-config.yml", "File containing infrastructure.config.openshift.io manifest.")
 	fs.StringVar(&r.bootstrapIP, "bootstrap-ip", r.bootstrapIP, "bootstrap IP used to indicate where to find the first etcd endpoint")
+	fs.StringVar(&r.delayedHABootstrapScalingStrategyMarker, "delayed-ha-bootstrap-scaling-marker-file", "/assets/assisted-install-bootstrap", "Marker file that, if present, enables the delayed HA bootstrap scaling strategy")
 }
 
 // Validate verifies the inputs.
@@ -198,6 +202,9 @@ type TemplateData struct {
 
 	// ComputedEnvVars name/value pairs to populate env: for static pod.
 	ComputedEnvVars string
+
+	// NamespaceAnnotations are addition annotations to apply to the etcd namespace.
+	NamespaceAnnotations map[string]string
 }
 
 type StaticFile struct {
@@ -277,6 +284,15 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 
 	if err := templateData.setComputedEnvVars(templateData.Platform); err != nil {
 		return nil, err
+	}
+
+	// Use a marker file to configure the bootstrap scaling strategy.
+	if _, err := os.Stat(opts.delayedHABootstrapScalingStrategyMarker); err == nil {
+		if templateData.NamespaceAnnotations == nil {
+			templateData.NamespaceAnnotations = map[string]string{}
+		}
+		templateData.NamespaceAnnotations[ceohelpers.DelayedHABootstrapScalingStrategyAnnotation] = ""
+		klog.Infof("using delayed HA bootstrap scaling strategy due to presence of marker file %s", opts.delayedHABootstrapScalingStrategyMarker)
 	}
 
 	return &templateData, nil
