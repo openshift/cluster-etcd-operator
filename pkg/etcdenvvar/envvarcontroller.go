@@ -9,9 +9,11 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	"k8s.io/apimachinery/pkg/api/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	corev1listers "k8s.io/client-go/listers/core/v1"
@@ -128,7 +130,7 @@ func (c *EnvVarController) checkEnvVars() error {
 		return err
 	}
 
-	currEnvVarMap, err := getEtcdEnvVars(envVarContext{
+	ctx := envVarContext{
 		targetImagePullSpec:  c.targetImagePullSpec,
 		spec:                 *operatorSpec,
 		status:               *operatorStatus,
@@ -136,7 +138,45 @@ func (c *EnvVarController) checkEnvVars() error {
 		nodeLister:           c.nodeLister,
 		infrastructureLister: c.infrastructureLister,
 		networkLister:        c.networkLister,
-	})
+	}
+
+	bootstrapComplete, err := isBootstrapComplete(c.configmapLister, c.operatorClient)
+	if err != nil {
+		return fmt.Errorf("couldn't determine bootstrap status: %w", err)
+	}
+	isUnsupportedUnsafeEtcd, err := ceohelpers.IsUnsupportedUnsafeEtcd(&ctx.spec)
+	if err != nil {
+		return fmt.Errorf("couldn't determine etcd unsupported override status: %w", err)
+	}
+	// TODO: determine this through a state check
+	isManagedByAssistedInstaller := true
+	nodeCount := len(ctx.status.NodeStatuses)
+
+	// There are three discrete validation paths to enforce HA invariants
+	// depending on whether the unsupported/unsafe config is set, whether the
+	// cluster is managed by assisted installer, and the default configuration.
+	switch {
+	case isUnsupportedUnsafeEtcd:
+		// When running in an unsupported/unsafe configuration, no guarantees are
+		// made once a single node is available.
+		if nodeCount < 1 {
+			return fmt.Errorf("at least one node is required to have a valid configuration")
+		}
+	case isManagedByAssistedInstaller:
+		// When managed by assisted installer, tolerate unsafe conditions only up
+		// until bootstrap is complete, and then enforce as in the supported case.
+		if nodeCount < 3 && bootstrapComplete {
+			return fmt.Errorf("at least three nodes are required to have a valid configuration (have %d)", nodeCount)
+		}
+	default:
+		// When running in a normal supported configuration, enforce HA invariants
+		// at all times.
+		if nodeCount < 3 {
+			return fmt.Errorf("at least three nodes are required to have a valid configuration (have %d)", nodeCount)
+		}
+	}
+
+	currEnvVarMap, err := getEtcdEnvVars(ctx)
 	if err != nil {
 		return err
 	}
@@ -207,4 +247,44 @@ func (c *EnvVarController) eventHandler() cache.ResourceEventHandler {
 		UpdateFunc: func(old, new interface{}) { c.queue.Add(workQueueKey) },
 		DeleteFunc: func(obj interface{}) { c.queue.Add(workQueueKey) },
 	}
+}
+
+// isBootstrapComplete returns true if bootstrap has completed.
+// TODO: consider sharing with etcdendpointscontroller.
+func isBootstrapComplete(configMapClient corev1listers.ConfigMapLister, staticPodClient v1helpers.StaticPodOperatorClient) (bool, error) {
+	// do a cheap check to see if the annotation is already gone.
+	// check to see if bootstrapping is complete
+	bootstrapFinishedConfigMap, err := configMapClient.ConfigMaps("kube-system").Get("bootstrap")
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// If the resource was deleted (e.g. by an admin) after bootstrap is actually complete,
+			// this is a false negative.
+			klog.V(4).Infof("bootstrap considered incomplete because the kube-system/bootstrap configmap wasn't found")
+			return false, nil
+		}
+		// We don't know, give up quickly.
+		return false, fmt.Errorf("failed to get configmap %s/%s: %w", "kube-system", "bootstrap", err)
+	}
+
+	if status, ok := bootstrapFinishedConfigMap.Data["status"]; !ok || status != "complete" {
+		// do nothing, not torn down
+		klog.V(4).Infof("bootstrap considered incomplete because status is %q", status)
+		return false, nil
+	}
+
+	// now run check to stability of revisions
+	_, status, _, err := staticPodClient.GetStaticPodOperatorState()
+	if err != nil {
+		return false, fmt.Errorf("failed to get static pod operator state: %w", err)
+	}
+	if status.LatestAvailableRevision == 0 {
+		return false, nil
+	}
+	for _, curr := range status.NodeStatuses {
+		if curr.CurrentRevision != status.LatestAvailableRevision {
+			klog.V(4).Infof("bootstrap considered incomplete because revision %d is still in progress", status.LatestAvailableRevision)
+			return false, nil
+		}
+	}
+	return true, nil
 }

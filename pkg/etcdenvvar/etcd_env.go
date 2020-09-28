@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -59,20 +58,6 @@ var envVarFns = []envVarFunc{
 //   NODE_%s_ETCD_URL_HOST
 //   NODE_%s_ETCD_NAME
 func getEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
-	// TODO once we are past bootstrapping, this restriction shouldn't be needed anymore.
-	//   we have it because the env vars were not getting set in the pod and the static pod operator started
-	//   rolling out to another node, which caused a failure.
-	isUnsupportedUnsafeEtcd, err := ceohelpers.IsUnsupportedUnsafeEtcd(&envVarContext.spec)
-	if err != nil {
-		return nil, err
-	}
-	switch {
-	case isUnsupportedUnsafeEtcd && len(envVarContext.status.NodeStatuses) < 1:
-		return nil, fmt.Errorf("at least one node is required to have a valid configuration")
-		//case !isUnsupportedUnsafeEtcd && len(envVarContext.status.NodeStatuses) < 3:
-		//	return nil, fmt.Errorf("at least three nodes are required to have a valid configuration")
-	}
-
 	ret := map[string]string{}
 
 	for _, envVarFn := range envVarFns {
