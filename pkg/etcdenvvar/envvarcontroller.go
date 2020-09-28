@@ -157,6 +157,11 @@ func (c *EnvVarController) checkEnvVars() error {
 	// cluster is managed by assisted installer, and the default configuration.
 	switch {
 	case isUnsupportedUnsafeEtcd:
+		// TODO: this is to help make sure assisted installer can run in a supported config.
+		// TODO: can remove this after integration testing.
+		if isManagedByAssistedInstaller {
+			return fmt.Errorf("assisted installer is running with an unsupported etcd configuration")
+		}
 		// When running in an unsupported/unsafe configuration, no guarantees are
 		// made once a single node is available.
 		if nodeCount < 1 {
