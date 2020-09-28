@@ -82,6 +82,31 @@ ${COMPUTED_ENV_VARS}
           name: cert-dir
         - mountPath: /usr/local/bin
           name: usr-local-bin
+    - name: defrag
+      image: ${IMAGE}
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      resources:
+        requests:
+          memory: 60Mi
+          cpu: 30m
+      volumeMounts:
+      - mountPath: /var/lib/etcd/
+        name: data-dir
+      env:
+${COMPUTED_ENV_VARS}
+      command:
+        - /bin/sh
+        - -c
+        - |
+          #!/bin/sh
+          set -euo pipefail
+
+          # Try and ensure etcd is really shut down.
+          timeout 3m /bin/bash -exuo pipefail -c 'while [ -n  "$(ss -Htan '( sport = 2379 or sport = 2380 or sport = 9978 )')" ]; do echo -n "."; sleep 1; done'
+
+          echo "Defragging etcd"
+          time etcdctl defrag --data-dir /var/lib/etcd
   containers:
   # The etcdctl container should always be first. It is intended to be used
   # to open a remote shell via `oc rsh` that is ready to run `etcdctl`.
