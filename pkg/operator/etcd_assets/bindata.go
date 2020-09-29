@@ -604,7 +604,7 @@ ${COMPUTED_ENV_VARS}
         # we cannot use the "normal" port conflict initcontainer because when we upgrade, the existing static pod will never yield,
         # so we do the detection in etcd container itsefl.
         echo -n "Waiting for ports 2379, 2380 and 9978 to be released."
-        while [ -n "$(lsof -ni :2379)$(lsof -ni :2380)$(lsof -ni :9978)" ]; do
+        while [ -n "$(ss -Htan '( sport = 2379 or sport = 2380 or sport = 9978 )')" ]; do
           echo -n "."
           sleep 1
         done
