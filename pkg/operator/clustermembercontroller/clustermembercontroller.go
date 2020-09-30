@@ -56,7 +56,7 @@ func NewClusterMemberController(
 		kubeInformers.InformersFor("").Core().V1().Nodes().Informer(),
 		networkInformer.Informer(),
 		operatorClient.Informer(),
-	).WithSync(c.sync).ToController("ClusterMemberController", eventRecorder.WithComponentSuffix("cluster-member-controller"))
+	).WithSync(c.sync).ResyncEvery(time.Minute).ToController("ClusterMemberController", eventRecorder.WithComponentSuffix("cluster-member-controller"))
 }
 
 func (c *ClusterMemberController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
