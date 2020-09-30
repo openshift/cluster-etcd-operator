@@ -60,6 +60,8 @@ spec:
           value: "0.0.1-snapshot"
         - name: OPERAND_IMAGE_VERSION
           value: "0.0.1-snapshot"
+        - name: OPENSHIFT_PROFILE
+          value: "web"
         - name: POD_NAME
           valueFrom:
             fieldRef:
