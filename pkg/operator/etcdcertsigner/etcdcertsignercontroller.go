@@ -3,15 +3,18 @@ package etcdcertsigner
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/kubernetes"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/util/cert"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
@@ -99,10 +102,22 @@ func (c *EtcdCertSignerController) syncAllMasters(recorder events.Recorder) erro
 
 	errs := []error{}
 	for _, node := range nodes {
-		if err := c.createSecretForNode(node, recorder); err != nil {
+		nodeInternalIPs, err := dnshelpers.GetInternalIPAddressesForNodeName(node)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		err = c.ensureAndValidateSecrets(node, nodeInternalIPs, recorder)
+		if errors.IsNotFound(err) {
+			// if any of the secrets are not present, create all secrets for the node
+			err = c.createSecretsForNode(node, nodeInternalIPs, recorder)
+		}
+
+		if err != nil {
 			errs = append(errs, err)
 		}
 	}
+
 	if len(errs) > 0 {
 		return utilerrors.NewAggregate(errs)
 	}
@@ -178,24 +193,59 @@ func (c *EtcdCertSignerController) syncAllMasters(recorder events.Recorder) erro
 	return utilerrors.NewAggregate(errs)
 }
 
-func (c *EtcdCertSignerController) createSecretForNode(node *corev1.Node, recorder events.Recorder) error {
-	etcdPeerClientCertName := tlshelpers.GetPeerClientSecretNameForNode(node.Name)
-	etcdServingCertName := tlshelpers.GetServingSecretNameForNode(node.Name)
-	metricsServingCertName := tlshelpers.GetServingMetricsSecretNameForNode(node.Name)
+// validateCertificateSAN makes sure that a given certificate is valid
+// at least for the SANs defined in the configuration.
+// NOTE: certName argument is used only for forming the error message
+func validateCertificateSAN(certData map[string][]byte, ipAddresses []string, certName string) error {
+	certificates, err := cert.ParseCertsPEM(certData["tls.crt"])
+	if err != nil {
+		return fmt.Errorf("could not parse TLS cert for %s: %w", certName, err)
+	}
+	for _, ipAddress := range ipAddresses {
+		if err := certificates[0].VerifyHostname(ipAddress); err != nil {
+			return fmt.Errorf("SAN for the certificate %s does not include %s: %w", certName, ipAddress, err)
+		}
+	}
+	return nil
+}
 
-	var err error
-	_, err = c.secretLister.Secrets(operatorclient.TargetNamespace).Get(etcdPeerClientCertName)
-	peerClientCertOk := err == nil
-	_, err = c.secretLister.Secrets(operatorclient.TargetNamespace).Get(etcdServingCertName)
-	servingCertOk := err == nil
-	_, err = c.secretLister.Secrets(operatorclient.TargetNamespace).Get(metricsServingCertName)
-	metricsCertOk := err == nil
+// Ensure that all secrets exist for the node and validate that the IP addresses are correct.
+func (c *EtcdCertSignerController) ensureAndValidateSecrets(node *corev1.Node, nodeInternalIPs []string, recorder events.Recorder) error {
+	etcdPeerClientSecretName := tlshelpers.GetPeerClientSecretNameForNode(node.Name)
+	etcdServingSecretName := tlshelpers.GetServingSecretNameForNode(node.Name)
+	metricsServingSecretName := tlshelpers.GetServingMetricsSecretNameForNode(node.Name)
 
-	// if we have all the certs we want, do nothing.
-	if peerClientCertOk && servingCertOk && metricsCertOk {
-		return nil
+	secretNames := []string{etcdPeerClientSecretName, etcdServingSecretName, metricsServingSecretName}
+
+	errs := []error{}
+	for _, secretName := range secretNames {
+		secret, err := c.secretLister.Secrets(operatorclient.TargetNamespace).Get(secretName)
+		if errors.IsNotFound(err) {
+			return err
+		}
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if secret.Data == nil {
+			errs = append(errs, fmt.Errorf("secret data not found in %s", secretName))
+			continue
+		}
+		if err := validateCertificateSAN(secret.Data, nodeInternalIPs, secretName); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
+		return utilerrors.NewAggregate(errs)
 	}
 
+	return nil
+}
+
+func (c *EtcdCertSignerController) createSecretsForNode(node *corev1.Node, nodeInternalIPs []string, recorder events.Recorder) error {
+	etcdPeerClientSecretName := tlshelpers.GetPeerClientSecretNameForNode(node.Name)
+	etcdServingSecretName := tlshelpers.GetServingSecretNameForNode(node.Name)
+	metricsServingSecretName := tlshelpers.GetServingMetricsSecretNameForNode(node.Name)
 	// get the signers
 	etcdCASecret, err := c.secretLister.Secrets(operatorclient.GlobalUserSpecifiedConfigNamespace).Get("etcd-signer")
 	if err != nil {
@@ -206,25 +256,30 @@ func (c *EtcdCertSignerController) createSecretForNode(node *corev1.Node, record
 		return err
 	}
 
-	nodeInternalIPs, err := dnshelpers.GetInternalIPAddressesForNodeName(node)
+	// create the certificates and update them in the API
+	pCert, pKey, err := tlshelpers.CreatePeerCertKey(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], nodeInternalIPs)
 	if err != nil {
 		return err
 	}
 
-	// create the certificates and update them in the API
-	pCert, pKey, err := tlshelpers.CreatePeerCertKey(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], nodeInternalIPs)
-	err = c.createSecret(etcdPeerClientCertName, pCert, pKey, recorder)
-	if err != nil {
+	if err := c.createSecret(etcdPeerClientSecretName, pCert, pKey, recorder); err != nil {
 		return err
 	}
 	sCert, sKey, err := tlshelpers.CreateServerCertKey(etcdCASecret.Data["tls.crt"], etcdCASecret.Data["tls.key"], nodeInternalIPs)
-	err = c.createSecret(etcdServingCertName, sCert, sKey, recorder)
 	if err != nil {
 		return err
 	}
+
+	if err := c.createSecret(etcdServingSecretName, sCert, sKey, recorder); err != nil {
+		return err
+	}
+
 	metricCert, metricKey, err := tlshelpers.CreateMetricCertKey(etcdMetricCASecret.Data["tls.crt"], etcdMetricCASecret.Data["tls.key"], nodeInternalIPs)
-	err = c.createSecret(metricsServingCertName, metricCert, metricKey, recorder)
 	if err != nil {
+		return err
+	}
+
+	if err := c.createSecret(metricsServingSecretName, metricCert, metricKey, recorder); err != nil {
 		return err
 	}
 
