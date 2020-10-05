@@ -1,0 +1,26 @@
+apiVersion: flowcontrol.apiserver.k8s.io/v1alpha1
+kind: FlowSchema
+metadata:
+  name: openshift-etcd-operator
+spec:
+  distinguisherMethod:
+    type: ByUser
+  matchingPrecedence: 2000
+  priorityLevelConfiguration:
+    name: openshift-control-plane-operators
+  rules:
+  - resourceRules:
+    - apiGroups:
+      - '*'
+      clusterScope: true
+      namespaces:
+      - '*'
+      resources:
+      - '*'
+      verbs:
+      - '*'
+    subjects:
+    - kind: ServiceAccount
+      serviceAccount:
+        name: etcd-operator
+        namespace: openshift-etcd-operator
