@@ -25,3 +25,5 @@ require (
 	k8s.io/component-base v0.18.0
 	k8s.io/klog v1.0.0
 )
+
+replace bitbucket.org/ww/goautoneg => github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822
