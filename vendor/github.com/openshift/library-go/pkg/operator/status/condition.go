@@ -64,6 +64,9 @@ func UnionCondition(conditionType string, defaultConditionStatus operatorv1.Cond
 	if len(elderBadConditions) == 0 {
 		unionedCondition.Status = defaultConditionStatus
 		unionedCondition.Message = unionMessage(interestingConditions)
+		if unionedCondition.Message == "" {
+			unionedCondition.Message = "All is well"
+		}
 		unionedCondition.Reason = "AsExpected"
 		unionedCondition.LastTransitionTime = latestTransitionTime(interestingConditions)
 
