@@ -17,6 +17,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -316,13 +317,21 @@ func (o *InstallOptions) copyContent(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// the kubelet has a bug that prevents graceful termination from working on static pods with the same name, filename
+	// and uuid.  By setting the pod UID we can work around the kubelet bug and get our graceful termination honored.
+	// Per the node team, this is hard to fix in the kubelet, though it will affect all static pods.
+	pod, err := resourceread.ReadPodV1([]byte(podContent))
+	if err != nil {
+		return err
+	}
+	pod.UID = uuid.NewUUID()
+	finalPodBytes := resourceread.WritePodV1OrDie(pod)
 
 	// Write secrets, config maps and pod to disk
 	// This does not need timeout, instead we should fail hard when we are not able to write.
-
 	podFileName := o.PodConfigMapNamePrefix + ".yaml"
 	klog.Infof("Writing pod manifest %q ...", path.Join(resourceDir, podFileName))
-	if err := ioutil.WriteFile(path.Join(resourceDir, podFileName), []byte(podContent), 0644); err != nil {
+	if err := ioutil.WriteFile(path.Join(resourceDir, podFileName), []byte(finalPodBytes), 0644); err != nil {
 		return err
 	}
 

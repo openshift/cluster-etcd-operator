@@ -538,9 +538,9 @@ func (c *InstallerController) newNodeStateForInstallInProgress(ctx context.Conte
 	case corev1.PodSucceeded:
 		if pendingNewRevision := latestRevisionAvailable > currNodeState.TargetRevision; pendingNewRevision {
 			// stop early, don't wait for ready static pod because a new revision is waiting
-			ret.LastFailedRevision = currNodeState.TargetRevision
+			ret.LastFailedRevision = 0
 			ret.TargetRevision = 0
-			ret.LastFailedRevisionErrors = []string{fmt.Sprintf("static pod of revision %d has been installed, but is not ready while new revision %d is pending", currNodeState.TargetRevision, latestRevisionAvailable)}
+			ret.LastFailedRevisionErrors = nil
 			return ret, false, "new revision pending", nil
 		}
 
