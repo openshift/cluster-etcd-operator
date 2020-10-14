@@ -152,6 +152,12 @@ func (c *BootstrapTeardownController) canRemoveEtcdBootstrap() (bool, bool, erro
 		return false, hasBootstrap, err
 	}
 
+	// TODO: determine this through a state check
+	isManagedByAssistedInstaller := true
+	if isManagedByAssistedInstaller {
+		isUnsupportedUnsafeEtcd = true
+	}
+
 	switch {
 	case !isUnsupportedUnsafeEtcd && len(members) < 4:
 		// bootstrap is not safe to remove until we scale to 4
