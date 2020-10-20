@@ -7,4 +7,4 @@ approvers:
   - hexfusion
   - sttts
   - ironcladlou
-component: "Etcd Operator"
+component: "Etcd"
