@@ -10,6 +10,58 @@ metadata:
     revision: "REVISION"
 spec:
   initContainers:
+    - name: fio-benchmark
+      image: ${OPERATOR_IMAGE}
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      command:
+        - /bin/sh
+        - -c
+        - |
+          #!/bin/sh
+          set -exuo pipefail
+
+          mkdir -p /etc/kubernetes/static-pod-resources/benchmark
+
+          # run once
+          if [ -f /etc/kubernetes/static-pod-resources/benchmark/storage-benchmark-results.json ]; then
+            exit 0
+          fi
+
+          # based on https://www.ibm.com/cloud/blog/using-fio-to-tell-whether-your-storage-is-fast-enough-for-etcd
+          fio \
+            --rw=write \
+            --ioengine=sync \
+            --fdatasync=1 \
+            --size=22m \
+            --bs=2300 \
+            --name=storage-benchmark-workfile \
+            --directory=/etc/kubernetes/static-pod-resources/benchmark \
+            --output-format=json \
+            --output /etc/kubernetes/static-pod-resources/benchmark/storage-benchmark-results.json
+         
+          # POC probably should be done in go for flexibility.
+          BENCHMARK=($(cat /etc/kubernetes/static-pod-resources/benchmark/storage-benchmark-results.json \
+            | jq '.jobs[0].sync.lat_ns.percentile | ."99.000000",."99.990000"'))
+
+          # we would write something like this to disk which would be consumed by node_exporter
+          echo "# HELP benchmark_fsync_duration_seconds reports on storage latency during cluster install"
+          echo "# TYPE benchmark_fsync_duration_seconds summary"
+          echo "benchmark_fsync_duration_seconds{quantile=\"0.99\"} ${BENCHMARK[0]}"
+          echo "benchmark_fsync_duration_seconds{quantile=\"0.9999\"} ${BENCHMARK[1]}"
+
+          # cleanup workfile  
+          rm -f /etc/kubernetes/static-pod-resources/benchmark/storage-benchmark-workfile.0.0
+
+      resources:
+        requests:
+          memory: 60Mi
+          cpu: 30m
+      securityContext:
+        privileged: true
+      volumeMounts:
+        - mountPath: /etc/kubernetes/static-pod-resources
+          name: static-pod-dir
     - name: etcd-ensure-env-vars
       image: ${IMAGE}
       imagePullPolicy: IfNotPresent
@@ -135,12 +187,8 @@ ${COMPUTED_ENV_VARS}
           --target-name=NODE_NAME)
          export ETCD_INITIAL_CLUSTER
 
-        # at this point we know this member is added.  To support a transition, we must remove the old etcd pod.
-        # move it somewhere safe so we can retrieve it again later if something goes badly.
-        mv /etc/kubernetes/manifests/etcd-member.yaml /etc/kubernetes/etcd-backup-dir || true
-
         # we cannot use the "normal" port conflict initcontainer because when we upgrade, the existing static pod will never yield,
-        # so we do the detection in etcd container itsefl.
+        # so we do the detection in etcd container itself.
         echo -n "Waiting for ports 2379, 2380 and 9978 to be released."
         while [ -n "$(ss -Htan '( sport = 2379 or sport = 2380 or sport = 9978 )')" ]; do
           echo -n "."
