@@ -29,7 +29,7 @@ func NewClusterOperatorLoggingController(operatorClient operatorv1helpers.Operat
 func NewClusterOperatorLoggingControllerWithLogLevel(operatorClient operatorv1helpers.OperatorClient, defaultLogLevel operatorv1.LogLevel, recorder events.Recorder) factory.Controller {
 	c := &LogLevelController{
 		operatorClient:  operatorClient,
-		setLogLevelFn:   SetLogLEvel,
+		setLogLevelFn:   SetLogLevel,
 		getLogLevelFn:   GetLogLevel,
 		defaultLogLevel: defaultLogLevel,
 	}

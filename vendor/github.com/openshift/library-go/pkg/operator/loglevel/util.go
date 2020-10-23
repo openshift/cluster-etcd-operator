@@ -60,9 +60,9 @@ func GetLogLevel() (operatorv1.LogLevel, bool) {
 	}
 }
 
-// SetLogLEvel is a nasty hack and attempt to manipulate the global flags as klog does not expose
+// SetLogLevel is a nasty hack and attempt to manipulate the global flags as klog does not expose
 // a way to dynamically change the loglevel in runtime.
-func SetLogLEvel(targetLevel operatorv1.LogLevel) error {
+func SetLogLevel(targetLevel operatorv1.LogLevel) error {
 	var level *klog.Level
 
 	// Convert operator loglevel to klog numeric string
