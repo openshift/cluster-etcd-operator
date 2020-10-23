@@ -91,24 +91,31 @@ func (c *StaticPodStateController) sync(ctx context.Context, syncCtx factory.Syn
 		}
 		images.Insert(pod.Spec.Containers[0].Image)
 
-		for _, containerStatus := range pod.Status.ContainerStatuses {
-			if !containerStatus.Ready {
-				// When container is not ready, we can't determine whether the operator is failing or not and every container will become not
-				// ready when created, so do not blip the failing state for it.
-				// We will still reflect the container not ready state in error conditions, but we don't set the operator as failed.
-				running := ""
-				if containerStatus.State.Running != nil {
-					running = fmt.Sprintf(" running for %s but", time.Now().Sub(containerStatus.State.Running.StartedAt.Time))
-				}
-				errs = append(errs, fmt.Errorf("pod/%s container %q is%s not ready: %s", pod.Name, containerStatus.Name, running, describeWaitingContainerState(containerStatus.State.Waiting)))
-			}
-			// if container status is waiting, but not initializing pod, increase the failing error counter
-			// this usually means the container is stucked on initializing network
-			if containerStatus.State.Waiting != nil && containerStatus.State.Waiting.Reason != "PodInitializing" {
+		for i, containerStatus := range pod.Status.ContainerStatuses {
+			switch {
+			case containerStatus.State.Waiting != nil && containerStatus.State.Waiting.Reason != "PodInitializing":
+				// if container status is waiting, but not initializing pod, increase the failing error counter
+				// this usually means the container is stuck on initializing network
 				errs = append(errs, fmt.Errorf("pod/%s container %q is waiting: %s", pod.Name, containerStatus.Name, describeWaitingContainerState(containerStatus.State.Waiting)))
 				failingErrorCount++
-			}
-			if containerStatus.State.Terminated != nil {
+			case containerStatus.State.Running != nil:
+				maxNormalStartupDuration := 30 * time.Second // assume 30s for containers without probes
+				if i < len(pod.Spec.Containers) {            // should always happen
+					spec := pod.Spec.Containers[i]
+					if spec.LivenessProbe != nil {
+						maxNormalStartupDuration = maxFailureDuration(spec.LivenessProbe)
+					}
+					grace := 10 * time.Second
+					maxNormalStartupDuration = max(maxNormalStartupDuration, maxFailureDuration(spec.ReadinessProbe)) + maxFailureDuration(spec.StartupProbe) + grace
+				}
+
+				if !containerStatus.Ready && time.Now().After(containerStatus.State.Running.StartedAt.Add(maxNormalStartupDuration)) {
+					// When container is not ready, we can't determine whether the operator is failing or not and every container will become not
+					// ready when created, so do not blip the failing state for it.
+					// We will still reflect the container not ready state in error conditions, but we don't set the operator as failed.
+					errs = append(errs, fmt.Errorf("pod/%s container %q started at %s is still not ready", pod.Name, containerStatus.Name, containerStatus.State.Running.StartedAt.Time))
+				}
+			case containerStatus.State.Terminated != nil:
 				// Containers can be terminated gracefully to trigger certificate reload, do not report these as failures.
 				errs = append(errs, fmt.Errorf("pod/%s container %q is terminated: %s: %s", pod.Name, containerStatus.Name, containerStatus.State.Terminated.Reason,
 					containerStatus.State.Terminated.Message))
@@ -116,7 +123,6 @@ func (c *StaticPodStateController) sync(ctx context.Context, syncCtx factory.Syn
 				if containerStatus.State.Terminated.ExitCode != 0 {
 					failingErrorCount++
 				}
-
 			}
 		}
 	}
@@ -166,6 +172,21 @@ func (c *StaticPodStateController) sync(ctx context.Context, syncCtx factory.Syn
 	}
 
 	return err
+}
+
+func maxFailureDuration(p *v1.Probe) time.Duration {
+	if p == nil {
+		return 0
+	}
+
+	return time.Duration(p.InitialDelaySeconds)*time.Second + time.Duration(p.FailureThreshold*p.PeriodSeconds)*time.Second
+}
+
+func max(x, y time.Duration) time.Duration {
+	if x > y {
+		return x
+	}
+	return y
 }
 
 func mirrorPodNameForNode(staticPodName, nodeName string) string {
