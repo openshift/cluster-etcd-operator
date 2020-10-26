@@ -643,6 +643,12 @@ ${COMPUTED_ENV_VARS}
       periodSeconds: 5
       successThreshold: 1
       timeoutSeconds: 5
+    livenessProbe:
+      httpGet:
+        port: 9989
+        path: health
+      initialDelaySeconds: 3
+      timeoutSeconds: 5
     securityContext:
       privileged: true
     volumeMounts:
