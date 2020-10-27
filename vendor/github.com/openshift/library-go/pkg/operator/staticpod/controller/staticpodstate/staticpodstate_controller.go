@@ -96,7 +96,11 @@ func (c *StaticPodStateController) sync(ctx context.Context, syncCtx factory.Syn
 				// When container is not ready, we can't determine whether the operator is failing or not and every container will become not
 				// ready when created, so do not blip the failing state for it.
 				// We will still reflect the container not ready state in error conditions, but we don't set the operator as failed.
-				errs = append(errs, fmt.Errorf("pod/%s container %q is not ready: %s", pod.Name, containerStatus.Name, describeWaitingContainerState(containerStatus.State.Waiting)))
+				running := ""
+				if containerStatus.State.Running != nil {
+					running = fmt.Sprintf(" running since %s but", containerStatus.State.Running.StartedAt.Time)
+				}
+				errs = append(errs, fmt.Errorf("pod/%s container %q is%s not ready: %s", pod.Name, containerStatus.Name, running, describeWaitingContainerState(containerStatus.State.Waiting)))
 			}
 			// if container status is waiting, but not initializing pod, increase the failing error counter
 			// this usually means the container is stucked on initializing network

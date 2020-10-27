@@ -17,6 +17,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -298,7 +299,7 @@ func (o *InstallOptions) copyContent(ctx context.Context) error {
 	}
 
 	// Gather pod yaml from config map
-	var podContent string
+	var rawPodBytes string
 
 	err := retry.RetryOnConnectionErrors(ctx, func(ctx context.Context) (bool, error) {
 		klog.Infof("Getting pod configmaps/%s -n %s", o.nameFor(o.PodConfigMapNamePrefix), o.Namespace)
@@ -310,19 +311,34 @@ func (o *InstallOptions) copyContent(ctx context.Context) error {
 			return true, fmt.Errorf("required 'pod.yaml' key does not exist in configmap")
 		}
 		podConfigMap = o.substituteConfigMap(podConfigMap)
-		podContent = podConfigMap.Data["pod.yaml"]
+		rawPodBytes = podConfigMap.Data["pod.yaml"]
 		return true, nil
 	})
 	if err != nil {
 		return err
 	}
+	// the kubelet has a bug that prevents graceful termination from working on static pods with the same name, filename
+	// and uuid.  By setting the pod UID we can work around the kubelet bug and get our graceful termination honored.
+	// Per the node team, this is hard to fix in the kubelet, though it will affect all static pods.
+	pod, err := resourceread.ReadPodV1([]byte(rawPodBytes))
+	if err != nil {
+		return err
+	}
+	pod.UID = uuid.NewUUID()
+	for _, fn := range o.PodMutationFns {
+		klog.V(2).Infof("Customizing static pod ...")
+		pod = pod.DeepCopy()
+		if err := fn(pod); err != nil {
+			return err
+		}
+	}
+	finalPodBytes := resourceread.WritePodV1OrDie(pod)
 
 	// Write secrets, config maps and pod to disk
 	// This does not need timeout, instead we should fail hard when we are not able to write.
-
 	podFileName := o.PodConfigMapNamePrefix + ".yaml"
 	klog.Infof("Writing pod manifest %q ...", path.Join(resourceDir, podFileName))
-	if err := ioutil.WriteFile(path.Join(resourceDir, podFileName), []byte(podContent), 0644); err != nil {
+	if err := ioutil.WriteFile(path.Join(resourceDir, podFileName), []byte(finalPodBytes), 0644); err != nil {
 		return err
 	}
 
@@ -332,17 +348,8 @@ func (o *InstallOptions) copyContent(ctx context.Context) error {
 		return err
 	}
 
-	for _, fn := range o.PodMutationFns {
-		klog.V(2).Infof("Customizing static pod ...")
-		pod := resourceread.ReadPodV1OrDie([]byte(podContent))
-		if err := fn(pod); err != nil {
-			return err
-		}
-		podContent = resourceread.WritePodV1OrDie(pod)
-	}
-
-	klog.Infof("Writing static pod manifest %q ...\n%s", path.Join(o.PodManifestDir, podFileName), podContent)
-	if err := ioutil.WriteFile(path.Join(o.PodManifestDir, podFileName), []byte(podContent), 0644); err != nil {
+	klog.Infof("Writing static pod manifest %q ...\n%s", path.Join(o.PodManifestDir, podFileName), finalPodBytes)
+	if err := ioutil.WriteFile(path.Join(o.PodManifestDir, podFileName), []byte(finalPodBytes), 0644); err != nil {
 		return err
 	}
 
