@@ -1,6 +1,7 @@
 package etcdenvvar
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"sync"
@@ -14,8 +15,10 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
@@ -26,6 +29,7 @@ const workQueueKey = "key"
 
 type EnvVarController struct {
 	operatorClient v1helpers.StaticPodOperatorClient
+	kubeClient     kubernetes.Interface
 
 	envVarMapLock       sync.Mutex
 	envVarMap           map[string]string
@@ -50,6 +54,7 @@ type Enqueueable interface {
 func NewEnvVarController(
 	targetImagePullSpec string,
 	operatorClient v1helpers.StaticPodOperatorClient,
+	kubeClient kubernetes.Interface,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	infrastructureInformer configv1informers.InfrastructureInformer,
 	networkInformer configv1informers.NetworkInformer,
@@ -57,6 +62,7 @@ func NewEnvVarController(
 ) *EnvVarController {
 	c := &EnvVarController{
 		operatorClient:       operatorClient,
+		kubeClient:           kubeClient,
 		infrastructureLister: infrastructureInformer.Lister(),
 		networkLister:        networkInformer.Lister(),
 		configmapLister:      kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister(),
@@ -152,6 +158,19 @@ func (c *EnvVarController) checkEnvVars() error {
 	isManagedByAssistedInstaller := true
 	nodeCount := len(ctx.status.NodeStatuses)
 
+	// check for valid PDB, while we do internal health checks aginst etcd directly,
+	// PDB has the data we need without an out of band query to etcd.
+	// see: https://github.com/etcd-io/etcd/blob/master/Documentation/faq.md#what-is-failure-tolerance
+	var isEtcdFailureTolerant bool
+	pdb, err := c.kubeClient.PolicyV1beta1().PodDisruptionBudgets(operatorclient.TargetNamespace).Get(context.Background(), "etcd-quorum-guard", metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	currentHealthyEtcds := pdb.Status.CurrentHealthy
+	if currentHealthyEtcds > 2 {
+		isEtcdFailureTolerant = true
+	}
+
 	// There are three discrete validation paths to enforce HA invariants
 	// depending on whether the unsupported/unsafe config is set, whether the
 	// cluster is managed by assisted installer, and the default configuration.
@@ -170,8 +189,9 @@ func (c *EnvVarController) checkEnvVars() error {
 	case isManagedByAssistedInstaller:
 		// When managed by assisted installer, tolerate unsafe conditions only up
 		// until bootstrap is complete, and then enforce as in the supported case.
-		if nodeCount < 3 && bootstrapComplete {
-			return fmt.Errorf("at least three nodes are required to have a valid configuration (have %d)", nodeCount)
+		// Only if etcd if failure tolerant is it safe for a new static pod revision.
+		if !isEtcdFailureTolerant && bootstrapComplete {
+			return fmt.Errorf("at least three healthy etcd members are required to have a valid configuration (have %d)", currentHealthyEtcds)
 		}
 	default:
 		// When running in a normal supported configuration, enforce HA invariants
