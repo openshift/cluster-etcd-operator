@@ -11,6 +11,7 @@ import (
 	"go.etcd.io/etcd/etcdserver/api/v3rpc/rpctypes"
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	"k8s.io/component-base/metrics/legacyregistry"
+	klog "k8s.io/klog/v2"
 )
 
 func init() {
@@ -196,6 +197,23 @@ func GetUnstartedMemberNames(memberHealth []healthCheck) []string {
 // HasStarted return true if etcd member has started.
 func HasStarted(member *etcdserverpb.Member) bool {
 	if len(member.ClientURLs) == 0 {
+		return false
+	}
+	return true
+}
+
+// IsQuorumFaultTolerant checks the current etcd cluster and returns true if the cluster can tolerate the
+// loss of a single etcd member. Such loss is common during new static pod revision.
+func IsQuorumFaultTolerant(memberHealth []healthCheck) bool {
+	totalMembers := len(memberHealth)
+	quorum := totalMembers/2 + 1
+	healthyMembers := len(GetHealthyMemberNames(memberHealth))
+	switch {
+	case totalMembers-quorum < 1:
+		klog.Errorf("etcd cluster has quorum of %d which is not fault tolerant", quorum)
+		return false
+	case healthyMembers-quorum < 1:
+		klog.Errorf("etcd cluster has quorum of %d and %d healthy members which is not fault tolerant", quorum, healthyMembers)
 		return false
 	}
 	return true

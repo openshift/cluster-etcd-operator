@@ -309,3 +309,106 @@ func TestGetUnhealthyMemberNames(t *testing.T) {
 		})
 	}
 }
+
+func TestIsQuorumFaultTolerant(t *testing.T) {
+	tests := []struct {
+		name         string
+		memberHealth memberHealth
+		want         bool
+	}{
+		{
+			"test all available members",
+			[]healthCheck{
+				{
+					Member:  &etcdserverpb.Member{Name: "etcd-1", PeerURLs: []string{"https://10.0.0.1:2380"}, ClientURLs: []string{"https://10.0.0.1:2379"}},
+					Healthy: true,
+				},
+				{
+					Member:  &etcdserverpb.Member{Name: "etcd-2", PeerURLs: []string{"https://10.0.0.2:2380"}, ClientURLs: []string{"https://10.0.0.2:2379"}},
+					Healthy: true,
+				},
+				{
+					Member:  &etcdserverpb.Member{Name: "etcd-3", PeerURLs: []string{"https://10.0.0.3:2380"}, ClientURLs: []string{"https://10.0.0.3:2379"}},
+					Healthy: true,
+				},
+			},
+			true,
+		},
+		{
+			"test an unhealthy members",
+			[]healthCheck{
+				{
+					Member:  &etcdserverpb.Member{Name: "etcd-1", PeerURLs: []string{"https://10.0.0.1:2380"}, ClientURLs: []string{"https://10.0.0.1:2379"}},
+					Healthy: true,
+				},
+				{
+					Member:  &etcdserverpb.Member{Name: "etcd-2", PeerURLs: []string{"https://10.0.0.2:2380"}, ClientURLs: []string{"https://10.0.0.2:2379"}},
+					Healthy: true,
+				},
+				{
+					Member:  &etcdserverpb.Member{Name: "etcd-3", PeerURLs: []string{"https://10.0.0.3:2380"}, ClientURLs: []string{"https://10.0.0.3:2379"}},
+					Healthy: false,
+				},
+			},
+			false,
+		},
+		{
+			"test an unstarted member",
+			[]healthCheck{
+				{
+					Member:  &etcdserverpb.Member{Name: "etcd-1", PeerURLs: []string{"https://10.0.0.1:2380"}, ClientURLs: []string{"https://10.0.0.1:2379"}},
+					Healthy: true,
+				},
+				{
+					Member:  &etcdserverpb.Member{PeerURLs: []string{"https://10.0.0.2:2380"}},
+					Healthy: false,
+				},
+				{
+					Member:  &etcdserverpb.Member{Name: "etcd-3", PeerURLs: []string{"https://10.0.0.3:2380"}, ClientURLs: []string{"https://10.0.0.3:2379"}},
+					Healthy: true,
+				},
+			},
+			false,
+		},
+		{
+			"test an unstarted and an unhealthy member",
+			[]healthCheck{
+				{
+					Member:  &etcdserverpb.Member{Name: "etcd-1", PeerURLs: []string{"https://10.0.0.1:2380"}, ClientURLs: []string{"https://10.0.0.1:2379"}},
+					Healthy: false,
+				},
+				{
+					Member:  &etcdserverpb.Member{PeerURLs: []string{"https://10.0.0.2:2380"}},
+					Healthy: false,
+				},
+				{
+					Member:  &etcdserverpb.Member{Name: "etcd-3", PeerURLs: []string{"https://10.0.0.3:2380"}, ClientURLs: []string{"https://10.0.0.3:2379"}},
+					Healthy: true,
+				},
+			},
+			false,
+		},
+		{
+			"test etcd cluster with less than 3 members",
+			[]healthCheck{
+				{
+					Member:  &etcdserverpb.Member{Name: "etcd-1", PeerURLs: []string{"https://10.0.0.1:2380"}, ClientURLs: []string{"https://10.0.0.1:2379"}},
+					Healthy: true,
+				},
+				{
+					Member:  &etcdserverpb.Member{PeerURLs: []string{"https://10.0.0.2:2380"}},
+					Healthy: true,
+				},
+			},
+			false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsQuorumFaultTolerant(tt.memberHealth)
+			if got != tt.want {
+				t.Errorf("test %q = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
