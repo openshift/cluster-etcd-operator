@@ -67,7 +67,9 @@ func GetMemberHealth(etcdMembers []*etcdserverpb.Member) memberHealth {
 			cancel()
 			hc := healthCheck{Member: member, Healthy: false, Took: time.Since(st).String()}
 			if err == nil {
-				raftTerms.Set(member.Name, resp.Header.RaftTerm)
+				if resp.Header != nil {
+					raftTerms.Set(member.Name, resp.Header.RaftTerm)
+				}
 				hc.Healthy = true
 			} else {
 				if err == rpctypes.ErrPermissionDenied {
@@ -210,10 +212,10 @@ func IsQuorumFaultTolerant(memberHealth []healthCheck) bool {
 	healthyMembers := len(GetHealthyMemberNames(memberHealth))
 	switch {
 	case totalMembers-quorum < 1:
-		klog.Errorf("etcd cluster has quorum of %d which is not fault tolerant", quorum)
+		klog.Errorf("etcd cluster has quorum of %d which is not fault tolerant: %+v", quorum, memberHealth)
 		return false
 	case healthyMembers-quorum < 1:
-		klog.Errorf("etcd cluster has quorum of %d and %d healthy members which is not fault tolerant", quorum, healthyMembers)
+		klog.Errorf("etcd cluster has quorum of %d and %d healthy members which is not fault tolerant: %+v", quorum, healthyMembers, memberHealth)
 		return false
 	}
 	return true
