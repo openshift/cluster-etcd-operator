@@ -75,6 +75,8 @@ github.com/googleapis/gnostic/extensions
 github.com/googleapis/gnostic/openapiv2
 # github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
 github.com/grpc-ecosystem/go-grpc-prometheus
+# github.com/grpc-ecosystem/grpc-gateway v1.14.6
+## explicit
 # github.com/hashicorp/golang-lru v0.5.1
 github.com/hashicorp/golang-lru
 github.com/hashicorp/golang-lru/simplelru
@@ -285,6 +287,7 @@ go.etcd.io/etcd/etcdserver/etcdserverpb
 go.etcd.io/etcd/mvcc/mvccpb
 go.etcd.io/etcd/pkg/fileutil
 go.etcd.io/etcd/pkg/logutil
+go.etcd.io/etcd/pkg/mock/mockserver
 go.etcd.io/etcd/pkg/systemd
 go.etcd.io/etcd/pkg/tlsutil
 go.etcd.io/etcd/pkg/transport
@@ -324,7 +327,7 @@ golang.org/x/net/idna
 golang.org/x/net/internal/timeseries
 golang.org/x/net/trace
 golang.org/x/net/websocket
-# golang.org/x/oauth2 v0.0.0-20191202225959-858c2ad4c8b6
+# golang.org/x/oauth2 v0.0.0-20200107190931-bf48bf16ab8d
 golang.org/x/oauth2
 golang.org/x/oauth2/internal
 # golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
@@ -353,7 +356,7 @@ google.golang.org/appengine/internal/urlfetch
 google.golang.org/appengine/urlfetch
 # google.golang.org/genproto v0.0.0-20200526211855-cb27e3aa2013
 google.golang.org/genproto/googleapis/rpc/status
-# google.golang.org/grpc v1.27.0
+# google.golang.org/grpc v1.29.1
 ## explicit
 google.golang.org/grpc
 google.golang.org/grpc/attributes
@@ -376,10 +379,13 @@ google.golang.org/grpc/internal/binarylog
 google.golang.org/grpc/internal/buffer
 google.golang.org/grpc/internal/channelz
 google.golang.org/grpc/internal/envconfig
+google.golang.org/grpc/internal/grpclog
 google.golang.org/grpc/internal/grpcrand
 google.golang.org/grpc/internal/grpcsync
+google.golang.org/grpc/internal/grpcutil
 google.golang.org/grpc/internal/resolver/dns
 google.golang.org/grpc/internal/resolver/passthrough
+google.golang.org/grpc/internal/status
 google.golang.org/grpc/internal/syscall
 google.golang.org/grpc/internal/transport
 google.golang.org/grpc/keepalive

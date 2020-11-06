@@ -29,6 +29,7 @@ import (
 // IP addresses for etcd. It should never depend on DNS directly or transitively.
 type EtcdEndpointsController struct {
 	operatorClient  v1helpers.StaticPodOperatorClient
+	etcdClient      etcdcli.EtcdClient
 	nodeLister      corev1listers.NodeLister
 	configmapLister corev1listers.ConfigMapLister
 	configmapClient corev1client.ConfigMapsGetter
@@ -36,6 +37,7 @@ type EtcdEndpointsController struct {
 
 func NewEtcdEndpointsController(
 	operatorClient v1helpers.StaticPodOperatorClient,
+	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
 	kubeClient kubernetes.Interface,
 	kubeInformers operatorv1helpers.KubeInformersForNamespaces,
@@ -44,6 +46,7 @@ func NewEtcdEndpointsController(
 
 	c := &EtcdEndpointsController{
 		operatorClient:  operatorClient,
+		etcdClient:      etcdClient,
 		nodeLister:      nodeInformer.Lister(),
 		configmapLister: kubeInformers.ConfigMapLister(),
 		configmapClient: kubeClient.CoreV1(),
@@ -89,13 +92,19 @@ func (c *EtcdEndpointsController) syncConfigMap(recorder events.Recorder) error 
 		return fmt.Errorf("couldn't determine bootstrap status: %w", err)
 	}
 
+	etcdMembers, err := c.etcdClient.MemberList()
+	if err != nil {
+		return fmt.Errorf("could not create etcd client: %w", err)
+	}
+	memberHealth := etcdcli.GetMemberHealth(etcdMembers)
+
 	required := configMapAsset()
 
 	// If the bootstrap IP is present on the existing configmap, either copy it
 	// forward or remove it if possible so clients can forget about it.
 	if existing, err := c.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints"); err == nil {
 		if existingIP, hasExistingIP := existing.Annotations[etcdcli.BootstrapIPAnnotationKey]; hasExistingIP {
-			if bootstrapComplete {
+			if bootstrapComplete && etcdcli.IsQuorumFaultTolerant(memberHealth) {
 				// remove the annotation
 				required.Annotations[etcdcli.BootstrapIPAnnotationKey+"-"] = existingIP
 			} else {
