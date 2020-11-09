@@ -6,7 +6,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blang/semver"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/informers"
@@ -14,10 +18,16 @@ import (
 	coreclientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/klog"
+	"sigs.k8s.io/yaml"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1client "github.com/openshift/client-go/config/clientset/versioned"
+	configv1versionedclient "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	clusteroperatorv1helpers "github.com/openshift/library-go/pkg/config/clusteroperator/v1helpers"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -31,11 +41,17 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
 )
 
+const (
+	disableRollbackCopierAnnotation = "openshift.io/disable-rollbackcopier"
+	rollbackCopierContainerName     = "rollbackcopier"
+)
+
 type TargetConfigController struct {
 	targetImagePullSpec   string
 	operatorImagePullSpec string
 
 	operatorClient v1helpers.StaticPodOperatorClient
+	configClient   configv1client.Interface
 
 	kubeClient           kubernetes.Interface
 	infrastructureLister configv1listers.InfrastructureLister
@@ -51,6 +67,7 @@ type TargetConfigController struct {
 func NewTargetConfigController(
 	targetImagePullSpec, operatorImagePullSpec string,
 	operatorClient v1helpers.StaticPodOperatorClient,
+	configClient configv1client.Interface,
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	infrastructureInformer configv1informers.InfrastructureInformer,
@@ -64,6 +81,7 @@ func NewTargetConfigController(
 		operatorImagePullSpec: operatorImagePullSpec,
 
 		operatorClient:       operatorClient,
+		configClient:         configClient,
 		kubeClient:           kubeClient,
 		infrastructureLister: infrastructureInformer.Lister(),
 		networkLister:        networkInformer.Lister(),
@@ -120,7 +138,7 @@ func createTargetConfig(c TargetConfigController, recorder events.Recorder, oper
 	if err != nil {
 		errors = append(errors, fmt.Errorf("%q: %v", "configmap/config", err))
 	}
-	_, _, err = c.manageStandardPod(contentReplacer, c.kubeClient.CoreV1(), recorder, operatorSpec)
+	_, _, err = c.manageStandardPod(contentReplacer, c.kubeClient.CoreV1(), c.configClient.ConfigV1(), recorder, operatorSpec)
 	if err != nil {
 		errors = append(errors, fmt.Errorf("%q: %v", "configmap/etcd-pod", err))
 	}
@@ -220,15 +238,65 @@ func (c *TargetConfigController) manageRecoveryPod(substitutionReplacer *strings
 	return resourceapply.ApplyConfigMap(client, recorder, podConfigMap)
 }
 
-func (c *TargetConfigController) manageStandardPod(substitutionReplacer *strings.Replacer, client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
+func (c *TargetConfigController) manageStandardPod(substitutionReplacer *strings.Replacer, client coreclientv1.ConfigMapsGetter, cluserVersionsClient configv1versionedclient.ClusterVersionsGetter, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
 	podBytes := etcd_assets.MustAsset("etcd/pod.yaml")
 	substitutedPodString := substitutionReplacer.Replace(string(podBytes))
+
+	// Remove the rollbackcopier container if desired.
+	clusterVersion, err := cluserVersionsClient.ClusterVersions().Get(context.TODO(), "version", metav1.GetOptions{})
+	if err != nil {
+		return nil, false, err
+	}
+	pod := &corev1.Pod{}
+	if err := yaml.Unmarshal(podBytes, pod); err != nil {
+		return nil, false, fmt.Errorf("failed to unmarshal etcd pod: %w", err)
+	}
+	updatedPod := ensureRollbackCopier(pod, clusterVersion)
+	if !equality.Semantic.DeepEqual(pod, updatedPod) {
+		newPodBytes, err := yaml.Marshal(updatedPod)
+		if err != nil {
+			return nil, false, fmt.Errorf("failed to marshal etcd pod: %w", err)
+		}
+		podBytes = newPodBytes
+	}
 
 	podConfigMap := resourceread.ReadConfigMapV1OrDie(etcd_assets.MustAsset("etcd/pod-cm.yaml"))
 	podConfigMap.Data["pod.yaml"] = substitutedPodString
 	podConfigMap.Data["forceRedeploymentReason"] = operatorSpec.ForceRedeploymentReason
 	podConfigMap.Data["version"] = version.Get().String()
 	return resourceapply.ApplyConfigMap(client, recorder, podConfigMap)
+}
+
+func ensureRollbackCopier(etcdPod *corev1.Pod, clusterVersion *configv1.ClusterVersion) *corev1.Pod {
+	errors := []error{}
+	if v, err := semver.Parse(clusterVersion.Status.Desired.Version); err != nil {
+		errors = append(errors, fmt.Errorf("unrecognizable cluster version %q: %w", clusterVersion.Status.Desired.Version, err))
+	} else {
+		if v.Major == 4 && v.Minor <= 5 {
+			errors = append(errors, fmt.Errorf("cluster version %q must be >= 4.5.0", v))
+		}
+	}
+	if clusteroperatorv1helpers.IsStatusConditionFalse(clusterVersion.Status.Conditions, configv1.OperatorAvailable) {
+		errors = append(errors, fmt.Errorf("clusterversion condition %s=False", configv1.OperatorAvailable))
+	}
+	if clusteroperatorv1helpers.IsStatusConditionTrue(clusterVersion.Status.Conditions, configv1.OperatorProgressing) {
+		errors = append(errors, fmt.Errorf("clusterversion condition %s=True", configv1.OperatorProgressing))
+	}
+	if clusteroperatorv1helpers.IsStatusConditionTrue(clusterVersion.Status.Conditions, "Failing") {
+		errors = append(errors, fmt.Errorf("clusterversion condition %s=True", "Failing"))
+	}
+	if err := utilerrors.NewAggregate(errors); err != nil {
+		klog.V(3).Infof("won't remove rollback copier because following preconditions failed: %v", err)
+		return etcdPod
+	}
+	updated := etcdPod.DeepCopy()
+	for i, container := range updated.Spec.Containers {
+		if container.Name == rollbackCopierContainerName {
+			updated.Spec.Containers = append(updated.Spec.Containers[:i], updated.Spec.Containers[i+1:]...)
+			break
+		}
+	}
+	return updated
 }
 
 func (c *TargetConfigController) Enqueue() {
