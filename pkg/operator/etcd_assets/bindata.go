@@ -230,7 +230,18 @@ function extract_and_start_restore_etcd_pod() {
    fi
 
    echo "starting restored etcd-pod.yaml"
-   tar -O -xvf "${BACKUP_FILE}" -C "${MANIFEST_DIR}"/ "${BACKUP_POD_PATH}" > "${MANIFEST_DIR}"/etcd-pod.yaml
+   tar -O -xvf "${BACKUP_FILE}" -C "${MANIFEST_DIR}"/ "${BACKUP_POD_PATH}" | \
+     sed -e 's,export ETCD_NAME=.*$,export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME},g' \
+         -e 's,export ETCD_INITIAL_CLUSTER=.*$,export ETCD_INITIAL_CLUSTER="${ETCD_NAME}=https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:2380",g' \
+         -e 's,export ETCD_NODE_PEER_URL=.*$,export ETCD_NODE_PEER_URL=https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:2380,g' \
+         -e 's,--initial-advertise-peer-urls .*$,--initial-advertise-peer-urls $ETCD_NODE_PEER_URL \\,g' \
+         -e 's,--initial-advertise-peer-urls=.*$,--initial-advertise-peer-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2380 \\,g' \
+         -e 's,--cert-file=.*$,--cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-serving/etcd-serving-NODE_NAME.crt \\,g' \
+         -e 's,--key-file=.*$,--key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-serving/etcd-serving-NODE_NAME.key \\,g' \
+         -e 's,--peer-cert-file=.*$,--peer-cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.crt \\,g' \
+         -e 's,--peer-key-file=.*$,--peer-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key \\,g' \
+         -e 's,--advertise-client-urls=.*$,--advertise-client-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2379 \\,g' > "${MANIFEST_DIR}"/etcd-pod.yaml
+
 }
 
 
