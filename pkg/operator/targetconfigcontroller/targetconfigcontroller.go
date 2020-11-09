@@ -7,6 +7,8 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/informers"
@@ -14,10 +16,13 @@ import (
 	coreclientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"sigs.k8s.io/yaml"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
+	operatorclientv1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -31,11 +36,17 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
 )
 
+const (
+	disableRollbackCopierAnnotation = "openshift.io/disable-rollbackcopier"
+	rollbackCopierContainerName     = "rollbackcopier"
+)
+
 type TargetConfigController struct {
 	targetImagePullSpec   string
 	operatorImagePullSpec string
 
-	operatorClient v1helpers.StaticPodOperatorClient
+	operatorClient       v1helpers.StaticPodOperatorClient
+	operatorConfigClient operatorversionedclient.Interface
 
 	kubeClient           kubernetes.Interface
 	infrastructureLister configv1listers.InfrastructureLister
@@ -51,6 +62,7 @@ type TargetConfigController struct {
 func NewTargetConfigController(
 	targetImagePullSpec, operatorImagePullSpec string,
 	operatorClient v1helpers.StaticPodOperatorClient,
+	operatorConfigClient operatorversionedclient.Interface,
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	infrastructureInformer configv1informers.InfrastructureInformer,
@@ -64,6 +76,7 @@ func NewTargetConfigController(
 		operatorImagePullSpec: operatorImagePullSpec,
 
 		operatorClient:       operatorClient,
+		operatorConfigClient: operatorConfigClient,
 		kubeClient:           kubeClient,
 		infrastructureLister: infrastructureInformer.Lister(),
 		networkLister:        networkInformer.Lister(),
@@ -120,7 +133,7 @@ func createTargetConfig(c TargetConfigController, recorder events.Recorder, oper
 	if err != nil {
 		errors = append(errors, fmt.Errorf("%q: %v", "configmap/config", err))
 	}
-	_, _, err = c.manageStandardPod(contentReplacer, c.kubeClient.CoreV1(), recorder, operatorSpec)
+	_, _, err = c.manageStandardPod(contentReplacer, c.kubeClient.CoreV1(), c.operatorConfigClient.OperatorV1(), recorder, operatorSpec)
 	if err != nil {
 		errors = append(errors, fmt.Errorf("%q: %v", "configmap/etcd-pod", err))
 	}
@@ -220,15 +233,51 @@ func (c *TargetConfigController) manageRecoveryPod(substitutionReplacer *strings
 	return resourceapply.ApplyConfigMap(client, recorder, podConfigMap)
 }
 
-func (c *TargetConfigController) manageStandardPod(substitutionReplacer *strings.Replacer, client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
+func (c *TargetConfigController) manageStandardPod(substitutionReplacer *strings.Replacer, client coreclientv1.ConfigMapsGetter, etcdsClient operatorclientv1.EtcdsGetter, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
 	podBytes := etcd_assets.MustAsset("etcd/pod.yaml")
 	substitutedPodString := substitutionReplacer.Replace(string(podBytes))
+
+	// Generically support removing the rollbackcopier container if the user has
+	// explicitly disabled it through an annotation. Remove it dynamically here
+	// so that the function works across all releases (as the copier doesn't exist
+	// in versions 4.6+).
+	etcdConfig, err := etcdsClient.Etcds().Get(context.TODO(), "cluster", metav1.GetOptions{})
+	if err != nil {
+		return nil, false, err
+	}
+	pod := &corev1.Pod{}
+	if err := yaml.Unmarshal(podBytes, pod); err != nil {
+		return nil, false, fmt.Errorf("failed to unmarshal etcd pod: %w", err)
+	}
+	updatedPod := ensureRollbackCopier(pod, etcdConfig)
+	if !equality.Semantic.DeepEqual(pod, updatedPod) {
+		newPodBytes, err := yaml.Marshal(updatedPod)
+		if err != nil {
+			return nil, false, fmt.Errorf("failed to marshal etcd pod: %w", err)
+		}
+		podBytes = newPodBytes
+	}
 
 	podConfigMap := resourceread.ReadConfigMapV1OrDie(etcd_assets.MustAsset("etcd/pod-cm.yaml"))
 	podConfigMap.Data["pod.yaml"] = substitutedPodString
 	podConfigMap.Data["forceRedeploymentReason"] = operatorSpec.ForceRedeploymentReason
 	podConfigMap.Data["version"] = version.Get().String()
 	return resourceapply.ApplyConfigMap(client, recorder, podConfigMap)
+}
+
+func ensureRollbackCopier(etcdPod *corev1.Pod, etcdConfig *operatorv1.Etcd) *corev1.Pod {
+	_, rollbackCopierDisabled := etcdConfig.Annotations[disableRollbackCopierAnnotation]
+	if !rollbackCopierDisabled {
+		return etcdPod
+	}
+	updated := etcdPod.DeepCopy()
+	for i, container := range updated.Spec.Containers {
+		if container.Name == rollbackCopierContainerName {
+			updated.Spec.Containers = append(updated.Spec.Containers[:i], updated.Spec.Containers[i+1:]...)
+			break
+		}
+	}
+	return updated
 }
 
 func (c *TargetConfigController) Enqueue() {

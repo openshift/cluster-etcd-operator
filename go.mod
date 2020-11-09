@@ -28,6 +28,7 @@ require (
 	k8s.io/cri-api v0.18.6
 	k8s.io/klog/v2 v2.3.0
 	k8s.io/utils v0.0.0-20200729134348-d5654de09c73
+	sigs.k8s.io/yaml v1.2.0
 )
 
 replace vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787
