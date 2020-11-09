@@ -3,12 +3,8 @@ package etcdendpointscontroller
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
 	"testing"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
-	"go.etcd.io/etcd/etcdserver/etcdserverpb"
-	"go.etcd.io/etcd/pkg/mock/mockserver"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,24 +15,21 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/diff"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	operatorv1 "github.com/openshift/api/operator/v1"
+
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
 func TestBootstrapAnnotationRemoval(t *testing.T) {
-	mockEtcd, err := mockserver.StartMockServers(3)
-	if err != nil {
-		t.Fatalf("failed to start mock servers: %s", err)
-	}
-	defer mockEtcd.Stop()
 	scenarios := []struct {
 		name            string
 		objects         []runtime.Object
 		staticPodStatus *operatorv1.StaticPodOperatorStatus
-		etcdMembers     []*etcdserverpb.Member
 		validateFunc    func(ts *testing.T, actions []clientgotesting.Action)
 	}{
 		{
@@ -61,11 +54,6 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 				withNodeStatusAtCurrentRevision(3),
 				withNodeStatusAtCurrentRevision(3),
 			),
-			etcdMembers: []*etcdserverpb.Member{
-				etcdMember(0, mockEtcd.Servers),
-				etcdMember(1, mockEtcd.Servers),
-				etcdMember(2, mockEtcd.Servers),
-			},
 			validateFunc: func(ts *testing.T, actions []clientgotesting.Action) {
 				wasValidated := false
 				for _, action := range actions {
@@ -241,7 +229,6 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			)
 
 			fakeKubeClient := fake.NewSimpleClientset(scenario.objects...)
-			fakeEtcdClient := etcdcli.NewFakeEtcdClient(scenario.etcdMembers)
 			eventRecorder := events.NewRecorder(fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace), "test-etcdendpointscontroller", &corev1.ObjectReference{})
 			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 			for _, obj := range scenario.objects {
@@ -251,7 +238,6 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			}
 			controller := &EtcdEndpointsController{
 				operatorClient:  fakeOperatorClient,
-				etcdClient:      fakeEtcdClient,
 				nodeLister:      corev1listers.NewNodeLister(indexer),
 				configmapLister: corev1listers.NewConfigMapLister(indexer),
 				configmapClient: fakeKubeClient.CoreV1(),
@@ -374,12 +360,5 @@ func withNodeInternalIP(ip string) func(*corev1.Node) {
 			Type:    corev1.NodeInternalIP,
 			Address: ip,
 		})
-	}
-}
-
-func etcdMember(member int, etcdMock []*mockserver.MockServer) *etcdserverpb.Member {
-	return &etcdserverpb.Member{
-		Name:       fmt.Sprintf("etcd-%d", member),
-		ClientURLs: []string{etcdMock[member].Address},
 	}
 }
