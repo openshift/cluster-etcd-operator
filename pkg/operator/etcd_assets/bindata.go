@@ -221,19 +221,6 @@ function restore_static_pods() {
   done
 }
 
-function extract_and_start_restore_etcd_pod() {
-  POD_FILE_NAME="restore-etcd-pod/pod.yaml"
-   BACKUP_POD_PATH=$(tar -tvf "${BACKUP_FILE}" "*${POD_FILE_NAME}" | awk '{ print $6 }') || true
-   if [ -z "${BACKUP_POD_PATH}" ]; then
-     echo "${POD_FILE_NAME} does not exist in ${BACKUP_FILE}"
-     exit 1
-   fi
-
-   echo "starting restored etcd-pod.yaml"
-   tar -O -xvf "${BACKUP_FILE}" -C "${MANIFEST_DIR}"/ "${BACKUP_POD_PATH}" > "${MANIFEST_DIR}"/etcd-pod.yaml
-}
-
-
 function wait_for_containers_to_stop() {
   CONTAINERS=("$@")
 
@@ -295,8 +282,8 @@ tar -C "${CONFIG_FILE_DIR}" -xzf "${BACKUP_FILE}" static-pod-resources
 # Copy snapshot to backupdir
 cp -p "${SNAPSHOT_FILE}" "${ETCD_DATA_DIR_BACKUP}"/snapshot.db
 
-# Extract and start restore-etcd pod.yaml
-extract_and_start_restore_etcd_pod
+echo "starting restore-etcd static pod"
+cp -p ${RESTORE_ETCD_POD_YAML} ${MANIFEST_DIR}/etcd-pod.yaml
 
 # start remaining static pods
 restore_static_pods "${STATIC_POD_LIST[@]}"
@@ -367,6 +354,7 @@ MANIFEST_DIR="${CONFIG_FILE_DIR}/manifests"
 ETCD_DATA_DIR="/var/lib/etcd"
 ETCD_DATA_DIR_BACKUP="/var/lib/etcd-backup"
 MANIFEST_STOPPED_DIR="${ASSET_DIR}/manifests-stopped"
+RESTORE_ETCD_POD_YAML="${CONFIG_FILE_DIR}/static-pod-resources/etcd-certs/configmaps/restore-etcd-pod/pod.yaml"
 ETCDCTL_BIN_DIR="${CONFIG_FILE_DIR}/static-pod-resources/bin"
 PATH=${PATH}:${ETCDCTL_BIN_DIR}
 
