@@ -4,6 +4,7 @@ metadata:
   namespace: openshift-etcd-operator
   name: etcd-operator-config
   annotations:
+    include.release.openshift.io/ibm-cloud-managed: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
 data:
   config.yaml: |
@@ -14,6 +15,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   annotations:
+    include.release.openshift.io/ibm-cloud-managed: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     release.openshift.io/create-only: "true"
   name: etcd-ca-bundle
@@ -23,6 +25,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   annotations:
+    include.release.openshift.io/ibm-cloud-managed: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     release.openshift.io/create-only: "true"
     service.beta.openshift.io/inject-cabundle: "true"
