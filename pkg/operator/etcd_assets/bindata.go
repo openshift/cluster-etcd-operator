@@ -605,7 +605,7 @@ ${COMPUTED_ENV_VARS}
           --advertise-client-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2379 \
           --listen-client-urls=https://${LISTEN_ON_ALL_IPS}:2379 \
           --listen-peer-urls=https://${LISTEN_ON_ALL_IPS}:2380 \
-          --listen-metrics-urls=https://${LISTEN_ON_ALL_IPS}:9978,http://${LISTEN_ON_ALL_IPS}:9989
+          --listen-metrics-urls=https://${LISTEN_ON_ALL_IPS}:9978 ||  mv /etc/kubernetes/etcd-backup-dir/etcd-member.yaml /etc/kubernetes/manifests
     env:
 ${COMPUTED_ENV_VARS}
     resources:
@@ -613,9 +613,11 @@ ${COMPUTED_ENV_VARS}
         memory: 600Mi
         cpu: 300m
     readinessProbe:
-      httpGet:
-        path: /health
-        port: 9989
+      exec:
+        command:
+          - /bin/sh
+          - -ec
+          - "lsof -n -i :2380 | grep LISTEN"
       failureThreshold: 3
       initialDelaySeconds: 3
       periodSeconds: 5
