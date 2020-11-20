@@ -262,7 +262,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 var RevisionConfigMaps = []revision.RevisionResource{
 	{Name: "etcd-pod"},
 
-	{Name: "config"},
 	{Name: "etcd-serving-ca"},
 	{Name: "etcd-peer-client-ca"},
 	{Name: "etcd-metrics-proxy-serving-ca"},

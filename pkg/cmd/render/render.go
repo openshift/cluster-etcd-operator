@@ -15,7 +15,6 @@ import (
 	"strings"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 
 	"github.com/ghodss/yaml"
@@ -35,18 +34,15 @@ type renderOpts struct {
 	manifest options.ManifestOptions
 	generic  options.GenericOptions
 
-	errOut                   io.Writer
-	etcdCAFile               string
-	etcdCAKeyFile            string
-	etcdDiscoveryDomain      string
-	etcdImage                string
-	clusterEtcdOperatorImage string
-	setupEtcdEnvImage        string
-	kubeClientAgentImage     string
-	networkConfigFile        string
-	clusterConfigMapFile     string
-	infraConfigFile          string
-	bootstrapIP              string
+	errOut               io.Writer
+	etcdCAFile           string
+	etcdCAKeyFile        string
+	etcdDiscoveryDomain  string
+	etcdImage            string
+	networkConfigFile    string
+	clusterConfigMapFile string
+	infraConfigFile      string
+	bootstrapIP          string
 }
 
 // NewRenderCommand creates a render command.
@@ -124,12 +120,19 @@ func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
 	r.manifest.AddFlags(fs, "etcd")
 	r.generic.AddFlags(fs)
 
+	// TODO: update bootkube.sh in the installer and then remove these
+	var (
+		deprecatedClusterEtcdOperatorImage string
+		deprecatedKubeClientAgentImage     string
+		deprecatedSetupEtcdEnvImage        string
+	)
+
 	fs.StringVar(&r.etcdCAFile, "etcd-ca", "/assets/tls/etcd-ca-bundle.crt", "path to etcd CA certificate")
 	fs.StringVar(&r.etcdCAKeyFile, "etcd-ca-key", "/assets/tls/etcd-signer.key", "path to etcd CA certificate key")
 	fs.StringVar(&r.etcdImage, "manifest-etcd-image", r.etcdImage, "etcd manifest image")
-	fs.StringVar(&r.clusterEtcdOperatorImage, "manifest-cluster-etcd-operator-image", r.clusterEtcdOperatorImage, "cluster-etcd-operator manifest image")
-	fs.StringVar(&r.kubeClientAgentImage, "manifest-kube-client-agent-image", r.kubeClientAgentImage, "kube-client-agent manifest image")
-	fs.StringVar(&r.setupEtcdEnvImage, "manifest-setup-etcd-env-image", r.setupEtcdEnvImage, "setup-etcd-env manifest image")
+	fs.StringVar(&deprecatedClusterEtcdOperatorImage, "manifest-cluster-etcd-operator-image", "", "deprecated, unused")
+	fs.StringVar(&deprecatedKubeClientAgentImage, "manifest-kube-client-agent-image", "", "deprecated, unused")
+	fs.StringVar(&deprecatedSetupEtcdEnvImage, "manifest-setup-etcd-env-image", "", "deprecated, unused")
 	fs.StringVar(&r.etcdDiscoveryDomain, "etcd-discovery-domain", r.etcdDiscoveryDomain, "etcd discovery domain")
 	// TODO: This flag name needs changed to be less confusing.
 	fs.StringVar(&r.networkConfigFile, "cluster-config-file", r.networkConfigFile, "File containing the network.config.openshift.io manifest. (Note: the flag name is misleading.)")
@@ -151,9 +154,6 @@ func (r *renderOpts) Validate() error {
 	}
 	if len(r.etcdImage) == 0 {
 		return errors.New("missing required flag: --manifest-etcd-image")
-	}
-	if len(r.clusterEtcdOperatorImage) == 0 {
-		return errors.New("missing required flag: --manifest-cluster-etcd-operator-image")
 	}
 	if len(r.networkConfigFile) == 0 {
 		return errors.New("missing required flag: --cluster-config-file")
@@ -297,16 +297,6 @@ func (r *renderOpts) Run() error {
 	}
 
 	if err := r.manifest.ApplyTo(&templateData.ManifestConfig); err != nil {
-		return err
-	}
-	if err := r.generic.ApplyTo(
-		&templateData.FileConfig,
-		options.Template{FileName: "defaultconfig.yaml", Content: etcd_assets.MustAsset(filepath.Join("etcd", "defaultconfig.yaml"))},
-		mustReadTemplateFile(filepath.Join(r.generic.TemplatesDir, "config", "bootstrap-config-overrides.yaml")),
-		mustReadTemplateFile(filepath.Join(r.generic.TemplatesDir, "config", "config-overrides.yaml")),
-		&templateData,
-		nil,
-	); err != nil {
 		return err
 	}
 
