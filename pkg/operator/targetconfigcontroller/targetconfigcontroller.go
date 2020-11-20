@@ -21,7 +21,6 @@ import (
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
-	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
@@ -116,10 +115,6 @@ func createTargetConfig(c TargetConfigController, recorder events.Recorder, oper
 		return false, err
 	}
 
-	_, _, err = manageEtcdConfig(c.kubeClient.CoreV1(), recorder, operatorSpec)
-	if err != nil {
-		errors = append(errors, fmt.Errorf("%q: %v", "configmap/config", err))
-	}
 	_, _, err = c.manageStandardPod(contentReplacer, c.kubeClient.CoreV1(), recorder, operatorSpec)
 	if err != nil {
 		errors = append(errors, fmt.Errorf("%q: %v", "configmap/etcd-pod", err))
@@ -151,24 +146,6 @@ func createTargetConfig(c TargetConfigController, recorder events.Recorder, oper
 	}
 
 	return false, nil
-}
-
-func manageEtcdConfig(client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
-	configMap := resourceread.ReadConfigMapV1OrDie(etcd_assets.MustAsset("etcd/cm.yaml"))
-	defaultConfig := etcd_assets.MustAsset("etcd/defaultconfig.yaml")
-
-	requiredConfigMap, _, err := resourcemerge.MergeConfigMap(
-		configMap,
-		"config.yaml",
-		nil,
-		defaultConfig,
-		operatorSpec.ObservedConfig.Raw,
-		operatorSpec.UnsupportedConfigOverrides.Raw,
-	)
-	if err != nil {
-		return nil, false, err
-	}
-	return resourceapply.ApplyConfigMap(client, recorder, requiredConfigMap)
 }
 
 func loglevelToKlog(logLevel operatorv1.LogLevel) string {

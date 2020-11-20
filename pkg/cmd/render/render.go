@@ -37,7 +37,6 @@ type renderOpts struct {
 	errOut               io.Writer
 	etcdCAFile           string
 	etcdCAKeyFile        string
-	etcdDiscoveryDomain  string
 	etcdImage            string
 	networkConfigFile    string
 	clusterConfigMapFile string
@@ -120,22 +119,16 @@ func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
 	r.manifest.AddFlags(fs, "etcd")
 	r.generic.AddFlags(fs)
 
-	// TODO: update bootkube.sh in the installer and then remove these
-	var (
-		deprecatedClusterEtcdOperatorImage string
-		deprecatedKubeClientAgentImage     string
-		deprecatedSetupEtcdEnvImage        string
-	)
+	// TODO: update bootkube.sh in the installer and then remove this
+	var deprecatedClusterEtcdOperatorImage string
 
 	fs.StringVar(&r.etcdCAFile, "etcd-ca", "/assets/tls/etcd-ca-bundle.crt", "path to etcd CA certificate")
 	fs.StringVar(&r.etcdCAKeyFile, "etcd-ca-key", "/assets/tls/etcd-signer.key", "path to etcd CA certificate key")
 	fs.StringVar(&r.etcdImage, "manifest-etcd-image", r.etcdImage, "etcd manifest image")
 	fs.StringVar(&deprecatedClusterEtcdOperatorImage, "manifest-cluster-etcd-operator-image", "", "deprecated, unused")
-	fs.StringVar(&deprecatedKubeClientAgentImage, "manifest-kube-client-agent-image", "", "deprecated, unused")
-	fs.StringVar(&deprecatedSetupEtcdEnvImage, "manifest-setup-etcd-env-image", "", "deprecated, unused")
-	fs.StringVar(&r.etcdDiscoveryDomain, "etcd-discovery-domain", r.etcdDiscoveryDomain, "etcd discovery domain")
-	// TODO: This flag name needs changed to be less confusing.
-	fs.StringVar(&r.networkConfigFile, "cluster-config-file", r.networkConfigFile, "File containing the network.config.openshift.io manifest. (Note: the flag name is misleading.)")
+	// TODO: Remove this after updating bootkube.sh in the installer.
+	fs.StringVar(&r.networkConfigFile, "cluster-config-file", r.networkConfigFile, "(deprecated) File containing the network.config.openshift.io manifest.")
+	fs.StringVar(&r.networkConfigFile, "network-config-file", r.networkConfigFile, "File containing the network.config.openshift.io manifest.")
 	fs.StringVar(&r.clusterConfigMapFile, "cluster-configmap-file", "/assets/manifests/cluster-config.yaml", "File containing the cluster-config-v1 configmap.")
 	fs.StringVar(&r.infraConfigFile, "infra-config-file", "/assets/manifests/cluster-infrastructure-02-config.yml", "File containing infrastructure.config.openshift.io manifest.")
 	fs.StringVar(&r.bootstrapIP, "bootstrap-ip", r.bootstrapIP, "bootstrap IP used to indicate where to find the first etcd endpoint")
