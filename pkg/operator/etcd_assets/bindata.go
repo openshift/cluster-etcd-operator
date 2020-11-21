@@ -700,34 +700,6 @@ ${COMPUTED_ENV_VARS}
         name: cert-dir
       - mountPath: /var/lib/etcd/
         name: data-dir
-  - name: rollbackcopier
-    image: ${OPERATOR_IMAGE}
-    imagePullPolicy: IfNotPresent
-    terminationMessagePolicy: FallbackToLogsOnError
-    command:
-      - /bin/sh
-      - -c
-      - |
-        #!/bin/sh
-        set -euo pipefail
-
-        export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
-        exec cluster-etcd-operator rollbackcopy
-    resources:
-      requests:
-        memory: 60Mi
-        cpu: 30m
-    securityContext:
-      privileged: true
-    volumeMounts:
-      - mountPath: /etc/kubernetes/rollbackcopy
-        name: rollbackcopy
-      - mountPath: /etc/kubernetes/static-pod-resources
-        name: full-resource-dir
-      - mountPath: /etc/kubernetes/static-pod-certs
-        name: cert-dir
-    env:
-${COMPUTED_ENV_VARS}
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
@@ -743,12 +715,6 @@ ${COMPUTED_ENV_VARS}
         path: /etc/kubernetes/static-pod-resources/etcd-pod-REVISION
       name: resource-dir
     - hostPath:
-        path: /etc/kubernetes/static-pod-resources
-      name: full-resource-dir
-    - hostPath:
-        path: /etc/kubernetes/rollbackcopy
-      name: rollbackcopy
-    - hostPath:
         path: /etc/kubernetes/static-pod-resources/etcd-certs
       name: cert-dir
     - hostPath:
@@ -758,7 +724,6 @@ ${COMPUTED_ENV_VARS}
     - hostPath:
         path: /usr/local/bin
       name: usr-local-bin
-
 `)
 
 func etcdPodYamlBytes() ([]byte, error) {
