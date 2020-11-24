@@ -68,10 +68,6 @@ func GetBootstrapScalingStrategy(staticPodClient v1helpers.StaticPodOperatorClie
 	}
 	_, hasDelayedHAAnnotation := etcdNamespace.Annotations[DelayedHABootstrapScalingStrategyAnnotation]
 
-	if isUnsupportedUnsafeEtcd && hasDelayedHAAnnotation {
-		return strategy, fmt.Errorf("unsupported/unsafe and delayed HA are both enabled but are mutually exclusive")
-	}
-
 	switch {
 	case isUnsupportedUnsafeEtcd:
 		strategy = UnsafeScalingStrategy
