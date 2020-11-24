@@ -3,7 +3,6 @@
 // bindata/etcd/cluster-backup.sh
 // bindata/etcd/cluster-restore.sh
 // bindata/etcd/cm.yaml
-// bindata/etcd/defaultconfig.yaml
 // bindata/etcd/etcd-common-tools
 // bindata/etcd/ns.yaml
 // bindata/etcd/pod-cm.yaml
@@ -324,25 +323,6 @@ func etcdCmYaml() (*asset, error) {
 	}
 
 	info := bindataFileInfo{name: "etcd/cm.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
-	a := &asset{bytes: bytes, info: info}
-	return a, nil
-}
-
-var _etcdDefaultconfigYaml = []byte(`apiVersion: kubecontrolplane.config.openshift.io/v1
-kind: EtcdConfig
-`)
-
-func etcdDefaultconfigYamlBytes() ([]byte, error) {
-	return _etcdDefaultconfigYaml, nil
-}
-
-func etcdDefaultconfigYaml() (*asset, error) {
-	bytes, err := etcdDefaultconfigYamlBytes()
-	if err != nil {
-		return nil, err
-	}
-
-	info := bindataFileInfo{name: "etcd/defaultconfig.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
@@ -1021,7 +1001,6 @@ var _bindata = map[string]func() (*asset, error){
 	"etcd/cluster-backup.sh":   etcdClusterBackupSh,
 	"etcd/cluster-restore.sh":  etcdClusterRestoreSh,
 	"etcd/cm.yaml":             etcdCmYaml,
-	"etcd/defaultconfig.yaml":  etcdDefaultconfigYaml,
 	"etcd/etcd-common-tools":   etcdEtcdCommonTools,
 	"etcd/ns.yaml":             etcdNsYaml,
 	"etcd/pod-cm.yaml":         etcdPodCmYaml,
@@ -1078,7 +1057,6 @@ var _bintree = &bintree{nil, map[string]*bintree{
 		"cluster-backup.sh":   {etcdClusterBackupSh, map[string]*bintree{}},
 		"cluster-restore.sh":  {etcdClusterRestoreSh, map[string]*bintree{}},
 		"cm.yaml":             {etcdCmYaml, map[string]*bintree{}},
-		"defaultconfig.yaml":  {etcdDefaultconfigYaml, map[string]*bintree{}},
 		"etcd-common-tools":   {etcdEtcdCommonTools, map[string]*bintree{}},
 		"ns.yaml":             {etcdNsYaml, map[string]*bintree{}},
 		"pod-cm.yaml":         {etcdPodCmYaml, map[string]*bintree{}},
