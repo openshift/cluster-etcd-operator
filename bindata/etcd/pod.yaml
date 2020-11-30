@@ -173,11 +173,8 @@ ${COMPUTED_ENV_VARS}
         memory: 600Mi
         cpu: 300m
     readinessProbe:
-      exec:
-        command:
-          - /bin/sh
-          - -ec
-          - "lsof -n -i :2380 | grep LISTEN"
+      tcpSocket:
+        port: 2380
       failureThreshold: 3
       initialDelaySeconds: 3
       periodSeconds: 5
