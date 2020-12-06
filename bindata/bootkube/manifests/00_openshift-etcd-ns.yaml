@@ -3,6 +3,9 @@ kind: Namespace
 metadata:
   annotations:
     openshift.io/node-selector: ""
+{{- range $key, $val := .NamespaceAnnotations }}
+    {{$key}}: "{{$val}}"
+{{- end}}
   name: openshift-etcd
   labels:
     openshift.io/run-level: "0"
