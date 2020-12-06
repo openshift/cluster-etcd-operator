@@ -7,6 +7,7 @@ metadata:
     include.release.openshift.io/ibm-cloud-managed: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
+    include.release.openshift.io/single-node-production-edge: "true"
 data:
   config.yaml: |
     apiVersion: operator.openshift.io/v1alpha1
@@ -20,6 +21,7 @@ metadata:
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
     release.openshift.io/create-only: "true"
+    include.release.openshift.io/single-node-production-edge: "true"
   name: etcd-ca-bundle
   namespace: openshift-etcd-operator
 ---
@@ -32,5 +34,6 @@ metadata:
     include.release.openshift.io/single-node-developer: "true"
     release.openshift.io/create-only: "true"
     service.beta.openshift.io/inject-cabundle: "true"
+    include.release.openshift.io/single-node-production-edge: "true"
   name: etcd-service-ca-bundle
   namespace: openshift-etcd-operator
