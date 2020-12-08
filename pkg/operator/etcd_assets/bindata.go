@@ -95,18 +95,40 @@ if [ ! -d "$1" ]; then
   mkdir -p "$1"
 fi
 
+function check_if_operator_is_progressing {
+   operator="$1"
+
+   export KUBECONFIG="/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/localhost.kubeconfig"
+   if [ ! -f "${KUBECONFIG}" ]; then
+      echo "Valid kubeconfig is not found in kube-apiserver-certs. Exiting!"
+      exit 1
+   fi
+
+   progressing=$(oc get co "${operator}" -o jsonpath='{.status.conditions[?(@.type=="Progressing")].status}')
+   if [ "$progressing" != "False" ]; then
+      echo "Currently the $operator operator is progressing. A reliable backup requires that a rollout is not in progress.  Aborting!"
+      exit 1
+   fi
+}
+
 # backup latest static pod resources
 function backup_latest_kube_static_resources {
   RESOURCES=("$@")
 
   LATEST_RESOURCE_DIRS=()
   for RESOURCE in "${RESOURCES[@]}"; do
-    # shellcheck disable=SC2012
-    LATEST_RESOURCE=$(ls -trd "${CONFIG_FILE_DIR}"/static-pod-resources/"${RESOURCE}"-[0-9]* | tail -1) || true
-    if [ -z "$LATEST_RESOURCE" ]; then
-      echo "error finding static-pod-resource ${RESOURCE}"
+    if [ ! -f "/etc/kubernetes/manifests/${RESOURCE}-pod.yaml" ]; then
+      echo "error finding manifests for the ${RESOURCE} pod. please check if it is running."
       exit 1
     fi
+
+    LATEST_RESOURCE=$(grep -o -m 1 "/etc/kubernetes/static-pod-resources/${RESOURCE}-pod-[0-9]*" "/etc/kubernetes/manifests/${RESOURCE}-pod.yaml") || true
+
+    if [ -z "$LATEST_RESOURCE" ]; then
+      echo "error finding static-pod-resources for the ${RESOURCE} pod. please check if it is running."
+      exit 1
+    fi
+    check_if_operator_is_progressing "${RESOURCE}"
 
     echo "found latest ${RESOURCE}: ${LATEST_RESOURCE}"
     LATEST_RESOURCE_DIRS+=("${LATEST_RESOURCE#${CONFIG_FILE_DIR}/}")
@@ -131,7 +153,7 @@ BACKUP_DIR="$1"
 DATESTRING=$(date "+%F_%H%M%S")
 BACKUP_TAR_FILE=${BACKUP_DIR}/static_kuberesources_${DATESTRING}.tar.gz
 SNAPSHOT_FILE="${BACKUP_DIR}/snapshot_${DATESTRING}.db"
-BACKUP_RESOURCE_LIST=("kube-apiserver-pod" "kube-controller-manager-pod" "kube-scheduler-pod" "etcd-pod")
+BACKUP_RESOURCE_LIST=("kube-apiserver" "kube-controller-manager" "kube-scheduler" "etcd")
 
 trap 'rm -f ${BACKUP_TAR_FILE} ${SNAPSHOT_FILE}' ERR
 
