@@ -82,9 +82,15 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 function usage {
-  echo 'Path to backup dir required: ./cluster-backup.sh <path-to-backup-dir>'
+  echo 'Path to backup dir required: ./cluster-backup.sh [--force] <path-to-backup-dir>'
   exit 1
 }
+
+IS_DIRTY=""
+if [ "$1" == "--force" ]; then
+  IS_DIRTY="__POSSIBLY_DIRTY__"
+  shift
+fi
 
 # If the first argument is missing, or it is an existing file, then print usage and exit
 if [ -z "$1" ] || [ -f "$1" ]; then
@@ -104,8 +110,11 @@ function check_if_operator_is_progressing {
       exit 1
    fi
 
-   progressing=$(oc get co "${operator}" -o jsonpath='{.status.conditions[?(@.type=="Progressing")].status}')
-   if [ "$progressing" != "False" ]; then
+   progressing=$(oc get co "${operator}" -o jsonpath='{.status.conditions[?(@.type=="Progressing")].status}') || true
+   if [ "$progressing" == "" ]; then
+      echo "Could not find the status of the $operator. Check if the API server is running. Pass the --force flag to skip checks."
+      exit 1
+   elif [ "$progressing" != "False" ]; then
       echo "Currently the $operator operator is progressing. A reliable backup requires that a rollout is not in progress.  Aborting!"
       exit 1
    fi
@@ -128,7 +137,9 @@ function backup_latest_kube_static_resources {
       echo "error finding static-pod-resources for the ${RESOURCE} pod. please check if it is running."
       exit 1
     fi
-    check_if_operator_is_progressing "${RESOURCE}"
+    if [ "${IS_DIRTY}" == "" ]; then
+      check_if_operator_is_progressing "${RESOURCE}"
+    fi
 
     echo "found latest ${RESOURCE}: ${LATEST_RESOURCE}"
     LATEST_RESOURCE_DIRS+=("${LATEST_RESOURCE#${CONFIG_FILE_DIR}/}")
@@ -151,8 +162,8 @@ function source_required_dependency {
 
 BACKUP_DIR="$1"
 DATESTRING=$(date "+%F_%H%M%S")
-BACKUP_TAR_FILE=${BACKUP_DIR}/static_kuberesources_${DATESTRING}.tar.gz
-SNAPSHOT_FILE="${BACKUP_DIR}/snapshot_${DATESTRING}.db"
+BACKUP_TAR_FILE=${BACKUP_DIR}/static_kuberesources_${DATESTRING}${IS_DIRTY}.tar.gz
+SNAPSHOT_FILE="${BACKUP_DIR}/snapshot_${DATESTRING}${IS_DIRTY}.db"
 BACKUP_RESOURCE_LIST=("kube-apiserver" "kube-controller-manager" "kube-scheduler" "etcd")
 
 trap 'rm -f ${BACKUP_TAR_FILE} ${SNAPSHOT_FILE}' ERR
