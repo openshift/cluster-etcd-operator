@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -202,18 +203,24 @@ func getEtcdURLHost(envVarContext envVarContext) (map[string]string, error) {
 }
 
 func getHeartbeatInterval(envVarContext envVarContext) (map[string]string, error) {
-	heartbeat := "100" // etcd default
-
-	infrastructure, err := envVarContext.infrastructureLister.Get("cluster")
+	var heartbeat string
+	infra, err := envVarContext.infrastructureLister.Get("cluster")
 	if err != nil {
 		return nil, err
 	}
 
-	if status := infrastructure.Status.PlatformStatus; status != nil {
-		switch {
-		case status.Azure != nil:
-			heartbeat = "500"
-		}
+	platform := infra.Status.PlatformStatus.Type
+
+	isUnsupportedEtcdStorage, err := ceohelpers.IsUnsupportedEtcdStorage(&envVarContext.spec)
+	if err != nil {
+		return nil, err
+	}
+
+	switch {
+	case platform == "Azure", isUnsupportedEtcdStorage:
+		heartbeat = "500"
+	default:
+		heartbeat = "100"
 	}
 
 	return map[string]string{
@@ -222,18 +229,24 @@ func getHeartbeatInterval(envVarContext envVarContext) (map[string]string, error
 }
 
 func getElectionTimeout(envVarContext envVarContext) (map[string]string, error) {
-	timeout := "1000" // etcd default
-
-	infrastructure, err := envVarContext.infrastructureLister.Get("cluster")
+	var timeout string
+	infra, err := envVarContext.infrastructureLister.Get("cluster")
 	if err != nil {
 		return nil, err
 	}
 
-	if status := infrastructure.Status.PlatformStatus; status != nil {
-		switch {
-		case status.Azure != nil:
-			timeout = "2500"
-		}
+	platform := infra.Status.PlatformStatus.Type
+
+	isUnsupportedEtcdStorage, err := ceohelpers.IsUnsupportedEtcdStorage(&envVarContext.spec)
+	if err != nil {
+		return nil, err
+	}
+
+	switch {
+	case platform == "Azure", isUnsupportedEtcdStorage:
+		timeout = "2500"
+	default:
+		timeout = "1000"
 	}
 
 	return map[string]string{

@@ -56,3 +56,44 @@ func isUnsupportedUnsafeEtcd(spec *operatorv1.StaticPodOperatorSpec) (bool, erro
 		return false, nil
 	}
 }
+
+// IsUnsupportedEtcdStorage returns true if
+// useUnsupportedNonProductionUnstableStorageEtcd key is set
+// to any parsable value
+func IsUnsupportedEtcdStorage(spec *operatorv1.StaticPodOperatorSpec) (bool, error) {
+	unsupportedConfig := map[string]interface{}{}
+	if spec.UnsupportedConfigOverrides.Raw == nil {
+		return false, nil
+	}
+
+	configJson, err := kyaml.ToJSON(spec.UnsupportedConfigOverrides.Raw)
+	if err != nil {
+		klog.Warning(err)
+		// maybe it's just json
+		configJson = spec.UnsupportedConfigOverrides.Raw
+	}
+
+	if err := json.NewDecoder(bytes.NewBuffer(configJson)).Decode(&unsupportedConfig); err != nil {
+		klog.V(4).Infof("decode of unsupported config failed with error: %v", err)
+		return false, err
+	}
+
+	// User has chosen to use unsupported disks for develoment or personal use.
+	// As these disks are known to cause latency issues that can lead to cluster
+	// instability they are not supported.
+	value, found, err := unstructured.NestedFieldNoCopy(unsupportedConfig, "useUnsupportedNonProductionUnstableStorageEtcd")
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		return false, nil
+	}
+	switch value.(type) {
+	case bool:
+		return value.(bool), nil
+	case string:
+		return strconv.ParseBool(value.(string))
+	default:
+		return false, nil
+	}
+}
