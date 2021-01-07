@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"k8s.io/api/policy/v1beta1"
 	"os"
 	"time"
 
@@ -253,6 +254,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	dynamicInformers.Start(ctx.Done())
 
 	ensureCVOEtcQuorumGuardCleanup(ctx, kubeClient, controllerContext.EventRecorder)
+	ensureCVOEtcQuorumGuardPDBCleanup(ctx, kubeClient, controllerContext.EventRecorder)
 
 	go staleConditions.Run(ctx, 1)
 	go fsyncMetricController.Run(ctx, 1)
@@ -323,7 +325,7 @@ func ensureCVOEtcQuorumGuardCleanup(ctx context.Context, kubeClient *kubernetes.
 		}
 
 		klog.Warningf("Deleting cvo-managed etcd quorum guard")
-		err := etcdClient.Delete(ctx, quorumguardcontroller.EtcdGuardDeploymentName, metav1.DeleteOptions{})
+		err := etcdClient.Delete(ctx, quorumGuard.Name, metav1.DeleteOptions{})
 		if err != nil && !errors.IsNotFound(err) {
 			klog.Warningf("Failed to delete cvo-managed etcd quorum guard: %v", err)
 			return
@@ -347,6 +349,47 @@ func ensureCVOEtcQuorumGuardCleanup(ctx context.Context, kubeClient *kubernetes.
 		for _, managedField := range quorumGuard.ManagedFields {
 			if managedField.Manager == "cluster-version-operator" {
 				deleteQuorumGuard(quorumGuard)
+				return
+			}
+		}
+	}, time.Minute)
+}
+
+// ensureCVOEtcQuorumGuardPDBCleanup continually ensures the removal of the cvo-managed etcd quorum guard
+func ensureCVOEtcQuorumGuardPDBCleanup(ctx context.Context, kubeClient *kubernetes.Clientset, eventRecorder events.Recorder) {
+
+	etcdClient := kubeClient.PolicyV1beta1().PodDisruptionBudgets(operatorclient.TargetNamespace)
+
+	deleteQuorumGuardPDB := func(quorumGuardPdb *v1beta1.PodDisruptionBudget) {
+		if quorumGuardPdb.ObjectMeta.DeletionTimestamp != nil {
+			return
+		}
+
+		klog.Warningf("Deleting cvo-managed etcd quorum guard pdb")
+		err := etcdClient.Delete(ctx, quorumGuardPdb.Name, metav1.DeleteOptions{})
+		if err != nil && !errors.IsNotFound(err) {
+			klog.Warningf("Failed to delete cvo-managed etcd quorum guard pdb: %v", err)
+			return
+		}
+		eventRecorder.Event("CvoManagedEtcdQuorumGuardPdbRemoved", "cvo-managed etcd quorum guard pdb has been removed")
+	}
+
+	go wait.UntilWithContext(ctx, func(_ context.Context) {
+		// Check whether the cvo-managed etcd quorum guard pdb exists and is not marked for deletion
+		quorumGuard, err := etcdClient.Get(ctx, quorumguardcontroller.EtcdGuardDeploymentName, metav1.GetOptions{})
+		if errors.IsNotFound(err) {
+			// Done
+			return
+		}
+		if err != nil {
+			klog.Warningf("Error retrieving cvo-managed etcd quorum guard pdb: %v", err)
+			return
+		}
+
+		// delete quorumGuard deployment if it is managed by cvo
+		for _, managedField := range quorumGuard.ManagedFields {
+			if managedField.Manager == "cluster-version-operator" {
+				deleteQuorumGuardPDB(quorumGuard)
 				return
 			}
 		}

@@ -9,6 +9,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1beta1 "k8s.io/api/policy/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	fakecore "k8s.io/client-go/kubernetes/fake"
@@ -26,6 +27,14 @@ controlPlane:
   name: master
   replicas: 3`}}
 
+	pdb := policyv1beta1.PodDisruptionBudget{
+		TypeMeta: metav1.TypeMeta{},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      EtcdGuardDeploymentName,
+			Namespace: operatorclient.TargetNamespace,
+		},
+	}
+
 	type fields struct {
 		client    kubernetes.Interface
 		clientInf configclientv1.InfrastructuresGetter
@@ -39,7 +48,7 @@ controlPlane:
 		expectedReplicaCount int
 	}{
 		{
-			name: "test ensureEtcdGuardDeployment - deployment exists",
+			name: "test ensureEtcdGuardDeployment - deployment exists but pdb not ",
 			fields: fields{
 				client: fakecore.NewSimpleClientset(&appsv1.Deployment{
 					TypeMeta: metav1.TypeMeta{},
@@ -58,12 +67,36 @@ controlPlane:
 					Status: configv1.InfrastructureStatus{
 						HighAvailabilityMode: configv1.FullHighAvailabilityMode},
 				}).ConfigV1()},
+			expectedHAmode: configv1.FullHighAvailabilityMode, expectedEvents: 2, wantErr: false, expectedReplicaCount: 3,
+		},
+
+		{
+			name: "test ensureEtcdGuardDeployment - deployment and pdb exists",
+			fields: fields{
+				client: fakecore.NewSimpleClientset(&appsv1.Deployment{
+					TypeMeta: metav1.TypeMeta{},
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      EtcdGuardDeploymentName,
+						Namespace: operatorclient.TargetNamespace,
+					},
+					Spec:   appsv1.DeploymentSpec{},
+					Status: appsv1.DeploymentStatus{},
+				}, &pdb, &clusterConfigFullHA),
+				clientInf: fakeconfig.NewSimpleClientset(&configv1.Infrastructure{
+					TypeMeta: metav1.TypeMeta{},
+					ObjectMeta: metav1.ObjectMeta{
+						Name: infrastructureClusterName,
+					},
+					Status: configv1.InfrastructureStatus{
+						HighAvailabilityMode: configv1.FullHighAvailabilityMode},
+				}).ConfigV1()},
 			expectedHAmode: configv1.FullHighAvailabilityMode, expectedEvents: 0, wantErr: false, expectedReplicaCount: 3,
 		},
+
 		{
-			name: "test ensureEtcdGuardDeployment - deployment not exists",
+			name: "test ensureEtcdGuardDeployment - deployment not exists but pdb exists",
 			fields: fields{
-				client: fakecore.NewSimpleClientset(&clusterConfigFullHA),
+				client: fakecore.NewSimpleClientset(&clusterConfigFullHA, &pdb),
 				clientInf: fakeconfig.NewSimpleClientset(&configv1.Infrastructure{
 					TypeMeta: metav1.TypeMeta{},
 					ObjectMeta: metav1.ObjectMeta{
@@ -91,7 +124,7 @@ controlPlane:
 		},
 
 		{
-			name: "test ensureEtcdGuardDeployment - ha mod not set",
+			name: "test ensureEtcdGuardDeployment - ha mod not set, nothing exists",
 			fields: fields{
 				client: fakecore.NewSimpleClientset(&clusterConfigFullHA),
 				clientInf: fakeconfig.NewSimpleClientset(&configv1.Infrastructure{
@@ -100,11 +133,11 @@ controlPlane:
 						Name: infrastructureClusterName,
 					},
 					Status: configv1.InfrastructureStatus{}}).ConfigV1()},
-			expectedHAmode: configv1.FullHighAvailabilityMode, expectedEvents: 2, wantErr: false, expectedReplicaCount: 3,
+			expectedHAmode: configv1.FullHighAvailabilityMode, expectedEvents: 4, wantErr: false, expectedReplicaCount: 3,
 		},
 
 		{
-			name: "test ensureEtcdGuardDeployment - 5 replicas",
+			name: "test ensureEtcdGuardDeployment - 5 replicas and nothing exists",
 			fields: fields{
 				client: fakecore.NewSimpleClientset(&corev1.ConfigMap{TypeMeta: metav1.TypeMeta{},
 					ObjectMeta: metav1.ObjectMeta{
@@ -121,7 +154,7 @@ controlPlane:
 						Name: infrastructureClusterName,
 					},
 					Status: configv1.InfrastructureStatus{}}).ConfigV1()},
-			expectedHAmode: configv1.FullHighAvailabilityMode, expectedEvents: 2, wantErr: false, expectedReplicaCount: 5,
+			expectedHAmode: configv1.FullHighAvailabilityMode, expectedEvents: 4, wantErr: false, expectedReplicaCount: 5,
 		},
 
 		{
