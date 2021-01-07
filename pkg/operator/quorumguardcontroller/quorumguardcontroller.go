@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"gopkg.in/yaml.v2"
+	policyv1beta1 "k8s.io/api/policy/v1beta1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"strconv"
 	"time"
 
@@ -27,11 +29,12 @@ import (
 )
 
 const (
-	EtcdGuardDeploymentName   = "etcd-quorum-guard"
-	infrastructureClusterName = "cluster"
-	clusterConfigName         = "cluster-config-v1"
-	clusterConfigKey          = "install-config"
-	clusterConfigNamespace    = "clusterConfigNamespace"
+	EtcdGuardDeploymentName     = "etcd-quorum-guard"
+	infrastructureClusterName   = "cluster"
+	clusterConfigName           = "cluster-config-v1"
+	clusterConfigKey            = "install-config"
+	clusterConfigNamespace      = "kube-system"
+	pdbDeploymentMaxUnavailable = 1
 )
 
 type replicaCountDecoder struct {
@@ -134,12 +137,39 @@ func (c *QuorumGuardController) ensureEtcdGuardDeployment(ctx context.Context, r
 		return err
 	}
 
-	_, err = c.kubeClient.AppsV1().Deployments(operatorclient.TargetNamespace).Get(ctx,
+	if err := c.ensureEtcdGuardDeployment2(ctx, replicaCount, recorder); err != nil {
+		return err
+	}
+
+	if err := c.ensureEtcdGuardPdbDeployment(ctx, recorder); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *QuorumGuardController) ensureEtcdGuardDeployment2(ctx context.Context, replicaCount int32, recorder events.Recorder) error {
+	_, err := c.kubeClient.AppsV1().Deployments(operatorclient.TargetNamespace).Get(ctx,
 		EtcdGuardDeploymentName, metav1.GetOptions{})
 	switch {
 	case apierrors.IsNotFound(err):
-		recorder.Eventf("NoEtcdQuorumGuardDeployment", "etcd quorum guard deployment was not found, creating one")
-		return c.applyDeployment(int32(replicaCount), recorder)
+		recorder.Eventf("NoEtcdGuardDeployment", "%s was not found, creating one", EtcdGuardDeploymentName)
+		return c.applyDeployment(replicaCount, recorder)
+	case err != nil:
+		klog.Warningf("failed to get %s deployment err %v", EtcdGuardDeploymentName, err.Error())
+		return err
+	default:
+		return nil
+	}
+}
+
+func (c *QuorumGuardController) ensureEtcdGuardPdbDeployment(ctx context.Context, recorder events.Recorder) error {
+	_, err := c.kubeClient.PolicyV1beta1().PodDisruptionBudgets(operatorclient.TargetNamespace).Get(ctx,
+		EtcdGuardDeploymentName, metav1.GetOptions{})
+	switch {
+	case apierrors.IsNotFound(err):
+		recorder.Eventf("NoEtcdGuardDeployment", "%s was not found, creating one", EtcdGuardDeploymentName)
+		return c.applyPdbDeployment(ctx, recorder)
 	case err != nil:
 		klog.Warningf("failed to get %s deployment err %v", EtcdGuardDeploymentName, err.Error())
 		return err
@@ -151,6 +181,7 @@ func (c *QuorumGuardController) ensureEtcdGuardDeployment(ctx context.Context, r
 // Applying etcd guard deployment
 func (c *QuorumGuardController) applyDeployment(replicaCount int32, recorder events.Recorder) error {
 	klog.Infof("Going to create new %s deployment with replica count %d", EtcdGuardDeploymentName, replicaCount)
+
 	deployment := resourceread.ReadDeploymentV1OrDie(etcd_assets.MustAsset("etcd/quorumguard-deployment.yaml"))
 	deployment.Spec.Replicas = &replicaCount
 	newDeployment, _, err := resourceapply.ApplyDeployment(c.kubeClient.AppsV1(), recorder, deployment, -1)
@@ -158,10 +189,35 @@ func (c *QuorumGuardController) applyDeployment(replicaCount int32, recorder eve
 	return err
 }
 
+// Applying etcd guard pdb
+func (c *QuorumGuardController) applyPdbDeployment(ctx context.Context, recorder events.Recorder) error {
+	klog.Infof("Going to create new %s pdb", EtcdGuardDeploymentName)
+	maxUnavailable := intstr.FromInt(pdbDeploymentMaxUnavailable)
+	pdb := &policyv1beta1.PodDisruptionBudget{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      EtcdGuardDeploymentName,
+			Namespace: operatorclient.TargetNamespace,
+			Annotations: map[string]string{"include.release.openshift.io/self-managed-high-availability": "true",
+				"include.release.openshift.io/single-node-developer": "true"},
+		},
+		Spec: policyv1beta1.PodDisruptionBudgetSpec{
+			MaxUnavailable: &maxUnavailable,
+			Selector:       &metav1.LabelSelector{MatchLabels: map[string]string{"k8s-app": EtcdGuardDeploymentName}},
+		},
+	}
+
+	if _, err := c.kubeClient.PolicyV1beta1().PodDisruptionBudgets(operatorclient.TargetNamespace).Create(ctx, pdb, metav1.CreateOptions{}); err != nil {
+		return err
+	}
+
+	recorder.Eventf("CreatedEtcdGuardPDBDeployment", "%s was created", EtcdGuardDeploymentName)
+	return nil
+}
+
 // Get number of expected masters
-func (c *QuorumGuardController) getMastersReplicaCount(ctx context.Context) (int, error) {
+func (c *QuorumGuardController) getMastersReplicaCount(ctx context.Context) (int32, error) {
 	if c.replicaCount != 0 {
-		return c.replicaCount, nil
+		return int32(c.replicaCount), nil
 	}
 
 	klog.Infof("Getting number of expected masters from %s", clusterConfigName)
@@ -183,5 +239,5 @@ func (c *QuorumGuardController) getMastersReplicaCount(ctx context.Context) (int
 		klog.Errorf("failed to convert replica %s, err %v", rcD.ControlPlane.Replicas, err)
 		return 0, err
 	}
-	return c.replicaCount, nil
+	return int32(c.replicaCount), nil
 }
