@@ -22,6 +22,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
+	"github.com/openshift/library-go/pkg/operator/staleconditions"
 	"github.com/openshift/library-go/pkg/operator/staticpod"
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/revision"
 	"github.com/openshift/library-go/pkg/operator/staticresourcecontroller"
@@ -234,6 +235,15 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
+	staleConditions := staleconditions.NewRemoveStaleConditionsController(
+		[]string{
+			// IP migrator was removed in 4.5, however older clusters can still have this condition set and it might prevent upgrades
+			"EtcdMemberIPMigratorDegraded",
+		},
+		operatorClient,
+		controllerContext.EventRecorder,
+	)
+
 	operatorInformers.Start(ctx.Done())
 	kubeInformersForNamespaces.Start(ctx.Done())
 	configInformers.Start(ctx.Done())
@@ -244,6 +254,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	ensureMCOEtcQuorumGuardCleanup(ctx, kubeClient, controllerContext.EventRecorder)
 	ensureMCOEtcQuorumGuardPDBCleanup(ctx, kubeClient, controllerContext.EventRecorder)
 
+	go staleConditions.Run(ctx, 1)
 	go fsyncMetricController.Run(ctx, 1)
 	go staticResourceController.Run(ctx, 1)
 	go targetConfigReconciler.Run(ctx, 1)
