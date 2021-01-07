@@ -77,7 +77,25 @@ type InfrastructureStatus struct {
 	// like kubelets, to contact the Kubernetes API server using the
 	// infrastructure provider rather than Kubernetes networking.
 	APIServerInternalURL string `json:"apiServerInternalURI"`
+
+	// HighAvailabilityMode express the high-availability expectations.
+	// The default is 'Full', which represents the behavior operators have in a \"normal\" cluster.
+	// The 'None' mode will be used in single-node deployments (developer and production) for example,
+	// and the operators should not configure the operand for highly-available operation
+	HighAvailabilityMode HighAvailabilityMode `json:"highAvailabilityMode"`
 }
+
+// HighAvailabilityMode defines the high-availability mode of the cluster.
+// +kubebuilder:validation:Enum="";Full;None
+type HighAvailabilityMode string
+
+const (
+	// "Full" is for operators to configure high-availability as much as possible.
+	FullHighAvailabilityMode HighAvailabilityMode = "Full"
+
+	// "None" is for operators to avoid spending resources for high-availability purpose.
+	NoneHighAvailabilityMode HighAvailabilityMode = "None"
+)
 
 // PlatformType is a specific supported infrastructure provider.
 // +kubebuilder:validation:Enum="";AWS;Azure;BareMetal;GCP;Libvirt;OpenStack;None;VSphere;oVirt;IBMCloud;KubeVirt

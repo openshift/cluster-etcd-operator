@@ -22,6 +22,7 @@ require (
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200910180754-dd1b699fc489
 	golang.org/x/sys v0.0.0-20201112073958-5cba982894dd
 	google.golang.org/grpc v1.29.1
+	gopkg.in/yaml.v2 v2.3.0
 	k8s.io/api v0.20.1
 	k8s.io/apiextensions-apiserver v0.20.1
 	k8s.io/apimachinery v0.20.1
@@ -32,4 +33,7 @@ require (
 	k8s.io/utils v0.0.0-20201110183641-67b214c5f920
 )
 
-replace vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787
+replace (
+	github.com/openshift/api => github.com/ravidbro/api v0.0.0-20201222081342-ff6d9577a139
+	vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787
+)
