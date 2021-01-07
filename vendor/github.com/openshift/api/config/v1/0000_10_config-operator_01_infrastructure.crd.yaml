@@ -178,6 +178,17 @@ spec:
                 deprecated: as of 4.7, this field is no longer set or honored.  It
                 will be removed in a future release.'
               type: string
+            highAvailabilityMode:
+              description: HighAvailabilityMode express the high-availability expectations.
+                The default is 'Full', which represents the behavior operators have
+                in a \"normal\" cluster. The 'None' mode will be used in single-node
+                deployments (developer and production) for example, and the operators
+                should not configure the operand for highly-available operation
+              type: string
+              enum:
+              - ""
+              - Full
+              - None
             infrastructureName:
               description: infrastructureName uniquely identifies a cluster with a
                 human friendly name. Once set it should not be changed. Must be of
