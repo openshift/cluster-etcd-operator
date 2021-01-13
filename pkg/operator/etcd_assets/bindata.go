@@ -727,10 +727,6 @@ kind: Deployment
 metadata:
   name: etcd-quorum-guard
   namespace: openshift-etcd
-  annotations:
-    include.release.openshift.io/self-managed-high-availability: "true"
-    include.release.openshift.io/single-node-developer: "true"
-    exclude.release.openshift.io/internal-openshift-hosted: "true"
 spec:
   replicas: 3
   selector:

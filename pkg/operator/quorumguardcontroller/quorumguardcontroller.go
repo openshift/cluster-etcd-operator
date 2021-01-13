@@ -29,12 +29,12 @@ import (
 )
 
 const (
-	EtcdGuardDeploymentName     = "etcd-quorum-guard"
-	infrastructureClusterName   = "cluster"
-	clusterConfigName           = "cluster-config-v1"
-	clusterConfigKey            = "install-config"
-	clusterConfigNamespace      = "kube-system"
-	pdbDeploymentMaxUnavailable = 1
+	EtcdGuardDeploymentName            = "etcd-quorum-guard"
+	infrastructureClusterName          = "cluster"
+	clusterConfigName                  = "cluster-config-v1"
+	clusterConfigKey                   = "install-config"
+	clusterConfigNamespace             = "kube-system"
+	pdbDeploymentMaxUnavailableDefault = 1
 )
 
 type replicaCountDecoder struct {
@@ -43,7 +43,7 @@ type replicaCountDecoder struct {
 	} `yaml:"controlPlane,omitempty"`
 }
 
-// watches the etcd quorum guard deployment, create if not exists
+// QuorumGuardController watches the etcd quorum guard deployment, create if not exists
 type QuorumGuardController struct {
 	operatorClient v1helpers.OperatorClient
 	kubeClient     kubernetes.Interface
@@ -99,7 +99,7 @@ func (c *QuorumGuardController) isInHAMode(ctx context.Context) (bool, error) {
 }
 
 func (c *QuorumGuardController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
-	err := c.ensureEtcdGuardDeployment(ctx, syncCtx.Recorder())
+	err := c.ensureEtcdGuard(ctx, syncCtx.Recorder())
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "QuorumGuardControllerDegraded",
@@ -122,7 +122,7 @@ func (c *QuorumGuardController) sync(ctx context.Context, syncCtx factory.SyncCo
 	return updateErr
 }
 
-func (c *QuorumGuardController) ensureEtcdGuardDeployment(ctx context.Context, recorder events.Recorder) error {
+func (c *QuorumGuardController) ensureEtcdGuard(ctx context.Context, recorder events.Recorder) error {
 	haMode, err := c.isInHAMode(ctx)
 	if err != nil {
 		klog.Infof("Failed to validate ha mode %v ", err)
@@ -137,7 +137,7 @@ func (c *QuorumGuardController) ensureEtcdGuardDeployment(ctx context.Context, r
 		return err
 	}
 
-	if err := c.ensureEtcdGuardDeployment2(ctx, replicaCount, recorder); err != nil {
+	if err := c.ensureEtcdGuardDeployment(ctx, replicaCount, recorder); err != nil {
 		return err
 	}
 
@@ -148,12 +148,13 @@ func (c *QuorumGuardController) ensureEtcdGuardDeployment(ctx context.Context, r
 	return nil
 }
 
-func (c *QuorumGuardController) ensureEtcdGuardDeployment2(ctx context.Context, replicaCount int32, recorder events.Recorder) error {
+// ensureEtcdGuardDeployment if etcd quorum guard deployment doesn't exist - add it, else skip
+func (c *QuorumGuardController) ensureEtcdGuardDeployment(ctx context.Context, replicaCount int32, recorder events.Recorder) error {
 	_, err := c.kubeClient.AppsV1().Deployments(operatorclient.TargetNamespace).Get(ctx,
 		EtcdGuardDeploymentName, metav1.GetOptions{})
 	switch {
 	case apierrors.IsNotFound(err):
-		recorder.Eventf("NoEtcdGuardDeployment", "%s was not found, creating one", EtcdGuardDeploymentName)
+		recorder.Eventf("NoEtcdQuorumGuardDeployment", "%s was not found, creating one", EtcdGuardDeploymentName)
 		return c.applyDeployment(replicaCount, recorder)
 	case err != nil:
 		klog.Warningf("failed to get %s deployment err %v", EtcdGuardDeploymentName, err.Error())
@@ -163,12 +164,13 @@ func (c *QuorumGuardController) ensureEtcdGuardDeployment2(ctx context.Context, 
 	}
 }
 
+// ensureEtcdGuardDeployment if etcd quorum guard pdb deployment doesn't exist - add it, else skip
 func (c *QuorumGuardController) ensureEtcdGuardPdbDeployment(ctx context.Context, recorder events.Recorder) error {
 	_, err := c.kubeClient.PolicyV1beta1().PodDisruptionBudgets(operatorclient.TargetNamespace).Get(ctx,
 		EtcdGuardDeploymentName, metav1.GetOptions{})
 	switch {
 	case apierrors.IsNotFound(err):
-		recorder.Eventf("NoEtcdGuardDeployment", "%s was not found, creating one", EtcdGuardDeploymentName)
+		recorder.Eventf("NoEtcdQuorumGuardPDBDeployment", "%s was not found, creating one", EtcdGuardDeploymentName)
 		return c.applyPdbDeployment(ctx, recorder)
 	case err != nil:
 		klog.Warningf("failed to get %s deployment err %v", EtcdGuardDeploymentName, err.Error())
@@ -178,21 +180,26 @@ func (c *QuorumGuardController) ensureEtcdGuardPdbDeployment(ctx context.Context
 	}
 }
 
-// Applying etcd guard deployment
+// applyDeployment applies new etcd quorum guard deployment
 func (c *QuorumGuardController) applyDeployment(replicaCount int32, recorder events.Recorder) error {
 	klog.Infof("Going to create new %s deployment with replica count %d", EtcdGuardDeploymentName, replicaCount)
 
 	deployment := resourceread.ReadDeploymentV1OrDie(etcd_assets.MustAsset("etcd/quorumguard-deployment.yaml"))
 	deployment.Spec.Replicas = &replicaCount
 	newDeployment, _, err := resourceapply.ApplyDeployment(c.kubeClient.AppsV1(), recorder, deployment, -1)
-	klog.Infof("New deployment is %v", newDeployment)
+	if err != nil {
+		klog.Errorf("Failed to deploy %s, error: %v", deployment.Name, err)
+		return err
+	}
+
+	klog.Infof("New etcd quorum guard deployment is %s", newDeployment.Name)
 	return err
 }
 
-// Applying etcd guard pdb
+// applyPdbDeployment applies new etcd quorum guard pdb
 func (c *QuorumGuardController) applyPdbDeployment(ctx context.Context, recorder events.Recorder) error {
-	klog.Infof("Going to create new %s pdb", EtcdGuardDeploymentName)
-	maxUnavailable := intstr.FromInt(pdbDeploymentMaxUnavailable)
+	klog.Infof("Creating new PDB %q", EtcdGuardDeploymentName)
+	maxUnavailable := intstr.FromInt(pdbDeploymentMaxUnavailableDefault)
 	pdb := &policyv1beta1.PodDisruptionBudget{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      EtcdGuardDeploymentName,
@@ -207,9 +214,11 @@ func (c *QuorumGuardController) applyPdbDeployment(ctx context.Context, recorder
 	}
 
 	if _, err := c.kubeClient.PolicyV1beta1().PodDisruptionBudgets(operatorclient.TargetNamespace).Create(ctx, pdb, metav1.CreateOptions{}); err != nil {
+		klog.Errorf("Failed to deploy %s, error: %v", pdb.Name, err)
 		return err
 	}
 
+	klog.Infof("New etcd quorum guard pdb deployment is %s", pdb.Name)
 	recorder.Eventf("CreatedEtcdGuardPDBDeployment", "%s was created", EtcdGuardDeploymentName)
 	return nil
 }
