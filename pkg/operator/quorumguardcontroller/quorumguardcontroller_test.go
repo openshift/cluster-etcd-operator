@@ -16,7 +16,7 @@ import (
 	"testing"
 )
 
-func TestQuorumGuardController_ensureEtcdGuardDeployment(t *testing.T) {
+func TestQuorumGuardController_ensureEtcdGuard(t *testing.T) {
 	clusterConfigFullHA := corev1.ConfigMap{TypeMeta: metav1.TypeMeta{},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      clusterConfigName,
@@ -48,7 +48,7 @@ controlPlane:
 		expectedReplicaCount int
 	}{
 		{
-			name: "test ensureEtcdGuardDeployment - deployment exists but pdb not ",
+			name: "test ensureEtcdGuard - deployment exists but pdb not ",
 			fields: fields{
 				client: fakecore.NewSimpleClientset(&appsv1.Deployment{
 					TypeMeta: metav1.TypeMeta{},
@@ -71,7 +71,7 @@ controlPlane:
 		},
 
 		{
-			name: "test ensureEtcdGuardDeployment - deployment and pdb exists",
+			name: "test ensureEtcdGuard - deployment and pdb exists",
 			fields: fields{
 				client: fakecore.NewSimpleClientset(&appsv1.Deployment{
 					TypeMeta: metav1.TypeMeta{},
@@ -94,7 +94,7 @@ controlPlane:
 		},
 
 		{
-			name: "test ensureEtcdGuardDeployment - deployment not exists but pdb exists",
+			name: "test ensureEtcdGuard - deployment not exists but pdb exists",
 			fields: fields{
 				client: fakecore.NewSimpleClientset(&clusterConfigFullHA, &pdb),
 				clientInf: fakeconfig.NewSimpleClientset(&configv1.Infrastructure{
@@ -109,7 +109,7 @@ controlPlane:
 		},
 
 		{
-			name: "test ensureEtcdGuardDeployment - nonHAmod",
+			name: "test ensureEtcdGuard - nonHAmod",
 			fields: fields{
 				client: fakecore.NewSimpleClientset(),
 				clientInf: fakeconfig.NewSimpleClientset(&configv1.Infrastructure{
@@ -124,7 +124,7 @@ controlPlane:
 		},
 
 		{
-			name: "test ensureEtcdGuardDeployment - ha mod not set, nothing exists",
+			name: "test ensureEtcdGuard - ha mod not set, nothing exists",
 			fields: fields{
 				client: fakecore.NewSimpleClientset(&clusterConfigFullHA),
 				clientInf: fakeconfig.NewSimpleClientset(&configv1.Infrastructure{
@@ -137,7 +137,7 @@ controlPlane:
 		},
 
 		{
-			name: "test ensureEtcdGuardDeployment - 5 replicas and nothing exists",
+			name: "test ensureEtcdGuard - 5 replicas and nothing exists",
 			fields: fields{
 				client: fakecore.NewSimpleClientset(&corev1.ConfigMap{TypeMeta: metav1.TypeMeta{},
 					ObjectMeta: metav1.ObjectMeta{
@@ -158,7 +158,7 @@ controlPlane:
 		},
 
 		{
-			name: "test ensureEtcdGuardDeployment - get clusterConfig not exists",
+			name: "test ensureEtcdGuard - get clusterConfig not exists",
 			fields: fields{
 				client: fakecore.NewSimpleClientset(),
 				clientInf: fakeconfig.NewSimpleClientset(&configv1.Infrastructure{
@@ -171,7 +171,7 @@ controlPlane:
 		},
 
 		{
-			name: "test ensureEtcdGuardDeployment - get replicas count key not found",
+			name: "test ensureEtcdGuard - get replicas count key not found",
 			fields: fields{
 				client: fakecore.NewSimpleClientset(&corev1.ConfigMap{TypeMeta: metav1.TypeMeta{},
 					ObjectMeta: metav1.ObjectMeta{
@@ -197,9 +197,9 @@ controlPlane:
 				kubeClient:  tt.fields.client,
 				infraClient: tt.fields.clientInf,
 			}
-			err := c.ensureEtcdGuardDeployment(context.TODO(), recorder)
+			err := c.ensureEtcdGuard(context.TODO(), recorder)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ensureEtcdGuardDeployment() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("ensureEtcdGuard() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 
