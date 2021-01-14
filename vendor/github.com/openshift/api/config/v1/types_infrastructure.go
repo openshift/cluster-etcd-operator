@@ -78,23 +78,31 @@ type InfrastructureStatus struct {
 	// infrastructure provider rather than Kubernetes networking.
 	APIServerInternalURL string `json:"apiServerInternalURI"`
 
-	// HighAvailabilityMode express the high-availability expectations.
-	// The default is 'Full', which represents the behavior operators have in a \"normal\" cluster.
-	// The 'None' mode will be used in single-node deployments (developer and production) for example,
+	// ControlPlaneTopology expresses the expectations for operands that normally run on control nodes.
+	// The default is 'HighlyAvailable', which represents the behavior operators have in a "normal" cluster.
+	// The 'SingleReplica' mode will be used in single-node deployments (developer and production) for example,
 	// and the operators should not configure the operand for highly-available operation
-	HighAvailabilityMode HighAvailabilityMode `json:"highAvailabilityMode"`
+	// +kubebuilder:default=HighlyAvailable
+	ControlPlaneTopology TopologyMode `json:"controlPlaneTopology"`
+
+	// InfrastructureTopology expresses the expectations for operands that normally run on infrastructure nodes.
+	// The default is 'HighlyAvailable', which represents the behavior operators have in a "normal" cluster.
+	// The 'SingleReplica' mode will be used in single-node deployments (developer and production) for example,
+	// and the operators should not configure the operand for highly-available operation
+	// +kubebuilder:default=HighlyAvailable
+	InfrastructureTopology TopologyMode `json:"infrastructureTopology"`
 }
 
-// HighAvailabilityMode defines the high-availability mode of the cluster.
-// +kubebuilder:validation:Enum="";Full;None
-type HighAvailabilityMode string
+// TopologyMode defines the topology mode of the control/infra nodes.
+// +kubebuilder:validation:Enum=HighlyAvailable;SingleReplica
+type TopologyMode string
 
 const (
-	// "Full" is for operators to configure high-availability as much as possible.
-	FullHighAvailabilityMode HighAvailabilityMode = "Full"
+	// "HighlyAvailable" is for operators to configure high-availability as much as possible.
+	HighlyAvailableTopologyMode TopologyMode = "HighlyAvailable"
 
-	// "None" is for operators to avoid spending resources for high-availability purpose.
-	NoneHighAvailabilityMode HighAvailabilityMode = "None"
+	// "SingleReplica" is for operators to avoid spending resources for high-availability purpose.
+	SingleReplicaTopologyMode TopologyMode = "SingleReplica"
 )
 
 // PlatformType is a specific supported infrastructure provider.
