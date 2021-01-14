@@ -2,8 +2,6 @@ package etcdenvvar
 
 import (
 	"fmt"
-	"github.com/openshift/library-go/pkg/crypto"
-	"go.etcd.io/etcd/pkg/tlsutil"
 	"runtime"
 	"strings"
 
@@ -13,6 +11,8 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/library-go/pkg/crypto"
+	"go.etcd.io/etcd/pkg/tlsutil"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 )
