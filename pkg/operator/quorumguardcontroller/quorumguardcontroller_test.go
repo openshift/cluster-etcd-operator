@@ -43,7 +43,7 @@ controlPlane:
 		name                 string
 		fields               fields
 		wantErr              bool
-		expectedHAmode       configv1.HighAvailabilityMode
+		expectedHATopology   configv1.TopologyMode
 		expectedEvents       int
 		expectedReplicaCount int
 	}{
@@ -65,9 +65,9 @@ controlPlane:
 						Name: infrastructureClusterName,
 					},
 					Status: configv1.InfrastructureStatus{
-						HighAvailabilityMode: configv1.FullHighAvailabilityMode},
+						ControlPlaneTopology: configv1.HighlyAvailableTopologyMode},
 				}).ConfigV1()},
-			expectedHAmode: configv1.FullHighAvailabilityMode, expectedEvents: 2, wantErr: false, expectedReplicaCount: 3,
+			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 2, wantErr: false, expectedReplicaCount: 3,
 		},
 
 		{
@@ -88,9 +88,9 @@ controlPlane:
 						Name: infrastructureClusterName,
 					},
 					Status: configv1.InfrastructureStatus{
-						HighAvailabilityMode: configv1.FullHighAvailabilityMode},
+						ControlPlaneTopology: configv1.HighlyAvailableTopologyMode},
 				}).ConfigV1()},
-			expectedHAmode: configv1.FullHighAvailabilityMode, expectedEvents: 0, wantErr: false, expectedReplicaCount: 3,
+			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 0, wantErr: false, expectedReplicaCount: 3,
 		},
 
 		{
@@ -103,9 +103,9 @@ controlPlane:
 						Name: infrastructureClusterName,
 					},
 					Status: configv1.InfrastructureStatus{
-						HighAvailabilityMode: configv1.FullHighAvailabilityMode},
+						ControlPlaneTopology: configv1.HighlyAvailableTopologyMode},
 				}).ConfigV1()},
-			expectedHAmode: configv1.FullHighAvailabilityMode, expectedEvents: 2, wantErr: false, expectedReplicaCount: 3,
+			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 2, wantErr: false, expectedReplicaCount: 3,
 		},
 
 		{
@@ -118,9 +118,9 @@ controlPlane:
 						Name: infrastructureClusterName,
 					},
 					Status: configv1.InfrastructureStatus{
-						HighAvailabilityMode: configv1.NoneHighAvailabilityMode},
+						ControlPlaneTopology: configv1.SingleReplicaTopologyMode},
 				}).ConfigV1()},
-			expectedHAmode: configv1.NoneHighAvailabilityMode, expectedEvents: 0, wantErr: false, expectedReplicaCount: 0,
+			expectedHATopology: configv1.SingleReplicaTopologyMode, expectedEvents: 0, wantErr: false, expectedReplicaCount: 0,
 		},
 
 		{
@@ -133,7 +133,7 @@ controlPlane:
 						Name: infrastructureClusterName,
 					},
 					Status: configv1.InfrastructureStatus{}}).ConfigV1()},
-			expectedHAmode: configv1.FullHighAvailabilityMode, expectedEvents: 4, wantErr: false, expectedReplicaCount: 3,
+			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 4, wantErr: false, expectedReplicaCount: 3,
 		},
 
 		{
@@ -154,7 +154,7 @@ controlPlane:
 						Name: infrastructureClusterName,
 					},
 					Status: configv1.InfrastructureStatus{}}).ConfigV1()},
-			expectedHAmode: configv1.FullHighAvailabilityMode, expectedEvents: 4, wantErr: false, expectedReplicaCount: 5,
+			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 4, wantErr: false, expectedReplicaCount: 5,
 		},
 
 		{
@@ -167,7 +167,7 @@ controlPlane:
 						Name: infrastructureClusterName,
 					},
 					Status: configv1.InfrastructureStatus{}}).ConfigV1()},
-			expectedHAmode: configv1.FullHighAvailabilityMode, expectedEvents: 0, wantErr: true,
+			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 0, wantErr: true,
 		},
 
 		{
@@ -187,7 +187,7 @@ controlPlane:
 						Name: infrastructureClusterName,
 					},
 					Status: configv1.InfrastructureStatus{}}).ConfigV1()},
-			expectedHAmode: configv1.FullHighAvailabilityMode, expectedEvents: 0, wantErr: true,
+			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 0, wantErr: true,
 		},
 	}
 	for _, tt := range tests {
@@ -208,8 +208,8 @@ controlPlane:
 				return
 			}
 
-			if c.haMode != tt.expectedHAmode {
-				t.Errorf("HA mode is %s and expected %s", c.haMode, tt.expectedHAmode)
+			if c.clusterTopology != tt.expectedHATopology {
+				t.Errorf("cluster HA topology is %s and expected %s", c.clusterTopology, tt.expectedHATopology)
 				return
 			}
 

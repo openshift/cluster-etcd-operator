@@ -45,13 +45,13 @@ type replicaCountDecoder struct {
 
 // QuorumGuardController watches the etcd quorum guard deployment, create if not exists
 type QuorumGuardController struct {
-	operatorClient v1helpers.OperatorClient
-	kubeClient     kubernetes.Interface
-	podLister      corev1listers.PodLister
-	nodeLister     corev1listers.NodeLister
-	infraClient    configclientv1.InfrastructuresGetter
-	haMode         configv1.HighAvailabilityMode
-	replicaCount   int
+	operatorClient  v1helpers.OperatorClient
+	kubeClient      kubernetes.Interface
+	podLister       corev1listers.PodLister
+	nodeLister      corev1listers.NodeLister
+	infraClient     configclientv1.InfrastructuresGetter
+	clusterTopology configv1.TopologyMode
+	replicaCount    int
 }
 
 func NewQuorumGuardController(
@@ -76,10 +76,10 @@ func NewQuorumGuardController(
 	).WithSync(c.sync).ResyncEvery(time.Minute).ToController("QuorumGuardController", eventRecorder.WithComponentSuffix("quorum-guard-controller"))
 }
 
-func (c *QuorumGuardController) isInHAMode(ctx context.Context) (bool, error) {
+func (c *QuorumGuardController) isInHATopologyMode(ctx context.Context) (bool, error) {
 	// update once
-	if c.haMode != "" {
-		return c.haMode == configv1.FullHighAvailabilityMode, nil
+	if c.clusterTopology != "" {
+		return c.clusterTopology == configv1.HighlyAvailableTopologyMode, nil
 	}
 
 	infraData, err := c.infraClient.Infrastructures().Get(ctx, infrastructureClusterName, metav1.GetOptions{})
@@ -88,14 +88,14 @@ func (c *QuorumGuardController) isInHAMode(ctx context.Context) (bool, error) {
 	}
 	// Added to make sure that iif ha mode is not set in infrastructure object
 	// we will get the default value configv1.FullHighAvailabilityMode
-	if infraData.Status.HighAvailabilityMode == "" {
-		klog.Infof("HA mode was not set in infrastructure resource setting it to default value %s", configv1.FullHighAvailabilityMode)
-		infraData.Status.HighAvailabilityMode = configv1.FullHighAvailabilityMode
+	if infraData.Status.ControlPlaneTopology == "" {
+		klog.Infof("HA mode was not set in infrastructure resource setting it to default value %s", configv1.HighlyAvailableTopologyMode)
+		infraData.Status.ControlPlaneTopology = configv1.HighlyAvailableTopologyMode
 	}
-	c.haMode = infraData.Status.HighAvailabilityMode
-	klog.Infof("HA mode is: %s", c.haMode)
+	c.clusterTopology = infraData.Status.ControlPlaneTopology
+	klog.Infof("HA mode is: %s", c.clusterTopology)
 
-	return c.haMode == configv1.FullHighAvailabilityMode, nil
+	return c.clusterTopology == configv1.HighlyAvailableTopologyMode, nil
 }
 
 func (c *QuorumGuardController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
@@ -123,12 +123,12 @@ func (c *QuorumGuardController) sync(ctx context.Context, syncCtx factory.SyncCo
 }
 
 func (c *QuorumGuardController) ensureEtcdGuard(ctx context.Context, recorder events.Recorder) error {
-	haMode, err := c.isInHAMode(ctx)
+	haTopologyMode, err := c.isInHATopologyMode(ctx)
 	if err != nil {
 		klog.Infof("Failed to validate ha mode %v ", err)
 		return err
 	}
-	if !haMode {
+	if !haTopologyMode {
 		return nil
 	}
 
