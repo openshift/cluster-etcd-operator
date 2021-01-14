@@ -103,7 +103,7 @@ github.com/modern-go/concurrent
 github.com/modern-go/reflect2
 # github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822
 github.com/munnerz/goautoneg
-# github.com/openshift/api v0.0.0-20201216151826-78a19e96f9eb => github.com/ravidbro/api v0.0.0-20201222081342-ff6d9577a139
+# github.com/openshift/api v0.0.0-20201216151826-78a19e96f9eb => github.com/ravidbro/api v0.0.0-20210114143302-24a7b5bde843
 ## explicit
 github.com/openshift/api
 github.com/openshift/api/apps
@@ -964,5 +964,5 @@ sigs.k8s.io/structured-merge-diff/v4/typed
 sigs.k8s.io/structured-merge-diff/v4/value
 # sigs.k8s.io/yaml v1.2.0
 sigs.k8s.io/yaml
-# github.com/openshift/api => github.com/ravidbro/api v0.0.0-20201222081342-ff6d9577a139
+# github.com/openshift/api => github.com/ravidbro/api v0.0.0-20210114143302-24a7b5bde843
 # vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787

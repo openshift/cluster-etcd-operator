@@ -35,6 +35,6 @@ require (
 )
 
 replace (
-	github.com/openshift/api => github.com/ravidbro/api v0.0.0-20201222081342-ff6d9577a139
+	github.com/openshift/api => github.com/ravidbro/api v0.0.0-20210114143302-24a7b5bde843
 	vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787
 )
