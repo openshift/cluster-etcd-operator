@@ -38,6 +38,38 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 		validateFunc    func(ts *testing.T, actions []clientgotesting.Action)
 	}{
 		{
+			// The etcd-endpoint configmap should be created properly if it is missing.
+			name: "NewConfigMapAfterDeletion",
+			objects: []runtime.Object{
+				u.FakeNode("master-0", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1")),
+				u.FakeNode("master-1", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.2")),
+				u.FakeNode("master-2", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.3")),
+				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
+			},
+			staticPodStatus: u.StaticPodOperatorStatus(
+				u.WithLatestRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+			),
+			validateFunc: func(ts *testing.T, actions []clientgotesting.Action) {
+				for _, action := range actions {
+					if action.Matches("create", "configmaps") {
+						createAction := action.(clientgotesting.CreateAction)
+						actual := createAction.GetObject().(*corev1.ConfigMap)
+						expected := u.EndpointsConfigMap(
+							u.WithAddress("10.0.0.1"),
+							u.WithAddress("10.0.0.2"),
+							u.WithAddress("10.0.0.3"),
+						)
+						if !equality.Semantic.DeepEqual(actual, expected) {
+							ts.Errorf(diff.ObjectDiff(expected, actual))
+						}
+					}
+				}
+			},
+		},
+		{
 			// The bootstrap IP should be deleted because bootstrap reports complete
 			// and all nodes have converged on a revision.
 			name: "NewClusterBootstrapRemoval",
