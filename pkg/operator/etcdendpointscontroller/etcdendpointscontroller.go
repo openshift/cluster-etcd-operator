@@ -94,6 +94,12 @@ func (c *EtcdEndpointsController) syncConfigMap(recorder events.Recorder) error 
 	// If the bootstrap IP is present on the existing configmap, either copy it
 	// forward or remove it if possible so clients can forget about it.
 	if existing, err := c.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints"); err == nil {
+		etcdMembers, err := c.etcdClient.MemberList()
+		if err != nil {
+			return fmt.Errorf("could not create etcd client: %w", err)
+		}
+		memberHealth := etcdcli.GetMemberHealth(etcdMembers)
+
 		if existingIP, hasExistingIP := existing.Annotations[etcdcli.BootstrapIPAnnotationKey]; hasExistingIP {
 			if bootstrapComplete {
 				// remove the annotation
@@ -103,7 +109,7 @@ func (c *EtcdEndpointsController) syncConfigMap(recorder events.Recorder) error 
 			}
 		}
 	} else if !errors.IsNotFound(err) {
-		return fmt.Errorf("couldn't get configmap %s/%s: %w", operatorclient.TargetNamespace, "etcd-endpoints", err)
+		klog.Warningf("required configmap %s/%s will be created because it was missing: %w", operatorclient.TargetNamespace, "etcd-endpoints", err)
 	}
 
 	// create endpoint addresses for each node
