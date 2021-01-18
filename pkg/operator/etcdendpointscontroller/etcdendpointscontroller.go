@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
@@ -92,17 +93,17 @@ func (c *EtcdEndpointsController) syncConfigMap(recorder events.Recorder) error 
 		return fmt.Errorf("couldn't determine bootstrap status: %w", err)
 	}
 
-	etcdMembers, err := c.etcdClient.MemberList()
-	if err != nil {
-		return fmt.Errorf("could not create etcd client: %w", err)
-	}
-	memberHealth := etcdcli.GetMemberHealth(etcdMembers)
-
 	required := configMapAsset()
 
 	// If the bootstrap IP is present on the existing configmap, either copy it
 	// forward or remove it if possible so clients can forget about it.
 	if existing, err := c.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints"); err == nil {
+		etcdMembers, err := c.etcdClient.MemberList()
+		if err != nil {
+			return fmt.Errorf("could not create etcd client: %w", err)
+		}
+		memberHealth := etcdcli.GetMemberHealth(etcdMembers)
+
 		if existingIP, hasExistingIP := existing.Annotations[etcdcli.BootstrapIPAnnotationKey]; hasExistingIP {
 			if bootstrapComplete && etcdcli.IsQuorumFaultTolerant(memberHealth) {
 				// remove the annotation
@@ -112,7 +113,7 @@ func (c *EtcdEndpointsController) syncConfigMap(recorder events.Recorder) error 
 			}
 		}
 	} else if !errors.IsNotFound(err) {
-		return fmt.Errorf("couldn't get configmap %s/%s: %w", operatorclient.TargetNamespace, "etcd-endpoints", err)
+		klog.Warningf("required configmap %s/%s will be created because it was missing: %w", operatorclient.TargetNamespace, "etcd-endpoints", err)
 	}
 
 	// create endpoint addresses for each node
