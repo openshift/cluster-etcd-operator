@@ -2,6 +2,8 @@ package ceohelpers
 
 import (
 	"fmt"
+	configv1 "github.com/openshift/api/config/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"testing"
 
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -19,6 +21,15 @@ import (
 var (
 	defaultNamespace = &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: operatorclient.TargetNamespace},
+	}
+
+	defaultInfra = &configv1.Infrastructure{
+		TypeMeta: metav1.TypeMeta{},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: infrastructureClusterName,
+		},
+		Status: configv1.InfrastructureStatus{
+			ControlPlaneTopology: configv1.HighlyAvailableTopologyMode},
 	}
 
 	namespaceWithDelayedHAEnabled = &corev1.Namespace{
@@ -74,25 +85,44 @@ var (
 )
 
 func Test_GetBootstrapScalingStrategy(t *testing.T) {
+	singleNode := &configv1.Infrastructure{
+		TypeMeta: metav1.TypeMeta{},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: infrastructureClusterName,
+		},
+		Status: configv1.InfrastructureStatus{
+			ControlPlaneTopology: configv1.SingleReplicaTopologyMode},
+	}
+
 	tests := map[string]struct {
 		namespace      *corev1.Namespace
 		operatorConfig operatorv1.StaticPodOperatorSpec
 		expectStrategy BootstrapScalingStrategy
+		infraObj       *configv1.Infrastructure
 	}{
 		"default should be HA": {
 			namespace:      defaultNamespace,
 			operatorConfig: defaultOperatorConfig,
 			expectStrategy: HAScalingStrategy,
+			infraObj:       defaultInfra,
 		},
 		"unsupported": {
 			namespace:      defaultNamespace,
 			operatorConfig: unsupportedOperatorConfig,
 			expectStrategy: UnsafeScalingStrategy,
+			infraObj:       defaultInfra,
+		},
+		"single_node": {
+			namespace:      defaultNamespace,
+			operatorConfig: defaultOperatorConfig,
+			expectStrategy: UnsafeScalingStrategy,
+			infraObj:       singleNode,
 		},
 		"delayed HA": {
 			namespace:      namespaceWithDelayedHAEnabled,
 			operatorConfig: defaultOperatorConfig,
 			expectStrategy: DelayedHAScalingStrategy,
+			infraObj:       defaultInfra,
 		},
 	}
 
@@ -108,7 +138,15 @@ func Test_GetBootstrapScalingStrategy(t *testing.T) {
 
 			fakeStaticPodClient := v1helpers.NewFakeStaticPodOperatorClient(&test.operatorConfig, nil, nil, nil)
 
-			actualStrategy, err := GetBootstrapScalingStrategy(fakeStaticPodClient, fakeNamespaceMapLister)
+			fakeInfraIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+			if test.infraObj != nil {
+				if err := fakeInfraIndexer.Add(test.infraObj); err != nil {
+					t.Fatal(err)
+				}
+			}
+			fakeInfraStructure := configv1listers.NewInfrastructureLister(fakeInfraIndexer)
+
+			actualStrategy, err := GetBootstrapScalingStrategy(fakeStaticPodClient, fakeNamespaceMapLister, fakeInfraStructure)
 			if err != nil {
 				t.Errorf("unexpected error: %s", err)
 				return
@@ -195,12 +233,14 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 		nodes              []operatorv1.NodeStatus
 		expectComplete     bool
 		expectError        error
+		infraObj           *configv1.Infrastructure
 	}{
 		"HA with sufficient nodes": {
 			namespace:          defaultNamespace,
 			bootstrapConfigMap: bootstrapComplete,
 			operatorConfig:     defaultOperatorConfig,
 			nodes:              threeNodesAtCurrentRevision,
+			infraObj:           defaultInfra,
 			expectError:        nil,
 		},
 		"HA with insufficient nodes": {
@@ -208,6 +248,7 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			bootstrapConfigMap: bootstrapComplete,
 			operatorConfig:     defaultOperatorConfig,
 			nodes:              twoNodesAtCurrentRevision,
+			infraObj:           defaultInfra,
 			expectError:        fmt.Errorf("not enough nodes"),
 		},
 		"unsupported with sufficient nodes": {
@@ -215,6 +256,7 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			bootstrapConfigMap: bootstrapComplete,
 			operatorConfig:     unsupportedOperatorConfig,
 			nodes:              oneNodeAtCurrentRevision,
+			infraObj:           defaultInfra,
 			expectError:        nil,
 		},
 		"unsupported with insufficient nodes": {
@@ -222,6 +264,7 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			bootstrapConfigMap: bootstrapComplete,
 			operatorConfig:     unsupportedOperatorConfig,
 			nodes:              zeroNodesAtAnyRevision,
+			infraObj:           defaultInfra,
 			expectError:        fmt.Errorf("not enough nodes"),
 		},
 		"delayed HA with sufficient nodes during bootstrap": {
@@ -229,6 +272,7 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			bootstrapConfigMap: bootstrapProgressing,
 			operatorConfig:     defaultOperatorConfig,
 			nodes:              twoNodesAtCurrentRevision,
+			infraObj:           defaultInfra,
 			expectError:        nil,
 		},
 		"delayed HA with insufficient nodes during bootstrap": {
@@ -236,6 +280,7 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			bootstrapConfigMap: bootstrapProgressing,
 			operatorConfig:     defaultOperatorConfig,
 			nodes:              oneNodeAtCurrentRevision,
+			infraObj:           defaultInfra,
 			expectError:        fmt.Errorf("not enough nodes"),
 		},
 		"delayed HA with sufficient nodes during steady state": {
@@ -243,6 +288,7 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			bootstrapConfigMap: bootstrapComplete,
 			operatorConfig:     defaultOperatorConfig,
 			nodes:              threeNodesAtCurrentRevision,
+			infraObj:           defaultInfra,
 			expectError:        nil,
 		},
 		"delayed HA with insufficient nodes during steady state": {
@@ -250,6 +296,7 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			bootstrapConfigMap: bootstrapComplete,
 			operatorConfig:     defaultOperatorConfig,
 			nodes:              twoNodesAtCurrentRevision,
+			infraObj:           defaultInfra,
 			expectError:        fmt.Errorf("not enough nodes"),
 		},
 	}
@@ -262,6 +309,7 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+
 			fakeNamespaceMapLister := corev1listers.NewNamespaceLister(namespaceIndexer)
 
 			configmapIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
@@ -278,7 +326,15 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			}
 			fakeStaticPodClient := v1helpers.NewFakeStaticPodOperatorClient(&test.operatorConfig, operatorStatus, nil, nil)
 
-			actualErr := CheckSafeToScaleCluster(fakeConfigMapLister, fakeStaticPodClient, fakeNamespaceMapLister)
+			fakeInfraIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+			if test.infraObj != nil {
+				if err := fakeInfraIndexer.Add(test.infraObj); err != nil {
+					t.Fatal(err)
+				}
+			}
+			fakeInfraStructure := configv1listers.NewInfrastructureLister(fakeInfraIndexer)
+
+			actualErr := CheckSafeToScaleCluster(fakeConfigMapLister, fakeStaticPodClient, fakeNamespaceMapLister, fakeInfraStructure)
 
 			if test.expectError != nil && actualErr == nil {
 				t.Errorf("expected error=%v, got %v", test.expectError, actualErr)

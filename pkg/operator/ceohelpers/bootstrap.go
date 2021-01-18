@@ -2,6 +2,7 @@ package ceohelpers
 
 import (
 	"fmt"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -49,7 +50,7 @@ const (
 )
 
 // GetBootstrapScalingStrategy determines the scaling strategy to use.
-func GetBootstrapScalingStrategy(staticPodClient v1helpers.StaticPodOperatorClient, namespaceLister corev1listers.NamespaceLister) (BootstrapScalingStrategy, error) {
+func GetBootstrapScalingStrategy(staticPodClient v1helpers.StaticPodOperatorClient, namespaceLister corev1listers.NamespaceLister, infraLister configv1listers.InfrastructureLister) (BootstrapScalingStrategy, error) {
 	var strategy BootstrapScalingStrategy
 
 	operatorSpec, _, _, err := staticPodClient.GetStaticPodOperatorState()
@@ -68,8 +69,13 @@ func GetBootstrapScalingStrategy(staticPodClient v1helpers.StaticPodOperatorClie
 	}
 	_, hasDelayedHAAnnotation := etcdNamespace.Annotations[DelayedHABootstrapScalingStrategyAnnotation]
 
+	singleNode, err := IsSingleNodeTopology(infraLister)
+	if err != nil {
+		return strategy, fmt.Errorf("failed to get control plane topology: %w", err)
+	}
+
 	switch {
-	case isUnsupportedUnsafeEtcd:
+	case isUnsupportedUnsafeEtcd || singleNode:
 		strategy = UnsafeScalingStrategy
 	case hasDelayedHAAnnotation:
 		strategy = DelayedHAScalingStrategy
@@ -83,7 +89,9 @@ func GetBootstrapScalingStrategy(staticPodClient v1helpers.StaticPodOperatorClie
 // This function returns nil if cluster conditions are such that it's safe to scale
 // the etcd cluster based on the scaling strategy in use, and otherwise will return
 // an error explaining why it's unsafe to scale.
-func CheckSafeToScaleCluster(configmapLister corev1listers.ConfigMapLister, staticPodClient v1helpers.StaticPodOperatorClient, namespaceLister corev1listers.NamespaceLister) error {
+func CheckSafeToScaleCluster(configmapLister corev1listers.ConfigMapLister, staticPodClient v1helpers.StaticPodOperatorClient,
+	namespaceLister corev1listers.NamespaceLister, infraLister configv1listers.InfrastructureLister) error {
+
 	bootstrapComplete, err := IsBootstrapComplete(configmapLister, staticPodClient)
 	if err != nil {
 		return fmt.Errorf("failed to determine bootstrap status: %w", err)
@@ -94,7 +102,7 @@ func CheckSafeToScaleCluster(configmapLister corev1listers.ConfigMapLister, stat
 		return fmt.Errorf("failed to get operator state: %w", err)
 	}
 
-	scalingStrategy, err := GetBootstrapScalingStrategy(staticPodClient, namespaceLister)
+	scalingStrategy, err := GetBootstrapScalingStrategy(staticPodClient, namespaceLister, infraLister)
 	if err != nil {
 		return fmt.Errorf("failed to get bootstrap scaling strategy: %w", err)
 	}

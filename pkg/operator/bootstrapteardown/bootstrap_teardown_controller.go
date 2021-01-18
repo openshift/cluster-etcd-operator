@@ -3,6 +3,7 @@ package bootstrapteardown
 import (
 	"context"
 	"fmt"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -18,10 +19,11 @@ import (
 )
 
 type BootstrapTeardownController struct {
-	operatorClient  v1helpers.StaticPodOperatorClient
-	etcdClient      etcdcli.EtcdClient
-	configmapLister corev1listers.ConfigMapLister
-	namespaceLister corev1listers.NamespaceLister
+	operatorClient       v1helpers.StaticPodOperatorClient
+	etcdClient           etcdcli.EtcdClient
+	configmapLister      corev1listers.ConfigMapLister
+	namespaceLister      corev1listers.NamespaceLister
+	infrastructureLister configv1listers.InfrastructureLister
 }
 
 func NewBootstrapTeardownController(
@@ -29,12 +31,15 @@ func NewBootstrapTeardownController(
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
+	infrastructureLister configv1listers.InfrastructureLister,
+
 ) factory.Controller {
 	c := &BootstrapTeardownController{
-		operatorClient:  operatorClient,
-		etcdClient:      etcdClient,
-		configmapLister: kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Lister(),
-		namespaceLister: kubeInformersForNamespaces.InformersFor("").Core().V1().Namespaces().Lister(),
+		operatorClient:       operatorClient,
+		etcdClient:           etcdClient,
+		configmapLister:      kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Lister(),
+		namespaceLister:      kubeInformersForNamespaces.InformersFor("").Core().V1().Namespaces().Lister(),
+		infrastructureLister: infrastructureLister,
 	}
 
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
@@ -150,7 +155,7 @@ func (c *BootstrapTeardownController) canRemoveEtcdBootstrap() (bool, bool, erro
 		return false, hasBootstrap, nil
 	}
 
-	scalingStrategy, err := ceohelpers.GetBootstrapScalingStrategy(c.operatorClient, c.namespaceLister)
+	scalingStrategy, err := ceohelpers.GetBootstrapScalingStrategy(c.operatorClient, c.namespaceLister, c.infrastructureLister)
 	if err != nil {
 		return false, hasBootstrap, fmt.Errorf("failed to get bootstrap scaling strategy: %w", err)
 	}

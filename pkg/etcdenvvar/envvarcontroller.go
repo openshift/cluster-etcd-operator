@@ -127,7 +127,7 @@ func (c *EnvVarController) sync() error {
 }
 
 func (c *EnvVarController) checkEnvVars() error {
-	if err := ceohelpers.CheckSafeToScaleCluster(c.configmapLister, c.operatorClient, c.namespaceLister); err != nil {
+	if err := ceohelpers.CheckSafeToScaleCluster(c.configmapLister, c.operatorClient, c.namespaceLister, c.infrastructureLister); err != nil {
 		return fmt.Errorf("can't update etcd pod configurations because scaling is currently unsafe: %w", err)
 	}
 
