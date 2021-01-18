@@ -232,7 +232,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeClient,
 		kubeInformersForNamespaces,
 		controllerContext.EventRecorder,
-		configClient.ConfigV1(),
+		configInformers.Config().V1().Infrastructures().Lister(),
 	)
 
 	unsupportedConfigOverridesController := unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(

@@ -3,13 +3,13 @@ package quorumguardcontroller
 import (
 	"context"
 	"fmt"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"gopkg.in/yaml.v2"
 	policyv1beta1 "k8s.io/api/policy/v1beta1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"strconv"
 	"time"
 
-	configclientv1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
@@ -25,6 +25,7 @@ import (
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
@@ -45,13 +46,13 @@ type replicaCountDecoder struct {
 
 // QuorumGuardController watches the etcd quorum guard deployment, create if not exists
 type QuorumGuardController struct {
-	operatorClient  v1helpers.OperatorClient
-	kubeClient      kubernetes.Interface
-	podLister       corev1listers.PodLister
-	nodeLister      corev1listers.NodeLister
-	infraClient     configclientv1.InfrastructuresGetter
-	clusterTopology configv1.TopologyMode
-	replicaCount    int
+	operatorClient       v1helpers.OperatorClient
+	kubeClient           kubernetes.Interface
+	podLister            corev1listers.PodLister
+	nodeLister           corev1listers.NodeLister
+	infrastructureLister configv1listers.InfrastructureLister
+	clusterTopology      configv1.TopologyMode
+	replicaCount         int
 }
 
 func NewQuorumGuardController(
@@ -59,15 +60,15 @@ func NewQuorumGuardController(
 	kubeClient kubernetes.Interface,
 	kubeInformers v1helpers.KubeInformersForNamespaces,
 	eventRecorder events.Recorder,
-	infraClient configclientv1.InfrastructuresGetter,
+	infrastructureLister configv1listers.InfrastructureLister,
 ) factory.Controller {
 	c := &QuorumGuardController{
-		operatorClient: operatorClient,
-		kubeClient:     kubeClient,
-		podLister:      kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
-		nodeLister:     kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
-		infraClient:    infraClient,
-		replicaCount:   0,
+		operatorClient:       operatorClient,
+		kubeClient:           kubeClient,
+		podLister:            kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
+		nodeLister:           kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
+		infrastructureLister: infrastructureLister,
+		replicaCount:         0,
 	}
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
 		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer(),
@@ -76,23 +77,18 @@ func NewQuorumGuardController(
 	).WithSync(c.sync).ResyncEvery(time.Minute).ToController("QuorumGuardController", eventRecorder.WithComponentSuffix("quorum-guard-controller"))
 }
 
-func (c *QuorumGuardController) isInHATopologyMode(ctx context.Context) (bool, error) {
+func (c *QuorumGuardController) isInHATopologyMode() (bool, error) {
 	// update once
 	if c.clusterTopology != "" {
 		return c.clusterTopology == configv1.HighlyAvailableTopologyMode, nil
 	}
 
-	infraData, err := c.infraClient.Infrastructures().Get(ctx, infrastructureClusterName, metav1.GetOptions{})
+	var err error
+	c.clusterTopology, err = ceohelpers.GetControlPlaneTopology(c.infrastructureLister)
 	if err != nil {
 		return false, err
 	}
-	// Added to make sure that iif ha mode is not set in infrastructure object
-	// we will get the default value configv1.FullHighAvailabilityMode
-	if infraData.Status.ControlPlaneTopology == "" {
-		klog.Infof("HA mode was not set in infrastructure resource setting it to default value %s", configv1.HighlyAvailableTopologyMode)
-		infraData.Status.ControlPlaneTopology = configv1.HighlyAvailableTopologyMode
-	}
-	c.clusterTopology = infraData.Status.ControlPlaneTopology
+
 	klog.Infof("HA mode is: %s", c.clusterTopology)
 
 	return c.clusterTopology == configv1.HighlyAvailableTopologyMode, nil
@@ -123,7 +119,7 @@ func (c *QuorumGuardController) sync(ctx context.Context, syncCtx factory.SyncCo
 }
 
 func (c *QuorumGuardController) ensureEtcdGuard(ctx context.Context, recorder events.Recorder) error {
-	haTopologyMode, err := c.isInHATopologyMode(ctx)
+	haTopologyMode, err := c.isInHATopologyMode()
 	if err != nil {
 		klog.Infof("Failed to validate ha mode %v ", err)
 		return err

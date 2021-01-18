@@ -3,8 +3,7 @@ package quorumguardcontroller
 import (
 	"context"
 	configv1 "github.com/openshift/api/config/v1"
-	fakeconfig "github.com/openshift/client-go/config/clientset/versioned/fake"
-	configclientv1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/operator/events"
 	appsv1 "k8s.io/api/apps/v1"
@@ -13,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	fakecore "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/tools/cache"
 	"testing"
 )
 
@@ -34,10 +34,11 @@ controlPlane:
 			Namespace: operatorclient.TargetNamespace,
 		},
 	}
+	fakeInfraIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 
 	type fields struct {
-		client    kubernetes.Interface
-		clientInf configclientv1.InfrastructuresGetter
+		client   kubernetes.Interface
+		infraObj *configv1.Infrastructure
 	}
 	tests := []struct {
 		name                 string
@@ -59,14 +60,14 @@ controlPlane:
 					Spec:   appsv1.DeploymentSpec{},
 					Status: appsv1.DeploymentStatus{},
 				}, &clusterConfigFullHA),
-				clientInf: fakeconfig.NewSimpleClientset(&configv1.Infrastructure{
+				infraObj: &configv1.Infrastructure{
 					TypeMeta: metav1.TypeMeta{},
 					ObjectMeta: metav1.ObjectMeta{
 						Name: infrastructureClusterName,
 					},
 					Status: configv1.InfrastructureStatus{
 						ControlPlaneTopology: configv1.HighlyAvailableTopologyMode},
-				}).ConfigV1()},
+				}},
 			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 2, wantErr: false, expectedReplicaCount: 3,
 		},
 
@@ -82,14 +83,14 @@ controlPlane:
 					Spec:   appsv1.DeploymentSpec{},
 					Status: appsv1.DeploymentStatus{},
 				}, &pdb, &clusterConfigFullHA),
-				clientInf: fakeconfig.NewSimpleClientset(&configv1.Infrastructure{
+				infraObj: &configv1.Infrastructure{
 					TypeMeta: metav1.TypeMeta{},
 					ObjectMeta: metav1.ObjectMeta{
 						Name: infrastructureClusterName,
 					},
 					Status: configv1.InfrastructureStatus{
 						ControlPlaneTopology: configv1.HighlyAvailableTopologyMode},
-				}).ConfigV1()},
+				}},
 			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 0, wantErr: false, expectedReplicaCount: 3,
 		},
 
@@ -97,14 +98,14 @@ controlPlane:
 			name: "test ensureEtcdGuard - deployment not exists but pdb exists",
 			fields: fields{
 				client: fakecore.NewSimpleClientset(&clusterConfigFullHA, &pdb),
-				clientInf: fakeconfig.NewSimpleClientset(&configv1.Infrastructure{
+				infraObj: &configv1.Infrastructure{
 					TypeMeta: metav1.TypeMeta{},
 					ObjectMeta: metav1.ObjectMeta{
 						Name: infrastructureClusterName,
 					},
 					Status: configv1.InfrastructureStatus{
 						ControlPlaneTopology: configv1.HighlyAvailableTopologyMode},
-				}).ConfigV1()},
+				}},
 			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 2, wantErr: false, expectedReplicaCount: 3,
 		},
 
@@ -112,14 +113,14 @@ controlPlane:
 			name: "test ensureEtcdGuard - nonHAmod",
 			fields: fields{
 				client: fakecore.NewSimpleClientset(),
-				clientInf: fakeconfig.NewSimpleClientset(&configv1.Infrastructure{
+				infraObj: &configv1.Infrastructure{
 					TypeMeta: metav1.TypeMeta{},
 					ObjectMeta: metav1.ObjectMeta{
 						Name: infrastructureClusterName,
 					},
 					Status: configv1.InfrastructureStatus{
 						ControlPlaneTopology: configv1.SingleReplicaTopologyMode},
-				}).ConfigV1()},
+				}},
 			expectedHATopology: configv1.SingleReplicaTopologyMode, expectedEvents: 0, wantErr: false, expectedReplicaCount: 0,
 		},
 
@@ -127,12 +128,12 @@ controlPlane:
 			name: "test ensureEtcdGuard - ha mod not set, nothing exists",
 			fields: fields{
 				client: fakecore.NewSimpleClientset(&clusterConfigFullHA),
-				clientInf: fakeconfig.NewSimpleClientset(&configv1.Infrastructure{
+				infraObj: &configv1.Infrastructure{
 					TypeMeta: metav1.TypeMeta{},
 					ObjectMeta: metav1.ObjectMeta{
 						Name: infrastructureClusterName,
 					},
-					Status: configv1.InfrastructureStatus{}}).ConfigV1()},
+					Status: configv1.InfrastructureStatus{}}},
 			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 4, wantErr: false, expectedReplicaCount: 3,
 		},
 
@@ -148,12 +149,12 @@ controlPlane:
   hyperthreading: Enabled
   name: master
   replicas: 5`}}),
-				clientInf: fakeconfig.NewSimpleClientset(&configv1.Infrastructure{
+				infraObj: &configv1.Infrastructure{
 					TypeMeta: metav1.TypeMeta{},
 					ObjectMeta: metav1.ObjectMeta{
 						Name: infrastructureClusterName,
 					},
-					Status: configv1.InfrastructureStatus{}}).ConfigV1()},
+					Status: configv1.InfrastructureStatus{}}},
 			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 4, wantErr: false, expectedReplicaCount: 5,
 		},
 
@@ -161,12 +162,12 @@ controlPlane:
 			name: "test ensureEtcdGuard - get clusterConfig not exists",
 			fields: fields{
 				client: fakecore.NewSimpleClientset(),
-				clientInf: fakeconfig.NewSimpleClientset(&configv1.Infrastructure{
+				infraObj: &configv1.Infrastructure{
 					TypeMeta: metav1.TypeMeta{},
 					ObjectMeta: metav1.ObjectMeta{
 						Name: infrastructureClusterName,
 					},
-					Status: configv1.InfrastructureStatus{}}).ConfigV1()},
+					Status: configv1.InfrastructureStatus{}}},
 			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 0, wantErr: true,
 		},
 
@@ -181,21 +182,26 @@ controlPlane:
 controlPlane:
   hyperthreading: Enabled
   name: master`}}),
-				clientInf: fakeconfig.NewSimpleClientset(&configv1.Infrastructure{
+				infraObj: &configv1.Infrastructure{
 					TypeMeta: metav1.TypeMeta{},
 					ObjectMeta: metav1.ObjectMeta{
 						Name: infrastructureClusterName,
 					},
-					Status: configv1.InfrastructureStatus{}}).ConfigV1()},
+					Status: configv1.InfrastructureStatus{}}},
 			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 0, wantErr: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			recorder := events.NewInMemoryRecorder("test")
+
+			if err := fakeInfraIndexer.Add(tt.fields.infraObj); err != nil {
+				t.Fatal(err)
+			}
+
 			c := &QuorumGuardController{
-				kubeClient:  tt.fields.client,
-				infraClient: tt.fields.clientInf,
+				kubeClient:           tt.fields.client,
+				infrastructureLister: configv1listers.NewInfrastructureLister(fakeInfraIndexer),
 			}
 			err := c.ensureEtcdGuard(context.TODO(), recorder)
 			if (err != nil) != tt.wantErr {
