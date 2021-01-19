@@ -103,7 +103,7 @@ func (c *EtcdEndpointsController) syncConfigMap(recorder events.Recorder) error 
 			}
 		}
 	} else if !errors.IsNotFound(err) {
-		return fmt.Errorf("couldn't get configmap %s/%s: %w", operatorclient.TargetNamespace, "etcd-endpoints", err)
+		klog.Warningf("required configmap %s/%s will be created because it was missing: %v", operatorclient.TargetNamespace, "etcd-endpoints", err)
 	}
 
 	// create endpoint addresses for each node
