@@ -85,7 +85,7 @@ X509v3 Subject Key Identifier:
     7E:88:6E:AB:ED:36:42:88:6D:99:BD:3F:C6:53:EB:7C:7B:FB:B6:14
 
 $ oc get -n openshift-config configmap/etcd-serving-ca -o template='{{index .data "ca-bundle.crt"}}'  | openssl x509 -noout -ext subjectKeyIdentifier
-X509v3 Subject Key Identifier 
+X509v3 Subject Key Identifier
     7E:88:6E:AB:ED:36:42:88:6D:99:BD:3F:C6:53:EB:7C:7B:FB:B6:14
 ```
 
@@ -515,7 +515,7 @@ use this list to iterate over all control plane nodes.
 
 This controller watches a [set of config maps and
 secrets](https://github.com/openshift/cluster-etcd-operator/blob/0ecd5d2b72df7648769b8625a35de5e792cf707d/pkg/operator/starter.go#L260-L277)
-for changes. Any change to those resouces constitue a new numbered
+for changes. Any change to those resources constitute a new numbered
 "revision".
 
 When a new revision is detected, copies of all these resources are
@@ -526,7 +526,7 @@ treated as an error.
 The new revision is then recorded in the
 `status.latestAvailableRevision` field and a `revision-$suffix`
 configmap is created to record the status (`In Progress`, `Succeeded`,
-`Failed`) of the installation of this revision.
+`Failed`, `Abandoned`) of the installation of this revision.
 
 ### Installer controller
 
@@ -553,14 +553,14 @@ kubelet to launch this new revision of the pod.
 A separate controller - the backing resource controller - is
 responsible for ensuring the existence of an `installer-sa` service
 account with the `cluster-admin` role. This is the service account
-under which the installer (and prunder) pods runs.
+under which the installer (and pruner) pods runs.
 
 The revisioned resources destined for
 `/etc/kubernetes/static-pod-resources/etcd-pod-$revision` for etcd
 are:
 
 * Config maps
-    - `etc-pod` - the first element in the list has a special meaning
+    - `etcd-pod` - the first element in the list has a special meaning
       it is the static pod itself, and is to be installed in
       `/etc/kubernetes/manifests`.
     - `config` - an `EtcdConfig` file
