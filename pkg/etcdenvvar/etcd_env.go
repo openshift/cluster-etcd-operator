@@ -33,7 +33,7 @@ var FixedEtcdEnvVars = map[string]string{
 	"ETCD_QUOTA_BACKEND_BYTES":   "7516192768", // 7 gig
 	"ETCD_INITIAL_CLUSTER_STATE": "existing",
 	"ETCD_ENABLE_PPROF":          "true",
-	"ETCD_CIPHER_SUITES":         getDefaultCipherSuites(),
+	"GODEBUG":                    "tls13=1",
 }
 
 type envVarFunc func(envVarContext envVarContext) (map[string]string, error)
