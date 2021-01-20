@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ghodss/yaml"
+
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render/options"
 )
 
@@ -487,4 +489,107 @@ type fakeBootstrapIPLocator struct {
 
 func (f *fakeBootstrapIPLocator) getBootstrapIP(ipv6 bool, machineCIDR string, excludedIPs []string) (net.IP, error) {
 	return f.ip, nil
+}
+
+const installConfigSingleStackIPv4 = `
+apiVersion: v1
+metadata:
+  name: my-cluster
+networking:
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  machineCIDR: 10.0.0.0/16
+  machineNetwork:
+  - foo: bar
+    cidr: 10.0.0.0/16
+  networkType: OpenShiftSDN
+  serviceNetwork:
+  - 172.30.0.0/16
+`
+
+const installConfigDualStack = `
+apiVersion: v1
+metadata:
+  name: my-cluster
+networking:
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  machineCIDR: 10.0.0.0/16
+  machineNetwork:
+  - foo: bar
+    cidr: 2620:52:0:1302::/64
+  - cidr: 10.0.0.0/16
+  networkType: OpenShiftSDN
+  serviceNetwork:
+  - 172.30.0.0/16
+`
+
+const installConfigSingleStackIPv6 = `
+apiVersion: v1
+metadata:
+  name: my-cluster
+networking:
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  machineCIDR: 10.0.0.0/16
+  machineNetwork:
+  - foo: bar
+    cidr: 2620:52:0:1302::/64
+  networkType: OpenShiftSDN
+  serviceNetwork:
+  - 172.30.0.0/16
+`
+
+func Test_getMachineCIDR(t *testing.T) {
+	tests := map[string]struct {
+		installConfig     string
+		isSingleStackIPv6 bool
+		expectedCIDR      string
+		expectedErr       error
+	}{
+		"should locate the ipv4 cidr in a single stack ipv4 config": {
+			installConfig:     installConfigSingleStackIPv4,
+			isSingleStackIPv6: false,
+			expectedCIDR:      "10.0.0.0/16",
+			expectedErr:       nil,
+		},
+		"should locate the ipv4 cidr in a dual stack config": {
+			installConfig:     installConfigDualStack,
+			isSingleStackIPv6: false,
+			expectedCIDR:      "10.0.0.0/16",
+			expectedErr:       nil,
+		},
+		"should locate the ipv6 cidr in a single stack ipv6 config": {
+			installConfig:     installConfigSingleStackIPv6,
+			isSingleStackIPv6: true,
+			expectedCIDR:      "2620:52:0:1302::/64",
+			expectedErr:       nil,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			var installConfig map[string]interface{}
+			if err := yaml.Unmarshal([]byte(test.installConfig), &installConfig); err != nil {
+				panic(err)
+			}
+			cidr, err := getMachineCIDR(installConfig, test.isSingleStackIPv6)
+			if err != nil {
+				if test.expectedErr == nil {
+					t.Errorf("unexpected error: %w", err)
+					return
+				}
+			} else {
+				if test.expectedErr != nil {
+					t.Errorf("expected but didn't get an error")
+				}
+			}
+			if cidr != test.expectedCIDR {
+				t.Errorf("expected CIDR %q, got %q", test.expectedCIDR, cidr)
+			}
+		})
+	}
 }
