@@ -19,7 +19,29 @@ import (
 	"k8s.io/client-go/transport"
 )
 
-func getPrometheusClient(ctx context.Context, secretClient coreclientv1.SecretsGetter) (prometheusv1.API, error) {
+func getTransport() (*http.Transport, error) {
+	serviceCABytes, err := ioutil.ReadFile("/var/run/configmaps/etcd-service-ca/service-ca.crt")
+	if err != nil {
+		return nil, err
+	}
+
+	roots := x509.NewCertPool()
+	roots.AppendCertsFromPEM(serviceCABytes)
+
+	return &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout: 10 * time.Second,
+		TLSClientConfig: &tls.Config{
+			RootCAs: roots,
+		},
+	}, nil
+}
+
+func getPrometheusClient(ctx context.Context, secretClient coreclientv1.SecretsGetter, httpTransport *http.Transport) (prometheusv1.API, error) {
 	secrets, err := secretClient.Secrets("openshift-monitoring").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
@@ -37,29 +59,11 @@ func getPrometheusClient(ctx context.Context, secretClient coreclientv1.SecretsG
 		return nil, fmt.Errorf("unable to retrieve prometheus-k8 bearer token")
 	}
 
-	serviceCABytes, err := ioutil.ReadFile("/var/run/configmaps/etcd-service-ca/service-ca.crt")
-	if err != nil {
-		return nil, err
-	}
-
-	roots := x509.NewCertPool()
-	roots.AppendCertsFromPEM(serviceCABytes)
-
 	client, err := prometheusapi.NewClient(prometheusapi.Config{
 		Address: "https://" + net.JoinHostPort("thanos-querier.openshift-monitoring.svc", "9091"),
 		RoundTripper: transport.NewBearerAuthRoundTripper(
 			bearerToken,
-			&http.Transport{
-				Proxy: http.ProxyFromEnvironment,
-				DialContext: (&net.Dialer{
-					Timeout:   30 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-				TLSHandshakeTimeout: 10 * time.Second,
-				TLSClientConfig: &tls.Config{
-					RootCAs: roots,
-				},
-			},
+			httpTransport,
 		),
 	})
 
