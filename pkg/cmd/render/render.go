@@ -447,8 +447,12 @@ func getMachineCIDR(installConfig map[string]interface{}, isSingleStackIPv6 bool
 		return "", fmt.Errorf("unrecognized data structure in networking field")
 	}
 
-	for _, network := range networking["machineNetwork"].([]interface{})[0].(map[string]interface{}) {
-		machineCIDR := fmt.Sprintf("%v", network)
+	for _, machineNetwork := range networking["machineNetwork"].([]interface{}) {
+		network := machineNetwork.(map[string]interface{})
+		machineCIDR := fmt.Sprintf("%v", network["cidr"])
+		if len(machineCIDR) == 0 {
+			return "", fmt.Errorf("malformed machineNetwork entry is missing the cidr field: %#v", network)
+		}
 		broadcast, _, err := net.ParseCIDR(machineCIDR)
 		if err != nil {
 			return "", err
