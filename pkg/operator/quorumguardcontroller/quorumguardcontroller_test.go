@@ -4,8 +4,10 @@ import (
 	"context"
 	configv1 "github.com/openshift/api/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1beta1 "k8s.io/api/policy/v1beta1"
@@ -34,6 +36,8 @@ controlPlane:
 			Namespace: operatorclient.TargetNamespace,
 		},
 	}
+
+	deployment := resourceread.ReadDeploymentV1OrDie(etcd_assets.MustAsset("etcd/quorumguard-deployment.yaml"))
 	fakeInfraIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 
 	type fields struct {
@@ -51,15 +55,7 @@ controlPlane:
 		{
 			name: "test ensureEtcdGuard - deployment exists but pdb not ",
 			fields: fields{
-				client: fakecore.NewSimpleClientset(&appsv1.Deployment{
-					TypeMeta: metav1.TypeMeta{},
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      EtcdGuardDeploymentName,
-						Namespace: operatorclient.TargetNamespace,
-					},
-					Spec:   appsv1.DeploymentSpec{},
-					Status: appsv1.DeploymentStatus{},
-				}, &clusterConfigFullHA),
+				client: fakecore.NewSimpleClientset(deployment, &clusterConfigFullHA),
 				infraObj: &configv1.Infrastructure{
 					TypeMeta: metav1.TypeMeta{},
 					ObjectMeta: metav1.ObjectMeta{

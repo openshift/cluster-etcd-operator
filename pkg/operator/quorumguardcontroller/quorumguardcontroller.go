@@ -5,13 +5,13 @@ import (
 	"fmt"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"gopkg.in/yaml.v2"
+	appsv1 "k8s.io/api/apps/v1"
 	policyv1beta1 "k8s.io/api/policy/v1beta1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"strconv"
 	"time"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
-	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -21,10 +21,10 @@ import (
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 
+	"github.com/openshift/cluster-etcd-operator/lib/resourceapply"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
@@ -53,6 +53,7 @@ type QuorumGuardController struct {
 	infrastructureLister configv1listers.InfrastructureLister
 	clusterTopology      configv1.TopologyMode
 	replicaCount         int
+	etcdQuorumGuard      *appsv1.Deployment
 }
 
 func NewQuorumGuardController(
@@ -74,24 +75,27 @@ func NewQuorumGuardController(
 		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer(),
 		kubeInformers.InformersFor("").Core().V1().Nodes().Informer(),
 		operatorClient.Informer(),
-	).WithSync(c.sync).ResyncEvery(time.Minute).ToController("QuorumGuardController", eventRecorder.WithComponentSuffix("quorum-guard-controller"))
+	).WithSync(c.sync).ResyncEvery(10*time.Minute).ToController("QuorumGuardController", eventRecorder.WithComponentSuffix("quorum-guard-controller"))
 }
 
-func (c *QuorumGuardController) isInHATopologyMode() (bool, error) {
-	// update once
+func (c *QuorumGuardController) getTopologyMode() (configv1.TopologyMode, error) {
+	// right now cluster topology cannot change, infrastructure cr is immutable,
+	// so we set it once in order not to run api call each time
 	if c.clusterTopology != "" {
-		return c.clusterTopology == configv1.HighlyAvailableTopologyMode, nil
+		klog.V(4).Infof("HA mode is: %s", c.clusterTopology)
+		return c.clusterTopology, nil
 	}
 
 	var err error
 	c.clusterTopology, err = ceohelpers.GetControlPlaneTopology(c.infrastructureLister)
 	if err != nil {
-		return false, err
+		klog.Errorf("Failed to get topology mode %w ", err)
+		return "", err
 	}
 
 	klog.Infof("HA mode is: %s", c.clusterTopology)
 
-	return c.clusterTopology == configv1.HighlyAvailableTopologyMode, nil
+	return c.clusterTopology, nil
 }
 
 func (c *QuorumGuardController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
@@ -119,12 +123,12 @@ func (c *QuorumGuardController) sync(ctx context.Context, syncCtx factory.SyncCo
 }
 
 func (c *QuorumGuardController) ensureEtcdGuard(ctx context.Context, recorder events.Recorder) error {
-	haTopologyMode, err := c.isInHATopologyMode()
+	haTopologyMode, err := c.getTopologyMode()
 	if err != nil {
-		klog.Infof("Failed to validate ha mode %v ", err)
 		return err
 	}
-	if !haTopologyMode {
+
+	if haTopologyMode != configv1.HighlyAvailableTopologyMode {
 		return nil
 	}
 
@@ -137,71 +141,49 @@ func (c *QuorumGuardController) ensureEtcdGuard(ctx context.Context, recorder ev
 		return err
 	}
 
-	if err := c.ensureEtcdGuardPdbDeployment(ctx, recorder); err != nil {
+	if err := c.ensureEtcdGuardPdb(ctx, recorder); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-// ensureEtcdGuardDeployment if etcd quorum guard deployment doesn't exist - add it, else skip
+// ensureEtcdGuardDeployment if etcd quorum guard deployment doesn't exist or was changed - apply it
 func (c *QuorumGuardController) ensureEtcdGuardDeployment(ctx context.Context, replicaCount int32, recorder events.Recorder) error {
-	_, err := c.kubeClient.AppsV1().Deployments(operatorclient.TargetNamespace).Get(ctx,
-		EtcdGuardDeploymentName, metav1.GetOptions{})
-	switch {
-	case apierrors.IsNotFound(err):
-		recorder.Eventf("NoEtcdQuorumGuardDeployment", "%s was not found, creating one", EtcdGuardDeploymentName)
-		return c.applyDeployment(replicaCount, recorder)
-	case err != nil:
-		klog.Warningf("failed to get %s deployment err %v", EtcdGuardDeploymentName, err.Error())
-		return err
-	default:
-		return nil
+
+	if c.etcdQuorumGuard == nil {
+		c.etcdQuorumGuard = resourceread.ReadDeploymentV1OrDie(etcd_assets.MustAsset("etcd/quorumguard-deployment.yaml"))
 	}
-}
+	c.etcdQuorumGuard.Spec.Replicas = &replicaCount
 
-// ensureEtcdGuardDeployment if etcd quorum guard pdb deployment doesn't exist - add it, else skip
-func (c *QuorumGuardController) ensureEtcdGuardPdbDeployment(ctx context.Context, recorder events.Recorder) error {
-	_, err := c.kubeClient.PolicyV1beta1().PodDisruptionBudgets(operatorclient.TargetNamespace).Get(ctx,
-		EtcdGuardDeploymentName, metav1.GetOptions{})
-	switch {
-	case apierrors.IsNotFound(err):
-		recorder.Eventf("NoEtcdQuorumGuardPDBDeployment", "%s was not found, creating one", EtcdGuardDeploymentName)
-		return c.applyPdbDeployment(ctx, recorder)
-	case err != nil:
-		klog.Warningf("failed to get %s deployment err %v", EtcdGuardDeploymentName, err.Error())
-		return err
-	default:
-		return nil
-	}
-}
-
-// applyDeployment applies new etcd quorum guard deployment
-func (c *QuorumGuardController) applyDeployment(replicaCount int32, recorder events.Recorder) error {
-	klog.Infof("Going to create new %s deployment with replica count %d", EtcdGuardDeploymentName, replicaCount)
-
-	deployment := resourceread.ReadDeploymentV1OrDie(etcd_assets.MustAsset("etcd/quorumguard-deployment.yaml"))
-	deployment.Spec.Replicas = &replicaCount
-	newDeployment, _, err := resourceapply.ApplyDeployment(c.kubeClient.AppsV1(), recorder, deployment, -1)
+	// if restart occurred, we will apply etcd guard deployment but if it is the same, nothing will happened
+	actual, modified, err := resourceapply.ApplyDeploymentv1(ctx, c.kubeClient.AppsV1(), c.etcdQuorumGuard)
 	if err != nil {
-		klog.Errorf("Failed to deploy %s, error: %v", deployment.Name, err)
+		klog.Errorf("Failed to verify/apply %s, error %w", EtcdGuardDeploymentName, err)
 		return err
 	}
 
-	klog.Infof("New etcd quorum guard deployment is %s", newDeployment.Name)
-	return err
+	// if deployment was modified need to save spec from modified one
+	// cause there are some fields added on creation or apply, for example permissions on volumes
+	// and we want to save them to be able to verify that deployment was not changed
+	if modified {
+		c.etcdQuorumGuard.Spec = actual.Spec
+		msg := fmt.Sprintf("%s was modified", EtcdGuardDeploymentName)
+		klog.Infof("%s was modified", EtcdGuardDeploymentName)
+		recorder.Event("ModifiedEtcdGuardDeployment", msg)
+	}
+
+	return nil
 }
 
-// applyPdbDeployment applies new etcd quorum guard pdb
-func (c *QuorumGuardController) applyPdbDeployment(ctx context.Context, recorder events.Recorder) error {
-	klog.Infof("Creating new PDB %q", EtcdGuardDeploymentName)
+// ensureEtcdGuardPdb if etcd quorum guard pdb doesn't exist or ws changed, apply one
+func (c *QuorumGuardController) ensureEtcdGuardPdb(ctx context.Context, recorder events.Recorder) error {
 	maxUnavailable := intstr.FromInt(pdbDeploymentMaxUnavailableDefault)
+
 	pdb := &policyv1beta1.PodDisruptionBudget{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      EtcdGuardDeploymentName,
 			Namespace: operatorclient.TargetNamespace,
-			Annotations: map[string]string{"include.release.openshift.io/self-managed-high-availability": "true",
-				"include.release.openshift.io/single-node-developer": "true"},
 		},
 		Spec: policyv1beta1.PodDisruptionBudgetSpec{
 			MaxUnavailable: &maxUnavailable,
@@ -209,17 +191,24 @@ func (c *QuorumGuardController) applyPdbDeployment(ctx context.Context, recorder
 		},
 	}
 
-	if _, err := c.kubeClient.PolicyV1beta1().PodDisruptionBudgets(operatorclient.TargetNamespace).Create(ctx, pdb, metav1.CreateOptions{}); err != nil {
-		klog.Errorf("Failed to deploy %s, error: %v", pdb.Name, err)
+	// if restart occurred, we will apply pdb but if it is the same, nothing will happened
+	_, modified, err := resourceapply.ApplyPodDisruptionBudgets(ctx, c.kubeClient.PolicyV1beta1(), pdb)
+	if err != nil {
+		klog.Errorf("Failed to verify/apply %s pdb, error %w", EtcdGuardDeploymentName, err)
 		return err
 	}
 
-	klog.Infof("New etcd quorum guard pdb deployment is %s", pdb.Name)
-	recorder.Eventf("CreatedEtcdGuardPDBDeployment", "%s was created", EtcdGuardDeploymentName)
+	// if PDB was modified log and event it
+	if modified {
+		msg := fmt.Sprintf("%s pdb was modified", EtcdGuardDeploymentName)
+		klog.Info(msg)
+		recorder.Event("ModifiedEtcdGuardPdb", msg)
+	}
+
 	return nil
 }
 
-// Get number of expected masters
+// getMastersReplicaCount get number of expected masters
 func (c *QuorumGuardController) getMastersReplicaCount(ctx context.Context) (int32, error) {
 	if c.replicaCount != 0 {
 		return int32(c.replicaCount), nil
@@ -228,7 +217,7 @@ func (c *QuorumGuardController) getMastersReplicaCount(ctx context.Context) (int
 	klog.Infof("Getting number of expected masters from %s", clusterConfigName)
 	clusterConfig, err := c.kubeClient.CoreV1().ConfigMaps(clusterConfigNamespace).Get(ctx, clusterConfigName, metav1.GetOptions{})
 	if err != nil {
-		klog.Errorf("Failed to get ConfigMap %s, err %v", clusterConfigName, err)
+		klog.Errorf("Failed to get ConfigMap %s, err %w", clusterConfigName, err)
 		return 0, err
 	}
 
