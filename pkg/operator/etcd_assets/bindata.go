@@ -505,7 +505,7 @@ spec:
       resources:
         requests:
           memory: 60Mi
-          cpu: 30m
+          cpu: 10m
       securityContext:
         privileged: true
       env:
@@ -531,7 +531,7 @@ ${COMPUTED_ENV_VARS}
       resources:
         requests:
           memory: 60Mi
-          cpu: 30m
+          cpu: 10m
       securityContext:
         privileged: true
       volumeMounts:
@@ -555,7 +555,7 @@ ${COMPUTED_ENV_VARS}
     resources:
       requests:
         memory: 60Mi
-        cpu: 30m
+        cpu: 10m
     volumeMounts:
       - mountPath: /etc/kubernetes/manifests
         name: static-pod-dir
@@ -672,7 +672,7 @@ ${COMPUTED_ENV_VARS}
     resources:
       requests:
         memory: 200Mi
-        cpu: 100m
+        cpu: 40m
     securityContext:
       privileged: true
     volumeMounts:
