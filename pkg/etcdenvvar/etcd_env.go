@@ -9,9 +9,13 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/library-go/pkg/crypto"
+	"go.etcd.io/etcd/pkg/tlsutil"
 	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/klog/v2"
 )
 
 type envVarContext struct {
@@ -30,6 +34,7 @@ var FixedEtcdEnvVars = map[string]string{
 	"ETCD_QUOTA_BACKEND_BYTES":   "7516192768", // 7 gig
 	"ETCD_INITIAL_CLUSTER_STATE": "existing",
 	"ETCD_ENABLE_PPROF":          "true",
+	"ETCD_CIPHER_SUITES":         getDefaultCipherSuites(),
 }
 
 type envVarFunc func(envVarContext envVarContext) (map[string]string, error)
@@ -272,4 +277,28 @@ func getUnsupportedArch(envVarContext envVarContext) (map[string]string, error) 
 	return map[string]string{
 		"ETCD_UNSUPPORTED_ARCH": arch,
 	}, nil
+}
+
+//TODO replace with TLS security policy observer
+func getDefaultCipherSuites() string {
+	profileSpec := configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
+	// whitelist ciphers for use with etcd
+	cipherSuites := whitelistEtcdCipherSuites(crypto.OpenSSLToIANACipherSuites(profileSpec.Ciphers))
+	return strings.Join(cipherSuites, ",")
+}
+
+// whitelistEtcdCipherSuites ensures ciphers are valid for use with etcd.
+// TODO move upstream
+func whitelistEtcdCipherSuites(cipherSuites []string) []string {
+	whitelist := []string{}
+	for _, cipher := range cipherSuites {
+		_, ok := tlsutil.GetCipherSuite(cipher)
+		if !ok {
+			// skip and log unsupported ciphers
+			klog.Warningf("cipher is not supported for use with etcd: %q", cipher)
+			continue
+		}
+		whitelist = append(whitelist, cipher)
+	}
+	return whitelist
 }
