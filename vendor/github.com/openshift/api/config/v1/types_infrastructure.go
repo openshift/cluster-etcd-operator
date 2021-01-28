@@ -78,16 +78,18 @@ type InfrastructureStatus struct {
 	// infrastructure provider rather than Kubernetes networking.
 	APIServerInternalURL string `json:"apiServerInternalURI"`
 
-	// ControlPlaneTopology expresses the expectations for operands that normally run on control nodes.
+	// controlPlaneTopology expresses the expectations for operands that normally run on control nodes.
 	// The default is 'HighlyAvailable', which represents the behavior operators have in a "normal" cluster.
-	// The 'SingleReplica' mode will be used in single-node deployments (developer and production) for example,
+	// The 'SingleReplica' mode will be used in single-node deployments
 	// and the operators should not configure the operand for highly-available operation
 	// +kubebuilder:default=HighlyAvailable
 	ControlPlaneTopology TopologyMode `json:"controlPlaneTopology"`
 
-	// InfrastructureTopology expresses the expectations for operands that normally run on infrastructure nodes.
+	// infrastructureTopology expresses the expectations for infrastructure services that do not run on control
+	// plane nodes, usually indicated by a node selector for a `role` value
+	// other than `master`.
 	// The default is 'HighlyAvailable', which represents the behavior operators have in a "normal" cluster.
-	// The 'SingleReplica' mode will be used in single-node deployments (developer and production) for example,
+	// The 'SingleReplica' mode will be used in single-node deployments
 	// and the operators should not configure the operand for highly-available operation
 	// +kubebuilder:default=HighlyAvailable
 	InfrastructureTopology TopologyMode `json:"infrastructureTopology"`
