@@ -76,7 +76,7 @@ func getClusterVersionAndUpgradeInfo(cli *clientv3.Client) (string, bool, error)
 }
 
 func checkLeadership(name string) (bool, error) {
-	cli, err := getEtcdClient([]string{"localhost:2379"})
+	cli, err := getEtcdClient([]string{"https://localhost:2379"})
 	if err != nil {
 		return false, fmt.Errorf("checkLeadership: failed to get etcd client: %w", err)
 	}
