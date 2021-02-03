@@ -122,15 +122,9 @@ func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
 	r.manifest.AddFlags(fs, "etcd")
 	r.generic.AddFlags(fs)
 
-	// TODO: update bootkube.sh in the installer and then remove this
-	var deprecatedClusterEtcdOperatorImage string
-
 	fs.StringVar(&r.etcdCAFile, "etcd-ca", "/assets/tls/etcd-ca-bundle.crt", "path to etcd CA certificate")
 	fs.StringVar(&r.etcdCAKeyFile, "etcd-ca-key", "/assets/tls/etcd-signer.key", "path to etcd CA certificate key")
 	fs.StringVar(&r.etcdImage, "manifest-etcd-image", r.etcdImage, "etcd manifest image")
-	fs.StringVar(&deprecatedClusterEtcdOperatorImage, "manifest-cluster-etcd-operator-image", "", "deprecated, unused")
-	// TODO: Remove this after updating bootkube.sh in the installer.
-	fs.StringVar(&r.networkConfigFile, "cluster-config-file", r.networkConfigFile, "(deprecated) File containing the network.config.openshift.io manifest.")
 	fs.StringVar(&r.networkConfigFile, "network-config-file", r.networkConfigFile, "File containing the network.config.openshift.io manifest.")
 	fs.StringVar(&r.clusterConfigMapFile, "cluster-configmap-file", "/assets/manifests/cluster-config.yaml", "File containing the cluster-config-v1 configmap.")
 	fs.StringVar(&r.infraConfigFile, "infra-config-file", "/assets/manifests/cluster-infrastructure-02-config.yml", "File containing infrastructure.config.openshift.io manifest.")
