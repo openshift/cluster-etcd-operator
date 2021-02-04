@@ -1,6 +1,8 @@
 package ceohelpers
 
 import (
+	"fmt"
+
 	configv1 "github.com/openshift/api/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"k8s.io/klog/v2"
@@ -13,6 +15,9 @@ func GetControlPlaneTopology(infraLister configv1listers.InfrastructureLister) (
 	if err != nil {
 		klog.Warningf("Failed to get infrastructure resource %s", infrastructureClusterName)
 		return "", err
+	}
+	if infraData.Status.ControlPlaneTopology == "" {
+		return "", fmt.Errorf("ControlPlaneTopology was not set")
 	}
 
 	return infraData.Status.ControlPlaneTopology, nil
