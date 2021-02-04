@@ -2,18 +2,18 @@ package ceohelpers
 
 import (
 	"fmt"
-	configv1 "github.com/openshift/api/config/v1"
-	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+
 	"testing"
 
+	configv1 "github.com/openshift/api/config/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
-
-	operatorv1 "github.com/openshift/api/operator/v1"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )

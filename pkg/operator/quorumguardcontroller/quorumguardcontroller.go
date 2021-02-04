@@ -3,29 +3,29 @@ package quorumguardcontroller
 import (
 	"context"
 	"fmt"
-	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
-	"gopkg.in/yaml.v2"
-	appsv1 "k8s.io/api/apps/v1"
-	policyv1beta1 "k8s.io/api/policy/v1beta1"
-	"k8s.io/apimachinery/pkg/util/intstr"
+	"github.com/ghodss/yaml"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"strconv"
 	"time"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
-	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	appsv1 "k8s.io/api/apps/v1"
+	policyv1beta1 "k8s.io/api/policy/v1beta1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/lib/resourceapply"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
@@ -71,11 +71,11 @@ func NewQuorumGuardController(
 		infrastructureLister: infrastructureLister,
 		replicaCount:         0,
 	}
-	return factory.New().ResyncEvery(time.Minute).WithInformers(
+	return factory.New().ResyncEvery(10*time.Minute).WithInformers(
 		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer(),
 		kubeInformers.InformersFor("").Core().V1().Nodes().Informer(),
 		operatorClient.Informer(),
-	).WithSync(c.sync).ResyncEvery(10*time.Minute).ToController("QuorumGuardController", eventRecorder.WithComponentSuffix("quorum-guard-controller"))
+	).WithSync(c.sync).ToController("QuorumGuardController", eventRecorder.WithComponentSuffix("quorum-guard-controller"))
 }
 
 func (c *QuorumGuardController) getTopologyMode() (configv1.TopologyMode, error) {
@@ -163,20 +163,49 @@ func (c *QuorumGuardController) ensureEtcdGuardDeployment(ctx context.Context, r
 		return err
 	}
 
-	// if deployment was modified need to save spec from modified one
+	// if deployment was modified and is not managed by cvo need to save spec from modified one
 	// cause there are some fields added on creation or apply, for example permissions on volumes
 	// and we want to save them to be able to verify that deployment was not changed
-	if modified {
+	// if managed by cvo, delete it
+	if modified && !c.findAndDeleteCVOManagedQuorumGuardDeployment(ctx, actual, recorder) {
 		c.etcdQuorumGuard.Spec = actual.Spec
 		msg := fmt.Sprintf("%s was modified", EtcdGuardDeploymentName)
-		klog.Infof("%s was modified", EtcdGuardDeploymentName)
-		recorder.Event("ModifiedEtcdGuardDeployment", msg)
+		klog.Infof(msg)
+		recorder.Event("ModifiedQuorumGuardDeployment", msg)
 	}
 
 	return nil
 }
 
-// ensureEtcdGuardPdb if etcd quorum guard pdb doesn't exist or ws changed, apply one
+// deleteCVOManagedQuorumGuardDeployment delete quorumGuard deployment if it is managed by cvo
+// TODO delete after 4.8
+func (c *QuorumGuardController) findAndDeleteCVOManagedQuorumGuardDeployment(ctx context.Context, quorumGuard *appsv1.Deployment, recorder events.Recorder) bool {
+
+	deleteDeployment := func() {
+		if quorumGuard.ObjectMeta.DeletionTimestamp != nil {
+			return
+		}
+
+		klog.Warningf("Deleting cvo-managed etcd quorum guard pdb")
+		err := c.kubeClient.AppsV1().Deployments(operatorclient.TargetNamespace).Delete(ctx, quorumGuard.Name, metav1.DeleteOptions{})
+		if err != nil && !errors.IsNotFound(err) {
+			klog.Warningf("Failed to delete cvo-managed quorum guard pdb: %v", err)
+			return
+		}
+		recorder.Event("CvoManagedQuorumGuardPdbRemoved", "cvo-managed quorum guard pdb has been removed")
+		return
+	}
+
+	for _, managedField := range quorumGuard.ManagedFields {
+		if managedField.Manager == "cluster-version-operator" {
+			deleteDeployment()
+			return true
+		}
+	}
+	return false
+}
+
+// ensureEtcdGuardPdb if etcd quorum guard PDB doesn't exist or ws changed, apply one
 func (c *QuorumGuardController) ensureEtcdGuardPdb(ctx context.Context, recorder events.Recorder) error {
 	maxUnavailable := intstr.FromInt(pdbDeploymentMaxUnavailableDefault)
 
@@ -191,21 +220,50 @@ func (c *QuorumGuardController) ensureEtcdGuardPdb(ctx context.Context, recorder
 		},
 	}
 
-	// if restart occurred, we will apply pdb but if it is the same, nothing will happened
-	_, modified, err := resourceapply.ApplyPodDisruptionBudgets(ctx, c.kubeClient.PolicyV1beta1(), pdb)
+	// if restart occurred, we will apply PDB but if it is the same, nothing will happened
+	actual, modified, err := resourceapply.ApplyPodDisruptionBudgets(ctx, c.kubeClient.PolicyV1beta1(), pdb)
 	if err != nil {
 		klog.Errorf("Failed to verify/apply %s pdb, error %w", EtcdGuardDeploymentName, err)
 		return err
 	}
 
-	// if PDB was modified log and event it
-	if modified {
+	// if PDB was modified and is not managed by cvo log and event it
+	// if managed by cvo, delete it
+	if modified && !c.findAndDeleteCVOManagedQuorumGuardPDB(ctx, actual, recorder) {
 		msg := fmt.Sprintf("%s pdb was modified", EtcdGuardDeploymentName)
 		klog.Info(msg)
-		recorder.Event("ModifiedEtcdGuardPdb", msg)
+		recorder.Event("ModifiedQuorumGuardPdb", msg)
 	}
 
 	return nil
+}
+
+// deleteCVOManagedQuorumGuardPDB delete quorumGuard PDB if it is managed by cvo
+// TODO delete after 4.8
+func (c *QuorumGuardController) findAndDeleteCVOManagedQuorumGuardPDB(ctx context.Context, quorumGuardPdb *policyv1beta1.PodDisruptionBudget, recorder events.Recorder) bool {
+
+	deletePdb := func() {
+		if quorumGuardPdb.ObjectMeta.DeletionTimestamp != nil {
+			return
+		}
+
+		klog.Warningf("Deleting cvo-managed etcd quorum guard pdb")
+		err := c.kubeClient.PolicyV1beta1().PodDisruptionBudgets(operatorclient.TargetNamespace).Delete(ctx, quorumGuardPdb.Name, metav1.DeleteOptions{})
+		if err != nil && !errors.IsNotFound(err) {
+			klog.Warningf("Failed to delete cvo-managed quorum guard pdb: %v", err)
+			return
+		}
+		recorder.Event("CvoManagedQuorumGuardPdbRemoved", "cvo-managed quorum guard pdb has been removed")
+		return
+	}
+
+	for _, managedField := range quorumGuardPdb.ManagedFields {
+		if managedField.Manager == "cluster-version-operator" {
+			deletePdb()
+			return true
+		}
+	}
+	return false
 }
 
 // getMastersReplicaCount get number of expected masters
@@ -223,14 +281,14 @@ func (c *QuorumGuardController) getMastersReplicaCount(ctx context.Context) (int
 
 	rcD := replicaCountDecoder{}
 	if err := yaml.Unmarshal([]byte(clusterConfig.Data[clusterConfigKey]), &rcD); err != nil {
-		err := fmt.Errorf("%s key doesn't exist in ConfigMap %s", clusterConfigKey, clusterConfigName)
+		err := fmt.Errorf("%s key doesn't exist in configmap/%s, err %w", clusterConfigKey, clusterConfigName, err)
 		klog.Error(err)
 		return 0, err
 	}
 
 	c.replicaCount, err = strconv.Atoi(rcD.ControlPlane.Replicas)
 	if err != nil {
-		klog.Errorf("failed to convert replica %s, err %v", rcD.ControlPlane.Replicas, err)
+		klog.Errorf("failed to convert replica %s, err %w", rcD.ControlPlane.Replicas, err)
 		return 0, err
 	}
 	return int32(c.replicaCount), nil

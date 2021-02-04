@@ -2,8 +2,8 @@ package ceohelpers
 
 import (
 	"fmt"
-	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"k8s.io/apimachinery/pkg/api/errors"
 	corev1listers "k8s.io/client-go/listers/core/v1"

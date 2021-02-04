@@ -2,12 +2,10 @@ package quorumguardcontroller
 
 import (
 	"context"
+	"testing"
+
 	configv1 "github.com/openshift/api/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1beta1 "k8s.io/api/policy/v1beta1"
@@ -15,7 +13,12 @@ import (
 	"k8s.io/client-go/kubernetes"
 	fakecore "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
-	"testing"
+
+	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
 func TestQuorumGuardController_ensureEtcdGuard(t *testing.T) {

@@ -2,19 +2,8 @@ package operator
 
 import (
 	"context"
-	"k8s.io/api/policy/v1beta1"
 	"os"
 	"time"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/quorumguardcontroller"
-	"github.com/openshift/library-go/pkg/operator/events"
-	v1 "k8s.io/api/apps/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/klog/v2"
-
-	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -32,6 +21,9 @@ import (
 	"github.com/openshift/library-go/pkg/operator/status"
 	"github.com/openshift/library-go/pkg/operator/unsupportedconfigoverridescontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
@@ -44,6 +36,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdmemberscontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/metriccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/quorumguardcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
@@ -254,9 +247,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	configInformers.Start(ctx.Done())
 	dynamicInformers.Start(ctx.Done())
 
-	ensureCVOEtcQuorumGuardCleanup(ctx, kubeClient, controllerContext.EventRecorder)
-	ensureCVOEtcQuorumGuardPDBCleanup(ctx, kubeClient, controllerContext.EventRecorder)
-
 	go staleConditions.Run(ctx, 1)
 	go fsyncMetricController.Run(ctx, 1)
 	go staticResourceController.Run(ctx, 1)
@@ -313,86 +303,4 @@ var CertSecrets = []revision.RevisionResource{
 	{Name: "etcd-all-peer"},
 	{Name: "etcd-all-serving"},
 	{Name: "etcd-all-serving-metrics"},
-}
-
-// ensureCVOEtcQuorumGuardCleanup continually ensures the removal of the cvo-managed etcd quorum guard
-func ensureCVOEtcQuorumGuardCleanup(ctx context.Context, kubeClient *kubernetes.Clientset, eventRecorder events.Recorder) {
-
-	etcdClient := kubeClient.AppsV1().Deployments(operatorclient.TargetNamespace)
-
-	deleteQuorumGuard := func(quorumGuard *v1.Deployment) {
-		if quorumGuard.ObjectMeta.DeletionTimestamp != nil {
-			return
-		}
-
-		klog.Warningf("Deleting cvo-managed etcd quorum guard")
-		err := etcdClient.Delete(ctx, quorumGuard.Name, metav1.DeleteOptions{})
-		if err != nil && !errors.IsNotFound(err) {
-			klog.Warningf("Failed to delete cvo-managed etcd quorum guard: %v", err)
-			return
-		}
-		eventRecorder.Event("CvoManagedEtcdQuorumGuardRemoved", "cvo-managed etcd quorum guard has been removed")
-	}
-
-	go wait.UntilWithContext(ctx, func(_ context.Context) {
-		// Check whether the cvo-managed etcd quorum guard exists and is not marked for deletion
-		quorumGuard, err := etcdClient.Get(ctx, quorumguardcontroller.EtcdGuardDeploymentName, metav1.GetOptions{})
-		if errors.IsNotFound(err) {
-			// Done
-			return
-		}
-		if err != nil {
-			klog.Warningf("Error retrieving cvo-managed etcd quorum guard: %v", err)
-			return
-		}
-
-		// delete quorumGuard deployment if it is managed by cvo
-		for _, managedField := range quorumGuard.ManagedFields {
-			if managedField.Manager == "cluster-version-operator" {
-				deleteQuorumGuard(quorumGuard)
-				return
-			}
-		}
-	}, time.Minute)
-}
-
-// ensureCVOEtcQuorumGuardPDBCleanup continually ensures the removal of the cvo-managed etcd quorum guard
-func ensureCVOEtcQuorumGuardPDBCleanup(ctx context.Context, kubeClient *kubernetes.Clientset, eventRecorder events.Recorder) {
-
-	etcdClient := kubeClient.PolicyV1beta1().PodDisruptionBudgets(operatorclient.TargetNamespace)
-
-	deleteQuorumGuardPDB := func(quorumGuardPdb *v1beta1.PodDisruptionBudget) {
-		if quorumGuardPdb.ObjectMeta.DeletionTimestamp != nil {
-			return
-		}
-
-		klog.Warningf("Deleting cvo-managed etcd quorum guard pdb")
-		err := etcdClient.Delete(ctx, quorumGuardPdb.Name, metav1.DeleteOptions{})
-		if err != nil && !errors.IsNotFound(err) {
-			klog.Warningf("Failed to delete cvo-managed etcd quorum guard pdb: %v", err)
-			return
-		}
-		eventRecorder.Event("CvoManagedEtcdQuorumGuardPdbRemoved", "cvo-managed etcd quorum guard pdb has been removed")
-	}
-
-	go wait.UntilWithContext(ctx, func(_ context.Context) {
-		// Check whether the cvo-managed etcd quorum guard pdb exists and is not marked for deletion
-		quorumGuard, err := etcdClient.Get(ctx, quorumguardcontroller.EtcdGuardDeploymentName, metav1.GetOptions{})
-		if errors.IsNotFound(err) {
-			// Done
-			return
-		}
-		if err != nil {
-			klog.Warningf("Error retrieving cvo-managed etcd quorum guard pdb: %v", err)
-			return
-		}
-
-		// delete quorumGuard deployment if it is managed by cvo
-		for _, managedField := range quorumGuard.ManagedFields {
-			if managedField.Manager == "cluster-version-operator" {
-				deleteQuorumGuardPDB(quorumGuard)
-				return
-			}
-		}
-	}, time.Minute)
 }

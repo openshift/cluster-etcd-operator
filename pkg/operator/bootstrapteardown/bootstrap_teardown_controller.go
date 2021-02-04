@@ -3,16 +3,15 @@ package bootstrapteardown
 import (
 	"context"
 	"fmt"
-	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"time"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	corev1listers "k8s.io/client-go/listers/core/v1"
-
 	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
@@ -32,7 +31,6 @@ func NewBootstrapTeardownController(
 	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
 	infrastructureLister configv1listers.InfrastructureLister,
-
 ) factory.Controller {
 	c := &BootstrapTeardownController{
 		operatorClient:       operatorClient,

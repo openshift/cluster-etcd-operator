@@ -23,7 +23,6 @@ require (
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200910180754-dd1b699fc489
 	golang.org/x/sys v0.0.0-20201112073958-5cba982894dd
 	google.golang.org/grpc v1.29.1
-	gopkg.in/yaml.v2 v2.3.0
 	k8s.io/api v0.20.1
 	k8s.io/apiextensions-apiserver v0.20.1
 	k8s.io/apimachinery v0.20.1
