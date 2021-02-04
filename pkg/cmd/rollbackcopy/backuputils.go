@@ -38,7 +38,7 @@ func archiveLatestResources(configDir, backupFile string) error {
 }
 
 func backup(configDir string) error {
-	cli, err := getEtcdClient([]string{"localhost:2379"})
+	cli, err := getEtcdClient([]string{"https://localhost:2379"})
 	if err != nil {
 		return fmt.Errorf("backup: failed to get etcd client: %w", err)
 	}
