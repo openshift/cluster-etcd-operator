@@ -2,11 +2,13 @@ package quorumguardcontroller
 
 import (
 	"context"
+	"k8s.io/utils/pointer"
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
-	appsv1 "k8s.io/api/apps/v1"
+	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	corev1 "k8s.io/api/core/v1"
 	policyv1beta1 "k8s.io/api/policy/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,11 +16,7 @@ import (
 	fakecore "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
-
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
 func TestQuorumGuardController_ensureEtcdGuard(t *testing.T) {
@@ -32,16 +30,22 @@ controlPlane:
   name: master
   replicas: 3`}}
 
-	pdb := policyv1beta1.PodDisruptionBudget{
+	changedPDB := &policyv1beta1.PodDisruptionBudget{}
+	*changedPDB = *pdb
+	changedPDB.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"k8s-changed": EtcdGuardDeploymentName}}
+	deployment := resourceread.ReadDeploymentV1OrDie(etcd_assets.MustAsset("etcd/quorumguard-deployment.yaml"))
+	changedDeployment := resourceread.ReadDeploymentV1OrDie(etcd_assets.MustAsset("etcd/quorumguard-deployment.yaml"))
+	changedDeployment.Spec.Replicas = pointer.Int32Ptr(1)
+
+	fakeInfraIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	haInfra := &configv1.Infrastructure{
 		TypeMeta: metav1.TypeMeta{},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      EtcdGuardDeploymentName,
-			Namespace: operatorclient.TargetNamespace,
+			Name: infrastructureClusterName,
 		},
+		Status: configv1.InfrastructureStatus{
+			ControlPlaneTopology: configv1.HighlyAvailableTopologyMode},
 	}
-
-	deployment := resourceread.ReadDeploymentV1OrDie(etcd_assets.MustAsset("etcd/quorumguard-deployment.yaml"))
-	fakeInfraIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 
 	type fields struct {
 		client   kubernetes.Interface
@@ -58,56 +62,46 @@ controlPlane:
 		{
 			name: "test ensureEtcdGuard - deployment exists but pdb not ",
 			fields: fields{
-				client: fakecore.NewSimpleClientset(deployment, &clusterConfigFullHA),
-				infraObj: &configv1.Infrastructure{
-					TypeMeta: metav1.TypeMeta{},
-					ObjectMeta: metav1.ObjectMeta{
-						Name: infrastructureClusterName,
-					},
-					Status: configv1.InfrastructureStatus{
-						ControlPlaneTopology: configv1.HighlyAvailableTopologyMode},
-				}},
-			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 2, wantErr: false, expectedReplicaCount: 3,
+				client:   fakecore.NewSimpleClientset(deployment, &clusterConfigFullHA),
+				infraObj: haInfra},
+			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 1, wantErr: false, expectedReplicaCount: 3,
 		},
-
 		{
 			name: "test ensureEtcdGuard - deployment and pdb exists",
 			fields: fields{
-				client: fakecore.NewSimpleClientset(&appsv1.Deployment{
-					TypeMeta: metav1.TypeMeta{},
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      EtcdGuardDeploymentName,
-						Namespace: operatorclient.TargetNamespace,
-					},
-					Spec:   appsv1.DeploymentSpec{},
-					Status: appsv1.DeploymentStatus{},
-				}, &pdb, &clusterConfigFullHA),
-				infraObj: &configv1.Infrastructure{
-					TypeMeta: metav1.TypeMeta{},
-					ObjectMeta: metav1.ObjectMeta{
-						Name: infrastructureClusterName,
-					},
-					Status: configv1.InfrastructureStatus{
-						ControlPlaneTopology: configv1.HighlyAvailableTopologyMode},
-				}},
+				client:   fakecore.NewSimpleClientset(deployment, pdb, &clusterConfigFullHA),
+				infraObj: haInfra},
 			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 0, wantErr: false, expectedReplicaCount: 3,
 		},
-
 		{
 			name: "test ensureEtcdGuard - deployment not exists but pdb exists",
 			fields: fields{
-				client: fakecore.NewSimpleClientset(&clusterConfigFullHA, &pdb),
-				infraObj: &configv1.Infrastructure{
-					TypeMeta: metav1.TypeMeta{},
-					ObjectMeta: metav1.ObjectMeta{
-						Name: infrastructureClusterName,
-					},
-					Status: configv1.InfrastructureStatus{
-						ControlPlaneTopology: configv1.HighlyAvailableTopologyMode},
-				}},
+				client:   fakecore.NewSimpleClientset(&clusterConfigFullHA, pdb),
+				infraObj: haInfra,
+			},
+			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 1, wantErr: false, expectedReplicaCount: 3,
+		},
+		{
+			name: "test ensureEtcdGuard - deployment was changed and pdb exists",
+			fields: fields{
+				client:   fakecore.NewSimpleClientset(changedDeployment, pdb, &clusterConfigFullHA),
+				infraObj: haInfra},
+			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 1, wantErr: false, expectedReplicaCount: 3,
+		},
+		{
+			name: "test ensureEtcdGuard - deployment exists and pdb was changed",
+			fields: fields{
+				client:   fakecore.NewSimpleClientset(deployment, changedPDB, &clusterConfigFullHA),
+				infraObj: haInfra},
+			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 1, wantErr: false, expectedReplicaCount: 3,
+		},
+		{
+			name: "test ensureEtcdGuard - deployment and pdb were changed",
+			fields: fields{
+				client:   fakecore.NewSimpleClientset(changedDeployment, changedPDB, &clusterConfigFullHA),
+				infraObj: haInfra},
 			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 2, wantErr: false, expectedReplicaCount: 3,
 		},
-
 		{
 			name: "test ensureEtcdGuard - nonHAmod",
 			fields: fields{
@@ -122,7 +116,6 @@ controlPlane:
 				}},
 			expectedHATopology: configv1.SingleReplicaTopologyMode, expectedEvents: 0, wantErr: false, expectedReplicaCount: 0,
 		},
-
 		{
 			name: "test ensureEtcdGuard - ha mod not set, nothing exists",
 			fields: fields{
@@ -133,9 +126,8 @@ controlPlane:
 						Name: infrastructureClusterName,
 					},
 					Status: configv1.InfrastructureStatus{}}},
-			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 4, wantErr: false, expectedReplicaCount: 3,
+			expectedHATopology: "", expectedEvents: 0, wantErr: true, expectedReplicaCount: 0,
 		},
-
 		{
 			name: "test ensureEtcdGuard - 5 replicas and nothing exists",
 			fields: fields{
@@ -145,31 +137,19 @@ controlPlane:
 						Namespace: clusterConfigNamespace,
 					}, Data: map[string]string{clusterConfigKey: `apiVersion: v1
 controlPlane:
-  hyperthreading: Enabled
-  name: master
-  replicas: 5`}}),
-				infraObj: &configv1.Infrastructure{
-					TypeMeta: metav1.TypeMeta{},
-					ObjectMeta: metav1.ObjectMeta{
-						Name: infrastructureClusterName,
-					},
-					Status: configv1.InfrastructureStatus{}}},
-			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 4, wantErr: false, expectedReplicaCount: 5,
+ hyperthreading: Enabled
+ name: master
+ replicas: 5`}}),
+				infraObj: haInfra},
+			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 2, wantErr: false, expectedReplicaCount: 5,
 		},
-
 		{
 			name: "test ensureEtcdGuard - get clusterConfig not exists",
 			fields: fields{
-				client: fakecore.NewSimpleClientset(),
-				infraObj: &configv1.Infrastructure{
-					TypeMeta: metav1.TypeMeta{},
-					ObjectMeta: metav1.ObjectMeta{
-						Name: infrastructureClusterName,
-					},
-					Status: configv1.InfrastructureStatus{}}},
+				client:   fakecore.NewSimpleClientset(),
+				infraObj: haInfra},
 			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 0, wantErr: true,
 		},
-
 		{
 			name: "test ensureEtcdGuard - get replicas count key not found",
 			fields: fields{
@@ -179,14 +159,9 @@ controlPlane:
 						Namespace: clusterConfigNamespace,
 					}, Data: map[string]string{clusterConfigKey: `apiVersion: v1
 controlPlane:
-  hyperthreading: Enabled
-  name: master`}}),
-				infraObj: &configv1.Infrastructure{
-					TypeMeta: metav1.TypeMeta{},
-					ObjectMeta: metav1.ObjectMeta{
-						Name: infrastructureClusterName,
-					},
-					Status: configv1.InfrastructureStatus{}}},
+ hyperthreading: Enabled
+ name: master`}}),
+				infraObj: haInfra},
 			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 0, wantErr: true,
 		},
 	}
@@ -214,7 +189,7 @@ controlPlane:
 			}
 
 			if c.clusterTopology != tt.expectedHATopology {
-				t.Errorf("cluster HA topology is %s and expected %s", c.clusterTopology, tt.expectedHATopology)
+				t.Errorf("cluster HA topology is %q and expected %q", c.clusterTopology, tt.expectedHATopology)
 				return
 			}
 
