@@ -9,7 +9,7 @@ require (
 	github.com/go-logr/logr v0.3.0 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway v1.14.6 // indirect
-	github.com/openshift/api v0.0.0-20201216151826-78a19e96f9eb
+	github.com/openshift/api v0.0.0-20210208192252-670ac3fc997c
 	github.com/openshift/build-machinery-go v0.0.0-20200917070002-f171684f77ab
 	github.com/openshift/client-go v0.0.0-20201214125552-e615e336eb49
 	github.com/openshift/library-go v0.0.0-20210106214821-c4d0b9c8d55f
@@ -33,7 +33,4 @@ require (
 	k8s.io/utils v0.0.0-20201110183641-67b214c5f920
 )
 
-replace (
-	github.com/openshift/api => github.com/ravidbro/api v0.0.0-20210128095511-56a849fda73a
-	vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787
-)
+replace vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787
