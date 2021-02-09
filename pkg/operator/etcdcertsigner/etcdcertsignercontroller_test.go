@@ -10,10 +10,11 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
-	"github.com/openshift/library-go/pkg/crypto"
 	"math/big"
 	"testing"
 	"time"
+
+	"github.com/openshift/library-go/pkg/crypto"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configlistersv1 "github.com/openshift/client-go/config/listers/config/v1"
@@ -21,6 +22,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/kubernetes/fake"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	clientgotesting "k8s.io/client-go/testing"
@@ -39,6 +42,7 @@ var (
 	publicKeyHash    []byte
 	DummyPrivateKey  []byte
 	DummyCertificate []byte
+	nodeUIDs         []types.UID
 )
 
 func initialize(t *testing.T) {
@@ -89,6 +93,11 @@ func initialize(t *testing.T) {
 	DummyCertificate = caPEM.Bytes()
 	DummyPrivateKey = caPrivKeyPEM.Bytes()
 
+	nodeUIDs = []types.UID{
+		uuid.NewUUID(),
+		uuid.NewUUID(),
+		uuid.NewUUID(),
+	}
 }
 
 func TestValidateSAN(t *testing.T) {
@@ -109,9 +118,9 @@ func TestValidateSAN(t *testing.T) {
 			// All secrets match the node and IP address configuration.
 			name: "NormalSteadyState",
 			objects: []runtime.Object{
-				u.FakeNode("master-0", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1")),
-				u.FakeNode("master-1", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.2")),
-				u.FakeNode("master-2", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.3")),
+				u.FakeNodeWithUID("master-0", nodeUIDs[0], u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1")),
+				u.FakeNodeWithUID("master-1", nodeUIDs[1], u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.2")),
+				u.FakeNodeWithUID("master-2", nodeUIDs[2], u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.3")),
 				u.EndpointsConfigMap(
 					u.WithAddress("10.0.0.1"),
 					u.WithAddress("10.0.0.2"),
@@ -138,17 +147,17 @@ func TestValidateSAN(t *testing.T) {
 						"tls.key": DummyPrivateKey,
 					},
 				},
-				u.FakeSecret("openshift-etcd", "etcd-peer-master-0", makeCerts(t, []string{"localhost", "10.0.0.1"})),
-				u.FakeSecret("openshift-etcd", "etcd-peer-master-1", makeCerts(t, []string{"localhost", "10.0.0.2"})),
-				u.FakeSecret("openshift-etcd", "etcd-peer-master-2", makeCerts(t, []string{"localhost", "10.0.0.3"})),
+				u.FakeSecret("openshift-etcd", fmt.Sprintf("etcd-peer-%s", nodeUIDs[0]), makeCerts(t, []string{"localhost", "10.0.0.1"})),
+				u.FakeSecret("openshift-etcd", fmt.Sprintf("etcd-peer-%s", nodeUIDs[1]), makeCerts(t, []string{"localhost", "10.0.0.2"})),
+				u.FakeSecret("openshift-etcd", fmt.Sprintf("etcd-peer-%s", nodeUIDs[2]), makeCerts(t, []string{"localhost", "10.0.0.3"})),
 
-				u.FakeSecret("openshift-etcd", "etcd-serving-master-0", makeCerts(t, []string{"localhost", "10.0.0.1"})),
-				u.FakeSecret("openshift-etcd", "etcd-serving-master-1", makeCerts(t, []string{"localhost", "10.0.0.2"})),
-				u.FakeSecret("openshift-etcd", "etcd-serving-master-2", makeCerts(t, []string{"localhost", "10.0.0.3"})),
+				u.FakeSecret("openshift-etcd", fmt.Sprintf("etcd-serving-%s", nodeUIDs[0]), makeCerts(t, []string{"localhost", "10.0.0.1"})),
+				u.FakeSecret("openshift-etcd", fmt.Sprintf("etcd-serving-%s", nodeUIDs[1]), makeCerts(t, []string{"localhost", "10.0.0.2"})),
+				u.FakeSecret("openshift-etcd", fmt.Sprintf("etcd-serving-%s", nodeUIDs[2]), makeCerts(t, []string{"localhost", "10.0.0.3"})),
 
-				u.FakeSecret("openshift-etcd", "etcd-serving-metrics-master-0", makeCerts(t, []string{"localhost", "10.0.0.1"})),
-				u.FakeSecret("openshift-etcd", "etcd-serving-metrics-master-1", makeCerts(t, []string{"localhost", "10.0.0.2"})),
-				u.FakeSecret("openshift-etcd", "etcd-serving-metrics-master-2", makeCerts(t, []string{"localhost", "10.0.0.3"})),
+				u.FakeSecret("openshift-etcd", fmt.Sprintf("etcd-serving-metrics-%s", nodeUIDs[0]), makeCerts(t, []string{"localhost", "10.0.0.1"})),
+				u.FakeSecret("openshift-etcd", fmt.Sprintf("etcd-serving-metrics-%s", nodeUIDs[1]), makeCerts(t, []string{"localhost", "10.0.0.2"})),
+				u.FakeSecret("openshift-etcd", fmt.Sprintf("etcd-serving-metrics-%s", nodeUIDs[2]), makeCerts(t, []string{"localhost", "10.0.0.3"})),
 			},
 			staticPodStatus: u.StaticPodOperatorStatus(
 				u.WithLatestRevision(3),
@@ -173,9 +182,9 @@ func TestValidateSAN(t *testing.T) {
 			// master-2 has a new IP addr (10.0.0.33) but certs still have old SAN (10.0.0.3).
 			name: "IPMismatch",
 			objects: []runtime.Object{
-				u.FakeNode("master-0", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1")),
-				u.FakeNode("master-1", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.2")),
-				u.FakeNode("master-2", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.33")),
+				u.FakeNodeWithUID("master-0", nodeUIDs[0], u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1")),
+				u.FakeNodeWithUID("master-1", nodeUIDs[1], u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.2")),
+				u.FakeNodeWithUID("master-2", nodeUIDs[2], u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.33")),
 				u.EndpointsConfigMap(
 					u.WithAddress("10.0.0.1"),
 					u.WithAddress("10.0.0.2"),
@@ -202,17 +211,17 @@ func TestValidateSAN(t *testing.T) {
 						"tls.key": DummyPrivateKey,
 					},
 				},
-				u.FakeSecret("openshift-etcd", "etcd-peer-master-0", makeCerts(t, []string{"localhost", "10.0.0.1"})),
-				u.FakeSecret("openshift-etcd", "etcd-peer-master-1", makeCerts(t, []string{"localhost", "10.0.0.2"})),
-				u.FakeSecret("openshift-etcd", "etcd-peer-master-2", makeCerts(t, []string{"localhost", "10.0.0.3"})),
+				u.FakeSecret("openshift-etcd", fmt.Sprintf("etcd-peer-%s", nodeUIDs[0]), makeCerts(t, []string{"localhost", "10.0.0.1"})),
+				u.FakeSecret("openshift-etcd", fmt.Sprintf("etcd-peer-%s", nodeUIDs[1]), makeCerts(t, []string{"localhost", "10.0.0.2"})),
+				u.FakeSecret("openshift-etcd", fmt.Sprintf("etcd-peer-%s", nodeUIDs[2]), makeCerts(t, []string{"localhost", "10.0.0.3"})),
 
-				u.FakeSecret("openshift-etcd", "etcd-serving-master-0", makeCerts(t, []string{"localhost", "10.0.0.1"})),
-				u.FakeSecret("openshift-etcd", "etcd-serving-master-1", makeCerts(t, []string{"localhost", "10.0.0.2"})),
-				u.FakeSecret("openshift-etcd", "etcd-serving-master-2", makeCerts(t, []string{"localhost", "10.0.0.3"})),
+				u.FakeSecret("openshift-etcd", fmt.Sprintf("etcd-serving-%s", nodeUIDs[0]), makeCerts(t, []string{"localhost", "10.0.0.1"})),
+				u.FakeSecret("openshift-etcd", fmt.Sprintf("etcd-serving-%s", nodeUIDs[1]), makeCerts(t, []string{"localhost", "10.0.0.2"})),
+				u.FakeSecret("openshift-etcd", fmt.Sprintf("etcd-serving-%s", nodeUIDs[2]), makeCerts(t, []string{"localhost", "10.0.0.3"})),
 
-				u.FakeSecret("openshift-etcd", "etcd-serving-metrics-master-0", makeCerts(t, []string{"localhost", "10.0.0.1"})),
-				u.FakeSecret("openshift-etcd", "etcd-serving-metrics-master-1", makeCerts(t, []string{"localhost", "10.0.0.2"})),
-				u.FakeSecret("openshift-etcd", "etcd-serving-metrics-master-2", makeCerts(t, []string{"localhost", "10.0.0.3"})),
+				u.FakeSecret("openshift-etcd", fmt.Sprintf("etcd-serving-metrics-%s", nodeUIDs[0]), makeCerts(t, []string{"localhost", "10.0.0.1"})),
+				u.FakeSecret("openshift-etcd", fmt.Sprintf("etcd-serving-metrics-%s", nodeUIDs[1]), makeCerts(t, []string{"localhost", "10.0.0.2"})),
+				u.FakeSecret("openshift-etcd", fmt.Sprintf("etcd-serving-metrics-%s", nodeUIDs[2]), makeCerts(t, []string{"localhost", "10.0.0.3"})),
 			},
 			staticPodStatus: u.StaticPodOperatorStatus(
 				u.WithLatestRevision(3),

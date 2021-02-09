@@ -107,10 +107,11 @@ func (c *EtcdCertSignerController) syncAllMasters(recorder events.Recorder) erro
 			errs = append(errs, err)
 			continue
 		}
-		err = c.ensureAndValidateSecrets(node, nodeInternalIPs, recorder)
+		nodeUID := string(node.UID)
+		err = c.ensureAndValidateSecrets(nodeUID, nodeInternalIPs, recorder)
 		if errors.IsNotFound(err) {
 			// if any of the secrets are not present, create all secrets for the node
-			err = c.createSecretsForNode(node, nodeInternalIPs, recorder)
+			err = c.createSecretsForNode(nodeUID, nodeInternalIPs, recorder)
 		}
 
 		if err != nil {
@@ -144,9 +145,10 @@ func (c *EtcdCertSignerController) syncAllMasters(recorder events.Recorder) erro
 		Data:       map[string][]byte{},
 	}
 	for _, node := range nodes {
-		peerSecretName := tlshelpers.GetPeerClientSecretNameForNode(node.Name)
-		servingSecretName := tlshelpers.GetServingSecretNameForNode(node.Name)
-		servingMetricsSecretName := tlshelpers.GetServingMetricsSecretNameForNode(node.Name)
+		nodeUID := string(node.UID)
+		peerSecretName := tlshelpers.GetPeerClientSecretNameForNode(nodeUID)
+		servingSecretName := tlshelpers.GetServingSecretNameForNode(nodeUID)
+		servingMetricsSecretName := tlshelpers.GetServingMetricsSecretNameForNode(nodeUID)
 
 		currPeer, err := c.secretLister.Secrets(operatorclient.TargetNamespace).Get(peerSecretName)
 		if err != nil {
@@ -210,10 +212,10 @@ func validateCertificateSAN(certData map[string][]byte, ipAddresses []string, ce
 }
 
 // Ensure that all secrets exist for the node and validate that the IP addresses are correct.
-func (c *EtcdCertSignerController) ensureAndValidateSecrets(node *corev1.Node, nodeInternalIPs []string, recorder events.Recorder) error {
-	etcdPeerClientSecretName := tlshelpers.GetPeerClientSecretNameForNode(node.Name)
-	etcdServingSecretName := tlshelpers.GetServingSecretNameForNode(node.Name)
-	metricsServingSecretName := tlshelpers.GetServingMetricsSecretNameForNode(node.Name)
+func (c *EtcdCertSignerController) ensureAndValidateSecrets(nodeUID string, nodeInternalIPs []string, recorder events.Recorder) error {
+	etcdPeerClientSecretName := tlshelpers.GetPeerClientSecretNameForNode(nodeUID)
+	etcdServingSecretName := tlshelpers.GetServingSecretNameForNode(nodeUID)
+	metricsServingSecretName := tlshelpers.GetServingMetricsSecretNameForNode(nodeUID)
 
 	secretNames := []string{etcdPeerClientSecretName, etcdServingSecretName, metricsServingSecretName}
 
@@ -242,10 +244,10 @@ func (c *EtcdCertSignerController) ensureAndValidateSecrets(node *corev1.Node, n
 	return nil
 }
 
-func (c *EtcdCertSignerController) createSecretsForNode(node *corev1.Node, nodeInternalIPs []string, recorder events.Recorder) error {
-	etcdPeerClientSecretName := tlshelpers.GetPeerClientSecretNameForNode(node.Name)
-	etcdServingSecretName := tlshelpers.GetServingSecretNameForNode(node.Name)
-	metricsServingSecretName := tlshelpers.GetServingMetricsSecretNameForNode(node.Name)
+func (c *EtcdCertSignerController) createSecretsForNode(nodeUID string, nodeInternalIPs []string, recorder events.Recorder) error {
+	etcdPeerClientSecretName := tlshelpers.GetPeerClientSecretNameForNode(nodeUID)
+	etcdServingSecretName := tlshelpers.GetServingSecretNameForNode(nodeUID)
+	metricsServingSecretName := tlshelpers.GetServingMetricsSecretNameForNode(nodeUID)
 	// get the signers
 	etcdCASecret, err := c.secretLister.Secrets(operatorclient.GlobalUserSpecifiedConfigNamespace).Get("etcd-signer")
 	if err != nil {

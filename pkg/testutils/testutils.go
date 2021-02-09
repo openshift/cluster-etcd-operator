@@ -3,16 +3,24 @@ package testutils
 import (
 	"encoding/base64"
 	"fmt"
+
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	"go.etcd.io/etcd/pkg/mock/mockserver"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
+
+func FakeNodeWithUID(name string, uid types.UID, configs ...func(node *corev1.Node)) *corev1.Node {
+	node := FakeNode(name, configs...)
+	node.UID = uid
+	return node
+}
 
 func FakeNode(name string, configs ...func(node *corev1.Node)) *corev1.Node {
 	node := &corev1.Node{

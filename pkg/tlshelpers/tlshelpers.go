@@ -29,14 +29,14 @@ const (
 	EtcdAllServingMetricsSecretName = "etcd-all-serving-metrics"
 )
 
-func GetPeerClientSecretNameForNode(nodeName string) string {
-	return fmt.Sprintf("etcd-peer-%s", nodeName)
+func GetPeerClientSecretNameForNode(nodeUID string) string {
+	return fmt.Sprintf("etcd-peer-%s", nodeUID)
 }
-func GetServingSecretNameForNode(nodeName string) string {
-	return fmt.Sprintf("etcd-serving-%s", nodeName)
+func GetServingSecretNameForNode(nodeUID string) string {
+	return fmt.Sprintf("etcd-serving-%s", nodeUID)
 }
-func GetServingMetricsSecretNameForNode(nodeName string) string {
-	return fmt.Sprintf("etcd-serving-metrics-%s", nodeName)
+func GetServingMetricsSecretNameForNode(nodeUID string) string {
+	return fmt.Sprintf("etcd-serving-metrics-%s", nodeUID)
 }
 
 func getPeerHostNames(nodeInternalIPs []string) []string {
