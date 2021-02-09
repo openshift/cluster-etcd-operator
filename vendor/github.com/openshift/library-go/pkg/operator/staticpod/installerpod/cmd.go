@@ -34,6 +34,7 @@ type InstallOptions struct {
 
 	Revision  string
 	NodeName  string
+	NodeUID   string
 	Namespace string
 
 	PodConfigMapNamePrefix        string
@@ -362,6 +363,7 @@ func (o *InstallOptions) substituteConfigMap(obj *corev1.ConfigMap) *corev1.Conf
 		newContent := strings.ReplaceAll(oldContent, "REVISION", o.Revision)
 		newContent = strings.ReplaceAll(newContent, "NODE_NAME", o.NodeName)
 		newContent = strings.ReplaceAll(newContent, "NODE_ENVVAR_NAME", strings.ReplaceAll(strings.ReplaceAll(o.NodeName, "-", "_"), ".", "_"))
+		newContent = strings.ReplaceAll(newContent, "NODE_UID", o.NodeUID)
 		ret.Data[k] = newContent
 	}
 	return ret
@@ -373,6 +375,7 @@ func (o *InstallOptions) substituteSecret(obj *corev1.Secret) *corev1.Secret {
 		newContent := strings.ReplaceAll(string(oldContent), "REVISION", o.Revision)
 		newContent = strings.ReplaceAll(newContent, "NODE_NAME", o.NodeName)
 		newContent = strings.ReplaceAll(newContent, "NODE_ENVVAR_NAME", strings.ReplaceAll(strings.ReplaceAll(o.NodeName, "-", "_"), ".", "_"))
+		newContent = strings.ReplaceAll(newContent, "NODE_UID", o.NodeUID)
 		ret.Data[k] = []byte(newContent)
 	}
 	return ret
@@ -392,6 +395,16 @@ func (o *InstallOptions) Run(ctx context.Context) error {
 	if err != nil {
 		klog.Warningf("unable to get owner reference (falling back to namespace): %v", err)
 	}
+
+	// Retrieve the node uid for use by components such as the etcd
+	// operator. Identifying etcd member certs by node uid rather than node
+	// name ensures that node deletion followed by addition with the same name
+	// can be detected as a member change.
+	node, err := o.KubeClient.CoreV1().Nodes().Get(context.Background(), o.NodeName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to retrieve node %s: %v", o.NodeName, err)
+	}
+	o.NodeUID = string(node.UID)
 
 	recorder := events.NewRecorder(o.KubeClient.CoreV1().Events(o.Namespace), "static-pod-installer", eventTarget)
 	if err := o.copyContent(ctx); err != nil {
