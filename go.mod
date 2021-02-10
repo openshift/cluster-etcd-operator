@@ -9,7 +9,7 @@ require (
 	github.com/go-logr/logr v0.3.0 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway v1.14.6 // indirect
-	github.com/openshift/api v0.0.0-20201216151826-78a19e96f9eb
+	github.com/openshift/api v0.0.0-20210208192252-670ac3fc997c
 	github.com/openshift/build-machinery-go v0.0.0-20200917070002-f171684f77ab
 	github.com/openshift/client-go v0.0.0-20201214125552-e615e336eb49
 	github.com/openshift/library-go v0.0.0-20210106214821-c4d0b9c8d55f
