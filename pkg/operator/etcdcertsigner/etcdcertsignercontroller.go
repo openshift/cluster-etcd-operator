@@ -20,8 +20,6 @@ import (
 	"k8s.io/klog/v2"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
-	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
-	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -66,12 +64,11 @@ var certConfigMap = map[string]etcdCertConfig{
 }
 
 type EtcdCertSignerController struct {
-	kubeClient           kubernetes.Interface
-	operatorClient       v1helpers.OperatorClient
-	infrastructureLister configv1listers.InfrastructureLister
-	nodeLister           corev1listers.NodeLister
-	secretLister         corev1listers.SecretLister
-	secretClient         corev1client.SecretsGetter
+	kubeClient     kubernetes.Interface
+	operatorClient v1helpers.OperatorClient
+	nodeLister     corev1listers.NodeLister
+	secretLister   corev1listers.SecretLister
+	secretClient   corev1client.SecretsGetter
 }
 
 // watches master nodes and maintains secrets for each master node, placing them in a single secret (NOT a tls secret)
@@ -85,22 +82,19 @@ func NewEtcdCertSignerController(
 	operatorClient v1helpers.OperatorClient,
 
 	kubeInformers v1helpers.KubeInformersForNamespaces,
-	infrastructureInformer configv1informers.InfrastructureInformer,
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &EtcdCertSignerController{
-		kubeClient:           kubeClient,
-		operatorClient:       operatorClient,
-		infrastructureLister: infrastructureInformer.Lister(),
-		secretLister:         kubeInformers.SecretLister(),
-		nodeLister:           kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
-		secretClient:         v1helpers.CachedSecretGetter(kubeClient.CoreV1(), kubeInformers),
+		kubeClient:     kubeClient,
+		operatorClient: operatorClient,
+		secretLister:   kubeInformers.SecretLister(),
+		nodeLister:     kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
+		secretClient:   v1helpers.CachedSecretGetter(kubeClient.CoreV1(), kubeInformers),
 	}
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
 		kubeInformers.InformersFor("").Core().V1().Nodes().Informer(),
 		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Informer(),
 		kubeInformers.InformersFor(operatorclient.GlobalUserSpecifiedConfigNamespace).Core().V1().Secrets().Informer(),
-		infrastructureInformer.Informer(),
 		operatorClient.Informer(),
 	).WithSync(c.sync).ToController("EtcdCertSignerController", eventRecorder.WithComponentSuffix("etcd-cert-signer-controller"))
 }
