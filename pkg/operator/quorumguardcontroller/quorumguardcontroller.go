@@ -64,6 +64,7 @@ type QuorumGuardController struct {
 	clusterTopology      configv1.TopologyMode
 	replicaCount         int
 	etcdQuorumGuard      *appsv1.Deployment
+	cliImagePullSpec     string
 }
 
 func NewQuorumGuardController(
@@ -72,6 +73,7 @@ func NewQuorumGuardController(
 	kubeInformers v1helpers.KubeInformersForNamespaces,
 	eventRecorder events.Recorder,
 	infrastructureLister configv1listers.InfrastructureLister,
+	cliImagePullSpec string,
 ) factory.Controller {
 	c := &QuorumGuardController{
 		operatorClient:       operatorClient,
@@ -80,6 +82,7 @@ func NewQuorumGuardController(
 		nodeLister:           kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
 		infrastructureLister: infrastructureLister,
 		replicaCount:         0,
+		cliImagePullSpec:     cliImagePullSpec,
 	}
 	return factory.New().ResyncEvery(10*time.Minute).WithInformers(
 		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer(),
@@ -165,11 +168,13 @@ func (c *QuorumGuardController) ensureEtcdGuardDeployment(ctx context.Context, r
 		c.etcdQuorumGuard = resourceread.ReadDeploymentV1OrDie(etcd_assets.MustAsset("etcd/quorumguard-deployment.yaml"))
 	}
 	c.etcdQuorumGuard.Spec.Replicas = &replicaCount
+	// use image from release payload
+	c.etcdQuorumGuard.Spec.Template.Spec.Containers[0].Image = c.cliImagePullSpec
 
 	// if restart occurred, we will apply etcd guard deployment but if it is the same, nothing will happened
 	actual, modified, err := resourceapply.ApplyDeploymentv1(ctx, c.kubeClient.AppsV1(), c.etcdQuorumGuard)
 	if err != nil {
-		klog.Errorf("Failed to verify/apply %s, error %w", EtcdGuardDeploymentName, err)
+		klog.Errorf("failed to verify/apply %s, error %w", EtcdGuardDeploymentName, err)
 		return err
 	}
 

@@ -226,6 +226,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeInformersForNamespaces,
 		controllerContext.EventRecorder,
 		configInformers.Config().V1().Infrastructures().Lister(),
+		os.Getenv("CLI_IMAGE"),
 	)
 
 	unsupportedConfigOverridesController := unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(
