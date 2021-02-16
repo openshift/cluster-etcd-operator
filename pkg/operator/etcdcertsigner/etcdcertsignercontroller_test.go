@@ -1,6 +1,8 @@
 package etcdcertsigner
 
 import (
+	"context"
+	"fmt"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -14,6 +16,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/openshift/library-go/pkg/crypto"
 	"github.com/openshift/library-go/pkg/operator/events"
 )
@@ -103,9 +106,9 @@ func TestCheckCertValidity(t *testing.T) {
 	}
 }
 
-func TestEnsureCertSecret(t *testing.T) {
+func TestEnsureCertForNode(t *testing.T) {
 	// Any one of the cert configs will be representative
-	certConfig := certConfigMap["peer"]
+	certConfig := certConfigs["peer"]
 
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
@@ -116,29 +119,6 @@ func TestEnsureCertSecret(t *testing.T) {
 
 	secretName := certConfig.secretNameFunc(node.Name)
 	ipAddresses := []string{"127.0.0.1"}
-	expireDays := 100
-
-	// Create a ca to generate a valid cert from
-	caConfig, err := crypto.MakeSelfSignedCAConfig("foo", expireDays)
-	if err != nil {
-		t.Fatalf("Failed to create ca config: %v", err)
-	}
-	caCertBytes, caKeyBytes, err := caConfig.GetPEMBytes()
-	if err != nil {
-		t.Fatalf("Error converting ca to bytes: %v", err)
-	}
-
-	// Create a ca secret that ensureCertSecret can use to generate a new cert with
-	caSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: operatorclient.GlobalUserSpecifiedConfigNamespace,
-			Name:      certConfig.caSecretName,
-		},
-		Data: map[string][]byte{
-			"tls.crt": caCertBytes,
-			"tls.key": caKeyBytes,
-		},
-	}
 
 	testCases := map[string]struct {
 		certSecret     *corev1.Secret
@@ -157,13 +137,15 @@ func TestEnsureCertSecret(t *testing.T) {
 	}
 	for testName, tc := range testCases {
 		t.Run(testName, func(t *testing.T) {
-			objects := []runtime.Object{caSecret}
+			objects := []runtime.Object{}
 			if tc.certSecret != nil {
 				objects = append(objects, tc.certSecret)
 			}
 
-			fakeKubeClient, controller, recorder := setupEnsureCertSecret(t, objects)
-			err := controller.ensureCertSecret(node, ipAddresses, certConfig, recorder)
+			fakeKubeClient, controller, recorder := setupController(t, objects)
+			secretName := certConfig.secretNameFunc(node.Name)
+			nodeUID := string(node.UID)
+			_, _, err := controller.ensureCertSecret(secretName, nodeUID, ipAddresses, certConfig, recorder)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -196,14 +178,17 @@ func TestEnsureCertSecret(t *testing.T) {
 
 				// Verify that a cert secret created by ensureCertSecret will
 				// not be updated when immediately round-tripped.
-				objects := []runtime.Object{createdSecret, caSecret}
-				fakeKubeClient, controller, recorder := setupEnsureCertSecret(t, objects)
-				err := controller.ensureCertSecret(node, ipAddresses, certConfig, recorder)
+				objects := []runtime.Object{createdSecret}
+				fakeKubeClient, controller, recorder := setupController(t, objects)
+				_, _, err := controller.ensureCertSecret(secretName, nodeUID, ipAddresses, certConfig, recorder)
 				if err != nil {
 					t.Fatal(err)
 				}
 				for _, action := range fakeKubeClient.Actions() {
 					if action.Matches("update", "secrets") {
+						t.Fatal("Valid secret unexpectedly updated")
+					}
+					if action.Matches("create", "secrets") {
 						t.Fatal("Valid secret unexpectedly updated")
 					}
 				}
@@ -212,15 +197,77 @@ func TestEnsureCertSecret(t *testing.T) {
 	}
 }
 
-// setupEnsureCertSecret encapsulates test setup for TestEnsureCertSecret for
-// reuse in round-tripping a cert secret created by ensureCertSecret.
-func setupEnsureCertSecret(t *testing.T, objects []runtime.Object) (*fake.Clientset, *EtcdCertSignerController, events.Recorder) {
-	fakeKubeClient := fake.NewSimpleClientset(objects...)
-	recorder := events.NewRecorder(
-		fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),
-		"test-ensurecertsecret",
-		&corev1.ObjectReference{},
+// Validate that a successful test run will result in a secret per
+// cert type per node and an aggregated secret per cert type.
+func TestSyncAllMasters(t *testing.T) {
+	fakeKubeClient, controller, recorder := setupController(t, []runtime.Object{})
+	err := controller.syncAllMasters(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := fakeKubeClient.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secrets, err := fakeKubeClient.CoreV1().Secrets(operatorclient.TargetNamespace).List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretMap := map[string]corev1.Secret{}
+	for _, secret := range secrets.Items {
+		secretMap[secret.Name] = secret
+	}
+	for _, certConfig := range certConfigs {
+		// Cert per type per node
+		for _, node := range nodes.Items {
+			secretName := certConfig.secretNameFunc(node.Name)
+			t.Run(secretName, func(t *testing.T) {
+				if _, ok := secretMap[secretName]; !ok {
+					t.Fatalf("secret %s is missing", secretName)
+				}
+			})
+		}
+		// Aggregated cert per type
+		secretName := certConfig.allSecretName
+		t.Run(secretName, func(t *testing.T) {
+			allSecret, ok := secretMap[secretName]
+			if !ok {
+				t.Fatalf("secret %s is missing", secretName)
+			}
+			// Cert pair per node
+			for _, node := range nodes.Items {
+				secretName := certConfig.secretNameFunc(node.Name)
+				certName := fmt.Sprintf("%s.crt", secretName)
+				keyName := fmt.Sprintf("%s.key", secretName)
+				for _, key := range []string{certName, keyName} {
+					if _, ok := allSecret.Data[certName]; !ok {
+						t.Fatalf("secret %s is missing %s", secretName, key)
+					}
+				}
+			}
+		})
+	}
+}
+
+// setupController configures EtcdCertSignerController for testing.
+func setupController(t *testing.T, objects []runtime.Object) (*fake.Clientset, *EtcdCertSignerController, events.Recorder) {
+	// Add nodes and CAs
+	objects = append(objects,
+		u.FakeNode("master-0", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1")),
+		u.FakeNode("master-1", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.2")),
+		u.FakeNode("master-2", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.3")),
 	)
+	signerNames := sets.NewString()
+	for _, certConfig := range certConfigs {
+		name := certConfig.caSecretName
+		if signerNames.Has(name) {
+			continue
+		}
+		signerNames.Insert(name)
+		objects = append(objects, newCASecret(t, name))
+	}
+
+	fakeKubeClient := fake.NewSimpleClientset(objects...)
 	indexer := cache.NewIndexer(
 		cache.MetaNamespaceKeyFunc,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
@@ -231,10 +278,38 @@ func setupEnsureCertSecret(t *testing.T, objects []runtime.Object) (*fake.Client
 		}
 	}
 	controller := &EtcdCertSignerController{
+		kubeClient:   fakeKubeClient,
+		nodeLister:   corev1listers.NewNodeLister(indexer),
 		secretLister: corev1listers.NewSecretLister(indexer),
 		secretClient: fakeKubeClient.CoreV1(),
 	}
+	recorder := events.NewRecorder(
+		fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),
+		"test-cert-signer",
+		&corev1.ObjectReference{},
+	)
 	return fakeKubeClient, controller, recorder
+}
+
+func newCASecret(t *testing.T, secretName string) *corev1.Secret {
+	caConfig, err := crypto.MakeSelfSignedCAConfig("foo", 100)
+	if err != nil {
+		t.Fatalf("Failed to create ca config for %s: %v", secretName, err)
+	}
+	caCertBytes, caKeyBytes, err := caConfig.GetPEMBytes()
+	if err != nil {
+		t.Fatalf("Error converting ca %s to bytes: %v", secretName, err)
+	}
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: operatorclient.GlobalUserSpecifiedConfigNamespace,
+			Name:      secretName,
+		},
+		Data: map[string][]byte{
+			"tls.crt": caCertBytes,
+			"tls.key": caKeyBytes,
+		},
+	}
 }
 
 // validateTestSecret checks that a secret created or updated by
