@@ -13,4 +13,4 @@ spec:
   - name: cli
     from:
       kind: DockerImage
-      name: quay.io/openshift/origin-cli:latest
+      name: quay.io/openshift/origin-cli
