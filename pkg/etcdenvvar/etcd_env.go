@@ -29,11 +29,11 @@ type envVarContext struct {
 }
 
 var FixedEtcdEnvVars = map[string]string{
-	"ETCD_DATA_DIR":              "/var/lib/etcd",
-	"ETCD_QUOTA_BACKEND_BYTES":   "7516192768", // 7 gig
-	"ETCD_INITIAL_CLUSTER_STATE": "existing",
-	"ETCD_ENABLE_PPROF":          "true",
-	"GODEBUG":                    "tls13=1",
+	"ETCD_DATA_DIR":                                 "/var/lib/etcd",
+	"ETCD_QUOTA_BACKEND_BYTES":                      "7516192768", // 7 gig
+	"ETCD_INITIAL_CLUSTER_STATE":                    "existing",
+	"ETCD_ENABLE_PPROF":                             "true",
+	"ETCD_EXPERIMENTAL_BACKEND_BBOLT_FREELIST_TYPE": "map",
 }
 
 type envVarFunc func(envVarContext envVarContext) (map[string]string, error)
