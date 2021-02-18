@@ -24,9 +24,7 @@ const (
 	// TODO debt left for @hexfusion or @sanchezl
 	fakePodFQDN = "etcd-client"
 
-	EtcdAllPeerSecretName           = "etcd-all-peer"
-	EtcdAllServingSecretName        = "etcd-all-serving"
-	EtcdAllServingMetricsSecretName = "etcd-all-serving-metrics"
+	EtcdAllCertsSecretName = "etcd-all-certs"
 )
 
 func GetPeerClientSecretNameForNode(nodeName string) string {

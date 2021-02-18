@@ -283,9 +283,7 @@ var RevisionConfigMaps = []revision.RevisionResource{
 
 // RevisionSecrets is a list of secrets that are directly copied for the current values.  A different actor/controller modifies these.
 var RevisionSecrets = []revision.RevisionResource{
-	{Name: "etcd-all-peer"},
-	{Name: "etcd-all-serving"},
-	{Name: "etcd-all-serving-metrics"},
+	{Name: "etcd-all-certs"},
 }
 
 var CertConfigMaps = []revision.RevisionResource{
@@ -300,7 +298,5 @@ var CertConfigMaps = []revision.RevisionResource{
 var CertSecrets = []revision.RevisionResource{
 	// these are also copied to certs to have a constant file location so we can refer to them in various recovery scripts
 	// and in the PDB
-	{Name: "etcd-all-peer"},
-	{Name: "etcd-all-serving"},
-	{Name: "etcd-all-serving-metrics"},
+	{Name: "etcd-all-certs"},
 }
