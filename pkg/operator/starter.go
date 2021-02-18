@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"os"
+	"strings"
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -23,7 +24,9 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
@@ -246,6 +249,35 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	kubeInformersForNamespaces.Start(ctx.Done())
 	configInformers.Start(ctx.Done())
 	dynamicInformers.Start(ctx.Done())
+
+	// REMOVE(4.9) Poll every 30 minutes to ensure removal of 4.7 secrets that
+	// were replaced in 4.8 with a unified secret. Removal is not critical,
+	// it's just potentially confusing if a bunch of now unused secrets linger
+	// forever.
+	secretClient := kubeClient.CoreV1().Secrets(operatorclient.TargetNamespace)
+	secretNamePrefixes := []string{"etcd-all-peer", "etcd-all-serving", "etcd-all-serving-metrics"}
+	go wait.Until(func() {
+		// The 4.7 secrets are likely to have multiple revisions
+		// (i.e. <prefix>-[0-9]*) so it's necessary to list all secrets and
+		// match by prefix.
+		secrets, err := secretClient.List(ctx, metav1.ListOptions{})
+		if err != nil {
+			klog.Warningf("Failed to list secrets when searching for 4.7 secrets to remove: %v", err)
+		}
+		if secrets == nil {
+			return
+		}
+		for _, secret := range secrets.Items {
+			for _, prefix := range secretNamePrefixes {
+				if strings.HasPrefix(secret.Name, prefix) {
+					err := secretClient.Delete(ctx, secret.Name, metav1.DeleteOptions{})
+					if err != nil {
+						klog.Warningf("Failed to delete 4.7 secret: %v", err)
+					}
+				}
+			}
+		}
+	}, 30*time.Minute, ctx.Done())
 
 	go staleConditions.Run(ctx, 1)
 	go fsyncMetricController.Run(ctx, 1)
