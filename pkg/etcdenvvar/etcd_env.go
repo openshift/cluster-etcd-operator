@@ -216,9 +216,12 @@ func getHeartbeatInterval(envVarContext envVarContext) (map[string]string, error
 
 	if status := infrastructure.Status.PlatformStatus; status != nil {
 		switch {
+		case status.AWS != nil:
+			heartbeat = "10"
 		case status.Azure != nil:
 			heartbeat = "500"
 		}
+
 	}
 
 	return map[string]string{
