@@ -20,8 +20,6 @@ import (
 	"k8s.io/klog/v2"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
-	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
-	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -40,6 +38,8 @@ const nodeUIDAnnotation = "etcd-operator.alpha.openshift.io/cert-secret-node-uid
 type etcdCertConfig struct {
 	// Name of the secret in namespace openshift-config that contains the CA used to issue the cert
 	caSecretName string
+	// Name of the secret aggregating certs of this type for all nodes
+	allSecretName string
 	// Function that derives the name of the cert secret from the node name
 	secretNameFunc func(nodeName string) string
 	// Function that creates the key material for a new cert
@@ -47,31 +47,57 @@ type etcdCertConfig struct {
 }
 
 // Define configuration for creating etcd cert secrets.
-var certConfigMap = map[string]etcdCertConfig{
+var certConfigs = map[string]etcdCertConfig{
 	"peer": {
 		caSecretName:   "etcd-signer",
+		allSecretName:  tlshelpers.EtcdAllPeerSecretName,
 		secretNameFunc: tlshelpers.GetPeerClientSecretNameForNode,
 		newCertFunc:    tlshelpers.CreatePeerCertKey,
 	},
-	"server": {
+	"serving": {
 		caSecretName:   "etcd-signer",
+		allSecretName:  tlshelpers.EtcdAllServingSecretName,
 		secretNameFunc: tlshelpers.GetServingSecretNameForNode,
 		newCertFunc:    tlshelpers.CreateServerCertKey,
 	},
-	"metric": {
+	"serving-metrics": {
 		caSecretName:   "etcd-metric-signer",
+		allSecretName:  tlshelpers.EtcdAllServingMetricsSecretName,
 		secretNameFunc: tlshelpers.GetServingMetricsSecretNameForNode,
 		newCertFunc:    tlshelpers.CreateMetricCertKey,
 	},
 }
 
+// Type used to collect all etcd certs during validation e.g.
+//
+// {
+//   "peer":             {"etcd-peer-master-0": []byte{...}, ...},
+//   "serving":          {"etcd-serving-master-0": []byte{...}, ...},
+//   "serving-metrics":  {"etcd-serving-metrics-master-0": []byte{...}, ...},
+// }
+type etcdCerts map[string]map[string][]byte
+
+// merge ensures the provided certs are included in the mapping.
+func (e etcdCerts) merge(newCerts etcdCerts) {
+	for certType, certs := range newCerts {
+		// Initialize if necessary
+		if _, ok := e[certType]; !ok {
+			e[certType] = map[string][]byte{}
+		}
+		// Copy the new certs. The cert names should be unique by virtue of
+		// embedding the node names.
+		for name, cert := range certs {
+			e[certType][name] = cert
+		}
+	}
+}
+
 type EtcdCertSignerController struct {
-	kubeClient           kubernetes.Interface
-	operatorClient       v1helpers.OperatorClient
-	infrastructureLister configv1listers.InfrastructureLister
-	nodeLister           corev1listers.NodeLister
-	secretLister         corev1listers.SecretLister
-	secretClient         corev1client.SecretsGetter
+	kubeClient     kubernetes.Interface
+	operatorClient v1helpers.OperatorClient
+	nodeLister     corev1listers.NodeLister
+	secretLister   corev1listers.SecretLister
+	secretClient   corev1client.SecretsGetter
 }
 
 // watches master nodes and maintains secrets for each master node, placing them in a single secret (NOT a tls secret)
@@ -85,22 +111,19 @@ func NewEtcdCertSignerController(
 	operatorClient v1helpers.OperatorClient,
 
 	kubeInformers v1helpers.KubeInformersForNamespaces,
-	infrastructureInformer configv1informers.InfrastructureInformer,
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &EtcdCertSignerController{
-		kubeClient:           kubeClient,
-		operatorClient:       operatorClient,
-		infrastructureLister: infrastructureInformer.Lister(),
-		secretLister:         kubeInformers.SecretLister(),
-		nodeLister:           kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
-		secretClient:         v1helpers.CachedSecretGetter(kubeClient.CoreV1(), kubeInformers),
+		kubeClient:     kubeClient,
+		operatorClient: operatorClient,
+		secretLister:   kubeInformers.SecretLister(),
+		nodeLister:     kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
+		secretClient:   v1helpers.CachedSecretGetter(kubeClient.CoreV1(), kubeInformers),
 	}
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
 		kubeInformers.InformersFor("").Core().V1().Nodes().Informer(),
 		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Informer(),
 		kubeInformers.InformersFor(operatorclient.GlobalUserSpecifiedConfigNamespace).Core().V1().Secrets().Informer(),
-		infrastructureInformer.Informer(),
 		operatorClient.Informer(),
 	).WithSync(c.sync).ToController("EtcdCertSignerController", eventRecorder.WithComponentSuffix("etcd-cert-signer-controller"))
 }
@@ -136,125 +159,104 @@ func (c *EtcdCertSignerController) syncAllMasters(recorder events.Recorder) erro
 		return err
 	}
 
+	certMap, err := c.ensureCertsForNodes(nodes, recorder)
+	if err != nil {
+		return err
+	}
+
+	// TODO(marun) Ensure static pod controller does not rollout a disjoint
+	// set of aggregated certs.
+	return c.applyAggregatedCerts(certMap, recorder)
+}
+
+// ensureCertsForNodes attempts to ensure the existence of valid cert secrets
+// for the provided nodes and if successful returns the validated certs.
+func (c *EtcdCertSignerController) ensureCertsForNodes(nodes []*corev1.Node, recorder events.Recorder) (etcdCerts, error) {
 	errs := []error{}
+	certs := etcdCerts{}
 	for _, node := range nodes {
-		certErrs := c.ensureCertSecrets(node, recorder)
+		certsForNode, certErrs := c.ensureCertsForNode(node, recorder)
 		if certErrs != nil {
 			errs = append(errs, certErrs...)
 		}
+		if len(errs) > 0 {
+			// Any error precludes further cert collection
+			continue
+		}
+		certs.merge(certsForNode)
 	}
 	if len(errs) > 0 {
-		return utilerrors.NewAggregate(errs)
+		return nil, utilerrors.NewAggregate(errs)
 	}
+	return certs, nil
+}
 
-	// at this point, all the content has been updated in the API, but we may be stale.
-	// if we were stale, we would be retriggered on the watch and achieve our level, but the cost of rolling an additional
-	// revision on the first go through the API is expensive. Wait for one second to settle most of the time, but still be fast.
-	time.Sleep(1 * time.Second)
-
-	// build the combined secrets that we're going to install
-	combinedPeerSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Namespace: operatorclient.TargetNamespace, Name: tlshelpers.EtcdAllPeerSecretName},
-		Type:       corev1.SecretTypeOpaque,
-		Data:       map[string][]byte{},
-	}
-	combinedServingSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Namespace: operatorclient.TargetNamespace, Name: tlshelpers.EtcdAllServingSecretName},
-		Type:       corev1.SecretTypeOpaque,
-		Data:       map[string][]byte{},
-	}
-	combinedServingMetricsSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Namespace: operatorclient.TargetNamespace, Name: tlshelpers.EtcdAllServingMetricsSecretName},
-		Type:       corev1.SecretTypeOpaque,
-		Data:       map[string][]byte{},
-	}
-	for _, node := range nodes {
-		peerSecretName := tlshelpers.GetPeerClientSecretNameForNode(node.Name)
-		servingSecretName := tlshelpers.GetServingSecretNameForNode(node.Name)
-		servingMetricsSecretName := tlshelpers.GetServingMetricsSecretNameForNode(node.Name)
-
-		currPeer, err := c.secretLister.Secrets(operatorclient.TargetNamespace).Get(peerSecretName)
+// applyAggregatedCerts ensures a secret per cert type (e.g. peer, serving,
+// metric) containing the provided certs.
+func (c *EtcdCertSignerController) applyAggregatedCerts(certMap etcdCerts, recorder events.Recorder) error {
+	errs := []error{}
+	for certType, secretData := range certMap {
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: operatorclient.TargetNamespace,
+				Name:      certConfigs[certType].allSecretName,
+			},
+			Type: corev1.SecretTypeOpaque,
+			Data: secretData,
+		}
+		_, _, err := resourceapply.ApplySecret(c.secretClient, recorder, secret)
 		if err != nil {
 			errs = append(errs, err)
-		} else {
-			combinedPeerSecret.Data[peerSecretName+".crt"] = currPeer.Data["tls.crt"]
-			combinedPeerSecret.Data[peerSecretName+".key"] = currPeer.Data["tls.key"]
-		}
-
-		currServing, err := c.secretLister.Secrets(operatorclient.TargetNamespace).Get(servingSecretName)
-		if err != nil {
-			errs = append(errs, err)
-		} else {
-			combinedServingSecret.Data[servingSecretName+".crt"] = currServing.Data["tls.crt"]
-			combinedServingSecret.Data[servingSecretName+".key"] = currServing.Data["tls.key"]
-		}
-
-		currServingMetrics, err := c.secretLister.Secrets(operatorclient.TargetNamespace).Get(servingMetricsSecretName)
-		if err != nil {
-			errs = append(errs, err)
-		} else {
-			combinedServingMetricsSecret.Data[servingMetricsSecretName+".crt"] = currServingMetrics.Data["tls.crt"]
-			combinedServingMetricsSecret.Data[servingMetricsSecretName+".key"] = currServingMetrics.Data["tls.key"]
 		}
 	}
-	if len(errs) > 0 {
-		return utilerrors.NewAggregate(errs)
-	}
-
-	// apply the secrets themselves
-	_, _, err = resourceapply.ApplySecret(c.secretClient, recorder, combinedPeerSecret)
-	if err != nil {
-		errs = append(errs, err)
-	}
-	_, _, err = resourceapply.ApplySecret(c.secretClient, recorder, combinedServingSecret)
-	if err != nil {
-		errs = append(errs, err)
-	}
-	_, _, err = resourceapply.ApplySecret(c.secretClient, recorder, combinedServingMetricsSecret)
-	if err != nil {
-		errs = append(errs, err)
-	}
-
 	return utilerrors.NewAggregate(errs)
 }
 
-// ensureCertSecret attempts to ensure the existence of secrets containing the
+// ensureCertsForNode attempts to ensure the existence of secrets containing the
 // etcd cert (cert+key) pairs needed for an etcd member.
-func (c *EtcdCertSignerController) ensureCertSecrets(node *corev1.Node, recorder events.Recorder) []error {
+func (c *EtcdCertSignerController) ensureCertsForNode(node *corev1.Node, recorder events.Recorder) (etcdCerts, []error) {
 	ipAddresses, err := dnshelpers.GetInternalIPAddressesForNodeName(node)
 	if err != nil {
-		return []error{err}
+		return nil, []error{err}
 	}
 
 	errs := []error{}
-	for _, certConfig := range certConfigMap {
-		err := c.ensureCertSecret(node, ipAddresses, certConfig, recorder)
+	certs := etcdCerts{}
+	for certType, certConfig := range certConfigs {
+		secretName := certConfig.secretNameFunc(node.Name)
+		cert, key, err := c.ensureCertSecret(secretName, string(node.UID), ipAddresses, certConfig, recorder)
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
+		certs[certType] = map[string][]byte{
+			fmt.Sprintf("%s.crt", secretName): cert,
+			fmt.Sprintf("%s.key", secretName): key,
+		}
 	}
-	return errs
+	if len(errs) > 0 {
+		return nil, errs
+	}
+	return certs, nil
 }
 
 // ensureCertSecret attempts to ensure the existence of a secret containing an
 // etcd cert (cert+key) pair. The secret will be created if it does not
 // exist. If the secret exists but contains an invalid cert pair, it will be
-// updated with a new cert pair.
-func (c *EtcdCertSignerController) ensureCertSecret(node *corev1.Node, ipAddresses []string, certConfig etcdCertConfig, recorder events.Recorder) error {
-	secretName := certConfig.secretNameFunc(node.Name)
-
+// updated with a new cert pair. If the secret is ensured to have a valid
+// cert pair, the bytes of the cert and key will be returned.
+func (c *EtcdCertSignerController) ensureCertSecret(secretName, nodeUID string, ipAddresses []string, certConfig etcdCertConfig, recorder events.Recorder) ([]byte, []byte, error) {
 	secret, err := c.secretLister.Secrets(operatorclient.TargetNamespace).Get(secretName)
 	if err != nil && !errors.IsNotFound(err) {
-		return err
+		return nil, nil, err
 	}
 
 	storedUID := ""
 	if secret != nil {
 		storedUID := secret.Annotations[nodeUIDAnnotation]
-		invalidMsg, err := checkCertValidity(secret.Data["tls.crt"], secret.Data["tls.key"], ipAddresses, string(node.UID), storedUID)
+		invalidMsg, err := checkCertValidity(secret.Data["tls.crt"], secret.Data["tls.key"], ipAddresses, nodeUID, storedUID)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		if len(invalidMsg) > 0 {
 			klog.V(4).Info("TLS cert %s is invalid and will be regenerated: %v", secretName, invalidMsg)
@@ -266,34 +268,34 @@ func (c *EtcdCertSignerController) ensureCertSecret(node *corev1.Node, ipAddress
 	cert := []byte{}
 	key := []byte{}
 	if secret != nil {
-		if storedUID == string(node.UID) {
-			// Nothing to do: Cert pair is valid, node uid is current
-			return nil
-		}
 		cert = secret.Data["tls.crt"]
 		key = secret.Data["tls.key"]
+		if storedUID == nodeUID {
+			// Nothing to do: Cert pair is valid, node uid is current
+			return cert, key, nil
+		}
 	} else {
 		// Generate a new cert pair. The secret is missing or its contents are invalid.
 		caSecret, err := c.secretLister.Secrets(operatorclient.GlobalUserSpecifiedConfigNamespace).Get(certConfig.caSecretName)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		certBuffer, keyBuffer, err := certConfig.newCertFunc(caSecret.Data["tls.crt"], caSecret.Data["tls.key"], ipAddresses)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		cert = certBuffer.Bytes()
 		key = keyBuffer.Bytes()
 	}
 
-	return c.applySecret(secretName, string(node.UID), cert, key, recorder)
-}
-
-func (c *EtcdCertSignerController) applySecret(secretName, nodeUID string, cert, key []byte, recorder events.Recorder) error {
 	//TODO: Update annotations Not Before and Not After for Cert Rotation
-	secret := newCertSecret(secretName, nodeUID, cert, key)
-	_, _, err := resourceapply.ApplySecret(c.secretClient, recorder, secret)
-	return err
+	newSecret := newCertSecret(secretName, nodeUID, cert, key)
+	_, _, err = resourceapply.ApplySecret(c.secretClient, recorder, newSecret)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return cert, key, nil
 }
 
 // newCertSecret ensures consistency of secret creation between the controller
