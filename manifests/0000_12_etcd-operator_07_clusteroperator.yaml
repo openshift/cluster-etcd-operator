@@ -27,5 +27,5 @@ status:
       name: openshift-etcd-operator
       resource: namespaces
     - group: ""
-      name: openshift-etcd
+      name: the-cvo-will-not-add-this-for-you
       resource: namespaces
