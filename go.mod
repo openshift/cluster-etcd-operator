@@ -8,6 +8,7 @@ require (
 	github.com/go-bindata/go-bindata v3.1.2+incompatible
 	github.com/go-logr/logr v0.3.0 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
+	github.com/google/uuid v1.1.2
 	github.com/grpc-ecosystem/grpc-gateway v1.14.6 // indirect
 	github.com/openshift/api v0.0.0-20210208192252-670ac3fc997c
 	github.com/openshift/build-machinery-go v0.0.0-20200917070002-f171684f77ab
@@ -26,6 +27,7 @@ require (
 	k8s.io/api v0.20.1
 	k8s.io/apiextensions-apiserver v0.20.1
 	k8s.io/apimachinery v0.20.1
+	k8s.io/apiserver v0.20.1
 	k8s.io/client-go v0.20.1
 	k8s.io/component-base v0.20.1
 	k8s.io/cri-api v0.18.6
