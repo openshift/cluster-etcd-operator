@@ -17,6 +17,7 @@ import (
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
+	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 	"github.com/openshift/library-go/pkg/crypto"
 	"github.com/openshift/library-go/pkg/operator/events"
 )
@@ -218,34 +219,42 @@ func TestSyncAllMasters(t *testing.T) {
 		secretMap[secret.Name] = secret
 	}
 	for _, certConfig := range certConfigs {
-		// Cert per type per node
+		// Cert secret per type per node
 		for _, node := range nodes.Items {
 			secretName := certConfig.secretNameFunc(node.Name)
 			t.Run(secretName, func(t *testing.T) {
-				if _, ok := secretMap[secretName]; !ok {
+				secret, ok := secretMap[secretName]
+				if !ok {
 					t.Fatalf("secret %s is missing", secretName)
 				}
+				checkCertPairSecret(t, secretName, "tls.crt", "tls.key", secret.Data)
 			})
 		}
-		// Aggregated cert per type
-		secretName := certConfig.allSecretName
-		t.Run(secretName, func(t *testing.T) {
-			allSecret, ok := secretMap[secretName]
-			if !ok {
-				t.Fatalf("secret %s is missing", secretName)
-			}
-			// Cert pair per node
+	}
+	// A single aggregated secret
+	secretName := tlshelpers.EtcdAllCertsSecretName
+	t.Run(secretName, func(t *testing.T) {
+		allSecret, ok := secretMap[secretName]
+		if !ok {
+			t.Fatalf("secret %s is missing", secretName)
+		}
+		// Cert pair per type per node
+		for _, certConfig := range certConfigs {
 			for _, node := range nodes.Items {
 				secretName := certConfig.secretNameFunc(node.Name)
 				certName := fmt.Sprintf("%s.crt", secretName)
 				keyName := fmt.Sprintf("%s.key", secretName)
-				for _, key := range []string{certName, keyName} {
-					if _, ok := allSecret.Data[certName]; !ok {
-						t.Fatalf("secret %s is missing %s", secretName, key)
-					}
-				}
+				checkCertPairSecret(t, secretName, certName, keyName, allSecret.Data)
 			}
-		})
+		}
+	})
+}
+
+func checkCertPairSecret(t *testing.T, secretName, certName, keyName string, secretData map[string][]byte) {
+	for _, key := range []string{certName, keyName} {
+		if _, ok := secretData[certName]; !ok {
+			t.Fatalf("secret %s is missing %s", secretName, key)
+		}
 	}
 }
 

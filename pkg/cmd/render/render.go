@@ -311,6 +311,13 @@ func (r *renderOpts) Run() error {
 
 	bootstrapManifestsDir := filepath.Join(r.generic.AssetOutputDir, "bootstrap-manifests")
 
+	secretDir := path.Join(bootstrapManifestsDir, "secrets", tlshelpers.EtcdAllCertsSecretName)
+
+	err = os.MkdirAll(secretDir, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create %s directory: %w", tlshelpers.EtcdAllCertsSecretName, err)
+	}
+
 	caCertData, err := ioutil.ReadFile(r.etcdCAFile)
 	if err != nil {
 		return fmt.Errorf("failed to read CA cert: %w", err)
@@ -325,7 +332,7 @@ func (r *renderOpts) Run() error {
 	if err != nil {
 		return err
 	}
-	err = writeCertKeyFiles(bootstrapManifestsDir, tlshelpers.EtcdAllServingSecretName, tlshelpers.GetServingSecretNameForNode(templateData.Hostname), certData, keyData)
+	err = writeCertKeyFiles(secretDir, tlshelpers.GetServingSecretNameForNode(templateData.Hostname), certData, keyData)
 	if err != nil {
 		return err
 	}
@@ -334,7 +341,7 @@ func (r *renderOpts) Run() error {
 	if err != nil {
 		return err
 	}
-	err = writeCertKeyFiles(bootstrapManifestsDir, tlshelpers.EtcdAllPeerSecretName, tlshelpers.GetPeerClientSecretNameForNode(templateData.Hostname), certData, keyData)
+	err = writeCertKeyFiles(secretDir, tlshelpers.GetPeerClientSecretNameForNode(templateData.Hostname), certData, keyData)
 	if err != nil {
 		return err
 	}
@@ -342,21 +349,14 @@ func (r *renderOpts) Run() error {
 	return WriteFiles(&r.generic, &templateData.FileConfig, templateData)
 }
 
-func writeCertKeyFiles(outputDir, allSecretName, nodeSecretName string, certData, keyData *bytes.Buffer) error {
-	dir := path.Join(outputDir, "secrets", allSecretName)
-
-	err := os.MkdirAll(dir, 0755)
+func writeCertKeyFiles(dir, nodeSecretName string, certData, keyData *bytes.Buffer) error {
+	err := ioutil.WriteFile(path.Join(dir, nodeSecretName+".crt"), certData.Bytes(), 0600)
 	if err != nil {
-		return fmt.Errorf("failed to create %s directory: %w", allSecretName, err)
-	}
-
-	err = ioutil.WriteFile(path.Join(dir, nodeSecretName+".crt"), certData.Bytes(), 0600)
-	if err != nil {
-		return fmt.Errorf("failed to write %s cert: %w", allSecretName, err)
+		return fmt.Errorf("failed to write %s cert: %w", nodeSecretName, err)
 	}
 	err = ioutil.WriteFile(path.Join(dir, nodeSecretName+".key"), keyData.Bytes(), 0600)
 	if err != nil {
-		return fmt.Errorf("failed to write %s key: %w", allSecretName, err)
+		return fmt.Errorf("failed to write %s key: %w", nodeSecretName, err)
 	}
 
 	return nil

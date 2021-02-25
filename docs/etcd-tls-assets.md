@@ -44,10 +44,10 @@ All etcd certificates are stored in secrets.
 | ------------------ | ----------------------------------------- | -------------------------------- | ------------------------------------------- |
 | etcd-signer        | openshift-config/etcd-client              | authn kube api to etcd           | openshift-etcd                              |
 |                    |                                           |                                  | openshift-etcd-operator                     |
-|                    | openshift-etcd/etcd-peer-$node            | etcd peer communication          | collected in etcd-all-peer                  |
-|                    | openshift-etcd/etcd-serving-$node         | etcd member serving              | collected in etcd-all-serving               |
+|                    | openshift-etcd/etcd-peer-$node            | etcd peer communication          | collected in etcd-all-certs                 |
+|                    | openshift-etcd/etcd-serving-$node         | etcd member serving              | collected in etcd-all-certs                 |
 | etcd-metric-signer | openshift-config/etcd-metric-client       | authn prometheus to etcd metrics | openshift-monitoring/kube-etcd-client-certs |
-|                    | openshift-etcd/etcd-serving-metrics-$node | etcd member metrics serving      | collected in etcd-all-serving-metrics       |
+|                    | openshift-etcd/etcd-serving-metrics-$node | etcd member metrics serving      | collected in etcd-all-certs                 |
 
 ## etcd-signer and etcd-metric-signer CA certs
 
@@ -345,12 +345,12 @@ itself is executed with the following arguments:
 ```
         exec etcd \
           ...
-          --cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-serving/etcd-serving-master-0.crt \
-          --key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-serving/etcd-serving-master-0.key \
+          --cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-master-0.crt \
+          --key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-master-0.key \
           --trusted-ca-file=/etc/kubernetes/static-pod-certs/configmaps/etcd-serving-ca/ca-bundle.crt \
           --client-cert-auth=true \
-          --peer-cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-master-0.crt \
-          --peer-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-master-0.key \
+          --peer-cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-master-0.crt \
+          --peer-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-master-0.key \
           --peer-trusted-ca-file=/etc/kubernetes/static-pod-certs/configmaps/etcd-peer-client-ca/ca-bundle.crt \
           --peer-client-cert-auth=true \
           ...
@@ -388,10 +388,10 @@ serve prometheus metrics on port 9979. This is secured as follows:
           --endpoints https://${NODE_master_0_ETCD_URL_HOST}:9978 \
           --metrics-addr https://0.0.0.0:9979 \
           ...
-          --key /etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-master-0.key \
-          --key-file /etc/kubernetes/static-pod-certs/secrets/etcd-all-serving-metrics/etcd-serving-metrics-master-0.key \
-          --cert /etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-master-0.crt \
-          --cert-file /etc/kubernetes/static-pod-certs/secrets/etcd-all-serving-metrics/etcd-serving-metrics-master-0.crt \
+          --key /etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-master-0.key \
+          --key-file /etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-metrics-master-0.key \
+          --cert /etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-master-0.crt \
+          --cert-file /etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-metrics-master-0.crt \
           --cacert /etc/kubernetes/static-pod-certs/configmaps/etcd-peer-client-ca/ca-bundle.crt \
           --trusted-ca-file /etc/kubernetes/static-pod-certs/configmaps/etcd-metrics-proxy-serving-ca/ca-bundle.crt
 ```
@@ -414,13 +414,13 @@ into the etcd pod under `/etc/kubernetes/static-pod-certs`.
 
 ```
 $ cd /etc/kubernetes/static-pod-resources/etcd-certs
-$ for crt in configmaps/etcd-serving-ca/ca-bundle.crt configmaps/etcd-peer-client-ca/ca-bundle.crt configmaps/etcd-metrics-proxy-serving-ca/ca-bundle.crt secrets/etcd-all-serving/etcd-serving-master-0.crt secrets/etcd-all-peer/etcd-peer-master-0.crt secrets/etcd-all-serving-metrics/etcd-serving-metrics-master-0.crt; do echo -n "$crt: "; openssl x509 -noout -subject < $crt; done
+$ for crt in configmaps/etcd-serving-ca/ca-bundle.crt configmaps/etcd-peer-client-ca/ca-bundle.crt configmaps/etcd-metrics-proxy-serving-ca/ca-bundle.crt secrets/etcd-all-certs/etcd-serving-master-0.crt secrets/etcd-all-certs/etcd-peer-master-0.crt secrets/etcd-all-certs/etcd-serving-metrics-master-0.crt; do echo -n "$crt: "; openssl x509 -noout -subject < $crt; done
 configmaps/etcd-serving-ca/ca-bundle.crt: subject=OU = openshift, CN = etcd-signer
 configmaps/etcd-peer-client-ca/ca-bundle.crt: subject=OU = openshift, CN = etcd-signer
 configmaps/etcd-metrics-proxy-serving-ca/ca-bundle.crt: subject=OU = openshift, CN = etcd-metric-signer
-secrets/etcd-all-serving/etcd-serving-master-0.crt: subject=O = system:etcd-servers, CN = system:etcd-server:etcd-client
-secrets/etcd-all-peer/etcd-peer-master-0.crt: subject=O = system:etcd-peers, CN = system:etcd-peer:etcd-client
-secrets/etcd-all-serving-metrics/etcd-serving-metrics-master-0.crt: subject=O = system:etcd-metrics, CN = system:etcd-metric:etcd-client
+secrets/etcd-all-certs/etcd-serving-master-0.crt: subject=O = system:etcd-servers, CN = system:etcd-server:etcd-client
+secrets/etcd-all-certs/etcd-peer-master-0.crt: subject=O = system:etcd-peers, CN = system:etcd-peer:etcd-client
+secrets/etcd-all-certs/etcd-serving-metrics-master-0.crt: subject=O = system:etcd-metrics, CN = system:etcd-metric:etcd-client
 ```
 
 As expected, there are the two CA certs (`etcd-signer`,
@@ -569,12 +569,11 @@ are:
       - CA certs described above, copied from the `openshift-config`
       namespace by the resource sync controller described below.
 * Secrets:
-    - `etcd-all-peer`, `etcd-all-serving`, `etcd-all-serving-metrics`
-      the three classes of serving certs, but with all certs for all
-      nodes in a single secret to reduce the complexity of managing
-      the resources to watch. The `etcd-signer` controller updates
-      the `etcd-all` copies of the node-specific certs during the cert
-      issuing process.
+    - `etcd-all-certs` includes all certs for all nodes in a single
+      secret to reduce the complexity of managing the resources to
+      watch. The `etcd-signer` controller maintains both the
+      `etcd-all-certs` secret and the node- and type-specific cert
+      secrets it aggregates.
 
 The unrevisioned resources destined for
 `/etc/kubernetes/static-pod-resources/etcd-certs` are:
@@ -586,8 +585,7 @@ The unrevisioned resources destined for
       `etcd-metrics-proxy-serving-ca`, `etcd-metrics-proxy-client-ca` -
       as above.
 * Secrets:
-    - `etcd-all-peer`, `etcd-all-serving`, `etcd-all-serving-metrics`
-      as above.
+    - `etcd-all-certs` as above.
 
 Note it appears we [only use the unrevisioned
 copies](https://github.com/openshift/cluster-etcd-operator/pull/217)
@@ -630,8 +628,7 @@ It's primary function is to iterate across all control plane nodes
 (i.e. those labelled with `node-role.kubernetes.io/master`), creating
 a secrets for each node's `etcd-serving-$node`, `etcd-peer-$node`, and
 `etcd-metrics-serving-$node` certificates in the `openshift-etcd`
-namespace. It also creates the `etcd-all-serving`, `etcd-all-peer`,
-and `etcd-all-metrics-serving` combined secrets.
+namespace. It also creates the `etcd-all-certs` combined secret.
 
 As described above, the `etcd-signer` and `etcd-metrics-signer`
 secrets in the `openshift-config` contain the signing certs and keys
