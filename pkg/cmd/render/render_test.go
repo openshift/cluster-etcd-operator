@@ -2,19 +2,12 @@ package render
 
 import (
 	"bytes"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"io"
 	"io/ioutil"
-	"math/big"
 	"net"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/ghodss/yaml"
 
@@ -252,56 +245,6 @@ func testRender(tc *testConfig) {
 		tc.t.Fatal(err)
 	}
 
-	ca := &x509.Certificate{
-		SerialNumber: big.NewInt(2020),
-		Subject: pkix.Name{
-			Organization: []string{"Red Hat"},
-			Country:      []string{"US"},
-			Province:     []string{""},
-			Locality:     []string{"Raleigh"},
-		},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().AddDate(10, 0, 0),
-		IsCA:                  true,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		BasicConstraintsValid: true,
-	}
-	caPrivKey, err := rsa.GenerateKey(rand.Reader, 4096)
-	if err != nil {
-		tc.t.Fatal(err)
-	}
-	caBytes, err := x509.CreateCertificate(rand.Reader, ca, ca, &caPrivKey.PublicKey, caPrivKey)
-	if err != nil {
-		tc.t.Fatal(err)
-	}
-	caPEM := new(bytes.Buffer)
-	pem.Encode(caPEM, &pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: caBytes,
-	})
-	caPrivKeyPEM := new(bytes.Buffer)
-	pem.Encode(caPrivKeyPEM, &pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: x509.MarshalPKCS1PrivateKey(caPrivKey),
-	})
-	caFile, err := ioutil.TempFile(dir, "etcd-ca.crt")
-	if err != nil {
-		tc.t.Fatal(err)
-	}
-	defer caFile.Close()
-	if err := writeFile(caPEM.String(), caFile); err != nil {
-		tc.t.Fatal(err)
-	}
-	keyFile, err := ioutil.TempFile(dir, "etcd-ca.key")
-	if err != nil {
-		tc.t.Fatal(err)
-	}
-	defer keyFile.Close()
-	if err := writeFile(caPrivKeyPEM.String(), keyFile); err != nil {
-		tc.t.Fatal(err)
-	}
-
 	generic := options.GenericOptions{
 		AssetInputDir:    dir,
 		AssetOutputDir:   dir,
@@ -316,8 +259,6 @@ func testRender(tc *testConfig) {
 		networkConfigFile:    clusterConfigFile.Name(),
 		infraConfigFile:      infraConfigFile.Name(),
 		clusterConfigMapFile: clusterConfigMapFile.Name(),
-		etcdCAFile:           caFile.Name(),
-		etcdCAKeyFile:        keyFile.Name(),
 	}
 
 	if err := render.Run(); err != nil {
