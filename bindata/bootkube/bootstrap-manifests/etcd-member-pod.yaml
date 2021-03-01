@@ -8,7 +8,7 @@ metadata:
 spec:
   containers:
   - name: etcd
-    image: {{ .Images.Etcd }}
+    image: {{ .Image }}
     command:
     - /bin/sh
     - -c
