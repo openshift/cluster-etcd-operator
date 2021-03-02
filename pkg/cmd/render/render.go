@@ -41,7 +41,6 @@ type renderOpts struct {
 	networkConfigFile    string
 	clusterConfigMapFile string
 	infraConfigFile      string
-	bootstrapIP          string
 
 	delayedHABootstrapScalingStrategyMarker string
 }
@@ -74,46 +73,6 @@ func NewRenderCommand(errOut io.Writer) *cobra.Command {
 	return cmd
 }
 
-func NewBootstrapIPCommand(errOut io.Writer) *cobra.Command {
-	var ipv6 bool
-	var clusterConfigFile string
-	cmd := &cobra.Command{
-		Use:   "show-bootstrap-ip",
-		Short: "Discovers and prints the bootstrap node IP",
-		Run: func(cmd *cobra.Command, args []string) {
-			clusterConfigMap, err := getUnstructured(clusterConfigFile)
-			if err != nil {
-				fmt.Fprintf(errOut, "%s\n", err)
-				os.Exit(1)
-			}
-			installConfig, err := getInstallConfig(clusterConfigMap)
-			if err != nil {
-				fmt.Fprintf(errOut, "%s\n", err)
-				os.Exit(1)
-			}
-			cidr, err := getMachineCIDR(installConfig, ipv6)
-			if err != nil {
-				fmt.Fprintf(errOut, "%s\n", err)
-				os.Exit(1)
-			}
-			excludedIPs, err := getExcludedMachineIPs(installConfig)
-			if err != nil {
-				fmt.Fprintf(errOut, "%s\n", err)
-				os.Exit(1)
-			}
-			ip, err := defaultBootstrapIPLocator.getBootstrapIP(ipv6, cidr, excludedIPs)
-			if err != nil {
-				fmt.Fprintf(errOut, "%s\n", err)
-				os.Exit(1)
-			}
-			fmt.Println(ip.String())
-		},
-	}
-	cmd.Flags().BoolVarP(&ipv6, "ipv6", "6", false, "ipv6 mode")
-	cmd.Flags().StringVarP(&clusterConfigFile, "cluster-config", "c", "", "cluster config yaml file")
-	return cmd
-}
-
 func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
 	// TODO(marun) Remove these deprecated options once https://github.com/openshift/installer/pull/4691 merges
 	var assetInputDir string
@@ -133,7 +92,6 @@ func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&r.clusterConfigMapFile, "cluster-configmap-file", "/assets/manifests/cluster-config.yaml", "File containing the cluster-config-v1 configmap.")
 	// TODO(marun) Remove default once https://github.com/openshift/installer/pull/4691 merges
 	fs.StringVar(&r.infraConfigFile, "infra-config-file", "/assets/manifests/cluster-infrastructure-02-config.yml", "File containing infrastructure.config.openshift.io manifest.")
-	fs.StringVar(&r.bootstrapIP, "bootstrap-ip", "", "bootstrap IP used to indicate where to find the first etcd endpoint")
 
 	// TODO(marun) Discover scaling strategy with less hack
 	fs.StringVar(&r.delayedHABootstrapScalingStrategyMarker, "delayed-ha-bootstrap-scaling-marker-file", "/assets/assisted-install-bootstrap", "Marker file that, if present, enables the delayed HA bootstrap scaling strategy")
@@ -249,7 +207,6 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 			"etcd.openshift-etcd.svc",
 			"etcd.openshift-etcd.svc.cluster.local",
 		}, ","),
-		BootstrapIP: opts.bootstrapIP,
 	}
 
 	network, err := getNetwork(opts.networkConfigFile)
@@ -287,14 +244,13 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 		return nil, err
 	}
 
-	if templateData.BootstrapIP == "" {
-		excludedIPs, err := getExcludedMachineIPs(installConfig)
-		if err != nil {
-			return nil, err
-		}
-		if err := templateData.setBootstrapIP(templateData.MachineCIDR, templateData.SingleStackIPv6, excludedIPs); err != nil {
-			return nil, err
-		}
+	// Set the bootstrap ip
+	excludedIPs, err := getExcludedMachineIPs(installConfig)
+	if err != nil {
+		return nil, err
+	}
+	if err := templateData.setBootstrapIP(templateData.MachineCIDR, templateData.SingleStackIPv6, excludedIPs); err != nil {
+		return nil, err
 	}
 
 	templateData.setEtcdAddress(templateData.SingleStackIPv6, templateData.BootstrapIP)
