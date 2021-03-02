@@ -12,7 +12,7 @@ require (
 	github.com/openshift/api v0.0.0-20210208192252-670ac3fc997c
 	github.com/openshift/build-machinery-go v0.0.0-20200917070002-f171684f77ab
 	github.com/openshift/client-go v0.0.0-20201214125552-e615e336eb49
-	github.com/openshift/library-go v0.0.0-20210106214821-c4d0b9c8d55f
+	github.com/openshift/library-go v0.0.0-20210301154249-aa29957b8a9c
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.7.1
 	github.com/prometheus/common v0.10.0
@@ -20,6 +20,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.6.1
 	github.com/vishvananda/netlink v1.0.0
+	github.com/vishvananda/netns v0.0.0-20210104183010-2eb08e3e575f // indirect
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200910180754-dd1b699fc489
 	golang.org/x/sys v0.0.0-20201112073958-5cba982894dd
 	google.golang.org/grpc v1.29.1
