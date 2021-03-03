@@ -1,7 +1,6 @@
 package render
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,8 +35,6 @@ type renderOpts struct {
 	generic  options.GenericOptions
 
 	errOut               io.Writer
-	etcdCAFile           string
-	etcdCAKeyFile        string
 	etcdImage            string
 	networkConfigFile    string
 	clusterConfigMapFile string
@@ -122,15 +119,14 @@ func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
 	r.manifest.AddFlags(fs, "etcd")
 	r.generic.AddFlags(fs)
 
-	// TODO: update bootkube.sh in the installer and then remove this
-	var deprecatedClusterEtcdOperatorImage string
-
-	fs.StringVar(&r.etcdCAFile, "etcd-ca", "/assets/tls/etcd-ca-bundle.crt", "path to etcd CA certificate")
-	fs.StringVar(&r.etcdCAKeyFile, "etcd-ca-key", "/assets/tls/etcd-signer.key", "path to etcd CA certificate key")
+	// No longer used. Remove once the installer no longer references these args.
+	var etcdCAFile string
+	var etcdCAKeyFile string
+	fs.StringVar(&etcdCAFile, "etcd-ca", "/assets/tls/etcd-ca-bundle.crt", "path to etcd CA certificate")
+	fs.StringVar(&etcdCAKeyFile, "etcd-ca-key", "/assets/tls/etcd-signer.key", "path to etcd CA certificate key")
 	fs.StringVar(&r.etcdImage, "manifest-etcd-image", r.etcdImage, "etcd manifest image")
-	fs.StringVar(&deprecatedClusterEtcdOperatorImage, "manifest-cluster-etcd-operator-image", "", "deprecated, unused")
-	// TODO: Remove this after updating bootkube.sh in the installer.
-	fs.StringVar(&r.networkConfigFile, "cluster-config-file", r.networkConfigFile, "(deprecated) File containing the network.config.openshift.io manifest.")
+
+	fs.StringVar(&r.etcdImage, "etcd-image", r.etcdImage, "etcd manifest image")
 	fs.StringVar(&r.networkConfigFile, "network-config-file", r.networkConfigFile, "File containing the network.config.openshift.io manifest.")
 	fs.StringVar(&r.clusterConfigMapFile, "cluster-configmap-file", "/assets/manifests/cluster-config.yaml", "File containing the cluster-config-v1 configmap.")
 	fs.StringVar(&r.infraConfigFile, "infra-config-file", "/assets/manifests/cluster-infrastructure-02-config.yml", "File containing infrastructure.config.openshift.io manifest.")
@@ -146,11 +142,8 @@ func (r *renderOpts) Validate() error {
 	if err := r.generic.Validate(); err != nil {
 		return err
 	}
-	if len(r.etcdCAFile) == 0 {
-		return errors.New("missing required flag: --etcd-ca")
-	}
 	if len(r.etcdImage) == 0 {
-		return errors.New("missing required flag: --manifest-etcd-image")
+		return errors.New("missing required flag: --etcd-image")
 	}
 	if len(r.networkConfigFile) == 0 {
 		return errors.New("missing required flag: --cluster-config-file")
@@ -178,6 +171,28 @@ type TemplateData struct {
 
 	EtcdServerCertDNSNames string
 	EtcdPeerCertDNSNames   string
+
+	// CA
+	EtcdSignerCert []byte
+	EtcdSignerKey  []byte
+
+	// CA bundle
+	EtcdCaBundle []byte
+
+	// Client cert
+	EtcdSignerClientCert []byte
+	EtcdSignerClientKey  []byte
+
+	// Metrics CA
+	EtcdMetricSignerCert []byte
+	EtcdMetricSignerKey  []byte
+
+	// Metrics CA bundle
+	EtcdMetricCaBundle []byte
+
+	// Metrics client cert
+	EtcdMetricSignerClientCert []byte
+	EtcdMetricSignerClientKey  []byte
 
 	// ClusterCIDR is the IP range for pod IPs.
 	ClusterCIDR []string
@@ -295,6 +310,28 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 		klog.Infof("using delayed HA bootstrap scaling strategy due to presence of marker file %s", opts.delayedHABootstrapScalingStrategyMarker)
 	}
 
+	// Signer key material
+	caKeyMaterial, err := createKeyMaterial("etcd-signer", "etcd")
+	if err != nil {
+		return nil, err
+	}
+	templateData.EtcdSignerCert = caKeyMaterial.caCert
+	templateData.EtcdSignerKey = caKeyMaterial.caKey
+	templateData.EtcdCaBundle = caKeyMaterial.caBundle
+	templateData.EtcdSignerClientCert = caKeyMaterial.clientCert
+	templateData.EtcdSignerClientKey = caKeyMaterial.clientKey
+
+	// Metric key material
+	metricKeyMaterial, err := createKeyMaterial("etcd-metric-signer", "etcd-metric")
+	if err != nil {
+		return nil, err
+	}
+	templateData.EtcdMetricSignerCert = metricKeyMaterial.caCert
+	templateData.EtcdMetricSignerKey = metricKeyMaterial.caKey
+	templateData.EtcdMetricCaBundle = metricKeyMaterial.caBundle
+	templateData.EtcdMetricSignerClientCert = metricKeyMaterial.clientCert
+	templateData.EtcdMetricSignerClientKey = metricKeyMaterial.clientKey
+
 	return &templateData, nil
 }
 
@@ -309,39 +346,74 @@ func (r *renderOpts) Run() error {
 		return err
 	}
 
-	bootstrapManifestsDir := filepath.Join(r.generic.AssetOutputDir, "bootstrap-manifests")
+	// Base path for bootstrap configuration
+	etcKubernetesDir := filepath.Join(r.generic.AssetOutputDir, "etc-kubernetes")
 
-	secretDir := path.Join(bootstrapManifestsDir, "secrets", tlshelpers.EtcdAllCertsSecretName)
+	// Path for bootstrap etcd member configuration
+	memberDir := filepath.Join(etcKubernetesDir, "static-pod-resources", "etcd-member")
 
-	err = os.MkdirAll(secretDir, 0755)
+	// Path for certs used by the bootstrap etcd member
+	certDir := filepath.Join(memberDir, "etcd-all-certs")
+
+	// Creating the cert dir recursively will create the base path too
+	err = os.MkdirAll(certDir, 0755)
 	if err != nil {
-		return fmt.Errorf("failed to create %s directory: %w", tlshelpers.EtcdAllCertsSecretName, err)
+		return fmt.Errorf("failed to create directory %s: %w", memberDir, err)
 	}
 
-	caCertData, err := ioutil.ReadFile(r.etcdCAFile)
-	if err != nil {
-		return fmt.Errorf("failed to read CA cert: %w", err)
-	}
-
-	caKeyData, err := ioutil.ReadFile(r.etcdCAKeyFile)
-	if err != nil {
-		return fmt.Errorf("failed to read CA key: %w", err)
-	}
-
-	certData, keyData, err := tlshelpers.CreateServerCertKey(caCertData, caKeyData, []string{templateData.BootstrapIP})
-	if err != nil {
-		return err
-	}
-	err = writeCertKeyFiles(secretDir, tlshelpers.GetServingSecretNameForNode(templateData.Hostname), certData, keyData)
+	// Write the ca bundle required by the bootstrap etcd member
+	err = writeCertFile(memberDir, "ca", []byte(templateData.EtcdCaBundle))
 	if err != nil {
 		return err
 	}
 
-	certData, keyData, err = tlshelpers.CreatePeerCertKey(caCertData, caKeyData, []string{templateData.BootstrapIP})
+	// Write the serving and peer certs for the bootstrap etcd member
+	caCertData := templateData.EtcdSignerCert
+	caKeyData := templateData.EtcdSignerKey
+	serverCertData, serverKeyData, err := tlshelpers.CreateServerCertKey(caCertData, caKeyData, []string{templateData.BootstrapIP})
 	if err != nil {
 		return err
 	}
-	err = writeCertKeyFiles(secretDir, tlshelpers.GetPeerClientSecretNameForNode(templateData.Hostname), certData, keyData)
+	err = writeCertKeyFiles(certDir, tlshelpers.GetServingSecretNameForNode(templateData.Hostname), serverCertData.Bytes(), serverKeyData.Bytes())
+	if err != nil {
+		return err
+	}
+	peerCertData, peerKeyData, err := tlshelpers.CreatePeerCertKey(caCertData, caKeyData, []string{templateData.BootstrapIP})
+	if err != nil {
+		return err
+	}
+	err = writeCertKeyFiles(certDir, tlshelpers.GetPeerClientSecretNameForNode(templateData.Hostname), peerCertData.Bytes(), peerKeyData.Bytes())
+	if err != nil {
+		return err
+	}
+
+	// Write the ca bundle and client cert pair for bootkube.sh and the bootstrap apiserver
+	secretsDir := filepath.Join(etcKubernetesDir, "bootstrap-secrets")
+	err = os.MkdirAll(secretsDir, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create directory %s: %w", secretsDir, err)
+	}
+	err = writeCertFile(secretsDir, "etcd-ca-bundle", []byte(templateData.EtcdCaBundle))
+	if err != nil {
+		return err
+	}
+	err = writeCertKeyFiles(secretsDir, "etcd-client", templateData.EtcdSignerClientCert, templateData.EtcdSignerClientKey)
+	if err != nil {
+		return err
+	}
+
+	// Write the ca bundle and client cert pair for bootkube.sh
+	// TODO(marun) Remove once https://github.com/openshift/installer/pull/4691 merges.
+	tlsDir := filepath.Join(r.generic.AssetOutputDir, "tls")
+	err = os.MkdirAll(tlsDir, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create directory %s: %w", tlsDir, err)
+	}
+	err = writeCertFile(tlsDir, "etcd-ca-bundle", []byte(templateData.EtcdCaBundle))
+	if err != nil {
+		return err
+	}
+	err = writeCertKeyFiles(tlsDir, "etcd-client", templateData.EtcdSignerClientCert, templateData.EtcdSignerClientKey)
 	if err != nil {
 		return err
 	}
@@ -349,16 +421,27 @@ func (r *renderOpts) Run() error {
 	return WriteFiles(&r.generic, &templateData.FileConfig, templateData)
 }
 
-func writeCertKeyFiles(dir, nodeSecretName string, certData, keyData *bytes.Buffer) error {
-	err := ioutil.WriteFile(path.Join(dir, nodeSecretName+".crt"), certData.Bytes(), 0600)
+func writeCertKeyFiles(dir, name string, certData, keyData []byte) error {
+	err := writeCertFile(dir, name, certData)
 	if err != nil {
-		return fmt.Errorf("failed to write %s cert: %w", nodeSecretName, err)
+		return err
 	}
-	err = ioutil.WriteFile(path.Join(dir, nodeSecretName+".key"), keyData.Bytes(), 0600)
-	if err != nil {
-		return fmt.Errorf("failed to write %s key: %w", nodeSecretName, err)
-	}
+	return writeKeyFile(dir, name, keyData)
+}
 
+func writeCertFile(dir, name string, certData []byte) error {
+	err := ioutil.WriteFile(path.Join(dir, name+".crt"), certData, 0600)
+	if err != nil {
+		return fmt.Errorf("failed to write %s cert: %w", name, err)
+	}
+	return nil
+}
+
+func writeKeyFile(dir, name string, keyData []byte) error {
+	err := ioutil.WriteFile(path.Join(dir, name+".key"), keyData, 0600)
+	if err != nil {
+		return fmt.Errorf("failed to write %s key: %w", name, err)
+	}
 	return nil
 }
 
@@ -539,20 +622,22 @@ func (t *TemplateData) setComputedEnvVars(platform string) error {
 
 // WriteFiles writes the manifests and the bootstrap config file.
 func WriteFiles(opt *options.GenericOptions, fileConfig *options.FileConfig, templateData interface{}, additionalPredicates ...assets.FileInfoPredicate) error {
-	// write assets
-	for _, manifestDir := range []string{"bootstrap-manifests", "manifests"} {
+	assetPaths := map[string]string{
+		// The etc-kubernetes path will be copied recursively by the installer to /etc/kubernetes/
+		"bootstrap-manifests": filepath.Join("etc-kubernetes", "manifests"),
+		// The contents of the manifests path will be copied by the installer to manifests/
+		"manifests": "manifests",
+	}
+
+	for manifestDir, destinationDir := range assetPaths {
 		manifests, err := assets.New(filepath.Join(opt.TemplatesDir, manifestDir), templateData, append(additionalPredicates, assets.OnlyYaml)...)
 		if err != nil {
 			return fmt.Errorf("failed rendering assets: %v", err)
 		}
-		if err := manifests.WriteFiles(filepath.Join(opt.AssetOutputDir, manifestDir)); err != nil {
-			return fmt.Errorf("failed writing assets to %q: %v", filepath.Join(opt.AssetOutputDir, manifestDir), err)
+		destinationPath := filepath.Join(opt.AssetOutputDir, destinationDir)
+		if err := manifests.WriteFiles(destinationPath); err != nil {
+			return fmt.Errorf("failed writing assets to %q: %v", destinationPath, err)
 		}
-	}
-
-	// create bootstrap configuration
-	if err := ioutil.WriteFile(opt.ConfigOutputFile, fileConfig.BootstrapConfig, 0644); err != nil {
-		return fmt.Errorf("failed to write merged config to %q: %v", opt.ConfigOutputFile, err)
 	}
 
 	return nil
