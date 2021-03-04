@@ -74,24 +74,11 @@ func NewRenderCommand(errOut io.Writer) *cobra.Command {
 }
 
 func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
-	// TODO(marun) Remove these deprecated options once https://github.com/openshift/installer/pull/4691 merges
-	var assetInputDir string
-	fs.StringVar(&assetInputDir, "asset-input-dir", "", "(deprecated) A path to directory with certificates and secrets.")
-	var configOutputFile string
-	fs.StringVar(&configOutputFile, "config-output-file", "", "(deprecated) Output path for the config yaml file.")
-	var etcdCAFile string
-	fs.StringVar(&etcdCAFile, "etcd-ca", "/assets/tls/etcd-ca-bundle.crt", "(deprecated) path to etcd CA certificate")
-	var etcdCAKeyFile string
-	fs.StringVar(&etcdCAKeyFile, "etcd-ca-key", "/assets/tls/etcd-signer.key", "(deprecated) path to etcd CA certificate key")
-	fs.StringVar(&r.etcdImage, "manifest-etcd-image", r.etcdImage, "(deprecated) etcd manifest image")
-
 	fs.StringVar(&r.assetOutputDir, "asset-output-dir", "", "Output path for rendered assets.")
 	fs.StringVar(&r.etcdImage, "etcd-image", "", "etcd image to use for bootstrap.")
 	fs.StringVar(&r.networkConfigFile, "network-config-file", "", "File containing the network.config.openshift.io manifest.")
-	// TODO(marun) Remove default once https://github.com/openshift/installer/pull/4691 merges
-	fs.StringVar(&r.clusterConfigMapFile, "cluster-configmap-file", "/assets/manifests/cluster-config.yaml", "File containing the cluster-config-v1 configmap.")
-	// TODO(marun) Remove default once https://github.com/openshift/installer/pull/4691 merges
-	fs.StringVar(&r.infraConfigFile, "infra-config-file", "/assets/manifests/cluster-infrastructure-02-config.yml", "File containing infrastructure.config.openshift.io manifest.")
+	fs.StringVar(&r.clusterConfigMapFile, "cluster-configmap-file", "", "File containing the cluster-config-v1 configmap.")
+	fs.StringVar(&r.infraConfigFile, "infra-config-file", "", "File containing infrastructure.config.openshift.io manifest.")
 
 	// TODO(marun) Discover scaling strategy with less hack
 	fs.StringVar(&r.delayedHABootstrapScalingStrategyMarker, "delayed-ha-bootstrap-scaling-marker-file", "/assets/assisted-install-bootstrap", "Marker file that, if present, enables the delayed HA bootstrap scaling strategy")
