@@ -19,7 +19,6 @@ import (
 
 	"github.com/ghodss/yaml"
 	configv1 "github.com/openshift/api/config/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render/options"
 	"github.com/openshift/library-go/pkg/assets"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -31,15 +30,17 @@ import (
 
 // renderOpts holds values to drive the render command.
 type renderOpts struct {
-	manifest options.ManifestOptions
-	generic  options.GenericOptions
+	// Path to render assets to
+	assetOutputDir string
+
+	// Path containing resource templates to render
+	templateDir string
 
 	errOut               io.Writer
 	etcdImage            string
 	networkConfigFile    string
 	clusterConfigMapFile string
 	infraConfigFile      string
-	bootstrapIP          string
 
 	delayedHABootstrapScalingStrategyMarker string
 }
@@ -47,9 +48,7 @@ type renderOpts struct {
 // NewRenderCommand creates a render command.
 func NewRenderCommand(errOut io.Writer) *cobra.Command {
 	renderOpts := renderOpts{
-		generic:  *options.NewGenericOptions(),
-		manifest: *options.NewManifestOptions("etcd"),
-		errOut:   errOut,
+		errOut: errOut,
 	}
 	cmd := &cobra.Command{
 		Use:   "render",
@@ -65,7 +64,6 @@ func NewRenderCommand(errOut io.Writer) *cobra.Command {
 			}
 
 			must(renderOpts.Validate)
-			must(renderOpts.Complete)
 			must(renderOpts.Run)
 		},
 	}
@@ -75,78 +73,44 @@ func NewRenderCommand(errOut io.Writer) *cobra.Command {
 	return cmd
 }
 
-func NewBootstrapIPCommand(errOut io.Writer) *cobra.Command {
-	var ipv6 bool
-	var clusterConfigFile string
-	cmd := &cobra.Command{
-		Use:   "show-bootstrap-ip",
-		Short: "Discovers and prints the bootstrap node IP",
-		Run: func(cmd *cobra.Command, args []string) {
-			clusterConfigMap, err := getUnstructured(clusterConfigFile)
-			if err != nil {
-				fmt.Fprintf(errOut, "%s\n", err)
-				os.Exit(1)
-			}
-			installConfig, err := getInstallConfig(clusterConfigMap)
-			if err != nil {
-				fmt.Fprintf(errOut, "%s\n", err)
-				os.Exit(1)
-			}
-			cidr, err := getMachineCIDR(installConfig, ipv6)
-			if err != nil {
-				fmt.Fprintf(errOut, "%s\n", err)
-				os.Exit(1)
-			}
-			excludedIPs, err := getExcludedMachineIPs(installConfig)
-			if err != nil {
-				fmt.Fprintf(errOut, "%s\n", err)
-				os.Exit(1)
-			}
-			ip, err := defaultBootstrapIPLocator.getBootstrapIP(ipv6, cidr, excludedIPs)
-			if err != nil {
-				fmt.Fprintf(errOut, "%s\n", err)
-				os.Exit(1)
-			}
-			fmt.Println(ip.String())
-		},
-	}
-	cmd.Flags().BoolVarP(&ipv6, "ipv6", "6", false, "ipv6 mode")
-	cmd.Flags().StringVarP(&clusterConfigFile, "cluster-config", "c", "", "cluster config yaml file")
-	return cmd
-}
-
 func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
-	r.manifest.AddFlags(fs, "etcd")
-	r.generic.AddFlags(fs)
-
-	// No longer used. Remove once the installer no longer references these args.
+	// TODO(marun) Remove these deprecated options once https://github.com/openshift/installer/pull/4691 merges
+	var assetInputDir string
+	fs.StringVar(&assetInputDir, "asset-input-dir", "", "(deprecated) A path to directory with certificates and secrets.")
+	var configOutputFile string
+	fs.StringVar(&configOutputFile, "config-output-file", "", "(deprecated) Output path for the config yaml file.")
 	var etcdCAFile string
+	fs.StringVar(&etcdCAFile, "etcd-ca", "/assets/tls/etcd-ca-bundle.crt", "(deprecated) path to etcd CA certificate")
 	var etcdCAKeyFile string
-	fs.StringVar(&etcdCAFile, "etcd-ca", "/assets/tls/etcd-ca-bundle.crt", "path to etcd CA certificate")
-	fs.StringVar(&etcdCAKeyFile, "etcd-ca-key", "/assets/tls/etcd-signer.key", "path to etcd CA certificate key")
-	fs.StringVar(&r.etcdImage, "manifest-etcd-image", r.etcdImage, "etcd manifest image")
+	fs.StringVar(&etcdCAKeyFile, "etcd-ca-key", "/assets/tls/etcd-signer.key", "(deprecated) path to etcd CA certificate key")
+	fs.StringVar(&r.etcdImage, "manifest-etcd-image", r.etcdImage, "(deprecated) etcd manifest image")
 
-	fs.StringVar(&r.etcdImage, "etcd-image", r.etcdImage, "etcd manifest image")
-	fs.StringVar(&r.networkConfigFile, "network-config-file", r.networkConfigFile, "File containing the network.config.openshift.io manifest.")
+	fs.StringVar(&r.assetOutputDir, "asset-output-dir", "", "Output path for rendered assets.")
+	fs.StringVar(&r.etcdImage, "etcd-image", "", "etcd image to use for bootstrap.")
+	fs.StringVar(&r.networkConfigFile, "network-config-file", "", "File containing the network.config.openshift.io manifest.")
+	// TODO(marun) Remove default once https://github.com/openshift/installer/pull/4691 merges
 	fs.StringVar(&r.clusterConfigMapFile, "cluster-configmap-file", "/assets/manifests/cluster-config.yaml", "File containing the cluster-config-v1 configmap.")
+	// TODO(marun) Remove default once https://github.com/openshift/installer/pull/4691 merges
 	fs.StringVar(&r.infraConfigFile, "infra-config-file", "/assets/manifests/cluster-infrastructure-02-config.yml", "File containing infrastructure.config.openshift.io manifest.")
-	fs.StringVar(&r.bootstrapIP, "bootstrap-ip", r.bootstrapIP, "bootstrap IP used to indicate where to find the first etcd endpoint")
+
+	// TODO(marun) Discover scaling strategy with less hack
 	fs.StringVar(&r.delayedHABootstrapScalingStrategyMarker, "delayed-ha-bootstrap-scaling-marker-file", "/assets/assisted-install-bootstrap", "Marker file that, if present, enables the delayed HA bootstrap scaling strategy")
+
 }
 
 // Validate verifies the inputs.
 func (r *renderOpts) Validate() error {
-	if err := r.manifest.Validate(); err != nil {
-		return err
-	}
-	if err := r.generic.Validate(); err != nil {
-		return err
+	if len(r.assetOutputDir) == 0 {
+		return errors.New("missing required flag: --asset-output-dir")
 	}
 	if len(r.etcdImage) == 0 {
 		return errors.New("missing required flag: --etcd-image")
 	}
+	if len(r.infraConfigFile) == 0 {
+		return errors.New("missing required flag: --infra-config-file")
+	}
 	if len(r.networkConfigFile) == 0 {
-		return errors.New("missing required flag: --cluster-config-file")
+		return errors.New("missing required flag: --network-config-file")
 	}
 	if len(r.clusterConfigMapFile) == 0 {
 		return errors.New("missing required flag: --cluster-configmap-file")
@@ -154,20 +118,23 @@ func (r *renderOpts) Validate() error {
 	return nil
 }
 
-// Complete fills in missing values before command execution.
-func (r *renderOpts) Complete() error {
-	if err := r.manifest.Complete(); err != nil {
-		return err
-	}
-	if err := r.generic.Complete(); err != nil {
-		return err
-	}
-	return nil
+// etcdAddress collects addresses used to populate the etcd static
+// pod spec
+type etcdAddress struct {
+	ListenClient       string
+	ListenPeer         string
+	ListenMetricServer string
+	ListenMetricProxy  string
+	LocalHost          string
+	EscapedBootstrapIP string
 }
 
 type TemplateData struct {
-	options.ManifestConfig
-	options.FileConfig
+	// Pull spec for the bootstrap etcd pod
+	Image string
+
+	// Addresses for static pod spec
+	EtcdAddress etcdAddress
 
 	EtcdServerCertDNSNames string
 	EtcdPeerCertDNSNames   string
@@ -232,11 +199,7 @@ type StaticFile struct {
 
 func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 	templateData := TemplateData{
-		ManifestConfig: options.ManifestConfig{
-			Images: options.Images{
-				Etcd: opts.etcdImage,
-			},
-		},
+		Image: opts.etcdImage,
 		EtcdServerCertDNSNames: strings.Join([]string{
 			"localhost",
 			"etcd.kube-system.svc",
@@ -244,7 +207,6 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 			"etcd.openshift-etcd.svc",
 			"etcd.openshift-etcd.svc.cluster.local",
 		}, ","),
-		BootstrapIP: opts.bootstrapIP,
 	}
 
 	network, err := getNetwork(opts.networkConfigFile)
@@ -282,14 +244,13 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 		return nil, err
 	}
 
-	if templateData.BootstrapIP == "" {
-		excludedIPs, err := getExcludedMachineIPs(installConfig)
-		if err != nil {
-			return nil, err
-		}
-		if err := templateData.setBootstrapIP(templateData.MachineCIDR, templateData.SingleStackIPv6, excludedIPs); err != nil {
-			return nil, err
-		}
+	// Set the bootstrap ip
+	excludedIPs, err := getExcludedMachineIPs(installConfig)
+	if err != nil {
+		return nil, err
+	}
+	if err := templateData.setBootstrapIP(templateData.MachineCIDR, templateData.SingleStackIPv6, excludedIPs); err != nil {
+		return nil, err
 	}
 
 	templateData.setEtcdAddress(templateData.SingleStackIPv6, templateData.BootstrapIP)
@@ -342,12 +303,14 @@ func (r *renderOpts) Run() error {
 		return err
 	}
 
-	if err := r.manifest.ApplyTo(&templateData.ManifestConfig); err != nil {
-		return err
+	// Set the template dir only if not already set to support
+	// overriding the path in unit tests.
+	if len(r.templateDir) == 0 {
+		r.templateDir = "/usr/share/bootkube/manifests"
 	}
 
 	// Base path for bootstrap configuration
-	etcKubernetesDir := filepath.Join(r.generic.AssetOutputDir, "etc-kubernetes")
+	etcKubernetesDir := filepath.Join(r.assetOutputDir, "etc-kubernetes")
 
 	// Path for bootstrap etcd member configuration
 	memberDir := filepath.Join(etcKubernetesDir, "static-pod-resources", "etcd-member")
@@ -388,23 +351,7 @@ func (r *renderOpts) Run() error {
 	}
 
 	// Write the ca bundle and client cert pair for bootkube.sh and the bootstrap apiserver
-	secretsDir := filepath.Join(etcKubernetesDir, "bootstrap-secrets")
-	err = os.MkdirAll(secretsDir, 0755)
-	if err != nil {
-		return fmt.Errorf("failed to create directory %s: %w", secretsDir, err)
-	}
-	err = writeCertFile(secretsDir, "etcd-ca-bundle", []byte(templateData.EtcdCaBundle))
-	if err != nil {
-		return err
-	}
-	err = writeCertKeyFiles(secretsDir, "etcd-client", templateData.EtcdSignerClientCert, templateData.EtcdSignerClientKey)
-	if err != nil {
-		return err
-	}
-
-	// Write the ca bundle and client cert pair for bootkube.sh
-	// TODO(marun) Remove once https://github.com/openshift/installer/pull/4691 merges.
-	tlsDir := filepath.Join(r.generic.AssetOutputDir, "tls")
+	tlsDir := filepath.Join(r.assetOutputDir, "tls")
 	err = os.MkdirAll(tlsDir, 0755)
 	if err != nil {
 		return fmt.Errorf("failed to create directory %s: %w", tlsDir, err)
@@ -418,7 +365,7 @@ func (r *renderOpts) Run() error {
 		return err
 	}
 
-	return WriteFiles(&r.generic, &templateData.FileConfig, templateData)
+	return writeManifests(r.assetOutputDir, r.templateDir, templateData)
 }
 
 func writeCertKeyFiles(dir, name string, certData, keyData []byte) error {
@@ -467,7 +414,7 @@ func (t *TemplateData) setEtcdAddress(ipv6 bool, bootstrapIP string) {
 		bootstrapIP = "[" + bootstrapIP + "]"
 	}
 
-	etcdAddress := options.EtcdAddress{
+	t.EtcdAddress = etcdAddress{
 		ListenClient:       net.JoinHostPort(allAddresses, "2379"),
 		ListenPeer:         net.JoinHostPort(allAddresses, "2380"),
 		LocalHost:          localhost,
@@ -475,8 +422,6 @@ func (t *TemplateData) setEtcdAddress(ipv6 bool, bootstrapIP string) {
 		ListenMetricProxy:  net.JoinHostPort(allAddresses, "9979"),
 		EscapedBootstrapIP: bootstrapIP,
 	}
-
-	t.ManifestConfig.EtcdAddress = etcdAddress
 }
 
 func (t *TemplateData) setMachineCIDR(installConfig map[string]interface{}, ipv6 bool) error {
@@ -620,8 +565,7 @@ func (t *TemplateData) setComputedEnvVars(platform string) error {
 	return nil
 }
 
-// WriteFiles writes the manifests and the bootstrap config file.
-func WriteFiles(opt *options.GenericOptions, fileConfig *options.FileConfig, templateData interface{}, additionalPredicates ...assets.FileInfoPredicate) error {
+func writeManifests(outputDir, templateDir string, templateData interface{}) error {
 	assetPaths := map[string]string{
 		// The etc-kubernetes path will be copied recursively by the installer to /etc/kubernetes/
 		"bootstrap-manifests": filepath.Join("etc-kubernetes", "manifests"),
@@ -630,11 +574,11 @@ func WriteFiles(opt *options.GenericOptions, fileConfig *options.FileConfig, tem
 	}
 
 	for manifestDir, destinationDir := range assetPaths {
-		manifests, err := assets.New(filepath.Join(opt.TemplatesDir, manifestDir), templateData, append(additionalPredicates, assets.OnlyYaml)...)
+		manifests, err := assets.New(filepath.Join(templateDir, manifestDir), templateData, assets.OnlyYaml)
 		if err != nil {
 			return fmt.Errorf("failed rendering assets: %v", err)
 		}
-		destinationPath := filepath.Join(opt.AssetOutputDir, destinationDir)
+		destinationPath := filepath.Join(outputDir, destinationDir)
 		if err := manifests.WriteFiles(destinationPath); err != nil {
 			return fmt.Errorf("failed writing assets to %q: %v", destinationPath, err)
 		}
@@ -657,14 +601,6 @@ func isSingleStackIPv6(serviceCIDRs []string) (bool, error) {
 		}
 	}
 	return true, nil
-}
-
-func mustReadTemplateFile(fname string) options.Template {
-	bs, err := ioutil.ReadFile(fname)
-	if err != nil {
-		panic(fmt.Sprintf("Failed to load %q: %v", fname, err))
-	}
-	return options.Template{FileName: fname, Content: bs}
 }
 
 func getUnstructured(file string) (*unstructured.Unstructured, error) {

@@ -10,8 +10,6 @@ import (
 	"testing"
 
 	"github.com/ghodss/yaml"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render/options"
 )
 
 var (
@@ -175,7 +173,6 @@ type testConfig struct {
 	infraConfig          string
 	clusterConfigMap     string
 	want                 TemplateData
-	bootstrapIP          string
 }
 
 func TestMain(m *testing.M) {
@@ -186,10 +183,8 @@ func TestMain(m *testing.M) {
 
 func TestRenderIpv4(t *testing.T) {
 	want := TemplateData{
-		ManifestConfig: options.ManifestConfig{
-			EtcdAddress: options.EtcdAddress{
-				LocalHost: "127.0.0.1",
-			},
+		EtcdAddress: etcdAddress{
+			LocalHost: "127.0.0.1",
 		},
 		ClusterCIDR:     []string{"10.128.0.0/14"},
 		ServiceCIDR:     []string{"172.30.0.0/16"},
@@ -245,16 +240,9 @@ func testRender(tc *testConfig) {
 		tc.t.Fatal(err)
 	}
 
-	generic := options.GenericOptions{
-		AssetInputDir:    dir,
-		AssetOutputDir:   dir,
-		TemplatesDir:     filepath.Join("../../..", "bindata", "bootkube"),
-		ConfigOutputFile: filepath.Join(dir, "config"),
-	}
-
 	render := renderOpts{
-		generic:              generic,
-		manifest:             *options.NewManifestOptions("etcd"),
+		assetOutputDir:       dir,
+		templateDir:          filepath.Join("../../..", "bindata", "bootkube"),
 		errOut:               errOut,
 		networkConfigFile:    clusterConfigFile.Name(),
 		infraConfigFile:      infraConfigFile.Name(),
@@ -268,10 +256,8 @@ func testRender(tc *testConfig) {
 
 func TestTemplateDataIpv4(t *testing.T) {
 	want := TemplateData{
-		ManifestConfig: options.ManifestConfig{
-			EtcdAddress: options.EtcdAddress{
-				LocalHost: "127.0.0.1",
-			},
+		EtcdAddress: etcdAddress{
+			LocalHost: "127.0.0.1",
 		},
 		ClusterCIDR:     []string{"10.128.0.0/14"},
 		ServiceCIDR:     []string{"172.30.0.0/16"},
@@ -290,10 +276,8 @@ func TestTemplateDataIpv4(t *testing.T) {
 
 func TestTemplateDataMixed(t *testing.T) {
 	want := TemplateData{
-		ManifestConfig: options.ManifestConfig{
-			EtcdAddress: options.EtcdAddress{
-				LocalHost: "127.0.0.1",
-			},
+		EtcdAddress: etcdAddress{
+			LocalHost: "127.0.0.1",
 		},
 		ClusterCIDR:     []string{"10.128.10.0/14"},
 		ServiceCIDR:     []string{"2001:db8::/32", "172.30.0.0/16"},
@@ -312,15 +296,12 @@ func TestTemplateDataMixed(t *testing.T) {
 
 func TestTemplateDataSingleStack(t *testing.T) {
 	want := TemplateData{
-		ManifestConfig: options.ManifestConfig{
-			EtcdAddress: options.EtcdAddress{
-				LocalHost: "[::1]",
-			},
+		EtcdAddress: etcdAddress{
+			LocalHost: "[::1]",
 		},
 		ClusterCIDR:     []string{"10.128.0.0/14"},
 		ServiceCIDR:     []string{"2001:db8::/32"},
 		SingleStackIPv6: true,
-		BootstrapIP:     "2001:0DB8:C21A",
 	}
 
 	config := &testConfig{
@@ -329,7 +310,6 @@ func TestTemplateDataSingleStack(t *testing.T) {
 		infraConfig:          infraConfig,
 		clusterConfigMap:     clusterConfigMap,
 		want:                 want,
-		bootstrapIP:          "2001:0DB8:C21A",
 	}
 	testTemplateData(config)
 }
@@ -372,21 +352,13 @@ func testTemplateData(tc *testConfig) {
 		tc.t.Fatal(err)
 	}
 
-	generic := options.GenericOptions{
-		AssetInputDir:    dir,
-		AssetOutputDir:   dir,
-		TemplatesDir:     filepath.Join("../../..", "bindata", "bootkube"),
-		ConfigOutputFile: filepath.Join(dir, "config"),
-	}
-
 	render := &renderOpts{
-		generic:              generic,
-		manifest:             *options.NewManifestOptions("etcd"),
+		assetOutputDir:       dir,
+		templateDir:          filepath.Join("../../..", "bindata", "bootkube"),
 		errOut:               errOut,
 		networkConfigFile:    clusterConfigFile.Name(),
 		infraConfigFile:      infraConfigFile.Name(),
 		clusterConfigMapFile: clusterConfigMapFile.Name(),
-		bootstrapIP:          tc.bootstrapIP,
 	}
 
 	got, err := newTemplateData(render)
@@ -405,13 +377,8 @@ func testTemplateData(tc *testConfig) {
 		tc.t.Errorf("len(ServiceCIDR) want: %d got: %d", len(tc.want.ServiceCIDR), len(got.ServiceCIDR))
 	case got.SingleStackIPv6 != tc.want.SingleStackIPv6:
 		tc.t.Errorf("SingleStackIPv6 want: %v got: %v", tc.want.SingleStackIPv6, got.SingleStackIPv6)
-	case got.ManifestConfig.EtcdAddress.LocalHost != tc.want.ManifestConfig.EtcdAddress.LocalHost:
-		tc.t.Errorf("LocalHost want: %q got: %q", tc.want.ManifestConfig.EtcdAddress.LocalHost, got.ManifestConfig.EtcdAddress.LocalHost)
-	case got.BootstrapIP != tc.want.BootstrapIP:
-		// if we don't say we want a specific IP we dont fail.
-		if tc.want.BootstrapIP != "" {
-			tc.t.Errorf("BootstrapIP want: %q got: %q", tc.want.BootstrapIP, got.BootstrapIP)
-		}
+	case got.EtcdAddress.LocalHost != tc.want.EtcdAddress.LocalHost:
+		tc.t.Errorf("LocalHost want: %q got: %q", tc.want.EtcdAddress.LocalHost, got.EtcdAddress.LocalHost)
 	}
 }
 

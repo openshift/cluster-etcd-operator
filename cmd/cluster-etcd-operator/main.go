@@ -56,7 +56,6 @@ func NewSSCSCommand() *cobra.Command {
 
 	cmd.AddCommand(operatorcmd.NewOperator())
 	cmd.AddCommand(render.NewRenderCommand(os.Stderr))
-	cmd.AddCommand(render.NewBootstrapIPCommand(os.Stderr))
 	cmd.AddCommand(backuprestore.NewBackupCommand(os.Stderr))
 	cmd.AddCommand(backuprestore.NewRestoreCommand(os.Stderr))
 	cmd.AddCommand(installerpod.NewInstaller())
