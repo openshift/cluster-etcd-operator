@@ -1,6 +1,9 @@
 package etcdcli
 
 import (
+	"context"
+
+	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -8,6 +11,10 @@ import (
 
 type fakeEtcdClient struct {
 	members []*etcdserverpb.Member
+}
+
+func (f *fakeEtcdClient) EndpointStatus(ctx context.Context, member *etcdserverpb.Member) (*clientv3.StatusResponse, error) {
+	panic("implement me")
 }
 
 func (f *fakeEtcdClient) MemberAdd(peerURL string) error {
