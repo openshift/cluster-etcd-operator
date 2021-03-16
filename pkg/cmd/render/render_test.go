@@ -7,9 +7,11 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/ghodss/yaml"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 )
 
 var (
@@ -165,14 +167,55 @@ data:
         region: us-east1
     publish: External
 `
+	clusterConfigMapSingleMaster = `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-config-v1
+  namespace: kube-system
+data:
+  install-config: |
+    apiVersion: v1
+    baseDomain: gcp.devcluster.openshift.com
+    compute:
+    - architecture: amd64
+      name: worker
+      platform: {}
+      replicas: 3
+    controlPlane:
+      name: master
+      platform:
+        gcp:
+      replicas: 1
+    metadata:
+      name: my-cluster
+    networking:
+      clusterNetwork:
+      - cidr: 10.128.0.0/14
+        hostPrefix: 23
+      machineCIDR: 10.0.0.0/16
+      machineNetwork:
+      - cidr: 10.0.0.0/16
+      networkType: OpenShiftSDN
+      serviceNetwork:
+      - 172.30.0.0/16
+    platform:
+      gcp:
+        projectID: openshift
+        region: us-east1
+    publish: External
+    bootstrapInPlace:
+      installationDisk: /dev/sda
+`
 )
 
 type testConfig struct {
-	t                    *testing.T
-	clusterNetworkConfig string
-	infraConfig          string
-	clusterConfigMap     string
-	want                 TemplateData
+	t                                       *testing.T
+	clusterNetworkConfig                    string
+	infraConfig                             string
+	clusterConfigMap                        string
+	delayedHABootstrapScalingStrategyMarker string
+	want                                    TemplateData
 }
 
 func TestMain(m *testing.M) {
@@ -274,6 +317,40 @@ func TestTemplateDataIpv4(t *testing.T) {
 	testTemplateData(config)
 }
 
+func TestRenderScalingStrategyBootstrapInPlace(t *testing.T) {
+	want := TemplateData{
+		BootstrapScalingStrategy:  ceohelpers.BootstrapInPlaceStrategy,
+		EtcdEndpointConfigmapData: "MTAuMC4wLjE: 10.0.0.1",
+	}
+
+	config := &testConfig{
+		t:                    t,
+		clusterNetworkConfig: networkConfigIpv4,
+		infraConfig:          infraConfig,
+		clusterConfigMap:     clusterConfigMapSingleMaster,
+		want:                 want,
+	}
+
+	testTemplateData(config)
+}
+
+func TestRenderScalingStrategyDelayedHA(t *testing.T) {
+	want := TemplateData{
+		BootstrapScalingStrategy: ceohelpers.DelayedHAScalingStrategy,
+		NamespaceAnnotations:     map[string]string{ceohelpers.DelayedHABootstrapScalingStrategyAnnotation: ""},
+	}
+	config := &testConfig{
+		t:                                       t,
+		clusterNetworkConfig:                    networkConfigIpv4,
+		infraConfig:                             infraConfig,
+		clusterConfigMap:                        clusterConfigMap,
+		delayedHABootstrapScalingStrategyMarker: "/dev/null", // exists
+		want:                                    want,
+	}
+
+	testTemplateData(config)
+}
+
 func TestTemplateDataMixed(t *testing.T) {
 	want := TemplateData{
 		EtcdAddress: etcdAddress{
@@ -353,12 +430,13 @@ func testTemplateData(tc *testConfig) {
 	}
 
 	render := &renderOpts{
-		assetOutputDir:       dir,
-		templateDir:          filepath.Join("../../..", "bindata", "bootkube"),
-		errOut:               errOut,
-		networkConfigFile:    clusterConfigFile.Name(),
-		infraConfigFile:      infraConfigFile.Name(),
-		clusterConfigMapFile: clusterConfigMapFile.Name(),
+		assetOutputDir:                          dir,
+		templateDir:                             filepath.Join("../../..", "bindata", "bootkube"),
+		errOut:                                  errOut,
+		networkConfigFile:                       clusterConfigFile.Name(),
+		infraConfigFile:                         infraConfigFile.Name(),
+		clusterConfigMapFile:                    clusterConfigMapFile.Name(),
+		delayedHABootstrapScalingStrategyMarker: tc.delayedHABootstrapScalingStrategyMarker,
 	}
 
 	got, err := newTemplateData(render)
@@ -366,19 +444,26 @@ func testTemplateData(tc *testConfig) {
 		tc.t.Fatal(err)
 	}
 
+	//TODO make more readable possibly as []func
 	switch {
-	case got.ClusterCIDR[0] != tc.want.ClusterCIDR[0]:
+	case tc.want.ClusterCIDR != nil && got.ClusterCIDR[0] != tc.want.ClusterCIDR[0]:
 		tc.t.Errorf("ClusterCIDR[0] want: %q got: %q", tc.want.ClusterCIDR[0], got.ClusterCIDR[0])
-	case len(got.ClusterCIDR) != len(tc.want.ClusterCIDR):
+	case tc.want.ClusterCIDR != nil && len(got.ClusterCIDR) != len(tc.want.ClusterCIDR):
 		tc.t.Errorf("len(ClusterCIDR) want: %d got: %d", len(tc.want.ClusterCIDR), len(got.ClusterCIDR))
-	case got.ServiceCIDR[0] != tc.want.ServiceCIDR[0]:
+	case tc.want.ServiceCIDR != nil && got.ServiceCIDR[0] != tc.want.ServiceCIDR[0]:
 		tc.t.Errorf("ServiceCIDR[0] want: %q got: %q", tc.want.ServiceCIDR[0], got.ServiceCIDR[0])
-	case len(got.ServiceCIDR) != len(tc.want.ServiceCIDR):
+	case tc.want.ServiceCIDR != nil && len(got.ServiceCIDR) != len(tc.want.ServiceCIDR):
 		tc.t.Errorf("len(ServiceCIDR) want: %d got: %d", len(tc.want.ServiceCIDR), len(got.ServiceCIDR))
 	case got.SingleStackIPv6 != tc.want.SingleStackIPv6:
 		tc.t.Errorf("SingleStackIPv6 want: %v got: %v", tc.want.SingleStackIPv6, got.SingleStackIPv6)
-	case got.EtcdAddress.LocalHost != tc.want.EtcdAddress.LocalHost:
+	case tc.want.EtcdAddress.LocalHost != "" && got.EtcdAddress.LocalHost != tc.want.EtcdAddress.LocalHost:
 		tc.t.Errorf("LocalHost want: %q got: %q", tc.want.EtcdAddress.LocalHost, got.EtcdAddress.LocalHost)
+	case tc.want.EtcdEndpointConfigmapData != "" && got.EtcdEndpointConfigmapData != tc.want.EtcdEndpointConfigmapData:
+		tc.t.Errorf("EtcdEndpointConfigmapData want: %q got: %q", tc.want.EtcdEndpointConfigmapData, got.EtcdEndpointConfigmapData)
+	case tc.want.BootstrapScalingStrategy != "" && got.BootstrapScalingStrategy != tc.want.BootstrapScalingStrategy:
+		tc.t.Errorf("BootstrapScalingStrategy want: %q got: %q", tc.want.BootstrapScalingStrategy, got.BootstrapScalingStrategy)
+	case tc.want.NamespaceAnnotations != nil && !reflect.DeepEqual(got.NamespaceAnnotations, tc.want.NamespaceAnnotations):
+		tc.t.Errorf("NamespaceAnnotations want: %q got: %q", tc.want.NamespaceAnnotations, got.NamespaceAnnotations)
 	}
 }
 

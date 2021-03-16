@@ -33,6 +33,15 @@ const (
 	// annotation to the openshift-etcd namesapce.
 	DelayedHAScalingStrategy BootstrapScalingStrategy = "DelayedHAScalingStrategy"
 
+	// BootstrapInPlaceStrategy means that the bootstrap node will never exist
+	// during the lifecycle of the cluster. Bootkube will run on a live iso
+	// afterwards the node will pivot into the manifests generated during that
+	// process.
+	//
+	// This strategy is selected by observing the existence of `bootstrapInPlace`
+	// root key in the install-config.
+	BootstrapInPlaceStrategy BootstrapScalingStrategy = "BootstrapInPlaceStrategy"
+
 	// UnsafeScalingStrategy means scaling will occur without regards to nodes and
 	// any effect on quorum. Use of this strategy isn't officially tested or supported,
 	// but is made available for ad-hoc use.
