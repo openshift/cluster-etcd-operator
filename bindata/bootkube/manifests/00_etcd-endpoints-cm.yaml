@@ -3,5 +3,10 @@ kind: ConfigMap
 metadata:
   name: etcd-endpoints
   namespace: openshift-etcd
+{{- if ne .BootstrapScalingStrategy "BootstrapInPlaceStrategy" }}
   annotations:
     alpha.installer.openshift.io/etcd-bootstrap: {{ .BootstrapIP }}
+{{- else }}
+data:
+  {{ .EtcdEndpointConfigmapData }}
+{{- end }}

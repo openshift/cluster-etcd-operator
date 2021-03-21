@@ -1,6 +1,7 @@
 package render
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -166,6 +167,10 @@ type TemplateData struct {
 	// BootstrapIP is address of the bootstrap node.
 	BootstrapIP string
 
+	// BootstrapScalingStrategy describes the invariants which will be enforced when
+	// scaling the etcd cluster.
+	ceohelpers.BootstrapScalingStrategy
+
 	// Platform is the underlying provider the cluster is run on.
 	Platform string
 
@@ -174,6 +179,9 @@ type TemplateData struct {
 
 	// NamespaceAnnotations are addition annotations to apply to the etcd namespace.
 	NamespaceAnnotations map[string]string
+
+	// EtcdEndpointConfigmapData is an optional data field used by etcd-endpoints configmap.
+	EtcdEndpointConfigmapData string
 }
 
 type StaticFile struct {
@@ -245,17 +253,26 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 	// assume that this is >4.2
 	templateData.Platform = string(infra.Status.PlatformStatus.Type)
 
+	if err := templateData.setBootstrapStrategy(installConfig, opts.delayedHABootstrapScalingStrategyMarker); err != nil {
+		return nil, err
+	}
+
 	if err := templateData.setComputedEnvVars(templateData.Platform); err != nil {
 		return nil, err
 	}
 
-	// Use a marker file to configure the bootstrap scaling strategy.
-	if _, err := os.Stat(opts.delayedHABootstrapScalingStrategyMarker); err == nil {
-		if templateData.NamespaceAnnotations == nil {
-			templateData.NamespaceAnnotations = map[string]string{}
+	// If bootstrap scaling strategy is delayed HA set annotation signal
+	if templateData.BootstrapScalingStrategy == ceohelpers.DelayedHAScalingStrategy {
+		templateData.NamespaceAnnotations = map[string]string{
+			ceohelpers.DelayedHABootstrapScalingStrategyAnnotation: "",
 		}
-		templateData.NamespaceAnnotations[ceohelpers.DelayedHABootstrapScalingStrategyAnnotation] = ""
-		klog.Infof("using delayed HA bootstrap scaling strategy due to presence of marker file %s", opts.delayedHABootstrapScalingStrategyMarker)
+	}
+
+	// If bootstrap scaling strategy is in place set endpoint data
+	if templateData.BootstrapScalingStrategy == ceohelpers.BootstrapInPlaceStrategy {
+		// base64 encode the ip address and use it as unique data key to emulate endpoint controller
+		templateData.EtcdEndpointConfigmapData = fmt.Sprintf("%s: %s",
+			base64.StdEncoding.WithPadding(base64.NoPadding).EncodeToString([]byte(templateData.BootstrapIP)), templateData.BootstrapIP)
 	}
 
 	// Signer key material
@@ -552,6 +569,16 @@ func (t *TemplateData) setComputedEnvVars(platform string) error {
 	return nil
 }
 
+func (t *TemplateData) setBootstrapStrategy(installConfig map[string]interface{}, delayedHAMarkerFile string) error {
+	bootstrapStrategy, err := getBootstrapScalingStrategy(installConfig, delayedHAMarkerFile)
+	if err != nil {
+		return err
+	}
+	klog.Infof("Bootstrapping etcd using: %q", bootstrapStrategy)
+	t.BootstrapScalingStrategy = bootstrapStrategy
+	return nil
+}
+
 func writeManifests(outputDir, templateDir string, templateData interface{}) error {
 	assetPaths := map[string]string{
 		// The etc-kubernetes path will be copied recursively by the installer to /etc/kubernetes/
@@ -642,4 +669,29 @@ func getInfrastructure(file string) (*configv1.Infrastructure, error) {
 		return nil, err
 	}
 	return config, nil
+}
+
+func getBootstrapScalingStrategy(installConfig map[string]interface{}, delayedHAMarkerFile string) (ceohelpers.BootstrapScalingStrategy, error) {
+	// Delayed HA strategy is set if marker file exists on disk.
+	if _, err := os.Stat(delayedHAMarkerFile); err == nil {
+		return ceohelpers.DelayedHAScalingStrategy, nil
+	}
+
+	controlPlane, found := installConfig["controlPlane"].(map[string]interface{})
+	if !found {
+		return "", fmt.Errorf("unrecognized data structure in controlPlane field")
+	}
+	replicaCount, found := controlPlane["replicas"].(float64)
+	if !found {
+		return "", fmt.Errorf("unrecognized data structure in controlPlane replica field")
+	}
+
+	// Bootstrap in place strategy when bootstrapInPlace root key exists in the install-config
+	// and controlPlane replicas is 1.
+	if _, found := installConfig["bootstrapInPlace"]; found && int(replicaCount) == 1 {
+		return ceohelpers.BootstrapInPlaceStrategy, nil
+	}
+
+	// HA "default".
+	return ceohelpers.HAScalingStrategy, nil
 }
