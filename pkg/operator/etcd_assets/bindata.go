@@ -474,6 +474,22 @@ metadata:
     revision: "REVISION"
 spec:
   initContainers:
+    - name: setup
+      terminationMessagePolicy: FallbackToLogsOnError
+      image: ${IMAGE}
+      imagePullPolicy: IfNotPresent
+      volumeMounts:
+        - mountPath: /var/log/etcd
+          name: log-dir
+      command:
+        - /bin/sh
+        - -c
+        - |
+          #!/bin/sh
+          echo -n "Fixing zap log permissions."
+          chmod 0700 /var/log/etcd && touch /var/log/etcd/etcd.log && chmod 0600 /var/log/etcd/*
+      securityContext:
+        privileged: true
     - name: etcd-ensure-env-vars
       image: ${IMAGE}
       imagePullPolicy: IfNotPresent
@@ -645,6 +661,8 @@ ${COMPUTED_ENV_VARS}
         name: cert-dir
       - mountPath: /var/lib/etcd/
         name: data-dir
+      - mountPath: /var/log/etcd
+        name: log-dir
   - name: etcd-metrics
     image: ${IMAGE}
     imagePullPolicy: IfNotPresent

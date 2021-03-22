@@ -35,6 +35,9 @@ var FixedEtcdEnvVars = map[string]string{
 	"ETCD_ENABLE_PPROF":                                "true",
 	"ETCD_CIPHER_SUITES":                               getDefaultCipherSuites(),
 	"ETCD_EXPERIMENTAL_WATCH_PROGRESS_NOTIFY_INTERVAL": "5s",
+	"ETCD_LOGGER":                                      "zap",
+	"ETCD_LOG_OUTPUTS":                                 "stderr,/var/log/etcd/etcd.log", // testing only, depends on log rotation efforts upstream.
+	"ETCD_LOG_LEVEL":                                   "debug",                         //testing only TODO fix logLevel as part of this PR.
 }
 
 type envVarFunc func(envVarContext envVarContext) (map[string]string, error)
