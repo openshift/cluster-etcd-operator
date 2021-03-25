@@ -34,7 +34,13 @@ func NewFSyncController(operatorClient operatorv1helpers.OperatorClient, infraCl
 }
 
 func (c *FSyncController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
-	client, err := getPrometheusClient(ctx, c.secretClient)
+	transport, err := getTransport()
+	if err != nil {
+		return err
+	}
+	defer transport.CloseIdleConnections()
+
+	client, err := getPrometheusClient(ctx, c.secretClient, transport)
 	if errors.IsNotFound(err) {
 		return nil
 	}
