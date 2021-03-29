@@ -85,7 +85,7 @@ func NewResourceSyncController(
 		informers = append(informers, informer.Core().V1().Secrets().Informer())
 	}
 
-	f := factory.New().WithSync(c.Sync).WithSyncContext(c.syncCtx).WithInformers(informers...).ResyncEvery(time.Second).ToController(c.name, eventRecorder.WithComponentSuffix("resource-sync-controller"))
+	f := factory.New().WithSync(c.Sync).WithSyncContext(c.syncCtx).WithInformers(informers...).ResyncEvery(time.Minute).ToController(c.name, eventRecorder.WithComponentSuffix("resource-sync-controller"))
 	c.runFn = f.Run
 
 	return c

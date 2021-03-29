@@ -24,10 +24,9 @@ import (
 // StaticPodStateController is a controller that watches static pods and will produce a failing status if the
 //// static pods start crashing for some reason.
 type StaticPodStateController struct {
-	targetNamespace   string
-	staticPodName     string
-	operandName       string
-	operatorNamespace string
+	targetNamespace string
+	staticPodName   string
+	operandName     string
 
 	operatorClient  v1helpers.StaticPodOperatorClient
 	configMapGetter corev1client.ConfigMapsGetter
@@ -38,7 +37,7 @@ type StaticPodStateController struct {
 // NewStaticPodStateController creates a controller that watches static pods and will produce a failing status if the
 // static pods start crashing for some reason.
 func NewStaticPodStateController(
-	targetNamespace, staticPodName, operatorNamespace, operandName string,
+	targetNamespace, staticPodName, operandName string,
 	kubeInformersForTargetNamespace informers.SharedInformerFactory,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	configMapGetter corev1client.ConfigMapsGetter,
@@ -47,19 +46,18 @@ func NewStaticPodStateController(
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &StaticPodStateController{
-		targetNamespace:   targetNamespace,
-		staticPodName:     staticPodName,
-		operandName:       operandName,
-		operatorNamespace: operatorNamespace,
-		operatorClient:    operatorClient,
-		configMapGetter:   configMapGetter,
-		podsGetter:        podsGetter,
-		versionRecorder:   versionRecorder,
+		targetNamespace: targetNamespace,
+		staticPodName:   staticPodName,
+		operandName:     operandName,
+		operatorClient:  operatorClient,
+		configMapGetter: configMapGetter,
+		podsGetter:      podsGetter,
+		versionRecorder: versionRecorder,
 	}
 	return factory.New().WithInformers(
 		operatorClient.Informer(),
 		kubeInformersForTargetNamespace.Core().V1().Pods().Informer(),
-	).WithSync(c.sync).ResyncEvery(30*time.Second).ToController("StaticPodStateController", eventRecorder)
+	).WithSync(c.sync).ResyncEvery(time.Minute).ToController("StaticPodStateController", eventRecorder)
 }
 
 func describeWaitingContainerState(waiting *v1.ContainerStateWaiting) string {

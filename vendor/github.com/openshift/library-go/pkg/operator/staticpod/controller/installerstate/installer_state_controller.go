@@ -175,11 +175,17 @@ func (c *InstallerStateController) handlePendingInstallerPods(recorder events.Re
 				continue
 			}
 			if state := containerStatus.State.Waiting; len(state.Reason) > 0 {
+				message := fmt.Sprintf("Pod %q on node %q container %q is waiting for %s because", pod.Name, pod.Spec.NodeName, containerStatus.Name, pendingTime)
+				if len(state.Message) > 0 {
+					message = fmt.Sprintf("%s %q", message, state.Message)
+				} else {
+					message = fmt.Sprintf("%s %s", message, state.Reason)
+				}
 				condition := operatorv1.OperatorCondition{
 					Type:    "InstallerPodContainerWaitingDegraded",
 					Reason:  state.Reason,
 					Status:  operatorv1.ConditionTrue,
-					Message: fmt.Sprintf("Pod %q on node %q container %q is waiting for %s because %q", pod.Name, pod.Spec.NodeName, containerStatus.Name, pendingTime, state.Message),
+					Message: message,
 				}
 				conditions = append(conditions, condition)
 				recorder.Warningf(condition.Reason, condition.Message)
