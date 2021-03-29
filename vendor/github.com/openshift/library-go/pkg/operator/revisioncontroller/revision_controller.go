@@ -257,8 +257,8 @@ func (c RevisionController) createNewRevision(recorder events.Recorder, revision
 }
 
 // getLatestAvailableRevision returns the latest known revision to the operator
-// This is either the LatestAvailableRevision in the status or by checking revision status configmaps
-func (c RevisionController) getLatestAvailableRevision(operatorStatus *operatorv1.OperatorStatus) (int32, error) {
+// This is determined by checking revision status configmaps.
+func (c RevisionController) getLatestAvailableRevision() (int32, error) {
 	configMaps, err := c.configMapGetter.ConfigMaps(c.targetNamespace).List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		return 0, err
@@ -283,11 +283,10 @@ func (c RevisionController) getLatestAvailableRevision(operatorStatus *operatorv
 }
 
 func (c RevisionController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
-	operatorSpec, originalOperatorStatus, latestAvailableRevision, resourceVersion, err := c.operatorClient.GetLatestRevisionState()
+	operatorSpec, _, latestAvailableRevision, resourceVersion, err := c.operatorClient.GetLatestRevisionState()
 	if err != nil {
 		return err
 	}
-	operatorStatus := originalOperatorStatus.DeepCopy()
 
 	if !management.IsOperatorManaged(operatorSpec.ManagementState) {
 		return nil
@@ -297,7 +296,7 @@ func (c RevisionController) sync(ctx context.Context, syncCtx factory.SyncContex
 	// or possibly the operator resource was deleted and reset back to 0, which is not what we want so check configmaps
 	if latestAvailableRevision == 0 {
 		// Check to see if current revision is accurate and if not, search through configmaps for latest revision
-		latestRevision, err := c.getLatestAvailableRevision(operatorStatus)
+		latestRevision, err := c.getLatestAvailableRevision()
 		if err != nil {
 			return err
 		}
