@@ -2,6 +2,7 @@ package etcdcli
 
 import (
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
+	"google.golang.org/grpc"
 )
 
 const (
@@ -12,6 +13,7 @@ const (
 )
 
 type EtcdClient interface {
+	Dialer
 	MemberAdder
 	MemberLister
 	MemberRemover
@@ -20,6 +22,10 @@ type EtcdClient interface {
 
 	GetMember(name string) (*etcdserverpb.Member, error)
 	MemberUpdatePeerURL(id uint64, peerURL []string) error
+}
+
+type Dialer interface {
+	Dial(endpoint string) (*grpc.ClientConn, error)
 }
 
 type MemberAdder interface {

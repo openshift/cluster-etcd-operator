@@ -53,7 +53,7 @@ func GetMemberHealth(etcdMembers []*etcdserverpb.Member) memberHealth {
 		go func(member *etcdserverpb.Member) {
 			defer wg.Done()
 			// new client vs shared is used here to minimize disruption of cached client consumers.
-			// performance analisis of CPU and RSS consumption showed net gain after refactor
+			// performance analysis of CPU and RSS consumption showed net gain after refactor
 			cli, err := getEtcdClient([]string{member.ClientURLs[0]})
 			if err != nil {
 				hch <- healthCheck{Member: member, Healthy: false, Error: fmt.Errorf("create client failure: %w", err)}

@@ -179,6 +179,15 @@ func (g *etcdClientGetter) MemberAdd(peerURL string) error {
 	return err
 }
 
+func (g *etcdClientGetter) Dial(endpoint string) (*grpc.ClientConn, error) {
+	cli, err := g.getEtcdClient()
+	if err != nil {
+		return nil, err
+	}
+
+	return cli.Dial(endpoint)
+}
+
 func (g *etcdClientGetter) MemberUpdatePeerURL(id uint64, peerURLs []string) error {
 	if members, err := g.MemberList(); err != nil {
 		g.eventRecorder.Eventf("MemberUpdate", "updating member %d with peers %v", id, strings.Join(peerURLs, ","))
