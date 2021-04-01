@@ -10,7 +10,6 @@ import (
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
 	"k8s.io/klog/v2"
@@ -82,14 +81,14 @@ func (c *DisruptionController) checkDisruption(ctx context.Context, eventRecorde
 			return err
 		}
 		wg.Add(1)
-		go checkClientConn(ctx, conn, member, eventRecorder, &wg)
+		go checkClientConn(ctx, conn, member.Name, eventRecorder, &wg)
 	}
 	wg.Wait()
 	return nil
 }
 
 // checkClientConn periodically checks the connection state of etcd members
-func checkClientConn(ctx context.Context, conn *grpc.ClientConn, member *etcdserverpb.Member, eventRecorder events.Recorder, wg *sync.WaitGroup) error {
+func checkClientConn(ctx context.Context, conn *grpc.ClientConn, memberName string, eventRecorder events.Recorder, wg *sync.WaitGroup) error {
 	defer wg.Done()
 	for {
 	reset:
@@ -105,17 +104,17 @@ func checkClientConn(ctx context.Context, conn *grpc.ClientConn, member *etcdser
 			}
 			// start tracking outage until Ready
 			disruptionStart := time.Now()
-			eventRecorder.Warningf("ConnectivityOutageDetected", "Connectivity outage detected: %s: state: %s\n", member.Name, state.String())
+			eventRecorder.Warningf("ConnectivityOutageDetected", "Connectivity outage detected: %s: state: %s\n", memberName, state.String())
 			for {
 				select {
 				case <-ctx.Done(): // resync but notify current state
-					eventRecorder.Warningf("ConnectivityOutagePaused", "Connectivity has not yet been restored after %s: %s: state: %s\n", time.Since(disruptionStart), member.Name, state.String())
+					eventRecorder.Warningf("ConnectivityOutagePaused", "Connectivity has not yet been restored after %s: %s: state: %s\n", time.Since(disruptionStart), memberName, state.String())
 					conn.Close()
 					return nil
 				case <-time.After(retryDuration):
 					state = conn.GetState()
 					if state == connectivity.Ready {
-						eventRecorder.Warningf("ConnectivityRestored", "Connectivity restored after %s: %s: state: %s\n", time.Since(disruptionStart), member.Name, state.String())
+						eventRecorder.Warningf("ConnectivityRestored", "Connectivity restored after %s: %s: state: %s\n", time.Since(disruptionStart), memberName, state.String())
 						goto reset
 					}
 				}
