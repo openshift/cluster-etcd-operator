@@ -3,6 +3,7 @@ package disruptioncontroller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -73,12 +74,12 @@ func (c *DisruptionController) checkDisruption(ctx context.Context, eventRecorde
 
 	members, err := c.etcdClient.MemberList()
 	if err != nil {
-		return err
+		return fmt.Errorf("client request failed: %v", err)
 	}
 	for _, member := range members {
 		conn, err := c.etcdClient.Dial(member.ClientURLs[0])
 		if err != nil {
-			return err
+			return fmt.Errorf("client request failed: %v", err)
 		}
 		wg.Add(1)
 		go checkClientConn(ctx, conn, member.Name, eventRecorder, &wg)
@@ -88,16 +89,16 @@ func (c *DisruptionController) checkDisruption(ctx context.Context, eventRecorde
 }
 
 // checkClientConn periodically checks the connection state of etcd members
-func checkClientConn(ctx context.Context, conn *grpc.ClientConn, memberName string, eventRecorder events.Recorder, wg *sync.WaitGroup) error {
+func checkClientConn(ctx context.Context, conn *grpc.ClientConn, memberName string, eventRecorder events.Recorder, wg *sync.WaitGroup) {
 	defer wg.Done()
 	for {
-	reset:
 		select {
 		case <-ctx.Done():
 			klog.Info("Restarting connectivity checker to validate membership")
 			conn.Close()
-			return nil
+			return
 		case <-time.After(retryDuration):
+		reset:
 			state := conn.GetState()
 			if conn.GetState() == connectivity.Ready {
 				continue
@@ -110,7 +111,7 @@ func checkClientConn(ctx context.Context, conn *grpc.ClientConn, memberName stri
 				case <-ctx.Done(): // resync but notify current state
 					eventRecorder.Warningf("ConnectivityOutagePaused", "Connectivity has not yet been restored after %s: %s: state: %s\n", time.Since(disruptionStart), memberName, state.String())
 					conn.Close()
-					return nil
+					return
 				case <-time.After(retryDuration):
 					state = conn.GetState()
 					if state == connectivity.Ready {
