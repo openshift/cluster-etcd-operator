@@ -3,6 +3,7 @@ kind: Namespace
 metadata:
   annotations:
     openshift.io/node-selector: ""
+    workload.openshift.io/allowed: "management"
   name: openshift-etcd
   labels:
     openshift.io/run-level: "0"
