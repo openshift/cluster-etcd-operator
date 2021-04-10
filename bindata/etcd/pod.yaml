@@ -127,12 +127,12 @@ ${COMPUTED_ENV_VARS}
           --data-dir=/var/lib/etcd \
           --target-peer-url-host=${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST} \
           --target-name=NODE_NAME)
-         export ETCD_INITIAL_CLUSTER
+        export ETCD_INITIAL_CLUSTER
 
         # we cannot use the "normal" port conflict initcontainer because when we upgrade, the existing static pod will never yield,
-        # so we do the detection in etcd container itsefl.
+        # so we do the detection in etcd container itself.
         echo -n "Waiting for ports 2379, 2380 and 9978 to be released."
-        while [ -n "$(ss -Htan '( sport = 2379 or sport = 2380 or sport = 9978 )')" ]; do
+        time while [ -n "$(ss -Htan '( sport = 2379 or sport = 2380 or sport = 9978 )')" ]; do
           echo -n "."
           sleep 1
         done
@@ -143,6 +143,7 @@ ${COMPUTED_ENV_VARS}
         set -x
         # See https://etcd.io/docs/v3.4.0/tuning/ for why we use ionice
         exec ionice -c2 -n0 etcd \
+          --logger=zap \
           --initial-advertise-peer-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2380 \
           --cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.crt \
           --key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.key \
