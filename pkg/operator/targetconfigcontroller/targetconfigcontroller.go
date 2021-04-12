@@ -148,18 +148,12 @@ func createTargetConfig(c TargetConfigController, recorder events.Recorder, oper
 	return false, nil
 }
 
-func loglevelToKlog(logLevel operatorv1.LogLevel) string {
+func loglevelToZap(logLevel operatorv1.LogLevel) string {
 	switch logLevel {
-	case operatorv1.Normal:
-		return "2"
-	case operatorv1.Debug:
-		return "4"
-	case operatorv1.Trace:
-		return "6"
-	case operatorv1.TraceAll:
-		return "8"
+	case operatorv1.Debug, operatorv1.Trace, operatorv1.TraceAll:
+		return "debug"
 	default:
-		return "2"
+		return "info"
 	}
 }
 
@@ -179,7 +173,7 @@ func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv
 	return strings.NewReplacer(
 		"${IMAGE}", imagePullSpec,
 		"${OPERATOR_IMAGE}", operatorImagePullSpec,
-		"${VERBOSITY}", loglevelToKlog(operatorSpec.LogLevel),
+		"${VERBOSITY}", loglevelToZap(operatorSpec.LogLevel),
 		"${LISTEN_ON_ALL_IPS}", "0.0.0.0", // TODO this needs updating to detect ipv6-ness
 		"${LOCALHOST_IP}", "127.0.0.1", // TODO this needs updating to detect ipv6-ness
 		"${COMPUTED_ENV_VARS}", strings.Join(envVarLines, "\n"), // lacks beauty, but it works
