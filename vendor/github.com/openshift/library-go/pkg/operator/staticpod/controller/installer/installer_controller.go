@@ -621,21 +621,33 @@ func (c *InstallerController) newNodeStateForInstallInProgress(ctx context.Conte
 		return nil, false, "", err
 	}
 
+	// quickly move to new revision even when an old installer has been seen, if necessary with force by
+	// deleting the old installer (it might be frozen).
+	if pendingNewRevision := latestRevisionAvailable > currNodeState.TargetRevision; pendingNewRevision {
+		switch installerPod.Status.Phase {
+		case corev1.PodSucceeded, corev1.PodFailed:
+			// stop early, don't wait for ready static operand pod because a new revision is waiting
+		default:
+			// delete non-terminated pod. It may be in some state where it would never terminate, e.g. ContainerCreating
+			if err := c.podsGetter.Pods(c.targetNamespace).Delete(ctx, installerPodName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+				return ret, false, "", err
+			}
+		}
+
+		ret.LastFailedRevision = 0
+		ret.LastFailedTime = nil
+		ret.LastFailedCount = 0
+		ret.TargetRevision = 0
+		ret.LastFailedRevisionErrors = nil
+
+		return ret, false, "new revision pending", nil
+	}
+
 	errors := []string{}
 	reason = ""
 
 	switch installerPod.Status.Phase {
 	case corev1.PodSucceeded:
-		if pendingNewRevision := latestRevisionAvailable > currNodeState.TargetRevision; pendingNewRevision {
-			// stop early, don't wait for ready static pod because a new revision is waiting
-			ret.LastFailedRevision = 0
-			ret.LastFailedTime = nil
-			ret.LastFailedCount = 0
-			ret.TargetRevision = 0
-			ret.LastFailedRevisionErrors = nil
-			return ret, false, "new revision pending", nil
-		}
-
 		state, currentRevision, staticPodReason, failedErrors, err := c.getStaticPodState(ctx, currNodeState.NodeName)
 		if err != nil && apierrors.IsNotFound(err) {
 			// pod not launched yet
@@ -707,6 +719,13 @@ func (c *InstallerController) newNodeStateForInstallInProgress(ctx context.Conte
 		}
 		ret.LastFailedRevisionErrors = errors
 		return ret, true, fmt.Sprintf("installer pod failed: %v", strings.Join(errors, "\n")), nil
+
+	default:
+		if len(installerPod.Status.Message) > 0 {
+			reason = fmt.Sprintf("installer is not finished: %s", installerPod.Status.Message)
+		} else {
+			reason = fmt.Sprintf("installer is not finished, but in %s phase", installerPod.Status.Phase)
+		}
 	}
 
 	return ret, false, reason, nil

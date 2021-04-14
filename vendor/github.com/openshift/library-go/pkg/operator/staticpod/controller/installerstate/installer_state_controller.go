@@ -152,9 +152,6 @@ func (c *InstallerStateController) handlePendingInstallerPodsNetworkEvents(ctx c
 func (c *InstallerStateController) handlePendingInstallerPods(recorder events.Recorder, pods []*v1.Pod) []operatorv1.OperatorCondition {
 	conditions := []operatorv1.OperatorCondition{}
 	for _, pod := range pods {
-		// at this point we already know the pod is pending for longer than expected
-		pendingTime := c.timeNowFn().Sub(pod.Status.StartTime.Time)
-
 		// the pod is in the pending state for longer than maxToleratedPodPendingDuration, report the reason and message
 		// as degraded condition for the operator.
 		if len(pod.Status.Reason) > 0 {
@@ -162,7 +159,7 @@ func (c *InstallerStateController) handlePendingInstallerPods(recorder events.Re
 				Type:    "InstallerPodPendingDegraded",
 				Reason:  pod.Status.Reason,
 				Status:  operatorv1.ConditionTrue,
-				Message: fmt.Sprintf("Pod %q on node %q is Pending for %s because %s", pod.Name, pod.Spec.NodeName, pendingTime, pod.Status.Message),
+				Message: fmt.Sprintf("Pod %q on node %q is Pending since %s because %s", pod.Name, pod.Spec.NodeName, pod.Status.StartTime.Time, pod.Status.Message),
 			}
 			conditions = append(conditions, condition)
 			recorder.Warningf(condition.Reason, condition.Message)
@@ -175,7 +172,7 @@ func (c *InstallerStateController) handlePendingInstallerPods(recorder events.Re
 				continue
 			}
 			if state := containerStatus.State.Waiting; len(state.Reason) > 0 {
-				message := fmt.Sprintf("Pod %q on node %q container %q is waiting for %s because", pod.Name, pod.Spec.NodeName, containerStatus.Name, pendingTime)
+				message := fmt.Sprintf("Pod %q on node %q container %q is waiting since %s because", pod.Name, pod.Spec.NodeName, containerStatus.Name, pod.Status.StartTime.Time)
 				if len(state.Message) > 0 {
 					message = fmt.Sprintf("%s %q", message, state.Message)
 				} else {
