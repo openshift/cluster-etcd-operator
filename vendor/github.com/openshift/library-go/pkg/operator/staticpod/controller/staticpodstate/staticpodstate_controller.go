@@ -127,7 +127,12 @@ func (c *StaticPodStateController) sync(ctx context.Context, syncCtx factory.Syn
 
 	switch {
 	case len(images) == 0:
-		syncCtx.Recorder().Warningf("MissingVersion", "no image found for operand pod")
+		// if NodeStatuses is still empty, we are most probably in bootstrapping phase and this controller races with the
+		// installer controller. Hence, ignore that case. It will settle.
+
+		if len(originalOperatorStatus.NodeStatuses) > 0 {
+			syncCtx.Recorder().Warningf("MissingVersion", "no image found for operand pod")
+		}
 
 	case len(images) > 1:
 		syncCtx.Recorder().Eventf("MultipleVersions", "multiple versions found, probably in transition: %v", strings.Join(images.List(), ","))

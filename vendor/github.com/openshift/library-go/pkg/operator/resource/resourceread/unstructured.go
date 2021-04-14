@@ -6,6 +6,10 @@ import (
 )
 
 func ReadCredentialRequestsOrDie(objBytes []byte) *unstructured.Unstructured {
+	return ReadUnstructuredOrDie(objBytes)
+}
+
+func ReadUnstructuredOrDie(objBytes []byte) *unstructured.Unstructured {
 	udi, _, err := scheme.Codecs.UniversalDecoder().Decode(objBytes, nil, &unstructured.Unstructured{})
 	if err != nil {
 		panic(err)
