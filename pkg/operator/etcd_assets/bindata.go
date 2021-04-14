@@ -568,6 +568,34 @@ ${COMPUTED_ENV_VARS}
         name: data-dir
     env:
 ${COMPUTED_ENV_VARS}
+  - name: etcd-healthz
+    image: ${OPERATOR_IMAGE}
+    imagePullPolicy: IfNotPresent
+    terminationMessagePolicy: FallbackToLogsOnError
+    command:
+      - /bin/sh
+      - -c
+      - |
+        #!/bin/sh
+        set -euo pipefail
+        cluster-etcd-operator healthz-proxy \
+          --listen-port=10100 \
+          --listen-cert=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-metrics-NODE_NAME.crt \
+          --listen-key=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-metrics-NODE_NAME.key \
+          --client-cert=${ETCDCTL_CERT} \
+          --client-key=${ETCDCTL_KEY} \
+          --client-cacert=${ETCDCTL_CACERT}
+    ports:
+      - containerPort: 10100
+    resources:
+      requests:
+        memory: 50Mi
+        cpu: 5m
+    volumeMounts:
+      - mountPath: /etc/kubernetes/static-pod-certs
+        name: cert-dir
+    env:
+${COMPUTED_ENV_VARS}
   - name: etcd
     image: ${IMAGE}
     imagePullPolicy: IfNotPresent
@@ -629,8 +657,10 @@ ${COMPUTED_ENV_VARS}
         memory: 600Mi
         cpu: 300m
     readinessProbe:
-      tcpSocket:
-        port: 2380
+      httpGet:
+        scheme: HTTPS
+        port: 10100
+        path: healthz
       failureThreshold: 3
       initialDelaySeconds: 3
       periodSeconds: 5

@@ -3,6 +3,7 @@ package main
 import (
 	goflag "flag"
 	"fmt"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/healthzproxy"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -62,6 +63,7 @@ func NewSSCSCommand() *cobra.Command {
 	cmd.AddCommand(prune.NewPrune())
 	cmd.AddCommand(certsyncpod.NewCertSyncControllerCommand(operator.CertConfigMaps, operator.CertSecrets))
 	cmd.AddCommand(waitforceo.NewWaitForCeoCommand(os.Stderr))
+	cmd.AddCommand(healthzproxy.NewHealthzProxyCommand())
 
 	return cmd
 }
