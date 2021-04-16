@@ -416,6 +416,7 @@ kind: Namespace
 metadata:
   annotations:
     openshift.io/node-selector: ""
+    workload.openshift.io/allowed: "management"
   name: openshift-etcd
   labels:
     openshift.io/run-level: "0"
@@ -467,6 +468,8 @@ kind: Pod
 metadata:
   name: etcd
   namespace: openshift-etcd
+  annotations:
+    workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
   labels:
     app: etcd
     k8s-app: etcd
