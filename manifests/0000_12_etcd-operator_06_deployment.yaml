@@ -20,7 +20,7 @@ spec:
     metadata:
       name: etcd-operator
       annotations:
-        workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
+        target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
       labels:
         app: etcd-operator
     spec:
