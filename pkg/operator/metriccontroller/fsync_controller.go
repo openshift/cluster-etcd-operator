@@ -53,13 +53,19 @@ func (c *FSyncController) sync(ctx context.Context, syncCtx factory.SyncContext)
 	if err != nil {
 		return err
 	}
-	leaderChanges := etcdLeaderChangesResult.(model.Vector)[0].Value
-	klog.V(4).Infof("Etcd leader changes increase in last 5m: %s", leaderChanges)
 
+	vector, ok := etcdLeaderChangesResult.(model.Vector)
+	if !ok {
+		return fmt.Errorf("unexpected type, expected Vector, got %T", vector)
+	}
+
+	leaderChanges := vector[0].Value
 	// Do nothing if there are no leader changes
 	if leaderChanges == 0.0 {
 		return nil
 	}
+
+	klog.V(4).Infof("Etcd leader changes increase in last 5m: %s", leaderChanges)
 
 	// Capture etcd disk metrics as we detected excessive etcd leader changes
 	etcdWalFsyncResult, _, err := client.QueryRange(ctx, "histogram_quantile(0.99, rate(etcd_disk_wal_fsync_duration_seconds_bucket[5m]))", prometheusv1.Range{
