@@ -31,6 +31,8 @@ $(call build-image,ocp-cluster-etcd-operator,$(IMAGE_REGISTRY)/ocp/4.4:cluster-e
 # and also hooked into {update,verify}-generated for broader integration.
 $(call add-bindata,etcd,./bindata/etcd/...,bindata,etcd_assets,pkg/operator/etcd_assets/bindata.go)
 
+$(call verify-golang-versions,Dockerfile.rhel7)
+
 # Configure the 'telepresence' target
 # See vendor/github.com/openshift/build-machinery-go/scripts/run-telepresence.sh for usage and configuration details
 export TP_DEPLOYMENT_YAML ?=./manifests/0000_12_etcd-operator_06_deployment.yaml
