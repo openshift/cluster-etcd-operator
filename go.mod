@@ -1,6 +1,6 @@
 module github.com/openshift/cluster-etcd-operator
 
-go 1.14
+go 1.16
 
 require (
 	github.com/davecgh/go-spew v1.1.1
@@ -11,7 +11,7 @@ require (
 	github.com/google/uuid v1.1.2
 	github.com/grpc-ecosystem/grpc-gateway v1.14.6 // indirect
 	github.com/openshift/api v0.0.0-20210405165116-47be53705a13
-	github.com/openshift/build-machinery-go v0.0.0-20210209125900-0da259a2c359
+	github.com/openshift/build-machinery-go v0.0.0-20210423112049-9415d7ebd33e
 	github.com/openshift/client-go v0.0.0-20210331195552-cf6c2669e01f
 	github.com/openshift/library-go v0.0.0-20210414082648-6e767630a0dc
 	github.com/pkg/errors v0.9.1
