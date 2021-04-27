@@ -469,7 +469,7 @@ metadata:
   name: etcd
   namespace: openshift-etcd
   annotations:
-    workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
+    target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
   labels:
     app: etcd
     k8s-app: etcd
