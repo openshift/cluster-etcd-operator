@@ -606,6 +606,7 @@ ${COMPUTED_ENV_VARS}
         set -x
         # See https://etcd.io/docs/v3.4.0/tuning/ for why we use ionice
         exec ionice -c2 -n0 etcd \
+          --log-level=${VERBOSITY} \
           --initial-advertise-peer-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2380 \
           --cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-serving/etcd-serving-NODE_NAME.crt \
           --key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-serving/etcd-serving-NODE_NAME.key \
@@ -810,6 +811,7 @@ spec:
 
         set -x
         exec etcd \
+          --log-level=${VERBOSITY} \
           --initial-advertise-peer-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2380 \
           --cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-serving/etcd-serving-NODE_NAME.crt \
           --key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-serving/etcd-serving-NODE_NAME.key \
