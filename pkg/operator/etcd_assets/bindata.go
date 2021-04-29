@@ -640,8 +640,8 @@ ${COMPUTED_ENV_VARS}
           --peer-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-peer/etcd-peer-NODE_NAME.key \
           --peer-trusted-ca-file=/etc/kubernetes/static-pod-certs/configmaps/etcd-peer-client-ca/ca-bundle.crt \
           --peer-client-cert-auth=true \
-          --advertise-client-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2379 \
-          --listen-client-urls=https://${LISTEN_ON_ALL_IPS}:2379 \
+          --advertise-client-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2379,unixs://${NODE_NODE_ENVVAR_NAME_IP}:0 \
+          --listen-client-urls=https://${LISTEN_ON_ALL_IPS}:2379,unixs://${NODE_NODE_ENVVAR_NAME_IP}:0 \
           --listen-peer-urls=https://${LISTEN_ON_ALL_IPS}:2380 \
           --listen-metrics-urls=https://${LISTEN_ON_ALL_IPS}:9978 ||  mv /etc/kubernetes/etcd-backup-dir/etcd-member.yaml /etc/kubernetes/manifests
     env:
@@ -651,8 +651,23 @@ ${COMPUTED_ENV_VARS}
         memory: 600Mi
         cpu: 300m
     readinessProbe:
-      tcpSocket:
-        port: 2380
+      exec:
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -xe
+
+          # Unix sockets are used for health checks to ensure that the pod is reporting readiness of the etcd process
+          # in this container. While this might seem unnecessary the use of SO_REUSEADDR has made this explicitly
+          # required as the kernel will allow the reuse of a port while in TIME_WAIT. etcd requires socket
+          # path in this format <name>:<port> so port 0 is used only to meet this requirement.
+          unset ETCDCTL_ENDPOINTS
+          /usr/bin/etcdctl \
+            --command-timeout=2s \
+            --dial-timeout=2s \
+            --endpoints=unixs://${NODE_NODE_ENVVAR_NAME_IP}:0 \
+            endpoint health -w json | grep \"health\":true
       failureThreshold: 3
       initialDelaySeconds: 3
       periodSeconds: 5
