@@ -146,8 +146,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	for _, version := range clusterOperator.Status.Versions {
 		versionRecorder.SetVersion(version.Name, version.Version)
 	}
+	// Don't set operator version. library-go will take care of it after setting operands.
 	versionRecorder.SetVersion("raw-internal", status.VersionForOperatorFromEnv())
-	versionRecorder.SetVersion("operator", status.VersionForOperatorFromEnv())
 
 	staticPodControllers, err := staticpod.NewBuilder(operatorClient, kubeClient, kubeInformersForNamespaces).
 		WithEvents(controllerContext.EventRecorder).
