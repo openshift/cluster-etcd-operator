@@ -58,6 +58,9 @@ func (c *FSyncController) sync(ctx context.Context, syncCtx factory.SyncContext)
 	if !ok {
 		return fmt.Errorf("unexpected type, expected Vector, got %T", vector)
 	}
+	if len(vector) == 0 {
+		return fmt.Errorf("client query returned empty vector")
+	}
 
 	leaderChanges := vector[0].Value
 	// Do nothing if there are no leader changes
