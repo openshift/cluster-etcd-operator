@@ -1,11 +1,11 @@
 reviewers:
   - hexfusion
   - ironcladlou
+  - lilic
   - marun
   - retroflexer
 approvers:
   - deads2k
   - hexfusion
-  - ironcladlou
   - sttts
 component: "Etcd"
