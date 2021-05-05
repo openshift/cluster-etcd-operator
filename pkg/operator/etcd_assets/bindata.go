@@ -571,6 +571,8 @@ ${COMPUTED_ENV_VARS}
         name: data-dir
     env:
 ${COMPUTED_ENV_VARS}
+      - name: "ETCD_STATIC_POD_REV"
+        value: "REVISION"
   - name: etcd
     image: ${IMAGE}
     imagePullPolicy: IfNotPresent
@@ -627,6 +629,8 @@ ${COMPUTED_ENV_VARS}
           --listen-metrics-urls=https://${LISTEN_ON_ALL_IPS}:9978 ||  mv /etc/kubernetes/etcd-backup-dir/etcd-member.yaml /etc/kubernetes/manifests
     env:
 ${COMPUTED_ENV_VARS}
+      - name: "ETCD_STATIC_POD_REV"
+        value: "REVISION"
     resources:
       requests:
         memory: 600Mi
@@ -675,6 +679,8 @@ ${COMPUTED_ENV_VARS}
           --trusted-ca-file /etc/kubernetes/static-pod-certs/configmaps/etcd-metrics-proxy-serving-ca/ca-bundle.crt
     env:
 ${COMPUTED_ENV_VARS}
+      - name: "ETCD_STATIC_POD_REV"
+        value: "REVISION"
     resources:
       requests:
         memory: 200Mi
@@ -947,6 +953,8 @@ spec:
           --listen-metrics-urls=https://${LISTEN_ON_ALL_IPS}:9978
     env:
 ${COMPUTED_ENV_VARS}
+      - name: "ETCD_STATIC_POD_REV"
+        value: "REVISION"
     resources:
       requests:
         memory: 600Mi
