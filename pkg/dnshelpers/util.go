@@ -5,8 +5,8 @@ import (
 	"net"
 
 	configv1 "github.com/openshift/api/config/v1"
-
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/klog/v2"
 )
 
 // GetEscapedPreferredInternalIPAddressForNodeName returns the first internal ip address of the correct family with escaping
@@ -70,15 +70,28 @@ func GetPreferredInternalIPAddressForNodeName(network *configv1.Network, node *c
 	return "", "", fmt.Errorf("no matches found for ip family %q for node %q", ipFamily, node.Name)
 }
 
+// GetPreferredIPFamily checks network status for service CIDR to conclude IP family. If status is not yet populated
+// fallback to spec.
 func GetPreferredIPFamily(network *configv1.Network) (string, error) {
-	if len(network.Status.ServiceNetwork) == 0 || len(network.Status.ServiceNetwork[0]) == 0 {
-		return "", fmt.Errorf("networks.%s/cluster: status.serviceNetwork not found", configv1.GroupName)
+	var serviceCIDR string
+	switch {
+	case len(network.Status.ServiceNetwork) != 0 && len(network.Status.ServiceNetwork[0]) != 0:
+		serviceCIDR = network.Status.ServiceNetwork[0]
+		if len(serviceCIDR) == 0 {
+			return "", fmt.Errorf("networks.%s/cluster: status.serviceNetwork[0] is empty", configv1.GroupName)
+		}
+		break
+	case len(network.Spec.ServiceNetwork) != 0 && len(network.Spec.ServiceNetwork[0]) != 0:
+		klog.Warningf("networks.%s/cluster: status.serviceNetwork not found falling back to spec.serviceNetwork", configv1.GroupName)
+		serviceCIDR = network.Spec.ServiceNetwork[0]
+		if len(serviceCIDR) == 0 {
+			return "", fmt.Errorf("networks.%s/cluster: spec.serviceNetwork[0] is empty", configv1.GroupName)
+		}
+		break
+	default:
+		return "", fmt.Errorf("networks.%s/cluster: status|spec.serviceNetwork not found", configv1.GroupName)
 	}
 
-	serviceCIDR := network.Status.ServiceNetwork[0]
-	if len(serviceCIDR) == 0 {
-		return "", fmt.Errorf("networks.%s/cluster: status.serviceNetwork[0] is empty", configv1.GroupName)
-	}
 	ip, _, err := net.ParseCIDR(serviceCIDR)
 
 	switch {
