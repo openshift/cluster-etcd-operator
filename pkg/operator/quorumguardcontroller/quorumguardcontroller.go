@@ -15,7 +15,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	appsv1 "k8s.io/api/apps/v1"
-	policyv1beta1 "k8s.io/api/policy/v1beta1"
+	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -43,12 +43,12 @@ type replicaCountDecoder struct {
 	} `yaml:"controlPlane,omitempty"`
 }
 
-var pdb = &policyv1beta1.PodDisruptionBudget{
+var pdb = &policyv1.PodDisruptionBudget{
 	ObjectMeta: metav1.ObjectMeta{
 		Name:      EtcdGuardDeploymentName,
 		Namespace: operatorclient.TargetNamespace,
 	},
-	Spec: policyv1beta1.PodDisruptionBudgetSpec{
+	Spec: policyv1.PodDisruptionBudgetSpec{
 		MaxUnavailable: &intstr.IntOrString{Type: intstr.Int, IntVal: int32(1)},
 		Selector:       &metav1.LabelSelector{MatchLabels: map[string]string{"k8s-app": EtcdGuardDeploymentName}},
 	},
@@ -224,7 +224,7 @@ func (c *QuorumGuardController) findAndDeleteCVOManagedQuorumGuardDeployment(ctx
 func (c *QuorumGuardController) ensureEtcdGuardPDB(ctx context.Context, recorder events.Recorder) error {
 
 	// if restart occurred, we will apply PDB but if it is the same, nothing will happened
-	actual, modified, err := resourceapply.ApplyPodDisruptionBudgets(ctx, c.kubeClient.PolicyV1beta1(), pdb)
+	actual, modified, err := resourceapply.ApplyPodDisruptionBudgets(ctx, c.kubeClient.PolicyV1(), pdb)
 	if err != nil {
 		klog.Errorf("Failed to verify/apply %s pdb, error %w", EtcdGuardDeploymentName, err)
 		return err
@@ -243,7 +243,7 @@ func (c *QuorumGuardController) ensureEtcdGuardPDB(ctx context.Context, recorder
 
 // findAndDeleteCVOManagedQuorumGuardPDB delete quorumGuard PDB if it is managed by cvo
 // TODO delete after 4.8
-func (c *QuorumGuardController) findAndDeleteCVOManagedQuorumGuardPDB(ctx context.Context, quorumGuardPDB *policyv1beta1.PodDisruptionBudget, recorder events.Recorder) bool {
+func (c *QuorumGuardController) findAndDeleteCVOManagedQuorumGuardPDB(ctx context.Context, quorumGuardPDB *policyv1.PodDisruptionBudget, recorder events.Recorder) bool {
 
 	deletePDB := func() {
 		if quorumGuardPDB.ObjectMeta.DeletionTimestamp != nil {
@@ -251,7 +251,7 @@ func (c *QuorumGuardController) findAndDeleteCVOManagedQuorumGuardPDB(ctx contex
 		}
 
 		klog.Warningf("Deleting cvo-managed etcd quorum guard pdb")
-		err := c.kubeClient.PolicyV1beta1().PodDisruptionBudgets(operatorclient.TargetNamespace).Delete(ctx, quorumGuardPDB.Name, metav1.DeleteOptions{})
+		err := c.kubeClient.PolicyV1().PodDisruptionBudgets(operatorclient.TargetNamespace).Delete(ctx, quorumGuardPDB.Name, metav1.DeleteOptions{})
 		if err != nil && !errors.IsNotFound(err) {
 			klog.Warningf("Failed to delete cvo-managed quorum guard pdb: %v", err)
 			return
