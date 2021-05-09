@@ -75,13 +75,13 @@ func GetPreferredInternalIPAddressForNodeName(network *configv1.Network, node *c
 func GetPreferredIPFamily(network *configv1.Network) (string, error) {
 	var serviceCIDR string
 	switch {
-	case len(network.Status.ServiceNetwork) != 0 && len(network.Status.ServiceNetwork[0]) != 0:
+	case len(network.Status.ServiceNetwork) != 0:
 		serviceCIDR = network.Status.ServiceNetwork[0]
 		if len(serviceCIDR) == 0 {
 			return "", fmt.Errorf("networks.%s/cluster: status.serviceNetwork[0] is empty", configv1.GroupName)
 		}
 		break
-	case len(network.Spec.ServiceNetwork) != 0 && len(network.Spec.ServiceNetwork[0]) != 0:
+	case len(network.Spec.ServiceNetwork) != 0:
 		klog.Warningf("networks.%s/cluster: status.serviceNetwork not found falling back to spec.serviceNetwork", configv1.GroupName)
 		serviceCIDR = network.Spec.ServiceNetwork[0]
 		if len(serviceCIDR) == 0 {
