@@ -477,6 +477,27 @@ metadata:
     revision: "REVISION"
 spec:
   initContainers:
+    - name: setup
+      image: ${IMAGE}
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      command:
+        - /bin/sh
+        - -c
+        - |
+          #!/bin/sh
+          echo -n "Fixing etcd log permissions."
+          chmod 0700 /var/log/etcd && touch /var/log/etcd/etcd.log && chmod 0600 /var/log/etcd/*
+
+      securityContext:
+        privileged: true
+      resources:
+        requests:
+          memory: 50Mi
+          cpu: 5m
+      volumeMounts:
+        - mountPath: /var/log/etcd
+          name: log-dir
     - name: etcd-ensure-env-vars
       image: ${IMAGE}
       imagePullPolicy: IfNotPresent
@@ -669,6 +690,8 @@ ${COMPUTED_ENV_VARS}
         name: cert-dir
       - mountPath: /var/lib/etcd/
         name: data-dir
+      - mountPath: /var/log/etcd/
+        name: log-dir
   - name: etcd-metrics
     image: ${IMAGE}
     imagePullPolicy: IfNotPresent
@@ -730,6 +753,9 @@ ${COMPUTED_ENV_VARS}
     - hostPath:
         path: /usr/local/bin
       name: usr-local-bin
+    - hostPath:
+        path: /var/log/etcd
+      name: log-dir
 `)
 
 func etcdPodYamlBytes() ([]byte, error) {
