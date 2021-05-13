@@ -348,6 +348,12 @@ func (o *InstallOptions) copyContent(ctx context.Context) error {
 		return err
 	}
 
+	// remove the existing file to ensure kubelet gets "create" event from inotify watchers
+	if err := os.Remove(path.Join(o.PodManifestDir, podFileName)); err == nil {
+		klog.Infof("Removed existing static pod manifest %q ...", path.Join(o.PodManifestDir, podFileName))
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	klog.Infof("Writing static pod manifest %q ...\n%s", path.Join(o.PodManifestDir, podFileName), finalPodBytes)
 	if err := ioutil.WriteFile(path.Join(o.PodManifestDir, podFileName), []byte(finalPodBytes), 0644); err != nil {
 		return err
