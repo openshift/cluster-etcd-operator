@@ -193,6 +193,26 @@ ${COMPUTED_ENV_VARS}
       periodSeconds: 5
       successThreshold: 1
       timeoutSeconds: 5
+    livenessProbe:
+      exec:
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -xe
+
+          # liveness probe uses a serialized get to an non-existant key (liveness) as a condition.
+          unset ETCDCTL_ENDPOINTS
+          /usr/bin/etcdctl \
+            --command-timeout=3s \
+            --dial-timeout=3s \
+            --endpoints=unixs://${NODE_NODE_ENVVAR_NAME_IP}:0 \
+            --consistency=s \ 
+            get liveness
+      failureThreshold: 3
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 10
     securityContext:
       privileged: true
     volumeMounts:
