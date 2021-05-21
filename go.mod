@@ -1,10 +1,9 @@
 module github.com/openshift/cluster-etcd-operator
 
-go 1.16
+go 1.15
 
 require (
 	github.com/davecgh/go-spew v1.1.1
-	github.com/fsnotify/fsnotify v1.4.9 // indirect
 	github.com/ghodss/yaml v1.0.0
 	github.com/go-bindata/go-bindata v3.1.2+incompatible
 	github.com/google/gofuzz v1.2.0 // indirect
