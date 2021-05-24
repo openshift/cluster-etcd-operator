@@ -477,6 +477,26 @@ metadata:
     revision: "REVISION"
 spec:
   initContainers:
+    - name: setup
+      image: ${IMAGE}
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      command:
+        - /bin/sh
+        - -c
+        - |
+          #!/bin/sh
+          echo -n "Fixing etcd log permissions."
+          chmod 0700 /var/log/etcd && touch /var/log/etcd/etcd-health-probe.log && chmod 0600 /var/log/etcd/*
+      securityContext:
+        privileged: true
+      resources:
+        requests:
+          memory: 50Mi
+          cpu: 5m
+      volumeMounts:
+        - mountPath: /var/log/etcd
+          name: log-dir
     - name: etcd-ensure-env-vars
       image: ${IMAGE}
       imagePullPolicy: IfNotPresent
@@ -571,7 +591,7 @@ ${COMPUTED_ENV_VARS}
         name: data-dir
     env:
 ${COMPUTED_ENV_VARS}
-      - name: "ETCD_STATIC_POD_REV"
+      - name: "ETCD_STATIC_POD_VERSION"
         value: "REVISION"
   - name: etcd
     image: ${IMAGE}
@@ -629,7 +649,7 @@ ${COMPUTED_ENV_VARS}
           --listen-metrics-urls=https://${LISTEN_ON_ALL_IPS}:9978 ||  mv /etc/kubernetes/etcd-backup-dir/etcd-member.yaml /etc/kubernetes/manifests
     env:
 ${COMPUTED_ENV_VARS}
-      - name: "ETCD_STATIC_POD_REV"
+      - name: "ETCD_STATIC_POD_VERSION"
         value: "REVISION"
     resources:
       requests:
@@ -694,7 +714,7 @@ ${COMPUTED_ENV_VARS}
           --trusted-ca-file /etc/kubernetes/static-pod-certs/configmaps/etcd-metrics-proxy-serving-ca/ca-bundle.crt
     env:
 ${COMPUTED_ENV_VARS}
-      - name: "ETCD_STATIC_POD_REV"
+      - name: "ETCD_STATIC_POD_VERSION"
         value: "REVISION"
     resources:
       requests:
@@ -709,6 +729,41 @@ ${COMPUTED_ENV_VARS}
         name: cert-dir
       - mountPath: /var/lib/etcd/
         name: data-dir
+  - name: etcd-health-monitor
+    image: ${OPERATOR_IMAGE}
+    imagePullPolicy: IfNotPresent
+    terminationMessagePolicy: FallbackToLogsOnError
+    command: [ "cluster-etcd-operator", "monitor" ]
+    args:
+      - --targets=$(ETCDCTL_ENDPOINTS)
+      - --probe-interval=1s
+      - --log-outputs=stderr
+      - --log-outputs=/var/log/etcd/etcd-health-probe.log
+      - --enable-log-rotation
+      - --pod-name=$(POD_NAME)
+      - --static-pod-version=$(ETCD_STATIC_POD_VERSION)
+      - --cert-file=$(ETCDCTL_CERT)
+      - --key-file=$(ETCDCTL_KEY)
+      - --cacert-file=$(ETCDCTL_CACERT)
+    env:
+${COMPUTED_ENV_VARS}
+      - name: "ETCD_STATIC_POD_VERSION"
+        value: "REVISION"
+      - name: "OPENSHIFT_PROFILE"
+        value: "web"
+      - name: POD_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.name
+    volumeMounts:
+      - mountPath: /var/log/etcd/
+        name: log-dir
+      - mountPath: /etc/kubernetes/static-pod-certs
+        name: cert-dir
+    resources:
+      requests:
+        memory: 70Mi
+        cpu: 50m
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
@@ -730,6 +785,9 @@ ${COMPUTED_ENV_VARS}
     - hostPath:
         path: /usr/local/bin
       name: usr-local-bin
+    - hostPath:
+        path: /var/log/etcd
+      name: log-dir
 `)
 
 func etcdPodYamlBytes() ([]byte, error) {
