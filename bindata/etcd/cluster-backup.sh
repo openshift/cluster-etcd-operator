@@ -35,9 +35,8 @@ if [ ! -d "$1" ]; then
 fi
 
 function check_if_operator_is_progressing {
-   operator="$1"
+   local operator="$1"
 
-   export KUBECONFIG="/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/localhost.kubeconfig"
    if [ ! -f "${KUBECONFIG}" ]; then
       echo "Valid kubeconfig is not found in kube-apiserver-certs. Exiting!"
       exit 1
@@ -55,49 +54,50 @@ function check_if_operator_is_progressing {
 
 # backup latest static pod resources
 function backup_latest_kube_static_resources {
-  RESOURCES=("$@")
+  local backup_tar_file="$1"
+  local backup_resource_list=("kube-apiserver" "kube-controller-manager" "kube-scheduler" "etcd")
+  local latest_resource_dirs=()
 
-  LATEST_RESOURCE_DIRS=()
-  for RESOURCE in "${RESOURCES[@]}"; do
-    if [ ! -f "/etc/kubernetes/manifests/${RESOURCE}-pod.yaml" ]; then
-      echo "error finding manifests for the ${RESOURCE} pod. please check if it is running."
+  for resource in "${backup_resource_list[@]}"; do
+    if [ ! -f "/etc/kubernetes/manifests/${resource}-pod.yaml" ]; then
+      echo "error finding manifests for the ${resource} pod. please check if it is running."
       exit 1
     fi
 
-    LATEST_RESOURCE=$(grep -o -m 1 "/etc/kubernetes/static-pod-resources/${RESOURCE}-pod-[0-9]*" "/etc/kubernetes/manifests/${RESOURCE}-pod.yaml") || true
+    local latest_resource
+    latest_resource=$(grep -o -m 1 "/etc/kubernetes/static-pod-resources/${resource}-pod-[0-9]*" "/etc/kubernetes/manifests/${resource}-pod.yaml") || true
 
-    if [ -z "$LATEST_RESOURCE" ]; then
-      echo "error finding static-pod-resources for the ${RESOURCE} pod. please check if it is running."
+    if [ -z "${latest_resource}" ]; then
+      echo "error finding static-pod-resources for the ${resource} pod. please check if it is running."
       exit 1
     fi
     if [ "${IS_DIRTY}" == "" ]; then
-      check_if_operator_is_progressing "${RESOURCE}"
+      check_if_operator_is_progressing "${resource}"
     fi
 
-    echo "found latest ${RESOURCE}: ${LATEST_RESOURCE}"
-    LATEST_RESOURCE_DIRS+=("${LATEST_RESOURCE#${CONFIG_FILE_DIR}/}")
+    echo "found latest ${resource}: ${latest_resource}"
+    latest_resource_dirs+=("${latest_resource#${CONFIG_FILE_DIR}/}")
   done
 
   # tar latest resources with the path relative to CONFIG_FILE_DIR
-  tar -cpzf "$BACKUP_TAR_FILE" -C "${CONFIG_FILE_DIR}" "${LATEST_RESOURCE_DIRS[@]}"
-  chmod 600 "$BACKUP_TAR_FILE"
+  tar -cpzf "$backup_tar_file" -C "${CONFIG_FILE_DIR}" "${latest_resource_dirs[@]}"
+  chmod 600 "$backup_tar_file"
 }
 
 function source_required_dependency {
-  local path="$1"
-  if [ ! -f "${path}" ]; then
+  local src_path="$1"
+  if [ ! -f "${src_path}" ]; then
     echo "required dependencies not found, please ensure this script is run on a node with a functional etcd static pod"
     exit 1
   fi
   # shellcheck disable=SC1090
-  source "${path}"
+  source "${src_path}"
 }
 
 BACKUP_DIR="$1"
 DATESTRING=$(date "+%F_%H%M%S")
 BACKUP_TAR_FILE=${BACKUP_DIR}/static_kuberesources_${DATESTRING}${IS_DIRTY}.tar.gz
 SNAPSHOT_FILE="${BACKUP_DIR}/snapshot_${DATESTRING}${IS_DIRTY}.db"
-BACKUP_RESOURCE_LIST=("kube-apiserver" "kube-controller-manager" "kube-scheduler" "etcd")
 
 trap 'rm -f ${BACKUP_TAR_FILE} ${SNAPSHOT_FILE}' ERR
 
@@ -109,7 +109,13 @@ if [ ! -f "$ETCDCTL_CACERT" ] && [ ! -d "${CONFIG_FILE_DIR}/static-pod-certs" ];
   ln -s "${CONFIG_FILE_DIR}"/static-pod-resources/etcd-certs "${CONFIG_FILE_DIR}"/static-pod-certs
 fi
 
+backup_latest_kube_static_resources "${BACKUP_TAR_FILE}"
+
+# Download etcdctl and get the etcd snapshot
 dl_etcdctl
-backup_latest_kube_static_resources "${BACKUP_RESOURCE_LIST[@]}"
 ETCDCTL_ENDPOINTS="https://${NODE_NODE_ENVVAR_NAME_IP}:2379" etcdctl snapshot save "${SNAPSHOT_FILE}"
+
+# Check the integrity of the snapshot
+check_snapshot_status "${SNAPSHOT_FILE}"
+
 echo "snapshot db and kube resources are successfully saved to ${BACKUP_DIR}"
