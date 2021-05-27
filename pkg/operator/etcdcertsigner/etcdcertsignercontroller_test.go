@@ -1,300 +1,254 @@
 package etcdcertsigner
 
 import (
-	"bytes"
-	"context"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha1"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
-	"fmt"
-	"github.com/openshift/library-go/pkg/crypto"
-	"math/big"
 	"testing"
-	"time"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
-	configlistersv1 "github.com/openshift/client-go/config/listers/config/v1"
-	"go.etcd.io/etcd/pkg/mock/mockserver"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/kubernetes/fake"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	clientgotesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
-	"github.com/openshift/library-go/pkg/controller/factory"
+	"github.com/openshift/library-go/pkg/crypto"
 	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
 )
 
-var (
-	rootcaPublicKey  *rsa.PublicKey
-	rootcaPrivateKey *rsa.PrivateKey
-	publicKeyHash    []byte
-	DummyPrivateKey  []byte
-	DummyCertificate []byte
-)
+func TestCheckCertValidity(t *testing.T) {
+	ipAddresses := []string{"127.0.0.1"}
+	differentIpAddresses := []string{"127.0.0.2"}
 
-func initialize(t *testing.T) {
+	nodeUID := "foo-bar"
+	differentNodeUID := "bar-foo"
 
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
-	rootcaPublicKey = &privateKey.PublicKey
-	rootcaPrivateKey = privateKey
-	if err == nil {
-		hash := sha1.New()
-		hash.Write(rootcaPublicKey.N.Bytes())
-		publicKeyHash = hash.Sum(nil)
-	}
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
-	ca := &x509.Certificate{
-		SerialNumber: big.NewInt(2020),
-		Subject: pkix.Name{
-			Organization: []string{"Red Hat"},
-			Country:      []string{"US"},
-			Province:     []string{""},
-			Locality:     []string{"Raleigh"},
-		},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().AddDate(10, 0, 0),
-		IsCA:                  true,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		BasicConstraintsValid: true,
-	}
-	caBytes, err := x509.CreateCertificate(rand.Reader, ca, ca, rootcaPublicKey, rootcaPrivateKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	caPEM := new(bytes.Buffer)
-	pem.Encode(caPEM, &pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: caBytes,
-	})
-	caPrivKeyPEM := new(bytes.Buffer)
-	pem.Encode(caPrivKeyPEM, &pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: x509.MarshalPKCS1PrivateKey(rootcaPrivateKey),
-	})
-	DummyCertificate = caPEM.Bytes()
-	DummyPrivateKey = caPrivKeyPEM.Bytes()
+	expireDays := 100
 
-}
-
-func TestValidateSAN(t *testing.T) {
-	initialize(t)
-	mockEtcd, err := mockserver.StartMockServers(3)
+	caConfig, err := crypto.MakeSelfSignedCAConfig("foo", expireDays)
 	if err != nil {
-		t.Fatalf("failed to start mock servers: %s", err)
+		t.Fatalf("Failed to create ca config: %v", err)
 	}
-	defer mockEtcd.Stop()
-	scenarios := []struct {
-		name            string
-		objects         []runtime.Object
-		staticPodStatus *operatorv1.StaticPodOperatorStatus
-		wantErr         bool
-		validateFunc    func(ts *testing.T, actions []clientgotesting.Action)
+	ca := &crypto.CA{
+		Config:          caConfig,
+		SerialGenerator: &crypto.RandomSerialGenerator{},
+	}
+
+	testCases := map[string]struct {
+		invalidCertPair  bool
+		certIPAddresses  []string
+		nodeIPAddresses  []string
+		storedNodeUID    string
+		expectedRegenMsg bool
+		expectedErr      bool
 	}{
-		{
-			// All secrets match the node and IP address configuration.
-			name: "NormalSteadyState",
-			objects: []runtime.Object{
-				u.FakeNode("master-0", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1")),
-				u.FakeNode("master-1", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.2")),
-				u.FakeNode("master-2", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.3")),
-				u.EndpointsConfigMap(
-					u.WithAddress("10.0.0.1"),
-					u.WithAddress("10.0.0.2"),
-					u.WithAddress("10.0.0.3"),
-				),
-				&corev1.Secret{
-					ObjectMeta: metav1.ObjectMeta{
-						Namespace: "openshift-config",
-						Name:      "etcd-signer",
-					},
-					Data: map[string][]byte{
-						"tls.crt": DummyCertificate,
-						"tls.key": DummyPrivateKey,
-					},
-				},
-
-				&corev1.Secret{
-					ObjectMeta: metav1.ObjectMeta{
-						Namespace: "openshift-config",
-						Name:      "etcd-metric-signer",
-					},
-					Data: map[string][]byte{
-						"tls.crt": DummyCertificate,
-						"tls.key": DummyPrivateKey,
-					},
-				},
-				u.FakeSecret("openshift-etcd", "etcd-peer-master-0", makeCerts(t, []string{"localhost", "10.0.0.1"})),
-				u.FakeSecret("openshift-etcd", "etcd-peer-master-1", makeCerts(t, []string{"localhost", "10.0.0.2"})),
-				u.FakeSecret("openshift-etcd", "etcd-peer-master-2", makeCerts(t, []string{"localhost", "10.0.0.3"})),
-
-				u.FakeSecret("openshift-etcd", "etcd-serving-master-0", makeCerts(t, []string{"localhost", "10.0.0.1"})),
-				u.FakeSecret("openshift-etcd", "etcd-serving-master-1", makeCerts(t, []string{"localhost", "10.0.0.2"})),
-				u.FakeSecret("openshift-etcd", "etcd-serving-master-2", makeCerts(t, []string{"localhost", "10.0.0.3"})),
-
-				u.FakeSecret("openshift-etcd", "etcd-serving-metrics-master-0", makeCerts(t, []string{"localhost", "10.0.0.1"})),
-				u.FakeSecret("openshift-etcd", "etcd-serving-metrics-master-1", makeCerts(t, []string{"localhost", "10.0.0.2"})),
-				u.FakeSecret("openshift-etcd", "etcd-serving-metrics-master-2", makeCerts(t, []string{"localhost", "10.0.0.3"})),
-			},
-			staticPodStatus: u.StaticPodOperatorStatus(
-				u.WithLatestRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-			),
-			wantErr: false,
-			validateFunc: func(ts *testing.T, actions []clientgotesting.Action) {
-				for _, action := range actions {
-					if action.Matches("update", "secrets") {
-						updateAction := action.(clientgotesting.UpdateAction)
-						actual := updateAction.GetObject().(*corev1.Secret)
-						ts.Errorf("unexpected secret update: %#v", actual)
-					}
-				}
-			},
+		"invalid bytes": {
+			invalidCertPair:  true,
+			expectedRegenMsg: true,
 		},
-
-		{
-			// IP addresses do not match the SAN configured in the certificates.
-			// master-2 has a new IP addr (10.0.0.33) but certs still have old SAN (10.0.0.3).
-			name: "IPMismatch",
-			objects: []runtime.Object{
-				u.FakeNode("master-0", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1")),
-				u.FakeNode("master-1", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.2")),
-				u.FakeNode("master-2", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.33")),
-				u.EndpointsConfigMap(
-					u.WithAddress("10.0.0.1"),
-					u.WithAddress("10.0.0.2"),
-					u.WithAddress("10.0.0.33"),
-				),
-				&corev1.Secret{
-					ObjectMeta: metav1.ObjectMeta{
-						Namespace: "openshift-config",
-						Name:      "etcd-signer",
-					},
-					Data: map[string][]byte{
-						"tls.crt": DummyCertificate,
-						"tls.key": DummyPrivateKey,
-					},
-				},
-
-				&corev1.Secret{
-					ObjectMeta: metav1.ObjectMeta{
-						Namespace: "openshift-config",
-						Name:      "etcd-metric-signer",
-					},
-					Data: map[string][]byte{
-						"tls.crt": DummyCertificate,
-						"tls.key": DummyPrivateKey,
-					},
-				},
-				u.FakeSecret("openshift-etcd", "etcd-peer-master-0", makeCerts(t, []string{"localhost", "10.0.0.1"})),
-				u.FakeSecret("openshift-etcd", "etcd-peer-master-1", makeCerts(t, []string{"localhost", "10.0.0.2"})),
-				u.FakeSecret("openshift-etcd", "etcd-peer-master-2", makeCerts(t, []string{"localhost", "10.0.0.3"})),
-
-				u.FakeSecret("openshift-etcd", "etcd-serving-master-0", makeCerts(t, []string{"localhost", "10.0.0.1"})),
-				u.FakeSecret("openshift-etcd", "etcd-serving-master-1", makeCerts(t, []string{"localhost", "10.0.0.2"})),
-				u.FakeSecret("openshift-etcd", "etcd-serving-master-2", makeCerts(t, []string{"localhost", "10.0.0.3"})),
-
-				u.FakeSecret("openshift-etcd", "etcd-serving-metrics-master-0", makeCerts(t, []string{"localhost", "10.0.0.1"})),
-				u.FakeSecret("openshift-etcd", "etcd-serving-metrics-master-1", makeCerts(t, []string{"localhost", "10.0.0.2"})),
-				u.FakeSecret("openshift-etcd", "etcd-serving-metrics-master-2", makeCerts(t, []string{"localhost", "10.0.0.3"})),
-			},
-			staticPodStatus: u.StaticPodOperatorStatus(
-				u.WithLatestRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-			),
-			wantErr: true,
+		"missing ip address; node uid unchanged": {
+			certIPAddresses: ipAddresses,
+			nodeIPAddresses: differentIpAddresses,
+			storedNodeUID:   nodeUID,
+			expectedErr:     true,
+		},
+		"missing ip address; node uid not stored": {
+			certIPAddresses: ipAddresses,
+			nodeIPAddresses: differentIpAddresses,
+			expectedErr:     true,
+		},
+		"missing ip address; node uid changed": {
+			certIPAddresses:  ipAddresses,
+			nodeIPAddresses:  differentIpAddresses,
+			storedNodeUID:    differentNodeUID,
+			expectedRegenMsg: true,
+		},
+		"valid": {
+			certIPAddresses: ipAddresses,
+			nodeIPAddresses: ipAddresses,
+			storedNodeUID:   nodeUID,
 		},
 	}
-	for _, scenario := range scenarios {
-		t.Run(scenario.name, func(t *testing.T) {
-			fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
-				&operatorv1.StaticPodOperatorSpec{
-					OperatorSpec: operatorv1.OperatorSpec{
-						ManagementState: operatorv1.Managed,
-					},
-				},
-				scenario.staticPodStatus,
-				nil,
-				nil,
-			)
-
-			fakeKubeClient := fake.NewSimpleClientset(scenario.objects...)
-			eventRecorder := events.NewRecorder(fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace), "test-etcdendpointscontroller", &corev1.ObjectReference{})
-			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
-			for _, obj := range scenario.objects {
-				if err := indexer.Add(obj); err != nil {
-					t.Fatal(err)
+	for testName, tc := range testCases {
+		t.Run(testName, func(t *testing.T) {
+			certBytes := []byte{}
+			keyBytes := []byte{}
+			if !tc.invalidCertPair {
+				// Generate a valid cert for the cert ip addresses
+				certConfig, err := ca.MakeServerCert(sets.NewString(tc.certIPAddresses...), expireDays)
+				if err != nil {
+					t.Fatalf("Error generating cert: %v", err)
+				}
+				certBytes, keyBytes, err = certConfig.GetPEMBytes()
+				if err != nil {
+					t.Fatalf("Error converting cert to bytes: %v", err)
 				}
 			}
-			controller := &EtcdCertSignerController{
-				kubeClient:           fakeKubeClient,
-				operatorClient:       fakeOperatorClient,
-				infrastructureLister: configlistersv1.NewInfrastructureLister(indexer),
-				secretLister:         corev1listers.NewSecretLister(indexer),
-				nodeLister:           corev1listers.NewNodeLister(indexer),
-				secretClient:         fakeKubeClient.CoreV1(),
+			msg, err := checkCertValidity(certBytes, keyBytes, tc.nodeIPAddresses, nodeUID, tc.storedNodeUID)
+			if tc.expectedRegenMsg && len(msg) == 0 {
+				t.Fatalf("Expected a regen message")
 			}
-
-			err := controller.sync(context.TODO(), factory.NewSyncContext("test", eventRecorder))
-			if (err != nil) != scenario.wantErr {
-				t.Fatal(err)
+			if !tc.expectedRegenMsg && len(msg) > 0 {
+				t.Fatalf("Unexpected regen message: %s", msg)
 			}
-			if scenario.validateFunc != nil {
-				scenario.validateFunc(t, fakeKubeClient.Actions())
+			if tc.expectedErr && err == nil {
+				t.Fatalf("Expected an error")
+			}
+			if !tc.expectedErr && err != nil {
+				t.Fatalf("Unexpected error: %v", err)
 			}
 		})
 	}
 }
 
-func makeCerts(t *testing.T, hosts []string) map[string][]byte {
+func TestEnsureCertSecret(t *testing.T) {
+	// Any one of the cert configs will be representative
+	certConfig := certConfigMap["peer"]
 
-	ipAddrs, dnsAddrs := crypto.IPAddressesDNSNames(hosts)
-	rootcaTemplate := &x509.Certificate{
-		Subject:               pkix.Name{CommonName: fmt.Sprintf("etcd-cert-signer_@%d", time.Now().Unix())},
-		SignatureAlgorithm:    x509.SHA256WithRSA,
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().AddDate(10, 0, 0),
-		SerialNumber:          big.NewInt(1),
-		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-		IPAddresses:           ipAddrs,
-		DNSNames:              dnsAddrs,
-		AuthorityKeyId:        publicKeyHash,
-		SubjectKeyId:          publicKeyHash,
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "master-0",
+			UID:  uuid.NewUUID(),
+		},
 	}
 
-	caBytes, err := x509.CreateCertificate(rand.Reader, rootcaTemplate, rootcaTemplate, rootcaPublicKey, rootcaPrivateKey)
+	secretName := certConfig.secretNameFunc(node.Name)
+	ipAddresses := []string{"127.0.0.1"}
+	expireDays := 100
+
+	// Create a ca to generate a valid cert from
+	caConfig, err := crypto.MakeSelfSignedCAConfig("foo", expireDays)
 	if err != nil {
-		t.Fatalf(err.Error())
+		t.Fatalf("Failed to create ca config: %v", err)
 	}
-	caPEM := new(bytes.Buffer)
-	pem.Encode(caPEM, &pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: caBytes,
-	})
-	caPrivKeyPEM := new(bytes.Buffer)
-	pem.Encode(caPrivKeyPEM, &pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: x509.MarshalPKCS1PrivateKey(rootcaPrivateKey),
-	})
-	return map[string][]byte{"tls.crt": caPEM.Bytes(), "tls.key": caPrivKeyPEM.Bytes()}
+	caCertBytes, caKeyBytes, err := caConfig.GetPEMBytes()
+	if err != nil {
+		t.Fatalf("Error converting ca to bytes: %v", err)
+	}
+
+	// Create a ca secret that ensureCertSecret can use to generate a new cert with
+	caSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: operatorclient.GlobalUserSpecifiedConfigNamespace,
+			Name:      certConfig.caSecretName,
+		},
+		Data: map[string][]byte{
+			"tls.crt": caCertBytes,
+			"tls.key": caKeyBytes,
+		},
+	}
+
+	testCases := map[string]struct {
+		certSecret     *corev1.Secret
+		createExpected bool
+		updateExpected bool
+	}{
+		"missing cert secret is created": {
+			createExpected: true,
+		},
+		"invalid cert secret is regenerated": {
+			certSecret:     newCertSecret(secretName, "", nil, nil),
+			updateExpected: true,
+		},
+		// The test for a valid cert secret is performed after a successful
+		// cert creation to simplify test setup.
+	}
+	for testName, tc := range testCases {
+		t.Run(testName, func(t *testing.T) {
+			objects := []runtime.Object{caSecret}
+			if tc.certSecret != nil {
+				objects = append(objects, tc.certSecret)
+			}
+
+			fakeKubeClient, controller, recorder := setupEnsureCertSecret(t, objects)
+			err := controller.ensureCertSecret(node, ipAddresses, certConfig, recorder)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var updatedSecret *corev1.Secret
+			var createdSecret *corev1.Secret
+			for _, action := range fakeKubeClient.Actions() {
+				if action.Matches("update", "secrets") {
+					updateAction := action.(clientgotesting.UpdateAction)
+					updatedSecret = updateAction.GetObject().(*corev1.Secret)
+					break
+				}
+				if action.Matches("create", "secrets") {
+					createAction := action.(clientgotesting.CreateAction)
+					createdSecret = createAction.GetObject().(*corev1.Secret)
+					break
+				}
+			}
+			if !tc.updateExpected && updatedSecret != nil {
+				t.Fatalf("Secret unexpectedly updated")
+			}
+			if updatedSecret != nil {
+				validateTestSecret(t, "updated", updatedSecret, ipAddresses)
+			}
+			if !tc.createExpected && createdSecret != nil {
+				t.Fatalf("Secret unexpectedly created")
+			}
+			if createdSecret != nil {
+				validateTestSecret(t, "created", createdSecret, ipAddresses)
+
+				// Verify that a cert secret created by ensureCertSecret will
+				// not be updated when immediately round-tripped.
+				objects := []runtime.Object{createdSecret, caSecret}
+				fakeKubeClient, controller, recorder := setupEnsureCertSecret(t, objects)
+				err := controller.ensureCertSecret(node, ipAddresses, certConfig, recorder)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, action := range fakeKubeClient.Actions() {
+					if action.Matches("update", "secrets") {
+						t.Fatal("Valid secret unexpectedly updated")
+					}
+				}
+			}
+		})
+	}
+}
+
+// setupEnsureCertSecret encapsulates test setup for TestEnsureCertSecret for
+// reuse in round-tripping a cert secret created by ensureCertSecret.
+func setupEnsureCertSecret(t *testing.T, objects []runtime.Object) (*fake.Clientset, *EtcdCertSignerController, events.Recorder) {
+	fakeKubeClient := fake.NewSimpleClientset(objects...)
+	recorder := events.NewRecorder(
+		fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),
+		"test-ensurecertsecret",
+		&corev1.ObjectReference{},
+	)
+	indexer := cache.NewIndexer(
+		cache.MetaNamespaceKeyFunc,
+		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
+	)
+	for _, obj := range objects {
+		if err := indexer.Add(obj); err != nil {
+			t.Fatal(err)
+		}
+	}
+	controller := &EtcdCertSignerController{
+		secretLister: corev1listers.NewSecretLister(indexer),
+		secretClient: fakeKubeClient.CoreV1(),
+	}
+	return fakeKubeClient, controller, recorder
+}
+
+// validateTestSecret checks that a secret created or updated by
+// ensureCertSecret is valid acording to checkCertValidity.
+func validateTestSecret(t *testing.T, action string, secret *corev1.Secret, ipAddresses []string) {
+	if secret.Data == nil {
+		t.Fatalf("%s secret is empty", action)
+	}
+	storedNodeUID := secret.Annotations[nodeUIDAnnotation]
+	msg, err := checkCertValidity(secret.Data["tls.crt"], secret.Data["tls.key"], ipAddresses, storedNodeUID, storedNodeUID)
+	if len(msg) > 0 {
+		t.Fatalf("%s secret is invalid with message: %s", action, msg)
+	}
+	if err != nil {
+		t.Fatalf("%s secret is invalid with error: %v", action, err)
+	}
 }
