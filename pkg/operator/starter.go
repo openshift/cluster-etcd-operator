@@ -156,7 +156,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		WithInstaller([]string{"cluster-etcd-operator", "installer"}).
 		WithPruning([]string{"cluster-etcd-operator", "prune"}, "etcd-pod").
 		WithRevisionedResources("openshift-etcd", "etcd", RevisionConfigMaps, RevisionSecrets).
-		WithUnrevisionedCerts("etcd-certs", CertConfigMaps, CertSecrets).
+		WithUnrevisionedCerts("dynamic", CertConfigMaps, CertSecrets).
 		WithVersioning("etcd", versionRecorder).
 		ToControllers()
 	if err != nil {
