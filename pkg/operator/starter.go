@@ -18,6 +18,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/staleconditions"
 	"github.com/openshift/library-go/pkg/operator/staticpod"
+	"github.com/openshift/library-go/pkg/operator/staticpod/controller/installer"
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/revision"
 	"github.com/openshift/library-go/pkg/operator/staticresourcecontroller"
 	"github.com/openshift/library-go/pkg/operator/status"
@@ -154,8 +155,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		WithEvents(controllerContext.EventRecorder).
 		WithInstaller([]string{"cluster-etcd-operator", "installer"}).
 		WithPruning([]string{"cluster-etcd-operator", "prune"}, "etcd-pod").
-		WithResources("openshift-etcd", "etcd", RevisionConfigMaps, RevisionSecrets).
-		WithCerts("etcd-certs", CertConfigMaps, CertSecrets).
+		WithRevisionedResources("openshift-etcd", "etcd", RevisionConfigMaps, RevisionSecrets).
+		WithUnrevisionedCerts("etcd-certs", CertConfigMaps, CertSecrets).
 		WithVersioning("etcd", versionRecorder).
 		ToControllers()
 	if err != nil {
@@ -326,7 +327,7 @@ var RevisionSecrets = []revision.RevisionResource{
 	{Name: "etcd-all-certs"},
 }
 
-var CertConfigMaps = []revision.RevisionResource{
+var CertConfigMaps = []installer.UnrevisionedResource{
 	{Name: "restore-etcd-pod"},
 	{Name: "etcd-scripts"},
 	{Name: "etcd-serving-ca"},
@@ -335,7 +336,7 @@ var CertConfigMaps = []revision.RevisionResource{
 	{Name: "etcd-metrics-proxy-client-ca"},
 }
 
-var CertSecrets = []revision.RevisionResource{
+var CertSecrets = []installer.UnrevisionedResource{
 	// these are also copied to certs to have a constant file location so we can refer to them in various recovery scripts
 	// and in the PDB
 	{Name: "etcd-all-certs"},
