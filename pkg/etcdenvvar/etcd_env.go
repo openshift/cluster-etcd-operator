@@ -1,6 +1,7 @@
 package etcdenvvar
 
 import (
+	"encoding/json"
 	"fmt"
 	"runtime"
 	"sort"
@@ -14,6 +15,7 @@ import (
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/crypto"
 	"go.etcd.io/etcd/pkg/tlsutil"
+	"gopkg.in/natefinch/lumberjack.v2"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 )
@@ -29,6 +31,8 @@ type envVarContext struct {
 	targetImagePullSpec  string
 }
 
+// FixedEtcdEnvVars defines ENV variables consumed by etcd as configuration during runtime on both the bootstrap
+// and control-plane static pods.
 var FixedEtcdEnvVars = map[string]string{
 	"ETCD_DATA_DIR":                                    "/var/lib/etcd",
 	"ETCD_QUOTA_BACKEND_BYTES":                         "7516192768", // 7 gig
@@ -36,7 +40,6 @@ var FixedEtcdEnvVars = map[string]string{
 	"ETCD_ENABLE_PPROF":                                "true",
 	"ETCD_CIPHER_SUITES":                               getDefaultCipherSuites(),
 	"ETCD_EXPERIMENTAL_WATCH_PROGRESS_NOTIFY_INTERVAL": "5s",
-	"ETCD_SOCKET_REUSE_ADDRESS":                        "true",
 }
 
 type envVarFunc func(envVarContext envVarContext) (map[string]string, error)
@@ -45,12 +48,14 @@ var envVarFns = []envVarFunc{
 	getEscapedIPAddress,
 	getEtcdURLHost,
 	getFixedEtcdEnvVars,
+	getFixedControlPlaneEtcdEnvVars,
 	getEtcdName,
 	getAllEtcdEndpoints,
 	getEtcdctlEnvVars,
 	getHeartbeatInterval,
 	getElectionTimeout,
 	getUnsupportedArch,
+	getLogRotationConfig,
 }
 
 // getEtcdEnvVars returns the env vars that need to be set on the etcd static pods that will be rendered.
@@ -62,6 +67,10 @@ var envVarFns = []envVarFunc{
 //   ETCD_ELECTION_TIMEOUT
 //   ETCD_INITIAL_CLUSTER_STATE
 //   ETCD_UNSUPPORTED_ARCH
+//   ETCD_LOG_ROTATION_CONFIG_JSON
+//   ETCD_SOCKET_REUSE_ADDRESS
+//   ETCD_ENABLE_LOG_ROTATION
+//   ETCD_LOG_OUTPUTS
 //   NODE_%s_IP
 //   NODE_%s_ETCD_URL_HOST
 //   NODE_%s_ETCD_NAME
@@ -89,6 +98,16 @@ func getEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
 
 func getFixedEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
 	return FixedEtcdEnvVars, nil
+}
+
+// getControlPlaneEtcdEnvVars defines ENV variables consumed by etcd as configuration during runtime for control-plane
+// managed etcd static pods.
+func getFixedControlPlaneEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
+	return map[string]string{
+		"ETCD_SOCKET_REUSE_ADDRESS": "true",
+		"ETCD_LOG_OUTPUTS":          "stderr,/var/log/etcd/etcd.log",
+		"ETCD_ENABLE_LOG_ROTATION":  "true",
+	}, nil
 }
 
 func getEtcdctlEnvVars(envVarContext envVarContext) (map[string]string, error) {
@@ -265,6 +284,26 @@ func getUnsupportedArch(envVarContext envVarContext) (map[string]string, error) 
 	}
 	return map[string]string{
 		"ETCD_UNSUPPORTED_ARCH": arch,
+	}, nil
+}
+
+// getLogRotationConfig defines the config for etcd log rotation. etcd persists a copy of logs to disk located at
+// /var/log/etcd/etcd.log. This configuration handles log rotation of those logs.
+func getLogRotationConfig(envVarContext envVarContext) (map[string]string, error) {
+	config := &lumberjack.Logger{
+		Filename:   "",    // set by etcd
+		LocalTime:  false, // UTC
+		MaxAge:     0,     // no limit
+		MaxBackups: 10,
+		MaxSize:    100,  //MB
+		Compress:   true, //gzip
+	}
+	configBytes, err := json.Marshal(config)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{
+		"ETCD_LOG_ROTATION_CONFIG_JSON": string(configBytes),
 	}, nil
 }
 
