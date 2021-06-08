@@ -17,7 +17,7 @@ import (
 	"github.com/openshift/library-go/pkg/config/client"
 	"github.com/openshift/library-go/pkg/controller/fileobserver"
 	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/staticpod/controller/revision"
+	"github.com/openshift/library-go/pkg/operator/staticpod/controller/installer"
 )
 
 type CertSyncControllerOptions struct {
@@ -25,14 +25,14 @@ type CertSyncControllerOptions struct {
 	Namespace      string
 	DestinationDir string
 
-	configMaps []revision.RevisionResource
-	secrets    []revision.RevisionResource
+	configMaps []installer.UnrevisionedResource
+	secrets    []installer.UnrevisionedResource
 
 	kubeClient            kubernetes.Interface
 	tlsServerNameOverride string
 }
 
-func NewCertSyncControllerCommand(configmaps, secrets []revision.RevisionResource) *cobra.Command {
+func NewCertSyncControllerCommand(configmaps, secrets []installer.UnrevisionedResource) *cobra.Command {
 	o := &CertSyncControllerOptions{
 		configMaps: configmaps,
 		secrets:    secrets,
