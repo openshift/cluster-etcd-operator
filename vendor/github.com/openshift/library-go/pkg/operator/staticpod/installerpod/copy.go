@@ -1,12 +1,12 @@
 package installerpod
 
 import (
-	"golang.org/x/net/context"
-	"k8s.io/klog/v2"
+	"context"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/klog/v2"
 
 	"github.com/openshift/library-go/pkg/operator/resource/retry"
 )

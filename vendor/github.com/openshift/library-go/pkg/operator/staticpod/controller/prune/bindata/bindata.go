@@ -62,6 +62,7 @@ metadata:
   labels:
     app: pruner
 spec:
+  automountServiceAccountToken: false
   serviceAccountName: installer-sa
   nodeName: # Value set by operator
   containers:
@@ -84,6 +85,9 @@ spec:
     volumeMounts:
     - mountPath: /etc/kubernetes/
       name: kubelet-dir
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access
+      readOnly: true
   restartPolicy: Never
   priorityClassName: system-node-critical
   tolerations:
@@ -94,6 +98,24 @@ spec:
   - hostPath:
       path: /etc/kubernetes/
     name: kubelet-dir
+  - name: kube-api-access
+    projected:
+      defaultMode: 420
+      sources:
+      - serviceAccountToken:
+          expirationSeconds: 3600
+          path: token
+      - configMap:
+          items:
+          - key: ca.crt
+            path: ca.crt
+          name: kube-root-ca.crt
+      - downwardAPI:
+          items:
+          - fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+            path: namespace
 `)
 
 func pkgOperatorStaticpodControllerPruneManifestsPrunerPodYamlBytes() ([]byte, error) {

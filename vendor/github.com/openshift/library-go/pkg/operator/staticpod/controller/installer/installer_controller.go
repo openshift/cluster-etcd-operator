@@ -69,8 +69,8 @@ type InstallerController struct {
 	command []string
 
 	// these are copied separately at the beginning to a fixed location
-	certConfigMaps []revision.RevisionResource
-	certSecrets    []revision.RevisionResource
+	certConfigMaps []UnrevisionedResource
+	certSecrets    []UnrevisionedResource
 	certDir        string
 
 	operatorClient v1helpers.StaticPodOperatorClient
@@ -105,7 +105,7 @@ func (c *InstallerController) WithMinReadyDuration(minReadyDuration time.Duratio
 	return c
 }
 
-func (c *InstallerController) WithCerts(certDir string, certConfigMaps, certSecrets []revision.RevisionResource) *InstallerController {
+func (c *InstallerController) WithCerts(certDir string, certConfigMaps, certSecrets []UnrevisionedResource) *InstallerController {
 	c.certDir = certDir
 	c.certConfigMaps = certConfigMaps
 	c.certSecrets = certSecrets
@@ -125,6 +125,11 @@ const (
 )
 
 var _ factory.Controller = &InstallerController{}
+
+type UnrevisionedResource struct {
+	Name     string
+	Optional bool
+}
 
 // NewInstallerController creates a new installer controller.
 func NewInstallerController(
@@ -334,7 +339,7 @@ func (c *InstallerController) timeToWaitBeforeInstallingNextPod(ctx context.Cont
 
 // manageInstallationPods takes care of creating content for the static pods to install.
 // returns whether or not requeue and if an error happened when updating status.  Normally it updates status itself.
-func (c *InstallerController) manageInstallationPods(ctx context.Context, operatorSpec *operatorv1.StaticPodOperatorSpec, originalOperatorStatus *operatorv1.StaticPodOperatorStatus, resourceVersion string) (bool, error) {
+func (c *InstallerController) manageInstallationPods(ctx context.Context, operatorSpec *operatorv1.StaticPodOperatorSpec, originalOperatorStatus *operatorv1.StaticPodOperatorStatus) (bool, error) {
 	operatorStatus := originalOperatorStatus.DeepCopy()
 
 	if len(operatorStatus.NodeStatuses) == 0 {
@@ -854,16 +859,13 @@ func getInstallerPodImageFromEnv() string {
 	return os.Getenv("OPERATOR_IMAGE")
 }
 
-func (c InstallerController) ensureSecretRevisionResourcesExists(ctx context.Context, secrets []revision.RevisionResource, hasRevisionSuffix bool, latestRevisionNumber int32) error {
+func (c InstallerController) ensureSecretRevisionResourcesExists(ctx context.Context, secrets []revision.RevisionResource, latestRevisionNumber int32) error {
 	missing := sets.NewString()
 	for _, secret := range secrets {
 		if secret.Optional {
 			continue
 		}
-		name := secret.Name
-		if !hasRevisionSuffix {
-			name = fmt.Sprintf("%s-%d", name, latestRevisionNumber)
-		}
+		name := fmt.Sprintf("%s-%d", secret.Name, latestRevisionNumber)
 		_, err := c.secretsGetter.Secrets(c.targetNamespace).Get(ctx, name, metav1.GetOptions{})
 		if err == nil {
 			continue
@@ -878,16 +880,13 @@ func (c InstallerController) ensureSecretRevisionResourcesExists(ctx context.Con
 	return fmt.Errorf("secrets: %s", strings.Join(missing.List(), ","))
 }
 
-func (c InstallerController) ensureConfigMapRevisionResourcesExists(ctx context.Context, configs []revision.RevisionResource, hasRevisionSuffix bool, latestRevisionNumber int32) error {
+func (c InstallerController) ensureConfigMapRevisionResourcesExists(ctx context.Context, configs []revision.RevisionResource, latestRevisionNumber int32) error {
 	missing := sets.NewString()
 	for _, config := range configs {
 		if config.Optional {
 			continue
 		}
-		name := config.Name
-		if !hasRevisionSuffix {
-			name = fmt.Sprintf("%s-%d", name, latestRevisionNumber)
-		}
+		name := fmt.Sprintf("%s-%d", config.Name, latestRevisionNumber)
 		_, err := c.configMapsGetter.ConfigMaps(c.targetNamespace).Get(ctx, name, metav1.GetOptions{})
 		if err == nil {
 			continue
@@ -902,14 +901,55 @@ func (c InstallerController) ensureConfigMapRevisionResourcesExists(ctx context.
 	return fmt.Errorf("configmaps: %s", strings.Join(missing.List(), ","))
 }
 
+func (c InstallerController) ensureUnrevisionedSecretResourcesExists(ctx context.Context, secrets []UnrevisionedResource) error {
+	missing := sets.NewString()
+	for _, secret := range secrets {
+		if secret.Optional {
+			continue
+		}
+		_, err := c.secretsGetter.Secrets(c.targetNamespace).Get(ctx, secret.Name, metav1.GetOptions{})
+		if err == nil {
+			continue
+		}
+		if apierrors.IsNotFound(err) {
+			missing.Insert(secret.Name)
+		}
+	}
+	if missing.Len() == 0 {
+		return nil
+	}
+	return fmt.Errorf("secrets: %s", strings.Join(missing.List(), ","))
+}
+
+func (c InstallerController) ensureUnrevisionedConfigMapResourcesExists(ctx context.Context, configs []UnrevisionedResource) error {
+	missing := sets.NewString()
+	for _, config := range configs {
+		if config.Optional {
+			continue
+		}
+		_, err := c.configMapsGetter.ConfigMaps(c.targetNamespace).Get(ctx, config.Name, metav1.GetOptions{})
+		if err == nil {
+			continue
+		}
+		if apierrors.IsNotFound(err) {
+			missing.Insert(config.Name)
+		}
+	}
+	if missing.Len() == 0 {
+		return nil
+	}
+	return fmt.Errorf("configmaps: %s", strings.Join(missing.List(), ","))
+}
+
 // ensureRequiredResourcesExist makes sure that all non-optional resources are ready or it will return an error to trigger a requeue so that we try again.
 func (c InstallerController) ensureRequiredResourcesExist(ctx context.Context, revisionNumber int32) error {
 	errs := []error{}
 
-	errs = append(errs, c.ensureConfigMapRevisionResourcesExists(ctx, c.certConfigMaps, true, revisionNumber))
-	errs = append(errs, c.ensureConfigMapRevisionResourcesExists(ctx, c.configMaps, false, revisionNumber))
-	errs = append(errs, c.ensureSecretRevisionResourcesExists(ctx, c.certSecrets, true, revisionNumber))
-	errs = append(errs, c.ensureSecretRevisionResourcesExists(ctx, c.secrets, false, revisionNumber))
+	errs = append(errs, c.ensureUnrevisionedConfigMapResourcesExists(ctx, c.certConfigMaps))
+	errs = append(errs, c.ensureUnrevisionedSecretResourcesExists(ctx, c.certSecrets))
+
+	errs = append(errs, c.ensureConfigMapRevisionResourcesExists(ctx, c.configMaps, revisionNumber))
+	errs = append(errs, c.ensureSecretRevisionResourcesExists(ctx, c.secrets, revisionNumber))
 
 	aggregatedErr := utilerrors.NewAggregate(errs)
 	if aggregatedErr == nil {
@@ -925,7 +965,7 @@ func (c InstallerController) ensureRequiredResourcesExist(ctx context.Context, r
 }
 
 func (c InstallerController) Sync(ctx context.Context, syncCtx factory.SyncContext) error {
-	operatorSpec, originalOperatorStatus, resourceVersion, err := c.operatorClient.GetStaticPodOperatorState()
+	operatorSpec, originalOperatorStatus, _, err := c.operatorClient.GetStaticPodOperatorState()
 	if err != nil {
 		return err
 	}
@@ -939,7 +979,7 @@ func (c InstallerController) Sync(ctx context.Context, syncCtx factory.SyncConte
 
 	// Only manage installation pods when all required certs are present.
 	if err == nil {
-		requeue, syncErr := c.manageInstallationPods(ctx, operatorSpec, operatorStatus, resourceVersion)
+		requeue, syncErr := c.manageInstallationPods(ctx, operatorSpec, operatorStatus)
 		if requeue && syncErr == nil {
 			return factory.SyntheticRequeueError
 		}

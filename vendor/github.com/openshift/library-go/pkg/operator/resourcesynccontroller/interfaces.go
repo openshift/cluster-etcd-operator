@@ -1,5 +1,7 @@
 package resourcesynccontroller
 
+import "k8s.io/apimachinery/pkg/util/sets"
+
 // ResourceLocation describes coordinates for a resource to be synced
 type ResourceLocation struct {
 	Namespace string `json:"namespace"`
@@ -10,7 +12,16 @@ type ResourceLocation struct {
 	Provider string `json:"provider,omitempty"`
 }
 
-var emptyResourceLocation = ResourceLocation{}
+type syncRuleSource struct {
+	ResourceLocation
+	syncedKeys sets.String // defines the set of keys to sync from source to dest
+}
+
+type syncRules map[ResourceLocation]syncRuleSource
+
+var (
+	emptyResourceLocation = ResourceLocation{}
+)
 
 // ResourceSyncer allows changes to syncing rules by this controller
 type ResourceSyncer interface {
