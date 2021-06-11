@@ -32,9 +32,9 @@ type ResourceSyncController struct {
 	// syncRuleLock is used to ensure we avoid races on changes to syncing rules
 	syncRuleLock sync.RWMutex
 	// configMapSyncRules is a map from destination location to source location
-	configMapSyncRules map[ResourceLocation]ResourceLocation
+	configMapSyncRules syncRules
 	// secretSyncRules is a map from destination location to source location
-	secretSyncRules map[ResourceLocation]ResourceLocation
+	secretSyncRules syncRules
 
 	// knownNamespaces is the list of namespaces we are watching.
 	knownNamespaces sets.String
@@ -63,8 +63,8 @@ func NewResourceSyncController(
 		name:                 "ResourceSyncController",
 		operatorConfigClient: operatorConfigClient,
 
-		configMapSyncRules:         map[ResourceLocation]ResourceLocation{},
-		secretSyncRules:            map[ResourceLocation]ResourceLocation{},
+		configMapSyncRules:         syncRules{},
+		secretSyncRules:            syncRules{},
 		kubeInformersForNamespaces: kubeInformersForNamespaces,
 		knownNamespaces:            kubeInformersForNamespaces.Namespaces(),
 
@@ -100,6 +100,10 @@ func (c *ResourceSyncController) Name() string {
 }
 
 func (c *ResourceSyncController) SyncConfigMap(destination, source ResourceLocation) error {
+	return c.SyncPartialConfigMap(destination, source)
+}
+
+func (c *ResourceSyncController) SyncPartialConfigMap(destination ResourceLocation, source ResourceLocation, keys ...string) error {
 	if !c.knownNamespaces.Has(destination.Namespace) {
 		return fmt.Errorf("not watching namespace %q", destination.Namespace)
 	}
@@ -109,7 +113,10 @@ func (c *ResourceSyncController) SyncConfigMap(destination, source ResourceLocat
 
 	c.syncRuleLock.Lock()
 	defer c.syncRuleLock.Unlock()
-	c.configMapSyncRules[destination] = source
+	c.configMapSyncRules[destination] = syncRuleSource{
+		ResourceLocation: source,
+		syncedKeys:       sets.NewString(keys...),
+	}
 
 	// make sure the new rule is picked up
 	c.syncCtx.Queue().Add(c.syncCtx.QueueKey())
@@ -117,6 +124,10 @@ func (c *ResourceSyncController) SyncConfigMap(destination, source ResourceLocat
 }
 
 func (c *ResourceSyncController) SyncSecret(destination, source ResourceLocation) error {
+	return c.SyncPartialSecret(destination, source)
+}
+
+func (c *ResourceSyncController) SyncPartialSecret(destination, source ResourceLocation, keys ...string) error {
 	if !c.knownNamespaces.Has(destination.Namespace) {
 		return fmt.Errorf("not watching namespace %q", destination.Namespace)
 	}
@@ -126,7 +137,10 @@ func (c *ResourceSyncController) SyncSecret(destination, source ResourceLocation
 
 	c.syncRuleLock.Lock()
 	defer c.syncRuleLock.Unlock()
-	c.secretSyncRules[destination] = source
+	c.secretSyncRules[destination] = syncRuleSource{
+		ResourceLocation: source,
+		syncedKeys:       sets.NewString(keys...),
+	}
 
 	// make sure the new rule is picked up
 	c.syncCtx.Queue().Add(c.syncCtx.QueueKey())
@@ -157,7 +171,7 @@ func (c *ResourceSyncController) Sync(ctx context.Context, syncCtx factory.SyncC
 	errors := []error{}
 
 	for destination, source := range c.configMapSyncRules {
-		if source == emptyResourceLocation {
+		if source.ResourceLocation == emptyResourceLocation {
 			// use the cache to check whether the configmap exists in target namespace, if not skip the extra delete call.
 			if _, err := c.configMapGetter.ConfigMaps(destination.Namespace).Get(ctx, destination.Name, metav1.GetOptions{}); err != nil {
 				if !apierrors.IsNotFound(err) {
@@ -171,13 +185,13 @@ func (c *ResourceSyncController) Sync(ctx context.Context, syncCtx factory.SyncC
 			continue
 		}
 
-		_, _, err := resourceapply.SyncConfigMap(c.configMapGetter, syncCtx.Recorder(), source.Namespace, source.Name, destination.Namespace, destination.Name, []metav1.OwnerReference{})
+		_, _, err := resourceapply.SyncPartialConfigMap(c.configMapGetter, syncCtx.Recorder(), source.Namespace, source.Name, destination.Namespace, destination.Name, source.syncedKeys, []metav1.OwnerReference{})
 		if err != nil {
 			errors = append(errors, errorWithProvider(source.Provider, err))
 		}
 	}
 	for destination, source := range c.secretSyncRules {
-		if source == emptyResourceLocation {
+		if source.ResourceLocation == emptyResourceLocation {
 			// use the cache to check whether the secret exists in target namespace, if not skip the extra delete call.
 			if _, err := c.secretGetter.Secrets(destination.Namespace).Get(ctx, destination.Name, metav1.GetOptions{}); err != nil {
 				if !apierrors.IsNotFound(err) {
@@ -191,7 +205,7 @@ func (c *ResourceSyncController) Sync(ctx context.Context, syncCtx factory.SyncC
 			continue
 		}
 
-		_, _, err := resourceapply.SyncSecret(c.secretGetter, syncCtx.Recorder(), source.Namespace, source.Name, destination.Namespace, destination.Name, []metav1.OwnerReference{})
+		_, _, err := resourceapply.SyncPartialSecret(c.secretGetter, syncCtx.Recorder(), source.Namespace, source.Name, destination.Namespace, destination.Name, source.syncedKeys, []metav1.OwnerReference{})
 		if err != nil {
 			errors = append(errors, errorWithProvider(source.Provider, err))
 		}
@@ -229,8 +243,8 @@ type debugHTTPHandler struct {
 }
 
 type ResourceSyncRule struct {
-	Source      ResourceLocation `json:"source"`
 	Destination ResourceLocation `json:"destination"`
+	Source      syncRuleSource   `json:"source"`
 }
 
 type ResourceSyncRuleList []ResourceSyncRule
@@ -274,9 +288,9 @@ func (h *debugHTTPHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func resourceSyncRuleList(syncRules map[ResourceLocation]ResourceLocation) ResourceSyncRuleList {
+func resourceSyncRuleList(syncRules syncRules) ResourceSyncRuleList {
 	rules := make(ResourceSyncRuleList, 0, len(syncRules))
-	for src, dest := range syncRules {
+	for dest, src := range syncRules {
 		rule := ResourceSyncRule{
 			Source:      src,
 			Destination: dest,

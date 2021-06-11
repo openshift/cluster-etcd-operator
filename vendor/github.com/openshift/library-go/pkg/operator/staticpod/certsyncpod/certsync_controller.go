@@ -18,14 +18,15 @@ import (
 
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/staticpod/controller/revision"
+	"github.com/openshift/library-go/pkg/operator/staticpod"
+	"github.com/openshift/library-go/pkg/operator/staticpod/controller/installer"
 )
 
 type CertSyncController struct {
 	destinationDir string
 	namespace      string
-	configMaps     []revision.RevisionResource
-	secrets        []revision.RevisionResource
+	configMaps     []installer.UnrevisionedResource
+	secrets        []installer.UnrevisionedResource
 
 	configmapGetter corev1interface.ConfigMapInterface
 	configMapLister v1.ConfigMapLister
@@ -34,7 +35,7 @@ type CertSyncController struct {
 	eventRecorder   events.Recorder
 }
 
-func NewCertSyncController(targetDir, targetNamespace string, configmaps, secrets []revision.RevisionResource, kubeClient kubernetes.Interface, informers informers.SharedInformerFactory, eventRecorder events.Recorder) factory.Controller {
+func NewCertSyncController(targetDir, targetNamespace string, configmaps, secrets []installer.UnrevisionedResource, kubeClient kubernetes.Interface, informers informers.SharedInformerFactory, eventRecorder events.Recorder) factory.Controller {
 	c := &CertSyncController{
 		destinationDir: targetDir,
 		namespace:      targetNamespace,
@@ -71,6 +72,13 @@ func (c *CertSyncController) sync(ctx context.Context, syncCtx factory.SyncConte
 			continue
 
 		case apierrors.IsNotFound(err) && cm.Optional:
+			configMapFile := getConfigMapDir(c.destinationDir, cm.Name)
+			if _, err := os.Stat(configMapFile); os.IsNotExist(err) {
+				// if the configmap file does not exist, there is no work to do, so skip making any live check and just return.
+				// if the configmap actually exists in the API, we'll eventually see it on the watch.
+				continue
+			}
+
 			// Check with the live call it is really missing
 			configMap, err = c.configmapGetter.Get(ctx, cm.Name, metav1.GetOptions{})
 			if err == nil {
@@ -84,7 +92,7 @@ func (c *CertSyncController) sync(ctx context.Context, syncCtx factory.SyncConte
 			}
 
 			// remove missing content
-			if err := os.RemoveAll(getConfigMapDir(c.destinationDir, cm.Name)); err != nil {
+			if err := os.RemoveAll(configMapFile); err != nil {
 				c.eventRecorder.Warningf("CertificateUpdateFailed", "Failed removing file for configmap: %s/%s: %v", c.namespace, cm.Name, err)
 				errors = append(errors, err)
 			}
@@ -150,7 +158,7 @@ func (c *CertSyncController) sync(ctx context.Context, syncCtx factory.SyncConte
 			}
 
 			klog.Infof("Writing configmap manifest %q ...", fullFilename)
-			if err := ioutil.WriteFile(fullFilename, []byte(content), 0644); err != nil {
+			if err := staticpod.WriteFileAtomic([]byte(content), 0644, fullFilename); err != nil {
 				c.eventRecorder.Warningf("CertificateUpdateFailed", "Failed writing file for configmap: %s/%s: %v", configMap.Namespace, configMap.Name, err)
 				errors = append(errors, err)
 				continue
@@ -168,6 +176,13 @@ func (c *CertSyncController) sync(ctx context.Context, syncCtx factory.SyncConte
 			continue
 
 		case apierrors.IsNotFound(err) && s.Optional:
+			secretFile := getSecretDir(c.destinationDir, s.Name)
+			if _, err := os.Stat(secretFile); os.IsNotExist(err) {
+				// if the secret file does not exist, there is no work to do, so skip making any live check and just return.
+				// if the secret actually exists in the API, we'll eventually see it on the watch.
+				continue
+			}
+
 			// Check with the live call it is really missing
 			secret, err = c.secretGetter.Get(ctx, s.Name, metav1.GetOptions{})
 			if err == nil {
@@ -177,12 +192,6 @@ func (c *CertSyncController) sync(ctx context.Context, syncCtx factory.SyncConte
 			}
 			if !apierrors.IsNotFound(err) {
 				errors = append(errors, err)
-				continue
-			}
-
-			// check if the secret file exists, skip firing events if it does not
-			secretFile := getSecretDir(c.destinationDir, s.Name)
-			if _, err := os.Stat(secretFile); os.IsNotExist(err) {
 				continue
 			}
 
@@ -255,7 +264,7 @@ func (c *CertSyncController) sync(ctx context.Context, syncCtx factory.SyncConte
 			}
 
 			klog.Infof("Writing secret manifest %q ...", fullFilename)
-			if err := ioutil.WriteFile(fullFilename, content, 0644); err != nil {
+			if err := staticpod.WriteFileAtomic(content, 0644, fullFilename); err != nil {
 				c.eventRecorder.Warningf("CertificateUpdateFailed", "Failed writing file for secret: %s/%s: %v", secret.Namespace, secret.Name, err)
 				errors = append(errors, err)
 				continue

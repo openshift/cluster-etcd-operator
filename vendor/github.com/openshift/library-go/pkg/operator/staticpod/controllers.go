@@ -40,8 +40,8 @@ type staticPodOperatorControllerBuilder struct {
 
 	// cert information
 	certDir        string
-	certConfigMaps []revisioncontroller.RevisionResource
-	certSecrets    []revisioncontroller.RevisionResource
+	certConfigMaps []installer.UnrevisionedResource
+	certSecrets    []installer.UnrevisionedResource
 
 	// versioner information
 	versionRecorder status.VersionGetter
@@ -74,8 +74,8 @@ func NewBuilder(
 type Builder interface {
 	WithEvents(eventRecorder events.Recorder) Builder
 	WithVersioning(operandName string, versionRecorder status.VersionGetter) Builder
-	WithResources(operandNamespace, staticPodName string, revisionConfigMaps, revisionSecrets []revisioncontroller.RevisionResource) Builder
-	WithCerts(certDir string, certConfigMaps, certSecrets []revisioncontroller.RevisionResource) Builder
+	WithRevisionedResources(operandNamespace, staticPodName string, revisionConfigMaps, revisionSecrets []revisioncontroller.RevisionResource) Builder
+	WithUnrevisionedCerts(certDir string, certConfigMaps, certSecrets []installer.UnrevisionedResource) Builder
 	WithInstaller(command []string) Builder
 	WithMinReadyDuration(minReadyDuration time.Duration) Builder
 	// WithCustomInstaller allows mutating the installer pod definition just before
@@ -96,7 +96,7 @@ func (b *staticPodOperatorControllerBuilder) WithVersioning(operandName string, 
 	return b
 }
 
-func (b *staticPodOperatorControllerBuilder) WithResources(operandNamespace, staticPodName string, revisionConfigMaps, revisionSecrets []revisioncontroller.RevisionResource) Builder {
+func (b *staticPodOperatorControllerBuilder) WithRevisionedResources(operandNamespace, staticPodName string, revisionConfigMaps, revisionSecrets []revisioncontroller.RevisionResource) Builder {
 	b.operandNamespace = operandNamespace
 	b.staticPodName = staticPodName
 	b.revisionConfigMaps = revisionConfigMaps
@@ -104,7 +104,7 @@ func (b *staticPodOperatorControllerBuilder) WithResources(operandNamespace, sta
 	return b
 }
 
-func (b *staticPodOperatorControllerBuilder) WithCerts(certDir string, certConfigMaps, certSecrets []revisioncontroller.RevisionResource) Builder {
+func (b *staticPodOperatorControllerBuilder) WithUnrevisionedCerts(certDir string, certConfigMaps, certSecrets []installer.UnrevisionedResource) Builder {
 	b.certDir = certDir
 	b.certConfigMaps = certConfigMaps
 	b.certSecrets = certSecrets
@@ -230,6 +230,7 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 		manager.WithController(prune.NewPruneController(
 			b.operandNamespace,
 			b.staticPodPrefix,
+			b.certDir,
 			b.pruneCommand,
 			configMapClient,
 			secretClient,

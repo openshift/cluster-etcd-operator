@@ -28,7 +28,7 @@ import (
 // PruneController is a controller that watches static installer pod revision statuses and spawns
 // a pruner pod to delete old revision resources from disk
 type PruneController struct {
-	targetNamespace, podResourcePrefix string
+	targetNamespace, podResourcePrefix, certDir string
 	// command is the string to use for the pruning pod command
 	command []string
 
@@ -57,6 +57,7 @@ const (
 func NewPruneController(
 	targetNamespace string,
 	podResourcePrefix string,
+	certDir string,
 	command []string,
 	configMapGetter corev1client.ConfigMapsGetter,
 	secretGetter corev1client.SecretsGetter,
@@ -67,6 +68,7 @@ func NewPruneController(
 	c := &PruneController{
 		targetNamespace:   targetNamespace,
 		podResourcePrefix: podResourcePrefix,
+		certDir:           certDir,
 		command:           command,
 
 		operatorClient:  operatorClient,
@@ -225,6 +227,7 @@ func (c *PruneController) ensurePrunePod(recorder events.Recorder, nodeName stri
 		fmt.Sprintf("--max-eligible-revision=%d", maxEligibleRevision),
 		fmt.Sprintf("--protected-revisions=%s", revisionsToString(protectedRevisions)),
 		fmt.Sprintf("--resource-dir=%s", "/etc/kubernetes/static-pod-resources"),
+		fmt.Sprintf("--cert-dir=%s", c.certDir),
 		fmt.Sprintf("--static-pod-name=%s", c.podResourcePrefix),
 	)
 

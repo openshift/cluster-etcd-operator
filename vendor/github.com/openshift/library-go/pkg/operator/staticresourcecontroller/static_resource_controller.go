@@ -7,6 +7,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/openshift/api"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	migrationv1alpha1 "sigs.k8s.io/kube-storage-version-migrator/pkg/apis/migration/v1alpha1"
 
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
@@ -41,6 +43,7 @@ var (
 
 func init() {
 	utilruntime.Must(api.InstallKube(genericScheme))
+	utilruntime.Must(migrationv1alpha1.AddToScheme(genericScheme))
 }
 
 type StaticResourceController struct {
@@ -156,6 +159,8 @@ func (c *StaticResourceController) AddKubeInformers(kubeInformersByNamespace v1h
 			ret = ret.AddInformer(informer.Rbac().V1().Roles().Informer())
 		case *rbacv1.RoleBinding:
 			ret = ret.AddInformer(informer.Rbac().V1().RoleBindings().Informer())
+		case *policyv1.PodDisruptionBudget:
+			ret = ret.AddInformer(informer.Policy().V1().PodDisruptionBudgets().Informer())
 		case *storagev1.StorageClass:
 			ret = ret.AddInformer(informer.Storage().V1().StorageClasses().Informer())
 		case *storagev1.CSIDriver:

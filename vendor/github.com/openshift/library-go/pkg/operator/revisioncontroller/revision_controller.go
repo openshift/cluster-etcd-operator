@@ -97,7 +97,7 @@ func (c RevisionController) createRevisionIfNeeded(recorder events.Recorder, lat
 
 	nextRevision := latestAvailableRevision + 1
 	recorder.Eventf("RevisionTriggered", "new revision %d triggered by %q", nextRevision, reason)
-	if err := c.createNewRevision(recorder, nextRevision); err != nil {
+	if err := c.createNewRevision(recorder, nextRevision, reason); err != nil {
 		cond := operatorv1.OperatorCondition{
 			Type:    "RevisionControllerDegraded",
 			Status:  operatorv1.ConditionTrue,
@@ -191,7 +191,7 @@ func (c RevisionController) isLatestRevisionCurrent(revision int32) (bool, strin
 	return true, ""
 }
 
-func (c RevisionController) createNewRevision(recorder events.Recorder, revision int32) error {
+func (c RevisionController) createNewRevision(recorder events.Recorder, revision int32, reason string) error {
 	// Create a new InProgress status configmap
 	statusConfigMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -201,6 +201,7 @@ func (c RevisionController) createNewRevision(recorder events.Recorder, revision
 		Data: map[string]string{
 			"status":   prune.StatusInProgress,
 			"revision": fmt.Sprintf("%d", revision),
+			"reason":   reason,
 		},
 	}
 	statusConfigMap, _, err := resourceapply.ApplyConfigMap(c.configMapGetter, recorder, statusConfigMap)
