@@ -18,12 +18,14 @@ require (
 	github.com/prometheus/common v0.10.0
 	github.com/spf13/cobra v1.1.3
 	github.com/spf13/pflag v1.0.5
-	github.com/stretchr/testify v1.6.1
+	github.com/stretchr/testify v1.7.0
 	github.com/vishvananda/netlink v1.0.0
 	github.com/vishvananda/netns v0.0.0-20210104183010-2eb08e3e575f // indirect
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200910180754-dd1b699fc489
+	go.uber.org/zap v1.17.0
 	golang.org/x/sys v0.0.0-20210225134936-a50acf3fe073
 	google.golang.org/grpc v1.29.1
+	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	k8s.io/api v0.21.0
 	k8s.io/apiextensions-apiserver v0.21.0
 	k8s.io/apimachinery v0.21.0
