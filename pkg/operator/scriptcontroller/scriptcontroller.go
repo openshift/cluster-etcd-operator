@@ -124,5 +124,5 @@ func (c *ScriptController) manageScriptConfigMap(recorder events.Recorder) (*cor
 		basename := filepath.Base(filename)
 		scriptConfigMap.Data[basename] = string(etcd_assets.MustAsset(filename))
 	}
-	return resourceapply.ApplyConfigMap(c.kubeClient.CoreV1(), recorder, scriptConfigMap)
+	return resourceapply.ApplyConfigMap(c.kubeClient.CoreV1(), false, recorder, scriptConfigMap)
 }

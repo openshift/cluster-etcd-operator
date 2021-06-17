@@ -2,6 +2,9 @@ package operator
 
 import (
 	"context"
+	"fmt"
+	v1 "k8s.io/client-go/listers/apps/v1"
+
 	"os"
 	"regexp"
 	"strings"
@@ -11,6 +14,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
@@ -103,7 +107,14 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		resourceSyncController,
 		controllerContext.EventRecorder,
 	)
+	// Add Deployment, PDB Informer for the `openshift-etcd` namespace
+	// TODO: Make this a slice to be passed for the controller to react to.
+	deploymentInformer := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Apps().V1().Deployments().Informer()
+	pdbInformer := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Policy().V1().PodDisruptionBudgets().Informer()
 
+	// infraLister and deploymentLister
+	infraLister := configInformers.Config().V1().Infrastructures().Lister()
+	deploymentLister := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Apps().V1().Deployments().Lister()
 	staticResourceController := staticresourcecontroller.NewStaticResourceController(
 		"EtcdStaticResources",
 		etcd_assets.Asset,
@@ -115,7 +126,10 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		(&resourceapply.ClientHolder{}).WithKubernetes(kubeClient),
 		operatorClient,
 		controllerContext.EventRecorder,
-	).AddKubeInformers(kubeInformersForNamespaces)
+	).WithConditionalResource(withDeploymentChecker(deploymentLister), "etcd/quorumguard-pdb.yaml",
+		withSNOCheck(infraLister)).
+		AddKubeInformers(kubeInformersForNamespaces).
+		AddInformer(deploymentInformer).AddInformer(pdbInformer)
 
 	envVarController := etcdenvvar.NewEnvVarController(
 		os.Getenv("IMAGE"),
@@ -157,6 +171,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		WithRevisionedResources("openshift-etcd", "etcd", RevisionConfigMaps, RevisionSecrets).
 		WithUnrevisionedCerts("etcd-certs", CertConfigMaps, CertSecrets).
 		WithVersioning("etcd", versionRecorder).
+		WithGuardDeployment(etcd_assets.MustAsset, "etcd/quorumguard-deployment.yaml").
 		ToControllers()
 	if err != nil {
 		return err
@@ -230,7 +245,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
-
 	unsupportedConfigOverridesController := unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(
 		operatorClient,
 		controllerContext.EventRecorder,
@@ -299,6 +313,41 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 	<-ctx.Done()
 	return nil
+}
+
+// withDeploymentChecker checks if the deployment exists or not.
+func withDeploymentChecker(deploymentLister v1.DeploymentLister) resourceapply.ConditionalFunction {
+	return func() bool {
+		_, err := deploymentLister.Deployments(operatorclient.TargetNamespace).Get("etcd-quorum-guard")
+		if err != nil {
+			return false
+		}
+		return true
+	}
+}
+
+// withSNOCheck checks if cluster is SNO mode, if yes, no need to create PDB associated with guard deployment.
+func withSNOCheck(infraLister configv1listers.InfrastructureLister) resourceapply.ConditionalFunction {
+	return func() bool {
+		isGuardNeeded, err := isSingleNodeTopology(infraLister)
+		if err != nil {
+			return false
+		}
+		return isGuardNeeded
+	}
+}
+
+// isSingleNodeTopology tells if the cluster is in running SingleNodeMode or not
+func isSingleNodeTopology(infraLister configv1listers.InfrastructureLister) (bool, error) {
+	infraData, err := infraLister.Get("cluster")
+	if err != nil {
+		return false, err
+	}
+	if infraData.Status.ControlPlaneTopology == "" {
+		return false, fmt.Errorf("ControlPlaneTopology was not set")
+	}
+
+	return infraData.Status.ControlPlaneTopology == configv1.SingleReplicaTopologyMode, nil
 }
 
 // RevisionConfigMaps is a list of configmaps that are directly copied for the current values.  A different actor/controller modifies these.

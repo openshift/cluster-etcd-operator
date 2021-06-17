@@ -188,7 +188,7 @@ func (c *TargetConfigController) manageRecoveryPod(substitutionReplacer *strings
 	podConfigMap.Data["pod.yaml"] = substitutedPodString
 	podConfigMap.Data["forceRedeploymentReason"] = operatorSpec.ForceRedeploymentReason
 	podConfigMap.Data["version"] = version.Get().String()
-	return resourceapply.ApplyConfigMap(client, recorder, podConfigMap)
+	return resourceapply.ApplyConfigMap(client, false, recorder, podConfigMap)
 }
 
 func (c *TargetConfigController) manageStandardPod(substitutionReplacer *strings.Replacer, client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
@@ -199,7 +199,7 @@ func (c *TargetConfigController) manageStandardPod(substitutionReplacer *strings
 	podConfigMap.Data["pod.yaml"] = substitutedPodString
 	podConfigMap.Data["forceRedeploymentReason"] = operatorSpec.ForceRedeploymentReason
 	podConfigMap.Data["version"] = version.Get().String()
-	return resourceapply.ApplyConfigMap(client, recorder, podConfigMap)
+	return resourceapply.ApplyConfigMap(client, false, recorder, podConfigMap)
 }
 
 func (c *TargetConfigController) Enqueue() {
