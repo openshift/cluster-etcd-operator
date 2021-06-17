@@ -15,17 +15,28 @@ import (
 )
 
 // ApplyStorageVersionMigration merges objectmeta and required data.
-func ApplyStorageVersionMigration(client migrationclientv1alpha1.Interface, recorder events.Recorder, required *migrationv1alpha1.StorageVersionMigration) (*migrationv1alpha1.StorageVersionMigration, bool, error) {
+func ApplyStorageVersionMigration(client migrationclientv1alpha1.Interface, shouldDelete bool, recorder events.Recorder, required *migrationv1alpha1.StorageVersionMigration) (*migrationv1alpha1.StorageVersionMigration, bool, error) {
 	clientInterface := client.MigrationV1alpha1().StorageVersionMigrations()
 	existing, err := clientInterface.Get(context.Background(), required.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
+	if apierrors.IsNotFound(err) && !shouldDelete {
 		requiredCopy := required.DeepCopy()
 		actual, err := clientInterface.Create(context.Background(), resourcemerge.WithCleanLabelsAndAnnotations(requiredCopy).(*v1alpha1.StorageVersionMigration), metav1.CreateOptions{})
 		reportCreateEvent(recorder, requiredCopy, err)
 		return actual, true, err
+	} else if apierrors.IsNotFound(err) && shouldDelete {
+		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
+	}
+
+	if shouldDelete {
+		err := clientInterface.Delete(context.TODO(), existing.Name, metav1.DeleteOptions{})
+		if err != nil {
+			return nil, false, err
+		}
+		reportDeleteEvent(recorder, required, err)
+		return nil, true, nil
 	}
 
 	modified := resourcemerge.BoolPtr(false)

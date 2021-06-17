@@ -12,7 +12,7 @@ require (
 	github.com/openshift/api v0.0.0-20210521075222-e273a339932a
 	github.com/openshift/build-machinery-go v0.0.0-20210423112049-9415d7ebd33e
 	github.com/openshift/client-go v0.0.0-20210521082421-73d9475a9142
-	github.com/openshift/library-go v0.0.0-20210611094144-35c8a075e255
+	github.com/openshift/library-go v0.0.0-20210414082648-6e767630a0dc
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.7.1
 	github.com/prometheus/common v0.10.0
@@ -39,6 +39,7 @@ require (
 
 replace (
 	github.com/gogo/protobuf => github.com/gogo/protobuf v1.3.2
+	github.com/openshift/library-go => github.com/ravisantoshgudimetla/library-go v0.0.0-20210623163909-3f138dd5f11a
 	// points to temporary-watch-reduction-patch-1.21 to pick up k/k/pull/101102 - please remove it once the pr merges and a new Z release is cut
 	k8s.io/apiserver => github.com/openshift/kubernetes-apiserver v0.0.0-20210419140141-620426e63a99
 	vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787

@@ -41,7 +41,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdmemberscontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/metriccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/quorumguardcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
@@ -231,14 +230,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
-	quorumGuardController := quorumguardcontroller.NewQuorumGuardController(
-		operatorClient,
-		kubeClient,
-		kubeInformersForNamespaces,
-		controllerContext.EventRecorder,
-		configInformers.Config().V1().Infrastructures().Lister(),
-		os.Getenv("CLI_IMAGE"),
-	)
 
 	unsupportedConfigOverridesController := unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(
 		operatorClient,
@@ -302,7 +293,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go bootstrapTeardownController.Run(ctx, 1)
 	go unsupportedConfigOverridesController.Run(ctx, 1)
 	go scriptController.Run(ctx, 1)
-	go quorumGuardController.Run(ctx, 1)
 
 	go envVarController.Run(1, ctx.Done())
 	go staticPodControllers.Start(ctx)

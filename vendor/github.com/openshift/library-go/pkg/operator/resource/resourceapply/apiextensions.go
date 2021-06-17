@@ -15,17 +15,27 @@ import (
 )
 
 // ApplyCustomResourceDefinitionV1Beta1 applies the required CustomResourceDefinition to the cluster.
-func ApplyCustomResourceDefinitionV1Beta1(client apiextclientv1beta1.CustomResourceDefinitionsGetter, recorder events.Recorder, required *apiextv1beta1.CustomResourceDefinition) (*apiextv1beta1.CustomResourceDefinition, bool, error) {
+func ApplyCustomResourceDefinitionV1Beta1(client apiextclientv1beta1.CustomResourceDefinitionsGetter, shouldDelete bool, recorder events.Recorder, required *apiextv1beta1.CustomResourceDefinition) (*apiextv1beta1.CustomResourceDefinition, bool, error) {
 	existing, err := client.CustomResourceDefinitions().Get(context.TODO(), required.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
+	if apierrors.IsNotFound(err) && !shouldDelete {
 		actual, err := client.CustomResourceDefinitions().Create(context.TODO(), required, metav1.CreateOptions{})
 		reportCreateEvent(recorder, required, err)
 		return actual, true, err
+	} else if apierrors.IsNotFound(err) && shouldDelete {
+		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
 	}
 
+	if shouldDelete {
+		err := client.CustomResourceDefinitions().Delete(context.TODO(), existing.Name, metav1.DeleteOptions{})
+		if err != nil {
+			return nil, false, err
+		}
+		reportDeleteEvent(recorder, required, err)
+		return nil, true, nil
+	}
 	modified := resourcemerge.BoolPtr(false)
 	existingCopy := existing.DeepCopy()
 	resourcemerge.EnsureCustomResourceDefinitionV1Beta1(modified, existingCopy, *required)
@@ -44,15 +54,26 @@ func ApplyCustomResourceDefinitionV1Beta1(client apiextclientv1beta1.CustomResou
 }
 
 // ApplyCustomResourceDefinitionV1 applies the required CustomResourceDefinition to the cluster.
-func ApplyCustomResourceDefinitionV1(client apiextclientv1.CustomResourceDefinitionsGetter, recorder events.Recorder, required *apiextensionsv1.CustomResourceDefinition) (*apiextensionsv1.CustomResourceDefinition, bool, error) {
+func ApplyCustomResourceDefinitionV1(client apiextclientv1.CustomResourceDefinitionsGetter, shouldDelete bool, recorder events.Recorder, required *apiextensionsv1.CustomResourceDefinition) (*apiextensionsv1.CustomResourceDefinition, bool, error) {
 	existing, err := client.CustomResourceDefinitions().Get(context.TODO(), required.Name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		actual, err := client.CustomResourceDefinitions().Create(context.TODO(), required, metav1.CreateOptions{})
 		reportCreateEvent(recorder, required, err)
 		return actual, true, err
+	} else if apierrors.IsNotFound(err) && shouldDelete {
+		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
+	}
+
+	if shouldDelete {
+		err := client.CustomResourceDefinitions().Delete(context.TODO(), existing.Name, metav1.DeleteOptions{})
+		if err != nil {
+			return nil, false, err
+		}
+		reportDeleteEvent(recorder, required, err)
+		return nil, true, nil
 	}
 
 	modified := resourcemerge.BoolPtr(false)
