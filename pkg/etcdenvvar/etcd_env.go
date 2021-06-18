@@ -3,6 +3,7 @@ package etcdenvvar
 import (
 	"fmt"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
@@ -122,6 +123,7 @@ func getEtcdGrpcEndpoints(envVarContext envVarContext) (string, error) {
 		}
 		endpoints = append(endpoints, fmt.Sprintf("https://%s:2379", endpointIP))
 	}
+	sort.Strings(endpoints)
 
 	return strings.Join(endpoints, ","), nil
 }
