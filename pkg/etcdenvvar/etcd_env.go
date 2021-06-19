@@ -31,7 +31,7 @@ type envVarContext struct {
 
 var FixedEtcdEnvVars = map[string]string{
 	"ETCD_DATA_DIR":                                    "/var/lib/etcd",
-	"ETCD_QUOTA_BACKEND_BYTES":                         "7516192768", // 7 gig
+	"ETCD_QUOTA_BACKEND_BYTES":                         "8589934592", // 8 GB
 	"ETCD_INITIAL_CLUSTER_STATE":                       "existing",
 	"ETCD_ENABLE_PPROF":                                "true",
 	"ETCD_CIPHER_SUITES":                               getDefaultCipherSuites(),
