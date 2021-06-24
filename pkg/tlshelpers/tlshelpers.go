@@ -2,6 +2,7 @@ package tlshelpers
 
 import (
 	"bytes"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
@@ -9,9 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/apimachinery/pkg/util/sets"
-
 	"github.com/openshift/library-go/pkg/crypto"
+	"go.etcd.io/etcd/pkg/tlsutil"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -132,4 +134,33 @@ func getCommonNameFromOrg(org string) (string, error) {
 		return "etcd-metric-signer", nil
 	}
 	return "", errors.New("unable to recognise secret name")
+}
+
+// WhitelistEtcdCipherSuites whitelists valid ciphers for use with etcd.
+// TODO move upstream
+func WhitelistEtcdCipherSuites(cipherSuites []string) []string {
+	whitelist := []string{}
+	for _, cipher := range cipherSuites {
+		_, ok := tlsutil.GetCipherSuite(cipher)
+		if !ok {
+			klog.Warningf("Skipping unsupported cipher: %s", cipher)
+			continue
+		}
+		if !IsCipherSecure(cipher) {
+			klog.Warningf("Skipping weak/insecure cipher: %s", cipher)
+			continue
+		}
+
+		whitelist = append(whitelist, cipher)
+	}
+	return whitelist
+}
+
+func IsCipherSecure(cipherSuiteName string) bool {
+	for _, insecure := range tls.InsecureCipherSuites() {
+		if insecure.Name == cipherSuiteName {
+			return true
+		}
+	}
+	return false
 }
