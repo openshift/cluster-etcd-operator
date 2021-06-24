@@ -375,7 +375,7 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 
 		// if we are in a transition, check to see whether our installer pod completed
 		if currNodeState.TargetRevision > currNodeState.CurrentRevision {
-			if err := c.ensureInstallerPod(currNodeState.NodeName, operatorSpec, currNodeState.TargetRevision, currNodeState.LastFailedCount); err != nil {
+			if err := c.ensureInstallerPod(ctx, currNodeState.NodeName, operatorSpec, currNodeState.TargetRevision, currNodeState.LastFailedCount); err != nil {
 				c.eventRecorder.Warningf("InstallerPodFailed", "Failed to create installer pod for revision %d count %d on node %q: %v",
 					currNodeState.TargetRevision, currNodeState.NodeName, currNodeState.LastFailedCount, err)
 				// if a newer revision is pending, continue, so we retry later with the latest available revision
@@ -491,7 +491,7 @@ func (c *InstallerController) updateConfigMapForRevision(ctx context.Context, cu
 			return err
 		}
 		statusConfigMap.Data["status"] = status
-		_, _, err = resourceapply.ApplyConfigMap(c.configMapsGetter, c.eventRecorder, statusConfigMap)
+		_, _, err = resourceapply.ApplyConfigMap(ctx, c.configMapsGetter, c.eventRecorder, statusConfigMap)
 		if err != nil {
 			return err
 		}
@@ -769,7 +769,7 @@ func getInstallerPodName(revision int32, nodeName string, previouslyFailedRevisi
 }
 
 // ensureInstallerPod creates the installer pod with the secrets required to if it does not exist already
-func (c *InstallerController) ensureInstallerPod(nodeName string, operatorSpec *operatorv1.StaticPodOperatorSpec, revision int32, previouslyFailedRevisionPods int) error {
+func (c *InstallerController) ensureInstallerPod(ctx context.Context, nodeName string, operatorSpec *operatorv1.StaticPodOperatorSpec, revision int32, previouslyFailedRevisionPods int) error {
 	pod := resourceread.ReadPodV1OrDie(bindata.MustAsset(filepath.Join(manifestDir, manifestInstallerPodPath)))
 
 	pod.Namespace = c.targetNamespace
@@ -837,7 +837,7 @@ func (c *InstallerController) ensureInstallerPod(nodeName string, operatorSpec *
 		}
 	}
 
-	_, _, err = resourceapply.ApplyPod(c.podsGetter, c.eventRecorder, pod)
+	_, _, err = resourceapply.ApplyPod(ctx, c.podsGetter, c.eventRecorder, pod)
 	return err
 }
 
