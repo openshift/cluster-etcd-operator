@@ -63,7 +63,7 @@ func (c *ScriptController) Enqueue() {
 }
 
 func (c ScriptController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
-	err := c.createScriptConfigMap(syncCtx.Recorder())
+	err := c.createScriptConfigMap(ctx, syncCtx.Recorder())
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "ScriptControllerDegraded",
@@ -92,10 +92,10 @@ func (c ScriptController) sync(ctx context.Context, syncCtx factory.SyncContext)
 
 // createScriptController takes care of creation of valid resources in a fixed name.  These are inputs to other control loops.
 // returns whether or not requeue and if an error happened when updating status.  Normally it updates status itself.
-func (c *ScriptController) createScriptConfigMap(recorder events.Recorder) error {
+func (c *ScriptController) createScriptConfigMap(ctx context.Context, recorder events.Recorder) error {
 	errors := []error{}
 
-	_, _, err := c.manageScriptConfigMap(recorder)
+	_, _, err := c.manageScriptConfigMap(ctx, recorder)
 	if err != nil {
 		errors = append(errors, fmt.Errorf("%q: %v", "configmap/etcd-pod", err))
 	}
@@ -103,7 +103,7 @@ func (c *ScriptController) createScriptConfigMap(recorder events.Recorder) error
 	return utilerrors.NewAggregate(errors)
 }
 
-func (c *ScriptController) manageScriptConfigMap(recorder events.Recorder) (*corev1.ConfigMap, bool, error) {
+func (c *ScriptController) manageScriptConfigMap(ctx context.Context, recorder events.Recorder) (*corev1.ConfigMap, bool, error) {
 	scriptConfigMap := resourceread.ReadConfigMapV1OrDie(etcd_assets.MustAsset("etcd/scripts-cm.yaml"))
 	// TODO get the env vars to produce a file that we write
 	envVarMap := c.envVarGetter.GetEnvVars()
@@ -124,5 +124,5 @@ func (c *ScriptController) manageScriptConfigMap(recorder events.Recorder) (*cor
 		basename := filepath.Base(filename)
 		scriptConfigMap.Data[basename] = string(etcd_assets.MustAsset(filename))
 	}
-	return resourceapply.ApplyConfigMap(c.kubeClient.CoreV1(), recorder, scriptConfigMap)
+	return resourceapply.ApplyConfigMap(ctx, c.kubeClient.CoreV1(), recorder, scriptConfigMap)
 }
