@@ -160,7 +160,7 @@ func TestEnsureCertForNode(t *testing.T) {
 			fakeKubeClient, controller, recorder := setupController(t, objects)
 			secretName := certConfig.secretNameFunc(node.Name)
 			nodeUID := string(node.UID)
-			_, _, err := controller.ensureCertSecret(secretName, nodeUID, ipAddresses, certConfig, recorder)
+			_, _, err := controller.ensureCertSecret(context.TODO(), secretName, nodeUID, ipAddresses, certConfig, recorder)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -195,7 +195,7 @@ func TestEnsureCertForNode(t *testing.T) {
 				// not be updated when immediately round-tripped.
 				objects := []runtime.Object{createdSecret}
 				fakeKubeClient, controller, recorder := setupController(t, objects)
-				_, _, err := controller.ensureCertSecret(secretName, nodeUID, ipAddresses, certConfig, recorder)
+				_, _, err := controller.ensureCertSecret(context.TODO(), secretName, nodeUID, ipAddresses, certConfig, recorder)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -216,7 +216,7 @@ func TestEnsureCertForNode(t *testing.T) {
 // cert type per node and an aggregated secret per cert type.
 func TestSyncAllMasters(t *testing.T) {
 	fakeKubeClient, controller, recorder := setupController(t, []runtime.Object{})
-	err := controller.syncAllMasters(recorder)
+	err := controller.syncAllMasters(context.TODO(), recorder)
 	if err != nil {
 		t.Fatal(err)
 	}

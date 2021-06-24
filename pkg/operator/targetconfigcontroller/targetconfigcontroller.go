@@ -94,7 +94,7 @@ func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncCo
 	if err != nil {
 		return err
 	}
-	requeue, err := createTargetConfig(c, syncCtx.Recorder(), operatorSpec)
+	requeue, err := createTargetConfig(ctx, c, syncCtx.Recorder(), operatorSpec)
 	if err != nil {
 		return err
 	}
@@ -107,21 +107,21 @@ func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncCo
 
 // createTargetConfig takes care of creation of valid resources in a fixed name.  These are inputs to other control loops.
 // returns whether or not requeue and if an error happened when updating status.  Normally it updates status itself.
-func createTargetConfig(c TargetConfigController, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (bool, error) {
+func createTargetConfig(ctx context.Context, c TargetConfigController, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (bool, error) {
 	errors := []error{}
 
 	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec)
 	if err != nil {
 		return false, err
 	}
-	if err := checkExternalDependencies(context.TODO(), c.configMapLister, recorder); err != nil {
+	if err := checkExternalDependencies(ctx, c.configMapLister, recorder); err != nil {
 		errors = append(errors, err)
 	}
-	_, _, err = c.manageStandardPod(contentReplacer, c.kubeClient.CoreV1(), recorder, operatorSpec)
+	_, _, err = c.manageStandardPod(ctx, contentReplacer, c.kubeClient.CoreV1(), recorder, operatorSpec)
 	if err != nil {
 		errors = append(errors, fmt.Errorf("%q: %v", "configmap/etcd-pod", err))
 	}
-	_, _, err = c.manageRecoveryPod(contentReplacer, c.kubeClient.CoreV1(), recorder, operatorSpec)
+	_, _, err = c.manageRecoveryPod(ctx, contentReplacer, c.kubeClient.CoreV1(), recorder, operatorSpec)
 	if err != nil {
 		errors = append(errors, fmt.Errorf("%q: %v", "configmap/restore-etcd-pod", err))
 	}
@@ -182,7 +182,7 @@ func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv
 	), nil
 }
 
-func (c *TargetConfigController) manageRecoveryPod(substitutionReplacer *strings.Replacer, client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
+func (c *TargetConfigController) manageRecoveryPod(ctx context.Context, substitutionReplacer *strings.Replacer, client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
 	podBytes := etcd_assets.MustAsset("etcd/restore-pod.yaml")
 	substitutedPodString := substitutionReplacer.Replace(string(podBytes))
 
@@ -190,10 +190,10 @@ func (c *TargetConfigController) manageRecoveryPod(substitutionReplacer *strings
 	podConfigMap.Data["pod.yaml"] = substitutedPodString
 	podConfigMap.Data["forceRedeploymentReason"] = operatorSpec.ForceRedeploymentReason
 	podConfigMap.Data["version"] = version.Get().String()
-	return resourceapply.ApplyConfigMap(client, recorder, podConfigMap)
+	return resourceapply.ApplyConfigMap(ctx, client, recorder, podConfigMap)
 }
 
-func (c *TargetConfigController) manageStandardPod(substitutionReplacer *strings.Replacer, client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
+func (c *TargetConfigController) manageStandardPod(ctx context.Context, substitutionReplacer *strings.Replacer, client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
 	podBytes := etcd_assets.MustAsset("etcd/pod.yaml")
 	substitutedPodString := substitutionReplacer.Replace(string(podBytes))
 
@@ -201,7 +201,7 @@ func (c *TargetConfigController) manageStandardPod(substitutionReplacer *strings
 	podConfigMap.Data["pod.yaml"] = substitutedPodString
 	podConfigMap.Data["forceRedeploymentReason"] = operatorSpec.ForceRedeploymentReason
 	podConfigMap.Data["version"] = version.Get().String()
-	return resourceapply.ApplyConfigMap(client, recorder, podConfigMap)
+	return resourceapply.ApplyConfigMap(ctx, client, recorder, podConfigMap)
 }
 
 func (c *TargetConfigController) Enqueue() {

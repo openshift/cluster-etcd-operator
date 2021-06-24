@@ -60,7 +60,7 @@ func NewEtcdEndpointsController(
 }
 
 func (c *EtcdEndpointsController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
-	err := c.syncConfigMap(syncCtx.Recorder())
+	err := c.syncConfigMap(ctx, syncCtx.Recorder())
 
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
@@ -87,7 +87,7 @@ func (c *EtcdEndpointsController) sync(ctx context.Context, syncCtx factory.Sync
 	return nil
 }
 
-func (c *EtcdEndpointsController) syncConfigMap(recorder events.Recorder) error {
+func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder events.Recorder) error {
 	bootstrapComplete, err := ceohelpers.IsBootstrapComplete(c.configmapLister, c.operatorClient)
 	if err != nil {
 		return fmt.Errorf("couldn't determine bootstrap status: %w", err)
@@ -143,7 +143,7 @@ func (c *EtcdEndpointsController) syncConfigMap(recorder events.Recorder) error 
 	required.Data = endpointAddresses
 
 	// Apply endpoint updates
-	if _, _, err := resourceapply.ApplyConfigMap(c.configmapClient, recorder, required); err != nil {
+	if _, _, err := resourceapply.ApplyConfigMap(ctx, c.configmapClient, recorder, required); err != nil {
 		return err
 	}
 

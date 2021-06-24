@@ -106,7 +106,7 @@ func NewEtcdCertSignerController(
 }
 
 func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
-	err := c.syncAllMasters(syncCtx.Recorder())
+	err := c.syncAllMasters(ctx, syncCtx.Recorder())
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdCertSignerControllerDegraded",
@@ -130,8 +130,8 @@ func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.Syn
 
 }
 
-func (c *EtcdCertSignerController) syncAllMasters(recorder events.Recorder) error {
-	certs, err := c.ensureCerts(recorder)
+func (c *EtcdCertSignerController) syncAllMasters(ctx context.Context, recorder events.Recorder) error {
+	certs, err := c.ensureCerts(ctx, recorder)
 	if err != nil {
 		return err
 	}
@@ -149,7 +149,7 @@ func (c *EtcdCertSignerController) syncAllMasters(recorder events.Recorder) erro
 		Type: corev1.SecretTypeOpaque,
 		Data: certs,
 	}
-	_, _, err = resourceapply.ApplySecret(c.secretClient, recorder, secret)
+	_, _, err = resourceapply.ApplySecret(ctx, c.secretClient, recorder, secret)
 	return err
 }
 
@@ -165,7 +165,7 @@ func (c *EtcdCertSignerController) syncAllMasters(recorder events.Recorder) erro
 //   "etcd-serving-master-0.key": []byte{...},
 //   ...
 // }
-func (c *EtcdCertSignerController) ensureCerts(recorder events.Recorder) (map[string][]byte, error) {
+func (c *EtcdCertSignerController) ensureCerts(ctx context.Context, recorder events.Recorder) (map[string][]byte, error) {
 	nodes, err := c.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
 	if err != nil {
 		return nil, err
@@ -174,7 +174,7 @@ func (c *EtcdCertSignerController) ensureCerts(recorder events.Recorder) (map[st
 	errs := []error{}
 	certs := map[string][]byte{}
 	for _, node := range nodes {
-		certsForNode, certErrs := c.ensureCertsForNode(node, recorder)
+		certsForNode, certErrs := c.ensureCertsForNode(ctx, node, recorder)
 		if certErrs != nil {
 			errs = append(errs, certErrs...)
 		}
@@ -196,7 +196,7 @@ func (c *EtcdCertSignerController) ensureCerts(recorder events.Recorder) (map[st
 
 // ensureCertsForNode attempts to ensure the existence of secrets containing the
 // etcd cert (cert+key) pairs needed for an etcd member.
-func (c *EtcdCertSignerController) ensureCertsForNode(node *corev1.Node, recorder events.Recorder) (map[string][]byte, []error) {
+func (c *EtcdCertSignerController) ensureCertsForNode(ctx context.Context, node *corev1.Node, recorder events.Recorder) (map[string][]byte, []error) {
 	ipAddresses, err := dnshelpers.GetInternalIPAddressesForNodeName(node)
 	if err != nil {
 		return nil, []error{err}
@@ -206,7 +206,7 @@ func (c *EtcdCertSignerController) ensureCertsForNode(node *corev1.Node, recorde
 	certs := map[string][]byte{}
 	for _, certConfig := range certConfigs {
 		secretName := certConfig.secretNameFunc(node.Name)
-		cert, key, err := c.ensureCertSecret(secretName, string(node.UID), ipAddresses, certConfig, recorder)
+		cert, key, err := c.ensureCertSecret(ctx, secretName, string(node.UID), ipAddresses, certConfig, recorder)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -225,7 +225,7 @@ func (c *EtcdCertSignerController) ensureCertsForNode(node *corev1.Node, recorde
 // exist. If the secret exists but contains an invalid cert pair, it will be
 // updated with a new cert pair. If the secret is ensured to have a valid
 // cert pair, the bytes of the cert and key will be returned.
-func (c *EtcdCertSignerController) ensureCertSecret(secretName, nodeUID string, ipAddresses []string, certConfig etcdCertConfig, recorder events.Recorder) ([]byte, []byte, error) {
+func (c *EtcdCertSignerController) ensureCertSecret(ctx context.Context, secretName, nodeUID string, ipAddresses []string, certConfig etcdCertConfig, recorder events.Recorder) ([]byte, []byte, error) {
 	secret, err := c.secretLister.Secrets(operatorclient.TargetNamespace).Get(secretName)
 	if err != nil && !errors.IsNotFound(err) {
 		return nil, nil, err
@@ -270,7 +270,7 @@ func (c *EtcdCertSignerController) ensureCertSecret(secretName, nodeUID string, 
 
 	//TODO: Update annotations Not Before and Not After for Cert Rotation
 	newSecret := newCertSecret(secretName, nodeUID, cert, key)
-	_, _, err = resourceapply.ApplySecret(c.secretClient, recorder, newSecret)
+	_, _, err = resourceapply.ApplySecret(ctx, c.secretClient, recorder, newSecret)
 	if err != nil {
 		return nil, nil, err
 	}
