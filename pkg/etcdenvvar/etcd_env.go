@@ -6,16 +6,13 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-
-	configv1 "github.com/openshift/api/config/v1"
+	"github.com/ghodss/yaml"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
-	"github.com/openshift/library-go/pkg/crypto"
-	"go.etcd.io/etcd/pkg/tlsutil"
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/klog/v2"
 )
 
 type envVarContext struct {
@@ -34,7 +31,6 @@ var FixedEtcdEnvVars = map[string]string{
 	"ETCD_QUOTA_BACKEND_BYTES":                         "8589934592", // 8 GB
 	"ETCD_INITIAL_CLUSTER_STATE":                       "existing",
 	"ETCD_ENABLE_PPROF":                                "true",
-	"ETCD_CIPHER_SUITES":                               getDefaultCipherSuites(),
 	"ETCD_EXPERIMENTAL_WATCH_PROGRESS_NOTIFY_INTERVAL": "5s",
 	"ETCD_SOCKET_REUSE_ADDRESS":                        "true",
 }
@@ -51,6 +47,7 @@ var envVarFns = []envVarFunc{
 	getHeartbeatInterval,
 	getElectionTimeout,
 	getUnsupportedArch,
+	getCipherSuites,
 }
 
 // getEtcdEnvVars returns the env vars that need to be set on the etcd static pods that will be rendered.
@@ -62,6 +59,7 @@ var envVarFns = []envVarFunc{
 //   ETCD_ELECTION_TIMEOUT
 //   ETCD_INITIAL_CLUSTER_STATE
 //   ETCD_UNSUPPORTED_ARCH
+//   ETCD_CIPHER_SUITES
 //   NODE_%s_IP
 //   NODE_%s_ETCD_URL_HOST
 //   NODE_%s_ETCD_NAME
@@ -112,7 +110,7 @@ func getEtcdGrpcEndpoints(envVarContext envVarContext) (string, error) {
 		return "", err
 	}
 
-	endpoints := []string{}
+	var endpoints []string
 	for _, nodeInfo := range envVarContext.status.NodeStatuses {
 		node, err := envVarContext.nodeLister.Get(nodeInfo.NodeName)
 		if err != nil {
@@ -268,26 +266,21 @@ func getUnsupportedArch(envVarContext envVarContext) (map[string]string, error) 
 	}, nil
 }
 
-//TODO replace with TLS security policy observer
-func getDefaultCipherSuites() string {
-	profileSpec := configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
-	// whitelist ciphers for use with etcd
-	cipherSuites := whitelistEtcdCipherSuites(crypto.OpenSSLToIANACipherSuites(profileSpec.Ciphers))
-	return strings.Join(cipherSuites, ",")
-}
-
-// whitelistEtcdCipherSuites ensures ciphers are valid for use with etcd.
-// TODO move upstream
-func whitelistEtcdCipherSuites(cipherSuites []string) []string {
-	whitelist := []string{}
-	for _, cipher := range cipherSuites {
-		_, ok := tlsutil.GetCipherSuite(cipher)
-		if !ok {
-			// skip and log unsupported ciphers
-			klog.Warningf("cipher is not supported for use with etcd: %q", cipher)
-			continue
-		}
-		whitelist = append(whitelist, cipher)
+func getCipherSuites(envVarContext envVarContext) (map[string]string, error) {
+	var observedConfig map[string]interface{}
+	if err := yaml.Unmarshal(envVarContext.spec.ObservedConfig.Raw, &observedConfig); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal the observedConfig: %w", err)
 	}
-	return whitelist
+	observedCipherSuites, _, err := unstructured.NestedStringSlice(observedConfig, "servingInfo", "cipherSuites")
+	if err != nil {
+		return nil, fmt.Errorf("couldn't get cipherSuites from observedConfig: %w", err)
+	}
+
+	if len(observedCipherSuites) == 0 {
+		return nil, fmt.Errorf("cipherSuites not found in observedConfig")
+	}
+
+	return map[string]string{
+		"ETCD_CIPHER_SUITES": strings.Join(observedCipherSuites, ","),
+	}, nil
 }

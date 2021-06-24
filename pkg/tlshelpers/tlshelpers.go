@@ -9,9 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/apimachinery/pkg/util/sets"
-
 	"github.com/openshift/library-go/pkg/crypto"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 const (
