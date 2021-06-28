@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"os"
+	"regexp"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -174,7 +175,14 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorClient,
 		versionRecorder,
 		controllerContext.EventRecorder,
-	)
+	).WithDegradedInertia(status.MustNewInertia(
+		2*time.Minute,
+		status.InertiaCondition{
+			ConditionTypeMatcher: regexp.MustCompile("^(NodeController|EtcdMembers)Degraded$"),
+			Duration:             5 * time.Minute,
+		},
+	).Inertia)
+
 	coreClient := clientset
 
 	etcdCertSignerController := etcdcertsigner.NewEtcdCertSignerController(
