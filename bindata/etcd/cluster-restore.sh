@@ -15,14 +15,15 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 function source_required_dependency {
-  local path="$1"
-  if [ ! -f "${path}" ]; then
+  local src_path="$1"
+  if [ ! -f "${src_path}" ]; then
     echo "required dependencies not found, please ensure this script is run on a node with a functional etcd static pod"
     exit 1
   fi
   # shellcheck disable=SC1090
-  source "${path}"
+  source "${src_path}"
 }
+
 source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd.env
 source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd-common-tools
 
@@ -40,26 +41,28 @@ if [ "$1" == "" ] || [ ! -d "$1" ]; then
 fi
 
 function restore_static_pods() {
-  STATIC_PODS=("$@")
+  local backup_file="$1"
+  shift
+  local static_pods=("$@")
 
-  for POD_FILE_NAME in "${STATIC_PODS[@]}"; do
-    BACKUP_POD_PATH=$(tar -tvf "${BACKUP_FILE}" "*${POD_FILE_NAME}" | awk '{ print $6 }') || true
-    if [ -z "${BACKUP_POD_PATH}" ]; then
-      echo "${POD_FILE_NAME} does not exist in ${BACKUP_FILE}"
+  for pod_file_name in "${static_pods[@]}"; do
+    backup_pod_path=$(tar -tvf "${backup_file}" "*${pod_file_name}" | awk '{ print $6 }') || true
+    if [ -z "${backup_pod_path}" ]; then
+      echo "${pod_file_name} does not exist in ${backup_file}"
       exit 1
     fi
 
-    echo "starting ${POD_FILE_NAME}"
-    tar -xvf "${BACKUP_FILE}" --strip-components=2 -C "${MANIFEST_DIR}"/ "${BACKUP_POD_PATH}"
+    echo "starting ${pod_file_name}"
+    tar -xvf "${backup_file}" --strip-components=2 -C "${MANIFEST_DIR}"/ "${backup_pod_path}"
   done
 }
 
 function wait_for_containers_to_stop() {
-  CONTAINERS=("$@")
+  local containers=("$@")
 
-  for NAME in "${CONTAINERS[@]}"; do
-    echo "Waiting for container ${NAME} to stop"
-    while [[ -n $(crictl ps --label io.kubernetes.container.name="${NAME}" -q) ]]; do
+  for container_name in "${containers[@]}"; do
+    echo "Waiting for container ${container_name} to stop"
+    while [[ -n $(crictl ps --label io.kubernetes.container.name="${container_name}" -q) ]]; do
       echo -n "."
       sleep 1
     done
@@ -79,6 +82,10 @@ if [ ! -f "${SNAPSHOT_FILE}" ]; then
   echo "etcd snapshot ${SNAPSHOT_FILE} does not exist"
   exit 1
 fi
+
+# Download etcdctl and check the snapshot status
+dl_etcdctl
+check_snapshot_status "${SNAPSHOT_FILE}"
 
 # Move manifests and stop static pods
 if [ ! -d "$MANIFEST_STOPPED_DIR" ]; then
@@ -116,7 +123,7 @@ tar -C "${CONFIG_FILE_DIR}" -xzf "${BACKUP_FILE}" static-pod-resources
 cp -p "${SNAPSHOT_FILE}" "${ETCD_DATA_DIR_BACKUP}"/snapshot.db
 
 echo "starting restore-etcd static pod"
-cp -p ${RESTORE_ETCD_POD_YAML} ${MANIFEST_DIR}/etcd-pod.yaml
+cp -p "${RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"
 
 # start remaining static pods
-restore_static_pods "${STATIC_POD_LIST[@]}"
+restore_static_pods "${BACKUP_FILE}" "${STATIC_POD_LIST[@]}"

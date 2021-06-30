@@ -8,6 +8,8 @@ MANIFEST_STOPPED_DIR="${ASSET_DIR}/manifests-stopped"
 RESTORE_ETCD_POD_YAML="${CONFIG_FILE_DIR}/static-pod-resources/etcd-certs/configmaps/restore-etcd-pod/pod.yaml"
 ETCDCTL_BIN_DIR="${CONFIG_FILE_DIR}/static-pod-resources/bin"
 PATH=${PATH}:${ETCDCTL_BIN_DIR}
+KUBECONFIG="/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/localhost.kubeconfig"
+export KUBECONFIG
 
 # download etcdctl from upstream release assets
 function dl_etcdctl {
@@ -31,3 +33,12 @@ function exec_etcdctl {
   fi
   crictl exec -it $container_id /bin/sh -c "etcdctl $command"
 }
+
+function check_snapshot_status() {
+  local snap_file="$1"
+  if ! etcdctl snapshot status "${snap_file}" -w json; then
+    echo "Backup integrity verification failed. Backup appears corrupted. Aborting!"
+    return 1
+  fi
+}
+
