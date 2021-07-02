@@ -21,17 +21,27 @@ import (
 )
 
 // ApplyNamespace merges objectmeta, does not worry about anything else
-func ApplyNamespace(client coreclientv1.NamespacesGetter, recorder events.Recorder, required *corev1.Namespace) (*corev1.Namespace, bool, error) {
+func ApplyNamespace(client coreclientv1.NamespacesGetter, shouldDelete bool, recorder events.Recorder, required *corev1.Namespace) (*corev1.Namespace, bool, error) {
 	existing, err := client.Namespaces().Get(context.TODO(), required.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
+	if apierrors.IsNotFound(err) && !shouldDelete {
 		requiredCopy := required.DeepCopy()
 		actual, err := client.Namespaces().
 			Create(context.TODO(), resourcemerge.WithCleanLabelsAndAnnotations(requiredCopy).(*corev1.Namespace), metav1.CreateOptions{})
 		reportCreateEvent(recorder, requiredCopy, err)
 		return actual, true, err
+	} else if apierrors.IsNotFound(err) && shouldDelete {
+		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
+	}
+	if shouldDelete {
+		err := client.Namespaces().Delete(context.TODO(), existing.Name, metav1.DeleteOptions{})
+		if err != nil {
+			return nil, false, err
+		}
+		reportDeleteEvent(recorder, required, err)
+		return nil, true, nil
 	}
 
 	modified := resourcemerge.BoolPtr(false)
@@ -54,19 +64,29 @@ func ApplyNamespace(client coreclientv1.NamespacesGetter, recorder events.Record
 // ApplyService merges objectmeta and requires
 // TODO, since this cannot determine whether changes are due to legitimate actors (api server) or illegitimate ones (users), we cannot update
 // TODO I've special cased the selector for now
-func ApplyService(client coreclientv1.ServicesGetter, recorder events.Recorder, required *corev1.Service) (*corev1.Service, bool, error) {
+func ApplyService(client coreclientv1.ServicesGetter, shouldDelete bool, recorder events.Recorder, required *corev1.Service) (*corev1.Service, bool, error) {
 	existing, err := client.Services(required.Namespace).Get(context.TODO(), required.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
+	if apierrors.IsNotFound(err) && !shouldDelete {
 		requiredCopy := required.DeepCopy()
 		actual, err := client.Services(requiredCopy.Namespace).
 			Create(context.TODO(), resourcemerge.WithCleanLabelsAndAnnotations(requiredCopy).(*corev1.Service), metav1.CreateOptions{})
 		reportCreateEvent(recorder, requiredCopy, err)
 		return actual, true, err
+	} else if apierrors.IsNotFound(err) && shouldDelete {
+		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
 	}
 
+	if shouldDelete {
+		err := client.Services(existing.Namespace).Delete(context.TODO(), existing.Name, metav1.DeleteOptions{})
+		if err != nil {
+			return nil, false, err
+		}
+		reportDeleteEvent(recorder, required, err)
+		return nil, true, nil
+	}
 	modified := resourcemerge.BoolPtr(false)
 	existingCopy := existing.DeepCopy()
 
@@ -97,19 +117,29 @@ func ApplyService(client coreclientv1.ServicesGetter, recorder events.Recorder, 
 }
 
 // ApplyPod merges objectmeta, does not worry about anything else
-func ApplyPod(client coreclientv1.PodsGetter, recorder events.Recorder, required *corev1.Pod) (*corev1.Pod, bool, error) {
+func ApplyPod(client coreclientv1.PodsGetter, shouldDelete bool, recorder events.Recorder, required *corev1.Pod) (*corev1.Pod, bool, error) {
 	existing, err := client.Pods(required.Namespace).Get(context.TODO(), required.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
+	if apierrors.IsNotFound(err) && !shouldDelete {
 		requiredCopy := required.DeepCopy()
 		actual, err := client.Pods(requiredCopy.Namespace).
 			Create(context.TODO(), resourcemerge.WithCleanLabelsAndAnnotations(requiredCopy).(*corev1.Pod), metav1.CreateOptions{})
 		reportCreateEvent(recorder, requiredCopy, err)
 		return actual, true, err
+	} else if apierrors.IsNotFound(err) && shouldDelete {
+		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
 	}
 
+	if shouldDelete {
+		err := client.Pods(existing.Namespace).Delete(context.TODO(), existing.Name, metav1.DeleteOptions{})
+		if err != nil {
+			return nil, false, err
+		}
+		reportDeleteEvent(recorder, required, err)
+		return nil, true, nil
+	}
 	modified := resourcemerge.BoolPtr(false)
 	existingCopy := existing.DeepCopy()
 
@@ -128,19 +158,29 @@ func ApplyPod(client coreclientv1.PodsGetter, recorder events.Recorder, required
 }
 
 // ApplyServiceAccount merges objectmeta, does not worry about anything else
-func ApplyServiceAccount(client coreclientv1.ServiceAccountsGetter, recorder events.Recorder, required *corev1.ServiceAccount) (*corev1.ServiceAccount, bool, error) {
+func ApplyServiceAccount(client coreclientv1.ServiceAccountsGetter, shouldDelete bool, recorder events.Recorder, required *corev1.ServiceAccount) (*corev1.ServiceAccount, bool, error) {
 	existing, err := client.ServiceAccounts(required.Namespace).Get(context.TODO(), required.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
+	if apierrors.IsNotFound(err) && !shouldDelete {
 		requiredCopy := required.DeepCopy()
 		actual, err := client.ServiceAccounts(requiredCopy.Namespace).
 			Create(context.TODO(), resourcemerge.WithCleanLabelsAndAnnotations(requiredCopy).(*corev1.ServiceAccount), metav1.CreateOptions{})
 		reportCreateEvent(recorder, requiredCopy, err)
 		return actual, true, err
+	} else if apierrors.IsNotFound(err) && shouldDelete {
+		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
 	}
 
+	if shouldDelete {
+		err := client.ServiceAccounts(existing.Namespace).Delete(context.TODO(), existing.Name, metav1.DeleteOptions{})
+		if err != nil {
+			return nil, false, err
+		}
+		reportDeleteEvent(recorder, required, err)
+		return nil, true, nil
+	}
 	modified := resourcemerge.BoolPtr(false)
 	existingCopy := existing.DeepCopy()
 
@@ -157,19 +197,29 @@ func ApplyServiceAccount(client coreclientv1.ServiceAccountsGetter, recorder eve
 }
 
 // ApplyConfigMap merges objectmeta, requires data
-func ApplyConfigMap(client coreclientv1.ConfigMapsGetter, recorder events.Recorder, required *corev1.ConfigMap) (*corev1.ConfigMap, bool, error) {
+func ApplyConfigMap(client coreclientv1.ConfigMapsGetter, shouldDelete bool, recorder events.Recorder, required *corev1.ConfigMap) (*corev1.ConfigMap, bool, error) {
 	existing, err := client.ConfigMaps(required.Namespace).Get(context.TODO(), required.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
+	if apierrors.IsNotFound(err) && !shouldDelete {
 		requiredCopy := required.DeepCopy()
 		actual, err := client.ConfigMaps(requiredCopy.Namespace).
 			Create(context.TODO(), resourcemerge.WithCleanLabelsAndAnnotations(requiredCopy).(*corev1.ConfigMap), metav1.CreateOptions{})
 		reportCreateEvent(recorder, requiredCopy, err)
 		return actual, true, err
+	} else if apierrors.IsNotFound(err) && shouldDelete {
+		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
 	}
 
+	if shouldDelete {
+		err := client.ConfigMaps(existing.Namespace).Delete(context.TODO(), existing.Name, metav1.DeleteOptions{})
+		if err != nil {
+			return nil, false, err
+		}
+		reportDeleteEvent(recorder, required, err)
+		return nil, true, nil
+	}
 	modified := resourcemerge.BoolPtr(false)
 	existingCopy := existing.DeepCopy()
 
@@ -235,7 +285,7 @@ func ApplyConfigMap(client coreclientv1.ConfigMapsGetter, recorder events.Record
 }
 
 // ApplySecret merges objectmeta, requires data
-func ApplySecret(client coreclientv1.SecretsGetter, recorder events.Recorder, requiredInput *corev1.Secret) (*corev1.Secret, bool, error) {
+func ApplySecret(client coreclientv1.SecretsGetter, shouldDelete bool, recorder events.Recorder, requiredInput *corev1.Secret) (*corev1.Secret, bool, error) {
 	// copy the stringData to data.  Error on a data content conflict inside required.  This is usually a bug.
 	required := requiredInput.DeepCopy()
 	if required.Data == nil {
@@ -252,17 +302,27 @@ func ApplySecret(client coreclientv1.SecretsGetter, recorder events.Recorder, re
 	required.StringData = nil
 
 	existing, err := client.Secrets(required.Namespace).Get(context.TODO(), required.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
+	if apierrors.IsNotFound(err) && !shouldDelete {
 		requiredCopy := required.DeepCopy()
 		actual, err := client.Secrets(requiredCopy.Namespace).
 			Create(context.TODO(), resourcemerge.WithCleanLabelsAndAnnotations(requiredCopy).(*corev1.Secret), metav1.CreateOptions{})
 		reportCreateEvent(recorder, requiredCopy, err)
 		return actual, true, err
+	} else if apierrors.IsNotFound(err) && shouldDelete {
+		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
 	}
 
+	if shouldDelete {
+		err := client.Secrets(existing.Namespace).Delete(context.TODO(), existing.Name, metav1.DeleteOptions{})
+		if err != nil {
+			return nil, false, err
+		}
+		reportDeleteEvent(recorder, required, err)
+		return nil, true, nil
+	}
 	existingCopy := existing.DeepCopy()
 
 	resourcemerge.EnsureObjectMeta(resourcemerge.BoolPtr(false), &existingCopy.ObjectMeta, required.ObjectMeta)
@@ -367,7 +427,7 @@ func SyncPartialConfigMap(client coreclientv1.ConfigMapsGetter, recorder events.
 		source.Name = targetName
 		source.ResourceVersion = ""
 		source.OwnerReferences = ownerRefs
-		return ApplyConfigMap(client, recorder, source)
+		return ApplyConfigMap(client, false, recorder, source)
 	}
 }
 
@@ -440,7 +500,7 @@ func SyncPartialSecret(client coreclientv1.SecretsGetter, recorder events.Record
 		source.Name = targetName
 		source.ResourceVersion = ""
 		source.OwnerReferences = ownerRefs
-		return ApplySecret(client, recorder, source)
+		return ApplySecret(client, false, recorder, source)
 	}
 }
 

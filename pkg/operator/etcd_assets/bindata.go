@@ -8,6 +8,7 @@
 // bindata/etcd/pod-cm.yaml
 // bindata/etcd/pod.yaml
 // bindata/etcd/quorumguard-deployment.yaml
+// bindata/etcd/quorumguard-pdb.yaml
 // bindata/etcd/restore-pod-cm.yaml
 // bindata/etcd/restore-pod.yaml
 // bindata/etcd/sa.yaml
@@ -944,6 +945,34 @@ func etcdQuorumguardDeploymentYaml() (*asset, error) {
 	return a, nil
 }
 
+var _etcdQuorumguardPdbYaml = []byte(`apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: etcd-quorum-guard
+  namespace: openshift-etcd
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      k8s-app: etcd-quorum-guard
+
+`)
+
+func etcdQuorumguardPdbYamlBytes() ([]byte, error) {
+	return _etcdQuorumguardPdbYaml, nil
+}
+
+func etcdQuorumguardPdbYaml() (*asset, error) {
+	bytes, err := etcdQuorumguardPdbYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "etcd/quorumguard-pdb.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
 var _etcdRestorePodCmYaml = []byte(`apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -1259,6 +1288,7 @@ var _bindata = map[string]func() (*asset, error){
 	"etcd/pod-cm.yaml":                 etcdPodCmYaml,
 	"etcd/pod.yaml":                    etcdPodYaml,
 	"etcd/quorumguard-deployment.yaml": etcdQuorumguardDeploymentYaml,
+	"etcd/quorumguard-pdb.yaml":        etcdQuorumguardPdbYaml,
 	"etcd/restore-pod-cm.yaml":         etcdRestorePodCmYaml,
 	"etcd/restore-pod.yaml":            etcdRestorePodYaml,
 	"etcd/sa.yaml":                     etcdSaYaml,
@@ -1316,6 +1346,7 @@ var _bintree = &bintree{nil, map[string]*bintree{
 		"pod-cm.yaml":                 {etcdPodCmYaml, map[string]*bintree{}},
 		"pod.yaml":                    {etcdPodYaml, map[string]*bintree{}},
 		"quorumguard-deployment.yaml": {etcdQuorumguardDeploymentYaml, map[string]*bintree{}},
+		"quorumguard-pdb.yaml":        {etcdQuorumguardPdbYaml, map[string]*bintree{}},
 		"restore-pod-cm.yaml":         {etcdRestorePodCmYaml, map[string]*bintree{}},
 		"restore-pod.yaml":            {etcdRestorePodYaml, map[string]*bintree{}},
 		"sa.yaml":                     {etcdSaYaml, map[string]*bintree{}},

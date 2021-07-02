@@ -1,5 +1,8 @@
 // Code generated for package bindata by go-bindata DO NOT EDIT. (@generated)
 // sources:
+// pkg/operator/staticpod/controller/backingresource/manifests/guard-role.yaml
+// pkg/operator/staticpod/controller/backingresource/manifests/guard-rolebinding.yaml
+// pkg/operator/staticpod/controller/backingresource/manifests/guard-sa.yaml
 // pkg/operator/staticpod/controller/backingresource/manifests/installer-cluster-rolebinding.yaml
 // pkg/operator/staticpod/controller/backingresource/manifests/installer-sa.yaml
 package bindata
@@ -53,6 +56,80 @@ func (fi bindataFileInfo) IsDir() bool {
 // Sys return file is sys mode
 func (fi bindataFileInfo) Sys() interface{} {
 	return nil
+}
+
+var _pkgOperatorStaticpodControllerBackingresourceManifestsGuardRoleYaml = []byte(`apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: {{ .TargetNamespace }}
+  name: guard-role
+rules:
+  - apiGroups: [""] # "" indicates the core API group
+    resources: ["pods"]
+    verbs: ["list"]`)
+
+func pkgOperatorStaticpodControllerBackingresourceManifestsGuardRoleYamlBytes() ([]byte, error) {
+	return _pkgOperatorStaticpodControllerBackingresourceManifestsGuardRoleYaml, nil
+}
+
+func pkgOperatorStaticpodControllerBackingresourceManifestsGuardRoleYaml() (*asset, error) {
+	bytes, err := pkgOperatorStaticpodControllerBackingresourceManifestsGuardRoleYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "pkg/operator/staticpod/controller/backingresource/manifests/guard-role.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
+var _pkgOperatorStaticpodControllerBackingresourceManifestsGuardRolebindingYaml = []byte(`apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: guard-rolebinding
+  namespace: {{ .TargetNamespace }}
+subjects:
+- kind: ServiceAccount
+  name: guard-sa
+roleRef:
+  kind: Role
+  name: guard-role
+  apiGroup: rbac.authorization.k8s.io`)
+
+func pkgOperatorStaticpodControllerBackingresourceManifestsGuardRolebindingYamlBytes() ([]byte, error) {
+	return _pkgOperatorStaticpodControllerBackingresourceManifestsGuardRolebindingYaml, nil
+}
+
+func pkgOperatorStaticpodControllerBackingresourceManifestsGuardRolebindingYaml() (*asset, error) {
+	bytes, err := pkgOperatorStaticpodControllerBackingresourceManifestsGuardRolebindingYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "pkg/operator/staticpod/controller/backingresource/manifests/guard-rolebinding.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
+var _pkgOperatorStaticpodControllerBackingresourceManifestsGuardSaYaml = []byte(`apiVersion: v1
+kind: ServiceAccount
+metadata:
+  namespace: {{ .TargetNamespace }}
+  name: guard-sa`)
+
+func pkgOperatorStaticpodControllerBackingresourceManifestsGuardSaYamlBytes() ([]byte, error) {
+	return _pkgOperatorStaticpodControllerBackingresourceManifestsGuardSaYaml, nil
+}
+
+func pkgOperatorStaticpodControllerBackingresourceManifestsGuardSaYaml() (*asset, error) {
+	bytes, err := pkgOperatorStaticpodControllerBackingresourceManifestsGuardSaYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "pkg/operator/staticpod/controller/backingresource/manifests/guard-sa.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
 }
 
 var _pkgOperatorStaticpodControllerBackingresourceManifestsInstallerClusterRolebindingYaml = []byte(`apiVersion: rbac.authorization.k8s.io/v1
@@ -158,6 +235,9 @@ func AssetNames() []string {
 
 // _bindata is a table, holding each asset generator, mapped to its name.
 var _bindata = map[string]func() (*asset, error){
+	"pkg/operator/staticpod/controller/backingresource/manifests/guard-role.yaml":                    pkgOperatorStaticpodControllerBackingresourceManifestsGuardRoleYaml,
+	"pkg/operator/staticpod/controller/backingresource/manifests/guard-rolebinding.yaml":             pkgOperatorStaticpodControllerBackingresourceManifestsGuardRolebindingYaml,
+	"pkg/operator/staticpod/controller/backingresource/manifests/guard-sa.yaml":                      pkgOperatorStaticpodControllerBackingresourceManifestsGuardSaYaml,
 	"pkg/operator/staticpod/controller/backingresource/manifests/installer-cluster-rolebinding.yaml": pkgOperatorStaticpodControllerBackingresourceManifestsInstallerClusterRolebindingYaml,
 	"pkg/operator/staticpod/controller/backingresource/manifests/installer-sa.yaml":                  pkgOperatorStaticpodControllerBackingresourceManifestsInstallerSaYaml,
 }
@@ -209,6 +289,9 @@ var _bintree = &bintree{nil, map[string]*bintree{
 				"controller": {nil, map[string]*bintree{
 					"backingresource": {nil, map[string]*bintree{
 						"manifests": {nil, map[string]*bintree{
+							"guard-role.yaml":                    {pkgOperatorStaticpodControllerBackingresourceManifestsGuardRoleYaml, map[string]*bintree{}},
+							"guard-rolebinding.yaml":             {pkgOperatorStaticpodControllerBackingresourceManifestsGuardRolebindingYaml, map[string]*bintree{}},
+							"guard-sa.yaml":                      {pkgOperatorStaticpodControllerBackingresourceManifestsGuardSaYaml, map[string]*bintree{}},
 							"installer-cluster-rolebinding.yaml": {pkgOperatorStaticpodControllerBackingresourceManifestsInstallerClusterRolebindingYaml, map[string]*bintree{}},
 							"installer-sa.yaml":                  {pkgOperatorStaticpodControllerBackingresourceManifestsInstallerSaYaml, map[string]*bintree{}},
 						}},

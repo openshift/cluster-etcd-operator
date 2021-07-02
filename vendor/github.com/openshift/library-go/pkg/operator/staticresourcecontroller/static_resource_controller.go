@@ -2,7 +2,11 @@ package staticresourcecontroller
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	configv1 "github.com/openshift/api/config/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/restmapper"
 	"strings"
 	"time"
 
@@ -47,17 +51,20 @@ func init() {
 }
 
 type StaticResourceController struct {
-	name                   string
-	manifests              resourceapply.AssetFunc
-	files                  []string
-	ignoreNotFoundOnCreate bool
+	name      string
+	manifests resourceapply.AssetFunc
+	//files                  []string
+	resourceConditionalMaps []resourceapply.ResourceConditionalMap
+	ignoreNotFoundOnCreate  bool
 
 	operatorClient v1helpers.OperatorClient
 	clients        *resourceapply.ClientHolder
 
 	eventRecorder events.Recorder
 
-	factory *factory.Factory
+	factory          *factory.Factory
+	restMapper       meta.RESTMapper
+	categoryExpander restmapper.CategoryExpander
 }
 
 // NewStaticResourceController returns a controller that maintains certain static manifests. Most "normal" types are supported,
@@ -73,10 +80,21 @@ func NewStaticResourceController(
 	operatorClient v1helpers.OperatorClient,
 	eventRecorder events.Recorder,
 ) *StaticResourceController {
+	var resourceConditionalMaps []resourceapply.ResourceConditionalMap
+	// All the files that passed to static resource controller directly have no conditional functions associated.
+	// If a resource wants to have conditional it should use the decorator.
+	for _, file := range files {
+		rcm := resourceapply.ResourceConditionalMap{
+			File:                  file,
+			DeleteConditionalFunc: nil,
+			CreateConditionalFunc: nil,
+		}
+		resourceConditionalMaps = append(resourceConditionalMaps, rcm)
+	}
 	c := &StaticResourceController{
-		name:      name,
-		manifests: manifests,
-		files:     files,
+		name:                    name,
+		manifests:               manifests,
+		resourceConditionalMaps: resourceConditionalMaps,
 
 		operatorClient: operatorClient,
 		clients:        clients,
@@ -99,25 +117,40 @@ func (c *StaticResourceController) WithIgnoreNotFoundOnCreate() *StaticResourceC
 	return c
 }
 
+// WithConditionalResource makes the controller react to changes in dependent object
+// If the deleteConditionFunc returns true, delete the resource, if the conditionFunc returns true create the resource.
+// Deletion trumps creation. By default, deletionConditionFunc is !conditionFunc.
+// TODO: This can be made multi-resource aware as well.
+func (c *StaticResourceController) WithConditionalResource(createConditionFunc resourceapply.ConditionalFunction,
+	file string, deleteConditionFunc resourceapply.ConditionalFunction) *StaticResourceController {
+	rcm := resourceapply.ResourceConditionalMap{
+		File:                  file,
+		DeleteConditionalFunc: deleteConditionFunc,
+		CreateConditionalFunc: createConditionFunc,
+	}
+	c.resourceConditionalMaps = append(c.resourceConditionalMaps, rcm)
+	return c
+}
+
 func (c *StaticResourceController) AddKubeInformers(kubeInformersByNamespace v1helpers.KubeInformersForNamespaces) *StaticResourceController {
 	// set the informers so we can have caching clients
 	c.clients = c.clients.WithKubernetesInformers(kubeInformersByNamespace)
 
 	ret := c
-	for _, file := range c.files {
-		objBytes, err := c.manifests(file)
+	for _, resourceConditionalMap := range c.resourceConditionalMaps {
+		objBytes, err := c.manifests(resourceConditionalMap.File)
 		if err != nil {
-			utilruntime.HandleError(fmt.Errorf("missing %q: %v", file, err))
+			utilruntime.HandleError(fmt.Errorf("missing %q: %v", resourceConditionalMap.File, err))
 			continue
 		}
 		requiredObj, _, err := genericCodec.Decode(objBytes, nil, nil)
 		if err != nil {
-			utilruntime.HandleError(fmt.Errorf("cannot decode %q: %v", file, err))
+			utilruntime.HandleError(fmt.Errorf("cannot decode %q: %v", resourceConditionalMap.File, err))
 			continue
 		}
 		metadata, err := meta.Accessor(requiredObj)
 		if err != nil {
-			utilruntime.HandleError(fmt.Errorf("cannot get metadata %q: %v", file, err))
+			utilruntime.HandleError(fmt.Errorf("cannot get metadata %q: %v", resourceConditionalMap.File, err))
 			continue
 		}
 
@@ -180,6 +213,16 @@ func (c *StaticResourceController) AddInformer(informer cache.SharedIndexInforme
 	return c
 }
 
+func (c *StaticResourceController) AddRESTMapper(mapper meta.RESTMapper) *StaticResourceController {
+	c.restMapper = mapper
+	return c
+}
+
+func (c *StaticResourceController) AddCategoryExpander(categoryExpander restmapper.CategoryExpander) *StaticResourceController {
+	c.categoryExpander = categoryExpander
+	return c
+}
+
 func (c *StaticResourceController) AddNamespaceInformer(informer cache.SharedIndexInformer, namespaces ...string) *StaticResourceController {
 	c.factory.WithNamespaceInformer(informer, namespaces...)
 	return c
@@ -196,7 +239,9 @@ func (c StaticResourceController) Sync(ctx context.Context, syncContext factory.
 
 	errors := []error{}
 	var notFoundErrorsCount int
-	directResourceResults := resourceapply.ApplyDirectly(c.clients, syncContext.Recorder(), c.manifests, c.files...)
+
+	directResourceResults := resourceapply.ApplyDirectly(c.clients, syncContext.Recorder(), c.manifests, c.resourceConditionalMaps)
+
 	for _, currResult := range directResourceResults {
 		if apierrors.IsNotFound(currResult.Error) {
 			notFoundErrorsCount++
@@ -238,6 +283,67 @@ func (c StaticResourceController) Sync(ctx context.Context, syncContext factory.
 
 func (c *StaticResourceController) Name() string {
 	return "StaticResourceController"
+}
+
+func (c *StaticResourceController) RelatedObjects() ([]configv1.ObjectReference, error) {
+	if c.restMapper == nil {
+		return nil, errors.New("StaticResourceController.restMapper is nil")
+	}
+
+	if c.categoryExpander == nil {
+		return nil, errors.New("StaticResourceController.categoryExpander is nil")
+	}
+
+	// create lookup for resources in "all" alias
+	grs, _ := c.categoryExpander.Expand("all")
+	lookup := make(map[schema.GroupResource]struct{})
+	for _, gr := range grs {
+		lookup[gr] = struct{}{}
+	}
+
+	acc := make([]configv1.ObjectReference, 0)
+	errors := []error{}
+
+	for _, resourceConditionalMap := range c.resourceConditionalMaps {
+		// parse static asset
+		objBytes, err := c.manifests(resourceConditionalMap.File)
+		if err != nil {
+			errors = append(errors, err)
+			continue
+		}
+		requiredObj, _, err := genericCodec.Decode(objBytes, nil, nil)
+		if err != nil {
+			errors = append(errors, err)
+			continue
+		}
+		metadata, err := meta.Accessor(requiredObj)
+		if err != nil {
+			errors = append(errors, err)
+			continue
+		}
+		// map gvk to gvr
+		gvk := requiredObj.GetObjectKind().GroupVersionKind()
+		mapping, err := c.restMapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+		if err != nil {
+			errors = append(errors, err)
+			continue
+		}
+		gvr := mapping.Resource
+		// filter out namespaced resources within "all" alias from result
+		if metadata.GetNamespace() != "" {
+			if _, ok := lookup[gvr.GroupResource()]; ok {
+				continue
+			}
+		}
+		acc = append(acc, configv1.ObjectReference{
+			Group:     gvk.Group,
+			Resource:  gvr.Resource,
+			Namespace: metadata.GetNamespace(),
+			Name:      metadata.GetName(),
+		})
+	}
+
+	return acc, utilerrors.NewAggregate(errors)
 }
 
 func (c *StaticResourceController) Run(ctx context.Context, workers int) {

@@ -15,17 +15,26 @@ import (
 	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
 )
 
-func ApplyPodDisruptionBudget(client policyclientv1.PodDisruptionBudgetsGetter, recorder events.Recorder, required *policyv1.PodDisruptionBudget) (*policyv1.PodDisruptionBudget, bool, error) {
+func ApplyPodDisruptionBudget(client policyclientv1.PodDisruptionBudgetsGetter, shouldDelete bool, recorder events.Recorder, required *policyv1.PodDisruptionBudget) (*policyv1.PodDisruptionBudget, bool, error) {
 	existing, err := client.PodDisruptionBudgets(required.Namespace).Get(context.TODO(), required.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
+	if apierrors.IsNotFound(err) && !shouldDelete {
 		actual, err := client.PodDisruptionBudgets(required.Namespace).Create(context.TODO(), required, metav1.CreateOptions{})
 		reportCreateEvent(recorder, required, err)
 		return actual, true, err
+	} else if apierrors.IsNotFound(err) && shouldDelete {
+		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
 	}
-
+	if shouldDelete {
+		err := client.PodDisruptionBudgets(required.Namespace).Delete(context.TODO(), existing.Name, metav1.DeleteOptions{})
+		if err != nil {
+			return nil, false, err
+		}
+		reportDeleteEvent(recorder, required, err)
+		return nil, true, nil
+	}
 	modified := resourcemerge.BoolPtr(false)
 	existingCopy := existing.DeepCopy()
 

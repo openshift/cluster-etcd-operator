@@ -149,7 +149,7 @@ func (c *EtcdCertSignerController) syncAllMasters(recorder events.Recorder) erro
 		Type: corev1.SecretTypeOpaque,
 		Data: certs,
 	}
-	_, _, err = resourceapply.ApplySecret(c.secretClient, recorder, secret)
+	_, _, err = resourceapply.ApplySecret(c.secretClient, false, recorder, secret)
 	return err
 }
 
@@ -270,7 +270,7 @@ func (c *EtcdCertSignerController) ensureCertSecret(secretName, nodeUID string, 
 
 	//TODO: Update annotations Not Before and Not After for Cert Rotation
 	newSecret := newCertSecret(secretName, nodeUID, cert, key)
-	_, _, err = resourceapply.ApplySecret(c.secretClient, recorder, newSecret)
+	_, _, err = resourceapply.ApplySecret(c.secretClient, false, recorder, newSecret)
 	if err != nil {
 		return nil, nil, err
 	}

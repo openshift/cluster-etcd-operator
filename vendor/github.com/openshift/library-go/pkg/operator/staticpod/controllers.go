@@ -5,7 +5,9 @@ import (
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/controller/manager"
+	"github.com/openshift/library-go/pkg/operator/deploymentcontroller"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/loglevel"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -20,6 +22,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/status"
 	"github.com/openshift/library-go/pkg/operator/unsupportedconfigoverridescontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/kubernetes"
@@ -54,6 +57,11 @@ type staticPodOperatorControllerBuilder struct {
 
 	// pruning information
 	pruneCommand []string
+	// deploymentManifest is the guard deployment to ensure static pods cannot be evicted
+	deploymentManifest []byte
+	// infraLister is used in guard controller to identify the cluster topology
+	infraLister configv1listers.InfrastructureLister
+
 	// TODO de-dupe this.  I think it's actually a directory name
 	staticPodPrefix string
 }
@@ -83,6 +91,7 @@ type Builder interface {
 	WithCustomInstaller(command []string, installerPodMutationFunc installer.InstallerPodMutationFunc) Builder
 	WithPruning(command []string, staticPodPrefix string) Builder
 	ToControllers() (manager.ControllerManager, error)
+	WithGuardDeployment(deploymentAssetFunc func(string) []byte, deploymentFile string) Builder
 }
 
 func (b *staticPodOperatorControllerBuilder) WithEvents(eventRecorder events.Recorder) Builder {
@@ -135,6 +144,12 @@ func (b *staticPodOperatorControllerBuilder) WithCustomInstaller(command []strin
 func (b *staticPodOperatorControllerBuilder) WithPruning(command []string, staticPodPrefix string) Builder {
 	b.pruneCommand = command
 	b.staticPodPrefix = staticPodPrefix
+	return b
+}
+
+func (b *staticPodOperatorControllerBuilder) WithGuardDeployment(deploymentAssetFunc func(string) []byte,
+	deploymentFile string) Builder {
+	b.deploymentManifest = deploymentAssetFunc(deploymentFile)
 	return b
 }
 
@@ -248,14 +263,23 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 		eventRecorder,
 	), 1)
 
+	backingResources := []string{
+		"manifests/installer-sa.yaml",
+		"manifests/installer-cluster-rolebinding.yaml",
+	}
+	if len(b.deploymentManifest) > 0 {
+		guardBackingResources := []string{
+			"manifests/guard-sa.yaml",
+			"manifests/guard-role.yaml",
+			"manifests/guard-rolebinding.yaml",
+		}
+		backingResources = append(backingResources, guardBackingResources...)
+	}
 	// this cleverly sets the same condition that used to be set because of the way that the names are constructed
 	manager.WithController(staticresourcecontroller.NewStaticResourceController(
 		"BackingResourceController",
 		backingresource.StaticPodManifests(b.operandNamespace),
-		[]string{
-			"manifests/installer-sa.yaml",
-			"manifests/installer-cluster-rolebinding.yaml",
-		},
+		backingResources,
 		resourceapply.NewKubeClientHolder(b.kubeClient),
 		b.staticPodOperatorClient,
 		eventRecorder,
@@ -263,6 +287,20 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 
 	manager.WithController(unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(b.staticPodOperatorClient, eventRecorder), 1)
 	manager.WithController(loglevel.NewClusterOperatorLoggingController(b.staticPodOperatorClient, eventRecorder), 1)
+
+	if len(b.deploymentManifest) > 0 {
+		nodeInformer := b.kubeInformers.InformersFor("").Core().V1().Nodes()
+		manager.WithController(deploymentcontroller.NewDeploymentController(
+			"StaticPodGuardDeployment",
+			b.deploymentManifest,
+			b.eventRecorder,
+			b.staticPodOperatorClient,
+			b.kubeClient,
+			b.kubeInformers.InformersFor(b.operandNamespace).Apps().V1().Deployments(),
+			nil,
+			nil,
+			deploymentcontroller.WithReplicasHook(nodeInformer.Lister()), deploymentcontroller.WithImageHook()), 1)
+	}
 
 	return manager, errors.NewAggregate(errs)
 }

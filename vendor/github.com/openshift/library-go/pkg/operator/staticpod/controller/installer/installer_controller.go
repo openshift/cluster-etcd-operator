@@ -491,7 +491,7 @@ func (c *InstallerController) updateConfigMapForRevision(ctx context.Context, cu
 			return err
 		}
 		statusConfigMap.Data["status"] = status
-		_, _, err = resourceapply.ApplyConfigMap(c.configMapsGetter, c.eventRecorder, statusConfigMap)
+		_, _, err = resourceapply.ApplyConfigMap(c.configMapsGetter, false, c.eventRecorder, statusConfigMap)
 		if err != nil {
 			return err
 		}
@@ -837,7 +837,7 @@ func (c *InstallerController) ensureInstallerPod(nodeName string, operatorSpec *
 		}
 	}
 
-	_, _, err = resourceapply.ApplyPod(c.podsGetter, c.eventRecorder, pod)
+	_, _, err = resourceapply.ApplyPod(c.podsGetter, false, c.eventRecorder, pod)
 	return err
 }
 

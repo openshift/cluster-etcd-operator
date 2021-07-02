@@ -204,7 +204,7 @@ func (c RevisionController) createNewRevision(recorder events.Recorder, revision
 			"reason":   reason,
 		},
 	}
-	statusConfigMap, _, err := resourceapply.ApplyConfigMap(c.configMapGetter, recorder, statusConfigMap)
+	statusConfigMap, _, err := resourceapply.ApplyConfigMap(c.configMapGetter, false, recorder, statusConfigMap)
 	if err != nil {
 		return err
 	}
@@ -221,7 +221,7 @@ func (c RevisionController) createNewRevision(recorder events.Recorder, revision
 		}
 		if configMap.Data["status"] == prune.StatusInProgress {
 			configMap.Data["status"] = prune.StatusAbandoned
-			_, _, err = resourceapply.ApplyConfigMap(c.configMapGetter, recorder, &configMap)
+			_, _, err = resourceapply.ApplyConfigMap(c.configMapGetter, false, recorder, &configMap)
 			if err != nil {
 				return err
 			}

@@ -143,7 +143,7 @@ func (c *EtcdEndpointsController) syncConfigMap(recorder events.Recorder) error 
 	required.Data = endpointAddresses
 
 	// Apply endpoint updates
-	if _, _, err := resourceapply.ApplyConfigMap(c.configmapClient, recorder, required); err != nil {
+	if _, _, err := resourceapply.ApplyConfigMap(c.configmapClient, false, recorder, required); err != nil {
 		return err
 	}
 

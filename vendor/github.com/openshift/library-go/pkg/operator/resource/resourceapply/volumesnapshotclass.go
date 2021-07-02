@@ -77,9 +77,9 @@ func ensureGenericVolumeSnapshotClass(required, existing *unstructured.Unstructu
 }
 
 // ApplyVolumeSnapshotClass applies Volume Snapshot Class.
-func ApplyVolumeSnapshotClass(client dynamic.Interface, recorder events.Recorder, required *unstructured.Unstructured) (*unstructured.Unstructured, bool, error) {
+func ApplyVolumeSnapshotClass(client dynamic.Interface, shouldDelete bool, recorder events.Recorder, required *unstructured.Unstructured) (*unstructured.Unstructured, bool, error) {
 	existing, err := client.Resource(volumeSnapshotClassResourceGVR).Get(context.TODO(), required.GetName(), metav1.GetOptions{})
-	if errors.IsNotFound(err) {
+	if errors.IsNotFound(err) && !shouldDelete {
 		newObj, createErr := client.Resource(volumeSnapshotClassResourceGVR).Create(context.TODO(), required, metav1.CreateOptions{})
 		if createErr != nil {
 			recorder.Warningf("VolumeSnapshotClassCreateFailed", "Failed to create VolumeSnapshotClass.snapshot.storage.k8s.io/v1: %v", createErr)
@@ -87,9 +87,20 @@ func ApplyVolumeSnapshotClass(client dynamic.Interface, recorder events.Recorder
 		}
 		recorder.Eventf("VolumeSnapshotClassCreated", "Created VolumeSnapshotClass.snapshot.storage.k8s.io/v1 because it was missing")
 		return newObj, true, nil
+	} else if errors.IsNotFound(err) && shouldDelete {
+		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
+	}
+
+	if shouldDelete {
+		err := client.Resource(volumeSnapshotClassResourceGVR).Delete(context.TODO(), existing.GetName(), metav1.DeleteOptions{})
+		if err != nil {
+			return nil, false, err
+		}
+		reportDeleteEvent(recorder, required, err)
+		return nil, true, nil
 	}
 
 	toUpdate, modified, err := ensureGenericVolumeSnapshotClass(required, existing)
