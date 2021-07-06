@@ -185,7 +185,7 @@ func (c *ResourceSyncController) Sync(ctx context.Context, syncCtx factory.SyncC
 			continue
 		}
 
-		_, _, err := resourceapply.SyncPartialConfigMap(c.configMapGetter, syncCtx.Recorder(), source.Namespace, source.Name, destination.Namespace, destination.Name, source.syncedKeys, []metav1.OwnerReference{})
+		_, _, err := resourceapply.SyncPartialConfigMap(ctx, c.configMapGetter, syncCtx.Recorder(), source.Namespace, source.Name, destination.Namespace, destination.Name, source.syncedKeys, []metav1.OwnerReference{})
 		if err != nil {
 			errors = append(errors, errorWithProvider(source.Provider, err))
 		}
@@ -205,7 +205,7 @@ func (c *ResourceSyncController) Sync(ctx context.Context, syncCtx factory.SyncC
 			continue
 		}
 
-		_, _, err := resourceapply.SyncPartialSecret(c.secretGetter, syncCtx.Recorder(), source.Namespace, source.Name, destination.Namespace, destination.Name, source.syncedKeys, []metav1.OwnerReference{})
+		_, _, err := resourceapply.SyncPartialSecret(ctx, c.secretGetter, syncCtx.Recorder(), source.Namespace, source.Name, destination.Namespace, destination.Name, source.syncedKeys, []metav1.OwnerReference{})
 		if err != nil {
 			errors = append(errors, errorWithProvider(source.Provider, err))
 		}
