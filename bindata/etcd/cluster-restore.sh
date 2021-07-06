@@ -85,6 +85,10 @@ if [ ! -d "$MANIFEST_STOPPED_DIR" ]; then
   mkdir -p "$MANIFEST_STOPPED_DIR"
 fi
 
+# Download etcdctl and check the snapshot status
+dl_etcdctl
+check_snapshot_status "${SNAPSHOT_FILE}"
+
 # Move static pod manifests out of MANIFEST_DIR
 for POD_FILE_NAME in "${STATIC_POD_LIST[@]}" etcd-pod.yaml; do
   echo "...stopping ${POD_FILE_NAME}"
