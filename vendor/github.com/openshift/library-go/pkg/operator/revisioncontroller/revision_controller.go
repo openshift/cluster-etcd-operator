@@ -87,8 +87,8 @@ func NewRevisionController(
 
 // createRevisionIfNeeded takes care of creating content for the static pods to use.
 // returns whether or not requeue and if an error happened when updating status.  Normally it updates status itself.
-func (c RevisionController) createRevisionIfNeeded(recorder events.Recorder, latestAvailableRevision int32, resourceVersion string) (bool, error) {
-	isLatestRevisionCurrent, reason := c.isLatestRevisionCurrent(latestAvailableRevision)
+func (c RevisionController) createRevisionIfNeeded(ctx context.Context, recorder events.Recorder, latestAvailableRevision int32, resourceVersion string) (bool, error) {
+	isLatestRevisionCurrent, reason := c.isLatestRevisionCurrent(ctx, latestAvailableRevision)
 
 	// check to make sure that the latestRevision has the exact content we expect.  No mutation here, so we start creating the next Revision only when it is required
 	if isLatestRevisionCurrent {
@@ -97,7 +97,7 @@ func (c RevisionController) createRevisionIfNeeded(recorder events.Recorder, lat
 
 	nextRevision := latestAvailableRevision + 1
 	recorder.Eventf("RevisionTriggered", "new revision %d triggered by %q", nextRevision, reason)
-	if err := c.createNewRevision(recorder, nextRevision, reason); err != nil {
+	if err := c.createNewRevision(ctx, recorder, nextRevision, reason); err != nil {
 		cond := operatorv1.OperatorCondition{
 			Type:    "RevisionControllerDegraded",
 			Status:  operatorv1.ConditionTrue,
@@ -129,17 +129,17 @@ func nameFor(name string, revision int32) string {
 }
 
 // isLatestRevisionCurrent returns whether the latest revision is up to date and an optional reason
-func (c RevisionController) isLatestRevisionCurrent(revision int32) (bool, string) {
+func (c RevisionController) isLatestRevisionCurrent(ctx context.Context, revision int32) (bool, string) {
 	configChanges := []string{}
 	for _, cm := range c.configMaps {
 		requiredData := map[string]string{}
 		existingData := map[string]string{}
 
-		required, err := c.configMapGetter.ConfigMaps(c.targetNamespace).Get(context.TODO(), cm.Name, metav1.GetOptions{})
+		required, err := c.configMapGetter.ConfigMaps(c.targetNamespace).Get(ctx, cm.Name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) && !cm.Optional {
 			return false, err.Error()
 		}
-		existing, err := c.configMapGetter.ConfigMaps(c.targetNamespace).Get(context.TODO(), nameFor(cm.Name, revision), metav1.GetOptions{})
+		existing, err := c.configMapGetter.ConfigMaps(c.targetNamespace).Get(ctx, nameFor(cm.Name, revision), metav1.GetOptions{})
 		if apierrors.IsNotFound(err) && !cm.Optional {
 			return false, err.Error()
 		}
@@ -162,11 +162,11 @@ func (c RevisionController) isLatestRevisionCurrent(revision int32) (bool, strin
 		requiredData := map[string][]byte{}
 		existingData := map[string][]byte{}
 
-		required, err := c.secretGetter.Secrets(c.targetNamespace).Get(context.TODO(), s.Name, metav1.GetOptions{})
+		required, err := c.secretGetter.Secrets(c.targetNamespace).Get(ctx, s.Name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) && !s.Optional {
 			return false, err.Error()
 		}
-		existing, err := c.secretGetter.Secrets(c.targetNamespace).Get(context.TODO(), nameFor(s.Name, revision), metav1.GetOptions{})
+		existing, err := c.secretGetter.Secrets(c.targetNamespace).Get(ctx, nameFor(s.Name, revision), metav1.GetOptions{})
 		if apierrors.IsNotFound(err) && !s.Optional {
 			return false, err.Error()
 		}
@@ -191,7 +191,7 @@ func (c RevisionController) isLatestRevisionCurrent(revision int32) (bool, strin
 	return true, ""
 }
 
-func (c RevisionController) createNewRevision(recorder events.Recorder, revision int32, reason string) error {
+func (c RevisionController) createNewRevision(ctx context.Context, recorder events.Recorder, revision int32, reason string) error {
 	// Create a new InProgress status configmap
 	statusConfigMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -204,14 +204,14 @@ func (c RevisionController) createNewRevision(recorder events.Recorder, revision
 			"reason":   reason,
 		},
 	}
-	statusConfigMap, _, err := resourceapply.ApplyConfigMap(c.configMapGetter, recorder, statusConfigMap)
+	statusConfigMap, _, err := resourceapply.ApplyConfigMap(ctx, c.configMapGetter, recorder, statusConfigMap)
 	if err != nil {
 		return err
 	}
 
 	// After we create a new revision, check if any of the previous existing
 	// revisions got interrupted while InProgress and mark them Abandoned.
-	configMaps, err := c.configMapGetter.ConfigMaps(c.targetNamespace).List(context.TODO(), metav1.ListOptions{})
+	configMaps, err := c.configMapGetter.ConfigMaps(c.targetNamespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return err
 	}
@@ -221,7 +221,7 @@ func (c RevisionController) createNewRevision(recorder events.Recorder, revision
 		}
 		if configMap.Data["status"] == prune.StatusInProgress {
 			configMap.Data["status"] = prune.StatusAbandoned
-			_, _, err = resourceapply.ApplyConfigMap(c.configMapGetter, recorder, &configMap)
+			_, _, err = resourceapply.ApplyConfigMap(ctx, c.configMapGetter, recorder, &configMap)
 			if err != nil {
 				return err
 			}
@@ -236,7 +236,7 @@ func (c RevisionController) createNewRevision(recorder events.Recorder, revision
 	}}
 
 	for _, cm := range c.configMaps {
-		obj, _, err := resourceapply.SyncConfigMap(c.configMapGetter, recorder, c.targetNamespace, cm.Name, c.targetNamespace, nameFor(cm.Name, revision), ownerRefs)
+		obj, _, err := resourceapply.SyncConfigMap(ctx, c.configMapGetter, recorder, c.targetNamespace, cm.Name, c.targetNamespace, nameFor(cm.Name, revision), ownerRefs)
 		if err != nil {
 			return err
 		}
@@ -245,7 +245,7 @@ func (c RevisionController) createNewRevision(recorder events.Recorder, revision
 		}
 	}
 	for _, s := range c.secrets {
-		obj, _, err := resourceapply.SyncSecret(c.secretGetter, recorder, c.targetNamespace, s.Name, c.targetNamespace, nameFor(s.Name, revision), ownerRefs)
+		obj, _, err := resourceapply.SyncSecret(ctx, c.secretGetter, recorder, c.targetNamespace, s.Name, c.targetNamespace, nameFor(s.Name, revision), ownerRefs)
 		if err != nil {
 			return err
 		}
@@ -259,8 +259,8 @@ func (c RevisionController) createNewRevision(recorder events.Recorder, revision
 
 // getLatestAvailableRevision returns the latest known revision to the operator
 // This is determined by checking revision status configmaps.
-func (c RevisionController) getLatestAvailableRevision() (int32, error) {
-	configMaps, err := c.configMapGetter.ConfigMaps(c.targetNamespace).List(context.TODO(), metav1.ListOptions{})
+func (c RevisionController) getLatestAvailableRevision(ctx context.Context) (int32, error) {
+	configMaps, err := c.configMapGetter.ConfigMaps(c.targetNamespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return 0, err
 	}
@@ -297,7 +297,7 @@ func (c RevisionController) sync(ctx context.Context, syncCtx factory.SyncContex
 	// or possibly the operator resource was deleted and reset back to 0, which is not what we want so check configmaps
 	if latestAvailableRevision == 0 {
 		// Check to see if current revision is accurate and if not, search through configmaps for latest revision
-		latestRevision, err := c.getLatestAvailableRevision()
+		latestRevision, err := c.getLatestAvailableRevision(ctx)
 		if err != nil {
 			return err
 		}
@@ -312,7 +312,7 @@ func (c RevisionController) sync(ctx context.Context, syncCtx factory.SyncContex
 		}
 	}
 
-	requeue, syncErr := c.createRevisionIfNeeded(syncCtx.Recorder(), latestAvailableRevision, resourceVersion)
+	requeue, syncErr := c.createRevisionIfNeeded(ctx, syncCtx.Recorder(), latestAvailableRevision, resourceVersion)
 	if requeue && syncErr == nil {
 		return factory.SyntheticRequeueError
 	}

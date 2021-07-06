@@ -157,12 +157,12 @@ func (c *PruneController) excludedRevisionHistory(ctx context.Context, recorder 
 	return excludedRevisions, nil
 }
 
-func (c *PruneController) pruneDiskResources(recorder events.Recorder, operatorStatus *operatorv1.StaticPodOperatorStatus, excludedRevisions []int, maxEligibleRevision int) error {
+func (c *PruneController) pruneDiskResources(ctx context.Context, recorder events.Recorder, operatorStatus *operatorv1.StaticPodOperatorStatus, excludedRevisions []int, maxEligibleRevision int) error {
 	// Run pruning pod on each node and pin it to that node
 	for _, nodeStatus := range operatorStatus.NodeStatuses {
 		// Use the highest value between CurrentRevision and LastFailedRevision
 		// Because CurrentRevision only updates on successful installs and we still prune on an unsuccessful install
-		if err := c.ensurePrunePod(recorder, nodeStatus.NodeName, maxEligibleRevision, excludedRevisions, max(nodeStatus.LastFailedRevision, nodeStatus.CurrentRevision)); err != nil {
+		if err := c.ensurePrunePod(ctx, recorder, nodeStatus.NodeName, maxEligibleRevision, excludedRevisions, max(nodeStatus.LastFailedRevision, nodeStatus.CurrentRevision)); err != nil {
 			return err
 		}
 	}
@@ -211,7 +211,7 @@ func protectedRevisions(revisions []int, revisionLimit int) []int {
 	return revisions[startKey:]
 }
 
-func (c *PruneController) ensurePrunePod(recorder events.Recorder, nodeName string, maxEligibleRevision int, protectedRevisions []int, revision int32) error {
+func (c *PruneController) ensurePrunePod(ctx context.Context, recorder events.Recorder, nodeName string, maxEligibleRevision int, protectedRevisions []int, revision int32) error {
 	if revision == 0 {
 		return nil
 	}
@@ -237,7 +237,7 @@ func (c *PruneController) ensurePrunePod(recorder events.Recorder, nodeName stri
 	}
 	pod.OwnerReferences = ownerRefs
 
-	_, _, err = resourceapply.ApplyPod(c.podGetter, recorder, pod)
+	_, _, err = resourceapply.ApplyPod(ctx, c.podGetter, recorder, pod)
 	return err
 }
 
@@ -291,7 +291,7 @@ func (c *PruneController) sync(ctx context.Context, syncCtx factory.SyncContext)
 	}
 
 	errs := []error{}
-	if diskErr := c.pruneDiskResources(syncCtx.Recorder(), operatorStatus, excludedRevisions, excludedRevisions[len(excludedRevisions)-1]); diskErr != nil {
+	if diskErr := c.pruneDiskResources(ctx, syncCtx.Recorder(), operatorStatus, excludedRevisions, excludedRevisions[len(excludedRevisions)-1]); diskErr != nil {
 		errs = append(errs, diskErr)
 	}
 	if apiErr := c.pruneAPIResources(ctx, excludedRevisions, excludedRevisions[len(excludedRevisions)-1]); apiErr != nil {
