@@ -3,18 +3,25 @@ package testutils
 import (
 	"encoding/base64"
 	"fmt"
-
+	configv1 "github.com/openshift/api/config/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	"go.etcd.io/etcd/pkg/mock/mockserver"
-
-	operatorv1 "github.com/openshift/api/operator/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"path/filepath"
 )
+
+func MustAbsPath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		panic(err)
+	}
+	return abs
+}
 
 func FakeNode(name string, configs ...func(node *corev1.Node)) *corev1.Node {
 	node := &corev1.Node{
@@ -141,5 +148,14 @@ func FakeEtcdMember(member int, etcdMock []*mockserver.MockServer) *etcdserverpb
 	return &etcdserverpb.Member{
 		Name:       fmt.Sprintf("etcd-%d", member),
 		ClientURLs: []string{etcdMock[member].Address},
+	}
+}
+
+func FakeInfrastructureTopology(topologyMode configv1.TopologyMode) *configv1.Infrastructure {
+	return &configv1.Infrastructure{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+		Status: configv1.InfrastructureStatus{
+			ControlPlaneTopology: topologyMode,
+		},
 	}
 }
