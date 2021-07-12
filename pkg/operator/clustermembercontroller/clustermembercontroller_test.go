@@ -40,8 +40,7 @@ func (f *fakePodLister) Pods(namespace string) corev1lister.PodNamespaceLister {
 
 func TestClusterMemberController_getEtcdPodToAddToMembership(t *testing.T) {
 	type fields struct {
-		etcdClient etcdcli.EtcdClient
-		podLister  corev1lister.PodLister
+		podLister corev1lister.PodLister
 	}
 	tests := []struct {
 		name    string
@@ -52,11 +51,6 @@ func TestClusterMemberController_getEtcdPodToAddToMembership(t *testing.T) {
 		{
 			name: "test pods with init container failed",
 			fields: fields{
-				etcdClient: etcdcli.NewFakeEtcdClient([]*etcdserverpb.Member{
-					{
-						Name: "etcd-a",
-					},
-				}),
 				podLister: &fakePodLister{fake.NewSimpleClientset(&corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
 						// this will be skipped
@@ -143,11 +137,6 @@ func TestClusterMemberController_getEtcdPodToAddToMembership(t *testing.T) {
 		{
 			name: "test pods with no container state set",
 			fields: fields{
-				etcdClient: etcdcli.NewFakeEtcdClient([]*etcdserverpb.Member{
-					{
-						Name: "etcd-a",
-					},
-				}),
 				podLister: &fakePodLister{fake.NewSimpleClientset(&corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
 						// this will be skipped
@@ -222,11 +211,6 @@ func TestClusterMemberController_getEtcdPodToAddToMembership(t *testing.T) {
 		{
 			name: "test pods with no status",
 			fields: fields{
-				etcdClient: etcdcli.NewFakeEtcdClient([]*etcdserverpb.Member{
-					{
-						Name: "etcd-a",
-					},
-				}),
 				podLister: &fakePodLister{fake.NewSimpleClientset(&corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
 						// this will be skipped
@@ -251,8 +235,13 @@ func TestClusterMemberController_getEtcdPodToAddToMembership(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient([]*etcdserverpb.Member{
+				{
+					Name: "etcd-a",
+				},
+			})
 			c := &ClusterMemberController{
-				etcdClient: tt.fields.etcdClient,
+				etcdClient: fakeEtcdClient,
 				podLister:  tt.fields.podLister,
 			}
 			got, err := c.getEtcdPodToAddToMembership()

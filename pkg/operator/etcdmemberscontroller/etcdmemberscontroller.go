@@ -60,11 +60,10 @@ func (c *EtcdMembersController) sync(ctx context.Context, syncCtx factory.SyncCo
 }
 
 func (c *EtcdMembersController) reportEtcdMembers(recorder events.Recorder) error {
-	etcdMembers, err := c.etcdClient.MemberList()
+	memberHealth, err := c.etcdClient.MemberHealth()
 	if err != nil {
 		return err
 	}
-	memberHealth := etcdcli.GetMemberHealth(etcdMembers)
 	updateErrors := []error{}
 	if len(etcdcli.GetUnhealthyMemberNames(memberHealth)) > 0 {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
@@ -114,7 +113,7 @@ func (c *EtcdMembersController) reportEtcdMembers(recorder events.Recorder) erro
 		}
 	}
 
-	if len(etcdcli.GetHealthyMemberNames(memberHealth)) > len(etcdMembers)/2 {
+	if len(etcdcli.GetHealthyMemberNames(memberHealth)) > len(memberHealth)/2 {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersAvailable",
 			Status:  operatorv1.ConditionTrue,

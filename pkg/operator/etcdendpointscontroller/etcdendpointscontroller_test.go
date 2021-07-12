@@ -271,7 +271,10 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			)
 
 			fakeKubeClient := fake.NewSimpleClientset(scenario.objects...)
-			fakeEtcdClient := etcdcli.NewFakeEtcdClient(scenario.etcdMembers)
+			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(scenario.etcdMembers)
+			if err != nil {
+				t.Fatal(err)
+			}
 			eventRecorder := events.NewRecorder(fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace), "test-etcdendpointscontroller", &corev1.ObjectReference{})
 			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 			for _, obj := range scenario.objects {
@@ -287,8 +290,7 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 				configmapClient: fakeKubeClient.CoreV1(),
 			}
 
-			err := controller.sync(context.TODO(), factory.NewSyncContext("test", eventRecorder))
-			if err != nil {
+			if err := controller.sync(context.TODO(), factory.NewSyncContext("test", eventRecorder)); err != nil {
 				t.Fatal(err)
 			}
 			if scenario.validateFunc != nil {
