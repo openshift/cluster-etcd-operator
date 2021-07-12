@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"go.etcd.io/etcd/etcdserver/api/v3rpc/rpctypes"
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	"k8s.io/component-base/metrics/legacyregistry"
 	klog "k8s.io/klog/v2"
@@ -40,7 +39,7 @@ type healthCheck struct {
 
 type memberHealth []healthCheck
 
-func GetMemberHealth(etcdMembers []*etcdserverpb.Member) memberHealth {
+func getMemberHealth(etcdMembers []*etcdserverpb.Member) memberHealth {
 	var wg sync.WaitGroup
 	memberHealth := memberHealth{}
 	hch := make(chan healthCheck, len(etcdMembers))
@@ -52,9 +51,7 @@ func GetMemberHealth(etcdMembers []*etcdserverpb.Member) memberHealth {
 		wg.Add(1)
 		go func(member *etcdserverpb.Member) {
 			defer wg.Done()
-			// new client vs shared is used here to minimize disruption of cached client consumers.
-			// performance analisis of CPU and RSS consumption showed net gain after refactor
-			cli, err := getEtcdClient([]string{member.ClientURLs[0]})
+			cli, err := getEtcdClientWithClientOpts([]string{member.ClientURLs[0]})
 			if err != nil {
 				hch <- healthCheck{Member: member, Healthy: false, Error: fmt.Errorf("create client failure: %w", err)}
 				return
@@ -72,12 +69,7 @@ func GetMemberHealth(etcdMembers []*etcdserverpb.Member) memberHealth {
 				}
 				hc.Healthy = true
 			} else {
-				if err == rpctypes.ErrPermissionDenied {
-					// TODO: this might not be accurate
-					hc.Healthy = true
-				} else {
-					hc.Error = fmt.Errorf("health check failed: %w", err)
-				}
+				hc.Error = fmt.Errorf("health check failed: %w", err)
 			}
 			hch <- hc
 		}(member)
@@ -216,6 +208,14 @@ func IsQuorumFaultTolerant(memberHealth []healthCheck) bool {
 		return false
 	case healthyMembers-quorum < 1:
 		klog.Errorf("etcd cluster has quorum of %d and %d healthy members which is not fault tolerant: %+v", quorum, healthyMembers, memberHealth)
+		return false
+	}
+	return true
+}
+
+func IsClusterHealthy(memberHealth memberHealth) bool {
+	unhealthyMembers := memberHealth.GetUnhealthyMembers()
+	if len(unhealthyMembers) > 0 {
 		return false
 	}
 	return true

@@ -1,6 +1,9 @@
 package etcdcli
 
 import (
+	"context"
+
+	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 )
 
@@ -12,18 +15,33 @@ const (
 )
 
 type EtcdClient interface {
+	Defragment
 	MemberAdder
+	MemberHealth
 	MemberLister
 	MemberRemover
 	UnhealthyMemberLister
 	MemberStatusChecker
+	Status
 
 	GetMember(name string) (*etcdserverpb.Member, error)
 	MemberUpdatePeerURL(id uint64, peerURL []string) error
 }
 
+type Defragment interface {
+	Defragment(ctx context.Context, member *etcdserverpb.Member) (*clientv3.DefragmentResponse, error)
+}
+
+type Status interface {
+	Status(ctx context.Context, member *etcdserverpb.Member) (*clientv3.StatusResponse, error)
+}
+
 type MemberAdder interface {
 	MemberAdd(peerURL string) error
+}
+
+type MemberHealth interface {
+	MemberHealth() (memberHealth, error)
 }
 
 type MemberRemover interface {
