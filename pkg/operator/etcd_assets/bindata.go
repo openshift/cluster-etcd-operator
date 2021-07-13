@@ -670,6 +670,7 @@ ${COMPUTED_ENV_VARS}
           --advertise-client-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2379,unixs://${NODE_NODE_ENVVAR_NAME_IP}:0 \
           --listen-client-urls=https://${LISTEN_ON_ALL_IPS}:2379,unixs://${NODE_NODE_ENVVAR_NAME_IP}:0 \
           --listen-peer-urls=https://${LISTEN_ON_ALL_IPS}:2380 \
+          --metrics=extensive \
           --listen-metrics-urls=https://${LISTEN_ON_ALL_IPS}:9978 ||  mv /etc/kubernetes/etcd-backup-dir/etcd-member.yaml /etc/kubernetes/manifests
     env:
 ${COMPUTED_ENV_VARS}
@@ -1047,6 +1048,7 @@ spec:
           --advertise-client-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2379 \
           --listen-client-urls=https://${LISTEN_ON_ALL_IPS}:2379 \
           --listen-peer-urls=https://${LISTEN_ON_ALL_IPS}:2380 \
+          --metrics=extensive \
           --listen-metrics-urls=https://${LISTEN_ON_ALL_IPS}:9978
     env:
 ${COMPUTED_ENV_VARS}
