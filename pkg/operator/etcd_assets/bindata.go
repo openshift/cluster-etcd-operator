@@ -169,6 +169,9 @@ fi
 dl_etcdctl
 backup_latest_kube_static_resources "${BACKUP_RESOURCE_LIST[@]}"
 ETCDCTL_ENDPOINTS="https://${NODE_NODE_ENVVAR_NAME_IP}:2379" etcdctl snapshot save "${SNAPSHOT_FILE}"
+
+# Check the integrity of the snapshot
+check_snapshot_status "${SNAPSHOT_FILE}"
 echo "snapshot db and kube resources are successfully saved to ${BACKUP_DIR}"
 `)
 
@@ -273,6 +276,10 @@ fi
 if [ ! -d "$MANIFEST_STOPPED_DIR" ]; then
   mkdir -p "$MANIFEST_STOPPED_DIR"
 fi
+
+# Download etcdctl and check the snapshot status
+dl_etcdctl
+check_snapshot_status "${SNAPSHOT_FILE}"
 
 # Move static pod manifests out of MANIFEST_DIR
 for POD_FILE_NAME in "${STATIC_POD_LIST[@]}" etcd-pod.yaml; do
@@ -401,6 +408,14 @@ function exec_etcdctl {
     exit 1
   fi
   crictl exec -it $container_id /bin/sh -c "etcdctl $command"
+}
+
+function check_snapshot_status() {
+  local snap_file="$1"
+  if ! etcdctl snapshot status "${snap_file}" -w json; then
+    echo "Backup integrity verification failed. Backup appears corrupted. Aborting!"
+    return 1
+  fi
 }
 `)
 
