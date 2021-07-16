@@ -5,7 +5,7 @@ local r = if std.objectHasAll(etcdMixin, 'prometheusRules') then etcdMixin.prome
 local o = if std.objectHasAll(openshiftRules, 'prometheusRules') then openshiftRules.prometheusRules.groups else [];
 // Exclude rules that are either OpenShift specific or do not work for OpenShift.
 // List should be ordered.
-local rules = std.map(function(group) group { rules: std.filter(function(rule) !std.setMember(rule.alert, ['etcdHighNumberOfFailedGRPCRequests', 'etcdHighNumberOfLeaderChanges', 'etcdInsufficientMembers']), super.rules) }
+local rules = std.map(function(group) group { rules: std.filter(function(rule) !std.setMember(rule.alert, ['etcdHighNumberOfLeaderChanges', 'etcdInsufficientMembers']), super.rules) }
                       , a + r);
 
 {
