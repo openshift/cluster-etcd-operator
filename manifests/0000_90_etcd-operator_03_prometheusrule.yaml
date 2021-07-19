@@ -40,8 +40,8 @@ spec:
         severity: critical
     - alert: etcdGRPCRequestsSlow
       annotations:
-        description: 'etcd cluster "{{ $labels.job }}": gRPC requests to {{ $labels.grpc_method
-          }} are taking {{ $value }}s on etcd instance {{ $labels.instance }}.'
+        description: 'etcd cluster "{{ $labels.job }}": 99th percentile of gRPC requests
+          is {{ $value }}s on etcd instance {{ $labels.instance }}.'
         summary: etcd grpc requests are slow
       expr: |
         histogram_quantile(0.99, sum(rate(grpc_server_handling_seconds_bucket{job=~".*etcd.*", grpc_type="unary"}[5m])) without(grpc_type))
@@ -84,7 +84,7 @@ spec:
         severity: warning
     - alert: etcdHighFsyncDurations
       annotations:
-        message: 'etcd cluster "{{ $labels.job }}": 99th percentile fsync durations
+        description: 'etcd cluster "{{ $labels.job }}": 99th percentile fsync durations
           are {{ $value }}s on etcd instance {{ $labels.instance }}.'
       expr: |
         histogram_quantile(0.99, rate(etcd_disk_wal_fsync_duration_seconds_bucket{job=~".*etcd.*"}[5m]))
@@ -105,9 +105,9 @@ spec:
         severity: warning
     - alert: etcdBackendQuotaLowSpace
       annotations:
-        message: 'etcd cluster "{{ $labels.job }}": database size exceeds the defined
-          quota on etcd instance {{ $labels.instance }}, please defrag or increase
-          the quota as the writes to etcd will be disabled when it is full.'
+        description: 'etcd cluster "{{ $labels.job }}": database size exceeds the
+          defined quota on etcd instance {{ $labels.instance }}, please defrag or
+          increase the quota as the writes to etcd will be disabled when it is full.'
       expr: |
         (etcd_mvcc_db_total_size_in_bytes/etcd_server_quota_backend_bytes)*100 > 95
       for: 10m
@@ -115,7 +115,7 @@ spec:
         severity: critical
     - alert: etcdExcessiveDatabaseGrowth
       annotations:
-        message: 'etcd cluster "{{ $labels.job }}": Observed surge in etcd writes
+        description: 'etcd cluster "{{ $labels.job }}": Observed surge in etcd writes
           leading to 50% increase in database size over the past four hours on etcd
           instance {{ $labels.instance }}, please check as it might be disruptive.'
       expr: |
@@ -139,13 +139,13 @@ spec:
         severity: warning
     - alert: etcdInsufficientMembers
       annotations:
-        message: etcd is reporting fewer instances are available than are needed ({{
-          $value }}). When etcd does not have a majority of instances available the
-          Kubernetes and OpenShift APIs will reject read and write requests and operations
-          that preserve the health of workloads cannot be performed. This can occur
-          when multiple control plane nodes are powered off or are unable to connect
-          to each other via the network. Check that all control plane nodes are powered
-          on and that network connections between each machine are functional.
+        description: etcd is reporting fewer instances are available than are needed
+          ({{ $value }}). When etcd does not have a majority of instances available
+          the Kubernetes and OpenShift APIs will reject read and write requests and
+          operations that preserve the health of workloads cannot be performed. This
+          can occur when multiple control plane nodes are powered off or are unable
+          to connect to each other via the network. Check that all control plane nodes
+          are powered on and that network connections between each machine are functional.
         summary: etcd is reporting that a majority of instances are unavailable.
       expr: sum(up{job="etcd"} == bool 1 and etcd_server_has_leader{job="etcd"} ==
         bool 1) without (instance,pod) < ((count(up{job="etcd"}) without (instance,pod)
