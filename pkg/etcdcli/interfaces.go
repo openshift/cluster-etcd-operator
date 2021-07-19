@@ -1,6 +1,8 @@
 package etcdcli
 
 import (
+	"context"
+	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 )
 
@@ -12,6 +14,7 @@ const (
 )
 
 type EtcdClient interface {
+	EndpointStatusLister
 	MemberAdder
 	MemberLister
 	MemberRemover
@@ -20,6 +23,10 @@ type EtcdClient interface {
 
 	GetMember(name string) (*etcdserverpb.Member, error)
 	MemberUpdatePeerURL(id uint64, peerURL []string) error
+}
+
+type EndpointStatusLister interface {
+	EndpointStatus(ctx context.Context, member *etcdserverpb.Member) (*clientv3.StatusResponse, error)
 }
 
 type MemberAdder interface {

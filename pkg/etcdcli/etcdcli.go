@@ -258,6 +258,15 @@ func (g *etcdClientGetter) MemberList() ([]*etcdserverpb.Member, error) {
 	return membersResp.Members, nil
 }
 
+func (g *etcdClientGetter) EndpointStatus(ctx context.Context, member *etcdserverpb.Member) (*clientv3.StatusResponse, error) {
+	cli, err := g.getEtcdClient()
+	if err != nil {
+		return nil, err
+	}
+
+	return cli.Status(ctx, member.ClientURLs[0])
+}
+
 func (g *etcdClientGetter) GetMember(name string) (*etcdserverpb.Member, error) {
 	members, err := g.MemberList()
 	if err != nil {
@@ -333,4 +342,18 @@ func (g *etcdClientGetter) MemberStatus(member *etcdserverpb.Member) string {
 	}
 
 	return EtcdMemberStatusAvailable
+}
+
+func DefragMember(member *etcdserverpb.Member) (*clientv3.DefragmentResponse, error) {
+	// TODO need a client with dial options dial timout should be ~30s
+	cli, err := getEtcdClient([]string{member.ClientURLs[0]})
+	if err != nil {
+		return nil, err
+	}
+	defer cli.Close()
+	resp, err := cli.Maintenance.Defragment(context.TODO(), member.ClientURLs[0])
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
