@@ -7,11 +7,11 @@ import (
 	"io/ioutil"
 	"net/url"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/monitor/health"
+	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/integration"
 	"go.etcd.io/etcd/pkg/transport"
@@ -19,9 +19,9 @@ import (
 
 var (
 	testTLSInfo = transport.TLSInfo{
-		KeyFile:        MustAbsPath("testdata/server.key.insecure"),
-		CertFile:       MustAbsPath("testdata/server.crt"),
-		TrustedCAFile:  MustAbsPath("testdata/ca.crt"),
+		KeyFile:        u.MustAbsPath("../../testutils/testdata/server.key.insecure"),
+		CertFile:       u.MustAbsPath("../../testutils/testdata/server.crt"),
+		TrustedCAFile:  u.MustAbsPath("../../testutils/testdata/ca.crt"),
 		ClientCertAuth: true,
 	}
 )
@@ -251,12 +251,4 @@ func getDisruptionDurationFromLogs(t *testing.T, wantHealthCheck health.CheckNam
 	}
 	cleanup(logDir)
 	return dur, nil
-}
-
-func MustAbsPath(path string) string {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		panic(err)
-	}
-	return abs
 }

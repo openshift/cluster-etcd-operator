@@ -35,6 +35,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/defragcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdendpointscontroller"
@@ -183,7 +184,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	).WithDegradedInertia(status.MustNewInertia(
 		2*time.Minute,
 		status.InertiaCondition{
-			ConditionTypeMatcher: regexp.MustCompile("^(NodeController|EtcdMembers)Degraded$"),
+			ConditionTypeMatcher: regexp.MustCompile("^(NodeController|EtcdMembers|DefragController)Degraded$"),
 			Duration:             5 * time.Minute,
 		},
 	).Inertia)
@@ -239,6 +240,12 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 		configInformers.Config().V1().Infrastructures().Lister(),
 		os.Getenv("CLI_IMAGE"),
+	)
+	defragController := defragcontroller.NewDefragController(
+		operatorClient,
+		etcdClient,
+		configInformers.Config().V1().Infrastructures().Lister(),
+		controllerContext.EventRecorder,
 	)
 
 	unsupportedConfigOverridesController := unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(
@@ -304,6 +311,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go unsupportedConfigOverridesController.Run(ctx, 1)
 	go scriptController.Run(ctx, 1)
 	go quorumGuardController.Run(ctx, 1)
+	go defragController.Run(ctx, 1)
 
 	go envVarController.Run(1, ctx.Done())
 	go staticPodControllers.Start(ctx)

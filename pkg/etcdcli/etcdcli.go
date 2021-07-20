@@ -29,7 +29,11 @@ import (
 	"k8s.io/klog/v2"
 )
 
-const BootstrapIPAnnotationKey = "alpha.installer.openshift.io/etcd-bootstrap"
+const (
+	BootstrapIPAnnotationKey = "alpha.installer.openshift.io/etcd-bootstrap"
+	DefaultDialTimeout       = 15 * time.Second
+	DefragDialTimeout        = 45 * time.Second
+)
 
 type etcdClientGetter struct {
 	nodeLister       corev1listers.NodeLister
@@ -57,6 +61,12 @@ func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkIn
 		networkListerSynced:    networkInformer.Informer().HasSynced,
 		eventRecorder:          eventRecorder.WithComponentSuffix("etcd-client"),
 	}
+}
+
+// getEtcdClientWithClientOpts allows customization of the etcd client using ClientOptions. All clients must be manually
+// closed by the caller with Close().
+func (g *etcdClientGetter) getEtcdClientWithClientOpts(endpoints []string, opts ...ClientOption) (*clientv3.Client, error) {
+	return getEtcdClientWithClientOpts(endpoints, opts...)
 }
 
 // getEtcdClient may return a cached client.  When a new client is needed, the previous client is closed.
@@ -106,7 +116,7 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 		return g.cachedClient, nil
 	}
 
-	c, err := getEtcdClient(etcdEndpoints)
+	c, err := getEtcdClientWithClientOpts(etcdEndpoints)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get etcd client: %w", err)
 	}
@@ -121,7 +131,11 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 	return g.cachedClient, nil
 }
 
-func getEtcdClient(endpoints []string) (*clientv3.Client, error) {
+func getEtcdClientWithClientOpts(endpoints []string, opts ...ClientOption) (*clientv3.Client, error) {
+	clientOpts, err := newClientOpts(opts...)
+	if err != nil {
+		return nil, err
+	}
 	dialOptions := []grpc.DialOption{
 		grpc.WithBlock(), // block until the underlying connection is up
 	}
@@ -132,11 +146,14 @@ func getEtcdClient(endpoints []string) (*clientv3.Client, error) {
 		TrustedCAFile: "/var/run/configmaps/etcd-ca/ca-bundle.crt",
 	}
 	tlsConfig, err := tlsInfo.ClientConfig()
+	if err != nil {
+		return nil, err
+	}
 
 	cfg := &clientv3.Config{
 		DialOptions: dialOptions,
 		Endpoints:   endpoints,
-		DialTimeout: 15 * time.Second,
+		DialTimeout: clientOpts.dialTimeout,
 		TLS:         tlsConfig,
 	}
 
@@ -258,6 +275,14 @@ func (g *etcdClientGetter) MemberList() ([]*etcdserverpb.Member, error) {
 	return membersResp.Members, nil
 }
 
+func (g *etcdClientGetter) Status(ctx context.Context, member *etcdserverpb.Member) (*clientv3.StatusResponse, error) {
+	cli, err := g.getEtcdClient()
+	if err != nil {
+		return nil, err
+	}
+	return cli.Status(ctx, member.ClientURLs[0])
+}
+
 func (g *etcdClientGetter) GetMember(name string) (*etcdserverpb.Member, error) {
 	members, err := g.MemberList()
 	if err != nil {
@@ -298,7 +323,7 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 		return nil, err
 	}
 
-	memberHealth := GetMemberHealth(etcdCluster.Members)
+	memberHealth := getMemberHealth(etcdCluster.Members)
 
 	unstartedMemberNames := GetUnstartedMemberNames(memberHealth)
 	if len(unstartedMemberNames) > 0 {
@@ -311,6 +336,14 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 	}
 
 	return memberHealth.GetUnhealthyMembers(), nil
+}
+
+func (g *etcdClientGetter) MemberHealth() (memberHealth, error) {
+	etcdMembers, err := g.MemberList()
+	if err != nil {
+		return nil, err
+	}
+	return getMemberHealth(etcdMembers), nil
 }
 
 func (g *etcdClientGetter) MemberStatus(member *etcdserverpb.Member) string {
@@ -333,4 +366,18 @@ func (g *etcdClientGetter) MemberStatus(member *etcdserverpb.Member) string {
 	}
 
 	return EtcdMemberStatusAvailable
+}
+
+func (g *etcdClientGetter) Defragment(ctx context.Context, member *etcdserverpb.Member) (*clientv3.DefragmentResponse, error) {
+	cli, err := g.getEtcdClientWithClientOpts([]string{member.ClientURLs[0]}, WithDialTimeout(DefragDialTimeout))
+	if err != nil {
+		return nil, err
+	}
+	defer cli.Close()
+
+	resp, err := cli.Defragment(ctx, member.ClientURLs[0])
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
 }

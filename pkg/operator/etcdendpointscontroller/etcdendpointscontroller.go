@@ -98,11 +98,10 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 	// If the bootstrap IP is present on the existing configmap, either copy it
 	// forward or remove it if possible so clients can forget about it.
 	if existing, err := c.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints"); err == nil {
-		etcdMembers, err := c.etcdClient.MemberList()
+		memberHealth, err := c.etcdClient.MemberHealth()
 		if err != nil {
-			return fmt.Errorf("could not create etcd client: %w", err)
+			return err
 		}
-		memberHealth := etcdcli.GetMemberHealth(etcdMembers)
 
 		if existingIP, hasExistingIP := existing.Annotations[etcdcli.BootstrapIPAnnotationKey]; hasExistingIP {
 			if bootstrapComplete && etcdcli.IsQuorumFaultTolerant(memberHealth) {
