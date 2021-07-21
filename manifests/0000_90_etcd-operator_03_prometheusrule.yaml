@@ -15,6 +15,7 @@ spec:
       annotations:
         description: 'etcd cluster "{{ $labels.job }}": members are down ({{ $value
           }}).'
+        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/etcdMembersDown.md
         summary: etcd cluster members are down.
       expr: |
         max without (endpoint) (
@@ -32,6 +33,7 @@ spec:
       annotations:
         description: 'etcd cluster "{{ $labels.job }}": member {{ $labels.instance
           }} has no leader.'
+        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/etcdNoLeader.md
         summary: etcd cluster has no leader.
       expr: |
         etcd_server_has_leader{job=~".*etcd.*"} == 0
@@ -42,6 +44,7 @@ spec:
       annotations:
         description: 'etcd cluster "{{ $labels.job }}": 99th percentile of gRPC requests
           is {{ $value }}s on etcd instance {{ $labels.instance }}.'
+        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/etcdGRPCRequestsSlow.md
         summary: etcd grpc requests are slow
       expr: |
         histogram_quantile(0.99, sum(rate(grpc_server_handling_seconds_bucket{job=~".*etcd.*", grpc_type="unary"}[5m])) without(grpc_type))
@@ -86,6 +89,7 @@ spec:
       annotations:
         description: 'etcd cluster "{{ $labels.job }}": 99th percentile fsync durations
           are {{ $value }}s on etcd instance {{ $labels.instance }}.'
+        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/etcdHighFsyncDurations.md
       expr: |
         histogram_quantile(0.99, rate(etcd_disk_wal_fsync_duration_seconds_bucket{job=~".*etcd.*"}[5m]))
         > 1
@@ -108,6 +112,7 @@ spec:
         description: 'etcd cluster "{{ $labels.job }}": database size exceeds the
           defined quota on etcd instance {{ $labels.instance }}, please defrag or
           increase the quota as the writes to etcd will be disabled when it is full.'
+        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/etcdBackendQuotaLowSpace.md
       expr: |
         (etcd_mvcc_db_total_size_in_bytes/etcd_server_quota_backend_bytes)*100 > 95
       for: 10m
@@ -146,6 +151,7 @@ spec:
           can occur when multiple control plane nodes are powered off or are unable
           to connect to each other via the network. Check that all control plane nodes
           are powered on and that network connections between each machine are functional.
+        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/etcdInsufficientMembers.md
         summary: etcd is reporting that a majority of instances are unavailable.
       expr: sum(up{job="etcd"} == bool 1 and etcd_server_has_leader{job="etcd"} ==
         bool 1) without (instance,pod) < ((count(up{job="etcd"}) without (instance,pod)
