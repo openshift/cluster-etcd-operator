@@ -140,6 +140,7 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 		member, err := getMemberFromStatus(etcdMembers, status)
 		if err != nil {
 			errors = append(errors, err)
+			continue
 		}
 
 		// Check each member's status which includes the db size on disk "DbSize" and the db size in use "DbSizeInUse"
@@ -147,17 +148,14 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 		// db size we defrag the members state file. In the case where this command only partially completed controller
 		// can clean that up on the next sync. Having the db sizes slightly different is not a problem in itself.
 		if isEndpointBackendFragmented(member, status) {
-			recorder.Eventf("DefragControllerDefragmentAttempt", "Attempting defrag on member: %s, dbSize: %d , dbInUse: %d, memberID %d, leader ID: %d", member.Name, status.DbSize, status.DbSizeInUse, member.ID, status.Leader)
+			recorder.Eventf("DefragControllerDefragmentAttempt", "Attempting defrag on member: %s, memberID: %d, dbSize: %d, dbInUse: %d, leader ID: %d", member.Name, member.ID, status.DbSize, status.DbSizeInUse, status.Leader)
 			if _, err := c.etcdClient.Defragment(ctx, member); err != nil {
 				// defrag can timeout if defragmentation takes longer than etcdcli.DefragDialTimeout
 				errors = append(errors, fmt.Errorf("failed to defragment etcd member: %q :%v", member.Name, err))
-			}
-			postDefragEndpointStatus, err := c.etcdClient.Status(ctx, member)
-			if err != nil {
-				errors = append(errors, err)
+				continue
 			}
 
-			recorder.Eventf("DefragControllerDefragmentSuccess", "etcd member has been defragmented: %s, dbSize: %d, dbInUse: %d, member ID: %d, leader ID: %d", member.Name, postDefragEndpointStatus.DbSize, postDefragEndpointStatus.DbSizeInUse, member.ID, postDefragEndpointStatus.Leader)
+			recorder.Eventf("DefragControllerDefragmentSuccess", "etcd member has been defragmented: %s, memberID: %d", member.Name, member.ID)
 
 			// Give cluster time to recover before we move to the next member.
 			if err := wait.Poll(

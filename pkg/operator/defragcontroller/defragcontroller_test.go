@@ -180,9 +180,9 @@ func TestNewDefragController(t *testing.T) {
 				}
 				// ensure the leader was defragged last
 				if i == lastEvent {
-					// last event will print leader ID 2x
+					// last event will print leader ID
 					regex := regexp.MustCompile(fmt.Sprint(status[0].Leader))
-					if len(regex.FindAll([]byte(event.Message), -1)) != 2 {
+					if len(regex.FindAll([]byte(event.Message), -1)) != 1 {
 						t.Fatalf("expected leader defrag event to be last got %q", event.Message)
 					}
 				}
