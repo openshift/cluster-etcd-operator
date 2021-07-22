@@ -2,7 +2,6 @@ package quorumguardcontroller
 
 import (
 	"context"
-	"k8s.io/utils/pointer"
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -10,11 +9,12 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	corev1 "k8s.io/api/core/v1"
-	policyv1beta1 "k8s.io/api/policy/v1beta1"
+	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	fakecore "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/utils/pointer"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 )
@@ -30,7 +30,7 @@ controlPlane:
   name: master
   replicas: 3`}}
 
-	changedPDB := &policyv1beta1.PodDisruptionBudget{}
+	changedPDB := &policyv1.PodDisruptionBudget{}
 	*changedPDB = *pdb
 	changedPDB.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"k8s-changed": EtcdGuardDeploymentName}}
 	deployment := resourceread.ReadDeploymentV1OrDie(etcd_assets.MustAsset("etcd/quorumguard-deployment.yaml"))
