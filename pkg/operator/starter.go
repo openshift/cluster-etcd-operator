@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"regexp"
-	"strings"
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -13,23 +12,6 @@ import (
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
-	"github.com/openshift/library-go/pkg/controller/controllercmd"
-	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
-	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
-	"github.com/openshift/library-go/pkg/operator/staleconditions"
-	"github.com/openshift/library-go/pkg/operator/staticpod"
-	"github.com/openshift/library-go/pkg/operator/staticpod/controller/installer"
-	"github.com/openshift/library-go/pkg/operator/staticpod/controller/revision"
-	"github.com/openshift/library-go/pkg/operator/staticresourcecontroller"
-	"github.com/openshift/library-go/pkg/operator/status"
-	"github.com/openshift/library-go/pkg/operator/unsupportedconfigoverridescontroller"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/klog/v2"
-
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
@@ -46,6 +28,20 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
+	"github.com/openshift/library-go/pkg/controller/controllercmd"
+	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
+	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
+	"github.com/openshift/library-go/pkg/operator/staleconditions"
+	"github.com/openshift/library-go/pkg/operator/staticpod"
+	"github.com/openshift/library-go/pkg/operator/staticpod/controller/installer"
+	"github.com/openshift/library-go/pkg/operator/staticpod/controller/revision"
+	"github.com/openshift/library-go/pkg/operator/staticresourcecontroller"
+	"github.com/openshift/library-go/pkg/operator/status"
+	"github.com/openshift/library-go/pkg/operator/unsupportedconfigoverridescontroller"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
 func RunOperator(ctx context.Context, controllerContext *controllercmd.ControllerContext) error {
@@ -266,35 +262,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	kubeInformersForNamespaces.Start(ctx.Done())
 	configInformers.Start(ctx.Done())
 	dynamicInformers.Start(ctx.Done())
-
-	// REMOVE(4.9) Poll every 30 minutes to ensure removal of 4.7 secrets that
-	// were replaced in 4.8 with a unified secret. Removal is not critical,
-	// it's just potentially confusing if a bunch of now unused secrets linger
-	// forever.
-	secretClient := kubeClient.CoreV1().Secrets(operatorclient.TargetNamespace)
-	secretNamePrefixes := []string{"etcd-all-peer", "etcd-all-serving", "etcd-all-serving-metrics"}
-	go wait.Until(func() {
-		// The 4.7 secrets are likely to have multiple revisions
-		// (i.e. <prefix>-[0-9]*) so it's necessary to list all secrets and
-		// match by prefix.
-		secrets, err := secretClient.List(ctx, metav1.ListOptions{})
-		if err != nil {
-			klog.Warningf("Failed to list secrets when searching for 4.7 secrets to remove: %v", err)
-		}
-		if secrets == nil {
-			return
-		}
-		for _, secret := range secrets.Items {
-			for _, prefix := range secretNamePrefixes {
-				if strings.HasPrefix(secret.Name, prefix) {
-					err := secretClient.Delete(ctx, secret.Name, metav1.DeleteOptions{})
-					if err != nil {
-						klog.Warningf("Failed to delete 4.7 secret: %v", err)
-					}
-				}
-			}
-		}
-	}, 30*time.Minute, ctx.Done())
 
 	go staleConditions.Run(ctx, 1)
 	go fsyncMetricController.Run(ctx, 1)
