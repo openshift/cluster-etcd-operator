@@ -19,7 +19,7 @@ local excludeRules = std.map(
 local modifiedRules = std.map(function(group) group {
   rules: std.map(function(rule) if 'alert' in rule && !('runbook_url' in rule.annotations) && (rule.labels.severity == 'critical') then rule {
                    annotations+: {
-                     runbook_url: 'https://github.com/openshift/runbooks/blob/master/alerts/%s.md' % rule.alert,
+                     runbook_url: 'https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/%s.md' % rule.alert,
                    },
                  } else rule,
                  super.rules),
