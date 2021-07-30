@@ -910,7 +910,7 @@ spec:
                   declare -r cacert="/var/run/configmaps/etcd-ca/ca-bundle.crt"
                   export NSS_SDB_USE_CACHE=no
                   [[ -z $cert || -z $key ]] && exit 1
-                  curl --max-time 2 --silent --cert "${cert//:/\:}" --key "$key" --cacert "$cacert" "$health_endpoint" |grep '{ *"health" *: *"true" *}'
+                  curl --max-time 2 --silent --cert "${cert//:/\:}" --key "$key" --cacert "$cacert" "$health_endpoint" |grep '"health":"true"'
             initialDelaySeconds: 5
             periodSeconds: 5
             failureThreshold: 3
