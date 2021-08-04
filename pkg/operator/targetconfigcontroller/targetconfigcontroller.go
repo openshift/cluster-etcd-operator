@@ -7,6 +7,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/informers"
@@ -15,6 +16,7 @@ import (
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
@@ -114,8 +116,9 @@ func createTargetConfig(ctx context.Context, c TargetConfigController, recorder 
 	if err != nil {
 		return false, err
 	}
-	if err := checkExternalDependencies(ctx, c.configMapLister, recorder); err != nil {
-		errors = append(errors, err)
+	if err := checkExternalDependencies(ctx, c.configMapLister, c.infrastructureLister, recorder); err != nil {
+		recorder.Warning("DependencyCheckFailure", err.Error())
+		return false, err
 	}
 	_, _, err = c.manageStandardPod(ctx, contentReplacer, c.kubeClient.CoreV1(), recorder, operatorSpec)
 	if err != nil {
@@ -250,13 +253,19 @@ func (c *TargetConfigController) namespaceEventHandler() cache.ResourceEventHand
 }
 
 // checkExternalDependencies ensures that resources critical to cluster stability are valid before possible disruptive rollout.
-func checkExternalDependencies(ctx context.Context, lister corev1listers.ConfigMapLister, recorder events.Recorder) error {
-	csrControllerCAConfigMap, err := lister.ConfigMaps(operatorclient.GlobalMachineSpecifiedConfigNamespace).Get("csr-controller-ca")
-	if err != nil {
+func checkExternalDependencies(ctx context.Context, lister corev1listers.ConfigMapLister, infrastructureLister configv1listers.InfrastructureLister, recorder events.Recorder) error {
+	infra, err := infrastructureLister.Get("cluster")
+	if err != nil && !apierrors.IsNotFound(err) {
 		return err
 	}
-	if err := checkCSRControllerCAConfigMap(csrControllerCAConfigMap); err != nil {
-		return err
+	if infra.Status.ControlPlaneTopology == configv1.SingleReplicaTopologyMode {
+		csrControllerCAConfigMap, err := lister.ConfigMaps(operatorclient.GlobalMachineSpecifiedConfigNamespace).Get("csr-controller-ca")
+		if err != nil {
+			return err
+		}
+		if err := checkCSRControllerCAConfigMap(csrControllerCAConfigMap); err != nil {
+			return err
+		}
 	}
 	return nil
 }
