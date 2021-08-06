@@ -60,7 +60,7 @@ controlPlane:
 		expectedReplicaCount int
 	}{
 		{
-			name: "test ensureEtcdGuard - deployment exists but pdb not ",
+			name: "test ensureEtcdGuard - deployment exists but pdb not",
 			fields: fields{
 				client:   fakecore.NewSimpleClientset(deployment, &clusterConfigFullHA),
 				infraObj: haInfra},

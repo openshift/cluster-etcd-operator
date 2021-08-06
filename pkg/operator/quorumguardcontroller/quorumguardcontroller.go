@@ -200,11 +200,9 @@ func (c *QuorumGuardController) ensureEtcdGuardPDB(ctx context.Context, recorder
 		return err
 	}
 
-	// if PDB was modified log and event it
+	// log if PDB was modified, modified event is created as part of ApplyPodDisruptionBudget above
 	if modified {
-		msg := fmt.Sprintf("%s pdb was modified", EtcdGuardDeploymentName)
-		klog.Info(msg)
-		recorder.Event("ModifiedQuorumGuardPDB", msg)
+		klog.Infof("%s pdb was modified", EtcdGuardDeploymentName)
 	}
 
 	return nil
