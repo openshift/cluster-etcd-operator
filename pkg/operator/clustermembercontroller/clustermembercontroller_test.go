@@ -3,18 +3,17 @@ package clustermembercontroller
 import (
 	"context"
 	"reflect"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
-	"go.etcd.io/etcd/etcdserver/etcdserverpb"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/kubernetes"
-
 	"testing"
 
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	corev1lister "k8s.io/client-go/listers/core/v1"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 )
 
 type fakePodLister struct {

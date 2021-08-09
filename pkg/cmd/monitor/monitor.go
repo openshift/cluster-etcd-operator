@@ -12,17 +12,18 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/monitor/health"
 	"github.com/openshift/library-go/pkg/serviceability"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/pkg/transport"
+	"go.etcd.io/etcd/client/pkg/v3/transport"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/monitor/health"
 )
 
 const (

@@ -10,11 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+	"go.etcd.io/etcd/client/pkg/v3/transport"
+	"go.etcd.io/etcd/tests/v3/integration"
+
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/monitor/health"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
-	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/integration"
-	"go.etcd.io/etcd/pkg/transport"
 )
 
 var (
