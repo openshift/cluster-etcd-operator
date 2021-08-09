@@ -6,6 +6,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
+	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 	"github.com/openshift/library-go/pkg/crypto"
 )
 
@@ -105,6 +106,8 @@ func getTLSCipherSuites(platform, arch string) (map[string]string, error) {
 	if len(cipherSuites) == 0 {
 		return nil, fmt.Errorf("no valid TLS ciphers found")
 	}
+	// Remove invalid ciphers.
+	cipherSuites = tlshelpers.SupportedEtcdCiphers(cipherSuites)
 	return map[string]string{
 		"ETCD_CIPHER_SUITES": strings.Join(cipherSuites, ","),
 	}, nil
