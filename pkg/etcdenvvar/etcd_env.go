@@ -33,6 +33,7 @@ var FixedEtcdEnvVars = map[string]string{
 	"ETCD_ENABLE_PPROF":                                "true",
 	"ETCD_EXPERIMENTAL_WATCH_PROGRESS_NOTIFY_INTERVAL": "5s",
 	"ETCD_SOCKET_REUSE_ADDRESS":                        "true",
+	"ETCD_EXPERIMENTAL_WARNING_APPLY_DURATION":         "200ms",
 }
 
 type envVarFunc func(envVarContext envVarContext) (map[string]string, error)
