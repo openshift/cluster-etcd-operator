@@ -5,16 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 
-	"k8s.io/klog/v2"
-
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/klog/v2"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
@@ -25,6 +22,8 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 )
 
+const maxInt32 = 2147483647
+
 // PruneController is a controller that watches static installer pod revision statuses and spawns
 // a pruner pod to delete old revision resources from disk
 type PruneController struct {
@@ -34,8 +33,8 @@ type PruneController struct {
 
 	// prunerPodImageFn returns the image name for the pruning pod
 	prunerPodImageFn func() string
-	// ownerRefsFn sets the ownerrefs on the pruner pod
-	ownerRefsFn func(revision int32) ([]metav1.OwnerReference, error)
+	// retrieveStatusConfigMapOwnerRefsFn gets the revision status ConfigMap and returns an owner ref, or empty slice on error.
+	retrieveStatusConfigMapOwnerRefsFn func(revision int32) ([]metav1.OwnerReference, error)
 
 	operatorClient v1helpers.StaticPodOperatorClient
 
@@ -45,12 +44,8 @@ type PruneController struct {
 }
 
 const (
-	pruneControllerWorkQueueKey = "key"
-	statusConfigMapName         = "revision-status-"
-	defaultRevisionLimit        = int32(5)
-
-	StatusInProgress = "InProgress"
-	StatusAbandoned  = "Abandoned"
+	statusConfigMapName  = "revision-status-"
+	defaultRevisionLimit = int32(5)
 )
 
 // NewPruneController creates a new pruning controller
@@ -78,12 +73,12 @@ func NewPruneController(
 
 		prunerPodImageFn: getPrunerPodImageFromEnv,
 	}
-	c.ownerRefsFn = c.setOwnerRefs
+	c.retrieveStatusConfigMapOwnerRefsFn = c.createStatusConfigMapOwnerRefs
 
 	return factory.New().WithInformers(operatorClient.Informer()).WithSync(c.sync).ToController("PruneController", eventRecorder)
 }
 
-func getRevisionLimits(operatorSpec *operatorv1.StaticPodOperatorSpec) (int32, int32) {
+func defaultedLimits(operatorSpec *operatorv1.StaticPodOperatorSpec) (int, int) {
 	failedRevisionLimit := defaultRevisionLimit
 	succeededRevisionLimit := defaultRevisionLimit
 	if operatorSpec.FailedRevisionLimit != 0 {
@@ -92,85 +87,78 @@ func getRevisionLimits(operatorSpec *operatorv1.StaticPodOperatorSpec) (int32, i
 	if operatorSpec.SucceededRevisionLimit != 0 {
 		succeededRevisionLimit = operatorSpec.SucceededRevisionLimit
 	}
-	return failedRevisionLimit, succeededRevisionLimit
+	return int(failedRevisionLimit), int(succeededRevisionLimit)
 }
 
-func (c *PruneController) excludedRevisionHistory(ctx context.Context, recorder events.Recorder, failedRevisionLimit, succeededRevisionLimit, abandonedRevisionLimit int32) ([]int, error) {
-	var succeededRevisions, failedRevisions, inProgressRevisions, unknownStatusRevisions, abandonedRevisions []int
-
-	configMaps, err := c.configMapGetter.ConfigMaps(c.targetNamespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return []int{}, err
-	}
-	for _, configMap := range configMaps.Items {
-		if !strings.HasPrefix(configMap.Name, statusConfigMapName) {
-			continue
-		}
-
-		if revision, ok := configMap.Data["revision"]; ok {
-			revisionNumber, err := strconv.Atoi(revision)
-			if err != nil {
-				return []int{}, err
-			}
-			switch configMap.Data["status"] {
-			case string(corev1.PodSucceeded):
-				succeededRevisions = append(succeededRevisions, revisionNumber)
-			case string(corev1.PodFailed):
-				failedRevisions = append(failedRevisions, revisionNumber)
-			case StatusAbandoned:
-				abandonedRevisions = append(abandonedRevisions, revisionNumber)
-			case StatusInProgress:
-				// we always protect inprogress
-				inProgressRevisions = append(inProgressRevisions, revisionNumber)
-
-			default:
-				// protect things you don't understand
-				unknownStatusRevisions = append(unknownStatusRevisions, revisionNumber)
-				recorder.Event("UnknownRevisionStatus", fmt.Sprintf("unknown status for revision %d: %v", revisionNumber, configMap.Data["status"]))
-			}
+// revisionsToKeep approximates the set of revisions to keep: spec.failedRevisionsLimit for failed revisions,
+// spec.succeededRevisionsLimit for succeed revisions (for all nodes). The approximation goes by:
+// - don't prune LatestAvailableRevision and the max(spec.failedRevisionLimit, spec.succeededRevisionLimit) - 1 revisions before it.
+// - don't prune a node's CurrentRevision and the spec.succeededRevisionLimit - 1 revisions before it.
+// - don't prune a node's TargetRevision and the spec.failedRevisionLimit - 1 revisions before it.
+// - don't prune a node's LastFailedRevision and the spec.failedRevisionLimit - 1 revisions before it.
+func (c *PruneController) revisionsToKeep(status *operatorv1.StaticPodOperatorStatus, failedLimit, succeededLimit int) (all bool, keep sets.Int32) {
+	// find oldest where we are sure it cannot fail anymore (i.e. = currentRevision
+	var oldestSucceeded int32 = maxInt32
+	for _, ns := range status.NodeStatuses {
+		if ns.CurrentRevision < oldestSucceeded {
+			oldestSucceeded = ns.CurrentRevision
 		}
 	}
-
-	// Return early if nothing to prune
-	if len(succeededRevisions)+len(failedRevisions)+len(abandonedRevisions) == 0 {
-		klog.V(2).Info("no revision IDs currently eligible to prune")
-		return []int{}, nil
+	if oldestSucceeded < status.LatestAvailableRevision && failedLimit == -1 {
+		return true, nil
+	}
+	if succeededLimit == -1 {
+		return true, nil
 	}
 
-	// Get list of protected IDs
-	protectedSucceededRevisions := protectedRevisions(succeededRevisions, int(succeededRevisionLimit))
-	protectedFailedRevisions := protectedRevisions(failedRevisions, int(failedRevisionLimit))
-	protectedAbandonedRevisions := protectedRevisions(abandonedRevisions, int(abandonedRevisionLimit))
+	keep = sets.Int32{}
+	if oldestSucceeded < status.LatestAvailableRevision {
+		keep.Insert(int32RangeBelowOrEqual(status.LatestAvailableRevision, maxLimit(failedLimit, succeededLimit))...) // max because we don't know about failure or success
+	} // otherwise all nodes are on LatestAvailableRevision already. Then there is no fail potential.
 
-	excludedRevisions := make([]int, 0, len(protectedSucceededRevisions)+len(protectedFailedRevisions)+len(inProgressRevisions)+len(unknownStatusRevisions)+len(protectedAbandonedRevisions))
-	excludedRevisions = append(excludedRevisions, protectedSucceededRevisions...)
-	excludedRevisions = append(excludedRevisions, protectedFailedRevisions...)
-	excludedRevisions = append(excludedRevisions, inProgressRevisions...)
-	excludedRevisions = append(excludedRevisions, unknownStatusRevisions...)
-	excludedRevisions = append(excludedRevisions, protectedAbandonedRevisions...)
-	sort.Ints(excludedRevisions)
-
-	// There should always be at least 1 excluded ID, otherwise we'll delete the current revision
-	if len(excludedRevisions) == 0 {
-		return []int{}, fmt.Errorf("need at least 1 excluded ID for revision pruning")
+	for _, ns := range status.NodeStatuses {
+		if ns.CurrentRevision > 0 {
+			keep.Insert(int32RangeBelowOrEqual(ns.CurrentRevision, succeededLimit)...)
+		}
+		if ns.TargetRevision > 0 {
+			keep.Insert(int32RangeBelowOrEqual(ns.TargetRevision, maxLimit(failedLimit, succeededLimit))...) // max because we don't know about failure or success
+		}
+		if ns.LastFailedRevision > 0 {
+			keep.Insert(int32RangeBelowOrEqual(ns.LastFailedRevision, failedLimit)...)
+		}
 	}
-	return excludedRevisions, nil
+
+	if keep.Len() > 0 && keep.List()[0] == 1 && keep.List()[keep.Len()-1] == status.LatestAvailableRevision {
+		return true, nil
+	}
+
+	return false, keep
 }
 
-func (c *PruneController) pruneDiskResources(ctx context.Context, recorder events.Recorder, operatorStatus *operatorv1.StaticPodOperatorStatus, excludedRevisions []int, maxEligibleRevision int) error {
+// int32Range returns range of int32 from upper-num+1 to upper.
+func int32RangeBelowOrEqual(upper int32, num int) []int32 {
+	ret := make([]int32, 0, num)
+	for i := 0; i < num; i++ {
+		value := upper - int32(num) + 1 + int32(i)
+		if value > 0 {
+			ret = append(ret, value)
+		}
+	}
+	return ret
+}
+
+func (c *PruneController) pruneDiskResources(ctx context.Context, recorder events.Recorder, operatorStatus *operatorv1.StaticPodOperatorStatus, toKeep []int32) error {
 	// Run pruning pod on each node and pin it to that node
 	for _, nodeStatus := range operatorStatus.NodeStatuses {
-		// Use the highest value between CurrentRevision and LastFailedRevision
-		// Because CurrentRevision only updates on successful installs and we still prune on an unsuccessful install
-		if err := c.ensurePrunePod(ctx, recorder, nodeStatus.NodeName, maxEligibleRevision, excludedRevisions, max(nodeStatus.LastFailedRevision, nodeStatus.CurrentRevision)); err != nil {
+		// note: we attach the pod (via owner-ref) to the latestAvailable
+		if err := c.ensurePrunePod(ctx, recorder, nodeStatus.NodeName, operatorStatus.LatestAvailableRevision, toKeep, operatorStatus.LatestAvailableRevision); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *PruneController) pruneAPIResources(ctx context.Context, excludedRevisions []int, maxEligibleRevision int) error {
-	protectedRevisions := sets.NewInt(excludedRevisions...)
+func (c *PruneController) pruneAPIResources(ctx context.Context, toKeep sets.Int32, latestAvailableRevision int32) error {
 	statusConfigMaps, err := c.configMapGetter.ConfigMaps(c.targetNamespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return err
@@ -185,10 +173,10 @@ func (c *PruneController) pruneAPIResources(ctx context.Context, excludedRevisio
 			return fmt.Errorf("unexpected error converting revision to int: %+v", err)
 		}
 
-		if protectedRevisions.Has(revision) {
+		if toKeep.Has(int32(revision)) {
 			continue
 		}
-		if revision > maxEligibleRevision {
+		if revision > int(latestAvailableRevision) {
 			continue
 		}
 		if err := c.configMapGetter.ConfigMaps(c.targetNamespace).Delete(ctx, cm.Name, metav1.DeleteOptions{}); err != nil {
@@ -198,20 +186,7 @@ func (c *PruneController) pruneAPIResources(ctx context.Context, excludedRevisio
 	return nil
 }
 
-func protectedRevisions(revisions []int, revisionLimit int) []int {
-	sort.Ints(revisions)
-	if len(revisions) == 0 {
-		return revisions
-	}
-	startKey := 0
-	// We use -1 = unlimited revisions, so protect all. Limit shouldn't ever be literally 0 either
-	if revisionLimit > 0 && len(revisions) > revisionLimit {
-		startKey = len(revisions) - revisionLimit
-	}
-	return revisions[startKey:]
-}
-
-func (c *PruneController) ensurePrunePod(ctx context.Context, recorder events.Recorder, nodeName string, maxEligibleRevision int, protectedRevisions []int, revision int32) error {
+func (c *PruneController) ensurePrunePod(ctx context.Context, recorder events.Recorder, nodeName string, maxEligibleRevision int32, protectedRevisions []int32, revision int32) error {
 	if revision == 0 {
 		return nil
 	}
@@ -231,7 +206,7 @@ func (c *PruneController) ensurePrunePod(ctx context.Context, recorder events.Re
 		fmt.Sprintf("--static-pod-name=%s", c.podResourcePrefix),
 	)
 
-	ownerRefs, err := c.ownerRefsFn(revision)
+	ownerRefs, err := c.retrieveStatusConfigMapOwnerRefsFn(revision)
 	if err != nil {
 		return fmt.Errorf("unable to set pruner pod ownerrefs: %+v", err)
 	}
@@ -241,28 +216,29 @@ func (c *PruneController) ensurePrunePod(ctx context.Context, recorder events.Re
 	return err
 }
 
-func (c *PruneController) setOwnerRefs(revision int32) ([]metav1.OwnerReference, error) {
-	ownerReferences := []metav1.OwnerReference{}
+func (c *PruneController) createStatusConfigMapOwnerRefs(revision int32) ([]metav1.OwnerReference, error) {
 	statusConfigMap, err := c.configMapGetter.ConfigMaps(c.targetNamespace).Get(context.TODO(), fmt.Sprintf("revision-status-%d", revision), metav1.GetOptions{})
-	if err == nil {
-		ownerReferences = append(ownerReferences, metav1.OwnerReference{
+	if err != nil {
+		return nil, err
+	}
+	return []metav1.OwnerReference{
+		{
 			APIVersion: "v1",
 			Kind:       "ConfigMap",
 			Name:       statusConfigMap.Name,
 			UID:        statusConfigMap.UID,
-		})
-	}
-	return ownerReferences, err
+		},
+	}, nil
 }
 
 func getPrunerPodName(nodeName string, revision int32) string {
 	return fmt.Sprintf("revision-pruner-%d-%s", revision, nodeName)
 }
 
-func revisionsToString(revisions []int) string {
+func revisionsToString(revisions []int32) string {
 	values := []string{}
 	for _, id := range revisions {
-		value := strconv.Itoa(id)
+		value := strconv.Itoa(int(id))
 		values = append(values, value)
 	}
 	return strings.Join(values, ",")
@@ -278,29 +254,34 @@ func (c *PruneController) sync(ctx context.Context, syncCtx factory.SyncContext)
 	if err != nil {
 		return err
 	}
-	failedLimit, succeededLimit := getRevisionLimits(operatorSpec)
 
-	excludedRevisions, err := c.excludedRevisionHistory(ctx, syncCtx.Recorder(), failedLimit, succeededLimit, defaultRevisionLimit)
-	if err != nil {
-		return err
+	if len(operatorStatus.NodeStatuses) == 0 {
+		klog.Info("No nodes, nothing to prune")
+		return nil
 	}
-	// if no IDs are excluded, then there is nothing to prune
-	if len(excludedRevisions) == 0 {
-		klog.Info("No excluded revisions to prune, skipping")
+
+	// keep a number of revision before current, target, last failed and last available revisions
+	failedLimit, succeededLimit := defaultedLimits(operatorSpec)
+	keepAll, toKeep := c.revisionsToKeep(operatorStatus, failedLimit, succeededLimit)
+	if keepAll {
+		klog.Info("Nothing to prune")
 		return nil
 	}
 
 	errs := []error{}
-	if diskErr := c.pruneDiskResources(ctx, syncCtx.Recorder(), operatorStatus, excludedRevisions, excludedRevisions[len(excludedRevisions)-1]); diskErr != nil {
+	if diskErr := c.pruneDiskResources(ctx, syncCtx.Recorder(), operatorStatus, toKeep.List()); diskErr != nil {
 		errs = append(errs, diskErr)
 	}
-	if apiErr := c.pruneAPIResources(ctx, excludedRevisions, excludedRevisions[len(excludedRevisions)-1]); apiErr != nil {
+	if apiErr := c.pruneAPIResources(ctx, toKeep, operatorStatus.LatestAvailableRevision); apiErr != nil {
 		errs = append(errs, apiErr)
 	}
 	return v1helpers.NewMultiLineAggregate(errs)
 }
 
-func max(a, b int32) int32 {
+func maxLimit(a, b int) int {
+	if a < 0 || b < 0 {
+		return -1
+	}
 	if a > b {
 		return a
 	}

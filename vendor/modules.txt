@@ -114,7 +114,7 @@ github.com/modern-go/concurrent
 github.com/modern-go/reflect2
 # github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822
 github.com/munnerz/goautoneg
-# github.com/openshift/api v0.0.0-20210521075222-e273a339932a
+# github.com/openshift/api v0.0.0-20210730095913-85e1d547cdee
 ## explicit
 github.com/openshift/api
 github.com/openshift/api/apiserver
@@ -172,7 +172,7 @@ github.com/openshift/api/template
 github.com/openshift/api/template/v1
 github.com/openshift/api/user
 github.com/openshift/api/user/v1
-# github.com/openshift/build-machinery-go v0.0.0-20210423112049-9415d7ebd33e
+# github.com/openshift/build-machinery-go v0.0.0-20210806203541-4ea9b6da3a37
 ## explicit
 github.com/openshift/build-machinery-go
 github.com/openshift/build-machinery-go/make
@@ -182,7 +182,7 @@ github.com/openshift/build-machinery-go/make/targets/golang
 github.com/openshift/build-machinery-go/make/targets/openshift
 github.com/openshift/build-machinery-go/make/targets/openshift/operator
 github.com/openshift/build-machinery-go/scripts
-# github.com/openshift/client-go v0.0.0-20210521082421-73d9475a9142
+# github.com/openshift/client-go v0.0.0-20210730113412-1811c1b3fc0e
 ## explicit
 github.com/openshift/client-go/config/clientset/versioned
 github.com/openshift/client-go/config/clientset/versioned/scheme
@@ -203,7 +203,7 @@ github.com/openshift/client-go/operator/informers/externalversions/operator/v1
 github.com/openshift/client-go/operator/informers/externalversions/operator/v1alpha1
 github.com/openshift/client-go/operator/listers/operator/v1
 github.com/openshift/client-go/operator/listers/operator/v1alpha1
-# github.com/openshift/library-go v0.0.0-20210624101008-7aab941b4a2b
+# github.com/openshift/library-go v0.0.0-20210804150119-965974e0af3f
 ## explicit
 github.com/openshift/library-go/pkg/assets
 github.com/openshift/library-go/pkg/authorization/hardcodedauthorizer
@@ -245,9 +245,13 @@ github.com/openshift/library-go/pkg/operator/staticpod/controller/node
 github.com/openshift/library-go/pkg/operator/staticpod/controller/prune
 github.com/openshift/library-go/pkg/operator/staticpod/controller/prune/bindata
 github.com/openshift/library-go/pkg/operator/staticpod/controller/revision
+github.com/openshift/library-go/pkg/operator/staticpod/controller/startupmonitorcondition
+github.com/openshift/library-go/pkg/operator/staticpod/controller/staticpodfallback
 github.com/openshift/library-go/pkg/operator/staticpod/controller/staticpodstate
 github.com/openshift/library-go/pkg/operator/staticpod/installerpod
+github.com/openshift/library-go/pkg/operator/staticpod/internal/flock
 github.com/openshift/library-go/pkg/operator/staticpod/prune
+github.com/openshift/library-go/pkg/operator/staticpod/startupmonitor/annotations
 github.com/openshift/library-go/pkg/operator/staticresourcecontroller
 github.com/openshift/library-go/pkg/operator/status
 github.com/openshift/library-go/pkg/operator/unsupportedconfigoverridescontroller
@@ -1163,7 +1167,7 @@ k8s.io/cri-api/pkg/apis/runtime/v1alpha2
 # k8s.io/klog/v2 v2.9.0
 ## explicit
 k8s.io/klog/v2
-# k8s.io/kube-aggregator v0.21.1
+# k8s.io/kube-aggregator v0.22.0-rc.0
 k8s.io/kube-aggregator/pkg/apis/apiregistration
 k8s.io/kube-aggregator/pkg/apis/apiregistration/v1
 k8s.io/kube-aggregator/pkg/apis/apiregistration/v1beta1

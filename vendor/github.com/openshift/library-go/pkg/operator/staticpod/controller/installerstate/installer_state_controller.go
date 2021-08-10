@@ -24,6 +24,7 @@ const installerStateControllerWorkQueueKey = "key"
 // maxToleratedPodPendingDuration is the maximum time we tolerate installer pod in pending state
 var maxToleratedPodPendingDuration = 5 * time.Minute
 
+// InstallerStateController analyzes installer pods and sets degraded conditions suggesting different root causes.
 type InstallerStateController struct {
 	podsGetter      corev1client.PodsGetter
 	eventsGetter    corev1client.EventsGetter

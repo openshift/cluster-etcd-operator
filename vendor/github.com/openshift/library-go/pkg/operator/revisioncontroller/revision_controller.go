@@ -21,11 +21,8 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/management"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
-	"github.com/openshift/library-go/pkg/operator/staticpod/controller/prune"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 )
-
-const revisionControllerWorkQueueKey = "key"
 
 // LatestRevisionClient is an operator client for an operator status with a latest revision field.
 type LatestRevisionClient interface {
@@ -199,7 +196,6 @@ func (c RevisionController) createNewRevision(ctx context.Context, recorder even
 			Name:      nameFor("revision-status", revision),
 		},
 		Data: map[string]string{
-			"status":   prune.StatusInProgress,
 			"revision": fmt.Sprintf("%d", revision),
 			"reason":   reason,
 		},
@@ -207,25 +203,6 @@ func (c RevisionController) createNewRevision(ctx context.Context, recorder even
 	statusConfigMap, _, err := resourceapply.ApplyConfigMap(ctx, c.configMapGetter, recorder, statusConfigMap)
 	if err != nil {
 		return err
-	}
-
-	// After we create a new revision, check if any of the previous existing
-	// revisions got interrupted while InProgress and mark them Abandoned.
-	configMaps, err := c.configMapGetter.ConfigMaps(c.targetNamespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return err
-	}
-	for _, configMap := range configMaps.Items {
-		if !strings.HasPrefix(configMap.Name, "revision-status-") || configMap.Name == statusConfigMap.Name {
-			continue
-		}
-		if configMap.Data["status"] == prune.StatusInProgress {
-			configMap.Data["status"] = prune.StatusAbandoned
-			_, _, err = resourceapply.ApplyConfigMap(ctx, c.configMapGetter, recorder, &configMap)
-			if err != nil {
-				return err
-			}
-		}
 	}
 
 	ownerRefs := []metav1.OwnerReference{{

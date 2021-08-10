@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -23,6 +24,7 @@ import (
 	migrationclient "sigs.k8s.io/kube-storage-version-migrator/pkg/clients/clientset"
 
 	"github.com/openshift/api"
+
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 )
@@ -38,6 +40,7 @@ func init() {
 	utilruntime.Must(apiextensionsv1beta1.AddToScheme(genericScheme))
 	utilruntime.Must(apiextensionsv1.AddToScheme(genericScheme))
 	utilruntime.Must(migrationv1alpha1.AddToScheme(genericScheme))
+	utilruntime.Must(admissionregistrationv1.AddToScheme(genericScheme))
 	// TODO: remove once openshift/api/pull/929 is merged
 	utilruntime.Must(policyv1.AddToScheme(genericScheme))
 }
@@ -194,6 +197,18 @@ func ApplyDirectly(ctx context.Context, clients *ClientHolder, recorder events.R
 				result.Error = fmt.Errorf("missing kubeClient")
 			} else {
 				result.Result, result.Changed, result.Error = ApplyStorageClass(ctx, clients.kubeClient.StorageV1(), recorder, t)
+			}
+		case *admissionregistrationv1.ValidatingWebhookConfiguration:
+			if clients.kubeClient == nil {
+				result.Error = fmt.Errorf("missing kubeClient")
+			} else {
+				result.Result, result.Changed, result.Error = ApplyValidatingWebhookConfiguration(ctx, clients.kubeClient.AdmissionregistrationV1(), recorder, t, -1)
+			}
+		case *admissionregistrationv1.MutatingWebhookConfiguration:
+			if clients.kubeClient == nil {
+				result.Error = fmt.Errorf("missing kubeClient")
+			} else {
+				result.Result, result.Changed, result.Error = ApplyMutatingWebhookConfiguration(ctx, clients.kubeClient.AdmissionregistrationV1(), recorder, t, -1)
 			}
 		case *storagev1.CSIDriver:
 			if clients.kubeClient == nil {

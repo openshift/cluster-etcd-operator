@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/klog/v2"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -39,7 +40,7 @@ func newClusterScopedOperatorClient(config *rest.Config, gvr schema.GroupVersion
 	}, informers, nil
 }
 
-func NewClusterScopedOperatorClient(config *rest.Config, gvr schema.GroupVersionResource) (v1helpers.OperatorClient, dynamicinformer.DynamicSharedInformerFactory, error) {
+func NewClusterScopedOperatorClient(config *rest.Config, gvr schema.GroupVersionResource) (v1helpers.OperatorClientWithFinalizers, dynamicinformer.DynamicSharedInformerFactory, error) {
 	d, informers, err := newClusterScopedOperatorClient(config, gvr)
 	if err != nil {
 		return nil, nil, err
@@ -49,7 +50,7 @@ func NewClusterScopedOperatorClient(config *rest.Config, gvr schema.GroupVersion
 
 }
 
-func NewClusterScopedOperatorClientWithConfigName(config *rest.Config, gvr schema.GroupVersionResource, configName string) (v1helpers.OperatorClient, dynamicinformer.DynamicSharedInformerFactory, error) {
+func NewClusterScopedOperatorClientWithConfigName(config *rest.Config, gvr schema.GroupVersionResource, configName string) (v1helpers.OperatorClientWithFinalizers, dynamicinformer.DynamicSharedInformerFactory, error) {
 	if len(configName) < 1 {
 		return nil, nil, fmt.Errorf("config name cannot be empty")
 	}
@@ -154,6 +155,68 @@ func (c dynamicOperatorClient) UpdateOperatorStatus(resourceVersion string, stat
 	}
 
 	return retStatus, nil
+}
+
+func (c dynamicOperatorClient) EnsureFinalizer(finalizer string) error {
+	uncastInstance, err := c.informer.Lister().Get(c.configName)
+	if err != nil {
+		return err
+	}
+
+	instance := uncastInstance.(*unstructured.Unstructured)
+	finalizers := instance.GetFinalizers()
+	for _, f := range finalizers {
+		if f == finalizer {
+			return nil
+		}
+	}
+
+	// Change is needed
+	klog.V(4).Infof("Adding finalizer %q", finalizer)
+	newFinalizers := append(finalizers, finalizer)
+	err = c.saveFinalizers(instance, newFinalizers)
+	if err != nil {
+		return err
+	}
+	klog.V(2).Infof("Added finalizer %q", finalizer)
+	return err
+}
+
+func (c dynamicOperatorClient) RemoveFinalizer(finalizer string) error {
+	uncastInstance, err := c.informer.Lister().Get(c.configName)
+	if err != nil {
+		return err
+	}
+
+	instance := uncastInstance.(*unstructured.Unstructured)
+	finalizers := instance.GetFinalizers()
+	found := false
+	newFinalizers := make([]string, 0, len(finalizers))
+	for _, f := range finalizers {
+		if f == finalizer {
+			found = true
+			continue
+		}
+		newFinalizers = append(newFinalizers, f)
+	}
+	if !found {
+		return nil
+	}
+
+	klog.V(4).Infof("Removing finalizer %q: %v", finalizer, newFinalizers)
+	err = c.saveFinalizers(instance, newFinalizers)
+	if err != nil {
+		return err
+	}
+	klog.V(2).Infof("Removed finalizer %q", finalizer)
+	return nil
+}
+
+func (c dynamicOperatorClient) saveFinalizers(instance *unstructured.Unstructured, finalizers []string) error {
+	clone := instance.DeepCopy()
+	clone.SetFinalizers(finalizers)
+	_, err := c.client.Update(context.TODO(), clone, metav1.UpdateOptions{})
+	return err
 }
 
 func getObjectMetaFromUnstructured(obj map[string]interface{}) (*metav1.ObjectMeta, error) {
