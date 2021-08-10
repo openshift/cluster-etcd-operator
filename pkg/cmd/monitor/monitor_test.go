@@ -81,6 +81,7 @@ func newTestData(t *testing.T, testDuration time.Duration, pauseServer, resumeSe
 
 func createAndStartEtcdTestServer(t *testing.T, size int) (*integration.ClusterV3, string) {
 	srvTLS := testTLSInfo
+	integration.BeforeTest(t)
 	etcd := integration.NewClusterV3(t, &integration.ClusterConfig{Size: size, ClientTLS: &srvTLS})
 	targets := fmt.Sprintf("%s,%s,%s", etcd.Members[0].GRPCAddr(), etcd.Members[1].GRPCAddr(), etcd.Members[2].GRPCAddr())
 
