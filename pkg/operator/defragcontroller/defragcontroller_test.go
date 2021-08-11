@@ -3,7 +3,6 @@ package defragcontroller
 import (
 	"context"
 	"fmt"
-	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	"regexp"
 	"strings"
 	"testing"
@@ -11,17 +10,19 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
-	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/integration"
-	"go.etcd.io/etcd/pkg/transport"
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
+	"go.etcd.io/etcd/client/pkg/v3/transport"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/tests/v3/integration"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/cache"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 )
 
 var (
@@ -122,6 +123,7 @@ func TestNewDefragController(t *testing.T) {
 	}
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
+			integration.BeforeTest(t)
 			// use integration etcd to create etcd members and status
 			testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: scenario.clusterSize})
 			defer testServer.Terminate(t)

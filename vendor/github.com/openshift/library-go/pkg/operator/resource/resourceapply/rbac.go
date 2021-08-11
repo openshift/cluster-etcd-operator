@@ -80,7 +80,7 @@ func ApplyClusterRoleBinding(ctx context.Context, client rbacclientv1.ClusterRol
 
 	requiredCopy.RoleRef.APIGroup = rbacv1.GroupName
 	for i := range requiredCopy.Subjects {
-		if existingCopy.Subjects[i].Kind == "User" {
+		if requiredCopy.Subjects[i].Kind == "User" {
 			requiredCopy.Subjects[i].APIGroup = rbacv1.GroupName
 		}
 	}
@@ -164,7 +164,7 @@ func ApplyRoleBinding(ctx context.Context, client rbacclientv1.RoleBindingsGette
 
 	requiredCopy.RoleRef.APIGroup = rbacv1.GroupName
 	for i := range requiredCopy.Subjects {
-		if existingCopy.Subjects[i].Kind == "User" {
+		if requiredCopy.Subjects[i].Kind == "User" {
 			requiredCopy.Subjects[i].APIGroup = rbacv1.GroupName
 		}
 	}

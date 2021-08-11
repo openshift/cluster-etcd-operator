@@ -13,6 +13,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/diff"
@@ -24,6 +25,7 @@ import (
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/condition"
 	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/management"
 	"github.com/openshift/library-go/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 )
@@ -116,6 +118,9 @@ func NewNestedConfigObserver(
 // must be information that is logically "owned" by another component.
 func (c ConfigObserver) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	originalSpec, _, _, err := c.operatorClient.GetOperatorState()
+	if management.IsOperatorRemovable() && apierrors.IsNotFound(err) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}

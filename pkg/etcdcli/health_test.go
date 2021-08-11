@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"go.etcd.io/etcd/etcdserver/etcdserverpb"
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
 )
 
 func TestMemberHealthStatus(t *testing.T) {

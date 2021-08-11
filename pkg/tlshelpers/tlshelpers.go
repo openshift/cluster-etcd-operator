@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/openshift/library-go/pkg/crypto"
+	"go.etcd.io/etcd/client/pkg/v3/tlsutil"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -131,4 +133,19 @@ func getCommonNameFromOrg(org string) (string, error) {
 		return "etcd-metric-signer", nil
 	}
 	return "", errors.New("unable to recognise secret name")
+}
+
+func SupportedEtcdCiphers(cipherSuites []string) []string {
+	allowedCiphers := []string{}
+	for _, cipher := range cipherSuites {
+		_, ok := tlsutil.GetCipherSuite(cipher)
+		if !ok {
+			// skip and log unsupported ciphers
+			klog.Warningf("cipher is not supported for use with etcd, skipping: %q", cipher)
+			continue
+		}
+		allowedCiphers = append(allowedCiphers, cipher)
+	}
+	return allowedCiphers
+
 }
