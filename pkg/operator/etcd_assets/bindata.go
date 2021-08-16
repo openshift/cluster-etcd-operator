@@ -667,7 +667,7 @@ ${COMPUTED_ENV_VARS}
           --peer-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.key \
           --peer-trusted-ca-file=/etc/kubernetes/static-pod-certs/configmaps/etcd-peer-client-ca/ca-bundle.crt \
           --peer-client-cert-auth=true \
-          --advertise-client-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2379,unixs://${NODE_NODE_ENVVAR_NAME_IP}:0 \
+          --advertise-client-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2379 \
           --listen-client-urls=https://${LISTEN_ON_ALL_IPS}:2379,unixs://${NODE_NODE_ENVVAR_NAME_IP}:0 \
           --listen-peer-urls=https://${LISTEN_ON_ALL_IPS}:2380 \
           --listen-metrics-urls=https://${LISTEN_ON_ALL_IPS}:9978 ||  mv /etc/kubernetes/etcd-backup-dir/etcd-member.yaml /etc/kubernetes/manifests
