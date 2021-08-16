@@ -17,7 +17,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -398,14 +397,10 @@ func (o *InstallOptions) Run(ctx context.Context) error {
 }
 
 func (o *InstallOptions) writePod(rawPodBytes []byte, manifestFileName, resourceDir string) error {
-	// the kubelet has a bug that prevents graceful termination from working on static pods with the same name, filename
-	// and uuid.  By setting the pod UID we can work around the kubelet bug and get our graceful termination honored.
-	// Per the node team, this is hard to fix in the kubelet, though it will affect all static pods.
 	pod, err := resourceread.ReadPodV1(rawPodBytes)
 	if err != nil {
 		return err
 	}
-	pod.UID = uuid.NewUUID()
 	for _, fn := range o.PodMutationFns {
 		klog.V(2).Infof("Customizing static pod ...")
 		pod = pod.DeepCopy()

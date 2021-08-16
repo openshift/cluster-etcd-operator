@@ -573,7 +573,9 @@ func setAvailableProgressingNodeInstallerFailingConditions(newStatus *operatorv1
 		}
 
 		// keep track of failures so that we can report failing status
-		if currNodeStatus.LastFailedRevision != 0 && currNodeStatus.LastFailedReason != nodeStatusOperandFailedFallbackReason {
+		if currNodeStatus.LastFailedRevision != 0 &&
+			currNodeStatus.LastFailedRevision == currNodeStatus.TargetRevision &&
+			currNodeStatus.LastFailedReason != nodeStatusOperandFailedFallbackReason {
 			failingCount[currNodeStatus.LastFailedRevision] = failingCount[currNodeStatus.LastFailedRevision] + 1
 			failing[currNodeStatus.LastFailedRevision] = append(failing[currNodeStatus.LastFailedRevision], currNodeStatus.LastFailedRevisionErrors...)
 		}
