@@ -186,6 +186,10 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 // This can happen if the operator starts defrag of the cluster but then loses leader status and is rescheduled before
 // the operator can defrag all members.
 func isEndpointBackendFragmented(member *etcdserverpb.Member, endpointStatus *clientv3.StatusResponse) bool {
+	if endpointStatus == nil {
+		klog.Errorf("endpoint status validation failed: %v", endpointStatus)
+		return false
+	}
 	fragmentedPercentage := checkFragmentationPercentage(endpointStatus.DbSize, endpointStatus.DbSizeInUse)
 	klog.Infof("etcd member %q backend store fragmented: %.2f %%, dbSize: %d", member.Name, fragmentedPercentage, endpointStatus.DbSize)
 	return fragmentedPercentage >= maxFragmentedPercentage && endpointStatus.DbSize >= minDefragBytes
@@ -197,6 +201,9 @@ func checkFragmentationPercentage(ondisk, inuse int64) float64 {
 }
 
 func getMemberFromStatus(members []*etcdserverpb.Member, endpointStatus *clientv3.StatusResponse) (*etcdserverpb.Member, error) {
+	if endpointStatus == nil {
+		return nil, fmt.Errorf("endpoint status validation failed: %v", endpointStatus)
+	}
 	for _, member := range members {
 		if member.ID == endpointStatus.Header.MemberId {
 			return member, nil

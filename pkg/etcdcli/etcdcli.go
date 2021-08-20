@@ -281,6 +281,12 @@ func (g *etcdClientGetter) Status(ctx context.Context, member *etcdserverpb.Memb
 	if err != nil {
 		return nil, err
 	}
+
+	// PeerURL is a manditory field, but ClientURL is populated at runtime.
+	if len(member.ClientURLs) == 0 {
+		return nil, fmt.Errorf("etcd member unstarted, status check failed, review operator logs for scaling problems: %s", member.PeerURLs[0])
+	}
+
 	return cli.Status(ctx, member.ClientURLs[0])
 }
 
