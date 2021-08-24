@@ -18,8 +18,10 @@ type EtcdClient interface {
 	Defragment
 	MemberAdder
 	MemberHealth
+	IsMemberHealthy
 	MemberLister
 	MemberRemover
+	HealthyMemberLister
 	UnhealthyMemberLister
 	MemberStatusChecker
 	Status
@@ -33,7 +35,7 @@ type Defragment interface {
 }
 
 type Status interface {
-	Status(ctx context.Context, member *etcdserverpb.Member) (*clientv3.StatusResponse, error)
+	Status(ctx context.Context, target string) (*clientv3.StatusResponse, error)
 }
 
 type MemberAdder interface {
@@ -43,13 +45,19 @@ type MemberAdder interface {
 type MemberHealth interface {
 	MemberHealth() (memberHealth, error)
 }
-
+type IsMemberHealthy interface {
+	IsMemberHealthy(member *etcdserverpb.Member) (bool, error)
+}
 type MemberRemover interface {
 	MemberRemove(member string) error
 }
 
 type MemberLister interface {
 	MemberList() ([]*etcdserverpb.Member, error)
+}
+
+type HealthyMemberLister interface {
+	HealthyMembers(ctx context.Context) ([]*etcdserverpb.Member, error)
 }
 
 type UnhealthyMemberLister interface {
