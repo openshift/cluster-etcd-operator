@@ -271,7 +271,7 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			)
 
 			fakeKubeClient := fake.NewSimpleClientset(scenario.objects...)
-			fakeEtcdClient := etcdcli.NewFakeEtcdClient(scenario.etcdMembers)
+			fakeEtcdClient, _ := etcdcli.NewFakeEtcdClient(scenario.etcdMembers)
 			eventRecorder := events.NewRecorder(fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace), "test-etcdendpointscontroller", &corev1.ObjectReference{})
 			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 			for _, obj := range scenario.objects {

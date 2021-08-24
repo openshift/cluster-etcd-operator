@@ -13,6 +13,10 @@ export KUBECONFIG
 
 # download etcdctl from upstream release assets
 function dl_etcdctl {
+  if [ -x "$(command -v etcdctl)" ]; then
+    echo "etcdctl is already installed"
+    return
+  fi
   local etcdimg=${ETCD_IMAGE}
   local etcdctr=$(podman create ${etcdimg} --authfile=/var/lib/kubelet/config.json)
   local etcdmnt=$(podman mount "${etcdctr}")
