@@ -205,7 +205,7 @@ func (o *monitorOpts) newMonitor(ctx context.Context, lg *zap.Logger, singleTarg
 	// Create single target checks one check per target
 	for _, target := range targets {
 		// one client per target to eliminate lock racing
-		client, err := newETCD3Client(tlsInfo, targets)
+		client, err := newETCD3Client(ctx, tlsInfo, targets)
 		if err != nil {
 			return nil, err
 		}
@@ -219,7 +219,7 @@ func (o *monitorOpts) newMonitor(ctx context.Context, lg *zap.Logger, singleTarg
 	}
 
 	if len(targets) > 1 {
-		client, err := newETCD3Client(tlsInfo, targets)
+		client, err := newETCD3Client(ctx, tlsInfo, targets)
 		if err != nil {
 			return nil, err
 		}
@@ -262,7 +262,7 @@ func WithSingleTargetHealthCheck(checks ...health.CheckFunc) []health.CheckFunc 
 	return checks
 }
 
-func newETCD3Client(tlsInfo transport.TLSInfo, endpoints []string) (*clientv3.Client, error) {
+func newETCD3Client(ctx context.Context, tlsInfo transport.TLSInfo, endpoints []string) (*clientv3.Client, error) {
 
 	tlsConfig, err := tlsInfo.ClientConfig()
 	if err != nil {
@@ -279,6 +279,7 @@ func newETCD3Client(tlsInfo transport.TLSInfo, endpoints []string) (*clientv3.Cl
 		DialKeepAliveTimeout: keepaliveTimeout,
 		Endpoints:            endpoints,
 		TLS:                  tlsConfig,
+		Context:              ctx,
 	}
 
 	return clientv3.New(*cfg)
