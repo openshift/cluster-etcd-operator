@@ -234,7 +234,6 @@ func (c RevisionController) createNewRevision(recorder events.Recorder, revision
 		Name:       statusConfigMap.Name,
 		UID:        statusConfigMap.UID,
 	}}
-
 	for _, cm := range c.configMaps {
 		obj, _, err := resourceapply.SyncConfigMap(c.configMapGetter, recorder, c.targetNamespace, cm.Name, c.targetNamespace, nameFor(cm.Name, revision), ownerRefs)
 		if err != nil {
