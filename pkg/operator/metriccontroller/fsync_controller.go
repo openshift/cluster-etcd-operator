@@ -11,24 +11,20 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/klog/v2"
 
 	configclientv1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
-	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
 )
 
 type FSyncController struct {
-	secretClient corev1client.SecretsGetter
-	infraClient  configclientv1.InfrastructuresGetter
+	infraClient configclientv1.InfrastructuresGetter
 }
 
-func NewFSyncController(operatorClient operatorv1helpers.OperatorClient, infraClient configclientv1.InfrastructuresGetter, secretGetter corev1client.SecretsGetter, recorder events.Recorder) factory.Controller {
+func NewFSyncController(infraClient configclientv1.InfrastructuresGetter, recorder events.Recorder) factory.Controller {
 	c := &FSyncController{
-		secretClient: secretGetter,
-		infraClient:  infraClient,
+		infraClient: infraClient,
 	}
 	return factory.New().ResyncEvery(1*time.Minute).WithSync(c.sync).ToController("FSyncController", recorder)
 }
@@ -40,7 +36,7 @@ func (c *FSyncController) sync(ctx context.Context, syncCtx factory.SyncContext)
 	}
 	defer transport.CloseIdleConnections()
 
-	client, err := getPrometheusClient(ctx, c.secretClient, transport)
+	client, err := getPrometheusClient(transport)
 	if errors.IsNotFound(err) {
 		return nil
 	}
