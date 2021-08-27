@@ -161,7 +161,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return err
 	}
 
-	fsyncMetricController := metriccontroller.NewFSyncController(operatorClient, configClient.ConfigV1(), kubeClient.CoreV1(), controllerContext.EventRecorder)
+	fsyncMetricController := metriccontroller.NewFSyncController(configClient.ConfigV1(), controllerContext.EventRecorder)
 
 	statusController := status.NewClusterOperatorStatusController(
 		"etcd",
