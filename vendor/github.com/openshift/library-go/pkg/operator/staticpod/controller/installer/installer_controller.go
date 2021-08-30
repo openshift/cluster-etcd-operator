@@ -88,8 +88,9 @@ type InstallerController struct {
 
 	installerPodMutationFns []InstallerPodMutationFunc
 
-	factory *factory.Factory
-	clock   clock.Clock
+	factory          *factory.Factory
+	clock            clock.Clock
+	installerBackOff func(count int) time.Duration
 }
 
 // InstallerPodMutationFunc is a function that has a chance at changing the installer pod before it is created
@@ -160,6 +161,7 @@ func NewInstallerController(
 
 		installerPodImageFn: getInstallerPodImageFromEnv,
 		clock:               clock.RealClock{},
+		installerBackOff:    backOffDuration(10*time.Second, 1.5, 10*time.Minute),
 	}
 
 	c.ownerRefsFn = c.setOwnerRefs
@@ -375,12 +377,26 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 
 		// if we are in a transition, check to see whether our installer pod completed
 		if currNodeState.TargetRevision > currNodeState.CurrentRevision {
-			if err := c.ensureInstallerPod(currNodeState.NodeName, operatorSpec, currNodeState.TargetRevision, currNodeState.LastFailedCount); err != nil {
-				c.eventRecorder.Warningf("InstallerPodFailed", "Failed to create installer pod for revision %d count %d on node %q: %v",
-					currNodeState.TargetRevision, currNodeState.NodeName, currNodeState.LastFailedCount, err)
-				// if a newer revision is pending, continue, so we retry later with the latest available revision
-				if !(operatorStatus.LatestAvailableRevision > currNodeState.TargetRevision) {
-					return true, err
+			if operatorStatus.LatestAvailableRevision > currNodeState.TargetRevision {
+				// if new revision is penindg, don't do backoff, don't create a pod we will delete in newNodeStateForInstallInProgress again
+				// TODO: move out pod deletion from newNodeStateForInstallInProgress and put it here, and rework the flow of this func
+			} else {
+				if currNodeState.LastFailedRevision == currNodeState.TargetRevision && currNodeState.LastFailedTime != nil && !currNodeState.LastFailedTime.IsZero() {
+					delay := c.installerBackOff(currNodeState.LastFailedCount)
+					earliestRetry := currNodeState.LastFailedTime.Add(delay)
+					if !c.now().After(earliestRetry) {
+						klog.V(4).Infof("Backing off node %s installer retry %d until %v", currNodeState.NodeName, currNodeState.LastFailedCount+1, earliestRetry)
+						return true, nil
+					}
+				}
+
+				if err := c.ensureInstallerPod(currNodeState.NodeName, operatorSpec, currNodeState.TargetRevision, currNodeState.LastFailedCount); err != nil {
+					c.eventRecorder.Warningf("InstallerPodFailed", "Failed to create installer pod for revision %d count %d on node %q: %v",
+						currNodeState.TargetRevision, currNodeState.NodeName, currNodeState.LastFailedCount, err)
+					// if a newer revision is pending, continue, so we retry later with the latest available revision
+					if !(operatorStatus.LatestAvailableRevision > currNodeState.TargetRevision) {
+						return true, err
+					}
 				}
 			}
 
@@ -400,10 +416,10 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 					c.eventRecorder.Eventf("NodeCurrentRevisionChanged", "Updated node %q from revision %d to %d because %s", currNodeState.NodeName,
 						currNodeState.CurrentRevision, newCurrNodeState.CurrentRevision, reason)
 				}
+
 				if err := c.updateRevisionStatus(ctx, newOperatorStatus); err != nil {
 					klog.Errorf("error updating revision status configmap: %v", err)
 				}
-				return false, nil
 			} else {
 				klog.V(2).Infof("%q is in transition to %d, but has not made progress because %s", currNodeState.NodeName, currNodeState.TargetRevision, reasonWithBlame(reason))
 			}
@@ -419,15 +435,6 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 		if revisionToStart == 0 {
 			klog.V(4).Infof("%s, but node %s does not need update", nodeChoiceReason, currNodeState.NodeName)
 			continue
-		}
-
-		if currNodeState.LastFailedRevision == revisionToStart && currNodeState.LastFailedTime != nil && !currNodeState.LastFailedTime.IsZero() {
-			delay := backOffDuration(currNodeState.LastFailedCount)
-			earliestRetry := currNodeState.LastFailedTime.Add(delay)
-			if !c.now().After(earliestRetry) {
-				klog.V(4).Infof("Backing off node %s installer retry %d until %v", currNodeState.NodeName, currNodeState.LastFailedCount+1, earliestRetry)
-				return true, nil
-			}
 		}
 
 		klog.Infof("%s and needs new revision %d", nodeChoiceReason, revisionToStart)
@@ -1014,12 +1021,14 @@ func statusConfigMapNameForRevision(revision int32) string {
 	return fmt.Sprintf("%s-%d", statusConfigMapName, revision)
 }
 
-func backOffDuration(count int) time.Duration {
-	d := time.Second * time.Duration(float64(10)*math.Pow(1.5, float64(count)))
-	if d > time.Minute*10 {
-		return time.Minute * 10
+func backOffDuration(base time.Duration, factor float64, max time.Duration) func(count int) time.Duration {
+	return func(count int) time.Duration {
+		d := time.Duration(float64(base) * math.Pow(factor, float64(count)))
+		if d > max {
+			return max
+		}
+		return d
 	}
-	return d
 }
 
 func nthTimeOr1st(n int) string {

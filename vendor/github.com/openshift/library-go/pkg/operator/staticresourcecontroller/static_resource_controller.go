@@ -2,7 +2,11 @@ package staticresourcecontroller
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	configv1 "github.com/openshift/api/config/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/restmapper"
 	"strings"
 	"time"
 
@@ -57,7 +61,9 @@ type StaticResourceController struct {
 
 	eventRecorder events.Recorder
 
-	factory *factory.Factory
+	factory          *factory.Factory
+	restMapper       meta.RESTMapper
+	categoryExpander restmapper.CategoryExpander
 }
 
 // NewStaticResourceController returns a controller that maintains certain static manifests. Most "normal" types are supported,
@@ -180,6 +186,16 @@ func (c *StaticResourceController) AddInformer(informer cache.SharedIndexInforme
 	return c
 }
 
+func (c *StaticResourceController) AddRESTMapper(mapper meta.RESTMapper) *StaticResourceController {
+	c.restMapper = mapper
+	return c
+}
+
+func (c *StaticResourceController) AddCategoryExpander(categoryExpander restmapper.CategoryExpander) *StaticResourceController {
+	c.categoryExpander = categoryExpander
+	return c
+}
+
 func (c *StaticResourceController) AddNamespaceInformer(informer cache.SharedIndexInformer, namespaces ...string) *StaticResourceController {
 	c.factory.WithNamespaceInformer(informer, namespaces...)
 	return c
@@ -238,6 +254,67 @@ func (c StaticResourceController) Sync(ctx context.Context, syncContext factory.
 
 func (c *StaticResourceController) Name() string {
 	return "StaticResourceController"
+}
+
+func (c *StaticResourceController) RelatedObjects() ([]configv1.ObjectReference, error) {
+	if c.restMapper == nil {
+		return nil, errors.New("StaticResourceController.restMapper is nil")
+	}
+
+	if c.categoryExpander == nil {
+		return nil, errors.New("StaticResourceController.categoryExpander is nil")
+	}
+
+	// create lookup for resources in "all" alias
+	grs, _ := c.categoryExpander.Expand("all")
+	lookup := make(map[schema.GroupResource]struct{})
+	for _, gr := range grs {
+		lookup[gr] = struct{}{}
+	}
+
+	acc := make([]configv1.ObjectReference, 0)
+	errors := []error{}
+
+	for _, file := range c.files {
+		// parse static asset
+		objBytes, err := c.manifests(file)
+		if err != nil {
+			errors = append(errors, err)
+			continue
+		}
+		requiredObj, _, err := genericCodec.Decode(objBytes, nil, nil)
+		if err != nil {
+			errors = append(errors, err)
+			continue
+		}
+		metadata, err := meta.Accessor(requiredObj)
+		if err != nil {
+			errors = append(errors, err)
+			continue
+		}
+		// map gvk to gvr
+		gvk := requiredObj.GetObjectKind().GroupVersionKind()
+		mapping, err := c.restMapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+		if err != nil {
+			errors = append(errors, err)
+			continue
+		}
+		gvr := mapping.Resource
+		// filter out namespaced resources within "all" alias from result
+		if metadata.GetNamespace() != "" {
+			if _, ok := lookup[gvr.GroupResource()]; ok {
+				continue
+			}
+		}
+		acc = append(acc, configv1.ObjectReference{
+			Group:     gvk.Group,
+			Resource:  gvr.Resource,
+			Namespace: metadata.GetNamespace(),
+			Name:      metadata.GetName(),
+		})
+	}
+
+	return acc, utilerrors.NewAggregate(errors)
 }
 
 func (c *StaticResourceController) Run(ctx context.Context, workers int) {
