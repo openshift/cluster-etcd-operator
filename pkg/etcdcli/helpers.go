@@ -21,13 +21,18 @@ func (f *fakeEtcdClient) Defragment(ctx context.Context, member *etcdserverpb.Me
 	return nil, nil
 }
 
-func (f *fakeEtcdClient) Status(ctx context.Context, member *etcdserverpb.Member) (*clientv3.StatusResponse, error) {
-	for _, status := range f.opts.status {
-		if status.Header.MemberId == member.ID {
-			return status, nil
+func (f *fakeEtcdClient) Status(ctx context.Context, target string) (*clientv3.StatusResponse, error) {
+	for _, member := range f.members {
+		if member.ClientURLs[0] == target {
+			for _, status := range f.opts.status {
+				if status.Header.MemberId == member.ID {
+					return status, nil
+				}
+			}
+			return nil, fmt.Errorf("no status found for member %d matching target %q.", member.ID, target)
 		}
 	}
-	return nil, fmt.Errorf("status failed no match for member: %v", member)
+	return nil, fmt.Errorf("status failed no match for target: %q", target)
 }
 
 func (f *fakeEtcdClient) MemberAdd(peerURL string) error {
@@ -67,6 +72,11 @@ func (f *fakeEtcdClient) MemberHealth() (memberHealth, error) {
 	return memberHealth, nil
 }
 
+//IsMemberHealthy returns true if the number of etcd members equals the member of healthy members.
+func (f *fakeEtcdClient) IsMemberHealthy(member *etcdserverpb.Member) (bool, error) {
+	return len(f.members) == f.opts.healthyMember, nil
+}
+
 func (f *fakeEtcdClient) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 	if f.opts.unhealthyMember > 0 {
 		// unheathy start from beginning
@@ -75,9 +85,9 @@ func (f *fakeEtcdClient) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 	return []*etcdserverpb.Member{}, nil
 }
 
-func (f *fakeEtcdClient) HealthyMembers() ([]*etcdserverpb.Member, error) {
+func (f *fakeEtcdClient) HealthyMembers(ctx context.Context) ([]*etcdserverpb.Member, error) {
 	if f.opts.healthyMember > 0 {
-		// heathy start from end
+		// healthy start from end
 		return f.members[f.opts.unhealthyMember:], nil
 	}
 	return []*etcdserverpb.Member{}, nil

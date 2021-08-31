@@ -119,7 +119,11 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 	var endpointStatus []*clientv3.StatusResponse
 	var leader *clientv3.StatusResponse
 	for _, member := range etcdMembers {
-		status, err := c.etcdClient.Status(ctx, member)
+		if len(member.ClientURLs) == 0 {
+			// skip unstarted member
+			continue
+		}
+		status, err := c.etcdClient.Status(ctx, member.ClientURLs[0])
 		if err != nil {
 			return err
 		}

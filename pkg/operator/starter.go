@@ -28,6 +28,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/upgradebackupcontroller"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -193,6 +194,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeInformersForNamespaces,
 		controllerContext.EventRecorder,
 	)
+
 	etcdEndpointsController := etcdendpointscontroller.NewEtcdEndpointsController(
 		operatorClient,
 		etcdClient,
@@ -213,6 +215,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		etcdClient,
 		controllerContext.EventRecorder,
 	)
+
 	bootstrapTeardownController := bootstrapteardown.NewBootstrapTeardownController(
 		operatorClient,
 		kubeInformersForNamespaces,
@@ -237,11 +240,23 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		configInformers.Config().V1().Infrastructures().Lister(),
 		os.Getenv("CLI_IMAGE"),
 	)
+
 	defragController := defragcontroller.NewDefragController(
 		operatorClient,
 		etcdClient,
 		configInformers.Config().V1().Infrastructures().Lister(),
 		controllerContext.EventRecorder,
+	)
+
+	upgradeBackupController := upgradebackupcontroller.NewUpgradeBackupController(
+		operatorClient,
+		kubeClient,
+		etcdClient,
+		kubeInformersForNamespaces,
+		configInformers.Config().V1().ClusterVersions(),
+		controllerContext.EventRecorder,
+		os.Getenv("IMAGE"),
+		os.Getenv("OPERATOR_IMAGE"),
 	)
 
 	unsupportedConfigOverridesController := unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(
@@ -279,6 +294,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go scriptController.Run(ctx, 1)
 	go quorumGuardController.Run(ctx, 1)
 	go defragController.Run(ctx, 1)
+	go upgradeBackupController.Run(ctx, 1)
 
 	go envVarController.Run(1, ctx.Done())
 	go staticPodControllers.Start(ctx)

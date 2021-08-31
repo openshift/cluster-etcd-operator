@@ -276,18 +276,13 @@ func (g *etcdClientGetter) MemberList() ([]*etcdserverpb.Member, error) {
 	return membersResp.Members, nil
 }
 
-func (g *etcdClientGetter) Status(ctx context.Context, member *etcdserverpb.Member) (*clientv3.StatusResponse, error) {
+// Status reports etcd endpoint status of client URL target. Example https://10.0.10.1:2379
+func (g *etcdClientGetter) Status(ctx context.Context, clientURL string) (*clientv3.StatusResponse, error) {
 	cli, err := g.getEtcdClient()
 	if err != nil {
 		return nil, err
 	}
-
-	// PeerURL is a manditory field, but ClientURL is populated at runtime.
-	if len(member.ClientURLs) == 0 {
-		return nil, fmt.Errorf("etcd member unstarted, status check failed, review operator logs for scaling problems: %s", member.PeerURLs[0])
-	}
-
-	return cli.Status(ctx, member.ClientURLs[0])
+	return cli.Status(ctx, clientURL)
 }
 
 func (g *etcdClientGetter) GetMember(name string) (*etcdserverpb.Member, error) {
@@ -345,12 +340,48 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 	return memberHealth.GetUnhealthyMembers(), nil
 }
 
+// HealthyMembers performs health check of current members and returns a slice of healthy members and error
+// if no healthy members found.
+func (g *etcdClientGetter) HealthyMembers(ctx context.Context) ([]*etcdserverpb.Member, error) {
+	cli, err := g.getEtcdClient()
+	if err != nil {
+		return nil, err
+	}
+
+	etcdCluster, err := cli.MemberList(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	healthyMembers := getMemberHealth(etcdCluster.Members).GetHealthyMembers()
+	if len(healthyMembers) == 0 {
+		return nil, fmt.Errorf("no healthy etcd members found")
+	}
+
+	return healthyMembers, nil
+}
+
 func (g *etcdClientGetter) MemberHealth() (memberHealth, error) {
 	etcdMembers, err := g.MemberList()
 	if err != nil {
 		return nil, err
 	}
 	return getMemberHealth(etcdMembers), nil
+}
+
+func (g *etcdClientGetter) IsMemberHealthy(member *etcdserverpb.Member) (bool, error) {
+	if member == nil {
+		return false, fmt.Errorf("member can not be nil")
+	}
+	memberHealth := getMemberHealth([]*etcdserverpb.Member{member})
+	if len(memberHealth) == 0 {
+		return false, fmt.Errorf("member health check failed")
+	}
+	if memberHealth[0].Healthy {
+		return true, nil
+	}
+
+	return false, nil
 }
 
 func (g *etcdClientGetter) MemberStatus(member *etcdserverpb.Member) string {
