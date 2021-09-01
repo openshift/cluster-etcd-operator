@@ -26,7 +26,7 @@ func Test_ensureRecentBackup(t *testing.T) {
 		name                    string
 		objects                 []runtime.Object
 		clusterversionCondition configv1.ClusterOperatorStatusCondition
-		wantBackupStatus        operatorv1.ConditionStatus
+		wantBackupStatus        configv1.ConditionStatus
 		wantNilBackupCondition  bool
 		wantErr                 bool
 		wantEventCount          int
@@ -41,7 +41,7 @@ func Test_ensureRecentBackup(t *testing.T) {
 				Status:  configv1.ConditionTrue,
 				Message: fmt.Sprintf("Need RecentBackup"),
 			},
-			wantBackupStatus: operatorv1.ConditionFalse,
+			wantBackupStatus: configv1.ConditionFalse,
 			wantEventCount:   1, // pod delete
 		},
 		{
@@ -54,7 +54,7 @@ func Test_ensureRecentBackup(t *testing.T) {
 				Status:  configv1.ConditionTrue,
 				Message: fmt.Sprintf("Need RecentBackup"),
 			},
-			wantBackupStatus: operatorv1.ConditionFalse,
+			wantBackupStatus: configv1.ConditionFalse,
 			wantEventCount:   0, // skip pod delete
 		},
 		{
@@ -67,7 +67,7 @@ func Test_ensureRecentBackup(t *testing.T) {
 				Status:  configv1.ConditionTrue,
 				Message: fmt.Sprintf("Need RecentBackup"),
 			},
-			wantBackupStatus: operatorv1.ConditionUnknown,
+			wantBackupStatus: configv1.ConditionUnknown,
 		},
 		{
 			name: "RecentBackup not required invalid type",
@@ -98,7 +98,7 @@ func Test_ensureRecentBackup(t *testing.T) {
 				Status:  configv1.ConditionTrue,
 				Message: fmt.Sprintf("Need RecentBackup"),
 			},
-			wantBackupStatus: operatorv1.ConditionUnknown,
+			wantBackupStatus: configv1.ConditionUnknown,
 			wantEventCount:   1, // pod created event
 		},
 	}
@@ -152,13 +152,7 @@ func Test_ensureRecentBackup(t *testing.T) {
 				targetImagePullSpec:  "quay.io/openshift/cluster-etcd-operator:latest",
 			}
 
-			staticPodStatus := u.StaticPodOperatorStatus(
-				u.WithLatestRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-			)
-			gotCondition, err := c.ensureRecentBackup(context.TODO(), &staticPodStatus.OperatorStatus, fakeRecorder)
+			gotCondition, err := c.ensureRecentBackup(context.TODO(), &configv1.ClusterOperatorStatus{}, fakeRecorder)
 			// verify condition
 			if gotCondition == nil && !scenario.wantNilBackupCondition {
 				t.Fatalf("unexpected nil condition:")
