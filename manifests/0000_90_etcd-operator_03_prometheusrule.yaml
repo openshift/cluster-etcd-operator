@@ -117,6 +117,31 @@ spec:
         severity: warning
   - name: openshift-etcd.rules
     rules:
+    - alert: etcdHighNumberOfFailedGRPCRequests
+      annotations:
+        description: 'etcd cluster "{{ $labels.job }}": {{ $value }}% of requests for {{ $labels.grpc_method }} failed on etcd instance {{ $labels.instance }}.'
+        summary: etcd cluster has high number of failed grpc requests.
+      expr: |
+        100 * sum(rate(grpc_server_handled_total{job="etcd", grpc_code=~"Unknown|FailedPrecondition|ResourceExhausted|Internal|Unavailable|DataLoss|DeadlineExceeded"}[5m])) without (grpc_type, grpc_code)
+          /
+        sum(rate(grpc_server_handled_total{job="etcd"}[5m])) without (grpc_type, grpc_code)
+          > 2 and on ()(sum(cluster_infrastructure_provider{type!~"ipi|BareMetal"} == bool 1))
+      for: 10m
+      labels:
+        severity: warning
+    - alert: etcdHighNumberOfFailedGRPCRequests
+      annotations:
+        description: 'etcd cluster "{{ $labels.job }}": {{ $value }}% of requests for {{ $labels.grpc_method }} failed on etcd instance {{ $labels.instance }}.'
+        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdHighNumberOfFailedGRPCRequests.md
+        summary: etcd cluster has high number of failed grpc requests.
+      expr: |
+        100 * sum(rate(grpc_server_handled_total{job="etcd", grpc_code=~"Unknown|FailedPrecondition|ResourceExhausted|Internal|Unavailable|DataLoss|DeadlineExceeded"}[5m])) without (grpc_type, grpc_code)
+          /
+        sum(rate(grpc_server_handled_total{job="etcd"}[5m])) without (grpc_type, grpc_code)
+          > 5 and on ()(sum(cluster_infrastructure_provider{type!~"ipi|BareMetal"} == bool 1))
+      for: 10m
+      labels:
+        severity: critical
     - alert: etcdHighNumberOfLeaderChanges
       annotations:
         description: 'etcd cluster "{{ $labels.job }}": {{ $value }} leader changes within the last 15 minutes. Frequent elections may be a sign of insufficient resources, high network latency, or disruptions by other components and should be investigated.'
