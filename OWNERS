@@ -6,5 +6,6 @@ reviewers:
 approvers:
   - deads2k
   - hexfusion
+  - lilic
   - sttts
 component: "Etcd"
