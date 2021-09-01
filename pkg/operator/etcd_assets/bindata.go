@@ -89,6 +89,10 @@ spec:
       volumeMounts:
         - mountPath: /etc/kubernetes/cluster-backup
           name: etc-kubernetes-cluster-backup
+        - mountPath: /var/run/secrets/etcd-client
+          name: etcd-client
+        - mountPath: /var/run/configmaps/etcd-ca
+          name: etcd-ca
   containers:
   - name: cluster-backup
     imagePullPolicy: IfNotPresent
@@ -142,7 +146,12 @@ spec:
     - hostPath:
         path: /etc/kubernetes/static-pod-resources/etcd-certs
       name: cert-dir
-
+    - name: etcd-client
+      secret:
+        secretName: etcd-client
+    - name: etcd-ca
+      configMap:
+        name: etcd-ca-bundle
 `)
 
 func etcdClusterBackupPodYamlBytes() ([]byte, error) {
