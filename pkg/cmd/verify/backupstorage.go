@@ -227,7 +227,7 @@ func getPathAvailableSpaceBytes(path string) (int64, error) {
 		return 0, fmt.Errorf("filesystem status: %w", err)
 	}
 
-	available := int64(stat.Bavail) * stat.Bsize
+	available := int64(stat.Bavail) * int64(stat.Bsize)
 	if available == 0 {
 		return 0, fmt.Errorf("filesystem status: no available bytes")
 	}
