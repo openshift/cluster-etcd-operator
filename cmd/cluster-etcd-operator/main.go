@@ -65,7 +65,7 @@ func NewSSCSCommand() *cobra.Command {
 	cmd.AddCommand(certsyncpod.NewCertSyncControllerCommand(operator.CertConfigMaps, operator.CertSecrets))
 	cmd.AddCommand(waitforceo.NewWaitForCeoCommand(os.Stderr))
 	cmd.AddCommand(monitor.NewMonitorCommand(os.Stderr))
-	cmd.AddCommand(verify.NewVerifyCommand())
+	cmd.AddCommand(verify.NewVerifyCommand(os.Stderr))
 
 	return cmd
 }
