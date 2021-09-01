@@ -8,11 +8,13 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1client "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	configv1helpers "github.com/openshift/library-go/pkg/config/clusteroperator/v1helpers"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -46,26 +48,32 @@ const (
 
 type UpgradeBackupController struct {
 	operatorClient        v1helpers.OperatorClient
+	clusterOperatorClient configv1client.ClusterOperatorsGetter
 	kubeClient            kubernetes.Interface
 	etcdClient            etcdcli.EtcdClient
 	podLister             corev1listers.PodLister
 	clusterVersionLister  configv1listers.ClusterVersionLister
+	clusterOperatorLister configv1listers.ClusterOperatorLister
 	targetImagePullSpec   string
 	operatorImagePullSpec string
 }
 
 func NewUpgradeBackupController(
 	operatorClient v1helpers.OperatorClient,
+	clusterOperatorClient configv1client.ClusterOperatorsGetter,
 	kubeClient kubernetes.Interface,
 	etcdClient etcdcli.EtcdClient,
 	kubeInformers v1helpers.KubeInformersForNamespaces,
 	clusterVersionInformer configv1informers.ClusterVersionInformer,
+	clusterOperatorInformer configv1informers.ClusterOperatorInformer,
 	eventRecorder events.Recorder,
 	targetImagePullSpec string,
 	operatorImagePullSpec string,
 ) factory.Controller {
 	c := &UpgradeBackupController{
 		operatorClient:        operatorClient,
+		clusterOperatorClient: clusterOperatorClient,
+		clusterOperatorLister: clusterOperatorInformer.Lister(),
 		kubeClient:            kubeClient,
 		etcdClient:            etcdClient,
 		podLister:             kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
@@ -77,28 +85,34 @@ func NewUpgradeBackupController(
 		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer(),
 		operatorClient.Informer(),
 		clusterVersionInformer.Informer(),
+		clusterOperatorInformer.Informer(),
 	).WithSync(c.sync).ToController("ClusterBackupController", eventRecorder.WithComponentSuffix("cluster-backup-controller"))
 }
 
 func (c *UpgradeBackupController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
-	_, status, _, err := c.operatorClient.GetOperatorState()
+	originalClusterOperatorObj, err := c.clusterOperatorLister.Get("etcd")
+	if err != nil && !apierrors.IsNotFound(err) {
+		syncCtx.Recorder().Warningf("StatusFailed", "Unable to get current operator status for clusteroperator/etcd: %v", err)
+		return err
+	}
 	if err != nil {
 		return err
 	}
-	backupCondition := v1helpers.FindOperatorCondition(status.Conditions, backupConditionType)
-	newConditionRequired := backupCondition == nil
-	if newConditionRequired {
-		_, _, err := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+
+	clusterOperatorObj := originalClusterOperatorObj.DeepCopy()
+	if !isBackupConditionExist(originalClusterOperatorObj.Status.Conditions) {
+		configv1helpers.SetStatusCondition(&clusterOperatorObj.Status.Conditions, configv1.ClusterOperatorStatusCondition{
 			Type:   "RecentBackup",
-			Status: operatorv1.ConditionUnknown,
+			Status: configv1.ConditionUnknown,
 			Reason: "ControllerStarted",
-		}))
-		if err != nil {
+		})
+		if _, err := c.clusterOperatorClient.ClusterOperators().UpdateStatus(ctx, clusterOperatorObj, metav1.UpdateOptions{}); err != nil {
+			syncCtx.Recorder().Warning("ClusterBackupControllerUpdatingStatus", err.Error())
 			return err
 		}
 	}
 
-	recentBackupCondition, err := c.ensureRecentBackup(ctx, status, syncCtx.Recorder())
+	recentBackupCondition, err := c.ensureRecentBackup(ctx, &clusterOperatorObj.Status, syncCtx.Recorder())
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "UpgradeBackupControllerDegraded",
@@ -111,12 +125,11 @@ func (c *UpgradeBackupController) sync(ctx context.Context, syncCtx factory.Sync
 		}
 		return err
 	}
-	_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient,
-		v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:   "UpgradeBackupControllerDegraded",
-			Status: operatorv1.ConditionFalse,
-			Reason: "AsExpected",
-		}))
+	_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		Type:   "UpgradeBackupControllerDegraded",
+		Status: operatorv1.ConditionFalse,
+		Reason: "AsExpected",
+	}))
 	if updateErr != nil {
 		syncCtx.Recorder().Warning("ClusterBackupControllerUpdatingStatus", updateErr.Error())
 		return updateErr
@@ -127,8 +140,8 @@ func (c *UpgradeBackupController) sync(ctx context.Context, syncCtx factory.Sync
 		return nil
 	}
 
-	_, _, err = v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(*recentBackupCondition))
-	if err != nil {
+	configv1helpers.SetStatusCondition(&clusterOperatorObj.Status.Conditions, *recentBackupCondition)
+	if _, err := c.clusterOperatorClient.ClusterOperators().UpdateStatus(ctx, clusterOperatorObj, metav1.UpdateOptions{}); err != nil {
 		syncCtx.Recorder().Warning("ClusterBackupControllerUpdatingStatus", err.Error())
 		return err
 	}
@@ -137,7 +150,7 @@ func (c *UpgradeBackupController) sync(ctx context.Context, syncCtx factory.Sync
 }
 
 // ensureRecentBackup ensures that a new backup pod is created if one does not exist, returns the appropriate RecentBackup condition.
-func (c *UpgradeBackupController) ensureRecentBackup(ctx context.Context, operatorStatus *operatorv1.OperatorStatus, recorder events.Recorder) (*operatorv1.OperatorCondition, error) {
+func (c *UpgradeBackupController) ensureRecentBackup(ctx context.Context, clusterOperatorStatus *configv1.ClusterOperatorStatus, recorder events.Recorder) (*configv1.ClusterOperatorStatusCondition, error) {
 	clusterVersion, err := c.clusterVersionLister.Get("version")
 	if err != nil {
 		return nil, err
@@ -163,8 +176,8 @@ func (c *UpgradeBackupController) ensureRecentBackup(ctx context.Context, operat
 			return nil, fmt.Errorf("pod/%s: %v", clusterBackupPodName, err)
 		}
 
-		return &operatorv1.OperatorCondition{
-			Status:  operatorv1.ConditionUnknown,
+		return &configv1.ClusterOperatorStatusCondition{
+			Status:  configv1.ConditionUnknown,
 			Type:    backupConditionType,
 			Reason:  "UpgradeBackupInProgress",
 			Message: fmt.Sprintf("Upgrade backup pod created on node %s", backupNodeName),
@@ -180,10 +193,10 @@ func (c *UpgradeBackupController) ensureRecentBackup(ctx context.Context, operat
 	// everything else ConditionUnknown
 	switch {
 	case backupPod.Status.Phase == corev1.PodSucceeded:
-		backupCondition := v1helpers.FindOperatorCondition(operatorStatus.Conditions, backupConditionType)
+		backupCondition := configv1helpers.FindStatusCondition(clusterOperatorStatus.Conditions, backupConditionType)
 		if backupCondition.Reason != backupSuccess {
-			return &operatorv1.OperatorCondition{
-				Status:  operatorv1.ConditionTrue,
+			return &configv1.ClusterOperatorStatusCondition{
+				Status:  configv1.ConditionTrue,
 				Type:    backupConditionType,
 				Reason:  backupSuccess,
 				Message: fmt.Sprintf("UpgradeBackup pre 4.9 located at path %s/%s on node %q", recentBackupPath, recentBackupName, backupPod.Spec.NodeName),
@@ -204,8 +217,8 @@ func (c *UpgradeBackupController) ensureRecentBackup(ctx context.Context, operat
 		return operatorStatusBackupPodFailed(podDeletedMessage), nil
 	}
 
-	return &operatorv1.OperatorCondition{
-		Status:  operatorv1.ConditionUnknown,
+	return &configv1.ClusterOperatorStatusCondition{
+		Status:  configv1.ConditionUnknown,
 		Type:    backupConditionType,
 		Reason:  "UpgradeBackupInProgress",
 		Message: fmt.Sprintf("Backup pod phase: %q", backupPod.Status.Phase),
@@ -281,11 +294,20 @@ func isBackoffDuration(createdTimeStamp time.Time, duration time.Duration) bool 
 	return metav1.Now().Add(-duration).After(createdTimeStamp)
 }
 
-func operatorStatusBackupPodFailed(message string) *operatorv1.OperatorCondition {
-	return &operatorv1.OperatorCondition{
-		Status:  operatorv1.ConditionFalse,
+func operatorStatusBackupPodFailed(message string) *configv1.ClusterOperatorStatusCondition {
+	return &configv1.ClusterOperatorStatusCondition{
+		Status:  configv1.ConditionFalse,
 		Type:    backupConditionType,
 		Reason:  "UpgradeBackupFailed",
 		Message: message,
 	}
+}
+
+func isBackupConditionExist(conditions []configv1.ClusterOperatorStatusCondition) bool {
+	for _, condition := range conditions {
+		if condition.Type == backupConditionType {
+			return true
+		}
+	}
+	return false
 }
