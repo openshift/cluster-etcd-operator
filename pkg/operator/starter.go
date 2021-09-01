@@ -245,10 +245,12 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 	upgradeBackupController := upgradebackupcontroller.NewUpgradeBackupController(
 		operatorClient,
+		configClient.ConfigV1(),
 		kubeClient,
 		etcdClient,
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().ClusterVersions(),
+		configInformers.Config().V1().ClusterOperators(),
 		controllerContext.EventRecorder,
 		os.Getenv("IMAGE"),
 		os.Getenv("OPERATOR_IMAGE"),
