@@ -58,6 +58,7 @@ func NewVerifyBackupStorage(errOut io.Writer) *cobra.Command {
 			must := func(fn func(ctx context.Context) error) {
 				if err := fn(context.Background()); err != nil {
 					fmt.Fprint(verifyBackupStorage.errOut, err.Error())
+					os.Exit(1)
 				}
 			}
 			must(verifyBackupStorage.Run)
