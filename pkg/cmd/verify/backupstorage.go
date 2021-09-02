@@ -24,8 +24,8 @@ import (
 )
 
 const (
-	defaultEndpoint       = "https://127.0.0.1:2370"
-	defaultBackupPath     = "/var/lib/cluster-backup"
+	defaultEndpoint       = "https://localhost:2379"
+	defaultBackupPath     = "/etc/kubernetes/cluster-backup"
 	defaultCertFilePath   = "/var/run/secrets/etcd-client/tls.crt"
 	defaultKeyFilePath    = "/var/run/secrets/etcd-client/tls.key"
 	defaultCaCertFilePath = "/var/run/configmaps/etcd-ca/ca-bundle.crt"
