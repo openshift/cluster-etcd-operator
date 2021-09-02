@@ -3,6 +3,7 @@ package verify
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -23,8 +24,8 @@ import (
 )
 
 const (
-	defaultEndpoint       = "https://127.0.0.1:2370"
-	defaultBackupPath     = "/var/lib/cluster-backup"
+	defaultEndpoint       = "https://localhost:2379"
+	defaultBackupPath     = "/etc/kubernetes/cluster-backup"
 	defaultCertFilePath   = "/var/run/secrets/etcd-client/tls.crt"
 	defaultKeyFilePath    = "/var/run/secrets/etcd-client/tls.key"
 	defaultCaCertFilePath = "/var/run/configmaps/etcd-ca/ca-bundle.crt"
@@ -35,6 +36,8 @@ const (
 )
 
 type verifyBackupStorage struct {
+	errOut io.Writer
+
 	endpoints        string
 	backupPath       string
 	clientCertFile   string
@@ -44,13 +47,20 @@ type verifyBackupStorage struct {
 
 // NewVerifyBackupStorage perform checks against the local filesystem and compares the available storage bytes with the
 // estimated size as reported by EndpointStatus.
-func NewVerifyBackupStorage() *cobra.Command {
-	verifyBackupStorage := &verifyBackupStorage{}
+func NewVerifyBackupStorage(errOut io.Writer) *cobra.Command {
+	verifyBackupStorage := &verifyBackupStorage{
+		errOut: errOut,
+	}
 	cmd := &cobra.Command{
 		Use:   "backup-storage",
 		Short: "performs checks to ensure storage is adequate for backup state",
 		Run: func(cmd *cobra.Command, args []string) {
-			must := func(fn func(ctx context.Context) error) {}
+			must := func(fn func(ctx context.Context) error) {
+				if err := fn(context.Background()); err != nil {
+					fmt.Fprint(verifyBackupStorage.errOut, err.Error())
+					os.Exit(1)
+				}
+			}
 			must(verifyBackupStorage.Run)
 		},
 	}
@@ -139,10 +149,10 @@ func (v *verifyBackupStorage) isStorageAdequate(ctx context.Context) (bool, erro
 
 	requiredBytes := 2 * dbSizeBytes
 	if requiredBytes > fsAvailableBytes {
-		return false, fmt.Errorf("available storage is not adequate for path: %q, required bytes: %d, available bytes %d", v.backupPath, requiredBytes, fsAvailableBytes)
+		return false, fmt.Errorf("available storage is not adequate for path: %q, required bytes: %d, available bytes %d\n", v.backupPath, requiredBytes, fsAvailableBytes)
 	}
 
-	klog.Infof("Path %s, required storage bytes: %d, available %d", v.backupPath, requiredBytes, fsAvailableBytes)
+	klog.Infof("Path %s, required storage bytes: %d, available %d\n", v.backupPath, requiredBytes, fsAvailableBytes)
 	return true, nil
 }
 
@@ -218,7 +228,7 @@ func getPathAvailableSpaceBytes(path string) (int64, error) {
 		return 0, fmt.Errorf("filesystem status: %w", err)
 	}
 
-	available := int64(stat.Bavail) * stat.Bsize
+	available := int64(stat.Bavail) * int64(stat.Bsize)
 	if available == 0 {
 		return 0, fmt.Errorf("filesystem status: no available bytes")
 	}
