@@ -8,6 +8,7 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	v1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/informers"
@@ -80,13 +81,17 @@ func (c *StaticPodStateController) sync(ctx context.Context, syncCtx factory.Syn
 	errs := []error{}
 	failingErrorCount := 0
 	images := sets.NewString()
+	podsFound := false
 	for _, node := range originalOperatorStatus.NodeStatuses {
 		pod, err := c.podsGetter.Pods(c.targetNamespace).Get(ctx, mirrorPodNameForNode(c.staticPodName, node.NodeName), metav1.GetOptions{})
 		if err != nil {
-			errs = append(errs, err)
-			failingErrorCount++
+			if !apierrors.IsNotFound(err) {
+				errs = append(errs, err)
+				failingErrorCount++
+			}
 			continue
 		}
+		podsFound = true
 		images.Insert(pod.Spec.Containers[0].Image)
 
 		for i, containerStatus := range pod.Status.ContainerStatuses {
@@ -127,10 +132,8 @@ func (c *StaticPodStateController) sync(ctx context.Context, syncCtx factory.Syn
 
 	switch {
 	case len(images) == 0:
-		// if NodeStatuses is still empty, we are most probably in bootstrapping phase and this controller races with the
-		// installer controller. Hence, ignore that case. It will settle.
-
-		if len(originalOperatorStatus.NodeStatuses) > 0 {
+		// only generate an event if we found pods, but none has an image.
+		if podsFound {
 			syncCtx.Recorder().Warningf("MissingVersion", "no image found for operand pod")
 		}
 
