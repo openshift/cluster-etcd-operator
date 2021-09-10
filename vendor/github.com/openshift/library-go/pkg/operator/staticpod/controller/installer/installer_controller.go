@@ -475,7 +475,7 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 
 				if err := c.ensureInstallerPod(ctx, operatorSpec, currNodeState); err != nil {
 					c.eventRecorder.Warningf("InstallerPodFailed", "Failed to create installer pod for revision %d count %d on node %q: %v",
-						currNodeState.TargetRevision, currNodeState.NodeName, currNodeState.LastFailedCount, err)
+						currNodeState.TargetRevision, currNodeState.LastFailedCount, currNodeState.NodeName, err)
 					// if a newer revision is pending, continue, so we retry later with the latest available revision
 					if !(operatorStatus.LatestAvailableRevision > currNodeState.TargetRevision) {
 						return true, 0, err
@@ -573,7 +573,9 @@ func setAvailableProgressingNodeInstallerFailingConditions(newStatus *operatorv1
 		}
 
 		// keep track of failures so that we can report failing status
-		if currNodeStatus.LastFailedRevision != 0 && currNodeStatus.LastFailedReason != nodeStatusOperandFailedFallbackReason {
+		if currNodeStatus.LastFailedRevision != 0 &&
+			currNodeStatus.LastFailedRevision == currNodeStatus.TargetRevision &&
+			currNodeStatus.LastFailedReason != nodeStatusOperandFailedFallbackReason {
 			failingCount[currNodeStatus.LastFailedRevision] = failingCount[currNodeStatus.LastFailedRevision] + 1
 			failing[currNodeStatus.LastFailedRevision] = append(failing[currNodeStatus.LastFailedRevision], currNodeStatus.LastFailedRevisionErrors...)
 		}
