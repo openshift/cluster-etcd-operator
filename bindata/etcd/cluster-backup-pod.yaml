@@ -1,0 +1,85 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cluster-backup
+  namespace: openshift-etcd
+  labels:
+    app: cluster-backup
+spec:
+  initContainers:
+    - name: verify-storage
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      command: [ "cluster-etcd-operator", "verify", "backup-storage" ]
+      securityContext:
+        privileged: true
+      resources:
+        requests:
+          memory: 50Mi
+          cpu: 5m
+      volumeMounts:
+        - mountPath: /etc/kubernetes/cluster-backup
+          name: etc-kubernetes-cluster-backup
+        - mountPath: /var/run/secrets/etcd-client
+          name: etcd-client
+        - mountPath: /var/run/configmaps/etcd-ca
+          name: etcd-ca
+  containers:
+  - name: cluster-backup
+    imagePullPolicy: IfNotPresent
+    terminationMessagePolicy: FallbackToLogsOnError
+    command:
+      - /bin/sh
+      - -c
+      - |
+        #!/bin/sh
+        set -exuo pipefail
+
+        /usr/local/bin/cluster-backup.sh --force ${CLUSTER_BACKUP_PATH}
+
+    resources:
+      requests:
+        memory: 80Mi
+        cpu: 10m
+    securityContext:
+      privileged: true
+    volumeMounts:
+      - mountPath: /usr/local/bin
+        name: usr-local-bin
+      - mountPath: /etc/kubernetes/static-pod-resources
+        name: resources-dir
+      - mountPath: /etc/kubernetes/static-pod-certs
+        name: cert-dir
+      - mountPath: /etc/kubernetes/manifests
+        name: static-pod-dir
+      - mountPath: /etc/kubernetes/cluster-backup
+        name: etc-kubernetes-cluster-backup
+  priorityClassName: system-node-critical
+  nodeSelector:
+    node-role.kubernetes.io/master: ""
+  restartPolicy: Never
+  hostNetwork: true
+  tolerations:
+  - operator: "Exists"
+  volumes:
+    - hostPath:
+        path: /usr/local/bin
+      name: usr-local-bin
+    - hostPath:
+        path: /etc/kubernetes/cluster-backup
+      name: etc-kubernetes-cluster-backup
+    - hostPath:
+        path: /etc/kubernetes/manifests
+      name: static-pod-dir
+    - hostPath:
+        path: /etc/kubernetes/static-pod-resources
+      name: resources-dir
+    - hostPath:
+        path: /etc/kubernetes/static-pod-resources/etcd-certs
+      name: cert-dir
+    - name: etcd-client
+      secret:
+        secretName: etcd-client
+    - name: etcd-ca
+      configMap:
+        name: etcd-ca-bundle

@@ -3,6 +3,7 @@ package main
 import (
 	goflag "flag"
 	"fmt"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/verify"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -64,6 +65,7 @@ func NewSSCSCommand() *cobra.Command {
 	cmd.AddCommand(certsyncpod.NewCertSyncControllerCommand(operator.CertConfigMaps, operator.CertSecrets))
 	cmd.AddCommand(waitforceo.NewWaitForCeoCommand(os.Stderr))
 	cmd.AddCommand(monitor.NewMonitorCommand(os.Stderr))
+	cmd.AddCommand(verify.NewVerifyCommand(os.Stderr))
 
 	return cmd
 }
