@@ -457,6 +457,15 @@ func getMachineCIDR(installConfig map[string]interface{}, isSingleStackIPv6 bool
 		if err != nil {
 			return "", err
 		}
+
+		// Placeholder IP addresses are not allowed for machine CIDR as bootstrap will fail
+		// due to the endpoints being skipped over by the config obeservers
+		// See: https://github.com/openshift/cluster-kube-apiserver-operator/blob/37b25afec3e8666af6b668e979cc9299ccce62d4/pkg/operator/configobservation/etcdendpoints/observe_etcd_endpoints.go#L72
+		// TODO(hasbro17): Use a set for all reserved/not-allowed IPv4/6 addresses?
+		if strings.HasPrefix(broadcast.String(), "192.0.2.") || strings.HasPrefix(broadcast.String(), "2001:db8:") {
+			return "", fmt.Errorf("machineNetwork CIDR is reserved and unsupported: %q", broadcast.String())
+		}
+
 		isIPV4, err := dnshelpers.IsIPv4(broadcast.String())
 		if err != nil {
 			return "", err
