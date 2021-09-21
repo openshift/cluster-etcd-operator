@@ -448,12 +448,25 @@ func getMachineCIDR(installConfig map[string]interface{}, isSingleStackIPv6 bool
 		return "", fmt.Errorf("unrecognized data structure in networking field")
 	}
 
-	for _, network := range networking["machineNetwork"].([]interface{})[0].(map[string]interface{}) {
-		machineCIDR := fmt.Sprintf("%v", network)
+	for _, machineNetwork := range networking["machineNetwork"].([]interface{}) {
+		network := machineNetwork.(map[string]interface{})
+		machineCIDR := fmt.Sprintf("%v", network["cidr"])
+		if len(machineCIDR) == 0 {
+			return "", fmt.Errorf("malformed machineNetwork entry is missing the cidr field: %#v", network)
+		}
 		broadcast, _, err := net.ParseCIDR(machineCIDR)
 		if err != nil {
 			return "", err
 		}
+
+		// Placeholder IP addresses are not allowed for machine CIDR as bootstrap will fail
+		// due to the endpoints being skipped over by the config obeservers
+		// See: https://github.com/openshift/cluster-kube-apiserver-operator/blob/37b25afec3e8666af6b668e979cc9299ccce62d4/pkg/operator/configobservation/etcdendpoints/observe_etcd_endpoints.go#L72
+		// TODO(hasbro17): Use a set for all reserved/not-allowed IPv4/6 addresses?
+		if strings.HasPrefix(broadcast.String(), "192.0.2.") || strings.HasPrefix(broadcast.String(), "2001:db8:") {
+			return "", fmt.Errorf("machineNetwork CIDR is reserved and unsupported: %q", broadcast.String())
+		}
+
 		isIPV4, err := dnshelpers.IsIPv4(broadcast.String())
 		if err != nil {
 			return "", err
