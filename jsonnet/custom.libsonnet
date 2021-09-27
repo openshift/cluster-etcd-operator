@@ -5,6 +5,40 @@
         name: 'openshift-etcd.rules',
         rules: [
           {
+            alert: 'etcdHighNumberOfFailedGRPCRequests',
+            expr: |||
+              100 * sum(rate(grpc_server_handled_total{job="etcd", grpc_code=~"Unknown|FailedPrecondition|ResourceExhausted|Internal|Unavailable|DataLoss|DeadlineExceeded"}[5m])) without (grpc_type, grpc_code)
+                /
+              sum(rate(grpc_server_handled_total{job="etcd"}[5m])) without (grpc_type, grpc_code)
+                > 2 and on ()(sum(cluster_infrastructure_provider{type!~"ipi|BareMetal"} == bool 1))
+            |||,
+            'for': '10m',
+            labels: {
+              severity: 'warning',
+            },
+            annotations: {
+              description: 'etcd cluster "{{ $labels.job }}": {{ $value }}% of requests for {{ $labels.grpc_method }} failed on etcd instance {{ $labels.instance }}.',
+              summary: 'etcd cluster has high number of failed grpc requests.',
+            },
+          },
+          {
+            alert: 'etcdHighNumberOfFailedGRPCRequests',
+            expr: |||
+              100 * sum(rate(grpc_server_handled_total{job="etcd", grpc_code=~"Unknown|FailedPrecondition|ResourceExhausted|Internal|Unavailable|DataLoss|DeadlineExceeded"}[5m])) without (grpc_type, grpc_code)
+                /
+              sum(rate(grpc_server_handled_total{job="etcd"}[5m])) without (grpc_type, grpc_code)
+                > 5 and on ()(sum(cluster_infrastructure_provider{type!~"ipi|BareMetal"} == bool 1))
+            |||,
+            'for': '10m',
+            labels: {
+              severity: 'critical',
+            },
+            annotations: {
+              description: 'etcd cluster "{{ $labels.job }}": {{ $value }}% of requests for {{ $labels.grpc_method }} failed on etcd instance {{ $labels.instance }}.',
+              summary: 'etcd cluster has high number of failed grpc requests.',
+            },
+          },
+          {
             alert: 'etcdHighNumberOfLeaderChanges',
             expr: |||
               increase((max without (instance) (etcd_server_leader_changes_seen_total{job=~".*etcd.*"}) or 0*absent(etcd_server_leader_changes_seen_total{job=~".*etcd.*"}))[15m:1m]) >= 5
