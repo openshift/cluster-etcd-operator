@@ -31,6 +31,8 @@ import (
 	"k8s.io/klog/v2"
 )
 
+// NOTE: This controller DISABLED in 4.10+ and can be removed at any time.
+
 // UpgradeBackupController responds to an upgrade request to 4.9 by attempting
 // to ensure the cluster is backed up. The CVO is expected to wait on a ceo
 // condition indicating successful backup before responding to the upgrade

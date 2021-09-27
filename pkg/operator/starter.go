@@ -28,7 +28,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/upgradebackupcontroller"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -248,19 +247,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
-	upgradeBackupController := upgradebackupcontroller.NewUpgradeBackupController(
-		operatorClient,
-		configClient.ConfigV1(),
-		kubeClient,
-		etcdClient,
-		kubeInformersForNamespaces,
-		configInformers.Config().V1().ClusterVersions(),
-		configInformers.Config().V1().ClusterOperators(),
-		controllerContext.EventRecorder,
-		os.Getenv("IMAGE"),
-		os.Getenv("OPERATOR_IMAGE"),
-	)
-
 	unsupportedConfigOverridesController := unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(
 		operatorClient,
 		controllerContext.EventRecorder,
@@ -296,7 +282,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go scriptController.Run(ctx, 1)
 	go quorumGuardController.Run(ctx, 1)
 	go defragController.Run(ctx, 1)
-	go upgradeBackupController.Run(ctx, 1)
 
 	go envVarController.Run(1, ctx.Done())
 	go staticPodControllers.Start(ctx)
