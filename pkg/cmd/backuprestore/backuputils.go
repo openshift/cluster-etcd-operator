@@ -2,9 +2,10 @@ package backuprestore
 
 import (
 	"fmt"
-	"k8s.io/klog/v2"
 	"path/filepath"
 	"time"
+
+	"k8s.io/klog/v2"
 )
 
 //This backup mimics the functionality of cluster-backup.sh
