@@ -43,7 +43,7 @@ type MemberAdder interface {
 }
 
 type MemberHealth interface {
-	MemberHealth() (memberHealth, error)
+	MemberHealth(ctx context.Context) (memberHealth, error)
 }
 type IsMemberHealthy interface {
 	IsMemberHealthy(member *etcdserverpb.Member) (bool, error)
@@ -53,7 +53,7 @@ type MemberRemover interface {
 }
 
 type MemberLister interface {
-	MemberList() ([]*etcdserverpb.Member, error)
+	MemberList(ctx context.Context) ([]*etcdserverpb.Member, error)
 }
 
 type HealthyMemberLister interface {

@@ -86,18 +86,18 @@ func (c *ClusterMemberController) sync(ctx context.Context, syncCtx factory.Sync
 func (c *ClusterMemberController) reconcileMembers(recorder events.Recorder) error {
 	unhealthyMembers, err := c.etcdClient.UnhealthyMembers()
 	if err != nil {
-		return err
+		return fmt.Errorf("could not get list of unhealthy members: %v", err)
 	}
 	if len(unhealthyMembers) > 0 {
 		klog.V(4).Infof("unhealthy members: %v", spew.Sdump(unhealthyMembers))
-		return nil
+		return fmt.Errorf("unhealthy members found during reconciling members")
 	}
 
 	// etcd is healthy, decide if we need to scale
 	podToAdd, err := c.getEtcdPodToAddToMembership()
 	switch {
 	case err != nil:
-		return err
+		return fmt.Errorf("could not get etcd pod: %w", err)
 	case podToAdd == nil:
 		// no more work left to do
 		return nil
@@ -107,11 +107,11 @@ func (c *ClusterMemberController) reconcileMembers(recorder events.Recorder) err
 
 	etcdHost, err := c.getEtcdPeerHostToScale(podToAdd)
 	if err != nil {
-		return err
+		return fmt.Errorf("could not get etcd peer host :%w", err)
 	}
 	err = c.etcdClient.MemberAdd(fmt.Sprintf("https://%s:2380", etcdHost))
 	if err != nil {
-		return err
+		return fmt.Errorf("could not add member :%w", err)
 	}
 	return nil
 }

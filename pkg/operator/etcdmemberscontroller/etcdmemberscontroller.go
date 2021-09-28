@@ -60,7 +60,10 @@ func (c *EtcdMembersController) sync(ctx context.Context, syncCtx factory.SyncCo
 }
 
 func (c *EtcdMembersController) reportEtcdMembers(recorder events.Recorder) error {
-	memberHealth, err := c.etcdClient.MemberHealth()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	memberHealth, err := c.etcdClient.MemberHealth(ctx)
 	if err != nil {
 		return err
 	}
