@@ -4,16 +4,19 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"time"
 
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/grpclog"
 	"k8s.io/klog/v2"
 )
 
 func getEtcdClient(endpoints []string) (*clientv3.Client, error) {
+	grpclog.SetLoggerV2(grpclog.NewLoggerV2(ioutil.Discard, ioutil.Discard, os.Stderr))
 	dialOptions := []grpc.DialOption{
 		grpc.WithBlock(), // block until the underlying connection is up
 	}
