@@ -3,8 +3,10 @@ package etcdcli
 import (
 	"context"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/url"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -15,9 +17,12 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
+	"go.etcd.io/etcd/client/pkg/v3/logutil"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/grpclog"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -133,10 +138,12 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 }
 
 func getEtcdClientWithClientOpts(endpoints []string, opts ...ClientOption) (*clientv3.Client, error) {
+	grpclog.SetLoggerV2(grpclog.NewLoggerV2(ioutil.Discard, ioutil.Discard, os.Stderr))
 	clientOpts, err := newClientOpts(opts...)
 	if err != nil {
 		return nil, err
 	}
+
 	dialOptions := []grpc.DialOption{
 		grpc.WithBlock(), // block until the underlying connection is up
 	}
