@@ -158,11 +158,20 @@ func getEtcdClientWithClientOpts(endpoints []string, opts ...ClientOption) (*cli
 		return nil, err
 	}
 
+	// Our logs are noisy
+	lcfg := logutil.DefaultZapLoggerConfig
+	lcfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
+	l, err := lcfg.Build()
+	if err != nil {
+		return nil, fmt.Errorf("failed building client logger: %w", err)
+	}
+
 	cfg := &clientv3.Config{
 		DialOptions: dialOptions,
 		Endpoints:   endpoints,
 		DialTimeout: clientOpts.dialTimeout,
 		TLS:         tlsConfig,
+		Logger:      l,
 	}
 
 	cli, err := clientv3.New(*cfg)
