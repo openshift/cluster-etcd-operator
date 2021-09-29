@@ -7,6 +7,32 @@ metadata:
     k8s-app: etcd
 spec:
   containers:
+  - name: etcdctl
+    image: {{ .Image }}
+    imagePullPolicy: IfNotPresent
+    command:
+      - "/bin/bash"
+      - "-c"
+      - "trap TERM INT; sleep infinity & wait"
+    resources:
+      requests:
+        memory: 60Mi
+        cpu: 10m
+    terminationMessagePolicy: FallbackToLogsOnError
+    securityContext:
+      privileged: true
+    volumeMounts:
+      - name: certs
+        mountPath: /etc/ssl/etcd/
+    env:
+      - name: "ETCDCTL_KEY"
+        value: "/etc/ssl/etcd/etcd-all-certs/etcd-serving-{{ .Hostname }}.key"
+      - name: "ETCDCTL_CERT"
+        value: "/etc/ssl/etcd/etcd-all-certs/etcd-serving-{{ .Hostname }}.crt"
+      - name: "ETCDCTL_CACERT"
+        value: "/etc/ssl/etcd/ca.crt"
+      - name: "ETCDCTL_ENDPOINTS"
+        value: "https://localhost:2379"
   - name: etcd
     image: {{ .Image }}
     command:
@@ -39,15 +65,10 @@ spec:
     securityContext:
       privileged: true
     volumeMounts:
-    - name: discovery
-      mountPath: /run/etcd/
     - name: certs
       mountPath: /etc/ssl/etcd/
     - name: data-dir
       mountPath: /var/lib/etcd/
-    - name: conf
-      mountPath: /etc/etcd/
-
     env:
 {{.ComputedEnvVars }}
     ports:
@@ -66,15 +87,6 @@ spec:
   - name: certs
     hostPath:
       path: /etc/kubernetes/static-pod-resources/etcd-member
-  - name: kubeconfig
-    hostPath:
-      path: /etc/kubernetes/kubeconfig
-  - name: discovery
-    hostPath:
-      path: /run/etcd
   - name: data-dir
     hostPath:
       path: /var/lib/etcd
-  - name: conf
-    hostPath:
-      path: /etc/etcd
