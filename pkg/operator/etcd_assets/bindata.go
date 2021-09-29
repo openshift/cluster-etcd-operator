@@ -737,18 +737,6 @@ ${COMPUTED_ENV_VARS}
 
         etcdctl member list || true
 
-        # this has a non-zero return code if the command is non-zero.  If you use an export first, it doesn't and you
-        # will succeed when you should fail.
-        ETCD_INITIAL_CLUSTER=$(discover-etcd-initial-cluster \
-          --cacert=/etc/kubernetes/static-pod-certs/configmaps/etcd-serving-ca/ca-bundle.crt \
-          --cert=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.crt \
-          --key=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.key \
-          --endpoints=${ALL_ETCD_ENDPOINTS} \
-          --data-dir=/var/lib/etcd \
-          --target-peer-url-host=${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST} \
-          --target-name=NODE_NAME)
-        export ETCD_INITIAL_CLUSTER
-
         # we cannot use the "normal" port conflict initcontainer because when we upgrade, the existing static pod will never yield,
         # so we do the detection in etcd container itself.
         echo -n "Waiting for ports 2379, 2380 and 9978 to be released."

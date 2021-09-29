@@ -20,6 +20,7 @@ type EtcdClient interface {
 	MemberHealth
 	IsMemberHealthy
 	MemberLister
+	MemberPromote
 	MemberRemover
 	HealthyMemberLister
 	UnhealthyMemberLister
@@ -40,6 +41,10 @@ type Status interface {
 
 type MemberAdder interface {
 	MemberAdd(ctx context.Context, peerURL string) error
+}
+
+type MemberPromote interface {
+	MemberPromote(ctx context.Context, id uint64) error
 }
 
 type MemberHealth interface {

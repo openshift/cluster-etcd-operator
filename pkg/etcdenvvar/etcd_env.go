@@ -51,6 +51,7 @@ var envVarFns = []envVarFunc{
 	getElectionTimeout,
 	getUnsupportedArch,
 	getCipherSuites,
+	getInitialCluster,
 }
 
 // getEtcdEnvVars returns the env vars that need to be set on the etcd static pods that will be rendered.
@@ -63,6 +64,7 @@ var envVarFns = []envVarFunc{
 //   ETCD_INITIAL_CLUSTER_STATE
 //   ETCD_UNSUPPORTED_ARCH
 //   ETCD_CIPHER_SUITES
+//   ETCD_INITIAL_CLUSTER
 //   NODE_%s_IP
 //   NODE_%s_ETCD_URL_HOST
 //   NODE_%s_ETCD_NAME
@@ -287,5 +289,43 @@ func getCipherSuites(envVarContext envVarContext) (map[string]string, error) {
 
 	return map[string]string{
 		"ETCD_CIPHER_SUITES": strings.Join(actualCipherSuites, ","),
+	}, nil
+}
+
+func getInitialCluster(envVarContext envVarContext) (map[string]string, error) {
+	network, err := envVarContext.networkLister.Get("cluster")
+	if err != nil {
+		return nil, err
+	}
+
+	etcdEndpoints, err := envVarContext.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints")
+	if err != nil {
+		return nil, err
+	}
+	var initialCluster []string
+	if bootstrapIP := etcdEndpoints.Annotations["alpha.installer.openshift.io/etcd-bootstrap"]; len(bootstrapIP) > 0 {
+		urlHost, err := dnshelpers.GetURLHostForIP(bootstrapIP)
+		if err != nil {
+			return nil, err
+		}
+		initialCluster = append(initialCluster, fmt.Sprintf("bootstrap-etcd=https://%s:2380", urlHost))
+	}
+
+	for _, nodeInfo := range envVarContext.status.NodeStatuses {
+		node, err := envVarContext.nodeLister.Get(nodeInfo.NodeName)
+		if err != nil {
+			return nil, err
+		}
+		etcdURLHost, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
+		if err != nil {
+			return nil, err
+		}
+		initialCluster = append(initialCluster, fmt.Sprintf("%s=https://%s:2380", nodeInfo.NodeName, etcdURLHost))
+	}
+	// ensure order is always the same
+	sort.Strings(initialCluster)
+
+	return map[string]string{
+		"ETCD_INITIAL_CLUSTER": strings.Join(initialCluster, ","),
 	}, nil
 }

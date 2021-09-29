@@ -29,13 +29,17 @@ func (f *fakeEtcdClient) Status(ctx context.Context, target string) (*clientv3.S
 					return status, nil
 				}
 			}
-			return nil, fmt.Errorf("no status found for member %d matching target %q.", member.ID, target)
+			return nil, fmt.Errorf("no status found for member %d matching target %q", member.ID, target)
 		}
 	}
 	return nil, fmt.Errorf("status failed no match for target: %q", target)
 }
 
 func (f *fakeEtcdClient) MemberAdd(ctx context.Context, peerURL string) error {
+	panic("implement me")
+}
+
+func (f *fakeEtcdClient) MemberPromote(ctx context.Context, id uint64) error {
 	panic("implement me")
 }
 

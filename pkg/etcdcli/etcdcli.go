@@ -219,11 +219,24 @@ func (g *etcdClientGetter) MemberAdd(ctx context.Context, peerURL string) error 
 		}
 	}
 
-	_, err = cli.MemberAdd(ctx, []string{peerURL})
+	_, err = cli.MemberAddAsLearner(ctx, []string{peerURL})
 	if err != nil {
 		return err
 	}
-	return err
+	return nil
+}
+
+func (g *etcdClientGetter) MemberPromote(ctx context.Context, id uint64) error {
+	cli, err := g.getEtcdClient()
+	if err != nil {
+		return err
+	}
+
+	_, err = cli.MemberPromote(ctx, id)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (g *etcdClientGetter) MemberUpdatePeerURL(ctx context.Context, id uint64, peerURLs []string) error {
