@@ -97,8 +97,6 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 	// If the bootstrap IP is present on the existing configmap, either copy it
 	// forward or remove it if possible so clients can forget about it.
 	if existing, err := c.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints"); err == nil && existing != nil {
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
 		memberHealth, err := c.etcdClient.MemberHealth(ctx)
 		if err != nil {
 			return fmt.Errorf("could not get member health: %w", err)

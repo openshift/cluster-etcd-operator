@@ -243,7 +243,7 @@ func TestClusterMemberController_getEtcdPodToAddToMembership(t *testing.T) {
 				etcdClient: fakeEtcdClient,
 				podLister:  tt.fields.podLister,
 			}
-			got, err := c.getEtcdPodToAddToMembership()
+			got, err := c.getEtcdPodToAddToMembership(context.TODO())
 			if (err != nil) != tt.wantErr {
 				t.Errorf("getEtcdPodToAddToMembership() error = %v, wantErr %v", err, tt.wantErr)
 				return

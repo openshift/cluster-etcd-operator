@@ -60,7 +60,7 @@ func NewClusterMemberController(
 }
 
 func (c *ClusterMemberController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
-	err := c.reconcileMembers(syncCtx.Recorder())
+	err := c.reconcileMembers(ctx, syncCtx.Recorder())
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "ClusterMemberControllerDegraded",
@@ -83,8 +83,8 @@ func (c *ClusterMemberController) sync(ctx context.Context, syncCtx factory.Sync
 	return updateErr
 }
 
-func (c *ClusterMemberController) reconcileMembers(recorder events.Recorder) error {
-	unhealthyMembers, err := c.etcdClient.UnhealthyMembers()
+func (c *ClusterMemberController) reconcileMembers(ctx context.Context, recorder events.Recorder) error {
+	unhealthyMembers, err := c.etcdClient.UnhealthyMembers(ctx)
 	if err != nil {
 		return fmt.Errorf("could not get list of unhealthy members: %v", err)
 	}
@@ -94,7 +94,7 @@ func (c *ClusterMemberController) reconcileMembers(recorder events.Recorder) err
 	}
 
 	// etcd is healthy, decide if we need to scale
-	podToAdd, err := c.getEtcdPodToAddToMembership()
+	podToAdd, err := c.getEtcdPodToAddToMembership(ctx)
 	switch {
 	case err != nil:
 		return fmt.Errorf("could not get etcd pod: %w", err)
@@ -109,14 +109,14 @@ func (c *ClusterMemberController) reconcileMembers(recorder events.Recorder) err
 	if err != nil {
 		return fmt.Errorf("could not get etcd peer host :%w", err)
 	}
-	err = c.etcdClient.MemberAdd(fmt.Sprintf("https://%s:2380", etcdHost))
+	err = c.etcdClient.MemberAdd(ctx, fmt.Sprintf("https://%s:2380", etcdHost))
 	if err != nil {
 		return fmt.Errorf("could not add member :%w", err)
 	}
 	return nil
 }
 
-func (c *ClusterMemberController) getEtcdPodToAddToMembership() (*corev1.Pod, error) {
+func (c *ClusterMemberController) getEtcdPodToAddToMembership(ctx context.Context) (*corev1.Pod, error) {
 	// list etcd member pods
 	pods, err := c.podLister.List(labels.Set{"app": "etcd"}.AsSelector())
 	if err != nil {
@@ -145,7 +145,7 @@ func (c *ClusterMemberController) getEtcdPodToAddToMembership() (*corev1.Pod, er
 
 		// now check to see if this member is already part of the quorum.  This logically requires being able to map every
 		// type of member name we have ever created.  The most important for now is the nodeName.
-		etcdMember, err := c.etcdClient.GetMember(pod.Spec.NodeName)
+		etcdMember, err := c.etcdClient.GetMember(ctx, pod.Spec.NodeName)
 		switch {
 		case apierrors.IsNotFound(err):
 			return pod, nil
