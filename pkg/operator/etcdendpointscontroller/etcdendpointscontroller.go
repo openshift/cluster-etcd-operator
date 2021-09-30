@@ -61,7 +61,6 @@ func NewEtcdEndpointsController(
 
 func (c *EtcdEndpointsController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	err := c.syncConfigMap(ctx, syncCtx.Recorder())
-
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdEndpointsDegraded",
@@ -97,10 +96,12 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 
 	// If the bootstrap IP is present on the existing configmap, either copy it
 	// forward or remove it if possible so clients can forget about it.
-	if existing, err := c.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints"); err == nil {
-		memberHealth, err := c.etcdClient.MemberHealth()
+	if existing, err := c.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints"); err == nil && existing != nil {
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		memberHealth, err := c.etcdClient.MemberHealth(ctx)
 		if err != nil {
-			return err
+			return fmt.Errorf("could not get member health: %w", err)
 		}
 
 		if existingIP, hasExistingIP := existing.Annotations[etcdcli.BootstrapIPAnnotationKey]; hasExistingIP {
@@ -143,7 +144,7 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 
 	// Apply endpoint updates
 	if _, _, err := resourceapply.ApplyConfigMap(ctx, c.configmapClient, recorder, required); err != nil {
-		return err
+		return fmt.Errorf("applying configmap update failed :%w", err)
 	}
 
 	return nil

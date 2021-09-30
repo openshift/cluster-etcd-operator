@@ -115,10 +115,12 @@ func (c *BootstrapTeardownController) removeBootstrap(syncCtx factory.SyncContex
 	}
 
 	// check to see if bootstrapping is complete
-	bootstrapFinishedConfigMap, err := c.configmapLister.ConfigMaps("kube-system").Get("bootstrap")
+	cmNamespace := "kube-system"
+	cmName := "bootstrap"
+	bootstrapFinishedConfigMap, err := c.configmapLister.ConfigMaps(cmNamespace).Get(cmName)
 	switch {
 	case apierrors.IsNotFound(err):
-		syncCtx.Recorder().Event("DelayingBootstrapTeardown", "cluster-bootstrap is not yet finished")
+		syncCtx.Recorder().Event("DelayingBootstrapTeardown", fmt.Sprintf("cluster-bootstrap is not yet finished - ConfigMap '%s/%s' not found", cmNamespace, cmName))
 		return nil
 	case err != nil:
 		return err
@@ -138,7 +140,10 @@ func (c *BootstrapTeardownController) removeBootstrap(syncCtx factory.SyncContex
 
 // canRemoveEtcdBootstrap returns whether it is safe to remove bootstrap, whether bootstrap is in the list, and an error
 func (c *BootstrapTeardownController) canRemoveEtcdBootstrap() (bool, bool, error) {
-	members, err := c.etcdClient.MemberList()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	members, err := c.etcdClient.MemberList(ctx)
 	if err != nil {
 		return false, false, err
 	}

@@ -102,13 +102,13 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 		recorder.Warning("DefragControllerUpdatingStatus", updateErr.Error())
 	}
 
-	etcdMembers, err := c.etcdClient.MemberList()
+	etcdMembers, err := c.etcdClient.MemberList(ctx)
 	if err != nil {
 		return err
 	}
 
 	// Do not defrag if any of the cluster members are unhealthy
-	memberHealth, err := c.etcdClient.MemberHealth()
+	memberHealth, err := c.etcdClient.MemberHealth(ctx)
 	if err != nil {
 		return err
 	}
@@ -167,7 +167,7 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 				waitDuration,
 				timeoutDuration,
 				func() (bool, error) {
-					memberHealth, err := c.etcdClient.MemberHealth()
+					memberHealth, err := c.etcdClient.MemberHealth(ctx)
 					if err != nil {
 						klog.Warningf("failed checking member health: %v", err)
 						return false, nil

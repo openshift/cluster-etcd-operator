@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"os/signal"
 	"syscall"
@@ -17,6 +18,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/grpclog"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -157,6 +159,7 @@ func (v *verifyBackupStorage) isStorageAdequate(ctx context.Context) (bool, erro
 }
 
 func newETCD3Client(ctx context.Context, tlsInfo transport.TLSInfo) (*clientv3.Client, error) {
+	grpclog.SetLoggerV2(grpclog.NewLoggerV2(ioutil.Discard, ioutil.Discard, os.Stderr))
 	tlsConfig, err := tlsInfo.ClientConfig()
 	if err != nil {
 		return nil, err
