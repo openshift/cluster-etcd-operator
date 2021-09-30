@@ -47,7 +47,7 @@ func NewBootstrapTeardownController(
 }
 
 func (c *BootstrapTeardownController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
-	err := c.removeBootstrap(syncCtx)
+	err := c.removeBootstrap(ctx, syncCtx)
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "BootstrapTeardownDegraded",
@@ -70,9 +70,9 @@ func (c *BootstrapTeardownController) sync(ctx context.Context, syncCtx factory.
 	return updateErr
 }
 
-func (c *BootstrapTeardownController) removeBootstrap(syncCtx factory.SyncContext) error {
+func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, syncCtx factory.SyncContext) error {
 	// checks the actual etcd cluster membership API if etcd-bootstrap exists
-	safeToRemoveBootstrap, hasBootstrap, err := c.canRemoveEtcdBootstrap()
+	safeToRemoveBootstrap, hasBootstrap, err := c.canRemoveEtcdBootstrap(ctx)
 	switch {
 	case err != nil:
 		return err
@@ -132,17 +132,14 @@ func (c *BootstrapTeardownController) removeBootstrap(syncCtx factory.SyncContex
 
 	syncCtx.Recorder().Event("RemoveBootstrapEtcd", "removing etcd-bootstrap member")
 	// this is ugly until bootkube is updated, but we want to be sure that bootkube has time to be waiting to watch the condition coming back.
-	if err := c.etcdClient.MemberRemove("etcd-bootstrap"); err != nil {
+	if err := c.etcdClient.MemberRemove(ctx, "etcd-bootstrap"); err != nil {
 		return err
 	}
 	return nil
 }
 
 // canRemoveEtcdBootstrap returns whether it is safe to remove bootstrap, whether bootstrap is in the list, and an error
-func (c *BootstrapTeardownController) canRemoveEtcdBootstrap() (bool, bool, error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+func (c *BootstrapTeardownController) canRemoveEtcdBootstrap(ctx context.Context) (bool, bool, error) {
 	members, err := c.etcdClient.MemberList(ctx)
 	if err != nil {
 		return false, false, err
@@ -176,7 +173,7 @@ func (c *BootstrapTeardownController) canRemoveEtcdBootstrap() (bool, bool, erro
 	}
 
 	// Next, given member counts are satisfied, check member health.
-	unhealthyMembers, err := c.etcdClient.UnhealthyMembers()
+	unhealthyMembers, err := c.etcdClient.UnhealthyMembers(ctx)
 	if err != nil {
 		return false, hasBootstrap, nil
 	}

@@ -167,7 +167,7 @@ func (c *UpgradeBackupController) ensureRecentBackup(ctx context.Context, cluste
 	// No backup found, attempt to create one.
 	if err != nil && apierrors.IsNotFound(err) {
 		// Check nodes for backup preconditions
-		backupNodeName, err := c.getBackupNodeName()
+		backupNodeName, err := c.getBackupNodeName(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -228,7 +228,7 @@ func (c *UpgradeBackupController) ensureRecentBackup(ctx context.Context, cluste
 // getBackupNodeName checks all etcd pods and verifies the etcd member on that
 // pod is healthy if yes returns the node name it is scheduled on and errors if
 // no healthy members exist.
-func (c *UpgradeBackupController) getBackupNodeName() (string, error) {
+func (c *UpgradeBackupController) getBackupNodeName(ctx context.Context) (string, error) {
 	pods, err := c.podLister.List(labels.Set{"app": "etcd"}.AsSelector())
 	if err != nil {
 		return "", err
@@ -239,7 +239,7 @@ func (c *UpgradeBackupController) getBackupNodeName() (string, error) {
 		if !strings.HasPrefix(pod.Name, "etcd-") {
 			continue
 		}
-		member, err := c.etcdClient.GetMember(pod.Spec.NodeName)
+		member, err := c.etcdClient.GetMember(ctx, pod.Spec.NodeName)
 		if err != nil {
 			errs = append(errs, err)
 			continue

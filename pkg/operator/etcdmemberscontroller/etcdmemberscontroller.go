@@ -33,7 +33,7 @@ func NewEtcdMembersController(operatorClient v1helpers.OperatorClient,
 }
 
 func (c *EtcdMembersController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
-	err := c.reportEtcdMembers(syncCtx.Recorder())
+	err := c.reportEtcdMembers(ctx, syncCtx.Recorder())
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersControllerDegraded",
@@ -59,10 +59,7 @@ func (c *EtcdMembersController) sync(ctx context.Context, syncCtx factory.SyncCo
 	return nil
 }
 
-func (c *EtcdMembersController) reportEtcdMembers(recorder events.Recorder) error {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+func (c *EtcdMembersController) reportEtcdMembers(ctx context.Context, recorder events.Recorder) error {
 	memberHealth, err := c.etcdClient.MemberHealth(ctx)
 	if err != nil {
 		return err

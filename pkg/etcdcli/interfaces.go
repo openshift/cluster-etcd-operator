@@ -26,8 +26,8 @@ type EtcdClient interface {
 	MemberStatusChecker
 	Status
 
-	GetMember(name string) (*etcdserverpb.Member, error)
-	MemberUpdatePeerURL(id uint64, peerURL []string) error
+	GetMember(ctx context.Context, name string) (*etcdserverpb.Member, error)
+	MemberUpdatePeerURL(ctx context.Context, id uint64, peerURL []string) error
 }
 
 type Defragment interface {
@@ -39,7 +39,7 @@ type Status interface {
 }
 
 type MemberAdder interface {
-	MemberAdd(peerURL string) error
+	MemberAdd(ctx context.Context, peerURL string) error
 }
 
 type MemberHealth interface {
@@ -49,7 +49,7 @@ type IsMemberHealthy interface {
 	IsMemberHealthy(member *etcdserverpb.Member) (bool, error)
 }
 type MemberRemover interface {
-	MemberRemove(member string) error
+	MemberRemove(ctx context.Context, member string) error
 }
 
 type MemberLister interface {
@@ -61,9 +61,9 @@ type HealthyMemberLister interface {
 }
 
 type UnhealthyMemberLister interface {
-	UnhealthyMembers() ([]*etcdserverpb.Member, error)
+	UnhealthyMembers(ctx context.Context) ([]*etcdserverpb.Member, error)
 }
 
 type MemberStatusChecker interface {
-	MemberStatus(member *etcdserverpb.Member) string
+	MemberStatus(ctx context.Context, member *etcdserverpb.Member) string
 }
