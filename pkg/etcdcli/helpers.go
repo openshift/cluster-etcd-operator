@@ -35,7 +35,7 @@ func (f *fakeEtcdClient) Status(ctx context.Context, target string) (*clientv3.S
 	return nil, fmt.Errorf("status failed no match for target: %q", target)
 }
 
-func (f *fakeEtcdClient) MemberAdd(peerURL string) error {
+func (f *fakeEtcdClient) MemberAdd(ctx context.Context, peerURL string) error {
 	panic("implement me")
 }
 
@@ -43,7 +43,7 @@ func (f *fakeEtcdClient) MemberList(ctx context.Context) ([]*etcdserverpb.Member
 	return f.members, nil
 }
 
-func (f *fakeEtcdClient) MemberRemove(member string) error {
+func (f *fakeEtcdClient) MemberRemove(ctx context.Context, member string) error {
 	panic("implement me")
 }
 func (f *fakeEtcdClient) MemberHealth(ctx context.Context) (memberHealth, error) {
@@ -77,7 +77,7 @@ func (f *fakeEtcdClient) IsMemberHealthy(member *etcdserverpb.Member) (bool, err
 	return len(f.members) == f.opts.healthyMember, nil
 }
 
-func (f *fakeEtcdClient) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
+func (f *fakeEtcdClient) UnhealthyMembers(ctx context.Context) ([]*etcdserverpb.Member, error) {
 	if f.opts.unhealthyMember > 0 {
 		// unheathy start from beginning
 		return f.members[0:f.opts.unhealthyMember], nil
@@ -93,11 +93,11 @@ func (f *fakeEtcdClient) HealthyMembers(ctx context.Context) ([]*etcdserverpb.Me
 	return []*etcdserverpb.Member{}, nil
 }
 
-func (f *fakeEtcdClient) MemberStatus(member *etcdserverpb.Member) string {
+func (f *fakeEtcdClient) MemberStatus(ctx context.Context, member *etcdserverpb.Member) string {
 	panic("implement me")
 }
 
-func (f *fakeEtcdClient) GetMember(name string) (*etcdserverpb.Member, error) {
+func (f *fakeEtcdClient) GetMember(ctx context.Context, name string) (*etcdserverpb.Member, error) {
 	for _, m := range f.members {
 		if m.Name == name {
 			return m, nil
@@ -106,7 +106,7 @@ func (f *fakeEtcdClient) GetMember(name string) (*etcdserverpb.Member, error) {
 	return nil, apierrors.NewNotFound(schema.GroupResource{Group: "etcd.operator.openshift.io", Resource: "etcdmembers"}, name)
 }
 
-func (f *fakeEtcdClient) MemberUpdatePeerURL(id uint64, peerURL []string) error {
+func (f *fakeEtcdClient) MemberUpdatePeerURL(ctx context.Context, id uint64, peerURL []string) error {
 	panic("implement me")
 }
 
