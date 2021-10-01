@@ -44,6 +44,7 @@ const (
 	clusterBackupPodName     = "cluster-backup"
 	recentBackupPath         = "/etc/kubernetes/cluster-backup"
 	failedPodBackoffDuration = 30 * time.Second
+	backupDirEnvName         = "CLUSTER_BACKUP_PATH"
 )
 
 type UpgradeBackupController struct {
@@ -161,8 +162,6 @@ func (c *UpgradeBackupController) ensureRecentBackup(ctx context.Context, cluste
 		return nil, nil
 	}
 
-	recentBackupName := fmt.Sprintf("upgrade-backup-%s", time.Now().Format("2006-01-02_150405"))
-
 	backupPod, err := c.podLister.Pods(operatorclient.TargetNamespace).Get(clusterBackupPodName)
 	// No backup found, attempt to create one.
 	if err != nil && apierrors.IsNotFound(err) {
@@ -171,6 +170,8 @@ func (c *UpgradeBackupController) ensureRecentBackup(ctx context.Context, cluste
 		if err != nil {
 			return nil, err
 		}
+
+		recentBackupName := fmt.Sprintf("upgrade-backup-%s", time.Now().Format("2006-01-02_150405"))
 
 		if err := createBackupPod(ctx, backupNodeName, recentBackupName, c.operatorImagePullSpec, c.targetImagePullSpec, c.kubeClient.CoreV1(), recorder); err != nil {
 			return nil, fmt.Errorf("pod/%s: %v", clusterBackupPodName, err)
@@ -195,11 +196,23 @@ func (c *UpgradeBackupController) ensureRecentBackup(ctx context.Context, cluste
 	case backupPod.Status.Phase == corev1.PodSucceeded:
 		backupCondition := configv1helpers.FindStatusCondition(clusterOperatorStatus.Conditions, backupConditionType)
 		if backupCondition.Reason != backupSuccess {
+
+			// Read the backup directory name from the backup pod's env
+			backupDirName := ""
+			for _, env := range backupPod.Spec.Containers[0].Env {
+				if env.Name == backupDirEnvName {
+					backupDirName = env.Value
+				}
+			}
+			if backupDirName == "" {
+				klog.Warningf("failed to get backup directory name from backup pod: %s/%s", backupPod.Namespace, backupPod.Name)
+			}
+
 			return &configv1.ClusterOperatorStatusCondition{
 				Status:  configv1.ConditionTrue,
 				Type:    backupConditionType,
 				Reason:  backupSuccess,
-				Message: fmt.Sprintf("UpgradeBackup pre 4.9 located at path %s/%s on node %q", recentBackupPath, recentBackupName, backupPod.Spec.NodeName),
+				Message: fmt.Sprintf("UpgradeBackup pre 4.9 located at path %s on node %q", backupDirName, backupPod.Spec.NodeName),
 			}, nil
 		}
 		return nil, nil
@@ -268,7 +281,7 @@ func createBackupPod(ctx context.Context, nodeName, recentBackupName, operatorIm
 	pod.Spec.InitContainers[0].Image = operatorImagePullSpec
 	pod.Spec.Containers[0].Image = targetImagePullSpec
 	pod.Spec.Containers[0].Env = []corev1.EnvVar{
-		{Name: "CLUSTER_BACKUP_PATH", Value: fmt.Sprintf("%s/%s", recentBackupPath, recentBackupName)},
+		{Name: backupDirEnvName, Value: fmt.Sprintf("%s/%s", recentBackupPath, recentBackupName)},
 	}
 	_, _, err := resourceapply.ApplyPod(ctx, client, recorder, pod)
 	if err != nil {
