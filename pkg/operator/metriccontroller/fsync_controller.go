@@ -44,8 +44,8 @@ func (c *FSyncController) sync(ctx context.Context, syncCtx factory.SyncContext)
 		return err
 	}
 
-	// First check how many leader changes we see in last 15 minutes
-	etcdLeaderChangesResult, _, err := client.Query(ctx, "increase((max by (job) (etcd_server_leader_changes_seen_total) or 0*absent(etcd_server_leader_changes_seen_total))[5m:1m])", time.Now())
+	// First check how many leader changes we see in last 5 minutes
+	etcdLeaderChangesResult, _, err := client.Query(ctx, "max by (job) (increase(etcd_server_leader_changes_seen_total[5m]))", time.Now())
 	if err != nil {
 		return err
 	}
@@ -60,7 +60,7 @@ func (c *FSyncController) sync(ctx context.Context, syncCtx factory.SyncContext)
 
 	leaderChanges := vector[0].Value
 	// Do nothing if there are no leader changes
-	if leaderChanges == 0.0 {
+	if leaderChanges < 2.0 {
 		return nil
 	}
 
@@ -103,7 +103,7 @@ func (c *FSyncController) sync(ctx context.Context, syncCtx factory.SyncContext)
 	}
 
 	// Send warning event if excessive leader changes are detected. The event will include fsync disk metrics.
-	syncCtx.Recorder().Warningf("EtcdLeaderChangeMetrics", "Detected leader change increase of %s over 5 minutes on %q; disk metrics are: %s", leaderChanges, platformType, strings.Join(values, ","))
+	syncCtx.Recorder().Warningf("EtcdLeaderChangeMetrics", "Detected leader change increase of %s over 5 minutes on %q; disk metrics are: %s. Most often this is as a result of inadequate storage or sometimes due to networking issues.", leaderChanges, platformType, strings.Join(values, ","))
 
 	// TODO: Consider Degraded condition here.
 
