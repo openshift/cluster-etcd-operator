@@ -551,6 +551,9 @@ metadata:
   name: openshift-etcd
   labels:
     openshift.io/run-level: "0"
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/warn: privileged
 `)
 
 func etcdNsYamlBytes() ([]byte, error) {
