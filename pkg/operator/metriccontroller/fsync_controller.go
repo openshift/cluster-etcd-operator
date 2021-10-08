@@ -13,18 +13,24 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
 	configclientv1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
 )
 
 type FSyncController struct {
-	infraClient configclientv1.InfrastructuresGetter
+	infraClient    configclientv1.InfrastructuresGetter
+	operatorClient v1helpers.StaticPodOperatorClient
 }
 
-func NewFSyncController(infraClient configclientv1.InfrastructuresGetter, recorder events.Recorder) factory.Controller {
+func NewFSyncController(infraClient configclientv1.InfrastructuresGetter,
+	operatorClient v1helpers.StaticPodOperatorClient,
+	recorder events.Recorder) factory.Controller {
 	c := &FSyncController{
-		infraClient: infraClient,
+		infraClient:    infraClient,
+		operatorClient: operatorClient,
 	}
 	return factory.New().ResyncEvery(1*time.Minute).WithSync(c.sync).ToController("FSyncController", recorder)
 }
@@ -59,7 +65,7 @@ func (c *FSyncController) sync(ctx context.Context, syncCtx factory.SyncContext)
 	}
 
 	leaderChanges := vector[0].Value
-	// Do nothing if there are no leader changes
+	// Do nothing if there are no significant leader changes.
 	if leaderChanges < 2.0 {
 		return nil
 	}
@@ -68,7 +74,7 @@ func (c *FSyncController) sync(ctx context.Context, syncCtx factory.SyncContext)
 
 	// Capture etcd disk metrics as we detected excessive etcd leader changes
 	etcdWalFsyncResult, _, err := client.QueryRange(ctx, "histogram_quantile(0.99, rate(etcd_disk_wal_fsync_duration_seconds_bucket[5m]))", prometheusv1.Range{
-		Start: time.Now().Add(-1 * time.Hour),
+		Start: time.Now().Add(-5 * time.Minute),
 		End:   time.Now(),
 		Step:  1 * time.Second,
 	})
@@ -81,13 +87,19 @@ func (c *FSyncController) sync(ctx context.Context, syncCtx factory.SyncContext)
 		return fmt.Errorf("unexpected type, expected Matrix, got %T", matrix)
 	}
 
+	degradedMsg := ""
 	values := []string{}
 	for _, s := range matrix {
 		if _, ok := s.Metric["pod"]; !ok {
 			klog.Warningf("No pod label found in metric: %+v", s.Metric)
 			continue
 		}
-		values = append(values, fmt.Sprintf("%s=%s", s.Metric["pod"], s.Values[0].Value))
+		// If any value of the fsync disk is more than 3 seconds
+		// we consider this not adequate hardware so we will go degraded.
+		if s.Values[0].Value > 3.0 {
+			degradedMsg = fmt.Sprintf("%s fsync duration value: %f, ", degradedMsg, s.Values[0].Value)
+		}
+		values = append(values, fmt.Sprintf("%s=%f", s.Metric["pod"], s.Values[0].Value))
 	}
 
 	infra, err := c.infraClient.Infrastructures().Get(ctx, "cluster", metav1.GetOptions{})
@@ -105,7 +117,21 @@ func (c *FSyncController) sync(ctx context.Context, syncCtx factory.SyncContext)
 	// Send warning event if excessive leader changes are detected. The event will include fsync disk metrics.
 	syncCtx.Recorder().Warningf("EtcdLeaderChangeMetrics", "Detected leader change increase of %s over 5 minutes on %q; disk metrics are: %s. Most often this is as a result of inadequate storage or sometimes due to networking issues.", leaderChanges, platformType, strings.Join(values, ","))
 
-	// TODO: Consider Degraded condition here.
+	// TODO: In the future when alerts are more stable, query the following and go degraded based on alerts:
+	// ALERTS{alertname=~\"etcd.+\", job=\"etcd\", alertstate="firing"}
+
+	if degradedMsg != "" {
+		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+			Type:    "FSyncControllerDegraded",
+			Status:  operatorv1.ConditionTrue,
+			Reason:  "etcd disk metrics exceeded known tresholds",
+			Message: fmt.Sprintf("etcd disk metrics exceeded known tresholds: %s", degradedMsg),
+		}))
+		if updateErr != nil {
+			syncCtx.Recorder().Warning("FSyncControllerErrorUpdatingStatus", updateErr.Error())
+		}
+		return fmt.Errorf("etcd disk metrics exceeded known tresholds")
+	}
 
 	return nil
 }
