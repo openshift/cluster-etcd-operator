@@ -1,5 +1,10 @@
 #!/bin/sh
-set -eux
+set -eu
+
+if ! command -v jb &> /dev/null; then
+  echo "jb could not be found. See https://github.com/jsonnet-bundler/jsonnet-bundler"
+  exit 1
+fi
 
 # Generate jsonnet mixin prometheusrule manifest.
 
