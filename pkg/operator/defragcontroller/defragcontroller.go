@@ -82,30 +82,19 @@ func (c *DefragController) sync(ctx context.Context, syncCtx factory.SyncContext
 }
 
 func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Recorder) error {
-	controlPlaneTopology, err := ceohelpers.GetControlPlaneTopology(c.infrastructureLister)
+
+	// Check for existing status.
+	_, status, _, err := c.operatorClient.GetOperatorState()
 	if err != nil {
 		return err
 	}
-	var updateErr error
-	// Defrag is blocking and can only be safely performed in HighlyAvailableTopologyMode
-	if controlPlaneTopology == configv1.HighlyAvailableTopologyMode {
-		_, _, updateErr = v1helpers.UpdateStatus(c.operatorClient,
-			v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-				Type:   "DefragControllerDisabled",
-				Status: operatorv1.ConditionFalse,
-				Reason: "AsExpected",
-			}))
-	} else {
-		_, _, updateErr = v1helpers.UpdateStatus(c.operatorClient,
-			v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-				Type:   "DefragControllerDisabled",
-				Status: operatorv1.ConditionTrue,
-				Reason: "AsExpected",
-			}))
-		return nil
-	}
-	if updateErr != nil {
-		recorder.Warning("DefragControllerUpdatingStatus", updateErr.Error())
+
+	controllerDisabledCondition := v1helpers.FindOperatorCondition(status.Conditions, defragDisabledCondition)
+	if controllerDisabledCondition == nil {
+		err := c.ensureControllerDisabledCondition(recorder)
+		if err != nil {
+			return fmt.Errorf("failed to update controller disabled status: %w", err)
+		}
 	}
 
 	etcdMembers, err := c.etcdClient.MemberList(ctx)
@@ -113,7 +102,7 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 		return err
 	}
 
-	// Do not defrag if any of the cluster members are unhealthy
+	// Do not defrag if any of the cluster members are unhealthy.
 	memberHealth, err := c.etcdClient.MemberHealth(ctx)
 	if err != nil {
 		return err
@@ -140,7 +129,7 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 		endpointStatus = append(endpointStatus, status)
 	}
 
-	// leader last if possible
+	// Leader last if possible.
 	if leader != nil {
 		klog.V(4).Infof("Appending leader last, ID: %d", leader.Header.MemberId)
 		endpointStatus = append(endpointStatus, leader)
@@ -161,7 +150,7 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 		if isEndpointBackendFragmented(member, status) {
 			recorder.Eventf("DefragControllerDefragmentAttempt", "Attempting defrag on member: %s, memberID: %d, dbSize: %d, dbInUse: %d, leader ID: %d", member.Name, member.ID, status.DbSize, status.DbSizeInUse, status.Leader)
 			if _, err := c.etcdClient.Defragment(ctx, member); err != nil {
-				// defrag can timeout if defragmentation takes longer than etcdcli.DefragDialTimeout
+				// Defrag can timeout if defragmentation takes longer than etcdcli.DefragDialTimeout.
 				errors = append(errors, fmt.Errorf("failed to defragment etcd member: %q :%v", member.Name, err))
 				continue
 			}
@@ -174,7 +163,7 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 				pollTimeoutDuration,
 				func() (bool, error) {
 					// Ensure defragmentation attempts have clear observable signal.
-					klog.V(4).Infof("Sleeping to allow cluster to recover before defrag next member %v", minDefragWaitDuration)
+					klog.V(4).Infof("Sleeping to allow cluster to recover before defrag next member: %v", minDefragWaitDuration)
 					time.Sleep(minDefragWaitDuration)
 
 					memberHealth, err := c.etcdClient.MemberHealth(ctx)
@@ -194,6 +183,39 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 	}
 
 	return v1helpers.NewMultiLineAggregate(errors)
+}
+
+func (c *DefragController) ensureControllerDisabledCondition(recorder events.Recorder) error {
+	controlPlaneTopology, err := ceohelpers.GetControlPlaneTopology(c.infrastructureLister)
+	if err != nil {
+		return fmt.Errorf("failed to get control-plane topology: %w", err)
+	}
+
+	// Defrag is blocking and can only be safely performed in HighlyAvailableTopologyMode
+	if controlPlaneTopology == configv1.HighlyAvailableTopologyMode {
+		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient,
+			v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+				Type:   defragDisabledCondition,
+				Status: operatorv1.ConditionFalse,
+				Reason: "AsExpected",
+			}))
+		if updateErr != nil {
+			recorder.Warning("DefragControllerUpdatingStatus", updateErr.Error())
+			return err
+		}
+	} else {
+		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient,
+			v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+				Type:   defragDisabledCondition,
+				Status: operatorv1.ConditionTrue,
+				Reason: "AsExpected",
+			}))
+		if updateErr != nil {
+			recorder.Warning("DefragControllerUpdatingStatus", updateErr.Error())
+			return err
+		}
+	}
+	return nil
 }
 
 // isEndpointBackendFragmented checks the status of all cluster members to ensure that no members have a fragmented store.
