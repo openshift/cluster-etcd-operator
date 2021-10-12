@@ -257,7 +257,7 @@ func (c *UpgradeBackupController) getBackupNodeName(ctx context.Context) (string
 			errs = append(errs, err)
 			continue
 		}
-		isHealthy, err := c.etcdClient.IsMemberHealthy(member)
+		isHealthy, err := c.etcdClient.IsMemberHealthy(ctx, member)
 		if err != nil {
 			errs = append(errs, err)
 			continue
