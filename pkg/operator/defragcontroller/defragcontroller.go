@@ -82,7 +82,6 @@ func (c *DefragController) sync(ctx context.Context, syncCtx factory.SyncContext
 }
 
 func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Recorder) error {
-
 	// Check for existing status.
 	_, status, _, err := c.operatorClient.GetOperatorState()
 	if err != nil {
@@ -97,11 +96,6 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 		}
 	}
 
-	etcdMembers, err := c.etcdClient.MemberList(ctx)
-	if err != nil {
-		return err
-	}
-
 	// Do not defrag if any of the cluster members are unhealthy.
 	memberHealth, err := c.etcdClient.MemberHealth(ctx)
 	if err != nil {
@@ -109,6 +103,11 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 	}
 	if !etcdcli.IsClusterHealthy(memberHealth) {
 		return fmt.Errorf("cluster is unhealthy: %s", memberHealth.Status())
+	}
+
+	etcdMembers, err := c.etcdClient.MemberList(ctx)
+	if err != nil {
+		return err
 	}
 
 	var endpointStatus []*clientv3.StatusResponse

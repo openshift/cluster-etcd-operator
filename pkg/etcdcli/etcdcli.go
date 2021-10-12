@@ -355,7 +355,7 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 		return nil, fmt.Errorf("could not get member list %v", err)
 	}
 
-	memberHealth := getMemberHealth(etcdCluster.Members)
+	memberHealth := getMemberHealth(ctx, etcdCluster.Members)
 
 	unstartedMemberNames := GetUnstartedMemberNames(memberHealth)
 	if len(unstartedMemberNames) > 0 {
@@ -383,7 +383,7 @@ func (g *etcdClientGetter) HealthyMembers(ctx context.Context) ([]*etcdserverpb.
 		return nil, err
 	}
 
-	healthyMembers := getMemberHealth(etcdCluster.Members).GetHealthyMembers()
+	healthyMembers := getMemberHealth(ctx, etcdCluster.Members).GetHealthyMembers()
 	if len(healthyMembers) == 0 {
 		return nil, fmt.Errorf("no healthy etcd members found")
 	}
@@ -401,14 +401,14 @@ func (g *etcdClientGetter) MemberHealth(ctx context.Context) (memberHealth, erro
 	if err != nil {
 		return nil, err
 	}
-	return getMemberHealth(etcdCluster.Members), nil
+	return getMemberHealth(ctx, etcdCluster.Members), nil
 }
 
-func (g *etcdClientGetter) IsMemberHealthy(member *etcdserverpb.Member) (bool, error) {
+func (g *etcdClientGetter) IsMemberHealthy(ctx context.Context, member *etcdserverpb.Member) (bool, error) {
 	if member == nil {
 		return false, fmt.Errorf("member can not be nil")
 	}
-	memberHealth := getMemberHealth([]*etcdserverpb.Member{member})
+	memberHealth := getMemberHealth(ctx, []*etcdserverpb.Member{member})
 	if len(memberHealth) == 0 {
 		return false, fmt.Errorf("member health check failed")
 	}

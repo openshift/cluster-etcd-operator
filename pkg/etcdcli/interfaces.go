@@ -46,7 +46,7 @@ type MemberHealth interface {
 	MemberHealth(ctx context.Context) (memberHealth, error)
 }
 type IsMemberHealthy interface {
-	IsMemberHealthy(member *etcdserverpb.Member) (bool, error)
+	IsMemberHealthy(ctx context.Context, member *etcdserverpb.Member) (bool, error)
 }
 type MemberRemover interface {
 	MemberRemove(member string) error
