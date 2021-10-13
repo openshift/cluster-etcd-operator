@@ -39,7 +39,7 @@ type healthCheck struct {
 
 type memberHealth []healthCheck
 
-func getMemberHealth(etcdMembers []*etcdserverpb.Member) memberHealth {
+func getMemberHealth(ctx context.Context, etcdMembers []*etcdserverpb.Member) memberHealth {
 	var wg sync.WaitGroup
 	memberHealth := memberHealth{}
 	hch := make(chan healthCheck, len(etcdMembers))
@@ -58,10 +58,9 @@ func getMemberHealth(etcdMembers []*etcdserverpb.Member) memberHealth {
 			}
 			defer cli.Close()
 			st := time.Now()
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(ctx)
 			// linearized request to verify health of member
 			resp, err := cli.Get(ctx, "health")
-			cancel()
 			hc := healthCheck{Member: member, Healthy: false, Took: time.Since(st).String()}
 			if err == nil {
 				if resp.Header != nil {
@@ -71,6 +70,7 @@ func getMemberHealth(etcdMembers []*etcdserverpb.Member) memberHealth {
 			} else {
 				hc.Error = fmt.Errorf("health check failed: %w", err)
 			}
+			cancel()
 			hch <- hc
 		}(member)
 	}
