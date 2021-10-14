@@ -3,8 +3,6 @@ package quorumguardcontroller
 import (
 	"context"
 	"fmt"
-	"github.com/ghodss/yaml"
-	"strconv"
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -145,12 +143,15 @@ func (c *QuorumGuardController) ensureEtcdGuard(ctx context.Context, recorder ev
 		return nil
 	}
 
-	replicaCount, err := c.getMastersReplicaCount(ctx)
-	if err != nil {
-		return err
+	if c.replicaCount == 0 {
+		replicaCount, err := ceohelpers.GetMastersReplicaCount(ctx, c.kubeClient)
+		if err != nil {
+			return err
+		}
+		c.replicaCount = replicaCount
 	}
 
-	if err := c.ensureEtcdGuardDeployment(ctx, replicaCount, recorder); err != nil {
+	if err := c.ensureEtcdGuardDeployment(ctx, int32(c.replicaCount), recorder); err != nil {
 		return err
 	}
 
@@ -206,32 +207,4 @@ func (c *QuorumGuardController) ensureEtcdGuardPDB(ctx context.Context, recorder
 	}
 
 	return nil
-}
-
-// getMastersReplicaCount get number of expected masters statically defined by the controlPlane replicas in the install-config.
-func (c *QuorumGuardController) getMastersReplicaCount(ctx context.Context) (int32, error) {
-	if c.replicaCount != 0 {
-		return int32(c.replicaCount), nil
-	}
-
-	klog.Infof("Getting number of expected masters from %s", clusterConfigName)
-	clusterConfig, err := c.kubeClient.CoreV1().ConfigMaps(clusterConfigNamespace).Get(ctx, clusterConfigName, metav1.GetOptions{})
-	if err != nil {
-		klog.Errorf("Failed to get ConfigMap %s, err %w", clusterConfigName, err)
-		return 0, err
-	}
-
-	rcD := replicaCountDecoder{}
-	if err := yaml.Unmarshal([]byte(clusterConfig.Data[clusterConfigKey]), &rcD); err != nil {
-		err := fmt.Errorf("%s key doesn't exist in configmap/%s, err %w", clusterConfigKey, clusterConfigName, err)
-		klog.Error(err)
-		return 0, err
-	}
-
-	c.replicaCount, err = strconv.Atoi(rcD.ControlPlane.Replicas)
-	if err != nil {
-		klog.Errorf("failed to convert replica %s, err %w", rcD.ControlPlane.Replicas, err)
-		return 0, err
-	}
-	return int32(c.replicaCount), nil
 }
