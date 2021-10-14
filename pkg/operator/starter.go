@@ -204,6 +204,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 	clusterMemberController := clustermembercontroller.NewClusterMemberController(
 		operatorClient,
+		kubeClient,
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Networks(),
 		etcdClient,
