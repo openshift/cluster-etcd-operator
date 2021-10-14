@@ -2,8 +2,9 @@ package etcdendpointscontroller
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
+	"net"
+	"net/url"
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -15,7 +16,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
@@ -114,28 +114,28 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 		klog.Warningf("required configmap %s/%s will be created because it was missing: %w", operatorclient.TargetNamespace, "etcd-endpoints", err)
 	}
 
-	// create endpoint addresses for each node
-	nodes, err := c.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
+	// create endpoint addresses for each member of the cluster
+	members, err := c.etcdClient.MemberList(ctx)
 	if err != nil {
-		return fmt.Errorf("unable to list expected etcd member nodes: %v", err)
+		return fmt.Errorf("failed to get member list: %w", err)
 	}
-	endpointAddresses := map[string]string{}
-	for _, node := range nodes {
-		var nodeInternalIP string
-		for _, nodeAddress := range node.Status.Addresses {
-			if nodeAddress.Type == corev1.NodeInternalIP {
-				nodeInternalIP = nodeAddress.Address
-				break
-			}
+
+	var errs []error
+	endpointAddresses := make(map[string]string, len(members))
+	for _, member := range members {
+		u, err := url.Parse(member.PeerURLs[0])
+		if err != nil {
+			errs = append(errs, err)
 		}
-		if len(nodeInternalIP) == 0 {
-			return fmt.Errorf("unable to determine internal ip address for node %s", node.Name)
+		host, _, err := net.SplitHostPort(u.Host)
+		if err != nil {
+			errs = append(errs, err)
 		}
-		endpointAddresses[base64.StdEncoding.WithPadding(base64.NoPadding).EncodeToString([]byte(nodeInternalIP))] = nodeInternalIP
+		endpointAddresses[string(member.ID)] = host
 	}
 
 	if len(endpointAddresses) == 0 {
-		return fmt.Errorf("no master nodes are present")
+		return fmt.Errorf("no etcd members are present")
 	}
 
 	required.Data = endpointAddresses
