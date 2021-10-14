@@ -39,14 +39,14 @@ func (f *fakeEtcdClient) MemberAdd(peerURL string) error {
 	panic("implement me")
 }
 
-func (f *fakeEtcdClient) MemberList() ([]*etcdserverpb.Member, error) {
+func (f *fakeEtcdClient) MemberList(ctx context.Context) ([]*etcdserverpb.Member, error) {
 	return f.members, nil
 }
 
 func (f *fakeEtcdClient) MemberRemove(member string) error {
 	panic("implement me")
 }
-func (f *fakeEtcdClient) MemberHealth() (memberHealth, error) {
+func (f *fakeEtcdClient) MemberHealth(ctx context.Context) (memberHealth, error) {
 	var healthy, unhealthy int
 	var memberHealth memberHealth
 	for _, member := range f.members {

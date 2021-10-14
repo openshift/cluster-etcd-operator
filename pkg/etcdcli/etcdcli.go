@@ -3,8 +3,10 @@ package etcdcli
 import (
 	"context"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/url"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -15,9 +17,12 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
+	"go.etcd.io/etcd/client/pkg/v3/logutil"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/grpclog"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -77,7 +82,7 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 		return nil, fmt.Errorf("node lister not synced")
 	}
 	if !g.configmapsListerSynced() {
-		return nil, fmt.Errorf("node lister not synced")
+		return nil, fmt.Errorf("configmaps lister not synced")
 	}
 	if !g.networkListerSynced() {
 		return nil, fmt.Errorf("network lister not synced")
@@ -112,9 +117,13 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 
 	g.clientLock.Lock()
 	defer g.clientLock.Unlock()
-	// TODO check if the connection is already closed
-	if reflect.DeepEqual(g.lastClientConfigKey, etcdEndpoints) {
-		return g.cachedClient, nil
+	if reflect.DeepEqual(g.lastClientConfigKey, etcdEndpoints) && g.cachedClient != nil {
+		ccx, ccancel := context.WithCancel(context.Background())
+		defer ccancel()
+		_, err = g.cachedClient.MemberList(ccx)
+		if err == nil {
+			return g.cachedClient, nil
+		}
 	}
 
 	c, err := getEtcdClientWithClientOpts(etcdEndpoints)
@@ -133,10 +142,12 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 }
 
 func getEtcdClientWithClientOpts(endpoints []string, opts ...ClientOption) (*clientv3.Client, error) {
+	grpclog.SetLoggerV2(grpclog.NewLoggerV2(ioutil.Discard, ioutil.Discard, os.Stderr))
 	clientOpts, err := newClientOpts(opts...)
 	if err != nil {
 		return nil, err
 	}
+
 	dialOptions := []grpc.DialOption{
 		grpc.WithBlock(), // block until the underlying connection is up
 	}
@@ -151,17 +162,37 @@ func getEtcdClientWithClientOpts(endpoints []string, opts ...ClientOption) (*cli
 		return nil, err
 	}
 
+	// Our logs are noisy
+	lcfg := logutil.DefaultZapLoggerConfig
+	lcfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
+	l, err := lcfg.Build()
+	if err != nil {
+		return nil, fmt.Errorf("failed building client logger: %w", err)
+	}
+
 	cfg := &clientv3.Config{
 		DialOptions: dialOptions,
 		Endpoints:   endpoints,
 		DialTimeout: clientOpts.dialTimeout,
 		TLS:         tlsConfig,
+		Logger:      l,
 	}
 
 	cli, err := clientv3.New(*cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to make etcd client for endpoints %v: %w", endpoints, err)
 	}
+	// Test client connection.
+	ccx, ccancel := context.WithCancel(context.Background())
+	defer ccancel()
+	_, err = cli.MemberList(ccx)
+	if err != nil {
+		if clientv3.IsConnCanceled(err) {
+			return nil, fmt.Errorf("client connection was canceled: %w", err)
+		}
+		return nil, fmt.Errorf("error during client connection check: %w", err)
+	}
+
 	return cli, err
 }
 
@@ -198,7 +229,9 @@ func (g *etcdClientGetter) MemberAdd(peerURL string) error {
 }
 
 func (g *etcdClientGetter) MemberUpdatePeerURL(id uint64, peerURLs []string) error {
-	if members, err := g.MemberList(); err != nil {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if members, err := g.MemberList(ctx); err != nil {
 		g.eventRecorder.Eventf("MemberUpdate", "updating member %d with peers %v", id, strings.Join(peerURLs, ","))
 	} else {
 		memberName := fmt.Sprintf("%d", id)
@@ -215,9 +248,6 @@ func (g *etcdClientGetter) MemberUpdatePeerURL(id uint64, peerURLs []string) err
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	_, err = cli.MemberUpdate(ctx, id, peerURLs)
 	if err != nil {
@@ -259,14 +289,11 @@ func (g *etcdClientGetter) MemberRemove(member string) error {
 	return nil
 }
 
-func (g *etcdClientGetter) MemberList() ([]*etcdserverpb.Member, error) {
+func (g *etcdClientGetter) MemberList(ctx context.Context) ([]*etcdserverpb.Member, error) {
 	cli, err := g.getEtcdClient()
 	if err != nil {
 		return nil, err
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	membersResp, err := cli.MemberList(ctx)
 	if err != nil {
@@ -286,7 +313,10 @@ func (g *etcdClientGetter) Status(ctx context.Context, clientURL string) (*clien
 }
 
 func (g *etcdClientGetter) GetMember(name string) (*etcdserverpb.Member, error) {
-	members, err := g.MemberList()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	members, err := g.MemberList(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -314,7 +344,7 @@ func GetMemberNameOrHost(member *etcdserverpb.Member) string {
 func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 	cli, err := g.getEtcdClient()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not get etcd client %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -322,7 +352,7 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 
 	etcdCluster, err := cli.MemberList(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not get member list %v", err)
 	}
 
 	memberHealth := getMemberHealth(etcdCluster.Members)
@@ -361,12 +391,17 @@ func (g *etcdClientGetter) HealthyMembers(ctx context.Context) ([]*etcdserverpb.
 	return healthyMembers, nil
 }
 
-func (g *etcdClientGetter) MemberHealth() (memberHealth, error) {
-	etcdMembers, err := g.MemberList()
+func (g *etcdClientGetter) MemberHealth(ctx context.Context) (memberHealth, error) {
+	cli, err := g.getEtcdClient()
 	if err != nil {
 		return nil, err
 	}
-	return getMemberHealth(etcdMembers), nil
+
+	etcdCluster, err := cli.MemberList(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return getMemberHealth(etcdCluster.Members), nil
 }
 
 func (g *etcdClientGetter) IsMemberHealthy(member *etcdserverpb.Member) (bool, error) {
@@ -409,7 +444,7 @@ func (g *etcdClientGetter) MemberStatus(member *etcdserverpb.Member) string {
 func (g *etcdClientGetter) Defragment(ctx context.Context, member *etcdserverpb.Member) (*clientv3.DefragmentResponse, error) {
 	cli, err := g.getEtcdClientWithClientOpts([]string{member.ClientURLs[0]}, WithDialTimeout(DefragDialTimeout))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get etcd client for defragment: %w", err)
 	}
 	defer cli.Close()
 
