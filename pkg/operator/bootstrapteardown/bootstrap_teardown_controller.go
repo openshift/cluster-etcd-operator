@@ -49,7 +49,7 @@ func NewBootstrapTeardownController(
 func (c *BootstrapTeardownController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	err := c.removeBootstrap(ctx, syncCtx)
 	if err != nil {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "BootstrapTeardownDegraded",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "Error",
@@ -61,7 +61,7 @@ func (c *BootstrapTeardownController) sync(ctx context.Context, syncCtx factory.
 		return err
 	}
 
-	_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient,
+	_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient,
 		v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:   "BootstrapTeardownDegraded",
 			Status: operatorv1.ConditionFalse,
@@ -79,7 +79,7 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, syncC
 
 	case !hasBootstrap:
 		// if the bootstrap isn't present, then clearly we're available enough to terminate. This avoids any risk of flapping.
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdRunningInCluster",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "BootstrapAlreadyRemoved",
@@ -91,7 +91,7 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, syncC
 		return nil
 
 	case !safeToRemoveBootstrap:
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdRunningInCluster",
 			Status:  operatorv1.ConditionFalse,
 			Reason:  "NotEnoughEtcdMembers",
@@ -104,7 +104,7 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, syncC
 
 	}
 
-	_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+	_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 		Type:    "EtcdRunningInCluster",
 		Status:  operatorv1.ConditionTrue,
 		Reason:  "EnoughEtcdMembers",

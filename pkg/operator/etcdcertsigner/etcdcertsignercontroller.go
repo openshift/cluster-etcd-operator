@@ -108,7 +108,7 @@ func NewEtcdCertSignerController(
 func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	err := c.syncAllMasters(ctx, syncCtx.Recorder())
 	if err != nil {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdCertSignerControllerDegraded",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "Error",
@@ -120,7 +120,7 @@ func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.Syn
 		return err
 	}
 
-	_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient,
+	_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient,
 		v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:   "EtcdCertSignerControllerDegraded",
 			Status: operatorv1.ConditionFalse,

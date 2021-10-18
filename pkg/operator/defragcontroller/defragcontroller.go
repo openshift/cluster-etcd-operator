@@ -54,7 +54,7 @@ func NewDefragController(
 func (c *DefragController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	err := c.checkDefrag(ctx, syncCtx.Recorder())
 	if err != nil && !errors.Is(err, context.Canceled) {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "DefragControllerDegraded",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "Error",
@@ -66,7 +66,7 @@ func (c *DefragController) sync(ctx context.Context, syncCtx factory.SyncContext
 		return err
 	}
 
-	_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient,
+	_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient,
 		v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:   "DefragControllerDegraded",
 			Status: operatorv1.ConditionFalse,
@@ -83,14 +83,14 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 	var updateErr error
 	// Defrag is blocking and can only be safely performed in HighlyAvailableTopologyMode
 	if controlPlaneTopology == configv1.HighlyAvailableTopologyMode {
-		_, _, updateErr = v1helpers.UpdateStatus(c.operatorClient,
+		_, _, updateErr = v1helpers.UpdateStatus(ctx, c.operatorClient,
 			v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 				Type:   "DefragControllerDisabled",
 				Status: operatorv1.ConditionFalse,
 				Reason: "AsExpected",
 			}))
 	} else {
-		_, _, updateErr = v1helpers.UpdateStatus(c.operatorClient,
+		_, _, updateErr = v1helpers.UpdateStatus(ctx, c.operatorClient,
 			v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 				Type:   "DefragControllerDisabled",
 				Status: operatorv1.ConditionTrue,

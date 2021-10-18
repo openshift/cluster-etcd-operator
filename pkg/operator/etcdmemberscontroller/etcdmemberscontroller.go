@@ -35,7 +35,7 @@ func NewEtcdMembersController(operatorClient v1helpers.OperatorClient,
 func (c *EtcdMembersController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	err := c.reportEtcdMembers(ctx, syncCtx.Recorder())
 	if err != nil {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersControllerDegraded",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "ErrorUpdatingReportEtcdMembers",
@@ -47,7 +47,7 @@ func (c *EtcdMembersController) sync(ctx context.Context, syncCtx factory.SyncCo
 		return err
 	}
 
-	_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+	_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 		Type:   "EtcdMembersControllerDegraded",
 		Status: operatorv1.ConditionFalse,
 		Reason: "MembersReported",
@@ -66,7 +66,7 @@ func (c *EtcdMembersController) reportEtcdMembers(ctx context.Context, recorder 
 	}
 	updateErrors := []error{}
 	if len(etcdcli.GetUnhealthyMemberNames(memberHealth)) > 0 {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersDegraded",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "UnhealthyMembers",
@@ -77,7 +77,7 @@ func (c *EtcdMembersController) reportEtcdMembers(ctx context.Context, recorder 
 			updateErrors = append(updateErrors, updateErr)
 		}
 	} else {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersDegraded",
 			Status:  operatorv1.ConditionFalse,
 			Reason:  "AsExpected",
@@ -90,7 +90,7 @@ func (c *EtcdMembersController) reportEtcdMembers(ctx context.Context, recorder 
 	}
 
 	if len(etcdcli.GetUnstartedMemberNames(memberHealth)) > 0 {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersProgressing",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "MembersNotStarted",
@@ -101,7 +101,7 @@ func (c *EtcdMembersController) reportEtcdMembers(ctx context.Context, recorder 
 			updateErrors = append(updateErrors, updateErr)
 		}
 	} else {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersProgressing",
 			Status:  operatorv1.ConditionFalse,
 			Reason:  "AsExpected",
@@ -114,7 +114,7 @@ func (c *EtcdMembersController) reportEtcdMembers(ctx context.Context, recorder 
 	}
 
 	if len(etcdcli.GetHealthyMemberNames(memberHealth)) > len(memberHealth)/2 {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersAvailable",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "EtcdQuorate",
@@ -128,7 +128,7 @@ func (c *EtcdMembersController) reportEtcdMembers(ctx context.Context, recorder 
 		// we will never reach here, if no quorum, we will always timeout
 		// in the member list call and go to degraded with
 		// etcdserver: request timed out
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersAvailable",
 			Status:  operatorv1.ConditionFalse,
 			Reason:  "No quorum",

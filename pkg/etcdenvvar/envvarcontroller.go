@@ -110,7 +110,7 @@ func (c *EnvVarController) GetEnvVars() map[string]string {
 func (c *EnvVarController) sync(ctx context.Context) error {
 	err := c.checkEnvVars(ctx)
 	if err != nil {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EnvVarControllerDegraded",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "Error",
@@ -122,7 +122,7 @@ func (c *EnvVarController) sync(ctx context.Context) error {
 		return err
 	}
 
-	_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient,
+	_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient,
 		v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:   "EnvVarControllerDegraded",
 			Status: operatorv1.ConditionFalse,

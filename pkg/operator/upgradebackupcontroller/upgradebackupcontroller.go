@@ -114,7 +114,7 @@ func (c *UpgradeBackupController) sync(ctx context.Context, syncCtx factory.Sync
 
 	recentBackupCondition, err := c.ensureRecentBackup(ctx, &clusterOperatorObj.Status, syncCtx.Recorder())
 	if err != nil {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "UpgradeBackupControllerDegraded",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "Error",
@@ -125,7 +125,7 @@ func (c *UpgradeBackupController) sync(ctx context.Context, syncCtx factory.Sync
 		}
 		return err
 	}
-	_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+	_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 		Type:   "UpgradeBackupControllerDegraded",
 		Status: operatorv1.ConditionFalse,
 		Reason: "AsExpected",
