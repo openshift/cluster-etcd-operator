@@ -8,7 +8,7 @@ require (
 	github.com/go-bindata/go-bindata v3.1.2+incompatible
 	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/google/uuid v1.1.2
-	github.com/openshift/api v0.0.0-20210831091943-07e756545ac1
+	github.com/openshift/api v0.0.0-20210906075240-3611f00b94fd
 	github.com/openshift/build-machinery-go v0.0.0-20210806203541-4ea9b6da3a37
 	github.com/openshift/client-go v0.0.0-20210831095141-e19a065e79f7
 	github.com/openshift/library-go v0.0.0-20210909124717-1c18e732a117
