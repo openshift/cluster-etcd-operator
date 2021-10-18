@@ -119,6 +119,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	envVarController := etcdenvvar.NewEnvVarController(
 		os.Getenv("IMAGE"),
 		operatorClient,
+		etcdClient,
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Infrastructures(),
 		configInformers.Config().V1().Networks(),
@@ -235,6 +236,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	quorumGuardController := quorumguardcontroller.NewQuorumGuardController(
 		operatorClient,
 		kubeClient,
+		etcdClient,
 		kubeInformersForNamespaces,
 		controllerContext.EventRecorder,
 		configInformers.Config().V1().Infrastructures().Lister(),
@@ -288,7 +290,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go defragController.Run(ctx, 1)
 	go upgradeBackupController.Run(ctx, 1)
 
-	go envVarController.Run(1, ctx.Done())
+	go envVarController.Run(ctx, 1)
 	go staticPodControllers.Start(ctx)
 
 	<-ctx.Done()

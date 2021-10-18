@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	clusterConfigName         = "cluster-config-v1"
-	clusterConfigKey          = "install-config"
-	clusterConfigNamespace    = "kube-system"
+	clusterConfigName      = "cluster-config-v1"
+	clusterConfigKey       = "install-config"
+	clusterConfigNamespace = "kube-system"
 )
 
 type replicaCountDecoder struct {

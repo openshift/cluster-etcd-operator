@@ -3,6 +3,8 @@ package quorumguardcontroller
 import (
 	"context"
 	"fmt"
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	corev1 "k8s.io/api/core/v1"
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -56,6 +58,7 @@ var pdb = &policyv1.PodDisruptionBudget{
 type QuorumGuardController struct {
 	operatorClient       v1helpers.OperatorClient
 	kubeClient           kubernetes.Interface
+	etcdClient           etcdcli.EtcdClient
 	podLister            corev1listers.PodLister
 	nodeLister           corev1listers.NodeLister
 	infrastructureLister configv1listers.InfrastructureLister
@@ -68,6 +71,7 @@ type QuorumGuardController struct {
 func NewQuorumGuardController(
 	operatorClient v1helpers.OperatorClient,
 	kubeClient kubernetes.Interface,
+	etcdClient etcdcli.EtcdClient,
 	kubeInformers v1helpers.KubeInformersForNamespaces,
 	eventRecorder events.Recorder,
 	infrastructureLister configv1listers.InfrastructureLister,
@@ -76,6 +80,7 @@ func NewQuorumGuardController(
 	c := &QuorumGuardController{
 		operatorClient:       operatorClient,
 		kubeClient:           kubeClient,
+		etcdClient:           etcdClient,
 		podLister:            kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
 		nodeLister:           kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
 		infrastructureLister: infrastructureLister,
@@ -168,9 +173,60 @@ func (c *QuorumGuardController) ensureEtcdGuardDeployment(ctx context.Context, r
 	if c.etcdQuorumGuard == nil {
 		c.etcdQuorumGuard = resourceread.ReadDeploymentV1OrDie(etcd_assets.MustAsset("etcd/quorumguard-deployment.yaml"))
 	}
+
+	members, err := c.etcdClient.MemberList(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get member list: %w", err)
+	}
+
+	var nodes []string
+	for _, member := range members {
+		if member.Name == "" {
+			continue
+		}
+		nodes = append(nodes, member.Name)
+	}
+
 	c.etcdQuorumGuard.Spec.Replicas = &replicaCount
 	// use image from release payload
 	c.etcdQuorumGuard.Spec.Template.Spec.Containers[0].Image = c.cliImagePullSpec
+
+	affinity := &corev1.Affinity{
+		PodAffinity: &corev1.PodAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+				{
+					LabelSelector: &metav1.LabelSelector{
+						MatchExpressions: []metav1.LabelSelectorRequirement{
+							{
+								Key:      "k8s-app",
+								Operator: metav1.LabelSelectorOpIn,
+								Values:   []string{"etcd-quorum-guard"},
+							},
+						},
+					},
+					TopologyKey: "kubernetes.io/hostname",
+				},
+			},
+		},
+		NodeAffinity: &corev1.NodeAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+				NodeSelectorTerms: []corev1.NodeSelectorTerm{
+					{
+						MatchExpressions: []corev1.NodeSelectorRequirement{
+							{
+								Key:      corev1.LabelHostname,
+								Operator: corev1.NodeSelectorOpIn,
+								Values:   nodes,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	//c.etcdQuorumGuard.Spec.Template.Spec.Affinity.PodAffinity.RequiredDuringSchedulingIgnoredDuringExecution = podAffinity
+	c.etcdQuorumGuard.Spec.Template.Spec.Affinity = affinity
 
 	// if restart occurred, we will apply etcd guard deployment but if it is the same, nothing will happened
 	actual, modified, err := resourceapply.ApplyDeploymentv1(ctx, c.kubeClient.AppsV1(), c.etcdQuorumGuard)

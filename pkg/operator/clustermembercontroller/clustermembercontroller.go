@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"k8s.io/client-go/kubernetes"
 	"sort"
 	"time"
@@ -30,17 +31,17 @@ const masterLabel = "node-role.kubernetes.io/master"
 
 type ClusterMemberController struct {
 	operatorClient v1helpers.OperatorClient
-	kubeClient           kubernetes.Interface
+	kubeClient     kubernetes.Interface
 	etcdClient     etcdcli.EtcdClient
 	podLister      corev1listers.PodLister
 	nodeLister     corev1listers.NodeLister
 	networkLister  configv1listers.NetworkLister
-	replicaCount int
+	replicaCount   int
 }
 
 func NewClusterMemberController(
 	operatorClient v1helpers.OperatorClient,
-	kubeClient           kubernetes.Interface,
+	kubeClient kubernetes.Interface,
 	kubeInformers v1helpers.KubeInformersForNamespaces,
 	networkInformer configv1informers.NetworkInformer,
 	etcdClient etcdcli.EtcdClient,
@@ -167,11 +168,7 @@ func (c *ClusterMemberController) getEtcdPeerURLToScale(ctx context.Context) (st
 		}
 		c.replicaCount = replicaCount
 	}
-
-	currentNodeCount := len(nodes)
-	if currentNodeCount < c.replicaCount {
-		fmt.Errorf("scaling etcd failed the desired number of control-plane replicas: %d is greater than existing nodes: %d", c.replicaCount, currentNodeCount)
-	}
+	desiredMemberCount := c.replicaCount
 
 	// Sort nodes by created timestamp.
 	sort.Slice(nodes, func(i, j int) bool {
@@ -183,6 +180,12 @@ func (c *ClusterMemberController) getEtcdPeerURLToScale(ctx context.Context) (st
 		return "", err
 	}
 
+	currentMemberCount := len(nodes)
+	maxMemberCount := desiredMemberCount + 1 // Surge up
+	if currentMemberCount == maxMemberCount {
+		klog.Warningf("Skipping scale up etcd membership at maximum size: %d", desiredMemberCount+1)
+		return "", nil
+	}
 	network, err := c.networkLister.Get("cluster")
 	if err != nil {
 		return "", fmt.Errorf("failed to list cluster network: %w", err)
@@ -190,18 +193,26 @@ func (c *ClusterMemberController) getEtcdPeerURLToScale(ctx context.Context) (st
 
 	for _, node := range nodes {
 		// Check to see if this member is already part of the quorum.
-		for _, member := range members {
-			if member.Name == "" || member.Name == node.Name || member.Name == "etcd-bootstrap" {
-				klog.Infof("node/%s is already mapped to an etcd member peerURL: %s", node.Name, member.PeerURLs[0])
-				continue
-			}
-		}
 		internalIP, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
 		if err != nil {
 			return "", fmt.Errorf("failed to get internal IP for node: %w", err)
 		}
-		return fmt.Sprintf("https://%s:2380", internalIP), nil
+		peerURL := fmt.Sprintf("https://%s:2380", internalIP)
+		if IsNodeMappedToMember(members, peerURL) {
+			klog.V(4).Infof("node/%s is already mapped to an etcd member", node.Name)
+			continue
+		}
+		return peerURL, nil
 	}
 
 	return "", nil
+}
+
+func IsNodeMappedToMember(members []*etcdserverpb.Member, target string) bool {
+	for _, member := range members {
+		if member.PeerURLs[0] == target {
+			return true
+		}
+	}
+	return false
 }

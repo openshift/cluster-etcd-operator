@@ -3,6 +3,7 @@ package etcdendpointscontroller
 import (
 	"context"
 	"fmt"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"net"
 	"net/url"
 	"time"
@@ -114,7 +115,6 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 		klog.Warningf("required configmap %s/%s will be created because it was missing: %w", operatorclient.TargetNamespace, "etcd-endpoints", err)
 	}
 
-	// create endpoint addresses for each member of the cluster
 	members, err := c.etcdClient.MemberList(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get member list: %w", err)
@@ -122,16 +122,26 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 
 	var errs []error
 	endpointAddresses := make(map[string]string, len(members))
+	// Create endpoint addresses for each member of the cluster.
 	for _, member := range members {
+		if member.Name == "etcd-bootstrap" {
+			continue
+		}
 		u, err := url.Parse(member.PeerURLs[0])
 		if err != nil {
 			errs = append(errs, err)
+			continue
 		}
 		host, _, err := net.SplitHostPort(u.Host)
 		if err != nil {
 			errs = append(errs, err)
+			continue
 		}
-		endpointAddresses[string(member.ID)] = host
+		endpointAddresses[fmt.Sprintf("%016x", member.ID)] = host
+	}
+
+	if len(errs) > 0 {
+		return utilerrors.NewAggregate(errs)
 	}
 
 	if len(endpointAddresses) == 0 {

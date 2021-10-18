@@ -163,7 +163,7 @@ func (c *BootstrapTeardownController) canRemoveEtcdBootstrap(ctx context.Context
 	// First, enforce the main HA invariants in terms of member counts.
 	switch scalingStrategy {
 	case ceohelpers.HAScalingStrategy:
-		if len(members) < 4 {
+		if len(members) < 2 {
 			return false, hasBootstrap, nil
 		}
 	case ceohelpers.DelayedHAScalingStrategy, ceohelpers.UnsafeScalingStrategy:
