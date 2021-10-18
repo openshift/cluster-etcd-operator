@@ -1,6 +1,7 @@
 package staticpod
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -57,6 +58,7 @@ type staticPodOperatorControllerBuilder struct {
 	installerPodMutationFunc installer.InstallerPodMutationFunc
 	minReadyDuration         time.Duration
 	enableStartMonitor       func() (bool, error)
+	nodeSelectorFn           func(ctx context.Context) (map[string]bool, error)
 
 	// pruning information
 	pruneCommand []string
@@ -86,6 +88,7 @@ type Builder interface {
 	WithInstaller(command []string) Builder
 	WithMinReadyDuration(minReadyDuration time.Duration) Builder
 	WithStartupMonitor(enabledStartupMonitor func() (bool, error), operandPodLabelSelector labels.Selector) Builder
+	WithNodeSelector(nodeSelectorFun func(ctx context.Context) (map[string]bool, error)) Builder
 
 	// WithCustomInstaller allows mutating the installer pod definition just before
 	// the installer pod is created for a revision.
@@ -136,6 +139,11 @@ func (b *staticPodOperatorControllerBuilder) WithMinReadyDuration(minReadyDurati
 func (b *staticPodOperatorControllerBuilder) WithStartupMonitor(enabledStartupMonitor func() (bool, error), operandPodLabelSelector labels.Selector) Builder {
 	b.enableStartMonitor = enabledStartupMonitor
 	b.operandPodLabelSelector = operandPodLabelSelector
+	return b
+}
+
+func (b *staticPodOperatorControllerBuilder) WithNodeSelector(nodeSelectorFn func(ctx context.Context) (map[string]bool, error)) Builder {
+	b.nodeSelectorFn = nodeSelectorFn
 	return b
 }
 
@@ -212,6 +220,8 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 			b.minReadyDuration,
 		).WithStartupMonitorSupport(
 			b.enableStartMonitor,
+		).WithNodeSelector(
+			b.nodeSelectorFn,
 		), 1)
 
 		manager.WithController(installerstate.NewInstallerStateController(

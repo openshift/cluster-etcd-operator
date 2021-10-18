@@ -391,8 +391,8 @@ github.com/hashicorp/logutils v1.0.0/go.mod h1:QIAnNjmIWmVIIkWDTG1z5v++HQmx9WQRO
 github.com/hashicorp/mdns v1.0.0/go.mod h1:tL+uN++7HEJ6SQLQ2/p+z2pH24WQKWjBPkE0mNTz8vQ=
 github.com/hashicorp/memberlist v0.1.3/go.mod h1:ajVTdAv/9Im8oMAAj5G31PhhMCZJV2pPBoIllUwCN7I=
 github.com/hashicorp/serf v0.8.2/go.mod h1:6hOLApaqBFA1NXqRQAsxw9QxuDEvNxSQRwA/JwenrHc=
-github.com/hexfusion/library-go v0.0.0-20211018022144-1a3c7a4c7ef4 h1:n/CtCnXmPA75OHmjC+B15V+kCPLGapNkHnsxSq64N5Q=
-github.com/hexfusion/library-go v0.0.0-20211018022144-1a3c7a4c7ef4/go.mod h1:b1cKE6TuNqjl7wT0y3W4g0qREuab1mH6WOJm9pT8L/A=
+github.com/hexfusion/library-go v0.0.0-20211018200941-1d865de07603 h1:ZGvCrqsEv0kz5oXtS0GjCdV/KPLUf7JVtzK+4SzrmOs=
+github.com/hexfusion/library-go v0.0.0-20211018200941-1d865de07603/go.mod h1:b1cKE6TuNqjl7wT0y3W4g0qREuab1mH6WOJm9pT8L/A=
 github.com/hpcloud/tail v1.0.0/go.mod h1:ab1qPbhIpdTxEkNHXyeSf5vhxWSCs/tWer42PpOxQnU=
 github.com/ianlancetaylor/demangle v0.0.0-20181102032728-5e5cf60278f6/go.mod h1:aSSvb/t6k1mPoxDqO4vJh6VOCGPwU4O0C2/Eqndh1Sc=
 github.com/ianlancetaylor/demangle v0.0.0-20200824232613-28f6c0f3b639/go.mod h1:aSSvb/t6k1mPoxDqO4vJh6VOCGPwU4O0C2/Eqndh1Sc=
