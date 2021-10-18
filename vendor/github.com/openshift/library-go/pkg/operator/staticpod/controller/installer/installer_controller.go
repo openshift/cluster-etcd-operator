@@ -94,6 +94,8 @@ type InstallerController struct {
 
 	startupMonitorEnabled func() (bool, error)
 
+	nodeSelectorFn func(ctx context.Context) (map[string]bool, error)
+
 	factory          *factory.Factory
 	clock            clock.Clock
 	installerBackOff func(count int) time.Duration
@@ -110,6 +112,12 @@ func (c *InstallerController) WithInstallerPodMutationFn(installerPodMutationFn 
 
 func (c *InstallerController) WithMinReadyDuration(minReadyDuration time.Duration) *InstallerController {
 	c.minReadyDuration = minReadyDuration
+	return c
+}
+
+// WithNodeSelector sets the nodes which will be considered for a new revision.
+func (c *InstallerController) WithNodeSelector(nodeSelectorFn func(ctx context.Context) (map[string]bool, error)) *InstallerController {
+	c.nodeSelectorFn = nodeSelectorFn
 	return c
 }
 
@@ -384,6 +392,36 @@ func nodeToStartRevisionWith(ctx context.Context, getStaticPodStateFn staticPodS
 	return 0, reason, nil
 }
 
+// nodeStatusesSelectedForRevision returns a list of nodeStatuses which have been selected for the next revision.
+func nodeStatusesSelectedForRevision(ctx context.Context, nodeSelectorFunc func(ctx context.Context) (map[string]bool, error), nodeStatuses []operatorv1.NodeStatus) ([]operatorv1.NodeStatus, error) {
+	if nodeSelectorFunc == nil {
+		return nodeStatuses, nil
+	}
+
+	nodeSelectorHostnameMap, err := nodeSelectorFunc(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Every node should be part of the map.
+	if len(nodeSelectorHostnameMap) != len(nodeStatuses) {
+		return nil, fmt.Errorf("node selector count: %d does not equal the node statuses count: %d", len(nodeSelectorHostnameMap), len(nodeStatuses))
+	}
+
+	var selectedNodeStatuses []operatorv1.NodeStatus
+	for _, ns := range nodeStatuses {
+		include, ok := nodeSelectorHostnameMap[ns.NodeName]
+		if !ok {
+			return nil, fmt.Errorf("node/%s is not included in the node selector map", ns.NodeName)
+		}
+		if include {
+			selectedNodeStatuses = append(selectedNodeStatuses, ns)
+		}
+	}
+
+	return selectedNodeStatuses, nil
+}
+
 // timeToWaitBeforeInstallingNextPod determines the amount of time to delay before creating the next installer pod.
 // We delay to avoid issues where the the LB doesn't observe readyz for ready pods as quickly as kubelet does.
 // See godoc on minReadyDuration.
@@ -430,27 +468,32 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 		return false, 0, nil
 	}
 
+	nodeStatuses, err := nodeStatusesSelectedForRevision(ctx, c.nodeSelectorFn, operatorStatus.NodeStatuses)
+	if err != nil {
+		return true, 0, err
+	}
+
 	// start with node which is in worst state (instead of terminating healthy pods first)
-	startNode, nodeChoiceReason, err := nodeToStartRevisionWith(ctx, c.getStaticPodState, operatorStatus.NodeStatuses)
+	startNode, nodeChoiceReason, err := nodeToStartRevisionWith(ctx, c.getStaticPodState, nodeStatuses)
 	if err != nil {
 		return true, 0, err
 	}
 
 	// determine the amount of time to delay before creating the next installer pod.  We delay to avoid an LB outage (see godoc on minReadySeconds)
-	requeueAfter := c.timeToWaitBeforeInstallingNextPod(ctx, operatorStatus.NodeStatuses)
+	requeueAfter := c.timeToWaitBeforeInstallingNextPod(ctx, nodeStatuses)
 	if requeueAfter > 0 {
 		return true, requeueAfter, nil
 	}
 
-	for l := 0; l < len(operatorStatus.NodeStatuses); l++ {
-		i := (startNode + l) % len(operatorStatus.NodeStatuses)
+	for l := 0; l < len(nodeStatuses); l++ {
+		i := (startNode + l) % len(nodeStatuses)
 
 		var currNodeState *operatorv1.NodeStatus
 		var prevNodeState *operatorv1.NodeStatus
-		currNodeState = &operatorStatus.NodeStatuses[i]
+		currNodeState = &nodeStatuses[i]
 		if l > 0 {
-			prev := (startNode + l - 1) % len(operatorStatus.NodeStatuses)
-			prevNodeState = &operatorStatus.NodeStatuses[prev]
+			prev := (startNode + l - 1) % len(nodeStatuses)
+			prevNodeState = &nodeStatuses[prev]
 			nodeChoiceReason = fmt.Sprintf("node %s is the next node in the line", currNodeState.NodeName)
 		}
 
@@ -498,7 +541,7 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 			// it's an extra write/read, but it makes the state debuggable from outside this process
 			if !equality.Semantic.DeepEqual(newCurrNodeState, currNodeState) {
 				klog.Infof("%q moving to %v because %s", currNodeState.NodeName, spew.Sdump(*newCurrNodeState), reason)
-				_, updated, updateError := v1helpers.UpdateStaticPodStatus(c.operatorClient, setNodeStatusFn(newCurrNodeState), setAvailableProgressingNodeInstallerFailingConditions)
+				_, updated, updateError := v1helpers.UpdateStaticPodStatus(ctx, c.operatorClient, setNodeStatusFn(newCurrNodeState), setAvailableProgressingNodeInstallerFailingConditions)
 				if updateError != nil {
 					return false, 0, updateError
 				} else if updated && currNodeState.CurrentRevision != newCurrNodeState.CurrentRevision {
@@ -530,7 +573,7 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 		// it's an extra write/read, but it makes the state debuggable from outside this process
 		if !equality.Semantic.DeepEqual(newCurrNodeState, currNodeState) {
 			klog.Infof("%q moving to %v", currNodeState.NodeName, spew.Sdump(*newCurrNodeState))
-			if _, updated, updateError := v1helpers.UpdateStaticPodStatus(c.operatorClient, setNodeStatusFn(newCurrNodeState), setAvailableProgressingNodeInstallerFailingConditions); updateError != nil {
+			if _, updated, updateError := v1helpers.UpdateStaticPodStatus(ctx, c.operatorClient, setNodeStatusFn(newCurrNodeState), setAvailableProgressingNodeInstallerFailingConditions); updateError != nil {
 				return false, 0, updateError
 			} else if updated && currNodeState.TargetRevision != newCurrNodeState.TargetRevision && newCurrNodeState.TargetRevision != 0 {
 				c.eventRecorder.Eventf("NodeTargetRevisionChanged", "Updating node %q from revision %d to %d because %s", currNodeState.NodeName,
@@ -1084,7 +1127,7 @@ func (c InstallerController) Sync(ctx context.Context, syncCtx factory.SyncConte
 		cond.Reason = "Error"
 		cond.Message = err.Error()
 	}
-	if _, _, updateError := v1helpers.UpdateStaticPodStatus(c.operatorClient, v1helpers.UpdateStaticPodConditionFn(cond), setAvailableProgressingNodeInstallerFailingConditions); updateError != nil {
+	if _, _, updateError := v1helpers.UpdateStaticPodStatus(ctx, c.operatorClient, v1helpers.UpdateStaticPodConditionFn(cond), setAvailableProgressingNodeInstallerFailingConditions); updateError != nil {
 		if err == nil {
 			return updateError
 		}
