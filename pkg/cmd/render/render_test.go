@@ -2,6 +2,7 @@ package render
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
@@ -536,6 +537,39 @@ networking:
   - 172.30.0.0/16
 `
 
+const installConfigReservedIPv4CIDR = `
+apiVersion: v1
+metadata:
+  name: my-cluster
+networking:
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  machineCIDR: 192.0.2.0/24
+  machineNetwork:
+  - foo: bar
+    cidr: 192.0.2.0/24
+  networkType: OpenShiftSDN
+  serviceNetwork:
+  - 172.30.0.0/16
+`
+const installConfigReservedIPv6CIDR = `
+apiVersion: v1
+metadata:
+  name: my-cluster
+networking:
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  machineCIDR: 2001:db8::/32
+  machineNetwork:
+  - foo: bar
+    cidr: 2001:db8::/32
+  networkType: OpenShiftSDN
+  serviceNetwork:
+  - 172.30.0.0/16
+`
+
 func Test_getMachineCIDR(t *testing.T) {
 	tests := map[string]struct {
 		installConfig     string
@@ -561,6 +595,18 @@ func Test_getMachineCIDR(t *testing.T) {
 			expectedCIDR:      "2620:52:0:1302::/64",
 			expectedErr:       nil,
 		},
+		"should error on a reserved ipv4 cidr": {
+			installConfig:     installConfigReservedIPv4CIDR,
+			isSingleStackIPv6: false,
+			expectedCIDR:      "",
+			expectedErr:       fmt.Errorf("machineNetwork CIDR is reserved and unsupported: \"192.0.2.0\""),
+		},
+		"should error on a reserved ipv6 cidr": {
+			installConfig:     installConfigReservedIPv6CIDR,
+			isSingleStackIPv6: true,
+			expectedCIDR:      "",
+			expectedErr:       fmt.Errorf("machineNetwork CIDR is reserved and unsupported: \"2001:db8::\""),
+		},
 	}
 
 	for name, test := range tests {
@@ -570,16 +616,20 @@ func Test_getMachineCIDR(t *testing.T) {
 				panic(err)
 			}
 			cidr, err := getMachineCIDR(installConfig, test.isSingleStackIPv6)
-			if err != nil {
-				if test.expectedErr == nil {
-					t.Errorf("unexpected error: %w", err)
-					return
-				}
-			} else {
-				if test.expectedErr != nil {
-					t.Errorf("expected but didn't get an error")
+			if err == nil && test.expectedErr != nil {
+				t.Fatalf("didn't get an error, expected: %v", test.expectedErr)
+			}
+
+			if err != nil && test.expectedErr == nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if err != nil && test.expectedErr != nil {
+				if err.Error() != test.expectedErr.Error() {
+					t.Fatalf("expected error: %v, got: %v", test.expectedErr, err)
 				}
 			}
+
 			if cidr != test.expectedCIDR {
 				t.Errorf("expected CIDR %q, got %q", test.expectedCIDR, cidr)
 			}
