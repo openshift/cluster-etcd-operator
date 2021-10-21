@@ -132,7 +132,7 @@
               severity: 'critical',
             },
             annotations: {
-              description: 'etcd cluster "{{ $labels.%s }}": 99th percentile of gRPC requests is {{ $value }}s on etcd instance {{ $labels.instance }}.' % $._config.clusterLabel,
+              description: 'etcd cluster "{{ $labels.%s }}": 99th percentile of gRPC requests is {{ $value }}s on etcd instance {{ $labels.instance }} for {{ $labels.grpc_method }} method.' % $._config.clusterLabel,
               summary: 'etcd grpc requests are slow',
             },
           },
@@ -1381,7 +1381,7 @@
               value: 'Prometheus',
             },
             hide: 0,
-            label: null,
+            label: 'Data Source',
             name: 'datasource',
             options: [],
             query: 'prometheus',
