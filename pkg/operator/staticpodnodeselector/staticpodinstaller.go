@@ -29,13 +29,11 @@ func GetStaticPodInstallerNodeSelectorMap(nodeLister corev1listers.NodeLister, c
 
 		nodeMap := make(map[string]bool, len(nodes))
 		for _, node := range nodes {
-			for _, currAddress := range node.Status.Addresses {
-				if currAddress.Type == corev1.NodeInternalIP && isEndpoint(endPointMap, currAddress.Address) {
-					nodeMap[node.Name] = true
-				} else {
-					nodeMap[node.Name] = false
-				}
+			if isEndpointNodeAddress(node, endPointMap) {
+				nodeMap[node.Name] = true
+				continue
 			}
+			nodeMap[node.Name] = false
 		}
 
 		return nodeMap, nil
@@ -45,4 +43,12 @@ func GetStaticPodInstallerNodeSelectorMap(nodeLister corev1listers.NodeLister, c
 func isEndpoint(addressMap map[string]struct{}, address string) bool {
 	_, ok := addressMap[address]
 	return ok
+}
+func isEndpointNodeAddress(node *corev1.Node, addressMap map[string]struct{}) bool {
+	for _, currAddress := range node.Status.Addresses {
+		if currAddress.Type == corev1.NodeInternalIP && isEndpoint(addressMap, currAddress.Address) {
+			return true
+		}
+	}
+	return false
 }

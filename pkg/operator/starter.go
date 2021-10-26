@@ -27,6 +27,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/quorumguardcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
+	staticpodinstaller "github.com/openshift/cluster-etcd-operator/pkg/operator/staticpodnodeselector"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/upgradebackupcontroller"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
@@ -157,6 +158,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		WithRevisionedResources("openshift-etcd", "etcd", RevisionConfigMaps, RevisionSecrets).
 		WithUnrevisionedCerts("etcd-certs", CertConfigMaps, CertSecrets).
 		WithVersioning("etcd", versionRecorder).
+		WithNodeSelector(staticpodinstaller.GetStaticPodInstallerNodeSelectorMap(kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(), kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister())).
 		ToControllers()
 	if err != nil {
 		return err
