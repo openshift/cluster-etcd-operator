@@ -1,6 +1,7 @@
 package etcdenvvar
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"sync"
@@ -102,10 +103,10 @@ func (c *EnvVarController) GetEnvVars() map[string]string {
 	return ret
 }
 
-func (c *EnvVarController) sync() error {
+func (c *EnvVarController) sync(ctx context.Context) error {
 	err := c.checkEnvVars()
 	if err != nil {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EnvVarControllerDegraded",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "Error",
@@ -117,7 +118,7 @@ func (c *EnvVarController) sync() error {
 		return err
 	}
 
-	_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient,
+	_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient,
 		v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:   "EnvVarControllerDegraded",
 			Status: operatorv1.ConditionFalse,
@@ -185,18 +186,20 @@ func (c *EnvVarController) Run(workers int, stopCh <-chan struct{}) {
 }
 
 func (c *EnvVarController) runWorker() {
-	for c.processNextWorkItem() {
+	// TODO: wire this context properly
+	ctx := context.TODO()
+	for c.processNextWorkItem(ctx) {
 	}
 }
 
-func (c *EnvVarController) processNextWorkItem() bool {
+func (c *EnvVarController) processNextWorkItem(ctx context.Context) bool {
 	dsKey, quit := c.queue.Get()
 	if quit {
 		return false
 	}
 	defer c.queue.Done(dsKey)
 
-	err := c.sync()
+	err := c.sync(ctx)
 	if err == nil {
 		c.queue.Forget(dsKey)
 		return true

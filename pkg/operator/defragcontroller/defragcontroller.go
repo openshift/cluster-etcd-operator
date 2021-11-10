@@ -60,7 +60,7 @@ func NewDefragController(
 func (c *DefragController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	err := c.checkDefrag(ctx, syncCtx.Recorder())
 	if err != nil && !errors.Is(err, context.Canceled) {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "DefragControllerDegraded",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "Error",
@@ -72,7 +72,7 @@ func (c *DefragController) sync(ctx context.Context, syncCtx factory.SyncContext
 		return err
 	}
 
-	_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient,
+	_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient,
 		v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:   "DefragControllerDegraded",
 			Status: operatorv1.ConditionFalse,
@@ -90,7 +90,7 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 
 	controllerDisabledCondition := v1helpers.FindOperatorCondition(status.Conditions, defragDisabledCondition)
 	if controllerDisabledCondition == nil {
-		err := c.ensureControllerDisabledCondition(recorder)
+		err := c.ensureControllerDisabledCondition(ctx, recorder)
 		if err != nil {
 			return fmt.Errorf("failed to update controller disabled status: %w", err)
 		}
@@ -184,7 +184,7 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 	return v1helpers.NewMultiLineAggregate(errors)
 }
 
-func (c *DefragController) ensureControllerDisabledCondition(recorder events.Recorder) error {
+func (c *DefragController) ensureControllerDisabledCondition(ctx context.Context, recorder events.Recorder) error {
 	controlPlaneTopology, err := ceohelpers.GetControlPlaneTopology(c.infrastructureLister)
 	if err != nil {
 		return fmt.Errorf("failed to get control-plane topology: %w", err)
@@ -192,7 +192,7 @@ func (c *DefragController) ensureControllerDisabledCondition(recorder events.Rec
 
 	// Defrag is blocking and can only be safely performed in HighlyAvailableTopologyMode
 	if controlPlaneTopology == configv1.HighlyAvailableTopologyMode {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient,
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient,
 			v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 				Type:   defragDisabledCondition,
 				Status: operatorv1.ConditionFalse,
@@ -203,7 +203,7 @@ func (c *DefragController) ensureControllerDisabledCondition(recorder events.Rec
 			return err
 		}
 	} else {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient,
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient,
 			v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 				Type:   defragDisabledCondition,
 				Status: operatorv1.ConditionTrue,
