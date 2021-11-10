@@ -42,11 +42,11 @@ func New(targetNamespace string,
 }
 
 // sync sets/unsets a StaticPodFallbackRevisionDegraded condition if a pod that matches the given label selector is annotated with FallbackForRevision
-func (fd *staticPodFallbackConditionController) sync(_ context.Context, _ factory.SyncContext) (err error) {
+func (fd *staticPodFallbackConditionController) sync(ctx context.Context, _ factory.SyncContext) (err error) {
 	degradedCondition := operatorv1.OperatorCondition{Type: "StaticPodFallbackRevisionDegraded", Status: operatorv1.ConditionFalse}
 	defer func() {
 		if err == nil {
-			if _, _, updateError := operatorv1helpers.UpdateStatus(fd.operatorClient, operatorv1helpers.UpdateConditionFn(degradedCondition)); updateError != nil {
+			if _, _, updateError := operatorv1helpers.UpdateStatus(ctx, fd.operatorClient, operatorv1helpers.UpdateConditionFn(degradedCondition)); updateError != nil {
 				err = updateError
 			}
 		}

@@ -218,7 +218,7 @@ func (c *ResourceSyncController) Sync(ctx context.Context, syncCtx factory.SyncC
 			Reason:  "Error",
 			Message: v1helpers.NewMultiLineAggregate(errors).Error(),
 		}
-		if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(cond)); updateError != nil {
+		if _, _, updateError := v1helpers.UpdateStatus(ctx, c.operatorConfigClient, v1helpers.UpdateConditionFn(cond)); updateError != nil {
 			return updateError
 		}
 		return nil
@@ -228,7 +228,7 @@ func (c *ResourceSyncController) Sync(ctx context.Context, syncCtx factory.SyncC
 		Type:   condition.ResourceSyncControllerDegradedConditionType,
 		Status: operatorv1.ConditionFalse,
 	}
-	if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(cond)); updateError != nil {
+	if _, _, updateError := v1helpers.UpdateStatus(ctx, c.operatorConfigClient, v1helpers.UpdateConditionFn(cond)); updateError != nil {
 		return updateError
 	}
 	return nil

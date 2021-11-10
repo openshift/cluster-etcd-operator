@@ -246,7 +246,7 @@ func (c StaticResourceController) Sync(ctx context.Context, syncContext factory.
 		}
 	}
 
-	_, _, err = v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(cnd))
+	_, _, err = v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(cnd))
 	if err != nil {
 		errors = append(errors, err)
 	}

@@ -41,13 +41,13 @@ func New(targetNamespace string,
 	return factory.New().WithSync(fd.sync).ResyncEvery(6*time.Minute).WithInformers(kubeInformersForNamespaces.InformersFor(targetNamespace).Core().V1().Pods().Informer(), operatorClient.Informer()).ToController("StartupMonitorPodCondition", eventRecorder)
 }
 
-func (fd *startupMonitorPodConditionController) sync(_ context.Context, _ factory.SyncContext) (err error) {
+func (fd *startupMonitorPodConditionController) sync(ctx context.Context, _ factory.SyncContext) (err error) {
 	startupPodDegraded := &operatorv1.OperatorCondition{Type: "StartupMonitorPodDegraded", Status: operatorv1.ConditionFalse}
 	startupPodContainerExcessiveRestartsDegraded := &operatorv1.OperatorCondition{Type: "StartupMonitorPodContainerExcessiveRestartsDegraded", Status: operatorv1.ConditionFalse}
 
 	defer func() {
 		if err == nil {
-			if _, _, updateError := operatorv1helpers.UpdateStatus(fd.operatorClient,
+			if _, _, updateError := operatorv1helpers.UpdateStatus(ctx, fd.operatorClient,
 				operatorv1helpers.UpdateConditionFn(*startupPodDegraded),
 				operatorv1helpers.UpdateConditionFn(*startupPodContainerExcessiveRestartsDegraded)); updateError != nil {
 				err = updateError

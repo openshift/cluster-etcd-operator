@@ -104,7 +104,7 @@ func (c dynamicOperatorClient) GetOperatorState() (*operatorv1.OperatorSpec, *op
 // UpdateOperatorSpec overwrites the operator object spec with the values given
 // in operatorv1.OperatorSpec while preserving pre-existing spec fields that have
 // no correspondence in operatorv1.OperatorSpec.
-func (c dynamicOperatorClient) UpdateOperatorSpec(resourceVersion string, spec *operatorv1.OperatorSpec) (*operatorv1.OperatorSpec, string, error) {
+func (c dynamicOperatorClient) UpdateOperatorSpec(ctx context.Context, resourceVersion string, spec *operatorv1.OperatorSpec) (*operatorv1.OperatorSpec, string, error) {
 	uncastOriginal, err := c.informer.Lister().Get(c.configName)
 	if err != nil {
 		return nil, "", err
@@ -117,7 +117,7 @@ func (c dynamicOperatorClient) UpdateOperatorSpec(resourceVersion string, spec *
 		return nil, "", err
 	}
 
-	ret, err := c.client.Update(context.TODO(), copy, metav1.UpdateOptions{})
+	ret, err := c.client.Update(ctx, copy, metav1.UpdateOptions{})
 	if err != nil {
 		return nil, "", err
 	}
@@ -132,7 +132,7 @@ func (c dynamicOperatorClient) UpdateOperatorSpec(resourceVersion string, spec *
 // UpdateOperatorStatus overwrites the operator object status with the values given
 // in operatorv1.OperatorStatus while preserving pre-existing status fields that have
 // no correspondence in operatorv1.OperatorStatus.
-func (c dynamicOperatorClient) UpdateOperatorStatus(resourceVersion string, status *operatorv1.OperatorStatus) (*operatorv1.OperatorStatus, error) {
+func (c dynamicOperatorClient) UpdateOperatorStatus(ctx context.Context, resourceVersion string, status *operatorv1.OperatorStatus) (*operatorv1.OperatorStatus, error) {
 	uncastOriginal, err := c.informer.Lister().Get(c.configName)
 	if err != nil {
 		return nil, err
@@ -145,7 +145,7 @@ func (c dynamicOperatorClient) UpdateOperatorStatus(resourceVersion string, stat
 		return nil, err
 	}
 
-	ret, err := c.client.UpdateStatus(context.TODO(), copy, metav1.UpdateOptions{})
+	ret, err := c.client.UpdateStatus(ctx, copy, metav1.UpdateOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +157,7 @@ func (c dynamicOperatorClient) UpdateOperatorStatus(resourceVersion string, stat
 	return retStatus, nil
 }
 
-func (c dynamicOperatorClient) EnsureFinalizer(finalizer string) error {
+func (c dynamicOperatorClient) EnsureFinalizer(ctx context.Context, finalizer string) error {
 	uncastInstance, err := c.informer.Lister().Get(c.configName)
 	if err != nil {
 		return err
@@ -174,7 +174,7 @@ func (c dynamicOperatorClient) EnsureFinalizer(finalizer string) error {
 	// Change is needed
 	klog.V(4).Infof("Adding finalizer %q", finalizer)
 	newFinalizers := append(finalizers, finalizer)
-	err = c.saveFinalizers(instance, newFinalizers)
+	err = c.saveFinalizers(ctx, instance, newFinalizers)
 	if err != nil {
 		return err
 	}
@@ -182,7 +182,7 @@ func (c dynamicOperatorClient) EnsureFinalizer(finalizer string) error {
 	return err
 }
 
-func (c dynamicOperatorClient) RemoveFinalizer(finalizer string) error {
+func (c dynamicOperatorClient) RemoveFinalizer(ctx context.Context, finalizer string) error {
 	uncastInstance, err := c.informer.Lister().Get(c.configName)
 	if err != nil {
 		return err
@@ -204,7 +204,7 @@ func (c dynamicOperatorClient) RemoveFinalizer(finalizer string) error {
 	}
 
 	klog.V(4).Infof("Removing finalizer %q: %v", finalizer, newFinalizers)
-	err = c.saveFinalizers(instance, newFinalizers)
+	err = c.saveFinalizers(ctx, instance, newFinalizers)
 	if err != nil {
 		return err
 	}
@@ -212,10 +212,10 @@ func (c dynamicOperatorClient) RemoveFinalizer(finalizer string) error {
 	return nil
 }
 
-func (c dynamicOperatorClient) saveFinalizers(instance *unstructured.Unstructured, finalizers []string) error {
+func (c dynamicOperatorClient) saveFinalizers(ctx context.Context, instance *unstructured.Unstructured, finalizers []string) error {
 	clone := instance.DeepCopy()
 	clone.SetFinalizers(finalizers)
-	_, err := c.client.Update(context.TODO(), clone, metav1.UpdateOptions{})
+	_, err := c.client.Update(ctx, clone, metav1.UpdateOptions{})
 	return err
 }
 

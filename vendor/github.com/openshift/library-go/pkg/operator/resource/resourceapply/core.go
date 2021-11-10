@@ -455,3 +455,75 @@ func deleteSecretSyncTarget(ctx context.Context, client coreclientv1.SecretsGett
 	}
 	return false, err
 }
+
+func DeleteNamespace(ctx context.Context, client coreclientv1.NamespacesGetter, recorder events.Recorder, required *corev1.Namespace) (*corev1.Namespace, bool, error) {
+	err := client.Namespaces().Delete(ctx, required.Name, metav1.DeleteOptions{})
+	if err != nil && apierrors.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	reportDeleteEvent(recorder, required, err)
+	return nil, true, nil
+}
+
+func DeleteService(ctx context.Context, client coreclientv1.ServicesGetter, recorder events.Recorder, required *corev1.Service) (*corev1.Service, bool, error) {
+	err := client.Services(required.Namespace).Delete(ctx, required.Name, metav1.DeleteOptions{})
+	if err != nil && apierrors.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	reportDeleteEvent(recorder, required, err)
+	return nil, true, nil
+}
+
+func DeletePod(ctx context.Context, client coreclientv1.PodsGetter, recorder events.Recorder, required *corev1.Pod) (*corev1.Pod, bool, error) {
+	err := client.Pods(required.Namespace).Delete(ctx, required.Name, metav1.DeleteOptions{})
+	if err != nil && apierrors.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	reportDeleteEvent(recorder, required, err)
+	return nil, true, nil
+}
+
+func DeleteServiceAccount(ctx context.Context, client coreclientv1.ServiceAccountsGetter, recorder events.Recorder, required *corev1.ServiceAccount) (*corev1.ServiceAccount, bool, error) {
+	err := client.ServiceAccounts(required.Namespace).Delete(ctx, required.Name, metav1.DeleteOptions{})
+	if err != nil && apierrors.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	reportDeleteEvent(recorder, required, err)
+	return nil, true, nil
+}
+
+func DeleteConfigMap(ctx context.Context, client coreclientv1.ConfigMapsGetter, recorder events.Recorder, required *corev1.ConfigMap) (*corev1.ConfigMap, bool, error) {
+	err := client.ConfigMaps(required.Namespace).Delete(ctx, required.Name, metav1.DeleteOptions{})
+	if err != nil && apierrors.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	reportDeleteEvent(recorder, required, err)
+	return nil, true, nil
+}
+
+func DeleteSecret(ctx context.Context, client coreclientv1.SecretsGetter, recorder events.Recorder, required *corev1.Secret) (*corev1.Secret, bool, error) {
+	err := client.Secrets(required.Namespace).Delete(ctx, required.Name, metav1.DeleteOptions{})
+	if err != nil && apierrors.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	reportDeleteEvent(recorder, required, err)
+	return nil, true, nil
+}

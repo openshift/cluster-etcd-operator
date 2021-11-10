@@ -105,7 +105,7 @@ func (c *InstallerStateController) sync(ctx context.Context, syncCtx factory.Syn
 		updateConditionFuncs = append(updateConditionFuncs, v1helpers.UpdateStaticPodConditionFn(updatedCondition))
 	}
 
-	if _, _, err := v1helpers.UpdateStaticPodStatus(c.operatorClient, updateConditionFuncs...); err != nil {
+	if _, _, err := v1helpers.UpdateStaticPodStatus(ctx, c.operatorClient, updateConditionFuncs...); err != nil {
 		return err
 	}
 
