@@ -264,7 +264,7 @@ func (c *CertSyncController) sync(ctx context.Context, syncCtx factory.SyncConte
 			}
 
 			klog.Infof("Writing secret manifest %q ...", fullFilename)
-			if err := staticpod.WriteFileAtomic(content, 0644, fullFilename); err != nil {
+			if err := staticpod.WriteFileAtomic(content, 0600, fullFilename); err != nil {
 				c.eventRecorder.Warningf("CertificateUpdateFailed", "Failed writing file for secret: %s/%s: %v", secret.Namespace, secret.Name, err)
 				errors = append(errors, err)
 				continue

@@ -31,7 +31,7 @@ type LatestRevisionClient interface {
 	// GetLatestRevisionState returns the spec, status and latest revision.
 	GetLatestRevisionState() (spec *operatorv1.OperatorSpec, status *operatorv1.OperatorStatus, rev int32, rv string, err error)
 	// UpdateLatestRevisionOperatorStatus updates the status with the given latestAvailableRevision and the by applying the given updateFuncs.
-	UpdateLatestRevisionOperatorStatus(latestAvailableRevision int32, updateFuncs ...v1helpers.UpdateStatusFunc) (*operatorv1.OperatorStatus, bool, error)
+	UpdateLatestRevisionOperatorStatus(ctx context.Context, latestAvailableRevision int32, updateFuncs ...v1helpers.UpdateStatusFunc) (*operatorv1.OperatorStatus, bool, error)
 }
 
 // RevisionController is a controller that watches a set of configmaps and secrets and them against a revision snapshot
@@ -101,7 +101,7 @@ func (c RevisionController) createRevisionIfNeeded(ctx context.Context, recorder
 			Reason:  "ContentCreationError",
 			Message: err.Error(),
 		}
-		if _, _, updateError := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(cond)); updateError != nil {
+		if _, _, updateError := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(cond)); updateError != nil {
 			recorder.Warningf("RevisionCreateFailed", "Failed to create revision %d: %v", nextRevision, err.Error())
 			return true, updateError
 		}
@@ -112,7 +112,7 @@ func (c RevisionController) createRevisionIfNeeded(ctx context.Context, recorder
 		Type:   "RevisionControllerDegraded",
 		Status: operatorv1.ConditionFalse,
 	}
-	if _, updated, updateError := c.operatorClient.UpdateLatestRevisionOperatorStatus(nextRevision, v1helpers.UpdateConditionFn(cond)); updateError != nil {
+	if _, updated, updateError := c.operatorClient.UpdateLatestRevisionOperatorStatus(ctx, nextRevision, v1helpers.UpdateConditionFn(cond)); updateError != nil {
 		return true, updateError
 	} else if updated {
 		recorder.Eventf("RevisionCreate", "Revision %d created because %s", latestAvailableRevision, reason)
@@ -280,7 +280,7 @@ func (c RevisionController) sync(ctx context.Context, syncCtx factory.SyncContex
 		}
 		if latestRevision != 0 {
 			// Then make sure that revision number is what's in the operator status
-			_, _, err := c.operatorClient.UpdateLatestRevisionOperatorStatus(latestRevision)
+			_, _, err := c.operatorClient.UpdateLatestRevisionOperatorStatus(ctx, latestRevision)
 			if err != nil {
 				return err
 			}
@@ -305,7 +305,7 @@ func (c RevisionController) sync(ctx context.Context, syncCtx factory.SyncContex
 		cond.Reason = "Error"
 		cond.Message = err.Error()
 	}
-	if _, _, updateError := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(cond)); updateError != nil {
+	if _, _, updateError := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(cond)); updateError != nil {
 		if err == nil {
 			return updateError
 		}

@@ -3,9 +3,10 @@ package quorumguardcontroller
 import (
 	"context"
 	"fmt"
-	"github.com/ghodss/yaml"
 	"strconv"
 	"time"
+
+	"github.com/ghodss/yaml"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -114,7 +115,7 @@ func (c *QuorumGuardController) getTopologyMode() (configv1.TopologyMode, error)
 func (c *QuorumGuardController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	err := c.ensureEtcdGuard(ctx, syncCtx.Recorder())
 	if err != nil {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "QuorumGuardControllerDegraded",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "Error",
@@ -126,7 +127,7 @@ func (c *QuorumGuardController) sync(ctx context.Context, syncCtx factory.SyncCo
 		return err
 	}
 
-	_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient,
+	_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient,
 		v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:   "QuorumGuardControllerDegraded",
 			Status: operatorv1.ConditionFalse,

@@ -62,7 +62,7 @@ func NewEtcdEndpointsController(
 func (c *EtcdEndpointsController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	err := c.syncConfigMap(ctx, syncCtx.Recorder())
 	if err != nil {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdEndpointsDegraded",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "ErrorUpdatingEtcdEndpoints",
@@ -74,7 +74,7 @@ func (c *EtcdEndpointsController) sync(ctx context.Context, syncCtx factory.Sync
 		return err
 	}
 
-	_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+	_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 		Type:   "EtcdEndpointsDegraded",
 		Status: operatorv1.ConditionFalse,
 		Reason: "EtcdEndpointsUpdated",

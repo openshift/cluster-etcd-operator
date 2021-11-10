@@ -173,7 +173,7 @@ func (c *StaticPodStateController) sync(ctx context.Context, syncCtx factory.Syn
 		cond.Reason = "Error"
 		cond.Message = v1helpers.NewMultiLineAggregate(errs).Error()
 	}
-	if _, _, updateError := v1helpers.UpdateStaticPodStatus(c.operatorClient, v1helpers.UpdateStaticPodConditionFn(cond), v1helpers.UpdateStaticPodConditionFn(cond)); updateError != nil {
+	if _, _, updateError := v1helpers.UpdateStaticPodStatus(ctx, c.operatorClient, v1helpers.UpdateStaticPodConditionFn(cond), v1helpers.UpdateStaticPodConditionFn(cond)); updateError != nil {
 		return updateError
 	}
 

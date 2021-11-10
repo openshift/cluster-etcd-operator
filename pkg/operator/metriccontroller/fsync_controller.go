@@ -121,7 +121,7 @@ func (c *FSyncController) sync(ctx context.Context, syncCtx factory.SyncContext)
 	// ALERTS{alertname=~\"etcd.+\", job=\"etcd\", alertstate="firing"}
 
 	if degradedMsg != "" {
-		_, _, updateErr := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "FSyncControllerDegraded",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "etcd disk metrics exceeded known tresholds",

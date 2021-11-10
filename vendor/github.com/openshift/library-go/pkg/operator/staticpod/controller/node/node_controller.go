@@ -115,7 +115,7 @@ func (c NodeController) sync(ctx context.Context, syncCtx factory.SyncContext) e
 	}
 
 	oldStatus := &operatorv1.StaticPodOperatorStatus{}
-	_, updated, updateError := v1helpers.UpdateStaticPodStatus(c.operatorClient, func(status *operatorv1.StaticPodOperatorStatus) error {
+	_, updated, updateError := v1helpers.UpdateStaticPodStatus(ctx, c.operatorClient, func(status *operatorv1.StaticPodOperatorStatus) error {
 		//a hack for storing the old status (before we mutate it)
 		oldStatus = status
 		return nil

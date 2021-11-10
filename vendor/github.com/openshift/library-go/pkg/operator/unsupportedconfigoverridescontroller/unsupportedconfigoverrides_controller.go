@@ -63,7 +63,7 @@ func (c *UnsupportedConfigOverridesController) sync(ctx context.Context, syncCtx
 		}
 	}
 
-	if _, _, updateError := v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(cond)); updateError != nil {
+	if _, _, updateError := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(cond)); updateError != nil {
 		return updateError
 	}
 	return nil
