@@ -1,12 +1,11 @@
 reviewers:
+  - dusk125
   - hexfusion
   - ironcladlou
-  - lilic
   - marun
   - hasbro17
 approvers:
   - deads2k
   - hexfusion
-  - lilic
   - sttts
 component: "Etcd"
