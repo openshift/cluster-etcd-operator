@@ -1,12 +1,12 @@
 package testutils
 
 import (
-	"encoding/base64"
 	"errors"
 	"fmt"
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
@@ -20,7 +20,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/uuid"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"math/rand"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -183,9 +185,16 @@ func WithBootstrapIP(ip string) func(*corev1.ConfigMap) {
 	}
 }
 
-func WithAddress(ip string) func(*corev1.ConfigMap) {
+func WithEndpoint(memberID uint64, peerURl string) func(*corev1.ConfigMap) {
+	if !strings.HasPrefix(peerURl, "https://") {
+		peerURl = "https://" + peerURl
+	}
+	ip, err := dnshelpers.GetIPFromAddress(peerURl)
+	if err != nil {
+		panic(err)
+	}
 	return func(endpoints *corev1.ConfigMap) {
-		endpoints.Data[base64.StdEncoding.WithPadding(base64.NoPadding).EncodeToString([]byte(ip))] = ip
+		endpoints.Data[fmt.Sprintf("%016x", memberID)] = ip
 	}
 }
 
@@ -207,7 +216,13 @@ func FakeEtcdMember(member int, etcdMock []*mockserver.MockServer) *etcdserverpb
 	return &etcdserverpb.Member{
 		Name:       fmt.Sprintf("etcd-%d", member),
 		ClientURLs: []string{etcdMock[member].Address},
+		PeerURLs:   []string{fmt.Sprintf("https://10.0.0.%d:2380", member+1)},
+		ID:         fakeMemberId(),
 	}
+}
+
+func fakeMemberId() uint64 {
+	return uint64(rand.Uint32())<<32 + uint64(rand.Uint32())
 }
 
 func FakeInfrastructureTopology(topologyMode configv1.TopologyMode) *configv1.Infrastructure {
