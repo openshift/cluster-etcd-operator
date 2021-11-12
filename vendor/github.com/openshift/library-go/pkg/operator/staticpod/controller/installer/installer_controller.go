@@ -94,6 +94,8 @@ type InstallerController struct {
 
 	startupMonitorEnabled func() (bool, error)
 
+	nodeFilterFn func(ctx context.Context) (map[string]bool, error)
+
 	factory          *factory.Factory
 	clock            clock.Clock
 	installerBackOff func(count int) time.Duration
@@ -110,6 +112,13 @@ func (c *InstallerController) WithInstallerPodMutationFn(installerPodMutationFn 
 
 func (c *InstallerController) WithMinReadyDuration(minReadyDuration time.Duration) *InstallerController {
 	c.minReadyDuration = minReadyDuration
+	return c
+}
+
+// WithNodeFilter sets a map of all control plane nodes called on every sync with a bool
+// representing if the node was included for the revision.
+func (c *InstallerController) WithNodeFilter(nodeFilterFn func(ctx context.Context) (map[string]bool, error)) *InstallerController {
+	c.nodeFilterFn = nodeFilterFn
 	return c
 }
 
@@ -384,6 +393,42 @@ func nodeToStartRevisionWith(ctx context.Context, getStaticPodStateFn staticPodS
 	return 0, reason, nil
 }
 
+// nodeStatusesFilteredForRevision returns a list of nodeStatuses which have been selected for the next revision.
+func nodeStatusesFilteredForRevision(ctx context.Context, nodeFilterFn func(ctx context.Context) (map[string]bool, error), nodeStatuses []operatorv1.NodeStatus) ([]operatorv1.NodeStatus, error) {
+	if nodeFilterFn == nil {
+		return nodeStatuses, nil
+	}
+
+	nodeSelectorHostnameMap, err := nodeFilterFn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(nodeSelectorHostnameMap) == 0 {
+		return nodeStatuses, nil
+	}
+	// Every node should be part of the map.
+	if len(nodeSelectorHostnameMap) != len(nodeStatuses) {
+		return nil, fmt.Errorf("node filter count: %d does not equal the node statuses count: %d", len(nodeSelectorHostnameMap), len(nodeStatuses))
+	}
+
+	var selectedNodeStatuses []operatorv1.NodeStatus
+	for _, ns := range nodeStatuses {
+		include, ok := nodeSelectorHostnameMap[ns.NodeName]
+		if !ok {
+			return nil, fmt.Errorf("node/%s is not included in the node selector map", ns.NodeName)
+		}
+		if include {
+			selectedNodeStatuses = append(selectedNodeStatuses, ns)
+		}
+	}
+
+	if len(selectedNodeStatuses) == 0 {
+		return nil, fmt.Errorf("all nodes filtered for revision, nodes array cannot be empty")
+	}
+
+	return selectedNodeStatuses, nil
+}
+
 // timeToWaitBeforeInstallingNextPod determines the amount of time to delay before creating the next installer pod.
 // We delay to avoid issues where the the LB doesn't observe readyz for ready pods as quickly as kubelet does.
 // See godoc on minReadyDuration.
@@ -430,27 +475,32 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 		return false, 0, nil
 	}
 
+	nodeStatuses, err := nodeStatusesFilteredForRevision(ctx, c.nodeFilterFn, operatorStatus.NodeStatuses)
+	if err != nil {
+		return true, 0, err
+	}
+
 	// start with node which is in worst state (instead of terminating healthy pods first)
-	startNode, nodeChoiceReason, err := nodeToStartRevisionWith(ctx, c.getStaticPodState, operatorStatus.NodeStatuses)
+	startNode, nodeChoiceReason, err := nodeToStartRevisionWith(ctx, c.getStaticPodState, nodeStatuses)
 	if err != nil {
 		return true, 0, err
 	}
 
 	// determine the amount of time to delay before creating the next installer pod.  We delay to avoid an LB outage (see godoc on minReadySeconds)
-	requeueAfter := c.timeToWaitBeforeInstallingNextPod(ctx, operatorStatus.NodeStatuses)
+	requeueAfter := c.timeToWaitBeforeInstallingNextPod(ctx, nodeStatuses)
 	if requeueAfter > 0 {
 		return true, requeueAfter, nil
 	}
 
-	for l := 0; l < len(operatorStatus.NodeStatuses); l++ {
-		i := (startNode + l) % len(operatorStatus.NodeStatuses)
+	for l := 0; l < len(nodeStatuses); l++ {
+		i := (startNode + l) % len(nodeStatuses)
 
 		var currNodeState *operatorv1.NodeStatus
 		var prevNodeState *operatorv1.NodeStatus
-		currNodeState = &operatorStatus.NodeStatuses[i]
+		currNodeState = &nodeStatuses[i]
 		if l > 0 {
-			prev := (startNode + l - 1) % len(operatorStatus.NodeStatuses)
-			prevNodeState = &operatorStatus.NodeStatuses[prev]
+			prev := (startNode + l - 1) % len(nodeStatuses)
+			prevNodeState = &nodeStatuses[prev]
 			nodeChoiceReason = fmt.Sprintf("node %s is the next node in the line", currNodeState.NodeName)
 		}
 
@@ -561,6 +611,7 @@ func setNodeStatusFn(status *operatorv1.NodeStatus) v1helpers.UpdateStaticPodSta
 func setAvailableProgressingNodeInstallerFailingConditions(newStatus *operatorv1.StaticPodOperatorStatus) error {
 	// Available means that we have at least one pod at the latest level
 	numAvailable := 0
+	numAtLatestRevision := 0
 	numProgressing := 0
 	counts := map[int32]int{}
 	failingCount := map[int32]int{}
@@ -579,7 +630,9 @@ func setAvailableProgressingNodeInstallerFailingConditions(newStatus *operatorv1
 			failing[currNodeStatus.LastFailedRevision] = append(failing[currNodeStatus.LastFailedRevision], currNodeStatus.LastFailedRevisionErrors...)
 		}
 
-		if newStatus.LatestAvailableRevision != currNodeStatus.CurrentRevision {
+		if newStatus.LatestAvailableRevision == currNodeStatus.CurrentRevision {
+			numAtLatestRevision += 1
+		} else {
 			numProgressing += 1
 		}
 	}

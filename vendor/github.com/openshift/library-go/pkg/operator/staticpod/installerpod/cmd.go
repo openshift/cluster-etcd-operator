@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/blang/semver"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -60,8 +59,6 @@ type InstallOptions struct {
 	StaticPodManifestsLockFile string
 
 	PodMutationFns []PodMutationFunc
-
-	KubeletVersion string
 }
 
 // PodMutationFunc is a function that has a chance at changing the pod before it is created
@@ -182,14 +179,6 @@ func (o *InstallOptions) nameFor(prefix string) string {
 
 func (o *InstallOptions) prefixFor(name string) string {
 	return name[0 : len(name)-len(fmt.Sprintf("-%s", o.Revision))]
-}
-
-func (o *InstallOptions) kubeletVersion(ctx context.Context) (string, error) {
-	node, err := o.KubeClient.CoreV1().Nodes().Get(ctx, o.NodeName, metav1.GetOptions{})
-	if err != nil {
-		return "", err
-	}
-	return node.Status.NodeInfo.KubeletVersion, nil
 }
 
 func (o *InstallOptions) copySecretsAndConfigMaps(ctx context.Context, resourceDir string,
@@ -398,21 +387,6 @@ func (o *InstallOptions) Run(ctx context.Context) error {
 		klog.Warningf("unable to get owner reference (falling back to namespace): %v", err)
 	}
 
-	err = retry.RetryOnConnectionErrors(ctx, func(context.Context) (bool, error) {
-		version, err := o.kubeletVersion(ctx)
-		if err != nil {
-			return false, err
-		}
-		// trim 'v' from 'v1.22.1' because semver parsing don't like it
-		o.KubeletVersion = strings.TrimPrefix(version, "v")
-		return true, nil
-	})
-	if err != nil || len(o.KubeletVersion) == 0 {
-		klog.Warningf("unable to get kubelet version for node %q: %v", o.NodeName, err)
-	} else {
-		klog.Infof("Got kubelet version %s on target node %s", o.KubeletVersion, o.NodeName)
-	}
-
 	recorder := events.NewRecorder(o.KubeClient.CoreV1().Events(o.Namespace), "static-pod-installer", eventTarget)
 	if err := o.copyContent(ctx); err != nil {
 		recorder.Warningf("StaticPodInstallerFailed", "Installing revision %s: %v", o.Revision, err)
@@ -423,16 +397,6 @@ func (o *InstallOptions) Run(ctx context.Context) error {
 	return nil
 }
 
-func (o *InstallOptions) installerPodNeedUUID() bool {
-	kubeletVersion, err := semver.Make(o.KubeletVersion)
-	if err != nil {
-		klog.Warningf("Failed to parse kubelet version %q to semver: %v (we will not generate pod UID)", err)
-		return false
-	}
-	// if we run kubelet older than 4.9, installer pods require UID generation
-	return kubeletVersion.LT(semver.MustParse("1.22.0"))
-}
-
 func (o *InstallOptions) writePod(rawPodBytes []byte, manifestFileName, resourceDir string) error {
 	// the kubelet has a bug that prevents graceful termination from working on static pods with the same name, filename
 	// and uuid.  By setting the pod UID we can work around the kubelet bug and get our graceful termination honored.
@@ -441,14 +405,7 @@ func (o *InstallOptions) writePod(rawPodBytes []byte, manifestFileName, resource
 	if err != nil {
 		return err
 	}
-
-	//  If the kubelet version is >=4.9 (1.22), the installer pod UID does not need to be set in the file.
-	if o.installerPodNeedUUID() {
-		pod.UID = uuid.NewUUID()
-	} else {
-		pod.UID = ""
-	}
-
+	pod.UID = uuid.NewUUID()
 	for _, fn := range o.PodMutationFns {
 		klog.V(2).Infof("Customizing static pod ...")
 		pod = pod.DeepCopy()
