@@ -103,7 +103,7 @@ controlPlane:
 			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 2, wantErr: false, expectedReplicaCount: 3,
 		},
 		{
-			name: "test ensureEtcdGuard - nonHAmod",
+			name: "test ensureEtcdGuard - non HA mode",
 			fields: fields{
 				client: fakecore.NewSimpleClientset(),
 				infraObj: &configv1.Infrastructure{
@@ -117,7 +117,7 @@ controlPlane:
 			expectedHATopology: configv1.SingleReplicaTopologyMode, expectedEvents: 0, wantErr: false, expectedReplicaCount: 0,
 		},
 		{
-			name: "test ensureEtcdGuard - ha mod not set, nothing exists",
+			name: "test ensureEtcdGuard - HA mode not set, nothing exists",
 			fields: fields{
 				client: fakecore.NewSimpleClientset(&clusterConfigFullHA),
 				infraObj: &configv1.Infrastructure{

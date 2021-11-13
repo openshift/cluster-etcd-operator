@@ -172,7 +172,7 @@ func (c *QuorumGuardController) ensureEtcdGuardDeployment(ctx context.Context, r
 	// use image from release payload
 	c.etcdQuorumGuard.Spec.Template.Spec.Containers[0].Image = c.cliImagePullSpec
 
-	// if restart occurred, we will apply etcd guard deployment but if it is the same, nothing will happened
+	// if restart occurred, we will apply etcd guard deployment but if it is the same, nothing will happen
 	actual, modified, err := resourceapply.ApplyDeploymentv1(ctx, c.kubeClient.AppsV1(), c.etcdQuorumGuard)
 	if err != nil {
 		klog.Errorf("failed to verify/apply %s, error %w", EtcdGuardDeploymentName, err)
