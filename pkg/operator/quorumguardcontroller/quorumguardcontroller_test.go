@@ -64,14 +64,14 @@ controlPlane:
 			fields: fields{
 				client:   fakecore.NewSimpleClientset(deployment, &clusterConfigFullHA),
 				infraObj: haInfra},
-			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 1, wantErr: false, expectedReplicaCount: 3,
+			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 2, wantErr: false, expectedReplicaCount: 3,
 		},
 		{
 			name: "test ensureEtcdGuard - deployment and pdb exists",
 			fields: fields{
 				client:   fakecore.NewSimpleClientset(deployment, pdb, &clusterConfigFullHA),
 				infraObj: haInfra},
-			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 0, wantErr: false, expectedReplicaCount: 3,
+			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 1, wantErr: false, expectedReplicaCount: 3,
 		},
 		{
 			name: "test ensureEtcdGuard - deployment not exists but pdb exists",
@@ -93,7 +93,7 @@ controlPlane:
 			fields: fields{
 				client:   fakecore.NewSimpleClientset(deployment, changedPDB, &clusterConfigFullHA),
 				infraObj: haInfra},
-			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 1, wantErr: false, expectedReplicaCount: 3,
+			expectedHATopology: configv1.HighlyAvailableTopologyMode, expectedEvents: 2, wantErr: false, expectedReplicaCount: 3,
 		},
 		{
 			name: "test ensureEtcdGuard - deployment and pdb were changed",

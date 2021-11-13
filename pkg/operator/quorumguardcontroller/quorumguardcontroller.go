@@ -17,6 +17,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -172,7 +173,45 @@ func (c *QuorumGuardController) ensureEtcdGuardDeployment(ctx context.Context, r
 	// use image from release payload
 	c.etcdQuorumGuard.Spec.Template.Spec.Containers[0].Image = c.cliImagePullSpec
 
-	// if restart occurred, we will apply etcd guard deployment but if it is the same, nothing will happened
+	affinity := &corev1.Affinity{
+		// Ensure only a single instance is deployed per node
+		PodAntiAffinity: &corev1.PodAntiAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+				{
+					LabelSelector: &metav1.LabelSelector{
+						MatchExpressions: []metav1.LabelSelectorRequirement{
+							{
+								Key:      "k8s-app",
+								Operator: metav1.LabelSelectorOpIn,
+								Values:   []string{"etcd-quorum-guard"},
+							},
+						},
+					},
+					TopologyKey: "kubernetes.io/hostname",
+				},
+			},
+		},
+		// Don't schedule unless etcd exists.
+		PodAffinity: &corev1.PodAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+				{
+					LabelSelector: &metav1.LabelSelector{
+						MatchExpressions: []metav1.LabelSelectorRequirement{
+							{
+								Key:      "k8s-app",
+								Operator: metav1.LabelSelectorOpIn,
+								Values:   []string{"etcd"},
+							},
+						},
+					},
+					TopologyKey: "kubernetes.io/hostname",
+				},
+			},
+		},
+	}
+	c.etcdQuorumGuard.Spec.Template.Spec.Affinity = affinity
+
+	// if restart occurred, we will apply etcd guard deployment but if it is the same, nothing will happen
 	actual, modified, err := resourceapply.ApplyDeploymentv1(ctx, c.kubeClient.AppsV1(), c.etcdQuorumGuard)
 	if err != nil {
 		klog.Errorf("failed to verify/apply %s, error %w", EtcdGuardDeploymentName, err)
