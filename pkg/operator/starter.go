@@ -306,6 +306,7 @@ var RevisionConfigMaps = []revision.RevisionResource{
 	{Name: "etcd-peer-client-ca"},
 	{Name: "etcd-metrics-proxy-serving-ca"},
 	{Name: "etcd-metrics-proxy-client-ca"},
+	{Name: "etcd-endpoints"},
 }
 
 // RevisionSecrets is a list of secrets that are directly copied for the current values.  A different actor/controller modifies these.

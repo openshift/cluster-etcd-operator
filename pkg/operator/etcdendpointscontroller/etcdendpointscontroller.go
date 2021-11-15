@@ -2,11 +2,11 @@ package etcdendpointscontroller
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -15,7 +15,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
@@ -114,28 +113,27 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 		klog.Warningf("required configmap %s/%s will be created because it was missing: %w", operatorclient.TargetNamespace, "etcd-endpoints", err)
 	}
 
-	// create endpoint addresses for each node
-	nodes, err := c.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
+	members, err := c.etcdClient.MemberList(ctx)
 	if err != nil {
-		return fmt.Errorf("unable to list expected etcd member nodes: %v", err)
+		return fmt.Errorf("failed to get member list: %w", err)
 	}
-	endpointAddresses := map[string]string{}
-	for _, node := range nodes {
-		var nodeInternalIP string
-		for _, nodeAddress := range node.Status.Addresses {
-			if nodeAddress.Type == corev1.NodeInternalIP {
-				nodeInternalIP = nodeAddress.Address
-				break
-			}
+
+	endpointAddresses := make(map[string]string, len(members))
+	// Create endpoint addresses for each member of the cluster.
+	for _, member := range members {
+		if member.Name == "etcd-bootstrap" {
+			continue
 		}
-		if len(nodeInternalIP) == 0 {
-			return fmt.Errorf("unable to determine internal ip address for node %s", node.Name)
+		// Use of PeerURL is expected here because it is a mandatory field, and it will mirror ClientURL.
+		ip, err := dnshelpers.GetIPFromAddress(member.PeerURLs[0])
+		if err != nil {
+			return err
 		}
-		endpointAddresses[base64.StdEncoding.WithPadding(base64.NoPadding).EncodeToString([]byte(nodeInternalIP))] = nodeInternalIP
+		endpointAddresses[fmt.Sprintf("%x", member.ID)] = ip
 	}
 
 	if len(endpointAddresses) == 0 {
-		return fmt.Errorf("no master nodes are present")
+		return fmt.Errorf("no etcd members are present")
 	}
 
 	required.Data = endpointAddresses

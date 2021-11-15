@@ -38,6 +38,8 @@ var FixedEtcdEnvVars = map[string]string{
 	"ETCD_EXPERIMENTAL_WARNING_APPLY_DURATION":         "200ms",
 }
 
+const etcdEndpointName = "etcd-endpoints"
+
 type envVarFunc func(envVarContext envVarContext) (map[string]string, error)
 
 var envVarFns = []envVarFunc{
@@ -93,7 +95,7 @@ func getFixedEtcdEnvVars(envVarContext envVarContext) (map[string]string, error)
 }
 
 func getEtcdctlEnvVars(envVarContext envVarContext) (map[string]string, error) {
-	endpoints, err := getEtcdGrpcEndpoints(envVarContext)
+	endpoints, err := getEtcdEndpoints(envVarContext.configmapLister, true)
 	if err != nil {
 		return nil, err
 	}
@@ -107,48 +109,11 @@ func getEtcdctlEnvVars(envVarContext envVarContext) (map[string]string, error) {
 	}, nil
 }
 
-func getEtcdGrpcEndpoints(envVarContext envVarContext) (string, error) {
-	network, err := envVarContext.networkLister.Get("cluster")
-	if err != nil {
-		return "", err
-	}
-
-	var endpoints []string
-	for _, nodeInfo := range envVarContext.status.NodeStatuses {
-		node, err := envVarContext.nodeLister.Get(nodeInfo.NodeName)
-		if err != nil {
-			return "", err
-		}
-
-		endpointIP, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
-		if err != nil {
-			return "", err
-		}
-		endpoints = append(endpoints, fmt.Sprintf("https://%s:2379", endpointIP))
-	}
-	sort.Strings(endpoints)
-
-	return strings.Join(endpoints, ","), nil
-}
-
 func getAllEtcdEndpoints(envVarContext envVarContext) (map[string]string, error) {
-	endpoints, err := getEtcdGrpcEndpoints(envVarContext)
+	endpoints, err := getEtcdEndpoints(envVarContext.configmapLister, false)
 	if err != nil {
 		return nil, err
 	}
-
-	etcdEndpoints, err := envVarContext.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints")
-	if err != nil {
-		return nil, err
-	}
-	if bootstrapIP := etcdEndpoints.Annotations["alpha.installer.openshift.io/etcd-bootstrap"]; len(bootstrapIP) > 0 {
-		urlHost, err := dnshelpers.GetURLHostForIP(bootstrapIP)
-		if err != nil {
-			return nil, err
-		}
-		endpoints += ",https://" + urlHost + ":2379"
-	}
-
 	return map[string]string{
 		"ALL_ETCD_ENDPOINTS": endpoints,
 	}, nil
@@ -288,4 +253,32 @@ func getCipherSuites(envVarContext envVarContext) (map[string]string, error) {
 	return map[string]string{
 		"ETCD_CIPHER_SUITES": strings.Join(actualCipherSuites, ","),
 	}, nil
+}
+
+func getEtcdEndpoints(configmapLister corev1listers.ConfigMapLister, skipBootstrap bool) (string, error) {
+	etcdEndpoints, err := configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get(etcdEndpointName)
+	if err != nil {
+		return "", err
+	}
+	var etcdURLs []string
+	bootstrapAddress := etcdEndpoints.Annotations["alpha.installer.openshift.io/etcd-bootstrap"]
+	// In some cases we want to exclude the ephemeral bootstrap-etcd member from the endpoint list.
+	if !skipBootstrap && len(bootstrapAddress) > 0 {
+		ip, err := dnshelpers.GetURLHostForIP(bootstrapAddress)
+		if err != nil {
+			return "", fmt.Errorf("configmaps/%s contains invalid bootstrap ip address: %s: %v", etcdEndpointName, bootstrapAddress, err)
+		}
+		etcdURLs = append(etcdURLs, fmt.Sprintf("https://%s:2379", ip))
+	}
+	for k := range etcdEndpoints.Data {
+		address := etcdEndpoints.Data[k]
+		ip, err := dnshelpers.GetURLHostForIP(address)
+		if err != nil {
+			return "", fmt.Errorf("configmaps/%s contains invalid ip address: %s: %v", etcdEndpointName, address, err)
+		}
+		etcdURLs = append(etcdURLs, fmt.Sprintf("https://%s:2379", ip))
+	}
+	sort.Strings(etcdURLs)
+
+	return strings.Join(etcdURLs, ","), nil
 }

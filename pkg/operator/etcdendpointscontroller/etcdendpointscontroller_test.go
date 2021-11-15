@@ -30,20 +30,25 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 		t.Fatalf("failed to start mock servers: %s", err)
 	}
 	defer mockEtcd.Stop()
+
+	etcdMembers := []*etcdserverpb.Member{
+		u.FakeEtcdMember(0, mockEtcd.Servers),
+		u.FakeEtcdMember(1, mockEtcd.Servers),
+		u.FakeEtcdMember(2, mockEtcd.Servers),
+	}
+
 	scenarios := []struct {
 		name            string
 		objects         []runtime.Object
 		staticPodStatus *operatorv1.StaticPodOperatorStatus
 		etcdMembers     []*etcdserverpb.Member
-		validateFunc    func(ts *testing.T, actions []clientgotesting.Action)
+		expectBootstrap bool
+		validateFunc    func(ts *testing.T, endpoints []func(*corev1.ConfigMap), actions []clientgotesting.Action)
 	}{
 		{
 			// The etcd-endpoint configmap should be created properly if it is missing.
 			name: "NewConfigMapAfterDeletion",
 			objects: []runtime.Object{
-				u.FakeNode("master-0", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1")),
-				u.FakeNode("master-1", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.2")),
-				u.FakeNode("master-2", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.3")),
 				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
 			},
 			staticPodStatus: u.StaticPodOperatorStatus(
@@ -52,16 +57,14 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 				u.WithNodeStatusAtCurrentRevision(3),
 				u.WithNodeStatusAtCurrentRevision(3),
 			),
-			validateFunc: func(ts *testing.T, actions []clientgotesting.Action) {
+			expectBootstrap: false,
+			etcdMembers:     etcdMembers,
+			validateFunc: func(ts *testing.T, endpoints []func(*corev1.ConfigMap), actions []clientgotesting.Action) {
 				for _, action := range actions {
 					if action.Matches("create", "configmaps") {
 						createAction := action.(clientgotesting.CreateAction)
 						actual := createAction.GetObject().(*corev1.ConfigMap)
-						expected := u.EndpointsConfigMap(
-							u.WithAddress("10.0.0.1"),
-							u.WithAddress("10.0.0.2"),
-							u.WithAddress("10.0.0.3"),
-						)
+						expected := u.EndpointsConfigMap(endpoints...)
 						if !equality.Semantic.DeepEqual(actual, expected) {
 							ts.Errorf(diff.ObjectDiff(expected, actual))
 						}
@@ -74,15 +77,12 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			// and all nodes have converged on a revision.
 			name: "NewClusterBootstrapRemoval",
 			objects: []runtime.Object{
-				u.FakeNode("master-0", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1")),
-				u.FakeNode("master-1", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.2")),
-				u.FakeNode("master-2", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.3")),
 				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
 				u.EndpointsConfigMap(
 					u.WithBootstrapIP("192.0.2.1"),
-					u.WithAddress("10.0.0.1"),
-					u.WithAddress("10.0.0.2"),
-					u.WithAddress("10.0.0.3"),
+					u.WithEndpoint(etcdMembers[0].ID, etcdMembers[0].PeerURLs[0]),
+					u.WithEndpoint(etcdMembers[1].ID, etcdMembers[1].PeerURLs[0]),
+					u.WithEndpoint(etcdMembers[2].ID, etcdMembers[2].PeerURLs[0]),
 				),
 			},
 			staticPodStatus: u.StaticPodOperatorStatus(
@@ -91,22 +91,15 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 				u.WithNodeStatusAtCurrentRevision(3),
 				u.WithNodeStatusAtCurrentRevision(3),
 			),
-			etcdMembers: []*etcdserverpb.Member{
-				u.FakeEtcdMember(0, mockEtcd.Servers),
-				u.FakeEtcdMember(1, mockEtcd.Servers),
-				u.FakeEtcdMember(2, mockEtcd.Servers),
-			},
-			validateFunc: func(ts *testing.T, actions []clientgotesting.Action) {
+			expectBootstrap: false,
+			etcdMembers:     etcdMembers,
+			validateFunc: func(ts *testing.T, endpoints []func(*corev1.ConfigMap), actions []clientgotesting.Action) {
 				wasValidated := false
 				for _, action := range actions {
 					if action.Matches("update", "configmaps") {
 						updateAction := action.(clientgotesting.UpdateAction)
 						actual := updateAction.GetObject().(*corev1.ConfigMap)
-						expected := u.EndpointsConfigMap(
-							u.WithAddress("10.0.0.1"),
-							u.WithAddress("10.0.0.2"),
-							u.WithAddress("10.0.0.3"),
-						)
+						expected := u.EndpointsConfigMap(endpoints...)
 						if !equality.Semantic.DeepEqual(actual, expected) {
 							ts.Errorf(diff.ObjectDiff(expected, actual))
 						}
@@ -124,15 +117,12 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			// reports complete, the nodes are still progressing towards a revision.
 			name: "NewClusterBootstrapNodesProgressing",
 			objects: []runtime.Object{
-				u.FakeNode("master-0", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1")),
-				u.FakeNode("master-1", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.2")),
-				u.FakeNode("master-2", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.3")),
 				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
 				u.EndpointsConfigMap(
 					u.WithBootstrapIP("192.0.2.1"),
-					u.WithAddress("10.0.0.1"),
-					u.WithAddress("10.0.0.2"),
-					u.WithAddress("10.0.0.3"),
+					u.WithEndpoint(etcdMembers[0].ID, etcdMembers[0].PeerURLs[0]),
+					u.WithEndpoint(etcdMembers[1].ID, etcdMembers[1].PeerURLs[0]),
+					u.WithEndpoint(etcdMembers[2].ID, etcdMembers[2].PeerURLs[0]),
 				),
 			},
 			staticPodStatus: u.StaticPodOperatorStatus(
@@ -141,7 +131,9 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 				u.WithNodeStatusAtCurrentRevision(2),
 				u.WithNodeStatusAtCurrentRevision(3),
 			),
-			validateFunc: func(ts *testing.T, actions []clientgotesting.Action) {
+			expectBootstrap: true,
+			etcdMembers:     etcdMembers,
+			validateFunc: func(ts *testing.T, endpoints []func(*corev1.ConfigMap), actions []clientgotesting.Action) {
 				for _, action := range actions {
 					if action.Matches("update", "configmaps") {
 						updateAction := action.(clientgotesting.UpdateAction)
@@ -156,15 +148,12 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			// to have converged on a revision, bootstrap reports incomplete.
 			name: "NewClusterBootstrapProgressing",
 			objects: []runtime.Object{
-				u.FakeNode("master-0", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1")),
-				u.FakeNode("master-1", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.2")),
-				u.FakeNode("master-2", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.3")),
 				u.BootstrapConfigMap(u.WithBootstrapStatus("progressing")),
 				u.EndpointsConfigMap(
 					u.WithBootstrapIP("192.0.2.1"),
-					u.WithAddress("10.0.0.1"),
-					u.WithAddress("10.0.0.2"),
-					u.WithAddress("10.0.0.3"),
+					u.WithEndpoint(etcdMembers[0].ID, etcdMembers[0].PeerURLs[0]),
+					u.WithEndpoint(etcdMembers[1].ID, etcdMembers[1].PeerURLs[0]),
+					u.WithEndpoint(etcdMembers[2].ID, etcdMembers[2].PeerURLs[0]),
 				),
 			},
 			staticPodStatus: u.StaticPodOperatorStatus(
@@ -173,7 +162,9 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 				u.WithNodeStatusAtCurrentRevision(3),
 				u.WithNodeStatusAtCurrentRevision(3),
 			),
-			validateFunc: func(ts *testing.T, actions []clientgotesting.Action) {
+			expectBootstrap: false,
+			etcdMembers:     etcdMembers,
+			validateFunc: func(ts *testing.T, endpoints []func(*corev1.ConfigMap), actions []clientgotesting.Action) {
 				for _, action := range actions {
 					if action.Matches("update", "configmaps") {
 						updateAction := action.(clientgotesting.UpdateAction)
@@ -187,14 +178,11 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			// The configmap should remain intact because there are no changes.
 			name: "NewClusterSteadyState",
 			objects: []runtime.Object{
-				u.FakeNode("master-0", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1")),
-				u.FakeNode("master-1", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.2")),
-				u.FakeNode("master-2", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.3")),
 				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
 				u.EndpointsConfigMap(
-					u.WithAddress("10.0.0.1"),
-					u.WithAddress("10.0.0.2"),
-					u.WithAddress("10.0.0.3"),
+					u.WithEndpoint(etcdMembers[0].ID, etcdMembers[0].PeerURLs[0]),
+					u.WithEndpoint(etcdMembers[1].ID, etcdMembers[1].PeerURLs[0]),
+					u.WithEndpoint(etcdMembers[2].ID, etcdMembers[2].PeerURLs[0]),
 				),
 			},
 			staticPodStatus: u.StaticPodOperatorStatus(
@@ -203,13 +191,55 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 				u.WithNodeStatusAtCurrentRevision(3),
 				u.WithNodeStatusAtCurrentRevision(3),
 			),
-			validateFunc: func(ts *testing.T, actions []clientgotesting.Action) {
+			expectBootstrap: false,
+			etcdMembers:     etcdMembers,
+			validateFunc: func(ts *testing.T, endpoints []func(*corev1.ConfigMap), actions []clientgotesting.Action) {
 				for _, action := range actions {
 					if action.Matches("update", "configmaps") {
 						updateAction := action.(clientgotesting.UpdateAction)
 						actual := updateAction.GetObject().(*corev1.ConfigMap)
 						ts.Errorf("unexpected configmap update: %#v", actual)
 					}
+				}
+			},
+		},
+		{
+			// The configmap should update based on the change in membership
+			name: "ClusterUpdateWithMemberChange",
+			objects: []runtime.Object{
+				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
+				u.EndpointsConfigMap(
+					u.WithEndpoint(etcdMembers[0].ID, etcdMembers[0].PeerURLs[0]),
+					u.WithEndpoint(etcdMembers[1].ID, etcdMembers[1].PeerURLs[0]),
+					u.WithEndpoint(etcdMembers[2].ID, etcdMembers[2].PeerURLs[0]),
+				),
+			},
+			staticPodStatus: u.StaticPodOperatorStatus(
+				u.WithLatestRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+			),
+			expectBootstrap: false,
+			etcdMembers: []*etcdserverpb.Member{
+				u.FakeEtcdMember(0, mockEtcd.Servers),
+			},
+			validateFunc: func(ts *testing.T, endpoints []func(*corev1.ConfigMap), actions []clientgotesting.Action) {
+				wasValidated := false
+				for _, action := range actions {
+					if action.Matches("update", "configmaps") {
+						updateAction := action.(clientgotesting.UpdateAction)
+						actual := updateAction.GetObject().(*corev1.ConfigMap)
+						expected := u.EndpointsConfigMap(endpoints...)
+						if !equality.Semantic.DeepEqual(actual, expected) {
+							ts.Errorf(diff.ObjectDiff(expected, actual))
+						}
+						wasValidated = true
+						break
+					}
+				}
+				if !wasValidated {
+					ts.Errorf("the endpoints configmap wasn't validated")
 				}
 			},
 		},
@@ -222,9 +252,6 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			// for is the configmap being deleted before bootstrapping is complete.
 			name: "UpgradedClusterCreateConfigmap",
 			objects: []runtime.Object{
-				u.FakeNode("master-0", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1")),
-				u.FakeNode("master-1", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.2")),
-				u.FakeNode("master-2", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.3")),
 				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
 			},
 			staticPodStatus: u.StaticPodOperatorStatus(
@@ -233,17 +260,15 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 				u.WithNodeStatusAtCurrentRevision(3),
 				u.WithNodeStatusAtCurrentRevision(3),
 			),
-			validateFunc: func(ts *testing.T, actions []clientgotesting.Action) {
+			expectBootstrap: false,
+			etcdMembers:     etcdMembers,
+			validateFunc: func(ts *testing.T, endpoints []func(*corev1.ConfigMap), actions []clientgotesting.Action) {
 				wasValidated := false
 				for _, action := range actions {
 					if action.Matches("create", "configmaps") {
 						createAction := action.(clientgotesting.CreateAction)
 						actual := createAction.GetObject().(*corev1.ConfigMap)
-						expected := u.EndpointsConfigMap(
-							u.WithAddress("10.0.0.1"),
-							u.WithAddress("10.0.0.2"),
-							u.WithAddress("10.0.0.3"),
-						)
+						expected := u.EndpointsConfigMap(endpoints...)
 						if !equality.Semantic.DeepEqual(actual, expected) {
 							ts.Errorf(diff.ObjectDiff(expected, actual))
 						}
@@ -293,8 +318,15 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			if err := controller.sync(context.TODO(), factory.NewSyncContext("test", eventRecorder)); err != nil {
 				t.Fatal(err)
 			}
+			var endpoints []func(*corev1.ConfigMap)
+			for _, member := range scenario.etcdMembers {
+				endpoints = append(endpoints, u.WithEndpoint(member.ID, member.PeerURLs[0]))
+			}
+			if scenario.expectBootstrap {
+				endpoints = append(endpoints, u.WithBootstrapIP("192.0.2.1"))
+			}
 			if scenario.validateFunc != nil {
-				scenario.validateFunc(t, fakeKubeClient.Actions())
+				scenario.validateFunc(t, endpoints, fakeKubeClient.Actions())
 			}
 		})
 	}
