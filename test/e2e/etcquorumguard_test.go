@@ -146,8 +146,8 @@ func makeAllNodesSchedulable(cs *framework.ClientSet) error {
 	return getMasterNodes(cs)
 }
 
-func evictEtcdQuotaGuardPodsFromNode(cs *framework.ClientSet, node string) error {
-	pods, err := getEtcdQuotaGuardPodsOnNode(cs, node)
+func evictEtcdQuorumGuardPodsFromNode(cs *framework.ClientSet, node string) error {
+	pods, err := getEtcdQuorumGuardPodsOnNode(cs, node)
 	if err != nil {
 		return err
 	}
@@ -174,7 +174,7 @@ func makeOneNodeUnschedulableAndEvict(cs *framework.ClientSet) error {
 				break
 			}
 			nodes[node] = true
-			err = evictEtcdQuotaGuardPodsFromNode(cs, node)
+			err = evictEtcdQuorumGuardPodsFromNode(cs, node)
 			break
 		}
 	}
@@ -256,7 +256,7 @@ func getMasterNodes(cs *framework.ClientSet) error {
 	return nil
 }
 
-func getEtcdQuotaGuardPodsOnNode(cs *framework.ClientSet, node string) ([]corev1.Pod, error) {
+func getEtcdQuorumGuardPodsOnNode(cs *framework.ClientSet, node string) ([]corev1.Pod, error) {
 	_, err := getNode(cs, node)
 	var answer []corev1.Pod
 	if err != nil {
