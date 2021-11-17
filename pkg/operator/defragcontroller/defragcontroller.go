@@ -130,7 +130,7 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 
 	// Leader last if possible.
 	if leader != nil {
-		klog.V(4).Infof("Appending leader last, ID: %d", leader.Header.MemberId)
+		klog.V(4).Infof("Appending leader last, ID: %x", leader.Header.MemberId)
 		endpointStatus = append(endpointStatus, leader)
 	}
 
@@ -147,10 +147,12 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 		// db size we defrag the members state file. In the case where this command only partially completed controller
 		// can clean that up on the next sync. Having the db sizes slightly different is not a problem in itself.
 		if isEndpointBackendFragmented(member, status) {
-			recorder.Eventf("DefragControllerDefragmentAttempt", "Attempting defrag on member: %s, memberID: %d, dbSize: %d, dbInUse: %d, leader ID: %d", member.Name, member.ID, status.DbSize, status.DbSizeInUse, status.Leader)
+			recorder.Eventf("DefragControllerDefragmentAttempt", "Attempting defrag on member: %s, memberID: %x, dbSize: %d, dbInUse: %d, leader ID: %d", member.Name, member.ID, status.DbSize, status.DbSizeInUse, status.Leader)
 			if _, err := c.etcdClient.Defragment(ctx, member); err != nil {
 				// Defrag can timeout if defragmentation takes longer than etcdcli.DefragDialTimeout.
-				errors = append(errors, fmt.Errorf("failed to defragment etcd member: %q :%v", member.Name, err))
+				errMsg := fmt.Sprintf("failed defrag on member: %s, memberID: %x: %v", member.Name, member.ID, err)
+				recorder.Eventf("DefragControllerDefragmentFailed", errMsg)
+				errors = append(errors, fmt.Errorf(errMsg))
 				continue
 			}
 
