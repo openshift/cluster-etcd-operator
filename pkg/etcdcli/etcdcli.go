@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	grpcprom "github.com/grpc-ecosystem/go-grpc-prometheus"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/operator/events"
@@ -151,6 +152,8 @@ func getEtcdClientWithClientOpts(endpoints []string, opts ...ClientOption) (*cli
 
 	dialOptions := []grpc.DialOption{
 		grpc.WithBlock(), // block until the underlying connection is up
+		grpc.WithChainUnaryInterceptor(grpcprom.UnaryClientInterceptor),
+		grpc.WithChainStreamInterceptor(grpcprom.StreamClientInterceptor),
 	}
 
 	tlsInfo := transport.TLSInfo{
