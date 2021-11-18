@@ -141,6 +141,8 @@ ${COMPUTED_ENV_VARS}
 
         etcdctl member list || true
 
+        # TODO(haseeb): Stop non-member pods from crashlooping on this
+        
         # this has a non-zero return code if the command is non-zero.  If you use an export first, it doesn't and you
         # will succeed when you should fail.
         ETCD_INITIAL_CLUSTER=$(discover-etcd-initial-cluster \

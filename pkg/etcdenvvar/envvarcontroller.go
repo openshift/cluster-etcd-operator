@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
@@ -27,6 +29,7 @@ const workQueueKey = "key"
 
 type EnvVarController struct {
 	operatorClient v1helpers.StaticPodOperatorClient
+	etcdClient     etcdcli.EtcdClient
 
 	envVarMapLock       sync.Mutex
 	envVarMap           map[string]string
@@ -52,6 +55,7 @@ type Enqueueable interface {
 func NewEnvVarController(
 	targetImagePullSpec string,
 	operatorClient v1helpers.StaticPodOperatorClient,
+	etcdClient etcdcli.EtcdClient,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	infrastructureInformer configv1informers.InfrastructureInformer,
 	networkInformer configv1informers.NetworkInformer,
@@ -59,6 +63,7 @@ func NewEnvVarController(
 ) *EnvVarController {
 	c := &EnvVarController{
 		operatorClient:       operatorClient,
+		etcdClient:           etcdClient,
 		infrastructureLister: infrastructureInformer.Lister(),
 		networkLister:        networkInformer.Lister(),
 		namespaceLister:      kubeInformersForNamespaces.InformersFor("").Core().V1().Namespaces().Lister(),
@@ -104,7 +109,7 @@ func (c *EnvVarController) GetEnvVars() map[string]string {
 }
 
 func (c *EnvVarController) sync(ctx context.Context) error {
-	err := c.checkEnvVars()
+	err := c.checkEnvVars(ctx)
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EnvVarControllerDegraded",
@@ -127,7 +132,7 @@ func (c *EnvVarController) sync(ctx context.Context) error {
 	return updateErr
 }
 
-func (c *EnvVarController) checkEnvVars() error {
+func (c *EnvVarController) checkEnvVars(ctx context.Context) error {
 	if err := ceohelpers.CheckSafeToScaleCluster(c.configmapLister, c.operatorClient, c.namespaceLister, c.infrastructureLister); err != nil {
 		return fmt.Errorf("can't update etcd pod configurations because scaling is currently unsafe: %w", err)
 	}
@@ -137,10 +142,11 @@ func (c *EnvVarController) checkEnvVars() error {
 		return err
 	}
 
-	currEnvVarMap, err := getEtcdEnvVars(envVarContext{
+	currEnvVarMap, err := getEtcdEnvVars(ctx, envVarContext{
 		targetImagePullSpec:  c.targetImagePullSpec,
 		spec:                 *operatorSpec,
 		status:               *operatorStatus,
+		etcdClient:           c.etcdClient,
 		configmapLister:      c.configmapLister,
 		nodeLister:           c.nodeLister,
 		infrastructureLister: c.infrastructureLister,
@@ -163,31 +169,31 @@ func (c *EnvVarController) checkEnvVars() error {
 }
 
 // Run starts the etcd and blocks until stopCh is closed.
-func (c *EnvVarController) Run(workers int, stopCh <-chan struct{}) {
+func (c *EnvVarController) Run(ctx context.Context, workers int) {
 	defer utilruntime.HandleCrash()
 	defer c.queue.ShutDown()
 
 	klog.Infof("Starting EnvVarController")
 	defer klog.Infof("Shutting down EnvVarController")
 
-	if !cache.WaitForCacheSync(stopCh, c.cachesToSync...) {
+	if !cache.WaitForCacheSync(ctx.Done(), c.cachesToSync...) {
 		return
 	}
 	klog.V(2).Infof("caches synced")
 
 	// doesn't matter what workers say, only start one.
-	go wait.Until(c.runWorker, time.Second, stopCh)
+	go wait.UntilWithContext(ctx, func(_ context.Context) {
+		c.runWorker(ctx)
+	}, time.Second)
 
 	go wait.Until(func() {
 		c.queue.Add(workQueueKey)
-	}, time.Minute, stopCh)
+	}, time.Minute, ctx.Done())
 
-	<-stopCh
+	<-ctx.Done()
 }
 
-func (c *EnvVarController) runWorker() {
-	// TODO: wire this context properly
-	ctx := context.TODO()
+func (c *EnvVarController) runWorker(ctx context.Context) {
 	for c.processNextWorkItem(ctx) {
 	}
 }

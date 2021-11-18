@@ -10,6 +10,8 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
+	mapiclientset "github.com/openshift/client-go/machine/clientset/versioned"
+	machineinformersv1beta1 "github.com/openshift/client-go/machine/informers/externalversions"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
@@ -62,6 +64,12 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	if err != nil {
 		return err
 	}
+
+	mapiClient, err := mapiclientset.NewForConfig(controllerContext.KubeConfig)
+	if err != nil {
+		return err
+	}
+	machineSharedInformer := machineinformersv1beta1.NewSharedInformerFactoryWithOptions(mapiClient, 10*time.Minute, machineinformersv1beta1.WithNamespace("openshift-machine-api"))
 
 	operatorInformers := operatorv1informers.NewSharedInformerFactory(operatorConfigClient, 10*time.Minute)
 	//operatorConfigInformers.ForResource()
@@ -119,6 +127,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	envVarController := etcdenvvar.NewEnvVarController(
 		os.Getenv("IMAGE"),
 		operatorClient,
+		etcdClient,
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Infrastructures(),
 		configInformers.Config().V1().Networks(),
@@ -206,7 +215,10 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 
 	clusterMemberController := clustermembercontroller.NewClusterMemberController(
+		mapiClient,
+		machineSharedInformer.Machine().V1beta1().Machines(),
 		operatorClient,
+		kubeClient,
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Networks(),
 		etcdClient,
@@ -272,6 +284,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	kubeInformersForNamespaces.Start(ctx.Done())
 	configInformers.Start(ctx.Done())
 	dynamicInformers.Start(ctx.Done())
+	machineSharedInformer.Start(ctx.Done())
 
 	go fsyncMetricController.Run(ctx, 1)
 	go staticResourceController.Run(ctx, 1)
@@ -290,7 +303,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go defragController.Run(ctx, 1)
 	go upgradeBackupController.Run(ctx, 1)
 
-	go envVarController.Run(1, ctx.Done())
+	go envVarController.Run(ctx, 1)
 	go staticPodControllers.Start(ctx)
 
 	<-ctx.Done()

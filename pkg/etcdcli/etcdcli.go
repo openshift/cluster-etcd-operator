@@ -2,6 +2,7 @@ package etcdcli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -21,6 +22,7 @@ import (
 	"go.etcd.io/etcd/client/pkg/v3/logutil"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/server/v3/etcdserver"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/grpclog"
@@ -96,6 +98,9 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 
 	etcdEndpoints := []string{}
 	nodes, err := g.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
+	if err != nil {
+		return nil, fmt.Errorf("failed to list master nodes: %w", err)
+	}
 	for _, node := range nodes {
 		internalIP, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
 		if err != nil {
@@ -200,9 +205,7 @@ func getEtcdClientWithClientOpts(endpoints []string, opts ...ClientOption) (*cli
 	return cli, err
 }
 
-func (g *etcdClientGetter) MemberAdd(ctx context.Context, peerURL string) error {
-	g.eventRecorder.Eventf("MemberAdd", "adding new peer %v", peerURL)
-
+func (g *etcdClientGetter) MemberAddAsLearner(ctx context.Context, peerURL string) error {
 	cli, err := g.getEtcdClient()
 	if err != nil {
 		return err
@@ -222,11 +225,46 @@ func (g *etcdClientGetter) MemberAdd(ctx context.Context, peerURL string) error 
 		}
 	}
 
-	_, err = cli.MemberAdd(ctx, []string{peerURL})
+	g.eventRecorder.Eventf("MemberAddAsLearner", "adding new peer %v", peerURL)
+	defer func() {
+		if err != nil {
+			g.eventRecorder.Warningf("MemberAddAsLearner", "failed to add new peer %v", peerURL)
+		} else {
+			g.eventRecorder.Eventf("MemberAddAsLearner", "successfully added new peer %v", peerURL)
+		}
+	}()
+
+	_, err = cli.MemberAddAsLearner(ctx, []string{peerURL})
 	if err != nil {
 		return err
 	}
-	return err
+	return nil
+}
+
+func (g *etcdClientGetter) MemberPromote(ctx context.Context, member *etcdserverpb.Member) error {
+	cli, err := g.getEtcdClient()
+	if err != nil {
+		return err
+	}
+
+	g.eventRecorder.Eventf("MemberPromote", "promoting learner member %v", member.PeerURLs[0])
+	defer func() {
+		if err != nil {
+			// Not being ready for promotion can be a common event until the learner's log syncs with the leader
+			// so we don't emit events for failing for that case
+			if !errors.Is(err, etcdserver.ErrLearnerNotReady) {
+				g.eventRecorder.Warningf("MemberPromote", "failed to promote learner member %v", member.PeerURLs[0])
+			}
+		} else {
+			g.eventRecorder.Eventf("MemberPromote", "successfully promoted learner member %v", member.PeerURLs[0])
+		}
+	}()
+
+	_, err = cli.MemberPromote(ctx, member.ID)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (g *etcdClientGetter) MemberUpdatePeerURL(ctx context.Context, id uint64, peerURLs []string) error {
@@ -255,8 +293,8 @@ func (g *etcdClientGetter) MemberUpdatePeerURL(ctx context.Context, id uint64, p
 	return err
 }
 
-func (g *etcdClientGetter) MemberRemove(ctx context.Context, member string) error {
-	g.eventRecorder.Eventf("MemberRemove", "removing member %q", member)
+func (g *etcdClientGetter) MemberRemove(ctx context.Context, memberName string) error {
+	g.eventRecorder.Eventf("MemberRemove", "removing member %q", memberName)
 
 	cli, err := g.getEtcdClient()
 	if err != nil {
@@ -267,20 +305,83 @@ func (g *etcdClientGetter) MemberRemove(ctx context.Context, member string) erro
 		return nil
 	}
 
+	isMember := false
+	mID := uint64(0)
 	for _, m := range membersResp.Members {
-		if m.Name == member {
-			cctx, ccancel := context.WithCancel(ctx)
-			defer ccancel()
-
-			_, err = cli.MemberRemove(cctx, m.ID)
-			if err != nil {
-				return err
-			}
-			return nil
+		if m.Name == memberName {
+			isMember = true
+			mID = m.ID
 		}
 	}
 
-	g.eventRecorder.Warningf("MemberAlreadyRemoved", "member %q already removed", member)
+	if !isMember {
+		g.eventRecorder.Warningf("MemberAlreadyRemoved", "member %q already removed", memberName)
+		return nil
+	}
+
+	g.eventRecorder.Eventf("MemberRemove", "removing member %q", memberName)
+	defer func() {
+		if err != nil {
+			g.eventRecorder.Warningf("MemberRemove", "failed to remove member %q", memberName)
+		} else {
+			g.eventRecorder.Eventf("MemberRemove", "successfully removed member %q", memberName)
+		}
+	}()
+
+	cctx, ccancel := context.WithCancel(ctx)
+	defer ccancel()
+	_, err = cli.MemberRemove(cctx, mID)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// TODO(haseeb): Consolidate with MemberRemove later since that is only used for removing the bootstrap member
+// MemberRemoveID is the same as MemberRemove except it uses the member.ID
+// instead of member.Name to check for the member to remove
+// This is necessary for cases where the member name may not be populated for unstarted members
+func (g *etcdClientGetter) MemberRemoveID(ctx context.Context, targetMember *etcdserverpb.Member) error {
+	g.eventRecorder.Eventf("MemberRemove", "removing member (Name:%q, ID:%v) ", targetMember.Name, targetMember.ID)
+
+	cli, err := g.getEtcdClient()
+	if err != nil {
+		return err
+	}
+	membersResp, err := cli.MemberList(ctx)
+	if err != nil {
+		return nil
+	}
+
+	isMember := false
+	mID := uint64(0)
+	for _, m := range membersResp.Members {
+		if m.ID == targetMember.ID {
+			isMember = true
+			mID = m.ID
+		}
+	}
+
+	if !isMember {
+		g.eventRecorder.Warningf("MemberAlreadyRemoved", "member already removed (Name:%q, ID:%v) ", targetMember.Name, targetMember.ID)
+		return nil
+	}
+
+	g.eventRecorder.Eventf("MemberRemove", "removing member (Name:%q, ID:%v) ", targetMember.Name, targetMember.ID)
+	defer func() {
+		if err != nil {
+			g.eventRecorder.Warningf("MemberRemove", "failed to remove member (Name:%q, ID:%v) ", targetMember.Name, targetMember.ID)
+		} else {
+			g.eventRecorder.Eventf("MemberRemove", "successfully removed member (Name:%q, ID:%v) ", targetMember.Name, targetMember.ID)
+		}
+	}()
+
+	cctx, ccancel := context.WithCancel(ctx)
+	defer ccancel()
+	_, err = cli.MemberRemove(cctx, mID)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 

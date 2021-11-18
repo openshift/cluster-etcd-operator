@@ -11,7 +11,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	corev1 "k8s.io/api/core/v1"
-	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	fakecore "k8s.io/client-go/kubernetes/fake"
@@ -32,8 +31,8 @@ controlPlane:
   name: master
   replicas: 3`}}
 
-	changedPDB := &policyv1.PodDisruptionBudget{}
-	*changedPDB = *pdb
+	pdb := getPDB(1)
+	changedPDB := getPDB(1)
 	changedPDB.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"k8s-changed": EtcdGuardDeploymentName}}
 	deployment := resourceread.ReadDeploymentV1OrDie(etcd_assets.MustAsset("etcd/quorumguard-deployment.yaml"))
 	changedDeployment := resourceread.ReadDeploymentV1OrDie(etcd_assets.MustAsset("etcd/quorumguard-deployment.yaml"))
@@ -251,8 +250,8 @@ controlPlane:
 				return
 			}
 
-			if c.replicaCount != tt.expectedReplicaCount {
-				t.Errorf("replicaCount is %d and expected is %d", c.replicaCount, tt.expectedReplicaCount)
+			if c.desiredControlPlaneSize != tt.expectedReplicaCount {
+				t.Errorf("desiredControlPlaneSize is %d and expected is %d", c.desiredControlPlaneSize, tt.expectedReplicaCount)
 				return
 			}
 		})

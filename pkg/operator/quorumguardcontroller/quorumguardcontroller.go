@@ -3,10 +3,8 @@ package quorumguardcontroller
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"time"
 
-	"github.com/ghodss/yaml"
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
@@ -19,6 +17,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
@@ -36,37 +35,35 @@ const (
 	clusterConfigName         = "cluster-config-v1"
 	clusterConfigKey          = "install-config"
 	clusterConfigNamespace    = "kube-system"
+	masterLabel               = "node-role.kubernetes.io/master"
 )
 
-type replicaCountDecoder struct {
-	ControlPlane struct {
-		Replicas string `yaml:"replicas,omitempty"`
-	} `yaml:"controlPlane,omitempty"`
-}
-
-var pdb = &policyv1.PodDisruptionBudget{
-	ObjectMeta: metav1.ObjectMeta{
-		Name:      EtcdGuardDeploymentName,
-		Namespace: operatorclient.TargetNamespace,
-	},
-	Spec: policyv1.PodDisruptionBudgetSpec{
-		MaxUnavailable: &intstr.IntOrString{Type: intstr.Int, IntVal: int32(1)},
-		Selector:       &metav1.LabelSelector{MatchLabels: map[string]string{"k8s-app": EtcdGuardDeploymentName}},
-	},
+func getPDB(maxUnavailable int) *policyv1.PodDisruptionBudget {
+	return &policyv1.PodDisruptionBudget{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      EtcdGuardDeploymentName,
+			Namespace: operatorclient.TargetNamespace,
+		},
+		Spec: policyv1.PodDisruptionBudgetSpec{
+			MaxUnavailable: &intstr.IntOrString{Type: intstr.Int, IntVal: int32(maxUnavailable)},
+			Selector:       &metav1.LabelSelector{MatchLabels: map[string]string{"k8s-app": EtcdGuardDeploymentName}},
+		},
+	}
 }
 
 // QuorumGuardController watches the etcd quorum guard deployment, create if not exists.
 type QuorumGuardController struct {
-	operatorClient       v1helpers.OperatorClient
-	kubeClient           kubernetes.Interface
-	podLister            corev1listers.PodLister
-	nodeLister           corev1listers.NodeLister
-	configMapLister      corev1listers.ConfigMapLister
-	infrastructureLister configv1listers.InfrastructureLister
-	clusterTopology      configv1.TopologyMode
-	replicaCount         int
-	etcdQuorumGuard      *appsv1.Deployment
-	cliImagePullSpec     string
+	operatorClient          v1helpers.OperatorClient
+	kubeClient              kubernetes.Interface
+	podLister               corev1listers.PodLister
+	nodeLister              corev1listers.NodeLister
+	configMapLister         corev1listers.ConfigMapLister
+	infrastructureLister    configv1listers.InfrastructureLister
+	clusterTopology         configv1.TopologyMode
+	replicaCount            int
+	etcdQuorumGuard         *appsv1.Deployment
+	cliImagePullSpec        string
+	desiredControlPlaneSize int
 }
 
 func NewQuorumGuardController(
@@ -150,11 +147,39 @@ func (c *QuorumGuardController) ensureEtcdGuard(ctx context.Context, recorder ev
 		return nil
 	}
 
-	if err := c.ensureEtcdGuardDeployment(ctx, recorder); err != nil {
+	// Get the desired cluster size from the cluster config
+	// TODO(haseeb): Always update this to react to control plane size change in cluster config?
+	if c.desiredControlPlaneSize == 0 {
+		klog.Infof("Getting desired control plane size")
+		replicaCount, err := ceohelpers.GetMastersReplicaCount(ctx, c.kubeClient)
+		if err != nil {
+			return fmt.Errorf("failed to get control-plane replica count: %w", err)
+		}
+		c.desiredControlPlaneSize = replicaCount
+	}
+
+	// Set the quorum guard size to cover all control plane nodes
+	nodes, err := c.nodeLister.List(labels.SelectorFromSet(labels.Set{masterLabel: ""}))
+	if err != nil {
+		return err
+	}
+	guardSize := len(nodes)
+
+	// In the absence of vertical scaling the PDB is set to 1 to allow operations like upgrades to drain and reboot nodes serially.
+	// During vertical scaling all nodes are protected from disruptions until the scaling operation finishes.
+	// The cluster is assumed to be in scaling mode when the number of actual nodes is greater than desired nodes.
+	maxUnavailable := 1
+	if len(nodes) > c.desiredControlPlaneSize {
+		maxUnavailable = 0
+		// TODO(haseeb): event or condition to indicate quorumguard is set/unset to block drainage on all nodes
+		klog.V(4).Infof("Setting PDB maxunavailable to 0")
+	}
+
+	if err := c.ensureEtcdGuardDeployment(ctx, int32(guardSize), recorder); err != nil {
 		return err
 	}
 
-	if err := c.ensureEtcdGuardPDB(ctx, recorder); err != nil {
+	if err := c.ensureEtcdGuardPDB(ctx, maxUnavailable, recorder); err != nil {
 		return err
 	}
 
@@ -162,18 +187,14 @@ func (c *QuorumGuardController) ensureEtcdGuard(ctx context.Context, recorder ev
 }
 
 // ensureEtcdGuardDeployment if etcd quorum guard deployment doesn't exist or was changed - apply it.
-func (c *QuorumGuardController) ensureEtcdGuardDeployment(ctx context.Context, recorder events.Recorder) error {
-	replicaCount, err := c.getMastersReplicaCount()
-	if err != nil {
-		return err
-	}
-
+func (c *QuorumGuardController) ensureEtcdGuardDeployment(ctx context.Context, replicaCount int32, recorder events.Recorder) error {
 	if c.etcdQuorumGuard == nil {
 		c.etcdQuorumGuard = resourceread.ReadDeploymentV1OrDie(etcd_assets.MustAsset("etcd/quorumguard-deployment.yaml"))
 		if c.etcdQuorumGuard.Spec.Template.Spec.Affinity.PodAffinity != nil {
 			return fmt.Errorf("quorum-guard deployment pod affinity can not be defined in bindata")
 		}
 	}
+
 	c.etcdQuorumGuard.Spec.Replicas = &replicaCount
 	// Use image from release payload.
 	c.etcdQuorumGuard.Spec.Template.Spec.Containers[0].Image = c.cliImagePullSpec
@@ -219,10 +240,10 @@ func (c *QuorumGuardController) ensureEtcdGuardDeployment(ctx context.Context, r
 }
 
 // ensureEtcdGuardPDB if etcd quorum guard PDB doesn't exist or was changed, apply one.
-func (c *QuorumGuardController) ensureEtcdGuardPDB(ctx context.Context, recorder events.Recorder) error {
+func (c *QuorumGuardController) ensureEtcdGuardPDB(ctx context.Context, maxUnavailable int, recorder events.Recorder) error {
 
 	// If restart occurred, we will apply PDB but if it is the same, nothing will happen.
-	_, modified, err := resourceapplylg.ApplyPodDisruptionBudget(ctx, c.kubeClient.PolicyV1(), recorder, pdb)
+	_, modified, err := resourceapplylg.ApplyPodDisruptionBudget(ctx, c.kubeClient.PolicyV1(), recorder, getPDB(maxUnavailable))
 	if err != nil {
 		klog.Errorf("failed to verify/apply %s pdb, error %w", EtcdGuardDeploymentName, err)
 		return err
@@ -234,32 +255,4 @@ func (c *QuorumGuardController) ensureEtcdGuardPDB(ctx context.Context, recorder
 	}
 
 	return nil
-}
-
-// getMastersReplicaCount get number of expected masters statically defined by the controlPlane replicas in the install-config.
-func (c *QuorumGuardController) getMastersReplicaCount() (int32, error) {
-	if c.replicaCount != 0 {
-		return int32(c.replicaCount), nil
-	}
-
-	klog.Infof("Getting number of expected masters from %s", clusterConfigName)
-	clusterConfig, err := c.configMapLister.ConfigMaps(operatorclient.TargetNamespace).Get(clusterConfigName)
-	if err != nil {
-		klog.Errorf("failed to get ConfigMap %s, err %w", clusterConfigName, err)
-		return 0, err
-	}
-
-	rcD := replicaCountDecoder{}
-	if err := yaml.Unmarshal([]byte(clusterConfig.Data[clusterConfigKey]), &rcD); err != nil {
-		err := fmt.Errorf("%s key doesn't exist in configmap/%s, err %w", clusterConfigKey, clusterConfigName, err)
-		klog.Error(err)
-		return 0, err
-	}
-
-	c.replicaCount, err = strconv.Atoi(rcD.ControlPlane.Replicas)
-	if err != nil {
-		klog.Errorf("failed to convert replica %s, err %w", rcD.ControlPlane.Replicas, err)
-		return 0, err
-	}
-	return int32(c.replicaCount), nil
 }

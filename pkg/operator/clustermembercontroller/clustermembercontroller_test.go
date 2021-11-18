@@ -44,7 +44,7 @@ func TestClusterMemberController_getEtcdPodToAddToMembership(t *testing.T) {
 	tests := []struct {
 		name    string
 		fields  fields
-		want    *corev1.Pod
+		want    string
 		wantErr bool
 	}{
 		{
@@ -131,7 +131,7 @@ func TestClusterMemberController_getEtcdPodToAddToMembership(t *testing.T) {
 						},
 					}), "openshift-etcd"},
 			},
-			want: nil,
+			want: "",
 		},
 		{
 			name: "test pods with no container state set",
@@ -205,7 +205,7 @@ func TestClusterMemberController_getEtcdPodToAddToMembership(t *testing.T) {
 						},
 					}), "openshift-etcd"},
 			},
-			want: nil,
+			want: "",
 		},
 		{
 			name: "test pods with no status",
@@ -229,7 +229,7 @@ func TestClusterMemberController_getEtcdPodToAddToMembership(t *testing.T) {
 						},
 					}), "openshift-etcd"},
 			},
-			want: nil,
+			want: "",
 		},
 	}
 	for _, tt := range tests {
@@ -239,17 +239,20 @@ func TestClusterMemberController_getEtcdPodToAddToMembership(t *testing.T) {
 					Name: "etcd-a",
 				},
 			})
+			if err != nil {
+				t.Errorf("NewFakeEtcdClient() error = %v, wantErr %v", err, tt.wantErr)
+			}
 			c := &ClusterMemberController{
 				etcdClient: fakeEtcdClient,
 				podLister:  tt.fields.podLister,
 			}
-			got, err := c.getEtcdPodToAddToMembership(context.TODO())
+			got, err := c.getEtcdPeerURLToScale(context.TODO())
 			if (err != nil) != tt.wantErr {
-				t.Errorf("getEtcdPodToAddToMembership() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("getEtcdPeerURLToScale() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("getEtcdPodToAddToMembership() got = %v, want %v", got, tt.want)
+				t.Errorf("getEtcdPeerURLToScale() got = %v, want %v", got, tt.want)
 			}
 		})
 	}

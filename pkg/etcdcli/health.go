@@ -44,6 +44,10 @@ func getMemberHealth(ctx context.Context, etcdMembers []*etcdserverpb.Member) me
 	memberHealth := memberHealth{}
 	hch := make(chan healthCheck, len(etcdMembers))
 	for _, member := range etcdMembers {
+		if member.IsLearner {
+			// Learner is not health checked until promoted.
+			continue
+		}
 		if !HasStarted(member) {
 			memberHealth = append(memberHealth, healthCheck{Member: member, Healthy: false})
 			continue

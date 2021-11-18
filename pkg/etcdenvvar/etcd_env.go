@@ -1,11 +1,14 @@
 package etcdenvvar
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 
 	"github.com/ghodss/yaml"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -23,6 +26,7 @@ type envVarContext struct {
 	spec   operatorv1.StaticPodOperatorSpec
 	status operatorv1.StaticPodOperatorStatus
 
+	etcdClient           etcdcli.EtcdClient
 	nodeLister           corev1listers.NodeLister
 	infrastructureLister configv1listers.InfrastructureLister
 	networkLister        configv1listers.NetworkLister
@@ -52,7 +56,7 @@ type replicaCountDecoder struct {
 	} `yaml:"controlPlane,omitempty"`
 }
 
-type envVarFunc func(envVarContext envVarContext) (map[string]string, error)
+type envVarFunc func(ctx context.Context, envVarContext envVarContext) (map[string]string, error)
 
 var envVarFns = []envVarFunc{
 	getEscapedIPAddress,
@@ -82,11 +86,11 @@ var envVarFns = []envVarFunc{
 //   NODE_%s_IP
 //   NODE_%s_ETCD_URL_HOST
 //   NODE_%s_ETCD_NAME
-func getEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
+func getEtcdEnvVars(ctx context.Context, envVarContext envVarContext) (map[string]string, error) {
 	ret := map[string]string{}
 
 	for _, envVarFn := range envVarFns {
-		newEnvVars, err := envVarFn(envVarContext)
+		newEnvVars, err := envVarFn(ctx, envVarContext)
 		if err != nil {
 			return nil, err
 		}
@@ -104,11 +108,11 @@ func getEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
 	return ret, nil
 }
 
-func getFixedEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
+func getFixedEtcdEnvVars(_ context.Context, envVarContext envVarContext) (map[string]string, error) {
 	return FixedEtcdEnvVars, nil
 }
 
-func getEtcdctlEnvVars(envVarContext envVarContext) (map[string]string, error) {
+func getEtcdctlEnvVars(_ context.Context, envVarContext envVarContext) (map[string]string, error) {
 	endpoints, err := getEtcdEndpoints(envVarContext.configmapLister, true)
 	if err != nil {
 		return nil, err
@@ -123,7 +127,7 @@ func getEtcdctlEnvVars(envVarContext envVarContext) (map[string]string, error) {
 	}, nil
 }
 
-func getAllEtcdEndpoints(envVarContext envVarContext) (map[string]string, error) {
+func getAllEtcdEndpoints(_ context.Context, envVarContext envVarContext) (map[string]string, error) {
 	endpoints, err := getEtcdEndpoints(envVarContext.configmapLister, false)
 	if err != nil {
 		return nil, err
@@ -133,7 +137,7 @@ func getAllEtcdEndpoints(envVarContext envVarContext) (map[string]string, error)
 	}, nil
 }
 
-func getEtcdName(envVarContext envVarContext) (map[string]string, error) {
+func getEtcdName(_ context.Context, envVarContext envVarContext) (map[string]string, error) {
 	ret := map[string]string{}
 
 	for _, nodeInfo := range envVarContext.status.NodeStatuses {
@@ -143,7 +147,7 @@ func getEtcdName(envVarContext envVarContext) (map[string]string, error) {
 	return ret, nil
 }
 
-func getEscapedIPAddress(envVarContext envVarContext) (map[string]string, error) {
+func getEscapedIPAddress(_ context.Context, envVarContext envVarContext) (map[string]string, error) {
 	network, err := envVarContext.networkLister.Get("cluster")
 	if err != nil {
 		return nil, err
@@ -166,7 +170,7 @@ func getEscapedIPAddress(envVarContext envVarContext) (map[string]string, error)
 	return ret, nil
 }
 
-func getEtcdURLHost(envVarContext envVarContext) (map[string]string, error) {
+func getEtcdURLHost(_ context.Context, envVarContext envVarContext) (map[string]string, error) {
 	ret := map[string]string{}
 
 	network, err := envVarContext.networkLister.Get("cluster")
@@ -190,7 +194,7 @@ func getEtcdURLHost(envVarContext envVarContext) (map[string]string, error) {
 	return ret, nil
 }
 
-func getHeartbeatInterval(envVarContext envVarContext) (map[string]string, error) {
+func getHeartbeatInterval(_ context.Context, envVarContext envVarContext) (map[string]string, error) {
 	heartbeat := "100" // etcd default
 
 	infrastructure, err := envVarContext.infrastructureLister.Get("cluster")
@@ -210,7 +214,7 @@ func getHeartbeatInterval(envVarContext envVarContext) (map[string]string, error
 	}, nil
 }
 
-func getElectionTimeout(envVarContext envVarContext) (map[string]string, error) {
+func getElectionTimeout(_ context.Context, envVarContext envVarContext) (map[string]string, error) {
 	timeout := "1000" // etcd default
 
 	infrastructure, err := envVarContext.infrastructureLister.Get("cluster")
@@ -234,7 +238,7 @@ func envVarSafe(nodeName string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(nodeName, "-", "_"), ".", "_")
 }
 
-func getUnsupportedArch(envVarContext envVarContext) (map[string]string, error) {
+func getUnsupportedArch(_ context.Context, envVarContext envVarContext) (map[string]string, error) {
 	arch := runtime.GOARCH
 	switch arch {
 	case "arm64":
@@ -248,7 +252,7 @@ func getUnsupportedArch(envVarContext envVarContext) (map[string]string, error) 
 	}, nil
 }
 
-func getCipherSuites(envVarContext envVarContext) (map[string]string, error) {
+func getCipherSuites(_ context.Context, envVarContext envVarContext) (map[string]string, error) {
 	var observedConfig map[string]interface{}
 	if err := yaml.Unmarshal(envVarContext.spec.ObservedConfig.Raw, &observedConfig); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal the observedConfig: %w", err)
@@ -271,7 +275,7 @@ func getCipherSuites(envVarContext envVarContext) (map[string]string, error) {
 
 // getMaxLearners reads the control-plane replicas from the install-config. We tolerate max learners equal to the
 // desired control-plane replicas so that the admin can surge up N x 2 in case of vertical scaling/replacement.
-func getMaxLearners(envVarContext envVarContext) (map[string]string, error) {
+func getMaxLearners(_ context.Context, envVarContext envVarContext) (map[string]string, error) {
 	clusterConfig, err := envVarContext.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get(clusterConfigName)
 	if err != nil {
 		errMsg := fmt.Errorf("failed to get configmap %s/%s :%v", operatorclient.TargetNamespace, clusterConfigName, err)
