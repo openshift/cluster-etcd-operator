@@ -182,6 +182,9 @@ type TemplateData struct {
 
 	// EtcdEndpointConfigmapData is an optional data field used by etcd-endpoints configmap.
 	EtcdEndpointConfigmapData string
+
+	// MaxLearners is the maximum number of learner members that can be part of the cluster membership.
+	MaxLearners int
 }
 
 type StaticFile struct {
@@ -257,7 +260,7 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 		return nil, err
 	}
 
-	if err := templateData.setComputedEnvVars(templateData.Platform); err != nil {
+	if err := templateData.setComputedEnvVars(templateData.Platform, installConfig); err != nil {
 		return nil, err
 	}
 
@@ -559,8 +562,9 @@ func (t *TemplateData) setSingleStackIPv6(serviceCIDR []string) error {
 	return nil
 }
 
-func (t *TemplateData) setComputedEnvVars(platform string) error {
-	envVarMap, err := getEtcdEnv(platform, runtime.GOARCH)
+func (t *TemplateData) setComputedEnvVars(platform string, installConfig map[string]interface{}) error {
+	envVarData := &envVarData{platform: platform, arch: runtime.GOARCH, installConfig: installConfig}
+	envVarMap, err := getEtcdEnv(envVarData)
 	if err != nil {
 		return err
 	}

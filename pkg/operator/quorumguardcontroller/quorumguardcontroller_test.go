@@ -156,7 +156,7 @@ controlPlane:
 				client: fakecore.NewSimpleClientset(&corev1.ConfigMap{TypeMeta: metav1.TypeMeta{},
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      clusterConfigName,
-						Namespace: clusterConfigNamespace,
+						Namespace: operatorclient.TargetNamespace,
 					}, Data: map[string]string{clusterConfigKey: `apiVersion: v1
 controlPlane:
  hyperthreading: Enabled

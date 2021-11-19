@@ -17,14 +17,21 @@ var envVarFns = []envVarFunc{
 	getUnsupportedArch,
 	getEtcdName,
 	getTLSCipherSuites,
+	getMaxLearners,
 }
 
-type envVarFunc func(platform, arch string) (map[string]string, error)
+type envVarData struct {
+	platform      string
+	arch          string
+	installConfig map[string]interface{}
+}
 
-func getEtcdEnv(platform, arch string) (map[string]string, error) {
+type envVarFunc func(e *envVarData) (map[string]string, error)
+
+func getEtcdEnv(e *envVarData) (map[string]string, error) {
 	ret := map[string]string{}
 	for _, envVarFn := range envVarFns {
-		newEnvVars, err := envVarFn(platform, arch)
+		newEnvVars, err := envVarFn(e)
 		if err != nil {
 			return nil, err
 		}
@@ -41,23 +48,23 @@ func getEtcdEnv(platform, arch string) (map[string]string, error) {
 	return ret, nil
 }
 
-func getFixedEtcdEnvVars(platform, arch string) (map[string]string, error) {
+func getFixedEtcdEnvVars(_ *envVarData) (map[string]string, error) {
 	env := etcdenvvar.FixedEtcdEnvVars
 	// single member cluster needs to start with "new" (default).
 	delete(env, "ETCD_INITIAL_CLUSTER_STATE")
 	return env, nil
 }
 
-func getEtcdName(platform, arch string) (map[string]string, error) {
+func getEtcdName(_ *envVarData) (map[string]string, error) {
 	return map[string]string{
 		"ETCD_NAME": "etcd-bootstrap",
 	}, nil
 }
 
-func getHeartbeatInterval(platform, arch string) (map[string]string, error) {
+func getHeartbeatInterval(e *envVarData) (map[string]string, error) {
 	var heartbeat string
 
-	switch platform {
+	switch e.platform {
 	case "Azure":
 		heartbeat = "500"
 	default:
@@ -69,10 +76,10 @@ func getHeartbeatInterval(platform, arch string) (map[string]string, error) {
 	}, nil
 }
 
-func getElectionTimeout(platform, arch string) (map[string]string, error) {
+func getElectionTimeout(e *envVarData) (map[string]string, error) {
 	var timeout string
 
-	switch platform {
+	switch e.platform {
 	case "Azure":
 		timeout = "2500"
 	default:
@@ -85,8 +92,8 @@ func getElectionTimeout(platform, arch string) (map[string]string, error) {
 
 }
 
-func getUnsupportedArch(platform, arch string) (map[string]string, error) {
-	switch arch {
+func getUnsupportedArch(e *envVarData) (map[string]string, error) {
+	switch e.arch {
 	case "arm64":
 	case "s390x":
 	default:
@@ -94,13 +101,13 @@ func getUnsupportedArch(platform, arch string) (map[string]string, error) {
 		return nil, nil
 	}
 	return map[string]string{
-		"ETCD_UNSUPPORTED_ARCH": arch,
+		"ETCD_UNSUPPORTED_ARCH": e.arch,
 	}, nil
 }
 
 // getTLSCipherSuites defines the ciphers used by the bootstrap etcd instance. The list is based on the definition of
 // TLSProfileIntermediateType with a TLS version of 1.2.
-func getTLSCipherSuites(platform, arch string) (map[string]string, error) {
+func getTLSCipherSuites(_ *envVarData) (map[string]string, error) {
 	profileSpec := configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
 	cipherSuites := crypto.OpenSSLToIANACipherSuites(profileSpec.Ciphers)
 	if len(cipherSuites) == 0 {
@@ -110,5 +117,19 @@ func getTLSCipherSuites(platform, arch string) (map[string]string, error) {
 	cipherSuites = tlshelpers.SupportedEtcdCiphers(cipherSuites)
 	return map[string]string{
 		"ETCD_CIPHER_SUITES": strings.Join(cipherSuites, ","),
+	}, nil
+}
+
+func getMaxLearners(e *envVarData) (map[string]string, error) {
+	controlPlane, found := e.installConfig["controlPlane"].(map[string]interface{})
+	if !found {
+		return nil, fmt.Errorf("unrecognized data structure in controlPlane field")
+	}
+	replicaCount, found := controlPlane["replicas"].(float64)
+	if !found {
+		return nil, fmt.Errorf("unrecognized data structure in controlPlane replica field")
+	}
+	return map[string]string{
+		"ETCD_EXPERIMENTAL_MAX_LEARNERS": fmt.Sprint(replicaCount),
 	}, nil
 }
