@@ -962,16 +962,7 @@ spec:
         k8s-app: etcd-quorum-guard
     spec:
       hostNetwork: true
-      affinity:
-        podAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - labelSelector:
-                matchExpressions:
-                  - key: k8s-app
-                    operator: In
-                    values:
-                      - "etcd"
-              topologyKey: kubernetes.io/hostname
+      affinity: # podAffinity is managed/defined by quorum-guard controller
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             - labelSelector:

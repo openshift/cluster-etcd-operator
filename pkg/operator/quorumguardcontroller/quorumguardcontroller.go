@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/ghodss/yaml"
-
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
@@ -17,6 +16,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -55,7 +55,7 @@ var pdb = &policyv1.PodDisruptionBudget{
 	},
 }
 
-// QuorumGuardController watches the etcd quorum guard deployment, create if not exists
+// QuorumGuardController watches the etcd quorum guard deployment, create if not exists.
 type QuorumGuardController struct {
 	operatorClient       v1helpers.OperatorClient
 	kubeClient           kubernetes.Interface
@@ -93,8 +93,8 @@ func NewQuorumGuardController(
 }
 
 func (c *QuorumGuardController) getTopologyMode() (configv1.TopologyMode, error) {
-	// right now cluster topology cannot change, infrastructure cr is immutable,
-	// so we set it once in order not to run api call each time
+	// Today cluster topology cannot change, infrastructure cr is immutable,
+	// so we set it once in order not to run api call each time.
 	if c.clusterTopology != "" {
 		klog.V(4).Infof("HA mode is: %s", c.clusterTopology)
 		return c.clusterTopology, nil
@@ -137,21 +137,17 @@ func (c *QuorumGuardController) sync(ctx context.Context, syncCtx factory.SyncCo
 }
 
 func (c *QuorumGuardController) ensureEtcdGuard(ctx context.Context, recorder events.Recorder) error {
-	haTopologyMode, err := c.getTopologyMode()
+	topologyMode, err := c.getTopologyMode()
 	if err != nil {
 		return err
 	}
 
-	if haTopologyMode != configv1.HighlyAvailableTopologyMode {
+	if topologyMode != configv1.HighlyAvailableTopologyMode {
+		klog.V(4).Infof("quorum guard controller disabled in topology mode: %s", topologyMode)
 		return nil
 	}
 
-	replicaCount, err := c.getMastersReplicaCount(ctx)
-	if err != nil {
-		return err
-	}
-
-	if err := c.ensureEtcdGuardDeployment(ctx, replicaCount, recorder); err != nil {
+	if err := c.ensureEtcdGuardDeployment(ctx, recorder); err != nil {
 		return err
 	}
 
@@ -162,23 +158,51 @@ func (c *QuorumGuardController) ensureEtcdGuard(ctx context.Context, recorder ev
 	return nil
 }
 
-// ensureEtcdGuardDeployment if etcd quorum guard deployment doesn't exist or was changed - apply it
-func (c *QuorumGuardController) ensureEtcdGuardDeployment(ctx context.Context, replicaCount int32, recorder events.Recorder) error {
+// ensureEtcdGuardDeployment if etcd quorum guard deployment doesn't exist or was changed - apply it.
+func (c *QuorumGuardController) ensureEtcdGuardDeployment(ctx context.Context, recorder events.Recorder) error {
+	replicaCount, err := c.getMastersReplicaCount(ctx)
+	if err != nil {
+		return err
+	}
 
 	if c.etcdQuorumGuard == nil {
 		c.etcdQuorumGuard = resourceread.ReadDeploymentV1OrDie(etcd_assets.MustAsset("etcd/quorumguard-deployment.yaml"))
+		if c.etcdQuorumGuard.Spec.Template.Spec.Affinity.PodAffinity != nil {
+			return fmt.Errorf("quorum-guard deployment pod affinity can not be defined in bindata")
+		}
 	}
 	c.etcdQuorumGuard.Spec.Replicas = &replicaCount
-	// use image from release payload
+	// Use image from release payload.
 	c.etcdQuorumGuard.Spec.Template.Spec.Containers[0].Image = c.cliImagePullSpec
 
-	// if restart occurred, we will apply etcd guard deployment but if it is the same, nothing will happen
+	// Set pod affinity only in HA topology mode.
+	affinity := c.etcdQuorumGuard.Spec.Template.Spec.Affinity
+	affinity.PodAffinity = &corev1.PodAffinity{
+		RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+			{
+				LabelSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "k8s-app",
+							Operator: metav1.LabelSelectorOpIn,
+							Values:   []string{"etcd"},
+						},
+					},
+				},
+				TopologyKey: "kubernetes.io/hostname",
+			},
+		},
+	}
+	c.etcdQuorumGuard.Spec.Template.Spec.Affinity = affinity
+	klog.V(4).Infof("quorum guard controller applied podAffinity")
+
+	// If restart occurred, we will apply etcd guard deployment but if it is the same, nothing will happen.
 	actual, modified, err := resourceapply.ApplyDeploymentv1(ctx, c.kubeClient.AppsV1(), c.etcdQuorumGuard)
 	if err != nil {
 		klog.Errorf("failed to verify/apply %s, error %w", EtcdGuardDeploymentName, err)
 		return err
 	}
-	// if deployment was modified need to save spec from modified one cause there are
+	// If deployment was modified need to save spec from modified one cause there are
 	// some fields added on creation or apply, for example permissions on volumes
 	// and we want to save them to be able to verify that deployment was not changed.
 	if modified {
@@ -191,17 +215,17 @@ func (c *QuorumGuardController) ensureEtcdGuardDeployment(ctx context.Context, r
 	return nil
 }
 
-// ensureEtcdGuardPDB if etcd quorum guard PDB doesn't exist or was changed, apply one
+// ensureEtcdGuardPDB if etcd quorum guard PDB doesn't exist or was changed, apply one.
 func (c *QuorumGuardController) ensureEtcdGuardPDB(ctx context.Context, recorder events.Recorder) error {
 
-	// if restart occurred, we will apply PDB but if it is the same, nothing will happened
+	// If restart occurred, we will apply PDB but if it is the same, nothing will happen.
 	_, modified, err := resourceapplylg.ApplyPodDisruptionBudget(ctx, c.kubeClient.PolicyV1(), recorder, pdb)
 	if err != nil {
-		klog.Errorf("Failed to verify/apply %s pdb, error %w", EtcdGuardDeploymentName, err)
+		klog.Errorf("failed to verify/apply %s pdb, error %w", EtcdGuardDeploymentName, err)
 		return err
 	}
 
-	// log if PDB was modified, modified event is created as part of ApplyPodDisruptionBudget above
+	// Log if PDB was modified, modified event is created as part of ApplyPodDisruptionBudget above.
 	if modified {
 		klog.Infof("%s pdb was modified", EtcdGuardDeploymentName)
 	}
@@ -218,7 +242,7 @@ func (c *QuorumGuardController) getMastersReplicaCount(ctx context.Context) (int
 	klog.Infof("Getting number of expected masters from %s", clusterConfigName)
 	clusterConfig, err := c.kubeClient.CoreV1().ConfigMaps(clusterConfigNamespace).Get(ctx, clusterConfigName, metav1.GetOptions{})
 	if err != nil {
-		klog.Errorf("Failed to get ConfigMap %s, err %w", clusterConfigName, err)
+		klog.Errorf("failed to get ConfigMap %s, err %w", clusterConfigName, err)
 		return 0, err
 	}
 
