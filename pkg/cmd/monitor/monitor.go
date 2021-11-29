@@ -170,6 +170,11 @@ func (o *monitorOpts) Run(ctx context.Context) error {
 			// health.WithNodeICMP(),
 		),
 	)
+	if err != nil {
+		errMsg := "failed to create new health monitor"
+		lg.Error(errMsg, zap.Error(err))
+		return fmt.Errorf("%s: %v", errMsg, err)
+	}
 
 	lg.Info("health monitor is starting",
 		zap.String("pod", o.podName),
