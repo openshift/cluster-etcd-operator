@@ -123,7 +123,7 @@ func TestNewDefragController(t *testing.T) {
 	}
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
-			integration.BeforeTest(t)
+			integration.BeforeTestExternal(t)
 			// use integration etcd to create etcd members and status
 			testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: scenario.clusterSize})
 			defer testServer.Terminate(t)
