@@ -81,7 +81,7 @@ func newTestData(t *testing.T, testDuration time.Duration, pauseServer, resumeSe
 
 func createAndStartEtcdTestServer(t *testing.T, size int) (*integration.ClusterV3, string) {
 	srvTLS := testTLSInfo
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 	etcd := integration.NewClusterV3(t, &integration.ClusterConfig{Size: size, ClientTLS: &srvTLS})
 	targets := fmt.Sprintf("%s,%s,%s", etcd.Members[0].GRPCAddr(), etcd.Members[1].GRPCAddr(), etcd.Members[2].GRPCAddr())
 
@@ -112,6 +112,8 @@ func TestMonitor(t *testing.T) {
 		wantHealthCheck health.CheckName
 		// the expected time duration of disruption.
 		wantDuration time.Duration
+
+		wantErr bool
 	}{
 		"healthy GRPCReadySingleTarget": {
 			duration:        3 * time.Second,
@@ -155,6 +157,13 @@ func TestMonitor(t *testing.T) {
 			wantHealthCheck:         health.GRPCReadySingleTarget,
 			wantDuration:            3 * time.Second,
 		},
+		"monitor error from failed etcd client creation": {
+			duration:                1 * time.Second,
+			stopServer:              true,
+			stopEtcdPeers:           2,
+			stopServerAfterDuration: 1 * time.Millisecond,
+			wantErr:                 true,
+		},
 	}
 	for testName, tc := range testCases {
 		t.Run(testName, func(t *testing.T) {
@@ -184,11 +193,18 @@ func TestMonitor(t *testing.T) {
 					stopEtcdPeers(t, testServer, td.stopEtcdPeers)
 				})
 			}
-			td.monitorOpts.Run(ctx)
+			err := td.monitorOpts.Run(ctx)
+			if err != nil && !tc.wantErr {
+				t.Fatalf("healthCheck unexpected error: %v", err)
+			}
 			td.logFile.Close()
 			// dont terminate if already stopped
 			if !tc.stopServer {
 				td.testServer.Terminate(t)
+			}
+			if err != nil && tc.wantErr {
+				// error expected nothing else to do
+				return
 			}
 			// check logs for disruption
 			gotDuration, err := getDisruptionDurationFromLogs(t, tc.wantHealthCheck, td.logFile.Name(), td.logDir)
