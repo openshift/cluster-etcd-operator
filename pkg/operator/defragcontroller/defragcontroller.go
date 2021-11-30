@@ -88,12 +88,23 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 		return err
 	}
 
+	controlPlaneTopology, err := ceohelpers.GetControlPlaneTopology(c.infrastructureLister)
+	if err != nil {
+		return fmt.Errorf("failed to get control-plane topology: %w", err)
+	}
+
 	controllerDisabledCondition := v1helpers.FindOperatorCondition(status.Conditions, defragDisabledCondition)
 	if controllerDisabledCondition == nil {
-		err := c.ensureControllerDisabledCondition(ctx, recorder)
+		err := c.ensureControllerDisabledCondition(ctx, controlPlaneTopology, recorder)
 		if err != nil {
 			return fmt.Errorf("failed to update controller disabled status: %w", err)
 		}
+	}
+
+	// Ensure defrag disabled unless HA.
+	if controlPlaneTopology != configv1.HighlyAvailableTopologyMode {
+		klog.V(4).Infof("Defrag controller disabled for non HA cluster topology: %s", controlPlaneTopology)
+		return nil
 	}
 
 	// Do not defrag if any of the cluster members are unhealthy.
@@ -186,12 +197,7 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 	return v1helpers.NewMultiLineAggregate(errors)
 }
 
-func (c *DefragController) ensureControllerDisabledCondition(ctx context.Context, recorder events.Recorder) error {
-	controlPlaneTopology, err := ceohelpers.GetControlPlaneTopology(c.infrastructureLister)
-	if err != nil {
-		return fmt.Errorf("failed to get control-plane topology: %w", err)
-	}
-
+func (c *DefragController) ensureControllerDisabledCondition(ctx context.Context, controlPlaneTopology configv1.TopologyMode, recorder events.Recorder) error {
 	// Defrag is blocking and can only be safely performed in HighlyAvailableTopologyMode
 	if controlPlaneTopology == configv1.HighlyAvailableTopologyMode {
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient,
@@ -202,7 +208,7 @@ func (c *DefragController) ensureControllerDisabledCondition(ctx context.Context
 			}))
 		if updateErr != nil {
 			recorder.Warning("DefragControllerUpdatingStatus", updateErr.Error())
-			return err
+			return updateErr
 		}
 	} else {
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient,
@@ -213,7 +219,7 @@ func (c *DefragController) ensureControllerDisabledCondition(ctx context.Context
 			}))
 		if updateErr != nil {
 			recorder.Warning("DefragControllerUpdatingStatus", updateErr.Error())
-			return err
+			return updateErr
 		}
 	}
 	return nil
