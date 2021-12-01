@@ -76,6 +76,12 @@ func NewResourceSyncController(
 	); err != nil {
 		return nil, err
 	}
+	if err := resourceSyncController.SyncConfigMap(
+		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.TargetNamespace, Name: "cluster-config-v1"},
+		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.KubeSystemNamespace, Name: "cluster-config-v1"},
+	); err != nil {
+		return nil, err
+	}
 
 	return resourceSyncController, nil
 }
