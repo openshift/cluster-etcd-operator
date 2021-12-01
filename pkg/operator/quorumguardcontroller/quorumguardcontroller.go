@@ -3,10 +3,8 @@ package quorumguardcontroller
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"time"
 
-	"github.com/ghodss/yaml"
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
@@ -33,16 +31,7 @@ import (
 const (
 	EtcdGuardDeploymentName   = "etcd-quorum-guard"
 	infrastructureClusterName = "cluster"
-	clusterConfigName         = "cluster-config-v1"
-	clusterConfigKey          = "install-config"
-	clusterConfigNamespace    = "kube-system"
 )
-
-type replicaCountDecoder struct {
-	ControlPlane struct {
-		Replicas string `yaml:"replicas,omitempty"`
-	} `yaml:"controlPlane,omitempty"`
-}
 
 var pdb = &policyv1.PodDisruptionBudget{
 	ObjectMeta: metav1.ObjectMeta{
@@ -163,7 +152,7 @@ func (c *QuorumGuardController) ensureEtcdGuard(ctx context.Context, recorder ev
 
 // ensureEtcdGuardDeployment if etcd quorum guard deployment doesn't exist or was changed - apply it.
 func (c *QuorumGuardController) ensureEtcdGuardDeployment(ctx context.Context, recorder events.Recorder) error {
-	replicaCount, err := c.getMastersReplicaCount()
+	replicaCount, err := ceohelpers.GetMastersReplicaCount(c.configMapLister)
 	if err != nil {
 		return err
 	}
@@ -174,7 +163,8 @@ func (c *QuorumGuardController) ensureEtcdGuardDeployment(ctx context.Context, r
 			return fmt.Errorf("quorum-guard deployment pod affinity can not be defined in bindata")
 		}
 	}
-	c.etcdQuorumGuard.Spec.Replicas = &replicaCount
+	quorumGuardReplicas := &replicaCount
+	c.etcdQuorumGuard.Spec.Replicas = quorumGuardReplicas
 	// Use image from release payload.
 	c.etcdQuorumGuard.Spec.Template.Spec.Containers[0].Image = c.cliImagePullSpec
 
@@ -234,32 +224,4 @@ func (c *QuorumGuardController) ensureEtcdGuardPDB(ctx context.Context, recorder
 	}
 
 	return nil
-}
-
-// getMastersReplicaCount get number of expected masters statically defined by the controlPlane replicas in the install-config.
-func (c *QuorumGuardController) getMastersReplicaCount() (int32, error) {
-	if c.replicaCount != 0 {
-		return int32(c.replicaCount), nil
-	}
-
-	klog.Infof("Getting number of expected masters from %s", clusterConfigName)
-	clusterConfig, err := c.configMapLister.ConfigMaps(operatorclient.TargetNamespace).Get(clusterConfigName)
-	if err != nil {
-		klog.Errorf("failed to get ConfigMap %s, err %w", clusterConfigName, err)
-		return 0, err
-	}
-
-	rcD := replicaCountDecoder{}
-	if err := yaml.Unmarshal([]byte(clusterConfig.Data[clusterConfigKey]), &rcD); err != nil {
-		err := fmt.Errorf("%s key doesn't exist in configmap/%s, err %w", clusterConfigKey, clusterConfigName, err)
-		klog.Error(err)
-		return 0, err
-	}
-
-	c.replicaCount, err = strconv.Atoi(rcD.ControlPlane.Replicas)
-	if err != nil {
-		klog.Errorf("failed to convert replica %s, err %w", rcD.ControlPlane.Replicas, err)
-		return 0, err
-	}
-	return int32(c.replicaCount), nil
 }

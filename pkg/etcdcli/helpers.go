@@ -6,6 +6,8 @@ import (
 
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/server/v3/etcdserver"
+	"go.etcd.io/etcd/server/v3/etcdserver/api/membership"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
@@ -39,8 +41,33 @@ func (f *fakeEtcdClient) MemberAdd(ctx context.Context, peerURL string) error {
 	panic("implement me")
 }
 
+func (f *fakeEtcdClient) MemberAddAsLearner(ctx context.Context, peerURL string) error {
+	panic("implement me")
+}
+
 func (f *fakeEtcdClient) MemberList(ctx context.Context) ([]*etcdserverpb.Member, error) {
 	return f.members, nil
+}
+
+func (f *fakeEtcdClient) MemberPromote(ctx context.Context, id uint64) error {
+	for _, member := range f.members {
+		if member.ID != id {
+			continue
+		}
+		// cant promote non learner
+		if id == member.ID && !member.IsLearner {
+			return membership.ErrMemberNotLearner
+		}
+		_, ok := f.opts.unreadyMemberPromotionMap[member.ID]
+		if ok {
+			return etcdserver.ErrLearnerNotReady
+		}
+		if id == member.ID {
+			member.IsLearner = false
+			return nil
+		}
+	}
+	return nil
 }
 
 func (f *fakeEtcdClient) MemberRemove(ctx context.Context, member string) error {
@@ -134,12 +161,13 @@ func NewFakeEtcdClient(members []*etcdserverpb.Member, opts ...FakeClientOption)
 }
 
 type FakeClientOptions struct {
-	client          *clientv3.Client
-	unhealthyMember int
-	healthyMember   int
-	status          []*clientv3.StatusResponse
-	dbSize          int64
-	dbSizeInUse     int64
+	client                    *clientv3.Client
+	unhealthyMember           int
+	healthyMember             int
+	status                    []*clientv3.StatusResponse
+	unreadyMemberPromotionMap map[uint64]struct{}
+	dbSize                    int64
+	dbSizeInUse               int64
 }
 
 func newFakeClientOpts(opts ...FakeClientOption) *FakeClientOptions {
@@ -168,6 +196,10 @@ type FakeMemberHealth struct {
 	Unhealthy int
 }
 
+type FakeMemberPromote struct {
+	Unready uint64
+}
+
 func WithFakeClusterHealth(members *FakeMemberHealth) FakeClientOption {
 	return func(fo *FakeClientOptions) {
 		fo.unhealthyMember = members.Unhealthy
@@ -178,5 +210,15 @@ func WithFakeClusterHealth(members *FakeMemberHealth) FakeClientOption {
 func WithFakeStatus(status []*clientv3.StatusResponse) FakeClientOption {
 	return func(fo *FakeClientOptions) {
 		fo.status = status
+	}
+}
+
+func WithFakeUnreadyLearnerIDs(unreadyLearnerIDs []uint64) FakeClientOption {
+	return func(fo *FakeClientOptions) {
+		unreadyMemberPromotionMap := make(map[uint64]struct{}, len(unreadyLearnerIDs))
+		for _, id := range unreadyLearnerIDs {
+			unreadyMemberPromotionMap[id] = struct{}{}
+		}
+		fo.unreadyMemberPromotionMap = unreadyMemberPromotionMap
 	}
 }

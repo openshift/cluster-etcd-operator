@@ -27,6 +27,9 @@ type EtcdClient interface {
 	Status
 
 	GetMember(ctx context.Context, name string) (*etcdserverpb.Member, error)
+
+	MemberAddAsLearner(ctx context.Context, peerURL string) error
+	MemberPromote(ctx context.Context, id uint64) error
 	MemberUpdatePeerURL(ctx context.Context, id uint64, peerURL []string) error
 }
 

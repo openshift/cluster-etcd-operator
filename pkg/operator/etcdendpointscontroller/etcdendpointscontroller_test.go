@@ -30,11 +30,11 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 		t.Fatalf("failed to start mock servers: %s", err)
 	}
 	defer mockEtcd.Stop()
-
+	isLearner := false
 	etcdMembers := []*etcdserverpb.Member{
-		u.FakeEtcdMember(0, mockEtcd.Servers),
-		u.FakeEtcdMember(1, mockEtcd.Servers),
-		u.FakeEtcdMember(2, mockEtcd.Servers),
+		u.FakeEtcdMember(0, isLearner, mockEtcd.Servers),
+		u.FakeEtcdMember(1, isLearner, mockEtcd.Servers),
+		u.FakeEtcdMember(2, isLearner, mockEtcd.Servers),
 	}
 
 	scenarios := []struct {
@@ -222,7 +222,7 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			),
 			expectBootstrap: false,
 			etcdMembers: []*etcdserverpb.Member{
-				u.FakeEtcdMember(0, mockEtcd.Servers),
+				u.FakeEtcdMember(0, false, mockEtcd.Servers),
 			},
 			validateFunc: func(ts *testing.T, endpoints []func(*corev1.ConfigMap), actions []clientgotesting.Action) {
 				wasValidated := false

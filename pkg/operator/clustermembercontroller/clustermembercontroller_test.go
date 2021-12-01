@@ -2,254 +2,217 @@ package clustermembercontroller
 
 import (
 	"context"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
-
-	"go.etcd.io/etcd/api/v3/etcdserverpb"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/kubernetes/fake"
-	corev1lister "k8s.io/client-go/listers/core/v1"
+	"time"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
+	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/stretchr/testify/assert"
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
+	"go.etcd.io/etcd/client/v3/mock/mockserver"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 )
 
-type fakePodLister struct {
-	client    kubernetes.Interface
-	namespace string
-}
+func TestClusterMemberController_getEtcdPeerURLToScale(t *testing.T) {
+	now := time.Now()
 
-func (f *fakePodLister) List(selector labels.Selector) (ret []*corev1.Pod, err error) {
-	pods, err := f.client.CoreV1().Pods(f.namespace).List(context.TODO(), metav1.ListOptions{LabelSelector: selector.String()})
-	if err != nil {
-		return nil, err
-	}
-	ret = []*corev1.Pod{}
-	for i := range pods.Items {
-		ret = append(ret, &pods.Items[i])
-	}
-	return ret, nil
-}
+	scenerios := []struct {
+		name        string
+		objects     []runtime.Object
+		etcdMembers []*etcdserverpb.Member
 
-func (f *fakePodLister) Pods(namespace string) corev1lister.PodNamespaceLister {
-	panic("implement me")
-}
-
-func TestClusterMemberController_getEtcdPodToAddToMembership(t *testing.T) {
-	type fields struct {
-		podLister corev1lister.PodLister
-	}
-	tests := []struct {
-		name    string
-		fields  fields
-		want    *corev1.Pod
+		want    string
+		isIPv6  bool
 		wantErr bool
 	}{
 		{
-			name: "test pods with init container failed",
-			fields: fields{
-				podLister: &fakePodLister{fake.NewSimpleClientset(&corev1.Pod{
-					ObjectMeta: metav1.ObjectMeta{
-						// this will be skipped
-						Name:      "etcd-a",
-						Namespace: "openshift-etcd",
-						Labels:    labels.Set{"app": "etcd"},
-					},
-					Status: corev1.PodStatus{
-						Phase: "Running",
-						InitContainerStatuses: []corev1.ContainerStatus{
-							{
-								Name: "etcd-ensure-env",
-								State: corev1.ContainerState{
-									Terminated: &corev1.ContainerStateTerminated{
-										ExitCode: 0,
-									},
-								},
-							},
-							{
-								Name: "etcd-resources-copy",
-								State: corev1.ContainerState{
-									Terminated: &corev1.ContainerStateTerminated{
-										ExitCode: 0,
-									},
-								},
-							},
-						},
-						ContainerStatuses: []corev1.ContainerStatus{
-							{
-								Name:  "etcd",
-								Ready: true,
-								State: corev1.ContainerState{
-									Running: &corev1.ContainerStateRunning{},
-								},
-							},
-						},
-					},
-				},
-					&corev1.Pod{
-						ObjectMeta: metav1.ObjectMeta{
-							Name:      "etcd-b",
-							Namespace: "openshift-etcd",
-							Labels:    labels.Set{"app": "etcd"},
-						},
-						Spec: corev1.PodSpec{
-							NodeName: "node-b",
-						},
-						Status: corev1.PodStatus{
-							Phase: "Running",
-							InitContainerStatuses: []corev1.ContainerStatus{
-								{
-									Name: "etcd-ensure-env",
-									State: corev1.ContainerState{
-										Terminated: &corev1.ContainerStateTerminated{
-											ExitCode: 1,
-										},
-									},
-								},
-								{
-									Name: "etcd-resources-copy",
-									State: corev1.ContainerState{
-										Terminated: nil,
-									},
-								},
-							},
-							ContainerStatuses: []corev1.ContainerStatus{
-								{
-									Name:  "etcd",
-									Ready: true,
-									State: corev1.ContainerState{
-										Waiting: &corev1.ContainerStateWaiting{
-											Reason: "WaitingOnInit",
-										},
-										Running:    nil,
-										Terminated: nil,
-									},
-								},
-							},
-						},
-					}), "openshift-etcd"},
+			name: "test oldest node already has member",
+			objects: []runtime.Object{
+				u.GetMockClusterConfig(3),
+				u.FakeNode("master-2", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.3"), u.WithCreatedTimeStamp(metav1.Time{Time: now.Add(2 * time.Second)})),
+				u.FakeNode("master-0", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1"), u.WithCreatedTimeStamp(metav1.Time{Time: now})),
+				u.FakeNode("master-1", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.2"), u.WithCreatedTimeStamp(metav1.Time{Time: now.Add(1 * time.Second)})),
 			},
-			want: nil,
+			etcdMembers: []*etcdserverpb.Member{
+				{PeerURLs: []string{"https://10.0.0.1:2380"}},
+			},
+			want: "https://10.0.0.2:2380",
 		},
 		{
-			name: "test pods with no container state set",
-			fields: fields{
-				podLister: &fakePodLister{fake.NewSimpleClientset(&corev1.Pod{
-					ObjectMeta: metav1.ObjectMeta{
-						// this will be skipped
-						Name:      "etcd-a",
-						Namespace: "openshift-etcd",
-						Labels:    labels.Set{"app": "etcd"},
-					},
-					Status: corev1.PodStatus{
-						Phase: "Running",
-						InitContainerStatuses: []corev1.ContainerStatus{
-							{
-								Name: "etcd-ensure-env",
-								State: corev1.ContainerState{
-									Terminated: &corev1.ContainerStateTerminated{
-										ExitCode: 0,
-									},
-								},
-							},
-							{
-								Name: "etcd-resources-copy",
-								State: corev1.ContainerState{
-									Terminated: &corev1.ContainerStateTerminated{
-										ExitCode: 0,
-									},
-								},
-							},
-						},
-						ContainerStatuses: []corev1.ContainerStatus{
-							{
-								Name: "etcd",
-							},
-						},
-					},
-				},
-					&corev1.Pod{
-						ObjectMeta: metav1.ObjectMeta{
-							Name:      "etcd-b",
-							Namespace: "openshift-etcd",
-							Labels:    labels.Set{"app": "etcd"},
-						},
-						Spec: corev1.PodSpec{
-							NodeName: "node-b",
-						},
-						Status: corev1.PodStatus{
-							Phase: "Running",
-							InitContainerStatuses: []corev1.ContainerStatus{
-								{
-									Name: "etcd-ensure-env",
-									State: corev1.ContainerState{
-										Terminated: &corev1.ContainerStateTerminated{
-											ExitCode: 1,
-										},
-									},
-								},
-								{
-									Name: "etcd-resources-copy",
-									State: corev1.ContainerState{
-										Terminated: nil,
-									},
-								},
-							},
-							ContainerStatuses: []corev1.ContainerStatus{
-								{
-									Name: "etcd",
-								},
-							},
-						},
-					}), "openshift-etcd"},
+			name: "test all nodes have members",
+			objects: []runtime.Object{
+				u.GetMockClusterConfig(3),
+				u.FakeNode("master-2", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.3"), u.WithCreatedTimeStamp(metav1.Time{Time: now.Add(2 * time.Second)})),
+				u.FakeNode("master-0", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1"), u.WithCreatedTimeStamp(metav1.Time{Time: now})),
+				u.FakeNode("master-1", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.2"), u.WithCreatedTimeStamp(metav1.Time{Time: now.Add(1 * time.Second)})),
 			},
-			want: nil,
+			etcdMembers: []*etcdserverpb.Member{
+				{PeerURLs: []string{"https://10.0.0.1:2380"}},
+				{PeerURLs: []string{"https://10.0.0.2:2380"}},
+				{PeerURLs: []string{"https://10.0.0.3:2380"}},
+			},
+			want: "",
 		},
 		{
-			name: "test pods with no status",
-			fields: fields{
-				podLister: &fakePodLister{fake.NewSimpleClientset(&corev1.Pod{
-					ObjectMeta: metav1.ObjectMeta{
-						// this will be skipped
-						Name:      "etcd-a",
-						Namespace: "openshift-etcd",
-						Labels:    labels.Set{"app": "etcd"},
-					},
-				},
-					&corev1.Pod{
-						ObjectMeta: metav1.ObjectMeta{
-							Name:      "etcd-b",
-							Namespace: "openshift-etcd",
-							Labels:    labels.Set{"app": "etcd"},
-						},
-						Spec: corev1.PodSpec{
-							NodeName: "node-b",
-						},
-					}), "openshift-etcd"},
+			name: "test nodes exceed etcd surge limit",
+			objects: []runtime.Object{
+				u.GetMockClusterConfig(3),
+				u.FakeNode("master-4", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.5"), u.WithCreatedTimeStamp(metav1.Time{Time: now.Add(4 * time.Second)})),
+				u.FakeNode("master-2", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.3"), u.WithCreatedTimeStamp(metav1.Time{Time: now.Add(2 * time.Second)})),
+				u.FakeNode("master-0", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1"), u.WithCreatedTimeStamp(metav1.Time{Time: now})),
+				u.FakeNode("master-1", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.2"), u.WithCreatedTimeStamp(metav1.Time{Time: now.Add(1 * time.Second)})),
+				u.FakeNode("master-3", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.4"), u.WithCreatedTimeStamp(metav1.Time{Time: now.Add(3 * time.Second)})),
 			},
-			want: nil,
+			etcdMembers: []*etcdserverpb.Member{
+				{PeerURLs: []string{"https://10.0.0.1:2380"}},
+				{PeerURLs: []string{"https://10.0.0.2:2380"}},
+				{PeerURLs: []string{"https://10.0.0.3:2380"}},
+				{PeerURLs: []string{"https://10.0.0.4:2380"}},
+			},
+			want: "",
+		},
+		{
+			name: "test missing openshift-etcd/cluster-config-v1 configmap",
+			objects: []runtime.Object{
+				u.FakeNode("master-2", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.3"), u.WithCreatedTimeStamp(metav1.Time{Time: now.Add(2 * time.Second)})),
+				u.FakeNode("master-0", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1"), u.WithCreatedTimeStamp(metav1.Time{Time: now})),
+				u.FakeNode("master-1", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.2"), u.WithCreatedTimeStamp(metav1.Time{Time: now.Add(1 * time.Second)})),
+			},
+			etcdMembers: []*etcdserverpb.Member{
+				{PeerURLs: []string{"https://10.0.0.1:2380"}},
+			},
+			wantErr: true,
 		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient([]*etcdserverpb.Member{
-				{
-					Name: "etcd-a",
-				},
-			})
-			c := &ClusterMemberController{
-				etcdClient: fakeEtcdClient,
-				podLister:  tt.fields.podLister,
+	for _, scenario := range scenerios {
+		t.Run(scenario.name, func(t *testing.T) {
+			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(scenario.etcdMembers)
+			assert.NoError(t, err)
+			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+			for _, obj := range scenario.objects {
+				if err := indexer.Add(obj); err != nil {
+					assert.NoError(t, err)
+				}
 			}
-			got, err := c.getEtcdPodToAddToMembership(context.TODO())
-			if (err != nil) != tt.wantErr {
-				t.Errorf("getEtcdPodToAddToMembership() error = %v, wantErr %v", err, tt.wantErr)
+
+			c := &ClusterMemberController{
+				etcdClient:      fakeEtcdClient,
+				networkLister:   u.FakeNetworkLister(t, scenario.isIPv6),
+				nodeLister:      corev1listers.NewNodeLister(indexer),
+				configMapLister: corev1listers.NewConfigMapLister(indexer),
+			}
+			got, err := c.getEtcdPeerURLToScale(context.TODO())
+			if (err != nil) != scenario.wantErr {
+				t.Errorf("getEtcdPeerURLToScale() error = %v, wantErr %v", err, scenario.wantErr)
 				return
 			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("getEtcdPodToAddToMembership() got = %v, want %v", got, tt.want)
+			if !reflect.DeepEqual(got, scenario.want) {
+				t.Errorf("getEtcdPeerURLToScale() got = %v, want %v", got, scenario.want)
+			}
+		})
+	}
+}
+
+func TestClusterMemberController_ensureEtcdLearnerPromotion(t *testing.T) {
+	type member struct {
+		isLearner    bool
+		isPromotable bool
+	}
+
+	scenerios := []struct {
+		name          string
+		etcdMemberMap map[string]*member
+		wantEvents    []string
+		wantErr       bool
+	}{
+		{
+			name: "test promote all ready members",
+			etcdMemberMap: map[string]*member{
+				"etcd-0": {isLearner: true, isPromotable: true},
+				"etcd-1": {isLearner: true, isPromotable: true},
+				"etcd-2": {isLearner: true, isPromotable: true},
+			},
+			wantEvents: []string{msgLearnerPromoted, msgLearnerPromoted, msgLearnerPromoted},
+		},
+		{
+			name: "test promote and skip unready learner",
+			etcdMemberMap: map[string]*member{
+				"etcd-0": {isLearner: false},
+				"etcd-1": {isLearner: true, isPromotable: false},
+				"etcd-2": {isLearner: true, isPromotable: true},
+			},
+			wantEvents: []string{msgLearnerPromoted, msgPromotionFailedNotReady},
+		},
+		{
+			name: "test skip promote all unready learners",
+			etcdMemberMap: map[string]*member{
+				"etcd-0": {isLearner: true, isPromotable: false},
+				"etcd-1": {isLearner: true, isPromotable: false},
+				"etcd-2": {isLearner: true, isPromotable: false},
+			},
+			wantEvents: []string{msgPromotionFailedNotReady, msgPromotionFailedNotReady, msgPromotionFailedNotReady},
+		},
+		{
+			name: "test no learners",
+			etcdMemberMap: map[string]*member{
+				"etcd-0": {isLearner: false},
+				"etcd-1": {isLearner: false},
+				"etcd-2": {isLearner: false},
+			},
+			wantEvents: []string{},
+		},
+	}
+	for _, scenario := range scenerios {
+		t.Run(scenario.name, func(t *testing.T) {
+			etcdClusterSize := len(scenario.etcdMemberMap)
+			mockEtcd, err := mockserver.StartMockServers(etcdClusterSize)
+			assert.NoError(t, err)
+			defer mockEtcd.Stop()
+
+			var etcdMembers []*etcdserverpb.Member
+			var unreadyLearnerIDs []uint64
+			for i := 0; i < len(scenario.etcdMemberMap); i++ {
+				member := scenario.etcdMemberMap[fmt.Sprintf("etcd-%d", i)]
+				// Populate etcd members.
+				etcdMembers = append(etcdMembers, u.FakeEtcdMember(i, member.isLearner, mockEtcd.Servers))
+				if !member.isPromotable {
+					unreadyLearnerIDs = append(unreadyLearnerIDs, etcdMembers[len(etcdMembers)-1].ID)
+				}
+			}
+
+			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(etcdMembers, etcdcli.WithFakeUnreadyLearnerIDs(unreadyLearnerIDs))
+			assert.NoError(t, err)
+
+			eventRecorder := events.NewInMemoryRecorder(t.Name())
+			c := &ClusterMemberController{
+				etcdClient: fakeEtcdClient,
+			}
+			err = c.ensureEtcdLearnerPromotion(context.TODO(), eventRecorder)
+			if (err != nil) != scenario.wantErr {
+				t.Errorf("ensureEtcdLearnerPromotion() error = %v, wantErr %v", err, scenario.wantErr)
+				return
+			}
+			wantEvents := scenario.wantEvents
+			var gotEvents []string
+			for _, event := range eventRecorder.Events() {
+				gotEvents = append(gotEvents, event.Message)
+				for i, msg := range scenario.wantEvents {
+					if strings.Contains(event.Message, msg) {
+						// Remove from slice
+						wantEvents = append(wantEvents[:i], wantEvents[i+1:]...)
+						break
+					}
+				}
+			}
+			if len(wantEvents) != 0 {
+				t.Errorf("ensureEtcdLearnerPromotion() wantEvents: %#v, gotEvents: %#v", scenario.wantEvents, gotEvents)
 			}
 		})
 	}

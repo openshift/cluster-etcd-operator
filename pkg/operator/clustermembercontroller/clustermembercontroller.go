@@ -2,39 +2,45 @@ package clustermembercontroller
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strings"
+	"sort"
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
-
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/labels"
-	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/klog/v2"
-
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	"go.etcd.io/etcd/server/v3/etcdserver"
+	"k8s.io/apimachinery/pkg/labels"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/klog/v2"
+)
 
-	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+const (
+	masterLabel                = "node-role.kubernetes.io/master"
+	msgPromotionFailedNotReady = "promotion failed etcd learner is not yet ready"
+	msgLearnerPromoted         = "etcd learner promoted to voting member"
 )
 
 // watches the etcd static pods, picks one unready pod and adds
 // to etcd membership only if all existing members are running healthy
 // skips if any one member is unhealthy.
 type ClusterMemberController struct {
-	operatorClient v1helpers.OperatorClient
-	etcdClient     etcdcli.EtcdClient
-	podLister      corev1listers.PodLister
-	nodeLister     corev1listers.NodeLister
-	networkLister  configv1listers.NetworkLister
+	operatorClient  v1helpers.OperatorClient
+	etcdClient      etcdcli.EtcdClient
+	configMapLister corev1listers.ConfigMapLister
+	podLister       corev1listers.PodLister
+	nodeLister      corev1listers.NodeLister
+	networkLister   configv1listers.NetworkLister
 }
 
 func NewClusterMemberController(
@@ -45,13 +51,15 @@ func NewClusterMemberController(
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &ClusterMemberController{
-		operatorClient: operatorClient,
-		etcdClient:     etcdClient,
-		podLister:      kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
-		nodeLister:     kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
-		networkLister:  networkInformer.Lister(),
+		operatorClient:  operatorClient,
+		etcdClient:      etcdClient,
+		configMapLister: kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister(),
+		podLister:       kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
+		nodeLister:      kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
+		networkLister:   networkInformer.Lister(),
 	}
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
+		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer(),
 		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer(),
 		kubeInformers.InformersFor("").Core().V1().Nodes().Informer(),
 		networkInformer.Informer(),
@@ -89,87 +97,113 @@ func (c *ClusterMemberController) reconcileMembers(ctx context.Context, recorder
 		return fmt.Errorf("could not get list of unhealthy members: %v", err)
 	}
 	if len(unhealthyMembers) > 0 {
-		klog.V(4).Infof("unhealthy members: %v", spew.Sdump(unhealthyMembers))
-		return fmt.Errorf("unhealthy members found during reconciling members")
+		errMsg := "unhealthy members found during reconciling members"
+		klog.V(4).Infof("%s: %v", errMsg, spew.Sdump(unhealthyMembers))
+		return fmt.Errorf(errMsg)
 	}
 
-	// etcd is healthy, decide if we need to scale
-	podToAdd, err := c.getEtcdPodToAddToMembership(ctx)
-	switch {
-	case err != nil:
-		return fmt.Errorf("could not get etcd pod: %w", err)
-	case podToAdd == nil:
-		// no more work left to do
-		return nil
-	default:
-		recorder.Eventf("FoundPodToScale", "found pod to add to etcd membership: %v", podToAdd.Name)
+	if err := c.ensureEtcdLearnerPromotion(ctx, recorder); err != nil {
+		return fmt.Errorf("learner promotion failed: %w", err)
 	}
 
-	etcdHost, err := c.getEtcdPeerHostToScale(podToAdd)
+	// etcd is healthy, decide if we need to scale.
+	peerURL, err := c.getEtcdPeerURLToScale(ctx)
 	if err != nil {
 		return fmt.Errorf("could not get etcd peer host :%w", err)
 	}
-	err = c.etcdClient.MemberAdd(ctx, fmt.Sprintf("https://%s:2380", etcdHost))
-	if err != nil {
-		return fmt.Errorf("could not add member :%w", err)
+	if peerURL == "" {
+		// No more work left to do.
+		return nil
 	}
+
+	recorder.Eventf("ScaleUpCluster", "scale up attempt peerURl: %s", peerURL)
+	err = c.etcdClient.MemberAddAsLearner(ctx, peerURL)
+	if err != nil {
+		recorder.Warningf("ScaleUpCluster", "scale up failed peerURl: %s :%v", peerURL, err)
+		return err
+	}
+	recorder.Eventf("ScaleUpCluster", "scale up etcd learner success peerURl: %s", peerURL)
 	return nil
 }
 
-func (c *ClusterMemberController) getEtcdPodToAddToMembership(ctx context.Context) (*corev1.Pod, error) {
-	// list etcd member pods
-	pods, err := c.podLister.List(labels.Set{"app": "etcd"}.AsSelector())
+func (c *ClusterMemberController) ensureEtcdLearnerPromotion(ctx context.Context, recorder events.Recorder) error {
+	members, err := c.etcdClient.MemberList(ctx)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("could not get etcd member list: %v", err)
 	}
 
-	// go through the list of all pods, pick one peerFQDN to return from unready pods
-	// and collect dns resolution errors on the way.
-	for _, pod := range pods {
-		if !strings.HasPrefix(pod.Name, "etcd-") {
-			continue
-		}
-		isEtcdContainerRunning, isEtcdContainerReady := false, false
-		for _, containerStatus := range pod.Status.ContainerStatuses {
-			if containerStatus.Name != "etcd" {
+	var errs []error
+	for _, member := range members {
+		// Promote learner to voting member if log is in sync with leader.
+		if member.IsLearner {
+			err := c.etcdClient.MemberPromote(ctx, member.ID)
+			if err != nil && errors.Is(err, etcdserver.ErrLearnerNotReady) {
+				recorder.Warningf("ScaleUpCluster", "%s: %s", msgPromotionFailedNotReady, member.PeerURLs[0])
 				continue
 			}
-			// set running and ready flags
-			isEtcdContainerRunning = containerStatus.State.Running != nil
-			isEtcdContainerReady = containerStatus.Ready
-			break
-		}
-		if !isEtcdContainerRunning || isEtcdContainerReady {
-			continue
-		}
-
-		// now check to see if this member is already part of the quorum.  This logically requires being able to map every
-		// type of member name we have ever created.  The most important for now is the nodeName.
-		etcdMember, err := c.etcdClient.GetMember(ctx, pod.Spec.NodeName)
-		switch {
-		case apierrors.IsNotFound(err):
-			return pod, nil
-		case err != nil:
-			return nil, err
-		default:
-			klog.Infof("skipping unready pod %q because it is already an etcd member: %#v", pod.Name, etcdMember)
+			if err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			recorder.Eventf("ScaleUpCluster", "%s: %s", msgLearnerPromoted, member.PeerURLs[0])
 		}
 	}
-	return nil, nil
+	if len(errs) > 0 {
+		return utilerrors.NewAggregate(errs)
+	}
+
+	return nil
 }
 
-// getValidPodFQDNToScale goes through the list on unready pods and
-// returns a resolvable  podFQDN. If none of the DNSes are available
-// yet it will return collected errors.
-func (c *ClusterMemberController) getEtcdPeerHostToScale(podToAdd *corev1.Pod) (string, error) {
-	network, err := c.networkLister.Get("cluster")
+// getEtcdPeerURLToScale checks the exiting nodes for etcd members and returns a peerURL that can be added to the cluster.
+func (c *ClusterMemberController) getEtcdPeerURLToScale(ctx context.Context) (string, error) {
+	desiredMemberCount, err := ceohelpers.GetMastersReplicaCount(c.configMapLister)
 	if err != nil {
-		return "", err
-	}
-	node, err := c.nodeLister.Get(podToAdd.Spec.NodeName)
-	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to get control-plane replica count: %w", err)
 	}
 
-	return dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
+	if desiredMemberCount == 0 {
+		return "", fmt.Errorf("invalid install-config control plane replica count: %d", desiredMemberCount)
+	}
+
+	members, err := c.etcdClient.MemberList(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get etcd member list: %v", err)
+	}
+
+	currentMemberCount := len(members)
+	maxMemberCount := desiredMemberCount + 1 // Surge up
+	if currentMemberCount == int(maxMemberCount) {
+		klog.Warningf("Skipping scale up etcd membership at maximum size: %d", desiredMemberCount+1)
+		return "", nil
+	}
+	network, err := c.networkLister.Get("cluster")
+	if err != nil {
+		return "", fmt.Errorf("failed to list cluster network: %w", err)
+	}
+
+	nodes, err := c.nodeLister.List(labels.SelectorFromSet(labels.Set{masterLabel: ""}))
+	if err != nil {
+		return "", fmt.Errorf("failed to list nodes: %v", err)
+	}
+	// Sort nodes by created timestamp.
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].CreationTimestamp.Before(&nodes[j].CreationTimestamp)
+	})
+
+	for _, node := range nodes {
+		nodeInternalIP, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
+		if err != nil {
+			return "", fmt.Errorf("failed to get internal IP for node: %w", err)
+		}
+		// Check to see if this member is already part of the quorum.
+		peerURL := fmt.Sprintf("https://%s:2380", nodeInternalIP)
+		if etcdcli.IsPeerURLMember(members, peerURL) {
+			klog.V(4).Infof("node/%s is already mapped to an etcd member", node.Name)
+			continue
+		}
+		return peerURL, nil
+	}
+
+	return "", nil
 }

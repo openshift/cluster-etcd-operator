@@ -213,13 +213,9 @@ func (g *etcdClientGetter) MemberAdd(ctx context.Context, peerURL string) error 
 		return err
 	}
 
-	for _, member := range membersResp.Members {
-		for _, currPeerURL := range member.PeerURLs {
-			if currPeerURL == peerURL {
-				g.eventRecorder.Warningf("MemberAlreadyAdded", "member with peerURL %s already part of the cluster", peerURL)
-				return nil
-			}
-		}
+	if IsPeerURLMember(membersResp.Members, peerURL) {
+		g.eventRecorder.Warningf("MemberAlreadyAdded", "member with peerURL %s already part of the cluster", peerURL)
+		return nil
 	}
 
 	_, err = cli.MemberAdd(ctx, []string{peerURL})
@@ -227,6 +223,44 @@ func (g *etcdClientGetter) MemberAdd(ctx context.Context, peerURL string) error 
 		return err
 	}
 	return err
+}
+
+func (g *etcdClientGetter) MemberAddAsLearner(ctx context.Context, peerURL string) error {
+	g.eventRecorder.Eventf("MemberAddAsLearner", "adding new peer %v", peerURL)
+
+	cli, err := g.getEtcdClient()
+	if err != nil {
+		return err
+	}
+
+	membersResp, err := cli.MemberList(ctx)
+	if err != nil {
+		return err
+	}
+
+	if IsPeerURLMember(membersResp.Members, peerURL) {
+		g.eventRecorder.Warningf("MemberAlreadyAdded", "member with peerURL %s already part of the cluster", peerURL)
+		return nil
+	}
+
+	_, err = cli.MemberAddAsLearner(ctx, []string{peerURL})
+	if err != nil {
+		return err
+	}
+	return err
+}
+
+func (g *etcdClientGetter) MemberPromote(ctx context.Context, id uint64) error {
+	cli, err := g.getEtcdClient()
+	if err != nil {
+		return err
+	}
+
+	_, err = cli.MemberPromote(ctx, id)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (g *etcdClientGetter) MemberUpdatePeerURL(ctx context.Context, id uint64, peerURLs []string) error {
@@ -406,6 +440,18 @@ func (g *etcdClientGetter) IsMemberHealthy(ctx context.Context, member *etcdserv
 	}
 
 	return false, nil
+}
+
+func IsPeerURLMember(members []*etcdserverpb.Member, peerURL string) bool {
+	for _, member := range members {
+		for _, currPeerURL := range member.PeerURLs {
+			if currPeerURL == peerURL {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func (g *etcdClientGetter) MemberStatus(ctx context.Context, member *etcdserverpb.Member) string {

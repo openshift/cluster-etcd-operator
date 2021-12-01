@@ -2,12 +2,12 @@ package quorumguardcontroller
 
 import (
 	"context"
+	"github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	corev1 "k8s.io/api/core/v1"
@@ -21,17 +21,6 @@ import (
 )
 
 func TestQuorumGuardController_ensureEtcdGuard(t *testing.T) {
-	clusterConfigFullHA := corev1.ConfigMap{
-		TypeMeta: metav1.TypeMeta{},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      clusterConfigName,
-			Namespace: operatorclient.TargetNamespace,
-		}, Data: map[string]string{clusterConfigKey: `apiVersion: v1
-controlPlane:
-  hyperthreading: Enabled
-  name: master
-  replicas: 3`}}
-
 	changedPDB := &policyv1.PodDisruptionBudget{}
 	*changedPDB = *pdb
 	changedPDB.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"k8s-changed": EtcdGuardDeploymentName}}
@@ -51,7 +40,7 @@ controlPlane:
 	type fields struct {
 		client           kubernetes.Interface
 		infraObj         configv1.Infrastructure
-		clusterConfigObj corev1.ConfigMap
+		clusterConfigObj *corev1.ConfigMap
 	}
 	tests := []struct {
 		name                 string
@@ -59,14 +48,14 @@ controlPlane:
 		wantErr              bool
 		expectedHATopology   configv1.TopologyMode
 		expectedEvents       int
-		expectedReplicaCount int
+		expectedReplicaCount int32
 	}{
 		{
 			name: "test ensureEtcdGuard - deployment exists but pdb not",
 			fields: fields{
 				client:           fakecore.NewSimpleClientset(deployment),
 				infraObj:         haInfra,
-				clusterConfigObj: clusterConfigFullHA,
+				clusterConfigObj: testutils.GetMockClusterConfig(3),
 			},
 
 			expectedHATopology:   configv1.HighlyAvailableTopologyMode,
@@ -79,7 +68,7 @@ controlPlane:
 			fields: fields{
 				client:           fakecore.NewSimpleClientset(deployment, pdb),
 				infraObj:         haInfra,
-				clusterConfigObj: clusterConfigFullHA,
+				clusterConfigObj: testutils.GetMockClusterConfig(3),
 			},
 			expectedHATopology:   configv1.HighlyAvailableTopologyMode,
 			expectedEvents:       1,
@@ -91,7 +80,7 @@ controlPlane:
 			fields: fields{
 				client:           fakecore.NewSimpleClientset(pdb),
 				infraObj:         haInfra,
-				clusterConfigObj: clusterConfigFullHA,
+				clusterConfigObj: testutils.GetMockClusterConfig(3),
 			},
 			expectedHATopology:   configv1.HighlyAvailableTopologyMode,
 			expectedEvents:       1,
@@ -103,7 +92,7 @@ controlPlane:
 			fields: fields{
 				client:           fakecore.NewSimpleClientset(changedDeployment, pdb),
 				infraObj:         haInfra,
-				clusterConfigObj: clusterConfigFullHA,
+				clusterConfigObj: testutils.GetMockClusterConfig(3),
 			},
 			expectedHATopology:   configv1.HighlyAvailableTopologyMode,
 			expectedEvents:       1,
@@ -115,7 +104,7 @@ controlPlane:
 			fields: fields{
 				client:           fakecore.NewSimpleClientset(deployment, changedPDB),
 				infraObj:         haInfra,
-				clusterConfigObj: clusterConfigFullHA,
+				clusterConfigObj: testutils.GetMockClusterConfig(3),
 			},
 			expectedHATopology:   configv1.HighlyAvailableTopologyMode,
 			expectedEvents:       2,
@@ -127,7 +116,7 @@ controlPlane:
 			fields: fields{
 				client:           fakecore.NewSimpleClientset(changedDeployment, changedPDB),
 				infraObj:         haInfra,
-				clusterConfigObj: clusterConfigFullHA,
+				clusterConfigObj: testutils.GetMockClusterConfig(3),
 			},
 			expectedHATopology:   configv1.HighlyAvailableTopologyMode,
 			expectedEvents:       2,
@@ -145,11 +134,13 @@ controlPlane:
 					},
 					Status: configv1.InfrastructureStatus{
 						ControlPlaneTopology: configv1.SingleReplicaTopologyMode},
-				}},
+				},
+				clusterConfigObj: testutils.GetMockClusterConfig(1),
+			},
 			expectedHATopology:   configv1.SingleReplicaTopologyMode,
 			expectedEvents:       0,
-			wantErr:              false,
 			expectedReplicaCount: 0,
+			wantErr:              false,
 		},
 		{
 			name: "test ensureEtcdGuard - HA mode not set, nothing exists",
@@ -169,18 +160,9 @@ controlPlane:
 		{
 			name: "test ensureEtcdGuard - 5 replicas and nothing exists",
 			fields: fields{
-				client:   fakecore.NewSimpleClientset(),
-				infraObj: haInfra,
-				clusterConfigObj: corev1.ConfigMap{
-					TypeMeta: metav1.TypeMeta{},
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      clusterConfigName,
-						Namespace: operatorclient.TargetNamespace,
-					}, Data: map[string]string{clusterConfigKey: `apiVersion: v1
-controlPlane:
- hyperthreading: Enabled
- name: master
- replicas: 5`}},
+				client:           fakecore.NewSimpleClientset(),
+				infraObj:         haInfra,
+				clusterConfigObj: testutils.GetMockClusterConfig(5),
 			},
 			expectedHATopology:   configv1.HighlyAvailableTopologyMode,
 			expectedEvents:       2,
@@ -200,16 +182,9 @@ controlPlane:
 		{
 			name: "test ensureEtcdGuard - get replicas count key not found",
 			fields: fields{
-				client:   fakecore.NewSimpleClientset(),
-				infraObj: haInfra,
-				clusterConfigObj: corev1.ConfigMap{TypeMeta: metav1.TypeMeta{},
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      clusterConfigName,
-						Namespace: operatorclient.TargetNamespace,
-					}, Data: map[string]string{clusterConfigKey: `apiVersion: v1
-controlPlane:
- hyperthreading: Enabled
- name: master`}},
+				client:           fakecore.NewSimpleClientset(),
+				infraObj:         haInfra,
+				clusterConfigObj: testutils.GetMockClusterConfig(0),
 			},
 			expectedHATopology: configv1.HighlyAvailableTopologyMode,
 			expectedEvents:     0,
@@ -226,8 +201,11 @@ controlPlane:
 			}
 
 			fakeConfigMapIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
-			if err := fakeConfigMapIndexer.Add(&tt.fields.clusterConfigObj); err != nil {
-				t.Fatal(err)
+			if tt.fields.clusterConfigObj != nil {
+				err := fakeConfigMapIndexer.Add(tt.fields.clusterConfigObj)
+				if err != nil {
+					t.Fatal(err)
+				}
 			}
 
 			c := &QuorumGuardController{
@@ -236,6 +214,9 @@ controlPlane:
 				configMapLister:      corev1listers.NewConfigMapLister(fakeConfigMapIndexer),
 			}
 			err := c.ensureEtcdGuard(context.TODO(), recorder)
+			if err != nil && tt.wantErr {
+				return
+			}
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ensureEtcdGuard() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -251,8 +232,8 @@ controlPlane:
 				return
 			}
 
-			if c.replicaCount != tt.expectedReplicaCount {
-				t.Errorf("replicaCount is %d and expected is %d", c.replicaCount, tt.expectedReplicaCount)
+			if c.clusterTopology == configv1.HighlyAvailableTopologyMode && *c.etcdQuorumGuard.Spec.Replicas != tt.expectedReplicaCount {
+				t.Errorf("replicaCount is %d and expected is %d", *c.etcdQuorumGuard.Spec.Replicas, tt.expectedReplicaCount)
 				return
 			}
 		})
