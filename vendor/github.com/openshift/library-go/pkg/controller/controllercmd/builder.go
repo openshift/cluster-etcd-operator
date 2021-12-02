@@ -215,7 +215,7 @@ func (b *ControllerBuilder) Run(ctx context.Context, config *unstructured.Unstru
 	controllerRef := b.componentOwnerReference
 
 	if controllerRef == nil {
-		controllerRef, err = events.GetControllerReferenceForCurrentPod(kubeClient, namespace, nil)
+		controllerRef, err = events.GetControllerReferenceForCurrentPod(ctx, kubeClient, namespace, nil)
 		if err != nil {
 			klog.Warningf("unable to get owner reference (falling back to namespace): %v", err)
 		}
