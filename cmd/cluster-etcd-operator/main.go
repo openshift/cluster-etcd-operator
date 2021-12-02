@@ -1,9 +1,9 @@
 package main
 
 import (
+	"context"
 	goflag "flag"
 	"fmt"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/verify"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -13,6 +13,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/monitor"
 	operatorcmd "github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/verify"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/waitforceo"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator"
 	"github.com/openshift/library-go/pkg/operator/staticpod/certsyncpod"
@@ -39,14 +40,14 @@ func main() {
 	logs.InitLogs()
 	defer logs.FlushLogs()
 
-	command := NewSSCSCommand()
+	command := NewSSCSCommand(context.Background())
 	if err := command.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
 }
 
-func NewSSCSCommand() *cobra.Command {
+func NewSSCSCommand(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cluster-etcd-operator",
 		Short: "OpenShift cluster etcd operator",
@@ -60,7 +61,7 @@ func NewSSCSCommand() *cobra.Command {
 	cmd.AddCommand(render.NewRenderCommand(os.Stderr))
 	cmd.AddCommand(backuprestore.NewBackupCommand(os.Stderr))
 	cmd.AddCommand(backuprestore.NewRestoreCommand(os.Stderr))
-	cmd.AddCommand(installerpod.NewInstaller())
+	cmd.AddCommand(installerpod.NewInstaller(ctx))
 	cmd.AddCommand(prune.NewPrune())
 	cmd.AddCommand(certsyncpod.NewCertSyncControllerCommand(operator.CertConfigMaps, operator.CertSecrets))
 	cmd.AddCommand(waitforceo.NewWaitForCeoCommand(os.Stderr))
