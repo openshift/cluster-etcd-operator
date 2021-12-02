@@ -61,6 +61,7 @@ type QuorumGuardController struct {
 	kubeClient           kubernetes.Interface
 	podLister            corev1listers.PodLister
 	nodeLister           corev1listers.NodeLister
+	configMapLister      corev1listers.ConfigMapLister
 	infrastructureLister configv1listers.InfrastructureLister
 	clusterTopology      configv1.TopologyMode
 	replicaCount         int
@@ -81,6 +82,7 @@ func NewQuorumGuardController(
 		kubeClient:           kubeClient,
 		podLister:            kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
 		nodeLister:           kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
+		configMapLister:      kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister(),
 		infrastructureLister: infrastructureLister,
 		replicaCount:         0,
 		cliImagePullSpec:     cliImagePullSpec,
@@ -88,6 +90,7 @@ func NewQuorumGuardController(
 	return factory.New().ResyncEvery(10*time.Minute).WithInformers(
 		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer(),
 		kubeInformers.InformersFor("").Core().V1().Nodes().Informer(),
+		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer(),
 		operatorClient.Informer(),
 	).WithSync(c.sync).ToController("QuorumGuardController", eventRecorder.WithComponentSuffix("quorum-guard-controller"))
 }
@@ -160,7 +163,7 @@ func (c *QuorumGuardController) ensureEtcdGuard(ctx context.Context, recorder ev
 
 // ensureEtcdGuardDeployment if etcd quorum guard deployment doesn't exist or was changed - apply it.
 func (c *QuorumGuardController) ensureEtcdGuardDeployment(ctx context.Context, recorder events.Recorder) error {
-	replicaCount, err := c.getMastersReplicaCount(ctx)
+	replicaCount, err := c.getMastersReplicaCount()
 	if err != nil {
 		return err
 	}
@@ -234,13 +237,13 @@ func (c *QuorumGuardController) ensureEtcdGuardPDB(ctx context.Context, recorder
 }
 
 // getMastersReplicaCount get number of expected masters statically defined by the controlPlane replicas in the install-config.
-func (c *QuorumGuardController) getMastersReplicaCount(ctx context.Context) (int32, error) {
+func (c *QuorumGuardController) getMastersReplicaCount() (int32, error) {
 	if c.replicaCount != 0 {
 		return int32(c.replicaCount), nil
 	}
 
 	klog.Infof("Getting number of expected masters from %s", clusterConfigName)
-	clusterConfig, err := c.kubeClient.CoreV1().ConfigMaps(clusterConfigNamespace).Get(ctx, clusterConfigName, metav1.GetOptions{})
+	clusterConfig, err := c.configMapLister.ConfigMaps(operatorclient.TargetNamespace).Get(clusterConfigName)
 	if err != nil {
 		klog.Errorf("failed to get ConfigMap %s, err %w", clusterConfigName, err)
 		return 0, err

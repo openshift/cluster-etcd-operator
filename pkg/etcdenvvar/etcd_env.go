@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/ghodss/yaml"
@@ -11,6 +12,7 @@ import (
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
@@ -38,7 +40,17 @@ var FixedEtcdEnvVars = map[string]string{
 	"ETCD_EXPERIMENTAL_WARNING_APPLY_DURATION":         "200ms",
 }
 
-const etcdEndpointName = "etcd-endpoints"
+const (
+	etcdEndpointName  = "etcd-endpoints"
+	clusterConfigName = "cluster-config-v1"
+	clusterConfigKey  = "install-config"
+)
+
+type replicaCountDecoder struct {
+	ControlPlane struct {
+		Replicas string `yaml:"replicas,omitempty"`
+	} `yaml:"controlPlane,omitempty"`
+}
 
 type envVarFunc func(envVarContext envVarContext) (map[string]string, error)
 
@@ -53,6 +65,7 @@ var envVarFns = []envVarFunc{
 	getElectionTimeout,
 	getUnsupportedArch,
 	getCipherSuites,
+	getMaxLearners,
 }
 
 // getEtcdEnvVars returns the env vars that need to be set on the etcd static pods that will be rendered.
@@ -65,6 +78,7 @@ var envVarFns = []envVarFunc{
 //   ETCD_INITIAL_CLUSTER_STATE
 //   ETCD_UNSUPPORTED_ARCH
 //   ETCD_CIPHER_SUITES
+//   ETCD_EXPERIMENTAL_MAX_LEARNERS
 //   NODE_%s_IP
 //   NODE_%s_ETCD_URL_HOST
 //   NODE_%s_ETCD_NAME
@@ -252,6 +266,35 @@ func getCipherSuites(envVarContext envVarContext) (map[string]string, error) {
 
 	return map[string]string{
 		"ETCD_CIPHER_SUITES": strings.Join(actualCipherSuites, ","),
+	}, nil
+}
+
+// getMaxLearners reads the control-plane replicas from the install-config. We tolerate max learners equal to the
+// desired control-plane replicas so that the admin can surge up N x 2 in case of vertical scaling/replacement.
+func getMaxLearners(envVarContext envVarContext) (map[string]string, error) {
+	clusterConfig, err := envVarContext.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get(clusterConfigName)
+	if err != nil {
+		errMsg := fmt.Errorf("failed to get configmap %s/%s :%v", operatorclient.TargetNamespace, clusterConfigName, err)
+		klog.Error(errMsg)
+		return nil, errMsg
+	}
+
+	d := replicaCountDecoder{}
+	if err := yaml.Unmarshal([]byte(clusterConfig.Data[clusterConfigKey]), &d); err != nil {
+		errMsg := fmt.Errorf("%s key doesn't exist in configmap %s/%s :%w", clusterConfigKey, operatorclient.TargetNamespace, clusterConfigName, err)
+		klog.Error(errMsg)
+		return nil, errMsg
+	}
+
+	replicaCount, err := strconv.Atoi(d.ControlPlane.Replicas)
+	if err != nil {
+		errMsg := fmt.Errorf("failed to convert replica %s: %w", d.ControlPlane.Replicas, err)
+		klog.Error(errMsg)
+		return nil, errMsg
+	}
+
+	return map[string]string{
+		"ETCD_EXPERIMENTAL_MAX_LEARNERS": fmt.Sprint(replicaCount),
 	}, nil
 }
 
