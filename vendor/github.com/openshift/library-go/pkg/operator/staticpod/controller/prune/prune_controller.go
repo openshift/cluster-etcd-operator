@@ -34,7 +34,7 @@ type PruneController struct {
 	// prunerPodImageFn returns the image name for the pruning pod
 	prunerPodImageFn func() string
 	// retrieveStatusConfigMapOwnerRefsFn gets the revision status ConfigMap and returns an owner ref, or empty slice on error.
-	retrieveStatusConfigMapOwnerRefsFn func(revision int32) ([]metav1.OwnerReference, error)
+	retrieveStatusConfigMapOwnerRefsFn func(ctx context.Context, revision int32) ([]metav1.OwnerReference, error)
 
 	operatorClient v1helpers.StaticPodOperatorClient
 
@@ -206,7 +206,7 @@ func (c *PruneController) ensurePrunePod(ctx context.Context, recorder events.Re
 		fmt.Sprintf("--static-pod-name=%s", c.podResourcePrefix),
 	)
 
-	ownerRefs, err := c.retrieveStatusConfigMapOwnerRefsFn(revision)
+	ownerRefs, err := c.retrieveStatusConfigMapOwnerRefsFn(ctx, revision)
 	if err != nil {
 		return fmt.Errorf("unable to set pruner pod ownerrefs: %+v", err)
 	}
@@ -216,8 +216,8 @@ func (c *PruneController) ensurePrunePod(ctx context.Context, recorder events.Re
 	return err
 }
 
-func (c *PruneController) createStatusConfigMapOwnerRefs(revision int32) ([]metav1.OwnerReference, error) {
-	statusConfigMap, err := c.configMapGetter.ConfigMaps(c.targetNamespace).Get(context.TODO(), fmt.Sprintf("revision-status-%d", revision), metav1.GetOptions{})
+func (c *PruneController) createStatusConfigMapOwnerRefs(ctx context.Context, revision int32) ([]metav1.OwnerReference, error) {
+	statusConfigMap, err := c.configMapGetter.ConfigMaps(c.targetNamespace).Get(ctx, fmt.Sprintf("revision-status-%d", revision), metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}

@@ -19,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/apiserver/pkg/server"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -76,7 +77,7 @@ func (o *InstallOptions) WithPodMutationFn(podMutationFn PodMutationFunc) *Insta
 	return o
 }
 
-func NewInstaller() *cobra.Command {
+func NewInstaller(ctx context.Context) *cobra.Command {
 	o := NewInstallOptions()
 
 	cmd := &cobra.Command{
@@ -93,7 +94,8 @@ func NewInstaller() *cobra.Command {
 				klog.Exit(err)
 			}
 
-			ctx, cancel := context.WithTimeout(context.TODO(), o.Timeout)
+			signalHandlingCtx := setupSignalContext(ctx)
+			ctx, cancel := context.WithTimeout(signalHandlingCtx, o.Timeout)
 			defer cancel()
 			if err := o.Run(ctx); err != nil {
 				klog.Exit(err)
@@ -104,6 +106,19 @@ func NewInstaller() *cobra.Command {
 	o.AddFlags(cmd.Flags())
 
 	return cmd
+}
+
+// setupSignalContext registers for SIGTERM and SIGINT and returns a context
+// that will be cancelled once a signal is received.
+func setupSignalContext(baseCtx context.Context) context.Context {
+	shutdownCtx, cancel := context.WithCancel(baseCtx)
+	shutdownHandler := server.SetupSignalHandler()
+	go func() {
+		defer cancel()
+		<-shutdownHandler
+		klog.Infof("Received SIGTERM or SIGINT signal, shutting down the process.")
+	}()
+	return shutdownCtx
 }
 
 func (o *InstallOptions) AddFlags(fs *pflag.FlagSet) {
@@ -388,7 +403,7 @@ func (o *InstallOptions) Run(ctx context.Context) error {
 
 	err := retry.RetryOnConnectionErrors(ctx, func(context.Context) (bool, error) {
 		var clientErr error
-		eventTarget, clientErr = events.GetControllerReferenceForCurrentPod(o.KubeClient, o.Namespace, nil)
+		eventTarget, clientErr = events.GetControllerReferenceForCurrentPod(ctx, o.KubeClient, o.Namespace, nil)
 		if clientErr != nil {
 			return false, clientErr
 		}
@@ -430,7 +445,12 @@ func (o *InstallOptions) installerPodNeedUUID() bool {
 		return false
 	}
 	// if we run kubelet older than 4.9, installer pods require UID generation
-	return kubeletVersion.LT(semver.MustParse("1.22.0"))
+	// Switching this to 1.23 because there was a fix backported late to 1.22: https://github.com/kubernetes/kubernetes/pull/106394
+	// Once we prove this out in 1.23 after the kube bump, we can consider relaxing the constraint to 1.22.Z, but TRT
+	// suspects that this is failing installs due to
+	//  hyperkube[1371]: I1202 08:50:47.935427    1371 status_manager.go:611] "Pod was deleted and then recreated, skipping status update" pod="openshift-kube-scheduler/openshift-kube-scheduler-ip-10-0-129-204.us-east-2.compute.internal" oldPodUID=f11e314508a00e4ea9bf37d76b82b162 podUID=cce59ead72804895d31dba4208b395aa
+	// in kubelet logs
+	return kubeletVersion.LT(semver.MustParse("1.23.0"))
 }
 
 func (o *InstallOptions) writePod(rawPodBytes []byte, manifestFileName, resourceDir string) error {

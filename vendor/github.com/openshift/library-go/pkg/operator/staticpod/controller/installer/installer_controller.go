@@ -88,7 +88,7 @@ type InstallerController struct {
 	// installerPodImageFn returns the image name for the installer pod
 	installerPodImageFn func() string
 	// ownerRefsFn sets the ownerrefs on the pruner pod
-	ownerRefsFn func(revision int32) ([]metav1.OwnerReference, error)
+	ownerRefsFn func(ctx context.Context, revision int32) ([]metav1.OwnerReference, error)
 
 	installerPodMutationFns []InstallerPodMutationFunc
 
@@ -850,7 +850,7 @@ func (c *InstallerController) ensureInstallerPod(ctx context.Context, operatorSp
 	pod.Spec.Containers[0].Image = c.installerPodImageFn()
 	pod.Spec.Containers[0].Command = c.command
 
-	ownerRefs, err := c.ownerRefsFn(ns.TargetRevision)
+	ownerRefs, err := c.ownerRefsFn(ctx, ns.TargetRevision)
 	if err != nil {
 		return fmt.Errorf("unable to set installer pod ownerrefs: %+v", err)
 	}
@@ -924,9 +924,9 @@ func (c *InstallerController) ensureInstallerPod(ctx context.Context, operatorSp
 	return err
 }
 
-func (c *InstallerController) setOwnerRefs(revision int32) ([]metav1.OwnerReference, error) {
+func (c *InstallerController) setOwnerRefs(ctx context.Context, revision int32) ([]metav1.OwnerReference, error) {
 	ownerReferences := []metav1.OwnerReference{}
-	statusConfigMap, err := c.configMapsGetter.ConfigMaps(c.targetNamespace).Get(context.TODO(), fmt.Sprintf("revision-status-%d", revision), metav1.GetOptions{})
+	statusConfigMap, err := c.configMapsGetter.ConfigMaps(c.targetNamespace).Get(ctx, fmt.Sprintf("revision-status-%d", revision), metav1.GetOptions{})
 	if err == nil {
 		ownerReferences = append(ownerReferences, metav1.OwnerReference{
 			APIVersion: "v1",
