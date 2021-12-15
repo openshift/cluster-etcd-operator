@@ -101,7 +101,7 @@ func (c *ClientHolder) WithMigrationClient(client migrationclient.Interface) *Cl
 }
 
 // ApplyDirectly applies the given manifest files to API server.
-func ApplyDirectly(ctx context.Context, clients *ClientHolder, recorder events.Recorder, manifests AssetFunc, files ...string) []ApplyResult {
+func ApplyDirectly(ctx context.Context, clients *ClientHolder, recorder events.Recorder, cache ResourceCache, manifests AssetFunc, files ...string) []ApplyResult {
 	ret := []ApplyResult{}
 
 	for _, file := range files {
@@ -126,39 +126,39 @@ func ApplyDirectly(ctx context.Context, clients *ClientHolder, recorder events.R
 			if clients.kubeClient == nil {
 				result.Error = fmt.Errorf("missing kubeClient")
 			} else {
-				result.Result, result.Changed, result.Error = ApplyNamespace(ctx, clients.kubeClient.CoreV1(), recorder, t)
+				result.Result, result.Changed, result.Error = ApplyNamespaceImproved(ctx, clients.kubeClient.CoreV1(), recorder, t, cache)
 			}
 		case *corev1.Service:
 			if clients.kubeClient == nil {
 				result.Error = fmt.Errorf("missing kubeClient")
 			} else {
-				result.Result, result.Changed, result.Error = ApplyService(ctx, clients.kubeClient.CoreV1(), recorder, t)
+				result.Result, result.Changed, result.Error = ApplyServiceImproved(ctx, clients.kubeClient.CoreV1(), recorder, t, cache)
 			}
 		case *corev1.Pod:
 			if clients.kubeClient == nil {
 				result.Error = fmt.Errorf("missing kubeClient")
 			} else {
-				result.Result, result.Changed, result.Error = ApplyPod(ctx, clients.kubeClient.CoreV1(), recorder, t)
+				result.Result, result.Changed, result.Error = ApplyPodImproved(ctx, clients.kubeClient.CoreV1(), recorder, t, cache)
 			}
 		case *corev1.ServiceAccount:
 			if clients.kubeClient == nil {
 				result.Error = fmt.Errorf("missing kubeClient")
 			} else {
-				result.Result, result.Changed, result.Error = ApplyServiceAccount(ctx, clients.kubeClient.CoreV1(), recorder, t)
+				result.Result, result.Changed, result.Error = ApplyServiceAccountImproved(ctx, clients.kubeClient.CoreV1(), recorder, t, cache)
 			}
 		case *corev1.ConfigMap:
 			client := clients.configMapsGetter()
 			if client == nil {
 				result.Error = fmt.Errorf("missing kubeClient")
 			} else {
-				result.Result, result.Changed, result.Error = ApplyConfigMap(ctx, client, recorder, t)
+				result.Result, result.Changed, result.Error = ApplyConfigMapImproved(ctx, client, recorder, t, cache)
 			}
 		case *corev1.Secret:
 			client := clients.secretsGetter()
 			if client == nil {
 				result.Error = fmt.Errorf("missing kubeClient")
 			} else {
-				result.Result, result.Changed, result.Error = ApplySecret(ctx, client, recorder, t)
+				result.Result, result.Changed, result.Error = ApplySecretImproved(ctx, client, recorder, t, cache)
 			}
 		case *rbacv1.ClusterRole:
 			if clients.kubeClient == nil {
