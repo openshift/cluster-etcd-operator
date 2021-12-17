@@ -11,6 +11,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/revisioncontroller"
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/backingresource"
+	"github.com/openshift/library-go/pkg/operator/staticpod/controller/guard"
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/installer"
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/installerstate"
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/node"
@@ -62,6 +63,12 @@ type staticPodOperatorControllerBuilder struct {
 	pruneCommand []string
 	// TODO de-dupe this.  I think it's actually a directory name
 	staticPodPrefix string
+
+	// guard infomation
+	operatorName               string
+	operatorNamespace          string
+	readyzPort                 string
+	guardCreateConditionalFunc func() (bool, error)
 }
 
 func NewBuilder(
@@ -91,6 +98,7 @@ type Builder interface {
 	// the installer pod is created for a revision.
 	WithCustomInstaller(command []string, installerPodMutationFunc installer.InstallerPodMutationFunc) Builder
 	WithPruning(command []string, staticPodPrefix string) Builder
+	WithPodDisruptionBudgetGuard(operatorNamespace, operatorName, readyzPort string, createConditionalFunc func() (bool, error)) Builder
 	ToControllers() (manager.ControllerManager, error)
 }
 
@@ -153,6 +161,14 @@ func (b *staticPodOperatorControllerBuilder) WithPruning(command []string, stati
 	return b
 }
 
+func (b *staticPodOperatorControllerBuilder) WithPodDisruptionBudgetGuard(operatorNamespace, operatorName, readyzPort string, createConditionalFunc func() (bool, error)) Builder {
+	b.operatorNamespace = operatorNamespace
+	b.operatorName = operatorName
+	b.readyzPort = readyzPort
+	b.guardCreateConditionalFunc = createConditionalFunc
+	return b
+}
+
 func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.ControllerManager, error) {
 	manager := manager.NewControllerManager()
 
@@ -169,6 +185,7 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 	secretClient := v1helpers.CachedSecretGetter(b.kubeClient.CoreV1(), b.kubeInformers)
 	podClient := b.kubeClient.CoreV1()
 	eventsClient := b.kubeClient.CoreV1()
+	pdbClient := b.kubeClient.PolicyV1()
 	operandInformers := b.kubeInformers.InformersFor(b.operandNamespace)
 	clusterInformers := b.kubeInformers.InformersFor("")
 
@@ -298,6 +315,22 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 
 	manager.WithController(unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(b.staticPodOperatorClient, eventRecorder), 1)
 	manager.WithController(loglevel.NewClusterOperatorLoggingController(b.staticPodOperatorClient, eventRecorder), 1)
+
+	if len(b.operatorNamespace) > 0 && len(b.operatorName) > 0 && len(b.readyzPort) > 0 {
+		manager.WithController(guard.NewGuardController(
+			b.operandNamespace,
+			b.staticPodName,
+			b.operatorName,
+			b.readyzPort,
+			operandInformers,
+			clusterInformers,
+			b.staticPodOperatorClient,
+			podClient,
+			pdbClient,
+			eventRecorder,
+			b.guardCreateConditionalFunc,
+		), 1)
+	}
 
 	return manager, errors.NewAggregate(errs)
 }
