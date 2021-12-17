@@ -6,6 +6,7 @@ reviewers:
   - hasbro17
 approvers:
   - deads2k
+  - hasbro17
   - hexfusion
   - sttts
 component: "Etcd"
