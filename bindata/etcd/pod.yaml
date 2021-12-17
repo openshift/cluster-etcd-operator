@@ -271,7 +271,7 @@ ${COMPUTED_ENV_VARS}
     terminationMessagePolicy: FallbackToLogsOnError
     command: [ "cluster-etcd-operator", "monitor" ]
     args:
-      - --targets=$(ETCDCTL_ENDPOINTS)
+      - --target-path=/etc/kubernetes/static-pod-resources/configmaps/etcd-endpoints
       - --probe-interval=1s
       - --log-outputs=stderr
       - --log-outputs=/var/log/etcd/etcd-health-probe.log
@@ -296,6 +296,8 @@ ${COMPUTED_ENV_VARS}
         name: log-dir
       - mountPath: /etc/kubernetes/static-pod-certs
         name: cert-dir
+      - mountPath: /etc/kubernetes/static-pod-resources
+        name: resource-dir
     resources:
       requests:
         memory: 70Mi

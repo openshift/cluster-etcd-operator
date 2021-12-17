@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"os/signal"
+	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -52,6 +55,7 @@ const dialTimeout = 20 * time.Second
 type monitorOpts struct {
 	errOut           io.Writer
 	Targets          string
+	TargetPath       string
 	dialTimeout      time.Duration
 	interval         time.Duration
 	logLevel         int
@@ -102,7 +106,8 @@ func NewMonitorCommand(errOut io.Writer) *cobra.Command {
 func (o *monitorOpts) AddFlags(fs *pflag.FlagSet) {
 	fs.DurationVar(&o.dialTimeout, "dial-timeout", DefaultHTTPDialTimeout, "Dial timeout for the client. Default 2s")
 	fs.DurationVar(&o.interval, "probe-interval", DefaultHealthCheckInterval, "Frequency of health checks. Default 5s")
-	fs.StringVar(&o.Targets, "targets", DefaultEndpoint, "Comma separated listed of targets to perform health checks against. Default https://localhost:2379")
+	fs.StringVar(&o.Targets, "targets", "", "Comma separated listed of targets to perform health checks against.")
+	fs.StringVar(&o.TargetPath, "target-path", "", "Static pod resource path which contains etcd targets.")
 	fs.StringSliceVar(&o.logOutputs, "log-outputs", []string{DefaultLogOutputs}, "Logger output targets. Default stderr")
 	fs.BoolVar(&o.enableLogRotation, "enable-log-rotation", false, "Enable log rotation of a single log-outputs file target.")
 	fs.StringVar(&o.LogRotationConfigJSON, "log-rotation-config-json", DefaultLogRotationConfig, "Configures log rotation if enabled with a JSON logger config. Default: MaxSize=100(MB), MaxAge=0(days,no limit), MaxBackups=10(no limit), LocalTime=false(UTC), Compress=false(true)")
@@ -124,6 +129,9 @@ func (o *monitorOpts) Validate(_ context.Context) error {
 	}
 	if len(o.clientCACertFile) == 0 {
 		return errors.New("missing required flag: --cacert-file")
+	}
+	if len(o.TargetPath) != 0 && len(o.Targets) != 0 {
+		return errors.New("--target-path and --targets flags can not be used together")
 	}
 	return nil
 }
@@ -205,13 +213,20 @@ func (o *monitorOpts) newMonitor(ctx context.Context, lg *zap.Logger, singleTarg
 		TrustedCAFile: o.clientCACertFile,
 	}
 
-	targets := strings.Split(o.Targets, ",")
+	targets, err := o.getTargets()
+	if err != nil {
+		lg.Error("failed to get targets", zap.Error(err))
+		return nil, err
+	}
+
+	lg.Info("monitor targets registered", zap.Strings("endpoints", targets))
 
 	// Create single target checks one check per target
 	for _, target := range targets {
 		// one client per target to eliminate lock racing
 		client, err := newETCD3Client(ctx, tlsInfo, targets)
 		if err != nil {
+			lg.Error("failed to create etcd client", zap.Error(err))
 			return nil, err
 		}
 		// pin endpoint for check
@@ -226,6 +241,7 @@ func (o *monitorOpts) newMonitor(ctx context.Context, lg *zap.Logger, singleTarg
 	if len(targets) > 1 {
 		client, err := newETCD3Client(ctx, tlsInfo, targets)
 		if err != nil {
+			lg.Error("failed to create etcd client", zap.Error(err))
 			return nil, err
 		}
 
@@ -259,6 +275,25 @@ func (m *Monitor) Schedule(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
+func (o *monitorOpts) getTargets() ([]string, error) {
+	if len(o.Targets) > 0 {
+		return strings.Split(o.Targets, ","), nil
+	}
+	data, err := configMapLoad(o.TargetPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load configmap from disk: %v", err)
+	}
+	var targets []string
+	for _, target := range data {
+		targets = append(targets, fmt.Sprintf("https://%s:2379", target))
+	}
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("no targets found in target path: %s", o.TargetPath)
+	}
+
+	return targets, nil
+}
+
 func WithMultiTargetHealthCheck(checks ...health.CheckFunc) []health.CheckFunc {
 	return checks
 }
@@ -288,4 +323,39 @@ func newETCD3Client(ctx context.Context, tlsInfo transport.TLSInfo, endpoints []
 	}
 
 	return clientv3.New(*cfg)
+}
+
+// configMapLoad reads the "Data" of a ConfigMap from a particular VolumeMount.
+// Borrowed from knative 0:)
+func configMapLoad(p string) (map[string]string, error) {
+	data := make(map[string]string)
+	err := filepath.Walk(p, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		for info.Mode()&os.ModeSymlink != 0 {
+			dirname := filepath.Dir(p)
+			p, err = os.Readlink(p)
+			if err != nil {
+				return err
+			}
+			if !filepath.IsAbs(p) {
+				p = path.Join(dirname, p)
+			}
+			info, err = os.Lstat(p)
+			if err != nil {
+				return err
+			}
+		}
+		if info.IsDir() {
+			return nil
+		}
+		b, err := ioutil.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		data[info.Name()] = string(b)
+		return nil
+	})
+	return data, err
 }
