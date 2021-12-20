@@ -100,10 +100,20 @@ func (c *ResourceSyncController) Name() string {
 }
 
 func (c *ResourceSyncController) SyncConfigMap(destination, source ResourceLocation) error {
-	return c.SyncPartialConfigMap(destination, source)
+	return c.syncConfigMap(destination, source, alwaysFulfilledPreconditions)
 }
 
 func (c *ResourceSyncController) SyncPartialConfigMap(destination ResourceLocation, source ResourceLocation, keys ...string) error {
+	return c.syncConfigMap(destination, source, alwaysFulfilledPreconditions, keys...)
+}
+
+// SyncConfigMapConditionally adds a new configmap that the resource sync
+// controller will synchronise if the given precondition is fulfilled.
+func (c *ResourceSyncController) SyncConfigMapConditionally(destination, source ResourceLocation, preconditionsFulfilledFn preconditionsFulfilled) error {
+	return c.syncConfigMap(destination, source, preconditionsFulfilledFn)
+}
+
+func (c *ResourceSyncController) syncConfigMap(destination ResourceLocation, source ResourceLocation, preconditionsFulfilledFn preconditionsFulfilled, keys ...string) error {
 	if !c.knownNamespaces.Has(destination.Namespace) {
 		return fmt.Errorf("not watching namespace %q", destination.Namespace)
 	}
@@ -114,8 +124,9 @@ func (c *ResourceSyncController) SyncPartialConfigMap(destination ResourceLocati
 	c.syncRuleLock.Lock()
 	defer c.syncRuleLock.Unlock()
 	c.configMapSyncRules[destination] = syncRuleSource{
-		ResourceLocation: source,
-		syncedKeys:       sets.NewString(keys...),
+		ResourceLocation:         source,
+		syncedKeys:               sets.NewString(keys...),
+		preconditionsFulfilledFn: preconditionsFulfilledFn,
 	}
 
 	// make sure the new rule is picked up
@@ -124,10 +135,20 @@ func (c *ResourceSyncController) SyncPartialConfigMap(destination ResourceLocati
 }
 
 func (c *ResourceSyncController) SyncSecret(destination, source ResourceLocation) error {
-	return c.SyncPartialSecret(destination, source)
+	return c.syncSecret(destination, source, alwaysFulfilledPreconditions)
 }
 
 func (c *ResourceSyncController) SyncPartialSecret(destination, source ResourceLocation, keys ...string) error {
+	return c.syncSecret(destination, source, alwaysFulfilledPreconditions, keys...)
+}
+
+// SyncSecretConditionally adds a new secret that the resource sync controller
+// will synchronise if the given precondition is fulfilled.
+func (c *ResourceSyncController) SyncSecretConditionally(destination, source ResourceLocation, preconditionsFulfilledFn preconditionsFulfilled) error {
+	return c.syncSecret(destination, source, preconditionsFulfilledFn)
+}
+
+func (c *ResourceSyncController) syncSecret(destination, source ResourceLocation, preconditionsFulfilledFn preconditionsFulfilled, keys ...string) error {
 	if !c.knownNamespaces.Has(destination.Namespace) {
 		return fmt.Errorf("not watching namespace %q", destination.Namespace)
 	}
@@ -138,8 +159,9 @@ func (c *ResourceSyncController) SyncPartialSecret(destination, source ResourceL
 	c.syncRuleLock.Lock()
 	defer c.syncRuleLock.Unlock()
 	c.secretSyncRules[destination] = syncRuleSource{
-		ResourceLocation: source,
-		syncedKeys:       sets.NewString(keys...),
+		ResourceLocation:         source,
+		syncedKeys:               sets.NewString(keys...),
+		preconditionsFulfilledFn: preconditionsFulfilledFn,
 	}
 
 	// make sure the new rule is picked up
@@ -171,6 +193,14 @@ func (c *ResourceSyncController) Sync(ctx context.Context, syncCtx factory.SyncC
 	errors := []error{}
 
 	for destination, source := range c.configMapSyncRules {
+		// skip the sync if the preconditions aren't fulfilled
+		if fulfilled, err := source.preconditionsFulfilledFn(); !fulfilled || err != nil {
+			if err != nil {
+				errors = append(errors, err)
+			}
+			continue
+		}
+
 		if source.ResourceLocation == emptyResourceLocation {
 			// use the cache to check whether the configmap exists in target namespace, if not skip the extra delete call.
 			if _, err := c.configMapGetter.ConfigMaps(destination.Namespace).Get(ctx, destination.Name, metav1.GetOptions{}); err != nil {
@@ -191,6 +221,14 @@ func (c *ResourceSyncController) Sync(ctx context.Context, syncCtx factory.SyncC
 		}
 	}
 	for destination, source := range c.secretSyncRules {
+		// skip the sync if the preconditions aren't fulfilled
+		if fulfilled, err := source.preconditionsFulfilledFn(); !fulfilled || err != nil {
+			if err != nil {
+				errors = append(errors, err)
+			}
+			continue
+		}
+
 		if source.ResourceLocation == emptyResourceLocation {
 			// use the cache to check whether the secret exists in target namespace, if not skip the extra delete call.
 			if _, err := c.secretGetter.Secrets(destination.Namespace).Get(ctx, destination.Name, metav1.GetOptions{}); err != nil {
@@ -218,7 +256,7 @@ func (c *ResourceSyncController) Sync(ctx context.Context, syncCtx factory.SyncC
 			Reason:  "Error",
 			Message: v1helpers.NewMultiLineAggregate(errors).Error(),
 		}
-		if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(cond)); updateError != nil {
+		if _, _, updateError := v1helpers.UpdateStatus(ctx, c.operatorConfigClient, v1helpers.UpdateConditionFn(cond)); updateError != nil {
 			return updateError
 		}
 		return nil
@@ -228,7 +266,7 @@ func (c *ResourceSyncController) Sync(ctx context.Context, syncCtx factory.SyncC
 		Type:   condition.ResourceSyncControllerDegradedConditionType,
 		Status: operatorv1.ConditionFalse,
 	}
-	if _, _, updateError := v1helpers.UpdateStatus(c.operatorConfigClient, v1helpers.UpdateConditionFn(cond)); updateError != nil {
+	if _, _, updateError := v1helpers.UpdateStatus(ctx, c.operatorConfigClient, v1helpers.UpdateConditionFn(cond)); updateError != nil {
 		return updateError
 	}
 	return nil

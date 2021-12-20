@@ -12,9 +12,16 @@ type ResourceLocation struct {
 	Provider string `json:"provider,omitempty"`
 }
 
+// PreconditionsFulfilled is a function that indicates whether all prerequisites
+// are met and a resource can be synced.
+type preconditionsFulfilled func() (bool, error)
+
+func alwaysFulfilledPreconditions() (bool, error) { return true, nil }
+
 type syncRuleSource struct {
 	ResourceLocation
-	syncedKeys sets.String // defines the set of keys to sync from source to dest
+	syncedKeys               sets.String            // defines the set of keys to sync from source to dest
+	preconditionsFulfilledFn preconditionsFulfilled // preconditions to fulfill before syncing the resource
 }
 
 type syncRules map[ResourceLocation]syncRuleSource

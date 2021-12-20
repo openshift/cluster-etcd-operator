@@ -1,6 +1,7 @@
 package revisioncontroller
 
 import (
+	"context"
 	"fmt"
 
 	"k8s.io/klog/v2"
@@ -25,14 +26,14 @@ func (c StaticPodLatestRevisionClient) GetLatestRevisionState() (*operatorv1.Ope
 	return &spec.OperatorSpec, &status.OperatorStatus, status.LatestAvailableRevision, rv, nil
 }
 
-func (c StaticPodLatestRevisionClient) UpdateLatestRevisionOperatorStatus(latestAvailableRevision int32, updateFuncs ...v1helpers.UpdateStatusFunc) (*operatorv1.OperatorStatus, bool, error) {
+func (c StaticPodLatestRevisionClient) UpdateLatestRevisionOperatorStatus(ctx context.Context, latestAvailableRevision int32, updateFuncs ...v1helpers.UpdateStatusFunc) (*operatorv1.OperatorStatus, bool, error) {
 	staticPodUpdateFuncs := make([]v1helpers.UpdateStaticPodStatusFunc, 0, len(updateFuncs))
 	for _, f := range updateFuncs {
 		staticPodUpdateFuncs = append(staticPodUpdateFuncs, func(operatorStatus *operatorv1.StaticPodOperatorStatus) error {
 			return f(&operatorStatus.OperatorStatus)
 		})
 	}
-	status, changed, err := v1helpers.UpdateStaticPodStatus(c, append(staticPodUpdateFuncs, func(status *operatorv1.StaticPodOperatorStatus) error {
+	status, changed, err := v1helpers.UpdateStaticPodStatus(ctx, c, append(staticPodUpdateFuncs, func(status *operatorv1.StaticPodOperatorStatus) error {
 		if status.LatestAvailableRevision == latestAvailableRevision {
 			klog.Warningf("revision %d is unexpectedly already the latest available revision. This is a possible race!", latestAvailableRevision)
 			return fmt.Errorf("conflicting latestAvailableRevision %d", status.LatestAvailableRevision)

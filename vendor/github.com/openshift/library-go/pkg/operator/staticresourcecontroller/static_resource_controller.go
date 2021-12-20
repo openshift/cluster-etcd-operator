@@ -53,8 +53,7 @@ func init() {
 
 type StaticResourceController struct {
 	name                   string
-	manifests              resourceapply.AssetFunc
-	files                  []string
+	manifests              []conditionalManifests
 	ignoreNotFoundOnCreate bool
 
 	operatorClient v1helpers.OperatorClient
@@ -65,6 +64,20 @@ type StaticResourceController struct {
 	factory          *factory.Factory
 	restMapper       meta.RESTMapper
 	categoryExpander restmapper.CategoryExpander
+	performanceCache resourceapply.ResourceCache
+}
+
+type conditionalManifests struct {
+	// shouldCreateFn controls whether the manifests should be created and updated.
+	// If it returns true, the manifests should be applied.
+	shouldCreateFn resourceapply.ConditionalFunction
+	// shouldDeleteFn controls whether the manifests should be deleted.
+	// If it returns true, the manifests should be removed.
+	shouldDeleteFn resourceapply.ConditionalFunction
+
+	manifests resourceapply.AssetFunc
+
+	files []string
 }
 
 // NewStaticResourceController returns a controller that maintains certain static manifests. Most "normal" types are supported,
@@ -81,17 +94,17 @@ func NewStaticResourceController(
 	eventRecorder events.Recorder,
 ) *StaticResourceController {
 	c := &StaticResourceController{
-		name:      name,
-		manifests: manifests,
-		files:     files,
+		name: name,
 
 		operatorClient: operatorClient,
 		clients:        clients,
 
 		eventRecorder: eventRecorder.WithComponentSuffix(strings.ToLower(name)),
 
-		factory: factory.New().WithInformers(operatorClient.Informer()).ResyncEvery(1 * time.Minute),
+		factory:          factory.New().WithInformers(operatorClient.Informer()).ResyncEvery(1 * time.Minute),
+		performanceCache: resourceapply.NewResourceCache(),
 	}
+	c.WithConditionalResources(manifests, files, nil, nil)
 
 	return c
 }
@@ -106,76 +119,114 @@ func (c *StaticResourceController) WithIgnoreNotFoundOnCreate() *StaticResourceC
 	return c
 }
 
+// WithConditionalResources adds a set of manifests to be created when the shouldCreateFnArg is true and should be
+// deleted when the shouldDeleteFnArg is true.
+// If shouldCreateFnArg is nil, then it is always create.
+// If shouldDeleteFnArg is nil, then it is !shouldCreateFnArg
+//  1. shouldCreateFnArg == true && shouldDeleteFnArg == true - produces an error
+//  2. shouldCreateFnArg == false && shouldDeleteFnArg == false - does nothing as expected
+//  3. shouldCreateFnArg == true applies the manifests
+//  4. shouldDeleteFnArg == true deletes the manifests
+func (c *StaticResourceController) WithConditionalResources(manifests resourceapply.AssetFunc, files []string, shouldCreateFnArg, shouldDeleteFnArg resourceapply.ConditionalFunction) *StaticResourceController {
+	var shouldCreateFn resourceapply.ConditionalFunction
+	if shouldCreateFnArg == nil {
+		shouldCreateFn = func() bool {
+			return true
+		}
+	} else {
+		shouldCreateFn = shouldCreateFnArg
+	}
+
+	var shouldDeleteFn resourceapply.ConditionalFunction
+	if shouldDeleteFnArg == nil {
+		shouldDeleteFn = func() bool {
+			return !shouldCreateFn()
+		}
+	} else {
+		shouldDeleteFn = shouldDeleteFnArg
+	}
+
+	c.manifests = append(c.manifests, conditionalManifests{
+		shouldCreateFn: shouldCreateFn,
+		shouldDeleteFn: shouldDeleteFn,
+		manifests:      manifests,
+		files:          files,
+	})
+	return c
+}
+
 func (c *StaticResourceController) AddKubeInformers(kubeInformersByNamespace v1helpers.KubeInformersForNamespaces) *StaticResourceController {
 	// set the informers so we can have caching clients
 	c.clients = c.clients.WithKubernetesInformers(kubeInformersByNamespace)
 
 	ret := c
-	for _, file := range c.files {
-		objBytes, err := c.manifests(file)
-		if err != nil {
-			utilruntime.HandleError(fmt.Errorf("missing %q: %v", file, err))
-			continue
-		}
-		requiredObj, _, err := genericCodec.Decode(objBytes, nil, nil)
-		if err != nil {
-			utilruntime.HandleError(fmt.Errorf("cannot decode %q: %v", file, err))
-			continue
-		}
-		metadata, err := meta.Accessor(requiredObj)
-		if err != nil {
-			utilruntime.HandleError(fmt.Errorf("cannot get metadata %q: %v", file, err))
-			continue
-		}
-
-		// find the right subset of informers.  Interestingly, cluster scoped resources require cluster scoped informers
-		var informer informers.SharedInformerFactory
-		if _, ok := requiredObj.(*corev1.Namespace); ok {
-			informer = kubeInformersByNamespace.InformersFor(metadata.GetName())
-			if informer == nil {
-				utilruntime.HandleError(fmt.Errorf("missing informer for namespace %q; no dynamic wiring added, time-based only.", metadata.GetName()))
+	for _, conditionalManifest := range c.manifests {
+		for _, file := range conditionalManifest.files {
+			objBytes, err := conditionalManifest.manifests(file)
+			if err != nil {
+				utilruntime.HandleError(fmt.Errorf("missing %q: %v", file, err))
 				continue
 			}
-		} else {
-			informer = kubeInformersByNamespace.InformersFor(metadata.GetNamespace())
-			if informer == nil {
-				utilruntime.HandleError(fmt.Errorf("missing informer for namespace %q; no dynamic wiring added, time-based only.", metadata.GetNamespace()))
+			requiredObj, _, err := genericCodec.Decode(objBytes, nil, nil)
+			if err != nil {
+				utilruntime.HandleError(fmt.Errorf("cannot decode %q: %v", file, err))
 				continue
 			}
-		}
+			metadata, err := meta.Accessor(requiredObj)
+			if err != nil {
+				utilruntime.HandleError(fmt.Errorf("cannot get metadata %q: %v", file, err))
+				continue
+			}
 
-		// iterate through the resources we know that are related to kube informers and add the pertinent informers
-		switch t := requiredObj.(type) {
-		case *corev1.Namespace:
-			ret = ret.AddNamespaceInformer(informer.Core().V1().Namespaces().Informer(), t.Name)
-		case *corev1.Service:
-			ret = ret.AddInformer(informer.Core().V1().Namespaces().Informer())
-		case *corev1.Pod:
-			ret = ret.AddInformer(informer.Core().V1().Pods().Informer())
-		case *corev1.ServiceAccount:
-			ret = ret.AddInformer(informer.Core().V1().ServiceAccounts().Informer())
-		case *corev1.ConfigMap:
-			ret = ret.AddInformer(informer.Core().V1().ConfigMaps().Informer())
-		case *corev1.Secret:
-			ret = ret.AddInformer(informer.Core().V1().Secrets().Informer())
-		case *rbacv1.ClusterRole:
-			ret = ret.AddInformer(informer.Rbac().V1().ClusterRoles().Informer())
-		case *rbacv1.ClusterRoleBinding:
-			ret = ret.AddInformer(informer.Rbac().V1().ClusterRoleBindings().Informer())
-		case *rbacv1.Role:
-			ret = ret.AddInformer(informer.Rbac().V1().Roles().Informer())
-		case *rbacv1.RoleBinding:
-			ret = ret.AddInformer(informer.Rbac().V1().RoleBindings().Informer())
-		case *policyv1.PodDisruptionBudget:
-			ret = ret.AddInformer(informer.Policy().V1().PodDisruptionBudgets().Informer())
-		case *storagev1.StorageClass:
-			ret = ret.AddInformer(informer.Storage().V1().StorageClasses().Informer())
-		case *storagev1.CSIDriver:
-			ret = ret.AddInformer(informer.Storage().V1().CSIDrivers().Informer())
-		default:
-			// if there's a missing case, the caller can add an informer or count on a time based trigger.
-			// if the controller doesn't handle it, then there will be failure from the underlying apply.
-			klog.V(4).Infof("unhandled type %T", requiredObj)
+			// find the right subset of informers.  Interestingly, cluster scoped resources require cluster scoped informers
+			var informer informers.SharedInformerFactory
+			if _, ok := requiredObj.(*corev1.Namespace); ok {
+				informer = kubeInformersByNamespace.InformersFor(metadata.GetName())
+				if informer == nil {
+					utilruntime.HandleError(fmt.Errorf("missing informer for namespace %q; no dynamic wiring added, time-based only.", metadata.GetName()))
+					continue
+				}
+			} else {
+				informer = kubeInformersByNamespace.InformersFor(metadata.GetNamespace())
+				if informer == nil {
+					utilruntime.HandleError(fmt.Errorf("missing informer for namespace %q; no dynamic wiring added, time-based only.", metadata.GetNamespace()))
+					continue
+				}
+			}
+
+			// iterate through the resources we know that are related to kube informers and add the pertinent informers
+			switch t := requiredObj.(type) {
+			case *corev1.Namespace:
+				ret = ret.AddNamespaceInformer(informer.Core().V1().Namespaces().Informer(), t.Name)
+			case *corev1.Service:
+				ret = ret.AddInformer(informer.Core().V1().Namespaces().Informer())
+			case *corev1.Pod:
+				ret = ret.AddInformer(informer.Core().V1().Pods().Informer())
+			case *corev1.ServiceAccount:
+				ret = ret.AddInformer(informer.Core().V1().ServiceAccounts().Informer())
+			case *corev1.ConfigMap:
+				ret = ret.AddInformer(informer.Core().V1().ConfigMaps().Informer())
+			case *corev1.Secret:
+				ret = ret.AddInformer(informer.Core().V1().Secrets().Informer())
+			case *rbacv1.ClusterRole:
+				ret = ret.AddInformer(informer.Rbac().V1().ClusterRoles().Informer())
+			case *rbacv1.ClusterRoleBinding:
+				ret = ret.AddInformer(informer.Rbac().V1().ClusterRoleBindings().Informer())
+			case *rbacv1.Role:
+				ret = ret.AddInformer(informer.Rbac().V1().Roles().Informer())
+			case *rbacv1.RoleBinding:
+				ret = ret.AddInformer(informer.Rbac().V1().RoleBindings().Informer())
+			case *policyv1.PodDisruptionBudget:
+				ret = ret.AddInformer(informer.Policy().V1().PodDisruptionBudgets().Informer())
+			case *storagev1.StorageClass:
+				ret = ret.AddInformer(informer.Storage().V1().StorageClasses().Informer())
+			case *storagev1.CSIDriver:
+				ret = ret.AddInformer(informer.Storage().V1().CSIDrivers().Informer())
+			default:
+				// if there's a missing case, the caller can add an informer or count on a time based trigger.
+				// if the controller doesn't handle it, then there will be failure from the underlying apply.
+				klog.V(4).Infof("unhandled type %T", requiredObj)
+			}
 		}
 	}
 
@@ -202,7 +253,7 @@ func (c *StaticResourceController) AddNamespaceInformer(informer cache.SharedInd
 	return c
 }
 
-func (c StaticResourceController) Sync(ctx context.Context, syncContext factory.SyncContext) error {
+func (c *StaticResourceController) Sync(ctx context.Context, syncContext factory.SyncContext) error {
 	operatorSpec, _, _, err := c.operatorClient.GetOperatorState()
 	if err != nil {
 		return err
@@ -213,14 +264,34 @@ func (c StaticResourceController) Sync(ctx context.Context, syncContext factory.
 
 	errors := []error{}
 	var notFoundErrorsCount int
-	directResourceResults := resourceapply.ApplyDirectly(ctx, c.clients, syncContext.Recorder(), c.manifests, c.files...)
-	for _, currResult := range directResourceResults {
-		if apierrors.IsNotFound(currResult.Error) {
-			notFoundErrorsCount++
-		}
-		if currResult.Error != nil {
-			errors = append(errors, fmt.Errorf("%q (%T): %v", currResult.File, currResult.Type, currResult.Error))
+	for _, conditionalManifest := range c.manifests {
+		shouldCreate := conditionalManifest.shouldCreateFn()
+		shouldDelete := conditionalManifest.shouldDeleteFn()
+
+		var directResourceResults []resourceapply.ApplyResult
+
+		switch {
+		case !shouldCreate && !shouldDelete:
+			// no action required
 			continue
+		case shouldCreate && shouldDelete:
+			errors = append(errors, fmt.Errorf("cannot create and delete %v at the same time, skipping", strings.Join(conditionalManifest.files, ", ")))
+			continue
+
+		case shouldCreate:
+			directResourceResults = resourceapply.ApplyDirectly(ctx, c.clients, syncContext.Recorder(), c.performanceCache, conditionalManifest.manifests, conditionalManifest.files...)
+		case shouldDelete:
+			directResourceResults = resourceapply.DeleteAll(ctx, c.clients, syncContext.Recorder(), conditionalManifest.manifests, conditionalManifest.files...)
+		}
+
+		for _, currResult := range directResourceResults {
+			if apierrors.IsNotFound(currResult.Error) {
+				notFoundErrorsCount++
+			}
+			if currResult.Error != nil {
+				errors = append(errors, fmt.Errorf("%q (%T): %v", currResult.File, currResult.Type, currResult.Error))
+				continue
+			}
 		}
 	}
 
@@ -230,7 +301,6 @@ func (c StaticResourceController) Sync(ctx context.Context, syncContext factory.
 		Reason:  "AsExpected",
 		Message: "",
 	}
-
 	if len(errors) > 0 {
 		message := ""
 		for _, err := range errors {
@@ -246,7 +316,7 @@ func (c StaticResourceController) Sync(ctx context.Context, syncContext factory.
 		}
 	}
 
-	_, _, err = v1helpers.UpdateStatus(c.operatorClient, v1helpers.UpdateConditionFn(cnd))
+	_, _, err = v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(cnd))
 	if err != nil {
 		errors = append(errors, err)
 	}
@@ -276,43 +346,45 @@ func (c *StaticResourceController) RelatedObjects() ([]configv1.ObjectReference,
 	acc := make([]configv1.ObjectReference, 0)
 	errors := []error{}
 
-	for _, file := range c.files {
-		// parse static asset
-		objBytes, err := c.manifests(file)
-		if err != nil {
-			errors = append(errors, err)
-			continue
-		}
-		requiredObj, _, err := genericCodec.Decode(objBytes, nil, nil)
-		if err != nil {
-			errors = append(errors, err)
-			continue
-		}
-		metadata, err := meta.Accessor(requiredObj)
-		if err != nil {
-			errors = append(errors, err)
-			continue
-		}
-		// map gvk to gvr
-		gvk := requiredObj.GetObjectKind().GroupVersionKind()
-		mapping, err := c.restMapper.RESTMapping(gvk.GroupKind(), gvk.Version)
-		if err != nil {
-			errors = append(errors, err)
-			continue
-		}
-		gvr := mapping.Resource
-		// filter out namespaced resources within "all" alias from result
-		if metadata.GetNamespace() != "" {
-			if _, ok := lookup[gvr.GroupResource()]; ok {
+	for _, conditionalManifest := range c.manifests {
+		for _, file := range conditionalManifest.files {
+			// parse static asset
+			objBytes, err := conditionalManifest.manifests(file)
+			if err != nil {
+				errors = append(errors, err)
 				continue
 			}
+			requiredObj, _, err := genericCodec.Decode(objBytes, nil, nil)
+			if err != nil {
+				errors = append(errors, err)
+				continue
+			}
+			metadata, err := meta.Accessor(requiredObj)
+			if err != nil {
+				errors = append(errors, err)
+				continue
+			}
+			// map gvk to gvr
+			gvk := requiredObj.GetObjectKind().GroupVersionKind()
+			mapping, err := c.restMapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+			if err != nil {
+				errors = append(errors, err)
+				continue
+			}
+			gvr := mapping.Resource
+			// filter out namespaced resources within "all" alias from result
+			if metadata.GetNamespace() != "" {
+				if _, ok := lookup[gvr.GroupResource()]; ok {
+					continue
+				}
+			}
+			acc = append(acc, configv1.ObjectReference{
+				Group:     gvk.Group,
+				Resource:  gvr.Resource,
+				Namespace: metadata.GetNamespace(),
+				Name:      metadata.GetName(),
+			})
 		}
-		acc = append(acc, configv1.ObjectReference{
-			Group:     gvk.Group,
-			Resource:  gvr.Resource,
-			Namespace: metadata.GetNamespace(),
-			Name:      metadata.GetName(),
-		})
 	}
 
 	return acc, utilerrors.NewAggregate(errors)

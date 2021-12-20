@@ -36,7 +36,7 @@ func (c RemoveStaleConditionsController) sync(ctx context.Context, syncContext f
 		return nil
 	}
 
-	if _, _, err := v1helpers.UpdateStatus(c.operatorClient, removeStaleConditionsFn); err != nil {
+	if _, _, err := v1helpers.UpdateStatus(ctx, c.operatorClient, removeStaleConditionsFn); err != nil {
 		return err
 	}
 

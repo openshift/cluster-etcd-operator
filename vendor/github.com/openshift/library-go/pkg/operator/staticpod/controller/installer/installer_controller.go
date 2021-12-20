@@ -88,7 +88,7 @@ type InstallerController struct {
 	// installerPodImageFn returns the image name for the installer pod
 	installerPodImageFn func() string
 	// ownerRefsFn sets the ownerrefs on the pruner pod
-	ownerRefsFn func(revision int32) ([]metav1.OwnerReference, error)
+	ownerRefsFn func(ctx context.Context, revision int32) ([]metav1.OwnerReference, error)
 
 	installerPodMutationFns []InstallerPodMutationFunc
 
@@ -475,7 +475,7 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 
 				if err := c.ensureInstallerPod(ctx, operatorSpec, currNodeState); err != nil {
 					c.eventRecorder.Warningf("InstallerPodFailed", "Failed to create installer pod for revision %d count %d on node %q: %v",
-						currNodeState.TargetRevision, currNodeState.NodeName, currNodeState.LastFailedCount, err)
+						currNodeState.TargetRevision, currNodeState.LastFailedCount, currNodeState.NodeName, err)
 					// if a newer revision is pending, continue, so we retry later with the latest available revision
 					if !(operatorStatus.LatestAvailableRevision > currNodeState.TargetRevision) {
 						return true, 0, err
@@ -498,7 +498,7 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 			// it's an extra write/read, but it makes the state debuggable from outside this process
 			if !equality.Semantic.DeepEqual(newCurrNodeState, currNodeState) {
 				klog.Infof("%q moving to %v because %s", currNodeState.NodeName, spew.Sdump(*newCurrNodeState), reason)
-				_, updated, updateError := v1helpers.UpdateStaticPodStatus(c.operatorClient, setNodeStatusFn(newCurrNodeState), setAvailableProgressingNodeInstallerFailingConditions)
+				_, updated, updateError := v1helpers.UpdateStaticPodStatus(ctx, c.operatorClient, setNodeStatusFn(newCurrNodeState), setAvailableProgressingNodeInstallerFailingConditions)
 				if updateError != nil {
 					return false, 0, updateError
 				} else if updated && currNodeState.CurrentRevision != newCurrNodeState.CurrentRevision {
@@ -530,7 +530,7 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 		// it's an extra write/read, but it makes the state debuggable from outside this process
 		if !equality.Semantic.DeepEqual(newCurrNodeState, currNodeState) {
 			klog.Infof("%q moving to %v", currNodeState.NodeName, spew.Sdump(*newCurrNodeState))
-			if _, updated, updateError := v1helpers.UpdateStaticPodStatus(c.operatorClient, setNodeStatusFn(newCurrNodeState), setAvailableProgressingNodeInstallerFailingConditions); updateError != nil {
+			if _, updated, updateError := v1helpers.UpdateStaticPodStatus(ctx, c.operatorClient, setNodeStatusFn(newCurrNodeState), setAvailableProgressingNodeInstallerFailingConditions); updateError != nil {
 				return false, 0, updateError
 			} else if updated && currNodeState.TargetRevision != newCurrNodeState.TargetRevision && newCurrNodeState.TargetRevision != 0 {
 				c.eventRecorder.Eventf("NodeTargetRevisionChanged", "Updating node %q from revision %d to %d because %s", currNodeState.NodeName,
@@ -561,7 +561,6 @@ func setNodeStatusFn(status *operatorv1.NodeStatus) v1helpers.UpdateStaticPodSta
 func setAvailableProgressingNodeInstallerFailingConditions(newStatus *operatorv1.StaticPodOperatorStatus) error {
 	// Available means that we have at least one pod at the latest level
 	numAvailable := 0
-	numAtLatestRevision := 0
 	numProgressing := 0
 	counts := map[int32]int{}
 	failingCount := map[int32]int{}
@@ -573,14 +572,14 @@ func setAvailableProgressingNodeInstallerFailingConditions(newStatus *operatorv1
 		}
 
 		// keep track of failures so that we can report failing status
-		if currNodeStatus.LastFailedRevision != 0 && currNodeStatus.LastFailedReason != nodeStatusOperandFailedFallbackReason {
+		if currNodeStatus.LastFailedRevision != 0 &&
+			currNodeStatus.LastFailedRevision == currNodeStatus.TargetRevision &&
+			currNodeStatus.LastFailedReason != nodeStatusOperandFailedFallbackReason {
 			failingCount[currNodeStatus.LastFailedRevision] = failingCount[currNodeStatus.LastFailedRevision] + 1
 			failing[currNodeStatus.LastFailedRevision] = append(failing[currNodeStatus.LastFailedRevision], currNodeStatus.LastFailedRevisionErrors...)
 		}
 
-		if newStatus.LatestAvailableRevision == currNodeStatus.CurrentRevision {
-			numAtLatestRevision += 1
-		} else {
+		if newStatus.LatestAvailableRevision != currNodeStatus.CurrentRevision {
 			numProgressing += 1
 		}
 	}
@@ -851,7 +850,7 @@ func (c *InstallerController) ensureInstallerPod(ctx context.Context, operatorSp
 	pod.Spec.Containers[0].Image = c.installerPodImageFn()
 	pod.Spec.Containers[0].Command = c.command
 
-	ownerRefs, err := c.ownerRefsFn(ns.TargetRevision)
+	ownerRefs, err := c.ownerRefsFn(ctx, ns.TargetRevision)
 	if err != nil {
 		return fmt.Errorf("unable to set installer pod ownerrefs: %+v", err)
 	}
@@ -925,9 +924,9 @@ func (c *InstallerController) ensureInstallerPod(ctx context.Context, operatorSp
 	return err
 }
 
-func (c *InstallerController) setOwnerRefs(revision int32) ([]metav1.OwnerReference, error) {
+func (c *InstallerController) setOwnerRefs(ctx context.Context, revision int32) ([]metav1.OwnerReference, error) {
 	ownerReferences := []metav1.OwnerReference{}
-	statusConfigMap, err := c.configMapsGetter.ConfigMaps(c.targetNamespace).Get(context.TODO(), fmt.Sprintf("revision-status-%d", revision), metav1.GetOptions{})
+	statusConfigMap, err := c.configMapsGetter.ConfigMaps(c.targetNamespace).Get(ctx, fmt.Sprintf("revision-status-%d", revision), metav1.GetOptions{})
 	if err == nil {
 		ownerReferences = append(ownerReferences, metav1.OwnerReference{
 			APIVersion: "v1",
@@ -1082,7 +1081,7 @@ func (c InstallerController) Sync(ctx context.Context, syncCtx factory.SyncConte
 		cond.Reason = "Error"
 		cond.Message = err.Error()
 	}
-	if _, _, updateError := v1helpers.UpdateStaticPodStatus(c.operatorClient, v1helpers.UpdateStaticPodConditionFn(cond), setAvailableProgressingNodeInstallerFailingConditions); updateError != nil {
+	if _, _, updateError := v1helpers.UpdateStaticPodStatus(ctx, c.operatorClient, v1helpers.UpdateStaticPodConditionFn(cond), setAvailableProgressingNodeInstallerFailingConditions); updateError != nil {
 		if err == nil {
 			return updateError
 		}

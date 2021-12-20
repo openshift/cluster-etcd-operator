@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blang/semver"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -18,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/apiserver/pkg/server"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -59,6 +61,8 @@ type InstallOptions struct {
 	StaticPodManifestsLockFile string
 
 	PodMutationFns []PodMutationFunc
+
+	KubeletVersion string
 }
 
 // PodMutationFunc is a function that has a chance at changing the pod before it is created
@@ -73,7 +77,7 @@ func (o *InstallOptions) WithPodMutationFn(podMutationFn PodMutationFunc) *Insta
 	return o
 }
 
-func NewInstaller() *cobra.Command {
+func NewInstaller(ctx context.Context) *cobra.Command {
 	o := NewInstallOptions()
 
 	cmd := &cobra.Command{
@@ -90,7 +94,8 @@ func NewInstaller() *cobra.Command {
 				klog.Exit(err)
 			}
 
-			ctx, cancel := context.WithTimeout(context.TODO(), o.Timeout)
+			signalHandlingCtx := setupSignalContext(ctx)
+			ctx, cancel := context.WithTimeout(signalHandlingCtx, o.Timeout)
 			defer cancel()
 			if err := o.Run(ctx); err != nil {
 				klog.Exit(err)
@@ -101,6 +106,19 @@ func NewInstaller() *cobra.Command {
 	o.AddFlags(cmd.Flags())
 
 	return cmd
+}
+
+// setupSignalContext registers for SIGTERM and SIGINT and returns a context
+// that will be cancelled once a signal is received.
+func setupSignalContext(baseCtx context.Context) context.Context {
+	shutdownCtx, cancel := context.WithCancel(baseCtx)
+	shutdownHandler := server.SetupSignalHandler()
+	go func() {
+		defer cancel()
+		<-shutdownHandler
+		klog.Infof("Received SIGTERM or SIGINT signal, shutting down the process.")
+	}()
+	return shutdownCtx
 }
 
 func (o *InstallOptions) AddFlags(fs *pflag.FlagSet) {
@@ -179,6 +197,14 @@ func (o *InstallOptions) nameFor(prefix string) string {
 
 func (o *InstallOptions) prefixFor(name string) string {
 	return name[0 : len(name)-len(fmt.Sprintf("-%s", o.Revision))]
+}
+
+func (o *InstallOptions) kubeletVersion(ctx context.Context) (string, error) {
+	node, err := o.KubeClient.CoreV1().Nodes().Get(ctx, o.NodeName, metav1.GetOptions{})
+	if err != nil {
+		return "", err
+	}
+	return node.Status.NodeInfo.KubeletVersion, nil
 }
 
 func (o *InstallOptions) copySecretsAndConfigMaps(ctx context.Context, resourceDir string,
@@ -377,7 +403,7 @@ func (o *InstallOptions) Run(ctx context.Context) error {
 
 	err := retry.RetryOnConnectionErrors(ctx, func(context.Context) (bool, error) {
 		var clientErr error
-		eventTarget, clientErr = events.GetControllerReferenceForCurrentPod(o.KubeClient, o.Namespace, nil)
+		eventTarget, clientErr = events.GetControllerReferenceForCurrentPod(ctx, o.KubeClient, o.Namespace, nil)
 		if clientErr != nil {
 			return false, clientErr
 		}
@@ -385,6 +411,21 @@ func (o *InstallOptions) Run(ctx context.Context) error {
 	})
 	if err != nil {
 		klog.Warningf("unable to get owner reference (falling back to namespace): %v", err)
+	}
+
+	err = retry.RetryOnConnectionErrors(ctx, func(context.Context) (bool, error) {
+		version, err := o.kubeletVersion(ctx)
+		if err != nil {
+			return false, err
+		}
+		// trim 'v' from 'v1.22.1' because semver parsing don't like it
+		o.KubeletVersion = strings.TrimPrefix(version, "v")
+		return true, nil
+	})
+	if err != nil || len(o.KubeletVersion) == 0 {
+		klog.Warningf("unable to get kubelet version for node %q: %v", o.NodeName, err)
+	} else {
+		klog.Infof("Got kubelet version %s on target node %s", o.KubeletVersion, o.NodeName)
 	}
 
 	recorder := events.NewRecorder(o.KubeClient.CoreV1().Events(o.Namespace), "static-pod-installer", eventTarget)
@@ -397,6 +438,21 @@ func (o *InstallOptions) Run(ctx context.Context) error {
 	return nil
 }
 
+func (o *InstallOptions) installerPodNeedUUID() bool {
+	kubeletVersion, err := semver.Make(o.KubeletVersion)
+	if err != nil {
+		klog.Warningf("Failed to parse kubelet version %q to semver: %v (we will not generate pod UID)", err)
+		return false
+	}
+	// if we run kubelet older than 4.9, installer pods require UID generation
+	// Switching this to 1.23 because there was a fix backported late to 1.22: https://github.com/kubernetes/kubernetes/pull/106394
+	// Once we prove this out in 1.23 after the kube bump, we can consider relaxing the constraint to 1.22.Z, but TRT
+	// suspects that this is failing installs due to
+	//  hyperkube[1371]: I1202 08:50:47.935427    1371 status_manager.go:611] "Pod was deleted and then recreated, skipping status update" pod="openshift-kube-scheduler/openshift-kube-scheduler-ip-10-0-129-204.us-east-2.compute.internal" oldPodUID=f11e314508a00e4ea9bf37d76b82b162 podUID=cce59ead72804895d31dba4208b395aa
+	// in kubelet logs
+	return kubeletVersion.LT(semver.MustParse("1.23.0"))
+}
+
 func (o *InstallOptions) writePod(rawPodBytes []byte, manifestFileName, resourceDir string) error {
 	// the kubelet has a bug that prevents graceful termination from working on static pods with the same name, filename
 	// and uuid.  By setting the pod UID we can work around the kubelet bug and get our graceful termination honored.
@@ -405,7 +461,14 @@ func (o *InstallOptions) writePod(rawPodBytes []byte, manifestFileName, resource
 	if err != nil {
 		return err
 	}
-	pod.UID = uuid.NewUUID()
+
+	//  If the kubelet version is >=4.9 (1.22), the installer pod UID does not need to be set in the file.
+	if o.installerPodNeedUUID() {
+		pod.UID = uuid.NewUUID()
+	} else {
+		pod.UID = ""
+	}
+
 	for _, fn := range o.PodMutationFns {
 		klog.V(2).Infof("Customizing static pod ...")
 		pod = pod.DeepCopy()
