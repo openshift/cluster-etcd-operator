@@ -7,14 +7,15 @@ import (
 )
 
 type testdata struct {
+	name     string
 	toSet    map[string]string
 	args     []string
 	expected string
 }
 
-func runTests(t *testing.T, tests map[string]testdata) {
-	for name, test := range tests {
-		t.Run(name, func(t *testing.T) {
+func runTests(t *testing.T, tests []testdata) {
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
 			for k, v := range test.toSet {
 				os.Setenv(k, v)
 			}
@@ -41,94 +42,59 @@ func runTests(t *testing.T, tests map[string]testdata) {
 	}
 }
 
+func TestEnsure(t *testing.T) {
+	TestEnsureValidate(t)
+	TestEnsureRun(t)
+}
+
 func TestEnsureValidate(t *testing.T) {
-	tests := map[string]testdata{
-		"TestNotSet": {
+	tests := []testdata{
+		{
+			name: "TestNotSet",
 			args: []string{
 				"--check-set-and-not-empty=EV_NOT_SET",
 			},
-			expected: "The value of environment variable EV_NOT_SET must be set.",
+			expected: "the value of environment variable EV_NOT_SET must be set.",
 		},
-		"TestEmpty": {
+		{
+			name: "TestEmpty",
 			args: []string{
 				"--check-set-and-not-empty=EV_EMPTY",
 			},
 			toSet: map[string]string{
 				"EV_EMPTY": "",
 			},
-			expected: "The value of environment variable EV_EMPTY must not be empty.",
+			expected: "the value of environment variable EV_EMPTY must not be empty.",
 		},
-		"TestDefaultIPEVEqual": {
+		{
+			name: "TestUnsetNodeIP",
 			args: []string{
-				"--ip-ev-equals=EV_NOT_EQUAL",
-				"--allow-invalid-ip-ev-val=false",
+				"--allow-invalid-node-ip=false",
 			},
-			toSet: map[string]string{
-				"NODE_IP":      "equal",
-				"EV_NOT_EQUAL": "not equal",
-			},
-			expected: "The value of environment variables NODE_IP, EV_NOT_EQUAL must be equal. Were: \"equal\", \"not equal\"",
+			expected: "since --allow-invalid-node-ip is not set, --node-ip must be set to a non-empty value.",
 		},
-		"TestIPEVEqual": {
+		{
+			name: "TestEmptyNodeIP",
 			args: []string{
-				"--ip-ev=NOT_DEFAULT",
-				"--ip-ev-equals=EV_NOT_EQUAL",
-				"--allow-invalid-ip-ev-val=false",
+				"--node-ip=",
+				"--allow-invalid-node-ip=false",
 			},
-			toSet: map[string]string{
-				"NOT_DEFAULT":  "equal",
-				"EV_NOT_EQUAL": "not equal",
-			},
-			expected: "The value of environment variables NOT_DEFAULT, EV_NOT_EQUAL must be equal. Were: \"equal\", \"not equal\"",
+			expected: "since --allow-invalid-node-ip is not set, --node-ip must be set to a non-empty value.",
 		},
-		"TestAllowInvalidNoFallback": {
+		{
+			name: "TestUnsetCurrentRev",
 			args: []string{
-				"--allow-invalid-ip-ev-val=true",
-				"--fallback-ip-ev=",
+				"--node-ip=127.0.0.1",
 			},
-			expected: "Since --allow-invalid-ip-ev-val is true, --fallback-ip-ev must be provided.",
+			expected: "--current-revision-node-ip must be set to a non-empty value.",
 		},
-		"TestAllowInvalidEmptyFallback": {
+		{
+			name: "TestUnsetCurrentRev",
 			args: []string{
-				"--allow-invalid-ip-ev-val=true",
-				"--fallback-ip-ev=EMPTY_FALLBACK",
+				"--node-ip=127.0.0.1",
+				"--current-revision-node-ip=",
 			},
-			toSet: map[string]string{
-				"EMPTY_FALLBACK": "",
-			},
-			expected: "Since --allow-invalid-ip-ev-val is true, the value of the environment variable provided by --fallback-ip-ev [EMPTY_FALLBACK] must not be empty.",
-		},
-		"TestDisallowInvalidNotSet": {
-			args: []string{
-				"--allow-invalid-ip-ev-val=false",
-				"--ip-ev-equals=EV_EQUAL",
-			},
-			toSet: map[string]string{
-				"EV_EQUAL": "equal",
-			},
-			expected: "The value of environment variables NODE_IP, EV_EQUAL must be equal. Were: \"\", \"equal\"",
-		},
-		"TestDisallowInvalidEmpty": {
-			args: []string{
-				"--allow-invalid-ip-ev-val=false",
-				"--ip-ev-equals=EV_EQUAL",
-			},
-			toSet: map[string]string{
-				"NODE_IP":  "",
-				"EV_EQUAL": "equal",
-			},
-			expected: "The value of environment variables NODE_IP, EV_EQUAL must be equal. Were: \"\", \"equal\"",
-		},
-		"TestSuccess": {
-			args: []string{
-				"--allow-invalid-ip-ev-val=false",
-				"--ip-ev-equals=EV_EQUAL",
-			},
-			toSet: map[string]string{
-				"NODE_IP":  "equal",
-				"EV_EQUAL": "equal",
-			},
-			expected: "",
+			expected: "--current-revision-node-ip must be set to a non-empty value.",
 		},
 	}
 
@@ -136,28 +102,40 @@ func TestEnsureValidate(t *testing.T) {
 }
 
 func TestEnsureRun(t *testing.T) {
-	tests := map[string]testdata{
-		"TestValidFallback": {
+	tests := []testdata{
+		{
+			name: "TestNodeIPEqualsCurrentRev",
 			args: []string{
-				"--ip-ev=NODE_IP",
-				"--allow-invalid-ip-ev-val=true",
-				"--fallback-ip-ev=EV_FALLBACK",
-			},
-			toSet: map[string]string{
-				"EV_FALLBACK": "127.0.0.1",
+				"--node-ip=equal",
+				"--allow-invalid-node-ip=false",
+				"--current-revision-node-ip=equal",
 			},
 			expected: "",
 		},
-		"TestInvalidFallback": {
+		{
+			name: "TestInvalidNodeIPNotAllow",
 			args: []string{
-				"--ip-ev=NODE_IP",
-				"--allow-invalid-ip-ev-val=true",
-				"--fallback-ip-ev=EV_FALLBACK",
+				"--node-ip=invalid_value",
+				"--allow-invalid-node-ip=false",
+				"--current-revision-node-ip=127.0.0.1",
 			},
-			toSet: map[string]string{
-				"EV_FALLBACK": "garbage",
+			expected: "since --allow-invalid-node-ip is not set, node-ip and current-revision-node-ip must be equal.",
+		},
+		{
+			name: "TestCurrentRevNoMatch",
+			args: []string{
+				"--allow-invalid-node-ip=true",
+				"--current-revision-node-ip=no_match",
 			},
-			expected: "Failed to find any ip addresses in network interfaces that match the value of EV_FALLBACK",
+			expected: "failed to find ip address on network interfaces: no_match",
+		},
+		{
+			name: "TestCurrentRevMatch",
+			args: []string{
+				"--allow-invalid-node-ip=true",
+				"--current-revision-node-ip=127.0.0.1",
+			},
+			expected: "",
 		},
 	}
 
