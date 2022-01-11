@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/utils/net"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -317,7 +319,13 @@ func checkCertValidity(certBytes, keyBytes []byte, ipAddresses []string, nodeUID
 
 	// Check that the cert is valid for the provided ip addresses
 	errs := []error{}
+	// We don't need to handle error, because there is only error if the IP is nil.
+	isDualStack, _ := net.IsDualStackIPStrings(ipAddresses)
 	for _, ipAddress := range ipAddresses {
+		// This will skip checking ipv6 addresses as in dual-stack mode, this will cause etcd operator go degraded.
+		if isDualStack && net.IsIPv6String(ipAddress) {
+			continue
+		}
 		if err := leafCert.VerifyHostname(ipAddress); err != nil {
 			errs = append(errs, err)
 		}
