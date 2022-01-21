@@ -450,7 +450,7 @@ func (o *InstallOptions) installerPodNeedUUID() bool {
 	// suspects that this is failing installs due to
 	//  hyperkube[1371]: I1202 08:50:47.935427    1371 status_manager.go:611] "Pod was deleted and then recreated, skipping status update" pod="openshift-kube-scheduler/openshift-kube-scheduler-ip-10-0-129-204.us-east-2.compute.internal" oldPodUID=f11e314508a00e4ea9bf37d76b82b162 podUID=cce59ead72804895d31dba4208b395aa
 	// in kubelet logs
-	return kubeletVersion.LT(semver.MustParse("1.23.0"))
+	return kubeletVersion.LT(semver.MustParse("1.22.0"))
 }
 
 func (o *InstallOptions) writePod(rawPodBytes []byte, manifestFileName, resourceDir string) error {
