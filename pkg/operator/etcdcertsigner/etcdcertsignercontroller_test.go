@@ -80,24 +80,6 @@ func TestCheckCertValidity(t *testing.T) {
 			lessThanMinDuration: true,
 			expectedRegenMsg:    true,
 		},
-		"dual-stack": {
-			certIPAddresses:  ipAddresses,
-			nodeIPAddresses:  append(ipAddresses, "2345:0425:2CA1:0000:0000:0567:5673:23b5"),
-			storedNodeUID:    nodeUID,
-			expectedRegenMsg: false,
-		},
-		"single stack ipv6 invalid": {
-			certIPAddresses: ipAddresses,
-			nodeIPAddresses: []string{"2345:0425:2CA1:0000:0000:0567:5673:23b5"},
-			storedNodeUID:   nodeUID,
-			expectedErr:     true,
-		},
-		"single stack ipv6 valid": {
-			certIPAddresses: []string{"2345:0425:2CA1:0000:0000:0567:5673:23b5"},
-			nodeIPAddresses: []string{"2345:0425:2CA1:0000:0000:0567:5673:23b5"},
-			storedNodeUID:   nodeUID,
-			expectedErr:     false,
-		},
 		"valid": {
 			certIPAddresses: ipAddresses,
 			nodeIPAddresses: ipAddresses,
