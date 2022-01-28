@@ -51,10 +51,17 @@ func init() {
 	utilruntime.Must(admissionregistrationv1.AddToScheme(genericScheme))
 }
 
+// StaticResourcesPreconditionsFuncType checks if the precondition is met (is true) and then proceeds with the sync.
+// When the requirement is not met, the controller reports degraded status.
+//
+// In case, the returned ready flag is false, a proper error with a valid description is recommended.
+type StaticResourcesPreconditionsFuncType func(ctx context.Context) (bool, error)
+
 type StaticResourceController struct {
 	name                   string
 	manifests              []conditionalManifests
 	ignoreNotFoundOnCreate bool
+	preconditions          []StaticResourcesPreconditionsFuncType
 
 	operatorClient v1helpers.OperatorClient
 	clients        *resourceapply.ClientHolder
@@ -99,6 +106,8 @@ func NewStaticResourceController(
 		operatorClient: operatorClient,
 		clients:        clients,
 
+		preconditions: []StaticResourcesPreconditionsFuncType{defaultStaticResourcesPreconditionsFunc},
+
 		eventRecorder: eventRecorder.WithComponentSuffix(strings.ToLower(name)),
 
 		factory:          factory.New().WithInformers(operatorClient.Informer()).ResyncEvery(1 * time.Minute),
@@ -116,6 +125,18 @@ func NewStaticResourceController(
 // NotFound errors are reported in <name>Degraded condition, but with Degraded=false.
 func (c *StaticResourceController) WithIgnoreNotFoundOnCreate() *StaticResourceController {
 	c.ignoreNotFoundOnCreate = true
+	return c
+}
+
+// WithPrecondition adds a precondition, which blocks the sync method from being executed. Preconditions might be chained using:
+//  WithPrecondition(a).WithPrecondition(b).WithPrecondition(c).
+// If any of the preconditions is false, the sync will result in an error.
+//
+// The requirement parameter should follow the convention described in the StaticResourcesPreconditionsFuncType.
+//
+// When the requirement is not met, the controller reports degraded status.
+func (c *StaticResourceController) WithPrecondition(precondition StaticResourcesPreconditionsFuncType) *StaticResourceController {
+	c.preconditions = append(c.preconditions, precondition)
 	return c
 }
 
@@ -262,6 +283,28 @@ func (c *StaticResourceController) Sync(ctx context.Context, syncContext factory
 		return nil
 	}
 
+	for _, precondition := range c.preconditions {
+		ready, err := precondition(ctx)
+		// We don't care about the other preconditions, we just stop on the first one.
+		if !ready {
+			var message string
+			if err != nil {
+				message = err.Error()
+			} else {
+				message = "the operator didn't specify what preconditions are missing"
+			}
+			if _, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+				Type:    fmt.Sprintf("%sDegraded", c.name),
+				Status:  operatorv1.ConditionTrue,
+				Reason:  "PreconditionNotReady",
+				Message: message,
+			})); updateErr != nil {
+				return updateErr
+			}
+			return err
+		}
+	}
+
 	errors := []error{}
 	var notFoundErrorsCount int
 	for _, conditionalManifest := range c.manifests {
@@ -392,4 +435,8 @@ func (c *StaticResourceController) RelatedObjects() ([]configv1.ObjectReference,
 
 func (c *StaticResourceController) Run(ctx context.Context, workers int) {
 	c.factory.WithSync(c.Sync).ToController(c.Name(), c.eventRecorder).Run(ctx, workers)
+}
+
+func defaultStaticResourcesPreconditionsFunc(_ context.Context) (bool, error) {
+	return true, nil
 }
