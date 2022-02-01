@@ -10,12 +10,17 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
+	machineclient "github.com/openshift/client-go/machine/clientset/versioned"
+	machineinformersv1beta1 "github.com/openshift/client-go/machine/informers/externalversions/machine/v1beta1"
+	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermemberremovalcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/defragcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
@@ -39,10 +44,20 @@ import (
 	"github.com/openshift/library-go/pkg/operator/status"
 	"github.com/openshift/library-go/pkg/operator/unsupportedconfigoverridescontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	corev1informers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
 )
+
+// masterMachineLabelSelectorString allows for getting only the master machines, it matters in larger installations with many worker nodes
+const masterMachineLabelSelectorString = "machine.openshift.io/cluster-api-machine-role=master"
+
+// masterNodeLabelSelectorString allows for getting only the master nodes, it matters in larger installations with many worker nodes
+const masterNodeLabelSelectorString = "node-role.kubernetes.io/master"
 
 func RunOperator(ctx context.Context, controllerContext *controllercmd.ControllerContext) error {
 	// This kube client use protobuf, do not use it for CR
@@ -62,7 +77,29 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	if err != nil {
 		return err
 	}
+	machineClientSet, err := machineclient.NewForConfig(controllerContext.KubeConfig)
+	if err != nil {
+		return err
+	}
 
+	// we create a new informer directly because we are only interested in observing changes to the master machines
+	// primarily to avoid reconciling on every update in large clusters (~2K machines)
+	masterMachineInformer := machineinformersv1beta1.NewFilteredMachineInformer(machineClientSet, "openshift-machine-api", 1*time.Hour, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, func(listOptions *metav1.ListOptions) {
+		listOptions.LabelSelector = masterMachineLabelSelectorString
+	})
+	masterMachineLabelSelector, err := labels.Parse(masterMachineLabelSelectorString)
+	if err != nil {
+		return err
+	}
+	// we create a new informer directly because we are only interested in observing changes to the master nodes
+	// primarily to avoid reconciling on every update in large clusters (~2K nodes)
+	masterNodeInformer := corev1informers.NewFilteredNodeInformer(kubeClient, 1*time.Hour, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, func(listOptions *metav1.ListOptions) {
+		listOptions.LabelSelector = masterNodeLabelSelectorString
+	})
+	masterNodeLabelSelector, err := labels.Parse(masterNodeLabelSelectorString)
+	if err != nil {
+		return err
+	}
 	operatorInformers := operatorv1informers.NewSharedInformerFactory(operatorConfigClient, 10*time.Minute)
 	//operatorConfigInformers.ForResource()
 	kubeInformersForNamespaces := v1helpers.NewKubeInformersForNamespaces(
@@ -212,6 +249,19 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		etcdClient,
 		controllerContext.EventRecorder,
 	)
+
+	clusterMemberRemovalController := clustermemberremovalcontroller.NewClusterMemberRemovalController(
+		operatorClient,
+		etcdClient,
+		ceohelpers.NewMachineAPI(masterMachineInformer, machinelistersv1beta1.NewMachineLister(masterMachineInformer.GetIndexer()), masterMachineLabelSelector),
+		masterMachineLabelSelector, masterNodeLabelSelector,
+		kubeInformersForNamespaces,
+		masterNodeInformer,
+		masterMachineInformer,
+		configInformers.Config().V1().Networks(),
+		controllerContext.EventRecorder,
+	)
+
 	etcdMembersController := etcdmemberscontroller.NewEtcdMembersController(
 		operatorClient,
 		etcdClient,
@@ -272,6 +322,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	kubeInformersForNamespaces.Start(ctx.Done())
 	configInformers.Start(ctx.Done())
 	dynamicInformers.Start(ctx.Done())
+	go masterMachineInformer.Run(ctx.Done())
+	go masterNodeInformer.Run(ctx.Done())
 
 	go fsyncMetricController.Run(ctx, 1)
 	go staticResourceController.Run(ctx, 1)
@@ -282,6 +334,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go statusController.Run(ctx, 1)
 	go configObserver.Run(ctx, 1)
 	go clusterMemberController.Run(ctx, 1)
+	go clusterMemberRemovalController.Run(ctx, 1)
 	go etcdMembersController.Run(ctx, 1)
 	go bootstrapTeardownController.Run(ctx, 1)
 	go unsupportedConfigOverridesController.Run(ctx, 1)
