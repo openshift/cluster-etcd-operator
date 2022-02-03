@@ -44,8 +44,28 @@ func (f *fakeEtcdClient) MemberList(ctx context.Context) ([]*etcdserverpb.Member
 }
 
 func (f *fakeEtcdClient) MemberRemove(ctx context.Context, memberID uint64) error {
-	panic("implement me")
+	var memberExists bool
+	for _, m := range f.members {
+		if m.ID == memberID {
+			memberExists = true
+			break
+		}
+	}
+	if !memberExists {
+		return fmt.Errorf("member with the given ID: %d doesn't exist", memberID)
+	}
+
+	var newMemberList []*etcdserverpb.Member
+	for _, m := range f.members {
+		if m.ID == memberID {
+			continue
+		}
+		newMemberList = append(newMemberList, m)
+	}
+	f.members = newMemberList
+	return nil
 }
+
 func (f *fakeEtcdClient) MemberHealth(ctx context.Context) (memberHealth, error) {
 	var healthy, unhealthy int
 	var memberHealth memberHealth
