@@ -321,6 +321,9 @@ func getEtcdEndpoints(configmapLister corev1listers.ConfigMapLister, skipBootstr
 		}
 		etcdURLs = append(etcdURLs, fmt.Sprintf("https://%s:2379", ip))
 	}
+	if len(etcdURLs) == 0 {
+		return "", fmt.Errorf("no etcd endpoints found in %s/%s configmap", operatorclient.TargetNamespace, etcdEndpointName)
+	}
 	sort.Strings(etcdURLs)
 
 	return strings.Join(etcdURLs, ","), nil
