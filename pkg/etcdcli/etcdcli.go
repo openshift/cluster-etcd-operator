@@ -255,33 +255,16 @@ func (g *etcdClientGetter) MemberUpdatePeerURL(ctx context.Context, id uint64, p
 	return err
 }
 
-func (g *etcdClientGetter) MemberRemove(ctx context.Context, member string) error {
-	g.eventRecorder.Eventf("MemberRemove", "removing member %q", member)
-
+func (g *etcdClientGetter) MemberRemove(ctx context.Context, memberID uint64) error {
 	cli, err := g.getEtcdClient()
 	if err != nil {
 		return err
 	}
-	membersResp, err := cli.MemberList(ctx)
-	if err != nil {
-		return nil
+	_, err = cli.MemberRemove(ctx, memberID)
+	if err == nil {
+		g.eventRecorder.Eventf("MemberRemove", "removed member with ID: %v", memberID)
 	}
-
-	for _, m := range membersResp.Members {
-		if m.Name == member {
-			cctx, ccancel := context.WithCancel(ctx)
-			defer ccancel()
-
-			_, err = cli.MemberRemove(cctx, m.ID)
-			if err != nil {
-				return err
-			}
-			return nil
-		}
-	}
-
-	g.eventRecorder.Warningf("MemberAlreadyRemoved", "member %q already removed", member)
-	return nil
+	return err
 }
 
 func (g *etcdClientGetter) MemberList(ctx context.Context) ([]*etcdserverpb.Member, error) {

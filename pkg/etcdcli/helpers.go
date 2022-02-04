@@ -43,7 +43,7 @@ func (f *fakeEtcdClient) MemberList(ctx context.Context) ([]*etcdserverpb.Member
 	return f.members, nil
 }
 
-func (f *fakeEtcdClient) MemberRemove(ctx context.Context, member string) error {
+func (f *fakeEtcdClient) MemberRemove(ctx context.Context, memberID uint64) error {
 	panic("implement me")
 }
 func (f *fakeEtcdClient) MemberHealth(ctx context.Context) (memberHealth, error) {
