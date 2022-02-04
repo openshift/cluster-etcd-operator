@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 
@@ -28,9 +29,12 @@ import (
 
 const masterMachineLabelSelector = "machine.openshift.io/cluster-api-machine-role" + "=" + "master"
 
-// TestScalingUpSingleNode adds a new master node and checks if it will result in an increase in etcd cluster.
-// The test also verifies if the newly added member is healthy.
-func TestScalingUpSingleNode(t *testing.T) {
+// TestScalingUpAndDownSingleNode tests basic vertical scaling scenario.
+// This scenario starts by adding a new master machine to the cluster
+// next it validates the size of etcd cluster and makes sure the new member is healthy.
+// The test ends by removing the newly added machine and validating the size of the cluster
+// and asserting the member was removed from the etcd cluster by contacting MemberList API.
+func TestScalingUpAndDownSingleNode(t *testing.T) {
 	// set up
 	ctx := context.TODO()
 	kubeConfig, err := framework.NewClientConfigForTest("")
@@ -44,8 +48,7 @@ func TestScalingUpSingleNode(t *testing.T) {
 	etcdClientFactory := newEtcdClientFactory(kubeClient)
 
 	// assert the cluster state before we run the test
-	ensureRunningMachines(ctx, t, machineClient)
-	ensureMembersCount(t, etcdClientFactory, 3)
+	ensureInitialClusterState(ctx, t, etcdClientFactory, machineClient)
 
 	// step 1: add a new master node and wait until it is in Running state
 	machineName := createNewMasterMachine(ctx, t, machineClient)
@@ -56,7 +59,13 @@ func TestScalingUpSingleNode(t *testing.T) {
 	memberName := machineNameToEtcdMemberName(ctx, t, kubeClient, machineClient, machineName)
 	ensureHealthyMember(t, etcdClientFactory, memberName)
 
-	// TODO: step 3: clean-up: until we can scale down
+	// step 3: clean-up: delete the machine and wait until etcd member is removed from the etcd cluster
+	err = machineClient.Delete(ctx, machineName, metav1.DeleteOptions{})
+	require.NoError(t, err)
+	t.Logf("successfully deleted the machine %q from the API", machineName)
+	ensureMembersCount(t, etcdClientFactory, 3)
+	ensureMemberRemoved(t, etcdClientFactory, memberName)
+	ensureRunningMachinesAndCount(ctx, t, machineClient)
 }
 
 // createNewMasterMachine creates a new master node by cloning an existing Machine resource
@@ -111,44 +120,98 @@ func ensureMasterMachineRunning(ctx context.Context, t testing.TB, machineName s
 	}
 }
 
-// asserts the cluster has only 3 master machines and all are in the Running state
-func ensureRunningMachines(ctx context.Context, t testing.TB, machineClient machinev1beta1client.MachineInterface) {
-	machineList, err := machineClient.List(ctx, metav1.ListOptions{LabelSelector: masterMachineLabelSelector})
+// ensureInitialClusterState makes sure the cluster state is expected, that is, has only 3 running machines and exactly 3 voting members
+// otherwise it attempts to recover the cluster by removing any excessive machines
+func ensureInitialClusterState(ctx context.Context, t testing.TB, etcdClientFactory etcdClientCreator, machineClient machinev1beta1client.MachineInterface) {
+	require.NoError(t, recoverClusterToInitialStateIfNeeded(ctx, t, machineClient))
+	require.NoError(t, checkMembersCount(t, etcdClientFactory, 3))
+	require.NoError(t, checkRunningMachinesAndCount(ctx, machineClient))
+}
+
+// ensureRunningMachinesAndCount asserts there are only 3 running master machines
+func ensureRunningMachinesAndCount(ctx context.Context, t testing.TB, machineClient machinev1beta1client.MachineInterface) {
+	err := checkRunningMachinesAndCount(ctx, machineClient)
 	require.NoError(t, err)
+}
+
+// checkRunningMachinesAndCount checks if there are only 3 running master machines otherwise it returns an error
+func checkRunningMachinesAndCount(ctx context.Context, machineClient machinev1beta1client.MachineInterface) error {
+	machineList, err := machineClient.List(ctx, metav1.ListOptions{LabelSelector: masterMachineLabelSelector})
+	if err != nil {
+		return err
+	}
 
 	if len(machineList.Items) != 3 {
-		machineNames := []string{}
+		var machineNames []string
 		for _, machine := range machineList.Items {
 			machineNames = append(machineNames, machine.Name)
 		}
-		t.Fatalf("incorrect cluster size, expected exactly 3 master machines, got: %v, found: %v", len(machineList.Items), machineNames)
+		return fmt.Errorf("expected exactly 3 master machines, got %d, machines are: %v", len(machineList.Items), machineNames)
 	}
 
 	for _, machine := range machineList.Items {
 		machinePhase := pointer.StringDeref(machine.Status.Phase, "")
 		if machinePhase != "Running" {
-			t.Fatalf("%q machine is in unexpected %q state, expected Running", machine.Name, machinePhase)
+			return fmt.Errorf("%q machine is in unexpected %q state, expected Running", machine.Name, machinePhase)
 		}
 	}
+	return nil
 }
 
-// ensureMembersCount simply counts the current etcd members, it doesn't evaluate health conditions or any other attributes (i.e. name) of individual members
+func recoverClusterToInitialStateIfNeeded(ctx context.Context, t testing.TB, machineClient machinev1beta1client.MachineInterface) error {
+	machineList, err := machineClient.List(ctx, metav1.ListOptions{LabelSelector: masterMachineLabelSelector})
+	if err != nil {
+		return err
+	}
+
+	var machineNames []string
+	for _, machine := range machineList.Items {
+		machineNames = append(machineNames, machine.Name)
+	}
+
+	t.Logf("checking if there are any excessive machines in the cluster (created by a previous test), expected cluster size is 3, found %v machines: %v", len(machineList.Items), machineNames)
+	for _, machine := range machineList.Items {
+		if strings.HasSuffix(machine.Name, "-clone") {
+			err := machineClient.Delete(ctx, machine.Name, metav1.DeleteOptions{})
+			if err != nil {
+				return fmt.Errorf("failed removing the machine: %q, err: %v", machine.Name, err)
+			}
+			t.Logf("successfully deleted an excessive machine %q from the API (perhaps, created by a previous test)", machine.Name)
+		}
+	}
+
+	return nil
+}
+
+// ensureMembersCount same as checkMembersCount but will fail on error
 func ensureMembersCount(t testing.TB, etcdClientFactory etcdClientCreator, expectedMembersCount int) {
+	require.NoError(t, checkMembersCount(t, etcdClientFactory, expectedMembersCount))
+}
+
+// checkMembersCount simply counts the current etcd members, it doesn't evaluate health conditions or any other attributes (i.e. name) of individual members
+// this method won't fail immediately on errors, this is useful during scaling down operation until the feature can ensure this operation to be graceful
+func checkMembersCount(t testing.TB, etcdClientFactory etcdClientCreator, expectedMembersCount int) error {
 	waitPollInterval := 15 * time.Second
-	waitPollTimeout := 5 * time.Minute
-	t.Logf("Waiting up to %s for a new etcd member to join the cluster", waitPollTimeout.String())
+	waitPollTimeout := 10 * time.Minute
+	t.Logf("Waiting up to %s for the cluster to reach the expected member count of %v", waitPollTimeout.String(), expectedMembersCount)
 
 	if err := wait.Poll(waitPollInterval, waitPollTimeout, func() (bool, error) {
-		etcdClient, close, err := etcdClientFactory.newEtcdClient()
-		require.NoError(t, err)
-		defer close()
+		etcdClient, closeFn, err := etcdClientFactory.newEtcdClient()
+		if err != nil {
+			t.Logf("failed to get etcd client, will retry, err: %v", err)
+			return false, nil
+		}
+		defer closeFn()
 
 		ctx, cancel := context.WithTimeout(context.TODO(), 15*time.Second)
 		defer cancel()
 		memberList, err := etcdClient.MemberList(ctx)
-		require.NoError(t, err)
+		if err != nil {
+			t.Logf("failed to get the member list, will retry, err: %v", err)
+			return false, nil
+		}
 
-		memberNames := []string{}
+		var memberNames []string
 		for _, member := range memberList.Members {
 			memberNames = append(memberNames, member.Name)
 		}
@@ -160,15 +223,34 @@ func ensureMembersCount(t testing.TB, etcdClientFactory etcdClientCreator, expec
 		t.Logf("cluster have reached the expected number of %v members, the members are: %v", expectedMembersCount, memberNames)
 		return true, nil
 	}); err != nil {
-		newErr := fmt.Errorf("failed on waiting for a new etcd member to join the cluster, err %v", err)
-		require.NoError(t, newErr)
+		newErr := fmt.Errorf("failed on waiting for the cluster to reach the expected member count of %v, err %v", expectedMembersCount, err)
+		return newErr
+	}
+	return nil
+}
+
+func ensureMemberRemoved(t testing.TB, etcdClientFactory etcdClientCreator, memberName string) {
+	etcdClient, closeFn, err := etcdClientFactory.newEtcdClient()
+	require.NoError(t, err)
+	defer closeFn()
+
+	ctx, cancel := context.WithTimeout(context.TODO(), 15*time.Second)
+	defer cancel()
+	rsp, err := etcdClient.MemberList(ctx)
+	require.NoError(t, err)
+
+	for _, member := range rsp.Members {
+		if member.Name == memberName {
+			t.Fatalf("member %v hasn't been removed", spew.Sdump(member))
+			return // unreachable
+		}
 	}
 }
 
 func ensureHealthyMember(t testing.TB, etcdClientFactory etcdClientCreator, memberName string) {
-	etcdClient, close, err := etcdClientFactory.newEtcdClientForMember(memberName)
+	etcdClient, closeFn, err := etcdClientFactory.newEtcdClientForMember(memberName)
 	require.NoError(t, err)
-	defer close()
+	defer closeFn()
 
 	// since we have a direct connection with the member
 	// getting any response is a good sign of healthiness
