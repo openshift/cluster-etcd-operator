@@ -5,7 +5,6 @@ import (
 	"net"
 	"net/url"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/ghodss/yaml"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 
@@ -126,7 +125,7 @@ func IndexMachinesByNodeInternalIP(machines []*machinev1beta1.Machine) map[strin
 
 func memberToURL(member *etcdserverpb.Member) (string, error) {
 	if len(member.PeerURLs) == 0 {
-		return "", fmt.Errorf("unable to extract member's URL address, it has an empty PeerURLs field, member: %v", spew.Sdump(member))
+		return "", fmt.Errorf("unable to extract member's URL address, it has an empty PeerURLs field, member name: %v, id: %v", member.Name, member.ID)
 	}
 	return member.PeerURLs[0], nil
 }
