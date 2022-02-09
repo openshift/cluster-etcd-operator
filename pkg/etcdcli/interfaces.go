@@ -49,7 +49,7 @@ type IsMemberHealthy interface {
 	IsMemberHealthy(ctx context.Context, member *etcdserverpb.Member) (bool, error)
 }
 type MemberRemover interface {
-	MemberRemove(ctx context.Context, member string) error
+	MemberRemove(ctx context.Context, memberID uint64) error
 }
 
 type MemberLister interface {
