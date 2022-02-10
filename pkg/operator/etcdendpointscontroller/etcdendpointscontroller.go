@@ -87,21 +87,26 @@ func (c *EtcdEndpointsController) sync(ctx context.Context, syncCtx factory.Sync
 
 func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder events.Recorder) error {
 	bootstrapComplete, err := ceohelpers.IsBootstrapComplete(c.configmapLister, c.operatorClient)
+	klog.Info("@Mustafa begin of syncConfigMap: bootstrapComplete is ",bootstrapComplete)
 	if err != nil {
 		return fmt.Errorf("couldn't determine bootstrap status: %w", err)
 	}
 
 	required := configMapAsset()
-
+	klog.Info("@Mustafa mid of syncConfigMap: configMapAsset is ",required)
 	// If the bootstrap IP is present on the existing configmap, either copy it
 	// forward or remove it if possible so clients can forget about it.
 	if existing, err := c.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints"); err == nil && existing != nil {
+		klog.Info("@Mustafa mid of syncConfigMap: existing is ",existing)
 		memberHealth, err := c.etcdClient.MemberHealth(ctx)
+		klog.Info("@Mustafa mid of syncConfigMap: memberHealth is ",memberHealth)
 		if err != nil {
 			return fmt.Errorf("could not get member health: %w", err)
 		}
 
 		if existingIP, hasExistingIP := existing.Annotations[etcdcli.BootstrapIPAnnotationKey]; hasExistingIP {
+			klog.Info("@Mustafa mid of syncConfigMap: existingIP is %+v and hasExistingIp is %v  ",existingIP, hasExistingIP)
+			klog.Info("@Mustafa mid of syncConfigMap: requiredAnnotations is  ", required.Annotations)
 			if bootstrapComplete && etcdcli.IsQuorumFaultTolerant(memberHealth) {
 				// remove the annotation
 				required.Annotations[etcdcli.BootstrapIPAnnotationKey+"-"] = existingIP
@@ -114,6 +119,7 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 	}
 
 	members, err := c.etcdClient.MemberList(ctx)
+	klog.Info("@Mustafa mid of syncConfigMap: members are  ", members)
 	if err != nil {
 		return fmt.Errorf("failed to get member list: %w", err)
 	}
@@ -135,7 +141,7 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 	if len(endpointAddresses) == 0 {
 		return fmt.Errorf("no etcd members are present")
 	}
-
+	klog.Info("@Mustafa mid of syncConfigMap: endpointAddesses is  ", endpointAddresses)
 	required.Data = endpointAddresses
 
 	// Apply endpoint updates
