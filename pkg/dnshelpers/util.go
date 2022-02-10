@@ -145,3 +145,12 @@ func GetIPFromAddress(address string) (string, error) {
 
 	return host, nil
 }
+
+// GetIPFromAddress takes a client or peer address and returns the IP address (unescaped if IPv6).
+func GetIPFromAddressWithPanic(address string) string {
+	host, err := GetIPFromAddress(address)
+	if err != nil {
+		panic(err)
+	}
+	return host
+}

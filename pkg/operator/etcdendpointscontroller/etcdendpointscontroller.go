@@ -3,6 +3,7 @@ package etcdendpointscontroller
 import (
 	"context"
 	"fmt"
+	"k8s.io/apimachinery/pkg/labels"
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -111,6 +112,39 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 		}
 	} else if !errors.IsNotFound(err) {
 		klog.Warningf("required configmap %s/%s will be created because it was missing: %w", operatorclient.TargetNamespace, "etcd-endpoints", err)
+	} else if existing == nil {
+		// create endpoint addresses for each node
+		nodes, err := c.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
+		if err != nil {
+			return fmt.Errorf("unable to list expected etcd member nodes: %v", err)
+		}
+		endpointAddresses := map[string]string{}
+		for _, node := range nodes {
+			var nodeInternalIP string
+			for _, nodeAddress := range node.Status.Addresses {
+				if nodeAddress.Type == corev1.NodeInternalIP {
+					nodeInternalIP = nodeAddress.Address
+					break
+				}
+			}
+			if len(nodeInternalIP) == 0 {
+				return fmt.Errorf("unable to determine internal ip address for node %s", node.Name)
+			}
+			endpointAddresses[node.Name] = nodeInternalIP
+		}
+
+		if len(endpointAddresses) == 0 {
+			return fmt.Errorf("no master nodes are present")
+		}
+
+		required.Data = endpointAddresses
+
+		// Apply endpoint updates
+		if _, _, err := resourceapply.ApplyConfigMap(ctx, c.configmapClient, recorder, required); err != nil {
+			return fmt.Errorf("applying configmap update failed :%w", err)
+		}
+
+		return nil
 	}
 
 	members, err := c.etcdClient.MemberList(ctx)

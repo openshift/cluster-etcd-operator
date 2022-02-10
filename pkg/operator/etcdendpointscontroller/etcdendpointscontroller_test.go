@@ -2,6 +2,8 @@ package etcdendpointscontroller
 
 import (
 	"context"
+	"fmt"
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"testing"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -50,6 +52,9 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			name: "NewConfigMapAfterDeletion",
 			objects: []runtime.Object{
 				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
+				u.FakeNode(fmt.Sprintf("%016x", etcdMembers[0].ID), u.WithMasterLabel(), u.WithNodeInternalIP(dnshelpers.GetIPFromAddressWithPanic(etcdMembers[0].PeerURLs[0]))),
+				u.FakeNode(fmt.Sprintf("%016x", etcdMembers[1].ID), u.WithMasterLabel(), u.WithNodeInternalIP(dnshelpers.GetIPFromAddressWithPanic(etcdMembers[1].PeerURLs[0]))),
+				u.FakeNode(fmt.Sprintf("%016x", etcdMembers[2].ID), u.WithMasterLabel(), u.WithNodeInternalIP(dnshelpers.GetIPFromAddressWithPanic(etcdMembers[2].PeerURLs[0]))),
 			},
 			staticPodStatus: u.StaticPodOperatorStatus(
 				u.WithLatestRevision(3),
@@ -253,6 +258,9 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			name: "UpgradedClusterCreateConfigmap",
 			objects: []runtime.Object{
 				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
+				u.FakeNode(fmt.Sprintf("%016x", etcdMembers[0].ID), u.WithMasterLabel(), u.WithNodeInternalIP(dnshelpers.GetIPFromAddressWithPanic(etcdMembers[0].PeerURLs[0]))),
+				u.FakeNode(fmt.Sprintf("%016x", etcdMembers[1].ID), u.WithMasterLabel(), u.WithNodeInternalIP(dnshelpers.GetIPFromAddressWithPanic(etcdMembers[1].PeerURLs[0]))),
+				u.FakeNode(fmt.Sprintf("%016x", etcdMembers[2].ID), u.WithMasterLabel(), u.WithNodeInternalIP(dnshelpers.GetIPFromAddressWithPanic(etcdMembers[2].PeerURLs[0]))),
 			},
 			staticPodStatus: u.StaticPodOperatorStatus(
 				u.WithLatestRevision(3),
