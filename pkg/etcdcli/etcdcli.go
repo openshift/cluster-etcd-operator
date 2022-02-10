@@ -13,17 +13,21 @@ import (
 	"time"
 
 	grpcprom "github.com/grpc-ecosystem/go-grpc-prometheus"
+
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/pkg/v3/logutil"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
+
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/grpclog"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -105,15 +109,16 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 	}
 
 	configmap, err := g.configmapsLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints")
-	if err != nil {
-		return nil, fmt.Errorf("failed to list endpoints: %w", err)
-	}
-	if bootstrapIP, ok := configmap.Annotations[BootstrapIPAnnotationKey]; ok && bootstrapIP != "" {
-		// escape if IPv6
-		if net.ParseIP(bootstrapIP).To4() == nil {
-			bootstrapIP = "[" + bootstrapIP + "]"
+	if err == nil {
+		if bootstrapIP, ok := configmap.Annotations[BootstrapIPAnnotationKey]; ok && bootstrapIP != "" {
+			// escape if IPv6
+			if net.ParseIP(bootstrapIP).To4() == nil {
+				bootstrapIP = "[" + bootstrapIP + "]"
+			}
+			etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", bootstrapIP))
 		}
-		etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", bootstrapIP))
+	} else if err != nil && !apierrors.IsNotFound(err) {
+		return nil, fmt.Errorf("failed to list endpoints: %w", err)
 	}
 
 	g.clientLock.Lock()

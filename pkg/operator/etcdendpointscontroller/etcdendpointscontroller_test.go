@@ -2,11 +2,17 @@ package etcdendpointscontroller
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/library-go/pkg/controller/factory"
+	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/v3/mock/mockserver"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -16,12 +22,10 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/diff"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
-	"github.com/openshift/library-go/pkg/controller/factory"
-	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
 )
 
 func TestBootstrapAnnotationRemoval(t *testing.T) {
@@ -50,6 +54,9 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			name: "NewConfigMapAfterDeletion",
 			objects: []runtime.Object{
 				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
+				u.FakeNode(fmt.Sprintf("%016x", etcdMembers[0].ID), u.WithMasterLabel(), u.WithNodeInternalIP(GetIPFromAddressOrFail(t, etcdMembers[0].PeerURLs[0]))),
+				u.FakeNode(fmt.Sprintf("%016x", etcdMembers[1].ID), u.WithMasterLabel(), u.WithNodeInternalIP(GetIPFromAddressOrFail(t, etcdMembers[1].PeerURLs[0]))),
+				u.FakeNode(fmt.Sprintf("%016x", etcdMembers[2].ID), u.WithMasterLabel(), u.WithNodeInternalIP(GetIPFromAddressOrFail(t, etcdMembers[2].PeerURLs[0]))),
 			},
 			staticPodStatus: u.StaticPodOperatorStatus(
 				u.WithLatestRevision(3),
@@ -253,6 +260,9 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			name: "UpgradedClusterCreateConfigmap",
 			objects: []runtime.Object{
 				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
+				u.FakeNode(fmt.Sprintf("%016x", etcdMembers[1].ID), u.WithMasterLabel(), u.WithNodeInternalIP(GetIPFromAddressOrFail(t, etcdMembers[1].PeerURLs[0]))),
+				u.FakeNode(fmt.Sprintf("%016x", etcdMembers[0].ID), u.WithMasterLabel(), u.WithNodeInternalIP(GetIPFromAddressOrFail(t, etcdMembers[0].PeerURLs[0]))),
+				u.FakeNode(fmt.Sprintf("%016x", etcdMembers[2].ID), u.WithMasterLabel(), u.WithNodeInternalIP(GetIPFromAddressOrFail(t, etcdMembers[2].PeerURLs[0]))),
 			},
 			staticPodStatus: u.StaticPodOperatorStatus(
 				u.WithLatestRevision(3),
@@ -330,4 +340,13 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			}
 		})
 	}
+}
+
+// GetIPFromAddress takes a client or peer address and returns the IP address (unescaped if IPv6).
+func GetIPFromAddressOrFail(t *testing.T, address string) string {
+	host, err := dnshelpers.GetIPFromAddress(address)
+	if err != nil {
+		t.Errorf("failed to get IP from address: %v", err)
+	}
+	return host
 }
