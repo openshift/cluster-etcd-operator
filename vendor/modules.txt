@@ -251,7 +251,7 @@ github.com/openshift/client-go/operator/informers/externalversions/operator/v1
 github.com/openshift/client-go/operator/informers/externalversions/operator/v1alpha1
 github.com/openshift/client-go/operator/listers/operator/v1
 github.com/openshift/client-go/operator/listers/operator/v1alpha1
-# github.com/openshift/library-go v0.0.0-20220131201636-2a46ecd044b3
+# github.com/openshift/library-go v0.0.0-20220214193238-2af3dca582a9
 ## explicit; go 1.17
 github.com/openshift/library-go/pkg/assets
 github.com/openshift/library-go/pkg/authorization/hardcodedauthorizer
@@ -290,6 +290,7 @@ github.com/openshift/library-go/pkg/operator/staticpod/controller/guard/bindata
 github.com/openshift/library-go/pkg/operator/staticpod/controller/installer
 github.com/openshift/library-go/pkg/operator/staticpod/controller/installer/bindata
 github.com/openshift/library-go/pkg/operator/staticpod/controller/installerstate
+github.com/openshift/library-go/pkg/operator/staticpod/controller/missingstaticpod
 github.com/openshift/library-go/pkg/operator/staticpod/controller/node
 github.com/openshift/library-go/pkg/operator/staticpod/controller/prune
 github.com/openshift/library-go/pkg/operator/staticpod/controller/prune/bindata
@@ -298,6 +299,7 @@ github.com/openshift/library-go/pkg/operator/staticpod/controller/startupmonitor
 github.com/openshift/library-go/pkg/operator/staticpod/controller/staticpodfallback
 github.com/openshift/library-go/pkg/operator/staticpod/controller/staticpodstate
 github.com/openshift/library-go/pkg/operator/staticpod/installerpod
+github.com/openshift/library-go/pkg/operator/staticpod/internal
 github.com/openshift/library-go/pkg/operator/staticpod/internal/flock
 github.com/openshift/library-go/pkg/operator/staticpod/prune
 github.com/openshift/library-go/pkg/operator/staticpod/startupmonitor/annotations
