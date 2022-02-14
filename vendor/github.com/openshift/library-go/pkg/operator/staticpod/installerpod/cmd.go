@@ -32,6 +32,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	"github.com/openshift/library-go/pkg/operator/resource/retry"
 	"github.com/openshift/library-go/pkg/operator/staticpod"
+	"github.com/openshift/library-go/pkg/operator/staticpod/internal"
 	"github.com/openshift/library-go/pkg/operator/staticpod/internal/flock"
 )
 
@@ -464,7 +465,7 @@ func (o *InstallOptions) waitForOtherInstallerRevisionsToSettle(ctx context.Cont
 		if len(installerPods) == 0 {
 			return false, fmt.Errorf("no installer pods found")
 		}
-		latestRevision, err := getRevisionOfPod(installerPods[len(installerPods)-1])
+		latestRevision, err := internal.GetRevisionOfPod(installerPods[len(installerPods)-1])
 		if err != nil {
 			return false, err
 		}
@@ -477,7 +478,7 @@ func (o *InstallOptions) waitForOtherInstallerRevisionsToSettle(ctx context.Cont
 		// that could be run
 		for _, pod := range installerPods {
 			// skip this revision
-			podRevision, err := getRevisionOfPod(pod)
+			podRevision, err := internal.GetRevisionOfPod(pod)
 			if err != nil {
 				return false, err
 			}
@@ -517,7 +518,7 @@ func (o *InstallOptions) waitForOtherInstallerRevisionsToSettle(ctx context.Cont
 	if len(installerPods) == 0 {
 		return fmt.Errorf("no installer pods found")
 	}
-	latestRevision, err := getRevisionOfPod(installerPods[len(installerPods)-1])
+	latestRevision, err := internal.GetRevisionOfPod(installerPods[len(installerPods)-1])
 	if err != nil {
 		return err
 	}
@@ -545,41 +546,9 @@ func (o *InstallOptions) getInstallerPodsOnThisNode(ctx context.Context) ([]*cor
 		}
 		installerPodsOnThisNode = append(installerPodsOnThisNode, pod)
 	}
-	sort.Sort(byRevision(installerPodsOnThisNode))
+	sort.Sort(internal.ByRevision(installerPodsOnThisNode))
 
 	return installerPodsOnThisNode, nil
-}
-
-type byRevision []*corev1.Pod
-
-func (s byRevision) Len() int {
-	return len(s)
-}
-func (s byRevision) Swap(i, j int) {
-	s[i], s[j] = s[j], s[i]
-}
-func (s byRevision) Less(i, j int) bool {
-	jRevision, err := getRevisionOfPod(s[j])
-	if err != nil {
-		return true
-	}
-	iRevision, err := getRevisionOfPod(s[i])
-	if err != nil {
-		return false
-	}
-	return iRevision < jRevision
-}
-
-func getRevisionOfPod(pod *corev1.Pod) (int, error) {
-	tokens := strings.Split(pod.Name, "-")
-	if len(tokens) < 2 {
-		return -1, fmt.Errorf("missing revision: %v", pod.Name)
-	}
-	revision, err := strconv.ParseInt(tokens[1], 10, 32)
-	if err != nil {
-		return -1, fmt.Errorf("bad revision for %v: %w", pod.Name, err)
-	}
-	return int(revision), nil
 }
 
 func (o *InstallOptions) installerPodNeedUUID() bool {
