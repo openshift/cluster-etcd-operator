@@ -38,6 +38,8 @@ require (
 	k8s.io/utils v0.0.0-20210930125809-cb0fa318a74b
 )
 
+replace github.com/openshift/library-go => github.com/dgrisonnet/library-go v0.0.0-20220214171349-d29493785229
+
 require (
 	github.com/NYTimes/gziphandler v1.1.1 // indirect
 	github.com/PuerkitoBio/purell v1.1.1 // indirect
