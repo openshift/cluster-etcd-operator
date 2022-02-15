@@ -351,6 +351,7 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 		b.kubeInformers.InformersFor(b.operandNamespace),
 		b.eventRecorder,
 		b.operandNamespace,
+		b.staticPodName,
 		b.operandName,
 	), 1)
 
