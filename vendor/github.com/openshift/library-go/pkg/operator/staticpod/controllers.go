@@ -14,6 +14,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/guard"
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/installer"
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/installerstate"
+	missingstaticpodcontroller "github.com/openshift/library-go/pkg/operator/staticpod/controller/missingstaticpod"
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/node"
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/prune"
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/startupmonitorcondition"
@@ -344,6 +345,14 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 			errs = append(errs, err)
 		}
 	}
+
+	manager.WithController(missingstaticpodcontroller.New(
+		b.staticPodOperatorClient,
+		b.kubeInformers.InformersFor(b.operandNamespace),
+		b.eventRecorder,
+		b.operandNamespace,
+		b.operandName,
+	), 1)
 
 	return manager, errors.NewAggregate(errs)
 }
