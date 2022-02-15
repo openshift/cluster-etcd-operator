@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
-
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
 	corelisterv1 "k8s.io/client-go/listers/core/v1"
@@ -27,6 +27,7 @@ type missingStaticPodController struct {
 	podListerForTargetNamespace       corelisterv1.PodNamespaceLister
 	configMapListerForTargetNamespace corelisterv1.ConfigMapNamespaceLister
 	targetNamespace                   string
+	staticPodName                     string
 	operandName                       string
 
 	lastEventEmissionPerNode lastEventEmissionPerNode
@@ -49,13 +50,15 @@ func New(
 	eventRecorder events.Recorder,
 	targetNamespace string,
 	staticPodName string,
+	operandName string,
 ) factory.Controller {
 	c := &missingStaticPodController{
 		operatorClient:                    operatorClient,
 		podListerForTargetNamespace:       kubeInformersForTargetNamespace.Core().V1().Pods().Lister().Pods(targetNamespace),
 		configMapListerForTargetNamespace: kubeInformersForTargetNamespace.Core().V1().ConfigMaps().Lister().ConfigMaps(targetNamespace),
 		targetNamespace:                   targetNamespace,
-		operandName:                       staticPodName,
+		staticPodName:                     staticPodName,
+		operandName:                       operandName,
 		lastEventEmissionPerNode:          make(lastEventEmissionPerNode),
 	}
 	return factory.New().
@@ -73,11 +76,6 @@ func New(
 }
 
 func (c *missingStaticPodController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
-	_, originalOperatorStatus, _, err := c.operatorClient.GetStaticPodOperatorState()
-	if err != nil {
-		return err
-	}
-
 	installerPods, err := c.podListerForTargetNamespace.List(labels.SelectorFromSet(labels.Set{"app": "installer"}))
 	if err != nil {
 		return err
@@ -109,37 +107,40 @@ func (c *missingStaticPodController) sync(ctx context.Context, syncCtx factory.S
 		}
 		threshold := gracePeriod + 120*time.Second
 
-		staticPodRevisionOnThisNode := getStaticPodCurrentRevision(node, originalOperatorStatus)
-		if staticPodRevisionOnThisNode == 0 {
-			// skip the bootstraping phase
-			continue
-		}
-
-		if time.Since(finishedAt) > threshold &&
-			staticPodRevisionOnThisNode < installerPodRevision {
-			// if we are here:
+		if time.Since(finishedAt) > threshold {
+			// if we are here then:
 			//  a: the latest installer pod successfully completed at finishedAt
 			//  b: it has been more than 'terminationGracePeriodSeconds' + 120s since the
 			//     installer pod has completed at finishedAt
-			//  c. the static pod is not at correct installerPodRevision yet
-			// then all of the above conditions are true, so we should produce an event
-
-			// only emit an event if for a particular node:
-			// - this is the first time we see a failure
-			// - this is a failure for new revision
-			// - the previously reported event was at least 30 min ago
-			lastEventEmission, found := c.lastEventEmissionPerNode[node]
-			if !found || installerPodRevision != lastEventEmission.revision || time.Since(lastEventEmission.timestamp) > 30*time.Minute {
-				syncCtx.Recorder().Eventf("MissingStaticPod", "static pod lifecycle failure - static pod: %q in namespace: %q for revision: %d on node: %q didn't show up, waited: %v",
-					c.operandName, c.targetNamespace, installerPodRevision, node, threshold)
-
-				lastEventEmission.revision = installerPodRevision
-				lastEventEmission.timestamp = time.Now()
-				c.lastEventEmissionPerNode[node] = lastEventEmission
+			//
+			// now check to see if we have a mirror pod on this node
+			staticPodRevisionOnThisNode, err := c.getStaticPodCurrentRevisionForNode(node)
+			if err != nil && !apierrors.IsNotFound(err) {
+				// we expect every static pod to have a valid revision
+				return fmt.Errorf("failed to get a revision for the static pod %q - %w", mirrorStaticPodNameForNode(c.staticPodName, node), err)
 			}
+			if staticPodRevisionOnThisNode < installerPodRevision {
+				// if we are here then:
+				//  c. the static pod is not at correct installerPodRevision yet
+				//
+				// in addition to that all the previous conditions are also true
+				// so, we should produce an event but only when an event is for a particular node and:
+				//  a: this is the first time we see a failure
+				//  b: this is a failure for new revision
+				//  c: the previously reported event was at least 30 min ago
+				lastEventEmission, found := c.lastEventEmissionPerNode[node]
+				if !found || installerPodRevision != lastEventEmission.revision || time.Since(lastEventEmission.timestamp) > 30*time.Minute {
+					syncCtx.Recorder().Eventf("MissingStaticPod", "static pod lifecycle failure - static pod: %q in namespace: %q for revision: %d on node: %q didn't show up, waited: %v",
+						c.staticPodName, c.targetNamespace, installerPodRevision, node, threshold)
 
-			errors = append(errors, fmt.Sprintf("static pod lifecycle failure - static pod: %q in namespace: %q for revision: %d on node: %q didn't show up, waited: %v",
-				c.operandName, c.targetNamespace, installerPodRevision, node, threshold))
+					lastEventEmission.revision = installerPodRevision
+					lastEventEmission.timestamp = time.Now()
+					c.lastEventEmissionPerNode[node] = lastEventEmission
+				}
+
+				errors = append(errors, fmt.Sprintf("static pod lifecycle failure - static pod: %q in namespace: %q for revision: %d on node: %q didn't show up, waited: %v",
+					c.staticPodName, c.targetNamespace, installerPodRevision, node, threshold))
+			}
 		}
 	}
 
@@ -148,6 +149,21 @@ func (c *missingStaticPodController) sync(ctx context.Context, syncCtx factory.S
 	}
 
 	return nil
+}
+
+// getStaticPodCurrentRevisionForNode reads the current revision from the static pod for the given node
+// since the names are uniques and we know how to construct the final pod's name we always expect to get the desired pod
+func (c *missingStaticPodController) getStaticPodCurrentRevisionForNode(nodeName string) (int, error) {
+	staticPod, err := c.podListerForTargetNamespace.Get(mirrorStaticPodNameForNode(c.staticPodName, nodeName))
+	if err != nil {
+		return -1, err
+	}
+	revisionStr := staticPod.Labels["revision"]
+	revision, err := strconv.Atoi(revisionStr)
+	if err != nil {
+		return -1, err
+	}
+	return revision, nil
 }
 
 // getStaticPodTerminationGracePeriodSecondsForRevision reads the static pod manifest from a configmap
@@ -178,29 +194,6 @@ func (c *missingStaticPodController) getStaticPodTerminationGracePeriodSecondsFo
 	}
 
 	return time.Duration(*serializedStaticPod.Spec.TerminationGracePeriodSeconds) * time.Second, nil
-}
-
-// TODO: consider the following logic to get the static pods revision:
-// - list all pods
-// - filter only static pods, those with annotation: `kubernetes.io/config.mirror`
-// - there will only be one for each master
-// - determine the node based on .spec.nodeName
-// - get the revision from label: `revision`
-// This would allow reducing the delay and remove the dependency on the node
-// status.
-func getStaticPodCurrentRevision(node string, status *operatorv1.StaticPodOperatorStatus) int {
-	var nodeStatus *operatorv1.NodeStatus
-	for i := range status.NodeStatuses {
-		if status.NodeStatuses[i].NodeName == node {
-			nodeStatus = &status.NodeStatuses[i]
-			break
-		}
-	}
-
-	if nodeStatus == nil {
-		return 0
-	}
-	return int(nodeStatus.CurrentRevision)
 }
 
 func getMostRecentInstallerPodByNode(pods []*corev1.Pod) (map[string]*corev1.Pod, error) {
@@ -265,4 +258,8 @@ func installerPodFinishedAt(pod *corev1.Pod) (time.Time, bool) {
 	}
 
 	return terminated.FinishedAt.Time, true
+}
+
+func mirrorStaticPodNameForNode(staticPodName, nodeName string) string {
+	return staticPodName + "-" + nodeName
 }
