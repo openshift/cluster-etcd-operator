@@ -185,6 +185,9 @@ type TemplateData struct {
 
 	// MaxLearners is the maximum number of learner members that can be part of the cluster membership.
 	MaxLearners int
+
+	// Optional Additional platform information (ex. ProviderType for IBMCloud).
+	PlatformData string
 }
 
 type StaticFile struct {
@@ -255,12 +258,16 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 
 	// assume that this is >4.2
 	templateData.Platform = string(infra.Status.PlatformStatus.Type)
+	switch infra.Status.PlatformStatus.Type {
+	case configv1.IBMCloudPlatformType:
+		templateData.PlatformData = string(infra.Status.PlatformStatus.IBMCloud.ProviderType)
+	}
 
 	if err := templateData.setBootstrapStrategy(installConfig, opts.delayedHABootstrapScalingStrategyMarker); err != nil {
 		return nil, err
 	}
 
-	if err := templateData.setComputedEnvVars(templateData.Platform, installConfig); err != nil {
+	if err := templateData.setComputedEnvVars(templateData.Platform, templateData.PlatformData, installConfig); err != nil {
 		return nil, err
 	}
 
@@ -562,8 +569,8 @@ func (t *TemplateData) setSingleStackIPv6(serviceCIDR []string) error {
 	return nil
 }
 
-func (t *TemplateData) setComputedEnvVars(platform string, installConfig map[string]interface{}) error {
-	envVarData := &envVarData{platform: platform, arch: runtime.GOARCH, installConfig: installConfig}
+func (t *TemplateData) setComputedEnvVars(platform, platformData string, installConfig map[string]interface{}) error {
+	envVarData := &envVarData{platform: platform, platformData: platformData, arch: runtime.GOARCH, installConfig: installConfig}
 	envVarMap, err := getEtcdEnv(envVarData)
 	if err != nil {
 		return err

@@ -40,6 +40,7 @@ func TestEtcdEnv(t *testing.T) {
 		wantKey       string
 		wantValue     string
 		installConfig string
+		platformData  string
 	}{
 		{
 			name:          "AWS HA etcd heartbeat interval",
@@ -105,6 +106,24 @@ func TestEtcdEnv(t *testing.T) {
 			installConfig: installConfigHA,
 			wantValue:     "3",
 		},
+		{
+			name:          "IBMCloud VPC etcd election timeout",
+			platform:      "IBMCloud",
+			platformData:  "VPC",
+			arch:          "amd64",
+			wantKey:       "ETCD_ELECTION_TIMEOUT",
+			installConfig: installConfigHA,
+			wantValue:     "2000",
+		},
+		{
+			name:          "IBMCloud non-VPC etcd election timeout",
+			platform:      "IBMCloud",
+			platformData:  "Classic",
+			arch:          "amd64",
+			wantKey:       "ETCD_ELECTION_TIMEOUT",
+			installConfig: installConfigHA,
+			wantValue:     "1000",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -112,9 +131,9 @@ func TestEtcdEnv(t *testing.T) {
 			installConfigJson, _ := yaml.YAMLToJSON([]byte(tt.installConfig))
 			err := json.Unmarshal(installConfigJson, &installConfig)
 			if err != nil {
-				t.Errorf("failed to unmarshal install config json %w", err)
+				t.Errorf("failed to unmarshal install config json %v", err)
 			}
-			data := &envVarData{tt.platform, tt.arch, installConfig}
+			data := &envVarData{platform: tt.platform, platformData: tt.platformData, arch: tt.arch, installConfig: installConfig}
 			env, err := getEtcdEnv(data)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
