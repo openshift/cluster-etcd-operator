@@ -9,7 +9,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	// TODO: Remove this once scale down is implemented
+	// TODO: Remove this function once the scaling tests are moved to their own job
 	reorderTestExecutionOrder(m)
 	os.Exit(m.Run())
 }
@@ -17,8 +17,6 @@ func TestMain(m *testing.M) {
 // reorderTestExecutionOrder a hack to place the vertical scaling test at the end of execution chain
 // Some test like TestEtcdQuorumGuard assume exactly 3 master cluster. Since the scaling test add new machine(s) and
 // we don't have a function to scale them down we need to run the new test after existing ones.
-//
-// This function should be removed once scaling down is implemented
 func reorderTestExecutionOrder(m *testing.M) {
 	pointerVal := reflect.ValueOf(m)
 	val := reflect.Indirect(pointerVal)
@@ -29,6 +27,6 @@ func reorderTestExecutionOrder(m *testing.M) {
 	tests := *realPtrToTests
 
 	sort.Slice(tests, func(i, j int) bool {
-		return tests[i].Name != "TestScalingUpSingleNode"
+		return tests[i].Name != "TestScalingUpAndDownSingleNode"
 	})
 }
