@@ -24,6 +24,7 @@ type envVarData struct {
 	platform      string
 	arch          string
 	installConfig map[string]interface{}
+	platformData  string
 }
 
 type envVarFunc func(e *envVarData) (map[string]string, error)
@@ -64,8 +65,8 @@ func getEtcdName(_ *envVarData) (map[string]string, error) {
 func getHeartbeatInterval(e *envVarData) (map[string]string, error) {
 	var heartbeat string
 
-	switch e.platform {
-	case "Azure":
+	switch configv1.PlatformType(e.platform) {
+	case configv1.AzurePlatformType:
 		heartbeat = "500"
 	default:
 		heartbeat = "100"
@@ -77,13 +78,16 @@ func getHeartbeatInterval(e *envVarData) (map[string]string, error) {
 }
 
 func getElectionTimeout(e *envVarData) (map[string]string, error) {
-	var timeout string
+	timeout := "1000"
 
-	switch e.platform {
-	case "Azure":
+	switch configv1.PlatformType(e.platform) {
+	case configv1.AzurePlatformType:
 		timeout = "2500"
-	default:
-		timeout = "1000"
+	case configv1.IBMCloudPlatformType:
+		switch configv1.IBMCloudProviderType(e.platformData) {
+		case configv1.IBMCloudProviderTypeVPC:
+			timeout = "2000"
+		}
 	}
 
 	return map[string]string{
