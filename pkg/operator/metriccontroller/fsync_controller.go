@@ -130,7 +130,7 @@ func (c *FSyncController) sync(ctx context.Context, syncCtx factory.SyncContext)
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "FSyncControllerDegraded",
 			Status:  operatorv1.ConditionTrue,
-			Reason:  "etcd disk metrics exceeded known thresholds",
+			Reason:  "EtcdDiskMetricsExceededKnownThresholds",
 			Message: fmt.Sprintf("etcd disk metrics exceeded known thresholds: %s", degradedMsg),
 		}))
 		if updateErr != nil {
