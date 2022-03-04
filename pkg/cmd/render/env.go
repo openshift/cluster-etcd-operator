@@ -71,7 +71,7 @@ func getHeartbeatInterval(e *envVarData) (map[string]string, error) {
 	case configv1.IBMCloudPlatformType:
 		switch configv1.IBMCloudProviderType(e.platformData) {
 		case configv1.IBMCloudProviderTypeVPC:
-			heartbeat = "2000"
+			heartbeat = "500"
 		}
 	}
 
@@ -89,7 +89,7 @@ func getElectionTimeout(e *envVarData) (map[string]string, error) {
 	case configv1.IBMCloudPlatformType:
 		switch configv1.IBMCloudProviderType(e.platformData) {
 		case configv1.IBMCloudProviderTypeVPC:
-			timeout = "10000"
+			timeout = "2500"
 		}
 	}
 
