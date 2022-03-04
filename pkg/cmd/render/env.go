@@ -89,7 +89,7 @@ func getElectionTimeout(e *envVarData) (map[string]string, error) {
 	case configv1.IBMCloudPlatformType:
 		switch configv1.IBMCloudProviderType(e.platformData) {
 		case configv1.IBMCloudProviderTypeVPC:
-			timeout = "4000"
+			timeout = "10000"
 		}
 	}
 
