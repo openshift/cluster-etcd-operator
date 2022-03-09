@@ -28,6 +28,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdendpointscontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdmemberscontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/machinedeletionhooks"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/metriccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/quorumguardcleanup"
@@ -85,6 +86,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	if err != nil {
 		return err
 	}
+	machineClient := machineClientSet.MachineV1beta1().Machines("openshift-machine-api")
 
 	// we create a new informer directly because we are only interested in observing changes to the master machines
 	// primarily to avoid reconciling on every update in large clusters (~2K machines)
@@ -306,7 +308,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	clusterMemberRemovalController := clustermemberremovalcontroller.NewClusterMemberRemovalController(
 		operatorClient,
 		etcdClient,
-		ceohelpers.NewMachineAPI(masterMachineInformer, machinelistersv1beta1.NewMachineLister(masterMachineInformer.GetIndexer()), masterMachineLabelSelector),
+		machineAPI,
 		masterMachineLabelSelector, masterNodeLabelSelector,
 		kubeInformersForNamespaces,
 		masterNodeInformer,
@@ -314,6 +316,16 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		configInformers.Config().V1().Networks(),
 		controllerContext.EventRecorder,
 	)
+
+	machineDeletionHooksController := machinedeletionhooks.NewMachineDeletionHooksController(
+		operatorClient,
+		machineClient,
+		etcdClient,
+		machineAPI,
+		masterMachineLabelSelector,
+		kubeInformersForNamespaces,
+		masterMachineInformer,
+		controllerContext.EventRecorder)
 
 	etcdMembersController := etcdmemberscontroller.NewEtcdMembersController(
 		operatorClient,
@@ -402,6 +414,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go configObserver.Run(ctx, 1)
 	go clusterMemberController.Run(ctx, 1)
 	go clusterMemberRemovalController.Run(ctx, 1)
+	go machineDeletionHooksController.Run(ctx, 1)
 	go etcdMembersController.Run(ctx, 1)
 	go bootstrapTeardownController.Run(ctx, 1)
 	go unsupportedConfigOverridesController.Run(ctx, 1)
