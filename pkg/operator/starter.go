@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/objectcountcheck"
+
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
@@ -120,6 +122,12 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Networks(),
 		controllerContext.EventRecorder)
+
+	// TODO: configure etcd top key prefixes we care about
+	objectCountChecker, err := objectcountcheck.New(etcdClient, operatorClient, []string{}, controllerContext.EventRecorder)
+	if err != nil {
+		return err
+	}
 
 	resourceSyncController, err := resourcesynccontroller.NewResourceSyncController(
 		operatorClient,
@@ -342,6 +350,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go quorumGuardController.Run(ctx, 1)
 	go defragController.Run(ctx, 1)
 	go upgradeBackupController.Run(ctx, 1)
+	go objectCountChecker.Run(ctx, 1)
 
 	go envVarController.Run(1, ctx.Done())
 	go staticPodControllers.Start(ctx)

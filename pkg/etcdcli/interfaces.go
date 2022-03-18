@@ -15,6 +15,7 @@ const (
 )
 
 type EtcdClient interface {
+	ObjectCounter
 	Defragment
 	MemberAdder
 	MemberHealth
@@ -28,6 +29,10 @@ type EtcdClient interface {
 
 	GetMember(ctx context.Context, name string) (*etcdserverpb.Member, error)
 	MemberUpdatePeerURL(ctx context.Context, id uint64, peerURL []string) error
+}
+
+type ObjectCounter interface {
+	GetObjectCounts(ctx context.Context, prefixes []string) (map[string]int64, error)
 }
 
 type Defragment interface {

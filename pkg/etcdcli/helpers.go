@@ -15,6 +15,10 @@ type fakeEtcdClient struct {
 	opts    *FakeClientOptions
 }
 
+func (f *fakeEtcdClient) GetObjectCounts(ctx context.Context, prefixes []string) (map[string]int64, error) {
+	panic("implement me")
+}
+
 func (f *fakeEtcdClient) Defragment(ctx context.Context, member *etcdserverpb.Member) (*clientv3.DefragmentResponse, error) {
 	// dramatic simplification
 	f.opts.dbSize = f.opts.dbSizeInUse

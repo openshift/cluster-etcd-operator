@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/sets"
+
 	grpcprom "github.com/grpc-ecosystem/go-grpc-prometheus"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
@@ -198,6 +200,47 @@ func getEtcdClientWithClientOpts(endpoints []string, opts ...ClientOption) (*cli
 	}
 
 	return cli, err
+}
+
+func (g *etcdClientGetter) GetObjectCounts(ctx context.Context, prefixes []string) (map[string]int64, error) {
+	cli, err := g.getEtcdClient()
+	if err != nil {
+		return nil, err
+	}
+	// TODO: this will return **all** keys from etcd... maybe there is more efficient way to get only kube/openshift
+	keysResponse, err := cli.Get(ctx, "/", clientv3.WithKeysOnly())
+	if err != nil {
+		return nil, err
+	}
+
+	topLevelKeys := sets.NewString()
+	prefixSet := sets.NewString(prefixes...)
+	for i := range keysResponse.Kvs {
+		keyParts := strings.Split(string(keysResponse.Kvs[i].Key), "/")
+		if len(keyParts) <= 1 {
+			continue
+		}
+		if key := keyParts[0] + "/" + keyParts[1]; topLevelKeys.Has(key) {
+			continue
+		} else if prefixSet.Len() > 0 && !prefixSet.Has(key) {
+			continue
+		} else {
+			topLevelKeys.Insert(key)
+		}
+	}
+
+	// count keys in buckets
+	result := map[string]int64{}
+	topLevelKeysList := topLevelKeys.List()
+	for i := range topLevelKeysList {
+		keyName := "/" + topLevelKeysList[i] + "/"
+		keyCountResponse, err := cli.Get(ctx, keyName, clientv3.WithRange(clientv3.GetPrefixRangeEnd(keyName)), clientv3.WithCountOnly())
+		if err != nil {
+			return nil, err
+		}
+		result[keyName] = keyCountResponse.Count
+	}
+	return result, nil
 }
 
 func (g *etcdClientGetter) MemberAdd(ctx context.Context, peerURL string) error {
