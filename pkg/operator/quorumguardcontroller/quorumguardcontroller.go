@@ -50,8 +50,8 @@ var pdb = &policyv1.PodDisruptionBudget{
 		Namespace: operatorclient.TargetNamespace,
 	},
 	Spec: policyv1.PodDisruptionBudgetSpec{
-		MaxUnavailable: &intstr.IntOrString{Type: intstr.Int, IntVal: int32(1)},
-		Selector:       &metav1.LabelSelector{MatchLabels: map[string]string{"k8s-app": EtcdGuardDeploymentName}},
+		MinAvailable: &intstr.IntOrString{Type: intstr.Int, IntVal: int32(2)},
+		Selector:     &metav1.LabelSelector{MatchLabels: map[string]string{"k8s-app": EtcdGuardDeploymentName}},
 	},
 }
 
