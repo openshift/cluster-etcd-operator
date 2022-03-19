@@ -2,9 +2,9 @@ package guard
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
@@ -28,7 +28,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
-	"github.com/openshift/library-go/pkg/operator/staticpod/controller/guard/bindata"
 	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
 )
 
@@ -124,6 +123,12 @@ func nodeHasUnschedulableTaint(node *corev1.Node) bool {
 	return false
 }
 
+//go:embed manifests/pdb.yaml
+var pdbTemplate []byte
+
+//go:embed manifests/guard-pod.yaml
+var podTemplate []byte
+
 func (c *GuardController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	klog.V(5).Info("Syncing guards")
 
@@ -143,7 +148,7 @@ func (c *GuardController) sync(ctx context.Context, syncCtx factory.SyncContext)
 
 	errs := []error{}
 	if !shouldCreate {
-		pdb := resourceread.ReadPodDisruptionBudgetV1OrDie(bindata.MustAsset(filepath.Join("pkg/operator/staticpod/controller/guard", "manifests/pdb.yaml")))
+		pdb := resourceread.ReadPodDisruptionBudgetV1OrDie(pdbTemplate)
 		pdb.ObjectMeta.Name = getGuardPDBName(c.podResourcePrefix)
 		pdb.ObjectMeta.Namespace = c.targetNamespace
 
@@ -195,7 +200,7 @@ func (c *GuardController) sync(ctx context.Context, syncCtx factory.SyncContext)
 
 		klog.V(5).Infof("Rendering guard pdb")
 
-		pdb := resourceread.ReadPodDisruptionBudgetV1OrDie(bindata.MustAsset(filepath.Join("pkg/operator/staticpod/controller/guard", "manifests/pdb.yaml")))
+		pdb := resourceread.ReadPodDisruptionBudgetV1OrDie(pdbTemplate)
 		pdb.ObjectMeta.Name = getGuardPDBName(c.podResourcePrefix)
 		pdb.ObjectMeta.Namespace = c.targetNamespace
 		if len(nodes) > 1 {
@@ -257,7 +262,7 @@ func (c *GuardController) sync(ctx context.Context, syncCtx factory.SyncContext)
 
 			klog.V(5).Infof("Rendering guard pod for operand %v on node %v", operands[node.Name].Name, node.Name)
 
-			pod := resourceread.ReadPodV1OrDie(bindata.MustAsset(filepath.Join("pkg/operator/staticpod/controller/guard", "manifests/guard-pod.yaml")))
+			pod := resourceread.ReadPodV1OrDie(podTemplate)
 
 			pod.ObjectMeta.Name = getGuardPodName(c.podResourcePrefix, node.Name)
 			pod.ObjectMeta.Namespace = c.targetNamespace

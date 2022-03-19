@@ -68,8 +68,8 @@ func NewResourceSyncController(
 		kubeInformersForNamespaces: kubeInformersForNamespaces,
 		knownNamespaces:            kubeInformersForNamespaces.Namespaces(),
 
-		configMapGetter: configMapsGetter,
-		secretGetter:    secretsGetter,
+		configMapGetter: v1helpers.CachedConfigMapGetter(configMapsGetter, kubeInformersForNamespaces),
+		secretGetter:    v1helpers.CachedSecretGetter(secretsGetter, kubeInformersForNamespaces),
 		syncCtx:         factory.NewSyncContext("ResourceSyncController", eventRecorder.WithComponentSuffix("resource-sync-controller")),
 	}
 

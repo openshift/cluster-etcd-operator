@@ -2,6 +2,7 @@ package installer
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"math"
 	"os"
@@ -19,7 +20,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/management"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
-	"github.com/openshift/library-go/pkg/operator/staticpod/controller/installer/bindata"
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/revision"
 	"github.com/openshift/library-go/pkg/operator/staticpod/startupmonitor/annotations"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -36,9 +36,6 @@ import (
 )
 
 const (
-	manifestDir              = "pkg/operator/staticpod/controller/installer"
-	manifestInstallerPodPath = "manifests/installer-pod.yaml"
-
 	hostResourceDirDir = "/etc/kubernetes/static-pod-resources"
 	hostPodManifestDir = "/etc/kubernetes/manifests"
 
@@ -48,6 +45,9 @@ const (
 	nodeStatusInstalledFailedReason       = "InstallerFailed"
 	nodeStatusOperandFailedFallbackReason = "OperandFailedFallback"
 )
+
+//go:embed manifests/installer-pod.yaml
+var podTemplate []byte
 
 // InstallerController is a controller that watches the currentRevision and targetRevision fields for each node and spawn
 // installer pods to update the static pods on the master nodes.
@@ -842,7 +842,7 @@ func getInstallerPodName(ns *operatorv1.NodeStatus) string {
 
 // ensureInstallerPod creates the installer pod with the secrets required to if it does not exist already
 func (c *InstallerController) ensureInstallerPod(ctx context.Context, operatorSpec *operatorv1.StaticPodOperatorSpec, ns *operatorv1.NodeStatus) error {
-	pod := resourceread.ReadPodV1OrDie(bindata.MustAsset(filepath.Join(manifestDir, manifestInstallerPodPath)))
+	pod := resourceread.ReadPodV1OrDie(podTemplate)
 
 	pod.Namespace = c.targetNamespace
 	pod.Name = getInstallerPodName(ns)

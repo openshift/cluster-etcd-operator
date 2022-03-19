@@ -254,7 +254,7 @@ github.com/openshift/client-go/operator/informers/externalversions/operator/v1
 github.com/openshift/client-go/operator/informers/externalversions/operator/v1alpha1
 github.com/openshift/client-go/operator/listers/operator/v1
 github.com/openshift/client-go/operator/listers/operator/v1alpha1
-# github.com/openshift/library-go v0.0.0-20220215130638-e570dd7004e5
+# github.com/openshift/library-go v0.0.0-20220215130638-e570dd7004e5 => /Users/lszaszki/go/src/github.com/openshift/library-go
 ## explicit; go 1.17
 github.com/openshift/library-go/pkg/assets
 github.com/openshift/library-go/pkg/authorization/hardcodedauthorizer
@@ -287,16 +287,12 @@ github.com/openshift/library-go/pkg/operator/revisioncontroller
 github.com/openshift/library-go/pkg/operator/staticpod
 github.com/openshift/library-go/pkg/operator/staticpod/certsyncpod
 github.com/openshift/library-go/pkg/operator/staticpod/controller/backingresource
-github.com/openshift/library-go/pkg/operator/staticpod/controller/backingresource/bindata
 github.com/openshift/library-go/pkg/operator/staticpod/controller/guard
-github.com/openshift/library-go/pkg/operator/staticpod/controller/guard/bindata
 github.com/openshift/library-go/pkg/operator/staticpod/controller/installer
-github.com/openshift/library-go/pkg/operator/staticpod/controller/installer/bindata
 github.com/openshift/library-go/pkg/operator/staticpod/controller/installerstate
 github.com/openshift/library-go/pkg/operator/staticpod/controller/missingstaticpod
 github.com/openshift/library-go/pkg/operator/staticpod/controller/node
 github.com/openshift/library-go/pkg/operator/staticpod/controller/prune
-github.com/openshift/library-go/pkg/operator/staticpod/controller/prune/bindata
 github.com/openshift/library-go/pkg/operator/staticpod/controller/revision
 github.com/openshift/library-go/pkg/operator/staticpod/controller/startupmonitorcondition
 github.com/openshift/library-go/pkg/operator/staticpod/controller/staticpodfallback
@@ -311,6 +307,8 @@ github.com/openshift/library-go/pkg/operator/status
 github.com/openshift/library-go/pkg/operator/unsupportedconfigoverridescontroller
 github.com/openshift/library-go/pkg/operator/v1helpers
 github.com/openshift/library-go/pkg/serviceability
+github.com/openshift/library-go/test/library
+github.com/openshift/library-go/test/library/etcdverticalscaling
 # github.com/pkg/errors v0.9.1
 ## explicit
 github.com/pkg/errors
@@ -1338,4 +1336,5 @@ sigs.k8s.io/structured-merge-diff/v4/value
 ## explicit; go 1.12
 sigs.k8s.io/yaml
 # github.com/gogo/protobuf => github.com/gogo/protobuf v1.3.2
+# github.com/openshift/library-go => /Users/lszaszki/go/src/github.com/openshift/library-go
 # vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787

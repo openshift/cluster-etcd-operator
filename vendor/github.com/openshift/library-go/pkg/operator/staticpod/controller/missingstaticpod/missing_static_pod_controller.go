@@ -40,7 +40,7 @@ type lastEventEmissionPerNode map[string]struct {
 
 // New checks the latest static pods pods and uses the installer to get the
 // latest revision.  If the installer pod was successful, and if it has been
-// longer than the terminationGracePeriodSeconds+120seconds since the installer
+// longer than the terminationGracePeriodSeconds+150seconds since the installer
 // pod completed successfully, and if the static pod is not at the correct
 // revision, this controller will go degraded.  It will also emit an event for
 // detection in CI.
@@ -105,12 +105,12 @@ func (c *missingStaticPodController) sync(ctx context.Context, syncCtx factory.S
 		if err != nil {
 			return err
 		}
-		threshold := gracePeriod + 120*time.Second
+		threshold := gracePeriod + 150*time.Second
 
 		if time.Since(finishedAt) > threshold {
 			// if we are here then:
 			//  a: the latest installer pod successfully completed at finishedAt
-			//  b: it has been more than 'terminationGracePeriodSeconds' + 120s since the
+			//  b: it has been more than 'terminationGracePeriodSeconds' + 150s since the
 			//     installer pod has completed at finishedAt
 			//
 			// now check to see if we have a mirror pod on this node

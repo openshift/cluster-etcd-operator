@@ -2,9 +2,9 @@ package prune
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -18,7 +18,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
-	"github.com/openshift/library-go/pkg/operator/staticpod/controller/prune/bindata"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 )
 
@@ -186,11 +185,14 @@ func (c *PruneController) pruneAPIResources(ctx context.Context, toKeep sets.Int
 	return nil
 }
 
+//go:embed manifests/pruner-pod.yaml
+var podTemplate []byte
+
 func (c *PruneController) ensurePrunePod(ctx context.Context, recorder events.Recorder, nodeName string, maxEligibleRevision int32, protectedRevisions []int32, revision int32) error {
 	if revision == 0 {
 		return nil
 	}
-	pod := resourceread.ReadPodV1OrDie(bindata.MustAsset(filepath.Join("pkg/operator/staticpod/controller/prune", "manifests/pruner-pod.yaml")))
+	pod := resourceread.ReadPodV1OrDie(podTemplate)
 
 	pod.Name = getPrunerPodName(nodeName, revision)
 	pod.Namespace = c.targetNamespace
