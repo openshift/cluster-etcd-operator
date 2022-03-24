@@ -4,12 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
-	"net/url"
 	"time"
-
-	"github.com/davecgh/go-spew/spew"
-	"go.etcd.io/etcd/api/v3/etcdserverpb"
 
 	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
@@ -126,7 +121,7 @@ func (c *clusterMemberRemovalController) sync(ctx context.Context, _ factory.Syn
 			return err
 		}
 		for _, member := range memberList {
-			memberIP, err := memberToNodeInternalIP(member)
+			memberIP, err := ceohelpers.MemberToNodeInternalIP(member)
 			if err != nil {
 				return err
 			}
@@ -226,28 +221,4 @@ func (c *clusterMemberRemovalController) findMachineByNodeInternalIP(nodeInterna
 		}
 	}
 	return nil, nil
-}
-
-func memberToURL(member *etcdserverpb.Member) (string, error) {
-	if len(member.PeerURLs) == 0 {
-		return "", fmt.Errorf("unable to extract member's URL address, it has an empty PeerURLs field, member: %v", spew.Sdump(member))
-	}
-	return member.PeerURLs[0], nil
-}
-
-func memberToNodeInternalIP(member *etcdserverpb.Member) (string, error) {
-	memberURLAsString, err := memberToURL(member)
-	if err != nil {
-		return "", err
-	}
-	memberURL, err := url.Parse(memberURLAsString)
-	if err != nil {
-		return "", err
-	}
-
-	host, _, err := net.SplitHostPort(memberURL.Host)
-	if err != nil {
-		return "", err
-	}
-	return host, nil
 }
