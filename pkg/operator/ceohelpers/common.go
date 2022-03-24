@@ -2,12 +2,24 @@ package ceohelpers
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/ghodss/yaml"
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
+
+	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 )
+
+// MachineDeletionHookName holds a name of the Machine Deletion Hook
+const MachineDeletionHookName = "EtcdQuorumOperator"
+
+// MachineDeletionHookOwner holds an owner of the Machine Deletion Hook
+const MachineDeletionHookOwner = "clusteroperator/etcd"
 
 // ReadDesiredControlPlaneReplicasCount simply reds the desired Control Plane replica count from the cluster-config-v1 configmap in the kube-system namespace
 func ReadDesiredControlPlaneReplicasCount(configMapListerForKubeSystemNamespace corev1listers.ConfigMapNamespaceLister) (int, error) {
@@ -46,4 +58,61 @@ func ReadDesiredControlPlaneReplicasCount(configMapListerForKubeSystemNamespace 
 	}
 
 	return int(desiredReplicas), nil
+}
+
+// MemberToNodeInternalIP extracts assigned IP address from the given member
+func MemberToNodeInternalIP(member *etcdserverpb.Member) (string, error) {
+	memberURLAsString, err := memberToURL(member)
+	if err != nil {
+		return "", err
+	}
+	memberURL, err := url.Parse(memberURLAsString)
+	if err != nil {
+		return "", err
+	}
+
+	host, _, err := net.SplitHostPort(memberURL.Host)
+	if err != nil {
+		return "", err
+	}
+	return host, nil
+}
+
+// FilterMachinesWithMachineDeletionHook a convenience function for filtering only machines with the machine deletion hook present
+func FilterMachinesWithMachineDeletionHook(machines []*machinev1beta1.Machine) []*machinev1beta1.Machine {
+	var filteredMachines []*machinev1beta1.Machine
+	for _, machine := range machines {
+		if HasMachineDeletionHook(machine) {
+			filteredMachines = append(filteredMachines, machine)
+		}
+	}
+	return filteredMachines
+}
+
+// FilterMachinesPendingDeletion a convenience function for filtering machines pending deletion
+func FilterMachinesPendingDeletion(machines []*machinev1beta1.Machine) []*machinev1beta1.Machine {
+	var filteredMachines []*machinev1beta1.Machine
+	for _, machine := range machines {
+		if machine.DeletionTimestamp != nil {
+			filteredMachines = append(filteredMachines, machine)
+		}
+	}
+	return filteredMachines
+}
+
+// HasMachineDeletionHook simply checks if the given machine has the machine deletion hook present
+func HasMachineDeletionHook(machine *machinev1beta1.Machine) bool {
+	for _, hook := range machine.Spec.LifecycleHooks.PreDrain {
+		if hook.Name == MachineDeletionHookName && hook.Owner == MachineDeletionHookOwner {
+			return true
+		}
+	}
+	return false
+}
+
+func memberToURL(member *etcdserverpb.Member) (string, error) {
+	if len(member.PeerURLs) == 0 {
+		return "", fmt.Errorf("unable to extract member's URL address, it has an empty PeerURLs field, member: %v", spew.Sdump(member))
+	}
+	return member.PeerURLs[0], nil
 }
