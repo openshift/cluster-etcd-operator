@@ -765,6 +765,7 @@ ${COMPUTED_ENV_VARS}
         exec ionice -c2 -n0 etcd \
           --logger=zap \
           --log-level=${VERBOSITY} \
+          --experimental-initial-corrupt-check=true \
           --initial-advertise-peer-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2380 \
           --cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.crt \
           --key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.key \
