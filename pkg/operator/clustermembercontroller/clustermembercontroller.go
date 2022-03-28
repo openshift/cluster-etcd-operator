@@ -3,6 +3,8 @@ package clustermembercontroller
 import (
 	"context"
 	"fmt"
+	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
+	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
 	"strings"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -35,21 +38,28 @@ type ClusterMemberController struct {
 	podLister      corev1listers.PodLister
 	nodeLister     corev1listers.NodeLister
 	networkLister  configv1listers.NetworkLister
+
+	masterMachineLister   machinelistersv1beta1.MachineLister
+	masterMachineSelector labels.Selector
 }
 
 func NewClusterMemberController(
 	operatorClient v1helpers.OperatorClient,
 	kubeInformers v1helpers.KubeInformersForNamespaces,
 	networkInformer configv1informers.NetworkInformer,
+	masterMachineInformer cache.SharedIndexInformer,
+	masterMachineSelector labels.Selector,
 	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &ClusterMemberController{
-		operatorClient: operatorClient,
-		etcdClient:     etcdClient,
-		podLister:      kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
-		nodeLister:     kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
-		networkLister:  networkInformer.Lister(),
+		operatorClient:        operatorClient,
+		etcdClient:            etcdClient,
+		podLister:             kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
+		nodeLister:            kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
+		networkLister:         networkInformer.Lister(),
+		masterMachineLister:   machinelistersv1beta1.NewMachineLister(masterMachineInformer.GetIndexer()),
+		masterMachineSelector: masterMachineSelector,
 	}
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
 		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer(),
@@ -109,6 +119,20 @@ func (c *ClusterMemberController) reconcileMembers(ctx context.Context, recorder
 	if err != nil {
 		return fmt.Errorf("could not get etcd peer host :%w", err)
 	}
+
+	masterMachines, err := c.masterMachineLister.List(c.masterMachineSelector)
+	if err != nil {
+		return err
+	}
+	for _, machine := range masterMachines {
+		if hasInternalIP(machine, etcdHost) {
+			if machine.DeletionTimestamp != nil {
+				klog.Infof("won't add etcd member: %v to the cluster because its machine is pending deletion: %v", etcdHost, machine.Name)
+				return nil
+			}
+		}
+	}
+
 	err = c.etcdClient.MemberAdd(ctx, fmt.Sprintf("https://%s:2380", etcdHost))
 	if err != nil {
 		return fmt.Errorf("could not add member :%w", err)
@@ -172,4 +196,13 @@ func (c *ClusterMemberController) getEtcdPeerHostToScale(podToAdd *corev1.Pod) (
 	}
 
 	return dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
+}
+
+func hasInternalIP(machine *machinev1beta1.Machine, memberInternalIP string) bool {
+	for _, addr := range machine.Status.Addresses {
+		if addr.Type == corev1.NodeInternalIP && addr.Address == memberInternalIP {
+			return true
+		}
+	}
+	return false
 }
