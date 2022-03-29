@@ -44,6 +44,7 @@ spec:
 
       exec etcd \
         --logger=zap \
+        --experimental-initial-corrupt-check=true \
         --initial-advertise-peer-urls=https://{{ .EtcdAddress.EscapedBootstrapIP }}:2380 \
         --cert-file=/etc/ssl/etcd/etcd-all-certs/etcd-serving-{{ .Hostname }}.crt \
         --key-file=/etc/ssl/etcd/etcd-all-certs/etcd-serving-{{ .Hostname }}.key \
