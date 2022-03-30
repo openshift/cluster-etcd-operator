@@ -184,3 +184,26 @@ spec:
       for: 3m
       labels:
         severity: critical
+    - alert: etcdDivergentRevisions
+      annotations:
+        description: etcd is reporting divergent member revisions, with a pod
+          {{ $labels.pod }} on instance {{ $labels.instance }} trailing
+          {{ $value }} compacted revisions behind pod {{ $labels.max_pod }} on
+          instance {{ $labels.max_instance }}. Members may be stuck or, in
+          extreme circumstances, split brained.
+        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdDivergentRevisions.md
+        summary: etcd is reporting divergent member revisions.
+      expr: |
+        -etcd_debugging_mvcc_compact_revision{job=~".*etcd.*"}
+          + on (job, namespace) group_left (max_instance, max_pod)
+        label_replace(
+          label_replace(
+            topk by (job,namespace) (1, etcd_debugging_mvcc_compact_revision{job=~".*etcd.*"}),
+            "max_instance", "$1", "instance", "(.*)"
+          ),
+          "max_pod", "$1", "pod", "(.*)"
+        )
+          > 0
+      for: 10m
+      labels:
+        severity: critical
