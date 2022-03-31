@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
@@ -20,6 +21,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/sets"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
@@ -29,11 +32,12 @@ import (
 var errNotFound = errors.New("not found")
 
 type clusterMemberRemovalController struct {
-	etcdClient                        etcdcli.EtcdClient
-	masterNodeLister                  corev1listers.NodeLister
-	masterMachineLister               machinelistersv1beta1.MachineLister
-	networkLister                     configv1listers.NetworkLister
-	configMapListerForTargetNamespace corev1listers.ConfigMapNamespaceLister
+	etcdClient                            etcdcli.EtcdClient
+	masterNodeLister                      corev1listers.NodeLister
+	masterMachineLister                   machinelistersv1beta1.MachineLister
+	networkLister                         configv1listers.NetworkLister
+	configMapListerForTargetNamespace     corev1listers.ConfigMapNamespaceLister
+	configMapListerForKubeSystemNamespace corev1listers.ConfigMapNamespaceLister
 	// machineAPIChecker determines if the precondition for this controller is met,
 	// this controller can be run only on a cluster that exposes a functional Machine API
 	machineAPIChecker     ceohelpers.MachineAPIChecker
@@ -59,14 +63,15 @@ func NewClusterMemberRemovalController(
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &clusterMemberRemovalController{
-		etcdClient:                        etcdClient,
-		machineAPIChecker:                 machineAPIChecker,
-		masterMachineSelector:             masterMachineSelector,
-		masterNodeSelector:                masterNodeSelector,
-		masterNodeLister:                  corev1listers.NewNodeLister(masterNodeInformer.GetIndexer()),
-		masterMachineLister:               machinelistersv1beta1.NewMachineLister(masterMachineInformer.GetIndexer()),
-		networkLister:                     networkInformer.Lister(),
-		configMapListerForTargetNamespace: kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister().ConfigMaps(operatorclient.TargetNamespace),
+		etcdClient:                            etcdClient,
+		machineAPIChecker:                     machineAPIChecker,
+		masterMachineSelector:                 masterMachineSelector,
+		masterNodeSelector:                    masterNodeSelector,
+		masterNodeLister:                      corev1listers.NewNodeLister(masterNodeInformer.GetIndexer()),
+		masterMachineLister:                   machinelistersv1beta1.NewMachineLister(masterMachineInformer.GetIndexer()),
+		networkLister:                         networkInformer.Lister(),
+		configMapListerForTargetNamespace:     kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister().ConfigMaps(operatorclient.TargetNamespace),
+		configMapListerForKubeSystemNamespace: kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Lister().ConfigMaps("kube-system"),
 	}
 	return factory.New().
 		WithSync(c.sync).
@@ -77,16 +82,88 @@ func NewClusterMemberRemovalController(
 			masterNodeInformer,
 			masterMachineInformer,
 			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer(),
+			kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Informer(),
 		).ToController("ClusterMemberRemovalController", eventRecorder.WithComponentSuffix("cluster-member-removal-controller"))
 }
 
 func (c *clusterMemberRemovalController) sync(ctx context.Context, _ factory.SyncContext) error {
-	// stop if the machine API is not functional
+	var errs []error
+
+	if err := c.removeMemberWithoutMachine(ctx); err != nil {
+		errs = append(errs, err)
+	}
+
+	// only attempt to scale down if the machine API is functional
 	if isFunctional, err := c.machineAPIChecker.IsFunctional(); err != nil {
-		return err
+		errs = append(errs, err)
+		return kerrors.NewAggregate(errs)
 	} else if !isFunctional {
 		return nil
 	}
+
+	if err := c.attemptToScaleDown(ctx); err != nil {
+		errs = append(errs, err)
+	}
+
+	if err := c.attemptToRemoveLearningMember(ctx); err != nil {
+		errs = append(errs, err)
+	}
+
+	return kerrors.NewAggregate(errs)
+}
+
+// attemptToRemoveLearningMember attempts to remove a learning member pending deletion regardless of whether a replacement member has been found
+func (c *clusterMemberRemovalController) attemptToRemoveLearningMember(ctx context.Context) error {
+	currentVotingMemberIPListSet, err := c.votingMemberIPListSet()
+	if err != nil {
+		return err
+	}
+	memberMachines, err := c.currentMemberMachines()
+	if err != nil {
+		return err
+	}
+	var learningMachines []*machinev1beta1.Machine
+	for memberMachineIP, memberMachine := range ceohelpers.IndexMachinesByNodeInternalIP(memberMachines) {
+		if !currentVotingMemberIPListSet.Has(memberMachineIP) {
+			learningMachines = append(learningMachines, memberMachine)
+		}
+	}
+	return c.removeMemberPendingDeletion(ctx, learningMachines, "learning")
+}
+
+// attemptToScaleDown attempts to remove a voting member only once we have identified that
+// a Machine resource is being deleted and a replacement member has been created
+func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context) error {
+	currentVotingMemberIPListSet, err := c.votingMemberIPListSet()
+	if err != nil {
+		return err
+	}
+
+	desiredControlPlaneReplicasCount, err := ceohelpers.ReadDesiredControlPlaneReplicasCount(c.configMapListerForKubeSystemNamespace)
+	if err != nil {
+		return err
+	}
+	if currentVotingMemberIPListSet.Len() <= desiredControlPlaneReplicasCount {
+		klog.V(4).Infof("Ignoring scale-down since the number of etcd voting members (%d) < desired number of control-plane replicas (%d) ", currentVotingMemberIPListSet.Len(), desiredControlPlaneReplicasCount)
+		return nil
+	}
+
+	memberMachines, err := c.currentMemberMachines()
+	if err != nil {
+		return err
+	}
+
+	var votingMachines []*machinev1beta1.Machine
+	for memberMachineIP, memberMachine := range ceohelpers.IndexMachinesByNodeInternalIP(memberMachines) {
+		if currentVotingMemberIPListSet.Has(memberMachineIP) {
+			votingMachines = append(votingMachines, memberMachine)
+		}
+	}
+
+	return c.removeMemberPendingDeletion(ctx, votingMachines, "voting")
+}
+
+func (c *clusterMemberRemovalController) removeMemberWithoutMachine(ctx context.Context) error {
 	etcdEndpointsConfigMap, err := c.configMapListerForTargetNamespace.Get("etcd-endpoints")
 	if err != nil {
 		return err // should not happen
@@ -146,6 +223,42 @@ func (c *clusterMemberRemovalController) sync(ctx context.Context, _ factory.Syn
 			break
 		}
 	}
+	return nil
+}
+
+func (c *clusterMemberRemovalController) removeMemberPendingDeletion(ctx context.Context, memberMachines []*machinev1beta1.Machine, memberType string) error {
+	memberMachinesPendingDeletion := ceohelpers.FilterMachinesPendingDeletion(memberMachines)
+	if len(memberMachinesPendingDeletion) == 0 {
+		return nil
+	}
+
+	// sort by deletion time and pick up one machine for removal and record it
+	sort.Slice(memberMachinesPendingDeletion, func(i, j int) bool {
+		return memberMachinesPendingDeletion[i].DeletionTimestamp.Before(memberMachinesPendingDeletion[j].DeletionTimestamp)
+	})
+	memberMachineToDelete := memberMachinesPendingDeletion[0]
+
+	// get the members, issue a live call to get the member ID
+	members, err := c.etcdClient.MemberList(ctx)
+	if err != nil {
+		return err
+	}
+	for _, member := range members {
+		memberIP, err := ceohelpers.MemberToNodeInternalIP(member)
+		if err != nil {
+			return err
+		}
+		if hasInternalIP(memberMachineToDelete, memberIP) {
+			memberLocator := fmt.Sprintf("[ url: %v, name: %v, id: %v ]", memberIP, member.Name, member.ID)
+			if err := c.etcdClient.MemberRemove(ctx, member.ID); err != nil {
+				return fmt.Errorf("failed to remove %v member: %v, err: %v", memberType, memberLocator, err)
+			}
+			klog.V(2).Infof("successfully removed %v member: %v from the cluster", memberType, memberLocator)
+			return nil
+		}
+	}
+
+	// if we go here then the member was removed from the cluster but the machine still has the deletion hooks
 	return nil
 }
 
@@ -221,4 +334,35 @@ func (c *clusterMemberRemovalController) findMachineByNodeInternalIP(nodeInterna
 		}
 	}
 	return nil, nil
+}
+
+func (c *clusterMemberRemovalController) votingMemberIPListSet() (sets.String, error) {
+	etcdEndpointsConfigMap, err := c.configMapListerForTargetNamespace.Get("etcd-endpoints")
+	if err != nil {
+		return sets.NewString(), err // should not happen
+	}
+	currentVotingMemberIPListSet := sets.NewString()
+	for _, votingMemberIP := range etcdEndpointsConfigMap.Data {
+		currentVotingMemberIPListSet.Insert(votingMemberIP)
+	}
+
+	return currentVotingMemberIPListSet, nil
+}
+
+// currentMemberMachines returns machines with the deletion hooks from the lister
+func (c *clusterMemberRemovalController) currentMemberMachines() ([]*machinev1beta1.Machine, error) {
+	masterMachines, err := c.masterMachineLister.List(c.masterMachineSelector)
+	if err != nil {
+		return nil, err
+	}
+	return ceohelpers.FilterMachinesWithMachineDeletionHook(masterMachines), nil
+}
+
+func hasInternalIP(machine *machinev1beta1.Machine, memberInternalIP string) bool {
+	for _, addr := range machine.Status.Addresses {
+		if addr.Type == corev1.NodeInternalIP && addr.Address == memberInternalIP {
+			return true
+		}
+	}
+	return false
 }

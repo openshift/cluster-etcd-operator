@@ -25,6 +25,7 @@ import (
 	machineclient "github.com/openshift/client-go/machine/clientset/versioned"
 	machinev1beta1client "github.com/openshift/client-go/machine/clientset/versioned/typed/machine/v1beta1"
 	"github.com/openshift/cluster-etcd-operator/test/e2e/framework"
+	testlibraryapi "github.com/openshift/library-go/test/library/apiserver"
 )
 
 const masterMachineLabelSelector = "machine.openshift.io/cluster-api-machine-role" + "=" + "master"
@@ -55,9 +56,13 @@ func TestScalingUpAndDownSingleNode(t *testing.T) {
 	ensureMasterMachineRunning(ctx, t, machineName, machineClient)
 
 	// step 2: wait until a new member shows up and check if it is healthy
+	//         and until all kube-api servers have reached the same revision
+	//         this additional step is the best-effort of ensuring they
+	//         have observed the new member before disruption
 	ensureMembersCount(t, etcdClientFactory, 4)
 	memberName := machineNameToEtcdMemberName(ctx, t, kubeClient, machineClient, machineName)
 	ensureHealthyMember(t, etcdClientFactory, memberName)
+	testlibraryapi.WaitForAPIServerToStabilizeOnTheSameRevision(t, kubeClient.CoreV1().Pods("openshift-kube-apiserver"))
 
 	// step 3: clean-up: delete the machine and wait until etcd member is removed from the etcd cluster
 	err = machineClient.Delete(ctx, machineName, metav1.DeleteOptions{})
@@ -125,37 +130,44 @@ func ensureMasterMachineRunning(ctx context.Context, t testing.TB, machineName s
 func ensureInitialClusterState(ctx context.Context, t testing.TB, etcdClientFactory etcdClientCreator, machineClient machinev1beta1client.MachineInterface) {
 	require.NoError(t, recoverClusterToInitialStateIfNeeded(ctx, t, machineClient))
 	require.NoError(t, checkMembersCount(t, etcdClientFactory, 3))
-	require.NoError(t, checkRunningMachinesAndCount(ctx, machineClient))
+	require.NoError(t, checkRunningMachinesAndCount(ctx, t, machineClient))
 }
 
 // ensureRunningMachinesAndCount asserts there are only 3 running master machines
 func ensureRunningMachinesAndCount(ctx context.Context, t testing.TB, machineClient machinev1beta1client.MachineInterface) {
-	err := checkRunningMachinesAndCount(ctx, machineClient)
+	err := checkRunningMachinesAndCount(ctx, t, machineClient)
 	require.NoError(t, err)
 }
 
 // checkRunningMachinesAndCount checks if there are only 3 running master machines otherwise it returns an error
-func checkRunningMachinesAndCount(ctx context.Context, machineClient machinev1beta1client.MachineInterface) error {
-	machineList, err := machineClient.List(ctx, metav1.ListOptions{LabelSelector: masterMachineLabelSelector})
-	if err != nil {
-		return err
-	}
+func checkRunningMachinesAndCount(ctx context.Context, t testing.TB, machineClient machinev1beta1client.MachineInterface) error {
+	waitPollInterval := 15 * time.Second
+	waitPollTimeout := 10 * time.Minute
+	t.Logf("Waiting up to %s for the cluster to reach the expected machines count of 3", waitPollTimeout.String())
 
-	if len(machineList.Items) != 3 {
-		var machineNames []string
+	return wait.Poll(waitPollInterval, waitPollTimeout, func() (bool, error) {
+		machineList, err := machineClient.List(ctx, metav1.ListOptions{LabelSelector: masterMachineLabelSelector})
+		if err != nil {
+			return false, err
+		}
+
+		if len(machineList.Items) != 3 {
+			var machineNames []string
+			for _, machine := range machineList.Items {
+				machineNames = append(machineNames, machine.Name)
+			}
+			t.Logf("expected exactly 3 master machines, got %d, machines are: %v", len(machineList.Items), machineNames)
+			return false, nil
+		}
+
 		for _, machine := range machineList.Items {
-			machineNames = append(machineNames, machine.Name)
+			machinePhase := pointer.StringDeref(machine.Status.Phase, "")
+			if machinePhase != "Running" {
+				return false, fmt.Errorf("%q machine is in unexpected %q state, expected Running", machine.Name, machinePhase)
+			}
 		}
-		return fmt.Errorf("expected exactly 3 master machines, got %d, machines are: %v", len(machineList.Items), machineNames)
-	}
-
-	for _, machine := range machineList.Items {
-		machinePhase := pointer.StringDeref(machine.Status.Phase, "")
-		if machinePhase != "Running" {
-			return fmt.Errorf("%q machine is in unexpected %q state, expected Running", machine.Name, machinePhase)
-		}
-	}
-	return nil
+		return true, nil
+	})
 }
 
 func recoverClusterToInitialStateIfNeeded(ctx context.Context, t testing.TB, machineClient machinev1beta1client.MachineInterface) error {
