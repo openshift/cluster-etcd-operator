@@ -127,7 +127,7 @@ func (c *ClusterMemberController) reconcileMembers(ctx context.Context, recorder
 	}
 
 	if machineForEtcdHost, hasMachine := ceohelpers.IndexMachinesByNodeInternalIP(masterMachines)[etcdHost]; hasMachine && machineForEtcdHost.DeletionTimestamp != nil {
-		klog.V(4).Infof("won't add member: %v to the cluster because its machine is pending deletion: %v", etcdHost, machineForEtcdHost.Name)
+		klog.V(2).Infof("won't add member: %v to the cluster because its machine is pending deletion: %v", etcdHost, machineForEtcdHost.Name)
 		return nil
 	} else if !hasMachine {
 		return fmt.Errorf("unable to find machine for member: %v", etcdHost)

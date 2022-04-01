@@ -87,28 +87,23 @@ func NewClusterMemberRemovalController(
 }
 
 func (c *clusterMemberRemovalController) sync(ctx context.Context, _ factory.SyncContext) error {
-	var errs []error
-
-	if err := c.removeMemberWithoutMachine(ctx); err != nil {
-		errs = append(errs, err)
-	}
-
 	// only attempt to scale down if the machine API is functional
 	if isFunctional, err := c.machineAPIChecker.IsFunctional(); err != nil {
-		errs = append(errs, err)
-		return kerrors.NewAggregate(errs)
+		return err
 	} else if !isFunctional {
 		return nil
 	}
 
+	var errs []error
+	if err := c.removeMemberWithoutMachine(ctx); err != nil {
+		errs = append(errs, err)
+	}
 	if err := c.attemptToScaleDown(ctx); err != nil {
 		errs = append(errs, err)
 	}
-
 	if err := c.attemptToRemoveLearningMember(ctx); err != nil {
 		errs = append(errs, err)
 	}
-
 	return kerrors.NewAggregate(errs)
 }
 

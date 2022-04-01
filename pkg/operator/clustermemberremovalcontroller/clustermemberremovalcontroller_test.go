@@ -11,14 +11,10 @@ import (
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
-	"github.com/openshift/library-go/pkg/controller/factory"
-	"github.com/openshift/library-go/pkg/operator/events"
-
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
-	k8sfakeclient "k8s.io/client-go/kubernetes/fake"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 )
@@ -385,11 +381,8 @@ func TestAttemptToScaleDown(t *testing.T) {
 }
 
 func TestRemoveMemberWithoutMachine(t *testing.T) {
-	alwaysFalseIsFunctionalMachineAPIFn := func() (bool, error) { return false, nil }
-
 	scenarios := []struct {
 		name                             string
-		isFunctionalMachineAPIFn         func() (bool, error)
 		initialObjectsForConfigMapLister []runtime.Object
 		initialObjectsForNodeLister      []runtime.Object
 		initialObjectsForMachineLister   []runtime.Object
@@ -399,7 +392,6 @@ func TestRemoveMemberWithoutMachine(t *testing.T) {
 		// scenario 1
 		{
 			name:                             "happy path: an etcd member has a corresponding machine and node resources",
-			isFunctionalMachineAPIFn:         alwaysFalseIsFunctionalMachineAPIFn,
 			initialObjectsForConfigMapLister: []runtime.Object{wellKnownSingleEtcdEndpointConfigMap()},
 			initialObjectsForNodeLister:      []runtime.Object{wellKnownMasterNode()},
 			initialObjectsForMachineLister:   []runtime.Object{wellKnownMasterMachine()},
@@ -418,7 +410,6 @@ func TestRemoveMemberWithoutMachine(t *testing.T) {
 		// scenario 2
 		{
 			name:                             "an etcd member doesn't have a corresponding machine nor node resource and it is removed",
-			isFunctionalMachineAPIFn:         alwaysFalseIsFunctionalMachineAPIFn,
 			initialObjectsForConfigMapLister: []runtime.Object{wellKnownSingleEtcdEndpointConfigMap()},
 			initialEtcdMemberList:            wellKnownSingleEtcdMemberList(),
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
@@ -435,7 +426,6 @@ func TestRemoveMemberWithoutMachine(t *testing.T) {
 		// scenario 3
 		{
 			name:                             "an etcd member with only a corresponding machine resource is not removed",
-			isFunctionalMachineAPIFn:         alwaysFalseIsFunctionalMachineAPIFn,
 			initialObjectsForConfigMapLister: []runtime.Object{wellKnownSingleEtcdEndpointConfigMap()},
 			initialObjectsForMachineLister:   []runtime.Object{wellKnownMasterMachine()},
 			initialEtcdMemberList:            wellKnownSingleEtcdMemberList(),
@@ -453,7 +443,6 @@ func TestRemoveMemberWithoutMachine(t *testing.T) {
 		// scenario 4
 		{
 			name:                             "an etcd member with only a corresponding node resource is not removed",
-			isFunctionalMachineAPIFn:         alwaysFalseIsFunctionalMachineAPIFn,
 			initialObjectsForConfigMapLister: []runtime.Object{wellKnownSingleEtcdEndpointConfigMap()},
 			initialObjectsForNodeLister:      []runtime.Object{wellKnownMasterNode()},
 			initialEtcdMemberList:            wellKnownSingleEtcdMemberList(),
@@ -472,9 +461,6 @@ func TestRemoveMemberWithoutMachine(t *testing.T) {
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
 			// test data
-			eventRecorder := events.NewRecorder(k8sfakeclient.NewSimpleClientset().CoreV1().Events("operator"), "test-cluster-member-removal-controller", &corev1.ObjectReference{})
-			fakeMachineAPIChecker := &fakeMachineAPI{isMachineAPIFunctional: scenario.isFunctionalMachineAPIFn}
-
 			configMapIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
 			for _, initialObj := range scenario.initialObjectsForConfigMapLister {
 				configMapIndexer.Add(initialObj)
@@ -512,7 +498,6 @@ func TestRemoveMemberWithoutMachine(t *testing.T) {
 			// act
 			target := clusterMemberRemovalController{
 				etcdClient:                        fakeEtcdClient,
-				machineAPIChecker:                 fakeMachineAPIChecker,
 				configMapListerForTargetNamespace: configMapLister,
 				masterNodeSelector:                nodeSelector,
 				masterNodeLister:                  nodeLister,
@@ -520,7 +505,7 @@ func TestRemoveMemberWithoutMachine(t *testing.T) {
 				masterMachineLister:               machineLister,
 				networkLister:                     networkLister,
 			}
-			err = target.sync(context.TODO(), factory.NewSyncContext("test-cluster-member-removal-controller", eventRecorder))
+			err = target.removeMemberWithoutMachine(context.TODO())
 			if err != nil {
 				t.Fatal(err)
 			}
