@@ -238,10 +238,8 @@ github.com/openshift/client-go/config/informers/externalversions/config/v1
 github.com/openshift/client-go/config/informers/externalversions/internalinterfaces
 github.com/openshift/client-go/config/listers/config/v1
 github.com/openshift/client-go/machine/clientset/versioned
-github.com/openshift/client-go/machine/clientset/versioned/fake
 github.com/openshift/client-go/machine/clientset/versioned/scheme
 github.com/openshift/client-go/machine/clientset/versioned/typed/machine/v1beta1
-github.com/openshift/client-go/machine/clientset/versioned/typed/machine/v1beta1/fake
 github.com/openshift/client-go/machine/informers/externalversions/internalinterfaces
 github.com/openshift/client-go/machine/informers/externalversions/machine/v1beta1
 github.com/openshift/client-go/machine/listers/machine/v1beta1
@@ -313,8 +311,6 @@ github.com/openshift/library-go/pkg/operator/status
 github.com/openshift/library-go/pkg/operator/unsupportedconfigoverridescontroller
 github.com/openshift/library-go/pkg/operator/v1helpers
 github.com/openshift/library-go/pkg/serviceability
-github.com/openshift/library-go/test/library
-github.com/openshift/library-go/test/library/apiserver
 # github.com/pkg/errors v0.9.1
 ## explicit
 github.com/pkg/errors
