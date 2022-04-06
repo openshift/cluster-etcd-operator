@@ -80,6 +80,17 @@ func NewClusterMemberRemovalController(
 		).ToController("ClusterMemberRemovalController", eventRecorder.WithComponentSuffix("cluster-member-removal-controller"))
 }
 
+func (c *clusterMemberRemovalController) sync(ctx context.Context, _ factory.SyncContext) error {
+	// only attempt to scale down if the machine API is functional
+	if isFunctional, err := c.machineAPIChecker.IsFunctional(); err != nil {
+		return err
+	} else if !isFunctional {
+		return nil
+	}
+
+	return c.removeMemberWithoutMachine(ctx)
+}
+
 func (c *clusterMemberRemovalController) removeMemberWithoutMachine(ctx context.Context) error {
 	etcdEndpointsConfigMap, err := c.configMapListerForTargetNamespace.Get("etcd-endpoints")
 	if err != nil {
