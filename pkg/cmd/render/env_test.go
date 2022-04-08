@@ -113,7 +113,7 @@ func TestEtcdEnv(t *testing.T) {
 			arch:          "amd64",
 			wantKey:       "ETCD_ELECTION_TIMEOUT",
 			installConfig: installConfigHA,
-			wantValue:     "2000",
+			wantValue:     "2500",
 		},
 		{
 			name:          "IBMCloud non-VPC etcd election timeout",
@@ -123,6 +123,24 @@ func TestEtcdEnv(t *testing.T) {
 			wantKey:       "ETCD_ELECTION_TIMEOUT",
 			installConfig: installConfigHA,
 			wantValue:     "1000",
+		},
+		{
+			name:          "IBMCloud VPC heartbeat interval",
+			platform:      "IBMCloud",
+			platformData:  "VPC",
+			arch:          "amd64",
+			wantKey:       "ETCD_HEARTBEAT_INTERVAL",
+			installConfig: installConfigHA,
+			wantValue:     "500",
+		},
+		{
+			name:          "IBMCloud non-VPC heartbeat interval",
+			platform:      "IBMCloud",
+			platformData:  "Classic",
+			arch:          "amd64",
+			wantKey:       "ETCD_HEARTBEAT_INTERVAL",
+			installConfig: installConfigHA,
+			wantValue:     "100",
 		},
 	}
 	for _, tt := range tests {

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ghodss/yaml"
+	v1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -202,6 +203,10 @@ func getHeartbeatInterval(envVarContext envVarContext) (map[string]string, error
 		switch {
 		case status.Azure != nil:
 			heartbeat = "500"
+		case status.IBMCloud != nil:
+			if infrastructure.Status.PlatformStatus.IBMCloud.ProviderType == v1.IBMCloudProviderTypeVPC {
+				heartbeat = "500"
+			}
 		}
 	}
 
@@ -222,6 +227,10 @@ func getElectionTimeout(envVarContext envVarContext) (map[string]string, error) 
 		switch {
 		case status.Azure != nil:
 			timeout = "2500"
+		case status.IBMCloud != nil:
+			if infrastructure.Status.PlatformStatus.IBMCloud.ProviderType == v1.IBMCloudProviderTypeVPC {
+				timeout = "2500"
+			}
 		}
 	}
 

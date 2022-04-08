@@ -63,13 +63,16 @@ func getEtcdName(_ *envVarData) (map[string]string, error) {
 }
 
 func getHeartbeatInterval(e *envVarData) (map[string]string, error) {
-	var heartbeat string
+	heartbeat := "100"
 
 	switch configv1.PlatformType(e.platform) {
 	case configv1.AzurePlatformType:
 		heartbeat = "500"
-	default:
-		heartbeat = "100"
+	case configv1.IBMCloudPlatformType:
+		switch configv1.IBMCloudProviderType(e.platformData) {
+		case configv1.IBMCloudProviderTypeVPC:
+			heartbeat = "500"
+		}
 	}
 
 	return map[string]string{
@@ -86,7 +89,7 @@ func getElectionTimeout(e *envVarData) (map[string]string, error) {
 	case configv1.IBMCloudPlatformType:
 		switch configv1.IBMCloudProviderType(e.platformData) {
 		case configv1.IBMCloudProviderTypeVPC:
-			timeout = "2000"
+			timeout = "2500"
 		}
 	}
 
