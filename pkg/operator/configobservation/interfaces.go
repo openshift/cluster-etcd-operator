@@ -9,11 +9,12 @@ import (
 )
 
 type Listers struct {
-	APIServerLister_              configlistersv1.APIServerLister
-	OpenshiftEtcdEndpointsLister  corelistersv1.EndpointsLister
-	OpenshiftEtcdPodsLister       corelistersv1.PodLister
-	OpenshiftEtcdConfigMapsLister corelistersv1.ConfigMapLister
-	NodeLister                    corelistersv1.NodeLister
+	APIServerLister_                      configlistersv1.APIServerLister
+	OpenshiftEtcdEndpointsLister          corelistersv1.EndpointsLister
+	OpenshiftEtcdPodsLister               corelistersv1.PodLister
+	OpenshiftEtcdConfigMapsLister         corelistersv1.ConfigMapLister
+	NodeLister                            corelistersv1.NodeLister
+	ConfigMapListerForKubeSystemNamespace corelistersv1.ConfigMapNamespaceLister
 
 	ResourceSync       resourcesynccontroller.ResourceSyncer
 	PreRunCachesSynced []cache.InformerSynced
