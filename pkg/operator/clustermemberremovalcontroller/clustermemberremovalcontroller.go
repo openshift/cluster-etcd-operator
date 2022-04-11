@@ -278,31 +278,23 @@ func (c *clusterMemberRemovalController) attemptToRemoveLearningMember(ctx conte
 		return err
 	}
 
-	var errs []error
+	var liveLearnerMembers []*etcdserverpb.Member
+	for _, member := range members {
+		if !member.IsLearner {
+			continue
+		}
+		liveLearnerMembers = append(liveLearnerMembers, member)
+	}
+
+	var allErrs []error
 	for _, learnerMachinePendingDeletion := range learnerMachinesPendingDeletion {
-		for _, member := range members {
-			if !member.IsLearner {
-				// ignore voting members
-				continue
-			}
-			learnerIP, err := ceohelpers.MemberToNodeInternalIP(member)
-			if err != nil {
-				memberLocator := fmt.Sprintf("[ name: %v, id: %v ]", member.Name, member.ID)
-				errs = append(errs, fmt.Errorf("failed to get an IP for member: %v, err: %v", memberLocator, err))
-				continue
-			}
-			if hasInternalIP(learnerMachinePendingDeletion, learnerIP) {
-				memberLocator := fmt.Sprintf("[ url: %v, name: %v, id: %v ]", learnerIP, member.Name, member.ID)
-				if err := c.etcdClient.MemberRemove(ctx, member.ID); err != nil {
-					errs = append(errs, fmt.Errorf("failed to remove learning member: %v, err: %v", memberLocator, err))
-					continue
-				}
-				klog.V(2).Infof("successfully removed learning member: %v from the cluster", memberLocator)
-			}
+		_, errs := c.attemptToRemoveMemberFor(ctx, liveLearnerMembers, learnerMachinePendingDeletion)
+		if len(errs) > 0 {
+			allErrs = append(allErrs, errs...)
 		}
 	}
 
-	return kerrors.NewAggregate(errs)
+	return kerrors.NewAggregate(allErrs)
 }
 
 func (c *clusterMemberRemovalController) getMachineForMember(memberInternalIP string) (*machinev1beta1.Machine, error) {
