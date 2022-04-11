@@ -6,6 +6,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1
 	github.com/ghodss/yaml v1.0.0
 	github.com/go-bindata/go-bindata v3.1.2+incompatible
+	github.com/google/go-cmp v0.5.5
 	github.com/google/uuid v1.1.2
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
 	github.com/openshift/api v0.0.0-20211209135129-c58d9f695577
@@ -61,7 +62,6 @@ require (
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/google/btree v1.0.1 // indirect
-	github.com/google/go-cmp v0.5.5 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/googleapis/gnostic v0.5.5 // indirect
 	github.com/gorilla/websocket v1.4.2 // indirect
