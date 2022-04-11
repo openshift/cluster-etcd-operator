@@ -1,71 +1,49 @@
 package ceohelpers
 
 import (
-	"fmt"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/tools/cache"
+	"k8s.io/apimachinery/pkg/runtime"
+
+	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
 )
 
 func TestReadDesiredControlPlaneReplicaCount(t *testing.T) {
 	scenarios := []struct {
 		name                             string
-		installConfigPayload             string
+		operatorSpec                     operatorv1.StaticPodOperatorSpec
 		expectedControlPlaneReplicaCount int
 		expectedError                    error
 	}{
-		// scenario 1
 		{
-			name:          "no install-config in cluster-config-1/kube-system",
-			expectedError: fmt.Errorf("missing required key: install-config for cm: cluster-config-v1/kube-system"),
-		},
-
-		// scenario 2
-		{
-			name:                 "no install-config.controlPlane field in cluster-config-1/kube-system",
-			installConfigPayload: emptyInstallConfigYaml,
-			expectedError:        fmt.Errorf("required field: install-config.controlPlane doesn't exist in cm: cluster-config-v1/kube-system"),
-		},
-
-		// scenario 3
-		{
-			name:                 "no install-config.controlPlane.replicas field in cluster-config-1/kube-system",
-			installConfigPayload: installConfigWithEmptyControlPlaneYaml,
-			expectedError:        fmt.Errorf("required field: install-config.controlPlane.replicas doesn't exist in cm: cluster-config-v1/kube-system"),
-		},
-
-		// scenario 4
-		{
-			name:                 "invalid type of install-config.controlPlane.replicas field in cluster-config-1/kube-system",
-			installConfigPayload: installConfigControlPlaneInvalidReplicasYaml,
-			expectedError:        fmt.Errorf("failed to extract field: install-config.controlPlane.replicas from cm: cluster-config-v1/kube-system, err: .replicas accessor error: 3 is of the type string, expected float64"),
-		},
-
-		// scenario 5
-		{
-			name:                             "happy path, found 3 replicas in install-config.controlPlane.replicas field",
-			installConfigPayload:             validInstallConfigYaml,
+			name: "with replicas set in the observed config only",
+			operatorSpec: operatorv1.StaticPodOperatorSpec{
+				OperatorSpec: operatorv1.OperatorSpec{
+					ObservedConfig: runtime.RawExtension{Raw: []byte(withWellKnownReplicasCountSet)},
+				},
+			},
 			expectedControlPlaneReplicaCount: 3,
+		},
+
+		{
+			name: "with replicas set in the UnsupportedConfigOverrides",
+			operatorSpec: operatorv1.StaticPodOperatorSpec{
+				OperatorSpec: operatorv1.OperatorSpec{
+					ObservedConfig:             runtime.RawExtension{Raw: []byte(withWellKnownReplicasCountSet)},
+					UnsupportedConfigOverrides: runtime.RawExtension{Raw: []byte(withReplicasCountSetInUnsupportedConfig)},
+				},
+			},
+			expectedControlPlaneReplicaCount: 7,
 		},
 	}
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
 			// test data
-			configMapIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
-			clusterConfig := &corev1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{Name: "cluster-config-v1", Namespace: "kube-system"},
-			}
-			if len(scenario.installConfigPayload) > 0 {
-				clusterConfig.Data = map[string]string{"install-config": scenario.installConfigPayload}
-			}
-			configMapIndexer.Add(clusterConfig)
-			configMapLister := corev1listers.NewConfigMapLister(configMapIndexer).ConfigMaps("kube-system")
+			fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(&scenario.operatorSpec, &operatorv1.StaticPodOperatorStatus{}, nil, nil)
 
 			// act
-			actualReplicaCount, err := ReadDesiredControlPlaneReplicasCount(configMapLister)
+			actualReplicaCount, err := ReadDesiredControlPlaneReplicasCount(fakeOperatorClient)
 
 			// validate
 			if err == nil && scenario.expectedError != nil {
@@ -84,24 +62,14 @@ func TestReadDesiredControlPlaneReplicaCount(t *testing.T) {
 	}
 }
 
-var emptyInstallConfigYaml = `
+var withWellKnownReplicasCountSet = `
+{
+ "controlPlane": {"replicas": 3}
+}
 `
 
-var installConfigWithEmptyControlPlaneYaml = `
-controlPlane:
-  architecture: amd64
-`
-
-var installConfigControlPlaneInvalidReplicasYaml = `
-controlPlane:
-  architecture: amd64
-  hyperthreading: Enabled
-  replicas: "3"
-`
-
-var validInstallConfigYaml = `
-controlPlane:
-  architecture: amd64
-  hyperthreading: Enabled
-  replicas: 3
+var withReplicasCountSetInUnsupportedConfig = `
+{
+ "controlPlane": {"replicas": 7}
+}
 `

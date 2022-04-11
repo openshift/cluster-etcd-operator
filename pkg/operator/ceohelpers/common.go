@@ -1,18 +1,20 @@
 package ceohelpers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
 
-	"github.com/ghodss/yaml"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 
 	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
-	corev1listers "k8s.io/client-go/listers/core/v1"
-
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/controlplanereplicascount"
+	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
 )
 
 // MachineDeletionHookName holds a name of the Machine Deletion Hook
@@ -21,43 +23,35 @@ const MachineDeletionHookName = "EtcdQuorumOperator"
 // MachineDeletionHookOwner holds an owner of the Machine Deletion Hook
 const MachineDeletionHookOwner = "clusteroperator/etcd"
 
-// ReadDesiredControlPlaneReplicasCount simply reds the desired Control Plane replica count from the cluster-config-v1 configmap in the kube-system namespace
-func ReadDesiredControlPlaneReplicasCount(configMapListerForKubeSystemNamespace corev1listers.ConfigMapNamespaceLister) (int, error) {
-	const clusterConfigConfigMapName = "cluster-config-v1"
-	const installConfigKeyName = "install-config"
-
-	clusterConfig, err := configMapListerForKubeSystemNamespace.Get(clusterConfigConfigMapName)
+// ReadDesiredControlPlaneReplicasCount reads the current Control Plane replica count
+func ReadDesiredControlPlaneReplicasCount(operatorClient v1helpers.StaticPodOperatorClient) (int, error) {
+	operatorSpec, _, _, err := operatorClient.GetStaticPodOperatorState()
 	if err != nil {
 		return 0, err
 	}
 
-	rawInstallConfig, hasInstallConfig := clusterConfig.Data[installConfigKeyName]
-	if !hasInstallConfig {
-		return 0, fmt.Errorf("missing required key: %s for cm: %s/kube-system", installConfigKeyName, clusterConfigConfigMapName)
-	}
-
-	var unstructuredInstallConfig map[string]interface{}
-	if err := yaml.Unmarshal([]byte(rawInstallConfig), &unstructuredInstallConfig); err != nil {
-		return 0, fmt.Errorf("failed to unmarshal key: %s to yaml from cm: %s/kube-system, err: %w", installConfigKeyName, clusterConfigConfigMapName, err)
-	}
-
-	unstructuredControlPlaneConfig, exists, err := unstructured.NestedMap(unstructuredInstallConfig, "controlPlane")
+	unstructuredMergedCfg, err := resourcemerge.MergeProcessConfig(
+		nil,
+		operatorSpec.ObservedConfig.Raw,
+		operatorSpec.UnsupportedConfigOverrides.Raw,
+	)
 	if err != nil {
-		return 0, fmt.Errorf("failed to extract field: %s.controlPlane from cm: %s/kube-system, err: %v", installConfigKeyName, clusterConfigConfigMapName, err)
+		return 0, err
 	}
-	if !exists {
-		return 0, fmt.Errorf("required field: %s.controlPlane doesn't exist in cm: %s/kube-system", installConfigKeyName, clusterConfigConfigMapName)
+
+	var unstructuredConfig map[string]interface{}
+	if err := json.Unmarshal(unstructuredMergedCfg, &unstructuredConfig); err != nil {
+		return 0, fmt.Errorf("failed to unmarshal merged operator's config, err: %w", err)
 	}
+
+	// read the current value
 	// unmarshalling JSON into an interface value always stores JSON number as a float64
-	desiredReplicas, exists, err := unstructured.NestedFloat64(unstructuredControlPlaneConfig, "replicas")
+	currentControlPlaneReplicas, _, err := unstructured.NestedFloat64(unstructuredConfig, controlplanereplicascount.ControlPlaneReplicasPath...)
 	if err != nil {
-		return 0, fmt.Errorf("failed to extract field: %s.controlPlane.replicas from cm: %s/kube-system, err: %v", installConfigKeyName, clusterConfigConfigMapName, err)
-	}
-	if !exists {
-		return 0, fmt.Errorf("required field: %s.controlPlane.replicas doesn't exist in cm: %s/kube-system", installConfigKeyName, clusterConfigConfigMapName)
+		return 0, fmt.Errorf("unable to extract %q from the existing config: %w", controlplanereplicascount.ControlPlaneReplicasPath, err)
 	}
 
-	return int(desiredReplicas), nil
+	return int(currentControlPlaneReplicas), nil
 }
 
 // MemberToNodeInternalIP extracts assigned IP address from the given member
