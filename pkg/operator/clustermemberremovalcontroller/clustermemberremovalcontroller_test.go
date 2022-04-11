@@ -8,17 +8,18 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
-	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
-	k8sfakeclient "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/kubernetes/fake"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 )
@@ -250,7 +251,6 @@ func TestClusterMemberRemovalController(t *testing.T) {
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
 			// test data
-			eventRecorder := events.NewRecorder(k8sfakeclient.NewSimpleClientset().CoreV1().Events("operator"), "test-cluster-member-removal-controller", &corev1.ObjectReference{})
 			fakeMachineAPIChecker := &fakeMachineAPI{isMachineAPIFunctional: scenario.isFunctionalMachineAPIFn}
 
 			configMapIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
@@ -298,7 +298,323 @@ func TestClusterMemberRemovalController(t *testing.T) {
 				masterMachineLister:               machineLister,
 				networkLister:                     networkLister,
 			}
-			err = target.sync(context.TODO(), factory.NewSyncContext("test-cluster-member-removal-controller", eventRecorder))
+			err = target.removeMemberWithoutMachine(context.TODO())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scenario.validateFn != nil {
+				scenario.validateFn(t, fakeEtcdClient)
+			}
+		})
+	}
+}
+
+func TestAttemptToScaleDown(t *testing.T) {
+	scenarios := []struct {
+		name                                     string
+		initialObjectsForMachineLister           []runtime.Object
+		initialObservedConfigInput               string
+		initialObjectsForConfigMapTargetNSLister []runtime.Object
+		initialEtcdMemberList                    []*etcdserverpb.Member
+		validateFn                               func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient)
+	}{
+		{
+			name:                       "scale down by one machine",
+			initialObservedConfigInput: wellKnownReplicasCountSet,
+			initialEtcdMemberList: func() []*etcdserverpb.Member {
+				members := append(wellKnownEtcdMemberList(), &etcdserverpb.Member{
+					Name:     "m-4",
+					ID:       4,
+					PeerURLs: []string{"https://10.0.139.81:1234"},
+				})
+				return members
+			}(),
+			initialObjectsForMachineLister: func() []runtime.Object {
+				m4 := machineWithHooksFor("m-4", "10.0.139.81")
+				m4.DeletionTimestamp = &metav1.Time{}
+				machines := wellKnownMasterMachines()
+				machines = append(machines, m4)
+				return machines
+			}(),
+			initialObjectsForConfigMapTargetNSLister: func() []runtime.Object {
+				cm := wellKnownEtcdEndpointsConfigMap()
+				cm.Data["m-4"] = "10.0.139.81"
+				return []runtime.Object{cm}
+			}(),
+			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
+				memberList, err := fakeEtcdClient.MemberList(context.TODO())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(memberList) != 3 {
+					t.Errorf("expected exactly 3 members, got %v", len(memberList))
+				}
+				for _, member := range memberList {
+					if member.ID == 4 {
+						t.Fatalf("expected the member: %v to be removed from the etcd cluster but it wasn't", member)
+					}
+				}
+			},
+		},
+
+		{
+			name:                                     "no excessive machine",
+			initialObjectsForMachineLister:           wellKnownMasterMachines(),
+			initialObservedConfigInput:               wellKnownReplicasCountSet,
+			initialObjectsForConfigMapTargetNSLister: []runtime.Object{wellKnownEtcdEndpointsConfigMap()},
+		},
+
+		{
+			name:                       "excessive machine without the hooks",
+			initialObservedConfigInput: wellKnownReplicasCountSet,
+			initialEtcdMemberList: func() []*etcdserverpb.Member {
+				members := append(wellKnownEtcdMemberList(), &etcdserverpb.Member{
+					Name:     "m-4",
+					ID:       4,
+					PeerURLs: []string{"https://10.0.139.81:1234"},
+				})
+				return members
+			}(),
+			initialObjectsForMachineLister: func() []runtime.Object {
+				m4 := machineFor("m-4", "10.0.139.81")
+				m4.DeletionTimestamp = &metav1.Time{}
+				machines := wellKnownMasterMachines()
+				machines = append(machines, m4)
+				return machines
+			}(),
+			initialObjectsForConfigMapTargetNSLister: func() []runtime.Object {
+				cm := wellKnownEtcdEndpointsConfigMap()
+				cm.Data["m-4"] = "10.0.139.81"
+				return []runtime.Object{cm}
+			}(),
+			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
+				memberList, err := fakeEtcdClient.MemberList(context.TODO())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(memberList) != 4 {
+					t.Errorf("expected exactly 4 members, got %v", len(memberList))
+				}
+			},
+		},
+
+		{
+			name:                       "excessive machine without deletion ts set",
+			initialObservedConfigInput: wellKnownReplicasCountSet,
+			initialEtcdMemberList: func() []*etcdserverpb.Member {
+				members := append(wellKnownEtcdMemberList(), &etcdserverpb.Member{
+					Name:     "m-4",
+					ID:       4,
+					PeerURLs: []string{"https://10.0.139.81:1234"},
+				})
+				return members
+			}(),
+			initialObjectsForMachineLister: func() []runtime.Object {
+				m4 := machineWithHooksFor("m-4", "10.0.139.81")
+				machines := wellKnownMasterMachines()
+				machines = append(machines, m4)
+				return machines
+			}(),
+			initialObjectsForConfigMapTargetNSLister: func() []runtime.Object {
+				cm := wellKnownEtcdEndpointsConfigMap()
+				cm.Data["m-4"] = "10.0.139.81"
+				return []runtime.Object{cm}
+			}(),
+			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
+				memberList, err := fakeEtcdClient.MemberList(context.TODO())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(memberList) != 4 {
+					t.Errorf("expected exactly 4 members, got %v", len(memberList))
+				}
+			},
+		},
+
+		{
+			name:                       "member machine with deletion ts set",
+			initialObservedConfigInput: wellKnownReplicasCountSet,
+			initialEtcdMemberList:      wellKnownEtcdMemberList(),
+			initialObjectsForMachineLister: func() []runtime.Object {
+				machines := wellKnownMasterMachines()
+				m0 := machines[0].(*machinev1beta1.Machine)
+				m0.DeletionTimestamp = &metav1.Time{}
+				return machines
+			}(),
+			initialObjectsForConfigMapTargetNSLister: []runtime.Object{wellKnownEtcdEndpointsConfigMap()},
+			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
+				memberList, err := fakeEtcdClient.MemberList(context.TODO())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(memberList) != 3 {
+					t.Errorf("expected exactly 3 members, got %v", len(memberList))
+				}
+			},
+		},
+
+		{
+			name:                       "excessive machine that hasn't made to be a voting member",
+			initialObservedConfigInput: wellKnownReplicasCountSet,
+			initialEtcdMemberList: func() []*etcdserverpb.Member {
+				members := append(wellKnownEtcdMemberList(), &etcdserverpb.Member{
+					Name:     "m-4",
+					ID:       4,
+					PeerURLs: []string{"https://10.0.139.81:1234"},
+				})
+				return members
+			}(),
+			initialObjectsForMachineLister: func() []runtime.Object {
+				m4 := machineFor("m-4", "10.0.139.81")
+				m4.DeletionTimestamp = &metav1.Time{}
+				machines := wellKnownMasterMachines()
+				machines = append(machines, m4)
+				return machines
+			}(),
+			initialObjectsForConfigMapTargetNSLister: []runtime.Object{wellKnownEtcdEndpointsConfigMap()},
+			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
+				memberList, err := fakeEtcdClient.MemberList(context.TODO())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(memberList) != 4 {
+					t.Errorf("expected exactly 4 members, got %v", len(memberList))
+				}
+			},
+		},
+
+		{
+			name:                       "mismatch of the number of members between the cache and the cluster",
+			initialObservedConfigInput: wellKnownReplicasCountSet,
+			initialEtcdMemberList: func() []*etcdserverpb.Member {
+				return []*etcdserverpb.Member{
+					{
+						Name:     "m-1",
+						ID:       1,
+						PeerURLs: []string{"https://10.0.139.78:1234"},
+					},
+					{
+						Name:     "m-2",
+						ID:       2,
+						PeerURLs: []string{"https://10.0.139.79:1234"},
+					},
+				}
+			}(),
+			initialObjectsForMachineLister: func() []runtime.Object {
+				m3 := machineWithHooksFor("m-3", "10.0.139.80")
+				m3.DeletionTimestamp = &metav1.Time{}
+				return []runtime.Object{machineWithHooksFor("m-1", "10.0.139.78"), machineWithHooksFor("m-2", "10.0.139.79"), m3}
+			}(),
+			initialObjectsForConfigMapTargetNSLister: func() []runtime.Object {
+				cm := wellKnownEtcdEndpointsConfigMap()
+				cm.Data["m-4"] = "10.0.139.81"
+				return []runtime.Object{cm}
+			}(),
+			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
+				memberList, err := fakeEtcdClient.MemberList(context.TODO())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(memberList) != 2 {
+					t.Errorf("expected exactly 2 members, got %v", len(memberList))
+				}
+			},
+		},
+
+		{
+			name:                       "scale down only by one machine at a time",
+			initialObservedConfigInput: wellKnownReplicasCountSet,
+			initialEtcdMemberList: func() []*etcdserverpb.Member {
+				members := append(wellKnownEtcdMemberList(), &etcdserverpb.Member{
+					Name:     "m-4",
+					ID:       4,
+					PeerURLs: []string{"https://10.0.139.81:1234"},
+				}, &etcdserverpb.Member{
+					Name:     "m-5",
+					ID:       5,
+					PeerURLs: []string{"https://10.0.139.82:1234"},
+				})
+				return members
+			}(),
+			initialObjectsForMachineLister: func() []runtime.Object {
+				m4 := machineWithHooksFor("m-4", "10.0.139.81")
+				m4.DeletionTimestamp = &metav1.Time{}
+				m5 := machineWithHooksFor("m-5", "10.0.139.82")
+				m5.DeletionTimestamp = &metav1.Time{}
+				machines := wellKnownMasterMachines()
+				machines = append(machines, m4, m5)
+				return machines
+			}(),
+			initialObjectsForConfigMapTargetNSLister: func() []runtime.Object {
+				cm := wellKnownEtcdEndpointsConfigMap()
+				cm.Data["m-4"] = "10.0.139.81"
+				cm.Data["m-5"] = "10.0.139.82"
+				return []runtime.Object{cm}
+			}(),
+			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
+				memberList, err := fakeEtcdClient.MemberList(context.TODO())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(memberList) != 4 {
+					t.Errorf("expected exactly 4 members, got %v", len(memberList))
+				}
+
+				// either m4 or m5 could have been deleted, but not both
+				var m4Found, m5Found bool
+				for _, member := range memberList {
+					if member.ID == 4 {
+						m4Found = true
+					}
+					if member.ID == 5 {
+						m5Found = true
+					}
+				}
+				if m4Found && m5Found {
+					t.Fatal("expected either m4 or m5 to be deleted but not both")
+				}
+			},
+		},
+	}
+
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			// test data
+			eventRecorder := events.NewRecorder(fake.NewSimpleClientset().CoreV1().Events("operator"), "test-cluster-member-removal-controller", &corev1.ObjectReference{})
+			configMapTargetNSIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+			for _, initialObj := range scenario.initialObjectsForConfigMapTargetNSLister {
+				configMapTargetNSIndexer.Add(initialObj)
+			}
+			configMapTargetNSLister := corev1listers.NewConfigMapLister(configMapTargetNSIndexer).ConfigMaps("openshift-etcd")
+
+			machineIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+			for _, initialObj := range scenario.initialObjectsForMachineLister {
+				machineIndexer.Add(initialObj)
+			}
+			machineLister := machinelistersv1beta1.NewMachineLister(machineIndexer)
+			machineSelector, err := labels.Parse("machine.openshift.io/cluster-api-machine-role=master")
+			if err != nil {
+				t.Fatal(err)
+			}
+			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(scenario.initialEtcdMemberList)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(&operatorv1.StaticPodOperatorSpec{
+				OperatorSpec: operatorv1.OperatorSpec{
+					ObservedConfig: runtime.RawExtension{Raw: []byte(scenario.initialObservedConfigInput)},
+				},
+			}, &operatorv1.StaticPodOperatorStatus{}, nil, nil)
+
+			// act
+			target := clusterMemberRemovalController{
+				operatorClient:                    fakeOperatorClient,
+				etcdClient:                        fakeEtcdClient,
+				masterMachineLister:               machineLister,
+				masterMachineSelector:             machineSelector,
+				configMapListerForTargetNamespace: configMapTargetNSLister,
+			}
+			err = target.attemptToScaleDown(context.TODO(), eventRecorder)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -397,3 +713,9 @@ func wellKnownMasterMachines() []runtime.Object {
 		machineWithHooksFor("m-3", "10.0.139.80"),
 	}
 }
+
+var wellKnownReplicasCountSet = `
+{
+ "controlPlane": {"replicas": 3}
+}
+`

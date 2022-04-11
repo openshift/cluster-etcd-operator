@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
+
 	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
@@ -31,6 +33,7 @@ import (
 var errNotFound = errors.New("not found")
 
 type clusterMemberRemovalController struct {
+	operatorClient                    operatorv1helpers.StaticPodOperatorClient
 	etcdClient                        etcdcli.EtcdClient
 	masterNodeLister                  corev1listers.NodeLister
 	masterMachineLister               machinelistersv1beta1.MachineLister
@@ -41,6 +44,8 @@ type clusterMemberRemovalController struct {
 	machineAPIChecker     ceohelpers.MachineAPIChecker
 	masterMachineSelector labels.Selector
 	masterNodeSelector    labels.Selector
+
+	lastTimeScaleDownEventWasSent time.Time
 }
 
 // NewClusterMemberRemovalController removes an etcd member if the machine and a node for the etcd member is gone and the machine-api is active
@@ -50,7 +55,7 @@ type clusterMemberRemovalController struct {
 //  make sure nodeInformer and machineInformer contain only filtered data
 //  otherwise it might be expensive to react to every node update in larger installations
 func NewClusterMemberRemovalController(
-	operatorClient operatorv1helpers.OperatorClient,
+	operatorClient operatorv1helpers.StaticPodOperatorClient,
 	etcdClient etcdcli.EtcdClient,
 	machineAPIChecker ceohelpers.MachineAPIChecker,
 	masterMachineSelector labels.Selector, masterNodeSelector labels.Selector,
@@ -61,6 +66,7 @@ func NewClusterMemberRemovalController(
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &clusterMemberRemovalController{
+		operatorClient:                    operatorClient,
 		etcdClient:                        etcdClient,
 		machineAPIChecker:                 machineAPIChecker,
 		masterMachineSelector:             masterMachineSelector,
@@ -82,7 +88,7 @@ func NewClusterMemberRemovalController(
 		).ToController("ClusterMemberRemovalController", eventRecorder.WithComponentSuffix("cluster-member-removal-controller"))
 }
 
-func (c *clusterMemberRemovalController) sync(ctx context.Context, _ factory.SyncContext) error {
+func (c *clusterMemberRemovalController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	// only attempt to scale down if the machine API is functional
 	if isFunctional, err := c.machineAPIChecker.IsFunctional(); err != nil {
 		return err
@@ -97,8 +103,87 @@ func (c *clusterMemberRemovalController) sync(ctx context.Context, _ factory.Syn
 	if err := c.attemptToRemoveLearningMember(ctx); err != nil {
 		errs = append(errs, err)
 	}
+	if err := c.attemptToScaleDown(ctx, syncCtx.Recorder()); err != nil {
+		errs = append(errs, err)
+	}
 	return kerrors.NewAggregate(errs)
 
+}
+
+// attemptToScaleDown attempts to remove a voting member only once we have identified that
+// a Machine resource is being deleted and a replacement member has been created
+func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context, recorder events.Recorder) error {
+	currentVotingMemberIPListSet, err := c.votingMemberIPListSet()
+	if err != nil {
+		return err
+	}
+
+	desiredControlPlaneReplicasCount, err := ceohelpers.ReadDesiredControlPlaneReplicasCount(c.operatorClient)
+	if err != nil {
+		return err
+	}
+	if desiredControlPlaneReplicasCount == 0 {
+		return fmt.Errorf("desired control plane replicas count cannot be empty")
+	}
+	if currentVotingMemberIPListSet.Len() <= desiredControlPlaneReplicasCount {
+		klog.V(4).Infof("Ignoring scale-down since the number of etcd voting members (%d) < desired number of control-plane replicas (%d) ", currentVotingMemberIPListSet.Len(), desiredControlPlaneReplicasCount)
+		return nil
+	}
+
+	memberMachines, err := c.currentMemberMachines()
+	if err != nil {
+		return err
+	}
+
+	var votingMachines []*machinev1beta1.Machine
+	for memberMachineIP, memberMachine := range ceohelpers.IndexMachinesByNodeInternalIP(memberMachines) {
+		if currentVotingMemberIPListSet.Has(memberMachineIP) {
+			votingMachines = append(votingMachines, memberMachine)
+		}
+	}
+
+	votingMachinesPendingDeletion := ceohelpers.FilterMachinesPendingDeletion(votingMachines)
+	if len(votingMachinesPendingDeletion) == 0 {
+		return nil
+	}
+
+	// based on the data in the cache it looks like we have something to do
+	// get the live members, to observe the current state and the member IDs
+	members, err := c.etcdClient.MemberList(ctx)
+	if err != nil {
+		return err
+	}
+
+	var liveVotingMembers []*etcdserverpb.Member
+	for _, member := range members {
+		if member.IsLearner {
+			continue
+		}
+		liveVotingMembers = append(liveVotingMembers, member)
+	}
+
+	// do not trust data in the cache, compare with the current state
+	if len(liveVotingMembers) <= desiredControlPlaneReplicasCount {
+		klog.V(2).Infof("Ignoring scale down since the number of live etcd voting members (%d) < desired number of control-plane replicas (%d) ", len(liveVotingMembers), desiredControlPlaneReplicasCount)
+		if time.Now().After(c.lastTimeScaleDownEventWasSent.Add(5 * time.Minute)) {
+			recorder.Eventf("ScaleDown", "Ignoring scale down since the number of live etcd voting members (%d) < desired number of control-plane replicas (%d) ", len(liveVotingMembers), desiredControlPlaneReplicasCount)
+			c.lastTimeScaleDownEventWasSent = time.Now()
+		}
+		return nil
+	}
+
+	var allErrs []error
+	for _, votingMachinePendingDeletion := range votingMachinesPendingDeletion {
+		removed, errs := c.attemptToRemoveMemberFor(ctx, liveVotingMembers, votingMachinePendingDeletion)
+		if removed {
+			break // we want to remove only one member at a time
+		}
+		if len(errs) > 0 {
+			allErrs = append(allErrs, errs...)
+		}
+	}
+
+	return kerrors.NewAggregate(allErrs)
 }
 
 func (c *clusterMemberRemovalController) removeMemberWithoutMachine(ctx context.Context) error {
@@ -314,6 +399,28 @@ func (c *clusterMemberRemovalController) currentMemberMachines() ([]*machinev1be
 		return nil, err
 	}
 	return ceohelpers.FilterMachinesWithMachineDeletionHook(masterMachines), nil
+}
+
+func (c *clusterMemberRemovalController) attemptToRemoveMemberFor(ctx context.Context, members []*etcdserverpb.Member, machinePendingDeletion *machinev1beta1.Machine) (removed bool, errs []error) {
+	for _, member := range members {
+		memberIP, err := ceohelpers.MemberToNodeInternalIP(member)
+		if err != nil {
+			memberLocator := fmt.Sprintf("[ name: %v, id: %v ]", member.Name, member.ID)
+			errs = append(errs, fmt.Errorf("failed to get an IP for member: %v, err: %v", memberLocator, err))
+			continue // ignore unhealthy members
+		}
+		if hasInternalIP(machinePendingDeletion, memberIP) {
+			memberLocator := fmt.Sprintf("[ url: %v, name: %v, id: %v ]", memberIP, member.Name, member.ID)
+			if err := c.etcdClient.MemberRemove(ctx, member.ID); err != nil {
+				errs = append(errs, fmt.Errorf("failed to remove member: %v, err: %v", memberLocator, err))
+				break // stop, we have found a matching member for the provided machine
+			}
+			klog.V(2).Infof("successfully removed member: %v from the cluster", memberLocator)
+			removed = true
+			break // stop, we have found a matching member for the provided machine
+		}
+	}
+	return removed, errs
 }
 
 func hasInternalIP(machine *machinev1beta1.Machine, memberInternalIP string) bool {
