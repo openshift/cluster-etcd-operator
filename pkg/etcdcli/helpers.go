@@ -36,14 +36,7 @@ func (f *fakeEtcdClient) Status(ctx context.Context, target string) (*clientv3.S
 }
 
 func (f *fakeEtcdClient) MemberAdd(ctx context.Context, peerURL string) error {
-	memberCount := len(f.members)
-	m := &etcdserverpb.Member{
-		Name:     fmt.Sprintf("m-%d", memberCount+1),
-		ID:       uint64(memberCount + 1),
-		PeerURLs: []string{peerURL},
-	}
-	f.members = append(f.members, m)
-	return nil
+	panic("implement me")
 }
 
 func (f *fakeEtcdClient) MemberList(ctx context.Context) ([]*etcdserverpb.Member, error) {
