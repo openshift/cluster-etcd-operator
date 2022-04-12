@@ -20,8 +20,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	kerrors "k8s.io/apimachinery/pkg/util/errors"
-	"k8s.io/apimachinery/pkg/util/sets"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
@@ -90,15 +88,7 @@ func (c *clusterMemberRemovalController) sync(ctx context.Context, _ factory.Syn
 		return nil
 	}
 
-	var errs []error
-	if err := c.removeMemberWithoutMachine(ctx); err != nil {
-		errs = append(errs, err)
-	}
-	if err := c.attemptToRemoveLearningMember(ctx); err != nil {
-		errs = append(errs, err)
-	}
-	return kerrors.NewAggregate(errs)
-
+	return c.removeMemberWithoutMachine(ctx)
 }
 
 func (c *clusterMemberRemovalController) removeMemberWithoutMachine(ctx context.Context) error {
@@ -162,62 +152,6 @@ func (c *clusterMemberRemovalController) removeMemberWithoutMachine(ctx context.
 		}
 	}
 	return nil
-}
-
-// attemptToRemoveLearningMember attempts to remove a learning member pending deletion regardless of whether a replacement member has been found
-func (c *clusterMemberRemovalController) attemptToRemoveLearningMember(ctx context.Context) error {
-	currentVotingMemberIPListSet, err := c.votingMemberIPListSet()
-	if err != nil {
-		return err
-	}
-	memberMachines, err := c.currentMemberMachines()
-	if err != nil {
-		return err
-	}
-	var learningMachines []*machinev1beta1.Machine
-	for memberMachineIP, memberMachine := range ceohelpers.IndexMachinesByNodeInternalIP(memberMachines) {
-		if !currentVotingMemberIPListSet.Has(memberMachineIP) {
-			learningMachines = append(learningMachines, memberMachine)
-		}
-	}
-
-	learnerMachinesPendingDeletion := ceohelpers.FilterMachinesPendingDeletion(learningMachines)
-	if len(learnerMachinesPendingDeletion) == 0 {
-		return nil
-	}
-
-	// based on the data in the cache it looks like we have something to do
-	// get the live members, to observe the current state and the member IDs
-	members, err := c.etcdClient.MemberList(ctx)
-	if err != nil {
-		return err
-	}
-
-	var errs []error
-	for _, learnerMachinePendingDeletion := range learnerMachinesPendingDeletion {
-		for _, member := range members {
-			if !member.IsLearner {
-				// ignore voting members
-				continue
-			}
-			learnerIP, err := ceohelpers.MemberToNodeInternalIP(member)
-			if err != nil {
-				memberLocator := fmt.Sprintf("[ name: %v, id: %v ]", member.Name, member.ID)
-				errs = append(errs, fmt.Errorf("failed to get an IP for member: %v, err: %v", memberLocator, err))
-				continue
-			}
-			if hasInternalIP(learnerMachinePendingDeletion, learnerIP) {
-				memberLocator := fmt.Sprintf("[ url: %v, name: %v, id: %v ]", learnerIP, member.Name, member.ID)
-				if err := c.etcdClient.MemberRemove(ctx, member.ID); err != nil {
-					errs = append(errs, fmt.Errorf("failed to remove learning member: %v, err: %v", memberLocator, err))
-					continue
-				}
-				klog.V(2).Infof("successfully removed learning member: %v from the cluster", memberLocator)
-			}
-		}
-	}
-
-	return kerrors.NewAggregate(errs)
 }
 
 func (c *clusterMemberRemovalController) getMachineForMember(memberInternalIP string) (*machinev1beta1.Machine, error) {
@@ -292,35 +226,4 @@ func (c *clusterMemberRemovalController) findMachineByNodeInternalIP(nodeInterna
 		}
 	}
 	return nil, nil
-}
-
-func (c *clusterMemberRemovalController) votingMemberIPListSet() (sets.String, error) {
-	etcdEndpointsConfigMap, err := c.configMapListerForTargetNamespace.Get("etcd-endpoints")
-	if err != nil {
-		return sets.NewString(), err // should not happen
-	}
-	currentVotingMemberIPListSet := sets.NewString()
-	for _, votingMemberIP := range etcdEndpointsConfigMap.Data {
-		currentVotingMemberIPListSet.Insert(votingMemberIP)
-	}
-
-	return currentVotingMemberIPListSet, nil
-}
-
-// currentMemberMachines returns machines with the deletion hooks from the lister
-func (c *clusterMemberRemovalController) currentMemberMachines() ([]*machinev1beta1.Machine, error) {
-	masterMachines, err := c.masterMachineLister.List(c.masterMachineSelector)
-	if err != nil {
-		return nil, err
-	}
-	return ceohelpers.FilterMachinesWithMachineDeletionHook(masterMachines), nil
-}
-
-func hasInternalIP(machine *machinev1beta1.Machine, memberInternalIP string) bool {
-	for _, addr := range machine.Status.Addresses {
-		if addr.Type == corev1.NodeInternalIP && addr.Address == memberInternalIP {
-			return true
-		}
-	}
-	return false
 }
