@@ -261,7 +261,7 @@ func (c *clusterMemberRemovalController) getNodeForMember(memberInternalIP strin
 	}
 
 	for _, masterNode := range masterNodes {
-		internalNodeIP, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, masterNode)
+		internalNodeIP, _, err := dnshelpers.GetPreferredInternalIPAddressForNodeName(network, masterNode)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get internal IP for node: %w", err)
 		}
