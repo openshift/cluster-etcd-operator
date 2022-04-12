@@ -12,19 +12,17 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
-	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
@@ -37,46 +35,52 @@ type ClusterMemberController struct {
 	podLister      corev1listers.PodLister
 	nodeLister     corev1listers.NodeLister
 	networkLister  configv1listers.NetworkLister
-	// machineAPIChecker determines if the precondition for this controller is met,
-	// this controller can be run only on a cluster that exposes a functional Machine API
-	machineAPIChecker ceohelpers.MachineAPIChecker
-
-	masterMachineLister   machinelistersv1beta1.MachineLister
-	masterMachineSelector labels.Selector
 }
 
 func NewClusterMemberController(
 	operatorClient v1helpers.OperatorClient,
-	machineAPIChecker ceohelpers.MachineAPIChecker,
 	kubeInformers v1helpers.KubeInformersForNamespaces,
 	networkInformer configv1informers.NetworkInformer,
-	masterMachineInformer cache.SharedIndexInformer,
-	masterMachineSelector labels.Selector,
 	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &ClusterMemberController{
-		operatorClient:        operatorClient,
-		machineAPIChecker:     machineAPIChecker,
-		etcdClient:            etcdClient,
-		podLister:             kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
-		nodeLister:            kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
-		networkLister:         networkInformer.Lister(),
-		masterMachineLister:   machinelistersv1beta1.NewMachineLister(masterMachineInformer.GetIndexer()),
-		masterMachineSelector: masterMachineSelector,
+		operatorClient: operatorClient,
+		etcdClient:     etcdClient,
+		podLister:      kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
+		nodeLister:     kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
+		networkLister:  networkInformer.Lister(),
 	}
-	return factory.New().ResyncEvery(time.Minute).
-		WithBareInformers(networkInformer.Informer()).
-		WithInformers(
-			kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer(),
-			kubeInformers.InformersFor("").Core().V1().Nodes().Informer(),
-			operatorClient.Informer(),
-			masterMachineInformer,
-		).WithSync(c.sync).WithSyncDegradedOnError(operatorClient).ResyncEvery(time.Minute).ToController("ClusterMemberController", eventRecorder.WithComponentSuffix("cluster-member-controller"))
+	return factory.New().ResyncEvery(time.Minute).WithInformers(
+		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer(),
+		kubeInformers.InformersFor("").Core().V1().Nodes().Informer(),
+		networkInformer.Informer(),
+		operatorClient.Informer(),
+	).WithSync(c.sync).ResyncEvery(time.Minute).ToController("ClusterMemberController", eventRecorder.WithComponentSuffix("cluster-member-controller"))
 }
 
 func (c *ClusterMemberController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
-	return c.reconcileMembers(ctx, syncCtx.Recorder())
+	err := c.reconcileMembers(ctx, syncCtx.Recorder())
+	if err != nil {
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+			Type:    "ClusterMemberControllerDegraded",
+			Status:  operatorv1.ConditionTrue,
+			Reason:  "Error",
+			Message: err.Error(),
+		}))
+		if updateErr != nil {
+			syncCtx.Recorder().Warning("ClusterMemberControllerUpdatingStatus", updateErr.Error())
+		}
+		return err
+	}
+
+	_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient,
+		v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+			Type:   "ClusterMemberControllerDegraded",
+			Status: operatorv1.ConditionFalse,
+			Reason: "AsExpected",
+		}))
+	return updateErr
 }
 
 func (c *ClusterMemberController) reconcileMembers(ctx context.Context, recorder events.Recorder) error {
@@ -97,52 +101,19 @@ func (c *ClusterMemberController) reconcileMembers(ctx context.Context, recorder
 	case podToAdd == nil:
 		// no more work left to do
 		return nil
+	default:
+		recorder.Eventf("FoundPodToScale", "found pod to add to etcd membership: %v", podToAdd.Name)
 	}
 
 	etcdHost, err := c.getEtcdPeerHostToScale(podToAdd)
 	if err != nil {
 		return fmt.Errorf("could not get etcd peer host :%w", err)
 	}
-
-	if machineForHostPendingDeletion, err := c.isMachinePendingDeletionFor(etcdHost); err != nil {
-		return err
-	} else if machineForHostPendingDeletion {
-		return nil
-	}
-
-	recorder.Eventf("FoundPodToScale", "found pod to add to etcd membership: %v", podToAdd.Name)
 	err = c.etcdClient.MemberAdd(ctx, fmt.Sprintf("https://%s:2380", etcdHost))
 	if err != nil {
 		return fmt.Errorf("could not add member :%w", err)
 	}
 	return nil
-}
-
-func (c *ClusterMemberController) isMachinePendingDeletionFor(etcdHost string) (bool, error) {
-	if isFunctional, err := c.machineAPIChecker.IsFunctional(); err != nil {
-		return false, err
-	} else if !isFunctional {
-		// always return false when the machine API is off
-		// otherwise we won't be able to add any member
-		return false, nil
-	}
-
-	masterMachines, err := c.masterMachineLister.List(c.masterMachineSelector)
-	if err != nil {
-		return false, err
-	}
-
-	// one we have functional machine API, get the corresponding machine and check DeletionTimestamp
-	switch machineForEtcdHost, hasMachine := ceohelpers.IndexMachinesByNodeInternalIP(masterMachines)[etcdHost]; {
-	case hasMachine && machineForEtcdHost.DeletionTimestamp != nil:
-		klog.V(2).Infof("member: %v has a machine that is pending deletion: %v", etcdHost, machineForEtcdHost.Name)
-		return true, nil
-	case !hasMachine:
-		return false, fmt.Errorf("unable to find machine for member: %v", etcdHost)
-	default:
-		// we've found a machine and it is not pending deletion
-		return false, nil
-	}
 }
 
 func (c *ClusterMemberController) getEtcdPodToAddToMembership(ctx context.Context) (*corev1.Pod, error) {
