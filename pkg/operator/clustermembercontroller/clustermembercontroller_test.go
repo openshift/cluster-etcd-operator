@@ -277,9 +277,11 @@ func TestReconcileMembers(t *testing.T) {
 		podLister                      corev1lister.PodLister
 		expectedError                  error
 		validateFn                     func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient)
+		serviceNetwork                 string
 	}{
 		{
 			name:                           "member is added, pod not ready, machine not pending deletion",
+			serviceNetwork:                 "172.30.0.0/16",
 			isFunctionalMachineAPIFn:       alwaysTrueIsFunctionalMachineAPIFn,
 			initialObjectsForMachineLister: []runtime.Object{wellKnownMasterMachine()},
 			initialObjectsForNodeLister:    []runtime.Object{wellKnownMasterNode()},
@@ -317,7 +319,54 @@ func TestReconcileMembers(t *testing.T) {
 			},
 		},
 		{
+			name:                           "ipv6 member is added, pod not ready, machine not pending deletion",
+			serviceNetwork:                 "fd02::/112",
+			isFunctionalMachineAPIFn:       alwaysTrueIsFunctionalMachineAPIFn,
+			initialObjectsForMachineLister: []runtime.Object{wellKnownMasterMachineIpv6()},
+			initialObjectsForNodeLister:    []runtime.Object{wellKnownMasterNodeIpv6()},
+			initialObjectsForPodLister: []runtime.Object{
+				&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "etcd-a",
+						Namespace: "openshift-etcd",
+						Labels:    labels.Set{"app": "etcd"},
+					},
+					Spec: corev1.PodSpec{
+						NodeName: "m-0",
+					},
+					Status: corev1.PodStatus{
+						Phase: "Running",
+						ContainerStatuses: []corev1.ContainerStatus{
+							{
+								Name:  "etcd",
+								Ready: false,
+								State: corev1.ContainerState{
+									Running: &corev1.ContainerStateRunning{},
+								},
+							},
+						},
+					},
+				}},
+			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
+				memberList, err := fakeEtcdClient.MemberList(context.TODO())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(memberList) != 1 {
+					t.Errorf("expected exactly 1 members, got %v", len(memberList))
+				}
+				if len(memberList[0].PeerURLs) != 1 {
+					t.Errorf("expected exactly 1 PeerURLs, got %v", len(memberList[0].PeerURLs))
+				}
+				expectedPeerURL := "https://[fd2e:6f44:5dd8:c956::16]:2380"
+				if memberList[0].PeerURLs[0] != expectedPeerURL {
+					t.Errorf("expected PeerURL %s got %s", expectedPeerURL, memberList[0].PeerURLs)
+				}
+			},
+		},
+		{
 			name:                     "member not added, machine pending deletion",
+			serviceNetwork:           "172.30.0.0/16",
 			isFunctionalMachineAPIFn: alwaysTrueIsFunctionalMachineAPIFn,
 			initialObjectsForMachineLister: func() []runtime.Object {
 				machine := wellKnownMasterMachine()
@@ -360,6 +409,7 @@ func TestReconcileMembers(t *testing.T) {
 		},
 		{
 			name:                     "member is added, pod not ready, machine pending deletion, machine api off",
+			serviceNetwork:           "172.30.0.0/16",
 			isFunctionalMachineAPIFn: func() (bool, error) { return false, nil },
 			initialObjectsForMachineLister: func() []runtime.Object {
 				machine := wellKnownMasterMachine()
@@ -402,6 +452,7 @@ func TestReconcileMembers(t *testing.T) {
 		},
 		{
 			name:                        "member not added, machine not found",
+			serviceNetwork:              "172.30.0.0/16",
 			isFunctionalMachineAPIFn:    alwaysTrueIsFunctionalMachineAPIFn,
 			initialObjectsForNodeLister: []runtime.Object{wellKnownMasterNode()},
 			initialObjectsForPodLister: []runtime.Object{
@@ -455,7 +506,7 @@ func TestReconcileMembers(t *testing.T) {
 				t.Fatal(err)
 			}
 			networkIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
-			networkIndexer.Add(&configv1.Network{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Spec: configv1.NetworkSpec{ServiceNetwork: []string{"172.30.0.0/16"}}})
+			networkIndexer.Add(&configv1.Network{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Spec: configv1.NetworkSpec{ServiceNetwork: []string{scenario.serviceNetwork}}})
 			networkLister := configv1listers.NewNetworkLister(networkIndexer)
 			nodeIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
 			for _, initialObj := range scenario.initialObjectsForNodeLister {
@@ -499,6 +550,10 @@ func wellKnownMasterMachine() *machinev1beta1.Machine {
 	return machineFor("m-0", "10.0.139.78")
 }
 
+func wellKnownMasterMachineIpv6() *machinev1beta1.Machine {
+	return machineFor("m-0", "fd2e:6f44:5dd8:c956::16")
+}
+
 func machineFor(name, internalIP string) *machinev1beta1.Machine {
 	return &machinev1beta1.Machine{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"machine.openshift.io/cluster-api-machine-role": "master"}},
@@ -518,6 +573,18 @@ func wellKnownMasterNode() *corev1.Node {
 			{
 				Type:    corev1.NodeInternalIP,
 				Address: "10.0.139.78",
+			},
+		}},
+	}
+}
+
+func wellKnownMasterNodeIpv6() *corev1.Node {
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "m-0", Labels: map[string]string{"node-role.kubernetes.io/master": ""}},
+		Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{
+			{
+				Type:    corev1.NodeInternalIP,
+				Address: "fd2e:6f44:5dd8:c956::16",
 			},
 		}},
 	}

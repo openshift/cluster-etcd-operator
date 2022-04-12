@@ -3,6 +3,7 @@ package clustermembercontroller
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -111,7 +112,7 @@ func (c *ClusterMemberController) reconcileMembers(ctx context.Context, recorder
 	}
 
 	recorder.Eventf("FoundPodToScale", "found pod to add to etcd membership: %v", podToAdd.Name)
-	err = c.etcdClient.MemberAdd(ctx, fmt.Sprintf("https://%s:2380", etcdHost))
+	err = c.etcdClient.MemberAdd(ctx, fmt.Sprintf("https://%s", net.JoinHostPort(etcdHost, "2380")))
 	if err != nil {
 		return fmt.Errorf("could not add member :%w", err)
 	}
@@ -200,5 +201,6 @@ func (c *ClusterMemberController) getEtcdPeerHostToScale(podToAdd *corev1.Pod) (
 		return "", err
 	}
 
-	return dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
+	ip, _, err := dnshelpers.GetPreferredInternalIPAddressForNodeName(network, node)
+	return ip, err
 }
