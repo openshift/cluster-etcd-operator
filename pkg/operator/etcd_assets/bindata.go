@@ -8,6 +8,7 @@
 // bindata/etcd/ns.yaml
 // bindata/etcd/pod-cm.yaml
 // bindata/etcd/pod.yaml
+// bindata/etcd/quorumguard-deployment.yaml
 // bindata/etcd/restore-pod-cm.yaml
 // bindata/etcd/restore-pod.yaml
 // bindata/etcd/sa.yaml
@@ -791,15 +792,28 @@ ${COMPUTED_ENV_VARS}
         memory: 600Mi
         cpu: 300m
     readinessProbe:
-      httpGet:
-        port: 9980
-        path: readyz
-        scheme: HTTPS
-      initialDelaySeconds: 10
-      timeoutSeconds: 10
+      exec:
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -xe
+
+          # Unix sockets are used for health checks to ensure that the pod is reporting readiness of the etcd process
+          # in this container. While this might seem unnecessary the use of SO_REUSEADDR has made this explicitly
+          # required as the kernel will allow the reuse of a port while in TIME_WAIT. etcd requires socket
+          # path in this format <name>:<port> so port 0 is used only to meet this requirement.
+          unset ETCDCTL_ENDPOINTS
+          /usr/bin/etcdctl \
+            --command-timeout=2s \
+            --dial-timeout=2s \
+            --endpoints=unixs://${NODE_NODE_ENVVAR_NAME_IP}:0 \
+            endpoint health -w json | grep \"health\":true
       failureThreshold: 3
+      initialDelaySeconds: 3
       periodSeconds: 5
       successThreshold: 1
+      timeoutSeconds: 5
     securityContext:
       privileged: true
     volumeMounts:
@@ -886,34 +900,6 @@ ${COMPUTED_ENV_VARS}
       requests:
         memory: 70Mi
         cpu: 50m
-  - name: etcd-readyz
-    image: ${OPERATOR_IMAGE}
-    imagePullPolicy: IfNotPresent
-    terminationMessagePolicy: FallbackToLogsOnError
-    command: [ "cluster-etcd-operator", "readyz" ]
-    args:
-      - --target=https://localhost:2379
-      - --listen-port=9980
-      - --serving-cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.crt
-      - --serving-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.key
-      - --client-cert-file=$(ETCDCTL_CERT)
-      - --client-key-file=$(ETCDCTL_KEY)
-      - --client-cacert-file=$(ETCDCTL_CACERT)
-    ports:
-    - containerPort: 9980
-      name: readyz
-      protocol: TCP
-    resources:
-      requests:
-        memory: 50Mi
-        cpu: 10m
-    env:
-${COMPUTED_ENV_VARS}
-    volumeMounts:
-      - mountPath: /var/log/etcd/
-        name: log-dir
-      - mountPath: /etc/kubernetes/static-pod-certs
-        name: cert-dir
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
@@ -951,6 +937,121 @@ func etcdPodYaml() (*asset, error) {
 	}
 
 	info := bindataFileInfo{name: "etcd/pod.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
+var _etcdQuorumguardDeploymentYaml = []byte(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: etcd-quorum-guard
+  namespace: openshift-etcd
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      k8s-app: etcd-quorum-guard
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        name: etcd-quorum-guard
+        k8s-app: etcd-quorum-guard
+    spec:
+      hostNetwork: true
+      affinity: # podAffinity is managed/defined by quorum-guard controller
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: k8s-app
+                    operator: In
+                    values:
+                      - "etcd-quorum-guard"
+              topologyKey: kubernetes.io/hostname
+      nodeSelector:
+        node-role.kubernetes.io/master: ""
+      priorityClassName: "system-cluster-critical"
+      terminationGracePeriodSeconds: 3
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          effect: NoSchedule
+          operator: Exists
+        - key: node.kubernetes.io/not-ready
+          effect: NoExecute
+          operator: Exists
+        - key: node.kubernetes.io/unreachable
+          effect: NoExecute
+          operator: Exists
+        - key: node-role.kubernetes.io/etcd
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: guard
+          image: quay.io/openshift/origin-cli:latest
+          imagePullPolicy: IfNotPresent
+          terminationMessagePolicy: FallbackToLogsOnError
+          volumeMounts:
+            - mountPath: /var/run/secrets/etcd-client
+              name: etcd-client
+            - mountPath: /var/run/configmaps/etcd-ca
+              name: etcd-ca
+          command:
+            - /bin/bash
+          args:
+            - -c
+            - |
+              # properly handle TERM and exit as soon as it is signaled
+              set -euo pipefail
+              trap 'jobs -p | xargs -r kill; exit 0' TERM
+              sleep infinity & wait
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  declare -r health_endpoint="https://localhost:2379/health"
+                  declare -r cert="/var/run/secrets/etcd-client/tls.crt"
+                  declare -r key="/var/run/secrets/etcd-client/tls.key"
+                  declare -r cacert="/var/run/configmaps/etcd-ca/ca-bundle.crt"
+                  export NSS_SDB_USE_CACHE=no
+                  [[ -z $cert || -z $key ]] && exit 1
+                  curl --max-time 2 --silent --cert "${cert//:/\:}" --key "$key" --cacert "$cacert" "$health_endpoint" |grep '"health":"true"'
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 10m
+              memory: 5Mi
+          securityContext:
+            privileged: true
+      volumes:
+        - name: etcd-client
+          secret:
+            secretName: etcd-client
+        - name: etcd-ca
+          configMap:
+            name: etcd-ca-bundle
+`)
+
+func etcdQuorumguardDeploymentYamlBytes() ([]byte, error) {
+	return _etcdQuorumguardDeploymentYaml, nil
+}
+
+func etcdQuorumguardDeploymentYaml() (*asset, error) {
+	bytes, err := etcdQuorumguardDeploymentYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "etcd/quorumguard-deployment.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
@@ -1263,19 +1364,20 @@ func AssetNames() []string {
 
 // _bindata is a table, holding each asset generator, mapped to its name.
 var _bindata = map[string]func() (*asset, error){
-	"etcd/cluster-backup-pod.yaml": etcdClusterBackupPodYaml,
-	"etcd/cluster-backup.sh":       etcdClusterBackupSh,
-	"etcd/cluster-restore.sh":      etcdClusterRestoreSh,
-	"etcd/cm.yaml":                 etcdCmYaml,
-	"etcd/etcd-common-tools":       etcdEtcdCommonTools,
-	"etcd/ns.yaml":                 etcdNsYaml,
-	"etcd/pod-cm.yaml":             etcdPodCmYaml,
-	"etcd/pod.yaml":                etcdPodYaml,
-	"etcd/restore-pod-cm.yaml":     etcdRestorePodCmYaml,
-	"etcd/restore-pod.yaml":        etcdRestorePodYaml,
-	"etcd/sa.yaml":                 etcdSaYaml,
-	"etcd/scripts-cm.yaml":         etcdScriptsCmYaml,
-	"etcd/svc.yaml":                etcdSvcYaml,
+	"etcd/cluster-backup-pod.yaml":     etcdClusterBackupPodYaml,
+	"etcd/cluster-backup.sh":           etcdClusterBackupSh,
+	"etcd/cluster-restore.sh":          etcdClusterRestoreSh,
+	"etcd/cm.yaml":                     etcdCmYaml,
+	"etcd/etcd-common-tools":           etcdEtcdCommonTools,
+	"etcd/ns.yaml":                     etcdNsYaml,
+	"etcd/pod-cm.yaml":                 etcdPodCmYaml,
+	"etcd/pod.yaml":                    etcdPodYaml,
+	"etcd/quorumguard-deployment.yaml": etcdQuorumguardDeploymentYaml,
+	"etcd/restore-pod-cm.yaml":         etcdRestorePodCmYaml,
+	"etcd/restore-pod.yaml":            etcdRestorePodYaml,
+	"etcd/sa.yaml":                     etcdSaYaml,
+	"etcd/scripts-cm.yaml":             etcdScriptsCmYaml,
+	"etcd/svc.yaml":                    etcdSvcYaml,
 }
 
 // AssetDir returns the file names below a certain
@@ -1320,19 +1422,20 @@ type bintree struct {
 
 var _bintree = &bintree{nil, map[string]*bintree{
 	"etcd": {nil, map[string]*bintree{
-		"cluster-backup-pod.yaml": {etcdClusterBackupPodYaml, map[string]*bintree{}},
-		"cluster-backup.sh":       {etcdClusterBackupSh, map[string]*bintree{}},
-		"cluster-restore.sh":      {etcdClusterRestoreSh, map[string]*bintree{}},
-		"cm.yaml":                 {etcdCmYaml, map[string]*bintree{}},
-		"etcd-common-tools":       {etcdEtcdCommonTools, map[string]*bintree{}},
-		"ns.yaml":                 {etcdNsYaml, map[string]*bintree{}},
-		"pod-cm.yaml":             {etcdPodCmYaml, map[string]*bintree{}},
-		"pod.yaml":                {etcdPodYaml, map[string]*bintree{}},
-		"restore-pod-cm.yaml":     {etcdRestorePodCmYaml, map[string]*bintree{}},
-		"restore-pod.yaml":        {etcdRestorePodYaml, map[string]*bintree{}},
-		"sa.yaml":                 {etcdSaYaml, map[string]*bintree{}},
-		"scripts-cm.yaml":         {etcdScriptsCmYaml, map[string]*bintree{}},
-		"svc.yaml":                {etcdSvcYaml, map[string]*bintree{}},
+		"cluster-backup-pod.yaml":     {etcdClusterBackupPodYaml, map[string]*bintree{}},
+		"cluster-backup.sh":           {etcdClusterBackupSh, map[string]*bintree{}},
+		"cluster-restore.sh":          {etcdClusterRestoreSh, map[string]*bintree{}},
+		"cm.yaml":                     {etcdCmYaml, map[string]*bintree{}},
+		"etcd-common-tools":           {etcdEtcdCommonTools, map[string]*bintree{}},
+		"ns.yaml":                     {etcdNsYaml, map[string]*bintree{}},
+		"pod-cm.yaml":                 {etcdPodCmYaml, map[string]*bintree{}},
+		"pod.yaml":                    {etcdPodYaml, map[string]*bintree{}},
+		"quorumguard-deployment.yaml": {etcdQuorumguardDeploymentYaml, map[string]*bintree{}},
+		"restore-pod-cm.yaml":         {etcdRestorePodCmYaml, map[string]*bintree{}},
+		"restore-pod.yaml":            {etcdRestorePodYaml, map[string]*bintree{}},
+		"sa.yaml":                     {etcdSaYaml, map[string]*bintree{}},
+		"scripts-cm.yaml":             {etcdScriptsCmYaml, map[string]*bintree{}},
+		"svc.yaml":                    {etcdSvcYaml, map[string]*bintree{}},
 	}},
 }}
 
