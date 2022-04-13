@@ -242,15 +242,10 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeInformersForNamespaces,
 	)
 
-	machineAPI := ceohelpers.NewMachineAPI(masterMachineInformer, machinelistersv1beta1.NewMachineLister(masterMachineInformer.GetIndexer()), masterMachineLabelSelector)
-
 	clusterMemberController := clustermembercontroller.NewClusterMemberController(
 		operatorClient,
-		machineAPI,
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Networks(),
-		masterMachineInformer,
-		masterMachineLabelSelector,
 		etcdClient,
 		controllerContext.EventRecorder,
 	)
