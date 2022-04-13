@@ -110,13 +110,17 @@ func HasMachineDeletionHook(machine *machinev1beta1.Machine) bool {
 	return false
 }
 
+// IndexMachinesByNodeInternalIP maps machines to IPs
+//
+// Note that a machine can have multiple internal IPs
 func IndexMachinesByNodeInternalIP(machines []*machinev1beta1.Machine) map[string]*machinev1beta1.Machine {
 	index := map[string]*machinev1beta1.Machine{}
 	for _, machine := range machines {
 		for _, addr := range machine.Status.Addresses {
 			if addr.Type == corev1.NodeInternalIP {
 				index[addr.Address] = machine
-				break
+				// do not stop on first match
+				// machines can have multiple network interfaces
 			}
 		}
 	}
