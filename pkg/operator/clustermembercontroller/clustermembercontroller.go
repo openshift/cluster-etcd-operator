@@ -104,11 +104,13 @@ func (c *ClusterMemberController) reconcileMembers(ctx context.Context, recorder
 		return fmt.Errorf("could not get etcd peer host :%w", err)
 	}
 
-	if machineForHostPendingDeletion, err := c.isMachinePendingDeletionFor(etcdHost); err != nil {
-		return err
-	} else if machineForHostPendingDeletion {
-		return nil
-	}
+	// TODO (polynomial) this fails on ipv6
+	/*
+		if machineForHostPendingDeletion, err := c.isMachinePendingDeletionFor(etcdHost); err != nil {
+			return err
+		} else if machineForHostPendingDeletion {
+			return nil
+		}*/
 
 	recorder.Eventf("FoundPodToScale", "found pod to add to etcd membership: %v", podToAdd.Name)
 	err = c.etcdClient.MemberAdd(ctx, fmt.Sprintf("https://%s:2380", etcdHost))
