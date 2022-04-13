@@ -12,7 +12,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/backuprestore"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/monitor"
 	operatorcmd "github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/readyz"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/verify"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/waitforceo"
@@ -69,7 +68,6 @@ func NewSSCSCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(waitforceo.NewWaitForCeoCommand(os.Stderr))
 	cmd.AddCommand(monitor.NewMonitorCommand(os.Stderr))
 	cmd.AddCommand(verify.NewVerifyCommand(os.Stderr))
-	cmd.AddCommand(readyz.NewReadyzCommand())
 
 	return cmd
 }

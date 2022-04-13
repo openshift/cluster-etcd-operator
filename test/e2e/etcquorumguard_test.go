@@ -3,11 +3,10 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"github.com/pkg/errors"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/pkg/errors"
 
 	"github.com/openshift/cluster-etcd-operator/test/e2e/framework"
 	corev1 "k8s.io/api/core/v1"
@@ -23,10 +22,7 @@ type podstatus struct {
 }
 
 var nodes = make(map[string]bool)
-
-const guardPodsLabelSelectorString = "app=guard"
-
-// var guardPodsLabelSelector labels.Selector
+var pods = make(map[string]podstatus)
 
 // TestEtcdQuorumGuard tests the etcd Quorum Guard.  It assumes there
 // are exactly three master pods (as does the etcd Quorum Guard at
@@ -39,56 +35,55 @@ const guardPodsLabelSelectorString = "app=guard"
 // unschedulable again and checks that the EQG pod is evicted.
 func TestEtcdQuorumGuard(t *testing.T) {
 	cs := framework.NewClientSet("")
+	if err := waitForEtcdQuorumGuardDeployment(cs); err != nil {
+		t.Fatalf("etcdQuorumGuard deployment not present: %s", err.Error())
+	}
 	fmt.Print("Make all schedulable\n")
 	if err := makeAllNodesSchedulable(cs); err != nil {
 		t.Errorf("Unable to make all nodes schedulable: %s", err.Error())
 	}
 	fmt.Print("Check for all running\n")
-	if err := waitForPods(cs, 3); err != nil {
-		t.Errorf("Unable to get all guard pods running: %s", err.Error())
+	if err := waitForPods(cs, 3, 3, 3); err != nil {
+		t.Errorf("Unable to get all etcd-quorum-guard pods running: %s", err.Error())
 	}
 	fmt.Print("Make one unschedulable\n")
 	if err := makeOneNodeUnschedulableAndEvict(cs); err != nil {
 		t.Errorf("Unable to make one node unschedulable: %s", err.Error())
 	}
 	fmt.Print("Wait for 2 running\n")
-	if err := waitForPods(cs, 2); err != nil {
-		t.Errorf("Unable to get one guard pod stopped: %s", err.Error())
+	if err := waitForPods(cs, 3, 2, 2); err != nil {
+		t.Errorf("Unable to get one etcd-quorum-guard pod stopped: %s", err.Error())
 	}
 	fmt.Print("Make second unschedulable\n")
-	err := makeOneNodeUnschedulableAndEvict(cs)
-	if err == nil {
+	if err := makeOneNodeUnschedulableAndEvict(cs); err == nil || !strings.Contains(err.Error(), "it would violate the pod's disruption budget") {
 		fmt.Print("  Pod should not have been evicted\n")
-		t.Errorf("Pod should not have been evicted because it violated disruption budget")
-	}
-	if err != nil && strings.Contains(err.Error(), "it would violate the pod's disruption budget") {
-		fmt.Print("  Eviction correctly failed because it would violate the pod's disruption budget.\n")
+		t.Errorf("Pod should not have been evicted because it violated disruption budget: %v", err)
 	} else {
-		t.Errorf("  Pod eviction attempt failed: %v", err)
+		fmt.Print("  Eviction correctly failed because it would violate the pod's disruption budget.\n")
 	}
 	fmt.Print("Make all schedulable\n")
 	if err := makeAllNodesSchedulable(cs); err != nil {
 		t.Errorf("Unable to make all nodes schedulable: %s", err.Error())
 	}
 	fmt.Print("Wait for all running\n")
-	if err := waitForPods(cs, 3); err != nil {
-		t.Errorf("Unable to get all guard pods running: %s", err.Error())
+	if err := waitForPods(cs, 3, 3, 3); err != nil {
+		t.Errorf("Unable to get all etcd-quorum-guard pods running: %s", err.Error())
 	}
 	fmt.Print("Make one unschedulable\n")
 	if err := makeOneNodeUnschedulableAndEvict(cs); err != nil {
 		t.Errorf("Unable to make one node unschedulable: %s", err.Error())
 	}
 	fmt.Print("Wait for one not running\n")
-	if err := waitForPods(cs, 2); err != nil {
-		t.Errorf("Unable to get one guard pod stopped: %s", err.Error())
+	if err := waitForPods(cs, 3, 2, 2); err != nil {
+		t.Errorf("Unable to get one etcd-quorum-guard pod stopped: %s", err.Error())
 	}
 	fmt.Print("Make all schedulable\n")
 	if err := makeAllNodesSchedulable(cs); err != nil {
 		t.Errorf("Unable to make all nodes schedulable: %s", err.Error())
 	}
 	fmt.Print("Wait for all\n")
-	if err := waitForPods(cs, 3); err != nil {
-		t.Errorf("Unable to get all guard pods running: %s", err.Error())
+	if err := waitForPods(cs, 3, 3, 3); err != nil {
+		t.Errorf("Unable to get all etcd-quorum-guard pods running: %s", err.Error())
 	}
 }
 
@@ -198,25 +193,37 @@ func getNode(cs *framework.ClientSet, node string) (*corev1.Node, error) {
 	return cs.CoreV1Interface.Nodes().Get(context.TODO(), node, metav1.GetOptions{})
 }
 
+func waitForEtcdQuorumGuardDeployment(cs *framework.ClientSet) error {
+	err := wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
+		_, err := cs.AppsV1Interface.Deployments("openshift-etcd").Get(context.TODO(), "etcd-quorum-guard", metav1.GetOptions{})
+		if err == nil {
+			return true, nil
+		}
+		fmt.Printf("  error waiting for etcd-quorum-guard deployment to exist: %v\n", err)
+		return false, nil
+	})
+	return err
+}
+
 // waitForPods waits for the expected number of etcd Quorum Guard pods
-// to be present and ready
-func waitForPods(cs *framework.ClientSet, expectedTotal int) error {
+// to be present and for the number of available pods to be within the
+// specified bounds.
+func waitForPods(cs *framework.ClientSet, expectedTotal, min, max int32) error {
 	err := wait.PollImmediate(1*time.Second, 5*time.Minute, func() (bool, error) {
-		guardPods, err := cs.CoreV1Interface.Pods("openshift-etcd").List(context.TODO(), metav1.ListOptions{
-			LabelSelector: guardPodsLabelSelectorString,
-		})
+		d, err := cs.AppsV1Interface.Deployments("openshift-etcd").Get(context.TODO(), "etcd-quorum-guard", metav1.GetOptions{})
 		if err != nil {
-			fmt.Printf("  error listing etcd guard pods: %v\n", err)
+			// By this point the deployment should exist.
+			fmt.Printf("  error waiting for etcd-quorum-guard deployment to exist: %v\n", err)
 			return true, err
 		}
-		numGuardPods := len(guardPods.Items)
-		if numGuardPods == 0 {
-			fmt.Println("  no guard pods found")
+		if d.Status.Replicas < 1 {
+			fmt.Println("operator deployment has no replicas")
 			return false, nil
 		}
-		numReadyPods := countReadyPods(guardPods.Items)
-		if numReadyPods == expectedTotal {
-			fmt.Printf("  %d ready etcd guard pods found! \n", numReadyPods)
+		if d.Status.Replicas == expectedTotal &&
+			d.Status.AvailableReplicas >= min &&
+			d.Status.AvailableReplicas <= max {
+			fmt.Printf("  Deployment is ready! %d %d\n", d.Status.Replicas, d.Status.AvailableReplicas)
 			return true, nil
 		}
 		return false, nil
@@ -224,20 +231,18 @@ func waitForPods(cs *framework.ClientSet, expectedTotal int) error {
 	if err != nil {
 		return err
 	}
-	return nil
-}
-
-func countReadyPods(pods []corev1.Pod) int {
-	numReadyPods := 0
-	for _, pod := range pods {
-		for _, condition := range pod.Status.Conditions {
-			if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
-				numReadyPods++
-				break
+	for pod, info := range pods {
+		if info.status == "Running" {
+			node := info.node
+			if node == "" {
+				return fmt.Errorf("Pod %s not associated with a node", pod)
+			}
+			if _, ok := nodes[node]; !ok {
+				return fmt.Errorf("pod %s running on %s, not a master", pod, node)
 			}
 		}
 	}
-	return numReadyPods
+	return nil
 }
 
 func getMasterNodes(cs *framework.ClientSet) error {
@@ -257,10 +262,7 @@ func getEtcdQuorumGuardPodsOnNode(cs *framework.ClientSet, node string) ([]corev
 	if err != nil {
 		return answer, fmt.Errorf("No such node %s", node)
 	}
-	p, err := cs.CoreV1Interface.Pods("openshift-etcd").List(context.TODO(), metav1.ListOptions{LabelSelector: guardPodsLabelSelectorString})
-	if err != nil {
-		return answer, fmt.Errorf("failed to get etcd guard pods %w", err)
-	}
+	p, err := cs.CoreV1Interface.Pods("openshift-etcd").List(context.TODO(), metav1.ListOptions{LabelSelector: "name=etcd-quorum-guard"})
 	for _, pod := range p.Items {
 		if pod.Spec.NodeName == node {
 			answer = append(answer, pod)
