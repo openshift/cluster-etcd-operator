@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"regexp"
 	"time"
@@ -29,7 +30,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdmemberscontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/metriccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/quorumguardcontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/quorumguardcleanup"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
@@ -37,7 +38,9 @@ import (
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
+	"github.com/openshift/library-go/pkg/operator/staleconditions"
 	"github.com/openshift/library-go/pkg/operator/staticpod"
+	"github.com/openshift/library-go/pkg/operator/staticpod/controller/guard"
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/installer"
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/revision"
 	"github.com/openshift/library-go/pkg/operator/staticresourcecontroller"
@@ -51,6 +54,7 @@ import (
 	corev1informers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/klog/v2"
 )
 
 // masterMachineLabelSelectorString allows for getting only the master machines, it matters in larger installations with many worker nodes
@@ -186,6 +190,43 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	// Don't set operator version. library-go will take care of it after setting operands.
 	versionRecorder.SetVersion("raw-internal", status.VersionForOperatorFromEnv())
 
+	// The guardRolloutPreCheck function always waits until the etcd pods have rolled out to the new version
+	// i.e clusteroperator version is the desired version, so that the PDB doesn't block the rollout
+	// Also prevents guard pods from being created in SNO topology
+	guardRolloutPreCheck := func() (bool, bool, error) {
+		clusterOperatorInformer := configInformers.Config().V1().ClusterOperators().Informer()
+		clusterOperatorLister := configInformers.Config().V1().ClusterOperators().Lister()
+		expectedOperatorVersion := status.VersionForOperatorFromEnv()
+
+		if !clusterOperatorInformer.HasSynced() {
+			// Skip and don't error until synced
+			return false, false, nil
+		}
+
+		etcdClusterOperator, err := clusterOperatorLister.Get("etcd")
+		if err != nil {
+			return false, false, fmt.Errorf("failed to get clusteroperator/etcd: %w", err)
+		}
+		operatorVersion := ""
+		for _, version := range etcdClusterOperator.Status.Versions {
+			if version.Name == "operator" {
+				operatorVersion = version.Version
+			}
+		}
+		if len(operatorVersion) == 0 {
+			return false, true, nil
+		}
+
+		if operatorVersion != expectedOperatorVersion {
+			klog.V(2).Infof("clusterOperator/etcd's operator version (%s) and expected operator version (%s) do not match. Will not create guard pods until operator reaches desired version.", operatorVersion, expectedOperatorVersion)
+			return false, true, nil
+		}
+
+		// create only when not a single node topology
+		isSNO, precheckSucceeded, err := guard.IsSNOCheckFnc(configInformers.Config().V1().Infrastructures())()
+		return !isSNO, precheckSucceeded, err
+	}
+
 	staticPodControllers, err := staticpod.NewBuilder(operatorClient, kubeClient, kubeInformersForNamespaces).
 		WithEvents(controllerContext.EventRecorder).
 		WithInstaller([]string{"cluster-etcd-operator", "installer"}).
@@ -193,6 +234,13 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		WithRevisionedResources("openshift-etcd", "etcd", RevisionConfigMaps, RevisionSecrets).
 		WithUnrevisionedCerts("etcd-certs", CertConfigMaps, CertSecrets).
 		WithVersioning("etcd", versionRecorder).
+		WithPodDisruptionBudgetGuard(
+			"openshift-etcd-operator",
+			"etcd-operator",
+			"9980",
+			guardRolloutPreCheck,
+		).
+		WithOperandPodLabelSelector(labels.Set{"etcd": "true"}.AsSelector()).
 		ToControllers()
 	if err != nil {
 		return err
@@ -284,13 +332,16 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
-	quorumGuardController := quorumguardcontroller.NewQuorumGuardController(
+	quorumGuardCleanupController := quorumguardcleanup.NewQuorumGuardCleanupController(
+		status.VersionForOperatorFromEnv(),
 		operatorClient,
 		kubeClient,
+		configInformers.Config().V1().ClusterVersions(),
+		configInformers.Config().V1().ClusterOperators(),
 		kubeInformersForNamespaces,
+		masterNodeInformer,
+		configInformers.Config().V1().Infrastructures(),
 		controllerContext.EventRecorder,
-		configInformers.Config().V1().Infrastructures().Lister(),
-		os.Getenv("CLI_IMAGE"),
 	)
 
 	defragController := defragcontroller.NewDefragController(
@@ -318,6 +369,16 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
+	staleConditions := staleconditions.NewRemoveStaleConditionsController(
+		[]string{
+			// QuorumGuardController was removed in 4.11, remove its stale conditions to avoid blocking upgrades from older clusters
+			// that might have this condition
+			"QuorumGuardControllerDegraded",
+		},
+		operatorClient,
+		controllerContext.EventRecorder,
+	)
+
 	operatorInformers.Start(ctx.Done())
 	kubeInformersForNamespaces.Start(ctx.Done())
 	configInformers.Start(ctx.Done())
@@ -325,6 +386,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go masterMachineInformer.Run(ctx.Done())
 	go masterNodeInformer.Run(ctx.Done())
 
+	go staleConditions.Run(ctx, 1)
 	go fsyncMetricController.Run(ctx, 1)
 	go staticResourceController.Run(ctx, 1)
 	go targetConfigReconciler.Run(ctx, 1)
@@ -339,7 +401,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go bootstrapTeardownController.Run(ctx, 1)
 	go unsupportedConfigOverridesController.Run(ctx, 1)
 	go scriptController.Run(ctx, 1)
-	go quorumGuardController.Run(ctx, 1)
+	go quorumGuardCleanupController.Run(ctx, 1)
 	go defragController.Run(ctx, 1)
 	go upgradeBackupController.Run(ctx, 1)
 
