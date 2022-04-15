@@ -5,14 +5,14 @@ import (
 	"net"
 	"net/url"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/ghodss/yaml"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 
 	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
-
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	corev1listers "k8s.io/client-go/listers/core/v1"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // MachineDeletionHookName holds a name of the Machine Deletion Hook
@@ -110,9 +110,26 @@ func HasMachineDeletionHook(machine *machinev1beta1.Machine) bool {
 	return false
 }
 
+// IndexMachinesByNodeInternalIP maps machines to IPs
+//
+// Note that a machine can have multiple internal IPs
+func IndexMachinesByNodeInternalIP(machines []*machinev1beta1.Machine) map[string]*machinev1beta1.Machine {
+	index := map[string]*machinev1beta1.Machine{}
+	for _, machine := range machines {
+		for _, addr := range machine.Status.Addresses {
+			if addr.Type == corev1.NodeInternalIP {
+				index[addr.Address] = machine
+				// do not stop on first match
+				// machines can have multiple network interfaces
+			}
+		}
+	}
+	return index
+}
+
 func memberToURL(member *etcdserverpb.Member) (string, error) {
 	if len(member.PeerURLs) == 0 {
-		return "", fmt.Errorf("unable to extract member's URL address, it has an empty PeerURLs field, member: %v", spew.Sdump(member))
+		return "", fmt.Errorf("unable to extract member's URL address, it has an empty PeerURLs field, member name: %v, id: %v", member.Name, member.ID)
 	}
 	return member.PeerURLs[0], nil
 }
