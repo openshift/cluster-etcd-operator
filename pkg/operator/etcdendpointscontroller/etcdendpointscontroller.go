@@ -121,6 +121,13 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 	endpointAddresses := make(map[string]string, len(members))
 	// Create endpoint addresses for each member of the cluster.
 	for _, member := range members {
+		// Since a learner member rejects all requests other than serializable reads and member status API
+		// we have to exclude them from the etcd-endpoints configmap to prevent the API server from sending
+		// requests to it which would fail with "rpc not supported for learner" errors
+		if member.IsLearner {
+			continue
+		}
+
 		if member.Name == "etcd-bootstrap" {
 			continue
 		}

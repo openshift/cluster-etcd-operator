@@ -297,10 +297,12 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	clusterMemberController := clustermembercontroller.NewClusterMemberController(
 		operatorClient,
 		machineAPI,
-		kubeInformersForNamespaces,
-		configInformers.Config().V1().Networks(),
+		masterNodeInformer,
+		masterNodeLabelSelector,
 		masterMachineInformer,
 		masterMachineLabelSelector,
+		kubeInformersForNamespaces,
+		configInformers.Config().V1().Networks(),
 		etcdClient,
 		controllerContext.EventRecorder,
 	)

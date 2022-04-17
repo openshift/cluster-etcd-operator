@@ -23,7 +23,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
-	"k8s.io/apimachinery/pkg/util/sets"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
@@ -113,7 +112,7 @@ func (c *clusterMemberRemovalController) sync(ctx context.Context, syncCtx facto
 // attemptToScaleDown attempts to remove a voting member only once we have identified that
 // a Machine resource is being deleted and a replacement member has been created
 func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context, recorder events.Recorder) error {
-	currentVotingMemberIPListSet, err := c.votingMemberIPListSet()
+	currentVotingMemberIPListSet, err := ceohelpers.VotingMemberIPListSet(c.configMapListerForTargetNamespace)
 	if err != nil {
 		return err
 	}
@@ -251,7 +250,7 @@ func (c *clusterMemberRemovalController) removeMemberWithoutMachine(ctx context.
 
 // attemptToRemoveLearningMember attempts to remove a learning member pending deletion regardless of whether a replacement member has been found
 func (c *clusterMemberRemovalController) attemptToRemoveLearningMember(ctx context.Context) error {
-	currentVotingMemberIPListSet, err := c.votingMemberIPListSet()
+	currentVotingMemberIPListSet, err := ceohelpers.VotingMemberIPListSet(c.configMapListerForTargetNamespace)
 	if err != nil {
 		return err
 	}
@@ -347,19 +346,6 @@ func (c *clusterMemberRemovalController) getNodeForMember(memberInternalIP strin
 		}
 	}
 	return nil, errNotFound
-}
-
-func (c *clusterMemberRemovalController) votingMemberIPListSet() (sets.String, error) {
-	etcdEndpointsConfigMap, err := c.configMapListerForTargetNamespace.Get("etcd-endpoints")
-	if err != nil {
-		return sets.NewString(), err // should not happen
-	}
-	currentVotingMemberIPListSet := sets.NewString()
-	for _, votingMemberIP := range etcdEndpointsConfigMap.Data {
-		currentVotingMemberIPListSet.Insert(votingMemberIP)
-	}
-
-	return currentVotingMemberIPListSet, nil
 }
 
 func (c *clusterMemberRemovalController) attemptToRemoveMemberFor(ctx context.Context, members []*etcdserverpb.Member, machinePendingDeletion *machinev1beta1.Machine) (removed bool, errs []error) {
