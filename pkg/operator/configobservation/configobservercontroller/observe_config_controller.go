@@ -5,6 +5,7 @@ import (
 
 	configinformers "github.com/openshift/client-go/config/informers/externalversions"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/controlplanereplicascount"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/configobserver"
 	libgoapiserver "github.com/openshift/library-go/pkg/operator/configobserver/apiserver"
@@ -33,6 +34,7 @@ func NewConfigObserver(
 		operatorclient.GlobalMachineSpecifiedConfigNamespace,
 		"openshift-etcd",
 		operatorclient.OperatorNamespace,
+		"kube-system",
 	}
 
 	configMapPreRunCacheSynced := []cache.InformerSynced{}
@@ -60,10 +62,11 @@ func NewConfigObserver(
 			configobservation.Listers{
 				APIServerLister_: configInformer.Config().V1().APIServers().Lister(),
 
-				OpenshiftEtcdEndpointsLister:  kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().Endpoints().Lister(),
-				OpenshiftEtcdPodsLister:       kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().Pods().Lister(),
-				OpenshiftEtcdConfigMapsLister: kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().ConfigMaps().Lister(),
-				NodeLister:                    kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
+				OpenshiftEtcdEndpointsLister:          kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().Endpoints().Lister(),
+				OpenshiftEtcdPodsLister:               kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().Pods().Lister(),
+				OpenshiftEtcdConfigMapsLister:         kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().ConfigMaps().Lister(),
+				NodeLister:                            kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
+				ConfigMapListerForKubeSystemNamespace: kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Lister().ConfigMaps("kube-system"),
 
 				ResourceSync: resourceSyncer,
 				PreRunCachesSynced: append(configMapPreRunCacheSynced,
@@ -79,6 +82,7 @@ func NewConfigObserver(
 			},
 			informers,
 			libgoapiserver.ObserveTLSSecurityProfile,
+			controlplanereplicascount.ObserveControlPlaneReplicas,
 		),
 	}
 
