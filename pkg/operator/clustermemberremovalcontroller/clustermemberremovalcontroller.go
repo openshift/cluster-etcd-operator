@@ -130,7 +130,7 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 		return nil
 	}
 
-	memberMachines, err := c.currentMemberMachines()
+	memberMachines, err := ceohelpers.CurrentMemberMachinesWithDeletionHooks(c.masterMachineSelector, c.masterMachineLister)
 	if err != nil {
 		return err
 	}
@@ -255,7 +255,7 @@ func (c *clusterMemberRemovalController) attemptToRemoveLearningMember(ctx conte
 	if err != nil {
 		return err
 	}
-	memberMachines, err := c.currentMemberMachines()
+	memberMachines, err := ceohelpers.CurrentMemberMachinesWithDeletionHooks(c.masterMachineSelector, c.masterMachineLister)
 	if err != nil {
 		return err
 	}
@@ -307,7 +307,7 @@ func (c *clusterMemberRemovalController) getMachineForMember(memberInternalIP st
 	// the same internal IP as the node would have had
 	if node == nil {
 		nodeInternalIP := memberInternalIP
-		machine, err := c.findMachineByNodeInternalIP(nodeInternalIP)
+		machine, err := ceohelpers.FindMachineByNodeInternalIP(nodeInternalIP, c.masterMachineSelector, c.masterMachineLister)
 		if err != nil {
 			return nil, err
 		}
@@ -349,28 +349,6 @@ func (c *clusterMemberRemovalController) getNodeForMember(memberInternalIP strin
 	return nil, errNotFound
 }
 
-// findMachineByNodeInternalIP finds machine that matches the given nodeInternalIP
-// is safe because the MAO:
-//  sync the addresses in the Machine with those assigned to real nodes by the cloud provider ,
-//  checks that the Machine and Node lists match before issuing a serving certification for Kubelet
-//  when the host disappears from the cloud side, it stops updating the Machine so the addresses and information should persist there as a tombstone as the Machine is marked Failed
-func (c *clusterMemberRemovalController) findMachineByNodeInternalIP(nodeInternalIP string) (*machinev1beta1.Machine, error) {
-	machines, err := c.masterMachineLister.List(c.masterMachineSelector)
-	if err != nil {
-		return nil, err
-	}
-	for _, machine := range machines {
-		for _, addr := range machine.Status.Addresses {
-			if addr.Type == corev1.NodeInternalIP {
-				if addr.Address == nodeInternalIP {
-					return machine, nil
-				}
-			}
-		}
-	}
-	return nil, nil
-}
-
 func (c *clusterMemberRemovalController) votingMemberIPListSet() (sets.String, error) {
 	etcdEndpointsConfigMap, err := c.configMapListerForTargetNamespace.Get("etcd-endpoints")
 	if err != nil {
@@ -382,15 +360,6 @@ func (c *clusterMemberRemovalController) votingMemberIPListSet() (sets.String, e
 	}
 
 	return currentVotingMemberIPListSet, nil
-}
-
-// currentMemberMachines returns machines with the deletion hooks from the lister
-func (c *clusterMemberRemovalController) currentMemberMachines() ([]*machinev1beta1.Machine, error) {
-	masterMachines, err := c.masterMachineLister.List(c.masterMachineSelector)
-	if err != nil {
-		return nil, err
-	}
-	return ceohelpers.FilterMachinesWithMachineDeletionHook(masterMachines), nil
 }
 
 func (c *clusterMemberRemovalController) attemptToRemoveMemberFor(ctx context.Context, members []*etcdserverpb.Member, machinePendingDeletion *machinev1beta1.Machine) (removed bool, errs []error) {
