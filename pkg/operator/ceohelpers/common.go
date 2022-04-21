@@ -11,7 +11,9 @@ import (
 	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 
+	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/controlplanereplicascount"
 	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -119,6 +121,39 @@ func IndexMachinesByNodeInternalIP(machines []*machinev1beta1.Machine) map[strin
 		}
 	}
 	return index
+}
+
+// CurrentMemberMachinesWithDeletionHooks returns machines with the deletion hooks from the lister
+func CurrentMemberMachinesWithDeletionHooks(machineSelector labels.Selector, machineLister machinelistersv1beta1.MachineLister) ([]*machinev1beta1.Machine, error) {
+	machines, err := machineLister.List(machineSelector)
+	if err != nil {
+		return nil, err
+	}
+	return FilterMachinesWithMachineDeletionHook(machines), nil
+}
+
+// FindMachineByNodeInternalIP finds the machine that matches the given nodeInternalIP
+// is safe because the MAO:
+//  syncs the addresses in the Machine with those assigned to real nodes by the cloud provider,
+//  checks that the Machine and Node lists match before issuing a serving certification for the kubelet
+//  when the host disappears from the cloud side, it stops updating the Machine so the addresses and information
+//  should persist there as a tombstone as the Machine is marked Failed
+func FindMachineByNodeInternalIP(nodeInternalIP string, machineSelector labels.Selector, machineLister machinelistersv1beta1.MachineLister) (*machinev1beta1.Machine, error) {
+	machines, err := machineLister.List(machineSelector)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, machine := range machines {
+		for _, addr := range machine.Status.Addresses {
+			if addr.Type == corev1.NodeInternalIP {
+				if addr.Address == nodeInternalIP {
+					return machine, nil
+				}
+			}
+		}
+	}
+	return nil, nil
 }
 
 func memberToURL(member *etcdserverpb.Member) (string, error) {
