@@ -147,6 +147,14 @@ func (r *readyzOpts) Run() error {
 func (r *readyzOpts) getReadyzHandlerFunc(ctx context.Context) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		etcdClient, err := r.newETCD3Client(ctx, r.targetEndpoint)
+		defer func() {
+			if etcdClient == nil {
+				return
+			}
+			if err := etcdClient.Close(); err != nil {
+				klog.V(2).Infof("error closing etcd client: %v", err)
+			}
+		}()
 		if err != nil {
 			klog.V(2).Infof("failed to establish etcd client: %v", err)
 			http.Error(w, fmt.Sprintf("failed to establish etcd client: %v", err), http.StatusServiceUnavailable)
