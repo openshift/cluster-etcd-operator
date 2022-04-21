@@ -30,6 +30,9 @@ const (
 )
 
 type readyzOpts struct {
+	client *clientv3.Client
+
+	// opts
 	listenPort       uint16
 	dialTimeout      time.Duration
 	targetEndpoint   string
@@ -105,6 +108,14 @@ func (r *readyzOpts) Validate() error {
 
 // Run contains the logic of the readyz command which checks the health of the etcd member
 func (r *readyzOpts) Run() error {
+	// we're caching the client because TLS handshakes over GRPC are expensive, this caused high CPU usage on etcd before
+	etcdClient, err := r.newETCD3Client(context.Background(), r.targetEndpoint)
+	if err != nil {
+		klog.V(2).Infof("failed to establish etcd client: %v", err)
+		return err
+	}
+	r.client = etcdClient
+
 	shutdownCtx, cancel := context.WithCancel(context.Background())
 	shutdownHandler := server.SetupSignalHandler()
 
@@ -126,7 +137,16 @@ func (r *readyzOpts) Run() error {
 		defer cancel()
 		<-shutdownHandler
 		klog.Infof("Received SIGTERM or SIGINT signal, shutting down server.")
-		server.Shutdown(shutdownCtx)
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			klog.V(2).Infof("error shutting down server: %v", err)
+		}
+
+		if r.client == nil {
+			return
+		}
+		if err := r.client.Close(); err != nil {
+			klog.V(2).Infof("error closing etcd client: %v", err)
+		}
 	}()
 
 	c := net.ListenConfig{}
@@ -146,27 +166,13 @@ func (r *readyzOpts) Run() error {
 // TODO: Add timeout to handler
 func (r *readyzOpts) getReadyzHandlerFunc(ctx context.Context) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		etcdClient, err := r.newETCD3Client(ctx, r.targetEndpoint)
-		defer func() {
-			if etcdClient == nil {
-				return
-			}
-			if err := etcdClient.Close(); err != nil {
-				klog.V(2).Infof("error closing etcd client: %v", err)
-			}
-		}()
-		if err != nil {
-			klog.V(2).Infof("failed to establish etcd client: %v", err)
-			http.Error(w, fmt.Sprintf("failed to establish etcd client: %v", err), http.StatusServiceUnavailable)
-			return
-		}
-
 		// linearized request to verify health of member
 		// TODO: Once learner members are supported, update this to differentiate
 		// learner members and only issue a serialized Get() for them
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		_, err = etcdClient.Get(ctx, "health")
+
+		_, err := r.client.Get(ctx, "health")
 		if err != nil {
 			klog.V(2).Infof("failed to get member health key: %v", err)
 			http.Error(w, fmt.Sprintf("failed to get member health key: %v", err), http.StatusServiceUnavailable)
