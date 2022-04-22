@@ -294,8 +294,8 @@ func createBackupPod(ctx context.Context, nodeName, recentBackupName, operatorIm
 // isRequireRecentBackup checks the conditions of ClusterVersion to verify if a backup is required.
 func isRequireRecentBackup(config *configv1.ClusterVersion) bool {
 	for _, condition := range config.Status.Conditions {
-		// Check if Failing is true and Message field containers the string RecentBackup.
-		if condition.Type == "Failing" && condition.Status == configv1.ConditionTrue {
+		// Check if ReleaseAccepted is false and Message field containers the string RecentBackup.
+		if condition.Type == "ReleaseAccepted" && condition.Status == configv1.ConditionFalse {
 			return strings.Contains(condition.Message, "RecentBackup")
 		}
 	}

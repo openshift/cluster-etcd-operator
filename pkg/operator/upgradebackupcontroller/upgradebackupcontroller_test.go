@@ -37,8 +37,8 @@ func Test_ensureRecentBackup(t *testing.T) {
 				u.FakePod("cluster-backup", u.WithPodStatus(corev1.PodFailed), u.WithCreationTimestamp(nowMinusDuration(failedPodBackoffDuration))),
 			},
 			clusterversionCondition: configv1.ClusterOperatorStatusCondition{
-				Type:    "Failing",
-				Status:  configv1.ConditionTrue,
+				Type:    "ReleaseAccepted",
+				Status:  configv1.ConditionFalse,
 				Message: fmt.Sprintf("Need RecentBackup"),
 			},
 			wantBackupStatus: configv1.ConditionFalse,
@@ -50,8 +50,8 @@ func Test_ensureRecentBackup(t *testing.T) {
 				u.FakePod("cluster-backup", u.WithPodStatus(corev1.PodFailed), u.WithCreationTimestamp(metav1.Now())),
 			},
 			clusterversionCondition: configv1.ClusterOperatorStatusCondition{
-				Type:    "Failing",
-				Status:  configv1.ConditionTrue,
+				Type:    "ReleaseAccepted",
+				Status:  configv1.ConditionFalse,
 				Message: fmt.Sprintf("Need RecentBackup"),
 			},
 			wantBackupStatus: configv1.ConditionFalse,
@@ -63,8 +63,8 @@ func Test_ensureRecentBackup(t *testing.T) {
 				u.FakePod("cluster-backup", u.WithPodStatus(corev1.PodPending)),
 			},
 			clusterversionCondition: configv1.ClusterOperatorStatusCondition{
-				Type:    "Failing",
-				Status:  configv1.ConditionTrue,
+				Type:    "ReleaseAccepted",
+				Status:  configv1.ConditionFalse,
 				Message: fmt.Sprintf("Need RecentBackup"),
 			},
 			wantBackupStatus: configv1.ConditionUnknown,
@@ -72,8 +72,8 @@ func Test_ensureRecentBackup(t *testing.T) {
 		{
 			name: "RecentBackup not required invalid type",
 			clusterversionCondition: configv1.ClusterOperatorStatusCondition{
-				Type:    "NotFailing",
-				Status:  configv1.ConditionTrue,
+				Type:    "NotReleaseAccepted",
+				Status:  configv1.ConditionFalse,
 				Message: fmt.Sprintf("Need RecentBackup"),
 			},
 			wantNilBackupCondition: true,
@@ -81,8 +81,8 @@ func Test_ensureRecentBackup(t *testing.T) {
 		{
 			name: "RecentBackup not required invalid message",
 			clusterversionCondition: configv1.ClusterOperatorStatusCondition{
-				Type:    "Failing",
-				Status:  configv1.ConditionTrue,
+				Type:    "ReleaseAccepted",
+				Status:  configv1.ConditionFalse,
 				Message: fmt.Sprintf("Invalid"),
 			},
 			wantNilBackupCondition: true,
@@ -94,8 +94,8 @@ func Test_ensureRecentBackup(t *testing.T) {
 				u.FakeNode("master-1"),
 			},
 			clusterversionCondition: configv1.ClusterOperatorStatusCondition{
-				Type:    "Failing",
-				Status:  configv1.ConditionTrue,
+				Type:    "ReleaseAccepted",
+				Status:  configv1.ConditionFalse,
 				Message: fmt.Sprintf("Need RecentBackup"),
 			},
 			wantBackupStatus: configv1.ConditionUnknown,
