@@ -2,6 +2,7 @@ package etcdmemberscontroller
 
 import (
 	"context"
+	"k8s.io/klog/v2"
 	"time"
 
 	errorsutil "k8s.io/apimachinery/pkg/util/errors"
@@ -64,8 +65,14 @@ func (c *EtcdMembersController) reportEtcdMembers(ctx context.Context, recorder 
 	if err != nil {
 		return err
 	}
-	updateErrors := []error{}
-	if len(etcdcli.GetUnhealthyMemberNames(memberHealth)) > 0 {
+	var updateErrors []error
+	unhealthy := etcdcli.GetUnhealthyMemberNames(memberHealth)
+	if len(unhealthy) > 0 {
+		for _, u := range memberHealth {
+			if !u.Healthy {
+				klog.Errorf("Unhealthy etcd member found: %s, took=%s, err=%v", u.Member.Name, u.Took, u.Error)
+			}
+		}
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersDegraded",
 			Status:  operatorv1.ConditionTrue,
