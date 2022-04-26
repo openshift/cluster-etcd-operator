@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"regexp"
 	"time"
@@ -10,21 +11,27 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
+	machineclient "github.com/openshift/client-go/machine/clientset/versioned"
+	machineinformersv1beta1 "github.com/openshift/client-go/machine/informers/externalversions/machine/v1beta1"
+	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermemberremovalcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/defragcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdendpointscontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdmemberscontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/machinedeletionhooks"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/metriccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/quorumguardcontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/quorumguardcleanup"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
@@ -32,17 +39,30 @@ import (
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
+	"github.com/openshift/library-go/pkg/operator/staleconditions"
 	"github.com/openshift/library-go/pkg/operator/staticpod"
+	"github.com/openshift/library-go/pkg/operator/staticpod/controller/guard"
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/installer"
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/revision"
 	"github.com/openshift/library-go/pkg/operator/staticresourcecontroller"
 	"github.com/openshift/library-go/pkg/operator/status"
 	"github.com/openshift/library-go/pkg/operator/unsupportedconfigoverridescontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	corev1informers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/klog/v2"
 )
+
+// masterMachineLabelSelectorString allows for getting only the master machines, it matters in larger installations with many worker nodes
+const masterMachineLabelSelectorString = "machine.openshift.io/cluster-api-machine-role=master"
+
+// masterNodeLabelSelectorString allows for getting only the master nodes, it matters in larger installations with many worker nodes
+const masterNodeLabelSelectorString = "node-role.kubernetes.io/master"
 
 func RunOperator(ctx context.Context, controllerContext *controllercmd.ControllerContext) error {
 	// This kube client use protobuf, do not use it for CR
@@ -62,7 +82,30 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	if err != nil {
 		return err
 	}
+	machineClientSet, err := machineclient.NewForConfig(controllerContext.KubeConfig)
+	if err != nil {
+		return err
+	}
+	machineClient := machineClientSet.MachineV1beta1().Machines("openshift-machine-api")
 
+	// we create a new informer directly because we are only interested in observing changes to the master machines
+	// primarily to avoid reconciling on every update in large clusters (~2K machines)
+	masterMachineInformer := machineinformersv1beta1.NewFilteredMachineInformer(machineClientSet, "openshift-machine-api", 1*time.Hour, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, func(listOptions *metav1.ListOptions) {
+		listOptions.LabelSelector = masterMachineLabelSelectorString
+	})
+	masterMachineLabelSelector, err := labels.Parse(masterMachineLabelSelectorString)
+	if err != nil {
+		return err
+	}
+	// we create a new informer directly because we are only interested in observing changes to the master nodes
+	// primarily to avoid reconciling on every update in large clusters (~2K nodes)
+	masterNodeInformer := corev1informers.NewFilteredNodeInformer(kubeClient, 1*time.Hour, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, func(listOptions *metav1.ListOptions) {
+		listOptions.LabelSelector = masterNodeLabelSelectorString
+	})
+	masterNodeLabelSelector, err := labels.Parse(masterNodeLabelSelectorString)
+	if err != nil {
+		return err
+	}
 	operatorInformers := operatorv1informers.NewSharedInformerFactory(operatorConfigClient, 10*time.Minute)
 	//operatorConfigInformers.ForResource()
 	kubeInformersForNamespaces := v1helpers.NewKubeInformersForNamespaces(
@@ -149,6 +192,43 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	// Don't set operator version. library-go will take care of it after setting operands.
 	versionRecorder.SetVersion("raw-internal", status.VersionForOperatorFromEnv())
 
+	// The guardRolloutPreCheck function always waits until the etcd pods have rolled out to the new version
+	// i.e clusteroperator version is the desired version, so that the PDB doesn't block the rollout
+	// Also prevents guard pods from being created in SNO topology
+	guardRolloutPreCheck := func() (bool, bool, error) {
+		clusterOperatorInformer := configInformers.Config().V1().ClusterOperators().Informer()
+		clusterOperatorLister := configInformers.Config().V1().ClusterOperators().Lister()
+		expectedOperatorVersion := status.VersionForOperatorFromEnv()
+
+		if !clusterOperatorInformer.HasSynced() {
+			// Skip and don't error until synced
+			return false, false, nil
+		}
+
+		etcdClusterOperator, err := clusterOperatorLister.Get("etcd")
+		if err != nil {
+			return false, false, fmt.Errorf("failed to get clusteroperator/etcd: %w", err)
+		}
+		operatorVersion := ""
+		for _, version := range etcdClusterOperator.Status.Versions {
+			if version.Name == "operator" {
+				operatorVersion = version.Version
+			}
+		}
+		if len(operatorVersion) == 0 {
+			return false, true, nil
+		}
+
+		if operatorVersion != expectedOperatorVersion {
+			klog.V(2).Infof("clusterOperator/etcd's operator version (%s) and expected operator version (%s) do not match. Will not create guard pods until operator reaches desired version.", operatorVersion, expectedOperatorVersion)
+			return false, true, nil
+		}
+
+		// create only when not a single node topology
+		isSNO, precheckSucceeded, err := guard.IsSNOCheckFnc(configInformers.Config().V1().Infrastructures())()
+		return !isSNO, precheckSucceeded, err
+	}
+
 	staticPodControllers, err := staticpod.NewBuilder(operatorClient, kubeClient, kubeInformersForNamespaces).
 		WithEvents(controllerContext.EventRecorder).
 		WithInstaller([]string{"cluster-etcd-operator", "installer"}).
@@ -156,6 +236,13 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		WithRevisionedResources("openshift-etcd", "etcd", RevisionConfigMaps, RevisionSecrets).
 		WithUnrevisionedCerts("etcd-certs", CertConfigMaps, CertSecrets).
 		WithVersioning("etcd", versionRecorder).
+		WithPodDisruptionBudgetGuard(
+			"openshift-etcd-operator",
+			"etcd-operator",
+			"9980",
+			guardRolloutPreCheck,
+		).
+		WithOperandPodLabelSelector(labels.Set{"etcd": "true"}.AsSelector()).
 		ToControllers()
 	if err != nil {
 		return err
@@ -205,13 +292,41 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeInformersForNamespaces,
 	)
 
+	machineAPI := ceohelpers.NewMachineAPI(masterMachineInformer, machinelistersv1beta1.NewMachineLister(masterMachineInformer.GetIndexer()), masterMachineLabelSelector)
+
 	clusterMemberController := clustermembercontroller.NewClusterMemberController(
 		operatorClient,
+		machineAPI,
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Networks(),
+		masterMachineInformer,
+		masterMachineLabelSelector,
 		etcdClient,
 		controllerContext.EventRecorder,
 	)
+
+	clusterMemberRemovalController := clustermemberremovalcontroller.NewClusterMemberRemovalController(
+		operatorClient,
+		etcdClient,
+		machineAPI,
+		masterMachineLabelSelector, masterNodeLabelSelector,
+		kubeInformersForNamespaces,
+		masterNodeInformer,
+		masterMachineInformer,
+		configInformers.Config().V1().Networks(),
+		controllerContext.EventRecorder,
+	)
+
+	machineDeletionHooksController := machinedeletionhooks.NewMachineDeletionHooksController(
+		operatorClient,
+		machineClient,
+		etcdClient,
+		machineAPI,
+		masterMachineLabelSelector,
+		kubeInformersForNamespaces,
+		masterMachineInformer,
+		controllerContext.EventRecorder)
+
 	etcdMembersController := etcdmemberscontroller.NewEtcdMembersController(
 		operatorClient,
 		etcdClient,
@@ -234,13 +349,16 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
-	quorumGuardController := quorumguardcontroller.NewQuorumGuardController(
+	quorumGuardCleanupController := quorumguardcleanup.NewQuorumGuardCleanupController(
+		status.VersionForOperatorFromEnv(),
 		operatorClient,
 		kubeClient,
+		configInformers.Config().V1().ClusterVersions(),
+		configInformers.Config().V1().ClusterOperators(),
 		kubeInformersForNamespaces,
+		masterNodeInformer,
+		configInformers.Config().V1().Infrastructures(),
 		controllerContext.EventRecorder,
-		configInformers.Config().V1().Infrastructures().Lister(),
-		os.Getenv("CLI_IMAGE"),
 	)
 
 	defragController := defragcontroller.NewDefragController(
@@ -268,11 +386,24 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
+	staleConditions := staleconditions.NewRemoveStaleConditionsController(
+		[]string{
+			// QuorumGuardController was removed in 4.11, remove its stale conditions to avoid blocking upgrades from older clusters
+			// that might have this condition
+			"QuorumGuardControllerDegraded",
+		},
+		operatorClient,
+		controllerContext.EventRecorder,
+	)
+
 	operatorInformers.Start(ctx.Done())
 	kubeInformersForNamespaces.Start(ctx.Done())
 	configInformers.Start(ctx.Done())
 	dynamicInformers.Start(ctx.Done())
+	go masterMachineInformer.Run(ctx.Done())
+	go masterNodeInformer.Run(ctx.Done())
 
+	go staleConditions.Run(ctx, 1)
 	go fsyncMetricController.Run(ctx, 1)
 	go staticResourceController.Run(ctx, 1)
 	go targetConfigReconciler.Run(ctx, 1)
@@ -282,11 +413,13 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go statusController.Run(ctx, 1)
 	go configObserver.Run(ctx, 1)
 	go clusterMemberController.Run(ctx, 1)
+	go clusterMemberRemovalController.Run(ctx, 1)
+	go machineDeletionHooksController.Run(ctx, 1)
 	go etcdMembersController.Run(ctx, 1)
 	go bootstrapTeardownController.Run(ctx, 1)
 	go unsupportedConfigOverridesController.Run(ctx, 1)
 	go scriptController.Run(ctx, 1)
-	go quorumGuardController.Run(ctx, 1)
+	go quorumGuardCleanupController.Run(ctx, 1)
 	go defragController.Run(ctx, 1)
 	go upgradeBackupController.Run(ctx, 1)
 

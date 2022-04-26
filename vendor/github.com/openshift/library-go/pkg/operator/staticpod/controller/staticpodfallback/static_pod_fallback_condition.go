@@ -31,14 +31,20 @@ func New(targetNamespace string,
 	operatorClient operatorv1helpers.OperatorClient,
 	kubeInformersForNamespaces operatorv1helpers.KubeInformersForNamespaces,
 	startupMonitorEnabledFn func() (bool, error),
-	eventRecorder events.Recorder) factory.Controller {
+	eventRecorder events.Recorder) (factory.Controller, error) {
+	if podLabelSelector == nil {
+		return nil, fmt.Errorf("StaticPodFallbackConditionController: missing required podLabelSelector")
+	}
+	if podLabelSelector.Empty() {
+		return nil, fmt.Errorf("StaticPodFallbackConditionController: podLabelSelector cannot be empty")
+	}
 	fd := &staticPodFallbackConditionController{
 		operatorClient:          operatorClient,
 		podLabelSelector:        podLabelSelector,
 		podLister:               kubeInformersForNamespaces.InformersFor(targetNamespace).Core().V1().Pods().Lister().Pods(targetNamespace),
 		startupMonitorEnabledFn: startupMonitorEnabledFn,
 	}
-	return factory.New().WithSync(fd.sync).ResyncEvery(6*time.Minute).WithInformers(kubeInformersForNamespaces.InformersFor(targetNamespace).Core().V1().Pods().Informer()).ToController("StaticPodStateFallback", eventRecorder)
+	return factory.New().WithSync(fd.sync).ResyncEvery(6*time.Minute).WithInformers(kubeInformersForNamespaces.InformersFor(targetNamespace).Core().V1().Pods().Informer()).ToController("StaticPodStateFallback", eventRecorder), nil
 }
 
 // sync sets/unsets a StaticPodFallbackRevisionDegraded condition if a pod that matches the given label selector is annotated with FallbackForRevision

@@ -60,9 +60,9 @@ func NewEnsureEnvCommand(errOut io.Writer) *cobra.Command {
 }
 
 func (e *ensureOpts) AddFlags(fs *pflag.FlagSet) {
-	fs.BoolVar(&e.allowInvalidNodeIP, "allow-invalid-node-ip", true, "If this is set and the value of --node-ip is invalid (not equal to environment variables given by --ip-ev-equals), continue validation and check the value of --current-revision-node-ip against the network interfaces.")
-	fs.StringVar(&e.nodeIP, "node-ip", "", "The internal IP of the node provided by the downward API.")
-	fs.StringVar(&e.currentRevNodeIP, "current-revision-node-ip", "", "If --node-ip is invalid and --allow-invalid-node-ip is true, check the network interfaces for an IP address matching this value.")
+	fs.BoolVar(&e.allowInvalidNodeIP, "allow-invalid-node-ip", true, "If this is set and the value of --node-ip is invalid (not equal to --current-revision-node-ip), continue validation and check the value of --current-revision-node-ip against the network interfaces.")
+	fs.StringVar(&e.nodeIP, "node-ip", "", "The internal IP of the node provided by the downward API; can be empty in edge cases where the host took too long to respond and the downward API returned an empty value.")
+	fs.StringVar(&e.currentRevNodeIP, "current-revision-node-ip", "", "The IP address we're expecting; validated against the downward API or the network interfaces.")
 	fs.StringSliceVar(&e.notEmpty, "check-set-and-not-empty", []string{}, "Validate that the given environment variable(s) are set and have non-empty values.")
 }
 
@@ -96,8 +96,8 @@ func (e *ensureOpts) Run() (err error) {
 			return fmt.Errorf("since --allow-invalid-node-ip is not set, node-ip and current-revision-node-ip must be equal.")
 		}
 
-		// Since the value of ip-ev is empty, we're going to check our
-		//   fallback environment variable against our network
+		// Since the value of nodeIP is invalid, we're going to check our
+		//   fallback environment variable (current-revision-node-ip) against our network
 		//   interfaces, to see if we find a match.
 		// If we find a match, we'll consider ourselves valid, if we can't
 		//   we'll fail.
@@ -121,7 +121,7 @@ func (e *ensureOpts) Run() (err error) {
 				case *net.IPNet:
 					if ip.IP.Equal(currentRevIP) {
 						// We found a match, we'll assume now that the value of fallbackEV is good
-						//		and we'll continue allowing etcd to start.
+						// and we'll continue allowing etcd to start.
 						klog.Info("NODE_IP is invalid, found a match to the current revision node IP in the network interfaces.")
 						return nil
 					}

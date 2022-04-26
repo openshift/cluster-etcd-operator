@@ -67,7 +67,13 @@ func (c *FSyncController) sync(ctx context.Context, syncCtx factory.SyncContext)
 	leaderChanges := vector[0].Value
 	// Do nothing if there are no significant leader changes.
 	if leaderChanges < 2.0 {
-		return nil
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient,
+			v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+				Type:   "FSyncControllerDegraded",
+				Status: operatorv1.ConditionFalse,
+				Reason: "AsExpected",
+			}))
+		return updateErr
 	}
 
 	klog.V(4).Infof("Etcd leader changes increase in last 5m: %s", leaderChanges)
@@ -124,14 +130,21 @@ func (c *FSyncController) sync(ctx context.Context, syncCtx factory.SyncContext)
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "FSyncControllerDegraded",
 			Status:  operatorv1.ConditionTrue,
-			Reason:  "etcd disk metrics exceeded known tresholds",
-			Message: fmt.Sprintf("etcd disk metrics exceeded known tresholds: %s", degradedMsg),
+			Reason:  "EtcdDiskMetricsExceededKnownThresholds",
+			Message: fmt.Sprintf("etcd disk metrics exceeded known thresholds: %s", degradedMsg),
 		}))
 		if updateErr != nil {
 			syncCtx.Recorder().Warning("FSyncControllerErrorUpdatingStatus", updateErr.Error())
 		}
-		return fmt.Errorf("etcd disk metrics exceeded known tresholds")
+		return fmt.Errorf("etcd disk metrics exceeded known thresholds")
 	}
 
-	return nil
+	_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient,
+		v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+			Type:   "FSyncControllerDegraded",
+			Status: operatorv1.ConditionFalse,
+			Reason: "AsExpected",
+		}))
+
+	return updateErr
 }

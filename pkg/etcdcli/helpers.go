@@ -36,16 +36,43 @@ func (f *fakeEtcdClient) Status(ctx context.Context, target string) (*clientv3.S
 }
 
 func (f *fakeEtcdClient) MemberAdd(ctx context.Context, peerURL string) error {
-	panic("implement me")
+	memberCount := len(f.members)
+	m := &etcdserverpb.Member{
+		Name:     fmt.Sprintf("m-%d", memberCount+1),
+		ID:       uint64(memberCount + 1),
+		PeerURLs: []string{peerURL},
+	}
+	f.members = append(f.members, m)
+	return nil
 }
 
 func (f *fakeEtcdClient) MemberList(ctx context.Context) ([]*etcdserverpb.Member, error) {
 	return f.members, nil
 }
 
-func (f *fakeEtcdClient) MemberRemove(ctx context.Context, member string) error {
-	panic("implement me")
+func (f *fakeEtcdClient) MemberRemove(ctx context.Context, memberID uint64) error {
+	var memberExists bool
+	for _, m := range f.members {
+		if m.ID == memberID {
+			memberExists = true
+			break
+		}
+	}
+	if !memberExists {
+		return fmt.Errorf("member with the given ID: %d doesn't exist", memberID)
+	}
+
+	var newMemberList []*etcdserverpb.Member
+	for _, m := range f.members {
+		if m.ID == memberID {
+			continue
+		}
+		newMemberList = append(newMemberList, m)
+	}
+	f.members = newMemberList
+	return nil
 }
+
 func (f *fakeEtcdClient) MemberHealth(ctx context.Context) (memberHealth, error) {
 	var healthy, unhealthy int
 	var memberHealth memberHealth

@@ -6,8 +6,12 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
+
+	"k8s.io/apimachinery/pkg/util/wait"
 
 	"github.com/blang/semver"
 	"github.com/davecgh/go-spew/spew"
@@ -28,6 +32,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	"github.com/openshift/library-go/pkg/operator/resource/retry"
 	"github.com/openshift/library-go/pkg/operator/staticpod"
+	"github.com/openshift/library-go/pkg/operator/staticpod/internal"
 	"github.com/openshift/library-go/pkg/operator/staticpod/internal/flock"
 )
 
@@ -413,6 +418,10 @@ func (o *InstallOptions) Run(ctx context.Context) error {
 		klog.Warningf("unable to get owner reference (falling back to namespace): %v", err)
 	}
 
+	if err := o.waitForOtherInstallerRevisionsToSettle(ctx); err != nil {
+		return err
+	}
+
 	err = retry.RetryOnConnectionErrors(ctx, func(context.Context) (bool, error) {
 		version, err := o.kubeletVersion(ctx)
 		if err != nil {
@@ -436,6 +445,110 @@ func (o *InstallOptions) Run(ctx context.Context) error {
 
 	recorder.Eventf("StaticPodInstallerCompleted", "Successfully installed revision %s", o.Revision)
 	return nil
+}
+
+func (o *InstallOptions) waitForOtherInstallerRevisionsToSettle(ctx context.Context) error {
+	currRevision64, err := strconv.ParseInt(o.Revision, 10, 32)
+	if err != nil {
+		return fmt.Errorf("bad local revision %v: %w", o.Revision, err)
+	}
+	currRevision := int(currRevision64)
+
+	// at this point we have a list of all the installer pods present on this node we need to check
+	// 1. is there a revision later than us present right now.  If yes, exit.
+	// 2. is there an installer pod present that has not finished running, wait until it is finished.
+	err = wait.PollImmediateWithContext(ctx, 10*time.Second, 60*time.Second, func(ctx context.Context) (done bool, err error) {
+		installerPods, err := o.getInstallerPodsOnThisNode(ctx)
+		if err != nil {
+			return false, nil
+		}
+		if len(installerPods) == 0 {
+			return false, fmt.Errorf("no installer pods found")
+		}
+		latestRevision, err := internal.GetRevisionOfPod(installerPods[len(installerPods)-1])
+		if err != nil {
+			return false, err
+		}
+		// if there is an installer pod for a newer revision, this installer pod should quit.
+		if latestRevision > currRevision {
+			return false, fmt.Errorf("more recent revision present on node: thisRevision=%v, moreRecentRevision=%v", currRevision, latestRevision)
+		}
+
+		// if any container is not terminated, we need to wait.  There should only ever be a single installer pod
+		// that could be run
+		for _, pod := range installerPods {
+			// skip this revision
+			podRevision, err := internal.GetRevisionOfPod(pod)
+			if err != nil {
+				return false, err
+			}
+
+			// skip our own installer pod.
+			if podRevision == currRevision {
+				continue
+			}
+			// wait until we have at least one container status to check
+			if len(pod.Status.ContainerStatuses) == 0 {
+				return false, nil
+			}
+			for _, container := range pod.Status.ContainerStatuses {
+				// if the container isn't terminated, we need this installer pod to wait until it is.
+				if container.State.Terminated == nil {
+					return false, nil
+				}
+			}
+		}
+
+		return true, nil
+	})
+	if err != nil {
+		return err
+	}
+
+	// once there are no other running revisions, wait Xs.
+	// In an extreme case, this can be grace period seconds+1.  Trying 30s to start. Etcd has been the worst off since
+	// it requires 2 out 3 to be functioning.
+	time.Sleep(30 * time.Second)
+
+	installerPods, err := o.getInstallerPodsOnThisNode(ctx)
+	if err != nil {
+		return err
+	}
+	// if there are no installer pods, it means this pod was removed somehow.  no action should be taken.
+	if len(installerPods) == 0 {
+		return fmt.Errorf("no installer pods found")
+	}
+	latestRevision, err := internal.GetRevisionOfPod(installerPods[len(installerPods)-1])
+	if err != nil {
+		return err
+	}
+	// if there is an installer pod for a newer revision, this installer pod should quit.
+	if latestRevision > currRevision {
+		return fmt.Errorf("more recent revision present on node: thisRevision=%v, moreRecentRevision=%v", currRevision, latestRevision)
+	}
+
+	return nil
+}
+
+func (o *InstallOptions) getInstallerPodsOnThisNode(ctx context.Context) ([]*corev1.Pod, error) {
+	podList, err := o.KubeClient.CoreV1().Pods(o.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "app=installer"})
+	if err != nil {
+		return nil, err
+	}
+	installerPodsOnThisNode := []*corev1.Pod{}
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		if !strings.HasPrefix(pod.Name, "installer-") {
+			continue
+		}
+		if pod.Spec.NodeName != o.NodeName {
+			continue
+		}
+		installerPodsOnThisNode = append(installerPodsOnThisNode, pod)
+	}
+	sort.Sort(internal.ByRevision(installerPodsOnThisNode))
+
+	return installerPodsOnThisNode, nil
 }
 
 func (o *InstallOptions) installerPodNeedUUID() bool {
