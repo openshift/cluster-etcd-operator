@@ -2,6 +2,7 @@ package clustermemberremovalcontroller
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
@@ -397,7 +398,9 @@ func TestAttemptToScaleDown(t *testing.T) {
 		initialObservedConfigInput               string
 		initialObjectsForConfigMapTargetNSLister []runtime.Object
 		initialEtcdMemberList                    []*etcdserverpb.Member
+		fakeEtcdClientOptions                    etcdcli.FakeClientOption
 		validateFn                               func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient)
+		expectedError                            error
 	}{
 		{
 			name:                       "scale down by one machine",
@@ -656,6 +659,42 @@ func TestAttemptToScaleDown(t *testing.T) {
 				}
 			},
 		},
+
+		{
+			name:                       "member not removed when unhealthy members found",
+			initialObservedConfigInput: wellKnownReplicasCountSet,
+			initialEtcdMemberList: func() []*etcdserverpb.Member {
+				members := append(wellKnownEtcdMemberList(), &etcdserverpb.Member{
+					Name:     "m-4",
+					ID:       4,
+					PeerURLs: []string{"https://10.0.139.81:1234"},
+				})
+				return members
+			}(),
+			initialObjectsForMachineLister: func() []runtime.Object {
+				m4 := machineWithHooksFor("m-4", "10.0.139.81")
+				m4.DeletionTimestamp = &metav1.Time{}
+				machines := wellKnownMasterMachines()
+				machines = append(machines, m4)
+				return machines
+			}(),
+			initialObjectsForConfigMapTargetNSLister: func() []runtime.Object {
+				cm := wellKnownEtcdEndpointsConfigMap()
+				cm.Data["m-4"] = "10.0.139.81"
+				return []runtime.Object{cm}
+			}(),
+			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 1}),
+			expectedError:         fmt.Errorf("cannot proceed wth scaling down, unhealthy members found: [https://10.0.139.78:1234]"),
+			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
+				memberList, err := fakeEtcdClient.MemberList(context.TODO())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(memberList) != 4 {
+					t.Errorf("expected exactly 4 members, got %v", len(memberList))
+				}
+			},
+		},
 	}
 
 	for _, scenario := range scenarios {
@@ -677,7 +716,11 @@ func TestAttemptToScaleDown(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(scenario.initialEtcdMemberList)
+
+			if scenario.fakeEtcdClientOptions == nil {
+				scenario.fakeEtcdClientOptions = etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Unhealthy: 0})
+			}
+			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(scenario.initialEtcdMemberList, scenario.fakeEtcdClientOptions)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -696,8 +739,14 @@ func TestAttemptToScaleDown(t *testing.T) {
 				configMapListerForTargetNamespace: configMapTargetNSLister,
 			}
 			err = target.attemptToScaleDown(context.TODO(), eventRecorder)
-			if err != nil {
+			if err == nil && scenario.expectedError != nil {
+				t.Fatal("expected to get an error from attemptToScaleDown method")
+			}
+			if err != nil && scenario.expectedError == nil {
 				t.Fatal(err)
+			}
+			if err != nil && scenario.expectedError != nil && err.Error() != scenario.expectedError.Error() {
+				t.Fatalf("unexpected error returned = %v, expected = %v", err, scenario.expectedError)
 			}
 			if scenario.validateFn != nil {
 				scenario.validateFn(t, fakeEtcdClient)
