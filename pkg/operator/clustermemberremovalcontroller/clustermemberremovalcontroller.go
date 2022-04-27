@@ -172,6 +172,24 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 		return nil
 	}
 
+	// before removing a voting member, we need to make sure that
+	// current members are healthy otherwise we might lose quorum
+	unhealthyMembers, err := c.etcdClient.UnhealthyMembers(ctx)
+	if err != nil {
+		return fmt.Errorf("could not get a list of unhealthy members: %v", err)
+	}
+	if len(unhealthyMembers) > 0 {
+		var unhealthyMembersURLs []string
+		for _, unhealthyMember := range unhealthyMembers {
+			if len(unhealthyMember.PeerURLs) > 0 {
+				unhealthyMembersURLs = append(unhealthyMembersURLs, unhealthyMember.PeerURLs[0])
+			} else {
+				unhealthyMembersURLs = append(unhealthyMembersURLs, unhealthyMember.Name)
+			}
+		}
+		return fmt.Errorf("cannot proceed wth scaling down, unhealthy members found: %v", unhealthyMembersURLs)
+	}
+
 	var allErrs []error
 	for _, votingMachinePendingDeletion := range votingMachinesPendingDeletion {
 		removed, errs := c.attemptToRemoveMemberFor(ctx, liveVotingMembers, votingMachinePendingDeletion)
