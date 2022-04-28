@@ -188,3 +188,25 @@ spec:
       for: 3m
       labels:
         severity: critical
+    - alert: etcdHighMemoryUsageInfo
+      annotations:
+        description: 'etcd cluster "{{ $labels.job }}": memory usage of {{ $value }} on
+        {{ $labels.node }} exceeds 40%. Etcd pods memory starvation could result
+        in degraded performance of the cluster.'
+        summary: etcd pod memory usage info.
+      expr: |
+        ((sum(node_memory_MemTotal_bytes AND on (instance) label_replace( kube_node_role{role="master"}, "instance", "$1", "node", "(.+)" )) - sum(node_memory_MemFree_bytes + node_memory_Buffers_bytes + node_memory_Cached_bytes AND on (instance) label_replace( kube_node_role{role="master"}, "instance", "$1", "node", "(.+)" ))) / sum(node_memory_MemTotal_bytes AND on (instance) label_replace( kube_node_role{role="master"}, "instance", "$1", "node", "(.+)" )) * 100) > 40
+      for: 10m
+      labels:
+        severity: info
+    - alert: etcdHighMemoryUsageWarn
+      annotations:
+        description: 'etcd cluster "{{ $labels.job }}": memory usage of {{ $value }} on
+        {{ $labels.node }} exceeds 60%. Etcd pods memory starvation could result
+        in degraded performance of the cluster.'
+        summary: etcd pod memory usage warning.
+      expr: |
+        ((sum(node_memory_MemTotal_bytes AND on (instance) label_replace( kube_node_role{role="master"}, "instance", "$1", "node", "(.+)" )) - sum(node_memory_MemFree_bytes + node_memory_Buffers_bytes + node_memory_Cached_bytes AND on (instance) label_replace( kube_node_role{role="master"}, "instance", "$1", "node", "(.+)" ))) / sum(node_memory_MemTotal_bytes AND on (instance) label_replace( kube_node_role{role="master"}, "instance", "$1", "node", "(.+)" )) * 100) > 60
+      for: 10m
+      labels:
+        severity: warning
