@@ -6,6 +6,7 @@ import (
 
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	v3membership "go.etcd.io/etcd/server/v3/etcdserver/api/membership"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
@@ -35,14 +36,35 @@ func (f *fakeEtcdClient) Status(ctx context.Context, target string) (*clientv3.S
 	return nil, fmt.Errorf("status failed no match for target: %q", target)
 }
 
-func (f *fakeEtcdClient) MemberAdd(ctx context.Context, peerURL string) error {
+func (f *fakeEtcdClient) MemberAddAsLearner(ctx context.Context, peerURL string) error {
 	memberCount := len(f.members)
 	m := &etcdserverpb.Member{
-		Name:     fmt.Sprintf("m-%d", memberCount+1),
-		ID:       uint64(memberCount + 1),
-		PeerURLs: []string{peerURL},
+		Name:      fmt.Sprintf("m-%d", memberCount+1),
+		ID:        uint64(memberCount + 1),
+		PeerURLs:  []string{peerURL},
+		IsLearner: true,
 	}
 	f.members = append(f.members, m)
+	return nil
+}
+
+func (f *fakeEtcdClient) MemberPromote(ctx context.Context, member *etcdserverpb.Member) error {
+	var memberToPromote *etcdserverpb.Member
+	for _, m := range f.members {
+		if m.ID == member.ID {
+			memberToPromote = m
+			break
+		}
+	}
+	if memberToPromote == nil {
+		return fmt.Errorf("member with the given (ID: %d) and (name: %s) doesn't exist", member.ID, member.Name)
+	}
+
+	if !memberToPromote.IsLearner {
+		return v3membership.ErrMemberNotLearner
+	}
+
+	memberToPromote.IsLearner = false
 	return nil
 }
 

@@ -17,6 +17,7 @@ const (
 type EtcdClient interface {
 	Defragment
 	MemberAdder
+	MemberPromoter
 	MemberHealth
 	IsMemberHealthy
 	MemberLister
@@ -39,7 +40,11 @@ type Status interface {
 }
 
 type MemberAdder interface {
-	MemberAdd(ctx context.Context, peerURL string) error
+	MemberAddAsLearner(ctx context.Context, peerURL string) error
+}
+
+type MemberPromoter interface {
+	MemberPromote(ctx context.Context, member *etcdserverpb.Member) error
 }
 
 type MemberHealth interface {

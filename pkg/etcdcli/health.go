@@ -9,6 +9,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"k8s.io/component-base/metrics/legacyregistry"
 	klog "k8s.io/klog/v2"
 )
@@ -51,7 +52,14 @@ func getMemberHealth(ctx context.Context, etcdMembers []*etcdserverpb.Member) me
 		wg.Add(1)
 		go func(member *etcdserverpb.Member) {
 			defer wg.Done()
-			cli, err := getEtcdClientWithClientOpts([]string{member.ClientURLs[0]})
+			// If the endpoint is for a learner member then we should skip testing the connection
+			// via the member list call as learners don't support that.
+			// The learner's connection would get tested in the health check below
+			skipConnectionTest := false
+			if member.IsLearner {
+				skipConnectionTest = true
+			}
+			cli, err := getEtcdClientWithClientOpts([]string{member.ClientURLs[0]}, skipConnectionTest)
 			if err != nil {
 				hch <- healthCheck{Member: member, Healthy: false, Error: fmt.Errorf("create client failure: %w", err)}
 				return
@@ -59,8 +67,15 @@ func getMemberHealth(ctx context.Context, etcdMembers []*etcdserverpb.Member) me
 			defer cli.Close()
 			st := time.Now()
 			ctx, cancel := context.WithCancel(ctx)
-			// linearized request to verify health of member
-			resp, err := cli.Get(ctx, "health")
+			var resp *clientv3.GetResponse
+			if member.IsLearner {
+				// Learner members only support serializable (without consensus) read requests
+				resp, err = cli.Get(ctx, "health", clientv3.WithSerializable())
+			} else {
+				// Linearized request to verify health of a voting member
+				resp, err = cli.Get(ctx, "health")
+			}
+
 			hc := healthCheck{Member: member, Healthy: false, Took: time.Since(st).String()}
 			if err == nil {
 				if resp.Header != nil {
@@ -68,6 +83,7 @@ func getMemberHealth(ctx context.Context, etcdMembers []*etcdserverpb.Member) me
 				}
 				hc.Healthy = true
 			} else {
+				klog.V(2).Infof("health check for memberID (%v) failed: err(%v)", resp.Header.MemberId, err)
 				hc.Error = fmt.Errorf("health check failed: %w", err)
 			}
 			cancel()

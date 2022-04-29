@@ -41,6 +41,7 @@ func TestScalingUpAndDownSingleNode(t *testing.T) {
 	// set up
 	ctx := context.TODO()
 	kubeConfig, err := framework.NewClientConfigForTest("")
+	require.NoError(t, err)
 	kubeConfig.Timeout = 60 * time.Second
 	require.NoError(t, err)
 	machineClientSet, err := machineclient.NewForConfig(kubeConfig)
@@ -61,7 +62,7 @@ func TestScalingUpAndDownSingleNode(t *testing.T) {
 	//         and until all kube-api servers have reached the same revision
 	//         this additional step is the best-effort of ensuring they
 	//         have observed the new member before disruption
-	ensureMembersCount(t, etcdClientFactory, 4)
+	ensureVotingMembersCount(t, etcdClientFactory, 4)
 	memberName := machineNameToEtcdMemberName(ctx, t, kubeClient, machineClient, machineName)
 	ensureHealthyMember(t, etcdClientFactory, memberName)
 	t.Log("waiting for kube api servers to stabilize on the same revision")
@@ -71,7 +72,7 @@ func TestScalingUpAndDownSingleNode(t *testing.T) {
 	err = machineClient.Delete(ctx, machineName, metav1.DeleteOptions{})
 	require.NoError(t, err)
 	t.Logf("successfully deleted the machine %q from the API", machineName)
-	ensureMembersCount(t, etcdClientFactory, 3)
+	ensureVotingMembersCount(t, etcdClientFactory, 3)
 	ensureMemberRemoved(t, etcdClientFactory, memberName)
 	ensureRunningMachinesAndCount(ctx, t, machineClient)
 }
@@ -137,7 +138,7 @@ func ensureMasterMachine(ctx context.Context, t testing.TB, machineName string, 
 // otherwise it attempts to recover the cluster by removing any excessive machines
 func ensureInitialClusterState(ctx context.Context, t testing.TB, etcdClientFactory etcdClientCreator, machineClient machinev1beta1client.MachineInterface) {
 	require.NoError(t, recoverClusterToInitialStateIfNeeded(ctx, t, machineClient))
-	require.NoError(t, checkMembersCount(t, etcdClientFactory, 3))
+	require.NoError(t, checkVotingMembersCount(t, etcdClientFactory, 3))
 	require.NoError(t, checkMasterMachinesAndCount(ctx, t, machineClient))
 }
 
@@ -206,14 +207,14 @@ func recoverClusterToInitialStateIfNeeded(ctx context.Context, t testing.TB, mac
 	return nil
 }
 
-// ensureMembersCount same as checkMembersCount but will fail on error
-func ensureMembersCount(t testing.TB, etcdClientFactory etcdClientCreator, expectedMembersCount int) {
-	require.NoError(t, checkMembersCount(t, etcdClientFactory, expectedMembersCount))
+// ensureVotingMembersCount same as checkVotingMembersCount but will fail on error
+func ensureVotingMembersCount(t testing.TB, etcdClientFactory etcdClientCreator, expectedMembersCount int) {
+	require.NoError(t, checkVotingMembersCount(t, etcdClientFactory, expectedMembersCount))
 }
 
-// checkMembersCount simply counts the current etcd members, it doesn't evaluate health conditions or any other attributes (i.e. name) of individual members
+// checkVotingMembersCount counts the number of voting etcd members, it doesn't evaluate health conditions or any other attributes (i.e. name) of individual members
 // this method won't fail immediately on errors, this is useful during scaling down operation until the feature can ensure this operation to be graceful
-func checkMembersCount(t testing.TB, etcdClientFactory etcdClientCreator, expectedMembersCount int) error {
+func checkVotingMembersCount(t testing.TB, etcdClientFactory etcdClientCreator, expectedMembersCount int) error {
 	waitPollInterval := 15 * time.Second
 	waitPollTimeout := 10 * time.Minute
 	t.Logf("Waiting up to %s for the cluster to reach the expected member count of %v", waitPollTimeout.String(), expectedMembersCount)
@@ -234,16 +235,18 @@ func checkMembersCount(t testing.TB, etcdClientFactory etcdClientCreator, expect
 			return false, nil
 		}
 
-		var memberNames []string
+		var votingMemberNames []string
 		for _, member := range memberList.Members {
-			memberNames = append(memberNames, member.Name)
+			if !member.IsLearner {
+				votingMemberNames = append(votingMemberNames, member.Name)
+			}
 		}
-		if len(memberNames) != expectedMembersCount {
-			t.Logf("unexpected number of etcd members, expected exactly %d, got: %v, current members are: %v", expectedMembersCount, len(memberNames), memberNames)
+		if len(votingMemberNames) != expectedMembersCount {
+			t.Logf("unexpected number of voting etcd members, expected exactly %d, got: %v, current members are: %v", expectedMembersCount, len(votingMemberNames), votingMemberNames)
 			return false, nil
 		}
 
-		t.Logf("cluster have reached the expected number of %v members, the members are: %v", expectedMembersCount, memberNames)
+		t.Logf("cluster has reached the expected number of %v voting members, the members are: %v", expectedMembersCount, votingMemberNames)
 		return true, nil
 	}); err != nil {
 		newErr := fmt.Errorf("failed on waiting for the cluster to reach the expected member count of %v, err %v", expectedMembersCount, err)
@@ -275,10 +278,10 @@ func ensureHealthyMember(t testing.TB, etcdClientFactory etcdClientCreator, memb
 	require.NoError(t, err)
 	defer closeFn()
 
-	// since we have a direct connection with the member
-	// getting any response is a good sign of healthiness
 	ctx, cancel := context.WithTimeout(context.TODO(), 15*time.Second)
 	defer cancel()
+
+	// We know it's a voting member so lineared read is fine
 	_, err = etcdClient.Get(ctx, "health")
 	if err != nil {
 		require.NoError(t, fmt.Errorf("failed to check healthiness condition of the %q member, err: %v", memberName, err))

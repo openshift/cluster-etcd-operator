@@ -12,6 +12,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/sets"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 
 	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/controlplanereplicascount"
@@ -161,4 +163,17 @@ func memberToURL(member *etcdserverpb.Member) (string, error) {
 		return "", fmt.Errorf("unable to extract member's URL address, it has an empty PeerURLs field, member name: %v, id: %v", member.Name, member.ID)
 	}
 	return member.PeerURLs[0], nil
+}
+
+func VotingMemberIPListSet(configMapLister corev1listers.ConfigMapNamespaceLister) (sets.String, error) {
+	etcdEndpointsConfigMap, err := configMapLister.Get("etcd-endpoints")
+	if err != nil {
+		return sets.NewString(), err // should not happen
+	}
+	currentVotingMemberIPListSet := sets.NewString()
+	for _, votingMemberIP := range etcdEndpointsConfigMap.Data {
+		currentVotingMemberIPListSet.Insert(votingMemberIP)
+	}
+
+	return currentVotingMemberIPListSet, nil
 }

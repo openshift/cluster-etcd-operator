@@ -23,6 +23,7 @@ require (
 	go.etcd.io/etcd/api/v3 v3.5.0
 	go.etcd.io/etcd/client/pkg/v3 v3.5.0
 	go.etcd.io/etcd/client/v3 v3.5.0
+	go.etcd.io/etcd/server/v3 v3.5.0
 	go.etcd.io/etcd/tests/v3 v3.5.0
 	go.uber.org/zap v1.19.0
 	golang.org/x/sys v0.0.0-20210831042530-f4d43177bf5e
@@ -91,7 +92,6 @@ require (
 	go.etcd.io/etcd/client/v2 v2.305.0 // indirect
 	go.etcd.io/etcd/pkg/v3 v3.5.0 // indirect
 	go.etcd.io/etcd/raft/v3 v3.5.0 // indirect
-	go.etcd.io/etcd/server/v3 v3.5.0 // indirect
 	go.opentelemetry.io/contrib v0.20.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.20.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.20.0 // indirect

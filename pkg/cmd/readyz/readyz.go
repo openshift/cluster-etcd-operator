@@ -161,12 +161,22 @@ func (r *readyzOpts) getReadyzHandlerFunc(ctx context.Context) http.HandlerFunc 
 			return
 		}
 
-		// linearized request to verify health of member
-		// TODO: Once learner members are supported, update this to differentiate
-		// learner members and only issue a serialized Get() for them
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		_, err = etcdClient.Get(ctx, "health")
+		// Learner and voting members both support the endpoint status call
+		resp, err := etcdClient.Status(ctx, r.targetEndpoint)
+		if err != nil {
+			klog.V(2).Infof("failed to get member endpoint status: %v", err)
+			http.Error(w, fmt.Sprintf("failed to get member endpoint status: %v", err), http.StatusServiceUnavailable)
+			return
+		}
+
+		if resp.IsLearner {
+			// Serializable (local) read request for learner members
+			// since learners don't support linearized reads
+			_, err = etcdClient.Get(ctx, "health", clientv3.WithSerializable())
+		} else {
+			// Linearized read request to verify health of voting members
+			_, err = etcdClient.Get(ctx, "health")
+		}
 		if err != nil {
 			klog.V(2).Infof("failed to get member health key: %v", err)
 			http.Error(w, fmt.Sprintf("failed to get member health key: %v", err), http.StatusServiceUnavailable)

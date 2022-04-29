@@ -21,6 +21,7 @@ import (
 	"go.etcd.io/etcd/client/pkg/v3/logutil"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/server/v3/etcdserver"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/grpclog"
@@ -73,7 +74,7 @@ func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkIn
 // getEtcdClientWithClientOpts allows customization of the etcd client using ClientOptions. All clients must be manually
 // closed by the caller with Close().
 func (g *etcdClientGetter) getEtcdClientWithClientOpts(endpoints []string, opts ...ClientOption) (*clientv3.Client, error) {
-	return getEtcdClientWithClientOpts(endpoints, opts...)
+	return getEtcdClientWithClientOpts(endpoints, false, opts...)
 }
 
 // getEtcdClient may return a cached client.  When a new client is needed, the previous client is closed.
@@ -128,7 +129,7 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 		}
 	}
 
-	c, err := getEtcdClientWithClientOpts(etcdEndpoints)
+	c, err := getEtcdClientWithClientOpts(etcdEndpoints, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get etcd client: %w", err)
 	}
@@ -143,7 +144,7 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 	return g.cachedClient, nil
 }
 
-func getEtcdClientWithClientOpts(endpoints []string, opts ...ClientOption) (*clientv3.Client, error) {
+func getEtcdClientWithClientOpts(endpoints []string, skipConnectionTest bool, opts ...ClientOption) (*clientv3.Client, error) {
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(ioutil.Discard, ioutil.Discard, os.Stderr))
 	clientOpts, err := newClientOpts(opts...)
 	if err != nil {
@@ -186,6 +187,13 @@ func getEtcdClientWithClientOpts(endpoints []string, opts ...ClientOption) (*cli
 	if err != nil {
 		return nil, fmt.Errorf("failed to make etcd client for endpoints %v: %w", endpoints, err)
 	}
+
+	// If the endpoint includes a learner member then we skip the test
+	// as learner members don't support member list
+	if skipConnectionTest {
+		return cli, err
+	}
+
 	// Test client connection.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -200,9 +208,7 @@ func getEtcdClientWithClientOpts(endpoints []string, opts ...ClientOption) (*cli
 	return cli, err
 }
 
-func (g *etcdClientGetter) MemberAdd(ctx context.Context, peerURL string) error {
-	g.eventRecorder.Eventf("MemberAdd", "adding new peer %v", peerURL)
-
+func (g *etcdClientGetter) MemberAddAsLearner(ctx context.Context, peerURL string) error {
 	cli, err := g.getEtcdClient()
 	if err != nil {
 		return err
@@ -222,10 +228,38 @@ func (g *etcdClientGetter) MemberAdd(ctx context.Context, peerURL string) error 
 		}
 	}
 
-	_, err = cli.MemberAdd(ctx, []string{peerURL})
+	defer func() {
+		if err != nil {
+			g.eventRecorder.Warningf("MemberAddAsLearner", "failed to add new member %s: %v", peerURL, err)
+		} else {
+			g.eventRecorder.Eventf("MemberAddAsLearner", "successfully added new member %s", peerURL)
+		}
+	}()
+
+	_, err = cli.MemberAddAsLearner(ctx, []string{peerURL})
+	return err
+}
+
+func (g *etcdClientGetter) MemberPromote(ctx context.Context, member *etcdserverpb.Member) error {
+	cli, err := g.getEtcdClient()
 	if err != nil {
 		return err
 	}
+
+	defer func() {
+		if err != nil {
+			// Not being ready for promotion can be a common event until the learner's log
+			// catches up with the leader, so we don't emit events for failing for that case
+			if err.Error() == etcdserver.ErrLearnerNotReady.Error() {
+				return
+			}
+			g.eventRecorder.Warningf("MemberPromote", "failed to promote learner member %s: %v", member.PeerURLs[0], err)
+		} else {
+			g.eventRecorder.Eventf("MemberPromote", "successfully promoted learner member %v", member.PeerURLs[0])
+		}
+	}()
+
+	_, err = cli.MemberPromote(ctx, member.ID)
 	return err
 }
 

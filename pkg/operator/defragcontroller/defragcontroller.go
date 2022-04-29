@@ -116,9 +116,17 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 		return fmt.Errorf("cluster is unhealthy: %s", memberHealth.Status())
 	}
 
-	etcdMembers, err := c.etcdClient.MemberList(ctx)
+	members, err := c.etcdClient.MemberList(ctx)
 	if err != nil {
 		return err
+	}
+
+	// filter out learner members since they don't support the defragment API call
+	etcdMembers := []*etcdserverpb.Member{}
+	for _, m := range members {
+		if !m.IsLearner {
+			etcdMembers = append(etcdMembers, m)
+		}
 	}
 
 	var endpointStatus []*clientv3.StatusResponse
