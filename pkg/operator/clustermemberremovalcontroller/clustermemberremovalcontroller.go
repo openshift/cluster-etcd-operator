@@ -99,7 +99,7 @@ func (c *clusterMemberRemovalController) sync(ctx context.Context, syncCtx facto
 	if err := c.removeMemberWithoutMachine(ctx); err != nil {
 		errs = append(errs, err)
 	}
-	if err := c.attemptToRemoveLearningMember(ctx); err != nil {
+	if err := c.attemptToRemoveLearningMember(ctx, syncCtx.Recorder()); err != nil {
 		errs = append(errs, err)
 	}
 	if err := c.attemptToScaleDown(ctx, syncCtx.Recorder()); err != nil {
@@ -191,7 +191,7 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 
 	var allErrs []error
 	for _, votingMachinePendingDeletion := range votingMachinesPendingDeletion {
-		removed, errs := c.attemptToRemoveMemberFor(ctx, liveVotingMembers, votingMachinePendingDeletion)
+		removed, errs := c.attemptToRemoveMemberFor(ctx, liveVotingMembers, votingMachinePendingDeletion, recorder)
 		if removed {
 			break // we want to remove only one member at a time
 		}
@@ -267,7 +267,7 @@ func (c *clusterMemberRemovalController) removeMemberWithoutMachine(ctx context.
 }
 
 // attemptToRemoveLearningMember attempts to remove a learning member pending deletion regardless of whether a replacement member has been found
-func (c *clusterMemberRemovalController) attemptToRemoveLearningMember(ctx context.Context) error {
+func (c *clusterMemberRemovalController) attemptToRemoveLearningMember(ctx context.Context, recorder events.Recorder) error {
 	currentVotingMemberIPListSet, err := ceohelpers.VotingMemberIPListSet(c.configMapListerForTargetNamespace)
 	if err != nil {
 		return err
@@ -305,7 +305,7 @@ func (c *clusterMemberRemovalController) attemptToRemoveLearningMember(ctx conte
 
 	var allErrs []error
 	for _, learnerMachinePendingDeletion := range learnerMachinesPendingDeletion {
-		_, errs := c.attemptToRemoveMemberFor(ctx, liveLearnerMembers, learnerMachinePendingDeletion)
+		_, errs := c.attemptToRemoveMemberFor(ctx, liveLearnerMembers, learnerMachinePendingDeletion, recorder)
 		if len(errs) > 0 {
 			allErrs = append(allErrs, errs...)
 		}
@@ -366,7 +366,7 @@ func (c *clusterMemberRemovalController) getNodeForMember(memberInternalIP strin
 	return nil, errNotFound
 }
 
-func (c *clusterMemberRemovalController) attemptToRemoveMemberFor(ctx context.Context, members []*etcdserverpb.Member, machinePendingDeletion *machinev1beta1.Machine) (removed bool, errs []error) {
+func (c *clusterMemberRemovalController) attemptToRemoveMemberFor(ctx context.Context, members []*etcdserverpb.Member, machinePendingDeletion *machinev1beta1.Machine, recorder events.Recorder) (removed bool, errs []error) {
 	for _, member := range members {
 		memberIP, err := ceohelpers.MemberToNodeInternalIP(member)
 		if err != nil {
@@ -380,6 +380,7 @@ func (c *clusterMemberRemovalController) attemptToRemoveMemberFor(ctx context.Co
 				errs = append(errs, fmt.Errorf("failed to remove member: %v, err: %v", memberLocator, err))
 				break // stop, we have found a matching member for the provided machine
 			}
+			recorder.Eventf("ScaleDown", "successfully removed member: %v from the cluster", memberLocator)
 			klog.V(2).Infof("successfully removed member: %v from the cluster", memberLocator)
 			removed = true
 			break // stop, we have found a matching member for the provided machine
