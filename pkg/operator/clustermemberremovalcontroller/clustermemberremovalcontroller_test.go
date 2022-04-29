@@ -126,6 +126,7 @@ func TestAttemptToRemoveLearningMember(t *testing.T) {
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
 			// test data
+			eventRecorder := events.NewRecorder(fake.NewSimpleClientset().CoreV1().Events("operator"), "test-cluster-member-removal-controller", &corev1.ObjectReference{})
 			configMapTargetNSIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
 			for _, initialObj := range scenario.initialObjectsForConfigMapTargetNSLister {
 				configMapTargetNSIndexer.Add(initialObj)
@@ -153,7 +154,7 @@ func TestAttemptToRemoveLearningMember(t *testing.T) {
 				masterMachineSelector:             machineSelector,
 				configMapListerForTargetNamespace: configMapTargetNSLister,
 			}
-			err = target.attemptToRemoveLearningMember(context.TODO())
+			err = target.attemptToRemoveLearningMember(context.TODO(), eventRecorder)
 			if err != nil {
 				t.Fatal(err)
 			}
