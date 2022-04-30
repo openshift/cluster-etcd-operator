@@ -7,6 +7,10 @@ import (
 	"math"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+
+	k8serror "k8s.io/apimachinery/pkg/api/errors"
+
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
@@ -16,6 +20,7 @@ import (
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"k8s.io/apimachinery/pkg/util/wait"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
@@ -30,7 +35,8 @@ const (
 	pollTimeoutDuration             = 45 * time.Second
 	compactionInterval              = 10 * time.Minute
 
-	defragDisabledCondition = "DefragControllerDisabled"
+	defragDisabledCondition    = "DefragControllerDisabled"
+	defragDisableConfigmapName = "etcd-disable-defrag"
 )
 
 // DefragController observes the etcd state file fragmentation via Status method of Maintenance API. Based on these
@@ -39,6 +45,9 @@ type DefragController struct {
 	operatorClient       v1helpers.OperatorClient
 	etcdClient           etcdcli.EtcdClient
 	infrastructureLister configv1listers.InfrastructureLister
+	configmapLister      corev1listers.ConfigMapLister
+
+	defragWaitDuration time.Duration
 }
 
 func NewDefragController(
@@ -46,11 +55,13 @@ func NewDefragController(
 	etcdClient etcdcli.EtcdClient,
 	infrastructureLister configv1listers.InfrastructureLister,
 	eventRecorder events.Recorder,
-) factory.Controller {
+	kubeInformers v1helpers.KubeInformersForNamespaces) factory.Controller {
 	c := &DefragController{
 		operatorClient:       operatorClient,
 		etcdClient:           etcdClient,
 		infrastructureLister: infrastructureLister,
+		configmapLister:      kubeInformers.ConfigMapLister(),
+		defragWaitDuration:   minDefragWaitDuration,
 	}
 	return factory.New().ResyncEvery(compactionInterval+1*time.Minute).WithInformers( // attempt to sync outside of etcd compaction interval to ensure maximum gain by defragmentation.
 		operatorClient.Informer(),
@@ -82,10 +93,14 @@ func (c *DefragController) sync(ctx context.Context, syncCtx factory.SyncContext
 }
 
 func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Recorder) error {
-	// Check for existing status.
-	_, status, _, err := c.operatorClient.GetOperatorState()
-	if err != nil {
-		return err
+	disableConfigMap, err := c.configmapLister.ConfigMaps(operatorclient.OperatorNamespace).Get(defragDisableConfigmapName)
+	if err != nil && !k8serror.IsNotFound(err) {
+		return fmt.Errorf("failed to retrieve configmap %s/%s: %w", operatorclient.OperatorNamespace, defragDisableConfigmapName, err)
+	}
+
+	if disableConfigMap != nil {
+		klog.V(4).Infof("Defrag controller disabled manually via configmap: %s/%s", operatorclient.OperatorNamespace, defragDisableConfigmapName)
+		return c.ensureControllerDisabledCondition(ctx, operatorv1.ConditionTrue, recorder)
 	}
 
 	controlPlaneTopology, err := ceohelpers.GetControlPlaneTopology(c.infrastructureLister)
@@ -93,18 +108,14 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 		return fmt.Errorf("failed to get control-plane topology: %w", err)
 	}
 
-	controllerDisabledCondition := v1helpers.FindOperatorCondition(status.Conditions, defragDisabledCondition)
-	if controllerDisabledCondition == nil {
-		err := c.ensureControllerDisabledCondition(ctx, controlPlaneTopology, recorder)
-		if err != nil {
-			return fmt.Errorf("failed to update controller disabled status: %w", err)
-		}
-	}
-
 	// Ensure defrag disabled unless HA.
 	if controlPlaneTopology != configv1.HighlyAvailableTopologyMode {
 		klog.V(4).Infof("Defrag controller disabled for non HA cluster topology: %s", controlPlaneTopology)
-		return nil
+		return c.ensureControllerDisabledCondition(ctx, operatorv1.ConditionTrue, recorder)
+	}
+
+	if err := c.ensureControllerDisabledCondition(ctx, operatorv1.ConditionFalse, recorder); err != nil {
+		return fmt.Errorf("failed to ensure enabled controller condition: %w", err)
 	}
 
 	// Do not defrag if any of the cluster members are unhealthy.
@@ -183,8 +194,8 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 				pollTimeoutDuration,
 				func() (bool, error) {
 					// Ensure defragmentation attempts have clear observable signal.
-					klog.V(4).Infof("Sleeping to allow cluster to recover before defrag next member: %v", minDefragWaitDuration)
-					time.Sleep(minDefragWaitDuration)
+					klog.V(4).Infof("Sleeping to allow cluster to recover before defrag next member: %v", c.defragWaitDuration)
+					time.Sleep(c.defragWaitDuration)
 
 					memberHealth, err := c.etcdClient.MemberHealth(ctx)
 					if err != nil {
@@ -205,24 +216,18 @@ func (c *DefragController) checkDefrag(ctx context.Context, recorder events.Reco
 	return v1helpers.NewMultiLineAggregate(errors)
 }
 
-func (c *DefragController) ensureControllerDisabledCondition(ctx context.Context, controlPlaneTopology configv1.TopologyMode, recorder events.Recorder) error {
-	// Defrag is blocking and can only be safely performed in HighlyAvailableTopologyMode
-	if controlPlaneTopology == configv1.HighlyAvailableTopologyMode {
+func (c *DefragController) ensureControllerDisabledCondition(ctx context.Context, desiredStatus operatorv1.ConditionStatus, recorder events.Recorder) error {
+	_, currentState, _, err := c.operatorClient.GetOperatorState()
+	if err != nil {
+		return err
+	}
+
+	controllerDisabledCondition := v1helpers.FindOperatorCondition(currentState.Conditions, defragDisabledCondition)
+	if controllerDisabledCondition == nil || controllerDisabledCondition.Status != desiredStatus {
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient,
 			v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 				Type:   defragDisabledCondition,
-				Status: operatorv1.ConditionFalse,
-				Reason: "AsExpected",
-			}))
-		if updateErr != nil {
-			recorder.Warning("DefragControllerUpdatingStatus", updateErr.Error())
-			return updateErr
-		}
-	} else {
-		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient,
-			v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-				Type:   defragDisabledCondition,
-				Status: operatorv1.ConditionTrue,
+				Status: desiredStatus,
 				Reason: "AsExpected",
 			}))
 		if updateErr != nil {
@@ -230,6 +235,7 @@ func (c *DefragController) ensureControllerDisabledCondition(ctx context.Context
 			return updateErr
 		}
 	}
+
 	return nil
 }
 
