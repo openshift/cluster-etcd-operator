@@ -219,6 +219,13 @@ func FakeInfrastructureTopology(topologyMode configv1.TopologyMode) *configv1.In
 	}
 }
 
+func FakeConfigMap(namespace string, name string, data map[string]string) *corev1.ConfigMap {
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
+		Data:       data,
+	}
+}
+
 type FakePodLister struct {
 	PodList []*corev1.Pod
 }
