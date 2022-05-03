@@ -17,6 +17,11 @@ type fakeEtcdClient struct {
 }
 
 func (f *fakeEtcdClient) Defragment(ctx context.Context, member *etcdserverpb.Member) (*clientv3.DefragmentResponse, error) {
+	if len(f.opts.defragErrors) > 0 {
+		err := f.opts.defragErrors[0]
+		f.opts.defragErrors = f.opts.defragErrors[1:]
+		return nil, err
+	}
 	// dramatic simplification
 	f.opts.dbSize = f.opts.dbSizeInUse
 	return nil, nil
@@ -189,6 +194,7 @@ type FakeClientOptions struct {
 	status          []*clientv3.StatusResponse
 	dbSize          int64
 	dbSizeInUse     int64
+	defragErrors    []error
 }
 
 func newFakeClientOpts(opts ...FakeClientOption) *FakeClientOptions {
@@ -227,5 +233,12 @@ func WithFakeClusterHealth(members *FakeMemberHealth) FakeClientOption {
 func WithFakeStatus(status []*clientv3.StatusResponse) FakeClientOption {
 	return func(fo *FakeClientOptions) {
 		fo.status = status
+	}
+}
+
+// WithFakeDefragErrors configures each call to Defrag to consume one error from the given slice
+func WithFakeDefragErrors(errors []error) FakeClientOption {
+	return func(fo *FakeClientOptions) {
+		fo.defragErrors = errors
 	}
 }
