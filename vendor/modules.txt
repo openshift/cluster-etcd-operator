@@ -314,8 +314,6 @@ github.com/openshift/library-go/pkg/operator/status
 github.com/openshift/library-go/pkg/operator/unsupportedconfigoverridescontroller
 github.com/openshift/library-go/pkg/operator/v1helpers
 github.com/openshift/library-go/pkg/serviceability
-github.com/openshift/library-go/test/library
-github.com/openshift/library-go/test/library/apiserver
 # github.com/pkg/errors v0.9.1
 ## explicit
 github.com/pkg/errors
