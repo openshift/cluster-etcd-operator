@@ -1,11 +1,15 @@
 reviewers:
   - hexfusion
   - ironcladlou
-  - lilic
   - marun
-  - retroflexer
+  - hasbro17
+  - dusk125
+  - EmilyM1
+  - Elbehery
+  - tjungblu
 approvers:
   - deads2k
-  - hexfusion
+  - hasbro17
   - sttts
+  - dusk125
 component: "Etcd"
