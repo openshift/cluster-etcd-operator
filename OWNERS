@@ -6,9 +6,10 @@ reviewers:
   - hasbro17
   - EmilyM1
   - Elbehery
+  - tjungblu
 approvers:
   - deads2k
   - hasbro17
-  - hexfusion
   - sttts
+  - dusk125
 component: "Etcd"
