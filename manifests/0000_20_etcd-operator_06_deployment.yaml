@@ -24,9 +24,18 @@ spec:
       labels:
         app: etcd-operator
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: etcd-operator
       containers:
       - name: etcd-operator
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
         image: quay.io/openshift/origin-cluster-etcd-operator
         imagePullPolicy: IfNotPresent
         ports:
