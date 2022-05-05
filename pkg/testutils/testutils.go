@@ -194,7 +194,7 @@ func WithEndpoint(memberID uint64, peerURl string) func(*corev1.ConfigMap) {
 		panic(err)
 	}
 	return func(endpoints *corev1.ConfigMap) {
-		endpoints.Data[fmt.Sprintf("%016x", memberID)] = ip
+		endpoints.Data[fmt.Sprintf("%x", memberID)] = ip
 	}
 }
 
