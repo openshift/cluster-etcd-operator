@@ -40,7 +40,7 @@ import (
 const (
 	BootstrapIPAnnotationKey = "alpha.installer.openshift.io/etcd-bootstrap"
 	DefaultDialTimeout       = 15 * time.Second
-	DefragDialTimeout        = 45 * time.Second
+	DefragDialTimeout        = 60 * time.Second
 )
 
 type etcdClientGetter struct {
