@@ -103,9 +103,10 @@ func (c *UpgradeBackupController) sync(ctx context.Context, syncCtx factory.Sync
 	clusterOperatorObj := originalClusterOperatorObj.DeepCopy()
 	if !isBackupConditionExist(originalClusterOperatorObj.Status.Conditions) {
 		configv1helpers.SetStatusCondition(&clusterOperatorObj.Status.Conditions, configv1.ClusterOperatorStatusCondition{
-			Type:   "RecentBackup",
-			Status: configv1.ConditionUnknown,
-			Reason: "ControllerStarted",
+			Type:    backupConditionType,
+			Status:  configv1.ConditionUnknown,
+			Reason:  "ControllerStarted",
+			Message: "The etcd backup controller is starting, and will decide if recent backups are available or if a backup is required",
 		})
 		if _, err := c.clusterOperatorClient.ClusterOperators().UpdateStatus(ctx, clusterOperatorObj, metav1.UpdateOptions{}); err != nil {
 			syncCtx.Recorder().Warning("ClusterBackupControllerUpdatingStatus", err.Error())
@@ -296,7 +297,7 @@ func isRequireRecentBackup(config *configv1.ClusterVersion) bool {
 	for _, condition := range config.Status.Conditions {
 		// Check if ReleaseAccepted is false and Message field containers the string RecentBackup.
 		if condition.Type == "ReleaseAccepted" && condition.Status == configv1.ConditionFalse {
-			return strings.Contains(condition.Message, "RecentBackup")
+			return strings.Contains(condition.Message, backupConditionType)
 		}
 	}
 	return false
