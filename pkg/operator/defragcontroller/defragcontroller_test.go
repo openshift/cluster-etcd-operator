@@ -6,6 +6,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -19,6 +22,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"k8s.io/apimachinery/pkg/runtime"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
@@ -57,6 +61,7 @@ func TestNewDefragController(t *testing.T) {
 		defragSuccessEvents int
 		wantErr             bool
 		wantErrMsg          string
+		wantCondition       operatorv1.ConditionStatus
 	}{
 		{
 			name:                "defrag success",
@@ -69,6 +74,7 @@ func TestNewDefragController(t *testing.T) {
 			objects: []runtime.Object{
 				u.FakeInfrastructureTopology(configv1.HighlyAvailableTopologyMode),
 			},
+			wantCondition: operatorv1.ConditionFalse,
 		},
 		{
 			name:                "defrag controller disabled SNO",
@@ -81,6 +87,21 @@ func TestNewDefragController(t *testing.T) {
 			objects: []runtime.Object{
 				u.FakeInfrastructureTopology(configv1.SingleReplicaTopologyMode),
 			},
+			wantCondition: operatorv1.ConditionTrue,
+		},
+		{
+			name:                "defrag controller disabled manual override",
+			staticPodStatus:     u.StaticPodOperatorStatus(),
+			dbSize:              minDefragBytes,     // 1GB
+			dbInUse:             minDefragBytes / 2, // 500MB
+			defragSuccessEvents: 0,
+			clusterSize:         3,
+			memberHealth:        &etcdcli.FakeMemberHealth{Healthy: 3},
+			objects: []runtime.Object{
+				u.FakeInfrastructureTopology(configv1.HighlyAvailableTopologyMode),
+				u.FakeConfigMap(operatorclient.OperatorNamespace, defragDisableConfigmapName, map[string]string{}),
+			},
+			wantCondition: operatorv1.ConditionTrue,
 		},
 		{
 			name:                "no defrag required dbSize below minDefragBytes",
@@ -93,6 +114,7 @@ func TestNewDefragController(t *testing.T) {
 			objects: []runtime.Object{
 				u.FakeInfrastructureTopology(configv1.HighlyAvailableTopologyMode),
 			},
+			wantCondition: operatorv1.ConditionFalse,
 		},
 		{
 			name:                "no defrag required dbSize above minDefragBytes and below maxFragmentedPercentage",
@@ -105,6 +127,7 @@ func TestNewDefragController(t *testing.T) {
 			objects: []runtime.Object{
 				u.FakeInfrastructureTopology(configv1.HighlyAvailableTopologyMode),
 			},
+			wantCondition: operatorv1.ConditionFalse,
 		},
 		{
 			name:                "defrag failed cluster is unhealthy: 2 of 3 members are available",
@@ -119,6 +142,7 @@ func TestNewDefragController(t *testing.T) {
 			objects: []runtime.Object{
 				u.FakeInfrastructureTopology(configv1.HighlyAvailableTopologyMode),
 			},
+			wantCondition: operatorv1.ConditionFalse,
 		},
 	}
 	for _, scenario := range scenarios {
@@ -160,6 +184,9 @@ func TestNewDefragController(t *testing.T) {
 				operatorClient:       fakeOperatorClient,
 				etcdClient:           fakeEtcdClient,
 				infrastructureLister: configv1listers.NewInfrastructureLister(indexer),
+				configmapLister:      corev1listers.NewConfigMapLister(indexer),
+				// to speed the tests up, in real life we use minDefragWaitDuration
+				defragWaitDuration: 1 * time.Second,
 			}
 
 			err = controller.sync(context.TODO(), factory.NewSyncContext("defrag-controller", eventRecorder))
@@ -192,7 +219,12 @@ func TestNewDefragController(t *testing.T) {
 			if defragSuccessEvents != scenario.defragSuccessEvents {
 				t.Fatalf("defragSuccessEvents invalid want %d got %d", scenario.defragSuccessEvents, defragSuccessEvents)
 			}
-			eventRecorder.Events()
+
+			_, currentState, _, _ := fakeOperatorClient.GetOperatorState()
+			controllerDisabledCondition := v1helpers.FindOperatorCondition(currentState.Conditions, defragDisabledCondition)
+			if scenario.wantCondition != controllerDisabledCondition.Status {
+				t.Fatalf("operator condition invalid want %s got %s", scenario.wantCondition, controllerDisabledCondition.Status)
+			}
 		})
 	}
 }

@@ -248,6 +248,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		etcdClient,
 		configInformers.Config().V1().Infrastructures().Lister(),
 		controllerContext.EventRecorder,
+		kubeInformersForNamespaces,
 	)
 
 	upgradeBackupController := upgradebackupcontroller.NewUpgradeBackupController(
