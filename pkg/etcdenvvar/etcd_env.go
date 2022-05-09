@@ -2,6 +2,7 @@ package etcdenvvar
 
 import (
 	"fmt"
+	"net"
 	"runtime"
 	"sort"
 	"strconv"
@@ -316,19 +317,17 @@ func getEtcdEndpoints(configmapLister corev1listers.ConfigMapLister, skipBootstr
 	bootstrapAddress := etcdEndpoints.Annotations["alpha.installer.openshift.io/etcd-bootstrap"]
 	// In some cases we want to exclude the ephemeral bootstrap-etcd member from the endpoint list.
 	if !skipBootstrap && len(bootstrapAddress) > 0 {
-		ip, err := dnshelpers.GetURLHostForIP(bootstrapAddress)
-		if err != nil {
+		if ip := net.ParseIP(bootstrapAddress); ip == nil {
 			return "", fmt.Errorf("configmaps/%s contains invalid bootstrap ip address: %s: %v", etcdEndpointName, bootstrapAddress, err)
 		}
-		etcdURLs = append(etcdURLs, fmt.Sprintf("https://%s:2379", ip))
+		etcdURLs = append(etcdURLs, fmt.Sprintf("https://%s", net.JoinHostPort(bootstrapAddress, "2379")))
 	}
 	for k := range etcdEndpoints.Data {
 		address := etcdEndpoints.Data[k]
-		ip, err := dnshelpers.GetURLHostForIP(address)
-		if err != nil {
+		if ip := net.ParseIP(address); ip == nil {
 			return "", fmt.Errorf("configmaps/%s contains invalid ip address: %s: %v", etcdEndpointName, address, err)
 		}
-		etcdURLs = append(etcdURLs, fmt.Sprintf("https://%s:2379", ip))
+		etcdURLs = append(etcdURLs, fmt.Sprintf("https://%s", net.JoinHostPort(address, "2379")))
 	}
 	sort.Strings(etcdURLs)
 

@@ -98,11 +98,11 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 	etcdEndpoints := []string{}
 	nodes, err := g.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
 	for _, node := range nodes {
-		internalIP, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
+		internalIP, _, err := dnshelpers.GetPreferredInternalIPAddressForNodeName(network, node)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get internal IP for node: %w", err)
 		}
-		etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", internalIP))
+		etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s", net.JoinHostPort(internalIP, "2379")))
 	}
 
 	configmap, err := g.configmapsLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints")
@@ -110,11 +110,7 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 		return nil, fmt.Errorf("failed to list endpoints: %w", err)
 	}
 	if bootstrapIP, ok := configmap.Annotations[BootstrapIPAnnotationKey]; ok && bootstrapIP != "" {
-		// escape if IPv6
-		if net.ParseIP(bootstrapIP).To4() == nil {
-			bootstrapIP = "[" + bootstrapIP + "]"
-		}
-		etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", bootstrapIP))
+		etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s", net.JoinHostPort(bootstrapIP, "2379")))
 	}
 
 	g.clientLock.Lock()
