@@ -7,9 +7,7 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"reflect"
 	"strings"
-	"sync"
 	"time"
 
 	grpcprom "github.com/grpc-ecosystem/go-grpc-prometheus"
@@ -28,7 +26,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
@@ -54,13 +51,11 @@ type etcdClientGetter struct {
 
 	eventRecorder events.Recorder
 
-	clientLock          sync.Mutex
-	lastClientConfigKey []string
-	cachedClient        *clientv3.Client
+	clientPool *EtcdClientPool
 }
 
 func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkInformer configv1informers.NetworkInformer, eventRecorder events.Recorder) EtcdClient {
-	return &etcdClientGetter{
+	g := &etcdClientGetter{
 		nodeLister:             kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
 		configmapsLister:       kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister(),
 		networkLister:          networkInformer.Lister(),
@@ -69,86 +64,67 @@ func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkIn
 		networkListerSynced:    networkInformer.Informer().HasSynced,
 		eventRecorder:          eventRecorder.WithComponentSuffix("etcd-client"),
 	}
-}
 
-// getEtcdClientWithClientOpts allows customization of the etcd client using ClientOptions. All clients must be manually
-// closed by the caller with Close().
-func (g *etcdClientGetter) getEtcdClientWithClientOpts(endpoints []string, opts ...ClientOption) (*clientv3.Client, error) {
-	return getEtcdClientWithClientOpts(endpoints, false, opts...)
-}
+	endpointFunc := func() ([]string, error) {
+		if !g.nodeListerSynced() {
+			return nil, fmt.Errorf("node lister not synced")
+		}
+		if !g.configmapsListerSynced() {
+			return nil, fmt.Errorf("configmaps lister not synced")
+		}
+		if !g.networkListerSynced() {
+			return nil, fmt.Errorf("network lister not synced")
+		}
 
-// getEtcdClient may return a cached client.  When a new client is needed, the previous client is closed.
-// The caller should not close the client or future calls may fail.
-func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
-	if !g.nodeListerSynced() {
-		return nil, fmt.Errorf("node lister not synced")
-	}
-	if !g.configmapsListerSynced() {
-		return nil, fmt.Errorf("configmaps lister not synced")
-	}
-	if !g.networkListerSynced() {
-		return nil, fmt.Errorf("network lister not synced")
-	}
-
-	network, err := g.networkLister.Get("cluster")
-	if err != nil {
-		return nil, fmt.Errorf("failed to list cluster network: %w", err)
-	}
-
-	etcdEndpoints := []string{}
-	nodes, err := g.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
-	for _, node := range nodes {
-		internalIP, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
+		network, err := g.networkLister.Get("cluster")
 		if err != nil {
-			return nil, fmt.Errorf("failed to get internal IP for node: %w", err)
+			return nil, fmt.Errorf("failed to list cluster network: %w", err)
 		}
-		etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", internalIP))
+
+		var etcdEndpoints []string
+		nodes, err := g.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
+		for _, node := range nodes {
+			internalIP, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get internal IP for node: %w", err)
+			}
+			etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", internalIP))
+		}
+
+		configmap, err := g.configmapsLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints")
+		if err != nil {
+			return nil, fmt.Errorf("failed to list endpoints from %s/%s: %w",
+				operatorclient.TargetNamespace, "etcd-endpoints", err)
+		}
+		if bootstrapIP, ok := configmap.Annotations[BootstrapIPAnnotationKey]; ok && bootstrapIP != "" {
+			// escape if IPv6
+			if net.ParseIP(bootstrapIP).To4() == nil {
+				bootstrapIP = "[" + bootstrapIP + "]"
+			}
+			etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", bootstrapIP))
+		}
+		return etcdEndpoints, nil
 	}
 
-	configmap, err := g.configmapsLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints")
-	if err != nil {
-		return nil, fmt.Errorf("failed to list endpoints: %w", err)
-	}
-	if bootstrapIP, ok := configmap.Annotations[BootstrapIPAnnotationKey]; ok && bootstrapIP != "" {
-		// escape if IPv6
-		if net.ParseIP(bootstrapIP).To4() == nil {
-			bootstrapIP = "[" + bootstrapIP + "]"
+	newFunc := func() (*clientv3.Client, error) {
+		endpoints, err := endpointFunc()
+		if err != nil {
+			return nil, fmt.Errorf("error retrieving endpoints for new cached client: %w", err)
 		}
-		etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", bootstrapIP))
+		return newEtcdClientWithClientOpts(endpoints, true)
 	}
 
-	g.clientLock.Lock()
-	defer g.clientLock.Unlock()
-	if reflect.DeepEqual(g.lastClientConfigKey, etcdEndpoints) && g.cachedClient != nil {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		// Test cached client connection by doing a request.
-		_, err = g.cachedClient.MemberList(ctx)
-		if err == nil {
-			return g.cachedClient, nil
-		}
-	}
-
-	c, err := getEtcdClientWithClientOpts(etcdEndpoints, false)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get etcd client: %w", err)
-	}
-	if g.cachedClient != nil {
-		if err := g.cachedClient.Close(); err != nil {
-			utilruntime.HandleError(fmt.Errorf("failed to close cached client: %w", err))
-		}
-	}
-	g.cachedClient = c
-	g.lastClientConfigKey = etcdEndpoints
-
-	return g.cachedClient, nil
+	g.clientPool = NewDefaultEtcdClientPool(newFunc, endpointFunc)
+	return g
 }
 
-func getEtcdClientWithClientOpts(endpoints []string, skipConnectionTest bool, opts ...ClientOption) (*clientv3.Client, error) {
+// newEtcdClientWithClientOpts allows customization of the etcd client using ClientOptions. All clients must be manually
+// closed by the caller with Close().
+func newEtcdClientWithClientOpts(endpoints []string, skipConnectionTest bool, opts ...ClientOption) (*clientv3.Client, error) {
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(ioutil.Discard, ioutil.Discard, os.Stderr))
 	clientOpts, err := newClientOpts(opts...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error during clientOpts: %w", err)
 	}
 
 	dialOptions := []grpc.DialOption{
@@ -164,7 +140,7 @@ func getEtcdClientWithClientOpts(endpoints []string, skipConnectionTest bool, op
 	}
 	tlsConfig, err := tlsInfo.ClientConfig()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error during client TLSConfig: %w", err)
 	}
 
 	// Our logs are noisy
@@ -209,10 +185,12 @@ func getEtcdClientWithClientOpts(endpoints []string, skipConnectionTest bool, op
 }
 
 func (g *etcdClientGetter) MemberAddAsLearner(ctx context.Context, peerURL string) error {
-	cli, err := g.getEtcdClient()
+	cli, err := g.clientPool.Get()
 	if err != nil {
 		return err
 	}
+
+	defer g.clientPool.Return(cli)
 
 	membersResp, err := cli.MemberList(ctx)
 	if err != nil {
@@ -241,10 +219,12 @@ func (g *etcdClientGetter) MemberAddAsLearner(ctx context.Context, peerURL strin
 }
 
 func (g *etcdClientGetter) MemberPromote(ctx context.Context, member *etcdserverpb.Member) error {
-	cli, err := g.getEtcdClient()
+	cli, err := g.clientPool.Get()
 	if err != nil {
 		return err
 	}
+
+	defer g.clientPool.Return(cli)
 
 	defer func() {
 		if err != nil {
@@ -277,10 +257,12 @@ func (g *etcdClientGetter) MemberUpdatePeerURL(ctx context.Context, id uint64, p
 		g.eventRecorder.Eventf("MemberUpdate", "updating member %q with peers %v", memberName, strings.Join(peerURLs, ","))
 	}
 
-	cli, err := g.getEtcdClient()
+	cli, err := g.clientPool.Get()
 	if err != nil {
 		return err
 	}
+
+	defer g.clientPool.Return(cli)
 
 	_, err = cli.MemberUpdate(ctx, id, peerURLs)
 	if err != nil {
@@ -290,10 +272,13 @@ func (g *etcdClientGetter) MemberUpdatePeerURL(ctx context.Context, id uint64, p
 }
 
 func (g *etcdClientGetter) MemberRemove(ctx context.Context, memberID uint64) error {
-	cli, err := g.getEtcdClient()
+	cli, err := g.clientPool.Get()
 	if err != nil {
 		return err
 	}
+
+	defer g.clientPool.Return(cli)
+
 	_, err = cli.MemberRemove(ctx, memberID)
 	if err == nil {
 		g.eventRecorder.Eventf("MemberRemove", "removed member with ID: %v", memberID)
@@ -302,10 +287,12 @@ func (g *etcdClientGetter) MemberRemove(ctx context.Context, memberID uint64) er
 }
 
 func (g *etcdClientGetter) MemberList(ctx context.Context) ([]*etcdserverpb.Member, error) {
-	cli, err := g.getEtcdClient()
+	cli, err := g.clientPool.Get()
 	if err != nil {
 		return nil, err
 	}
+
+	defer g.clientPool.Return(cli)
 
 	membersResp, err := cli.MemberList(ctx)
 	if err != nil {
@@ -317,10 +304,12 @@ func (g *etcdClientGetter) MemberList(ctx context.Context) ([]*etcdserverpb.Memb
 
 // Status reports etcd endpoint status of client URL target. Example https://10.0.10.1:2379
 func (g *etcdClientGetter) Status(ctx context.Context, clientURL string) (*clientv3.StatusResponse, error) {
-	cli, err := g.getEtcdClient()
+	cli, err := g.clientPool.Get()
 	if err != nil {
 		return nil, err
 	}
+
+	defer g.clientPool.Return(cli)
 	return cli.Status(ctx, clientURL)
 }
 
@@ -351,10 +340,12 @@ func GetMemberNameOrHost(member *etcdserverpb.Member) string {
 }
 
 func (g *etcdClientGetter) UnhealthyMembers(ctx context.Context) ([]*etcdserverpb.Member, error) {
-	cli, err := g.getEtcdClient()
+	cli, err := g.clientPool.Get()
 	if err != nil {
-		return nil, fmt.Errorf("could not get etcd client %v", err)
+		return nil, err
 	}
+
+	defer g.clientPool.Return(cli)
 
 	etcdCluster, err := cli.MemberList(ctx)
 	if err != nil {
@@ -379,10 +370,12 @@ func (g *etcdClientGetter) UnhealthyMembers(ctx context.Context) ([]*etcdserverp
 // HealthyMembers performs health check of current members and returns a slice of healthy members and error
 // if no healthy members found.
 func (g *etcdClientGetter) HealthyMembers(ctx context.Context) ([]*etcdserverpb.Member, error) {
-	cli, err := g.getEtcdClient()
+	cli, err := g.clientPool.Get()
 	if err != nil {
 		return nil, err
 	}
+
+	defer g.clientPool.Return(cli)
 
 	etcdCluster, err := cli.MemberList(ctx)
 	if err != nil {
@@ -398,10 +391,12 @@ func (g *etcdClientGetter) HealthyMembers(ctx context.Context) ([]*etcdserverpb.
 }
 
 func (g *etcdClientGetter) MemberHealth(ctx context.Context) (memberHealth, error) {
-	cli, err := g.getEtcdClient()
+	cli, err := g.clientPool.Get()
 	if err != nil {
 		return nil, err
 	}
+
+	defer g.clientPool.Return(cli)
 
 	etcdCluster, err := cli.MemberList(ctx)
 	if err != nil {
@@ -426,16 +421,16 @@ func (g *etcdClientGetter) IsMemberHealthy(ctx context.Context, member *etcdserv
 }
 
 func (g *etcdClientGetter) MemberStatus(ctx context.Context, member *etcdserverpb.Member) string {
-	cli, err := g.getEtcdClient()
+	cli, err := g.clientPool.Get()
 	if err != nil {
 		klog.Errorf("error getting etcd client: %#v", err)
 		return EtcdMemberStatusUnknown
 	}
+	defer g.clientPool.Return(cli)
 
 	if len(member.ClientURLs) == 0 && member.Name == "" {
 		return EtcdMemberStatusNotStarted
 	}
-
 	_, err = cli.Status(ctx, member.ClientURLs[0])
 	if err != nil {
 		klog.Errorf("error getting etcd member %s status: %#v", member.Name, err)
@@ -445,16 +440,25 @@ func (g *etcdClientGetter) MemberStatus(ctx context.Context, member *etcdserverp
 	return EtcdMemberStatusAvailable
 }
 
+// Defragment creates a new uncached clientv3 to the given member url and calls clientv3.Client.Defragment.
 func (g *etcdClientGetter) Defragment(ctx context.Context, member *etcdserverpb.Member) (*clientv3.DefragmentResponse, error) {
-	cli, err := g.getEtcdClientWithClientOpts([]string{member.ClientURLs[0]}, WithDialTimeout(DefragDialTimeout))
+	// no g.clientLock necessary, this always returns a new fresh client
+	cli, err := newEtcdClientWithClientOpts([]string{member.ClientURLs[0]}, false, WithDialTimeout(DefragDialTimeout))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get etcd client for defragment: %w", err)
 	}
-	defer cli.Close()
+	defer func() {
+		if cli == nil {
+			return
+		}
+		if err := cli.Close(); err != nil {
+			klog.Errorf("error closing etcd client for defrag: %v", err)
+		}
+	}()
 
 	resp, err := cli.Defragment(ctx, member.ClientURLs[0])
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error while running defragment: %w", err)
 	}
 	return resp, nil
 }

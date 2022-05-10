@@ -59,12 +59,17 @@ func getMemberHealth(ctx context.Context, etcdMembers []*etcdserverpb.Member) me
 			if member.IsLearner {
 				skipConnectionTest = true
 			}
-			cli, err := getEtcdClientWithClientOpts([]string{member.ClientURLs[0]}, skipConnectionTest)
+			cli, err := newEtcdClientWithClientOpts([]string{member.ClientURLs[0]}, skipConnectionTest)
 			if err != nil {
 				hch <- healthCheck{Member: member, Healthy: false, Error: fmt.Errorf("create client failure: %w", err)}
 				return
 			}
-			defer cli.Close()
+			defer func() {
+				if err := cli.Close(); err != nil {
+					klog.Errorf("error closing etcd client for getMemberHealth: %v", err)
+				}
+			}()
+
 			st := time.Now()
 			ctx, cancel := context.WithCancel(ctx)
 			var resp *clientv3.GetResponse
