@@ -18,8 +18,8 @@ import (
 // * update endpoints, to be always up to date with the changes
 // * return a used client to the pool, making it available to consume again
 type EtcdClientPool struct {
-	pool             chan *clientv3.Client
-	availableTickets chan int
+	pool                 chan *clientv3.Client
+	availableOpenClients chan int
 
 	newFunc       func() (*clientv3.Client, error)
 	endpointsFunc func() ([]string, error)
@@ -35,9 +35,9 @@ const linearRetryBaseSleep = 2 * time.Second
 // that controls the channel size, which controls how many unused clients we are keeping in buffer
 const maxNumCachedClients = 5
 
-// that controls how many clients are being created, you need to have a ticket to create a client
+// that controls how many clients are being created, you need to have a free message in the availableOpenClients channel to create a client
 // this protects etcd from being hit by too many clients at once, eg when it is down or recovering or hit by lots of QPS
-const maxNumClientTickets = 10
+const maxNumOpenClients = 10
 const maxAcquireTime = 5 * time.Second
 
 // Get returns a client that can be used exclusively by the caller,
@@ -62,7 +62,7 @@ func (p *EtcdClientPool) Get() (*clientv3.Client, error) {
 		default:
 			// blocks the creation when there are too many clients, after timeout we reject the request immediately without retry
 			select {
-			case <-p.availableTickets:
+			case <-p.availableOpenClients:
 			case <-time.After(maxAcquireTime):
 				return nil, fmt.Errorf("too many active cache clients, rejecting to create new one")
 			}
@@ -71,7 +71,7 @@ func (p *EtcdClientPool) Get() (*clientv3.Client, error) {
 			c, err := p.newFunc()
 			if err != nil {
 				klog.Warningf("could not create a new cached client after %d tries, trying again. Err: %v", i, err)
-				returnTicket(p.availableTickets)
+				returnClosedClient(p.availableOpenClients)
 				continue
 			}
 
@@ -92,8 +92,8 @@ func (p *EtcdClientPool) Get() (*clientv3.Client, error) {
 		err = p.healthFunc(client)
 		if err != nil {
 			klog.Warningf("cached client considered unhealthy after %d tries, trying again. Err: %v", i, err)
-			// try to close the broken client and return the ticket to the pool
-			returnTicket(p.availableTickets)
+			// try to close the broken client and return the client to the pool
+			returnClosedClient(p.availableOpenClients)
 			err = p.closeFunc(client)
 			if err != nil {
 				klog.Errorf("could not close unhealthy cache client: %v", err)
@@ -117,7 +117,7 @@ func (p *EtcdClientPool) Return(client *clientv3.Client) {
 	select {
 	case p.pool <- client:
 	default:
-		returnTicket(p.availableTickets)
+		returnClosedClient(p.availableOpenClients)
 		err := p.closeFunc(client)
 		if err != nil {
 			klog.Errorf("failed to close extra etcd client which is not being re-added in the client pool: %v", err)
@@ -125,10 +125,10 @@ func (p *EtcdClientPool) Return(client *clientv3.Client) {
 	}
 }
 
-// returnTicket will attempt to return a ticket to the channel, but will not block when the channel is at capacity
-func returnTicket(tickets chan int) {
+// returnClosedClient will attempt to return a client to the channel, but will not block when the channel is at capacity
+func returnClosedClient(channel chan int) {
 	select {
-	case tickets <- 1:
+	case channel <- 1:
 	default:
 	}
 }
@@ -167,18 +167,18 @@ func NewEtcdClientPool(
 	healthFunc func(*clientv3.Client) error,
 	closeFunc func(*clientv3.Client) error) *EtcdClientPool {
 
-	// pre-populate tickets for client creation
-	tickets := make(chan int, maxNumClientTickets)
-	for i := 0; i < maxNumClientTickets; i++ {
-		tickets <- i
+	// pre-populate clients for client creation
+	availableOpenClients := make(chan int, maxNumOpenClients)
+	for i := 0; i < maxNumOpenClients; i++ {
+		availableOpenClients <- i
 	}
 
 	return &EtcdClientPool{
-		pool:             make(chan *clientv3.Client, maxNumCachedClients),
-		availableTickets: tickets,
-		newFunc:          newFunc,
-		endpointsFunc:    endpointsFunc,
-		healthFunc:       healthFunc,
-		closeFunc:        closeFunc,
+		pool:                 make(chan *clientv3.Client, maxNumCachedClients),
+		availableOpenClients: availableOpenClients,
+		newFunc:              newFunc,
+		endpointsFunc:        endpointsFunc,
+		healthFunc:           healthFunc,
+		closeFunc:            closeFunc,
 	}
 }

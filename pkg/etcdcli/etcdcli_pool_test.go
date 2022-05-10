@@ -133,23 +133,23 @@ func TestClientClosesOnChannelCapacity(t *testing.T) {
 	assert.Equal(t, 1, poolRecorder.numCloseCalls)
 }
 
-func TestNewClientWithTickets(t *testing.T) {
+func TestNewClientWithOpenClients(t *testing.T) {
 	integration.BeforeTestExternal(t)
 	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
 	defer testServer.Terminate(t)
 
 	poolRecorder := newTestPool(testServer)
 	var clients []*clientv3.Client
-	for i := 0; i < maxNumClientTickets; i++ {
+	for i := 0; i < maxNumOpenClients; i++ {
 		client, err := poolRecorder.pool.Get()
 		require.NoError(t, err)
 		assert.NotNil(t, client)
 		clients = append(clients, client)
 	}
 
-	assert.Equal(t, maxNumClientTickets, poolRecorder.numNewCalls)
-	assert.Equal(t, maxNumClientTickets, poolRecorder.numEndpointCalls)
-	assert.Equal(t, maxNumClientTickets, poolRecorder.numHealthCalls)
+	assert.Equal(t, maxNumOpenClients, poolRecorder.numNewCalls)
+	assert.Equal(t, maxNumOpenClients, poolRecorder.numEndpointCalls)
+	assert.Equal(t, maxNumOpenClients, poolRecorder.numHealthCalls)
 	assert.Equal(t, 0, poolRecorder.numCloseCalls)
 
 	// this should block and return an error
@@ -161,104 +161,104 @@ func TestNewClientWithTickets(t *testing.T) {
 	client, err = poolRecorder.pool.Get()
 	require.NoError(t, err)
 	assert.NotNil(t, client)
-	assert.Equal(t, maxNumClientTickets, poolRecorder.numNewCalls)        // no new call added
-	assert.Equal(t, maxNumClientTickets+2, poolRecorder.numEndpointCalls) // called Get twice additionally
-	assert.Equal(t, maxNumClientTickets+1, poolRecorder.numHealthCalls)
+	assert.Equal(t, maxNumOpenClients, poolRecorder.numNewCalls)        // no new call added
+	assert.Equal(t, maxNumOpenClients+2, poolRecorder.numEndpointCalls) // called Get twice additionally
+	assert.Equal(t, maxNumOpenClients+1, poolRecorder.numHealthCalls)
 	assert.Equal(t, 0, poolRecorder.numCloseCalls)
 }
 
-func TestClosesReturnTickets(t *testing.T) {
+func TestClosesReturnOpenClients(t *testing.T) {
 	integration.BeforeTestExternal(t)
 	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
 	defer testServer.Terminate(t)
 
 	poolRecorder := newTestPool(testServer)
 	var clients []*clientv3.Client
-	for i := 0; i < maxNumClientTickets; i++ {
+	for i := 0; i < maxNumOpenClients; i++ {
 		client, err := poolRecorder.pool.Get()
 		require.NoError(t, err)
 		assert.NotNil(t, client)
 		clients = append(clients, client)
 	}
 
-	assert.Equal(t, maxNumClientTickets, poolRecorder.numNewCalls)
-	assert.Equal(t, maxNumClientTickets, poolRecorder.numEndpointCalls)
-	assert.Equal(t, maxNumClientTickets, poolRecorder.numHealthCalls)
+	assert.Equal(t, maxNumOpenClients, poolRecorder.numNewCalls)
+	assert.Equal(t, maxNumOpenClients, poolRecorder.numEndpointCalls)
+	assert.Equal(t, maxNumOpenClients, poolRecorder.numHealthCalls)
 	assert.Equal(t, 0, poolRecorder.numCloseCalls)
 
 	// return all clients to fill the internal cache and cause five to close
-	for i := 0; i < maxNumClientTickets; i++ {
+	for i := 0; i < maxNumOpenClients; i++ {
 		poolRecorder.pool.Return(clients[i])
 	}
 	assert.Equal(t, maxNumCachedClients, poolRecorder.numCloseCalls)
 
 	// now we should be able to get the full amount of clients again
-	for i := 0; i < maxNumClientTickets; i++ {
+	for i := 0; i < maxNumOpenClients; i++ {
 		client, err := poolRecorder.pool.Get()
 		require.NoError(t, err)
 		assert.NotNil(t, client)
 	}
 
 	// replenish the maxNumCachedClients that were closed earlier
-	assert.Equal(t, maxNumClientTickets+maxNumCachedClients, poolRecorder.numNewCalls)
-	// no tickets are available anymore, as we have handed out all clients
-	assert.Equal(t, 0, len(poolRecorder.pool.availableTickets))
-	assert.Equal(t, maxNumClientTickets*2, poolRecorder.numEndpointCalls)
-	assert.Equal(t, maxNumClientTickets*2, poolRecorder.numHealthCalls)
+	assert.Equal(t, maxNumOpenClients+maxNumCachedClients, poolRecorder.numNewCalls)
+	// no open clients are available anymore, as we have handed out all clients
+	assert.Equal(t, 0, len(poolRecorder.pool.availableOpenClients))
+	assert.Equal(t, maxNumOpenClients*2, poolRecorder.numEndpointCalls)
+	assert.Equal(t, maxNumOpenClients*2, poolRecorder.numHealthCalls)
 	assert.Equal(t, maxNumCachedClients, poolRecorder.numCloseCalls)
 }
 
-func TestClosesReturnTicketsCloseError(t *testing.T) {
+func TestClosesReturnOpenClientCloseError(t *testing.T) {
 	integration.BeforeTestExternal(t)
 	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
 	defer testServer.Terminate(t)
 
 	poolRecorder := newTestPool(testServer)
 	var clients []*clientv3.Client
-	for i := 0; i < maxNumClientTickets; i++ {
+	for i := 0; i < maxNumOpenClients; i++ {
 		client, err := poolRecorder.pool.Get()
 		require.NoError(t, err)
 		assert.NotNil(t, client)
 		clients = append(clients, client)
 	}
 
-	assert.Equal(t, maxNumClientTickets, poolRecorder.numNewCalls)
-	assert.Equal(t, maxNumClientTickets, poolRecorder.numEndpointCalls)
-	assert.Equal(t, maxNumClientTickets, poolRecorder.numHealthCalls)
+	assert.Equal(t, maxNumOpenClients, poolRecorder.numNewCalls)
+	assert.Equal(t, maxNumOpenClients, poolRecorder.numEndpointCalls)
+	assert.Equal(t, maxNumOpenClients, poolRecorder.numHealthCalls)
 	assert.Equal(t, 0, poolRecorder.numCloseCalls)
 
 	// return all clients to fill the internal cache and cause five to close
 	// first close should fail, but not impact anything and certainly not block
 	poolRecorder.closeFuncErrReturn = errors.New("fail")
-	for i := 0; i < maxNumClientTickets; i++ {
+	for i := 0; i < maxNumOpenClients; i++ {
 		poolRecorder.pool.Return(clients[i])
 	}
 	assert.Equal(t, maxNumCachedClients, poolRecorder.numCloseCalls)
 
 	// now we should be able to get the full amount of clients again
-	for i := 0; i < maxNumClientTickets; i++ {
+	for i := 0; i < maxNumOpenClients; i++ {
 		client, err := poolRecorder.pool.Get()
 		require.NoError(t, err)
 		assert.NotNil(t, client)
 	}
 
 	// replenish the maxNumCachedClients that were closed earlier
-	assert.Equal(t, maxNumClientTickets+maxNumCachedClients, poolRecorder.numNewCalls)
-	assert.Equal(t, maxNumClientTickets*2, poolRecorder.numEndpointCalls)
-	assert.Equal(t, maxNumClientTickets*2, poolRecorder.numHealthCalls)
+	assert.Equal(t, maxNumOpenClients+maxNumCachedClients, poolRecorder.numNewCalls)
+	assert.Equal(t, maxNumOpenClients*2, poolRecorder.numEndpointCalls)
+	assert.Equal(t, maxNumOpenClients*2, poolRecorder.numHealthCalls)
 	assert.Equal(t, maxNumCachedClients, poolRecorder.numCloseCalls)
 }
 
 // this scenario used to lock-up etcd on start-up a lot, as the client does some initial connection testing that may fail
-// eventually it will be exhausting all the tickets
-func TestFailingOnCreationReturnsTickets(t *testing.T) {
+// eventually it will be exhausting all the openClient quota
+func TestFailingOnCreationReturnsClients(t *testing.T) {
 	integration.BeforeTestExternal(t)
 	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
 	defer testServer.Terminate(t)
 
 	poolRecorder := newTestPool(testServer)
-	// this should already happen at maxNumClientTickets/numRetries, so we're testing this is working pretty well here.
-	for i := 0; i < maxNumClientTickets; i++ {
+	// this should already happen at maxNumOpenClients/numRetries, so we're testing this is working pretty well here.
+	for i := 0; i < maxNumOpenClients; i++ {
 		// this error should fail the first retry consistently
 		poolRecorder.newFuncErrReturn = fmt.Errorf("constant error")
 		client, err := poolRecorder.pool.Get()
@@ -267,9 +267,9 @@ func TestFailingOnCreationReturnsTickets(t *testing.T) {
 	}
 
 	// replenish the maxNumCachedClients that were closed earlier
-	assert.Equal(t, maxNumClientTickets*2, poolRecorder.numNewCalls)
-	assert.Equal(t, maxNumClientTickets, poolRecorder.numEndpointCalls)
-	assert.Equal(t, maxNumClientTickets, poolRecorder.numHealthCalls)
+	assert.Equal(t, maxNumOpenClients*2, poolRecorder.numNewCalls)
+	assert.Equal(t, maxNumOpenClients, poolRecorder.numEndpointCalls)
+	assert.Equal(t, maxNumOpenClients, poolRecorder.numHealthCalls)
 	assert.Equal(t, 0, poolRecorder.numCloseCalls)
 }
 
@@ -357,7 +357,7 @@ func TestClientUpdatesEndpoints(t *testing.T) {
 	assert.Equal(t, 0, poolRecorder.numCloseCalls)
 }
 
-func TestClientTicketReturnNil(t *testing.T) {
+func TestClientOpenClientReturnNil(t *testing.T) {
 	integration.BeforeTestExternal(t)
 	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
 	defer testServer.Terminate(t)
@@ -370,19 +370,19 @@ func TestClientTicketReturnNil(t *testing.T) {
 }
 
 // we try to return many more clients than we actually handed out, this should fill the pool but not block when it's full
-func TestClientTicketMultiReturns(t *testing.T) {
+func TestClientOpenClientMultiReturns(t *testing.T) {
 	integration.BeforeTestExternal(t)
 	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
 	defer testServer.Terminate(t)
 
 	poolRecorder := newTestPool(testServer)
-	for i := 0; i < maxNumClientTickets*3; i++ {
+	for i := 0; i < maxNumOpenClients*3; i++ {
 		poolRecorder.pool.Return(testServer.RandClient())
 	}
 	assert.Equal(t, 0, poolRecorder.numNewCalls)
 	assert.Equal(t, 0, poolRecorder.numEndpointCalls)
 	assert.Equal(t, 0, poolRecorder.numHealthCalls)
-	assert.Equal(t, maxNumClientTickets*3-maxNumCachedClients, poolRecorder.numCloseCalls)
+	assert.Equal(t, maxNumOpenClients*3-maxNumCachedClients, poolRecorder.numCloseCalls)
 }
 
 func newTestPool(testServer *integration.ClusterV3) *clientPoolRecorder {
