@@ -120,7 +120,7 @@ func (p *EtcdClientPool) Return(client *clientv3.Client) {
 		returnTicket(p.availableTickets)
 		err := p.closeFunc(client)
 		if err != nil {
-			klog.Errorf("could not close cache client exceeding pool capacity: %v", err)
+			klog.Errorf("failed to close extra etcd client which is not being re-added in the client pool: %v", err)
 		}
 	}
 }

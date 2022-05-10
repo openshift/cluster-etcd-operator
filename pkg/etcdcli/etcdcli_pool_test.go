@@ -159,6 +159,7 @@ func TestNewClientWithTickets(t *testing.T) {
 	// returning one should unlock the get again
 	poolRecorder.pool.Return(clients[0])
 	client, err = poolRecorder.pool.Get()
+	require.NoError(t, err)
 	assert.NotNil(t, client)
 	assert.Equal(t, maxNumClientTickets, poolRecorder.numNewCalls)        // no new call added
 	assert.Equal(t, maxNumClientTickets+2, poolRecorder.numEndpointCalls) // called Get twice additionally
@@ -191,7 +192,7 @@ func TestClosesReturnTickets(t *testing.T) {
 	}
 	assert.Equal(t, maxNumCachedClients, poolRecorder.numCloseCalls)
 
-	// now we should be able to get the full amount of tickets again
+	// now we should be able to get the full amount of clients again
 	for i := 0; i < maxNumClientTickets; i++ {
 		client, err := poolRecorder.pool.Get()
 		require.NoError(t, err)
@@ -200,6 +201,8 @@ func TestClosesReturnTickets(t *testing.T) {
 
 	// replenish the maxNumCachedClients that were closed earlier
 	assert.Equal(t, maxNumClientTickets+maxNumCachedClients, poolRecorder.numNewCalls)
+	// no tickets are available anymore, as we have handed out all clients
+	assert.Equal(t, 0, len(poolRecorder.pool.availableTickets))
 	assert.Equal(t, maxNumClientTickets*2, poolRecorder.numEndpointCalls)
 	assert.Equal(t, maxNumClientTickets*2, poolRecorder.numHealthCalls)
 	assert.Equal(t, maxNumCachedClients, poolRecorder.numCloseCalls)
@@ -232,7 +235,7 @@ func TestClosesReturnTicketsCloseError(t *testing.T) {
 	}
 	assert.Equal(t, maxNumCachedClients, poolRecorder.numCloseCalls)
 
-	// now we should be able to get the full amount of tickets again
+	// now we should be able to get the full amount of clients again
 	for i := 0; i < maxNumClientTickets; i++ {
 		client, err := poolRecorder.pool.Get()
 		require.NoError(t, err)
