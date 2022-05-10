@@ -92,16 +92,20 @@ func NewUpgradeBackupController(
 
 func (c *UpgradeBackupController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	originalClusterOperatorObj, err := c.clusterOperatorLister.Get("etcd")
+	klog.Infof("@Mustafa started UpgradeBackupController.sync, originalClusterOperatorObj: %v", originalClusterOperatorObj)
 	if err != nil && !apierrors.IsNotFound(err) {
+		klog.Infof("@Mustafa  UpgradeBackupController.sync: status failed with error: %w", err)
 		syncCtx.Recorder().Warningf("StatusFailed", "Unable to get current operator status for clusteroperator/etcd: %v", err)
 		return err
 	}
 	if err != nil {
+		klog.Infof("@Mustafa UpgradeBackupController.sync: error: %w", err)
 		return err
 	}
 
 	clusterOperatorObj := originalClusterOperatorObj.DeepCopy()
 	if !isBackupConditionExist(originalClusterOperatorObj.Status.Conditions) {
+		klog.Infof("@Mustafa  UpgradeBackupController.sync: isBackupConditionExist is false")
 		configv1helpers.SetStatusCondition(&clusterOperatorObj.Status.Conditions, configv1.ClusterOperatorStatusCondition{
 			Type:    backupConditionType,
 			Status:  configv1.ConditionUnknown,
@@ -114,8 +118,11 @@ func (c *UpgradeBackupController) sync(ctx context.Context, syncCtx factory.Sync
 		}
 	}
 
+	klog.Infof("@Mustafa  UpgradeBackupController.sync: isBackupConditionExist is true")
 	recentBackupCondition, err := c.ensureRecentBackup(ctx, &clusterOperatorObj.Status, syncCtx.Recorder())
 	if err != nil {
+		//recentBackupCondition
+		klog.Infof("@Mustafa  UpgradeBackupController.sync: recentBackupCondition returns error: %w", err)
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "UpgradeBackupControllerDegraded",
 			Status:  operatorv1.ConditionTrue,
@@ -153,6 +160,7 @@ func (c *UpgradeBackupController) sync(ctx context.Context, syncCtx factory.Sync
 
 // ensureRecentBackup ensures that a new backup pod is created if one does not exist, returns the appropriate RecentBackup condition.
 func (c *UpgradeBackupController) ensureRecentBackup(ctx context.Context, clusterOperatorStatus *configv1.ClusterOperatorStatus, recorder events.Recorder) (*configv1.ClusterOperatorStatusCondition, error) {
+	klog.Infof("@Mustafa started UpgradeBackupController.ensureRecentBackup")
 	clusterVersion, err := c.clusterVersionLister.Get("version")
 	if err != nil {
 		return nil, err
@@ -160,14 +168,18 @@ func (c *UpgradeBackupController) ensureRecentBackup(ctx context.Context, cluste
 
 	// Check cluster version status for backup condition.
 	if !isRequireRecentBackup(clusterVersion) {
+		klog.Infof("@Mustafa started UpgradeBackupController.ensureRecentBackup: isRequireRecentBackup is false")
 		return nil, nil
 	}
 
+	klog.Infof("@Mustafa started UpgradeBackupController.ensureRecentBackup: isRequireRecentBackup is true")
 	backupPod, err := c.podLister.Pods(operatorclient.TargetNamespace).Get(clusterBackupPodName)
 	// No backup found, attempt to create one.
 	if err != nil && apierrors.IsNotFound(err) {
 		// Check nodes for backup preconditions
+		klog.Infof("@Mustafa started UpgradeBackupController.ensureRecentBackup: could not find backup pod: %v", backupPod)
 		backupNodeName, err := c.getBackupNodeName(ctx)
+		klog.Infof("@Mustafa started UpgradeBackupController.ensureRecentBackup: node name: %v", backupNodeName)
 		if err != nil {
 			return nil, err
 		}
@@ -178,6 +190,7 @@ func (c *UpgradeBackupController) ensureRecentBackup(ctx context.Context, cluste
 			return nil, fmt.Errorf("pod/%s: %v", clusterBackupPodName, err)
 		}
 
+		klog.Infof("@Mustafa started UpgradeBackupController.ensureRecentBackup: backup pod created: %v", recentBackupName)
 		return &configv1.ClusterOperatorStatusCondition{
 			Status:  configv1.ConditionUnknown,
 			Type:    backupConditionType,
@@ -186,6 +199,7 @@ func (c *UpgradeBackupController) ensureRecentBackup(ctx context.Context, cluste
 		}, nil
 	}
 	if err != nil {
+		klog.Infof("@Mustafa started UpgradeBackupController.ensureRecentBackup: error: %v", err)
 		return nil, err
 	}
 
@@ -195,6 +209,7 @@ func (c *UpgradeBackupController) ensureRecentBackup(ctx context.Context, cluste
 	// everything else ConditionUnknown
 	switch {
 	case backupPod.Status.Phase == corev1.PodSucceeded:
+		klog.Infof("@Mustafa started UpgradeBackupController.ensureRecentBackup: backup pod status: %v", corev1.PodSucceeded)
 		backupCondition := configv1helpers.FindStatusCondition(clusterOperatorStatus.Conditions, backupConditionType)
 		if backupCondition.Reason != backupSuccess {
 
@@ -218,9 +233,11 @@ func (c *UpgradeBackupController) ensureRecentBackup(ctx context.Context, cluste
 		}
 		return nil, nil
 	case backupPod.Status.Phase == corev1.PodFailed && !isBackoffDuration(backupPod.CreationTimestamp.Time, failedPodBackoffDuration):
+		klog.Infof("@Mustafa started UpgradeBackupController.ensureRecentBackup: backup pod status: %v && BackOffDuration is false", corev1.PodFailed)
 		// Pod must be older than retry duration before any delete action is taken.
 		return operatorStatusBackupPodFailed("pod failed within retry duration: delete skipped"), nil
 	case backupPod.Status.Phase == corev1.PodFailed:
+		klog.Infof("@Mustafa started UpgradeBackupController.ensureRecentBackup: backup pod status: %v", corev1.PodFailed)
 		// Delete pod
 		err := c.kubeClient.CoreV1().Pods(operatorclient.TargetNamespace).Delete(ctx, backupPod.Name, metav1.DeleteOptions{})
 		if err != nil {
@@ -297,6 +314,7 @@ func isRequireRecentBackup(config *configv1.ClusterVersion) bool {
 	for _, condition := range config.Status.Conditions {
 		// Check if ReleaseAccepted is false and Message field containers the string RecentBackup.
 		if condition.Type == "ReleaseAccepted" && condition.Status == configv1.ConditionFalse {
+			klog.Infof("@Mustafa isRequireRecentBackup is true")
 			return strings.Contains(condition.Message, backupConditionType)
 		}
 	}
@@ -320,6 +338,7 @@ func operatorStatusBackupPodFailed(message string) *configv1.ClusterOperatorStat
 func isBackupConditionExist(conditions []configv1.ClusterOperatorStatusCondition) bool {
 	for _, condition := range conditions {
 		if condition.Type == backupConditionType {
+			klog.Infof("@Mustafa backup condition exist: %v", backupConditionType)
 			return true
 		}
 	}
