@@ -29,7 +29,7 @@ const (
 	minDefragWaitDuration                  = 36 * time.Second
 	maxFragmentedPercentage        float64 = 45
 	pollWaitDuration                       = 2 * time.Second
-	pollTimeoutDuration                    = 45 * time.Second
+	pollTimeoutDuration                    = 60 * time.Second
 	compactionInterval                     = 10 * time.Minute
 	maxDefragFailuresBeforeDegrade         = 3
 

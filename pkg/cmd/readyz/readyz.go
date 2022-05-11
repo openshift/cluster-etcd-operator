@@ -3,14 +3,16 @@ package readyz
 import (
 	"context"
 	"errors"
+	goflag "flag"
 	"fmt"
 	"net"
 	"net/http"
 	"syscall"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"golang.org/x/sys/unix"
@@ -38,6 +40,8 @@ type readyzOpts struct {
 	clientCertFile   string
 	clientKeyFile    string
 	clientCACertFile string
+
+	clientPool *etcdcli.EtcdClientPool
 }
 
 func newReadyzOpts() *readyzOpts {
@@ -55,6 +59,8 @@ func NewReadyzCommand() *cobra.Command {
 		Use:   "readyz",
 		Short: "Serve the HTTP /readyz endpoint health check for an etcd member",
 		Run: func(cmd *cobra.Command, args []string) {
+			defer klog.Flush()
+
 			if err := opts.Validate(); err != nil {
 				klog.Fatal(err)
 			}
@@ -64,11 +70,12 @@ func NewReadyzCommand() *cobra.Command {
 		},
 	}
 
-	opts.AddFlags(cmd.Flags())
+	opts.AddFlags(cmd)
 	return cmd
 }
 
-func (r *readyzOpts) AddFlags(fs *pflag.FlagSet) {
+func (r *readyzOpts) AddFlags(cmd *cobra.Command) {
+	fs := cmd.Flags()
 	fs.Uint16Var(&r.listenPort, "listen-port", r.listenPort, "Listen on this port. Default 9980")
 	fs.DurationVar(&r.dialTimeout, "dial-timeout", r.dialTimeout, "Dial timeout for the client. Default 2s")
 	fs.StringVar(&r.targetEndpoint, "target", r.targetEndpoint, "Target endpoint to perform health check against. Default https://localhost:2379")
@@ -77,6 +84,10 @@ func (r *readyzOpts) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&r.clientCertFile, "client-cert-file", r.clientCertFile, "Etcd TLS client certificate file. (required)")
 	fs.StringVar(&r.clientKeyFile, "client-key-file", r.clientKeyFile, "Etcd TLS client key file. (required)")
 	fs.StringVar(&r.clientCACertFile, "client-cacert-file", r.clientCACertFile, "Etcd TLS client CA certificate file. (required)")
+	// adding klog flags to tune verbosity better
+	gfs := goflag.NewFlagSet("", goflag.ExitOnError)
+	klog.InitFlags(gfs)
+	cmd.Flags().AddGoFlagSet(gfs)
 }
 
 // Validate verifies the inputs.
@@ -105,6 +116,31 @@ func (r *readyzOpts) Validate() error {
 
 // Run contains the logic of the readyz command which checks the health of the etcd member
 func (r *readyzOpts) Run() error {
+	clientPool := etcdcli.NewEtcdClientPool(
+		// client factory
+		func() (*clientv3.Client, error) {
+			return r.newETCD3Client(context.Background(), r.targetEndpoint)
+		},
+		// endpoints
+		func() ([]string, error) {
+			return []string{r.targetEndpoint}, nil
+		},
+		// health check
+		func(client *clientv3.Client) error {
+			_, err := client.Status(context.Background(), r.targetEndpoint)
+			return err
+		},
+		// closing
+		func(client *clientv3.Client) error {
+			if client == nil {
+				return nil
+			}
+			klog.Infof("closing cached client")
+			return client.Close()
+		})
+
+	r.clientPool = clientPool
+
 	shutdownCtx, cancel := context.WithCancel(context.Background())
 	shutdownHandler := server.SetupSignalHandler()
 
@@ -146,20 +182,14 @@ func (r *readyzOpts) Run() error {
 // TODO: Add timeout to handler
 func (r *readyzOpts) getReadyzHandlerFunc(ctx context.Context) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		etcdClient, err := r.newETCD3Client(ctx, r.targetEndpoint)
-		defer func() {
-			if etcdClient == nil {
-				return
-			}
-			if err := etcdClient.Close(); err != nil {
-				klog.V(2).Infof("error closing etcd client: %v", err)
-			}
-		}()
+		etcdClient, err := r.clientPool.Get()
 		if err != nil {
 			klog.V(2).Infof("failed to establish etcd client: %v", err)
 			http.Error(w, fmt.Sprintf("failed to establish etcd client: %v", err), http.StatusServiceUnavailable)
 			return
 		}
+
+		defer r.clientPool.Return(etcdClient)
 
 		// Learner and voting members both support the endpoint status call
 		resp, err := etcdClient.Status(ctx, r.targetEndpoint)
