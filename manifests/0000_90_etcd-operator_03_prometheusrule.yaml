@@ -109,6 +109,7 @@ spec:
         severity: warning
     - alert: etcdBackendQuotaLowSpace
       annotations:
+        summary: etcd cluster database size exceeds the defined quota.
         description: 'etcd cluster "{{ $labels.job }}": database size exceeds the
           defined quota on etcd instance {{ $labels.instance }}, please defrag or
           increase the quota as the writes to etcd will be disabled when it is full.'
@@ -120,6 +121,7 @@ spec:
         severity: critical
     - alert: etcdExcessiveDatabaseGrowth
       annotations:
+        summary: etcd cluster database size increased by 50 percent over the past four hours.
         description: 'etcd cluster "{{ $labels.job }}": Observed surge in etcd writes
           leading to 50% increase in database size over the past four hours on etcd
           instance {{ $labels.instance }}, please check as it might be disruptive.'
