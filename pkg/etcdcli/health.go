@@ -51,12 +51,24 @@ func getMemberHealth(etcdMembers []*etcdserverpb.Member) memberHealth {
 		wg.Add(1)
 		go func(member *etcdserverpb.Member) {
 			defer wg.Done()
-			cli, err := getEtcdClientWithClientOpts([]string{member.ClientURLs[0]})
+			// If the endpoint is for a learner member then we should skip testing the connection
+			// via the member list call as learners don't support that.
+			// The learner's connection would get tested in the health check below
+			skipConnectionTest := false
+			if member.IsLearner {
+				skipConnectionTest = true
+			}
+			cli, err := newEtcdClientWithClientOpts([]string{member.ClientURLs[0]}, skipConnectionTest)
 			if err != nil {
 				hch <- healthCheck{Member: member, Healthy: false, Error: fmt.Errorf("create client failure: %w", err)}
 				return
 			}
-			defer cli.Close()
+			defer func() {
+				if err := cli.Close(); err != nil {
+					klog.Errorf("error closing etcd client for getMemberHealth: %v", err)
+				}
+			}()
+
 			st := time.Now()
 			ctx, cancel := context.WithCancel(context.Background())
 			// linearized request to verify health of member
