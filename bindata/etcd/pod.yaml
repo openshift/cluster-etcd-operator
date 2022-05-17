@@ -288,6 +288,35 @@ ${COMPUTED_ENV_VARS}
       requests:
         memory: 70Mi
         cpu: 50m
+  - name: etcd-health-monitor-uploader
+    image: ${OPERATOR_IMAGE}
+    imagePullPolicy: IfNotPresent
+    terminationMessagePolicy: FallbackToLogsOnError
+    command: [ "cluster-etcd-operator", "monitor-uploader" ]
+    args:
+      - --upload-interval=1m
+      - --log-input=/var/log/etcd/etcd-health-probe.log
+      - --pod-name=$(POD_NAME)
+      - --kubeconfig=/etc/kubernetes/kube-apiserver-static-pod-certs/secrets/node-kubeconfigs/lb-int.kubeconfig
+    env:
+${COMPUTED_ENV_VARS}
+      - name: "ETCD_STATIC_POD_VERSION"
+        value: "REVISION"
+      - name: POD_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.name
+    volumeMounts:
+      - mountPath: /var/log/etcd/
+        name: log-dir
+      - mountPath: /etc/kubernetes/static-pod-certs
+        name: cert-dir
+      - mountPath: /etc/kubernetes/kube-apiserver-static-pod-certs
+        name: kube-apiserver-cert-dir
+    resources:
+      requests:
+        memory: 70Mi
+        cpu: 50m
   - name: etcd-readyz
     image: ${OPERATOR_IMAGE}
     imagePullPolicy: IfNotPresent
@@ -330,6 +359,9 @@ ${COMPUTED_ENV_VARS}
     - hostPath:
         path: /etc/kubernetes/static-pod-resources/etcd-certs
       name: cert-dir
+    - hostPath:
+        path: /etc/kubernetes/static-pod-resources/kube-apiserver-certs
+      name: kube-apiserver-cert-dir
     - hostPath:
         path: /var/lib/etcd
         type: ""

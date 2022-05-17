@@ -9,6 +9,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/monitoruploader"
+
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/backuprestore"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/monitor"
 	operatorcmd "github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
@@ -70,6 +72,7 @@ func NewSSCSCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(monitor.NewMonitorCommand(os.Stderr))
 	cmd.AddCommand(verify.NewVerifyCommand(os.Stderr))
 	cmd.AddCommand(readyz.NewReadyzCommand())
+	cmd.AddCommand(monitoruploader.NewMonitorCommand(os.Stderr))
 
 	return cmd
 }
