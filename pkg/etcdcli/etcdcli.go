@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -76,33 +77,36 @@ func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkIn
 			return nil, fmt.Errorf("network lister not synced")
 		}
 
-		network, err := g.networkLister.Get("cluster")
-		if err != nil {
-			return nil, fmt.Errorf("failed to list cluster network: %w", err)
-		}
-
 		var etcdEndpoints []string
-		nodes, err := g.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
-		for _, node := range nodes {
-			internalIP, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get internal IP for node: %w", err)
-			}
-			etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", internalIP))
-		}
-
+		// This configmap should always only contain voting members. Learners should not be present here.
 		configmap, err := g.configmapsLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints")
 		if err != nil {
-			return nil, fmt.Errorf("failed to list endpoints from %s/%s: %w",
+			klog.Errorf("failed to list endpoints from %s/%s, falling back to listing nodes: %w",
 				operatorclient.TargetNamespace, "etcd-endpoints", err)
-		}
-		if bootstrapIP, ok := configmap.Annotations[BootstrapIPAnnotationKey]; ok && bootstrapIP != "" {
-			// escape if IPv6
-			if net.ParseIP(bootstrapIP).To4() == nil {
-				bootstrapIP = "[" + bootstrapIP + "]"
+
+			network, err := g.networkLister.Get("cluster")
+			if err != nil {
+				return nil, fmt.Errorf("failed to list cluster network: %w", err)
 			}
-			etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", bootstrapIP))
+
+			nodes, err := g.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
+			for _, node := range nodes {
+				internalIP, _, err := dnshelpers.GetPreferredInternalIPAddressForNodeName(network, node)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get internal IP for node: %w", err)
+				}
+				etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s", net.JoinHostPort(internalIP, "2379")))
+			}
+		} else {
+			if bootstrapIP, ok := configmap.Annotations[BootstrapIPAnnotationKey]; ok && bootstrapIP != "" {
+				etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s", net.JoinHostPort(bootstrapIP, "2379")))
+			}
+			for _, etcdEndpointIp := range configmap.Data {
+				etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s", net.JoinHostPort(etcdEndpointIp, "2379")))
+			}
 		}
+
+		sort.Strings(etcdEndpoints)
 		return etcdEndpoints, nil
 	}
 
