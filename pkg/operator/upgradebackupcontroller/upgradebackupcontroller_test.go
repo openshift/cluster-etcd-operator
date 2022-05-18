@@ -128,7 +128,9 @@ func Test_ensureRecentBackup(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "version"},
 				Spec:       configv1.ClusterVersionSpec{},
 				Status: configv1.ClusterVersionStatus{
-					History: []configv1.UpdateHistory{},
+					History: []configv1.UpdateHistory{
+						{State: "Completed", Version: "4.9.30"},
+					},
 				},
 			}
 			fakeEtcdClient, _ := etcdcli.NewFakeEtcdClient(
