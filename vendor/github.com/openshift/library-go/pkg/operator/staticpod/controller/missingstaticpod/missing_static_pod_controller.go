@@ -15,12 +15,21 @@ import (
 	corelisterv1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 
+	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
+	"github.com/openshift/library-go/pkg/operator/staticpod/controller/common"
 	"github.com/openshift/library-go/pkg/operator/staticpod/internal"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 )
+
+const (
+	timeoutMultiNode  = time.Second * 150
+	timeoutSingleNode = time.Second * 180
+)
+
+type snoDeploymentFunc func() (bool, bool, error)
 
 type missingStaticPodController struct {
 	operatorClient                    v1helpers.StaticPodOperatorClient
@@ -31,6 +40,8 @@ type missingStaticPodController struct {
 	operandName                       string
 
 	lastEventEmissionPerNode lastEventEmissionPerNode
+
+	isSNODeployment snoDeploymentFunc
 }
 
 type lastEventEmissionPerNode map[string]struct {
@@ -40,10 +51,11 @@ type lastEventEmissionPerNode map[string]struct {
 
 // New checks the latest static pods pods and uses the installer to get the
 // latest revision.  If the installer pod was successful, and if it has been
-// longer than the terminationGracePeriodSeconds+120seconds since the installer
-// pod completed successfully, and if the static pod is not at the correct
-// revision, this controller will go degraded.  It will also emit an event for
-// detection in CI.
+// longer than the terminationGracePeriodSeconds+maxTimeout(value depends on
+// single node or multi node deployment) seconds since the installer pod
+// completed successfully, and if the static pod is not at the correct revision
+//, this controller will go degraded.  It will also emit an event for detection
+// in CI.
 func New(
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeInformersForTargetNamespace informers.SharedInformerFactory,
@@ -51,6 +63,7 @@ func New(
 	targetNamespace string,
 	staticPodName string,
 	operandName string,
+	infraInformer configv1informers.InfrastructureInformer,
 ) factory.Controller {
 	c := &missingStaticPodController{
 		operatorClient:                    operatorClient,
@@ -60,12 +73,15 @@ func New(
 		staticPodName:                     staticPodName,
 		operandName:                       operandName,
 		lastEventEmissionPerNode:          make(lastEventEmissionPerNode),
+		isSNODeployment:                   common.NewIsSingleNodePlatformFn(infraInformer),
 	}
+
 	return factory.New().
 		ResyncEvery(time.Minute).
 		WithInformers(
 			operatorClient.Informer(),
 			kubeInformersForTargetNamespace.Core().V1().Pods().Informer(),
+			infraInformer.Informer(),
 		).
 		WithBareInformers(
 			kubeInformersForTargetNamespace.Core().V1().ConfigMaps().Informer(),
@@ -105,13 +121,27 @@ func (c *missingStaticPodController) sync(ctx context.Context, syncCtx factory.S
 		if err != nil {
 			return err
 		}
-		threshold := gracePeriod + 120*time.Second
+
+		isSNO, preconditionFulfilled, err := c.isSNODeployment()
+		if err != nil {
+			return err
+		}
+		maxTimeout := timeoutMultiNode
+		// In practice the preconditionFulfilled should always be true because the controller
+		// waits for the infra informer. If this is not the case and we get a failure (it only
+		// fails when the informer is not synced), we choose the conservative approach of
+		// selecting the longer timeout in case we dont know if we are running in SNO.
+		if !preconditionFulfilled || isSNO {
+			maxTimeout = timeoutSingleNode
+		}
+
+		threshold := gracePeriod + maxTimeout
 
 		if time.Since(finishedAt) > threshold {
 			// if we are here then:
 			//  a: the latest installer pod successfully completed at finishedAt
-			//  b: it has been more than 'terminationGracePeriodSeconds' + 120s since the
-			//     installer pod has completed at finishedAt
+			//  b: it has been more than 'terminationGracePeriodSeconds' + maxTimeout
+			//     since the installer pod has completed at finishedAt
 			//
 			// now check to see if we have a mirror pod on this node
 			staticPodRevisionOnThisNode, err := c.getStaticPodCurrentRevisionForNode(node)

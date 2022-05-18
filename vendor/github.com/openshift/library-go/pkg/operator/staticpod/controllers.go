@@ -5,6 +5,7 @@ import (
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/client-go/config/informers/externalversions"
 	"github.com/openshift/library-go/pkg/controller/manager"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/loglevel"
@@ -36,6 +37,7 @@ type staticPodOperatorControllerBuilder struct {
 	staticPodOperatorClient v1helpers.StaticPodOperatorClient
 	kubeClient              kubernetes.Interface
 	kubeInformers           v1helpers.KubeInformersForNamespaces
+	configInformers         externalversions.SharedInformerFactory
 	eventRecorder           events.Recorder
 
 	// resource information
@@ -76,11 +78,13 @@ func NewBuilder(
 	staticPodOperatorClient v1helpers.StaticPodOperatorClient,
 	kubeClient kubernetes.Interface,
 	kubeInformers v1helpers.KubeInformersForNamespaces,
+	configInformers externalversions.SharedInformerFactory,
 ) Builder {
 	return &staticPodOperatorControllerBuilder{
 		staticPodOperatorClient: staticPodOperatorClient,
 		kubeClient:              kubeClient,
 		kubeInformers:           kubeInformers,
+		configInformers:         configInformers,
 	}
 }
 
@@ -193,6 +197,7 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 	pdbClient := b.kubeClient.PolicyV1()
 	operandInformers := b.kubeInformers.InformersFor(b.operandNamespace)
 	clusterInformers := b.kubeInformers.InformersFor("")
+	infraInformers := b.configInformers.Config().V1().Infrastructures()
 
 	var errs []error
 
@@ -353,6 +358,7 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 		b.operandNamespace,
 		b.staticPodName,
 		b.operandName,
+		infraInformers,
 	), 1)
 
 	return manager, errors.NewAggregate(errs)
