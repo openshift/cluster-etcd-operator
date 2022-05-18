@@ -29,6 +29,8 @@ import (
 	coreclientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
+
+	"github.com/mcuadros/go-version"
 )
 
 // UpgradeBackupController responds to an upgrade request to 4.9 by attempting
@@ -158,8 +160,13 @@ func (c *UpgradeBackupController) ensureRecentBackup(ctx context.Context, cluste
 		return nil, err
 	}
 
+	currentVersion, err := getCurrentClusterVersion(clusterVersion)
+	if err != nil {
+		return nil, err
+	}
+
 	// Check cluster version status for backup condition.
-	if !isRequireRecentBackup(clusterVersion) {
+	if !isRequireRecentBackup(clusterVersion, clusterOperatorStatus) {
 		return nil, nil
 	}
 
@@ -172,7 +179,7 @@ func (c *UpgradeBackupController) ensureRecentBackup(ctx context.Context, cluste
 			return nil, err
 		}
 
-		recentBackupName := fmt.Sprintf("upgrade-backup-%s", time.Now().Format("2006-01-02_150405"))
+		recentBackupName := fmt.Sprintf("upgrade-backup-%s-%s", currentVersion, time.Now().Format("2006-01-02_150405"))
 
 		if err := createBackupPod(ctx, backupNodeName, recentBackupName, c.operatorImagePullSpec, c.targetImagePullSpec, c.kubeClient.CoreV1(), recorder); err != nil {
 			return nil, fmt.Errorf("pod/%s: %v", clusterBackupPodName, err)
@@ -213,7 +220,7 @@ func (c *UpgradeBackupController) ensureRecentBackup(ctx context.Context, cluste
 				Status:  configv1.ConditionTrue,
 				Type:    backupConditionType,
 				Reason:  backupSuccess,
-				Message: fmt.Sprintf("UpgradeBackup pre 4.9 located at path %s on node %q", backupDirName, backupPod.Spec.NodeName),
+				Message: fmt.Sprintf("UpgradeBackup for %v is located at path %s on node %q", currentVersion, backupDirName, backupPod.Spec.NodeName),
 			}, nil
 		}
 		return nil, nil
@@ -293,11 +300,15 @@ func createBackupPod(ctx context.Context, nodeName, recentBackupName, operatorIm
 }
 
 // isRequireRecentBackup checks the conditions of ClusterVersion to verify if a backup is required.
-func isRequireRecentBackup(config *configv1.ClusterVersion) bool {
+func isRequireRecentBackup(config *configv1.ClusterVersion, clusterOperatorStatus *configv1.ClusterOperatorStatus) bool {
 	for _, condition := range config.Status.Conditions {
 		// Check if ReleaseAccepted is false and Message field containers the string RecentBackup.
 		if condition.Type == "ReleaseAccepted" && condition.Status == configv1.ConditionFalse {
-			return strings.Contains(condition.Message, backupConditionType)
+			if strings.Contains(condition.Message, backupConditionType) {
+				return true
+			} else if backupRequired, err := isNewBackupRequired(config, clusterOperatorStatus); err == nil && backupRequired {
+				return true
+			}
 		}
 	}
 	return false
@@ -324,4 +335,35 @@ func isBackupConditionExist(conditions []configv1.ClusterOperatorStatusCondition
 		}
 	}
 	return false
+}
+
+func getCurrentClusterVersion(cv *configv1.ClusterVersion) (string, error) {
+	if cv == nil {
+		return "", fmt.Errorf("ClusterVersion type is nil: %v", cv)
+	}
+	for _, c := range cv.Status.History {
+		if c.State == configv1.CompletedUpdate {
+			return c.Version, nil
+		}
+	}
+	return "", fmt.Errorf("unable to retrieve cluster version, no completed update was found in status history: %v", cv.Status.History)
+}
+
+func isNewBackupRequired(config *configv1.ClusterVersion, clusterOperatorStatus *configv1.ClusterOperatorStatus) (bool, error) {
+	currentVersion, err := getCurrentClusterVersion(config)
+	if err != nil {
+		return false, err
+	}
+
+	backupCondition := configv1helpers.FindStatusCondition(clusterOperatorStatus.Conditions, backupConditionType)
+	if backupCondition == nil {
+		return false, fmt.Errorf("clusterOperatorStatus %v does not contain %v type", clusterOperatorStatus.Conditions, backupConditionType)
+	}
+	if backupCondition.Reason == backupSuccess {
+		backupVersion := strings.Fields(backupCondition.Message)[2]
+		if cmp := version.CompareSimple(currentVersion, backupVersion); cmp > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
