@@ -3,6 +3,7 @@ package upgradebackupcontroller
 import (
 	"context"
 	"fmt"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"strings"
 	"time"
 
@@ -160,7 +161,7 @@ func (c *UpgradeBackupController) ensureRecentBackup(ctx context.Context, cluste
 		return nil, err
 	}
 
-	currentVersion, err := getCurrentClusterVersion(clusterVersion)
+	currentVersion, err := ceohelpers.GetCurrentClusterVersion(clusterVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -337,20 +338,8 @@ func isBackupConditionExist(conditions []configv1.ClusterOperatorStatusCondition
 	return false
 }
 
-func getCurrentClusterVersion(cv *configv1.ClusterVersion) (string, error) {
-	if cv == nil {
-		return "", fmt.Errorf("ClusterVersion type is nil: %v", cv)
-	}
-	for _, c := range cv.Status.History {
-		if c.State == configv1.CompletedUpdate {
-			return c.Version, nil
-		}
-	}
-	return "", fmt.Errorf("unable to retrieve cluster version, no completed update was found in status history: %v", cv.Status.History)
-}
-
 func isNewBackupRequired(config *configv1.ClusterVersion, clusterOperatorStatus *configv1.ClusterOperatorStatus) (bool, error) {
-	currentVersion, err := getCurrentClusterVersion(config)
+	currentVersion, err := ceohelpers.GetCurrentClusterVersion(config)
 	if err != nil {
 		return false, err
 	}
