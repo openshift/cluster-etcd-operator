@@ -2,11 +2,14 @@ package defragcontroller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 
@@ -18,7 +21,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
-	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -27,15 +29,6 @@ import (
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
-)
-
-var (
-	testTLSInfo = transport.TLSInfo{
-		KeyFile:        u.MustAbsPath("../../testutils/testdata/server.key.insecure"),
-		CertFile:       u.MustAbsPath("../../testutils/testdata/server.crt"),
-		TrustedCAFile:  u.MustAbsPath("../../testutils/testdata/ca.crt"),
-		ClientCertAuth: true,
-	}
 )
 
 func TestNewDefragController(t *testing.T) {
@@ -229,6 +222,152 @@ func TestNewDefragController(t *testing.T) {
 	}
 }
 
+// similar to the above, but across multiple loops of sync
+func TestNewDefragControllerMultiSyncs(t *testing.T) {
+	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+		&operatorv1.StaticPodOperatorSpec{
+			OperatorSpec: operatorv1.OperatorSpec{
+				ManagementState: operatorv1.Managed,
+			},
+		},
+		u.StaticPodOperatorStatus(),
+		nil,
+		nil,
+	)
+
+	scenarios := []struct {
+		name                  string
+		staticPodStatus       *operatorv1.StaticPodOperatorStatus
+		objects               []runtime.Object
+		fakeClientOpts        []etcdcli.FakeClientOption
+		clusterSize           int
+		syncLoops             int
+		errSyncLoops          int
+		memberHealth          *etcdcli.FakeMemberHealth
+		dbInUse               int64
+		dbSize                int64
+		defragSuccessEvents   int
+		wantDisabledCondition operatorv1.ConditionStatus
+		wantDegradedCondition operatorv1.ConditionStatus
+	}{
+		{
+			name:                "defrag degrades after several unsuccessful loops",
+			staticPodStatus:     u.StaticPodOperatorStatus(),
+			dbSize:              minDefragBytes,
+			dbInUse:             minDefragBytes / 2,
+			defragSuccessEvents: 0,
+			clusterSize:         3,
+			syncLoops:           maxDefragFailuresBeforeDegrade,
+			errSyncLoops:        maxDefragFailuresBeforeDegrade,
+			memberHealth:        &etcdcli.FakeMemberHealth{Healthy: 3},
+			objects: []runtime.Object{
+				u.FakeInfrastructureTopology(configv1.HighlyAvailableTopologyMode),
+			},
+			fakeClientOpts: []etcdcli.FakeClientOption{
+				etcdcli.WithFakeDefragErrors(generateErrors(maxDefragFailuresBeforeDegrade * 3)),
+			},
+			wantDisabledCondition: operatorv1.ConditionFalse,
+			wantDegradedCondition: operatorv1.ConditionTrue,
+		},
+		{
+			name:                "defrag degrades and recovers after several unsuccessful loops",
+			staticPodStatus:     u.StaticPodOperatorStatus(),
+			dbSize:              minDefragBytes,
+			dbInUse:             minDefragBytes / 2,
+			defragSuccessEvents: 3,
+			clusterSize:         3,
+			syncLoops:           maxDefragFailuresBeforeDegrade + 1,
+			errSyncLoops:        maxDefragFailuresBeforeDegrade,
+			memberHealth:        &etcdcli.FakeMemberHealth{Healthy: 3},
+			objects: []runtime.Object{
+				u.FakeInfrastructureTopology(configv1.HighlyAvailableTopologyMode),
+			},
+			fakeClientOpts: []etcdcli.FakeClientOption{
+				etcdcli.WithFakeDefragErrors(generateErrors(maxDefragFailuresBeforeDegrade * 3)),
+			},
+			// ignoring errors here since the first maxDefragFailuresBeforeDegrade invocations will return an error, the ones after won't
+			wantDisabledCondition: operatorv1.ConditionFalse,
+			wantDegradedCondition: operatorv1.ConditionFalse,
+		},
+	}
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			integration.BeforeTestExternal(t)
+			// use integration etcd to create etcd members and status
+			testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: scenario.clusterSize})
+			defer testServer.Terminate(t)
+
+			// populate MemberList
+			memberListResp, err := testServer.Client(0).MemberList(context.TODO())
+			require.NoError(t, err)
+			etcdMembers := memberListResp.Members
+
+			// populate Status
+			var status []*clientv3.StatusResponse
+			for _, member := range testServer.Members {
+				statusResp, err := testServer.Client(0).Status(context.TODO(), member.GRPCAddr())
+				require.NoError(t, err)
+				statusResp.DbSizeInUse = scenario.dbInUse
+				statusResp.DbSize = scenario.dbSize
+				status = append(status, statusResp)
+			}
+
+			fakeOpts := []etcdcli.FakeClientOption{
+				etcdcli.WithFakeClusterHealth(scenario.memberHealth),
+				etcdcli.WithFakeStatus(status),
+			}
+
+			for _, o := range scenario.fakeClientOpts {
+				fakeOpts = append(fakeOpts, o)
+			}
+
+			fakeEtcdClient, _ := etcdcli.NewFakeEtcdClient(etcdMembers, fakeOpts...)
+			eventRecorder := events.NewInMemoryRecorder(t.Name())
+			require.NoError(t, err)
+			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+			for _, obj := range scenario.objects {
+				if err := indexer.Add(obj); err != nil {
+					t.Fatal(err)
+				}
+			}
+			controller := &DefragController{
+				operatorClient:       fakeOperatorClient,
+				etcdClient:           fakeEtcdClient,
+				infrastructureLister: configv1listers.NewInfrastructureLister(indexer),
+				configmapLister:      corev1listers.NewConfigMapLister(indexer),
+				// to speed the tests up, in real life we use minDefragWaitDuration
+				defragWaitDuration: 1 * time.Second,
+			}
+
+			numSyncErr := 0
+			for i := 0; i < scenario.syncLoops; i++ {
+				err = controller.sync(context.TODO(), factory.NewSyncContext("defrag-controller", eventRecorder))
+				if err != nil {
+					numSyncErr++
+					fmt.Printf("error on sync: %v\n", err)
+				}
+			}
+
+			assert.Equal(t, scenario.errSyncLoops, numSyncErr)
+
+			var defragSuccessEvents int
+			for _, event := range eventRecorder.Events() {
+				if strings.HasPrefix(event.Message, "etcd member has been defragmented") {
+					defragSuccessEvents++
+				}
+			}
+			assert.Equal(t, scenario.defragSuccessEvents, defragSuccessEvents)
+
+			_, currentState, _, _ := fakeOperatorClient.GetOperatorState()
+			controllerDisabledCondition := v1helpers.FindOperatorCondition(currentState.Conditions, defragDisabledCondition)
+			assert.Equal(t, scenario.wantDisabledCondition, controllerDisabledCondition.Status)
+
+			controllerDegradedCondition := v1helpers.FindOperatorCondition(currentState.Conditions, defragDegradedCondition)
+			assert.Equal(t, scenario.wantDegradedCondition, controllerDegradedCondition.Status)
+		})
+	}
+}
+
 func Test_isEndpointBackendFragmented(t *testing.T) {
 	scenarios := []struct {
 		name             string
@@ -279,4 +418,12 @@ func Test_isEndpointBackendFragmented(t *testing.T) {
 			}
 		})
 	}
+}
+
+func generateErrors(n int) []error {
+	var errs []error
+	for i := 0; i < n; i++ {
+		errs = append(errs, errors.New("fail"))
+	}
+	return errs
 }
