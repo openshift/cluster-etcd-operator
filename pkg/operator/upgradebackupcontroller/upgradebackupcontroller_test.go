@@ -25,7 +25,8 @@ func Test_ensureRecentBackup(t *testing.T) {
 	scenarios := []struct {
 		name                    string
 		objects                 []runtime.Object
-		clusterversionCondition []configv1.ClusterOperatorStatusCondition
+		clusterversionCondition configv1.ClusterOperatorStatusCondition
+		ceoCondition            *configv1.ClusterOperatorStatus
 		wantBackupStatus        configv1.ConditionStatus
 		wantNilBackupCondition  bool
 		wantErr                 bool
@@ -36,11 +37,12 @@ func Test_ensureRecentBackup(t *testing.T) {
 			objects: []runtime.Object{
 				u.FakePod("cluster-backup", u.WithPodStatus(corev1.PodFailed), u.WithCreationTimestamp(nowMinusDuration(failedPodBackoffDuration))),
 			},
-			clusterversionCondition: []configv1.ClusterOperatorStatusCondition{{
+			clusterversionCondition: configv1.ClusterOperatorStatusCondition{
 				Type:    "ReleaseAccepted",
 				Status:  configv1.ConditionFalse,
 				Message: fmt.Sprintf("Need RecentBackup"),
-			}},
+			},
+			ceoCondition:     &configv1.ClusterOperatorStatus{},
 			wantBackupStatus: configv1.ConditionFalse,
 			wantEventCount:   1, // pod delete
 		},
@@ -49,11 +51,12 @@ func Test_ensureRecentBackup(t *testing.T) {
 			objects: []runtime.Object{
 				u.FakePod("cluster-backup", u.WithPodStatus(corev1.PodFailed), u.WithCreationTimestamp(metav1.Now())),
 			},
-			clusterversionCondition: []configv1.ClusterOperatorStatusCondition{{
+			clusterversionCondition: configv1.ClusterOperatorStatusCondition{
 				Type:    "ReleaseAccepted",
 				Status:  configv1.ConditionFalse,
 				Message: fmt.Sprintf("Need RecentBackup"),
-			}},
+			},
+			ceoCondition:     &configv1.ClusterOperatorStatus{},
 			wantBackupStatus: configv1.ConditionFalse,
 			wantEventCount:   0, // skip pod delete
 		},
@@ -62,29 +65,32 @@ func Test_ensureRecentBackup(t *testing.T) {
 			objects: []runtime.Object{
 				u.FakePod("cluster-backup", u.WithPodStatus(corev1.PodPending)),
 			},
-			clusterversionCondition: []configv1.ClusterOperatorStatusCondition{{
+			clusterversionCondition: configv1.ClusterOperatorStatusCondition{
 				Type:    "ReleaseAccepted",
 				Status:  configv1.ConditionFalse,
 				Message: fmt.Sprintf("Need RecentBackup"),
-			}},
+			},
+			ceoCondition:     &configv1.ClusterOperatorStatus{},
 			wantBackupStatus: configv1.ConditionUnknown,
 		},
 		{
 			name: "RecentBackup not required invalid type",
-			clusterversionCondition: []configv1.ClusterOperatorStatusCondition{{
+			clusterversionCondition: configv1.ClusterOperatorStatusCondition{
 				Type:    "NotReleaseAccepted",
 				Status:  configv1.ConditionFalse,
 				Message: fmt.Sprintf("Need RecentBackup"),
-			}},
+			},
+			ceoCondition:           &configv1.ClusterOperatorStatus{},
 			wantNilBackupCondition: true,
 		},
 		{
 			name: "RecentBackup not required invalid message",
-			clusterversionCondition: []configv1.ClusterOperatorStatusCondition{{
+			clusterversionCondition: configv1.ClusterOperatorStatusCondition{
 				Type:    "ReleaseAccepted",
 				Status:  configv1.ConditionFalse,
 				Message: fmt.Sprintf("Invalid"),
-			}},
+			},
+			ceoCondition:           &configv1.ClusterOperatorStatus{},
 			wantNilBackupCondition: true,
 		},
 		{
@@ -93,11 +99,12 @@ func Test_ensureRecentBackup(t *testing.T) {
 				u.FakePod("etcd-1-master-1", u.WithScheduledNodeName("master-1"), u.WithPodLabels(map[string]string{"app": "etcd"})),
 				u.FakeNode("master-1"),
 			},
-			clusterversionCondition: []configv1.ClusterOperatorStatusCondition{{
+			clusterversionCondition: configv1.ClusterOperatorStatusCondition{
 				Type:    "ReleaseAccepted",
 				Status:  configv1.ConditionFalse,
 				Message: fmt.Sprintf("Need RecentBackup"),
-			}},
+			},
+			ceoCondition:     &configv1.ClusterOperatorStatus{},
 			wantBackupStatus: configv1.ConditionUnknown,
 			wantEventCount:   1, // pod created event
 		},
@@ -107,13 +114,34 @@ func Test_ensureRecentBackup(t *testing.T) {
 				u.FakePod("etcd-1-master-1", u.WithScheduledNodeName("master-1"), u.WithPodLabels(map[string]string{"app": "etcd"})),
 				u.FakeNode("master-1"),
 			},
-			clusterversionCondition: []configv1.ClusterOperatorStatusCondition{{
+			clusterversionCondition: configv1.ClusterOperatorStatusCondition{
 				Type:    "ReleaseAccepted",
-				Status:  configv1.ConditionFalse,
-				Message: fmt.Sprintf("Need RecentBackup"),
-			}},
+				Status:  configv1.ConditionTrue,
+				Message: fmt.Sprintf("Payload loaded version"),
+			},
+			ceoCondition: &configv1.ClusterOperatorStatus{
+				Conditions: []configv1.ClusterOperatorStatusCondition{
+					{Type: backupConditionType, Reason: backupSuccess, Message: "UpgradeBackup pre 4.9 located at path "}},
+			},
 			wantBackupStatus: configv1.ConditionUnknown,
 			wantEventCount:   1, // pod created event
+		},
+		{
+			name: "RecentBackup not required, backup exist for current version",
+			objects: []runtime.Object{
+				u.FakePod("etcd-1-master-1", u.WithScheduledNodeName("master-1"), u.WithPodLabels(map[string]string{"app": "etcd"})),
+				u.FakeNode("master-1"),
+			},
+			clusterversionCondition: configv1.ClusterOperatorStatusCondition{
+				Type:    "ReleaseAccepted",
+				Status:  configv1.ConditionTrue,
+				Message: fmt.Sprintf("Payload loaded version"),
+			},
+			ceoCondition: &configv1.ClusterOperatorStatus{
+				Conditions: []configv1.ClusterOperatorStatusCondition{
+					{Type: backupConditionType, Reason: backupSuccess, Message: "UpgradeBackup pre 4.9.30 located at path "}},
+			},
+			wantNilBackupCondition: true,
 		},
 	}
 
@@ -143,7 +171,8 @@ func Test_ensureRecentBackup(t *testing.T) {
 				Spec:       configv1.ClusterVersionSpec{},
 				Status: configv1.ClusterVersionStatus{
 					History: []configv1.UpdateHistory{
-						{State: "Completed", Version: "4.9.30"},
+						{State: configv1.PartialUpdate, Version: "4.10.15"},
+						{State: configv1.CompletedUpdate, Version: "4.9.30"},
 					},
 				},
 			}
@@ -156,7 +185,7 @@ func Test_ensureRecentBackup(t *testing.T) {
 				etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 1}),
 			)
 
-			clusterVersion.Status.Conditions = append(clusterVersion.Status.Conditions, scenario.clusterversionCondition...)
+			clusterVersion.Status.Conditions = append(clusterVersion.Status.Conditions, scenario.clusterversionCondition)
 			fakeClusterVersionLister := u.FakeClusterVersionLister(t, clusterVersion)
 
 			c := UpgradeBackupController{
@@ -168,7 +197,7 @@ func Test_ensureRecentBackup(t *testing.T) {
 				targetImagePullSpec:  "quay.io/openshift/cluster-etcd-operator:latest",
 			}
 
-			gotCondition, err := c.ensureRecentBackup(context.TODO(), &configv1.ClusterOperatorStatus{}, fakeRecorder)
+			gotCondition, err := c.ensureRecentBackup(context.TODO(), scenario.ceoCondition, fakeRecorder)
 			// verify condition
 			if gotCondition == nil && !scenario.wantNilBackupCondition {
 				t.Fatalf("unexpected nil condition:")
