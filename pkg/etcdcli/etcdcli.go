@@ -457,6 +457,9 @@ func endpoints(nodeLister corev1listers.NodeLister,
 		}
 
 		nodes, err := nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
+		if err != nil {
+			return nil, fmt.Errorf("failed to list control plane nodes: %w", err)
+		}
 		for _, node := range nodes {
 			internalIP, _, err := dnshelpers.GetPreferredInternalIPAddressForNodeName(network, node)
 			if err != nil {
