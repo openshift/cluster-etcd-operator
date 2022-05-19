@@ -307,10 +307,13 @@ func isRequireRecentBackup(config *configv1.ClusterVersion, clusterOperatorStatu
 		if condition.Type == "ReleaseAccepted" && condition.Status == configv1.ConditionFalse {
 			if strings.Contains(condition.Message, backupConditionType) {
 				return true
-			} else if backupRequired, err := isNewBackupRequired(config, clusterOperatorStatus); err == nil && backupRequired {
-				return true
 			}
 		}
+	}
+
+	// consecutive upgrades case
+	if backupRequired, err := isNewBackupRequired(config, clusterOperatorStatus); err == nil && backupRequired {
+		return true
 	}
 	return false
 }
@@ -344,15 +347,34 @@ func isNewBackupRequired(config *configv1.ClusterVersion, clusterOperatorStatus 
 		return false, err
 	}
 
+	// check in ClusterVersion update history for update in progress (i.e. state: Partial)
+	// then check the condition of etcd operator
+	// if backup for current cluster version was taken, return false
+	// otherwise, if the update version greater than current version, return true
+	for _, update := range config.Status.History {
+		if update.State == configv1.PartialUpdate {
+			klog.V(4).Infof("in progress update is detected, cluster current version is %v, progressing towards cluster version %v", currentVersion, update.Version)
+			currentBackupVersion := getCurrentBackupVersion(clusterOperatorStatus)
+			if currentBackupVersion == "" || currentBackupVersion == currentVersion {
+				return false, nil
+			}
+			if cmp := version.CompareSimple(update.Version, currentVersion); cmp > 0 {
+				return true, nil
+			}
+		}
+	}
+
+	return false, nil
+}
+
+func getCurrentBackupVersion(clusterOperatorStatus *configv1.ClusterOperatorStatus) string {
 	backupCondition := configv1helpers.FindStatusCondition(clusterOperatorStatus.Conditions, backupConditionType)
 	if backupCondition == nil {
-		return false, fmt.Errorf("clusterOperatorStatus %v does not contain %v type", clusterOperatorStatus.Conditions, backupConditionType)
+		return ""
 	}
 	if backupCondition.Reason == backupSuccess {
 		backupVersion := strings.Fields(backupCondition.Message)[2]
-		if cmp := version.CompareSimple(currentVersion, backupVersion); cmp > 0 {
-			return true, nil
-		}
+		return backupVersion
 	}
-	return false, nil
+	return ""
 }
