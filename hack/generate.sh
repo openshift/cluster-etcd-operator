@@ -6,6 +6,8 @@ if ! command -v jb &> /dev/null; then
   exit 1
 fi
 
-# Generate jsonnet mixin prometheusrule manifest.
+# Generate jsonnet mixin prometheusrule and dashboards manifest.
 
-cd jsonnet && jb update && jsonnet -J vendor main.jsonnet  | gojsontoyaml > ../manifests/0000_90_etcd-operator_03_prometheusrule.yaml
+cd jsonnet && jb update
+jsonnet -J vendor main.jsonnet  | gojsontoyaml > ../manifests/0000_90_etcd-operator_03_prometheusrule.yaml
+jsonnet -J vendor dashboard.jsonnet  | gojsontoyaml > ../manifests/0000_90_cluster-etcd-operator_01-dashboards.yaml
