@@ -361,6 +361,7 @@ func (c *ClusterMemberController) isEtcdContainerRunningNotReady(node *corev1.No
 	}
 	if !isEtcdContainerRunning || isEtcdContainerReady {
 		// The pod needs to be running but not ready (i.e discover-etcd-initial-cluster process is waiting to join the cluster)
+		klog.V(2).Infof("Skipping %v as the etcd container is in incorrect state, isEtcdContainerRunning = %v, isEtcdContainerReady = %v", podName, isEtcdContainerRunning, isEtcdContainerReady)
 		return false, nil
 	}
 
