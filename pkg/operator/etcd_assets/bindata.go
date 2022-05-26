@@ -795,7 +795,7 @@ ${COMPUTED_ENV_VARS}
         port: 9980
         path: readyz
         scheme: HTTPS
-      initialDelaySeconds: 180
+      initialDelaySeconds: 10
       timeoutSeconds: 10
       failureThreshold: 3
       periodSeconds: 5
