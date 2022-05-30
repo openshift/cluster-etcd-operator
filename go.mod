@@ -8,6 +8,7 @@ require (
 	github.com/go-bindata/go-bindata v3.1.2+incompatible
 	github.com/google/uuid v1.1.2
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
+	github.com/mcuadros/go-version v0.0.0-20190830083331-035f6764e8d2
 	github.com/openshift/api v0.0.0-20211209135129-c58d9f695577
 	github.com/openshift/build-machinery-go v0.0.0-20211213093930-7e33a7eb4ce3
 	github.com/openshift/client-go v0.0.0-20211209144617-7385dd6338e3
