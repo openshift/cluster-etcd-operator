@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	configv1 "github.com/openshift/api/config/v1"
+	"k8s.io/klog/v2"
 	"net"
 	"net/url"
 
@@ -188,5 +189,6 @@ func GetCurrentClusterVersion(cv *configv1.ClusterVersion) (string, error) {
 			return c.Version, nil
 		}
 	}
-	return "", fmt.Errorf("unable to retrieve cluster version, no completed update was found in cluster version status history: %v", cv.Status.History)
+	klog.Warningf("unable to retrieve cluster version, no completed update was found in cluster version status history: %v", cv.Status.History)
+	return "", nil
 }
