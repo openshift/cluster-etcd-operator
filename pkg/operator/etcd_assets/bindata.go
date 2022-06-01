@@ -1108,6 +1108,11 @@ spec:
         env | grep ETCD | grep -v NODE
         export ETCD_NODE_PEER_URL=https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:2380
 
+        # checking if there are any fio perf file left behind that could be deleted without problems
+        if [ ! -z $(ls -A "/var/lib/etcd/etcd_perf*") ]; then
+          rm -f /var/lib/etcd/etcd_perf*
+        fi
+
         # checking if data directory is empty, if not etcdctl restore will fail
         if [ ! -z $(ls -A "/var/lib/etcd") ]; then
           echo "please delete the contents of data directory before restoring, running the restore script will do this for you"
