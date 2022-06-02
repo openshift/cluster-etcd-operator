@@ -3,12 +3,14 @@ package testutils
 import (
 	"errors"
 	"fmt"
+	"math/rand"
+	"path/filepath"
+	"strings"
+	"testing"
+
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/v3/mock/mockserver"
 	corev1 "k8s.io/api/core/v1"
@@ -20,10 +22,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/uuid"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
-	"math/rand"
-	"path/filepath"
-	"strings"
-	"testing"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
 func MustAbsPath(path string) string {
@@ -181,7 +182,8 @@ func WithBootstrapIP(ip string) func(*corev1.ConfigMap) {
 		if endpoints.Annotations == nil {
 			endpoints.Annotations = map[string]string{}
 		}
-		endpoints.Annotations[etcdcli.BootstrapIPAnnotationKey] = ip
+		// not relying on the constant from etcdcli.go here as this is introducing a cyclic dependency for its tests
+		endpoints.Annotations["alpha.installer.openshift.io/etcd-bootstrap"] = ip
 	}
 }
 
@@ -238,6 +240,22 @@ func FakeConfigMap(namespace string, name string, data map[string]string) *corev
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
 		Data:       data,
+	}
+}
+
+// FakeNetwork creates a fake network.
+// !isIpv6  serviceNetwork = []string{"10.0.1.0/24"}
+// isIPv6  serviceNetwork = []string{"2001:4860:4860::8888/32"}
+func FakeNetwork(isIPv6 bool) *configv1.Network {
+	var serviceNetwork []string
+	if isIPv6 {
+		serviceNetwork = []string{"2001:4860:4860::8888/32"}
+	} else {
+		serviceNetwork = []string{"10.0.1.0/24"}
+	}
+	return &configv1.Network{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+		Status:     configv1.NetworkStatus{ServiceNetwork: serviceNetwork},
 	}
 }
 
@@ -318,17 +336,7 @@ func FakeClusterVersionLister(t *testing.T, clusterVersion *configv1.ClusterVers
 // isIPv6  serviceNetwork = []string{"2001:4860:4860::8888/32"}
 func FakeNetworkLister(t *testing.T, isIPv6 bool) configv1listers.NetworkLister {
 	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
-	var serviceNetwork []string
-	if isIPv6 {
-		serviceNetwork = []string{"2001:4860:4860::8888/32"}
-	} else {
-		serviceNetwork = []string{"10.0.1.0/24"}
-	}
-	fakeNetworkConfig := &configv1.Network{
-		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-		Status:     configv1.NetworkStatus{ServiceNetwork: serviceNetwork},
-	}
-	if err := indexer.Add(fakeNetworkConfig); err != nil {
+	if err := indexer.Add(FakeNetwork(isIPv6)); err != nil {
 		t.Fatal(err.Error())
 	}
 	return configv1listers.NewNetworkLister(indexer)

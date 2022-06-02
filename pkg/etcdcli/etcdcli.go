@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -66,46 +67,9 @@ func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkIn
 	}
 
 	endpointFunc := func() ([]string, error) {
-		if !g.nodeListerSynced() {
-			return nil, fmt.Errorf("node lister not synced")
-		}
-		if !g.configmapsListerSynced() {
-			return nil, fmt.Errorf("configmaps lister not synced")
-		}
-		if !g.networkListerSynced() {
-			return nil, fmt.Errorf("network lister not synced")
-		}
-
-		network, err := g.networkLister.Get("cluster")
-		if err != nil {
-			return nil, fmt.Errorf("failed to list cluster network: %w", err)
-		}
-
-		var etcdEndpoints []string
-		nodes, err := g.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
-		for _, node := range nodes {
-			internalIP, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get internal IP for node: %w", err)
-			}
-			etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", internalIP))
-		}
-
-		configmap, err := g.configmapsLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints")
-		if err != nil {
-			return nil, fmt.Errorf("failed to list endpoints from %s/%s: %w",
-				operatorclient.TargetNamespace, "etcd-endpoints", err)
-		}
-		if bootstrapIP, ok := configmap.Annotations[BootstrapIPAnnotationKey]; ok && bootstrapIP != "" {
-			// escape if IPv6
-			if net.ParseIP(bootstrapIP).To4() == nil {
-				bootstrapIP = "[" + bootstrapIP + "]"
-			}
-			etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s:2379", bootstrapIP))
-		}
-		return etcdEndpoints, nil
+		return endpoints(g.nodeLister, g.configmapsLister, g.networkLister,
+			g.nodeListerSynced, g.configmapsListerSynced, g.networkListerSynced)
 	}
-
 	newFunc := func() (*clientv3.Client, error) {
 		endpoints, err := endpointFunc()
 		if err != nil {
@@ -461,4 +425,61 @@ func (g *etcdClientGetter) Defragment(ctx context.Context, member *etcdserverpb.
 		return nil, fmt.Errorf("error while running defragment: %w", err)
 	}
 	return resp, nil
+}
+
+func endpoints(nodeLister corev1listers.NodeLister,
+	configmapsLister corev1listers.ConfigMapLister,
+	networkLister configv1listers.NetworkLister,
+	nodeListerSynced cache.InformerSynced,
+	configmapsListerSynced cache.InformerSynced,
+	networkListerSynced cache.InformerSynced) ([]string, error) {
+
+	if !nodeListerSynced() {
+		return nil, fmt.Errorf("node lister not synced")
+	}
+	if !configmapsListerSynced() {
+		return nil, fmt.Errorf("configmaps lister not synced")
+	}
+	if !networkListerSynced() {
+		return nil, fmt.Errorf("network lister not synced")
+	}
+
+	var etcdEndpoints []string
+	// This configmap should always only contain voting members. Learners should not be present here.
+	configmap, err := configmapsLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints")
+	if err != nil {
+		klog.Errorf("failed to list endpoints from %s/%s, falling back to listing nodes: %w",
+			operatorclient.TargetNamespace, "etcd-endpoints", err)
+
+		network, err := networkLister.Get("cluster")
+		if err != nil {
+			return nil, fmt.Errorf("failed to list cluster network: %w", err)
+		}
+
+		nodes, err := nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
+		if err != nil {
+			return nil, fmt.Errorf("failed to list control plane nodes: %w", err)
+		}
+		for _, node := range nodes {
+			internalIP, _, err := dnshelpers.GetPreferredInternalIPAddressForNodeName(network, node)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get internal IP for node: %w", err)
+			}
+			etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s", net.JoinHostPort(internalIP, "2379")))
+		}
+	} else {
+		if bootstrapIP, ok := configmap.Annotations[BootstrapIPAnnotationKey]; ok && bootstrapIP != "" {
+			etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s", net.JoinHostPort(bootstrapIP, "2379")))
+		}
+		for _, etcdEndpointIp := range configmap.Data {
+			etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s", net.JoinHostPort(etcdEndpointIp, "2379")))
+		}
+	}
+
+	if len(etcdEndpoints) == 0 {
+		return nil, fmt.Errorf("endpoints func found no etcd endpoints")
+	}
+
+	sort.Strings(etcdEndpoints)
+	return etcdEndpoints, nil
 }
