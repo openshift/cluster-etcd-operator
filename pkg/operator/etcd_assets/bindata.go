@@ -275,9 +275,18 @@ trap 'rm -f ${BACKUP_TAR_FILE} ${SNAPSHOT_FILE}' ERR
 source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd.env
 source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd-common-tools
 
-# TODO handle properly
-if [ ! -f "$ETCDCTL_CACERT" ] && [ ! -d "${CONFIG_FILE_DIR}/static-pod-certs" ]; then
-  ln -s "${CONFIG_FILE_DIR}"/static-pod-resources/etcd-certs "${CONFIG_FILE_DIR}"/static-pod-certs
+# replacing the value of variables sourced form etcd.env to use the local node folders if the script is not running into the cluster-backup pod
+if [ ! -f "${ETCDCTL_CACERT}" ]; then
+  echo "Certificate ${ETCDCTL_CACERT} is missing. Checking in different directory"
+  export ETCDCTL_CACERT=$(echo ${ETCDCTL_CACERT} | sed -e "s|static-pod-certs|static-pod-resources/etcd-certs|")
+  export ETCDCTL_CERT=$(echo ${ETCDCTL_CERT} | sed -e "s|static-pod-certs|static-pod-resources/etcd-certs|")
+  export ETCDCTL_KEY=$(echo ${ETCDCTL_KEY} | sed -e "s|static-pod-certs|static-pod-resources/etcd-certs|")
+  if [ ! -f "${ETCDCTL_CACERT}" ]; then
+    echo "Certificate ${ETCDCTL_CACERT} is also missing in the second directory. Exiting!"
+    exit 1
+  else
+    echo "Certificate ${ETCDCTL_CACERT} found!"
+  fi
 fi
 
 backup_latest_kube_static_resources "${BACKUP_TAR_FILE}"
