@@ -52,6 +52,16 @@
               summary: 'etcd cluster has high number of leader changes.',
             },
           },
+           expr: 'histogram_quantile(0.99, sum by (instance, le) (irate(etcd_disk_wal_fsync_duration_seconds_bucket{job="etcd"}[5m])))',
+            alert: 'etcdGRPCRequestsSlow',
+            'for': '5m',
+            annotations: {
+              description:
+              summary:
+            },
+            labels: {
+              severity: 'critical',
+            },
           {
             expr: 'sum(up{job="etcd"} == bool 1 and etcd_server_has_leader{job="etcd"} == bool 1) without (instance,pod) < ((count(up{job="etcd"}) without (instance,pod) + 1) / 2)',
             alert: 'etcdInsufficientMembers',
