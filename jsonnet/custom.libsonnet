@@ -41,7 +41,7 @@
           {
             alert: 'etcdHighNumberOfLeaderChanges',
             expr: |||
-              increase((max without (instance) (etcd_server_leader_changes_seen_total{job=~".*etcd.*"}) or 0*absent(etcd_server_leader_changes_seen_total{job=~".*etcd.*"}))[15m:1m]) >= 5
+              (increase((max without (instance) (etcd_server_leader_changes_seen_total{job=~".*etcd.*"}) or 0*absent(etcd_server_leader_changes_seen_total{job=~".*etcd.*"}))[15m:1m]) >= 5)  and on () time() - cluster_version{type="initial"} > 3600
             |||,
             'for': '5m',
             labels: {
