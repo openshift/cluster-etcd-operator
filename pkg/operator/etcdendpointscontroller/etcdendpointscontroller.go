@@ -6,7 +6,6 @@ import (
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -19,6 +18,8 @@ import (
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
@@ -144,6 +145,8 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 	}
 
 	required.Data = endpointAddresses
+	// TODO(thomas): temporal logging to figure out why deleted members don't get removed from the configmap
+	klog.Infof("MemberList returns %v, saving %v to configmap", members, endpointAddresses)
 
 	// Apply endpoint updates
 	if _, _, err := resourceapply.ApplyConfigMap(ctx, c.configmapClient, recorder, required); err != nil {
