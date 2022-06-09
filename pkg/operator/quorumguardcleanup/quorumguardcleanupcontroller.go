@@ -9,7 +9,7 @@ import (
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/staticpod/controller/guard"
+	"github.com/openshift/library-go/pkg/operator/staticpod/controller/common"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -88,7 +88,7 @@ func (c *QuorumGuardCleanupController) sync(ctx context.Context, syncCtx factory
 // and then deletes the "etcd-quorum-guard" deployment and PodDisruptionBudget
 func (c *QuorumGuardCleanupController) cleanupOldQuorumGuard(ctx context.Context, syncCtx factory.SyncContext) error {
 	// No need for cleanup on SNO(single node openshift) as neither the old and new quorum guards are deployed
-	isSNO, precheckSucceeded, err := guard.IsSNOCheckFnc(c.infrastructureInformer)()
+	isSNO, precheckSucceeded, err := common.NewIsSingleNodePlatformFn(c.infrastructureInformer)()
 	if err != nil {
 		return fmt.Errorf("failed to check if cluster topology is SNO : %w", err)
 	}

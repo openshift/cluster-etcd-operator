@@ -158,7 +158,7 @@ github.com/modern-go/reflect2
 # github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822
 ## explicit
 github.com/munnerz/goautoneg
-# github.com/openshift/api v0.0.0-20211209135129-c58d9f695577
+# github.com/openshift/api v0.0.0-20220315184754-d7c10d0b647e
 ## explicit; go 1.16
 github.com/openshift/api
 github.com/openshift/api/apiserver
@@ -259,7 +259,7 @@ github.com/openshift/client-go/operator/informers/externalversions/operator/v1
 github.com/openshift/client-go/operator/informers/externalversions/operator/v1alpha1
 github.com/openshift/client-go/operator/listers/operator/v1
 github.com/openshift/client-go/operator/listers/operator/v1alpha1
-# github.com/openshift/library-go v0.0.0-20220215130638-e570dd7004e5
+# github.com/openshift/library-go v0.0.0-20220505131319-80f9619c29ba
 ## explicit; go 1.17
 github.com/openshift/library-go/pkg/assets
 github.com/openshift/library-go/pkg/authorization/hardcodedauthorizer
@@ -293,16 +293,13 @@ github.com/openshift/library-go/pkg/operator/staleconditions
 github.com/openshift/library-go/pkg/operator/staticpod
 github.com/openshift/library-go/pkg/operator/staticpod/certsyncpod
 github.com/openshift/library-go/pkg/operator/staticpod/controller/backingresource
-github.com/openshift/library-go/pkg/operator/staticpod/controller/backingresource/bindata
+github.com/openshift/library-go/pkg/operator/staticpod/controller/common
 github.com/openshift/library-go/pkg/operator/staticpod/controller/guard
-github.com/openshift/library-go/pkg/operator/staticpod/controller/guard/bindata
 github.com/openshift/library-go/pkg/operator/staticpod/controller/installer
-github.com/openshift/library-go/pkg/operator/staticpod/controller/installer/bindata
 github.com/openshift/library-go/pkg/operator/staticpod/controller/installerstate
 github.com/openshift/library-go/pkg/operator/staticpod/controller/missingstaticpod
 github.com/openshift/library-go/pkg/operator/staticpod/controller/node
 github.com/openshift/library-go/pkg/operator/staticpod/controller/prune
-github.com/openshift/library-go/pkg/operator/staticpod/controller/prune/bindata
 github.com/openshift/library-go/pkg/operator/staticpod/controller/revision
 github.com/openshift/library-go/pkg/operator/staticpod/controller/startupmonitorcondition
 github.com/openshift/library-go/pkg/operator/staticpod/controller/staticpodfallback

@@ -1,0 +1,10 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: # Value set by operator
+  namespace: # Value set by operator
+spec:
+  minAvailable: 0 # Value set by operator
+  selector:
+    matchLabels:
+      app: guard

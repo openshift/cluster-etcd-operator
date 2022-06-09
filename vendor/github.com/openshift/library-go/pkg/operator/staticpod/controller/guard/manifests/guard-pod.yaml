@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  namespace: # Value set by operator
+  name: # Value set by operator
+  labels:
+    app: guard
+  ownerReferences: # Value set by operator
+spec:
+  affinity: # Value set by operator
+  priorityClassName: "system-cluster-critical"
+  terminationGracePeriodSeconds: 3
+  tolerations:
+    - key: node-role.kubernetes.io/master
+      effect: NoSchedule
+      operator: Exists
+    - key: node.kubernetes.io/not-ready
+      effect: NoExecute
+      operator: Exists
+    - key: node.kubernetes.io/unreachable
+      effect: NoExecute
+      operator: Exists
+    - key: node-role.kubernetes.io/etcd
+      operator: Exists
+      effect: NoSchedule
+  containers:
+    - name: guard
+      image: # Value set by operator
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      command:
+        - /bin/bash
+      args:
+        - -c
+        - |
+          # properly handle TERM and exit as soon as it is signaled
+          set -euo pipefail
+          trap 'jobs -p | xargs -r kill; exit 0' TERM
+          sleep infinity & wait
+      readinessProbe:
+        failureThreshold: 3
+        httpGet:
+          host: # Value set by operator
+          path: healthz
+          port: # Value set by operator
+          scheme: HTTPS
+        periodSeconds: 5
+        successThreshold: 1
+        timeoutSeconds: 5
+      resources:
+        requests:
+          cpu: 10m
+          memory: 5Mi
