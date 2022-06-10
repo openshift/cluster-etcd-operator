@@ -12,6 +12,7 @@ import (
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	"github.com/prometheus/client_golang/prometheus"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	corev1listers "k8s.io/client-go/listers/core/v1"
@@ -43,6 +44,8 @@ type EnvVarController struct {
 	queue         workqueue.RateLimitingInterface
 	cachesToSync  []cache.InformerSynced
 	eventRecorder events.Recorder
+
+	revisionGauge *prometheus.GaugeVec
 }
 
 type Enqueueable interface {
@@ -57,6 +60,16 @@ func NewEnvVarController(
 	networkInformer configv1informers.NetworkInformer,
 	eventRecorder events.Recorder,
 ) *EnvVarController {
+
+	revGauge := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "etcd_operator",
+		Name:      "static_pod_current_revision",
+		Help:      "current revision for a given node",
+	}, []string{
+		"node",
+	})
+	prometheus.MustRegister(revGauge)
+
 	c := &EnvVarController{
 		operatorClient:       operatorClient,
 		infrastructureLister: infrastructureInformer.Lister(),
@@ -75,6 +88,7 @@ func NewEnvVarController(
 			kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
 		},
 		eventRecorder: eventRecorder.WithComponentSuffix("env-var-controller"),
+		revisionGauge: revGauge,
 	}
 
 	operatorClient.Informer().AddEventHandler(c.eventHandler())
@@ -135,6 +149,10 @@ func (c *EnvVarController) checkEnvVars() error {
 	operatorSpec, operatorStatus, _, err := c.operatorClient.GetStaticPodOperatorState()
 	if err != nil {
 		return err
+	}
+
+	for _, status := range operatorStatus.NodeStatuses {
+		c.revisionGauge.WithLabelValues(status.NodeName).Set(float64(status.CurrentRevision))
 	}
 
 	currEnvVarMap, err := getEtcdEnvVars(envVarContext{
