@@ -128,6 +128,9 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 			continue
 		}
 
+		if member.IsLearner == false:
+			continue
+
 		if member.Name == "etcd-bootstrap" {
 			continue
 		}
