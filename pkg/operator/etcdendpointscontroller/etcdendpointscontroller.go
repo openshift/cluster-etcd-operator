@@ -6,7 +6,6 @@ import (
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -112,38 +111,6 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 	} else if !errors.IsNotFound(err) {
 		klog.Warningf("required configmap %s/%s will be created because it was missing: %w", operatorclient.TargetNamespace, "etcd-endpoints", err)
 	}
-
-	members, err := c.etcdClient.MemberList(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get member list: %w", err)
-	}
-
-	endpointAddresses := make(map[string]string, len(members))
-	// Create endpoint addresses for each member of the cluster.
-	for _, member := range members {
-		// Since a learner member rejects all requests other than serializable reads and member status API
-		// we have to exclude them from the etcd-endpoints configmap to prevent the API server from sending
-		// requests to it which would fail with "rpc not supported for learner" errors
-		if member.IsLearner {
-			continue
-		}
-
-		if member.Name == "etcd-bootstrap" {
-			continue
-		}
-		// Use of PeerURL is expected here because it is a mandatory field, and it will mirror ClientURL.
-		ip, err := dnshelpers.GetIPFromAddress(member.PeerURLs[0])
-		if err != nil {
-			return err
-		}
-		endpointAddresses[fmt.Sprintf("%x", member.ID)] = ip
-	}
-
-	if len(endpointAddresses) == 0 {
-		return fmt.Errorf("no etcd members are present")
-	}
-
-	required.Data = endpointAddresses
 
 	// Apply endpoint updates
 	if _, _, err := resourceapply.ApplyConfigMap(ctx, c.configmapClient, recorder, required); err != nil {
