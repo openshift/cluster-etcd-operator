@@ -19,6 +19,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
+	"github.com/openshift/library-go/pkg/operator/status"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -159,11 +160,7 @@ func (c *UpgradeBackupController) ensureRecentBackup(ctx context.Context, cluste
 		return nil, err
 	}
 
-	currentVersion, err := getCurrentClusterVersion(clusterVersion)
-	if err != nil {
-		return nil, err
-	}
-
+	currentVersion := status.VersionForOperatorFromEnv()
 	// Check cluster version status for backup condition.
 	if !isRequireRecentBackup(clusterVersion, clusterOperatorStatus) {
 		return nil, nil
@@ -352,11 +349,10 @@ func getCurrentClusterVersion(cv *configv1.ClusterVersion) (string, error) {
 }
 
 func isNewBackupRequired(config *configv1.ClusterVersion, clusterOperatorStatus *configv1.ClusterOperatorStatus) (bool, error) {
-	currentVersion, err := getCurrentClusterVersion(config)
-	if err != nil {
-		return false, err
+	currentVersion := status.VersionForOperatorFromEnv()
+	if currentVersion == "" {
+		return false, nil
 	}
-
 	// check in ClusterVersion update history for update in progress (i.e. state: Partial)
 	// then check the condition of etcd operator
 	// if backup for current cluster version was taken, return false
