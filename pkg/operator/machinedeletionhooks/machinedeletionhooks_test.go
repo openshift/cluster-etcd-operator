@@ -19,9 +19,10 @@ import (
 	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
 	machinev1beta1fakeclient "github.com/openshift/client-go/machine/clientset/versioned/fake"
 	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 )
 
 func TestSyncMethod(t *testing.T) {
@@ -293,7 +294,99 @@ func TestAttemptToDeleteMachineDeletionHook(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "one excessive machine pending deletion without a member ipv6",
+			initialObjectsForMachineLister: func() []runtime.Object {
+				m4 := machineWithHooksFor("m-4", "fe80::901a:317c:fbc5:fba9")
+				m4.DeletionTimestamp = &metav1.Time{}
+				return []runtime.Object{
+					machineWithHooksFor("m-1", "fe80::901a:317c:fbc5:fba6"),
+					machineWithHooksFor("m-2", "fe80::901a:317c:fbc5:fba7"),
+					machineWithHooksFor("m-3", "fe80::901a:317c:fbc5:fba8"),
+					m4,
+				}
+			}(),
+			initialEtcdMemberList: []*etcdserverpb.Member{
+				{
+					Name:     "m-1",
+					ID:       1,
+					PeerURLs: []string{"https://[fe80::901a:317c:fbc5:fba6]:1234"},
+				},
+				{
+					Name:     "m-2",
+					ID:       2,
+					PeerURLs: []string{"https://[fe80::901a:317c:fbc5:fba7]:1234"},
+				},
+				{
+					Name:     "m-3",
+					ID:       3,
+					PeerURLs: []string{"https://[fe80::901a:317c:fbc5:fba8]:1234"},
+				},
+			},
+			expectedActions: []string{"update:machines:"},
+			validateFunc: func(t *testing.T, machineClientActions []clientgotesting.Action) {
+				wasMachineUpdated := false
+				for _, action := range machineClientActions {
+					if action.Matches("update", "machines") {
+						updateAction := action.(clientgotesting.UpdateAction)
+						updatedMachine := updateAction.GetObject().(*machinev1beta1.Machine)
+						if hasMachineDeletionHook(updatedMachine) {
+							t.Fatalf("machine %v has unexpected machine deletion hooks", updatedMachine)
+						}
+						wasMachineUpdated = true
+					}
+				}
+				if !wasMachineUpdated {
+					t.Errorf("expected to see an updated machine but didn't get any, fake machine client actions: %v", machineClientActions)
+				}
+			},
+		},
+		{
+			name: "machine with dualstack network pending deletion with an excessive member",
+			initialObjectsForMachineLister: func() []runtime.Object {
+				m4 := addHook(dualStackMachineFor("m-4", "10.0.139.81", "fe80::901a:317c:fbc5:fba9"))
+				m4.DeletionTimestamp = &metav1.Time{}
 
+				return []runtime.Object{
+					addHook(dualStackMachineFor("m-1", "10.0.139.78", "fe80::901a:317c:fbc5:fba6")),
+					addHook(dualStackMachineFor("m-2", "10.0.139.79", "fe80::901a:317c:fbc5:fba7")),
+					addHook(dualStackMachineFor("m-3", "10.0.139.80", "fe80::901a:317c:fbc5:fba8")),
+					m4,
+				}
+			}(),
+			initialEtcdMemberList: wellKnownEtcdMemberList(),
+			expectedActions:       []string{"update:machines:"},
+			validateFunc: func(t *testing.T, machineClientActions []clientgotesting.Action) {
+				wasMachineUpdated := false
+				for _, action := range machineClientActions {
+					if action.Matches("update", "machines") {
+						updateAction := action.(clientgotesting.UpdateAction)
+						updatedMachine := updateAction.GetObject().(*machinev1beta1.Machine)
+						if hasMachineDeletionHook(updatedMachine) {
+							t.Fatalf("machine %v has unexpected machine deletion hooks", updatedMachine)
+						}
+						wasMachineUpdated = true
+					}
+				}
+				if !wasMachineUpdated {
+					t.Errorf("expected to see an updated machine but didn't get any, fake machine client actions: %v", machineClientActions)
+				}
+			},
+		},
+		{
+			name: "machine with dualstack network pending deletion with no excessive member",
+			initialObjectsForMachineLister: func() []runtime.Object {
+				m1 := addHook(dualStackMachineFor("m-1", "10.0.139.78", "fe80::901a:317c:fbc5:fba6"))
+				m1.DeletionTimestamp = &metav1.Time{}
+
+				return []runtime.Object{
+					m1,
+					addHook(dualStackMachineFor("m-2", "10.0.139.79", "fe80::901a:317c:fbc5:fba7")),
+					addHook(dualStackMachineFor("m-3", "10.0.139.80", "fe80::901a:317c:fbc5:fba8")),
+				}
+			}(),
+			initialEtcdMemberList: wellKnownEtcdMemberList(),
+		},
 		{
 			name: "two excessive, the first one with pending deletion and without the hooks, the second pending deletion without a member",
 			initialObjectsForMachineLister: func() []runtime.Object {
@@ -361,7 +454,7 @@ func TestAttemptToDeleteMachineDeletionHook(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := validateActionsVerbs(fakeMachineClient.Actions(), scenario.expectedActions); err != nil {
-			t.Fatalf("incorrect actions from the fake machine client: %v", err)
+			t.Fatalf("[%s] incorrect actions from the fake machine client: %v", scenario.name, err)
 		}
 		if scenario.validateFunc != nil {
 			scenario.validateFunc(t, fakeMachineClient.Actions())
@@ -381,8 +474,28 @@ func machineFor(name, internalIP string) *machinev1beta1.Machine {
 	}
 }
 
+func dualStackMachineFor(name, internalIPv4, internalIPv6 string) *machinev1beta1.Machine {
+	return &machinev1beta1.Machine{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"machine.openshift.io/cluster-api-machine-role": "master"}},
+		Status: machinev1beta1.MachineStatus{Addresses: []corev1.NodeAddress{
+			{
+				Type:    corev1.NodeInternalIP,
+				Address: internalIPv4,
+			},
+			{
+				Type:    corev1.NodeInternalIP,
+				Address: internalIPv6,
+			},
+		}},
+	}
+}
+
 func machineWithHooksFor(name, internalIP string) *machinev1beta1.Machine {
 	m := machineFor(name, internalIP)
+	return addHook(m)
+}
+
+func addHook(m *machinev1beta1.Machine) *machinev1beta1.Machine {
 	m.Spec.LifecycleHooks.PreDrain = append(m.Spec.LifecycleHooks.PreDrain, machinev1beta1.LifecycleHook{Name: "EtcdQuorumOperator", Owner: "clusteroperator/etcd"})
 	return m
 }
