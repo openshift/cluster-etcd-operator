@@ -6,7 +6,6 @@ import (
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -19,6 +18,8 @@ import (
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
@@ -121,6 +122,8 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 	endpointAddresses := make(map[string]string, len(members))
 	// Create endpoint addresses for each member of the cluster.
 	for _, member := range members {
+		klog.Infof("member from MemberList: %s", member.String())
+
 		// Since a learner member rejects all requests other than serializable reads and member status API
 		// we have to exclude them from the etcd-endpoints configmap to prevent the API server from sending
 		// requests to it which would fail with "rpc not supported for learner" errors
@@ -143,6 +146,7 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 		return fmt.Errorf("no etcd members are present")
 	}
 
+	klog.Infof("final endpoint list from MemberList: %s", endpointAddresses)
 	required.Data = endpointAddresses
 
 	// Apply endpoint updates
