@@ -773,7 +773,7 @@ ${COMPUTED_ENV_VARS}
 
         set -x
         # See https://etcd.io/docs/v3.4.0/tuning/ for why we use ionice
-        exec ionice -c2 -n0 etcd \
+        exec ionice -c1 -n2 etcd \
           --logger=zap \
           --log-level=${VERBOSITY} \
           --experimental-initial-corrupt-check=true \
