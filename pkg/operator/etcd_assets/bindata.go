@@ -804,7 +804,7 @@ ${COMPUTED_ENV_VARS}
         port: 9980
         path: readyz
         scheme: HTTPS
-      timeoutSeconds: 10
+      timeoutSeconds: 3
       failureThreshold: 3
       periodSeconds: 5
       successThreshold: 1
@@ -813,11 +813,11 @@ ${COMPUTED_ENV_VARS}
         port: 9980
         path: readyz
         scheme: HTTPS
-      initialDelaySeconds: 10
+      initialDelaySeconds: 5
       timeoutSeconds: 1
       periodSeconds: 10
       successThreshold: 1
-      failureThreshold: 18
+      failureThreshold: 10
     securityContext:
       privileged: true
     volumeMounts:
