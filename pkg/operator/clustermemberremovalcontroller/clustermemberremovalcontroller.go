@@ -12,13 +12,14 @@ import (
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
+	"github.com/openshift/library-go/pkg/controller/factory"
+	"github.com/openshift/library-go/pkg/operator/events"
+	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
+
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/library-go/pkg/controller/factory"
-	"github.com/openshift/library-go/pkg/operator/events"
-	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -367,6 +368,7 @@ func (c *clusterMemberRemovalController) getNodeForMember(memberInternalIP strin
 }
 
 func (c *clusterMemberRemovalController) attemptToRemoveMemberFor(ctx context.Context, members []*etcdserverpb.Member, machinePendingDeletion *machinev1beta1.Machine, recorder events.Recorder) (removed bool, errs []error) {
+	klog.Infof("attempting to remove machine %s", machinePendingDeletion.Name)
 	for _, member := range members {
 		memberIP, err := ceohelpers.MemberToNodeInternalIP(member)
 		if err != nil {
@@ -374,6 +376,8 @@ func (c *clusterMemberRemovalController) attemptToRemoveMemberFor(ctx context.Co
 			errs = append(errs, fmt.Errorf("failed to get an IP for member: %v, err: %v", memberLocator, err))
 			continue // ignore unhealthy members
 		}
+		klog.Infof("machine %s trying to match against member IP %s and addresses %v",
+			machinePendingDeletion.Name, memberIP, machinePendingDeletion.Status.Addresses)
 		if hasInternalIP(machinePendingDeletion, memberIP) {
 			memberLocator := fmt.Sprintf("[ url: %v, name: %v, id: %v ]", memberIP, member.Name, member.ID)
 			if err := c.etcdClient.MemberRemove(ctx, member.ID); err != nil {
