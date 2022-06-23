@@ -3,9 +3,10 @@ package ceohelpers
 import (
 	"encoding/json"
 	"fmt"
-	configv1 "github.com/openshift/api/config/v1"
 	"net"
 	"net/url"
+
+	configv1 "github.com/openshift/api/config/v1"
 
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 
@@ -17,9 +18,10 @@ import (
 	corev1listers "k8s.io/client-go/listers/core/v1"
 
 	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/controlplanereplicascount"
 	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/controlplanereplicascount"
 )
 
 // MachineDeletionHookName holds a name of the Machine Deletion Hook
@@ -111,7 +113,7 @@ func HasMachineDeletionHook(machine *machinev1beta1.Machine) bool {
 
 // IndexMachinesByNodeInternalIP maps machines to IPs
 //
-// Note that a machine can have multiple internal IPs
+// Note that a machine can have multiple internal IPs with different types (v4/v6)
 func IndexMachinesByNodeInternalIP(machines []*machinev1beta1.Machine) map[string]*machinev1beta1.Machine {
 	index := map[string]*machinev1beta1.Machine{}
 	for _, machine := range machines {

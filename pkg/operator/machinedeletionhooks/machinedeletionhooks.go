@@ -2,17 +2,19 @@ package machinedeletionhooks
 
 import (
 	"context"
-	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"time"
 
 	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
 	machinev1beta1client "github.com/openshift/client-go/machine/clientset/versioned/typed/machine/v1beta1"
 	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
+	corev1 "k8s.io/api/core/v1"
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -106,6 +108,7 @@ func (c *machineDeletionHooksController) attemptToDeleteMachineDeletionHook(ctx 
 	if err != nil {
 		return err
 	}
+
 	currentMemberIPListSet := sets.NewString()
 	for _, member := range members {
 		memberIP, err := ceohelpers.MemberToNodeInternalIP(member)
@@ -115,24 +118,33 @@ func (c *machineDeletionHooksController) attemptToDeleteMachineDeletionHook(ctx 
 		currentMemberIPListSet.Insert(memberIP)
 	}
 
-	// find a machine that doesn't have a member
-	var errs []error
-	for machinePendingDeletionIP, machinePendingDeletion := range ceohelpers.IndexMachinesByNodeInternalIP(machinesPendingDeletion) {
-		if currentMemberIPListSet.Has(machinePendingDeletionIP) {
-			// ignore machines that still have a member present
-			klog.V(2).Infof("skipping removing the deletion hook from machine %v since its member is still present", machinePendingDeletion.Name)
+	klog.V(2).Infof("current members %v with IPSet: %v", members, currentMemberIPListSet)
+	for _, machinePendingDeletion := range machinesPendingDeletion {
+		// if none of the addresses for a machinePendingDeletion are in the member list, we can safely remove the hook
+		skipNode := false
+		for _, addr := range machinePendingDeletion.Status.Addresses {
+			if addr.Type == corev1.NodeInternalIP {
+				if currentMemberIPListSet.Has(addr.Address) {
+					skipNode = true
+					break
+				}
+			}
+		}
+
+		if skipNode {
+			klog.V(2).Infof("skip removing the deletion hook from machine %s since its member is still present with any of: %v", machinePendingDeletion.Name, machinePendingDeletion.Status.Addresses)
 			continue
 		}
+
 		machinePendingDeletionCopy := machinePendingDeletion.DeepCopy()
 		removeMachineDeletionHook(machinePendingDeletionCopy)
 		if _, err := c.machineClient.Update(ctx, machinePendingDeletionCopy, metav1.UpdateOptions{}); err != nil {
-			errs = append(errs, err)
-			continue
+			return err
 		}
 		klog.V(2).Infof("successfully removed the deletion hook from machine %v", machinePendingDeletion.Name)
 		recorder.Eventf("MachineDeletionHook", "successfully removed the deletion hook from machine %v as it doesn't have a member", machinePendingDeletion.Name)
 	}
-	return kerrors.NewAggregate(errs)
+	return nil
 }
 
 // addDeletionHookToMasterMachines adds the Machine Deletion Hook to master machines
