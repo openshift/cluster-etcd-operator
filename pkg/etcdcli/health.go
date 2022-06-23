@@ -20,6 +20,7 @@ func init() {
 
 const raftTermsMetricName = "etcd_debugging_raft_terms_total"
 
+// raftTermsCollector is thread-safe internally
 var raftTerms = &raftTermsCollector{
 	desc: prometheus.NewDesc(
 		raftTermsMetricName,
@@ -41,66 +42,34 @@ type healthCheck struct {
 type memberHealth []healthCheck
 
 func getMemberHealth(ctx context.Context, etcdMembers []*etcdserverpb.Member) memberHealth {
-	var wg sync.WaitGroup
 	memberHealth := memberHealth{}
-	hch := make(chan healthCheck, len(etcdMembers))
 	for _, member := range etcdMembers {
 		if !HasStarted(member) {
 			memberHealth = append(memberHealth, healthCheck{Member: member, Healthy: false})
 			continue
 		}
-		wg.Add(1)
-		go func(member *etcdserverpb.Member) {
-			defer wg.Done()
-			// If the endpoint is for a learner member then we should skip testing the connection
-			// via the member list call as learners don't support that.
-			// The learner's connection would get tested in the health check below
-			skipConnectionTest := false
-			if member.IsLearner {
-				skipConnectionTest = true
-			}
-			cli, err := newEtcdClientWithClientOpts([]string{member.ClientURLs[0]}, skipConnectionTest)
-			if err != nil {
-				hch <- healthCheck{Member: member, Healthy: false, Error: fmt.Errorf("create client failure: %w", err)}
-				return
-			}
-			defer func() {
-				if err := cli.Close(); err != nil {
-					klog.Errorf("error closing etcd client for getMemberHealth: %v", err)
-				}
-			}()
 
-			st := time.Now()
-			ctx, cancel := context.WithCancel(ctx)
-			var resp *clientv3.GetResponse
-			if member.IsLearner {
-				// Learner members only support serializable (without consensus) read requests
-				resp, err = cli.Get(ctx, "health", clientv3.WithSerializable())
-			} else {
-				// Linearized request to verify health of a voting member
-				resp, err = cli.Get(ctx, "health")
-			}
+		const defaultTimeout = 30 * time.Second
+		resChan := make(chan healthCheck, 1)
+		go func() {
+			ctx, cancel := context.WithTimeout(ctx, defaultTimeout)
+			defer cancel()
 
-			hc := healthCheck{Member: member, Healthy: false, Took: time.Since(st).String()}
-			if err == nil {
-				if resp.Header != nil {
-					raftTerms.Set(member.Name, resp.Header.RaftTerm)
-				}
-				hc.Healthy = true
-			} else {
-				klog.V(2).Infof("health check for memberID (%v) failed: err(%v)", resp.Header.MemberId, err)
-				hc.Error = fmt.Errorf("health check failed: %w", err)
-			}
-			cancel()
-			hch <- hc
-		}(member)
-	}
+			resChan <- checkSingleMemberHealth(ctx, member)
+		}()
 
-	wg.Wait()
-	close(hch)
+		select {
+		case res := <-resChan:
+			memberHealth = append(memberHealth, res)
+		case <-time.After(defaultTimeout):
+			memberHealth = append(memberHealth, healthCheck{
+				Member:  member,
+				Healthy: false,
+				Error: fmt.Errorf("30s timeout waiting for member %s to respond to health check",
+					member.Name)})
+		}
 
-	for healthCheck := range hch {
-		memberHealth = append(memberHealth, healthCheck)
+		close(resChan)
 	}
 
 	// Purge any unknown members from the raft term metrics collector.
@@ -112,12 +81,62 @@ func getMemberHealth(ctx context.Context, etcdMembers []*etcdserverpb.Member) me
 				break
 			}
 		}
+
 		if !found {
+			// Forget is a map deletion underneath, which is idempotent and under a lock.
 			raftTerms.Forget(cachedMember)
 		}
 	}
 
 	return memberHealth
+}
+
+func checkSingleMemberHealth(ctx context.Context, member *etcdserverpb.Member) healthCheck {
+	// If the endpoint is for a learner member then we should skip testing the connection
+	// via the member list call as learners don't support that.
+	// The learner's connection would get tested in the health check below
+	skipConnectionTest := false
+	if member.IsLearner {
+		skipConnectionTest = true
+	}
+	cli, err := newEtcdClientWithClientOpts([]string{member.ClientURLs[0]}, skipConnectionTest)
+	if err != nil {
+		return healthCheck{
+			Member:  member,
+			Healthy: false,
+			Error:   fmt.Errorf("create client failure: %w", err)}
+	}
+
+	defer func() {
+		if err := cli.Close(); err != nil {
+			klog.Errorf("error closing etcd client for getMemberHealth: %v", err)
+		}
+	}()
+
+	st := time.Now()
+
+	var resp *clientv3.GetResponse
+	if member.IsLearner {
+		// Learner members only support serializable (without consensus) read requests
+		resp, err = cli.Get(ctx, "health", clientv3.WithSerializable())
+	} else {
+		// Linearized request to verify health of a voting member
+		resp, err = cli.Get(ctx, "health")
+	}
+
+	hc := healthCheck{Member: member, Healthy: false, Took: time.Since(st).String()}
+	if err == nil {
+		if resp.Header != nil {
+			// TODO(thomas): this is a somewhat misplaced side-effect that is safe to call from multiple goroutines
+			raftTerms.Set(member.Name, resp.Header.RaftTerm)
+		}
+		hc.Healthy = true
+	} else {
+		klog.Errorf("health check for memberID (%v) failed: err(%v)", resp.Header.MemberId, err)
+		hc.Error = fmt.Errorf("health check failed: %w", err)
+	}
+
+	return hc
 }
 
 // Status returns a reporting of memberHealth status
