@@ -4,6 +4,12 @@
 
 ### Maintenance
 
+#### Update Alerts
+
+Alerts are stored in `jsonnet/custom.libsonnet`, you need to update the respective `prometheusRules` in there and then re-generate the manifest yamls via:
+
+> hack/generate.sh
+
 #### CVO resource removal
 Any resource in the manifests/ directory is managed by CVO. Removal of these resources requires code to be added 
 that removes these resources frequently[1]. This must be maintained for 1 release then the code can be removed.
