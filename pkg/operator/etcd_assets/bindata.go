@@ -808,6 +808,15 @@ ${COMPUTED_ENV_VARS}
       failureThreshold: 3
       periodSeconds: 5
       successThreshold: 1
+    livenessProbe:
+      httpGet:
+        path: healthz
+        port: 9980
+        scheme: HTTPS
+      timeoutSeconds: 10
+      periodSeconds: 5
+      successThreshold: 1
+      failureThreshold: 3
     startupProbe:
       httpGet:
         port: 9980
