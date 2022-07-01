@@ -6,8 +6,6 @@ import (
 	"net"
 	"net/url"
 
-	configv1 "github.com/openshift/api/config/v1"
-
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 
 	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
@@ -179,16 +177,4 @@ func VotingMemberIPListSet(configMapLister corev1listers.ConfigMapNamespaceListe
 	}
 
 	return currentVotingMemberIPListSet, nil
-}
-
-func GetCurrentClusterVersion(cv *configv1.ClusterVersion) (string, error) {
-	if cv == nil {
-		return "", fmt.Errorf("ClusterVersion is nil: %v", cv)
-	}
-	for _, c := range cv.Status.History {
-		if c.State == configv1.CompletedUpdate {
-			return c.Version, nil
-		}
-	}
-	return "", fmt.Errorf("unable to retrieve cluster version, no completed update was found in cluster version status history: %v", cv.Status.History)
 }

@@ -123,8 +123,7 @@ func Test_ensureRecentBackup(t *testing.T) {
 				Conditions: []configv1.ClusterOperatorStatusCondition{
 					{Type: backupConditionType, Reason: backupSuccess, Message: "UpgradeBackup pre 4.9 located at path "}},
 			},
-			wantBackupStatus: configv1.ConditionUnknown,
-			wantEventCount:   1, // pod created event
+			wantNilBackupCondition: true,
 		},
 		{
 			name: "RecentBackup not required, backup exist for current version",
