@@ -14,6 +14,7 @@ import (
 	coreclientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/klog/v2"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
@@ -24,7 +25,9 @@ import (
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
@@ -43,6 +46,7 @@ type TargetConfigController struct {
 	endpointLister       corev1listers.EndpointsLister
 	nodeLister           corev1listers.NodeLister
 	envVarGetter         *etcdenvvar.EnvVarController
+	etcdClient           etcdcli.EtcdClient
 
 	enqueueFn func()
 }
@@ -57,6 +61,7 @@ func NewTargetConfigController(
 	kubeClient kubernetes.Interface,
 	envVarGetter *etcdenvvar.EnvVarController,
 	eventRecorder events.Recorder,
+	etcdClient etcdcli.EtcdClient,
 ) factory.Controller {
 	c := &TargetConfigController{
 		targetImagePullSpec:   targetImagePullSpec,
@@ -70,6 +75,7 @@ func NewTargetConfigController(
 		endpointLister:       kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
 		nodeLister:           kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
 		envVarGetter:         envVarGetter,
+		etcdClient:           etcdClient,
 	}
 
 	syncCtx := factory.NewSyncContext("TargetConfigController", eventRecorder.WithComponentSuffix("target-config-controller"))
@@ -90,6 +96,21 @@ func NewTargetConfigController(
 }
 
 func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
+	bootstrapComplete, err := ceohelpers.IsBootstrapComplete(c.configMapLister, c.operatorClient)
+	if err != nil {
+		return fmt.Errorf("couldn't determine bootstrap status: %w", err)
+	}
+
+	memberHealth, err := c.etcdClient.MemberHealth(ctx)
+	if err != nil {
+		return fmt.Errorf("couldn't determine member health: %w", err)
+	}
+
+	if bootstrapComplete && !etcdcli.IsQuorumFaultTolerant(memberHealth) {
+		klog.Warningf("skipping TargetConfigController reconciliation due to insufficient quorum")
+		return nil
+	}
+
 	operatorSpec, _, _, err := c.operatorClient.GetStaticPodOperatorState()
 	if err != nil {
 		return err
