@@ -25,6 +25,11 @@ import (
 
 const workQueueKey = "key"
 
+type EnvVar interface {
+	AddListener(listener Enqueueable)
+	GetEnvVars() map[string]string
+}
+
 type EnvVarController struct {
 	operatorClient v1helpers.StaticPodOperatorClient
 

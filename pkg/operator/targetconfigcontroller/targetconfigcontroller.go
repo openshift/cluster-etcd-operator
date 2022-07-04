@@ -6,16 +6,6 @@ import (
 	"strings"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/client-go/informers"
-	"k8s.io/client-go/kubernetes"
-	coreclientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
-	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/tools/cache"
-	"k8s.io/klog/v2"
-
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
@@ -24,6 +14,14 @@ import (
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	corev1 "k8s.io/api/core/v1"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
+	coreclientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
@@ -45,7 +43,7 @@ type TargetConfigController struct {
 	configMapLister      corev1listers.ConfigMapLister
 	endpointLister       corev1listers.EndpointsLister
 	nodeLister           corev1listers.NodeLister
-	envVarGetter         *etcdenvvar.EnvVarController
+	envVarGetter         etcdenvvar.EnvVar
 	etcdClient           etcdcli.EtcdClient
 
 	enqueueFn func()
@@ -59,7 +57,7 @@ func NewTargetConfigController(
 	infrastructureInformer configv1informers.InfrastructureInformer,
 	networkInformer configv1informers.NetworkInformer,
 	kubeClient kubernetes.Interface,
-	envVarGetter *etcdenvvar.EnvVarController,
+	envVarGetter etcdenvvar.EnvVar,
 	eventRecorder events.Recorder,
 	etcdClient etcdcli.EtcdClient,
 ) factory.Controller {
@@ -107,8 +105,7 @@ func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncCo
 	}
 
 	if bootstrapComplete && !etcdcli.IsQuorumFaultTolerant(memberHealth) {
-		klog.Warningf("skipping TargetConfigController reconciliation due to insufficient quorum")
-		return nil
+		return fmt.Errorf("skipping TargetConfigController reconciliation due to insufficient quorum")
 	}
 
 	operatorSpec, _, _, err := c.operatorClient.GetStaticPodOperatorState()
