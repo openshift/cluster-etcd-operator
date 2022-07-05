@@ -28,11 +28,12 @@ import (
 func TestTargetConfigController(t *testing.T) {
 
 	scenarios := []struct {
-		name            string
-		objects         []runtime.Object
-		staticPodStatus *operatorv1.StaticPodOperatorStatus
-		etcdMembers     []*etcdserverpb.Member
-		expectedErr     error
+		name              string
+		objects           []runtime.Object
+		staticPodStatus   *operatorv1.StaticPodOperatorStatus
+		etcdMembers       []*etcdserverpb.Member
+		etcdMembersEnvVar string
+		expectedErr       error
 	}{
 		{
 			name: "HappyPath",
@@ -50,6 +51,7 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(1),
 				u.FakeEtcdMemberWithoutServer(2),
 			},
+			etcdMembersEnvVar: "1,2,3",
 		},
 		{
 			name: "Quorum not fault tolerant",
@@ -66,7 +68,26 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(0),
 				u.FakeEtcdMemberWithoutServer(2),
 			},
-			expectedErr: fmt.Errorf("skipping TargetConfigController reconciliation due to insufficient quorum"),
+			etcdMembersEnvVar: "1,3",
+			expectedErr:       fmt.Errorf("skipping TargetConfigController reconciliation due to insufficient quorum"),
+		},
+		{
+			name: "Quorum inconsistent env",
+			objects: []runtime.Object{
+				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
+			},
+			staticPodStatus: u.StaticPodOperatorStatus(
+				u.WithLatestRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+			),
+			etcdMembers: []*etcdserverpb.Member{
+				u.FakeEtcdMemberWithoutServer(0),
+				u.FakeEtcdMemberWithoutServer(2),
+			},
+			etcdMembersEnvVar: "1,2,3",
+			expectedErr:       fmt.Errorf("skipping TargetConfigController reconciliation due to inconsistency between env vars and member health"),
 		},
 	}
 	for _, scenario := range scenarios {
@@ -97,7 +118,7 @@ func TestTargetConfigController(t *testing.T) {
 			}
 
 			envVar := etcdenvvar.FakeEnvVar{EnvVars: map[string]string{
-				"fake-key": "fake-value",
+				"ALL_ETCD_ENDPOINTS": scenario.etcdMembersEnvVar,
 			}}
 
 			controller := &TargetConfigController{
