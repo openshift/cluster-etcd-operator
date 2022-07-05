@@ -72,6 +72,23 @@ func TestTargetConfigController(t *testing.T) {
 			expectedErr:       fmt.Errorf("skipping TargetConfigController reconciliation due to insufficient quorum"),
 		},
 		{
+			name: "Quorum not fault tolerant but bootstrapping",
+			objects: []runtime.Object{
+				u.BootstrapConfigMap(u.WithBootstrapStatus("mot complete")),
+			},
+			staticPodStatus: u.StaticPodOperatorStatus(
+				u.WithLatestRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+			),
+			etcdMembers: []*etcdserverpb.Member{
+				u.FakeEtcdMemberWithoutServer(0),
+				u.FakeEtcdMemberWithoutServer(2),
+			},
+			etcdMembersEnvVar: "1,3",
+		},
+		{
 			name: "Quorum inconsistent env",
 			objects: []runtime.Object{
 				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
