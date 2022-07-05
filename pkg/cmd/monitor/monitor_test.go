@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	"go.etcd.io/etcd/tests/v3/integration"
@@ -197,8 +198,8 @@ func TestMonitor(t *testing.T) {
 			if err != nil && !tc.wantErr {
 				t.Fatalf("healthCheck unexpected error: %v", err)
 			}
-			td.logFile.Close()
-			// dont terminate if already stopped
+			_ = td.logFile.Close()
+			// don't terminate if already stopped
 			if !tc.stopServer {
 				td.testServer.Terminate(t)
 			}
@@ -209,9 +210,9 @@ func TestMonitor(t *testing.T) {
 			// check logs for disruption
 			gotDuration, err := getDisruptionDurationFromLogs(t, tc.wantHealthCheck, td.logFile.Name(), td.logDir)
 			require.NoError(t, err)
-			if gotDuration != tc.wantDuration {
-				t.Fatalf("healthCheck %v want: %v got %v", tc.wantHealthCheck, tc.wantDuration, gotDuration)
-			}
+
+			assert.InDeltaf(t, tc.wantDuration, gotDuration, float64(1*time.Second),
+				"healthCheck %v want: %v got %v", tc.wantHealthCheck, tc.wantDuration, gotDuration)
 		})
 	}
 }
