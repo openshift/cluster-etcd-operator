@@ -104,6 +104,16 @@ func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncCo
 		return fmt.Errorf("couldn't determine member health: %w", err)
 	}
 
+	envVars := c.envVarGetter.GetEnvVars()
+	if len(envVars) == 0 {
+		return fmt.Errorf("missing env var values")
+	}
+
+	// this guards against races where we determine that a quorum is happy from etcd PoV, but the env contains a very different story
+	if len(memberHealth) != len(strings.Split(envVars["ALL_ETCD_ENDPOINTS"], ",")) {
+		return fmt.Errorf("skipping TargetConfigController reconciliation due to inconsistency between env vars and member health")
+	}
+
 	if bootstrapComplete && !etcdcli.IsQuorumFaultTolerant(memberHealth) {
 		return fmt.Errorf("skipping TargetConfigController reconciliation due to insufficient quorum")
 	}
@@ -112,7 +122,7 @@ func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncCo
 	if err != nil {
 		return err
 	}
-	requeue, err := createTargetConfig(ctx, c, syncCtx.Recorder(), operatorSpec)
+	requeue, err := createTargetConfig(ctx, c, syncCtx.Recorder(), operatorSpec, envVars)
 	if err != nil {
 		return err
 	}
@@ -124,11 +134,12 @@ func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncCo
 }
 
 // createTargetConfig takes care of creation of valid resources in a fixed name.  These are inputs to other control loops.
-// returns whether or not requeue and if an error happened when updating status.  Normally it updates status itself.
-func createTargetConfig(ctx context.Context, c TargetConfigController, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (bool, error) {
-	errors := []error{}
+// returns whether to requeue and if an error happened when updating status.  Normally it updates status itself.
+func createTargetConfig(ctx context.Context, c TargetConfigController, recorder events.Recorder,
+	operatorSpec *operatorv1.StaticPodOperatorSpec, envVars map[string]string) (bool, error) {
 
-	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec)
+	var errors []error
+	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars)
 	if err != nil {
 		return false, err
 	}
@@ -175,13 +186,9 @@ func loglevelToZap(logLevel operatorv1.LogLevel) string {
 	}
 }
 
-func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv1.StaticPodOperatorSpec, imagePullSpec, operatorImagePullSpec string) (*strings.Replacer, error) {
-	envVarMap := c.envVarGetter.GetEnvVars()
-	if len(envVarMap) == 0 {
-		return nil, fmt.Errorf("missing env var values")
-	}
-
-	envVarLines := []string{}
+func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv1.StaticPodOperatorSpec,
+	imagePullSpec, operatorImagePullSpec string, envVarMap map[string]string) (*strings.Replacer, error) {
+	var envVarLines []string
 	for _, k := range sets.StringKeySet(envVarMap).List() {
 		v := envVarMap[k]
 		envVarLines = append(envVarLines, fmt.Sprintf("      - name: %q", k))
@@ -198,7 +205,10 @@ func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv
 	), nil
 }
 
-func (c *TargetConfigController) manageRecoveryPod(ctx context.Context, substitutionReplacer *strings.Replacer, client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
+func (c *TargetConfigController) manageRecoveryPod(ctx context.Context, substitutionReplacer *strings.Replacer,
+	client coreclientv1.ConfigMapsGetter, recorder events.Recorder,
+	operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
+
 	podBytes := etcd_assets.MustAsset("etcd/restore-pod.yaml")
 	substitutedPodString := substitutionReplacer.Replace(string(podBytes))
 
@@ -209,7 +219,10 @@ func (c *TargetConfigController) manageRecoveryPod(ctx context.Context, substitu
 	return resourceapply.ApplyConfigMap(ctx, client, recorder, podConfigMap)
 }
 
-func (c *TargetConfigController) manageStandardPod(ctx context.Context, substitutionReplacer *strings.Replacer, client coreclientv1.ConfigMapsGetter, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
+func (c *TargetConfigController) manageStandardPod(ctx context.Context, substitutionReplacer *strings.Replacer,
+	client coreclientv1.ConfigMapsGetter, recorder events.Recorder,
+	operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
+
 	podBytes := etcd_assets.MustAsset("etcd/pod.yaml")
 	substitutedPodString := substitutionReplacer.Replace(string(podBytes))
 
