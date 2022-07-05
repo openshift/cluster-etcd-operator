@@ -8,6 +8,12 @@ import (
 	"testing"
 	"time"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/library-go/pkg/controller/factory"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -18,11 +24,13 @@ import (
 	clientgotesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 
+	"github.com/openshift/library-go/pkg/crypto"
+	"github.com/openshift/library-go/pkg/operator/events"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
-	"github.com/openshift/library-go/pkg/crypto"
-	"github.com/openshift/library-go/pkg/operator/events"
 )
 
 func TestCheckCertValidity(t *testing.T) {
@@ -212,6 +220,23 @@ func TestEnsureCertForNode(t *testing.T) {
 	}
 }
 
+func TestSyncSkipsOnInsufficientQuorum(t *testing.T) {
+	_, controller, recorder := setupController(t, []runtime.Object{})
+
+	err := controller.sync(context.TODO(), factory.NewSyncContext("test", recorder))
+	require.NoError(t, err)
+
+	etcdMembers := []*etcdserverpb.Member{
+		u.FakeEtcdMemberWithoutServer(0),
+		u.FakeEtcdMemberWithoutServer(1),
+	}
+	_, controller, recorder = setupControllerWithEtcd(t, []runtime.Object{
+		u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
+	}, etcdMembers)
+	err = controller.sync(context.TODO(), factory.NewSyncContext("test", recorder))
+	assert.Equal(t, fmt.Errorf("skipping EtcdCertSignerController reconciliation due to insufficient quorum"), err)
+}
+
 // Validate that a successful test run will result in a secret per
 // cert type per node and an aggregated secret per cert type.
 func TestSyncAllMasters(t *testing.T) {
@@ -272,8 +297,17 @@ func checkCertPairSecret(t *testing.T, secretName, certName, keyName string, sec
 	}
 }
 
-// setupController configures EtcdCertSignerController for testing.
 func setupController(t *testing.T, objects []runtime.Object) (*fake.Clientset, *EtcdCertSignerController, events.Recorder) {
+	etcdMembers := []*etcdserverpb.Member{
+		u.FakeEtcdMemberWithoutServer(0),
+		u.FakeEtcdMemberWithoutServer(1),
+		u.FakeEtcdMemberWithoutServer(2),
+	}
+	return setupControllerWithEtcd(t, objects, etcdMembers)
+}
+
+// setupController configures EtcdCertSignerController for testing with etcd members.
+func setupControllerWithEtcd(t *testing.T, objects []runtime.Object, etcdMembers []*etcdserverpb.Member) (*fake.Clientset, *EtcdCertSignerController, events.Recorder) {
 	// Add nodes and CAs
 	objects = append(objects,
 		u.FakeNode("master-0", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1")),
@@ -300,11 +334,35 @@ func setupController(t *testing.T, objects []runtime.Object) (*fake.Clientset, *
 			t.Fatal(err)
 		}
 	}
+	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+		&operatorv1.StaticPodOperatorSpec{
+			OperatorSpec: operatorv1.OperatorSpec{
+				ManagementState: operatorv1.Managed,
+			},
+		},
+		u.StaticPodOperatorStatus(
+			u.WithLatestRevision(3),
+			u.WithNodeStatusAtCurrentRevision(3),
+			u.WithNodeStatusAtCurrentRevision(3),
+			u.WithNodeStatusAtCurrentRevision(3),
+		),
+		nil,
+		nil,
+	)
+
+	fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(etcdMembers)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	controller := &EtcdCertSignerController{
-		kubeClient:   fakeKubeClient,
-		nodeLister:   corev1listers.NewNodeLister(indexer),
-		secretLister: corev1listers.NewSecretLister(indexer),
-		secretClient: fakeKubeClient.CoreV1(),
+		kubeClient:      fakeKubeClient,
+		operatorClient:  fakeOperatorClient,
+		nodeLister:      corev1listers.NewNodeLister(indexer),
+		secretLister:    corev1listers.NewSecretLister(indexer),
+		secretClient:    fakeKubeClient.CoreV1(),
+		configMapLister: corev1listers.NewConfigMapLister(indexer),
+		etcdClient:      fakeEtcdClient,
 	}
 	recorder := events.NewRecorder(
 		fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),
