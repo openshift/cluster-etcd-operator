@@ -6,7 +6,6 @@ import (
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -19,6 +18,8 @@ import (
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
@@ -91,19 +92,20 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 		return fmt.Errorf("couldn't determine bootstrap status: %w", err)
 	}
 
-	required := configMapAsset()
+	memberHealth, err := c.etcdClient.MemberHealth(ctx)
+	if err != nil {
+		return fmt.Errorf("could not get member health: %w", err)
+	}
 
+	quorumFaultTolerant := etcdcli.IsQuorumFaultTolerant(memberHealth)
+
+	required := configMapAsset()
 	// If the bootstrap IP is present on the existing configmap, either copy it
 	// forward or remove it if possible so clients can forget about it.
 	if existing, err := c.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints"); err == nil && existing != nil {
-		memberHealth, err := c.etcdClient.MemberHealth(ctx)
-		if err != nil {
-			return fmt.Errorf("could not get member health: %w", err)
-		}
-
 		if existingIP, hasExistingIP := existing.Annotations[etcdcli.BootstrapIPAnnotationKey]; hasExistingIP {
-			if bootstrapComplete && etcdcli.IsQuorumFaultTolerant(memberHealth) {
-				// remove the annotation
+			if bootstrapComplete {
+				// rename the annotation once we're done with bootstrapping
 				required.Annotations[etcdcli.BootstrapIPAnnotationKey+"-"] = existingIP
 			} else {
 				required.Annotations[etcdcli.BootstrapIPAnnotationKey] = existingIP
@@ -144,6 +146,10 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 	}
 
 	required.Data = endpointAddresses
+
+	if bootstrapComplete && !quorumFaultTolerant {
+		return fmt.Errorf("skipping EtcdEndpointsController reconciliation due to insufficient quorum")
+	}
 
 	// Apply endpoint updates
 	if _, _, err := resourceapply.ApplyConfigMap(ctx, c.configmapClient, recorder, required); err != nil {
