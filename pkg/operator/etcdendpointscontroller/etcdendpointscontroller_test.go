@@ -2,9 +2,11 @@ package etcdendpointscontroller
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/stretchr/testify/assert"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/v3/mock/mockserver"
 	corev1 "k8s.io/api/core/v1"
@@ -16,12 +18,13 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/diff"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 )
 
 func TestBootstrapAnnotationRemoval(t *testing.T) {
@@ -44,6 +47,7 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 		etcdMembers     []*etcdserverpb.Member
 		expectBootstrap bool
 		validateFunc    func(ts *testing.T, endpoints []func(*corev1.ConfigMap), actions []clientgotesting.Action)
+		expectedErr     error
 	}{
 		{
 			// The etcd-endpoint configmap should be created properly if it is missing.
@@ -223,6 +227,9 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			expectBootstrap: false,
 			etcdMembers: []*etcdserverpb.Member{
 				u.FakeEtcdMember(0, mockEtcd.Servers),
+				u.FakeEtcdMember(1, mockEtcd.Servers),
+				u.FakeEtcdMember(2, mockEtcd.Servers),
+				u.FakeEtcdMemberWithoutServer(3),
 			},
 			validateFunc: func(ts *testing.T, endpoints []func(*corev1.ConfigMap), actions []clientgotesting.Action) {
 				wasValidated := false
@@ -242,6 +249,29 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 					ts.Errorf("the endpoints configmap wasn't validated")
 				}
 			},
+		},
+		{
+			// The configmap should not update when quorum is critical
+			name: "ClusterNotUpdateWithMemberChangeViolatingQuorum",
+			objects: []runtime.Object{
+				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
+				u.EndpointsConfigMap(
+					u.WithEndpoint(etcdMembers[0].ID, etcdMembers[0].PeerURLs[0]),
+					u.WithEndpoint(etcdMembers[1].ID, etcdMembers[1].PeerURLs[0]),
+					u.WithEndpoint(etcdMembers[2].ID, etcdMembers[2].PeerURLs[0]),
+				),
+			},
+			staticPodStatus: u.StaticPodOperatorStatus(
+				u.WithLatestRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+			),
+			expectBootstrap: false,
+			etcdMembers: []*etcdserverpb.Member{
+				u.FakeEtcdMember(0, mockEtcd.Servers),
+			},
+			expectedErr: fmt.Errorf("skipping EtcdEndpointsController reconciliation due to insufficient quorum"),
 		},
 		{
 			// The configmap should be created without a bootstrap IP because the
@@ -315,9 +345,9 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 				configmapClient: fakeKubeClient.CoreV1(),
 			}
 
-			if err := controller.sync(context.TODO(), factory.NewSyncContext("test", eventRecorder)); err != nil {
-				t.Fatal(err)
-			}
+			err = controller.sync(context.TODO(), factory.NewSyncContext("test", eventRecorder))
+			assert.Equal(t, scenario.expectedErr, err)
+
 			var endpoints []func(*corev1.ConfigMap)
 			for _, member := range scenario.etcdMembers {
 				endpoints = append(endpoints, u.WithEndpoint(member.ID, member.PeerURLs[0]))
