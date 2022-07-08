@@ -878,41 +878,6 @@ ${COMPUTED_ENV_VARS}
         name: cert-dir
       - mountPath: /var/lib/etcd/
         name: data-dir
-  - name: etcd-health-monitor
-    image: ${OPERATOR_IMAGE}
-    imagePullPolicy: IfNotPresent
-    terminationMessagePolicy: FallbackToLogsOnError
-    command: [ "cluster-etcd-operator", "monitor" ]
-    args:
-      - --targets=$(ETCDCTL_ENDPOINTS)
-      - --probe-interval=1s
-      - --log-outputs=stderr
-      - --log-outputs=/var/log/etcd/etcd-health-probe.log
-      - --enable-log-rotation
-      - --pod-name=$(POD_NAME)
-      - --static-pod-version=$(ETCD_STATIC_POD_VERSION)
-      - --cert-file=$(ETCDCTL_CERT)
-      - --key-file=$(ETCDCTL_KEY)
-      - --cacert-file=$(ETCDCTL_CACERT)
-    env:
-${COMPUTED_ENV_VARS}
-      - name: "ETCD_STATIC_POD_VERSION"
-        value: "REVISION"
-      - name: "OPENSHIFT_PROFILE"
-        value: "web"
-      - name: POD_NAME
-        valueFrom:
-          fieldRef:
-            fieldPath: metadata.name
-    volumeMounts:
-      - mountPath: /var/log/etcd/
-        name: log-dir
-      - mountPath: /etc/kubernetes/static-pod-certs
-        name: cert-dir
-    resources:
-      requests:
-        memory: 70Mi
-        cpu: 50m
   - name: etcd-readyz
     image: ${OPERATOR_IMAGE}
     imagePullPolicy: IfNotPresent
