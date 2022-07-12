@@ -801,23 +801,8 @@ ${COMPUTED_ENV_VARS}
         memory: 600Mi
         cpu: 300m
     readinessProbe:
-      exec:
-        command:
-        - /bin/bash
-        - -c
-        - |
-          set -xe
-
-          # Unix sockets are used for health checks to ensure that the pod is reporting readiness of the etcd process
-          # in this container. While this might seem unnecessary the use of SO_REUSEADDR has made this explicitly
-          # required as the kernel will allow the reuse of a port while in TIME_WAIT. etcd requires socket
-          # path in this format <name>:<port> so port 0 is used only to meet this requirement.
-          unset ETCDCTL_ENDPOINTS
-          /usr/bin/etcdctl \
-            --command-timeout=2s \
-            --dial-timeout=2s \
-            --endpoints=unixs://${NODE_NODE_ENVVAR_NAME_IP}:0 \
-            endpoint health -w json | grep \"health\":true
+    tcpSocket:
+      port: 2380
       failureThreshold: 3
       initialDelaySeconds: 3
       periodSeconds: 5
