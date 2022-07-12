@@ -8,7 +8,6 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
-	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -20,10 +19,8 @@ import (
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	coreclientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
-	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
@@ -37,16 +34,11 @@ type TargetConfigController struct {
 
 	operatorClient v1helpers.StaticPodOperatorClient
 
-	kubeClient           kubernetes.Interface
-	infrastructureLister configv1listers.InfrastructureLister
-	networkLister        configv1listers.NetworkLister
-	configMapLister      corev1listers.ConfigMapLister
-	endpointLister       corev1listers.EndpointsLister
-	nodeLister           corev1listers.NodeLister
-	envVarGetter         etcdenvvar.EnvVar
-	etcdClient           etcdcli.EtcdClient
+	kubeClient   kubernetes.Interface
+	envVarGetter etcdenvvar.EnvVar
 
-	enqueueFn func()
+	enqueueFn     func()
+	quorumChecker ceohelpers.QuorumChecker
 }
 
 func NewTargetConfigController(
@@ -59,21 +51,16 @@ func NewTargetConfigController(
 	kubeClient kubernetes.Interface,
 	envVarGetter etcdenvvar.EnvVar,
 	eventRecorder events.Recorder,
-	etcdClient etcdcli.EtcdClient,
+	quorumChecker ceohelpers.QuorumChecker,
 ) factory.Controller {
 	c := &TargetConfigController{
 		targetImagePullSpec:   targetImagePullSpec,
 		operatorImagePullSpec: operatorImagePullSpec,
 
-		operatorClient:       operatorClient,
-		kubeClient:           kubeClient,
-		infrastructureLister: infrastructureInformer.Lister(),
-		networkLister:        networkInformer.Lister(),
-		configMapLister:      kubeInformersForNamespaces.ConfigMapLister(),
-		endpointLister:       kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
-		nodeLister:           kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
-		envVarGetter:         envVarGetter,
-		etcdClient:           etcdClient,
+		operatorClient: operatorClient,
+		kubeClient:     kubeClient,
+		envVarGetter:   envVarGetter,
+		quorumChecker:  quorumChecker,
 	}
 
 	syncCtx := factory.NewSyncContext("TargetConfigController", eventRecorder.WithComponentSuffix("target-config-controller"))
@@ -94,28 +81,18 @@ func NewTargetConfigController(
 }
 
 func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
-	bootstrapComplete, err := ceohelpers.IsBootstrapComplete(c.configMapLister, c.operatorClient)
+	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
 	if err != nil {
-		return fmt.Errorf("couldn't determine bootstrap status: %w", err)
+		return fmt.Errorf("TargetConfigController can't evaluate whether quorum is safe: %w", err)
 	}
 
-	memberHealth, err := c.etcdClient.MemberHealth(ctx)
-	if err != nil {
-		return fmt.Errorf("couldn't determine member health: %w", err)
+	if !safe {
+		return fmt.Errorf("skipping TargetConfigController reconciliation due to insufficient quorum")
 	}
 
 	envVars := c.envVarGetter.GetEnvVars()
 	if len(envVars) == 0 {
-		return fmt.Errorf("missing env var values")
-	}
-
-	// this guards against races where we determine that a quorum is happy from etcd PoV, but the env contains a very different story
-	if len(memberHealth) != len(strings.Split(envVars["ALL_ETCD_ENDPOINTS"], ",")) {
-		return fmt.Errorf("skipping TargetConfigController reconciliation due to inconsistency between env vars and member health")
-	}
-
-	if bootstrapComplete && !etcdcli.IsQuorumFaultTolerant(memberHealth) {
-		return fmt.Errorf("skipping TargetConfigController reconciliation due to insufficient quorum")
+		return fmt.Errorf("TargetConfigController missing env var values")
 	}
 
 	operatorSpec, _, _, err := c.operatorClient.GetStaticPodOperatorState()

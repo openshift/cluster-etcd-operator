@@ -5,12 +5,16 @@ import (
 	"fmt"
 	"testing"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/v3/mock/mockserver"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	corev1listers "k8s.io/client-go/listers/core/v1"
@@ -23,6 +27,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 )
@@ -38,6 +43,20 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 		u.FakeEtcdMember(0, mockEtcd.Servers),
 		u.FakeEtcdMember(1, mockEtcd.Servers),
 		u.FakeEtcdMember(2, mockEtcd.Servers),
+	}
+
+	defaultObjects := []runtime.Object{
+		&corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: operatorclient.TargetNamespace},
+		},
+		&configv1.Infrastructure{
+			TypeMeta: metav1.TypeMeta{},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: ceohelpers.InfrastructureClusterName,
+			},
+			Status: configv1.InfrastructureStatus{
+				ControlPlaneTopology: configv1.HighlyAvailableTopologyMode},
+		},
 	}
 
 	scenarios := []struct {
@@ -269,9 +288,9 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			),
 			expectBootstrap: false,
 			etcdMembers: []*etcdserverpb.Member{
-				u.FakeEtcdMember(0, mockEtcd.Servers),
+				u.FakeEtcdMemberWithoutServer(0),
 			},
-			expectedErr: fmt.Errorf("skipping EtcdEndpointsController reconciliation due to insufficient quorum"),
+			expectedErr: fmt.Errorf("EtcdEndpointsController can't evaluate whether quorum is safe: %w", fmt.Errorf("etcd cluster has quorum of 1 which is not fault tolerant: [{Member:name:\"etcd-0\" peerURLs:\"https://10.0.0.1:2380\" clientURLs:\"https://10.0.0.1:2907\"  Healthy:true Took: Error:<nil>}]")),
 		},
 		{
 			// The configmap should be created without a bootstrap IP because the
@@ -332,17 +351,28 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			}
 			eventRecorder := events.NewRecorder(fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace), "test-etcdendpointscontroller", &corev1.ObjectReference{})
 			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
-			for _, obj := range scenario.objects {
-				if err := indexer.Add(obj); err != nil {
-					t.Fatal(err)
-				}
+
+			for _, obj := range defaultObjects {
+				require.NoError(t, indexer.Add(obj))
 			}
+			for _, obj := range scenario.objects {
+				require.NoError(t, indexer.Add(obj))
+			}
+
+			quorumChecker := ceohelpers.NewQuorumChecker(
+				corev1listers.NewConfigMapLister(indexer),
+				corev1listers.NewNamespaceLister(indexer),
+				configv1listers.NewInfrastructureLister(indexer),
+				fakeOperatorClient,
+				fakeEtcdClient)
+
 			controller := &EtcdEndpointsController{
 				operatorClient:  fakeOperatorClient,
 				etcdClient:      fakeEtcdClient,
 				nodeLister:      corev1listers.NewNodeLister(indexer),
 				configmapLister: corev1listers.NewConfigMapLister(indexer),
 				configmapClient: fakeKubeClient.CoreV1(),
+				quorumChecker:   quorumChecker,
 			}
 
 			err = controller.sync(context.TODO(), factory.NewSyncContext("test", eventRecorder))
