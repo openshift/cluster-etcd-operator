@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/stretchr/testify/assert"
@@ -28,6 +30,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
@@ -234,7 +237,8 @@ func TestSyncSkipsOnInsufficientQuorum(t *testing.T) {
 		u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
 	}, etcdMembers)
 	err = controller.sync(context.TODO(), factory.NewSyncContext("test", recorder))
-	assert.Equal(t, fmt.Errorf("skipping EtcdCertSignerController reconciliation due to insufficient quorum"), err)
+	assert.Equal(t, "EtcdCertSignerController can't evaluate whether quorum is safe: etcd cluster has quorum of 2 which is not fault tolerant: [{Member:name:\"etcd-0\" peerURLs:\"https://10.0.0.1:2380\" clientURLs:\"https://10.0.0.1:2907\"  Healthy:true Took: Error:<nil>} {Member:ID:1 name:\"etcd-1\" peerURLs:\"https://10.0.0.2:2380\" clientURLs:\"https://10.0.0.2:2907\"  Healthy:true Took: Error:<nil>}]",
+		err.Error())
 }
 
 // Validate that a successful test run will result in a secret per
@@ -329,10 +333,21 @@ func setupControllerWithEtcd(t *testing.T, objects []runtime.Object, etcdMembers
 		cache.MetaNamespaceKeyFunc,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
 	)
+
+	objects = append(objects,
+		&corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: operatorclient.TargetNamespace},
+		},
+		&configv1.Infrastructure{
+			TypeMeta: metav1.TypeMeta{},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: ceohelpers.InfrastructureClusterName,
+			},
+			Status: configv1.InfrastructureStatus{
+				ControlPlaneTopology: configv1.HighlyAvailableTopologyMode},
+		})
 	for _, obj := range objects {
-		if err := indexer.Add(obj); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, indexer.Add(obj))
 	}
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 		&operatorv1.StaticPodOperatorSpec{
@@ -355,14 +370,20 @@ func setupControllerWithEtcd(t *testing.T, objects []runtime.Object, etcdMembers
 		t.Fatal(err)
 	}
 
+	quorumChecker := ceohelpers.NewQuorumChecker(
+		corev1listers.NewConfigMapLister(indexer),
+		corev1listers.NewNamespaceLister(indexer),
+		configv1listers.NewInfrastructureLister(indexer),
+		fakeOperatorClient,
+		fakeEtcdClient)
+
 	controller := &EtcdCertSignerController{
-		kubeClient:      fakeKubeClient,
-		operatorClient:  fakeOperatorClient,
-		nodeLister:      corev1listers.NewNodeLister(indexer),
-		secretLister:    corev1listers.NewSecretLister(indexer),
-		secretClient:    fakeKubeClient.CoreV1(),
-		configMapLister: corev1listers.NewConfigMapLister(indexer),
-		etcdClient:      fakeEtcdClient,
+		kubeClient:     fakeKubeClient,
+		operatorClient: fakeOperatorClient,
+		nodeLister:     corev1listers.NewNodeLister(indexer),
+		secretLister:   corev1listers.NewSecretLister(indexer),
+		secretClient:   fakeKubeClient.CoreV1(),
+		quorumChecker:  quorumChecker,
 	}
 	recorder := events.NewRecorder(
 		fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),

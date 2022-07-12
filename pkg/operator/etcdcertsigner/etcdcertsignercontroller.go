@@ -26,7 +26,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
@@ -72,13 +71,12 @@ var certConfigs = map[string]etcdCertConfig{
 }
 
 type EtcdCertSignerController struct {
-	kubeClient      kubernetes.Interface
-	operatorClient  v1helpers.StaticPodOperatorClient
-	nodeLister      corev1listers.NodeLister
-	secretLister    corev1listers.SecretLister
-	secretClient    corev1client.SecretsGetter
-	configMapLister corev1listers.ConfigMapLister
-	etcdClient      etcdcli.EtcdClient
+	kubeClient     kubernetes.Interface
+	operatorClient v1helpers.StaticPodOperatorClient
+	nodeLister     corev1listers.NodeLister
+	secretLister   corev1listers.SecretLister
+	secretClient   corev1client.SecretsGetter
+	quorumChecker  ceohelpers.QuorumChecker
 }
 
 // NewEtcdCertSignerController watches master nodes and maintains secrets for each master node, placing them in a single secret (NOT a tls secret)
@@ -92,16 +90,15 @@ func NewEtcdCertSignerController(
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeInformers v1helpers.KubeInformersForNamespaces,
 	eventRecorder events.Recorder,
-	etcdClient etcdcli.EtcdClient,
+	quorumChecker ceohelpers.QuorumChecker,
 ) factory.Controller {
 	c := &EtcdCertSignerController{
-		kubeClient:      kubeClient,
-		operatorClient:  operatorClient,
-		nodeLister:      kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
-		secretLister:    kubeInformers.SecretLister(),
-		secretClient:    v1helpers.CachedSecretGetter(kubeClient.CoreV1(), kubeInformers),
-		configMapLister: kubeInformers.ConfigMapLister(),
-		etcdClient:      etcdClient,
+		kubeClient:     kubeClient,
+		operatorClient: operatorClient,
+		nodeLister:     kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
+		secretLister:   kubeInformers.SecretLister(),
+		secretClient:   v1helpers.CachedSecretGetter(kubeClient.CoreV1(), kubeInformers),
+		quorumChecker:  quorumChecker,
 	}
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
 		kubeInformers.InformersFor("").Core().V1().Nodes().Informer(),
@@ -112,17 +109,12 @@ func NewEtcdCertSignerController(
 }
 
 func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
-	bootstrapComplete, err := ceohelpers.IsBootstrapComplete(c.configMapLister, c.operatorClient)
+	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
 	if err != nil {
-		return fmt.Errorf("couldn't determine bootstrap status: %w", err)
+		return fmt.Errorf("EtcdCertSignerController can't evaluate whether quorum is safe: %w", err)
 	}
 
-	memberHealth, err := c.etcdClient.MemberHealth(ctx)
-	if err != nil {
-		return fmt.Errorf("couldn't determine member health: %w", err)
-	}
-
-	if bootstrapComplete && !etcdcli.IsQuorumFaultTolerant(memberHealth) {
+	if !safe {
 		return fmt.Errorf("skipping EtcdCertSignerController reconciliation due to insufficient quorum")
 	}
 

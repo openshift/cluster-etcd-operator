@@ -20,7 +20,6 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
-
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
@@ -34,6 +33,7 @@ type EtcdEndpointsController struct {
 	nodeLister      corev1listers.NodeLister
 	configmapLister corev1listers.ConfigMapLister
 	configmapClient corev1client.ConfigMapsGetter
+	quorumChecker   ceohelpers.QuorumChecker
 }
 
 func NewEtcdEndpointsController(
@@ -42,6 +42,7 @@ func NewEtcdEndpointsController(
 	eventRecorder events.Recorder,
 	kubeClient kubernetes.Interface,
 	kubeInformers operatorv1helpers.KubeInformersForNamespaces,
+	quorumChecker ceohelpers.QuorumChecker,
 ) factory.Controller {
 	nodeInformer := kubeInformers.InformersFor("").Core().V1().Nodes()
 
@@ -51,6 +52,7 @@ func NewEtcdEndpointsController(
 		nodeLister:      nodeInformer.Lister(),
 		configmapLister: kubeInformers.ConfigMapLister(),
 		configmapClient: kubeClient.CoreV1(),
+		quorumChecker:   quorumChecker,
 	}
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
 		operatorClient.Informer(),
@@ -87,23 +89,16 @@ func (c *EtcdEndpointsController) sync(ctx context.Context, syncCtx factory.Sync
 }
 
 func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder events.Recorder) error {
-	bootstrapComplete, err := ceohelpers.IsBootstrapComplete(c.configmapLister, c.operatorClient)
-	if err != nil {
-		return fmt.Errorf("couldn't determine bootstrap status: %w", err)
-	}
-
-	memberHealth, err := c.etcdClient.MemberHealth(ctx)
-	if err != nil {
-		return fmt.Errorf("could not get member health: %w", err)
-	}
-
-	quorumFaultTolerant := etcdcli.IsQuorumFaultTolerant(memberHealth)
-
 	required := configMapAsset()
 	// If the bootstrap IP is present on the existing configmap, either copy it
 	// forward or remove it if possible so clients can forget about it.
 	if existing, err := c.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints"); err == nil && existing != nil {
 		if existingIP, hasExistingIP := existing.Annotations[etcdcli.BootstrapIPAnnotationKey]; hasExistingIP {
+			bootstrapComplete, err := ceohelpers.IsBootstrapComplete(c.configmapLister, c.operatorClient)
+			if err != nil {
+				return fmt.Errorf("couldn't determine bootstrap status: %w", err)
+			}
+
 			if bootstrapComplete {
 				// rename the annotation once we're done with bootstrapping
 				required.Annotations[etcdcli.BootstrapIPAnnotationKey+"-"] = existingIP
@@ -147,7 +142,11 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 
 	required.Data = endpointAddresses
 
-	if bootstrapComplete && !quorumFaultTolerant {
+	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
+	if err != nil {
+		return fmt.Errorf("EtcdEndpointsController can't evaluate whether quorum is safe: %w", err)
+	}
+	if !safe {
 		return fmt.Errorf("skipping EtcdEndpointsController reconciliation due to insufficient quorum")
 	}
 
