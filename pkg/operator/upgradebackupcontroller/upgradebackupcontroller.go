@@ -351,7 +351,7 @@ func isNewBackupRequired(config *configv1.ClusterVersion, clusterOperatorStatus 
 		if update.State == configv1.PartialUpdate {
 			klog.V(4).Infof("in progress update is detected, cluster current version is %v, progressing towards cluster version %v", currentVersion, update.Version)
 			currentBackupVersion := getCurrentBackupVersion(clusterOperatorStatus)
-			if currentBackupVersion == "" || currentBackupVersion == currentVersion {
+			if currentBackupVersion == currentVersion {
 				return false, nil
 			}
 			if cmp := version.CompareSimple(update.Version, currentVersion); cmp > 0 {
