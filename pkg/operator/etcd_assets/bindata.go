@@ -297,6 +297,12 @@ ETCDCTL_ENDPOINTS="https://${NODE_NODE_ENVVAR_NAME_IP}:2379" etcdctl snapshot sa
 
 # Check the integrity of the snapshot
 check_snapshot_status "${SNAPSHOT_FILE}"
+snapshot_failed=$?
+
+# If check_snapshot_status returned 1 it failed, so exit with code 1
+if [[ $snapshot_failed -eq 1 ]]; then
+  exit 1
+fi
 
 echo "snapshot db and kube resources are successfully saved to ${BACKUP_DIR}"
 `)
@@ -530,7 +536,6 @@ function check_snapshot_status() {
   local snap_file="$1"
   if ! etcdctl snapshot status "${snap_file}" -w json; then
     echo "Backup integrity verification failed. Backup appears corrupted. Aborting!"
-    return 1
   fi
 }
 
