@@ -279,7 +279,7 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			nodes:              zeroNodesAtAnyRevision,
 			etcdMembers:        defaultEtcdMembers,
 			infraObj:           defaultInfra,
-			expectError:        fmt.Errorf("CheckSafeToScaleCluster 1 nodes are required, but only 0 are available"),
+			expectError:        nil,
 		},
 		"delayed HA with sufficient nodes during bootstrap": {
 			namespace:          namespaceWithDelayedHAEnabled,
