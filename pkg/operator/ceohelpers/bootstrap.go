@@ -127,12 +127,14 @@ func CheckSafeToScaleCluster(
 		return fmt.Errorf("CheckSafeToScaleCluster failed to get bootstrap scaling strategy: %w", err)
 	}
 
+	if scalingStrategy == UnsafeScalingStrategy {
+		return nil
+	}
+
 	var minimumNodes int
 	switch scalingStrategy {
 	case HAScalingStrategy:
 		minimumNodes = 3
-	case UnsafeScalingStrategy:
-		minimumNodes = 1
 	case DelayedHAScalingStrategy:
 		minimumNodes = 3
 	default:
