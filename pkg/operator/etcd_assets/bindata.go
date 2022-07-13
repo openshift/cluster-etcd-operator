@@ -535,6 +535,7 @@ function check_snapshot_status() {
   local snap_file="$1"
   if ! etcdctl snapshot status "${snap_file}" -w json; then
     echo "Backup integrity verification failed. Backup appears corrupted. Aborting!"
+    return 1
   fi
 }
 
