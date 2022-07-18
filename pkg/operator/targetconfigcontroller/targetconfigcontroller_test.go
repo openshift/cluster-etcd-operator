@@ -78,7 +78,7 @@ func TestTargetConfigController(t *testing.T) {
 		{
 			name: "Quorum not fault tolerant but bootstrapping",
 			objects: []runtime.Object{
-				u.BootstrapConfigMap(u.WithBootstrapStatus("mot complete")),
+				u.BootstrapConfigMap(u.WithBootstrapStatus("not complete")),
 			},
 			staticPodStatus: u.StaticPodOperatorStatus(
 				u.WithLatestRevision(3),
