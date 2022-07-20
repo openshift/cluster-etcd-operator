@@ -802,7 +802,7 @@ ${COMPUTED_ENV_VARS}
         cpu: 300m
     readinessProbe:
     tcpSocket:
-      port: 2379
+      port: 2380
       failureThreshold: 3
       initialDelaySeconds: 3
       periodSeconds: 5
@@ -1170,7 +1170,7 @@ ${COMPUTED_ENV_VARS}
         cpu: 300m
     readinessProbe:
       tcpSocket:
-        port: 2379
+        port: 2380
       failureThreshold: 3
       initialDelaySeconds: 3
       periodSeconds: 5
