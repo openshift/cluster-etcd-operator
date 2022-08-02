@@ -193,15 +193,13 @@ ${COMPUTED_ENV_VARS}
         memory: 600Mi
         cpu: 300m
     readinessProbe:
-      httpGet:
-        port: 9980
-        path: readyz
-        scheme: HTTPS
-      initialDelaySeconds: 10
-      timeoutSeconds: 10
-      failureThreshold: 3
-      periodSeconds: 5
-      successThreshold: 1
+    tcpSocket:
+    port: 2380
+    failureThreshold: 3
+    initialDelaySeconds: 3
+    periodSeconds: 5
+    successThreshold: 1
+    timeoutSeconds: 5
     livenessProbe:
       httpGet:
         path: healthz
