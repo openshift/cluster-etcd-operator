@@ -798,28 +798,34 @@ ${COMPUTED_ENV_VARS}
         memory: 600Mi
         cpu: 300m
     readinessProbe:
-      exec:
-        command:
-        - /bin/bash
-        - -c
-        - |
-          set -xe
-
-          # Unix sockets are used for health checks to ensure that the pod is reporting readiness of the etcd process
-          # in this container. While this might seem unnecessary the use of SO_REUSEADDR has made this explicitly
-          # required as the kernel will allow the reuse of a port while in TIME_WAIT. etcd requires socket
-          # path in this format <name>:<port> so port 0 is used only to meet this requirement.
-          unset ETCDCTL_ENDPOINTS
-          /usr/bin/etcdctl \
-            --command-timeout=2s \
-            --dial-timeout=2s \
-            --endpoints=unixs://${NODE_NODE_ENVVAR_NAME_IP}:0 \
-            endpoint health -w json | grep \"health\":true
+      httpGet:
+        port: 9980
+        path: readyz
+        scheme: HTTPS
+      initialDelaySeconds: 10
+      timeoutSeconds: 10
       failureThreshold: 3
-      initialDelaySeconds: 3
       periodSeconds: 5
       successThreshold: 1
-      timeoutSeconds: 5
+    livenessProbe:
+      httpGet:
+        path: healthz
+        port: 9980
+        scheme: HTTPS
+      timeoutSeconds: 10
+      periodSeconds: 5
+      successThreshold: 1
+      failureThreshold: 3
+    startupProbe:
+      httpGet:
+        port: 9980
+        path: readyz
+        scheme: HTTPS
+      initialDelaySeconds: 10
+      timeoutSeconds: 1
+      periodSeconds: 10
+      successThreshold: 1
+      failureThreshold: 18
     securityContext:
       privileged: true
     volumeMounts:
@@ -906,6 +912,34 @@ ${COMPUTED_ENV_VARS}
       requests:
         memory: 70Mi
         cpu: 50m
+  - name: etcd-readyz
+    image: ${OPERATOR_IMAGE}
+    imagePullPolicy: IfNotPresent
+    terminationMessagePolicy: FallbackToLogsOnError
+    command: [ "cluster-etcd-operator", "readyz" ]
+    args:
+      - --target=https://localhost:2379
+      - --listen-port=9980
+      - --serving-cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.crt
+      - --serving-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.key
+      - --client-cert-file=$(ETCDCTL_CERT)
+      - --client-key-file=$(ETCDCTL_KEY)
+      - --client-cacert-file=$(ETCDCTL_CACERT)
+    ports:
+    - containerPort: 9980
+      name: readyz
+      protocol: TCP
+    resources:
+      requests:
+        memory: 50Mi
+        cpu: 10m
+    env:
+${COMPUTED_ENV_VARS}
+    volumeMounts:
+      - mountPath: /var/log/etcd/
+        name: log-dir
+      - mountPath: /etc/kubernetes/static-pod-certs
+        name: cert-dir
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
