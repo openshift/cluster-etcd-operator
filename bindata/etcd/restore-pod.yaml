@@ -93,8 +93,10 @@ ${COMPUTED_ENV_VARS}
         memory: 600Mi
         cpu: 300m
     readinessProbe:
-      tcpSocket:
-        port: 2380
+      httpGet:
+        port: 9980
+        path: readyz
+        scheme: HTTPS
       failureThreshold: 3
       initialDelaySeconds: 3
       periodSeconds: 5

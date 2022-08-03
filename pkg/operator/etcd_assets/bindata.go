@@ -801,13 +801,15 @@ ${COMPUTED_ENV_VARS}
         memory: 600Mi
         cpu: 300m
     readinessProbe:
-    tcpSocket:
-    port: 2380
-    failureThreshold: 3
-    initialDelaySeconds: 3
-    periodSeconds: 5
-    successThreshold: 1
-    timeoutSeconds: 5
+      httpGet:
+        port: 9980
+        path: readyz
+        scheme: HTTPS
+      failureThreshold: 3
+      initialDelaySeconds: 3
+      periodSeconds: 5
+      successThreshold: 1
+      timeoutSeconds: 5
     livenessProbe:
       httpGet:
         path: healthz
@@ -1216,8 +1218,10 @@ ${COMPUTED_ENV_VARS}
         memory: 600Mi
         cpu: 300m
     readinessProbe:
-      tcpSocket:
-        port: 2380
+      httpGet:
+        port: 9980
+        path: readyz
+        scheme: HTTPS
       failureThreshold: 3
       initialDelaySeconds: 3
       periodSeconds: 5
