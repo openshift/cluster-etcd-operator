@@ -44,7 +44,6 @@ import (
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/apiserver/pkg/storage/value"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
-	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/component-base/traces"
 	"k8s.io/klog/v2"
 )
@@ -68,7 +67,7 @@ func init() {
 	// using the global prometheus registry and using our own wrapped global registry,
 	// we need to explicitly register these metrics to our global registry here.
 	// For reference: https://github.com/kubernetes/kubernetes/pull/81387
-	legacyregistry.RawMustRegister(grpcprom.DefaultClientMetrics)
+	// legacyregistry.RawMustRegister(grpcprom.DefaultClientMetrics)
 	dbMetricsMonitors = make(map[string]struct{})
 }
 
@@ -260,6 +259,9 @@ func newETCD3Storage(c storagebackend.ConfigForResource, newFunc func() runtime.
 		stopCompactor()
 		return nil, nil, err
 	}
+
+	// decorate the KV instance so we can track etcd latency per request.
+	client.KV = etcd3.NewETCDLatencyTracker(client.KV)
 
 	stopDBSizeMonitor, err := startDBSizeMonitorPerEndpoint(client, c.DBMetricPollInterval)
 	if err != nil {

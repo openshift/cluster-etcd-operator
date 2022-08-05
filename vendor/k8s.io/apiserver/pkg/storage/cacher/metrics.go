@@ -16,9 +16,9 @@ limitations under the License.
 
 package cacher
 
-import (
-	"k8s.io/component-base/metrics"
-	"k8s.io/component-base/metrics/legacyregistry"
+const (
+	namespace = "apiserver"
+	subsystem = "watch_cache"
 )
 
 /*
@@ -30,66 +30,66 @@ import (
  * the metric stability policy.
  */
 var (
-	initCounter = metrics.NewCounterVec(
-		&metrics.CounterOpts{
-			Name:           "apiserver_init_events_total",
-			Help:           "Counter of init events processed in watchcache broken by resource type.",
-			StabilityLevel: metrics.ALPHA,
-		},
-		[]string{"resource"},
-	)
+// initCounter = metrics.NewCounterVec(
+// 	&metrics.CounterOpts{
+// 		Name:           "apiserver_init_events_total",
+// 		Help:           "Counter of init events processed in watchcache broken by resource type.",
+// 		StabilityLevel: metrics.ALPHA,
+// 	},
+// 	[]string{"resource"},
+// )
 
-	terminatedWatchersCounter = metrics.NewCounterVec(
-		&metrics.CounterOpts{
-			Name:           "apiserver_terminated_watchers_total",
-			Help:           "Counter of watchers closed due to unresponsiveness broken by resource type.",
-			StabilityLevel: metrics.ALPHA,
-		},
-		[]string{"resource"},
-	)
+// terminatedWatchersCounter = metrics.NewCounterVec(
+// 	&metrics.CounterOpts{
+// 		Name:           "apiserver_terminated_watchers_total",
+// 		Help:           "Counter of watchers closed due to unresponsiveness broken by resource type.",
+// 		StabilityLevel: metrics.ALPHA,
+// 	},
+// 	[]string{"resource"},
+// )
 
-	watchCacheCapacityIncreaseTotal = metrics.NewCounterVec(
-		&metrics.CounterOpts{
-			Name:           "watch_cache_capacity_increase_total",
-			Help:           "Total number of watch cache capacity increase events broken by resource type.",
-			StabilityLevel: metrics.ALPHA,
-		},
-		[]string{"resource"},
-	)
+// watchCacheCapacityIncreaseTotal = metrics.NewCounterVec(
+// 	&metrics.CounterOpts{
+// 		Name:           "watch_cache_capacity_increase_total",
+// 		Help:           "Total number of watch cache capacity increase events broken by resource type.",
+// 		StabilityLevel: metrics.ALPHA,
+// 	},
+// 	[]string{"resource"},
+// )
 
-	watchCacheCapacityDecreaseTotal = metrics.NewCounterVec(
-		&metrics.CounterOpts{
-			Name:           "watch_cache_capacity_decrease_total",
-			Help:           "Total number of watch cache capacity decrease events broken by resource type.",
-			StabilityLevel: metrics.ALPHA,
-		},
-		[]string{"resource"},
-	)
+// watchCacheCapacityDecreaseTotal = metrics.NewCounterVec(
+// 	&metrics.CounterOpts{
+// 		Name:           "watch_cache_capacity_decrease_total",
+// 		Help:           "Total number of watch cache capacity decrease events broken by resource type.",
+// 		StabilityLevel: metrics.ALPHA,
+// 	},
+// 	[]string{"resource"},
+// )
 
-	watchCacheCapacity = metrics.NewGaugeVec(
-		&metrics.GaugeOpts{
-			Name:           "watch_cache_capacity",
-			Help:           "Total capacity of watch cache broken by resource type.",
-			StabilityLevel: metrics.ALPHA,
-		},
-		[]string{"resource"},
-	)
+// watchCacheCapacity = metrics.NewGaugeVec(
+// 	&metrics.GaugeOpts{
+// 		Name:           "watch_cache_capacity",
+// 		Help:           "Total capacity of watch cache broken by resource type.",
+// 		StabilityLevel: metrics.ALPHA,
+// 	},
+// 	[]string{"resource"},
+// )
 )
 
 func init() {
-	legacyregistry.MustRegister(initCounter)
-	legacyregistry.MustRegister(terminatedWatchersCounter)
-	legacyregistry.MustRegister(watchCacheCapacityIncreaseTotal)
-	legacyregistry.MustRegister(watchCacheCapacityDecreaseTotal)
-	legacyregistry.MustRegister(watchCacheCapacity)
+	// legacyregistry.MustRegister(initCounter)
+	// legacyregistry.MustRegister(terminatedWatchersCounter)
+	// legacyregistry.MustRegister(watchCacheCapacityIncreaseTotal)
+	// legacyregistry.MustRegister(watchCacheCapacityDecreaseTotal)
+	// legacyregistry.MustRegister(watchCacheCapacity)
 }
 
 // recordsWatchCacheCapacityChange record watchCache capacity resize(increase or decrease) operations.
 func recordsWatchCacheCapacityChange(objType string, old, new int) {
-	watchCacheCapacity.WithLabelValues(objType).Set(float64(new))
-	if old < new {
-		watchCacheCapacityIncreaseTotal.WithLabelValues(objType).Inc()
-		return
-	}
-	watchCacheCapacityDecreaseTotal.WithLabelValues(objType).Inc()
+	// watchCacheCapacity.WithLabelValues(objType).Set(float64(new))
+	// if old < new {
+	// 	watchCacheCapacityIncreaseTotal.WithLabelValues(objType).Inc()
+	// 	return
+	// }
+	// watchCacheCapacityDecreaseTotal.WithLabelValues(objType).Inc()
 }

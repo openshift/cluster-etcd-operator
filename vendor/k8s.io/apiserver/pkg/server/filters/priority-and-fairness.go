@@ -21,12 +21,10 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
-	"sync/atomic"
 	"time"
 
 	flowcontrol "k8s.io/api/flowcontrol/v1beta2"
 	apitypes "k8s.io/apimachinery/pkg/types"
-	epmetrics "k8s.io/apiserver/pkg/endpoints/metrics"
 	apirequest "k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/server/httplog"
 	utilflowcontrol "k8s.io/apiserver/pkg/util/flowcontrol"
@@ -45,11 +43,11 @@ type PriorityAndFairnessClassification struct {
 }
 
 // waitingMark tracks requests waiting rather than being executed
-var waitingMark = &requestWatermark{
-	phase:            epmetrics.WaitingPhase,
-	readOnlyObserver: fcmetrics.ReadWriteConcurrencyObserverPairGenerator.Generate(1, 1, []string{epmetrics.ReadOnlyKind}).RequestsWaiting,
-	mutatingObserver: fcmetrics.ReadWriteConcurrencyObserverPairGenerator.Generate(1, 1, []string{epmetrics.MutatingKind}).RequestsWaiting,
-}
+// var waitingMark = &requestWatermark{
+// 	phase:            epmetrics.WaitingPhase,
+// 	readOnlyObserver: fcmetrics.ReadWriteConcurrencyObserverPairGenerator.Generate(1, 1, []string{epmetrics.ReadOnlyKind}).RequestsWaiting,
+// 	mutatingObserver: fcmetrics.ReadWriteConcurrencyObserverPairGenerator.Generate(1, 1, []string{epmetrics.MutatingKind}).RequestsWaiting,
+// }
 
 var atomicMutatingExecuting, atomicReadOnlyExecuting int32
 var atomicMutatingWaiting, atomicReadOnlyWaiting int32
@@ -101,7 +99,7 @@ func WithPriorityAndFairness(
 		}
 
 		var classification *PriorityAndFairnessClassification
-		estimateWork := func(fs *flowcontrol.FlowSchema, pl *flowcontrol.PriorityLevelConfiguration, flowDistinguisher string) flowcontrolrequest.WorkEstimate {
+		noteFn := func(fs *flowcontrol.FlowSchema, pl *flowcontrol.PriorityLevelConfiguration, flowDistinguisher string) {
 			classification = &PriorityAndFairnessClassification{
 				FlowSchemaName:    fs.Name,
 				FlowSchemaUID:     fs.UID,
@@ -110,24 +108,46 @@ func WithPriorityAndFairness(
 
 			httplog.AddKeyValue(ctx, "apf_pl", truncateLogField(pl.Name))
 			httplog.AddKeyValue(ctx, "apf_fs", truncateLogField(fs.Name))
-			httplog.AddKeyValue(ctx, "apf_fd", truncateLogField(flowDistinguisher))
-			return workEstimator(r, fs.Name, pl.Name)
+		}
+		// estimateWork is called, if at all, after noteFn
+		estimateWork := func() flowcontrolrequest.WorkEstimate {
+			if classification == nil {
+				// workEstimator is being invoked before classification of
+				// the request has completed, we should never be here though.
+				klog.ErrorS(fmt.Errorf("workEstimator is being invoked before classification of the request has completed"),
+					"Using empty FlowSchema and PriorityLevelConfiguration name", "verb", r.Method, "URI", r.RequestURI)
+
+				return workEstimator(r, "", "")
+			}
+
+			workEstimate := workEstimator(r, classification.FlowSchemaName, classification.PriorityLevelName)
+
+			fcmetrics.ObserveWorkEstimatedSeats(classification.PriorityLevelName, classification.FlowSchemaName, workEstimate.MaxSeats())
+			// nolint:logcheck // Not using the result of klog.V
+			// inside the if branch is okay, we just use it to
+			// determine whether the additional information should
+			// be added.
+			if klog.V(4).Enabled() {
+				httplog.AddKeyValue(ctx, "apf_iseats", workEstimate.InitialSeats)
+				httplog.AddKeyValue(ctx, "apf_fseats", workEstimate.FinalSeats)
+			}
+			return workEstimate
 		}
 
 		var served bool
 		isMutatingRequest := !nonMutatingRequestVerbs.Has(requestInfo.Verb)
 		noteExecutingDelta := func(delta int32) {
 			if isMutatingRequest {
-				watermark.recordMutating(int(atomic.AddInt32(&atomicMutatingExecuting, delta)))
+				// watermark.recordMutating(int(atomic.AddInt32(&atomicMutatingExecuting, delta)))
 			} else {
-				watermark.recordReadOnly(int(atomic.AddInt32(&atomicReadOnlyExecuting, delta)))
+				// watermark.recordReadOnly(int(atomic.AddInt32(&atomicReadOnlyExecuting, delta)))
 			}
 		}
 		noteWaitingDelta := func(delta int32) {
 			if isMutatingRequest {
-				waitingMark.recordMutating(int(atomic.AddInt32(&atomicMutatingWaiting, delta)))
+				// waitingMark.recordMutating(int(atomic.AddInt32(&atomicMutatingWaiting, delta)))
 			} else {
-				waitingMark.recordReadOnly(int(atomic.AddInt32(&atomicReadOnlyWaiting, delta)))
+				// waitingMark.recordReadOnly(int(atomic.AddInt32(&atomicReadOnlyWaiting, delta)))
 			}
 		}
 		queueNote := func(inQueue bool) {
@@ -235,7 +255,7 @@ func WithPriorityAndFairness(
 				// Note that Handle will return irrespective of whether the request
 				// executes or is rejected. In the latter case, the function will return
 				// without calling the passed `execute` function.
-				fcIfc.Handle(handleCtx, digest, estimateWork, queueNote, execute)
+				fcIfc.Handle(handleCtx, digest, noteFn, estimateWork, queueNote, execute)
 			}()
 
 			select {
@@ -266,18 +286,18 @@ func WithPriorityAndFairness(
 				handler.ServeHTTP(w, r)
 			}
 
-			fcIfc.Handle(ctx, digest, estimateWork, queueNote, execute)
+			fcIfc.Handle(ctx, digest, noteFn, estimateWork, queueNote, execute)
 		}
 
 		if !served {
 			setResponseHeaders(classification, w)
 
-			if isMutatingRequest {
-				epmetrics.DroppedRequests.WithContext(ctx).WithLabelValues(epmetrics.MutatingKind).Inc()
-			} else {
-				epmetrics.DroppedRequests.WithContext(ctx).WithLabelValues(epmetrics.ReadOnlyKind).Inc()
-			}
-			epmetrics.RecordRequestTermination(r, requestInfo, epmetrics.APIServerComponent, http.StatusTooManyRequests)
+			// if isMutatingRequest {
+			// 	epmetrics.DroppedRequests.WithContext(ctx).WithLabelValues(epmetrics.MutatingKind).Inc()
+			// } else {
+			// 	epmetrics.DroppedRequests.WithContext(ctx).WithLabelValues(epmetrics.ReadOnlyKind).Inc()
+			// }
+			// epmetrics.RecordRequestTermination(r, requestInfo, epmetrics.APIServerComponent, http.StatusTooManyRequests)
 			tooManyRequests(r, w)
 		}
 	})
@@ -286,8 +306,8 @@ func WithPriorityAndFairness(
 // StartPriorityAndFairnessWatermarkMaintenance starts the goroutines to observe and maintain watermarks for
 // priority-and-fairness requests.
 func StartPriorityAndFairnessWatermarkMaintenance(stopCh <-chan struct{}) {
-	startWatermarkMaintenance(watermark, stopCh)
-	startWatermarkMaintenance(waitingMark, stopCh)
+	// startWatermarkMaintenance(watermark, stopCh)
+	// startWatermarkMaintenance(waitingMark, stopCh)
 }
 
 func setResponseHeaders(classification *PriorityAndFairnessClassification, w http.ResponseWriter) {
