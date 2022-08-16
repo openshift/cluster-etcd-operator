@@ -26,6 +26,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 )
@@ -71,13 +72,14 @@ var certConfigs = map[string]etcdCertConfig{
 
 type EtcdCertSignerController struct {
 	kubeClient     kubernetes.Interface
-	operatorClient v1helpers.OperatorClient
+	operatorClient v1helpers.StaticPodOperatorClient
 	nodeLister     corev1listers.NodeLister
 	secretLister   corev1listers.SecretLister
 	secretClient   corev1client.SecretsGetter
+	quorumChecker  ceohelpers.QuorumChecker
 }
 
-// watches master nodes and maintains secrets for each master node, placing them in a single secret (NOT a tls secret)
+// NewEtcdCertSignerController watches master nodes and maintains secrets for each master node, placing them in a single secret (NOT a tls secret)
 // so that the revision controller only has to watch a single secret.  This isn't ideal because it's possible to have a
 // revision that is missing the content of a secret, but the actual static pod will fail if that happens and the later
 // revision will pick it up.
@@ -85,17 +87,18 @@ type EtcdCertSignerController struct {
 // to make the cert rotation controller dynamic.
 func NewEtcdCertSignerController(
 	kubeClient kubernetes.Interface,
-	operatorClient v1helpers.OperatorClient,
-
+	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeInformers v1helpers.KubeInformersForNamespaces,
 	eventRecorder events.Recorder,
+	quorumChecker ceohelpers.QuorumChecker,
 ) factory.Controller {
 	c := &EtcdCertSignerController{
 		kubeClient:     kubeClient,
 		operatorClient: operatorClient,
-		secretLister:   kubeInformers.SecretLister(),
 		nodeLister:     kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
+		secretLister:   kubeInformers.SecretLister(),
 		secretClient:   v1helpers.CachedSecretGetter(kubeClient.CoreV1(), kubeInformers),
+		quorumChecker:  quorumChecker,
 	}
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
 		kubeInformers.InformersFor("").Core().V1().Nodes().Informer(),
@@ -106,7 +109,16 @@ func NewEtcdCertSignerController(
 }
 
 func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
-	err := c.syncAllMasters(ctx, syncCtx.Recorder())
+	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
+	if err != nil {
+		return fmt.Errorf("EtcdCertSignerController can't evaluate whether quorum is safe: %w", err)
+	}
+
+	if !safe {
+		return fmt.Errorf("skipping EtcdCertSignerController reconciliation due to insufficient quorum")
+	}
+
+	err = c.syncAllMasters(ctx, syncCtx.Recorder())
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdCertSignerControllerDegraded",
