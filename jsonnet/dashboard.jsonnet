@@ -5,7 +5,6 @@ local etcdMixin = (import 'github.com/etcd-io/etcd/contrib/mixin/mixin.libsonnet
   kind: 'ConfigMap',
   metadata: {
     annotations: {
-      'include.release.openshift.io/ibm-cloud-managed': 'true',
       'include.release.openshift.io/self-managed-high-availability': 'true',
       'include.release.openshift.io/single-node-developer': 'true',
     },
