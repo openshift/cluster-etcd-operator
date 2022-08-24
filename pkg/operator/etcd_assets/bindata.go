@@ -617,6 +617,7 @@ metadata:
   name: etcd
   namespace: openshift-etcd
   annotations:
+    kubectl.kubernetes.io/default-container: etcd
     target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
   labels:
     app: etcd
