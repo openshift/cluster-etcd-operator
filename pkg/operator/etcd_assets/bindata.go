@@ -646,34 +646,15 @@ spec:
         - mountPath: /var/log/etcd
           name: log-dir
     - name: etcd-ensure-env-vars
-      image: ${IMAGE}
+      image: ${OPERATOR_IMAGE}
       imagePullPolicy: IfNotPresent
       terminationMessagePolicy: FallbackToLogsOnError
-      command:
-        - /bin/sh
-        - -c
-        - |
-          #!/bin/sh
-          set -euo pipefail
-
-          : "${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST?not set}"
-          : "${NODE_NODE_ENVVAR_NAME_ETCD_NAME?not set}"
-          : "${NODE_NODE_ENVVAR_NAME_IP?not set}"
-
-          # check for ipv4 addresses as well as ipv6 addresses with extra square brackets
-          if [[ "${NODE_NODE_ENVVAR_NAME_IP}" != "${NODE_IP}" && "${NODE_NODE_ENVVAR_NAME_IP}" != "[${NODE_IP}]" ]]; then
-            # echo the error message to stderr
-            echo "Expected node IP to be ${NODE_IP} got ${NODE_NODE_ENVVAR_NAME_IP}" >&2
-            exit 1
-          fi
-
-          # check for ipv4 addresses as well as ipv6 addresses with extra square brackets
-          if [[ "${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}" != "${NODE_IP}" && "${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}" != "[${NODE_IP}]" ]]; then
-            # echo the error message to stderr
-            echo "Expected etcd url host to be ${NODE_IP} got ${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}" >&2
-            exit 1
-          fi
-
+      command: [ "cluster-etcd-operator", "ensure-env" ]
+      args:
+        - --node-ip=$(NODE_IP)
+        - --allow-invalid-node-ip=true
+        - --current-revision-node-ip=$(NODE_NODE_ENVVAR_NAME_IP)
+        - --check-set-and-not-empty=NODE_NODE_ENVVAR_NAME_ETCD_NAME,NODE_NODE_ENVVAR_NAME_IP
       resources:
         requests:
           memory: 60Mi
