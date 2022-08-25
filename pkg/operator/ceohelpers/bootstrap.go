@@ -1,7 +1,6 @@
 package ceohelpers
 
 import (
-	"context"
 	"fmt"
 
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
@@ -10,7 +9,6 @@ import (
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
@@ -55,7 +53,7 @@ const (
 
 const (
 	// DelayedHABootstrapScalingStrategyAnnotation is an annotation on the openshift-etcd
-	// namespace which, if present indicates the DelayedHAScalingStrategy strategy
+	// namespace which if present indicates the DelayedHAScalingStrategy strategy
 	// should be used.
 	DelayedHABootstrapScalingStrategyAnnotation = "openshift.io/delayed-ha-bootstrap"
 )
@@ -100,60 +98,43 @@ func GetBootstrapScalingStrategy(staticPodClient v1helpers.StaticPodOperatorClie
 // This function returns nil if cluster conditions are such that it's safe to scale
 // the etcd cluster based on the scaling strategy in use, and otherwise will return
 // an error explaining why it's unsafe to scale.
-func CheckSafeToScaleCluster(
-	configmapLister corev1listers.ConfigMapLister,
-	staticPodClient v1helpers.StaticPodOperatorClient,
-	namespaceLister corev1listers.NamespaceLister,
-	infraLister configv1listers.InfrastructureLister,
-	etcdClient etcdcli.EtcdClient) error {
+func CheckSafeToScaleCluster(configmapLister corev1listers.ConfigMapLister, staticPodClient v1helpers.StaticPodOperatorClient,
+	namespaceLister corev1listers.NamespaceLister, infraLister configv1listers.InfrastructureLister) error {
 
 	bootstrapComplete, err := IsBootstrapComplete(configmapLister, staticPodClient)
 	if err != nil {
-		return fmt.Errorf("CheckSafeToScaleCluster failed to determine bootstrap status: %w", err)
-	}
-
-	// while bootstrapping, scaling should be considered safe always
-	if !bootstrapComplete {
-		return nil
+		return fmt.Errorf("failed to determine bootstrap status: %w", err)
 	}
 
 	_, operatorStatus, _, err := staticPodClient.GetStaticPodOperatorState()
 	if err != nil {
-		return fmt.Errorf("CheckSafeToScaleCluster failed to get operator state: %w", err)
+		return fmt.Errorf("failed to get operator state: %w", err)
 	}
 
 	scalingStrategy, err := GetBootstrapScalingStrategy(staticPodClient, namespaceLister, infraLister)
 	if err != nil {
-		return fmt.Errorf("CheckSafeToScaleCluster failed to get bootstrap scaling strategy: %w", err)
-	}
-
-	if scalingStrategy == UnsafeScalingStrategy {
-		return nil
+		return fmt.Errorf("failed to get bootstrap scaling strategy: %w", err)
 	}
 
 	var minimumNodes int
 	switch scalingStrategy {
 	case HAScalingStrategy:
 		minimumNodes = 3
+	case UnsafeScalingStrategy:
+		minimumNodes = 1
 	case DelayedHAScalingStrategy:
-		minimumNodes = 3
+		if bootstrapComplete {
+			minimumNodes = 3
+		} else {
+			minimumNodes = 2
+		}
 	default:
-		return fmt.Errorf("CheckSafeToScaleCluster unrecognized scaling strategy %q", scalingStrategy)
+		return fmt.Errorf("unrecognized scaling strategy %q", scalingStrategy)
 	}
 
 	nodeCount := len(operatorStatus.NodeStatuses)
 	if nodeCount < minimumNodes {
-		return fmt.Errorf("CheckSafeToScaleCluster %d nodes are required, but only %d are available", minimumNodes, nodeCount)
-	}
-
-	memberHealth, err := etcdClient.MemberHealth(context.Background())
-	if err != nil {
-		return fmt.Errorf("CheckSafeToScaleCluster couldn't determine member health: %w", err)
-	}
-
-	err = etcdcli.IsQuorumFaultTolerantErr(memberHealth)
-	if err != nil {
-		return err
+		return fmt.Errorf("%d nodes are required, but only %d are available", minimumNodes, nodeCount)
 	}
 
 	klog.V(4).Infof("node count %d satisfies minimum of %d required by the %s bootstrap scaling strategy", nodeCount, minimumNodes, scalingStrategy)
