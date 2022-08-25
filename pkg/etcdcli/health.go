@@ -225,6 +225,20 @@ func IsQuorumFaultTolerant(memberHealth []healthCheck) bool {
 	return true
 }
 
+// IsQuorumFaultTolerantErr is the same as IsQuorumFaultTolerant but with an error return instead of the log
+func IsQuorumFaultTolerantErr(memberHealth []healthCheck) error {
+	totalMembers := len(memberHealth)
+	quorum := totalMembers/2 + 1
+	healthyMembers := len(GetHealthyMemberNames(memberHealth))
+	switch {
+	case totalMembers-quorum < 1:
+		return fmt.Errorf("etcd cluster has quorum of %d which is not fault tolerant: %+v", quorum, memberHealth)
+	case healthyMembers-quorum < 1:
+		return fmt.Errorf("etcd cluster has quorum of %d and %d healthy members which is not fault tolerant: %+v", quorum, healthyMembers, memberHealth)
+	}
+	return nil
+}
+
 func IsClusterHealthy(memberHealth memberHealth) bool {
 	unhealthyMembers := memberHealth.GetUnhealthyMembers()
 	if len(unhealthyMembers) > 0 {
