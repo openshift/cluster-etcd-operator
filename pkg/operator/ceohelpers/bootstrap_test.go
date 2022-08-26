@@ -2,20 +2,23 @@ package ceohelpers
 
 import (
 	"fmt"
-
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	"github.com/stretchr/testify/assert"
+	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 )
 
 var (
@@ -26,7 +29,7 @@ var (
 	defaultInfra = &configv1.Infrastructure{
 		TypeMeta: metav1.TypeMeta{},
 		ObjectMeta: metav1.ObjectMeta{
-			Name: infrastructureClusterName,
+			Name: InfrastructureClusterName,
 		},
 		Status: configv1.InfrastructureStatus{
 			ControlPlaneTopology: configv1.HighlyAvailableTopologyMode},
@@ -88,7 +91,7 @@ func Test_GetBootstrapScalingStrategy(t *testing.T) {
 	singleNode := &configv1.Infrastructure{
 		TypeMeta: metav1.TypeMeta{},
 		ObjectMeta: metav1.ObjectMeta{
-			Name: infrastructureClusterName,
+			Name: InfrastructureClusterName,
 		},
 		Status: configv1.InfrastructureStatus{
 			ControlPlaneTopology: configv1.SingleReplicaTopologyMode},
@@ -226,11 +229,18 @@ func Test_IsBootstrapComplete(t *testing.T) {
 }
 
 func Test_CheckSafeToScaleCluster(t *testing.T) {
+	defaultEtcdMembers := []*etcdserverpb.Member{
+		u.FakeEtcdMemberWithoutServer(0),
+		u.FakeEtcdMemberWithoutServer(1),
+		u.FakeEtcdMemberWithoutServer(2),
+	}
+
 	tests := map[string]struct {
 		namespace          *corev1.Namespace
 		bootstrapConfigMap *corev1.ConfigMap
 		operatorConfig     operatorv1.StaticPodOperatorSpec
 		nodes              []operatorv1.NodeStatus
+		etcdMembers        []*etcdserverpb.Member
 		expectComplete     bool
 		expectError        error
 		infraObj           *configv1.Infrastructure
@@ -240,6 +250,7 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			bootstrapConfigMap: bootstrapComplete,
 			operatorConfig:     defaultOperatorConfig,
 			nodes:              threeNodesAtCurrentRevision,
+			etcdMembers:        defaultEtcdMembers,
 			infraObj:           defaultInfra,
 			expectError:        nil,
 		},
@@ -248,14 +259,16 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			bootstrapConfigMap: bootstrapComplete,
 			operatorConfig:     defaultOperatorConfig,
 			nodes:              twoNodesAtCurrentRevision,
+			etcdMembers:        defaultEtcdMembers,
 			infraObj:           defaultInfra,
-			expectError:        fmt.Errorf("not enough nodes"),
+			expectError:        fmt.Errorf("CheckSafeToScaleCluster 3 nodes are required, but only 2 are available"),
 		},
 		"unsupported with sufficient nodes": {
 			namespace:          defaultNamespace,
 			bootstrapConfigMap: bootstrapComplete,
 			operatorConfig:     unsupportedOperatorConfig,
 			nodes:              oneNodeAtCurrentRevision,
+			etcdMembers:        defaultEtcdMembers,
 			infraObj:           defaultInfra,
 			expectError:        nil,
 		},
@@ -264,30 +277,34 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			bootstrapConfigMap: bootstrapComplete,
 			operatorConfig:     unsupportedOperatorConfig,
 			nodes:              zeroNodesAtAnyRevision,
+			etcdMembers:        defaultEtcdMembers,
 			infraObj:           defaultInfra,
-			expectError:        fmt.Errorf("not enough nodes"),
+			expectError:        nil,
 		},
 		"delayed HA with sufficient nodes during bootstrap": {
 			namespace:          namespaceWithDelayedHAEnabled,
 			bootstrapConfigMap: bootstrapProgressing,
 			operatorConfig:     defaultOperatorConfig,
 			nodes:              twoNodesAtCurrentRevision,
+			etcdMembers:        defaultEtcdMembers,
 			infraObj:           defaultInfra,
 			expectError:        nil,
 		},
-		"delayed HA with insufficient nodes during bootstrap": {
+		"delayed HA with insufficient nodes during bootstrap should succeed": {
 			namespace:          namespaceWithDelayedHAEnabled,
 			bootstrapConfigMap: bootstrapProgressing,
 			operatorConfig:     defaultOperatorConfig,
 			nodes:              oneNodeAtCurrentRevision,
+			etcdMembers:        defaultEtcdMembers,
 			infraObj:           defaultInfra,
-			expectError:        fmt.Errorf("not enough nodes"),
+			expectError:        nil,
 		},
 		"delayed HA with sufficient nodes during steady state": {
 			namespace:          namespaceWithDelayedHAEnabled,
 			bootstrapConfigMap: bootstrapComplete,
 			operatorConfig:     defaultOperatorConfig,
 			nodes:              threeNodesAtCurrentRevision,
+			etcdMembers:        defaultEtcdMembers,
 			infraObj:           defaultInfra,
 			expectError:        nil,
 		},
@@ -296,8 +313,21 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			bootstrapConfigMap: bootstrapComplete,
 			operatorConfig:     defaultOperatorConfig,
 			nodes:              twoNodesAtCurrentRevision,
+			etcdMembers:        defaultEtcdMembers,
 			infraObj:           defaultInfra,
-			expectError:        fmt.Errorf("not enough nodes"),
+			expectError:        fmt.Errorf("CheckSafeToScaleCluster 3 nodes are required, but only 2 are available"),
+		},
+		"HA with insufficient etcd members": {
+			namespace:          defaultNamespace,
+			bootstrapConfigMap: bootstrapComplete,
+			operatorConfig:     defaultOperatorConfig,
+			nodes:              threeNodesAtCurrentRevision,
+			etcdMembers: []*etcdserverpb.Member{
+				u.FakeEtcdMemberWithoutServer(0),
+				u.FakeEtcdMemberWithoutServer(1),
+			},
+			infraObj:    defaultInfra,
+			expectError: fmt.Errorf("etcd cluster has quorum of 2 which is not fault tolerant: [{Member:name:\"etcd-0\" peerURLs:\"https://10.0.0.1:2380\" clientURLs:\"https://10.0.0.1:2907\"  Healthy:true Took: Error:<nil>} {Member:ID:1 name:\"etcd-1\" peerURLs:\"https://10.0.0.2:2380\" clientURLs:\"https://10.0.0.2:2907\"  Healthy:true Took: Error:<nil>}]"),
 		},
 	}
 
@@ -333,15 +363,19 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 				}
 			}
 			fakeInfraStructure := configv1listers.NewInfrastructureLister(fakeInfraIndexer)
-
-			actualErr := CheckSafeToScaleCluster(fakeConfigMapLister, fakeStaticPodClient, fakeNamespaceMapLister, fakeInfraStructure)
-
-			if test.expectError != nil && actualErr == nil {
-				t.Errorf("expected error=%v, got %v", test.expectError, actualErr)
+			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(test.etcdMembers)
+			if err != nil {
+				t.Fatal(err)
 			}
-			if test.expectError == nil && actualErr != nil {
-				t.Errorf("expected error=%v, got %v", test.expectError, actualErr)
-			}
+
+			actualErr := CheckSafeToScaleCluster(
+				fakeConfigMapLister,
+				fakeStaticPodClient,
+				fakeNamespaceMapLister,
+				fakeInfraStructure,
+				fakeEtcdClient)
+
+			assert.Equal(t, test.expectError, actualErr)
 		})
 	}
 }

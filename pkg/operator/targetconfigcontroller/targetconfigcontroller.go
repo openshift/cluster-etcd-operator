@@ -12,12 +12,10 @@ import (
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	coreclientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
-	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
-	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -25,6 +23,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
@@ -36,15 +35,11 @@ type TargetConfigController struct {
 
 	operatorClient v1helpers.StaticPodOperatorClient
 
-	kubeClient           kubernetes.Interface
-	infrastructureLister configv1listers.InfrastructureLister
-	networkLister        configv1listers.NetworkLister
-	configMapLister      corev1listers.ConfigMapLister
-	endpointLister       corev1listers.EndpointsLister
-	nodeLister           corev1listers.NodeLister
-	envVarGetter         *etcdenvvar.EnvVarController
+	kubeClient   kubernetes.Interface
+	envVarGetter etcdenvvar.EnvVar
 
-	enqueueFn func()
+	enqueueFn     func()
+	quorumChecker ceohelpers.QuorumChecker
 }
 
 func NewTargetConfigController(
@@ -55,21 +50,18 @@ func NewTargetConfigController(
 	infrastructureInformer configv1informers.InfrastructureInformer,
 	networkInformer configv1informers.NetworkInformer,
 	kubeClient kubernetes.Interface,
-	envVarGetter *etcdenvvar.EnvVarController,
+	envVarGetter etcdenvvar.EnvVar,
 	eventRecorder events.Recorder,
+	quorumChecker ceohelpers.QuorumChecker,
 ) factory.Controller {
 	c := &TargetConfigController{
 		targetImagePullSpec:   targetImagePullSpec,
 		operatorImagePullSpec: operatorImagePullSpec,
 
-		operatorClient:       operatorClient,
-		kubeClient:           kubeClient,
-		infrastructureLister: infrastructureInformer.Lister(),
-		networkLister:        networkInformer.Lister(),
-		configMapLister:      kubeInformersForNamespaces.ConfigMapLister(),
-		endpointLister:       kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Lister(),
-		nodeLister:           kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
-		envVarGetter:         envVarGetter,
+		operatorClient: operatorClient,
+		kubeClient:     kubeClient,
+		envVarGetter:   envVarGetter,
+		quorumChecker:  quorumChecker,
 	}
 
 	syncCtx := factory.NewSyncContext("TargetConfigController", eventRecorder.WithComponentSuffix("target-config-controller"))
@@ -90,11 +82,25 @@ func NewTargetConfigController(
 }
 
 func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
+	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
+	if err != nil {
+		return fmt.Errorf("TargetConfigController can't evaluate whether quorum is safe: %w", err)
+	}
+
+	if !safe {
+		return fmt.Errorf("skipping TargetConfigController reconciliation due to insufficient quorum")
+	}
+
+	envVars := c.envVarGetter.GetEnvVars()
+	if len(envVars) == 0 {
+		return fmt.Errorf("TargetConfigController missing env var values")
+	}
+
 	operatorSpec, _, _, err := c.operatorClient.GetStaticPodOperatorState()
 	if err != nil {
 		return err
 	}
-	requeue, err := createTargetConfig(c, syncCtx.Recorder(), operatorSpec)
+	requeue, err := createTargetConfig(c, syncCtx.Recorder(), operatorSpec, envVars)
 	if err != nil {
 		return err
 	}
@@ -107,10 +113,9 @@ func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncCo
 
 // createTargetConfig takes care of creation of valid resources in a fixed name.  These are inputs to other control loops.
 // returns whether or not requeue and if an error happened when updating status.  Normally it updates status itself.
-func createTargetConfig(c TargetConfigController, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec) (bool, error) {
-	errors := []error{}
-
-	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec)
+func createTargetConfig(c TargetConfigController, recorder events.Recorder, operatorSpec *operatorv1.StaticPodOperatorSpec, envVars map[string]string) (bool, error) {
+	var errors []error
+	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars)
 	if err != nil {
 		return false, err
 	}
@@ -157,13 +162,9 @@ func loglevelToZap(logLevel operatorv1.LogLevel) string {
 	}
 }
 
-func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv1.StaticPodOperatorSpec, imagePullSpec, operatorImagePullSpec string) (*strings.Replacer, error) {
-	envVarMap := c.envVarGetter.GetEnvVars()
-	if len(envVarMap) == 0 {
-		return nil, fmt.Errorf("missing env var values")
-	}
-
-	envVarLines := []string{}
+func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv1.StaticPodOperatorSpec,
+	imagePullSpec, operatorImagePullSpec string, envVarMap map[string]string) (*strings.Replacer, error) {
+	var envVarLines []string
 	for _, k := range sets.StringKeySet(envVarMap).List() {
 		v := envVarMap[k]
 		envVarLines = append(envVarLines, fmt.Sprintf("      - name: %q", k))

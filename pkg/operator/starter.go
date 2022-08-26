@@ -33,6 +33,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
@@ -128,6 +129,13 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
+	quorumChecker := ceohelpers.NewQuorumChecker(
+		kubeInformersForNamespaces.ConfigMapLister(),
+		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Namespaces().Lister(),
+		configInformers.Config().V1().Infrastructures().Lister(),
+		operatorClient,
+		etcdClient)
+
 	targetConfigReconciler := targetconfigcontroller.NewTargetConfigController(
 		os.Getenv("IMAGE"),
 		os.Getenv("OPERATOR_IMAGE"),
@@ -139,6 +147,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeClient,
 		envVarController,
 		controllerContext.EventRecorder,
+		quorumChecker,
 	)
 
 	versionRecorder := status.NewVersionGetter()
@@ -164,7 +173,9 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return err
 	}
 
-	fsyncMetricController := metriccontroller.NewFSyncController(configClient.ConfigV1(), controllerContext.EventRecorder)
+	fsyncMetricController := metriccontroller.NewFSyncController(
+		configClient.ConfigV1(),
+		controllerContext.EventRecorder)
 
 	statusController := status.NewClusterOperatorStatusController(
 		"etcd",
@@ -195,6 +206,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorClient,
 		kubeInformersForNamespaces,
 		controllerContext.EventRecorder,
+		quorumChecker,
 	)
 
 	etcdEndpointsController := etcdendpointscontroller.NewEtcdEndpointsController(
@@ -203,6 +215,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 		coreClient,
 		kubeInformersForNamespaces,
+		quorumChecker,
 	)
 
 	clusterMemberController := clustermembercontroller.NewClusterMemberController(
@@ -337,6 +350,7 @@ var RevisionConfigMaps = []revision.RevisionResource{
 	{Name: "etcd-peer-client-ca"},
 	{Name: "etcd-metrics-proxy-serving-ca"},
 	{Name: "etcd-metrics-proxy-client-ca"},
+	{Name: "etcd-endpoints"},
 }
 
 // RevisionSecrets is a list of secrets that are directly copied for the current values.  A different actor/controller modifies these.
