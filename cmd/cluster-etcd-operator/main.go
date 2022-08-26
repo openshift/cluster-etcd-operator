@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/backuprestore"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/ensureenv"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/monitor"
 	operatorcmd "github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/readyz"
@@ -71,7 +70,6 @@ func NewSSCSCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(monitor.NewMonitorCommand(os.Stderr))
 	cmd.AddCommand(verify.NewVerifyCommand(os.Stderr))
 	cmd.AddCommand(readyz.NewReadyzCommand())
-	cmd.AddCommand(ensureenv.NewEnsureEnvCommand(os.Stderr))
 
 	return cmd
 }
