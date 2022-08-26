@@ -19,15 +19,11 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
 const workQueueKey = "key"
-
-type EnvVar interface {
-	AddListener(listener Enqueueable)
-	GetEnvVars() map[string]string
-}
 
 type EnvVarController struct {
 	operatorClient v1helpers.StaticPodOperatorClient
@@ -41,6 +37,7 @@ type EnvVarController struct {
 	networkLister        configv1listers.NetworkLister
 	configmapLister      corev1listers.ConfigMapLister
 	nodeLister           corev1listers.NodeLister
+	namespaceLister      corev1listers.NamespaceLister
 
 	// queue only ever has one item, but it has nice error handling backoff/retry semantics
 	queue         workqueue.RateLimitingInterface
@@ -64,6 +61,7 @@ func NewEnvVarController(
 		operatorClient:       operatorClient,
 		infrastructureLister: infrastructureInformer.Lister(),
 		networkLister:        networkInformer.Lister(),
+		namespaceLister:      kubeInformersForNamespaces.InformersFor("").Core().V1().Namespaces().Lister(),
 		configmapLister:      kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister(),
 		nodeLister:           kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
 		targetImagePullSpec:  targetImagePullSpec,
@@ -130,6 +128,10 @@ func (c *EnvVarController) sync(ctx context.Context) error {
 }
 
 func (c *EnvVarController) checkEnvVars() error {
+	if err := ceohelpers.CheckSafeToScaleCluster(c.configmapLister, c.operatorClient, c.namespaceLister, c.infrastructureLister); err != nil {
+		return fmt.Errorf("can't update etcd pod configurations because scaling is currently unsafe: %w", err)
+	}
+
 	operatorSpec, operatorStatus, _, err := c.operatorClient.GetStaticPodOperatorState()
 	if err != nil {
 		return err
@@ -147,25 +149,21 @@ func (c *EnvVarController) checkEnvVars() error {
 	if err != nil {
 		return err
 	}
-	func() {
-		c.envVarMapLock.Lock()
-		defer c.envVarMapLock.Unlock()
+	c.envVarMapLock.Lock()
+	defer c.envVarMapLock.Unlock()
 
-		if !reflect.DeepEqual(c.envVarMap, currEnvVarMap) {
-			c.envVarMap = currEnvVarMap
+	if !reflect.DeepEqual(c.envVarMap, currEnvVarMap) {
+		c.envVarMap = currEnvVarMap
+		for _, listener := range c.listeners {
+			listener.Enqueue()
 		}
-	}()
-
-	// update listeners outside the lock in-case they are synchronously retrieving via GetEnvVars within the listener
-	for _, listener := range c.listeners {
-		listener.Enqueue()
 	}
 
 	return nil
 }
 
 // Run starts the etcd and blocks until stopCh is closed.
-func (c *EnvVarController) Run(_ int, stopCh <-chan struct{}) {
+func (c *EnvVarController) Run(workers int, stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
 	defer c.queue.ShutDown()
 

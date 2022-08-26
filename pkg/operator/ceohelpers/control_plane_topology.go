@@ -8,12 +8,12 @@ import (
 	"k8s.io/klog/v2"
 )
 
-const InfrastructureClusterName = "cluster"
+const infrastructureClusterName = "cluster"
 
 func GetControlPlaneTopology(infraLister configv1listers.InfrastructureLister) (configv1.TopologyMode, error) {
-	infraData, err := infraLister.Get(InfrastructureClusterName)
+	infraData, err := infraLister.Get(infrastructureClusterName)
 	if err != nil {
-		klog.Warningf("Failed to get infrastructure resource %s", InfrastructureClusterName)
+		klog.Warningf("Failed to get infrastructure resource %s", infrastructureClusterName)
 		return "", err
 	}
 	if infraData.Status.ControlPlaneTopology == "" {
