@@ -41,17 +41,18 @@ func NewEnsureEnvCommand(errOut io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ensure-env",
 		Short: "Ensures that the IP address related environment variables are correct",
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := ensure.Validate(); err != nil {
 				klog.Error(err.Error())
 				fmt.Fprint(ensure.errOut, err)
-				return
+				return err
 			}
 			if err := ensure.Run(); err != nil {
 				klog.Error(err.Error())
 				fmt.Fprint(ensure.errOut, err)
-				return
+				return err
 			}
+			return nil
 		},
 	}
 
