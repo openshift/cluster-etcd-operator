@@ -63,17 +63,6 @@ func TestCheckCertValidity(t *testing.T) {
 			invalidCertPair:  true,
 			expectedRegenMsg: true,
 		},
-		"missing ip address; node uid unchanged": {
-			certIPAddresses: ipAddresses,
-			nodeIPAddresses: differentIpAddresses,
-			storedNodeUID:   nodeUID,
-			expectedErr:     true,
-		},
-		"missing ip address; node uid not stored": {
-			certIPAddresses: ipAddresses,
-			nodeIPAddresses: differentIpAddresses,
-			expectedErr:     true,
-		},
 		"missing ip address; node uid changed": {
 			certIPAddresses:  ipAddresses,
 			nodeIPAddresses:  differentIpAddresses,
@@ -130,18 +119,26 @@ func TestEnsureCertForNode(t *testing.T) {
 	}
 
 	secretName := certConfig.secretNameFunc(node.Name)
-	ipAddresses := []string{"127.0.0.1"}
-
 	testCases := map[string]struct {
 		certSecret     *corev1.Secret
 		createExpected bool
 		updateExpected bool
+		ipAddresses    []string
 	}{
 		"missing cert secret is created": {
 			createExpected: true,
+			ipAddresses:    []string{"127.0.0.1"},
 		},
 		"invalid cert secret is regenerated": {
 			certSecret:     newCertSecret(secretName, "", nil, nil),
+			ipAddresses:    []string{"127.0.0.1"},
+			updateExpected: true,
+		},
+		// this is a very common case when adding NICs on day2 operations
+		"cert secret is regenerated when ip addresses change": {
+			certSecret:     newCertSecretForIPs(t, secretName, []string{"127.0.0.1"}),
+			ipAddresses:    []string{"127.0.0.1", "127.0.0.2"},
+			createExpected: true,
 			updateExpected: true,
 		},
 		// The test for a valid cert secret is performed after a successful
@@ -157,7 +154,7 @@ func TestEnsureCertForNode(t *testing.T) {
 			fakeKubeClient, controller, recorder := setupController(t, objects)
 			secretName := certConfig.secretNameFunc(node.Name)
 			nodeUID := string(node.UID)
-			_, _, err := controller.ensureCertSecret(secretName, nodeUID, ipAddresses, certConfig, recorder)
+			_, _, err := controller.ensureCertSecret(secretName, nodeUID, tc.ipAddresses, certConfig, recorder)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -180,19 +177,19 @@ func TestEnsureCertForNode(t *testing.T) {
 				t.Fatalf("Secret unexpectedly updated")
 			}
 			if updatedSecret != nil {
-				validateTestSecret(t, "updated", updatedSecret, ipAddresses)
+				validateTestSecret(t, "updated", updatedSecret, tc.ipAddresses)
 			}
 			if !tc.createExpected && createdSecret != nil {
 				t.Fatalf("Secret unexpectedly created")
 			}
 			if createdSecret != nil {
-				validateTestSecret(t, "created", createdSecret, ipAddresses)
+				validateTestSecret(t, "created", createdSecret, tc.ipAddresses)
 
 				// Verify that a cert secret created by ensureCertSecret will
 				// not be updated when immediately round-tripped.
 				objects := []runtime.Object{createdSecret}
 				fakeKubeClient, controller, recorder := setupController(t, objects)
-				_, _, err := controller.ensureCertSecret(secretName, nodeUID, ipAddresses, certConfig, recorder)
+				_, _, err := controller.ensureCertSecret(secretName, nodeUID, tc.ipAddresses, certConfig, recorder)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -396,6 +393,40 @@ func newCASecret(t *testing.T, secretName string) *corev1.Secret {
 		Data: map[string][]byte{
 			"tls.crt": caCertBytes,
 			"tls.key": caKeyBytes,
+		},
+	}
+}
+
+func newCertSecretForIPs(t *testing.T, secretName string, ips []string) *corev1.Secret {
+	expireDays := 100
+
+	caConfig, err := crypto.MakeSelfSignedCAConfig("foo", expireDays)
+	if err != nil {
+		t.Fatalf("Failed to create ca config: %v", err)
+	}
+	ca := &crypto.CA{
+		Config:          caConfig,
+		SerialGenerator: &crypto.RandomSerialGenerator{},
+	}
+
+	certConfig, err := ca.MakeServerCert(sets.NewString(ips...), expireDays)
+	if err != nil {
+		t.Fatalf("Error generating cert: %v", err)
+	}
+
+	certBytes, keyBytes, err := certConfig.GetPEMBytes()
+	if err != nil {
+		t.Fatalf("Error converting cert to bytes: %v", err)
+	}
+
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: operatorclient.TargetNamespace,
+			Name:      secretName,
+		},
+		Data: map[string][]byte{
+			"tls.crt": certBytes,
+			"tls.key": keyBytes,
 		},
 	}
 }

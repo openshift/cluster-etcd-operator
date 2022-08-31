@@ -252,8 +252,8 @@ func (c *EtcdCertSignerController) ensureCertSecret(secretName, nodeUID string, 
 		}
 	}
 
-	cert := []byte{}
-	key := []byte{}
+	var cert []byte
+	var key []byte
 	if secret != nil {
 		cert = secret.Data["tls.crt"]
 		key = secret.Data["tls.key"]
@@ -323,42 +323,18 @@ func checkCertValidity(certBytes, keyBytes []byte, ipAddresses []string, nodeUID
 	}
 
 	// Check that the cert is valid for the provided ip addresses
-	errs := []error{}
+	var errs []error
 	for _, ipAddress := range ipAddresses {
 		if err := leafCert.VerifyHostname(ipAddress); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	if len(errs) > 0 {
-		// When a cluster is upgraded to 4.8 - the first release to annotate
-		// cert secrets with the node UID - previously created secrets will
-		// initially not have a node UID set. Assume that the lack of a stored
-		// node UID indicates that the certs were generated for the current node
-		// so that if the cert is not valid for the node's current ip addresses
-		// it will be flagged as an error.
-		//
-		// TODO(marun) The check for a missing stored uid can be removed in 4.9
-		// since by then all cert secrets will be guaranteed to have a stored
-		// node uid. That would change the conditional from ternary to binary
-		// and allow the use of a boolean indication of node uid change.
-		nodeUIDUnchanged := nodeUID == storedUID || len(storedUID) == 0
-
-		if nodeUIDUnchanged {
-			// This is an error condition. If the cert SAN doesn't include all
-			// of ip's for the node that it was generated for, an out-of-band
-			// etcd cluster membership change may be required. The operator
-			// doesn't currently handle this.
-			return "", utilerrors.NewAggregate(errs)
-		} else {
-			// A different node uid indicates node removal and addition with the
-			// same name. etcd on the node will be a new cluster member and
-			// needs a new certificate.
-			msgs := []string{}
-			for _, err := range errs {
-				msgs = append(msgs, fmt.Sprintf("%v", err))
-			}
-			return strings.Join(msgs, ", "), nil
+		var msgs []string
+		for _, err := range errs {
+			msgs = append(msgs, fmt.Sprintf("%v", err))
 		}
+		return strings.Join(msgs, ", "), nil
 	}
 
 	// TODO(marun) Check that the certificate was issued by the CA
