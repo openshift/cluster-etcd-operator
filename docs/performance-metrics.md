@@ -1,12 +1,12 @@
-# OpenShift ETCD Performance Metrics
+# OpenShift etcd Performance Metrics
 
-This document is intended to help users mitigate performance issues using Prometheus Metrics.
+This document is intended to help users and support engineers to troubleshoot performance issues using Prometheus Metrics.
 
 ## Common Bottlenecks
 
 ### Memory
 
-ETCD uses bbolt, which stores everything as a single memory mapped file. In OpenShift this is up to 8 GiB big, this file is organized with a B+Tree and chunked into discrete 4k pages which can be flagged in-use or not. On top of that, several in-memory caches/indices on both ETCD and API server are being used to facilitate fast multi-version access and label/field selection respectively.
+etcd uses bbolt, which stores everything as a single memory mapped file. In OpenShift this is up to 8 GiB big, this file is organized with a B+Tree and chunked into discrete 4k pages which can be flagged in-use or not. On top of that, several in-memory caches/indices on both etcd and API server are being used to facilitate fast multi-version access and label/field selection respectively.
 
 Due to the indices and caches employed, it is fairly easy to exhaust memory on the control plane even though the actual used size of the etcd database file is tiny. One particular scenario where is this common is when listing all pods in a large cluster or listing many large configmaps/secrets.
 
@@ -29,15 +29,15 @@ One way to reduce memory usage is to defrag bbolt and compact the database to th
 > 
 > etctctl defrag
 
-In more recent OpenShift versions this is done automatically -  compacting from the API server and defrag from the etcd-operator.
+In more recent OpenShift versions this is done automatically -  compacting from the API server and defrag from the etcd-operator (since 4.9).
 
 Sometimes etcd is quite reluctant to free memory, due to the laziness of the Golang GC. So it is perfectly normal for the resident memory to stay up until memory pressure forces it to go down again.
 
 ### CPU
 
-While ETCD is not very heavy user of CPU in general, similar to memory, ETCD is competing for CPU usage with other components on the same hosts.
+While etcd is not a very heavy user of CPU in general, similar to memory, etcd is competing for CPU usage with other components on the same hosts.
 
-This query will give you our most offending candidates (API server, OVN and ETCD) in a single chart. 
+This query will give you our most offending candidates (API server, OVN and etcd) in a single chart. 
 
 > sum(node_namespace_pod_container:container_cpu_usage_seconds_total:sum_irate{namespace=~"openshift-etcd|openshift-ovn-kubernetes|openshift-apiserver"}) by (namespace)
 
@@ -52,13 +52,13 @@ Keep in mind that this is not exhaustive, there might be something else that run
 
 ### Disk Latency
 
-ETCD is extremely sensitive to high latency disk latency. ETCD utilizes the disk to persist bbolt's memory mapped file, but more importantly, for writing to the write-ahead-log (WAL). The latter is the most important path with writing and executes fsync to ensure the data is durably synchronized to the disk.
+etcd is extremely sensitive to high latency disk latency. etcd utilizes the disk to persist bbolt's memory mapped file, but more importantly, for writing to the write-ahead-log (WAL). The latter is the most important path with writing and executes fsync to ensure the data is durably synchronized to the disk.
 
-From ETCD, you can look at the 99th percentile of the WAL append with:
+From etcd, you can look at the 99th percentile of the WAL append with:
 
 > histogram_quantile(0.99, sum(rate(etcd_disk_wal_fsync_duration_seconds_bucket{job="etcd"}[5m])) by (instance, le))
 
-To ensure the best performance, this metric should not exceed 10ms. It's thus incredibly important to run OpenShift ETCD on SSD or better NVME drives that offer less than a 1ms.
+To ensure the best performance, this metric should not exceed 10ms. It's thus incredibly important to run OpenShift etcd on SSD or better NVME drives that offer less than a 1ms.
 
 The backend disk commit can be tracked on 99th percentile with: 
 
@@ -70,7 +70,7 @@ To check for noisy neighbours on the instance's disk (OVN, logs, etc.), you can 
 
 > rate(node_disk_write_time_seconds_total{instance=~".+-master-.+"}[5m]) / rate(node_disk_writes_completed_total{instance=~".+-master-.+"}[5m])
 
-That should reveal whether ETCD is behaving worse or better than what else is running on that host.
+That should reveal whether etcd is behaving worse or better than what else is running on that host.
 
 ### Disk Bandwidth
 
@@ -83,7 +83,7 @@ On OpenShift this can vary a lot depending on how many and what operators are in
 
 ### Network Latency
 
-OpenShift ETCD communicates primarily with control plane components and via host network. To persist a single write it needs to be acknowledged by at least a second ETCD instance using the Raft consensus protocol. This also warrants to have a low latency host network between the control plane nodes.
+OpenShift etcd communicates primarily with control plane components and via host network. To persist a single write it needs to be acknowledged by at least a second etcd instance using the Raft consensus protocol. This also warrants to have a low latency host network between the control plane nodes.
 
 To see the pure network latency between the nodes, you can check the round trip time with:
 
