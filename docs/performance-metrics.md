@@ -89,7 +89,7 @@ To see the pure network latency between the nodes, you can check the round trip 
 
 > histogram_quantile(0.99, sum by (instance, le) (rate(etcd_network_peer_round_trip_time_seconds_bucket{job="etcd"}[5m])))
 
-Couple layers up top, you can check the reliability of GRPC. Most common you would see timeouts, failures or unavailability from the GRPC exit codes of the server using:
+Couple layers up top, you can check the reliability of GRPC. Most commonly you would see timeouts, failures or unavailability from the GRPC exit codes of the server using:
 
 > (100 * sum(rate(grpc_server_handled_total{job=~".*etcd.*", grpc_code=~"Unknown|FailedPrecondition|ResourceExhausted|Internal|Unavailable|DataLoss|DeadlineExceeded"}[5m])) without (grpc_type, grpc_code)
 / sum(rate(grpc_server_handled_total{job=~".*etcd.*"}[5m])) without (grpc_type, grpc_code)) > 0 
