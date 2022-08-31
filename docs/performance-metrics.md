@@ -1,6 +1,6 @@
 # OpenShift ETCD Performance Metrics
 
-We often get complaints about ETCD performance being bad, this document should help track down the culprit and mitigate the issue at hand using Prometheus Metrics.
+This document is intended to help users mitigate performance issues using Prometheus Metrics.
 
 ## Common Bottlenecks
 
