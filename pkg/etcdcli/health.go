@@ -132,9 +132,7 @@ func checkSingleMemberHealth(ctx context.Context, member *etcdserverpb.Member) h
 		}
 		hc.Healthy = true
 	} else {
-		if resp.Header != nil {
-			klog.Errorf("health check for memberID (%v) failed: err(%v)", resp.Header.MemberId, err)
-		}
+		klog.Errorf("health check for member (%v) failed: err(%v)", member.Name, err)
 		hc.Error = fmt.Errorf("health check failed: %w", err)
 	}
 
