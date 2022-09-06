@@ -11,6 +11,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
@@ -192,9 +193,22 @@ func (c *machineDeletionHooksController) attemptToDeleteQuorumGuard(ctx context.
 			continue
 		}
 
+		node, err := c.kubeClient.CoreV1().Nodes().Get(ctx, machine.Status.NodeRef.Name, metav1.GetOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return err
+		} else if apierrors.IsNotFound(err) {
+			return nil
+		}
+
+		if !node.Spec.Unschedulable {
+			// If we delete the guard pod on a node that isn't cordoned, it will be recreated.
+			klog.V(4).Infof("node %q is not yet cordoned, skipping removing the guard pod", node.Name)
+			continue
+		}
+
 		guardPodsForMachine := guardPodsByNodeName[machine.Status.NodeRef.Name]
 		if len(guardPodsForMachine) == 0 {
-			klog.V(4).Infof("node %q is does not have a guard pod, skipping", machine.Status.NodeRef.Name)
+			klog.V(4).Infof("node %q is does not have a guard pod, skipping", node.Name)
 			continue
 		}
 
