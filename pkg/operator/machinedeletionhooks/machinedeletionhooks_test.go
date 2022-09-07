@@ -3,6 +3,7 @@ package machinedeletionhooks
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -19,6 +20,10 @@ import (
 	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
 	machinev1beta1fakeclient "github.com/openshift/client-go/machine/clientset/versioned/fake"
 	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
+
+	kubefakeclient "k8s.io/client-go/kubernetes/fake"
+	corelistersv1 "k8s.io/client-go/listers/core/v1"
+
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 
@@ -462,6 +467,252 @@ func TestAttemptToDeleteMachineDeletionHook(t *testing.T) {
 	}
 }
 
+func TestAttemptToDeleteQuorumGuard(t *testing.T) {
+	scenarios := []struct {
+		name                           string
+		initialObjectsForKubeClient    []runtime.Object
+		initialObjectsForMachineLister []runtime.Object
+		initialObjectsForPodLister     []runtime.Object
+		expectedKubeClientActions      []string
+		expectedEvents                 []string
+		validateFunc                   func(ts *testing.T, kubeClientActions []clientgotesting.Action)
+	}{
+		{
+			name: "no machines",
+		},
+		{
+			name: "no machines pending deletion",
+			initialObjectsForMachineLister: []runtime.Object{
+				addNode(machineWithHooksFor("m0", "10.0.139.78"), "n0"),
+				addNode(machineWithHooksFor("m1", "10.0.139.79"), "n1"),
+				addNode(machineWithHooksFor("m2", "10.0.139.80"), "n2"),
+			},
+			initialObjectsForPodLister: []runtime.Object{
+				guardPodForNode("n0"),
+				guardPodForNode("n1"),
+				guardPodForNode("n2"),
+			},
+			initialObjectsForKubeClient: []runtime.Object{
+				nodeFor("n0"),
+				nodeFor("n1"),
+				nodeFor("n2"),
+			},
+		},
+		{
+			name: "a machine pending deletion with a hook",
+			initialObjectsForMachineLister: []runtime.Object{
+				addNode(machineWithHooksFor("m0", "10.0.139.78"), "n0"),
+				addNode(machineWithHooksFor("m1", "10.0.139.79"), "n1"),
+				setDeletionTimestamp(addNode(machineWithHooksFor("m2", "10.0.139.80"), "n2")),
+			},
+			initialObjectsForPodLister: []runtime.Object{
+				guardPodForNode("n0"),
+				guardPodForNode("n1"),
+				guardPodForNode("n2"),
+			},
+			initialObjectsForKubeClient: []runtime.Object{
+				nodeFor("n0"),
+				nodeFor("n1"),
+				nodeFor("n2"),
+			},
+		},
+		{
+			name: "a machine pending deletion without a hook, without a node",
+			initialObjectsForMachineLister: []runtime.Object{
+				addNode(machineWithHooksFor("m0", "10.0.139.78"), "n0"),
+				addNode(machineWithHooksFor("m1", "10.0.139.79"), "n1"),
+				setDeletionTimestamp(machineFor("m2", "10.0.139.80")),
+			},
+			initialObjectsForPodLister: []runtime.Object{
+				guardPodForNode("n0"),
+				guardPodForNode("n1"),
+				guardPodForNode("n2"),
+			},
+			initialObjectsForKubeClient: []runtime.Object{
+				nodeFor("n0"),
+				nodeFor("n1"),
+				nodeFor("n2"),
+			},
+		},
+		{
+			name: "a machine pending deletion without a hook, with a node and a guard pod",
+			initialObjectsForMachineLister: []runtime.Object{
+				addNode(machineWithHooksFor("m0", "10.0.139.78"), "n0"),
+				addNode(machineWithHooksFor("m1", "10.0.139.79"), "n1"),
+				setDeletionTimestamp(addNode(machineFor("m2", "10.0.139.80"), "n2")),
+			},
+			initialObjectsForPodLister: []runtime.Object{
+				guardPodForNode("n0"),
+				guardPodForNode("n1"),
+				guardPodForNode("n2"),
+			},
+			initialObjectsForKubeClient: []runtime.Object{
+				nodeFor("n0"),
+				nodeFor("n1"),
+				nodeFor("n2"),
+			},
+			expectedKubeClientActions: []string{
+				"get:nodes:",
+			},
+			validateFunc: func(ts *testing.T, kubeClientActions []clientgotesting.Action) {
+				if len(kubeClientActions) != 1 {
+					t.Fatalf("Expected 1 action, got %d actions", len(kubeClientActions))
+				}
+
+				action := kubeClientActions[0]
+				validateGetNodeAction(t, action, "n2")
+			},
+		},
+		{
+			name: "a machine pending deletion without a hook, with a missing node",
+			initialObjectsForMachineLister: []runtime.Object{
+				addNode(machineWithHooksFor("m0", "10.0.139.78"), "n0"),
+				addNode(machineWithHooksFor("m1", "10.0.139.79"), "n1"),
+				setDeletionTimestamp(addNode(machineFor("m2", "10.0.139.80"), "n2")),
+			},
+			initialObjectsForPodLister: []runtime.Object{
+				guardPodForNode("n0"),
+				guardPodForNode("n1"),
+				guardPodForNode("n2"),
+			},
+			initialObjectsForKubeClient: []runtime.Object{
+				nodeFor("n0"),
+				nodeFor("n1"),
+			},
+			expectedKubeClientActions: []string{
+				"get:nodes:",
+			},
+			validateFunc: func(ts *testing.T, kubeClientActions []clientgotesting.Action) {
+				if len(kubeClientActions) != 1 {
+					t.Fatalf("Expected 1 action, got %d actions", len(kubeClientActions))
+				}
+
+				action := kubeClientActions[0]
+				validateGetNodeAction(t, action, "n2")
+			},
+		},
+		{
+			name: "a machine pending deletion without a hook, with a cordoned node and a guard pod",
+			initialObjectsForMachineLister: []runtime.Object{
+				addNode(machineWithHooksFor("m0", "10.0.139.78"), "n0"),
+				addNode(machineWithHooksFor("m1", "10.0.139.79"), "n1"),
+				setDeletionTimestamp(addNode(machineFor("m2", "10.0.139.80"), "n2")),
+			},
+			initialObjectsForPodLister: []runtime.Object{
+				guardPodForNode("n0"),
+				guardPodForNode("n1"),
+				guardPodForNode("n2"),
+			},
+			initialObjectsForKubeClient: []runtime.Object{
+				nodeFor("n0"),
+				nodeFor("n1"),
+				cordonNode(nodeFor("n2")),
+			},
+			expectedKubeClientActions: []string{
+				"get:nodes:",
+				"delete:pods:test",
+			},
+			validateFunc: func(ts *testing.T, kubeClientActions []clientgotesting.Action) {
+				if len(kubeClientActions) != 2 {
+					t.Fatalf("Expected 2 action, got %d actions", len(kubeClientActions))
+				}
+
+				getNodeAction := kubeClientActions[0]
+				validateGetNodeAction(t, getNodeAction, "n2")
+
+				deletePodAction := kubeClientActions[1]
+				validateDeletePodAction(t, deletePodAction, "guard-n2")
+			},
+			expectedEvents: []string{"QuorumGuardRemoved"},
+		},
+		{
+			name: "a machine pending deletion without a hook, with a cordoned node without a guard pod",
+			initialObjectsForMachineLister: []runtime.Object{
+				addNode(machineWithHooksFor("m0", "10.0.139.78"), "n0"),
+				addNode(machineWithHooksFor("m1", "10.0.139.79"), "n1"),
+				setDeletionTimestamp(addNode(machineFor("m2", "10.0.139.80"), "n2")),
+			},
+			initialObjectsForPodLister: []runtime.Object{
+				guardPodForNode("n0"),
+				guardPodForNode("n1"),
+			},
+			initialObjectsForKubeClient: []runtime.Object{
+				nodeFor("n0"),
+				nodeFor("n1"),
+				cordonNode(nodeFor("n2")),
+			},
+			expectedKubeClientActions: []string{
+				"get:nodes:",
+			},
+			validateFunc: func(ts *testing.T, kubeClientActions []clientgotesting.Action) {
+				if len(kubeClientActions) != 1 {
+					t.Fatalf("Expected 1 action, got %d actions", len(kubeClientActions))
+				}
+
+				action := kubeClientActions[0]
+				validateGetNodeAction(t, action, "n2")
+			},
+		},
+	}
+
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			// We only expect a single event.
+			eventRecorder := events.NewInMemoryRecorder("test-cluster-machine-deletion-hooks-controller")
+
+			machineIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+			for _, initialObj := range scenario.initialObjectsForMachineLister {
+				machineIndexer.Add(initialObj)
+			}
+			machineLister := machinelistersv1beta1.NewMachineLister(machineIndexer)
+
+			podIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+			for _, initialObj := range scenario.initialObjectsForPodLister {
+				podIndexer.Add(initialObj)
+			}
+			podLister := corelistersv1.NewPodLister(podIndexer)
+
+			fakeKubeClient := kubefakeclient.NewSimpleClientset(append(scenario.initialObjectsForPodLister, scenario.initialObjectsForKubeClient...)...)
+
+			machineSelector, err := labels.Parse("machine.openshift.io/cluster-api-machine-role=master")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// act
+			target := machineDeletionHooksController{
+				masterMachineSelector:              machineSelector,
+				masterMachineLister:                machineLister,
+				kubeClient:                         fakeKubeClient,
+				podListerForOpenShiftEtcdNamespace: podLister.Pods(""),
+			}
+
+			err = target.attemptToDeleteQuorumGuard(context.TODO(), eventRecorder)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := validateActionsVerbs(fakeKubeClient.Actions(), scenario.expectedKubeClientActions); err != nil {
+				t.Fatalf("[%s] incorrect actions from the fake kube client: %v", scenario.name, err)
+			}
+			if scenario.validateFunc != nil {
+				scenario.validateFunc(t, fakeKubeClient.Actions())
+			}
+
+			receivedEvents := []string{}
+			for _, ev := range eventRecorder.Events() {
+				receivedEvents = append(receivedEvents, ev.Reason)
+			}
+
+			if len(scenario.expectedEvents) > 0 && !reflect.DeepEqual(receivedEvents, scenario.expectedEvents) {
+				t.Fatalf("expected events %v, got events %v", scenario.expectedEvents, receivedEvents)
+			}
+			if len(scenario.expectedEvents) == 0 && len(receivedEvents) > 0 {
+				t.Fatalf("unexpected events: %v", receivedEvents)
+			}
+		})
+	}
+}
+
 func machineFor(name, internalIP string) *machinev1beta1.Machine {
 	return &machinev1beta1.Machine{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"machine.openshift.io/cluster-api-machine-role": "master"}},
@@ -498,6 +749,42 @@ func machineWithHooksFor(name, internalIP string) *machinev1beta1.Machine {
 func addHook(m *machinev1beta1.Machine) *machinev1beta1.Machine {
 	m.Spec.LifecycleHooks.PreDrain = append(m.Spec.LifecycleHooks.PreDrain, machinev1beta1.LifecycleHook{Name: "EtcdQuorumOperator", Owner: "clusteroperator/etcd"})
 	return m
+}
+
+func setDeletionTimestamp(m *machinev1beta1.Machine) *machinev1beta1.Machine {
+	now := metav1.Now()
+	m.DeletionTimestamp = &now
+
+	return m
+}
+
+func addNode(m *machinev1beta1.Machine, nodeName string) *machinev1beta1.Machine {
+	m.Status.NodeRef = &corev1.ObjectReference{
+		Name: nodeName,
+	}
+
+	return m
+}
+
+func guardPodForNode(name string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("guard-%s", name), Namespace: "test", Labels: map[string]string{"app": "guard"}},
+		Spec: corev1.PodSpec{
+			NodeName: name,
+		},
+	}
+}
+
+func nodeFor(name string) *corev1.Node {
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+	}
+}
+
+func cordonNode(n *corev1.Node) *corev1.Node {
+	n.Spec.Unschedulable = true
+
+	return n
 }
 
 func wellKnownMasterMachines() []runtime.Object {
@@ -550,6 +837,32 @@ func actionStrings(actions []clientgotesting.Action) []string {
 		res = append(res, actionString(a))
 	}
 	return res
+}
+
+func validateGetNodeAction(t *testing.T, action clientgotesting.Action, nodeName string) {
+	if !action.Matches("get", "nodes") {
+		t.Fatalf("expected action to match get:nodes:, got %s", actionString(action))
+	}
+
+	getAction := action.(clientgotesting.GetAction)
+	if getAction.GetName() != nodeName {
+		t.Fatalf("expected get action to get %q, get action got %q", nodeName, getAction.GetName())
+	}
+}
+
+func validateDeletePodAction(t *testing.T, action clientgotesting.Action, podName string) {
+	if !action.Matches("delete", "pods") {
+		t.Fatalf("expected action to match delete:pods:test, got: %s", actionString(action))
+	}
+
+	deleteAction := action.(clientgotesting.DeleteAction)
+	if deleteAction.GetName() != podName {
+		t.Fatalf("expected delete action to delete %q, delete action deleted %q", podName, deleteAction.GetName())
+	}
+
+	if deleteAction.GetNamespace() != "test" {
+		t.Fatalf("expected delete action to delete pod in namespace \"test\", delete action deleted pod in namespace %q", deleteAction.GetNamespace())
+	}
 }
 
 func hasMachineDeletionHook(machine *machinev1beta1.Machine) bool {
