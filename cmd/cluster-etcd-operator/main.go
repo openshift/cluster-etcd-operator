@@ -27,6 +27,8 @@ import (
 	"k8s.io/component-base/logs"
 )
 
+// random change
+
 func main() {
 	// overwrite gRPC logger, to discard all gRPC info-level logging
 	// https://github.com/kubernetes/kubernetes/issues/80741
