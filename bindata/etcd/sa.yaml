@@ -2,4 +2,4 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   namespace: openshift-etcd
-  name: etcd-sa
+  name: system:serviceaccount:openshift-etcd:etcd-sa

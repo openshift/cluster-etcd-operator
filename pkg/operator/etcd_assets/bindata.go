@@ -1132,7 +1132,7 @@ var _etcdSaYaml = []byte(`apiVersion: v1
 kind: ServiceAccount
 metadata:
   namespace: openshift-etcd
-  name: etcd-sa
+  name: system:serviceaccount:openshift-etcd:etcd-sa
 `)
 
 func etcdSaYamlBytes() ([]byte, error) {

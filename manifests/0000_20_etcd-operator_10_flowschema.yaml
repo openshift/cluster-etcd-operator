@@ -14,16 +14,16 @@ spec:
   rules:
   - resourceRules:
     - apiGroups:
-      - '*'
+      - apiGrousValue
       clusterScope: true
       namespaces:
-      - '*'
+      - openshift-etcd-operator
       resources:
-      - '*'
+      - resourcesValue
       verbs:
-      - '*'
+      - verbValue
     subjects:
     - kind: ServiceAccount
       serviceAccount:
-        name: etcd-operator
-        namespace: openshift-etcd-operator
+        namespace: etcd-operator
+        name: system:serviceaccount:openshift-etcd-operator:etcd-operator

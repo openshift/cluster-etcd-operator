@@ -11,4 +11,4 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   namespace: openshift-etcd-operator
-  name: etcd-operator
+  name: system:serviceaccount:openshift-etcd-operator:etcd-operator
