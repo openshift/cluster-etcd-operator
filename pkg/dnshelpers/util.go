@@ -3,6 +3,7 @@ package dnshelpers
 import (
 	"fmt"
 	"net"
+	"net/url"
 
 	configv1 "github.com/openshift/api/config/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -129,4 +130,18 @@ func GetInternalIPAddressesForNodeName(node *corev1.Node) ([]string, error) {
 	}
 
 	return addresses, nil
+}
+
+// GetIPFromAddress takes a client or peer address and returns the IP address (unescaped if IPv6).
+func GetIPFromAddress(address string) (string, error) {
+	u, err := url.Parse(address)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse address: %s: %w", address, err)
+	}
+	host, _, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		return "", fmt.Errorf("failed to split host port: %s: %w", u.Host, err)
+	}
+
+	return host, nil
 }

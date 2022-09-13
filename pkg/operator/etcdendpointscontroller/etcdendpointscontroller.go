@@ -2,7 +2,6 @@ package etcdendpointscontroller
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"time"
 
@@ -15,11 +14,12 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
@@ -34,6 +34,7 @@ type EtcdEndpointsController struct {
 	nodeLister      corev1listers.NodeLister
 	configmapLister corev1listers.ConfigMapLister
 	configmapClient corev1client.ConfigMapsGetter
+	quorumChecker   ceohelpers.QuorumChecker
 }
 
 func NewEtcdEndpointsController(
@@ -42,6 +43,7 @@ func NewEtcdEndpointsController(
 	eventRecorder events.Recorder,
 	kubeClient kubernetes.Interface,
 	kubeInformers operatorv1helpers.KubeInformersForNamespaces,
+	quorumChecker ceohelpers.QuorumChecker,
 ) factory.Controller {
 	nodeInformer := kubeInformers.InformersFor("").Core().V1().Nodes()
 
@@ -51,6 +53,7 @@ func NewEtcdEndpointsController(
 		nodeLister:      nodeInformer.Lister(),
 		configmapLister: kubeInformers.ConfigMapLister(),
 		configmapClient: kubeClient.CoreV1(),
+		quorumChecker:   quorumChecker,
 	}
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
 		operatorClient.Informer(),
@@ -87,26 +90,18 @@ func (c *EtcdEndpointsController) sync(ctx context.Context, syncCtx factory.Sync
 }
 
 func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder events.Recorder) error {
-	bootstrapComplete, err := ceohelpers.IsBootstrapComplete(c.configmapLister, c.operatorClient)
-	if err != nil {
-		return fmt.Errorf("couldn't determine bootstrap status: %w", err)
-	}
-
 	required := configMapAsset()
-
 	// If the bootstrap IP is present on the existing configmap, either copy it
 	// forward or remove it if possible so clients can forget about it.
 	if existing, err := c.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints"); err == nil && existing != nil {
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		memberHealth, err := c.etcdClient.MemberHealth(ctx)
-		if err != nil {
-			return fmt.Errorf("could not get member health: %w", err)
-		}
-
 		if existingIP, hasExistingIP := existing.Annotations[etcdcli.BootstrapIPAnnotationKey]; hasExistingIP {
-			if bootstrapComplete && etcdcli.IsQuorumFaultTolerant(memberHealth) {
-				// remove the annotation
+			bootstrapComplete, err := ceohelpers.IsBootstrapComplete(c.configmapLister, c.operatorClient)
+			if err != nil {
+				return fmt.Errorf("couldn't determine bootstrap status: %w", err)
+			}
+
+			if bootstrapComplete {
+				// rename the annotation once we're done with bootstrapping
 				required.Annotations[etcdcli.BootstrapIPAnnotationKey+"-"] = existingIP
 			} else {
 				required.Annotations[etcdcli.BootstrapIPAnnotationKey] = existingIP
@@ -116,31 +111,38 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 		klog.Warningf("required configmap %s/%s will be created because it was missing: %w", operatorclient.TargetNamespace, "etcd-endpoints", err)
 	}
 
-	// create endpoint addresses for each node
-	nodes, err := c.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
+	members, err := c.etcdClient.MemberList(ctx)
 	if err != nil {
-		return fmt.Errorf("unable to list expected etcd member nodes: %v", err)
+		return fmt.Errorf("failed to get member list: %w", err)
 	}
-	endpointAddresses := map[string]string{}
-	for _, node := range nodes {
-		var nodeInternalIP string
-		for _, nodeAddress := range node.Status.Addresses {
-			if nodeAddress.Type == corev1.NodeInternalIP {
-				nodeInternalIP = nodeAddress.Address
-				break
-			}
+
+	endpointAddresses := make(map[string]string, len(members))
+	// Create endpoint addresses for each member of the cluster.
+	for _, member := range members {
+		if member.Name == "etcd-bootstrap" {
+			continue
 		}
-		if len(nodeInternalIP) == 0 {
-			return fmt.Errorf("unable to determine internal ip address for node %s", node.Name)
+		// Use of PeerURL is expected here because it is a mandatory field, and it will mirror ClientURL.
+		ip, err := dnshelpers.GetIPFromAddress(member.PeerURLs[0])
+		if err != nil {
+			return err
 		}
-		endpointAddresses[base64.StdEncoding.WithPadding(base64.NoPadding).EncodeToString([]byte(nodeInternalIP))] = nodeInternalIP
+		endpointAddresses[fmt.Sprintf("%x", member.ID)] = ip
 	}
 
 	if len(endpointAddresses) == 0 {
-		return fmt.Errorf("no master nodes are present")
+		return fmt.Errorf("no etcd members are present")
 	}
 
 	required.Data = endpointAddresses
+
+	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
+	if err != nil {
+		return fmt.Errorf("EtcdEndpointsController can't evaluate whether quorum is safe: %w", err)
+	}
+	if !safe {
+		return fmt.Errorf("skipping EtcdEndpointsController reconciliation due to insufficient quorum")
+	}
 
 	// Apply endpoint updates
 	if _, _, err := resourceapply.ApplyConfigMap(ctx, c.configmapClient, recorder, required); err != nil {

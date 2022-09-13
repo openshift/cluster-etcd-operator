@@ -88,7 +88,7 @@ func getEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
 	return ret, nil
 }
 
-func getFixedEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
+func getFixedEtcdEnvVars(_ envVarContext) (map[string]string, error) {
 	return FixedEtcdEnvVars, nil
 }
 
@@ -255,13 +255,13 @@ func envVarSafe(nodeName string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(nodeName, "-", "_"), ".", "_")
 }
 
-func getUnsupportedArch(envVarContext envVarContext) (map[string]string, error) {
+func getUnsupportedArch(_ envVarContext) (map[string]string, error) {
 	arch := runtime.GOARCH
 	switch arch {
 	case "arm64":
 	case "s390x":
 	default:
-		// dont set unless it is defined.
+		// don't set unless it is defined.
 		return nil, nil
 	}
 	return map[string]string{
