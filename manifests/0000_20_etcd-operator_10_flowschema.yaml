@@ -25,5 +25,5 @@ spec:
     subjects:
     - kind: ServiceAccount
       serviceAccount:
-        namespace: etcd-operator
+        namespace: openshift-etcd-operator
         name: system:serviceaccount:openshift-etcd-operator:etcd-operator
