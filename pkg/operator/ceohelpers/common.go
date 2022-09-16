@@ -88,6 +88,17 @@ func FilterMachinesWithMachineDeletionHook(machines []*machinev1beta1.Machine) [
 	return filteredMachines
 }
 
+// FilterMachinesWithoutMachineDeletionHook a convenience function for filtering only machines without the machine deletion hook present
+func FilterMachinesWithoutMachineDeletionHook(machines []*machinev1beta1.Machine) []*machinev1beta1.Machine {
+	var filteredMachines []*machinev1beta1.Machine
+	for _, machine := range machines {
+		if !HasMachineDeletionHook(machine) {
+			filteredMachines = append(filteredMachines, machine)
+		}
+	}
+	return filteredMachines
+}
+
 // FilterMachinesPendingDeletion a convenience function for filtering machines pending deletion
 func FilterMachinesPendingDeletion(machines []*machinev1beta1.Machine) []*machinev1beta1.Machine {
 	var filteredMachines []*machinev1beta1.Machine

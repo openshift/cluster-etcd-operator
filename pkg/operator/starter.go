@@ -334,6 +334,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorClient,
 		machineClient,
 		etcdClient,
+		kubeClient,
 		machineAPI,
 		masterMachineLabelSelector,
 		kubeInformersForNamespaces,
