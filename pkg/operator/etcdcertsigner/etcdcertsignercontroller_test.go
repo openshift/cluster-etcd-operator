@@ -5,6 +5,14 @@ import (
 	"fmt"
 	"testing"
 
+	configv1 "github.com/openshift/api/config/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/library-go/pkg/controller/factory"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -15,11 +23,14 @@ import (
 	clientgotesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 
+	"github.com/openshift/library-go/pkg/crypto"
+	"github.com/openshift/library-go/pkg/operator/events"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
-	"github.com/openshift/library-go/pkg/crypto"
-	"github.com/openshift/library-go/pkg/operator/events"
 )
 
 func TestCheckCertValidity(t *testing.T) {
@@ -198,6 +209,24 @@ func TestEnsureCertForNode(t *testing.T) {
 	}
 }
 
+func TestSyncSkipsOnInsufficientQuorum(t *testing.T) {
+	_, controller, recorder := setupController(t, []runtime.Object{})
+
+	err := controller.sync(context.TODO(), factory.NewSyncContext("test", recorder))
+	require.NoError(t, err)
+
+	etcdMembers := []*etcdserverpb.Member{
+		u.FakeEtcdMemberWithoutServer(0),
+		u.FakeEtcdMemberWithoutServer(1),
+	}
+	_, controller, recorder = setupControllerWithEtcd(t, []runtime.Object{
+		u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
+	}, etcdMembers)
+	err = controller.sync(context.TODO(), factory.NewSyncContext("test", recorder))
+	assert.Equal(t, "EtcdCertSignerController can't evaluate whether quorum is safe: etcd cluster has quorum of 2 which is not fault tolerant: [{Member:name:\"etcd-0\" peerURLs:\"https://10.0.0.1:2380\" clientURLs:\"https://10.0.0.1:2907\"  Healthy:true Took: Error:<nil>} {Member:ID:1 name:\"etcd-1\" peerURLs:\"https://10.0.0.2:2380\" clientURLs:\"https://10.0.0.2:2907\"  Healthy:true Took: Error:<nil>}]",
+		err.Error())
+}
+
 // Validate that a successful test run will result in a secret per
 // cert type per node and an aggregated secret per cert type.
 func TestSyncAllMasters(t *testing.T) {
@@ -258,8 +287,17 @@ func checkCertPairSecret(t *testing.T, secretName, certName, keyName string, sec
 	}
 }
 
-// setupController configures EtcdCertSignerController for testing.
 func setupController(t *testing.T, objects []runtime.Object) (*fake.Clientset, *EtcdCertSignerController, events.Recorder) {
+	etcdMembers := []*etcdserverpb.Member{
+		u.FakeEtcdMemberWithoutServer(0),
+		u.FakeEtcdMemberWithoutServer(1),
+		u.FakeEtcdMemberWithoutServer(2),
+	}
+	return setupControllerWithEtcd(t, objects, etcdMembers)
+}
+
+// setupController configures EtcdCertSignerController for testing with etcd members.
+func setupControllerWithEtcd(t *testing.T, objects []runtime.Object, etcdMembers []*etcdserverpb.Member) (*fake.Clientset, *EtcdCertSignerController, events.Recorder) {
 	// Add nodes and CAs
 	objects = append(objects,
 		u.FakeNode("master-0", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1")),
@@ -281,16 +319,57 @@ func setupController(t *testing.T, objects []runtime.Object) (*fake.Clientset, *
 		cache.MetaNamespaceKeyFunc,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
 	)
+
+	objects = append(objects,
+		&corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: operatorclient.TargetNamespace},
+		},
+		&configv1.Infrastructure{
+			TypeMeta: metav1.TypeMeta{},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: ceohelpers.InfrastructureClusterName,
+			},
+			Status: configv1.InfrastructureStatus{
+				ControlPlaneTopology: configv1.HighlyAvailableTopologyMode},
+		})
 	for _, obj := range objects {
-		if err := indexer.Add(obj); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, indexer.Add(obj))
 	}
+	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+		&operatorv1.StaticPodOperatorSpec{
+			OperatorSpec: operatorv1.OperatorSpec{
+				ManagementState: operatorv1.Managed,
+			},
+		},
+		u.StaticPodOperatorStatus(
+			u.WithLatestRevision(3),
+			u.WithNodeStatusAtCurrentRevision(3),
+			u.WithNodeStatusAtCurrentRevision(3),
+			u.WithNodeStatusAtCurrentRevision(3),
+		),
+		nil,
+		nil,
+	)
+
+	fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(etcdMembers)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	quorumChecker := ceohelpers.NewQuorumChecker(
+		corev1listers.NewConfigMapLister(indexer),
+		corev1listers.NewNamespaceLister(indexer),
+		configv1listers.NewInfrastructureLister(indexer),
+		fakeOperatorClient,
+		fakeEtcdClient)
+
 	controller := &EtcdCertSignerController{
-		kubeClient:   fakeKubeClient,
-		nodeLister:   corev1listers.NewNodeLister(indexer),
-		secretLister: corev1listers.NewSecretLister(indexer),
-		secretClient: fakeKubeClient.CoreV1(),
+		kubeClient:     fakeKubeClient,
+		operatorClient: fakeOperatorClient,
+		nodeLister:     corev1listers.NewNodeLister(indexer),
+		secretLister:   corev1listers.NewSecretLister(indexer),
+		secretClient:   fakeKubeClient.CoreV1(),
+		quorumChecker:  quorumChecker,
 	}
 	recorder := events.NewRecorder(
 		fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),
