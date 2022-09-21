@@ -5,6 +5,21 @@
         name: 'openshift-etcd.rules',
         rules: [
           {
+            alert: 'etcdGRPCRequestsSlow',
+            expr: |||
+              histogram_quantile(0.99, sum(rate(grpc_server_handling_seconds_bucket{job="etcd", grpc_method!="Defragment", grpc_type="unary"}[10m])) without(grpc_type))
+              > 1
+            |||,
+            'for': '30m',
+            labels: {
+              severity: 'critical',
+            },
+            annotations: {
+              description: 'etcd cluster "{{ $labels.job }}": 99th percentile of gRPC requests is {{ $value }}s on etcd instance {{ $labels.instance }} for {{ $labels.grpc_method }} method.',
+              summary: 'etcd grpc requests are slow',
+            },
+          },
+          {
             alert: 'etcdHighNumberOfFailedGRPCRequests',
             expr: |||
               (sum(rate(grpc_server_handled_total{job="etcd", grpc_code=~"Unknown|FailedPrecondition|ResourceExhausted|Internal|Unavailable|DataLoss|DeadlineExceeded"}[5m])) without (grpc_type, grpc_code)
