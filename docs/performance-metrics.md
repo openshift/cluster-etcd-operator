@@ -63,13 +63,13 @@ etcd is extremely sensitive to high latency disk latency. etcd utilizes the disk
 
 From etcd, you can look at the 99th percentile of the WAL append with:
 
-> histogram_quantile(0.99, irate(etcd_disk_wal_fsync_duration_seconds_bucket{job="etcd"}[5m]) by (instance, le))
+> histogram_quantile(0.99, irate(etcd_disk_wal_fsync_duration_seconds_bucket{job="etcd"}[5m]))
 
 To ensure the best performance, this metric should not exceed 10ms. It's thus incredibly important to run OpenShift etcd on SSD or better NVME drives that offer less than a 1ms.
 
 The backend disk commit can be tracked on 99th percentile with: 
 
-> histogram_quantile(0.99, irate(etcd_disk_backend_commit_duration_seconds_bucket{job="etcd"}[5m]) by (instance, le))
+> histogram_quantile(0.99, irate(etcd_disk_backend_commit_duration_seconds_bucket{job="etcd"}[5m]))
 
 This is used primarily to continuously write the snapshots and rotate old WAL files. High latencies here indicate faulty disk or bandwidth starvation issues (both on read and write).
 
@@ -102,4 +102,3 @@ Couple layers up top, you can check the reliability of GRPC. Most commonly you w
 / sum(irate(grpc_server_handled_total{job=~".*etcd.*"}[5m])) without (grpc_type, grpc_code)) > 0 
 
 This gives you a percentage (0-100) of failures that helps to track down what instance and what grpc_method was involved. Keep in mind that some methods (like Defragment, Snapshot or Compact) usually take longer than the more common Txn or Range requests. 
-
