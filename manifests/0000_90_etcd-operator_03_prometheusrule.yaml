@@ -37,17 +37,6 @@ spec:
       for: 1m
       labels:
         severity: critical
-    - alert: etcdGRPCRequestsSlow
-      annotations:
-        description: 'etcd cluster "{{ $labels.job }}": 99th percentile of gRPC requests is {{ $value }}s on etcd instance {{ $labels.instance }} for {{ $labels.grpc_method }} method.'
-        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdGRPCRequestsSlow.md
-        summary: etcd grpc requests are slow
-      expr: |
-        histogram_quantile(0.99, sum(rate(grpc_server_handling_seconds_bucket{job=~".*etcd.*", grpc_method!="Defragment", grpc_type="unary"}[5m])) without(grpc_type))
-        > 0.15
-      for: 10m
-      labels:
-        severity: critical
     - alert: etcdMemberCommunicationSlow
       annotations:
         description: 'etcd cluster "{{ $labels.job }}": member communication with {{ $labels.To }} is taking {{ $value }}s on etcd instance {{ $labels.instance }}.'
@@ -129,6 +118,17 @@ spec:
         severity: warning
   - name: openshift-etcd.rules
     rules:
+    - alert: etcdGRPCRequestsSlow
+      annotations:
+        description: 'etcd cluster "{{ $labels.job }}": 99th percentile of gRPC requests is {{ $value }}s on etcd instance {{ $labels.instance }} for {{ $labels.grpc_method }} method.'
+        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdGRPCRequestsSlow.md
+        summary: etcd grpc requests are slow
+      expr: |
+        histogram_quantile(0.99, sum(rate(grpc_server_handling_seconds_bucket{job="etcd", grpc_method!="Defragment", grpc_type="unary"}[10m])) without(grpc_type))
+        > 1
+      for: 30m
+      labels:
+        severity: critical
     - alert: etcdHighNumberOfFailedGRPCRequests
       annotations:
         description: 'etcd cluster "{{ $labels.job }}": {{ $value }}% of requests for {{ $labels.grpc_method }} failed on etcd instance {{ $labels.instance }}.'
