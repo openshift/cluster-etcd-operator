@@ -82,22 +82,7 @@ func createNewCombinedClientAndServingCerts(caCert, caKey []byte, podFQDN, org s
 		// TODO: Extended Key Usage:
 		// All profiles expect a x509.ExtKeyUsageCodeSigning set on extended Key Usages
 		// need to investigage: https://github.com/etcd-io/etcd/issues/9398#issuecomment-435340312
-		// TODO: Change serial number logic, to something as follows.
-		// The following is taken from CFSSL library.
-		// If CFSSL is providing the serial numbers, it makes
-		// sense to use the max supported size.
 
-		//	serialNumber := make([]byte, 20)
-		//	_, err = io.ReadFull(rand.Reader, serialNumber)
-		//	if err != nil {
-		//		return err
-		//	}
-		//
-		//	// SetBytes interprets buf as the bytes of a big-endian
-		//	// unsigned integer. The leading byte should be masked
-		//	// off to ensure it isn't negative.
-		//	serialNumber[0] &= 0x7F
-		//	cert.SerialNumber = new(big.Int).SetBytes(serialNumber)
 		return nil
 	})
 	if err != nil {
