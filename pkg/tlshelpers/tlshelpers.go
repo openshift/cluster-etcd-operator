@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -68,18 +67,12 @@ func CreateMetricCertKey(caCert, caKey []byte, nodeInternalIPs []string) (*bytes
 }
 
 func createNewCombinedClientAndServingCerts(caCert, caKey []byte, podFQDN, org string, hostNames []string) (*bytes.Buffer, *bytes.Buffer, error) {
-	cn, err := getCommonNameFromOrg(org)
 	etcdCAKeyPair, err := crypto.GetCAFromBytes(caCert, caKey)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	certConfig, err := etcdCAKeyPair.MakeServerCertForDuration(sets.NewString(hostNames...), etcdCertValidity, func(cert *x509.Certificate) error {
-
-		cert.Issuer = pkix.Name{
-			OrganizationalUnit: []string{"openshift"},
-			CommonName:         cn,
-		}
 		cert.Subject = pkix.Name{
 			Organization: []string{org},
 			CommonName:   strings.TrimSuffix(org, "s") + ":" + podFQDN,
@@ -123,16 +116,6 @@ func createNewCombinedClientAndServingCerts(caCert, caKey []byte, podFQDN, org s
 		return nil, nil, err
 	}
 	return certBytes, keyBytes, nil
-}
-
-func getCommonNameFromOrg(org string) (string, error) {
-	if strings.Contains(org, "peer") || strings.Contains(org, "server") {
-		return "etcd-signer", nil
-	}
-	if strings.Contains(org, "metric") {
-		return "etcd-metric-signer", nil
-	}
-	return "", errors.New("unable to recognise secret name")
 }
 
 func SupportedEtcdCiphers(cipherSuites []string) []string {
