@@ -178,18 +178,41 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 	if err != nil {
 		return fmt.Errorf("could not get a list of unhealthy members: %v", err)
 	}
+
+	// map machines pending deletion to node internal ip
+	votingMachinesPendingDeletionIndex := ceohelpers.IndexMachinesByNodeInternalIP(votingMachinesPendingDeletion)
+	// find unhealthy machine pending deletion to remove first from the cluster, without violating quorum
+	var unhealthyMachinePendingDeletion []*machinev1beta1.Machine
 	if len(unhealthyMembers) > 0 {
 		var unhealthyMembersURLs []string
 		for _, unhealthyMember := range unhealthyMembers {
+			unhealthyMemberNodeInternalIP, err := ceohelpers.MemberToNodeInternalIP(unhealthyMember)
+			if err != nil {
+				return fmt.Errorf("cannot get node internal ip for unhealthy member %v: %w", unhealthyMember, err)
+			}
+			unhealthyMemberMachine, ok := votingMachinesPendingDeletionIndex[unhealthyMemberNodeInternalIP]
+			if ok {
+				unhealthyMachinePendingDeletion = append(unhealthyMachinePendingDeletion, unhealthyMemberMachine)
+			}
 			if len(unhealthyMember.PeerURLs) > 0 {
 				unhealthyMembersURLs = append(unhealthyMembersURLs, unhealthyMember.PeerURLs[0])
 			} else {
 				unhealthyMembersURLs = append(unhealthyMembersURLs, unhealthyMember.Name)
 			}
 		}
-		return fmt.Errorf("cannot proceed wth scaling down, unhealthy members found: %v", unhealthyMembersURLs)
+		if len(unhealthyMachinePendingDeletion) > 0 {
+			klog.V(4).Infof("found unhealthy voting members with machine pending deletion: %v", unhealthyMachinePendingDeletion)
+			klog.V(4).Infof("unhealthy members found: %v", unhealthyMembersURLs)
+		} else {
+			return fmt.Errorf("cannot proceed with scaling down, unhealthy members found: %v", unhealthyMembersURLs)
+		}
 	}
 
+	// remove the unhealthy machine pending deletion first
+	// if no unhealthy machine pending deletion found, then attempt to scale down the healthy machines pending deletion
+	if len(unhealthyMachinePendingDeletion) > 0 {
+		votingMachinesPendingDeletion = append(unhealthyMachinePendingDeletion, votingMachinesPendingDeletion...)
+	}
 	var allErrs []error
 	for _, votingMachinePendingDeletion := range votingMachinesPendingDeletion {
 		removed, errs := c.attemptToRemoveMemberFor(ctx, liveVotingMembers, votingMachinePendingDeletion, recorder)
