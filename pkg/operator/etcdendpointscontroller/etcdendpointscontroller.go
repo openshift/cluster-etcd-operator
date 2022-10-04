@@ -93,6 +93,7 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 	// If the bootstrap IP is present on the existing configmap, either copy it
 	// forward or remove it if possible so clients can forget about it.
 	if existing, err := c.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints"); err == nil && existing != nil {
+		klog.Warningf("existing configmap: %v", existing)
 		if existingIP, hasExistingIP := existing.Annotations[etcdcli.BootstrapIPAnnotationKey]; hasExistingIP {
 			bootstrapComplete, err := ceohelpers.IsBootstrapComplete(c.configmapLister, c.operatorClient)
 			if err != nil {
@@ -141,6 +142,8 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 	}
 
 	required.Data = endpointAddresses
+
+	klog.Warningf("compiled configmap: %v", required)
 
 	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
 	if err != nil {
