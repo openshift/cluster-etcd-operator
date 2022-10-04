@@ -47,7 +47,7 @@ func ToServerConfig(ctx context.Context, servingInfo configv1.HTTPServingInfo, a
 		err := wait.PollImmediateUntil(1*time.Second, func() (done bool, err error) {
 			lastApplyErr = authenticationOptions.ApplyTo(&config.Authentication, config.SecureServing, config.OpenAPIConfig)
 			if lastApplyErr != nil {
-				klog.V(4).Infof("Error initializing delegating authentication (will retry): %v", err)
+				klog.V(4).Infof("Error initializing delegating authentication (will retry): %v", lastApplyErr)
 				return false, nil
 			}
 			return true, nil
