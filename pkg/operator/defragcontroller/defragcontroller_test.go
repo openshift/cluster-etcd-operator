@@ -153,7 +153,7 @@ func TestNewDefragController(t *testing.T) {
 			// populate Status
 			var status []*clientv3.StatusResponse
 			for _, member := range testServer.Members {
-				statusResp, err := testServer.Client(0).Status(context.TODO(), member.GRPCAddr())
+				statusResp, err := testServer.Client(0).Status(context.TODO(), member.GRPCURL())
 				require.NoError(t, err)
 				statusResp.DbSizeInUse = scenario.dbInUse
 				statusResp.DbSize = scenario.dbSize
@@ -305,7 +305,7 @@ func TestNewDefragControllerMultiSyncs(t *testing.T) {
 			// populate Status
 			var status []*clientv3.StatusResponse
 			for _, member := range testServer.Members {
-				statusResp, err := testServer.Client(0).Status(context.TODO(), member.GRPCAddr())
+				statusResp, err := testServer.Client(0).Status(context.TODO(), member.GRPCURL())
 				require.NoError(t, err)
 				statusResp.DbSizeInUse = scenario.dbInUse
 				statusResp.DbSize = scenario.dbSize

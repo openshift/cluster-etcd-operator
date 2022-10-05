@@ -439,6 +439,7 @@ go.etcd.io/etcd/pkg/v3/cpuutil
 go.etcd.io/etcd/pkg/v3/crc
 go.etcd.io/etcd/pkg/v3/debugutil
 go.etcd.io/etcd/pkg/v3/flags
+go.etcd.io/etcd/pkg/v3/grpc_testing
 go.etcd.io/etcd/pkg/v3/httputil
 go.etcd.io/etcd/pkg/v3/idutil
 go.etcd.io/etcd/pkg/v3/ioutil
@@ -499,7 +500,7 @@ go.etcd.io/etcd/server/v3/proxy/grpcproxy/cache
 go.etcd.io/etcd/server/v3/verify
 go.etcd.io/etcd/server/v3/wal
 go.etcd.io/etcd/server/v3/wal/walpb
-# go.etcd.io/etcd/tests/v3 v3.5.0
+# go.etcd.io/etcd/tests/v3 v3.5.4
 ## explicit; go 1.16
 go.etcd.io/etcd/tests/v3/integration
 # go.opentelemetry.io/contrib v0.20.0
@@ -705,6 +706,7 @@ google.golang.org/grpc/serviceconfig
 google.golang.org/grpc/stats
 google.golang.org/grpc/status
 google.golang.org/grpc/tap
+google.golang.org/grpc/test/grpc_testing
 # google.golang.org/protobuf v1.28.0
 ## explicit; go 1.11
 google.golang.org/protobuf/encoding/protojson

@@ -84,7 +84,7 @@ func createAndStartEtcdTestServer(t *testing.T, size int) (*integration.ClusterV
 	srvTLS := testTLSInfo
 	integration.BeforeTestExternal(t)
 	etcd := integration.NewClusterV3(t, &integration.ClusterConfig{Size: size, ClientTLS: &srvTLS})
-	targets := fmt.Sprintf("%s,%s,%s", etcd.Members[0].GRPCAddr(), etcd.Members[1].GRPCAddr(), etcd.Members[2].GRPCAddr())
+	targets := fmt.Sprintf("%s,%s,%s", etcd.Members[0].GRPCURL(), etcd.Members[1].GRPCURL(), etcd.Members[2].GRPCURL())
 
 	// populated expected default NS
 	etcd.Client(0).Put(context.Background(), health.DefaultNamespaceKey, "foo")
