@@ -170,13 +170,13 @@ func (c *EtcdCertSignerController) syncAllMasters(ctx context.Context, recorder 
 //
 // Example output:
 //
-// {
-//   "etcd-peer-master-0.crt":    []byte{...},
-//   "etcd-peer-master-0.key":    []byte{...},
-//   "etcd-serving-master-0.crt": []byte{...},
-//   "etcd-serving-master-0.key": []byte{...},
-//   ...
-// }
+//	{
+//	  "etcd-peer-master-0.crt":    []byte{...},
+//	  "etcd-peer-master-0.key":    []byte{...},
+//	  "etcd-serving-master-0.crt": []byte{...},
+//	  "etcd-serving-master-0.key": []byte{...},
+//	  ...
+//	}
 func (c *EtcdCertSignerController) ensureCerts(ctx context.Context, recorder events.Recorder) (map[string][]byte, error) {
 	nodes, err := c.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
 	if err != nil {
