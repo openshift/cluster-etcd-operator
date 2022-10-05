@@ -3,6 +3,7 @@ package ceohelpers
 import (
 	"context"
 	"fmt"
+	"time"
 
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -101,6 +102,7 @@ func GetBootstrapScalingStrategy(staticPodClient v1helpers.StaticPodOperatorClie
 // the etcd cluster based on the scaling strategy in use, and otherwise will return
 // an error explaining why it's unsafe to scale.
 func CheckSafeToScaleCluster(
+	ctx context.Context,
 	configmapLister corev1listers.ConfigMapLister,
 	staticPodClient v1helpers.StaticPodOperatorClient,
 	namespaceLister corev1listers.NamespaceLister,
@@ -146,7 +148,10 @@ func CheckSafeToScaleCluster(
 		return fmt.Errorf("CheckSafeToScaleCluster %d nodes are required, but only %d are available", minimumNodes, nodeCount)
 	}
 
-	memberHealth, err := etcdClient.MemberHealth(context.Background())
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	memberHealth, err := etcdClient.MemberHealth(ctx)
 	if err != nil {
 		return fmt.Errorf("CheckSafeToScaleCluster couldn't determine member health: %w", err)
 	}

@@ -109,7 +109,7 @@ func NewEtcdCertSignerController(
 }
 
 func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
-	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
+	safe, err := c.quorumChecker.IsSafeToUpdateRevision(ctx)
 	if err != nil {
 		return fmt.Errorf("EtcdCertSignerController can't evaluate whether quorum is safe: %w", err)
 	}

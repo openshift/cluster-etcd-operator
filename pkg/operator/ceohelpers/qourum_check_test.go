@@ -1,6 +1,7 @@
 package ceohelpers
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -137,7 +138,7 @@ func TestQuorumCheck_IsSafeToUpdateRevision(t *testing.T) {
 				fakeOperatorClient,
 				fakeEtcdClient)
 
-			safe, err := quorumChecker.IsSafeToUpdateRevision()
+			safe, err := quorumChecker.IsSafeToUpdateRevision(context.Background())
 			assert.Equal(t, scenario.expectedErr, err)
 			assert.Equal(t, scenario.safe, safe)
 		})

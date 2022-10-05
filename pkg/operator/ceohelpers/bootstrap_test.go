@@ -1,6 +1,7 @@
 package ceohelpers
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -369,6 +370,7 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			}
 
 			actualErr := CheckSafeToScaleCluster(
+				context.Background(),
 				fakeConfigMapLister,
 				fakeStaticPodClient,
 				fakeNamespaceMapLister,
