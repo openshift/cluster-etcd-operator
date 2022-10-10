@@ -406,6 +406,7 @@ func (o *InstallOptions) substituteSecret(obj *corev1.Secret) *corev1.Secret {
 func (o *InstallOptions) Run(ctx context.Context) error {
 	var eventTarget *corev1.ObjectReference
 
+	klog.Infof("Getting controller reference for node %s", o.NodeName)
 	err := retry.RetryOnConnectionErrors(ctx, func(context.Context) (bool, error) {
 		var clientErr error
 		eventTarget, clientErr = events.GetControllerReferenceForCurrentPod(ctx, o.KubeClient, o.Namespace, nil)
@@ -418,10 +419,12 @@ func (o *InstallOptions) Run(ctx context.Context) error {
 		klog.Warningf("unable to get owner reference (falling back to namespace): %v", err)
 	}
 
+	klog.Infof("Waiting for installer revisions to settle for node %s", o.NodeName)
 	if err := o.waitForOtherInstallerRevisionsToSettle(ctx); err != nil {
 		return err
 	}
 
+	klog.Infof("Querying kubelet version for node %s", o.NodeName)
 	err = retry.RetryOnConnectionErrors(ctx, func(context.Context) (bool, error) {
 		version, err := o.kubeletVersion(ctx)
 		if err != nil {
@@ -460,6 +463,7 @@ func (o *InstallOptions) waitForOtherInstallerRevisionsToSettle(ctx context.Cont
 	err = wait.PollImmediateWithContext(ctx, 10*time.Second, 60*time.Second, func(ctx context.Context) (done bool, err error) {
 		installerPods, err := o.getInstallerPodsOnThisNode(ctx)
 		if err != nil {
+			klog.Warningf("Error getting installer pods on current node %s: %v", o.NodeName, err)
 			return false, nil
 		}
 		if len(installerPods) == 0 {
@@ -489,11 +493,13 @@ func (o *InstallOptions) waitForOtherInstallerRevisionsToSettle(ctx context.Cont
 			}
 			// wait until we have at least one container status to check
 			if len(pod.Status.ContainerStatuses) == 0 {
+				klog.Infof("Pod container statuses for node %s are empty, waiting", o.NodeName)
 				return false, nil
 			}
 			for _, container := range pod.Status.ContainerStatuses {
 				// if the container isn't terminated, we need this installer pod to wait until it is.
 				if container.State.Terminated == nil {
+					klog.Infof("Pod container: %s state for node %s is not terminated, waiting", container.Name, o.NodeName)
 					return false, nil
 				}
 			}
@@ -505,11 +511,13 @@ func (o *InstallOptions) waitForOtherInstallerRevisionsToSettle(ctx context.Cont
 		return err
 	}
 
+	klog.Infof("Waiting additional period after revisions have settled for node %s", o.NodeName)
 	// once there are no other running revisions, wait Xs.
 	// In an extreme case, this can be grace period seconds+1.  Trying 30s to start. Etcd has been the worst off since
 	// it requires 2 out 3 to be functioning.
 	time.Sleep(30 * time.Second)
 
+	klog.Infof("Getting installer pods for node %s", o.NodeName)
 	installerPods, err := o.getInstallerPodsOnThisNode(ctx)
 	if err != nil {
 		return err
@@ -526,6 +534,8 @@ func (o *InstallOptions) waitForOtherInstallerRevisionsToSettle(ctx context.Cont
 	if latestRevision > currRevision {
 		return fmt.Errorf("more recent revision present on node: thisRevision=%v, moreRecentRevision=%v", currRevision, latestRevision)
 	}
+
+	klog.Infof("Latest installer revision for node %s is: %v", o.NodeName, latestRevision)
 
 	return nil
 }

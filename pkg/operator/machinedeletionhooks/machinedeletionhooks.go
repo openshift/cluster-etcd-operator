@@ -42,8 +42,9 @@ type machineDeletionHooksController struct {
 // NewMachineDeletionHooksController reconciles machine hooks for master machines
 //
 // note:
-//  The Machine Deletion Hook this controller reconciles is a mechanism within the Machine API that allow this operator to hold up removal of a machine
-//  until a replacement member has been promoted to a voting member.
+//
+//	The Machine Deletion Hook this controller reconciles is a mechanism within the Machine API that allow this operator to hold up removal of a machine
+//	until a replacement member has been promoted to a voting member.
 func NewMachineDeletionHooksController(
 	operatorClient operatorv1helpers.OperatorClient,
 	machineClient machinev1beta1client.MachineInterface,
