@@ -182,7 +182,7 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 	// map machines pending deletion to node internal ip
 	votingMachinesPendingDeletionIndex := ceohelpers.IndexMachinesByNodeInternalIP(votingMachinesPendingDeletion)
 	// find unhealthy machine pending deletion to remove first from the cluster, without violating quorum
-	var unhealthyMachinePendingDeletion []*machinev1beta1.Machine
+	var unhealthyMachinesPendingDeletion []*machinev1beta1.Machine
 	if len(unhealthyMembers) > 0 {
 		var unhealthyMembersURLs []string
 		for _, unhealthyMember := range unhealthyMembers {
@@ -192,7 +192,7 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 			}
 			unhealthyMemberMachine, ok := votingMachinesPendingDeletionIndex[unhealthyMemberNodeInternalIP]
 			if ok {
-				unhealthyMachinePendingDeletion = append(unhealthyMachinePendingDeletion, unhealthyMemberMachine)
+				unhealthyMachinesPendingDeletion = append(unhealthyMachinesPendingDeletion, unhealthyMemberMachine)
 			}
 			if len(unhealthyMember.PeerURLs) > 0 {
 				unhealthyMembersURLs = append(unhealthyMembersURLs, unhealthyMember.PeerURLs[0])
@@ -200,8 +200,8 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 				unhealthyMembersURLs = append(unhealthyMembersURLs, unhealthyMember.Name)
 			}
 		}
-		if len(unhealthyMachinePendingDeletion) > 0 {
-			klog.V(4).Infof("found unhealthy voting members with machine pending deletion: %v", unhealthyMachinePendingDeletion)
+		if len(unhealthyMachinesPendingDeletion) > 0 {
+			klog.V(4).Infof("found unhealthy voting members with machine pending deletion: %v", unhealthyMachinesPendingDeletion)
 			klog.V(4).Infof("unhealthy members found: %v", unhealthyMembersURLs)
 		} else {
 			return fmt.Errorf("cannot proceed with scaling down, unhealthy members found: %v", unhealthyMembersURLs)
@@ -210,8 +210,8 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 
 	// remove the unhealthy machine pending deletion first
 	// if no unhealthy machine pending deletion found, then attempt to scale down the healthy machines pending deletion
-	if len(unhealthyMachinePendingDeletion) > 0 {
-		votingMachinesPendingDeletion = append(unhealthyMachinePendingDeletion, votingMachinesPendingDeletion...)
+	if len(unhealthyMachinesPendingDeletion) > 0 {
+		votingMachinesPendingDeletion = append(unhealthyMachinesPendingDeletion, votingMachinesPendingDeletion...)
 	}
 	var allErrs []error
 	for _, votingMachinePendingDeletion := range votingMachinesPendingDeletion {
