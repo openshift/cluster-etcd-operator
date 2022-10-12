@@ -40,7 +40,7 @@ While etcd is not a very heavy user of CPU in general, similar to memory, etcd i
 
 This query will give you our most offending candidates (API server, OVN and etcd) in a single chart. 
 
-> sum(node_namespace_pod_container:container_cpu_usage_seconds_total:sum_rate{namespace=~"openshift-etcd|openshift-ovn-kubernetes|openshift-apiserver"}) by (namespace)
+> sum(node_namespace_pod_container:container_cpu_usage_seconds_total:sum_irate{namespace=~"openshift-etcd|openshift-ovn-kubernetes|openshift-apiserver"}) by (namespace)
 
 Especially when dealing with OVN, you might want to drill deeper into what component is using the CPU:
 
