@@ -412,21 +412,19 @@ func (c *clusterMemberRemovalController) attemptToRemoveMemberFor(ctx context.Co
 }
 
 func (c *clusterMemberRemovalController) getHealthyVotingMembers(ctx context.Context) ([]*etcdserverpb.Member, error) {
-	healthyMembers, err := c.etcdClient.HealthyMembers(ctx)
+	members, err := c.etcdClient.HealthyVotingMembers(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to list healthy voting members: %w", err)
 	}
-	healthyLiveVotingMembers := getVotingMembers(healthyMembers)
-	return healthyLiveVotingMembers, nil
+	return members, nil
 }
 
 func (c *clusterMemberRemovalController) getAllVotingMembers(ctx context.Context) ([]*etcdserverpb.Member, error) {
-	allMembers, err := c.etcdClient.MemberList(ctx)
+	members, err := c.etcdClient.VotingMemberList(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to list all voting members: %w", err)
 	}
-	liveVotingMembers := getVotingMembers(allMembers)
-	return liveVotingMembers, nil
+	return members, nil
 }
 
 func hasInternalIP(machine *machinev1beta1.Machine, memberInternalIP string) bool {
@@ -436,15 +434,4 @@ func hasInternalIP(machine *machinev1beta1.Machine, memberInternalIP string) boo
 		}
 	}
 	return false
-}
-
-func getVotingMembers(members []*etcdserverpb.Member) []*etcdserverpb.Member {
-	var votingMembers []*etcdserverpb.Member
-	for _, member := range members {
-		if member.IsLearner {
-			continue
-		}
-		votingMembers = append(votingMembers, member)
-	}
-	return votingMembers
 }

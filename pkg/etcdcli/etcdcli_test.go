@@ -2,6 +2,7 @@ package etcdcli
 
 import (
 	"fmt"
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"testing"
 
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
@@ -103,6 +104,50 @@ func TestEndpointFunc(t *testing.T) {
 
 			require.Equal(t, scenario.expectedError, err)
 			require.Equal(t, scenario.expectedEndpoints, endpoints)
+		})
+	}
+}
+
+func TestFilterVotingMembers(t *testing.T) {
+	scenarios := []struct {
+		name     string
+		input    []*etcdserverpb.Member
+		expected int
+	}{
+		{
+			"all voting members",
+			[]*etcdserverpb.Member{
+				u.FakeEtcdMemberWithoutServer(1),
+				u.FakeEtcdMemberWithoutServer(2),
+				u.FakeEtcdMemberWithoutServer(3),
+			},
+			3,
+		},
+		{
+			"all learner members",
+			[]*etcdserverpb.Member{
+				u.AsLearner(u.FakeEtcdMemberWithoutServer(1)),
+				u.AsLearner(u.FakeEtcdMemberWithoutServer(2)),
+				u.AsLearner(u.FakeEtcdMemberWithoutServer(3)),
+			},
+			0,
+		},
+		{
+			"one learner two voting members",
+			[]*etcdserverpb.Member{
+				u.AsLearner(u.FakeEtcdMemberWithoutServer(1)),
+				u.FakeEtcdMemberWithoutServer(2),
+				u.FakeEtcdMemberWithoutServer(3),
+			},
+			2,
+		},
+	}
+
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			if len(filterVotingMembers(scenario.input)) != scenario.expected {
+				t.Errorf("expected to have %v voting member, but got %v instead", scenario.expected, len(filterVotingMembers(scenario.input)))
+			}
 		})
 	}
 }
