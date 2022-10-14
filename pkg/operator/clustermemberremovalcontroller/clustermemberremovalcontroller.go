@@ -130,43 +130,35 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 		return nil
 	}
 
+	// machines with master role and deletion hook
 	memberMachines, err := ceohelpers.CurrentMemberMachinesWithDeletionHooks(c.masterMachineSelector, c.masterMachineLister)
 	if err != nil {
 		return err
 	}
 
-	var votingMachines []*machinev1beta1.Machine
+	var votingMembersMachines []*machinev1beta1.Machine
 	for memberMachineIP, memberMachine := range ceohelpers.IndexMachinesByNodeInternalIP(memberMachines) {
 		if currentVotingMemberIPListSet.Has(memberMachineIP) {
-			votingMachines = append(votingMachines, memberMachine)
+			votingMembersMachines = append(votingMembersMachines, memberMachine)
 		}
 	}
 
-	votingMachinesPendingDeletion := ceohelpers.FilterMachinesPendingDeletion(votingMachines)
-	if len(votingMachinesPendingDeletion) == 0 {
+	votingMembersMachinesPendingDeletion := ceohelpers.FilterMachinesPendingDeletion(votingMembersMachines)
+	if len(votingMembersMachinesPendingDeletion) == 0 {
 		return nil
 	}
 
-	// based on the data in the cache it looks like we have something to do
-	// get the live members, to observe the current state and the member IDs
-	members, err := c.etcdClient.MemberList(ctx)
+	// do not trust data in the cache, compare with the current state
+	healthyLiveVotingMembers, err := c.getHealthyVotingMembers(ctx)
 	if err != nil {
 		return err
 	}
 
-	var liveVotingMembers []*etcdserverpb.Member
-	for _, member := range members {
-		if member.IsLearner {
-			continue
-		}
-		liveVotingMembers = append(liveVotingMembers, member)
-	}
-
-	// do not trust data in the cache, compare with the current state
-	if len(liveVotingMembers) <= desiredControlPlaneReplicasCount {
-		klog.V(2).Infof("Ignoring scale down since the number of live etcd voting members (%d) < desired number of control-plane replicas (%d) ", len(liveVotingMembers), desiredControlPlaneReplicasCount)
+	// scaling down invariant
+	if len(healthyLiveVotingMembers) < desiredControlPlaneReplicasCount {
+		klog.V(2).Infof("Ignoring scale down since the number of healthy live etcd voting members (%d) < desired number of control-plane replicas (%d) ", len(healthyLiveVotingMembers), desiredControlPlaneReplicasCount)
 		if time.Now().After(c.lastTimeScaleDownEventWasSent.Add(5 * time.Minute)) {
-			recorder.Eventf("ScaleDown", "Ignoring scale down since the number of live etcd voting members (%d) < desired number of control-plane replicas (%d) ", len(liveVotingMembers), desiredControlPlaneReplicasCount)
+			recorder.Eventf("ScaleDown", "Ignoring scale down since the number of healthy live etcd voting members (%d) < desired number of control-plane replicas (%d) ", len(healthyLiveVotingMembers), desiredControlPlaneReplicasCount)
 			c.lastTimeScaleDownEventWasSent = time.Now()
 		}
 		return nil
@@ -178,21 +170,50 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 	if err != nil {
 		return fmt.Errorf("could not get a list of unhealthy members: %v", err)
 	}
+
+	// map machines pending deletion to node internal ip
+	votingMemberMachinesPendingDeletionIndex := ceohelpers.IndexMachinesByNodeInternalIP(votingMembersMachinesPendingDeletion)
+	// find unhealthy machine pending deletion to remove first from the cluster, without violating quorum
+	var unhealthyVotingMemberMachinesPendingDeletion []*machinev1beta1.Machine
 	if len(unhealthyMembers) > 0 {
 		var unhealthyMembersURLs []string
 		for _, unhealthyMember := range unhealthyMembers {
+			unhealthyMemberNodeInternalIP, err := ceohelpers.MemberToNodeInternalIP(unhealthyMember)
+			if err != nil {
+				return fmt.Errorf("cannot get node internal ip for unhealthy member %v: %w", unhealthyMember, err)
+			}
+			unhealthyVotingMemberMachinePendingDeletion, ok := votingMemberMachinesPendingDeletionIndex[unhealthyMemberNodeInternalIP]
+			if ok {
+				unhealthyVotingMemberMachinesPendingDeletion = append(unhealthyVotingMemberMachinesPendingDeletion, unhealthyVotingMemberMachinePendingDeletion)
+			}
 			if len(unhealthyMember.PeerURLs) > 0 {
 				unhealthyMembersURLs = append(unhealthyMembersURLs, unhealthyMember.PeerURLs[0])
 			} else {
 				unhealthyMembersURLs = append(unhealthyMembersURLs, unhealthyMember.Name)
 			}
 		}
-		return fmt.Errorf("cannot proceed wth scaling down, unhealthy members found: %v", unhealthyMembersURLs)
+		if len(unhealthyVotingMemberMachinesPendingDeletion) > 0 {
+			klog.V(4).Infof("found unhealthy voting members with machine pending deletion: %v", unhealthyVotingMemberMachinesPendingDeletion)
+			klog.V(4).Infof("unhealthy members found: %v", unhealthyMembersURLs)
+		} else {
+			return fmt.Errorf("cannot proceed with scaling down, unhealthy voting members found: %v, none are pending deletion", unhealthyMembersURLs)
+		}
+	}
+
+	// remove the unhealthy machine pending deletion first
+	// if no unhealthy machine pending deletion found, then attempt to scale down the healthy machines pending deletion
+	if len(unhealthyVotingMemberMachinesPendingDeletion) > 0 {
+		votingMembersMachinesPendingDeletion = append(unhealthyVotingMemberMachinesPendingDeletion, votingMembersMachinesPendingDeletion...)
+	}
+
+	liveVotingMembers, err := c.getAllVotingMembers(ctx)
+	if err != nil {
+		return err
 	}
 
 	var allErrs []error
-	for _, votingMachinePendingDeletion := range votingMachinesPendingDeletion {
-		removed, errs := c.attemptToRemoveMemberFor(ctx, liveVotingMembers, votingMachinePendingDeletion, recorder)
+	for _, votingMemberMachinePendingDeletion := range votingMembersMachinesPendingDeletion {
+		removed, errs := c.attemptToRemoveMemberFor(ctx, liveVotingMembers, votingMemberMachinePendingDeletion, recorder)
 		if removed {
 			break // we want to remove only one member at a time
 		}
@@ -388,6 +409,22 @@ func (c *clusterMemberRemovalController) attemptToRemoveMemberFor(ctx context.Co
 		}
 	}
 	return removed, errs
+}
+
+func (c *clusterMemberRemovalController) getHealthyVotingMembers(ctx context.Context) ([]*etcdserverpb.Member, error) {
+	members, err := c.etcdClient.HealthyVotingMembers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list healthy voting members: %w", err)
+	}
+	return members, nil
+}
+
+func (c *clusterMemberRemovalController) getAllVotingMembers(ctx context.Context) ([]*etcdserverpb.Member, error) {
+	members, err := c.etcdClient.VotingMemberList(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list all voting members: %w", err)
+	}
+	return members, nil
 }
 
 func hasInternalIP(machine *machinev1beta1.Machine, memberInternalIP string) bool {

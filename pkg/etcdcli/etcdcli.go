@@ -266,6 +266,14 @@ func (g *etcdClientGetter) MemberList(ctx context.Context) ([]*etcdserverpb.Memb
 	return membersResp.Members, nil
 }
 
+func (g *etcdClientGetter) VotingMemberList(ctx context.Context) ([]*etcdserverpb.Member, error) {
+	members, err := g.MemberList(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return filterVotingMembers(members), nil
+}
+
 // Status reports etcd endpoint status of client URL target. Example https://10.0.10.1:2379
 func (g *etcdClientGetter) Status(ctx context.Context, clientURL string) (*clientv3.StatusResponse, error) {
 	cli, err := g.clientPool.Get()
@@ -331,6 +339,14 @@ func (g *etcdClientGetter) UnhealthyMembers(ctx context.Context) ([]*etcdserverp
 	return memberHealth.GetUnhealthyMembers(), nil
 }
 
+func (g *etcdClientGetter) UnhealthyVotingMembers(ctx context.Context) ([]*etcdserverpb.Member, error) {
+	unhealthyMembers, err := g.UnhealthyMembers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return filterVotingMembers(unhealthyMembers), nil
+}
+
 // HealthyMembers performs health check of current members and returns a slice of healthy members and error
 // if no healthy members found.
 func (g *etcdClientGetter) HealthyMembers(ctx context.Context) ([]*etcdserverpb.Member, error) {
@@ -352,6 +368,14 @@ func (g *etcdClientGetter) HealthyMembers(ctx context.Context) ([]*etcdserverpb.
 	}
 
 	return healthyMembers, nil
+}
+
+func (g *etcdClientGetter) HealthyVotingMembers(ctx context.Context) ([]*etcdserverpb.Member, error) {
+	healthyMembers, err := g.HealthyMembers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return filterVotingMembers(healthyMembers), nil
 }
 
 func (g *etcdClientGetter) MemberHealth(ctx context.Context) (memberHealth, error) {
@@ -482,4 +506,16 @@ func endpoints(nodeLister corev1listers.NodeLister,
 
 	sort.Strings(etcdEndpoints)
 	return etcdEndpoints, nil
+}
+
+// filterVotingMembers filters out learner members
+func filterVotingMembers(members []*etcdserverpb.Member) []*etcdserverpb.Member {
+	var votingMembers []*etcdserverpb.Member
+	for _, member := range members {
+		if member.IsLearner {
+			continue
+		}
+		votingMembers = append(votingMembers, member)
+	}
+	return votingMembers
 }

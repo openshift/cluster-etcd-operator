@@ -232,6 +232,11 @@ func FakeEtcdMemberWithoutServer(member int) *etcdserverpb.Member {
 	}
 }
 
+func AsLearner(member *etcdserverpb.Member) *etcdserverpb.Member {
+	member.IsLearner = true
+	return member
+}
+
 func fakeMemberId() uint64 {
 	return uint64(rand.Uint32())<<32 + uint64(rand.Uint32())
 }

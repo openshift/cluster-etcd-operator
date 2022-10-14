@@ -426,6 +426,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 				cm.Data["m-4"] = "10.0.139.81"
 				return []runtime.Object{cm}
 			}(),
+			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 4, Unhealthy: 0}),
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
 				memberList, err := fakeEtcdClient.MemberList(context.TODO())
 				if err != nil {
@@ -636,6 +637,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 				cm.Data["m-5"] = "10.0.139.82"
 				return []runtime.Object{cm}
 			}(),
+			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 5, Unhealthy: 0}),
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
 				memberList, err := fakeEtcdClient.MemberList(context.TODO())
 				if err != nil {
@@ -645,18 +647,11 @@ func TestAttemptToScaleDown(t *testing.T) {
 					t.Errorf("expected exactly 4 members, got %v", len(memberList))
 				}
 
-				// either m4 or m5 could have been deleted, but not both
-				var m4Found, m5Found bool
+				// expected m4 to be deleted, m5 not to be deleted
 				for _, member := range memberList {
 					if member.ID == 4 {
-						m4Found = true
+						t.Errorf("not expected member with id %d", member.ID)
 					}
-					if member.ID == 5 {
-						m5Found = true
-					}
-				}
-				if m4Found && m5Found {
-					t.Fatal("expected either m4 or m5 to be deleted but not both")
 				}
 			},
 		},
@@ -685,7 +680,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 				return []runtime.Object{cm}
 			}(),
 			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 1}),
-			expectedError:         fmt.Errorf("cannot proceed wth scaling down, unhealthy members found: [https://10.0.139.78:1234]"),
+			expectedError:         fmt.Errorf("cannot proceed with scaling down, unhealthy voting members found: [https://10.0.139.78:1234], none are pending deletion"),
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
 				memberList, err := fakeEtcdClient.MemberList(context.TODO())
 				if err != nil {
@@ -693,6 +688,141 @@ func TestAttemptToScaleDown(t *testing.T) {
 				}
 				if len(memberList) != 4 {
 					t.Errorf("expected exactly 4 members, got %v", len(memberList))
+				}
+			},
+		},
+		{
+			name:                       "remove unhealthy voting member whose machine is pending deletion only if quorum is maintained",
+			initialObservedConfigInput: wellKnownReplicasCountSet,
+			initialEtcdMemberList: func() []*etcdserverpb.Member {
+				members := append(wellKnownEtcdMemberList(), &etcdserverpb.Member{
+					Name:     "m-4",
+					ID:       4,
+					PeerURLs: []string{"https://10.0.139.81:1234"},
+				})
+				return members
+			}(),
+			initialObjectsForMachineLister: func() []runtime.Object {
+				machines := wellKnownMasterMachines()
+				// override the default health config for test scenario
+				m, ok := machines[0].(*machinev1beta1.Machine)
+				if !ok {
+					t.Fatalf("expected type *machinev1beta1.Machine, but got %T instead", m)
+				}
+				m.DeletionTimestamp = &metav1.Time{}
+				m4 := machineWithHooksFor("m-4", "10.0.139.81")
+				machines = append(machines, m4)
+				return machines
+			}(),
+			initialObjectsForConfigMapTargetNSLister: func() []runtime.Object {
+				cm := wellKnownEtcdEndpointsConfigMap()
+				cm.Data["m-4"] = "10.0.139.81"
+				return []runtime.Object{cm}
+			}(),
+			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 1}),
+			expectedError:         nil,
+			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
+				memberList, err := fakeEtcdClient.MemberList(context.TODO())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(memberList) != 3 {
+					t.Errorf("expected exactly 3 members, got %v", len(memberList))
+				}
+				for _, member := range memberList {
+					if member.ID == 1 {
+						t.Errorf("not expected member with id %d", member.ID)
+					}
+				}
+			},
+		},
+		{
+			name:                       "keep voting member whose machine is pending deletion if cluster is unhealthy",
+			initialObservedConfigInput: wellKnownReplicasCountSet,
+			initialEtcdMemberList: func() []*etcdserverpb.Member {
+				members := append(wellKnownEtcdMemberList(), &etcdserverpb.Member{
+					Name:     "m-4",
+					ID:       4,
+					PeerURLs: []string{"https://10.0.139.81:1234"},
+				})
+				return members
+			}(),
+			initialObjectsForMachineLister: func() []runtime.Object {
+				m4 := machineWithHooksFor("m-4", "10.0.139.81")
+				m4.DeletionTimestamp = &metav1.Time{}
+				machines := wellKnownMasterMachines()
+				machines = append(machines, m4)
+				return machines
+			}(),
+			initialObjectsForConfigMapTargetNSLister: func() []runtime.Object {
+				cm := wellKnownEtcdEndpointsConfigMap()
+				cm.Data["m-4"] = "10.0.139.81"
+				return []runtime.Object{cm}
+			}(),
+			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 1}),
+			expectedError:         fmt.Errorf("cannot proceed with scaling down, unhealthy voting members found: [https://10.0.139.78:1234], none are pending deletion"),
+			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
+				memberList, err := fakeEtcdClient.MemberList(context.TODO())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(memberList) != 4 {
+					t.Errorf("expected exactly 4 members, got %v", len(memberList))
+				}
+			},
+		},
+		{
+			name:                       "scale down only by one machine at a time when more than one machine pending deletion while quorum maintained",
+			initialObservedConfigInput: wellKnownReplicasCountSet,
+			initialEtcdMemberList: func() []*etcdserverpb.Member {
+				members := append(wellKnownEtcdMemberList(), &etcdserverpb.Member{
+					Name:     "m-4",
+					ID:       4,
+					PeerURLs: []string{"https://10.0.139.81:1234"},
+				}, &etcdserverpb.Member{
+					Name:     "m-5",
+					ID:       5,
+					PeerURLs: []string{"https://10.0.139.82:1234"},
+				})
+				return members
+			}(),
+			initialObjectsForMachineLister: func() []runtime.Object {
+				m4 := machineWithHooksFor("m-4", "10.0.139.81")
+				m5 := machineWithHooksFor("m-5", "10.0.139.82")
+				machines := wellKnownMasterMachines()
+				// override the default health config for test scenario
+				m1, ok := machines[0].(*machinev1beta1.Machine)
+				if !ok {
+					t.Fatalf("expected type *machinev1beta1.Machine, but got %T instead", m1)
+				}
+				m1.DeletionTimestamp = &metav1.Time{}
+				m2, ok := machines[1].(*machinev1beta1.Machine)
+				if !ok {
+					t.Fatalf("expected type *machinev1beta1.Machine, but got %T instead", m2)
+				}
+				m2.DeletionTimestamp = &metav1.Time{}
+				machines = append(machines, m4, m5)
+				return machines
+			}(),
+			initialObjectsForConfigMapTargetNSLister: func() []runtime.Object {
+				cm := wellKnownEtcdEndpointsConfigMap()
+				cm.Data["m-4"] = "10.0.139.81"
+				cm.Data["m-5"] = "10.0.139.82"
+				return []runtime.Object{cm}
+			}(),
+			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 2}),
+			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
+				memberList, err := fakeEtcdClient.MemberList(context.TODO())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(memberList) != 4 {
+					t.Errorf("expected exactly 4 members, got %v", len(memberList))
+				}
+				for _, member := range memberList {
+					if member.ID == 1 {
+						t.Errorf("not expected member with id %d", member.ID)
+					}
 				}
 			},
 		},

@@ -77,6 +77,11 @@ func (f *fakeEtcdClient) MemberList(ctx context.Context) ([]*etcdserverpb.Member
 	return f.members, nil
 }
 
+func (f *fakeEtcdClient) VotingMemberList(ctx context.Context) ([]*etcdserverpb.Member, error) {
+	members, _ := f.MemberList(ctx)
+	return filterVotingMembers(members), nil
+}
+
 func (f *fakeEtcdClient) MemberRemove(ctx context.Context, memberID uint64) error {
 	var memberExists bool
 	for _, m := range f.members {
@@ -139,12 +144,22 @@ func (f *fakeEtcdClient) UnhealthyMembers(ctx context.Context) ([]*etcdserverpb.
 	return []*etcdserverpb.Member{}, nil
 }
 
+func (f *fakeEtcdClient) UnhealthyVotingMembers(ctx context.Context) ([]*etcdserverpb.Member, error) {
+	members, _ := f.UnhealthyMembers(ctx)
+	return filterVotingMembers(members), nil
+}
+
 func (f *fakeEtcdClient) HealthyMembers(ctx context.Context) ([]*etcdserverpb.Member, error) {
 	if f.opts.healthyMember > 0 {
 		// healthy start from end
 		return f.members[f.opts.unhealthyMember:], nil
 	}
 	return []*etcdserverpb.Member{}, nil
+}
+
+func (f *fakeEtcdClient) HealthyVotingMembers(ctx context.Context) ([]*etcdserverpb.Member, error) {
+	members, _ := f.HealthyMembers(ctx)
+	return filterVotingMembers(members), nil
 }
 
 func (f *fakeEtcdClient) MemberStatus(ctx context.Context, member *etcdserverpb.Member) string {

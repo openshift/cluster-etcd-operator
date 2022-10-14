@@ -58,15 +58,24 @@ type MemberRemover interface {
 }
 
 type MemberLister interface {
+	// MemberList lists all members in a cluster
 	MemberList(ctx context.Context) ([]*etcdserverpb.Member, error)
+	// VotingMemberList lists all non learner members in a cluster
+	VotingMemberList(ctx context.Context) ([]*etcdserverpb.Member, error)
 }
 
 type HealthyMemberLister interface {
+	// HealthyMembers lists all healthy members in a cluster
 	HealthyMembers(ctx context.Context) ([]*etcdserverpb.Member, error)
+	// HealthyVotingMembers lists all non learner healthy members in a cluster
+	HealthyVotingMembers(ctx context.Context) ([]*etcdserverpb.Member, error)
 }
 
 type UnhealthyMemberLister interface {
+	// UnhealthyMembers lists all unhealthy members in a cluster
 	UnhealthyMembers(ctx context.Context) ([]*etcdserverpb.Member, error)
+	// UnhealthyVotingMembers lists all non learner unhealthy members in a cluster
+	UnhealthyVotingMembers(ctx context.Context) ([]*etcdserverpb.Member, error)
 }
 
 type MemberStatusChecker interface {
