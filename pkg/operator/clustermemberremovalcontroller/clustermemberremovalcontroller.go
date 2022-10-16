@@ -125,15 +125,23 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 	if desiredControlPlaneReplicasCount == 0 {
 		return fmt.Errorf("desired control plane replicas count cannot be empty")
 	}
-	if currentVotingMemberIPListSet.Len() <= desiredControlPlaneReplicasCount {
-		klog.V(4).Infof("Ignoring scale-down since the number of etcd voting members (%d) < desired number of control-plane replicas (%d) ", currentVotingMemberIPListSet.Len(), desiredControlPlaneReplicasCount)
+
+	liveVotingMembers, err := c.getAllVotingMembers(ctx)
+	if err != nil {
+		// TODO : update status condition
+		// TODO : should go degraded ?
+		return fmt.Errorf("could not list etcd members: %w", err)
+	}
+
+	if len(liveVotingMembers) < desiredControlPlaneReplicasCount {
+		klog.V(2).Infof("Ignoring scale-down since the number of etcd members (%d) < desired number of control-plane replicas (%d) ", len(liveVotingMembers), desiredControlPlaneReplicasCount)
 		return nil
 	}
 
 	// machines with master role and deletion hook
 	memberMachines, err := ceohelpers.CurrentMemberMachinesWithDeletionHooks(c.masterMachineSelector, c.masterMachineLister)
 	if err != nil {
-		return err
+		return fmt.Errorf("could not find master machines with deletion hook: %w", err)
 	}
 
 	var votingMembersMachines []*machinev1beta1.Machine
@@ -151,14 +159,14 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 	// do not trust data in the cache, compare with the current state
 	healthyLiveVotingMembers, err := c.getHealthyVotingMembers(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("could not list etcd healthy members: %w", err)
 	}
 
 	// scaling down invariant
-	if len(healthyLiveVotingMembers) < desiredControlPlaneReplicasCount {
-		klog.V(2).Infof("Ignoring scale down since the number of healthy live etcd voting members (%d) < desired number of control-plane replicas (%d) ", len(healthyLiveVotingMembers), desiredControlPlaneReplicasCount)
+	if len(healthyLiveVotingMembers) < minimumTolerableQuorum(desiredControlPlaneReplicasCount) {
+		klog.V(2).Infof("Ignoring scale down since the number of healthy live etcd members (%d) < desired number of control-plane replicas (%d) ", len(healthyLiveVotingMembers), desiredControlPlaneReplicasCount)
 		if time.Now().After(c.lastTimeScaleDownEventWasSent.Add(5 * time.Minute)) {
-			recorder.Eventf("ScaleDown", "Ignoring scale down since the number of healthy live etcd voting members (%d) < desired number of control-plane replicas (%d) ", len(healthyLiveVotingMembers), desiredControlPlaneReplicasCount)
+			recorder.Eventf("ScaleDown", "Ignoring scale down since the number of healthy live etcd members (%d) < desired number of control-plane replicas (%d) ", len(healthyLiveVotingMembers), desiredControlPlaneReplicasCount)
 			c.lastTimeScaleDownEventWasSent = time.Now()
 		}
 		return nil
@@ -192,23 +200,17 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 				unhealthyMembersURLs = append(unhealthyMembersURLs, unhealthyMember.Name)
 			}
 		}
-		if len(unhealthyVotingMemberMachinesPendingDeletion) > 0 {
-			klog.V(4).Infof("found unhealthy voting members with machine pending deletion: %v", unhealthyVotingMemberMachinesPendingDeletion)
-			klog.V(4).Infof("unhealthy members found: %v", unhealthyMembersURLs)
-		} else {
-			return fmt.Errorf("cannot proceed with scaling down, unhealthy voting members found: %v, none are pending deletion", unhealthyMembersURLs)
+		if len(unhealthyVotingMemberMachinesPendingDeletion) <= 0 {
+			klog.V(2).Infof("cannot proceed with scaling down, unhealthy etcd members found: %v", unhealthyMembersURLs)
+			return fmt.Errorf("cannot proceed with scaling down, unhealthy etcd members found: %v", unhealthyMembersURLs)
 		}
 	}
 
 	// remove the unhealthy machine pending deletion first
 	// if no unhealthy machine pending deletion found, then attempt to scale down the healthy machines pending deletion
 	if len(unhealthyVotingMemberMachinesPendingDeletion) > 0 {
+		klog.V(2).Infof("found unhealthy etcd members with machine pending deletion: %v", unhealthyVotingMemberMachinesPendingDeletion)
 		votingMembersMachinesPendingDeletion = append(unhealthyVotingMemberMachinesPendingDeletion, votingMembersMachinesPendingDeletion...)
-	}
-
-	liveVotingMembers, err := c.getAllVotingMembers(ctx)
-	if err != nil {
-		return err
 	}
 
 	var allErrs []error
@@ -434,4 +436,8 @@ func hasInternalIP(machine *machinev1beta1.Machine, memberInternalIP string) boo
 		}
 	}
 	return false
+}
+
+func minimumTolerableQuorum(desiredControlPlaneReplicasCount int) int {
+	return (desiredControlPlaneReplicasCount / 2) + 1
 }
