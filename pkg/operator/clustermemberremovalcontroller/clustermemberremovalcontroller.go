@@ -128,8 +128,6 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 
 	liveVotingMembers, err := c.getAllVotingMembers(ctx)
 	if err != nil {
-		// TODO : update status condition
-		// TODO : should go degraded ?
 		return fmt.Errorf("could not list etcd members: %w", err)
 	}
 
@@ -164,9 +162,9 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 
 	// scaling down invariant
 	if len(healthyLiveVotingMembers) < minimumTolerableQuorum(desiredControlPlaneReplicasCount) {
-		klog.V(2).Infof("Ignoring scale down since the number of healthy live etcd members (%d) < desired number of control-plane replicas (%d) ", len(healthyLiveVotingMembers), desiredControlPlaneReplicasCount)
+		klog.V(2).Infof("ignoring scale down since the number of healthy live etcd members (%d) < minimum required to maintain quorum (%d) ", len(healthyLiveVotingMembers), minimumTolerableQuorum(desiredControlPlaneReplicasCount))
 		if time.Now().After(c.lastTimeScaleDownEventWasSent.Add(5 * time.Minute)) {
-			recorder.Eventf("ScaleDown", "Ignoring scale down since the number of healthy live etcd members (%d) < desired number of control-plane replicas (%d) ", len(healthyLiveVotingMembers), desiredControlPlaneReplicasCount)
+			recorder.Eventf("ScaleDown", "Ignoring scale down since the number of healthy live etcd members (%d) < < minimum required to maintain quorum (%d) ", len(healthyLiveVotingMembers), minimumTolerableQuorum(desiredControlPlaneReplicasCount))
 			c.lastTimeScaleDownEventWasSent = time.Now()
 		}
 		return nil
