@@ -368,7 +368,7 @@ func (c *StaticResourceController) Sync(ctx context.Context, syncContext factory
 }
 
 func (c *StaticResourceController) Name() string {
-	return "StaticResourceController"
+	return c.name
 }
 
 func (c *StaticResourceController) RelatedObjects() ([]configv1.ObjectReference, error) {

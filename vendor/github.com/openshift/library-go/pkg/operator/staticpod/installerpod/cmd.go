@@ -157,6 +157,7 @@ func (o *InstallOptions) Complete() error {
 	protoConfig := rest.CopyConfig(clientConfig)
 	protoConfig.AcceptContentTypes = "application/vnd.kubernetes.protobuf,application/json"
 	protoConfig.ContentType = "application/vnd.kubernetes.protobuf"
+	protoConfig.Timeout = 14 * time.Second
 
 	o.KubeClient, err = kubernetes.NewForConfig(protoConfig)
 	if err != nil {
