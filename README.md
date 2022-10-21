@@ -39,7 +39,7 @@ Again this is good to adjust the new etcdGRPCRequestsSlow alert, if one fires to
 ```console
 count by (grpc_method, grpc_service) (alerts{alertname="etcdGRPCRequestsSlow"})
 ```
-
+ 
 3. Median fsync disk duration by provider.
 
 This gives an insight which provider has slowest disks.
