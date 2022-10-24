@@ -779,7 +779,7 @@ ${COMPUTED_ENV_VARS}
 
         set -x
         # See https://etcd.io/docs/v3.4.0/tuning/ for why we use ionice
-        exec ionice -c2 -n0 etcd \
+        exec nice -n -19 ionice -c2 -n0 etcd \
           --logger=zap \
           --log-level=${VERBOSITY} \
           --experimental-initial-corrupt-check=true \
@@ -857,7 +857,7 @@ ${COMPUTED_ENV_VARS}
 
         export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
 
-        exec etcd grpc-proxy start \
+        exec nice -n -18 etcd grpc-proxy start \
           --endpoints https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:9978 \
           --metrics-addr https://${LISTEN_ON_ALL_IPS}:9979 \
           --listen-addr ${LOCALHOST_IP}:9977 \
@@ -924,15 +924,23 @@ ${COMPUTED_ENV_VARS}
     image: ${OPERATOR_IMAGE}
     imagePullPolicy: IfNotPresent
     terminationMessagePolicy: FallbackToLogsOnError
-    command: [ "cluster-etcd-operator", "readyz" ]
-    args:
-      - --target=https://localhost:2379
-      - --listen-port=9980
-      - --serving-cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.crt
-      - --serving-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.key
-      - --client-cert-file=$(ETCDCTL_CERT)
-      - --client-key-file=$(ETCDCTL_KEY)
-      - --client-cacert-file=$(ETCDCTL_CACERT)
+    command:
+      - /bin/sh
+      - -c
+      - |
+        #!/bin/sh
+        set -euo pipefail
+        
+        exec nice -n -18 cluster-etcd-operator readyz \
+          --target=https://localhost:2379 \
+          --listen-port=9980 \
+          --serving-cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.crt \
+          --serving-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.key \
+          --client-cert-file=$(ETCDCTL_CERT) \
+          --client-key-file=$(ETCDCTL_KEY) \
+          --client-cacert-file=$(ETCDCTL_CACERT)
+    securityContext:
+      privileged: true
     ports:
     - containerPort: 9980
       name: readyz
