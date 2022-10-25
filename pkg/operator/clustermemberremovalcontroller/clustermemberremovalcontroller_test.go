@@ -804,7 +804,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 				return []runtime.Object{cm}
 			}(),
 			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 1}),
-			expectedError:         fmt.Errorf("cannot proceed with scaling down, unhealthy etcd members found: [https://10.0.139.78:1234]"),
+			expectedError:         fmt.Errorf("cannot proceed with scaling down, unhealthy voting etcd members found: [https://10.0.139.78:1234] but none are pending deletion"),
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
 				memberList, err := fakeEtcdClient.MemberList(context.TODO())
 				if err != nil {
@@ -884,7 +884,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 				return []runtime.Object{cm}
 			}(),
 			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 1}),
-			expectedError:         fmt.Errorf("cannot proceed with scaling down, unhealthy etcd members found: [https://10.0.139.78:1234]"),
+			expectedError:         fmt.Errorf("cannot proceed with scaling down, unhealthy voting etcd members found: [https://10.0.139.78:1234] but none are pending deletion"),
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
 				memberList, err := fakeEtcdClient.MemberList(context.TODO())
 				if err != nil {

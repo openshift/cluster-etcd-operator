@@ -198,16 +198,16 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 				unhealthyMembersURLs = append(unhealthyMembersURLs, unhealthyMember.Name)
 			}
 		}
-		if len(unhealthyVotingMemberMachinesPendingDeletion) <= 0 {
-			klog.V(2).Infof("cannot proceed with scaling down, unhealthy etcd members found: %v", unhealthyMembersURLs)
-			return fmt.Errorf("cannot proceed with scaling down, unhealthy etcd members found: %v", unhealthyMembersURLs)
+		if len(unhealthyVotingMemberMachinesPendingDeletion) == 0 {
+			klog.V(2).Infof("cannot proceed with scaling down, unhealthy voting etcd members found: %v but none are pending deletion", unhealthyMembersURLs)
+			return fmt.Errorf("cannot proceed with scaling down, unhealthy voting etcd members found: %v but none are pending deletion", unhealthyMembersURLs)
 		}
 	}
 
 	// remove the unhealthy machine pending deletion first
 	// if no unhealthy machine pending deletion found, then attempt to scale down the healthy machines pending deletion
 	if len(unhealthyVotingMemberMachinesPendingDeletion) > 0 {
-		klog.V(2).Infof("found unhealthy etcd members with machine pending deletion: %v", unhealthyVotingMemberMachinesPendingDeletion)
+		klog.V(2).Infof("found unhealthy voting etcd members with machine pending deletion: %v", unhealthyVotingMemberMachinesPendingDeletion)
 		votingMembersMachinesPendingDeletion = append(unhealthyVotingMemberMachinesPendingDeletion, votingMembersMachinesPendingDeletion...)
 	}
 
