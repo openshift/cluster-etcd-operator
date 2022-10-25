@@ -232,6 +232,15 @@ func FakeEtcdMemberWithoutServer(member int) *etcdserverpb.Member {
 	}
 }
 
+func FakeEtcdBoostrapMember(member int) *etcdserverpb.Member {
+	return &etcdserverpb.Member{
+		Name:       "etcd-bootstrap",
+		ClientURLs: []string{fmt.Sprintf("https://10.0.0.%d:2907", member+1)},
+		PeerURLs:   []string{fmt.Sprintf("https://10.0.0.%d:2380", member+1)},
+		ID:         uint64(member),
+	}
+}
+
 func AsLearner(member *etcdserverpb.Member) *etcdserverpb.Member {
 	member.IsLearner = true
 	return member
