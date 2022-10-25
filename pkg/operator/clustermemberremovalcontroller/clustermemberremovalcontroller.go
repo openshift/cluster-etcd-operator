@@ -161,10 +161,11 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 	}
 
 	// scaling down invariant
-	if len(healthyLiveVotingMembers) < minimumTolerableQuorum(desiredControlPlaneReplicasCount) {
-		klog.V(2).Infof("ignoring scale down since the number of healthy live etcd members (%d) < minimum required to maintain quorum (%d) ", len(healthyLiveVotingMembers), minimumTolerableQuorum(desiredControlPlaneReplicasCount))
+	minTolerableQuorum := etcdcli.MinimumTolerableQuorum(desiredControlPlaneReplicasCount)
+	if len(healthyLiveVotingMembers) < minTolerableQuorum {
+		klog.V(2).Infof("ignoring scale down since the number of healthy live etcd members (%d) < minimum required to maintain quorum (%d) ", len(healthyLiveVotingMembers), minTolerableQuorum)
 		if time.Now().After(c.lastTimeScaleDownEventWasSent.Add(5 * time.Minute)) {
-			recorder.Eventf("ScaleDown", "Ignoring scale down since the number of healthy live etcd members (%d) < < minimum required to maintain quorum (%d) ", len(healthyLiveVotingMembers), minimumTolerableQuorum(desiredControlPlaneReplicasCount))
+			recorder.Eventf("ScaleDown", "Ignoring scale down since the number of healthy live etcd members (%d) < minimum required to maintain quorum (%d) ", len(healthyLiveVotingMembers), minTolerableQuorum)
 			c.lastTimeScaleDownEventWasSent = time.Now()
 		}
 		return nil
@@ -434,8 +435,4 @@ func hasInternalIP(machine *machinev1beta1.Machine, memberInternalIP string) boo
 		}
 	}
 	return false
-}
-
-func minimumTolerableQuorum(desiredControlPlaneReplicasCount int) int {
-	return (desiredControlPlaneReplicasCount / 2) + 1
 }
