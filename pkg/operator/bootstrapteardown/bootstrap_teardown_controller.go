@@ -71,8 +71,12 @@ func (c *BootstrapTeardownController) sync(ctx context.Context, syncCtx factory.
 }
 
 func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, syncCtx factory.SyncContext) error {
+	scalingStrategy, err := ceohelpers.GetBootstrapScalingStrategy(c.operatorClient, c.namespaceLister, c.infrastructureLister)
+	if err != nil {
+		return fmt.Errorf("failed to get bootstrap scaling strategy: %w", err)
+	}
 	// checks the actual etcd cluster membership API if etcd-bootstrap exists
-	safeToRemoveBootstrap, hasBootstrap, bootstrapID, err := c.canRemoveEtcdBootstrap(ctx)
+	safeToRemoveBootstrap, hasBootstrap, bootstrapID, err := c.canRemoveEtcdBootstrap(ctx, scalingStrategy)
 	switch {
 	case err != nil:
 		return err
@@ -139,7 +143,7 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, syncC
 }
 
 // canRemoveEtcdBootstrap returns whether it is safe to remove bootstrap, whether bootstrap is in the list, and an error
-func (c *BootstrapTeardownController) canRemoveEtcdBootstrap(ctx context.Context) (bool, bool, uint64, error) {
+func (c *BootstrapTeardownController) canRemoveEtcdBootstrap(ctx context.Context, scalingStrategy ceohelpers.BootstrapScalingStrategy) (bool, bool, uint64, error) {
 	members, err := c.etcdClient.MemberList(ctx)
 	if err != nil {
 		return false, false, 0, err
@@ -158,11 +162,6 @@ func (c *BootstrapTeardownController) canRemoveEtcdBootstrap(ctx context.Context
 		return false, hasBootstrap, bootstrapMemberID, nil
 	}
 
-	scalingStrategy, err := ceohelpers.GetBootstrapScalingStrategy(c.operatorClient, c.namespaceLister, c.infrastructureLister)
-	if err != nil {
-		return false, hasBootstrap, bootstrapMemberID, fmt.Errorf("failed to get bootstrap scaling strategy: %w", err)
-	}
-
 	// First, enforce the main HA invariants in terms of member counts.
 	switch scalingStrategy {
 	case ceohelpers.HAScalingStrategy:
@@ -170,6 +169,9 @@ func (c *BootstrapTeardownController) canRemoveEtcdBootstrap(ctx context.Context
 			return false, hasBootstrap, bootstrapMemberID, nil
 		}
 	case ceohelpers.DelayedHAScalingStrategy, ceohelpers.UnsafeScalingStrategy:
+		// TODO(thomas): it's unclear whether DelayedHAScalingStrategy needs special treatment here
+		// we assume it needs < 3, waiting for two nodes+boostrap to continue installation.
+		// context: https://github.com/openshift/cluster-etcd-operator/pull/951
 		if len(members) < 2 {
 			return false, hasBootstrap, bootstrapMemberID, nil
 		}
