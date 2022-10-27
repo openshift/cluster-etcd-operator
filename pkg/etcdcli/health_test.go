@@ -2,6 +2,7 @@ package etcdcli
 
 import (
 	"fmt"
+	"github.com/stretchr/testify/require"
 	"reflect"
 	"testing"
 
@@ -257,6 +258,51 @@ func healthyMember(member int) healthCheck {
 			ClientURLs: []string{fmt.Sprintf("https://10.0.0.%d:2379", member)},
 		},
 		Healthy: true,
+	}
+}
+
+func TestMinimumTolerableQuorum(t *testing.T) {
+
+	scenarios := []struct {
+		name   string
+		input  int
+		expErr error
+		exp    int
+	}{
+		{
+			name:   "valid input `3`",
+			input:  3,
+			expErr: nil,
+			exp:    2,
+		},
+		{
+			name:   "valid input `5`",
+			input:  5,
+			expErr: nil,
+			exp:    3,
+		},
+		{
+			name:   "invalid input `0`",
+			input:  0,
+			expErr: fmt.Errorf("invalid etcd member length: %v", 0),
+			exp:    0,
+		},
+		{
+			name:   "invalid input `-10`",
+			input:  -10,
+			expErr: fmt.Errorf("invalid etcd member length: %v", -10),
+			exp:    0,
+		},
+	}
+
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			// act
+			actual, err := MinimumTolerableQuorum(scenario.input)
+			// assert
+			require.Equal(t, scenario.expErr, err)
+			require.Equal(t, scenario.exp, actual)
+		})
 	}
 }
 
