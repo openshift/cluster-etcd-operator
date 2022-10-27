@@ -372,7 +372,7 @@ func (c *ClusterMemberController) isEtcdContainerRunningNotReady(node *corev1.No
 // The voting members are read from the etcd-endpoints configmap
 func (c *ClusterMemberController) allNodesMapToVotingMembers(nodes []*corev1.Node) ([]*corev1.Node, error) {
 	var nonVotingMemberNodes []*corev1.Node
-	currentVotingMemberIPListSet, err := ceohelpers.VotingMemberIPListSet(c.configMapLister)
+	currentVotingMemberIPListSet, err := ceohelpers.VotingMemberIPListSet(context.Background(), c.etcdClient)
 	if err != nil {
 		return nonVotingMemberNodes, fmt.Errorf("failed to get the set of voting members: %v", err)
 	}

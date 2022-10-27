@@ -1,23 +1,24 @@
 package ceohelpers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"net"
 	"net/url"
 
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 
 	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
+	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
+	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
-	corev1listers "k8s.io/client-go/listers/core/v1"
-
-	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
-	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/controlplanereplicascount"
 )
@@ -178,14 +179,20 @@ func memberToURL(member *etcdserverpb.Member) (string, error) {
 	return member.PeerURLs[0], nil
 }
 
-func VotingMemberIPListSet(configMapLister corev1listers.ConfigMapNamespaceLister) (sets.String, error) {
-	etcdEndpointsConfigMap, err := configMapLister.Get("etcd-endpoints")
+func VotingMemberIPListSet(ctx context.Context, cli etcdcli.EtcdClient) (sets.String, error) {
+	members, err := cli.VotingMemberList(ctx)
 	if err != nil {
 		return sets.NewString(), err // should not happen
 	}
 	currentVotingMemberIPListSet := sets.NewString()
-	for _, votingMemberIP := range etcdEndpointsConfigMap.Data {
-		currentVotingMemberIPListSet.Insert(votingMemberIP)
+
+	for _, member := range members {
+		// Use of PeerURL is expected here because it is a mandatory field, and it will mirror ClientURL.
+		ip, err := dnshelpers.GetIPFromAddress(member.PeerURLs[0])
+		if err != nil {
+			return sets.NewString(), err
+		}
+		currentVotingMemberIPListSet.Insert(ip)
 	}
 
 	return currentVotingMemberIPListSet, nil

@@ -113,7 +113,7 @@ func (c *clusterMemberRemovalController) sync(ctx context.Context, syncCtx facto
 // attemptToScaleDown attempts to remove a voting member only once we have identified that
 // a Machine resource is being deleted and a replacement member has been created
 func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context, recorder events.Recorder) error {
-	currentVotingMemberIPListSet, err := ceohelpers.VotingMemberIPListSet(c.configMapListerForTargetNamespace)
+	currentVotingMemberIPListSet, err := ceohelpers.VotingMemberIPListSet(ctx, c.etcdClient)
 	if err != nil {
 		return err
 	}
@@ -161,7 +161,11 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 	}
 
 	// scaling down invariant
-	minTolerableQuorum := etcdcli.MinimumTolerableQuorum(desiredControlPlaneReplicasCount)
+	minTolerableQuorum, err := etcdcli.MinimumTolerableQuorum(desiredControlPlaneReplicasCount)
+	if err != nil {
+		klog.V(2).Infof("etcd cluster could not determine minimum quorum required. desiredControlPlaneReplicasCount is %v. minimum quorum required is %v: %w", desiredControlPlaneReplicasCount, minTolerableQuorum, err)
+	}
+
 	if len(healthyLiveVotingMembers) < minTolerableQuorum {
 		klog.V(2).Infof("ignoring scale down since the number of healthy live etcd members (%d) < minimum required to maintain quorum (%d) ", len(healthyLiveVotingMembers), minTolerableQuorum)
 		if time.Now().After(c.lastTimeScaleDownEventWasSent.Add(5 * time.Minute)) {
@@ -291,13 +295,13 @@ func (c *clusterMemberRemovalController) removeMemberWithoutMachine(ctx context.
 
 // attemptToRemoveLearningMember attempts to remove a learning member pending deletion regardless of whether a replacement member has been found
 func (c *clusterMemberRemovalController) attemptToRemoveLearningMember(ctx context.Context, recorder events.Recorder) error {
-	currentVotingMemberIPListSet, err := ceohelpers.VotingMemberIPListSet(c.configMapListerForTargetNamespace)
+	currentVotingMemberIPListSet, err := ceohelpers.VotingMemberIPListSet(ctx, c.etcdClient)
 	if err != nil {
 		return err
 	}
 	memberMachines, err := ceohelpers.CurrentMemberMachinesWithDeletionHooks(c.masterMachineSelector, c.masterMachineLister)
 	if err != nil {
-		return err
+		return fmt.Errorf("could not find master machines with deletion hook: %w", err)
 	}
 	var learningMachines []*machinev1beta1.Machine
 	for memberMachineIP, memberMachine := range ceohelpers.IndexMachinesByNodeInternalIP(memberMachines) {
