@@ -33,7 +33,6 @@ local modifiedRules = std.map(function(group) group {
     namespace: 'openshift-etcd-operator',
     annotations:
       {
-        'include.release.openshift.io/ibm-cloud-managed': 'true',
         'include.release.openshift.io/self-managed-high-availability': 'true',
         'include.release.openshift.io/single-node-developer': 'true',
       },
