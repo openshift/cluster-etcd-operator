@@ -240,7 +240,11 @@ func HasStarted(member *etcdserverpb.Member) bool {
 // loss of a single etcd member. Such loss is common during new static pod revision.
 func IsQuorumFaultTolerant(memberHealth []healthCheck) bool {
 	totalMembers := len(memberHealth)
-	quorum := totalMembers/2 + 1
+	quorum, err := MinimumTolerableQuorum(totalMembers)
+	if err != nil {
+		klog.Errorf("etcd cluster could not determine minimum quorum required. total number of members is %v. minimum quorum required is %v: %w", totalMembers, quorum, err)
+		return false
+	}
 	healthyMembers := len(GetHealthyMemberNames(memberHealth))
 	switch {
 	case totalMembers-quorum < 1:
@@ -256,7 +260,10 @@ func IsQuorumFaultTolerant(memberHealth []healthCheck) bool {
 // IsQuorumFaultTolerantErr is the same as IsQuorumFaultTolerant but with an error return instead of the log
 func IsQuorumFaultTolerantErr(memberHealth []healthCheck) error {
 	totalMembers := len(memberHealth)
-	quorum := totalMembers/2 + 1
+	quorum, err := MinimumTolerableQuorum(totalMembers)
+	if err != nil {
+		return fmt.Errorf("etcd cluster could not determine minimum quorum required. total number of members is %v. minimum quorum required is %v: %w", totalMembers, quorum, err)
+	}
 	healthyMembers := len(GetHealthyMemberNames(memberHealth))
 	switch {
 	case totalMembers-quorum < 1:
@@ -319,4 +326,11 @@ func (c *raftTermsCollector) Collect(ch chan<- prometheus.Metric) {
 			member,
 		)
 	}
+}
+
+func MinimumTolerableQuorum(members int) (int, error) {
+	if members <= 0 {
+		return 0, fmt.Errorf("invalid etcd member length: %v", members)
+	}
+	return (members / 2) + 1, nil
 }
