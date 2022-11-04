@@ -2,7 +2,6 @@ apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
   annotations:
-    include.release.openshift.io/ibm-cloud-managed: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
   name: etcd-prometheus-rules
@@ -36,17 +35,6 @@ spec:
       expr: |
         etcd_server_has_leader{job=~".*etcd.*"} == 0
       for: 1m
-      labels:
-        severity: critical
-    - alert: etcdGRPCRequestsSlow
-      annotations:
-        description: 'etcd cluster "{{ $labels.job }}": 99th percentile of gRPC requests is {{ $value }}s on etcd instance {{ $labels.instance }} for {{ $labels.grpc_method }} method.'
-        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdGRPCRequestsSlow.md
-        summary: etcd grpc requests are slow
-      expr: |
-        histogram_quantile(0.99, sum(rate(grpc_server_handling_seconds_bucket{job=~".*etcd.*", grpc_method!="Defragment", grpc_type="unary"}[5m])) without(grpc_type))
-        > 0.15
-      for: 10m
       labels:
         severity: critical
     - alert: etcdMemberCommunicationSlow
@@ -99,27 +87,48 @@ spec:
       for: 10m
       labels:
         severity: warning
-    - alert: etcdBackendQuotaLowSpace
+    - alert: etcdDatabaseQuotaLowSpace
       annotations:
         description: 'etcd cluster "{{ $labels.job }}": database size exceeds the defined quota on etcd instance {{ $labels.instance }}, please defrag or increase the quota as the writes to etcd will be disabled when it is full.'
-        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackendQuotaLowSpace.md
+        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdDatabaseQuotaLowSpace.md
         summary: etcd cluster database is running full.
       expr: |
-        (etcd_mvcc_db_total_size_in_bytes/etcd_server_quota_backend_bytes)*100 > 95
+        (last_over_time(etcd_mvcc_db_total_size_in_bytes[5m]) / last_over_time(etcd_server_quota_backend_bytes[5m]))*100 > 95
       for: 10m
       labels:
         severity: critical
     - alert: etcdExcessiveDatabaseGrowth
       annotations:
-        description: 'etcd cluster "{{ $labels.job }}": Observed surge in etcd writes leading to 50% increase in database size over the past four hours on etcd instance {{ $labels.instance }}, please check as it might be disruptive.'
+        description: 'etcd cluster "{{ $labels.job }}": Predicting running out of disk space in the next four hours, based on write observations within the past four hours on etcd instance {{ $labels.instance }}, please check as it might be disruptive.'
         summary: etcd cluster database growing very fast.
       expr: |
-        increase(((etcd_mvcc_db_total_size_in_bytes/etcd_server_quota_backend_bytes)*100)[240m:1m]) > 50
+        predict_linear(etcd_mvcc_db_total_size_in_bytes[4h], 4*60*60) > etcd_server_quota_backend_bytes
+      for: 10m
+      labels:
+        severity: warning
+    - alert: etcdDatabaseHighFragmentationRatio
+      annotations:
+        description: 'etcd cluster "{{ $labels.job }}": database size in use on instance {{ $labels.instance }} is {{ $value | humanizePercentage }} of the actual allocated disk space, please run defragmentation (e.g. etcdctl defrag) to retrieve the unused fragmented disk space.'
+        runbook_url: https://etcd.io/docs/v3.5/op-guide/maintenance/#defragmentation
+        summary: etcd database size in use is less than 50% of the actual allocated storage.
+      expr: |
+        (last_over_time(etcd_mvcc_db_total_size_in_use_in_bytes[5m]) / last_over_time(etcd_mvcc_db_total_size_in_bytes[5m])) < 0.5
       for: 10m
       labels:
         severity: warning
   - name: openshift-etcd.rules
     rules:
+    - alert: etcdGRPCRequestsSlow
+      annotations:
+        description: 'etcd cluster "{{ $labels.job }}": 99th percentile of gRPC requests is {{ $value }}s on etcd instance {{ $labels.instance }} for {{ $labels.grpc_method }} method.'
+        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdGRPCRequestsSlow.md
+        summary: etcd grpc requests are slow
+      expr: |
+        histogram_quantile(0.99, sum(rate(grpc_server_handling_seconds_bucket{job="etcd", grpc_method!="Defragment", grpc_type="unary"}[10m])) without(grpc_type))
+        > 1
+      for: 30m
+      labels:
+        severity: critical
     - alert: etcdHighNumberOfFailedGRPCRequests
       annotations:
         description: 'etcd cluster "{{ $labels.job }}": {{ $value }}% of requests for {{ $labels.grpc_method }} failed on etcd instance {{ $labels.instance }}.'

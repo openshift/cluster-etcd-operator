@@ -6,7 +6,7 @@ local promRules = if std.objectHasAll(etcdMixin, 'prometheusRules') then etcdMix
 
 // Exclude rules that are either OpenShift specific or do not work for OpenShift.
 // List should be ordered!
-local excludedAlerts = ['etcdHighNumberOfFailedGRPCRequests', 'etcdHighNumberOfLeaderChanges', 'etcdInsufficientMembers'];
+local excludedAlerts = ['etcdGRPCRequestsSlow', 'etcdHighNumberOfFailedGRPCRequests', 'etcdHighNumberOfLeaderChanges', 'etcdInsufficientMembers'];
 local excludeRules = std.map(
   function(group) group {
     rules: std.filter(
@@ -33,7 +33,6 @@ local modifiedRules = std.map(function(group) group {
     namespace: 'openshift-etcd-operator',
     annotations:
       {
-        'include.release.openshift.io/ibm-cloud-managed': 'true',
         'include.release.openshift.io/self-managed-high-availability': 'true',
         'include.release.openshift.io/single-node-developer': 'true',
       },
