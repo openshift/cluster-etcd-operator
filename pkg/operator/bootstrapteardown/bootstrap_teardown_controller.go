@@ -168,10 +168,11 @@ func (c *BootstrapTeardownController) canRemoveEtcdBootstrap(ctx context.Context
 		if len(members) < 4 {
 			return false, hasBootstrap, bootstrapMemberID, nil
 		}
-	case ceohelpers.DelayedHAScalingStrategy, ceohelpers.UnsafeScalingStrategy:
-		// TODO(thomas): it's unclear whether DelayedHAScalingStrategy needs special treatment here
-		// we assume it needs < 3, waiting for two nodes+boostrap to continue installation.
-		// context: https://github.com/openshift/cluster-etcd-operator/pull/951
+	case ceohelpers.DelayedHAScalingStrategy:
+		if len(members) < 3 {
+			return false, hasBootstrap, bootstrapMemberID, nil
+		}
+	case ceohelpers.UnsafeScalingStrategy:
 		if len(members) < 2 {
 			return false, hasBootstrap, bootstrapMemberID, nil
 		}
