@@ -104,7 +104,7 @@ func TestCanRemoveEtcdBootstrap(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(1),
 			},
 			scalingStrategy: ceohelpers.DelayedHAScalingStrategy,
-			safeToRemove:    true, // TODO(thomas): this could be false
+			safeToRemove:    false,
 			hasBootstrap:    true,
 			bootstrapId:     uint64(0),
 		},
