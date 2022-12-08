@@ -2,6 +2,7 @@ package readyz
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	goflag "flag"
 	"fmt"
@@ -153,16 +154,33 @@ func (r *readyzOpts) Run() error {
 	addr := fmt.Sprintf("0.0.0.0:%d", r.listenPort)
 	klog.Infof("Listening on %s", addr)
 
-	server := &http.Server{
+	httpServer := &http.Server{
 		Addr:        addr,
 		Handler:     mux,
 		BaseContext: func(_ net.Listener) context.Context { return shutdownCtx },
+		TLSConfig: &tls.Config{
+			CipherSuites: []uint16{
+				// 1.2
+				tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+
+				// 1.3
+				tls.TLS_AES_128_GCM_SHA256,
+				tls.TLS_AES_256_GCM_SHA384,
+				tls.TLS_CHACHA20_POLY1305_SHA256,
+			},
+		},
 	}
 	go func() {
 		defer cancel()
 		<-shutdownHandler
-		klog.Infof("Received SIGTERM or SIGINT signal, shutting down server.")
-		server.Shutdown(shutdownCtx)
+		klog.Infof("Received SIGTERM or SIGINT signal, shutting down readyz server.")
+		err := httpServer.Shutdown(shutdownCtx)
+		if err != nil {
+			klog.Errorf("Error while shutting down readyz server: %v", err)
+		}
 	}()
 
 	c := net.ListenConfig{}
@@ -171,7 +189,7 @@ func (r *readyzOpts) Run() error {
 	if err != nil {
 		return err
 	}
-	err = server.ServeTLS(ln, r.servingCertFile, r.servingKeyFile)
+	err = httpServer.ServeTLS(ln, r.servingCertFile, r.servingKeyFile)
 	if err == http.ErrServerClosed {
 		err = nil
 		<-shutdownCtx.Done()
