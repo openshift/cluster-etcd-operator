@@ -33,7 +33,15 @@ import (
 
 // Annotation key used to associate a cert secret with a node uid. This allows
 // cert regeneration if a node was deleted and added with the same name.
-const nodeUIDAnnotation = "etcd-operator.alpha.openshift.io/cert-secret-node-uid"
+const (
+	// Annotation key used to associate a cert secret with a node uid. This allows
+	// cert regeneration if a node was deleted and added with the same name.
+	nodeUIDAnnotation = "etcd-operator.alpha.openshift.io/cert-secret-node-uid"
+
+	// The minimum percentage duration of a certificate. If a cert has less than
+	// this percentage of its duration remaining, it will be regenerated.
+	defaultMinDurationPercent = 0.20
+)
 
 // etcdCertConfig defines the configuration required to maintain a cert secret for an etcd member.
 type etcdCertConfig struct {
@@ -165,13 +173,13 @@ func (c *EtcdCertSignerController) syncAllMasters(recorder events.Recorder) erro
 //
 // Example output:
 //
-// {
-//   "etcd-peer-master-0.crt":    []byte{...},
-//   "etcd-peer-master-0.key":    []byte{...},
-//   "etcd-serving-master-0.crt": []byte{...},
-//   "etcd-serving-master-0.key": []byte{...},
-//   ...
-// }
+//	{
+//	  "etcd-peer-master-0.crt":    []byte{...},
+//	  "etcd-peer-master-0.key":    []byte{...},
+//	  "etcd-serving-master-0.crt": []byte{...},
+//	  "etcd-serving-master-0.key": []byte{...},
+//	  ...
+//	}
 func (c *EtcdCertSignerController) ensureCerts(recorder events.Recorder) (map[string][]byte, error) {
 	nodes, err := c.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
 	if err != nil {
@@ -246,7 +254,7 @@ func (c *EtcdCertSignerController) ensureCertSecret(secretName, nodeUID string, 
 			return nil, nil, err
 		}
 		if len(invalidMsg) > 0 {
-			klog.V(4).Info("TLS cert %s is invalid and will be regenerated: %v", secretName, invalidMsg)
+			klog.V(4).Infof("TLS cert %s is invalid and will be regenerated: %v", secretName, invalidMsg)
 			// A nil secret will prompt creation of a new keypair
 			secret = nil
 		}
@@ -337,10 +345,22 @@ func checkCertValidity(certBytes, keyBytes []byte, ipAddresses []string, nodeUID
 		return strings.Join(msgs, ", "), nil
 	}
 
-	// TODO(marun) Check that the certificate was issued by the CA
+	if ok := lessThanMinimumDuration(leafCert.NotBefore, leafCert.NotAfter, defaultMinDurationPercent); ok {
+		return fmt.Sprintf("less than %d%% duration remaining", int64(defaultMinDurationPercent*100)), nil
+	}
 
-	// TODO(marun) Check that the certificate is not expired or due for replacement
+	// TODO(marun) Check that the certificate was issued by the CA
 
 	// Cert is valid
 	return "", nil
+}
+
+// lessThanMinimumDuration indicates whether the provided cert has less
+// than the provided minimum percentage of its duration remaining.
+func lessThanMinimumDuration(notBefore, notAfter time.Time, minDurationPercent float64) bool {
+	expiry := notAfter
+	duration := expiry.Sub(notBefore)
+	minDuration := time.Duration(float64(duration.Nanoseconds()) * minDurationPercent)
+	replacementTime := expiry.Add(-minDuration)
+	return time.Now().After(replacementTime)
 }

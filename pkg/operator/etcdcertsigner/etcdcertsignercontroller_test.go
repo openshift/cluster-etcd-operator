@@ -2,8 +2,11 @@ package etcdcertsigner
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/x509"
 	"fmt"
 	"testing"
+	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -52,12 +55,13 @@ func TestCheckCertValidity(t *testing.T) {
 	}
 
 	testCases := map[string]struct {
-		invalidCertPair  bool
-		certIPAddresses  []string
-		nodeIPAddresses  []string
-		storedNodeUID    string
-		expectedRegenMsg bool
-		expectedErr      bool
+		invalidCertPair     bool
+		lessThanMinDuration bool
+		certIPAddresses     []string
+		nodeIPAddresses     []string
+		storedNodeUID       string
+		expectedRegenMsg    bool
+		expectedErr         bool
 	}{
 		"invalid bytes": {
 			invalidCertPair:  true,
@@ -68,6 +72,13 @@ func TestCheckCertValidity(t *testing.T) {
 			nodeIPAddresses:  differentIpAddresses,
 			storedNodeUID:    differentNodeUID,
 			expectedRegenMsg: true,
+		},
+		"less than minimum duration remaining": {
+			certIPAddresses:     ipAddresses,
+			nodeIPAddresses:     ipAddresses,
+			storedNodeUID:       nodeUID,
+			lessThanMinDuration: true,
+			expectedRegenMsg:    true,
 		},
 		"valid": {
 			certIPAddresses: ipAddresses,
@@ -84,6 +95,9 @@ func TestCheckCertValidity(t *testing.T) {
 				certConfig, err := ca.MakeServerCert(sets.NewString(tc.certIPAddresses...), expireDays)
 				if err != nil {
 					t.Fatalf("Error generating cert: %v", err)
+				}
+				if tc.lessThanMinDuration {
+					certConfig = ensureLessThanMinDuration(t, certConfig)
 				}
 				certBytes, keyBytes, err = certConfig.GetPEMBytes()
 				if err != nil {
@@ -444,5 +458,27 @@ func validateTestSecret(t *testing.T, action string, secret *corev1.Secret, ipAd
 	}
 	if err != nil {
 		t.Fatalf("%s secret is invalid with error: %v", action, err)
+	}
+}
+
+func ensureLessThanMinDuration(t *testing.T, caConfig *crypto.TLSCertificateConfig) *crypto.TLSCertificateConfig {
+	caCert := caConfig.Certs[0]
+
+	// Issued 9 hours ago, 1 hour remaining: < 20% duration remaining
+	caCert.NotBefore = time.Now().Add(-9 * time.Hour)
+	caCert.NotAfter = time.Now().Add(time.Hour)
+
+	rawCert, err := x509.CreateCertificate(rand.Reader, caCert, caCert, caCert.PublicKey, caConfig.Key)
+	if err != nil {
+		t.Fatalf("error creating certificate: %v", err)
+	}
+	parsedCerts, err := x509.ParseCertificates(rawCert)
+	if err != nil {
+		t.Fatalf("error parsing certificate: %v", err)
+	}
+
+	return &crypto.TLSCertificateConfig{
+		Certs: []*x509.Certificate{parsedCerts[0]},
+		Key:   caConfig.Key,
 	}
 }
