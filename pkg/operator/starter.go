@@ -19,7 +19,6 @@ import (
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
-	"github.com/openshift/library-go/pkg/operator/staleconditions"
 	"github.com/openshift/library-go/pkg/operator/staticpod"
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/common"
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/installer"
@@ -52,7 +51,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/machinedeletionhooks"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/metriccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/quorumguardcleanup"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
@@ -362,18 +360,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
-	quorumGuardCleanupController := quorumguardcleanup.NewQuorumGuardCleanupController(
-		status.VersionForOperatorFromEnv(),
-		operatorClient,
-		kubeClient,
-		configInformers.Config().V1().ClusterVersions(),
-		configInformers.Config().V1().ClusterOperators(),
-		kubeInformersForNamespaces,
-		masterNodeInformer,
-		configInformers.Config().V1().Infrastructures(),
-		controllerContext.EventRecorder,
-	)
-
 	defragController := defragcontroller.NewDefragController(
 		operatorClient,
 		etcdClient,
@@ -400,24 +386,12 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
-	staleConditions := staleconditions.NewRemoveStaleConditionsController(
-		[]string{
-			// QuorumGuardController was removed in 4.11, remove its stale conditions to avoid blocking upgrades from older clusters
-			// that might have this condition
-			"QuorumGuardControllerDegraded",
-		},
-		operatorClient,
-		controllerContext.EventRecorder,
-	)
-
 	operatorInformers.Start(ctx.Done())
 	kubeInformersForNamespaces.Start(ctx.Done())
 	configInformers.Start(ctx.Done())
 	dynamicInformers.Start(ctx.Done())
 	go masterMachineInformer.Run(ctx.Done())
 	go masterNodeInformer.Run(ctx.Done())
-
-	go staleConditions.Run(ctx, 1)
 	go fsyncMetricController.Run(ctx, 1)
 	go staticResourceController.Run(ctx, 1)
 	go targetConfigReconciler.Run(ctx, 1)
@@ -433,7 +407,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go bootstrapTeardownController.Run(ctx, 1)
 	go unsupportedConfigOverridesController.Run(ctx, 1)
 	go scriptController.Run(ctx, 1)
-	go quorumGuardCleanupController.Run(ctx, 1)
 	go defragController.Run(ctx, 1)
 	go upgradeBackupController.Run(ctx, 1)
 
