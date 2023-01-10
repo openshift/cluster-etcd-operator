@@ -74,7 +74,6 @@ type EtcdCertSignerController struct {
 	kubeClient     kubernetes.Interface
 	operatorClient v1helpers.StaticPodOperatorClient
 	nodeLister     corev1listers.NodeLister
-	secretLister   corev1listers.SecretLister
 	secretClient   corev1client.SecretsGetter
 	quorumChecker  ceohelpers.QuorumChecker
 }
@@ -96,7 +95,6 @@ func NewEtcdCertSignerController(
 		kubeClient:     kubeClient,
 		operatorClient: operatorClient,
 		nodeLister:     kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
-		secretLister:   kubeInformers.SecretLister(),
 		secretClient:   v1helpers.CachedSecretGetter(kubeClient.CoreV1(), kubeInformers),
 		quorumChecker:  quorumChecker,
 	}
@@ -238,7 +236,7 @@ func (c *EtcdCertSignerController) ensureCertsForNode(ctx context.Context, node 
 // updated with a new cert pair. If the secret is ensured to have a valid
 // cert pair, the bytes of the cert and key will be returned.
 func (c *EtcdCertSignerController) ensureCertSecret(ctx context.Context, secretName, nodeUID string, ipAddresses []string, certConfig etcdCertConfig, recorder events.Recorder) ([]byte, []byte, error) {
-	secret, err := c.secretLister.Secrets(operatorclient.TargetNamespace).Get(secretName)
+	secret, err := c.secretClient.Secrets(operatorclient.TargetNamespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil && !errors.IsNotFound(err) {
 		return nil, nil, err
 	}
@@ -268,7 +266,7 @@ func (c *EtcdCertSignerController) ensureCertSecret(ctx context.Context, secretN
 		}
 	} else {
 		// Generate a new cert pair. The secret is missing or its contents are invalid.
-		caSecret, err := c.secretLister.Secrets(operatorclient.GlobalUserSpecifiedConfigNamespace).Get(certConfig.caSecretName)
+		caSecret, err := c.secretClient.Secrets(operatorclient.GlobalUserSpecifiedConfigNamespace).Get(ctx, certConfig.caSecretName, metav1.GetOptions{})
 		if err != nil {
 			return nil, nil, err
 		}

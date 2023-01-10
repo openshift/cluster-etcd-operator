@@ -379,7 +379,6 @@ func setupControllerWithEtcd(t *testing.T, objects []runtime.Object, etcdMembers
 		kubeClient:     fakeKubeClient,
 		operatorClient: fakeOperatorClient,
 		nodeLister:     corev1listers.NewNodeLister(indexer),
-		secretLister:   corev1listers.NewSecretLister(indexer),
 		secretClient:   fakeKubeClient.CoreV1(),
 		quorumChecker:  quorumChecker,
 	}
