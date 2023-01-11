@@ -474,18 +474,53 @@ func TestAttemptToScaleDown(t *testing.T) {
 			},
 		},
 		{
-			name:                       "skip scaling down by one unhealthy machine from 3 master nodes", // no machine pending deletion
+			name:                       "scale down by one unhealthy machine pending deletion from 3 master nodes",
 			initialObservedConfigInput: wellKnownReplicasCountSet,
 			initialEtcdMemberList: func() []*etcdserverpb.Member {
 				return wellKnownEtcdMemberList()
 			}(),
 			initialObjectsForMachineLister: func() []runtime.Object {
-				return wellKnownMasterMachines()
+				machines := wellKnownMasterMachines()
+				m0 := machines[0].(*machinev1beta1.Machine)
+				m0.DeletionTimestamp = &metav1.Time{}
+				return machines
 			}(),
 			initialObjectsForConfigMapTargetNSLister: func() []runtime.Object {
 				return []runtime.Object{wellKnownEtcdEndpointsConfigMap()}
 			}(),
 			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 2, Unhealthy: 1}),
+			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
+				memberList, err := fakeEtcdClient.MemberList(context.TODO())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(memberList) != 2 {
+					t.Errorf("expected exactly 2 members, got %v", len(memberList))
+				}
+				for _, member := range memberList {
+					if member.ID == 1 {
+						t.Fatalf("expected the member: %v to be removed from the etcd cluster but it wasn't", member)
+					}
+				}
+			},
+		},
+		{
+			name:                       "skip scaling down, 3 master healthy machines from 3 master nodes", // one machine pending deletion
+			initialObservedConfigInput: wellKnownReplicasCountSet,
+			initialEtcdMemberList: func() []*etcdserverpb.Member {
+				return wellKnownEtcdMemberList()
+			}(),
+			initialObjectsForMachineLister: func() []runtime.Object {
+				machines := wellKnownMasterMachines()
+				// set deletion ts
+				m0 := machines[0].(*machinev1beta1.Machine)
+				m0.DeletionTimestamp = &metav1.Time{}
+				return machines
+			}(),
+			initialObjectsForConfigMapTargetNSLister: func() []runtime.Object {
+				return []runtime.Object{wellKnownEtcdEndpointsConfigMap()}
+			}(),
+			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 0}),
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
 				memberList, err := fakeEtcdClient.MemberList(context.TODO())
 				if err != nil {
