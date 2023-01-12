@@ -286,26 +286,26 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 	}
 
 	// Signer key material
-	caKeyMaterial, err := createKeyMaterial("etcd-signer", "etcd")
+	caKeyMaterial, err := tlshelpers.CreateSignerKeyMaterial("etcd-signer", "etcd")
 	if err != nil {
 		return nil, err
 	}
-	templateData.EtcdSignerCert = caKeyMaterial.caCert
-	templateData.EtcdSignerKey = caKeyMaterial.caKey
-	templateData.EtcdCaBundle = caKeyMaterial.caBundle
-	templateData.EtcdSignerClientCert = caKeyMaterial.clientCert
-	templateData.EtcdSignerClientKey = caKeyMaterial.clientKey
+	templateData.EtcdSignerCert = caKeyMaterial.CaCert
+	templateData.EtcdSignerKey = caKeyMaterial.CaKey
+	templateData.EtcdCaBundle = caKeyMaterial.CaBundle
+	templateData.EtcdSignerClientCert = caKeyMaterial.ClientCert
+	templateData.EtcdSignerClientKey = caKeyMaterial.ClientKey
 
 	// Metric key material
-	metricKeyMaterial, err := createKeyMaterial("etcd-metric-signer", "etcd-metric")
+	metricKeyMaterial, err := tlshelpers.CreateSignerKeyMaterial("etcd-metric-signer", "etcd-metric")
 	if err != nil {
 		return nil, err
 	}
-	templateData.EtcdMetricSignerCert = metricKeyMaterial.caCert
-	templateData.EtcdMetricSignerKey = metricKeyMaterial.caKey
-	templateData.EtcdMetricCaBundle = metricKeyMaterial.caBundle
-	templateData.EtcdMetricSignerClientCert = metricKeyMaterial.clientCert
-	templateData.EtcdMetricSignerClientKey = metricKeyMaterial.clientKey
+	templateData.EtcdMetricSignerCert = metricKeyMaterial.CaCert
+	templateData.EtcdMetricSignerKey = metricKeyMaterial.CaKey
+	templateData.EtcdMetricCaBundle = metricKeyMaterial.CaBundle
+	templateData.EtcdMetricSignerClientCert = metricKeyMaterial.ClientCert
+	templateData.EtcdMetricSignerClientKey = metricKeyMaterial.ClientKey
 
 	return &templateData, nil
 }

@@ -8,9 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/openshift/library-go/pkg/crypto"
 	"go.etcd.io/etcd/client/pkg/v3/tlsutil"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/klog/v2"
 )
 
@@ -26,6 +28,15 @@ const (
 
 	EtcdAllCertsSecretName = "etcd-all-certs"
 )
+
+// SignerKeyMaterial simplifies handling of the key data produced by CreateSignerKeyMaterial
+type SignerKeyMaterial struct {
+	CaCert     []byte
+	CaKey      []byte
+	CaBundle   []byte
+	ClientCert []byte
+	ClientKey  []byte
+}
 
 func GetPeerClientSecretNameForNode(nodeName string) string {
 	return fmt.Sprintf("etcd-peer-%s", nodeName)
@@ -110,4 +121,54 @@ func SupportedEtcdCiphers(cipherSuites []string) []string {
 	}
 	return allowedCiphers
 
+}
+
+// CreateSignerKeyMaterial returns the key material for a self-signed CA, its CA bundle,
+// and a client cert signed by the CA.
+func CreateSignerKeyMaterial(signerName, clientName string) (*SignerKeyMaterial, error) {
+	// CA
+	caSubject := pkix.Name{CommonName: signerName, OrganizationalUnit: []string{"openshift"}}
+	caExpiryDays := 10 * 365 // 10 years
+	signerCAConfig, err := crypto.MakeSelfSignedCAConfigForSubject(caSubject, caExpiryDays)
+	if err != nil {
+		return nil, err
+	}
+	caCert, caKey, err := signerCAConfig.GetPEMBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	// Bundle
+	caBundle, err := crypto.EncodeCertificates(signerCAConfig.Certs[0])
+	if err != nil {
+		return nil, err
+	}
+
+	// Client cert
+	ca := &crypto.CA{
+		Config:          signerCAConfig,
+		SerialGenerator: &crypto.RandomSerialGenerator{},
+	}
+	clientUser := &user.DefaultInfo{
+		Name:   clientName,
+		UID:    uuid.New().String(),
+		Groups: []string{clientName},
+	}
+	clientCertDuration := time.Hour * 24 * 365 * 10 // 10 years
+	clientCertConfig, err := ca.MakeClientCertificateForDuration(clientUser, clientCertDuration)
+	if err != nil {
+		return nil, err
+	}
+	clientCert, clientKey, err := clientCertConfig.GetPEMBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	return &SignerKeyMaterial{
+		CaCert:     caCert,
+		CaKey:      caKey,
+		CaBundle:   caBundle,
+		ClientCert: clientCert,
+		ClientKey:  clientKey,
+	}, nil
 }

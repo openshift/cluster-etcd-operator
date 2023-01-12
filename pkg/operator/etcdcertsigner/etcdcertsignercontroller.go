@@ -51,6 +51,8 @@ type etcdCertConfig struct {
 	newCertFunc func(caCert, caKey []byte, ipAddresses []string) (*bytes.Buffer, *bytes.Buffer, error)
 }
 
+var signerCerts = []string{"etcd-signer", "etcd-metric-signer"}
+
 // Define configuration for creating etcd cert secrets.
 var certConfigs = map[string]etcdCertConfig{
 	"peer": {
@@ -183,7 +185,14 @@ func (c *EtcdCertSignerController) ensureCerts(ctx context.Context, recorder eve
 		return nil, err
 	}
 
-	errs := []error{}
+	for _, signerCert := range signerCerts {
+		err := c.ensureSignerCert(ctx, signerCert, recorder)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var errs []error
 	certs := map[string][]byte{}
 	for _, node := range nodes {
 		certsForNode, certErrs := c.ensureCertsForNode(ctx, node, recorder)
@@ -288,6 +297,41 @@ func (c *EtcdCertSignerController) ensureCertSecret(ctx context.Context, secretN
 	}
 
 	return cert, key, nil
+}
+
+func (c *EtcdCertSignerController) ensureSignerCert(ctx context.Context, certSignerName string, recorder events.Recorder) error {
+	secret, err := c.secretLister.Secrets(operatorclient.GlobalUserSpecifiedConfigNamespace).Get(certSignerName)
+	if err != nil && !errors.IsNotFound(err) {
+		return err
+	}
+
+	// we only generate a new certificate when it doesn't exist, this can only happen when the secret was deleted
+	if secret == nil {
+		clientName := strings.TrimSuffix(certSignerName, "-signer")
+		material, err := tlshelpers.CreateSignerKeyMaterial(certSignerName, clientName)
+		if err != nil {
+			return err
+		}
+
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      certSignerName,
+				Namespace: operatorclient.GlobalUserSpecifiedConfigNamespace,
+			},
+			Type: corev1.SecretTypeTLS,
+			Data: map[string][]byte{
+				"tls.crt": material.CaCert,
+				"tls.key": material.CaKey,
+			},
+		}
+
+		_, _, err = resourceapply.ApplySecret(ctx, c.secretClient, recorder, secret)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // newCertSecret ensures consistency of secret creation between the controller
