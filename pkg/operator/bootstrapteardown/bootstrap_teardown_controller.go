@@ -7,14 +7,16 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
-	"github.com/openshift/library-go/pkg/controller/factory"
-	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	corev1listers "k8s.io/client-go/listers/core/v1"
-
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	"github.com/openshift/library-go/pkg/controller/factory"
+	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/client-go/kubernetes"
+	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 )
 
 type BootstrapTeardownController struct {
@@ -23,21 +25,23 @@ type BootstrapTeardownController struct {
 	configmapLister      corev1listers.ConfigMapLister
 	namespaceLister      corev1listers.NamespaceLister
 	infrastructureLister configv1listers.InfrastructureLister
+	configmapClient      corev1client.ConfigMapsGetter
 }
 
 func NewBootstrapTeardownController(
+	kubeClient kubernetes.Interface,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
-	infrastructureLister configv1listers.InfrastructureLister,
-) factory.Controller {
+	infrastructureLister configv1listers.InfrastructureLister) factory.Controller {
 	c := &BootstrapTeardownController{
 		operatorClient:       operatorClient,
 		etcdClient:           etcdClient,
 		configmapLister:      kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Lister(),
 		namespaceLister:      kubeInformersForNamespaces.InformersFor("").Core().V1().Namespaces().Lister(),
 		infrastructureLister: infrastructureLister,
+		configmapClient:      v1helpers.CachedConfigMapGetter(kubeClient.CoreV1(), kubeInformersForNamespaces),
 	}
 
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
@@ -139,6 +143,13 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, syncC
 	if err := c.etcdClient.MemberRemove(ctx, bootstrapID); err != nil {
 		return err
 	}
+	syncCtx.Recorder().Event("RemoveBootstrapEtcd", "etcd-bootstrap member removed successfully")
+	// flagging another status field allows bootkube or other installer clients to safely shut down the bootstrap node
+	bootstrapFinishedConfigMap.Data["etcd-bootstrap-removal-status"] = "complete"
+	if _, _, err := resourceapply.ApplyConfigMap(ctx, c.configmapClient, syncCtx.Recorder(), bootstrapFinishedConfigMap); err != nil {
+		return err
+	}
+
 	return nil
 }
 

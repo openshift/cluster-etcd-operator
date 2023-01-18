@@ -348,6 +348,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 
 	bootstrapTeardownController := bootstrapteardown.NewBootstrapTeardownController(
+		kubeClient,
 		operatorClient,
 		kubeInformersForNamespaces,
 		etcdClient,
