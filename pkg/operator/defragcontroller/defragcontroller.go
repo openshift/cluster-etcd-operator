@@ -204,7 +204,7 @@ func (c *DefragController) runDefrag(ctx context.Context, recorder events.Record
 					}
 					return true, nil
 				}); err != nil {
-				errors = append(errors, fmt.Errorf("timeout waiting for cluster to stabalize after defrag: %w", err))
+				errors = append(errors, fmt.Errorf("timeout waiting for cluster to stabilize after defrag: %w", err))
 			}
 		} else {
 			// no fragmentation needed is also a success
