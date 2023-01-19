@@ -6,8 +6,10 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	clientwatch "k8s.io/client-go/tools/watch"
@@ -66,4 +68,44 @@ func done(etcd *operatorv1.Etcd) (bool, error) {
 	}
 	klog.Infof("waiting on condition %s in etcd CR %s/%s to be True.", "EtcdRunningInCluster", etcd.Namespace, etcd.Name)
 	return false, nil
+}
+
+func WaitForEtcdBootstrapRemoval(ctx context.Context, config *rest.Config) error {
+	kubeClient, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		klog.Errorf("error getting kube client: %#v", err)
+		return err
+	}
+
+	_, err = clientwatch.UntilWithSync(
+		ctx,
+		cache.NewListWatchFromClient(kubeClient.RESTClient(), "bootstrap", "kube-system", fields.OneTermEqualSelector("metadata.name", "bootstrap")),
+		&corev1.ConfigMap{},
+		nil,
+		func(event watch.Event) (bool, error) {
+			switch event.Type {
+			case watch.Modified:
+				cm, ok := event.Object.(*corev1.ConfigMap)
+				if !ok {
+					klog.Warningf("Expected configmap object but got a %q object instead", event.Object.GetObjectKind().GroupVersionKind())
+					return false, nil
+				}
+
+				if cm.Data["etcd-bootstrap-removal-status"] == "complete" {
+					klog.Infof("cluster-etcd-operator successfully removed the bootstrap member")
+					return true, nil
+				}
+			}
+			klog.Infof("Still waiting for the cluster-etcd-operator to remove bootstrap member...")
+			return false, nil
+		},
+	)
+
+	if err != nil {
+		klog.Errorf("error waiting for etcd bootstrap member removal: %#v", err)
+		return err
+	}
+
+	klog.Infof("cluster-etcd-operator has removed the bootstrap etcd member")
+	return nil
 }

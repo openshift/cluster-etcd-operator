@@ -13,8 +13,9 @@ import (
 )
 
 type waitForCeoOpts struct {
-	errOut     io.Writer
-	kubeconfig string
+	errOut               io.Writer
+	kubeconfig           string
+	waitForMemberRemoval bool
 }
 
 // NewWaitForCeoCommand waits for cluster-etcd-operator to bootstrap.
@@ -45,6 +46,8 @@ func NewWaitForCeoCommand(errOut io.Writer) *cobra.Command {
 
 func (w *waitForCeoOpts) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&w.kubeconfig, "kubeconfig", "", "kubeconfig for the cluster it is bootstrapping")
+	// TODO(thomas): default to false once working, enable in bootkube template
+	fs.BoolVar(&w.waitForMemberRemoval, "removal", true, "when true, it will wait for the bootstrap member to get removed")
 }
 
 func (w *waitForCeoOpts) Run() error {
@@ -55,5 +58,12 @@ func (w *waitForCeoOpts) Run() error {
 	if err := bootstrapteardown.WaitForEtcdBootstrap(context.TODO(), config); err != nil {
 		klog.Errorf("error waiting for cluster-etcd-operator %#v", err)
 	}
+
+	if w.waitForMemberRemoval {
+		if err := bootstrapteardown.WaitForEtcdBootstrapRemoval(context.TODO(), config); err != nil {
+			klog.Errorf("error waiting for cluster-etcd-operator bootstrap removal %#v", err)
+		}
+	}
+
 	return nil
 }
