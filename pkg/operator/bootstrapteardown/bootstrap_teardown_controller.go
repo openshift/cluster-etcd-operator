@@ -82,7 +82,7 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, syncC
 	// checks the actual etcd cluster membership API if etcd-bootstrap exists
 	safeToRemoveBootstrap, hasBootstrap, bootstrapID, err := c.canRemoveEtcdBootstrap(ctx, scalingStrategy)
 	if err != nil {
-		return err
+		return fmt.Errorf("error while canRemoveEtcdBootstrap: %w", err)
 	}
 
 	if !hasBootstrap {
@@ -90,7 +90,7 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, syncC
 		// this is to ensure the status is always set correctly, even if the status update below failed
 		updateErr := setSuccessfulBoostrapRemovalStatus(ctx, c.operatorClient)
 		if updateErr != nil {
-			return updateErr
+			return fmt.Errorf("error while setSuccessfulBoostrapRemovalStatus: %w", updateErr)
 		}
 
 		// if the bootstrap isn't present, then clearly we're available enough to terminate. This avoids any risk of flapping.
@@ -101,7 +101,7 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, syncC
 			Message: "etcd-bootstrap member is already removed",
 		}))
 
-		return updateErr
+		return fmt.Errorf("error while updating BootstrapAlreadyRemoved: %w", updateErr)
 	}
 
 	if !safeToRemoveBootstrap {
@@ -112,10 +112,9 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, syncC
 			Message: "still waiting for three healthy etcd members",
 		}))
 		if updateErr != nil {
-			return updateErr
+			return fmt.Errorf("error while updating NotEnoughEtcdMembers: %w", updateErr)
 		}
 		return nil
-
 	}
 
 	_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
@@ -125,7 +124,7 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, syncC
 		Message: "enough members found",
 	}))
 	if updateErr != nil {
-		return updateErr
+		return fmt.Errorf("error while updating EnoughEtcdMembers: %w", updateErr)
 	}
 
 	// check to see if bootstrapping is complete
@@ -134,10 +133,10 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, syncC
 	bootstrapFinishedConfigMap, err := c.configmapLister.ConfigMaps(cmNamespace).Get(cmName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			klog.Infof("cluster-bootstrap is not yet finished - ConfigMap '%s/%s' not found", cmNamespace, cmName)
+			klog.Warningf("cluster-bootstrap is not yet finished - ConfigMap '%s/%s' not found", cmNamespace, cmName)
 			return nil
 		}
-		return err
+		return fmt.Errorf("error while getting bootstrap configmap: %w", err)
 	}
 
 	if bootstrapFinishedConfigMap.Data["status"] != "complete" {
@@ -145,11 +144,11 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, syncC
 		return nil
 	}
 
-	klog.Infof("Removing bootstrap member [%x]", bootstrapID)
+	klog.Warningf("Removing bootstrap member [%x]", bootstrapID)
 
 	// this is ugly until bootkube is updated, but we want to be sure that bootkube has time to be waiting to watch the condition coming back.
 	if err := c.etcdClient.MemberRemove(ctx, bootstrapID); err != nil {
-		return err
+		return fmt.Errorf("error while removing bootstrap member [%x]: %w", bootstrapID, updateErr)
 	}
 
 	klog.Infof("Successfully removed bootstrap member [%x]", bootstrapID)
