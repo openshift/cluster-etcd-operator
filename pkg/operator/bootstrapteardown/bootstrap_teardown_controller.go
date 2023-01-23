@@ -101,7 +101,11 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, syncC
 			Message: "etcd-bootstrap member is already removed",
 		}))
 
-		return fmt.Errorf("error while updating BootstrapAlreadyRemoved: %w", updateErr)
+		if updateErr != nil {
+			return fmt.Errorf("error while updating BootstrapAlreadyRemoved: %w", updateErr)
+		}
+
+		return nil
 	}
 
 	if !safeToRemoveBootstrap {
