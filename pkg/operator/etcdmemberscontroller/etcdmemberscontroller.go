@@ -138,7 +138,7 @@ func (c *EtcdMembersController) reportEtcdMembers(ctx context.Context, recorder 
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersAvailable",
 			Status:  operatorv1.ConditionFalse,
-			Reason:  "No quorum",
+			Reason:  "NoQuorum",
 			Message: memberHealth.Status(),
 		}))
 		if updateErr != nil {
