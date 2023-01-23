@@ -59,7 +59,8 @@ spec:
          --initial-cluster=$ETCD_INITIAL_CLUSTER \
          --initial-cluster-token "openshift-etcd-${UUID}" \
          --initial-advertise-peer-urls $ETCD_NODE_PEER_URL \
-         --data-dir="/var/lib/etcd/restore-${UUID}"
+         --data-dir="/var/lib/etcd/restore-${UUID}" \
+         --skip-hash-check=true
 
         mv /var/lib/etcd/restore-${UUID}/* /var/lib/etcd/
 
