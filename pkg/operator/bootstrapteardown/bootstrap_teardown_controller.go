@@ -47,11 +47,21 @@ func NewBootstrapTeardownController(
 	).WithSync(c.sync).ToController("BootstrapTeardownController", eventRecorder.WithComponentSuffix("bootstrap-teardown-controller"))
 }
 
-func (c *BootstrapTeardownController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
+func (c *BootstrapTeardownController) sync(ctx context.Context, _ factory.SyncContext) error {
 	timeoutCtx, cancelFunc := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelFunc()
 
-	err := c.removeBootstrap(timeoutCtx, syncCtx)
+	scalingStrategy, err := ceohelpers.GetBootstrapScalingStrategy(c.operatorClient, c.namespaceLister, c.infrastructureLister)
+	if err != nil {
+		return fmt.Errorf("failed to get bootstrap scaling strategy: %w", err)
+	}
+	// checks the actual etcd cluster membership API if etcd-bootstrap exists
+	safeToRemoveBootstrap, hasBootstrap, bootstrapID, err := c.canRemoveEtcdBootstrap(ctx, scalingStrategy)
+	if err != nil {
+		return fmt.Errorf("error while canRemoveEtcdBootstrap: %w", err)
+	}
+
+	err = c.removeBootstrap(timeoutCtx, safeToRemoveBootstrap, hasBootstrap, bootstrapID)
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "BootstrapTeardownDegraded",
@@ -74,17 +84,7 @@ func (c *BootstrapTeardownController) sync(ctx context.Context, syncCtx factory.
 	return updateErr
 }
 
-func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, syncCtx factory.SyncContext) error {
-	scalingStrategy, err := ceohelpers.GetBootstrapScalingStrategy(c.operatorClient, c.namespaceLister, c.infrastructureLister)
-	if err != nil {
-		return fmt.Errorf("failed to get bootstrap scaling strategy: %w", err)
-	}
-	// checks the actual etcd cluster membership API if etcd-bootstrap exists
-	safeToRemoveBootstrap, hasBootstrap, bootstrapID, err := c.canRemoveEtcdBootstrap(ctx, scalingStrategy)
-	if err != nil {
-		return fmt.Errorf("error while canRemoveEtcdBootstrap: %w", err)
-	}
-
+func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, safeToRemoveBootstrap bool, hasBootstrap bool, bootstrapID uint64) error {
 	if !hasBootstrap {
 		klog.V(4).Infof("no bootstrap anymore setting removal status")
 		// this is to ensure the status is always set correctly, even if the status update below failed
@@ -152,7 +152,7 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, syncC
 
 	// this is ugly until bootkube is updated, but we want to be sure that bootkube has time to be waiting to watch the condition coming back.
 	if err := c.etcdClient.MemberRemove(ctx, bootstrapID); err != nil {
-		return fmt.Errorf("error while removing bootstrap member [%x]: %w", bootstrapID, updateErr)
+		return fmt.Errorf("error while removing bootstrap member [%x]: %w", bootstrapID, err)
 	}
 
 	klog.Infof("Successfully removed bootstrap member [%x]", bootstrapID)
