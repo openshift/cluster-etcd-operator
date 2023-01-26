@@ -55,6 +55,17 @@ func (c *BootstrapTeardownController) sync(ctx context.Context, _ factory.SyncCo
 	if err != nil {
 		return fmt.Errorf("failed to get bootstrap scaling strategy: %w", err)
 	}
+
+	_, _, err = v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		Type:    "BootstrapScalingStrategy",
+		Status:  operatorv1.ConditionTrue,
+		Reason:  "AsExpected",
+		Message: string(scalingStrategy),
+	}))
+	if err != nil {
+		return fmt.Errorf("error while updating status with bootstrap scaling strategy: %w", err)
+	}
+
 	// checks the actual etcd cluster membership API if etcd-bootstrap exists
 	safeToRemoveBootstrap, hasBootstrap, bootstrapID, err := c.canRemoveEtcdBootstrap(ctx, scalingStrategy)
 	if err != nil {

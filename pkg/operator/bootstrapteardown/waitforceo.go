@@ -5,6 +5,7 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/watch"
@@ -43,7 +44,7 @@ func waitForEtcdBootstrap(ctx context.Context, operatorRestClient rest.Interface
 					klog.Warningf("Expected an Etcd object but got a %q object instead", event.Object.GetObjectKind().GroupVersionKind())
 					return false, nil
 				}
-				return done(etcd)
+				return done(etcd), nil
 			}
 			klog.Infof("Still waiting for the cluster-etcd-operator to bootstrap...")
 			return false, nil
@@ -59,11 +60,28 @@ func waitForEtcdBootstrap(ctx context.Context, operatorRestClient rest.Interface
 	return nil
 }
 
-func done(etcd *operatorv1.Etcd) (bool, error) {
-	if operatorv1helpers.IsOperatorConditionTrue(etcd.Status.Conditions, "EtcdRunningInCluster") {
-		klog.Info("Cluster etcd operator bootstrapped successfully")
-		return true, nil
+func done(etcd *operatorv1.Etcd) bool {
+	scalingStrategy := operatorv1helpers.FindOperatorCondition(etcd.Status.Conditions, "BootstrapScalingStrategy")
+	if scalingStrategy != nil {
+		// for DelayedHAScalingStrategy we need to test whether the bootstrap member was already removed
+		// this is to ensure we properly remove the bootstrap member before it comes back as a proper control plane node
+		if scalingStrategy.Message == string(ceohelpers.DelayedHAScalingStrategy) {
+			if operatorv1helpers.IsOperatorConditionTrue(etcd.Status.Conditions, "EtcdBoostrapMemberRemoved") {
+				return true
+			}
+
+			klog.Infof("waiting on condition %s in etcd CR %s/%s to be True.", "EtcdBoostrapMemberRemoved", etcd.Namespace, etcd.Name)
+			return false
+		}
+
+		if operatorv1helpers.IsOperatorConditionTrue(etcd.Status.Conditions, "EtcdRunningInCluster") {
+			klog.Info("Cluster etcd operator bootstrapped successfully")
+			return true
+		} else {
+			klog.Infof("waiting on condition %s in etcd CR %s/%s to be True.", "EtcdRunningInCluster", etcd.Namespace, etcd.Name)
+		}
+	} else {
+		klog.Infof("waiting on condition %s in etcd CR %s/%s to be appear.", "BootstrapScalingStrategy", etcd.Namespace, etcd.Name)
 	}
-	klog.Infof("waiting on condition %s in etcd CR %s/%s to be True.", "EtcdRunningInCluster", etcd.Namespace, etcd.Name)
-	return false, nil
+	return false
 }
