@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
@@ -207,6 +208,14 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 			klog.V(2).Infof("cannot proceed with scaling down, unhealthy voting etcd members found: %v but none are pending deletion", unhealthyMembersURLs)
 			return fmt.Errorf("cannot proceed with scaling down, unhealthy voting etcd members found: %v but none are pending deletion", unhealthyMembersURLs)
 		}
+	}
+
+	// Don't scale down if all members are healthy and the cluster is already at the desired control-plane size
+	// When at the desired control-plane size, scale down is only allowed if a member is unhealthy so that a new machine can replace it.
+	// For healthy members, deleting a machine should result in a new machine being created and member addition before scale down can occur
+	if reflect.DeepEqual(liveVotingMembers, healthyLiveVotingMembers) && len(healthyLiveVotingMembers) <= desiredControlPlaneReplicasCount {
+		klog.V(2).Infof("skip scale down: all voting members are healthy and membership does not exceed the desired cluster size of %v", desiredControlPlaneReplicasCount)
+		return nil
 	}
 
 	// remove the unhealthy machine pending deletion first
