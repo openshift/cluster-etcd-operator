@@ -130,7 +130,9 @@ func (c *StaticResourceController) WithIgnoreNotFoundOnCreate() *StaticResourceC
 }
 
 // WithPrecondition adds a precondition, which blocks the sync method from being executed. Preconditions might be chained using:
-//  WithPrecondition(a).WithPrecondition(b).WithPrecondition(c).
+//
+//	WithPrecondition(a).WithPrecondition(b).WithPrecondition(c).
+//
 // If any of the preconditions is false, the sync will result in an error.
 //
 // The requirement parameter should follow the convention described in the StaticResourcesPreconditionsFuncType.
