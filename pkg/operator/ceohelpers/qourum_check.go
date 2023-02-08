@@ -15,6 +15,15 @@ type QuorumChecker interface {
 	IsSafeToUpdateRevision() (bool, error)
 }
 
+// AlwaysSafeQuorumChecker can be used for testing and always returns that it is safe to update a revision
+type AlwaysSafeQuorumChecker struct {
+}
+
+// IsSafeToUpdateRevision always returns true, nil
+func (c *AlwaysSafeQuorumChecker) IsSafeToUpdateRevision() (bool, error) {
+	return true, nil
+}
+
 // QuorumCheck is just a convenience struct around bootstrap.go
 type QuorumCheck struct {
 	configMapLister corev1listers.ConfigMapLister
