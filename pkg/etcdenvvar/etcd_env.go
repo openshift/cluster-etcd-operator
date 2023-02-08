@@ -139,8 +139,12 @@ func getAllEtcdEndpoints(envVarContext envVarContext) (map[string]string, error)
 func getEtcdName(envVarContext envVarContext) (map[string]string, error) {
 	ret := map[string]string{}
 
-	for _, nodeInfo := range envVarContext.status.NodeStatuses {
-		ret[fmt.Sprintf("NODE_%s_ETCD_NAME", envVarSafe(nodeInfo.NodeName))] = nodeInfo.NodeName
+	if nodeStatus := envVarContext.status.NodeStatuses; nodeStatus != nil {
+		for _, nodeInfo := range nodeStatus {
+			ret[fmt.Sprintf("NODE_%s_ETCD_NAME", envVarSafe(nodeInfo.NodeName))] = nodeInfo.NodeName
+		}
+	} else {
+		return nil, fmt.Errorf("nodeStatuses not found in StaticPodOperator")
 	}
 
 	return ret, nil
@@ -153,17 +157,21 @@ func getEscapedIPAddress(envVarContext envVarContext) (map[string]string, error)
 	}
 
 	ret := map[string]string{}
-	for _, nodeInfo := range envVarContext.status.NodeStatuses {
-		node, err := envVarContext.nodeLister.Get(nodeInfo.NodeName)
-		if err != nil {
-			return nil, err
-		}
+	if nodeStatus := envVarContext.status.NodeStatuses; nodeStatus != nil {
+		for _, nodeInfo := range nodeStatus {
+			node, err := envVarContext.nodeLister.Get(nodeInfo.NodeName)
+			if err != nil {
+				return nil, err
+			}
 
-		escapedIPAddress, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
-		if err != nil {
-			return nil, err
+			escapedIPAddress, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
+			if err != nil {
+				return nil, err
+			}
+			ret[fmt.Sprintf("NODE_%s_IP", envVarSafe(nodeInfo.NodeName))] = escapedIPAddress
 		}
-		ret[fmt.Sprintf("NODE_%s_IP", envVarSafe(nodeInfo.NodeName))] = escapedIPAddress
+	} else {
+		return nil, fmt.Errorf("nodeStatuses not found in StaticPodOperator")
 	}
 
 	return ret, nil
@@ -177,17 +185,21 @@ func getEtcdURLHost(envVarContext envVarContext) (map[string]string, error) {
 		return nil, err
 	}
 
-	for _, nodeInfo := range envVarContext.status.NodeStatuses {
-		node, err := envVarContext.nodeLister.Get(nodeInfo.NodeName)
-		if err != nil {
-			return nil, err
-		}
-		etcdURLHost, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
-		if err != nil {
-			return nil, err
-		}
+	if nodeStatus := envVarContext.status.NodeStatuses; nodeStatus != nil {
+		for _, nodeInfo := range nodeStatus {
+			node, err := envVarContext.nodeLister.Get(nodeInfo.NodeName)
+			if err != nil {
+				return nil, err
+			}
+			etcdURLHost, err := dnshelpers.GetEscapedPreferredInternalIPAddressForNodeName(network, node)
+			if err != nil {
+				return nil, err
+			}
 
-		ret[fmt.Sprintf("NODE_%s_ETCD_URL_HOST", envVarSafe(nodeInfo.NodeName))] = etcdURLHost
+			ret[fmt.Sprintf("NODE_%s_ETCD_URL_HOST", envVarSafe(nodeInfo.NodeName))] = etcdURLHost
+		}
+	} else {
+		return nil, fmt.Errorf("nodeStatuses not found in StaticPodOperator")
 	}
 
 	return ret, nil
