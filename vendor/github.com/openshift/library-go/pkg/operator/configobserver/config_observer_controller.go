@@ -83,14 +83,14 @@ func NewConfigObserver(
 // Given the following configuration, you could run two separate controllers and point each to its own section.
 // The first controller would be responsible for "oauthAPIServer" and the second for "oauthServer" section.
 //
-// "observedConfig": {
-//   "oauthAPIServer": {
-//     "apiServerArguments": {"tls-min-version": "VersionTLS12"}
-//   },
-//   "oauthServer": {
-//     "corsAllowedOrigins": [ "//127\\.0\\.0\\.1(:|$)","//localhost(:|$)"]
-//   }
-// }
+//	"observedConfig": {
+//	  "oauthAPIServer": {
+//	    "apiServerArguments": {"tls-min-version": "VersionTLS12"}
+//	  },
+//	  "oauthServer": {
+//	    "corsAllowedOrigins": [ "//127\\.0\\.0\\.1(:|$)","//localhost(:|$)"]
+//	  }
+//	}
 //
 // oauthAPIController    := NewNestedConfigObserver(..., []string{"oauthAPIServer"}
 // oauthServerController := NewNestedConfigObserver(..., []string{"oauthServer"}
@@ -245,8 +245,8 @@ type listerInformer struct {
 	cacheSynced cache.InformerSynced
 }
 
-func (l *listerInformer) AddEventHandler(cache.ResourceEventHandler) {
-	return
+func (l *listerInformer) AddEventHandler(cache.ResourceEventHandler) (cache.ResourceEventHandlerRegistration, error) {
+	return nil, nil
 }
 
 func (l *listerInformer) HasSynced() bool {
