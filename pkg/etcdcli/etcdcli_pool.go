@@ -138,7 +138,7 @@ func NewDefaultEtcdClientPool(newFunc func() (*clientv3.Client, error), endpoint
 		if client == nil {
 			return fmt.Errorf("cached client was nil")
 		}
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), DefaultClientTimeout)
 		defer cancel()
 		_, err := client.MemberList(ctx)
 		if err != nil {
