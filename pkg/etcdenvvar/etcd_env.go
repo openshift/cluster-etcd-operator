@@ -138,6 +138,10 @@ func getAllEtcdEndpoints(envVarContext envVarContext) (map[string]string, error)
 func getEtcdName(envVarContext envVarContext) (map[string]string, error) {
 	ret := map[string]string{}
 
+	if envVarContext.status.NodeStatuses == nil || len(envVarContext.status.NodeStatuses) == 0 {
+		return nil, fmt.Errorf("empty NodeStatuses, can't generate environment for getEtcdName")
+	}
+
 	for _, nodeInfo := range envVarContext.status.NodeStatuses {
 		ret[fmt.Sprintf("NODE_%s_ETCD_NAME", envVarSafe(nodeInfo.NodeName))] = nodeInfo.NodeName
 	}
@@ -149,6 +153,10 @@ func getEscapedIPAddress(envVarContext envVarContext) (map[string]string, error)
 	network, err := envVarContext.networkLister.Get("cluster")
 	if err != nil {
 		return nil, err
+	}
+
+	if envVarContext.status.NodeStatuses == nil || len(envVarContext.status.NodeStatuses) == 0 {
+		return nil, fmt.Errorf("empty NodeStatuses, can't generate environment for getEscapedIPAddress")
 	}
 
 	ret := map[string]string{}
@@ -174,6 +182,10 @@ func getEtcdURLHost(envVarContext envVarContext) (map[string]string, error) {
 	network, err := envVarContext.networkLister.Get("cluster")
 	if err != nil {
 		return nil, err
+	}
+
+	if envVarContext.status.NodeStatuses == nil || len(envVarContext.status.NodeStatuses) == 0 {
+		return nil, fmt.Errorf("empty NodeStatuses, can't generate environment for getEtcdURLHost")
 	}
 
 	for _, nodeInfo := range envVarContext.status.NodeStatuses {
