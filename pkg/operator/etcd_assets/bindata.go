@@ -811,8 +811,8 @@ ${COMPUTED_ENV_VARS}
         port: 9980
         path: readyz
         scheme: HTTPS
-      timeoutSeconds: 10
-      failureThreshold: 3
+      timeoutSeconds: 30
+      failureThreshold: 5
       periodSeconds: 5
       successThreshold: 1
     livenessProbe:
@@ -820,10 +820,10 @@ ${COMPUTED_ENV_VARS}
         path: healthz
         port: 9980
         scheme: HTTPS
-      timeoutSeconds: 10
+      timeoutSeconds: 30
       periodSeconds: 5
       successThreshold: 1
-      failureThreshold: 3
+      failureThreshold: 5
     startupProbe:
       httpGet:
         port: 9980
