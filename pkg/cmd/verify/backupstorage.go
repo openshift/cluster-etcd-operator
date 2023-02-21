@@ -132,6 +132,8 @@ func (v *verifyBackupStorage) isStorageAdequate(ctx context.Context) (bool, erro
 	}
 	defer cli.Close()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	members, err := cli.MemberList(ctx)
 	if err != nil {
 		klog.Warningf("failed checking member list: %v", err)
