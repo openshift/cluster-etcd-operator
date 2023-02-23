@@ -1,10 +1,7 @@
 reviewers:
   - dusk125
-  - hexfusion
   - ironcladlou
-  - marun
   - hasbro17
-  - EmilyM1
   - Elbehery
   - tjungblu
 approvers:
@@ -12,4 +9,6 @@ approvers:
   - hasbro17
   - sttts
   - dusk125
+  - Elbehery
+  - tjungblu
 component: "Etcd"
