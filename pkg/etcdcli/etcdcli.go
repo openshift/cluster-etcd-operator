@@ -38,6 +38,7 @@ const (
 	BootstrapIPAnnotationKey = "alpha.installer.openshift.io/etcd-bootstrap"
 	DefaultDialTimeout       = 15 * time.Second
 	DefragDialTimeout        = 60 * time.Second
+	DefaultClientTimeout     = 30 * time.Second
 )
 
 type etcdClientGetter struct {
@@ -135,7 +136,7 @@ func newEtcdClientWithClientOpts(endpoints []string, skipConnectionTest bool, op
 	}
 
 	// Test client connection.
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultClientTimeout)
 	defer cancel()
 	_, err = cli.MemberList(ctx)
 	if err != nil {
@@ -157,6 +158,8 @@ func (g *etcdClientGetter) MemberAdd(ctx context.Context, peerURL string) error 
 	}
 	defer g.clientPool.Return(cli)
 
+	ctx, cancel := context.WithTimeout(ctx, DefaultClientTimeout)
+	defer cancel()
 	membersResp, err := cli.MemberList(ctx)
 	if err != nil {
 		return err
@@ -199,6 +202,8 @@ func (g *etcdClientGetter) MemberUpdatePeerURL(ctx context.Context, id uint64, p
 
 	defer g.clientPool.Return(cli)
 
+	ctx, cancel := context.WithTimeout(ctx, DefaultClientTimeout)
+	defer cancel()
 	_, err = cli.MemberUpdate(ctx, id, peerURLs)
 	if err != nil {
 		return err
@@ -215,6 +220,8 @@ func (g *etcdClientGetter) MemberRemove(ctx context.Context, member string) erro
 	}
 	defer g.clientPool.Return(cli)
 
+	ctx, cancel := context.WithTimeout(ctx, DefaultClientTimeout)
+	defer cancel()
 	membersResp, err := cli.MemberList(ctx)
 	if err != nil {
 		return nil
@@ -222,7 +229,7 @@ func (g *etcdClientGetter) MemberRemove(ctx context.Context, member string) erro
 
 	for _, m := range membersResp.Members {
 		if m.Name == member {
-			cctx, ccancel := context.WithCancel(ctx)
+			cctx, ccancel := context.WithTimeout(ctx, DefaultClientTimeout)
 			defer ccancel()
 
 			_, err = cli.MemberRemove(cctx, m.ID)
@@ -245,6 +252,8 @@ func (g *etcdClientGetter) MemberList(ctx context.Context) ([]*etcdserverpb.Memb
 
 	defer g.clientPool.Return(cli)
 
+	ctx, cancel := context.WithTimeout(ctx, DefaultClientTimeout)
+	defer cancel()
 	membersResp, err := cli.MemberList(ctx)
 	if err != nil {
 		return nil, err
@@ -261,6 +270,8 @@ func (g *etcdClientGetter) Status(ctx context.Context, clientURL string) (*clien
 	}
 
 	defer g.clientPool.Return(cli)
+	ctx, cancel := context.WithTimeout(ctx, DefaultClientTimeout)
+	defer cancel()
 	return cli.Status(ctx, clientURL)
 }
 
@@ -298,6 +309,8 @@ func (g *etcdClientGetter) UnhealthyMembers(ctx context.Context) ([]*etcdserverp
 
 	defer g.clientPool.Return(cli)
 
+	ctx, cancel := context.WithTimeout(ctx, DefaultClientTimeout)
+	defer cancel()
 	etcdCluster, err := cli.MemberList(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("could not get member list %v", err)
@@ -328,6 +341,8 @@ func (g *etcdClientGetter) HealthyMembers(ctx context.Context) ([]*etcdserverpb.
 
 	defer g.clientPool.Return(cli)
 
+	ctx, cancel := context.WithTimeout(ctx, DefaultClientTimeout)
+	defer cancel()
 	etcdCluster, err := cli.MemberList(ctx)
 	if err != nil {
 		return nil, err
@@ -349,6 +364,8 @@ func (g *etcdClientGetter) MemberHealth(ctx context.Context) (memberHealth, erro
 
 	defer g.clientPool.Return(cli)
 
+	ctx, cancel := context.WithTimeout(ctx, DefaultClientTimeout)
+	defer cancel()
 	etcdCluster, err := cli.MemberList(ctx)
 	if err != nil {
 		return nil, err
@@ -383,6 +400,8 @@ func (g *etcdClientGetter) MemberStatus(ctx context.Context, member *etcdserverp
 		return EtcdMemberStatusNotStarted
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, DefaultClientTimeout)
+	defer cancel()
 	_, err = cli.Status(ctx, member.ClientURLs[0])
 	if err != nil {
 		klog.Errorf("error getting etcd member %s status: %#v", member.Name, err)
@@ -408,6 +427,8 @@ func (g *etcdClientGetter) Defragment(ctx context.Context, member *etcdserverpb.
 		}
 	}()
 
+	ctx, cancel := context.WithTimeout(ctx, DefaultClientTimeout)
+	defer cancel()
 	resp, err := cli.Defragment(ctx, member.ClientURLs[0])
 	if err != nil {
 		return nil, fmt.Errorf("error while running defragment: %w", err)
