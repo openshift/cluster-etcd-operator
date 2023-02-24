@@ -13,6 +13,7 @@ import (
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/v3/mock/mockserver"
+	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -130,6 +131,26 @@ func FakeSecret(namespace, name string, cert map[string][]byte) *corev1.Secret {
 	return secret
 }
 
+func ClusterConfigConfigMap(maxLearner int) *corev1.ConfigMap {
+	installConfig := map[string]interface{}{
+		"ControlPlane": map[string]interface{}{
+			"Replicas": fmt.Sprintf("%d", maxLearner),
+		},
+	}
+	installConfigYaml, _ := yaml.Marshal(installConfig)
+
+	m := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cluster-config-v1",
+			Namespace: operatorclient.TargetNamespace,
+		},
+		Data: map[string]string{
+			"install-config": string(installConfigYaml),
+		},
+	}
+	return m
+}
+
 func EndpointsConfigMap(configs ...func(endpoints *corev1.ConfigMap)) *corev1.ConfigMap {
 	endpoints := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -209,6 +230,15 @@ func WithLatestRevision(latest int32) func(status *operatorv1.StaticPodOperatorS
 func WithNodeStatusAtCurrentRevision(current int32) func(*operatorv1.StaticPodOperatorStatus) {
 	return func(status *operatorv1.StaticPodOperatorStatus) {
 		status.NodeStatuses = append(status.NodeStatuses, operatorv1.NodeStatus{
+			CurrentRevision: current,
+		})
+	}
+}
+
+func WithNodeStatusAtCurrentRevisionNamed(current int32, name string) func(*operatorv1.StaticPodOperatorStatus) {
+	return func(status *operatorv1.StaticPodOperatorStatus) {
+		status.NodeStatuses = append(status.NodeStatuses, operatorv1.NodeStatus{
+			NodeName:        name,
 			CurrentRevision: current,
 		})
 	}
