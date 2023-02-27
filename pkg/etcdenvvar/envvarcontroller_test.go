@@ -1,7 +1,6 @@
 package etcdenvvar
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
@@ -34,7 +33,6 @@ var defaultEnvResult = map[string]string{
 	"ETCD_DATA_DIR":                            "/var/lib/etcd",
 	"ETCD_ELECTION_TIMEOUT":                    "1000",
 	"ETCD_ENABLE_PPROF":                        "true",
-	"ETCD_EXPERIMENTAL_MAX_LEARNERS":           "1",
 	"ETCD_EXPERIMENTAL_WARNING_APPLY_DURATION": "200ms",
 	"ETCD_EXPERIMENTAL_WATCH_PROGRESS_NOTIFY_INTERVAL": "5s",
 	"ETCD_HEARTBEAT_INTERVAL":                          "100",
@@ -161,7 +159,7 @@ func TestEnvVarController(t *testing.T) {
 				networkLister:        configv1listers.NewNetworkLister(networkIndexer),
 			}
 
-			err = controller.sync(context.TODO())
+			err = controller.sync()
 			require.Equal(t, err, scenario.expectedErr)
 
 			m := controller.GetEnvVars()
