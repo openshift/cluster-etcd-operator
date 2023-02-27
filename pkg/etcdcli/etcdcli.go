@@ -39,6 +39,7 @@ const (
 	BootstrapIPAnnotationKey = "alpha.installer.openshift.io/etcd-bootstrap"
 	DefaultDialTimeout       = 15 * time.Second
 	DefragDialTimeout        = 60 * time.Second
+	DefaultClientTimeout     = 30 * time.Second
 )
 
 type etcdClientGetter struct {
@@ -118,7 +119,7 @@ func (g *etcdClientGetter) getEtcdClient() (*clientv3.Client, error) {
 	g.clientLock.Lock()
 	defer g.clientLock.Unlock()
 	if reflect.DeepEqual(g.lastClientConfigKey, etcdEndpoints) && g.cachedClient != nil {
-		ccx, ccancel := context.WithCancel(context.Background())
+		ccx, ccancel := context.WithTimeout(context.Background(), DefaultClientTimeout)
 		defer ccancel()
 		_, err = g.cachedClient.MemberList(ccx)
 		if err == nil {
@@ -183,7 +184,7 @@ func getEtcdClientWithClientOpts(endpoints []string, opts ...ClientOption) (*cli
 		return nil, fmt.Errorf("failed to make etcd client for endpoints %v: %w", endpoints, err)
 	}
 	// Test client connection.
-	ccx, ccancel := context.WithCancel(context.Background())
+	ccx, ccancel := context.WithTimeout(context.Background(), DefaultClientTimeout)
 	defer ccancel()
 	_, err = cli.MemberList(ccx)
 	if err != nil {
@@ -204,7 +205,7 @@ func (g *etcdClientGetter) MemberAdd(peerURL string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultClientTimeout)
 	defer cancel()
 
 	membersResp, err := cli.MemberList(ctx)
@@ -229,7 +230,7 @@ func (g *etcdClientGetter) MemberAdd(peerURL string) error {
 }
 
 func (g *etcdClientGetter) MemberUpdatePeerURL(id uint64, peerURLs []string) error {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultClientTimeout)
 	defer cancel()
 	if members, err := g.MemberList(ctx); err != nil {
 		g.eventRecorder.Eventf("MemberUpdate", "updating member %d with peers %v", id, strings.Join(peerURLs, ","))
@@ -264,7 +265,7 @@ func (g *etcdClientGetter) MemberRemove(member string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultClientTimeout)
 	defer cancel()
 
 	membersResp, err := cli.MemberList(ctx)
@@ -274,7 +275,7 @@ func (g *etcdClientGetter) MemberRemove(member string) error {
 
 	for _, m := range membersResp.Members {
 		if m.Name == member {
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithTimeout(context.Background(), DefaultClientTimeout)
 			defer cancel()
 
 			_, err = cli.MemberRemove(ctx, m.ID)
@@ -295,6 +296,8 @@ func (g *etcdClientGetter) MemberList(ctx context.Context) ([]*etcdserverpb.Memb
 		return nil, err
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, DefaultClientTimeout)
+	defer cancel()
 	membersResp, err := cli.MemberList(ctx)
 	if err != nil {
 		return nil, err
@@ -309,11 +312,13 @@ func (g *etcdClientGetter) Status(ctx context.Context, clientURL string) (*clien
 	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, DefaultClientTimeout)
+	defer cancel()
 	return cli.Status(ctx, clientURL)
 }
 
 func (g *etcdClientGetter) GetMember(name string) (*etcdserverpb.Member, error) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultClientTimeout)
 	defer cancel()
 
 	members, err := g.MemberList(ctx)
@@ -347,7 +352,7 @@ func (g *etcdClientGetter) UnhealthyMembers() ([]*etcdserverpb.Member, error) {
 		return nil, fmt.Errorf("could not get etcd client %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultClientTimeout)
 	defer cancel()
 
 	etcdCluster, err := cli.MemberList(ctx)
@@ -378,6 +383,8 @@ func (g *etcdClientGetter) HealthyMembers(ctx context.Context) ([]*etcdserverpb.
 		return nil, err
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, DefaultClientTimeout)
+	defer cancel()
 	etcdCluster, err := cli.MemberList(ctx)
 	if err != nil {
 		return nil, err
@@ -397,6 +404,8 @@ func (g *etcdClientGetter) MemberHealth(ctx context.Context) (memberHealth, erro
 		return nil, err
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, DefaultClientTimeout)
+	defer cancel()
 	etcdCluster, err := cli.MemberList(ctx)
 	if err != nil {
 		return nil, err
@@ -430,7 +439,7 @@ func (g *etcdClientGetter) MemberStatus(member *etcdserverpb.Member) string {
 		return EtcdMemberStatusNotStarted
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultClientTimeout)
 	_, err = cli.Status(ctx, member.ClientURLs[0])
 	cancel()
 	if err != nil {
@@ -448,6 +457,8 @@ func (g *etcdClientGetter) Defragment(ctx context.Context, member *etcdserverpb.
 	}
 	defer cli.Close()
 
+	ctx, cancel := context.WithTimeout(ctx, DefaultClientTimeout)
+	defer cancel()
 	resp, err := cli.Defragment(ctx, member.ClientURLs[0])
 	if err != nil {
 		return nil, err
