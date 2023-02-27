@@ -230,9 +230,9 @@ func TestRenderIpv4(t *testing.T) {
 		EtcdAddress: etcdAddress{
 			LocalHost: "127.0.0.1",
 		},
-		ClusterCIDR:     []string{"10.128.0.0/14"},
-		ServiceCIDR:     []string{"172.30.0.0/16"},
-		SingleStackIPv6: false,
+		ClusterCIDR: []string{"10.128.0.0/14"},
+		ServiceCIDR: []string{"172.30.0.0/16"},
+		PreferIPv6:  false,
 	}
 
 	config := &testConfig{
@@ -303,9 +303,9 @@ func TestTemplateDataIpv4(t *testing.T) {
 		EtcdAddress: etcdAddress{
 			LocalHost: "127.0.0.1",
 		},
-		ClusterCIDR:     []string{"10.128.0.0/14"},
-		ServiceCIDR:     []string{"172.30.0.0/16"},
-		SingleStackIPv6: false,
+		ClusterCIDR: []string{"10.128.0.0/14"},
+		ServiceCIDR: []string{"172.30.0.0/16"},
+		PreferIPv6:  false,
 	}
 
 	config := &testConfig{
@@ -355,11 +355,11 @@ func TestRenderScalingStrategyDelayedHA(t *testing.T) {
 func TestTemplateDataMixed(t *testing.T) {
 	want := TemplateData{
 		EtcdAddress: etcdAddress{
-			LocalHost: "127.0.0.1",
+			LocalHost: "[::1]",
 		},
-		ClusterCIDR:     []string{"10.128.10.0/14"},
-		ServiceCIDR:     []string{"2001:db8::/32", "172.30.0.0/16"},
-		SingleStackIPv6: false,
+		ClusterCIDR: []string{"10.128.10.0/14"},
+		ServiceCIDR: []string{"2001:db8::/32", "172.30.0.0/16"},
+		PreferIPv6:  true,
 	}
 
 	config := &testConfig{
@@ -377,9 +377,9 @@ func TestTemplateDataSingleStack(t *testing.T) {
 		EtcdAddress: etcdAddress{
 			LocalHost: "[::1]",
 		},
-		ClusterCIDR:     []string{"10.128.0.0/14"},
-		ServiceCIDR:     []string{"2001:db8::/32"},
-		SingleStackIPv6: true,
+		ClusterCIDR: []string{"10.128.0.0/14"},
+		ServiceCIDR: []string{"2001:db8::/32"},
+		PreferIPv6:  true,
 	}
 
 	config := &testConfig{
@@ -455,8 +455,8 @@ func testTemplateData(tc *testConfig) {
 		tc.t.Errorf("ServiceCIDR[0] want: %q got: %q", tc.want.ServiceCIDR[0], got.ServiceCIDR[0])
 	case tc.want.ServiceCIDR != nil && len(got.ServiceCIDR) != len(tc.want.ServiceCIDR):
 		tc.t.Errorf("len(ServiceCIDR) want: %d got: %d", len(tc.want.ServiceCIDR), len(got.ServiceCIDR))
-	case got.SingleStackIPv6 != tc.want.SingleStackIPv6:
-		tc.t.Errorf("SingleStackIPv6 want: %v got: %v", tc.want.SingleStackIPv6, got.SingleStackIPv6)
+	case got.PreferIPv6 != tc.want.PreferIPv6:
+		tc.t.Errorf("PreferIPv6 want: %v got: %v", tc.want.PreferIPv6, got.PreferIPv6)
 	case tc.want.EtcdAddress.LocalHost != "" && got.EtcdAddress.LocalHost != tc.want.EtcdAddress.LocalHost:
 		tc.t.Errorf("LocalHost want: %q got: %q", tc.want.EtcdAddress.LocalHost, got.EtcdAddress.LocalHost)
 	case tc.want.EtcdEndpointConfigmapData != "" && got.EtcdEndpointConfigmapData != tc.want.EtcdEndpointConfigmapData:
@@ -520,6 +520,23 @@ networking:
   - 172.30.0.0/16
 `
 
+const installConfigDualStackIPv6Primary = `
+apiVersion: v1
+metadata:
+  name: my-cluster
+networking:
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  machineCIDR: 10.0.0.0/16
+  machineNetwork:
+  - cidr: 2620:52:0:1302::/64
+  - cidr: 10.0.0.0/16
+  networkType: OpenShiftSDN
+  serviceNetwork:
+  - 172.30.0.0/16
+`
+
 const installConfigSingleStackIPv6 = `
 apiVersion: v1
 metadata:
@@ -572,40 +589,46 @@ networking:
 
 func Test_getMachineCIDR(t *testing.T) {
 	tests := map[string]struct {
-		installConfig     string
-		isSingleStackIPv6 bool
-		expectedCIDR      string
-		expectedErr       error
+		installConfig string
+		preferIPv6    bool
+		expectedCIDR  string
+		expectedErr   error
 	}{
 		"should locate the ipv4 cidr in a single stack ipv4 config": {
-			installConfig:     installConfigSingleStackIPv4,
-			isSingleStackIPv6: false,
-			expectedCIDR:      "10.0.0.0/16",
-			expectedErr:       nil,
+			installConfig: installConfigSingleStackIPv4,
+			preferIPv6:    false,
+			expectedCIDR:  "10.0.0.0/16",
+			expectedErr:   nil,
 		},
 		"should locate the ipv4 cidr in a dual stack config": {
-			installConfig:     installConfigDualStack,
-			isSingleStackIPv6: false,
-			expectedCIDR:      "10.0.0.0/16",
-			expectedErr:       nil,
+			installConfig: installConfigDualStack,
+			preferIPv6:    false,
+			expectedCIDR:  "10.0.0.0/16",
+			expectedErr:   nil,
+		},
+		"should locate the ipv6 cidr in a v6-primary dual stack config": {
+			installConfig: installConfigDualStack,
+			preferIPv6:    true,
+			expectedCIDR:  "2620:52:0:1302::/64",
+			expectedErr:   nil,
 		},
 		"should locate the ipv6 cidr in a single stack ipv6 config": {
-			installConfig:     installConfigSingleStackIPv6,
-			isSingleStackIPv6: true,
-			expectedCIDR:      "2620:52:0:1302::/64",
-			expectedErr:       nil,
+			installConfig: installConfigSingleStackIPv6,
+			preferIPv6:    true,
+			expectedCIDR:  "2620:52:0:1302::/64",
+			expectedErr:   nil,
 		},
 		"should error on a reserved ipv4 cidr": {
-			installConfig:     installConfigReservedIPv4CIDR,
-			isSingleStackIPv6: false,
-			expectedCIDR:      "",
-			expectedErr:       fmt.Errorf("machineNetwork CIDR is reserved and unsupported: \"192.0.2.0\""),
+			installConfig: installConfigReservedIPv4CIDR,
+			preferIPv6:    false,
+			expectedCIDR:  "",
+			expectedErr:   fmt.Errorf("machineNetwork CIDR is reserved and unsupported: \"192.0.2.0\""),
 		},
 		"should error on a reserved ipv6 cidr": {
-			installConfig:     installConfigReservedIPv6CIDR,
-			isSingleStackIPv6: true,
-			expectedCIDR:      "",
-			expectedErr:       fmt.Errorf("machineNetwork CIDR is reserved and unsupported: \"2001:db8::\""),
+			installConfig: installConfigReservedIPv6CIDR,
+			preferIPv6:    true,
+			expectedCIDR:  "",
+			expectedErr:   fmt.Errorf("machineNetwork CIDR is reserved and unsupported: \"2001:db8::\""),
 		},
 	}
 
@@ -615,7 +638,7 @@ func Test_getMachineCIDR(t *testing.T) {
 			if err := yaml.Unmarshal([]byte(test.installConfig), &installConfig); err != nil {
 				panic(err)
 			}
-			cidr, err := getMachineCIDR(installConfig, test.isSingleStackIPv6)
+			cidr, err := getMachineCIDR(installConfig, test.preferIPv6)
 			if err == nil && test.expectedErr != nil {
 				t.Fatalf("didn't get an error, expected: %v", test.expectedErr)
 			}
@@ -632,6 +655,68 @@ func Test_getMachineCIDR(t *testing.T) {
 
 			if cidr != test.expectedCIDR {
 				t.Errorf("expected CIDR %q, got %q", test.expectedCIDR, cidr)
+			}
+		})
+	}
+}
+
+func Test_preferIPv6(t *testing.T) {
+	tests := map[string]struct {
+		expected    bool
+		cidrs       []string
+		expectedErr error
+	}{
+		"should prefer ipv4 in single stack ipv4 cluster": {
+			expected:    false,
+			cidrs:       []string{"10.0.0.0/16"},
+			expectedErr: nil,
+		},
+		"should prefer ipv6 in single stack ipv6 cluster": {
+			expected:    true,
+			cidrs:       []string{"fd00::/64"},
+			expectedErr: nil,
+		},
+		"should prefer ipv4 in v4-primary dual stack cluster": {
+			expected:    false,
+			cidrs:       []string{"10.0.0.0/16", "fd00::/64"},
+			expectedErr: nil,
+		},
+		"should prefer ipv6 in v6-primary dual stack cluster": {
+			expected:    true,
+			cidrs:       []string{"fd00::/64", "10.0.0.0/16"},
+			expectedErr: nil,
+		},
+		"should return error on empty cidr list": {
+			expected:    false,
+			cidrs:       []string{},
+			expectedErr: fmt.Errorf("preferIPv6: no serviceCIDRs passed"),
+		},
+		"should return error on invalid cidr": {
+			expected:    false,
+			cidrs:       []string{"not a cidr"},
+			expectedErr: fmt.Errorf("invalid CIDR address: not a cidr"),
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			result, err := preferIPv6(test.cidrs)
+			if err == nil && test.expectedErr != nil {
+				t.Fatalf("didn't get an error, expected: %v", test.expectedErr)
+			}
+
+			if err != nil && test.expectedErr == nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if err != nil && test.expectedErr != nil {
+				if err.Error() != test.expectedErr.Error() {
+					t.Fatalf("expected error: %v, got: %v", test.expectedErr, err)
+				}
+			}
+
+			if result != test.expected {
+				t.Errorf("expected result %v, got %v", test.expected, result)
 			}
 		})
 	}

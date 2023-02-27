@@ -158,8 +158,8 @@ type TemplateData struct {
 	// MachineCIDR is the IP range for machine IPs.
 	MachineCIDR string
 
-	// SingleStackIPv6 is true if the stack is IPv6 only.
-	SingleStackIPv6 bool
+	// PreferIPv6 is true if IPv6 is the primary IP version.
+	PreferIPv6 bool
 
 	// Hostname as reported by the kernel.
 	Hostname string
@@ -235,10 +235,10 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 
 	templateData.ServiceCIDR = network.Spec.ServiceNetwork
 
-	if err := templateData.setSingleStackIPv6(templateData.ServiceCIDR); err != nil {
+	if err := templateData.setPreferIPv6(templateData.ServiceCIDR); err != nil {
 		return nil, err
 	}
-	if err := templateData.setMachineCIDR(installConfig, templateData.SingleStackIPv6); err != nil {
+	if err := templateData.setMachineCIDR(installConfig, templateData.PreferIPv6); err != nil {
 		return nil, err
 	}
 	if err := templateData.setHostname(); err != nil {
@@ -250,11 +250,11 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := templateData.setBootstrapIP(templateData.MachineCIDR, templateData.SingleStackIPv6, excludedIPs); err != nil {
+	if err := templateData.setBootstrapIP(templateData.MachineCIDR, templateData.PreferIPv6, excludedIPs); err != nil {
 		return nil, err
 	}
 
-	templateData.setEtcdAddress(templateData.SingleStackIPv6, templateData.BootstrapIP)
+	templateData.setEtcdAddress(templateData.PreferIPv6, templateData.BootstrapIP)
 
 	// assume that this is >4.2
 	templateData.Platform = string(infra.Status.PlatformStatus.Type)
@@ -480,7 +480,7 @@ func getInstallConfig(clusterConfigMap *unstructured.Unstructured) (map[string]i
 // getMachineCIDR extracts the machine CIDR from the machineNetwork portion of
 // the networking field of the install config. If that doesn't work, tries to
 // fall back to the deprecated machineCIDR networking field.
-func getMachineCIDR(installConfig map[string]interface{}, isSingleStackIPv6 bool) (string, error) {
+func getMachineCIDR(installConfig map[string]interface{}, preferIPv6 bool) (string, error) {
 	if _, found := installConfig["networking"]; !found {
 		return "", fmt.Errorf("install config missing networking key")
 	}
@@ -513,11 +513,11 @@ func getMachineCIDR(installConfig map[string]interface{}, isSingleStackIPv6 bool
 			return "", err
 		}
 		// IPv4
-		if isIPV4 && !isSingleStackIPv6 {
+		if isIPV4 && !preferIPv6 {
 			return machineCIDR, nil
 		}
 		// IPv6
-		if !isIPV4 && isSingleStackIPv6 {
+		if !isIPV4 && preferIPv6 {
 			return machineCIDR, nil
 		}
 	}
@@ -558,13 +558,13 @@ func getExcludedMachineIPs(installConfig map[string]interface{}) ([]string, erro
 	return ips, nil
 }
 
-func (t *TemplateData) setSingleStackIPv6(serviceCIDR []string) error {
-	singleStack, err := isSingleStackIPv6(serviceCIDR)
+func (t *TemplateData) setPreferIPv6(serviceCIDR []string) error {
+	preferIPv6, err := preferIPv6(serviceCIDR)
 	if err != nil {
 		return err
 	}
-	if singleStack {
-		t.SingleStackIPv6 = true
+	if preferIPv6 {
+		t.PreferIPv6 = true
 	}
 	return nil
 }
@@ -621,18 +621,33 @@ func writeManifests(outputDir, templateDir string, templateData interface{}) err
 	return nil
 }
 
-func isSingleStackIPv6(serviceCIDRs []string) (bool, error) {
+func preferIPv6(serviceCIDRs []string) (bool, error) {
 	if len(serviceCIDRs) == 0 {
-		return false, fmt.Errorf("isSingleStackIPv6: no serviceCIDRs passed")
+		return false, fmt.Errorf("preferIPv6: no serviceCIDRs passed")
 	}
-	for _, cidr := range serviceCIDRs {
-		ip, _, err := net.ParseCIDR(cidr)
-		if err != nil {
-			return false, err
-		}
-		if ip.To4() != nil {
-			return false, nil
-		}
+	// We can tell the desired bootstrap IP version based on the version of
+	// the first CIDR. For example, in a single stack IPv4 cluster the CIDR
+	// list will look something like:
+	// 10.0.0.0/16, 10.1.0.0/16, 10.2.0.0/16, etc.
+	// which means we want IPv4. Similarly, for single stack IPv6:
+	// fd00::/64, fe00::/64, ff00::/64, etc.
+	// In dual stack, the ordering of the CIDRs indicates which IP version
+	// should be considered primary:
+	// 10.0.0.0/16, fd00::/64
+	// is v4-primary while
+	// fd00::/64, 10.0.0.0/16
+	// is v6-primary. It doesn't matter how many CIDRs are in the list, the
+	// first one must be primary.
+	// The bootstrap IP must match the primary IP version because the
+	// cluster nodes are going to select an address from the primary version
+	// and if that doesn't match there will be connectivity issues back to
+	// the boostrap.
+	ip, _, err := net.ParseCIDR(serviceCIDRs[0])
+	if err != nil {
+		return false, err
+	}
+	if ip.To4() != nil {
+		return false, nil
 	}
 	return true, nil
 }
