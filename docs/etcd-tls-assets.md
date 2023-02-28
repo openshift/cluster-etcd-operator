@@ -594,7 +594,7 @@ of all these certs and secrets.
 ### Prune controller
 
 Launches a pruner pod - again under the `installer-sa` service account
-- on each node that runs `cluster-kube-apiserver-operator prune` to
+- on each node that runs `cluster-etcd-operator prune` to
 delete old revisions from disk. Also deletes old revisions of the API
 resources.
 
