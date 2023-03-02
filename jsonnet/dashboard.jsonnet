@@ -27,10 +27,7 @@ local etcdMixin = (import 'github.com/etcd-io/etcd/contrib/mixin/mixin.libsonnet
       'include.release.openshift.io/single-node-developer': 'true',
       'release.openshift.io/delete': "true",
     },
-    labels: {
-      'console.openshift.io/dashboard': 'true',
-    },
-    name: 'remove-etcd-dashboard',
+    name: 'grafana-dashboard-etcd',
     namespace: 'openshift-config-managed',
   }
 }
