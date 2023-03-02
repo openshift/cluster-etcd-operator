@@ -14,3 +14,6 @@ cluster-etcd-operator
 
 # Log output from telepresence
 telepresence.log
+# Goland
+.idea
+
