@@ -1,5 +1,6 @@
 local etcdMixin = (import 'github.com/etcd-io/etcd/contrib/mixin/mixin.libsonnet');
 
+[
 {
   apiVersion: 'v1',
   kind: 'ConfigMap',
@@ -17,7 +18,7 @@ local etcdMixin = (import 'github.com/etcd-io/etcd/contrib/mixin/mixin.libsonnet
   data: {
     'etcd.json': std.manifestJsonEx(etcdMixin.grafanaDashboards['etcd.json'], '    '),
   },
-}
+},
 {
   apiVersion: 'v1',
   kind: 'ConfigMap',
@@ -31,3 +32,4 @@ local etcdMixin = (import 'github.com/etcd-io/etcd/contrib/mixin/mixin.libsonnet
     namespace: 'openshift-config-managed',
   }
 }
+]
