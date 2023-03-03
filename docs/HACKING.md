@@ -14,7 +14,16 @@ Alerts are stored in `jsonnet/custom.libsonnet`, you need to update the respecti
 Any resource in the manifests/ directory is managed by CVO. Removal of these resources requires code to be added 
 that removes these resources frequently[1]. This must be maintained for 1 release then the code can be removed.
 
+As per [2], a new annotation is added to resources, to be garbage collected by CVO. 
+This approach is being used to remove duplicate etcd-grafana dashboard. See [3],[4]
+
 [1] https://github.com/openshift/cluster-etcd-operator/pull/429
+
+[2] https://github.com/openshift/enhancements/blob/master/enhancements/update/object-removal-manifest-annotation.md
+
+[3] https://issues.redhat.com/browse/OCPBUGS-8044
+
+[4] https://github.com/openshift/cluster-etcd-operator/pull/1016
 
 #### Controller removal
 Anytime we remove a controller we should also ensure that we cleanup any stale status conditions. Leaving these
