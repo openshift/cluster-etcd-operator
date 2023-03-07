@@ -1,7 +1,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: system:openshift:operator:etcd-operator
+  name: openshift-etcd-operator
   namespace: openshift-etcd-operator
   annotations:
     include.release.openshift.io/ibm-cloud-managed: "true"
@@ -14,4 +14,3 @@ subjects:
   - kind: ServiceAccount
     namespace: openshift-etcd-operator
     name: etcd-operator
----
