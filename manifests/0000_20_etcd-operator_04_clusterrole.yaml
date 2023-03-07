@@ -6,71 +6,71 @@ metadata:
     include.release.openshift.io/ibm-cloud-managed: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
-  rules:
-    - apiGroups:
-        - ""
-      resources:
-        - configmaps
-        - secrets
-        - pods
-        - namespaces
-        - nodes
-      # TODO(thomas): this is very broad, we need to be concise here across all namespaces (especially with secrets)
-      verbs: [ "get", "list", "watch", "create", "update", "patch", "delete" ]
-    - apiGroups:
-        - config.openshift.io
-      resources:
-        - apiservers
-        - clusteroperators
-        - clusterversions
-        - infrastructures
-        - networks
-      verbs:
-        - get
-        - list
-        - watch
-    - apiGroups:
-        - config.openshift.io
-      resourceNames:
-        - etcd
-      resources:
-        - clusteroperators/status
-      verbs:
-        - get
-        - patch
-        - update
-    - apiGroups:
-        - operator.openshift.io
-      resources:
-        - etcds
-      verbs: [ "get", "list", "watch", "create", "update", "patch", "delete" ]
-    - apiGroups:
-        - operator.openshift.io
-      resourceNames:
-        - cluster
-      resources:
-        - etcds/status
-      verbs: [ "get", "list", "watch", "create", "update", "patch", "delete" ]
-    - apiGroups:
-        - rbac.authorization.k8s.io
-      resources:
-        - clusterrolebindings
-      verbs:
-        - get
-        - list
-        - watch
-    - apiGroups:
-        - machine.openshift.io
-      resources:
-        - machinehealthchecks
-        - machines
-        - machinesets
-      verbs:
-        - get
-        - list
-        - watch
-    - apiGroups:
-        - coordination.k8s.io
-      resources:
-        - leases
-      verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+      - secrets
+      - pods
+      - namespaces
+      - nodes
+    # TODO(thomas): this is very broad, we need to be concise here across all namespaces (especially with secrets)
+    verbs: [ "get", "list", "watch", "create", "update", "patch", "delete" ]
+  - apiGroups:
+      - config.openshift.io
+    resources:
+      - apiservers
+      - clusteroperators
+      - clusterversions
+      - infrastructures
+      - networks
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - config.openshift.io
+    resourceNames:
+      - etcd
+    resources:
+      - clusteroperators/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
+      - operator.openshift.io
+    resources:
+      - etcds
+    verbs: [ "get", "list", "watch", "create", "update", "patch", "delete" ]
+  - apiGroups:
+      - operator.openshift.io
+    resourceNames:
+      - cluster
+    resources:
+      - etcds/status
+    verbs: [ "get", "list", "watch", "create", "update", "patch", "delete" ]
+  - apiGroups:
+      - rbac.authorization.k8s.io
+    resources:
+      - clusterrolebindings
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - machine.openshift.io
+    resources:
+      - machinehealthchecks
+      - machines
+      - machinesets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs: [ "get", "list", "watch", "create", "update", "patch", "delete" ]
