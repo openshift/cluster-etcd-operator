@@ -12,9 +12,11 @@ rules:
     resources:
       - configmaps
       - secrets
-      - pods
       - namespaces
       - nodes
+      # only openshift-etcd
+      - pods
+      - services
     # TODO(thomas): this is very broad, we need to be concise here across all namespaces (especially with secrets)
     verbs: [ "get", "list", "watch", "create", "update", "patch", "delete" ]
   - apiGroups:
@@ -65,6 +67,11 @@ rules:
       - machinehealthchecks
       - machines
       - machinesets
+    verbs: [ "get", "list", "watch", "create", "update", "patch", "delete" ]
+  - apiGroups:
+      - policy
+    resources:
+      - poddisruptionbudgets
     verbs:
       - get
       - list
