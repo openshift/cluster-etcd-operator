@@ -17,6 +17,8 @@ rules:
       # only openshift-etcd
       - pods
       - services
+      - endpoints
+      - serviceaccounts
     # TODO(thomas): this is very broad, we need to be concise here across all namespaces (especially with secrets)
     verbs: [ "get", "list", "watch", "create", "update", "patch", "delete" ]
   - apiGroups:
