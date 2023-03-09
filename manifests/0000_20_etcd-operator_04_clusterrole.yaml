@@ -25,7 +25,6 @@ rules:
       - config.openshift.io
     resources:
       - apiservers
-      - clusteroperators
       - clusterversions
       - infrastructures
       - networks
@@ -38,11 +37,9 @@ rules:
     resourceNames:
       - etcd
     resources:
+      - clusteroperators
       - clusteroperators/status
-    verbs:
-      - get
-      - patch
-      - update
+    verbs: [ "get", "list", "watch", "create", "update", "patch", "delete" ]
   - apiGroups:
       - operator.openshift.io
     resources:
