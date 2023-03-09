@@ -59,10 +59,10 @@ rules:
       - rbac.authorization.k8s.io
     resources:
       - clusterrolebindings
-    verbs:
-      - get
-      - list
-      - watch
+      - clusterrole
+      - role
+      - rolebinding
+    verbs: [ "get", "list", "watch", "create", "update", "patch", "delete" ]
   - apiGroups:
       - machine.openshift.io
     resources:
