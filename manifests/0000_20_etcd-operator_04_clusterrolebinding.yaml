@@ -7,7 +7,7 @@ metadata:
     include.release.openshift.io/single-node-developer: "true"
 roleRef:
   kind: ClusterRole
-  name: etcd-operator-cluster-role
+  name: system:openshift:operator:etcd-operator
 subjects:
 - kind: ServiceAccount
   namespace: openshift-etcd-operator
