@@ -5,8 +5,6 @@ metadata:
   name: etcd
   annotations:
     service.alpha.openshift.io/serving-cert-secret-name: serving-cert
-    prometheus.io/scrape: "true"
-    prometheus.io/scheme: https
   labels:
     # this label is used to indicate that it should be scraped by prometheus
     k8s-app: etcd
