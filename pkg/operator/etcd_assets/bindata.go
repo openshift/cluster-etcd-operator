@@ -622,7 +622,6 @@ metadata:
   labels:
     app: etcd
     k8s-app: etcd
-    etcd: "true"
     revision: "REVISION"
 spec:
   initContainers:
@@ -996,7 +995,6 @@ metadata:
   labels:
     app: etcd
     k8s-app: etcd
-    etcd: "true"
     revision: "REVISION"
 spec:
   containers:
@@ -1198,7 +1196,7 @@ metadata:
     k8s-app: etcd
 spec:
   selector:
-    etcd: "true"
+    k8s-app: etcd
   ports:
     - name: etcd
       port: 2379

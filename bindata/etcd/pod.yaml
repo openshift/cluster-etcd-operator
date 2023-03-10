@@ -9,7 +9,6 @@ metadata:
   labels:
     app: etcd
     k8s-app: etcd
-    etcd: "true"
     revision: "REVISION"
 spec:
   initContainers:
