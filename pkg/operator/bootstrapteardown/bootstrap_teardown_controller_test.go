@@ -13,17 +13,12 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 )
 
 var (
-	bootstrapComplete = &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: "bootstrap", Namespace: "kube-system"},
-		Data:       map[string]string{"status": "complete"},
-	}
+	bootstrapComplete = u.BootstrapConfigMap(u.WithBootstrapStatus("complete"))
 
 	conditionBootstrapAlreadyRemoved = operatorv1.OperatorCondition{
 		Type:    "EtcdRunningInCluster",
@@ -60,20 +55,10 @@ var (
 		Message: "etcd bootstrap member is removed",
 	}
 
-	bootstrapProgressing = &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: "bootstrap", Namespace: "kube-system"},
-		Data:       map[string]string{"status": "progressing"},
-	}
+	bootstrapProgressing = u.BootstrapConfigMap(u.WithBootstrapStatus("progressing"))
 )
 
 func TestCanRemoveEtcdBootstrap(t *testing.T) {
-
-	defaultEtcdMembers := []*etcdserverpb.Member{
-		u.FakeEtcdMemberWithoutServer(1),
-		u.FakeEtcdMemberWithoutServer(2),
-		u.FakeEtcdMemberWithoutServer(3),
-	}
-
 	tests := map[string]struct {
 		etcdMembers     []*etcdserverpb.Member
 		clientFakeOpts  etcdcli.FakeClientOption
@@ -83,14 +68,14 @@ func TestCanRemoveEtcdBootstrap(t *testing.T) {
 		bootstrapId     uint64
 	}{
 		"default happy path no bootstrap": {
-			etcdMembers:     defaultEtcdMembers,
+			etcdMembers:     u.DefaultEtcdMembers(),
 			scalingStrategy: ceohelpers.HAScalingStrategy,
 			safeToRemove:    false,
 			hasBootstrap:    false,
 			bootstrapId:     uint64(0),
 		},
 		"HA happy path with bootstrap": {
-			etcdMembers:     append(defaultEtcdMembers, u.FakeEtcdBoostrapMember(0)),
+			etcdMembers:     append(u.DefaultEtcdMembers(), u.FakeEtcdBoostrapMember(0)),
 			scalingStrategy: ceohelpers.HAScalingStrategy,
 			safeToRemove:    true,
 			hasBootstrap:    true,
@@ -108,7 +93,7 @@ func TestCanRemoveEtcdBootstrap(t *testing.T) {
 			bootstrapId:     uint64(0),
 		},
 		"HA with unhealthy member": {
-			etcdMembers:     append(defaultEtcdMembers, u.FakeEtcdBoostrapMember(0)),
+			etcdMembers:     append(u.DefaultEtcdMembers(), u.FakeEtcdBoostrapMember(0)),
 			clientFakeOpts:  etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Unhealthy: 1, Healthy: 3}),
 			scalingStrategy: ceohelpers.HAScalingStrategy,
 			safeToRemove:    false,
@@ -129,14 +114,14 @@ func TestCanRemoveEtcdBootstrap(t *testing.T) {
 			bootstrapId:     uint64(0),
 		},
 		"DelayedScaling happy path no bootstrap": {
-			etcdMembers:     defaultEtcdMembers,
+			etcdMembers:     u.DefaultEtcdMembers(),
 			scalingStrategy: ceohelpers.DelayedHAScalingStrategy,
 			safeToRemove:    false,
 			hasBootstrap:    false,
 			bootstrapId:     uint64(0),
 		},
 		"DelayedScaling happy path with bootstrap": {
-			etcdMembers:     append(defaultEtcdMembers, u.FakeEtcdBoostrapMember(0)),
+			etcdMembers:     append(u.DefaultEtcdMembers(), u.FakeEtcdBoostrapMember(0)),
 			scalingStrategy: ceohelpers.DelayedHAScalingStrategy,
 			safeToRemove:    true,
 			hasBootstrap:    true,
