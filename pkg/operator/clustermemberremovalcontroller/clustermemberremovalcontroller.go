@@ -44,6 +44,7 @@ type clusterMemberRemovalController struct {
 	machineAPIChecker     ceohelpers.MachineAPIChecker
 	masterMachineSelector labels.Selector
 	masterNodeSelector    labels.Selector
+	configMapLister       corev1listers.ConfigMapLister
 
 	lastTimeScaleDownEventWasSent time.Time
 }
@@ -64,6 +65,7 @@ func NewClusterMemberRemovalController(
 	masterNodeInformer cache.SharedIndexInformer,
 	masterMachineInformer cache.SharedIndexInformer,
 	networkInformer configv1informers.NetworkInformer,
+	configMapLister corev1listers.ConfigMapLister,
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &clusterMemberRemovalController{
@@ -76,6 +78,7 @@ func NewClusterMemberRemovalController(
 		masterMachineLister:               machinelistersv1beta1.NewMachineLister(masterMachineInformer.GetIndexer()),
 		networkLister:                     networkInformer.Lister(),
 		configMapListerForTargetNamespace: kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister().ConfigMaps(operatorclient.TargetNamespace),
+		configMapLister:                   configMapLister,
 	}
 	return factory.New().
 		WithSync(c.sync).
@@ -90,6 +93,15 @@ func NewClusterMemberRemovalController(
 }
 
 func (c *clusterMemberRemovalController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
+	// skip reconciling this controller, if bootstrapping is not completed
+	bootstrapComplete, err := ceohelpers.IsBootstrapComplete(c.configMapLister, c.operatorClient, c.etcdClient)
+	if err != nil {
+		return fmt.Errorf("IsBootstrapComplete failed to determine bootstrap status: %w", err)
+	}
+	if !bootstrapComplete {
+		return nil
+	}
+
 	// only attempt to scale down if the machine API is functional
 	if isFunctional, err := c.machineAPIChecker.IsFunctional(); err != nil {
 		return err
@@ -133,7 +145,7 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 	}
 
 	if len(liveVotingMembers) < desiredControlPlaneReplicasCount {
-		klog.V(2).Infof("Ignoring scale-down since the number of etcd members (%d) < desired number of control-plane replicas (%d) ", len(liveVotingMembers), desiredControlPlaneReplicasCount)
+		klog.V(2).Infof("Ignoring scale-down since the number of voting, non-bootstrap etcd members is (%d) < desired number of control-plane replicas (%d)", len(liveVotingMembers), desiredControlPlaneReplicasCount)
 		return nil
 	}
 
@@ -168,9 +180,9 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 	}
 
 	if len(healthyLiveVotingMembers) < minTolerableQuorum {
-		klog.V(2).Infof("ignoring scale down since the number of healthy live etcd members (%d) < minimum required to maintain quorum (%d) ", len(healthyLiveVotingMembers), minTolerableQuorum)
+		klog.V(2).Infof("ignoring scale down since the number of healthy voting, non-bootstrap etcd members (%d) < minimum required to maintain quorum (%d)", len(healthyLiveVotingMembers), minTolerableQuorum)
 		if time.Now().After(c.lastTimeScaleDownEventWasSent.Add(5 * time.Minute)) {
-			recorder.Eventf("ScaleDown", "Ignoring scale down since the number of healthy live etcd members (%d) < minimum required to maintain quorum (%d) ", len(healthyLiveVotingMembers), minTolerableQuorum)
+			recorder.Eventf("ScaleDown", "Ignoring scale down since the number of healthy voting, non-bootstrap etcd members (%d) < minimum required to maintain quorum (%d)", len(healthyLiveVotingMembers), minTolerableQuorum)
 			c.lastTimeScaleDownEventWasSent = time.Now()
 		}
 		return nil
@@ -214,7 +226,7 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 	// When at the desired control-plane size, scale down is only allowed if a member is unhealthy so that a new machine can replace it.
 	// For healthy members, deleting a machine should result in a new machine being created and member addition before scale down can occur
 	if reflect.DeepEqual(liveVotingMembers, healthyLiveVotingMembers) && len(healthyLiveVotingMembers) <= desiredControlPlaneReplicasCount {
-		klog.V(2).Infof("skip scale down: all voting members are healthy and membership does not exceed the desired cluster size of %v", desiredControlPlaneReplicasCount)
+		klog.V(2).Infof("skip scale down: all voting, non-bootstrap members are healthy and membership does not exceed the desired cluster size of %v", desiredControlPlaneReplicasCount)
 		return nil
 	}
 

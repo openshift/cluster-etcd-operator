@@ -165,36 +165,56 @@ func Test_IsBootstrapComplete(t *testing.T) {
 	tests := map[string]struct {
 		bootstrapConfigMap *corev1.ConfigMap
 		nodes              []operatorv1.NodeStatus
+		etcdMembers        []*etcdserverpb.Member
 		expectComplete     bool
 		expectError        error
 	}{
 		"bootstrap complete, nodes up to date": {
 			bootstrapConfigMap: bootstrapComplete,
 			nodes:              twoNodesAtCurrentRevision,
+			etcdMembers:        u.DefaultEtcdMembers(),
 			expectComplete:     true,
 			expectError:        nil,
 		},
 		"bootstrap progressing, nodes up to date": {
 			bootstrapConfigMap: bootstrapProgressing,
 			nodes:              twoNodesAtCurrentRevision,
+			etcdMembers:        u.DefaultEtcdMembers(),
 			expectComplete:     false,
 			expectError:        nil,
 		},
 		"bootstrap configmap missing": {
 			bootstrapConfigMap: nil,
 			nodes:              twoNodesAtCurrentRevision,
+			etcdMembers:        u.DefaultEtcdMembers(),
 			expectComplete:     false,
 			expectError:        nil,
 		},
 		"bootstrap complete, no recorded revisions": {
 			bootstrapConfigMap: bootstrapComplete,
 			nodes:              zeroNodesAtAnyRevision,
+			etcdMembers:        u.DefaultEtcdMembers(),
 			expectComplete:     true,
 			expectError:        nil,
 		},
 		"bootstrap complete, node progressing": {
 			bootstrapConfigMap: bootstrapComplete,
 			nodes:              twoNodesProgressingTowardsCurrentRevision,
+			etcdMembers:        u.DefaultEtcdMembers(),
+			expectComplete:     false,
+			expectError:        nil,
+		},
+		"bootstrap complete, etcd-bootstrap removed": {
+			bootstrapConfigMap: bootstrapComplete,
+			nodes:              twoNodesAtCurrentRevision,
+			etcdMembers:        u.DefaultEtcdMembers(),
+			expectComplete:     true,
+			expectError:        nil,
+		},
+		"bootstrap complete, etcd-bootstrap exists": {
+			bootstrapConfigMap: bootstrapComplete,
+			nodes:              twoNodesAtCurrentRevision,
+			etcdMembers:        append(u.DefaultEtcdMembers(), u.FakeEtcdBoostrapMember(0)),
 			expectComplete:     false,
 			expectError:        nil,
 		},
@@ -216,25 +236,20 @@ func Test_IsBootstrapComplete(t *testing.T) {
 			}
 			fakeStaticPodClient := v1helpers.NewFakeStaticPodOperatorClient(nil, operatorStatus, nil, nil)
 
-			actualComplete, actualErr := IsBootstrapComplete(fakeConfigMapLister, fakeStaticPodClient)
+			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(test.etcdMembers)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-			if test.expectComplete != actualComplete {
-				t.Errorf("expected complete=%v, got %v", test.expectComplete, actualComplete)
-			}
-			if test.expectError != actualErr {
-				t.Errorf("expected error=%v, got %v", test.expectError, actualErr)
-			}
+			actualComplete, actualErr := IsBootstrapComplete(fakeConfigMapLister, fakeStaticPodClient, fakeEtcdClient)
+
+			assert.Equal(t, test.expectComplete, actualComplete)
+			assert.Equal(t, test.expectError, actualErr)
 		})
 	}
 }
 
 func Test_CheckSafeToScaleCluster(t *testing.T) {
-	defaultEtcdMembers := []*etcdserverpb.Member{
-		u.FakeEtcdMemberWithoutServer(0),
-		u.FakeEtcdMemberWithoutServer(1),
-		u.FakeEtcdMemberWithoutServer(2),
-	}
-
 	tests := map[string]struct {
 		namespace          *corev1.Namespace
 		bootstrapConfigMap *corev1.ConfigMap
@@ -250,7 +265,7 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			bootstrapConfigMap: bootstrapComplete,
 			operatorConfig:     defaultOperatorConfig,
 			nodes:              threeNodesAtCurrentRevision,
-			etcdMembers:        defaultEtcdMembers,
+			etcdMembers:        u.DefaultEtcdMembers(),
 			infraObj:           defaultInfra,
 			expectError:        nil,
 		},
@@ -259,7 +274,7 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			bootstrapConfigMap: bootstrapComplete,
 			operatorConfig:     defaultOperatorConfig,
 			nodes:              twoNodesAtCurrentRevision,
-			etcdMembers:        defaultEtcdMembers,
+			etcdMembers:        u.DefaultEtcdMembers(),
 			infraObj:           defaultInfra,
 			expectError:        fmt.Errorf("CheckSafeToScaleCluster 3 nodes are required, but only 2 are available"),
 		},
@@ -268,7 +283,7 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			bootstrapConfigMap: bootstrapComplete,
 			operatorConfig:     unsupportedOperatorConfig,
 			nodes:              oneNodeAtCurrentRevision,
-			etcdMembers:        defaultEtcdMembers,
+			etcdMembers:        u.DefaultEtcdMembers(),
 			infraObj:           defaultInfra,
 			expectError:        nil,
 		},
@@ -277,7 +292,7 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			bootstrapConfigMap: bootstrapComplete,
 			operatorConfig:     unsupportedOperatorConfig,
 			nodes:              zeroNodesAtAnyRevision,
-			etcdMembers:        defaultEtcdMembers,
+			etcdMembers:        u.DefaultEtcdMembers(),
 			infraObj:           defaultInfra,
 			expectError:        nil,
 		},
@@ -286,7 +301,7 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			bootstrapConfigMap: bootstrapProgressing,
 			operatorConfig:     defaultOperatorConfig,
 			nodes:              twoNodesAtCurrentRevision,
-			etcdMembers:        defaultEtcdMembers,
+			etcdMembers:        u.DefaultEtcdMembers(),
 			infraObj:           defaultInfra,
 			expectError:        nil,
 		},
@@ -295,7 +310,7 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			bootstrapConfigMap: bootstrapProgressing,
 			operatorConfig:     defaultOperatorConfig,
 			nodes:              oneNodeAtCurrentRevision,
-			etcdMembers:        defaultEtcdMembers,
+			etcdMembers:        u.DefaultEtcdMembers(),
 			infraObj:           defaultInfra,
 			expectError:        nil,
 		},
@@ -304,7 +319,7 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			bootstrapConfigMap: bootstrapComplete,
 			operatorConfig:     defaultOperatorConfig,
 			nodes:              threeNodesAtCurrentRevision,
-			etcdMembers:        defaultEtcdMembers,
+			etcdMembers:        u.DefaultEtcdMembers(),
 			infraObj:           defaultInfra,
 			expectError:        nil,
 		},
@@ -313,7 +328,7 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			bootstrapConfigMap: bootstrapComplete,
 			operatorConfig:     defaultOperatorConfig,
 			nodes:              twoNodesAtCurrentRevision,
-			etcdMembers:        defaultEtcdMembers,
+			etcdMembers:        u.DefaultEtcdMembers(),
 			infraObj:           defaultInfra,
 			expectError:        fmt.Errorf("CheckSafeToScaleCluster 3 nodes are required, but only 2 are available"),
 		},

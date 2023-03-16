@@ -327,6 +327,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		masterNodeInformer,
 		masterMachineInformer,
 		configInformers.Config().V1().Networks(),
+		kubeInformersForNamespaces.ConfigMapLister(),
 		controllerContext.EventRecorder,
 	)
 
