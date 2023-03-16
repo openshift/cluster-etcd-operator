@@ -3,6 +3,7 @@ package ceohelpers
 import (
 	"context"
 	"fmt"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -11,7 +12,6 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
 // BootstrapScalingStrategy describes the invariants which will be enforced when
@@ -60,7 +60,7 @@ const (
 	DelayedHABootstrapScalingStrategyAnnotation = "openshift.io/delayed-ha-bootstrap"
 )
 
-// GetBootstrapScalingStrategy determines the scaling strategy to use.
+// GetBootstrapScalingStrategy determines the scaling strategy to use
 func GetBootstrapScalingStrategy(staticPodClient v1helpers.StaticPodOperatorClient, namespaceLister corev1listers.NamespaceLister, infraLister configv1listers.InfrastructureLister) (BootstrapScalingStrategy, error) {
 	var strategy BootstrapScalingStrategy
 
@@ -107,7 +107,7 @@ func CheckSafeToScaleCluster(
 	infraLister configv1listers.InfrastructureLister,
 	etcdClient etcdcli.EtcdClient) error {
 
-	bootstrapComplete, err := IsBootstrapComplete(configmapLister, staticPodClient)
+	bootstrapComplete, err := IsBootstrapComplete(configmapLister, staticPodClient, etcdClient)
 	if err != nil {
 		return fmt.Errorf("CheckSafeToScaleCluster failed to determine bootstrap status: %w", err)
 	}
@@ -161,7 +161,7 @@ func CheckSafeToScaleCluster(
 }
 
 // IsBootstrapComplete returns true if bootstrap has completed.
-func IsBootstrapComplete(configMapClient corev1listers.ConfigMapLister, staticPodClient v1helpers.StaticPodOperatorClient) (bool, error) {
+func IsBootstrapComplete(configMapClient corev1listers.ConfigMapLister, staticPodClient v1helpers.StaticPodOperatorClient, etcdClient etcdcli.EtcdClient) (bool, error) {
 	// do a cheap check to see if the annotation is already gone.
 	// check to see if bootstrapping is complete
 	bootstrapFinishedConfigMap, err := configMapClient.ConfigMaps("kube-system").Get("bootstrap")
@@ -196,5 +196,18 @@ func IsBootstrapComplete(configMapClient corev1listers.ConfigMapLister, staticPo
 			return false, nil
 		}
 	}
+
+	// check if etcd-bootstrap member is still present within the etcd cluster membership
+	membersList, err := etcdClient.MemberList(context.Background())
+	if err != nil {
+		return false, fmt.Errorf("IsBootstrapComplete couldn't list the etcd cluster members: %w", err)
+	}
+	for _, m := range membersList {
+		if m.Name == "etcd-bootstrap" {
+			klog.V(4).Infof("(etcd-bootstrap) member is still present in the etcd cluster membership")
+			return false, nil
+		}
+	}
+
 	return true, nil
 }

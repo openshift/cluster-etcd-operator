@@ -94,7 +94,7 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 	// forward or remove it if possible so clients can forget about it.
 	if existing, err := c.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints"); err == nil && existing != nil {
 		if existingIP, hasExistingIP := existing.Annotations[etcdcli.BootstrapIPAnnotationKey]; hasExistingIP {
-			bootstrapComplete, err := ceohelpers.IsBootstrapComplete(c.configmapLister, c.operatorClient)
+			bootstrapComplete, err := ceohelpers.IsBootstrapComplete(c.configmapLister, c.operatorClient, c.etcdClient)
 			if err != nil {
 				return fmt.Errorf("couldn't determine bootstrap status: %w", err)
 			}
