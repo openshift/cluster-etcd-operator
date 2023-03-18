@@ -11,3 +11,4 @@ fi
 cd jsonnet && jb update
 jsonnet -J vendor main.jsonnet  | gojsontoyaml > ../manifests/0000_90_etcd-operator_03_prometheusrule.yaml
 jsonnet -J vendor dashboard.jsonnet  | gojsontoyaml > ../manifests/0000_90_cluster-etcd-operator_01-dashboards.yaml
+jsonnet -J vendor removed_dashboard.jsonnet | gojsontoyaml > ../manifests/0000_90_cluster-etcd-operator_02-removed-dashboard.yaml
