@@ -763,6 +763,7 @@ ${COMPUTED_ENV_VARS}
           --key=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.key \
           --endpoints=${ALL_ETCD_ENDPOINTS} \
           --data-dir=/var/lib/etcd \
+          --log-level=debug \
           --target-peer-url-host=${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST} \
           --target-name=NODE_NAME)
         export ETCD_INITIAL_CLUSTER
@@ -782,7 +783,7 @@ ${COMPUTED_ENV_VARS}
         # See https://etcd.io/docs/v3.4.0/tuning/ for why we use ionice
         exec nice -n -19 ionice -c2 -n0 etcd \
           --logger=zap \
-          --log-level=${VERBOSITY} \
+          --log-level=DEBUG \
           --experimental-initial-corrupt-check=true \
           --initial-advertise-peer-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2380 \
           --cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.crt \
