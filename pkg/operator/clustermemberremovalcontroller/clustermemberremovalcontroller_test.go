@@ -806,11 +806,14 @@ func TestAttemptToScaleDown(t *testing.T) {
 					t.Errorf("expected exactly 4 members, got %v", len(memberList))
 				}
 
-				// expected m4 to be deleted, m5 not to be deleted
+				// depending on the machine ordering, it can be either m4 or m5 being deleted, but never both
+				membersById := make(map[uint64]bool)
 				for _, member := range memberList {
-					if member.ID == 4 {
-						t.Errorf("not expected member with id %d", member.ID)
-					}
+					membersById[member.ID] = true
+				}
+
+				if membersById[uint64(4)] == membersById[uint64(5)] {
+					t.Errorf("neither 4 nor 5 were deleted, but got member list: %v", memberList)
 				}
 			},
 		},
