@@ -1,7 +1,11 @@
 apiVersion: v1
 kind: Pod
 metadata:
+{{- if ne .BootstrapScalingStrategy "BootstrapInPlaceStrategy" }}
   name: etcd-bootstrap-member
+{{- else }}
+  name: etcd-{{ .Hostname }}
+{{- end }}
   namespace: openshift-etcd
   labels:
     k8s-app: etcd

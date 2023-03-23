@@ -570,7 +570,14 @@ func (t *TemplateData) setPreferIPv6(serviceCIDR []string) error {
 }
 
 func (t *TemplateData) setComputedEnvVars(platform, platformData string, installConfig map[string]interface{}) error {
-	envVarData := &envVarData{platform: platform, platformData: platformData, arch: runtime.GOARCH, installConfig: installConfig}
+	envVarData := &envVarData{
+		platform:         platform,
+		platformData:     platformData,
+		arch:             runtime.GOARCH,
+		installConfig:    installConfig,
+		hostname:         t.Hostname,
+		inPlaceBootstrap: t.BootstrapScalingStrategy == ceohelpers.BootstrapInPlaceStrategy,
+	}
 	envVarMap, err := getEtcdEnv(envVarData)
 	if err != nil {
 		return err
