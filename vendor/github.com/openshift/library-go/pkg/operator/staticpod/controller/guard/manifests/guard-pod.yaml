@@ -41,7 +41,7 @@ spec:
         failureThreshold: 3
         httpGet:
           host: # Value set by operator
-          path: healthz
+          path: # Value set by operator
           port: # Value set by operator
           scheme: HTTPS
         periodSeconds: 5

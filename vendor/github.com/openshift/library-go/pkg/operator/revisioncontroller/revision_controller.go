@@ -150,7 +150,17 @@ func (c RevisionController) isLatestRevisionCurrent(ctx context.Context, revisio
 			if klog.V(4).Enabled() {
 				klog.Infof("configmap %q changes for revision %d: %s", cm.Name, revision, resourceapply.JSONPatchNoError(existing, required))
 			}
-			configChanges = append(configChanges, fmt.Sprintf("configmap/%s has changed", cm.Name))
+			// "configmap/foo has changed" when there is actual change in data
+			// "configmap/foo has been created" when the existing configmap was empty (iow. the configmap is optional)
+			verb := "changed"
+			if len(existingData) == 0 {
+				verb = "been created"
+			}
+			req := "required"
+			if cm.Optional {
+				req = "optional"
+			}
+			configChanges = append(configChanges, fmt.Sprintf("%s configmap/%s has %s", req, cm.Name, verb))
 		}
 	}
 
@@ -177,7 +187,17 @@ func (c RevisionController) isLatestRevisionCurrent(ctx context.Context, revisio
 			if klog.V(4).Enabled() {
 				klog.Infof("Secret %q changes for revision %d: %s", s.Name, revision, resourceapply.JSONPatchSecretNoError(existing, required))
 			}
-			secretChanges = append(secretChanges, fmt.Sprintf("secret/%s has changed", s.Name))
+			// "configmap/foo has changed" when there is actual change in data
+			// "configmap/foo has been created" when the existing configmap was empty (iow. the configmap is optional)
+			verb := "changed"
+			if len(existingData) == 0 {
+				verb = "been created"
+			}
+			req := "required"
+			if s.Optional {
+				req = "optional"
+			}
+			secretChanges = append(secretChanges, fmt.Sprintf("%s secret/%s has %s", req, s.Name, verb))
 		}
 	}
 
