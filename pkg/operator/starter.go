@@ -300,6 +300,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		coreClient,
 		kubeInformersForNamespaces,
 		quorumChecker,
+		configInformers.Config().V1().Infrastructures().Lister(),
 	)
 
 	machineAPI := ceohelpers.NewMachineAPI(masterMachineInformer, machinelistersv1beta1.NewMachineLister(masterMachineInformer.GetIndexer()), masterMachineLabelSelector)
@@ -327,6 +328,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		masterMachineInformer,
 		configInformers.Config().V1().Networks(),
 		kubeInformersForNamespaces.ConfigMapLister(),
+		configInformers.Config().V1().Infrastructures().Lister(),
 		controllerContext.EventRecorder,
 	)
 

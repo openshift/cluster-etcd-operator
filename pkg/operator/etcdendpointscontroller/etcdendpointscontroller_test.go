@@ -359,10 +359,12 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 				require.NoError(t, indexer.Add(obj))
 			}
 
+			fakeInfraLister := configv1listers.NewInfrastructureLister(indexer)
+
 			quorumChecker := ceohelpers.NewQuorumChecker(
 				corev1listers.NewConfigMapLister(indexer),
 				corev1listers.NewNamespaceLister(indexer),
-				configv1listers.NewInfrastructureLister(indexer),
+				fakeInfraLister,
 				fakeOperatorClient,
 				fakeEtcdClient)
 
@@ -373,6 +375,7 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 				configmapLister: corev1listers.NewConfigMapLister(indexer),
 				configmapClient: fakeKubeClient.CoreV1(),
 				quorumChecker:   quorumChecker,
+				infraLister:     fakeInfraLister,
 			}
 
 			err = controller.sync(context.TODO(), factory.NewSyncContext("test", eventRecorder))
