@@ -402,3 +402,14 @@ func DefaultEtcdMembers() []*etcdserverpb.Member {
 		FakeEtcdMemberWithoutServer(2),
 	}
 }
+
+func DefaultInfra() *configv1.Infrastructure {
+	return &configv1.Infrastructure{
+		TypeMeta: metav1.TypeMeta{},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cluster",
+		},
+		Status: configv1.InfrastructureStatus{
+			ControlPlaneTopology: configv1.HighlyAvailableTopologyMode},
+	}
+}
