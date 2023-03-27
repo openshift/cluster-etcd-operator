@@ -3,7 +3,6 @@ package etcdendpointscontroller
 import (
 	"context"
 	"fmt"
-	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -35,7 +34,6 @@ type EtcdEndpointsController struct {
 	configmapLister corev1listers.ConfigMapLister
 	configmapClient corev1client.ConfigMapsGetter
 	quorumChecker   ceohelpers.QuorumChecker
-	infraLister     configv1listers.InfrastructureLister
 }
 
 func NewEtcdEndpointsController(
@@ -45,7 +43,6 @@ func NewEtcdEndpointsController(
 	kubeClient kubernetes.Interface,
 	kubeInformers operatorv1helpers.KubeInformersForNamespaces,
 	quorumChecker ceohelpers.QuorumChecker,
-	infraLister configv1listers.InfrastructureLister,
 ) factory.Controller {
 	nodeInformer := kubeInformers.InformersFor("").Core().V1().Nodes()
 
@@ -56,7 +53,6 @@ func NewEtcdEndpointsController(
 		configmapLister: kubeInformers.ConfigMapLister(),
 		configmapClient: kubeClient.CoreV1(),
 		quorumChecker:   quorumChecker,
-		infraLister:     infraLister,
 	}
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
 		operatorClient.Informer(),
@@ -98,7 +94,7 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 	// forward or remove it if possible so clients can forget about it.
 	if existing, err := c.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints"); err == nil && existing != nil {
 		if existingIP, hasExistingIP := existing.Annotations[etcdcli.BootstrapIPAnnotationKey]; hasExistingIP {
-			bootstrapComplete, err := ceohelpers.IsBootstrapComplete(c.configmapLister, c.operatorClient, c.etcdClient, c.infraLister)
+			bootstrapComplete, err := ceohelpers.IsBootstrapComplete(c.configmapLister, c.operatorClient, c.etcdClient)
 			if err != nil {
 				return fmt.Errorf("couldn't determine bootstrap status: %w", err)
 			}

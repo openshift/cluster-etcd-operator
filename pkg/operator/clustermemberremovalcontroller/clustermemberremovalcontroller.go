@@ -45,7 +45,6 @@ type clusterMemberRemovalController struct {
 	masterMachineSelector labels.Selector
 	masterNodeSelector    labels.Selector
 	configMapLister       corev1listers.ConfigMapLister
-	infraLister           configv1listers.InfrastructureLister
 
 	lastTimeScaleDownEventWasSent time.Time
 }
@@ -67,7 +66,6 @@ func NewClusterMemberRemovalController(
 	masterMachineInformer cache.SharedIndexInformer,
 	networkInformer configv1informers.NetworkInformer,
 	configMapLister corev1listers.ConfigMapLister,
-	infraLister configv1listers.InfrastructureLister,
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &clusterMemberRemovalController{
@@ -81,7 +79,6 @@ func NewClusterMemberRemovalController(
 		networkLister:                     networkInformer.Lister(),
 		configMapListerForTargetNamespace: kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister().ConfigMaps(operatorclient.TargetNamespace),
 		configMapLister:                   configMapLister,
-		infraLister:                       infraLister,
 	}
 	return factory.New().
 		WithSync(c.sync).
@@ -97,7 +94,7 @@ func NewClusterMemberRemovalController(
 
 func (c *clusterMemberRemovalController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	// skip reconciling this controller, if bootstrapping is not completed
-	bootstrapComplete, err := ceohelpers.IsBootstrapComplete(c.configMapLister, c.operatorClient, c.etcdClient, c.infraLister)
+	bootstrapComplete, err := ceohelpers.IsBootstrapComplete(c.configMapLister, c.operatorClient, c.etcdClient)
 	if err != nil {
 		return fmt.Errorf("IsBootstrapComplete failed to determine bootstrap status: %w", err)
 	}
