@@ -107,7 +107,7 @@ func CheckSafeToScaleCluster(
 	infraLister configv1listers.InfrastructureLister,
 	etcdClient etcdcli.EtcdClient) error {
 
-	bootstrapComplete, err := IsBootstrapComplete(configmapLister, staticPodClient, etcdClient, infraLister)
+	bootstrapComplete, err := IsBootstrapComplete(configmapLister, staticPodClient, etcdClient)
 	if err != nil {
 		return fmt.Errorf("CheckSafeToScaleCluster failed to determine bootstrap status: %w", err)
 	}
@@ -161,7 +161,7 @@ func CheckSafeToScaleCluster(
 }
 
 // IsBootstrapComplete returns true if bootstrap has completed.
-func IsBootstrapComplete(configMapClient corev1listers.ConfigMapLister, staticPodClient v1helpers.StaticPodOperatorClient, etcdClient etcdcli.EtcdClient, infraLister configv1listers.InfrastructureLister) (bool, error) {
+func IsBootstrapComplete(configMapClient corev1listers.ConfigMapLister, staticPodClient v1helpers.StaticPodOperatorClient, etcdClient etcdcli.EtcdClient) (bool, error) {
 	// do a cheap check to see if the annotation is already gone.
 	// check to see if bootstrapping is complete
 	bootstrapFinishedConfigMap, err := configMapClient.ConfigMaps("kube-system").Get("bootstrap")
@@ -195,15 +195,6 @@ func IsBootstrapComplete(configMapClient corev1listers.ConfigMapLister, staticPo
 			klog.V(4).Infof("bootstrap considered incomplete because revision %d is still in progress", status.LatestAvailableRevision)
 			return false, nil
 		}
-	}
-
-	// skip listing etcd membership for SingleReplicaTopologyMode
-	singleNode, err := IsSingleNodeTopology(infraLister)
-	if err != nil {
-		return false, fmt.Errorf("failed to get control plane topology: %w", err)
-	}
-	if singleNode {
-		return true, nil
 	}
 
 	// check if etcd-bootstrap member is still present within the etcd cluster membership
