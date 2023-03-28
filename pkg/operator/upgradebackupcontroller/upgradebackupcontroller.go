@@ -3,9 +3,11 @@ package upgradebackupcontroller
 import (
 	"context"
 	"fmt"
-	"github.com/openshift/library-go/pkg/operator/status"
 	"strings"
 	"time"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
+	"github.com/openshift/library-go/pkg/operator/status"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -63,6 +65,7 @@ type UpgradeBackupController struct {
 }
 
 func NewUpgradeBackupController(
+	livenessChecker *health.MultiAlivenessChecker,
 	operatorClient v1helpers.OperatorClient,
 	clusterOperatorClient configv1client.ClusterOperatorsGetter,
 	kubeClient kubernetes.Interface,
@@ -85,12 +88,16 @@ func NewUpgradeBackupController(
 		targetImagePullSpec:   targetImagePullSpec,
 		operatorImagePullSpec: operatorImagePullSpec,
 	}
+
+	syncer := health.NewCheckingSyncWrapper(c.sync, 5*time.Minute)
+	livenessChecker.Add("ClusterBackupController", syncer)
+
 	return factory.New().ResyncEvery(1*time.Minute).WithInformers(
 		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer(),
 		operatorClient.Informer(),
 		clusterVersionInformer.Informer(),
 		clusterOperatorInformer.Informer(),
-	).WithSync(c.sync).ToController("ClusterBackupController", eventRecorder.WithComponentSuffix("cluster-backup-controller"))
+	).WithSync(syncer.Sync).ToController("ClusterBackupController", eventRecorder.WithComponentSuffix("cluster-backup-controller"))
 }
 
 func (c *UpgradeBackupController) sync(ctx context.Context, syncCtx factory.SyncContext) error {

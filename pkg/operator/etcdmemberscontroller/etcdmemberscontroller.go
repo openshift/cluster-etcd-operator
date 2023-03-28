@@ -2,8 +2,10 @@ package etcdmemberscontroller
 
 import (
 	"context"
-	"k8s.io/klog/v2"
 	"time"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
+	"k8s.io/klog/v2"
 
 	errorsutil "k8s.io/apimachinery/pkg/util/errors"
 
@@ -22,7 +24,9 @@ type EtcdMembersController struct {
 	etcdClient     etcdcli.EtcdClient
 }
 
-func NewEtcdMembersController(operatorClient v1helpers.OperatorClient,
+func NewEtcdMembersController(
+	livenessChecker *health.MultiAlivenessChecker,
+	operatorClient v1helpers.OperatorClient,
 	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
 ) factory.Controller {
@@ -30,7 +34,11 @@ func NewEtcdMembersController(operatorClient v1helpers.OperatorClient,
 		operatorClient: operatorClient,
 		etcdClient:     etcdClient,
 	}
-	return factory.New().ResyncEvery(time.Minute).WithSync(c.sync).ToController("EtcdMembersController", eventRecorder.WithComponentSuffix("member-observer-controller"))
+
+	syncer := health.NewCheckingSyncWrapper(c.sync, 5*time.Minute)
+	livenessChecker.Add("EtcdMembersController", syncer)
+
+	return factory.New().ResyncEvery(time.Minute).WithSync(syncer.Sync).ToController("EtcdMembersController", eventRecorder.WithComponentSuffix("member-observer-controller"))
 }
 
 func (c *EtcdMembersController) sync(ctx context.Context, syncCtx factory.SyncContext) error {

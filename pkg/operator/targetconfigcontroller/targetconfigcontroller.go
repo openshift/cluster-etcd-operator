@@ -8,6 +8,7 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -42,6 +43,7 @@ type TargetConfigController struct {
 }
 
 func NewTargetConfigController(
+	livenessChecker *health.MultiAlivenessChecker,
 	targetImagePullSpec, operatorImagePullSpec string,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
@@ -69,6 +71,9 @@ func NewTargetConfigController(
 	}
 	envVarGetter.AddListener(c)
 
+	syncer := health.NewCheckingSyncWrapper(c.sync, 5*time.Minute)
+	livenessChecker.Add("TargetConfigController", syncer)
+
 	return factory.New().WithSyncContext(syncCtx).ResyncEvery(time.Minute).WithInformers(
 		operatorClient.Informer(),
 		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer(),
@@ -77,7 +82,7 @@ func NewTargetConfigController(
 		kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer(),
 		infrastructureInformer.Informer(),
 		networkInformer.Informer(),
-	).WithSync(c.sync).ToController("TargetConfigController", syncCtx.Recorder())
+	).WithSync(syncer.Sync).ToController("TargetConfigController", syncCtx.Recorder())
 }
 
 func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
