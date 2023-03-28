@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/openshift/library-go/pkg/controller/factory"
@@ -9,26 +10,29 @@ import (
 
 // CheckingSyncWrapper wraps calls to the factory.SyncFunc in order to track when it last ran successfully.
 type CheckingSyncWrapper struct {
-	lastSuccessfulRun time.Time
 	syncFunc          factory.SyncFunc
 	livenessThreshold time.Duration
+
+	// lastSuccessfulRun is updated with atomics, as updates can come from different goroutines
+	lastSuccessfulRun int64
 }
 
 func (r *CheckingSyncWrapper) Sync(ctx context.Context, controllerContext factory.SyncContext) error {
 	err := r.syncFunc(ctx, controllerContext)
 	if err == nil {
-		r.lastSuccessfulRun = time.Now()
+		atomic.StoreInt64(&r.lastSuccessfulRun, time.Now().UnixMilli())
 	}
 	return err
 }
 
 func (r *CheckingSyncWrapper) Alive() bool {
-	return r.lastSuccessfulRun.Add(r.livenessThreshold).After(time.Now())
+	lastRun := time.UnixMilli(atomic.LoadInt64(&r.lastSuccessfulRun))
+	return lastRun.Add(r.livenessThreshold).After(time.Now())
 }
 
 func NewCheckingSyncWrapper(sync factory.SyncFunc, livenessThreshold time.Duration) *CheckingSyncWrapper {
 	return &CheckingSyncWrapper{
-		lastSuccessfulRun: time.Now(),
+		lastSuccessfulRun: time.Now().UnixMilli(),
 		syncFunc:          sync,
 		livenessThreshold: livenessThreshold,
 	}
