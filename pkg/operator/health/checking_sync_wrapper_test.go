@@ -33,7 +33,7 @@ func TestHappyPathAliveness(t *testing.T) {
 			syncer := NewCheckingSyncWrapper(func(ctx context.Context, controllerContext factory.SyncContext) error {
 				return nil
 			}, tc.threshold)
-			syncer.lastSuccessfulRun = tc.mockSuccessTime
+			syncer.lastSuccessfulRun = tc.mockSuccessTime.UnixMilli()
 			require.Equal(t, tc.expectedAlive, syncer.Alive())
 		})
 	}
@@ -45,10 +45,10 @@ func TestErrorDoesNotUpdateSuccess(t *testing.T) {
 		return fmt.Errorf("some")
 	}, 1*time.Second)
 	// setting it to zero to ensure no update happened
-	syncer.lastSuccessfulRun = time.Unix(0, 0)
+	syncer.lastSuccessfulRun = 0
 
 	err := syncer.Sync(context.Background(), nil)
 	require.Error(t, err)
-	require.Equal(t, time.Unix(0, 0), syncer.lastSuccessfulRun)
+	require.Equal(t, int64(0), syncer.lastSuccessfulRun)
 	require.False(t, syncer.Alive())
 }
