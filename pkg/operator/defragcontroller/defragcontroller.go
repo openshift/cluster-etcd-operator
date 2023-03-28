@@ -9,6 +9,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -52,6 +53,7 @@ type DefragController struct {
 }
 
 func NewDefragController(
+	livenessChecker *health.MultiAlivenessChecker,
 	operatorClient v1helpers.OperatorClient,
 	etcdClient etcdcli.EtcdClient,
 	infrastructureLister configv1listers.InfrastructureLister,
@@ -64,9 +66,12 @@ func NewDefragController(
 		configmapLister:      kubeInformers.ConfigMapLister(),
 		defragWaitDuration:   minDefragWaitDuration,
 	}
+	syncer := health.NewCheckingSyncWrapper(c.sync, 3*compactionInterval+1*time.Minute)
+	livenessChecker.Add("DefragController", syncer)
+
 	return factory.New().ResyncEvery(compactionInterval+1*time.Minute).WithInformers( // attempt to sync outside of etcd compaction interval to ensure maximum gain by defragmentation.
 		operatorClient.Informer(),
-	).WithSync(c.sync).ToController("DefragController", eventRecorder.WithComponentSuffix("defrag-controller"))
+	).WithSync(syncer.Sync).ToController("DefragController", eventRecorder.WithComponentSuffix("defrag-controller"))
 }
 
 func (c *DefragController) sync(ctx context.Context, syncCtx factory.SyncContext) error {

@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 
 	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
@@ -56,6 +57,7 @@ type clusterMemberRemovalController struct {
 //	make sure nodeInformer and machineInformer contain only filtered data
 //	otherwise it might be expensive to react to every node update in larger installations
 func NewClusterMemberRemovalController(
+	livenessChecker *health.MultiAlivenessChecker,
 	operatorClient operatorv1helpers.StaticPodOperatorClient,
 	etcdClient etcdcli.EtcdClient,
 	machineAPIChecker ceohelpers.MachineAPIChecker,
@@ -77,8 +79,12 @@ func NewClusterMemberRemovalController(
 		networkLister:                     networkInformer.Lister(),
 		configMapListerForTargetNamespace: kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister().ConfigMaps(operatorclient.TargetNamespace),
 	}
+
+	syncer := health.NewCheckingSyncWrapper(c.sync, 10*time.Minute)
+	livenessChecker.Add("ClusterMemberRemovalController", syncer)
+
 	return factory.New().
-		WithSync(c.sync).
+		WithSync(syncer.Sync).
 		WithSyncDegradedOnError(operatorClient).
 		ResyncEvery(33*time.Minute). // make it slow since nodes are updated every few minutes
 		WithBareInformers(networkInformer.Informer()).
