@@ -52,6 +52,15 @@ spec:
           requests:
             memory: 50Mi
             cpu: 10m
+        livenessProbe:
+          httpGet:
+            path: healthz
+            port: 8080
+            scheme: HTTP
+          timeoutSeconds: 30
+          periodSeconds: 60
+          successThreshold: 1
+          failureThreshold: 3
         volumeMounts:
         - mountPath: /var/run/configmaps/config
           name: config
