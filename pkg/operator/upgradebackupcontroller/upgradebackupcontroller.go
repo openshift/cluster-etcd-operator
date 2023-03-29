@@ -89,7 +89,7 @@ func NewUpgradeBackupController(
 		operatorImagePullSpec: operatorImagePullSpec,
 	}
 
-	syncer := health.NewCheckingSyncWrapper(c.sync, 5*time.Minute)
+	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
 	livenessChecker.Add("ClusterBackupController", syncer)
 
 	return factory.New().ResyncEvery(1*time.Minute).WithInformers(

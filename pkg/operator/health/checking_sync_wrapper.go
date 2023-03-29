@@ -13,7 +13,8 @@ type CheckingSyncWrapper struct {
 	syncFunc          factory.SyncFunc
 	livenessThreshold time.Duration
 
-	// lastSuccessfulRun is updated with atomics, as updates can come from different goroutines
+	// lastSuccessfulRun is updated with atomics, as updates can come from different goroutines in case of parallel controllers
+	// or from the webserver that runs asynchronously to all controller routines.
 	lastSuccessfulRun int64
 }
 
@@ -28,6 +29,11 @@ func (r *CheckingSyncWrapper) Sync(ctx context.Context, controllerContext factor
 func (r *CheckingSyncWrapper) Alive() bool {
 	lastRun := time.UnixMilli(atomic.LoadInt64(&r.lastSuccessfulRun))
 	return lastRun.Add(r.livenessThreshold).After(time.Now())
+}
+
+// NewDefaultCheckingSyncWrapper creates a new CheckingSyncWrapper with 5m threshold
+func NewDefaultCheckingSyncWrapper(sync factory.SyncFunc) *CheckingSyncWrapper {
+	return NewCheckingSyncWrapper(sync, 5*time.Minute)
 }
 
 func NewCheckingSyncWrapper(sync factory.SyncFunc, livenessThreshold time.Duration) *CheckingSyncWrapper {

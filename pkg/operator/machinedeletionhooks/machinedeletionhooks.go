@@ -68,7 +68,7 @@ func NewMachineDeletionHooksController(
 		podListerForOpenShiftEtcdNamespace:    kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().Pods().Lister().Pods("openshift-etcd"),
 	}
 
-	syncer := health.NewCheckingSyncWrapper(c.sync, 5*time.Minute)
+	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
 	livenessChecker.Add("MachineDeletionHooksController", syncer)
 
 	return factory.New().

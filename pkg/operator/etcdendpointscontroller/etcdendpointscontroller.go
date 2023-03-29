@@ -57,7 +57,7 @@ func NewEtcdEndpointsController(
 		quorumChecker:   quorumChecker,
 	}
 
-	syncer := health.NewCheckingSyncWrapper(c.sync, 5*time.Minute)
+	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
 	livenessChecker.Add("EtcdEndpointsController", syncer)
 
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
