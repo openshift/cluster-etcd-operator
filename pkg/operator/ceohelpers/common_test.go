@@ -9,6 +9,20 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 )
 
+var (
+	withWellKnownReplicasCountSet = `
+{
+ "controlPlane": {"replicas": 3}
+}
+`
+
+	withReplicasCountSetInUnsupportedConfig = `
+{
+ "controlPlane": {"replicas": 7}
+}
+`
+)
+
 func TestReadDesiredControlPlaneReplicaCount(t *testing.T) {
 	scenarios := []struct {
 		name                             string
@@ -61,15 +75,3 @@ func TestReadDesiredControlPlaneReplicaCount(t *testing.T) {
 		})
 	}
 }
-
-var withWellKnownReplicasCountSet = `
-{
- "controlPlane": {"replicas": 3}
-}
-`
-
-var withReplicasCountSetInUnsupportedConfig = `
-{
- "controlPlane": {"replicas": 7}
-}
-`
