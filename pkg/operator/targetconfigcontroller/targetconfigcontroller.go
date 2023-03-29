@@ -71,7 +71,7 @@ func NewTargetConfigController(
 	}
 	envVarGetter.AddListener(c)
 
-	syncer := health.NewCheckingSyncWrapper(c.sync, 5*time.Minute)
+	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
 	livenessChecker.Add("TargetConfigController", syncer)
 
 	return factory.New().WithSyncContext(syncCtx).ResyncEvery(time.Minute).WithInformers(

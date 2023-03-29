@@ -35,7 +35,7 @@ func NewEtcdMembersController(
 		etcdClient:     etcdClient,
 	}
 
-	syncer := health.NewCheckingSyncWrapper(c.sync, 5*time.Minute)
+	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
 	livenessChecker.Add("EtcdMembersController", syncer)
 
 	return factory.New().ResyncEvery(time.Minute).WithSync(syncer.Sync).ToController("EtcdMembersController", eventRecorder.WithComponentSuffix("member-observer-controller"))
