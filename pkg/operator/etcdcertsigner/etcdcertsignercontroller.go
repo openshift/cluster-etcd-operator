@@ -103,7 +103,7 @@ func NewEtcdCertSignerController(
 		quorumChecker:  quorumChecker,
 	}
 
-	syncer := health.NewCheckingSyncWrapper(c.sync, 5*time.Minute)
+	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
 	livenessChecker.Add("EtcdCertSignerController", syncer)
 
 	return factory.New().ResyncEvery(time.Minute).WithInformers(

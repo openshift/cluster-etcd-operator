@@ -81,7 +81,7 @@ func NewClusterMemberController(
 		configMapLister:       kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister().ConfigMaps(operatorclient.TargetNamespace),
 	}
 
-	syncer := health.NewCheckingSyncWrapper(c.sync, 5*time.Minute)
+	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
 	livenessChecker.Add("ClusterMemberController", syncer)
 
 	return factory.New().ResyncEvery(time.Minute).

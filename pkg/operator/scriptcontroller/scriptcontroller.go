@@ -54,7 +54,7 @@ func NewScriptControllerController(
 		syncCtx.Queue().Add(syncCtx.QueueKey())
 	}
 
-	syncer := health.NewCheckingSyncWrapper(c.sync, 5*time.Minute)
+	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
 	livenessChecker.Add("ScriptController", syncer)
 
 	return factory.New().WithSyncContext(syncCtx).ResyncEvery(time.Minute).WithInformers(
