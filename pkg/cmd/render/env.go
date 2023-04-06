@@ -21,10 +21,12 @@ var envVarFns = []envVarFunc{
 }
 
 type envVarData struct {
-	platform      string
-	arch          string
-	installConfig map[string]interface{}
-	platformData  string
+	platform         string
+	arch             string
+	installConfig    map[string]interface{}
+	platformData     string
+	hostname         string
+	inPlaceBootstrap bool
 }
 
 type envVarFunc func(e *envVarData) (map[string]string, error)
@@ -56,9 +58,13 @@ func getFixedEtcdEnvVars(_ *envVarData) (map[string]string, error) {
 	return env, nil
 }
 
-func getEtcdName(_ *envVarData) (map[string]string, error) {
+func getEtcdName(e *envVarData) (map[string]string, error) {
+	etcdBootstrapName := "etcd-bootstrap"
+	if e.inPlaceBootstrap {
+		etcdBootstrapName = fmt.Sprintf("etcd-%s", e.hostname)
+	}
 	return map[string]string{
-		"ETCD_NAME": "etcd-bootstrap",
+		"ETCD_NAME": etcdBootstrapName,
 	}, nil
 }
 
