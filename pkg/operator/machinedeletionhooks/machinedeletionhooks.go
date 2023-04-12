@@ -7,6 +7,7 @@ import (
 	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
 	machinev1beta1client "github.com/openshift/client-go/machine/clientset/versioned/typed/machine/v1beta1"
 	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -46,6 +47,7 @@ type machineDeletionHooksController struct {
 //	The Machine Deletion Hook this controller reconciles is a mechanism within the Machine API that allow this operator to hold up removal of a machine
 //	until a replacement member has been promoted to a voting member.
 func NewMachineDeletionHooksController(
+	livenessChecker *health.MultiAlivenessChecker,
 	operatorClient operatorv1helpers.OperatorClient,
 	machineClient machinev1beta1client.MachineInterface,
 	etcdClient etcdcli.EtcdClient,
@@ -65,8 +67,12 @@ func NewMachineDeletionHooksController(
 		configMapListerForKubeSystemNamespace: kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Lister().ConfigMaps("kube-system"),
 		podListerForOpenShiftEtcdNamespace:    kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().Pods().Lister().Pods("openshift-etcd"),
 	}
+
+	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
+	livenessChecker.Add("MachineDeletionHooksController", syncer)
+
 	return factory.New().
-		WithSync(c.sync).
+		WithSync(syncer.Sync).
 		WithSyncDegradedOnError(operatorClient).
 		WithInformers(
 			masterMachineInformer,
