@@ -394,3 +394,11 @@ func FakeNetworkLister(t *testing.T, isIPv6 bool) configv1listers.NetworkLister 
 	}
 	return configv1listers.NewNetworkLister(indexer)
 }
+
+func DefaultEtcdMembers() []*etcdserverpb.Member {
+	return []*etcdserverpb.Member{
+		FakeEtcdMemberWithoutServer(0),
+		FakeEtcdMemberWithoutServer(1),
+		FakeEtcdMemberWithoutServer(2),
+	}
+}
