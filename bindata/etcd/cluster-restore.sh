@@ -8,6 +8,9 @@ set -o errtrace
 
 # example
 # ./cluster-restore.sh $path-to-backup
+# There are several customization switches based on env variables:
+# ETCD_RESTORE_SKIP_MOVE_CP_STATIC_PODS - when set this script will not move the other (non-etcd) static pod yamls
+# ETCD_ETCDCTL_RESTORE - when set this script will use `etcdctl snapshot restore` instead of a restore pod yaml
 
 if [[ $EUID -ne 0 ]]; then
   echo "This script must be run as root"
@@ -70,13 +73,32 @@ function wait_for_containers_to_stop() {
   done
 }
 
+function mv_static_pods() {
+  local containers=("$@")
+
+  # Move manifests and stop static pods
+  if [ ! -d "$MANIFEST_STOPPED_DIR" ]; then
+    mkdir -p "$MANIFEST_STOPPED_DIR"
+  fi
+
+  for POD_FILE_NAME in "${containers[@]}"; do
+    echo "...stopping ${POD_FILE_NAME}"
+    [ ! -f "${MANIFEST_DIR}/${POD_FILE_NAME}" ] && continue
+    mv "${MANIFEST_DIR}/${POD_FILE_NAME}" "${MANIFEST_STOPPED_DIR}"
+  done
+}
+
 BACKUP_DIR="$1"
 # shellcheck disable=SC2012
 BACKUP_FILE=$(ls -vd "${BACKUP_DIR}"/static_kuberesources*.tar.gz | tail -1) || true
 # shellcheck disable=SC2012
 SNAPSHOT_FILE=$(ls -vd "${BACKUP_DIR}"/snapshot*.db | tail -1) || true
-STATIC_POD_LIST=("kube-apiserver-pod.yaml" "kube-controller-manager-pod.yaml" "kube-scheduler-pod.yaml")
-STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "kube-controller-manager" "kube-apiserver" "kube-scheduler")
+
+ETCD_STATIC_POD_LIST=("etcd-pod.yaml")
+AUX_STATIC_POD_LIST=("kube-apiserver-pod.yaml" "kube-controller-manager-pod.yaml" "kube-scheduler-pod.yaml")
+
+ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz")
+AUX_STATIC_POD_CONTAINERS=("kube-controller-manager" "kube-apiserver" "kube-scheduler")
 
 if [ ! -f "${SNAPSHOT_FILE}" ]; then
   echo "etcd snapshot ${SNAPSHOT_FILE} does not exist"
@@ -87,20 +109,15 @@ fi
 dl_etcdctl
 check_snapshot_status "${SNAPSHOT_FILE}"
 
-# Move manifests and stop static pods
-if [ ! -d "$MANIFEST_STOPPED_DIR" ]; then
-  mkdir -p "$MANIFEST_STOPPED_DIR"
+# Move static pod manifests out of MANIFEST_DIR, if required
+if [ -z "${ETCD_RESTORE_SKIP_MOVE_CP_STATIC_PODS}" ]; then
+  mv_static_pods "${AUX_STATIC_POD_LIST[@]}"
+  wait_for_containers_to_stop "${AUX_STATIC_POD_CONTAINERS[@]}"
 fi
 
-# Move static pod manifests out of MANIFEST_DIR
-for POD_FILE_NAME in "${STATIC_POD_LIST[@]}" etcd-pod.yaml; do
-  echo "...stopping ${POD_FILE_NAME}"
-  [ ! -f "${MANIFEST_DIR}/${POD_FILE_NAME}" ] && continue
-  mv "${MANIFEST_DIR}/${POD_FILE_NAME}" "${MANIFEST_STOPPED_DIR}"
-done
-
-# wait for every static pod container to stop
-wait_for_containers_to_stop "${STATIC_POD_CONTAINERS[@]}"
+# always move etcd pod and wait for all containers to exit
+mv_static_pods "${ETCD_STATIC_POD_LIST[@]}"
+wait_for_containers_to_stop "${ETCD_STATIC_POD_CONTAINERS[@]}"
 
 if [ ! -d "${ETCD_DATA_DIR_BACKUP}" ]; then
   mkdir -p "${ETCD_DATA_DIR_BACKUP}"
@@ -116,14 +133,29 @@ if [ -d "${ETCD_DATA_DIR}/member" ]; then
   mv "${ETCD_DATA_DIR}"/member "${ETCD_DATA_DIR_BACKUP}"/
 fi
 
-# Restore static pod resources
-tar -C "${CONFIG_FILE_DIR}" -xzf "${BACKUP_FILE}" static-pod-resources
+if [ -z "${ETCD_ETCDCTL_RESTORE}" ]; then
+  # Restore static pod resources
+  tar -C "${CONFIG_FILE_DIR}" -xzf "${BACKUP_FILE}" static-pod-resources
 
-# Copy snapshot to backupdir
-cp -p "${SNAPSHOT_FILE}" "${ETCD_DATA_DIR_BACKUP}"/snapshot.db
+  # Copy snapshot to backupdir
+  cp -p "${SNAPSHOT_FILE}" "${ETCD_DATA_DIR_BACKUP}"/snapshot.db
 
-echo "starting restore-etcd static pod"
-cp -p "${RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"
+  echo "starting restore-etcd static pod"
+  cp -p "${RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"
+else
+  echo "removing etcd data dir..."
+  rm -rf "${ETCD_DATA_DIR}"
+  mkdir -p "${ETCD_DATA_DIR}"
+
+  echo "starting snapshot restore through etcdctl..."
+  etcdctl snapshot restore "${SNAPSHOT_FILE}" --data-dir="${ETCD_DATA_DIR}"
+
+  # start the original etcd static pod again through the new snapshot
+  echo "restoring old etcd pod to start etcd again"
+  mv "${MANIFEST_STOPPED_DIR}/etcd-pod.yaml" "${MANIFEST_DIR}/etcd-pod.yaml"
+fi
 
 # start remaining static pods
-restore_static_pods "${BACKUP_FILE}" "${STATIC_POD_LIST[@]}"
+if [ -z "${ETCD_RESTORE_SKIP_MOVE_CP_STATIC_PODS}" ]; then
+  restore_static_pods "${BACKUP_FILE}" "${STATIC_POD_LIST[@]}"
+fi
