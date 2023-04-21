@@ -4,6 +4,8 @@ cluster-etcd-operator (CEO) is an operator that handles the scaling of etcd duri
 
 ## Developing the CEO
 
+# dummy change to see the restore test runs 
+
 See [HACKING.md](docs/HACKING.md).
 
 ## Frequently Asked Questions
