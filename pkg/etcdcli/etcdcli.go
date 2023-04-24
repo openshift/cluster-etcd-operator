@@ -343,12 +343,12 @@ func (g *etcdClientGetter) UnhealthyMembers(ctx context.Context) ([]*etcdserverp
 
 	unstartedMemberNames := GetUnstartedMemberNames(memberHealth)
 	if len(unstartedMemberNames) > 0 {
-		g.eventRecorder.Warningf("UnstartedEtcdMember", "unstarted members: %v", strings.Join(unstartedMemberNames, ","))
+		klog.Warningf("UnstartedEtcdMember found: %v", unstartedMemberNames)
 	}
 
 	unhealthyMemberNames := GetUnhealthyMemberNames(memberHealth)
 	if len(unhealthyMemberNames) > 0 {
-		g.eventRecorder.Warningf("UnhealthyEtcdMember", "unhealthy members: %v", strings.Join(unhealthyMemberNames, ","))
+		klog.Warningf("UnhealthyEtcdMember found: %v", unhealthyMemberNames)
 	}
 
 	return memberHealth.GetUnhealthyMembers(), nil
