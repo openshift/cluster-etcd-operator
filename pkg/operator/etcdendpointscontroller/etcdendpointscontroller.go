@@ -6,7 +6,6 @@ import (
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -38,7 +37,6 @@ type EtcdEndpointsController struct {
 }
 
 func NewEtcdEndpointsController(
-	livenessChecker *health.MultiAlivenessChecker,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
@@ -56,15 +54,11 @@ func NewEtcdEndpointsController(
 		configmapClient: kubeClient.CoreV1(),
 		quorumChecker:   quorumChecker,
 	}
-
-	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
-	livenessChecker.Add("EtcdEndpointsController", syncer)
-
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
 		operatorClient.Informer(),
 		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer(),
 		nodeInformer.Informer(),
-	).WithSync(syncer.Sync).ToController("EtcdEndpointsController", eventRecorder.WithComponentSuffix("etcd-endpoints-controller"))
+	).WithSync(c.sync).ToController("EtcdEndpointsController", eventRecorder.WithComponentSuffix("etcd-endpoints-controller"))
 }
 
 func (c *EtcdEndpointsController) sync(ctx context.Context, syncCtx factory.SyncContext) error {

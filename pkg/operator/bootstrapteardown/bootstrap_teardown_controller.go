@@ -7,7 +7,6 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -28,7 +27,6 @@ type BootstrapTeardownController struct {
 }
 
 func NewBootstrapTeardownController(
-	livenessChecker *health.MultiAlivenessChecker,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	etcdClient etcdcli.EtcdClient,
@@ -43,13 +41,10 @@ func NewBootstrapTeardownController(
 		infrastructureLister: infrastructureLister,
 	}
 
-	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
-	livenessChecker.Add("BootstrapTeardownController", syncer)
-
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
 		operatorClient.Informer(),
 		kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Informer(),
-	).WithSync(syncer.Sync).ToController("BootstrapTeardownController", eventRecorder.WithComponentSuffix("bootstrap-teardown-controller"))
+	).WithSync(c.sync).ToController("BootstrapTeardownController", eventRecorder.WithComponentSuffix("bootstrap-teardown-controller"))
 }
 
 func (c *BootstrapTeardownController) sync(ctx context.Context, _ factory.SyncContext) error {

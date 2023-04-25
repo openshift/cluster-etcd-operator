@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	corev1 "k8s.io/api/core/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -34,7 +33,6 @@ type ScriptController struct {
 }
 
 func NewScriptControllerController(
-	livenessChecker *health.MultiAlivenessChecker,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeClient kubernetes.Interface,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
@@ -54,13 +52,10 @@ func NewScriptControllerController(
 		syncCtx.Queue().Add(syncCtx.QueueKey())
 	}
 
-	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
-	livenessChecker.Add("ScriptController", syncer)
-
 	return factory.New().WithSyncContext(syncCtx).ResyncEvery(time.Minute).WithInformers(
 		operatorClient.Informer(),
 		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer(),
-	).WithSync(syncer.Sync).ToController("ScriptController", syncCtx.Recorder())
+	).WithSync(c.sync).ToController("ScriptController", syncCtx.Recorder())
 }
 
 func (c *ScriptController) Enqueue() {

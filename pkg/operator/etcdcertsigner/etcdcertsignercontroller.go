@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -87,7 +86,6 @@ type EtcdCertSignerController struct {
 // This control loop is considerably less robust than the actual cert rotation controller, but I don't have time at the moment
 // to make the cert rotation controller dynamic.
 func NewEtcdCertSignerController(
-	livenessChecker *health.MultiAlivenessChecker,
 	kubeClient kubernetes.Interface,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeInformers v1helpers.KubeInformersForNamespaces,
@@ -102,16 +100,12 @@ func NewEtcdCertSignerController(
 		secretClient:   v1helpers.CachedSecretGetter(kubeClient.CoreV1(), kubeInformers),
 		quorumChecker:  quorumChecker,
 	}
-
-	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
-	livenessChecker.Add("EtcdCertSignerController", syncer)
-
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
 		kubeInformers.InformersFor("").Core().V1().Nodes().Informer(),
 		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Informer(),
 		kubeInformers.InformersFor(operatorclient.GlobalUserSpecifiedConfigNamespace).Core().V1().Secrets().Informer(),
 		operatorClient.Informer(),
-	).WithSync(syncer.Sync).ToController("EtcdCertSignerController", eventRecorder.WithComponentSuffix("etcd-cert-signer-controller"))
+	).WithSync(c.sync).ToController("EtcdCertSignerController", eventRecorder.WithComponentSuffix("etcd-cert-signer-controller"))
 }
 
 func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
