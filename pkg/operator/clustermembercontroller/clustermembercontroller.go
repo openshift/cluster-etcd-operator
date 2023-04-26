@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/server/v3/etcdserver"
 
@@ -56,7 +55,6 @@ type ClusterMemberController struct {
 }
 
 func NewClusterMemberController(
-	livenessChecker *health.MultiAlivenessChecker,
 	operatorClient v1helpers.OperatorClient,
 	machineAPIChecker ceohelpers.MachineAPIChecker,
 	masterNodeInformer cache.SharedIndexInformer,
@@ -80,10 +78,6 @@ func NewClusterMemberController(
 		masterNodeSelector:    masterNodeSelector,
 		configMapLister:       kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister().ConfigMaps(operatorclient.TargetNamespace),
 	}
-
-	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
-	livenessChecker.Add("ClusterMemberController", syncer)
-
 	return factory.New().ResyncEvery(time.Minute).
 		WithBareInformers(networkInformer.Informer()).
 		WithInformers(
@@ -92,7 +86,7 @@ func NewClusterMemberController(
 			kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer(),
 			kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer(),
 			operatorClient.Informer(),
-		).WithSync(syncer.Sync).WithSyncDegradedOnError(operatorClient).ToController("ClusterMemberController", eventRecorder.WithComponentSuffix("cluster-member-controller"))
+		).WithSync(c.sync).WithSyncDegradedOnError(operatorClient).ToController("ClusterMemberController", eventRecorder.WithComponentSuffix("cluster-member-controller"))
 }
 
 func (c *ClusterMemberController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
