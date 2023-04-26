@@ -3,7 +3,6 @@ package operator
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"regexp"
 	"time"
@@ -64,6 +63,8 @@ const masterMachineLabelSelectorString = "machine.openshift.io/cluster-api-machi
 
 // masterNodeLabelSelectorString allows for getting only the master nodes, it matters in larger installations with many worker nodes
 const masterNodeLabelSelectorString = "node-role.kubernetes.io/master"
+
+var AlivenessChecker = health.NewMultiAlivenessChecker()
 
 func RunOperator(ctx context.Context, controllerContext *controllercmd.ControllerContext) error {
 	// This kube client use protobuf, do not use it for CR
@@ -147,8 +148,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
-	alivenessChecker := health.NewMultiAlivenessChecker()
-
 	staticResourceController := staticresourcecontroller.NewStaticResourceController(
 		"EtcdStaticResources",
 		etcd_assets.Asset,
@@ -179,7 +178,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		etcdClient)
 
 	targetConfigReconciler := targetconfigcontroller.NewTargetConfigController(
-		alivenessChecker,
+		AlivenessChecker,
 		os.Getenv("IMAGE"),
 		os.Getenv("OPERATOR_IMAGE"),
 		operatorClient,
@@ -291,7 +290,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	coreClient := clientset
 
 	etcdCertSignerController := etcdcertsigner.NewEtcdCertSignerController(
-		alivenessChecker,
+		AlivenessChecker,
 		coreClient,
 		operatorClient,
 		kubeInformersForNamespaces,
@@ -300,7 +299,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 
 	etcdEndpointsController := etcdendpointscontroller.NewEtcdEndpointsController(
-		alivenessChecker,
+		AlivenessChecker,
 		operatorClient,
 		etcdClient,
 		controllerContext.EventRecorder,
@@ -312,7 +311,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	machineAPI := ceohelpers.NewMachineAPI(masterMachineInformer, machinelistersv1beta1.NewMachineLister(masterMachineInformer.GetIndexer()), masterMachineLabelSelector)
 
 	clusterMemberController := clustermembercontroller.NewClusterMemberController(
-		alivenessChecker,
+		AlivenessChecker,
 		operatorClient,
 		machineAPI,
 		masterNodeInformer,
@@ -326,7 +325,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 
 	clusterMemberRemovalController := clustermemberremovalcontroller.NewClusterMemberRemovalController(
-		alivenessChecker,
+		AlivenessChecker,
 		operatorClient,
 		etcdClient,
 		machineAPI,
@@ -340,7 +339,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 
 	machineDeletionHooksController := machinedeletionhooks.NewMachineDeletionHooksController(
-		alivenessChecker,
+		AlivenessChecker,
 		operatorClient,
 		machineClient,
 		etcdClient,
@@ -352,14 +351,14 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder)
 
 	etcdMembersController := etcdmemberscontroller.NewEtcdMembersController(
-		alivenessChecker,
+		AlivenessChecker,
 		operatorClient,
 		etcdClient,
 		controllerContext.EventRecorder,
 	)
 
 	bootstrapTeardownController := bootstrapteardown.NewBootstrapTeardownController(
-		alivenessChecker,
+		AlivenessChecker,
 		operatorClient,
 		kubeInformersForNamespaces,
 		etcdClient,
@@ -368,7 +367,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 
 	scriptController := scriptcontroller.NewScriptControllerController(
-		alivenessChecker,
+		AlivenessChecker,
 		operatorClient,
 		kubeClient,
 		kubeInformersForNamespaces,
@@ -377,7 +376,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 
 	defragController := defragcontroller.NewDefragController(
-		alivenessChecker,
+		AlivenessChecker,
 		operatorClient,
 		etcdClient,
 		configInformers.Config().V1().Infrastructures().Lister(),
@@ -386,7 +385,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 
 	upgradeBackupController := upgradebackupcontroller.NewUpgradeBackupController(
-		alivenessChecker,
+		AlivenessChecker,
 		operatorClient,
 		configClient.ConfigV1(),
 		kubeClient,
@@ -431,32 +430,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go envVarController.Run(1, ctx.Done())
 	go staticPodControllers.Start(ctx)
 
-	err = runHealthzServer(alivenessChecker)
-	if err != nil {
-		return err
-	}
-
 	<-ctx.Done()
 	return nil
-}
-
-func runHealthzServer(alivenessChecker *health.MultiAlivenessChecker) error {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(writer http.ResponseWriter, request *http.Request) {
-		writer.WriteHeader(http.StatusOK)
-		if !alivenessChecker.Alive() {
-			writer.WriteHeader(http.StatusServiceUnavailable)
-		}
-	})
-
-	addr := "0.0.0.0:8080"
-	klog.Infof("HealthZ is listening on %s", addr)
-	httpServer := &http.Server{
-		Addr:    addr,
-		Handler: mux,
-	}
-
-	return httpServer.ListenAndServe()
 }
 
 // RevisionConfigMaps is a list of configmaps that are directly copied for the current values.  A different actor/controller modifies these.

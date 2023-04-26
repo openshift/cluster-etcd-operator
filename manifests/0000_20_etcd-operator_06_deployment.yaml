@@ -55,8 +55,8 @@ spec:
         livenessProbe:
           httpGet:
             path: healthz
-            port: 8080
-            scheme: HTTP
+            port: 8443
+            scheme: HTTPS
           timeoutSeconds: 30
           periodSeconds: 60
           successThreshold: 1
