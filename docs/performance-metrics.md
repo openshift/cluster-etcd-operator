@@ -4,6 +4,16 @@ This document is intended to help users and support engineers to troubleshoot pe
 
 ## Common Bottlenecks
 
+### Etcd Leader change
+
+The stability of the etcd cluster is crucial to the ocp cluster. When etcd lost its leader, the cluster will be temporarily unavailable, The cluster may responds slowly, and client requests may even fail
+
+Etcd leader change metrics:
+
+> etcd_server_leader_changes_seen_total{job="etcd"}
+
+When the value of this etcd leader change metrics is relatively large and continues to grow(usually this metric will not be greater than 10), we would run the following metrics to check the bottlenecks
+
 ### Memory
 
 etcd uses bbolt, which stores everything as a single memory mapped file. In OpenShift this is up to 8 GiB big, this file is organized with a B+Tree and chunked into discrete 4k pages which can be flagged in-use or not. On top of that, several in-memory caches/indices on both etcd and API server are being used to facilitate fast multi-version access and label/field selection respectively.
