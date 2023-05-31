@@ -616,7 +616,7 @@ func (o *InstallOptions) writePod(rawPodBytes []byte, manifestFileName, resource
 		return err
 	}
 	klog.Infof("Writing static pod manifest %q ...\n%s", path.Join(o.PodManifestDir, manifestFileName), finalPodBytes)
-	if err := ioutil.WriteFile(path.Join(o.PodManifestDir, manifestFileName), []byte(finalPodBytes), 0644); err != nil {
+	if err := ioutil.WriteFile(path.Join(o.PodManifestDir, manifestFileName), []byte(finalPodBytes), 0600); err != nil {
 		return err
 	}
 	return nil
