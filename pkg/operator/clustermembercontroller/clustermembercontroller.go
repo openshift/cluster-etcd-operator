@@ -106,7 +106,8 @@ func (c *ClusterMemberController) reconcileMembers(ctx context.Context, recorder
 	}
 	if len(unhealthyMembers) > 0 {
 		klog.V(4).Infof("unhealthy members: %v", spew.Sdump(unhealthyMembers))
-		return fmt.Errorf("unhealthy members found during reconciling members")
+		// see https://issues.redhat.com/browse/OCPBUGS-14296
+		return nil
 	}
 
 	// Add a learner member if next peer found
