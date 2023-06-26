@@ -1,0 +1,100 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    api-approved.openshift.io: https://github.com/openshift/api/pull/1482
+    include.release.openshift.io/ibm-cloud-managed: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+    release.openshift.io/feature-set: TechPreviewNoUpgrade
+  name: backups.config.openshift.io
+spec:
+  group: config.openshift.io
+  names:
+    kind: Backup
+    listKind: BackupList
+    plural: backups
+    singular: backup
+  scope: Cluster
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          description: "Backup provides configuration for performing backups of the openshift cluster. \n Compatibility level 4: No compatibility is provided, the API can change at any point for any reason. These capabilities should not be used by applications needing long term support."
+          type: object
+          required:
+            - spec
+          properties:
+            apiVersion:
+              description: 'APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+              type: string
+            kind:
+              description: 'Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+              type: string
+            metadata:
+              type: object
+            spec:
+              description: spec holds user settable values for configuration
+              type: object
+              required:
+                - etcdBackupSpec
+              properties:
+                etcdBackupSpec:
+                  description: EtcdBackupSpec provides configuration for automated etcd backups to the cluster-etcd-operator
+                  type: object
+                  required:
+                    - pvcName
+                  properties:
+                    pvcName:
+                      description: PVCName specifies the name of the PersistentVolumeClaim which binds a PersistentVolume where the etcd backup files would be saved
+                      type: string
+                      minLength: 1
+                    retentionPolicy:
+                      description: RetentionPolicy defines the retention policy for retaining and deleting existing backups.
+                      type: object
+                      required:
+                        - retentionType
+                      properties:
+                        retentionCount:
+                          description: RetentionCount configures the retention policy based on the number of backups
+                          type: object
+                          required:
+                            - maxNumberOfBackups
+                          properties:
+                            maxNumberOfBackups:
+                              description: MaxNumberOfBackups defines the maximum number of backups to retain. If the number of successful backups matches retentionCount the oldest backup will be removed before a new backup is initiated. The count here is for the total number of backups
+                              type: integer
+                              minimum: 1
+                        retentionSize:
+                          description: RetentionSize configures the retention policy based on the size of backups
+                          type: object
+                          required:
+                            - maxSizeOfBackupsMb
+                          properties:
+                            maxSizeOfBackupsMb:
+                              description: MaxSizeOfBackupsMb defines the total size in Mb of backups to retain. If the current total size backups exceeds MaxSizeOfBackupsMb then the oldest backup will be removed before a new backup is initiated.
+                              type: integer
+                              minimum: 100
+                        retentionType:
+                          description: 'RetentionType sets the type of retention policy. The currently supported and valid values are "retentionCount" Currently, the only valid policies are retention by count (RetentionCount) and by size (RetentionSize). More policies or types may be added in the future. TODO: How to provide a "NoRetentionPolicy" option as a default? Should that be another enum which would need to be explicitly set as the discriminant or can we set that as the default value.'
+                          type: string
+                          allOf:
+                            - enum:
+                                - RetentionCount
+                                - RetentionSize
+                            - enum:
+                                - RetentionCount
+                                - RetentionSize
+                    schedule:
+                      description: 'Schedule defines the recurring backup schedule in Cron format every 2 hours: 0 */2 * * * every day at 3am: 0 3 * * * Setting to an empty string "" means disabling scheduled backups Default: "" TODO: Define CEL validation for the cron format See if the upstream CronJob has CEL validation already defined somewhere. TODO: Validation to disallow unrealistic schedules (e.g */2 * * * * every 2 mins)'
+                      type: string
+                    timeZone:
+                      description: 'The time zone name for the given schedule, see https://en.wikipedia.org/wiki/List_of_tz_database_time_zones. If not specified, this will default to the time zone of the kube-controller-manager process. See https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/#time-zones TODO: CEL validation for timezone format'
+                      type: string
+            status:
+              description: status holds observed values from the cluster. They may not be overridden.
+              type: object

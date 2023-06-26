@@ -9,6 +9,8 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	backupv1alphaclient "github.com/openshift/client-go/backup/clientset/versioned/typed/backup/v1alpha1"
+
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
 	machineclient "github.com/openshift/client-go/machine/clientset/versioned"
@@ -16,7 +18,9 @@ import (
 	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/backupcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/periodicbackupcontroller"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -77,6 +81,10 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return err
 	}
 	configClient, err := configv1client.NewForConfig(controllerContext.KubeConfig)
+	if err != nil {
+		return err
+	}
+	backupClient, err := backupv1alphaclient.NewForConfig(controllerContext.KubeConfig)
 	if err != nil {
 		return err
 	}
@@ -193,6 +201,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 
 	versionRecorder := status.NewVersionGetter()
+	configClient.ConfigV1alpha1()
 	clusterOperator, err := configClient.ConfigV1().ClusterOperators().Get(ctx, "etcd", metav1.GetOptions{})
 	if err != nil && !errors.IsNotFound(err) {
 		return err
@@ -398,6 +407,28 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		os.Getenv("OPERATOR_IMAGE"),
 	)
 
+	periodicBackupController := periodicbackupcontroller.NewPeriodicBackupController(
+		AlivenessChecker,
+		operatorClient,
+		configClient.ConfigV1(),
+		configClient.ConfigV1alpha1(),
+		kubeClient,
+		kubeInformersForNamespaces,
+		configInformers.Config().V1().ClusterVersions(),
+		configInformers.Config().V1().ClusterOperators(),
+		controllerContext.EventRecorder)
+
+	backupController := backupcontroller.NewBackupController(
+		AlivenessChecker,
+		operatorClient,
+		configClient.ConfigV1(),
+		backupClient,
+		kubeClient,
+		kubeInformersForNamespaces,
+		configInformers.Config().V1().ClusterVersions(),
+		configInformers.Config().V1().ClusterOperators(),
+		controllerContext.EventRecorder)
+
 	unsupportedConfigOverridesController := unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(
 		operatorClient,
 		controllerContext.EventRecorder,
@@ -426,6 +457,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go scriptController.Run(ctx, 1)
 	go defragController.Run(ctx, 1)
 	go upgradeBackupController.Run(ctx, 1)
+	go periodicBackupController.Run(ctx, 1)
+	go backupController.Run(ctx, 1)
 
 	go envVarController.Run(1, ctx.Done())
 	go staticPodControllers.Start(ctx)
