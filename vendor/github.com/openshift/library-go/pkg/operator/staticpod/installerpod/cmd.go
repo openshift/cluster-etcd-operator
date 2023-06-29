@@ -625,7 +625,7 @@ func (o *InstallOptions) writePod(rawPodBytes []byte, manifestFileName, resource
 func writeConfig(content []byte, fullFilename string) error {
 	klog.Infof("Writing config file %q ...", fullFilename)
 
-	filePerms := os.FileMode(0644)
+	filePerms := os.FileMode(0600)
 	if strings.HasSuffix(fullFilename, ".sh") {
 		filePerms = 0755
 	}

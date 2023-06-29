@@ -83,6 +83,16 @@ var (
 		OwningProduct:       ocpSpecific,
 	}
 
+	FeatureGateExternalCloudProviderExternal = FeatureGateName("ExternalCloudProviderExternal")
+	externalCloudProviderExternal            = FeatureGateDescription{
+		FeatureGateAttributes: FeatureGateAttributes{
+			Name: FeatureGateExternalCloudProviderExternal,
+		},
+		OwningJiraComponent: "cloud-provider",
+		ResponsiblePerson:   "elmiko",
+		OwningProduct:       ocpSpecific,
+	}
+
 	FeatureGateCSIDriverSharedResource = FeatureGateName("CSIDriverSharedResource")
 	csiDriverSharedResource            = FeatureGateDescription{
 		FeatureGateAttributes: FeatureGateAttributes{
@@ -181,5 +191,75 @@ var (
 		OwningJiraComponent: "cloud-credential-operator",
 		ResponsiblePerson:   "abutcher",
 		OwningProduct:       ocpSpecific,
+	}
+
+	FeatureGateMaxUnavailableStatefulSet = FeatureGateName("MaxUnavailableStatefulSet")
+	maxUnavailableStatefulSet            = FeatureGateDescription{
+		FeatureGateAttributes: FeatureGateAttributes{
+			Name: FeatureGateMaxUnavailableStatefulSet,
+		},
+		OwningJiraComponent: "apps",
+		ResponsiblePerson:   "atiratree",
+		OwningProduct:       kubernetes,
+	}
+
+	FeatureGateEventedPLEG = FeatureGateName("EventedPLEG")
+	eventedPleg            = FeatureGateDescription{
+		FeatureGateAttributes: FeatureGateAttributes{
+			Name: FeatureGateEventedPLEG,
+		},
+		OwningJiraComponent: "node",
+		ResponsiblePerson:   "sairameshv",
+		OwningProduct:       kubernetes,
+	}
+
+	FeatureGatePrivateHostedZoneAWS = FeatureGateName("PrivateHostedZoneAWS")
+	privateHostedZoneAWS            = FeatureGateDescription{
+		FeatureGateAttributes: FeatureGateAttributes{
+			Name: FeatureGatePrivateHostedZoneAWS,
+		},
+		OwningJiraComponent: "Routing",
+		ResponsiblePerson:   "miciah",
+		OwningProduct:       ocpSpecific,
+	}
+
+	FeatureGateSigstoreImageVerification = FeatureGateName("SigstoreImageVerification")
+	sigstoreImageVerification            = FeatureGateDescription{
+		FeatureGateAttributes: FeatureGateAttributes{
+			Name: FeatureGateSigstoreImageVerification,
+		},
+		OwningJiraComponent: "node",
+		ResponsiblePerson:   "sgrunert",
+		OwningProduct:       ocpSpecific,
+	}
+
+	FeatureGateGCPLabelsTags = FeatureGateName("GCPLabelsTags")
+	gcpLabelsTags            = FeatureGateDescription{
+		FeatureGateAttributes: FeatureGateAttributes{
+			Name: FeatureGateGCPLabelsTags,
+		},
+		OwningJiraComponent: "Installer",
+		ResponsiblePerson:   "bhb",
+		OwningProduct:       ocpSpecific,
+	}
+
+	FeatureGateAlibabaPlatform = FeatureGateName("AlibabaPlatform")
+	alibabaPlatform            = FeatureGateDescription{
+		FeatureGateAttributes: FeatureGateAttributes{
+			Name: FeatureGateAlibabaPlatform,
+		},
+		OwningJiraComponent: "cloud-provider",
+		ResponsiblePerson:   "jspeed",
+		OwningProduct:       ocpSpecific,
+	}
+
+	FeatureGateCloudDualStackNodeIPs = FeatureGateName("CloudDualStackNodeIPs")
+	cloudDualStackNodeIPs            = FeatureGateDescription{
+		FeatureGateAttributes: FeatureGateAttributes{
+			Name: FeatureGateCloudDualStackNodeIPs,
+		},
+		OwningJiraComponent: "machine-config-operator/platform-baremetal",
+		ResponsiblePerson:   "mkowalsk",
+		OwningProduct:       kubernetes,
 	}
 )
