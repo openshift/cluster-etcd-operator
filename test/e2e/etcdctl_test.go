@@ -89,10 +89,11 @@ func TestEtcdctlCommands(t *testing.T) {
 				t.Skip(tc.skipReason)
 			}
 			actual, err := exec.Command("oc", getOcExecArgs(tc.command, podName)...).CombinedOutput()
+
 			if len(tc.expectedError) > 0 {
 				require.Contains(t, string(actual), tc.expectedError, "expected error not reported: %q", tc.expectedError)
 			} else {
-				require.NoError(t, err)
+				require.NoErrorf(t, err, "unexpected error found, with output: %s", string(actual))
 			}
 		})
 	}
