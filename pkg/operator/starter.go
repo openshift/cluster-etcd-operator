@@ -3,7 +3,6 @@ package operator
 import (
 	"context"
 	"fmt"
-	"github.com/openshift/client-go/config/clientset/versioned/typed/config/v1"
 	"os"
 	"regexp"
 	"time"
@@ -19,7 +18,6 @@ import (
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
-	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/staticpod"
@@ -65,9 +63,6 @@ const masterMachineLabelSelectorString = "machine.openshift.io/cluster-api-machi
 
 // masterNodeLabelSelectorString allows for getting only the master nodes, it matters in larger installations with many worker nodes
 const masterNodeLabelSelectorString = "node-role.kubernetes.io/master"
-
-const releaseVersionEnvVariableName = "RELEASE_VERSION"
-const missingVersion = "0.0.1-snapshot"
 
 var AlivenessChecker = health.NewMultiAlivenessChecker()
 
@@ -125,37 +120,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		"kube-system",
 	)
 	configInformers := configv1informers.NewSharedInformerFactory(configClient, 10*time.Minute)
-
-	versionRecorder := status.NewVersionGetter()
-	clusterOperator, err := configClient.ConfigV1().ClusterOperators().Get(ctx, "etcd", metav1.GetOptions{})
-	if err != nil && !errors.IsNotFound(err) {
-		return err
-	}
-	for _, version := range clusterOperator.Status.Versions {
-		versionRecorder.SetVersion(version.Name, version.Version)
-	}
-	// Don't set operator version. library-go will take care of it after setting operands.
-	versionRecorder.SetVersion("raw-internal", status.VersionForOperatorFromEnv())
-	klog.Infof("recorded cluster versions: %v", versionRecorder.GetVersions())
-
-	// during bootstrap the only version we have is from env, on later inits we can take the operator version if available
-	desiredVersion := versionRecorder.GetVersions()["raw-internal"]
-	if v, ok := versionRecorder.GetVersions()["operator"]; ok {
-		desiredVersion = v
-	}
-
-	featureGateAccessor := featuregates.NewFeatureGateAccess(
-		desiredVersion,
-		missingVersion,
-		configInformers.Config().V1().ClusterVersions(),
-		configInformers.Config().V1().FeatureGates(),
-		controllerContext.EventRecorder)
-
-	featureGateAccessor.SetChangeHandler(func(featureChange featuregates.FeatureChange) {
-		// Do nothing here. The controller watches feature gate changes and will react to them.
-		klog.InfoS("FeatureGates changed", "enabled", featureChange.New.Enabled, "disabled", featureChange.New.Disabled)
-	})
-
 	operatorClient, dynamicInformers, err := genericoperatorclient.NewStaticPodOperatorClient(controllerContext.KubeConfig, operatorv1.GroupVersion.WithResource("etcds"))
 	if err != nil {
 		return err
@@ -227,6 +191,17 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 		quorumChecker,
 	)
+
+	versionRecorder := status.NewVersionGetter()
+	clusterOperator, err := configClient.ConfigV1().ClusterOperators().Get(ctx, "etcd", metav1.GetOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return err
+	}
+	for _, version := range clusterOperator.Status.Versions {
+		versionRecorder.SetVersion(version.Name, version.Version)
+	}
+	// Don't set operator version. library-go will take care of it after setting operands.
+	versionRecorder.SetVersion("raw-internal", status.VersionForOperatorFromEnv())
 
 	// The guardRolloutPreCheck function always waits until the etcd pods have rolled out to the new version
 	// i.e clusteroperator version is the desired version, so that the PDB doesn't block the rollout
@@ -409,31 +384,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeInformersForNamespaces,
 	)
 
-	unsupportedConfigOverridesController := unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(
-		operatorClient,
-		controllerContext.EventRecorder,
-	)
-
-	operatorInformers.Start(ctx.Done())
-	kubeInformersForNamespaces.Start(ctx.Done())
-	configInformers.Start(ctx.Done())
-	dynamicInformers.Start(ctx.Done())
-
-	go featureGateAccessor.Run(ctx)
-	select {
-	case <-featureGateAccessor.InitialFeatureGatesObserved():
-		features, err := featureGateAccessor.CurrentFeatureGates()
-		if err != nil {
-			return fmt.Errorf("could not find FeatureGates, aborting controller start: %w", err)
-		}
-
-		enabled, disabled := getEnabledDisabledFeatures(features)
-		klog.Info("FeatureGates initialized", "enabled", enabled, "disabled", disabled)
-	case <-time.After(1 * time.Minute):
-		return fmt.Errorf("timed out waiting for FeatureGate detection, aborting controller start")
-	}
-
-	// putting all backup related controllers after the feature flags
 	upgradeBackupController := upgradebackupcontroller.NewUpgradeBackupController(
 		AlivenessChecker,
 		operatorClient,
@@ -448,6 +398,15 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		os.Getenv("OPERATOR_IMAGE"),
 	)
 
+	unsupportedConfigOverridesController := unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(
+		operatorClient,
+		controllerContext.EventRecorder,
+	)
+
+	operatorInformers.Start(ctx.Done())
+	kubeInformersForNamespaces.Start(ctx.Done())
+	configInformers.Start(ctx.Done())
+	dynamicInformers.Start(ctx.Done())
 	go masterMachineInformer.Run(ctx.Done())
 	go masterNodeInformer.Run(ctx.Done())
 	go fsyncMetricController.Run(ctx, 1)
@@ -473,43 +432,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 	<-ctx.Done()
 	return nil
-}
-
-// GetReleaseVersion gets the release version string from the env
-func GetReleaseVersion(c v1.ClusterOperatorInterface) (string, error) {
-	etcd, err := c.Get(context.Background(), "etcd", metav1.GetOptions{})
-	if err != nil {
-		return "", fmt.Errorf("could not get etcd cluster operator CRD: %w", err)
-	}
-
-	klog.Infof("found etcd versions: %v", etcd.Status.Versions)
-	for _, version := range etcd.Status.Versions {
-		if version.Name == "operator" {
-			return version.Version, nil
-		}
-	}
-
-	// if we found nothing on the CRD, we can resort to the older unsupported env variable
-	releaseVersion := os.Getenv(releaseVersionEnvVariableName)
-	if len(releaseVersion) == 0 {
-		return "", fmt.Errorf("%s environment variable is missing", releaseVersionEnvVariableName)
-	}
-	return releaseVersion, nil
-}
-
-func getEnabledDisabledFeatures(features featuregates.FeatureGate) ([]string, []string) {
-	var enabled []string
-	var disabled []string
-
-	for _, feature := range features.KnownFeatures() {
-		if features.Enabled(feature) {
-			enabled = append(enabled, string(feature))
-		} else {
-			disabled = append(disabled, string(feature))
-		}
-	}
-
-	return enabled, disabled
 }
 
 // RevisionConfigMaps is a list of configmaps that are directly copied for the current values.  A different actor/controller modifies these.
