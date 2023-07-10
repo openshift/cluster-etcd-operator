@@ -1,0 +1,38 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: etcd-minimal
+  namespace: openshift-etcd-operator
+  labels:
+    app.kubernetes.io/name: etcd
+    k8s-app: etcd
+    monitoring.openshift.io/collection-profile: minimal
+spec:
+  endpoints:
+    - interval: 30s
+      metricRelabelings:
+      - action: keep
+        regex: (etcd_disk_backend_commit_duration_seconds_bucket|etcd_disk_wal_fsync_duration_seconds_bucket|etcd_mvcc_db_total_size_in_bytes|etcd_mvcc_db_total_size_in_use_in_bytes|etcd_network_peer_round_trip_time_seconds_bucket|etcd_network_peer_sent_failures_total|etcd_server_has_leader|etcd_server_is_leader|etcd_server_proposals_failed_total|etcd_server_quota_backend_bytes|grpc_server_handled_total|grpc_server_handling_seconds_bucket|grpc_server_started_total|process_start_time_seconds)
+        sourceLabels:
+        - __name__
+      port: etcd-metrics
+      scheme: https
+      tlsConfig:
+        ca:
+          configMap:
+            name: etcd-metric-serving-ca
+            key: ca-bundle.crt
+        cert:
+          secret:
+            name: etcd-metric-client
+            key: tls.crt
+        keySecret:
+          name: etcd-metric-client
+          key: tls.key
+  jobLabel: k8s-app
+  namespaceSelector:
+    matchNames:
+    - openshift-etcd
+  selector:
+    matchLabels:
+      k8s-app: etcd

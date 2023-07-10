@@ -27,14 +27,15 @@ for these certificates.
 All etcd CAs and their CA bundles are stored in the `openshift-config`
 namespace.
 
-| CA (secret)        | CA bundle (configmap)            | CA bundle also appearing in                  |
-| ------------------ | -------------------------------- | -------------------------------------------- |
-| etcd-signer        | etcd-ca-bundle                   | openshift-etcd                               |
-|                    |                                  | openshift-etcd-operator                      |
-|                    |                                  | openshift-etcd/etcd-peer-client-ca           |
-|                    | etcd-serving-ca                  | openshift-etcd                               |
-| etcd-metric-signer | etcd-metric-serving-ca           | openshift-etcd/etcd-metrics-proxy-client-ca  |
-|                    |                                  | openshift-etcd/etcd-metrics-proxy-serving-ca |
+| CA (secret)        | CA bundle (configmap)            | CA bundle also appearing in                    |
+| ------------------ | -------------------------------- | -----------------------------------------------|
+| etcd-signer        | etcd-ca-bundle                   | openshift-etcd                                 |
+|                    |                                  | openshift-etcd-operator                        |
+|                    |                                  | openshift-etcd/etcd-peer-client-ca             |
+|                    | etcd-serving-ca                  | openshift-etcd                                 |
+| etcd-metric-signer | etcd-metric-serving-ca           | openshift-etcd/etcd-metrics-proxy-client-ca    |
+|                    |                                  | openshift-etcd/etcd-metrics-proxy-serving-ca   |
+|                    |                                  | openshift-etcd-operator/etcd-metric-serving-ca |
 
 ## etcd cert summary
 
@@ -46,7 +47,7 @@ All etcd certificates are stored in secrets.
 |                    |                                           |                                  | openshift-etcd-operator                     |
 |                    | openshift-etcd/etcd-peer-$node            | etcd peer communication          | collected in etcd-all-certs                 |
 |                    | openshift-etcd/etcd-serving-$node         | etcd member serving              | collected in etcd-all-certs                 |
-| etcd-metric-signer | openshift-config/etcd-metric-client       | authn prometheus to etcd metrics | openshift-monitoring/kube-etcd-client-certs |
+| etcd-metric-signer | openshift-config/etcd-metric-client       | authn prometheus to etcd metrics | openshift-etcd-operator/etcd-metric-client  |
 |                    | openshift-etcd/etcd-serving-metrics-$node | etcd member metrics serving      | collected in etcd-all-certs                 |
 
 ## etcd-signer and etcd-metric-signer CA certs
@@ -144,10 +145,7 @@ Certificate:
 ```
 
 Similarly, the `etcd-metric-signer` CA issues a client cert that
-prometheus uses when authenticating with the etcd metrics server. The
-`cluster-monitoring-operator` copies this into the
-`kube-etcd-client-certs` secret in the `openshift-monitoring`
-namespace.
+prometheus uses when authenticating with the etcd metrics server.
 
 ```
 $ oc get -n openshift-config secret/etcd-metric-client -o template='{{index .data "tls.crt"}}'  | base64 -d | openssl x509 -noout -text

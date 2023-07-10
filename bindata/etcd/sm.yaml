@@ -1,0 +1,33 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: etcd
+  namespace: openshift-etcd-operator
+  labels:
+    app.kubernetes.io/name: etcd
+    k8s-app: etcd
+    monitoring.openshift.io/collection-profile: full
+spec:
+  endpoints:
+    - interval: 30s
+      port: etcd-metrics
+      scheme: https
+      tlsConfig:
+        ca:
+          configMap:
+            name: etcd-metric-serving-ca
+            key: ca-bundle.crt
+        cert:
+          secret:
+            name: etcd-metric-client
+            key: tls.crt
+        keySecret:
+          name: etcd-metric-client
+          key: tls.key
+  jobLabel: k8s-app
+  namespaceSelector:
+    matchNames:
+    - openshift-etcd
+  selector:
+    matchLabels:
+      k8s-app: etcd

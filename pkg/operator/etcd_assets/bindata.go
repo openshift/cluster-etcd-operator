@@ -5,6 +5,7 @@
 // bindata/etcd/cluster-restore.sh
 // bindata/etcd/cm.yaml
 // bindata/etcd/etcd-common-tools
+// bindata/etcd/minimal-sm.yaml
 // bindata/etcd/ns.yaml
 // bindata/etcd/pod-cm.yaml
 // bindata/etcd/pod.yaml
@@ -12,6 +13,7 @@
 // bindata/etcd/restore-pod.yaml
 // bindata/etcd/sa.yaml
 // bindata/etcd/scripts-cm.yaml
+// bindata/etcd/sm.yaml
 // bindata/etcd/svc.yaml
 package etcd_assets
 
@@ -584,6 +586,61 @@ func etcdEtcdCommonTools() (*asset, error) {
 	}
 
 	info := bindataFileInfo{name: "etcd/etcd-common-tools", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
+var _etcdMinimalSmYaml = []byte(`apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: etcd-minimal
+  namespace: openshift-etcd-operator
+  labels:
+    app.kubernetes.io/name: etcd
+    k8s-app: etcd
+    monitoring.openshift.io/collection-profile: minimal
+spec:
+  endpoints:
+    - interval: 30s
+      metricRelabelings:
+      - action: keep
+        regex: (etcd_disk_backend_commit_duration_seconds_bucket|etcd_disk_wal_fsync_duration_seconds_bucket|etcd_mvcc_db_total_size_in_bytes|etcd_mvcc_db_total_size_in_use_in_bytes|etcd_network_peer_round_trip_time_seconds_bucket|etcd_network_peer_sent_failures_total|etcd_server_has_leader|etcd_server_is_leader|etcd_server_proposals_failed_total|etcd_server_quota_backend_bytes|grpc_server_handled_total|grpc_server_handling_seconds_bucket|grpc_server_started_total|process_start_time_seconds)
+        sourceLabels:
+        - __name__
+      port: etcd-metrics
+      scheme: https
+      tlsConfig:
+        ca:
+          configMap:
+            name: etcd-metric-serving-ca
+            key: ca-bundle.crt
+        cert:
+          secret:
+            name: etcd-metric-client
+            key: tls.crt
+        keySecret:
+          name: etcd-metric-client
+          key: tls.key
+  jobLabel: k8s-app
+  namespaceSelector:
+    matchNames:
+    - openshift-etcd
+  selector:
+    matchLabels:
+      k8s-app: etcd
+`)
+
+func etcdMinimalSmYamlBytes() ([]byte, error) {
+	return _etcdMinimalSmYaml, nil
+}
+
+func etcdMinimalSmYaml() (*asset, error) {
+	bytes, err := etcdMinimalSmYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "etcd/minimal-sm.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
@@ -1218,6 +1275,56 @@ func etcdScriptsCmYaml() (*asset, error) {
 	return a, nil
 }
 
+var _etcdSmYaml = []byte(`apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: etcd
+  namespace: openshift-etcd-operator
+  labels:
+    app.kubernetes.io/name: etcd
+    k8s-app: etcd
+    monitoring.openshift.io/collection-profile: full
+spec:
+  endpoints:
+    - interval: 30s
+      port: etcd-metrics
+      scheme: https
+      tlsConfig:
+        ca:
+          configMap:
+            name: etcd-metric-serving-ca
+            key: ca-bundle.crt
+        cert:
+          secret:
+            name: etcd-metric-client
+            key: tls.crt
+        keySecret:
+          name: etcd-metric-client
+          key: tls.key
+  jobLabel: k8s-app
+  namespaceSelector:
+    matchNames:
+    - openshift-etcd
+  selector:
+    matchLabels:
+      k8s-app: etcd
+`)
+
+func etcdSmYamlBytes() ([]byte, error) {
+	return _etcdSmYaml, nil
+}
+
+func etcdSmYaml() (*asset, error) {
+	bytes, err := etcdSmYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "etcd/sm.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
 var _etcdSvcYaml = []byte(`apiVersion: v1
 kind: Service
 metadata:
@@ -1314,6 +1421,7 @@ var _bindata = map[string]func() (*asset, error){
 	"etcd/cluster-restore.sh":      etcdClusterRestoreSh,
 	"etcd/cm.yaml":                 etcdCmYaml,
 	"etcd/etcd-common-tools":       etcdEtcdCommonTools,
+	"etcd/minimal-sm.yaml":         etcdMinimalSmYaml,
 	"etcd/ns.yaml":                 etcdNsYaml,
 	"etcd/pod-cm.yaml":             etcdPodCmYaml,
 	"etcd/pod.yaml":                etcdPodYaml,
@@ -1321,6 +1429,7 @@ var _bindata = map[string]func() (*asset, error){
 	"etcd/restore-pod.yaml":        etcdRestorePodYaml,
 	"etcd/sa.yaml":                 etcdSaYaml,
 	"etcd/scripts-cm.yaml":         etcdScriptsCmYaml,
+	"etcd/sm.yaml":                 etcdSmYaml,
 	"etcd/svc.yaml":                etcdSvcYaml,
 }
 
@@ -1373,6 +1482,7 @@ var _bintree = &bintree{nil, map[string]*bintree{
 		"cluster-restore.sh":      {etcdClusterRestoreSh, map[string]*bintree{}},
 		"cm.yaml":                 {etcdCmYaml, map[string]*bintree{}},
 		"etcd-common-tools":       {etcdEtcdCommonTools, map[string]*bintree{}},
+		"minimal-sm.yaml":         {etcdMinimalSmYaml, map[string]*bintree{}},
 		"ns.yaml":                 {etcdNsYaml, map[string]*bintree{}},
 		"pod-cm.yaml":             {etcdPodCmYaml, map[string]*bintree{}},
 		"pod.yaml":                {etcdPodYaml, map[string]*bintree{}},
@@ -1380,6 +1490,7 @@ var _bintree = &bintree{nil, map[string]*bintree{
 		"restore-pod.yaml":        {etcdRestorePodYaml, map[string]*bintree{}},
 		"sa.yaml":                 {etcdSaYaml, map[string]*bintree{}},
 		"scripts-cm.yaml":         {etcdScriptsCmYaml, map[string]*bintree{}},
+		"sm.yaml":                 {etcdSmYaml, map[string]*bintree{}},
 		"svc.yaml":                {etcdSvcYaml, map[string]*bintree{}},
 	}},
 }}
