@@ -122,6 +122,8 @@ backup_latest_kube_static_resources "${BACKUP_TAR_FILE}"
 
 # Download etcdctl and get the etcd snapshot
 dl_etcdctl
+
+# snapshot save will continue to stay in etcdctl
 ETCDCTL_ENDPOINTS="https://${NODE_NODE_ENVVAR_NAME_IP}:2379" etcdctl snapshot save "${SNAPSHOT_FILE}"
 
 # Check the integrity of the snapshot
@@ -130,6 +132,7 @@ snapshot_failed=$?
 
 # If check_snapshot_status returned 1 it failed, so exit with code 1
 if [[ $snapshot_failed -eq 1 ]]; then
+  echo "snapshot failed with exit code ${snapshot_failed}"
   exit 1
 fi
 
