@@ -11,6 +11,7 @@ set -o errtrace
 # There are several customization switches based on env variables:
 # ETCD_RESTORE_SKIP_MOVE_CP_STATIC_PODS - when set this script will not move the other (non-etcd) static pod yamls
 # ETCD_ETCDCTL_RESTORE - when set this script will use `etcdctl snapshot restore` instead of a restore pod yaml
+# ETCD_ETCDCTL_RESTORE_ENABLE_BUMP - when set this script will spawn the restore pod with a large enough revision bump
 
 if [[ $EUID -ne 0 ]]; then
   echo "This script must be run as root"
@@ -109,6 +110,11 @@ fi
 dl_etcdctl
 check_snapshot_status "${SNAPSHOT_FILE}"
 
+ETCD_CLIENT="${ETCD_ETCDCTL_BIN+etcdctl}"
+if [ -n "${ETCD_ETCDUTL_BIN}" ]; then
+  ETCD_CLIENT="${ETCD_ETCDUTL_BIN}"
+fi
+
 # Move static pod manifests out of MANIFEST_DIR, if required
 if [ -z "${ETCD_RESTORE_SKIP_MOVE_CP_STATIC_PODS}" ]; then
   mv_static_pods "${AUX_STATIC_POD_LIST[@]}"
@@ -141,14 +147,23 @@ if [ -z "${ETCD_ETCDCTL_RESTORE}" ]; then
   cp -p "${SNAPSHOT_FILE}" "${ETCD_DATA_DIR_BACKUP}"/snapshot.db
 
   echo "starting restore-etcd static pod"
-  cp -p "${RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"
+  # ideally this can be solved with jq and a real env var, but we don't have it available at this point
+  if [ -n "${ETCD_ETCDCTL_RESTORE_ENABLE_BUMP}" ]; then
+    sed "s/export ETCD_ETCDCTL_RESTORE_ENABLE_BUMP=\"false\"/export ETCD_ETCDCTL_RESTORE_ENABLE_BUMP=\"true\"/" "${RESTORE_ETCD_POD_YAML}" > "${MANIFEST_DIR}/etcd-pod.yaml"
+  else
+     cp -p "${RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"
+  fi
+
 else
   echo "removing etcd data dir..."
   rm -rf "${ETCD_DATA_DIR}"
   mkdir -p "${ETCD_DATA_DIR}"
 
   echo "starting snapshot restore through etcdctl..."
-  etcdctl snapshot restore "${SNAPSHOT_FILE}" --data-dir="${ETCD_DATA_DIR}"
+  if ! ${ETCD_CLIENT} snapshot restore "${SNAPSHOT_FILE}" --data-dir="${ETCD_DATA_DIR}"; then
+      echo "Snapshot restore failed. Aborting!"
+      exit 1
+  fi
 
   # start the original etcd static pod again through the new snapshot
   echo "restoring old etcd pod to start etcd again"
