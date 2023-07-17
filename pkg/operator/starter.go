@@ -34,6 +34,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/dynamic"
 	corev1informers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
@@ -74,6 +75,10 @@ var AlivenessChecker = health.NewMultiAlivenessChecker()
 func RunOperator(ctx context.Context, controllerContext *controllercmd.ControllerContext) error {
 	// This kube client use protobuf, do not use it for CR
 	kubeClient, err := kubernetes.NewForConfig(controllerContext.ProtoKubeConfig)
+	if err != nil {
+		return err
+	}
+	dynamicClient, err := dynamic.NewForConfig(controllerContext.ProtoKubeConfig)
 	if err != nil {
 		return err
 	}
@@ -185,11 +190,13 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			"etcd/ns.yaml",
 			"etcd/sa.yaml",
 			"etcd/svc.yaml",
+			"etcd/sm.yaml",
+			"etcd/minimal-sm.yaml",
 		},
-		(&resourceapply.ClientHolder{}).WithKubernetes(kubeClient),
+		(&resourceapply.ClientHolder{}).WithKubernetes(kubeClient).WithDynamicClient(dynamicClient),
 		operatorClient,
 		controllerContext.EventRecorder,
-	).AddKubeInformers(kubeInformersForNamespaces)
+	).WithIgnoreNotFoundOnCreate().AddKubeInformers(kubeInformersForNamespaces)
 
 	envVarController := etcdenvvar.NewEnvVarController(
 		os.Getenv("IMAGE"),
