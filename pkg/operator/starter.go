@@ -10,13 +10,17 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
+
 	machineclient "github.com/openshift/client-go/machine/clientset/versioned"
 	machineinformersv1beta1 "github.com/openshift/client-go/machine/informers/externalversions/machine/v1beta1"
 	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
+	operatorversionedclientv1alpha1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/backupcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
@@ -83,6 +87,10 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return err
 	}
 	operatorConfigClient, err := operatorversionedclient.NewForConfig(controllerContext.KubeConfig)
+	if err != nil {
+		return err
+	}
+	operatorConfigClientv1Alpha1, err := operatorversionedclientv1alpha1.NewForConfig(controllerContext.KubeConfig)
 	if err != nil {
 		return err
 	}
@@ -421,6 +429,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	dynamicInformers.Start(ctx.Done())
 
 	go featureGateAccessor.Run(ctx)
+
 	select {
 	case <-featureGateAccessor.InitialFeatureGatesObserved():
 		features, err := featureGateAccessor.CurrentFeatureGates()
@@ -434,7 +443,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return fmt.Errorf("timed out waiting for FeatureGate detection, aborting controller start")
 	}
 
-	// putting all backup related controllers after the feature flags
+	// putting all backup related controllers after the feature flags to ensure flags are initialized already
 	upgradeBackupController := upgradebackupcontroller.NewUpgradeBackupController(
 		AlivenessChecker,
 		operatorClient,
@@ -448,6 +457,14 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		os.Getenv("IMAGE"),
 		os.Getenv("OPERATOR_IMAGE"),
 	)
+
+	backupController := backupcontroller.NewBackupController(
+		AlivenessChecker,
+		operatorConfigClientv1Alpha1,
+		kubeClient,
+		controllerContext.EventRecorder,
+		os.Getenv("IMAGE"),
+		featureGateAccessor)
 
 	go masterMachineInformer.Run(ctx.Done())
 	go masterNodeInformer.Run(ctx.Done())
@@ -468,6 +485,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go scriptController.Run(ctx, 1)
 	go defragController.Run(ctx, 1)
 	go upgradeBackupController.Run(ctx, 1)
+	go backupController.Run(ctx, 1)
 
 	go envVarController.Run(1, ctx.Done())
 	go staticPodControllers.Start(ctx)

@@ -1,5 +1,6 @@
 // Code generated for package etcd_assets by go-bindata DO NOT EDIT. (@generated)
 // sources:
+// bindata/etcd/cluster-backup-job.yaml
 // bindata/etcd/cluster-backup-pod.yaml
 // bindata/etcd/cluster-backup.sh
 // bindata/etcd/cluster-restore.sh
@@ -66,6 +67,93 @@ func (fi bindataFileInfo) IsDir() bool {
 // Sys return file is sys mode
 func (fi bindataFileInfo) Sys() interface{} {
 	return nil
+}
+
+var _etcdClusterBackupJobYaml = []byte(`apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cluster-backup-job
+  namespace: openshift-etcd
+  labels:
+    app: cluster-backup-job
+    backup-name: templated
+spec:
+  template:
+    spec:
+      containers:
+        - name: cluster-backup
+          imagePullPolicy: IfNotPresent
+          terminationMessagePolicy: FallbackToLogsOnError
+          command:
+            - /bin/sh
+            - -c
+            - |
+              #!/bin/sh
+              set -exuo pipefail
+              
+              /usr/local/bin/cluster-backup.sh ${CLUSTER_BACKUP_PATH}
+
+          resources:
+            requests:
+              memory: 80Mi
+              cpu: 10m
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - mountPath: /usr/local/bin
+              name: usr-local-bin
+            - mountPath: /etc/kubernetes/static-pod-resources
+              name: resources-dir
+            - mountPath: /etc/kubernetes/static-pod-certs
+              name: cert-dir
+            - mountPath: /etc/kubernetes/manifests
+              name: static-pod-dir
+            - mountPath: /etc/kubernetes/cluster-backup
+              name: etc-kubernetes-cluster-backup
+      priorityClassName: system-node-critical
+      nodeSelector:
+        node-role.kubernetes.io/master: ""
+      restartPolicy: Never
+      hostNetwork: true
+      tolerations:
+        - operator: "Exists"
+      volumes:
+        - hostPath:
+            path: /usr/local/bin
+          name: usr-local-bin
+        - hostPath:
+            path: /etc/kubernetes/manifests
+          name: static-pod-dir
+        - hostPath:
+            path: /etc/kubernetes/static-pod-resources
+          name: resources-dir
+        - hostPath:
+            path: /etc/kubernetes/static-pod-resources/etcd-certs
+          name: cert-dir
+        - name: etcd-client
+          secret:
+            secretName: etcd-client
+        - name: etcd-ca
+          configMap:
+            name: etcd-ca-bundle
+        - name: etc-kubernetes-cluster-backup
+          persistentVolumeClaim:
+            claimName: templated
+`)
+
+func etcdClusterBackupJobYamlBytes() ([]byte, error) {
+	return _etcdClusterBackupJobYaml, nil
+}
+
+func etcdClusterBackupJobYaml() (*asset, error) {
+	bytes, err := etcdClusterBackupJobYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "etcd/cluster-backup-job.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
 }
 
 var _etcdClusterBackupPodYaml = []byte(`apiVersion: v1
@@ -1456,6 +1544,7 @@ func AssetNames() []string {
 
 // _bindata is a table, holding each asset generator, mapped to its name.
 var _bindata = map[string]func() (*asset, error){
+	"etcd/cluster-backup-job.yaml": etcdClusterBackupJobYaml,
 	"etcd/cluster-backup-pod.yaml": etcdClusterBackupPodYaml,
 	"etcd/cluster-backup.sh":       etcdClusterBackupSh,
 	"etcd/cluster-restore.sh":      etcdClusterRestoreSh,
@@ -1517,6 +1606,7 @@ type bintree struct {
 
 var _bintree = &bintree{nil, map[string]*bintree{
 	"etcd": {nil, map[string]*bintree{
+		"cluster-backup-job.yaml": {etcdClusterBackupJobYaml, map[string]*bintree{}},
 		"cluster-backup-pod.yaml": {etcdClusterBackupPodYaml, map[string]*bintree{}},
 		"cluster-backup.sh":       {etcdClusterBackupSh, map[string]*bintree{}},
 		"cluster-restore.sh":      {etcdClusterRestoreSh, map[string]*bintree{}},
