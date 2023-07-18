@@ -12,6 +12,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
+	configversionedclientv1alpha1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
 
 	machineclient "github.com/openshift/client-go/machine/clientset/versioned"
@@ -22,6 +23,7 @@ import (
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/backupcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/periodicbackupcontroller"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
@@ -38,7 +40,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/dynamic"
 	corev1informers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
@@ -82,15 +83,15 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	if err != nil {
 		return err
 	}
-	dynamicClient, err := dynamic.NewForConfig(controllerContext.ProtoKubeConfig)
-	if err != nil {
-		return err
-	}
 	operatorConfigClient, err := operatorversionedclient.NewForConfig(controllerContext.KubeConfig)
 	if err != nil {
 		return err
 	}
 	operatorConfigClientv1Alpha1, err := operatorversionedclientv1alpha1.NewForConfig(controllerContext.KubeConfig)
+	if err != nil {
+		return err
+	}
+	configClientv1Alpha1, err := configversionedclientv1alpha1.NewForConfig(controllerContext.KubeConfig)
 	if err != nil {
 		return err
 	}
@@ -198,13 +199,11 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			"etcd/ns.yaml",
 			"etcd/sa.yaml",
 			"etcd/svc.yaml",
-			"etcd/sm.yaml",
-			"etcd/minimal-sm.yaml",
 		},
-		(&resourceapply.ClientHolder{}).WithKubernetes(kubeClient).WithDynamicClient(dynamicClient),
+		(&resourceapply.ClientHolder{}).WithKubernetes(kubeClient),
 		operatorClient,
 		controllerContext.EventRecorder,
-	).WithIgnoreNotFoundOnCreate().AddKubeInformers(kubeInformersForNamespaces)
+	).AddKubeInformers(kubeInformersForNamespaces)
 
 	envVarController := etcdenvvar.NewEnvVarController(
 		os.Getenv("IMAGE"),
@@ -458,6 +457,14 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		os.Getenv("OPERATOR_IMAGE"),
 	)
 
+	periodicBackupController := periodicbackupcontroller.NewPeriodicBackupController(
+		AlivenessChecker,
+		configClientv1Alpha1,
+		kubeClient,
+		controllerContext.EventRecorder,
+		os.Getenv("OPERATOR_IMAGE"),
+		featureGateAccessor)
+
 	backupController := backupcontroller.NewBackupController(
 		AlivenessChecker,
 		operatorConfigClientv1Alpha1,
@@ -485,6 +492,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go scriptController.Run(ctx, 1)
 	go defragController.Run(ctx, 1)
 	go upgradeBackupController.Run(ctx, 1)
+	go periodicBackupController.Run(ctx, 1)
 	go backupController.Run(ctx, 1)
 
 	go envVarController.Run(1, ctx.Done())

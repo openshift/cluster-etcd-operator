@@ -1,0 +1,25 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: templated
+  namespace: openshift-etcd
+  labels:
+    app: cluster-backup-job
+    backup-name: templated
+spec:
+  schedule: "templated"
+  timeZone: "templated"
+  concurrencyPolicy: "Forbid"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: cluster-backup
+              imagePullPolicy: IfNotPresent
+              terminationMessagePolicy: FallbackToLogsOnError
+              command: [ "./cluster-etcd-operator" ]
+              args: ["templated"]
+          nodeSelector:
+            node-role.kubernetes.io/master: ""
+          restartPolicy: OnFailure
