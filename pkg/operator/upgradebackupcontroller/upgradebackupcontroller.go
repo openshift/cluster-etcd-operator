@@ -90,14 +90,14 @@ func NewUpgradeBackupController(
 	}
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
-	livenessChecker.Add("ClusterBackupController", syncer)
+	livenessChecker.Add("ClusterUpgradeBackupController", syncer)
 
 	return factory.New().ResyncEvery(1*time.Minute).WithInformers(
 		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer(),
 		operatorClient.Informer(),
 		clusterVersionInformer.Informer(),
 		clusterOperatorInformer.Informer(),
-	).WithSync(syncer.Sync).ToController("ClusterBackupController", eventRecorder.WithComponentSuffix("cluster-backup-controller"))
+	).WithSync(syncer.Sync).ToController("ClusterUpgradeBackupController", eventRecorder.WithComponentSuffix("cluster-upgrade-backup-controller"))
 }
 
 func (c *UpgradeBackupController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
@@ -119,7 +119,7 @@ func (c *UpgradeBackupController) sync(ctx context.Context, syncCtx factory.Sync
 			Message: "The etcd backup controller is starting, and will decide if recent backups are available or if a backup is required",
 		})
 		if _, err := c.clusterOperatorClient.ClusterOperators().UpdateStatus(ctx, clusterOperatorObj, metav1.UpdateOptions{}); err != nil {
-			syncCtx.Recorder().Warning("ClusterBackupControllerUpdatingStatus", err.Error())
+			syncCtx.Recorder().Warning("ClusterUpgradeBackupControllerUpdatingStatus", err.Error())
 			return err
 		}
 	}
@@ -133,7 +133,7 @@ func (c *UpgradeBackupController) sync(ctx context.Context, syncCtx factory.Sync
 			Message: err.Error(),
 		}))
 		if updateErr != nil {
-			syncCtx.Recorder().Warning("ClusterBackupControllerUpdatingStatus", updateErr.Error())
+			syncCtx.Recorder().Warning("ClusterUpgradeBackupControllerUpdatingStatus", updateErr.Error())
 		}
 		return err
 	}
@@ -143,7 +143,7 @@ func (c *UpgradeBackupController) sync(ctx context.Context, syncCtx factory.Sync
 		Reason: "AsExpected",
 	}))
 	if updateErr != nil {
-		syncCtx.Recorder().Warning("ClusterBackupControllerUpdatingStatus", updateErr.Error())
+		syncCtx.Recorder().Warning("ClusterUpgradeBackupControllerUpdatingStatus", updateErr.Error())
 		return updateErr
 	}
 
@@ -154,7 +154,7 @@ func (c *UpgradeBackupController) sync(ctx context.Context, syncCtx factory.Sync
 
 	configv1helpers.SetStatusCondition(&clusterOperatorObj.Status.Conditions, *recentBackupCondition)
 	if _, err := c.clusterOperatorClient.ClusterOperators().UpdateStatus(ctx, clusterOperatorObj, metav1.UpdateOptions{}); err != nil {
-		syncCtx.Recorder().Warning("ClusterBackupControllerUpdatingStatus", err.Error())
+		syncCtx.Recorder().Warning("ClusterUpgradeBackupControllerUpdatingStatus", err.Error())
 		return err
 	}
 
