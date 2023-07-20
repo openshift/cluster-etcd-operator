@@ -298,6 +298,7 @@ type GCPFailureDomain struct {
 
 // OpenStackFailureDomain configures failure domain information for the OpenStack platform.
 // +kubebuilder:validation:MinProperties:=1
+// +kubebuilder:validation:XValidation:rule="!has(self.availabilityZone) || !has(self.rootVolume) || has(self.rootVolume.availabilityZone)",message="rootVolume.availabilityZone is required when availabilityZone is set"
 type OpenStackFailureDomain struct {
 	// availabilityZone is the nova availability zone in which the OpenStack machine provider will create the VM.
 	// If not specified, the VM will be created in the default availability zone specified in the nova configuration.
@@ -340,6 +341,14 @@ type RootVolume struct {
 	// +kubebuilder:validation:Pattern=`^[^ ]*$`
 	// +optional
 	AvailabilityZone string `json:"availabilityZone,omitempty"`
+
+	// volumeType specifies the type of the root volume that will be provisioned.
+	// If not specifified, the root volume will be created as the type in the machine template.
+	// The maximum length of a volume type name is 255 characters, as per the OpenStack limit.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=255
+	// +optional
+	VolumeType string `json:"volumeType,omitempty"`
 }
 
 // ControlPlaneMachineSetStatus represents the status of the ControlPlaneMachineSet CRD.
