@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/openshift/client-go/config/clientset/versioned/typed/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/periodicbackupcontroller"
 	"os"
 	"regexp"
 	"time"
@@ -12,8 +13,8 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
+	configversionedclientv1alpha1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
-
 	machineclient "github.com/openshift/client-go/machine/clientset/versioned"
 	machineinformersv1beta1 "github.com/openshift/client-go/machine/informers/externalversions/machine/v1beta1"
 	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
@@ -91,6 +92,10 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return err
 	}
 	operatorConfigClientv1Alpha1, err := operatorversionedclientv1alpha1.NewForConfig(controllerContext.KubeConfig)
+	if err != nil {
+		return err
+	}
+	configClientv1Alpha1, err := configversionedclientv1alpha1.NewForConfig(controllerContext.KubeConfig)
 	if err != nil {
 		return err
 	}
@@ -458,6 +463,15 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		os.Getenv("OPERATOR_IMAGE"),
 	)
 
+	periodicBackupController := periodicbackupcontroller.NewPeriodicBackupController(
+		AlivenessChecker,
+		operatorClient,
+		configClientv1Alpha1,
+		kubeClient,
+		controllerContext.EventRecorder,
+		os.Getenv("OPERATOR_IMAGE"),
+		featureGateAccessor)
+
 	backupController := backupcontroller.NewBackupController(
 		AlivenessChecker,
 		operatorConfigClientv1Alpha1,
@@ -486,6 +500,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go scriptController.Run(ctx, 1)
 	go defragController.Run(ctx, 1)
 	go upgradeBackupController.Run(ctx, 1)
+	go periodicBackupController.Run(ctx, 1)
 	go backupController.Run(ctx, 1)
 
 	go envVarController.Run(1, ctx.Done())

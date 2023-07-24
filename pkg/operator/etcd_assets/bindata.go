@@ -1,5 +1,6 @@
 // Code generated for package etcd_assets by go-bindata DO NOT EDIT. (@generated)
 // sources:
+// bindata/etcd/cluster-backup-cronjob.yaml
 // bindata/etcd/cluster-backup-job.yaml
 // bindata/etcd/cluster-backup-pod.yaml
 // bindata/etcd/cluster-backup.sh
@@ -67,6 +68,50 @@ func (fi bindataFileInfo) IsDir() bool {
 // Sys return file is sys mode
 func (fi bindataFileInfo) Sys() interface{} {
 	return nil
+}
+
+var _etcdClusterBackupCronjobYaml = []byte(`apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: templated
+  namespace: openshift-etcd
+  labels:
+    app: cluster-backup-job
+    backup-name: templated
+spec:
+  schedule: "templated"
+  timeZone: "templated"
+  concurrencyPolicy: "Forbid"
+  failedJobsHistoryLimit: 10
+  successfulJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: cluster-backup
+              imagePullPolicy: IfNotPresent
+              terminationMessagePolicy: FallbackToLogsOnError
+              command: [ "./cluster-etcd-operator" ]
+              args: [ "templated" ]
+          nodeSelector:
+            node-role.kubernetes.io/master: ""
+          restartPolicy: OnFailure
+`)
+
+func etcdClusterBackupCronjobYamlBytes() ([]byte, error) {
+	return _etcdClusterBackupCronjobYaml, nil
+}
+
+func etcdClusterBackupCronjobYaml() (*asset, error) {
+	bytes, err := etcdClusterBackupCronjobYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "etcd/cluster-backup-cronjob.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
 }
 
 var _etcdClusterBackupJobYaml = []byte(`apiVersion: batch/v1
@@ -1563,22 +1608,23 @@ func AssetNames() []string {
 
 // _bindata is a table, holding each asset generator, mapped to its name.
 var _bindata = map[string]func() (*asset, error){
-	"etcd/cluster-backup-job.yaml": etcdClusterBackupJobYaml,
-	"etcd/cluster-backup-pod.yaml": etcdClusterBackupPodYaml,
-	"etcd/cluster-backup.sh":       etcdClusterBackupSh,
-	"etcd/cluster-restore.sh":      etcdClusterRestoreSh,
-	"etcd/cm.yaml":                 etcdCmYaml,
-	"etcd/etcd-common-tools":       etcdEtcdCommonTools,
-	"etcd/minimal-sm.yaml":         etcdMinimalSmYaml,
-	"etcd/ns.yaml":                 etcdNsYaml,
-	"etcd/pod-cm.yaml":             etcdPodCmYaml,
-	"etcd/pod.yaml":                etcdPodYaml,
-	"etcd/restore-pod-cm.yaml":     etcdRestorePodCmYaml,
-	"etcd/restore-pod.yaml":        etcdRestorePodYaml,
-	"etcd/sa.yaml":                 etcdSaYaml,
-	"etcd/scripts-cm.yaml":         etcdScriptsCmYaml,
-	"etcd/sm.yaml":                 etcdSmYaml,
-	"etcd/svc.yaml":                etcdSvcYaml,
+	"etcd/cluster-backup-cronjob.yaml": etcdClusterBackupCronjobYaml,
+	"etcd/cluster-backup-job.yaml":     etcdClusterBackupJobYaml,
+	"etcd/cluster-backup-pod.yaml":     etcdClusterBackupPodYaml,
+	"etcd/cluster-backup.sh":           etcdClusterBackupSh,
+	"etcd/cluster-restore.sh":          etcdClusterRestoreSh,
+	"etcd/cm.yaml":                     etcdCmYaml,
+	"etcd/etcd-common-tools":           etcdEtcdCommonTools,
+	"etcd/minimal-sm.yaml":             etcdMinimalSmYaml,
+	"etcd/ns.yaml":                     etcdNsYaml,
+	"etcd/pod-cm.yaml":                 etcdPodCmYaml,
+	"etcd/pod.yaml":                    etcdPodYaml,
+	"etcd/restore-pod-cm.yaml":         etcdRestorePodCmYaml,
+	"etcd/restore-pod.yaml":            etcdRestorePodYaml,
+	"etcd/sa.yaml":                     etcdSaYaml,
+	"etcd/scripts-cm.yaml":             etcdScriptsCmYaml,
+	"etcd/sm.yaml":                     etcdSmYaml,
+	"etcd/svc.yaml":                    etcdSvcYaml,
 }
 
 // AssetDir returns the file names below a certain
@@ -1625,22 +1671,23 @@ type bintree struct {
 
 var _bintree = &bintree{nil, map[string]*bintree{
 	"etcd": {nil, map[string]*bintree{
-		"cluster-backup-job.yaml": {etcdClusterBackupJobYaml, map[string]*bintree{}},
-		"cluster-backup-pod.yaml": {etcdClusterBackupPodYaml, map[string]*bintree{}},
-		"cluster-backup.sh":       {etcdClusterBackupSh, map[string]*bintree{}},
-		"cluster-restore.sh":      {etcdClusterRestoreSh, map[string]*bintree{}},
-		"cm.yaml":                 {etcdCmYaml, map[string]*bintree{}},
-		"etcd-common-tools":       {etcdEtcdCommonTools, map[string]*bintree{}},
-		"minimal-sm.yaml":         {etcdMinimalSmYaml, map[string]*bintree{}},
-		"ns.yaml":                 {etcdNsYaml, map[string]*bintree{}},
-		"pod-cm.yaml":             {etcdPodCmYaml, map[string]*bintree{}},
-		"pod.yaml":                {etcdPodYaml, map[string]*bintree{}},
-		"restore-pod-cm.yaml":     {etcdRestorePodCmYaml, map[string]*bintree{}},
-		"restore-pod.yaml":        {etcdRestorePodYaml, map[string]*bintree{}},
-		"sa.yaml":                 {etcdSaYaml, map[string]*bintree{}},
-		"scripts-cm.yaml":         {etcdScriptsCmYaml, map[string]*bintree{}},
-		"sm.yaml":                 {etcdSmYaml, map[string]*bintree{}},
-		"svc.yaml":                {etcdSvcYaml, map[string]*bintree{}},
+		"cluster-backup-cronjob.yaml": {etcdClusterBackupCronjobYaml, map[string]*bintree{}},
+		"cluster-backup-job.yaml":     {etcdClusterBackupJobYaml, map[string]*bintree{}},
+		"cluster-backup-pod.yaml":     {etcdClusterBackupPodYaml, map[string]*bintree{}},
+		"cluster-backup.sh":           {etcdClusterBackupSh, map[string]*bintree{}},
+		"cluster-restore.sh":          {etcdClusterRestoreSh, map[string]*bintree{}},
+		"cm.yaml":                     {etcdCmYaml, map[string]*bintree{}},
+		"etcd-common-tools":           {etcdEtcdCommonTools, map[string]*bintree{}},
+		"minimal-sm.yaml":             {etcdMinimalSmYaml, map[string]*bintree{}},
+		"ns.yaml":                     {etcdNsYaml, map[string]*bintree{}},
+		"pod-cm.yaml":                 {etcdPodCmYaml, map[string]*bintree{}},
+		"pod.yaml":                    {etcdPodYaml, map[string]*bintree{}},
+		"restore-pod-cm.yaml":         {etcdRestorePodCmYaml, map[string]*bintree{}},
+		"restore-pod.yaml":            {etcdRestorePodYaml, map[string]*bintree{}},
+		"sa.yaml":                     {etcdSaYaml, map[string]*bintree{}},
+		"scripts-cm.yaml":             {etcdScriptsCmYaml, map[string]*bintree{}},
+		"sm.yaml":                     {etcdSmYaml, map[string]*bintree{}},
+		"svc.yaml":                    {etcdSvcYaml, map[string]*bintree{}},
 	}},
 }}
 
