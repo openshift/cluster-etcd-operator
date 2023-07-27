@@ -3,7 +3,7 @@ package operator
 import (
 	"context"
 	"fmt"
-	"github.com/openshift/client-go/config/clientset/versioned/typed/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/periodicbackupcontroller"
 	"os"
 	"regexp"
@@ -143,6 +143,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		"kube-system",
 	)
 	configInformers := configv1informers.NewSharedInformerFactory(configClient, 10*time.Minute)
+	jobsInformer := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs().Informer()
 
 	versionRecorder := status.NewVersionGetter()
 	clusterOperator, err := configClient.ConfigV1().ClusterOperators().Get(ctx, "etcd", metav1.GetOptions{})
@@ -449,6 +450,12 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	}
 
 	// putting all backup related controllers after the feature flags to ensure flags are initialized already
+	etcdBackupInformer, configBackupInformer, err := backuphelpers.CreateBackupInformers(
+		featureGateAccessor, operatorInformers, configInformers)
+	if err != nil {
+		return fmt.Errorf("error while creating backup informers, aborting controller start")
+	}
+
 	upgradeBackupController := upgradebackupcontroller.NewUpgradeBackupController(
 		AlivenessChecker,
 		operatorClient,
@@ -470,7 +477,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeClient,
 		controllerContext.EventRecorder,
 		os.Getenv("OPERATOR_IMAGE"),
-		featureGateAccessor)
+		featureGateAccessor,
+		configBackupInformer)
 
 	backupController := backupcontroller.NewBackupController(
 		AlivenessChecker,
@@ -479,10 +487,16 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 		os.Getenv("IMAGE"),
 		os.Getenv("OPERATOR_IMAGE"),
-		featureGateAccessor)
+		featureGateAccessor,
+		etcdBackupInformer,
+		jobsInformer)
 
+	go etcdBackupInformer.Run(ctx.Done())
+	go configBackupInformer.Run(ctx.Done())
+	go jobsInformer.Run(ctx.Done())
 	go masterMachineInformer.Run(ctx.Done())
 	go masterNodeInformer.Run(ctx.Done())
+
 	go fsyncMetricController.Run(ctx, 1)
 	go staticResourceController.Run(ctx, 1)
 	go targetConfigReconciler.Run(ctx, 1)
@@ -508,28 +522,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 	<-ctx.Done()
 	return nil
-}
-
-// GetReleaseVersion gets the release version string from the env
-func GetReleaseVersion(c v1.ClusterOperatorInterface) (string, error) {
-	etcd, err := c.Get(context.Background(), "etcd", metav1.GetOptions{})
-	if err != nil {
-		return "", fmt.Errorf("could not get etcd cluster operator CRD: %w", err)
-	}
-
-	klog.Infof("found etcd versions: %v", etcd.Status.Versions)
-	for _, version := range etcd.Status.Versions {
-		if version.Name == "operator" {
-			return version.Version, nil
-		}
-	}
-
-	// if we found nothing on the CRD, we can resort to the older unsupported env variable
-	releaseVersion := os.Getenv(releaseVersionEnvVariableName)
-	if len(releaseVersion) == 0 {
-		return "", fmt.Errorf("%s environment variable is missing", releaseVersionEnvVariableName)
-	}
-	return releaseVersion, nil
 }
 
 func getEnabledDisabledFeatures(features featuregates.FeatureGate) ([]string, []string) {

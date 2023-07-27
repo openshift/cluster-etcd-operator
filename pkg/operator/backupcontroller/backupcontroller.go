@@ -46,13 +46,16 @@ type BackupController struct {
 	featureGateAccessor   featuregates.FeatureGateAccess
 }
 
-func NewBackupController(livenessChecker *health.MultiAlivenessChecker,
+func NewBackupController(
+	livenessChecker *health.MultiAlivenessChecker,
 	backupsClient operatorv1alpha1client.EtcdBackupsGetter,
 	kubeClient kubernetes.Interface,
 	eventRecorder events.Recorder,
 	targetImagePullSpec string,
 	operatorImagePullSpec string,
-	accessor featuregates.FeatureGateAccess) factory.Controller {
+	accessor featuregates.FeatureGateAccess,
+	backupInformer factory.Informer,
+	jobInformer factory.Informer) factory.Controller {
 
 	c := &BackupController{
 		backupsClient:         backupsClient,
@@ -65,8 +68,11 @@ func NewBackupController(livenessChecker *health.MultiAlivenessChecker,
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
 	livenessChecker.Add("BackupController", syncer)
 
-	return factory.New().ResyncEvery(1*time.Minute).
-		WithSync(syncer.Sync).ToController("BackupController", eventRecorder.WithComponentSuffix("backup-controller"))
+	return factory.New().
+		ResyncEvery(1*time.Minute).
+		WithInformers(backupInformer, jobInformer).
+		WithSync(syncer.Sync).
+		ToController("BackupController", eventRecorder.WithComponentSuffix("backup-controller"))
 }
 
 func (c *BackupController) sync(ctx context.Context, _ factory.SyncContext) error {

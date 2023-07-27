@@ -42,7 +42,8 @@ func NewPeriodicBackupController(
 	kubeClient kubernetes.Interface,
 	eventRecorder events.Recorder,
 	operatorImagePullSpec string,
-	accessor featuregates.FeatureGateAccess) factory.Controller {
+	accessor featuregates.FeatureGateAccess,
+	backupsInformer factory.Informer) factory.Controller {
 
 	c := &PeriodicBackupController{
 		operatorClient:        operatorClient,
@@ -55,8 +56,11 @@ func NewPeriodicBackupController(
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
 	livenessChecker.Add("PeriodicBackupController", syncer)
 
-	return factory.New().ResyncEvery(1*time.Minute).
-		WithSync(syncer.Sync).ToController("PeriodicBackupController", eventRecorder.WithComponentSuffix("periodic-backup-controller"))
+	return factory.New().
+		ResyncEvery(1*time.Minute).
+		WithInformers(backupsInformer).
+		WithSync(syncer.Sync).
+		ToController("PeriodicBackupController", eventRecorder.WithComponentSuffix("periodic-backup-controller"))
 }
 
 func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncContext) error {
