@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/periodicbackupcontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/upgradebackupcontroller"
 	"os"
 	"regexp"
 	"time"
@@ -63,7 +64,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/upgradebackupcontroller"
 )
 
 // masterMachineLabelSelectorString allows for getting only the master machines, it matters in larger installations with many worker nodes
@@ -163,11 +163,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		configInformers.Config().V1().ClusterVersions(),
 		configInformers.Config().V1().FeatureGates(),
 		controllerContext.EventRecorder)
-
-	featureGateAccessor.SetChangeHandler(func(featureChange featuregates.FeatureChange) {
-		// Do nothing here. The controller watches feature gate changes and will react to them.
-		klog.InfoS("FeatureGates changed", "enabled", featureChange.New.Enabled, "disabled", featureChange.New.Disabled)
-	})
+	// we keep the default behavior of exiting the controller once a gate changes
+	featureGateAccessor.SetChangeHandler(featuregates.ForceExit)
 
 	operatorClient, dynamicInformers, err := genericoperatorclient.NewStaticPodOperatorClient(controllerContext.KubeConfig, operatorv1.GroupVersion.WithResource("etcds"))
 	if err != nil {
@@ -424,6 +421,20 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeInformersForNamespaces,
 	)
 
+	upgradeBackupController := upgradebackupcontroller.NewUpgradeBackupController(
+		AlivenessChecker,
+		operatorClient,
+		configClient.ConfigV1(),
+		kubeClient,
+		etcdClient,
+		kubeInformersForNamespaces,
+		configInformers.Config().V1().ClusterVersions(),
+		configInformers.Config().V1().ClusterOperators(),
+		controllerContext.EventRecorder,
+		os.Getenv("IMAGE"),
+		os.Getenv("OPERATOR_IMAGE"),
+	)
+
 	unsupportedConfigOverridesController := unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(
 		operatorClient,
 		controllerContext.EventRecorder,
@@ -449,51 +460,45 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return fmt.Errorf("timed out waiting for FeatureGate detection, aborting controller start")
 	}
 
-	// putting all backup related controllers after the feature flags to ensure flags are initialized already
-	etcdBackupInformer, configBackupInformer, err := backuphelpers.CreateBackupInformers(
-		featureGateAccessor, operatorInformers, configInformers)
+	enabledAutoBackupFeature, err := backuphelpers.AutoBackupFeatureGateEnabled(featureGateAccessor)
 	if err != nil {
-		return fmt.Errorf("error while creating backup informers, aborting controller start")
+		return fmt.Errorf("could not determine AutoBackupFeatureGateEnabled, aborting controller start: %w", err)
 	}
 
-	upgradeBackupController := upgradebackupcontroller.NewUpgradeBackupController(
-		AlivenessChecker,
-		operatorClient,
-		configClient.ConfigV1(),
-		kubeClient,
-		etcdClient,
-		kubeInformersForNamespaces,
-		configInformers.Config().V1().ClusterVersions(),
-		configInformers.Config().V1().ClusterOperators(),
-		controllerContext.EventRecorder,
-		os.Getenv("IMAGE"),
-		os.Getenv("OPERATOR_IMAGE"),
-	)
+	if enabledAutoBackupFeature {
+		etcdBackupInformer := operatorInformers.Operator().V1alpha1().EtcdBackups().Informer()
+		configBackupInformer := configInformers.Config().V1alpha1().Backups().Informer()
 
-	periodicBackupController := periodicbackupcontroller.NewPeriodicBackupController(
-		AlivenessChecker,
-		operatorClient,
-		configClientv1Alpha1,
-		kubeClient,
-		controllerContext.EventRecorder,
-		os.Getenv("OPERATOR_IMAGE"),
-		featureGateAccessor,
-		configBackupInformer)
+		klog.Infof("found automated backup feature to be enabled, starting controllers...")
+		periodicBackupController := periodicbackupcontroller.NewPeriodicBackupController(
+			AlivenessChecker,
+			operatorClient,
+			configClientv1Alpha1,
+			kubeClient,
+			controllerContext.EventRecorder,
+			os.Getenv("OPERATOR_IMAGE"),
+			featureGateAccessor,
+			configBackupInformer)
 
-	backupController := backupcontroller.NewBackupController(
-		AlivenessChecker,
-		operatorConfigClientv1Alpha1,
-		kubeClient,
-		controllerContext.EventRecorder,
-		os.Getenv("IMAGE"),
-		os.Getenv("OPERATOR_IMAGE"),
-		featureGateAccessor,
-		etcdBackupInformer,
-		jobsInformer)
+		backupController := backupcontroller.NewBackupController(
+			AlivenessChecker,
+			operatorConfigClientv1Alpha1,
+			kubeClient,
+			controllerContext.EventRecorder,
+			os.Getenv("IMAGE"),
+			os.Getenv("OPERATOR_IMAGE"),
+			featureGateAccessor,
+			etcdBackupInformer,
+			jobsInformer)
 
-	go etcdBackupInformer.Run(ctx.Done())
-	go configBackupInformer.Run(ctx.Done())
-	go jobsInformer.Run(ctx.Done())
+		go etcdBackupInformer.Run(ctx.Done())
+		go configBackupInformer.Run(ctx.Done())
+		go jobsInformer.Run(ctx.Done())
+
+		go periodicBackupController.Run(ctx, 1)
+		go backupController.Run(ctx, 1)
+	}
+
 	go masterMachineInformer.Run(ctx.Done())
 	go masterNodeInformer.Run(ctx.Done())
 
@@ -514,8 +519,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go scriptController.Run(ctx, 1)
 	go defragController.Run(ctx, 1)
 	go upgradeBackupController.Run(ctx, 1)
-	go periodicBackupController.Run(ctx, 1)
-	go backupController.Run(ctx, 1)
 
 	go envVarController.Run(1, ctx.Done())
 	go staticPodControllers.Start(ctx)
