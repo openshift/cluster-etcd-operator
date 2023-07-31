@@ -4,17 +4,19 @@ import (
 	"context"
 	goflag "flag"
 	"fmt"
-	prune_backups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 	"io/ioutil"
 	"math/rand"
 	"os"
 	"time"
+
+	prune_backups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/backuprestore"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/monitor"
 	operatorcmd "github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/readyz"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
+	requestbackup "github.com/openshift/cluster-etcd-operator/pkg/cmd/request-backup"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/verify"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/waitforceo"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator"
@@ -72,6 +74,7 @@ func NewSSCSCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(verify.NewVerifyCommand(os.Stderr))
 	cmd.AddCommand(readyz.NewReadyzCommand())
 	cmd.AddCommand(prune_backups.NewPruneCommand())
+	cmd.AddCommand(requestbackup.NewRequestBackupCommand(ctx))
 
 	return cmd
 }

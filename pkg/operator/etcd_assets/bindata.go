@@ -80,7 +80,6 @@ metadata:
     backup-name: templated
 spec:
   schedule: "templated"
-  timeZone: "templated"
   concurrencyPolicy: "Forbid"
   failedJobsHistoryLimit: 10
   successfulJobsHistoryLimit: 5
@@ -94,6 +93,15 @@ spec:
               terminationMessagePolicy: FallbackToLogsOnError
               command: [ "./cluster-etcd-operator" ]
               args: [ "templated" ]
+              env:
+              - name: MY_POD_NAME
+                valueFrom:
+                  fieldRef:
+                    fieldPath: metadata.name
+              - name: MY_POD_UID
+                valueFrom:
+                  fieldRef:
+                    fieldPath: metadata.uid
           nodeSelector:
             node-role.kubernetes.io/master: ""
           restartPolicy: OnFailure
