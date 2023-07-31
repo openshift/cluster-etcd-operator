@@ -881,3 +881,7 @@ type fakeMachineAPI struct {
 func (dm *fakeMachineAPI) IsFunctional() (bool, error) {
 	return dm.isMachineAPIFunctional()
 }
+
+func (dm *fakeMachineAPI) IsEnabled() (bool, error) {
+	return true, nil
+}

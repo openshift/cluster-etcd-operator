@@ -27,6 +27,7 @@ func TestIsMachineAPIFunctionalWrapper(t *testing.T) {
 	scenarios := []struct {
 		name                           string
 		expectMachineAPIToBeFunctional bool
+		expectMachineAPIToBeEnabled    bool
 		initialObjects                 []runtime.Object
 	}{
 		// scenario 1
@@ -34,6 +35,7 @@ func TestIsMachineAPIFunctionalWrapper(t *testing.T) {
 			name:                           "a single master machine in Running state denotes active Machine API",
 			initialObjects:                 []runtime.Object{clusterVersion, masterMachineFor("m-0", "Running")},
 			expectMachineAPIToBeFunctional: true,
+			expectMachineAPIToBeEnabled:    true,
 		},
 
 		// scenario 2
@@ -41,6 +43,7 @@ func TestIsMachineAPIFunctionalWrapper(t *testing.T) {
 			name:                           "a single master machine in Running state denotes active Machine API even when machines in different phase are present",
 			initialObjects:                 []runtime.Object{clusterVersion, masterMachineFor("m-0", "Running"), masterMachineFor("m-1", "Provisioning")},
 			expectMachineAPIToBeFunctional: true,
+			expectMachineAPIToBeEnabled:    true,
 		},
 
 		// scenario 3
@@ -48,12 +51,14 @@ func TestIsMachineAPIFunctionalWrapper(t *testing.T) {
 			name:                           "a single master machine in Running state denotes active Machine API even when the other machines are in the same phase",
 			initialObjects:                 []runtime.Object{clusterVersion, masterMachineFor("m-0", "Running"), masterMachineFor("m-1", "Running")},
 			expectMachineAPIToBeFunctional: true,
+			expectMachineAPIToBeEnabled:    true,
 		},
 
 		// scenario 4
 		{
-			name:           "no machines in Running state denote inactive Machine API",
-			initialObjects: []runtime.Object{clusterVersion, masterMachineFor("m-0", "Unknown"), masterMachineFor("m-1", "Provisioning")},
+			name:                        "no machines in Running state denote inactive Machine API",
+			initialObjects:              []runtime.Object{clusterVersion, masterMachineFor("m-0", "Unknown"), masterMachineFor("m-1", "Provisioning")},
+			expectMachineAPIToBeEnabled: true,
 		},
 
 		// scenario 5
@@ -72,12 +77,14 @@ func TestIsMachineAPIFunctionalWrapper(t *testing.T) {
 					return m
 				}(),
 			},
+			expectMachineAPIToBeEnabled: true,
 		},
 
 		// scenario 6
 		{
-			name:           "no machines denote inactive Machine API",
-			initialObjects: []runtime.Object{clusterVersion},
+			name:                        "no machines denote inactive Machine API",
+			initialObjects:              []runtime.Object{clusterVersion},
+			expectMachineAPIToBeEnabled: true,
 		},
 
 		// scenario 7
@@ -95,6 +102,7 @@ func TestIsMachineAPIFunctionalWrapper(t *testing.T) {
 				},
 			},
 			expectMachineAPIToBeFunctional: false,
+			expectMachineAPIToBeEnabled:    false,
 		},
 
 		// scenario 8
@@ -115,6 +123,7 @@ func TestIsMachineAPIFunctionalWrapper(t *testing.T) {
 				masterMachineFor("m-0", "Running"),
 			},
 			expectMachineAPIToBeFunctional: true,
+			expectMachineAPIToBeEnabled:    true,
 		},
 
 		// scenario 9
@@ -134,6 +143,7 @@ func TestIsMachineAPIFunctionalWrapper(t *testing.T) {
 				},
 			},
 			expectMachineAPIToBeFunctional: false,
+			expectMachineAPIToBeEnabled:    true,
 		},
 	}
 	for _, scenario := range scenarios {
@@ -156,9 +166,26 @@ func TestIsMachineAPIFunctionalWrapper(t *testing.T) {
 			isMachineAPIFunctional, err := target.IsFunctional()
 			require.NoError(t, err)
 			require.Equalf(t, scenario.expectMachineAPIToBeFunctional, isMachineAPIFunctional,
-				"IsMachineAPIFunctionalWrapper function returned = %v, whereas the test expected to get = %v", isMachineAPIFunctional, scenario.expectMachineAPIToBeFunctional)
+				"function returned = %v, whereas the test expected to get = %v", isMachineAPIFunctional, scenario.expectMachineAPIToBeFunctional)
+
+			// isFunctional already tests isEnabled() implicitly, this here is to test for potential inconsistencies
+			isEnabled, err := target.IsEnabled()
+			require.NoError(t, err)
+			require.Equalf(t, scenario.expectMachineAPIToBeEnabled, isEnabled,
+				"function returned = %v, whereas the test expected to get = %v", isEnabled, scenario.expectMachineAPIToBeEnabled)
 		})
 	}
+}
+
+// TestMachineSyncErrorsOnEnableCheck should ensure we never make a decision without synchronized CVO. This is most important for starter.go.
+func TestMachineSyncErrorsOnEnableCheck(t *testing.T) {
+	target := &MachineAPI{
+		hasVersionInformerSyncedFn: func() bool { return false },
+	}
+
+	enabled, err := target.IsEnabled()
+	require.False(t, enabled)
+	require.EqualError(t, err, "ClusterVersionInformer is not yet synced")
 }
 
 func masterMachineFor(name, phase string) *v1beta1.Machine {

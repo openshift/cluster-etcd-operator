@@ -1,6 +1,7 @@
 package ceohelpers
 
 import (
+	"fmt"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
@@ -12,8 +13,10 @@ import (
 
 // MachineAPIChecker captures a set of functions for working with the Machine API
 type MachineAPIChecker interface {
-	// IsFunctional checks if the Machine API is functional
+	// IsFunctional checks if the Machine API is functional and enabled
 	IsFunctional() (bool, error)
+	// IsEnabled checks if the Machine API is enabled
+	IsEnabled() (bool, error)
 }
 
 // MachineAPI a simple struct that helps determine if the Machine API is functional
@@ -48,35 +51,20 @@ func NewMachineAPI(masterMachineInformer cache.SharedIndexInformer,
 	}
 }
 
-// IsFunctional checks if the Machine API is functional.
+// IsFunctional checks if the Machine API is enabled AND functional.
 // As of today Machine API is functional when:
 // * clusterVersionInformer is synced
 // * clusterVersion has MachineAPI as an enabled capability
 // * MachineInformer is synced
 // * we find at least one Machine resources in the Running state.
 func (m *MachineAPI) IsFunctional() (bool, error) {
-	if !m.hasVersionInformerSyncedFn() {
-		return false, nil
-	}
-
-	clusterVersion, err := m.versionLister.Get("version")
+	enabled, err := m.IsEnabled()
 	if err != nil {
 		return false, err
 	}
 
-	// this is a special case introduced from 4.14 on, where MachineAPI can be optional with clusters installed using capabilities.baselineCapabilitySet=None
-	if clusterVersion.Spec.Capabilities != nil && string(clusterVersion.Spec.Capabilities.BaselineCapabilitySet) == "None" {
-		machineAPIEnabled := false
-		for _, capability := range clusterVersion.Spec.Capabilities.AdditionalEnabledCapabilities {
-			if string(capability) == "MachineAPI" {
-				machineAPIEnabled = true
-				continue
-			}
-		}
-
-		if !machineAPIEnabled {
-			return false, nil
-		}
+	if !enabled {
+		return false, nil
 	}
 
 	if !m.hasMasterMachineInformerSyncedFn() {
@@ -99,4 +87,36 @@ func (m *MachineAPI) IsFunctional() (bool, error) {
 	}
 
 	return false, nil
+}
+
+// IsEnabled checks if the Machine API is enabled.
+// As of today Machine API is enabled when:
+// * clusterVersionInformer is synced
+// * clusterVersion has "MachineAPI" as an enabled capability
+func (m *MachineAPI) IsEnabled() (bool, error) {
+	if !m.hasVersionInformerSyncedFn() {
+		return false, fmt.Errorf("ClusterVersionInformer is not yet synced")
+	}
+
+	clusterVersion, err := m.versionLister.Get("version")
+	if err != nil {
+		return false, err
+	}
+
+	// this is a special case introduced from 4.14 on, where MachineAPI can be optional with clusters installed using capabilities.baselineCapabilitySet=None
+	if clusterVersion != nil && clusterVersion.Spec.Capabilities != nil && string(clusterVersion.Spec.Capabilities.BaselineCapabilitySet) == "None" {
+		machineAPIEnabled := false
+		for _, capability := range clusterVersion.Spec.Capabilities.AdditionalEnabledCapabilities {
+			if string(capability) == "MachineAPI" {
+				machineAPIEnabled = true
+				continue
+			}
+		}
+
+		if !machineAPIEnabled {
+			return false, nil
+		}
+	}
+
+	return true, nil
 }
