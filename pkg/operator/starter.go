@@ -345,7 +345,9 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		quorumChecker,
 	)
 
-	machineAPI := ceohelpers.NewMachineAPI(masterMachineInformer, machinelistersv1beta1.NewMachineLister(masterMachineInformer.GetIndexer()), masterMachineLabelSelector)
+	machineAPI := ceohelpers.NewMachineAPI(masterMachineInformer,
+		machinelistersv1beta1.NewMachineLister(masterMachineInformer.GetIndexer()), masterMachineLabelSelector,
+		configInformers.Config().V1().ClusterVersions())
 
 	clusterMemberController := clustermembercontroller.NewClusterMemberController(
 		AlivenessChecker,

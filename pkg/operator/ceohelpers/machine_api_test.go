@@ -1,6 +1,9 @@
 package ceohelpers
 
 import (
+	configv1 "github.com/openshift/api/config/v1"
+	v1 "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/stretchr/testify/require"
 	"testing"
 
 	"github.com/openshift/api/machine/v1beta1"
@@ -14,8 +17,11 @@ import (
 
 func TestIsMachineAPIFunctionalWrapper(t *testing.T) {
 	machineLabelSelector, err := labels.Parse("machine.openshift.io/cluster-api-machine-role=master")
-	if err != nil {
-		t.Fatal(err)
+	require.NoError(t, err)
+
+	clusterVersion := &configv1.ClusterVersion{
+		ObjectMeta: metav1.ObjectMeta{Name: "version"},
+		Spec:       configv1.ClusterVersionSpec{},
 	}
 
 	scenarios := []struct {
@@ -26,34 +32,35 @@ func TestIsMachineAPIFunctionalWrapper(t *testing.T) {
 		// scenario 1
 		{
 			name:                           "a single master machine in Running state denotes active Machine API",
-			initialObjects:                 []runtime.Object{masterMachineFor("m-0", "Running")},
+			initialObjects:                 []runtime.Object{clusterVersion, masterMachineFor("m-0", "Running")},
 			expectMachineAPIToBeFunctional: true,
 		},
 
 		// scenario 2
 		{
 			name:                           "a single master machine in Running state denotes active Machine API even when machines in different phase are present",
-			initialObjects:                 []runtime.Object{masterMachineFor("m-0", "Running"), masterMachineFor("m-1", "Provisioning")},
+			initialObjects:                 []runtime.Object{clusterVersion, masterMachineFor("m-0", "Running"), masterMachineFor("m-1", "Provisioning")},
 			expectMachineAPIToBeFunctional: true,
 		},
 
 		// scenario 3
 		{
 			name:                           "a single master machine in Running state denotes active Machine API even when the other machines are in the same phase",
-			initialObjects:                 []runtime.Object{masterMachineFor("m-0", "Running"), masterMachineFor("m-1", "Running")},
+			initialObjects:                 []runtime.Object{clusterVersion, masterMachineFor("m-0", "Running"), masterMachineFor("m-1", "Running")},
 			expectMachineAPIToBeFunctional: true,
 		},
 
 		// scenario 4
 		{
 			name:           "no machines in Running state denote inactive Machine API",
-			initialObjects: []runtime.Object{masterMachineFor("m-0", "Unknown"), masterMachineFor("m-1", "Provisioning")},
+			initialObjects: []runtime.Object{clusterVersion, masterMachineFor("m-0", "Unknown"), masterMachineFor("m-1", "Provisioning")},
 		},
 
 		// scenario 5
 		{
 			name: "non-master machines in Running state denote inactive Machine API",
 			initialObjects: []runtime.Object{
+				clusterVersion,
 				func() *v1beta1.Machine {
 					m := masterMachineFor("m-0", "Running")
 					m.Labels = map[string]string{}
@@ -69,27 +76,87 @@ func TestIsMachineAPIFunctionalWrapper(t *testing.T) {
 
 		// scenario 6
 		{
-			name: "no machines denote inactive Machine API",
+			name:           "no machines denote inactive Machine API",
+			initialObjects: []runtime.Object{clusterVersion},
+		},
+
+		// scenario 7
+		{
+			name: "capabilities = None, machine API not enabled",
+			initialObjects: []runtime.Object{
+				&configv1.ClusterVersion{
+					ObjectMeta: metav1.ObjectMeta{Name: "version"},
+					Spec: configv1.ClusterVersionSpec{
+						Capabilities: &configv1.ClusterVersionCapabilitiesSpec{
+							BaselineCapabilitySet:         "None",
+							AdditionalEnabledCapabilities: []configv1.ClusterVersionCapability{},
+						},
+					},
+				},
+			},
+			expectMachineAPIToBeFunctional: false,
+		},
+
+		// scenario 8
+		{
+			name: "capabilities = None, machine API enabled with running machine",
+			initialObjects: []runtime.Object{
+				&configv1.ClusterVersion{
+					ObjectMeta: metav1.ObjectMeta{Name: "version"},
+					Spec: configv1.ClusterVersionSpec{
+						Capabilities: &configv1.ClusterVersionCapabilitiesSpec{
+							BaselineCapabilitySet: "None",
+							AdditionalEnabledCapabilities: []configv1.ClusterVersionCapability{
+								"MachineAPI",
+							},
+						},
+					},
+				},
+				masterMachineFor("m-0", "Running"),
+			},
+			expectMachineAPIToBeFunctional: true,
+		},
+
+		// scenario 9
+		{
+			name: "capabilities = None, machine API enabled, no running machine",
+			initialObjects: []runtime.Object{
+				&configv1.ClusterVersion{
+					ObjectMeta: metav1.ObjectMeta{Name: "version"},
+					Spec: configv1.ClusterVersionSpec{
+						Capabilities: &configv1.ClusterVersionCapabilitiesSpec{
+							BaselineCapabilitySet: "None",
+							AdditionalEnabledCapabilities: []configv1.ClusterVersionCapability{
+								"MachineAPI",
+							},
+						},
+					},
+				},
+			},
+			expectMachineAPIToBeFunctional: false,
 		},
 	}
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
 			// test data
-			machineIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
 			for _, initialObj := range scenario.initialObjects {
-				machineIndexer.Add(initialObj)
+				require.NoError(t, indexer.Add(initialObj))
 			}
-			machineLister := machinelistersv1beta1.NewMachineLister(machineIndexer)
+			machineLister := machinelistersv1beta1.NewMachineLister(indexer)
+			versionLister := v1.NewClusterVersionLister(indexer)
 
 			// act
-			target := &MachineAPI{func() bool { return true }, machineLister, machineLabelSelector}
+			target := &MachineAPI{
+				func() bool { return true },
+				func() bool { return true },
+				machineLister,
+				machineLabelSelector,
+				versionLister}
 			isMachineAPIFunctional, err := target.IsFunctional()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if isMachineAPIFunctional != scenario.expectMachineAPIToBeFunctional {
-				t.Errorf("IsMachineAPIFunctionalWrapper function returned = %v, whereas the test expected to get = %v", isMachineAPIFunctional, scenario.expectMachineAPIToBeFunctional)
-			}
+			require.NoError(t, err)
+			require.Equalf(t, scenario.expectMachineAPIToBeFunctional, isMachineAPIFunctional,
+				"IsMachineAPIFunctionalWrapper function returned = %v, whereas the test expected to get = %v", isMachineAPIFunctional, scenario.expectMachineAPIToBeFunctional)
 		})
 	}
 }
