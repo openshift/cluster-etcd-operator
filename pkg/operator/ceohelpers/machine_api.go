@@ -3,6 +3,7 @@ package ceohelpers
 import (
 	"context"
 	"fmt"
+	configv1 "github.com/openshift/api/config/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
@@ -126,7 +127,7 @@ func (m *MachineAPI) IsEnabled() (bool, error) {
 	if clusterVersion != nil && clusterVersion.Spec.Capabilities != nil && string(clusterVersion.Spec.Capabilities.BaselineCapabilitySet) == "None" {
 		machineAPIEnabled := false
 		for _, capability := range clusterVersion.Status.Capabilities.EnabledCapabilities {
-			if string(capability) == "MachineAPI" {
+			if capability == configv1.ClusterVersionCapabilityMachineAPI {
 				machineAPIEnabled = true
 				break
 			}
