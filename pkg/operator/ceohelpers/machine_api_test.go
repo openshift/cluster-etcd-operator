@@ -303,7 +303,7 @@ func (f fakeDynamicResourceInterface) List(ctx context.Context, opts metav1.List
 }
 
 func (f fakeDynamicResourceInterface) Namespace(s string) dynamic.ResourceInterface {
-	panic("implement me")
+	return fakeDynamicResourceInterface{f.returnResult}
 }
 
 func (f fakeDynamicResourceInterface) Create(ctx context.Context, obj *unstructured.Unstructured, options metav1.CreateOptions, subresources ...string) (*unstructured.Unstructured, error) {

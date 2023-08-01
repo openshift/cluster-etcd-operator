@@ -145,8 +145,8 @@ func (m *MachineAPI) IsAvailable() (bool, error) {
 	resource := m.dynamicClient.Resource(schema.GroupVersionResource{
 		Group:    "machine.openshift.io",
 		Version:  "v1beta1",
-		Resource: "MachineList",
-	})
+		Resource: "machines",
+	}).Namespace("openshift-machine-api")
 
 	list, err := resource.List(context.Background(), metav1.ListOptions{LabelSelector: m.masterMachineSelector.String()})
 	if err != nil {
