@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"time"
 
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -197,8 +198,10 @@ func IsBootstrapComplete(configMapClient corev1listers.ConfigMapLister, staticPo
 		}
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	// check if etcd-bootstrap member is still present within the etcd cluster membership
-	membersList, err := etcdClient.MemberList(context.Background())
+	membersList, err := etcdClient.MemberList(ctx)
 	if err != nil {
 		return false, fmt.Errorf("IsBootstrapComplete couldn't list the etcd cluster members: %w", err)
 	}
