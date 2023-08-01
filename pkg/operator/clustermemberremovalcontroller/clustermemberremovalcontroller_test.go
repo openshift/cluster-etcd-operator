@@ -1180,6 +1180,10 @@ func (dm *fakeMachineAPI) IsEnabled() (bool, error) {
 	return true, nil
 }
 
+func (dm *fakeMachineAPI) IsAvailable() (bool, error) {
+	return true, nil
+}
+
 func machineFor(name, internalIP string) *machinev1beta1.Machine {
 	return &machinev1beta1.Machine{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"machine.openshift.io/cluster-api-machine-role": "master"}},

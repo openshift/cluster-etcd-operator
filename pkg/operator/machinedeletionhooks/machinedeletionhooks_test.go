@@ -885,3 +885,7 @@ func (dm *fakeMachineAPI) IsFunctional() (bool, error) {
 func (dm *fakeMachineAPI) IsEnabled() (bool, error) {
 	return true, nil
 }
+
+func (dm *fakeMachineAPI) IsAvailable() (bool, error) {
+	return true, nil
+}

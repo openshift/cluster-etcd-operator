@@ -949,6 +949,10 @@ func (dm *fakeMachineAPI) IsEnabled() (bool, error) {
 	return true, nil
 }
 
+func (dm *fakeMachineAPI) IsAvailable() (bool, error) {
+	return true, nil
+}
+
 func withEndpoint(memberID uint64, ip string) func(*corev1.ConfigMap) {
 	return func(endpoints *corev1.ConfigMap) {
 		endpoints.Data[fmt.Sprintf("%016x", memberID)] = ip

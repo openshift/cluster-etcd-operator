@@ -473,13 +473,18 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 	clusterMemberControllerInformers := []factory.Informer{masterNodeInformer}
 	machineLister := machinelistersv1beta1.NewMachineLister(masterMachineInformer.GetIndexer())
-	machineAPI := ceohelpers.NewMachineAPI(masterMachineInformer, machineLister, masterMachineLabelSelector, clusterVersions)
+	machineAPI := ceohelpers.NewMachineAPI(masterMachineInformer, machineLister, masterMachineLabelSelector, clusterVersions, dynamicClient)
 	machineAPIEnabled, err := machineAPI.IsEnabled()
 	if err != nil {
 		return fmt.Errorf("could not determine whether machine API is enabled, aborting controller start")
 	}
 
-	if machineAPIEnabled {
+	machineAPIAvailable, err := machineAPI.IsAvailable()
+	if err != nil {
+		return fmt.Errorf("could not determine whether machine API is available, aborting controller start")
+	}
+
+	if machineAPIEnabled || machineAPIAvailable {
 		klog.Infof("Detected available machine API, starting vertical scaling related controllers and informers...")
 		clusterMemberControllerInformers = append(clusterMemberControllerInformers, masterMachineInformer)
 		clusterMemberRemovalController := clustermemberremovalcontroller.NewClusterMemberRemovalController(
