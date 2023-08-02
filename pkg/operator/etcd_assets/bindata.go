@@ -88,15 +88,28 @@ spec:
     spec:
       template:
         spec:
+          initContainers:
+            - name: retention
+              imagePullPolicy: IfNotPresent
+              terminationMessagePolicy: FallbackToLogsOnError
+              command: [ "cluster-etcd-operator" ]
+              args: [ "templated" ]
+              volumeMounts:
+              - mountPath: /etc/kubernetes/cluster-backup
+                name: etc-kubernetes-cluster-backup
           containers:
             - name: cluster-backup
               imagePullPolicy: IfNotPresent
               terminationMessagePolicy: FallbackToLogsOnError
-              command: [ "./cluster-etcd-operator" ]
+              command: [ "cluster-etcd-operator" ]
               args: [ "templated" ]
           nodeSelector:
             node-role.kubernetes.io/master: ""
           restartPolicy: OnFailure
+          volumes:
+            - name: etc-kubernetes-cluster-backup
+              persistentVolumeClaim:
+                claimName: templated
 `)
 
 func etcdClusterBackupCronjobYamlBytes() ([]byte, error) {

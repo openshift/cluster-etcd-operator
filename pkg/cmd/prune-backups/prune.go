@@ -13,8 +13,9 @@ import (
 	"time"
 )
 
-// BasePath for Backups we assume we have full ownership over the root folder, for tests we will change this to a tmp directory
-var BasePath = "/"
+// BasePath for Backups we assume we have full ownership over the root folder at /etc/kubernetes/cluster-backup
+// for tests we will change this to a tmp directory
+var BasePath = "/etc/kubernetes/cluster-backup/"
 
 const RetentionTypeNone = "None"
 const RetentionTypeSize = "RetentionSize"
