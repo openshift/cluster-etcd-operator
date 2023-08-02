@@ -4,6 +4,7 @@ import (
 	"context"
 	goflag "flag"
 	"fmt"
+	prune_backups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -70,6 +71,7 @@ func NewSSCSCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(monitor.NewMonitorCommand(os.Stderr))
 	cmd.AddCommand(verify.NewVerifyCommand(os.Stderr))
 	cmd.AddCommand(readyz.NewReadyzCommand())
+	cmd.AddCommand(prune_backups.NewPruneCommand())
 
 	return cmd
 }
