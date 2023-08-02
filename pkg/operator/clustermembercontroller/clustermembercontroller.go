@@ -16,7 +16,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
@@ -59,24 +58,24 @@ func NewClusterMemberController(
 	livenessChecker *health.MultiAlivenessChecker,
 	operatorClient v1helpers.OperatorClient,
 	machineAPIChecker ceohelpers.MachineAPIChecker,
-	masterNodeInformer cache.SharedIndexInformer,
+	masterNodeLister corev1listers.NodeLister,
 	masterNodeSelector labels.Selector,
-	masterMachineInformer cache.SharedIndexInformer,
+	machineLister machinelistersv1beta1.MachineLister,
 	masterMachineSelector labels.Selector,
 	kubeInformers v1helpers.KubeInformersForNamespaces,
 	networkInformer configv1informers.NetworkInformer,
 	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
-) factory.Controller {
+	additionalInformers ...factory.Informer) factory.Controller {
 	c := &ClusterMemberController{
 		operatorClient:        operatorClient,
 		machineAPIChecker:     machineAPIChecker,
 		etcdClient:            etcdClient,
 		podLister:             kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
 		networkLister:         networkInformer.Lister(),
-		masterMachineLister:   machinelistersv1beta1.NewMachineLister(masterMachineInformer.GetIndexer()),
+		masterMachineLister:   machineLister,
 		masterMachineSelector: masterMachineSelector,
-		masterNodeLister:      corev1listers.NewNodeLister(masterNodeInformer.GetIndexer()),
+		masterNodeLister:      masterNodeLister,
 		masterNodeSelector:    masterNodeSelector,
 		configMapLister:       kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister().ConfigMaps(operatorclient.TargetNamespace),
 	}
@@ -84,15 +83,19 @@ func NewClusterMemberController(
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
 	livenessChecker.Add("ClusterMemberController", syncer)
 
+	informers := []factory.Informer{
+		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer(),
+		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer(),
+		operatorClient.Informer(),
+	}
+	informers = append(informers, additionalInformers...)
+
 	return factory.New().ResyncEvery(time.Minute).
 		WithBareInformers(networkInformer.Informer()).
-		WithInformers(
-			masterNodeInformer,
-			masterMachineInformer,
-			kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer(),
-			kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer(),
-			operatorClient.Informer(),
-		).WithSync(syncer.Sync).WithSyncDegradedOnError(operatorClient).ToController("ClusterMemberController", eventRecorder.WithComponentSuffix("cluster-member-controller"))
+		WithInformers(informers...).
+		WithSync(syncer.Sync).
+		WithSyncDegradedOnError(operatorClient).
+		ToController("ClusterMemberController", eventRecorder.WithComponentSuffix("cluster-member-controller"))
 }
 
 func (c *ClusterMemberController) sync(ctx context.Context, syncCtx factory.SyncContext) error {

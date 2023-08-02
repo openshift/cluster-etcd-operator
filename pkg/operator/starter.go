@@ -6,6 +6,8 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/periodicbackupcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/upgradebackupcontroller"
+	"github.com/openshift/library-go/pkg/controller/factory"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"os"
 	"regexp"
 	"time"
@@ -127,12 +129,13 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	masterNodeInformer := corev1informers.NewFilteredNodeInformer(kubeClient, 1*time.Hour, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, func(listOptions *metav1.ListOptions) {
 		listOptions.LabelSelector = masterNodeLabelSelectorString
 	})
+	masterNodeLister := corev1listers.NewNodeLister(masterNodeInformer.GetIndexer())
 	masterNodeLabelSelector, err := labels.Parse(masterNodeLabelSelectorString)
 	if err != nil {
 		return err
 	}
+
 	operatorInformers := operatorv1informers.NewSharedInformerFactory(operatorConfigClient, 10*time.Minute)
-	//operatorConfigInformers.ForResource()
 	kubeInformersForNamespaces := v1helpers.NewKubeInformersForNamespaces(
 		kubeClient,
 		"",
@@ -142,7 +145,10 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorclient.OperatorNamespace,
 		"kube-system",
 	)
+
 	configInformers := configv1informers.NewSharedInformerFactory(configClient, 10*time.Minute)
+	clusterVersions := configInformers.Config().V1().ClusterVersions()
+	networkInformer := configInformers.Config().V1().Networks()
 	jobsInformer := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs().Informer()
 
 	versionRecorder := status.NewVersionGetter()
@@ -160,7 +166,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	featureGateAccessor := featuregates.NewFeatureGateAccess(
 		versionRecorder.GetVersions()["raw-internal"],
 		missingVersion,
-		configInformers.Config().V1().ClusterVersions(),
+		clusterVersions,
 		configInformers.Config().V1().FeatureGates(),
 		controllerContext.EventRecorder)
 	// we keep the default behavior of exiting the controller once a gate changes
@@ -170,9 +176,10 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	if err != nil {
 		return err
 	}
+
 	etcdClient := etcdcli.NewEtcdClient(
 		kubeInformersForNamespaces,
-		configInformers.Config().V1().Networks(),
+		networkInformer,
 		controllerContext.EventRecorder)
 
 	resourceSyncController, err := resourcesynccontroller.NewResourceSyncController(
@@ -214,7 +221,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorClient,
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Infrastructures(),
-		configInformers.Config().V1().Networks(),
+		networkInformer,
 		controllerContext.EventRecorder,
 	)
 
@@ -233,7 +240,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Infrastructures(),
-		configInformers.Config().V1().Networks(),
+		networkInformer,
 		kubeClient,
 		envVarController,
 		controllerContext.EventRecorder,
@@ -345,48 +352,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		quorumChecker,
 	)
 
-	machineAPI := ceohelpers.NewMachineAPI(masterMachineInformer, machinelistersv1beta1.NewMachineLister(masterMachineInformer.GetIndexer()), masterMachineLabelSelector)
-
-	clusterMemberController := clustermembercontroller.NewClusterMemberController(
-		AlivenessChecker,
-		operatorClient,
-		machineAPI,
-		masterNodeInformer,
-		masterNodeLabelSelector,
-		masterMachineInformer,
-		masterMachineLabelSelector,
-		kubeInformersForNamespaces,
-		configInformers.Config().V1().Networks(),
-		etcdClient,
-		controllerContext.EventRecorder,
-	)
-
-	clusterMemberRemovalController := clustermemberremovalcontroller.NewClusterMemberRemovalController(
-		AlivenessChecker,
-		operatorClient,
-		etcdClient,
-		machineAPI,
-		masterMachineLabelSelector, masterNodeLabelSelector,
-		kubeInformersForNamespaces,
-		masterNodeInformer,
-		masterMachineInformer,
-		configInformers.Config().V1().Networks(),
-		kubeInformersForNamespaces.ConfigMapLister(),
-		controllerContext.EventRecorder,
-	)
-
-	machineDeletionHooksController := machinedeletionhooks.NewMachineDeletionHooksController(
-		AlivenessChecker,
-		operatorClient,
-		machineClient,
-		etcdClient,
-		kubeClient,
-		machineAPI,
-		masterMachineLabelSelector,
-		kubeInformersForNamespaces,
-		masterMachineInformer,
-		controllerContext.EventRecorder)
-
 	etcdMembersController := etcdmemberscontroller.NewEtcdMembersController(
 		AlivenessChecker,
 		operatorClient,
@@ -428,7 +393,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeClient,
 		etcdClient,
 		kubeInformersForNamespaces,
-		configInformers.Config().V1().ClusterVersions(),
+		clusterVersions,
 		configInformers.Config().V1().ClusterOperators(),
 		controllerContext.EventRecorder,
 		os.Getenv("IMAGE"),
@@ -440,11 +405,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
-	operatorInformers.Start(ctx.Done())
-	kubeInformersForNamespaces.Start(ctx.Done())
+	// the configInformer has to run before the machine and backup feature checks
 	configInformers.Start(ctx.Done())
-	dynamicInformers.Start(ctx.Done())
-
 	go featureGateAccessor.Run(ctx)
 
 	select {
@@ -499,8 +461,83 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		go backupController.Run(ctx, 1)
 	}
 
-	go masterMachineInformer.Run(ctx.Done())
+	// we have to wait for the definitive result of the cluster version informer to make the correct machine API decision
+	klog.Infof("waiting for cluster version informer sync...")
+	versionTimeoutCtx, versionTimeoutCancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
+	clusterVersionInformerSynced := cache.WaitForCacheSync(versionTimeoutCtx.Done(), clusterVersions.Informer().HasSynced)
+	versionTimeoutCancelFunc()
+
+	if !clusterVersionInformerSynced {
+		return fmt.Errorf("could not sync ClusterVersion, aborting operator start")
+	}
+
+	clusterMemberControllerInformers := []factory.Informer{masterNodeInformer}
+	machineLister := machinelistersv1beta1.NewMachineLister(masterMachineInformer.GetIndexer())
+	machineAPI := ceohelpers.NewMachineAPI(masterMachineInformer, machineLister, masterMachineLabelSelector, clusterVersions, dynamicClient)
+	machineAPIEnabled, err := machineAPI.IsEnabled()
+	if err != nil {
+		return fmt.Errorf("could not determine whether machine API is enabled, aborting controller start")
+	}
+
+	machineAPIAvailable, err := machineAPI.IsAvailable()
+	if err != nil {
+		return fmt.Errorf("could not determine whether machine API is available, aborting controller start")
+	}
+
+	if machineAPIEnabled || machineAPIAvailable {
+		klog.Infof("Detected available machine API, starting vertical scaling related controllers and informers...")
+		clusterMemberControllerInformers = append(clusterMemberControllerInformers, masterMachineInformer)
+		clusterMemberRemovalController := clustermemberremovalcontroller.NewClusterMemberRemovalController(
+			AlivenessChecker,
+			operatorClient,
+			etcdClient,
+			machineAPI,
+			masterMachineLabelSelector, masterNodeLabelSelector,
+			kubeInformersForNamespaces,
+			masterNodeInformer,
+			masterMachineInformer,
+			networkInformer,
+			kubeInformersForNamespaces.ConfigMapLister(),
+			controllerContext.EventRecorder,
+		)
+
+		machineDeletionHooksController := machinedeletionhooks.NewMachineDeletionHooksController(
+			AlivenessChecker,
+			operatorClient,
+			machineClient,
+			etcdClient,
+			kubeClient,
+			machineAPI,
+			masterMachineLabelSelector,
+			kubeInformersForNamespaces,
+			masterMachineInformer,
+			controllerContext.EventRecorder)
+
+		go masterMachineInformer.Run(ctx.Done())
+		go clusterMemberRemovalController.Run(ctx, 1)
+		go machineDeletionHooksController.Run(ctx, 1)
+	}
+
+	// clusterMemberController uses the machineAPI component, but can run entirely without it
+	clusterMemberController := clustermembercontroller.NewClusterMemberController(
+		AlivenessChecker,
+		operatorClient,
+		machineAPI,
+		masterNodeLister,
+		masterNodeLabelSelector,
+		machineLister,
+		masterMachineLabelSelector,
+		kubeInformersForNamespaces,
+		networkInformer,
+		etcdClient,
+		controllerContext.EventRecorder,
+		clusterMemberControllerInformers...,
+	)
+
 	go masterNodeInformer.Run(ctx.Done())
+	dynamicInformers.Start(ctx.Done())
+	operatorInformers.Start(ctx.Done())
+	kubeInformersForNamespaces.Start(ctx.Done())
 
 	go fsyncMetricController.Run(ctx, 1)
 	go staticResourceController.Run(ctx, 1)
@@ -511,8 +548,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go statusController.Run(ctx, 1)
 	go configObserver.Run(ctx, 1)
 	go clusterMemberController.Run(ctx, 1)
-	go clusterMemberRemovalController.Run(ctx, 1)
-	go machineDeletionHooksController.Run(ctx, 1)
 	go etcdMembersController.Run(ctx, 1)
 	go bootstrapTeardownController.Run(ctx, 1)
 	go unsupportedConfigOverridesController.Run(ctx, 1)
