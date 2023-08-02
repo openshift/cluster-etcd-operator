@@ -16,8 +16,10 @@ import (
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 
+	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/cluster-etcd-operator/pkg/profilehelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 )
 
@@ -30,6 +32,7 @@ type envVarContext struct {
 	networkLister        configv1listers.NetworkLister
 	configmapLister      corev1listers.ConfigMapLister
 	targetImagePullSpec  string
+	etcdLister           operatorv1listers.EtcdLister
 }
 
 var FixedEtcdEnvVars = map[string]string{
@@ -63,8 +66,7 @@ var envVarFns = []envVarFunc{
 	getEtcdName,
 	getAllEtcdEndpoints,
 	getEtcdctlEnvVars,
-	getHeartbeatInterval,
-	getElectionTimeout,
+	getTuningProfileValues,
 	getUnsupportedArch,
 	getCipherSuites,
 	getMaxLearners,
@@ -205,52 +207,36 @@ func getEtcdURLHost(envVarContext envVarContext) (map[string]string, error) {
 	return ret, nil
 }
 
-func getHeartbeatInterval(envVarContext envVarContext) (map[string]string, error) {
-	heartbeat := "100" // etcd default
-
-	infrastructure, err := envVarContext.infrastructureLister.Get("cluster")
+func getTuningProfileValues(envVarContext envVarContext) (map[string]string, error) {
+	etcd, err := envVarContext.etcdLister.Get("cluster")
 	if err != nil {
 		return nil, err
 	}
 
-	if status := infrastructure.Status.PlatformStatus; status != nil {
-		switch {
-		case status.Azure != nil:
-			heartbeat = "500"
-		case status.IBMCloud != nil:
-			if infrastructure.Status.PlatformStatus.IBMCloud.ProviderType == v1.IBMCloudProviderTypeVPC {
-				heartbeat = "500"
+	speed := etcd.Spec.HardwareSpeed
+
+	// If the speed from the api is empty, then the CEO gets to decide what to set the values to.
+	//	Allows for upgrades from before this api field was added.
+	if speed == "" {
+		envs := profilehelpers.StandardHardwareSpeed()
+		infrastructure, err := envVarContext.infrastructureLister.Get("cluster")
+		if err != nil {
+			return nil, err
+		}
+		if status := infrastructure.Status.PlatformStatus; status != nil {
+			switch {
+			case status.Azure != nil:
+				envs = profilehelpers.SlowerHardwareSpeed()
+			case status.IBMCloud != nil:
+				if infrastructure.Status.PlatformStatus.IBMCloud.ProviderType == v1.IBMCloudProviderTypeVPC {
+					envs = profilehelpers.SlowerHardwareSpeed()
+				}
 			}
 		}
+		return envs, err
 	}
 
-	return map[string]string{
-		"ETCD_HEARTBEAT_INTERVAL": heartbeat,
-	}, nil
-}
-
-func getElectionTimeout(envVarContext envVarContext) (map[string]string, error) {
-	timeout := "1000" // etcd default
-
-	infrastructure, err := envVarContext.infrastructureLister.Get("cluster")
-	if err != nil {
-		return nil, err
-	}
-
-	if status := infrastructure.Status.PlatformStatus; status != nil {
-		switch {
-		case status.Azure != nil:
-			timeout = "2500"
-		case status.IBMCloud != nil:
-			if infrastructure.Status.PlatformStatus.IBMCloud.ProviderType == v1.IBMCloudProviderTypeVPC {
-				timeout = "2500"
-			}
-		}
-	}
-
-	return map[string]string{
-		"ETCD_ELECTION_TIMEOUT": timeout,
-	}, nil
+	return profilehelpers.ProfileToEnvMap(speed)
 }
 
 func envVarSafe(nodeName string) string {

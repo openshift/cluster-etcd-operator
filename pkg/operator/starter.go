@@ -3,14 +3,15 @@ package operator
 import (
 	"context"
 	"fmt"
+	"os"
+	"regexp"
+	"time"
+
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/periodicbackupcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/upgradebackupcontroller"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	corev1listers "k8s.io/client-go/listers/core/v1"
-	"os"
-	"regexp"
-	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -136,6 +137,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	}
 
 	operatorInformers := operatorv1informers.NewSharedInformerFactory(operatorConfigClient, 10*time.Minute)
+	etcdsInformer := operatorInformers.Operator().V1().Etcds()
 	kubeInformersForNamespaces := v1helpers.NewKubeInformersForNamespaces(
 		kubeClient,
 		"",
@@ -223,6 +225,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		configInformers.Config().V1().Infrastructures(),
 		networkInformer,
 		controllerContext.EventRecorder,
+		etcdsInformer,
 	)
 
 	quorumChecker := ceohelpers.NewQuorumChecker(
