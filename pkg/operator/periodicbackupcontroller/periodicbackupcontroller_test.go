@@ -123,6 +123,56 @@ func TestSyncLoopFailsDegradesOperator(t *testing.T) {
 	requireOperatorStatus(t, fakeOperatorClient, true)
 }
 
+func TestBackupRetentionCommand(t *testing.T) {
+	testCases := map[string]struct {
+		policy       backupv1alpha1.RetentionPolicy
+		expectedArgs []string
+	}{
+		"none default": {
+			policy:       backupv1alpha1.RetentionPolicy{},
+			expectedArgs: []string{"prune-backups", "--type=RetentionNumber", "--maxNumberOfBackups=15"},
+		},
+		"none, number set": {
+			policy:       backupv1alpha1.RetentionPolicy{RetentionNumber: &backupv1alpha1.RetentionNumberConfig{MaxNumberOfBackups: 13}},
+			expectedArgs: []string{"prune-backups", "--type=RetentionNumber", "--maxNumberOfBackups=13"},
+		},
+		"number type, number set": {
+			policy: backupv1alpha1.RetentionPolicy{
+				RetentionType:   backupv1alpha1.RetentionTypeNumber,
+				RetentionNumber: &backupv1alpha1.RetentionNumberConfig{MaxNumberOfBackups: 42}},
+			expectedArgs: []string{"prune-backups", "--type=RetentionNumber", "--maxNumberOfBackups=42"},
+		},
+		"size type, size default": {
+			policy: backupv1alpha1.RetentionPolicy{
+				RetentionType: backupv1alpha1.RetentionTypeSize,
+				RetentionSize: &backupv1alpha1.RetentionSizeConfig{MaxSizeOfBackupsGb: 10}},
+			expectedArgs: []string{"prune-backups", "--type=RetentionSize", "--maxSizeOfBackupsGb=10"},
+		},
+		"size type, size set": {
+			policy: backupv1alpha1.RetentionPolicy{
+				RetentionType: backupv1alpha1.RetentionTypeSize,
+				RetentionSize: &backupv1alpha1.RetentionSizeConfig{MaxSizeOfBackupsGb: 44}},
+			expectedArgs: []string{"prune-backups", "--type=RetentionSize", "--maxSizeOfBackupsGb=44"},
+		},
+	}
+
+	for k, v := range testCases {
+		t.Run(k, func(t *testing.T) {
+			c, _ := newCronJob()
+			require.NoError(t, setRetentionPolicyInitContainer(v.policy, c, "image"))
+			require.Equal(t, "image", c.Spec.JobTemplate.Spec.Template.Spec.InitContainers[0].Image)
+			require.Equal(t, []string{"cluster-etcd-operator"}, c.Spec.JobTemplate.Spec.Template.Spec.InitContainers[0].Command)
+			require.Equal(t, v.expectedArgs, c.Spec.JobTemplate.Spec.Template.Spec.InitContainers[0].Args)
+		})
+	}
+}
+
+func TestBackupRetentionCommandUnknownType(t *testing.T) {
+	c, _ := newCronJob()
+	err := setRetentionPolicyInitContainer(backupv1alpha1.RetentionPolicy{RetentionType: "something"}, c, "image")
+	require.Equal(t, fmt.Errorf("unknown retention type: something"), err)
+}
+
 func TestCronJobSpecDiffs(t *testing.T) {
 	job, err := newCronJob()
 	require.NoError(t, err)
@@ -159,6 +209,9 @@ func requireBackupCronJobCreated(t *testing.T, client *k8sfakeclient.Clientset, 
 	require.Equal(t, "pullspec-image", createdCronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Image)
 	require.Equal(t, 1, len(createdCronJob.OwnerReferences))
 	require.Equal(t, v1.OwnerReference{Name: backup.Name}, createdCronJob.OwnerReferences[0])
+	require.Equal(t, "pullspec-image", createdCronJob.Spec.JobTemplate.Spec.Template.Spec.InitContainers[0].Image)
+	require.Contains(t, createdCronJob.Spec.JobTemplate.Spec.Template.Spec.InitContainers[0].Args, "prune-backups")
+	require.Contains(t, createdCronJob.Spec.JobTemplate.Spec.Template.Spec.InitContainers[0].Args, fmt.Sprintf("--type=%s", backup.Spec.EtcdBackupSpec.RetentionPolicy.RetentionType))
 }
 
 func requireBackupCronJobUpdated(t *testing.T, client *k8sfakeclient.Clientset, backup backupv1alpha1.Backup) {

@@ -135,9 +135,27 @@ func reconcileCronJob(ctx context.Context,
 		UID:        backup.UID,
 	})
 
+	injected := false
+	for _, mount := range cronJob.Spec.JobTemplate.Spec.Template.Spec.Volumes {
+		if mount.Name == "etc-kubernetes-cluster-backup" {
+			mount.PersistentVolumeClaim.ClaimName = backup.Spec.EtcdBackupSpec.PVCName
+			injected = true
+			break
+		}
+	}
+
+	if !injected {
+		return fmt.Errorf("could not inject PVC into CronJob template, please check the included cluster-backup-cronjob.yaml")
+	}
+
 	cronJob.Spec.Schedule = backup.Spec.EtcdBackupSpec.Schedule
 	if backup.Spec.EtcdBackupSpec.TimeZone != "" {
 		cronJob.Spec.TimeZone = &backup.Spec.EtcdBackupSpec.TimeZone
+	}
+
+	err = setRetentionPolicyInitContainer(backup.Spec.EtcdBackupSpec.RetentionPolicy, cronJob, operatorImagePullSpec)
+	if err != nil {
+		return err
 	}
 
 	if len(cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers) == 0 {
@@ -168,6 +186,41 @@ func reconcileCronJob(ctx context.Context,
 		}
 	}
 
+	return nil
+}
+
+func setRetentionPolicyInitContainer(retentionPolicy backupv1alpha1.RetentionPolicy, cronJob *batchv1.CronJob, operatorImagePullSpec string) error {
+	retentionType := retentionPolicy.RetentionType
+	if retentionPolicy.RetentionType == "" {
+		retentionType = backupv1alpha1.RetentionTypeNumber
+	}
+
+	retentionInitArgs := []string{
+		"prune-backups",
+		fmt.Sprintf("--type=%s", retentionType),
+	}
+
+	if retentionType == backupv1alpha1.RetentionTypeNumber {
+		maxNum := 15
+		if retentionPolicy.RetentionNumber != nil {
+			maxNum = retentionPolicy.RetentionNumber.MaxNumberOfBackups
+		}
+
+		retentionInitArgs = append(retentionInitArgs, fmt.Sprintf("--maxNumberOfBackups=%d", maxNum))
+	} else if retentionType == backupv1alpha1.RetentionTypeSize {
+		// that's not defined in the API, but we assume that's about 15-20 median sized snapshots in line with MaxNumberOfBackups
+		maxSizeGb := 10
+		if retentionPolicy.RetentionSize != nil {
+			maxSizeGb = retentionPolicy.RetentionSize.MaxSizeOfBackupsGb
+		}
+
+		retentionInitArgs = append(retentionInitArgs, fmt.Sprintf("--maxSizeOfBackupsGb=%d", maxSizeGb))
+	} else {
+		return fmt.Errorf("unknown retention type: %s", retentionPolicy.RetentionType)
+	}
+
+	cronJob.Spec.JobTemplate.Spec.Template.Spec.InitContainers[0].Image = operatorImagePullSpec
+	cronJob.Spec.JobTemplate.Spec.Template.Spec.InitContainers[0].Args = retentionInitArgs
 	return nil
 }
 

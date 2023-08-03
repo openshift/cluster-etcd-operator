@@ -13,8 +13,9 @@ import (
 	"time"
 )
 
-// BasePath for Backups we assume we have full ownership over the root folder, for tests we will change this to a tmp directory
-var BasePath = "/"
+// BasePath for Backups we assume we have full ownership over the root folder at /etc/kubernetes/cluster-backup
+// for tests we will change this to a tmp directory
+var BasePath = "/etc/kubernetes/cluster-backup/"
 
 const RetentionTypeNone = "None"
 const RetentionTypeSize = "RetentionSize"
@@ -58,8 +59,9 @@ func NewPruneCommand() *cobra.Command {
 func (r *pruneOpts) AddFlags(cmd *cobra.Command) {
 	flagSet := cmd.Flags()
 	flagSet.StringVar(&r.retentionType, "type", r.retentionType, "Which kind of retention to execute, can either be None, RetentionNumber or RetentionSize.")
-	flagSet.IntVar(&r.maxNumberOfBackups, "maxNumberOfBackups", 1, "how many backups to keep when type=RetentionNumber")
-	flagSet.IntVar(&r.maxSizeOfBackupsGb, "maxSizeOfBackupsGb", 1, "how many gigabytes of backups to keep when type=RetentionSize")
+	// the defaults are zero for validation, we inject the real defaults from the periodic backup controller
+	flagSet.IntVar(&r.maxNumberOfBackups, "maxNumberOfBackups", 0, "how many backups to keep when type=RetentionNumber")
+	flagSet.IntVar(&r.maxSizeOfBackupsGb, "maxSizeOfBackupsGb", 0, "how many gigabytes of backups to keep when type=RetentionSize")
 
 	// adding klog flags to tune verbosity better
 	gfs := goflag.NewFlagSet("", goflag.ExitOnError)
