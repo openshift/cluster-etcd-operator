@@ -3,6 +3,8 @@ package periodicbackupcontroller
 import (
 	"context"
 	"fmt"
+	"time"
+
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	backupv1client "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
@@ -18,7 +20,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	batchv1client "k8s.io/client-go/kubernetes/typed/batch/v1"
 	"k8s.io/klog/v2"
-	"time"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/library-go/pkg/controller/factory"
@@ -144,10 +145,12 @@ func reconcileCronJob(ctx context.Context,
 	}
 
 	cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Image = operatorImagePullSpec
+	// The "etcd-operator request-backup" cmd is passed the pvcName arg it can set that on the EtcdBackup CustomResource spec.
+	// The name of the CR will needs to be unique for each scheduled run of the CronJob, so the name is
+	// set at runtime as the pod via the MY_POD_NAME populated via the downward API.
+	// See the CronJob template manifest for reference.
 	cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Args = []string{
-		"--backup-name=" + backup.Name,
-		"--retention-number=5",
-		"--pvc=" + backup.Spec.EtcdBackupSpec.PVCName,
+		"--pvc-name=" + backup.Spec.EtcdBackupSpec.PVCName,
 	}
 
 	if create {
