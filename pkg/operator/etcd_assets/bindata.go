@@ -1,5 +1,8 @@
 // Code generated for package etcd_assets by go-bindata DO NOT EDIT. (@generated)
 // sources:
+// bindata/etcd/backups-cr.yaml
+// bindata/etcd/backups-crb.yaml
+// bindata/etcd/backups-sa.yaml
 // bindata/etcd/cluster-backup-cronjob.yaml
 // bindata/etcd/cluster-backup-job.yaml
 // bindata/etcd/cluster-backup-pod.yaml
@@ -70,6 +73,87 @@ func (fi bindataFileInfo) Sys() interface{} {
 	return nil
 }
 
+var _etcdBackupsCrYaml = []byte(`kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: system:openshift:operator:etcd-backup-role
+rules:
+  - apiGroups:
+      - "operator.openshift.io"
+    resources:
+      - "etcdbackups"
+    verbs:
+      - "create"
+`)
+
+func etcdBackupsCrYamlBytes() ([]byte, error) {
+	return _etcdBackupsCrYaml, nil
+}
+
+func etcdBackupsCrYaml() (*asset, error) {
+	bytes, err := etcdBackupsCrYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "etcd/backups-cr.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
+var _etcdBackupsCrbYaml = []byte(`apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: system:openshift:operator:etcd-backup-crb
+  annotations:
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+roleRef:
+  kind: ClusterRole
+  name: system:openshift:operator:etcd-backup-role
+subjects:
+  - kind: ServiceAccount
+    namespace: openshift-etcd
+    name: etcd-backup-sa
+`)
+
+func etcdBackupsCrbYamlBytes() ([]byte, error) {
+	return _etcdBackupsCrbYaml, nil
+}
+
+func etcdBackupsCrbYaml() (*asset, error) {
+	bytes, err := etcdBackupsCrbYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "etcd/backups-crb.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
+var _etcdBackupsSaYaml = []byte(`apiVersion: v1
+kind: ServiceAccount
+metadata:
+  namespace: openshift-etcd
+  name: etcd-backup-sa
+`)
+
+func etcdBackupsSaYamlBytes() ([]byte, error) {
+	return _etcdBackupsSaYaml, nil
+}
+
+func etcdBackupsSaYaml() (*asset, error) {
+	bytes, err := etcdBackupsSaYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "etcd/backups-sa.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
 var _etcdClusterBackupCronjobYaml = []byte(`apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -91,11 +175,14 @@ spec:
             - name: retention
               imagePullPolicy: IfNotPresent
               terminationMessagePolicy: FallbackToLogsOnError
+              # since we can expect hostPath mounts, we need to run as privileged to access them
+              securityContext:
+                privileged: true
               command: [ "cluster-etcd-operator" ]
               args: [ "templated" ]
               volumeMounts:
-              - mountPath: /etc/kubernetes/cluster-backup
-                name: etc-kubernetes-cluster-backup
+                - mountPath: /etc/kubernetes/cluster-backup
+                  name: etc-kubernetes-cluster-backup
           containers:
             - name: cluster-backup
               imagePullPolicy: IfNotPresent
@@ -103,16 +190,19 @@ spec:
               command: [ "cluster-etcd-operator" ]
               args: [ "templated" ]
               env:
-              - name: MY_POD_NAME
-                valueFrom:
-                  fieldRef:
-                    fieldPath: metadata.name
-              - name: MY_POD_UID
-                valueFrom:
-                  fieldRef:
-                    fieldPath: metadata.uid
+                - name: MY_POD_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
+                - name: MY_POD_UID
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.uid
+          serviceAccountName: etcd-backup-sa
           nodeSelector:
             node-role.kubernetes.io/master: ""
+          tolerations:
+            - operator: "Exists"
           restartPolicy: OnFailure
           volumes:
             - name: etc-kubernetes-cluster-backup
@@ -1629,6 +1719,9 @@ func AssetNames() []string {
 
 // _bindata is a table, holding each asset generator, mapped to its name.
 var _bindata = map[string]func() (*asset, error){
+	"etcd/backups-cr.yaml":             etcdBackupsCrYaml,
+	"etcd/backups-crb.yaml":            etcdBackupsCrbYaml,
+	"etcd/backups-sa.yaml":             etcdBackupsSaYaml,
 	"etcd/cluster-backup-cronjob.yaml": etcdClusterBackupCronjobYaml,
 	"etcd/cluster-backup-job.yaml":     etcdClusterBackupJobYaml,
 	"etcd/cluster-backup-pod.yaml":     etcdClusterBackupPodYaml,
@@ -1692,6 +1785,9 @@ type bintree struct {
 
 var _bintree = &bintree{nil, map[string]*bintree{
 	"etcd": {nil, map[string]*bintree{
+		"backups-cr.yaml":             {etcdBackupsCrYaml, map[string]*bintree{}},
+		"backups-crb.yaml":            {etcdBackupsCrbYaml, map[string]*bintree{}},
+		"backups-sa.yaml":             {etcdBackupsSaYaml, map[string]*bintree{}},
 		"cluster-backup-cronjob.yaml": {etcdClusterBackupCronjobYaml, map[string]*bintree{}},
 		"cluster-backup-job.yaml":     {etcdClusterBackupJobYaml, map[string]*bintree{}},
 		"cluster-backup-pod.yaml":     {etcdClusterBackupPodYaml, map[string]*bintree{}},
