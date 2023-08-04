@@ -28,6 +28,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
+const backupJobLabel = "backup-name"
+
 type PeriodicBackupController struct {
 	operatorClient        v1helpers.OperatorClient
 	backupsClient         backupv1client.BackupsGetter
@@ -128,6 +130,7 @@ func reconcileCronJob(ctx context.Context,
 	}
 
 	cronJob.Name = backup.Name
+	cronJob.Labels[backupJobLabel] = backup.Name
 	cronJob.OwnerReferences = append(cronJob.OwnerReferences, v1.OwnerReference{
 		APIVersion: backup.APIVersion,
 		Kind:       backup.Kind,
@@ -164,10 +167,11 @@ func reconcileCronJob(ctx context.Context,
 
 	cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Image = operatorImagePullSpec
 	// The "etcd-operator request-backup" cmd is passed the pvcName arg it can set that on the EtcdBackup CustomResource spec.
-	// The name of the CR will needs to be unique for each scheduled run of the CronJob, so the name is
+	// The name of the CR will need to be unique for each scheduled run of the CronJob, so the name is
 	// set at runtime as the pod via the MY_POD_NAME populated via the downward API.
 	// See the CronJob template manifest for reference.
 	cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Args = []string{
+		"request-backup",
 		"--pvc-name=" + backup.Spec.EtcdBackupSpec.PVCName,
 	}
 

@@ -19,11 +19,14 @@ spec:
             - name: retention
               imagePullPolicy: IfNotPresent
               terminationMessagePolicy: FallbackToLogsOnError
+              # since we can expect hostPath mounts, we need to run as privileged to access them
+              securityContext:
+                privileged: true
               command: [ "cluster-etcd-operator" ]
               args: [ "templated" ]
               volumeMounts:
-              - mountPath: /etc/kubernetes/cluster-backup
-                name: etc-kubernetes-cluster-backup
+                - mountPath: /etc/kubernetes/cluster-backup
+                  name: etc-kubernetes-cluster-backup
           containers:
             - name: cluster-backup
               imagePullPolicy: IfNotPresent
@@ -31,16 +34,19 @@ spec:
               command: [ "cluster-etcd-operator" ]
               args: [ "templated" ]
               env:
-              - name: MY_POD_NAME
-                valueFrom:
-                  fieldRef:
-                    fieldPath: metadata.name
-              - name: MY_POD_UID
-                valueFrom:
-                  fieldRef:
-                    fieldPath: metadata.uid
+                - name: MY_POD_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
+                - name: MY_POD_UID
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.uid
+          serviceAccountName: etcd-backup-sa
           nodeSelector:
             node-role.kubernetes.io/master: ""
+          tolerations:
+            - operator: "Exists"
           restartPolicy: OnFailure
           volumes:
             - name: etc-kubernetes-cluster-backup
