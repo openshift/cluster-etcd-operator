@@ -2,7 +2,7 @@ Overview (deep dive) on etcd
 ======
 <span style="color: #808080; font-family: Babas; font-size: 1em;">
 thomas.jungblut@redhat.com <br>
-Nov 8th, 2022
+Aug 4th, 2023
 </span>
 
 # Background
@@ -48,6 +48,7 @@ Below are screenshots of all slides with some commentary.
 ![05](images/CEO%20__%20CEE_5.png)
 ![06](images/CEO%20__%20CEE_6.png)
 ![07](images/CEO%20__%20CEE_7.png)
+![07_1](images/CEO%20__%20CEE_7_1.png)
 
 # etcd Containers
 ![08](images/CEO%20__%20CEE_8.png)
@@ -60,6 +61,8 @@ Below are screenshots of all slides with some commentary.
 
 # Disaster Recovery
 ![11](images/CEO%20__%20CEE_11.png)
+![11_1](images/CEO%20__%20CEE_11_1.png)
+![11_2](images/CEO%20__%20CEE_11_2.png)
 
 # Maintenance
 ![12](images/CEO%20__%20CEE_12.png)
