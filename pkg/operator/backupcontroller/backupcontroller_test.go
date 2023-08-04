@@ -280,17 +280,23 @@ func requireBackupJobCreated(t *testing.T, client *k8sfakeclient.Clientset, back
 }
 
 func requireBackupJobSkipped(t *testing.T, client *fake.Clientset, backup operatorv1alpha1.EtcdBackup) {
+	var updateAction *k8stesting.UpdateActionImpl
 	var updateStatusAction *k8stesting.UpdateActionImpl
 	for _, action := range client.Fake.Actions() {
 		if a, ok := action.(k8stesting.UpdateActionImpl); ok && a.Subresource == "status" {
 			if b, ok := a.Object.(*operatorv1alpha1.EtcdBackup); ok && b.Name == backup.Name {
 				updateStatusAction = &a
-				break
+			}
+		} else if a, ok := action.(k8stesting.UpdateActionImpl); ok && a.Subresource == "" {
+			if b, ok := a.Object.(*operatorv1alpha1.EtcdBackup); ok && b.Name == backup.Name {
+				updateAction = &a
 			}
 		}
 	}
 
 	require.NotNilf(t, updateStatusAction, "expected to find at least one status updateAction matching the backup name, but found %v", client.Fake.Actions())
+	require.NotNilf(t, updateAction, "expected to find at least one updateAction matching the backup name, but found %v", client.Fake.Actions())
+
 	b := updateStatusAction.Object.(*operatorv1alpha1.EtcdBackup)
 	require.Equal(t, []v1.Condition{
 		{
@@ -300,6 +306,9 @@ func requireBackupJobSkipped(t *testing.T, client *fake.Clientset, backup operat
 			Status:  v1.ConditionTrue,
 		},
 	}, removeTransitionTime(b.Status.Conditions))
+
+	b = updateAction.Object.(*operatorv1alpha1.EtcdBackup)
+	require.Equal(t, map[string]string{"state": "processed"}, b.Labels)
 }
 
 func findFirstCreateAction(client *k8sfakeclient.Clientset) *k8stesting.CreateActionImpl {
