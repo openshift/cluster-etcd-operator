@@ -177,6 +177,22 @@ func markBackupSkipped(ctx context.Context, client operatorv1alpha1client.EtcdBa
 	})
 
 	_, err := client.UpdateStatus(ctx, &backup, v1.UpdateOptions{})
+	if err != nil {
+		return err
+	}
+
+	bp, err := client.Get(ctx, backup.Name, v1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("error while getting backup for updating skipped status [%s]: %w", backup.Name, err)
+	}
+
+	// update the backup label, so we don't have to reconcile it anymore later
+	if bp.Labels == nil {
+		bp.Labels = map[string]string{}
+	}
+
+	bp.Labels["state"] = "processed"
+	_, err = client.Update(ctx, bp, v1.UpdateOptions{})
 	return err
 }
 
