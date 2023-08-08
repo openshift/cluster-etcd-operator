@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/storage/names"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -18,6 +19,7 @@ import (
 	"k8s.io/utils/pointer"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -81,7 +83,6 @@ func TestBackupHappyPath(t *testing.T) {
 func TestPeriodicBackupHappyPath(t *testing.T) {
 	pvcName := "periodic-backup-happy-path-pvc"
 	ensureHostPathPVC(t, pvcName)
-	batchClient := framework.NewBatchClient(t)
 	configClient := framework.NewConfigClient(t)
 
 	backupCrd := configv1alpha1.Backup{
@@ -105,9 +106,123 @@ func TestPeriodicBackupHappyPath(t *testing.T) {
 	_, err := configClient.Backups().Create(context.Background(), &backupCrd, metav1.CreateOptions{})
 	require.NoError(t, err)
 
+	t.Cleanup(func() {
+		err := configClient.Backups().Delete(context.Background(), backupCrd.Name, metav1.DeleteOptions{})
+		require.NoError(t, err)
+	})
+
+	awaitBackupInvocations(t, backupCrd)
+
+	foundFiles := collectFilesInPVCAcrossAllNodes(t, pvcName)
+	grouped := groupBackupFilesByRunPrefix(t, foundFiles)
+	// we expect either 5 or 6 backups, depending on whether there's currently an invocation ongoing
+	require.Truef(t, len(grouped) == 5 || len(grouped) == 6,
+		"expected 5 or 6 backup groups, but found %d. Groups: %v", len(grouped), grouped)
+	// each group individually must be a valid backup
+	// TODO(thomas): this might flake when an ongoing backup is not entirely done yet?
+	for k, v := range grouped {
+		t.Logf("testing backup group %s = %v", k, v)
+		requireBackupFilesFound(t, backupCrd.Name, v)
+	}
+}
+
+func TestRetentionBySize(t *testing.T) {
+	pvcName := "retention-by-size"
+	ensureHostPathPVC(t, pvcName)
+	configClient := framework.NewConfigClient(t)
+
+	pushRandomConfigMaps(t)
+
+	backupCrd := configv1alpha1.Backup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "retention-by-size",
+			Namespace: OpenShiftEtcdNamespace,
+		},
+		Spec: configv1alpha1.BackupSpec{
+			EtcdBackupSpec: configv1alpha1.EtcdBackupSpec{
+				Schedule: "* * * * *",
+				TimeZone: "UTC",
+				RetentionPolicy: configv1alpha1.RetentionPolicy{
+					RetentionType: configv1alpha1.RetentionTypeSize,
+					RetentionSize: &configv1alpha1.RetentionSizeConfig{MaxSizeOfBackupsGb: 1},
+				},
+				PVCName: pvcName,
+			},
+		},
+	}
+
+	_, err := configClient.Backups().Create(context.Background(), &backupCrd, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		err := configClient.Backups().Delete(context.Background(), backupCrd.Name, metav1.DeleteOptions{})
+		require.NoError(t, err)
+	})
+
+	awaitBackupInvocations(t, backupCrd)
+	// this is the state after five job invocations
+	foundFiles := collectFilesInPVCAcrossAllNodes(t, pvcName)
+	grouped := groupBackupFilesByRunPrefix(t, foundFiles)
+	// we expect either 4 or 5 backups, depending on whether there's currently an invocation ongoing
+	require.Truef(t, len(grouped) == 4 || len(grouped) == 5,
+		"expected 4 or 5 backup groups, but found %d. Groups: %v", len(grouped), grouped)
+	// each group individually must be a valid backup
+	// TODO(thomas): this might flake when an ongoing backup is not entirely done yet?
+	for k, v := range grouped {
+		t.Logf("testing backup group %s = %v", k, v)
+		requireBackupFilesFound(t, backupCrd.Name, v)
+	}
+}
+
+// pushRandomConfigMaps pushes about 125mb of random configmaps into the etcd cluster
+func pushRandomConfigMaps(t *testing.T) {
+	coreClient := framework.NewCoreClient(t)
+	// we only allow retention on the order of gigabytes, so we have to fill up etcd for a while to get sizable snapshots
+	// the maximum we can push without errors is: Too long: must have at most 1048576 bytes
+	megString := rand.String(1024 * 1024 * 1)
+	// pushing one hundred megabytes of CM takes about 2m with one thread, doing it 5x in parallel (kn)
+	kn := 5
+	n := 25
+
+	wg := sync.WaitGroup{}
+	wg.Add(kn)
+
+	for k := 0; k < kn; k++ {
+		go func(k int) {
+			defer wg.Done()
+
+			for i := 0; i < n; i++ {
+				cm := corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      names.SimpleNameGenerator.GenerateName("retention-by-size"),
+						Namespace: OpenShiftEtcdNamespace,
+					},
+					Data: map[string]string{
+						"blob": megString,
+					},
+				}
+
+				_, err := coreClient.ConfigMaps(OpenShiftEtcdNamespace).Create(context.Background(), &cm, metav1.CreateOptions{})
+				if err != nil {
+					klog.Errorf("[%d] got an error while creating filler configmap no. %d/%d: %v", k, i, n, err)
+				}
+
+				if i%5 == 0 {
+					klog.Infof("[%d] writing CM %d/%d", k, i, n)
+				}
+			}
+		}(k)
+	}
+
+	wg.Wait()
+	t.Logf("done pushng %d configmaps at 1mb!", kn*n)
+}
+
+func awaitBackupInvocations(t *testing.T, backupCrd configv1alpha1.Backup) {
+	batchClient := framework.NewBatchClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
-	err = wait.PollUntilContextCancel(ctx, 30*time.Second, false,
+	err := wait.PollUntilContextCancel(ctx, 30*time.Second, false,
 		func(ctx context.Context) (done bool, err error) {
 			jobList, err := batchClient.Jobs(backupCrd.Namespace).List(context.Background(), metav1.ListOptions{})
 			if err != nil {
@@ -144,18 +259,6 @@ func TestPeriodicBackupHappyPath(t *testing.T) {
 			return false, nil
 		})
 	require.NoError(t, err)
-
-	foundFiles := collectFilesInPVCAcrossAllNodes(t, pvcName)
-	grouped := groupBackupFilesByRunPrefix(t, foundFiles)
-	// we expect either 5 or 6 backups, depending on whether there's currently an invocation ongoing
-	require.Truef(t, len(grouped) == 5 || len(grouped) == 6,
-		"expected 5 or 6 backup groups, but found %d. Groups: %v", len(grouped), grouped)
-	// each group individually must be a valid backup
-	// TODO(thomas): this might flake when an ongoing backup is not entirely done yet?
-	for k, v := range grouped {
-		t.Logf("testing backup group %s = %v", k, v)
-		requireBackupFilesFound(t, backupCrd.Name, v)
-	}
 }
 
 func ensureHostPathPVC(t *testing.T, pvcName string) {
