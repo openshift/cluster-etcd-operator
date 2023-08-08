@@ -122,9 +122,9 @@ func (m *MachineAPI) IsEnabled() (bool, error) {
 		return false, err
 	}
 
-	// this is a special case introduced from 4.14 on, where MachineAPI can be optional with clusters installed using capabilities.baselineCapabilitySet=None
+	// this is a special case introduced from 4.14 on, where MachineAPI can be optional.
 	// on upgrades from prior versions of OpenShift the status should have MachineAPI listed as an EnabledCapabilities
-	if clusterVersion != nil && clusterVersion.Spec.Capabilities != nil && string(clusterVersion.Spec.Capabilities.BaselineCapabilitySet) == "None" {
+	if clusterVersion != nil {
 		machineAPIEnabled := false
 		for _, capability := range clusterVersion.Status.Capabilities.EnabledCapabilities {
 			if capability == configv1.ClusterVersionCapabilityMachineAPI {

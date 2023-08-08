@@ -28,6 +28,13 @@ func TestIsMachineAPIFunctionalWrapper(t *testing.T) {
 	clusterVersion := &configv1.ClusterVersion{
 		ObjectMeta: metav1.ObjectMeta{Name: "version"},
 		Spec:       configv1.ClusterVersionSpec{},
+		Status: configv1.ClusterVersionStatus{
+			Capabilities: configv1.ClusterVersionCapabilitiesStatus{
+				EnabledCapabilities: []configv1.ClusterVersionCapability{
+					configv1.ClusterVersionCapabilityMachineAPI,
+				},
+			},
+		},
 	}
 
 	scenarios := []struct {
