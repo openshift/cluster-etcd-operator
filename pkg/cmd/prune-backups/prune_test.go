@@ -74,11 +74,11 @@ func TestRetainBySize(t *testing.T) {
 	require.NoError(t, err)
 	BasePath = temp
 	expectedFolders := []string{"backup-1", "backup-2", "backup-3", "backup-4", "backup-5"}
+	// using a zeroed slice here, being much faster than generating a random gigabyte of bytes
+	zeroGig := make([]byte, 1024*1024*1024*1)
 	for _, folder := range expectedFolders {
 		require.NoError(t, os.MkdirAll(path.Join(temp, folder), 0750))
-		require.NoError(t, os.WriteFile(path.Join(temp, folder, "snapshot.snap"), randBytes(1024*1024*1), 0600))
-		// the creation is fairly quick, so the mod time doesn't reflect as it otherwise would
-		time.Sleep(1 * time.Second)
+		require.NoError(t, os.WriteFile(path.Join(temp, folder, "snapshot.snap"), zeroGig, 0600))
 	}
 
 	require.NoError(t, retainBySizeGb(10))

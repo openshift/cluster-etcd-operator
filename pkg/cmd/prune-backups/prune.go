@@ -119,7 +119,8 @@ func retainBySizeGb(sizeInGb int) error {
 
 	// we keep the latest - up to sizeInGb folders around, the remainder is deleted
 	// the newest backups are always found at the beginning of the list
-	cutOffBytes := int64(1024 * 1024 * sizeInGb)
+	cutOffBytes := int64(1024 * 1024 * 1024 * sizeInGb)
+	klog.Infof("configured cut-off bytes: %d (%dGiB)", cutOffBytes, sizeInGb)
 	accBytes := int64(0)
 	var toRemove []string
 	for _, f := range folders {
