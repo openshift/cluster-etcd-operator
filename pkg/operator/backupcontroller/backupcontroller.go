@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sort"
 	"strings"
@@ -144,6 +145,16 @@ func (c *BackupController) sync(ctx context.Context, _ factory.SyncContext) erro
 	})
 
 	klog.V(4).Infof("BackupController backupsToRun: %v, chooses %v", backupsToRun, backupsToRun[0])
+	valid, err := validateBackup(ctx, backupsToRun[0], c.kubeClient, backupsClient)
+	if err != nil {
+		return err
+	}
+
+	if !valid {
+		klog.V(4).Infof("BackupController deems: %v invalid, skipping", backupsToRun[0])
+		return nil
+	}
+
 	err = createBackupJob(ctx, backupsToRun[0], c.targetImagePullSpec, c.operatorImagePullSpec, jobsClient, backupsClient)
 	if err != nil {
 		return err
@@ -162,6 +173,28 @@ func (c *BackupController) sync(ctx context.Context, _ factory.SyncContext) erro
 	return nil
 }
 
+func validateBackup(ctx context.Context,
+	backup operatorv1alpha1.EtcdBackup,
+	kubeClient kubernetes.Interface,
+	backupsClient operatorv1alpha1client.EtcdBackupInterface) (bool, error) {
+
+	_, err := kubeClient.CoreV1().PersistentVolumeClaims(operatorclient.TargetNamespace).Get(ctx, backup.Spec.PVCName, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			markFailedErr := markBackupFailed(ctx, backupsClient, backup, fmt.Sprintf("unable to find PVC [%s]", backup.Spec.PVCName))
+			if markFailedErr != nil {
+				return false, fmt.Errorf("BackupController could not get PVC [%s]: %w, failed to mark as failed: %w", backup.Spec.PVCName, err, markFailedErr)
+			}
+
+			return false, nil
+		}
+
+		return false, fmt.Errorf("BackupController could not get PVC [%s]: %w", backup.Spec.PVCName, err)
+	}
+
+	return true, nil
+}
+
 func markBackupSkipped(ctx context.Context, client operatorv1alpha1client.EtcdBackupInterface, backup operatorv1alpha1.EtcdBackup) error {
 	// mark all previous conditions as false, only BackupSkipped should be true
 	for i := 0; i < len(backup.Status.Conditions); i++ {
@@ -172,6 +205,44 @@ func markBackupSkipped(ctx context.Context, client operatorv1alpha1client.EtcdBa
 		Type:               string(operatorv1alpha1.BackupSkipped),
 		Reason:             string(operatorv1alpha1.BackupSkipped),
 		Message:            "skipped due too many simultaneous backups",
+		Status:             v1.ConditionTrue,
+		LastTransitionTime: metav1.NewTime(time.Now()),
+	})
+
+	_, err := client.UpdateStatus(ctx, &backup, v1.UpdateOptions{})
+	if err != nil {
+		return err
+	}
+
+	bp, err := client.Get(ctx, backup.Name, v1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("error while getting backup for updating skipped status [%s]: %w", backup.Name, err)
+	}
+
+	// update the backup label, so we don't have to reconcile it anymore later
+	if bp.Labels == nil {
+		bp.Labels = map[string]string{}
+	}
+
+	bp.Labels["state"] = "processed"
+	_, err = client.Update(ctx, bp, v1.UpdateOptions{})
+	return err
+}
+
+func markBackupFailed(ctx context.Context,
+	client operatorv1alpha1client.EtcdBackupInterface,
+	backup operatorv1alpha1.EtcdBackup,
+	failedMessage string) error {
+
+	// mark all previous conditions as false, only BackupFailed should be true
+	for i := 0; i < len(backup.Status.Conditions); i++ {
+		backup.Status.Conditions[i].Status = v1.ConditionFalse
+	}
+
+	backup.Status.Conditions = append(backup.Status.Conditions, v1.Condition{
+		Type:               string(operatorv1alpha1.BackupFailed),
+		Reason:             string(operatorv1alpha1.BackupFailed),
+		Message:            failedMessage,
 		Status:             v1.ConditionTrue,
 		LastTransitionTime: metav1.NewTime(time.Now()),
 	})
@@ -320,6 +391,7 @@ func createBackupJob(ctx context.Context,
 	operatorImagePullSpec string,
 	jobClient batchv1client.JobInterface,
 	backupClient operatorv1alpha1client.EtcdBackupInterface) error {
+
 	scheme := runtime.NewScheme()
 	codec := serializer.NewCodecFactory(scheme)
 	err := batchv1.AddToScheme(scheme)

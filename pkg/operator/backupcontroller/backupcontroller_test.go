@@ -2,7 +2,6 @@ package backupcontroller
 
 import (
 	"context"
-	"fmt"
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
@@ -29,7 +28,10 @@ func TestSyncLoopHappyPath(t *testing.T) {
 	backup := operatorv1alpha1.EtcdBackup{ObjectMeta: v1.ObjectMeta{Name: "test-backup"},
 		Spec: operatorv1alpha1.EtcdBackupSpec{PVCName: "backup-happy-path-pvc"}}
 	operatorFake := fake.NewSimpleClientset([]runtime.Object{&backup}...)
-	client := k8sfakeclient.NewSimpleClientset()
+	pvc := corev1.PersistentVolumeClaim{
+		ObjectMeta: v1.ObjectMeta{Name: "backup-happy-path-pvc", Namespace: operatorclient.TargetNamespace},
+	}
+	client := k8sfakeclient.NewSimpleClientset([]runtime.Object{&pvc}...)
 
 	controller := BackupController{
 		backupsClient:         operatorFake.OperatorV1alpha1(),
@@ -96,7 +98,7 @@ func TestJobBackupJobFinished(t *testing.T) {
 	err := controller.sync(context.TODO(), nil)
 	require.NoError(t, err)
 	requireNoBackupJobCreated(t, client)
-	requireBackupUpdated(t, operatorFake, string(batchv1.JobComplete))
+	requireBackupUpdated(t, operatorFake, string(operatorv1alpha1.BackupCompleted), string(batchv1.JobComplete))
 	requireJobUpdated(t, client, backup.Name)
 }
 
@@ -164,7 +166,10 @@ func TestMultipleBackupsAreSkipped(t *testing.T) {
 	backup3 := operatorv1alpha1.EtcdBackup{ObjectMeta: v1.ObjectMeta{Name: "test-backup-3"},
 		Spec: operatorv1alpha1.EtcdBackupSpec{PVCName: "backup-happy-path-pvc"}}
 	operatorFake := fake.NewSimpleClientset([]runtime.Object{&backup1, &backup2, &backup3}...)
-	client := k8sfakeclient.NewSimpleClientset()
+	pvc := corev1.PersistentVolumeClaim{
+		ObjectMeta: v1.ObjectMeta{Name: "backup-happy-path-pvc", Namespace: operatorclient.TargetNamespace},
+	}
+	client := k8sfakeclient.NewSimpleClientset([]runtime.Object{&pvc}...)
 
 	controller := BackupController{
 		backupsClient:         operatorFake.OperatorV1alpha1(),
@@ -223,6 +228,26 @@ func TestIsJobComplete(t *testing.T) {
 			require.Equal(t, test.complete, finished)
 		})
 	}
+}
+
+func TestPVCNotFound(t *testing.T) {
+	backup := operatorv1alpha1.EtcdBackup{ObjectMeta: v1.ObjectMeta{Name: "test-backup"},
+		Spec: operatorv1alpha1.EtcdBackupSpec{PVCName: "backup-pvc-that-doesnt-exist"}}
+	operatorFake := fake.NewSimpleClientset([]runtime.Object{&backup}...)
+	client := k8sfakeclient.NewSimpleClientset()
+
+	controller := BackupController{
+		backupsClient:         operatorFake.OperatorV1alpha1(),
+		kubeClient:            client,
+		targetImagePullSpec:   "target-pullspec-image",
+		operatorImagePullSpec: "operator-pullspec-image",
+		featureGateAccessor:   backupFeatureGateAccessor,
+	}
+
+	err := controller.sync(context.TODO(), nil)
+	require.NoError(t, err)
+	requireNoBackupJobCreated(t, client)
+	requireBackupUpdated(t, operatorFake, string(operatorv1alpha1.BackupFailed), "unable to find PVC [backup-pvc-that-doesnt-exist]")
 }
 
 func TestNoFeatureGateDisablesController(t *testing.T) {
@@ -322,7 +347,7 @@ func findFirstCreateAction(client *k8sfakeclient.Clientset) *k8stesting.CreateAc
 	return createAction
 }
 
-func requireBackupUpdated(t *testing.T, client *fake.Clientset, expectedBackupState string) {
+func requireBackupUpdated(t *testing.T, client *fake.Clientset, expectedConditionType string, expectedConditionMessage string) {
 	var updateAction *k8stesting.UpdateActionImpl
 	for _, action := range client.Fake.Actions() {
 		if a, ok := action.(k8stesting.UpdateActionImpl); ok && a.Subresource == "" {
@@ -347,9 +372,9 @@ func requireBackupUpdated(t *testing.T, client *fake.Clientset, expectedBackupSt
 	b = updateStatusAction.Object.(*operatorv1alpha1.EtcdBackup)
 	require.Equal(t, []v1.Condition{
 		{
-			Type:    "BackupCompleted",
-			Reason:  "BackupCompleted",
-			Message: fmt.Sprintf("%s", expectedBackupState),
+			Type:    expectedConditionType,
+			Reason:  expectedConditionType,
+			Message: expectedConditionMessage,
 			Status:  v1.ConditionTrue,
 		},
 	}, removeTransitionTime(b.Status.Conditions))
