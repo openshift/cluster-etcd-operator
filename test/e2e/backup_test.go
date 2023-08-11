@@ -174,6 +174,48 @@ func TestRetentionBySize(t *testing.T) {
 	}
 }
 
+func TestMultipleBackupsAreSkipped(t *testing.T) {
+	pvcName := "multi-backups"
+	ensureHostPathPVC(t, pvcName)
+	c := framework.NewOperatorClient(t)
+
+	backupCrd := operatorv1alpha1.EtcdBackup{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: OpenShiftEtcdNamespace,
+		},
+		Spec: operatorv1alpha1.EtcdBackupSpec{
+			PVCName: pvcName,
+		},
+	}
+
+	for i := 0; i < 5; i++ {
+		backupCrd.Name = fmt.Sprintf("multi-backup-%d", i)
+		_, err := c.OperatorV1alpha1().EtcdBackups().Create(context.Background(), &backupCrd, metav1.CreateOptions{})
+		require.NoError(t, err)
+	}
+
+	// this is highly reliant on the sync interval of the backup controller, we expect at least one of the five to have condition "skipped"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	err := wait.PollUntilContextCancel(ctx, 5*time.Second, true,
+		func(ctx context.Context) (done bool, err error) {
+			list, err := c.OperatorV1alpha1().EtcdBackups().List(context.Background(), metav1.ListOptions{})
+			if err != nil {
+				klog.Infof("error while listing backup: %v", err)
+				return false, nil
+			}
+
+			for _, b := range list.Items {
+				if backupHasCondition(&b, operatorv1alpha1.BackupSkipped, metav1.ConditionTrue) {
+					return true, nil
+				}
+			}
+
+			return false, nil
+		})
+	require.NoError(t, err)
+}
+
 // pushRandomConfigMaps pushes about 125mb of random configmaps into the etcd cluster
 func pushRandomConfigMaps(t *testing.T) {
 	coreClient := framework.NewCoreClient(t)
