@@ -216,6 +216,39 @@ func TestMultipleBackupsAreSkipped(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestBackupFailureOnMissingPVC(t *testing.T) {
+	backupCrd := operatorv1alpha1.EtcdBackup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "failing-backup-missing-pvc",
+			Namespace: OpenShiftEtcdNamespace,
+		},
+		Spec: operatorv1alpha1.EtcdBackupSpec{
+			PVCName: "something that does not exist",
+		},
+	}
+
+	c := framework.NewOperatorClient(t)
+	_, err := c.OperatorV1alpha1().EtcdBackups().Create(context.Background(), &backupCrd, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	err = wait.PollUntilContextCancel(ctx, 5*time.Second, true,
+		func(ctx context.Context) (done bool, err error) {
+			b, err := c.OperatorV1alpha1().EtcdBackups().Get(ctx, backupCrd.Name, metav1.GetOptions{})
+			if err != nil {
+				klog.Infof("error while getting backup: %v", err)
+				return false, nil
+			}
+
+			klog.Infof("current backup job: %v", b.Status.BackupJob)
+			klog.Infof("current backup conditions: %v", b.Status.Conditions)
+
+			return backupHasCondition(b, operatorv1alpha1.BackupFailed, metav1.ConditionTrue), nil
+		})
+	require.NoError(t, err)
+}
+
 // pushRandomConfigMaps pushes about 125mb of random configmaps into the etcd cluster
 func pushRandomConfigMaps(t *testing.T) {
 	coreClient := framework.NewCoreClient(t)
