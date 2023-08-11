@@ -293,6 +293,91 @@ func pushRandomConfigMaps(t *testing.T) {
 	t.Logf("done pushng %d configmaps at 1mb!", kn*n)
 }
 
+func TestWrongScheduleDegradesOperator(t *testing.T) {
+	operatorClient := framework.NewOperatorClient(t)
+	configClient := framework.NewConfigClient(t)
+
+	backupCrd := configv1alpha1.Backup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "periodic-backup-wrong-schedule",
+			Namespace: OpenShiftEtcdNamespace,
+		},
+		Spec: configv1alpha1.BackupSpec{
+			EtcdBackupSpec: configv1alpha1.EtcdBackupSpec{
+				Schedule: "*/5 */0 * * *",
+				TimeZone: "UTC",
+				RetentionPolicy: configv1alpha1.RetentionPolicy{
+					RetentionType:   configv1alpha1.RetentionTypeNumber,
+					RetentionNumber: &configv1alpha1.RetentionNumberConfig{MaxNumberOfBackups: 5},
+				},
+				PVCName: "not-existing-pvc",
+			},
+		},
+	}
+
+	_, err := configClient.Backups().Create(context.Background(), &backupCrd, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_ = configClient.Backups().Delete(context.Background(), backupCrd.Name, metav1.DeleteOptions{})
+
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	err = wait.PollUntilContextCancel(ctx, 10*time.Second, false,
+		func(ctx context.Context) (done bool, err error) {
+			operatorStatus, err := operatorClient.OperatorV1().Etcds().Get(ctx, "cluster", metav1.GetOptions{})
+			if err != nil {
+				klog.Infof("error while getting operator status: %v", err)
+				return false, nil
+			}
+
+			klog.Infof("current conditions: %v", operatorStatus.Status.Conditions)
+
+			for _, condition := range operatorStatus.Status.Conditions {
+				if condition.Type == "PeriodicBackupControllerDegraded" &&
+					condition.Reason == "Error" &&
+					string(condition.Status) == string(metav1.ConditionTrue) &&
+					strings.Contains(condition.Message,
+						"CronJob.batch \"periodic-backup-wrong-schedule\" is invalid: spec.schedule:") {
+					return true, nil
+				}
+			}
+
+			return false, nil
+		})
+	require.NoError(t, err, "expected operator to degrade")
+
+	// deleting the offending backup should recover the operator condition again
+	err = configClient.Backups().Delete(context.Background(), backupCrd.Name, metav1.DeleteOptions{})
+	require.NoError(t, err)
+
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	err = wait.PollUntilContextCancel(ctx, 10*time.Second, false,
+		func(ctx context.Context) (done bool, err error) {
+			operatorStatus, err := operatorClient.OperatorV1().Etcds().Get(ctx, "cluster", metav1.GetOptions{})
+			if err != nil {
+				klog.Infof("error while getting operator status: %v", err)
+				return false, nil
+			}
+
+			klog.Infof("current conditions: %v", operatorStatus.Status.Conditions)
+
+			for _, condition := range operatorStatus.Status.Conditions {
+				if condition.Type == "PeriodicBackupControllerDegraded" &&
+					condition.Reason == "AsExpected" &&
+					string(condition.Status) == string(metav1.ConditionFalse) {
+					return true, nil
+				}
+			}
+
+			return false, nil
+		})
+	require.NoError(t, err, "expected operator to recover after degrade")
+}
+
 func awaitBackupInvocations(t *testing.T, backupCrd configv1alpha1.Backup) {
 	batchClient := framework.NewBatchClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
