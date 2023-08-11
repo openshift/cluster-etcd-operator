@@ -1,4 +1,4 @@
-package profilehelpers
+package hwspeedhelpers
 
 import (
 	"fmt"
@@ -6,14 +6,14 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 )
 
-func ProfileToEnvMap(profile operatorv1.ControlPlaneHardwareSpeed) (envs map[string]string, err error) {
-	switch profile {
+func HardwareSpeedToEnvMap(speed operatorv1.ControlPlaneHardwareSpeed) (envs map[string]string, err error) {
+	switch speed {
 	case operatorv1.StandardHardwareSpeed:
 		envs = StandardHardwareSpeed()
 	case operatorv1.SlowerHardwareSpeed:
 		envs = SlowerHardwareSpeed()
 	default:
-		return nil, fmt.Errorf("invalid etcd tuning profile %v", profile)
+		return nil, fmt.Errorf("invalid hardware speed value for etcd %v", speed)
 	}
 	return envs, nil
 }

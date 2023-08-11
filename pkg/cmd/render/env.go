@@ -5,16 +5,15 @@ import (
 	"strings"
 
 	configv1 "github.com/openshift/api/config/v1"
-	v1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
-	"github.com/openshift/cluster-etcd-operator/pkg/profilehelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/hwspeedhelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 	"github.com/openshift/library-go/pkg/crypto"
 )
 
 var envVarFns = []envVarFunc{
 	getFixedEtcdEnvVars,
-	getTuningProfileValues,
+	getHardwareSpeedValues,
 	getUnsupportedArch,
 	getEtcdName,
 	getTLSCipherSuites,
@@ -69,9 +68,18 @@ func getEtcdName(e *envVarData) (map[string]string, error) {
 	}, nil
 }
 
-func getTuningProfileValues(e *envVarData) (map[string]string, error) {
-	// TODO (alray) Can the profile be set before the bootstrap is created?
-	return profilehelpers.ProfileToEnvMap(v1.StandardHardwareSpeed)
+func getHardwareSpeedValues(e *envVarData) (map[string]string, error) {
+	envs := hwspeedhelpers.StandardHardwareSpeed()
+	switch configv1.PlatformType(e.platform) {
+	case configv1.AzurePlatformType:
+		envs = hwspeedhelpers.SlowerHardwareSpeed()
+	case configv1.IBMCloudPlatformType:
+		switch configv1.IBMCloudProviderType(e.platformData) {
+		case configv1.IBMCloudProviderTypeVPC:
+			envs = hwspeedhelpers.SlowerHardwareSpeed()
+		}
+	}
+	return envs, nil
 }
 
 func getUnsupportedArch(e *envVarData) (map[string]string, error) {

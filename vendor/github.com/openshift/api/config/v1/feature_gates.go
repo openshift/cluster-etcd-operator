@@ -143,16 +143,6 @@ var (
 		OwningProduct:       ocpSpecific,
 	}
 
-	FeatureGatePDBUnhealthyPodEvictionPolicy = FeatureGateName("PDBUnhealthyPodEvictionPolicy")
-	pdbUnhealthyPodEvictionPolicy            = FeatureGateDescription{
-		FeatureGateAttributes: FeatureGateAttributes{
-			Name: FeatureGatePDBUnhealthyPodEvictionPolicy,
-		},
-		OwningJiraComponent: "apps",
-		ResponsiblePerson:   "atiratree",
-		OwningProduct:       kubernetes,
-	}
-
 	FeatureGateDynamicResourceAllocation = FeatureGateName("DynamicResourceAllocation")
 	dynamicResourceAllocation            = FeatureGateDescription{
 		FeatureGateAttributes: FeatureGateAttributes{
@@ -177,16 +167,6 @@ var (
 	azureWorkloadIdentity            = FeatureGateDescription{
 		FeatureGateAttributes: FeatureGateAttributes{
 			Name: FeatureGateAzureWorkloadIdentity,
-		},
-		OwningJiraComponent: "cloud-credential-operator",
-		ResponsiblePerson:   "abutcher",
-		OwningProduct:       ocpSpecific,
-	}
-
-	FeatureGateAWSSecurityTokenService = FeatureGateName("AWSSecurityTokenService")
-	awsSecurityTokenService            = FeatureGateDescription{
-		FeatureGateAttributes: FeatureGateAttributes{
-			Name: FeatureGateAWSSecurityTokenService,
 		},
 		OwningJiraComponent: "cloud-credential-operator",
 		ResponsiblePerson:   "abutcher",

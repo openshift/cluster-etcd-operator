@@ -12,14 +12,15 @@ import (
 	v1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 
 	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/hwspeedhelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/profilehelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 )
 
@@ -33,6 +34,7 @@ type envVarContext struct {
 	configmapLister      corev1listers.ConfigMapLister
 	targetImagePullSpec  string
 	etcdLister           operatorv1listers.EtcdLister
+	featureGateAccessor  featuregates.FeatureGateAccess
 }
 
 var FixedEtcdEnvVars = map[string]string{
@@ -66,7 +68,7 @@ var envVarFns = []envVarFunc{
 	getEtcdName,
 	getAllEtcdEndpoints,
 	getEtcdctlEnvVars,
-	getTuningProfileValues,
+	getHardwareSpeedValues,
 	getUnsupportedArch,
 	getCipherSuites,
 	getMaxLearners,
@@ -207,7 +209,7 @@ func getEtcdURLHost(envVarContext envVarContext) (map[string]string, error) {
 	return ret, nil
 }
 
-func getTuningProfileValues(envVarContext envVarContext) (map[string]string, error) {
+func getHardwareSpeedValues(envVarContext envVarContext) (map[string]string, error) {
 	etcd, err := envVarContext.etcdLister.Get("cluster")
 	if err != nil {
 		return nil, err
@@ -218,7 +220,7 @@ func getTuningProfileValues(envVarContext envVarContext) (map[string]string, err
 	// If the speed from the api is empty, then the CEO gets to decide what to set the values to.
 	//	Allows for upgrades from before this api field was added.
 	if speed == "" {
-		envs := profilehelpers.StandardHardwareSpeed()
+		envs := hwspeedhelpers.StandardHardwareSpeed()
 		infrastructure, err := envVarContext.infrastructureLister.Get("cluster")
 		if err != nil {
 			return nil, err
@@ -226,17 +228,17 @@ func getTuningProfileValues(envVarContext envVarContext) (map[string]string, err
 		if status := infrastructure.Status.PlatformStatus; status != nil {
 			switch {
 			case status.Azure != nil:
-				envs = profilehelpers.SlowerHardwareSpeed()
+				envs = hwspeedhelpers.SlowerHardwareSpeed()
 			case status.IBMCloud != nil:
 				if infrastructure.Status.PlatformStatus.IBMCloud.ProviderType == v1.IBMCloudProviderTypeVPC {
-					envs = profilehelpers.SlowerHardwareSpeed()
+					envs = hwspeedhelpers.SlowerHardwareSpeed()
 				}
 			}
 		}
 		return envs, err
 	}
 
-	return profilehelpers.ProfileToEnvMap(speed)
+	return hwspeedhelpers.HardwareSpeedToEnvMap(speed)
 }
 
 func envVarSafe(nodeName string) string {
