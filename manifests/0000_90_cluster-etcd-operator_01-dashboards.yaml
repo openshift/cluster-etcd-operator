@@ -1343,7 +1343,7 @@ data:
 
          ],
          "timeShift": null,
-         "title": "Panel Title",
+         "title": "Disk fsync distributions",
          "tooltip": {
           "shared": true,
           "sort": 0,
