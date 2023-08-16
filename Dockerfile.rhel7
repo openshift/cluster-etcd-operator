@@ -17,4 +17,7 @@ COPY vendor/github.com/openshift/api/operator/v1/0000_12_etcd-operator_01_config
 COPY vendor/github.com/openshift/api/operator/v1alpha1/0000_10_01_etcdbackup-TechPreviewNoUpgrade.crd.yaml /manifests
 COPY vendor/github.com/openshift/api/config/v1alpha1/0000_10_config-operator_01_backup-TechPreviewNoUpgrade.crd.yaml /manifests
 
+# Hardware Speed related CRDs
+COPY vendor/github.com/openshift/api/operator/v1/0000_12_etcd-operator_01_config-TechPreviewNoUpgrade.crd.yaml /manifests
+
 LABEL io.openshift.release.operator true
