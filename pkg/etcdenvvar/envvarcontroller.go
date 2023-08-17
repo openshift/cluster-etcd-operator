@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -19,6 +19,10 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
+
+	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
+	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
@@ -30,7 +34,8 @@ type EnvVar interface {
 }
 
 type EnvVarController struct {
-	operatorClient v1helpers.StaticPodOperatorClient
+	operatorClient       v1helpers.StaticPodOperatorClient
+	operatorConfigClient *operatorversionedclient.Clientset
 
 	envVarMapLock       sync.Mutex
 	envVarMap           map[string]string
@@ -41,6 +46,7 @@ type EnvVarController struct {
 	networkLister        configv1listers.NetworkLister
 	configmapLister      corev1listers.ConfigMapLister
 	nodeLister           corev1listers.NodeLister
+	etcdLister           operatorv1listers.EtcdLister
 
 	// queue only ever has one item, but it has nice error handling backoff/retry semantics
 	queue         workqueue.RateLimitingInterface
@@ -59,6 +65,7 @@ func NewEnvVarController(
 	infrastructureInformer configv1informers.InfrastructureInformer,
 	networkInformer configv1informers.NetworkInformer,
 	eventRecorder events.Recorder,
+	etcdsInformer operatorv1informers.EtcdInformer,
 ) *EnvVarController {
 	c := &EnvVarController{
 		operatorClient:       operatorClient,
@@ -67,6 +74,7 @@ func NewEnvVarController(
 		configmapLister:      kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister(),
 		nodeLister:           kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
 		targetImagePullSpec:  targetImagePullSpec,
+		etcdLister:           etcdsInformer.Lister(),
 
 		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "EnvVarController"),
 		cachesToSync: []cache.InformerSynced{
@@ -75,6 +83,7 @@ func NewEnvVarController(
 			networkInformer.Informer().HasSynced,
 			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().HasSynced,
 			kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
+			etcdsInformer.Informer().HasSynced,
 		},
 		eventRecorder: eventRecorder.WithComponentSuffix("env-var-controller"),
 	}
@@ -83,6 +92,7 @@ func NewEnvVarController(
 	infrastructureInformer.Informer().AddEventHandler(c.eventHandler())
 	networkInformer.Informer().AddEventHandler(c.eventHandler())
 	kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().AddEventHandler(c.eventHandler())
+	etcdsInformer.Informer().AddEventHandler(c.eventHandler())
 
 	// TODO only trigger on master nodes
 	kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().AddEventHandler(c.eventHandler())
@@ -143,6 +153,7 @@ func (c *EnvVarController) checkEnvVars() error {
 		nodeLister:           c.nodeLister,
 		infrastructureLister: c.infrastructureLister,
 		networkLister:        c.networkLister,
+		etcdLister:           c.etcdLister,
 	})
 	if err != nil {
 		return err

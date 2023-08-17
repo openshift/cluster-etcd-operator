@@ -6,14 +6,14 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
+	"github.com/openshift/cluster-etcd-operator/pkg/hwspeedhelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 	"github.com/openshift/library-go/pkg/crypto"
 )
 
 var envVarFns = []envVarFunc{
 	getFixedEtcdEnvVars,
-	getHeartbeatInterval,
-	getElectionTimeout,
+	getHardwareSpeedValues,
 	getUnsupportedArch,
 	getEtcdName,
 	getTLSCipherSuites,
@@ -68,41 +68,18 @@ func getEtcdName(e *envVarData) (map[string]string, error) {
 	}, nil
 }
 
-func getHeartbeatInterval(e *envVarData) (map[string]string, error) {
-	heartbeat := "100"
-
+func getHardwareSpeedValues(e *envVarData) (map[string]string, error) {
+	envs := hwspeedhelpers.StandardHardwareSpeed()
 	switch configv1.PlatformType(e.platform) {
 	case configv1.AzurePlatformType:
-		heartbeat = "500"
+		envs = hwspeedhelpers.SlowerHardwareSpeed()
 	case configv1.IBMCloudPlatformType:
 		switch configv1.IBMCloudProviderType(e.platformData) {
 		case configv1.IBMCloudProviderTypeVPC:
-			heartbeat = "500"
+			envs = hwspeedhelpers.SlowerHardwareSpeed()
 		}
 	}
-
-	return map[string]string{
-		"ETCD_HEARTBEAT_INTERVAL": heartbeat,
-	}, nil
-}
-
-func getElectionTimeout(e *envVarData) (map[string]string, error) {
-	timeout := "1000"
-
-	switch configv1.PlatformType(e.platform) {
-	case configv1.AzurePlatformType:
-		timeout = "2500"
-	case configv1.IBMCloudPlatformType:
-		switch configv1.IBMCloudProviderType(e.platformData) {
-		case configv1.IBMCloudProviderTypeVPC:
-			timeout = "2500"
-		}
-	}
-
-	return map[string]string{
-		"ETCD_ELECTION_TIMEOUT": timeout,
-	}, nil
-
+	return envs, nil
 }
 
 func getUnsupportedArch(e *envVarData) (map[string]string, error) {

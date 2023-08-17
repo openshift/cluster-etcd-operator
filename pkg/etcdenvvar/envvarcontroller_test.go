@@ -21,6 +21,8 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+
+	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
 )
 
 var defaultEnvResult = map[string]string{
@@ -152,6 +154,14 @@ func TestEnvVarController(t *testing.T) {
 				require.NoError(t, indexer.Add(obj))
 			}
 
+			etcdIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+			require.NoError(t, etcdIndexer.Add(&operatorv1.Etcd{
+				TypeMeta: metav1.TypeMeta{},
+				ObjectMeta: metav1.ObjectMeta{
+					Name: ceohelpers.InfrastructureClusterName,
+				},
+			}))
+
 			controller := EnvVarController{
 				operatorClient:       fakeOperatorClient,
 				eventRecorder:        eventRecorder,
@@ -159,6 +169,7 @@ func TestEnvVarController(t *testing.T) {
 				infrastructureLister: configv1listers.NewInfrastructureLister(indexer),
 				nodeLister:           corev1listers.NewNodeLister(indexer),
 				networkLister:        configv1listers.NewNetworkLister(networkIndexer),
+				etcdLister:           operatorv1listers.NewEtcdLister(etcdIndexer),
 			}
 
 			err = controller.sync(context.TODO())
