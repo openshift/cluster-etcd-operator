@@ -80,7 +80,9 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 		return fmt.Errorf("PeriodicBackupController could not list backup CRDs, error was: %w", err)
 	}
 
+	klog.Infof("@Mustafa-PeriodicBackupController-sync(): all currentBackups are '%v'\n", backups)
 	for _, item := range backups.Items {
+		klog.Infof("@Mustafa-PeriodicBackupController-sync(): backup item in process '%v'\n", item)
 		err := reconcileCronJob(ctx, cronJobsClient, item, c.operatorImagePullSpec)
 		if err != nil {
 			_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
@@ -124,6 +126,8 @@ func reconcileCronJob(ctx context.Context,
 		}
 	}
 
+	klog.Infof("@Mustafa-PeriodicBackupController-reconcileCronJob(): backup item in process '%v'\n", backup)
+	klog.Infof("@Mustafa-PeriodicBackupController-reconcileCronJob(): currentCronJob '%v'\n", currentCronJob)
 	cronJob, err := newCronJob()
 	if err != nil {
 		return err
@@ -182,6 +186,7 @@ func reconcileCronJob(ctx context.Context,
 		}
 	} else {
 		if cronSpecDiffers(cronJob.Spec, currentCronJob.Spec) {
+			klog.Infof("@Mustafa-PeriodicBackupController-reconcileCronJob(): spec diff found :: currentSpec='%v' ::but:: newSpec='%v'\n", currentCronJob.Spec, cronJob.Spec)
 			klog.V(4).Infof("detected diff in cronjob specs, updating cronjob: %s", cronJob.Name)
 			_, err := cronJobClient.Update(ctx, cronJob, v1.UpdateOptions{})
 			if err != nil {
@@ -194,6 +199,8 @@ func reconcileCronJob(ctx context.Context,
 }
 
 func setRetentionPolicyInitContainer(retentionPolicy backupv1alpha1.RetentionPolicy, cronJob *batchv1.CronJob, operatorImagePullSpec string) error {
+	klog.Infof("@Mustafa-PeriodicBackupController-setRetentionPolicyInitContainer(): backupSpecRetention='%v'\n", retentionPolicy)
+	klog.Infof("@Mustafa-PeriodicBackupController-setRetentionPolicyInitContainer(): cronJob before updating retention is ='%v'\n", cronJob)
 	retentionType := retentionPolicy.RetentionType
 	if retentionPolicy.RetentionType == "" {
 		retentionType = backupv1alpha1.RetentionTypeNumber
@@ -225,6 +232,7 @@ func setRetentionPolicyInitContainer(retentionPolicy backupv1alpha1.RetentionPol
 
 	cronJob.Spec.JobTemplate.Spec.Template.Spec.InitContainers[0].Image = operatorImagePullSpec
 	cronJob.Spec.JobTemplate.Spec.Template.Spec.InitContainers[0].Args = retentionInitArgs
+	klog.Infof("@Mustafa-PeriodicBackupController-setRetentionPolicyInitContainer(): cronJob after updating retention is ='%v'\n", cronJob)
 	return nil
 }
 

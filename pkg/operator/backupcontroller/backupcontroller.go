@@ -89,17 +89,20 @@ func (c *BackupController) sync(ctx context.Context, _ factory.SyncContext) erro
 	if err != nil {
 		return fmt.Errorf("BackupController could not list backup jobs, error was: %w", err)
 	}
-
+	klog.Infof("@Mustafa-BackupController-sync(): all currentJobs are '%v'\n", currentJobs)
 	// we only allow to run one at a time, if there's currently a job running then we will skip it in this reconciliation step
 	runningJobs := findRunningJobs(currentJobs)
+	klog.Infof("@Mustafa-BackupController-sync(): all runningJobs are '%v'\n", runningJobs)
 	if len(runningJobs) > 0 {
 		klog.V(4).Infof("BackupController already found [%d] running jobs, skipping", len(runningJobs))
 		return nil
 	}
 
 	jobIndexed := indexJobsByBackupLabelName(currentJobs)
+	klog.Infof("@Mustafa-BackupController-sync(): all jobIndexed are '%v'\n", jobIndexed)
 	backupsClient := c.backupsClient.EtcdBackups()
 	backups, err := backupsClient.List(ctx, v1.ListOptions{LabelSelector: "state!=processed"})
+	klog.Infof("@Mustafa-BackupController-sync(): all backup state!=processed are '%v'\n", backups)
 	if err != nil {
 		return fmt.Errorf("BackupController could not list etcdbackups CRDs, error was: %w", err)
 	}
@@ -110,6 +113,7 @@ func (c *BackupController) sync(ctx context.Context, _ factory.SyncContext) erro
 
 	var backupsToRun []operatorv1alpha1.EtcdBackup
 	for _, item := range backups.Items {
+		klog.Infof("@Mustafa-BackupController-sync(): backup with state!=processed in process is '%v'\n", item)
 		if backupJob, ok := jobIndexed[item.Name]; ok {
 			klog.V(4).Infof("BackupController backup job with name [%s] found, reconciling status", backupJob.Name)
 			err := reconcileJobStatus(ctx, jobsClient, backupsClient, backupJob, item)
@@ -122,9 +126,11 @@ func (c *BackupController) sync(ctx context.Context, _ factory.SyncContext) erro
 		}
 
 		backupsToRun = append(backupsToRun, *item.DeepCopy())
+		klog.Infof("@Mustafa-BackupController-sync(): backupsToRun are  '%v'\n", backupsToRun)
 	}
 
 	if len(jobIndexed) > 0 {
+		klog.Infof("@Mustafa-BackupController-sync(): jobIndexed > 0 are   '%v'\n", jobIndexed)
 		klog.V(4).Infof("BackupController found dangling jobs without corresponding backup, removing")
 		for _, job := range jobIndexed {
 			err := jobsClient.Delete(ctx, job.Name, v1.DeleteOptions{})
@@ -145,6 +151,7 @@ func (c *BackupController) sync(ctx context.Context, _ factory.SyncContext) erro
 	})
 
 	klog.V(4).Infof("BackupController backupsToRun: %v, chooses %v", backupsToRun, backupsToRun[0])
+	klog.Infof("@Mustafa-BackupController-sync(): backupToRun is '%v'\n", backupsToRun[0])
 	valid, err := validateBackup(ctx, backupsToRun[0], c.kubeClient, backupsClient)
 	if err != nil {
 		return err
@@ -155,18 +162,19 @@ func (c *BackupController) sync(ctx context.Context, _ factory.SyncContext) erro
 		return nil
 	}
 
+	klog.Infof("@Mustafa-BackupController-sync(): backupToRun '%v' is  validity '%v'\n", backupsToRun[0], valid)
 	err = createBackupJob(ctx, backupsToRun[0], c.targetImagePullSpec, c.operatorImagePullSpec, jobsClient, backupsClient)
 	if err != nil {
 		return err
 	}
-
+	klog.Infof("@Mustafa-BackupController-sync(): backupToSkip are '%v'\n", backupsToRun[1:])
 	if len(backupsToRun) > 1 {
 		for _, backup := range backupsToRun[1:] {
 			err := markBackupSkipped(ctx, backupsClient, backup)
 			if err != nil {
 				return err
 			}
-			klog.V(4).Infof("BackupController marked as skipped: %v", backup)
+			klog.Infof("@Mustafa- BackupController marked as skipped: %v", backup)
 		}
 	}
 
