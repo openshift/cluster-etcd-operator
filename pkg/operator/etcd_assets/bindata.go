@@ -177,6 +177,9 @@ spec:
               terminationMessagePolicy: FallbackToLogsOnError
               command: [ "cluster-etcd-operator" ]
               args: [ "templated" ]
+              volumeMounts:
+                - mountPath: /etc/kubernetes/cluster-backup
+                  name: etc-kubernetes-cluster-backup
               env:
                 - name: MY_POD_NAME
                   valueFrom:
@@ -195,9 +198,6 @@ spec:
                 privileged: true
               command: [ "cluster-etcd-operator" ]
               args: [ "templated" ]
-              volumeMounts:
-                - mountPath: /etc/kubernetes/cluster-backup
-                  name: etc-kubernetes-cluster-backup
           serviceAccountName: etcd-backup-sa
           nodeSelector:
             node-role.kubernetes.io/master: ""
