@@ -175,6 +175,8 @@ spec:
             - name: cluster-backup
               imagePullPolicy: IfNotPresent
               terminationMessagePolicy: FallbackToLogsOnError
+              securityContext:
+                privileged: true
               command: [ "cluster-etcd-operator" ]
               args: [ "templated" ]
               volumeMounts:
