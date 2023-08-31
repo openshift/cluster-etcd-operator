@@ -161,16 +161,16 @@ func reconcileCronJob(ctx context.Context,
 		return err
 	}
 
-	if len(cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers) == 0 {
-		cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers = append(cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers, corev1.Container{})
+	if len(cronJob.Spec.JobTemplate.Spec.Template.Spec.InitContainers) == 0 {
+		cronJob.Spec.JobTemplate.Spec.Template.Spec.InitContainers = append(cronJob.Spec.JobTemplate.Spec.Template.Spec.InitContainers, corev1.Container{})
 	}
 
-	cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Image = operatorImagePullSpec
+	cronJob.Spec.JobTemplate.Spec.Template.Spec.InitContainers[0].Image = operatorImagePullSpec
 	// The "etcd-operator request-backup" cmd is passed the pvcName arg it can set that on the EtcdBackup CustomResource spec.
 	// The name of the CR will need to be unique for each scheduled run of the CronJob, so the name is
 	// set at runtime as the pod via the MY_POD_NAME populated via the downward API.
 	// See the CronJob template manifest for reference.
-	cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Args = []string{
+	cronJob.Spec.JobTemplate.Spec.Template.Spec.InitContainers[0].Args = []string{
 		"request-backup",
 		"--pvc-name=" + backup.Spec.EtcdBackupSpec.PVCName,
 	}
@@ -223,8 +223,8 @@ func setRetentionPolicyInitContainer(retentionPolicy backupv1alpha1.RetentionPol
 		return fmt.Errorf("unknown retention type: %s", retentionPolicy.RetentionType)
 	}
 
-	cronJob.Spec.JobTemplate.Spec.Template.Spec.InitContainers[0].Image = operatorImagePullSpec
-	cronJob.Spec.JobTemplate.Spec.Template.Spec.InitContainers[0].Args = retentionInitArgs
+	cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Image = operatorImagePullSpec
+	cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Args = retentionInitArgs
 	return nil
 }
 
