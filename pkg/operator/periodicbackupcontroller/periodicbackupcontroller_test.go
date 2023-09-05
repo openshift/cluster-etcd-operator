@@ -160,9 +160,9 @@ func TestBackupRetentionCommand(t *testing.T) {
 		t.Run(k, func(t *testing.T) {
 			c, _ := newCronJob()
 			require.NoError(t, setRetentionPolicyInitContainer(v.policy, c, "image"))
-			require.Equal(t, "image", c.Spec.JobTemplate.Spec.Template.Spec.InitContainers[0].Image)
-			require.Equal(t, []string{"cluster-etcd-operator"}, c.Spec.JobTemplate.Spec.Template.Spec.InitContainers[0].Command)
-			require.Equal(t, v.expectedArgs, c.Spec.JobTemplate.Spec.Template.Spec.InitContainers[0].Args)
+			require.Equal(t, "image", c.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Image)
+			require.Equal(t, []string{"cluster-etcd-operator"}, c.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Command)
+			require.Equal(t, v.expectedArgs, c.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Args)
 		})
 	}
 }
@@ -210,8 +210,8 @@ func requireBackupCronJobCreated(t *testing.T, client *k8sfakeclient.Clientset, 
 	require.Equal(t, 1, len(createdCronJob.OwnerReferences))
 	require.Equal(t, v1.OwnerReference{Name: backup.Name}, createdCronJob.OwnerReferences[0])
 	require.Equal(t, "pullspec-image", createdCronJob.Spec.JobTemplate.Spec.Template.Spec.InitContainers[0].Image)
-	require.Contains(t, createdCronJob.Spec.JobTemplate.Spec.Template.Spec.InitContainers[0].Args, "prune-backups")
-	require.Contains(t, createdCronJob.Spec.JobTemplate.Spec.Template.Spec.InitContainers[0].Args, fmt.Sprintf("--type=%s", backup.Spec.EtcdBackupSpec.RetentionPolicy.RetentionType))
+	require.Contains(t, createdCronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Args, "prune-backups")
+	require.Contains(t, createdCronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Args, fmt.Sprintf("--type=%s", backup.Spec.EtcdBackupSpec.RetentionPolicy.RetentionType))
 }
 
 func requireBackupCronJobUpdated(t *testing.T, client *k8sfakeclient.Clientset, backup backupv1alpha1.Backup) {
