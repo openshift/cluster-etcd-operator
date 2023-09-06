@@ -163,8 +163,9 @@ func TestRetentionBySize(t *testing.T) {
 	// this is the state after five job invocations
 	foundFiles := collectFilesInPVCAcrossAllNodes(t, pvcName)
 	grouped := groupBackupFilesByRunPrefix(t, foundFiles)
-	// we expect either 4 backups, depending on whether there's currently an invocation ongoing
-	require.Truef(t, len(grouped) == 4, "expected 4 backup groups, but found %d. Groups: %v", len(grouped), grouped)
+	// we expect either 4 or 5 backups, depending on whether there's currently an invocation ongoing
+	require.Truef(t, len(grouped) == 4 || len(grouped) == 5,
+		"expected 4 or 5 backup groups, but found %d. Groups: %v", len(grouped), grouped)
 	// each group individually must be a valid backup
 	// TODO(thomas): this might flake when an ongoing backup is not entirely done yet?
 	for k, v := range grouped {
