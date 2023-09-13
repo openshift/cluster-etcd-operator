@@ -20,6 +20,7 @@ import (
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 
+	apiannotations "github.com/openshift/api/annotations"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
@@ -163,6 +164,9 @@ func (c *EtcdCertSignerController) syncAllMasters(ctx context.Context, recorder 
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: operatorclient.TargetNamespace,
 			Name:      tlshelpers.EtcdAllCertsSecretName,
+			Annotations: map[string]string{
+				apiannotations.OpenShiftComponent: "Etcd",
+			},
 		},
 		Type: corev1.SecretTypeOpaque,
 		Data: certs,
@@ -304,7 +308,8 @@ func newCertSecret(secretName, nodeUID string, cert, key []byte) *corev1.Secret 
 			Name:      secretName,
 			Namespace: operatorclient.TargetNamespace,
 			Annotations: map[string]string{
-				nodeUIDAnnotation: nodeUID,
+				nodeUIDAnnotation:                 nodeUID,
+				apiannotations.OpenShiftComponent: "Etcd",
 			},
 		},
 		Type: corev1.SecretTypeTLS,
