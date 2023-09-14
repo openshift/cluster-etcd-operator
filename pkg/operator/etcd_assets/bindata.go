@@ -762,7 +762,7 @@ fi
 
 # start remaining static pods
 if [ -z "${ETCD_RESTORE_SKIP_MOVE_CP_STATIC_PODS}" ]; then
-  restore_static_pods "${BACKUP_FILE}" "${STATIC_POD_LIST[@]}"
+  restore_static_pods "${BACKUP_FILE}" "${AUX_STATIC_POD_LIST[@]}"
 fi
 `)
 
