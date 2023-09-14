@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"github.com/openshift/cluster-etcd-operator/test/e2e/framework"
 	"github.com/stretchr/testify/require"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"os/exec"
 	"strings"
 	"testing"
@@ -15,6 +17,7 @@ import (
 const (
 	masterNodeLabel = "node-role.kubernetes.io/master"
 	backupPath      = "/etc/kubernetes/cluster-backup"
+	debugNamespace  = "default"
 )
 
 func TestBackupScript(t *testing.T) {
@@ -25,11 +28,26 @@ func TestBackupScript(t *testing.T) {
 	// create debug pod on first master node
 	// see https://www.redhat.com/sysadmin/how-oc-debug-works
 	debugNodeName := masterNodes.Items[0].Name
-	go runDebugPod(t, debugNodeName)
-	time.Sleep(500 * time.Millisecond)
-
 	debugPodName := debugNodeName + "-debug"
 	debugPodName = strings.ReplaceAll(debugPodName, ".", "-")
+
+	go runDebugPod(t, debugNodeName)
+
+	// wait for debug pod to be in Running phase
+	wait.PollUntilContextTimeout(context.Background(), time.Second, 5*time.Minute, true, func(ctx context.Context) (done bool, err error) {
+		pods, err := clientSet.Pods(debugNamespace).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return false, err
+		}
+
+		for _, pod := range pods.Items {
+			if pod.Name == debugPodName && pod.Status.Phase == v1.PodRunning {
+				return true, nil
+			}
+		}
+
+		return false, nil
+	})
 
 	// verify no backup exist
 	cmdAsStr := fmt.Sprintf("ls -l /host%s", backupPath)
@@ -59,7 +77,7 @@ func getOcArgs(podName, cmdAsStr string) []string {
 }
 
 func runDebugPod(t *testing.T, debugNodeName string) {
-	debugArgs := strings.Split(fmt.Sprintf("debug node/%s %s %s", debugNodeName, "--as-root=true", "-- sleep 200s"), " ")
+	debugArgs := strings.Split(fmt.Sprintf("debug node/%s %s %s", debugNodeName, "--as-root=true", "-- sleep 7000s"), " ")
 	err := exec.Command("oc", debugArgs...).Run()
 	require.NoError(t, err)
 }
