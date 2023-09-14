@@ -6,8 +6,10 @@ import (
 	"github.com/openshift/cluster-etcd-operator/test/e2e/framework"
 	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/klog/v2"
 	"os/exec"
 	"strings"
 	"testing"
@@ -34,9 +36,13 @@ func TestBackupScript(t *testing.T) {
 	go runDebugPod(t, debugNodeName)
 
 	// wait for debug pod to be in Running phase
-	err = wait.PollUntilContextTimeout(context.Background(), time.Second, 5*time.Minute, true, func(ctx context.Context) (done bool, err error) {
-		pods, err := clientSet.Pods(debugNamespace).List(ctx, metav1.ListOptions{})
+	err = wait.PollUntilContextTimeout(context.Background(), time.Second, 30*time.Minute, true, func(ctx context.Context) (done bool, err error) {
+		pods, err := clientSet.CoreV1Interface.Pods(debugNamespace).List(ctx, metav1.ListOptions{})
 		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return false, nil
+			}
+			klog.Infof("error listing pods within default namespace '%v'\n", err)
 			return false, err
 		}
 
@@ -45,9 +51,10 @@ func TestBackupScript(t *testing.T) {
 				return true, nil
 			}
 		}
-
+		klog.Infof("could not find debug pod within default namespace\n")
 		return false, nil
 	})
+	klog.Infof("polling finished with this error '%v'", err)
 	require.NoErrorf(t, err, err.Error())
 
 	// verify no backup exist
@@ -80,5 +87,5 @@ func getOcArgs(podName, cmdAsStr string) []string {
 func runDebugPod(t *testing.T, debugNodeName string) {
 	debugArgs := strings.Split(fmt.Sprintf("debug node/%s %s %s", debugNodeName, "--as-root=true", "-- sleep 1800s"), " ")
 	output, err := exec.Command("oc", debugArgs...).CombinedOutput()
-	require.NoError(t, err, string(output))
+	require.NoErrorf(t, err, string(output))
 }
