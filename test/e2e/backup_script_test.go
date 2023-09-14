@@ -34,7 +34,7 @@ func TestBackupScript(t *testing.T) {
 	go runDebugPod(t, debugNodeName)
 
 	// wait for debug pod to be in Running phase
-	wait.PollUntilContextTimeout(context.Background(), time.Second, 5*time.Minute, true, func(ctx context.Context) (done bool, err error) {
+	err = wait.PollUntilContextTimeout(context.Background(), time.Second, 5*time.Minute, true, func(ctx context.Context) (done bool, err error) {
 		pods, err := clientSet.Pods(debugNamespace).List(ctx, metav1.ListOptions{})
 		if err != nil {
 			return false, err
@@ -48,6 +48,7 @@ func TestBackupScript(t *testing.T) {
 
 		return false, nil
 	})
+	require.NoErrorf(t, err, err.Error())
 
 	// verify no backup exist
 	cmdAsStr := fmt.Sprintf("ls -l /host%s", backupPath)
@@ -77,7 +78,7 @@ func getOcArgs(podName, cmdAsStr string) []string {
 }
 
 func runDebugPod(t *testing.T, debugNodeName string) {
-	debugArgs := strings.Split(fmt.Sprintf("debug node/%s %s %s", debugNodeName, "--as-root=true", "-- sleep 7000s"), " ")
-	err := exec.Command("oc", debugArgs...).Run()
-	require.NoError(t, err)
+	debugArgs := strings.Split(fmt.Sprintf("debug node/%s %s %s", debugNodeName, "--as-root=true", "-- sleep 1800s"), " ")
+	output, err := exec.Command("oc", debugArgs...).CombinedOutput()
+	require.NoError(t, err, string(output))
 }
