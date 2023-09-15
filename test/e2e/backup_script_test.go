@@ -85,7 +85,7 @@ func getOcArgs(podName, cmdAsStr string) []string {
 }
 
 func runDebugPod(t *testing.T, debugNodeName string) {
-	debugArgs := strings.Split(fmt.Sprintf("debug node/%s %s %s", debugNodeName, "--as-root=true", "-- sleep 1800s"), " ")
+	debugArgs := strings.Split(fmt.Sprintf("debug node/%s %s %s %s", debugNodeName, "--to-namespace='default'", "--as-root=true", "-- sleep 1800s"), " ")
 	output, err := exec.Command("oc", debugArgs...).CombinedOutput()
 	require.NoErrorf(t, err, string(output))
 }
