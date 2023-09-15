@@ -1,6 +1,6 @@
 local etcdMixin = (import 'github.com/etcd-io/etcd/contrib/mixin/mixin.libsonnet');
 local openshiftRules = (import 'custom.libsonnet');
-
+ 
 local alertingRules = if std.objectHasAll(etcdMixin, 'prometheusAlerts') then etcdMixin.prometheusAlerts.groups else [];
 local promRules = if std.objectHasAll(etcdMixin, 'prometheusRules') then etcdMixin.prometheusRules.groups else [];
 
