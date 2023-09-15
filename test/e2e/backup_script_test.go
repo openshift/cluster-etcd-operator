@@ -3,17 +3,17 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"os/exec"
+	"strings"
+	"testing"
+	"time"
+
 	"github.com/openshift/cluster-etcd-operator/test/e2e/framework"
 	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/klog/v2"
-	"os/exec"
-	"strings"
-	"testing"
-	"time"
 )
 
 const (
@@ -30,8 +30,7 @@ func TestBackupScript(t *testing.T) {
 	// create debug pod on first master node
 	// see https://www.redhat.com/sysadmin/how-oc-debug-works
 	debugNodeName := masterNodes.Items[0].Name
-	debugPodName := debugNodeName + "-debug"
-	debugPodName = strings.ReplaceAll(debugPodName, ".", "-")
+	var debugPodName string
 
 	go runDebugPod(t, debugNodeName)
 
@@ -42,20 +41,18 @@ func TestBackupScript(t *testing.T) {
 			if apierrors.IsNotFound(err) {
 				return false, nil
 			}
-			klog.Infof("error listing pods within default namespace '%v'\n", err)
 			return false, err
 		}
 
 		for _, pod := range pods.Items {
-			if pod.Name == debugPodName && pod.Status.Phase == v1.PodRunning {
+			if strings.Contains(pod.Name, "debug") && pod.Status.Phase == v1.PodRunning {
+				debugPodName = pod.Name
 				return true, nil
 			}
 		}
-		klog.Infof("could not find debug pod within default namespace\n")
 		return false, nil
 	})
-	klog.Infof("polling finished with this error '%v'", err)
-	require.NoErrorf(t, err, err.Error())
+	require.NoError(t, err)
 
 	// verify no backup exist
 	cmdAsStr := fmt.Sprintf("ls -l /host%s", backupPath)
@@ -85,7 +82,7 @@ func getOcArgs(podName, cmdAsStr string) []string {
 }
 
 func runDebugPod(t *testing.T, debugNodeName string) {
-	debugArgs := strings.Split(fmt.Sprintf("debug node/%s %s %s %s", debugNodeName, "--to-namespace='default'", "--as-root=true", "-- sleep 1800s"), " ")
+	debugArgs := strings.Split(fmt.Sprintf("debug node/%s %s %s %s", debugNodeName, "--to-namespace=default", "--as-root=true", "-- sleep 1800s"), " ")
 	output, err := exec.Command("oc", debugArgs...).CombinedOutput()
 	require.NoErrorf(t, err, string(output))
 }
