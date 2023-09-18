@@ -20,6 +20,7 @@ const (
 	masterNodeLabel = "node-role.kubernetes.io/master"
 	backupPath      = "/etc/kubernetes/cluster-backup"
 	debugNamespace  = "default"
+	backupDirName   = "cluster-backup"
 )
 
 func TestBackupScript(t *testing.T) {
@@ -69,7 +70,7 @@ func TestBackupScript(t *testing.T) {
 	output, err = exec.Command("oc", getOcArgs(debugPodName, cmdAsStr)...).CombinedOutput()
 	require.NoError(t, err)
 	files := strings.Split(string(output), "\n")
-	requireBackupFilesFound(t, "", files)
+	requireBackupFilesFound(t, backupDirName, files)
 
 	// clean up
 	cmdAsStr = fmt.Sprintf("rm -rf /host%s", backupPath)
