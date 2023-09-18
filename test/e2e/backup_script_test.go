@@ -18,9 +18,9 @@ import (
 
 const (
 	masterNodeLabel = "node-role.kubernetes.io/master"
-	backupPath      = "/etc/kubernetes/cluster-backup"
+	backupPath      = "/etc/kubernetes/backup-happy-path-2023-08-03_152313"
 	debugNamespace  = "default"
-	backupDirName   = "cluster-backup"
+	backupName      = "backup-happy-path"
 )
 
 func TestBackupScript(t *testing.T) {
@@ -70,12 +70,14 @@ func TestBackupScript(t *testing.T) {
 	output, err = exec.Command("oc", getOcArgs(debugPodName, cmdAsStr)...).CombinedOutput()
 	require.NoError(t, err)
 	files := strings.Split(string(output), "\n")
-	requireBackupFilesFound(t, backupDirName, files)
+	requireBackupFilesFound(t, "backup-happy-path", trimFilesPrefix(files))
 
-	// clean up
-	cmdAsStr = fmt.Sprintf("rm -rf /host%s", backupPath)
-	output, err = exec.Command("oc", getOcArgs(debugPodName, cmdAsStr)...).CombinedOutput()
-	require.NoError(t, err, fmt.Errorf("cleanup failed: %s", string(output)))
+	t.Cleanup(func() {
+		// clean up
+		cmdAsStr = fmt.Sprintf("rm -rf /host%s", backupPath)
+		output, err = exec.Command("oc", getOcArgs(debugPodName, cmdAsStr)...).CombinedOutput()
+		require.NoError(t, err, fmt.Errorf("cleanup failed: %s", string(output)))
+	})
 }
 
 func getOcArgs(podName, cmdAsStr string) []string {
@@ -86,4 +88,13 @@ func runDebugPod(t *testing.T, debugNodeName string) {
 	debugArgs := strings.Split(fmt.Sprintf("debug node/%s %s %s %s", debugNodeName, "--to-namespace=default", "--as-root=true", "-- sleep 1800s"), " ")
 	output, err := exec.Command("oc", debugArgs...).CombinedOutput()
 	require.NoErrorf(t, err, string(output))
+}
+
+func trimFilesPrefix(files []string) []string {
+	trimmedFiles := make([]string, len(files))
+	for i, f := range files {
+		trimmedFiles[i], _ = strings.CutPrefix(f, "/host/etc/kubernetes/")
+		trimmedFiles[i] = "./backup-" + trimmedFiles[i]
+	}
+	return trimmedFiles
 }
