@@ -3,6 +3,8 @@ kind: ConfigMap
 metadata:
   name: etcd-metric-serving-ca
   namespace: openshift-config
+  annotations:
+    openshift.io/owning-component: Etcd
 data:
   ca-bundle.crt: |
     {{ .EtcdMetricCaBundle | indent 4 }}

@@ -10,7 +10,7 @@ require (
 	github.com/google/uuid v1.3.0
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
 	github.com/mcuadros/go-version v0.0.0-20190830083331-035f6764e8d2
-	github.com/openshift/api v0.0.0-20230816181854-a7ca92db022a
+	github.com/openshift/api v0.0.0-20230919091950-86cd393582c0
 	github.com/openshift/build-machinery-go v0.0.0-20220913142420-e25cf57ea46d
 	github.com/openshift/client-go v0.0.0-20230718103934-90d8d813cf54
 	github.com/openshift/library-go v0.0.0-20230724150037-c515269de16e
@@ -31,9 +31,9 @@ require (
 	google.golang.org/grpc v1.54.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
-	k8s.io/api v0.28.0
+	k8s.io/api v0.28.2
 	k8s.io/apiextensions-apiserver v0.27.4
-	k8s.io/apimachinery v0.28.0
+	k8s.io/apimachinery v0.28.2
 	k8s.io/apiserver v0.28.0
 	k8s.io/client-go v0.28.0
 	k8s.io/component-base v0.28.0

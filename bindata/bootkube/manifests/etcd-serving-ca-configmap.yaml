@@ -3,6 +3,8 @@ kind: ConfigMap
 metadata:
   name: etcd-serving-ca
   namespace: openshift-config
+  annotations:
+    openshift.io/owning-component: Etcd
 data:
   ca-bundle.crt: |
     {{ .EtcdCaBundle | indent 4 }}
