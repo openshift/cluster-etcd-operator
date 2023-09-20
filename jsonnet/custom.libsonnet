@@ -79,6 +79,21 @@
               severity: 'critical',
             },
           },
+          {
+            alert: 'highOverallControlPlaneIOWait',
+            expr: |||
+              (sum(irate(node_cpu_seconds_total {mode="iowait"} [2m])) without (cpu)) / count(node_cpu_seconds_total) without (cpu) * 100 > 20
+              AND on (instance) label_replace( kube_node_role{role="master"}, "instance", "$1", "node", "(.+)" )
+            |||,
+            'for': '5m',
+            labels: {
+              severity: 'warning',
+            },
+            annotations: {
+              description: 'Control-plane nodes are spending more than 20% of CPU time on iowait mode.',
+              summary: 'CPU utilization on master nodes is more than 20% on iowait mode.',
+            },
+          },
         ],
       },
     ],
