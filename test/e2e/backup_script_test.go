@@ -20,7 +20,6 @@ const (
 	masterNodeLabel = "node-role.kubernetes.io/master"
 	backupPath      = "/etc/kubernetes/backup-happy-path-2023-08-03_152313"
 	debugNamespace  = "default"
-	backupName      = "backup-happy-path"
 )
 
 func TestBackupScript(t *testing.T) {
@@ -36,7 +35,9 @@ func TestBackupScript(t *testing.T) {
 	go runDebugPod(t, debugNodeName)
 
 	// wait for debug pod to be in Running phase
-	err = wait.PollUntilContextTimeout(context.Background(), time.Second, 30*time.Minute, true, func(ctx context.Context) (done bool, err error) {
+	pollTimeout, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	err = wait.PollUntilWithContext(pollTimeout, 10*time.Second, func(ctx context.Context) (done bool, err error) {
 		pods, err := clientSet.CoreV1Interface.Pods(debugNamespace).List(ctx, metav1.ListOptions{})
 		if err != nil {
 			if apierrors.IsNotFound(err) {
@@ -93,7 +94,7 @@ func runDebugPod(t *testing.T, debugNodeName string) {
 func trimFilesPrefix(files []string) []string {
 	trimmedFiles := make([]string, len(files))
 	for i, f := range files {
-		trimmedFiles[i], _ = strings.CutPrefix(f, "/host/etc/kubernetes/")
+		trimmedFiles[i], _ = CutPrefix(f, "/host/etc/kubernetes/")
 		trimmedFiles[i] = "./backup-" + trimmedFiles[i]
 	}
 	return trimmedFiles
