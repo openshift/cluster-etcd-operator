@@ -820,7 +820,9 @@ export ETCD_ETCDCTL_BIN="etcdctl"
 
 # download etcdctl from download release image
 function dl_etcdctl {
-  if [ -x "$(command -v etcdctl)" ]; then
+  # Avoid caching the binary when podman exists, the etcd image is always available locally and we need a way to update etcdctl.
+  # When we're running from an etcd image there's no podman and we can continue without a download.
+  if ([ ! -x "$(command -v podman)" ] || [ -x "$(command -v etcdctl)" ]); then
     echo "etcdctl is already installed"
     if [ -x "$(command -v etcdutl)" ]; then
       echo "etcdutl is already installed"
