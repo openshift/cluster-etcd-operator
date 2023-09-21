@@ -2,6 +2,7 @@ package framework
 
 import (
 	"os"
+	"path"
 
 	clientconfigv1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1"
 	clientapiextensionsv1beta1 "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset/typed/apiextensions/v1beta1"
@@ -42,6 +43,10 @@ func NewClientConfigForTest(kubeconfig string) (*rest.Config, error) {
 
 	if kubeconfig == "" {
 		kubeconfig = os.Getenv("KUBECONFIG")
+	}
+
+	if kubeconfig == "" {
+		kubeconfig = path.Join(os.Getenv("HOME"), ".kube", "config")
 	}
 
 	if kubeconfig != "" {
