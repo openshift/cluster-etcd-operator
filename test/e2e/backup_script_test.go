@@ -19,7 +19,7 @@ import (
 const (
 	masterNodeLabel = "node-role.kubernetes.io/master"
 	backupPath      = "/etc/kubernetes/backup-happy-path-2023-08-03_152313"
-	debugNamespace  = "default"
+	debugNamespace  = "openshift-etcd" // using a privileged ns to pass on fips
 )
 
 func TestBackupScript(t *testing.T) {
@@ -82,11 +82,11 @@ func TestBackupScript(t *testing.T) {
 }
 
 func getOcArgs(podName, cmdAsStr string) []string {
-	return strings.Split(fmt.Sprintf("rsh -n default %s %s", podName, cmdAsStr), " ")
+	return strings.Split(fmt.Sprintf("rsh -n %s %s %s", debugNamespace, podName, cmdAsStr), " ")
 }
 
 func runDebugPod(t *testing.T, debugNodeName string) {
-	debugArgs := strings.Split(fmt.Sprintf("debug node/%s %s %s %s", debugNodeName, "--to-namespace=default", "--as-root=true", "-- sleep 1800s"), " ")
+	debugArgs := strings.Split(fmt.Sprintf("debug node/%s %s %s %s", debugNodeName, "--to-namespace="+debugNamespace, "--as-root=true", "-- sleep 1800s"), " ")
 	output, err := exec.Command("oc", debugArgs...).CombinedOutput()
 	require.NoErrorf(t, err, string(output))
 }
