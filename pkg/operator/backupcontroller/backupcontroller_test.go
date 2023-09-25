@@ -273,6 +273,34 @@ func TestNoFeatureGateDisablesController(t *testing.T) {
 	})
 }
 
+func TestOwnerRefsPropagate(t *testing.T) {
+	backup := operatorv1alpha1.EtcdBackup{
+		ObjectMeta: v1.ObjectMeta{
+			Name: "test-backup",
+			OwnerReferences: []v1.OwnerReference{{
+				Name: "some-cronjob-we-inject",
+				UID:  "123",
+			}}},
+		Spec: operatorv1alpha1.EtcdBackupSpec{PVCName: "backup-happy-path-pvc"}}
+	operatorFake := fake.NewSimpleClientset([]runtime.Object{&backup}...)
+	pvc := corev1.PersistentVolumeClaim{
+		ObjectMeta: v1.ObjectMeta{Name: "backup-happy-path-pvc", Namespace: operatorclient.TargetNamespace},
+	}
+	client := k8sfakeclient.NewSimpleClientset([]runtime.Object{&pvc}...)
+
+	controller := BackupController{
+		backupsClient:         operatorFake.OperatorV1alpha1(),
+		kubeClient:            client,
+		targetImagePullSpec:   "target-pullspec-image",
+		operatorImagePullSpec: "operator-pullspec-image",
+		featureGateAccessor:   backupFeatureGateAccessor,
+	}
+
+	err := controller.sync(context.TODO(), nil)
+	require.NoError(t, err)
+	requireBackupJobCreated(t, client, backup)
+}
+
 func requireNoBackupJobCreated(t *testing.T, client *k8sfakeclient.Clientset) {
 	createAction := findFirstCreateAction(client)
 	require.Nilf(t, createAction, "expected to not find one createAction, but found %v", client.Fake.Actions())
@@ -300,8 +328,12 @@ func requireBackupJobCreated(t *testing.T, client *k8sfakeclient.Clientset, back
 	}
 
 	require.Truef(t, foundVolume, "could not find injected PVC volume in %v", createdJob.Spec.Template.Spec.Volumes)
-	require.Equal(t, 1, len(createdJob.OwnerReferences))
+	require.Equal(t, len(backup.OwnerReferences)+1, len(createdJob.OwnerReferences))
 	require.Equal(t, v1.OwnerReference{Name: backup.Name}, createdJob.OwnerReferences[0])
+
+	for i := 0; i < len(backup.OwnerReferences); i++ {
+		require.Equal(t, backup.OwnerReferences[i], createdJob.OwnerReferences[i+1])
+	}
 }
 
 func requireBackupJobSkipped(t *testing.T, client *fake.Clientset, backup operatorv1alpha1.EtcdBackup) {
