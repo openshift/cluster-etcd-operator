@@ -42,6 +42,14 @@ spec:
                   valueFrom:
                     fieldRef:
                       fieldPath: metadata.uid
+                - name: MY_JOB_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.labels['batch.kubernetes.io/job-name']
+                - name: MY_JOB_UID
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.labels['batch.kubernetes.io/controller-uid']
           serviceAccountName: etcd-backup-sa
           nodeSelector:
             node-role.kubernetes.io/master: ""

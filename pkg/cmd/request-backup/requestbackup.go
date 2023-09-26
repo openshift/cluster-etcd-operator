@@ -22,6 +22,8 @@ import (
 const (
 	PodNameEnvVar = "MY_POD_NAME"
 	PodUIDEnvVar  = "MY_POD_UID"
+	JobNameEnvVar = "MY_JOB_NAME"
+	JobUIDEnvVar  = "MY_JOB_UID"
 )
 
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
@@ -32,6 +34,8 @@ type requestBackupOpts struct {
 	kubeConfig     string
 	ownerPodName   string
 	ownerPodUID    string
+	ownerJobName   string
+	ownerJobUID    string
 }
 
 func NewRequestBackupCommand(ctx context.Context) *cobra.Command {
@@ -90,6 +94,17 @@ func (r *requestBackupOpts) ReadEnvVars() error {
 	if len(r.ownerPodUID) == 0 {
 		return fmt.Errorf("pod UID must be set via %v env var", PodUIDEnvVar)
 	}
+
+	r.ownerJobName = os.Getenv(JobNameEnvVar)
+	if r.ownerJobName == "" {
+		return fmt.Errorf("job name must be set via %v env var", JobNameEnvVar)
+	}
+
+	r.ownerJobUID = os.Getenv(JobUIDEnvVar)
+	if len(r.ownerJobUID) == 0 {
+		return fmt.Errorf("job UID must be set via %v env var", JobUIDEnvVar)
+	}
+
 	return nil
 }
 
@@ -155,6 +170,12 @@ func (r *requestBackupOpts) Run(ctx context.Context) error {
 					Kind:       "Pod",
 					Name:       r.ownerPodName,
 					UID:        types.UID(r.ownerPodUID),
+				},
+				{
+					APIVersion: "batch/v1",
+					Kind:       "Job",
+					Name:       r.ownerJobName,
+					UID:        types.UID(r.ownerJobUID),
 				},
 			},
 		},
