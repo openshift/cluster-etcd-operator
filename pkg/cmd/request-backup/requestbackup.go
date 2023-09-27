@@ -167,13 +167,6 @@ func (r *requestBackupOpts) Run(ctx context.Context) error {
 			// and failedJobsHistoryLimit.
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion:         "v1",
-					Kind:               "Pod",
-					Name:               r.ownerPodName,
-					UID:                types.UID(r.ownerPodUID),
-					BlockOwnerDeletion: pointer.Bool(true),
-				},
-				{
 					APIVersion:         "batch/v1",
 					Kind:               "Job",
 					Name:               r.ownerJobName,
