@@ -109,6 +109,9 @@ func TestPeriodicBackupHappyPath(t *testing.T) {
 	t.Cleanup(func() {
 		err := configClient.Backups().Delete(context.Background(), backupCrd.Name, metav1.DeleteOptions{})
 		require.NoError(t, err)
+
+		// TODO(thomas): we need to assert all resources were deleted properly
+
 	})
 
 	awaitBackupInvocations(t, backupCrd)

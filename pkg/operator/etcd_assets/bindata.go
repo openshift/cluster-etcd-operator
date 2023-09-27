@@ -82,8 +82,23 @@ rules:
       - "operator.openshift.io"
     resources:
       - "etcdbackups"
+      - "etcdbackups/status"
+      - "etcdbackups/finalizers"
     verbs:
       - "create"
+      - "delete"
+  - apiGroups:
+      - "batch"
+    resources:
+      - "jobs/finalizers"
+    verbs:
+      - "update"
+  - apiGroups:
+      - "batch"
+    resources:
+      - "jobs"
+    verbs:
+      - "delete"
 `)
 
 func etcdBackupsCrYamlBytes() ([]byte, error) {

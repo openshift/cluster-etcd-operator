@@ -180,6 +180,8 @@ func (r *requestBackupOpts) Run(ctx context.Context) error {
 		},
 	}
 
+	klog.Infof("creating CRD: %v", etcdBackup)
+
 	_, err = etcdBackupClient.Create(ctx, etcdBackup, metav1.CreateOptions{})
 	if err != nil {
 		klog.Errorf("failed to create EtcdBackup CR: %v", err)
