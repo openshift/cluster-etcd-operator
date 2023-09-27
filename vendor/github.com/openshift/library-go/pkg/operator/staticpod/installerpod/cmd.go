@@ -605,7 +605,7 @@ func (o *InstallOptions) writePod(rawPodBytes []byte, manifestFileName, resource
 	// Write secrets, config maps and pod to disk
 	// This does not need timeout, instead we should fail hard when we are not able to write.
 	klog.Infof("Writing pod manifest %q ...", path.Join(resourceDir, manifestFileName))
-	if err := ioutil.WriteFile(path.Join(resourceDir, manifestFileName), []byte(finalPodBytes), 0644); err != nil {
+	if err := ioutil.WriteFile(path.Join(resourceDir, manifestFileName), []byte(finalPodBytes), 0600); err != nil {
 		return err
 	}
 
@@ -616,7 +616,7 @@ func (o *InstallOptions) writePod(rawPodBytes []byte, manifestFileName, resource
 		return err
 	}
 	klog.Infof("Writing static pod manifest %q ...\n%s", path.Join(o.PodManifestDir, manifestFileName), finalPodBytes)
-	if err := ioutil.WriteFile(path.Join(o.PodManifestDir, manifestFileName), []byte(finalPodBytes), 0644); err != nil {
+	if err := ioutil.WriteFile(path.Join(o.PodManifestDir, manifestFileName), []byte(finalPodBytes), 0600); err != nil {
 		return err
 	}
 	return nil
@@ -625,7 +625,7 @@ func (o *InstallOptions) writePod(rawPodBytes []byte, manifestFileName, resource
 func writeConfig(content []byte, fullFilename string) error {
 	klog.Infof("Writing config file %q ...", fullFilename)
 
-	filePerms := os.FileMode(0644)
+	filePerms := os.FileMode(0600)
 	if strings.HasSuffix(fullFilename, ".sh") {
 		filePerms = 0755
 	}
