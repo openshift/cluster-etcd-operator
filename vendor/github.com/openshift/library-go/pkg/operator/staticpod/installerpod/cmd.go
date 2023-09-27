@@ -605,7 +605,7 @@ func (o *InstallOptions) writePod(rawPodBytes []byte, manifestFileName, resource
 	// Write secrets, config maps and pod to disk
 	// This does not need timeout, instead we should fail hard when we are not able to write.
 	klog.Infof("Writing pod manifest %q ...", path.Join(resourceDir, manifestFileName))
-	if err := ioutil.WriteFile(path.Join(resourceDir, manifestFileName), []byte(finalPodBytes), 0644); err != nil {
+	if err := ioutil.WriteFile(path.Join(resourceDir, manifestFileName), []byte(finalPodBytes), 0600); err != nil {
 		return err
 	}
 
