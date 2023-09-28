@@ -416,6 +416,11 @@ func createBackupJob(ctx context.Context,
 		UID:        backup.UID,
 	})
 
+	// we also inject owner references from periodic backups
+	for _, r := range backup.OwnerReferences {
+		job.OwnerReferences = append(job.OwnerReferences, r)
+	}
+
 	job.Spec.Template.Spec.InitContainers[0].Image = operatorImagePullSpec
 	job.Spec.Template.Spec.Containers[0].Image = targetImagePullSpec
 	job.Spec.Template.Spec.Containers[0].Env = []corev1.EnvVar{

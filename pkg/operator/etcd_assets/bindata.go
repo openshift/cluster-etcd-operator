@@ -82,8 +82,18 @@ rules:
       - "operator.openshift.io"
     resources:
       - "etcdbackups"
+      - "etcdbackups/status"
+      - "etcdbackups/finalizers"
     verbs:
       - "create"
+      - "update"
+      - "delete"
+  - apiGroups:
+      - "batch"
+    resources:
+      - "jobs/finalizers"
+    verbs:
+      - "update"
 `)
 
 func etcdBackupsCrYamlBytes() ([]byte, error) {
@@ -160,7 +170,7 @@ metadata:
   name: templated
   namespace: openshift-etcd
   labels:
-    app: cluster-backup-job
+    app: cluster-backup-cronjob
     backup-name: templated
 spec:
   schedule: "templated"
@@ -168,8 +178,14 @@ spec:
   failedJobsHistoryLimit: 10
   successfulJobsHistoryLimit: 5
   jobTemplate:
+    metadata:
+      labels:
+        app: cluster-backup-cronjob
     spec:
       template:
+        metadata:
+          labels:
+            app: cluster-backup-cronjob
         spec:
           initContainers:
             - name: retention
@@ -190,14 +206,14 @@ spec:
               command: [ "cluster-etcd-operator" ]
               args: [ "templated" ]
               env:
-                - name: MY_POD_NAME
+                - name: MY_JOB_NAME
                   valueFrom:
                     fieldRef:
-                      fieldPath: metadata.name
-                - name: MY_POD_UID
+                      fieldPath: metadata.labels['batch.kubernetes.io/job-name']
+                - name: MY_JOB_UID
                   valueFrom:
                     fieldRef:
-                      fieldPath: metadata.uid
+                      fieldPath: metadata.labels['batch.kubernetes.io/controller-uid']
           serviceAccountName: etcd-backup-sa
           nodeSelector:
             node-role.kubernetes.io/master: ""
