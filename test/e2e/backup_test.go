@@ -52,6 +52,14 @@ func TestBackupHappyPath(t *testing.T) {
 	_, err := c.OperatorV1alpha1().EtcdBackups().Create(context.Background(), &backupCrd, metav1.CreateOptions{})
 	require.NoError(t, err)
 
+	t.Cleanup(func() {
+		err := c.OperatorV1alpha1().EtcdBackups().Delete(context.Background(), backupCrd.Name, metav1.DeleteOptions{})
+		require.NoError(t, err)
+
+		ensureEtcdBackupsRemoved(t, backupCrd.Name)
+		ensureAllBackupPodsAreRemoved(t)
+	})
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	err = wait.PollUntilContextCancel(ctx, 30*time.Second, false,
@@ -109,6 +117,11 @@ func TestPeriodicBackupHappyPath(t *testing.T) {
 	t.Cleanup(func() {
 		err := configClient.Backups().Delete(context.Background(), backupCrd.Name, metav1.DeleteOptions{})
 		require.NoError(t, err)
+
+		// deleting the CRD should delete all its cronjobs/jobs, etcdbackups and their pods as well
+		ensureCronJobRemoved(t, backupCrd.Name)
+		ensureEtcdBackupsRemoved(t, backupCrd.Name)
+		ensureAllBackupPodsAreRemoved(t)
 	})
 
 	awaitBackupInvocations(t, backupCrd)
@@ -482,6 +495,74 @@ func ensureHostPathPVC(t *testing.T, pvcName string) {
 			require.NoErrorf(t, err, "could not retrieve PVC")
 		}
 	}
+}
+
+func ensureCronJobRemoved(t *testing.T, name string) {
+	c := framework.NewBatchClient(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	err := wait.PollUntilContextCancel(ctx, 10*time.Second, false, func(ctx context.Context) (bool, error) {
+		_, err := c.CronJobs(OpenShiftEtcdNamespace).Get(context.Background(), name, metav1.GetOptions{})
+		if err != nil {
+			if errors.IsNotFound(err) {
+				return true, nil
+			}
+
+			klog.Infof("error while getting cronjob, waiting for its deletion: %v", err)
+		}
+
+		return false, nil
+	})
+	require.NoErrorf(t, err, "waiting for cronjob deletion error")
+}
+
+func ensureEtcdBackupsRemoved(t *testing.T, name string) {
+	c := framework.NewOperatorClient(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	err := wait.PollUntilContextCancel(ctx, 10*time.Second, false, func(ctx context.Context) (bool, error) {
+		backupsList, err := c.OperatorV1alpha1().EtcdBackups().List(ctx, metav1.ListOptions{})
+		if err != nil {
+			klog.Infof("error while getting cronjob, waiting for its deletion: %v", err)
+			return false, nil
+		}
+
+		for _, b := range backupsList.Items {
+			klog.Infof("EnsureBackupRemoval found backup with name: %s", b.Name)
+			if strings.Contains(b.Name, name) {
+				return false, nil
+			}
+		}
+
+		return true, nil
+	})
+	require.NoErrorf(t, err, "waiting for etcdbackups deletion error")
+}
+
+func ensureAllBackupPodsAreRemoved(t *testing.T) {
+	c := framework.NewCoreClient(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	err := wait.PollUntilContextCancel(ctx, 10*time.Second, false, func(ctx context.Context) (bool, error) {
+		podList, err := c.Pods(OpenShiftEtcdNamespace).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			klog.Infof("error while getting pods, waiting for its deletion: %v", err)
+			return false, nil
+		}
+
+		for _, p := range podList.Items {
+			if strings.Contains(p.Name, "cluster-backup-job") {
+				klog.Infof("EnsureBackupPodRemoval found pod with name: %s", p.Name)
+				return false, nil
+			}
+		}
+
+		return true, nil
+	})
+	require.NoErrorf(t, err, "waiting for backup pods deletion error")
 }
 
 func backupHasCondition(backup *operatorv1alpha1.EtcdBackup,

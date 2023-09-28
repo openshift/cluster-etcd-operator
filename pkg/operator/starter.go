@@ -459,12 +459,22 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			etcdBackupInformer,
 			jobsInformer)
 
+		backupRemovalController := backupcontroller.NewBackupRemovalController(
+			AlivenessChecker,
+			operatorConfigClientv1Alpha1,
+			kubeClient,
+			controllerContext.EventRecorder,
+			featureGateAccessor,
+			etcdBackupInformer,
+			jobsInformer)
+
 		go etcdBackupInformer.Run(ctx.Done())
 		go configBackupInformer.Run(ctx.Done())
 		go jobsInformer.Run(ctx.Done())
 
 		go periodicBackupController.Run(ctx, 1)
 		go backupController.Run(ctx, 1)
+		go backupRemovalController.Run(ctx, 1)
 	}
 
 	// we have to wait for the definitive result of the cluster version informer to make the correct machine API decision
