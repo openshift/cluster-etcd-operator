@@ -20,8 +20,8 @@ import (
 )
 
 const (
-	PodNameEnvVar = "MY_POD_NAME"
-	PodUIDEnvVar  = "MY_POD_UID"
+	JobNameEnvVar = "MY_JOB_NAME"
+	JobUIDEnvVar  = "MY_JOB_UID"
 )
 
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
@@ -30,8 +30,8 @@ type requestBackupOpts struct {
 	etcdBackupName string
 	pvcName        string
 	kubeConfig     string
-	ownerPodName   string
-	ownerPodUID    string
+	ownerJobName   string
+	ownerJobUID    string
 }
 
 func NewRequestBackupCommand(ctx context.Context) *cobra.Command {
@@ -78,17 +78,17 @@ func (r *requestBackupOpts) Validate() error {
 }
 
 func (r *requestBackupOpts) ReadEnvVars() error {
-	r.ownerPodName = os.Getenv(PodNameEnvVar)
-	if r.ownerPodName == "" {
-		return fmt.Errorf("pod name must be set via %v env var", PodNameEnvVar)
+	r.ownerJobName = os.Getenv(JobNameEnvVar)
+	if r.ownerJobName == "" {
+		return fmt.Errorf("job name must be set via %v env var", JobNameEnvVar)
 	}
 	// The backup name is set to be the same as the pod name so that each scheduled run of the cronjob
 	// executing this cmd results in a unique EtcdBackup name.
-	r.etcdBackupName = r.ownerPodName
+	r.etcdBackupName = r.ownerJobName
 
-	r.ownerPodUID = os.Getenv(PodUIDEnvVar)
-	if len(r.ownerPodUID) == 0 {
-		return fmt.Errorf("pod UID must be set via %v env var", PodUIDEnvVar)
+	r.ownerJobUID = os.Getenv(JobUIDEnvVar)
+	if len(r.ownerJobUID) == 0 {
+		return fmt.Errorf("job UID must be set via %v env var", JobUIDEnvVar)
 	}
 	return nil
 }
@@ -145,16 +145,15 @@ func (r *requestBackupOpts) Run(ctx context.Context) error {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      r.etcdBackupName,
 			Namespace: operatorclient.TargetNamespace,
-			// Set the OwnerReference as the Pod executing this cmd so that when the Job (and Pod) for the scheduled run
-			// is cleaned up, the EtcdBackup CR is also garbage collected.
-			// This still leaves us with a history of EtcdBackup CRs as determined by the CronJob's successfulJobsHistoryLimit
-			// and failedJobsHistoryLimit.
+			// Due to a limitation of the kube-controller, we can't rely on the api to garbage collect non-namespaced
+			// etcdbackups from their corresponding namespaced jobs.
+			// We set this job information solely to prune those in the backup controller.
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion: "v1",
-					Kind:       "Pod",
-					Name:       r.ownerPodName,
-					UID:        types.UID(r.ownerPodUID),
+					APIVersion: "batch/v1",
+					Kind:       "Job",
+					Name:       r.ownerJobName,
+					UID:        types.UID(r.ownerJobUID),
 				},
 			},
 		},
@@ -163,6 +162,7 @@ func (r *requestBackupOpts) Run(ctx context.Context) error {
 		},
 	}
 
+	klog.Infof("creating CRD: %v", etcdBackup)
 	_, err = etcdBackupClient.Create(ctx, etcdBackup, metav1.CreateOptions{})
 	if err != nil {
 		klog.Errorf("failed to create EtcdBackup CR: %v", err)
