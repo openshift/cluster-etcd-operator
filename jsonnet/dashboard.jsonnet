@@ -15,6 +15,6 @@ local etcdMixin = (import 'github.com/etcd-io/etcd/contrib/mixin/mixin.libsonnet
     namespace: 'openshift-config-managed',
   },
   data: {
-    'etcd.json': std.manifestJsonEx(etcdMixin.grafanaDashboards['etcd.json'] + {rows+: [ (import 'diskjitter_dashboard.json') ]}, ' '),
+    'etcd.json': std.manifestJsonEx(etcdMixin.grafanaDashboards['etcd.json'] + {rows+: [ (import 'diskjitter_dashboard.json'), (import 'cpu_iowait_dashboard.json') ]}, ' '),
   },
 }
