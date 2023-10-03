@@ -37,6 +37,7 @@ type GuardController struct {
 	targetNamespace, podResourcePrefix string
 	operatorName                       string
 	readyzPort                         string
+	readyzEndpoint                     string
 	operandPodLabelSelector            labels.Selector
 
 	nodeLister corelisterv1.NodeLister
@@ -56,6 +57,7 @@ func NewGuardController(
 	podResourcePrefix string,
 	operatorName string,
 	readyzPort string,
+	readyzEndpoint string,
 	kubeInformersForTargetNamespace informers.SharedInformerFactory,
 	kubeInformersClusterScoped informers.SharedInformerFactory,
 	operatorClient operatorv1helpers.StaticPodOperatorClient,
@@ -77,6 +79,7 @@ func NewGuardController(
 		podResourcePrefix:       podResourcePrefix,
 		operatorName:            operatorName,
 		readyzPort:              readyzPort,
+		readyzEndpoint:          readyzEndpoint,
 		nodeLister:              kubeInformersClusterScoped.Core().V1().Nodes().Lister(),
 		podLister:               kubeInformersForTargetNamespace.Core().V1().Pods().Lister(),
 		podGetter:               podGetter,
@@ -292,6 +295,7 @@ func (c *GuardController) sync(ctx context.Context, syncCtx factory.SyncContext)
 				panic(err)
 			}
 			pod.Spec.Containers[0].ReadinessProbe.HTTPGet.Port = intstr.FromInt(readyzPort)
+			pod.Spec.Containers[0].ReadinessProbe.HTTPGet.Path = c.readyzEndpoint
 
 			actual, err := c.podGetter.Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
 			if err == nil {
@@ -303,6 +307,14 @@ func (c *GuardController) sync(ctx context.Context, syncCtx factory.SyncContext)
 				}
 				if actual.Spec.Containers[0].ReadinessProbe.HTTPGet.Host != pod.Spec.Containers[0].ReadinessProbe.HTTPGet.Host {
 					klog.V(5).Infof("Operand PodIP changed, deleting %v so the guard can be re-created", pod.Name)
+					delete = true
+				}
+				if actual.Spec.Containers[0].ReadinessProbe.HTTPGet.Port.String() != pod.Spec.Containers[0].ReadinessProbe.HTTPGet.Port.String() {
+					klog.V(5).Infof("Guard readinessProbe port changed, deleting %v so the guard can be re-created", pod.Name)
+					delete = true
+				}
+				if actual.Spec.Containers[0].ReadinessProbe.HTTPGet.Path != pod.Spec.Containers[0].ReadinessProbe.HTTPGet.Path {
+					klog.V(5).Infof("Guard readinessProbe path changed, deleting %v so the guard can be re-created", pod.Name)
 					delete = true
 				}
 				if actual.Spec.Hostname != pod.Spec.Hostname {
