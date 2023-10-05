@@ -9,7 +9,6 @@ import (
 
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/periodicbackupcontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/upgradebackupcontroller"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 
@@ -392,20 +391,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeInformersForNamespaces,
 	)
 
-	upgradeBackupController := upgradebackupcontroller.NewUpgradeBackupController(
-		AlivenessChecker,
-		operatorClient,
-		configClient.ConfigV1(),
-		kubeClient,
-		etcdClient,
-		kubeInformersForNamespaces,
-		clusterVersions,
-		configInformers.Config().V1().ClusterOperators(),
-		controllerContext.EventRecorder,
-		os.Getenv("IMAGE"),
-		os.Getenv("OPERATOR_IMAGE"),
-	)
-
 	unsupportedConfigOverridesController := unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(
 		operatorClient,
 		controllerContext.EventRecorder,
@@ -569,7 +554,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go unsupportedConfigOverridesController.Run(ctx, 1)
 	go scriptController.Run(ctx, 1)
 	go defragController.Run(ctx, 1)
-	go upgradeBackupController.Run(ctx, 1)
 
 	go envVarController.Run(1, ctx.Done())
 	go staticPodControllers.Start(ctx)
