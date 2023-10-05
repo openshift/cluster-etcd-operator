@@ -838,7 +838,24 @@ export ETCD_ETCDCTL_BIN="etcdctl"
 function dl_etcdctl {
   # Avoid caching the binary when podman exists, the etcd image is always available locally and we need a way to update etcdctl.
   # When we're running from an etcd image there's no podman and we can continue without a download.
-  if ([ ! -x "$(command -v podman)" ] || [ -x "$(command -v etcdctl)" ]); then
+  if ([ -n "$(command -v podman)" ]); then
+     local etcdimg=${ETCD_IMAGE}
+     local etcdctr=$(podman create --authfile=/var/lib/kubelet/config.json ${etcdimg})
+     local etcdmnt=$(podman mount "${etcdctr}")
+     [ ! -d ${ETCDCTL_BIN_DIR} ] && mkdir -p ${ETCDCTL_BIN_DIR}
+     cp ${etcdmnt}/bin/etcdctl ${ETCDCTL_BIN_DIR}/
+     if [ -f "${etcdmnt}/bin/etcdutl" ]; then
+       cp ${etcdmnt}/bin/etcdutl ${ETCDCTL_BIN_DIR}/
+       export ETCD_ETCDUTL_BIN=etcdutl
+     fi
+
+     umount "${etcdmnt}"
+     podman rm "${etcdctr}"
+     etcdctl version
+     return
+  fi
+
+  if ([ -x "$(command -v etcdctl)" ]); then
     echo "etcdctl is already installed"
     if [ -x "$(command -v etcdutl)" ]; then
       echo "etcdutl is already installed"
@@ -848,19 +865,8 @@ function dl_etcdctl {
     return
   fi
 
-  local etcdimg=${ETCD_IMAGE}
-  local etcdctr=$(podman create --authfile=/var/lib/kubelet/config.json ${etcdimg})
-  local etcdmnt=$(podman mount "${etcdctr}")
-  [ ! -d ${ETCDCTL_BIN_DIR} ] && mkdir -p ${ETCDCTL_BIN_DIR}
-  cp ${etcdmnt}/bin/etcdctl ${ETCDCTL_BIN_DIR}/
-  if [ -f "${etcdmnt}/bin/etcdutl" ]; then
-    cp ${etcdmnt}/bin/etcdutl ${ETCDCTL_BIN_DIR}/
-    export ETCD_ETCDUTL_BIN=etcdutl
-  fi
-
-  umount "${etcdmnt}"
-  podman rm "${etcdctr}"
-  etcdctl version
+  echo "Could neither pull etcdctl nor find it locally in cache. Aborting!"
+  exit 1
 }
 
 function check_snapshot_status() {
