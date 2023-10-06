@@ -197,7 +197,6 @@ func (r *readyzOpts) Run() error {
 	return err
 }
 
-// TODO: Add timeout to handler
 func (r *readyzOpts) getReadyzHandlerFunc(ctx context.Context) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		etcdClient, err := r.clientPool.Get()
@@ -209,22 +208,12 @@ func (r *readyzOpts) getReadyzHandlerFunc(ctx context.Context) http.HandlerFunc 
 
 		defer r.clientPool.Return(etcdClient)
 
-		// Learner and voting members both support the endpoint status call
-		resp, err := etcdClient.Status(ctx, r.targetEndpoint)
-		if err != nil {
-			klog.V(2).Infof("failed to get member endpoint status: %v", err)
-			http.Error(w, fmt.Sprintf("failed to get member endpoint status: %v", err), http.StatusServiceUnavailable)
-			return
-		}
+		timeout, cancel := context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
 
-		if resp.IsLearner {
-			// Serializable (local) read request for learner members
-			// since learners don't support linearized reads
-			_, err = etcdClient.Get(ctx, "health", clientv3.WithSerializable())
-		} else {
-			// Linearized read request to verify health of voting members
-			_, err = etcdClient.Get(ctx, "health")
-		}
+		// we solely do serializable requests to the local instance, as we don't want the readiness of individual
+		// etcd members to rely on an existing quorum to do linearized requests.
+		_, err = etcdClient.Get(timeout, "health", clientv3.WithSerializable())
 		if err != nil {
 			klog.V(2).Infof("failed to get member health key: %v", err)
 			http.Error(w, fmt.Sprintf("failed to get member health key: %v", err), http.StatusServiceUnavailable)
