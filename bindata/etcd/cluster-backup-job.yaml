@@ -37,8 +37,8 @@ spec:
             - |
               #!/bin/sh
               set -exuo pipefail
-              
-              /usr/local/bin/cluster-backup.sh --force ${CLUSTER_BACKUP_PATH}
+
+              cluster-etcd-operator cluster-backup --backup-dir "${CLUSTER_BACKUP_PATH}"
 
           resources:
             requests:
@@ -57,7 +57,12 @@ spec:
               name: static-pod-dir
             - mountPath: /etc/kubernetes/cluster-backup
               name: etc-kubernetes-cluster-backup
+            - mountPath: /var/run/secrets/etcd-client
+              name: etcd-client
+            - mountPath: /var/run/configmaps/etcd-ca
+              name: etcd-ca
       priorityClassName: system-node-critical
+      activeDeadlineSeconds: 900
       nodeSelector:
         node-role.kubernetes.io/master: ""
       restartPolicy: Never

@@ -438,7 +438,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			operatorConfigClientv1Alpha1,
 			kubeClient,
 			controllerContext.EventRecorder,
-			os.Getenv("IMAGE"),
 			os.Getenv("OPERATOR_IMAGE"),
 			featureGateAccessor,
 			etcdBackupInformer,

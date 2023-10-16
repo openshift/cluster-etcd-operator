@@ -27,17 +27,20 @@ func getEtcdClient(endpoints []string) (*clientv3.Client, error) {
 		TrustedCAFile: os.Getenv("ETCDCTL_CACERT"),
 	}
 	tlsConfig, err := tlsInfo.ClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate tls client config endpoints %v and env %v: %w", endpoints, os.Environ(), err)
+	}
 
 	cfg := &clientv3.Config{
 		DialOptions: dialOptions,
 		Endpoints:   endpoints,
-		DialTimeout: 2 * time.Second,
+		DialTimeout: 10 * time.Second,
 		TLS:         tlsConfig,
 	}
 
 	cli, err := clientv3.New(*cfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to make etcd client for endpoints %v: %w", endpoints, err)
+		return nil, fmt.Errorf("failed to make etcd client for endpoints %v and env %v: %w", endpoints, os.Environ(), err)
 	}
 	return cli, nil
 }
@@ -64,14 +67,11 @@ func saveSnapshot(cli *clientv3.Client, dbPath string) error {
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("saveSnapshot failed: %w", err)
 	}
-	klog.Info(
-		"fetched snapshot. ",
-		"Time taken: ", time.Since(opBegin),
-	)
+	klog.Infof("fetched snapshot, took: %v", time.Since(opBegin))
 
 	if err := os.Rename(partpath, dbPath); err != nil {
 		return fmt.Errorf("could not rename %s to %s (%v)", partpath, dbPath, err)
 	}
-	klog.Info("saved snapshot to path", dbPath)
+	klog.Infof("saved snapshot to path %s", dbPath)
 	return nil
 }

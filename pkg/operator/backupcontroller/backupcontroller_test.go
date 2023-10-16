@@ -36,7 +36,6 @@ func TestSyncLoopHappyPath(t *testing.T) {
 	controller := BackupController{
 		backupsClient:         operatorFake.OperatorV1alpha1(),
 		kubeClient:            client,
-		targetImagePullSpec:   "target-pullspec-image",
 		operatorImagePullSpec: "operator-pullspec-image",
 		featureGateAccessor:   backupFeatureGateAccessor,
 	}
@@ -61,7 +60,6 @@ func TestJobAlreadyRunning(t *testing.T) {
 	controller := BackupController{
 		backupsClient:         operatorFake.OperatorV1alpha1(),
 		kubeClient:            client,
-		targetImagePullSpec:   "target-pullspec-image",
 		operatorImagePullSpec: "operator-pullspec-image",
 		featureGateAccessor:   backupFeatureGateAccessor,
 	}
@@ -90,7 +88,6 @@ func TestJobBackupJobFinished(t *testing.T) {
 	controller := BackupController{
 		backupsClient:         operatorFake.OperatorV1alpha1(),
 		kubeClient:            client,
-		targetImagePullSpec:   "target-pullspec-image",
 		operatorImagePullSpec: "operator-pullspec-image",
 		featureGateAccessor:   backupFeatureGateAccessor,
 	}
@@ -119,7 +116,6 @@ func TestJobWithoutBackupRemovesJob(t *testing.T) {
 	controller := BackupController{
 		backupsClient:         operatorFake.OperatorV1alpha1(),
 		kubeClient:            client,
-		targetImagePullSpec:   "target-pullspec-image",
 		operatorImagePullSpec: "operator-pullspec-image",
 		featureGateAccessor:   backupFeatureGateAccessor,
 	}
@@ -138,7 +134,6 @@ func TestJobCreationHappyPath(t *testing.T) {
 
 	err := createBackupJob(context.Background(),
 		backup,
-		"target-pullspec-image",
 		"operator-pullspec-image",
 		client.BatchV1().Jobs(operatorclient.TargetNamespace),
 		operatorFake.OperatorV1alpha1().EtcdBackups(),
@@ -174,7 +169,6 @@ func TestMultipleBackupsAreSkipped(t *testing.T) {
 	controller := BackupController{
 		backupsClient:         operatorFake.OperatorV1alpha1(),
 		kubeClient:            client,
-		targetImagePullSpec:   "target-pullspec-image",
 		operatorImagePullSpec: "operator-pullspec-image",
 		featureGateAccessor:   backupFeatureGateAccessor,
 	}
@@ -239,7 +233,6 @@ func TestPVCNotFound(t *testing.T) {
 	controller := BackupController{
 		backupsClient:         operatorFake.OperatorV1alpha1(),
 		kubeClient:            client,
-		targetImagePullSpec:   "target-pullspec-image",
 		operatorImagePullSpec: "operator-pullspec-image",
 		featureGateAccessor:   backupFeatureGateAccessor,
 	}
@@ -291,7 +284,6 @@ func TestOwnerRefsPropagate(t *testing.T) {
 	controller := BackupController{
 		backupsClient:         operatorFake.OperatorV1alpha1(),
 		kubeClient:            client,
-		targetImagePullSpec:   "target-pullspec-image",
 		operatorImagePullSpec: "operator-pullspec-image",
 		featureGateAccessor:   backupFeatureGateAccessor,
 	}
@@ -317,7 +309,7 @@ func requireBackupJobCreated(t *testing.T, client *k8sfakeclient.Clientset, back
 	require.Equal(t, operatorclient.TargetNamespace, createdJob.Namespace)
 	require.Equal(t, backup.Name, createdJob.Labels[backupJobLabel])
 	require.Equal(t, "operator-pullspec-image", createdJob.Spec.Template.Spec.InitContainers[0].Image)
-	require.Equal(t, "target-pullspec-image", createdJob.Spec.Template.Spec.Containers[0].Image)
+	require.Equal(t, "operator-pullspec-image", createdJob.Spec.Template.Spec.Containers[0].Image)
 
 	foundVolume := false
 	for _, volume := range createdJob.Spec.Template.Spec.Volumes {
