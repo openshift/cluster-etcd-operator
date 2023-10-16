@@ -42,7 +42,6 @@ type BackupController struct {
 	operatorClient        v1helpers.OperatorClient
 	backupsClient         operatorv1alpha1client.EtcdBackupsGetter
 	kubeClient            kubernetes.Interface
-	targetImagePullSpec   string
 	operatorImagePullSpec string
 	featureGateAccessor   featuregates.FeatureGateAccess
 }
@@ -52,7 +51,6 @@ func NewBackupController(
 	backupsClient operatorv1alpha1client.EtcdBackupsGetter,
 	kubeClient kubernetes.Interface,
 	eventRecorder events.Recorder,
-	targetImagePullSpec string,
 	operatorImagePullSpec string,
 	accessor featuregates.FeatureGateAccess,
 	backupInformer factory.Informer,
@@ -61,7 +59,6 @@ func NewBackupController(
 	c := &BackupController{
 		backupsClient:         backupsClient,
 		kubeClient:            kubeClient,
-		targetImagePullSpec:   targetImagePullSpec,
 		operatorImagePullSpec: operatorImagePullSpec,
 		featureGateAccessor:   accessor,
 	}
@@ -155,7 +152,7 @@ func (c *BackupController) sync(ctx context.Context, _ factory.SyncContext) erro
 		return nil
 	}
 
-	err = createBackupJob(ctx, backupsToRun[0], c.targetImagePullSpec, c.operatorImagePullSpec, jobsClient, backupsClient)
+	err = createBackupJob(ctx, backupsToRun[0], c.operatorImagePullSpec, jobsClient, backupsClient)
 	if err != nil {
 		return err
 	}
@@ -387,7 +384,6 @@ func reconcileJobStatus(ctx context.Context,
 
 func createBackupJob(ctx context.Context,
 	backup operatorv1alpha1.EtcdBackup,
-	targetImagePullSpec string,
 	operatorImagePullSpec string,
 	jobClient batchv1client.JobInterface,
 	backupClient operatorv1alpha1client.EtcdBackupInterface) error {
@@ -422,9 +418,13 @@ func createBackupJob(ctx context.Context,
 	}
 
 	job.Spec.Template.Spec.InitContainers[0].Image = operatorImagePullSpec
-	job.Spec.Template.Spec.Containers[0].Image = targetImagePullSpec
+	job.Spec.Template.Spec.Containers[0].Image = operatorImagePullSpec
+
 	job.Spec.Template.Spec.Containers[0].Env = []corev1.EnvVar{
 		{Name: backupDirEnvName, Value: fmt.Sprintf("%s/%s", recentBackupPath, backupFileName)},
+		{Name: "ETCDCTL_CERT", Value: "/var/run/secrets/etcd-client/tls.crt"},
+		{Name: "ETCDCTL_KEY", Value: "/var/run/secrets/etcd-client/tls.key"},
+		{Name: "ETCDCTL_CACERT", Value: "/var/run/configmaps/etcd-ca/ca-bundle.crt"},
 	}
 
 	injected := false
