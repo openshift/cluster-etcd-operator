@@ -12,3 +12,4 @@ COPY manifests/ /manifests
 COPY vendor/github.com/openshift/api/operator/v1/0000_12_etcd-operator_01_config.crd.yaml /manifests
 
 LABEL io.openshift.release.operator true
+ 
