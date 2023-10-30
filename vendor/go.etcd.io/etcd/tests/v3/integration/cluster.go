@@ -84,7 +84,7 @@ var (
 	// member, ensuring restarted members can listen on the same port again.
 	localListenCount = int64(0)
 
-	testTLSInfo = transport.TLSInfo{
+	TestTLSInfo = transport.TLSInfo{
 		KeyFile:        MustAbsPath("../fixtures/server.key.insecure"),
 		CertFile:       MustAbsPath("../fixtures/server.crt"),
 		TrustedCAFile:  MustAbsPath("../fixtures/ca.crt"),
@@ -136,7 +136,8 @@ type ClusterConfig struct {
 
 	DiscoveryURL string
 
-	AuthToken string
+	AuthToken    string
+	AuthTokenTTL uint
 
 	UseGRPC bool
 
@@ -314,6 +315,7 @@ func (c *cluster) mustNewMember(t testutil.TB, memberNumber int64) *member {
 			name:                        c.generateMemberName(),
 			memberNumber:                memberNumber,
 			authToken:                   c.cfg.AuthToken,
+			authTokenTTL:                c.cfg.AuthTokenTTL,
 			peerTLS:                     c.cfg.PeerTLS,
 			clientTLS:                   c.cfg.ClientTLS,
 			quotaBackendBytes:           c.cfg.QuotaBackendBytes,
@@ -613,6 +615,10 @@ type member struct {
 
 func (m *member) GRPCURL() string { return m.grpcURL }
 
+func (m *member) CorruptionChecker() etcdserver.CorruptionChecker {
+	return m.s.CorruptionChecker()
+}
+
 type memberConfig struct {
 	name                        string
 	uniqNumber                  int64
@@ -620,6 +626,7 @@ type memberConfig struct {
 	peerTLS                     *transport.TLSInfo
 	clientTLS                   *transport.TLSInfo
 	authToken                   string
+	authTokenTTL                uint
 	quotaBackendBytes           int64
 	maxTxnOps                   uint
 	maxRequestBytes             uint
@@ -710,6 +717,9 @@ func mustNewMember(t testutil.TB, mcfg memberConfig) *member {
 	m.AuthToken = "simple"
 	if mcfg.authToken != "" {
 		m.AuthToken = mcfg.authToken
+	}
+	if mcfg.authTokenTTL != 0 {
+		m.TokenTTL = mcfg.authTokenTTL
 	}
 
 	m.BcryptCost = uint(bcrypt.MinCost) // use min bcrypt cost to speedy up integration testing
