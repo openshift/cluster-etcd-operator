@@ -20,7 +20,10 @@ spec:
       - |
         #!/bin/sh
         set -euo pipefail
-
+        
+        # this can be controlled by cluster-restore.sh, which will replace this line entirely when enabled at runtime
+        export ETCD_ETCDCTL_RESTORE_ENABLE_BUMP="false"
+        
         export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
         export ETCD_INITIAL_CLUSTER="${ETCD_NAME}=https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:2380"
         env | grep ETCD | grep -v NODE
@@ -36,6 +39,12 @@ spec:
           echo "please delete the contents of data directory before restoring, running the restore script will do this for you"
           exit 1
         fi
+        
+        ETCD_ETCDCTL_BIN="etcdctl"
+        if [ -x "$(command -v etcdutl)" ]; then
+          echo "found newer etcdutl, using that instead of etcdctl"
+          ETCD_ETCDCTL_BIN="etcdutl"
+        fi      
 
         # check if we have backup file to be restored
         # if the file exist, check if it has not changed size in last 5 seconds
@@ -51,15 +60,22 @@ spec:
             exit 1
           fi
         fi
-
+        
+        BUMP_ARGS=""
+        if [[ "${ETCD_ETCDCTL_RESTORE_ENABLE_BUMP}" == "true" ]]; then
+          echo "enabling restore bump"
+          BUMP_ARGS="--bump-revision 1000000000 --mark-compacted"
+        fi
+                
         UUID=$(uuidgen)
         echo "restoring to a single node cluster"
-        ETCDCTL_API=3 /usr/bin/etcdctl snapshot restore /var/lib/etcd-backup/snapshot.db \
+        ${ETCD_ETCDCTL_BIN} snapshot restore /var/lib/etcd-backup/snapshot.db \
          --name  $ETCD_NAME \
          --initial-cluster=$ETCD_INITIAL_CLUSTER \
          --initial-cluster-token "openshift-etcd-${UUID}" \
          --initial-advertise-peer-urls $ETCD_NODE_PEER_URL \
-         --data-dir="/var/lib/etcd/restore-${UUID}"
+         --data-dir="/var/lib/etcd/restore-${UUID}" \
+         ${BUMP_ARGS}
 
         mv /var/lib/etcd/restore-${UUID}/* /var/lib/etcd/
 
