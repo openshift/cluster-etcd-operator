@@ -12,7 +12,6 @@ import (
 	prune_backups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/backuprestore"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/hypershift"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/monitor"
 	operatorcmd "github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/readyz"
@@ -76,8 +75,6 @@ func NewSSCSCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(readyz.NewReadyzCommand())
 	cmd.AddCommand(prune_backups.NewPruneCommand())
 	cmd.AddCommand(requestbackup.NewRequestBackupCommand(ctx))
-
-	cmd.AddCommand(hypershift.NewHypershiftCommand())
 
 	return cmd
 }
