@@ -8,6 +8,7 @@ import (
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
+	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -129,7 +130,9 @@ func (c *StaticResourceController) WithIgnoreNotFoundOnCreate() *StaticResourceC
 }
 
 // WithPrecondition adds a precondition, which blocks the sync method from being executed. Preconditions might be chained using:
-//  WithPrecondition(a).WithPrecondition(b).WithPrecondition(c).
+//
+//	WithPrecondition(a).WithPrecondition(b).WithPrecondition(c).
+//
 // If any of the preconditions is false, the sync will result in an error.
 //
 // The requirement parameter should follow the convention described in the StaticResourcesPreconditionsFuncType.
@@ -188,7 +191,7 @@ func (c *StaticResourceController) AddKubeInformers(kubeInformersByNamespace v1h
 				utilruntime.HandleError(fmt.Errorf("missing %q: %v", file, err))
 				continue
 			}
-			requiredObj, _, err := genericCodec.Decode(objBytes, nil, nil)
+			requiredObj, err := resourceread.ReadGenericWithUnstructured(objBytes)
 			if err != nil {
 				utilruntime.HandleError(fmt.Errorf("cannot decode %q: %v", file, err))
 				continue
@@ -220,7 +223,7 @@ func (c *StaticResourceController) AddKubeInformers(kubeInformersByNamespace v1h
 			case *corev1.Namespace:
 				ret = ret.AddNamespaceInformer(informer.Core().V1().Namespaces().Informer(), t.Name)
 			case *corev1.Service:
-				ret = ret.AddInformer(informer.Core().V1().Namespaces().Informer())
+				ret = ret.AddInformer(informer.Core().V1().Services().Informer())
 			case *corev1.Pod:
 				ret = ret.AddInformer(informer.Core().V1().Pods().Informer())
 			case *corev1.ServiceAccount:
@@ -367,7 +370,7 @@ func (c *StaticResourceController) Sync(ctx context.Context, syncContext factory
 }
 
 func (c *StaticResourceController) Name() string {
-	return "StaticResourceController"
+	return c.name
 }
 
 func (c *StaticResourceController) RelatedObjects() ([]configv1.ObjectReference, error) {
@@ -397,7 +400,7 @@ func (c *StaticResourceController) RelatedObjects() ([]configv1.ObjectReference,
 				errors = append(errors, err)
 				continue
 			}
-			requiredObj, _, err := genericCodec.Decode(objBytes, nil, nil)
+			requiredObj, err := resourceread.ReadGenericWithUnstructured(objBytes)
 			if err != nil {
 				errors = append(errors, err)
 				continue

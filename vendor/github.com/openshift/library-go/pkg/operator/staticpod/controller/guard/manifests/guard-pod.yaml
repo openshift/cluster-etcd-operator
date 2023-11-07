@@ -3,6 +3,8 @@ kind: Pod
 metadata:
   namespace: # Value set by operator
   name: # Value set by operator
+  annotations:
+    target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
   labels:
     app: guard
   ownerReferences: # Value set by operator
@@ -41,7 +43,7 @@ spec:
         failureThreshold: 3
         httpGet:
           host: # Value set by operator
-          path: healthz
+          path: # Value set by operator
           port: # Value set by operator
           scheme: HTTPS
         periodSeconds: 5
