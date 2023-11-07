@@ -292,6 +292,8 @@ backup_latest_kube_static_resources "${BACKUP_TAR_FILE}"
 
 # Download etcdctl and get the etcd snapshot
 dl_etcdctl
+
+# snapshot save will continue to stay in etcdctl
 ETCDCTL_ENDPOINTS="https://${NODE_NODE_ENVVAR_NAME_IP}:2379" etcdctl snapshot save "${SNAPSHOT_FILE}"
 
 # Check the integrity of the snapshot
@@ -300,6 +302,7 @@ snapshot_failed=$?
 
 # If check_snapshot_status returned 1 it failed, so exit with code 1
 if [[ $snapshot_failed -eq 1 ]]; then
+  echo "snapshot failed with exit code ${snapshot_failed}"
   exit 1
 fi
 
@@ -331,6 +334,10 @@ set -o errtrace
 
 # example
 # ./cluster-restore.sh $path-to-backup
+# There are several customization switches based on env variables:
+# ETCD_RESTORE_SKIP_MOVE_CP_STATIC_PODS - when set this script will not move the other (non-etcd) static pod yamls
+# ETCD_ETCDCTL_RESTORE - when set this script will use ` + "`" + `etcdctl snapshot restore` + "`" + ` instead of a restore pod yaml
+# ETCD_ETCDCTL_RESTORE_ENABLE_BUMP - when set this script will spawn the restore pod with a large enough revision bump
 
 if [[ $EUID -ne 0 ]]; then
   echo "This script must be run as root"
@@ -393,13 +400,32 @@ function wait_for_containers_to_stop() {
   done
 }
 
+function mv_static_pods() {
+  local containers=("$@")
+
+  # Move manifests and stop static pods
+  if [ ! -d "$MANIFEST_STOPPED_DIR" ]; then
+    mkdir -p "$MANIFEST_STOPPED_DIR"
+  fi
+
+  for POD_FILE_NAME in "${containers[@]}"; do
+    echo "...stopping ${POD_FILE_NAME}"
+    [ ! -f "${MANIFEST_DIR}/${POD_FILE_NAME}" ] && continue
+    mv "${MANIFEST_DIR}/${POD_FILE_NAME}" "${MANIFEST_STOPPED_DIR}"
+  done
+}
+
 BACKUP_DIR="$1"
 # shellcheck disable=SC2012
 BACKUP_FILE=$(ls -vd "${BACKUP_DIR}"/static_kuberesources*.tar.gz | tail -1) || true
 # shellcheck disable=SC2012
 SNAPSHOT_FILE=$(ls -vd "${BACKUP_DIR}"/snapshot*.db | tail -1) || true
-STATIC_POD_LIST=("kube-apiserver-pod.yaml" "kube-controller-manager-pod.yaml" "kube-scheduler-pod.yaml")
-STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "kube-controller-manager" "kube-apiserver" "kube-scheduler")
+
+ETCD_STATIC_POD_LIST=("etcd-pod.yaml")
+AUX_STATIC_POD_LIST=("kube-apiserver-pod.yaml" "kube-controller-manager-pod.yaml" "kube-scheduler-pod.yaml")
+
+ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz")
+AUX_STATIC_POD_CONTAINERS=("kube-controller-manager" "kube-apiserver" "kube-scheduler")
 
 if [ ! -f "${SNAPSHOT_FILE}" ]; then
   echo "etcd snapshot ${SNAPSHOT_FILE} does not exist"
@@ -410,20 +436,20 @@ fi
 dl_etcdctl
 check_snapshot_status "${SNAPSHOT_FILE}"
 
-# Move manifests and stop static pods
-if [ ! -d "$MANIFEST_STOPPED_DIR" ]; then
-  mkdir -p "$MANIFEST_STOPPED_DIR"
+ETCD_CLIENT="${ETCD_ETCDCTL_BIN+etcdctl}"
+if [ -n "${ETCD_ETCDUTL_BIN}" ]; then
+  ETCD_CLIENT="${ETCD_ETCDUTL_BIN}"
 fi
 
-# Move static pod manifests out of MANIFEST_DIR
-for POD_FILE_NAME in "${STATIC_POD_LIST[@]}" etcd-pod.yaml; do
-  echo "...stopping ${POD_FILE_NAME}"
-  [ ! -f "${MANIFEST_DIR}/${POD_FILE_NAME}" ] && continue
-  mv "${MANIFEST_DIR}/${POD_FILE_NAME}" "${MANIFEST_STOPPED_DIR}"
-done
+# Move static pod manifests out of MANIFEST_DIR, if required
+if [ -z "${ETCD_RESTORE_SKIP_MOVE_CP_STATIC_PODS}" ]; then
+  mv_static_pods "${AUX_STATIC_POD_LIST[@]}"
+  wait_for_containers_to_stop "${AUX_STATIC_POD_CONTAINERS[@]}"
+fi
 
-# wait for every static pod container to stop
-wait_for_containers_to_stop "${STATIC_POD_CONTAINERS[@]}"
+# always move etcd pod and wait for all containers to exit
+mv_static_pods "${ETCD_STATIC_POD_LIST[@]}"
+wait_for_containers_to_stop "${ETCD_STATIC_POD_CONTAINERS[@]}"
 
 if [ ! -d "${ETCD_DATA_DIR_BACKUP}" ]; then
   mkdir -p "${ETCD_DATA_DIR_BACKUP}"
@@ -439,17 +465,41 @@ if [ -d "${ETCD_DATA_DIR}/member" ]; then
   mv "${ETCD_DATA_DIR}"/member "${ETCD_DATA_DIR_BACKUP}"/
 fi
 
-# Restore static pod resources
-tar -C "${CONFIG_FILE_DIR}" -xzf "${BACKUP_FILE}" static-pod-resources
+if [ -z "${ETCD_ETCDCTL_RESTORE}" ]; then
+  # Restore static pod resources
+  tar -C "${CONFIG_FILE_DIR}" -xzf "${BACKUP_FILE}" static-pod-resources
 
-# Copy snapshot to backupdir
-cp -p "${SNAPSHOT_FILE}" "${ETCD_DATA_DIR_BACKUP}"/snapshot.db
+  # Copy snapshot to backupdir
+  cp -p "${SNAPSHOT_FILE}" "${ETCD_DATA_DIR_BACKUP}"/snapshot.db
 
-echo "starting restore-etcd static pod"
-cp -p "${RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"
+  echo "starting restore-etcd static pod"
+  # ideally this can be solved with jq and a real env var, but we don't have it available at this point
+  if [ -n "${ETCD_ETCDCTL_RESTORE_ENABLE_BUMP}" ]; then
+    sed "s/export ETCD_ETCDCTL_RESTORE_ENABLE_BUMP=\"false\"/export ETCD_ETCDCTL_RESTORE_ENABLE_BUMP=\"true\"/" "${RESTORE_ETCD_POD_YAML}" > "${MANIFEST_DIR}/etcd-pod.yaml"
+  else
+     cp -p "${RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"
+  fi
+
+else
+  echo "removing etcd data dir..."
+  rm -rf "${ETCD_DATA_DIR}"
+  mkdir -p "${ETCD_DATA_DIR}"
+
+  echo "starting snapshot restore through etcdctl..."
+  if ! ${ETCD_CLIENT} snapshot restore "${SNAPSHOT_FILE}" --data-dir="${ETCD_DATA_DIR}"; then
+      echo "Snapshot restore failed. Aborting!"
+      exit 1
+  fi
+
+  # start the original etcd static pod again through the new snapshot
+  echo "restoring old etcd pod to start etcd again"
+  mv "${MANIFEST_STOPPED_DIR}/etcd-pod.yaml" "${MANIFEST_DIR}/etcd-pod.yaml"
+fi
 
 # start remaining static pods
-restore_static_pods "${BACKUP_FILE}" "${STATIC_POD_LIST[@]}"
+if [ -z "${ETCD_RESTORE_SKIP_MOVE_CP_STATIC_PODS}" ]; then
+  restore_static_pods "${BACKUP_FILE}" "${AUX_STATIC_POD_LIST[@]}"
+fi
 `)
 
 func etcdClusterRestoreShBytes() ([]byte, error) {
@@ -501,39 +551,53 @@ MANIFEST_STOPPED_DIR="${ASSET_DIR}/manifests-stopped"
 RESTORE_ETCD_POD_YAML="${CONFIG_FILE_DIR}/static-pod-resources/etcd-certs/configmaps/restore-etcd-pod/pod.yaml"
 ETCDCTL_BIN_DIR="${CONFIG_FILE_DIR}/static-pod-resources/bin"
 PATH=${PATH}:${ETCDCTL_BIN_DIR}
-KUBECONFIG="/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/localhost.kubeconfig"
-export KUBECONFIG
+export KUBECONFIG="/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/localhost.kubeconfig"
+export ETCD_ETCDCTL_BIN="etcdctl"
 
-# download etcdctl from upstream release assets
+# download etcdctl from download release image
 function dl_etcdctl {
-  if [ -x "$(command -v etcdctl)" ]; then
+  # Avoid caching the binary when podman exists, the etcd image is always available locally and we need a way to update etcdctl.
+  # When we're running from an etcd image there's no podman and we can continue without a download.
+  if ([ -n "$(command -v podman)" ]); then
+     local etcdimg=${ETCD_IMAGE}
+     local etcdctr=$(podman create --authfile=/var/lib/kubelet/config.json ${etcdimg})
+     local etcdmnt=$(podman mount "${etcdctr}")
+     [ ! -d ${ETCDCTL_BIN_DIR} ] && mkdir -p ${ETCDCTL_BIN_DIR}
+     cp ${etcdmnt}/bin/etcdctl ${ETCDCTL_BIN_DIR}/
+     if [ -f "${etcdmnt}/bin/etcdutl" ]; then
+       cp ${etcdmnt}/bin/etcdutl ${ETCDCTL_BIN_DIR}/
+       export ETCD_ETCDUTL_BIN=etcdutl
+     fi
+
+     umount "${etcdmnt}"
+     podman rm "${etcdctr}"
+     etcdctl version
+     return
+  fi
+
+  if ([ -x "$(command -v etcdctl)" ]); then
     echo "etcdctl is already installed"
+    if [ -x "$(command -v etcdutl)" ]; then
+      echo "etcdutl is already installed"
+      export ETCD_ETCDUTL_BIN=etcdutl
+    fi
+
     return
   fi
-  local etcdimg=${ETCD_IMAGE}
-  local etcdctr=$(podman create ${etcdimg} --authfile=/var/lib/kubelet/config.json)
-  local etcdmnt=$(podman mount "${etcdctr}")
-  [ ! -d ${ETCDCTL_BIN_DIR} ] && mkdir -p ${ETCDCTL_BIN_DIR}
-  cp ${etcdmnt}/bin/etcdctl ${ETCDCTL_BIN_DIR}/
-  umount "${etcdmnt}"
-  podman rm "${etcdctr}"
-  etcdctl version
-}
 
-# execute etcdctl command inside of running etcdctl container
-function exec_etcdctl {
-  local command="$@"
-  local container_id=$(sudo crictl ps --label io.kubernetes.container.name=etcdctl -o json | jq -r '.containers[0].id') || true
-  if [ -z "$container_id" ]; then
-    echo "etcdctl container is not running"
-    exit 1
-  fi
-  crictl exec -it $container_id /bin/sh -c "etcdctl $command"
+  echo "Could neither pull etcdctl nor find it locally in cache. Aborting!"
+  exit 1
 }
 
 function check_snapshot_status() {
   local snap_file="$1"
-  if ! etcdctl snapshot status "${snap_file}" -w json; then
+
+  ETCD_CLIENT="${ETCD_ETCDCTL_BIN}"
+  if [ -n "${ETCD_ETCDUTL_BIN}" ]; then
+    ETCD_CLIENT="${ETCD_ETCDUTL_BIN}"
+  fi
+
+  if ! ${ETCD_CLIENT} snapshot status "${snap_file}" -w json; then
     echo "Backup integrity verification failed. Backup appears corrupted. Aborting!"
     return 1
   fi
@@ -1045,7 +1109,10 @@ spec:
       - |
         #!/bin/sh
         set -euo pipefail
-
+        
+        # this can be controlled by cluster-restore.sh, which will replace this line entirely when enabled at runtime
+        export ETCD_ETCDCTL_RESTORE_ENABLE_BUMP="false"
+        
         export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
         export ETCD_INITIAL_CLUSTER="${ETCD_NAME}=https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:2380"
         env | grep ETCD | grep -v NODE
@@ -1061,6 +1128,12 @@ spec:
           echo "please delete the contents of data directory before restoring, running the restore script will do this for you"
           exit 1
         fi
+        
+        ETCD_ETCDCTL_BIN="etcdctl"
+        if [ -x "$(command -v etcdutl)" ]; then
+          echo "found newer etcdutl, using that instead of etcdctl"
+          ETCD_ETCDCTL_BIN="etcdutl"
+        fi      
 
         # check if we have backup file to be restored
         # if the file exist, check if it has not changed size in last 5 seconds
@@ -1076,15 +1149,22 @@ spec:
             exit 1
           fi
         fi
-
+        
+        BUMP_ARGS=""
+        if [[ "${ETCD_ETCDCTL_RESTORE_ENABLE_BUMP}" == "true" ]]; then
+          echo "enabling restore bump"
+          BUMP_ARGS="--bump-revision 1000000000 --mark-compacted"
+        fi
+                
         UUID=$(uuidgen)
         echo "restoring to a single node cluster"
-        ETCDCTL_API=3 /usr/bin/etcdctl snapshot restore /var/lib/etcd-backup/snapshot.db \
+        ${ETCD_ETCDCTL_BIN} snapshot restore /var/lib/etcd-backup/snapshot.db \
          --name  $ETCD_NAME \
          --initial-cluster=$ETCD_INITIAL_CLUSTER \
          --initial-cluster-token "openshift-etcd-${UUID}" \
          --initial-advertise-peer-urls $ETCD_NODE_PEER_URL \
-         --data-dir="/var/lib/etcd/restore-${UUID}"
+         --data-dir="/var/lib/etcd/restore-${UUID}" \
+         ${BUMP_ARGS}
 
         mv /var/lib/etcd/restore-${UUID}/* /var/lib/etcd/
 
