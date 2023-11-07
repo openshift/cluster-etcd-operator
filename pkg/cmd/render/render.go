@@ -608,7 +608,7 @@ func writeManifests(outputDir, templateDir string, templateData interface{}) err
 	}
 
 	for manifestDir, destinationDir := range assetPaths {
-		manifests, err := assets.New(filepath.Join(templateDir, manifestDir), templateData, assets.OnlyYaml)
+		manifests, err := assets.New(filepath.Join(templateDir, manifestDir), templateData, []assets.FileContentsPredicate{}, assets.OnlyYaml)
 		if err != nil {
 			return fmt.Errorf("failed rendering assets: %v", err)
 		}
