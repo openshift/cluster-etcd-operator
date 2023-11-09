@@ -32,8 +32,6 @@ import (
 	coreclientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
-
-	"github.com/mcuadros/go-version"
 )
 
 // UpgradeBackupController responds to an upgrade request to 4.9 by attempting
@@ -43,6 +41,8 @@ import (
 // proceed without a recent backup to restore a cluster that is not healthy after
 // upgrade to 4.9.
 
+// This controller is removed from 4.15 on.
+
 const (
 	backupConditionType      = "RecentBackup"
 	backupSuccess            = "UpgradeBackupSuccessful"
@@ -50,6 +50,7 @@ const (
 	recentBackupPath         = "/etc/kubernetes/cluster-backup"
 	failedPodBackoffDuration = 30 * time.Second
 	backupDirEnvName         = "CLUSTER_BACKUP_PATH"
+	deleteBackupDirEnvName   = "DELETE_BACKUP_DIR"
 )
 
 type UpgradeBackupController struct {
@@ -295,6 +296,7 @@ func createBackupPod(ctx context.Context, nodeName, recentBackupName, operatorIm
 	pod.Spec.Containers[0].Image = targetImagePullSpec
 	pod.Spec.Containers[0].Env = []corev1.EnvVar{
 		{Name: backupDirEnvName, Value: fmt.Sprintf("%s/%s", recentBackupPath, recentBackupName)},
+		{Name: deleteBackupDirEnvName, Value: recentBackupPath},
 	}
 	_, _, err := resourceapply.ApplyPod(ctx, client, recorder, pod)
 	if err != nil {
@@ -315,10 +317,6 @@ func isRequireRecentBackup(config *configv1.ClusterVersion, clusterOperatorStatu
 		}
 	}
 
-	// consecutive upgrades case
-	if backupRequired, err := isNewBackupRequired(config, clusterOperatorStatus); err == nil && backupRequired {
-		return true
-	}
 	return false
 }
 
@@ -343,41 +341,4 @@ func isBackupConditionExist(conditions []configv1.ClusterOperatorStatusCondition
 		}
 	}
 	return false
-}
-
-func isNewBackupRequired(config *configv1.ClusterVersion, clusterOperatorStatus *configv1.ClusterOperatorStatus) (bool, error) {
-	currentVersion := status.VersionForOperatorFromEnv()
-	if currentVersion == "" {
-		return false, nil
-	}
-	// check in ClusterVersion update history for update in progress (i.e. state: Partial)
-	// then check the condition of etcd operator
-	// if backup for current cluster version was taken, return false
-	// otherwise, if the update version greater than current version, return true
-	for _, update := range config.Status.History {
-		if update.State == configv1.PartialUpdate {
-			klog.V(4).Infof("in progress update is detected, cluster current version is %v, progressing towards cluster version %v", currentVersion, update.Version)
-			currentBackupVersion := getCurrentBackupVersion(clusterOperatorStatus)
-			if currentBackupVersion == currentVersion {
-				return false, nil
-			}
-			if cmp := version.CompareSimple(update.Version, currentVersion); cmp > 0 {
-				return true, nil
-			}
-		}
-	}
-
-	return false, nil
-}
-
-func getCurrentBackupVersion(clusterOperatorStatus *configv1.ClusterOperatorStatus) string {
-	backupCondition := configv1helpers.FindStatusCondition(clusterOperatorStatus.Conditions, backupConditionType)
-	if backupCondition == nil {
-		return ""
-	}
-	if backupCondition.Reason == backupSuccess {
-		backupVersion := strings.Fields(backupCondition.Message)[2]
-		return backupVersion
-	}
-	return ""
 }
