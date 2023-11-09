@@ -23,7 +23,7 @@ import (
 )
 
 // StaticPodStateController is a controller that watches static pods and will produce a failing status if the
-//// static pods start crashing for some reason.
+// // static pods start crashing for some reason.
 type StaticPodStateController struct {
 	targetNamespace string
 	staticPodName   string

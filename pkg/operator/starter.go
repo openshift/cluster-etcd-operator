@@ -249,6 +249,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			"openshift-etcd-operator",
 			"etcd-operator",
 			"9980",
+			"readyz",
 			guardRolloutPreCheck,
 		).
 		WithOperandPodLabelSelector(labels.Set{"etcd": "true"}.AsSelector()).

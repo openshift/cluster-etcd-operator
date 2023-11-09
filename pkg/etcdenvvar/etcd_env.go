@@ -71,19 +71,20 @@ var envVarFns = []envVarFunc{
 }
 
 // getEtcdEnvVars returns the env vars that need to be set on the etcd static pods that will be rendered.
-//   ALL_ETCD_ENDPOINTS - this is used to drive the ETCD_INITIAL_CLUSTER
-//   ETCD_DATA_DIR
-//   ETCDCTL_API
-//   ETCD_QUOTA_BACKEND_BYTES
-//   ETCD_HEARTBEAT_INTERVAL
-//   ETCD_ELECTION_TIMEOUT
-//   ETCD_INITIAL_CLUSTER_STATE
-//   ETCD_UNSUPPORTED_ARCH
-//   ETCD_CIPHER_SUITES
-//   ETCD_EXPERIMENTAL_MAX_LEARNERS
-//   NODE_%s_IP
-//   NODE_%s_ETCD_URL_HOST
-//   NODE_%s_ETCD_NAME
+//
+//	ALL_ETCD_ENDPOINTS - this is used to drive the ETCD_INITIAL_CLUSTER
+//	ETCD_DATA_DIR
+//	ETCDCTL_API
+//	ETCD_QUOTA_BACKEND_BYTES
+//	ETCD_HEARTBEAT_INTERVAL
+//	ETCD_ELECTION_TIMEOUT
+//	ETCD_INITIAL_CLUSTER_STATE
+//	ETCD_UNSUPPORTED_ARCH
+//	ETCD_CIPHER_SUITES
+//	ETCD_EXPERIMENTAL_MAX_LEARNERS
+//	NODE_%s_IP
+//	NODE_%s_ETCD_URL_HOST
+//	NODE_%s_ETCD_NAME
 func getEtcdEnvVars(envVarContext envVarContext) (map[string]string, error) {
 	ret := map[string]string{}
 
