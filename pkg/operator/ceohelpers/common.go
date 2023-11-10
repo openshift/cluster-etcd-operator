@@ -137,11 +137,10 @@ func CurrentMemberMachinesWithDeletionHooks(machineSelector labels.Selector, mac
 
 // FindMachineByNodeInternalIP finds the machine that matches the given nodeInternalIP
 // is safe because the MAO:
-//
-//	syncs the addresses in the Machine with those assigned to real nodes by the cloud provider,
-//	checks that the Machine and Node lists match before issuing a serving certification for the kubelet
-//	when the host disappears from the cloud side, it stops updating the Machine so the addresses and information
-//	should persist there as a tombstone as the Machine is marked Failed
+//  syncs the addresses in the Machine with those assigned to real nodes by the cloud provider,
+//  checks that the Machine and Node lists match before issuing a serving certification for the kubelet
+//  when the host disappears from the cloud side, it stops updating the Machine so the addresses and information
+//  should persist there as a tombstone as the Machine is marked Failed
 func FindMachineByNodeInternalIP(nodeInternalIP string, machineSelector labels.Selector, machineLister machinelistersv1beta1.MachineLister) (*machinev1beta1.Machine, error) {
 	machines, err := machineLister.List(machineSelector)
 	if err != nil {

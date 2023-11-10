@@ -94,9 +94,6 @@ type ControllerBuilder struct {
 	// Keep track if we defaulted leader election, used to make sure we don't stomp on the users intent for leader election
 	// We use this flag to determine at runtime if we can alter leader election for SNO configurations
 	userExplicitlySetLeaderElectionValues bool
-
-	// Allow enabling HTTP2
-	enableHTTP2 bool
 }
 
 // NewController returns a builder struct for constructing the command you want to run
@@ -172,12 +169,6 @@ func (b *ControllerBuilder) WithServer(servingInfo configv1.HTTPServingInfo, aut
 	configdefaults.SetRecommendedHTTPServingInfoDefaults(b.servingInfo)
 	b.authenticationConfig = &authenticationConfig
 	b.authorizationConfig = &authorizationConfig
-	return b
-}
-
-// WithHTTP2 indicates that http2 should be enabled
-func (b *ControllerBuilder) WithHTTP2() *ControllerBuilder {
-	b.enableHTTP2 = true
 	return b
 }
 
@@ -278,7 +269,7 @@ func (b *ControllerBuilder) Run(ctx context.Context, config *unstructured.Unstru
 
 	var server *genericapiserver.GenericAPIServer
 	if b.servingInfo != nil {
-		serverConfig, err := serving.ToServerConfig(ctx, *b.servingInfo, *b.authenticationConfig, *b.authorizationConfig, kubeConfig, kubeClient, b.leaderElection, b.enableHTTP2)
+		serverConfig, err := serving.ToServerConfig(ctx, *b.servingInfo, *b.authenticationConfig, *b.authorizationConfig, kubeConfig)
 		if err != nil {
 			return err
 		}
@@ -338,7 +329,7 @@ func (b *ControllerBuilder) Run(ctx context.Context, config *unstructured.Unstru
 	leaderConfig := rest.CopyConfig(protoConfig)
 	leaderConfig.Timeout = b.leaderElection.RenewDeadline.Duration
 
-	leaderElection, err := leaderelectionconverter.ToLeaderElectionWithLease(leaderConfig, *b.leaderElection, b.componentName, b.instanceIdentity)
+	leaderElection, err := leaderelectionconverter.ToLeaderElectionWithConfigmapLease(leaderConfig, *b.leaderElection, b.componentName, b.instanceIdentity)
 	if err != nil {
 		return err
 	}

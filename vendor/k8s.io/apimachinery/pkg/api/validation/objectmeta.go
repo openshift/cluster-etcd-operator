@@ -40,11 +40,13 @@ var BannedOwners = map[schema.GroupVersionKind]struct{}{
 	{Group: "", Version: "v1", Kind: "Event"}: {},
 }
 
+// ValidateClusterName can be used to check whether the given cluster name is valid.
+var ValidateClusterName = NameIsDNS1035Label
+
 // ValidateAnnotations validates that a set of annotations are correctly defined.
 func ValidateAnnotations(annotations map[string]string, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	for k := range annotations {
-		// The rule is QualifiedName except that case doesn't matter, so convert to lowercase before checking.
 		for _, msg := range validation.IsQualifiedName(strings.ToLower(k)) {
 			allErrs = append(allErrs, field.Invalid(fldPath, k, msg))
 		}
@@ -91,16 +93,15 @@ func validateOwnerReference(ownerReference metav1.OwnerReference, fldPath *field
 // ValidateOwnerReferences validates that a set of owner references are correctly defined.
 func ValidateOwnerReferences(ownerReferences []metav1.OwnerReference, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	firstControllerName := ""
+	controllerName := ""
 	for _, ref := range ownerReferences {
 		allErrs = append(allErrs, validateOwnerReference(ref, fldPath)...)
 		if ref.Controller != nil && *ref.Controller {
-			curControllerName := ref.Kind + "/" + ref.Name
-			if firstControllerName != "" {
+			if controllerName != "" {
 				allErrs = append(allErrs, field.Invalid(fldPath, ownerReferences,
-					fmt.Sprintf("Only one reference can have Controller set to true. Found \"true\" in references for %v and %v", firstControllerName, curControllerName)))
+					fmt.Sprintf("Only one reference can have Controller set to true. Found \"true\" in references for %v and %v", controllerName, ref.Name)))
 			} else {
-				firstControllerName = curControllerName
+				controllerName = ref.Name
 			}
 		}
 	}
@@ -183,6 +184,11 @@ func ValidateObjectMetaAccessor(meta metav1.Object, requiresNamespace bool, name
 			allErrs = append(allErrs, field.Forbidden(fldPath.Child("namespace"), "not allowed on this type"))
 		}
 	}
+	if len(meta.GetClusterName()) != 0 {
+		for _, msg := range ValidateClusterName(meta.GetClusterName(), false) {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("clusterName"), meta.GetClusterName(), msg))
+		}
+	}
 
 	allErrs = append(allErrs, ValidateNonnegativeField(meta.GetGeneration(), fldPath.Child("generation"))...)
 	allErrs = append(allErrs, v1validation.ValidateLabels(meta.GetLabels(), fldPath.Child("labels"))...)
@@ -255,6 +261,7 @@ func ValidateObjectMetaAccessorUpdate(newMeta, oldMeta metav1.Object, fldPath *f
 	allErrs = append(allErrs, ValidateImmutableField(newMeta.GetCreationTimestamp(), oldMeta.GetCreationTimestamp(), fldPath.Child("creationTimestamp"))...)
 	allErrs = append(allErrs, ValidateImmutableField(newMeta.GetDeletionTimestamp(), oldMeta.GetDeletionTimestamp(), fldPath.Child("deletionTimestamp"))...)
 	allErrs = append(allErrs, ValidateImmutableField(newMeta.GetDeletionGracePeriodSeconds(), oldMeta.GetDeletionGracePeriodSeconds(), fldPath.Child("deletionGracePeriodSeconds"))...)
+	allErrs = append(allErrs, ValidateImmutableField(newMeta.GetClusterName(), oldMeta.GetClusterName(), fldPath.Child("clusterName"))...)
 
 	allErrs = append(allErrs, v1validation.ValidateLabels(newMeta.GetLabels(), fldPath.Child("labels"))...)
 	allErrs = append(allErrs, ValidateAnnotations(newMeta.GetAnnotations(), fldPath.Child("annotations"))...)

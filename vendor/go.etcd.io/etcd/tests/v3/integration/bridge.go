@@ -15,22 +15,22 @@
 package integration
 
 import (
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
 	"sync"
+
+	"go.etcd.io/etcd/client/pkg/v3/transport"
 )
 
-type Dialer interface {
-	Dial() (net.Conn, error)
-}
-
-// bridge proxies connections between listener and dialer, making it possible
+// bridge creates a unix socket bridge to another unix socket, making it possible
 // to disconnect grpc network connections without closing the logical grpc connection.
 type bridge struct {
-	dialer Dialer
-	l      net.Listener
-	conns  map[*bridgeConn]struct{}
+	inaddr  string
+	outaddr string
+	l       net.Listener
+	conns   map[*bridgeConn]struct{}
 
 	stopc      chan struct{}
 	pausec     chan struct{}
@@ -40,21 +40,29 @@ type bridge struct {
 	mu sync.Mutex
 }
 
-func newBridge(dialer Dialer, listener net.Listener) (*bridge, error) {
+func newBridge(addr string) (*bridge, error) {
 	b := &bridge{
 		// bridge "port" is ("%05d%05d0", port, pid) since go1.8 expects the port to be a number
-		dialer:     dialer,
-		l:          listener,
+		inaddr:     addr + "0",
+		outaddr:    addr,
 		conns:      make(map[*bridgeConn]struct{}),
 		stopc:      make(chan struct{}),
 		pausec:     make(chan struct{}),
 		blackholec: make(chan struct{}),
 	}
 	close(b.pausec)
+
+	l, err := transport.NewUnixListener(b.inaddr)
+	if err != nil {
+		return nil, fmt.Errorf("listen failed on socket %s (%v)", addr, err)
+	}
+	b.l = l
 	b.wg.Add(1)
 	go b.serveListen()
 	return b, nil
 }
+
+func (b *bridge) URL() string { return "unix://" + b.inaddr }
 
 func (b *bridge) Close() {
 	b.l.Close()
@@ -68,7 +76,7 @@ func (b *bridge) Close() {
 	b.wg.Wait()
 }
 
-func (b *bridge) DropConnections() {
+func (b *bridge) Reset() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for bc := range b.conns {
@@ -77,13 +85,13 @@ func (b *bridge) DropConnections() {
 	b.conns = make(map[*bridgeConn]struct{})
 }
 
-func (b *bridge) PauseConnections() {
+func (b *bridge) Pause() {
 	b.mu.Lock()
 	b.pausec = make(chan struct{})
 	b.mu.Unlock()
 }
 
-func (b *bridge) UnpauseConnections() {
+func (b *bridge) Unpause() {
 	b.mu.Lock()
 	select {
 	case <-b.pausec:
@@ -119,7 +127,7 @@ func (b *bridge) serveListen() {
 		case <-pausec:
 		}
 
-		outc, oerr := b.dialer.Dial()
+		outc, oerr := net.Dial("unix", b.outaddr)
 		if oerr != nil {
 			inc.Close()
 			return

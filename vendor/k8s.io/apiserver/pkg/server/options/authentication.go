@@ -17,7 +17,6 @@ limitations under the License.
 package options
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -202,9 +201,6 @@ type DelegatingAuthenticationOptions struct {
 
 	// CustomRoundTripperFn allows for specifying a middleware function for custom HTTP behaviour for the authentication webhook client.
 	CustomRoundTripperFn transport.WrapperFunc
-
-	// DisableAnonymous gives user an option to disable Anonymous authentication.
-	DisableAnonymous bool
 }
 
 func NewDelegatingAuthenticationOptions() *DelegatingAuthenticationOptions {
@@ -286,7 +282,7 @@ func (s *DelegatingAuthenticationOptions) ApplyTo(authenticationInfo *server.Aut
 	}
 
 	cfg := authenticatorfactory.DelegatingAuthenticatorConfig{
-		Anonymous:                !s.DisableAnonymous,
+		Anonymous:                true,
 		CacheTTL:                 s.CacheTTL,
 		WebhookRetryBackoff:      s.WebhookRetryBackoff,
 		TokenAccessReviewTimeout: s.TokenRequestTimeout,
@@ -391,10 +387,7 @@ func (s *DelegatingAuthenticationOptions) createRequestHeaderConfig(client kuber
 	}
 
 	//  look up authentication configuration in the cluster and in case of an err defer to authentication-tolerate-lookup-failure flag
-	//  We are passing the context to ProxyCerts.RunOnce as it needs to implement RunOnce(ctx) however the
-	//  context is not used at all. So passing a empty context shouldn't be a problem
-	ctx := context.TODO()
-	if err := dynamicRequestHeaderProvider.RunOnce(ctx); err != nil {
+	if err := dynamicRequestHeaderProvider.RunOnce(); err != nil {
 		return nil, err
 	}
 

@@ -126,7 +126,7 @@ func (f *fakeEtcdClient) MemberHealth(ctx context.Context) (memberHealth, error)
 	return memberHealth, nil
 }
 
-// IsMemberHealthy returns true if the number of etcd members equals the member of healthy members.
+//IsMemberHealthy returns true if the number of etcd members equals the member of healthy members.
 func (f *fakeEtcdClient) IsMemberHealthy(ctx context.Context, member *etcdserverpb.Member) (bool, error) {
 	return len(f.members) == f.opts.healthyMember, nil
 }

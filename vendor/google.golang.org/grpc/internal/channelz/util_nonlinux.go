@@ -1,5 +1,4 @@
-//go:build !linux
-// +build !linux
+// +build !linux appengine
 
 /*
  *
@@ -22,6 +21,6 @@
 package channelz
 
 // GetSocketOption gets the socket option info of the conn.
-func GetSocketOption(c any) *SocketOptionData {
+func GetSocketOption(c interface{}) *SocketOptionData {
 	return nil
 }

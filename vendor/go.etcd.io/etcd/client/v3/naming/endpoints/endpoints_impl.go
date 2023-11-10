@@ -78,8 +78,7 @@ func (m *endpointManager) DeleteEndpoint(ctx context.Context, key string, opts .
 }
 
 func (m *endpointManager) NewWatchChannel(ctx context.Context) (WatchChannel, error) {
-	key := m.target + "/"
-	resp, err := m.client.Get(ctx, key, clientv3.WithPrefix(), clientv3.WithSerializable())
+	resp, err := m.client.Get(ctx, m.target, clientv3.WithPrefix(), clientv3.WithSerializable())
 	if err != nil {
 		return nil, err
 	}
@@ -113,8 +112,7 @@ func (m *endpointManager) watch(ctx context.Context, rev int64, upch chan []*Upd
 
 	lg := m.client.GetLogger()
 	opts := []clientv3.OpOption{clientv3.WithRev(rev), clientv3.WithPrefix()}
-	key := m.target + "/"
-	wch := m.client.Watch(ctx, key, opts...)
+	wch := m.client.Watch(ctx, m.target, opts...)
 	for {
 		select {
 		case <-ctx.Done():
@@ -159,8 +157,7 @@ func (m *endpointManager) watch(ctx context.Context, rev int64, upch chan []*Upd
 }
 
 func (m *endpointManager) List(ctx context.Context) (Key2EndpointMap, error) {
-	key := m.target + "/"
-	resp, err := m.client.Get(ctx, key, clientv3.WithPrefix(), clientv3.WithSerializable())
+	resp, err := m.client.Get(ctx, m.target, clientv3.WithPrefix(), clientv3.WithSerializable())
 	if err != nil {
 		return nil, err
 	}

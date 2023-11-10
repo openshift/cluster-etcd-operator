@@ -245,7 +245,8 @@ func anyToSockaddr(fd int, rsa *RawSockaddrAny) (Sockaddr, error) {
 				break
 			}
 		}
-		sa.Name = string(unsafe.Slice((*byte)(unsafe.Pointer(&pp.Path[0])), n))
+		bytes := (*[len(pp.Path)]byte)(unsafe.Pointer(&pp.Path[0]))[0:n]
+		sa.Name = string(bytes)
 		return sa, nil
 
 	case AF_INET:
@@ -324,62 +325,80 @@ func GetsockoptString(fd, level, opt int) (string, error) {
 //sys	sendto(s int, buf []byte, flags int, to unsafe.Pointer, addrlen _Socklen) (err error)
 //sys	recvmsg(s int, msg *Msghdr, flags int) (n int, err error)
 
-func recvmsgRaw(fd int, iov []Iovec, oob []byte, flags int, rsa *RawSockaddrAny) (n, oobn int, recvflags int, err error) {
+func Recvmsg(fd int, p, oob []byte, flags int) (n, oobn int, recvflags int, from Sockaddr, err error) {
 	var msg Msghdr
-	msg.Name = (*byte)(unsafe.Pointer(rsa))
+	var rsa RawSockaddrAny
+	msg.Name = (*byte)(unsafe.Pointer(&rsa))
 	msg.Namelen = uint32(SizeofSockaddrAny)
+	var iov Iovec
+	if len(p) > 0 {
+		iov.Base = (*byte)(unsafe.Pointer(&p[0]))
+		iov.SetLen(len(p))
+	}
 	var dummy byte
 	if len(oob) > 0 {
 		// receive at least one normal byte
-		if emptyIovecs(iov) {
-			var iova [1]Iovec
-			iova[0].Base = &dummy
-			iova[0].SetLen(1)
-			iov = iova[:]
+		if len(p) == 0 {
+			iov.Base = &dummy
+			iov.SetLen(1)
 		}
 		msg.Control = (*byte)(unsafe.Pointer(&oob[0]))
 		msg.SetControllen(len(oob))
 	}
-	if len(iov) > 0 {
-		msg.Iov = &iov[0]
-		msg.SetIovlen(len(iov))
-	}
+	msg.Iov = &iov
+	msg.Iovlen = 1
 	if n, err = recvmsg(fd, &msg, flags); err != nil {
 		return
 	}
 	oobn = int(msg.Controllen)
 	recvflags = int(msg.Flags)
+	// source address is only specified if the socket is unconnected
+	if rsa.Addr.Family != AF_UNSPEC {
+		from, err = anyToSockaddr(fd, &rsa)
+	}
 	return
 }
 
 //sys	sendmsg(s int, msg *Msghdr, flags int) (n int, err error)
 
-func sendmsgN(fd int, iov []Iovec, oob []byte, ptr unsafe.Pointer, salen _Socklen, flags int) (n int, err error) {
+func Sendmsg(fd int, p, oob []byte, to Sockaddr, flags int) (err error) {
+	_, err = SendmsgN(fd, p, oob, to, flags)
+	return
+}
+
+func SendmsgN(fd int, p, oob []byte, to Sockaddr, flags int) (n int, err error) {
+	var ptr unsafe.Pointer
+	var salen _Socklen
+	if to != nil {
+		ptr, salen, err = to.sockaddr()
+		if err != nil {
+			return 0, err
+		}
+	}
 	var msg Msghdr
 	msg.Name = (*byte)(unsafe.Pointer(ptr))
 	msg.Namelen = uint32(salen)
+	var iov Iovec
+	if len(p) > 0 {
+		iov.Base = (*byte)(unsafe.Pointer(&p[0]))
+		iov.SetLen(len(p))
+	}
 	var dummy byte
-	var empty bool
 	if len(oob) > 0 {
 		// send at least one normal byte
-		empty = emptyIovecs(iov)
-		if empty {
-			var iova [1]Iovec
-			iova[0].Base = &dummy
-			iova[0].SetLen(1)
-			iov = iova[:]
+		if len(p) == 0 {
+			iov.Base = &dummy
+			iov.SetLen(1)
 		}
 		msg.Control = (*byte)(unsafe.Pointer(&oob[0]))
 		msg.SetControllen(len(oob))
 	}
-	if len(iov) > 0 {
-		msg.Iov = &iov[0]
-		msg.SetIovlen(len(iov))
-	}
+	msg.Iov = &iov
+	msg.Iovlen = 1
 	if n, err = sendmsg(fd, &msg, flags); err != nil {
 		return 0, err
 	}
-	if len(oob) > 0 && empty {
+	if len(oob) > 0 && len(p) == 0 {
 		n = 0
 	}
 	return n, nil
@@ -552,7 +571,12 @@ func UtimesNano(path string, ts []Timespec) error {
 	if len(ts) != 2 {
 		return EINVAL
 	}
-	err := utimensat(AT_FDCWD, path, (*[2]Timespec)(unsafe.Pointer(&ts[0])), 0)
+	// Darwin setattrlist can set nanosecond timestamps
+	err := setattrlistTimes(path, ts, 0)
+	if err != ENOSYS {
+		return err
+	}
+	err = utimensat(AT_FDCWD, path, (*[2]Timespec)(unsafe.Pointer(&ts[0])), 0)
 	if err != ENOSYS {
 		return err
 	}
@@ -571,6 +595,10 @@ func UtimesNanoAt(dirfd int, path string, ts []Timespec, flags int) error {
 	}
 	if len(ts) != 2 {
 		return EINVAL
+	}
+	err := setattrlistTimes(path, ts, flags)
+	if err != ENOSYS {
+		return err
 	}
 	return utimensat(dirfd, path, (*[2]Timespec)(unsafe.Pointer(&ts[0])), flags)
 }
@@ -600,6 +628,20 @@ func Poll(fds []PollFd, timeout int) (n int, err error) {
 //	Acct(name nil-string) (err error)
 //	Gethostuuid(uuid *byte, timeout *Timespec) (err error)
 //	Ptrace(req int, pid int, addr uintptr, data int) (ret uintptr, err error)
+
+var mapper = &mmapper{
+	active: make(map[*byte][]byte),
+	mmap:   mmap,
+	munmap: munmap,
+}
+
+func Mmap(fd int, offset int64, length int, prot int, flags int) (data []byte, err error) {
+	return mapper.Mmap(fd, offset, length, prot, flags)
+}
+
+func Munmap(b []byte) (err error) {
+	return mapper.Munmap(b)
+}
 
 //sys	Madvise(b []byte, behav int) (err error)
 //sys	Mlock(b []byte) (err error)

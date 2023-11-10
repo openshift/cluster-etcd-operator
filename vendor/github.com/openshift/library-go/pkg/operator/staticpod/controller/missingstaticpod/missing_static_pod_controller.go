@@ -54,7 +54,7 @@ type lastEventEmissionPerNode map[string]struct {
 // longer than the terminationGracePeriodSeconds+maxTimeout(value depends on
 // single node or multi node deployment) seconds since the installer pod
 // completed successfully, and if the static pod is not at the correct revision
-// , this controller will go degraded.  It will also emit an event for detection
+//, this controller will go degraded.  It will also emit an event for detection
 // in CI.
 func New(
 	operatorClient v1helpers.StaticPodOperatorClient,

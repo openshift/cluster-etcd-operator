@@ -71,7 +71,6 @@ type staticPodOperatorControllerBuilder struct {
 	operatorName               string
 	operatorNamespace          string
 	readyzPort                 string
-	readyzEndpoint             string
 	guardCreateConditionalFunc func() (bool, bool, error)
 }
 
@@ -104,7 +103,7 @@ type Builder interface {
 	// the installer pod is created for a revision.
 	WithCustomInstaller(command []string, installerPodMutationFunc installer.InstallerPodMutationFunc) Builder
 	WithPruning(command []string, staticPodPrefix string) Builder
-	WithPodDisruptionBudgetGuard(operatorNamespace, operatorName, readyzPort, readyzEndpoint string, createConditionalFunc func() (bool, bool, error)) Builder
+	WithPodDisruptionBudgetGuard(operatorNamespace, operatorName, readyzPort string, createConditionalFunc func() (bool, bool, error)) Builder
 	ToControllers() (manager.ControllerManager, error)
 }
 
@@ -171,11 +170,10 @@ func (b *staticPodOperatorControllerBuilder) WithPruning(command []string, stati
 	return b
 }
 
-func (b *staticPodOperatorControllerBuilder) WithPodDisruptionBudgetGuard(operatorNamespace, operatorName, readyzPort, readyzEndpoint string, createConditionalFunc func() (bool, bool, error)) Builder {
+func (b *staticPodOperatorControllerBuilder) WithPodDisruptionBudgetGuard(operatorNamespace, operatorName, readyzPort string, createConditionalFunc func() (bool, bool, error)) Builder {
 	b.operatorNamespace = operatorNamespace
 	b.operatorName = operatorName
 	b.readyzPort = readyzPort
-	b.readyzEndpoint = readyzEndpoint
 	b.guardCreateConditionalFunc = createConditionalFunc
 	return b
 }
@@ -332,14 +330,13 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 	manager.WithController(unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(b.staticPodOperatorClient, eventRecorder), 1)
 	manager.WithController(loglevel.NewClusterOperatorLoggingController(b.staticPodOperatorClient, eventRecorder), 1)
 
-	if len(b.operatorNamespace) > 0 && len(b.operatorName) > 0 && len(b.readyzPort) > 0 && len(b.readyzEndpoint) > 0 {
+	if len(b.operatorNamespace) > 0 && len(b.operatorName) > 0 && len(b.readyzPort) > 0 {
 		if guardController, err := guard.NewGuardController(
 			b.operandNamespace,
 			b.operandPodLabelSelector,
 			b.staticPodName,
 			b.operatorName,
 			b.readyzPort,
-			b.readyzEndpoint,
 			operandInformers,
 			clusterInformers,
 			b.staticPodOperatorClient,

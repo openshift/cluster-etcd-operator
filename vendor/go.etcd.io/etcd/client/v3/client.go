@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
-	"go.etcd.io/etcd/client/pkg/v3/logutil"
 	"go.etcd.io/etcd/client/v3/credentials"
 	"go.etcd.io/etcd/client/v3/internal/endpoint"
 	"go.etcd.io/etcd/client/v3/internal/resolver"
@@ -185,9 +184,7 @@ func (c *Client) Sync(ctx context.Context) error {
 	}
 	var eps []string
 	for _, m := range mresp.Members {
-		if len(m.Name) != 0 && !m.IsLearner {
-			eps = append(eps, m.ClientURLs...)
-		}
+		eps = append(eps, m.ClientURLs...)
 	}
 	c.SetEndpoints(eps...)
 	return nil
@@ -264,7 +261,6 @@ func (c *Client) getToken(ctx context.Context) error {
 	resp, err := c.Auth.Authenticate(ctx, c.Username, c.Password)
 	if err != nil {
 		if err == rpctypes.ErrAuthNotEnabled {
-			c.authTokenBundle.UpdateAuthToken("")
 			return nil
 		}
 		return err
@@ -287,7 +283,8 @@ func (c *Client) dial(creds grpccredentials.TransportCredentials, dopts ...grpc.
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure dialer: %v", err)
 	}
-	if c.authTokenBundle != nil {
+	if c.Username != "" && c.Password != "" {
+		c.authTokenBundle = credentials.NewBundle(credentials.Config{})
 		opts = append(opts, grpc.WithPerRPCCredentials(c.authTokenBundle.PerRPCCredentials()))
 	}
 
@@ -299,26 +296,14 @@ func (c *Client) dial(creds grpccredentials.TransportCredentials, dopts ...grpc.
 		dctx, cancel = context.WithTimeout(c.ctx, c.cfg.DialTimeout)
 		defer cancel() // TODO: Is this right for cases where grpc.WithBlock() is not set on the dial options?
 	}
-	target := fmt.Sprintf("%s://%p/%s", resolver.Schema, c, authority(c.Endpoints()[0]))
+
+	initialEndpoints := strings.Join(c.cfg.Endpoints, ";")
+	target := fmt.Sprintf("%s://%p/#initially=[%s]", resolver.Schema, c, initialEndpoints)
 	conn, err := grpc.DialContext(dctx, target, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return conn, nil
-}
-
-func authority(endpoint string) string {
-	spl := strings.SplitN(endpoint, "://", 2)
-	if len(spl) < 2 {
-		if strings.HasPrefix(endpoint, "unix:") {
-			return endpoint[len("unix:"):]
-		}
-		if strings.HasPrefix(endpoint, "unixs:") {
-			return endpoint[len("unixs:"):]
-		}
-		return endpoint
-	}
-	return spl[1]
 }
 
 func (c *Client) credentialsForEndpoint(ep string) grpccredentials.TransportCredentials {
@@ -371,10 +356,7 @@ func newClient(cfg *Config) (*Client, error) {
 	} else if cfg.LogConfig != nil {
 		client.lg, err = cfg.LogConfig.Build()
 	} else {
-		client.lg, err = logutil.CreateDefaultZapLogger(etcdClientDebugLevel())
-		if client.lg != nil {
-			client.lg = client.lg.Named("etcd-client")
-		}
+		client.lg, err = CreateDefaultZapLogger()
 	}
 	if err != nil {
 		return nil, err
@@ -383,7 +365,6 @@ func newClient(cfg *Config) (*Client, error) {
 	if cfg.Username != "" && cfg.Password != "" {
 		client.Username = cfg.Username
 		client.Password = cfg.Password
-		client.authTokenBundle = credentials.NewBundle(credentials.Config{})
 	}
 	if cfg.MaxCallSendMsgSize > 0 || cfg.MaxCallRecvMsgSize > 0 {
 		if cfg.MaxCallRecvMsgSize > 0 && cfg.MaxCallSendMsgSize > cfg.MaxCallRecvMsgSize {
@@ -502,7 +483,7 @@ func (c *Client) checkVersion() (err error) {
 					return
 				}
 			}
-			if maj < 3 || (maj == 3 && min < 4) {
+			if maj < 3 || (maj == 3 && min < 2) {
 				rerr = ErrOldCluster
 			}
 			errc <- rerr
@@ -510,7 +491,7 @@ func (c *Client) checkVersion() (err error) {
 	}
 	// wait for success
 	for range eps {
-		if err = <-errc; err != nil {
+		if err = <-errc; err == nil {
 			break
 		}
 	}

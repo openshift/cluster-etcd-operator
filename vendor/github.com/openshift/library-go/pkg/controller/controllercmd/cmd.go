@@ -43,9 +43,6 @@ type ControllerCommandConfig struct {
 	// DisableServing disables serving metrics, debug and health checks and so on.
 	DisableServing bool
 
-	// Allow enabling HTTP2
-	EnableHTTP2 bool
-
 	// DisableLeaderElection allows leader election to be suspended
 	DisableLeaderElection bool
 
@@ -292,9 +289,6 @@ func (c *ControllerCommandConfig) StartController(ctx context.Context) error {
 
 	if !c.DisableServing {
 		builder = builder.WithServer(config.ServingInfo, config.Authentication, config.Authorization)
-		if c.EnableHTTP2 {
-			builder = builder.WithHTTP2()
-		}
 	}
 
 	return builder.Run(controllerCtx, unstructuredConfig)

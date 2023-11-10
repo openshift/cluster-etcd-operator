@@ -26,24 +26,32 @@ import (
 	"time"
 
 	"github.com/spf13/pflag"
-	logsapi "k8s.io/component-base/logs/api/v1"
-	"k8s.io/component-base/logs/klogflags"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 )
 
-const vmoduleUsage = " (only works for the default text log format)"
+const logFlushFreqFlagName = "log-flush-frequency"
+const deprecated = "will be removed in a future release, see https://github.com/kubernetes/enhancements/tree/master/keps/sig-instrumentation/2845-deprecate-klog-specific-flags-in-k8s-components"
+
+// TODO (https://github.com/kubernetes/kubernetes/issues/105310): once klog
+// flags are removed, stop warning about "Non-default formats don't honor these
+// flags" in config.go and instead add this remark here.
+//
+// const vmoduleUsage = " (only works for the default text log format)"
 
 var (
 	packageFlags = flag.NewFlagSet("logging", flag.ContinueOnError)
+	logrFlush    func()
 
 	// Periodic flushing gets configured either via the global flag
 	// in this file or via LoggingConfiguration.
-	logFlushFreq time.Duration
+	logFlushFreq      time.Duration
+	logFlushFreqAdded bool
 )
 
 func init() {
-	klogflags.Init(packageFlags)
-	packageFlags.DurationVar(&logFlushFreq, logsapi.LogFlushFreqFlagName, logsapi.LogFlushFreqDefault, "Maximum number of seconds between log flushes")
+	klog.InitFlags(packageFlags)
+	packageFlags.DurationVar(&logFlushFreq, logFlushFreqFlagName, 5*time.Second, "Maximum number of seconds between log flushes")
 }
 
 type addFlagsOptions struct {
@@ -61,13 +69,6 @@ func SkipLoggingConfigurationFlags() Option {
 	}
 }
 
-// Options is an alias for LoggingConfiguration to comply with component-base
-// conventions.
-type Options = logsapi.LoggingConfiguration
-
-// NewOptions is an alias for NewLoggingConfiguration.
-var NewOptions = logsapi.NewLoggingConfiguration
-
 // AddFlags registers this package's flags on arbitrary FlagSets. This includes
 // the klog flags, with the original underscore as separator between. If
 // commands want hyphens as separators, they can set
@@ -76,29 +77,43 @@ var NewOptions = logsapi.NewLoggingConfiguration
 //
 // May be called more than once.
 func AddFlags(fs *pflag.FlagSet, opts ...Option) {
+	// Determine whether the flags are already present by looking up one
+	// which always should exist.
+	if fs.Lookup("logtostderr") != nil {
+		return
+	}
+
 	o := addFlagsOptions{}
 	for _, opt := range opts {
 		opt(&o)
 	}
 
-	// Add all supported flags.
+	// Add flags with pflag deprecation remark for some klog flags.
 	packageFlags.VisitAll(func(f *flag.Flag) {
 		pf := pflag.PFlagFromGoFlag(f)
 		switch f.Name {
-		case "v", logsapi.LogFlushFreqFlagName:
+		case "v":
 			// unchanged, potentially skip it
 			if o.skipLoggingConfigurationFlags {
 				return
 			}
-		case "vmodule":
+		case logFlushFreqFlagName:
+			// unchanged, potentially skip it
 			if o.skipLoggingConfigurationFlags {
 				return
 			}
-			pf.Usage += vmoduleUsage
+			logFlushFreqAdded = true
+		case "vmodule":
+			// TODO: see above
+			// pf.Usage += vmoduleUsage
+			if o.skipLoggingConfigurationFlags {
+				return
+			}
+		default:
+			// deprecated, but not hidden
+			pf.Deprecated = deprecated
 		}
-		if fs.Lookup(pf.Name) == nil {
-			fs.AddFlag(pf)
-		}
+		fs.AddFlag(pf)
 	})
 }
 
@@ -119,16 +134,25 @@ func AddGoFlags(fs *flag.FlagSet, opts ...Option) {
 	packageFlags.VisitAll(func(f *flag.Flag) {
 		usage := f.Usage
 		switch f.Name {
-		case "v", logsapi.LogFlushFreqFlagName:
+		case "v":
 			// unchanged
 			if o.skipLoggingConfigurationFlags {
 				return
 			}
-		case "vmodule":
+		case logFlushFreqFlagName:
+			// unchanged
 			if o.skipLoggingConfigurationFlags {
 				return
 			}
-			usage += vmoduleUsage
+			logFlushFreqAdded = true
+		case "vmodule":
+			// TODO: see above
+			// usage += vmoduleUsage
+			if o.skipLoggingConfigurationFlags {
+				return
+			}
+		default:
+			usage += " (DEPRECATED: " + deprecated + ")"
 		}
 		fs.Var(f.Value, f.Name, usage)
 	})
@@ -146,28 +170,14 @@ func (writer KlogWriter) Write(data []byte) (n int, err error) {
 // InitLogs initializes logs the way we want for Kubernetes.
 // It should be called after parsing flags. If called before that,
 // it will use the default log settings.
-//
-// InitLogs disables support for contextual logging in klog while
-// that Kubernetes feature is not considered stable yet. Commands
-// which want to support contextual logging can:
-//   - call klog.EnableContextualLogging after calling InitLogs,
-//     with a fixed `true` or depending on some command line flag or
-//     a feature gate check
-//   - set up a FeatureGate instance, the advanced logging configuration
-//     with Options and call Options.ValidateAndApply with the FeatureGate;
-//     k8s.io/component-base/logs/example/cmd demonstrates how to do that
 func InitLogs() {
 	log.SetOutput(KlogWriter{})
 	log.SetFlags(0)
-
-	// Start flushing now. If LoggingConfiguration.ApplyAndValidate is
-	// used, it will restart the daemon with the log flush interval defined
-	// there.
-	klog.StartFlushDaemon(logFlushFreq)
-
-	// This is the default in Kubernetes. Options.ValidateAndApply
-	// will override this with the result of a feature gate check.
-	klog.EnableContextualLogging(false)
+	if logFlushFreqAdded {
+		// The flag from this file was activated, so use it now.
+		// Otherwise LoggingConfiguration.Apply will do this.
+		go wait.Forever(FlushLogs, logFlushFreq)
+	}
 }
 
 // FlushLogs flushes logs immediately. This should be called at the end of
@@ -175,6 +185,9 @@ func InitLogs() {
 // are printed before exiting the program.
 func FlushLogs() {
 	klog.Flush()
+	if logrFlush != nil {
+		logrFlush()
+	}
 }
 
 // NewLogger creates a new log.Logger which sends logs to klog.Info.

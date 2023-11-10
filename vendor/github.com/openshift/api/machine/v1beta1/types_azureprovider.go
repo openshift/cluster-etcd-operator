@@ -117,12 +117,6 @@ type AzureMachineProviderSpec struct {
 	// Availability set should be precreated, before using this field.
 	// +optional
 	AvailabilitySet string `json:"availabilitySet,omitempty"`
-	// Diagnostics configures the diagnostics settings for the virtual machine.
-	// This allows you to configure boot diagnostics such as capturing serial output from
-	// the virtual machine on boot.
-	// This is useful for debugging software based launch issues.
-	// +optional
-	Diagnostics AzureDiagnostics `json:"diagnostics,omitempty"`
 }
 
 // SpotVMOptions defines the options relevant to running the Machine on Spot VMs
@@ -131,62 +125,6 @@ type SpotVMOptions struct {
 	// +optional
 	MaxPrice *resource.Quantity `json:"maxPrice,omitempty"`
 }
-
-// AzureDiagnostics is used to configure the diagnostic settings of the virtual machine.
-type AzureDiagnostics struct {
-	// AzureBootDiagnostics configures the boot diagnostics settings for the virtual machine.
-	// This allows you to configure capturing serial output from the virtual machine on boot.
-	// This is useful for debugging software based launch issues.
-	// + This is a pointer so that we can validate required fields only when the structure is
-	// + configured by the user.
-	// +optional
-	Boot *AzureBootDiagnostics `json:"boot,omitempty"`
-}
-
-// AzureBootDiagnostics configures the boot diagnostics settings for the virtual machine.
-// This allows you to configure capturing serial output from the virtual machine on boot.
-// This is useful for debugging software based launch issues.
-// +union
-type AzureBootDiagnostics struct {
-	// StorageAccountType determines if the storage account for storing the diagnostics data
-	// should be provisioned by Azure (AzureManaged) or by the customer (CustomerManaged).
-	// +kubebuilder:validation:Required
-	// +unionDiscriminator
-	StorageAccountType AzureBootDiagnosticsStorageAccountType `json:"storageAccountType"`
-
-	// CustomerManaged provides reference to the customer manager storage account.
-	// +optional
-	CustomerManaged *AzureCustomerManagedBootDiagnostics `json:"customerManaged,omitempty"`
-}
-
-// AzureCustomerManagedBootDiagnostics provides reference to a customer managed
-// storage account.
-type AzureCustomerManagedBootDiagnostics struct {
-	// StorageAccountURI is the URI of the customer managed storage account.
-	// The URI typically will be `https://<mystorageaccountname>.blob.core.windows.net/`
-	// but may differ if you are using Azure DNS zone endpoints.
-	// You can find the correct endpoint by looking for the Blob Primary Endpoint in the
-	// endpoints tab in the Azure console.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Pattern=`^https://`
-	// +kubebuilder:validation:MaxLength=1024
-	StorageAccountURI string `json:"storageAccountURI"`
-}
-
-// AzureBootDiagnosticsStorageAccountType defines the list of valid storage account types
-// for the boot diagnostics.
-// +kubebuilder:validation:Enum:="AzureManaged";"CustomerManaged"
-type AzureBootDiagnosticsStorageAccountType string
-
-const (
-	// AzureManagedAzureDiagnosticsStorage is used to determine that the diagnostics storage account
-	// should be provisioned by Azure.
-	AzureManagedAzureDiagnosticsStorage AzureBootDiagnosticsStorageAccountType = "AzureManaged"
-
-	// CustomerManagedAzureDiagnosticsStorage is used to determine that the diagnostics storage account
-	// should be provisioned by the Customer.
-	CustomerManagedAzureDiagnosticsStorage AzureBootDiagnosticsStorageAccountType = "CustomerManaged"
-)
 
 // AzureMachineProviderStatus is the type that will be embedded in a Machine.Status.ProviderStatus field.
 // It contains Azure-specific status information.
@@ -205,7 +143,7 @@ type AzureMachineProviderStatus struct {
 	// Conditions is a set of conditions associated with the Machine to indicate
 	// errors or other status.
 	// +optional
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	Conditions []AzureMachineProviderCondition `json:"conditions,omitempty"`
 }
 
 // VMState describes the state of an Azure virtual machine.
@@ -344,25 +282,7 @@ type DataDisk struct {
 	// +optional
 	// +kubebuilder:validation:Enum=None;ReadOnly;ReadWrite
 	CachingType CachingTypeOption `json:"cachingType,omitempty"`
-	// DeletionPolicy specifies the data disk deletion policy upon Machine deletion.
-	// Possible values are "Delete","Detach".
-	// When "Delete" is used the data disk is deleted when the Machine is deleted.
-	// When "Detach" is used the data disk is detached from the Machine and retained when the Machine is deleted.
-	// +kubebuilder:validation:Enum=Delete;Detach
-	// +kubebuilder:validation:Required
-	DeletionPolicy DiskDeletionPolicyType `json:"deletionPolicy"`
 }
-
-// DiskDeletionPolicyType defines the possible values for DeletionPolicy.
-type DiskDeletionPolicyType string
-
-// These are the valid DiskDeletionPolicyType values.
-const (
-	// DiskDeletionPolicyTypeDelete means the DiskDeletionPolicyType is "Delete".
-	DiskDeletionPolicyTypeDelete DiskDeletionPolicyType = "Delete"
-	// DiskDeletionPolicyTypeDetach means the DiskDeletionPolicyType is "Detach".
-	DiskDeletionPolicyTypeDetach DiskDeletionPolicyType = "Detach"
-)
 
 // CachingTypeOption defines the different values for a CachingType.
 type CachingTypeOption string
@@ -444,13 +364,33 @@ type SecurityProfile struct {
 	EncryptionAtHost *bool `json:"encryptionAtHost,omitempty"`
 }
 
+// AzureMachineProviderCondition is a condition in a AzureMachineProviderStatus
+type AzureMachineProviderCondition struct {
+	// Type is the type of the condition.
+	Type ConditionType `json:"type"`
+	// Status is the status of the condition.
+	Status corev1.ConditionStatus `json:"status"`
+	// LastProbeTime is the last time we probed the condition.
+	// +optional
+	LastProbeTime metav1.Time `json:"lastProbeTime"`
+	// LastTransitionTime is the last time the condition transitioned from one status to another.
+	// +optional
+	LastTransitionTime metav1.Time `json:"lastTransitionTime"`
+	// Reason is a unique, one-word, CamelCase reason for the condition's last transition.
+	// +optional
+	Reason string `json:"reason"`
+	// Message is a human-readable message indicating details about last transition.
+	// +optional
+	Message string `json:"message"`
+}
+
 // AzureUltraSSDCapabilityState defines the different states of an UltraSSDCapability
 type AzureUltraSSDCapabilityState string
 
 // These are the valid AzureUltraSSDCapabilityState states.
 const (
-	// "AzureUltraSSDCapabilityEnabled" means the Azure UltraSSDCapability is Enabled
-	AzureUltraSSDCapabilityEnabled AzureUltraSSDCapabilityState = "Enabled"
-	// "AzureUltraSSDCapabilityDisabled" means the Azure UltraSSDCapability is Disabled
-	AzureUltraSSDCapabilityDisabled AzureUltraSSDCapabilityState = "Disabled"
+	// "AzureUltraSSDCapabilityTrue" means the Azure UltraSSDCapability is Enabled
+	AzureUltraSSDCapabilityTrue AzureUltraSSDCapabilityState = "Enabled"
+	// "AzureUltraSSDCapabilityFalse" means the Azure UltraSSDCapability is Disabled
+	AzureUltraSSDCapabilityFalse AzureUltraSSDCapabilityState = "Disabled"
 )

@@ -50,10 +50,9 @@ type clusterMemberRemovalController struct {
 // NewClusterMemberRemovalController removes an etcd member if the machine and a node for the etcd member is gone and the machine-api is active
 //
 // Note:
-//
-//	since this controller needs to reconcile only master nodes and machine objects
-//	make sure nodeInformer and machineInformer contain only filtered data
-//	otherwise it might be expensive to react to every node update in larger installations
+//  since this controller needs to reconcile only master nodes and machine objects
+//  make sure nodeInformer and machineInformer contain only filtered data
+//  otherwise it might be expensive to react to every node update in larger installations
 func NewClusterMemberRemovalController(
 	operatorClient operatorv1helpers.StaticPodOperatorClient,
 	etcdClient etcdcli.EtcdClient,

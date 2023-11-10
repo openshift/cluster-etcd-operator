@@ -3,7 +3,6 @@ package installerstate
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -60,14 +59,6 @@ var degradedConditionNames = []string{
 	"InstallerPodNetworkingDegraded",
 }
 
-func installerNameToRevision(name string) (int, error) {
-	parts := strings.Split(name, "-")
-	if len(parts) < 2 {
-		return 0, fmt.Errorf("Installer name %v is invalid, missing revision number", name)
-	}
-	return strconv.Atoi(parts[1])
-}
-
 func (c *InstallerStateController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	pods, err := c.podsGetter.Pods(c.targetNamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labels.SelectorFromSet(labels.Set{"app": "installer"}).String(),
@@ -76,41 +67,19 @@ func (c *InstallerStateController) sync(ctx context.Context, syncCtx factory.Syn
 		return err
 	}
 
-	masterRevisions := make(map[string][]*v1.Pod)
-	installerHighestRunningRevision := make(map[string]int)
-	for _, pod := range pods.Items {
-		p := pod
-		masterRevisions[pod.Spec.NodeName] = append(masterRevisions[pod.Spec.NodeName], &p)
-	}
-	// find the highest revision of a non-pending pod on each master node
-	for masterNode, pods := range masterRevisions {
-		maxRunningRev := 0
-		for _, pod := range pods {
-			if pod.Status.Phase != v1.PodPending || pod.Status.StartTime == nil {
-				rev, err := installerNameToRevision(pod.Name)
-				if err != nil {
-					return err
-				}
-				if rev > maxRunningRev {
-					maxRunningRev = rev
-				}
-			}
-		}
-		installerHighestRunningRevision[masterNode] = maxRunningRev
-	}
-
 	// collect all startingObjects that are in pending state for longer than maxToleratedPodPendingDuration
 	pendingPods := []*v1.Pod{}
 	for _, pod := range pods.Items {
 		if pod.Status.Phase != v1.PodPending || pod.Status.StartTime == nil {
 			continue
 		}
-		if rev, _ := installerNameToRevision(pod.Name); c.timeNowFn().Sub(pod.Status.StartTime.Time) >= maxToleratedPodPendingDuration && rev >= installerHighestRunningRevision[pod.Spec.NodeName] {
+		if c.timeNowFn().Sub(pod.Status.StartTime.Time) >= maxToleratedPodPendingDuration {
 			pendingPods = append(pendingPods, pod.DeepCopy())
 		}
 	}
 
-	// handle pending installer pods conditions
+	// in theory, there should never be two installer startingObjects pending as we don't roll new installer pod
+	// until the previous/existing pod has finished its job.
 	foundConditions := []operatorv1.OperatorCondition{}
 	foundConditions = append(foundConditions, c.handlePendingInstallerPods(syncCtx.Recorder(), pendingPods)...)
 

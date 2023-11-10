@@ -17,12 +17,11 @@ type MachineAPIChecker interface {
 // MachineAPI a simple struct that helps determine if the Machine API is functional
 //
 // Note:
+//  since this type needs to take into account only master machine objects
+//  make sure machineInformer contain only filtered data
+//  otherwise it might be expensive to react to every node update in larger installations
 //
-//	since this type needs to take into account only master machine objects
-//	make sure machineInformer contain only filtered data
-//	otherwise it might be expensive to react to every node update in larger installations
-//
-//	as a safety net this type requires masterMachineSelector, just in case a caller won't provide a filtered informer
+//  as a safety net this type requires masterMachineSelector, just in case a caller won't provide a filtered informer
 type MachineAPI struct {
 	hasMasterMachineInformerSyncedFn func() bool
 	masterMachineLister              machinelistersv1beta1.MachineLister

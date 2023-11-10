@@ -39,4 +39,5 @@
 //	resp, _ = cli.Get(context.TODO(), "abc")
 //	fmt.Printf("%s\n", resp.Kvs[0].Value)
 //	// Output: 456
+//
 package namespace

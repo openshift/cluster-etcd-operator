@@ -1,3 +1,5 @@
+// +build linux,!appengine
+
 /*
  *
  * Copyright 2018 gRPC authors.
@@ -23,7 +25,7 @@ import (
 )
 
 // GetSocketOption gets the socket option info of the conn.
-func GetSocketOption(socket any) *SocketOptionData {
+func GetSocketOption(socket interface{}) *SocketOptionData {
 	c, ok := socket.(syscall.Conn)
 	if !ok {
 		return nil

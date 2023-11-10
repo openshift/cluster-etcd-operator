@@ -29,7 +29,6 @@ package status
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	spb "google.golang.org/genproto/googleapis/rpc/status"
@@ -50,7 +49,7 @@ func New(c codes.Code, msg string) *Status {
 }
 
 // Newf returns New(c, fmt.Sprintf(format, a...)).
-func Newf(c codes.Code, format string, a ...any) *Status {
+func Newf(c codes.Code, format string, a ...interface{}) *Status {
 	return New(c, fmt.Sprintf(format, a...))
 }
 
@@ -60,7 +59,7 @@ func Error(c codes.Code, msg string) error {
 }
 
 // Errorf returns Error(c, fmt.Sprintf(format, a...)).
-func Errorf(c codes.Code, format string, a ...any) error {
+func Errorf(c codes.Code, format string, a ...interface{}) error {
 	return Error(c, fmt.Sprintf(format, a...))
 }
 
@@ -74,54 +73,19 @@ func FromProto(s *spb.Status) *Status {
 	return status.FromProto(s)
 }
 
-// FromError returns a Status representation of err.
-//
-//   - If err was produced by this package or implements the method `GRPCStatus()
-//     *Status` and `GRPCStatus()` does not return nil, or if err wraps a type
-//     satisfying this, the Status from `GRPCStatus()` is returned.  For wrapped
-//     errors, the message returned contains the entire err.Error() text and not
-//     just the wrapped status. In that case, ok is true.
-//
-//   - If err is nil, a Status is returned with codes.OK and no message, and ok
-//     is true.
-//
-//   - If err implements the method `GRPCStatus() *Status` and `GRPCStatus()`
-//     returns nil (which maps to Codes.OK), or if err wraps a type
-//     satisfying this, a Status is returned with codes.Unknown and err's
-//     Error() message, and ok is false.
-//
-//   - Otherwise, err is an error not compatible with this package.  In this
-//     case, a Status is returned with codes.Unknown and err's Error() message,
-//     and ok is false.
+// FromError returns a Status representing err if it was produced by this
+// package or has a method `GRPCStatus() *Status`.
+// If err is nil, a Status is returned with codes.OK and no message.
+// Otherwise, ok is false and a Status is returned with codes.Unknown and
+// the original error message.
 func FromError(err error) (s *Status, ok bool) {
 	if err == nil {
 		return nil, true
 	}
-	type grpcstatus interface{ GRPCStatus() *Status }
-	if gs, ok := err.(grpcstatus); ok {
-		grpcStatus := gs.GRPCStatus()
-		if grpcStatus == nil {
-			// Error has status nil, which maps to codes.OK. There
-			// is no sensible behavior for this, so we turn it into
-			// an error with codes.Unknown and discard the existing
-			// status.
-			return New(codes.Unknown, err.Error()), false
-		}
-		return grpcStatus, true
-	}
-	var gs grpcstatus
-	if errors.As(err, &gs) {
-		grpcStatus := gs.GRPCStatus()
-		if grpcStatus == nil {
-			// Error wraps an error that has status nil, which maps
-			// to codes.OK.  There is no sensible behavior for this,
-			// so we turn it into an error with codes.Unknown and
-			// discard the existing status.
-			return New(codes.Unknown, err.Error()), false
-		}
-		p := grpcStatus.Proto()
-		p.Message = err.Error()
-		return status.FromProto(p), true
+	if se, ok := err.(interface {
+		GRPCStatus() *Status
+	}); ok {
+		return se.GRPCStatus(), true
 	}
 	return New(codes.Unknown, err.Error()), false
 }
@@ -133,30 +97,33 @@ func Convert(err error) *Status {
 	return s
 }
 
-// Code returns the Code of the error if it is a Status error or if it wraps a
-// Status error. If that is not the case, it returns codes.OK if err is nil, or
-// codes.Unknown otherwise.
+// Code returns the Code of the error if it is a Status error, codes.OK if err
+// is nil, or codes.Unknown otherwise.
 func Code(err error) codes.Code {
 	// Don't use FromError to avoid allocation of OK status.
 	if err == nil {
 		return codes.OK
 	}
-
-	return Convert(err).Code()
+	if se, ok := err.(interface {
+		GRPCStatus() *Status
+	}); ok {
+		return se.GRPCStatus().Code()
+	}
+	return codes.Unknown
 }
 
-// FromContextError converts a context error or wrapped context error into a
-// Status.  It returns a Status with codes.OK if err is nil, or a Status with
-// codes.Unknown if err is non-nil and not a context error.
+// FromContextError converts a context error into a Status.  It returns a
+// Status with codes.OK if err is nil, or a Status with codes.Unknown if err is
+// non-nil and not a context error.
 func FromContextError(err error) *Status {
-	if err == nil {
+	switch err {
+	case nil:
 		return nil
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
+	case context.DeadlineExceeded:
 		return New(codes.DeadlineExceeded, err.Error())
-	}
-	if errors.Is(err, context.Canceled) {
+	case context.Canceled:
 		return New(codes.Canceled, err.Error())
+	default:
+		return New(codes.Unknown, err.Error())
 	}
-	return New(codes.Unknown, err.Error())
 }

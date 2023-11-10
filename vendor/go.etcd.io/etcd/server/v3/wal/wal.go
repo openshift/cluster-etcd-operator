@@ -54,14 +54,15 @@ var (
 	// so that tests can set a different segment size.
 	SegmentSizeBytes int64 = 64 * 1000 * 1000 // 64MB
 
-	ErrMetadataConflict = errors.New("wal: conflicting metadata found")
-	ErrFileNotFound     = errors.New("wal: file not found")
-	ErrCRCMismatch      = errors.New("wal: crc mismatch")
-	ErrSnapshotMismatch = errors.New("wal: snapshot mismatch")
-	ErrSnapshotNotFound = errors.New("wal: snapshot not found")
-	ErrSliceOutOfRange  = errors.New("wal: slice bounds out of range")
-	ErrDecoderNotFound  = errors.New("wal: decoder not found")
-	crcTable            = crc32.MakeTable(crc32.Castagnoli)
+	ErrMetadataConflict             = errors.New("wal: conflicting metadata found")
+	ErrFileNotFound                 = errors.New("wal: file not found")
+	ErrCRCMismatch                  = errors.New("wal: crc mismatch")
+	ErrSnapshotMismatch             = errors.New("wal: snapshot mismatch")
+	ErrSnapshotNotFound             = errors.New("wal: snapshot not found")
+	ErrSliceOutOfRange              = errors.New("wal: slice bounds out of range")
+	ErrMaxWALEntrySizeLimitExceeded = errors.New("wal: max entry size limit exceeded")
+	ErrDecoderNotFound              = errors.New("wal: decoder not found")
+	crcTable                        = crc32.MakeTable(crc32.Castagnoli)
 )
 
 // WAL is a logical representation of the stable storage.
@@ -115,7 +116,7 @@ func Create(lg *zap.Logger, dirpath string, metadata []byte) (*WAL, error) {
 	}
 	defer os.RemoveAll(tmpdirpath)
 
-	if err := fileutil.CreateDirAll(lg, tmpdirpath); err != nil {
+	if err := fileutil.CreateDirAll(tmpdirpath); err != nil {
 		lg.Warn(
 			"failed to create a temporary WAL directory",
 			zap.String("tmp-dir-path", tmpdirpath),
@@ -377,13 +378,12 @@ func selectWALFiles(lg *zap.Logger, dirpath string, snap walpb.Snapshot) ([]stri
 	return names, nameIndex, nil
 }
 
-func openWALFiles(lg *zap.Logger, dirpath string, names []string, nameIndex int, write bool) ([]fileutil.FileReader, []*fileutil.LockedFile, func() error, error) {
+func openWALFiles(lg *zap.Logger, dirpath string, names []string, nameIndex int, write bool) ([]io.Reader, []*fileutil.LockedFile, func() error, error) {
 	rcs := make([]io.ReadCloser, 0)
-	rs := make([]fileutil.FileReader, 0)
+	rs := make([]io.Reader, 0)
 	ls := make([]*fileutil.LockedFile, 0)
 	for _, name := range names[nameIndex:] {
 		p := filepath.Join(dirpath, name)
-		var f *os.File
 		if write {
 			l, err := fileutil.TryLockFile(p, os.O_RDWR, fileutil.PrivateFileMode)
 			if err != nil {
@@ -392,7 +392,6 @@ func openWALFiles(lg *zap.Logger, dirpath string, names []string, nameIndex int,
 			}
 			ls = append(ls, l)
 			rcs = append(rcs, l)
-			f = l.File
 		} else {
 			rf, err := os.OpenFile(p, os.O_RDONLY, fileutil.PrivateFileMode)
 			if err != nil {
@@ -401,10 +400,8 @@ func openWALFiles(lg *zap.Logger, dirpath string, names []string, nameIndex int,
 			}
 			ls = append(ls, nil)
 			rcs = append(rcs, rf)
-			f = rf
 		}
-		fileReader := fileutil.NewFileReader(f)
-		rs = append(rs, fileReader)
+		rs = append(rs, rcs[len(rcs)-1])
 	}
 
 	closer := func() error { return closeAll(lg, rcs...) }
@@ -500,13 +497,13 @@ func (w *WAL) ReadAll() (metadata []byte, state raftpb.HardState, ents []raftpb.
 		// We do not have to read out all entries in read mode.
 		// The last record maybe a partial written one, so
 		// ErrunexpectedEOF might be returned.
-		if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		if err != io.EOF && err != io.ErrUnexpectedEOF {
 			state.Reset()
 			return nil, state, nil, err
 		}
 	default:
-		// We must read all the entries if WAL is opened in write mode.
-		if !errors.Is(err, io.EOF) {
+		// We must read all of the entries if WAL is opened in write mode.
+		if err != io.EOF {
 			state.Reset()
 			return nil, state, nil, err
 		}
@@ -598,7 +595,7 @@ func ValidSnapshotEntries(lg *zap.Logger, walDir string) ([]walpb.Snapshot, erro
 	}
 	// We do not have to read out all the WAL entries
 	// as the decoder is opened in read mode.
-	if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+	if err != io.EOF && err != io.ErrUnexpectedEOF {
 		return nil, err
 	}
 
@@ -688,7 +685,7 @@ func Verify(lg *zap.Logger, walDir string, snap walpb.Snapshot) (*raftpb.HardSta
 
 	// We do not have to read out all the WAL entries
 	// as the decoder is opened in read mode.
-	if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+	if err != io.EOF && err != io.ErrUnexpectedEOF {
 		return nil, err
 	}
 
@@ -939,10 +936,7 @@ func (w *WAL) Save(st raftpb.HardState, ents []raftpb.Entry) error {
 	}
 	if curOff < SegmentSizeBytes {
 		if mustSync {
-			// gofail: var walBeforeSync struct{}
-			err = w.sync()
-			// gofail: var walAfterSync struct{}
-			return err
+			return w.sync()
 		}
 		return nil
 	}
