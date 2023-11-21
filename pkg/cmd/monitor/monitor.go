@@ -108,7 +108,7 @@ func (o *monitorOpts) AddFlags(fs *pflag.FlagSet) {
 	fs.StringSliceVar(&o.logOutputs, "log-outputs", []string{DefaultLogOutputs}, "Logger output targets. Default stderr")
 	fs.BoolVar(&o.enableLogRotation, "enable-log-rotation", false, "Enable log rotation of a single log-outputs file target.")
 	fs.StringVar(&o.LogRotationConfigJSON, "log-rotation-config-json", DefaultLogRotationConfig, "Configures log rotation if enabled with a JSON logger config. Default: MaxSize=100(MB), MaxAge=0(days,no limit), MaxBackups=10(no limit), LocalTime=false(UTC), Compress=false(true)")
-	fs.StringVar(&o.podName, "pod-name", os.Getenv("POD_NAME"), "Name of the pod the health probe will monitor.")
+	fs.StringVar(&o.podName, "pod-name", os.Getenv("POD_NAME"), "Name of the pod the health probe will monitor, for logging purposes only.")
 	fs.StringVar(&o.nodeName, "node-name", os.Getenv("NODE_NAME"), "Node name the pod runs on.")
 	fs.IntVar(&o.staticPodVersion, "static-pod-version", DefaultStaticPodVersion, "The revision of the current static pod.")
 	fs.StringVar(&o.clientCertFile, "cert-file", "", "Health probe TLS client certificate file. (required)")
@@ -128,9 +128,14 @@ func (o *monitorOpts) Validate(_ context.Context) error {
 	if len(o.clientCACertFile) == 0 {
 		return errors.New("missing required flag: --cacert-file")
 	}
+	if len(o.nodeName) == 0 {
+		return errors.New("missing required flag: --node-name or env var NODE_NAME")
+	}
 	return nil
 }
 
+// FixCertPaths when running from a DaemonSet, the node name is not properly injected as with static pod sidecars.
+// Thus, we need to help a little to replace the NODE_NAME in the certificate paths.
 func (o *monitorOpts) FixCertPaths(_ context.Context) error {
 	o.clientKeyFile = o.fixCertPath(o.clientKeyFile)
 	o.clientCertFile = o.fixCertPath(o.clientCertFile)
@@ -141,7 +146,7 @@ func (o *monitorOpts) FixCertPaths(_ context.Context) error {
 
 func (o *monitorOpts) fixCertPath(v string) string {
 	if strings.Contains(v, "NODE_NAME") {
-		v = strings.Replace(v, "NODE_NAME", o.nodeName, -1)
+		v = strings.ReplaceAll(v, "NODE_NAME", o.nodeName)
 	}
 	return v
 }

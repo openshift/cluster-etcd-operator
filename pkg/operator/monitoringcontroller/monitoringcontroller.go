@@ -25,6 +25,12 @@ const (
 	monitoringEnabledConfigmapName = "enable-monitoring-configmap"
 )
 
+// MonitoringController brings back the etcd-health-monitor sidecar that was removed with https://github.com/openshift/cluster-etcd-operator/pull/873
+// The sidecar itself created unnecessarily high CPU usage due to TLS handshakes (1-2 cores of overhead) and unreliable output under load.
+// This controller only creates an equivalent daemon set when a configmap was created using:
+// > kubectl create cm -n openshift-etcd-operator enable-monitoring-configmap
+// That DS should only be used for our CI clusters to correlate failures in apiserver-related components, no removal routine is implemented for this DS.
+// This is not meant for actual end users of the product and should not be used to monitor etcd.
 type MonitoringController struct {
 	operatorClient  v1helpers.OperatorClient
 	configmapLister corev1listers.ConfigMapLister
