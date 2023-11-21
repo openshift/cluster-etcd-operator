@@ -57,6 +57,7 @@ type monitorOpts struct {
 	logLevel         int
 	logOutputs       []string
 	podName          string
+	nodeName         string
 	staticPodVersion int
 	clientCertFile   string
 	clientKeyFile    string
@@ -92,6 +93,7 @@ func NewMonitorCommand(errOut io.Writer) *cobra.Command {
 				}
 			}
 			must(monitorOpts.Validate)
+			must(monitorOpts.FixCertPaths)
 			must(monitorOpts.Run)
 		},
 	}
@@ -107,6 +109,7 @@ func (o *monitorOpts) AddFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&o.enableLogRotation, "enable-log-rotation", false, "Enable log rotation of a single log-outputs file target.")
 	fs.StringVar(&o.LogRotationConfigJSON, "log-rotation-config-json", DefaultLogRotationConfig, "Configures log rotation if enabled with a JSON logger config. Default: MaxSize=100(MB), MaxAge=0(days,no limit), MaxBackups=10(no limit), LocalTime=false(UTC), Compress=false(true)")
 	fs.StringVar(&o.podName, "pod-name", os.Getenv("POD_NAME"), "Name of the pod the health probe will monitor.")
+	fs.StringVar(&o.nodeName, "node-name", os.Getenv("NODE_NAME"), "Node name the pod runs on.")
 	fs.IntVar(&o.staticPodVersion, "static-pod-version", DefaultStaticPodVersion, "The revision of the current static pod.")
 	fs.StringVar(&o.clientCertFile, "cert-file", "", "Health probe TLS client certificate file. (required)")
 	fs.StringVar(&o.clientKeyFile, "key-file", "", "Health probe TLS client key file. (required)")
@@ -126,6 +129,21 @@ func (o *monitorOpts) Validate(_ context.Context) error {
 		return errors.New("missing required flag: --cacert-file")
 	}
 	return nil
+}
+
+func (o *monitorOpts) FixCertPaths(_ context.Context) error {
+	o.clientKeyFile = o.fixCertPath(o.clientKeyFile)
+	o.clientCertFile = o.fixCertPath(o.clientCertFile)
+	o.clientCACertFile = o.fixCertPath(o.clientCACertFile)
+
+	return nil
+}
+
+func (o *monitorOpts) fixCertPath(v string) string {
+	if strings.Contains(v, "NODE_NAME") {
+		v = strings.Replace(v, "NODE_NAME", o.nodeName, -1)
+	}
+	return v
 }
 
 func (o *monitorOpts) Run(ctx context.Context) error {
@@ -178,6 +196,7 @@ func (o *monitorOpts) Run(ctx context.Context) error {
 
 	lg.Info("health monitor is starting",
 		zap.String("pod", o.podName),
+		zap.String("node", o.nodeName),
 		zap.Int("static-pod-version", o.staticPodVersion),
 	)
 
@@ -190,6 +209,7 @@ func (o *monitorOpts) Run(ctx context.Context) error {
 	wg.Wait()
 	lg.Info("health monitor is shutting down",
 		zap.String("pod", o.podName),
+		zap.String("node", o.nodeName),
 		zap.Int("static-pod-version", o.staticPodVersion),
 	)
 	return nil
