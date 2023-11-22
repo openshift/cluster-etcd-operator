@@ -115,7 +115,7 @@ func (c RevisionController) createRevisionIfNeeded(ctx context.Context, recorder
 	if _, updated, updateError := c.operatorClient.UpdateLatestRevisionOperatorStatus(ctx, nextRevision, v1helpers.UpdateConditionFn(cond)); updateError != nil {
 		return true, updateError
 	} else if updated {
-		recorder.Eventf("RevisionCreate", "Revision %d created because %s", latestAvailableRevision, reason)
+		recorder.Eventf("RevisionCreate", "Revision %d created because %s", nextRevision, reason)
 	}
 
 	return false, nil

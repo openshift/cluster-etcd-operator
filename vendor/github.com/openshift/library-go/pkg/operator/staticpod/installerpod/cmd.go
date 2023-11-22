@@ -565,7 +565,7 @@ func (o *InstallOptions) getInstallerPodsOnThisNode(ctx context.Context) ([]*cor
 func (o *InstallOptions) installerPodNeedUUID() bool {
 	kubeletVersion, err := semver.Make(o.KubeletVersion)
 	if err != nil {
-		klog.Warningf("Failed to parse kubelet version %q to semver: %v (we will not generate pod UID)", err)
+		klog.Warningf("Failed to parse kubelet version %q to semver: %v (we will not generate pod UID)", o.KubeletVersion, err)
 		return false
 	}
 	// if we run kubelet older than 4.9, installer pods require UID generation
