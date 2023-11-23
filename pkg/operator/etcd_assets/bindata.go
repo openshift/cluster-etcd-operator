@@ -14,6 +14,8 @@
 // bindata/etcd/ns.yaml
 // bindata/etcd/pod-cm.yaml
 // bindata/etcd/pod.yaml
+// bindata/etcd/prometheus-role.yaml
+// bindata/etcd/prometheus-rolebinding.yaml
 // bindata/etcd/restore-pod-cm.yaml
 // bindata/etcd/restore-pod.yaml
 // bindata/etcd/sa.yaml
@@ -1369,6 +1371,85 @@ func etcdPodYaml() (*asset, error) {
 	return a, nil
 }
 
+var _etcdPrometheusRoleYaml = []byte(`apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: prometheus-k8s
+  namespace: openshift-etcd
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - services
+  - endpoints
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - extensions
+  resources:
+  - ingresses
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingresses
+  verbs:
+  - get
+  - list
+  - watch
+`)
+
+func etcdPrometheusRoleYamlBytes() ([]byte, error) {
+	return _etcdPrometheusRoleYaml, nil
+}
+
+func etcdPrometheusRoleYaml() (*asset, error) {
+	bytes, err := etcdPrometheusRoleYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "etcd/prometheus-role.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
+var _etcdPrometheusRolebindingYaml = []byte(`apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: prometheus-k8s
+  namespace: openshift-etcd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: prometheus-k8s
+subjects:
+- kind: ServiceAccount
+  name: prometheus-k8s
+  namespace: openshift-monitoring
+`)
+
+func etcdPrometheusRolebindingYamlBytes() ([]byte, error) {
+	return _etcdPrometheusRolebindingYaml, nil
+}
+
+func etcdPrometheusRolebindingYaml() (*asset, error) {
+	bytes, err := etcdPrometheusRolebindingYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "etcd/prometheus-rolebinding.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
 var _etcdRestorePodCmYaml = []byte(`apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -1762,6 +1843,8 @@ var _bindata = map[string]func() (*asset, error){
 	"etcd/ns.yaml":                     etcdNsYaml,
 	"etcd/pod-cm.yaml":                 etcdPodCmYaml,
 	"etcd/pod.yaml":                    etcdPodYaml,
+	"etcd/prometheus-role.yaml":        etcdPrometheusRoleYaml,
+	"etcd/prometheus-rolebinding.yaml": etcdPrometheusRolebindingYaml,
 	"etcd/restore-pod-cm.yaml":         etcdRestorePodCmYaml,
 	"etcd/restore-pod.yaml":            etcdRestorePodYaml,
 	"etcd/sa.yaml":                     etcdSaYaml,
@@ -1828,6 +1911,8 @@ var _bintree = &bintree{nil, map[string]*bintree{
 		"ns.yaml":                     {etcdNsYaml, map[string]*bintree{}},
 		"pod-cm.yaml":                 {etcdPodCmYaml, map[string]*bintree{}},
 		"pod.yaml":                    {etcdPodYaml, map[string]*bintree{}},
+		"prometheus-role.yaml":        {etcdPrometheusRoleYaml, map[string]*bintree{}},
+		"prometheus-rolebinding.yaml": {etcdPrometheusRolebindingYaml, map[string]*bintree{}},
 		"restore-pod-cm.yaml":         {etcdRestorePodCmYaml, map[string]*bintree{}},
 		"restore-pod.yaml":            {etcdRestorePodYaml, map[string]*bintree{}},
 		"sa.yaml":                     {etcdSaYaml, map[string]*bintree{}},
