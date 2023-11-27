@@ -32,14 +32,15 @@ const (
 // That DS should only be used for our CI clusters to correlate failures in apiserver-related components, no removal routine is implemented for this DS.
 // This is not meant for actual end users of the product and should not be used to monitor etcd.
 type MonitoringController struct {
-	operatorClient  v1helpers.OperatorClient
+	operatorClient  v1helpers.StaticPodOperatorClient
 	configmapLister corev1listers.ConfigMapLister
 	kubeClient      *kubernetes.Clientset
 	operatorImage   string
 	envVarGetter    etcdenvvar.EnvVar
 }
 
-func NewMonitoringController(operatorClient v1helpers.OperatorClient,
+func NewMonitoringController(
+	operatorClient v1helpers.StaticPodOperatorClient,
 	eventRecorder events.Recorder,
 	kubeInformers v1helpers.KubeInformersForNamespaces,
 	kubeClient *kubernetes.Clientset,
@@ -89,14 +90,14 @@ func (c *MonitoringController) checkMonitoringEnabled() (bool, error) {
 func (c *MonitoringController) reconcileMonitoringDaemonSet(ctx context.Context) error {
 	labels := map[string]string{"name": "etcd-monitoring-daemon"}
 
-	_, _, resourceVersion, err := c.operatorClient.GetOperatorState()
+	_, operatorStatus, _, err := c.operatorClient.GetStaticPodOperatorState()
 	if err != nil {
 		return err
 	}
 
 	envVars := []*applycorev1.EnvVarApplyConfiguration{
 		applycorev1.EnvVar().WithName("OPENSHIFT_PROFILE").WithValue("web"),
-		applycorev1.EnvVar().WithName("ETCD_STATIC_POD_VERSION").WithValue(resourceVersion),
+		applycorev1.EnvVar().WithName("ETCD_STATIC_POD_VERSION").WithValue(string(operatorStatus.LatestAvailableRevision)),
 		applycorev1.EnvVar().WithName("POD_NAME").WithValueFrom(
 			applycorev1.EnvVarSource().WithFieldRef(applycorev1.ObjectFieldSelector().WithFieldPath("metadata.name"))),
 		applycorev1.EnvVar().WithName("NODE_NAME").WithValueFrom(
