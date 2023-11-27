@@ -321,6 +321,10 @@ func (c *GuardController) sync(ctx context.Context, syncCtx factory.SyncContext)
 					klog.V(5).Infof("Guard Hostname changed, deleting %v so the guard can be re-created", pod.Name)
 					delete = true
 				}
+				if actual.Status.Phase != "" && actual.Status.Phase != corev1.PodPending && actual.Status.Phase != corev1.PodRunning {
+					klog.V(5).Infof("Pod phase is neither pending nor running, deleting %v so the guard can be re-created", pod.Name)
+					delete = true
+				}
 				if delete {
 					_, _, err = resourceapply.DeletePod(ctx, c.podGetter, syncCtx.Recorder(), pod)
 					if err != nil {
