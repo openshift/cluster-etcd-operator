@@ -290,6 +290,8 @@ func (c RevisionController) sync(ctx context.Context, syncCtx factory.SyncContex
 		return nil
 	}
 
+	klog.V(2).Infof("status.LatestAvailableRevision: %v, resourceVersion: %v", latestAvailableRevision, resourceVersion)
+
 	// If the operator status has 0 as its latest available revision, this is either the first revision
 	// or possibly the operator resource was deleted and reset back to 0, which is not what we want so check configmaps
 	if latestAvailableRevision == 0 {
