@@ -182,19 +182,12 @@ func IsBootstrapComplete(configMapClient corev1listers.ConfigMapLister, staticPo
 		return false, nil
 	}
 
-	// now run check to stability of revisions
 	_, status, _, err := staticPodClient.GetStaticPodOperatorState()
 	if err != nil {
 		return false, fmt.Errorf("failed to get static pod operator state: %w", err)
 	}
 	if status.LatestAvailableRevision == 0 {
 		return false, nil
-	}
-	for _, curr := range status.NodeStatuses {
-		if curr.CurrentRevision != status.LatestAvailableRevision {
-			klog.V(4).Infof("bootstrap considered incomplete because revision %d is still in progress", status.LatestAvailableRevision)
-			return false, nil
-		}
 	}
 
 	// check if etcd-bootstrap member is still present within the etcd cluster membership
