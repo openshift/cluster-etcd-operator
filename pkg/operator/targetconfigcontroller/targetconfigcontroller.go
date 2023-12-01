@@ -3,6 +3,7 @@ package targetconfigcontroller
 import (
 	"context"
 	"fmt"
+	"k8s.io/klog/v2"
 	"strings"
 	"time"
 
@@ -119,6 +120,8 @@ func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncCo
 // returns whether to requeue and if an error happened when updating status.  Normally it updates status itself.
 func createTargetConfig(ctx context.Context, c TargetConfigController, recorder events.Recorder,
 	operatorSpec *operatorv1.StaticPodOperatorSpec, envVars map[string]string) (bool, error) {
+
+	klog.Infof("creating target config with env vars %v", envVars)
 
 	var errors []error
 	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars)

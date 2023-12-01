@@ -135,6 +135,7 @@ func getAllEtcdEndpoints(envVarContext envVarContext) (map[string]string, error)
 	if err != nil {
 		return nil, err
 	}
+	klog.Infof("endpoints: %v", endpoints)
 	return map[string]string{
 		"ALL_ETCD_ENDPOINTS": endpoints,
 	}, nil
@@ -163,6 +164,8 @@ func getEscapedIPAddress(envVarContext envVarContext) (map[string]string, error)
 	if envVarContext.status.NodeStatuses == nil || len(envVarContext.status.NodeStatuses) == 0 {
 		return nil, fmt.Errorf("empty NodeStatuses, can't generate environment for getEscapedIPAddress")
 	}
+
+	klog.Infof("node status: %v", envVarContext.status.NodeStatuses)
 
 	ret := map[string]string{}
 	for _, nodeInfo := range envVarContext.status.NodeStatuses {
