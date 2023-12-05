@@ -3,7 +3,10 @@ package etcdenvvar
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"reflect"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +26,8 @@ import (
 )
 
 const workQueueKey = "key"
+
+var nodeEnvRegex = regexp.MustCompile("^NODE_(?P<NodeName>.*)_(?P<Suffix>IP|ETCD_URL_HOST|ETCD_NAME)$")
 
 type EnvVar interface {
 	AddListener(listener Enqueueable)
@@ -147,6 +152,11 @@ func (c *EnvVarController) checkEnvVars() error {
 	if err != nil {
 		return err
 	}
+
+	if err := validateMap(*operatorStatus, c.nodeLister, currEnvVarMap); err != nil {
+		return fmt.Errorf("found invalid env var configs: %w", err)
+	}
+
 	func() {
 		c.envVarMapLock.Lock()
 		defer c.envVarMapLock.Unlock()
@@ -220,4 +230,68 @@ func (c *EnvVarController) eventHandler() cache.ResourceEventHandler {
 		UpdateFunc: func(old, new interface{}) { c.queue.Add(workQueueKey) },
 		DeleteFunc: func(obj interface{}) { c.queue.Add(workQueueKey) },
 	}
+}
+
+// validateMap checks for coherence of the generated env vars map. Returns an error when an invalid config is detected.
+func validateMap(
+	status operatorv1.StaticPodOperatorStatus,
+	nodeLister corev1listers.NodeLister,
+	envVars map[string]string) error {
+
+	if _, ok := envVars[AllEtcdEndpoints]; !ok {
+		return fmt.Errorf("map does not contain %s", AllEtcdEndpoints)
+	}
+
+	endpoints := strings.Split(envVars[AllEtcdEndpoints], ",")
+
+	// we need to ensure that for every endpoint, the IP and HOST names are properly filled:
+	//	NODE_%s_IP
+	//	NODE_%s_ETCD_URL_HOST
+	//	NODE_%s_ETCD_NAME
+
+	// this map takes the "envVarSafe" node name as key, the value is a map indexed by the suffix (IP, HOST, NAME), which points to its value.
+	nodeNameMap := map[string]map[string]string{}
+
+	for k, v := range envVars {
+		if nodeEnvRegex.MatchString(k) {
+			matches := nodeEnvRegex.FindStringSubmatch(k)
+			nodeName := matches[nodeEnvRegex.SubexpIndex("NodeName")]
+			suffix := matches[nodeEnvRegex.SubexpIndex("Suffix")]
+			m := nodeNameMap[nodeName]
+			if m != nil {
+				m[suffix] = v
+			} else {
+				nodeNameMap[nodeName] = map[string]string{suffix: v}
+			}
+		}
+	}
+
+	if len(endpoints) != len(nodeNameMap) {
+		return fmt.Errorf("unexpected difference in env vars with endpoints [%v] vs. [%v]", endpoints, nodeNameMap)
+	}
+
+	for _, endpoint := range endpoints {
+		endpointUrl, _ := url.Parse(endpoint)
+		hostPort := strings.Split(endpointUrl.Host, ":")
+		if len(hostPort) != 2 {
+			return fmt.Errorf("malformed endpoint detected, must be a host:port combination. Found: [%s]", endpoint)
+		}
+
+		// we expect the host to be in the value of the IP and ETCD_URL_HOST vars once
+		found := false
+		for _, v := range nodeNameMap {
+			if strings.Contains(v["IP"], hostPort[0]) && strings.Contains(v["ETCD_URL_HOST"], hostPort[0]) {
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			return fmt.Errorf("found inconsistency with endpoint [%s], no matching coherent env vars found in: [%v]", endpoint, nodeNameMap)
+		}
+	}
+
+	// TODO(thomas): detect inconsistency in static pod node status and actual listed nodes too
+
+	return nil
 }
