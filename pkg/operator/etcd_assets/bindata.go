@@ -105,8 +105,7 @@ spec:
         
         if [ -n "${DELETE_BACKUP_DIR}" ]; then
           echo "removing all backups in ${DELETE_BACKUP_DIR}" 
-          rm -rf "${DELETE_BACKUP_DIR}"
-          mkdir -p "${DELETE_BACKUP_DIR}"
+          rm -rf "${DELETE_BACKUP_DIR}/*"
         fi
 
         /usr/local/bin/cluster-backup.sh --force ${CLUSTER_BACKUP_PATH}
