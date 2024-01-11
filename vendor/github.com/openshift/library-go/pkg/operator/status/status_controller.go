@@ -2,6 +2,7 @@ package status
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"k8s.io/klog/v2"
@@ -172,7 +173,9 @@ func (c StatusSyncer) Sync(ctx context.Context, syncCtx factory.SyncContext) err
 		if _, err := c.clusterOperatorClient.ClusterOperators().UpdateStatus(ctx, clusterOperatorObj, metav1.UpdateOptions{}); err != nil {
 			return err
 		}
-		syncCtx.Recorder().Eventf("OperatorStatusChanged", "Status for operator %s changed: %s", c.clusterOperatorName, configv1helpers.GetStatusDiff(originalClusterOperatorObj.Status, clusterOperatorObj.Status))
+		if !skipOperatorStatusChangedEvent(originalClusterOperatorObj.Status, clusterOperatorObj.Status) {
+			syncCtx.Recorder().Eventf("OperatorStatusChanged", "Status for operator %s changed: %s", c.clusterOperatorName, configv1helpers.GetStatusDiff(originalClusterOperatorObj.Status, clusterOperatorObj.Status))
+		}
 		return nil
 	}
 
@@ -217,8 +220,21 @@ func (c StatusSyncer) Sync(ctx context.Context, syncCtx factory.SyncContext) err
 	if _, updateErr := c.clusterOperatorClient.ClusterOperators().UpdateStatus(ctx, clusterOperatorObj, metav1.UpdateOptions{}); updateErr != nil {
 		return updateErr
 	}
-	syncCtx.Recorder().Eventf("OperatorStatusChanged", "Status for clusteroperator/%s changed: %s", c.clusterOperatorName, configv1helpers.GetStatusDiff(originalClusterOperatorObj.Status, clusterOperatorObj.Status))
+	if !skipOperatorStatusChangedEvent(originalClusterOperatorObj.Status, clusterOperatorObj.Status) {
+		syncCtx.Recorder().Eventf("OperatorStatusChanged", "Status for clusteroperator/%s changed: %s", c.clusterOperatorName, configv1helpers.GetStatusDiff(originalClusterOperatorObj.Status, clusterOperatorObj.Status))
+	}
 	return nil
+}
+
+func skipOperatorStatusChangedEvent(originalStatus, newStatus configv1.ClusterOperatorStatus) bool {
+	originalCopy := *originalStatus.DeepCopy()
+	for i, condition := range originalCopy.Conditions {
+		switch condition.Type {
+		case configv1.OperatorAvailable, configv1.OperatorDegraded, configv1.OperatorProgressing, configv1.OperatorUpgradeable:
+			originalCopy.Conditions[i].Message = strings.TrimPrefix(condition.Message, "\ufeff")
+		}
+	}
+	return len(configv1helpers.GetStatusDiff(originalCopy, newStatus)) == 0
 }
 
 func (c *StatusSyncer) syncStatusVersions(clusterOperatorObj *configv1.ClusterOperator, syncCtx factory.SyncContext) {

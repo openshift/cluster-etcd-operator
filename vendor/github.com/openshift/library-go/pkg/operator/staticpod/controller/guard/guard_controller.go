@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -360,6 +361,6 @@ func (c *GuardController) sync(ctx context.Context, syncCtx factory.SyncContext)
 			}
 		}
 	}
-
+	sort.Slice(errs, func(i, j int) bool { return errs[i].Error() < errs[j].Error() })
 	return utilerrors.NewAggregate(errs)
 }
