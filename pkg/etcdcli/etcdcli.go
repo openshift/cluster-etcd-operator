@@ -493,7 +493,7 @@ func endpoints(nodeLister corev1listers.NodeLister,
 	// This configmap should always only contain voting members. Learners should not be present here.
 	configmap, err := configmapsLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints")
 	if err != nil {
-		klog.Errorf("failed to list endpoints from %s/%s, falling back to listing nodes: %w",
+		klog.Errorf("failed to list endpoints from %s/%s, falling back to listing nodes: %v",
 			operatorclient.TargetNamespace, "etcd-endpoints", err)
 
 		network, err := networkLister.Get("cluster")

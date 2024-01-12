@@ -182,7 +182,7 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 	// scaling down invariant
 	minTolerableQuorum, err := etcdcli.MinimumTolerableQuorum(desiredControlPlaneReplicasCount)
 	if err != nil {
-		klog.V(2).Infof("etcd cluster could not determine minimum quorum required. desiredControlPlaneReplicasCount is %v. minimum quorum required is %v: %w", desiredControlPlaneReplicasCount, minTolerableQuorum, err)
+		klog.V(2).Infof("etcd cluster could not determine minimum quorum required. desiredControlPlaneReplicasCount is %v. minimum quorum required is %v: %v", desiredControlPlaneReplicasCount, minTolerableQuorum, err)
 	}
 
 	if len(healthyLiveVotingMembers) < minTolerableQuorum {
