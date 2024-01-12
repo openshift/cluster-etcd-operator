@@ -113,7 +113,7 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 			}
 		}
 	} else if !errors.IsNotFound(err) {
-		klog.Warningf("required configmap %s/%s will be created because it was missing: %w", operatorclient.TargetNamespace, "etcd-endpoints", err)
+		klog.Warningf("required configmap %s/%s will be created because it was missing: %v", operatorclient.TargetNamespace, "etcd-endpoints", err)
 	}
 
 	members, err := c.etcdClient.MemberList(ctx)

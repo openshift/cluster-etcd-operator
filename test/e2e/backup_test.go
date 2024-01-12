@@ -478,7 +478,7 @@ func ensureHostPathPVC(t *testing.T, pvcName string) {
 			AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 			VolumeName:       pv.Name,
 			StorageClassName: pointer.String("manual"),
-			Resources: corev1.ResourceRequirements{
+			Resources: corev1.VolumeResourceRequirements{
 				Requests: map[corev1.ResourceName]resource.Quantity{
 					corev1.ResourceStorage: *resource.NewQuantity(10, "Gi"),
 				},

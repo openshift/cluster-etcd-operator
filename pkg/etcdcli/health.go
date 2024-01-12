@@ -242,7 +242,7 @@ func IsQuorumFaultTolerant(memberHealth []healthCheck) bool {
 	totalMembers := len(memberHealth)
 	quorum, err := MinimumTolerableQuorum(totalMembers)
 	if err != nil {
-		klog.Errorf("etcd cluster could not determine minimum quorum required. total number of members is %v. minimum quorum required is %v: %w", totalMembers, quorum, err)
+		klog.Errorf("etcd cluster could not determine minimum quorum required. total number of members is %v. minimum quorum required is %v: %v", totalMembers, quorum, err)
 		return false
 	}
 	healthyMembers := len(GetHealthyMemberNames(memberHealth))
