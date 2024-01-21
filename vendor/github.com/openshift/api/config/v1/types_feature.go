@@ -194,6 +194,8 @@ var FeatureSets = map[FeatureSet]*FeatureGateEnabledDisabled{
 		without(disableKubeletCloudCredentialProviders).
 		with(onClusterBuild).
 		with(signatureStores).
+		with(pinnedImages).
+		with(upgradeStatus).
 		toFeatures(defaultFeatures),
 	LatencySensitive: newDefaultFeatures().
 		toFeatures(defaultFeatures),

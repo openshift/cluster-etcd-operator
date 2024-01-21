@@ -1378,6 +1378,11 @@ func (in *EtcdList) DeepCopyObject() runtime.Object {
 func (in *EtcdSpec) DeepCopyInto(out *EtcdSpec) {
 	*out = *in
 	in.StaticPodOperatorSpec.DeepCopyInto(&out.StaticPodOperatorSpec)
+	if in.EtcdDBSize != nil {
+		in, out := &in.EtcdDBSize, &out.EtcdDBSize
+		*out = new(int64)
+		**out = **in
+	}
 	return
 }
 
