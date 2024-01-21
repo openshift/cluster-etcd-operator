@@ -37,10 +37,6 @@ spec:
             spec:
               type: object
               properties:
-                etcdDBSize:
-                  description: EtcdDBSize allows user to customize the etcd database backend storage size.
-                  type: integer
-                  format: int64
                 failedRevisionLimit:
                   description: failedRevisionLimit is the number of failed static pod installer revisions to keep on disk and in the api -1 = unlimited, 0 or unset = 5 (default)
                   type: integer
