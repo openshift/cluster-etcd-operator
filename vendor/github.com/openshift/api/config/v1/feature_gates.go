@@ -407,7 +407,7 @@ var (
 		FeatureGateAttributes: FeatureGateAttributes{
 			Name: FeatureGateSignatureStores,
 		},
-		OwningJiraComponent: "over-the-air-updates",
+		OwningJiraComponent: "Cluster Version Operator",
 		ResponsiblePerson:   "lmohanty",
 		OwningProduct:       ocpSpecific,
 	}
@@ -420,5 +420,25 @@ var (
 		OwningJiraComponent: "kube-apiserver",
 		ResponsiblePerson:   "dgrisonnet",
 		OwningProduct:       kubernetes,
+	}
+
+	FeatureGatePinnedImages = FeatureGateName("PinnedImages")
+	pinnedImages            = FeatureGateDescription{
+		FeatureGateAttributes: FeatureGateAttributes{
+			Name: FeatureGatePinnedImages,
+		},
+		OwningJiraComponent: "MachineConfigOperator",
+		ResponsiblePerson:   "jhernand",
+		OwningProduct:       ocpSpecific,
+	}
+
+	FeatureGateUpgradeStatus = FeatureGateName("UpgradeStatus")
+	upgradeStatus            = FeatureGateDescription{
+		FeatureGateAttributes: FeatureGateAttributes{
+			Name: FeatureGateUpgradeStatus,
+		},
+		OwningJiraComponent: "Cluster Version Operator",
+		ResponsiblePerson:   "pmuller",
+		OwningProduct:       ocpSpecific,
 	}
 )

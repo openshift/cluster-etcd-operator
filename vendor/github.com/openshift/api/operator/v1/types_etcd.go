@@ -38,6 +38,11 @@ type EtcdSpec struct {
 	// +openshift:enable:FeatureSets=CustomNoUpgrade;TechPreviewNoUpgrade
 	// +optional
 	HardwareSpeed ControlPlaneHardwareSpeed `json:"controlPlaneHardwareSpeed"`
+
+	// EtcdDBSize allows user to customize the etcd database backend storage size.
+	// +kubebuilder:validation:Optional
+	// +optional
+	EtcdDBSize *int64 `json:"etcdDBSize"`
 }
 
 type EtcdStatus struct {
