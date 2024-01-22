@@ -99,7 +99,7 @@ github.com/felixge/httpsnoop v1.0.3 h1:s/nj+GCswXYzN5v2DpNMuMQYe+0DDwt5WVCU6CWBd
 github.com/felixge/httpsnoop v1.0.3/go.mod h1:m8KPJKqk1gH5J9DgRY2ASl2lWCfGKXixSwevea8zH2U=
 github.com/fsnotify/fsnotify v1.6.0 h1:n+5WquG0fcWoWp6xPWfHdbskMCQaFnG6PfBrh1Ky4HY=
 github.com/fsnotify/fsnotify v1.6.0/go.mod h1:sl3t1tCWJFWoRz9R8WJCbQihKKwmorjAbSClcnxKAGw=
-github.com/fvbommel/sortorder v1.1.0 h1:fUmoe+HLsBTctBDoaBwpQo5N+nrCp8g/BjKb/6ZQmYw=
+github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787 h1:AfLWrOEtyI9WI9aaDF0GN/6FQu+rNvl2YUeizB6FYuk=
 github.com/ghodss/yaml v1.0.0 h1:wQHKEahhL6wmXdzwWG11gIVCkOv05bNOh+Rxn0yngAk=
 github.com/ghodss/yaml v1.0.0/go.mod h1:4dBDuWmgqj2HViK6kFavaiC9ZROes6MMH2rRYeMEF04=
 github.com/go-bindata/go-bindata v3.1.2+incompatible h1:5vjJMVhowQdPzjE1LdxyFF7YFTXg5IgGVW4gBr5IbvE=
@@ -259,8 +259,8 @@ github.com/openshift/build-machinery-go v0.0.0-20220913142420-e25cf57ea46d h1:RR
 github.com/openshift/build-machinery-go v0.0.0-20220913142420-e25cf57ea46d/go.mod h1:b1BuldmJlbA/xYtdZvKi+7j5YGB44qJUJDZ9zwiNCfE=
 github.com/openshift/client-go v0.0.0-20230926161409-848405da69e1 h1:W1N/3nVciqmjPjn2xldHjb0AwwCQzlGxLvX5BCgE8H4=
 github.com/openshift/client-go v0.0.0-20230926161409-848405da69e1/go.mod h1:ihUJrhBcYAGYQrJu/gP2OMgfVds5f5z5kbeLNBqjHLo=
-github.com/openshift/library-go v0.0.0-20231020125034-5a2d9fe760b3 h1:RmbS0Ea69/ejW0HqUoUjO72EfNc/biuVDjODEDl/EnE=
-github.com/openshift/library-go v0.0.0-20231020125034-5a2d9fe760b3/go.mod h1:8UzmrBMCn7+GzouL8DVYkL9COBQTB1Ggd13/mHJQCUg=
+github.com/openshift/library-go v0.0.0-20231103161458-0ec67489d123 h1:JfXG50f8yVud5xakwTHoqD00+3HYdLmZuEqn5Sq8ZRQ=
+github.com/openshift/library-go v0.0.0-20231103161458-0ec67489d123/go.mod h1:ZFwNwC3opc/7aOvzUbU95zp33Lbxet48h80ryH3p6DY=
 github.com/opentracing/opentracing-go v1.1.0/go.mod h1:UkNAQd3GIcIGf0SeVgPpRdFStlNbqXla1AfSYxPUl2o=
 github.com/pkg/errors v0.8.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
