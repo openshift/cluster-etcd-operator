@@ -72,6 +72,7 @@ var envVarFns = []envVarFunc{
 	getUnsupportedArch,
 	getCipherSuites,
 	getMaxLearners,
+	getClusterTopologyValues,
 }
 
 // getEtcdEnvVars returns the env vars that need to be set on the etcd static pods that will be rendered.
@@ -207,6 +208,19 @@ func getEtcdURLHost(envVarContext envVarContext) (map[string]string, error) {
 	}
 
 	return ret, nil
+}
+
+func getClusterTopologyValues(envVarContext envVarContext) (map[string]string, error) {
+	envs := map[string]string{}
+	infrastructure, err := envVarContext.infrastructureLister.Get("cluster")
+	if err != nil {
+		return nil, err
+	}
+
+	envs["CONTROL_PLANE_TOPOLOGY"] = string(infrastructure.Status.ControlPlaneTopology)
+	envs["INFRASTRUCTURE_TOPOLOGY"] = string(infrastructure.Status.InfrastructureTopology)
+
+	return envs, nil
 }
 
 func getHardwareSpeedValues(envVarContext envVarContext) (map[string]string, error) {

@@ -1067,6 +1067,10 @@ spec:
           : "${NODE_NODE_ENVVAR_NAME_ETCD_NAME?not set}"
           : "${NODE_NODE_ENVVAR_NAME_IP?not set}"
 
+          if [[ "${CONTROL_PLANE_TOPOLOGY}" == "SingleReplica" ]]; then
+            exit 0
+          fi
+
           # check for ipv4 addresses as well as ipv6 addresses with extra square brackets
           if [[ "${NODE_NODE_ENVVAR_NAME_IP}" != "${NODE_IP}" && "${NODE_NODE_ENVVAR_NAME_IP}" != "[${NODE_IP}]" ]]; then
             # echo the error message to stderr
