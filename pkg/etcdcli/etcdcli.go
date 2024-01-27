@@ -54,6 +54,7 @@ type etcdClientGetter struct {
 	eventRecorder events.Recorder
 
 	clientPool *EtcdClientPool
+	tlsInfo    *transport.TLSInfo
 }
 
 func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkInformer configv1informers.NetworkInformer, eventRecorder events.Recorder) EtcdClient {
@@ -83,6 +84,24 @@ func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkIn
 	return g
 }
 
+func NewEtcdClientWithEndpointFunc(endpointFunc func() ([]string, error), tlsInfo *transport.TLSInfo, eventRecorder events.Recorder) EtcdClient {
+	g := &etcdClientGetter{
+		tlsInfo:       tlsInfo,
+		eventRecorder: eventRecorder.WithComponentSuffix("etcd-client"),
+	}
+
+	newFunc := func() (*clientv3.Client, error) {
+		endpoints, err := endpointFunc()
+		if err != nil {
+			return nil, fmt.Errorf("error retrieving endpoints for new cached client: %w", err)
+		}
+		return newEtcdClientWithClientOpts(endpoints, true, WithTLSInfo(tlsInfo))
+	}
+
+	g.clientPool = NewDefaultEtcdClientPool(newFunc, endpointFunc)
+	return g
+}
+
 // newEtcdClientWithClientOpts allows customization of the etcd client using ClientOptions. All clients must be manually
 // closed by the caller with Close().
 func newEtcdClientWithClientOpts(endpoints []string, skipConnectionTest bool, opts ...ClientOption) (*clientv3.Client, error) {
@@ -103,6 +122,10 @@ func newEtcdClientWithClientOpts(endpoints []string, skipConnectionTest bool, op
 		KeyFile:       "/var/run/secrets/etcd-client/tls.key",
 		TrustedCAFile: "/var/run/configmaps/etcd-ca/ca-bundle.crt",
 	}
+	if clientOpts.tlsInfo != nil {
+		tlsInfo = *clientOpts.tlsInfo
+	}
+
 	tlsConfig, err := tlsInfo.ClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("error during client TLSConfig: %w", err)
@@ -409,7 +432,7 @@ func (g *etcdClientGetter) MemberHealth(ctx context.Context) (memberHealth, erro
 	if err != nil {
 		return nil, err
 	}
-	return getMemberHealth(ctx, etcdCluster.Members), nil
+	return getMemberHealth(ctx, etcdCluster.Members, WithTLSInfo(g.tlsInfo)), nil
 }
 
 func (g *etcdClientGetter) IsMemberHealthy(ctx context.Context, member *etcdserverpb.Member) (bool, error) {
@@ -452,7 +475,7 @@ func (g *etcdClientGetter) MemberStatus(ctx context.Context, member *etcdserverp
 // Defragment creates a new uncached clientv3 to the given member url and calls clientv3.Client.Defragment.
 func (g *etcdClientGetter) Defragment(ctx context.Context, member *etcdserverpb.Member) (*clientv3.DefragmentResponse, error) {
 	// no g.clientLock necessary, this always returns a new fresh client
-	cli, err := newEtcdClientWithClientOpts([]string{member.ClientURLs[0]}, false, WithDialTimeout(DefragDialTimeout))
+	cli, err := newEtcdClientWithClientOpts([]string{member.ClientURLs[0]}, false, WithDialTimeout(DefragDialTimeout), WithTLSInfo(g.tlsInfo))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get etcd client for defragment: %w", err)
 	}

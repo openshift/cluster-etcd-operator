@@ -41,7 +41,7 @@ type healthCheck struct {
 
 type memberHealth []healthCheck
 
-func getMemberHealth(ctx context.Context, etcdMembers []*etcdserverpb.Member) memberHealth {
+func getMemberHealth(ctx context.Context, etcdMembers []*etcdserverpb.Member, opts ...ClientOption) memberHealth {
 	memberHealth := memberHealth{}
 	for _, member := range etcdMembers {
 		if !HasStarted(member) {
@@ -55,7 +55,7 @@ func getMemberHealth(ctx context.Context, etcdMembers []*etcdserverpb.Member) me
 			ctx, cancel := context.WithTimeout(ctx, defaultTimeout)
 			defer cancel()
 
-			resChan <- checkSingleMemberHealth(ctx, member)
+			resChan <- checkSingleMemberHealth(ctx, member, opts...)
 		}()
 
 		select {
@@ -91,7 +91,7 @@ func getMemberHealth(ctx context.Context, etcdMembers []*etcdserverpb.Member) me
 	return memberHealth
 }
 
-func checkSingleMemberHealth(ctx context.Context, member *etcdserverpb.Member) healthCheck {
+func checkSingleMemberHealth(ctx context.Context, member *etcdserverpb.Member, opts ...ClientOption) healthCheck {
 	// If the endpoint is for a learner member then we should skip testing the connection
 	// via the member list call as learners don't support that.
 	// The learner's connection would get tested in the health check below
@@ -99,7 +99,7 @@ func checkSingleMemberHealth(ctx context.Context, member *etcdserverpb.Member) h
 	if member.IsLearner {
 		skipConnectionTest = true
 	}
-	cli, err := newEtcdClientWithClientOpts([]string{member.ClientURLs[0]}, skipConnectionTest)
+	cli, err := newEtcdClientWithClientOpts([]string{member.ClientURLs[0]}, skipConnectionTest, opts...)
 	if err != nil {
 		return healthCheck{
 			Member:  member,

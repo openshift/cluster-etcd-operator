@@ -2,10 +2,13 @@ package etcdcli
 
 import (
 	"time"
+
+	"go.etcd.io/etcd/client/pkg/v3/transport"
 )
 
 type ClientOptions struct {
 	dialTimeout time.Duration
+	tlsInfo     *transport.TLSInfo
 }
 
 func newClientOpts(opts ...ClientOption) (*ClientOptions, error) {
@@ -27,5 +30,11 @@ type ClientOption func(*ClientOptions)
 func WithDialTimeout(timeout time.Duration) ClientOption {
 	return func(co *ClientOptions) {
 		co.dialTimeout = timeout
+	}
+}
+
+func WithTLSInfo(tlsInfo *transport.TLSInfo) ClientOption {
+	return func(co *ClientOptions) {
+		co.tlsInfo = tlsInfo
 	}
 }
