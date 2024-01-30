@@ -83,7 +83,7 @@ func NewClusterMemberRemovalController(
 	return factory.New().
 		WithSync(c.sync).
 		WithSyncDegradedOnError(operatorClient).
-		ResyncEvery(33*time.Minute). // make it slow since nodes are updated every few minutes
+		ResyncEvery(5*time.Minute). // nodes are updated several times a minute, 5m for safety on getting stuck
 		WithBareInformers(networkInformer.Informer()).
 		WithInformers(
 			masterNodeInformer,
@@ -93,6 +93,13 @@ func NewClusterMemberRemovalController(
 }
 
 func (c *clusterMemberRemovalController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
+	// only attempt to scale down if the machine API is functional
+	if isFunctional, err := c.machineAPIChecker.IsFunctional(); err != nil {
+		return fmt.Errorf("failed to determine whether machine api is functional: %w", err)
+	} else if !isFunctional {
+		return nil
+	}
+
 	// skip reconciling this controller, if bootstrapping is not completed
 	bootstrapComplete, err := ceohelpers.IsBootstrapComplete(c.configMapLister, c.operatorClient, c.etcdClient)
 	if err != nil {
@@ -102,10 +109,13 @@ func (c *clusterMemberRemovalController) sync(ctx context.Context, syncCtx facto
 		return nil
 	}
 
-	// only attempt to scale down if the machine API is functional
-	if isFunctional, err := c.machineAPIChecker.IsFunctional(); err != nil {
-		return err
-	} else if !isFunctional {
+	// check for stability of revisions, by also taking the node status into account
+	// note that this is an important step for the AssistedInstallers installation procedure.
+	stable, err := c.isRevisionStable()
+	if err != nil {
+		return fmt.Errorf("isRevisionStable failed to determine revision stability: %w", err)
+	}
+	if !stable {
 		return nil
 	}
 
@@ -120,7 +130,45 @@ func (c *clusterMemberRemovalController) sync(ctx context.Context, syncCtx facto
 		errs = append(errs, err)
 	}
 	return kerrors.NewAggregate(errs)
+}
 
+func (c *clusterMemberRemovalController) isRevisionStable() (bool, error) {
+	_, status, _, err := c.operatorClient.GetStaticPodOperatorState()
+	if err != nil {
+		return false, fmt.Errorf("failed to get static pod operator state: %w", err)
+	}
+
+	masterNodes, err := c.masterNodeLister.List(c.masterNodeSelector)
+	if err != nil {
+		return false, fmt.Errorf("failed to list master nodes: %w", err)
+	}
+
+	for _, node := range masterNodes {
+		nodeReady := false
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+				nodeReady = true
+			}
+		}
+
+		// There are cases where the installer can be quicker to create a new revision than it can detect a node going away.
+		// This causes the revision check below to infinite loop, waiting forever for the installation on that node.
+		// Subsequently, all healthy other nodes are barred from installing the new revision.
+		// Normally, the machine-api will detect this and replace said node, here we do not want to block the member removal
+		// that can get us out of that situation automatically.
+		if !nodeReady {
+			return true, nil
+		}
+	}
+
+	for _, curr := range status.NodeStatuses {
+		if curr.CurrentRevision != status.LatestAvailableRevision {
+			klog.V(4).Infof("pending revision %d/%d is still in progress on node %s", curr.CurrentRevision, status.LatestAvailableRevision, curr.NodeName)
+			return false, nil
+		}
+	}
+
+	return true, nil
 }
 
 // attemptToScaleDown attempts to remove a voting member only once we have identified that
@@ -226,7 +274,7 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 	// When at the desired control-plane size, scale down is only allowed if a member is unhealthy so that a new machine can replace it.
 	// For healthy members, deleting a machine should result in a new machine being created and member addition before scale down can occur
 	if reflect.DeepEqual(liveVotingMembers, healthyLiveVotingMembers) && len(healthyLiveVotingMembers) <= desiredControlPlaneReplicasCount {
-		klog.V(2).Infof("skip scale down: all voting, non-bootstrap members are healthy and membership does not exceed the desired cluster size of %v", desiredControlPlaneReplicasCount)
+		klog.V(2).Infof("skip scale down: all voting, non-bootstrap members are healthy and membership does not exceed the desired cluster size of %d. Current Members: %v, healthy: %v", desiredControlPlaneReplicasCount, liveVotingMembers, healthyLiveVotingMembers)
 		return nil
 	}
 
@@ -262,7 +310,7 @@ func (c *clusterMemberRemovalController) removeMemberWithoutMachine(ctx context.
 	for _, potentialMemberToRemoveIP := range etcdEndpointsConfigMap.Data {
 		memberLocator := potentialMemberToRemoveIP
 		machine, err := c.getMachineForMember(potentialMemberToRemoveIP)
-		if err != nil && err != errNotFound {
+		if err != nil && !errors.Is(err, errNotFound) {
 			return fmt.Errorf("unable to get a machine for member: %v, err: %v", memberLocator, err)
 		}
 		if machine != nil {
@@ -271,7 +319,7 @@ func (c *clusterMemberRemovalController) removeMemberWithoutMachine(ctx context.
 		}
 
 		node, err := c.getNodeForMember(potentialMemberToRemoveIP)
-		if err != nil && err != errNotFound {
+		if err != nil && !errors.Is(err, errNotFound) {
 			return fmt.Errorf("unable to get a node for member: %v, err: %v", memberLocator, err)
 		}
 		if node != nil {
@@ -364,7 +412,7 @@ func (c *clusterMemberRemovalController) attemptToRemoveLearningMember(ctx conte
 
 func (c *clusterMemberRemovalController) getMachineForMember(memberInternalIP string) (*machinev1beta1.Machine, error) {
 	node, err := c.getNodeForMember(memberInternalIP)
-	if err != nil && err != errNotFound {
+	if err != nil && !errors.Is(err, errNotFound) {
 		return nil, err
 	}
 

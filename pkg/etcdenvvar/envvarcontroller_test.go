@@ -169,3 +169,73 @@ func TestEnvVarController(t *testing.T) {
 		})
 	}
 }
+
+func TestMapValidation(t *testing.T) {
+	scenarios := []struct {
+		name        string
+		env         map[string]string
+		expectedErr error
+	}{
+		{
+			name:        "Empty",
+			env:         map[string]string{},
+			expectedErr: fmt.Errorf("map does not contain ALL_ETCD_ENDPOINTS"),
+		},
+		{
+			name: "HappyConfig",
+			env: map[string]string{
+				"ALL_ETCD_ENDPOINTS": "https://192.168.127.10:2379,https://192.168.127.11:2379,https://192.168.127.12:2379",
+				"NODE_test_infra_cluster_803c5056_master_0_ETCD_NAME":     "test-infra-cluster-803c5056-master-0",
+				"NODE_test_infra_cluster_803c5056_master_0_ETCD_URL_HOST": "192.168.127.10",
+				"NODE_test_infra_cluster_803c5056_master_0_IP":            "192.168.127.10",
+
+				"NODE_test_infra_cluster_803c5056_master_1_ETCD_NAME":     "test-infra-cluster-803c5056-master-1",
+				"NODE_test_infra_cluster_803c5056_master_1_ETCD_URL_HOST": "192.168.127.11",
+				"NODE_test_infra_cluster_803c5056_master_1_IP":            "192.168.127.11",
+
+				"NODE_test_infra_cluster_803c5056_master_2_ETCD_NAME":     "test-infra-cluster-803c5056-master-2",
+				"NODE_test_infra_cluster_803c5056_master_2_ETCD_URL_HOST": "192.168.127.12",
+				"NODE_test_infra_cluster_803c5056_master_2_IP":            "192.168.127.12",
+			},
+		},
+		{
+			name: "missing master-1",
+			env: map[string]string{
+				"ALL_ETCD_ENDPOINTS": "https://192.168.127.10:2379,https://192.168.127.11:2379,https://192.168.127.12:2379",
+				"NODE_test_infra_cluster_803c5056_master_0_ETCD_NAME":     "test-infra-cluster-803c5056-master-0",
+				"NODE_test_infra_cluster_803c5056_master_0_ETCD_URL_HOST": "192.168.127.10",
+				"NODE_test_infra_cluster_803c5056_master_0_IP":            "192.168.127.10",
+
+				"NODE_test_infra_cluster_803c5056_master_2_ETCD_NAME":     "test-infra-cluster-803c5056-master-2",
+				"NODE_test_infra_cluster_803c5056_master_2_ETCD_URL_HOST": "192.168.127.12",
+				"NODE_test_infra_cluster_803c5056_master_2_IP":            "192.168.127.12",
+			},
+			expectedErr: fmt.Errorf("unexpected difference in env vars with endpoints [[https://192.168.127.10:2379 https://192.168.127.11:2379 https://192.168.127.12:2379]] vs. [map[test_infra_cluster_803c5056_master_0:map[ETCD_NAME:test-infra-cluster-803c5056-master-0 ETCD_URL_HOST:192.168.127.10 IP:192.168.127.10] test_infra_cluster_803c5056_master_2:map[ETCD_NAME:test-infra-cluster-803c5056-master-2 ETCD_URL_HOST:192.168.127.12 IP:192.168.127.12]]]"),
+		},
+		{
+			name: "misconfigured ip master-0",
+			env: map[string]string{
+				"ALL_ETCD_ENDPOINTS": "https://192.168.127.10:2379,https://192.168.127.11:2379,https://192.168.127.12:2379",
+				"NODE_test_infra_cluster_803c5056_master_0_ETCD_NAME":     "test-infra-cluster-803c5056-master-0",
+				"NODE_test_infra_cluster_803c5056_master_0_ETCD_URL_HOST": "192.168.127.1",
+				"NODE_test_infra_cluster_803c5056_master_0_IP":            "192.168.127.1",
+
+				"NODE_test_infra_cluster_803c5056_master_1_ETCD_NAME":     "test-infra-cluster-803c5056-master-1",
+				"NODE_test_infra_cluster_803c5056_master_1_ETCD_URL_HOST": "192.168.127.11",
+				"NODE_test_infra_cluster_803c5056_master_1_IP":            "192.168.127.11",
+
+				"NODE_test_infra_cluster_803c5056_master_2_ETCD_NAME":     "test-infra-cluster-803c5056-master-2",
+				"NODE_test_infra_cluster_803c5056_master_2_ETCD_URL_HOST": "192.168.127.12",
+				"NODE_test_infra_cluster_803c5056_master_2_IP":            "192.168.127.12",
+			},
+			expectedErr: fmt.Errorf("found inconsistency with endpoint [https://192.168.127.10:2379], no matching coherent env vars found in: [map[test_infra_cluster_803c5056_master_0:map[ETCD_NAME:test-infra-cluster-803c5056-master-0 ETCD_URL_HOST:192.168.127.1 IP:192.168.127.1] test_infra_cluster_803c5056_master_1:map[ETCD_NAME:test-infra-cluster-803c5056-master-1 ETCD_URL_HOST:192.168.127.11 IP:192.168.127.11] test_infra_cluster_803c5056_master_2:map[ETCD_NAME:test-infra-cluster-803c5056-master-2 ETCD_URL_HOST:192.168.127.12 IP:192.168.127.12]]]"),
+		},
+	}
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			err := validateMap(*u.StaticPodOperatorStatus(), nil, scenario.env)
+			require.Equal(t, err, scenario.expectedErr)
+		})
+	}
+
+}

@@ -1070,6 +1070,117 @@ func TestAttemptToScaleDown(t *testing.T) {
 	}
 }
 
+func TestRevisionStability(t *testing.T) {
+	scenarios := []struct {
+		name                        string
+		indexerObjs                 []interface{}
+		initialObjectsForNodeLister []runtime.Object
+		operatorStatus              operatorv1.StaticPodOperatorStatus
+		expectedStable              bool
+	}{
+		{
+			name:        "happy-path",
+			indexerObjs: []interface{}{},
+			initialObjectsForNodeLister: []runtime.Object{
+				masterNodeWithReadyState(0, true),
+				masterNodeWithReadyState(1, true),
+				masterNodeWithReadyState(2, true),
+			},
+			operatorStatus: operatorv1.StaticPodOperatorStatus{
+				LatestAvailableRevision: 10,
+				NodeStatuses: []operatorv1.NodeStatus{
+					{CurrentRevision: 10},
+					{CurrentRevision: 10},
+					{CurrentRevision: 10},
+				},
+			},
+			expectedStable: true,
+		},
+		{
+			name:        "ready-rev-behind",
+			indexerObjs: []interface{}{},
+			initialObjectsForNodeLister: []runtime.Object{
+				masterNodeWithReadyState(0, true),
+				masterNodeWithReadyState(1, true),
+				masterNodeWithReadyState(2, true),
+			},
+			operatorStatus: operatorv1.StaticPodOperatorStatus{
+				LatestAvailableRevision: 10,
+				NodeStatuses: []operatorv1.NodeStatus{
+					{CurrentRevision: 10},
+					{CurrentRevision: 10},
+					{CurrentRevision: 8},
+				},
+			},
+			expectedStable: false,
+		},
+		{
+			name:        "unready-rev-equal",
+			indexerObjs: []interface{}{},
+			initialObjectsForNodeLister: []runtime.Object{
+				masterNodeWithReadyState(0, true),
+				masterNodeWithReadyState(1, false),
+				masterNodeWithReadyState(2, true),
+			},
+			operatorStatus: operatorv1.StaticPodOperatorStatus{
+				LatestAvailableRevision: 10,
+				NodeStatuses: []operatorv1.NodeStatus{
+					{CurrentRevision: 10},
+					{CurrentRevision: 10},
+					{CurrentRevision: 10},
+				},
+			},
+			expectedStable: true,
+		},
+		{
+			name:        "unready-rev-unequal",
+			indexerObjs: []interface{}{},
+			initialObjectsForNodeLister: []runtime.Object{
+				masterNodeWithReadyState(0, true),
+				masterNodeWithReadyState(1, false),
+				masterNodeWithReadyState(2, true),
+			},
+			operatorStatus: operatorv1.StaticPodOperatorStatus{
+				LatestAvailableRevision: 25,
+				NodeStatuses: []operatorv1.NodeStatus{
+					{CurrentRevision: 10},
+					{CurrentRevision: 9},
+					{CurrentRevision: 10},
+				},
+			},
+			expectedStable: true,
+		},
+	}
+
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+			for _, obj := range scenario.indexerObjs {
+				require.NoError(t, indexer.Add(obj))
+			}
+
+			nodeIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+			for _, initialObj := range scenario.initialObjectsForNodeLister {
+				require.NoError(t, nodeIndexer.Add(initialObj))
+			}
+			nodeLister := corev1listers.NewNodeLister(nodeIndexer)
+			nodeSelector, err := labels.Parse("node-role.kubernetes.io/master")
+			require.NoError(t, err)
+			fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(&operatorv1.StaticPodOperatorSpec{},
+				&scenario.operatorStatus, nil, nil)
+
+			target := clusterMemberRemovalController{
+				operatorClient:     fakeOperatorClient,
+				masterNodeLister:   nodeLister,
+				masterNodeSelector: nodeSelector,
+			}
+			stable, err := target.isRevisionStable()
+			require.NoError(t, err)
+			require.Equal(t, scenario.expectedStable, stable)
+		})
+	}
+}
+
 func wellKnownEtcdEndpointsConfigMap() *corev1.ConfigMap {
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: "etcd-endpoints", Namespace: "openshift-etcd"},
@@ -1129,6 +1240,29 @@ func wellKnownMasterNode() *corev1.Node {
 				Address: "10.0.139.78",
 			},
 		}},
+	}
+}
+
+func masterNodeWithReadyState(identifier int, ready bool) *corev1.Node {
+	condition := corev1.NodeCondition{
+		Type:   corev1.NodeReady,
+		Status: corev1.ConditionTrue,
+	}
+
+	if !ready {
+		condition.Status = corev1.ConditionFalse
+	}
+
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("m-%d", identifier), Labels: map[string]string{"node-role.kubernetes.io/master": ""}},
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{condition},
+			Addresses: []corev1.NodeAddress{
+				{
+					Type:    corev1.NodeInternalIP,
+					Address: fmt.Sprintf("10.0.139.%d", identifier),
+				},
+			}},
 	}
 }
 

@@ -43,6 +43,8 @@ var FixedEtcdEnvVars = map[string]string{
 }
 
 const (
+	AllEtcdEndpoints = "ALL_ETCD_ENDPOINTS"
+
 	etcdEndpointName  = "etcd-endpoints"
 	clusterConfigName = "cluster-config-v1"
 	clusterConfigKey  = "install-config"
@@ -131,8 +133,9 @@ func getAllEtcdEndpoints(envVarContext envVarContext) (map[string]string, error)
 	if err != nil {
 		return nil, err
 	}
+
 	return map[string]string{
-		"ALL_ETCD_ENDPOINTS": endpoints,
+		AllEtcdEndpoints: endpoints,
 	}, nil
 }
 
