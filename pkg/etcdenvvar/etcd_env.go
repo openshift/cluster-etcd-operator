@@ -247,15 +247,15 @@ func getEtcdDBSize(envVarContext envVarContext) (map[string]string, error) {
 		return nil, fmt.Errorf("failed to retrieve etcd CR: %v", err)
 	}
 
-	if etcd.Spec.QuotaBackendSize == nil {
+	if etcd.Spec.BackendQuotaGiB == 0 {
 		return map[string]string{
-			"ETCD_QUOTA_BACKEND_BYTES": "8589934592",
+			"ETCD_QUOTA_BACKEND_BYTES": gibibytesToBytesString(8),
 		}, nil
 	}
 
-	etcdDBSize := *etcd.Spec.QuotaBackendSize
+	etcdDBSize := etcd.Spec.BackendQuotaGiB
 	return map[string]string{
-		"ETCD_QUOTA_BACKEND_BYTES": strconv.FormatInt(etcdDBSize, 10),
+		"ETCD_QUOTA_BACKEND_BYTES": gibibytesToBytesString(etcdDBSize),
 	}, nil
 }
 
@@ -351,4 +351,9 @@ func getEtcdEndpoints(configmapLister corev1listers.ConfigMapLister, skipBootstr
 	sort.Strings(etcdURLs)
 
 	return strings.Join(etcdURLs, ","), nil
+}
+
+func gibibytesToBytesString(dbSize int64) string {
+	etcdDBSize := dbSize * 1024 * 1024 * 1024
+	return strconv.FormatInt(etcdDBSize, 10)
 }

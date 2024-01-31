@@ -7,6 +7,11 @@ import (
 // +genclient
 // +genclient:nonNamespaced
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +kubebuilder:object:root=true
+// +kubebuilder:resource:path=etcds,scope=Cluster,categories=coreoperators
+// +kubebuilder:subresource:status
+// +openshift:api-approved.openshift.io=https://github.com/openshift/api/pull/752
+// +openshift:file-pattern=0000_12_etcd-operator_01_configMARKERS.crd.yaml
 
 // Etcd provides information to configure an operator to manage etcd.
 //
@@ -35,20 +40,17 @@ type EtcdSpec struct {
 	//	"" means no opinion and the platform is left to choose a reasonable default
 	//	which is subject to change without notice.
 	// +kubebuilder:validation:Optional
-	// +openshift:enable:FeatureSets=CustomNoUpgrade;TechPreviewNoUpgrade
+	// +openshift:enable:FeatureGate=HardwareSpeed
 	// +optional
 	HardwareSpeed ControlPlaneHardwareSpeed `json:"controlPlaneHardwareSpeed"`
 
-	// QuotaBackendSize allows user to customize the etcd database backend storage size.
-	// It defaults to 8GB, and maximum allowed value is 64GB.
-	// +optional
+	// BackendQuotaGiB sets the etcd backend storage size limit in gigabytes. Defaults to 8GiB.
 	// +kubebuilder:validation:Optional
-	// +kubebuilder:default=8589934592
-	// +kubebuilder:validation:MultipleOf=8589934592
-	// +kubebuilder:validation:Maximum=68719476736
+	// +kubebuilder:default=8
+	// +kubebuilder:validation:Maximum=64
 	// +kubebuilder:validation:XValidation:rule="self >= oldSelf",message="can't decrease database size"
 	// +openshift:enable:FeatureSets=CustomNoUpgrade;TechPreviewNoUpgrade
-	QuotaBackendSize *int64 `json:"quotaBackendSize"`
+	BackendQuotaGiB int64 `json:"backendQuotaGiB"`
 }
 
 type EtcdStatus struct {

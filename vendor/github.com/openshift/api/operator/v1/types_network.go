@@ -7,6 +7,12 @@ import (
 // +genclient
 // +genclient:nonNamespaced
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +kubebuilder:object:root=true
+// +kubebuilder:resource:path=networks,scope=Cluster
+// +openshift:api-approved.openshift.io=https://github.com/openshift/api/pull/475
+// +openshift:file-pattern=0000_70_cluster-network-operator_01MARKERS.crd.yaml
+// +kubebuilder:metadata:annotations=include.release.openshift.io/self-managed-high-availability=true
+// +kubebuilder:metadata:annotations=include.release.openshift.io/single-node-developer=true
 
 // Network describes the cluster's desired network configuration. It is
 // consumed by the cluster-network-operator.
@@ -48,6 +54,7 @@ type NetworkList struct {
 }
 
 // NetworkSpec is the top-level network configuration object.
+// +kubebuilder:validation:XValidation:rule="!has(self.defaultNetwork) || !has(self.defaultNetwork.ovnKubernetesConfig) || !has(self.defaultNetwork.ovnKubernetesConfig.gatewayConfig) || !has(self.defaultNetwork.ovnKubernetesConfig.gatewayConfig.ipForwarding) || self.defaultNetwork.ovnKubernetesConfig.gatewayConfig.ipForwarding == oldSelf.defaultNetwork.ovnKubernetesConfig.gatewayConfig.ipForwarding || self.defaultNetwork.ovnKubernetesConfig.gatewayConfig.ipForwarding == 'Restricted' || self.defaultNetwork.ovnKubernetesConfig.gatewayConfig.ipForwarding == 'Global'",message="invalid value for IPForwarding, valid values are 'Restricted' or 'Global'"
 type NetworkSpec struct {
 	OperatorSpec `json:",inline"`
 
@@ -129,7 +136,7 @@ const (
 )
 
 // NetworkMigration represents the cluster network configuration.
-// +openshift:validation:FeatureSetAwareXValidation:featureSet=CustomNoUpgrade;TechPreviewNoUpgrade,rule="!has(self.mtu) || !has(self.networkType) || self.networkType == '' || has(self.mode) && self.mode == 'Live'",message="networkType migration in mode other than 'Live' may not be configured at the same time as mtu migration"
+// +openshift:validation:FeatureGateAwareXValidation:featureGate=NetworkLiveMigration,rule="!has(self.mtu) || !has(self.networkType) || self.networkType == '' || has(self.mode) && self.mode == 'Live'",message="networkType migration in mode other than 'Live' may not be configured at the same time as mtu migration"
 type NetworkMigration struct {
 	// networkType is the target type of network migration. Set this to the
 	// target network type to allow changing the default network. If unset, the
@@ -157,7 +164,6 @@ type NetworkMigration struct {
 	// An "Offline" migration operation will cause service interruption. During an "Offline" migration, two rounds of node reboots are required. The cluster network will be malfunctioning during the network migration.
 	// When omitted, this means no opinion and the platform is left to choose a reasonable default which is subject to change over time.
 	// The current default value is "Offline".
-	// +openshift:enable:FeatureSets=CustomNoUpgrade;TechPreviewNoUpgrade
 	// +optional
 	Mode NetworkMigrationMode `json:"mode"`
 }
@@ -438,7 +444,7 @@ type IPsecConfig struct {
 	// When 'External', ipsec is enabled on the node level but requires the user to configure the secure communication parameters.
 	// This mode is for external secure communications and the configuration can be done using the k8s-nmstate operator.
 	// When 'Full', ipsec is configured on the node level and inter-pod secure communication within the cluster is configured.
-	// Note with `Full`, if ipsec is desired for communication with external (to the cluster) entities (such as storage arrays), 
+	// Note with `Full`, if ipsec is desired for communication with external (to the cluster) entities (such as storage arrays),
 	// this is left to the user to configure.
 	// +kubebuilder:validation:Enum=Disabled;External;Full
 	// +optional
