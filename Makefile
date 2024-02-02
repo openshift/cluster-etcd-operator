@@ -10,7 +10,12 @@ include $(addprefix ./vendor/github.com/openshift/build-machinery-go/make/, \
 	targets/openshift/operator/telepresence.mk \
 )
 
+E2E_TIMEOUT ?= 1h
 IMAGE_REGISTRY :=registry.svc.ci.openshift.org
+# Setting SHELL to bash allows bash commands to be executed by recipes.
+# # # Options are set to exit when a recipe line exits non-zero or a piped command fails.
+SHELL = /usr/bin/env bash -o pipefail
+.SHELLFLAGS = -ec
 
 # This will call a macro called "build-image" which will generate image specific targets based on the parameters:
 # $0 - macro name
@@ -47,4 +52,13 @@ test-e2e: GO_TEST_FLAGS += -v
 test-e2e: GO_TEST_FLAGS += -timeout 2h
 test-e2e: GO_TEST_FLAGS += -p 1
 test-e2e: test-unit
+test-e2e:
+	go test \
+	-timeout $(E2E_TIMEOUT) \
+	-count 1 \
+	-v \
+	-p 1 \
+	-tags e2e \
+	-run "$(TEST)" \
+	./test/e2e
 .PHONY: test-e2e
