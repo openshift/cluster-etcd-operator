@@ -1,76 +1,92 @@
 package etcdcertsigner
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
-	corev1informers "k8s.io/client-go/informers/core/v1"
-	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
-	corev1listers "k8s.io/client-go/listers/core/v1"
 	"strings"
 	"time"
 
-	apiannotations "github.com/openshift/api/annotations"
-	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
-	"github.com/openshift/library-go/pkg/controller/factory"
-	"github.com/openshift/library-go/pkg/operator/certrotation"
-	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/kubernetes"
+	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
+	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/klog/v2"
 
+	apiannotations "github.com/openshift/api/annotations"
+	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/library-go/pkg/controller/factory"
+	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 )
 
-type certConfig struct {
-	// configmap name: "etcd-ca-bundle"
-	signerCaBundle certrotation.CABundleConfigMap
-	// secret name: "etcd-signer"
-	signerCert certrotation.RotatedSigningCASecret
+const (
+	// Annotation key used to associate a cert secret with a node uid. This allows
+	// cert regeneration if a node was deleted and added with the same name.
+	nodeUIDAnnotation = "etcd-operator.alpha.openshift.io/cert-secret-node-uid"
 
-	// configmap name: "etcd-metric-ca-bundle"
-	metricsSignerCaBundle certrotation.CABundleConfigMap
-	// secret name: "etcd-metric-signer"
-	metricsSignerCert certrotation.RotatedSigningCASecret
+	// The minimum percentage duration of a certificate. If a cert has less than
+	// this percentage of its duration remaining, it will be regenerated.
+	defaultMinDurationPercent = 0.20
+)
 
-	// secret name: "etcd-metric-client"
-	metricsClientCert certrotation.RotatedSelfSignedCertKeySecret
-	// secret name: "etcd-client"
-	etcdClientCert certrotation.RotatedSelfSignedCertKeySecret
+// etcdCertConfig defines the configuration required to maintain a cert secret for an etcd member.
+type etcdCertConfig struct {
+	// Name of the secret in namespace openshift-config that contains the CA used to issue the cert
+	caSecretName string
+	// Function that derives the name of the cert secret from the node name
+	secretNameFunc func(nodeName string) string
+	// Function that creates the key material for a new cert
+	newCertFunc func(caCert, caKey []byte, ipAddresses []string) (*bytes.Buffer, *bytes.Buffer, error)
 }
 
-// nodeCertConfigs contains all certificates generated per node
-type nodeCertConfigs struct {
-	node *corev1.Node
-
-	peerCert    *certrotation.RotatedSelfSignedCertKeySecret
-	servingCert *certrotation.RotatedSelfSignedCertKeySecret
-	metricsCert *certrotation.RotatedSelfSignedCertKeySecret
+// Define configuration for creating etcd cert secrets.
+var certConfigs = map[string]etcdCertConfig{
+	"peer": {
+		caSecretName:   "etcd-signer",
+		secretNameFunc: tlshelpers.GetPeerClientSecretNameForNode,
+		newCertFunc:    tlshelpers.CreatePeerCertKey,
+	},
+	"serving": {
+		caSecretName:   "etcd-signer",
+		secretNameFunc: tlshelpers.GetServingSecretNameForNode,
+		newCertFunc:    tlshelpers.CreateServerCertKey,
+	},
+	"serving-metrics": {
+		caSecretName:   "etcd-metric-signer",
+		secretNameFunc: tlshelpers.GetServingMetricsSecretNameForNode,
+		newCertFunc:    tlshelpers.CreateMetricCertKey,
+	},
 }
 
 type EtcdCertSignerController struct {
-	eventRecorder  events.Recorder
 	kubeClient     kubernetes.Interface
 	operatorClient v1helpers.StaticPodOperatorClient
 	nodeLister     corev1listers.NodeLister
-	secretInformer corev1informers.SecretInformer
 	secretLister   corev1listers.SecretLister
 	secretClient   corev1client.SecretsGetter
 	quorumChecker  ceohelpers.QuorumChecker
-
-	certConfig *certConfig
 }
 
 // NewEtcdCertSignerController watches master nodes and maintains secrets for each master node, placing them in a single secret (NOT a tls secret)
 // so that the revision controller only has to watch a single secret.  This isn't ideal because it's possible to have a
 // revision that is missing the content of a secret, but the actual static pod will fail if that happens and the later
 // revision will pick it up.
+// This control loop is considerably less robust than the actual cert rotation controller, but I don't have time at the moment
+// to make the cert rotation controller dynamic.
 func NewEtcdCertSignerController(
 	livenessChecker *health.MultiAlivenessChecker,
 	kubeClient kubernetes.Interface,
@@ -79,54 +95,13 @@ func NewEtcdCertSignerController(
 	eventRecorder events.Recorder,
 	quorumChecker ceohelpers.QuorumChecker,
 ) factory.Controller {
-	eventRecorder = eventRecorder.WithComponentSuffix("etcd-cert-signer-controller")
-	cmInformer := kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps()
-	cmLister := cmInformer.Lister()
-	cmGetter := v1helpers.CachedConfigMapGetter(kubeClient.CoreV1(), kubeInformers)
-	signerCaBundle := tlshelpers.CreateSignerCertRotationBundleConfigMap(
-		cmInformer,
-		cmLister,
-		cmGetter,
-		eventRecorder,
-	)
-
-	metricsSignerCaBundle := tlshelpers.CreateMetricsSignerCertRotationBundleConfigMap(
-		cmInformer,
-		cmLister,
-		cmGetter,
-		eventRecorder,
-	)
-
-	secretInformer := kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets()
-	secretLister := secretInformer.Lister()
-	secretClient := v1helpers.CachedSecretGetter(kubeClient.CoreV1(), kubeInformers)
-
-	signerCert := tlshelpers.CreateSignerCert(secretInformer, secretLister, secretClient, eventRecorder)
-	etcdClientCert := tlshelpers.CreateEtcdClientCert(secretInformer, secretLister, secretClient, eventRecorder)
-
-	metricsSignerCert := tlshelpers.CreateMetricsSignerCert(secretInformer, secretLister, secretClient, eventRecorder)
-	metricsClientCert := tlshelpers.CreateMetricsClientCert(secretInformer, secretLister, secretClient, eventRecorder)
-
-	certCfg := &certConfig{
-		signerCaBundle: signerCaBundle,
-		signerCert:     signerCert,
-		etcdClientCert: etcdClientCert,
-
-		metricsSignerCaBundle: metricsSignerCaBundle,
-		metricsSignerCert:     metricsSignerCert,
-		metricsClientCert:     metricsClientCert,
-	}
-
 	c := &EtcdCertSignerController{
-		eventRecorder:  eventRecorder,
 		kubeClient:     kubeClient,
 		operatorClient: operatorClient,
 		nodeLister:     kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
-		secretInformer: secretInformer,
-		secretLister:   secretLister,
-		secretClient:   secretClient,
+		secretLister:   kubeInformers.SecretLister(),
+		secretClient:   v1helpers.CachedSecretGetter(kubeClient.CoreV1(), kubeInformers),
 		quorumChecker:  quorumChecker,
-		certConfig:     certCfg,
 	}
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
@@ -134,11 +109,10 @@ func NewEtcdCertSignerController(
 
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
 		kubeInformers.InformersFor("").Core().V1().Nodes().Informer(),
+		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Informer(),
 		kubeInformers.InformersFor(operatorclient.GlobalUserSpecifiedConfigNamespace).Core().V1().Secrets().Informer(),
-		cmInformer.Informer(),
-		secretInformer.Informer(),
 		operatorClient.Informer(),
-	).WithSync(syncer.Sync).ToController("EtcdCertSignerController", c.eventRecorder)
+	).WithSync(syncer.Sync).ToController("EtcdCertSignerController", eventRecorder.WithComponentSuffix("etcd-cert-signer-controller"))
 }
 
 func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
@@ -151,7 +125,8 @@ func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.Syn
 		return fmt.Errorf("skipping EtcdCertSignerController reconciliation due to insufficient quorum")
 	}
 
-	if err := c.syncAllMasterCertificates(ctx, syncCtx.Recorder()); err != nil {
+	err = c.syncAllMasters(ctx, syncCtx.Recorder())
+	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdCertSignerControllerDegraded",
 			Status:  operatorv1.ConditionTrue,
@@ -171,95 +146,13 @@ func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.Syn
 			Reason: "AsExpected",
 		}))
 	return updateErr
+
 }
 
-func (c *EtcdCertSignerController) syncAllMasterCertificates(ctx context.Context, recorder events.Recorder) error {
-	// TODO(thomas): it is of utmost importance to keep the existing signer certs for now
-	// when we just create a new signer cert, the new revision does not allow the peer to join the existing two-node
-	// cluster based on the old CA. Any newly rotated additions will come for free through the signerCaBundle and will work out of the box.
-	// Unfortunately, we can't make use of the certrotation.RotatedSigningCASecret here because it would immediately try to rotate the existing signer.
-	signerCaPair, err := tlshelpers.ReadConfigSignerCert(ctx, c.secretClient)
+func (c *EtcdCertSignerController) syncAllMasters(ctx context.Context, recorder events.Recorder) error {
+	certs, err := c.ensureCerts(ctx, recorder)
 	if err != nil {
 		return err
-	}
-
-	// EnsureConfigMapCABundle is stateful w.r.t to the configmap it manages, so we can simply add it to the bundle before the new one
-	_, err = c.certConfig.signerCaBundle.EnsureConfigMapCABundle(ctx, signerCaPair)
-	if err != nil {
-		return fmt.Errorf("error on ensuring signer bundle for existing pair: %w", err)
-	}
-
-	// TODO(thomas): we need to transition that new signer as a replacement for the above - today we only bundle it
-	newSignerCaPair, err := c.certConfig.signerCert.EnsureSigningCertKeyPair(ctx)
-	if err != nil {
-		return fmt.Errorf("error on ensuring etcd-signer cert: %w", err)
-	}
-
-	signerBundle, err := c.certConfig.signerCaBundle.EnsureConfigMapCABundle(ctx, newSignerCaPair)
-	if err != nil {
-		return fmt.Errorf("error on ensuring signer bundle for new pair: %w", err)
-	}
-
-	_, err = c.certConfig.etcdClientCert.EnsureTargetCertKeyPair(ctx, signerCaPair, signerBundle)
-	if err != nil {
-		return fmt.Errorf("error on ensuring etcd client cert: %w", err)
-	}
-
-	metricsSignerCaPair, err := tlshelpers.ReadConfigMetricsSignerCert(ctx, c.secretClient)
-	if err != nil {
-		return err
-	}
-
-	_, err = c.certConfig.metricsSignerCaBundle.EnsureConfigMapCABundle(ctx, metricsSignerCaPair)
-	if err != nil {
-		return fmt.Errorf("error on ensuring metrics signer bundle for existing pair: %w", err)
-	}
-
-	// TODO(thomas): we need to transition that new signer as a replacement for the above - today we only bundle it
-	newMetricsSignerCaPair, err := c.certConfig.metricsSignerCert.EnsureSigningCertKeyPair(ctx)
-	if err != nil {
-		return fmt.Errorf("error on ensuring metrics-signer cert: %w", err)
-	}
-
-	metricsSignerBundle, err := c.certConfig.metricsSignerCaBundle.EnsureConfigMapCABundle(ctx, newMetricsSignerCaPair)
-	if err != nil {
-		return fmt.Errorf("error on ensuring metrics signer bundle: %w", err)
-	}
-
-	_, err = c.certConfig.metricsClientCert.EnsureTargetCertKeyPair(ctx, metricsSignerCaPair, metricsSignerBundle)
-	if err != nil {
-		return fmt.Errorf("error on ensuring metrics client cert: %w", err)
-	}
-
-	nodeCfgs, err := c.createNodeCertConfigs()
-	if err != nil {
-		return fmt.Errorf("error while creating cert configs for nodes: %w", err)
-	}
-
-	allCerts := map[string][]byte{}
-	var errs []error
-	for _, cfg := range nodeCfgs {
-		secret, err := cfg.peerCert.EnsureTargetCertKeyPair(ctx, signerCaPair, signerBundle)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("error on peer cert sync: %w", err))
-		}
-		allCerts = addCertSecretToMap(allCerts, secret)
-
-		secret, err = cfg.servingCert.EnsureTargetCertKeyPair(ctx, signerCaPair, signerBundle)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("error on serving cert sync: %w", err))
-		}
-		allCerts = addCertSecretToMap(allCerts, secret)
-
-		secret, err = cfg.metricsCert.EnsureTargetCertKeyPair(ctx, metricsSignerCaPair, metricsSignerBundle)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("error on serving metrics cert sync: %w", err))
-		}
-		allCerts = addCertSecretToMap(allCerts, secret)
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("encountered errors while syncing some certificates: %w", utilerrors.NewAggregate(errs))
 	}
 
 	// Write a secret that aggregates all certs for all nodes for the static
@@ -276,69 +169,206 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(ctx context.Context
 			},
 		},
 		Type: corev1.SecretTypeOpaque,
-		Data: allCerts,
+		Data: certs,
 	}
 	_, _, err = resourceapply.ApplySecret(ctx, c.secretClient, recorder, secret)
-
-	return nil
+	return err
 }
 
-// Nodes change internally the whole time (e.g. due to IPs changing), we thus re-create the cert configs every sync loop.
-// This works, because initialization is cheap and all state is kept in secrets, configmaps and their annotations.
-func (c *EtcdCertSignerController) createNodeCertConfigs() ([]*nodeCertConfigs, error) {
-	var cfgs []*nodeCertConfigs
+// ensureCerts attempts to ensure the existence of valid etcd cert secrets for
+// all master nodes and if successful returns a map of all cert pairs.
+//
+// Example output:
+//
+//	{
+//	  "etcd-peer-master-0.crt":    []byte{...},
+//	  "etcd-peer-master-0.key":    []byte{...},
+//	  "etcd-serving-master-0.crt": []byte{...},
+//	  "etcd-serving-master-0.key": []byte{...},
+//	  ...
+//	}
+func (c *EtcdCertSignerController) ensureCerts(ctx context.Context, recorder events.Recorder) (map[string][]byte, error) {
 	nodes, err := c.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
 	if err != nil {
-		return cfgs, err
+		return nil, err
 	}
 
+	errs := []error{}
+	certs := map[string][]byte{}
 	for _, node := range nodes {
-		peerCert, err := tlshelpers.CreatePeerCertificate(node,
-			c.secretInformer,
-			c.secretLister,
-			c.secretClient,
-			c.eventRecorder)
-		if err != nil {
-			return cfgs, fmt.Errorf("error creating peer cert for node [%s]: %w", node.Name, err)
+		certsForNode, certErrs := c.ensureCertsForNode(ctx, node, recorder)
+		if certErrs != nil {
+			errs = append(errs, certErrs...)
 		}
-
-		servingCert, err := tlshelpers.CreateServingCertificate(node,
-			c.secretInformer,
-			c.secretLister,
-			c.secretClient,
-			c.eventRecorder)
-		if err != nil {
-			return cfgs, fmt.Errorf("error creating serving cert for node [%s]: %w", node.Name, err)
+		if len(errs) > 0 {
+			// Any error precludes further cert collection
+			continue
 		}
-
-		metricsCert, err := tlshelpers.CreateMetricsServingCertificate(node,
-			c.secretInformer,
-			c.secretLister,
-			c.secretClient,
-			c.eventRecorder)
-		if err != nil {
-			return cfgs, fmt.Errorf("error creating metrics cert for node [%s]: %w", node.Name, err)
+		for key, value := range certsForNode {
+			// Each key is guaranteed to be unique by virtue of embedding the
+			// cert type and node name.
+			certs[key] = value
 		}
-
-		cfgs = append(cfgs, &nodeCertConfigs{
-			node:        node.DeepCopy(),
-			peerCert:    peerCert,
-			servingCert: servingCert,
-			metricsCert: metricsCert,
-		})
 	}
-
-	return cfgs, nil
+	if len(errs) > 0 {
+		return nil, utilerrors.NewAggregate(errs)
+	}
+	return certs, nil
 }
 
-func addCertSecretToMap(allCerts map[string][]byte, secret *corev1.Secret) map[string][]byte {
-	for k, v := range secret.Data {
-		// in library-go the certs are stored as tls.crt and tls.key - which we trim away to stay backward compatible
-		ext, found := strings.CutPrefix(k, "tls")
-		if found {
-			k = ext
-		}
-		allCerts[fmt.Sprintf("%s%s", secret.Name, k)] = v
+// ensureCertsForNode attempts to ensure the existence of secrets containing the
+// etcd cert (cert+key) pairs needed for an etcd member.
+func (c *EtcdCertSignerController) ensureCertsForNode(ctx context.Context, node *corev1.Node, recorder events.Recorder) (map[string][]byte, []error) {
+	ipAddresses, err := dnshelpers.GetInternalIPAddressesForNodeName(node)
+	if err != nil {
+		return nil, []error{err}
 	}
-	return allCerts
+
+	errs := []error{}
+	certs := map[string][]byte{}
+	for _, certConfig := range certConfigs {
+		secretName := certConfig.secretNameFunc(node.Name)
+		cert, key, err := c.ensureCertSecret(ctx, secretName, string(node.UID), ipAddresses, certConfig, recorder)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		certs[fmt.Sprintf("%s.crt", secretName)] = cert
+		certs[fmt.Sprintf("%s.key", secretName)] = key
+	}
+	if len(errs) > 0 {
+		return nil, errs
+	}
+	return certs, nil
+}
+
+// ensureCertSecret attempts to ensure the existence of a secret containing an
+// etcd cert (cert+key) pair. The secret will be created if it does not
+// exist. If the secret exists but contains an invalid cert pair, it will be
+// updated with a new cert pair. If the secret is ensured to have a valid
+// cert pair, the bytes of the cert and key will be returned.
+func (c *EtcdCertSignerController) ensureCertSecret(ctx context.Context, secretName, nodeUID string, ipAddresses []string, certConfig etcdCertConfig, recorder events.Recorder) ([]byte, []byte, error) {
+	secret, err := c.secretLister.Secrets(operatorclient.TargetNamespace).Get(secretName)
+	if err != nil && !errors.IsNotFound(err) {
+		return nil, nil, err
+	}
+
+	storedUID := ""
+	if secret != nil {
+		storedUID := secret.Annotations[nodeUIDAnnotation]
+		invalidMsg, err := checkCertValidity(secret.Data["tls.crt"], secret.Data["tls.key"], ipAddresses, nodeUID, storedUID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(invalidMsg) > 0 {
+			klog.V(4).Infof("TLS cert %s is invalid and will be regenerated: %v", secretName, invalidMsg)
+			// A nil secret will prompt creation of a new keypair
+			secret = nil
+		}
+	}
+
+	var cert []byte
+	var key []byte
+	if secret != nil {
+		cert = secret.Data["tls.crt"]
+		key = secret.Data["tls.key"]
+		if storedUID == nodeUID {
+			// Nothing to do: Cert pair is valid, node uid is current
+			return cert, key, nil
+		}
+	} else {
+		// Generate a new cert pair. The secret is missing or its contents are invalid.
+		caSecret, err := c.secretLister.Secrets(operatorclient.GlobalUserSpecifiedConfigNamespace).Get(certConfig.caSecretName)
+		if err != nil {
+			return nil, nil, err
+		}
+		certBuffer, keyBuffer, err := certConfig.newCertFunc(caSecret.Data["tls.crt"], caSecret.Data["tls.key"], ipAddresses)
+		if err != nil {
+			return nil, nil, err
+		}
+		cert = certBuffer.Bytes()
+		key = keyBuffer.Bytes()
+	}
+
+	//TODO: Update annotations Not Before and Not After for Cert Rotation
+	newSecret := newCertSecret(secretName, nodeUID, cert, key)
+	_, _, err = resourceapply.ApplySecret(ctx, c.secretClient, recorder, newSecret)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return cert, key, nil
+}
+
+// newCertSecret ensures consistency of secret creation between the controller
+// and its tests.
+func newCertSecret(secretName, nodeUID string, cert, key []byte) *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: operatorclient.TargetNamespace,
+			Annotations: map[string]string{
+				nodeUIDAnnotation:                 nodeUID,
+				apiannotations.OpenShiftComponent: "Etcd",
+			},
+		},
+		Type: corev1.SecretTypeTLS,
+		Data: map[string][]byte{
+			"tls.crt": cert,
+			"tls.key": key,
+		},
+	}
+}
+
+// checkCertValidity validates the provided cert bytes. If the cert needs to be
+// regenerated, a message will be returned indicating why. An empty message
+// indicates a valid cert. An error will be returned if the cert is not valid
+// and should not be regenerated.
+func checkCertValidity(certBytes, keyBytes []byte, ipAddresses []string, nodeUID, storedUID string) (string, error) {
+	// Loading the keypair without error indicates the key material is valid and
+	// the cert and private key are related.
+	keyPair, err := tls.X509KeyPair(certBytes, keyBytes)
+	if err != nil {
+		// Invalid keypair - regen required
+		return fmt.Sprintf("%v", err), nil
+	}
+	leafCert, err := x509.ParseCertificate(keyPair.Certificate[0])
+	if err != nil {
+		// Should never happen once x509KeyPair() succeeds
+		return fmt.Sprintf("%v", err), nil
+	}
+
+	// Check that the cert is valid for the provided ip addresses
+	var errs []error
+	for _, ipAddress := range ipAddresses {
+		if err := leafCert.VerifyHostname(ipAddress); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
+		var msgs []string
+		for _, err := range errs {
+			msgs = append(msgs, fmt.Sprintf("%v", err))
+		}
+		return strings.Join(msgs, ", "), nil
+	}
+
+	if ok := lessThanMinimumDuration(leafCert.NotBefore, leafCert.NotAfter, defaultMinDurationPercent); ok {
+		return fmt.Sprintf("less than %d%% duration remaining", int64(defaultMinDurationPercent*100)), nil
+	}
+
+	// TODO(marun) Check that the certificate was issued by the CA
+
+	// Cert is valid
+	return "", nil
+}
+
+// lessThanMinimumDuration indicates whether the provided cert has less
+// than the provided minimum percentage of its duration remaining.
+func lessThanMinimumDuration(notBefore, notAfter time.Time, minDurationPercent float64) bool {
+	expiry := notAfter
+	duration := expiry.Sub(notBefore)
+	minDuration := time.Duration(float64(duration.Nanoseconds()) * minDurationPercent)
+	replacementTime := expiry.Add(-minDuration)
+	return time.Now().After(replacementTime)
 }
