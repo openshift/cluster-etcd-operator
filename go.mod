@@ -9,7 +9,6 @@ require (
 	github.com/google/go-cmp v0.5.9
 	github.com/google/uuid v1.3.0
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
-	github.com/mcuadros/go-version v0.0.0-20190830083331-035f6764e8d2
 	github.com/openshift/api v0.0.0-20230330150608-05635858d40f
 	github.com/openshift/build-machinery-go v0.0.0-20220913142420-e25cf57ea46d
 	github.com/openshift/client-go v0.0.0-20230120202327-72f107311084
