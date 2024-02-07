@@ -38,10 +38,9 @@ type envVarContext struct {
 }
 
 var FixedEtcdEnvVars = map[string]string{
-	"ETCD_DATA_DIR":                                    "/var/lib/etcd",
-	"ETCD_QUOTA_BACKEND_BYTES":                         "8589934592", // 8 GB
-	"ETCD_INITIAL_CLUSTER_STATE":                       "existing",
-	"ETCD_ENABLE_PPROF":                                "true",
+	"ETCD_DATA_DIR":              "/var/lib/etcd",
+	"ETCD_INITIAL_CLUSTER_STATE": "existing",
+	"ETCD_ENABLE_PPROF":          "true",
 	"ETCD_EXPERIMENTAL_WATCH_PROGRESS_NOTIFY_INTERVAL": "5s",
 	"ETCD_SOCKET_REUSE_ADDRESS":                        "true",
 	"ETCD_EXPERIMENTAL_WARNING_APPLY_DURATION":         "200ms",
@@ -69,6 +68,7 @@ var envVarFns = []envVarFunc{
 	getAllEtcdEndpoints,
 	getEtcdctlEnvVars,
 	getHardwareSpeedValues,
+	getEtcdDBSize,
 	getUnsupportedArch,
 	getCipherSuites,
 	getMaxLearners,
@@ -239,6 +239,24 @@ func getHardwareSpeedValues(envVarContext envVarContext) (map[string]string, err
 	}
 
 	return hwspeedhelpers.HardwareSpeedToEnvMap(speed)
+}
+
+func getEtcdDBSize(envVarContext envVarContext) (map[string]string, error) {
+	etcd, err := envVarContext.etcdLister.Get("cluster")
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve etcd CR: %v", err)
+	}
+
+	if etcd.Spec.QuotaBackendSize == nil {
+		return map[string]string{
+			"ETCD_QUOTA_BACKEND_BYTES": "8589934592",
+		}, nil
+	}
+
+	etcdDBSize := *etcd.Spec.QuotaBackendSize
+	return map[string]string{
+		"ETCD_QUOTA_BACKEND_BYTES": strconv.FormatInt(etcdDBSize, 10),
+	}, nil
 }
 
 func envVarSafe(nodeName string) string {

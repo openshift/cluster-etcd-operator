@@ -38,6 +38,17 @@ type EtcdSpec struct {
 	// +openshift:enable:FeatureSets=CustomNoUpgrade;TechPreviewNoUpgrade
 	// +optional
 	HardwareSpeed ControlPlaneHardwareSpeed `json:"controlPlaneHardwareSpeed"`
+
+	// QuotaBackendSize allows user to customize the etcd database backend storage size.
+	// It defaults to 8GB, and maximum allowed value is 64GB.
+	// +optional
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=8589934592
+	// +kubebuilder:validation:MultipleOf=8589934592
+	// +kubebuilder:validation:Maximum=68719476736
+	// +kubebuilder:validation:XValidation:rule="self >= oldSelf",message="can't decrease database size"
+	// +openshift:enable:FeatureSets=CustomNoUpgrade;TechPreviewNoUpgrade
+	QuotaBackendSize *int64 `json:"quotaBackendSize"`
 }
 
 type EtcdStatus struct {
