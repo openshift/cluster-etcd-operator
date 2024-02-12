@@ -28,7 +28,7 @@ var (
 	}
 
 	conditionBootstrapMemberRemoved = operatorv1.OperatorCondition{
-		Type:    "EtcdBoostrapMemberRemoved",
+		Type:    "EtcdBootstrapMemberRemoved",
 		Status:  "True",
 		Reason:  "BootstrapMemberRemoved",
 		Message: "etcd bootstrap member is removed",
@@ -49,7 +49,7 @@ var (
 	}
 
 	conditionEtcdMemberRemoved = operatorv1.OperatorCondition{
-		Type:    "EtcdBoostrapMemberRemoved",
+		Type:    "EtcdBootstrapMemberRemoved",
 		Status:  "True",
 		Reason:  "BootstrapMemberRemoved",
 		Message: "etcd bootstrap member is removed",
@@ -75,7 +75,7 @@ func TestCanRemoveEtcdBootstrap(t *testing.T) {
 			bootstrapId:     uint64(0),
 		},
 		"HA happy path with bootstrap": {
-			etcdMembers:     append(u.DefaultEtcdMembers(), u.FakeEtcdBoostrapMember(0)),
+			etcdMembers:     append(u.DefaultEtcdMembers(), u.FakeEtcdBootstrapMember(0)),
 			scalingStrategy: ceohelpers.HAScalingStrategy,
 			safeToRemove:    true,
 			hasBootstrap:    true,
@@ -83,7 +83,7 @@ func TestCanRemoveEtcdBootstrap(t *testing.T) {
 		},
 		"HA happy path with bootstrap and not enough members": {
 			etcdMembers: []*etcdserverpb.Member{
-				u.FakeEtcdBoostrapMember(0),
+				u.FakeEtcdBootstrapMember(0),
 				u.FakeEtcdMemberWithoutServer(1),
 				u.FakeEtcdMemberWithoutServer(2),
 			},
@@ -93,7 +93,7 @@ func TestCanRemoveEtcdBootstrap(t *testing.T) {
 			bootstrapId:     uint64(0),
 		},
 		"HA with unhealthy member": {
-			etcdMembers:     append(u.DefaultEtcdMembers(), u.FakeEtcdBoostrapMember(0)),
+			etcdMembers:     append(u.DefaultEtcdMembers(), u.FakeEtcdBootstrapMember(0)),
 			clientFakeOpts:  etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Unhealthy: 1, Healthy: 3}),
 			scalingStrategy: ceohelpers.HAScalingStrategy,
 			safeToRemove:    false,
@@ -102,7 +102,7 @@ func TestCanRemoveEtcdBootstrap(t *testing.T) {
 		},
 		"HA with unhealthy bootstrap": {
 			etcdMembers: []*etcdserverpb.Member{
-				u.FakeEtcdBoostrapMember(0),
+				u.FakeEtcdBootstrapMember(0),
 				u.FakeEtcdMemberWithoutServer(1),
 				u.FakeEtcdMemberWithoutServer(2),
 				u.FakeEtcdMemberWithoutServer(3),
@@ -121,7 +121,7 @@ func TestCanRemoveEtcdBootstrap(t *testing.T) {
 			bootstrapId:     uint64(0),
 		},
 		"DelayedScaling happy path with bootstrap": {
-			etcdMembers:     append(u.DefaultEtcdMembers(), u.FakeEtcdBoostrapMember(0)),
+			etcdMembers:     append(u.DefaultEtcdMembers(), u.FakeEtcdBootstrapMember(0)),
 			scalingStrategy: ceohelpers.DelayedHAScalingStrategy,
 			safeToRemove:    true,
 			hasBootstrap:    true,
@@ -129,7 +129,7 @@ func TestCanRemoveEtcdBootstrap(t *testing.T) {
 		},
 		"DelayedScaling happy path with bootstrap and just enough members": {
 			etcdMembers: []*etcdserverpb.Member{
-				u.FakeEtcdBoostrapMember(0),
+				u.FakeEtcdBootstrapMember(0),
 				u.FakeEtcdMemberWithoutServer(1),
 				u.FakeEtcdMemberWithoutServer(2),
 			},
@@ -140,7 +140,7 @@ func TestCanRemoveEtcdBootstrap(t *testing.T) {
 		},
 		"DelayedScaling happy path with bootstrap and not enough members": {
 			etcdMembers: []*etcdserverpb.Member{
-				u.FakeEtcdBoostrapMember(0),
+				u.FakeEtcdBootstrapMember(0),
 				u.FakeEtcdMemberWithoutServer(1),
 			},
 			scalingStrategy: ceohelpers.DelayedHAScalingStrategy,
@@ -150,7 +150,7 @@ func TestCanRemoveEtcdBootstrap(t *testing.T) {
 		},
 		"UnsafeScaling happy path with bootstrap and enough members": {
 			etcdMembers: []*etcdserverpb.Member{
-				u.FakeEtcdBoostrapMember(0),
+				u.FakeEtcdBootstrapMember(0),
 				u.FakeEtcdMemberWithoutServer(1),
 			},
 			scalingStrategy: ceohelpers.UnsafeScalingStrategy,
@@ -274,7 +274,7 @@ func TestRemoveBootstrap(t *testing.T) {
 			fakeConfigmapLister := corev1listers.NewConfigMapLister(indexer)
 			fakeInfraLister := configv1listers.NewInfrastructureLister(indexer)
 			fakeStaticPodClient := v1helpers.NewFakeStaticPodOperatorClient(&operatorv1.StaticPodOperatorSpec{}, &operatorv1.StaticPodOperatorStatus{}, nil, nil)
-			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient([]*etcdserverpb.Member{u.FakeEtcdBoostrapMember(1)})
+			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient([]*etcdserverpb.Member{u.FakeEtcdBootstrapMember(1)})
 			require.NoError(t, err)
 
 			c := &BootstrapTeardownController{
