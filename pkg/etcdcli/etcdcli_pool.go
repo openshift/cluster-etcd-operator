@@ -33,11 +33,11 @@ const retries = 3
 const linearRetryBaseSleep = 2 * time.Second
 
 // that controls the channel size, which controls how many unused clients we are keeping in buffer
-const maxNumCachedClients = 5
+const maxNumCachedClients = 10
 
 // that controls how many clients are being created, you need to have a free message in the availableOpenClients channel to create a client
 // this protects etcd from being hit by too many clients at once, eg when it is down or recovering or hit by lots of QPS
-const maxNumOpenClients = 10
+const maxNumOpenClients = 20
 const maxAcquireTime = 5 * time.Second
 
 // Get returns a client that can be used exclusively by the caller,
