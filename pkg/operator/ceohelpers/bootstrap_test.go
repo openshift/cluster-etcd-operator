@@ -214,7 +214,7 @@ func Test_IsBootstrapComplete(t *testing.T) {
 		"bootstrap complete, etcd-bootstrap exists": {
 			bootstrapConfigMap: bootstrapComplete,
 			nodes:              twoNodesAtCurrentRevision,
-			etcdMembers:        append(u.DefaultEtcdMembers(), u.FakeEtcdBoostrapMember(0)),
+			etcdMembers:        append(u.DefaultEtcdMembers(), u.FakeEtcdBootstrapMember(0)),
 			expectComplete:     false,
 			expectError:        nil,
 		},
