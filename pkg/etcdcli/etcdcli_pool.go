@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"runtime"
 	"sort"
 	"time"
 
@@ -155,6 +156,9 @@ func NewDefaultEtcdClientPool(newFunc func() (*clientv3.Client, error), endpoint
 			return nil
 		}
 		klog.Infof("closing cached client")
+		buf := make([]byte, 1024*1024*4)
+		n := runtime.Stack(buf, false)
+		klog.Warningf("%s", buf[:n])
 		return client.Close()
 	}
 
