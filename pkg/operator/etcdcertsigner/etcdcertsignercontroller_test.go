@@ -16,6 +16,7 @@ import (
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	corev1listers "k8s.io/client-go/listers/core/v1"
@@ -305,11 +306,18 @@ func setupControllerWithEtcd(t *testing.T, objects []runtime.Object, etcdMembers
 		"test-cert-signer",
 		&corev1.ObjectReference{},
 	)
+
+	nodeSelector, err := labels.Parse("node-role.kubernetes.io/master")
+	require.NoError(t, err)
+
 	controller := NewEtcdCertSignerController(
 		health.NewMultiAlivenessChecker(),
 		fakeKubeClient,
 		fakeOperatorClient,
 		kubeInformerForNamespace,
+		kubeInformerForNamespace.InformersFor("").Core().V1().Nodes().Informer(),
+		kubeInformerForNamespace.InformersFor("").Core().V1().Nodes().Lister(),
+		nodeSelector,
 		recorder,
 		quorumChecker)
 

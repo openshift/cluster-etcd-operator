@@ -6,6 +6,7 @@ import (
 	corev1informers "k8s.io/client-go/informers/core/v1"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 	"strings"
 	"time"
 
@@ -55,14 +56,15 @@ type nodeCertConfigs struct {
 }
 
 type EtcdCertSignerController struct {
-	eventRecorder  events.Recorder
-	kubeClient     kubernetes.Interface
-	operatorClient v1helpers.StaticPodOperatorClient
-	nodeLister     corev1listers.NodeLister
-	secretInformer corev1informers.SecretInformer
-	secretLister   corev1listers.SecretLister
-	secretClient   corev1client.SecretsGetter
-	quorumChecker  ceohelpers.QuorumChecker
+	eventRecorder      events.Recorder
+	kubeClient         kubernetes.Interface
+	operatorClient     v1helpers.StaticPodOperatorClient
+	masterNodeLister   corev1listers.NodeLister
+	masterNodeSelector labels.Selector
+	secretInformer     corev1informers.SecretInformer
+	secretLister       corev1listers.SecretLister
+	secretClient       corev1client.SecretsGetter
+	quorumChecker      ceohelpers.QuorumChecker
 
 	certConfig *certConfig
 }
@@ -76,6 +78,9 @@ func NewEtcdCertSignerController(
 	kubeClient kubernetes.Interface,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeInformers v1helpers.KubeInformersForNamespaces,
+	masterNodeInformer cache.SharedIndexInformer,
+	masterNodeLister corev1listers.NodeLister,
+	masterNodeSelector labels.Selector,
 	eventRecorder events.Recorder,
 	quorumChecker ceohelpers.QuorumChecker,
 ) factory.Controller {
@@ -118,22 +123,23 @@ func NewEtcdCertSignerController(
 	}
 
 	c := &EtcdCertSignerController{
-		eventRecorder:  eventRecorder,
-		kubeClient:     kubeClient,
-		operatorClient: operatorClient,
-		nodeLister:     kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
-		secretInformer: secretInformer,
-		secretLister:   secretLister,
-		secretClient:   secretClient,
-		quorumChecker:  quorumChecker,
-		certConfig:     certCfg,
+		eventRecorder:      eventRecorder,
+		kubeClient:         kubeClient,
+		operatorClient:     operatorClient,
+		masterNodeLister:   masterNodeLister,
+		masterNodeSelector: masterNodeSelector,
+		secretInformer:     secretInformer,
+		secretLister:       secretLister,
+		secretClient:       secretClient,
+		quorumChecker:      quorumChecker,
+		certConfig:         certCfg,
 	}
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
 	livenessChecker.Add("EtcdCertSignerController", syncer)
 
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
-		kubeInformers.InformersFor("").Core().V1().Nodes().Informer(),
+		masterNodeInformer,
 		kubeInformers.InformersFor(operatorclient.GlobalUserSpecifiedConfigNamespace).Core().V1().Secrets().Informer(),
 		cmInformer.Informer(),
 		secretInformer.Informer(),
@@ -287,7 +293,7 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(ctx context.Context
 // This works, because initialization is cheap and all state is kept in secrets, configmaps and their annotations.
 func (c *EtcdCertSignerController) createNodeCertConfigs() ([]*nodeCertConfigs, error) {
 	var cfgs []*nodeCertConfigs
-	nodes, err := c.nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
+	nodes, err := c.masterNodeLister.List(c.masterNodeSelector)
 	if err != nil {
 		return cfgs, err
 	}

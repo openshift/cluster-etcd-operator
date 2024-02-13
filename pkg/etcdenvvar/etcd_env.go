@@ -2,6 +2,7 @@ package etcdenvvar
 
 import (
 	"fmt"
+	"k8s.io/apimachinery/pkg/labels"
 	"net"
 	"runtime"
 	"sort"
@@ -28,13 +29,14 @@ type envVarContext struct {
 	spec   operatorv1.StaticPodOperatorSpec
 	status operatorv1.StaticPodOperatorStatus
 
-	nodeLister           corev1listers.NodeLister
-	infrastructureLister configv1listers.InfrastructureLister
-	networkLister        configv1listers.NetworkLister
-	configmapLister      corev1listers.ConfigMapLister
-	targetImagePullSpec  string
-	etcdLister           operatorv1listers.EtcdLister
-	featureGateAccessor  featuregates.FeatureGateAccess
+	masterNodeLister        corev1listers.NodeLister
+	masterNodeLabelSelector labels.Selector
+	infrastructureLister    configv1listers.InfrastructureLister
+	networkLister           configv1listers.NetworkLister
+	configmapLister         corev1listers.ConfigMapLister
+	targetImagePullSpec     string
+	etcdLister              operatorv1listers.EtcdLister
+	featureGateAccessor     featuregates.FeatureGateAccess
 }
 
 var FixedEtcdEnvVars = map[string]string{
@@ -166,7 +168,7 @@ func getEscapedIPAddress(envVarContext envVarContext) (map[string]string, error)
 
 	ret := map[string]string{}
 	for _, nodeInfo := range envVarContext.status.NodeStatuses {
-		node, err := envVarContext.nodeLister.Get(nodeInfo.NodeName)
+		node, err := envVarContext.masterNodeLister.Get(nodeInfo.NodeName)
 		if err != nil {
 			return nil, err
 		}
@@ -194,7 +196,7 @@ func getEtcdURLHost(envVarContext envVarContext) (map[string]string, error) {
 	}
 
 	for _, nodeInfo := range envVarContext.status.NodeStatuses {
-		node, err := envVarContext.nodeLister.Get(nodeInfo.NodeName)
+		node, err := envVarContext.masterNodeLister.Get(nodeInfo.NodeName)
 		if err != nil {
 			return nil, err
 		}

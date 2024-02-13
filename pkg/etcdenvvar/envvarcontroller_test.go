@@ -167,7 +167,7 @@ func TestEnvVarController(t *testing.T) {
 				eventRecorder:        eventRecorder,
 				configmapLister:      corev1listers.NewConfigMapLister(indexer),
 				infrastructureLister: configv1listers.NewInfrastructureLister(indexer),
-				nodeLister:           corev1listers.NewNodeLister(indexer),
+				masterNodeLister:     corev1listers.NewNodeLister(indexer),
 				networkLister:        configv1listers.NewNetworkLister(networkIndexer),
 				etcdLister:           operatorv1listers.NewEtcdLister(etcdIndexer),
 			}

@@ -369,7 +369,6 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			controller := &EtcdEndpointsController{
 				operatorClient:  fakeOperatorClient,
 				etcdClient:      fakeEtcdClient,
-				nodeLister:      corev1listers.NewNodeLister(indexer),
 				configmapLister: corev1listers.NewConfigMapLister(indexer),
 				configmapClient: fakeKubeClient.CoreV1(),
 				quorumChecker:   quorumChecker,

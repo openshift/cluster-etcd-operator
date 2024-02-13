@@ -31,7 +31,6 @@ import (
 type EtcdEndpointsController struct {
 	operatorClient  v1helpers.StaticPodOperatorClient
 	etcdClient      etcdcli.EtcdClient
-	nodeLister      corev1listers.NodeLister
 	configmapLister corev1listers.ConfigMapLister
 	configmapClient corev1client.ConfigMapsGetter
 	quorumChecker   ceohelpers.QuorumChecker
@@ -39,19 +38,16 @@ type EtcdEndpointsController struct {
 
 func NewEtcdEndpointsController(
 	livenessChecker *health.MultiAlivenessChecker,
-	operatorClient v1helpers.StaticPodOperatorClient,
+	operatorClient operatorv1helpers.StaticPodOperatorClient,
 	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
 	kubeClient kubernetes.Interface,
 	kubeInformers operatorv1helpers.KubeInformersForNamespaces,
-	quorumChecker ceohelpers.QuorumChecker,
-) factory.Controller {
-	nodeInformer := kubeInformers.InformersFor("").Core().V1().Nodes()
+	quorumChecker ceohelpers.QuorumChecker) factory.Controller {
 
 	c := &EtcdEndpointsController{
 		operatorClient:  operatorClient,
 		etcdClient:      etcdClient,
-		nodeLister:      nodeInformer.Lister(),
 		configmapLister: kubeInformers.ConfigMapLister(),
 		configmapClient: kubeClient.CoreV1(),
 		quorumChecker:   quorumChecker,
@@ -63,7 +59,6 @@ func NewEtcdEndpointsController(
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
 		operatorClient.Informer(),
 		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer(),
-		nodeInformer.Informer(),
 	).WithSync(syncer.Sync).ToController("EtcdEndpointsController", eventRecorder.WithComponentSuffix("etcd-endpoints-controller"))
 }
 
