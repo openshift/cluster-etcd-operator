@@ -47,6 +47,10 @@ spec:
         - "--config=/var/run/configmaps/config/config.yaml"
         - "--terminate-on-files=/var/run/secrets/serving-cert/tls.crt"
         - "--terminate-on-files=/var/run/secrets/serving-cert/tls.key"
+        - "--terminate-on-files=/var/run/secrets/etcd-client/tls.crt"
+        - "--terminate-on-files=/var/run/secrets/etcd-client/tls.key"
+        - "--terminate-on-files=/var/run/configmaps/etcd-ca/ca-bundle.crt"
+        - "--terminate-on-files=/var/run/configmaps/etcd-service-ca/service-ca.crt"
         resources:
           requests:
             memory: 50Mi
