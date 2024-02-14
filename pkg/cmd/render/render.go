@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
+	corev1 "k8s.io/api/core/v1"
 	"net"
 	"os"
 	"path"
@@ -76,6 +76,7 @@ func NewRenderCommand(errOut io.Writer) *cobra.Command {
 
 func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&r.assetOutputDir, "asset-output-dir", "", "Output path for rendered assets.")
+	fs.StringVar(&r.templateDir, "template-dir", "/usr/share/bootkube/manifests", "Root folder for bootkube manifests, in this repo stored under bindata/bootkube")
 	fs.StringVar(&r.etcdImage, "etcd-image", "", "etcd image to use for bootstrap.")
 	fs.StringVar(&r.networkConfigFile, "network-config-file", "", "File containing the network.config.openshift.io manifest.")
 	fs.StringVar(&r.clusterConfigMapFile, "cluster-configmap-file", "", "File containing the cluster-config-v1 configmap.")
@@ -127,28 +128,6 @@ type TemplateData struct {
 	EtcdServerCertDNSNames string
 	EtcdPeerCertDNSNames   string
 
-	// CA
-	EtcdSignerCert []byte
-	EtcdSignerKey  []byte
-
-	// CA bundle
-	EtcdCaBundle []byte
-
-	// Client cert
-	EtcdSignerClientCert []byte
-	EtcdSignerClientKey  []byte
-
-	// Metrics CA
-	EtcdMetricSignerCert []byte
-	EtcdMetricSignerKey  []byte
-
-	// Metrics CA bundle
-	EtcdMetricCaBundle []byte
-
-	// Metrics client cert
-	EtcdMetricSignerClientCert []byte
-	EtcdMetricSignerClientKey  []byte
-
 	// ClusterCIDR is the IP range for pod IPs.
 	ClusterCIDR []string
 
@@ -188,6 +167,10 @@ type TemplateData struct {
 
 	// Optional Additional platform information (ex. ProviderType for IBMCloud).
 	PlatformData string
+
+	// not intended for templating, but written directly as a resource
+	certificates []corev1.Secret
+	caBundles    []corev1.ConfigMap
 }
 
 type StaticFile struct {
@@ -285,27 +268,13 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 			base64.StdEncoding.WithPadding(base64.NoPadding).EncodeToString([]byte(templateData.BootstrapIP)), templateData.BootstrapIP)
 	}
 
-	// Signer key material
-	caKeyMaterial, err := createKeyMaterial("etcd-signer", "etcd")
+	certs, bundles, err := createBootstrapCertSecrets(templateData.Hostname, templateData.BootstrapIP)
 	if err != nil {
 		return nil, err
 	}
-	templateData.EtcdSignerCert = caKeyMaterial.caCert
-	templateData.EtcdSignerKey = caKeyMaterial.caKey
-	templateData.EtcdCaBundle = caKeyMaterial.caBundle
-	templateData.EtcdSignerClientCert = caKeyMaterial.clientCert
-	templateData.EtcdSignerClientKey = caKeyMaterial.clientKey
 
-	// Metric key material
-	metricKeyMaterial, err := createKeyMaterial("etcd-metric-signer", "etcd-metric")
-	if err != nil {
-		return nil, err
-	}
-	templateData.EtcdMetricSignerCert = metricKeyMaterial.caCert
-	templateData.EtcdMetricSignerKey = metricKeyMaterial.caKey
-	templateData.EtcdMetricCaBundle = metricKeyMaterial.caBundle
-	templateData.EtcdMetricSignerClientCert = metricKeyMaterial.clientCert
-	templateData.EtcdMetricSignerClientKey = metricKeyMaterial.clientKey
+	templateData.certificates = certs
+	templateData.caBundles = bundles
 
 	return &templateData, nil
 }
@@ -337,49 +306,86 @@ func (r *renderOpts) Run() error {
 	if err != nil {
 		return fmt.Errorf("failed to create directory %s: %w", memberDir, err)
 	}
-
-	// Write the ca bundle required by the bootstrap etcd member
-	err = writeCertFile(memberDir, "ca", []byte(templateData.EtcdCaBundle))
-	if err != nil {
-		return err
-	}
-
-	// Write the serving and peer certs for the bootstrap etcd member
-	caCertData := templateData.EtcdSignerCert
-	caKeyData := templateData.EtcdSignerKey
-	serverCertData, serverKeyData, err := tlshelpers.CreateServerCertKey(caCertData, caKeyData, []string{templateData.BootstrapIP})
-	if err != nil {
-		return err
-	}
-	err = writeCertKeyFiles(certDir, tlshelpers.GetServingSecretNameForNode(templateData.Hostname), serverCertData.Bytes(), serverKeyData.Bytes())
-	if err != nil {
-		return err
-	}
-	peerCertData, peerKeyData, err := tlshelpers.CreatePeerCertKey(caCertData, caKeyData, []string{templateData.BootstrapIP})
-	if err != nil {
-		return err
-	}
-	err = writeCertKeyFiles(certDir, tlshelpers.GetPeerClientSecretNameForNode(templateData.Hostname), peerCertData.Bytes(), peerKeyData.Bytes())
-	if err != nil {
-		return err
-	}
-
-	// Write the ca bundle and client cert pair for bootkube.sh and the bootstrap apiserver
+	// tlsDir contains the ca bundle and client cert pair for bootkube.sh and the bootstrap apiserver
 	tlsDir := filepath.Join(r.assetOutputDir, "tls")
 	err = os.MkdirAll(tlsDir, 0755)
-	if err != nil {
-		return fmt.Errorf("failed to create directory %s: %w", tlsDir, err)
+
+	// Write the etcd ca bundle required by the bootstrap etcd member
+	for _, bundle := range templateData.caBundles {
+		if bundle.Name == tlshelpers.EtcdSignerCaBundleConfigMapName {
+			err = writeCertFile(memberDir, "ca", []byte(bundle.Data["ca-bundle.crt"]))
+			if err != nil {
+				return err
+			}
+
+			// this is the bundle for the bootstrapping apiserver, stored in a special folder
+			err = writeCertFile(tlsDir, "etcd-ca-bundle", []byte(bundle.Data["ca-bundle.crt"]))
+			if err != nil {
+				return err
+			}
+			break
+		}
 	}
-	err = writeCertFile(tlsDir, "etcd-ca-bundle", []byte(templateData.EtcdCaBundle))
-	if err != nil {
-		return err
+
+	// Write the etcd certificates required by the bootstrap etcd member
+	for _, certSecret := range templateData.certificates {
+		if certSecret.Name == tlshelpers.EtcdAllCertsSecretName {
+			continue
+		}
+
+		err = writeCertKeyFiles(certDir, certSecret.Name, certSecret.Data["tls.crt"], certSecret.Data["tls.key"])
+		if err != nil {
+			return err
+		}
+
+		// the client cert is stored in a special folder for the bootstrapping apiserver
+		if certSecret.Name == tlshelpers.EtcdClientCertSecretName {
+			err = writeCertKeyFiles(tlsDir, "etcd-client", certSecret.Data["tls.crt"], certSecret.Data["tls.key"])
+			if err != nil {
+				return err
+			}
+		}
 	}
-	err = writeCertKeyFiles(tlsDir, "etcd-client", templateData.EtcdSignerClientCert, templateData.EtcdSignerClientKey)
+
+	err = writeManifests(r.assetOutputDir, r.templateDir, templateData)
 	if err != nil {
 		return err
 	}
 
-	return writeManifests(r.assetOutputDir, r.templateDir, templateData)
+	// the certificates are not templated anymore, so we directly write those to the right folder
+	for _, cert := range templateData.certificates {
+		destinationPath := filepath.Join(r.assetOutputDir, "manifests", fmt.Sprintf("%s-%s.yaml", cert.Namespace, cert.Name))
+		bytes, err := json.Marshal(cert)
+		if err != nil {
+			return fmt.Errorf("error while marshalling secret %s: %w", cert.Name, err)
+		}
+		bytes, err = yaml.JSONToYAML(bytes)
+		if err != nil {
+			return fmt.Errorf("error while converting secret from json to yaml %s: %w", cert.Name, err)
+		}
+		err = os.WriteFile(destinationPath, bytes, 0644)
+		if err != nil {
+			return fmt.Errorf("error while writing secret %s: %w", cert.Name, err)
+		}
+	}
+
+	for _, bundle := range templateData.caBundles {
+		destinationPath := filepath.Join(r.assetOutputDir, "manifests", fmt.Sprintf("%s-%s.yaml", bundle.Namespace, bundle.Name))
+		bytes, err := json.Marshal(bundle)
+		if err != nil {
+			return fmt.Errorf("error while marshalling cm %s: %w", bundle.Name, err)
+		}
+		bytes, err = yaml.JSONToYAML(bytes)
+		if err != nil {
+			return fmt.Errorf("error while converting cm from json to yaml %s: %w", bundle.Name, err)
+		}
+		err = os.WriteFile(destinationPath, bytes, 0644)
+		if err != nil {
+			return fmt.Errorf("error while writing cm %s: %w", bundle.Name, err)
+		}
+	}
+
+	return nil
 }
 
 func writeCertKeyFiles(dir, name string, certData, keyData []byte) error {
@@ -391,7 +397,7 @@ func writeCertKeyFiles(dir, name string, certData, keyData []byte) error {
 }
 
 func writeCertFile(dir, name string, certData []byte) error {
-	err := ioutil.WriteFile(path.Join(dir, name+".crt"), certData, 0600)
+	err := os.WriteFile(path.Join(dir, name+".crt"), certData, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to write %s cert: %w", name, err)
 	}
@@ -399,7 +405,7 @@ func writeCertFile(dir, name string, certData []byte) error {
 }
 
 func writeKeyFile(dir, name string, keyData []byte) error {
-	err := ioutil.WriteFile(path.Join(dir, name+".key"), keyData, 0600)
+	err := os.WriteFile(path.Join(dir, name+".key"), keyData, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to write %s key: %w", name, err)
 	}
@@ -660,15 +666,15 @@ func preferIPv6(serviceCIDRs []string) (bool, error) {
 }
 
 func getUnstructured(file string) (*unstructured.Unstructured, error) {
-	data, err := ioutil.ReadFile(file)
+	data, err := os.ReadFile(file)
 	if err != nil {
 		return nil, err
 	}
-	json, err := yaml.YAMLToJSON(data)
+	jsonBytes, err := yaml.YAMLToJSON(data)
 	if err != nil {
 		return nil, err
 	}
-	obj, err := apiruntime.Decode(unstructured.UnstructuredJSONScheme, json)
+	obj, err := apiruntime.Decode(unstructured.UnstructuredJSONScheme, jsonBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -681,7 +687,7 @@ func getUnstructured(file string) (*unstructured.Unstructured, error) {
 
 func getNetwork(file string) (*configv1.Network, error) {
 	config := &configv1.Network{}
-	yamlData, err := ioutil.ReadFile(file)
+	yamlData, err := os.ReadFile(file)
 	if err != nil {
 		return nil, err
 	}
@@ -698,7 +704,7 @@ func getNetwork(file string) (*configv1.Network, error) {
 
 func getInfrastructure(file string) (*configv1.Infrastructure, error) {
 	config := &configv1.Infrastructure{}
-	yamlData, err := ioutil.ReadFile(file)
+	yamlData, err := os.ReadFile(file)
 	if err != nil {
 		return nil, err
 	}

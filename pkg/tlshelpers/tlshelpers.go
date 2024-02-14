@@ -1,10 +1,8 @@
 package tlshelpers
 
 import (
-	"bytes"
 	"context"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"fmt"
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
@@ -16,12 +14,10 @@ import (
 	corev1informers "k8s.io/client-go/informers/core/v1"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
-	"strings"
 	"time"
 
 	"github.com/openshift/library-go/pkg/crypto"
 	"go.etcd.io/etcd/client/pkg/v3/tlsutil"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 )
 
@@ -132,6 +128,17 @@ func CreateSignerCert(
 	}
 }
 
+// CreateBootstrapSignerCert is a CreateSignerCert in the openshift-config namespace
+func CreateBootstrapSignerCert(
+	secretInformer corev1informers.SecretInformer,
+	secretLister corev1listers.SecretLister,
+	secretGetter corev1client.SecretsGetter,
+	recorder events.Recorder) certrotation.RotatedSigningCASecret {
+	secret := CreateSignerCert(secretInformer, secretLister, secretGetter, recorder)
+	secret.Namespace = operatorclient.GlobalUserSpecifiedConfigNamespace
+	return secret
+}
+
 func CreateMetricsSignerCert(
 	secretInformer corev1informers.SecretInformer,
 	secretLister corev1listers.SecretLister,
@@ -151,6 +158,17 @@ func CreateMetricsSignerCert(
 		Client:        secretGetter,
 		EventRecorder: recorder,
 	}
+}
+
+// CreateBootstrapMetricsSignerCert is a CreateMetricsSignerCert in the openshift-config namespace
+func CreateBootstrapMetricsSignerCert(
+	secretInformer corev1informers.SecretInformer,
+	secretLister corev1listers.SecretLister,
+	secretGetter corev1client.SecretsGetter,
+	recorder events.Recorder) certrotation.RotatedSigningCASecret {
+	secret := CreateMetricsSignerCert(secretInformer, secretLister, secretGetter, recorder)
+	secret.Namespace = operatorclient.GlobalUserSpecifiedConfigNamespace
+	return secret
 }
 
 func CreatePeerCertificate(node *corev1.Node,
@@ -298,49 +316,6 @@ func ReadConfigMetricsSignerCert(ctx context.Context, secretClient corev1client.
 	}
 
 	return crypto.GetCAFromBytes(metricsSigningCertKeyPairSecret.Data["tls.crt"], metricsSigningCertKeyPairSecret.Data["tls.key"])
-}
-
-func CreatePeerCertKey(caCert, caKey []byte, nodeInternalIPs []string) (*bytes.Buffer, *bytes.Buffer, error) {
-	return createNewCombinedClientAndServingCerts(caCert, caKey, fakePodFQDN, peerOrg, getPeerHostNames(nodeInternalIPs))
-}
-
-func CreateServerCertKey(caCert, caKey []byte, nodeInternalIPs []string) (*bytes.Buffer, *bytes.Buffer, error) {
-	return createNewCombinedClientAndServingCerts(caCert, caKey, fakePodFQDN, serverOrg, getServerHostNames(nodeInternalIPs))
-}
-
-func CreateMetricCertKey(caCert, caKey []byte, nodeInternalIPs []string) (*bytes.Buffer, *bytes.Buffer, error) {
-	return createNewCombinedClientAndServingCerts(caCert, caKey, fakePodFQDN, metricOrg, getServerHostNames(nodeInternalIPs))
-}
-
-func createNewCombinedClientAndServingCerts(caCert, caKey []byte, podFQDN, org string, hostNames []string) (*bytes.Buffer, *bytes.Buffer, error) {
-	etcdCAKeyPair, err := crypto.GetCAFromBytes(caCert, caKey)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	certConfig, err := etcdCAKeyPair.MakeServerCertForDuration(sets.NewString(hostNames...), etcdCertValidity, func(cert *x509.Certificate) error {
-		cert.Subject = pkix.Name{
-			Organization: []string{org},
-			CommonName:   strings.TrimSuffix(org, "s") + ":" + podFQDN,
-		}
-		cert.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth}
-
-		// TODO: Extended Key Usage:
-		// All profiles expect a x509.ExtKeyUsageCodeSigning set on extended Key Usages
-		// need to investigage: https://github.com/etcd-io/etcd/issues/9398#issuecomment-435340312
-
-		return nil
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-
-	certBytes := &bytes.Buffer{}
-	keyBytes := &bytes.Buffer{}
-	if err := certConfig.WriteCertConfig(certBytes, keyBytes); err != nil {
-		return nil, nil, err
-	}
-	return certBytes, keyBytes, nil
 }
 
 func SupportedEtcdCiphers(cipherSuites []string) []string {

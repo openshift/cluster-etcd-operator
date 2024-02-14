@@ -50,6 +50,14 @@ func NewResourceSyncController(
 	}
 
 	if err := resourceSyncController.SyncConfigMapConditionally(
+		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.GlobalUserSpecifiedConfigNamespace, Name: "etcd-ca-bundle"},
+		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.TargetNamespace, Name: "etcd-ca-bundle"},
+		caBundleExistsFunc,
+	); err != nil {
+		return nil, err
+	}
+
+	if err := resourceSyncController.SyncConfigMapConditionally(
 		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.TargetNamespace, Name: "etcd-peer-client-ca"},
 		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.TargetNamespace, Name: "etcd-ca-bundle"},
 		caBundleExistsFunc,
