@@ -15,6 +15,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -57,11 +58,19 @@ func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMa
 		return nil, nil, fmt.Errorf("could not create etcd metrics signer certificate: %w", err)
 	}
 
+	nodeSelector, err := labels.Parse("node-role.kubernetes.io/master")
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not parse master node labels: %w", err)
+	}
+
 	controller := etcdcertsigner.NewEtcdCertSignerController(
 		health.NewMultiAlivenessChecker(),
 		fakeKubeClient,
 		fakeOperatorClient,
 		kubeInformers,
+		kubeInformers.InformersFor("").Core().V1().Nodes().Informer(),
+		kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
+		nodeSelector,
 		recorder,
 		&ceohelpers.AlwaysSafeQuorumChecker{})
 
