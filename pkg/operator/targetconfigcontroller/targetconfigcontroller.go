@@ -50,6 +50,7 @@ func NewTargetConfigController(
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	infrastructureInformer configv1informers.InfrastructureInformer,
 	networkInformer configv1informers.NetworkInformer,
+	masterNodeInformer cache.SharedIndexInformer,
 	kubeClient kubernetes.Interface,
 	envVarGetter etcdenvvar.EnvVar,
 	eventRecorder events.Recorder,
@@ -79,7 +80,7 @@ func NewTargetConfigController(
 		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer(),
 		kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer(),
 		kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer(),
-		kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer(),
+		masterNodeInformer,
 		infrastructureInformer.Informer(),
 		networkInformer.Informer(),
 	).WithSync(syncer.Sync).ToController("TargetConfigController", syncCtx.Recorder())
