@@ -3,11 +3,11 @@ package etcdenvvar
 import (
 	"context"
 	"fmt"
+	"k8s.io/apimachinery/pkg/labels"
 	"reflect"
 	"sync"
 	"time"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/operator/events"
@@ -19,6 +19,9 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
+
+	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
@@ -30,17 +33,19 @@ type EnvVar interface {
 }
 
 type EnvVarController struct {
-	operatorClient v1helpers.StaticPodOperatorClient
+	operatorClient       v1helpers.StaticPodOperatorClient
+	operatorConfigClient *operatorversionedclient.Clientset
 
 	envVarMapLock       sync.Mutex
 	envVarMap           map[string]string
 	targetImagePullSpec string
 	listeners           []Enqueueable
 
-	infrastructureLister configv1listers.InfrastructureLister
-	networkLister        configv1listers.NetworkLister
-	configmapLister      corev1listers.ConfigMapLister
-	nodeLister           corev1listers.NodeLister
+	infrastructureLister    configv1listers.InfrastructureLister
+	networkLister           configv1listers.NetworkLister
+	configmapLister         corev1listers.ConfigMapLister
+	masterNodeLister        corev1listers.NodeLister
+	masterNodeLabelSelector labels.Selector
 
 	// queue only ever has one item, but it has nice error handling backoff/retry semantics
 	queue         workqueue.RateLimitingInterface
@@ -56,17 +61,21 @@ func NewEnvVarController(
 	targetImagePullSpec string,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
+	masterNodeInformer cache.SharedIndexInformer,
+	masterNodeLister corev1listers.NodeLister,
+	masterNodeLabelSelector labels.Selector,
 	infrastructureInformer configv1informers.InfrastructureInformer,
 	networkInformer configv1informers.NetworkInformer,
 	eventRecorder events.Recorder,
 ) *EnvVarController {
 	c := &EnvVarController{
-		operatorClient:       operatorClient,
-		infrastructureLister: infrastructureInformer.Lister(),
-		networkLister:        networkInformer.Lister(),
-		configmapLister:      kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister(),
-		nodeLister:           kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
-		targetImagePullSpec:  targetImagePullSpec,
+		operatorClient:          operatorClient,
+		infrastructureLister:    infrastructureInformer.Lister(),
+		networkLister:           networkInformer.Lister(),
+		configmapLister:         kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister(),
+		masterNodeLister:        masterNodeLister,
+		masterNodeLabelSelector: masterNodeLabelSelector,
+		targetImagePullSpec:     targetImagePullSpec,
 
 		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "EnvVarController"),
 		cachesToSync: []cache.InformerSynced{
@@ -74,7 +83,7 @@ func NewEnvVarController(
 			infrastructureInformer.Informer().HasSynced,
 			networkInformer.Informer().HasSynced,
 			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().HasSynced,
-			kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
+			masterNodeInformer.HasSynced,
 		},
 		eventRecorder: eventRecorder.WithComponentSuffix("env-var-controller"),
 	}
@@ -83,9 +92,7 @@ func NewEnvVarController(
 	infrastructureInformer.Informer().AddEventHandler(c.eventHandler())
 	networkInformer.Informer().AddEventHandler(c.eventHandler())
 	kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().AddEventHandler(c.eventHandler())
-
-	// TODO only trigger on master nodes
-	kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().AddEventHandler(c.eventHandler())
+	masterNodeInformer.AddEventHandler(c.eventHandler())
 
 	return c
 }
@@ -136,13 +143,14 @@ func (c *EnvVarController) checkEnvVars() error {
 	}
 
 	currEnvVarMap, err := getEtcdEnvVars(envVarContext{
-		targetImagePullSpec:  c.targetImagePullSpec,
-		spec:                 *operatorSpec,
-		status:               *operatorStatus,
-		configmapLister:      c.configmapLister,
-		nodeLister:           c.nodeLister,
-		infrastructureLister: c.infrastructureLister,
-		networkLister:        c.networkLister,
+		targetImagePullSpec:     c.targetImagePullSpec,
+		spec:                    *operatorSpec,
+		status:                  *operatorStatus,
+		configmapLister:         c.configmapLister,
+		masterNodeLister:        c.masterNodeLister,
+		masterNodeLabelSelector: c.masterNodeLabelSelector,
+		infrastructureLister:    c.infrastructureLister,
+		networkLister:           c.networkLister,
 	})
 	if err != nil {
 		return err
