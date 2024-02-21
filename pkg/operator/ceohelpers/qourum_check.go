@@ -30,7 +30,7 @@ type QuorumCheck struct {
 	namespaceLister corev1listers.NamespaceLister
 	infraLister     configv1listers.InfrastructureLister
 	operatorClient  v1helpers.StaticPodOperatorClient
-	etcdClient      etcdcli.EtcdClient
+	etcdClient      etcdcli.AllMemberLister
 }
 
 func (c *QuorumCheck) IsSafeToUpdateRevision() (bool, error) {
@@ -47,7 +47,7 @@ func NewQuorumChecker(
 	namespaceLister corev1listers.NamespaceLister,
 	infraLister configv1listers.InfrastructureLister,
 	operatorClient v1helpers.StaticPodOperatorClient,
-	etcdClient etcdcli.EtcdClient,
+	etcdClient etcdcli.AllMemberLister,
 ) QuorumChecker {
 	c := &QuorumCheck{
 		configMapLister,

@@ -183,6 +183,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		networkInformer,
 		controllerContext.EventRecorder)
 
+	cachedMemberClient := etcdcli.NewMemberCache(etcdClient)
+
 	resourceSyncController, err := resourcesynccontroller.NewResourceSyncController(
 		operatorClient,
 		kubeInformersForNamespaces,
@@ -242,7 +244,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Namespaces().Lister(),
 		configInformers.Config().V1().Infrastructures().Lister(),
 		operatorClient,
-		etcdClient)
+		cachedMemberClient)
 
 	targetConfigReconciler := targetconfigcontroller.NewTargetConfigController(
 		AlivenessChecker,
