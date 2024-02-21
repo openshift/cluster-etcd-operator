@@ -41,6 +41,10 @@ type healthCheck struct {
 
 type memberHealth []healthCheck
 
+func GetMemberHealth(ctx context.Context, etcdMembers []*etcdserverpb.Member) memberHealth {
+	return getMemberHealth(ctx, etcdMembers)
+}
+
 func getMemberHealth(ctx context.Context, etcdMembers []*etcdserverpb.Member) memberHealth {
 	memberHealth := memberHealth{}
 	for _, member := range etcdMembers {

@@ -105,7 +105,7 @@ func CheckSafeToScaleCluster(
 	staticPodClient v1helpers.StaticPodOperatorClient,
 	namespaceLister corev1listers.NamespaceLister,
 	infraLister configv1listers.InfrastructureLister,
-	etcdClient etcdcli.EtcdClient) error {
+	etcdClient etcdcli.AllMemberLister) error {
 
 	bootstrapComplete, err := IsBootstrapComplete(configmapLister, staticPodClient, etcdClient)
 	if err != nil {
@@ -146,12 +146,12 @@ func CheckSafeToScaleCluster(
 		return fmt.Errorf("CheckSafeToScaleCluster %d nodes are required, but only %d are available", minimumNodes, nodeCount)
 	}
 
-	memberHealth, err := etcdClient.MemberHealth(context.Background())
+	healthyMembers, err := etcdClient.HealthyMembers(context.Background())
 	if err != nil {
 		return fmt.Errorf("CheckSafeToScaleCluster couldn't determine member health: %w", err)
 	}
 
-	err = etcdcli.IsQuorumFaultTolerantErr(memberHealth)
+	err = etcdcli.IsQuorumFaultTolerantErr(etcdcli.GetMemberHealth(context.Background(), healthyMembers))
 	if err != nil {
 		return err
 	}
@@ -161,7 +161,7 @@ func CheckSafeToScaleCluster(
 }
 
 // IsBootstrapComplete returns true if bootstrap has completed.
-func IsBootstrapComplete(configMapClient corev1listers.ConfigMapLister, staticPodClient v1helpers.StaticPodOperatorClient, etcdClient etcdcli.EtcdClient) (bool, error) {
+func IsBootstrapComplete(configMapClient corev1listers.ConfigMapLister, staticPodClient v1helpers.StaticPodOperatorClient, etcdClient etcdcli.AllMemberLister) (bool, error) {
 	// do a cheap check to see if the annotation is already gone.
 	// check to see if bootstrapping is complete
 	bootstrapFinishedConfigMap, err := configMapClient.ConfigMaps("kube-system").Get("bootstrap")
