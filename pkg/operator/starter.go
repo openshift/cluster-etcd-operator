@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"fmt"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/monitoringcontroller"
 	"os"
 	"regexp"
 	"time"
@@ -408,6 +409,14 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeInformersForNamespaces,
 	)
 
+	monitoringController := monitoringcontroller.NewMonitoringController(
+		operatorClient,
+		controllerContext.EventRecorder,
+		kubeInformersForNamespaces,
+		kubeClient,
+		envVarController,
+		os.Getenv("OPERATOR_IMAGE"))
+
 	unsupportedConfigOverridesController := unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(
 		operatorClient,
 		controllerContext.EventRecorder,
@@ -570,6 +579,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go unsupportedConfigOverridesController.Run(ctx, 1)
 	go scriptController.Run(ctx, 1)
 	go defragController.Run(ctx, 1)
+	go monitoringController.Run(ctx, 1)
 
 	go envVarController.Run(1, ctx.Done())
 	go staticPodControllers.Start(ctx)
