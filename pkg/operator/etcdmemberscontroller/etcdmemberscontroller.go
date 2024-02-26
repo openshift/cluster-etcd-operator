@@ -21,13 +21,13 @@ import (
 // of etcd members.
 type EtcdMembersController struct {
 	operatorClient v1helpers.OperatorClient
-	etcdClient     etcdcli.EtcdClient
+	etcdClient     etcdcli.AllMemberLister
 }
 
 func NewEtcdMembersController(
 	livenessChecker *health.MultiAlivenessChecker,
 	operatorClient v1helpers.OperatorClient,
-	etcdClient etcdcli.EtcdClient,
+	etcdClient etcdcli.AllMemberLister,
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &EtcdMembersController{

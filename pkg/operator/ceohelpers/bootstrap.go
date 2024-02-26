@@ -146,12 +146,12 @@ func CheckSafeToScaleCluster(
 		return fmt.Errorf("CheckSafeToScaleCluster %d nodes are required, but only %d are available", minimumNodes, nodeCount)
 	}
 
-	healthyMembers, err := etcdClient.HealthyMembers(context.Background())
+	memberHealth, err := etcdClient.MemberHealth(context.Background())
 	if err != nil {
 		return fmt.Errorf("CheckSafeToScaleCluster couldn't determine member health: %w", err)
 	}
 
-	err = etcdcli.IsQuorumFaultTolerantErr(etcdcli.GetMemberHealth(context.Background(), healthyMembers))
+	err = etcdcli.IsQuorumFaultTolerantErr(memberHealth)
 	if err != nil {
 		return err
 	}

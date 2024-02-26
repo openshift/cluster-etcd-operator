@@ -42,10 +42,6 @@ type healthCheck struct {
 type memberHealth []healthCheck
 
 func GetMemberHealth(ctx context.Context, etcdMembers []*etcdserverpb.Member) memberHealth {
-	return getMemberHealth(ctx, etcdMembers)
-}
-
-func getMemberHealth(ctx context.Context, etcdMembers []*etcdserverpb.Member) memberHealth {
 	memberHealth := memberHealth{}
 	for _, member := range etcdMembers {
 		if !HasStarted(member) {
@@ -114,7 +110,7 @@ func checkSingleMemberHealth(ctx context.Context, member *etcdserverpb.Member) h
 
 	defer func() {
 		if err := cli.Close(); err != nil {
-			klog.Errorf("error closing etcd client for getMemberHealth: %v", err)
+			klog.Errorf("error closing etcd client for GetMemberHealth: %v", err)
 		}
 	}()
 
@@ -169,7 +165,7 @@ func (h memberHealth) Status() string {
 
 // GetHealthyMembers returns healthy members
 func (h memberHealth) GetHealthyMembers() []*etcdserverpb.Member {
-	members := []*etcdserverpb.Member{}
+	var members []*etcdserverpb.Member
 	for _, etcd := range h {
 		if etcd.Healthy {
 			members = append(members, etcd.Member)
@@ -180,7 +176,7 @@ func (h memberHealth) GetHealthyMembers() []*etcdserverpb.Member {
 
 // GetUnhealthy returns unhealthy members
 func (h memberHealth) GetUnhealthyMembers() []*etcdserverpb.Member {
-	members := []*etcdserverpb.Member{}
+	var members []*etcdserverpb.Member
 	for _, etcd := range h {
 		if !etcd.Healthy {
 			members = append(members, etcd.Member)
@@ -191,7 +187,7 @@ func (h memberHealth) GetUnhealthyMembers() []*etcdserverpb.Member {
 
 // GetUnstarted returns unstarted members
 func (h memberHealth) GetUnstartedMembers() []*etcdserverpb.Member {
-	members := []*etcdserverpb.Member{}
+	var members []*etcdserverpb.Member
 	for _, etcd := range h {
 		if !HasStarted(etcd.Member) {
 			members = append(members, etcd.Member)

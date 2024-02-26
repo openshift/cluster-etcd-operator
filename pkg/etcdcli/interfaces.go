@@ -35,6 +35,7 @@ type AllMemberLister interface {
 	MemberLister
 	HealthyMemberLister
 	UnhealthyMemberLister
+	MemberHealth
 }
 
 type Defragment interface {
