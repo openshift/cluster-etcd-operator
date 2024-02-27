@@ -131,6 +131,18 @@ func FakeSecret(namespace, name string, cert map[string][]byte) *corev1.Secret {
 	return secret
 }
 
+func FakeSecretWithAnnotations(namespace, name string, cert map[string][]byte, annotations map[string]string) *corev1.Secret {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:   namespace,
+			Name:        name,
+			Annotations: annotations,
+		},
+		Data: cert,
+	}
+	return secret
+}
+
 func ClusterConfigConfigMap(maxLearner int) *corev1.ConfigMap {
 	installConfig := map[string]interface{}{
 		"ControlPlane": map[string]interface{}{

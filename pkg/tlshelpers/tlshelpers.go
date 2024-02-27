@@ -27,13 +27,6 @@ const (
 	etcdCaCertValidity        = 5 * 365 * 24 * time.Hour
 	etcdCaCertValidityRefresh = 4.5 * 365 * 24 * time.Hour
 
-	peerOrg   = "system:etcd-peers"
-	serverOrg = "system:etcd-servers"
-	metricOrg = "system:etcd-metrics"
-
-	// TODO debt left for @hexfusion or @sanchezl
-	fakePodFQDN = "etcd-client"
-
 	EtcdJiraComponentName                  = "etcd"
 	EtcdSignerCertSecretName               = "etcd-signer"
 	EtcdSignerCaBundleConfigMapName        = "etcd-ca-bundle"
@@ -52,10 +45,6 @@ func GetServingSecretNameForNode(nodeName string) string {
 }
 func GetServingMetricsSecretNameForNode(nodeName string) string {
 	return fmt.Sprintf("etcd-serving-metrics-%s", nodeName)
-}
-
-func getPeerHostNames(nodeInternalIPs []string) []string {
-	return append([]string{"localhost"}, nodeInternalIPs...)
 }
 
 func getServerHostNames(nodeInternalIPs []string) []string {
