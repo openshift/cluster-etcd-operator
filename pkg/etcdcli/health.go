@@ -52,10 +52,13 @@ func getMemberHealth(ctx context.Context, etcdMembers []*etcdserverpb.Member) me
 		const defaultTimeout = 30 * time.Second
 		resChan := make(chan healthCheck, 1)
 		go func() {
-			ctx, cancel := context.WithTimeout(ctx, defaultTimeout)
+			ctxTimeout, cancel := context.WithTimeout(ctx, defaultTimeout)
 			defer cancel()
 
-			resChan <- checkSingleMemberHealth(ctx, member)
+			resChan <- checkSingleMemberHealth(ctxTimeout, member)
+			// closing here to avoid late replies to panic on resChan,
+			// the result will be considered a timeout anyway
+			close(resChan)
 		}()
 
 		select {
@@ -68,8 +71,6 @@ func getMemberHealth(ctx context.Context, etcdMembers []*etcdserverpb.Member) me
 				Error: fmt.Errorf("30s timeout waiting for member %s to respond to health check",
 					member.Name)})
 		}
-
-		close(resChan)
 	}
 
 	// Purge any unknown members from the raft term metrics collector.
