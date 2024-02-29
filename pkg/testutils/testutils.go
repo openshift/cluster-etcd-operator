@@ -262,7 +262,7 @@ func FakeEtcdMemberWithoutServer(member int) *etcdserverpb.Member {
 	}
 }
 
-func FakeEtcdBoostrapMember(member int) *etcdserverpb.Member {
+func FakeEtcdBootstrapMember(member int) *etcdserverpb.Member {
 	return &etcdserverpb.Member{
 		Name:       "etcd-bootstrap",
 		ClientURLs: []string{fmt.Sprintf("https://10.0.0.%d:2907", member+1)},
