@@ -1,6 +1,7 @@
 package configobservercontroller
 
 import (
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 
 	configinformers "github.com/openshift/client-go/config/informers/externalversions"
@@ -26,6 +27,8 @@ func NewConfigObserver(
 	configInformer configinformers.SharedInformerFactory,
 	operatorConfigInformers operatorv1informers.SharedInformerFactory,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
+	masterNodeInformer cache.SharedIndexInformer,
+	masterNodeLister corev1listers.NodeLister,
 	resourceSyncer resourcesynccontroller.ResourceSyncer,
 	eventRecorder events.Recorder,
 ) *ConfigObserver {
@@ -48,7 +51,7 @@ func NewConfigObserver(
 		kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().Endpoints().Informer(),
 		kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().Pods().Informer(),
 		kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().ConfigMaps().Informer(),
-		kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer(),
+		masterNodeInformer,
 	}
 
 	for _, ns := range interestingNamespaces {
@@ -65,7 +68,7 @@ func NewConfigObserver(
 				OpenshiftEtcdEndpointsLister:          kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().Endpoints().Lister(),
 				OpenshiftEtcdPodsLister:               kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().Pods().Lister(),
 				OpenshiftEtcdConfigMapsLister:         kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().ConfigMaps().Lister(),
-				NodeLister:                            kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Lister(),
+				NodeLister:                            masterNodeLister,
 				ConfigMapListerForKubeSystemNamespace: kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Lister().ConfigMaps("kube-system"),
 
 				ResourceSync: resourceSyncer,
@@ -77,7 +80,7 @@ func NewConfigObserver(
 					kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().Endpoints().Informer().HasSynced,
 					kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().Pods().Informer().HasSynced,
 					kubeInformersForNamespaces.InformersFor("openshift-etcd").Core().V1().ConfigMaps().Informer().HasSynced,
-					kubeInformersForNamespaces.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
+					masterNodeInformer.HasSynced,
 				),
 			},
 			informers,

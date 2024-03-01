@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"fmt"
+	"k8s.io/apimachinery/pkg/labels"
 	"testing"
 	"time"
 
@@ -375,13 +376,17 @@ func setupControllerWithEtcd(t *testing.T, objects []runtime.Object, etcdMembers
 		fakeOperatorClient,
 		fakeEtcdClient)
 
+	nodeSelector, err := labels.Parse("node-role.kubernetes.io/master")
+	require.NoError(t, err)
+
 	controller := &EtcdCertSignerController{
-		kubeClient:     fakeKubeClient,
-		operatorClient: fakeOperatorClient,
-		nodeLister:     corev1listers.NewNodeLister(indexer),
-		secretLister:   corev1listers.NewSecretLister(indexer),
-		secretClient:   fakeKubeClient.CoreV1(),
-		quorumChecker:  quorumChecker,
+		kubeClient:         fakeKubeClient,
+		operatorClient:     fakeOperatorClient,
+		masterNodeLister:   corev1listers.NewNodeLister(indexer),
+		masterNodeSelector: nodeSelector,
+		secretLister:       corev1listers.NewSecretLister(indexer),
+		secretClient:       fakeKubeClient.CoreV1(),
+		quorumChecker:      quorumChecker,
 	}
 	recorder := events.NewRecorder(
 		fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),
