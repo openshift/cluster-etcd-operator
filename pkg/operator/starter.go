@@ -152,6 +152,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	clusterVersions := configInformers.Config().V1().ClusterVersions()
 	networkInformer := configInformers.Config().V1().Networks()
 	jobsInformer := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs().Informer()
+	configMapInformer := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps()
 
 	versionRecorder := status.NewVersionGetter()
 	clusterOperator, err := configClient.ConfigV1().ClusterOperators().Get(ctx, "etcd", metav1.GetOptions{})
@@ -179,10 +180,16 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return err
 	}
 
-	etcdClient := etcdcli.NewEtcdClient(
-		kubeInformersForNamespaces,
+	etcdClient, err := etcdcli.NewEtcdClient(
+		masterNodeInformer,
+		masterNodeLister,
+		masterNodeLabelSelector,
+		configMapInformer,
 		networkInformer,
 		controllerContext.EventRecorder)
+	if err != nil {
+		return err
+	}
 
 	cachedMemberClient := etcdcli.NewMemberCache(etcdClient)
 
@@ -494,13 +501,9 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	}
 
 	// we have to wait for the definitive result of the cluster version informer to make the correct machine API decision
-	klog.Infof("waiting for cluster version informer sync...")
-	versionTimeoutCtx, versionTimeoutCancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
-	clusterVersionInformerSynced := cache.WaitForCacheSync(versionTimeoutCtx.Done(), clusterVersions.Informer().HasSynced)
-	versionTimeoutCancelFunc()
-
-	if !clusterVersionInformerSynced {
-		return fmt.Errorf("could not sync ClusterVersion, aborting operator start")
+	err = operatorclient.AwaitInformerCacheSync("ClusterVersion", clusterVersions.Informer())
+	if err != nil {
+		return err
 	}
 
 	clusterMemberControllerInformers := []factory.Informer{masterNodeInformer}

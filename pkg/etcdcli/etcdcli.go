@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
+	v1 "k8s.io/client-go/informers/core/v1"
+	"k8s.io/client-go/tools/cache"
 	"net"
 	"net/url"
 	"os"
@@ -15,7 +17,6 @@ import (
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/pkg/v3/logutil"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
@@ -28,7 +29,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
@@ -43,44 +43,56 @@ const (
 )
 
 type etcdClientGetter struct {
-	nodeLister       corev1listers.NodeLister
-	configmapsLister corev1listers.ConfigMapLister
-	networkLister    configv1listers.NetworkLister
-
-	nodeListerSynced       cache.InformerSynced
-	configmapsListerSynced cache.InformerSynced
-	networkListerSynced    cache.InformerSynced
-
-	eventRecorder events.Recorder
+	masterNodeLister        corev1listers.NodeLister
+	masterNodeLabelSelector labels.Selector
+	configmapsLister        corev1listers.ConfigMapLister
+	networkLister           configv1listers.NetworkLister
+	eventRecorder           events.Recorder
 
 	clientPool *EtcdClientPool
 }
 
-func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkInformer configv1informers.NetworkInformer, eventRecorder events.Recorder) EtcdClient {
+func NewEtcdClient(
+	masterNodeInformer cache.SharedIndexInformer,
+	masterNodeLister corev1listers.NodeLister,
+	masterNodeLabelSelector labels.Selector,
+	configMapInformer v1.ConfigMapInformer,
+	networkInformer configv1informers.NetworkInformer,
+	eventRecorder events.Recorder) (EtcdClient, error) {
+
 	g := &etcdClientGetter{
-		nodeLister:             kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
-		configmapsLister:       kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister(),
-		networkLister:          networkInformer.Lister(),
-		nodeListerSynced:       kubeInformers.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
-		configmapsListerSynced: kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer().HasSynced,
-		networkListerSynced:    networkInformer.Informer().HasSynced,
-		eventRecorder:          eventRecorder.WithComponentSuffix("etcd-client"),
+		masterNodeLister:        masterNodeLister,
+		masterNodeLabelSelector: masterNodeLabelSelector,
+		configmapsLister:        configMapInformer.Lister(),
+		networkLister:           networkInformer.Lister(),
+		eventRecorder:           eventRecorder.WithComponentSuffix("etcd-client"),
 	}
 
-	endpointFunc := func() ([]string, error) {
-		return endpoints(g.nodeLister, g.configmapsLister, g.networkLister,
-			g.nodeListerSynced, g.configmapsListerSynced, g.networkListerSynced)
+	err := operatorclient.AwaitInformerCacheSync("master nodes", masterNodeInformer)
+	if err != nil {
+		return nil, err
 	}
+
+	err = operatorclient.AwaitInformerCacheSync("configmaps", configMapInformer.Informer())
+	if err != nil {
+		return nil, err
+	}
+
+	err = operatorclient.AwaitInformerCacheSync("network", networkInformer.Informer())
+	if err != nil {
+		return nil, err
+	}
+
 	newFunc := func() (*clientv3.Client, error) {
-		endpoints, err := endpointFunc()
+		endpoints, err := g.endpoints()
 		if err != nil {
 			return nil, fmt.Errorf("error retrieving endpoints for new cached client: %w", err)
 		}
 		return newEtcdClientWithClientOpts(endpoints, true)
 	}
 
-	g.clientPool = NewDefaultEtcdClientPool(newFunc, endpointFunc)
-	return g
+	g.clientPool = NewDefaultEtcdClientPool(newFunc, g.endpoints)
+	return g, nil
 }
 
 // newEtcdClientWithClientOpts allows customization of the etcd client using ClientOptions. All clients must be manually
@@ -472,36 +484,21 @@ func (g *etcdClientGetter) Defragment(ctx context.Context, member *etcdserverpb.
 	return resp, nil
 }
 
-func endpoints(nodeLister corev1listers.NodeLister,
-	configmapsLister corev1listers.ConfigMapLister,
-	networkLister configv1listers.NetworkLister,
-	nodeListerSynced cache.InformerSynced,
-	configmapsListerSynced cache.InformerSynced,
-	networkListerSynced cache.InformerSynced) ([]string, error) {
-
-	if !nodeListerSynced() {
-		return nil, fmt.Errorf("node lister not synced")
-	}
-	if !configmapsListerSynced() {
-		return nil, fmt.Errorf("configmaps lister not synced")
-	}
-	if !networkListerSynced() {
-		return nil, fmt.Errorf("network lister not synced")
-	}
+func (g *etcdClientGetter) endpoints() ([]string, error) {
 
 	var etcdEndpoints []string
 	// This configmap should always only contain voting members. Learners should not be present here.
-	configmap, err := configmapsLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints")
+	configmap, err := g.configmapsLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints")
 	if err != nil {
 		klog.Errorf("failed to list endpoints from %s/%s, falling back to listing nodes: %v",
 			operatorclient.TargetNamespace, "etcd-endpoints", err)
 
-		network, err := networkLister.Get("cluster")
+		network, err := g.networkLister.Get("cluster")
 		if err != nil {
 			return nil, fmt.Errorf("failed to list cluster network: %w", err)
 		}
 
-		nodes, err := nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
+		nodes, err := g.masterNodeLister.List(g.masterNodeLabelSelector)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list control plane nodes: %w", err)
 		}
