@@ -5,12 +5,14 @@ import (
 )
 
 type ClientOptions struct {
-	dialTimeout time.Duration
+	dialTimeout          time.Duration
+	dialKeepAliveTimeout time.Duration
 }
 
 func newClientOpts(opts ...ClientOption) (*ClientOptions, error) {
 	clientOpts := &ClientOptions{
-		dialTimeout: DefaultDialTimeout,
+		dialTimeout:          DefaultDialTimeout,
+		dialKeepAliveTimeout: DefaultDialKeepAliveTimeout,
 	}
 	clientOpts.applyOpts(opts)
 	return clientOpts, nil
