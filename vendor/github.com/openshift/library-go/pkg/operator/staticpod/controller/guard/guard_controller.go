@@ -6,10 +6,12 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -23,6 +25,7 @@ import (
 	corelisterv1 "k8s.io/client-go/listers/core/v1"
 	policylisterv1 "k8s.io/client-go/listers/policy/v1"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
@@ -39,6 +42,7 @@ type GuardController struct {
 	readyzPort                         string
 	readyzEndpoint                     string
 	operandPodLabelSelector            labels.Selector
+	pdbUnhealthyPodEvictionPolicy      *v1.UnhealthyPodEvictionPolicyType
 
 	nodeLister corelisterv1.NodeLister
 	podLister  corelisterv1.PodLister
@@ -58,6 +62,7 @@ func NewGuardController(
 	operatorName string,
 	readyzPort string,
 	readyzEndpoint string,
+	pdbUnhealthyPodEvictionPolicy *v1.UnhealthyPodEvictionPolicyType,
 	kubeInformersForTargetNamespace informers.SharedInformerFactory,
 	kubeInformersClusterScoped informers.SharedInformerFactory,
 	operatorClient operatorv1helpers.StaticPodOperatorClient,
@@ -73,20 +78,29 @@ func NewGuardController(
 		return nil, fmt.Errorf("GuardController: operandPodLabelSelector cannot be empty")
 	}
 
+	// test any new UnhealthyPodEvictionPolicyType before adding them to the supported list
+	if !(pdbUnhealthyPodEvictionPolicy == nil ||
+		*pdbUnhealthyPodEvictionPolicy == v1.IfHealthyBudget ||
+		*pdbUnhealthyPodEvictionPolicy == v1.AlwaysAllow) {
+		return nil, fmt.Errorf("GuardController: only <nil>, %q and %q pdbUnhealthyPodEvictionPolicy values are supported", v1.IfHealthyBudget, v1.AlwaysAllow)
+
+	}
+
 	c := &GuardController{
-		targetNamespace:         targetNamespace,
-		operandPodLabelSelector: operandPodLabelSelector,
-		podResourcePrefix:       podResourcePrefix,
-		operatorName:            operatorName,
-		readyzPort:              readyzPort,
-		readyzEndpoint:          readyzEndpoint,
-		nodeLister:              kubeInformersClusterScoped.Core().V1().Nodes().Lister(),
-		podLister:               kubeInformersForTargetNamespace.Core().V1().Pods().Lister(),
-		podGetter:               podGetter,
-		pdbGetter:               pdbGetter,
-		pdbLister:               kubeInformersForTargetNamespace.Policy().V1().PodDisruptionBudgets().Lister(),
-		installerPodImageFn:     getInstallerPodImageFromEnv,
-		createConditionalFunc:   createConditionalFunc,
+		targetNamespace:               targetNamespace,
+		operandPodLabelSelector:       operandPodLabelSelector,
+		podResourcePrefix:             podResourcePrefix,
+		operatorName:                  operatorName,
+		readyzPort:                    readyzPort,
+		readyzEndpoint:                readyzEndpoint,
+		pdbUnhealthyPodEvictionPolicy: pdbUnhealthyPodEvictionPolicy,
+		nodeLister:                    kubeInformersClusterScoped.Core().V1().Nodes().Lister(),
+		podLister:                     kubeInformersForTargetNamespace.Core().V1().Pods().Lister(),
+		podGetter:                     podGetter,
+		pdbGetter:                     pdbGetter,
+		pdbLister:                     kubeInformersForTargetNamespace.Policy().V1().PodDisruptionBudgets().Lister(),
+		installerPodImageFn:           getInstallerPodImageFromEnv,
+		createConditionalFunc:         createConditionalFunc,
 	}
 
 	return factory.New().WithInformers(
@@ -222,14 +236,16 @@ func (c *GuardController) sync(ctx context.Context, syncCtx factory.SyncContext)
 		pdb := resourceread.ReadPodDisruptionBudgetV1OrDie(pdbTemplate)
 		pdb.ObjectMeta.Name = getGuardPDBName(c.podResourcePrefix)
 		pdb.ObjectMeta.Namespace = c.targetNamespace
+		pdb.Spec.UnhealthyPodEvictionPolicy = c.pdbUnhealthyPodEvictionPolicy
 		if len(nodes) > 1 {
-			minAvailable := intstr.FromInt(len(nodes) - 1)
+			minAvailable := intstr.FromInt32(int32(len(nodes)) - 1)
 			pdb.Spec.MinAvailable = &minAvailable
 		}
 
 		pdbObj, err := c.pdbLister.PodDisruptionBudgets(pdb.Namespace).Get(pdb.Name)
 		if err == nil {
-			if pdbObj.Spec.MinAvailable != pdb.Spec.MinAvailable {
+			if !ptr.Equal(pdbObj.Spec.UnhealthyPodEvictionPolicy, pdb.Spec.UnhealthyPodEvictionPolicy) ||
+				!ptr.Equal(pdbObj.Spec.MinAvailable, pdb.Spec.MinAvailable) {
 				_, _, err = resourceapply.ApplyPodDisruptionBudget(ctx, c.pdbGetter, syncCtx.Recorder(), pdb)
 				if err != nil {
 					klog.Errorf("Unable to apply PodDisruptionBudget changes: %v", err)
@@ -345,6 +361,6 @@ func (c *GuardController) sync(ctx context.Context, syncCtx factory.SyncContext)
 			}
 		}
 	}
-
+	sort.Slice(errs, func(i, j int) bool { return errs[i].Error() < errs[j].Error() })
 	return utilerrors.NewAggregate(errs)
 }
