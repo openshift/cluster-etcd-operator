@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"fmt"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertcleaner"
 	"os"
 	"regexp"
 	"time"
@@ -364,6 +365,16 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		quorumChecker,
 	)
 
+	etcdCertCleanerController := etcdcertcleaner.NewEtcdCertCleanerController(
+		AlivenessChecker,
+		coreClient,
+		operatorClient,
+		kubeInformersForNamespaces,
+		masterNodeLister,
+		masterNodeLabelSelector,
+		controllerContext.EventRecorder,
+	)
+
 	etcdEndpointsController := etcdendpointscontroller.NewEtcdEndpointsController(
 		AlivenessChecker,
 		operatorClient,
@@ -560,6 +571,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go staticResourceController.Run(ctx, 1)
 	go targetConfigReconciler.Run(ctx, 1)
 	go etcdCertSignerController.Run(ctx, 1)
+	go etcdCertCleanerController.Run(ctx, 1)
 	go etcdEndpointsController.Run(ctx, 1)
 	go resourceSyncController.Run(ctx, 1)
 	go statusController.Run(ctx, 1)
