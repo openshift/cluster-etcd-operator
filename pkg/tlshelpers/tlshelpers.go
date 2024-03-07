@@ -78,10 +78,12 @@ func CreateSignerCertRotationBundleConfigMap(
 	recorder events.Recorder) certrotation.CABundleConfigMap {
 
 	return certrotation.CABundleConfigMap{
-		Name:          EtcdSignerCaBundleConfigMapName,
-		Namespace:     operatorclient.TargetNamespace,
-		JiraComponent: EtcdJiraComponentName,
-		Description:   "bundle for etcd signer certificate authorities",
+		Name:      EtcdSignerCaBundleConfigMapName,
+		Namespace: operatorclient.TargetNamespace,
+		AdditionalAnnotations: certrotation.AdditionalAnnotations{
+			JiraComponent: EtcdJiraComponentName,
+			Description:   "bundle for etcd signer certificate authorities",
+		},
 		Informer:      cmInformer,
 		Lister:        cmLister,
 		Client:        cmGetter,
@@ -96,10 +98,12 @@ func CreateMetricsSignerCertRotationBundleConfigMap(
 	recorder events.Recorder) certrotation.CABundleConfigMap {
 
 	return certrotation.CABundleConfigMap{
-		Name:          EtcdMetricsSignerCaBundleConfigMapName,
-		Namespace:     operatorclient.TargetNamespace,
-		JiraComponent: EtcdJiraComponentName,
-		Description:   "bundle for etcd metrics signer certificate authorities",
+		Name:      EtcdMetricsSignerCaBundleConfigMapName,
+		Namespace: operatorclient.TargetNamespace,
+		AdditionalAnnotations: certrotation.AdditionalAnnotations{
+			JiraComponent: EtcdJiraComponentName,
+			Description:   "bundle for etcd metrics signer certificate authorities",
+		},
 		Informer:      cmInformer,
 		Lister:        cmLister,
 		Client:        cmGetter,
@@ -114,12 +118,14 @@ func CreateSignerCert(
 	recorder events.Recorder) certrotation.RotatedSigningCASecret {
 
 	return certrotation.RotatedSigningCASecret{
-		Namespace:     operatorclient.TargetNamespace,
-		Name:          EtcdSignerCertSecretName,
-		JiraComponent: EtcdJiraComponentName,
-		Description:   "etcd signer certificate authorities",
-		Validity:      etcdCaCertValidity,
-		Refresh:       etcdCaCertValidityRefresh,
+		Namespace: operatorclient.TargetNamespace,
+		Name:      EtcdSignerCertSecretName,
+		AdditionalAnnotations: certrotation.AdditionalAnnotations{
+			JiraComponent: EtcdJiraComponentName,
+			Description:   "etcd signer certificate authorities",
+		},
+		Validity: etcdCaCertValidity,
+		Refresh:  etcdCaCertValidityRefresh,
 
 		Informer:      secretInformer,
 		Lister:        secretLister,
@@ -146,12 +152,14 @@ func CreateMetricsSignerCert(
 	recorder events.Recorder) certrotation.RotatedSigningCASecret {
 
 	return certrotation.RotatedSigningCASecret{
-		Namespace:     operatorclient.TargetNamespace,
-		Name:          EtcdMetricsSignerCertSecretName,
-		JiraComponent: EtcdJiraComponentName,
-		Description:   "etcd metrics signer certificate authorities",
-		Validity:      etcdCaCertValidity,
-		Refresh:       etcdCaCertValidityRefresh,
+		Namespace: operatorclient.TargetNamespace,
+		Name:      EtcdMetricsSignerCertSecretName,
+		AdditionalAnnotations: certrotation.AdditionalAnnotations{
+			JiraComponent: EtcdJiraComponentName,
+			Description:   "etcd metrics signer certificate authorities",
+		},
+		Validity: etcdCaCertValidity,
+		Refresh:  etcdCaCertValidityRefresh,
 
 		Informer:      secretInformer,
 		Lister:        secretLister,
@@ -229,13 +237,15 @@ func createCertForNode(description, secretName string, node *corev1.Node,
 	}
 
 	return &certrotation.RotatedSelfSignedCertKeySecret{
-		Namespace:     operatorclient.TargetNamespace,
-		Name:          secretName,
-		JiraComponent: EtcdJiraComponentName,
-		Description:   description,
-		Validity:      etcdCertValidity,
-		Refresh:       etcdCertValidityRefresh,
-		CertCreator:   creator,
+		Namespace: operatorclient.TargetNamespace,
+		Name:      secretName,
+		AdditionalAnnotations: certrotation.AdditionalAnnotations{
+			JiraComponent: EtcdJiraComponentName,
+			Description:   description,
+		},
+		Validity:    etcdCertValidity,
+		Refresh:     etcdCertValidityRefresh,
+		CertCreator: creator,
 
 		Informer:      secretInformer,
 		Lister:        secretLister,
@@ -257,13 +267,15 @@ func CreateMetricsClientCert(
 	}
 
 	return certrotation.RotatedSelfSignedCertKeySecret{
-		Namespace:     operatorclient.TargetNamespace,
-		Name:          EtcdMetricsClientCertSecretName,
-		JiraComponent: EtcdJiraComponentName,
-		Description:   "etcd metrics client certificate",
-		Validity:      etcdCertValidity,
-		Refresh:       etcdCertValidityRefresh,
-		CertCreator:   creator,
+		Namespace: operatorclient.TargetNamespace,
+		Name:      EtcdMetricsClientCertSecretName,
+		AdditionalAnnotations: certrotation.AdditionalAnnotations{
+			JiraComponent: EtcdJiraComponentName,
+			Description:   "etcd metrics client certificate",
+		},
+		Validity:    etcdCertValidity,
+		Refresh:     etcdCertValidityRefresh,
+		CertCreator: creator,
 
 		Informer:      secretInformer,
 		Lister:        secretLister,
@@ -285,13 +297,15 @@ func CreateEtcdClientCert(
 	}
 
 	return certrotation.RotatedSelfSignedCertKeySecret{
-		Namespace:     operatorclient.TargetNamespace,
-		Name:          EtcdClientCertSecretName,
-		JiraComponent: EtcdJiraComponentName,
-		Description:   "etcd client certificate",
-		Validity:      etcdCertValidity,
-		Refresh:       etcdCertValidityRefresh,
-		CertCreator:   creator,
+		Namespace: operatorclient.TargetNamespace,
+		Name:      EtcdClientCertSecretName,
+		AdditionalAnnotations: certrotation.AdditionalAnnotations{
+			JiraComponent: EtcdJiraComponentName,
+			Description:   "etcd client certificate",
+		},
+		Validity:    etcdCertValidity,
+		Refresh:     etcdCertValidityRefresh,
+		CertCreator: creator,
 
 		Informer:      secretInformer,
 		Lister:        secretLister,
