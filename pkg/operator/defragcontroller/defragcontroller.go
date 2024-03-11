@@ -44,7 +44,9 @@ const (
 // observations the controller will perform rolling defragmentation of each etcd member in the cluster.
 type DefragController struct {
 	operatorClient       v1helpers.OperatorClient
-	etcdClient           etcdcli.EtcdClient
+	memberLister         etcdcli.AllMemberLister
+	defragClient         etcdcli.Defragment
+	statusClient         etcdcli.Status
 	infrastructureLister configv1listers.InfrastructureLister
 	configmapLister      corev1listers.ConfigMapLister
 
@@ -55,13 +57,17 @@ type DefragController struct {
 func NewDefragController(
 	livenessChecker *health.MultiAlivenessChecker,
 	operatorClient v1helpers.OperatorClient,
-	etcdClient etcdcli.EtcdClient,
+	memberLister etcdcli.AllMemberLister,
+	defragClient etcdcli.Defragment,
+	statusClient etcdcli.Status,
 	infrastructureLister configv1listers.InfrastructureLister,
 	eventRecorder events.Recorder,
 	kubeInformers v1helpers.KubeInformersForNamespaces) factory.Controller {
 	c := &DefragController{
 		operatorClient:       operatorClient,
-		etcdClient:           etcdClient,
+		memberLister:         memberLister,
+		defragClient:         defragClient,
+		statusClient:         statusClient,
 		infrastructureLister: infrastructureLister,
 		configmapLister:      kubeInformers.ConfigMapLister(),
 		defragWaitDuration:   minDefragWaitDuration,
@@ -118,7 +124,7 @@ func (c *DefragController) checkDefragEnabled(ctx context.Context, recorder even
 
 func (c *DefragController) runDefrag(ctx context.Context, recorder events.Recorder) error {
 	// Do not defrag if any of the cluster members are unhealthy.
-	memberHealth, err := c.etcdClient.MemberHealth(ctx)
+	memberHealth, err := c.memberLister.MemberHealth(ctx)
 	if err != nil {
 		return err
 	}
@@ -126,7 +132,7 @@ func (c *DefragController) runDefrag(ctx context.Context, recorder events.Record
 		return fmt.Errorf("cluster is unhealthy: %s", memberHealth.Status())
 	}
 
-	members, err := c.etcdClient.MemberList(ctx)
+	members, err := c.memberLister.MemberList(ctx)
 	if err != nil {
 		return err
 	}
@@ -146,7 +152,7 @@ func (c *DefragController) runDefrag(ctx context.Context, recorder events.Record
 			// skip unstarted member
 			continue
 		}
-		status, err := c.etcdClient.Status(ctx, member.ClientURLs[0])
+		status, err := c.statusClient.Status(ctx, member.ClientURLs[0])
 		if err != nil {
 			return err
 		}
@@ -178,7 +184,7 @@ func (c *DefragController) runDefrag(ctx context.Context, recorder events.Record
 		// can clean that up on the next sync. Having the db sizes slightly different is not a problem in itself.
 		if isEndpointBackendFragmented(member, status) {
 			recorder.Eventf("DefragControllerDefragmentAttempt", "Attempting defrag on member: %s, memberID: %x, dbSize: %d, dbInUse: %d, leader ID: %d", member.Name, member.ID, status.DbSize, status.DbSizeInUse, status.Leader)
-			if _, err := c.etcdClient.Defragment(ctx, member); err != nil {
+			if _, err := c.defragClient.Defragment(ctx, member); err != nil {
 				// Defrag can timeout if defragmentation takes longer than etcdcli.DefragDialTimeout.
 				errMsg := fmt.Sprintf("failed defrag on member: %s, memberID: %x: %v", member.Name, member.ID, err)
 				recorder.Eventf("DefragControllerDefragmentFailed", errMsg)
@@ -198,7 +204,7 @@ func (c *DefragController) runDefrag(ctx context.Context, recorder events.Record
 					klog.V(4).Infof("Sleeping to allow cluster to recover before defrag next member: %v", c.defragWaitDuration)
 					time.Sleep(c.defragWaitDuration)
 
-					memberHealth, err := c.etcdClient.MemberHealth(ctx)
+					memberHealth, err := c.memberLister.MemberHealth(ctx)
 					if err != nil {
 						klog.Warningf("failed checking member health: %v", err)
 						return false, nil
