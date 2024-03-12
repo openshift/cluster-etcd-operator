@@ -85,7 +85,7 @@ func NewRevisionController(
 // createRevisionIfNeeded takes care of creating content for the static pods to use.
 // returns whether or not requeue and if an error happened when updating status.  Normally it updates status itself.
 func (c RevisionController) createRevisionIfNeeded(ctx context.Context, recorder events.Recorder, latestAvailableRevision int32, resourceVersion string) (bool, error) {
-	isLatestRevisionCurrent, reason := c.isLatestRevisionCurrent(ctx, latestAvailableRevision)
+	isLatestRevisionCurrent, requiredIsNotFound, reason := c.isLatestRevisionCurrent(ctx, latestAvailableRevision)
 
 	// check to make sure that the latestRevision has the exact content we expect.  No mutation here, so we start creating the next Revision only when it is required
 	if isLatestRevisionCurrent {
@@ -94,8 +94,16 @@ func (c RevisionController) createRevisionIfNeeded(ctx context.Context, recorder
 	}
 
 	nextRevision := latestAvailableRevision + 1
-	recorder.Eventf("StartingNewRevision", "new revision %d triggered by %q", nextRevision, reason)
-	createdNewRevision, err := c.createNewRevision(ctx, recorder, nextRevision, reason)
+	var createdNewRevision bool
+	var err error
+	// check to make sure no new revision is created when a required object is missing
+	if requiredIsNotFound {
+		err = fmt.Errorf("%v", reason)
+	} else {
+		recorder.Eventf("StartingNewRevision", "new revision %d triggered by %q", nextRevision, reason)
+		createdNewRevision, err = c.createNewRevision(ctx, recorder, nextRevision, reason)
+	}
+
 	if err != nil {
 		cond := operatorv1.OperatorCondition{
 			Type:    "RevisionControllerDegraded",
@@ -134,7 +142,7 @@ func nameFor(name string, revision int32) string {
 }
 
 // isLatestRevisionCurrent returns whether the latest revision is up to date and an optional reason
-func (c RevisionController) isLatestRevisionCurrent(ctx context.Context, revision int32) (bool, string) {
+func (c RevisionController) isLatestRevisionCurrent(ctx context.Context, revision int32) (bool, bool, string) {
 	configChanges := []string{}
 	for _, cm := range c.configMaps {
 		requiredData := map[string]string{}
@@ -142,11 +150,11 @@ func (c RevisionController) isLatestRevisionCurrent(ctx context.Context, revisio
 
 		required, err := c.configMapGetter.ConfigMaps(c.targetNamespace).Get(ctx, cm.Name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) && !cm.Optional {
-			return false, err.Error()
+			return false, true, err.Error()
 		}
 		existing, err := c.configMapGetter.ConfigMaps(c.targetNamespace).Get(ctx, nameFor(cm.Name, revision), metav1.GetOptions{})
 		if apierrors.IsNotFound(err) && !cm.Optional {
-			return false, err.Error()
+			return false, false, err.Error()
 		}
 		if required != nil {
 			requiredData = required.Data
@@ -179,11 +187,11 @@ func (c RevisionController) isLatestRevisionCurrent(ctx context.Context, revisio
 
 		required, err := c.secretGetter.Secrets(c.targetNamespace).Get(ctx, s.Name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) && !s.Optional {
-			return false, err.Error()
+			return false, true, err.Error()
 		}
 		existing, err := c.secretGetter.Secrets(c.targetNamespace).Get(ctx, nameFor(s.Name, revision), metav1.GetOptions{})
 		if apierrors.IsNotFound(err) && !s.Optional {
-			return false, err.Error()
+			return false, false, err.Error()
 		}
 		if required != nil {
 			requiredData = required.Data
@@ -210,10 +218,10 @@ func (c RevisionController) isLatestRevisionCurrent(ctx context.Context, revisio
 	}
 
 	if len(secretChanges) > 0 || len(configChanges) > 0 {
-		return false, strings.Join(append(secretChanges, configChanges...), ",")
+		return false, false, strings.Join(append(secretChanges, configChanges...), ",")
 	}
 
-	return true, ""
+	return true, false, ""
 }
 
 // returns true if we created a revision
