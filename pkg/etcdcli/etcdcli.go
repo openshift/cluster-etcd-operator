@@ -36,11 +36,10 @@ import (
 )
 
 const (
-	BootstrapIPAnnotationKey    = "alpha.installer.openshift.io/etcd-bootstrap"
-	DefaultDialTimeout          = 15 * time.Second
-	DefaultDialKeepAliveTimeout = 60 * time.Second
-	DefragDialTimeout           = 60 * time.Second
-	DefaultClientTimeout        = 30 * time.Second
+	BootstrapIPAnnotationKey = "alpha.installer.openshift.io/etcd-bootstrap"
+	DefaultDialTimeout       = 15 * time.Second
+	DefragDialTimeout        = 60 * time.Second
+	DefaultClientTimeout     = 30 * time.Second
 )
 
 type etcdClientGetter struct {
@@ -117,21 +116,14 @@ func newEtcdClientWithClientOpts(endpoints []string, skipConnectionTest bool, op
 		return nil, fmt.Errorf("failed building client logger: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), DefaultClientTimeout)
-	defer cancel()
-
 	cfg := &clientv3.Config{
-		Context:              ctx,
-		DialOptions:          dialOptions,
-		Endpoints:            endpoints,
-		DialTimeout:          clientOpts.dialTimeout,
-		DialKeepAliveTimeout: clientOpts.dialKeepAliveTimeout,
-		TLS:                  tlsConfig,
-		Logger:               l,
+		DialOptions: dialOptions,
+		Endpoints:   endpoints,
+		DialTimeout: clientOpts.dialTimeout,
+		TLS:         tlsConfig,
+		Logger:      l,
 	}
 
-	// Note that this already establishes a connection that can fail, whereas skipConnectionTest only applies to the member listing,
-	// which will fail when the member would be a learner
 	cli, err := clientv3.New(*cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to make etcd client for endpoints %v: %w", endpoints, err)
@@ -142,6 +134,10 @@ func newEtcdClientWithClientOpts(endpoints []string, skipConnectionTest bool, op
 	if skipConnectionTest {
 		return cli, err
 	}
+
+	// Test client connection.
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultClientTimeout)
+	defer cancel()
 	_, err = cli.MemberList(ctx)
 	if err != nil {
 		if clientv3.IsConnCanceled(err) {
