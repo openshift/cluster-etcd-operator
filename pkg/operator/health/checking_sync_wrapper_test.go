@@ -40,7 +40,7 @@ func TestHappyPathAliveness(t *testing.T) {
 
 }
 
-func TestErrorDoesNotUpdateSuccess(t *testing.T) {
+func TestErrorDoesUpdatesSuccess(t *testing.T) {
 	syncer := NewCheckingSyncWrapper(func(ctx context.Context, controllerContext factory.SyncContext) error {
 		return fmt.Errorf("some")
 	}, 1*time.Second)
@@ -49,6 +49,6 @@ func TestErrorDoesNotUpdateSuccess(t *testing.T) {
 
 	err := syncer.Sync(context.Background(), nil)
 	require.Error(t, err)
-	require.Equal(t, int64(0), syncer.lastSuccessfulRun)
-	require.False(t, syncer.Alive())
+	require.NotEqual(t, int64(0), syncer.lastSuccessfulRun)
+	require.True(t, syncer.Alive())
 }
