@@ -4,6 +4,7 @@ import (
 	"context"
 	goflag "flag"
 	"fmt"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/recert"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -75,6 +76,7 @@ func NewSSCSCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(readyz.NewReadyzCommand())
 	cmd.AddCommand(prune_backups.NewPruneCommand())
 	cmd.AddCommand(requestbackup.NewRequestBackupCommand(ctx))
+	cmd.AddCommand(recert.NewRecertCommand(os.Stderr))
 
 	return cmd
 }
