@@ -286,7 +286,7 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(ctx context.Context
 	}
 	_, _, err = resourceapply.ApplySecret(ctx, c.secretClient, recorder, secret)
 
-	return nil
+	return err
 }
 
 // Nodes change internally the whole time (e.g. due to IPs changing), we thus re-create the cert configs every sync loop.

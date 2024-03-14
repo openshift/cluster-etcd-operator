@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	corev1listers "k8s.io/client-go/listers/core/v1"
+	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 	"testing"
 
@@ -146,6 +147,14 @@ func TestClientCertsRemoval(t *testing.T) {
 	// test that the secrets actually differ and the cert was regenerated
 	require.NotEqual(t, oldClientCert.Data, secretMap[tlshelpers.EtcdClientCertSecretName])
 	require.NotEqual(t, oldMetricClientCert.Data, secretMap[tlshelpers.EtcdMetricsClientCertSecretName])
+}
+
+func TestSecretApplyFailureSyncError(t *testing.T) {
+	fakeKubeClient, controller, recorder := setupController(t, []runtime.Object{})
+	fakeKubeClient.PrependReactor("create", "secrets", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+		return true, nil, fmt.Errorf("apply failed")
+	})
+	require.Error(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
 }
 
 func allNodesAndSecrets(t *testing.T, fakeKubeClient *fake.Clientset) (*corev1.NodeList, map[string]corev1.Secret) {
