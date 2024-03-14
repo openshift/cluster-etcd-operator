@@ -1,11 +1,10 @@
-package render
+package etcdcertsigner
 
 import (
 	"context"
 	"fmt"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
@@ -20,9 +19,9 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-// createCertSecrets will run the etcdcertsigner.EtcdCertSignerController once and collect all respective certs created.
+// CreateCertSecrets will run the etcdcertsigner.EtcdCertSignerController once and collect all respective certs created.
 // The secrets will contain all signers, peer, serving and client certs. The configmaps contain all bundles.
-func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMap, error) {
+func CreateCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMap, error) {
 	var fakeObjs []runtime.Object
 	for _, node := range nodes {
 		fakeObjs = append(fakeObjs, node)
@@ -63,7 +62,7 @@ func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMa
 		return nil, nil, fmt.Errorf("could not parse master node labels: %w", err)
 	}
 
-	controller := etcdcertsigner.NewEtcdCertSignerController(
+	controller := NewEtcdCertSignerController(
 		health.NewMultiAlivenessChecker(),
 		fakeKubeClient,
 		fakeOperatorClient,
@@ -137,8 +136,8 @@ func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMa
 	return secrets, bundles, nil
 }
 
-func createBootstrapCertSecrets(hostName string, ipAddress string) ([]corev1.Secret, []corev1.ConfigMap, error) {
-	return createCertSecrets([]*corev1.Node{
+func CreateBootstrapCertSecrets(hostName string, ipAddress string) ([]corev1.Secret, []corev1.ConfigMap, error) {
+	return CreateCertSecrets([]*corev1.Node{
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: hostName, Labels: map[string]string{"node-role.kubernetes.io/master": ""}},
 			Status:     corev1.NodeStatus{Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: ipAddress}}},
