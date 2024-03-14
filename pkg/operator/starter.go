@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"fmt"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"os"
 	"regexp"
 	"time"
@@ -101,6 +102,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	masterNodeInformer := corev1informers.NewFilteredNodeInformer(kubeClient, 1*time.Hour, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, func(listOptions *metav1.ListOptions) {
 		listOptions.LabelSelector = masterNodeLabelSelectorString
 	})
+	masterNodeLister := corev1listers.NewNodeLister(masterNodeInformer.GetIndexer())
 	masterNodeLabelSelector, err := labels.Parse(masterNodeLabelSelectorString)
 	if err != nil {
 		return err
@@ -117,6 +119,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		"kube-system",
 	)
 	configInformers := configv1informers.NewSharedInformerFactory(configClient, 10*time.Minute)
+	clusterVersions := configInformers.Config().V1().ClusterVersions()
+	networkInformer := configInformers.Config().V1().Networks()
 	operatorClient, dynamicInformers, err := genericoperatorclient.NewStaticPodOperatorClient(controllerContext.KubeConfig, operatorv1.GroupVersion.WithResource("etcds"))
 	if err != nil {
 		return err
@@ -141,6 +145,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		configInformers,
 		operatorInformers,
 		kubeInformersForNamespaces,
+		masterNodeInformer,
+		masterNodeLister,
 		resourceSyncController,
 		controllerContext.EventRecorder,
 	)
@@ -162,6 +168,9 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		os.Getenv("IMAGE"),
 		operatorClient,
 		kubeInformersForNamespaces,
+		masterNodeInformer,
+		masterNodeLister,
+		masterNodeLabelSelector,
 		configInformers.Config().V1().Infrastructures(),
 		configInformers.Config().V1().Networks(),
 		controllerContext.EventRecorder,
@@ -181,7 +190,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Infrastructures(),
-		configInformers.Config().V1().Networks(),
+		networkInformer,
+		masterNodeInformer,
 		kubeClient,
 		envVarController,
 		controllerContext.EventRecorder,
@@ -289,6 +299,9 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		coreClient,
 		operatorClient,
 		kubeInformersForNamespaces,
+		masterNodeInformer,
+		masterNodeLister,
+		masterNodeLabelSelector,
 		controllerContext.EventRecorder,
 		quorumChecker,
 	)
@@ -377,7 +390,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeClient,
 		etcdClient,
 		kubeInformersForNamespaces,
-		configInformers.Config().V1().ClusterVersions(),
+		clusterVersions,
 		configInformers.Config().V1().ClusterOperators(),
 		controllerContext.EventRecorder,
 		os.Getenv("IMAGE"),
