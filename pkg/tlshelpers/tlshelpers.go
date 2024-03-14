@@ -70,8 +70,9 @@ func CreateSignerCertRotationBundleConfigMap(
 		Name:      EtcdSignerCaBundleConfigMapName,
 		Namespace: operatorclient.TargetNamespace,
 		AdditionalAnnotations: certrotation.AdditionalAnnotations{
-			JiraComponent: EtcdJiraComponentName,
-			Description:   "bundle for etcd signer certificate authorities",
+			JiraComponent:                    EtcdJiraComponentName,
+			Description:                      "bundle for etcd signer certificate authorities",
+			AutoRegenerateAfterOfflineExpiry: "",
 		},
 		Informer:      cmInformer,
 		Lister:        cmLister,
@@ -90,8 +91,9 @@ func CreateMetricsSignerCertRotationBundleConfigMap(
 		Name:      EtcdMetricsSignerCaBundleConfigMapName,
 		Namespace: operatorclient.TargetNamespace,
 		AdditionalAnnotations: certrotation.AdditionalAnnotations{
-			JiraComponent: EtcdJiraComponentName,
-			Description:   "bundle for etcd metrics signer certificate authorities",
+			JiraComponent:                    EtcdJiraComponentName,
+			Description:                      "bundle for etcd metrics signer certificate authorities",
+			AutoRegenerateAfterOfflineExpiry: "",
 		},
 		Informer:      cmInformer,
 		Lister:        cmLister,
@@ -110,8 +112,9 @@ func CreateSignerCert(
 		Namespace: operatorclient.TargetNamespace,
 		Name:      EtcdSignerCertSecretName,
 		AdditionalAnnotations: certrotation.AdditionalAnnotations{
-			JiraComponent: EtcdJiraComponentName,
-			Description:   "etcd signer certificate authorities",
+			JiraComponent:                    EtcdJiraComponentName,
+			Description:                      "etcd signer certificate authorities",
+			AutoRegenerateAfterOfflineExpiry: "",
 		},
 		Validity: etcdCaCertValidity,
 		Refresh:  etcdCaCertValidityRefresh,
@@ -144,8 +147,9 @@ func CreateMetricsSignerCert(
 		Namespace: operatorclient.TargetNamespace,
 		Name:      EtcdMetricsSignerCertSecretName,
 		AdditionalAnnotations: certrotation.AdditionalAnnotations{
-			JiraComponent: EtcdJiraComponentName,
-			Description:   "etcd metrics signer certificate authorities",
+			JiraComponent:                    EtcdJiraComponentName,
+			Description:                      "etcd metrics signer certificate authorities",
+			AutoRegenerateAfterOfflineExpiry: "",
 		},
 		Validity: etcdCaCertValidity,
 		Refresh:  etcdCaCertValidityRefresh,
@@ -213,14 +217,16 @@ func createCertForNode(description, secretName string, node *corev1.Node,
 	}
 	hostNames := getServerHostNames(ipAddresses)
 
-	creator := &certrotation.ServingRotation{
-		Hostnames: func() []string {
-			return hostNames
-		},
-		CertificateExtensionFn: []crypto.CertificateExtensionFunc{
-			func(certificate *x509.Certificate) error {
-				certificate.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth}
-				return nil
+	creator := &CARotatingTargetCertCreator{
+		&certrotation.ServingRotation{
+			Hostnames: func() []string {
+				return hostNames
+			},
+			CertificateExtensionFn: []crypto.CertificateExtensionFunc{
+				func(certificate *x509.Certificate) error {
+					certificate.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth}
+					return nil
+				},
 			},
 		},
 	}
@@ -229,8 +235,9 @@ func createCertForNode(description, secretName string, node *corev1.Node,
 		Namespace: operatorclient.TargetNamespace,
 		Name:      secretName,
 		AdditionalAnnotations: certrotation.AdditionalAnnotations{
-			JiraComponent: EtcdJiraComponentName,
-			Description:   description,
+			JiraComponent:                    EtcdJiraComponentName,
+			Description:                      description,
+			AutoRegenerateAfterOfflineExpiry: "",
 		},
 		Validity:    etcdCertValidity,
 		Refresh:     etcdCertValidityRefresh,
@@ -248,10 +255,12 @@ func CreateMetricsClientCert(
 	secretLister corev1listers.SecretLister,
 	secretGetter corev1client.SecretsGetter,
 	recorder events.Recorder) certrotation.RotatedSelfSignedCertKeySecret {
-	creator := &certrotation.ClientRotation{
-		UserInfo: &user.DefaultInfo{
-			Name:   "etcd-metric",
-			Groups: []string{"system:etcd", "etcd-metric"},
+	creator := &CARotatingTargetCertCreator{
+		&certrotation.ClientRotation{
+			UserInfo: &user.DefaultInfo{
+				Name:   "etcd-metric",
+				Groups: []string{"system:etcd", "etcd-metric"},
+			},
 		},
 	}
 
@@ -259,8 +268,9 @@ func CreateMetricsClientCert(
 		Namespace: operatorclient.TargetNamespace,
 		Name:      EtcdMetricsClientCertSecretName,
 		AdditionalAnnotations: certrotation.AdditionalAnnotations{
-			JiraComponent: EtcdJiraComponentName,
-			Description:   "etcd metrics client certificate",
+			JiraComponent:                    EtcdJiraComponentName,
+			Description:                      "etcd metrics client certificate",
+			AutoRegenerateAfterOfflineExpiry: "",
 		},
 		Validity:    etcdCertValidity,
 		Refresh:     etcdCertValidityRefresh,
@@ -278,10 +288,12 @@ func CreateEtcdClientCert(
 	secretLister corev1listers.SecretLister,
 	secretGetter corev1client.SecretsGetter,
 	recorder events.Recorder) certrotation.RotatedSelfSignedCertKeySecret {
-	creator := &certrotation.ClientRotation{
-		UserInfo: &user.DefaultInfo{
-			Name:   "etcd-client",
-			Groups: []string{"system:etcd", "etcd-client"},
+	creator := &CARotatingTargetCertCreator{
+		&certrotation.ClientRotation{
+			UserInfo: &user.DefaultInfo{
+				Name:   "etcd-client",
+				Groups: []string{"system:etcd", "etcd-client"},
+			},
 		},
 	}
 
@@ -289,8 +301,9 @@ func CreateEtcdClientCert(
 		Namespace: operatorclient.TargetNamespace,
 		Name:      EtcdClientCertSecretName,
 		AdditionalAnnotations: certrotation.AdditionalAnnotations{
-			JiraComponent: EtcdJiraComponentName,
-			Description:   "etcd client certificate",
+			JiraComponent:                    EtcdJiraComponentName,
+			Description:                      "etcd client certificate",
+			AutoRegenerateAfterOfflineExpiry: "",
 		},
 		Validity:    etcdCertValidity,
 		Refresh:     etcdCertValidityRefresh,
