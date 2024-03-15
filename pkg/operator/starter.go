@@ -152,6 +152,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	clusterVersions := configInformers.Config().V1().ClusterVersions()
 	networkInformer := configInformers.Config().V1().Networks()
 	jobsInformer := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs().Informer()
+	configMapInformer := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps()
 
 	versionRecorder := status.NewVersionGetter()
 	clusterOperator, err := configClient.ConfigV1().ClusterOperators().Get(ctx, "etcd", metav1.GetOptions{})
@@ -180,7 +181,10 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	}
 
 	etcdClient := etcdcli.NewEtcdClient(
-		kubeInformersForNamespaces,
+		masterNodeInformer,
+		masterNodeLister,
+		masterNodeLabelSelector,
+		configMapInformer,
 		networkInformer,
 		controllerContext.EventRecorder)
 
