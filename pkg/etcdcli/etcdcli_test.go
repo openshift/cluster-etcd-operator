@@ -3,6 +3,7 @@ package etcdcli
 import (
 	"fmt"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
+	"k8s.io/apimachinery/pkg/labels"
 	"testing"
 
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
@@ -95,8 +96,12 @@ func TestEndpointFunc(t *testing.T) {
 				}
 			}
 
+			nodeSelector, err := labels.Parse("node-role.kubernetes.io/master")
+			require.NoError(t, err)
+
 			endpoints, err := endpoints(
 				corev1listers.NewNodeLister(indexer),
+				nodeSelector,
 				corev1listers.NewConfigMapLister(indexer),
 				configv1listers.NewNetworkLister(indexer),
 				syncTrue, syncTrue, syncTrue,

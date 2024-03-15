@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
+	v1 "k8s.io/client-go/informers/core/v1"
 	"net"
 	"net/url"
 	"os"
@@ -15,7 +16,6 @@ import (
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/pkg/v3/logutil"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
@@ -43,9 +43,10 @@ const (
 )
 
 type etcdClientGetter struct {
-	nodeLister       corev1listers.NodeLister
-	configmapsLister corev1listers.ConfigMapLister
-	networkLister    configv1listers.NetworkLister
+	masterNodeLister        corev1listers.NodeLister
+	masterNodeLabelSelector labels.Selector
+	configmapsLister        corev1listers.ConfigMapLister
+	networkLister           configv1listers.NetworkLister
 
 	nodeListerSynced       cache.InformerSynced
 	configmapsListerSynced cache.InformerSynced
@@ -56,19 +57,26 @@ type etcdClientGetter struct {
 	clientPool *EtcdClientPool
 }
 
-func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkInformer configv1informers.NetworkInformer, eventRecorder events.Recorder) EtcdClient {
+func NewEtcdClient(
+	masterNodeInformer cache.SharedIndexInformer,
+	masterNodeLister corev1listers.NodeLister,
+	masterNodeLabelSelector labels.Selector,
+	configMapInformer v1.ConfigMapInformer,
+	networkInformer configv1informers.NetworkInformer,
+	eventRecorder events.Recorder) EtcdClient {
 	g := &etcdClientGetter{
-		nodeLister:             kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
-		configmapsLister:       kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister(),
-		networkLister:          networkInformer.Lister(),
-		nodeListerSynced:       kubeInformers.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
-		configmapsListerSynced: kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer().HasSynced,
-		networkListerSynced:    networkInformer.Informer().HasSynced,
-		eventRecorder:          eventRecorder.WithComponentSuffix("etcd-client"),
+		masterNodeLister:        masterNodeLister,
+		masterNodeLabelSelector: masterNodeLabelSelector,
+		configmapsLister:        configMapInformer.Lister(),
+		networkLister:           networkInformer.Lister(),
+		nodeListerSynced:        masterNodeInformer.HasSynced,
+		configmapsListerSynced:  configMapInformer.Informer().HasSynced,
+		networkListerSynced:     networkInformer.Informer().HasSynced,
+		eventRecorder:           eventRecorder.WithComponentSuffix("etcd-client"),
 	}
 
 	endpointFunc := func() ([]string, error) {
-		return endpoints(g.nodeLister, g.configmapsLister, g.networkLister,
+		return endpoints(g.masterNodeLister, g.masterNodeLabelSelector, g.configmapsLister, g.networkLister,
 			g.nodeListerSynced, g.configmapsListerSynced, g.networkListerSynced)
 	}
 	newFunc := func() (*clientv3.Client, error) {
@@ -473,6 +481,7 @@ func (g *etcdClientGetter) Defragment(ctx context.Context, member *etcdserverpb.
 }
 
 func endpoints(nodeLister corev1listers.NodeLister,
+	masterNodeLabelSelector labels.Selector,
 	configmapsLister corev1listers.ConfigMapLister,
 	networkLister configv1listers.NetworkLister,
 	nodeListerSynced cache.InformerSynced,
@@ -501,7 +510,7 @@ func endpoints(nodeLister corev1listers.NodeLister,
 			return nil, fmt.Errorf("failed to list cluster network: %w", err)
 		}
 
-		nodes, err := nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
+		nodes, err := nodeLister.List(masterNodeLabelSelector)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list control plane nodes: %w", err)
 		}
