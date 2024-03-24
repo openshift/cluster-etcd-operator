@@ -1043,8 +1043,6 @@ spec:
           #!/bin/sh
           echo -n "Fixing etcd log permissions."
           chmod 0700 /var/log/etcd && touch /var/log/etcd/etcd-health-probe.log && chmod 0600 /var/log/etcd/*
-      securityContext:
-        privileged: true
       resources:
         requests:
           memory: 50Mi
@@ -1085,8 +1083,6 @@ spec:
         requests:
           memory: 60Mi
           cpu: 10m
-      securityContext:
-        privileged: true
       env:
 ${COMPUTED_ENV_VARS}
       - name: NODE_IP
@@ -1111,8 +1107,6 @@ ${COMPUTED_ENV_VARS}
         requests:
           memory: 60Mi
           cpu: 10m
-      securityContext:
-        privileged: true
       volumeMounts:
         - mountPath: /etc/kubernetes/static-pod-resources
           name: resource-dir
@@ -1241,8 +1235,6 @@ ${COMPUTED_ENV_VARS}
       periodSeconds: 10
       successThreshold: 1
       failureThreshold: 18
-    securityContext:
-      privileged: true
     volumeMounts:
       - mountPath: /etc/kubernetes/manifests
         name: static-pod-dir
@@ -1285,8 +1277,6 @@ ${COMPUTED_ENV_VARS}
       requests:
         memory: 200Mi
         cpu: 40m
-    securityContext:
-      privileged: true
     volumeMounts:
       - mountPath: /etc/kubernetes/static-pod-resources
         name: resource-dir
@@ -1313,8 +1303,6 @@ ${COMPUTED_ENV_VARS}
           --client-cert-file=$(ETCDCTL_CERT) \
           --client-key-file=$(ETCDCTL_KEY) \
           --client-cacert-file=$(ETCDCTL_CACERT)
-    securityContext:
-      privileged: true
     ports:
     - containerPort: 9980
       name: readyz
