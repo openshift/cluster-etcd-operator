@@ -20,9 +20,9 @@ type CheckingSyncWrapper struct {
 
 func (r *CheckingSyncWrapper) Sync(ctx context.Context, controllerContext factory.SyncContext) error {
 	err := r.syncFunc(ctx, controllerContext)
-	if err == nil {
-		atomic.StoreInt64(&r.lastSuccessfulRun, time.Now().UnixMilli())
-	}
+	// we store the time regardless of success of the sync because some controllers error out when they have unhealthy members,
+	// whereas we actually want to detect deadlocks - which would entirely block the sync from returning.
+	atomic.StoreInt64(&r.lastSuccessfulRun, time.Now().UnixMilli())
 	return err
 }
 
