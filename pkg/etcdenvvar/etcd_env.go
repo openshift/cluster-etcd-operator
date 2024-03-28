@@ -2,6 +2,8 @@ package etcdenvvar
 
 import (
 	"fmt"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"net"
 	"runtime"
 	"sort"
@@ -11,7 +13,6 @@ import (
 	"github.com/ghodss/yaml"
 	v1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
-	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
@@ -25,7 +26,9 @@ type envVarContext struct {
 	spec   operatorv1.StaticPodOperatorSpec
 	status operatorv1.StaticPodOperatorStatus
 
-	nodeLister           corev1listers.NodeLister
+	masterNodeLister        corev1listers.NodeLister
+	masterNodeLabelSelector labels.Selector
+
 	infrastructureLister configv1listers.InfrastructureLister
 	networkLister        configv1listers.NetworkLister
 	configmapLister      corev1listers.ConfigMapLister
@@ -162,7 +165,7 @@ func getEscapedIPAddress(envVarContext envVarContext) (map[string]string, error)
 
 	ret := map[string]string{}
 	for _, nodeInfo := range envVarContext.status.NodeStatuses {
-		node, err := envVarContext.nodeLister.Get(nodeInfo.NodeName)
+		node, err := envVarContext.masterNodeLister.Get(nodeInfo.NodeName)
 		if err != nil {
 			return nil, err
 		}
@@ -190,7 +193,7 @@ func getEtcdURLHost(envVarContext envVarContext) (map[string]string, error) {
 	}
 
 	for _, nodeInfo := range envVarContext.status.NodeStatuses {
-		node, err := envVarContext.nodeLister.Get(nodeInfo.NodeName)
+		node, err := envVarContext.masterNodeLister.Get(nodeInfo.NodeName)
 		if err != nil {
 			return nil, err
 		}
