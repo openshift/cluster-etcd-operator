@@ -11,7 +11,7 @@ COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/cluster-e
 COPY manifests/ /manifests
 
 # Operator CRD
-COPY vendor/github.com/openshift/api/operator/v1/0000_12_etcd-operator_01_config.crd.yaml /manifests
+COPY vendor/github.com/openshift/api/operator/v1/0000_12_etcd-operator_01_config-Default.crd.yaml /manifests
 
 # Backup related CRDs
 COPY vendor/github.com/openshift/api/operator/v1alpha1/0000_10_01_etcdbackup-TechPreviewNoUpgrade.crd.yaml /manifests
@@ -19,5 +19,6 @@ COPY vendor/github.com/openshift/api/config/v1alpha1/0000_10_config-operator_01_
 
 # Hardware Speed related CRDs
 COPY vendor/github.com/openshift/api/operator/v1/0000_12_etcd-operator_01_config-TechPreviewNoUpgrade.crd.yaml /manifests
+COPY vendor/github.com/openshift/api/operator/v1/0000_12_etcd-operator_01_config-CustomNoUpgrade.crd.yaml /manifests
 
 LABEL io.openshift.release.operator true
