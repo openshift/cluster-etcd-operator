@@ -119,10 +119,11 @@ func CreateSignerCert(
 		Validity: etcdCaCertValidity,
 		Refresh:  etcdCaCertValidityRefresh,
 
-		Informer:      secretInformer,
-		Lister:        secretLister,
-		Client:        secretGetter,
-		EventRecorder: recorder,
+		Informer:            secretInformer,
+		Lister:              secretLister,
+		Client:              secretGetter,
+		EventRecorder:       recorder,
+		UseSecretUpdateOnly: true,
 	}
 }
 
@@ -154,10 +155,11 @@ func CreateMetricsSignerCert(
 		Validity: etcdCaCertValidity,
 		Refresh:  etcdCaCertValidityRefresh,
 
-		Informer:      secretInformer,
-		Lister:        secretLister,
-		Client:        secretGetter,
-		EventRecorder: recorder,
+		Informer:            secretInformer,
+		Lister:              secretLister,
+		Client:              secretGetter,
+		EventRecorder:       recorder,
+		UseSecretUpdateOnly: true,
 	}
 }
 
@@ -243,10 +245,11 @@ func createCertForNode(description, secretName string, node *corev1.Node,
 		Refresh:     etcdCertValidityRefresh,
 		CertCreator: creator,
 
-		Informer:      secretInformer,
-		Lister:        secretLister,
-		Client:        secretGetter,
-		EventRecorder: recorder,
+		Informer:            secretInformer,
+		Lister:              secretLister,
+		Client:              secretGetter,
+		EventRecorder:       recorder,
+		UseSecretUpdateOnly: true,
 	}, nil
 }
 
@@ -276,10 +279,11 @@ func CreateMetricsClientCert(
 		Refresh:     etcdCertValidityRefresh,
 		CertCreator: creator,
 
-		Informer:      secretInformer,
-		Lister:        secretLister,
-		Client:        secretGetter,
-		EventRecorder: recorder,
+		Informer:            secretInformer,
+		Lister:              secretLister,
+		Client:              secretGetter,
+		EventRecorder:       recorder,
+		UseSecretUpdateOnly: true,
 	}
 }
 
@@ -309,10 +313,11 @@ func CreateEtcdClientCert(
 		Refresh:     etcdCertValidityRefresh,
 		CertCreator: creator,
 
-		Informer:      secretInformer,
-		Lister:        secretLister,
-		Client:        secretGetter,
-		EventRecorder: recorder,
+		Informer:            secretInformer,
+		Lister:              secretLister,
+		Client:              secretGetter,
+		EventRecorder:       recorder,
+		UseSecretUpdateOnly: true,
 	}
 }
 
