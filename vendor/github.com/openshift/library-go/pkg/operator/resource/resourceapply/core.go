@@ -84,7 +84,15 @@ func ApplyConfigMap(ctx context.Context, client coreclientv1.ConfigMapsGetter, r
 
 // ApplySecret merges objectmeta, requires data
 func ApplySecret(ctx context.Context, client coreclientv1.SecretsGetter, recorder events.Recorder, required *corev1.Secret) (*corev1.Secret, bool, error) {
-	return ApplySecretImproved(ctx, client, recorder, required, noCache)
+	return applySecretImproved(ctx, client, recorder, required, noCache, false)
+}
+
+// ApplySecretDoNotUse is depreated and will be removed
+// Deprecated: DO NOT USE, it is intended as a short term hack for a very specific use case,
+// and it works in tandem with a particular carry patch applied to the openshift kube-apiserver.
+// Use ApplySecret instead.
+func ApplySecretDoNotUse(ctx context.Context, client coreclientv1.SecretsGetter, recorder events.Recorder, required *corev1.Secret) (*corev1.Secret, bool, error) {
+	return applySecretImproved(ctx, client, recorder, required, noCache, true)
 }
 
 // ApplyNamespace merges objectmeta, does not worry about anything else
@@ -356,6 +364,10 @@ func ApplyConfigMapImproved(ctx context.Context, client coreclientv1.ConfigMapsG
 
 // ApplySecret merges objectmeta, requires data
 func ApplySecretImproved(ctx context.Context, client coreclientv1.SecretsGetter, recorder events.Recorder, requiredInput *corev1.Secret, cache ResourceCache) (*corev1.Secret, bool, error) {
+	return applySecretImproved(ctx, client, recorder, requiredInput, cache, false)
+}
+
+func applySecretImproved(ctx context.Context, client coreclientv1.SecretsGetter, recorder events.Recorder, requiredInput *corev1.Secret, cache ResourceCache, updateOnly bool) (*corev1.Secret, bool, error) {
 	// copy the stringData to data.  Error on a data content conflict inside required.  This is usually a bug.
 
 	existing, err := client.Secrets(requiredInput.Namespace).Get(ctx, requiredInput.Name, metav1.GetOptions{})
@@ -435,6 +447,12 @@ func ApplySecretImproved(ctx context.Context, client coreclientv1.SecretsGetter,
 	 * https://github.com/kubernetes/kubernetes/blob/98e65951dccfd40d3b4f31949c2ab8df5912d93e/pkg/apis/core/validation/validation.go#L5048
 	 * We need to explicitly opt for delete+create in that case.
 	 */
+	if updateOnly {
+		actual, err = client.Secrets(required.Namespace).Update(ctx, existingCopy, metav1.UpdateOptions{})
+		reportUpdateEvent(recorder, existingCopy, err)
+		return actual, err == nil, err
+	}
+
 	if existingCopy.Type == existing.Type {
 		actual, err = client.Secrets(required.Namespace).Update(ctx, existingCopy, metav1.UpdateOptions{})
 		reportUpdateEvent(recorder, existingCopy, err)
