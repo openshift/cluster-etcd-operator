@@ -148,15 +148,6 @@ func NewEtcdCertSignerController(
 }
 
 func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
-	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
-	if err != nil {
-		return fmt.Errorf("EtcdCertSignerController can't evaluate whether quorum is safe: %w", err)
-	}
-
-	if !safe {
-		return fmt.Errorf("skipping EtcdCertSignerController reconciliation due to insufficient quorum")
-	}
-
 	if err := c.syncAllMasterCertificates(ctx, syncCtx.Recorder()); err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdCertSignerControllerDegraded",
@@ -283,6 +274,15 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(ctx context.Context
 		},
 		Type: corev1.SecretTypeOpaque,
 		Data: allCerts,
+	}
+	
+	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
+	if err != nil {
+		return fmt.Errorf("EtcdCertSignerController can't evaluate whether quorum is safe: %w", err)
+	}
+
+	if !safe {
+		return fmt.Errorf("skipping EtcdCertSignerController reconciliation due to insufficient quorum")
 	}
 	_, _, err = resourceapply.ApplySecret(ctx, c.secretClient, recorder, secret)
 
