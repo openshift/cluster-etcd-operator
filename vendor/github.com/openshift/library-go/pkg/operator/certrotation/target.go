@@ -68,6 +68,12 @@ type RotatedSelfSignedCertKeySecret struct {
 	Lister        corev1listers.SecretLister
 	Client        corev1client.SecretsGetter
 	EventRecorder events.Recorder
+
+	// Deprecated: DO NOT eanble, it is intended as a short term hack for a very specific use case,
+	// and it works in tandem with a particular carry patch applied to the openshift kube-apiserver.
+	// we will remove this when we migrate all of the affected secret
+	// objects to their intended type: https://issues.redhat.com/browse/API-1800
+	UseSecretUpdateOnly bool
 }
 
 type TargetCertCreator interface {
@@ -107,10 +113,15 @@ func (c RotatedSelfSignedCertKeySecret) EnsureTargetCertKeyPair(ctx context.Cont
 		}
 	}
 
+	applyFn := resourceapply.ApplySecret
+	if c.UseSecretUpdateOnly {
+		applyFn = resourceapply.ApplySecretDoNotUse
+	}
+
 	// apply necessary metadata (possibly via delete+recreate) if secret exists
 	// this is done before content update to prevent unexpected rollouts
 	if ensureMetadataUpdate(targetCertKeyPairSecret, c.Owner, c.AdditionalAnnotations) && ensureSecretTLSTypeSet(targetCertKeyPairSecret) {
-		actualTargetCertKeyPairSecret, _, err := resourceapply.ApplySecret(ctx, c.Client, c.EventRecorder, targetCertKeyPairSecret)
+		actualTargetCertKeyPairSecret, _, err := applyFn(ctx, c.Client, c.EventRecorder, targetCertKeyPairSecret)
 		if err != nil {
 			return nil, err
 		}
@@ -125,7 +136,7 @@ func (c RotatedSelfSignedCertKeySecret) EnsureTargetCertKeyPair(ctx context.Cont
 
 		LabelAsManagedSecret(targetCertKeyPairSecret, CertificateTypeTarget)
 
-		actualTargetCertKeyPairSecret, _, err := resourceapply.ApplySecret(ctx, c.Client, c.EventRecorder, targetCertKeyPairSecret)
+		actualTargetCertKeyPairSecret, _, err := applyFn(ctx, c.Client, c.EventRecorder, targetCertKeyPairSecret)
 		if err != nil {
 			return nil, err
 		}

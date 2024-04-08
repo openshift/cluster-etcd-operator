@@ -133,6 +133,7 @@ func assertBundleCorrectness(t *testing.T, secrets []corev1.Secret, bundles []co
 			return bytes.Compare(bundleCerts[i].Raw, bundleCerts[j].Raw) < 0
 		})
 
+		require.Equal(t, len(signers), len(bundleCerts))
 		require.Equal(t, signers, bundleCerts)
 	}
 }

@@ -243,6 +243,7 @@ func WithNodeStatusAtCurrentRevision(current int32) func(*operatorv1.StaticPodOp
 	return func(status *operatorv1.StaticPodOperatorStatus) {
 		status.NodeStatuses = append(status.NodeStatuses, operatorv1.NodeStatus{
 			CurrentRevision: current,
+			TargetRevision:  current,
 		})
 	}
 }
@@ -252,6 +253,7 @@ func WithNodeStatusAtCurrentRevisionNamed(current int32, name string) func(*oper
 		status.NodeStatuses = append(status.NodeStatuses, operatorv1.NodeStatus{
 			NodeName:        name,
 			CurrentRevision: current,
+			TargetRevision:  current,
 		})
 	}
 }
