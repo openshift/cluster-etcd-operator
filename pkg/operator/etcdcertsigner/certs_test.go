@@ -1,4 +1,4 @@
-package render
+package etcdcertsigner
 
 import (
 	"bytes"
@@ -19,7 +19,7 @@ import (
 
 func TestCertSingleNode(t *testing.T) {
 	node := u.FakeNode("cp-1", u.WithMasterLabel(), u.WithNodeInternalIP("192.168.2.1"))
-	secrets, bundles, err := createCertSecrets([]*corev1.Node{node})
+	secrets, bundles, err := CreateCertSecrets([]*corev1.Node{node})
 	require.NoError(t, err)
 
 	require.Equal(t, 11, len(secrets))
@@ -36,7 +36,7 @@ func TestCertsMultiNode(t *testing.T) {
 		u.FakeNode("cp-2", u.WithMasterLabel(), u.WithNodeInternalIP("192.168.2.2")),
 		u.FakeNode("cp-3", u.WithMasterLabel(), u.WithNodeInternalIP("192.168.2.3")),
 	}
-	secrets, bundles, err := createCertSecrets(nodes)
+	secrets, bundles, err := CreateCertSecrets(nodes)
 	require.NoError(t, err)
 
 	require.Equal(t, 17, len(secrets))

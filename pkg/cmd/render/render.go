@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
 	"io"
 	corev1 "k8s.io/api/core/v1"
 	"net"
@@ -268,7 +269,7 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 			base64.StdEncoding.WithPadding(base64.NoPadding).EncodeToString([]byte(templateData.BootstrapIP)), templateData.BootstrapIP)
 	}
 
-	certs, bundles, err := createBootstrapCertSecrets(templateData.Hostname, templateData.BootstrapIP)
+	certs, bundles, err := etcdcertsigner.CreateBootstrapCertSecrets(templateData.Hostname, templateData.BootstrapIP)
 	if err != nil {
 		return nil, err
 	}
