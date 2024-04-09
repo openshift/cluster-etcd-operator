@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
+	"time"
+
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/operator/certrotation"
@@ -14,7 +16,6 @@ import (
 	corev1informers "k8s.io/client-go/informers/core/v1"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
-	"time"
 
 	"github.com/openshift/library-go/pkg/crypto"
 	"go.etcd.io/etcd/client/pkg/v3/tlsutil"
@@ -22,10 +23,13 @@ import (
 )
 
 const (
+	// Given that clusters can be shutdown/hibernated for a max of ~9 months
+	// this validity period leaves enough cushion to not have the
+	// certs expire during shutdown/hibernation in the worst case.
 	etcdCertValidity          = 3 * 365 * 24 * time.Hour
-	etcdCertValidityRefresh   = 2.5 * 365 * 24 * time.Hour
+	etcdCertValidityRefresh   = 2.2 * 365 * 24 * time.Hour
 	etcdCaCertValidity        = 5 * 365 * 24 * time.Hour
-	etcdCaCertValidityRefresh = 4.5 * 365 * 24 * time.Hour
+	etcdCaCertValidityRefresh = 4.2 * 365 * 24 * time.Hour
 
 	EtcdJiraComponentName                  = "etcd"
 	EtcdSignerCertSecretName               = "etcd-signer"
