@@ -76,7 +76,8 @@ func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMa
 		kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
 		nodeSelector,
 		recorder,
-		&ceohelpers.AlwaysSafeQuorumChecker{})
+		&ceohelpers.AlwaysSafeQuorumChecker{},
+		true)
 
 	stopChan := make(chan struct{})
 	defer close(stopChan)

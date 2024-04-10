@@ -379,7 +379,9 @@ func setupControllerWithEtcd(
 		kubeInformerForNamespace.InformersFor("").Core().V1().Nodes().Lister(),
 		nodeSelector,
 		recorder,
-		quorumChecker)
+		quorumChecker,
+		// TODO(thomas): we need to test the revision gating now too :-)
+		true)
 
 	stopChan := make(chan struct{})
 	t.Cleanup(func() {

@@ -365,6 +365,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		masterNodeLabelSelector,
 		controllerContext.EventRecorder,
 		quorumChecker,
+		false,
 	)
 
 	etcdCertCleanerController := etcdcertcleaner.NewEtcdCertCleanerController(
