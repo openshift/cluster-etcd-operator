@@ -33,6 +33,8 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 )
 
+const unsetRotationRevision = int32(-1)
+
 type certConfig struct {
 	// configmap name: "etcd-ca-bundle"
 	signerCaBundle certrotation.CABundleConfigMap
@@ -236,6 +238,7 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(ctx context.Context
 		return err
 	}
 
+	// we want to avoid regenerating the leafs in the same revision as the signer rotates, unless we force it - i.e. during bootstrap render
 	if !c.forceLeafRegen && (signers.signerRotated || (currentRevision <= lastSignerRotationRev && currentRevision <= lastMetricsSignerRotationRev)) {
 		klog.Infof("EtcdCertSignerController skipping leaf certificate regeneration: just_rotated=%v, current_rev=%d, last_signer_rota=%d, last_metric_signer_rota=%d",
 			signers.signerRotated, currentRevision, lastSignerRotationRev, lastMetricsSignerRotationRev)
@@ -326,7 +329,8 @@ func (c *EtcdCertSignerController) maybeRotateSigners(ctx context.Context, lastS
 
 	// the revision is only set when we have successfully created a new signer certificate, so for the first time we have to
 	// bundle the existing signer and use it to sign any leaf certificates
-	if lastSignerRotationRev == 0 {
+
+	if lastSignerRotationRev == unsetRotationRevision {
 		signerCaPair, err := tlshelpers.ReadConfigSignerCert(ctx, c.secretClient)
 		if err != nil {
 			return nil, err
@@ -367,7 +371,7 @@ func (c *EtcdCertSignerController) maybeRotateSigners(ctx context.Context, lastS
 
 	}
 
-	if lastMetricsSignerRotationRev == 0 {
+	if lastMetricsSignerRotationRev == unsetRotationRevision {
 		metricsSignerCaPair, err := tlshelpers.ReadConfigMetricsSignerCert(ctx, c.secretClient)
 		if err != nil {
 			return nil, err
@@ -460,15 +464,18 @@ func (c *EtcdCertSignerController) updateCertRevision(ctx context.Context, certS
 	return err
 }
 
+// TODO(thomas): this is not covered by unit tests at all
 func getCertRotationRevision(status *operatorv1.StaticPodOperatorStatus, certSecretName string) (int32, error) {
 	condition := v1helpers.FindOperatorCondition(status.Conditions, fmt.Sprintf("EtcdCertSignerController-rotation-rev-%s", certSecretName))
 	if condition == nil {
-		return int32(0), nil
+		// returning -1 here to denote there is nothing set on the operator just yet
+		return unsetRotationRevision, nil
 	}
 
 	rev, err := strconv.ParseInt(condition.Message, 10, 32)
 	if err != nil {
-		return 0, fmt.Errorf("could not parse condition message for cert secret [%s], msg=[%s]: %w", certSecretName, condition.Message, err)
+		// returning -2 here for safety, as we have some special handling for the first bootstrap revision 0
+		return -2, fmt.Errorf("could not parse condition message for cert secret [%s], msg=[%s]: %w", certSecretName, condition.Message, err)
 	}
 	return int32(rev), nil
 }
