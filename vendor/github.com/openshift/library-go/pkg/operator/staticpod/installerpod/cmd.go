@@ -13,7 +13,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/wait"
 
-	"github.com/blang/semver/v4"
+	"github.com/blang/semver"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"

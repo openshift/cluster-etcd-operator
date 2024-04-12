@@ -122,7 +122,7 @@ func (c CertRotationController) Sync(ctx context.Context, syncCtx factory.SyncCo
 }
 
 func (c CertRotationController) SyncWorker(ctx context.Context) error {
-	signingCertKeyPair, _, err := c.RotatedSigningCASecret.EnsureSigningCertKeyPair(ctx)
+	signingCertKeyPair, err := c.RotatedSigningCASecret.EnsureSigningCertKeyPair(ctx)
 	if err != nil {
 		return err
 	}
