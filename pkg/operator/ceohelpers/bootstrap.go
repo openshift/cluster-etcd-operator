@@ -3,15 +3,15 @@ package ceohelpers
 import (
 	"context"
 	"fmt"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/library-go/pkg/operator/bootstrap"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	"k8s.io/apimachinery/pkg/api/errors"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
 // BootstrapScalingStrategy describes the invariants which will be enforced when
@@ -161,25 +161,11 @@ func CheckSafeToScaleCluster(
 }
 
 // IsBootstrapComplete returns true if bootstrap has completed.
-func IsBootstrapComplete(configMapClient corev1listers.ConfigMapLister, staticPodClient v1helpers.StaticPodOperatorClient, etcdClient etcdcli.AllMemberLister) (bool, error) {
-	// do a cheap check to see if the annotation is already gone.
-	// check to see if bootstrapping is complete
-	bootstrapFinishedConfigMap, err := configMapClient.ConfigMaps("kube-system").Get("bootstrap")
-	if err != nil {
-		if errors.IsNotFound(err) {
-			// If the resource was deleted (e.g. by an admin) after bootstrap is actually complete,
-			// this is a false negative.
-			klog.V(4).Infof("bootstrap considered incomplete because the kube-system/bootstrap configmap wasn't found")
-			return false, nil
-		}
-		// We don't know, give up quickly.
-		return false, fmt.Errorf("failed to get configmap %s/%s: %w", "kube-system", "bootstrap", err)
-	}
-
-	if status, ok := bootstrapFinishedConfigMap.Data["status"]; !ok || status != "complete" {
-		// do nothing, not torn down
-		klog.V(4).Infof("bootstrap considered incomplete because status is %q", status)
-		return false, nil
+func IsBootstrapComplete(configmapLister corev1listers.ConfigMapLister, staticPodClient v1helpers.StaticPodOperatorClient, etcdClient etcdcli.AllMemberLister) (bool, error) {
+	// do a cheap check to see if the installer has marked
+	// bootstrapping as done by creating the configmap first.
+	if isBootstrapComplete, err := bootstrap.IsBootstrapComplete(configmapLister); !isBootstrapComplete || err != nil {
+		return isBootstrapComplete, err
 	}
 
 	// now run check to stability of revisions

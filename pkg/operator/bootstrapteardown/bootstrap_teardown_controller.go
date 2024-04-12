@@ -9,9 +9,10 @@ import (
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/library-go/pkg/controller/factory"
+	"github.com/openshift/library-go/pkg/operator/bootstrap"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
+
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 
@@ -137,22 +138,9 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, safeT
 	}
 
 	// check to see if bootstrapping is complete
-	cmNamespace := "kube-system"
-	cmName := "bootstrap"
-	bootstrapFinishedConfigMap, err := c.configmapLister.ConfigMaps(cmNamespace).Get(cmName)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			klog.Warningf("cluster-bootstrap is not yet finished - ConfigMap '%s/%s' not found", cmNamespace, cmName)
-			return nil
-		}
-		return fmt.Errorf("error while getting bootstrap configmap: %w", err)
+	if isBootstrapComplete, err := bootstrap.IsBootstrapComplete(c.configmapLister); !isBootstrapComplete || err != nil {
+		return err
 	}
-
-	if bootstrapFinishedConfigMap.Data["status"] != "complete" {
-		klog.Warningf("cluster-bootstrap is not yet finished, bootstrap status=[%s]", bootstrapFinishedConfigMap.Data["status"])
-		return nil
-	}
-
 	klog.Warningf("Removing bootstrap member [%x]", bootstrapID)
 
 	// this is ugly until bootkube is updated, but we want to be sure that bootkube has time to be waiting to watch the condition coming back.
