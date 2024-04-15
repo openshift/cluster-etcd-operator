@@ -86,8 +86,11 @@ func NewEtcdCertSignerController(
 ) factory.Controller {
 	eventRecorder = eventRecorder.WithComponentSuffix("etcd-cert-signer-controller")
 	cmInformer := kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps()
-	cmLister := cmInformer.Lister()
-	cmGetter := v1helpers.CachedConfigMapGetter(kubeClient.CoreV1(), kubeInformers)
+	cmGetter := kubeClient.CoreV1()
+	cmLister := &tlshelpers.ConfigMapClientLister{
+		ConfigMapClient: cmGetter.ConfigMaps(operatorclient.TargetNamespace),
+		Namespace:       operatorclient.TargetNamespace,
+	}
 	signerCaBundle := tlshelpers.CreateSignerCertRotationBundleConfigMap(
 		cmInformer,
 		cmLister,
@@ -103,9 +106,11 @@ func NewEtcdCertSignerController(
 	)
 
 	secretInformer := kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets()
-	secretLister := secretInformer.Lister()
-	secretClient := v1helpers.CachedSecretGetter(kubeClient.CoreV1(), kubeInformers)
-
+	secretClient := kubeClient.CoreV1()
+	secretLister := &tlshelpers.SecretClientLister{
+		SecretClient: secretClient.Secrets(operatorclient.TargetNamespace),
+		Namespace:    operatorclient.TargetNamespace,
+	}
 	signerCert := tlshelpers.CreateSignerCert(secretInformer, secretLister, secretClient, eventRecorder)
 	etcdClientCert := tlshelpers.CreateEtcdClientCert(secretInformer, secretLister, secretClient, eventRecorder)
 
@@ -196,7 +201,7 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(ctx context.Context
 	}
 
 	// TODO(thomas): we need to transition that new signer as a replacement for the above - today we only bundle it
-	newSignerCaPair, err := c.certConfig.signerCert.EnsureSigningCertKeyPair(ctx)
+	newSignerCaPair, _, err := c.certConfig.signerCert.EnsureSigningCertKeyPair(ctx)
 	if err != nil {
 		return fmt.Errorf("error on ensuring etcd-signer cert: %w", err)
 	}
@@ -222,7 +227,7 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(ctx context.Context
 	}
 
 	// TODO(thomas): we need to transition that new signer as a replacement for the above - today we only bundle it
-	newMetricsSignerCaPair, err := c.certConfig.metricsSignerCert.EnsureSigningCertKeyPair(ctx)
+	newMetricsSignerCaPair, _, err := c.certConfig.metricsSignerCert.EnsureSigningCertKeyPair(ctx)
 	if err != nil {
 		return fmt.Errorf("error on ensuring metrics-signer cert: %w", err)
 	}

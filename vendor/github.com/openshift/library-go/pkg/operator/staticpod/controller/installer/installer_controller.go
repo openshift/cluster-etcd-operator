@@ -586,7 +586,7 @@ func setAvailableProgressingNodeInstallerFailingConditions(newStatus *operatorv1
 
 	revisionStrings := []string{}
 	var nodesStr string
-	for _, currentRevision := range Int32KeySet(counts).List() {
+	for _, currentRevision := range sets.List(sets.KeySet(counts)) {
 		count := counts[currentRevision]
 		nodesStr = "node is"
 		if count > 1 {
@@ -633,7 +633,7 @@ func setAvailableProgressingNodeInstallerFailingConditions(newStatus *operatorv1
 
 	if len(failing) > 0 {
 		failingStrings := []string{}
-		for _, failingRevision := range Int32KeySet(failing).List() {
+		for _, failingRevision := range sets.List(sets.KeySet(failing)) {
 			errorStrings := failing[failingRevision]
 			failingStrings = append(failingStrings, fmt.Sprintf("%d nodes are failing on revision %d:\n%v", failingCount[failingRevision], failingRevision, strings.Join(errorStrings, "\n")))
 		}
@@ -948,7 +948,7 @@ func getInstallerPodImageFromEnv() string {
 }
 
 func (c InstallerController) ensureSecretRevisionResourcesExists(ctx context.Context, secrets []revision.RevisionResource, latestRevisionNumber int32) error {
-	missing := sets.NewString()
+	missing := sets.New[string]()
 	for _, secret := range secrets {
 		if secret.Optional {
 			continue
@@ -965,11 +965,11 @@ func (c InstallerController) ensureSecretRevisionResourcesExists(ctx context.Con
 	if missing.Len() == 0 {
 		return nil
 	}
-	return fmt.Errorf("secrets: %s", strings.Join(missing.List(), ","))
+	return fmt.Errorf("secrets: %s", strings.Join(sets.List(missing), ","))
 }
 
 func (c InstallerController) ensureConfigMapRevisionResourcesExists(ctx context.Context, configs []revision.RevisionResource, latestRevisionNumber int32) error {
-	missing := sets.NewString()
+	missing := sets.New[string]()
 	for _, config := range configs {
 		if config.Optional {
 			continue
@@ -986,11 +986,11 @@ func (c InstallerController) ensureConfigMapRevisionResourcesExists(ctx context.
 	if missing.Len() == 0 {
 		return nil
 	}
-	return fmt.Errorf("configmaps: %s", strings.Join(missing.List(), ","))
+	return fmt.Errorf("configmaps: %s", strings.Join(sets.List(missing), ","))
 }
 
 func (c InstallerController) ensureUnrevisionedSecretResourcesExists(ctx context.Context, secrets []UnrevisionedResource) error {
-	missing := sets.NewString()
+	missing := sets.New[string]()
 	for _, secret := range secrets {
 		if secret.Optional {
 			continue
@@ -1006,11 +1006,11 @@ func (c InstallerController) ensureUnrevisionedSecretResourcesExists(ctx context
 	if missing.Len() == 0 {
 		return nil
 	}
-	return fmt.Errorf("secrets: %s", strings.Join(missing.List(), ","))
+	return fmt.Errorf("secrets: %s", strings.Join(sets.List(missing), ","))
 }
 
 func (c InstallerController) ensureUnrevisionedConfigMapResourcesExists(ctx context.Context, configs []UnrevisionedResource) error {
-	missing := sets.NewString()
+	missing := sets.New[string]()
 	for _, config := range configs {
 		if config.Optional {
 			continue
@@ -1026,7 +1026,7 @@ func (c InstallerController) ensureUnrevisionedConfigMapResourcesExists(ctx cont
 	if missing.Len() == 0 {
 		return nil
 	}
-	return fmt.Errorf("configmaps: %s", strings.Join(missing.List(), ","))
+	return fmt.Errorf("configmaps: %s", strings.Join(sets.List(missing), ","))
 }
 
 // ensureRequiredResourcesExist makes sure that all non-optional resources are ready or it will return an error to trigger a requeue so that we try again.

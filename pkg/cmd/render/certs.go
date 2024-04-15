@@ -48,12 +48,12 @@ func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMa
 	// create openshift-config signers first, they will remain in openshift-config and are needed for the controller sync loop to function
 	// TODO(thomas): once the rotation process is in place, we can remove that special case
 	etcdSignerCert := tlshelpers.CreateBootstrapSignerCert(secretInformer, secretLister, secretClient, recorder)
-	_, err := etcdSignerCert.EnsureSigningCertKeyPair(context.Background())
+	_, _, err := etcdSignerCert.EnsureSigningCertKeyPair(context.Background())
 	if err != nil {
 		return nil, nil, fmt.Errorf("could not create etcd signer certificate: %w", err)
 	}
 	metricsSignerCert := tlshelpers.CreateBootstrapMetricsSignerCert(secretInformer, secretLister, secretClient, recorder)
-	_, err = metricsSignerCert.EnsureSigningCertKeyPair(context.Background())
+	_, _, err = metricsSignerCert.EnsureSigningCertKeyPair(context.Background())
 	if err != nil {
 		return nil, nil, fmt.Errorf("could not create etcd metrics signer certificate: %w", err)
 	}

@@ -2,7 +2,6 @@ package certsyncpod
 
 import (
 	"context"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -111,7 +110,7 @@ func (c *CertSyncController) sync(ctx context.Context, syncCtx factory.SyncConte
 		for filename := range configMap.Data {
 			fullFilename := filepath.Join(contentDir, filename)
 
-			existingContent, err := ioutil.ReadFile(fullFilename)
+			existingContent, err := os.ReadFile(fullFilename)
 			if err != nil {
 				if !os.IsNotExist(err) {
 					klog.Error(err)
@@ -216,7 +215,7 @@ func (c *CertSyncController) sync(ctx context.Context, syncCtx factory.SyncConte
 		for filename := range secret.Data {
 			fullFilename := filepath.Join(contentDir, filename)
 
-			existingContent, err := ioutil.ReadFile(fullFilename)
+			existingContent, err := os.ReadFile(fullFilename)
 			if err != nil {
 				if !os.IsNotExist(err) {
 					klog.Error(err)

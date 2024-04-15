@@ -80,7 +80,7 @@ func (c *StaticPodStateController) sync(ctx context.Context, syncCtx factory.Syn
 
 	errs := []error{}
 	failingErrorCount := 0
-	images := sets.NewString()
+	images := sets.New[string]()
 	podsFound := false
 	for _, node := range originalOperatorStatus.NodeStatuses {
 		pod, err := c.podsGetter.Pods(c.targetNamespace).Get(ctx, mirrorPodNameForNode(c.staticPodName, node.NodeName), metav1.GetOptions{})
@@ -138,11 +138,11 @@ func (c *StaticPodStateController) sync(ctx context.Context, syncCtx factory.Syn
 		}
 
 	case len(images) > 1:
-		syncCtx.Recorder().Eventf("MultipleVersions", "multiple versions found, probably in transition: %v", strings.Join(images.List(), ","))
+		syncCtx.Recorder().Eventf("MultipleVersions", "multiple versions found, probably in transition: %v", strings.Join(sets.List(images), ","))
 
 	default: // we have one image
 		// if have a consistent image and if that image the same as the current operand image, then we can update the version to reflect our new version
-		if images.List()[0] == status.ImageForOperandFromEnv() {
+		if images.UnsortedList()[0] == status.ImageForOperandFromEnv() {
 			c.versionRecorder.SetVersion(
 				c.operandName,
 				status.VersionForOperandFromEnv(),
