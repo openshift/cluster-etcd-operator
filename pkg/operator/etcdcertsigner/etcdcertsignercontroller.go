@@ -21,7 +21,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
@@ -243,29 +242,24 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(ctx context.Context
 	}
 
 	allCerts := map[string][]byte{}
-	var errs []error
 	for _, cfg := range nodeCfgs {
 		secret, err := cfg.peerCert.EnsureTargetCertKeyPair(ctx, signerCaPair, signerBundle)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("error on peer cert sync: %w", err))
+			return fmt.Errorf("error on peer cert sync for node %s: %w", cfg.node.Name, err)
 		}
 		allCerts = addCertSecretToMap(allCerts, secret)
 
 		secret, err = cfg.servingCert.EnsureTargetCertKeyPair(ctx, signerCaPair, signerBundle)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("error on serving cert sync: %w", err))
+			return fmt.Errorf("error on serving cert sync for node %s: %w", cfg.node.Name, err)
 		}
 		allCerts = addCertSecretToMap(allCerts, secret)
 
 		secret, err = cfg.metricsCert.EnsureTargetCertKeyPair(ctx, metricsSignerCaPair, metricsSignerBundle)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("error on serving metrics cert sync: %w", err))
+			return fmt.Errorf("error on serving metrics cert sync for node %s: %w", cfg.node.Name, err)
 		}
 		allCerts = addCertSecretToMap(allCerts, secret)
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("encountered errors while syncing some certificates: %w", utilerrors.NewAggregate(errs))
 	}
 
 	// Write a secret that aggregates all certs for all nodes for the static
