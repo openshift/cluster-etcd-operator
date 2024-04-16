@@ -344,6 +344,7 @@ github.com/openshift/library-go/pkg/controller/fileobserver
 github.com/openshift/library-go/pkg/controller/manager
 github.com/openshift/library-go/pkg/crypto
 github.com/openshift/library-go/pkg/network
+github.com/openshift/library-go/pkg/operator/bootstrap
 github.com/openshift/library-go/pkg/operator/certrotation
 github.com/openshift/library-go/pkg/operator/condition
 github.com/openshift/library-go/pkg/operator/configobserver
