@@ -95,7 +95,7 @@ func defaultedLimits(operatorSpec *operatorv1.StaticPodOperatorSpec) (int, int) 
 // - don't prune a node's CurrentRevision and the spec.succeededRevisionLimit - 1 revisions before it.
 // - don't prune a node's TargetRevision and the spec.failedRevisionLimit - 1 revisions before it.
 // - don't prune a node's LastFailedRevision and the spec.failedRevisionLimit - 1 revisions before it.
-func (c *PruneController) revisionsToKeep(status *operatorv1.StaticPodOperatorStatus, failedLimit, succeededLimit int) (all bool, keep sets.Int32) {
+func (c *PruneController) revisionsToKeep(status *operatorv1.StaticPodOperatorStatus, failedLimit, succeededLimit int) (all bool, keep sets.Set[int32]) {
 	// find oldest where we are sure it cannot fail anymore (i.e. = currentRevision
 	var oldestSucceeded int32 = maxInt32
 	for _, ns := range status.NodeStatuses {
@@ -110,7 +110,7 @@ func (c *PruneController) revisionsToKeep(status *operatorv1.StaticPodOperatorSt
 		return true, nil
 	}
 
-	keep = sets.Int32{}
+	keep = sets.Set[int32]{}
 	if oldestSucceeded < status.LatestAvailableRevision {
 		keep.Insert(int32RangeBelowOrEqual(status.LatestAvailableRevision, maxLimit(failedLimit, succeededLimit))...) // max because we don't know about failure or success
 	} // otherwise all nodes are on LatestAvailableRevision already. Then there is no fail potential.
@@ -127,7 +127,7 @@ func (c *PruneController) revisionsToKeep(status *operatorv1.StaticPodOperatorSt
 		}
 	}
 
-	if keep.Len() > 0 && keep.List()[0] == 1 && keep.List()[keep.Len()-1] == status.LatestAvailableRevision {
+	if keep.Len() > 0 && sets.List(keep)[0] == 1 && sets.List(keep)[keep.Len()-1] == status.LatestAvailableRevision {
 		return true, nil
 	}
 
@@ -157,7 +157,7 @@ func (c *PruneController) pruneDiskResources(ctx context.Context, recorder event
 	return nil
 }
 
-func (c *PruneController) pruneAPIResources(ctx context.Context, toKeep sets.Int32, latestAvailableRevision int32) error {
+func (c *PruneController) pruneAPIResources(ctx context.Context, toKeep sets.Set[int32], latestAvailableRevision int32) error {
 	statusConfigMaps, err := c.configMapGetter.ConfigMaps(c.targetNamespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return err
@@ -271,7 +271,7 @@ func (c *PruneController) sync(ctx context.Context, syncCtx factory.SyncContext)
 	}
 
 	errs := []error{}
-	if diskErr := c.pruneDiskResources(ctx, syncCtx.Recorder(), operatorStatus, toKeep.List()); diskErr != nil {
+	if diskErr := c.pruneDiskResources(ctx, syncCtx.Recorder(), operatorStatus, sets.List(toKeep)); diskErr != nil {
 		errs = append(errs, diskErr)
 	}
 	if apiErr := c.pruneAPIResources(ctx, toKeep, operatorStatus.LatestAvailableRevision); apiErr != nil {

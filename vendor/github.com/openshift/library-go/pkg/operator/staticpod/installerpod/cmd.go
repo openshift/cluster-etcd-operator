@@ -3,7 +3,6 @@ package installerpod
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path"
 	"sort"
@@ -13,7 +12,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/wait"
 
-	"github.com/blang/semver"
+	"github.com/blang/semver/v4"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -214,7 +213,7 @@ func (o *InstallOptions) kubeletVersion(ctx context.Context) (string, error) {
 }
 
 func (o *InstallOptions) copySecretsAndConfigMaps(ctx context.Context, resourceDir string,
-	secretNames, optionalSecretNames, configNames, optionalConfigNames sets.String, prefixed bool) error {
+	secretNames, optionalSecretNames, configNames, optionalConfigNames sets.Set[string], prefixed bool) error {
 	klog.Infof("Creating target resource directory %q ...", resourceDir)
 	if err := os.MkdirAll(resourceDir, 0755); err != nil && !os.IsExist(err) {
 		return err
@@ -225,7 +224,7 @@ func (o *InstallOptions) copySecretsAndConfigMaps(ctx context.Context, resourceD
 	// We return when all "required" secrets are gathered, optional secrets are not checked.
 	klog.Infof("Getting secrets ...")
 	secrets := []*corev1.Secret{}
-	for _, name := range append(secretNames.List(), optionalSecretNames.List()...) {
+	for _, name := range append(sets.List(secretNames), sets.List(optionalSecretNames)...) {
 		secret, err := o.getSecretWithRetry(ctx, name, optionalSecretNames.Has(name))
 		if err != nil {
 			return err
@@ -238,7 +237,7 @@ func (o *InstallOptions) copySecretsAndConfigMaps(ctx context.Context, resourceD
 
 	klog.Infof("Getting config maps ...")
 	configs := []*corev1.ConfigMap{}
-	for _, name := range append(configNames.List(), optionalConfigNames.List()...) {
+	for _, name := range append(sets.List(configNames), sets.List(optionalConfigNames)...) {
 		config, err := o.getConfigMapWithRetry(ctx, name, optionalConfigNames.Has(name))
 		if err != nil {
 			return err
@@ -292,10 +291,10 @@ func (o *InstallOptions) copyContent(ctx context.Context) error {
 		return err
 	}
 
-	secretPrefixes := sets.NewString()
-	optionalSecretPrefixes := sets.NewString()
-	configPrefixes := sets.NewString()
-	optionalConfigPrefixes := sets.NewString()
+	secretPrefixes := sets.New[string]()
+	optionalSecretPrefixes := sets.New[string]()
+	configPrefixes := sets.New[string]()
+	optionalConfigPrefixes := sets.New[string]()
 	for _, prefix := range o.SecretNamePrefixes {
 		secretPrefixes.Insert(o.nameFor(prefix))
 	}
@@ -315,10 +314,10 @@ func (o *InstallOptions) copyContent(ctx context.Context) error {
 	// Copy the current state of the certs as we see them.  This primes us once and allows a kube-apiserver to start once
 	if len(o.CertDir) > 0 {
 		if err := o.copySecretsAndConfigMaps(ctx, o.CertDir,
-			sets.NewString(o.CertSecretNames...),
-			sets.NewString(o.OptionalCertSecretNamePrefixes...),
-			sets.NewString(o.CertConfigMapNamePrefixes...),
-			sets.NewString(o.OptionalCertConfigMapNamePrefixes...),
+			sets.New(o.CertSecretNames...),
+			sets.New(o.OptionalCertSecretNamePrefixes...),
+			sets.New(o.CertConfigMapNamePrefixes...),
+			sets.New(o.OptionalCertConfigMapNamePrefixes...),
 			false,
 		); err != nil {
 			return err
@@ -605,7 +604,7 @@ func (o *InstallOptions) writePod(rawPodBytes []byte, manifestFileName, resource
 	// Write secrets, config maps and pod to disk
 	// This does not need timeout, instead we should fail hard when we are not able to write.
 	klog.Infof("Writing pod manifest %q ...", path.Join(resourceDir, manifestFileName))
-	if err := ioutil.WriteFile(path.Join(resourceDir, manifestFileName), []byte(finalPodBytes), 0600); err != nil {
+	if err := os.WriteFile(path.Join(resourceDir, manifestFileName), []byte(finalPodBytes), 0600); err != nil {
 		return err
 	}
 
@@ -616,7 +615,7 @@ func (o *InstallOptions) writePod(rawPodBytes []byte, manifestFileName, resource
 		return err
 	}
 	klog.Infof("Writing static pod manifest %q ...\n%s", path.Join(o.PodManifestDir, manifestFileName), finalPodBytes)
-	if err := ioutil.WriteFile(path.Join(o.PodManifestDir, manifestFileName), []byte(finalPodBytes), 0600); err != nil {
+	if err := os.WriteFile(path.Join(o.PodManifestDir, manifestFileName), []byte(finalPodBytes), 0600); err != nil {
 		return err
 	}
 	return nil

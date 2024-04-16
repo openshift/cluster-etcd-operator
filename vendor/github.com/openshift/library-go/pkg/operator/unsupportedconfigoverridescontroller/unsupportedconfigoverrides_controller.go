@@ -58,7 +58,7 @@ func (c *UnsupportedConfigOverridesController) sync(ctx context.Context, syncCtx
 		// try to get a prettier message
 		keys, err := keysSetInUnsupportedConfig(operatorSpec.UnsupportedConfigOverrides.Raw)
 		if err == nil {
-			cond.Message = fmt.Sprintf("setting: %v", keys.List())
+			cond.Message = fmt.Sprintf("setting: %v", sets.List(keys))
 
 		}
 	}
@@ -69,7 +69,7 @@ func (c *UnsupportedConfigOverridesController) sync(ctx context.Context, syncCtx
 	return nil
 }
 
-func keysSetInUnsupportedConfig(configYaml []byte) (sets.String, error) {
+func keysSetInUnsupportedConfig(configYaml []byte) (sets.Set[string], error) {
 	configJson, err := kyaml.ToJSON(configYaml)
 	if err != nil {
 		klog.Warning(err)
@@ -85,8 +85,8 @@ func keysSetInUnsupportedConfig(configYaml []byte) (sets.String, error) {
 	return keysSetInUnsupportedConfigMap([]string{}, config), nil
 }
 
-func keysSetInUnsupportedConfigMap(pathSoFar []string, config map[string]interface{}) sets.String {
-	ret := sets.String{}
+func keysSetInUnsupportedConfigMap(pathSoFar []string, config map[string]interface{}) sets.Set[string] {
+	ret := sets.Set[string]{}
 
 	for k, v := range config {
 		currPath := append(pathSoFar, k)
@@ -104,8 +104,8 @@ func keysSetInUnsupportedConfigMap(pathSoFar []string, config map[string]interfa
 	return ret
 }
 
-func keysSetInUnsupportedConfigSlice(pathSoFar []string, config []interface{}) sets.String {
-	ret := sets.String{}
+func keysSetInUnsupportedConfigSlice(pathSoFar []string, config []interface{}) sets.Set[string] {
+	ret := sets.Set[string]{}
 
 	for index, v := range config {
 		currPath := append(pathSoFar, fmt.Sprintf("%d", index))

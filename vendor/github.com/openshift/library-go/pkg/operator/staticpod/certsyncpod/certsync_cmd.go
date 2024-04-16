@@ -2,7 +2,6 @@ package certsyncpod
 
 import (
 	"context"
-	"io/ioutil"
 	"os"
 	"time"
 
@@ -75,7 +74,7 @@ func (o *CertSyncControllerOptions) Run() error {
 		<-stopCh
 	}()
 
-	initialContent, _ := ioutil.ReadFile(o.KubeConfigFile)
+	initialContent, _ := os.ReadFile(o.KubeConfigFile)
 	observer.AddReactor(fileobserver.TerminateOnChangeReactor(func() {
 		close(stopCh)
 	}), map[string][]byte{o.KubeConfigFile: initialContent}, o.KubeConfigFile)

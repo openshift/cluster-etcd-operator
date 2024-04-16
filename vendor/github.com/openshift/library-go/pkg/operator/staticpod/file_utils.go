@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"io/ioutil"
 )
 
 func WriteFileAtomic(content []byte, filePerms os.FileMode, fullFilename string) error {
@@ -20,7 +18,7 @@ func WriteFileAtomic(content []byte, filePerms os.FileMode, fullFilename string)
 func writeTemporaryFile(content []byte, filePerms os.FileMode, fullFilename string) (string, error) {
 	contentDir := filepath.Dir(fullFilename)
 	filename := filepath.Base(fullFilename)
-	tmpfile, err := ioutil.TempFile(contentDir, fmt.Sprintf("%s.tmp", filename))
+	tmpfile, err := os.CreateTemp(contentDir, fmt.Sprintf("%s.tmp", filename))
 	if err != nil {
 		return "", err
 	}
