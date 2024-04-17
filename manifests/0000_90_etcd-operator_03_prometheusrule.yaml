@@ -93,7 +93,7 @@ spec:
         runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdDatabaseQuotaLowSpace.md
         summary: etcd cluster database is running full.
       expr: |
-        (last_over_time(etcd_mvcc_db_total_size_in_bytes[5m]) / last_over_time(etcd_server_quota_backend_bytes[5m]))*100 > 95
+        (last_over_time(etcd_mvcc_db_total_size_in_bytes{job=~".*etcd.*"}[5m]) / last_over_time(etcd_server_quota_backend_bytes{job=~".*etcd.*"}[5m]))*100 > 95
       for: 10m
       labels:
         severity: critical
@@ -102,7 +102,7 @@ spec:
         description: 'etcd cluster "{{ $labels.job }}": Predicting running out of disk space in the next four hours, based on write observations within the past four hours on etcd instance {{ $labels.instance }}, please check as it might be disruptive.'
         summary: etcd cluster database growing very fast.
       expr: |
-        predict_linear(etcd_mvcc_db_total_size_in_bytes[4h], 4*60*60) > etcd_server_quota_backend_bytes
+        predict_linear(etcd_mvcc_db_total_size_in_bytes{job=~".*etcd.*"}[4h], 4*60*60) > etcd_server_quota_backend_bytes{job=~".*etcd.*"}
       for: 10m
       labels:
         severity: warning
@@ -112,7 +112,7 @@ spec:
         runbook_url: https://etcd.io/docs/v3.5/op-guide/maintenance/#defragmentation
         summary: etcd database size in use is less than 50% of the actual allocated storage.
       expr: |
-        (last_over_time(etcd_mvcc_db_total_size_in_use_in_bytes[5m]) / last_over_time(etcd_mvcc_db_total_size_in_bytes[5m])) < 0.5 and etcd_mvcc_db_total_size_in_use_in_bytes > 104857600
+        (last_over_time(etcd_mvcc_db_total_size_in_use_in_bytes{job=~".*etcd.*"}[5m]) / last_over_time(etcd_mvcc_db_total_size_in_bytes{job=~".*etcd.*"}[5m])) < 0.5 and etcd_mvcc_db_total_size_in_use_in_bytes{job=~".*etcd.*"} > 104857600
       for: 10m
       labels:
         severity: warning
@@ -170,5 +170,22 @@ spec:
         summary: etcd is reporting that a majority of instances are unavailable.
       expr: sum(up{job="etcd"} == bool 1 and etcd_server_has_leader{job="etcd"} == bool 1) without (instance,pod) < ((count(up{job="etcd"}) without (instance,pod) + 1) / 2)
       for: 3m
+      labels:
+        severity: critical
+    - alert: etcdSignerCAExpirationWarning
+      annotations:
+        description: etcd is reporting the signer ca "{{ $labels.name }}" to have less than two years (({{ printf "%.f" $value }} days) of validity left.
+        summary: etcd signer ca is about to expire
+      expr: avg(openshift_etcd_operator_signer_expiration_days) by (name) < 730
+      for: 1h
+      labels:
+        severity: warning
+    - alert: etcdSignerCAExpirationCritical
+      annotations:
+        description: etcd is reporting the signer ca "{{ $labels.name }}" to have less than year  (({{ printf "%.f" $value }} days) of validity left.
+        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdSignerCAExpirationCritical.md
+        summary: etcd has critical signer ca expiration
+      expr: avg(openshift_etcd_operator_signer_expiration_days) by (name) < 365
+      for: 1h
       labels:
         severity: critical

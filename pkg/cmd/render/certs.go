@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/component-base/metrics"
 )
 
 // createCertSecrets will run the etcdcertsigner.EtcdCertSignerController once and collect all respective certs created.
@@ -72,7 +73,8 @@ func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMa
 		kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
 		nodeSelector,
 		recorder,
-		&ceohelpers.AlwaysSafeQuorumChecker{})
+		&ceohelpers.AlwaysSafeQuorumChecker{},
+		metrics.NewKubeRegistry())
 
 	stopChan := make(chan struct{})
 	defer close(stopChan)

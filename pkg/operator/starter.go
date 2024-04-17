@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertcleaner"
+	"k8s.io/component-base/metrics"
+	"k8s.io/component-base/metrics/legacyregistry"
 	"os"
 	"regexp"
 	"time"
@@ -365,6 +367,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		masterNodeLabelSelector,
 		controllerContext.EventRecorder,
 		quorumChecker,
+		legacyregistry.DefaultGatherer.(metrics.KubeRegistry),
 	)
 
 	etcdCertCleanerController := etcdcertcleaner.NewEtcdCertCleanerController(

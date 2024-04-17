@@ -22,6 +22,10 @@ import (
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/component-base/metrics"
+	"k8s.io/component-base/metrics/legacyregistry"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/openshift/library-go/pkg/crypto"
@@ -63,6 +67,7 @@ func TestSyncAllMasters(t *testing.T) {
 	assertNodeCerts(t, nodes, secretMap)
 	assertStaticPodAllCerts(t, nodes, secretMap)
 	assertClientCerts(t, secretMap)
+	assertExpirationMetric(t)
 }
 
 func TestNewNodeAdded(t *testing.T) {
@@ -214,6 +219,23 @@ func assertClientCerts(t *testing.T, secretMap map[string]corev1.Secret) {
 	require.Containsf(t, secretMap, tlshelpers.EtcdMetricsClientCertSecretName, "expected secret/%s to exist", tlshelpers.EtcdMetricsClientCertSecretName)
 }
 
+func assertExpirationMetric(t *testing.T) {
+	m, err := legacyregistry.DefaultGatherer.Gather()
+	require.NoError(t, err)
+	require.Equal(t, 1, len(m))
+
+	require.Equal(t, signerExpirationMetricName, m[0].GetName())
+	require.Equal(t, 2, len(m[0].Metric))
+	sort.SliceStable(m[0].Metric, func(i, j int) bool {
+		return strings.Compare(m[0].Metric[i].Label[0].GetValue(), m[0].Metric[j].Label[0].GetValue()) < 0
+	})
+	require.Equal(t, "metrics-signer-ca", m[0].Metric[0].Label[0].GetValue())
+	require.Equal(t, "signer-ca", m[0].Metric[1].Label[0].GetValue())
+	// newCASecret creates signers with 100 days of expiration, which we assert here
+	require.InEpsilon(t, float64(100), m[0].Metric[0].GetGauge().GetValue(), float64(1))
+	require.InEpsilon(t, float64(100), m[0].Metric[1].GetGauge().GetValue(), float64(1))
+}
+
 func checkCertNodeValidity(t *testing.T, node corev1.Node, certName, keyName string, secretData map[string][]byte) {
 	cfg, err := crypto.GetTLSCertificateConfigFromBytes(secretData[certName], secretData[keyName])
 	require.NoError(t, err)
@@ -319,6 +341,8 @@ func setupControllerWithEtcd(t *testing.T, objects []runtime.Object, etcdMembers
 	nodeSelector, err := labels.Parse("node-role.kubernetes.io/master")
 	require.NoError(t, err)
 
+	registry := metrics.NewKubeRegistry()
+	legacyregistry.DefaultGatherer = registry
 	controller := NewEtcdCertSignerController(
 		health.NewMultiAlivenessChecker(),
 		fakeKubeClient,
@@ -328,7 +352,8 @@ func setupControllerWithEtcd(t *testing.T, objects []runtime.Object, etcdMembers
 		kubeInformerForNamespace.InformersFor("").Core().V1().Nodes().Lister(),
 		nodeSelector,
 		recorder,
-		quorumChecker)
+		quorumChecker,
+		registry)
 
 	stopChan := make(chan struct{})
 	t.Cleanup(func() {
