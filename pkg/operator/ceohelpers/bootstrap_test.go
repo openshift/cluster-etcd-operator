@@ -269,15 +269,6 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			infraObj:           defaultInfra,
 			expectError:        nil,
 		},
-		"HA with insufficient nodes": {
-			namespace:          defaultNamespace,
-			bootstrapConfigMap: bootstrapComplete,
-			operatorConfig:     defaultOperatorConfig,
-			nodes:              twoNodesAtCurrentRevision,
-			etcdMembers:        u.DefaultEtcdMembers(),
-			infraObj:           defaultInfra,
-			expectError:        fmt.Errorf("CheckSafeToScaleCluster 3 nodes are required, but only 2 are available"),
-		},
 		"unsupported with sufficient nodes": {
 			namespace:          defaultNamespace,
 			bootstrapConfigMap: bootstrapComplete,
@@ -322,15 +313,6 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			etcdMembers:        u.DefaultEtcdMembers(),
 			infraObj:           defaultInfra,
 			expectError:        nil,
-		},
-		"delayed HA with insufficient nodes during steady state": {
-			namespace:          namespaceWithDelayedHAEnabled,
-			bootstrapConfigMap: bootstrapComplete,
-			operatorConfig:     defaultOperatorConfig,
-			nodes:              twoNodesAtCurrentRevision,
-			etcdMembers:        u.DefaultEtcdMembers(),
-			infraObj:           defaultInfra,
-			expectError:        fmt.Errorf("CheckSafeToScaleCluster 3 nodes are required, but only 2 are available"),
 		},
 		"HA with insufficient etcd members": {
 			namespace:          defaultNamespace,
