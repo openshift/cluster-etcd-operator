@@ -175,9 +175,7 @@ func TestNewDefragController(t *testing.T) {
 			}
 			controller := &DefragController{
 				operatorClient:       fakeOperatorClient,
-				memberLister:         fakeEtcdClient,
-				defragClient:         fakeEtcdClient,
-				statusClient:         fakeEtcdClient,
+				etcdClient:           fakeEtcdClient,
 				infrastructureLister: configv1listers.NewInfrastructureLister(indexer),
 				configmapLister:      corev1listers.NewConfigMapLister(indexer),
 				// to speed the tests up, in real life we use minDefragWaitDuration
@@ -334,9 +332,7 @@ func TestNewDefragControllerMultiSyncs(t *testing.T) {
 			}
 			controller := &DefragController{
 				operatorClient:       fakeOperatorClient,
-				memberLister:         fakeEtcdClient,
-				statusClient:         fakeEtcdClient,
-				defragClient:         fakeEtcdClient,
+				etcdClient:           fakeEtcdClient,
 				infrastructureLister: configv1listers.NewInfrastructureLister(indexer),
 				configmapLister:      corev1listers.NewConfigMapLister(indexer),
 				// to speed the tests up, in real life we use minDefragWaitDuration

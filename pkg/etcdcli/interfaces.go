@@ -31,13 +31,6 @@ type EtcdClient interface {
 	MemberUpdatePeerURL(ctx context.Context, id uint64, peerURL []string) error
 }
 
-type AllMemberLister interface {
-	MemberLister
-	HealthyMemberLister
-	UnhealthyMemberLister
-	MemberHealth
-}
-
 type Defragment interface {
 	Defragment(ctx context.Context, member *etcdserverpb.Member) (*clientv3.DefragmentResponse, error)
 }
