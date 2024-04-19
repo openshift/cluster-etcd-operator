@@ -1092,7 +1092,7 @@ ${COMPUTED_ENV_VARS}
       - name: NODE_IP
         valueFrom:
           fieldRef:
-            fieldPath: status.podIP
+            fieldPath: status.hostIP
     - name: etcd-resources-copy
       image: ${IMAGE}
       imagePullPolicy: IfNotPresent
