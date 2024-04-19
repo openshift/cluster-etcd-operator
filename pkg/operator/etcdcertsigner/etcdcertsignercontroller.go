@@ -3,10 +3,12 @@ package etcdcertsigner
 import (
 	"context"
 	"fmt"
+	"github.com/openshift/library-go/pkg/crypto"
 	corev1informers "k8s.io/client-go/informers/core/v1"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/component-base/metrics"
 	"strings"
 	"time"
 
@@ -27,6 +29,8 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 )
+
+const signerExpirationMetricName = "openshift_etcd_operator_signer_expiration_days"
 
 type certConfig struct {
 	// configmap name: "etcd-ca-bundle"
@@ -66,6 +70,9 @@ type EtcdCertSignerController struct {
 	quorumChecker      ceohelpers.QuorumChecker
 
 	certConfig *certConfig
+
+	// metrics
+	signerExpirationGauge *metrics.GaugeVec
 }
 
 // NewEtcdCertSignerController watches master nodes and maintains secrets for each master node, placing them in a single secret (NOT a tls secret)
@@ -82,6 +89,7 @@ func NewEtcdCertSignerController(
 	masterNodeSelector labels.Selector,
 	eventRecorder events.Recorder,
 	quorumChecker ceohelpers.QuorumChecker,
+	metricsRegistry metrics.KubeRegistry,
 ) factory.Controller {
 	eventRecorder = eventRecorder.WithComponentSuffix("etcd-cert-signer-controller")
 	cmInformer := kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps()
@@ -126,17 +134,24 @@ func NewEtcdCertSignerController(
 		metricsClientCert:     metricsClientCert,
 	}
 
+	signerExpirationGauge := metrics.NewGaugeVec(&metrics.GaugeOpts{
+		Name: signerExpirationMetricName,
+		Help: "Report observed days to expiration of a given signer certificate over time",
+	}, []string{"name"})
+	metricsRegistry.MustRegister(signerExpirationGauge)
+
 	c := &EtcdCertSignerController{
-		eventRecorder:      eventRecorder,
-		kubeClient:         kubeClient,
-		operatorClient:     operatorClient,
-		masterNodeLister:   masterNodeLister,
-		masterNodeSelector: masterNodeSelector,
-		secretInformer:     secretInformer,
-		secretLister:       secretLister,
-		secretClient:       secretClient,
-		quorumChecker:      quorumChecker,
-		certConfig:         certCfg,
+		eventRecorder:         eventRecorder,
+		kubeClient:            kubeClient,
+		operatorClient:        operatorClient,
+		masterNodeLister:      masterNodeLister,
+		masterNodeSelector:    masterNodeSelector,
+		secretInformer:        secretInformer,
+		secretLister:          secretLister,
+		secretClient:          secretClient,
+		quorumChecker:         quorumChecker,
+		certConfig:            certCfg,
+		signerExpirationGauge: signerExpirationGauge,
 	}
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
@@ -193,6 +208,8 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(ctx context.Context
 		return err
 	}
 
+	c.reportExpirationMetric(signerCaPair, "signer-ca")
+
 	// EnsureConfigMapCABundle is stateful w.r.t to the configmap it manages, so we can simply add it to the bundle before the new one
 	_, err = c.certConfig.signerCaBundle.EnsureConfigMapCABundle(ctx, signerCaPair)
 	if err != nil {
@@ -219,6 +236,8 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(ctx context.Context
 	if err != nil {
 		return err
 	}
+
+	c.reportExpirationMetric(metricsSignerCaPair, "metrics-signer-ca")
 
 	_, err = c.certConfig.metricsSignerCaBundle.EnsureConfigMapCABundle(ctx, metricsSignerCaPair)
 	if err != nil {
@@ -334,6 +353,12 @@ func (c *EtcdCertSignerController) createNodeCertConfigs() ([]*nodeCertConfigs, 
 	}
 
 	return cfgs, nil
+}
+
+func (c *EtcdCertSignerController) reportExpirationMetric(pair *crypto.CA, name string) {
+	expDate := pair.Config.Certs[0].NotAfter
+	daysUntil := expDate.Sub(time.Now()).Hours() / 24
+	c.signerExpirationGauge.WithLabelValues(name).Set(daysUntil)
 }
 
 func addCertSecretToMap(allCerts map[string][]byte, secret *corev1.Secret) map[string][]byte {
