@@ -1042,7 +1042,7 @@ spec:
         - |
           #!/bin/sh
           echo -n "Fixing etcd log permissions."
-          chmod 0700 /var/log/etcd && touch /var/log/etcd/etcd-health-probe.log && chmod 0600 /var/log/etcd/*
+          mkdir -p /var/log/etcd && chmod 0700 /var/log/etcd
       securityContext:
         privileged: true
       resources:
