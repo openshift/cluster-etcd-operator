@@ -2,28 +2,29 @@ package etcdenvvar
 
 import (
 	"fmt"
-	"github.com/openshift/cluster-etcd-operator/pkg/backendquotahelpers"
-	"k8s.io/apimachinery/pkg/labels"
 	"net"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 
-	"github.com/ghodss/yaml"
 	v1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
-	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/klog/v2"
-
 	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/backendquotahelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/hwspeedhelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
+	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
+	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/klog/v2"
+
+	"github.com/ghodss/yaml"
 )
 
 type envVarContext struct {

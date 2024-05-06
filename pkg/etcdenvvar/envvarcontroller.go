@@ -3,29 +3,29 @@ package etcdenvvar
 import (
 	"context"
 	"fmt"
-	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
-	"k8s.io/apimachinery/pkg/labels"
 	"reflect"
 	"sync"
 	"time"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
+	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
+	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
+	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+
+	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
-
-	operatorv1 "github.com/openshift/api/operator/v1"
-
-	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
-	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
 const workQueueKey = "key"

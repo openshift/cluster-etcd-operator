@@ -3,20 +3,20 @@ package etcdenvvar
 import (
 	"context"
 	"fmt"
-	"github.com/openshift/cluster-etcd-operator/pkg/backendquotahelpers"
-	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/backendquotahelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
+	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -24,7 +24,9 @@ import (
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 
-	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
+	"github.com/stretchr/testify/require"
+	
+	"gopkg.in/yaml.v3"
 )
 
 var (
