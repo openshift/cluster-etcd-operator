@@ -253,10 +253,11 @@ func getEtcdDBSize(envVarContext envVarContext) (map[string]string, error) {
 
 	backendQuotaGiB := int64(8)
 	enabled, err := backendquotahelpers.IsBackendQuotaFeatureGateEnabled(envVarContext.featureGateAccessor)
-	if err == nil && enabled {
-		if etcd.Spec.BackendQuotaGiB != 0 {
-			backendQuotaGiB = int64(etcd.Spec.BackendQuotaGiB)
-		}
+	if err != nil {
+		return nil, fmt.Errorf("failed check backend quota enabled: %w", err)
+	}
+	if enabled && etcd.Spec.BackendQuotaGiB != 0 {
+		backendQuotaGiB = int64(etcd.Spec.BackendQuotaGiB)
 	}
 
 	return map[string]string{

@@ -25,7 +25,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/stretchr/testify/require"
-	
+
 	"gopkg.in/yaml.v3"
 )
 

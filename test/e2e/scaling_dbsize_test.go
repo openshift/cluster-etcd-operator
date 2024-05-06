@@ -36,7 +36,7 @@ func TestEtcdDBScaling(t *testing.T) {
 	etcdCR, err = opClientSet.OperatorV1().Etcds().Update(context.Background(), etcdCR, metav1.UpdateOptions{})
 	require.NoError(t, err)
 
-	err = library.WaitForPodsToStabilizeOnTheSameRevision(t, etcdPodsClient, etcdLabelSelector, 3, 10*time.Second, 5*time.Second, 30*time.Minute)
+	err = library.WaitForPodsToStabilizeOnTheSameRevision(t, etcdPodsClient, etcdLabelSelector, 5, 1*time.Minute, 5*time.Second, 30*time.Minute)
 	require.NoError(t, err)
 
 	etcdPods, err := etcdPodsClient.List(context.Background(), metav1.ListOptions{LabelSelector: etcdLabelSelector})
