@@ -9,7 +9,7 @@ import (
 func TestConvertDBSize(t *testing.T) {
 	testCases := []struct {
 		name  string
-		input int32
+		input int64
 		exp   string
 	}{
 		{

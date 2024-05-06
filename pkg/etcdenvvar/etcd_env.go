@@ -2,6 +2,7 @@ package etcdenvvar
 
 import (
 	"fmt"
+	"github.com/openshift/cluster-etcd-operator/pkg/backendquotahelpers"
 	"k8s.io/apimachinery/pkg/labels"
 	"net"
 	"runtime"
@@ -249,15 +250,16 @@ func getEtcdDBSize(envVarContext envVarContext) (map[string]string, error) {
 		return nil, fmt.Errorf("failed to retrieve etcd CR: %v", err)
 	}
 
-	if etcd.Spec.BackendQuotaGiB == 0 {
-		return map[string]string{
-			"ETCD_QUOTA_BACKEND_BYTES": GibibytesToBytesString(8),
-		}, nil
+	backendQuotaGiB := int64(8)
+	enabled, err := backendquotahelpers.IsBackendQuotaFeatureGateEnabled(envVarContext.featureGateAccessor)
+	if err == nil && enabled {
+		if etcd.Spec.BackendQuotaGiB != 0 {
+			backendQuotaGiB = int64(etcd.Spec.BackendQuotaGiB)
+		}
 	}
 
-	etcdDBSize := etcd.Spec.BackendQuotaGiB
 	return map[string]string{
-		"ETCD_QUOTA_BACKEND_BYTES": GibibytesToBytesString(etcdDBSize),
+		"ETCD_QUOTA_BACKEND_BYTES": GibibytesToBytesString(backendQuotaGiB),
 	}, nil
 }
 
@@ -355,7 +357,7 @@ func getEtcdEndpoints(configmapLister corev1listers.ConfigMapLister, skipBootstr
 	return strings.Join(etcdURLs, ","), nil
 }
 
-func GibibytesToBytesString(dbSize int32) string {
-	etcdDBSize := int64(dbSize) * 1024 * 1024 * 1024
+func GibibytesToBytesString(dbSize int64) string {
+	etcdDBSize := dbSize * 1024 * 1024 * 1024
 	return strconv.FormatInt(etcdDBSize, 10)
 }

@@ -13,18 +13,7 @@ spec:
   priorityClassName: "system-cluster-critical"
   terminationGracePeriodSeconds: 3
   tolerations:
-    - key: node-role.kubernetes.io/master
-      effect: NoSchedule
-      operator: Exists
-    - key: node.kubernetes.io/not-ready
-      effect: NoExecute
-      operator: Exists
-    - key: node.kubernetes.io/unreachable
-      effect: NoExecute
-      operator: Exists
-    - key: node-role.kubernetes.io/etcd
-      operator: Exists
-      effect: NoSchedule
+    - operator: Exists
   containers:
     - name: guard
       image: # Value set by operator

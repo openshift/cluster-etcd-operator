@@ -240,6 +240,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		networkInformer,
 		controllerContext.EventRecorder,
 		etcdsInformer,
+		featureGateAccessor,
 	)
 
 	quorumChecker := ceohelpers.NewQuorumChecker(

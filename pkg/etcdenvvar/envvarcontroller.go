@@ -3,6 +3,7 @@ package etcdenvvar
 import (
 	"context"
 	"fmt"
+	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"k8s.io/apimachinery/pkg/labels"
 	"reflect"
 	"sync"
@@ -49,6 +50,7 @@ type EnvVarController struct {
 	masterNodeLister        corev1listers.NodeLister
 	masterNodeLabelSelector labels.Selector
 	etcdLister              operatorv1listers.EtcdLister
+	featureGateAccessor     featuregates.FeatureGateAccess
 
 	// queue only ever has one item, but it has nice error handling backoff/retry semantics
 	queue         workqueue.RateLimitingInterface
@@ -71,6 +73,7 @@ func NewEnvVarController(
 	networkInformer configv1informers.NetworkInformer,
 	eventRecorder events.Recorder,
 	etcdsInformer operatorv1informers.EtcdInformer,
+	featureGateAccessor featuregates.FeatureGateAccess,
 ) *EnvVarController {
 	c := &EnvVarController{
 		operatorClient:          operatorClient,
@@ -81,6 +84,7 @@ func NewEnvVarController(
 		masterNodeLabelSelector: masterNodeLabelSelector,
 		targetImagePullSpec:     targetImagePullSpec,
 		etcdLister:              etcdsInformer.Lister(),
+		featureGateAccessor:     featureGateAccessor,
 
 		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "EnvVarController"),
 		cachesToSync: []cache.InformerSynced{
@@ -159,6 +163,7 @@ func (c *EnvVarController) checkEnvVars() error {
 		infrastructureLister:    c.infrastructureLister,
 		networkLister:           c.networkLister,
 		etcdLister:              c.etcdLister,
+		featureGateAccessor:     c.featureGateAccessor,
 	})
 	if err != nil {
 		return err

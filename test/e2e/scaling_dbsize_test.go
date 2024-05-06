@@ -2,36 +2,32 @@ package e2e
 
 import (
 	"context"
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"testing"
 	"time"
 
-	v1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
-
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/test/e2e/framework"
+	"github.com/openshift/library-go/test/library"
+
+	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/stretchr/testify/require"
 )
 
 const (
-	operatorNamespace      = "openshift-etcd-operator"
-	operatorDeploymentName = "etcd-operator"
-	operatorUpdatedImage   = "quay.io/melbeher/ceo-1900"
-	operatorImageKey       = "OPERATOR_IMAGE"
-	operandNameSpace       = "openshift-etcd"
-	etcdCRName             = "cluster"
-	etcdLabelSelector      = "app=etcd"
-	quotaEnvName           = "ETCD_QUOTA_BACKEND_BYTES"
-	etcdPodName            = "etcd"
+	operandNameSpace  = "openshift-etcd"
+	etcdCRName        = "cluster"
+	etcdLabelSelector = "app=etcd"
+	quotaEnvName      = "ETCD_QUOTA_BACKEND_BYTES"
+	etcdPodName       = "etcd"
 )
 
 func TestEtcdDBScaling(t *testing.T) {
 	dbSize32GB := int32(32)
 	opClientSet := framework.NewOperatorClient(t)
 	clientSet := framework.NewClientSet("")
+	etcdPodsClient := clientSet.CoreV1Interface.Pods(operandNameSpace)
 
 	etcdCR, err := opClientSet.OperatorV1().Etcds().Get(context.Background(), etcdCRName, metav1.GetOptions{})
 	require.NoError(t, err)
@@ -40,30 +36,18 @@ func TestEtcdDBScaling(t *testing.T) {
 	etcdCR, err = opClientSet.OperatorV1().Etcds().Update(context.Background(), etcdCR, metav1.UpdateOptions{})
 	require.NoError(t, err)
 
-	var etcdPod v1.Pod
-	// wait for new etcd pods to be rolled out
-	err = wait.PollUntilContextTimeout(context.Background(), time.Second, 10*time.Minute, true, func(ctx context.Context) (done bool, err error) {
-		etcdPods, err := clientSet.Pods(operandNameSpace).List(context.Background(), metav1.ListOptions{LabelSelector: etcdLabelSelector})
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				return false, nil
-			}
-			return false, err
-		}
-
-		for _, pod := range etcdPods.Items {
-			if pod.Status.Phase == v1.PodRunning && time.Now().Sub(pod.CreationTimestamp.Time) < 1*time.Minute {
-				return true, nil
-			}
-		}
-		return false, nil
-	})
+	err = library.WaitForPodsToStabilizeOnTheSameRevision(t, etcdPodsClient, etcdLabelSelector, 3, 10*time.Second, 5*time.Second, 30*time.Minute)
 	require.NoError(t, err)
 
-	assertPodsSpec(t, etcdPod, etcdenvvar.GibibytesToBytesString(dbSize32GB))
+	etcdPods, err := etcdPodsClient.List(context.Background(), metav1.ListOptions{LabelSelector: etcdLabelSelector})
+	require.NoError(t, err)
+	etcdPod := etcdPods.Items[0]
+	require.True(t, etcdPod.Status.Phase == v1.PodRunning)
+
+	assertPodsSpec(t, &etcdPod, etcdenvvar.GibibytesToBytesString(int64(dbSize32GB)))
 }
 
-func assertPodsSpec(t testing.TB, etcdPod v1.Pod, expectedSize string) {
+func assertPodsSpec(t testing.TB, etcdPod *v1.Pod, expectedSize string) {
 	t.Helper()
 
 	var etcdContainer v1.Container
