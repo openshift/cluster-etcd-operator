@@ -302,6 +302,16 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(ctx context.Context
 		Type: corev1.SecretTypeOpaque,
 		Data: allCerts,
 	}
+
+	//check the quorum in case the cluster is healthy or not after generating certs
+	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
+	if err != nil {
+		return fmt.Errorf("EtcdCertSignerController can't evaluate whether quorum is safe: %w", err)
+	}
+
+	if !safe {
+		return fmt.Errorf("skipping EtcdCertSignerController reconciliation due to insufficient quorum")
+	}
 	_, _, err = resourceapply.ApplySecret(ctx, c.secretClient, recorder, secret)
 
 	return err

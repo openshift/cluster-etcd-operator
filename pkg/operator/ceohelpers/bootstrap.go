@@ -117,11 +117,6 @@ func CheckSafeToScaleCluster(
 		return nil
 	}
 
-	_, operatorStatus, _, err := staticPodClient.GetStaticPodOperatorState()
-	if err != nil {
-		return fmt.Errorf("CheckSafeToScaleCluster failed to get operator state: %w", err)
-	}
-
 	scalingStrategy, err := GetBootstrapScalingStrategy(staticPodClient, namespaceLister, infraLister)
 	if err != nil {
 		return fmt.Errorf("CheckSafeToScaleCluster failed to get bootstrap scaling strategy: %w", err)
@@ -141,11 +136,6 @@ func CheckSafeToScaleCluster(
 		return fmt.Errorf("CheckSafeToScaleCluster unrecognized scaling strategy %q", scalingStrategy)
 	}
 
-	nodeCount := len(operatorStatus.NodeStatuses)
-	if nodeCount < minimumNodes {
-		return fmt.Errorf("CheckSafeToScaleCluster %d nodes are required, but only %d are available", minimumNodes, nodeCount)
-	}
-
 	memberHealth, err := etcdClient.MemberHealth(context.Background())
 	if err != nil {
 		return fmt.Errorf("CheckSafeToScaleCluster couldn't determine member health: %w", err)
@@ -156,7 +146,7 @@ func CheckSafeToScaleCluster(
 		return err
 	}
 
-	klog.V(4).Infof("node count %d satisfies minimum of %d required by the %s bootstrap scaling strategy", nodeCount, minimumNodes, scalingStrategy)
+	klog.V(4).Infof("node count %d satisfies minimum of %d required by the %s bootstrap scaling strategy", len(memberHealth.GetHealthyMembers()), minimumNodes, scalingStrategy)
 	return nil
 }
 
