@@ -2,27 +2,29 @@ package etcdenvvar
 
 import (
 	"fmt"
-	"k8s.io/apimachinery/pkg/labels"
 	"net"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 
-	"github.com/ghodss/yaml"
 	v1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
-	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/klog/v2"
-
 	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/backendquotahelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/hwspeedhelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
+	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
+	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/klog/v2"
+
+	"github.com/ghodss/yaml"
 )
 
 type envVarContext struct {
@@ -40,10 +42,9 @@ type envVarContext struct {
 }
 
 var FixedEtcdEnvVars = map[string]string{
-	"ETCD_DATA_DIR":                                    "/var/lib/etcd",
-	"ETCD_QUOTA_BACKEND_BYTES":                         "8589934592", // 8 GB
-	"ETCD_INITIAL_CLUSTER_STATE":                       "existing",
-	"ETCD_ENABLE_PPROF":                                "true",
+	"ETCD_DATA_DIR":              "/var/lib/etcd",
+	"ETCD_INITIAL_CLUSTER_STATE": "existing",
+	"ETCD_ENABLE_PPROF":          "true",
 	"ETCD_EXPERIMENTAL_WATCH_PROGRESS_NOTIFY_INTERVAL": "5s",
 	"ETCD_SOCKET_REUSE_ADDRESS":                        "true",
 	"ETCD_EXPERIMENTAL_WARNING_APPLY_DURATION":         "200ms",
@@ -71,6 +72,7 @@ var envVarFns = []envVarFunc{
 	getAllEtcdEndpoints,
 	getEtcdctlEnvVars,
 	getHardwareSpeedValues,
+	getEtcdDBSize,
 	getUnsupportedArch,
 	getCipherSuites,
 	getMaxLearners,
@@ -243,6 +245,26 @@ func getHardwareSpeedValues(envVarContext envVarContext) (map[string]string, err
 	return hwspeedhelpers.HardwareSpeedToEnvMap(speed)
 }
 
+func getEtcdDBSize(envVarContext envVarContext) (map[string]string, error) {
+	etcd, err := envVarContext.etcdLister.Get("cluster")
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve etcd CR: %v", err)
+	}
+
+	backendQuotaGiB := int64(8)
+	enabled, err := backendquotahelpers.IsBackendQuotaFeatureGateEnabled(envVarContext.featureGateAccessor)
+	if err != nil {
+		return nil, fmt.Errorf("failed check backend quota enabled: %w", err)
+	}
+	if enabled && etcd.Spec.BackendQuotaGiB != 0 {
+		backendQuotaGiB = int64(etcd.Spec.BackendQuotaGiB)
+	}
+
+	return map[string]string{
+		"ETCD_QUOTA_BACKEND_BYTES": GibibytesToBytesString(backendQuotaGiB),
+	}, nil
+}
+
 func envVarSafe(nodeName string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(nodeName, "-", "_"), ".", "_")
 }
@@ -335,4 +357,9 @@ func getEtcdEndpoints(configmapLister corev1listers.ConfigMapLister, skipBootstr
 	sort.Strings(etcdURLs)
 
 	return strings.Join(etcdURLs, ","), nil
+}
+
+func GibibytesToBytesString(dbSize int64) string {
+	etcdDBSize := dbSize * 1024 * 1024 * 1024
+	return strconv.FormatInt(etcdDBSize, 10)
 }

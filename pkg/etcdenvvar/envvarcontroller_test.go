@@ -8,13 +8,15 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/backendquotahelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
+	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -22,38 +24,46 @@ import (
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 
-	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
+	"github.com/stretchr/testify/require"
+
+	"gopkg.in/yaml.v3"
 )
 
-var defaultEnvResult = map[string]string{
-	"ALL_ETCD_ENDPOINTS":                       "https://192.168.2.0:2379,https://192.168.2.1:2379,https://192.168.2.2:2379",
-	"ETCDCTL_API":                              "3",
-	"ETCDCTL_CACERT":                           "/etc/kubernetes/static-pod-certs/configmaps/etcd-serving-ca/ca-bundle.crt",
-	"ETCDCTL_CERT":                             "/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.crt",
-	"ETCDCTL_ENDPOINTS":                        "https://192.168.2.0:2379,https://192.168.2.1:2379,https://192.168.2.2:2379",
-	"ETCDCTL_KEY":                              "/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.key",
-	"ETCD_CIPHER_SUITES":                       "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
-	"ETCD_DATA_DIR":                            "/var/lib/etcd",
-	"ETCD_ELECTION_TIMEOUT":                    "1000",
-	"ETCD_ENABLE_PPROF":                        "true",
-	"ETCD_EXPERIMENTAL_MAX_LEARNERS":           "1",
-	"ETCD_EXPERIMENTAL_WARNING_APPLY_DURATION": "200ms",
-	"ETCD_EXPERIMENTAL_WATCH_PROGRESS_NOTIFY_INTERVAL": "5s",
-	"ETCD_HEARTBEAT_INTERVAL":                          "100",
-	"ETCD_IMAGE":                                       "",
-	"ETCD_INITIAL_CLUSTER_STATE":                       "existing",
-	"ETCD_QUOTA_BACKEND_BYTES":                         "8589934592",
-	"ETCD_SOCKET_REUSE_ADDRESS":                        "true",
-	"NODE_master_0_ETCD_NAME":                          "master-0",
-	"NODE_master_0_ETCD_URL_HOST":                      "192.168.2.0",
-	"NODE_master_0_IP":                                 "192.168.2.0",
-	"NODE_master_1_ETCD_NAME":                          "master-1",
-	"NODE_master_1_ETCD_URL_HOST":                      "192.168.2.1",
-	"NODE_master_1_IP":                                 "192.168.2.1",
-	"NODE_master_2_ETCD_NAME":                          "master-2",
-	"NODE_master_2_ETCD_URL_HOST":                      "192.168.2.2",
-	"NODE_master_2_IP":                                 "192.168.2.2",
-}
+var (
+	backendQuotaFeatureGateAccessor = featuregates.NewHardcodedFeatureGateAccess(
+		[]configv1.FeatureGateName{backendquotahelpers.BackendQuotaFeatureGateName},
+		[]configv1.FeatureGateName{})
+
+	defaultEnvResult = map[string]string{
+		"ALL_ETCD_ENDPOINTS":                       "https://192.168.2.0:2379,https://192.168.2.1:2379,https://192.168.2.2:2379",
+		"ETCDCTL_API":                              "3",
+		"ETCDCTL_CACERT":                           "/etc/kubernetes/static-pod-certs/configmaps/etcd-serving-ca/ca-bundle.crt",
+		"ETCDCTL_CERT":                             "/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.crt",
+		"ETCDCTL_ENDPOINTS":                        "https://192.168.2.0:2379,https://192.168.2.1:2379,https://192.168.2.2:2379",
+		"ETCDCTL_KEY":                              "/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.key",
+		"ETCD_CIPHER_SUITES":                       "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+		"ETCD_DATA_DIR":                            "/var/lib/etcd",
+		"ETCD_ELECTION_TIMEOUT":                    "1000",
+		"ETCD_ENABLE_PPROF":                        "true",
+		"ETCD_EXPERIMENTAL_MAX_LEARNERS":           "1",
+		"ETCD_EXPERIMENTAL_WARNING_APPLY_DURATION": "200ms",
+		"ETCD_EXPERIMENTAL_WATCH_PROGRESS_NOTIFY_INTERVAL": "5s",
+		"ETCD_HEARTBEAT_INTERVAL":                          "100",
+		"ETCD_IMAGE":                                       "",
+		"ETCD_INITIAL_CLUSTER_STATE":                       "existing",
+		"ETCD_QUOTA_BACKEND_BYTES":                         "8589934592",
+		"ETCD_SOCKET_REUSE_ADDRESS":                        "true",
+		"NODE_master_0_ETCD_NAME":                          "master-0",
+		"NODE_master_0_ETCD_URL_HOST":                      "192.168.2.0",
+		"NODE_master_0_IP":                                 "192.168.2.0",
+		"NODE_master_1_ETCD_NAME":                          "master-1",
+		"NODE_master_1_ETCD_URL_HOST":                      "192.168.2.1",
+		"NODE_master_1_IP":                                 "192.168.2.1",
+		"NODE_master_2_ETCD_NAME":                          "master-2",
+		"NODE_master_2_ETCD_URL_HOST":                      "192.168.2.2",
+		"NODE_master_2_IP":                                 "192.168.2.2",
+	}
+)
 
 func TestEnvVarController(t *testing.T) {
 	scenarios := []struct {
@@ -170,6 +180,7 @@ func TestEnvVarController(t *testing.T) {
 				masterNodeLister:     corev1listers.NewNodeLister(indexer),
 				networkLister:        configv1listers.NewNetworkLister(networkIndexer),
 				etcdLister:           operatorv1listers.NewEtcdLister(etcdIndexer),
+				featureGateAccessor:  backendQuotaFeatureGateAccessor,
 			}
 
 			err = controller.sync(context.TODO())

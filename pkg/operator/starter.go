@@ -3,21 +3,12 @@ package operator
 import (
 	"context"
 	"fmt"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertcleaner"
-	"k8s.io/component-base/metrics"
-	"k8s.io/component-base/metrics/legacyregistry"
 	"os"
 	"regexp"
 	"time"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/periodicbackupcontroller"
-	"github.com/openshift/library-go/pkg/controller/factory"
-	corev1listers "k8s.io/client-go/listers/core/v1"
-
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
-
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
 	configversionedclientv1alpha1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
@@ -27,9 +18,13 @@ import (
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorversionedclientv1alpha1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
+	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/backupcontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertcleaner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/periodicbackupcontroller"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
+	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -48,7 +43,10 @@ import (
 	"k8s.io/client-go/dynamic"
 	corev1informers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/component-base/metrics"
+	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
@@ -240,6 +238,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		networkInformer,
 		controllerContext.EventRecorder,
 		etcdsInformer,
+		featureGateAccessor,
 	)
 
 	quorumChecker := ceohelpers.NewQuorumChecker(
