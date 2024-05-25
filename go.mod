@@ -1,8 +1,8 @@
 module github.com/openshift/cluster-etcd-operator
 
-go 1.21
+go 1.22
 
-toolchain go1.21.1
+toolchain go1.22.1
 
 require (
 	github.com/davecgh/go-spew v1.1.1
