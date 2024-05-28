@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"net"
@@ -28,6 +29,8 @@ const MachineDeletionHookName = "EtcdQuorumOperator"
 
 // MachineDeletionHookOwner holds an owner of the Machine Deletion Hook
 const MachineDeletionHookOwner = "clusteroperator/etcd"
+
+var RevisionRolloutInProgressErr = fmt.Errorf("revision rollout in progress, can't establish current revision")
 
 // ReadDesiredControlPlaneReplicasCount reads the current Control Plane replica count
 func ReadDesiredControlPlaneReplicasCount(operatorClient v1helpers.StaticPodOperatorClient) (int, error) {
@@ -196,4 +199,39 @@ func VotingMemberIPListSet(ctx context.Context, cli etcdcli.EtcdClient) (sets.St
 	}
 
 	return currentVotingMemberIPListSet, nil
+}
+
+// RevisionRolloutInProgress will return true if any node status reports its target revision is different from the current revision and the latest known revision.
+func RevisionRolloutInProgress(status operatorv1.StaticPodOperatorStatus) bool {
+	latestRevision := status.LatestAvailableRevision
+	for _, nodeStatus := range status.NodeStatuses {
+		if (nodeStatus.TargetRevision > 0 && nodeStatus.CurrentRevision != nodeStatus.TargetRevision) ||
+			nodeStatus.CurrentRevision != latestRevision {
+			return true
+		}
+	}
+
+	return false
+}
+
+// CurrentRevision will only return the current revision if no revision rollout is in progress and all revisions across nodes
+// are the exact same. Otherwise, an error will be returned.
+func CurrentRevision(status operatorv1.StaticPodOperatorStatus) (int32, error) {
+	if RevisionRolloutInProgress(status) {
+		return 0, RevisionRolloutInProgressErr
+	}
+
+	if len(status.NodeStatuses) == 0 {
+		return 0, fmt.Errorf("no node status")
+	}
+
+	latestRevision := status.LatestAvailableRevision
+	for _, nodeStatus := range status.NodeStatuses {
+		if latestRevision != nodeStatus.CurrentRevision {
+			return 0, fmt.Errorf("node [%s] is not on latest revision yet: %d vs latest revision %d",
+				nodeStatus.NodeName, nodeStatus.CurrentRevision, latestRevision)
+		}
+	}
+
+	return latestRevision, nil
 }

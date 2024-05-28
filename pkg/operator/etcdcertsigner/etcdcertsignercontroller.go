@@ -2,6 +2,7 @@ package etcdcertsigner
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 	"github.com/openshift/library-go/pkg/crypto"
 	corev1informers "k8s.io/client-go/informers/core/v1"
@@ -9,6 +10,7 @@ import (
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/component-base/metrics"
+	"strconv"
 	"strings"
 	"time"
 
@@ -210,26 +212,10 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(ctx context.Context
 
 	c.reportExpirationMetric(signerCaPair, "signer-ca")
 
-	// EnsureConfigMapCABundle is stateful w.r.t to the configmap it manages, so we can simply add it to the bundle before the new one
-	_, err = c.certConfig.signerCaBundle.EnsureConfigMapCABundle(ctx, signerCaPair)
-	if err != nil {
-		return fmt.Errorf("error on ensuring signer bundle for existing pair: %w", err)
-	}
-
 	// TODO(thomas): we need to transition that new signer as a replacement for the above - today we only bundle it
 	newSignerCaPair, _, err := c.certConfig.signerCert.EnsureSigningCertKeyPair(ctx)
 	if err != nil {
 		return fmt.Errorf("error on ensuring etcd-signer cert: %w", err)
-	}
-
-	signerBundle, err := c.certConfig.signerCaBundle.EnsureConfigMapCABundle(ctx, newSignerCaPair)
-	if err != nil {
-		return fmt.Errorf("error on ensuring signer bundle for new pair: %w", err)
-	}
-
-	_, err = c.certConfig.etcdClientCert.EnsureTargetCertKeyPair(ctx, signerCaPair, signerBundle)
-	if err != nil {
-		return fmt.Errorf("error on ensuring etcd client cert: %w", err)
 	}
 
 	metricsSignerCaPair, err := tlshelpers.ReadConfigMetricsSignerCert(ctx, c.secretClient)
@@ -239,22 +225,25 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(ctx context.Context
 
 	c.reportExpirationMetric(metricsSignerCaPair, "metrics-signer-ca")
 
-	_, err = c.certConfig.metricsSignerCaBundle.EnsureConfigMapCABundle(ctx, metricsSignerCaPair)
-	if err != nil {
-		return fmt.Errorf("error on ensuring metrics signer bundle for existing pair: %w", err)
-	}
-
 	// TODO(thomas): we need to transition that new signer as a replacement for the above - today we only bundle it
 	newMetricsSignerCaPair, _, err := c.certConfig.metricsSignerCert.EnsureSigningCertKeyPair(ctx)
 	if err != nil {
 		return fmt.Errorf("error on ensuring metrics-signer cert: %w", err)
 	}
 
-	metricsSignerBundle, err := c.certConfig.metricsSignerCaBundle.EnsureConfigMapCABundle(ctx, newMetricsSignerCaPair)
+	signerBundle, metricsSignerBundle, err := c.ensureBundles(ctx, []*crypto.CA{signerCaPair, newSignerCaPair}, []*crypto.CA{metricsSignerCaPair, newMetricsSignerCaPair})
 	if err != nil {
-		return fmt.Errorf("error on ensuring metrics signer bundle: %w", err)
+		return fmt.Errorf("error on ensuring bundles: %w", err)
 	}
 
+	// -----------------------------------------------------------------
+	// Leaf Certificates
+	// -----------------------------------------------------------------
+
+	_, err = c.certConfig.etcdClientCert.EnsureTargetCertKeyPair(ctx, signerCaPair, signerBundle)
+	if err != nil {
+		return fmt.Errorf("error on ensuring etcd client cert: %w", err)
+	}
 	_, err = c.certConfig.metricsClientCert.EnsureTargetCertKeyPair(ctx, metricsSignerCaPair, metricsSignerBundle)
 	if err != nil {
 		return fmt.Errorf("error on ensuring metrics client cert: %w", err)
@@ -317,6 +306,27 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(ctx context.Context
 	return err
 }
 
+// ensureBundles will take the metrics and server CA certificates and ensure the bundle is updated.
+// This will cause a revision rollout if a change in the bundle was detected.
+// TODO(thomas): that bundle rollout is not transactional: it's very likely the first update will already trigger a new revision, the metrics could come in a follow-up
+func (c *EtcdCertSignerController) ensureBundles(ctx context.Context, serverCA []*crypto.CA, metricsCA []*crypto.CA) (serverBundle []*x509.Certificate, metricsBundle []*x509.Certificate, err error) {
+	for _, ca := range serverCA {
+		serverBundle, err = c.certConfig.signerCaBundle.EnsureConfigMapCABundle(ctx, ca)
+		if err != nil {
+			return
+		}
+	}
+
+	for _, ca := range metricsCA {
+		metricsBundle, err = c.certConfig.metricsSignerCaBundle.EnsureConfigMapCABundle(ctx, ca)
+		if err != nil {
+			return
+		}
+	}
+
+	return
+}
+
 // Nodes change internally the whole time (e.g. due to IPs changing), we thus re-create the cert configs every sync loop.
 // This works, because initialization is cheap and all state is kept in secrets, configmaps and their annotations.
 func (c *EtcdCertSignerController) createNodeCertConfigs() ([]*nodeCertConfigs, error) {
@@ -369,6 +379,29 @@ func (c *EtcdCertSignerController) reportExpirationMetric(pair *crypto.CA, name 
 	expDate := pair.Config.Certs[0].NotAfter
 	daysUntil := expDate.Sub(time.Now()).Hours() / 24
 	c.signerExpirationGauge.WithLabelValues(name).Set(daysUntil)
+}
+
+func (c *EtcdCertSignerController) updateCertRevision(ctx context.Context, certSecretName string, revision int32) error {
+	_, _, err := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		Type:    fmt.Sprintf("EtcdCertSignerController-rotation-rev-%s", certSecretName),
+		Status:  operatorv1.ConditionTrue,
+		Message: fmt.Sprintf("%d", revision),
+	}))
+
+	return err
+}
+
+func getCertRotationRevision(status *operatorv1.StaticPodOperatorStatus, certSecretName string) (int32, error) {
+	condition := v1helpers.FindOperatorCondition(status.Conditions, fmt.Sprintf("EtcdCertSignerController-rotation-rev-%s", certSecretName))
+	if condition == nil {
+		return int32(0), nil
+	}
+
+	rev, err := strconv.ParseInt(condition.Message, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("could not parse condition message for cert secret [%s], msg=[%s]: %w", certSecretName, condition.Message, err)
+	}
+	return int32(rev), nil
 }
 
 func addCertSecretToMap(allCerts map[string][]byte, secret *corev1.Secret) map[string][]byte {
