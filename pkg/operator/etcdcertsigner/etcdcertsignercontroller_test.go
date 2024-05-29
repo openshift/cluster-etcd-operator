@@ -11,7 +11,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	corev1 "k8s.io/api/core/v1"
@@ -38,28 +37,47 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 )
 
-func TestSyncSkipsOnInsufficientQuorum(t *testing.T) {
-	_, controller, recorder := setupController(t, []runtime.Object{})
-
-	err := controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder))
+func TestHasNodeCertDiffGeneratesLeafs(t *testing.T) {
+	fakeKubeClient, fakeOperatorClient, controller, recorder := setupController(t, []runtime.Object{}, false)
+	// ensure that the bundled secrets do not contain any matching nodes
+	_, err := fakeKubeClient.CoreV1().Secrets(operatorclient.TargetNamespace).Update(context.TODO(),
+		u.FakeSecret(operatorclient.TargetNamespace, tlshelpers.EtcdAllCertsSecretName, map[string][]byte{}), metav1.UpdateOptions{})
 	require.NoError(t, err)
 
-	etcdMembers := []*etcdserverpb.Member{
-		u.FakeEtcdMemberWithoutServer(0),
-		u.FakeEtcdMemberWithoutServer(1),
-	}
-	_, controller, recorder = setupControllerWithEtcd(t, []runtime.Object{
-		u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
-	}, etcdMembers)
+	_, err = fakeOperatorClient.UpdateStaticPodOperatorStatus(context.TODO(), "0", u.StaticPodOperatorStatus(
+		u.WithLatestRevision(4),
+		u.WithNodeStatusAtCurrentRevision(4),
+		u.WithNodeStatusAtCurrentRevision(3),
+		u.WithNodeStatusAtCurrentRevision(3),
+	))
+	require.NoError(t, err)
+
 	err = controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder))
-	assert.Equal(t, "EtcdCertSignerController can't evaluate whether quorum is safe: etcd cluster has quorum of 2 which is not fault tolerant: [{Member:name:\"etcd-0\" peerURLs:\"https://10.0.0.1:2380\" clientURLs:\"https://10.0.0.1:2907\"  Healthy:true Took: Error:<nil>} {Member:ID:1 name:\"etcd-1\" peerURLs:\"https://10.0.0.2:2380\" clientURLs:\"https://10.0.0.2:2907\"  Healthy:true Took: Error:<nil>}]",
-		err.Error())
+	require.NoError(t, err)
+	nodes, secretMap, configMaps := allNodesAndSecrets(t, fakeKubeClient)
+	require.Equal(t, 3, len(nodes.Items))
+	require.Equal(t, 14, len(secretMap))
+	require.Equal(t, 3, len(configMaps))
 }
 
 // Validate that a successful test run will result in a secret per
 // cert type per node and an aggregated secret per cert type.
 func TestSyncAllMasters(t *testing.T) {
-	fakeKubeClient, controller, recorder := setupController(t, []runtime.Object{})
+	fakeKubeClient, fakeOperatorClient, controller, recorder := setupController(t, []runtime.Object{}, false)
+	runSyncWithRevisionRollout(t, controller, fakeOperatorClient, recorder)
+
+	nodes, secretMap, configMaps := allNodesAndSecrets(t, fakeKubeClient)
+	require.Equal(t, 3, len(nodes.Items))
+	assertNodeCerts(t, nodes, secretMap)
+	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertStaticPodAllBundles(t, configMaps)
+	assertClientCerts(t, secretMap)
+	assertExpirationMetric(t)
+}
+
+func TestSyncAllMastersForceSkip(t *testing.T) {
+	fakeKubeClient, _, controller, recorder := setupController(t, []runtime.Object{}, true)
+	// a single sync call should be enough now to generate all certs, this is important for bootstrap render
 	require.NoError(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
 
 	nodes, secretMap, configMaps := allNodesAndSecrets(t, fakeKubeClient)
@@ -71,10 +89,67 @@ func TestSyncAllMasters(t *testing.T) {
 	assertExpirationMetric(t)
 }
 
-func TestNewNodeAdded(t *testing.T) {
-	fakeKubeClient, controller, recorder := setupController(t, []runtime.Object{})
+func TestSignerRotation(t *testing.T) {
+	fakeKubeClient, fakeOperatorClient, controller, recorder := setupController(t, []runtime.Object{}, false)
+	runSyncWithRevisionRollout(t, controller, fakeOperatorClient, recorder)
 
+	nodes, secretMap, configMaps := allNodesAndSecrets(t, fakeKubeClient)
+	require.Equal(t, 3, len(nodes.Items))
+	assertNodeCerts(t, nodes, secretMap)
+	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertStaticPodAllBundles(t, configMaps)
+	assertClientCerts(t, secretMap)
+	assertExpirationMetric(t)
+
+	// this will create an entirely new signer during the next sync loop
+	err := fakeKubeClient.CoreV1().Secrets(operatorclient.TargetNamespace).Delete(context.TODO(), tlshelpers.EtcdSignerCertSecretName, metav1.DeleteOptions{})
+	require.NoError(t, err)
+
+	runSyncWithRevisionRollout(t, controller, fakeOperatorClient, recorder)
+
+	nodes, newSecretMap, newConfigMaps := allNodesAndSecrets(t, fakeKubeClient)
+	require.Equal(t, 3, len(nodes.Items))
+	assertNodeCerts(t, nodes, newSecretMap)
+	assertStaticPodAllCerts(t, nodes, newSecretMap)
+	assertStaticPodAllBundles(t, newConfigMaps)
+	assertClientCerts(t, newSecretMap)
+	assertExpirationMetric(t)
+	require.NotEqual(t, secretMap, newSecretMap)
+	require.NotEqual(t, configMaps, newConfigMaps)
+}
+
+func TestSignerRotationBlocksWithRevisionRollout(t *testing.T) {
+	fakeKubeClient, fakeOperatorClient, controller, recorder := setupController(t, []runtime.Object{}, false)
+	runSyncWithRevisionRollout(t, controller, fakeOperatorClient, recorder)
+
+	nodes, secretMap, configMaps := allNodesAndSecrets(t, fakeKubeClient)
+	require.Equal(t, 3, len(nodes.Items))
+	assertNodeCerts(t, nodes, secretMap)
+	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertStaticPodAllBundles(t, configMaps)
+	assertClientCerts(t, secretMap)
+	assertExpirationMetric(t)
+
+	err := fakeKubeClient.CoreV1().Secrets(operatorclient.TargetNamespace).Delete(context.TODO(), tlshelpers.EtcdSignerCertSecretName, metav1.DeleteOptions{})
+	require.NoError(t, err)
+
+	// this sync will create new signers and bundles
 	require.NoError(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
+	// this should block because we didn't roll out a new revision (yet)
+	require.NoError(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
+	_, newSecretMap, newConfigMaps := allNodesAndSecrets(t, fakeKubeClient)
+	// subsequently the leaf certificates should not have changed
+	require.Equal(t, filterLeafCerts(secretMap), filterLeafCerts(newSecretMap))
+	// the metrics bundle should also be left untouched
+	require.Equal(t, configMaps[tlshelpers.EtcdMetricsSignerCaBundleConfigMapName], newConfigMaps[tlshelpers.EtcdMetricsSignerCaBundleConfigMapName])
+	// the signer bundles and the signer cert should be different
+	require.NotEqual(t, secretMap[tlshelpers.EtcdSignerCertSecretName], newSecretMap[tlshelpers.EtcdSignerCertSecretName])
+	require.NotEqual(t, configMaps[tlshelpers.EtcdSignerCaBundleConfigMapName], newConfigMaps[tlshelpers.EtcdSignerCaBundleConfigMapName])
+}
+
+func TestNewNodeAdded(t *testing.T) {
+	fakeKubeClient, fakeOperatorClient, controller, recorder := setupController(t, []runtime.Object{}, false)
+	runSyncWithRevisionRollout(t, controller, fakeOperatorClient, recorder)
 
 	nodes, secretMap, configMaps := allNodesAndSecrets(t, fakeKubeClient)
 	require.Equal(t, 3, len(nodes.Items))
@@ -86,7 +161,7 @@ func TestNewNodeAdded(t *testing.T) {
 	_, err := fakeKubeClient.CoreV1().Nodes().Create(context.TODO(), u.FakeNode("master-3", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.4")), metav1.CreateOptions{})
 	require.NoError(t, err)
 
-	require.NoError(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
+	runSyncWithRevisionRollout(t, controller, fakeOperatorClient, recorder)
 
 	nodes, secretMap, configMaps = allNodesAndSecrets(t, fakeKubeClient)
 	require.Equal(t, 4, len(nodes.Items))
@@ -97,9 +172,8 @@ func TestNewNodeAdded(t *testing.T) {
 }
 
 func TestNodeChangingIPs(t *testing.T) {
-	fakeKubeClient, controller, recorder := setupController(t, []runtime.Object{})
-
-	require.NoError(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
+	fakeKubeClient, fakeOperatorClient, controller, recorder := setupController(t, []runtime.Object{}, false)
+	runSyncWithRevisionRollout(t, controller, fakeOperatorClient, recorder)
 
 	nodes, secretMap, configMaps := allNodesAndSecrets(t, fakeKubeClient)
 	require.Equal(t, 3, len(nodes.Items))
@@ -115,7 +189,7 @@ func TestNodeChangingIPs(t *testing.T) {
 	_, err = fakeKubeClient.CoreV1().Nodes().Update(context.TODO(), n, metav1.UpdateOptions{})
 	require.NoError(t, err)
 
-	require.NoError(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
+	runSyncWithRevisionRollout(t, controller, fakeOperatorClient, recorder)
 
 	nodes, secretMap, configMaps = allNodesAndSecrets(t, fakeKubeClient)
 	require.Equal(t, 3, len(nodes.Items))
@@ -126,9 +200,8 @@ func TestNodeChangingIPs(t *testing.T) {
 }
 
 func TestClientCertsRemoval(t *testing.T) {
-	fakeKubeClient, controller, recorder := setupController(t, []runtime.Object{})
-
-	require.NoError(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
+	fakeKubeClient, fakeOperatorClient, controller, recorder := setupController(t, []runtime.Object{}, false)
+	runSyncWithRevisionRollout(t, controller, fakeOperatorClient, recorder)
 
 	nodes, secretMap, configMaps := allNodesAndSecrets(t, fakeKubeClient)
 	require.Equal(t, 3, len(nodes.Items))
@@ -148,7 +221,7 @@ func TestClientCertsRemoval(t *testing.T) {
 	require.NoError(t, err)
 
 	// this should regenerate the certificates
-	require.NoError(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
+	runSyncWithRevisionRollout(t, controller, fakeOperatorClient, recorder)
 
 	nodes, secretMap, configMaps = allNodesAndSecrets(t, fakeKubeClient)
 	require.Equal(t, 3, len(nodes.Items))
@@ -162,11 +235,37 @@ func TestClientCertsRemoval(t *testing.T) {
 }
 
 func TestSecretApplyFailureSyncError(t *testing.T) {
-	fakeKubeClient, controller, recorder := setupController(t, []runtime.Object{})
+	fakeKubeClient, _, controller, recorder := setupController(t, []runtime.Object{}, true)
 	fakeKubeClient.PrependReactor("create", "secrets", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
 		return true, nil, fmt.Errorf("apply failed")
 	})
 	require.Error(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
+}
+
+func TestConfigmapApplyFailureSyncError(t *testing.T) {
+	fakeKubeClient, _, controller, recorder := setupController(t, []runtime.Object{}, true)
+	fakeKubeClient.PrependReactor("create", "configmaps", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+		return true, nil, fmt.Errorf("apply failed")
+	})
+	require.Error(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
+}
+
+func runSyncWithRevisionRollout(t *testing.T, controller factory.Controller, fakeOperatorClient v1helpers.StaticPodOperatorClient, recorder events.Recorder) {
+	require.NoError(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
+	_, status, resourceVersion, err := fakeOperatorClient.GetStaticPodOperatorStateWithQuorum(context.TODO())
+	require.NoError(t, err)
+	status.LatestAvailableRevision += 1
+	var ns []operatorv1.NodeStatus
+	for _, nodeStatus := range status.NodeStatuses {
+		cp := nodeStatus.DeepCopy()
+		cp.CurrentRevision = status.LatestAvailableRevision
+		ns = append(ns, *cp)
+	}
+	status.NodeStatuses = ns
+
+	_, err = fakeOperatorClient.UpdateStaticPodOperatorStatus(context.TODO(), resourceVersion, status)
+	require.NoError(t, err)
+	require.NoError(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
 }
 
 func allNodesAndSecrets(t *testing.T, fakeKubeClient *fake.Clientset) (*corev1.NodeList, map[string]corev1.Secret, map[string]corev1.ConfigMap) {
@@ -258,9 +357,8 @@ func assertExpirationMetric(t *testing.T) {
 	})
 	require.Equal(t, "metrics-signer-ca", m[0].Metric[0].Label[0].GetValue())
 	require.Equal(t, "signer-ca", m[0].Metric[1].Label[0].GetValue())
-	// newCASecret creates signers with 100 days of expiration, which we assert here
-	require.InEpsilon(t, float64(100), m[0].Metric[0].GetGauge().GetValue(), float64(1))
-	require.InEpsilon(t, float64(100), m[0].Metric[1].GetGauge().GetValue(), float64(1))
+	require.InEpsilon(t, float64(tlshelpers.EtcdCaCertValidity), m[0].Metric[0].GetGauge().GetValue(), float64(1))
+	require.InEpsilon(t, float64(tlshelpers.EtcdCaCertValidity), m[0].Metric[1].GetGauge().GetValue(), float64(1))
 }
 
 func checkCertNodeValidity(t *testing.T, node corev1.Node, certName, keyName string, secretData map[string][]byte) {
@@ -290,17 +388,12 @@ func checkCertPairSecret(t *testing.T, secretName, certName, keyName string, sec
 	}
 }
 
-func setupController(t *testing.T, objects []runtime.Object) (*fake.Clientset, factory.Controller, events.Recorder) {
+func setupController(t *testing.T, objects []runtime.Object, forceSkipRollout bool) (*fake.Clientset, v1helpers.StaticPodOperatorClient, factory.Controller, events.Recorder) {
 	etcdMembers := []*etcdserverpb.Member{
 		u.FakeEtcdMemberWithoutServer(0),
 		u.FakeEtcdMemberWithoutServer(1),
 		u.FakeEtcdMemberWithoutServer(2),
 	}
-	return setupControllerWithEtcd(t, objects, etcdMembers)
-}
-
-// setupController configures EtcdCertSignerController for testing with etcd members.
-func setupControllerWithEtcd(t *testing.T, objects []runtime.Object, etcdMembers []*etcdserverpb.Member) (*fake.Clientset, factory.Controller, events.Recorder) {
 	// Add nodes and CAs
 	objects = append(objects,
 		&corev1.Namespace{
@@ -309,9 +402,13 @@ func setupControllerWithEtcd(t *testing.T, objects []runtime.Object, etcdMembers
 		u.FakeNode("master-0", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1")),
 		u.FakeNode("master-1", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.2")),
 		u.FakeNode("master-2", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.3")),
+		u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
+		u.FakeSecret(operatorclient.TargetNamespace, tlshelpers.EtcdAllCertsSecretName, map[string][]byte{
+			fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode("master-0")): {},
+			fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode("master-1")): {},
+			fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode("master-2")): {},
+		}),
 	)
-
-	objects = append(objects, newCASecret(t, tlshelpers.EtcdSignerCertSecretName), newCASecret(t, tlshelpers.EtcdMetricsSignerCertSecretName))
 
 	indexer := cache.NewIndexer(
 		cache.MetaNamespaceKeyFunc,
@@ -319,8 +416,12 @@ func setupControllerWithEtcd(t *testing.T, objects []runtime.Object, etcdMembers
 	)
 
 	fakeKubeClient := fake.NewSimpleClientset(objects...)
-	kubeInformerForNamespace := v1helpers.NewKubeInformersForNamespaces(fakeKubeClient, "",
-		operatorclient.TargetNamespace, operatorclient.OperatorNamespace, operatorclient.GlobalUserSpecifiedConfigNamespace)
+	kubeInformerForNamespace := v1helpers.NewKubeInformersForNamespaces(fakeKubeClient,
+		"",
+		operatorclient.TargetNamespace,
+		operatorclient.OperatorNamespace,
+		operatorclient.GlobalUserSpecifiedConfigNamespace,
+		operatorclient.KubeSystemNamespace)
 
 	objects = append(objects, &configv1.Infrastructure{
 		TypeMeta: metav1.TypeMeta{},
@@ -380,7 +481,8 @@ func setupControllerWithEtcd(t *testing.T, objects []runtime.Object, etcdMembers
 		nodeSelector,
 		recorder,
 		quorumChecker,
-		registry)
+		registry,
+		forceSkipRollout)
 
 	stopChan := make(chan struct{})
 	t.Cleanup(func() {
@@ -392,26 +494,16 @@ func setupControllerWithEtcd(t *testing.T, objects []runtime.Object, etcdMembers
 		kubeInformerForNamespace.InformersFor(ns).WaitForCacheSync(stopChan)
 	}
 
-	return fakeKubeClient, controller, recorder
+	return fakeKubeClient, fakeOperatorClient, controller, recorder
 }
 
-func newCASecret(t *testing.T, secretName string) *corev1.Secret {
-	caConfig, err := crypto.MakeSelfSignedCAConfig("foo", 100)
-	if err != nil {
-		t.Fatalf("Failed to create ca config for %s: %v", secretName, err)
+func filterLeafCerts(secretMap map[string]corev1.Secret) map[string]corev1.Secret {
+	filtered := map[string]corev1.Secret{}
+	for s, secret := range secretMap {
+		if s != tlshelpers.EtcdMetricsSignerCertSecretName && s != tlshelpers.EtcdSignerCertSecretName {
+			filtered[s] = secret
+		}
 	}
-	caCertBytes, caKeyBytes, err := caConfig.GetPEMBytes()
-	if err != nil {
-		t.Fatalf("Error converting ca %s to bytes: %v", secretName, err)
-	}
-	return &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: operatorclient.GlobalUserSpecifiedConfigNamespace,
-			Name:      secretName,
-		},
-		Data: map[string][]byte{
-			"tls.crt": caCertBytes,
-			"tls.key": caKeyBytes,
-		},
-	}
+
+	return filtered
 }
