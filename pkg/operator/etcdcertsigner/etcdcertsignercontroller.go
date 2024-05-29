@@ -69,6 +69,7 @@ type EtcdCertSignerController struct {
 	secretInformer     corev1informers.SecretInformer
 	secretLister       corev1listers.SecretLister
 	secretClient       corev1client.SecretsGetter
+	configMapClient    corev1client.ConfigMapsGetter
 	quorumChecker      ceohelpers.QuorumChecker
 
 	certConfig *certConfig
@@ -151,6 +152,7 @@ func NewEtcdCertSignerController(
 		secretInformer:        secretInformer,
 		secretLister:          secretLister,
 		secretClient:          secretClient,
+		configMapClient:       cmGetter,
 		quorumChecker:         quorumChecker,
 		certConfig:            certCfg,
 		signerExpirationGauge: signerExpirationGauge,
@@ -231,7 +233,8 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(ctx context.Context
 		return fmt.Errorf("error on ensuring metrics-signer cert: %w", err)
 	}
 
-	signerBundle, metricsSignerBundle, err := c.ensureBundles(ctx, []*crypto.CA{signerCaPair, newSignerCaPair}, []*crypto.CA{metricsSignerCaPair, newMetricsSignerCaPair})
+	signerBundle, metricsSignerBundle, err := c.ensureBundles(ctx, recorder,
+		[]*crypto.CA{signerCaPair, newSignerCaPair}, []*crypto.CA{metricsSignerCaPair, newMetricsSignerCaPair})
 	if err != nil {
 		return fmt.Errorf("error on ensuring bundles: %w", err)
 	}
@@ -308,8 +311,8 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(ctx context.Context
 
 // ensureBundles will take the metrics and server CA certificates and ensure the bundle is updated.
 // This will cause a revision rollout if a change in the bundle was detected.
-// TODO(thomas): that bundle rollout is not transactional: it's very likely the first update will already trigger a new revision, the metrics could come in a follow-up
-func (c *EtcdCertSignerController) ensureBundles(ctx context.Context, serverCA []*crypto.CA, metricsCA []*crypto.CA) (serverBundle []*x509.Certificate, metricsBundle []*x509.Certificate, err error) {
+func (c *EtcdCertSignerController) ensureBundles(ctx context.Context, recorder events.Recorder,
+	serverCA []*crypto.CA, metricsCA []*crypto.CA) (serverBundle []*x509.Certificate, metricsBundle []*x509.Certificate, err error) {
 	for _, ca := range serverCA {
 		serverBundle, err = c.certConfig.signerCaBundle.EnsureConfigMapCABundle(ctx, ca)
 		if err != nil {
@@ -317,11 +320,58 @@ func (c *EtcdCertSignerController) ensureBundles(ctx context.Context, serverCA [
 		}
 	}
 
+	serverCaBytes, err := crypto.EncodeCertificates(serverBundle...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not encode server bundle: %w", err)
+	}
+
 	for _, ca := range metricsCA {
 		metricsBundle, err = c.certConfig.metricsSignerCaBundle.EnsureConfigMapCABundle(ctx, ca)
 		if err != nil {
 			return
 		}
+	}
+
+	metricsCaBytes, err := crypto.EncodeCertificates(metricsBundle...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not encode metrics bundle: %w", err)
+	}
+
+	// Write a configmap that aggregates all certs for all nodes for the static
+	// pod controller to watch. A single configmap ensures that a bundle change
+	// (e.g. node addition or cert rotation) triggers at most one static pod
+	// rollout. If multiple configmaps were written, the static pod controller
+	// might initiate rollout before all configmaps had been updated.
+	configMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: operatorclient.TargetNamespace,
+			Name:      tlshelpers.EtcdAllBundlesConfigMapName,
+			Annotations: map[string]string{
+				apiannotations.OpenShiftComponent: "Etcd",
+			},
+		},
+		Data: map[string]string{
+			"server-ca-bundle.crt":  string(serverCaBytes),
+			"metrics-ca-bundle.crt": string(metricsCaBytes),
+		},
+	}
+
+	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
+	if err != nil {
+		return nil, nil, fmt.Errorf("EtcdCertSignerController.ensureBundles can't evaluate whether quorum is safe: %w", err)
+	}
+
+	if !safe {
+		return nil, nil, fmt.Errorf("skipping EtcdCertSignerController.ensureBundles reconciliation due to insufficient quorum")
+	}
+	_, changed, err := resourceapply.ApplyConfigMap(ctx, c.configMapClient, recorder, configMap)
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not apply bundle configmap: %w", err)
+	}
+
+	if changed {
+		// TODO(thomas): set the rollout bundle revision in the CEO status
+		// TODO(thomas): we need to notify the outside caller that it's not safe to rotate the leafs just yet
 	}
 
 	return
