@@ -126,7 +126,7 @@ func getEtcdctlEnvVars(envVarContext envVarContext) (map[string]string, error) {
 	}
 	return map[string]string{
 		"ETCDCTL_API":       "3",
-		"ETCDCTL_CACERT":    "/etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt",
+		"ETCDCTL_CACERT":    "/etc/kubernetes/static-pod-certs/configmaps/etcd-serving-ca/ca-bundle.crt",
 		"ETCDCTL_CERT":      "/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.crt",
 		"ETCDCTL_KEY":       "/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.key",
 		"ETCDCTL_ENDPOINTS": endpoints,
