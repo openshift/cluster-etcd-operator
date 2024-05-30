@@ -615,8 +615,12 @@ func getEnabledDisabledFeatures(features featuregates.FeatureGate) ([]string, []
 // the first element should be the configmap that contains the static pod manifest
 var RevisionConfigMaps = []revision.RevisionResource{
 	{Name: "etcd-pod"},
+
+	{Name: "etcd-serving-ca"},
+	{Name: "etcd-peer-client-ca"},
+	{Name: "etcd-metrics-proxy-serving-ca"},
+	{Name: "etcd-metrics-proxy-client-ca"},
 	{Name: "etcd-endpoints"},
-	{Name: "etcd-all-bundles"},
 }
 
 // RevisionSecrets is a list of secrets that are directly copied for the current values.  A different actor/controller modifies these.
@@ -627,7 +631,10 @@ var RevisionSecrets = []revision.RevisionResource{
 var CertConfigMaps = []installer.UnrevisionedResource{
 	{Name: "restore-etcd-pod"},
 	{Name: "etcd-scripts"},
-	{Name: "etcd-all-bundles"},
+	{Name: "etcd-serving-ca"},
+	{Name: "etcd-peer-client-ca"},
+	{Name: "etcd-metrics-proxy-serving-ca"},
+	{Name: "etcd-metrics-proxy-client-ca"},
 }
 
 var CertSecrets = []installer.UnrevisionedResource{

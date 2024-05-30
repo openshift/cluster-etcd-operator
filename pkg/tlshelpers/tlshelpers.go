@@ -37,7 +37,6 @@ const (
 	EtcdMetricsSignerCertSecretName        = "etcd-metric-signer"
 	EtcdMetricsSignerCaBundleConfigMapName = "etcd-metrics-ca-bundle"
 	EtcdAllCertsSecretName                 = "etcd-all-certs"
-	EtcdAllBundlesConfigMapName            = "etcd-all-bundles"
 	EtcdClientCertSecretName               = "etcd-client"
 	EtcdMetricsClientCertSecretName        = "etcd-metric-client"
 )
