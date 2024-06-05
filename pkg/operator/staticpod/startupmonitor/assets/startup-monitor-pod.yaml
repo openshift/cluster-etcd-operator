@@ -1,0 +1,75 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  namespace: {{.TargetNamespace}}
+  name: {{.TargetName}}-startup-monitor
+  labels:
+    revision: "REVISION"
+spec:
+  containers:
+    - name: startup-monitor
+      image: {{.OperatorImage}}
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      command: [{{.Command}}]
+      args:
+        - {{.Verbosity}}
+        - --fallback-timeout-duration=300s
+        - --target-name={{.TargetName}}
+        - --manifests-dir=/etc/kubernetes/manifests
+        - --resource-dir=/etc/kubernetes/static-pod-resources
+        - --installer-lock-file=/var/lock/{{.TargetName}}-installer.lock
+        - --revision=REVISION
+        - --node-name=NODE_NAME
+        - --kubeconfig=/etc/kubernetes/static-pod-resources/configmaps/kube-apiserver-cert-syncer-kubeconfig/kubeconfig #TODO: use a different config
+        {{- if .LogFilePath}}
+        - --log-file-path={{.LogFilePath}}
+        {{- end}}
+      volumeMounts:
+        - mountPath: /etc/kubernetes/manifests
+          name: manifests
+        - mountPath: /etc/kubernetes/static-pod-resources
+          name: resource-dir
+        - mountPath: /etc/kubernetes/static-pod-resources/secrets
+          subPath: secrets
+          name: pod-resource-dir
+          readOnly: true
+        - mountPath: /etc/kubernetes/static-pod-resources/configmaps
+          subPath: configmaps
+          name: pod-resource-dir
+          readOnly: true
+        - mountPath: /var/lock
+          name: var-lock
+        {{- if .LogFileDir}}
+        - mountPath: {{ .LogFileDir}}
+          name: var-log
+        {{- end}}
+      resources:
+        requests:
+          memory: 50Mi
+          cpu: 5m
+      securityContext:
+        privileged: true
+  hostNetwork: true
+  terminationGracePeriodSeconds: 5
+  priorityClassName: system-node-critical
+  tolerations:
+    - operator: "Exists"
+  volumes:
+    - name: resource-dir
+      hostPath:
+        path: /etc/kubernetes/static-pod-resources
+    - name: manifests
+      hostPath:
+        path: /etc/kubernetes/manifests
+    - hostPath:
+        path: /etc/kubernetes/static-pod-resources/kube-apiserver-pod-REVISION
+      name: pod-resource-dir
+    - hostPath:
+        path: /var/lock
+      name: var-lock
+   {{- if .LogFileDir}}
+    - hostPath:
+        path: {{ .LogFileDir}}
+      name: var-log
+    {{- end}}
