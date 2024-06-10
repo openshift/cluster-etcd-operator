@@ -62,10 +62,11 @@ func TestSyncAllMasters(t *testing.T) {
 	fakeKubeClient, controller, recorder := setupController(t, []runtime.Object{})
 	require.NoError(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
 
-	nodes, secretMap := allNodesAndSecrets(t, fakeKubeClient)
+	nodes, secretMap, configMaps := allNodesAndSecrets(t, fakeKubeClient)
 	require.Equal(t, 3, len(nodes.Items))
 	assertNodeCerts(t, nodes, secretMap)
 	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertStaticPodAllBundles(t, configMaps)
 	assertClientCerts(t, secretMap)
 	assertExpirationMetric(t)
 }
@@ -75,10 +76,11 @@ func TestNewNodeAdded(t *testing.T) {
 
 	require.NoError(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
 
-	nodes, secretMap := allNodesAndSecrets(t, fakeKubeClient)
+	nodes, secretMap, configMaps := allNodesAndSecrets(t, fakeKubeClient)
 	require.Equal(t, 3, len(nodes.Items))
 	assertNodeCerts(t, nodes, secretMap)
 	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertStaticPodAllBundles(t, configMaps)
 	assertClientCerts(t, secretMap)
 
 	_, err := fakeKubeClient.CoreV1().Nodes().Create(context.TODO(), u.FakeNode("master-3", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.4")), metav1.CreateOptions{})
@@ -86,10 +88,11 @@ func TestNewNodeAdded(t *testing.T) {
 
 	require.NoError(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
 
-	nodes, secretMap = allNodesAndSecrets(t, fakeKubeClient)
+	nodes, secretMap, configMaps = allNodesAndSecrets(t, fakeKubeClient)
 	require.Equal(t, 4, len(nodes.Items))
 	assertNodeCerts(t, nodes, secretMap)
 	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertStaticPodAllBundles(t, configMaps)
 	assertClientCerts(t, secretMap)
 }
 
@@ -98,10 +101,11 @@ func TestNodeChangingIPs(t *testing.T) {
 
 	require.NoError(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
 
-	nodes, secretMap := allNodesAndSecrets(t, fakeKubeClient)
+	nodes, secretMap, configMaps := allNodesAndSecrets(t, fakeKubeClient)
 	require.Equal(t, 3, len(nodes.Items))
 	assertNodeCerts(t, nodes, secretMap)
 	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertStaticPodAllBundles(t, configMaps)
 	assertClientCerts(t, secretMap)
 
 	n, err := fakeKubeClient.CoreV1().Nodes().Get(context.TODO(), "master-1", metav1.GetOptions{})
@@ -113,10 +117,11 @@ func TestNodeChangingIPs(t *testing.T) {
 
 	require.NoError(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
 
-	nodes, secretMap = allNodesAndSecrets(t, fakeKubeClient)
+	nodes, secretMap, configMaps = allNodesAndSecrets(t, fakeKubeClient)
 	require.Equal(t, 3, len(nodes.Items))
 	assertNodeCerts(t, nodes, secretMap)
 	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertStaticPodAllBundles(t, configMaps)
 	assertClientCerts(t, secretMap)
 }
 
@@ -125,10 +130,11 @@ func TestClientCertsRemoval(t *testing.T) {
 
 	require.NoError(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
 
-	nodes, secretMap := allNodesAndSecrets(t, fakeKubeClient)
+	nodes, secretMap, configMaps := allNodesAndSecrets(t, fakeKubeClient)
 	require.Equal(t, 3, len(nodes.Items))
 	assertNodeCerts(t, nodes, secretMap)
 	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertStaticPodAllBundles(t, configMaps)
 	assertClientCerts(t, secretMap)
 
 	oldClientCert, err := fakeKubeClient.CoreV1().Secrets(operatorclient.TargetNamespace).Get(context.TODO(), tlshelpers.EtcdClientCertSecretName, metav1.GetOptions{})
@@ -144,10 +150,11 @@ func TestClientCertsRemoval(t *testing.T) {
 	// this should regenerate the certificates
 	require.NoError(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
 
-	nodes, secretMap = allNodesAndSecrets(t, fakeKubeClient)
+	nodes, secretMap, configMaps = allNodesAndSecrets(t, fakeKubeClient)
 	require.Equal(t, 3, len(nodes.Items))
 	assertNodeCerts(t, nodes, secretMap)
 	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertStaticPodAllBundles(t, configMaps)
 	assertClientCerts(t, secretMap)
 	// test that the secrets actually differ and the cert was regenerated
 	require.NotEqual(t, oldClientCert.Data, secretMap[tlshelpers.EtcdClientCertSecretName])
@@ -162,7 +169,7 @@ func TestSecretApplyFailureSyncError(t *testing.T) {
 	require.Error(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
 }
 
-func allNodesAndSecrets(t *testing.T, fakeKubeClient *fake.Clientset) (*corev1.NodeList, map[string]corev1.Secret) {
+func allNodesAndSecrets(t *testing.T, fakeKubeClient *fake.Clientset) (*corev1.NodeList, map[string]corev1.Secret, map[string]corev1.ConfigMap) {
 	nodes, err := fakeKubeClient.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
 	require.NoError(t, err)
 	secrets, err := fakeKubeClient.CoreV1().Secrets(operatorclient.TargetNamespace).List(context.Background(), metav1.ListOptions{})
@@ -172,7 +179,15 @@ func allNodesAndSecrets(t *testing.T, fakeKubeClient *fake.Clientset) (*corev1.N
 	for _, secret := range secrets.Items {
 		secretMap[secret.Name] = secret
 	}
-	return nodes, secretMap
+
+	configMaps, err := fakeKubeClient.CoreV1().ConfigMaps(operatorclient.TargetNamespace).List(context.Background(), metav1.ListOptions{})
+	require.NoError(t, err)
+
+	configMapsMap := map[string]corev1.ConfigMap{}
+	for _, cm := range configMaps.Items {
+		configMapsMap[cm.Name] = cm
+	}
+	return nodes, secretMap, configMapsMap
 }
 
 func assertStaticPodAllCerts(t *testing.T, nodes *corev1.NodeList, secretMap map[string]corev1.Secret) {
@@ -193,6 +208,18 @@ func assertStaticPodAllCerts(t *testing.T, nodes *corev1.NodeList, secretMap map
 				checkCertPairSecret(t, secretName, certName, keyName, allSecret.Data)
 			}
 		}
+	})
+}
+
+func assertStaticPodAllBundles(t *testing.T, configMaps map[string]corev1.ConfigMap) {
+	cmName := tlshelpers.EtcdAllBundlesConfigMapName
+	t.Run(cmName, func(t *testing.T) {
+		allBundles, ok := configMaps[cmName]
+		require.Truef(t, ok, "expected configmaps/%s to exist", cmName)
+		// always should have server and metrics bundle
+		require.Equal(t, 2, len(allBundles.Data))
+		require.NotNil(t, allBundles.Data["server-ca-bundle.crt"])
+		require.NotNil(t, allBundles.Data["metrics-ca-bundle.crt"])
 	})
 }
 

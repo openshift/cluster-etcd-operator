@@ -23,7 +23,7 @@ func TestCertSingleNode(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, 11, len(secrets))
-	require.Equal(t, 9, len(bundles))
+	require.Equal(t, 10, len(bundles))
 
 	assertCertificateCorrectness(t, secrets)
 	assertBundleCorrectness(t, secrets, bundles)
@@ -40,7 +40,7 @@ func TestCertsMultiNode(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, 17, len(secrets))
-	require.Equal(t, 9, len(bundles))
+	require.Equal(t, 10, len(bundles))
 
 	assertCertificateCorrectness(t, secrets)
 	assertBundleCorrectness(t, secrets, bundles)
@@ -116,25 +116,39 @@ func assertBundleCorrectness(t *testing.T, secrets []corev1.Secret, bundles []co
 	}
 
 	for _, bundle := range bundles {
-		bundleCerts, err := cert.ParseCertsPEM([]byte(bundle.Data["ca-bundle.crt"]))
-		require.NoError(t, err)
+		if bundle.Name == tlshelpers.EtcdAllBundlesConfigMapName {
+			serverBundleCerts, err := cert.ParseCertsPEM([]byte(bundle.Data["server-ca-bundle.crt"]))
+			require.NoError(t, err)
+			assertMatchingBundles(t, signerMap[tlshelpers.EtcdSignerCertSecretName], serverBundleCerts)
 
-		var signers []*x509.Certificate
-		if strings.Contains(bundle.Name, "metric") {
-			signers = signerMap[tlshelpers.EtcdMetricsSignerCertSecretName]
+			metricsBundleCerts, err := cert.ParseCertsPEM([]byte(bundle.Data["metrics-ca-bundle.crt"]))
+			require.NoError(t, err)
+			assertMatchingBundles(t, signerMap[tlshelpers.EtcdMetricsSignerCertSecretName], metricsBundleCerts)
 		} else {
-			signers = signerMap[tlshelpers.EtcdSignerCertSecretName]
+			bundleCerts, err := cert.ParseCertsPEM([]byte(bundle.Data["ca-bundle.crt"]))
+			require.NoError(t, err)
+
+			var signers []*x509.Certificate
+			if strings.Contains(bundle.Name, "metric") {
+				signers = signerMap[tlshelpers.EtcdMetricsSignerCertSecretName]
+			} else {
+				signers = signerMap[tlshelpers.EtcdSignerCertSecretName]
+			}
+
+			assertMatchingBundles(t, signers, bundleCerts)
 		}
-
-		sort.SliceStable(signers, func(i, j int) bool {
-			return bytes.Compare(signers[i].Raw, signers[j].Raw) < 0
-		})
-		sort.SliceStable(bundleCerts, func(i, j int) bool {
-			return bytes.Compare(bundleCerts[i].Raw, bundleCerts[j].Raw) < 0
-		})
-
-		require.Equal(t, signers, bundleCerts)
 	}
+}
+
+func assertMatchingBundles(t *testing.T, expectedBundle []*x509.Certificate, actualBundle []*x509.Certificate) {
+	sort.SliceStable(expectedBundle, func(i, j int) bool {
+		return bytes.Compare(expectedBundle[i].Raw, expectedBundle[j].Raw) < 0
+	})
+	sort.SliceStable(actualBundle, func(i, j int) bool {
+		return bytes.Compare(actualBundle[i].Raw, actualBundle[j].Raw) < 0
+	})
+
+	require.Equal(t, expectedBundle, actualBundle)
 }
 
 // we only check that all certificates were generated, the correctness is verified above
