@@ -98,6 +98,8 @@ type InstallerController struct {
 	clock            clock.Clock
 	installerBackOff func(count int) time.Duration
 	fallbackBackOff  func(count int) time.Duration
+
+	shouldRevisionInstall func() (bool, error)
 }
 
 // InstallerPodMutationFunc is a function that has a chance at changing the installer pod before it is created
@@ -125,6 +127,11 @@ func (c *InstallerController) WithCerts(certDir string, certConfigMaps, certSecr
 // and the state machine can expect that the startup-monitor acknowledges a ready operand.
 func (c *InstallerController) WithStartupMonitorSupport(startupMonitorEnabled func() (bool, error)) *InstallerController {
 	c.startupMonitorEnabled = startupMonitorEnabled
+	return c
+}
+
+func (c *InstallerController) WithShouldRevisionInstall(shouldRevisionInstall func() (bool, error)) *InstallerController {
+	c.shouldRevisionInstall = shouldRevisionInstall
 	return c
 }
 
@@ -852,6 +859,13 @@ func getInstallerPodName(ns *operatorv1.NodeStatus) string {
 
 // ensureInstallerPod creates the installer pod with the secrets required to if it does not exist already
 func (c *InstallerController) ensureInstallerPod(ctx context.Context, operatorSpec *operatorv1.StaticPodOperatorSpec, ns *operatorv1.NodeStatus) error {
+	// checks if new revision should be rolled out
+	if c.shouldRevisionInstall != nil {
+		shouldInstall, err := c.shouldRevisionInstall()
+		if !shouldInstall {
+			return err
+		}
+	}
 	pod := resourceread.ReadPodV1OrDie(podTemplate)
 
 	pod.Namespace = c.targetNamespace
