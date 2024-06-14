@@ -2,7 +2,8 @@ package targetconfigcontroller
 
 import (
 	"context"
-	"fmt"
+	"testing"
+
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
@@ -18,7 +19,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
-	"testing"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
@@ -56,24 +56,6 @@ func TestTargetConfigController(t *testing.T) {
 			etcdMembersEnvVar: "1,2,3",
 		},
 		{
-			name: "Quorum not fault tolerant",
-			objects: []runtime.Object{
-				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
-			},
-			staticPodStatus: u.StaticPodOperatorStatus(
-				u.WithLatestRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-			),
-			etcdMembers: []*etcdserverpb.Member{
-				u.FakeEtcdMemberWithoutServer(0),
-				u.FakeEtcdMemberWithoutServer(2),
-			},
-			etcdMembersEnvVar: "1,3",
-			expectedErr:       fmt.Errorf("TargetConfigController can't evaluate whether quorum is safe: %w", fmt.Errorf("etcd cluster has quorum of 2 which is not fault tolerant: [{Member:name:\"etcd-0\" peerURLs:\"https://10.0.0.1:2380\" clientURLs:\"https://10.0.0.1:2907\"  Healthy:true Took: Error:<nil>} {Member:ID:2 name:\"etcd-2\" peerURLs:\"https://10.0.0.3:2380\" clientURLs:\"https://10.0.0.3:2907\"  Healthy:true Took: Error:<nil>}]")),
-		},
-		{
 			name: "Quorum not fault tolerant but bootstrapping",
 			objects: []runtime.Object{
 				u.BootstrapConfigMap(u.WithBootstrapStatus("not complete")),
@@ -100,7 +82,7 @@ func TestTargetConfigController(t *testing.T) {
 	}
 }
 
-func TestControllerDegradesOnQuorumLoss(t *testing.T) {
+/* func TestControllerDegradesOnQuorumLoss(t *testing.T) {
 	objects := []runtime.Object{
 		u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
 	}
@@ -137,7 +119,7 @@ func TestControllerDegradesOnQuorumLoss(t *testing.T) {
 	}
 
 	require.Truef(t, foundDegraded, "could not find degraded status in operator client")
-}
+} */
 
 func getController(t *testing.T, staticPodStatus *operatorv1.StaticPodOperatorStatus, objects []runtime.Object, etcdMembers []*etcdserverpb.Member) (events.Recorder, v1helpers.StaticPodOperatorClient, *TargetConfigController) {
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(

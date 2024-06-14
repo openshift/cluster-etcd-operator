@@ -143,14 +143,6 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 
 	required.Data = endpointAddresses
 
-	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
-	if err != nil {
-		return fmt.Errorf("EtcdEndpointsController can't evaluate whether quorum is safe: %w", err)
-	}
-	if !safe {
-		return fmt.Errorf("skipping EtcdEndpointsController reconciliation due to insufficient quorum")
-	}
-
 	// Apply endpoint updates
 	if _, _, err := resourceapply.ApplyConfigMap(ctx, c.configmapClient, recorder, required); err != nil {
 		return fmt.Errorf("applying configmap update failed :%w", err)

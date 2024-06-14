@@ -6,11 +6,12 @@ import (
 	"errors"
 	goflag "flag"
 	"fmt"
-	"go.etcd.io/etcd/client/pkg/v3/tlsutil"
 	"net"
 	"net/http"
 	"syscall"
 	"time"
+
+	"go.etcd.io/etcd/client/pkg/v3/tlsutil"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 
@@ -167,6 +168,7 @@ func (r *readyzOpts) Run() error {
 	// Handle the /healthz endpoint as well since the static pod controller's guard pods check the /healthz endpoint
 	// https://github.com/openshift/library-go/blob/edab248e63516c65a93467eaa8224c86d69f5de9/pkg/operator/staticpod/controller/guard/manifests/guard-pod.yaml#L44
 	mux.HandleFunc("/healthz", r.getReadyzHandlerFunc(shutdownCtx))
+	mux.HandleFunc("/quorumz", r.getQuorumzHandlerFunc(shutdownCtx))
 
 	addr := fmt.Sprintf("0.0.0.0:%d", r.listenPort)
 	klog.Infof("Listening on %s", addr)
@@ -227,6 +229,37 @@ func (r *readyzOpts) getReadyzHandlerFunc(ctx context.Context) http.HandlerFunc 
 		if err != nil {
 			klog.V(2).Infof("failed to get member health key: %v", err)
 			http.Error(w, fmt.Sprintf("failed to get member health key: %v", err), http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+func (r *readyzOpts) getQuorumzHandlerFunc(ctx context.Context) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		etcdClient, err := r.clientPool.Get()
+		if err != nil {
+			klog.V(2).Infof("failed to establish etcd client: %v", err)
+			http.Error(w, fmt.Sprintf("failed to establish etcd client: %v", err), http.StatusServiceUnavailable)
+			return
+		}
+		defer r.clientPool.Return(etcdClient)
+
+		timeout, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+
+		etcdCluster, err := etcdClient.MemberList(timeout)
+		if err != nil {
+			klog.V(2).Infof("failed to get the current cluster membership: %v", err)
+			http.Error(w, fmt.Sprintf("failed to get the current cluster membership: %v", err), http.StatusServiceUnavailable)
+			return
+		}
+
+		memberHealth := etcdcli.GetMemberHealth(ctx, etcdClient, etcdCluster.Members)
+		err = etcdcli.IsQuorumFaultTolerantErr(memberHealth)
+		if err != nil {
+			klog.V(2).Infof("quorum is not fault tolerant: %v", err)
+			http.Error(w, fmt.Sprintf("quorum is not fault tolerant: %v", err), http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusOK)

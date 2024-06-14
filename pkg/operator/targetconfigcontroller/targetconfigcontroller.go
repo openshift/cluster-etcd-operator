@@ -140,16 +140,6 @@ func (c *TargetConfigController) createTargetConfig(
 	operatorSpec *operatorv1.StaticPodOperatorSpec,
 	envVars map[string]string) error {
 
-	// check the cluster is healthy or not after get env var, to ensure it is safe to rollout
-	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
-	if err != nil {
-		return fmt.Errorf("TargetConfigController can't evaluate whether quorum is safe: %w", err)
-	}
-
-	if !safe {
-		return fmt.Errorf("skipping TargetConfigController reconciliation due to insufficient quorum")
-	}
-
 	var errs error
 	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars)
 	if err != nil {
