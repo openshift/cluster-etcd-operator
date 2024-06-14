@@ -408,6 +408,7 @@ func setupController(t *testing.T, objects []runtime.Object, forceSkipRollout bo
 			fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode("master-1")): {},
 			fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode("master-2")): {},
 		}),
+		u.FakeConfigMap(operatorclient.TargetNamespace, tlshelpers.EtcdAllBundlesConfigMapName, map[string]string{}),
 	)
 
 	indexer := cache.NewIndexer(

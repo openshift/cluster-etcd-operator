@@ -13,6 +13,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/component-base/metrics"
 	"k8s.io/klog/v2"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +36,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 )
 
+const BundleRolloutRevisionAnnotation = "openshift.io/ceo-bundle-rollout-revision"
 const signerExpirationMetricName = "openshift_etcd_operator_signer_expiration_days"
 
 type certConfig struct {
@@ -214,7 +216,7 @@ func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.Syn
 		return nil
 	}
 
-	rotationRevision, err := getCertRotationRevision(*currentStatus)
+	rotationRevision, err := c.getCertRotationRevision(ctx)
 	if err != nil {
 		return err
 	}
@@ -389,6 +391,24 @@ func (c *EtcdCertSignerController) ensureBundles(ctx context.Context,
 		},
 	}
 
+	latestConfigMap, err := c.configMapClient.ConfigMaps(operatorclient.TargetNamespace).Get(ctx, tlshelpers.EtcdAllBundlesConfigMapName, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			latestConfigMap = &corev1.ConfigMap{Data: map[string]string{}}
+		} else {
+			return nil, nil, false, fmt.Errorf("could not get current all-bundle configmap %w", err)
+		}
+	}
+
+	// we can skip the reconciliation here early when there's no change in the bundles
+	if reflect.DeepEqual(latestConfigMap.Data, configMap.Data) {
+		return
+	}
+
+	// this ensures we always tag the right revision we're rolling out with, so we can later ensure
+	// the leaf certificates are not regenerated too early.
+	configMap.Annotations[BundleRolloutRevisionAnnotation] = fmt.Sprintf("%d", currentRevision)
+
 	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("EtcdCertSignerController.ensureBundles can't evaluate whether quorum is safe: %w", err)
@@ -401,15 +421,6 @@ func (c *EtcdCertSignerController) ensureBundles(ctx context.Context,
 	if err != nil {
 		return nil, nil, rolloutTriggered, fmt.Errorf("could not apply bundle configmap: %w", err)
 	}
-
-	if rolloutTriggered {
-		// note that even when this operation fails, the triggered revision will not generate leaf certificates
-		// this is guarded by the next sync loops first check against a rolling out revision in ceohelpers.CurrentRevision
-		if err = c.updateCertRevision(ctx, currentRevision); err != nil {
-			return
-		}
-	}
-
 	return
 }
 
@@ -467,19 +478,6 @@ func (c *EtcdCertSignerController) reportExpirationMetric(pair *crypto.CA, name 
 	c.signerExpirationGauge.WithLabelValues(name).Set(daysUntil)
 }
 
-func (c *EtcdCertSignerController) updateCertRevision(ctx context.Context, revision int32) error {
-	_, _, err := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-		Type:    fmt.Sprintf("EtcdCertSignerController-rotation-rev"),
-		Status:  operatorv1.ConditionTrue,
-		Message: fmt.Sprintf("%d", revision),
-	}))
-
-	if err != nil {
-		return fmt.Errorf("EtcdCertSignerController error while updating operator status: %w", err)
-	}
-	return nil
-}
-
 func (c *EtcdCertSignerController) hasNodeCertDiff() (bool, error) {
 	nodes, err := c.masterNodeLister.List(c.masterNodeSelector)
 	if err != nil {
@@ -505,17 +503,26 @@ func (c *EtcdCertSignerController) hasNodeCertDiff() (bool, error) {
 	return false, nil
 }
 
-func getCertRotationRevision(status operatorv1.StaticPodOperatorStatus) (int32, error) {
-	condition := v1helpers.FindOperatorCondition(status.Conditions, fmt.Sprintf("EtcdCertSignerController-rotation-rev"))
-	if condition == nil {
-		return int32(0), nil
+func (c *EtcdCertSignerController) getCertRotationRevision(ctx context.Context) (int32, error) {
+	latestConfigMap, err := c.configMapClient.ConfigMaps(operatorclient.TargetNamespace).Get(ctx, tlshelpers.EtcdAllBundlesConfigMapName, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return int32(0), nil
+		}
+
+		return 0, fmt.Errorf("could not get all-bundle configmap: %w", err)
 	}
 
-	rev, err := strconv.ParseInt(condition.Message, 10, 32)
-	if err != nil {
-		return 0, fmt.Errorf("could not parse condition message for cert rotation revision, msg=[%s]: %w", condition.Message, err)
+	if v, ok := latestConfigMap.Annotations[BundleRolloutRevisionAnnotation]; ok {
+		rev, err := strconv.ParseInt(v, 10, 32)
+		if err != nil {
+			return 0, fmt.Errorf("could not parse annotation for cert rotation revision [%s]: %w", v, err)
+		}
+
+		return int32(rev), nil
 	}
-	return int32(rev), nil
+
+	return int32(0), nil
 }
 
 func addCertSecretToMap(allCerts map[string][]byte, secret *corev1.Secret) map[string][]byte {
