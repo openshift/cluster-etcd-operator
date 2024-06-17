@@ -1087,6 +1087,7 @@ ${COMPUTED_ENV_VARS}
           --logger=zap \
           --log-level=${VERBOSITY} \
           --experimental-initial-corrupt-check=true \
+          --experimental-stop-grpc-service-on-defrag \
           --snapshot-count=10000 \
           --initial-advertise-peer-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2380 \
           --cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.crt \
