@@ -6,6 +6,8 @@ import (
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	"github.com/openshift/library-go/pkg/controller/factory"
@@ -65,9 +67,8 @@ type CertRotationController struct {
 	RotatedSigningCASecret RotatedSigningCASecret
 	// CABundleConfigMap maintains a CA bundle config map, by adding new CA certs coming from rotatedSigningCASecret, and by removing expired old ones.
 	CABundleConfigMap CABundleConfigMap
-	// RotatedSelfSignedCertKeySecret rotates a key and cert signed by a signing CA and stores it in a secret.
-	RotatedSelfSignedCertKeySecret RotatedSelfSignedCertKeySecret
-
+	// RotatedTargetSecrets contains a list of key and cert signed by a signing CA to rotate.
+	RotatedTargetSecrets []RotatedSelfSignedCertKeySecret
 	// Plumbing:
 	StatusReporter StatusReporter
 }
@@ -81,11 +82,11 @@ func NewCertRotationController(
 	reporter StatusReporter,
 ) factory.Controller {
 	c := &CertRotationController{
-		Name:                           name,
-		RotatedSigningCASecret:         rotatedSigningCASecret,
-		CABundleConfigMap:              caBundleConfigMap,
-		RotatedSelfSignedCertKeySecret: rotatedSelfSignedCertKeySecret,
-		StatusReporter:                 reporter,
+		Name:                   name,
+		RotatedSigningCASecret: rotatedSigningCASecret,
+		CABundleConfigMap:      caBundleConfigMap,
+		RotatedTargetSecrets:   []RotatedSelfSignedCertKeySecret{rotatedSelfSignedCertKeySecret},
+		StatusReporter:         reporter,
 	}
 	return factory.New().
 		ResyncEvery(time.Minute).
@@ -94,6 +95,42 @@ func NewCertRotationController(
 			rotatedSigningCASecret.Informer.Informer(),
 			caBundleConfigMap.Informer.Informer(),
 			rotatedSelfSignedCertKeySecret.Informer.Informer(),
+		).
+		WithPostStartHooks(
+			c.targetCertRecheckerPostRunHook,
+		).
+		ToController("CertRotationController", recorder.WithComponentSuffix("cert-rotation-controller").WithComponentSuffix(name))
+}
+
+func NewCertRotationControllerMultipleTargets(
+	name string,
+	rotatedSigningCASecret RotatedSigningCASecret,
+	caBundleConfigMap CABundleConfigMap,
+	rotatedTargetSecrets []RotatedSelfSignedCertKeySecret,
+	recorder events.Recorder,
+	reporter StatusReporter,
+) factory.Controller {
+	informers := sets.New[factory.Informer](
+		rotatedSigningCASecret.Informer.Informer(),
+		caBundleConfigMap.Informer.Informer(),
+	)
+
+	for _, target := range rotatedTargetSecrets {
+		informers = informers.Insert(target.Informer.Informer())
+	}
+
+	c := &CertRotationController{
+		Name:                   name,
+		RotatedSigningCASecret: rotatedSigningCASecret,
+		CABundleConfigMap:      caBundleConfigMap,
+		RotatedTargetSecrets:   rotatedTargetSecrets,
+		StatusReporter:         reporter,
+	}
+	return factory.New().
+		ResyncEvery(time.Minute).
+		WithSync(c.Sync).
+		WithInformers(
+			informers.UnsortedList()...,
 		).
 		WithPostStartHooks(
 			c.targetCertRecheckerPostRunHook,
@@ -132,8 +169,14 @@ func (c CertRotationController) SyncWorker(ctx context.Context) error {
 		return err
 	}
 
-	if _, err := c.RotatedSelfSignedCertKeySecret.EnsureTargetCertKeyPair(ctx, signingCertKeyPair, cabundleCerts); err != nil {
-		return err
+	var errs []error
+	for _, secret := range c.RotatedTargetSecrets {
+		if _, err := secret.EnsureTargetCertKeyPair(ctx, signingCertKeyPair, cabundleCerts); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) != 0 {
+		return errors.NewAggregate(errs)
 	}
 
 	return nil
@@ -141,15 +184,25 @@ func (c CertRotationController) SyncWorker(ctx context.Context) error {
 
 func (c CertRotationController) targetCertRecheckerPostRunHook(ctx context.Context, syncCtx factory.SyncContext) error {
 	// If we have a need to force rechecking the cert, use this channel to do it.
-	refresher, ok := c.RotatedSelfSignedCertKeySecret.CertCreator.(TargetCertRechecker)
-	if !ok {
-		return nil
+	var targetRefreshers []<-chan struct{}
+	for _, target := range c.RotatedTargetSecrets {
+		if refresher, ok := target.CertCreator.(TargetCertRechecker); ok {
+			targetRefreshers = append(targetRefreshers, refresher.RecheckChannel())
+		}
 	}
-	targetRefresh := refresher.RecheckChannel()
+	aggregateTargetRefresher := make(chan struct{})
+	for _, ch := range targetRefreshers {
+		go func(c <-chan struct{}) {
+			for msg := range c {
+				aggregateTargetRefresher <- msg
+			}
+		}(ch)
+	}
+
 	go wait.Until(func() {
 		for {
 			select {
-			case <-targetRefresh:
+			case <-aggregateTargetRefresher:
 				syncCtx.Queue().Add(factory.DefaultQueueKey)
 			case <-ctx.Done():
 				return
