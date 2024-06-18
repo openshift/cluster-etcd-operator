@@ -26,10 +26,10 @@ const (
 	// Given that clusters can be shutdown/hibernated for a max of ~9 months
 	// this validity period leaves enough cushion to not have the
 	// certs expire during shutdown/hibernation in the worst case.
-	etcdCertValidity          = 3 * 365 * 24 * time.Hour
-	etcdCertValidityRefresh   = 2.2 * 365 * 24 * time.Hour
-	etcdCaCertValidity        = 5 * 365 * 24 * time.Hour
-	etcdCaCertValidityRefresh = 4.2 * 365 * 24 * time.Hour
+	EtcdCertValidity          = 3 * 365 * 24 * time.Hour
+	EtcdCertValidityRefresh   = 2.2 * 365 * 24 * time.Hour
+	EtcdCaCertValidity        = 5 * 365 * 24 * time.Hour
+	EtcdCaCertValidityRefresh = 4.2 * 365 * 24 * time.Hour
 
 	EtcdJiraComponentName                  = "etcd"
 	EtcdSignerCertSecretName               = "etcd-signer"
@@ -121,8 +121,8 @@ func CreateSignerCert(
 			Description:                      "etcd signer certificate authorities",
 			AutoRegenerateAfterOfflineExpiry: "",
 		},
-		Validity: etcdCaCertValidity,
-		Refresh:  etcdCaCertValidityRefresh,
+		Validity: EtcdCaCertValidity,
+		Refresh:  EtcdCaCertValidityRefresh,
 
 		Informer:      secretInformer,
 		Lister:        secretLister,
@@ -156,8 +156,8 @@ func CreateMetricsSignerCert(
 			Description:                      "etcd metrics signer certificate authorities",
 			AutoRegenerateAfterOfflineExpiry: "",
 		},
-		Validity: etcdCaCertValidity,
-		Refresh:  etcdCaCertValidityRefresh,
+		Validity: EtcdCaCertValidity,
+		Refresh:  EtcdCaCertValidityRefresh,
 
 		Informer:      secretInformer,
 		Lister:        secretLister,
@@ -244,8 +244,8 @@ func createCertForNode(description, secretName string, node *corev1.Node,
 			Description:                      description,
 			AutoRegenerateAfterOfflineExpiry: "",
 		},
-		Validity:    etcdCertValidity,
-		Refresh:     etcdCertValidityRefresh,
+		Validity:    EtcdCertValidity,
+		Refresh:     EtcdCertValidityRefresh,
 		CertCreator: creator,
 
 		Informer:      secretInformer,
@@ -277,8 +277,8 @@ func CreateMetricsClientCert(
 			Description:                      "etcd metrics client certificate",
 			AutoRegenerateAfterOfflineExpiry: "",
 		},
-		Validity:    etcdCertValidity,
-		Refresh:     etcdCertValidityRefresh,
+		Validity:    EtcdCertValidity,
+		Refresh:     EtcdCertValidityRefresh,
 		CertCreator: creator,
 
 		Informer:      secretInformer,
@@ -310,8 +310,8 @@ func CreateEtcdClientCert(
 			Description:                      "etcd client certificate",
 			AutoRegenerateAfterOfflineExpiry: "",
 		},
-		Validity:    etcdCertValidity,
-		Refresh:     etcdCertValidityRefresh,
+		Validity:    EtcdCertValidity,
+		Refresh:     EtcdCertValidityRefresh,
 		CertCreator: creator,
 
 		Informer:      secretInformer,

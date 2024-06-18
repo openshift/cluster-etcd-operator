@@ -3,6 +3,7 @@ package etcdenvvar
 import (
 	"context"
 	"fmt"
+	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -70,6 +71,7 @@ func TestEnvVarController(t *testing.T) {
 		name            string
 		objects         []runtime.Object
 		staticPodStatus *operatorv1.StaticPodOperatorStatus
+		certSecret      map[string][]byte
 		expectedEnv     map[string]string
 		expectedErr     error
 	}{
@@ -82,6 +84,15 @@ func TestEnvVarController(t *testing.T) {
 			staticPodStatus: u.StaticPodOperatorStatus(u.WithLatestRevision(3)),
 			expectedEnv:     map[string]string{},
 			expectedErr:     fmt.Errorf("empty NodeStatuses, can't generate environment for getEscapedIPAddress"),
+		},
+		{
+			name: "MissingCertSecrets",
+			certSecret: map[string][]byte{
+				fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode("master-0")): {},
+				fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode("master-2")): {},
+			},
+			expectedEnv: map[string]string{},
+			expectedErr: fmt.Errorf("could not find serving cert for node [master-1] and key [etcd-serving-master-1.key]"),
 		},
 	}
 	for _, scenario := range scenarios {
@@ -104,6 +115,14 @@ func TestEnvVarController(t *testing.T) {
 					u.WithNodeStatusAtCurrentRevisionNamed(3, "master-1"),
 					u.WithNodeStatusAtCurrentRevisionNamed(3, "master-2"),
 				)
+			}
+
+			if scenario.certSecret == nil {
+				scenario.certSecret = map[string][]byte{
+					fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode("master-0")): {},
+					fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode("master-1")): {},
+					fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode("master-2")): {},
+				}
 			}
 
 			fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
@@ -150,6 +169,7 @@ func TestEnvVarController(t *testing.T) {
 					u.WithEndpoint(1, "https://192.168.2.1:2379"),
 					u.WithEndpoint(2, "https://192.168.2.2:2379")),
 				u.ClusterConfigConfigMap(1),
+				u.FakeSecret(operatorclient.TargetNamespace, tlshelpers.EtcdAllCertsSecretName, scenario.certSecret),
 			}
 
 			fakeKubeClient := fake.NewSimpleClientset(scenario.objects...)
@@ -176,6 +196,7 @@ func TestEnvVarController(t *testing.T) {
 				operatorClient:       fakeOperatorClient,
 				eventRecorder:        eventRecorder,
 				configmapLister:      corev1listers.NewConfigMapLister(indexer),
+				secretLister:         corev1listers.NewSecretLister(indexer),
 				infrastructureLister: configv1listers.NewInfrastructureLister(indexer),
 				masterNodeLister:     corev1listers.NewNodeLister(indexer),
 				networkLister:        configv1listers.NewNetworkLister(networkIndexer),

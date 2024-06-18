@@ -9,7 +9,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -35,30 +34,16 @@ func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMa
 			ManagementState: operatorv1.Managed,
 		},
 	}, &operatorv1.StaticPodOperatorStatus{
-		OperatorStatus: operatorv1.OperatorStatus{Conditions: []operatorv1.OperatorCondition{}},
-		NodeStatuses:   []operatorv1.NodeStatus{},
+		OperatorStatus:          operatorv1.OperatorStatus{Conditions: []operatorv1.OperatorCondition{}},
+		LatestAvailableRevision: 1,
+		NodeStatuses: []operatorv1.NodeStatus{
+			{CurrentRevision: 1},
+		},
 	}, nil, nil)
 
 	kubeInformers := v1helpers.NewKubeInformersForNamespaces(fakeKubeClient, "", "kube-system",
 		operatorclient.TargetNamespace, operatorclient.OperatorNamespace, operatorclient.GlobalUserSpecifiedConfigNamespace)
-	secretInformer := kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets()
-	secretLister := secretInformer.Lister()
-	secretClient := v1helpers.CachedSecretGetter(fakeKubeClient.CoreV1(), kubeInformers)
-
 	recorder := events.NewInMemoryRecorder("etcd")
-	// create openshift-config signers first, they will remain in openshift-config and are needed for the controller sync loop to function
-	// TODO(thomas): once the rotation process is in place, we can remove that special case
-	etcdSignerCert := tlshelpers.CreateBootstrapSignerCert(secretInformer, secretLister, secretClient, recorder)
-	_, _, err := etcdSignerCert.EnsureSigningCertKeyPair(context.Background())
-	if err != nil {
-		return nil, nil, fmt.Errorf("could not create etcd signer certificate: %w", err)
-	}
-	metricsSignerCert := tlshelpers.CreateBootstrapMetricsSignerCert(secretInformer, secretLister, secretClient, recorder)
-	_, _, err = metricsSignerCert.EnsureSigningCertKeyPair(context.Background())
-	if err != nil {
-		return nil, nil, fmt.Errorf("could not create etcd metrics signer certificate: %w", err)
-	}
-
 	nodeSelector, err := labels.Parse("node-role.kubernetes.io/master")
 	if err != nil {
 		return nil, nil, fmt.Errorf("could not parse master node labels: %w", err)
@@ -74,7 +59,8 @@ func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMa
 		nodeSelector,
 		recorder,
 		&ceohelpers.AlwaysSafeQuorumChecker{},
-		metrics.NewKubeRegistry())
+		metrics.NewKubeRegistry(),
+		true)
 
 	stopChan := make(chan struct{})
 	defer close(stopChan)
@@ -105,14 +91,9 @@ func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMa
 		return nil, nil, fmt.Errorf("error while listing fake client secrets in %s: %w", operatorclient.TargetNamespace, err)
 	}
 
-	openshiftConfigSecrets, err := fakeKubeClient.CoreV1().Secrets(operatorclient.GlobalUserSpecifiedConfigNamespace).List(context.Background(), metav1.ListOptions{})
-	if err != nil {
-		return nil, nil, fmt.Errorf("error while listing fake client secrets in %s: %w", operatorclient.GlobalUserSpecifiedConfigNamespace, err)
-	}
-
 	var secrets []corev1.Secret
 	// we have to add some extra information that the fake apiserver doesn't add for a valid k8s resource
-	for _, s := range append(openshiftEtcdSecrets.Items, openshiftConfigSecrets.Items...) {
+	for _, s := range openshiftEtcdSecrets.Items {
 		s.APIVersion = "v1"
 		s.Kind = "Secret"
 		secrets = append(secrets, s)
@@ -123,14 +104,9 @@ func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMa
 		return nil, nil, fmt.Errorf("error while listing fake client configmaps in %s: %w", operatorclient.TargetNamespace, err)
 	}
 
-	openshiftConfigBundles, err := fakeKubeClient.CoreV1().ConfigMaps(operatorclient.GlobalUserSpecifiedConfigNamespace).List(context.Background(), metav1.ListOptions{})
-	if err != nil {
-		return nil, nil, fmt.Errorf("error while listing fake client configmaps in %s: %w", operatorclient.GlobalUserSpecifiedConfigNamespace, err)
-	}
-
 	var bundles []corev1.ConfigMap
 	// we have to add some extra information that the fake apiserver doesn't add for a valid k8s resource
-	for _, s := range append(openshiftEtcdBundles.Items, openshiftConfigBundles.Items...) {
+	for _, s := range openshiftEtcdBundles.Items {
 		s.APIVersion = "v1"
 		s.Kind = "ConfigMap"
 		bundles = append(bundles, s)

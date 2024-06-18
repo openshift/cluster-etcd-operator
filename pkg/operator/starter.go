@@ -367,6 +367,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 		quorumChecker,
 		legacyregistry.DefaultGatherer.(metrics.KubeRegistry),
+		false,
 	)
 
 	etcdCertCleanerController := etcdcertcleaner.NewEtcdCertCleanerController(

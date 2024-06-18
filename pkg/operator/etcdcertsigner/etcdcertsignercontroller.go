@@ -5,11 +5,15 @@ import (
 	"crypto/x509"
 	"fmt"
 	"github.com/openshift/library-go/pkg/crypto"
+	"github.com/openshift/library-go/pkg/operator/bootstrap"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	corev1informers "k8s.io/client-go/informers/core/v1"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/component-base/metrics"
+	"k8s.io/klog/v2"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -32,6 +36,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 )
 
+const BundleRolloutRevisionAnnotation = "openshift.io/ceo-bundle-rollout-revision"
 const signerExpirationMetricName = "openshift_etcd_operator_signer_expiration_days"
 
 type certConfig struct {
@@ -70,7 +75,11 @@ type EtcdCertSignerController struct {
 	secretLister       corev1listers.SecretLister
 	secretClient       corev1client.SecretsGetter
 	configMapClient    corev1client.ConfigMapsGetter
+	configmapLister    corev1listers.ConfigMapLister
 	quorumChecker      ceohelpers.QuorumChecker
+
+	// when true we skip all checks related to the rollout of static pods, this is used in render
+	forceSkipRollout bool
 
 	certConfig *certConfig
 
@@ -93,6 +102,7 @@ func NewEtcdCertSignerController(
 	eventRecorder events.Recorder,
 	quorumChecker ceohelpers.QuorumChecker,
 	metricsRegistry metrics.KubeRegistry,
+	forceSkipRollout bool,
 ) factory.Controller {
 	eventRecorder = eventRecorder.WithComponentSuffix("etcd-cert-signer-controller")
 	cmInformer := kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps()
@@ -144,18 +154,21 @@ func NewEtcdCertSignerController(
 	metricsRegistry.MustRegister(signerExpirationGauge)
 
 	c := &EtcdCertSignerController{
-		eventRecorder:         eventRecorder,
-		kubeClient:            kubeClient,
-		operatorClient:        operatorClient,
-		masterNodeLister:      masterNodeLister,
-		masterNodeSelector:    masterNodeSelector,
-		secretInformer:        secretInformer,
-		secretLister:          secretLister,
-		secretClient:          secretClient,
-		configMapClient:       cmGetter,
+		eventRecorder:      eventRecorder,
+		kubeClient:         kubeClient,
+		operatorClient:     operatorClient,
+		masterNodeLister:   masterNodeLister,
+		masterNodeSelector: masterNodeSelector,
+		secretInformer:     secretInformer,
+		secretLister:       secretLister,
+		secretClient:       secretClient,
+		configMapClient:    cmGetter,
+		// this one can go through the informers, it's only used for bootstrap checks
+		configmapLister:       kubeInformers.InformersFor(operatorclient.KubeSystemNamespace).Core().V1().ConfigMaps().Lister(),
 		quorumChecker:         quorumChecker,
 		certConfig:            certCfg,
 		signerExpirationGauge: signerExpirationGauge,
+		forceSkipRollout:      forceSkipRollout,
 	}
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
@@ -171,16 +184,44 @@ func NewEtcdCertSignerController(
 }
 
 func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
-	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
+	bootstrapComplete, err := bootstrap.IsBootstrapComplete(c.configmapLister)
 	if err != nil {
-		return fmt.Errorf("EtcdCertSignerController can't evaluate whether quorum is safe: %w", err)
+		return err
 	}
 
-	if !safe {
-		return fmt.Errorf("skipping EtcdCertSignerController reconciliation due to insufficient quorum")
+	hasDiff, err := c.hasNodeCertDiff()
+	if err != nil {
+		return err
 	}
 
-	if err := c.syncAllMasterCertificates(ctx, syncCtx.Recorder()); err != nil {
+	// we allow the controller to run freely during bootstrap to avoid having issues with constantly rolling out revisions and other
+	// contention issues on the operator status update. Same during vertical scaling, when a node was added we want to immediately issue a cert.
+	if !bootstrapComplete || hasDiff {
+		klog.Infof("EtcdCertSignerController force sync bootstrap completed=[%v], found node difference=[%v]", bootstrapComplete, hasDiff)
+		if err := c.syncAllMasterCertificates(ctx, syncCtx.Recorder(), true, 0, 0); err != nil {
+			return fmt.Errorf("EtcdCertSignerController failed to sync all master certificates during bootstrap: %w", err)
+		}
+		return nil
+	}
+
+	_, currentStatus, _, err := c.operatorClient.GetStaticPodOperatorStateWithQuorum(ctx)
+	if err != nil || currentStatus == nil {
+		return fmt.Errorf("skipping EtcdCertSignerController can't get current status: %w", err)
+	}
+
+	currentRevision, err := ceohelpers.CurrentRevision(*currentStatus)
+	if err != nil {
+		// we explicitly do not return error here, as this will degrade the operator during any revision rollout.
+		klog.Infof("skipping EtcdCertSignerController can't get current revision. Err=%v", err)
+		return nil
+	}
+
+	rotationRevision, err := c.getCertRotationRevision(ctx)
+	if err != nil {
+		return err
+	}
+
+	if err := c.syncAllMasterCertificates(ctx, syncCtx.Recorder(), c.forceSkipRollout, rotationRevision, currentRevision); err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdCertSignerControllerDegraded",
 			Status:  operatorv1.ConditionTrue,
@@ -202,41 +243,35 @@ func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.Syn
 	return updateErr
 }
 
-func (c *EtcdCertSignerController) syncAllMasterCertificates(ctx context.Context, recorder events.Recorder) error {
-	// TODO(thomas): it is of utmost importance to keep the existing signer certs for now
-	// when we just create a new signer cert, the new revision does not allow the peer to join the existing two-node
-	// cluster based on the old CA. Any newly rotated additions will come for free through the signerCaBundle and will work out of the box.
-	// Unfortunately, we can't make use of the certrotation.RotatedSigningCASecret here because it would immediately try to rotate the existing signer.
-	signerCaPair, err := tlshelpers.ReadConfigSignerCert(ctx, c.secretClient)
-	if err != nil {
-		return err
-	}
-
-	c.reportExpirationMetric(signerCaPair, "signer-ca")
-
-	// TODO(thomas): we need to transition that new signer as a replacement for the above - today we only bundle it
-	newSignerCaPair, _, err := c.certConfig.signerCert.EnsureSigningCertKeyPair(ctx)
+func (c *EtcdCertSignerController) syncAllMasterCertificates(
+	ctx context.Context, recorder events.Recorder, forceSkipRollout bool, lastRotationRevision int32, currentRevision int32) error {
+	signerCaPair, _, err := c.certConfig.signerCert.EnsureSigningCertKeyPair(ctx)
 	if err != nil {
 		return fmt.Errorf("error on ensuring etcd-signer cert: %w", err)
 	}
+	c.reportExpirationMetric(signerCaPair, "signer-ca")
 
-	metricsSignerCaPair, err := tlshelpers.ReadConfigMetricsSignerCert(ctx, c.secretClient)
-	if err != nil {
-		return err
-	}
-
-	c.reportExpirationMetric(metricsSignerCaPair, "metrics-signer-ca")
-
-	// TODO(thomas): we need to transition that new signer as a replacement for the above - today we only bundle it
-	newMetricsSignerCaPair, _, err := c.certConfig.metricsSignerCert.EnsureSigningCertKeyPair(ctx)
+	metricsSignerCaPair, _, err := c.certConfig.metricsSignerCert.EnsureSigningCertKeyPair(ctx)
 	if err != nil {
 		return fmt.Errorf("error on ensuring metrics-signer cert: %w", err)
 	}
+	c.reportExpirationMetric(metricsSignerCaPair, "metrics-signer-ca")
 
-	signerBundle, metricsSignerBundle, err := c.ensureBundles(ctx, recorder,
-		[]*crypto.CA{signerCaPair, newSignerCaPair}, []*crypto.CA{metricsSignerCaPair, newMetricsSignerCaPair})
+	signerBundle, metricsSignerBundle, rolloutTriggered, err := c.ensureBundles(ctx, recorder, signerCaPair, metricsSignerCaPair, currentRevision)
 	if err != nil {
 		return fmt.Errorf("error on ensuring bundles: %w", err)
+	}
+
+	if !forceSkipRollout {
+		if rolloutTriggered {
+			klog.Infof("skipping EtcdCertSignerController leaf cert generation as revision rollout has been triggered")
+			return nil
+		}
+
+		if currentRevision <= lastRotationRevision {
+			klog.Infof("skipping EtcdCertSignerController leaf cert generation as safe revision is not yet achieved, currently at %d - rotation happend at %d", currentRevision, lastRotationRevision)
+			return nil
+		}
 	}
 
 	// -----------------------------------------------------------------
@@ -311,30 +346,30 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(ctx context.Context
 
 // ensureBundles will take the metrics and server CA certificates and ensure the bundle is updated.
 // This will cause a revision rollout if a change in the bundle was detected.
-func (c *EtcdCertSignerController) ensureBundles(ctx context.Context, recorder events.Recorder,
-	serverCA []*crypto.CA, metricsCA []*crypto.CA) (serverBundle []*x509.Certificate, metricsBundle []*x509.Certificate, err error) {
-	for _, ca := range serverCA {
-		serverBundle, err = c.certConfig.signerCaBundle.EnsureConfigMapCABundle(ctx, ca)
-		if err != nil {
-			return
-		}
+func (c *EtcdCertSignerController) ensureBundles(ctx context.Context,
+	recorder events.Recorder,
+	serverCA *crypto.CA,
+	metricsCA *crypto.CA,
+	currentRevision int32,
+) (serverBundle []*x509.Certificate, metricsBundle []*x509.Certificate, rolloutTriggered bool, err error) {
+	serverBundle, err = c.certConfig.signerCaBundle.EnsureConfigMapCABundle(ctx, serverCA)
+	if err != nil {
+		return nil, nil, false, err
 	}
 
 	serverCaBytes, err := crypto.EncodeCertificates(serverBundle...)
 	if err != nil {
-		return nil, nil, fmt.Errorf("could not encode server bundle: %w", err)
+		return nil, nil, false, fmt.Errorf("could not encode server bundle: %w", err)
 	}
 
-	for _, ca := range metricsCA {
-		metricsBundle, err = c.certConfig.metricsSignerCaBundle.EnsureConfigMapCABundle(ctx, ca)
-		if err != nil {
-			return
-		}
+	metricsBundle, err = c.certConfig.metricsSignerCaBundle.EnsureConfigMapCABundle(ctx, metricsCA)
+	if err != nil {
+		return nil, nil, false, err
 	}
 
 	metricsCaBytes, err := crypto.EncodeCertificates(metricsBundle...)
 	if err != nil {
-		return nil, nil, fmt.Errorf("could not encode metrics bundle: %w", err)
+		return nil, nil, false, fmt.Errorf("could not encode metrics bundle: %w", err)
 	}
 
 	// Write a configmap that aggregates all certs for all nodes for the static
@@ -356,24 +391,36 @@ func (c *EtcdCertSignerController) ensureBundles(ctx context.Context, recorder e
 		},
 	}
 
+	latestConfigMap, err := c.configMapClient.ConfigMaps(operatorclient.TargetNamespace).Get(ctx, tlshelpers.EtcdAllBundlesConfigMapName, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			latestConfigMap = &corev1.ConfigMap{Data: map[string]string{}}
+		} else {
+			return nil, nil, false, fmt.Errorf("could not get current all-bundle configmap %w", err)
+		}
+	}
+
+	// we can skip the reconciliation here early when there's no change in the bundles
+	if reflect.DeepEqual(latestConfigMap.Data, configMap.Data) {
+		return
+	}
+
+	// this ensures we always tag the right revision we're rolling out with, so we can later ensure
+	// the leaf certificates are not regenerated too early.
+	configMap.Annotations[BundleRolloutRevisionAnnotation] = fmt.Sprintf("%d", currentRevision)
+
 	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
 	if err != nil {
-		return nil, nil, fmt.Errorf("EtcdCertSignerController.ensureBundles can't evaluate whether quorum is safe: %w", err)
+		return nil, nil, false, fmt.Errorf("EtcdCertSignerController.ensureBundles can't evaluate whether quorum is safe: %w", err)
 	}
-
 	if !safe {
-		return nil, nil, fmt.Errorf("skipping EtcdCertSignerController.ensureBundles reconciliation due to insufficient quorum")
+		return nil, nil, false, fmt.Errorf("skipping EtcdCertSignerController.ensureBundles reconciliation due to insufficient quorum")
 	}
-	_, changed, err := resourceapply.ApplyConfigMap(ctx, c.configMapClient, recorder, configMap)
+
+	_, rolloutTriggered, err = resourceapply.ApplyConfigMap(ctx, c.configMapClient, recorder, configMap)
 	if err != nil {
-		return nil, nil, fmt.Errorf("could not apply bundle configmap: %w", err)
+		return nil, nil, rolloutTriggered, fmt.Errorf("could not apply bundle configmap: %w", err)
 	}
-
-	if changed {
-		// TODO(thomas): set the rollout bundle revision in the CEO status
-		// TODO(thomas): we need to notify the outside caller that it's not safe to rotate the leafs just yet
-	}
-
 	return
 }
 
@@ -431,27 +478,51 @@ func (c *EtcdCertSignerController) reportExpirationMetric(pair *crypto.CA, name 
 	c.signerExpirationGauge.WithLabelValues(name).Set(daysUntil)
 }
 
-func (c *EtcdCertSignerController) updateCertRevision(ctx context.Context, certSecretName string, revision int32) error {
-	_, _, err := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-		Type:    fmt.Sprintf("EtcdCertSignerController-rotation-rev-%s", certSecretName),
-		Status:  operatorv1.ConditionTrue,
-		Message: fmt.Sprintf("%d", revision),
-	}))
+func (c *EtcdCertSignerController) hasNodeCertDiff() (bool, error) {
+	nodes, err := c.masterNodeLister.List(c.masterNodeSelector)
+	if err != nil {
+		return false, err
+	}
 
-	return err
+	allSecrets, err := c.secretLister.Secrets(operatorclient.TargetNamespace).Get(tlshelpers.EtcdAllCertsSecretName)
+	if err != nil {
+		klog.Infof("could not find secret [%s]", tlshelpers.EtcdAllCertsSecretName)
+		if apierrors.IsNotFound(err) {
+			return true, nil
+		}
+		return false, err
+	}
+
+	for _, node := range nodes {
+		secretDataKey := fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode(node.Name))
+		if _, ok := allSecrets.Data[secretDataKey]; !ok {
+			klog.Infof("could not find serving cert for node [%s] and key [%s] in bundled secret", node.Name, secretDataKey)
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
-func getCertRotationRevision(status *operatorv1.StaticPodOperatorStatus, certSecretName string) (int32, error) {
-	condition := v1helpers.FindOperatorCondition(status.Conditions, fmt.Sprintf("EtcdCertSignerController-rotation-rev-%s", certSecretName))
-	if condition == nil {
-		return int32(0), nil
+func (c *EtcdCertSignerController) getCertRotationRevision(ctx context.Context) (int32, error) {
+	latestConfigMap, err := c.configMapClient.ConfigMaps(operatorclient.TargetNamespace).Get(ctx, tlshelpers.EtcdAllBundlesConfigMapName, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return int32(0), nil
+		}
+
+		return 0, fmt.Errorf("could not get all-bundle configmap: %w", err)
 	}
 
-	rev, err := strconv.ParseInt(condition.Message, 10, 32)
-	if err != nil {
-		return 0, fmt.Errorf("could not parse condition message for cert secret [%s], msg=[%s]: %w", certSecretName, condition.Message, err)
+	if v, ok := latestConfigMap.Annotations[BundleRolloutRevisionAnnotation]; ok {
+		rev, err := strconv.ParseInt(v, 10, 32)
+		if err != nil {
+			return 0, fmt.Errorf("could not parse annotation for cert rotation revision [%s]: %w", v, err)
+		}
+
+		return int32(rev), nil
 	}
-	return int32(rev), nil
+
+	return int32(0), nil
 }
 
 func addCertSecretToMap(allCerts map[string][]byte, secret *corev1.Secret) map[string][]byte {

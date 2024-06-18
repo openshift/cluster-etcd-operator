@@ -22,8 +22,8 @@ func TestCertSingleNode(t *testing.T) {
 	secrets, bundles, err := createCertSecrets([]*corev1.Node{node})
 	require.NoError(t, err)
 
-	require.Equal(t, 11, len(secrets))
-	require.Equal(t, 10, len(bundles))
+	require.Equal(t, 8, len(secrets))
+	require.Equal(t, 7, len(bundles))
 
 	assertCertificateCorrectness(t, secrets)
 	assertBundleCorrectness(t, secrets, bundles)
@@ -39,8 +39,8 @@ func TestCertsMultiNode(t *testing.T) {
 	secrets, bundles, err := createCertSecrets(nodes)
 	require.NoError(t, err)
 
-	require.Equal(t, 17, len(secrets))
-	require.Equal(t, 10, len(bundles))
+	require.Equal(t, 14, len(secrets))
+	require.Equal(t, 7, len(bundles))
 
 	assertCertificateCorrectness(t, secrets)
 	assertBundleCorrectness(t, secrets, bundles)

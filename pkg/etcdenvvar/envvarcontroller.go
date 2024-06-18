@@ -3,7 +3,9 @@ package etcdenvvar
 import (
 	"context"
 	"fmt"
+	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,6 +49,7 @@ type EnvVarController struct {
 	infrastructureLister    configv1listers.InfrastructureLister
 	networkLister           configv1listers.NetworkLister
 	configmapLister         corev1listers.ConfigMapLister
+	secretLister            corev1listers.SecretLister
 	masterNodeLister        corev1listers.NodeLister
 	masterNodeLabelSelector labels.Selector
 	etcdLister              operatorv1listers.EtcdLister
@@ -80,6 +83,7 @@ func NewEnvVarController(
 		infrastructureLister:    infrastructureInformer.Lister(),
 		networkLister:           networkInformer.Lister(),
 		configmapLister:         kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister(),
+		secretLister:            kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Lister(),
 		masterNodeLister:        masterNodeLister,
 		masterNodeLabelSelector: masterNodeLabelSelector,
 		targetImagePullSpec:     targetImagePullSpec,
@@ -92,6 +96,8 @@ func NewEnvVarController(
 			infrastructureInformer.Informer().HasSynced,
 			networkInformer.Informer().HasSynced,
 			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().HasSynced,
+			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Informer().HasSynced,
+			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer().HasSynced,
 			masterNodeInformer.HasSynced,
 			etcdsInformer.Informer().HasSynced,
 		},
@@ -102,6 +108,8 @@ func NewEnvVarController(
 	infrastructureInformer.Informer().AddEventHandler(c.eventHandler())
 	networkInformer.Informer().AddEventHandler(c.eventHandler())
 	kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().AddEventHandler(c.eventHandler())
+	kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Informer().AddEventHandler(c.eventHandler())
+	kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
 	etcdsInformer.Informer().AddEventHandler(c.eventHandler())
 	masterNodeInformer.AddEventHandler(c.eventHandler())
 
@@ -168,6 +176,12 @@ func (c *EnvVarController) checkEnvVars() error {
 	if err != nil {
 		return err
 	}
+
+	err = c.validateEnvVars(currEnvVarMap)
+	if err != nil {
+		return err
+	}
+
 	func() {
 		c.envVarMapLock.Lock()
 		defer c.envVarMapLock.Unlock()
@@ -180,6 +194,28 @@ func (c *EnvVarController) checkEnvVars() error {
 	// update listeners outside the lock in-case they are synchronously retrieving via GetEnvVars within the listener
 	for _, listener := range c.listeners {
 		listener.Enqueue()
+	}
+
+	return nil
+}
+
+func (c *EnvVarController) validateEnvVars(varMap map[string]string) error {
+	// Below ensures that the certificates for all the configured nodes exist in the bundle configmap already.
+	// Otherwise, this controller might render a new pod/revision faster than the CertSignerController could generate
+	// the dynamic certificates on vertical scaling.
+	allSecrets, err := c.secretLister.Secrets(operatorclient.TargetNamespace).Get(tlshelpers.EtcdAllCertsSecretName)
+	if err != nil {
+		return fmt.Errorf("EnvVarController: could not retrieve secret %s, err: %w", tlshelpers.EtcdAllCertsSecretName, err)
+	}
+	for k, v := range varMap {
+		if strings.HasPrefix(k, "NODE_") && strings.HasSuffix(k, "_ETCD_NAME") {
+			// it's enough to check for the serving cert, the CertSignerController takes care of
+			// atomically creating all of them at the same time inside the bundle
+			secretDataKey := fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode(v))
+			if _, ok := allSecrets.Data[secretDataKey]; !ok {
+				return fmt.Errorf("could not find serving cert for node [%s] and key [%s]", v, secretDataKey)
+			}
+		}
 	}
 
 	return nil
