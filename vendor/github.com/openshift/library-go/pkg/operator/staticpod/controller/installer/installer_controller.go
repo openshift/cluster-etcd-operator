@@ -189,7 +189,12 @@ func NewInstallerController(
 	}
 
 	c.ownerRefsFn = c.setOwnerRefs
-	c.factory = factory.New().WithInformers(operatorClient.Informer(), kubeInformersForTargetNamespace.Core().V1().Pods().Informer())
+	c.factory = factory.New().WithInformers(
+		operatorClient.Informer(),
+		// informers are needed here because their Getter are cached lister based
+		kubeInformersForTargetNamespace.Core().V1().Pods().Informer(),
+		kubeInformersForTargetNamespace.Core().V1().ConfigMaps().Informer(),
+		kubeInformersForTargetNamespace.Core().V1().Secrets().Informer())
 
 	return c
 }

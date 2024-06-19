@@ -30,7 +30,6 @@ type StaticPodStateController struct {
 	operandName     string
 
 	operatorClient  v1helpers.StaticPodOperatorClient
-	configMapGetter corev1client.ConfigMapsGetter
 	podsGetter      corev1client.PodsGetter
 	versionRecorder status.VersionGetter
 }
@@ -41,7 +40,6 @@ func NewStaticPodStateController(
 	targetNamespace, staticPodName, operandName string,
 	kubeInformersForTargetNamespace informers.SharedInformerFactory,
 	operatorClient v1helpers.StaticPodOperatorClient,
-	configMapGetter corev1client.ConfigMapsGetter,
 	podsGetter corev1client.PodsGetter,
 	versionRecorder status.VersionGetter,
 	eventRecorder events.Recorder,
@@ -51,7 +49,6 @@ func NewStaticPodStateController(
 		staticPodName:   staticPodName,
 		operandName:     operandName,
 		operatorClient:  operatorClient,
-		configMapGetter: configMapGetter,
 		podsGetter:      podsGetter,
 		versionRecorder: versionRecorder,
 	}

@@ -10,6 +10,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/informers"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/klog/v2"
 
@@ -38,7 +39,6 @@ type PruneController struct {
 	operatorClient v1helpers.StaticPodOperatorClient
 
 	configMapGetter corev1client.ConfigMapsGetter
-	secretGetter    corev1client.SecretsGetter
 	podGetter       corev1client.PodsGetter
 }
 
@@ -54,9 +54,9 @@ func NewPruneController(
 	certDir string,
 	command []string,
 	configMapGetter corev1client.ConfigMapsGetter,
-	secretGetter corev1client.SecretsGetter,
 	podGetter corev1client.PodsGetter,
 	operatorClient v1helpers.StaticPodOperatorClient,
+	kubeInformersForTargetNamespace informers.SharedInformerFactory,
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &PruneController{
@@ -67,14 +67,16 @@ func NewPruneController(
 
 		operatorClient:  operatorClient,
 		configMapGetter: configMapGetter,
-		secretGetter:    secretGetter,
 		podGetter:       podGetter,
 
 		prunerPodImageFn: getPrunerPodImageFromEnv,
 	}
 	c.retrieveStatusConfigMapOwnerRefsFn = c.createStatusConfigMapOwnerRefs
 
-	return factory.New().WithInformers(operatorClient.Informer()).WithSync(c.sync).ToController("PruneController", eventRecorder)
+	return factory.New().WithInformers(
+		operatorClient.Informer(),
+		kubeInformersForTargetNamespace.Core().V1().ConfigMaps().Informer(),
+	).WithSync(c.sync).ToController("PruneController", eventRecorder)
 }
 
 func defaultedLimits(operatorSpec *operatorv1.StaticPodOperatorSpec) (int, int) {

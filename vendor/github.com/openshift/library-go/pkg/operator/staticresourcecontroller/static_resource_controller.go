@@ -282,7 +282,7 @@ func (c *StaticResourceController) Sync(ctx context.Context, syncContext factory
 	if err != nil {
 		return err
 	}
-	if !management.IsOperatorManaged(operatorSpec.ManagementState) {
+	if !management.IsOperatorManaged(operatorSpec.ManagementState) && (operatorSpec.ManagementState != operatorv1.Removed || management.IsOperatorNotRemovable()) {
 		return nil
 	}
 
