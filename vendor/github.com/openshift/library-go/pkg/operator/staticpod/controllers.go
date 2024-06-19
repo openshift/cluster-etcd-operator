@@ -208,6 +208,8 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 		versionRecorder = status.NewVersionGetter()
 	}
 
+	// ensure that all controllers that need the secret/configmap informer-based clients
+	// need to wait for their synchronization before starting using WithInformer
 	configMapClient := v1helpers.CachedConfigMapGetter(b.kubeClient.CoreV1(), b.kubeInformers)
 	secretClient := v1helpers.CachedSecretGetter(b.kubeClient.CoreV1(), b.kubeInformers)
 	podClient := b.kubeClient.CoreV1()
@@ -277,7 +279,6 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 			b.operandName,
 			operandInformers,
 			b.staticPodOperatorClient,
-			configMapClient,
 			podClient,
 			versionRecorder,
 			eventRecorder,
@@ -293,9 +294,9 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 			b.certDir,
 			b.pruneCommand,
 			configMapClient,
-			secretClient,
 			podClient,
 			b.staticPodOperatorClient,
+			operandInformers,
 			eventRecorder,
 		), 1)
 	} else {
