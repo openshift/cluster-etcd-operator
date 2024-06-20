@@ -177,6 +177,7 @@ func NewEtcdCertSignerController(
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
 		masterNodeInformer,
 		kubeInformers.InformersFor(operatorclient.GlobalUserSpecifiedConfigNamespace).Core().V1().Secrets().Informer(),
+		kubeInformers.InformersFor(operatorclient.KubeSystemNamespace).Core().V1().ConfigMaps().Informer(),
 		cmInformer.Informer(),
 		secretInformer.Informer(),
 		operatorClient.Informer(),
@@ -189,15 +190,15 @@ func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.Syn
 		return err
 	}
 
-	hasDiff, err := c.hasNodeCertDiff()
+	hasNodeDiff, err := c.hasNodeCertDiff()
 	if err != nil {
 		return err
 	}
 
 	// we allow the controller to run freely during bootstrap to avoid having issues with constantly rolling out revisions and other
 	// contention issues on the operator status update. Same during vertical scaling, when a node was added we want to immediately issue a cert.
-	if !bootstrapComplete || hasDiff {
-		klog.Infof("EtcdCertSignerController force sync bootstrap completed=[%v], found node difference=[%v]", bootstrapComplete, hasDiff)
+	if !bootstrapComplete || hasNodeDiff {
+		klog.Infof("EtcdCertSignerController force sync bootstrap completed=[%v], found node difference=[%v]", bootstrapComplete, hasNodeDiff)
 		if err := c.syncAllMasterCertificates(ctx, syncCtx.Recorder(), true, 0, 0); err != nil {
 			return fmt.Errorf("EtcdCertSignerController failed to sync all master certificates during bootstrap: %w", err)
 		}
@@ -330,14 +331,16 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(
 		Data: allCerts,
 	}
 
-	//check the quorum in case the cluster is healthy or not after generating certs
-	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
-	if err != nil {
-		return fmt.Errorf("EtcdCertSignerController can't evaluate whether quorum is safe: %w", err)
-	}
+	// check the quorum in case the cluster is healthy or not after generating certs, unless we're in force mode
+	if !forceSkipRollout {
+		safe, err := c.quorumChecker.IsSafeToUpdateRevision()
+		if err != nil {
+			return fmt.Errorf("EtcdCertSignerController can't evaluate whether quorum is safe: %w", err)
+		}
 
-	if !safe {
-		return fmt.Errorf("skipping EtcdCertSignerController reconciliation due to insufficient quorum")
+		if !safe {
+			return fmt.Errorf("skipping EtcdCertSignerController reconciliation due to insufficient quorum")
+		}
 	}
 	_, _, err = resourceapply.ApplySecret(ctx, c.secretClient, recorder, secret)
 
@@ -486,8 +489,8 @@ func (c *EtcdCertSignerController) hasNodeCertDiff() (bool, error) {
 
 	allSecrets, err := c.secretLister.Secrets(operatorclient.TargetNamespace).Get(tlshelpers.EtcdAllCertsSecretName)
 	if err != nil {
-		klog.Infof("could not find secret [%s]", tlshelpers.EtcdAllCertsSecretName)
 		if apierrors.IsNotFound(err) {
+			klog.Infof("could not find secret [%s]", tlshelpers.EtcdAllCertsSecretName)
 			return true, nil
 		}
 		return false, err
