@@ -301,20 +301,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return !isSNO, precheckSucceeded, err
 	}
 
-	// checks if quorum is valid
-	quorumSafe := func() (bool, error) {
-		klog.Info("Hitting quorum valid check")
-		safe, err := quorumChecker.IsSafeToUpdateRevision()
-		if !safe {
-			err = fmt.Errorf("quorum is not safe")
-		} else if err != nil {
-			err = fmt.Errorf("unable to evaluate if the quorum is safe: %w", err)
-		} else {
-			err = nil
-		}
-		return safe, err
-	}
-
 	staticPodControllers, err := staticpod.NewBuilder(operatorClient, kubeClient, kubeInformersForNamespaces, configInformers).
 		WithEvents(controllerContext.EventRecorder).
 		WithInstaller([]string{"cluster-etcd-operator", "installer"}).
@@ -336,7 +322,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			guardRolloutPreCheck,
 		).
 		WithOperandPodLabelSelector(labels.Set{"etcd": "true"}.AsSelector()).
-		WithShouldRevisionInstall(quorumSafe).
+		WithShouldRevisionInstall(quorumChecker.IsSafeToUpdateRevision).
 		ToControllers()
 	if err != nil {
 		return err

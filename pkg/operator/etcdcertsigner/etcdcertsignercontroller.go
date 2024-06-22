@@ -4,6 +4,11 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
+	"reflect"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/openshift/library-go/pkg/crypto"
 	"github.com/openshift/library-go/pkg/operator/bootstrap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -13,10 +18,6 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/component-base/metrics"
 	"k8s.io/klog/v2"
-	"reflect"
-	"strconv"
-	"strings"
-	"time"
 
 	apiannotations "github.com/openshift/api/annotations"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -330,18 +331,6 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(
 		Type: corev1.SecretTypeOpaque,
 		Data: allCerts,
 	}
-
-	// check the quorum in case the cluster is healthy or not after generating certs, unless we're in force mode
-	if !forceSkipRollout {
-		safe, err := c.quorumChecker.IsSafeToUpdateRevision()
-		if err != nil {
-			return fmt.Errorf("EtcdCertSignerController can't evaluate whether quorum is safe: %w", err)
-		}
-
-		if !safe {
-			return fmt.Errorf("skipping EtcdCertSignerController reconciliation due to insufficient quorum")
-		}
-	}
 	_, _, err = resourceapply.ApplySecret(ctx, c.secretClient, recorder, secret)
 
 	return err
@@ -411,14 +400,6 @@ func (c *EtcdCertSignerController) ensureBundles(ctx context.Context,
 	// this ensures we always tag the right revision we're rolling out with, so we can later ensure
 	// the leaf certificates are not regenerated too early.
 	configMap.Annotations[BundleRolloutRevisionAnnotation] = fmt.Sprintf("%d", currentRevision)
-
-	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
-	if err != nil {
-		return nil, nil, false, fmt.Errorf("EtcdCertSignerController.ensureBundles can't evaluate whether quorum is safe: %w", err)
-	}
-	if !safe {
-		return nil, nil, false, fmt.Errorf("skipping EtcdCertSignerController.ensureBundles reconciliation due to insufficient quorum")
-	}
 
 	_, rolloutTriggered, err = resourceapply.ApplyConfigMap(ctx, c.configMapClient, recorder, configMap)
 	if err != nil {
