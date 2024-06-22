@@ -325,7 +325,7 @@ github.com/openshift/client-go/operator/informers/externalversions/operator/v1
 github.com/openshift/client-go/operator/informers/externalversions/operator/v1alpha1
 github.com/openshift/client-go/operator/listers/operator/v1
 github.com/openshift/client-go/operator/listers/operator/v1alpha1
-# github.com/openshift/library-go v0.0.0-20240619140217-e20ca28ddfe7 => github.com/jubittajohn/library-go v0.0.0-20240621140645-d1afb2e3039d
+# github.com/openshift/library-go v0.0.0-20240619140217-e20ca28ddfe7 => github.com/jubittajohn/library-go v0.0.0-20240626144247-8d7fddd726eb
 ## explicit; go 1.22.0
 github.com/openshift/library-go/pkg/assets
 github.com/openshift/library-go/pkg/authorization/hardcodedauthorizer
@@ -1542,5 +1542,5 @@ sigs.k8s.io/structured-merge-diff/v4/value
 ## explicit; go 1.12
 sigs.k8s.io/yaml
 # github.com/gogo/protobuf => github.com/gogo/protobuf v1.3.2
-# github.com/openshift/library-go => github.com/jubittajohn/library-go v0.0.0-20240621140645-d1afb2e3039d
+# github.com/openshift/library-go => github.com/jubittajohn/library-go v0.0.0-20240626144247-8d7fddd726eb
 # vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787

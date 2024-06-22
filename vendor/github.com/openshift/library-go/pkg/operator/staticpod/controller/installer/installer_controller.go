@@ -99,6 +99,7 @@ type InstallerController struct {
 	installerBackOff func(count int) time.Duration
 	fallbackBackOff  func(count int) time.Duration
 
+	// shouldRevisionInstall is a callback function that determines whether a new revision should be installed
 	shouldRevisionInstall func() (bool, error)
 }
 
@@ -485,13 +486,18 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 					}
 				}
 
-				if err := c.ensureInstallerPod(ctx, operatorSpec, currNodeState); err != nil {
+				requeue, err := c.ensureInstallerPod(ctx, operatorSpec, currNodeState)
+				if err != nil {
 					c.eventRecorder.Warningf("InstallerPodFailed", "Failed to create installer pod for revision %d count %d on node %q: %v",
 						currNodeState.TargetRevision, currNodeState.LastFailedCount, currNodeState.NodeName, err)
 					// if a newer revision is pending, continue, so we retry later with the latest available revision
 					if !(operatorStatus.LatestAvailableRevision > currNodeState.TargetRevision) {
 						return true, 0, err
 					}
+				}
+				if requeue {
+					klog.V(4).Infof("Requeuing the creation of installer pod for revision %d on node %q", currNodeState.TargetRevision, currNodeState.NodeName)
+					return true, 0, nil
 				}
 			}
 
@@ -858,12 +864,16 @@ func getInstallerPodName(ns *operatorv1.NodeStatus) string {
 }
 
 // ensureInstallerPod creates the installer pod with the secrets required to if it does not exist already
-func (c *InstallerController) ensureInstallerPod(ctx context.Context, operatorSpec *operatorv1.StaticPodOperatorSpec, ns *operatorv1.NodeStatus) error {
+// returns whether or not requeue and if an error happened while creating installer pod
+func (c *InstallerController) ensureInstallerPod(ctx context.Context, operatorSpec *operatorv1.StaticPodOperatorSpec, ns *operatorv1.NodeStatus) (bool, error) {
 	// checks if new revision should be rolled out
 	if c.shouldRevisionInstall != nil {
 		shouldInstall, err := c.shouldRevisionInstall()
+		if err != nil {
+			return true, err
+		}
 		if !shouldInstall {
-			return err
+			return true, nil
 		}
 	}
 	pod := resourceread.ReadPodV1OrDie(podTemplate)
@@ -876,19 +886,19 @@ func (c *InstallerController) ensureInstallerPod(ctx context.Context, operatorSp
 
 	ownerRefs, err := c.ownerRefsFn(ctx, ns.TargetRevision)
 	if err != nil {
-		return fmt.Errorf("unable to set installer pod ownerrefs: %+v", err)
+		return true, fmt.Errorf("unable to set installer pod ownerrefs: %+v", err)
 	}
 	pod.OwnerReferences = ownerRefs
 
 	if c.configMaps[0].Optional {
-		return fmt.Errorf("pod configmap %s is required, cannot be optional", c.configMaps[0].Name)
+		return true, fmt.Errorf("pod configmap %s is required, cannot be optional", c.configMaps[0].Name)
 	}
 
 	// if the startup monitor is enabled we need to acquire an exclusive lock
 	// to coordinate the work between the installer and the monitor
 	withStartupMonitorSupport, err := c.startupMonitorEnabled()
 	if err != nil {
-		return fmt.Errorf("unable to determine if the startup monitor should be enabled: %v", err)
+		return true, fmt.Errorf("unable to determine if the startup monitor should be enabled: %v", err)
 	}
 
 	args := []string{
@@ -940,12 +950,14 @@ func (c *InstallerController) ensureInstallerPod(ctx context.Context, operatorSp
 	// Some owners need to change aspects of the pod.  Things like arguments for instance
 	for _, fn := range c.installerPodMutationFns {
 		if err := fn(pod, ns.NodeName, operatorSpec, ns.TargetRevision); err != nil {
-			return err
+			return true, err
 		}
 	}
 
-	_, _, err = resourceapply.ApplyPod(ctx, c.podsGetter, c.eventRecorder, pod)
-	return err
+	if _, _, err = resourceapply.ApplyPod(ctx, c.podsGetter, c.eventRecorder, pod); err != nil {
+		return true, err
+	}
+	return false, nil
 }
 
 func (c *InstallerController) setOwnerRefs(ctx context.Context, revision int32) ([]metav1.OwnerReference, error) {
