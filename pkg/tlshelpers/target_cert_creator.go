@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"crypto/x509"
 	"fmt"
+	"time"
+
 	"github.com/openshift/library-go/pkg/crypto"
 	"github.com/openshift/library-go/pkg/operator/certrotation"
 	corev1 "k8s.io/api/core/v1"
-	"time"
 )
 
 // CARotatingTargetCertCreator ensures we also rotate leaf certificates when we detect a change in signer.
@@ -22,9 +23,10 @@ func (c *CARotatingTargetCertCreator) NeedNewTargetCertKeyPair(
 	signer *crypto.CA,
 	caBundleCerts []*x509.Certificate,
 	refresh time.Duration,
-	refreshOnlyWhenExpired bool) string {
+	refreshOnlyWhenExpired bool,
+	secretDoesntExist bool) string {
 
-	result := c.TargetCertCreator.NeedNewTargetCertKeyPair(secret, signer, caBundleCerts, refresh, refreshOnlyWhenExpired)
+	result := c.TargetCertCreator.NeedNewTargetCertKeyPair(secret, signer, caBundleCerts, refresh, refreshOnlyWhenExpired, secretDoesntExist)
 	if result != "" {
 		return result
 	}

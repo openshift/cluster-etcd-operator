@@ -8,12 +8,13 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
-	"github.com/openshift/library-go/pkg/operator/certrotation"
-	"github.com/stretchr/testify/require"
-	corev1 "k8s.io/api/core/v1"
 	"math/big"
 	"testing"
 	"time"
+
+	"github.com/openshift/library-go/pkg/operator/certrotation"
+	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 
 	"github.com/davecgh/go-spew/spew"
 
@@ -38,13 +39,13 @@ func (t *testEmbed) SetAnnotations(_ *crypto.TLSCertificateConfig, _ map[string]
 	panic("implement me")
 }
 
-func (t *testEmbed) NeedNewTargetCertKeyPair(_ *corev1.Secret, _ *crypto.CA, _ []*x509.Certificate, _ time.Duration, _ bool) string {
+func (t *testEmbed) NeedNewTargetCertKeyPair(_ *corev1.Secret, _ *crypto.CA, _ []*x509.Certificate, _ time.Duration, _, _ bool) string {
 	return t.result
 }
 
 func TestEmbeddedStructHasPriority(t *testing.T) {
 	embedded := CARotatingTargetCertCreator{&testEmbed{result: "definitive-result"}}
-	require.Equal(t, "definitive-result", embedded.NeedNewTargetCertKeyPair(nil, nil, nil, time.Minute, false))
+	require.Equal(t, "definitive-result", embedded.NeedNewTargetCertKeyPair(nil, nil, nil, time.Minute, false, false))
 }
 
 func TestSignerSignatureRotation(t *testing.T) {
