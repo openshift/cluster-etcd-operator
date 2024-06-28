@@ -70,7 +70,9 @@ func TestSyncAllMasters(t *testing.T) {
 	require.Equal(t, 3, len(nodes.Items))
 	assertNodeCerts(t, nodes, secretMap)
 	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertCertificateCorrectness(t, secretMap)
 	assertStaticPodAllBundles(t, configMaps)
+	assertBundleCorrectness(t, secretMap, configMaps)
 	assertClientCerts(t, secretMap)
 	assertExpirationMetric(t)
 }
@@ -84,7 +86,9 @@ func TestSyncAllMastersForceSkip(t *testing.T) {
 	require.Equal(t, 3, len(nodes.Items))
 	assertNodeCerts(t, nodes, secretMap)
 	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertCertificateCorrectness(t, secretMap)
 	assertStaticPodAllBundles(t, configMaps)
+	assertBundleCorrectness(t, secretMap, configMaps)
 	assertClientCerts(t, secretMap)
 	assertExpirationMetric(t)
 }
@@ -97,7 +101,9 @@ func TestSignerRotation(t *testing.T) {
 	require.Equal(t, 3, len(nodes.Items))
 	assertNodeCerts(t, nodes, secretMap)
 	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertCertificateCorrectness(t, secretMap)
 	assertStaticPodAllBundles(t, configMaps)
+	assertBundleCorrectness(t, secretMap, configMaps)
 	assertClientCerts(t, secretMap)
 	assertExpirationMetric(t)
 
@@ -111,7 +117,42 @@ func TestSignerRotation(t *testing.T) {
 	require.Equal(t, 3, len(nodes.Items))
 	assertNodeCerts(t, nodes, newSecretMap)
 	assertStaticPodAllCerts(t, nodes, newSecretMap)
+	assertCertificateCorrectness(t, secretMap)
 	assertStaticPodAllBundles(t, newConfigMaps)
+	assertBundleCorrectness(t, secretMap, configMaps)
+	assertClientCerts(t, newSecretMap)
+	assertExpirationMetric(t)
+	require.NotEqual(t, secretMap, newSecretMap)
+	require.NotEqual(t, configMaps, newConfigMaps)
+}
+
+func TestMetricsSignerRotation(t *testing.T) {
+	fakeKubeClient, fakeOperatorClient, controller, recorder := setupController(t, []runtime.Object{}, false)
+	runSyncWithRevisionRollout(t, controller, fakeOperatorClient, recorder)
+
+	nodes, secretMap, configMaps := allNodesAndSecrets(t, fakeKubeClient)
+	require.Equal(t, 3, len(nodes.Items))
+	assertNodeCerts(t, nodes, secretMap)
+	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertCertificateCorrectness(t, secretMap)
+	assertStaticPodAllBundles(t, configMaps)
+	assertBundleCorrectness(t, secretMap, configMaps)
+	assertClientCerts(t, secretMap)
+	assertExpirationMetric(t)
+
+	// this will create an entirely new signer during the next sync loop
+	err := fakeKubeClient.CoreV1().Secrets(operatorclient.TargetNamespace).Delete(context.TODO(), tlshelpers.EtcdMetricsSignerCertSecretName, metav1.DeleteOptions{})
+	require.NoError(t, err)
+
+	runSyncWithRevisionRollout(t, controller, fakeOperatorClient, recorder)
+
+	nodes, newSecretMap, newConfigMaps := allNodesAndSecrets(t, fakeKubeClient)
+	require.Equal(t, 3, len(nodes.Items))
+	assertNodeCerts(t, nodes, newSecretMap)
+	assertStaticPodAllCerts(t, nodes, newSecretMap)
+	assertCertificateCorrectness(t, secretMap)
+	assertStaticPodAllBundles(t, newConfigMaps)
+	assertBundleCorrectness(t, secretMap, configMaps)
 	assertClientCerts(t, newSecretMap)
 	assertExpirationMetric(t)
 	require.NotEqual(t, secretMap, newSecretMap)
@@ -126,7 +167,9 @@ func TestSignerRotationBlocksWithRevisionRollout(t *testing.T) {
 	require.Equal(t, 3, len(nodes.Items))
 	assertNodeCerts(t, nodes, secretMap)
 	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertCertificateCorrectness(t, secretMap)
 	assertStaticPodAllBundles(t, configMaps)
+	assertBundleCorrectness(t, secretMap, configMaps)
 	assertClientCerts(t, secretMap)
 	assertExpirationMetric(t)
 
@@ -155,7 +198,9 @@ func TestNewNodeAdded(t *testing.T) {
 	require.Equal(t, 3, len(nodes.Items))
 	assertNodeCerts(t, nodes, secretMap)
 	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertCertificateCorrectness(t, secretMap)
 	assertStaticPodAllBundles(t, configMaps)
+	assertBundleCorrectness(t, secretMap, configMaps)
 	assertClientCerts(t, secretMap)
 
 	_, err := fakeKubeClient.CoreV1().Nodes().Create(context.TODO(), u.FakeNode("master-3", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.4")), metav1.CreateOptions{})
@@ -167,7 +212,9 @@ func TestNewNodeAdded(t *testing.T) {
 	require.Equal(t, 4, len(nodes.Items))
 	assertNodeCerts(t, nodes, secretMap)
 	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertCertificateCorrectness(t, secretMap)
 	assertStaticPodAllBundles(t, configMaps)
+	assertBundleCorrectness(t, secretMap, configMaps)
 	assertClientCerts(t, secretMap)
 }
 
@@ -179,10 +226,12 @@ func TestNodeChangingIPs(t *testing.T) {
 	require.Equal(t, 3, len(nodes.Items))
 	assertNodeCerts(t, nodes, secretMap)
 	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertCertificateCorrectness(t, secretMap)
 	assertStaticPodAllBundles(t, configMaps)
+	assertBundleCorrectness(t, secretMap, configMaps)
 	assertClientCerts(t, secretMap)
 
-	n, err := fakeKubeClient.CoreV1().Nodes().Get(context.TODO(), "master-1", metav1.GetOptions{})
+	n, err := fakeKubeClient.CoreV1().Nodes().Get(context.TODO(), "cp-1", metav1.GetOptions{})
 	require.NoError(t, err)
 	// change its IP to a completely different subnet
 	n.Status.Addresses = []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "10.100.100.1"}}
@@ -195,7 +244,9 @@ func TestNodeChangingIPs(t *testing.T) {
 	require.Equal(t, 3, len(nodes.Items))
 	assertNodeCerts(t, nodes, secretMap)
 	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertCertificateCorrectness(t, secretMap)
 	assertStaticPodAllBundles(t, configMaps)
+	assertBundleCorrectness(t, secretMap, configMaps)
 	assertClientCerts(t, secretMap)
 }
 
@@ -207,7 +258,9 @@ func TestClientCertsRemoval(t *testing.T) {
 	require.Equal(t, 3, len(nodes.Items))
 	assertNodeCerts(t, nodes, secretMap)
 	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertCertificateCorrectness(t, secretMap)
 	assertStaticPodAllBundles(t, configMaps)
+	assertBundleCorrectness(t, secretMap, configMaps)
 	assertClientCerts(t, secretMap)
 
 	oldClientCert, err := fakeKubeClient.CoreV1().Secrets(operatorclient.TargetNamespace).Get(context.TODO(), tlshelpers.EtcdClientCertSecretName, metav1.GetOptions{})
@@ -227,7 +280,9 @@ func TestClientCertsRemoval(t *testing.T) {
 	require.Equal(t, 3, len(nodes.Items))
 	assertNodeCerts(t, nodes, secretMap)
 	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertCertificateCorrectness(t, secretMap)
 	assertStaticPodAllBundles(t, configMaps)
+	assertBundleCorrectness(t, secretMap, configMaps)
 	assertClientCerts(t, secretMap)
 	// test that the secrets actually differ and the cert was regenerated
 	require.NotEqual(t, oldClientCert.Data, secretMap[tlshelpers.EtcdClientCertSecretName])
@@ -310,6 +365,14 @@ func assertStaticPodAllCerts(t *testing.T, nodes *corev1.NodeList, secretMap map
 	})
 }
 
+func assertCertificateCorrectness(t *testing.T, secretMap map[string]corev1.Secret) {
+	var allSecrets []corev1.Secret
+	for _, secret := range secretMap {
+		allSecrets = append(allSecrets, secret)
+	}
+	u.AssertCertificateCorrectness(t, allSecrets)
+}
+
 func assertStaticPodAllBundles(t *testing.T, configMaps map[string]corev1.ConfigMap) {
 	cmName := tlshelpers.EtcdAllBundlesConfigMapName
 	t.Run(cmName, func(t *testing.T) {
@@ -322,9 +385,28 @@ func assertStaticPodAllBundles(t *testing.T, configMaps map[string]corev1.Config
 	})
 }
 
+func assertBundleCorrectness(t *testing.T, secretMap map[string]corev1.Secret, configMaps map[string]corev1.ConfigMap) {
+	var allSecrets []corev1.Secret
+	for _, secret := range secretMap {
+		allSecrets = append(allSecrets, secret)
+	}
+	var allBundles []corev1.ConfigMap
+	for _, cm := range configMaps {
+		allBundles = append(allBundles, cm)
+	}
+	u.AssertBundleCorrectness(t, allSecrets, allBundles)
+}
+
 func assertNodeCerts(t *testing.T, nodes *corev1.NodeList, secretMap map[string]corev1.Secret) {
+	var allSecrets []corev1.Secret
+	for _, secret := range secretMap {
+		allSecrets = append(allSecrets, secret)
+	}
+
 	// Cert secret per type per node
 	for _, node := range nodes.Items {
+		u.AssertNodeSpecificCertificates(t, &node, allSecrets)
+
 		for _, secretName := range []string{
 			tlshelpers.GetPeerClientSecretNameForNode(node.Name),
 			tlshelpers.GetServingSecretNameForNode(node.Name),
@@ -399,14 +481,14 @@ func setupController(t *testing.T, objects []runtime.Object, forceSkipRollout bo
 		&corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{Name: operatorclient.TargetNamespace},
 		},
-		u.FakeNode("master-0", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1")),
-		u.FakeNode("master-1", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.2")),
-		u.FakeNode("master-2", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.3")),
+		u.FakeNode("cp-0", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1")),
+		u.FakeNode("cp-1", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.2")),
+		u.FakeNode("cp-2", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.3")),
 		u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
 		u.FakeSecret(operatorclient.TargetNamespace, tlshelpers.EtcdAllCertsSecretName, map[string][]byte{
-			fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode("master-0")): {},
-			fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode("master-1")): {},
-			fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode("master-2")): {},
+			fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode("cp-0")): {},
+			fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode("cp-1")): {},
+			fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode("cp-2")): {},
 		}),
 		u.FakeConfigMap(operatorclient.TargetNamespace, tlshelpers.EtcdAllBundlesConfigMapName, map[string]string{}),
 	)
