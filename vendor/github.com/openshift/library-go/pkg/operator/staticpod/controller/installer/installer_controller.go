@@ -99,8 +99,7 @@ type InstallerController struct {
 	installerBackOff func(count int) time.Duration
 	fallbackBackOff  func(count int) time.Duration
 
-	// shouldRevisionInstall is a callback function that determines whether a new revision should be installed
-	shouldRevisionInstall func() (bool, error)
+	installPrecondition StaticPodInstallerPreconditionsFuncType
 }
 
 // InstallerPodMutationFunc is a function that has a chance at changing the installer pod before it is created
@@ -131,8 +130,11 @@ func (c *InstallerController) WithStartupMonitorSupport(startupMonitorEnabled fu
 	return c
 }
 
-func (c *InstallerController) WithShouldRevisionInstall(shouldRevisionInstall func() (bool, error)) *InstallerController {
-	c.shouldRevisionInstall = shouldRevisionInstall
+// StaticPodInstallerPreconditionsFuncType checks if installPrecondition is met (is true) and then proceeeds with creation of installer pod
+type StaticPodInstallerPreconditionsFuncType func(ctx context.Context) (bool, error)
+
+func (c *InstallerController) WithInstallPrecondition(installPrecondition StaticPodInstallerPreconditionsFuncType) *InstallerController {
+	c.installPrecondition = installPrecondition
 	return c
 }
 
@@ -867,8 +869,8 @@ func getInstallerPodName(ns *operatorv1.NodeStatus) string {
 // returns whether or not requeue and if an error happened while creating installer pod
 func (c *InstallerController) ensureInstallerPod(ctx context.Context, operatorSpec *operatorv1.StaticPodOperatorSpec, ns *operatorv1.NodeStatus) (bool, error) {
 	// checks if new revision should be rolled out
-	if c.shouldRevisionInstall != nil {
-		shouldInstall, err := c.shouldRevisionInstall()
+	if c.installPrecondition != nil {
+		shouldInstall, err := c.installPrecondition(ctx)
 		if err != nil {
 			return true, err
 		}
