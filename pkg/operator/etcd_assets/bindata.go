@@ -1045,6 +1045,33 @@ ${COMPUTED_ENV_VARS}
 ${COMPUTED_ENV_VARS}
       - name: "ETCD_STATIC_POD_VERSION"
         value: "REVISION"
+  # The etcdbackup container copies snapshots from etcd data dir into backup volume.
+  - name: etcdbackup
+    image: ${IMAGE}
+    imagePullPolicy: IfNotPresent
+    terminationMessagePolicy: FallbackToLogsOnError
+    command:
+      - /bin/sh
+      - -c
+      - |
+        #!/bin/sh
+        set -euo pipefail        
+        cp --verbose --recursive --preserve --reflink=auto /var/lib/etcd/ /var/backup/etcd
+    resources:
+      requests:
+        memory: 60Mi
+        cpu: 10m
+    volumeMounts:
+      - mountPath: /etc/kubernetes/manifests
+        name: static-pod-dir
+      - mountPath: /etc/kubernetes/static-pod-resources
+        name: resource-dir
+      - mountPath: /etc/kubernetes/static-pod-certs
+        name: cert-dir
+      - mountPath: /var/lib/etcd/
+        name: data-dir
+      - mountPath: /var/backup/etcd
+        name: backup-dir
   - name: etcd
     image: ${IMAGE}
     imagePullPolicy: IfNotPresent
@@ -1251,6 +1278,10 @@ ${COMPUTED_ENV_VARS}
     - hostPath:
         path: /var/log/etcd
       name: log-dir
+    - hostPath:
+        path: /var/backup/etcd
+        type: ""
+      name: backup-dir
 `)
 
 func etcdPodYamlBytes() ([]byte, error) {
