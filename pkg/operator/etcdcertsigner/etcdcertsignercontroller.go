@@ -4,6 +4,11 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
+	"reflect"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/openshift/library-go/pkg/crypto"
 	"github.com/openshift/library-go/pkg/operator/bootstrap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -13,10 +18,6 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/component-base/metrics"
 	"k8s.io/klog/v2"
-	"reflect"
-	"strconv"
-	"strings"
-	"time"
 
 	apiannotations "github.com/openshift/api/annotations"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -355,7 +356,7 @@ func (c *EtcdCertSignerController) ensureBundles(ctx context.Context,
 	metricsCA *crypto.CA,
 	currentRevision int32,
 ) (serverBundle []*x509.Certificate, metricsBundle []*x509.Certificate, rolloutTriggered bool, err error) {
-	serverBundle, err = c.certConfig.signerCaBundle.EnsureConfigMapCABundle(ctx, serverCA)
+	serverBundle, err = c.certConfig.signerCaBundle.EnsureConfigMapCABundle(ctx, serverCA, "")
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -365,7 +366,7 @@ func (c *EtcdCertSignerController) ensureBundles(ctx context.Context,
 		return nil, nil, false, fmt.Errorf("could not encode server bundle: %w", err)
 	}
 
-	metricsBundle, err = c.certConfig.metricsSignerCaBundle.EnsureConfigMapCABundle(ctx, metricsCA)
+	metricsBundle, err = c.certConfig.metricsSignerCaBundle.EnsureConfigMapCABundle(ctx, metricsCA, "")
 	if err != nil {
 		return nil, nil, false, err
 	}
