@@ -18,7 +18,7 @@ IMAGE_REGISTRY :=registry.svc.ci.openshift.org
 # $2 - image ref
 # $3 - Dockerfile path
 # $4 - context directory for image build
-$(call build-image,ocp-cluster-etcd-operator,$(IMAGE_REGISTRY)/ocp/4.4:cluster-etcd-operator, ./Dockerfile.rhel7,.)
+$(call build-image,ocp-cluster-etcd-operator,$(IMAGE_REGISTRY)/ocp/4.4:cluster-etcd-operator, ./Dockerfile.ocp,.)
 
 # This will call a macro called "add-bindata" which will generate bindata specific targets based on the parameters:
 # $0 - macro name
@@ -31,7 +31,7 @@ $(call build-image,ocp-cluster-etcd-operator,$(IMAGE_REGISTRY)/ocp/4.4:cluster-e
 # and also hooked into {update,verify}-generated for broader integration.
 $(call add-bindata,etcd,./bindata/etcd/...,bindata,etcd_assets,pkg/operator/etcd_assets/bindata.go)
 
-$(call verify-golang-versions,Dockerfile.rhel7)
+$(call verify-golang-versions,Dockerfile.ocp)
 
 # Configure the 'telepresence' target
 # See vendor/github.com/openshift/build-machinery-go/scripts/run-telepresence.sh for usage and configuration details
