@@ -23,10 +23,12 @@ func WaitForEtcdBootstrap(ctx context.Context, config *rest.Config) error {
 
 	// TODO: figure out if we can timeout after 30 mins by
 	// passing a different context here
-	if err := waitForEtcdBootstrap(ctx, operatorConfigClient.OperatorV1().RESTClient()); err != nil {
+	err = waitForEtcdBootstrap(ctx, operatorConfigClient.OperatorV1().RESTClient())
+	if err != nil {
 		klog.Errorf("error watching etcd: %#v", err)
+		return err
 	}
-	return err
+	return nil
 }
 
 func waitForEtcdBootstrap(ctx context.Context, operatorRestClient rest.Interface) error {
