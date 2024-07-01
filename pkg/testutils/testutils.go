@@ -1,10 +1,19 @@
 package testutils
 
 import (
+	"bytes"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
+	"github.com/openshift/library-go/pkg/crypto"
+	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/util/cert"
 	"math/rand"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -413,4 +422,121 @@ func DefaultEtcdMembers() []*etcdserverpb.Member {
 		FakeEtcdMemberWithoutServer(1),
 		FakeEtcdMemberWithoutServer(2),
 	}
+}
+
+// AssertCertificateCorrectness ensures that the certificates are signed by the correct signer
+func AssertCertificateCorrectness(t *testing.T, secrets []corev1.Secret) {
+	certMap := map[string]string{
+		"etcd-client":  tlshelpers.EtcdSignerCertSecretName,
+		"etcd-peer-.*": tlshelpers.EtcdSignerCertSecretName,
+		// adding the unit test node name convention here to avoid conflicts with etcd-serving-metrics certificates
+		"etcd-serving-cp.*": tlshelpers.EtcdSignerCertSecretName,
+
+		"etcd-metric-client":      tlshelpers.EtcdMetricsSignerCertSecretName,
+		"etcd-serving-metrics-.*": tlshelpers.EtcdMetricsSignerCertSecretName,
+	}
+
+	signerMap := map[string]*x509.CertPool{}
+	for _, s := range secrets {
+		if s.Name == tlshelpers.EtcdSignerCertSecretName || s.Name == tlshelpers.EtcdMetricsSignerCertSecretName {
+			ca, err := crypto.GetCAFromBytes(s.Data["tls.crt"], s.Data["tls.key"])
+			require.NoError(t, err)
+
+			pool := x509.NewCertPool()
+			for _, crt := range ca.Config.Certs {
+				pool.AddCert(crt)
+			}
+			signerMap[s.Name] = pool
+		}
+	}
+
+	all := sets.NewString()
+	successfulMatches := sets.NewString()
+	for _, s := range secrets {
+		for certPattern, signerName := range certMap {
+			all.Insert(certPattern)
+			if matches, _ := regexp.MatchString(certPattern, s.Name); matches {
+				crt, err := crypto.CertsFromPEM(s.Data["tls.crt"])
+				require.NoError(t, err)
+
+				caPool := signerMap[signerName]
+				for _, certificate := range crt {
+					_, err := certificate.Verify(x509.VerifyOptions{
+						Roots:     caPool,
+						KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
+					})
+					require.NoErrorf(t, err, "unable to verify secret %s with signer %s", s.Name, signerName)
+				}
+				successfulMatches.Insert(certPattern)
+				break
+			}
+		}
+	}
+
+	require.Equalf(t, successfulMatches.Len(), len(certMap),
+		"missing coverage for some certificates: %v", all.SymmetricDifference(successfulMatches))
+}
+
+func AssertBundleCorrectness(t *testing.T, secrets []corev1.Secret, bundles []corev1.ConfigMap) {
+	signerMap := map[string][]*x509.Certificate{}
+	for _, s := range secrets {
+		if s.Name == tlshelpers.EtcdSignerCertSecretName || s.Name == tlshelpers.EtcdMetricsSignerCertSecretName {
+			ca, err := crypto.GetCAFromBytes(s.Data["tls.crt"], s.Data["tls.key"])
+			require.NoError(t, err)
+
+			if sl, ok := signerMap[s.Name]; ok {
+				sl = append(sl, ca.Config.Certs[0])
+				signerMap[s.Name] = sl
+			} else {
+				signerMap[s.Name] = []*x509.Certificate{ca.Config.Certs[0]}
+			}
+		}
+	}
+
+	for _, bundle := range bundles {
+		if bundle.Name == tlshelpers.EtcdAllBundlesConfigMapName {
+			serverBundleCerts, err := cert.ParseCertsPEM([]byte(bundle.Data["server-ca-bundle.crt"]))
+			require.NoError(t, err)
+			AssertMatchingBundles(t, signerMap[tlshelpers.EtcdSignerCertSecretName], serverBundleCerts)
+
+			metricsBundleCerts, err := cert.ParseCertsPEM([]byte(bundle.Data["metrics-ca-bundle.crt"]))
+			require.NoError(t, err)
+			AssertMatchingBundles(t, signerMap[tlshelpers.EtcdMetricsSignerCertSecretName], metricsBundleCerts)
+		} else {
+			bundleCerts, err := cert.ParseCertsPEM([]byte(bundle.Data["ca-bundle.crt"]))
+			require.NoError(t, err)
+
+			var signers []*x509.Certificate
+			if strings.Contains(bundle.Name, "metric") {
+				signers = signerMap[tlshelpers.EtcdMetricsSignerCertSecretName]
+			} else {
+				signers = signerMap[tlshelpers.EtcdSignerCertSecretName]
+			}
+
+			AssertMatchingBundles(t, signers, bundleCerts)
+		}
+	}
+}
+
+func AssertMatchingBundles(t *testing.T, expectedBundle []*x509.Certificate, actualBundle []*x509.Certificate) {
+	sort.SliceStable(expectedBundle, func(i, j int) bool {
+		return bytes.Compare(expectedBundle[i].Raw, expectedBundle[j].Raw) < 0
+	})
+	sort.SliceStable(actualBundle, func(i, j int) bool {
+		return bytes.Compare(actualBundle[i].Raw, actualBundle[j].Raw) < 0
+	})
+
+	require.Equal(t, expectedBundle, actualBundle)
+}
+
+func AssertNodeSpecificCertificates(t *testing.T, node *corev1.Node, secrets []corev1.Secret) {
+	expectedSet := sets.NewString(fmt.Sprintf("etcd-peer-%s", node.Name),
+		fmt.Sprintf("etcd-serving-%s", node.Name),
+		fmt.Sprintf("etcd-serving-metrics-%s", node.Name))
+
+	for _, s := range secrets {
+		expectedSet = expectedSet.Delete(s.Name)
+	}
+
+	require.Equalf(t, 0, expectedSet.Len(), "missing certificates for node: %v", expectedSet.List())
 }
