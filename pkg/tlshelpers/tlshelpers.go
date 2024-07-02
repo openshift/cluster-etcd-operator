@@ -26,10 +26,10 @@ const (
 	// Given that clusters can be shutdown/hibernated for a max of ~9 months
 	// this validity period leaves enough cushion to not have the
 	// certs expire during shutdown/hibernation in the worst case.
-	EtcdCertValidity          = 3 * 365 * 24 * time.Hour
-	EtcdCertValidityRefresh   = 2.2 * 365 * 24 * time.Hour
-	EtcdCaCertValidity        = 5 * 365 * 24 * time.Hour
-	EtcdCaCertValidityRefresh = 4.2 * 365 * 24 * time.Hour
+	etcdCertValidity          = 2 * time.Hour
+	etcdCertValidityRefresh   = 70 * time.Minute
+	etcdCaCertValidity        = 3 * time.Hour
+	etcdCaCertValidityRefresh = 100 * time.Minute
 
 	EtcdJiraComponentName                  = "etcd"
 	EtcdSignerCertSecretName               = "etcd-signer"
