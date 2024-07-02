@@ -416,6 +416,8 @@ func (g *etcdClientGetter) IsMemberHealthy(ctx context.Context, member *etcdserv
 	if member == nil {
 		return false, fmt.Errorf("member can not be nil")
 	}
+	ctx, cancel := context.WithTimeout(ctx, DefaultClientTimeout)
+	defer cancel()
 	memberHealth := GetMemberHealth(ctx, []*etcdserverpb.Member{member})
 	if len(memberHealth) == 0 {
 		return false, fmt.Errorf("member health check failed")
