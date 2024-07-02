@@ -75,6 +75,8 @@ type staticPodOperatorControllerBuilder struct {
 	readyzEndpoint                string
 	pdbUnhealthyPodEvictionPolicy *v1.UnhealthyPodEvictionPolicyType
 	guardCreateConditionalFunc    func() (bool, bool, error)
+
+	installPrecondition installer.StaticPodInstallerPreconditionsFuncType
 }
 
 func NewBuilder(
@@ -114,6 +116,7 @@ type Builder interface {
 	// This can help to drain/maintain a node and recover without a manual intervention when multiple instances of nodes or pods are misbehaving.
 	// Use this with caution, as this option can disrupt perspective pods that have not yet had a chance to become healthy.
 	WithPodDisruptionBudgetGuard(operatorNamespace, operatorName, readyzPort, readyzEndpoint string, pdbUnhealthyPodEvictionPolicy *v1.UnhealthyPodEvictionPolicyType, createConditionalFunc func() (bool, bool, error)) Builder
+	WithInstallPrecondition(installPrecondition installer.StaticPodInstallerPreconditionsFuncType) Builder
 	ToControllers() (manager.ControllerManager, error)
 }
 
@@ -196,6 +199,11 @@ func (b *staticPodOperatorControllerBuilder) WithPodDisruptionBudgetGuard(operat
 	return b
 }
 
+func (b *staticPodOperatorControllerBuilder) WithInstallPrecondition(installPrecondition installer.StaticPodInstallerPreconditionsFuncType) Builder {
+	b.installPrecondition = installPrecondition
+	return b
+}
+
 func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.ControllerManager, error) {
 	manager := manager.NewControllerManager()
 
@@ -257,6 +265,8 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 			b.installerPodMutationFunc,
 		).WithMinReadyDuration(
 			b.minReadyDuration,
+		).WithInstallPrecondition(
+			b.installPrecondition,
 		), 1)
 
 		manager.WithController(installerstate.NewInstallerStateController(

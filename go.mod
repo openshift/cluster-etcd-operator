@@ -137,5 +137,6 @@ require (
 
 replace (
 	github.com/gogo/protobuf => github.com/gogo/protobuf v1.3.2
+	github.com/openshift/library-go => github.com/jubittajohn/library-go v0.0.0-20240628203932-f152bd5d19c1
 	vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787
 )

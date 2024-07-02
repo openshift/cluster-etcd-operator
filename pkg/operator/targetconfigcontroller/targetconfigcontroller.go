@@ -87,15 +87,6 @@ func NewTargetConfigController(
 }
 
 func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
-	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
-	if err != nil {
-		return fmt.Errorf("TargetConfigController can't evaluate whether quorum is safe: %w", err)
-	}
-
-	if !safe {
-		return fmt.Errorf("skipping TargetConfigController reconciliation due to insufficient quorum")
-	}
-
 	envVars := c.envVarGetter.GetEnvVars()
 	if len(envVars) == 0 {
 		return fmt.Errorf("TargetConfigController missing env var values")
@@ -104,15 +95,6 @@ func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncCo
 	operatorSpec, _, _, err := c.operatorClient.GetStaticPodOperatorState()
 	if err != nil {
 		return err
-	}
-	// check the cluster is healthy or not after get env var, to ensure it is safe to rollout
-	safe, err = c.quorumChecker.IsSafeToUpdateRevision()
-	if err != nil {
-		return fmt.Errorf("TargetConfigController can't evaluate whether quorum is safe: %w", err)
-	}
-
-	if !safe {
-		return fmt.Errorf("skipping TargetConfigController reconciliation due to insufficient quorum")
 	}
 	requeue, err := createTargetConfig(ctx, c, syncCtx.Recorder(), operatorSpec, envVars)
 	if err != nil {
