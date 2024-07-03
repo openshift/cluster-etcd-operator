@@ -20,19 +20,16 @@ See also the [user-facing documentation](https://docs.openshift.com/container-pl
 ## etcd CA summary
 
 All etcd CAs and their CA bundles are stored in the `openshift-etcd` namespace. This NS is considered the source of truth for all certificates.
-To share CA bundles and client certificates with consumers (e.g. apiserver or the cluster-etcd-operator) they are copied by the `ResourceSyncController` into different places:
+To share CA bundles with consumers (e.g. apiserver or the cluster-etcd-operator) they are copied by the `ResourceSyncController` into different places:
 
-| CA (secret)                                      | CA bundle (configmap)                                         |
-|--------------------------------------------------|---------------------------------------------------------------|
-| openshift-config/etcd-signer (deprecated)        | openshift-config/etcd-ca-bundle                               |
-|                                                  | openshift-etcd/etcd-ca-bundle                                 |
-| openshift-etcd/etcd-signer (NEW)                 | openshift-etcd/etcd-ca-bundle                                 |
-| openshift-config/etcd-metric-signer (deprecated) | openshift-config/etcd-metric-serving-ca                       |
-|                                                  | openshift-etcd/etcd-metrics-ca-bundle                         |
-| openshift-etcd/etcd-metric-signer (NEW)          | openshift-config/etcd-metric-serving-ca (to be removed later) |
-|                                                  | openshift-etcd/etcd-metrics-ca-bundle                         |
+* openshift-etcd/etcd-ca-bundle (etcd server, configmap, source of truth)
+  * openshift-etcd-operator/etcd-ca-bundle (for the operator to reach etcd)
+  * openshift-config/etcd-serving-ca (for apiserver and others to connect to etcd)
+  * openshift-config/etcd-ca-bundle (just for consistency’s sake, should replace etcd-serving-ca, but is very cumbersome)
+* openshift-etcd/etcd-metrics-ca-bundle (grpc proxy for metrics, configmap, source of truth)
+  * openshift-etcd-operator/etcd-metric-serving-ca (for prometheus to reach etcd, co-located with the ServiceMonitor installed by the operator)
 
-Historically, the certificates were created in the `openshift-config` namespace. All public key bundles are found in configmaps, the private keys are stored in secrets.
+Historically, the certificates were created in the `openshift-config` namespace. All public key bundles are found in configmaps, the private keys are always stored in secrets.
 
 ## etcd cert summary
 
@@ -56,102 +53,80 @@ All signers and certificates are centralized logically in the `CertSignerControl
 The cluster hosts two certificate authorities (CA) for etcd - `etcd-signer` for certs relating to client/server and peer/peer communication, 
 and `etcd-metric-signer` for certs relating to etcd metrics serving and collection. These certs can only be used for signing.
 
-The certs and associated private keys for these CAs are stored in secrets in the `openshift-etcd` (new) and `openshift-config` (old) namespace. The CA certs alone also stored several `ca-bundle` config maps.
+The certs and associated private keys for these CAs are stored in secrets in the `openshift-etcd` namespace.
 
 ```
-$ oc get -n openshift-config secret/etcd-signer -o template='{{index .data "tls.crt"}}'  | base64 -d | openssl x509 -noout -text
-Certificate:
-    Data:
-        Version: 3 (0x2)
-        Serial Number: 5666804984547586656 (0x4ea4891c035f3260)
-        Signature Algorithm: sha256WithRSAEncryption
-        Issuer: CN = openshift-config_etcd-signer@1706867612
-        Validity
-            Not Before: Feb  2 09:53:31 2024 GMT
-            Not After : Jan 31 09:53:32 2029 GMT
-        Subject: CN = openshift-config_etcd-signer@1706867612
-        Subject Public Key Info:
-            Public Key Algorithm: rsaEncryption
-                Public-Key: (2048 bit)
-...                
-        X509v3 extensions:
-            X509v3 Key Usage: critical
-                Digital Signature, Key Encipherment, Certificate Sign
-            X509v3 Basic Constraints: critical
-                CA:TRUE
-            X509v3 Subject Key Identifier: 
-                AD:5A:0E:AE:36:68:A2:84:BE:9A:0C:D1:B3:6C:2B:B4:BE:63:AF:9C
-            X509v3 Authority Key Identifier: 
-                AD:5A:0E:AE:36:68:A2:84:BE:9A:0C:D1:B3:6C:2B:B4:BE:63:AF:9C
-...
-
 $ oc get -n openshift-etcd secret/etcd-signer -o template='{{index .data "tls.crt"}}'  | base64 -d | openssl x509 -noout -text
 Certificate:
     Data:
         Version: 3 (0x2)
-        Serial Number: 1882009046775752485 (0x1a1e3d41b923e725)
+        Serial Number: 2788524736615789254 (0x26b2d479455fb2c6)
         Signature Algorithm: sha256WithRSAEncryption
-        Issuer: CN = openshift-etcd_etcd-signer@1706867612
+        Issuer: CN=openshift-etcd_etcd-signer@1720003641
         Validity
-            Not Before: Feb  2 09:53:31 2024 GMT
-            Not After : Jan 31 09:53:32 2029 GMT
-        Subject: CN = openshift-etcd_etcd-signer@1706867612
+            Not Before: Jul  3 10:47:20 2024 GMT
+            Not After : Jul  2 10:47:21 2029 GMT
+        Subject: CN=openshift-etcd_etcd-signer@1720003641
         Subject Public Key Info:
             Public Key Algorithm: rsaEncryption
                 Public-Key: (2048 bit)
 ...
-       X509v3 extensions:
-            X509v3 Key Usage: critical
-                Digital Signature, Key Encipherment, Certificate Sign
-            X509v3 Basic Constraints: critical
-                CA:TRUE
-            X509v3 Subject Key Identifier: 
-                51:69:98:F9:35:D2:9E:B8:90:2F:38:EA:C1:07:62:22:26:B6:58:89
-            X509v3 Authority Key Identifier: 
-                51:69:98:F9:35:D2:9E:B8:90:2F:38:EA:C1:07:62:22:26:B6:58:89
-...
-
-
-$ oc get -n openshift-etcd configmap/etcd-ca-bundle -o template='{{index .data "ca-bundle.crt"}}'  | openssl x509 -noout -ext subjectKeyIdentifier
-X509v3 Subject Key Identifier: 
-    51:69:98:F9:35:D2:9E:B8:90:2F:38:EA:C1:07:62:22:26:B6:58:89
-
-$ oc get -n openshift-etcd configmap/etcd-serving-ca -o template='{{index .data "ca-bundle.crt"}}'  | openssl x509 -noout -ext subjectKeyIdentifier
-X509v3 Subject Key Identifier: 
-    51:69:98:F9:35:D2:9E:B8:90:2F:38:EA:C1:07:62:22:26:B6:58:89
-```
-
-```
-$ oc get -n openshift-etcd secret/etcd-metric-signer -o template='{{index .data "tls.crt"}}'  | base64 -d | openssl x509 -noout -text
-Certificate:
-    Data:
-        Version: 3 (0x2)
-        Serial Number: 8949989853081977106 (0x7c34c05a304d4112)
-        Signature Algorithm: sha256WithRSAEncryption
-        Issuer: CN = openshift-etcd_etcd-metric-signer@1706867612
-        Validity
-            Not Before: Feb  2 09:53:32 2024 GMT
-            Not After : Jan 31 09:53:33 2029 GMT
-        Subject: CN = openshift-etcd_etcd-metric-signer@1706867612
-...
+                Exponent: 65537 (0x10001)
         X509v3 extensions:
             X509v3 Key Usage: critical
                 Digital Signature, Key Encipherment, Certificate Sign
             X509v3 Basic Constraints: critical
                 CA:TRUE
             X509v3 Subject Key Identifier: 
-                5F:C6:96:F4:CA:D6:AE:41:ED:96:0E:94:F0:00:44:4D:FC:CD:20:63
+                44:48:82:79:8A:7A:28:E1:FA:E2:E5:59:DE:B4:1B:42:47:3A:28:A6
             X509v3 Authority Key Identifier: 
-                5F:C6:96:F4:CA:D6:AE:41:ED:96:0E:94:F0:00:44:4D:FC:CD:20:63
+                44:48:82:79:8A:7A:28:E1:FA:E2:E5:59:DE:B4:1B:42:47:3A:28:A6
+    Signature Algorithm: sha256WithRSAEncryption
+    Signature Value:
 ...
 
-$ oc get -n openshift-etcd configmap/etcd-metrics-ca-bundle -o template='{{index .data "ca-bundle.crt"}}'  | openssl x509 -noout -ext subjectKeyIdentifier
+$ oc get -n openshift-etcd configmap/etcd-ca-bundle -o template='{{index .data "ca-bundle.crt"}}'  | openssl x509 -noout -ext subjectKeyIdentifier
 X509v3 Subject Key Identifier: 
-    5F:C6:96:F4:CA:D6:AE:41:ED:96:0E:94:F0:00:44:4D:FC:CD:20:63
-
+    44:48:82:79:8A:7A:28:E1:FA:E2:E5:59:DE:B4:1B:42:47:3A:28:A6
 ```
 
-You can see that the CN also contains the namespace, which makes them easy to distinguish.
+```
+$ oc get -n openshift-etcd secret/etcd-metric-signer -o template='{{index .data "tls.crt"}}'  | base64 -d | openssl x509 -noout -text
+ertificate:
+    Data:
+        Version: 3 (0x2)
+        Serial Number: 5396202536825775930 (0x4ae3299def8fe73a)
+        Signature Algorithm: sha256WithRSAEncryption
+        Issuer: CN=openshift-etcd_etcd-metric-signer@1720003641
+        Validity
+            Not Before: Jul  3 10:47:21 2024 GMT
+            Not After : Jul  2 10:47:22 2029 GMT
+        Subject: CN=openshift-etcd_etcd-metric-signer@1720003641
+        Subject Public Key Info:
+            Public Key Algorithm: rsaEncryption
+                Public-Key: (2048 bit)
+                Modulus:
+...
+                Exponent: 65537 (0x10001)
+        X509v3 extensions:
+            X509v3 Key Usage: critical
+                Digital Signature, Key Encipherment, Certificate Sign
+            X509v3 Basic Constraints: critical
+                CA:TRUE
+            X509v3 Subject Key Identifier: 
+                9D:46:20:5E:14:A1:41:72:FD:2E:B9:25:54:15:0E:66:22:6F:EF:7E
+            X509v3 Authority Key Identifier: 
+                9D:46:20:5E:14:A1:41:72:FD:2E:B9:25:54:15:0E:66:22:6F:EF:7E
+    Signature Algorithm: sha256WithRSAEncryption
+    Signature Value:
+...
+
+
+$ oc get -n openshift-etcd configmap/etcd-metrics-ca-bundle -o template='{{index .data "ca-bundle.crt"}}'  | openssl x509 -noout -ext subjectKeyIdentifier
+509v3 Subject Key Identifier: 
+    9D:46:20:5E:14:A1:41:72:FD:2E:B9:25:54:15:0E:66:22:6F:EF:7E
+
+```
 
 ## etcd-client and etcd-metric-client certs
 
@@ -160,19 +135,22 @@ This is stored in the `openshift-etcd` namespace and copied into the `openshift-
 
 ```
 $ oc get -n openshift-etcd secret/etcd-client -o template='{{index .data "tls.crt"}}'  | base64 -d | openssl x509 -noout -text
-Certificate:
+Ceertificate:
     Data:
         Version: 3 (0x2)
-        Serial Number: 3286966950741554736 (0x2d9da706cf663630)
+        Serial Number: 3547798364874546324 (0x313c4fd0d90f1c94)
         Signature Algorithm: sha256WithRSAEncryption
-        Issuer: CN = openshift-config_etcd-signer@1706867612
+        Issuer: CN=openshift-etcd_etcd-signer@1720003641
         Validity
-            Not Before: Feb  2 09:53:31 2024 GMT
-            Not After : Feb  1 09:53:32 2027 GMT
-        Subject: O = etcd-client + O = system:etcd, CN = etcd-client
+            Not Before: Jul  3 10:47:21 2024 GMT
+            Not After : Jul  3 10:47:22 2027 GMT
+        Subject: O=etcd-client + O=system:etcd, CN=etcd-client
         Subject Public Key Info:
             Public Key Algorithm: rsaEncryption
+                Public-Key: (2048 bit)
+                Modulus:
 ...
+                Exponent: 65537 (0x10001)
         X509v3 extensions:
             X509v3 Key Usage: critical
                 Digital Signature, Key Encipherment
@@ -181,8 +159,11 @@ Certificate:
             X509v3 Basic Constraints: critical
                 CA:FALSE
             X509v3 Authority Key Identifier: 
-                AD:5A:0E:AE:36:68:A2:84:BE:9A:0C:D1:B3:6C:2B:B4:BE:63:AF:9C
+                44:48:82:79:8A:7A:28:E1:FA:E2:E5:59:DE:B4:1B:42:47:3A:28:A6
+    Signature Algorithm: sha256WithRSAEncryption
+    Signature Value:
 ...
+
 ```
 
 Similarly, the `etcd-metric-signer` CA issues a client cert that prometheus uses when authenticating with the etcd metrics server. 
@@ -193,16 +174,19 @@ $ oc get -n openshift-etcd secret/etcd-metric-client -o template='{{index .data 
 Certificate:
     Data:
         Version: 3 (0x2)
-        Serial Number: 2861583867292788305 (0x27b6635db0f9a651)
+        Serial Number: 7975949877543133558 (0x6eb04427bd476176)
         Signature Algorithm: sha256WithRSAEncryption
-        Issuer: CN = openshift-config_etcd-metric-signer@1706867612
+        Issuer: CN=openshift-etcd_etcd-metric-signer@1720003641
         Validity
-            Not Before: Feb  2 09:53:32 2024 GMT
-            Not After : Feb  1 09:53:33 2027 GMT
-        Subject: O = etcd-metric + O = system:etcd, CN = etcd-metric
+            Not Before: Jul  3 10:47:21 2024 GMT
+            Not After : Jul  3 10:47:22 2027 GMT
+        Subject: O=etcd-metric + O=system:etcd, CN=etcd-metric
         Subject Public Key Info:
             Public Key Algorithm: rsaEncryption
+                Public-Key: (2048 bit)
+                Modulus:
 ...
+                Exponent: 65537 (0x10001)
         X509v3 extensions:
             X509v3 Key Usage: critical
                 Digital Signature, Key Encipherment
@@ -211,12 +195,12 @@ Certificate:
             X509v3 Basic Constraints: critical
                 CA:FALSE
             X509v3 Authority Key Identifier: 
-                2C:EF:FD:79:FB:7F:70:B0:21:62:CC:06:C1:F1:F1:F2:EA:B8:D4:D2
+                9D:46:20:5E:14:A1:41:72:FD:2E:B9:25:54:15:0E:66:22:6F:EF:7E
+    Signature Algorithm: sha256WithRSAEncryption
+    Signature Value:
 ...
+
 ```
-
-Note that those certificates are signed by the CA's from the `openshift-config` namespace, this is to ensure backward compatibility on upgrades. 
-
 ## etcd-serving certs
 
 Each control plane node is issued a serving cert (by the `etcd-signer` CA) to secure the client-server communication on port 2379. This cert 
@@ -227,16 +211,19 @@ $ oc get -n openshift-etcd secret/etcd-serving-master-0 -o template='{{index .da
 Certificate:
     Data:
         Version: 3 (0x2)
-        Serial Number: 7627369043925387108 (0x69d9dbbbe1fbc764)
+        Serial Number: 6744732405560992845 (0x5d9a1a634287644d)
         Signature Algorithm: sha256WithRSAEncryption
-        Issuer: CN = openshift-config_etcd-signer@1706867612
+        Issuer: CN=openshift-etcd_etcd-signer@1720003641
         Validity
-            Not Before: Feb  2 10:02:59 2024 GMT
-            Not After : Feb  1 10:03:00 2027 GMT
-        Subject: CN = 10.0.0.4
+            Not Before: Jul  3 10:56:52 2024 GMT
+            Not After : Jul  3 10:56:53 2027 GMT
+        Subject: CN=10.0.0.4
         Subject Public Key Info:
             Public Key Algorithm: rsaEncryption
+                Public-Key: (2048 bit)
+                Modulus:
 ...
+                Exponent: 65537 (0x10001)
         X509v3 extensions:
             X509v3 Key Usage: critical
                 Digital Signature, Key Encipherment
@@ -245,11 +232,14 @@ Certificate:
             X509v3 Basic Constraints: critical
                 CA:FALSE
             X509v3 Subject Key Identifier: 
-                AD:CC:6A:00:4F:6F:94:FC:46:B9:49:9C:9E:9C:72:AA:FA:30:90:81
+                38:C1:A3:CC:D8:5E:B7:D5:C7:79:77:FC:81:D3:D2:A0:84:64:3C:35
             X509v3 Authority Key Identifier: 
-                AD:5A:0E:AE:36:68:A2:84:BE:9A:0C:D1:B3:6C:2B:B4:BE:63:AF:9C
+                44:48:82:79:8A:7A:28:E1:FA:E2:E5:59:DE:B4:1B:42:47:3A:28:A6
             X509v3 Subject Alternative Name: 
                 DNS:etcd.kube-system.svc, DNS:etcd.kube-system.svc.cluster.local, DNS:etcd.openshift-etcd.svc, DNS:etcd.openshift-etcd.svc.cluster.local, DNS:localhost, DNS:10.0.0.4, DNS:127.0.0.1, DNS:::1, IP Address:10.0.0.4, IP Address:127.0.0.1, IP Address:0:0:0:0:0:0:0:1
+    Signature Algorithm: sha256WithRSAEncryption
+    Signature Value:
+...
 
 ```
 
@@ -267,16 +257,19 @@ $ oc get -n openshift-etcd secret/etcd-peer-master-0 -o template='{{index .data 
 Certificate:
     Data:
         Version: 3 (0x2)
-        Serial Number: 7675552765032453621 (0x6a850a92ae86d5f5)
+        Serial Number: 2786242632767132582 (0x26aab8e9902253a6)
         Signature Algorithm: sha256WithRSAEncryption
-        Issuer: CN = openshift-config_etcd-signer@1706867612
+        Issuer: CN=openshift-etcd_etcd-signer@1720003641
         Validity
-            Not Before: Feb  2 10:02:59 2024 GMT
-            Not After : Feb  1 10:03:00 2027 GMT
-        Subject: CN = 10.0.0.4
+            Not Before: Jul  3 10:56:52 2024 GMT
+            Not After : Jul  3 10:56:53 2027 GMT
+        Subject: CN=10.0.0.4
         Subject Public Key Info:
             Public Key Algorithm: rsaEncryption
+                Public-Key: (2048 bit)
+                Modulus:
 ...
+                Exponent: 65537 (0x10001)
         X509v3 extensions:
             X509v3 Key Usage: critical
                 Digital Signature, Key Encipherment
@@ -285,12 +278,15 @@ Certificate:
             X509v3 Basic Constraints: critical
                 CA:FALSE
             X509v3 Subject Key Identifier: 
-                B0:DA:CC:DB:8E:7C:99:90:EA:06:DD:2F:15:32:58:A7:74:27:59:4B
+                2B:AF:30:00:BD:25:AB:6A:24:30:15:94:8E:62:CB:AC:3B:8C:05:93
             X509v3 Authority Key Identifier: 
-                AD:5A:0E:AE:36:68:A2:84:BE:9A:0C:D1:B3:6C:2B:B4:BE:63:AF:9C
+                44:48:82:79:8A:7A:28:E1:FA:E2:E5:59:DE:B4:1B:42:47:3A:28:A6
             X509v3 Subject Alternative Name: 
                 DNS:etcd.kube-system.svc, DNS:etcd.kube-system.svc.cluster.local, DNS:etcd.openshift-etcd.svc, DNS:etcd.openshift-etcd.svc.cluster.local, DNS:localhost, DNS:10.0.0.4, DNS:127.0.0.1, DNS:::1, IP Address:10.0.0.4, IP Address:127.0.0.1, IP Address:0:0:0:0:0:0:0:1
+    Signature Algorithm: sha256WithRSAEncryption
+    Signature Value:
 ...
+
 ```
 
 Note that this cert can also be for client authentication - i.e. peers use this to authenticate when connecting to another peer.
@@ -304,16 +300,19 @@ $ oc get -n openshift-etcd secret/etcd-serving-metrics-master-0 -o template='{{i
 Certificate:
     Data:
         Version: 3 (0x2)
-        Serial Number: 2805443370039336688 (0x26eeefe194ab5ef0)
+        Serial Number: 4872666981444824074 (0x439f30cd99cb2c0a)
         Signature Algorithm: sha256WithRSAEncryption
-        Issuer: CN = openshift-config_etcd-metric-signer@1706867612
+        Issuer: CN=openshift-etcd_etcd-metric-signer@1720003641
         Validity
-            Not Before: Feb  2 10:02:59 2024 GMT
-            Not After : Feb  1 10:03:00 2027 GMT
-        Subject: CN = 10.0.0.4
+            Not Before: Jul  3 10:56:53 2024 GMT
+            Not After : Jul  3 10:56:54 2027 GMT
+        Subject: CN=10.0.0.4
         Subject Public Key Info:
             Public Key Algorithm: rsaEncryption
+                Public-Key: (2048 bit)
+                Modulus:
 ...
+                Exponent: 65537 (0x10001)
         X509v3 extensions:
             X509v3 Key Usage: critical
                 Digital Signature, Key Encipherment
@@ -322,44 +321,52 @@ Certificate:
             X509v3 Basic Constraints: critical
                 CA:FALSE
             X509v3 Subject Key Identifier: 
-                7D:B1:A5:F8:55:37:8F:1D:5A:03:8F:19:F9:59:49:D8:E1:49:EC:C9
+                D5:79:E3:7E:00:27:D1:53:09:1D:AC:0E:E2:4B:30:6D:F0:22:23:4C
             X509v3 Authority Key Identifier: 
-                2C:EF:FD:79:FB:7F:70:B0:21:62:CC:06:C1:F1:F1:F2:EA:B8:D4:D2
+                9D:46:20:5E:14:A1:41:72:FD:2E:B9:25:54:15:0E:66:22:6F:EF:7E
             X509v3 Subject Alternative Name: 
                 DNS:etcd.kube-system.svc, DNS:etcd.kube-system.svc.cluster.local, DNS:etcd.openshift-etcd.svc, DNS:etcd.openshift-etcd.svc.cluster.local, DNS:localhost, DNS:10.0.0.4, DNS:127.0.0.1, DNS:::1, IP Address:10.0.0.4, IP Address:127.0.0.1, IP Address:0:0:0:0:0:0:0:1
+    Signature Algorithm: sha256WithRSAEncryption
+    Signature Value:
 ...
+
 ```
 
 ## Operator Service CA
 
-You may notice an
-`openshift-etcd-operator/configmap/etcd-service-ca-bundle` resource:
+You may notice an `openshift-etcd-operator/configmap/etcd-service-ca-bundle` resource:
 
 ```
 $ oc get -n openshift-etcd-operator configmap/etcd-service-ca-bundle  -o template='{{index .data "service-ca.crt"}}' | openssl x509 -noout -text
 Certificate:
     Data:
         Version: 3 (0x2)
-        Serial Number: 8395602991184334199 (0x74832c704cbfcd77)
+        Serial Number: 4712822867380430630 (0x41674f6da38c6726)
         Signature Algorithm: sha256WithRSAEncryption
-        Issuer: CN = openshift-service-serving-signer@1706868181
+        Issuer: CN=openshift-service-serving-signer@1720004212
         Validity
-            Not Before: Feb  2 10:03:00 2024 GMT
-            Not After : Apr  2 10:03:01 2026 GMT
-        Subject: CN = openshift-service-serving-signer@1706868181
+            Not Before: Jul  3 10:56:51 2024 GMT
+            Not After : Sep  1 10:56:52 2026 GMT
+        Subject: CN=openshift-service-serving-signer@1720004212
         Subject Public Key Info:
             Public Key Algorithm: rsaEncryption
+                Public-Key: (2048 bit)
+                Modulus:
 ...
+                Exponent: 65537 (0x10001)
         X509v3 extensions:
             X509v3 Key Usage: critical
                 Digital Signature, Key Encipherment, Certificate Sign
             X509v3 Basic Constraints: critical
                 CA:TRUE
             X509v3 Subject Key Identifier: 
-                08:BA:46:C1:AA:F3:BE:F3:25:09:EA:B5:36:92:86:B1:4F:D0:12:82
+                7D:0A:DE:63:6C:A2:32:1C:D7:ED:95:F3:A3:31:B6:B4:1B:CD:D1:94
             X509v3 Authority Key Identifier: 
-                08:BA:46:C1:AA:F3:BE:F3:25:09:EA:B5:36:92:86:B1:4F:D0:12:82
+                7D:0A:DE:63:6C:A2:32:1C:D7:ED:95:F3:A3:31:B6:B4:1B:CD:D1:94
+    Signature Algorithm: sha256WithRSAEncryption
+    Signature Value:
 ...
+
 ```
 
 This is the cert for the service CA implemented by the [service-ca-operator](https://github.com/openshift/service-ca-operator) component.
@@ -371,12 +378,12 @@ $ oc get -n openshift-etcd-operator service/metrics -o template='{{range $k, $v 
 include.release.openshift.io/self-managed-high-availability = true
 include.release.openshift.io/single-node-developer = true
 service.alpha.openshift.io/serving-cert-secret-name = etcd-operator-serving-cert
-service.alpha.openshift.io/serving-cert-signed-by = openshift-service-serving-signer@1706868181
-service.beta.openshift.io/serving-cert-signed-by = openshift-service-serving-signer@1706868181
+service.alpha.openshift.io/serving-cert-signed-by = openshift-service-serving-signer@1720004212
+service.beta.openshift.io/serving-cert-signed-by = openshift-service-serving-signer@1720004212
 
 $ oc get -n openshift-etcd-operator secret/etcd-operator-serving-cert -o template='{{index .data "tls.crt"}}' | base64 -d | openssl x509 -noout -issuer -subject
-issuer=CN = openshift-service-serving-signer@1706868181
-subject=CN = metrics.openshift-etcd-operator.svc
+issuer=CN=openshift-service-serving-signer@1720004212
+subject=CN=metrics.openshift-etcd-operator.svc
 ```
 
 Note the `openshift-etcd/services/etcd` resource is similarly annotated but the `openshift-etcd/secret/serving-cert` appears unused.
@@ -390,11 +397,11 @@ The etcd static pod on each control plane node runs a number of containers - see
           ...
           --cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-master-0.crt \
           --key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-master-0.key \
-          --trusted-ca-file=/etc/kubernetes/static-pod-certs/configmaps/etcd-serving-ca/ca-bundle.crt \
+          --trusted-ca-file=/etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt \
           --client-cert-auth=true \
           --peer-cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-master-0.crt \
           --peer-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-master-0.key \
-          --peer-trusted-ca-file=/etc/kubernetes/static-pod-certs/configmaps/etcd-peer-client-ca/ca-bundle.crt \
+          --peer-trusted-ca-file=/etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt \
           --peer-client-cert-auth=true \
           ...
           --listen-client-urls=https://0.0.0.0:2379 \
@@ -423,8 +430,8 @@ Also in the etcd pod, a `grpc-proxy` instance is launched which will serve prome
           --key-file /etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-metrics-master-0.key \
           --cert /etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-master-0.crt \
           --cert-file /etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-metrics-master-0.crt \
-          --cacert /etc/kubernetes/static-pod-certs/configmaps/etcd-peer-client-ca/ca-bundle.crt \
-          --trusted-ca-file /etc/kubernetes/static-pod-certs/configmaps/etcd-metrics-proxy-serving-ca/ca-bundle.crt
+          --cacert /etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt \
+          --trusted-ca-file /etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/metrics-ca-bundle.crt
 ```
 
 - `--endpoint ... :9978` specifies that we're proxying etcd's metrics serving.
@@ -440,19 +447,20 @@ It can be helpful to inspect these certs on disk on a control plane machine. The
 $ chroot /host
 $ cd /etc/kubernetes/static-pod-resources/etcd-certs
 $ for crt in $(find . -name "*.crt"); do echo -n "$crt: "; openssl x509 -noout -subject < $crt; done
-./secrets/etcd-all-certs/etcd-serving-ci-ln-lzvwz92-72292-9l99x-master-2.crt: subject=CN = 10.0.0.5
-./secrets/etcd-all-certs/etcd-peer-ci-ln-lzvwz92-72292-9l99x-master-0.crt: subject=CN = 10.0.0.4
-./secrets/etcd-all-certs/etcd-serving-metrics-ci-ln-lzvwz92-72292-9l99x-master-0.crt: subject=CN = 10.0.0.4
-./secrets/etcd-all-certs/etcd-peer-ci-ln-lzvwz92-72292-9l99x-master-1.crt: subject=CN = 10.0.0.3
-./secrets/etcd-all-certs/etcd-serving-ci-ln-lzvwz92-72292-9l99x-master-1.crt: subject=CN = 10.0.0.3
-./secrets/etcd-all-certs/etcd-peer-ci-ln-lzvwz92-72292-9l99x-master-2.crt: subject=CN = 10.0.0.5
-./secrets/etcd-all-certs/etcd-serving-metrics-ci-ln-lzvwz92-72292-9l99x-master-2.crt: subject=CN = 10.0.0.5
-./secrets/etcd-all-certs/etcd-serving-ci-ln-lzvwz92-72292-9l99x-master-0.crt: subject=CN = 10.0.0.4
-./secrets/etcd-all-certs/etcd-serving-metrics-ci-ln-lzvwz92-72292-9l99x-master-1.crt: subject=CN = 10.0.0.3
-./configmaps/etcd-metrics-proxy-client-ca/ca-bundle.crt: subject=CN = openshift-etcd_etcd-metric-signer@1706881792
-./configmaps/etcd-metrics-proxy-serving-ca/ca-bundle.crt: subject=CN = openshift-etcd_etcd-metric-signer@1706881792
-./configmaps/etcd-peer-client-ca/ca-bundle.crt: subject=CN = openshift-etcd_etcd-signer@1706881791
-./configmaps/etcd-serving-ca/ca-bundle.crt: subject=CN = openshift-etcd_etcd-signer@1706881791
+./secrets/etcd-all-certs/etcd-serving-metrics-ci-ln-wcvpfqt-72292-gxtbk-master-0.crt: subject=CN = 10.0.0.4
+./secrets/etcd-all-certs/etcd-serving-metrics-ci-ln-wcvpfqt-72292-gxtbk-master-1.crt: subject=CN = 10.0.0.5
+./secrets/etcd-all-certs/etcd-serving-metrics-ci-ln-wcvpfqt-72292-gxtbk-master-2.crt: subject=CN = 10.0.0.3
+
+./secrets/etcd-all-certs/etcd-serving-ci-ln-wcvpfqt-72292-gxtbk-master-0.crt: subject=CN = 10.0.0.4
+./secrets/etcd-all-certs/etcd-serving-ci-ln-wcvpfqt-72292-gxtbk-master-1.crt: subject=CN = 10.0.0.5
+./secrets/etcd-all-certs/etcd-serving-ci-ln-wcvpfqt-72292-gxtbk-master-2.crt: subject=CN = 10.0.0.3
+
+./secrets/etcd-all-certs/etcd-peer-ci-ln-wcvpfqt-72292-gxtbk-master-0.crt: subject=CN = 10.0.0.4
+./secrets/etcd-all-certs/etcd-peer-ci-ln-wcvpfqt-72292-gxtbk-master-1.crt: subject=CN = 10.0.0.5
+./secrets/etcd-all-certs/etcd-peer-ci-ln-wcvpfqt-72292-gxtbk-master-2.crt: subject=CN = 10.0.0.3
+
+./configmaps/etcd-all-bundles/metrics-ca-bundle.crt: subject=CN = openshift-etcd_etcd-metric-signer@1720003641
+./configmaps/etcd-all-bundles/server-ca-bundle.crt: subject=CN = openshift-etcd_etcd-signer@1720003641
 ```
 
 As expected, there are the two CA certs (`etcd-signer`, `etcd-metric-signer`) and three serving certs (`etcd-server`, `etcd-peer`, `etcd-metric`) and each one for every control plane node.
@@ -526,7 +534,8 @@ This controller watches a [set of config maps and secrets](https://github.com/op
 Any change to those resources constitute a new numbered "revision".
 
 When a new revision is detected, copies of all these resources are created with the revision number as a name suffix. Resources may be
-flagged as `optional`, in which case their non-existance will not be treated as an error. The new revision is then recorded in the `status.latestAvailableRevision` field and a `revision-$suffix` configmap is created to record the status (`In Progress`, `Succeeded`, `Failed`, `Abandoned`) of the installation of this revision.
+flagged as `optional`, in which case their non-existence will not be treated as an error. The new revision is then recorded in the `status.latestAvailableRevision` 
+field and a `revision-$suffix` configmap is created to record the status (`In Progress`, `Succeeded`, `Failed`, `Abandoned`) of the installation of this revision.
 
 ### Installer controller
 
@@ -550,18 +559,18 @@ The revisioned resources destined for `/etc/kubernetes/static-pod-resources/etcd
     - `etcd-pod` - the first element in the list has a special meaning it is the static pod itself, and is to be installed in
       `/etc/kubernetes/manifests`.
     - `config` - an `EtcdConfig` file
-    - `etcd-serving-ca`, `etcd-peer-client-ca`, `etcd-metrics-proxy-serving-ca`, `etcd-metrics-proxy-client-ca`
-      - CA certs described above, copied from the `openshift-config` namespace by the resource sync controller described below.
+    - `etcd-all-bundles` serving and metrics CA certs described above, this ensures atomic static pod rollouts when a bundle changes.
+      The `etcd-cert-signer-controller` maintains both the `etcd-all-bundles` secret and the individual bundles it aggregates.
 * Secrets:
-    - `etcd-all-certs` includes all certs for all nodes in a single secret to reduce the complexity of managing the resources to watch. 
-      The `etcd-signer` controller maintains both the `etcd-all-certs` secret and the node- and type-specific cert secrets it aggregates.
+    - `etcd-all-certs` includes all certs for all nodes in a single secret to reduce the complexity of managing the resources to watch and ensure 
+      atomic rollouts when a certificate changes. The `etcd-cert-signer-controller` maintains both the `etcd-all-certs` secret and the node- and type-specific cert secrets it aggregates.
 
 The unrevisioned resources destined for
 `/etc/kubernetes/static-pod-resources/etcd-certs` are:
 
 * Config maps:
     - `etcd-scripts`, `restore-etcd-pod` - etcd backup and restore scripts.
-    - `etcd-serving-ca`, `etcd-peer-client-ca`, `etcd-metrics-proxy-serving-ca`, `etcd-metrics-proxy-client-ca` - as above.
+    - `etcd-all-bundles` - as above.
 * Secrets:
     - `etcd-all-certs` as above.
 
@@ -591,13 +600,13 @@ namespace. It also creates the `etcd-all-certs` combined secret. Those certifica
 A CEO controller, separate from the `StaticPodOperator` controllers above, copies a bunch of config maps and secrets from the `openshift-etcd` namespace to either the `openshift-config` or `openshift-etcd-operator` namespace. The list of resources copied are:
 
 - `openshift-etcd/configmaps/etcd-ca-bundle` to operator and config NS
-- `openshift-etcd/configmaps/etcd-ca-bundle` to `openshift-etcd/configmaps/etcd-peer-client-ca`
-- `openshift-etcd/configmaps/etcd-ca-bundle`  to `openshift-etcd/configmaps/etcd-serving-ca`
-- `openshift-etcd/configmaps/etcd-metric-ca-bundle` to `openshift-etcd/configmaps/etcd-metric-serving-ca`, `openshift-etcd/configmaps/etcd-metrics-proxy-serving-ca` and `openshift-etcd/configmaps/etcd-metrics-proxy-client-ca`
+- `openshift-etcd/configmaps/etcd-metrics-ca-bundle` to `openshift-etcd-operator/configmaps/etcd-metric-serving-ca`
  secrets
 
 
 The etcd client certificates secrets (`etcd-client`) are copied into the `cluster-etcd-operator` and `openshift-config` namespace for sharing.  
+
+The metric client (`etcd-metric-client`) is only copied into the operator namespace.
 
 # Bootstrap Process
 
@@ -651,13 +660,68 @@ Some key points:
 
 ## Bootstrap serving certs
 
-// TODO with render update PR
+The bootstrap certificates are generated through the `cluster-etcd-operator render` command, e.g. for running it locally:
+
+```
+./cluster-etcd-operator render \
+    --asset-output-dir asset-out \
+    --etcd-image "registry.build01.ci.openshift.org/etcd-image" \
+    --infra-config-file infra.yaml \
+    --network-config-file network.yaml \
+    --cluster-configmap-file cluster.yaml \
+    --template-dir bindata/bootkube 
+```
+
+This will create all raw certificates required for running the bootstrap node etcd:
+```
+$ ls -l asset-out/etc-kubernetes/static-pod-resources/etcd-member/etcd-all-certs
+etcd-client.crt
+etcd-client.key
+etcd-metric-client.crt
+etcd-metric-client.key
+etcd-metric-signer.crt
+etcd-metric-signer.key
+etcd-peer-HOST_NAME.crt
+etcd-peer-HOST_NAME.key
+etcd-serving-HOST_NAME.crt
+etcd-serving-HOST_NAME.key
+etcd-serving-metrics-HOST_NAME.crt
+etcd-serving-metrics-HOST_NAME.key
+etcd-signer.crt
+etcd-signer.key
+
+$ ls -l asset-out/etc-kubernetes/static-pod-resources/etcd-member
+ca.crt
+```
+
+and also the first set of manifests that contains the above certificates:
+
+```
+$ ls -l asset-out/manifests
+00_etcd-endpoints-cm.yaml
+00_openshift-etcd-ns.yaml
+openshift-etcd-etcd-all-bundles.yaml
+openshift-etcd-etcd-all-certs.yaml
+openshift-etcd-etcd-ca-bundle.yaml
+openshift-etcd-etcd-client.yaml
+openshift-etcd-etcd-metric-client.yaml
+openshift-etcd-etcd-metrics-ca-bundle.yaml
+openshift-etcd-etcd-metric-signer.yaml
+openshift-etcd-etcd-peer-HOST_NAME.yaml
+penshift-etcd-etcd-serving-HOST_NAME.yaml
+openshift-etcd-etcd-serving-metrics-HOST_NAME.yaml
+openshift-etcd-etcd-signer.yaml
+openshift-etcd-svc.yaml
+```
+
+This is accomplished by running the `etcd-cert-signer-controller` against a mock apiserver client (like in a unit test) and writing
+the required secrets and configmaps as yaml files.
 
 ## CSR Signing
 
 Early in `bootkube` script, the `kube-etcd-signer-server` service is launched.
 
-This is an implementation of the `etcd-signer` CA from the [kubecsr project](https://github.com/openshift/kubecsr/tree/openshift-4.16), and
+This is an implementation of the `etcd-signer` CA from the [kubecsr project](https://github.com/openshift/kubecsr/tree/openshift-4.17), and
 is distinct from the `etcd-signer` controller in CEO.
 
 `kube-etcd-signer-server` is only used during the bootstrap process. It implements a fake kubernetes API server, solely for the
@@ -704,7 +768,9 @@ other components.
 
 # Cert Rotation
 
-With 4.16 we want to take an initial stab at the rotation of the signer certificates. 
+With 4.16 we took an initial stab at the rotation of the signer certificates and implemented manual rotation. With 4.17
+we finally were able to introduce a fully automated process to rotate signer certificates and all dependent leaf certificates.
+
 Below rotation procedure do not invalidate any existing KCS articles, they are merely overviews for (support) engineers to understand the process. 
 
 In general the process depends on _what_ needs to be rotated, signers have a slightly more complicated rotation procedure due to their dependencies to many certificates. Leaving the signer untouched, most certificates can be rotated fairly easily.
@@ -728,7 +794,9 @@ For all other certificates (e.g. the clients) the rotation must be done manually
 
 See [KCS-7003549](https://access.redhat.com/solutions/7003549) and [ETCD-445](https://issues.redhat.com/browse/ETCD-445). 
 
-## Since 4.16
+## In 4.16
+
+This is officially documented as part of [openshift-docs](https://docs.openshift.com/container-platform/4.16/security/certificate_types_descriptions/etcd-certificates.html).
 
 ### Certificates
 
@@ -749,10 +817,6 @@ Client rotation will trigger additional rollouts/restarts, e.g. on the cluster-e
 Auto-rotation before expiry is still supported, certificates will rotate once they reach 30 months (or 2.5 years) of their 3 year lifetime.
 
 ### Signers
-
-TODO(thomas): highly experimental
-
-(Disclaimer: this is subject to change over the course of the 4.16 dev cycle)
 
 The CA signers used to sign the certificates are still read from `openshift-config` for backward compatibility reasons. 
 Starting with 4.16, we're creating a new signer CA in `openshift-etcd` which is _not_ used to sign anything, 
@@ -778,23 +842,112 @@ $ oc delete secret etcd-signer -n openshift-etcd
 You can observe that the ca-bundle now contains three certificates:
 
 ```
-$ oc get configmap -n openshift-config -oyaml etcd-serving-ca
+$ oc get configmap -n openshift-etcd etcd-ca-bundle
 ```
 
-Still sketchy with the signers in openshift-etcd: rotation based on expiration is supported now, signers will rotate once they reach 54 months (or 4.5 years) of their 5 year lifetime. Needs to be figured out before we release 4.16.
+### Bundles
 
-## Plan for automated signer rotation
+When a private key was leaked, you may want to prune the bundle and remove the old private key from it. This is a simple deletion operation:
 
-The whole process can be split into a two-step migration:
-1. Operator must manage all etcd certificates [CEO#1194](https://github.com/openshift/cluster-etcd-operator/pull/1177) 
-   1. Operator should create new signers, in addition to the current ones in openshift-config. Both bundled and distributed.  
-      This allows us to stop the "death clock" on any existing signer expiration and allowing manual rotation immediately.
-   2. Having the rotation code already in place also enables easier offline rotation [ETCD-510](https://issues.redhat.com/browse/ETCD-510)
-2. Operator must orchestrate an automated signer rotation process (> 4.16)
-   1. A new signer needs to be generated, distributed via bundle and static pod rollout
-   2. All certificates must be re-generated using the new signer
-   3. All consumers of client certs (Prometheus, CEO, KAS) need to be notified or must react correctly to a rotated certificate secret
+```
+$ oc delete configmap -n openshift-etcd etcd-ca-bundle
+```
 
-With step (1), we want to move the source-of-truth for etcd certificates into the `openshift-etcd` namespace. This should 
-help in future backup and restore stories, allowing us to more easily collect all certificates required for etcd and guard 
-them better by RBAC.
+The controller will recreate it by reading both signers from `openshift-config` and `openshift-etcd`. 
+
+## Since 4.17
+
+This is officially documented as part of [openshift-docs](https://docs.openshift.com/container-platform/4.17/security/certificate_types_descriptions/etcd-certificates.html).
+
+### Certificates
+
+As with 4.16, deleting any of the dynamically generated certificates (peer, serving, metrics) will re-generate automatically through the operator by simply deleting the respective secret:
+
+```
+$ oc delete secret -n openshift-etcd etcd-peer-master-0
+```
+
+As with 4.16, the client certificates can be rotated in similar fashion:
+
+```
+$ oc delete secret -n openshift-etcd etcd-client
+```
+
+Client rotation will trigger additional rollouts/restarts, e.g. on the cluster-etcd-operator or the kube-apiserver. 
+Metrics client cert updates are handled by Prometheus dynamically and do not require rollouts/restarts.
+
+Auto-rotation before expiry is still supported, certificates will rotate once they reach 2.5 months (or 2.2 years) of their 3-year lifetime.
+
+### Signers
+
+The CA signers used to sign the certificates are now exclusively read from `openshift-etcd`, meaning, during the upgrade to 4.17
+the CEO will automatically rotate signers for the very first time on its own.  
+
+To facilitate this, the `etcd-cert-signer-controller` implements a two-phase static pod rollout. 
+
+***Phase one*** happens when a signer secret is updated/rotated, removed or when the upgrade from 4.16 to 4.17 happens. 
+This will, in turn, cause the public key bundles to update and start a new rollout with this bundle.
+
+For this phase, we introduced a new aggregated bundle configmap called `openshift-etcd/etcd-all-bundles`. Similar to the 
+`openshift-etcd/etcd-all-certs` secret, we need to ensure that rollouts are atomic w.r.t. all certificates in such an aggregation.
+
+The new aggregate bundle contains an annotation `openshift.io/ceo-bundle-rollout-revision` that denotes which static pod revision 
+was the latest at the time of updating the configmap. This allows us to gate any further leaf certificate generation, based 
+on the new signer certificates, until a later static pod revision has been achieved.
+
+Phase two can only proceed if we're fully running on a revision that's strictly higher than the current revision that triggered it. 
+Updates to any certificates are strictly prohibited while the new revision has not been achieved, and we will skip any logic execution during a static pod rollout.
+You can spot this in the CEO logs, by looking for `skipping EtcdCertSignerController leaf cert generation as safe revision is not yet achieved, currently at X - rotation happend at Y` or
+`skipping EtcdCertSignerController leaf cert generation as revision rollout has been triggered`. 
+
+Gating is important, because etcd is quite picky about the trust bundle amongst its peers. Under no circumstances can
+any of the peer/serving and client certificates be signed by a (yet) unknown signer certificate. You can spot this very well through
+log messages in the etcd pod: "remote error: tls: unknown certificate authority". etcd will either refuse the startup or other peers 
+will not allow the new peer to join the quorum.
+
+You can forcefully skip this check by setting a lower revision in the annotation, or removing the annotation entirely. 
+Note, this may cause intermittent downtime at best, or in the worst-case, a fully bricked cluster.
+
+***Phase two*** 
+
+Once we have achieved a stable version that's higher than the bundle revision annotation, the controller will proceed to update all "leaf" 
+certificates depending on the changed signer CA certificate. This includes all server-side certificates as well as all client certificates.
+This, as in previous releases, will cause another revision rollout through the update to the `openshift-etcd/etcd-all-certs` secret.
+
+***Exceptions***
+
+We only allow to skip this gating during three phases: 
+* bootstrap render
+* during bootstrap installation, until the bootstrap etcd member is removed successfully
+* when a new control plane node joins the cluster, as determined by a node object not reflected in the `etcd-all-certs` secret
+
+In the last case ("vertical scaling"), we only allow to generate new leaf certificates to not block the new node from joining the cluster. 
+Signer and bundle rotations are not possible during that phase. 
+
+### Bundles
+
+Exactly as in 4.16, this can be done manually with: 
+
+```
+$ oc delete configmap -n openshift-etcd etcd-ca-bundle
+```
+
+The controller will recreate it by reading the CA secret in `openshift-etcd`. The automated part is still to be figured out in ETCD-608.
+
+### Recovery from a botched certificate rotation
+
+Note, this is untested/unofficial procedure, but may save your cluster from becoming totally bricked.
+
+When you find that one etcd peer (usually on the first control plane node) is crash looping, and you see TLS connection errors,
+then most likely you need to manually revert the current revision. You can do that by ssh'ing into the crash looping node and executing
+the following steps (assuming 10 is the crash looping revision):
+
+```
+$ cd /etc/kubernetes/static-pod-resources/
+$ mv etcd-pod-10 backup-etcd-pod-10
+$ cp -r etcd-pod-9 etcd-pod-10
+$ cp etcd-pod-9/etcd-pod.yaml /etc/kubernetes/manifests/
+```
+
+This will copy all certificates from revision 9 into the current revision and revert the etcd pod yaml. 
+The etcd pod should immediately recover. 
