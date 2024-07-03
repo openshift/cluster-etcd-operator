@@ -1,4 +1,9 @@
-local etcdMixin = (import 'github.com/etcd-io/etcd/contrib/mixin/mixin.libsonnet');
+local etcdMixin = (import 'github.com/etcd-io/etcd/contrib/mixin/mixin.libsonnet')
+{
+  _config+: {
+    grafana7x: true,
+  },
+};
 
 {
   apiVersion: 'v1',
