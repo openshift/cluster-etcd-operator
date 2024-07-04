@@ -190,18 +190,26 @@ func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.Syn
 		return err
 	}
 
+	// we allow the controller to run freely during bootstrap to avoid having issues with constantly rolling out revisions and other
+	// contention issues on the operator status update.
+	if !bootstrapComplete {
+		if err := c.syncAllMasterCertificates(ctx, syncCtx.Recorder(), true, 0, 0); err != nil {
+			return fmt.Errorf("EtcdCertSignerController failed to sync all master certificates during bootstrap: %w", err)
+		}
+		return nil
+	}
+
 	hasNodeDiff, err := c.hasNodeCertDiff()
 	if err != nil {
 		return err
 	}
 
-	// we allow the controller to run freely during bootstrap to avoid having issues with constantly rolling out revisions and other
-	// contention issues on the operator status update. Same during vertical scaling, when a node was added we want to immediately issue a cert.
-	if !bootstrapComplete || hasNodeDiff {
-		klog.Infof("EtcdCertSignerController force sync bootstrap completed=[%v], found node difference=[%v]", bootstrapComplete, hasNodeDiff)
-		if err := c.syncAllMasterCertificates(ctx, syncCtx.Recorder(), true, 0, 0); err != nil {
-			return fmt.Errorf("EtcdCertSignerController failed to sync all master certificates during bootstrap: %w", err)
+	if hasNodeDiff {
+		klog.Infof("EtcdCertSignerController force leaf sync on node difference")
+		if err := c.forcedSyncLeafCertificates(ctx, syncCtx.Recorder()); err != nil {
+			return fmt.Errorf("EtcdCertSignerController failed to force sync leaf certificates: %w", err)
 		}
+
 		return nil
 	}
 
@@ -275,11 +283,45 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(
 		}
 	}
 
-	// -----------------------------------------------------------------
-	// Leaf Certificates
-	// -----------------------------------------------------------------
+	return c.syncLeafCertificates(ctx, recorder, forceSkipRollout, signerCaPair, signerBundle, metricsSignerCaPair, metricsSignerBundle)
+}
 
-	_, err = c.certConfig.etcdClientCert.EnsureTargetCertKeyPair(ctx, signerCaPair, signerBundle)
+// forcedSyncLeafCertificates will ensure we only read signer certificates and bundles, never re-create them.
+// This ensures that on node scale-ups we never issue a new signer due to expiration and potentially brick a cluster.
+func (c *EtcdCertSignerController) forcedSyncLeafCertificates(ctx context.Context, recorder events.Recorder) error {
+	signerCert, err := tlshelpers.ReadSignerCaCert(ctx, c.secretClient, tlshelpers.EtcdSignerCertSecretName)
+	if err != nil {
+		return fmt.Errorf("error while reading signer ca during forced leaf sync: %w", err)
+	}
+
+	signerBundle, err := tlshelpers.ReadSignerCaBundle(ctx, c.configMapClient, tlshelpers.EtcdSignerCaBundleConfigMapName)
+	if err != nil {
+		return fmt.Errorf("error while reading signer ca bundle during forced leaf sync: %w", err)
+	}
+
+	metricsCert, err := tlshelpers.ReadSignerCaCert(ctx, c.secretClient, tlshelpers.EtcdMetricsSignerCertSecretName)
+	if err != nil {
+		return fmt.Errorf("error while reading metrics signer ca during forced leaf sync: %w", err)
+	}
+
+	metricsBundle, err := tlshelpers.ReadSignerCaBundle(ctx, c.configMapClient, tlshelpers.EtcdMetricsSignerCaBundleConfigMapName)
+	if err != nil {
+		return fmt.Errorf("error while reading metrics signer ca bundle during forced leaf sync: %w", err)
+	}
+
+	return c.syncLeafCertificates(ctx, recorder, true, signerCert, signerBundle, metricsCert, metricsBundle)
+}
+
+func (c *EtcdCertSignerController) syncLeafCertificates(
+	ctx context.Context,
+	recorder events.Recorder,
+	forceSkipRollout bool,
+	signerCaPair *crypto.CA,
+	signerBundle []*x509.Certificate,
+	metricsSignerCaPair *crypto.CA,
+	metricsSignerBundle []*x509.Certificate) error {
+
+	_, err := c.certConfig.etcdClientCert.EnsureTargetCertKeyPair(ctx, signerCaPair, signerBundle)
 	if err != nil {
 		return fmt.Errorf("error on ensuring etcd client cert: %w", err)
 	}
@@ -343,7 +385,6 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(
 		}
 	}
 	_, _, err = resourceapply.ApplySecret(ctx, c.secretClient, recorder, secret)
-
 	return err
 }
 

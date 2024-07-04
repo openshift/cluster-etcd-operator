@@ -39,12 +39,38 @@ import (
 
 func TestHasNodeCertDiffGeneratesLeafs(t *testing.T) {
 	fakeKubeClient, fakeOperatorClient, controller, recorder := setupController(t, []runtime.Object{}, false)
+	// generate one valid certificate setup
+	runSyncWithRevisionRollout(t, controller, fakeOperatorClient, recorder)
+
 	// ensure that the bundled secrets do not contain any matching nodes
 	_, err := fakeKubeClient.CoreV1().Secrets(operatorclient.TargetNamespace).Update(context.TODO(),
 		u.FakeSecret(operatorclient.TargetNamespace, tlshelpers.EtcdAllCertsSecretName, map[string][]byte{}), metav1.UpdateOptions{})
 	require.NoError(t, err)
 
-	_, err = fakeOperatorClient.UpdateStaticPodOperatorStatus(context.TODO(), "0", u.StaticPodOperatorStatus(
+	err = controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder))
+	require.NoError(t, err)
+	nodes, secretMap, configMaps := allNodesAndSecrets(t, fakeKubeClient)
+	require.Equal(t, 3, len(nodes.Items))
+	require.Equal(t, 14, len(secretMap))
+	require.Equal(t, 3, len(configMaps))
+}
+
+func TestHasNodeCertDiffDoesNotRotateSigners(t *testing.T) {
+	fakeKubeClient, fakeOperatorClient, controller, recorder := setupController(t, []runtime.Object{}, false)
+	// generate one valid certificate setup
+	runSyncWithRevisionRollout(t, controller, fakeOperatorClient, recorder)
+
+	_, err := fakeKubeClient.CoreV1().Secrets(operatorclient.TargetNamespace).Update(context.TODO(),
+		u.FakeSecret(operatorclient.TargetNamespace, tlshelpers.EtcdAllCertsSecretName, map[string][]byte{}), metav1.UpdateOptions{})
+	require.NoError(t, err)
+	signerCa, err := fakeKubeClient.CoreV1().Secrets(operatorclient.TargetNamespace).Get(context.TODO(), tlshelpers.EtcdSignerCertSecretName, metav1.GetOptions{})
+	require.NoError(t, err)
+	// ensure that the signer is outdated - by standards of library-go, this will identify this cert as unmanaged
+	signerCa.Annotations = map[string]string{}
+	_, err = fakeKubeClient.CoreV1().Secrets(operatorclient.TargetNamespace).Update(context.TODO(), signerCa, metav1.UpdateOptions{})
+	require.NoError(t, err)
+
+	_, err = fakeOperatorClient.UpdateStaticPodOperatorStatus(context.TODO(), "2", u.StaticPodOperatorStatus(
 		u.WithLatestRevision(4),
 		u.WithNodeStatusAtCurrentRevision(4),
 		u.WithNodeStatusAtCurrentRevision(3),
@@ -54,10 +80,21 @@ func TestHasNodeCertDiffGeneratesLeafs(t *testing.T) {
 
 	err = controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder))
 	require.NoError(t, err)
+
+	// the signer should stay the exact same as before
+	curSignerCa, err := fakeKubeClient.CoreV1().Secrets(operatorclient.TargetNamespace).Get(context.TODO(), tlshelpers.EtcdSignerCertSecretName, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, signerCa.Data, curSignerCa.Data)
+
+	// the certificates themselves should still be valid
 	nodes, secretMap, configMaps := allNodesAndSecrets(t, fakeKubeClient)
-	require.Equal(t, 3, len(nodes.Items))
-	require.Equal(t, 14, len(secretMap))
-	require.Equal(t, 3, len(configMaps))
+	assertNodeCerts(t, nodes, secretMap)
+	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertCertificateCorrectness(t, secretMap)
+	assertStaticPodAllBundles(t, configMaps)
+	assertBundleCorrectness(t, secretMap, configMaps)
+	assertClientCerts(t, secretMap)
+	assertExpirationMetric(t)
 }
 
 // Validate that a successful test run will result in a secret per

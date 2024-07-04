@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
+	"k8s.io/client-go/util/cert"
 	"time"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
@@ -321,22 +322,22 @@ func CreateEtcdClientCert(
 	}
 }
 
-func ReadConfigSignerCert(ctx context.Context, secretClient corev1client.SecretsGetter) (*crypto.CA, error) {
-	signingCertKeyPairSecret, err := secretClient.Secrets(operatorclient.GlobalUserSpecifiedConfigNamespace).Get(ctx, EtcdSignerCertSecretName, metav1.GetOptions{})
+func ReadSignerCaCert(ctx context.Context, secretClient corev1client.SecretsGetter, name string) (*crypto.CA, error) {
+	signingCertKeyPairSecret, err := secretClient.Secrets(operatorclient.TargetNamespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("error getting %s/%s: %w", operatorclient.GlobalUserSpecifiedConfigNamespace, EtcdSignerCertSecretName, err)
+		return nil, fmt.Errorf("error getting %s/%s: %w", operatorclient.TargetNamespace, name, err)
 	}
 
 	return crypto.GetCAFromBytes(signingCertKeyPairSecret.Data["tls.crt"], signingCertKeyPairSecret.Data["tls.key"])
 }
 
-func ReadConfigMetricsSignerCert(ctx context.Context, secretClient corev1client.SecretsGetter) (*crypto.CA, error) {
-	metricsSigningCertKeyPairSecret, err := secretClient.Secrets(operatorclient.GlobalUserSpecifiedConfigNamespace).Get(ctx, EtcdMetricsSignerCertSecretName, metav1.GetOptions{})
+func ReadSignerCaBundle(ctx context.Context, cmClient corev1client.ConfigMapsGetter, name string) ([]*x509.Certificate, error) {
+	bundle, err := cmClient.ConfigMaps(operatorclient.TargetNamespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("error getting %s/%s: %w", operatorclient.GlobalUserSpecifiedConfigNamespace, EtcdMetricsSignerCertSecretName, err)
+		return nil, fmt.Errorf("error getting %s/%s: %w", operatorclient.TargetNamespace, name, err)
 	}
 
-	return crypto.GetCAFromBytes(metricsSigningCertKeyPairSecret.Data["tls.crt"], metricsSigningCertKeyPairSecret.Data["tls.key"])
+	return cert.ParseCertsPEM([]byte(bundle.Data["ca-bundle.crt"]))
 }
 
 func SupportedEtcdCiphers(cipherSuites []string) []string {
