@@ -15,6 +15,7 @@ import (
 
 type backupNoConfig struct {
 	snapshotExist bool
+	retention     string
 	backupOptions
 }
 

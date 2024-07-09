@@ -3,6 +3,7 @@ package periodicbackupcontroller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
@@ -79,6 +80,11 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 	if err != nil {
 		return fmt.Errorf("PeriodicBackupController could not list backup CRDs, error was: %w", err)
 	}
+
+	// ignore reconciliation of default backup
+	backups.Items = slices.DeleteFunc(backups.Items, func(b backupv1alpha1.Backup) bool {
+		return b.Name == "default"
+	})
 
 	for _, item := range backups.Items {
 		err := reconcileCronJob(ctx, cronJobsClient, item, c.operatorImagePullSpec)
