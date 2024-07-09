@@ -66,19 +66,6 @@ func (b *backupNoConfig) Run() error {
 		return err
 	}
 
-	if !b.snapshotExist {
-		if err := backup(&b.backupOptions); err != nil {
-			klog.Errorf("run: backup failed: [%v]", err)
-		}
-		b.snapshotExist = true
-		klog.Infof("config-dir is: %s", b.configDir)
-		return nil
-	}
-
-	if err := b.copySnapshot(); err != nil {
-		klog.Errorf("run: backup failed: [%v]", err)
-	}
-
 	return nil
 }
 
@@ -116,6 +103,28 @@ func (b *backupNoConfig) extractBackupConfigs() error {
 	defaultBackupCR := backups.Items[idx]
 	b.schedule = defaultBackupCR.Spec.EtcdBackupSpec.Schedule
 	b.retention = defaultBackupCR.Spec.EtcdBackupSpec.RetentionPolicy
+
+	return nil
+}
+
+func (b *backupNoConfig) backup() error {
+	// initially take backup using etcdctl
+	if !b.snapshotExist {
+		if err := backup(&b.backupOptions); err != nil {
+			klog.Errorf("run: backup failed: [%v]", err)
+			return err
+		}
+		b.snapshotExist = true
+		klog.Infof("config-dir is: %s", b.configDir)
+		return nil
+	}
+
+	// only update the snapshot file
+	if err := b.copySnapshot(); err != nil {
+		sErr := fmt.Errorf("run: backup failed: [%v]", err)
+		klog.Error(sErr)
+		return sErr
+	}
 
 	return nil
 }
