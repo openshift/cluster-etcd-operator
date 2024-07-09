@@ -11,6 +11,7 @@ import (
 
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
 	configversionedclientv1alpha1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
+	prune_backups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/clientcmd"
@@ -69,6 +70,7 @@ func (b *backupNoConfig) Run() error {
 	}
 
 	go b.scheduleBackup()
+	go b.scheduleBackupPrune()
 	return nil
 }
 
@@ -161,6 +163,50 @@ func (b *backupNoConfig) copySnapshot() error {
 		klog.Errorf("run: backup failed: [%v]", err)
 	}
 
+	return nil
+}
+
+func (b *backupNoConfig) pruneBackups() error {
+	switch b.retention.RetentionType {
+	case prune_backups.RetentionTypeNone:
+		klog.Info("no retention policy specified")
+		return nil
+	case prune_backups.RetentionTypeNumber:
+		if b.retention.RetentionNumber == nil {
+			err := fmt.Errorf("retention policy RetentionTypeNumber requires RetentionNumberConfig")
+			klog.Error(err)
+			return err
+		}
+		return prune_backups.Retain(b.retention)
+	case prune_backups.RetentionTypeSize:
+		if b.retention.RetentionSize == nil {
+			err := fmt.Errorf("retention policy RetentionTypeSize requires RetentionSizeConfig")
+			klog.Error(err)
+			return err
+		}
+		return prune_backups.Retain(b.retention)
+	default:
+		err := fmt.Errorf("illegal retention policy type: [%v]", b.retention.RetentionType)
+		klog.Error(err)
+		return err
+	}
+}
+
+func (b *backupNoConfig) scheduleBackupPrune() error {
+	s, _ := gcron.NewScheduler()
+	defer func() { _ = s.Shutdown() }()
+
+	if _, err := s.NewJob(
+		gcron.CronJob(
+			b.schedule,
+			false,
+		),
+		gcron.NewTask(b.pruneBackups()),
+	); err != nil {
+		return err
+	}
+
+	s.Start()
 	return nil
 }
 
