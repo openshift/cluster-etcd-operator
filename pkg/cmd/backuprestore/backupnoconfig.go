@@ -4,19 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
-	configversionedclientv1alpha1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
 	"io"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/clientcmd"
 	"os/exec"
 	"slices"
 	"strings"
 
+	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
+	configversionedclientv1alpha1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
+
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/klog/v2"
+
+	gcron "github.com/go-co-op/gocron/v2"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-
-	"k8s.io/klog/v2"
 )
 
 type backupNoConfig struct {
@@ -66,6 +68,7 @@ func (b *backupNoConfig) Run() error {
 		return err
 	}
 
+	go b.scheduleBackup()
 	return nil
 }
 
@@ -126,6 +129,24 @@ func (b *backupNoConfig) backup() error {
 		return sErr
 	}
 
+	return nil
+}
+
+func (b *backupNoConfig) scheduleBackup() error {
+	s, _ := gcron.NewScheduler()
+	defer func() { _ = s.Shutdown() }()
+
+	if _, err := s.NewJob(
+		gcron.CronJob(
+			b.schedule,
+			false,
+		),
+		gcron.NewTask(b.backup()),
+	); err != nil {
+		return err
+	}
+
+	s.Start()
 	return nil
 }
 
