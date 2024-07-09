@@ -1,10 +1,16 @@
 package backuprestore
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
+	configversionedclientv1alpha1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
 	"io"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/clientcmd"
 	"os/exec"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -14,8 +20,10 @@ import (
 )
 
 type backupNoConfig struct {
+	kubeConfig    string
 	snapshotExist bool
-	retention     string
+	schedule      string
+	retention     backupv1alpha1.RetentionPolicy
 	backupOptions
 }
 
@@ -54,6 +62,10 @@ func (b *backupNoConfig) Validate() error {
 }
 
 func (b *backupNoConfig) Run() error {
+	if err := b.extractBackupConfigs(); err != nil {
+		return err
+	}
+
 	if !b.snapshotExist {
 		if err := backup(&b.backupOptions); err != nil {
 			klog.Errorf("run: backup failed: [%v]", err)
@@ -66,6 +78,44 @@ func (b *backupNoConfig) Run() error {
 	if err := b.copySnapshot(); err != nil {
 		klog.Errorf("run: backup failed: [%v]", err)
 	}
+
+	return nil
+}
+
+func (b *backupNoConfig) extractBackupConfigs() error {
+	kubeConfig, err := clientcmd.BuildConfigFromFlags("", b.kubeConfig)
+	if err != nil {
+		bErr := fmt.Errorf("error loading kubeconfig: %v", err)
+		klog.Error(bErr)
+		return bErr
+	}
+
+	backupsClient, err := configversionedclientv1alpha1.NewForConfig(kubeConfig)
+	if err != nil {
+		bErr := fmt.Errorf("error creating etcd backups client: %v", err)
+		klog.Error(bErr)
+		return bErr
+	}
+
+	backups, err := backupsClient.Backups().List(context.Background(), v1.ListOptions{})
+	if err != nil {
+		lErr := fmt.Errorf("could not list backup CRDs, error was: [%v]", err)
+		klog.Error(lErr)
+		return lErr
+	}
+
+	idx := slices.IndexFunc(backups.Items, func(backup backupv1alpha1.Backup) bool {
+		return backup.Name == "default"
+	})
+	if idx == -1 {
+		sErr := fmt.Errorf("could not find default backup CR, found [%v]", backups.Items)
+		klog.Error(sErr)
+		return sErr
+	}
+
+	defaultBackupCR := backups.Items[idx]
+	b.schedule = defaultBackupCR.Spec.EtcdBackupSpec.Schedule
+	b.retention = defaultBackupCR.Spec.EtcdBackupSpec.RetentionPolicy
 
 	return nil
 }
