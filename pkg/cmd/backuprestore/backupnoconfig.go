@@ -3,6 +3,7 @@ package backuprestore
 import (
 	"context"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"slices"
 
@@ -15,7 +16,6 @@ import (
 	"github.com/spf13/pflag"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 )
@@ -25,6 +25,7 @@ type backupNoConfig struct {
 	snapshotExist bool
 	schedule      string
 	retention     backupv1alpha1.RetentionPolicy
+	scheduler     gcron.Scheduler
 	backupOptions
 }
 
@@ -68,27 +69,22 @@ func (b *backupNoConfig) Run() error {
 		return err
 	}
 
+	b.scheduler, _ = gcron.NewScheduler(
+		gcron.WithLimitConcurrentJobs(1, gcron.LimitModeWait),
+		gcron.WithGlobalJobOptions(
+			gcron.WithLimitedRuns(1),
+			gcron.WithSingletonMode(gcron.LimitModeWait)))
+	defer func() { _ = b.scheduler.Shutdown() }()
+
 	if err = b.extractBackupSpecs(backupsClient); err != nil {
 		return err
 	}
 
-	var errs []error
-	go func() {
-		err := b.scheduleBackup()
-		if err != nil {
-			errs = append(errs, err)
-		}
-	}()
-	go func() {
-		err := b.scheduleBackupPrune()
-		if err != nil {
-			errs = append(errs, err)
-		}
-	}()
-
-	if len(errs) > 0 {
-		return kerrors.NewAggregate(errs)
+	err = b.scheduleBackup()
+	if err != nil {
+		return err
 	}
+
 	return nil
 }
 
@@ -145,20 +141,24 @@ func (b *backupNoConfig) backup() error {
 }
 
 func (b *backupNoConfig) scheduleBackup() error {
-	s, _ := gcron.NewScheduler()
-	defer func() { _ = s.Shutdown() }()
-
-	if _, err := s.NewJob(
+	if _, err := b.scheduler.NewJob(
 		gcron.CronJob(
 			b.schedule,
 			false,
 		),
 		gcron.NewTask(b.backup()),
+		gcron.WithEventListeners(
+			gcron.AfterJobRuns(
+				func(jobID uuid.UUID, jobName string) {
+					b.pruneBackups()
+				},
+			),
+		),
 	); err != nil {
 		return err
 	}
 
-	s.Start()
+	b.scheduler.Start()
 	return nil
 }
 
@@ -186,22 +186,4 @@ func (b *backupNoConfig) pruneBackups() error {
 		klog.Error(err)
 		return err
 	}
-}
-
-func (b *backupNoConfig) scheduleBackupPrune() error {
-	s, _ := gcron.NewScheduler()
-	defer func() { _ = s.Shutdown() }()
-
-	if _, err := s.NewJob(
-		gcron.CronJob(
-			b.schedule,
-			false,
-		),
-		gcron.NewTask(b.pruneBackups()),
-	); err != nil {
-		return err
-	}
-
-	s.Start()
-	return nil
 }
