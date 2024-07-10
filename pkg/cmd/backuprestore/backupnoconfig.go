@@ -10,10 +10,11 @@ import (
 	"strings"
 
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
-	configversionedclientv1alpha1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
-	prune_backups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
+	backupv1client "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
+	prune "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 
@@ -65,33 +66,63 @@ func (b *backupNoConfig) Validate() error {
 }
 
 func (b *backupNoConfig) Run() error {
-	if err := b.extractBackupConfigs(); err != nil {
+	backupsClient, err := b.getBackupClient()
+	if err != nil {
 		return err
 	}
 
-	go b.scheduleBackup()
-	go b.scheduleBackupPrune()
+	if err = b.extractBackupSpecs(backupsClient); err != nil {
+		return err
+	}
+
+	var errs []error
+	go func() {
+		err := b.scheduleBackup()
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}()
+	go func() {
+		err := b.scheduleBackupPrune()
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}()
+
+	if len(errs) > 0 {
+		return kerrors.NewAggregate(errs)
+	}
 	return nil
 }
 
-func (b *backupNoConfig) extractBackupConfigs() error {
+func (b *backupNoConfig) getBackupClient() (backupv1client.BackupsGetter, error) {
 	kubeConfig, err := clientcmd.BuildConfigFromFlags("", b.kubeConfig)
 	if err != nil {
 		bErr := fmt.Errorf("error loading kubeconfig: %v", err)
 		klog.Error(bErr)
-		return bErr
+		return nil, bErr
 	}
 
-	backupsClient, err := configversionedclientv1alpha1.NewForConfig(kubeConfig)
+	backupsClient, err := backupv1client.NewForConfig(kubeConfig)
 	if err != nil {
 		bErr := fmt.Errorf("error creating etcd backups client: %v", err)
 		klog.Error(bErr)
-		return bErr
+		return nil, bErr
 	}
 
+	return backupsClient, nil
+}
+
+func (b *backupNoConfig) extractBackupSpecs(backupsClient backupv1client.BackupsGetter) error {
 	backups, err := backupsClient.Backups().List(context.Background(), v1.ListOptions{})
 	if err != nil {
 		lErr := fmt.Errorf("could not list backup CRDs, error was: [%v]", err)
+		klog.Error(lErr)
+		return lErr
+	}
+
+	if len(backups.Items) == 0 {
+		lErr := fmt.Errorf("no backup CRDs exist, found [%v]", backups)
 		klog.Error(lErr)
 		return lErr
 	}
@@ -168,23 +199,23 @@ func (b *backupNoConfig) copySnapshot() error {
 
 func (b *backupNoConfig) pruneBackups() error {
 	switch b.retention.RetentionType {
-	case prune_backups.RetentionTypeNone:
+	case prune.RetentionTypeNone:
 		klog.Info("no retention policy specified")
 		return nil
-	case prune_backups.RetentionTypeNumber:
+	case prune.RetentionTypeNumber:
 		if b.retention.RetentionNumber == nil {
 			err := fmt.Errorf("retention policy RetentionTypeNumber requires RetentionNumberConfig")
 			klog.Error(err)
 			return err
 		}
-		return prune_backups.Retain(b.retention)
-	case prune_backups.RetentionTypeSize:
+		return prune.Retain(b.retention)
+	case prune.RetentionTypeSize:
 		if b.retention.RetentionSize == nil {
 			err := fmt.Errorf("retention policy RetentionTypeSize requires RetentionSizeConfig")
 			klog.Error(err)
 			return err
 		}
-		return prune_backups.Retain(b.retention)
+		return prune.Retain(b.retention)
 	default:
 		err := fmt.Errorf("illegal retention policy type: [%v]", b.retention.RetentionType)
 		klog.Error(err)
