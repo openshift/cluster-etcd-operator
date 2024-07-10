@@ -30,14 +30,14 @@ type backupDirStat struct {
 	modTime   time.Time
 }
 
-type pruneOpts struct {
-	retentionType      string
-	maxNumberOfBackups int
-	maxSizeOfBackupsGb int
+type PruneOpts struct {
+	RetentionType      string
+	MaxNumberOfBackups int
+	MaxSizeOfBackupsGb int
 }
 
 func NewPruneCommand() *cobra.Command {
-	opts := pruneOpts{retentionType: "None"}
+	opts := PruneOpts{RetentionType: "None"}
 	cmd := &cobra.Command{
 		Use:   "prune-backups",
 		Short: "Prunes existing backups on the filesystem.",
@@ -57,12 +57,12 @@ func NewPruneCommand() *cobra.Command {
 	return cmd
 }
 
-func (r *pruneOpts) AddFlags(cmd *cobra.Command) {
+func (r *PruneOpts) AddFlags(cmd *cobra.Command) {
 	flagSet := cmd.Flags()
-	flagSet.StringVar(&r.retentionType, "type", r.retentionType, "Which kind of retention to execute, can either be None, RetentionNumber or RetentionSize.")
+	flagSet.StringVar(&r.RetentionType, "type", r.RetentionType, "Which kind of retention to execute, can either be None, RetentionNumber or RetentionSize.")
 	// the defaults are zero for validation, we inject the real defaults from the periodic backup controller
-	flagSet.IntVar(&r.maxNumberOfBackups, "maxNumberOfBackups", 0, "how many backups to keep when type=RetentionNumber")
-	flagSet.IntVar(&r.maxSizeOfBackupsGb, "maxSizeOfBackupsGb", 0, "how many gigabytes of backups to keep when type=RetentionSize")
+	flagSet.IntVar(&r.MaxNumberOfBackups, "MaxNumberOfBackups", 0, "how many backups to keep when type=RetentionNumber")
+	flagSet.IntVar(&r.MaxSizeOfBackupsGb, "MaxSizeOfBackupsGb", 0, "how many gigabytes of backups to keep when type=RetentionSize")
 
 	// adding klog flags to tune verbosity better
 	gfs := goflag.NewFlagSet("", goflag.ExitOnError)
@@ -70,41 +70,41 @@ func (r *pruneOpts) AddFlags(cmd *cobra.Command) {
 	cmd.Flags().AddGoFlagSet(gfs)
 }
 
-func (r *pruneOpts) Validate() error {
-	if r.retentionType != RetentionTypeNone && r.retentionType != RetentionTypeNumber && r.retentionType != RetentionTypeSize {
-		return fmt.Errorf("unknown retention type: [%s]", r.retentionType)
+func (r *PruneOpts) Validate() error {
+	if r.RetentionType != RetentionTypeNone && r.RetentionType != RetentionTypeNumber && r.RetentionType != RetentionTypeSize {
+		return fmt.Errorf("unknown retention type: [%s]", r.RetentionType)
 	}
 
-	if r.retentionType == RetentionTypeNumber {
-		if r.maxNumberOfBackups < 1 {
-			return fmt.Errorf("unexpected amount of backups [%d] found, expected at least 1", r.maxNumberOfBackups)
+	if r.RetentionType == RetentionTypeNumber {
+		if r.MaxNumberOfBackups < 1 {
+			return fmt.Errorf("unexpected amount of backups [%d] found, expected at least 1", r.MaxNumberOfBackups)
 		}
 
-		if r.maxSizeOfBackupsGb != 0 {
-			return fmt.Errorf("unexpected argument [maxSizeOfBackupsGb] found while using %s", RetentionTypeNumber)
+		if r.MaxSizeOfBackupsGb != 0 {
+			return fmt.Errorf("unexpected argument [MaxSizeOfBackupsGb] found while using %s", RetentionTypeNumber)
 		}
 
-	} else if r.retentionType == RetentionTypeSize {
-		if r.maxSizeOfBackupsGb < 1 {
-			return fmt.Errorf("unexpected size of backups [%d]gb found, expected at least 1", r.maxSizeOfBackupsGb)
+	} else if r.RetentionType == RetentionTypeSize {
+		if r.MaxSizeOfBackupsGb < 1 {
+			return fmt.Errorf("unexpected size of backups [%d]gb found, expected at least 1", r.MaxSizeOfBackupsGb)
 		}
 
-		if r.maxNumberOfBackups != 0 {
-			return fmt.Errorf("unexpected argument [maxNumberOfBackups] found while using %s", RetentionTypeSize)
+		if r.MaxNumberOfBackups != 0 {
+			return fmt.Errorf("unexpected argument [MaxNumberOfBackups] found while using %s", RetentionTypeSize)
 		}
 	}
 
 	return nil
 }
 
-func (r *pruneOpts) Run() error {
-	if r.retentionType == RetentionTypeNone {
+func (r *PruneOpts) Run() error {
+	if r.RetentionType == RetentionTypeNone {
 		klog.Infof("nothing to do, retention type is none")
 		return nil
-	} else if r.retentionType == RetentionTypeSize {
-		return retainBySizeGb(r.maxSizeOfBackupsGb)
-	} else if r.retentionType == RetentionTypeNumber {
-		return retainByNumber(r.maxNumberOfBackups)
+	} else if r.RetentionType == RetentionTypeSize {
+		return retainBySizeGb(r.MaxSizeOfBackupsGb)
+	} else if r.RetentionType == RetentionTypeNumber {
+		return retainByNumber(r.MaxNumberOfBackups)
 	}
 
 	return nil

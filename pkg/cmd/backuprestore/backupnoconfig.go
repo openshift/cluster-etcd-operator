@@ -3,21 +3,21 @@ package backuprestore
 import (
 	"context"
 	"fmt"
-	"github.com/google/uuid"
 	"io"
 	"slices"
 
-	gcron "github.com/go-co-op/gocron/v2"
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
 	backupv1client "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
-	prune "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
-
-	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
+	prune_backups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
+
+	gcron "github.com/go-co-op/gocron/v2"
+	"github.com/google/uuid"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 type backupNoConfig struct {
@@ -163,27 +163,15 @@ func (b *backupNoConfig) scheduleBackup() error {
 }
 
 func (b *backupNoConfig) pruneBackups() error {
-	switch b.retention.RetentionType {
-	case prune.RetentionTypeNone:
-		klog.Info("no retention policy specified")
-		return nil
-	case prune.RetentionTypeNumber:
-		if b.retention.RetentionNumber == nil {
-			err := fmt.Errorf("retention policy RetentionTypeNumber requires RetentionNumberConfig")
-			klog.Error(err)
-			return err
-		}
-		return prune.Retain(b.retention)
-	case prune.RetentionTypeSize:
-		if b.retention.RetentionSize == nil {
-			err := fmt.Errorf("retention policy RetentionTypeSize requires RetentionSizeConfig")
-			klog.Error(err)
-			return err
-		}
-		return prune.Retain(b.retention)
-	default:
-		err := fmt.Errorf("illegal retention policy type: [%v]", b.retention.RetentionType)
-		klog.Error(err)
+	opts := &prune_backups.PruneOpts{
+		RetentionType:      string(b.retention.RetentionType),
+		MaxNumberOfBackups: b.retention.RetentionNumber.MaxNumberOfBackups,
+		MaxSizeOfBackupsGb: b.retention.RetentionSize.MaxSizeOfBackupsGb,
+	}
+
+	if err := opts.Validate(); err != nil {
 		return err
 	}
+
+	return opts.Run()
 }
