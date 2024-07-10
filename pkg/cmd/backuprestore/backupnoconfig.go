@@ -8,9 +8,10 @@ import (
 
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
 	backupv1client "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
-	prune_backups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
+	prunebackups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 
@@ -141,6 +142,8 @@ func (b *backupNoConfig) backup() error {
 }
 
 func (b *backupNoConfig) scheduleBackup() error {
+	var errs []error
+
 	if _, err := b.scheduler.NewJob(
 		gcron.CronJob(
 			b.schedule,
@@ -150,20 +153,21 @@ func (b *backupNoConfig) scheduleBackup() error {
 		gcron.WithEventListeners(
 			gcron.AfterJobRuns(
 				func(jobID uuid.UUID, jobName string) {
-					b.pruneBackups()
+					err := b.pruneBackups()
+					errs = append(errs, err)
 				},
 			),
 		),
 	); err != nil {
-		return err
+		errs = append(errs, err)
 	}
 
 	b.scheduler.Start()
-	return nil
+	return utilerrors.NewAggregate(errs)
 }
 
 func (b *backupNoConfig) pruneBackups() error {
-	opts := &prune_backups.PruneOpts{
+	opts := &prunebackups.PruneOpts{
 		RetentionType:      string(b.retention.RetentionType),
 		MaxNumberOfBackups: b.retention.RetentionNumber.MaxNumberOfBackups,
 		MaxSizeOfBackupsGb: b.retention.RetentionSize.MaxSizeOfBackupsGb,
