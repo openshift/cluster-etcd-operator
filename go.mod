@@ -10,6 +10,7 @@ require (
 	github.com/go-bindata/go-bindata v3.1.2+incompatible
 	github.com/go-co-op/gocron/v2 v2.8.0
 	github.com/google/go-cmp v0.6.0
+	github.com/google/uuid v1.6.0
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
 	github.com/openshift/api v0.0.0-20240527133614-ba11c1587003
 	github.com/openshift/build-machinery-go v0.0.0-20240419090851-af9c868bcf52
@@ -71,7 +72,6 @@ require (
 	github.com/google/cel-go v0.17.8 // indirect
 	github.com/google/gnostic-models v0.6.8 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway v1.16.0 // indirect
