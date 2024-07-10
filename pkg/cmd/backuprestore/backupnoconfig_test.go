@@ -6,9 +6,11 @@ import (
 
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
 	fake "github.com/openshift/client-go/config/clientset/versioned/fake"
-	"github.com/stretchr/testify/require"
+
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestBackupNoConfig_extractBackupSpecs(t *testing.T) {

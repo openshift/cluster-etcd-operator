@@ -2,25 +2,22 @@ package backuprestore
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
-	"os/exec"
 	"slices"
-	"strings"
 
+	gcron "github.com/go-co-op/gocron/v2"
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
 	backupv1client "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
 	prune "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
-
-	gcron "github.com/go-co-op/gocron/v2"
-	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
 
 type backupNoConfig struct {
@@ -37,7 +34,7 @@ func NewBackupNoConfigCommand(errOut io.Writer) *cobra.Command {
 		backupOptions: backupOptions{errOut: errOut},
 	}
 	cmd := &cobra.Command{
-		Use:   "cluster-backup-no-config",
+		Use:   "backup-server",
 		Short: "Backs up a snapshot of etcd database and static pod resources without config",
 		Run: func(cmd *cobra.Command, args []string) {
 			must := func(fn func() error) {
@@ -144,25 +141,7 @@ func (b *backupNoConfig) extractBackupSpecs(backupsClient backupv1client.Backups
 }
 
 func (b *backupNoConfig) backup() error {
-	// initially take backup using etcdctl
-	if !b.snapshotExist {
-		if err := backup(&b.backupOptions); err != nil {
-			klog.Errorf("run: backup failed: [%v]", err)
-			return err
-		}
-		b.snapshotExist = true
-		klog.Infof("config-dir is: %s", b.configDir)
-		return nil
-	}
-
-	// only update the snapshot file
-	if err := b.copySnapshot(); err != nil {
-		sErr := fmt.Errorf("run: backup failed: [%v]", err)
-		klog.Error(sErr)
-		return sErr
-	}
-
-	return nil
+	return backup(&b.backupOptions)
 }
 
 func (b *backupNoConfig) scheduleBackup() error {
@@ -180,20 +159,6 @@ func (b *backupNoConfig) scheduleBackup() error {
 	}
 
 	s.Start()
-	return nil
-}
-
-func (b *backupNoConfig) copySnapshot() error {
-	if !b.snapshotExist {
-		klog.Errorf("run: backup failed: [%v]", errors.New("no snapshot file exists"))
-	}
-
-	src := "/var/lib/etcd/member/snap"
-	dst := "/var/backup/etcd/snap"
-	if _, err := exec.Command("cp", getCpArgs(src, dst)...).CombinedOutput(); err != nil {
-		klog.Errorf("run: backup failed: [%v]", err)
-	}
-
 	return nil
 }
 
@@ -239,8 +204,4 @@ func (b *backupNoConfig) scheduleBackupPrune() error {
 
 	s.Start()
 	return nil
-}
-
-func getCpArgs(src, dst string) []string {
-	return strings.Split(fmt.Sprintf("--verbose --recursive --preserve --reflink=auto %s %s", src, dst), " ")
 }
