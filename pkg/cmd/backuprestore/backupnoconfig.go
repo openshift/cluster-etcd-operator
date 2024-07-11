@@ -59,7 +59,7 @@ func (b *backupNoConfig) AddFlags(fs *pflag.FlagSet) {
 }
 
 func (b *backupNoConfig) Validate() error {
-	return b.Validate()
+	return b.backupOptions.Validate()
 }
 
 func (b *backupNoConfig) Run() error {

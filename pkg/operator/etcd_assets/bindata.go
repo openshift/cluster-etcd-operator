@@ -1227,6 +1227,36 @@ ${COMPUTED_ENV_VARS}
         name: log-dir
       - mountPath: /etc/kubernetes/static-pod-certs
         name: cert-dir
+  - name: etcd-backup-noconfig
+    image: ${OPERATOR_IMAGE}
+    imagePullPolicy: IfNotPresent
+    terminationMessagePolicy: FallbackToLogsOnError
+    command:
+      - /bin/sh
+      - -c
+      - |
+        #!/bin/sh
+        set -euo pipefail
+        exec nice -n -18 cluster-etcd-operator backup-server \
+          --endpoints=https://localhost:2379 \
+          --config-dir=/etc/kubernetes \
+          --data-dir=/var/lib/etcd \
+          --backup-dir=/var/backup/etcd
+    securityContext:
+      privileged: true
+    resources:
+      requests:
+        memory: 50Mi
+        cpu: 10m
+    env:
+${COMPUTED_ENV_VARS}
+    volumeMounts:
+      - mountPath: /var/lib/etcd
+        name: data-dir
+      - mountPath: /var/backup/etcd
+        name: backup-dir
+      - mountPath: /etc/kubernetes
+        name: config-dir
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
@@ -1251,6 +1281,12 @@ ${COMPUTED_ENV_VARS}
     - hostPath:
         path: /var/log/etcd
       name: log-dir
+    - hostPath:
+        path: /var/backup/etcd
+      name: backup-dir
+    - hostPath:
+        path: /etc/kubernetes
+      name: config-dir
 `)
 
 func etcdPodYamlBytes() ([]byte, error) {
