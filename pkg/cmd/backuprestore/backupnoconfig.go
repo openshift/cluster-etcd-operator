@@ -11,30 +11,28 @@ import (
 	prunebackups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 
-	gcron "github.com/go-co-op/gocron/v2"
-	"github.com/google/uuid"
+	"github.com/adhocore/gronx/pkg/tasker"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
 type backupNoConfig struct {
-	kubeConfig    string
-	snapshotExist bool
-	schedule      string
-	retention     backupv1alpha1.RetentionPolicy
-	scheduler     gcron.Scheduler
+	kubeConfig string
+	schedule   string
+	timeZone   string
+	retention  backupv1alpha1.RetentionPolicy
+	scheduler  *tasker.Tasker
 	backupOptions
 }
 
 func NewBackupNoConfigCommand(errOut io.Writer) *cobra.Command {
 	backupNoConf := &backupNoConfig{
-		snapshotExist: false,
 		backupOptions: backupOptions{errOut: errOut},
 	}
+
 	cmd := &cobra.Command{
 		Use:   "backup-server",
 		Short: "Backs up a snapshot of etcd database and static pod resources without config",
@@ -70,22 +68,27 @@ func (b *backupNoConfig) Run() error {
 		return err
 	}
 
-	b.scheduler, _ = gcron.NewScheduler(
-		gcron.WithLimitConcurrentJobs(1, gcron.LimitModeWait),
-		gcron.WithGlobalJobOptions(
-			gcron.WithLimitedRuns(1),
-			gcron.WithSingletonMode(gcron.LimitModeWait)))
-	defer func() { _ = b.scheduler.Shutdown() }()
-
 	if err = b.extractBackupSpecs(backupsClient); err != nil {
 		return err
 	}
+
+	b.scheduler = tasker.New(tasker.Option{
+		Verbose: true,
+		Tz:      b.timeZone,
+	})
 
 	err = b.scheduleBackup()
 	if err != nil {
 		return err
 	}
 
+	doneCh := make(chan struct{})
+	go func() {
+		b.scheduler.Run()
+		doneCh <- struct{}{}
+	}()
+
+	<-doneCh
 	return nil
 }
 
@@ -133,37 +136,19 @@ func (b *backupNoConfig) extractBackupSpecs(backupsClient backupv1client.Backups
 	defaultBackupCR := backups.Items[idx]
 	b.schedule = defaultBackupCR.Spec.EtcdBackupSpec.Schedule
 	b.retention = defaultBackupCR.Spec.EtcdBackupSpec.RetentionPolicy
+	b.timeZone = defaultBackupCR.Spec.EtcdBackupSpec.TimeZone
 
 	return nil
 }
 
-func (b *backupNoConfig) backup() error {
-	return backup(&b.backupOptions)
-}
-
 func (b *backupNoConfig) scheduleBackup() error {
-	var errs []error
+	var err error
+	b.scheduler.Task(b.schedule, func(ctx context.Context) (int, error) {
+		err = backup(&b.backupOptions)
+		return 0, err
+	}, false)
 
-	if _, err := b.scheduler.NewJob(
-		gcron.CronJob(
-			b.schedule,
-			false,
-		),
-		gcron.NewTask(b.backup()),
-		gcron.WithEventListeners(
-			gcron.AfterJobRuns(
-				func(jobID uuid.UUID, jobName string) {
-					err := b.pruneBackups()
-					errs = append(errs, err)
-				},
-			),
-		),
-	); err != nil {
-		errs = append(errs, err)
-	}
-
-	b.scheduler.Start()
-	return utilerrors.NewAggregate(errs)
+	return err
 }
 
 func (b *backupNoConfig) pruneBackups() error {
