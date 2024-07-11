@@ -25,7 +25,7 @@ To share CA bundles with consumers (e.g. apiserver or the cluster-etcd-operator)
 * openshift-etcd/etcd-ca-bundle (etcd server, configmap, source of truth)
   * openshift-etcd-operator/etcd-ca-bundle (for the operator to reach etcd)
   * openshift-config/etcd-serving-ca (for apiserver and others to connect to etcd)
-  * openshift-config/etcd-ca-bundle (just for consistency’s sake, should replace etcd-serving-ca, but is very cumbersome)
+  * openshift-config/etcd-ca-bundle (old source of truth for the bundle, still used in some tests and potentially unknown use cases, copied from openshift-etcd now)
 * openshift-etcd/etcd-metrics-ca-bundle (grpc proxy for metrics, configmap, source of truth)
   * openshift-etcd-operator/etcd-metric-serving-ca (for prometheus to reach etcd, co-located with the ServiceMonitor installed by the operator)
 
@@ -35,16 +35,14 @@ Historically, the certificates were created in the `openshift-config` namespace.
 
 All etcd certificates are stored in secrets. 
 
-We're currently transitioning away from `openshift-config` as a source of truth for the signers. As of today, we're using the signers in `openshift-config` to create all certificates, but we're bundling a newly created signer into all required places already. This allows us to switch more easy in the future and sets a definitive stop-date for all existing signer certificates that are about to expire soon.
-
-| CA                                               | Certificate                               | Purpose                          | Certificate copied to                      |
-|--------------------------------------------------|-------------------------------------------|----------------------------------|--------------------------------------------|
-| openshift-config/etcd-signer (deprecated)        | openshift-etcd/etcd-client                | authn KAS to etcd                | openshift-config                           |
-|                                                  |                                           | authn CEO to etcd                | openshift-etcd-operator                    |
-|                                                  | openshift-etcd/etcd-peer-$node            | etcd peer communication          | collected in openshift-etcd/etcd-all-certs |
-|                                                  | openshift-etcd/etcd-serving-$node         | etcd member serving              | collected in openshift-etcd/etcd-all-certs |
-| openshift-config/etcd-metric-signer (deprecated) | openshift-etcd/etcd-metric-client         | authn prometheus to etcd metrics | openshift-etcd-operator/etcd-metric-client |
-|                                                  | openshift-etcd/etcd-serving-metrics-$node | etcd member metrics serving      | collected in openshift-etcd/etcd-all-certs |
+| CA                                       | Certificate                               | Purpose                          | Certificate copied to                      |
+|------------------------------------------|-------------------------------------------|----------------------------------|--------------------------------------------|
+| openshift-etcd/etcd-signer               | openshift-etcd/etcd-client                | authn KAS to etcd                | openshift-config                           |
+|                                          |                                           | authn CEO to etcd                | openshift-etcd-operator                    |
+|                                          | openshift-etcd/etcd-peer-$node            | etcd peer communication          | collected in openshift-etcd/etcd-all-certs |
+|                                          | openshift-etcd/etcd-serving-$node         | etcd member serving              | collected in openshift-etcd/etcd-all-certs |
+| openshift-etcd/etcd-metric-signer (etcd) | openshift-etcd/etcd-metric-client         | authn prometheus to etcd metrics | openshift-etcd-operator/etcd-metric-client |
+|                                          | openshift-etcd/etcd-serving-metrics-$node | etcd member metrics serving      | collected in openshift-etcd/etcd-all-certs |
 
 All signers and certificates are centralized logically in the `CertSignerController` in this repository.
 
@@ -932,7 +930,9 @@ Exactly as in 4.16, this can be done manually with:
 $ oc delete configmap -n openshift-etcd etcd-ca-bundle
 ```
 
-The controller will recreate it by reading the CA secret in `openshift-etcd`. The automated part is still to be figured out in ETCD-608.
+The controller will recreate it by reading the CA secret in `openshift-etcd`. The bundle code in library-go will automatically
+filter old and expired public keys from its bundle, so if not immediately deleted it will naturally expire and eventually get
+removed.
 
 ### Recovery from a botched certificate rotation
 
