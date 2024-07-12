@@ -928,6 +928,7 @@ metadata:
     etcd: "true"
     revision: "REVISION"
 spec:
+  serviceAccountName: etcd-pod
   initContainers:
     - name: setup
       image: ${IMAGE}
@@ -1257,6 +1258,11 @@ ${COMPUTED_ENV_VARS}
         name: backup-dir
       - mountPath: /etc/kubernetes
         name: config-dir
+      - mountPath: /etc/kubernetes/static-pod-certs
+        name: cert-dir
+      - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+        name: kube-api-access
+        readOnly: true
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
@@ -1287,6 +1293,29 @@ ${COMPUTED_ENV_VARS}
     - hostPath:
         path: /etc/kubernetes
       name: config-dir
+    - name: kube-api-access
+      projected:
+        defaultMode: 420
+        sources:
+          - serviceAccountToken:
+              expirationSeconds: 3600
+              path: token
+          - configMap:
+              items:
+                - key: ca.crt
+                  path: ca.crt
+              name: kube-root-ca.crt
+          - downwardAPI:
+              items:
+                - fieldRef:
+                    apiVersion: v1
+                    fieldPath: metadata.namespace
+                  path: namespace
+          - configMap:
+              items:
+                - key: service-ca.crt
+                  path: service-ca.crt
+              name: openshift-service-ca.crt
 `)
 
 func etcdPodYamlBytes() ([]byte, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"k8s.io/client-go/rest"
 	"slices"
 
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
@@ -11,7 +12,6 @@ import (
 	prunebackups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 
 	"github.com/adhocore/gronx/pkg/tasker"
@@ -20,11 +20,10 @@ import (
 )
 
 type backupNoConfig struct {
-	kubeConfig string
-	schedule   string
-	timeZone   string
-	retention  backupv1alpha1.RetentionPolicy
-	scheduler  *tasker.Tasker
+	schedule  string
+	timeZone  string
+	retention backupv1alpha1.RetentionPolicy
+	scheduler *tasker.Tasker
 	backupOptions
 }
 
@@ -93,14 +92,14 @@ func (b *backupNoConfig) Run() error {
 }
 
 func (b *backupNoConfig) getBackupClient() (backupv1client.BackupsGetter, error) {
-	kubeConfig, err := clientcmd.BuildConfigFromFlags("", b.kubeConfig)
+	config, err := rest.InClusterConfig()
 	if err != nil {
-		bErr := fmt.Errorf("error loading kubeconfig: %v", err)
+		bErr := fmt.Errorf("error loading in-cluster kube client config: %v", err)
 		klog.Error(bErr)
 		return nil, bErr
 	}
 
-	backupsClient, err := backupv1client.NewForConfig(kubeConfig)
+	backupsClient, err := backupv1client.NewForConfig(config)
 	if err != nil {
 		bErr := fmt.Errorf("error creating etcd backups client: %v", err)
 		klog.Error(bErr)
