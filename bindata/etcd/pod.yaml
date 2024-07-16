@@ -322,6 +322,7 @@ ${COMPUTED_ENV_VARS}
         #!/bin/sh
         set -euo pipefail
         exec nice -n -18 cluster-etcd-operator backup-server \
+          --kubeConfig=/etc/kubernetes/static-pod-certs/configmaps/etcd-backup-server/kubeconfig \
           --endpoints=https://localhost:2379 \
           --config-dir=/etc/kubernetes \
           --data-dir=/var/lib/etcd \
@@ -343,9 +344,6 @@ ${COMPUTED_ENV_VARS}
         name: config-dir
       - mountPath: /etc/kubernetes/static-pod-certs
         name: cert-dir
-      - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
-        name: kube-api-access
-        readOnly: true
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:

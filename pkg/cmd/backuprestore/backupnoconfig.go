@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"k8s.io/client-go/rest"
 	"slices"
 
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
@@ -12,6 +11,7 @@ import (
 	prunebackups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 
 	"github.com/adhocore/gronx/pkg/tasker"
@@ -20,10 +20,11 @@ import (
 )
 
 type backupNoConfig struct {
-	schedule  string
-	timeZone  string
-	retention backupv1alpha1.RetentionPolicy
-	scheduler *tasker.Tasker
+	kubeConfig string
+	schedule   string
+	timeZone   string
+	retention  backupv1alpha1.RetentionPolicy
+	scheduler  *tasker.Tasker
 	backupOptions
 }
 
@@ -54,6 +55,9 @@ func NewBackupNoConfigCommand(errOut io.Writer) *cobra.Command {
 }
 
 func (b *backupNoConfig) AddFlags(fs *pflag.FlagSet) {
+	fs.StringVar(&b.kubeConfig, "kubeConfig", "", "kubeConfig specifies the config to be used by the cmd for accessing the api server")
+	cobra.MarkFlagRequired(fs, "kubeConfig")
+
 	b.backupOptions.AddFlags(fs)
 }
 
@@ -92,9 +96,9 @@ func (b *backupNoConfig) Run() error {
 }
 
 func (b *backupNoConfig) getBackupClient() (backupv1client.BackupsGetter, error) {
-	config, err := rest.InClusterConfig()
+	config, err := clientcmd.BuildConfigFromFlags("", b.kubeConfig)
 	if err != nil {
-		bErr := fmt.Errorf("error loading in-cluster kube client config: %v", err)
+		bErr := fmt.Errorf("error loading kubeconfig: %v", err)
 		klog.Error(bErr)
 		return nil, bErr
 	}
