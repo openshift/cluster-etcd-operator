@@ -3,7 +3,6 @@ package prune_backups
 import (
 	goflag "flag"
 	"fmt"
-	"github.com/openshift/api/config/v1alpha1"
 	"github.com/spf13/cobra"
 	"io/fs"
 	"k8s.io/klog/v2"
@@ -107,19 +106,6 @@ func (r *PruneOpts) Run() error {
 		return retainByNumber(r.MaxNumberOfBackups)
 	}
 
-	return nil
-}
-
-func Retain(policy v1alpha1.RetentionPolicy) error {
-	switch policy.RetentionType {
-	case RetentionTypeNone:
-		klog.Infof("nothing to do, retention type is none")
-		return nil
-	case RetentionTypeNumber:
-		return retainByNumber(policy.RetentionNumber.MaxNumberOfBackups)
-	case RetentionTypeSize:
-		return retainBySizeGb(policy.RetentionSize.MaxSizeOfBackupsGb)
-	}
 	return nil
 }
 
