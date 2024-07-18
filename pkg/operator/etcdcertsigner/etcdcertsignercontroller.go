@@ -4,6 +4,11 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
+	"reflect"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/openshift/library-go/pkg/crypto"
 	"github.com/openshift/library-go/pkg/operator/bootstrap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -13,10 +18,6 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/component-base/metrics"
 	"k8s.io/klog/v2"
-	"reflect"
-	"strconv"
-	"strings"
-	"time"
 
 	apiannotations "github.com/openshift/api/annotations"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -199,6 +200,25 @@ func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.Syn
 		return nil
 	}
 
+	// If the etcd-all-bundles configmap is missing, the revision rollout can become deadlocked as the staticpod installer pod won't find
+	// the etcd-all-bundles configmap to install on disk and keep failing.
+	// Meanwhile the CertSignerController will keep skipping on account of an ongoing revision due to the revision gate for
+	// regenerating the leaf certs below.
+	// As in the case of bootstrap, we let the controller run freely to regenerate the etcd-all-bundles configmap and allow the next revision to install.
+	// TODO(haseeb): Clarify how the etcd-all-bundles confimap may be missing. Also does this apply to secret/etcd-all-certs as well?
+	missingAllBundlesConfigmap, err := c.isMissingAllBundleConfigmap(ctx)
+	if err != nil {
+		return err
+	}
+
+	if missingAllBundlesConfigmap {
+		klog.Warningf("could not find %s configmap, forcing EtcdCertSignerController sync to regenerate", tlshelpers.EtcdAllBundlesConfigMapName)
+		if err := c.syncAllMasterCertificates(ctx, syncCtx.Recorder(), true, 0, 0); err != nil {
+			return fmt.Errorf("EtcdCertSignerController failed to sync all master certificates to regenerate missing %s configmap: %w", tlshelpers.EtcdAllBundlesConfigMapName, err)
+		}
+		return nil
+	}
+
 	hasNodeDiff, err := c.hasNodeCertDiff()
 	if err != nil {
 		return err
@@ -266,7 +286,7 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(
 	}
 	c.reportExpirationMetric(metricsSignerCaPair, "metrics-signer-ca")
 
-	signerBundle, metricsSignerBundle, rolloutTriggered, err := c.ensureBundles(ctx, recorder, signerCaPair, metricsSignerCaPair, currentRevision)
+	signerBundle, metricsSignerBundle, rolloutTriggered, err := c.ensureBundles(ctx, recorder, forceSkipRollout, signerCaPair, metricsSignerCaPair, currentRevision)
 	if err != nil {
 		return fmt.Errorf("error on ensuring bundles: %w", err)
 	}
@@ -392,6 +412,7 @@ func (c *EtcdCertSignerController) syncLeafCertificates(
 // This will cause a revision rollout if a change in the bundle was detected.
 func (c *EtcdCertSignerController) ensureBundles(ctx context.Context,
 	recorder events.Recorder,
+	forceSkipRollout bool,
 	serverCA *crypto.CA,
 	metricsCA *crypto.CA,
 	currentRevision int32,
@@ -440,7 +461,7 @@ func (c *EtcdCertSignerController) ensureBundles(ctx context.Context,
 		if apierrors.IsNotFound(err) {
 			latestConfigMap = &corev1.ConfigMap{Data: map[string]string{}}
 		} else {
-			return nil, nil, false, fmt.Errorf("could not get current all-bundle configmap %w", err)
+			return nil, nil, false, fmt.Errorf("could not get current %s configmap %w", tlshelpers.EtcdAllBundlesConfigMapName, err)
 		}
 	}
 
@@ -453,12 +474,15 @@ func (c *EtcdCertSignerController) ensureBundles(ctx context.Context,
 	// the leaf certificates are not regenerated too early.
 	configMap.Annotations[BundleRolloutRevisionAnnotation] = fmt.Sprintf("%d", currentRevision)
 
-	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
-	if err != nil {
-		return nil, nil, false, fmt.Errorf("EtcdCertSignerController.ensureBundles can't evaluate whether quorum is safe: %w", err)
-	}
-	if !safe {
-		return nil, nil, false, fmt.Errorf("skipping EtcdCertSignerController.ensureBundles reconciliation due to insufficient quorum")
+	// The rollout may be stuck due to a missing etcd-all-bundles configmap, so we override the quorum check here to regenerate the configmap and let the next revision install
+	if !forceSkipRollout {
+		safe, err := c.quorumChecker.IsSafeToUpdateRevision()
+		if err != nil {
+			return nil, nil, false, fmt.Errorf("EtcdCertSignerController.ensureBundles can't evaluate whether quorum is safe: %w", err)
+		}
+		if !safe {
+			return nil, nil, false, fmt.Errorf("skipping EtcdCertSignerController.ensureBundles reconciliation due to insufficient quorum")
+		}
 	}
 
 	_, rolloutTriggered, err = resourceapply.ApplyConfigMap(ctx, c.configMapClient, recorder, configMap)
@@ -567,6 +591,17 @@ func (c *EtcdCertSignerController) getCertRotationRevision(ctx context.Context) 
 	}
 
 	return int32(0), nil
+}
+
+func (c *EtcdCertSignerController) isMissingAllBundleConfigmap(ctx context.Context) (bool, error) {
+	_, err := c.configMapClient.ConfigMaps(operatorclient.TargetNamespace).Get(ctx, tlshelpers.EtcdAllBundlesConfigMapName, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return true, nil
+		}
+		return false, fmt.Errorf("could not get current %s configmap %w", tlshelpers.EtcdAllBundlesConfigMapName, err)
+	}
+	return false, nil
 }
 
 func addCertSecretToMap(allCerts map[string][]byte, secret *corev1.Secret) map[string][]byte {
