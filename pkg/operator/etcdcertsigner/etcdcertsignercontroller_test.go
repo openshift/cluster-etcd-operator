@@ -4,6 +4,10 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
+	"sort"
+	"strings"
+	"testing"
+
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
@@ -23,9 +27,6 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/component-base/metrics"
 	"k8s.io/component-base/metrics/legacyregistry"
-	"sort"
-	"strings"
-	"testing"
 
 	"github.com/openshift/library-go/pkg/crypto"
 	"github.com/openshift/library-go/pkg/operator/events"
@@ -102,6 +103,32 @@ func TestHasNodeCertDiffDoesNotRotateSigners(t *testing.T) {
 func TestSyncAllMasters(t *testing.T) {
 	fakeKubeClient, fakeOperatorClient, controller, recorder := setupController(t, []runtime.Object{}, false)
 	runSyncWithRevisionRollout(t, controller, fakeOperatorClient, recorder)
+
+	nodes, secretMap, configMaps := allNodesAndSecrets(t, fakeKubeClient)
+	require.Equal(t, 3, len(nodes.Items))
+	assertNodeCerts(t, nodes, secretMap)
+	assertStaticPodAllCerts(t, nodes, secretMap)
+	assertCertificateCorrectness(t, secretMap)
+	assertStaticPodAllBundles(t, configMaps)
+	assertBundleCorrectness(t, secretMap, configMaps)
+	assertClientCerts(t, secretMap)
+	assertExpirationMetric(t)
+}
+
+// Validate that a successful sync run can regenerate a missing etcd-all-bundles configmap
+func TestSyncAllMastersMissingBundleConfigmap(t *testing.T) {
+	fakeKubeClient, fakeOperatorClient, controller, recorder := setupController(t, []runtime.Object{}, false)
+
+	// Delete the etcd-all-bundles configmap before the sync
+	err := fakeKubeClient.CoreV1().ConfigMaps(operatorclient.TargetNamespace).Delete(context.TODO(), tlshelpers.EtcdAllBundlesConfigMapName, metav1.DeleteOptions{})
+	require.NoError(t, err)
+
+	runSyncWithRevisionRollout(t, controller, fakeOperatorClient, recorder)
+
+	// Validate that the etcd-all-bundles configmap is regenerated
+	cm, err := fakeKubeClient.CoreV1().ConfigMaps(operatorclient.TargetNamespace).Get(context.TODO(), tlshelpers.EtcdAllBundlesConfigMapName, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.NotNil(t, cm, "expected to find etcd-all-bundles configmap after sync")
 
 	nodes, secretMap, configMaps := allNodesAndSecrets(t, fakeKubeClient)
 	require.Equal(t, 3, len(nodes.Items))
