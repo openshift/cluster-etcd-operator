@@ -13,7 +13,7 @@ func TestCertSingleNode(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, 8, len(secrets))
-	require.Equal(t, 7, len(bundles))
+	require.Equal(t, 3, len(bundles))
 
 	u.AssertCertificateCorrectness(t, secrets)
 	u.AssertBundleCorrectness(t, secrets, bundles)
@@ -30,7 +30,7 @@ func TestCertsMultiNode(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, 14, len(secrets))
-	require.Equal(t, 7, len(bundles))
+	require.Equal(t, 3, len(bundles))
 
 	u.AssertCertificateCorrectness(t, secrets)
 	u.AssertBundleCorrectness(t, secrets, bundles)

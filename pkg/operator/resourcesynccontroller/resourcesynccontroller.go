@@ -57,23 +57,7 @@ func NewResourceSyncController(
 		return nil, err
 	}
 
-	if err := resourceSyncController.SyncConfigMapConditionally(
-		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.TargetNamespace, Name: "etcd-peer-client-ca"},
-		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.TargetNamespace, Name: "etcd-ca-bundle"},
-		caBundleExistsFunc,
-	); err != nil {
-		return nil, err
-	}
-
-	// "etcd-serving-ca" is replaced by the "etcd-ca-bundle"
-	if err := resourceSyncController.SyncConfigMapConditionally(
-		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.TargetNamespace, Name: "etcd-serving-ca"},
-		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.TargetNamespace, Name: "etcd-ca-bundle"},
-		caBundleExistsFunc,
-	); err != nil {
-		return nil, err
-	}
-
+	// "etcd-serving-ca" escaped to almost all control plane operators and tests in the OpenShift org, we have to keep it for the time being
 	if err := resourceSyncController.SyncConfigMapConditionally(
 		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.GlobalUserSpecifiedConfigNamespace, Name: "etcd-serving-ca"},
 		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.TargetNamespace, Name: "etcd-ca-bundle"},
@@ -86,31 +70,10 @@ func NewResourceSyncController(
 	metricsBundleExistsFunc := func() (bool, error) {
 		return configMapExistsPrecondition(configMapClient, resourcesynccontroller.ResourceLocation{Namespace: operatorclient.TargetNamespace, Name: "etcd-metrics-ca-bundle"})
 	}
-	// TODO(thomas): copying the metrics ca-bundle back to openshift-config should not be necessary anymore
-	// this buys us some more transition time, but the source of truth stays in openshift-etcd
-	if err := resourceSyncController.SyncConfigMapConditionally(
-		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.GlobalUserSpecifiedConfigNamespace, Name: "etcd-metric-serving-ca"},
-		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.TargetNamespace, Name: "etcd-metrics-ca-bundle"},
-		metricsBundleExistsFunc,
-	); err != nil {
-		return nil, err
-	}
-	if err := resourceSyncController.SyncConfigMapConditionally(
-		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.TargetNamespace, Name: "etcd-metrics-proxy-client-ca"},
-		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.TargetNamespace, Name: "etcd-metrics-ca-bundle"},
-		metricsBundleExistsFunc,
-	); err != nil {
-		return nil, err
-	}
+
+	// used by the prometheus service monitors
 	if err := resourceSyncController.SyncConfigMapConditionally(
 		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.OperatorNamespace, Name: "etcd-metric-serving-ca"},
-		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.TargetNamespace, Name: "etcd-metrics-ca-bundle"},
-		metricsBundleExistsFunc,
-	); err != nil {
-		return nil, err
-	}
-	if err := resourceSyncController.SyncConfigMapConditionally(
-		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.TargetNamespace, Name: "etcd-metrics-proxy-serving-ca"},
 		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.TargetNamespace, Name: "etcd-metrics-ca-bundle"},
 		metricsBundleExistsFunc,
 	); err != nil {
@@ -121,6 +84,7 @@ func NewResourceSyncController(
 	metricsClientExistsFunc := func() (bool, error) {
 		return secretExistsPrecondition(secretClient, resourcesynccontroller.ResourceLocation{Namespace: operatorclient.TargetNamespace, Name: "etcd-metric-client"})
 	}
+	// used by the prometheus service monitors
 	if err := resourceSyncController.SyncSecretConditionally(
 		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.OperatorNamespace, Name: "etcd-metric-client"},
 		resourcesynccontroller.ResourceLocation{Namespace: operatorclient.TargetNamespace, Name: "etcd-metric-client"},
