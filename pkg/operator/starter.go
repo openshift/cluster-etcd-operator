@@ -221,7 +221,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			"etcd/backups-sa.yaml",
 			"etcd/backups-cr.yaml",
 			"etcd/backups-crb.yaml",
-			"etcd/backup-server-kubeconfig.yaml",
 		},
 		(&resourceapply.ClientHolder{}).WithKubernetes(kubeClient).WithDynamicClient(dynamicClient),
 		operatorClient,
@@ -630,8 +629,6 @@ var CertConfigMaps = []installer.UnrevisionedResource{
 	{Name: "restore-etcd-pod"},
 	{Name: "etcd-scripts"},
 	{Name: "etcd-all-bundles"},
-	// kubeconfig for backup-server
-	{Name: "backup-server-kubeconfig"},
 }
 
 var CertSecrets = []installer.UnrevisionedResource{

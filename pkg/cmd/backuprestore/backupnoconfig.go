@@ -4,14 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"slices"
 
-	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
-	backupv1client "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
-	prunebackups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
-
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 
 	"github.com/adhocore/gronx/pkg/tasker"
@@ -20,11 +13,9 @@ import (
 )
 
 type backupNoConfig struct {
-	kubeConfig string
-	schedule   string
-	timeZone   string
-	retention  backupv1alpha1.RetentionPolicy
-	scheduler  *tasker.Tasker
+	schedule  string
+	timeZone  string
+	scheduler *tasker.Tasker
 	backupOptions
 }
 
@@ -55,8 +46,8 @@ func NewBackupNoConfigCommand(errOut io.Writer) *cobra.Command {
 }
 
 func (b *backupNoConfig) AddFlags(fs *pflag.FlagSet) {
-	fs.StringVar(&b.kubeConfig, "kubeConfig", "", "kubeConfig specifies the config to be used by the cmd for accessing the api server")
-	cobra.MarkFlagRequired(fs, "kubeConfig")
+	fs.StringVar(&b.schedule, "schedule", "", "schedule specifies the cron schedule to run the backup")
+	fs.StringVar(&b.timeZone, "timezone", "", "timezone specifies the timezone of the cron schedule to run the backup")
 
 	b.backupOptions.AddFlags(fs)
 }
@@ -66,21 +57,12 @@ func (b *backupNoConfig) Validate() error {
 }
 
 func (b *backupNoConfig) Run() error {
-	backupsClient, err := b.getBackupClient()
-	if err != nil {
-		return err
-	}
-
-	if err = b.extractBackupSpecs(backupsClient); err != nil {
-		return err
-	}
-
 	b.scheduler = tasker.New(tasker.Option{
 		Verbose: true,
 		Tz:      b.timeZone,
 	})
 
-	err = b.scheduleBackup()
+	err := b.scheduleBackup()
 	if err != nil {
 		return err
 	}
@@ -95,55 +77,6 @@ func (b *backupNoConfig) Run() error {
 	return nil
 }
 
-func (b *backupNoConfig) getBackupClient() (backupv1client.BackupsGetter, error) {
-	config, err := clientcmd.BuildConfigFromFlags("", b.kubeConfig)
-	if err != nil {
-		bErr := fmt.Errorf("error loading kubeconfig: %v", err)
-		klog.Error(bErr)
-		return nil, bErr
-	}
-
-	backupsClient, err := backupv1client.NewForConfig(config)
-	if err != nil {
-		bErr := fmt.Errorf("error creating etcd backups client: %v", err)
-		klog.Error(bErr)
-		return nil, bErr
-	}
-
-	return backupsClient, nil
-}
-
-func (b *backupNoConfig) extractBackupSpecs(backupsClient backupv1client.BackupsGetter) error {
-	backups, err := backupsClient.Backups().List(context.Background(), v1.ListOptions{})
-	if err != nil {
-		lErr := fmt.Errorf("could not list backup CRDs, error was: [%v]", err)
-		klog.Error(lErr)
-		return lErr
-	}
-
-	if len(backups.Items) == 0 {
-		lErr := fmt.Errorf("no backup CRDs exist, found [%v]", backups)
-		klog.Error(lErr)
-		return lErr
-	}
-
-	idx := slices.IndexFunc(backups.Items, func(backup backupv1alpha1.Backup) bool {
-		return backup.Name == "default"
-	})
-	if idx == -1 {
-		sErr := fmt.Errorf("could not find default backup CR, found [%v]", backups.Items)
-		klog.Error(sErr)
-		return sErr
-	}
-
-	defaultBackupCR := backups.Items[idx]
-	b.schedule = defaultBackupCR.Spec.EtcdBackupSpec.Schedule
-	b.retention = defaultBackupCR.Spec.EtcdBackupSpec.RetentionPolicy
-	b.timeZone = defaultBackupCR.Spec.EtcdBackupSpec.TimeZone
-
-	return nil
-}
-
 func (b *backupNoConfig) scheduleBackup() error {
 	var err error
 	b.scheduler.Task(b.schedule, func(ctx context.Context) (int, error) {
@@ -152,18 +85,4 @@ func (b *backupNoConfig) scheduleBackup() error {
 	}, false)
 
 	return err
-}
-
-func (b *backupNoConfig) pruneBackups() error {
-	opts := &prunebackups.PruneOpts{
-		RetentionType:      string(b.retention.RetentionType),
-		MaxNumberOfBackups: b.retention.RetentionNumber.MaxNumberOfBackups,
-		MaxSizeOfBackupsGb: b.retention.RetentionSize.MaxSizeOfBackupsGb,
-	}
-
-	if err := opts.Validate(); err != nil {
-		return err
-	}
-
-	return opts.Run()
 }

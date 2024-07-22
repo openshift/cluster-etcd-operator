@@ -1,6 +1,5 @@
 // Code generated for package etcd_assets by go-bindata DO NOT EDIT. (@generated)
 // sources:
-// bindata/etcd/backup-server-kubeconfig.yaml
 // bindata/etcd/backups-cr.yaml
 // bindata/etcd/backups-crb.yaml
 // bindata/etcd/backups-sa.yaml
@@ -73,49 +72,6 @@ func (fi bindataFileInfo) IsDir() bool {
 // Sys return file is sys mode
 func (fi bindataFileInfo) Sys() interface{} {
 	return nil
-}
-
-var _etcdBackupServerKubeconfigYaml = []byte(`apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: backup-server-kubeconfig
-  namespace: openshift-etcd
-data:
-  kubeconfig: |
-    apiVersion: v1
-    clusters:
-      - cluster:
-          certificate-authority: /etc/kubernetes/static-pod-resources/configmaps/kube-apiserver-server-ca/ca-bundle.crt
-          server: https://localhost:6443
-        name: loopback
-    contexts:
-      - context:
-          cluster: loopback
-          user: backup-server
-        name: backup-server
-    current-context: backup-server
-    kind: Config
-    preferences: {}
-    users:
-      - name: backup-server
-        user:
-          client-certificate: /etc/kubernetes/static-pod-certs/secrets/backup-server-client-cert-key/tls.crt
-          client-key: /etc/kubernetes/static-pod-certs/secrets/backup-server-client-cert-key/tls.key
-`)
-
-func etcdBackupServerKubeconfigYamlBytes() ([]byte, error) {
-	return _etcdBackupServerKubeconfigYaml, nil
-}
-
-func etcdBackupServerKubeconfigYaml() (*asset, error) {
-	bytes, err := etcdBackupServerKubeconfigYamlBytes()
-	if err != nil {
-		return nil, err
-	}
-
-	info := bindataFileInfo{name: "etcd/backup-server-kubeconfig.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
-	a := &asset{bytes: bytes, info: info}
-	return a, nil
 }
 
 var _etcdBackupsCrYaml = []byte(`kind: ClusterRole
@@ -1271,39 +1227,6 @@ ${COMPUTED_ENV_VARS}
         name: log-dir
       - mountPath: /etc/kubernetes/static-pod-certs
         name: cert-dir
-  - name: etcd-backup-noconfig
-    image: ${OPERATOR_IMAGE}
-    imagePullPolicy: IfNotPresent
-    terminationMessagePolicy: FallbackToLogsOnError
-    command:
-      - /bin/sh
-      - -c
-      - |
-        #!/bin/sh
-        set -euo pipefail
-        exec nice -n -18 cluster-etcd-operator backup-server \
-          --kubeConfig=/etc/kubernetes/static-pod-certs/configmaps/etcd-backup-server/kubeconfig \
-          --endpoints=https://localhost:2379 \
-          --config-dir=/etc/kubernetes \
-          --data-dir=/var/lib/etcd \
-          --backup-dir=/var/backup/etcd
-    securityContext:
-      privileged: true
-    resources:
-      requests:
-        memory: 50Mi
-        cpu: 10m
-    env:
-${COMPUTED_ENV_VARS}
-    volumeMounts:
-      - mountPath: /var/lib/etcd
-        name: data-dir
-      - mountPath: /var/backup/etcd
-        name: backup-dir
-      - mountPath: /etc/kubernetes
-        name: config-dir
-      - mountPath: /etc/kubernetes/static-pod-certs
-        name: cert-dir
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
@@ -1809,28 +1732,27 @@ func AssetNames() []string {
 
 // _bindata is a table, holding each asset generator, mapped to its name.
 var _bindata = map[string]func() (*asset, error){
-	"etcd/backup-server-kubeconfig.yaml": etcdBackupServerKubeconfigYaml,
-	"etcd/backups-cr.yaml":               etcdBackupsCrYaml,
-	"etcd/backups-crb.yaml":              etcdBackupsCrbYaml,
-	"etcd/backups-sa.yaml":               etcdBackupsSaYaml,
-	"etcd/cluster-backup-cronjob.yaml":   etcdClusterBackupCronjobYaml,
-	"etcd/cluster-backup-job.yaml":       etcdClusterBackupJobYaml,
-	"etcd/cluster-backup.sh":             etcdClusterBackupSh,
-	"etcd/cluster-restore.sh":            etcdClusterRestoreSh,
-	"etcd/cm.yaml":                       etcdCmYaml,
-	"etcd/etcd-common-tools":             etcdEtcdCommonTools,
-	"etcd/minimal-sm.yaml":               etcdMinimalSmYaml,
-	"etcd/ns.yaml":                       etcdNsYaml,
-	"etcd/pod-cm.yaml":                   etcdPodCmYaml,
-	"etcd/pod.yaml":                      etcdPodYaml,
-	"etcd/prometheus-role.yaml":          etcdPrometheusRoleYaml,
-	"etcd/prometheus-rolebinding.yaml":   etcdPrometheusRolebindingYaml,
-	"etcd/restore-pod-cm.yaml":           etcdRestorePodCmYaml,
-	"etcd/restore-pod.yaml":              etcdRestorePodYaml,
-	"etcd/sa.yaml":                       etcdSaYaml,
-	"etcd/scripts-cm.yaml":               etcdScriptsCmYaml,
-	"etcd/sm.yaml":                       etcdSmYaml,
-	"etcd/svc.yaml":                      etcdSvcYaml,
+	"etcd/backups-cr.yaml":             etcdBackupsCrYaml,
+	"etcd/backups-crb.yaml":            etcdBackupsCrbYaml,
+	"etcd/backups-sa.yaml":             etcdBackupsSaYaml,
+	"etcd/cluster-backup-cronjob.yaml": etcdClusterBackupCronjobYaml,
+	"etcd/cluster-backup-job.yaml":     etcdClusterBackupJobYaml,
+	"etcd/cluster-backup.sh":           etcdClusterBackupSh,
+	"etcd/cluster-restore.sh":          etcdClusterRestoreSh,
+	"etcd/cm.yaml":                     etcdCmYaml,
+	"etcd/etcd-common-tools":           etcdEtcdCommonTools,
+	"etcd/minimal-sm.yaml":             etcdMinimalSmYaml,
+	"etcd/ns.yaml":                     etcdNsYaml,
+	"etcd/pod-cm.yaml":                 etcdPodCmYaml,
+	"etcd/pod.yaml":                    etcdPodYaml,
+	"etcd/prometheus-role.yaml":        etcdPrometheusRoleYaml,
+	"etcd/prometheus-rolebinding.yaml": etcdPrometheusRolebindingYaml,
+	"etcd/restore-pod-cm.yaml":         etcdRestorePodCmYaml,
+	"etcd/restore-pod.yaml":            etcdRestorePodYaml,
+	"etcd/sa.yaml":                     etcdSaYaml,
+	"etcd/scripts-cm.yaml":             etcdScriptsCmYaml,
+	"etcd/sm.yaml":                     etcdSmYaml,
+	"etcd/svc.yaml":                    etcdSvcYaml,
 }
 
 // AssetDir returns the file names below a certain
@@ -1877,28 +1799,27 @@ type bintree struct {
 
 var _bintree = &bintree{nil, map[string]*bintree{
 	"etcd": {nil, map[string]*bintree{
-		"backup-server-kubeconfig.yaml": {etcdBackupServerKubeconfigYaml, map[string]*bintree{}},
-		"backups-cr.yaml":               {etcdBackupsCrYaml, map[string]*bintree{}},
-		"backups-crb.yaml":              {etcdBackupsCrbYaml, map[string]*bintree{}},
-		"backups-sa.yaml":               {etcdBackupsSaYaml, map[string]*bintree{}},
-		"cluster-backup-cronjob.yaml":   {etcdClusterBackupCronjobYaml, map[string]*bintree{}},
-		"cluster-backup-job.yaml":       {etcdClusterBackupJobYaml, map[string]*bintree{}},
-		"cluster-backup.sh":             {etcdClusterBackupSh, map[string]*bintree{}},
-		"cluster-restore.sh":            {etcdClusterRestoreSh, map[string]*bintree{}},
-		"cm.yaml":                       {etcdCmYaml, map[string]*bintree{}},
-		"etcd-common-tools":             {etcdEtcdCommonTools, map[string]*bintree{}},
-		"minimal-sm.yaml":               {etcdMinimalSmYaml, map[string]*bintree{}},
-		"ns.yaml":                       {etcdNsYaml, map[string]*bintree{}},
-		"pod-cm.yaml":                   {etcdPodCmYaml, map[string]*bintree{}},
-		"pod.yaml":                      {etcdPodYaml, map[string]*bintree{}},
-		"prometheus-role.yaml":          {etcdPrometheusRoleYaml, map[string]*bintree{}},
-		"prometheus-rolebinding.yaml":   {etcdPrometheusRolebindingYaml, map[string]*bintree{}},
-		"restore-pod-cm.yaml":           {etcdRestorePodCmYaml, map[string]*bintree{}},
-		"restore-pod.yaml":              {etcdRestorePodYaml, map[string]*bintree{}},
-		"sa.yaml":                       {etcdSaYaml, map[string]*bintree{}},
-		"scripts-cm.yaml":               {etcdScriptsCmYaml, map[string]*bintree{}},
-		"sm.yaml":                       {etcdSmYaml, map[string]*bintree{}},
-		"svc.yaml":                      {etcdSvcYaml, map[string]*bintree{}},
+		"backups-cr.yaml":             {etcdBackupsCrYaml, map[string]*bintree{}},
+		"backups-crb.yaml":            {etcdBackupsCrbYaml, map[string]*bintree{}},
+		"backups-sa.yaml":             {etcdBackupsSaYaml, map[string]*bintree{}},
+		"cluster-backup-cronjob.yaml": {etcdClusterBackupCronjobYaml, map[string]*bintree{}},
+		"cluster-backup-job.yaml":     {etcdClusterBackupJobYaml, map[string]*bintree{}},
+		"cluster-backup.sh":           {etcdClusterBackupSh, map[string]*bintree{}},
+		"cluster-restore.sh":          {etcdClusterRestoreSh, map[string]*bintree{}},
+		"cm.yaml":                     {etcdCmYaml, map[string]*bintree{}},
+		"etcd-common-tools":           {etcdEtcdCommonTools, map[string]*bintree{}},
+		"minimal-sm.yaml":             {etcdMinimalSmYaml, map[string]*bintree{}},
+		"ns.yaml":                     {etcdNsYaml, map[string]*bintree{}},
+		"pod-cm.yaml":                 {etcdPodCmYaml, map[string]*bintree{}},
+		"pod.yaml":                    {etcdPodYaml, map[string]*bintree{}},
+		"prometheus-role.yaml":        {etcdPrometheusRoleYaml, map[string]*bintree{}},
+		"prometheus-rolebinding.yaml": {etcdPrometheusRolebindingYaml, map[string]*bintree{}},
+		"restore-pod-cm.yaml":         {etcdRestorePodCmYaml, map[string]*bintree{}},
+		"restore-pod.yaml":            {etcdRestorePodYaml, map[string]*bintree{}},
+		"sa.yaml":                     {etcdSaYaml, map[string]*bintree{}},
+		"scripts-cm.yaml":             {etcdScriptsCmYaml, map[string]*bintree{}},
+		"sm.yaml":                     {etcdSmYaml, map[string]*bintree{}},
+		"svc.yaml":                    {etcdSvcYaml, map[string]*bintree{}},
 	}},
 }}
 

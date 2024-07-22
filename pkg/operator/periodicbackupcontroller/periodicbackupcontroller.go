@@ -11,25 +11,29 @@ import (
 	backupv1client "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
+	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes"
 	batchv1client "k8s.io/client-go/kubernetes/typed/batch/v1"
 	"k8s.io/klog/v2"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
-	"github.com/openshift/library-go/pkg/controller/factory"
-	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	"k8s.io/client-go/kubernetes"
 )
 
-const backupJobLabel = "backup-name"
+const (
+	backupJobLabel                   = "backup-name"
+	defaultBackupServerContainerName = "etcd-backup-noconfig"
+)
 
 type PeriodicBackupController struct {
 	operatorClient        v1helpers.OperatorClient
@@ -37,6 +41,7 @@ type PeriodicBackupController struct {
 	kubeClient            kubernetes.Interface
 	operatorImagePullSpec string
 	featureGateAccessor   featuregates.FeatureGateAccess
+	defaultBackupRunning  bool
 }
 
 func NewPeriodicBackupController(
@@ -81,10 +86,39 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 		return fmt.Errorf("PeriodicBackupController could not list backup CRDs, error was: %w", err)
 	}
 
-	// ignore reconciliation of default backup
-	backups.Items = slices.DeleteFunc(backups.Items, func(b backupv1alpha1.Backup) bool {
-		return b.Name == "default"
+	// reconciliation of default backup
+	// (1) default backup CR exists && flag == true ( ignore )
+	// (2) default backup CR no exists && flag == true ( remove container )
+	// (3) default backup CR exists && flag == false  ( deploy container )
+	// (4) default backup CR no exists && flag == false ( ignore )
+	idx := slices.IndexFunc(backups.Items, func(backup backupv1alpha1.Backup) bool {
+		return backup.Name == "default"
 	})
+
+	if idx == -1 && c.defaultBackupRunning { // case (2)
+		_, err = removeBackupServerContainer()
+		if err != nil {
+			rErr := fmt.Errorf("could not remove default backup container: [%v]", err)
+			klog.Error(rErr)
+			return rErr
+		}
+		c.defaultBackupRunning = false
+		klog.V(4).Info("default backup container removed successfully")
+		//TODO: redeploy etcd pods
+
+	} else if idx > -1 && !c.defaultBackupRunning { // case (3)
+		_, err = runBackupServerContainer(backups.Items[idx], c.operatorImagePullSpec)
+		if err != nil {
+			rErr := fmt.Errorf("could not run default backup container: [%v]", err)
+			klog.Error(rErr)
+			return rErr
+		}
+		c.defaultBackupRunning = true
+		klog.V(4).Info("default backup container run successfully")
+		//TODO: redeploy etcd pods
+		// TODO: run retention
+		// TODO: update statusConditions
+	}
 
 	for _, item := range backups.Items {
 		err := reconcileCronJob(ctx, cronJobsClient, item, c.operatorImagePullSpec)
@@ -265,4 +299,101 @@ func newCronJob() (*batchv1.CronJob, error) {
 	}
 
 	return obj.(*batchv1.CronJob), nil
+}
+
+func runBackupServerContainer(defaultBackup backupv1alpha1.Backup, operatorImagePullSpec string) (*corev1.Pod, error) {
+	etcdPod, err := decodeEtcdPodManifest()
+	if err != nil {
+		return nil, err
+	}
+
+	if exist := slices.ContainsFunc(etcdPod.Spec.Containers, func(c corev1.Container) bool {
+		return c.Name == defaultBackupServerContainerName
+	}); exist {
+		return etcdPod, nil
+	}
+
+	requiredVolumes := map[string]string{
+		"data-dir":   "/var/lib/etcd",
+		"config-dir": "/etc/kubernetes",
+		"backup-dir": " /var/backup/etcd",
+	}
+
+	for k := range requiredVolumes {
+		if exist := slices.ContainsFunc(etcdPod.Spec.Volumes, func(v corev1.Volume) bool {
+			return v.Name == k
+		}); !exist {
+			return nil, fmt.Errorf("could not find required volume '%v' ", k)
+		}
+	}
+
+	backupServerContainer := corev1.Container{}
+	backupServerContainer.Name = defaultBackupServerContainerName
+	backupServerContainer.Image = operatorImagePullSpec
+	backupServerContainer.ImagePullPolicy = corev1.PullAlways
+	backupServerContainer.TerminationMessagePolicy = corev1.TerminationMessageFallbackToLogsOnError
+	backupServerContainer.VolumeMounts = mapToMounts(requiredVolumes)
+	backupServerContainer.Args = mapToArgs(requiredVolumes)
+	backupServerContainer.Args = append([]string{"backup-server",
+		fmt.Sprintf("--%s=%s", "schedule", defaultBackup.Spec.EtcdBackupSpec.Schedule),
+		fmt.Sprintf("--%s=%s", "timezone", defaultBackup.Spec.EtcdBackupSpec.TimeZone),
+	}, backupServerContainer.Args...)
+
+	etcdPod.Spec.Containers = append(etcdPod.Spec.Containers, backupServerContainer)
+	return etcdPod, nil
+}
+
+func removeBackupServerContainer() (*corev1.Pod, error) {
+	etcdPod, err := decodeEtcdPodManifest()
+	if err != nil {
+		return nil, err
+	}
+
+	idx := slices.IndexFunc(etcdPod.Spec.Containers, func(c corev1.Container) bool {
+		return c.Name == defaultBackupServerContainerName
+	})
+	if idx == -1 {
+		return etcdPod, nil
+	}
+
+	etcdPod.Spec.Containers = append(etcdPod.Spec.Containers[:idx], etcdPod.Spec.Containers[idx+1:]...)
+	return etcdPod, nil
+}
+
+func decodeEtcdPodManifest() (*corev1.Pod, error) {
+	scheme := runtime.NewScheme()
+	codec := serializer.NewCodecFactory(scheme)
+	utilruntime.Must(corev1.AddToScheme(scheme))
+	etcdPodBytes := etcd_assets.MustAsset("etcd/pod.yaml")
+
+	obj, err := runtime.Decode(codec.UniversalDecoder(corev1.SchemeGroupVersion), etcdPodBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode etcd pod manifest: %v", err)
+	}
+
+	pod, ok := obj.(*corev1.Pod)
+	if !ok {
+		return nil, fmt.Errorf("unsupported type: etcdStaticPodManifest is not type *corev1.Pod but %T", obj)
+	}
+
+	return pod, nil
+}
+
+func mapToArgs(m map[string]string) []string {
+	var args []string
+	for k, v := range m {
+		args = append(args, fmt.Sprintf("--%s=%s", k, v))
+	}
+	return args
+}
+
+func mapToMounts(m map[string]string) []corev1.VolumeMount {
+	var mounts []corev1.VolumeMount
+	for k, v := range m {
+		mounts = append(mounts, corev1.VolumeMount{
+			Name:      k,
+			MountPath: v,
+		})
+	}
+	return mounts
 }
