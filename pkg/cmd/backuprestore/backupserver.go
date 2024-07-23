@@ -56,10 +56,10 @@ func NewBackupNoConfigCommand(ctx context.Context, errOut io.Writer) *cobra.Comm
 }
 
 func (b *backupServer) AddFlags(fs *pflag.FlagSet) {
-	fs.StringVar(&b.schedule, "schedule", "", "schedule specifies the cron schedule to run the backup")
-	fs.StringVar(&b.timeZone, "timezone", "", "timezone specifies the timezone of the cron schedule to run the backup")
-
-	b.backupOptions.AddFlags(fs)
+	//fs.StringVar(&b.schedule, "schedule", "", "schedule specifies the cron schedule to run the backup")
+	//fs.StringVar(&b.timeZone, "timezone", "", "timezone specifies the timezone of the cron schedule to run the backup")
+	//
+	//b.backupOptions.AddFlags(fs)
 }
 
 func (b *backupServer) Validate() error {

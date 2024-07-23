@@ -322,7 +322,7 @@ ${COMPUTED_ENV_VARS}
         #!/bin/sh
         set -euo pipefail
         
-        sleep infinity & wait
+        exec nice -n -18 cluster-etcd-operator backup-server
     securityContext:
       privileged: true
     resources:
