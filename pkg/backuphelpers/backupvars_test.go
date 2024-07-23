@@ -13,9 +13,9 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 		TimeZone: "GMT",
 	}
 
-	expected := "- --timezone=GMT\n- --schedule=0 */2 * * *"
+	expected := "\t\t- --schedule=0 */2 * * *\n\t\t- --timezone=GMT"
 
-	c := NewBackupConfig(input)
+	c := NewDisabledBackupConfig(input)
 	act := c.ArgString()
 	require.Equal(t, expected, act)
 }

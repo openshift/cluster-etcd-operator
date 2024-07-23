@@ -2,13 +2,10 @@ package backuprestore
 
 import (
 	"context"
+	"k8s.io/klog/v2"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
-	"time"
-
-	"k8s.io/klog/v2"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -95,20 +92,7 @@ func (b *backupServer) Run(ctx context.Context) error {
 	//<-doneCh
 	//return nil
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case <-ctx.Done():
-				cancel()
-			case <-time.After(time.Duration(1<<63 - 1)):
-				klog.Info("time elapsed ...")
-			}
-		}
-	}()
-	wg.Wait()
+	<-ctx.Done()
 
 	return nil
 }

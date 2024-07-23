@@ -2,6 +2,7 @@ package backuphelpers
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -19,7 +20,7 @@ var (
 )
 
 type BackupVar interface {
-	GetBackupVars() *BackupConfig
+	ArgString() string
 }
 
 type BackupConfig struct {
@@ -28,7 +29,7 @@ type BackupConfig struct {
 	mux      sync.Mutex
 }
 
-func NewBackupConfig(backupCR backupv1alpha1.EtcdBackupSpec) *BackupConfig {
+func NewDisabledBackupConfig(backupCR backupv1alpha1.EtcdBackupSpec) *BackupConfig {
 	return &BackupConfig{
 		enabled:  false,
 		backupCR: backupCR,
@@ -36,22 +37,21 @@ func NewBackupConfig(backupCR backupv1alpha1.EtcdBackupSpec) *BackupConfig {
 	}
 }
 
-func (b *BackupConfig) GetBackupVars() *BackupConfig {
-	b.mux.Lock()
-	defer b.mux.Unlock()
-
-	c := NewBackupConfig(b.backupCR)
-	c.enabled = b.enabled
-	return c
-}
-
 func (b *BackupConfig) ArgString() string {
 	b.mux.Lock()
 	defer b.mux.Unlock()
 
 	var args []string
-	args = append(args, fmt.Sprintf("- --%s=%s", "timezone", b.backupCR.TimeZone))
-	args = append(args, fmt.Sprintf("- --%s=%s", "schedule", b.backupCR.Schedule))
+
+	t := reflect.TypeOf(b.backupCR)
+	v := reflect.ValueOf(b.backupCR)
+
+	for i := 0; i < t.NumField(); i++ {
+		if !v.Field(i).IsZero() {
+			argName := strings.ToLower(t.Field(i).Name)
+			args = append(args, fmt.Sprintf("\t\t- --%s=%s", argName, v.Field(i).String()))
+		}
+	}
 
 	return strings.Join(args, "\n")
 }

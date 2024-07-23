@@ -105,8 +105,6 @@ func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncCo
 		return fmt.Errorf("TargetConfigController missing env var values")
 	}
 
-	backupVars := c.backupVarGetter.GetBackupVars()
-
 	operatorSpec, _, _, err := c.operatorClient.GetStaticPodOperatorState()
 	if err != nil {
 		return err
@@ -120,7 +118,7 @@ func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncCo
 	if !safe {
 		return fmt.Errorf("skipping TargetConfigController reconciliation due to insufficient quorum")
 	}
-	requeue, err := createTargetConfig(ctx, c, syncCtx.Recorder(), operatorSpec, envVars, backupVars)
+	requeue, err := createTargetConfig(ctx, c, syncCtx.Recorder(), operatorSpec, envVars, c.backupVarGetter)
 	if err != nil {
 		return err
 	}
@@ -134,10 +132,10 @@ func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncCo
 // createTargetConfig takes care of creation of valid resources in a fixed name.  These are inputs to other control loops.
 // returns whether to requeue and if an error happened when updating status.  Normally it updates status itself.
 func createTargetConfig(ctx context.Context, c TargetConfigController, recorder events.Recorder,
-	operatorSpec *operatorv1.StaticPodOperatorSpec, envVars map[string]string, backupVars *backuphelpers.BackupConfig) (bool, error) {
+	operatorSpec *operatorv1.StaticPodOperatorSpec, envVars map[string]string, backupVar backuphelpers.BackupVar) (bool, error) {
 
 	var errors []error
-	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars, backupVars)
+	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars, backupVar)
 	if err != nil {
 		return false, err
 	}
@@ -185,15 +183,13 @@ func loglevelToZap(logLevel operatorv1.LogLevel) string {
 }
 
 func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv1.StaticPodOperatorSpec,
-	imagePullSpec, operatorImagePullSpec string, envVarMap map[string]string, backupVars *backuphelpers.BackupConfig) (*strings.Replacer, error) {
+	imagePullSpec, operatorImagePullSpec string, envVarMap map[string]string, backupVar backuphelpers.BackupVar) (*strings.Replacer, error) {
 	var envVarLines []string
 	for _, k := range sets.StringKeySet(envVarMap).List() {
 		v := envVarMap[k]
 		envVarLines = append(envVarLines, fmt.Sprintf("      - name: %q", k))
 		envVarLines = append(envVarLines, fmt.Sprintf("        value: %q", v))
 	}
-
-	backVarLines := backupVars.ArgString()
 
 	return strings.NewReplacer(
 		"${IMAGE}", imagePullSpec,
@@ -202,7 +198,7 @@ func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv
 		"${LISTEN_ON_ALL_IPS}", "0.0.0.0", // TODO this needs updating to detect ipv6-ness
 		"${LOCALHOST_IP}", "127.0.0.1", // TODO this needs updating to detect ipv6-ness
 		"${COMPUTED_ENV_VARS}", strings.Join(envVarLines, "\n"), // lacks beauty, but it works
-		"${COMPUTED_BACKUP_VARS}", backVarLines,
+		"${COMPUTED_BACKUP_VARS}", backupVar.ArgString(),
 	), nil
 }
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
+	"github.com/openshift/api/config/v1alpha1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
 	configversionedclientv1alpha1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
@@ -260,7 +261,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		masterNodeInformer,
 		kubeClient,
 		envVarController,
-		nil,
+		backuphelpers.NewDisabledBackupConfig(v1alpha1.EtcdBackupSpec{}),
 		controllerContext.EventRecorder,
 		quorumChecker,
 	)
