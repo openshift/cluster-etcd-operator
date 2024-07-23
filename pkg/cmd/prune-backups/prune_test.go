@@ -2,32 +2,33 @@ package prune_backups
 
 import (
 	"fmt"
-	"github.com/stretchr/testify/require"
 	"math/rand"
 	"os"
 	"path"
 	"sort"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestCommandValidation(t *testing.T) {
 	testCases := map[string]struct {
-		opts        pruneOpts
+		opts        PruneOpts
 		expectedErr error
 	}{
-		"none happy":   {opts: pruneOpts{retentionType: RetentionTypeNone}},
-		"number happy": {opts: pruneOpts{retentionType: RetentionTypeNumber, maxNumberOfBackups: 1}},
-		"number zero": {opts: pruneOpts{retentionType: RetentionTypeNumber, maxNumberOfBackups: 0},
+		"none happy":   {opts: PruneOpts{RetentionType: RetentionTypeNone}},
+		"number happy": {opts: PruneOpts{RetentionType: RetentionTypeNumber, MaxNumberOfBackups: 1}},
+		"number zero": {opts: PruneOpts{RetentionType: RetentionTypeNumber, MaxNumberOfBackups: 0},
 			expectedErr: fmt.Errorf("unexpected amount of backups [0] found, expected at least 1")},
-		"number flipped": {opts: pruneOpts{retentionType: RetentionTypeNumber, maxNumberOfBackups: 2, maxSizeOfBackupsGb: 25},
-			expectedErr: fmt.Errorf("unexpected argument [maxSizeOfBackupsGb] found while using RetentionNumber")},
+		"number flipped": {opts: PruneOpts{RetentionType: RetentionTypeNumber, MaxNumberOfBackups: 2, MaxSizeOfBackupsGb: 25},
+			expectedErr: fmt.Errorf("unexpected argument [MaxSizeOfBackupsGb] found while using RetentionNumber")},
 
-		"size happy": {opts: pruneOpts{retentionType: RetentionTypeSize, maxSizeOfBackupsGb: 1}},
-		"size zero": {opts: pruneOpts{retentionType: RetentionTypeSize, maxSizeOfBackupsGb: 0},
+		"size happy": {opts: PruneOpts{RetentionType: RetentionTypeSize, MaxSizeOfBackupsGb: 1}},
+		"size zero": {opts: PruneOpts{RetentionType: RetentionTypeSize, MaxSizeOfBackupsGb: 0},
 			expectedErr: fmt.Errorf("unexpected size of backups [0]gb found, expected at least 1")},
-		"size flipped": {opts: pruneOpts{retentionType: RetentionTypeSize, maxSizeOfBackupsGb: 2, maxNumberOfBackups: 25},
-			expectedErr: fmt.Errorf("unexpected argument [maxNumberOfBackups] found while using RetentionSize")},
+		"size flipped": {opts: PruneOpts{RetentionType: RetentionTypeSize, MaxSizeOfBackupsGb: 2, MaxNumberOfBackups: 25},
+			expectedErr: fmt.Errorf("unexpected argument [MaxNumberOfBackups] found while using RetentionSize")},
 	}
 
 	for k, v := range testCases {
