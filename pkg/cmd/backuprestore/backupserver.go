@@ -2,8 +2,6 @@ package backuprestore
 
 import (
 	"context"
-	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"sync"
@@ -12,7 +10,6 @@ import (
 
 	"k8s.io/klog/v2"
 
-	"github.com/adhocore/gronx/pkg/tasker"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -20,32 +17,25 @@ import (
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
 
 type backupServer struct {
-	schedule  string
-	timeZone  string
-	scheduler *tasker.Tasker
+	schedule string
+	timeZone string
+	//scheduler *tasker.Tasker
 	backupOptions
 }
 
-func NewBackupNoConfigCommand(ctx context.Context, errOut io.Writer) *cobra.Command {
+func NewBackupServer(ctx context.Context) *cobra.Command {
 	backupSrv := &backupServer{
-		backupOptions: backupOptions{errOut: errOut},
+		backupOptions: backupOptions{errOut: os.Stderr},
 	}
 
 	cmd := &cobra.Command{
 		Use:   "backup-server",
 		Short: "Backs up a snapshot of etcd database and static pod resources without config",
 		Run: func(cmd *cobra.Command, args []string) {
-			must := func(fn func() error) {
-				if err := fn(); err != nil {
-					if cmd.HasParent() {
-						klog.Fatal(err)
-					}
-					fmt.Fprint(backupSrv.errOut, err.Error())
-				}
+
+			if err := backupSrv.Validate(); err != nil {
+				klog.Fatal(err)
 			}
-
-			must(backupSrv.Validate)
-
 			if err := backupSrv.Run(ctx); err != nil {
 				klog.Fatal(err)
 			}
@@ -63,14 +53,15 @@ func (b *backupServer) AddFlags(fs *pflag.FlagSet) {
 }
 
 func (b *backupServer) Validate() error {
-	return b.backupOptions.Validate()
+	//return b.backupOptions.Validate()
+	return nil
 }
 
 func (b *backupServer) Run(ctx context.Context) error {
-	b.scheduler = tasker.New(tasker.Option{
-		Verbose: true,
-		Tz:      b.timeZone,
-	})
+	//b.scheduler = tasker.New(tasker.Option{
+	//	Verbose: true,
+	//	Tz:      b.timeZone,
+	//})
 
 	// handle teardown
 	ctx, cancel := context.WithCancel(ctx)
@@ -108,20 +99,16 @@ func (b *backupServer) Run(ctx context.Context) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		// sleep for 292 years
-		time.Sleep(time.Duration(1<<63 - 1))
+		for {
+			select {
+			case <-ctx.Done():
+				cancel()
+			case <-time.After(time.Duration(1<<63 - 1)):
+				klog.Info("time elapsed ...")
+			}
+		}
 	}()
 	wg.Wait()
 
 	return nil
-}
-
-func (b *backupServer) scheduleBackup() error {
-	var err error
-	b.scheduler.Task(b.schedule, func(ctx context.Context) (int, error) {
-		err = backup(&b.backupOptions)
-		return 0, err
-	}, false)
-
-	return err
 }

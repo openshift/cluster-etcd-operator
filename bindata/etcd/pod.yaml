@@ -315,14 +315,9 @@ ${COMPUTED_ENV_VARS}
     image: ${OPERATOR_IMAGE}
     imagePullPolicy: IfNotPresent
     terminationMessagePolicy: FallbackToLogsOnError
-    command:
-      - /bin/sh
-      - -c
-      - |
-        #!/bin/sh
-        set -euo pipefail
-        
-        exec nice -n -18 cluster-etcd-operator backup-server
+    command: [cluster-etcd-operator]
+    args:
+    - backup-server
     securityContext:
       privileged: true
     resources:
