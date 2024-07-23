@@ -4,6 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
 
 	"k8s.io/klog/v2"
 
@@ -12,6 +17,8 @@ import (
 	"github.com/spf13/pflag"
 )
 
+var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
+
 type backupServer struct {
 	schedule  string
 	timeZone  string
@@ -19,7 +26,7 @@ type backupServer struct {
 	backupOptions
 }
 
-func NewBackupNoConfigCommand(errOut io.Writer) *cobra.Command {
+func NewBackupNoConfigCommand(ctx context.Context, errOut io.Writer) *cobra.Command {
 	backupSrv := &backupServer{
 		backupOptions: backupOptions{errOut: errOut},
 	}
@@ -38,7 +45,10 @@ func NewBackupNoConfigCommand(errOut io.Writer) *cobra.Command {
 			}
 
 			must(backupSrv.Validate)
-			must(backupSrv.Run)
+
+			if err := backupSrv.Run(ctx); err != nil {
+				klog.Fatal(err)
+			}
 		},
 	}
 	backupSrv.AddFlags(cmd.Flags())
@@ -56,24 +66,53 @@ func (b *backupServer) Validate() error {
 	return b.backupOptions.Validate()
 }
 
-func (b *backupServer) Run() error {
+func (b *backupServer) Run(ctx context.Context) error {
 	b.scheduler = tasker.New(tasker.Option{
 		Verbose: true,
 		Tz:      b.timeZone,
 	})
 
-	err := b.scheduleBackup()
-	if err != nil {
-		return err
-	}
-
-	doneCh := make(chan struct{})
+	// handle teardown
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	shutdownHandler := make(chan os.Signal, 2)
+	signal.Notify(shutdownHandler, shutdownSignals...)
 	go func() {
-		b.scheduler.Run()
-		doneCh <- struct{}{}
+		select {
+		case <-shutdownHandler:
+			klog.Infof("Received SIGTERM or SIGINT signal, shutting down.")
+			close(shutdownHandler)
+			cancel()
+		case <-ctx.Done():
+			klog.Infof("Context has been cancelled, shutting down.")
+			close(shutdownHandler)
+			cancel()
+		}
 	}()
 
-	<-doneCh
+	//err := b.scheduleBackup()
+	//if err != nil {
+	//	return err
+	//}
+	//
+	//doneCh := make(chan struct{})
+	//go func() {
+	//	b.scheduler.Run()
+	//	doneCh <- struct{}{}
+	//}()
+	//
+	//<-doneCh
+	//return nil
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// sleep for 292 years
+		time.Sleep(time.Duration(1<<63 - 1))
+	}()
+	wg.Wait()
+
 	return nil
 }
 
