@@ -3,6 +3,7 @@ package targetconfigcontroller
 import (
 	"context"
 	"fmt"
+	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"strings"
 	"time"
 
@@ -35,8 +36,9 @@ type TargetConfigController struct {
 
 	operatorClient v1helpers.StaticPodOperatorClient
 
-	kubeClient   kubernetes.Interface
-	envVarGetter etcdenvvar.EnvVar
+	kubeClient      kubernetes.Interface
+	envVarGetter    etcdenvvar.EnvVar
+	backupVarGetter backuphelpers.BackupVar
 
 	enqueueFn     func()
 	quorumChecker ceohelpers.QuorumChecker
@@ -53,6 +55,7 @@ func NewTargetConfigController(
 	masterNodeInformer cache.SharedIndexInformer,
 	kubeClient kubernetes.Interface,
 	envVarGetter etcdenvvar.EnvVar,
+	backupVarGetter backuphelpers.BackupVar,
 	eventRecorder events.Recorder,
 	quorumChecker ceohelpers.QuorumChecker,
 ) factory.Controller {
@@ -60,10 +63,11 @@ func NewTargetConfigController(
 		targetImagePullSpec:   targetImagePullSpec,
 		operatorImagePullSpec: operatorImagePullSpec,
 
-		operatorClient: operatorClient,
-		kubeClient:     kubeClient,
-		envVarGetter:   envVarGetter,
-		quorumChecker:  quorumChecker,
+		operatorClient:  operatorClient,
+		kubeClient:      kubeClient,
+		envVarGetter:    envVarGetter,
+		backupVarGetter: backupVarGetter,
+		quorumChecker:   quorumChecker,
 	}
 
 	syncCtx := factory.NewSyncContext("TargetConfigController", eventRecorder.WithComponentSuffix("target-config-controller"))
@@ -101,6 +105,11 @@ func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncCo
 		return fmt.Errorf("TargetConfigController missing env var values")
 	}
 
+	backupVars := c.backupVarGetter.GetBackupVars()
+	if len(backupVars) == 0 {
+		return fmt.Errorf("TargetConfigController missing backup var values")
+	}
+
 	operatorSpec, _, _, err := c.operatorClient.GetStaticPodOperatorState()
 	if err != nil {
 		return err
@@ -114,7 +123,7 @@ func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncCo
 	if !safe {
 		return fmt.Errorf("skipping TargetConfigController reconciliation due to insufficient quorum")
 	}
-	requeue, err := createTargetConfig(ctx, c, syncCtx.Recorder(), operatorSpec, envVars)
+	requeue, err := createTargetConfig(ctx, c, syncCtx.Recorder(), operatorSpec, envVars, backupVars)
 	if err != nil {
 		return err
 	}
@@ -128,7 +137,7 @@ func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncCo
 // createTargetConfig takes care of creation of valid resources in a fixed name.  These are inputs to other control loops.
 // returns whether to requeue and if an error happened when updating status.  Normally it updates status itself.
 func createTargetConfig(ctx context.Context, c TargetConfigController, recorder events.Recorder,
-	operatorSpec *operatorv1.StaticPodOperatorSpec, envVars map[string]string) (bool, error) {
+	operatorSpec *operatorv1.StaticPodOperatorSpec, envVars map[string]string, backupVars map[string]string) (bool, error) {
 
 	var errors []error
 	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars)
@@ -179,7 +188,7 @@ func loglevelToZap(logLevel operatorv1.LogLevel) string {
 }
 
 func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv1.StaticPodOperatorSpec,
-	imagePullSpec, operatorImagePullSpec string, envVarMap map[string]string) (*strings.Replacer, error) {
+	imagePullSpec, operatorImagePullSpec string, envVarMap map[string]string, backupVars map[string]string) (*strings.Replacer, error) {
 	var envVarLines []string
 	for _, k := range sets.StringKeySet(envVarMap).List() {
 		v := envVarMap[k]
@@ -187,6 +196,7 @@ func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv
 		envVarLines = append(envVarLines, fmt.Sprintf("        value: %q", v))
 	}
 
+	backVarLines := backVarsToArgs(backupVars)
 	return strings.NewReplacer(
 		"${IMAGE}", imagePullSpec,
 		"${OPERATOR_IMAGE}", operatorImagePullSpec,
@@ -268,4 +278,12 @@ func (c *TargetConfigController) namespaceEventHandler() cache.ResourceEventHand
 			}
 		},
 	}
+}
+
+func backVarsToArgs(vars map[string]string) []string {
+	var args []string
+	for k, v := range vars {
+		args = append(args, fmt.Sprintf("--%s=%s", k, v))
+	}
+	return args
 }
