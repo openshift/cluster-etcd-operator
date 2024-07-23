@@ -3,18 +3,9 @@ package targetconfigcontroller
 import (
 	"context"
 	"fmt"
-	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"strings"
 	"time"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
-	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
-	"github.com/openshift/library-go/pkg/controller/factory"
-	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
-	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -23,11 +14,20 @@ import (
 	coreclientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/cache"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
+	"github.com/openshift/library-go/pkg/controller/factory"
+	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
+	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
 )
 
 type TargetConfigController struct {
@@ -106,9 +106,6 @@ func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncCo
 	}
 
 	backupVars := c.backupVarGetter.GetBackupVars()
-	if len(backupVars) == 0 {
-		return fmt.Errorf("TargetConfigController missing backup var values")
-	}
 
 	operatorSpec, _, _, err := c.operatorClient.GetStaticPodOperatorState()
 	if err != nil {
@@ -137,10 +134,10 @@ func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncCo
 // createTargetConfig takes care of creation of valid resources in a fixed name.  These are inputs to other control loops.
 // returns whether to requeue and if an error happened when updating status.  Normally it updates status itself.
 func createTargetConfig(ctx context.Context, c TargetConfigController, recorder events.Recorder,
-	operatorSpec *operatorv1.StaticPodOperatorSpec, envVars map[string]string, backupVars map[string]string) (bool, error) {
+	operatorSpec *operatorv1.StaticPodOperatorSpec, envVars map[string]string, backupVars *backuphelpers.BackupConfig) (bool, error) {
 
 	var errors []error
-	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars)
+	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars, backupVars)
 	if err != nil {
 		return false, err
 	}
@@ -188,7 +185,7 @@ func loglevelToZap(logLevel operatorv1.LogLevel) string {
 }
 
 func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv1.StaticPodOperatorSpec,
-	imagePullSpec, operatorImagePullSpec string, envVarMap map[string]string, backupVars map[string]string) (*strings.Replacer, error) {
+	imagePullSpec, operatorImagePullSpec string, envVarMap map[string]string, backupVars *backuphelpers.BackupConfig) (*strings.Replacer, error) {
 	var envVarLines []string
 	for _, k := range sets.StringKeySet(envVarMap).List() {
 		v := envVarMap[k]
@@ -196,7 +193,8 @@ func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv
 		envVarLines = append(envVarLines, fmt.Sprintf("        value: %q", v))
 	}
 
-	backVarLines := backVarsToArgs(backupVars)
+	backVarLines := backupVars.ArgString()
+
 	return strings.NewReplacer(
 		"${IMAGE}", imagePullSpec,
 		"${OPERATOR_IMAGE}", operatorImagePullSpec,
@@ -204,6 +202,7 @@ func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv
 		"${LISTEN_ON_ALL_IPS}", "0.0.0.0", // TODO this needs updating to detect ipv6-ness
 		"${LOCALHOST_IP}", "127.0.0.1", // TODO this needs updating to detect ipv6-ness
 		"${COMPUTED_ENV_VARS}", strings.Join(envVarLines, "\n"), // lacks beauty, but it works
+		"${COMPUTED_BACKUP_VARS}", backVarLines,
 	), nil
 }
 
@@ -278,12 +277,4 @@ func (c *TargetConfigController) namespaceEventHandler() cache.ResourceEventHand
 			}
 		},
 	}
-}
-
-func backVarsToArgs(vars map[string]string) []string {
-	var args []string
-	for k, v := range vars {
-		args = append(args, fmt.Sprintf("--%s=%s", k, v))
-	}
-	return args
 }

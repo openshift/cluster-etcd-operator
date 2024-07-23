@@ -3,7 +3,6 @@ package etcdenvvar
 import (
 	"context"
 	"fmt"
-	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 	"reflect"
 	"strings"
 	"sync"
@@ -12,14 +11,14 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
+	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
-
-	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
-	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 
 	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"

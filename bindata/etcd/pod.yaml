@@ -318,6 +318,7 @@ ${COMPUTED_ENV_VARS}
     command: [cluster-etcd-operator]
     args:
     - backup-server
+${COMPUTED_BACKUP_VARS}
     securityContext:
       privileged: true
     resources:

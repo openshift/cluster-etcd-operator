@@ -260,6 +260,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		masterNodeInformer,
 		kubeClient,
 		envVarController,
+		nil,
 		controllerContext.EventRecorder,
 		quorumChecker,
 	)

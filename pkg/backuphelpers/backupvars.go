@@ -1,41 +1,57 @@
 package backuphelpers
 
-import "sync"
+import (
+	"fmt"
+	"strings"
+	"sync"
+
+	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
+)
+
+var (
+	validBackupVars = map[string]struct{}{
+		"schedule":   {},
+		"timezone":   {},
+		"data-dir":   {},
+		"config-dir": {},
+		"backup-dir": {},
+	}
+)
 
 type BackupVar interface {
-	GetBackupVars() map[string]string
+	GetBackupVars() *BackupConfig
 }
 
 type BackupConfig struct {
-	schedule  string
-	timeZone  string
-	dataDir   string
-	configDir string
-	backupDir string
-	mux       sync.Mutex
+	enabled  bool
+	backupCR backupv1alpha1.EtcdBackupSpec
+	mux      sync.Mutex
 }
 
-func NewBackupConfig(schedule, timeZone, dataDir, configDir, backupDir string) *BackupConfig {
+func NewBackupConfig(backupCR backupv1alpha1.EtcdBackupSpec) *BackupConfig {
 	return &BackupConfig{
-		schedule:  schedule,
-		timeZone:  timeZone,
-		dataDir:   dataDir,
-		configDir: configDir,
-		backupDir: backupDir,
-		mux:       sync.Mutex{},
+		enabled:  false,
+		backupCR: backupCR,
+		mux:      sync.Mutex{},
 	}
 }
 
-func (b *BackupConfig) GetBackupVars() map[string]string {
+func (b *BackupConfig) GetBackupVars() *BackupConfig {
 	b.mux.Lock()
 	defer b.mux.Unlock()
 
-	vars := map[string]string{}
-	vars["schedule"] = b.schedule
-	vars["timezone"] = b.timeZone
-	vars["data-dir"] = b.dataDir
-	vars["config-dir"] = b.configDir
-	vars["backup-dir"] = b.backupDir
+	c := NewBackupConfig(b.backupCR)
+	c.enabled = b.enabled
+	return c
+}
 
-	return vars
+func (b *BackupConfig) ArgString() string {
+	b.mux.Lock()
+	defer b.mux.Unlock()
+
+	var args []string
+	args = append(args, fmt.Sprintf("- --%s=%s", "timezone", b.backupCR.TimeZone))
+	args = append(args, fmt.Sprintf("- --%s=%s", "schedule", b.backupCR.Schedule))
+
+	return strings.Join(args, "\n")
 }
