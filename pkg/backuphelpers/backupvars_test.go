@@ -1,7 +1,6 @@
 package backuphelpers
 
 import (
-	"fmt"
 	"testing"
 
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
@@ -25,51 +24,51 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 			"enabled",
 			createEtcdBackupSpec(timezone, schedule),
 			true,
-			"\t- backup-server\n\t- --enabled=true\n\t- --timezone=GMT\n\t- --schedule=0 */2 * * *",
+			"    - backup-server\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *",
 		},
 		{
 			"disabled",
 			createEtcdBackupSpec(timezone, schedule),
 			false,
-			"\t- backup-server\n\t- --timezone=GMT\n\t- --schedule=0 */2 * * *",
+			"    - backup-server\n    - --timezone=GMT\n    - --schedule=0 */2 * * *",
 		},
 		{
 			"empty schedule disabled",
 			createEtcdBackupSpec(timezone, ""),
 			false,
-			"\t- backup-server\n\t- --timezone=GMT",
+			"    - backup-server\n    - --timezone=GMT",
 		},
 		{
 			"empty schedule enabled",
 			createEtcdBackupSpec(timezone, ""),
 			true,
-			"\t- backup-server\n\t- --enabled=true\n\t- --timezone=GMT",
+			"    - backup-server\n    - --enabled=true\n    - --timezone=GMT",
 		},
 
 		{
 			"empty timezone disabled",
 			createEtcdBackupSpec("", schedule),
 			false,
-			"\t- backup-server\n\t- --schedule=0 */2 * * *",
+			"    - backup-server\n    - --schedule=0 */2 * * *",
 		},
 		{
 			"empty timezone enabled",
 			createEtcdBackupSpec("", schedule),
 			true,
-			"\t- backup-server\n\t- --enabled=true\n\t- --schedule=0 */2 * * *",
+			"    - backup-server\n    - --enabled=true\n    - --schedule=0 */2 * * *",
 		},
 
 		{
 			"empty timezone and schedule disabled",
 			createEtcdBackupSpec("", ""),
 			false,
-			"\t- backup-server",
+			"    - backup-server",
 		},
 		{
 			"empty timezone and schedule enabled",
 			createEtcdBackupSpec("", ""),
 			true,
-			"\t- backup-server\n\t- --enabled=true",
+			"    - backup-server\n    - --enabled=true",
 		},
 	}
 
@@ -77,7 +76,6 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			c := NewDisabledBackupConfig(tc.cr, tc.enabled)
 			act := c.ArgString()
-			fmt.Println(act)
 			require.Equal(t, tc.expected, act)
 		})
 	}

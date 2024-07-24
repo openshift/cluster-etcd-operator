@@ -30,7 +30,7 @@ func (b *BackupConfig) ArgString() string {
 	b.mux.Lock()
 	defer b.mux.Unlock()
 
-	args := []string{"\t- backup-server"}
+	args := []string{"    - backup-server"}
 	if b.enabled {
 		args = append(args, fmt.Sprintf("- --%s=%v", "enabled", b.enabled))
 	}
@@ -43,5 +43,5 @@ func (b *BackupConfig) ArgString() string {
 		args = append(args, fmt.Sprintf("- --%s=%s", "schedule", b.backupCR.Schedule))
 	}
 
-	return strings.Join(args, "\n\t")
+	return strings.Join(args, "\n    ")
 }
