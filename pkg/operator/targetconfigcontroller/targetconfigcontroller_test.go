@@ -156,7 +156,7 @@ func TestTargetConfigController(t *testing.T) {
 				operatorClient:        fakeOperatorClient,
 				kubeClient:            fakeKubeClient,
 				envVarGetter:          envVar,
-				backupVarGetter:       backuphelpers.NewDisabledBackupConfig(v1alpha1.EtcdBackupSpec{}),
+				backupVarGetter:       backuphelpers.NewDisabledBackupConfig(v1alpha1.EtcdBackupSpec{}, false),
 				enqueueFn:             func() {},
 				quorumChecker:         quorumChecker,
 			}

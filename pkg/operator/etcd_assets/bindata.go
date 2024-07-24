@@ -1233,7 +1233,6 @@ ${COMPUTED_ENV_VARS}
     terminationMessagePolicy: FallbackToLogsOnError
     command: [cluster-etcd-operator]
     args:
-    - backup-server
 ${COMPUTED_BACKUP_VARS}
     securityContext:
       privileged: true

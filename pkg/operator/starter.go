@@ -261,7 +261,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		masterNodeInformer,
 		kubeClient,
 		envVarController,
-		backuphelpers.NewDisabledBackupConfig(v1alpha1.EtcdBackupSpec{}),
+		backuphelpers.NewDisabledBackupConfig(v1alpha1.EtcdBackupSpec{}, false),
 		controllerContext.EventRecorder,
 		quorumChecker,
 	)

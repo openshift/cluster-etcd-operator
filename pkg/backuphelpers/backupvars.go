@@ -2,21 +2,10 @@ package backuphelpers
 
 import (
 	"fmt"
-	"reflect"
 	"strings"
 	"sync"
 
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
-)
-
-var (
-	validBackupVars = map[string]struct{}{
-		"schedule":   {},
-		"timezone":   {},
-		"data-dir":   {},
-		"config-dir": {},
-		"backup-dir": {},
-	}
 )
 
 type BackupVar interface {
@@ -29,9 +18,9 @@ type BackupConfig struct {
 	mux      sync.Mutex
 }
 
-func NewDisabledBackupConfig(backupCR backupv1alpha1.EtcdBackupSpec) *BackupConfig {
+func NewDisabledBackupConfig(backupCR backupv1alpha1.EtcdBackupSpec, enabled bool) *BackupConfig {
 	return &BackupConfig{
-		enabled:  false,
+		enabled:  enabled,
 		backupCR: backupCR,
 		mux:      sync.Mutex{},
 	}
@@ -41,17 +30,18 @@ func (b *BackupConfig) ArgString() string {
 	b.mux.Lock()
 	defer b.mux.Unlock()
 
-	var args []string
-
-	t := reflect.TypeOf(b.backupCR)
-	v := reflect.ValueOf(b.backupCR)
-
-	for i := 0; i < t.NumField(); i++ {
-		if !v.Field(i).IsZero() {
-			argName := strings.ToLower(t.Field(i).Name)
-			args = append(args, fmt.Sprintf("\t\t- --%s=%s", argName, v.Field(i).String()))
-		}
+	args := []string{"\t- backup-server"}
+	if b.enabled {
+		args = append(args, fmt.Sprintf("- --%s=%v", "enabled", b.enabled))
 	}
 
-	return strings.Join(args, "\n")
+	if b.backupCR.TimeZone != "" {
+		args = append(args, fmt.Sprintf("- --%s=%s", "timezone", b.backupCR.TimeZone))
+	}
+
+	if b.backupCR.Schedule != "" {
+		args = append(args, fmt.Sprintf("- --%s=%s", "schedule", b.backupCR.Schedule))
+	}
+
+	return strings.Join(args, "\n\t")
 }
