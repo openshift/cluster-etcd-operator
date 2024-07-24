@@ -18,11 +18,10 @@ type BackupConfig struct {
 	mux      sync.Mutex
 }
 
-func NewDisabledBackupConfig(backupCR backupv1alpha1.EtcdBackupSpec, enabled bool) *BackupConfig {
+func NewDisabledBackupConfig() *BackupConfig {
 	return &BackupConfig{
-		enabled:  enabled,
-		backupCR: backupCR,
-		mux:      sync.Mutex{},
+		enabled: false,
+		mux:     sync.Mutex{},
 	}
 }
 
@@ -31,9 +30,7 @@ func (b *BackupConfig) ArgString() string {
 	defer b.mux.Unlock()
 
 	args := []string{"    - backup-server"}
-	if b.enabled {
-		args = append(args, fmt.Sprintf("- --%s=%v", "enabled", b.enabled))
-	}
+	args = append(args, fmt.Sprintf("- --%s=%v", "enabled", b.enabled))
 
 	if b.backupCR.TimeZone != "" {
 		args = append(args, fmt.Sprintf("- --%s=%s", "timezone", b.backupCR.TimeZone))

@@ -30,13 +30,13 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 			"disabled",
 			createEtcdBackupSpec(timezone, schedule),
 			false,
-			"    - backup-server\n    - --timezone=GMT\n    - --schedule=0 */2 * * *",
+			"    - backup-server\n    - --enabled=false\n    - --timezone=GMT\n    - --schedule=0 */2 * * *",
 		},
 		{
 			"empty schedule disabled",
 			createEtcdBackupSpec(timezone, ""),
 			false,
-			"    - backup-server\n    - --timezone=GMT",
+			"    - backup-server\n    - --enabled=false\n    - --timezone=GMT",
 		},
 		{
 			"empty schedule enabled",
@@ -49,7 +49,7 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 			"empty timezone disabled",
 			createEtcdBackupSpec("", schedule),
 			false,
-			"    - backup-server\n    - --schedule=0 */2 * * *",
+			"    - backup-server\n    - --enabled=false\n    - --schedule=0 */2 * * *",
 		},
 		{
 			"empty timezone enabled",
@@ -62,7 +62,7 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 			"empty timezone and schedule disabled",
 			createEtcdBackupSpec("", ""),
 			false,
-			"    - backup-server",
+			"    - backup-server\n    - --enabled=false",
 		},
 		{
 			"empty timezone and schedule enabled",
@@ -74,8 +74,15 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			c := NewDisabledBackupConfig(tc.cr, tc.enabled)
+
+			c := NewDisabledBackupConfig()
+			c.backupCR = tc.cr
+			if tc.enabled {
+				c.enabled = true
+			}
+
 			act := c.ArgString()
+
 			require.Equal(t, tc.expected, act)
 		})
 	}

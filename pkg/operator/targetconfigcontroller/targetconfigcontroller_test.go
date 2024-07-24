@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
-	"github.com/openshift/api/config/v1alpha1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
@@ -156,7 +155,7 @@ func TestTargetConfigController(t *testing.T) {
 				operatorClient:        fakeOperatorClient,
 				kubeClient:            fakeKubeClient,
 				envVarGetter:          envVar,
-				backupVarGetter:       backuphelpers.NewDisabledBackupConfig(v1alpha1.EtcdBackupSpec{}, false),
+				backupVarGetter:       backuphelpers.NewDisabledBackupConfig(),
 				enqueueFn:             func() {},
 				quorumChecker:         quorumChecker,
 			}
