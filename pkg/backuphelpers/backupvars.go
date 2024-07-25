@@ -8,15 +8,21 @@ import (
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
 )
 
+type Enqueueable interface {
+	Enqueue()
+}
+
 type BackupVar interface {
+	AddListener(listener Enqueueable)
 	SetBackupSpec(spec backupv1alpha1.EtcdBackupSpec)
 	ArgString() string
 }
 
 type BackupConfig struct {
-	enabled bool
-	spec    backupv1alpha1.EtcdBackupSpec
-	mux     sync.Mutex
+	enabled   bool
+	spec      backupv1alpha1.EtcdBackupSpec
+	listeners []Enqueueable
+	mux       sync.Mutex
 }
 
 func NewDisabledBackupConfig() *BackupConfig {
@@ -49,4 +55,8 @@ func (b *BackupConfig) ArgString() string {
 	}
 
 	return strings.Join(args, "\n    ")
+}
+
+func (b *BackupConfig) AddListener(listener Enqueueable) {
+	b.listeners = append(b.listeners, listener)
 }

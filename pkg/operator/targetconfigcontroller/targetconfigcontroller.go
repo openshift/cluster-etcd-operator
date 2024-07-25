@@ -75,6 +75,7 @@ func NewTargetConfigController(
 		syncCtx.Queue().Add(syncCtx.QueueKey())
 	}
 	envVarGetter.AddListener(c)
+	backupVarGetter.AddListener(c)
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
 	livenessChecker.Add("TargetConfigController", syncer)
