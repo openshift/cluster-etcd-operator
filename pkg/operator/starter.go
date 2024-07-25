@@ -248,6 +248,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorClient,
 		cachedMemberClient)
 
+	backupVar := backuphelpers.NewDisabledBackupConfig()
+
 	targetConfigReconciler := targetconfigcontroller.NewTargetConfigController(
 		AlivenessChecker,
 		os.Getenv("IMAGE"),
@@ -260,7 +262,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		masterNodeInformer,
 		kubeClient,
 		envVarController,
-		backuphelpers.NewDisabledBackupConfig(),
+		backupVar,
 		controllerContext.EventRecorder,
 		quorumChecker,
 	)
@@ -467,6 +469,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			controllerContext.EventRecorder,
 			os.Getenv("OPERATOR_IMAGE"),
 			featureGateAccessor,
+			backupVar,
 			configBackupInformer)
 
 		backupController := backupcontroller.NewBackupController(

@@ -76,7 +76,7 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 
 			c := NewDisabledBackupConfig()
-			c.backupCR = tc.cr
+			c.SetBackupSpec(tc.cr)
 			if tc.enabled {
 				c.enabled = true
 			}
