@@ -32,6 +32,8 @@ func NewBackupServer(ctx context.Context) *cobra.Command {
 		Short: "Backs up a snapshot of etcd database and static pod resources without config",
 		Run: func(cmd *cobra.Command, args []string) {
 
+			klog.Infof("hello from backup server :) ")
+
 			if err := backupSrv.Validate(); err != nil {
 				klog.Fatal(err)
 			}
@@ -64,6 +66,7 @@ func (b *backupServer) Run(ctx context.Context) error {
 	//	Tz:      b.timeZone,
 	//})
 
+	klog.Infof("hello from backup server Run() :) ")
 	// handle teardown
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
