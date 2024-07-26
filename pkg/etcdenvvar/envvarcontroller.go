@@ -182,14 +182,20 @@ func (c *EnvVarController) checkEnvVars() error {
 		return err
 	}
 
+	updated := false
 	func() {
 		c.envVarMapLock.Lock()
 		defer c.envVarMapLock.Unlock()
 
 		if !reflect.DeepEqual(c.envVarMap, currEnvVarMap) {
 			c.envVarMap = currEnvVarMap
+			updated = true
 		}
 	}()
+
+	if !updated {
+		return nil
+	}
 
 	// update listeners outside the lock in-case they are synchronously retrieving via GetEnvVars within the listener
 	for _, listener := range c.listeners {
