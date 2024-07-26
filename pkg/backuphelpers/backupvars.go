@@ -2,6 +2,7 @@ package backuphelpers
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -36,7 +37,14 @@ func (b *BackupConfig) SetBackupSpec(spec backupv1alpha1.EtcdBackupSpec) {
 	b.mux.Lock()
 	defer b.mux.Unlock()
 
+	if reflect.DeepEqual(b.spec, spec) {
+		return
+	}
+
 	b.spec = spec
+	for _, l := range b.listeners {
+		l.Enqueue()
+	}
 }
 
 func (b *BackupConfig) ArgString() string {
@@ -58,5 +66,8 @@ func (b *BackupConfig) ArgString() string {
 }
 
 func (b *BackupConfig) AddListener(listener Enqueueable) {
+	b.mux.Lock()
+	defer b.mux.Unlock()
+
 	b.listeners = append(b.listeners, listener)
 }
