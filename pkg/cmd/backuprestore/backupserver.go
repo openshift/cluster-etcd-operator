@@ -14,12 +14,13 @@ import (
 	"github.com/spf13/pflag"
 )
 
+const backupDir = "/var/backup/etcd"
+
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
 
 type backupServer struct {
 	schedule  string
 	timeZone  string
-	backupDir string
 	enabled   bool
 	scheduler *tasker.Tasker
 	backupOptions
@@ -52,7 +53,6 @@ func NewBackupServer(ctx context.Context) *cobra.Command {
 func (b *backupServer) AddFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&b.enabled, "enabled", false, "enable backup server")
 	fs.StringVar(&b.schedule, "schedule", "", "schedule specifies the cron schedule to run the backup")
-	fs.StringVar(&b.backupDir, "backup-dir", "", "Path to the directory where the backup is generated")
 	fs.StringVar(&b.timeZone, "timezone", "", "timezone specifies the timezone of the cron schedule to run the backup")
 	cobra.MarkFlagRequired(fs, "enabled")
 
@@ -71,13 +71,7 @@ func (b *backupServer) Validate() error {
 		return err
 	}
 
-	if len(b.backupDir) == 0 {
-		err := errors.New("missing required flag: --backup-dir")
-		klog.Error(err)
-		return err
-	}
-
-	b.backupOptions.backupDir = b.backupDir
+	b.backupOptions.backupDir = backupDir
 	return b.backupOptions.Validate()
 }
 
