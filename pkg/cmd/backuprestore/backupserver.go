@@ -77,10 +77,6 @@ func (b *backupServer) Validate() error {
 
 func (b *backupServer) Run(ctx context.Context) error {
 	klog.Infof("hello from backup server Run() :) ")
-	if !b.enabled {
-		klog.Infof("backup-server is disabled")
-		return nil
-	}
 
 	b.scheduler = tasker.New(tasker.Option{
 		Verbose: true,
@@ -105,16 +101,19 @@ func (b *backupServer) Run(ctx context.Context) error {
 		}
 	}()
 
-	err := b.scheduleBackup()
-	if err != nil {
-		return err
-	}
-
 	doneCh := make(chan struct{})
-	go func() {
-		b.scheduler.Run()
-		doneCh <- struct{}{}
-	}()
+
+	if b.enabled {
+		err := b.scheduleBackup()
+		if err != nil {
+			return err
+		}
+
+		go func() {
+			b.scheduler.Run()
+			doneCh <- struct{}{}
+		}()
+	}
 
 	for {
 		select {
