@@ -2,12 +2,14 @@ package backuprestore
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"k8s.io/klog/v2"
 
+	"github.com/adhocore/gronx/pkg/tasker"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -15,10 +17,10 @@ import (
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
 
 type backupServer struct {
-	schedule string
-	timeZone string
-	enabled  bool
-	//scheduler *tasker.Tasker
+	schedule  string
+	timeZone  string
+	enabled   bool
+	scheduler *tasker.Tasker
 	backupOptions
 }
 
@@ -50,23 +52,26 @@ func (b *backupServer) AddFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&b.enabled, "enabled", false, "enable backup server")
 	fs.StringVar(&b.schedule, "schedule", "", "schedule specifies the cron schedule to run the backup")
 	fs.StringVar(&b.timeZone, "timezone", "", "timezone specifies the timezone of the cron schedule to run the backup")
-	cobra.MarkFlagRequired(fs, "enabled")
+	cobra.MarkFlagRequired(fs, "schedule")
 
-	//b.backupOptions.AddFlags(fs)
+	b.backupOptions.AddFlags(fs)
 }
 
 func (b *backupServer) Validate() error {
-	//return b.backupOptions.Validate()
-	return nil
+	if len(b.schedule) == 0 {
+		return errors.New("missing required flag: --schedule")
+	}
+	return b.backupOptions.Validate()
 }
 
 func (b *backupServer) Run(ctx context.Context) error {
-	//b.scheduler = tasker.New(tasker.Option{
-	//	Verbose: true,
-	//	Tz:      b.timeZone,
-	//})
-
 	klog.Infof("hello from backup server Run() :) ")
+
+	b.scheduler = tasker.New(tasker.Option{
+		Verbose: true,
+		Tz:      b.timeZone,
+	})
+
 	// handle teardown
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -85,21 +90,33 @@ func (b *backupServer) Run(ctx context.Context) error {
 		}
 	}()
 
-	//err := b.scheduleBackup()
-	//if err != nil {
-	//	return err
-	//}
-	//
-	//doneCh := make(chan struct{})
-	//go func() {
-	//	b.scheduler.Run()
-	//	doneCh <- struct{}{}
-	//}()
-	//
-	//<-doneCh
-	//return nil
+	err := b.scheduleBackup()
+	if err != nil {
+		return err
+	}
 
-	<-ctx.Done()
+	doneCh := make(chan struct{})
+	go func() {
+		b.scheduler.Run()
+		doneCh <- struct{}{}
+	}()
 
-	return nil
+	for {
+		select {
+		case <-doneCh:
+			klog.Infof("scheduler has been terminated")
+		case <-ctx.Done():
+			klog.Infof("context has been terminated")
+		}
+	}
+}
+
+func (b *backupServer) scheduleBackup() error {
+	var err error
+	b.scheduler.Task(b.schedule, func(ctx context.Context) (int, error) {
+		err = backup(&b.backupOptions)
+		return 0, err
+	}, false)
+
+	return err
 }
