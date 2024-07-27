@@ -61,7 +61,7 @@ func (b *backupServer) AddFlags(fs *pflag.FlagSet) {
 
 func (b *backupServer) Validate() error {
 	if !b.enabled {
-		klog.Infof("backup-server is not enabled")
+		klog.Infof("backup-server is disabled")
 		return nil
 	}
 
@@ -78,7 +78,7 @@ func (b *backupServer) Validate() error {
 func (b *backupServer) Run(ctx context.Context) error {
 	klog.Infof("hello from backup server Run() :) ")
 	if !b.enabled {
-		klog.Infof("backup-server is not enabled")
+		klog.Infof("backup-server is disabled")
 		return nil
 	}
 

@@ -1278,6 +1278,7 @@ ${COMPUTED_ENV_VARS}
       name: config-dir
     - hostPath:
         path: /var/backup/etcd
+        type: DirectoryOrCreate
       name: backup-dir
 `)
 
