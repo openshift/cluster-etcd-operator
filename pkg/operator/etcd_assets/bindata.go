@@ -1245,8 +1245,10 @@ ${COMPUTED_ENV_VARS}
     volumeMounts:
       - mountPath: /var/lib/etcd
         name: data-dir
-      - mountPath: /var/log/etcd
-        name: log-dir
+      - mountPath: /etc/kubernetes
+        name: config-dir
+      - mountPath: /var/backup/etcd
+        name: backup-dir
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
@@ -1271,6 +1273,12 @@ ${COMPUTED_ENV_VARS}
     - hostPath:
         path: /var/log/etcd
       name: log-dir
+    - hostPath:
+        path: /etc/kubernetes
+      name: config-dir
+    - hostPath:
+        path: /var/backup/etcd
+      name: backup-dir
 `)
 
 func etcdPodYamlBytes() ([]byte, error) {
