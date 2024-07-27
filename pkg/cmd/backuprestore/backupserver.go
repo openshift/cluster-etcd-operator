@@ -19,6 +19,7 @@ var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
 type backupServer struct {
 	schedule  string
 	timeZone  string
+	backupDir string
 	enabled   bool
 	scheduler *tasker.Tasker
 	backupOptions
@@ -51,6 +52,7 @@ func NewBackupServer(ctx context.Context) *cobra.Command {
 func (b *backupServer) AddFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&b.enabled, "enabled", false, "enable backup server")
 	fs.StringVar(&b.schedule, "schedule", "", "schedule specifies the cron schedule to run the backup")
+	fs.StringVar(&b.backupDir, "backup-dir", "", "Path to the directory where the backup is generated")
 	fs.StringVar(&b.timeZone, "timezone", "", "timezone specifies the timezone of the cron schedule to run the backup")
 	cobra.MarkFlagRequired(fs, "enabled")
 
@@ -58,14 +60,33 @@ func (b *backupServer) AddFlags(fs *pflag.FlagSet) {
 }
 
 func (b *backupServer) Validate() error {
-	if len(b.schedule) == 0 {
-		return errors.New("missing required flag: --schedule")
+	if !b.enabled {
+		klog.Infof("backup-server is not enabled")
+		return nil
 	}
+
+	if len(b.schedule) == 0 {
+		err := errors.New("missing required flag: --schedule")
+		klog.Error(err)
+		return err
+	}
+
+	if len(b.backupDir) == 0 {
+		err := errors.New("missing required flag: --backup-dir")
+		klog.Error(err)
+		return err
+	}
+
+	b.backupOptions.backupDir = b.backupDir
 	return b.backupOptions.Validate()
 }
 
 func (b *backupServer) Run(ctx context.Context) error {
 	klog.Infof("hello from backup server Run() :) ")
+	if !b.enabled {
+		klog.Infof("backup-server is not enabled")
+		return nil
+	}
 
 	b.scheduler = tasker.New(tasker.Option{
 		Verbose: true,
