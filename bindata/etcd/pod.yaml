@@ -333,6 +333,8 @@ ${COMPUTED_ENV_VARS}
         name: config-dir
       - mountPath: /var/backup/etcd
         name: backup-dir
+      - mountPath: /etc/kubernetes/static-pod-certs
+        name: cert-dir
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
