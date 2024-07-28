@@ -14,7 +14,10 @@ import (
 	"github.com/spf13/pflag"
 )
 
-const backupDir = "/var/backup/etcd"
+const (
+	backupVolume = "/var/backup/etcd/"
+	backupFolder = "current-backup"
+)
 
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
 
@@ -71,7 +74,7 @@ func (b *backupServer) Validate() error {
 		return err
 	}
 
-	b.backupOptions.backupDir = backupDir
+	b.backupOptions.backupDir = backupVolume + backupFolder
 	return b.backupOptions.Validate()
 }
 
