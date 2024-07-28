@@ -30,13 +30,13 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 			"disabled",
 			createEtcdBackupSpec(timezone, schedule),
 			false,
-			"    - backup-server\n    - --enabled=false\n    - --timezone=GMT\n    - --schedule=0 */2 * * *",
+			"    - backup-server\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *",
 		},
 		{
 			"empty schedule disabled",
 			createEtcdBackupSpec(timezone, ""),
 			false,
-			"    - backup-server\n    - --enabled=false\n    - --timezone=GMT",
+			"    - backup-server\n    - --enabled=true\n    - --timezone=GMT",
 		},
 		{
 			"empty schedule enabled",
@@ -49,7 +49,7 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 			"empty timezone disabled",
 			createEtcdBackupSpec("", schedule),
 			false,
-			"    - backup-server\n    - --enabled=false\n    - --schedule=0 */2 * * *",
+			"    - backup-server\n    - --enabled=true\n    - --schedule=0 */2 * * *",
 		},
 		{
 			"empty timezone enabled",
