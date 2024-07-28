@@ -38,30 +38,40 @@ func archiveLatestResources(configDir, backupFile string) error {
 }
 
 func backup(r *backupOptions) error {
+	klog.Infof("hello from backup server -inside backupOptions backup()  ")
 	cli, err := getEtcdClient(r.endpoints)
 	if err != nil {
+		klog.Errorf("failed to get etcd client [%v]", err)
 		return fmt.Errorf("backup: failed to get etcd client: %w", err)
 	}
 	defer cli.Close()
 
+	klog.Infof("hello from backup server -inside backupOptions backup() - before checkAndCreateDir() ")
 	if err := checkAndCreateDir(r.backupDir); err != nil {
+		klog.Errorf("hello from backup server -inside backupOptions backup() - inside checkAndCreateDir() [%v] ", err)
 		return fmt.Errorf("backup: checkAndCreateDir failed: %w", err)
 	}
+	klog.Infof("hello from backup server -inside backupOptions backup() - after checkAndCreateDir() ")
 
 	// Trying to match the output file formats with the formats of the current cluster-backup.sh script
 	dateString := time.Now().Format("2006-01-02_150405")
 	outputArchive := "static_kuberesources_" + dateString + ".tar.gz"
 	snapshotOutFile := "snapshot_" + dateString + ".db"
 
+	klog.Infof("hello from backup server -inside backupOptions backup() - before saveSnapshot() ")
 	// Save snapshot
 	if err := saveSnapshot(cli, filepath.Join(r.backupDir, snapshotOutFile)); err != nil {
+		klog.Errorf("hello from backup server -inside backupOptions saveSnapshot() - inside saveSnapshot() [%v] ", err)
 		return fmt.Errorf("saveSnapshot failed: %w", err)
 	}
-
+	klog.Infof("hello from backup server -inside backupOptions backup() - after saveSnapshot() ")
 	// Save the corresponding static pod resources
+
+	klog.Infof("hello from backup server -inside backupOptions backup() - before archiveLatestResources() ")
 	if err := archiveLatestResources(r.configDir, filepath.Join(r.backupDir, outputArchive)); err != nil {
+		klog.Errorf("hello from backup server -inside backupOptions archiveLatestResources() - inside archiveLatestResources() [%v] ", err)
 		return fmt.Errorf("archiveLatestResources failed: %w", err)
 	}
-
+	klog.Infof("hello from backup server -inside backupOptions backup() - after archiveLatestResources() ")
 	return nil
 }
