@@ -43,34 +43,21 @@ type memberHealth []healthCheck
 
 func GetMemberHealth(ctx context.Context, etcdMembers []*etcdserverpb.Member) memberHealth {
 	memberHealth := memberHealth{}
+	resChan := make(chan healthCheck, 1)
 	for _, member := range etcdMembers {
 		if !HasStarted(member) {
 			memberHealth = append(memberHealth, healthCheck{Member: member, Healthy: false})
 			continue
 		}
 
-		const defaultTimeout = 30 * time.Second
-		resChan := make(chan healthCheck, 1)
-		go func() {
-			ctxTimeout, cancel := context.WithTimeout(ctx, defaultTimeout)
-			defer cancel()
+		go func(m *etcdserverpb.Member) {
+			resChan <- checkSingleMemberHealth(ctx, m)
+		}(member)
+	}
 
-			resChan <- checkSingleMemberHealth(ctxTimeout, member)
-			// closing here to avoid late replies to panic on resChan,
-			// the result will be considered a timeout anyway
-			close(resChan)
-		}()
-
-		select {
-		case res := <-resChan:
-			memberHealth = append(memberHealth, res)
-		case <-time.After(defaultTimeout):
-			memberHealth = append(memberHealth, healthCheck{
-				Member:  member,
-				Healthy: false,
-				Error: fmt.Errorf("30s timeout waiting for member %s to respond to health check",
-					member.Name)})
-		}
+	for len(memberHealth) < len(etcdMembers) {
+		res := <-resChan
+		memberHealth = append(memberHealth, res)
 	}
 
 	// Purge any unknown members from the raft term metrics collector.
