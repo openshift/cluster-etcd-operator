@@ -2,7 +2,6 @@ package targetconfigcontroller
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -56,24 +55,6 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(2),
 			},
 			etcdMembersEnvVar: "1,2,3",
-		},
-		{
-			name: "Quorum not fault tolerant",
-			objects: []runtime.Object{
-				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
-			},
-			staticPodStatus: u.StaticPodOperatorStatus(
-				u.WithLatestRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-			),
-			etcdMembers: []*etcdserverpb.Member{
-				u.FakeEtcdMemberWithoutServer(0),
-				u.FakeEtcdMemberWithoutServer(2),
-			},
-			etcdMembersEnvVar: "1,3",
-			expectedErr:       fmt.Errorf("TargetConfigController can't evaluate whether quorum is safe: %w", fmt.Errorf("etcd cluster has quorum of 2 which is not fault tolerant: [{Member:name:\"etcd-0\" peerURLs:\"https://10.0.0.1:2380\" clientURLs:\"https://10.0.0.1:2907\"  Healthy:true Took: Error:<nil>} {Member:ID:2 name:\"etcd-2\" peerURLs:\"https://10.0.0.3:2380\" clientURLs:\"https://10.0.0.3:2907\"  Healthy:true Took: Error:<nil>}]")),
 		},
 		{
 			name: "Quorum not fault tolerant but bootstrapping",

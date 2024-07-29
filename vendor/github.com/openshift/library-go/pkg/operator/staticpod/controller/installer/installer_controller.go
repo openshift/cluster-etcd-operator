@@ -98,6 +98,8 @@ type InstallerController struct {
 	clock            clock.Clock
 	installerBackOff func(count int) time.Duration
 	fallbackBackOff  func(count int) time.Duration
+
+	installPrecondition StaticPodInstallerPreconditionsFuncType
 }
 
 // InstallerPodMutationFunc is a function that has a chance at changing the installer pod before it is created
@@ -125,6 +127,14 @@ func (c *InstallerController) WithCerts(certDir string, certConfigMaps, certSecr
 // and the state machine can expect that the startup-monitor acknowledges a ready operand.
 func (c *InstallerController) WithStartupMonitorSupport(startupMonitorEnabled func() (bool, error)) *InstallerController {
 	c.startupMonitorEnabled = startupMonitorEnabled
+	return c
+}
+
+// StaticPodInstallerPreconditionsFuncType checks if installPrecondition is met (is true) and then proceeeds with creation of installer pod
+type StaticPodInstallerPreconditionsFuncType func(ctx context.Context) (bool, error)
+
+func (c *InstallerController) WithInstallPrecondition(installPrecondition StaticPodInstallerPreconditionsFuncType) *InstallerController {
+	c.installPrecondition = installPrecondition
 	return c
 }
 
@@ -476,6 +486,15 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 						klog.V(4).Infof("Backing off node %s installer retry %d until %v", currNodeState.NodeName, currNodeState.LastFailedCount+1, earliestRetry)
 						return true, earliestRetry.Sub(c.now()), nil
 					}
+				}
+
+				requeue, err := c.evaluateInstallerPrecondition(ctx, currNodeState)
+				if err != nil {
+					return true, 0, err
+				}
+				if requeue {
+					klog.V(4).Infof("Requeuing the creation of installer pod for revision %d on node %q", currNodeState.TargetRevision, currNodeState.NodeName)
+					return true, 0, nil
 				}
 
 				if err := c.ensureInstallerPod(ctx, operatorSpec, currNodeState); err != nil {
@@ -932,6 +951,28 @@ func (c *InstallerController) ensureInstallerPod(ctx context.Context, operatorSp
 
 	_, _, err = resourceapply.ApplyPod(ctx, c.podsGetter, c.eventRecorder, pod)
 	return err
+}
+
+// returns whether or not to requeue the creation of installer pod and if an error happened while evaluating the install precondition
+func (c *InstallerController) evaluateInstallerPrecondition(ctx context.Context, ns *operatorv1.NodeStatus) (bool, error) {
+	// preconditions are only evaluated when the installer pod isn't already present for the target revision
+	installerPodName := getInstallerPodName(ns)
+	_, err := c.podsGetter.Pods(c.targetNamespace).Get(ctx, installerPodName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		if c.installPrecondition != nil {
+			shouldInstall, err := c.installPrecondition(ctx)
+			if err != nil {
+				return true, err
+			}
+			if !shouldInstall {
+				klog.Infof("Preconditions not met, requeuing the creation of installer pod %s", installerPodName)
+				return true, nil
+			}
+		}
+	} else if err != nil {
+		return true, err
+	}
+	return false, nil
 }
 
 func (c *InstallerController) setOwnerRefs(ctx context.Context, revision int32) ([]metav1.OwnerReference, error) {
