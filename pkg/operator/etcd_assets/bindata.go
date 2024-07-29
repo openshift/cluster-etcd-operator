@@ -1232,7 +1232,7 @@ ${COMPUTED_ENV_VARS}
     imagePullPolicy: IfNotPresent
     terminationMessagePolicy: FallbackToLogsOnError
     command: [cluster-etcd-operator]
-    args: []
+    args:
     securityContext:
       privileged: true
     resources:
