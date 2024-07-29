@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
+	"github.com/openshift/cluster-etcd-operator/pkg/testutils"
 
 	"github.com/stretchr/testify/require"
 )
@@ -22,51 +23,51 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 	}{
 		{
 			"enabled",
-			createEtcdBackupSpec(timezone, schedule),
+			testutils.CreateEtcdBackupSpec(timezone, schedule),
 			true,
 			"    - backup-server\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *",
 		},
 		{
 			"disabled",
-			createEtcdBackupSpec(timezone, schedule),
+			testutils.CreateEtcdBackupSpec(timezone, schedule),
 			false,
 			"    - backup-server\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *",
 		},
 		{
 			"empty schedule disabled",
-			createEtcdBackupSpec(timezone, ""),
+			testutils.CreateEtcdBackupSpec(timezone, ""),
 			false,
 			"    - backup-server\n    - --enabled=true\n    - --timezone=GMT",
 		},
 		{
 			"empty schedule enabled",
-			createEtcdBackupSpec(timezone, ""),
+			testutils.CreateEtcdBackupSpec(timezone, ""),
 			true,
 			"    - backup-server\n    - --enabled=true\n    - --timezone=GMT",
 		},
 
 		{
 			"empty timezone disabled",
-			createEtcdBackupSpec("", schedule),
+			testutils.CreateEtcdBackupSpec("", schedule),
 			false,
 			"    - backup-server\n    - --enabled=true\n    - --schedule=0 */2 * * *",
 		},
 		{
 			"empty timezone enabled",
-			createEtcdBackupSpec("", schedule),
+			testutils.CreateEtcdBackupSpec("", schedule),
 			true,
 			"    - backup-server\n    - --enabled=true\n    - --schedule=0 */2 * * *",
 		},
 
 		{
 			"empty timezone and schedule disabled",
-			createEtcdBackupSpec("", ""),
+			testutils.CreateEtcdBackupSpec("", ""),
 			false,
 			"    - backup-server\n    - --enabled=false",
 		},
 		{
 			"empty timezone and schedule enabled",
-			createEtcdBackupSpec("", ""),
+			testutils.CreateEtcdBackupSpec("", ""),
 			true,
 			"    - backup-server\n    - --enabled=true",
 		},
@@ -85,12 +86,5 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 
 			require.Equal(t, tc.expected, act)
 		})
-	}
-}
-
-func createEtcdBackupSpec(timezone, schedule string) backupv1alpha1.EtcdBackupSpec {
-	return backupv1alpha1.EtcdBackupSpec{
-		Schedule: schedule,
-		TimeZone: timezone,
 	}
 }

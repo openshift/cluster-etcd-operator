@@ -5,11 +5,6 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
-	"github.com/openshift/library-go/pkg/crypto"
-	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/client-go/util/cert"
 	"math/rand"
 	"path/filepath"
 	"regexp"
@@ -18,23 +13,31 @@ import (
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
+	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
+	"github.com/openshift/library-go/pkg/crypto"
+
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/v3/mock/mockserver"
-	"gopkg.in/yaml.v3"
+
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/cert"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func MustAbsPath(path string) string {
@@ -539,4 +542,16 @@ func AssertNodeSpecificCertificates(t *testing.T, node *corev1.Node, secrets []c
 	}
 
 	require.Equalf(t, 0, expectedSet.Len(), "missing certificates for node: %v", expectedSet.List())
+}
+
+func CreateEtcdBackupSpec(timezone, schedule string) backupv1alpha1.EtcdBackupSpec {
+	return backupv1alpha1.EtcdBackupSpec{
+		Schedule: schedule,
+		TimeZone: timezone,
+	}
+}
+
+func CreateEtcdBackupSpecPtr(timezone, schedule string) *backupv1alpha1.EtcdBackupSpec {
+	spec := CreateEtcdBackupSpec(timezone, schedule)
+	return &spec
 }
