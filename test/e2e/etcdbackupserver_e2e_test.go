@@ -2,8 +2,6 @@ package e2e
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -11,14 +9,8 @@ import (
 	"github.com/openshift/cluster-etcd-operator/test/e2e/framework"
 	"github.com/openshift/library-go/test/library"
 
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/apiserver/pkg/storage/names"
-	"k8s.io/klog/v2"
-	"k8s.io/utils/pointer"
-
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
@@ -43,10 +35,13 @@ func TestEtcdBackupServer(t *testing.T) {
 	masterNodes, err := clientSet.CoreV1Interface.Nodes().List(context.Background(), metav1.ListOptions{LabelSelector: masterNodeLabel})
 	require.NoErrorf(t, err, "error listing master nodes")
 
+	filesPerNode := map[string][]string{}
 	for _, node := range masterNodes.Items {
-		err = isBackupExist(t, node)
-		require.NoError(t, err)
+		files := listFilesInVolume(t, backupHostPath, false, 30*time.Minute, node)
+		filesPerNode[node.Name] = files
 	}
+
+	assertBackupFiles(t, filesPerNode)
 
 	t.Cleanup(func() {
 		cErr := configClient.Backups().Delete(context.Background(), backupCR.Name, metav1.DeleteOptions{})
@@ -58,9 +53,6 @@ func createDefaultBackupCR(schedule, timeZone string) *configv1alpha1.Backup {
 	return &configv1alpha1.Backup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: defaultBackupCRName,
-			Annotations: map[string]string{
-				"default": "true",
-			},
 		},
 		Spec: configv1alpha1.BackupSpec{
 			EtcdBackupSpec: configv1alpha1.EtcdBackupSpec{
@@ -74,74 +66,9 @@ func createDefaultBackupCR(schedule, timeZone string) *configv1alpha1.Backup {
 	}
 }
 
-func isBackupExist(t *testing.T, node corev1.Node) error {
-	client := framework.NewCoreClient(t)
-	pod := corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      names.SimpleNameGenerator.GenerateName("backup-finder-pod" + "-"),
-			Namespace: OpenShiftEtcdNamespace,
-		},
-		Spec: corev1.PodSpec{
-			NodeName: node.Name,
-			Volumes: []corev1.Volume{
-				{
-					Name: "backup-dir",
-					VolumeSource: corev1.VolumeSource{
-						HostPath: &corev1.HostPathVolumeSource{
-							Path: backupHostPath,
-						},
-					},
-				},
-			},
-			Containers: []corev1.Container{
-				{
-					Name:       "finder",
-					Image:      ShellImage,
-					Command:    []string{"find", "."},
-					WorkingDir: backupHostPath,
-					Resources:  corev1.ResourceRequirements{},
-					VolumeMounts: []corev1.VolumeMount{
-						{
-							Name:      "backup-dir",
-							ReadOnly:  false,
-							MountPath: backupHostPath,
-						},
-					},
-					SecurityContext: &corev1.SecurityContext{Privileged: pointer.Bool(true)},
-				},
-			},
-			RestartPolicy: corev1.RestartPolicyNever,
-		},
+func assertBackupFiles(t *testing.T, filesMap map[string][]string) {
+	for _, files := range filesMap {
+		require.Contains(t, files[2], "snapshot_")
+		require.Contains(t, files[3], "static_kuberesources_")
 	}
-
-	_, err := client.Pods(OpenShiftEtcdNamespace).Create(context.Background(), &pod, metav1.CreateOptions{})
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
-	err = wait.PollUntilContextCancel(ctx, 10*time.Second, false, func(ctx context.Context) (done bool, err error) {
-		p, err := client.Pods(OpenShiftEtcdNamespace).Get(context.Background(), pod.Name, metav1.GetOptions{})
-		if err != nil {
-			klog.Infof("error while getting finder pod: %v", err)
-			return false, nil
-		}
-
-		if p.Status.Phase == corev1.PodFailed {
-			return true, fmt.Errorf("finder pod failed with status: %s", p.Status.String())
-		}
-
-		return p.Status.Phase == corev1.PodSucceeded, nil
-	})
-	require.NoErrorf(t, err, "waiting for finder pod error")
-
-	logBytes, err := client.Pods(OpenShiftEtcdNamespace).GetLogs(pod.Name, &corev1.PodLogOptions{}).Do(ctx).Raw()
-	require.NoError(t, err)
-
-	files := strings.Split(string(logBytes), "\n")
-	klog.Infof("found files on node [%s]: %v", node.Name, files)
-
-	require.Contains(t, files[2], "snapshot_")
-	require.Contains(t, files[3], "static_kuberesources_")
-
-	return nil
 }

@@ -588,7 +588,7 @@ func collectFilesInPVCAcrossAllNodes(t *testing.T, pvcName string) []string {
 	var lines []string
 	linesSet := make(map[string]bool)
 	for _, node := range list.Items {
-		pvcLines := listFilesInPVC(t, pvcName, node)
+		pvcLines := listFilesInVolume(t, pvcName, true, 10*time.Minute, node)
 		for _, l := range pvcLines {
 			if _, ok := linesSet[l]; !ok {
 				linesSet[l] = true
@@ -599,8 +599,24 @@ func collectFilesInPVCAcrossAllNodes(t *testing.T, pvcName string) []string {
 	return lines
 }
 
-func listFilesInPVC(t *testing.T, pvcName string, node corev1.Node) []string {
+func listFilesInVolume(t *testing.T, volName string, isPVC bool, timeout time.Duration, node corev1.Node) []string {
 	client := framework.NewCoreClient(t)
+
+	var vol corev1.VolumeSource
+	if isPVC {
+		vol = corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+				ClaimName: volName,
+			},
+		}
+	} else {
+		vol = corev1.VolumeSource{
+			HostPath: &corev1.HostPathVolumeSource{
+				Path: volName,
+			},
+		}
+	}
+
 	pod := corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      names.SimpleNameGenerator.GenerateName("backup-finder-pod" + "-"),
@@ -609,12 +625,8 @@ func listFilesInPVC(t *testing.T, pvcName string, node corev1.Node) []string {
 		Spec: corev1.PodSpec{
 			Volumes: []corev1.Volume{
 				{
-					Name: "backup-dir",
-					VolumeSource: corev1.VolumeSource{
-						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-							ClaimName: pvcName,
-						},
-					},
+					Name:         "backup-dir",
+					VolumeSource: vol,
 				},
 			},
 			Containers: []corev1.Container{
@@ -645,7 +657,7 @@ func listFilesInPVC(t *testing.T, pvcName string, node corev1.Node) []string {
 	_, err := client.Pods(OpenShiftEtcdNamespace).Create(context.Background(), &pod, metav1.CreateOptions{})
 	require.NoError(t, err)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	err = wait.PollUntilContextCancel(ctx, 10*time.Second, false, func(ctx context.Context) (done bool, err error) {
 		p, err := client.Pods(OpenShiftEtcdNamespace).Get(context.Background(), pod.Name, metav1.GetOptions{})
