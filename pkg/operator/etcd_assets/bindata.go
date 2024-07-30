@@ -1231,8 +1231,7 @@ ${COMPUTED_ENV_VARS}
     image: ${OPERATOR_IMAGE}
     imagePullPolicy: IfNotPresent
     terminationMessagePolicy: FallbackToLogsOnError
-    command: [cluster-etcd-operator]
-    args:
+    command: ["cluster-etcd-operator","backup-server"]
     securityContext:
       privileged: true
     resources:
