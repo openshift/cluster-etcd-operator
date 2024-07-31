@@ -42,23 +42,24 @@ type healthCheck struct {
 type memberHealth []healthCheck
 
 func GetMemberHealth(ctx context.Context, etcdMembers []*etcdserverpb.Member) memberHealth {
-	memberHealth := memberHealth{}
-	resChan := make(chan healthCheck, 1)
-	for _, member := range etcdMembers {
+	// while we don't explicitly mention that the returned ordering has to be the same as etcdMembers,
+	// we try to keep it that way for backward compatibility reasons
+	memberHealth := make([]healthCheck, len(etcdMembers))
+	wg := sync.WaitGroup{}
+	for i, member := range etcdMembers {
 		if !HasStarted(member) {
-			memberHealth = append(memberHealth, healthCheck{Member: member, Healthy: false})
+			memberHealth[i] = healthCheck{Member: member, Healthy: false}
 			continue
 		}
 
-		go func() {
-			resChan <- checkSingleMemberHealth(ctx, member)
-		}()
+		wg.Add(1)
+		go func(i int) {
+			memberHealth[i] = checkSingleMemberHealth(ctx, member)
+			wg.Done()
+		}(i)
 	}
 
-	for len(memberHealth) < len(etcdMembers) {
-		res := <-resChan
-		memberHealth = append(memberHealth, res)
-	}
+	wg.Wait()
 
 	// Purge any unknown members from the raft term metrics collector.
 	for _, cachedMember := range raftTerms.List() {
