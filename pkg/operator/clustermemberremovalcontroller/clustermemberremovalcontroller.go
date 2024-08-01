@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
+	"slices"
+	"sort"
 	"time"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
@@ -231,7 +232,7 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 	// Don't scale down if all members are healthy and the cluster is already at the desired control-plane size
 	// When at the desired control-plane size, scale down is only allowed if a member is unhealthy so that a new machine can replace it.
 	// For healthy members, deleting a machine should result in a new machine being created and member addition before scale down can occur
-	if reflect.DeepEqual(liveVotingMembers, healthyLiveVotingMembers) && len(healthyLiveVotingMembers) <= desiredControlPlaneReplicasCount {
+	if membersEqual(liveVotingMembers, healthyLiveVotingMembers) && len(healthyLiveVotingMembers) <= desiredControlPlaneReplicasCount {
 		klog.V(2).Infof("skip scale down: all voting, non-bootstrap members are healthy and membership does not exceed the desired cluster size of %v", desiredControlPlaneReplicasCount)
 		return nil
 	}
@@ -466,4 +467,17 @@ func hasInternalIP(machine *machinev1beta1.Machine, memberInternalIP string) boo
 		}
 	}
 	return false
+}
+
+func membersEqual(left, right []*etcdserverpb.Member) bool {
+	sort.SliceStable(left, func(i, j int) bool {
+		return left[i].ID < left[j].ID
+	})
+	sort.SliceStable(right, func(i, j int) bool {
+		return right[i].ID < right[j].ID
+	})
+
+	return slices.EqualFunc(left, right, func(l *etcdserverpb.Member, r *etcdserverpb.Member) bool {
+		return l.ID == r.ID
+	})
 }
