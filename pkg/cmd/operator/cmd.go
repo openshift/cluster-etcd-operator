@@ -34,10 +34,10 @@ func NewOperator() *cobra.Command {
 // EtcdOperatorCorrelatorOptions is a very strict correlator policy to avoid spamming etcd/apiserver with duplicated events
 func EtcdOperatorCorrelatorOptions() record.CorrelatorOptions {
 	return record.CorrelatorOptions{
-		// only allow the same event five times in 10m
-		MaxEvents:            5,
-		MaxIntervalInSeconds: 600,
-		BurstSize:            5,         // default: 25 (change allows a single source to send 5 events about object per minute)
+		// only allow the same event ten times in 10m
+		MaxEvents:            10,
+		MaxIntervalInSeconds: 300,
+		BurstSize:            1,         // default: 25 (change allows a single source to send 1 event about object per minute)
 		QPS:                  1. / 300., // default: 1/300 (change allows refill rate to 1 new event every 300s)
 		KeyFunc: func(event *corev1.Event) (aggregateKey string, localKey string) {
 			return strings.Join([]string{event.Type, event.Reason, event.Message}, "_"), event.Message
