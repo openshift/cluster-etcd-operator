@@ -2,6 +2,7 @@ package targetconfigcontroller
 
 import (
 	"context"
+	errors "errors"
 	"fmt"
 	"strings"
 	"time"
@@ -75,18 +76,71 @@ func NewTargetConfigController(
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
 	livenessChecker.Add("TargetConfigController", syncer)
 
-	return factory.New().WithSyncContext(syncCtx).ResyncEvery(time.Minute).WithInformers(
-		operatorClient.Informer(),
-		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer(),
-		kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer(),
-		kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer(),
-		masterNodeInformer,
-		infrastructureInformer.Informer(),
-		networkInformer.Informer(),
-	).WithSync(syncer.Sync).ToController("TargetConfigController", syncCtx.Recorder())
+	return factory.New().
+		WithSyncContext(syncCtx).
+		ResyncEvery(time.Minute).
+		WithSync(syncer.Sync).
+		WithInformers(
+			operatorClient.Informer(),
+			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer(),
+			kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer(),
+			kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer(),
+			masterNodeInformer,
+			infrastructureInformer.Informer(),
+			networkInformer.Informer(),
+		).ToController("TargetConfigController", syncCtx.Recorder())
 }
 
-func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
+func (c *TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
+	envVars := c.envVarGetter.GetEnvVars()
+	if len(envVars) == 0 {
+		// note this will not degrade the controller, that can happen during CEO restarts often due to cold informer caches (expected)
+		return fmt.Errorf("TargetConfigController missing env var values")
+	}
+
+	operatorSpec, _, _, err := c.operatorClient.GetStaticPodOperatorState()
+	if err != nil {
+		return err
+	}
+
+	err = c.createTargetConfig(ctx, syncCtx.Recorder(), operatorSpec, envVars)
+	if err != nil {
+		condition := operatorv1.OperatorCondition{
+			Type:    "TargetConfigControllerDegraded",
+			Status:  operatorv1.ConditionTrue,
+			Reason:  "SynchronizationError",
+			Message: err.Error(),
+		}
+		if _, _, err := v1helpers.UpdateStaticPodStatus(ctx, c.operatorClient, v1helpers.UpdateStaticPodConditionFn(condition)); err != nil {
+			// this re-queues the sync loop to get the status updated correctly next invocation
+			c.enqueueFn()
+			return err
+		}
+
+		return err
+	}
+
+	condition := operatorv1.OperatorCondition{
+		Type:   "TargetConfigControllerDegraded",
+		Status: operatorv1.ConditionFalse,
+	}
+	if _, _, err := v1helpers.UpdateStaticPodStatus(ctx, c.operatorClient, v1helpers.UpdateStaticPodConditionFn(condition)); err != nil {
+		// this re-queues the sync loop to get the status updated correctly next invocation
+		c.enqueueFn()
+		return err
+	}
+
+	return nil
+}
+
+// createTargetConfig takes care of creation of valid resources in a fixed name. These are inputs to other control loops.
+func (c *TargetConfigController) createTargetConfig(
+	ctx context.Context,
+	recorder events.Recorder,
+	operatorSpec *operatorv1.StaticPodOperatorSpec,
+	envVars map[string]string) error {
+
+	// check the cluster is healthy or not after get env var, to ensure it is safe to rollout
 	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
 	if err != nil {
 		return fmt.Errorf("TargetConfigController can't evaluate whether quorum is safe: %w", err)
@@ -96,77 +150,22 @@ func (c TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncCo
 		return fmt.Errorf("skipping TargetConfigController reconciliation due to insufficient quorum")
 	}
 
-	envVars := c.envVarGetter.GetEnvVars()
-	if len(envVars) == 0 {
-		return fmt.Errorf("TargetConfigController missing env var values")
-	}
-
-	operatorSpec, _, _, err := c.operatorClient.GetStaticPodOperatorState()
-	if err != nil {
-		return err
-	}
-	// check the cluster is healthy or not after get env var, to ensure it is safe to rollout
-	safe, err = c.quorumChecker.IsSafeToUpdateRevision()
-	if err != nil {
-		return fmt.Errorf("TargetConfigController can't evaluate whether quorum is safe: %w", err)
-	}
-
-	if !safe {
-		return fmt.Errorf("skipping TargetConfigController reconciliation due to insufficient quorum")
-	}
-	requeue, err := createTargetConfig(ctx, c, syncCtx.Recorder(), operatorSpec, envVars)
-	if err != nil {
-		return err
-	}
-	if requeue {
-		return fmt.Errorf("synthetic requeue request")
-	}
-
-	return nil
-}
-
-// createTargetConfig takes care of creation of valid resources in a fixed name.  These are inputs to other control loops.
-// returns whether to requeue and if an error happened when updating status.  Normally it updates status itself.
-func createTargetConfig(ctx context.Context, c TargetConfigController, recorder events.Recorder,
-	operatorSpec *operatorv1.StaticPodOperatorSpec, envVars map[string]string) (bool, error) {
-
-	var errors []error
+	var errs error
 	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars)
 	if err != nil {
-		return false, err
+		return err
 	}
 	_, _, err = c.manageStandardPod(ctx, contentReplacer, c.kubeClient.CoreV1(), recorder, operatorSpec)
 	if err != nil {
-		errors = append(errors, fmt.Errorf("%q: %v", "configmap/etcd-pod", err))
+		errs = errors.Join(errs, fmt.Errorf("%q: %w", "configmap/etcd-pod", err))
 	}
 
 	_, _, err = c.manageRecoveryPod(ctx, contentReplacer, c.kubeClient.CoreV1(), recorder, operatorSpec)
 	if err != nil {
-		errors = append(errors, fmt.Errorf("%q: %v", "configmap/restore-etcd-pod", err))
+		errs = errors.Join(errs, fmt.Errorf("%q: %w", "configmap/restore-etcd-pod", err))
 	}
 
-	if len(errors) > 0 {
-		condition := operatorv1.OperatorCondition{
-			Type:    "TargetConfigControllerDegraded",
-			Status:  operatorv1.ConditionTrue,
-			Reason:  "SynchronizationError",
-			Message: v1helpers.NewMultiLineAggregate(errors).Error(),
-		}
-		if _, _, err := v1helpers.UpdateStaticPodStatus(ctx, c.operatorClient, v1helpers.UpdateStaticPodConditionFn(condition)); err != nil {
-			return true, err
-		}
-		return true, nil
-	}
-
-	condition := operatorv1.OperatorCondition{
-		Type:   "TargetConfigControllerDegraded",
-		Status: operatorv1.ConditionFalse,
-	}
-	if _, _, err := v1helpers.UpdateStaticPodStatus(ctx, c.operatorClient, v1helpers.UpdateStaticPodConditionFn(condition)); err != nil {
-		return true, err
-	}
-
-	return false, nil
+	return errs
 }
 
 func loglevelToZap(logLevel operatorv1.LogLevel) string {
