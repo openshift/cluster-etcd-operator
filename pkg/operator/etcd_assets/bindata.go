@@ -1732,6 +1732,7 @@ metadata:
 data:
   etcd.env:
   cluster-restore.sh:
+  quorum-restore.sh:
   cluster-backup.sh:
   etcd-common-tools:
 `)
