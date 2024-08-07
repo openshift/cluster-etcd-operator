@@ -1070,6 +1070,40 @@ func TestAttemptToScaleDown(t *testing.T) {
 	}
 }
 
+func TestMemberOrderingEquals(t *testing.T) {
+	left := []*etcdserverpb.Member{
+		u.FakeEtcdMemberWithoutServer(1),
+		u.FakeEtcdMemberWithoutServer(2),
+		u.FakeEtcdMemberWithoutServer(3),
+	}
+	right := []*etcdserverpb.Member{
+		u.FakeEtcdMemberWithoutServer(1),
+		u.FakeEtcdMemberWithoutServer(2),
+		u.FakeEtcdMemberWithoutServer(3),
+	}
+	require.True(t, membersEqual(left, right))
+
+	// changed ordering
+	right = []*etcdserverpb.Member{
+		u.FakeEtcdMemberWithoutServer(1),
+		u.FakeEtcdMemberWithoutServer(3),
+		u.FakeEtcdMemberWithoutServer(2),
+	}
+	require.True(t, membersEqual(left, right))
+
+	// just the same IDs, bogus names
+	right = []*etcdserverpb.Member{{ID: 3, Name: "lol3"}, {ID: 1, Name: "lol1"}, {ID: 2, Name: "lol2"}}
+	require.True(t, membersEqual(left, right))
+
+	// different count
+	right = []*etcdserverpb.Member{
+		u.FakeEtcdMemberWithoutServer(3),
+		u.FakeEtcdMemberWithoutServer(2),
+	}
+	require.False(t, membersEqual(left, right))
+
+}
+
 func wellKnownEtcdEndpointsConfigMap() *corev1.ConfigMap {
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: "etcd-endpoints", Namespace: "openshift-etcd"},
