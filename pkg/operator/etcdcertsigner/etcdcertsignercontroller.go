@@ -417,7 +417,7 @@ func (c *EtcdCertSignerController) ensureBundles(ctx context.Context,
 	metricsCA *crypto.CA,
 	currentRevision int32,
 ) (serverBundle []*x509.Certificate, metricsBundle []*x509.Certificate, rolloutTriggered bool, err error) {
-	serverBundle, err = c.certConfig.signerCaBundle.EnsureConfigMapCABundle(ctx, serverCA)
+	serverBundle, err = c.certConfig.signerCaBundle.EnsureConfigMapCABundle(ctx, serverCA, "")
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -427,7 +427,7 @@ func (c *EtcdCertSignerController) ensureBundles(ctx context.Context,
 		return nil, nil, false, fmt.Errorf("could not encode server bundle: %w", err)
 	}
 
-	metricsBundle, err = c.certConfig.metricsSignerCaBundle.EnsureConfigMapCABundle(ctx, metricsCA)
+	metricsBundle, err = c.certConfig.metricsSignerCaBundle.EnsureConfigMapCABundle(ctx, metricsCA, "")
 	if err != nil {
 		return nil, nil, false, err
 	}
