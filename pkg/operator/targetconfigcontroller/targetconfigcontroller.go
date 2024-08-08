@@ -160,7 +160,7 @@ func (c *TargetConfigController) createTargetConfig(
 		errs = errors.Join(errs, fmt.Errorf("%q: %w", "configmap/etcd-pod", err))
 	}
 
-	_, _, err = c.manageRecoveryPod(ctx, contentReplacer, c.kubeClient.CoreV1(), recorder, operatorSpec)
+	_, _, err = c.manageRecoveryPods(ctx, contentReplacer, c.kubeClient.CoreV1(), recorder, operatorSpec)
 	if err != nil {
 		errs = errors.Join(errs, fmt.Errorf("%q: %w", "configmap/restore-etcd-pod", err))
 	}
@@ -196,15 +196,17 @@ func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv
 	), nil
 }
 
-func (c *TargetConfigController) manageRecoveryPod(ctx context.Context, substitutionReplacer *strings.Replacer,
-	client coreclientv1.ConfigMapsGetter, recorder events.Recorder,
+func (c *TargetConfigController) manageRecoveryPods(
+	ctx context.Context,
+	substitutionReplacer *strings.Replacer,
+	client coreclientv1.ConfigMapsGetter,
+	recorder events.Recorder,
 	operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
-
-	podBytes := etcd_assets.MustAsset("etcd/restore-pod.yaml")
-	substitutedPodString := substitutionReplacer.Replace(string(podBytes))
-
 	podConfigMap := resourceread.ReadConfigMapV1OrDie(etcd_assets.MustAsset("etcd/restore-pod-cm.yaml"))
-	podConfigMap.Data["pod.yaml"] = substitutedPodString
+	restorePodBytes := etcd_assets.MustAsset("etcd/restore-pod.yaml")
+	podConfigMap.Data["pod.yaml"] = substitutionReplacer.Replace(string(restorePodBytes))
+	quorumRestorePodBytes := etcd_assets.MustAsset("etcd/quorum-restore-pod.yaml")
+	podConfigMap.Data["quorum-restore-pod.yaml"] = substitutionReplacer.Replace(string(quorumRestorePodBytes))
 	podConfigMap.Data["forceRedeploymentReason"] = operatorSpec.ForceRedeploymentReason
 	podConfigMap.Data["version"] = version.Get().String()
 	return resourceapply.ApplyConfigMap(ctx, client, recorder, podConfigMap)
