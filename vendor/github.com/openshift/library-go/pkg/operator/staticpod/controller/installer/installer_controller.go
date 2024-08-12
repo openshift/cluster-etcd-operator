@@ -53,6 +53,14 @@ const (
 //go:embed manifests/installer-pod.yaml
 var podTemplate []byte
 
+type OperatorClient interface {
+	GetStaticPodOperatorState() (spec *operatorv1.StaticPodOperatorSpec, status *operatorv1.StaticPodOperatorStatus, resourceVersion string, err error)
+	GetStaticPodOperatorStateWithQuorum(ctx context.Context) (spec *operatorv1.StaticPodOperatorSpec, status *operatorv1.StaticPodOperatorStatus, resourceVersion string, err error)
+	ApplyStaticPodOperatorStatus(ctx context.Context, fieldManager string, applyConfiguration *applyoperatorv1.StaticPodOperatorStatusApplyConfiguration) (err error)
+}
+
+var _ OperatorClient = v1helpers.StaticPodOperatorClient(nil)
+
 // InstallerController is a controller that watches the currentRevision and targetRevision fields for each node and spawn
 // installer pods to update the static pods on the master nodes.
 type InstallerController struct {
@@ -81,7 +89,7 @@ type InstallerController struct {
 	certSecrets    []UnrevisionedResource
 	certDir        string
 
-	operatorClient v1helpers.StaticPodOperatorClient
+	operatorClient OperatorClient
 
 	configMapsGetter corev1client.ConfigMapsGetter
 	secretsGetter    corev1client.SecretsGetter
@@ -92,7 +100,9 @@ type InstallerController struct {
 	// installerPodImageFn returns the image name for the installer pod
 	installerPodImageFn func() string
 	// ownerRefsFn sets the ownerrefs on the pruner pod
-	ownerRefsFn func(ctx context.Context, revision int32) ([]metav1.OwnerReference, error)
+	ownerRefsFn                    func(ctx context.Context, revision int32) ([]metav1.OwnerReference, error)
+	ensureRequiredResourcesExistFn func(ctx context.Context, revisionNumber int32) error
+	manageInstallationPodsFn       func(ctx context.Context, operatorSpec *operatorv1.StaticPodOperatorSpec, originalOperatorStatus *operatorv1.StaticPodOperatorStatus) (bool, time.Duration, *operatorv1.NodeStatus, func(), error)
 
 	installerPodMutationFns []InstallerPodMutationFunc
 
@@ -200,6 +210,8 @@ func NewInstallerController(
 	}
 
 	c.ownerRefsFn = c.setOwnerRefs
+	c.ensureRequiredResourcesExistFn = c.ensureRequiredResourcesExist
+	c.manageInstallationPodsFn = c.manageInstallationPods
 	c.factory = factory.New().
 		WithInformers(
 			operatorClient.Informer(),
@@ -1123,7 +1135,7 @@ func (c *InstallerController) Sync(ctx context.Context, syncCtx factory.SyncCont
 	// Apply response.
 	if c.podOperatorStatusApplied {
 		if c.lastPodOperatorAppliedRV == 0 {
-			_, _, resourceVersion, err := c.operatorClient.GetOperatorStateWithQuorum(ctx)
+			_, _, resourceVersion, err := c.operatorClient.GetStaticPodOperatorStateWithQuorum(ctx)
 			if err != nil {
 				return err
 			}
@@ -1152,7 +1164,7 @@ func (c *InstallerController) Sync(ctx context.Context, syncCtx factory.SyncCont
 		return nil
 	}
 
-	err = c.ensureRequiredResourcesExist(ctx, originalOperatorStatus.LatestAvailableRevision)
+	err = c.ensureRequiredResourcesExistFn(ctx, originalOperatorStatus.LatestAvailableRevision)
 
 	// Only manage installation pods when all required certs are present.
 	var updatedNode *operatorv1.NodeStatus
@@ -1161,7 +1173,7 @@ func (c *InstallerController) Sync(ctx context.Context, syncCtx factory.SyncCont
 		var requeue bool
 		var after time.Duration
 		var syncErr error
-		requeue, after, updatedNode, updatedNodeReportOnSuccessfulUpdateFn, syncErr = c.manageInstallationPods(ctx, operatorSpec, operatorStatus)
+		requeue, after, updatedNode, updatedNodeReportOnSuccessfulUpdateFn, syncErr = c.manageInstallationPodsFn(ctx, operatorSpec, operatorStatus)
 		if requeue && syncErr == nil {
 			syncCtx.Queue().AddAfter(syncCtx.QueueKey(), after)
 			return nil
