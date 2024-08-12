@@ -6,6 +6,7 @@ import (
 	"errors"
 	goflag "flag"
 	"fmt"
+	"go.etcd.io/etcd/client/pkg/v3/tlsutil"
 	"net"
 	"net/http"
 	"syscall"
@@ -41,6 +42,7 @@ type readyzOpts struct {
 	clientCertFile   string
 	clientKeyFile    string
 	clientCACertFile string
+	cipherSuites     []string
 
 	clientPool *etcdcli.EtcdClientPool
 }
@@ -50,6 +52,15 @@ func newReadyzOpts() *readyzOpts {
 		listenPort:     defaultListenPort,
 		dialTimeout:    defaultHTTPDialTimeout,
 		targetEndpoint: defaultEndpoint,
+		cipherSuites: []string{
+			"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+			"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+			"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+			"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+			"TLS_AES_128_GCM_SHA256",
+			"TLS_AES_256_GCM_SHA384",
+			"TLS_CHACHA20_POLY1305_SHA256",
+		},
 	}
 }
 
@@ -78,6 +89,7 @@ func NewReadyzCommand() *cobra.Command {
 func (r *readyzOpts) AddFlags(cmd *cobra.Command) {
 	fs := cmd.Flags()
 	fs.Uint16Var(&r.listenPort, "listen-port", r.listenPort, "Listen on this port. Default 9980")
+	fs.StringSliceVar(&r.cipherSuites, "listen-cipher-suites", r.cipherSuites, "readyZ server TLS cipher suites.")
 	fs.DurationVar(&r.dialTimeout, "dial-timeout", r.dialTimeout, "Dial timeout for the client. Default 2s")
 	fs.StringVar(&r.targetEndpoint, "target", r.targetEndpoint, "Target endpoint to perform health check against. Default https://localhost:2379")
 	fs.StringVar(&r.servingCertFile, "serving-cert-file", r.servingCertFile, "Health probe server TLS client certificate file. (required)")
@@ -110,6 +122,11 @@ func (r *readyzOpts) Validate() error {
 	}
 	if len(r.clientCACertFile) == 0 {
 		return errors.New("missing required flag: --client-cacert-file")
+	}
+
+	_, err := tlsutil.GetCipherSuites(r.cipherSuites)
+	if err != nil {
+		return fmt.Errorf("invalid TLS cipher suites passed via --listen-cipher-suites: %v, err=%w", r.cipherSuites, err)
 	}
 
 	return nil
@@ -154,24 +171,17 @@ func (r *readyzOpts) Run() error {
 	addr := fmt.Sprintf("0.0.0.0:%d", r.listenPort)
 	klog.Infof("Listening on %s", addr)
 
+	suites, err := tlsutil.GetCipherSuites(r.cipherSuites)
+	if err != nil {
+		cancel()
+		return err
+	}
+
 	httpServer := &http.Server{
 		Addr:        addr,
 		Handler:     mux,
 		BaseContext: func(_ net.Listener) context.Context { return shutdownCtx },
-		TLSConfig: &tls.Config{
-			CipherSuites: []uint16{
-				// 1.2
-				tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-				tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-
-				// 1.3
-				tls.TLS_AES_128_GCM_SHA256,
-				tls.TLS_AES_256_GCM_SHA384,
-				tls.TLS_CHACHA20_POLY1305_SHA256,
-			},
-		},
+		TLSConfig:   &tls.Config{CipherSuites: suites},
 	}
 	go func() {
 		defer cancel()
