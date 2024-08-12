@@ -356,20 +356,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 	coreClient := clientset
 
-	etcdCertSignerController := etcdcertsigner.NewEtcdCertSignerController(
-		AlivenessChecker,
-		coreClient,
-		operatorClient,
-		kubeInformersForNamespaces,
-		masterNodeInformer,
-		masterNodeLister,
-		masterNodeLabelSelector,
-		controllerContext.EventRecorder,
-		quorumChecker,
-		legacyregistry.DefaultGatherer.(metrics.KubeRegistry),
-		false,
-	)
-
 	etcdCertCleanerController := etcdcertcleaner.NewEtcdCertCleanerController(
 		AlivenessChecker,
 		coreClient,
@@ -494,6 +480,24 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		go periodicBackupController.Run(ctx, 1)
 		go backupController.Run(ctx, 1)
 		go backupRemovalController.Run(ctx, 1)
+	}
+
+	etcdCertSignerController, err := etcdcertsigner.NewEtcdCertSignerController(
+		AlivenessChecker,
+		coreClient,
+		operatorClient,
+		kubeInformersForNamespaces,
+		masterNodeInformer,
+		masterNodeLister,
+		masterNodeLabelSelector,
+		controllerContext.EventRecorder,
+		quorumChecker,
+		legacyregistry.DefaultGatherer.(metrics.KubeRegistry),
+		false,
+		featureGateAccessor,
+	)
+	if err != nil {
+		return err
 	}
 
 	// we have to wait for the definitive result of the cluster version informer to make the correct machine API decision
