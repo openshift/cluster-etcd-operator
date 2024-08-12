@@ -143,3 +143,5 @@ replace (
 	github.com/gogo/protobuf => github.com/gogo/protobuf v1.3.2
 	vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787
 )
+
+replace github.com/openshift/api => github.com/vrutkovs/api v0.0.0-20241107084801-3929a3da5d2a
