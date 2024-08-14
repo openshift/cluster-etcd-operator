@@ -1116,28 +1116,9 @@ ${COMPUTED_ENV_VARS}
         path: readyz
         scheme: HTTPS
       timeoutSeconds: 30
-      failureThreshold: 5
-      periodSeconds: 5
+      failureThreshold: 3
+      periodSeconds: 1
       successThreshold: 1
-    livenessProbe:
-      httpGet:
-        path: healthz
-        port: 9980
-        scheme: HTTPS
-      timeoutSeconds: 30
-      periodSeconds: 5
-      successThreshold: 1
-      failureThreshold: 5
-    startupProbe:
-      httpGet:
-        port: 9980
-        path: readyz
-        scheme: HTTPS
-      initialDelaySeconds: 10
-      timeoutSeconds: 1
-      periodSeconds: 10
-      successThreshold: 1
-      failureThreshold: 18
     securityContext:
       privileged: true
     volumeMounts:
