@@ -1,6 +1,7 @@
 package etcdcli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -385,6 +386,41 @@ func TestClientOpenClientMultiReturns(t *testing.T) {
 	assert.Equal(t, maxNumOpenClients*3-maxNumCachedClients, poolRecorder.numCloseCalls)
 }
 
+func TestClientEndpointChanges(t *testing.T) {
+	integration.BeforeTestExternal(t)
+	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
+	defer testServer.Terminate(t)
+
+	poolRecorder := newTestPool(testServer)
+
+	client, err := poolRecorder.pool.Get()
+	require.NoError(t, err)
+	assert.NotNil(t, client)
+	assert.Equal(t, 1, poolRecorder.numNewCalls)
+	assert.Equal(t, 1, poolRecorder.numEndpointCalls)
+	assert.Equal(t, 1, poolRecorder.numHealthCalls)
+	assert.Equal(t, 0, poolRecorder.numCloseCalls)
+
+	cachedEndpoints := client.Endpoints()
+	client.SetEndpoints(testServer.Members[0].GRPCURL())
+	assert.Equal(t, 1, len(client.Endpoints()))
+
+	alarmList, err := client.AlarmList(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, uint64(testServer.Members[0].ID()), alarmList.Header.MemberId)
+
+	client.SetEndpoints(cachedEndpoints...)
+	assert.Equal(t, 3, len(client.Endpoints()))
+
+	poolRecorder.pool.Return(client)
+	client, err = poolRecorder.pool.Get()
+	require.NoError(t, err)
+	assert.Equal(t, 3, len(client.Endpoints()))
+
+	// ensure we never created a new client here, otherwise the test passing might be unexpected
+	assert.Equal(t, 1, poolRecorder.numNewCalls)
+}
+
 func newTestPool(testServer *integration.ClusterV3) *clientPoolRecorder {
 	rec := &clientPoolRecorder{}
 	endpointFunc := func() ([]string, error) {
@@ -401,7 +437,12 @@ func newTestPool(testServer *integration.ClusterV3) *clientPoolRecorder {
 			return nil, err
 		}
 
-		return testServer.Client(0).Endpoints(), nil
+		var endpoints []string
+		for _, member := range testServer.Members {
+			endpoints = append(endpoints, member.GRPCURL())
+		}
+
+		return endpoints, nil
 	}
 
 	newFunc := func() (*clientv3.Client, error) {
@@ -411,7 +452,7 @@ func newTestPool(testServer *integration.ClusterV3) *clientPoolRecorder {
 			rec.newFuncErrReturn = nil
 			return nil, err
 		}
-		return testServer.Client(0), nil
+		return testServer.ClusterClient()
 	}
 
 	healthFunc := func(client *clientv3.Client) error {
