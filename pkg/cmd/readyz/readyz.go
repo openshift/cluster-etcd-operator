@@ -9,6 +9,7 @@ import (
 	"go.etcd.io/etcd/client/pkg/v3/tlsutil"
 	"net"
 	"net/http"
+	"os"
 	"syscall"
 	"time"
 
@@ -127,6 +128,18 @@ func (r *readyzOpts) Validate() error {
 	_, err := tlsutil.GetCipherSuites(r.cipherSuites)
 	if err != nil {
 		return fmt.Errorf("invalid TLS cipher suites passed via --listen-cipher-suites: %v, err=%w", r.cipherSuites, err)
+	}
+
+	// ensure the cert files really exist, sometimes during installation we might not have the certificates created yet
+	// we should exit this container with an error instead of the readiness probe during that time
+	for _, certFile := range []string{r.clientKeyFile, r.clientCertFile, r.clientCACertFile, r.servingKeyFile, r.servingCertFile} {
+		_, err = os.Lstat(certFile)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("unable to find cert [%s]: %w", certFile, err)
+			}
+			return err
+		}
 	}
 
 	return nil
