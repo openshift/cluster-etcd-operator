@@ -608,7 +608,7 @@ SNAPSHOT_FILE=$(ls -vd "${BACKUP_DIR}"/snapshot*.db | tail -1) || true
 ETCD_STATIC_POD_LIST=("etcd-pod.yaml")
 AUX_STATIC_POD_LIST=("kube-apiserver-pod.yaml" "kube-controller-manager-pod.yaml" "kube-scheduler-pod.yaml")
 
-ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz")
+ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics")
 AUX_STATIC_POD_CONTAINERS=("kube-controller-manager" "kube-apiserver" "kube-scheduler")
 
 if [ ! -f "${SNAPSHOT_FILE}" ]; then
@@ -1112,32 +1112,32 @@ ${COMPUTED_ENV_VARS}
         cpu: 300m
     readinessProbe:
       httpGet:
-        port: 9980
-        path: readyz
+        port: 2379
+        path: readyz?exclude=data_corruption&exclude=linearized_read
         scheme: HTTPS
       timeoutSeconds: 30
-      failureThreshold: 5
-      periodSeconds: 5
+      failureThreshold: 3
+      periodSeconds: 1
       successThreshold: 1
     livenessProbe:
       httpGet:
-        path: healthz
-        port: 9980
+        path: health
+        port: 2379
         scheme: HTTPS
       timeoutSeconds: 30
       periodSeconds: 5
       successThreshold: 1
-      failureThreshold: 5
+      failureThreshold: 20
     startupProbe:
       httpGet:
-        port: 9980
+        port: 2379
         path: readyz
         scheme: HTTPS
-      initialDelaySeconds: 10
-      timeoutSeconds: 1
+      initialDelaySeconds: 30
+      timeoutSeconds: 30
       periodSeconds: 10
       successThreshold: 1
-      failureThreshold: 18
+      failureThreshold: 30
     securityContext:
       privileged: true
     volumeMounts:
@@ -1191,43 +1191,6 @@ ${COMPUTED_ENV_VARS}
         name: cert-dir
       - mountPath: /var/lib/etcd/
         name: data-dir
-  - name: etcd-readyz
-    image: ${OPERATOR_IMAGE}
-    imagePullPolicy: IfNotPresent
-    terminationMessagePolicy: FallbackToLogsOnError
-    command:
-      - /bin/sh
-      - -c
-      - |
-        #!/bin/sh
-        set -euo pipefail
-        
-        exec nice -n -18 cluster-etcd-operator readyz \
-          --target=https://localhost:2379 \
-          --listen-port=9980 \
-          --serving-cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.crt \
-          --serving-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.key \
-          --client-cert-file=$(ETCDCTL_CERT) \
-          --client-key-file=$(ETCDCTL_KEY) \
-          --client-cacert-file=$(ETCDCTL_CACERT) \
-          --listen-cipher-suites=$(ETCD_CIPHER_SUITES)
-    securityContext:
-      privileged: true
-    ports:
-    - containerPort: 9980
-      name: readyz
-      protocol: TCP
-    resources:
-      requests:
-        memory: 50Mi
-        cpu: 10m
-    env:
-${COMPUTED_ENV_VARS}
-    volumeMounts:
-      - mountPath: /var/log/etcd/
-        name: log-dir
-      - mountPath: /etc/kubernetes/static-pod-certs
-        name: cert-dir
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:

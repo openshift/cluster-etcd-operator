@@ -98,7 +98,7 @@ SNAPSHOT_FILE=$(ls -vd "${BACKUP_DIR}"/snapshot*.db | tail -1) || true
 ETCD_STATIC_POD_LIST=("etcd-pod.yaml")
 AUX_STATIC_POD_LIST=("kube-apiserver-pod.yaml" "kube-controller-manager-pod.yaml" "kube-scheduler-pod.yaml")
 
-ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz")
+ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics")
 AUX_STATIC_POD_CONTAINERS=("kube-controller-manager" "kube-apiserver" "kube-scheduler")
 
 if [ ! -f "${SNAPSHOT_FILE}" ]; then

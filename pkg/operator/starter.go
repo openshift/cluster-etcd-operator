@@ -311,8 +311,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		WithPodDisruptionBudgetGuard(
 			"openshift-etcd-operator",
 			"etcd-operator",
-			"9980",
-			"readyz",
+			"2379",
+			"readyz?exclude=data_corruption&exclude=linearized_read",
 			// etcd should use a default UnhealthyPodEvictionPolicy behavior corresponding to the
 			// IfHealthyBudget policy. This policy achieves the least amount of disruption, as it
 			// does not allow eviction when multiple etcd pods do not report readiness.
