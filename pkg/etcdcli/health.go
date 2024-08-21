@@ -41,7 +41,7 @@ type healthCheck struct {
 
 type memberHealth []healthCheck
 
-func GetMemberHealth(ctx context.Context, cli *clientv3.Client, etcdMembers []*etcdserverpb.Member) memberHealth {
+func GetMemberHealth(ctx context.Context, clipool *EtcdClientPool, etcdMembers []*etcdserverpb.Member) memberHealth {
 	// while we don't explicitly mention that the returned ordering has to be the same as etcdMembers,
 	// we try to keep it that way for backward compatibility reasons
 	memberHealth := make([]healthCheck, len(etcdMembers))
@@ -54,8 +54,16 @@ func GetMemberHealth(ctx context.Context, cli *clientv3.Client, etcdMembers []*e
 
 		wg.Add(1)
 		go func(i int) {
+			defer wg.Done()
+
+			cli, err := clipool.Get()
+			if err != nil {
+				memberHealth[i] = healthCheck{Member: member, Healthy: false, Error: err}
+				return
+			}
+			defer clipool.Return(cli)
+
 			memberHealth[i] = checkSingleMemberHealth(ctx, cli, member)
-			wg.Done()
 		}(i)
 	}
 
@@ -81,12 +89,8 @@ func GetMemberHealth(ctx context.Context, cli *clientv3.Client, etcdMembers []*e
 }
 
 func checkSingleMemberHealth(ctx context.Context, cli *clientv3.Client, member *etcdserverpb.Member) healthCheck {
-	originalEndpoints := cli.Endpoints()
-	defer func(eps []string) {
-		cli.SetEndpoints(eps...)
-	}(originalEndpoints)
-
 	// we only want to check that one member that was passed, we're restoring the original client endpoints at the end
+	defer cli.SetEndpoints(cli.Endpoints()...)
 	cli.SetEndpoints(member.ClientURLs...)
 
 	st := time.Now()

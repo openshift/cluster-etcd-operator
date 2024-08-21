@@ -339,7 +339,7 @@ func (g *etcdClientGetter) UnhealthyMembers(ctx context.Context) ([]*etcdserverp
 		return nil, fmt.Errorf("could not get member list %v", err)
 	}
 
-	memberHealth := GetMemberHealth(ctx, cli, etcdCluster.Members)
+	memberHealth := GetMemberHealth(ctx, g.clientPool, etcdCluster.Members)
 
 	unstartedMemberNames := GetUnstartedMemberNames(memberHealth)
 	if len(unstartedMemberNames) > 0 {
@@ -379,7 +379,7 @@ func (g *etcdClientGetter) HealthyMembers(ctx context.Context) ([]*etcdserverpb.
 		return nil, err
 	}
 
-	healthyMembers := GetMemberHealth(ctx, cli, etcdCluster.Members).GetHealthyMembers()
+	healthyMembers := GetMemberHealth(ctx, g.clientPool, etcdCluster.Members).GetHealthyMembers()
 	if len(healthyMembers) == 0 {
 		return nil, fmt.Errorf("no healthy etcd members found")
 	}
@@ -409,7 +409,7 @@ func (g *etcdClientGetter) MemberHealth(ctx context.Context) (memberHealth, erro
 	if err != nil {
 		return nil, err
 	}
-	return GetMemberHealth(ctx, cli, etcdCluster.Members), nil
+	return GetMemberHealth(ctx, g.clientPool, etcdCluster.Members), nil
 }
 
 func (g *etcdClientGetter) IsMemberHealthy(ctx context.Context, member *etcdserverpb.Member) (bool, error) {
@@ -427,7 +427,7 @@ func (g *etcdClientGetter) IsMemberHealthy(ctx context.Context, member *etcdserv
 	ctx, cancel := context.WithTimeout(ctx, DefaultClientTimeout)
 	defer cancel()
 
-	memberHealth := GetMemberHealth(ctx, cli, []*etcdserverpb.Member{member})
+	memberHealth := GetMemberHealth(ctx, g.clientPool, []*etcdserverpb.Member{member})
 	if len(memberHealth) == 0 {
 		return false, fmt.Errorf("member health check failed")
 	}
