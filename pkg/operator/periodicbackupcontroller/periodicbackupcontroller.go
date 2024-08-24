@@ -28,13 +28,17 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-const backupJobLabel = "backup-name"
+const (
+	backupJobLabel      = "backup-name"
+	defaultBackupCRName = "default"
+)
 
 type PeriodicBackupController struct {
 	operatorClient        v1helpers.OperatorClient
 	backupsClient         backupv1client.BackupsGetter
 	kubeClient            kubernetes.Interface
 	operatorImagePullSpec string
+	backupVarGetter       backuphelpers.BackupVar
 	featureGateAccessor   featuregates.FeatureGateAccess
 }
 
@@ -46,6 +50,7 @@ func NewPeriodicBackupController(
 	eventRecorder events.Recorder,
 	operatorImagePullSpec string,
 	accessor featuregates.FeatureGateAccess,
+	backupVarGetter backuphelpers.BackupVar,
 	backupsInformer factory.Informer) factory.Controller {
 
 	c := &PeriodicBackupController{
@@ -53,6 +58,7 @@ func NewPeriodicBackupController(
 		backupsClient:         backupsClient,
 		kubeClient:            kubeClient,
 		operatorImagePullSpec: operatorImagePullSpec,
+		backupVarGetter:       backupVarGetter,
 		featureGateAccessor:   accessor,
 	}
 
@@ -81,6 +87,11 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 	}
 
 	for _, item := range backups.Items {
+		if item.Name == defaultBackupCRName {
+			c.backupVarGetter.SetBackupSpec(item.Spec.EtcdBackupSpec)
+			continue
+		}
+
 		err := reconcileCronJob(ctx, cronJobsClient, item, c.operatorImagePullSpec)
 		if err != nil {
 			_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{

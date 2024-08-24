@@ -6,6 +6,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -196,6 +197,7 @@ func getController(t *testing.T, staticPodStatus *operatorv1.StaticPodOperatorSt
 		operatorClient:        fakeOperatorClient,
 		kubeClient:            fakeKubeClient,
 		envVarGetter:          envVar,
+		backupVarGetter:       backuphelpers.NewDisabledBackupConfig(),
 		enqueueFn:             func() {},
 		quorumChecker:         quorumChecker,
 	}

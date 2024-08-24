@@ -4,6 +4,7 @@ import (
 	"context"
 	errors "errors"
 	"fmt"
+	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"strings"
 	"time"
 
@@ -36,8 +37,9 @@ type TargetConfigController struct {
 
 	operatorClient v1helpers.StaticPodOperatorClient
 
-	kubeClient   kubernetes.Interface
-	envVarGetter etcdenvvar.EnvVar
+	kubeClient      kubernetes.Interface
+	envVarGetter    etcdenvvar.EnvVar
+	backupVarGetter backuphelpers.BackupVar
 
 	enqueueFn     func()
 	quorumChecker ceohelpers.QuorumChecker
@@ -54,6 +56,7 @@ func NewTargetConfigController(
 	masterNodeInformer cache.SharedIndexInformer,
 	kubeClient kubernetes.Interface,
 	envVarGetter etcdenvvar.EnvVar,
+	backupVarGetter backuphelpers.BackupVar,
 	eventRecorder events.Recorder,
 	quorumChecker ceohelpers.QuorumChecker,
 ) factory.Controller {
@@ -61,10 +64,11 @@ func NewTargetConfigController(
 		targetImagePullSpec:   targetImagePullSpec,
 		operatorImagePullSpec: operatorImagePullSpec,
 
-		operatorClient: operatorClient,
-		kubeClient:     kubeClient,
-		envVarGetter:   envVarGetter,
-		quorumChecker:  quorumChecker,
+		operatorClient:  operatorClient,
+		kubeClient:      kubeClient,
+		envVarGetter:    envVarGetter,
+		backupVarGetter: backupVarGetter,
+		quorumChecker:   quorumChecker,
 	}
 
 	syncCtx := factory.NewSyncContext("TargetConfigController", eventRecorder.WithComponentSuffix("target-config-controller"))
@@ -72,6 +76,7 @@ func NewTargetConfigController(
 		syncCtx.Queue().Add(syncCtx.QueueKey())
 	}
 	envVarGetter.AddListener(c)
+	backupVarGetter.AddListener(c)
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
 	livenessChecker.Add("TargetConfigController", syncer)
@@ -103,7 +108,7 @@ func (c *TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncC
 		return err
 	}
 
-	err = c.createTargetConfig(ctx, syncCtx.Recorder(), operatorSpec, envVars)
+	err = c.createTargetConfig(ctx, syncCtx.Recorder(), operatorSpec, envVars, c.backupVarGetter)
 	if err != nil {
 		condition := operatorv1.OperatorCondition{
 			Type:    "TargetConfigControllerDegraded",
@@ -138,7 +143,8 @@ func (c *TargetConfigController) createTargetConfig(
 	ctx context.Context,
 	recorder events.Recorder,
 	operatorSpec *operatorv1.StaticPodOperatorSpec,
-	envVars map[string]string) error {
+	envVars map[string]string,
+	backupVar backuphelpers.BackupVar) error {
 
 	// check the cluster is healthy or not after get env var, to ensure it is safe to rollout
 	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
@@ -151,7 +157,7 @@ func (c *TargetConfigController) createTargetConfig(
 	}
 
 	var errs error
-	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars)
+	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars, backupVar)
 	if err != nil {
 		return err
 	}
@@ -178,7 +184,7 @@ func loglevelToZap(logLevel operatorv1.LogLevel) string {
 }
 
 func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv1.StaticPodOperatorSpec,
-	imagePullSpec, operatorImagePullSpec string, envVarMap map[string]string) (*strings.Replacer, error) {
+	imagePullSpec, operatorImagePullSpec string, envVarMap map[string]string, backupVar backuphelpers.BackupVar) (*strings.Replacer, error) {
 	var envVarLines []string
 	for _, k := range sets.StringKeySet(envVarMap).List() {
 		v := envVarMap[k]
@@ -193,6 +199,7 @@ func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv
 		"${LISTEN_ON_ALL_IPS}", "0.0.0.0", // TODO this needs updating to detect ipv6-ness
 		"${LOCALHOST_IP}", "127.0.0.1", // TODO this needs updating to detect ipv6-ness
 		"${COMPUTED_ENV_VARS}", strings.Join(envVarLines, "\n"), // lacks beauty, but it works
+		"${COMPUTED_BACKUP_VARS}", backupVar.ArgString(),
 	), nil
 }
 

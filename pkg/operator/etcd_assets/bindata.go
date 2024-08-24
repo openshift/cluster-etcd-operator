@@ -1257,6 +1257,30 @@ ${COMPUTED_ENV_VARS}
       name: data-dir
     - mountPath: /etc/kubernetes/static-pod-certs
       name: cert-dir
+  - name: etcd-backup-server
+    image: ${OPERATOR_IMAGE}
+    imagePullPolicy: IfNotPresent
+    terminationMessagePolicy: FallbackToLogsOnError
+    command: [cluster-etcd-operator]
+    args:
+${COMPUTED_BACKUP_VARS}
+    securityContext:
+      privileged: true
+    resources:
+      requests:
+        memory: 50Mi
+        cpu: 10m
+    env:
+${COMPUTED_ENV_VARS}
+    volumeMounts:
+      - mountPath: /var/lib/etcd
+        name: data-dir
+      - mountPath: /etc/kubernetes
+        name: config-dir
+      - mountPath: /var/backup/etcd
+        name: backup-dir
+      - mountPath: /etc/kubernetes/static-pod-certs
+        name: cert-dir
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
@@ -1281,6 +1305,13 @@ ${COMPUTED_ENV_VARS}
     - hostPath:
         path: /var/log/etcd
       name: log-dir
+    - hostPath:
+        path: /etc/kubernetes
+      name: config-dir
+    - hostPath:
+        path: /var/backup/etcd
+        type: DirectoryOrCreate
+      name: backup-dir
 `)
 
 func etcdPodYamlBytes() ([]byte, error) {
