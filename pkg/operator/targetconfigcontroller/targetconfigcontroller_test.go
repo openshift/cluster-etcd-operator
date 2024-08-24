@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	configv1 "github.com/openshift/api/config/v1"
+	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
@@ -36,6 +37,7 @@ func TestTargetConfigController(t *testing.T) {
 		staticPodStatus   *operatorv1.StaticPodOperatorStatus
 		etcdMembers       []*etcdserverpb.Member
 		etcdMembersEnvVar string
+		etcdBackupSpec    *backupv1alpha1.EtcdBackupSpec
 		expectedErr       error
 	}{
 		{
@@ -55,6 +57,7 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(2),
 			},
 			etcdMembersEnvVar: "1,2,3",
+			etcdBackupSpec:    nil,
 		},
 		{
 			name: "Quorum not fault tolerant",
@@ -72,6 +75,7 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(2),
 			},
 			etcdMembersEnvVar: "1,3",
+			etcdBackupSpec:    nil,
 			expectedErr:       fmt.Errorf("TargetConfigController can't evaluate whether quorum is safe: %w", fmt.Errorf("etcd cluster has quorum of 2 which is not fault tolerant: [{Member:name:\"etcd-0\" peerURLs:\"https://10.0.0.1:2380\" clientURLs:\"https://10.0.0.1:2907\"  Healthy:true Took: Error:<nil>} {Member:ID:2 name:\"etcd-2\" peerURLs:\"https://10.0.0.3:2380\" clientURLs:\"https://10.0.0.3:2907\"  Healthy:true Took: Error:<nil>}]")),
 		},
 		{
@@ -89,14 +93,45 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(0),
 				u.FakeEtcdMemberWithoutServer(2),
 			},
+			etcdBackupSpec:    nil,
 			etcdMembersEnvVar: "1,3",
+		},
+		{
+			name: "Backup Var Test",
+			objects: []runtime.Object{
+				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
+			},
+			staticPodStatus: u.StaticPodOperatorStatus(
+				u.WithLatestRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+			),
+			etcdMembers: []*etcdserverpb.Member{
+				u.FakeEtcdMemberWithoutServer(0),
+				u.FakeEtcdMemberWithoutServer(1),
+				u.FakeEtcdMemberWithoutServer(2),
+			},
+			etcdBackupSpec:    u.CreateEtcdBackupSpecPtr("GMT", "0 */2 * * *"),
+			etcdMembersEnvVar: "1,2,3",
 		},
 	}
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
-			eventRecorder, _, controller := getController(t, scenario.staticPodStatus, scenario.objects, scenario.etcdMembers)
+			backupVar := backuphelpers.NewDisabledBackupConfig()
+			eventRecorder, _, controller, fakeKubeClient := getController(t, scenario.staticPodStatus, scenario.objects, scenario.etcdMembers, backupVar)
+			if scenario.etcdBackupSpec != nil {
+				backupVar.SetBackupSpec(*scenario.etcdBackupSpec)
+			}
 			err := controller.sync(context.TODO(), factory.NewSyncContext("test", eventRecorder))
 			assert.Equal(t, scenario.expectedErr, err)
+
+			if scenario.etcdBackupSpec != nil {
+				etcdPodCM, err := fakeKubeClient.CoreV1().ConfigMaps(operatorclient.TargetNamespace).Get(context.TODO(), "etcd-pod", metav1.GetOptions{})
+				require.NoError(t, err)
+				expStr := "    - backup-server\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *"
+				require.Contains(t, etcdPodCM.Data["pod.yaml"], expStr)
+			}
 		})
 	}
 }
@@ -117,7 +152,7 @@ func TestControllerDegradesOnQuorumLoss(t *testing.T) {
 		u.FakeEtcdMemberWithoutServer(2),
 	}
 
-	eventRecorder, fakeOperatorClient, controller := getController(t, staticPodStatus, objects, etcdMembers)
+	eventRecorder, fakeOperatorClient, controller, _ := getController(t, staticPodStatus, objects, etcdMembers, backuphelpers.NewDisabledBackupConfig())
 	syncContext := factory.NewSyncContext("test", eventRecorder)
 
 	foundDegraded := false
@@ -140,7 +175,7 @@ func TestControllerDegradesOnQuorumLoss(t *testing.T) {
 	require.Truef(t, foundDegraded, "could not find degraded status in operator client")
 }
 
-func getController(t *testing.T, staticPodStatus *operatorv1.StaticPodOperatorStatus, objects []runtime.Object, etcdMembers []*etcdserverpb.Member) (events.Recorder, v1helpers.StaticPodOperatorClient, *TargetConfigController) {
+func getController(t *testing.T, staticPodStatus *operatorv1.StaticPodOperatorStatus, objects []runtime.Object, etcdMembers []*etcdserverpb.Member, backupVar *backuphelpers.BackupConfig) (events.Recorder, v1helpers.StaticPodOperatorClient, *TargetConfigController, *fake.Clientset) {
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 		&operatorv1.StaticPodOperatorSpec{
 			OperatorSpec: operatorv1.OperatorSpec{
@@ -197,10 +232,10 @@ func getController(t *testing.T, staticPodStatus *operatorv1.StaticPodOperatorSt
 		operatorClient:        fakeOperatorClient,
 		kubeClient:            fakeKubeClient,
 		envVarGetter:          envVar,
-		backupVarGetter:       backuphelpers.NewDisabledBackupConfig(),
+		backupVarGetter:       backupVar,
 		enqueueFn:             func() {},
 		quorumChecker:         quorumChecker,
 	}
 
-	return eventRecorder, fakeOperatorClient, controller
+	return eventRecorder, fakeOperatorClient, controller, fakeKubeClient
 }
