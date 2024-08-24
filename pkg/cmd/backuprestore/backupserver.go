@@ -39,8 +39,6 @@ func NewBackupServer(ctx context.Context) *cobra.Command {
 		Short: "Backs up a snapshot of etcd database and static pod resources without config",
 		Run: func(cmd *cobra.Command, args []string) {
 
-			klog.Infof("hello from backup server :) ")
-
 			if err := backupSrv.Validate(); err != nil {
 				klog.Fatal(err)
 			}
@@ -79,13 +77,10 @@ func (b *backupServer) Validate() error {
 }
 
 func (b *backupServer) Run(ctx context.Context) error {
-	klog.Infof("hello from backup server Run() :) ")
-
 	b.scheduler = tasker.New(tasker.Option{
 		Verbose: true,
 		Tz:      b.timeZone,
 	})
-	klog.Infof("hello from backup server - scheduler has been init ;)  ")
 	// handle teardown
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -107,12 +102,10 @@ func (b *backupServer) Run(ctx context.Context) error {
 	doneCh := make(chan struct{})
 
 	if b.enabled {
-		klog.Infof("hello from backup server -before schedule backup()  ")
 		err := b.scheduleBackup()
 		if err != nil {
 			return err
 		}
-		klog.Infof("hello from backup server -after schedule backup()  ")
 		go func() {
 			b.scheduler.Run()
 			doneCh <- struct{}{}
@@ -130,13 +123,10 @@ func (b *backupServer) Run(ctx context.Context) error {
 }
 
 func (b *backupServer) scheduleBackup() error {
-	klog.Infof("hello from backup server -inside-begin schedule backup()  ")
 	var err error
 	b.scheduler.Task(b.schedule, func(ctx context.Context) (int, error) {
 		err = backup(&b.backupOptions)
 		return 0, err
 	}, false)
-	klog.Infof("hello from backup server -inside-end schedule backup()  ")
-	klog.Errorf("hello from backup server -inside-end schedule backup()  error [%v]", err)
 	return err
 }
