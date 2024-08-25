@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/adhocore/gronx/pkg/tasker"
 	prune "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
@@ -15,7 +16,6 @@ import (
 
 const (
 	backupVolume = "/var/backup/etcd/"
-	backupFolder = "current-backup"
 )
 
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
@@ -32,7 +32,10 @@ type backupServer struct {
 func NewBackupServer(ctx context.Context) *cobra.Command {
 	backupSrv := &backupServer{
 		backupOptions: backupOptions{errOut: os.Stderr},
-		PruneOpts:     prune.PruneOpts{RetentionType: "None"},
+		PruneOpts: prune.PruneOpts{
+			RetentionType: "None",
+			BackupPath:    backupVolume,
+		},
 	}
 
 	cmd := &cobra.Command{
@@ -75,7 +78,7 @@ func (b *backupServer) Validate() error {
 		return err
 	}
 
-	b.backupOptions.backupDir = backupVolume + backupFolder
+	b.backupOptions.backupDir = backupVolume
 	err := b.backupOptions.Validate()
 	if err != nil {
 		klog.Error(err)
@@ -140,6 +143,8 @@ func (b *backupServer) Run(ctx context.Context) error {
 func (b *backupServer) scheduleBackup() error {
 	var err error
 	b.scheduler.Task(b.schedule, func(ctx context.Context) (int, error) {
+		dateString := time.Now().Format("2006-01-02_150405")
+		b.backupOptions.backupDir = backupVolume + dateString
 		err = backup(&b.backupOptions)
 		if err != nil {
 			return 1, err

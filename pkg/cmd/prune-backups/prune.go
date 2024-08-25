@@ -33,10 +33,14 @@ type PruneOpts struct {
 	RetentionType      string
 	MaxNumberOfBackups int
 	MaxSizeOfBackupsGb int
+	BackupPath         string
 }
 
 func NewPruneCommand() *cobra.Command {
-	opts := PruneOpts{RetentionType: "None"}
+	opts := PruneOpts{
+		RetentionType: "None",
+		BackupPath:    BasePath,
+	}
 	cmd := &cobra.Command{
 		Use:   "prune-backups",
 		Short: "Prunes existing backups on the filesystem.",
@@ -101,16 +105,16 @@ func (r *PruneOpts) Run() error {
 		klog.Infof("nothing to do, retention type is none")
 		return nil
 	} else if r.RetentionType == RetentionTypeSize {
-		return retainBySizeGb(r.MaxSizeOfBackupsGb)
+		return retainBySizeGb(r.MaxSizeOfBackupsGb, r.BackupPath)
 	} else if r.RetentionType == RetentionTypeNumber {
-		return retainByNumber(r.MaxNumberOfBackups)
+		return retainByNumber(r.MaxNumberOfBackups, r.BackupPath)
 	}
 
 	return nil
 }
 
-func retainBySizeGb(sizeInGb int) error {
-	folders, err := listAllBackupFolders()
+func retainBySizeGb(sizeInGb int, backupPath string) error {
+	folders, err := listAllBackupFolders(backupPath)
 	if err != nil {
 		return err
 	}
@@ -126,7 +130,7 @@ func retainBySizeGb(sizeInGb int) error {
 	for _, f := range folders {
 		accBytes += f.sizeBytes
 		if accBytes > cutOffBytes {
-			toRemove = append(toRemove, path.Join(BasePath, f.name))
+			toRemove = append(toRemove, path.Join(backupPath, f.name))
 		} else {
 			klog.Infof("retaining [%s], found [%d] bytes so far", f.name, accBytes)
 		}
@@ -144,8 +148,8 @@ func retainBySizeGb(sizeInGb int) error {
 	return nil
 }
 
-func retainByNumber(maxNumBackups int) error {
-	folders, err := listAllBackupFolders()
+func retainByNumber(maxNumBackups int, backupPath string) error {
+	folders, err := listAllBackupFolders(backupPath)
 	if err != nil {
 		return err
 	}
@@ -158,7 +162,7 @@ func retainByNumber(maxNumBackups int) error {
 	sort.Sort(folders)
 	// the newest backups are always found at the beginning of the list
 	for _, f := range folders[maxNumBackups:] {
-		bPath := path.Join(BasePath, f.name)
+		bPath := path.Join(backupPath, f.name)
 		klog.Infof("deleting [%s]...", bPath)
 		err = os.RemoveAll(bPath)
 		if err != nil {
@@ -169,10 +173,10 @@ func retainByNumber(maxNumBackups int) error {
 	return nil
 }
 
-func listAllBackupFolders() (backupDirStats, error) {
+func listAllBackupFolders(backupPath string) (backupDirStats, error) {
 	var stats []backupDirStat
 
-	dir, err := os.ReadDir(BasePath)
+	dir, err := os.ReadDir(backupPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not list dir [%s]: %w", dir, err)
 	}
@@ -184,7 +188,7 @@ func listAllBackupFolders() (backupDirStats, error) {
 
 		var dirSize int64
 		var latestModTime time.Time
-		err := fs.WalkDir(os.DirFS(path.Join(BasePath, d.Name())), ".", func(path string, d fs.DirEntry, err error) error {
+		err := fs.WalkDir(os.DirFS(path.Join(backupPath, d.Name())), ".", func(path string, d fs.DirEntry, err error) error {
 			if !d.IsDir() {
 				info, err := d.Info()
 				if err != nil {
