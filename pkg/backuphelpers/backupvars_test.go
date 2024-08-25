@@ -1,10 +1,10 @@
 package backuphelpers
 
 import (
-	prune_backups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 	"testing"
 
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
+	prune "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 
 	"github.com/stretchr/testify/require"
 )
@@ -72,13 +72,13 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 		},
 		{
 			"retention number",
-			withRetentionNumber(createEtcdBackupSpec(timezone, schedule)),
+			withRetentionNumberThreeBackups(createEtcdBackupSpec(timezone, schedule)),
 			false,
 			"    - backup-server\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *\n    - --type=RetentionNumber\n    - --maxNumberOfBackups=3",
 		},
 		{
 			"retention none",
-			withRetentionSize(createEtcdBackupSpec(timezone, schedule)),
+			withRetentionSizeOneGB(createEtcdBackupSpec(timezone, schedule)),
 			false,
 			"    - backup-server\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *\n    - --type=RetentionSize\n    - --maxSizeOfBackupsGb=1",
 		},
@@ -107,16 +107,16 @@ func createEtcdBackupSpec(timezone, schedule string) *backupv1alpha1.EtcdBackupS
 	}
 }
 
-func withRetentionNumber(b *backupv1alpha1.EtcdBackupSpec) *backupv1alpha1.EtcdBackupSpec {
-	b.RetentionPolicy.RetentionType = prune_backups.RetentionTypeNumber
+func withRetentionNumberThreeBackups(b *backupv1alpha1.EtcdBackupSpec) *backupv1alpha1.EtcdBackupSpec {
+	b.RetentionPolicy.RetentionType = prune.RetentionTypeNumber
 	b.RetentionPolicy.RetentionNumber = &backupv1alpha1.RetentionNumberConfig{
 		MaxNumberOfBackups: 3,
 	}
 	return b
 }
 
-func withRetentionSize(b *backupv1alpha1.EtcdBackupSpec) *backupv1alpha1.EtcdBackupSpec {
-	b.RetentionPolicy.RetentionType = prune_backups.RetentionTypeSize
+func withRetentionSizeOneGB(b *backupv1alpha1.EtcdBackupSpec) *backupv1alpha1.EtcdBackupSpec {
+	b.RetentionPolicy.RetentionType = prune.RetentionTypeSize
 	b.RetentionPolicy.RetentionSize = &backupv1alpha1.RetentionSizeConfig{
 		MaxSizeOfBackupsGb: 1,
 	}

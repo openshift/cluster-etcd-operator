@@ -2,12 +2,12 @@ package backuphelpers
 
 import (
 	"fmt"
-	prune_backups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 	"reflect"
 	"strings"
 	"sync"
 
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
+	prune "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 )
 
 type Enqueueable interface {
@@ -64,10 +64,10 @@ func (b *BackupConfig) ArgString() string {
 		args = append(args, fmt.Sprintf("- --%s=%s", "schedule", b.spec.Schedule))
 	}
 
-	if b.spec.RetentionPolicy.RetentionType == prune_backups.RetentionTypeNumber {
+	if b.spec.RetentionPolicy.RetentionType == prune.RetentionTypeNumber {
 		args = append(args, fmt.Sprintf("- --%s=%s", "type", b.spec.RetentionPolicy.RetentionType))
 		args = append(args, fmt.Sprintf("- --%s=%d", "maxNumberOfBackups", b.spec.RetentionPolicy.RetentionNumber.MaxNumberOfBackups))
-	} else if b.spec.RetentionPolicy.RetentionType == prune_backups.RetentionTypeSize {
+	} else if b.spec.RetentionPolicy.RetentionType == prune.RetentionTypeSize {
 		args = append(args, fmt.Sprintf("- --%s=%s", "type", b.spec.RetentionPolicy.RetentionType))
 		args = append(args, fmt.Sprintf("- --%s=%d", "maxSizeOfBackupsGb", b.spec.RetentionPolicy.RetentionSize.MaxSizeOfBackupsGb))
 	}

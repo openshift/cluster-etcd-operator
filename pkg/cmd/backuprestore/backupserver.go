@@ -8,7 +8,7 @@ import (
 	"syscall"
 
 	"github.com/adhocore/gronx/pkg/tasker"
-	prune_backups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
+	prune "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 )
@@ -26,13 +26,13 @@ type backupServer struct {
 	enabled   bool
 	scheduler *tasker.Tasker
 	backupOptions
-	prune_backups.PruneOpts
+	prune.PruneOpts
 }
 
 func NewBackupServer(ctx context.Context) *cobra.Command {
 	backupSrv := &backupServer{
 		backupOptions: backupOptions{errOut: os.Stderr},
-		PruneOpts:     prune_backups.PruneOpts{RetentionType: "None"},
+		PruneOpts:     prune.PruneOpts{RetentionType: "None"},
 	}
 
 	cmd := &cobra.Command{
