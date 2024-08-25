@@ -2,6 +2,7 @@ package backuphelpers
 
 import (
 	"fmt"
+	prune_backups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 	"reflect"
 	"strings"
 	"sync"
@@ -61,6 +62,14 @@ func (b *BackupConfig) ArgString() string {
 
 	if b.spec.Schedule != "" {
 		args = append(args, fmt.Sprintf("- --%s=%s", "schedule", b.spec.Schedule))
+	}
+
+	if b.spec.RetentionPolicy.RetentionType == prune_backups.RetentionTypeNumber {
+		args = append(args, fmt.Sprintf("- --%s=%s", "type", b.spec.RetentionPolicy.RetentionType))
+		args = append(args, fmt.Sprintf("- --%s=%d", "maxNumberOfBackups", b.spec.RetentionPolicy.RetentionNumber.MaxNumberOfBackups))
+	} else if b.spec.RetentionPolicy.RetentionType == prune_backups.RetentionTypeSize {
+		args = append(args, fmt.Sprintf("- --%s=%s", "type", b.spec.RetentionPolicy.RetentionType))
+		args = append(args, fmt.Sprintf("- --%s=%d", "maxSizeOfBackupsGb", b.spec.RetentionPolicy.RetentionSize.MaxSizeOfBackupsGb))
 	}
 
 	return strings.Join(args, "\n    ")

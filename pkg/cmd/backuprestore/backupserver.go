@@ -7,11 +7,10 @@ import (
 	"os/signal"
 	"syscall"
 
-	"k8s.io/klog/v2"
-
 	"github.com/adhocore/gronx/pkg/tasker"
+	prune_backups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -27,11 +26,13 @@ type backupServer struct {
 	enabled   bool
 	scheduler *tasker.Tasker
 	backupOptions
+	prune_backups.PruneOpts
 }
 
 func NewBackupServer(ctx context.Context) *cobra.Command {
 	backupSrv := &backupServer{
 		backupOptions: backupOptions{errOut: os.Stderr},
+		PruneOpts:     prune_backups.PruneOpts{RetentionType: "None"},
 	}
 
 	cmd := &cobra.Command{
@@ -47,17 +48,19 @@ func NewBackupServer(ctx context.Context) *cobra.Command {
 			}
 		},
 	}
-	backupSrv.AddFlags(cmd.Flags())
+	backupSrv.AddFlags(cmd)
 	return cmd
 }
 
-func (b *backupServer) AddFlags(fs *pflag.FlagSet) {
+func (b *backupServer) AddFlags(cmd *cobra.Command) {
+	fs := cmd.Flags()
 	fs.BoolVar(&b.enabled, "enabled", false, "enable backup server")
 	fs.StringVar(&b.schedule, "schedule", "", "schedule specifies the cron schedule to run the backup")
 	fs.StringVar(&b.timeZone, "timezone", "", "timezone specifies the timezone of the cron schedule to run the backup")
 	cobra.MarkFlagRequired(fs, "enabled")
 
 	b.backupOptions.AddFlags(fs)
+	b.PruneOpts.AddFlags(cmd)
 }
 
 func (b *backupServer) Validate() error {
@@ -73,7 +76,19 @@ func (b *backupServer) Validate() error {
 	}
 
 	b.backupOptions.backupDir = backupVolume + backupFolder
-	return b.backupOptions.Validate()
+	err := b.backupOptions.Validate()
+	if err != nil {
+		klog.Error(err)
+		return err
+	}
+
+	err = b.PruneOpts.Validate()
+	if err != nil {
+		klog.Error(err)
+		return err
+	}
+
+	return nil
 }
 
 func (b *backupServer) Run(ctx context.Context) error {
@@ -126,6 +141,15 @@ func (b *backupServer) scheduleBackup() error {
 	var err error
 	b.scheduler.Task(b.schedule, func(ctx context.Context) (int, error) {
 		err = backup(&b.backupOptions)
+		if err != nil {
+			return 1, err
+		}
+
+		err = b.PruneOpts.Run()
+		if err != nil {
+			return 1, err
+		}
+
 		return 0, err
 	}, false)
 	return err
