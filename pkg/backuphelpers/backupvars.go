@@ -42,7 +42,12 @@ func (b *BackupConfig) SetBackupSpec(spec backupv1alpha1.EtcdBackupSpec) {
 		return
 	}
 
-	b.enabled = true
+	if isEmptyEtcdBackupSpec(spec) {
+		b.enabled = false
+	} else {
+		b.enabled = true
+	}
+
 	b.spec = spec
 	for _, l := range b.listeners {
 		l.Enqueue()
@@ -80,4 +85,8 @@ func (b *BackupConfig) AddListener(listener Enqueueable) {
 	defer b.mux.Unlock()
 
 	b.listeners = append(b.listeners, listener)
+}
+
+func isEmptyEtcdBackupSpec(spec backupv1alpha1.EtcdBackupSpec) bool {
+	return reflect.DeepEqual(backupv1alpha1.EtcdBackupSpec{}, spec)
 }

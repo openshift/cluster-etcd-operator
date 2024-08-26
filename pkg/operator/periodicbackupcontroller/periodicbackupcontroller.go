@@ -9,6 +9,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	backupv1client "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
+	prune "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
@@ -40,6 +41,7 @@ type PeriodicBackupController struct {
 	operatorImagePullSpec string
 	backupVarGetter       backuphelpers.BackupVar
 	featureGateAccessor   featuregates.FeatureGateAccess
+	isDefaultBackup       bool
 }
 
 func NewPeriodicBackupController(
@@ -60,6 +62,7 @@ func NewPeriodicBackupController(
 		operatorImagePullSpec: operatorImagePullSpec,
 		backupVarGetter:       backupVarGetter,
 		featureGateAccessor:   accessor,
+		isDefaultBackup:       false,
 	}
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
@@ -86,12 +89,17 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 		return fmt.Errorf("PeriodicBackupController could not list backup CRDs, error was: %w", err)
 	}
 
-	for _, item := range backups.Items {
-		if item.Name == defaultBackupCRName {
-			c.backupVarGetter.SetBackupSpec(item.Spec.EtcdBackupSpec)
-			continue
-		}
+	if len(backups.Items) == 0 && !c.isDefaultBackup {
+		c.backupVarGetter.SetBackupSpec(createDefaultEtcdBackupSpec())
+		c.isDefaultBackup = true
+	}
 
+	if len(backups.Items) > 0 && c.isDefaultBackup {
+		c.backupVarGetter.SetBackupSpec(backupv1alpha1.EtcdBackupSpec{})
+		c.isDefaultBackup = false
+	}
+
+	for _, item := range backups.Items {
 		err := reconcileCronJob(ctx, cronJobsClient, item, c.operatorImagePullSpec)
 		if err != nil {
 			_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
@@ -270,4 +278,17 @@ func newCronJob() (*batchv1.CronJob, error) {
 	}
 
 	return obj.(*batchv1.CronJob), nil
+}
+
+func createDefaultEtcdBackupSpec() backupv1alpha1.EtcdBackupSpec {
+	return backupv1alpha1.EtcdBackupSpec{
+		Schedule: "*/5 * * * *",
+		TimeZone: "UTC",
+		RetentionPolicy: backupv1alpha1.RetentionPolicy{
+			RetentionType: prune.RetentionTypeNumber,
+			RetentionNumber: &backupv1alpha1.RetentionNumberConfig{
+				MaxNumberOfBackups: 3,
+			},
+		},
+	}
 }
