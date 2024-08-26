@@ -2,6 +2,7 @@ package backuphelpers
 
 import (
 	"fmt"
+	"k8s.io/klog/v2"
 	"reflect"
 	"strings"
 	"sync"
@@ -28,6 +29,7 @@ type BackupConfig struct {
 }
 
 func NewDisabledBackupConfig() *BackupConfig {
+	klog.Infof("@Mustafa : BackupConfig - construct ")
 	return &BackupConfig{
 		enabled: false,
 		mux:     sync.Mutex{},
@@ -38,6 +40,7 @@ func (b *BackupConfig) SetBackupSpec(spec backupv1alpha1.EtcdBackupSpec) {
 	b.mux.Lock()
 	defer b.mux.Unlock()
 
+	klog.Infof("@Mustafa : BackupConfig - Spec %v", spec)
 	if reflect.DeepEqual(b.spec, spec) {
 		return
 	}
@@ -48,6 +51,7 @@ func (b *BackupConfig) SetBackupSpec(spec backupv1alpha1.EtcdBackupSpec) {
 		b.enabled = true
 	}
 
+	klog.Infof("@Mustafa : BackupConfig - enabled %v", b.enabled)
 	b.spec = spec
 	for _, l := range b.listeners {
 		l.Enqueue()
@@ -77,6 +81,7 @@ func (b *BackupConfig) ArgString() string {
 		args = append(args, fmt.Sprintf("- --%s=%d", "maxSizeOfBackupsGb", b.spec.RetentionPolicy.RetentionSize.MaxSizeOfBackupsGb))
 	}
 
+	klog.Infof("@Mustafa : BackupConfig - string %v", strings.Join(args, "\n    "))
 	return strings.Join(args, "\n    ")
 }
 

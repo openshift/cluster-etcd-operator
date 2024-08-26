@@ -141,6 +141,7 @@ func (b *backupServer) Run(ctx context.Context) error {
 }
 
 func (b *backupServer) scheduleBackup() error {
+	klog.Infof("@Mustafa: backup-server - scheduleBackup()")
 	var err error
 	b.scheduler.Task(b.schedule, func(ctx context.Context) (int, error) {
 		dateString := time.Now().Format("2006-01-02_150405")

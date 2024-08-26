@@ -76,6 +76,7 @@ func NewPeriodicBackupController(
 }
 
 func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncContext) error {
+	klog.Infof("@Mustafa : PeriodicBackupController - sync() begin")
 	if enabled, err := backuphelpers.AutoBackupFeatureGateEnabled(c.featureGateAccessor); !enabled {
 		if err != nil {
 			klog.V(4).Infof("PeriodicBackupController error while checking feature flags: %v", err)
@@ -83,6 +84,7 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 		return nil
 	}
 
+	klog.Infof("@Mustafa : PeriodicBackupController - sync() - featuregate enabled")
 	cronJobsClient := c.kubeClient.BatchV1().CronJobs(operatorclient.TargetNamespace)
 	backups, err := c.backupsClient.Backups().List(ctx, v1.ListOptions{})
 	if err != nil {
@@ -92,12 +94,16 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 	if len(backups.Items) == 0 && !c.isDefaultBackup {
 		c.backupVarGetter.SetBackupSpec(createDefaultEtcdBackupSpec())
 		c.isDefaultBackup = true
+		klog.Infof("@Mustafa : PeriodicBackupController - enabling default backup: %v", createDefaultEtcdBackupSpec())
 	}
 
 	if len(backups.Items) > 0 && c.isDefaultBackup {
 		c.backupVarGetter.SetBackupSpec(backupv1alpha1.EtcdBackupSpec{})
 		c.isDefaultBackup = false
+		klog.Infof("@Mustafa : PeriodicBackupController - disabling default backup: %v", backupv1alpha1.EtcdBackupSpec{})
 	}
+
+	klog.Infof("@Mustafa : PeriodicBackupController - sync() loop : %v", backups.Items)
 
 	for _, item := range backups.Items {
 		err := reconcileCronJob(ctx, cronJobsClient, item, c.operatorImagePullSpec)
