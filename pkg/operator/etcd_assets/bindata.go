@@ -1228,6 +1228,35 @@ ${COMPUTED_ENV_VARS}
         name: log-dir
       - mountPath: /etc/kubernetes/static-pod-certs
         name: cert-dir
+  - name: etcd-rev
+    image: ${OPERATOR_IMAGE}
+    imagePullPolicy: IfNotPresent
+    terminationMessagePolicy: FallbackToLogsOnError
+    command:
+      - /bin/sh
+      - -c
+      - |
+        #!/bin/sh
+        set -euo pipefail
+        
+        cluster-etcd-operator rev \
+          --endpoints=$(ALL_ETCD_ENDPOINTS) \
+          --client-cert-file=$(ETCDCTL_CERT) \
+          --client-key-file=$(ETCDCTL_KEY) \
+          --client-cacert-file=$(ETCDCTL_CACERT)
+    securityContext:
+      privileged: true
+    resources:
+      requests:
+        memory: 50Mi
+        cpu: 10m
+    env:
+${COMPUTED_ENV_VARS}
+    volumeMounts:
+    - mountPath: /var/lib/etcd
+      name: data-dir
+    - mountPath: /etc/kubernetes/static-pod-certs
+      name: cert-dir
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
