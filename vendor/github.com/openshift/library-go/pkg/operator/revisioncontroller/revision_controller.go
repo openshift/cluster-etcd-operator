@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"k8s.io/klog/v2"
 
@@ -48,12 +49,17 @@ type RevisionController struct {
 	operatorClient  LatestRevisionClient
 	configMapGetter corev1client.ConfigMapsGetter
 	secretGetter    corev1client.SecretsGetter
+
+	revisionPrecondition PreconditionFunc
 }
 
 type RevisionResource struct {
 	Name     string
 	Optional bool
 }
+
+// PreconditionFunc checks if revision precondition is met (is true) and then proceeeds with the creation of new revision
+type PreconditionFunc func(ctx context.Context) (bool, error)
 
 // NewRevisionController create a new revision controller.
 func NewRevisionController(
@@ -65,21 +71,29 @@ func NewRevisionController(
 	configMapGetter corev1client.ConfigMapsGetter,
 	secretGetter corev1client.SecretsGetter,
 	eventRecorder events.Recorder,
+	revisionPrecondition PreconditionFunc,
 ) factory.Controller {
+	if revisionPrecondition == nil {
+		revisionPrecondition = func(ctx context.Context) (bool, error) {
+			return true, nil
+		}
+	}
+
 	c := &RevisionController{
 		targetNamespace: targetNamespace,
 		configMaps:      configMaps,
 		secrets:         secrets,
 
-		operatorClient:  operatorClient,
-		configMapGetter: configMapGetter,
-		secretGetter:    secretGetter,
+		operatorClient:       operatorClient,
+		configMapGetter:      configMapGetter,
+		secretGetter:         secretGetter,
+		revisionPrecondition: revisionPrecondition,
 	}
 
 	return factory.New().WithInformers(
 		operatorClient.Informer(),
 		kubeInformersForTargetNamespace.Core().V1().ConfigMaps().Informer(),
-		kubeInformersForTargetNamespace.Core().V1().Secrets().Informer()).WithSync(c.sync).ToController("RevisionController", eventRecorder)
+		kubeInformersForTargetNamespace.Core().V1().Secrets().Informer()).WithSync(c.sync).ResyncEvery(1*time.Minute).ToController("RevisionController", eventRecorder)
 }
 
 // createRevisionIfNeeded takes care of creating content for the static pods to use.
@@ -329,6 +343,10 @@ func (c RevisionController) sync(ctx context.Context, syncCtx factory.SyncContex
 
 	if !management.IsOperatorManaged(operatorSpec.ManagementState) {
 		return nil
+	}
+
+	if shouldCreateNewRevision, err := c.revisionPrecondition(ctx); err != nil || !shouldCreateNewRevision {
+		return err
 	}
 
 	// If the operator status's latest available revision is not the same as the observed latest revision, update the operator.
