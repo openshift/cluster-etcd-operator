@@ -38,13 +38,13 @@ func (t *testEmbed) SetAnnotations(_ *crypto.TLSCertificateConfig, _ map[string]
 	panic("implement me")
 }
 
-func (t *testEmbed) NeedNewTargetCertKeyPair(_ *corev1.Secret, _ *crypto.CA, _ []*x509.Certificate, _ time.Duration, _ bool) string {
+func (t *testEmbed) NeedNewTargetCertKeyPair(_ *corev1.Secret, _ *crypto.CA, _ []*x509.Certificate, _ time.Duration, _ bool, _ bool) string {
 	return t.result
 }
 
 func TestEmbeddedStructHasPriority(t *testing.T) {
 	embedded := CARotatingTargetCertCreator{&testEmbed{result: "definitive-result"}}
-	require.Equal(t, "definitive-result", embedded.NeedNewTargetCertKeyPair(nil, nil, nil, time.Minute, false))
+	require.Equal(t, "definitive-result", embedded.NeedNewTargetCertKeyPair(nil, nil, nil, time.Minute, false, false))
 }
 
 func TestSignerSignatureRotation(t *testing.T) {
