@@ -57,22 +57,9 @@ func (b *backupServer) Validate() error {
 
 func (b *backupServer) Run(ctx context.Context) error {
 	// handle teardown
-	ctx, cancel := context.WithCancel(ctx)
+	cCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	shutdownHandler := make(chan os.Signal, 2)
-	signal.Notify(shutdownHandler, shutdownSignals...)
-	go func() {
-		select {
-		case <-shutdownHandler:
-			klog.Infof("Received SIGTERM or SIGINT signal, shutting down.")
-			close(shutdownHandler)
-			cancel()
-		case <-ctx.Done():
-			klog.Infof("Context has been cancelled, shutting down.")
-			close(shutdownHandler)
-			cancel()
-		}
-	}()
+	signal.NotifyContext(cCtx, shutdownSignals...)
 
 	<-ctx.Done()
 
