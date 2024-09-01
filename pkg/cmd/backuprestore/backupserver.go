@@ -3,13 +3,14 @@ package backuprestore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"github.com/adhocore/gronx/pkg/tasker"
 	prune "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
+	"github.com/robfig/cron"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 )
@@ -21,10 +22,9 @@ const (
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
 
 type backupServer struct {
-	schedule  string
-	timeZone  string
-	enabled   bool
-	scheduler *tasker.Tasker
+	schedule string
+	timeZone string
+	enabled  bool
 	backupOptions
 	prune.PruneOpts
 }
@@ -95,68 +95,59 @@ func (b *backupServer) Validate() error {
 }
 
 func (b *backupServer) Run(ctx context.Context) error {
-	b.scheduler = tasker.New(tasker.Option{
-		Verbose: true,
-		Tz:      b.timeZone,
-	})
 	// handle teardown
-	ctx, cancel := context.WithCancel(ctx)
+	cCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	shutdownHandler := make(chan os.Signal, 2)
-	signal.Notify(shutdownHandler, shutdownSignals...)
-	go func() {
-		select {
-		case <-shutdownHandler:
-			klog.Infof("Received SIGTERM or SIGINT signal, shutting down.")
-			close(shutdownHandler)
-			cancel()
-		case <-ctx.Done():
-			klog.Infof("Context has been cancelled, shutting down.")
-			close(shutdownHandler)
-			cancel()
-		}
-	}()
-
-	doneCh := make(chan struct{})
+	signal.NotifyContext(cCtx, shutdownSignals...)
 
 	if b.enabled {
-		err := b.scheduleBackup()
+		schedule, err := cron.ParseStandard(b.schedule)
+		if err != nil {
+			pErr := fmt.Errorf("error parsing backup schedule %v: %w", b.schedule, err)
+			klog.Error(pErr)
+			return pErr
+		}
+
+		err = b.scheduleBackup(cCtx, schedule)
 		if err != nil {
 			return err
 		}
-		go func() {
-			b.scheduler.Run()
-			doneCh <- struct{}{}
-		}()
 	}
+
+	<-ctx.Done()
+	return nil
+}
+
+func (b *backupServer) scheduleBackup(ctx context.Context, schedule cron.Schedule) error {
+	nextRun := schedule.Next(time.Now())
+	ticker := time.NewTicker(time.Until(nextRun))
+	defer ticker.Stop()
 
 	for {
 		select {
-		case <-doneCh:
-			klog.Infof("scheduler has been terminated - doneCh")
+		case <-ticker.C:
+			err := b.runBackup()
+			if err != nil {
+				return err
+			}
 		case <-ctx.Done():
-			klog.Infof("context has been terminated - ctx.DONE()")
+			klog.Infof("context deadline has exceeded")
 		}
 	}
 }
 
-func (b *backupServer) scheduleBackup() error {
-	klog.Infof("@Mustafa: backup-server - scheduleBackup()")
-	var err error
-	b.scheduler.Task(b.schedule, func(ctx context.Context) (int, error) {
-		dateString := time.Now().Format("2006-01-02_150405")
-		b.backupOptions.backupDir = backupVolume + dateString
-		err = backup(&b.backupOptions)
-		if err != nil {
-			return 1, err
-		}
+func (b *backupServer) runBackup() error {
+	dateString := time.Now().Format("2006-01-02_150405")
+	b.backupOptions.backupDir = backupVolume + dateString
+	err := backup(&b.backupOptions)
+	if err != nil {
+		return err
+	}
 
-		err = b.PruneOpts.Run()
-		if err != nil {
-			return 1, err
-		}
+	err = b.PruneOpts.Run()
+	if err != nil {
+		return err
+	}
 
-		return 0, err
-	}, false)
-	return err
+	return nil
 }
