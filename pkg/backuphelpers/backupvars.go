@@ -58,7 +58,7 @@ func (b *BackupConfig) ArgString() string {
 	b.mux.Lock()
 	defer b.mux.Unlock()
 
-	args := []string{"    args:", "- backup-server"}
+	args := []string{"    args:"}
 	args = append(args, fmt.Sprintf("- --%s=%v", "enabled", b.enabled))
 
 	if b.spec.TimeZone != "" {
