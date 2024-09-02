@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -13,8 +14,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"k8s.io/klog/v2"
-
-	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 type PruneOptions struct {
@@ -77,8 +76,6 @@ func (o *PruneOptions) Validate() error {
 }
 
 func (o *PruneOptions) Run() error {
-	protectedIDs := sets.New(o.ProtectedRevisions...)
-
 	files, err := os.ReadDir(o.ResourceDir)
 	if err != nil {
 		return err
@@ -102,7 +99,7 @@ func (o *PruneOptions) Run() error {
 		}
 
 		// And is not protected...
-		if protected := protectedIDs.Has(revisionID); protected {
+		if protected := slices.Contains(o.ProtectedRevisions, revisionID); protected {
 			continue
 		}
 		// And is less than or equal to the maxEligibleRevisionID
