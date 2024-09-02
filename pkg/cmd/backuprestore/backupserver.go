@@ -119,8 +119,7 @@ func (b *backupServer) Run(ctx context.Context) error {
 }
 
 func (b *backupServer) scheduleBackup(ctx context.Context, schedule cron.Schedule) error {
-	nextRun := schedule.Next(time.Now())
-	ticker := time.NewTicker(time.Until(nextRun))
+	ticker := time.NewTicker(time.Until(schedule.Next(time.Now())))
 	defer ticker.Stop()
 
 	for {
@@ -130,6 +129,7 @@ func (b *backupServer) scheduleBackup(ctx context.Context, schedule cron.Schedul
 			if err != nil {
 				return err
 			}
+			ticker.Reset(time.Until(schedule.Next(time.Now())))
 		case <-ctx.Done():
 			klog.Infof("context deadline has exceeded")
 		}
