@@ -6,10 +6,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"k8s.io/klog/v2"
-
+	prune "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
+	"k8s.io/klog/v2"
 )
 
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
@@ -19,6 +18,7 @@ type backupServer struct {
 	timeZone string
 	enabled  bool
 	backupOptions
+	prune.PruneOpts
 }
 
 func NewBackupServer(ctx context.Context) *cobra.Command {
@@ -39,14 +39,20 @@ func NewBackupServer(ctx context.Context) *cobra.Command {
 			}
 		},
 	}
-	backupSrv.AddFlags(cmd.Flags())
+	backupSrv.AddFlags(cmd)
 	return cmd
 }
 
-func (b *backupServer) AddFlags(fs *pflag.FlagSet) {
+func (b *backupServer) AddFlags(cmd *cobra.Command) {
+	fs := cmd.Flags()
 	fs.BoolVar(&b.enabled, "enabled", false, "enable backup server")
 	fs.StringVar(&b.schedule, "schedule", "", "schedule specifies the cron schedule to run the backup")
 	fs.StringVar(&b.timeZone, "timezone", "", "timezone specifies the timezone of the cron schedule to run the backup")
+
+	cobra.MarkFlagRequired(fs, "enabled")
+
+	b.backupOptions.AddFlags(fs)
+	b.PruneOpts.AddFlags(cmd)
 }
 
 func (b *backupServer) Validate() error {

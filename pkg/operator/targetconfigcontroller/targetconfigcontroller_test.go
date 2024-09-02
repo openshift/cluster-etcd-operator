@@ -132,7 +132,7 @@ func TestTargetConfigController(t *testing.T) {
 			if scenario.etcdBackupSpec != nil {
 				etcdPodCM, err := fakeKubeClient.CoreV1().ConfigMaps(operatorclient.TargetNamespace).Get(context.TODO(), "etcd-pod", metav1.GetOptions{})
 				require.NoError(t, err)
-				expStr := "    - backup-server\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *"
+				expStr := "    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *"
 				require.Contains(t, etcdPodCM.Data["pod.yaml"], expStr)
 			}
 		})
