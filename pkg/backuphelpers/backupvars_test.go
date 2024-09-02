@@ -88,7 +88,7 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 
 			c := NewDisabledBackupConfig()
-			c.SetBackupSpec(*tc.cr)
+			c.SetBackupSpec(tc.cr)
 			if tc.enabled {
 				c.enabled = true
 			}
@@ -101,6 +101,9 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 }
 
 func createEtcdBackupSpec(timezone, schedule string) *backupv1alpha1.EtcdBackupSpec {
+	if timezone == "" && schedule == "" {
+		return nil
+	}
 	return &backupv1alpha1.EtcdBackupSpec{
 		Schedule: schedule,
 		TimeZone: timezone,

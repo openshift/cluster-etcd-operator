@@ -16,13 +16,13 @@ type Enqueueable interface {
 
 type BackupVar interface {
 	AddListener(listener Enqueueable)
-	SetBackupSpec(spec backupv1alpha1.EtcdBackupSpec)
+	SetBackupSpec(spec *backupv1alpha1.EtcdBackupSpec)
 	ArgString() string
 }
 
 type BackupConfig struct {
 	enabled   bool
-	spec      backupv1alpha1.EtcdBackupSpec
+	spec      *backupv1alpha1.EtcdBackupSpec
 	listeners []Enqueueable
 	mux       sync.Mutex
 }
@@ -34,7 +34,7 @@ func NewDisabledBackupConfig() *BackupConfig {
 	}
 }
 
-func (b *BackupConfig) SetBackupSpec(spec backupv1alpha1.EtcdBackupSpec) {
+func (b *BackupConfig) SetBackupSpec(spec *backupv1alpha1.EtcdBackupSpec) {
 	b.mux.Lock()
 	defer b.mux.Unlock()
 
@@ -42,11 +42,7 @@ func (b *BackupConfig) SetBackupSpec(spec backupv1alpha1.EtcdBackupSpec) {
 		return
 	}
 
-	if isEmptyEtcdBackupSpec(spec) {
-		b.enabled = false
-	} else {
-		b.enabled = true
-	}
+	b.enabled = spec != nil
 
 	b.spec = spec
 	for _, l := range b.listeners {
@@ -60,6 +56,10 @@ func (b *BackupConfig) ArgString() string {
 
 	args := []string{"    args:"}
 	args = append(args, fmt.Sprintf("- --%s=%v", "enabled", b.enabled))
+
+	if b.spec == nil {
+		return strings.Join(args, "\n    ")
+	}
 
 	if b.spec.TimeZone != "" {
 		args = append(args, fmt.Sprintf("- --%s=%s", "timezone", b.spec.TimeZone))

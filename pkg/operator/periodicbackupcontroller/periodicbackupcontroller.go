@@ -89,17 +89,12 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 		return fmt.Errorf("PeriodicBackupController could not list backup CRDs, error was: %w", err)
 	}
 
-	if len(backups.Items) == 0 && !c.isDefaultBackup {
-		c.backupVarGetter.SetBackupSpec(createDefaultEtcdBackupSpec())
-		c.isDefaultBackup = true
-	}
-
-	if len(backups.Items) > 0 && c.isDefaultBackup {
-		c.backupVarGetter.SetBackupSpec(backupv1alpha1.EtcdBackupSpec{})
-		c.isDefaultBackup = false
-	}
-
 	for _, item := range backups.Items {
+		if item.Name == "default" {
+			specClone := item
+			c.backupVarGetter.SetBackupSpec(&specClone.Spec.EtcdBackupSpec)
+		}
+
 		err := reconcileCronJob(ctx, cronJobsClient, item, c.operatorImagePullSpec)
 		if err != nil {
 			_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
@@ -280,8 +275,8 @@ func newCronJob() (*batchv1.CronJob, error) {
 	return obj.(*batchv1.CronJob), nil
 }
 
-func createDefaultEtcdBackupSpec() backupv1alpha1.EtcdBackupSpec {
-	return backupv1alpha1.EtcdBackupSpec{
+func createDefaultEtcdBackupSpec() *backupv1alpha1.EtcdBackupSpec {
+	return &backupv1alpha1.EtcdBackupSpec{
 		Schedule: "*/5 * * * *",
 		TimeZone: "UTC",
 		RetentionPolicy: backupv1alpha1.RetentionPolicy{

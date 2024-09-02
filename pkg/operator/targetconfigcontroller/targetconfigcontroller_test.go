@@ -124,7 +124,7 @@ func TestTargetConfigController(t *testing.T) {
 			backupVar := backuphelpers.NewDisabledBackupConfig()
 			eventRecorder, _, controller, fakeKubeClient := getController(t, scenario.staticPodStatus, scenario.objects, scenario.etcdMembers, backupVar)
 			if scenario.etcdBackupSpec != nil {
-				backupVar.SetBackupSpec(*scenario.etcdBackupSpec)
+				backupVar.SetBackupSpec(scenario.etcdBackupSpec)
 			}
 			err := controller.sync(context.TODO(), factory.NewSyncContext("test", eventRecorder))
 			assert.Equal(t, scenario.expectedErr, err)

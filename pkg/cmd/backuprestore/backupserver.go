@@ -6,7 +6,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	prune "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 )
@@ -18,7 +17,6 @@ type backupServer struct {
 	timeZone string
 	enabled  bool
 	backupOptions
-	prune.PruneOpts
 }
 
 func NewBackupServer(ctx context.Context) *cobra.Command {
@@ -52,7 +50,6 @@ func (b *backupServer) AddFlags(cmd *cobra.Command) {
 	cobra.MarkFlagRequired(fs, "enabled")
 
 	b.backupOptions.AddFlags(fs)
-	b.PruneOpts.AddFlags(cmd)
 }
 
 func (b *backupServer) Validate() error {
