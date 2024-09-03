@@ -61,34 +61,6 @@ function restore_static_pods() {
   done
 }
 
-function wait_for_containers_to_stop() {
-  local containers=("$@")
-
-  for container_name in "${containers[@]}"; do
-    echo "Waiting for container ${container_name} to stop"
-    while [[ -n $(crictl ps --label io.kubernetes.container.name="${container_name}" -q) ]]; do
-      echo -n "."
-      sleep 1
-    done
-    echo "complete"
-  done
-}
-
-function mv_static_pods() {
-  local containers=("$@")
-
-  # Move manifests and stop static pods
-  if [ ! -d "$MANIFEST_STOPPED_DIR" ]; then
-    mkdir -p "$MANIFEST_STOPPED_DIR"
-  fi
-
-  for POD_FILE_NAME in "${containers[@]}"; do
-    echo "...stopping ${POD_FILE_NAME}"
-    [ ! -f "${MANIFEST_DIR}/${POD_FILE_NAME}" ] && continue
-    mv "${MANIFEST_DIR}/${POD_FILE_NAME}" "${MANIFEST_STOPPED_DIR}"
-  done
-}
-
 BACKUP_DIR="$1"
 # shellcheck disable=SC2012
 BACKUP_FILE=$(ls -vd "${BACKUP_DIR}"/static_kuberesources*.tar.gz | tail -1) || true
