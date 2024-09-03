@@ -21,55 +21,34 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 		expected string
 	}{
 		{
-			"enabled",
+			"backup spec with timezone and schedule",
 			createEtcdBackupSpec(timezone, schedule),
 			"    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *",
 		},
 		{
-			"disabled",
-			createEtcdBackupSpec(timezone, schedule),
-			"    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *",
-		},
-		{
-			"empty schedule disabled",
+			"backup spec with timezone and empty schedule",
 			createEtcdBackupSpec(timezone, ""),
 			"    args:\n    - --enabled=true\n    - --timezone=GMT",
 		},
 		{
-			"empty schedule enabled",
-			createEtcdBackupSpec(timezone, ""),
-			"    args:\n    - --enabled=true\n    - --timezone=GMT",
-		},
-
-		{
-			"empty timezone disabled",
+			"backup spec with empty timezone and schedule",
 			createEtcdBackupSpec("", schedule),
 			"    args:\n    - --enabled=true\n    - --schedule=0 */2 * * *",
 		},
 		{
-			"empty timezone enabled",
-			createEtcdBackupSpec("", schedule),
-			"    args:\n    - --enabled=true\n    - --schedule=0 */2 * * *",
-		},
-		{
-			"empty timezone and schedule disabled",
-			createEtcdBackupSpec("", ""),
-			"    args:\n    - --enabled=false",
-		},
-		{
-			"empty timezone and schedule enabled",
-			createEtcdBackupSpec("", ""),
-			"    args:\n    - --enabled=false",
-		},
-		{
-			"retention number",
+			"backup spec with timezone and schedule and retention number",
 			withRetentionNumberThreeBackups(createEtcdBackupSpec(timezone, schedule)),
 			"    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *\n    - --type=RetentionNumber\n    - --maxNumberOfBackups=3",
 		},
 		{
-			"retention none",
+			"backup spec with timezone and schedule and retention size",
 			withRetentionSizeOneGB(createEtcdBackupSpec(timezone, schedule)),
 			"    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *\n    - --type=RetentionSize\n    - --maxSizeOfBackupsGb=1",
+		},
+		{
+			"backup spec with empty timezone and empty schedule",
+			nil,
+			"    args:\n    - --enabled=false",
 		},
 	}
 
@@ -87,9 +66,6 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 }
 
 func createEtcdBackupSpec(timezone, schedule string) *backupv1alpha1.EtcdBackupSpec {
-	if timezone == "" && schedule == "" {
-		return nil
-	}
 	return &backupv1alpha1.EtcdBackupSpec{
 		Schedule: schedule,
 		TimeZone: timezone,

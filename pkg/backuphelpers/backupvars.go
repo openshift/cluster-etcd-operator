@@ -47,8 +47,7 @@ func (b *BackupConfig) SetBackupSpec(spec *backupv1alpha1.EtcdBackupSpec) {
 	if spec == nil {
 		b.spec = nil
 	} else {
-		specClone := *spec
-		b.spec = &specClone
+		b.spec = spec.DeepCopy()
 	}
 
 	for _, l := range b.listeners {

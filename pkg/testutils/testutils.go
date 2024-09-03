@@ -542,14 +542,9 @@ func AssertNodeSpecificCertificates(t *testing.T, node *corev1.Node, secrets []c
 	require.Equalf(t, 0, expectedSet.Len(), "missing certificates for node: %v", expectedSet.List())
 }
 
-func CreateEtcdBackupSpec(timezone, schedule string) backupv1alpha1.EtcdBackupSpec {
-	return backupv1alpha1.EtcdBackupSpec{
+func CreateEtcdBackupSpecPtr(timezone, schedule string) *backupv1alpha1.EtcdBackupSpec {
+	return &backupv1alpha1.EtcdBackupSpec{
 		Schedule: schedule,
 		TimeZone: timezone,
 	}
-}
-
-func CreateEtcdBackupSpecPtr(timezone, schedule string) *backupv1alpha1.EtcdBackupSpec {
-	spec := CreateEtcdBackupSpec(timezone, schedule)
-	return &spec
 }

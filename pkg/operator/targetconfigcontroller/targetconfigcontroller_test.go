@@ -100,7 +100,7 @@ func TestTargetConfigController(t *testing.T) {
 			etcdMembersEnvVar: "1,3",
 		},
 		{
-			name: "Backup Var Test",
+			name: "BackupVar Test HappyPath",
 			objects: []runtime.Object{
 				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
 			},
@@ -118,23 +118,47 @@ func TestTargetConfigController(t *testing.T) {
 			etcdBackupSpec:    u.CreateEtcdBackupSpecPtr("GMT", "0 */2 * * *"),
 			etcdMembersEnvVar: "1,2,3",
 		},
+		{
+			name: "Backup Var Test with empty spec",
+			objects: []runtime.Object{
+				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
+			},
+			staticPodStatus: u.StaticPodOperatorStatus(
+				u.WithLatestRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+			),
+			etcdMembers: []*etcdserverpb.Member{
+				u.FakeEtcdMemberWithoutServer(0),
+				u.FakeEtcdMemberWithoutServer(1),
+				u.FakeEtcdMemberWithoutServer(2),
+			},
+			etcdBackupSpec:    nil,
+			etcdMembersEnvVar: "1,2,3",
+		},
 	}
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
 			backupVar := backuphelpers.NewDisabledBackupConfig()
 			eventRecorder, _, controller, fakeKubeClient := getController(t, scenario.staticPodStatus, scenario.objects, scenario.etcdMembers, backupVar)
-			if scenario.etcdBackupSpec != nil {
-				backupVar.SetBackupSpec(scenario.etcdBackupSpec)
-			}
+			backupVar.SetBackupSpec(scenario.etcdBackupSpec)
 			err := controller.sync(context.TODO(), factory.NewSyncContext("test", eventRecorder))
 			assert.Equal(t, scenario.expectedErr, err)
 
-			if scenario.etcdBackupSpec != nil {
-				etcdPodCM, err := fakeKubeClient.CoreV1().ConfigMaps(operatorclient.TargetNamespace).Get(context.TODO(), "etcd-pod", metav1.GetOptions{})
-				require.NoError(t, err)
-				expStr := "    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *"
-				require.Contains(t, etcdPodCM.Data["pod.yaml"], expStr)
+			if scenario.expectedErr != nil {
+				return
 			}
+
+			etcdPodCM, err := fakeKubeClient.CoreV1().ConfigMaps(operatorclient.TargetNamespace).Get(context.TODO(), "etcd-pod", metav1.GetOptions{})
+			require.NoError(t, err)
+			expStr := "    args:\n    - --enabled=false"
+
+			if scenario.etcdBackupSpec != nil {
+				expStr = "    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *"
+			}
+
+			require.Contains(t, etcdPodCM.Data["pod.yaml"], expStr)
 		})
 	}
 }
