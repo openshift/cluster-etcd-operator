@@ -36,9 +36,7 @@ type PruneOpts struct {
 }
 
 func NewPruneCommand() *cobra.Command {
-	opts := PruneOpts{
-		RetentionType: "None",
-	}
+	opts := PruneOpts{RetentionType: "None"}
 	cmd := &cobra.Command{
 		Use:   "prune-backups",
 		Short: "Prunes existing backups on the filesystem.",

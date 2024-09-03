@@ -9,7 +9,6 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	backupv1client "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
-	prune "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
@@ -41,7 +40,6 @@ type PeriodicBackupController struct {
 	operatorImagePullSpec string
 	backupVarGetter       backuphelpers.BackupVar
 	featureGateAccessor   featuregates.FeatureGateAccess
-	isDefaultBackup       bool
 }
 
 func NewPeriodicBackupController(
@@ -62,7 +60,6 @@ func NewPeriodicBackupController(
 		operatorImagePullSpec: operatorImagePullSpec,
 		backupVarGetter:       backupVarGetter,
 		featureGateAccessor:   accessor,
-		isDefaultBackup:       false,
 	}
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
@@ -90,9 +87,10 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 	}
 
 	for _, item := range backups.Items {
-		if item.Name == "default" {
+		if item.Name == defaultBackupCRName {
 			specClone := item
 			c.backupVarGetter.SetBackupSpec(&specClone.Spec.EtcdBackupSpec)
+			continue
 		}
 
 		err := reconcileCronJob(ctx, cronJobsClient, item, c.operatorImagePullSpec)
@@ -273,17 +271,4 @@ func newCronJob() (*batchv1.CronJob, error) {
 	}
 
 	return obj.(*batchv1.CronJob), nil
-}
-
-func createDefaultEtcdBackupSpec() *backupv1alpha1.EtcdBackupSpec {
-	return &backupv1alpha1.EtcdBackupSpec{
-		Schedule: "*/5 * * * *",
-		TimeZone: "UTC",
-		RetentionPolicy: backupv1alpha1.RetentionPolicy{
-			RetentionType: prune.RetentionTypeNumber,
-			RetentionNumber: &backupv1alpha1.RetentionNumberConfig{
-				MaxNumberOfBackups: 3,
-			},
-		},
-	}
 }
