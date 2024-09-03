@@ -47,6 +47,7 @@ func TestSyncLoopHappyPath(t *testing.T) {
 		backupsClient:         operatorFake.ConfigV1alpha1(),
 		kubeClient:            client,
 		operatorImagePullSpec: "pullspec-image",
+		backupVarGetter:       backuphelpers.NewDisabledBackupConfig(),
 		featureGateAccessor:   backupFeatureGateAccessor,
 	}
 
@@ -79,6 +80,7 @@ func TestSyncLoopExistingCronJob(t *testing.T) {
 		backupsClient:         operatorFake.ConfigV1alpha1(),
 		kubeClient:            client,
 		operatorImagePullSpec: "pullspec-image",
+		backupVarGetter:       backuphelpers.NewDisabledBackupConfig(),
 		featureGateAccessor:   backupFeatureGateAccessor,
 	}
 
@@ -114,6 +116,7 @@ func TestSyncLoopFailsDegradesOperator(t *testing.T) {
 		backupsClient:         operatorFake.ConfigV1alpha1(),
 		kubeClient:            client,
 		operatorImagePullSpec: "pullspec-image",
+		backupVarGetter:       backuphelpers.NewDisabledBackupConfig(),
 		featureGateAccessor:   backupFeatureGateAccessor,
 	}
 
