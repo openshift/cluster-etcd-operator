@@ -86,8 +86,10 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 		return fmt.Errorf("PeriodicBackupController could not list backup CRDs, error was: %w", err)
 	}
 
+	defaultFound := false
 	for _, item := range backups.Items {
 		if item.Name == defaultBackupCRName {
+			defaultFound = true
 			specClone := item
 			c.backupVarGetter.SetBackupSpec(&specClone.Spec.EtcdBackupSpec)
 			continue
@@ -107,6 +109,10 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 
 			return fmt.Errorf("PeriodicBackupController could not reconcile backup [%s] with cronjob: %w", item.Name, err)
 		}
+	}
+
+	if !defaultFound {
+		c.backupVarGetter.SetBackupSpec(nil)
 	}
 
 	_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{

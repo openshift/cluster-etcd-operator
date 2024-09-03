@@ -57,7 +57,7 @@ func (b *BackupConfig) ArgString() string {
 	args := []string{"    args:"}
 	args = append(args, fmt.Sprintf("- --%s=%v", "enabled", b.enabled))
 
-	if !b.enabled {
+	if !b.enabled || b.spec == nil {
 		return strings.Join(args, "\n    ")
 	}
 
