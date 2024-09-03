@@ -90,8 +90,7 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 	for _, item := range backups.Items {
 		if item.Name == defaultBackupCRName {
 			defaultFound = true
-			specClone := item
-			c.backupVarGetter.SetBackupSpec(&specClone.Spec.EtcdBackupSpec)
+			c.backupVarGetter.SetBackupSpec(&item.Spec.EtcdBackupSpec)
 			continue
 		}
 

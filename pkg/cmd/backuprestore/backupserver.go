@@ -2,6 +2,7 @@ package backuprestore
 
 import (
 	"context"
+	"github.com/spf13/pflag"
 	"os"
 	"os/signal"
 	"syscall"
@@ -37,12 +38,12 @@ func NewBackupServer(ctx context.Context) *cobra.Command {
 			}
 		},
 	}
-	backupSrv.AddFlags(cmd)
+
+	backupSrv.AddFlags(cmd.Flags())
 	return cmd
 }
 
-func (b *backupServer) AddFlags(cmd *cobra.Command) {
-	fs := cmd.Flags()
+func (b *backupServer) AddFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&b.enabled, "enabled", false, "enable backup server")
 	fs.StringVar(&b.schedule, "schedule", "", "schedule specifies the cron schedule to run the backup")
 	fs.StringVar(&b.timeZone, "timezone", "", "timezone specifies the timezone of the cron schedule to run the backup")

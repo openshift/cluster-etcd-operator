@@ -44,7 +44,13 @@ func (b *BackupConfig) SetBackupSpec(spec *backupv1alpha1.EtcdBackupSpec) {
 
 	b.enabled = spec != nil
 
-	b.spec = spec
+	if spec == nil {
+		b.spec = nil
+	} else {
+		specClone := *spec
+		b.spec = &specClone
+	}
+
 	for _, l := range b.listeners {
 		l.Enqueue()
 	}

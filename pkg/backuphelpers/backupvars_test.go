@@ -18,68 +18,57 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 	testCases := []struct {
 		name     string
 		cr       *backupv1alpha1.EtcdBackupSpec
-		enabled  bool
 		expected string
 	}{
 		{
 			"enabled",
 			createEtcdBackupSpec(timezone, schedule),
-			true,
 			"    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *",
 		},
 		{
 			"disabled",
 			createEtcdBackupSpec(timezone, schedule),
-			false,
 			"    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *",
 		},
 		{
 			"empty schedule disabled",
 			createEtcdBackupSpec(timezone, ""),
-			false,
 			"    args:\n    - --enabled=true\n    - --timezone=GMT",
 		},
 		{
 			"empty schedule enabled",
 			createEtcdBackupSpec(timezone, ""),
-			true,
 			"    args:\n    - --enabled=true\n    - --timezone=GMT",
 		},
 
 		{
 			"empty timezone disabled",
 			createEtcdBackupSpec("", schedule),
-			false,
 			"    args:\n    - --enabled=true\n    - --schedule=0 */2 * * *",
 		},
 		{
 			"empty timezone enabled",
 			createEtcdBackupSpec("", schedule),
-			true,
 			"    args:\n    - --enabled=true\n    - --schedule=0 */2 * * *",
 		},
 		{
 			"empty timezone and schedule disabled",
 			createEtcdBackupSpec("", ""),
-			false,
 			"    args:\n    - --enabled=false",
 		},
 		{
 			"empty timezone and schedule enabled",
 			createEtcdBackupSpec("", ""),
-			true,
-			"    args:\n    - --enabled=true",
+			"    args:\n    - --enabled=false",
 		},
 		{
 			"retention number",
 			withRetentionNumberThreeBackups(createEtcdBackupSpec(timezone, schedule)),
-			false,
 			"    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *\n    - --type=RetentionNumber\n    - --maxNumberOfBackups=3",
 		},
 		{
 			"retention none",
 			withRetentionSizeOneGB(createEtcdBackupSpec(timezone, schedule)),
-			false,
 			"    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *\n    - --type=RetentionSize\n    - --maxSizeOfBackupsGb=1",
 		},
 	}
@@ -89,9 +78,6 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 
 			c := NewDisabledBackupConfig()
 			c.SetBackupSpec(tc.cr)
-			if tc.enabled {
-				c.enabled = true
-			}
 
 			act := c.ArgString()
 
