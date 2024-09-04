@@ -1279,6 +1279,8 @@ ${COMPUTED_ENV_VARS}
         name: data-dir
       - mountPath: /etc/kubernetes
         name: config-dir
+      - mountPath: /var/lib/etcd-auto-backup
+        name: etcd-auto-backup-dir
       - mountPath: /etc/kubernetes/static-pod-certs
         name: cert-dir
   hostNetwork: true
@@ -1308,7 +1310,10 @@ ${COMPUTED_ENV_VARS}
     - hostPath:
         path: /etc/kubernetes
       name: config-dir
-`)
+    - hostPath:
+        path: /var/lib/etcd-auto-backup
+        type: DirectoryOrCreate
+      name: etcd-auto-backup-dir`)
 
 func etcdPodYamlBytes() ([]byte, error) {
 	return _etcdPodYaml, nil

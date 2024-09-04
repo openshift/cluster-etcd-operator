@@ -2,14 +2,21 @@ package backuprestore
 
 import (
 	"context"
-	"github.com/spf13/pflag"
+	"errors"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
-	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
+
+	cron "github.com/robfig/cron/v3"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
+
+const backupVolume = "/var/backup/etcd/"
 
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
 
@@ -52,6 +59,24 @@ func (b *backupServer) AddFlags(fs *pflag.FlagSet) {
 }
 
 func (b *backupServer) Validate() error {
+	if !b.enabled {
+		klog.Infof("backup-server is disabled")
+		return nil
+	}
+
+	if len(b.schedule) == 0 {
+		err := errors.New("missing required flag: --schedule")
+		klog.Error(err)
+		return err
+	}
+
+	b.backupOptions.backupDir = backupVolume
+	err := b.backupOptions.Validate()
+	if err != nil {
+		klog.Error(err)
+		return err
+	}
+
 	return nil
 }
 
@@ -61,7 +86,49 @@ func (b *backupServer) Run(ctx context.Context) error {
 	defer cancel()
 	signal.NotifyContext(cCtx, shutdownSignals...)
 
+	if b.enabled {
+		schedule, err := cron.ParseStandard(b.schedule)
+		if err != nil {
+			pErr := fmt.Errorf("error parsing backup schedule %v: %w", b.schedule, err)
+			klog.Error(pErr)
+			return pErr
+		}
+
+		err = b.scheduleBackup(cCtx, schedule)
+		if err != nil {
+			return err
+		}
+	}
+
 	<-ctx.Done()
+	return nil
+}
+
+func (b *backupServer) scheduleBackup(ctx context.Context, schedule cron.Schedule) error {
+	ticker := time.NewTicker(time.Until(schedule.Next(time.Now())))
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			err := b.runBackup()
+			if err != nil {
+				return err
+			}
+			ticker.Reset(time.Until(schedule.Next(time.Now())))
+		case <-ctx.Done():
+			klog.Infof("context deadline has exceeded")
+		}
+	}
+}
+
+func (b *backupServer) runBackup() error {
+	dateString := time.Now().Format("2006-01-02_150405")
+	b.backupOptions.backupDir = backupVolume + dateString
+	err := backup(&b.backupOptions)
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
