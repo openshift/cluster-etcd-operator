@@ -47,6 +47,7 @@ func TestSyncLoopHappyPath(t *testing.T) {
 		backupsClient:         operatorFake.ConfigV1alpha1(),
 		kubeClient:            client,
 		operatorImagePullSpec: "pullspec-image",
+		backupVarGetter:       backuphelpers.NewDisabledBackupConfig(),
 		featureGateAccessor:   backupFeatureGateAccessor,
 	}
 
@@ -54,6 +55,70 @@ func TestSyncLoopHappyPath(t *testing.T) {
 	require.NoError(t, err)
 	requireBackupCronJobCreated(t, client, backup)
 	requireOperatorStatus(t, fakeOperatorClient, false)
+}
+
+func TestSyncLoopWithDefaultBackupCR(t *testing.T) {
+	var backups backupv1alpha1.BackupList
+
+	backup := backupv1alpha1.Backup{ObjectMeta: v1.ObjectMeta{Name: "test-backup"},
+		Spec: backupv1alpha1.BackupSpec{
+			EtcdBackupSpec: backupv1alpha1.EtcdBackupSpec{
+				Schedule: "20 4 * * *",
+				TimeZone: "UTC",
+				RetentionPolicy: backupv1alpha1.RetentionPolicy{
+					RetentionType:   backupv1alpha1.RetentionTypeNumber,
+					RetentionNumber: &backupv1alpha1.RetentionNumberConfig{MaxNumberOfBackups: 5}},
+				PVCName: "backup-happy-path-pvc"}}}
+
+	// no default CR
+	backups.Items = append(backups.Items, backup)
+	operatorFake := fake.NewSimpleClientset([]runtime.Object{&backups}...)
+	client := k8sfakeclient.NewSimpleClientset()
+	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+		&operatorv1.StaticPodOperatorSpec{OperatorSpec: operatorv1.OperatorSpec{ManagementState: operatorv1.Managed}},
+		&operatorv1.StaticPodOperatorStatus{}, nil, nil)
+
+	controller := PeriodicBackupController{
+		operatorClient:        fakeOperatorClient,
+		backupsClient:         operatorFake.ConfigV1alpha1(),
+		kubeClient:            client,
+		operatorImagePullSpec: "pullspec-image",
+		backupVarGetter:       backuphelpers.NewDisabledBackupConfig(),
+		featureGateAccessor:   backupFeatureGateAccessor,
+	}
+
+	expDisabledBackupVar := "    args:\n    - --enabled=false"
+	err := controller.sync(context.TODO(), nil)
+	require.NoError(t, err)
+	require.Equal(t, expDisabledBackupVar, controller.backupVarGetter.ArgString())
+
+	// create default CR
+	defaultBackup := backupv1alpha1.Backup{ObjectMeta: v1.ObjectMeta{Name: defaultBackupCRName},
+		Spec: backupv1alpha1.BackupSpec{
+			EtcdBackupSpec: backupv1alpha1.EtcdBackupSpec{
+				Schedule: "0 */2 * * *",
+				TimeZone: "GMT",
+				RetentionPolicy: backupv1alpha1.RetentionPolicy{
+					RetentionType:   backupv1alpha1.RetentionTypeNumber,
+					RetentionNumber: &backupv1alpha1.RetentionNumberConfig{MaxNumberOfBackups: 3}}}}}
+
+	backups.Items = append(backups.Items, defaultBackup)
+	operatorFake = fake.NewSimpleClientset([]runtime.Object{&backups}...)
+	controller.backupsClient = operatorFake.ConfigV1alpha1()
+
+	expEnabledBackupVar := "    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *\n    - --type=RetentionNumber\n    - --maxNumberOfBackups=3"
+	err = controller.sync(context.TODO(), nil)
+	require.NoError(t, err)
+	require.Equal(t, expEnabledBackupVar, controller.backupVarGetter.ArgString())
+
+	// removing defaultCR
+	backups.Items = backups.Items[:len(backups.Items)-1]
+	operatorFake = fake.NewSimpleClientset([]runtime.Object{&backups}...)
+	controller.backupsClient = operatorFake.ConfigV1alpha1()
+
+	err = controller.sync(context.TODO(), nil)
+	require.NoError(t, err)
+	require.Equal(t, expDisabledBackupVar, controller.backupVarGetter.ArgString())
 }
 
 func TestSyncLoopExistingCronJob(t *testing.T) {
@@ -79,6 +144,7 @@ func TestSyncLoopExistingCronJob(t *testing.T) {
 		backupsClient:         operatorFake.ConfigV1alpha1(),
 		kubeClient:            client,
 		operatorImagePullSpec: "pullspec-image",
+		backupVarGetter:       backuphelpers.NewDisabledBackupConfig(),
 		featureGateAccessor:   backupFeatureGateAccessor,
 	}
 
@@ -114,6 +180,7 @@ func TestSyncLoopFailsDegradesOperator(t *testing.T) {
 		backupsClient:         operatorFake.ConfigV1alpha1(),
 		kubeClient:            client,
 		operatorImagePullSpec: "pullspec-image",
+		backupVarGetter:       backuphelpers.NewDisabledBackupConfig(),
 		featureGateAccessor:   backupFeatureGateAccessor,
 	}
 

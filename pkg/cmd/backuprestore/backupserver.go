@@ -2,14 +2,13 @@ package backuprestore
 
 import (
 	"context"
+	"github.com/spf13/pflag"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"k8s.io/klog/v2"
-
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
+	"k8s.io/klog/v2"
 )
 
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
@@ -39,6 +38,7 @@ func NewBackupServer(ctx context.Context) *cobra.Command {
 			}
 		},
 	}
+
 	backupSrv.AddFlags(cmd.Flags())
 	return cmd
 }
@@ -47,6 +47,8 @@ func (b *backupServer) AddFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&b.enabled, "enabled", false, "enable backup server")
 	fs.StringVar(&b.schedule, "schedule", "", "schedule specifies the cron schedule to run the backup")
 	fs.StringVar(&b.timeZone, "timezone", "", "timezone specifies the timezone of the cron schedule to run the backup")
+
+	b.backupOptions.AddFlags(fs)
 }
 
 func (b *backupServer) Validate() error {

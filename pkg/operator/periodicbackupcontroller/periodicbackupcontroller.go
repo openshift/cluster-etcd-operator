@@ -10,31 +10,35 @@ import (
 	backupv1client "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
+	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/client-go/kubernetes"
 	batchv1client "k8s.io/client-go/kubernetes/typed/batch/v1"
 	"k8s.io/klog/v2"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
-	"github.com/openshift/library-go/pkg/controller/factory"
-	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	"k8s.io/client-go/kubernetes"
 )
 
-const backupJobLabel = "backup-name"
+const (
+	backupJobLabel      = "backup-name"
+	defaultBackupCRName = "default"
+)
 
 type PeriodicBackupController struct {
 	operatorClient        v1helpers.OperatorClient
 	backupsClient         backupv1client.BackupsGetter
 	kubeClient            kubernetes.Interface
 	operatorImagePullSpec string
+	backupVarGetter       backuphelpers.BackupVar
 	featureGateAccessor   featuregates.FeatureGateAccess
 }
 
@@ -46,6 +50,7 @@ func NewPeriodicBackupController(
 	eventRecorder events.Recorder,
 	operatorImagePullSpec string,
 	accessor featuregates.FeatureGateAccess,
+	backupVarGetter backuphelpers.BackupVar,
 	backupsInformer factory.Informer) factory.Controller {
 
 	c := &PeriodicBackupController{
@@ -53,6 +58,7 @@ func NewPeriodicBackupController(
 		backupsClient:         backupsClient,
 		kubeClient:            kubeClient,
 		operatorImagePullSpec: operatorImagePullSpec,
+		backupVarGetter:       backupVarGetter,
 		featureGateAccessor:   accessor,
 	}
 
@@ -80,7 +86,14 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 		return fmt.Errorf("PeriodicBackupController could not list backup CRDs, error was: %w", err)
 	}
 
+	defaultFound := false
 	for _, item := range backups.Items {
+		if item.Name == defaultBackupCRName {
+			defaultFound = true
+			c.backupVarGetter.SetBackupSpec(&item.Spec.EtcdBackupSpec)
+			continue
+		}
+
 		err := reconcileCronJob(ctx, cronJobsClient, item, c.operatorImagePullSpec)
 		if err != nil {
 			_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
@@ -95,6 +108,10 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 
 			return fmt.Errorf("PeriodicBackupController could not reconcile backup [%s] with cronjob: %w", item.Name, err)
 		}
+	}
+
+	if !defaultFound {
+		c.backupVarGetter.SetBackupSpec(nil)
 	}
 
 	_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
