@@ -1313,7 +1313,8 @@ ${COMPUTED_ENV_VARS}
     - hostPath:
         path: /var/lib/etcd-auto-backup
         type: DirectoryOrCreate
-      name: etcd-auto-backup-dir`)
+      name: etcd-auto-backup-dir
+`)
 
 func etcdPodYamlBytes() ([]byte, error) {
 	return _etcdPodYaml, nil

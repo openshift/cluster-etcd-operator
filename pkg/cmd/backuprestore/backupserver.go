@@ -55,8 +55,6 @@ func (b *backupServer) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&b.schedule, "schedule", "", "schedule specifies the cron schedule to run the backup")
 	fs.StringVar(&b.timeZone, "timezone", "", "timezone specifies the timezone of the cron schedule to run the backup")
 
-	cobra.MarkFlagRequired(fs, "schedule")
-
 	b.backupOptions.AddFlags(fs)
 }
 
