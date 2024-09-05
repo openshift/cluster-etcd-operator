@@ -1,12 +1,16 @@
 package backuprestore
 
 import (
+	"context"
 	"errors"
-	"github.com/stretchr/testify/require"
+	"github.com/robfig/cron"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
-const validSchedule = "0 */2 * * *"
+const validSchedule = "* * * * *"
 
 func TestBackupServer_Validate(t *testing.T) {
 	testCases := []struct {
@@ -95,4 +99,65 @@ func TestBackupServer_Validate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNewBackupServer_scheduleBackup(t *testing.T) {
+	srvr := &backupServer{
+		timeZone:      "",
+		enabled:       true,
+		backupOptions: backupOptions{},
+	}
+
+	testCases := []struct {
+		name       string
+		schedule   string
+		timeout    time.Duration
+		expBackups int
+		expErr     error
+	}{
+		{
+			name:       "valid schedule",
+			schedule:   validSchedule,
+			timeout:    time.Minute * 3,
+			expBackups: 3,
+			expErr:     nil,
+		},
+		{
+			name:       "invalid schedule",
+			schedule:   "invalid schedule",
+			timeout:    time.Minute * 3,
+			expBackups: 0,
+			expErr:     errors.New("Expected exactly 5 fields"),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+
+			cronSchedule, err := cron.ParseStandard(tc.schedule)
+			if tc.expErr != nil {
+				require.Contains(t, err.Error(), tc.expErr.Error())
+				return
+			}
+			require.NoError(t, err)
+			srvr.cronSchedule = cronSchedule
+
+			mock := backUpErMock{counter: 0}
+			ctxTimeout, cancel := context.WithTimeout(context.Background(), tc.timeout)
+			defer cancel()
+
+			err = srvr.scheduleBackup(ctxTimeout, &mock)
+			require.Equal(t, tc.expErr, err)
+			require.GreaterOrEqual(t, mock.counter, 3)
+		})
+	}
+}
+
+type backUpErMock struct {
+	counter int
+}
+
+func (b *backUpErMock) runBackup(opts *backupOptions) error {
+	b.counter++
+	return nil
 }

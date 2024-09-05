@@ -19,6 +19,23 @@ const backupVolume = "/var/lib/etcd-auto-backup"
 
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
 
+type backUpEr interface {
+	runBackup(opts *backupOptions) error
+}
+
+type backUpErImpl struct{}
+
+func (b backUpErImpl) runBackup(opts *backupOptions) error {
+	dateString := time.Now().Format("2006-01-02_150405")
+	opts.backupDir = backupVolume + dateString
+	err := backup(opts)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 type backupServer struct {
 	schedule     string
 	timeZone     string
@@ -88,7 +105,8 @@ func (b *backupServer) Run(ctx context.Context) error {
 	defer cancel()
 
 	if b.enabled {
-		err := b.scheduleBackup(cCtx, b.cronSchedule)
+		bck := backUpErImpl{}
+		err := b.scheduleBackup(cCtx, bck)
 		if err != nil {
 			return err
 		}
@@ -98,32 +116,21 @@ func (b *backupServer) Run(ctx context.Context) error {
 	return nil
 }
 
-func (b *backupServer) scheduleBackup(ctx context.Context, schedule cron.Schedule) error {
-	ticker := time.NewTicker(time.Until(schedule.Next(time.Now())))
+func (b *backupServer) scheduleBackup(ctx context.Context, bck backUpEr) error {
+	ticker := time.NewTicker(time.Until(b.cronSchedule.Next(time.Now())))
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			err := b.runBackup()
+			err := bck.runBackup(&b.backupOptions)
 			if err != nil {
 				klog.Errorf("error running backup: %v", err)
 				return err
 			}
-			ticker.Reset(time.Until(schedule.Next(time.Now())))
+			ticker.Reset(time.Until(b.cronSchedule.Next(time.Now())))
 		case <-ctx.Done():
 			return nil
 		}
 	}
-}
-
-func (b *backupServer) runBackup() error {
-	dateString := time.Now().Format("2006-01-02_150405")
-	b.backupOptions.backupDir = backupVolume + dateString
-	err := backup(&b.backupOptions)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
