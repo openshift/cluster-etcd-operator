@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/pflag"
 )
 
-const backupVolume = "/var/backup/etcd/"
+const backupVolume = "/var/lib/etcd-auto-backup"
 
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
 
@@ -84,9 +84,8 @@ func (b *backupServer) Validate() error {
 
 func (b *backupServer) Run(ctx context.Context) error {
 	// handle teardown
-	cCtx, cancel := context.WithCancel(ctx)
+	cCtx, cancel := signal.NotifyContext(ctx, shutdownSignals...)
 	defer cancel()
-	signal.NotifyContext(cCtx, shutdownSignals...)
 
 	if b.enabled {
 		err := b.scheduleBackup(cCtx, b.cronSchedule)
