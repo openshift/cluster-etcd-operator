@@ -23,9 +23,9 @@ type backupRunner interface {
 	runBackup(opts *backupOptions) error
 }
 
-type backRunnerImpl struct{}
+type backupRunnerImpl struct{}
 
-func (b backRunnerImpl) runBackup(opts *backupOptions) error {
+func (b backupRunnerImpl) runBackup(opts *backupOptions) error {
 	dateString := time.Now().Format("2006-01-02_150405")
 	opts.backupDir = backupVolume + dateString
 	err := backup(opts)
@@ -102,7 +102,7 @@ func (b *backupServer) Run(ctx context.Context) error {
 	defer cancel()
 
 	if b.enabled {
-		bck := backRunnerImpl{}
+		bck := backupRunnerImpl{}
 		err := b.scheduleBackup(cCtx, bck)
 		if err != nil {
 			return err

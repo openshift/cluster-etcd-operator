@@ -112,6 +112,7 @@ func TestNewBackupServer_scheduleBackup(t *testing.T) {
 		name       string
 		schedule   string
 		timeout    time.Duration
+		slow       bool
 		expBackups int
 		expErr     error
 	}{
@@ -119,6 +120,15 @@ func TestNewBackupServer_scheduleBackup(t *testing.T) {
 			name:       "valid schedule",
 			schedule:   "*/1 * * * * *",
 			timeout:    time.Second * 3,
+			slow:       false,
+			expBackups: 3,
+			expErr:     nil,
+		},
+		{
+			name:       "slow valid schedule",
+			schedule:   "*/2 * * * * *",
+			timeout:    time.Second * 8,
+			slow:       true,
 			expBackups: 3,
 			expErr:     nil,
 		},
@@ -142,22 +152,32 @@ func TestNewBackupServer_scheduleBackup(t *testing.T) {
 			require.NoError(t, err)
 			srvr.cronSchedule = cronSchedule
 
-			mock := backUpErMock{counter: 0}
+			mock := backupRunnerMock{counter: 0}
+			if tc.slow {
+				mock.slow = true
+				mock.delay = time.Second * 3
+			}
 			ctxTimeout, cancel := context.WithTimeout(context.Background(), tc.timeout)
 			defer cancel()
 
 			err = srvr.scheduleBackup(ctxTimeout, &mock)
 			require.Equal(t, tc.expErr, err)
-			require.GreaterOrEqual(t, mock.counter, 3)
+			require.GreaterOrEqual(t, mock.counter, tc.expBackups)
 		})
 	}
 }
 
-type backUpErMock struct {
+type backupRunnerMock struct {
 	counter int
+	slow    bool
+	delay   time.Duration
 }
 
-func (b *backUpErMock) runBackup(opts *backupOptions) error {
+func (b *backupRunnerMock) runBackup(opts *backupOptions) error {
+	if b.slow {
+		time.Sleep(b.delay)
+	}
+
 	b.counter++
 	return nil
 }
