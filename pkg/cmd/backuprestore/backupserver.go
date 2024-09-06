@@ -10,7 +10,7 @@ import (
 
 	"k8s.io/klog/v2"
 
-	cron "github.com/robfig/cron/v3"
+	"github.com/robfig/cron/v3"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -19,13 +19,13 @@ const backupVolume = "/var/lib/etcd-auto-backup"
 
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
 
-type backUpEr interface {
+type backupRunner interface {
 	runBackup(opts *backupOptions) error
 }
 
-type backUpErImpl struct{}
+type backRunnerImpl struct{}
 
-func (b backUpErImpl) runBackup(opts *backupOptions) error {
+func (b backRunnerImpl) runBackup(opts *backupOptions) error {
 	dateString := time.Now().Format("2006-01-02_150405")
 	opts.backupDir = backupVolume + dateString
 	err := backup(opts)
@@ -83,17 +83,14 @@ func (b *backupServer) Validate() error {
 
 	cronSchedule, err := cron.ParseStandard(b.schedule)
 	if err != nil {
-		pErr := fmt.Errorf("error parsing backup schedule %v: %w", b.schedule, err)
-		klog.Error(pErr)
-		return pErr
+		return fmt.Errorf("error parsing backup schedule %v: %w", b.schedule, err)
 	}
 	b.cronSchedule = cronSchedule
 
 	b.backupOptions.backupDir = backupVolume
 	err = b.backupOptions.Validate()
 	if err != nil {
-		klog.Error(err)
-		return err
+		return fmt.Errorf("error validating backup %v: %w", b.backupOptions, err)
 	}
 
 	return nil
@@ -105,7 +102,7 @@ func (b *backupServer) Run(ctx context.Context) error {
 	defer cancel()
 
 	if b.enabled {
-		bck := backUpErImpl{}
+		bck := backRunnerImpl{}
 		err := b.scheduleBackup(cCtx, bck)
 		if err != nil {
 			return err
@@ -116,7 +113,7 @@ func (b *backupServer) Run(ctx context.Context) error {
 	return nil
 }
 
-func (b *backupServer) scheduleBackup(ctx context.Context, bck backUpEr) error {
+func (b *backupServer) scheduleBackup(ctx context.Context, bck backupRunner) error {
 	ticker := time.NewTicker(time.Until(b.cronSchedule.Next(time.Now())))
 	defer ticker.Stop()
 

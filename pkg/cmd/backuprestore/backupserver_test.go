@@ -3,10 +3,10 @@ package backuprestore
 import (
 	"context"
 	"errors"
-	"github.com/robfig/cron"
 	"testing"
 	"time"
 
+	"github.com/robfig/cron"
 	"github.com/stretchr/testify/require"
 )
 
@@ -117,8 +117,8 @@ func TestNewBackupServer_scheduleBackup(t *testing.T) {
 	}{
 		{
 			name:       "valid schedule",
-			schedule:   validSchedule,
-			timeout:    time.Minute * 3,
+			schedule:   "*/1 * * * * *",
+			timeout:    time.Second * 3,
 			expBackups: 3,
 			expErr:     nil,
 		},
@@ -127,14 +127,14 @@ func TestNewBackupServer_scheduleBackup(t *testing.T) {
 			schedule:   "invalid schedule",
 			timeout:    time.Minute * 3,
 			expBackups: 0,
-			expErr:     errors.New("Expected exactly 5 fields"),
+			expErr:     errors.New("Expected 5 to 6 fields"),
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 
-			cronSchedule, err := cron.ParseStandard(tc.schedule)
+			cronSchedule, err := cron.Parse(tc.schedule)
 			if tc.expErr != nil {
 				require.Contains(t, err.Error(), tc.expErr.Error())
 				return
