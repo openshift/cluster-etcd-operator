@@ -941,7 +941,7 @@ spec:
         - |
           #!/bin/sh
           echo -n "Fixing etcd log permissions."
-          mkdir -p /var/log/etcd  && chmod 0700 /var/log/etcd
+          mkdir -p /var/log/etcd  && chmod 0600 /var/log/etcd
           echo -n "Fixing etcd auto backup permissions."
           mkdir -p /var/lib/etcd-auto-backup  && chmod 0600 /var/lib/etcd-auto-backup
       securityContext:
