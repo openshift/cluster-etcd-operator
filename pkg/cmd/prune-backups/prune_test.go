@@ -45,7 +45,6 @@ func TestRetainByNumber(t *testing.T) {
 		_ = os.RemoveAll(temp)
 	})
 	require.NoError(t, err)
-	BasePath = temp
 	expectedFolders := []string{"backup-1", "backup-2", "backup-3", "backup-4", "backup-5"}
 	for _, folder := range expectedFolders {
 		require.NoError(t, os.MkdirAll(path.Join(temp, folder), 0750))
@@ -54,15 +53,15 @@ func TestRetainByNumber(t *testing.T) {
 		time.Sleep(1 * time.Second)
 	}
 
-	require.NoError(t, retainByNumber(6))
+	require.NoError(t, retainByNumber(6, temp))
 	requireFoldersExist(t, temp, expectedFolders)
-	require.NoError(t, retainByNumber(5))
+	require.NoError(t, retainByNumber(5, temp))
 	requireFoldersExist(t, temp, expectedFolders)
-	require.NoError(t, retainByNumber(3))
+	require.NoError(t, retainByNumber(3, temp))
 	requireFoldersExist(t, temp, []string{"backup-3", "backup-4", "backup-5"})
-	require.NoError(t, retainByNumber(1))
+	require.NoError(t, retainByNumber(1, temp))
 	requireFoldersExist(t, temp, []string{"backup-5"})
-	require.NoError(t, retainByNumber(0))
+	require.NoError(t, retainByNumber(0, temp))
 	requireFoldersExist(t, temp, []string{})
 }
 
@@ -73,7 +72,6 @@ func TestRetainBySize(t *testing.T) {
 		_ = os.RemoveAll(temp)
 	})
 	require.NoError(t, err)
-	BasePath = temp
 	expectedFolders := []string{"backup-1", "backup-2", "backup-3", "backup-4", "backup-5"}
 	// using a zeroed slice here, being much faster than generating a random gigabyte of bytes
 	zeroGig := make([]byte, 1024*1024*1024*1)
@@ -82,17 +80,17 @@ func TestRetainBySize(t *testing.T) {
 		require.NoError(t, os.WriteFile(path.Join(temp, folder, "snapshot.snap"), zeroGig, 0600))
 	}
 
-	require.NoError(t, retainBySizeGb(10))
 	requireFoldersExist(t, temp, expectedFolders)
+	require.NoError(t, retainBySizeGb(10, temp))
 
 	for i := 4; i >= 0; i-- {
-		require.NoError(t, retainBySizeGb(i))
+		require.NoError(t, retainBySizeGb(i, temp))
 		requireFoldersExist(t, temp, expectedFolders[len(expectedFolders)-i:])
 	}
 
 	// in the end we should arrive at the empty list, which would be a no-op when retaining with 0.
 	requireFoldersExist(t, temp, []string{})
-	require.NoError(t, retainBySizeGb(0))
+	require.NoError(t, retainBySizeGb(0, temp))
 	requireFoldersExist(t, temp, []string{})
 }
 
@@ -102,7 +100,6 @@ func TestBackupFolderLister(t *testing.T) {
 		_ = os.RemoveAll(temp)
 	})
 	require.NoError(t, err)
-	BasePath = temp
 
 	require.NoError(t, os.MkdirAll(path.Join(temp, "backup-1"), 0750))
 	require.NoError(t, os.WriteFile(path.Join(temp, "backup-1", "snapshot.snap"), randBytes(2500), 0600))
@@ -115,7 +112,7 @@ func TestBackupFolderLister(t *testing.T) {
 	require.NoError(t, os.MkdirAll(path.Join(temp, "backup-3"), 0750))
 	require.NoError(t, os.WriteFile(path.Join(temp, "backup-3", "snapshot.snap"), randBytes(51500), 0600))
 
-	folders, err := listAllBackupFolders()
+	folders, err := listAllBackupFolders(temp)
 	require.NoError(t, err)
 
 	// we rely on the alphabetical ordering of the fs.WalkDir methods here
