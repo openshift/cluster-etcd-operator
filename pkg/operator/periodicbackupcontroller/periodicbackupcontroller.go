@@ -3,6 +3,7 @@ package periodicbackupcontroller
 import (
 	"context"
 	"fmt"
+	"k8s.io/apimachinery/pkg/labels"
 	"time"
 
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
@@ -110,7 +111,37 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 		}
 	}
 
-	if !defaultFound {
+	if defaultFound {
+		mirrorPods, err := c.kubeClient.CoreV1().Pods(operatorclient.TargetNamespace).List(ctx, v1.ListOptions{LabelSelector: labels.Set{"etcd": "true"}.AsSelector().String()})
+		if err != nil {
+			return fmt.Errorf("PeriodicBackupController could not list etcd pods: %w", err)
+		}
+
+		var terminationReason []string
+		for _, p := range mirrorPods.Items {
+			for _, cStatus := range p.Status.ContainerStatuses {
+				if cStatus.Name == "etcd-backup-server" {
+					// TODO we can also try different cStatus.State.Terminated.ExitCode
+					terminationReason = append(terminationReason, cStatus.State.Terminated.Message)
+				}
+			}
+		}
+
+		if len(terminationReason) > 0 {
+			_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+				Type:    "PeriodicBackupControllerDegraded",
+				Status:  operatorv1.ConditionTrue,
+				Reason:  "Error",
+				Message: fmt.Sprintf("found default backup errors: %v", terminationReason),
+			}))
+			if updateErr != nil {
+				klog.V(4).Infof("PeriodicBackupController error during default backup UpdateStatus: %v", err)
+			}
+		} else {
+			// TODO clear the status condition
+		}
+
+	} else {
 		c.backupVarGetter.SetBackupSpec(nil)
 	}
 
