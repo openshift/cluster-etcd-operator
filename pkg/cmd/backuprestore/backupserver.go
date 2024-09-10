@@ -3,6 +3,8 @@ package backuprestore
 import (
 	"context"
 	"fmt"
+	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -119,7 +121,19 @@ func (b *backupServer) Run(ctx context.Context) error {
 	cCtx, cancel := signal.NotifyContext(ctx, shutdownSignals...)
 	defer cancel()
 
+	// add readiness probes
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", healthz)
+	srv := &http.Server{
+		Addr:    ":8000",
+		Handler: mux,
+	}
+
 	if b.enabled {
+		go func() {
+			log.Fatal(srv.ListenAndServe())
+		}()
+
 		bck := backupRunnerImpl{}
 		err := b.scheduleBackup(cCtx, bck)
 		if err != nil {
@@ -128,6 +142,7 @@ func (b *backupServer) Run(ctx context.Context) error {
 	}
 
 	<-ctx.Done()
+	srv.Shutdown(context.Background())
 	return nil
 }
 
@@ -148,4 +163,8 @@ func (b *backupServer) scheduleBackup(ctx context.Context, bck backupRunner) err
 			return nil
 		}
 	}
+}
+
+func healthz(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
 }

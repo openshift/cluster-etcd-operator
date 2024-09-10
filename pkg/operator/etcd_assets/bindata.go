@@ -1276,6 +1276,15 @@ ${COMPUTED_BACKUP_VARS}
         cpu: 10m
     env:
 ${COMPUTED_ENV_VARS}
+    livenessProbe:
+      httpGet:
+        path: healthz
+        port: 8000
+        scheme: HTTPS
+      timeoutSeconds: 30
+      periodSeconds: 5
+      successThreshold: 1
+      failureThreshold: 5
     volumeMounts:
       - mountPath: /var/lib/etcd
         name: data-dir
