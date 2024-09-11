@@ -121,7 +121,7 @@ func (b *backupServer) Run(ctx context.Context) error {
 	cCtx, cancel := signal.NotifyContext(ctx, shutdownSignals...)
 	defer cancel()
 
-	// add readiness probes
+	// add liveness probes
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthz)
 	srv := &http.Server{

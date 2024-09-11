@@ -200,6 +200,7 @@ func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv
 		"${LOCALHOST_IP}", "127.0.0.1", // TODO this needs updating to detect ipv6-ness
 		"${COMPUTED_ENV_VARS}", strings.Join(envVarLines, "\n"), // lacks beauty, but it works
 		"${COMPUTED_BACKUP_VARS}", backupVar.ArgString(),
+		"${COMPUTED_BACKUP_PROBE}", backupVar.ProbeString(),
 	), nil
 }
 

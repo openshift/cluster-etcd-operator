@@ -152,13 +152,17 @@ func TestTargetConfigController(t *testing.T) {
 
 			etcdPodCM, err := fakeKubeClient.CoreV1().ConfigMaps(operatorclient.TargetNamespace).Get(context.TODO(), "etcd-pod", metav1.GetOptions{})
 			require.NoError(t, err)
+
 			expStr := "    args:\n    - --enabled=false"
+			expProbe := ""
 
 			if scenario.etcdBackupSpec != nil {
 				expStr = "    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *"
+				expProbe = "    livenessProbe:\n      httpGet:\n        path: healthz\n        port: 8000\n        scheme: HTTPS\n      timeoutSeconds: 60\n      periodSeconds: 5\n      successThreshold: 1\n      failureThreshold: 5"
 			}
 
 			require.Contains(t, etcdPodCM.Data["pod.yaml"], expStr)
+			require.Contains(t, etcdPodCM.Data["pod.yaml"], expProbe)
 		})
 	}
 }
