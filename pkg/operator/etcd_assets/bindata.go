@@ -8,6 +8,7 @@
 // bindata/etcd/cluster-backup.sh
 // bindata/etcd/cluster-restore.sh
 // bindata/etcd/cm.yaml
+// bindata/etcd/disable-etcd.sh
 // bindata/etcd/etcd-common-tools
 // bindata/etcd/minimal-sm.yaml
 // bindata/etcd/ns.yaml
@@ -695,6 +696,59 @@ func etcdCmYaml() (*asset, error) {
 	}
 
 	info := bindataFileInfo{name: "etcd/cm.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
+var _etcdDisableEtcdSh = []byte(`#!/usr/bin/env bash
+
+### Created by cluster-etcd-operator. DO NOT edit.
+
+set -o errexit
+set -o pipefail
+set -o errtrace
+
+# disable-etcd.sh
+# This script will move the etcd static pod into the home/core/assets/manifests-stopped folder and wait for all containers to exit.
+
+if [[ $EUID -ne 0 ]]; then
+  echo "This script must be run as root"
+  exit 1
+fi
+
+
+function source_required_dependency {
+  local src_path="$1"
+  if [ ! -f "${src_path}" ]; then
+    echo "required dependencies not found, please ensure this script is run on a node with a functional etcd static pod"
+    exit 1
+  fi
+  # shellcheck disable=SC1090
+  source "${src_path}"
+}
+
+source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd.env
+source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd-common-tools
+
+ETCD_STATIC_POD_LIST=("etcd-pod.yaml")
+ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz" "etcd-rev" "etcd-backup-server")
+
+# always move etcd pod and wait for all containers to exit
+mv_static_pods "${ETCD_STATIC_POD_LIST[@]}"
+wait_for_containers_to_stop "${ETCD_STATIC_POD_CONTAINERS[@]}"
+`)
+
+func etcdDisableEtcdShBytes() ([]byte, error) {
+	return _etcdDisableEtcdSh, nil
+}
+
+func etcdDisableEtcdSh() (*asset, error) {
+	bytes, err := etcdDisableEtcdShBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "etcd/disable-etcd.sh", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
@@ -1548,7 +1602,7 @@ source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/confi
 source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd-common-tools
 
 ETCD_STATIC_POD_LIST=("etcd-pod.yaml")
-ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz")
+ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz" "etcd-rev" "etcd-backup-server")
 
 # always move etcd pod and wait for all containers to exit
 mv_static_pods "${ETCD_STATIC_POD_LIST[@]}"
@@ -1794,6 +1848,7 @@ data:
   cluster-restore.sh:
   quorum-restore.sh:
   cluster-backup.sh:
+  disable-etcd.sh:
   etcd-common-tools:
 `)
 
@@ -1961,6 +2016,7 @@ var _bindata = map[string]func() (*asset, error){
 	"etcd/cluster-backup.sh":           etcdClusterBackupSh,
 	"etcd/cluster-restore.sh":          etcdClusterRestoreSh,
 	"etcd/cm.yaml":                     etcdCmYaml,
+	"etcd/disable-etcd.sh":             etcdDisableEtcdSh,
 	"etcd/etcd-common-tools":           etcdEtcdCommonTools,
 	"etcd/minimal-sm.yaml":             etcdMinimalSmYaml,
 	"etcd/ns.yaml":                     etcdNsYaml,
@@ -2030,6 +2086,7 @@ var _bintree = &bintree{nil, map[string]*bintree{
 		"cluster-backup.sh":           {etcdClusterBackupSh, map[string]*bintree{}},
 		"cluster-restore.sh":          {etcdClusterRestoreSh, map[string]*bintree{}},
 		"cm.yaml":                     {etcdCmYaml, map[string]*bintree{}},
+		"disable-etcd.sh":             {etcdDisableEtcdSh, map[string]*bintree{}},
 		"etcd-common-tools":           {etcdEtcdCommonTools, map[string]*bintree{}},
 		"minimal-sm.yaml":             {etcdMinimalSmYaml, map[string]*bintree{}},
 		"ns.yaml":                     {etcdNsYaml, map[string]*bintree{}},
