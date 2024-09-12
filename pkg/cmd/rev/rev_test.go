@@ -40,11 +40,19 @@ func TestNodeDownRevisionSaving(t *testing.T) {
 	client, err := testServer.ClusterClient()
 	require.NoError(t, err)
 
+	list, err := client.MemberList(context.Background())
+	require.NoError(t, err)
+
+	clusterId := list.Header.ClusterId
+
 	trySaveRevision(context.Background(), client.Endpoints(), outputPath, clientPool, 5*time.Second)
 	initialRev := readRevStruct(t, outputPath)
 	require.Equal(t, 3, len(initialRev.RaftIndexByEndpoint))
+	require.Equal(t, clusterId, initialRev.ClusterId)
 	ensureRevStructConsistency(t, initialRev)
 
+	// ensure we move the leader somewhere else to avoid flakes, that only succeeds when the member is the leader
+	_, _ = testServer.Client(1).MoveLeader(context.Background(), list.Members[0].ID)
 	testServer.Members[1].Terminate(t)
 
 	for i := 0; i < 5; i++ {
@@ -56,6 +64,7 @@ func TestNodeDownRevisionSaving(t *testing.T) {
 		revStruct := readRevStruct(t, outputPath)
 		ensureRevStructConsistency(t, revStruct)
 		require.InDelta(t, initialRev.MaxRaftIndex+uint64(i+1), revStruct.MaxRaftIndex, 2)
+		require.Equal(t, clusterId, revStruct.ClusterId)
 	}
 }
 

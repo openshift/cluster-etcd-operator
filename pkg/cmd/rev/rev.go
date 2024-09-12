@@ -28,6 +28,7 @@ type revOpts struct {
 }
 
 type outputStruct struct {
+	ClusterId           uint64            `json:"clusterId,omitempty"`
 	RaftIndexByEndpoint map[string]uint64 `json:"raftIndex,omitempty"`
 	MaxRaftIndex        uint64            `json:"maxRaftIndex,omitempty"`
 	CreatedTime         string            `json:"created,omitempty"`
@@ -136,6 +137,7 @@ func trySaveRevision(ctx context.Context, endpoints []string, outputFile string,
 	lock := sync.Mutex{}
 
 	wg.Add(len(endpoints))
+	clusterId := uint64(0)
 	raftIndexByEndpoint := map[string]uint64{}
 	maxRaftIndex := uint64(0)
 	for _, ep := range endpoints {
@@ -163,6 +165,7 @@ func trySaveRevision(ctx context.Context, endpoints []string, outputFile string,
 
 			raftIndexByEndpoint[ep] = status.RaftIndex
 			maxRaftIndex = max(maxRaftIndex, status.RaftIndex)
+			clusterId = status.Header.ClusterId
 		}(ep)
 	}
 
@@ -174,6 +177,7 @@ func trySaveRevision(ctx context.Context, endpoints []string, outputFile string,
 	}
 
 	jsonOutput, err := json.Marshal(outputStruct{
+		ClusterId:           clusterId,
 		RaftIndexByEndpoint: raftIndexByEndpoint,
 		MaxRaftIndex:        maxRaftIndex,
 		CreatedTime:         time.Now().UTC().String(),
