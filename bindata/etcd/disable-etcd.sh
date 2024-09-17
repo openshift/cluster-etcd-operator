@@ -6,13 +6,14 @@ set -o errexit
 set -o pipefail
 set -o errtrace
 
-# ./quorum-restore.sh
-# This script attempts to restore quorum by spawning a revision-bumped etcd without membership information.
+# disable-etcd.sh
+# This script will move the etcd static pod into the home/core/assets/manifests-stopped folder and wait for all containers to exit.
 
 if [[ $EUID -ne 0 ]]; then
   echo "This script must be run as root"
   exit 1
 fi
+
 
 function source_required_dependency {
   local src_path="$1"
@@ -33,6 +34,3 @@ ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz" "etcd-
 # always move etcd pod and wait for all containers to exit
 mv_static_pods "${ETCD_STATIC_POD_LIST[@]}"
 wait_for_containers_to_stop "${ETCD_STATIC_POD_CONTAINERS[@]}"
-
-echo "starting restore-etcd static pod"
-cp "${QUORUM_RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"
