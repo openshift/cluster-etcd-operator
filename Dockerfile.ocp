@@ -10,15 +10,4 @@ COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/bindata/b
 COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/cluster-etcd-operator /usr/bin/
 COPY manifests/ /manifests
 
-# Operator CRD
-COPY vendor/github.com/openshift/api/operator/v1/zz_generated.crd-manifests/0000_12_etcd_01_etcds-CustomNoUpgrade.crd.yaml /manifests
-COPY vendor/github.com/openshift/api/operator/v1/zz_generated.crd-manifests/0000_12_etcd_01_etcds-Default.crd.yaml /manifests
-COPY vendor/github.com/openshift/api/operator/v1/zz_generated.crd-manifests/0000_12_etcd_01_etcds-TechPreviewNoUpgrade.crd.yaml /manifests
-
-# Backup related CRDs
-COPY vendor/github.com/openshift/api/operator/v1alpha1/zz_generated.crd-manifests/0000_10_etcd_01_etcdbackups-CustomNoUpgrade.crd.yaml /manifests
-COPY vendor/github.com/openshift/api/operator/v1alpha1/zz_generated.crd-manifests/0000_10_etcd_01_etcdbackups-TechPreviewNoUpgrade.crd.yaml /manifests
-COPY vendor/github.com/openshift/api/config/v1alpha1/zz_generated.crd-manifests/0000_10_config-operator_01_backups-CustomNoUpgrade.crd.yaml /manifests
-COPY vendor/github.com/openshift/api/config/v1alpha1/zz_generated.crd-manifests/0000_10_config-operator_01_backups-TechPreviewNoUpgrade.crd.yaml /manifests
-
 LABEL io.openshift.release.operator true
