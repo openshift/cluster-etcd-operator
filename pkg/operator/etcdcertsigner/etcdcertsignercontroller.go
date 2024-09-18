@@ -77,7 +77,6 @@ type EtcdCertSignerController struct {
 	secretClient       corev1client.SecretsGetter
 	configMapClient    corev1client.ConfigMapsGetter
 	configmapLister    corev1listers.ConfigMapLister
-	quorumChecker      ceohelpers.QuorumChecker
 
 	// when true we skip all checks related to the rollout of static pods, this is used in render
 	forceSkipRollout bool
@@ -101,7 +100,6 @@ func NewEtcdCertSignerController(
 	masterNodeLister corev1listers.NodeLister,
 	masterNodeSelector labels.Selector,
 	eventRecorder events.Recorder,
-	quorumChecker ceohelpers.QuorumChecker,
 	metricsRegistry metrics.KubeRegistry,
 	forceSkipRollout bool,
 ) factory.Controller {
@@ -166,7 +164,6 @@ func NewEtcdCertSignerController(
 		configMapClient:    cmGetter,
 		// this one can go through the informers, it's only used for bootstrap checks
 		configmapLister:       kubeInformers.InformersFor(operatorclient.KubeSystemNamespace).Core().V1().ConfigMaps().Lister(),
-		quorumChecker:         quorumChecker,
 		certConfig:            certCfg,
 		signerExpirationGauge: signerExpirationGauge,
 		forceSkipRollout:      forceSkipRollout,
@@ -393,17 +390,6 @@ func (c *EtcdCertSignerController) syncLeafCertificates(
 		Data: allCerts,
 	}
 
-	// check the quorum in case the cluster is healthy or not after generating certs, unless we're in force mode
-	if !forceSkipRollout {
-		safe, err := c.quorumChecker.IsSafeToUpdateRevision()
-		if err != nil {
-			return fmt.Errorf("EtcdCertSignerController can't evaluate whether quorum is safe: %w", err)
-		}
-
-		if !safe {
-			return fmt.Errorf("skipping EtcdCertSignerController reconciliation due to insufficient quorum")
-		}
-	}
 	_, _, err = resourceapply.ApplySecret(ctx, c.secretClient, recorder, secret)
 	return err
 }
@@ -473,17 +459,6 @@ func (c *EtcdCertSignerController) ensureBundles(ctx context.Context,
 	// this ensures we always tag the right revision we're rolling out with, so we can later ensure
 	// the leaf certificates are not regenerated too early.
 	configMap.Annotations[BundleRolloutRevisionAnnotation] = fmt.Sprintf("%d", currentRevision)
-
-	// The rollout may be stuck due to a missing etcd-all-bundles configmap, so we override the quorum check here to regenerate the configmap and let the next revision install
-	if !forceSkipRollout {
-		safe, err := c.quorumChecker.IsSafeToUpdateRevision()
-		if err != nil {
-			return nil, nil, false, fmt.Errorf("EtcdCertSignerController.ensureBundles can't evaluate whether quorum is safe: %w", err)
-		}
-		if !safe {
-			return nil, nil, false, fmt.Errorf("skipping EtcdCertSignerController.ensureBundles reconciliation due to insufficient quorum")
-		}
-	}
 
 	_, rolloutTriggered, err = resourceapply.ApplyConfigMap(ctx, c.configMapClient, recorder, configMap)
 	if err != nil {

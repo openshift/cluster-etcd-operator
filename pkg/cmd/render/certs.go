@@ -3,8 +3,8 @@ package render
 import (
 	"context"
 	"fmt"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
@@ -58,7 +58,6 @@ func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMa
 		kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
 		nodeSelector,
 		recorder,
-		&ceohelpers.AlwaysSafeQuorumChecker{},
 		metrics.NewKubeRegistry(),
 		true)
 
