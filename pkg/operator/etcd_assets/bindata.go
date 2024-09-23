@@ -608,7 +608,9 @@ fi
 
 # always move etcd pod and wait for all containers to exit
 mv_static_pods "${ETCD_STATIC_POD_LIST[@]}"
+stop_containers "${ETCD_STATIC_POD_CONTAINERS[@]}"
 wait_for_containers_to_stop "${ETCD_STATIC_POD_CONTAINERS[@]}"
+await_mirror_pod_removal
 
 if [ ! -d "${ETCD_DATA_DIR_BACKUP}" ]; then
   mkdir -p "${ETCD_DATA_DIR_BACKUP}"
@@ -735,7 +737,9 @@ ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz" "etcd-
 
 # always move etcd pod and wait for all containers to exit
 mv_static_pods "${ETCD_STATIC_POD_LIST[@]}"
+stop_containers "${ETCD_STATIC_POD_CONTAINERS[@]}"
 wait_for_containers_to_stop "${ETCD_STATIC_POD_CONTAINERS[@]}"
+await_mirror_pod_removal
 `)
 
 func etcdDisableEtcdShBytes() ([]byte, error) {
@@ -814,6 +818,37 @@ function check_snapshot_status() {
     echo "Backup integrity verification failed. Backup appears corrupted. Aborting!"
     return 1
   fi
+}
+
+function stop_containers() {
+  local containers=("$@")
+
+  for container_name in "${containers[@]}"; do
+    echo "Stopping container ${container_name}"
+    CID=$(crictl ps --label io.kubernetes.container.name="${container_name}" -q)
+    crictl stop -t 30 "${CID+done}"
+    while [[ -n $(crictl ps --label io.kubernetes.container.name="${container_name}" -q) ]]; do
+      echo -n "."
+      sleep 1
+    done
+    echo "complete"
+  done
+}
+
+function await_mirror_pod_removal() {
+   # we allow to skip this, because the detection logic through kubelet logs is imperfect
+   if [ -n "${ETCD_RESTORE_SKIP_MIRROR_POD_CHECK}" ]; then
+      echo "skip check for etcd mirror pod deletion in kubelet"
+      return
+   fi
+
+   echo "Waiting for etcd mirror pod deletion in kubelet"
+   local msg="\"Deleting a mirror pod\" pod=\"openshift-etcd/etcd"
+   while [[ -z $(journalctl -u kubelet --no-tail -n 1000 -g "${msg}") ]]; do
+     echo -n "."
+     sleep 1
+   done
+   echo "complete"
 }
 
 function wait_for_containers_to_stop() {
@@ -1606,7 +1641,9 @@ ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz" "etcd-
 
 # always move etcd pod and wait for all containers to exit
 mv_static_pods "${ETCD_STATIC_POD_LIST[@]}"
+stop_containers "${ETCD_STATIC_POD_CONTAINERS[@]}"
 wait_for_containers_to_stop "${ETCD_STATIC_POD_CONTAINERS[@]}"
+await_mirror_pod_removal
 
 echo "starting restore-etcd static pod"
 cp "${QUORUM_RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"

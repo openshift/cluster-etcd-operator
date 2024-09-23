@@ -32,7 +32,9 @@ ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz" "etcd-
 
 # always move etcd pod and wait for all containers to exit
 mv_static_pods "${ETCD_STATIC_POD_LIST[@]}"
+stop_containers "${ETCD_STATIC_POD_CONTAINERS[@]}"
 wait_for_containers_to_stop "${ETCD_STATIC_POD_CONTAINERS[@]}"
+await_mirror_pod_removal
 
 echo "starting restore-etcd static pod"
 cp "${QUORUM_RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"

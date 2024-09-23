@@ -61,6 +61,37 @@ function check_snapshot_status() {
   fi
 }
 
+function stop_containers() {
+  local containers=("$@")
+
+  for container_name in "${containers[@]}"; do
+    echo "Stopping container ${container_name}"
+    CID=$(crictl ps --label io.kubernetes.container.name="${container_name}" -q)
+    crictl stop -t 30 "${CID+done}"
+    while [[ -n $(crictl ps --label io.kubernetes.container.name="${container_name}" -q) ]]; do
+      echo -n "."
+      sleep 1
+    done
+    echo "complete"
+  done
+}
+
+function await_mirror_pod_removal() {
+   # we allow to skip this, because the detection logic through kubelet logs is imperfect
+   if [ -n "${ETCD_RESTORE_SKIP_MIRROR_POD_CHECK}" ]; then
+      echo "skip check for etcd mirror pod deletion in kubelet"
+      return
+   fi
+
+   echo "Waiting for etcd mirror pod deletion in kubelet"
+   local msg="\"Deleting a mirror pod\" pod=\"openshift-etcd/etcd"
+   while [[ -z $(journalctl -u kubelet --no-tail -n 1000 -g "${msg}") ]]; do
+     echo -n "."
+     sleep 1
+   done
+   echo "complete"
+}
+
 function wait_for_containers_to_stop() {
   local containers=("$@")
 

@@ -95,7 +95,9 @@ fi
 
 # always move etcd pod and wait for all containers to exit
 mv_static_pods "${ETCD_STATIC_POD_LIST[@]}"
+stop_containers "${ETCD_STATIC_POD_CONTAINERS[@]}"
 wait_for_containers_to_stop "${ETCD_STATIC_POD_CONTAINERS[@]}"
+await_mirror_pod_removal
 
 if [ ! -d "${ETCD_DATA_DIR_BACKUP}" ]; then
   mkdir -p "${ETCD_DATA_DIR_BACKUP}"
