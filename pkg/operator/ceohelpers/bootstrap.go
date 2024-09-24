@@ -112,11 +112,6 @@ func CheckSafeToScaleCluster(
 		return fmt.Errorf("CheckSafeToScaleCluster failed to determine bootstrap status: %w", err)
 	}
 
-	// while bootstrapping, scaling should be considered safe always
-	if !bootstrapComplete {
-		return nil
-	}
-
 	scalingStrategy, err := GetBootstrapScalingStrategy(staticPodClient, namespaceLister, infraLister)
 	if err != nil {
 		return fmt.Errorf("CheckSafeToScaleCluster failed to get bootstrap scaling strategy: %w", err)
@@ -131,7 +126,11 @@ func CheckSafeToScaleCluster(
 	case HAScalingStrategy:
 		minimumNodes = 3
 	case DelayedHAScalingStrategy:
-		minimumNodes = 3
+		if bootstrapComplete {
+			minimumNodes = 3
+		} else {
+			minimumNodes = 2
+		}
 	default:
 		return fmt.Errorf("CheckSafeToScaleCluster unrecognized scaling strategy %q", scalingStrategy)
 	}
@@ -139,6 +138,11 @@ func CheckSafeToScaleCluster(
 	memberHealth, err := etcdClient.MemberHealth(context.Background())
 	if err != nil {
 		return fmt.Errorf("CheckSafeToScaleCluster couldn't determine member health: %w", err)
+	}
+
+	// this allows us to scale beyond the bootstrap node
+	if len(memberHealth) == 1 && !bootstrapComplete {
+		return nil
 	}
 
 	err = etcdcli.IsQuorumFaultTolerantErr(memberHealth)
