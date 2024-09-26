@@ -145,6 +145,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorclient.GlobalMachineSpecifiedConfigNamespace,
 		operatorclient.TargetNamespace,
 		operatorclient.OperatorNamespace,
+		"openshift-kube-apiserver",
 		"kube-system",
 	)
 
@@ -241,13 +242,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		featureGateAccessor,
 	)
 
-	quorumChecker := ceohelpers.NewQuorumChecker(
-		kubeInformersForNamespaces.ConfigMapLister(),
-		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Namespaces().Lister(),
-		configInformers.Config().V1().Infrastructures().Lister(),
-		operatorClient,
-		cachedMemberClient)
-
 	backupVar := backuphelpers.NewDisabledBackupConfig()
 
 	targetConfigReconciler := targetconfigcontroller.NewTargetConfigController(
@@ -303,8 +297,41 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return !isSNO, precheckSucceeded, err
 	}
 
+	quorumChecker := ceohelpers.NewQuorumChecker(
+		kubeInformersForNamespaces.ConfigMapLister(),
+		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Namespaces().Lister(),
+		configInformers.Config().V1().Infrastructures().Lister(),
+		operatorClient,
+		cachedMemberClient)
+
 	quorumSafe := func(ctx context.Context) (bool, error) {
 		return quorumChecker.IsSafeToUpdateRevision()
+	}
+
+	apiserverChecker := ceohelpers.NewApiserverChecker(
+		kubeInformersForNamespaces.PodLister(),
+		kubeInformersForNamespaces.ConfigMapLister(),
+		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Namespaces().Lister(),
+		configInformers.Config().V1().Infrastructures().Lister(),
+		operatorClient,
+		cachedMemberClient)
+
+	apiserverSafe := func(ctx context.Context) (bool, error) {
+		return apiserverChecker.IsSafeToUpdateRevision()
+	}
+
+	joinedSafety := func(ctx context.Context) (bool, error) {
+		safe, err := quorumSafe(ctx)
+		if err != nil {
+			return false, err
+		}
+
+		safe2, err := apiserverSafe(ctx)
+		if err != nil {
+			return false, err
+		}
+
+		return safe && safe2, nil
 	}
 
 	staticPodControllers, err := staticpod.NewBuilder(operatorClient, kubeClient, kubeInformersForNamespaces, configInformers).
@@ -327,7 +354,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			nil,
 			guardRolloutPreCheck,
 		).
-		WithRevisionControllerPrecondition(quorumSafe).
+		WithRevisionControllerPrecondition(joinedSafety).
 		WithOperandPodLabelSelector(labels.Set{"etcd": "true"}.AsSelector()).
 		ToControllers()
 	if err != nil {
