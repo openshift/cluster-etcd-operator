@@ -4,15 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
-	"net"
-	"net/url"
 
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 
 	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
 	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -20,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/controlplanereplicascount"
 )
@@ -234,4 +237,30 @@ func CurrentRevision(status operatorv1.StaticPodOperatorStatus) (int32, error) {
 	}
 
 	return latestRevision, nil
+}
+
+// Returns if the machine hosting the given node name is in deleting phase
+func IsMachineHostingNodeDeleting(nodeName string, machineLister machinelistersv1beta1.MachineLister, machineSelector labels.Selector, masterNodeLister corev1listers.NodeLister, networkLister configv1listers.NetworkLister) (bool, error) {
+	node, err := masterNodeLister.Get(nodeName)
+	if err != nil {
+		return false, fmt.Errorf("failed to get the node %v: %w", nodeName, err)
+	}
+	network, err := networkLister.Get("cluster")
+	if err != nil {
+		return false, fmt.Errorf("failed to get cluster network: %w", err)
+	}
+
+	internalNodeIP, _, err := dnshelpers.GetPreferredInternalIPAddressForNodeName(network, node)
+	if err != nil {
+		return false, fmt.Errorf("failed to get the internal Node IP for the node %v: %w", nodeName, err)
+	}
+
+	machine, err := FindMachineByNodeInternalIP(internalNodeIP, machineSelector, machineLister)
+	if err != nil {
+		return false, fmt.Errorf("failed to find the machine matching the node internal IP %v: %w", internalNodeIP, err)
+	}
+	if machine.DeletionTimestamp != nil {
+		return true, nil
+	}
+	return false, nil
 }

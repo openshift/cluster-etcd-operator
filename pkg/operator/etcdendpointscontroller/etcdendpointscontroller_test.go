@@ -6,6 +6,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
@@ -13,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	corev1listers "k8s.io/client-go/listers/core/v1"
@@ -334,11 +336,21 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 				require.NoError(t, indexer.Add(obj))
 			}
 
+			fakeMachineAPIChecker := &fakeMachineAPI{isMachineAPIFunctional: func() (bool, error) { return false, nil }}
+			machineLister := machinelistersv1beta1.NewMachineLister(indexer)
+			machineSelector, err := labels.Parse("machine.openshift.io/cluster-api-machine-role=master")
+			if err != nil {
+				t.Fatal(err)
+			}
+
 			controller := &EtcdEndpointsController{
-				operatorClient:  fakeOperatorClient,
-				etcdClient:      fakeEtcdClient,
-				configmapLister: corev1listers.NewConfigMapLister(indexer),
-				configmapClient: fakeKubeClient.CoreV1(),
+				operatorClient:    fakeOperatorClient,
+				etcdClient:        fakeEtcdClient,
+				configmapLister:   corev1listers.NewConfigMapLister(indexer),
+				configmapClient:   fakeKubeClient.CoreV1(),
+				machineAPIChecker: fakeMachineAPIChecker,
+				machineLister:     machineLister,
+				machineSelector:   machineSelector,
 			}
 
 			err = controller.sync(context.TODO(), factory.NewSyncContext("test", eventRecorder))
@@ -356,4 +368,20 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			}
 		})
 	}
+}
+
+type fakeMachineAPI struct {
+	isMachineAPIFunctional func() (bool, error)
+}
+
+func (dm *fakeMachineAPI) IsFunctional() (bool, error) {
+	return dm.isMachineAPIFunctional()
+}
+
+func (dm *fakeMachineAPI) IsEnabled() (bool, error) {
+	return true, nil
+}
+
+func (dm *fakeMachineAPI) IsAvailable() (bool, error) {
+	return true, nil
 }

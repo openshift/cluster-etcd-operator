@@ -21,6 +21,7 @@ import (
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/backupcontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertcleaner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/periodicbackupcontroller"
@@ -55,7 +56,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermemberremovalcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
@@ -189,6 +189,9 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 	cachedMemberClient := etcdcli.NewMemberCache(etcdClient)
 
+	machineLister := machinelistersv1beta1.NewMachineLister(masterMachineInformer.GetIndexer())
+	machineAPI := ceohelpers.NewMachineAPI(masterMachineInformer, machineLister, masterMachineLabelSelector, clusterVersions, dynamicClient)
+
 	resourceSyncController, err := resourcesynccontroller.NewResourceSyncController(
 		operatorClient,
 		kubeInformersForNamespaces,
@@ -249,7 +252,13 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Namespaces().Lister(),
 		configInformers.Config().V1().Infrastructures().Lister(),
 		operatorClient,
-		cachedMemberClient)
+		cachedMemberClient,
+		machineAPI,
+		machineLister,
+		masterMachineLabelSelector,
+		masterNodeLister,
+		networkInformer,
+	)
 
 	backupVar := backuphelpers.NewDisabledBackupConfig()
 
@@ -310,6 +319,32 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return quorumChecker.IsSafeToUpdateRevision()
 	}
 
+	deletingNodes := func(ctx context.Context) []string {
+		var deletingNodes []string
+		masterNodes, err := masterNodeLister.List(masterNodeLabelSelector)
+		if err != nil {
+			return nil
+		}
+		isFunctional, err := machineAPI.IsFunctional()
+		if err != nil {
+			return nil
+		}
+		if !isFunctional {
+			return nil
+		}
+		for _, node := range masterNodes {
+			isMachineDeleting, err := ceohelpers.IsMachineHostingNodeDeleting(node.Name, machineLister, masterMachineLabelSelector, masterNodeLister, networkInformer.Lister())
+			if err != nil {
+				return deletingNodes
+			}
+			if isMachineDeleting {
+				deletingNodes = append(deletingNodes, node.Name)
+			}
+		}
+
+		return deletingNodes
+	}
+
 	staticPodControllers, err := staticpod.NewBuilder(operatorClient, kubeClient, kubeInformersForNamespaces, configInformers).
 		WithEvents(controllerContext.EventRecorder).
 		WithInstaller([]string{"cluster-etcd-operator", "installer"}).
@@ -332,6 +367,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		).
 		WithRevisionControllerPrecondition(quorumSafe).
 		WithOperandPodLabelSelector(labels.Set{"etcd": "true"}.AsSelector()).
+		WithDeletingNodes(deletingNodes).
 		ToControllers()
 	if err != nil {
 		return err
@@ -396,6 +432,11 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 		coreClient,
 		kubeInformersForNamespaces,
+		machineAPI,
+		machineLister,
+		masterMachineLabelSelector,
+		masterNodeLister,
+		networkInformer,
 	)
 
 	etcdMembersController := etcdmemberscontroller.NewEtcdMembersController(
@@ -516,8 +557,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	}
 
 	clusterMemberControllerInformers := []factory.Informer{masterNodeInformer}
-	machineLister := machinelistersv1beta1.NewMachineLister(masterMachineInformer.GetIndexer())
-	machineAPI := ceohelpers.NewMachineAPI(masterMachineInformer, machineLister, masterMachineLabelSelector, clusterVersions, dynamicClient)
 	machineAPIEnabled, err := machineAPI.IsEnabled()
 	if err != nil {
 		return fmt.Errorf("could not determine whether machine API is enabled, aborting controller start")

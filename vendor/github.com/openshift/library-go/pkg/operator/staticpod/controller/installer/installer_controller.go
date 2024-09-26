@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -98,6 +99,8 @@ type InstallerController struct {
 	clock            clock.Clock
 	installerBackOff func(count int) time.Duration
 	fallbackBackOff  func(count int) time.Duration
+
+	deletingNodes func(context.Context) []string
 }
 
 // InstallerPodMutationFunc is a function that has a chance at changing the installer pod before it is created
@@ -125,6 +128,11 @@ func (c *InstallerController) WithCerts(certDir string, certConfigMaps, certSecr
 // and the state machine can expect that the startup-monitor acknowledges a ready operand.
 func (c *InstallerController) WithStartupMonitorSupport(startupMonitorEnabled func() (bool, error)) *InstallerController {
 	c.startupMonitorEnabled = startupMonitorEnabled
+	return c
+}
+
+func (c *InstallerController) WithDeletingNodes(deletingNodes func(context.Context) []string) *InstallerController {
+	c.deletingNodes = deletingNodes
 	return c
 }
 
@@ -525,7 +533,11 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 
 		// here we are not in transition, i.e. there is no install pod running
 
-		revisionToStart := c.getRevisionToStart(currNodeState, prevNodeState, operatorStatus)
+		var deletingNodes []string
+		if c.deletingNodes != nil {
+			deletingNodes = c.deletingNodes(ctx)
+		}
+		revisionToStart := c.getRevisionToStart(currNodeState, prevNodeState, operatorStatus, deletingNodes)
 		if revisionToStart == 0 {
 			klog.V(4).Infof("%s, but node %s does not need update", nodeChoiceReason, currNodeState.NodeName)
 			continue
@@ -819,8 +831,13 @@ func (c *InstallerController) newNodeStateForInstallInProgress(ctx context.Conte
 }
 
 // getRevisionToStart returns the revision we need to start or zero if none
-func (c *InstallerController) getRevisionToStart(currNodeState, prevNodeState *operatorv1.NodeStatus, operatorStatus *operatorv1.StaticPodOperatorStatus) int32 {
-	if prevNodeState == nil {
+func (c *InstallerController) getRevisionToStart(currNodeState, prevNodeState *operatorv1.NodeStatus, operatorStatus *operatorv1.StaticPodOperatorStatus, deletingNodes []string) int32 {
+	// if the current node is deleting, then we needn't start revision on it
+	if slices.Contains(deletingNodes, currNodeState.NodeName) {
+		return 0
+	}
+
+	if prevNodeState == nil || slices.Contains(deletingNodes, prevNodeState.NodeName) {
 		currentAtLatest := currNodeState.CurrentRevision == operatorStatus.LatestAvailableRevision
 		if !currentAtLatest {
 			return operatorStatus.LatestAvailableRevision

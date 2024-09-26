@@ -264,6 +264,8 @@ github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnr
 github.com/json-iterator/go v1.1.12/go.mod h1:e30LSqwooZae/UwlEbR2852Gd8hjQvJoHmT4TnhNGBo=
 github.com/jstemmer/go-junit-report v0.0.0-20190106144839-af01ea7f8024/go.mod h1:6v2b51hI/fHJwM22ozAgKL4VKDeJcHhJFhtBdhmNjmU=
 github.com/jtolds/gls v4.20.0+incompatible/go.mod h1:QJZ7F/aHp+rZTRtaJ1ow/lLfFfVYBRgL+9YlvaHOwJU=
+github.com/jubittajohn/library-go v0.0.0-20241008145655-0da6116158ba h1:t83SadeFZKrICLnQjVcTB1uk0nGUbJR5VDGnI7QWi2k=
+github.com/jubittajohn/library-go v0.0.0-20241008145655-0da6116158ba/go.mod h1:9B1MYPoLtP9tqjWxcbUNVpwxy68zOH/3EIP6c31dAM0=
 github.com/julienschmidt/httprouter v1.2.0/go.mod h1:SYymIcj16QtmaHHD7aYtjjsJG7VTCxuUUipMqKk8s4w=
 github.com/julienschmidt/httprouter v1.3.0/go.mod h1:JR6WtHb+2LUe8TCKY3cZOxFyyO8IZAc4RVcycCCAKdM=
 github.com/kisielk/errcheck v1.5.0/go.mod h1:pFxgyoBC7bSaBwPgfKdkLd5X25qrDl4LWUI2bnpBCr8=
@@ -321,8 +323,6 @@ github.com/openshift/build-machinery-go v0.0.0-20240613134303-8359781da660 h1:F0
 github.com/openshift/build-machinery-go v0.0.0-20240613134303-8359781da660/go.mod h1:8jcm8UPtg2mCAsxfqKil1xrmRMI3a+XU2TZ9fF8A7TE=
 github.com/openshift/client-go v0.0.0-20241001162912-da6d55e4611f h1:FRc0bVNWprihWS0GqQWzb3dY4dkCwpOP3mDw5NwSoR4=
 github.com/openshift/client-go v0.0.0-20241001162912-da6d55e4611f/go.mod h1:KiZi2mJRH1TOJ3FtBDYS6YvUL30s/iIXaGSUrSa36mo=
-github.com/openshift/library-go v0.0.0-20241007132721-695e3914ffaa h1:J+yNseiBYDHHX0ln6Jy1iKjNepq2v9PBBtbPb2xU+AQ=
-github.com/openshift/library-go v0.0.0-20241007132721-695e3914ffaa/go.mod h1:9B1MYPoLtP9tqjWxcbUNVpwxy68zOH/3EIP6c31dAM0=
 github.com/opentracing/opentracing-go v1.1.0/go.mod h1:UkNAQd3GIcIGf0SeVgPpRdFStlNbqXla1AfSYxPUl2o=
 github.com/orisano/pixelmatch v0.0.0-20220722002657-fb0b55479cde/go.mod h1:nZgzbfBr3hhjoZnS66nKrHmduYNpc34ny7RK4z5/HM0=
 github.com/pascaldekloe/goe v0.0.0-20180627143212-57f6aae5913c/go.mod h1:lzWF7FIEvWOWxwDKqyGYQf6ZUaNfKdP144TG7ZOy1lc=

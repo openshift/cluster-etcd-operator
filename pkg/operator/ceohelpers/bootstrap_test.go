@@ -7,11 +7,13 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/stretchr/testify/assert"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
@@ -241,7 +243,20 @@ func Test_IsBootstrapComplete(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			actualComplete, actualErr := IsBootstrapComplete(fakeConfigMapLister, fakeStaticPodClient, fakeEtcdClient)
+			fakeMachineAPIChecker := &fakeMachineAPI{isMachineAPIFunctional: func() (bool, error) { return false, nil }}
+			machineLister := machinelistersv1beta1.NewMachineLister(indexer)
+			machineSelector, err := labels.Parse("machine.openshift.io/cluster-api-machine-role=master")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			nodeLister := corev1listers.NewNodeLister(indexer)
+
+			networkIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+			networkIndexer.Add(&configv1.Network{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Spec: configv1.NetworkSpec{ServiceNetwork: []string{"172.30.0.0/16"}}})
+			networkLister := configv1listers.NewNetworkLister(networkIndexer)
+
+			actualComplete, actualErr := IsBootstrapComplete(fakeConfigMapLister, fakeStaticPodClient, fakeEtcdClient, fakeMachineAPIChecker, machineLister, machineSelector, nodeLister, networkLister)
 
 			assert.Equal(t, test.expectComplete, actualComplete)
 			assert.Equal(t, test.expectError, actualErr)
@@ -365,14 +380,49 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			fakeMachineAPIChecker := &fakeMachineAPI{isMachineAPIFunctional: func() (bool, error) { return false, nil }}
+			machineLister := machinelistersv1beta1.NewMachineLister(fakeInfraIndexer)
+			machineSelector, err := labels.Parse("machine.openshift.io/cluster-api-machine-role=master")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			nodeLister := corev1listers.NewNodeLister(fakeInfraIndexer)
+
+			networkIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+			networkIndexer.Add(&configv1.Network{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Spec: configv1.NetworkSpec{ServiceNetwork: []string{"172.30.0.0/16"}}})
+			networkLister := configv1listers.NewNetworkLister(networkIndexer)
+
 			actualErr := CheckSafeToScaleCluster(
 				fakeConfigMapLister,
 				fakeStaticPodClient,
 				fakeNamespaceMapLister,
 				fakeInfraStructure,
-				fakeEtcdClient)
+				fakeEtcdClient,
+				fakeMachineAPIChecker,
+				machineLister,
+				machineSelector,
+				nodeLister,
+				networkLister,
+			)
 
 			assert.Equal(t, test.expectError, actualErr)
 		})
 	}
+}
+
+type fakeMachineAPI struct {
+	isMachineAPIFunctional func() (bool, error)
+}
+
+func (dm *fakeMachineAPI) IsFunctional() (bool, error) {
+	return dm.isMachineAPIFunctional()
+}
+
+func (dm *fakeMachineAPI) IsEnabled() (bool, error) {
+	return true, nil
+}
+
+func (dm *fakeMachineAPI) IsAvailable() (bool, error) {
+	return true, nil
 }

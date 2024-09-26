@@ -6,6 +6,9 @@ import (
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
@@ -15,6 +18,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
@@ -29,10 +33,15 @@ import (
 // EtcdEndpointsController maintains a configmap resource with
 // IP addresses for etcd. It should never depend on DNS directly or transitively.
 type EtcdEndpointsController struct {
-	operatorClient  v1helpers.StaticPodOperatorClient
-	etcdClient      etcdcli.EtcdClient
-	configmapLister corev1listers.ConfigMapLister
-	configmapClient corev1client.ConfigMapsGetter
+	operatorClient    v1helpers.StaticPodOperatorClient
+	etcdClient        etcdcli.EtcdClient
+	configmapLister   corev1listers.ConfigMapLister
+	configmapClient   corev1client.ConfigMapsGetter
+	machineAPIChecker ceohelpers.MachineAPIChecker
+	machineLister     machinelistersv1beta1.MachineLister
+	machineSelector   labels.Selector
+	masterNodeLister  corev1listers.NodeLister
+	networkLister     configv1listers.NetworkLister
 }
 
 func NewEtcdEndpointsController(
@@ -41,13 +50,24 @@ func NewEtcdEndpointsController(
 	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
 	kubeClient kubernetes.Interface,
-	kubeInformers operatorv1helpers.KubeInformersForNamespaces) factory.Controller {
+	kubeInformers operatorv1helpers.KubeInformersForNamespaces,
+	machineAPIChecker ceohelpers.MachineAPIChecker,
+	machineLister machinelistersv1beta1.MachineLister,
+	machineSelector labels.Selector,
+	masterNodeLister corev1listers.NodeLister,
+	networkInformer configv1informers.NetworkInformer,
+) factory.Controller {
 
 	c := &EtcdEndpointsController{
-		operatorClient:  operatorClient,
-		etcdClient:      etcdClient,
-		configmapLister: kubeInformers.ConfigMapLister(),
-		configmapClient: kubeClient.CoreV1(),
+		operatorClient:    operatorClient,
+		etcdClient:        etcdClient,
+		configmapLister:   kubeInformers.ConfigMapLister(),
+		configmapClient:   kubeClient.CoreV1(),
+		machineAPIChecker: machineAPIChecker,
+		machineLister:     machineLister,
+		machineSelector:   machineSelector,
+		masterNodeLister:  masterNodeLister,
+		networkLister:     networkInformer.Lister(),
 	}
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
@@ -92,7 +112,7 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 	// forward or remove it if possible so clients can forget about it.
 	if existing, err := c.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints"); err == nil && existing != nil {
 		if existingIP, hasExistingIP := existing.Annotations[etcdcli.BootstrapIPAnnotationKey]; hasExistingIP {
-			bootstrapComplete, err := ceohelpers.IsBootstrapComplete(c.configmapLister, c.operatorClient, c.etcdClient)
+			bootstrapComplete, err := ceohelpers.IsBootstrapComplete(c.configmapLister, c.operatorClient, c.etcdClient, c.machineAPIChecker, c.machineLister, c.machineSelector, c.masterNodeLister, c.networkLister)
 			if err != nil {
 				return fmt.Errorf("couldn't determine bootstrap status: %w", err)
 			}

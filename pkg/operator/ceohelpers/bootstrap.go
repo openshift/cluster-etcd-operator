@@ -5,8 +5,10 @@ import (
 	"fmt"
 
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
 	"github.com/openshift/library-go/pkg/operator/bootstrap"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	"k8s.io/apimachinery/pkg/labels"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 
@@ -105,9 +107,14 @@ func CheckSafeToScaleCluster(
 	staticPodClient v1helpers.StaticPodOperatorClient,
 	namespaceLister corev1listers.NamespaceLister,
 	infraLister configv1listers.InfrastructureLister,
-	etcdClient etcdcli.AllMemberLister) error {
+	etcdClient etcdcli.AllMemberLister,
+	machineAPIChecker MachineAPIChecker,
+	machineLister machinelistersv1beta1.MachineLister,
+	machineSelector labels.Selector,
+	masterNodeLister corev1listers.NodeLister,
+	networkLister configv1listers.NetworkLister) error {
 
-	bootstrapComplete, err := IsBootstrapComplete(configmapLister, staticPodClient, etcdClient)
+	bootstrapComplete, err := IsBootstrapComplete(configmapLister, staticPodClient, etcdClient, machineAPIChecker, machineLister, machineSelector, masterNodeLister, networkLister)
 	if err != nil {
 		return fmt.Errorf("CheckSafeToScaleCluster failed to determine bootstrap status: %w", err)
 	}
@@ -151,7 +158,7 @@ func CheckSafeToScaleCluster(
 }
 
 // IsBootstrapComplete returns true if bootstrap has completed.
-func IsBootstrapComplete(configmapLister corev1listers.ConfigMapLister, staticPodClient v1helpers.StaticPodOperatorClient, etcdClient etcdcli.AllMemberLister) (bool, error) {
+func IsBootstrapComplete(configmapLister corev1listers.ConfigMapLister, staticPodClient v1helpers.StaticPodOperatorClient, etcdClient etcdcli.AllMemberLister, machineAPIChecker MachineAPIChecker, machineLister machinelistersv1beta1.MachineLister, machineSelector labels.Selector, masterNodeLister corev1listers.NodeLister, networkLister configv1listers.NetworkLister) (bool, error) {
 	// do a cheap check to see if the installer has marked
 	// bootstrapping as done by creating the configmap first.
 	if isBootstrapComplete, err := bootstrap.IsBootstrapComplete(configmapLister); !isBootstrapComplete || err != nil {
@@ -167,6 +174,20 @@ func IsBootstrapComplete(configmapLister corev1listers.ConfigMapLister, staticPo
 		return false, nil
 	}
 	for _, curr := range status.NodeStatuses {
+		//skip stability check on the nodes, if the machine hosting the node is in deleting status
+		isFunctional, err := machineAPIChecker.IsFunctional()
+		if err != nil {
+			return false, fmt.Errorf("failed to determine Machine API availability: %w", err)
+		}
+		if isFunctional {
+			isMachineDeleting, err := IsMachineHostingNodeDeleting(curr.NodeName, machineLister, machineSelector, masterNodeLister, networkLister)
+			if err != nil {
+				return false, fmt.Errorf("failed to determine if the machine hosting the node %s is in deleting status: %w", curr.NodeName, err)
+			}
+			if isMachineDeleting {
+				continue
+			}
+		}
 		if curr.CurrentRevision != status.LatestAvailableRevision {
 			klog.V(4).Infof("bootstrap considered incomplete because revision %d is still in progress", status.LatestAvailableRevision)
 			return false, nil

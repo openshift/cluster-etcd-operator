@@ -6,13 +6,17 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/client-go/config/clientset/versioned/fake"
+	"github.com/openshift/client-go/config/informers/externalversions"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
@@ -130,12 +134,31 @@ func TestQuorumCheck_IsSafeToUpdateRevision(t *testing.T) {
 				require.NoError(t, indexer.Add(obj))
 			}
 
+			fakeMachineAPIChecker := &fakeMachineAPI{isMachineAPIFunctional: func() (bool, error) { return false, nil }}
+			machineLister := machinelistersv1beta1.NewMachineLister(indexer)
+			machineSelector, err := labels.Parse("machine.openshift.io/cluster-api-machine-role=master")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			nodeLister := corev1listers.NewNodeLister(indexer)
+
+			fakeClient := fake.NewSimpleClientset()
+			informerFactory := externalversions.NewSharedInformerFactory(fakeClient, 0)
+			networkInformer := informerFactory.Config().V1().Networks()
+
 			quorumChecker := NewQuorumChecker(
 				corev1listers.NewConfigMapLister(indexer),
 				corev1listers.NewNamespaceLister(indexer),
 				configv1listers.NewInfrastructureLister(indexer),
 				fakeOperatorClient,
-				fakeEtcdClient)
+				fakeEtcdClient,
+				fakeMachineAPIChecker,
+				machineLister,
+				machineSelector,
+				nodeLister,
+				networkInformer,
+			)
 
 			safe, err := quorumChecker.IsSafeToUpdateRevision()
 			assert.Equal(t, scenario.expectedErr, err)
