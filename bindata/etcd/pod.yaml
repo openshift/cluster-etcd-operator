@@ -358,6 +358,7 @@ ${COMPUTED_BACKUP_VARS}
         cpu: 10m
     env:
 ${COMPUTED_ENV_VARS}
+${COMPUTED_BACKUP_PROBE}
     volumeMounts:
       - mountPath: /var/lib/etcd
         name: data-dir

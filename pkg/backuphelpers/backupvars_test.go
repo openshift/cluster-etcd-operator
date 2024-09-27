@@ -65,6 +65,36 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 	}
 }
 
+func TestBackupConfig_ProbeString(t *testing.T) {
+	scenarios := []struct {
+		name     string
+		cr       *backupv1alpha1.EtcdBackupSpec
+		expected string
+	}{
+		{
+			name:     "backup spec with timezone and schedule",
+			cr:       createEtcdBackupSpec(timezone, schedule),
+			expected: "    livenessProbe:\n      httpGet:\n        path: healthz\n        port: 8000\n        scheme: HTTPS\n      timeoutSeconds: 60\n      periodSeconds: 5\n      successThreshold: 1\n      failureThreshold: 5",
+		},
+		{
+			"backup spec with empty timezone and empty schedule",
+			nil,
+			"",
+		},
+	}
+
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			c := NewDisabledBackupConfig()
+			c.SetBackupSpec(scenario.cr)
+
+			act := c.ProbeString()
+
+			require.Equal(t, scenario.expected, act)
+		})
+	}
+}
+
 func createEtcdBackupSpec(timezone, schedule string) *backupv1alpha1.EtcdBackupSpec {
 	return &backupv1alpha1.EtcdBackupSpec{
 		Schedule: schedule,

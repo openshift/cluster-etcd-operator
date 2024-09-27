@@ -18,6 +18,7 @@ type BackupVar interface {
 	AddListener(listener Enqueueable)
 	SetBackupSpec(spec *backupv1alpha1.EtcdBackupSpec)
 	ArgString() string
+	ProbeString() string
 }
 
 type BackupConfig struct {
@@ -85,13 +86,22 @@ func (b *BackupConfig) ArgString() string {
 	return strings.Join(args, "\n    ")
 }
 
+func (b *BackupConfig) ProbeString() string {
+	if !b.enabled {
+		return ""
+	}
+
+	probeString := []string{"    livenessProbe:", "  httpGet:",
+		"    path: healthz", "    port: 8000",
+		"    scheme: HTTPS", "  timeoutSeconds: 60",
+		"  periodSeconds: 5", "  successThreshold: 1", "  failureThreshold: 5"}
+
+	return strings.Join(probeString, "\n    ")
+}
+
 func (b *BackupConfig) AddListener(listener Enqueueable) {
 	b.mux.Lock()
 	defer b.mux.Unlock()
 
 	b.listeners = append(b.listeners, listener)
-}
-
-func isEmptyEtcdBackupSpec(spec backupv1alpha1.EtcdBackupSpec) bool {
-	return reflect.DeepEqual(backupv1alpha1.EtcdBackupSpec{}, spec)
 }

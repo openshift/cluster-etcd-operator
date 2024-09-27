@@ -88,9 +88,11 @@ func TestSyncLoopWithDefaultBackupCR(t *testing.T) {
 	}
 
 	expDisabledBackupVar := "    args:\n    - --enabled=false"
+	expDisabledBackupProbe := ""
 	err := controller.sync(context.TODO(), nil)
 	require.NoError(t, err)
 	require.Equal(t, expDisabledBackupVar, controller.backupVarGetter.ArgString())
+	require.Equal(t, expDisabledBackupProbe, controller.backupVarGetter.ProbeString())
 
 	// create default CR
 	defaultBackup := backupv1alpha1.Backup{ObjectMeta: v1.ObjectMeta{Name: defaultBackupCRName},
@@ -107,9 +109,11 @@ func TestSyncLoopWithDefaultBackupCR(t *testing.T) {
 	controller.backupsClient = operatorFake.ConfigV1alpha1()
 
 	expEnabledBackupVar := "    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *\n    - --type=RetentionNumber\n    - --maxNumberOfBackups=3"
+	expEnabledBackupProbe := "    livenessProbe:\n      httpGet:\n        path: healthz\n        port: 8000\n        scheme: HTTPS\n      timeoutSeconds: 60\n      periodSeconds: 5\n      successThreshold: 1\n      failureThreshold: 5"
 	err = controller.sync(context.TODO(), nil)
 	require.NoError(t, err)
 	require.Equal(t, expEnabledBackupVar, controller.backupVarGetter.ArgString())
+	require.Equal(t, expEnabledBackupProbe, controller.backupVarGetter.ProbeString())
 
 	// removing defaultCR
 	backups.Items = backups.Items[:len(backups.Items)-1]
@@ -119,6 +123,7 @@ func TestSyncLoopWithDefaultBackupCR(t *testing.T) {
 	err = controller.sync(context.TODO(), nil)
 	require.NoError(t, err)
 	require.Equal(t, expDisabledBackupVar, controller.backupVarGetter.ArgString())
+	require.Equal(t, expDisabledBackupProbe, controller.backupVarGetter.ProbeString())
 }
 
 func TestSyncLoopExistingCronJob(t *testing.T) {
