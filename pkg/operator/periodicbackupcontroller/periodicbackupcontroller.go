@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"k8s.io/apimachinery/pkg/labels"
+	"strings"
 	"time"
 
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
@@ -30,8 +31,9 @@ import (
 )
 
 const (
-	backupJobLabel      = "backup-name"
-	defaultBackupCRName = "default"
+	backupJobLabel                = "backup-name"
+	defaultBackupCRName           = "default"
+	etcdBackupServerContainerName = "etcd-backup-server"
 )
 
 type PeriodicBackupController struct {
@@ -117,31 +119,29 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 			return fmt.Errorf("PeriodicBackupController could not list etcd pods: %w", err)
 		}
 
-		var terminationReason []string
+		var terminationReasons []string
 		for _, p := range mirrorPods.Items {
 			for _, cStatus := range p.Status.ContainerStatuses {
-				if cStatus.Name == "etcd-backup-server" {
+				if cStatus.Name == etcdBackupServerContainerName {
 					// TODO we can also try different cStatus.State.Terminated.ExitCode
-					terminationReason = append(terminationReason, cStatus.State.Terminated.Message)
+					terminationReasons = append(terminationReasons, cStatus.State.Terminated.Message)
 				}
 			}
 		}
 
-		if len(terminationReason) > 0 {
+		if len(terminationReasons) > 0 {
 			_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 				Type:    "PeriodicBackupControllerDegraded",
 				Status:  operatorv1.ConditionTrue,
 				Reason:  "Error",
-				Message: fmt.Sprintf("found default backup errors: %v", terminationReason),
+				Message: fmt.Sprintf("found default backup errors: %s", strings.Join(terminationReasons, " ,")),
 			}))
 			if updateErr != nil {
 				klog.V(4).Infof("PeriodicBackupController error during default backup UpdateStatus: %v", err)
 			}
-		} else {
-			// TODO clear the status condition
 		}
-
 	} else {
+		// disable etcd-backup-server
 		c.backupVarGetter.SetBackupSpec(nil)
 	}
 
