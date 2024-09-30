@@ -65,6 +65,78 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 	}
 }
 
+func TestBackupConfig_ToArgList(t *testing.T) {
+	testCases := []struct {
+		name     string
+		cr       *backupv1alpha1.EtcdBackupSpec
+		expected []string
+	}{
+		{
+			"backup spec with timezone and schedule",
+			createEtcdBackupSpec(timezone, schedule),
+			[]string{
+				"--enabled=true",
+				"--timezone=GMT",
+				"--schedule=0 */2 * * *",
+			},
+		},
+		{
+			"backup spec with timezone and empty schedule",
+			createEtcdBackupSpec(timezone, ""),
+			[]string{
+				"--enabled=true",
+				"--timezone=GMT",
+			},
+		},
+		{
+			"backup spec with empty timezone and schedule",
+			createEtcdBackupSpec("", schedule),
+			[]string{
+				"--enabled=true",
+				"--schedule=0 */2 * * *",
+			},
+		},
+		{
+			"backup spec with timezone and schedule and retention number",
+			withRetentionNumberThreeBackups(createEtcdBackupSpec(timezone, schedule)),
+			[]string{
+				"--enabled=true",
+				"--timezone=GMT",
+				"--schedule=0 */2 * * *",
+				"--type=RetentionNumber",
+				"--maxNumberOfBackups=3",
+			},
+		},
+		{
+			"backup spec with timezone and schedule and retention size",
+			withRetentionSizeOneGB(createEtcdBackupSpec(timezone, schedule)),
+			[]string{
+				"--enabled=true",
+				"--timezone=GMT",
+				"--schedule=0 */2 * * *",
+				"--type=RetentionSize",
+				"--maxSizeOfBackupsGb=1",
+			},
+		},
+		{
+			"backup spec with empty timezone and empty schedule",
+			nil,
+			[]string{
+				"--enabled=false",
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+
+			c := NewDisabledBackupConfig()
+			c.SetBackupSpec(tc.cr)
+			require.Equal(t, tc.expected, c.ArgList())
+		})
+	}
+}
+
 func createEtcdBackupSpec(timezone, schedule string) *backupv1alpha1.EtcdBackupSpec {
 	return &backupv1alpha1.EtcdBackupSpec{
 		Schedule: schedule,

@@ -2,6 +2,8 @@ package targetconfigcontroller
 
 import (
 	"context"
+	"k8s.io/client-go/kubernetes/scheme"
+	"slices"
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -24,20 +26,21 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+const etcdPullSpec = "etcd-pull-spec"
+const operatorPullSpec = "operator-pull-spec"
 
 func TestTargetConfigController(t *testing.T) {
 
 	scenarios := []struct {
-		name              string
-		objects           []runtime.Object
-		staticPodStatus   *operatorv1.StaticPodOperatorStatus
-		etcdMembers       []*etcdserverpb.Member
-		etcdMembersEnvVar string
-		etcdBackupSpec    *backupv1alpha1.EtcdBackupSpec
-		expectedErr       error
+		name            string
+		objects         []runtime.Object
+		staticPodStatus *operatorv1.StaticPodOperatorStatus
+		etcdMembers     []*etcdserverpb.Member
+		etcdBackupSpec  *backupv1alpha1.EtcdBackupSpec
+		expectedErr     error
 	}{
 		{
 			name: "HappyPath",
@@ -55,8 +58,7 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(1),
 				u.FakeEtcdMemberWithoutServer(2),
 			},
-			etcdMembersEnvVar: "1,2,3",
-			etcdBackupSpec:    nil,
+			etcdBackupSpec: nil,
 		},
 		{
 			name: "Quorum not fault tolerant but bootstrapping",
@@ -73,8 +75,7 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(0),
 				u.FakeEtcdMemberWithoutServer(2),
 			},
-			etcdBackupSpec:    nil,
-			etcdMembersEnvVar: "1,3",
+			etcdBackupSpec: nil,
 		},
 		{
 			name: "BackupVar Test HappyPath",
@@ -92,8 +93,7 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(1),
 				u.FakeEtcdMemberWithoutServer(2),
 			},
-			etcdBackupSpec:    u.CreateEtcdBackupSpecPtr("GMT", "0 */2 * * *"),
-			etcdMembersEnvVar: "1,2,3",
+			etcdBackupSpec: u.CreateEtcdBackupSpecPtr("GMT", "0 */2 * * *"),
 		},
 		{
 			name: "Backup Var Test with empty spec",
@@ -111,17 +111,16 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(1),
 				u.FakeEtcdMemberWithoutServer(2),
 			},
-			etcdBackupSpec:    nil,
-			etcdMembersEnvVar: "1,2,3",
+			etcdBackupSpec: nil,
 		},
 	}
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
 			backupVar := backuphelpers.NewDisabledBackupConfig()
-			eventRecorder, _, controller, fakeKubeClient := getController(t, scenario.staticPodStatus, scenario.objects, scenario.etcdMembers, backupVar)
+			eventRecorder, _, controller, fakeKubeClient := getController(t, scenario.staticPodStatus, scenario.objects, backupVar)
 			backupVar.SetBackupSpec(scenario.etcdBackupSpec)
 			err := controller.sync(context.TODO(), factory.NewSyncContext("test", eventRecorder))
-			assert.Equal(t, scenario.expectedErr, err)
+			require.Equal(t, scenario.expectedErr, err)
 
 			if scenario.expectedErr != nil {
 				return
@@ -129,18 +128,60 @@ func TestTargetConfigController(t *testing.T) {
 
 			etcdPodCM, err := fakeKubeClient.CoreV1().ConfigMaps(operatorclient.TargetNamespace).Get(context.TODO(), "etcd-pod", metav1.GetOptions{})
 			require.NoError(t, err)
-			expStr := "    args:\n    - --enabled=false"
 
-			if scenario.etcdBackupSpec != nil {
-				expStr = "    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *"
+			podYaml := etcdPodCM.Data["pod.yaml"]
+			pod := &corev1.Pod{}
+			_, _, err = scheme.Codecs.UniversalDeserializer().Decode([]byte(podYaml), nil, pod)
+			require.NoError(t, err)
+
+			envWithoutRevision := []corev1.EnvVar{
+				{Name: "ALL_ETCD_ENDPOINTS", Value: "1,3"},
+				{Name: "OTHER_ENDPOINTS_IP", Value: "192.168.2.42"},
 			}
 
-			require.Contains(t, etcdPodCM.Data["pod.yaml"], expStr)
+			envWithRevision := append(envWithoutRevision, corev1.EnvVar{
+				Name:  "ETCD_STATIC_POD_VERSION",
+				Value: "REVISION",
+			})
+
+			expectedEnv := map[string][]corev1.EnvVar{
+				"etcdctl":            envWithRevision,
+				"etcd":               envWithRevision,
+				"etcd-metrics":       envWithRevision,
+				"etcd-readyz":        envWithoutRevision,
+				"etcd-rev":           envWithoutRevision,
+				"etcd-backup-server": envWithoutRevision,
+			}
+
+			expectedImage := map[string]string{
+				"etcdctl":            etcdPullSpec,
+				"etcd":               etcdPullSpec,
+				"etcd-metrics":       etcdPullSpec,
+				"etcd-readyz":        operatorPullSpec,
+				"etcd-rev":           operatorPullSpec,
+				"etcd-backup-server": operatorPullSpec,
+			}
+
+			for _, container := range pod.Spec.Containers {
+				require.Contains(t, expectedEnv, container.Name)
+				require.Equal(t, expectedEnv[container.Name], container.Env)
+				require.Contains(t, expectedImage, container.Name)
+				require.Equal(t, expectedImage[container.Name], container.Image)
+			}
+
+			backupContainerIndex := slices.IndexFunc(pod.Spec.Containers, func(container corev1.Container) bool {
+				return container.Name == "etcd-backup-server"
+			})
+			if scenario.etcdBackupSpec != nil {
+				require.Equal(t, []string{"--enabled=true", "--timezone=GMT", "--schedule=0 */2 * * *"}, pod.Spec.Containers[backupContainerIndex].Args)
+			} else {
+				require.Equal(t, []string{"--enabled=false"}, pod.Spec.Containers[backupContainerIndex].Args)
+			}
 		})
 	}
 }
 
-func getController(t *testing.T, staticPodStatus *operatorv1.StaticPodOperatorStatus, objects []runtime.Object, etcdMembers []*etcdserverpb.Member, backupVar *backuphelpers.BackupConfig) (events.Recorder, v1helpers.StaticPodOperatorClient, *TargetConfigController, *fake.Clientset) {
+func getController(t *testing.T, staticPodStatus *operatorv1.StaticPodOperatorStatus, objects []runtime.Object, backupVar *backuphelpers.BackupConfig) (events.Recorder, v1helpers.StaticPodOperatorClient, *TargetConfigController, *fake.Clientset) {
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 		&operatorv1.StaticPodOperatorSpec{
 			OperatorSpec: operatorv1.OperatorSpec{
@@ -180,11 +221,12 @@ func getController(t *testing.T, staticPodStatus *operatorv1.StaticPodOperatorSt
 
 	envVar := etcdenvvar.FakeEnvVar{EnvVars: map[string]string{
 		"ALL_ETCD_ENDPOINTS": "1,3",
+		"OTHER_ENDPOINTS_IP": "192.168.2.42",
 	}}
 
 	controller := &TargetConfigController{
-		targetImagePullSpec:   "etcd-pull-spec",
-		operatorImagePullSpec: "operator-pull-spec",
+		targetImagePullSpec:   etcdPullSpec,
+		operatorImagePullSpec: operatorPullSpec,
 		operatorClient:        fakeOperatorClient,
 		kubeClient:            fakeKubeClient,
 		envVarGetter:          envVar,
