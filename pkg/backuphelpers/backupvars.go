@@ -120,7 +120,3 @@ func (b *BackupConfig) AddListener(listener Enqueueable) {
 
 	b.listeners = append(b.listeners, listener)
 }
-
-func isEmptyEtcdBackupSpec(spec backupv1alpha1.EtcdBackupSpec) bool {
-	return reflect.DeepEqual(backupv1alpha1.EtcdBackupSpec{}, spec)
-}

@@ -114,7 +114,9 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 	}
 
 	if defaultFound {
-		mirrorPods, err := c.kubeClient.CoreV1().Pods(operatorclient.TargetNamespace).List(ctx, v1.ListOptions{LabelSelector: labels.Set{"etcd": "true"}.AsSelector().String()})
+		mirrorPods, err := c.kubeClient.CoreV1().Pods(operatorclient.TargetNamespace).List(ctx, v1.ListOptions{
+			LabelSelector: labels.Set{"app": "etcd"}.AsSelector().String(),
+			Watch:         true})
 		if err != nil {
 			return fmt.Errorf("PeriodicBackupController could not list etcd pods: %w", err)
 		}
@@ -124,7 +126,7 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 			for _, cStatus := range p.Status.ContainerStatuses {
 				if cStatus.Name == etcdBackupServerContainerName {
 					// TODO we can also try different cStatus.State.Terminated.ExitCode
-					terminationReasons = append(terminationReasons, cStatus.State.Terminated.Message)
+					terminationReasons = append(terminationReasons, fmt.Sprintf("container %s within pod %s has been terminated: %s", etcdBackupServerContainerName, p.Name, cStatus.State.Terminated.Message))
 				}
 			}
 		}
@@ -139,6 +141,8 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 			if updateErr != nil {
 				klog.V(4).Infof("PeriodicBackupController error during default backup UpdateStatus: %v", err)
 			}
+
+			return nil
 		}
 	} else {
 		// disable etcd-backup-server

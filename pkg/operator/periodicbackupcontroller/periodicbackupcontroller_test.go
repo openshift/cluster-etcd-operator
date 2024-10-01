@@ -14,6 +14,8 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8sfakeclient "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
@@ -120,6 +122,79 @@ func TestSyncLoopWithDefaultBackupCR(t *testing.T) {
 	err = controller.sync(context.TODO(), nil)
 	require.NoError(t, err)
 	require.Equal(t, expDisabledBackupVar, controller.backupVarGetter.ArgString())
+}
+
+func TestSyncLoopFailsDegradesOperatorWithDefaultBackupCR(t *testing.T) {
+	var backups backupv1alpha1.BackupList
+
+	backup := backupv1alpha1.Backup{ObjectMeta: v1.ObjectMeta{Name: "test-backup"},
+		Spec: backupv1alpha1.BackupSpec{
+			EtcdBackupSpec: backupv1alpha1.EtcdBackupSpec{
+				Schedule: "20 4 * * *",
+				TimeZone: "UTC",
+				RetentionPolicy: backupv1alpha1.RetentionPolicy{
+					RetentionType:   backupv1alpha1.RetentionTypeNumber,
+					RetentionNumber: &backupv1alpha1.RetentionNumberConfig{MaxNumberOfBackups: 5}},
+				PVCName: "backup-happy-path-pvc"}}}
+
+	backupServerFailureMsg := fmt.Sprintf("error running etcd backup: %s", "error running backup")
+	client := k8sfakeclient.NewSimpleClientset([]runtime.Object{
+		etcdPodWithFailingBackupServerContainer("1", backupServerFailureMsg),
+		etcdPodWithFailingBackupServerContainer("2", backupServerFailureMsg),
+		etcdPodWithFailingBackupServerContainer("3", backupServerFailureMsg)}...)
+
+	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+		&operatorv1.StaticPodOperatorSpec{OperatorSpec: operatorv1.OperatorSpec{ManagementState: operatorv1.Managed}},
+		&operatorv1.StaticPodOperatorStatus{}, nil, nil)
+
+	// no default CR
+	backups.Items = append(backups.Items, backup)
+	operatorFake := fake.NewSimpleClientset([]runtime.Object{&backups}...)
+
+	controller := PeriodicBackupController{
+		operatorClient:        fakeOperatorClient,
+		backupsClient:         operatorFake.ConfigV1alpha1(),
+		kubeClient:            client,
+		operatorImagePullSpec: "pullspec-image",
+		backupVarGetter:       backuphelpers.NewDisabledBackupConfig(),
+		featureGateAccessor:   backupFeatureGateAccessor,
+	}
+
+	expDisabledBackupVar := "    args:\n    - --enabled=false"
+	err := controller.sync(context.TODO(), nil)
+	require.NoError(t, err)
+	require.Equal(t, expDisabledBackupVar, controller.backupVarGetter.ArgString())
+	requireOperatorStatus(t, fakeOperatorClient, false)
+
+	// create default CR
+	defaultBackup := backupv1alpha1.Backup{ObjectMeta: v1.ObjectMeta{Name: defaultBackupCRName},
+		Spec: backupv1alpha1.BackupSpec{
+			EtcdBackupSpec: backupv1alpha1.EtcdBackupSpec{
+				Schedule: "0 */2 * * *",
+				TimeZone: "GMT",
+				RetentionPolicy: backupv1alpha1.RetentionPolicy{
+					RetentionType:   backupv1alpha1.RetentionTypeNumber,
+					RetentionNumber: &backupv1alpha1.RetentionNumberConfig{MaxNumberOfBackups: 3}}}}}
+
+	backups.Items = append(backups.Items, defaultBackup)
+	operatorFake = fake.NewSimpleClientset([]runtime.Object{&backups}...)
+	controller.backupsClient = operatorFake.ConfigV1alpha1()
+
+	expEnabledBackupVar := "    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *\n    - --type=RetentionNumber\n    - --maxNumberOfBackups=3"
+	err = controller.sync(context.TODO(), nil)
+	require.NoError(t, err)
+	require.Equal(t, expEnabledBackupVar, controller.backupVarGetter.ArgString())
+	requireOperatorStatus(t, fakeOperatorClient, true)
+
+	// removing defaultCR
+	backups.Items = backups.Items[:len(backups.Items)-1]
+	operatorFake = fake.NewSimpleClientset([]runtime.Object{&backups}...)
+	controller.backupsClient = operatorFake.ConfigV1alpha1()
+
+	err = controller.sync(context.TODO(), nil)
+	require.NoError(t, err)
+	require.Equal(t, expDisabledBackupVar, controller.backupVarGetter.ArgString())
+	requireOperatorStatus(t, fakeOperatorClient, false)
 }
 
 func TestSyncLoopExistingCronJob(t *testing.T) {
@@ -307,4 +382,24 @@ func findFirstCreateAction(client *k8sfakeclient.Clientset) *k8stesting.CreateAc
 		}
 	}
 	return createAction
+}
+
+func etcdPodWithFailingBackupServerContainer(nodeName string, failureMsg string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: v1.ObjectMeta{
+			Name:      fmt.Sprintf("etcd-%v", nodeName),
+			Namespace: "openshift-etcd",
+			Labels:    labels.Set{"app": "etcd"},
+		},
+		Status: corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name: etcdBackupServerContainerName,
+				State: corev1.ContainerState{
+					Terminated: &corev1.ContainerStateTerminated{
+						Message: failureMsg,
+					},
+				}},
+			},
+		},
+	}
 }
