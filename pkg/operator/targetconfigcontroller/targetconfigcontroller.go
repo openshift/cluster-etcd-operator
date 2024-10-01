@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
+	"text/template"
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -29,6 +31,21 @@ import (
 	coreclientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/cache"
 )
+
+type NameValue struct {
+	Name  string
+	Value string
+}
+
+type PodSubstitutionTemplate struct {
+	Image            string
+	OperatorImage    string
+	ListenAddress    string
+	LocalhostAddress string
+	LogLevel         string
+	EnvVars          []NameValue
+	BackupArgs       []string
+}
 
 type TargetConfigController struct {
 	targetImagePullSpec   string
@@ -147,7 +164,8 @@ func (c *TargetConfigController) createTargetConfig(
 	if err != nil {
 		return err
 	}
-	_, _, err = c.manageStandardPod(ctx, contentReplacer, c.kubeClient.CoreV1(), recorder, operatorSpec)
+	podSub := c.getPodSubstitution(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars, backupVar)
+	_, _, err = c.manageStandardPod(ctx, podSub, c.kubeClient.CoreV1(), recorder, operatorSpec)
 	if err != nil {
 		errs = errors.Join(errs, fmt.Errorf("%q: %w", "configmap/etcd-pod", err))
 	}
@@ -189,6 +207,26 @@ func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv
 	), nil
 }
 
+func (c *TargetConfigController) getPodSubstitution(operatorSpec *operatorv1.StaticPodOperatorSpec,
+	imagePullSpec, operatorImagePullSpec string, envVarMap map[string]string, backupVar backuphelpers.BackupVar) *PodSubstitutionTemplate {
+
+	var nameValues []NameValue
+	for _, k := range sets.StringKeySet(envVarMap).List() {
+		v := envVarMap[k]
+		nameValues = append(nameValues, NameValue{k, v})
+	}
+
+	return &PodSubstitutionTemplate{
+		Image:            imagePullSpec,
+		OperatorImage:    operatorImagePullSpec,
+		ListenAddress:    "0.0.0.0",   // TODO this needs updating to detect ipv6-ness
+		LocalhostAddress: "127.0.0.1", // TODO this needs updating to detect ipv6-ness
+		LogLevel:         loglevelToZap(operatorSpec.LogLevel),
+		EnvVars:          nameValues,
+		BackupArgs:       backupVar.ArgList(),
+	}
+}
+
 func (c *TargetConfigController) manageRecoveryPods(
 	ctx context.Context,
 	substitutionReplacer *strings.Replacer,
@@ -205,15 +243,27 @@ func (c *TargetConfigController) manageRecoveryPods(
 	return resourceapply.ApplyConfigMap(ctx, client, recorder, podConfigMap)
 }
 
-func (c *TargetConfigController) manageStandardPod(ctx context.Context, substitutionReplacer *strings.Replacer,
+func (c *TargetConfigController) manageStandardPod(ctx context.Context, subs *PodSubstitutionTemplate,
 	client coreclientv1.ConfigMapsGetter, recorder events.Recorder,
 	operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
 
-	podBytes := etcd_assets.MustAsset("etcd/pod.yaml")
-	substitutedPodString := substitutionReplacer.Replace(string(podBytes))
+	fm := template.FuncMap{"quote": func(arg reflect.Value) string {
+		return "\"" + arg.String() + "\""
+	}}
+	podBytes := etcd_assets.MustAsset("etcd/pod.gotpl.yaml")
+	tmpl, err := template.New("pod").Funcs(fm).Parse(string(podBytes))
+	if err != nil {
+		return nil, false, err
+	}
+
+	w := &strings.Builder{}
+	err = tmpl.Execute(w, subs)
+	if err != nil {
+		return nil, false, err
+	}
 
 	podConfigMap := resourceread.ReadConfigMapV1OrDie(etcd_assets.MustAsset("etcd/pod-cm.yaml"))
-	podConfigMap.Data["pod.yaml"] = substitutedPodString
+	podConfigMap.Data["pod.yaml"] = w.String()
 	podConfigMap.Data["forceRedeploymentReason"] = operatorSpec.ForceRedeploymentReason
 	podConfigMap.Data["version"] = version.Get().String()
 	return resourceapply.ApplyConfigMap(ctx, client, recorder, podConfigMap)

@@ -1,0 +1,422 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: etcd
+  namespace: openshift-etcd
+  annotations:
+    kubectl.kubernetes.io/default-container: etcd
+    target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
+  labels:
+    app: etcd
+    k8s-app: etcd
+    etcd: "true"
+    revision: "REVISION"
+spec:
+  initContainers:
+    - name: setup
+      image: {{.Image}}
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      command:
+        - /bin/sh
+        - -c
+        - |
+          #!/bin/sh
+          echo -n "Fixing etcd log permissions."
+          mkdir -p /var/log/etcd  && chmod 0600 /var/log/etcd
+          echo -n "Fixing etcd auto backup permissions."
+          mkdir -p /var/lib/etcd-auto-backup  && chmod 0600 /var/lib/etcd-auto-backup
+      securityContext:
+        privileged: true
+      resources:
+        requests:
+          memory: 50Mi
+          cpu: 5m
+      volumeMounts:
+        - mountPath: /var/log/etcd
+          name: log-dir
+    - name: etcd-ensure-env-vars
+      image: {{.Image}}
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      command:
+        - /bin/sh
+        - -c
+        - |
+          #!/bin/sh
+          set -euo pipefail
+
+          : "${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST?not set}"
+          : "${NODE_NODE_ENVVAR_NAME_ETCD_NAME?not set}"
+          : "${NODE_NODE_ENVVAR_NAME_IP?not set}"
+
+          # check for ipv4 addresses as well as ipv6 addresses with extra square brackets
+          if [[ "${NODE_NODE_ENVVAR_NAME_IP}" != "${NODE_IP}" && "${NODE_NODE_ENVVAR_NAME_IP}" != "[${NODE_IP}]" ]]; then
+            # echo the error message to stderr
+            echo "Expected node IP to be ${NODE_IP} got ${NODE_NODE_ENVVAR_NAME_IP}" >&2
+            exit 1
+          fi
+
+          # check for ipv4 addresses as well as ipv6 addresses with extra square brackets
+          if [[ "${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}" != "${NODE_IP}" && "${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}" != "[${NODE_IP}]" ]]; then
+            # echo the error message to stderr
+            echo "Expected etcd url host to be ${NODE_IP} got ${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}" >&2
+            exit 1
+          fi
+
+      resources:
+        requests:
+          memory: 60Mi
+          cpu: 10m
+      securityContext:
+        privileged: true
+      env:
+      {{ range $i, $k := .EnvVars -}}
+      - name: {{ $k.Name | quote }}
+        value: {{ $k.Value | quote }}
+      {{ end -}}
+      - name: NODE_IP
+        valueFrom:
+          fieldRef:
+            fieldPath: status.podIP
+    - name: etcd-resources-copy
+      image: {{.Image}}
+      imagePullPolicy: IfNotPresent
+      terminationMessagePolicy: FallbackToLogsOnError
+      command:
+        - /bin/sh
+        - -c
+        - |
+          #!/bin/sh
+          set -euo pipefail
+
+          rm -f $(grep -l '^### Created by cluster-etcd-operator' /usr/local/bin/*)
+          cp -p /etc/kubernetes/static-pod-certs/configmaps/etcd-scripts/*.sh /usr/local/bin
+
+      resources:
+        requests:
+          memory: 60Mi
+          cpu: 10m
+      securityContext:
+        privileged: true
+      volumeMounts:
+        - mountPath: /etc/kubernetes/static-pod-resources
+          name: resource-dir
+        - mountPath: /etc/kubernetes/static-pod-certs
+          name: cert-dir
+        - mountPath: /usr/local/bin
+          name: usr-local-bin
+  containers:
+  # The etcdctl container should always be first. It is intended to be used
+  # to open a remote shell via `oc rsh` that is ready to run `etcdctl`.
+  - name: etcdctl
+    image: {{.Image}}
+    imagePullPolicy: IfNotPresent
+    terminationMessagePolicy: FallbackToLogsOnError
+    command:
+      - "/bin/bash"
+      - "-c"
+      - "trap TERM INT; sleep infinity & wait"
+    resources:
+      requests:
+        memory: 60Mi
+        cpu: 10m
+    volumeMounts:
+      - mountPath: /etc/kubernetes/manifests
+        name: static-pod-dir
+      - mountPath: /etc/kubernetes/static-pod-resources
+        name: resource-dir
+      - mountPath: /etc/kubernetes/static-pod-certs
+        name: cert-dir
+      - mountPath: /var/lib/etcd/
+        name: data-dir
+    env:
+    {{ range $i, $k := .EnvVars -}}
+    - name: {{ $k.Name | quote }}
+      value: {{ $k.Value | quote }}
+    {{ end -}}
+    - name: "ETCD_STATIC_POD_VERSION"
+      value: "REVISION"
+  - name: etcd
+    image: {{.Image}}
+    imagePullPolicy: IfNotPresent
+    terminationMessagePolicy: FallbackToLogsOnError
+    command:
+      - /bin/sh
+      - -c
+      - |
+        #!/bin/sh
+        set -euo pipefail
+
+        etcdctl member list || true
+
+        # this has a non-zero return code if the command is non-zero.  If you use an export first, it doesn't and you
+        # will succeed when you should fail.
+        ETCD_INITIAL_CLUSTER=$(discover-etcd-initial-cluster \
+          --cacert=/etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt \
+          --cert=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.crt \
+          --key=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.key \
+          --endpoints=${ALL_ETCD_ENDPOINTS} \
+          --data-dir=/var/lib/etcd \
+          --target-peer-url-host=${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST} \
+          --target-name=NODE_NAME)
+        export ETCD_INITIAL_CLUSTER
+
+        # we cannot use the "normal" port conflict initcontainer because when we upgrade, the existing static pod will never yield,
+        # so we do the detection in etcd container itself.
+        echo -n "Waiting for ports 2379, 2380 and 9978 to be released."
+        time while [ -n "$(ss -Htan '( sport = 2379 or sport = 2380 or sport = 9978 )')" ]; do
+          echo -n "."
+          sleep 1
+        done
+
+        export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
+        env | grep ETCD | grep -v NODE
+
+        set -x
+        # See https://etcd.io/docs/v3.4.0/tuning/ for why we use ionice
+        exec nice -n -19 ionice -c2 -n0 etcd \
+          --logger=zap \
+          --log-level={{.LogLevel}} \
+          --experimental-initial-corrupt-check=true \
+          --snapshot-count=10000 \
+          --initial-advertise-peer-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2380 \
+          --cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.crt \
+          --key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.key \
+          --trusted-ca-file=/etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt \
+          --client-cert-auth=true \
+          --peer-cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.crt \
+          --peer-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.key \
+          --peer-trusted-ca-file=/etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt \
+          --peer-client-cert-auth=true \
+          --advertise-client-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2379 \
+          --listen-client-urls=https://{{.ListenAddress}}:2379,unixs://${NODE_NODE_ENVVAR_NAME_IP}:0 \
+          --listen-peer-urls=https://{{.ListenAddress}}:2380 \
+          --metrics=extensive \
+          --listen-metrics-urls=https://{{.ListenAddress}}:9978 ||  mv /etc/kubernetes/etcd-backup-dir/etcd-member.yaml /etc/kubernetes/manifests
+    env:
+    {{ range $i, $k := .EnvVars -}}
+    - name: {{ $k.Name | quote }}
+      value: {{ $k.Value | quote }}
+    {{ end -}}
+    - name: "ETCD_STATIC_POD_VERSION"
+      value: "REVISION"
+    resources:
+      requests:
+        memory: 600Mi
+        cpu: 300m
+    readinessProbe:
+      httpGet:
+        port: 9980
+        path: readyz
+        scheme: HTTPS
+      timeoutSeconds: 30
+      failureThreshold: 5
+      periodSeconds: 5
+      successThreshold: 1
+    livenessProbe:
+      httpGet:
+        path: healthz
+        port: 9980
+        scheme: HTTPS
+      timeoutSeconds: 30
+      periodSeconds: 5
+      successThreshold: 1
+      failureThreshold: 5
+    startupProbe:
+      httpGet:
+        port: 9980
+        path: readyz
+        scheme: HTTPS
+      initialDelaySeconds: 10
+      timeoutSeconds: 1
+      periodSeconds: 10
+      successThreshold: 1
+      failureThreshold: 18
+    securityContext:
+      privileged: true
+    volumeMounts:
+      - mountPath: /etc/kubernetes/manifests
+        name: static-pod-dir
+      - mountPath: /etc/kubernetes/static-pod-resources
+        name: resource-dir
+      - mountPath: /etc/kubernetes/static-pod-certs
+        name: cert-dir
+      - mountPath: /var/lib/etcd/
+        name: data-dir
+  - name: etcd-metrics
+    image: {{.Image}}
+    imagePullPolicy: IfNotPresent
+    terminationMessagePolicy: FallbackToLogsOnError
+    command:
+      - /bin/sh
+      - -c
+      - |
+        #!/bin/sh
+        set -euo pipefail
+
+        export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
+
+        exec nice -n -18 etcd grpc-proxy start \
+          --endpoints https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:9978 \
+          --metrics-addr https://{{.ListenAddress}}:9979 \
+          --listen-addr {{.LocalhostAddress}}:9977 \
+          --advertise-client-url ""  \
+          --key /etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.key \
+          --key-file /etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-metrics-NODE_NAME.key \
+          --cert /etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.crt \
+          --cert-file /etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-metrics-NODE_NAME.crt \
+          --cacert /etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt \
+          --trusted-ca-file /etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/metrics-ca-bundle.crt \
+          --listen-cipher-suites ${ETCD_CIPHER_SUITES}
+    env:
+    {{ range $i, $k := .EnvVars -}}
+    - name: {{ $k.Name | quote }}
+      value: {{ $k.Value | quote }}
+    {{ end -}}
+    - name: "ETCD_STATIC_POD_VERSION"
+      value: "REVISION"
+    resources:
+      requests:
+        memory: 200Mi
+        cpu: 40m
+    securityContext:
+      privileged: true
+    volumeMounts:
+      - mountPath: /etc/kubernetes/static-pod-resources
+        name: resource-dir
+      - mountPath: /etc/kubernetes/static-pod-certs
+        name: cert-dir
+      - mountPath: /var/lib/etcd/
+        name: data-dir
+  - name: etcd-readyz
+    image: {{.OperatorImage}}
+    imagePullPolicy: IfNotPresent
+    terminationMessagePolicy: FallbackToLogsOnError
+    command:
+      - /bin/sh
+      - -c
+      - |
+        #!/bin/sh
+        set -euo pipefail
+        
+        exec nice -n -18 cluster-etcd-operator readyz \
+          --target=https://localhost:2379 \
+          --listen-port=9980 \
+          --serving-cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.crt \
+          --serving-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.key \
+          --client-cert-file=$(ETCDCTL_CERT) \
+          --client-key-file=$(ETCDCTL_KEY) \
+          --client-cacert-file=$(ETCDCTL_CACERT) \
+          --listen-cipher-suites=$(ETCD_CIPHER_SUITES)
+    securityContext:
+      privileged: true
+    ports:
+    - containerPort: 9980
+      name: readyz
+      protocol: TCP
+    resources:
+      requests:
+        memory: 50Mi
+        cpu: 10m
+    env:
+    {{ range $i, $k := .EnvVars -}}
+    - name: {{ $k.Name | quote }}
+      value: {{ $k.Value | quote }}
+    {{ end -}}
+    volumeMounts:
+      - mountPath: /var/log/etcd/
+        name: log-dir
+      - mountPath: /etc/kubernetes/static-pod-certs
+        name: cert-dir
+  - name: etcd-rev
+    image: {{.OperatorImage}}
+    imagePullPolicy: IfNotPresent
+    terminationMessagePolicy: FallbackToLogsOnError
+    command:
+      - /bin/sh
+      - -c
+      - |
+        #!/bin/sh
+        set -euo pipefail
+        
+        cluster-etcd-operator rev \
+          --endpoints=$(ALL_ETCD_ENDPOINTS) \
+          --client-cert-file=$(ETCDCTL_CERT) \
+          --client-key-file=$(ETCDCTL_KEY) \
+          --client-cacert-file=$(ETCDCTL_CACERT)
+    securityContext:
+      privileged: true
+    resources:
+      requests:
+        memory: 50Mi
+        cpu: 10m
+    env:
+    {{ range $i, $k := .EnvVars -}}
+    - name: {{ $k.Name | quote }}
+      value: {{ $k.Value | quote }}
+    {{ end -}}
+    volumeMounts:
+    - mountPath: /var/lib/etcd
+      name: data-dir
+    - mountPath: /etc/kubernetes/static-pod-certs
+      name: cert-dir
+  - name: etcd-backup-server
+    image: {{.OperatorImage}}
+    imagePullPolicy: IfNotPresent
+    terminationMessagePolicy: FallbackToLogsOnError
+    command: [cluster-etcd-operator, backup-server]
+    args:
+    {{ range $i, $val := .BackupArgs -}}
+      - {{ $val | quote }}
+    {{ end -}}
+    securityContext:
+      privileged: true
+    resources:
+      requests:
+        memory: 50Mi
+        cpu: 10m
+    env:
+    {{ range $i, $k := .EnvVars -}}
+    - name: {{ $k.Name | quote }}
+      value: {{ $k.Value | quote }}
+    {{ end -}}
+    volumeMounts:
+      - mountPath: /var/lib/etcd
+        name: data-dir
+      - mountPath: /etc/kubernetes
+        name: config-dir
+      - mountPath: /var/lib/etcd-auto-backup
+        name: etcd-auto-backup-dir
+      - mountPath: /etc/kubernetes/static-pod-certs
+        name: cert-dir
+  hostNetwork: true
+  priorityClassName: system-node-critical
+  tolerations:
+  - operator: "Exists"
+  volumes:
+    - hostPath:
+        path: /etc/kubernetes/manifests
+      name: static-pod-dir
+    - hostPath:
+        path: /etc/kubernetes/static-pod-resources/etcd-pod-REVISION
+      name: resource-dir
+    - hostPath:
+        path: /etc/kubernetes/static-pod-resources/etcd-certs
+      name: cert-dir
+    - hostPath:
+        path: /var/lib/etcd
+        type: ""
+      name: data-dir
+    - hostPath:
+        path: /usr/local/bin
+      name: usr-local-bin
+    - hostPath:
+        path: /var/log/etcd
+      name: log-dir
+    - hostPath:
+        path: /etc/kubernetes
+      name: config-dir
+    - hostPath:
+        path: /var/lib/etcd-auto-backup
+      name: etcd-auto-backup-dir
