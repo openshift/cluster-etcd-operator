@@ -14,7 +14,7 @@ import (
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
-
+	applyoperatorv1 "github.com/openshift/client-go/operator/applyconfigurations/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -27,15 +27,17 @@ var maxToleratedPodPendingDuration = 5 * time.Minute
 
 // InstallerStateController analyzes installer pods and sets degraded conditions suggesting different root causes.
 type InstallerStateController struct {
-	podsGetter      corev1client.PodsGetter
-	eventsGetter    corev1client.EventsGetter
-	targetNamespace string
-	operatorClient  v1helpers.StaticPodOperatorClient
+	controllerInstanceName string
+	podsGetter             corev1client.PodsGetter
+	eventsGetter           corev1client.EventsGetter
+	targetNamespace        string
+	operatorClient         v1helpers.StaticPodOperatorClient
 
 	timeNowFn func() time.Time
 }
 
-func NewInstallerStateController(kubeInformersForTargetNamespace informers.SharedInformerFactory,
+func NewInstallerStateController(instanceName string,
+	kubeInformersForTargetNamespace informers.SharedInformerFactory,
 	podsGetter corev1client.PodsGetter,
 	eventsGetter corev1client.EventsGetter,
 	operatorClient v1helpers.StaticPodOperatorClient,
@@ -43,14 +45,22 @@ func NewInstallerStateController(kubeInformersForTargetNamespace informers.Share
 	recorder events.Recorder,
 ) factory.Controller {
 	c := &InstallerStateController{
-		podsGetter:      podsGetter,
-		eventsGetter:    eventsGetter,
-		targetNamespace: targetNamespace,
-		operatorClient:  operatorClient,
-		timeNowFn:       time.Now,
+		controllerInstanceName: factory.ControllerInstanceName(instanceName, "InstallerState"),
+		podsGetter:             podsGetter,
+		eventsGetter:           eventsGetter,
+		targetNamespace:        targetNamespace,
+		operatorClient:         operatorClient,
+		timeNowFn:              time.Now,
 	}
 
-	return factory.New().WithInformers(kubeInformersForTargetNamespace.Core().V1().Pods().Informer()).WithSync(c.sync).ResyncEvery(1*time.Minute).ToController("InstallerStateController", recorder)
+	return factory.New().
+		WithInformers(kubeInformersForTargetNamespace.Core().V1().Pods().Informer()).
+		WithSync(c.sync).
+		ResyncEvery(1*time.Minute).
+		ToController(
+			c.controllerInstanceName,
+			recorder,
+		)
 }
 
 // degradedConditionNames lists all supported condition types.
@@ -121,26 +131,25 @@ func (c *InstallerStateController) sync(ctx context.Context, syncCtx factory.Syn
 	}
 	foundConditions = append(foundConditions, networkConditions...)
 
-	updateConditionFuncs := []v1helpers.UpdateStaticPodStatusFunc{}
-
+	updateConditions := []*applyoperatorv1.OperatorConditionApplyConfiguration{}
 	// check the supported degraded foundConditions and check if any pending pod matching them.
 	for _, degradedConditionName := range degradedConditionNames {
 		// clean up existing foundConditions
-		updatedCondition := operatorv1.OperatorCondition{
-			Type:   degradedConditionName,
-			Status: operatorv1.ConditionFalse,
-		}
+		updatedCondition := applyoperatorv1.OperatorCondition().
+			WithType(degradedConditionName).
+			WithStatus(operatorv1.ConditionFalse)
+
 		if condition := v1helpers.FindOperatorCondition(foundConditions, degradedConditionName); condition != nil {
-			updatedCondition = *condition
+			updatedCondition = updatedCondition.
+				WithStatus(condition.Status).
+				WithReason(condition.Reason).
+				WithMessage(condition.Message)
 		}
-		updateConditionFuncs = append(updateConditionFuncs, v1helpers.UpdateStaticPodConditionFn(updatedCondition))
+		updateConditions = append(updateConditions, updatedCondition)
 	}
 
-	if _, _, err := v1helpers.UpdateStaticPodStatus(ctx, c.operatorClient, updateConditionFuncs...); err != nil {
-		return err
-	}
-
-	return nil
+	status := applyoperatorv1.StaticPodOperatorStatus().WithConditions(updateConditions...)
+	return c.operatorClient.ApplyStaticPodOperatorStatus(ctx, c.controllerInstanceName, status)
 }
 
 func (c *InstallerStateController) handlePendingInstallerPodsNetworkEvents(ctx context.Context, recorder events.Recorder, pods []*v1.Pod) ([]operatorv1.OperatorCondition, error) {

@@ -35,7 +35,16 @@ func NewNodeController(
 		operatorClient: operatorClient,
 		nodeLister:     kubeInformersClusterScoped.Core().V1().Nodes().Lister(),
 	}
-	return factory.New().WithInformers(operatorClient.Informer(), kubeInformersClusterScoped.Core().V1().Nodes().Informer()).WithSync(c.sync).ToController("NodeController", eventRecorder)
+	return factory.New().
+		WithInformers(
+			operatorClient.Informer(),
+			kubeInformersClusterScoped.Core().V1().Nodes().Informer(),
+		).
+		WithSync(c.sync).
+		ToController(
+			"NodeController", // don't change what is passed here unless you also remove the old FooDegraded condition
+			eventRecorder,
+		)
 }
 
 func (c NodeController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
