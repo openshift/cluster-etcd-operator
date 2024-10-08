@@ -15,6 +15,7 @@ import (
 	machineclient "github.com/openshift/client-go/machine/clientset/versioned"
 	machineinformersv1beta1 "github.com/openshift/client-go/machine/informers/externalversions/machine/v1beta1"
 	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
+	applyoperatorv1 "github.com/openshift/client-go/operator/applyconfigurations/operator/v1"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorversionedclientv1alpha1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
@@ -39,7 +40,9 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
 	corev1informers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
@@ -174,7 +177,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	// we keep the default behavior of exiting the controller once a gate changes
 	featureGateAccessor.SetChangeHandler(featuregates.ForceExit)
 
-	operatorClient, dynamicInformers, err := genericoperatorclient.NewStaticPodOperatorClient(controllerContext.KubeConfig, operatorv1.GroupVersion.WithResource("etcds"))
+	operatorClient, dynamicInformers, err := genericoperatorclient.NewStaticPodOperatorClient(controllerContext.KubeConfig, operatorv1.GroupVersion.WithResource("etcds"), operatorv1.GroupVersion.WithKind("Etcd"), ExtractStaticPodOperatorSpec, ExtractStaticPodOperatorStatus)
 	if err != nil {
 		return err
 	}
@@ -641,4 +644,33 @@ var CertSecrets = []installer.UnrevisionedResource{
 	// these are also copied to certs to have a constant file location so we can refer to them in various recovery scripts
 	// and in the PDB
 	{Name: "etcd-all-certs"},
+}
+
+func ExtractStaticPodOperatorSpec(obj *unstructured.Unstructured, fieldManager string) (*applyoperatorv1.StaticPodOperatorSpecApplyConfiguration, error) {
+	castObj := &operatorv1.Etcd{}
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, castObj); err != nil {
+		return nil, fmt.Errorf("unable to convert to Etcd: %w", err)
+	}
+	ret, err := applyoperatorv1.ExtractEtcd(castObj, fieldManager)
+	if err != nil {
+		return nil, fmt.Errorf("unable to extract fields for %q: %w", fieldManager, err)
+	}
+	if ret.Spec == nil {
+		return nil, nil
+	}
+	return &ret.Spec.StaticPodOperatorSpecApplyConfiguration, nil
+}
+func ExtractStaticPodOperatorStatus(obj *unstructured.Unstructured, fieldManager string) (*applyoperatorv1.StaticPodOperatorStatusApplyConfiguration, error) {
+	castObj := &operatorv1.Etcd{}
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, castObj); err != nil {
+		return nil, fmt.Errorf("unable to convert to Etcd: %w", err)
+	}
+	ret, err := applyoperatorv1.ExtractEtcdStatus(castObj, fieldManager)
+	if err != nil {
+		return nil, fmt.Errorf("unable to extract fields for %q: %w", fieldManager, err)
+	}
+	if ret.Status == nil {
+		return nil, nil
+	}
+	return &ret.Status.StaticPodOperatorStatusApplyConfiguration, nil
 }

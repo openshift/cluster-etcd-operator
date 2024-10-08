@@ -60,6 +60,7 @@ func NewConfigObserver(
 
 	c := &ConfigObserver{
 		Controller: configobserver.NewConfigObserver(
+			"etcd",
 			operatorClient,
 			eventRecorder,
 			configobservation.Listers{

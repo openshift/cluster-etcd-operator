@@ -7,6 +7,7 @@ import (
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	applyoperatorv1 "github.com/openshift/client-go/operator/applyconfigurations/operator/v1"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,9 +26,10 @@ import (
 // StaticPodStateController is a controller that watches static pods and will produce a failing status if the
 // // static pods start crashing for some reason.
 type StaticPodStateController struct {
-	targetNamespace string
-	staticPodName   string
-	operandName     string
+	controllerInstanceName string
+	targetNamespace        string
+	staticPodName          string
+	operandName            string
 
 	operatorClient  v1helpers.StaticPodOperatorClient
 	podsGetter      corev1client.PodsGetter
@@ -37,7 +39,7 @@ type StaticPodStateController struct {
 // NewStaticPodStateController creates a controller that watches static pods and will produce a failing status if the
 // static pods start crashing for some reason.
 func NewStaticPodStateController(
-	targetNamespace, staticPodName, operandName string,
+	instanceName, targetNamespace, staticPodName, operandName string,
 	kubeInformersForTargetNamespace informers.SharedInformerFactory,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	podsGetter corev1client.PodsGetter,
@@ -45,17 +47,25 @@ func NewStaticPodStateController(
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &StaticPodStateController{
-		targetNamespace: targetNamespace,
-		staticPodName:   staticPodName,
-		operandName:     operandName,
-		operatorClient:  operatorClient,
-		podsGetter:      podsGetter,
-		versionRecorder: versionRecorder,
+		controllerInstanceName: factory.ControllerInstanceName(instanceName, "StaticPodState"),
+		targetNamespace:        targetNamespace,
+		staticPodName:          staticPodName,
+		operandName:            operandName,
+		operatorClient:         operatorClient,
+		podsGetter:             podsGetter,
+		versionRecorder:        versionRecorder,
 	}
-	return factory.New().WithInformers(
-		operatorClient.Informer(),
-		kubeInformersForTargetNamespace.Core().V1().Pods().Informer(),
-	).WithSync(c.sync).ResyncEvery(time.Minute).ToController("StaticPodStateController", eventRecorder)
+	return factory.New().
+		WithInformers(
+			operatorClient.Informer(),
+			kubeInformersForTargetNamespace.Core().V1().Pods().Informer(),
+		).
+		WithSync(c.sync).
+		ResyncEvery(time.Minute).
+		ToController(
+			c.controllerInstanceName,
+			eventRecorder,
+		)
 }
 
 func describeWaitingContainerState(waiting *v1.ContainerStateWaiting) string {
@@ -155,25 +165,25 @@ func (c *StaticPodStateController) sync(ctx context.Context, syncCtx factory.Syn
 	}
 
 	// update failing condition
-	cond := operatorv1.OperatorCondition{
-		Type:   condition.StaticPodsDegradedConditionType,
-		Status: operatorv1.ConditionFalse,
-	}
+	cond := applyoperatorv1.OperatorCondition().
+		WithType(condition.StaticPodsDegradedConditionType).
+		WithStatus(operatorv1.ConditionFalse)
 	// Failing errors
 	if failingErrorCount > 0 {
-		cond.Status = operatorv1.ConditionTrue
-		cond.Reason = "Error"
-		cond.Message = v1helpers.NewMultiLineAggregate(errs).Error()
+		cond = cond.WithStatus(operatorv1.ConditionTrue).
+			WithReason("Error").
+			WithMessage(v1helpers.NewMultiLineAggregate(errs).Error())
 	}
 	// Not failing errors
 	if failingErrorCount == 0 && len(errs) > 0 {
-		cond.Reason = "Error"
-		cond.Message = v1helpers.NewMultiLineAggregate(errs).Error()
-	}
-	if _, _, updateError := v1helpers.UpdateStaticPodStatus(ctx, c.operatorClient, v1helpers.UpdateStaticPodConditionFn(cond), v1helpers.UpdateStaticPodConditionFn(cond)); updateError != nil {
-		return updateError
+		cond = cond.WithReason("Error").
+			WithMessage(v1helpers.NewMultiLineAggregate(errs).Error())
 	}
 
+	status := applyoperatorv1.StaticPodOperatorStatus().WithConditions(cond)
+	if updateError := c.operatorClient.ApplyStaticPodOperatorStatus(ctx, c.controllerInstanceName, status); updateError != nil {
+		return updateError
+	}
 	return err
 }
 

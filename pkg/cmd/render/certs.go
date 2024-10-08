@@ -34,8 +34,7 @@ func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMa
 			ManagementState: operatorv1.Managed,
 		},
 	}, &operatorv1.StaticPodOperatorStatus{
-		OperatorStatus:          operatorv1.OperatorStatus{Conditions: []operatorv1.OperatorCondition{}},
-		LatestAvailableRevision: 1,
+		OperatorStatus: operatorv1.OperatorStatus{Conditions: []operatorv1.OperatorCondition{}, LatestAvailableRevision: 1},
 		NodeStatuses: []operatorv1.NodeStatus{
 			{CurrentRevision: 1},
 		},

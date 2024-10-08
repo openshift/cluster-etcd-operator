@@ -103,10 +103,17 @@ func NewGuardController(
 		createConditionalFunc:         createConditionalFunc,
 	}
 
-	return factory.New().WithInformers(
-		kubeInformersForTargetNamespace.Core().V1().Pods().Informer(),
-		kubeInformersClusterScoped.Core().V1().Nodes().Informer(),
-	).WithSync(c.sync).WithSyncDegradedOnError(operatorClient).ToController("GuardController", eventRecorder), nil
+	return factory.New().
+		WithInformers(
+			kubeInformersForTargetNamespace.Core().V1().Pods().Informer(),
+			kubeInformersClusterScoped.Core().V1().Nodes().Informer(),
+		).
+		WithSync(c.sync).
+		WithSyncDegradedOnError(operatorClient).
+		ToController(
+			"GuardController", // don't change what is passed here unless you also remove the old FooDegraded condition
+			eventRecorder,
+		), nil
 }
 
 func getInstallerPodImageFromEnv() string {

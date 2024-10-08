@@ -32,7 +32,13 @@ func NewUnsupportedConfigOverridesController(
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &UnsupportedConfigOverridesController{operatorClient: operatorClient}
-	return factory.New().WithInformers(operatorClient.Informer()).WithSync(c.sync).ToController("UnsupportedConfigOverridesController", eventRecorder)
+	return factory.New().
+		WithInformers(operatorClient.Informer()).
+		WithSync(c.sync).
+		ToController(
+			"UnsupportedConfigOverridesController", // don't change what is passed here unless you also remove the old FooDegraded condition
+			eventRecorder,
+		)
 }
 
 func (c *UnsupportedConfigOverridesController) sync(ctx context.Context, syncCtx factory.SyncContext) error {

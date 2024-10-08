@@ -73,10 +73,16 @@ func NewPruneController(
 	}
 	c.retrieveStatusConfigMapOwnerRefsFn = c.createStatusConfigMapOwnerRefs
 
-	return factory.New().WithInformers(
-		operatorClient.Informer(),
-		kubeInformersForTargetNamespace.Core().V1().ConfigMaps().Informer(),
-	).WithSync(c.sync).ToController("PruneController", eventRecorder)
+	return factory.New().
+		WithInformers(
+			operatorClient.Informer(),
+			kubeInformersForTargetNamespace.Core().V1().ConfigMaps().Informer(),
+		).
+		WithSync(c.sync).
+		ToController(
+			"PruneController", // don't change what is passed here unless you also remove the old FooDegraded condition
+			eventRecorder,
+		)
 }
 
 func defaultedLimits(operatorSpec *operatorv1.StaticPodOperatorSpec) (int, int) {

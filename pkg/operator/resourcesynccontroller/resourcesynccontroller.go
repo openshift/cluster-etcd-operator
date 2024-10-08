@@ -2,6 +2,7 @@ package resourcesynccontroller
 
 import (
 	"context"
+
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -23,6 +24,7 @@ func NewResourceSyncController(
 	configMapClient := v1helpers.CachedConfigMapGetter(kubeClient.CoreV1(), kubeInformersForNamespaces)
 
 	resourceSyncController := resourcesynccontroller.NewResourceSyncController(
+		"etcd",
 		operatorConfigClient,
 		kubeInformersForNamespaces,
 		secretClient,
