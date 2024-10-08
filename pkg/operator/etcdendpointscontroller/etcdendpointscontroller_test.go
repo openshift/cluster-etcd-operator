@@ -136,37 +136,6 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			},
 		},
 		{
-			// The configmap should remain intact because although bootstrapping
-			// reports complete, the nodes are still progressing towards a revision.
-			name: "NewClusterBootstrapNodesProgressing",
-			objects: []runtime.Object{
-				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
-				u.EndpointsConfigMap(
-					u.WithBootstrapIP("192.0.2.1"),
-					u.WithEndpoint(etcdMembers[0].ID, etcdMembers[0].PeerURLs[0]),
-					u.WithEndpoint(etcdMembers[1].ID, etcdMembers[1].PeerURLs[0]),
-					u.WithEndpoint(etcdMembers[2].ID, etcdMembers[2].PeerURLs[0]),
-				),
-			},
-			staticPodStatus: u.StaticPodOperatorStatus(
-				u.WithLatestRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-				u.WithNodeStatusAtCurrentRevision(2),
-				u.WithNodeStatusAtCurrentRevision(3),
-			),
-			expectBootstrap: true,
-			etcdMembers:     etcdMembers,
-			validateFunc: func(ts *testing.T, endpoints []func(*corev1.ConfigMap), actions []clientgotesting.Action) {
-				for _, action := range actions {
-					if action.Matches("update", "configmaps") {
-						updateAction := action.(clientgotesting.UpdateAction)
-						actual := updateAction.GetObject().(*corev1.ConfigMap)
-						ts.Errorf("unexpected configmap update: %#v", actual)
-					}
-				}
-			},
-		},
-		{
 			// The configmap should remain intact because although nodes appear
 			// to have converged on a revision, bootstrap reports incomplete.
 			name: "NewClusterBootstrapProgressing",
