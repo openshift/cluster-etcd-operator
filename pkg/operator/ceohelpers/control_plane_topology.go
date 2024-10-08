@@ -1,10 +1,13 @@
 package ceohelpers
 
 import (
+	"context"
 	"fmt"
 
 	configv1 "github.com/openshift/api/config/v1"
+	configv1client "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 )
 
@@ -30,4 +33,16 @@ func IsSingleNodeTopology(infraLister configv1listers.InfrastructureLister) (boo
 	}
 
 	return topology == configv1.SingleReplicaTopologyMode, nil
+}
+
+// IsArbiterNodeTopology returns if the cluster infrastructure ControlPlaneTopology is set to HighlyAvailableArbiterMode
+// We use the infra interface in this situation instead of the lister because typically you are looking to find out this information
+// in order to configure controllers before the informers are running.
+func IsArbiterNodeTopology(ctx context.Context, infraClient configv1client.InfrastructureInterface) (bool, error) {
+	infra, err := infraClient.Get(ctx, InfrastructureClusterName, metav1.GetOptions{})
+	if err != nil {
+		return false, err
+	}
+	return infra.Status.ControlPlaneTopology == configv1.HighlyAvailableArbiterMode, nil
+
 }

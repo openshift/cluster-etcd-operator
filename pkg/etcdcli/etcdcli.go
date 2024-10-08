@@ -516,6 +516,11 @@ func endpoints(nodeLister corev1listers.NodeLister,
 		if err != nil {
 			return nil, fmt.Errorf("failed to list control plane nodes: %w", err)
 		}
+		nodesArbiter, err := nodeLister.List(labels.Set{"node-role.kubernetes.io/arbiter": ""}.AsSelector())
+		if err != nil {
+			return nil, fmt.Errorf("failed to list arbiter nodes: %w", err)
+		}
+		nodes = append(nodes, nodesArbiter...)
 		for _, node := range nodes {
 			internalIP, _, err := dnshelpers.GetPreferredInternalIPAddressForNodeName(network, node)
 			if err != nil {
