@@ -39,8 +39,8 @@ func TestSyncLoopHappyPath(t *testing.T) {
 					RetentionNumber: &backupv1alpha1.RetentionNumberConfig{MaxNumberOfBackups: 5}},
 				PVCName: "backup-happy-path-pvc"}}}
 
-	operatorFake := fake.NewSimpleClientset([]runtime.Object{&backup}...)
-	client := k8sfakeclient.NewSimpleClientset()
+	operatorFake := fake.NewClientset([]runtime.Object{&backup}...)
+	client := k8sfakeclient.NewClientset()
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 		&operatorv1.StaticPodOperatorSpec{OperatorSpec: operatorv1.OperatorSpec{ManagementState: operatorv1.Managed}},
 		&operatorv1.StaticPodOperatorStatus{}, nil, nil)
@@ -75,20 +75,29 @@ func TestSyncLoopWithDefaultBackupCR(t *testing.T) {
 
 	// no default CR
 	backups.Items = append(backups.Items, backup)
-	operatorFake := fake.NewSimpleClientset([]runtime.Object{&backups}...)
-	client := k8sfakeclient.NewSimpleClientset()
+	operatorFake := fake.NewClientset([]runtime.Object{&backups}...)
+	client := k8sfakeclient.NewClientset()
+	fakeKubeInformerForNamespace := v1helpers.NewKubeInformersForNamespaces(client, operatorclient.TargetNamespace)
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 		&operatorv1.StaticPodOperatorSpec{OperatorSpec: operatorv1.OperatorSpec{ManagementState: operatorv1.Managed}},
 		&operatorv1.StaticPodOperatorStatus{}, nil, nil)
 
 	controller := PeriodicBackupController{
 		operatorClient:        fakeOperatorClient,
+		podLister:             fakeKubeInformerForNamespace.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
 		backupsClient:         operatorFake.ConfigV1alpha1(),
 		kubeClient:            client,
 		operatorImagePullSpec: "pullspec-image",
 		backupVarGetter:       backuphelpers.NewDisabledBackupConfig(),
 		featureGateAccessor:   backupFeatureGateAccessor,
+		kubeInformers:         fakeKubeInformerForNamespace,
 	}
+
+	stopChan := make(chan struct{})
+	t.Cleanup(func() {
+		close(stopChan)
+	})
+	fakeKubeInformerForNamespace.Start(stopChan)
 
 	expDisabledBackupVar := "    args:\n    - --enabled=false"
 	err := controller.sync(context.TODO(), nil)
@@ -106,7 +115,7 @@ func TestSyncLoopWithDefaultBackupCR(t *testing.T) {
 					RetentionNumber: &backupv1alpha1.RetentionNumberConfig{MaxNumberOfBackups: 3}}}}}
 
 	backups.Items = append(backups.Items, defaultBackup)
-	operatorFake = fake.NewSimpleClientset([]runtime.Object{&backups}...)
+	operatorFake = fake.NewClientset([]runtime.Object{&backups}...)
 	controller.backupsClient = operatorFake.ConfigV1alpha1()
 
 	expEnabledBackupVar := "    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *\n    - --type=RetentionNumber\n    - --maxNumberOfBackups=3"
@@ -116,7 +125,7 @@ func TestSyncLoopWithDefaultBackupCR(t *testing.T) {
 
 	// removing defaultCR
 	backups.Items = backups.Items[:len(backups.Items)-1]
-	operatorFake = fake.NewSimpleClientset([]runtime.Object{&backups}...)
+	operatorFake = fake.NewClientset([]runtime.Object{&backups}...)
 	controller.backupsClient = operatorFake.ConfigV1alpha1()
 
 	err = controller.sync(context.TODO(), nil)
@@ -138,10 +147,12 @@ func TestSyncLoopFailsDegradesOperatorWithDefaultBackupCR(t *testing.T) {
 				PVCName: "backup-happy-path-pvc"}}}
 
 	backupServerFailureMsg := fmt.Sprintf("error running etcd backup: %s", "error running backup")
-	client := k8sfakeclient.NewSimpleClientset([]runtime.Object{
+	client := k8sfakeclient.NewClientset([]runtime.Object{
 		etcdPodWithFailingBackupServerContainer("1", backupServerFailureMsg),
 		etcdPodWithFailingBackupServerContainer("2", backupServerFailureMsg),
 		etcdPodWithFailingBackupServerContainer("3", backupServerFailureMsg)}...)
+
+	fakeKubeInformerForNamespace := v1helpers.NewKubeInformersForNamespaces(client, operatorclient.TargetNamespace)
 
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 		&operatorv1.StaticPodOperatorSpec{OperatorSpec: operatorv1.OperatorSpec{ManagementState: operatorv1.Managed}},
@@ -149,16 +160,24 @@ func TestSyncLoopFailsDegradesOperatorWithDefaultBackupCR(t *testing.T) {
 
 	// no default CR
 	backups.Items = append(backups.Items, backup)
-	operatorFake := fake.NewSimpleClientset([]runtime.Object{&backups}...)
+	operatorFake := fake.NewClientset([]runtime.Object{&backups}...)
 
 	controller := PeriodicBackupController{
 		operatorClient:        fakeOperatorClient,
+		podLister:             fakeKubeInformerForNamespace.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
 		backupsClient:         operatorFake.ConfigV1alpha1(),
 		kubeClient:            client,
 		operatorImagePullSpec: "pullspec-image",
 		backupVarGetter:       backuphelpers.NewDisabledBackupConfig(),
 		featureGateAccessor:   backupFeatureGateAccessor,
+		kubeInformers:         fakeKubeInformerForNamespace,
 	}
+
+	stopChan := make(chan struct{})
+	t.Cleanup(func() {
+		close(stopChan)
+	})
+	fakeKubeInformerForNamespace.Start(stopChan)
 
 	expDisabledBackupVar := "    args:\n    - --enabled=false"
 	err := controller.sync(context.TODO(), nil)
@@ -177,7 +196,7 @@ func TestSyncLoopFailsDegradesOperatorWithDefaultBackupCR(t *testing.T) {
 					RetentionNumber: &backupv1alpha1.RetentionNumberConfig{MaxNumberOfBackups: 3}}}}}
 
 	backups.Items = append(backups.Items, defaultBackup)
-	operatorFake = fake.NewSimpleClientset([]runtime.Object{&backups}...)
+	operatorFake = fake.NewClientset([]runtime.Object{&backups}...)
 	controller.backupsClient = operatorFake.ConfigV1alpha1()
 
 	expEnabledBackupVar := "    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *\n    - --type=RetentionNumber\n    - --maxNumberOfBackups=3"
@@ -188,7 +207,7 @@ func TestSyncLoopFailsDegradesOperatorWithDefaultBackupCR(t *testing.T) {
 
 	// removing defaultCR
 	backups.Items = backups.Items[:len(backups.Items)-1]
-	operatorFake = fake.NewSimpleClientset([]runtime.Object{&backups}...)
+	operatorFake = fake.NewClientset([]runtime.Object{&backups}...)
 	controller.backupsClient = operatorFake.ConfigV1alpha1()
 
 	err = controller.sync(context.TODO(), nil)
@@ -209,8 +228,8 @@ func TestSyncLoopExistingCronJob(t *testing.T) {
 				PVCName: "backup-happy-path-pvc"}}}
 
 	cronJob := batchv1.CronJob{ObjectMeta: v1.ObjectMeta{Name: "test-backup", Namespace: operatorclient.TargetNamespace}}
-	operatorFake := fake.NewSimpleClientset([]runtime.Object{&backup}...)
-	client := k8sfakeclient.NewSimpleClientset([]runtime.Object{&cronJob}...)
+	operatorFake := fake.NewClientset([]runtime.Object{&backup}...)
+	client := k8sfakeclient.NewClientset([]runtime.Object{&cronJob}...)
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 		&operatorv1.StaticPodOperatorSpec{OperatorSpec: operatorv1.OperatorSpec{ManagementState: operatorv1.Managed}},
 		&operatorv1.StaticPodOperatorStatus{}, nil, nil)
@@ -241,8 +260,8 @@ func TestSyncLoopFailsDegradesOperator(t *testing.T) {
 					RetentionNumber: &backupv1alpha1.RetentionNumberConfig{MaxNumberOfBackups: 5}},
 				PVCName: "backup-happy-path-pvc"}}}
 
-	operatorFake := fake.NewSimpleClientset([]runtime.Object{&backup}...)
-	client := k8sfakeclient.NewSimpleClientset()
+	operatorFake := fake.NewClientset([]runtime.Object{&backup}...)
+	client := k8sfakeclient.NewClientset()
 	client.Fake.PrependReactor("create", "cronjobs", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
 		return true, nil, fmt.Errorf("could not create cronjob")
 	})

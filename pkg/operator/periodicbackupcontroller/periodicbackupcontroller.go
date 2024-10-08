@@ -3,9 +3,11 @@ package periodicbackupcontroller
 import (
 	"context"
 	"fmt"
-	"k8s.io/apimachinery/pkg/labels"
 	"strings"
 	"time"
+
+	"k8s.io/apimachinery/pkg/labels"
+	clientv1 "k8s.io/client-go/listers/core/v1"
 
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -38,11 +40,13 @@ const (
 
 type PeriodicBackupController struct {
 	operatorClient        v1helpers.OperatorClient
+	podLister             clientv1.PodLister
 	backupsClient         backupv1client.BackupsGetter
 	kubeClient            kubernetes.Interface
 	operatorImagePullSpec string
 	backupVarGetter       backuphelpers.BackupVar
 	featureGateAccessor   featuregates.FeatureGateAccess
+	kubeInformers         v1helpers.KubeInformersForNamespaces
 }
 
 func NewPeriodicBackupController(
@@ -55,15 +59,17 @@ func NewPeriodicBackupController(
 	accessor featuregates.FeatureGateAccess,
 	backupVarGetter backuphelpers.BackupVar,
 	backupsInformer factory.Informer,
-	etcdPodsInformer factory.Informer) factory.Controller {
+	kubeInformers v1helpers.KubeInformersForNamespaces) factory.Controller {
 
 	c := &PeriodicBackupController{
 		operatorClient:        operatorClient,
+		podLister:             kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
 		backupsClient:         backupsClient,
 		kubeClient:            kubeClient,
 		operatorImagePullSpec: operatorImagePullSpec,
 		backupVarGetter:       backupVarGetter,
 		featureGateAccessor:   accessor,
+		kubeInformers:         kubeInformers,
 	}
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
@@ -71,7 +77,8 @@ func NewPeriodicBackupController(
 
 	return factory.New().
 		ResyncEvery(1*time.Minute).
-		WithInformers(backupsInformer, etcdPodsInformer).
+		WithInformers(backupsInformer,
+			kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer()).
 		WithSync(syncer.Sync).
 		ToController("PeriodicBackupController", eventRecorder.WithComponentSuffix("periodic-backup-controller"))
 }
@@ -115,13 +122,13 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 	}
 
 	if defaultFound {
-		mirrorPods, err := c.kubeClient.CoreV1().Pods(operatorclient.TargetNamespace).List(ctx, v1.ListOptions{LabelSelector: labels.Set{"app": "etcd"}.AsSelector().String()})
+		mirrorPods, err := c.podLister.List(labels.Set{"app": "etcd"}.AsSelector())
 		if err != nil {
 			return fmt.Errorf("PeriodicBackupController could not list etcd pods: %w", err)
 		}
 
 		var terminationReasons []string
-		for _, p := range mirrorPods.Items {
+		for _, p := range mirrorPods {
 			for _, cStatus := range p.Status.ContainerStatuses {
 				if cStatus.Name == etcdBackupServerContainerName {
 					// TODO we can also try different cStatus.State.Terminated.ExitCode
