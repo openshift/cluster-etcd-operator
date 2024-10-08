@@ -3,9 +3,10 @@ package backuprestore
 import (
 	"context"
 	"errors"
-	prune "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 	"testing"
 	"time"
+
+	prune "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 
 	"github.com/robfig/cron"
 	"github.com/stretchr/testify/require"

@@ -1,10 +1,11 @@
 package render
 
 import (
+	"testing"
+
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
-	"testing"
 )
 
 func TestCertSingleNode(t *testing.T) {

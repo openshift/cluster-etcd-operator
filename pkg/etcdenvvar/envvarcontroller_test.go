@@ -3,8 +3,9 @@ package etcdenvvar
 import (
 	"context"
 	"fmt"
-	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 	"testing"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"

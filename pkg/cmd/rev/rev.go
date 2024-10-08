@@ -6,14 +6,15 @@ import (
 	"errors"
 	goflag "flag"
 	"fmt"
+	"os"
+	"sync"
+	"time"
+
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/spf13/cobra"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"k8s.io/klog/v2"
-	"os"
-	"sync"
-	"time"
 )
 
 type revOpts struct {

@@ -6,13 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	corev1 "k8s.io/api/core/v1"
 	"net"
 	"os"
 	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	corev1 "k8s.io/api/core/v1"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"

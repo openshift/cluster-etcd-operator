@@ -2,8 +2,9 @@ package ceohelpers
 
 import (
 	"errors"
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"k8s.io/apimachinery/pkg/runtime"
 

@@ -6,11 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"k8s.io/klog/v2"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"k8s.io/klog/v2"
 )
 
 func createTarball(tarballFilePath string, filePaths []string, prefixTrim string) error {

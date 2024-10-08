@@ -3,6 +3,12 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
 	configv1alpha1 "github.com/openshift/api/config/v1alpha1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	"github.com/openshift/cluster-etcd-operator/test/e2e/framework"
@@ -17,11 +23,6 @@ import (
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/pointer"
-	"regexp"
-	"strings"
-	"sync"
-	"testing"
-	"time"
 )
 
 const (

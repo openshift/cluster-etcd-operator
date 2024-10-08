@@ -2,6 +2,7 @@ package resourcesynccontroller
 
 import (
 	"context"
+
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
