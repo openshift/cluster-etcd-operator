@@ -155,6 +155,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	clusterVersions := configInformers.Config().V1().ClusterVersions()
 	networkInformer := configInformers.Config().V1().Networks()
 	jobsInformer := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs().Informer()
+	etcdPodsInformer := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer()
 
 	versionRecorder := status.NewVersionGetter()
 	clusterOperator, err := configClient.ConfigV1().ClusterOperators().Get(ctx, "etcd", metav1.GetOptions{})
@@ -475,7 +476,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			os.Getenv("OPERATOR_IMAGE"),
 			featureGateAccessor,
 			backupVar,
-			configBackupInformer)
+			configBackupInformer,
+			etcdPodsInformer)
 
 		backupController := backupcontroller.NewBackupController(
 			AlivenessChecker,

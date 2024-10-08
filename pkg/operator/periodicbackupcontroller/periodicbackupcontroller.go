@@ -54,7 +54,8 @@ func NewPeriodicBackupController(
 	operatorImagePullSpec string,
 	accessor featuregates.FeatureGateAccess,
 	backupVarGetter backuphelpers.BackupVar,
-	backupsInformer factory.Informer) factory.Controller {
+	backupsInformer factory.Informer,
+	etcdPodsInformer factory.Informer) factory.Controller {
 
 	c := &PeriodicBackupController{
 		operatorClient:        operatorClient,
@@ -70,7 +71,7 @@ func NewPeriodicBackupController(
 
 	return factory.New().
 		ResyncEvery(1*time.Minute).
-		WithInformers(backupsInformer).
+		WithInformers(backupsInformer, etcdPodsInformer).
 		WithSync(syncer.Sync).
 		ToController("PeriodicBackupController", eventRecorder.WithComponentSuffix("periodic-backup-controller"))
 }
@@ -114,9 +115,7 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 	}
 
 	if defaultFound {
-		mirrorPods, err := c.kubeClient.CoreV1().Pods(operatorclient.TargetNamespace).List(ctx, v1.ListOptions{
-			LabelSelector: labels.Set{"app": "etcd"}.AsSelector().String(),
-			Watch:         true})
+		mirrorPods, err := c.kubeClient.CoreV1().Pods(operatorclient.TargetNamespace).List(ctx, v1.ListOptions{LabelSelector: labels.Set{"app": "etcd"}.AsSelector().String()})
 		if err != nil {
 			return fmt.Errorf("PeriodicBackupController could not list etcd pods: %w", err)
 		}
