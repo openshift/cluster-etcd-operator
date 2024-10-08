@@ -2,9 +2,10 @@ package etcdcli
 
 import (
 	"context"
-	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"sync"
 	"time"
+
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
 )
 
 const refreshPeriod = time.Minute

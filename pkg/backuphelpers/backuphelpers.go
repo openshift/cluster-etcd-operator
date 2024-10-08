@@ -2,6 +2,7 @@ package backuphelpers
 
 import (
 	"fmt"
+
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 )
 

@@ -3,14 +3,15 @@ package prune_backups
 import (
 	goflag "flag"
 	"fmt"
-	"github.com/spf13/cobra"
 	"io/fs"
-	"k8s.io/klog/v2"
 	"os"
 	"path"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/spf13/cobra"
+	"k8s.io/klog/v2"
 )
 
 const (

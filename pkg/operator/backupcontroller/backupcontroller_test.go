@@ -2,11 +2,12 @@ package backupcontroller
 
 import (
 	"context"
+	"strings"
+	"testing"
+
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
-	"strings"
-	"testing"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	fake "github.com/openshift/client-go/operator/clientset/versioned/fake"

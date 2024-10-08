@@ -1,12 +1,13 @@
 package framework
 
 import (
+	"testing"
+
 	configversionedclientv1alpha1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	"github.com/stretchr/testify/require"
 	batchv1client "k8s.io/client-go/kubernetes/typed/batch/v1"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
-	"testing"
 )
 
 func NewOperatorClient(t *testing.T) *operatorversionedclient.Clientset {

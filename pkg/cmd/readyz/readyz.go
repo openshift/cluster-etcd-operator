@@ -6,11 +6,12 @@ import (
 	"errors"
 	goflag "flag"
 	"fmt"
-	"go.etcd.io/etcd/client/pkg/v3/tlsutil"
 	"net"
 	"net/http"
 	"syscall"
 	"time"
+
+	"go.etcd.io/etcd/client/pkg/v3/tlsutil"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 

@@ -3,6 +3,8 @@ package periodicbackupcontroller
 import (
 	"context"
 	"fmt"
+	"testing"
+
 	configv1 "github.com/openshift/api/config/v1"
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -15,7 +17,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	k8sfakeclient "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
-	"testing"
 
 	fake "github.com/openshift/client-go/config/clientset/versioned/fake"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"

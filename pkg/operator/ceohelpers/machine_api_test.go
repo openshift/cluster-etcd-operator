@@ -2,6 +2,8 @@ package ceohelpers
 
 import (
 	"context"
+	"testing"
+
 	configv1 "github.com/openshift/api/config/v1"
 	v1 "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/stretchr/testify/require"
@@ -10,7 +12,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/dynamic"
-	"testing"
 
 	"github.com/openshift/api/machine/v1beta1"
 	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
