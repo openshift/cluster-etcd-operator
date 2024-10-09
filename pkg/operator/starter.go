@@ -475,7 +475,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			os.Getenv("OPERATOR_IMAGE"),
 			featureGateAccessor,
 			backupVar,
-			configBackupInformer)
+			configBackupInformer,
+			kubeInformersForNamespaces)
 
 		backupController := backupcontroller.NewBackupController(
 			AlivenessChecker,
