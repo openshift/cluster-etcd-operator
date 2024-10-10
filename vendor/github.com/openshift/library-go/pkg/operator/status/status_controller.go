@@ -2,6 +2,7 @@ package status
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -51,6 +52,7 @@ type StatusSyncer struct {
 	degradedInertia   Inertia
 
 	removeUnusedVersions bool
+	retryWithClientGet   bool
 }
 
 var _ factory.Controller = &StatusSyncer{}
@@ -126,9 +128,9 @@ func (c *StatusSyncer) WithVersionRemoval() *StatusSyncer {
 	return &output
 }
 
-// sync reacts to a change in prereqs by finding information that is required to match another value in the cluster. This
+// Sync reacts to a change in prereqs by finding information that is required to match another value in the cluster. This
 // must be information that is logically "owned" by another component.
-func (c StatusSyncer) Sync(ctx context.Context, syncCtx factory.SyncContext) error {
+func (c *StatusSyncer) Sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	detailedSpec, currentDetailedStatus, _, err := c.operatorClient.GetOperatorState()
 	if apierrors.IsNotFound(err) {
 		syncCtx.Recorder().Warningf("StatusNotFound", "Unable to determine current operator status for clusteroperator/%s", c.clusterOperatorName)
@@ -145,6 +147,14 @@ func (c StatusSyncer) Sync(ctx context.Context, syncCtx factory.SyncContext) err
 	if err != nil && !apierrors.IsNotFound(err) {
 		syncCtx.Recorder().Warningf("StatusFailed", "Unable to get current operator status for clusteroperator/%s: %v", c.clusterOperatorName, err)
 		return err
+	}
+
+	if c.retryWithClientGet {
+		c.retryWithClientGet = false
+		originalClusterOperatorObj, err = c.clusterOperatorClient.ClusterOperators().Get(ctx, c.clusterOperatorName, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("consistent client get from retry failed with: %w", err)
+		}
 	}
 
 	// ensure that we have a clusteroperator resource
@@ -225,6 +235,11 @@ func (c StatusSyncer) Sync(ctx context.Context, syncCtx factory.SyncContext) err
 	klog.V(2).Infof("clusteroperator/%s diff %v", c.clusterOperatorName, resourceapply.JSONPatchNoError(originalClusterOperatorObj, clusterOperatorObj))
 
 	if _, updateErr := c.clusterOperatorClient.ClusterOperators().UpdateStatus(ctx, clusterOperatorObj, metav1.UpdateOptions{}); updateErr != nil {
+		// Conflicts are sometimes caused when the watch cache is lagging behind. We still want to ensure the operators update their status correctly.
+		// This is ensuring on the next sync loop to get the latest status directly with a client get.
+		if apierrors.IsConflict(updateErr) {
+			c.retryWithClientGet = true
+		}
 		return updateErr
 	}
 	if !skipOperatorStatusChangedEvent(originalClusterOperatorObj.Status, clusterOperatorObj.Status) {
