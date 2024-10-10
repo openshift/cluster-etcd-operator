@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	clientv1 "k8s.io/client-go/listers/core/v1"
@@ -110,7 +111,13 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 				if !apierrors.IsNotFound(err) {
 					return fmt.Errorf("PeriodicBackupController could not retrieve [defaultBackupDeployment]: %w", err)
 				}
-				_, err = c.kubeClient.AppsV1().DaemonSets(operatorclient.TargetNamespace).Create(ctx, deployBackupServerDaemonSet(), v1.CreateOptions{})
+
+				endpoints, err := getEtcdEndpoints(ctx, c.kubeClient)
+				if err != nil {
+					return err
+				}
+
+				_, err = c.kubeClient.AppsV1().DaemonSets(operatorclient.TargetNamespace).Create(ctx, deployBackupServerDaemonSet(endpoints), v1.CreateOptions{})
 				if err != nil {
 					return fmt.Errorf("PeriodicBackupController could not create [defaultBackupDeployment]: %w", err)
 				}
@@ -309,7 +316,7 @@ func newCronJob() (*batchv1.CronJob, error) {
 	return obj.(*batchv1.CronJob), nil
 }
 
-func deployBackupServerDaemonSet() *appv1.DaemonSet {
+func deployBackupServerDaemonSet(endpoints string) *appv1.DaemonSet {
 	deploy := appv1.DaemonSet{
 		ObjectMeta: v1.ObjectMeta{
 			Name:      backupServerDaemonSet,
@@ -367,6 +374,7 @@ func deployBackupServerDaemonSet() *appv1.DaemonSet {
 								"--schedule=0 */5 * * *",
 								"--type=RetentionNumber",
 								"--maxNumberOfBackups=3",
+								fmt.Sprintf("--endpoints=%s", endpoints),
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "data-dir", MountPath: "/var/lib/etcd"},
@@ -387,4 +395,18 @@ func deployBackupServerDaemonSet() *appv1.DaemonSet {
 	}
 
 	return &deploy
+}
+
+func getEtcdEndpoints(ctx context.Context, client kubernetes.Interface) (string, error) {
+	etcdEndPointsCM, err := client.CoreV1().ConfigMaps(operatorclient.TargetNamespace).Get(ctx, "etcd-endpoints", v1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to list etcd-endpoints config-map: %w", err)
+	}
+
+	var endpoints []string
+	for _, v := range etcdEndPointsCM.Data {
+		endpoints = append(endpoints, v)
+	}
+
+	return strings.Join(endpoints, ","), nil
 }
