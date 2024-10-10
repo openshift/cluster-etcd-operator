@@ -2,6 +2,8 @@ package targetconfigcontroller
 
 import (
 	"context"
+	"fmt"
+	"k8s.io/client-go/kubernetes/scheme"
 	"slices"
 	"testing"
 
@@ -36,12 +38,13 @@ const operatorPullSpec = "operator-pull-spec"
 func TestTargetConfigController(t *testing.T) {
 
 	scenarios := []struct {
-		name            string
-		objects         []runtime.Object
-		staticPodStatus *operatorv1.StaticPodOperatorStatus
-		etcdMembers     []*etcdserverpb.Member
-		etcdBackupSpec  *backupv1alpha1.EtcdBackupSpec
-		expectedErr     error
+		name                   string
+		objects                []runtime.Object
+		staticPodStatus        *operatorv1.StaticPodOperatorStatus
+		etcdMembers            []*etcdserverpb.Member
+		etcdBackupSpec         *backupv1alpha1.EtcdBackupSpec
+		enableContainerRemoval bool
+		expectedErr            error
 	}{
 		{
 			name: "HappyPath",
@@ -114,11 +117,30 @@ func TestTargetConfigController(t *testing.T) {
 			},
 			etcdBackupSpec: nil,
 		},
+		{
+			name: "Container Removed",
+			objects: []runtime.Object{
+				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
+			},
+			staticPodStatus: u.StaticPodOperatorStatus(
+				u.WithLatestRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+			),
+			etcdMembers: []*etcdserverpb.Member{
+				u.FakeEtcdMemberWithoutServer(0),
+				u.FakeEtcdMemberWithoutServer(1),
+				u.FakeEtcdMemberWithoutServer(2),
+			},
+			etcdBackupSpec:         nil,
+			enableContainerRemoval: true,
+		},
 	}
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
 			backupVar := backuphelpers.NewDisabledBackupConfig()
-			eventRecorder, _, controller, fakeKubeClient := getController(t, scenario.staticPodStatus, scenario.objects, backupVar)
+			eventRecorder, _, controller, fakeKubeClient := getController(t, scenario.staticPodStatus, scenario.objects, backupVar, scenario.enableContainerRemoval)
 			backupVar.SetBackupSpec(scenario.etcdBackupSpec)
 			err := controller.sync(context.TODO(), factory.NewSyncContext("test", eventRecorder))
 			require.Equal(t, scenario.expectedErr, err)
@@ -163,12 +185,20 @@ func TestTargetConfigController(t *testing.T) {
 				"etcd-backup-server": operatorPullSpec,
 			}
 
+			etcdContainerFound := false
+
 			for _, container := range pod.Spec.Containers {
 				require.Contains(t, expectedEnv, container.Name)
 				require.Equal(t, expectedEnv[container.Name], container.Env)
 				require.Contains(t, expectedImage, container.Name)
 				require.Equal(t, expectedImage[container.Name], container.Image)
+
+				if container.Name == "etcd" {
+					etcdContainerFound = true
+				}
 			}
+
+			require.Equal(t, !scenario.enableContainerRemoval, etcdContainerFound)
 
 			backupContainerIndex := slices.IndexFunc(pod.Spec.Containers, func(container corev1.Container) bool {
 				return container.Name == "etcd-backup-server"
@@ -182,11 +212,19 @@ func TestTargetConfigController(t *testing.T) {
 	}
 }
 
-func getController(t *testing.T, staticPodStatus *operatorv1.StaticPodOperatorStatus, objects []runtime.Object, backupVar *backuphelpers.BackupConfig) (events.Recorder, v1helpers.StaticPodOperatorClient, *TargetConfigController, *fake.Clientset) {
+func getController(
+	t *testing.T,
+	staticPodStatus *operatorv1.StaticPodOperatorStatus,
+	objects []runtime.Object,
+	backupVar *backuphelpers.BackupConfig,
+	enabledContainerRemoval bool) (events.Recorder, v1helpers.StaticPodOperatorClient, *TargetConfigController, *fake.Clientset) {
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 		&operatorv1.StaticPodOperatorSpec{
 			OperatorSpec: operatorv1.OperatorSpec{
 				ManagementState: operatorv1.Managed,
+				UnsupportedConfigOverrides: runtime.RawExtension{
+					Raw: []byte(fmt.Sprintf(`{"useUnsupportedUnsafeEtcdContainerRemoval": "%t"}`, enabledContainerRemoval)),
+				},
 			},
 		},
 		staticPodStatus,

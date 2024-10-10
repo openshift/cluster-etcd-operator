@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"reflect"
 	"strings"
 	"text/template"
@@ -38,13 +39,14 @@ type NameValue struct {
 }
 
 type PodSubstitutionTemplate struct {
-	Image            string
-	OperatorImage    string
-	ListenAddress    string
-	LocalhostAddress string
-	LogLevel         string
-	EnvVars          []NameValue
-	BackupArgs       []string
+	Image               string
+	OperatorImage       string
+	ListenAddress       string
+	LocalhostAddress    string
+	LogLevel            string
+	EnvVars             []NameValue
+	BackupArgs          []string
+	EnableEtcdContainer bool
 }
 
 type TargetConfigController struct {
@@ -164,7 +166,12 @@ func (c *TargetConfigController) createTargetConfig(
 	if err != nil {
 		return err
 	}
-	podSub := c.getPodSubstitution(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars, backupVar)
+
+	podSub, err := c.getPodSubstitution(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars, backupVar)
+	if err != nil {
+		return err
+	}
+
 	_, _, err = c.manageStandardPod(ctx, podSub, c.kubeClient.CoreV1(), recorder, operatorSpec)
 	if err != nil {
 		errs = errors.Join(errs, fmt.Errorf("%q: %w", "configmap/etcd-pod", err))
@@ -207,8 +214,16 @@ func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv
 	), nil
 }
 
-func (c *TargetConfigController) getPodSubstitution(operatorSpec *operatorv1.StaticPodOperatorSpec,
-	imagePullSpec, operatorImagePullSpec string, envVarMap map[string]string, backupVar backuphelpers.BackupVar) *PodSubstitutionTemplate {
+func (c *TargetConfigController) getPodSubstitution(
+	operatorSpec *operatorv1.StaticPodOperatorSpec,
+	imagePullSpec, operatorImagePullSpec string,
+	envVarMap map[string]string,
+	backupVar backuphelpers.BackupVar) (*PodSubstitutionTemplate, error) {
+
+	shouldRemoveEtcdContainer, err := ceohelpers.IsUnsupportedUnsafeEtcdContainerRemoval(operatorSpec)
+	if err != nil {
+		return nil, err
+	}
 
 	var nameValues []NameValue
 	for _, k := range sets.StringKeySet(envVarMap).List() {
@@ -217,14 +232,15 @@ func (c *TargetConfigController) getPodSubstitution(operatorSpec *operatorv1.Sta
 	}
 
 	return &PodSubstitutionTemplate{
-		Image:            imagePullSpec,
-		OperatorImage:    operatorImagePullSpec,
-		ListenAddress:    "0.0.0.0",   // TODO this needs updating to detect ipv6-ness
-		LocalhostAddress: "127.0.0.1", // TODO this needs updating to detect ipv6-ness
-		LogLevel:         loglevelToZap(operatorSpec.LogLevel),
-		EnvVars:          nameValues,
-		BackupArgs:       backupVar.ArgList(),
-	}
+		Image:               imagePullSpec,
+		OperatorImage:       operatorImagePullSpec,
+		ListenAddress:       "0.0.0.0",   // TODO this needs updating to detect ipv6-ness
+		LocalhostAddress:    "127.0.0.1", // TODO this needs updating to detect ipv6-ness
+		LogLevel:            loglevelToZap(operatorSpec.LogLevel),
+		EnvVars:             nameValues,
+		BackupArgs:          backupVar.ArgList(),
+		EnableEtcdContainer: !shouldRemoveEtcdContainer,
+	}, nil
 }
 
 func (c *TargetConfigController) manageRecoveryPods(

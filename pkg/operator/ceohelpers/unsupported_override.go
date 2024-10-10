@@ -11,10 +11,17 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// isUnsupportedUnsafeEtcd returns true if
-// useUnsupportedUnsafeNonHANonProductionUnstableEtcd key is set
-// to any parsable value
+// isUnsupportedUnsafeEtcd returns true if useUnsupportedUnsafeNonHANonProductionUnstableEtcd key is set to any parsable value
 func isUnsupportedUnsafeEtcd(spec *operatorv1.StaticPodOperatorSpec) (bool, error) {
+	return tryGetUnsupportedValue(spec, "useUnsupportedUnsafeNonHANonProductionUnstableEtcd")
+}
+
+// IsUnsupportedUnsafeEtcdContainerRemoval returns true if useUnsupportedUnsafeEtcdContainerRemoval is set to any parsable value.
+func IsUnsupportedUnsafeEtcdContainerRemoval(spec *operatorv1.StaticPodOperatorSpec) (bool, error) {
+	return tryGetUnsupportedValue(spec, "useUnsupportedUnsafeEtcdContainerRemoval")
+}
+
+func tryGetUnsupportedValue(spec *operatorv1.StaticPodOperatorSpec, key string) (bool, error) {
 	unsupportedConfig := map[string]interface{}{}
 	if spec.UnsupportedConfigOverrides.Raw == nil {
 		return false, nil
@@ -40,7 +47,7 @@ func isUnsupportedUnsafeEtcd(spec *operatorv1.StaticPodOperatorSpec) (bool, erro
 	//    unstable
 	// 4. the combination of all these things makes the situation
 	//    unsupportable.
-	value, found, err := unstructured.NestedFieldNoCopy(unsupportedConfig, "useUnsupportedUnsafeNonHANonProductionUnstableEtcd")
+	value, found, err := unstructured.NestedFieldNoCopy(unsupportedConfig, key)
 	if err != nil {
 		return false, err
 	}
