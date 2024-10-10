@@ -36,3 +36,6 @@ wait_for_containers_to_stop "${ETCD_STATIC_POD_CONTAINERS[@]}"
 
 echo "starting restore-etcd static pod"
 cp "${QUORUM_RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"
+
+# This ensures kubelet does not get stuck on reporting status of the static pod, see OCPBUGS-42133
+systemctl restart kubelet
