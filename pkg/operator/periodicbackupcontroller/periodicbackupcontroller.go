@@ -312,9 +312,22 @@ func deployBackupServerDaemonSet() *appv1.DaemonSet {
 		ObjectMeta: v1.ObjectMeta{
 			Name:      backupServerDaemonSet,
 			Namespace: operatorclient.TargetNamespace,
+			Labels: map[string]string{
+				"app": "etcd-auto-backup",
+			},
 		},
 		Spec: appv1.DaemonSetSpec{
+			Selector: &v1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "etcd-auto-backup",
+				},
+			},
 			Template: corev1.PodTemplateSpec{
+				ObjectMeta: v1.ObjectMeta{
+					Labels: map[string]string{
+						"app": "etcd-auto-backup",
+					},
+				},
 				Spec: corev1.PodSpec{
 					NodeSelector: map[string]string{"node-role.kubernetes.io/master": ""},
 					Volumes: []corev1.Volume{
