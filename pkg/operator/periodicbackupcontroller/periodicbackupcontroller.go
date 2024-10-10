@@ -104,10 +104,16 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 	for _, item := range backups.Items {
 		if item.Name == defaultBackupCRName {
 			defaultFound = true
-			// c.backupVarGetter.SetBackupSpec(&item.Spec.EtcdBackupSpec)
-			_, err = c.kubeClient.AppsV1().DaemonSets(operatorclient.TargetNamespace).Update(ctx, deployBackupServerDaemonSet(), v1.UpdateOptions{})
+
+			_, err := c.kubeClient.AppsV1().DaemonSets(operatorclient.TargetNamespace).Get(ctx, backupServerDaemonSet, v1.GetOptions{})
 			if err != nil {
-				return fmt.Errorf("PeriodicBackupController could not update [defaultBackupDeployment]: %w", err)
+				if !apierrors.IsNotFound(err) {
+					return fmt.Errorf("PeriodicBackupController could not retrieve [defaultBackupDeployment]: %w", err)
+				}
+				_, err = c.kubeClient.AppsV1().DaemonSets(operatorclient.TargetNamespace).Create(ctx, deployBackupServerDaemonSet(), v1.CreateOptions{})
+				if err != nil {
+					return fmt.Errorf("PeriodicBackupController could not create [defaultBackupDeployment]: %w", err)
+				}
 			}
 			continue
 		}
