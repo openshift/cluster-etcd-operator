@@ -16,11 +16,13 @@ import (
 )
 
 func getEtcdClient(endpoints []string) (*clientv3.Client, error) {
+	klog.Infof("@Mustafa: being getEtcdClient() -  endpoints are [%v]", endpoints)
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(ioutil.Discard, ioutil.Discard, os.Stderr))
 	dialOptions := []grpc.DialOption{
 		grpc.WithBlock(), // block until the underlying connection is up
 	}
 
+	klog.Infof("@Mustafa: before tlsInfo in getEtcdClient()")
 	tlsInfo := transport.TLSInfo{
 		CertFile:      os.Getenv("ETCDCTL_CERT"),
 		KeyFile:       os.Getenv("ETCDCTL_KEY"),
@@ -28,6 +30,8 @@ func getEtcdClient(endpoints []string) (*clientv3.Client, error) {
 	}
 	tlsConfig, err := tlsInfo.ClientConfig()
 	if err != nil {
+		klog.Infof("@Mustafa: before tlsInfo in getEtcdClient() - tlsConfig are [%v]", tlsConfig)
+		klog.Infof("@Mustafa: before tlsInfo in getEtcdClient() - err  is [%v]", err)
 		return nil, fmt.Errorf("failed to generate tls client config endpoints %v and env %v: %w", endpoints, os.Environ(), err)
 	}
 
@@ -38,14 +42,18 @@ func getEtcdClient(endpoints []string) (*clientv3.Client, error) {
 		TLS:         tlsConfig,
 	}
 
+	klog.Infof("@Mustafa: after tlsInfo in getEtcdClient()")
 	cli, err := clientv3.New(*cfg)
 	if err != nil {
+		klog.Infof("@Mustafa: after tlsInfo in getEtcdClient() - cli are [%v]", cli)
+		klog.Infof("@Mustafa: after tlsInfo in getEtcdClient() - err is [%v]", err)
 		return nil, fmt.Errorf("failed to make etcd client for endpoints %v and env %v: %w", endpoints, os.Environ(), err)
 	}
 	return cli, nil
 }
 
 func saveSnapshot(cli *clientv3.Client, dbPath string) error {
+	klog.Infof("@Mustafa: being saveSnapshot() - cli are [%v] - dbPath are [%v]", cli, dbPath)
 	partpath := dbPath + ".part"
 	defer os.RemoveAll(partpath)
 

@@ -18,6 +18,7 @@ var backupResourcePodList = []string{
 }
 
 func archiveLatestResources(configDir, backupFile string) error {
+	klog.Infof("@Mustafa: being archiveLatestResources() - configDir are [%v] - backupFile are [%v]", configDir, backupFile)
 	klog.Info("Static Pod Resources are being stored in: ", backupFile)
 
 	paths := []string{}
@@ -38,6 +39,7 @@ func archiveLatestResources(configDir, backupFile string) error {
 }
 
 func backup(r *backupOptions) error {
+	klog.Infof("@Mustafa: being backup() - backupOpts are [%v] - endpoints are [%v]", r, r.endpoints)
 	cli, err := getEtcdClient(r.endpoints)
 	if err != nil {
 		return fmt.Errorf("backup: failed to get etcd client: %w", err)
