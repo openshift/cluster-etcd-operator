@@ -115,6 +115,7 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 					return fmt.Errorf("PeriodicBackupController could not create [defaultBackupDeployment]: %w", err)
 				}
 			}
+			klog.V(4).Infof("PeriodicBackupController created DaemonSet [%v] successfully", backupServerDaemonSet)
 			continue
 		}
 
@@ -141,6 +142,7 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 				return fmt.Errorf("PeriodicBackupController could not delete [defaultBackupDeployment]: %w", err)
 			}
 		}
+		klog.V(4).Infof("PeriodicBackupController deleted DaemonSet [%v] successfully", backupServerDaemonSet)
 	}
 
 	_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
@@ -329,6 +331,12 @@ func deployBackupServerDaemonSet() *appv1.DaemonSet {
 					},
 				},
 				Spec: corev1.PodSpec{
+					Tolerations: []corev1.Toleration{
+						{
+							Key:   "node-role.kubernetes.io/master",
+							Value: "NoSchedule",
+						},
+					},
 					NodeSelector: map[string]string{"node-role.kubernetes.io/master": ""},
 					Volumes: []corev1.Volume{
 						{Name: "data-dir", VolumeSource: corev1.VolumeSource{
