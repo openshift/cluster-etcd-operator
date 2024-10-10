@@ -140,3 +140,5 @@ else
   mv "${MANIFEST_STOPPED_DIR}/etcd-pod.yaml" "${MANIFEST_DIR}/etcd-pod.yaml"
 fi
 
+# This ensures kubelet does not get stuck on reporting status of the static pod, see OCPBUGS-42133
+systemctl restart kubelet

@@ -654,6 +654,8 @@ else
   mv "${MANIFEST_STOPPED_DIR}/etcd-pod.yaml" "${MANIFEST_DIR}/etcd-pod.yaml"
 fi
 
+# This ensures kubelet does not get stuck on reporting status of the static pod, see OCPBUGS-42133
+systemctl restart kubelet
 `)
 
 func etcdClusterRestoreShBytes() ([]byte, error) {
@@ -731,6 +733,9 @@ ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz" "etcd-
 # always move etcd pod and wait for all containers to exit
 mv_static_pods "${ETCD_STATIC_POD_LIST[@]}"
 wait_for_containers_to_stop "${ETCD_STATIC_POD_CONTAINERS[@]}"
+
+# This ensures kubelet does not get stuck on reporting status of the static pod, see OCPBUGS-42133
+systemctl restart kubelet
 `)
 
 func etcdDisableEtcdShBytes() ([]byte, error) {
@@ -1990,6 +1995,9 @@ wait_for_containers_to_stop "${ETCD_STATIC_POD_CONTAINERS[@]}"
 
 echo "starting restore-etcd static pod"
 cp "${QUORUM_RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"
+
+# This ensures kubelet does not get stuck on reporting status of the static pod, see OCPBUGS-42133
+systemctl restart kubelet
 `)
 
 func etcdQuorumRestoreShBytes() ([]byte, error) {
