@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"k8s.io/klog/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,12 +72,15 @@ func findTheLatestRevision(dir, filePrefix string, isDir bool) (string, error) {
 }
 
 func checkAndCreateDir(dirName string) error {
+	klog.Infof("@Mustafa: being checkAndCreateDir() - dirName are [%v]", dirName)
 	_, err := os.Stat(dirName)
 	if err != nil && !os.IsNotExist(err) {
+		klog.Infof("@Mustafa: being checkAndCreateDir() - err are [%v]", err)
 		return fmt.Errorf("checkAndCreateDir failed: %w", err)
 	}
 	// If dirName already exists, remove it
 	if err == nil {
+		klog.Infof("@Mustafa: being checkAndCreateDir() - err are [%v]", err)
 		if err := os.RemoveAll(dirName); err != nil {
 			return fmt.Errorf("checkAndCreateDir failed to remove %s: %w", dirName, err)
 		}

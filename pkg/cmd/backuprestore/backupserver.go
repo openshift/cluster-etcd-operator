@@ -28,6 +28,7 @@ type backupRunner interface {
 type backupRunnerImpl struct{}
 
 func (b backupRunnerImpl) runBackup(backupOpts *backupOptions, pruneOpts *prune.PruneOpts) error {
+	klog.Infof("@Mustafa: being runBackup() - backupOpts are [%v] - pruneOpts are [%v] ", backupOpts, pruneOpts)
 	dateString := time.Now().Format("2006-01-02_150405")
 	backupOpts.backupDir = path.Join(backupVolume, dateString)
 	err := backup(backupOpts)
