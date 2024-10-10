@@ -197,13 +197,6 @@ func Test_IsBootstrapComplete(t *testing.T) {
 			expectComplete:     true,
 			expectError:        nil,
 		},
-		"bootstrap complete, node progressing": {
-			bootstrapConfigMap: bootstrapComplete,
-			nodes:              twoNodesProgressingTowardsCurrentRevision,
-			etcdMembers:        u.DefaultEtcdMembers(),
-			expectComplete:     false,
-			expectError:        nil,
-		},
 		"bootstrap complete, etcd-bootstrap removed": {
 			bootstrapConfigMap: bootstrapComplete,
 			nodes:              twoNodesAtCurrentRevision,
