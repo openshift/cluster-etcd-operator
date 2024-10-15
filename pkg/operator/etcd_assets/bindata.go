@@ -1332,35 +1332,6 @@ spec:
       name: data-dir
     - mountPath: /etc/kubernetes/static-pod-certs
       name: cert-dir
-  - name: etcd-backup-server
-    image: {{.OperatorImage}}
-    imagePullPolicy: IfNotPresent
-    terminationMessagePolicy: FallbackToLogsOnError
-    command: [cluster-etcd-operator, backup-server]
-    args:
-    {{ range $i, $val := .BackupArgs -}}
-      - {{ $val | quote }}
-    {{ end -}}
-    securityContext:
-      privileged: true
-    resources:
-      requests:
-        memory: 50Mi
-        cpu: 10m
-    env:
-    {{ range $i, $k := .EnvVars -}}
-    - name: {{ $k.Name | quote }}
-      value: {{ $k.Value | quote }}
-    {{ end -}}
-    volumeMounts:
-      - mountPath: /var/lib/etcd
-        name: data-dir
-      - mountPath: /etc/kubernetes
-        name: config-dir
-      - mountPath: /var/lib/etcd-auto-backup
-        name: etcd-auto-backup-dir
-      - mountPath: /etc/kubernetes/static-pod-certs
-        name: cert-dir
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
@@ -1434,8 +1405,6 @@ spec:
           #!/bin/sh
           echo -n "Fixing etcd log permissions."
           mkdir -p /var/log/etcd  && chmod 0600 /var/log/etcd
-          echo -n "Fixing etcd auto backup permissions."
-          mkdir -p /var/lib/etcd-auto-backup  && chmod 0600 /var/lib/etcd-auto-backup
       securityContext:
         privileged: true
       resources:
@@ -1753,30 +1722,6 @@ ${COMPUTED_ENV_VARS}
       name: data-dir
     - mountPath: /etc/kubernetes/static-pod-certs
       name: cert-dir
-  - name: etcd-backup-server
-    image: ${OPERATOR_IMAGE}
-    imagePullPolicy: IfNotPresent
-    terminationMessagePolicy: FallbackToLogsOnError
-    command: [cluster-etcd-operator, backup-server]
-    args:
-${COMPUTED_BACKUP_VARS}
-    securityContext:
-      privileged: true
-    resources:
-      requests:
-        memory: 50Mi
-        cpu: 10m
-    env:
-${COMPUTED_ENV_VARS}
-    volumeMounts:
-      - mountPath: /var/lib/etcd
-        name: data-dir
-      - mountPath: /etc/kubernetes
-        name: config-dir
-      - mountPath: /var/lib/etcd-auto-backup
-        name: etcd-auto-backup-dir
-      - mountPath: /etc/kubernetes/static-pod-certs
-        name: cert-dir
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
@@ -1804,9 +1749,6 @@ ${COMPUTED_ENV_VARS}
     - hostPath:
         path: /etc/kubernetes
       name: config-dir
-    - hostPath:
-        path: /var/lib/etcd-auto-backup
-      name: etcd-auto-backup-dir
 `)
 
 func etcdPodYamlBytes() ([]byte, error) {

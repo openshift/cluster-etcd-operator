@@ -11,7 +11,6 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
@@ -53,9 +52,8 @@ type TargetConfigController struct {
 
 	operatorClient v1helpers.StaticPodOperatorClient
 
-	kubeClient      kubernetes.Interface
-	envVarGetter    etcdenvvar.EnvVar
-	backupVarGetter backuphelpers.BackupVar
+	kubeClient   kubernetes.Interface
+	envVarGetter etcdenvvar.EnvVar
 
 	enqueueFn func()
 }
@@ -71,17 +69,15 @@ func NewTargetConfigController(
 	masterNodeInformer cache.SharedIndexInformer,
 	kubeClient kubernetes.Interface,
 	envVarGetter etcdenvvar.EnvVar,
-	backupVarGetter backuphelpers.BackupVar,
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &TargetConfigController{
 		targetImagePullSpec:   targetImagePullSpec,
 		operatorImagePullSpec: operatorImagePullSpec,
 
-		operatorClient:  operatorClient,
-		kubeClient:      kubeClient,
-		envVarGetter:    envVarGetter,
-		backupVarGetter: backupVarGetter,
+		operatorClient: operatorClient,
+		kubeClient:     kubeClient,
+		envVarGetter:   envVarGetter,
 	}
 
 	syncCtx := factory.NewSyncContext("TargetConfigController", eventRecorder.WithComponentSuffix("target-config-controller"))
@@ -89,7 +85,6 @@ func NewTargetConfigController(
 		syncCtx.Queue().Add(syncCtx.QueueKey())
 	}
 	envVarGetter.AddListener(c)
-	backupVarGetter.AddListener(c)
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
 	livenessChecker.Add("TargetConfigController", syncer)
@@ -121,7 +116,7 @@ func (c *TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncC
 		return err
 	}
 
-	err = c.createTargetConfig(ctx, syncCtx.Recorder(), operatorSpec, envVars, c.backupVarGetter)
+	err = c.createTargetConfig(ctx, syncCtx.Recorder(), operatorSpec, envVars)
 	if err != nil {
 		condition := operatorv1.OperatorCondition{
 			Type:    "TargetConfigControllerDegraded",
@@ -156,15 +151,14 @@ func (c *TargetConfigController) createTargetConfig(
 	ctx context.Context,
 	recorder events.Recorder,
 	operatorSpec *operatorv1.StaticPodOperatorSpec,
-	envVars map[string]string,
-	backupVar backuphelpers.BackupVar) error {
+	envVars map[string]string) error {
 
 	var errs error
-	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars, backupVar)
+	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars)
 	if err != nil {
 		return err
 	}
-	podSub := c.getPodSubstitution(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars, backupVar)
+	podSub := c.getPodSubstitution(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars)
 	_, _, err = c.manageStandardPod(ctx, podSub, c.kubeClient.CoreV1(), recorder, operatorSpec)
 	if err != nil {
 		errs = errors.Join(errs, fmt.Errorf("%q: %w", "configmap/etcd-pod", err))
@@ -188,7 +182,7 @@ func loglevelToZap(logLevel operatorv1.LogLevel) string {
 }
 
 func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv1.StaticPodOperatorSpec,
-	imagePullSpec, operatorImagePullSpec string, envVarMap map[string]string, backupVar backuphelpers.BackupVar) (*strings.Replacer, error) {
+	imagePullSpec, operatorImagePullSpec string, envVarMap map[string]string) (*strings.Replacer, error) {
 	var envVarLines []string
 	for _, k := range sets.StringKeySet(envVarMap).List() {
 		v := envVarMap[k]
@@ -203,12 +197,11 @@ func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv
 		"${LISTEN_ON_ALL_IPS}", "0.0.0.0", // TODO this needs updating to detect ipv6-ness
 		"${LOCALHOST_IP}", "127.0.0.1", // TODO this needs updating to detect ipv6-ness
 		"${COMPUTED_ENV_VARS}", strings.Join(envVarLines, "\n"), // lacks beauty, but it works
-		"${COMPUTED_BACKUP_VARS}", backupVar.ArgString(),
 	), nil
 }
 
 func (c *TargetConfigController) getPodSubstitution(operatorSpec *operatorv1.StaticPodOperatorSpec,
-	imagePullSpec, operatorImagePullSpec string, envVarMap map[string]string, backupVar backuphelpers.BackupVar) *PodSubstitutionTemplate {
+	imagePullSpec, operatorImagePullSpec string, envVarMap map[string]string) *PodSubstitutionTemplate {
 
 	var nameValues []NameValue
 	for _, k := range sets.StringKeySet(envVarMap).List() {
@@ -223,7 +216,6 @@ func (c *TargetConfigController) getPodSubstitution(operatorSpec *operatorv1.Sta
 		LocalhostAddress: "127.0.0.1", // TODO this needs updating to detect ipv6-ness
 		LogLevel:         loglevelToZap(operatorSpec.LogLevel),
 		EnvVars:          nameValues,
-		BackupArgs:       backupVar.ArgList(),
 	}
 }
 
