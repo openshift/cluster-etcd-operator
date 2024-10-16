@@ -634,7 +634,7 @@ if [ -z "${ETCD_ETCDCTL_RESTORE}" ]; then
   fi
 
   echo "starting restore-etcd static pod"
-  cp -p "${RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"
+  cp -p "${RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-restore-pod.yaml"
 else
   echo "removing etcd data dir..."
   rm -rf "${ETCD_DATA_DIR}"
@@ -651,9 +651,11 @@ else
 
   # start the original etcd static pod again through the new snapshot
   echo "restoring old etcd pod to start etcd again"
-  mv "${MANIFEST_STOPPED_DIR}/etcd-pod.yaml" "${MANIFEST_DIR}/etcd-pod.yaml"
+  mv "${MANIFEST_STOPPED_DIR}/etcd-pod.yaml" "${MANIFEST_DIR}/etcd-restore-pod.yaml"
 fi
 
+# This ensures kubelet does not get stuck on reporting status of the static pod, see OCPBUGS-42133
+systemctl restart kubelet
 `)
 
 func etcdClusterRestoreShBytes() ([]byte, error) {
@@ -731,6 +733,9 @@ ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz" "etcd-
 # always move etcd pod and wait for all containers to exit
 mv_static_pods "${ETCD_STATIC_POD_LIST[@]}"
 wait_for_containers_to_stop "${ETCD_STATIC_POD_CONTAINERS[@]}"
+
+# This ensures kubelet does not get stuck on reporting status of the static pod, see OCPBUGS-42133
+systemctl restart kubelet
 `)
 
 func etcdDisableEtcdShBytes() ([]byte, error) {
@@ -997,6 +1002,10 @@ spec:
           mkdir -p /var/log/etcd  && chmod 0600 /var/log/etcd
           echo -n "Fixing etcd auto backup permissions."
           mkdir -p /var/lib/etcd-auto-backup  && chmod 0600 /var/lib/etcd-auto-backup
+
+          # any left over restore pods need to be removed from the static pod dir
+          rm -f /etc/kubernetes/manifests/etcd-restore-pod.yaml
+          # TODO we need to wait for the pod to disappear, or we leave this up to the "free port" logic below
       securityContext:
         privileged: true
       resources:
@@ -1004,6 +1013,8 @@ spec:
           memory: 50Mi
           cpu: 5m
       volumeMounts:
+        - mountPath: /etc/kubernetes/manifests
+          name: static-pod-dir
         - mountPath: /var/log/etcd
           name: log-dir
     - name: etcd-ensure-env-vars
@@ -1405,6 +1416,10 @@ spec:
           #!/bin/sh
           echo -n "Fixing etcd log permissions."
           mkdir -p /var/log/etcd  && chmod 0600 /var/log/etcd
+
+          # any left over restore pods need to be removed from the static pod dir
+          rm -f /etc/kubernetes/manifests/etcd-restore-pod.yaml
+          # TODO we need to wait for the pod to disappear, or we leave this up to the "free port" logic below
       securityContext:
         privileged: true
       resources:
@@ -1412,6 +1427,8 @@ spec:
           memory: 50Mi
           cpu: 5m
       volumeMounts:
+        - mountPath: /etc/kubernetes/manifests
+          name: static-pod-dir
         - mountPath: /var/log/etcd
           name: log-dir
     - name: etcd-ensure-env-vars
@@ -1722,6 +1739,30 @@ ${COMPUTED_ENV_VARS}
       name: data-dir
     - mountPath: /etc/kubernetes/static-pod-certs
       name: cert-dir
+  - name: etcd-backup-server
+    image: ${OPERATOR_IMAGE}
+    imagePullPolicy: IfNotPresent
+    terminationMessagePolicy: FallbackToLogsOnError
+    command: [cluster-etcd-operator, backup-server]
+    args:
+${COMPUTED_BACKUP_VARS}
+    securityContext:
+      privileged: true
+    resources:
+      requests:
+        memory: 50Mi
+        cpu: 10m
+    env:
+${COMPUTED_ENV_VARS}
+    volumeMounts:
+      - mountPath: /var/lib/etcd
+        name: data-dir
+      - mountPath: /etc/kubernetes
+        name: config-dir
+      - mountPath: /var/lib/etcd-auto-backup
+        name: etcd-auto-backup-dir
+      - mountPath: /etc/kubernetes/static-pod-certs
+        name: cert-dir
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
@@ -1749,6 +1790,9 @@ ${COMPUTED_ENV_VARS}
     - hostPath:
         path: /etc/kubernetes
       name: config-dir
+    - hostPath:
+        path: /var/lib/etcd-auto-backup
+      name: etcd-auto-backup-dir
 `)
 
 func etcdPodYamlBytes() ([]byte, error) {
@@ -1848,8 +1892,11 @@ func etcdPrometheusRolebindingYaml() (*asset, error) {
 var _etcdQuorumRestorePodYaml = []byte(`apiVersion: v1
 kind: Pod
 metadata:
-  name: etcd
+  name: etcd-quorum-restore
   namespace: openshift-etcd
+  # we set a static UUID here to tell kubelet that this is different pod to what's usually running
+  # this ensures that the pod status is correctly updated
+  uid: 55aed6ab-58f4-4ae2-bf1c-54be36669b8a
   labels:
     app: etcd
     k8s-app: etcd
@@ -1989,7 +2036,10 @@ mv_static_pods "${ETCD_STATIC_POD_LIST[@]}"
 wait_for_containers_to_stop "${ETCD_STATIC_POD_CONTAINERS[@]}"
 
 echo "starting restore-etcd static pod"
-cp "${QUORUM_RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"
+cp "${QUORUM_RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-restore-pod.yaml"
+
+# This ensures kubelet does not get stuck on reporting status of the static pod, see OCPBUGS-42133
+systemctl restart kubelet
 `)
 
 func etcdQuorumRestoreShBytes() ([]byte, error) {
@@ -2034,8 +2084,11 @@ func etcdRestorePodCmYaml() (*asset, error) {
 var _etcdRestorePodYaml = []byte(`apiVersion: v1
 kind: Pod
 metadata:
-  name: etcd
+  name: etcd-backup-restore
   namespace: openshift-etcd
+  # we set a static UUID here to tell kubelet that this is different pod to what's usually running
+  # this ensures that the pod status is correctly updated
+  uid: 55aed6ab-58f5-4ae2-bf1c-54be36669b8a
   labels:
     app: etcd
     k8s-app: etcd
