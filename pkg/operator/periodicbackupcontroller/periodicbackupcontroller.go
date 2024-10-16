@@ -3,7 +3,14 @@ package periodicbackupcontroller
 import (
 	"context"
 	"fmt"
+	"os"
+	"slices"
+	"strings"
 	"time"
+
+	"k8s.io/apimachinery/pkg/labels"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/backuprestore"
 
 	clientv1 "k8s.io/client-go/listers/core/v1"
 
@@ -19,21 +26,40 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
+	appv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/client-go/kubernetes"
 	batchv1client "k8s.io/client-go/kubernetes/typed/batch/v1"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 )
 
 const (
 	backupJobLabel                = "backup-name"
 	defaultBackupCRName           = "default"
 	etcdBackupServerContainerName = "etcd-backup-server"
+	backupServerDaemonSet         = "backup-server-daemon-set"
+	etcdEndpointConfigMapName     = "etcd-endpoints"
+	etcdClientPort                = ":2379"
+	etcdDataDirVolName            = "data-dir"
+	etcdDataDirVolPath            = "/var/lib/etcd"
+	etcdConfigDirVolName          = "config-dir"
+	etcdConfigDirVolPath          = "/etc/kubernetes"
+	etcdAutoBackupDirVolName      = "etcd-auto-backup-dir"
+	etcdAutoBackupDirVolPath      = "/var/lib/etcd-auto-backup"
+	etcdCertDirVolName            = "cert-dir"
+	etcdCertDirVolPath            = "/etc/kubernetes/static-pod-certs"
+	nodeNameEnvVar                = "NODE_NAME"
+	nodeNameFieldPath             = "spec.nodeName"
+	masterNodeSelector            = "node-role.kubernetes.io/master"
+	backupDSLabelKey              = "app"
+	backupDSLabelValue            = "etcd-auto-backup"
 )
 
 type PeriodicBackupController struct {
@@ -42,6 +68,7 @@ type PeriodicBackupController struct {
 	backupsClient         backupv1client.BackupsGetter
 	kubeClient            kubernetes.Interface
 	operatorImagePullSpec string
+	backupVarGetter       backuphelpers.BackupVar
 	featureGateAccessor   featuregates.FeatureGateAccess
 	kubeInformers         v1helpers.KubeInformersForNamespaces
 }
@@ -54,6 +81,7 @@ func NewPeriodicBackupController(
 	eventRecorder events.Recorder,
 	operatorImagePullSpec string,
 	accessor featuregates.FeatureGateAccess,
+	backupVarGetter backuphelpers.BackupVar,
 	backupsInformer factory.Informer,
 	kubeInformers v1helpers.KubeInformersForNamespaces) factory.Controller {
 
@@ -63,6 +91,7 @@ func NewPeriodicBackupController(
 		backupsClient:         backupsClient,
 		kubeClient:            kubeClient,
 		operatorImagePullSpec: operatorImagePullSpec,
+		backupVarGetter:       backupVarGetter,
 		featureGateAccessor:   accessor,
 		kubeInformers:         kubeInformers,
 	}
@@ -92,7 +121,32 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 		return fmt.Errorf("PeriodicBackupController could not list backup CRDs, error was: %w", err)
 	}
 
+	defaultFound := false
 	for _, item := range backups.Items {
+		if item.Name == defaultBackupCRName {
+			defaultFound = true
+
+			currentEtcdBackupDS, err := c.kubeClient.AppsV1().DaemonSets(operatorclient.TargetNamespace).Get(ctx, backupServerDaemonSet, v1.GetOptions{})
+			if err != nil && !apierrors.IsNotFound(err) {
+				return fmt.Errorf("PeriodicBackupController could not retrieve [defaultBackupDeployment]: %w", err)
+			}
+
+			endpoints, err := getEtcdEndpoints(ctx, c.kubeClient)
+			if err != nil {
+				return fmt.Errorf("PeriodicBackupController failed to list etcd-endpoints config-map: %w", err)
+			}
+
+			desiredEtcdBackupDS := createBackupServerDaemonSet(item, endpoints)
+			if etcdBackupServerDSDiffers(desiredEtcdBackupDS.Spec, currentEtcdBackupDS.Spec) {
+				_, err = c.kubeClient.AppsV1().DaemonSets(operatorclient.TargetNamespace).Create(ctx, desiredEtcdBackupDS, v1.CreateOptions{})
+				if err != nil {
+					return fmt.Errorf("PeriodicBackupController could not create [defaultBackupDeployment]: %w", err)
+				}
+				klog.V(4).Infof("PeriodicBackupController created DaemonSet [%v] successfully", backupServerDaemonSet)
+			}
+			continue
+		}
+
 		err := reconcileCronJob(ctx, cronJobsClient, item, c.operatorImagePullSpec)
 		if err != nil {
 			_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
@@ -106,6 +160,34 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 			}
 
 			return fmt.Errorf("PeriodicBackupController could not reconcile backup [%s] with cronjob: %w", item.Name, err)
+		}
+	}
+
+	if !defaultFound {
+		err = c.kubeClient.AppsV1().DaemonSets(operatorclient.TargetNamespace).Delete(ctx, backupServerDaemonSet, v1.DeleteOptions{})
+		if err != nil {
+			if !apierrors.IsNotFound(err) {
+				return fmt.Errorf("PeriodicBackupController could not delete [defaultBackupDeployment]: %w", err)
+			}
+			klog.V(4).Infof("PeriodicBackupController deleted DaemonSet [%v] successfully", backupServerDaemonSet)
+		}
+	} else {
+		terminationReasons, err := checkBackupServerPodsStatus(c.podLister)
+		if err != nil {
+			return err
+		}
+
+		if len(terminationReasons) > 0 {
+			_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+				Type:    "PeriodicBackupControllerDegraded",
+				Status:  operatorv1.ConditionTrue,
+				Reason:  "Error",
+				Message: fmt.Sprintf("found default backup errors: %s", strings.Join(terminationReasons, " ,")),
+			}))
+			if updateErr != nil {
+				klog.V(4).Infof("PeriodicBackupController error during [etcd-backup-server] UpdateStatus: %v", err)
+			}
+			return nil
 		}
 	}
 
@@ -271,4 +353,153 @@ func newCronJob() (*batchv1.CronJob, error) {
 	}
 
 	return obj.(*batchv1.CronJob), nil
+}
+
+func createBackupServerDaemonSet(cr backupv1alpha1.Backup, endpoints []string) *appv1.DaemonSet {
+	ds := appv1.DaemonSet{
+		ObjectMeta: v1.ObjectMeta{
+			Name:      backupServerDaemonSet,
+			Namespace: operatorclient.TargetNamespace,
+			Labels: map[string]string{
+				backupDSLabelKey: backupDSLabelValue,
+			},
+		},
+		Spec: appv1.DaemonSetSpec{
+			Selector: &v1.LabelSelector{
+				MatchLabels: map[string]string{
+					backupDSLabelKey: backupDSLabelValue,
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: v1.ObjectMeta{
+					Labels: map[string]string{
+						backupDSLabelKey: backupDSLabelValue,
+					},
+				},
+				Spec: corev1.PodSpec{
+					Tolerations: []corev1.Toleration{
+						{
+							Key:    masterNodeSelector,
+							Effect: corev1.TaintEffectNoSchedule,
+						},
+					},
+					NodeSelector: map[string]string{masterNodeSelector: ""},
+					Volumes: []corev1.Volume{
+						{Name: etcdDataDirVolName, VolumeSource: corev1.VolumeSource{
+							HostPath: &corev1.HostPathVolumeSource{
+								Path: etcdDataDirVolPath,
+								Type: ptr.To(corev1.HostPathUnset)}}},
+
+						{Name: etcdConfigDirVolName, VolumeSource: corev1.VolumeSource{
+							HostPath: &corev1.HostPathVolumeSource{
+								Path: etcdConfigDirVolPath}}},
+
+						{Name: etcdAutoBackupDirVolName, VolumeSource: corev1.VolumeSource{
+							HostPath: &corev1.HostPathVolumeSource{
+								Path: etcdAutoBackupDirVolPath}}},
+
+						{Name: etcdCertDirVolName, VolumeSource: corev1.VolumeSource{
+							HostPath: &corev1.HostPathVolumeSource{
+								Path: "/etc/kubernetes/static-pod-resources/etcd-certs"}}},
+					},
+					Containers: []corev1.Container{
+						{
+							Name:    etcdBackupServerContainerName,
+							Image:   os.Getenv("OPERATOR_IMAGE"),
+							Command: []string{"cluster-etcd-operator", "backup-server"},
+							Env: []corev1.EnvVar{
+								{
+									Name: nodeNameEnvVar,
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: nodeNameFieldPath,
+										},
+									},
+								},
+							},
+							Args: constructBackupServerArgs(cr, strings.Join(endpoints, ",")),
+							VolumeMounts: []corev1.VolumeMount{
+								{Name: etcdDataDirVolName, MountPath: etcdDataDirVolPath},
+								{Name: etcdConfigDirVolName, MountPath: etcdConfigDirVolPath},
+								{Name: etcdAutoBackupDirVolName, MountPath: etcdAutoBackupDirVolPath},
+								{Name: etcdCertDirVolName, MountPath: etcdCertDirVolPath},
+							},
+							TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
+							ImagePullPolicy:          corev1.PullIfNotPresent,
+							SecurityContext: &corev1.SecurityContext{
+								Privileged: ptr.To(true),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	return &ds
+}
+
+func getEtcdEndpoints(ctx context.Context, client kubernetes.Interface) ([]string, error) {
+	etcdEndPointsCM, err := client.CoreV1().ConfigMaps(operatorclient.TargetNamespace).Get(ctx, etcdEndpointConfigMapName, v1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	var endpoints []string
+	for _, v := range etcdEndPointsCM.Data {
+		ep := v + etcdClientPort
+		endpoints = append(endpoints, ep)
+	}
+
+	slices.Sort(endpoints)
+	return endpoints, nil
+}
+
+func constructBackupServerArgs(cr backupv1alpha1.Backup, endpoints string) []string {
+	backupConfig := backuphelpers.NewDisabledBackupConfig()
+	backupConfig.SetBackupSpec(&cr.Spec.EtcdBackupSpec)
+	argList := backupConfig.ArgList()
+
+	argList = append(argList, fmt.Sprintf("--endpoints=%s", endpoints))
+	argList = append(argList, fmt.Sprintf("--backupPath=%s", backuprestore.BackupVolume))
+
+	return argList
+}
+
+func checkBackupServerPodsStatus(podLister clientv1.PodLister) ([]string, error) {
+	backupPods, err := podLister.List(labels.Set{backupDSLabelKey: backupDSLabelValue}.AsSelector())
+	if err != nil {
+		return nil, fmt.Errorf("PeriodicBackupController could not list etcd pods: %w", err)
+	}
+
+	var terminationReasons []string
+	for _, p := range backupPods {
+		if p.Status.Phase == corev1.PodFailed {
+			for _, cStatus := range p.Status.ContainerStatuses {
+				if cStatus.Name == etcdBackupServerContainerName {
+					// TODO we can also try different cStatus.State.Terminated.ExitCode
+					terminationReasons = append(terminationReasons, fmt.Sprintf("container %s within pod %s has been terminated: %s", etcdBackupServerContainerName, p.Name, cStatus.State.Terminated.Message))
+				}
+			}
+		}
+	}
+
+	return terminationReasons, nil
+}
+
+func etcdBackupServerDSDiffers(l, r appv1.DaemonSetSpec) bool {
+	lBytes, _ := l.Marshal()
+	rBytes, _ := r.Marshal()
+
+	if len(lBytes) != len(rBytes) {
+		return true
+	}
+
+	for i := 0; i < len(lBytes); i++ {
+		if lBytes[i] != rBytes[i] {
+			return true
+		}
+	}
+
+	return false
 }
