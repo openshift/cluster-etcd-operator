@@ -120,7 +120,7 @@ if [ -z "${ETCD_ETCDCTL_RESTORE}" ]; then
   fi
 
   echo "starting restore-etcd static pod"
-  cp -p "${RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"
+  cp -p "${RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-restore-pod.yaml"
 else
   echo "removing etcd data dir..."
   rm -rf "${ETCD_DATA_DIR}"
@@ -137,7 +137,7 @@ else
 
   # start the original etcd static pod again through the new snapshot
   echo "restoring old etcd pod to start etcd again"
-  mv "${MANIFEST_STOPPED_DIR}/etcd-pod.yaml" "${MANIFEST_DIR}/etcd-pod.yaml"
+  mv "${MANIFEST_STOPPED_DIR}/etcd-pod.yaml" "${MANIFEST_DIR}/etcd-restore-pod.yaml"
 fi
 
 # This ensures kubelet does not get stuck on reporting status of the static pod, see OCPBUGS-42133
