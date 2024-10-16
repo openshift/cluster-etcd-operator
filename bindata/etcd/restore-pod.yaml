@@ -3,6 +3,9 @@ kind: Pod
 metadata:
   name: etcd-backup-restore
   namespace: openshift-etcd
+  # we set a static UUID here to tell kubelet that this is different pod to what's usually running
+  # this ensures that the pod status is correctly updated
+  uid: 55aed6ab-58f5-4ae2-bf1c-54be36669b8a
   labels:
     app: etcd
     k8s-app: etcd

@@ -1002,6 +1002,10 @@ spec:
           mkdir -p /var/log/etcd  && chmod 0600 /var/log/etcd
           echo -n "Fixing etcd auto backup permissions."
           mkdir -p /var/lib/etcd-auto-backup  && chmod 0600 /var/lib/etcd-auto-backup
+
+          # any left over restore pods need to be removed from the static pod dir
+          rm -f /etc/kubernetes/manifests/etcd-restore-pod.yaml
+          # TODO we need to wait for the pod to disappear, or we leave this up to the "free port" logic below
       securityContext:
         privileged: true
       resources:
@@ -1009,6 +1013,8 @@ spec:
           memory: 50Mi
           cpu: 5m
       volumeMounts:
+        - mountPath: /etc/kubernetes/manifests
+          name: static-pod-dir
         - mountPath: /var/log/etcd
           name: log-dir
     - name: etcd-ensure-env-vars
@@ -1888,6 +1894,9 @@ kind: Pod
 metadata:
   name: etcd-quorum-restore
   namespace: openshift-etcd
+  # we set a static UUID here to tell kubelet that this is different pod to what's usually running
+  # this ensures that the pod status is correctly updated
+  uid: 55aed6ab-58f4-4ae2-bf1c-54be36669b8a
   labels:
     app: etcd
     k8s-app: etcd
@@ -2077,6 +2086,9 @@ kind: Pod
 metadata:
   name: etcd-backup-restore
   namespace: openshift-etcd
+  # we set a static UUID here to tell kubelet that this is different pod to what's usually running
+  # this ensures that the pod status is correctly updated
+  uid: 55aed6ab-58f5-4ae2-bf1c-54be36669b8a
   labels:
     app: etcd
     k8s-app: etcd
