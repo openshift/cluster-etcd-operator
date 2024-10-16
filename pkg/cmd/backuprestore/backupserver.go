@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"strings"
 	"syscall"
 	"time"
 
@@ -17,7 +18,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const backupVolume = "/var/lib/etcd-auto-backup"
+const (
+	BackupVolume      = "/var/lib/etcd-auto-backup"
+	etcdCtlKeyName    = "ETCDCTL_KEY"
+	etcdCtlCertName   = "ETCDCTL_CERT"
+	etcdCtlCACertName = "ETCDCTL_CACERT"
+	nodeNameEnvVar    = "NODE_NAME"
+)
 
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
 
@@ -29,7 +36,7 @@ type backupRunnerImpl struct{}
 
 func (b backupRunnerImpl) runBackup(backupOpts *backupOptions, pruneOpts *prune.PruneOpts) error {
 	dateString := time.Now().Format("2006-01-02_150405")
-	backupOpts.backupDir = path.Join(backupVolume, dateString)
+	backupOpts.backupDir = path.Join(BackupVolume, dateString)
 	err := backup(backupOpts)
 	if err != nil {
 		return err
@@ -46,6 +53,7 @@ func (b backupRunnerImpl) runBackup(backupOpts *backupOptions, pruneOpts *prune.
 type backupServer struct {
 	schedule     string
 	timeZone     string
+	nodeName     string
 	enabled      bool
 	cronSchedule cron.Schedule
 	backupOptions
@@ -57,7 +65,7 @@ func NewBackupServer(ctx context.Context) *cobra.Command {
 		backupOptions: backupOptions{errOut: os.Stderr},
 		PruneOpts: prune.PruneOpts{
 			RetentionType: "None",
-			BackupPath:    backupVolume,
+			BackupPath:    BackupVolume,
 		},
 	}
 
@@ -65,7 +73,6 @@ func NewBackupServer(ctx context.Context) *cobra.Command {
 		Use:   "backup-server",
 		Short: "Backs up a snapshot of etcd database and static pod resources without config",
 		Run: func(cmd *cobra.Command, args []string) {
-
 			if err := backupSrv.Validate(); err != nil {
 				klog.Fatal(err)
 			}
@@ -95,13 +102,22 @@ func (b *backupServer) Validate() error {
 		return nil
 	}
 
+	if err := b.validateNameNode(); err != nil {
+		return err
+	}
+
+	if err := b.constructEnvVars(); err != nil {
+		klog.Infof("error constructing envVars: [%v]", err)
+		return err
+	}
+
 	cronSchedule, err := cron.ParseStandard(b.schedule)
 	if err != nil {
 		return fmt.Errorf("error parsing backup schedule %v: %w", b.schedule, err)
 	}
 	b.cronSchedule = cronSchedule
 
-	b.backupOptions.backupDir = backupVolume
+	b.backupOptions.backupDir = BackupVolume
 	err = b.backupOptions.Validate()
 	if err != nil {
 		return fmt.Errorf("error validating backup %v: %w", b.backupOptions, err)
@@ -111,7 +127,6 @@ func (b *backupServer) Validate() error {
 	if err != nil {
 		return fmt.Errorf("error validating prune args %v: %w", b.PruneOpts, err)
 	}
-
 	return nil
 }
 
@@ -136,7 +151,6 @@ func (b *backupServer) Run(ctx context.Context) error {
 func (b *backupServer) scheduleBackup(ctx context.Context, bck backupRunner) error {
 	ticker := time.NewTicker(time.Until(b.cronSchedule.Next(time.Now())))
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ticker.C:
@@ -150,4 +164,35 @@ func (b *backupServer) scheduleBackup(ctx context.Context, bck backupRunner) err
 			return nil
 		}
 	}
+}
+
+func (b *backupServer) validateNameNode() error {
+	nodeNameEnv := os.Getenv(nodeNameEnvVar)
+	if len(nodeNameEnv) == 0 {
+		return fmt.Errorf("[%v] environment variable is empty", nodeNameEnvVar)
+	}
+	b.nodeName = nodeNameEnv
+	return nil
+}
+
+func (b *backupServer) constructEnvVars() error {
+	etcdCtlKeyVal := strings.Replace("/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.key", nodeNameEnvVar, b.nodeName, -1)
+	err := os.Setenv(etcdCtlKeyName, etcdCtlKeyVal)
+	if err != nil {
+		return fmt.Errorf("error exporting [%v]: val is [%v]: %w", etcdCtlKeyName, etcdCtlKeyVal, err)
+	}
+
+	etcdCtlCertVal := strings.Replace("/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.crt", nodeNameEnvVar, b.nodeName, -1)
+	err = os.Setenv(etcdCtlCertName, etcdCtlCertVal)
+	if err != nil {
+		return fmt.Errorf("error writing [%v]: val is [%v]: %w", etcdCtlCertName, etcdCtlCertVal, err)
+	}
+
+	etcdCtlCACertVal := "/etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt"
+	err = os.Setenv(etcdCtlCACertName, etcdCtlCACertVal)
+	if err != nil {
+		return fmt.Errorf("error writing [%v]: val is [%v]: %w", etcdCtlCACertName, etcdCtlCACertVal, err)
+	}
+
+	return nil
 }

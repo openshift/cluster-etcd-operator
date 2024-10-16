@@ -3,7 +3,15 @@ package periodicbackupcontroller
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"testing"
+
+	"k8s.io/apimachinery/pkg/labels"
+
+	corev1 "k8s.io/api/core/v1"
+
+	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 
 	configv1 "github.com/openshift/api/config/v1"
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
@@ -54,6 +62,181 @@ func TestSyncLoopHappyPath(t *testing.T) {
 	err := controller.sync(context.TODO(), nil)
 	require.NoError(t, err)
 	requireBackupCronJobCreated(t, client, backup)
+	requireOperatorStatus(t, fakeOperatorClient, false)
+}
+
+func TestSyncLoopWithDefaultBackupCR(t *testing.T) {
+	var backups backupv1alpha1.BackupList
+
+	backup := backupv1alpha1.Backup{ObjectMeta: v1.ObjectMeta{Name: "test-backup"},
+		Spec: backupv1alpha1.BackupSpec{
+			EtcdBackupSpec: backupv1alpha1.EtcdBackupSpec{
+				Schedule: "20 4 * * *",
+				TimeZone: "UTC",
+				RetentionPolicy: backupv1alpha1.RetentionPolicy{
+					RetentionType:   backupv1alpha1.RetentionTypeNumber,
+					RetentionNumber: &backupv1alpha1.RetentionNumberConfig{MaxNumberOfBackups: 5}},
+				PVCName: "backup-happy-path-pvc"}}}
+
+	// no default CR
+	backups.Items = append(backups.Items, backup)
+	operatorFake := fake.NewClientset([]runtime.Object{&backups}...)
+	client := k8sfakeclient.NewClientset([]runtime.Object{defaultEtcdEndpointCM()}...)
+	fakeKubeInformerForNamespace := v1helpers.NewKubeInformersForNamespaces(client, operatorclient.TargetNamespace)
+	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+		&operatorv1.StaticPodOperatorSpec{OperatorSpec: operatorv1.OperatorSpec{ManagementState: operatorv1.Managed}},
+		&operatorv1.StaticPodOperatorStatus{}, nil, nil)
+
+	controller := PeriodicBackupController{
+		operatorClient:        fakeOperatorClient,
+		podLister:             fakeKubeInformerForNamespace.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
+		backupsClient:         operatorFake.ConfigV1alpha1(),
+		kubeClient:            client,
+		operatorImagePullSpec: "pullspec-image",
+		backupVarGetter:       backuphelpers.NewDisabledBackupConfig(),
+		featureGateAccessor:   backupFeatureGateAccessor,
+		kubeInformers:         fakeKubeInformerForNamespace,
+	}
+
+	stopChan := make(chan struct{})
+	t.Cleanup(func() {
+		close(stopChan)
+	})
+	fakeKubeInformerForNamespace.Start(stopChan)
+
+	expDisabledBackupVar := "    args:\n    - --enabled=false"
+	err := controller.sync(context.TODO(), nil)
+	require.NoError(t, err)
+	require.Equal(t, expDisabledBackupVar, controller.backupVarGetter.ArgString())
+
+	// create default CR
+	defaultBackup := backupv1alpha1.Backup{ObjectMeta: v1.ObjectMeta{Name: defaultBackupCRName},
+		Spec: backupv1alpha1.BackupSpec{
+			EtcdBackupSpec: backupv1alpha1.EtcdBackupSpec{
+				Schedule: "0 */2 * * *",
+				TimeZone: "GMT",
+				RetentionPolicy: backupv1alpha1.RetentionPolicy{
+					RetentionType:   backupv1alpha1.RetentionTypeNumber,
+					RetentionNumber: &backupv1alpha1.RetentionNumberConfig{MaxNumberOfBackups: 3}}}}}
+
+	backups.Items = append(backups.Items, defaultBackup)
+	operatorFake = fake.NewClientset([]runtime.Object{&backups}...)
+	controller.backupsClient = operatorFake.ConfigV1alpha1()
+
+	err = controller.sync(context.TODO(), nil)
+	require.NoError(t, err)
+	act, err := controller.kubeClient.AppsV1().DaemonSets(operatorclient.TargetNamespace).Get(context.TODO(), backupServerDaemonSet, v1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, len(act.Spec.Template.Spec.Containers))
+	require.Equal(t, etcdBackupServerContainerName, act.Spec.Template.Spec.Containers[0].Name)
+	require.Equal(t, []string{"cluster-etcd-operator", "backup-server"}, act.Spec.Template.Spec.Containers[0].Command)
+	endpoints, err := getEtcdEndpoints(context.TODO(), controller.kubeClient)
+	require.NoError(t, err)
+	slices.Sort(endpoints)
+	require.Equal(t, constructBackupServerArgs(defaultBackup, strings.Join(endpoints, ",")), act.Spec.Template.Spec.Containers[0].Args)
+
+	// removing defaultCR
+	backups.Items = backups.Items[:len(backups.Items)-1]
+	operatorFake = fake.NewClientset([]runtime.Object{&backups}...)
+	controller.backupsClient = operatorFake.ConfigV1alpha1()
+
+	err = controller.sync(context.TODO(), nil)
+	require.NoError(t, err)
+	_, err = controller.kubeClient.AppsV1().DaemonSets(operatorclient.TargetNamespace).Get(context.TODO(), backupServerDaemonSet, v1.GetOptions{})
+	require.Error(t, err)
+	require.Equal(t, fmt.Errorf("daemonsets.apps \"backup-server-daemon-set\" not found").Error(), err.Error())
+}
+
+func TestSyncLoopFailsDegradesOperatorWithDefaultBackupCR(t *testing.T) {
+	var backups backupv1alpha1.BackupList
+
+	backup := backupv1alpha1.Backup{ObjectMeta: v1.ObjectMeta{Name: "test-backup"},
+		Spec: backupv1alpha1.BackupSpec{
+			EtcdBackupSpec: backupv1alpha1.EtcdBackupSpec{
+				Schedule: "20 4 * * *",
+				TimeZone: "UTC",
+				RetentionPolicy: backupv1alpha1.RetentionPolicy{
+					RetentionType:   backupv1alpha1.RetentionTypeNumber,
+					RetentionNumber: &backupv1alpha1.RetentionNumberConfig{MaxNumberOfBackups: 5}},
+				PVCName: "backup-happy-path-pvc"}}}
+
+	backupServerFailureMsg := fmt.Sprintf("error running etcd backup: %s", "error running backup")
+	client := k8sfakeclient.NewClientset([]runtime.Object{
+		etcdBackupServerFailingPod("1", backupServerFailureMsg),
+		etcdBackupServerFailingPod("2", backupServerFailureMsg),
+		etcdBackupServerFailingPod("3", backupServerFailureMsg),
+		defaultEtcdEndpointCM()}...)
+
+	fakeKubeInformerForNamespace := v1helpers.NewKubeInformersForNamespaces(client, operatorclient.TargetNamespace)
+
+	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+		&operatorv1.StaticPodOperatorSpec{OperatorSpec: operatorv1.OperatorSpec{ManagementState: operatorv1.Managed}},
+		&operatorv1.StaticPodOperatorStatus{}, nil, nil)
+
+	// no default CR
+	backups.Items = append(backups.Items, backup)
+	operatorFake := fake.NewClientset([]runtime.Object{&backups}...)
+
+	controller := PeriodicBackupController{
+		operatorClient:        fakeOperatorClient,
+		podLister:             fakeKubeInformerForNamespace.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
+		backupsClient:         operatorFake.ConfigV1alpha1(),
+		kubeClient:            client,
+		operatorImagePullSpec: "pullspec-image",
+		backupVarGetter:       backuphelpers.NewDisabledBackupConfig(),
+		featureGateAccessor:   backupFeatureGateAccessor,
+		kubeInformers:         fakeKubeInformerForNamespace,
+	}
+
+	stopChan := make(chan struct{})
+	t.Cleanup(func() {
+		close(stopChan)
+	})
+	fakeKubeInformerForNamespace.Start(stopChan)
+
+	expDisabledBackupVar := "    args:\n    - --enabled=false"
+	err := controller.sync(context.TODO(), nil)
+	require.NoError(t, err)
+	require.Equal(t, expDisabledBackupVar, controller.backupVarGetter.ArgString())
+	requireOperatorStatus(t, fakeOperatorClient, false)
+
+	// create default CR
+	defaultBackup := backupv1alpha1.Backup{ObjectMeta: v1.ObjectMeta{Name: defaultBackupCRName},
+		Spec: backupv1alpha1.BackupSpec{
+			EtcdBackupSpec: backupv1alpha1.EtcdBackupSpec{
+				Schedule: "0 */2 * * *",
+				TimeZone: "GMT",
+				RetentionPolicy: backupv1alpha1.RetentionPolicy{
+					RetentionType:   backupv1alpha1.RetentionTypeNumber,
+					RetentionNumber: &backupv1alpha1.RetentionNumberConfig{MaxNumberOfBackups: 3}}}}}
+
+	backups.Items = append(backups.Items, defaultBackup)
+	operatorFake = fake.NewClientset([]runtime.Object{&backups}...)
+	controller.backupsClient = operatorFake.ConfigV1alpha1()
+
+	err = controller.sync(context.TODO(), nil)
+	require.NoError(t, err)
+	act, err := controller.kubeClient.AppsV1().DaemonSets(operatorclient.TargetNamespace).Get(context.TODO(), backupServerDaemonSet, v1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, len(act.Spec.Template.Spec.Containers))
+	require.Equal(t, etcdBackupServerContainerName, act.Spec.Template.Spec.Containers[0].Name)
+	require.Equal(t, []string{"cluster-etcd-operator", "backup-server"}, act.Spec.Template.Spec.Containers[0].Command)
+	endpoints, err := getEtcdEndpoints(context.TODO(), controller.kubeClient)
+	require.NoError(t, err)
+	slices.Sort(endpoints)
+	require.Equal(t, constructBackupServerArgs(defaultBackup, strings.Join(endpoints, ",")), act.Spec.Template.Spec.Containers[0].Args)
+	requireOperatorStatus(t, fakeOperatorClient, true)
+
+	// removing defaultCR
+	backups.Items = backups.Items[:len(backups.Items)-1]
+	operatorFake = fake.NewClientset([]runtime.Object{&backups}...)
+	controller.backupsClient = operatorFake.ConfigV1alpha1()
+
+	err = controller.sync(context.TODO(), nil)
+	require.NoError(t, err)
+	_, err = controller.kubeClient.AppsV1().DaemonSets(operatorclient.TargetNamespace).Get(context.TODO(), backupServerDaemonSet, v1.GetOptions{})
+	require.Error(t, err)
+	require.Equal(t, fmt.Errorf("daemonsets.apps \"backup-server-daemon-set\" not found").Error(), err.Error())
 	requireOperatorStatus(t, fakeOperatorClient, false)
 }
 
@@ -184,6 +367,38 @@ func TestCronJobSpecDiffs(t *testing.T) {
 	require.True(t, cronSpecDiffers(job.Spec, job2.Spec))
 }
 
+func TestConstructBackupServerArgs(t *testing.T) {
+	testEtcdEndpoints := "10.0.109.40:2379,10.0.63.58:2379,10.0.44.255:2379"
+	testCR := backupv1alpha1.Backup{
+		Spec: backupv1alpha1.BackupSpec{
+			EtcdBackupSpec: backupv1alpha1.EtcdBackupSpec{
+				Schedule: "* * * * *",
+				TimeZone: "GMT",
+				RetentionPolicy: backupv1alpha1.RetentionPolicy{
+					RetentionType:   backupv1alpha1.RetentionTypeNumber,
+					RetentionNumber: &backupv1alpha1.RetentionNumberConfig{MaxNumberOfBackups: 3},
+				},
+			},
+		},
+	}
+
+	exp := []string{"--enabled=true", "--timezone=GMT", "--schedule=* * * * *", "--type=RetentionNumber", "--maxNumberOfBackups=3", "--endpoints=10.0.109.40:2379,10.0.63.58:2379,10.0.44.255:2379", "--backupPath=/var/lib/etcd-auto-backup"}
+
+	act := constructBackupServerArgs(testCR, testEtcdEndpoints)
+	require.Equal(t, exp, act)
+}
+
+func TestGetEtcdEndpoints(t *testing.T) {
+	testEtcdEndpointCM := defaultEtcdEndpointCM()
+
+	exp := []string{"10.0.0.0:2379", "10.0.0.1:2379", "10.0.0.2:2379"}
+
+	client := k8sfakeclient.NewClientset([]runtime.Object{testEtcdEndpointCM}...)
+	act, err := getEtcdEndpoints(context.TODO(), client)
+	require.NoError(t, err)
+	require.ElementsMatch(t, exp, act)
+}
+
 func requireOperatorStatus(t *testing.T, client v1helpers.StaticPodOperatorClient, degraded bool) {
 	_, status, _, _ := client.GetOperatorState()
 	require.Equal(t, 1, len(status.Conditions))
@@ -240,4 +455,33 @@ func findFirstCreateAction(client *k8sfakeclient.Clientset) *k8stesting.CreateAc
 		}
 	}
 	return createAction
+}
+
+func defaultEtcdEndpointCM() *corev1.ConfigMap {
+	return u.FakeConfigMap(operatorclient.TargetNamespace, etcdEndpointConfigMapName, map[string]string{
+		"0": "10.0.0.0",
+		"1": "10.0.0.1",
+		"2": "10.0.0.2",
+	})
+}
+
+func etcdBackupServerFailingPod(nodeName string, failureMsg string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: v1.ObjectMeta{
+			Name:      fmt.Sprintf("etcd-backup-server-%v", nodeName),
+			Namespace: "openshift-etcd",
+			Labels:    labels.Set{backupDSLabelKey: backupDSLabelValue},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodFailed,
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name: etcdBackupServerContainerName,
+				State: corev1.ContainerState{
+					Terminated: &corev1.ContainerStateTerminated{
+						Message: failureMsg,
+					},
+				}},
+			},
+		},
+	}
 }

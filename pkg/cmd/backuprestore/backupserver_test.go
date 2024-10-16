@@ -3,6 +3,8 @@ package backuprestore
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -12,17 +14,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const validSchedule = "* * * * *"
+const (
+	validSchedule = "* * * * *"
+	localHost     = "localhost"
+)
 
 func TestBackupServer_Validate(t *testing.T) {
 	testCases := []struct {
 		name         string
 		backupServer backupServer
+		envExist     bool
 		expErr       error
 	}{
 		{
 			"BackupServer is disabled",
 			backupServer{enabled: false},
+			false,
 			nil,
 		},
 		{
@@ -31,6 +38,7 @@ func TestBackupServer_Validate(t *testing.T) {
 				enabled:  false,
 				schedule: "invalid schedule",
 			},
+			false,
 			nil,
 		},
 		{
@@ -42,6 +50,7 @@ func TestBackupServer_Validate(t *testing.T) {
 					backupDir: "",
 				},
 			},
+			false,
 			nil,
 		},
 		{
@@ -49,6 +58,7 @@ func TestBackupServer_Validate(t *testing.T) {
 			backupServer{
 				enabled: true,
 			},
+			true,
 			errors.New("error parsing backup schedule : empty spec string"),
 		},
 		{
@@ -57,6 +67,7 @@ func TestBackupServer_Validate(t *testing.T) {
 				enabled:  true,
 				schedule: "invalid schedule",
 			},
+			true,
 			errors.New("error parsing backup schedule invalid schedule"),
 		},
 		{
@@ -68,6 +79,7 @@ func TestBackupServer_Validate(t *testing.T) {
 					RetentionType: prune.RetentionTypeNone,
 				},
 			},
+			true,
 			nil,
 		},
 		{
@@ -79,6 +91,7 @@ func TestBackupServer_Validate(t *testing.T) {
 					backupDir: "",
 				},
 			},
+			true,
 			errors.New("error parsing backup schedule invalid schedule"),
 		},
 		{
@@ -93,18 +106,29 @@ func TestBackupServer_Validate(t *testing.T) {
 					RetentionType: prune.RetentionTypeNone,
 				},
 			},
+			true,
 			nil,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.envExist {
+				err := os.Setenv(nodeNameEnvVar, localHost)
+				require.NoError(t, err)
+			}
+
 			actErr := tc.backupServer.Validate()
 			if tc.expErr != nil {
 				require.Contains(t, actErr.Error(), tc.expErr.Error())
 			} else {
 				require.Equal(t, tc.expErr, actErr)
 			}
+
+			t.Cleanup(func() {
+				err := os.Unsetenv(nodeNameEnvVar)
+				require.NoError(t, err)
+			})
 		})
 	}
 }
@@ -173,6 +197,67 @@ func TestNewBackupServer_scheduleBackup(t *testing.T) {
 			require.GreaterOrEqual(t, mock.counter, tc.expBackups)
 		})
 	}
+}
+
+func TestBackupServer_validateNameNode(t *testing.T) {
+	testCases := []struct {
+		name          string
+		inputNodeName string
+		envExist      bool
+		expErr        error
+	}{
+		{
+			name:          "env var exist",
+			inputNodeName: localHost,
+			envExist:      true,
+			expErr:        nil,
+		},
+		{
+			name:     "env var not exist",
+			envExist: false,
+			expErr:   fmt.Errorf("[NODE_NAME] environment variable is empty"),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.envExist {
+				err := os.Setenv(nodeNameEnvVar, tc.inputNodeName)
+				require.NoError(t, err)
+			}
+
+			b := &backupServer{}
+			err := b.validateNameNode()
+			require.Equal(t, tc.expErr, err)
+			require.Equal(t, b.nodeName, tc.inputNodeName)
+
+			t.Cleanup(func() {
+				err := os.Unsetenv(nodeNameEnvVar)
+				require.NoError(t, err)
+			})
+		})
+	}
+}
+
+func TestBackupServer_constructEnvVars(t *testing.T) {
+	b := &backupServer{
+		nodeName: localHost,
+	}
+
+	err := b.constructEnvVars()
+	require.NoError(t, err)
+
+	expEtcdKey := "/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-localhost.key"
+	act := os.Getenv(etcdCtlKeyName)
+	require.Equal(t, expEtcdKey, act)
+
+	expEtcdCert := "/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-localhost.crt"
+	act = os.Getenv(etcdCtlCertName)
+	require.Equal(t, expEtcdCert, act)
+
+	expEtcdCACert := "/etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt"
+	act = os.Getenv(etcdCtlCACertName)
+	require.Equal(t, expEtcdCACert, act)
 }
 
 type backupRunnerMock struct {
