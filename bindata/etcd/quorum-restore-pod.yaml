@@ -26,6 +26,7 @@ spec:
           --logger=zap \
           --log-level=${VERBOSITY} \
           --force-new-cluster \
+          --force-new-cluster-bump-amount=1000000 \
           --name="${NODE_NODE_ENVVAR_NAME_ETCD_NAME}" \
           --initial-cluster="${NODE_NODE_ENVVAR_NAME_ETCD_NAME}=https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:2380" \
           --initial-advertise-peer-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2380 \
