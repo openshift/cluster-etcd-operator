@@ -8,6 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
+	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
+
 	"k8s.io/apimachinery/pkg/labels"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/backuprestore"
@@ -96,18 +99,20 @@ func NewPeriodicBackupController(
 		kubeInformers:         kubeInformers,
 	}
 
+	syncCtx := factory.NewSyncContext("PeriodicBackupController", eventRecorder.WithComponentSuffix("periodic-backup-controller"))
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
 	livenessChecker.Add("PeriodicBackupController", syncer)
 
 	return factory.New().
+		WithSyncContext(syncCtx).
 		ResyncEvery(1*time.Minute).
 		WithInformers(backupsInformer,
 			kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer()).
 		WithSync(syncer.Sync).
-		ToController("PeriodicBackupController", eventRecorder.WithComponentSuffix("periodic-backup-controller"))
+		ToController("PeriodicBackupController", syncCtx.Recorder())
 }
 
-func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncContext) error {
+func (c *PeriodicBackupController) sync(ctx context.Context, syncContext factory.SyncContext) error {
 	if enabled, err := backuphelpers.AutoBackupFeatureGateEnabled(c.featureGateAccessor); !enabled {
 		if err != nil {
 			klog.V(4).Infof("PeriodicBackupController error while checking feature flags: %v", err)
@@ -138,11 +143,14 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 
 			desiredEtcdBackupDS := createBackupServerDaemonSet(item, endpoints)
 			if etcdBackupServerDSDiffers(desiredEtcdBackupDS.Spec, currentEtcdBackupDS.Spec) {
-				_, err = c.kubeClient.AppsV1().DaemonSets(operatorclient.TargetNamespace).Create(ctx, desiredEtcdBackupDS, v1.CreateOptions{})
+				_, opStatus, _, _ := c.operatorClient.GetOperatorState()
+				_, _, err := resourceapply.ApplyDaemonSet(ctx, c.kubeClient.AppsV1(), syncContext.Recorder(), desiredEtcdBackupDS,
+					resourcemerge.ExpectedDaemonSetGeneration(desiredEtcdBackupDS, opStatus.Generations),
+				)
 				if err != nil {
-					return fmt.Errorf("PeriodicBackupController could not create [defaultBackupDeployment]: %w", err)
+					return fmt.Errorf("PeriodicBackupController could not apply [defaultBackupDeployment]: %w", err)
 				}
-				klog.V(4).Infof("PeriodicBackupController created DaemonSet [%v] successfully", backupServerDaemonSet)
+				klog.V(4).Infof("PeriodicBackupController applied DaemonSet [%v] successfully", backupServerDaemonSet)
 			}
 			continue
 		}
