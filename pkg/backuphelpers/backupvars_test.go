@@ -28,7 +28,7 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 		{
 			"backup spec with timezone and empty schedule",
 			createEtcdBackupSpec(timezone, ""),
-			"    args:\n    - --enabled=true\n    - --timezone=GMT\n    --type=RetentionNumber\n    --maxNumberOfBackups=5",
+			"    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 0 * * *\n    --type=RetentionNumber\n    --maxNumberOfBackups=5",
 		},
 		{
 			"backup spec with empty timezone and schedule",
@@ -88,6 +88,7 @@ func TestBackupConfig_ToArgList(t *testing.T) {
 			[]string{
 				"--enabled=true",
 				"--timezone=GMT",
+				"--schedule=0 0 * * *",
 				"--type=RetentionNumber",
 				"--maxNumberOfBackups=5",
 			},
