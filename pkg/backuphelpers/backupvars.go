@@ -10,7 +10,10 @@ import (
 	prune "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 )
 
-const defaultNumberBackups = 5
+const (
+	defaultNumberBackups  = 3
+	defaultBackupSchedule = "0 0 * * *"
+)
 
 type Enqueueable interface {
 	Enqueue()
@@ -73,6 +76,9 @@ func (b *BackupConfig) ArgList() []string {
 
 	if b.spec.Schedule != "" {
 		args = append(args, fmt.Sprintf("--%s=%s", "schedule", b.spec.Schedule))
+	} else {
+		// fix OCPBUGS-43687
+		args = append(args, fmt.Sprintf("--%s=%s", "schedule", defaultBackupSchedule))
 	}
 
 	// fix OCPBUGS-43676
@@ -110,6 +116,9 @@ func (b *BackupConfig) ArgString() string {
 
 	if b.spec.Schedule != "" {
 		args = append(args, fmt.Sprintf("- --%s=%s", "schedule", b.spec.Schedule))
+	} else {
+		// fix OCPBUGS-43687
+		args = append(args, fmt.Sprintf("- --%s=%s", "schedule", defaultBackupSchedule))
 	}
 
 	// fix OCPBUGS-43676

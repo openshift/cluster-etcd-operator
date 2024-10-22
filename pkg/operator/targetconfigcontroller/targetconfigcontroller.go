@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"reflect"
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"

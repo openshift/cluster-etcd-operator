@@ -6,6 +6,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	testing2 "k8s.io/utils/clock/testing"
 
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
@@ -101,7 +104,12 @@ func TestSyncLoopWithDefaultBackupCR(t *testing.T) {
 		kubeInformers:         fakeKubeInformerForNamespace,
 	}
 
-	syncCtx := factory.NewSyncContext("test", events.NewRecorder(controller.kubeClient.CoreV1().Events(operatorclient.TargetNamespace), "test-periodic-backup-controller", &corev1.ObjectReference{}))
+	syncCtx := factory.NewSyncContext("test", events.NewRecorder(
+		controller.kubeClient.CoreV1().Events(operatorclient.TargetNamespace),
+		"test-periodic-backup-controller",
+		&corev1.ObjectReference{},
+		testing2.NewFakePassiveClock(time.Now()),
+	))
 	stopChan := make(chan struct{})
 	t.Cleanup(func() {
 		close(stopChan)
@@ -184,7 +192,12 @@ func TestSyncLoopWithDefaultBackupCRWithoutRetentionSpec(t *testing.T) {
 		kubeInformers:         fakeKubeInformerForNamespace,
 	}
 
-	syncCtx := factory.NewSyncContext("test", events.NewRecorder(controller.kubeClient.CoreV1().Events(operatorclient.TargetNamespace), "test-periodic-backup-controller", &corev1.ObjectReference{}))
+	syncCtx := factory.NewSyncContext("test", events.NewRecorder(
+		controller.kubeClient.CoreV1().Events(operatorclient.TargetNamespace),
+		"test-periodic-backup-controller",
+		&corev1.ObjectReference{},
+		testing2.NewFakePassiveClock(time.Now()),
+	))
 	stopChan := make(chan struct{})
 	t.Cleanup(func() {
 		close(stopChan)
@@ -216,7 +229,96 @@ func TestSyncLoopWithDefaultBackupCRWithoutRetentionSpec(t *testing.T) {
 	require.Equal(t, 1, len(act.Spec.Template.Spec.Containers))
 	require.Equal(t, etcdBackupServerContainerName, act.Spec.Template.Spec.Containers[0].Name)
 	require.Equal(t, []string{"cluster-etcd-operator", "backup-server"}, act.Spec.Template.Spec.Containers[0].Command)
-	require.Equal(t, fmt.Sprintf("%d", 5), extractEtcdBackupServerArgVal(t, "maxNumberOfBackups", act.Spec.Template.Spec.Containers[0].Args))
+	require.Equal(t, fmt.Sprintf("%d", 3), extractEtcdBackupServerArgVal(t, "maxNumberOfBackups", act.Spec.Template.Spec.Containers[0].Args))
+	endpoints, err := getEtcdEndpoints(context.TODO(), controller.kubeClient)
+	require.NoError(t, err)
+	slices.Sort(endpoints)
+	require.Equal(t, constructBackupServerArgs(defaultBackup, strings.Join(endpoints, ",")), act.Spec.Template.Spec.Containers[0].Args)
+
+	// removing defaultCR
+	backups.Items = backups.Items[:len(backups.Items)-1]
+	operatorFake = fake.NewClientset([]runtime.Object{&backups}...)
+	controller.backupsClient = operatorFake.ConfigV1alpha1()
+
+	err = controller.sync(context.TODO(), syncCtx)
+	require.NoError(t, err)
+	_, err = controller.kubeClient.AppsV1().DaemonSets(operatorclient.TargetNamespace).Get(context.TODO(), backupServerDaemonSet, v1.GetOptions{})
+	require.Error(t, err)
+	require.Equal(t, fmt.Errorf("daemonsets.apps \"backup-server-daemon-set\" not found").Error(), err.Error())
+}
+
+func TestSyncLoopWithDefaultBackupCRWithoutScheduleSpec(t *testing.T) {
+	var backups backupv1alpha1.BackupList
+
+	backup := backupv1alpha1.Backup{ObjectMeta: v1.ObjectMeta{Name: "test-backup"},
+		Spec: backupv1alpha1.BackupSpec{
+			EtcdBackupSpec: backupv1alpha1.EtcdBackupSpec{
+				Schedule: "20 4 * * *",
+				TimeZone: "UTC",
+				RetentionPolicy: backupv1alpha1.RetentionPolicy{
+					RetentionType:   backupv1alpha1.RetentionTypeNumber,
+					RetentionNumber: &backupv1alpha1.RetentionNumberConfig{MaxNumberOfBackups: 5}},
+				PVCName: "backup-happy-path-pvc"}}}
+
+	// no default CR
+	backups.Items = append(backups.Items, backup)
+	operatorFake := fake.NewClientset([]runtime.Object{&backups}...)
+	client := k8sfakeclient.NewClientset([]runtime.Object{defaultEtcdEndpointCM()}...)
+	fakeKubeInformerForNamespace := v1helpers.NewKubeInformersForNamespaces(client, operatorclient.TargetNamespace)
+	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+		&operatorv1.StaticPodOperatorSpec{OperatorSpec: operatorv1.OperatorSpec{ManagementState: operatorv1.Managed}},
+		&operatorv1.StaticPodOperatorStatus{}, nil, nil)
+
+	controller := PeriodicBackupController{
+		operatorClient:        fakeOperatorClient,
+		podLister:             fakeKubeInformerForNamespace.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
+		backupsClient:         operatorFake.ConfigV1alpha1(),
+		kubeClient:            client,
+		operatorImagePullSpec: "pullspec-image",
+		backupVarGetter:       backuphelpers.NewDisabledBackupConfig(),
+		featureGateAccessor:   backupFeatureGateAccessor,
+		kubeInformers:         fakeKubeInformerForNamespace,
+	}
+
+	syncCtx := factory.NewSyncContext("test", events.NewRecorder(
+		controller.kubeClient.CoreV1().Events(operatorclient.TargetNamespace),
+		"test-periodic-backup-controller",
+		&corev1.ObjectReference{},
+		testing2.NewFakePassiveClock(time.Now()),
+	))
+	stopChan := make(chan struct{})
+	t.Cleanup(func() {
+		close(stopChan)
+	})
+	fakeKubeInformerForNamespace.Start(stopChan)
+
+	expDisabledBackupVar := "    args:\n    - --enabled=false"
+	err := controller.sync(context.TODO(), syncCtx)
+	require.NoError(t, err)
+	require.Equal(t, expDisabledBackupVar, controller.backupVarGetter.ArgString())
+
+	// create default CR without Retention specified
+	// OCPBUGS-43687
+	defaultBackup := backupv1alpha1.Backup{ObjectMeta: v1.ObjectMeta{Name: defaultBackupCRName},
+		Spec: backupv1alpha1.BackupSpec{
+			EtcdBackupSpec: backupv1alpha1.EtcdBackupSpec{
+				TimeZone: "GMT",
+				RetentionPolicy: backupv1alpha1.RetentionPolicy{
+					RetentionType:   backupv1alpha1.RetentionTypeNumber,
+					RetentionNumber: &backupv1alpha1.RetentionNumberConfig{MaxNumberOfBackups: 3}}}}}
+
+	backups.Items = append(backups.Items, defaultBackup)
+	operatorFake = fake.NewClientset([]runtime.Object{&backups}...)
+	controller.backupsClient = operatorFake.ConfigV1alpha1()
+
+	err = controller.sync(context.TODO(), syncCtx)
+	require.NoError(t, err)
+	act, err := controller.kubeClient.AppsV1().DaemonSets(operatorclient.TargetNamespace).Get(context.TODO(), backupServerDaemonSet, v1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, len(act.Spec.Template.Spec.Containers))
+	require.Equal(t, etcdBackupServerContainerName, act.Spec.Template.Spec.Containers[0].Name)
+	require.Equal(t, []string{"cluster-etcd-operator", "backup-server"}, act.Spec.Template.Spec.Containers[0].Command)
+	require.Equal(t, "0 0 * * *", extractEtcdBackupServerArgVal(t, "schedule", act.Spec.Template.Spec.Containers[0].Args))
 	endpoints, err := getEtcdEndpoints(context.TODO(), controller.kubeClient)
 	require.NoError(t, err)
 	slices.Sort(endpoints)
@@ -267,7 +369,12 @@ func TestSyncLoopWithDefaultBackupCREditSpec(t *testing.T) {
 		kubeInformers:         fakeKubeInformerForNamespace,
 	}
 
-	syncCtx := factory.NewSyncContext("test", events.NewRecorder(controller.kubeClient.CoreV1().Events(operatorclient.TargetNamespace), "test-periodic-backup-controller", &corev1.ObjectReference{}))
+	syncCtx := factory.NewSyncContext("test", events.NewRecorder(
+		controller.kubeClient.CoreV1().Events(operatorclient.TargetNamespace),
+		"test-periodic-backup-controller",
+		&corev1.ObjectReference{},
+		testing2.NewFakePassiveClock(time.Now()),
+	))
 	stopChan := make(chan struct{})
 	t.Cleanup(func() {
 		close(stopChan)
@@ -377,7 +484,12 @@ func TestSyncLoopFailsDegradesOperatorWithDefaultBackupCR(t *testing.T) {
 		kubeInformers:         fakeKubeInformerForNamespace,
 	}
 
-	syncCtx := factory.NewSyncContext("test", events.NewRecorder(controller.kubeClient.CoreV1().Events(operatorclient.TargetNamespace), "test-periodic-backup-controller", &corev1.ObjectReference{}))
+	syncCtx := factory.NewSyncContext("test", events.NewRecorder(
+		controller.kubeClient.CoreV1().Events(operatorclient.TargetNamespace),
+		"test-periodic-backup-controller",
+		&corev1.ObjectReference{},
+		testing2.NewFakePassiveClock(time.Now()),
+	))
 	stopChan := make(chan struct{})
 	t.Cleanup(func() {
 		close(stopChan)
