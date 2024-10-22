@@ -10,6 +10,8 @@ import (
 	prune "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 )
 
+const defaultNumberBackups = 5
+
 type Enqueueable interface {
 	Enqueue()
 }
@@ -73,6 +75,13 @@ func (b *BackupConfig) ArgList() []string {
 		args = append(args, fmt.Sprintf("--%s=%s", "schedule", b.spec.Schedule))
 	}
 
+	// fix OCPBUGS-43676
+	if b.spec.RetentionPolicy.RetentionType == "" {
+		args = append(args, fmt.Sprintf("--%s=%s", "type", backupv1alpha1.RetentionTypeNumber))
+		args = append(args, fmt.Sprintf("--%s=%d", "maxNumberOfBackups", defaultNumberBackups))
+		return args
+	}
+
 	if b.spec.RetentionPolicy.RetentionType == prune.RetentionTypeNumber {
 		args = append(args, fmt.Sprintf("--%s=%s", "type", b.spec.RetentionPolicy.RetentionType))
 		args = append(args, fmt.Sprintf("--%s=%d", "maxNumberOfBackups", b.spec.RetentionPolicy.RetentionNumber.MaxNumberOfBackups))
@@ -101,6 +110,13 @@ func (b *BackupConfig) ArgString() string {
 
 	if b.spec.Schedule != "" {
 		args = append(args, fmt.Sprintf("- --%s=%s", "schedule", b.spec.Schedule))
+	}
+
+	// fix OCPBUGS-43676
+	if b.spec.RetentionPolicy.RetentionType == "" {
+		args = append(args, fmt.Sprintf("--%s=%s", "type", backupv1alpha1.RetentionTypeNumber))
+		args = append(args, fmt.Sprintf("--%s=%d", "maxNumberOfBackups", defaultNumberBackups))
+		return strings.Join(args, "\n    ")
 	}
 
 	if b.spec.RetentionPolicy.RetentionType == prune.RetentionTypeNumber {

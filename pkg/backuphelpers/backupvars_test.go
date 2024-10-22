@@ -23,17 +23,17 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 		{
 			"backup spec with timezone and schedule",
 			createEtcdBackupSpec(timezone, schedule),
-			"    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *",
+			"    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *\n    --type=RetentionNumber\n    --maxNumberOfBackups=5",
 		},
 		{
 			"backup spec with timezone and empty schedule",
 			createEtcdBackupSpec(timezone, ""),
-			"    args:\n    - --enabled=true\n    - --timezone=GMT",
+			"    args:\n    - --enabled=true\n    - --timezone=GMT\n    --type=RetentionNumber\n    --maxNumberOfBackups=5",
 		},
 		{
 			"backup spec with empty timezone and schedule",
 			createEtcdBackupSpec("", schedule),
-			"    args:\n    - --enabled=true\n    - --schedule=0 */2 * * *",
+			"    args:\n    - --enabled=true\n    - --schedule=0 */2 * * *\n    --type=RetentionNumber\n    --maxNumberOfBackups=5",
 		},
 		{
 			"backup spec with timezone and schedule and retention number",
@@ -78,6 +78,8 @@ func TestBackupConfig_ToArgList(t *testing.T) {
 				"--enabled=true",
 				"--timezone=GMT",
 				"--schedule=0 */2 * * *",
+				"--type=RetentionNumber",
+				"--maxNumberOfBackups=5",
 			},
 		},
 		{
@@ -86,6 +88,8 @@ func TestBackupConfig_ToArgList(t *testing.T) {
 			[]string{
 				"--enabled=true",
 				"--timezone=GMT",
+				"--type=RetentionNumber",
+				"--maxNumberOfBackups=5",
 			},
 		},
 		{
@@ -94,6 +98,8 @@ func TestBackupConfig_ToArgList(t *testing.T) {
 			[]string{
 				"--enabled=true",
 				"--schedule=0 */2 * * *",
+				"--type=RetentionNumber",
+				"--maxNumberOfBackups=5",
 			},
 		},
 		{
