@@ -107,13 +107,21 @@ func CheckSafeToScaleCluster(
 	infraLister configv1listers.InfrastructureLister,
 	etcdClient etcdcli.AllMemberLister) error {
 
-	bootstrapComplete, err := IsBootstrapComplete(configmapLister, staticPodClient, etcdClient)
+	bootstrapComplete, err := IsBootstrapComplete(configmapLister, etcdClient)
 	if err != nil {
 		return fmt.Errorf("CheckSafeToScaleCluster failed to determine bootstrap status: %w", err)
 	}
-
 	// while bootstrapping, scaling should be considered safe always
 	if !bootstrapComplete {
+		return nil
+	}
+
+	revisionStable, err := IsRevisionStable(staticPodClient)
+	if err != nil {
+		return fmt.Errorf("CheckSafeToScaleCluster failed to determine stability of revisions: %w", err)
+	}
+	// when revision is stabilising, scaling should be considered safe always
+	if !revisionStable {
 		return nil
 	}
 
@@ -151,26 +159,11 @@ func CheckSafeToScaleCluster(
 }
 
 // IsBootstrapComplete returns true if bootstrap has completed.
-func IsBootstrapComplete(configmapLister corev1listers.ConfigMapLister, staticPodClient v1helpers.StaticPodOperatorClient, etcdClient etcdcli.AllMemberLister) (bool, error) {
+func IsBootstrapComplete(configmapLister corev1listers.ConfigMapLister, etcdClient etcdcli.AllMemberLister) (bool, error) {
 	// do a cheap check to see if the installer has marked
 	// bootstrapping as done by creating the configmap first.
 	if isBootstrapComplete, err := bootstrap.IsBootstrapComplete(configmapLister); !isBootstrapComplete || err != nil {
 		return isBootstrapComplete, err
-	}
-
-	// now run check to stability of revisions
-	_, status, _, err := staticPodClient.GetStaticPodOperatorState()
-	if err != nil {
-		return false, fmt.Errorf("failed to get static pod operator state: %w", err)
-	}
-	if status.LatestAvailableRevision == 0 {
-		return false, nil
-	}
-	for _, curr := range status.NodeStatuses {
-		if curr.CurrentRevision != status.LatestAvailableRevision {
-			klog.V(4).Infof("bootstrap considered incomplete because revision %d is still in progress", status.LatestAvailableRevision)
-			return false, nil
-		}
 	}
 
 	// check if etcd-bootstrap member is still present within the etcd cluster membership
@@ -181,6 +174,25 @@ func IsBootstrapComplete(configmapLister corev1listers.ConfigMapLister, staticPo
 	for _, m := range membersList {
 		if m.Name == "etcd-bootstrap" {
 			klog.V(4).Infof("(etcd-bootstrap) member is still present in the etcd cluster membership")
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
+// IsRevisionStable checks the stability of revisions and returns true if the revision is stable
+func IsRevisionStable(staticPodClient v1helpers.StaticPodOperatorClient) (bool, error) {
+	_, status, _, err := staticPodClient.GetStaticPodOperatorState()
+	if err != nil {
+		return false, fmt.Errorf("failed to get static pod operator state: %w", err)
+	}
+	if status.LatestAvailableRevision == 0 {
+		return false, nil
+	}
+	for _, curr := range status.NodeStatuses {
+		if curr.CurrentRevision != status.LatestAvailableRevision {
+			klog.V(4).Infof("revision stability check failed because revision %d is still in progress", status.LatestAvailableRevision)
 			return false, nil
 		}
 	}

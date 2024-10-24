@@ -92,13 +92,18 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 	// forward or remove it if possible so clients can forget about it.
 	if existing, err := c.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get("etcd-endpoints"); err == nil && existing != nil {
 		if existingIP, hasExistingIP := existing.Annotations[etcdcli.BootstrapIPAnnotationKey]; hasExistingIP {
-			bootstrapComplete, err := ceohelpers.IsBootstrapComplete(c.configmapLister, c.operatorClient, c.etcdClient)
+			bootstrapComplete, err := ceohelpers.IsBootstrapComplete(c.configmapLister, c.etcdClient)
 			if err != nil {
 				return fmt.Errorf("couldn't determine bootstrap status: %w", err)
 			}
 
-			if bootstrapComplete {
-				// rename the annotation once we're done with bootstrapping
+			revisionStable, err := ceohelpers.IsRevisionStable(c.operatorClient)
+			if err != nil {
+				return fmt.Errorf("couldn't determine stability of revisions: %w", err)
+			}
+
+			if bootstrapComplete && revisionStable {
+				// rename the annotation once we're done with bootstrapping and the revision is stable
 				required.Annotations[etcdcli.BootstrapIPAnnotationKey+"-"] = existingIP
 			} else {
 				required.Annotations[etcdcli.BootstrapIPAnnotationKey] = existingIP
