@@ -26,6 +26,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/certrotation"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
+	"github.com/openshift/library-go/pkg/operator/resource/resourcehelper"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -191,7 +192,7 @@ func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.Syn
 	// we allow the controller to run freely during bootstrap to avoid having issues with constantly rolling out revisions and other
 	// contention issues on the operator status update.
 	if !bootstrapComplete {
-		if err := c.syncAllMasterCertificates(ctx, syncCtx.Recorder(), true, 0, 0); err != nil {
+		if err := c.syncAllMasterCertificates(ctx, syncCtx.Recorder(), true, nil, 0, 0); err != nil {
 			return fmt.Errorf("EtcdCertSignerController failed to sync all master certificates during bootstrap: %w", err)
 		}
 		return nil
@@ -210,20 +211,20 @@ func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.Syn
 
 	if missingAllBundlesConfigmap {
 		klog.Warningf("could not find %s configmap, forcing EtcdCertSignerController sync to regenerate", tlshelpers.EtcdAllBundlesConfigMapName)
-		if err := c.syncAllMasterCertificates(ctx, syncCtx.Recorder(), true, 0, 0); err != nil {
+		if err := c.syncAllMasterCertificates(ctx, syncCtx.Recorder(), true, nil, 0, 0); err != nil {
 			return fmt.Errorf("EtcdCertSignerController failed to sync all master certificates to regenerate missing %s configmap: %w", tlshelpers.EtcdAllBundlesConfigMapName, err)
 		}
 		return nil
 	}
 
-	hasNodeDiff, err := c.hasNodeCertDiff()
+	hasNodeDiff, allCertsSecret, err := c.hasNodeCertDiff()
 	if err != nil {
 		return err
 	}
 
 	if hasNodeDiff {
 		klog.Infof("EtcdCertSignerController force leaf sync on node difference")
-		if err := c.forcedSyncLeafCertificates(ctx, syncCtx.Recorder()); err != nil {
+		if err := c.forcedSyncLeafCertificates(ctx, allCertsSecret, syncCtx.Recorder()); err != nil {
 			return fmt.Errorf("EtcdCertSignerController failed to force sync leaf certificates: %w", err)
 		}
 
@@ -247,7 +248,7 @@ func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.Syn
 		return err
 	}
 
-	if err := c.syncAllMasterCertificates(ctx, syncCtx.Recorder(), c.forceSkipRollout, rotationRevision, currentRevision); err != nil {
+	if err := c.syncAllMasterCertificates(ctx, syncCtx.Recorder(), c.forceSkipRollout, allCertsSecret, rotationRevision, currentRevision); err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdCertSignerControllerDegraded",
 			Status:  operatorv1.ConditionTrue,
@@ -270,7 +271,7 @@ func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.Syn
 }
 
 func (c *EtcdCertSignerController) syncAllMasterCertificates(
-	ctx context.Context, recorder events.Recorder, forceSkipRollout bool, lastRotationRevision int32, currentRevision int32) error {
+	ctx context.Context, recorder events.Recorder, forceSkipRollout bool, allCertsSecret *corev1.Secret, lastRotationRevision int32, currentRevision int32) error {
 	signerCaPair, _, err := c.certConfig.signerCert.EnsureSigningCertKeyPair(ctx)
 	if err != nil {
 		return fmt.Errorf("error on ensuring etcd-signer cert: %w", err)
@@ -300,12 +301,12 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(
 		}
 	}
 
-	return c.syncLeafCertificates(ctx, recorder, forceSkipRollout, signerCaPair, signerBundle, metricsSignerCaPair, metricsSignerBundle)
+	return c.syncLeafCertificates(ctx, recorder, allCertsSecret, signerCaPair, signerBundle, metricsSignerCaPair, metricsSignerBundle)
 }
 
 // forcedSyncLeafCertificates will ensure we only read signer certificates and bundles, never re-create them.
 // This ensures that on node scale-ups we never issue a new signer due to expiration and potentially brick a cluster.
-func (c *EtcdCertSignerController) forcedSyncLeafCertificates(ctx context.Context, recorder events.Recorder) error {
+func (c *EtcdCertSignerController) forcedSyncLeafCertificates(ctx context.Context, allCertsSecret *corev1.Secret, recorder events.Recorder) error {
 	signerCert, err := tlshelpers.ReadSignerCaCert(ctx, c.secretClient, tlshelpers.EtcdSignerCertSecretName)
 	if err != nil {
 		return fmt.Errorf("error while reading signer ca during forced leaf sync: %w", err)
@@ -326,13 +327,13 @@ func (c *EtcdCertSignerController) forcedSyncLeafCertificates(ctx context.Contex
 		return fmt.Errorf("error while reading metrics signer ca bundle during forced leaf sync: %w", err)
 	}
 
-	return c.syncLeafCertificates(ctx, recorder, true, signerCert, signerBundle, metricsCert, metricsBundle)
+	return c.syncLeafCertificates(ctx, recorder, allCertsSecret, signerCert, signerBundle, metricsCert, metricsBundle)
 }
 
 func (c *EtcdCertSignerController) syncLeafCertificates(
 	ctx context.Context,
 	recorder events.Recorder,
-	forceSkipRollout bool,
+	allCertsSecret *corev1.Secret,
 	signerCaPair *crypto.CA,
 	signerBundle []*x509.Certificate,
 	metricsSignerCaPair *crypto.CA,
@@ -378,19 +379,40 @@ func (c *EtcdCertSignerController) syncLeafCertificates(
 	// (e.g. node addition or cert rotation) triggers at most one static pod
 	// rollout. If multiple secrets were written, the static pod controller
 	// might initiate rollout before all secrets had been updated.
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: operatorclient.TargetNamespace,
-			Name:      tlshelpers.EtcdAllCertsSecretName,
-			Annotations: map[string]string{
-				apiannotations.OpenShiftComponent: "Etcd",
+
+	creationRequired := false
+	if allCertsSecret == nil {
+		allCertsSecret = &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: operatorclient.TargetNamespace,
+				Name:      tlshelpers.EtcdAllCertsSecretName,
 			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: allCerts,
+			Type: corev1.SecretTypeOpaque,
+		}
+		creationRequired = true
+	}
+	allCertsSecret.Annotations = map[string]string{
+		apiannotations.OpenShiftComponent: "Etcd",
+	}
+	allCertsSecret.Data = allCerts
+
+	if creationRequired {
+		actualAllCertsSecret, err := c.secretClient.Secrets(operatorclient.TargetNamespace).Create(ctx, allCertsSecret, metav1.CreateOptions{})
+		resourcehelper.ReportCreateEvent(recorder, actualAllCertsSecret, err)
+		if !apierrors.IsAlreadyExists(err) {
+			return err
+		}
 	}
 
-	_, _, err = resourceapply.ApplySecret(ctx, c.secretClient, recorder, secret)
+	cachedSecret, err := c.secretInformer.Lister().Secrets(operatorclient.TargetNamespace).Get(tlshelpers.EtcdAllCertsSecretName)
+	if err != nil && reflect.DeepEqual(cachedSecret, allCertsSecret) {
+		return nil
+	}
+
+	actualAllCertsSecret, err := c.secretClient.Secrets(operatorclient.TargetNamespace).Update(ctx, allCertsSecret, metav1.UpdateOptions{})
+	if err != nil || !reflect.DeepEqual(actualAllCertsSecret, allCertsSecret) {
+		resourcehelper.ReportUpdateEvent(recorder, actualAllCertsSecret, err)
+	}
 	return err
 }
 
@@ -521,29 +543,29 @@ func (c *EtcdCertSignerController) reportExpirationMetric(pair *crypto.CA, name 
 	c.signerExpirationGauge.WithLabelValues(name).Set(daysUntil)
 }
 
-func (c *EtcdCertSignerController) hasNodeCertDiff() (bool, error) {
+func (c *EtcdCertSignerController) hasNodeCertDiff() (bool, *corev1.Secret, error) {
 	nodes, err := c.masterNodeLister.List(c.masterNodeSelector)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 
 	allSecrets, err := c.secretLister.Secrets(operatorclient.TargetNamespace).Get(tlshelpers.EtcdAllCertsSecretName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			klog.Infof("could not find secret [%s]", tlshelpers.EtcdAllCertsSecretName)
-			return true, nil
+			return true, nil, nil
 		}
-		return false, err
+		return false, nil, err
 	}
 
 	for _, node := range nodes {
 		secretDataKey := fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode(node.Name))
 		if _, ok := allSecrets.Data[secretDataKey]; !ok {
 			klog.Infof("could not find serving cert for node [%s] and key [%s] in bundled secret", node.Name, secretDataKey)
-			return true, nil
+			return true, allSecrets, nil
 		}
 	}
-	return false, nil
+	return false, allSecrets, nil
 }
 
 func (c *EtcdCertSignerController) getCertRotationRevision(ctx context.Context) (int32, error) {
