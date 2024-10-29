@@ -28,6 +28,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	batchv1client "k8s.io/client-go/kubernetes/typed/batch/v1"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 )
 
 const (
@@ -139,6 +140,57 @@ func reconcileCronJob(ctx context.Context,
 	cronJob, err := newCronJob()
 	if err != nil {
 		return err
+	}
+
+	// add job parallelism
+	cronJob.Spec.JobTemplate.Spec.Parallelism = ptr.To(int32(3))
+	cronJob.Spec.JobTemplate.Spec.Completions = ptr.To(int32(3))
+
+	cronJob.Spec.JobTemplate.Spec.Template.Spec.Affinity = &corev1.Affinity{
+		NodeAffinity: &corev1.NodeAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+				NodeSelectorTerms: []corev1.NodeSelectorTerm{
+					{
+						MatchExpressions: []corev1.NodeSelectorRequirement{
+							{
+								Key:      "node-role.kubernetes.io/master",
+								Operator: corev1.NodeSelectorOpExists,
+							},
+						},
+					},
+				},
+			},
+		},
+
+		PodAntiAffinity: &corev1.PodAntiAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+				{
+					LabelSelector: &v1.LabelSelector{
+						MatchExpressions: []v1.LabelSelectorRequirement{
+							{
+								Key:      "app",
+								Operator: v1.LabelSelectorOpIn,
+								Values:   []string{"cluster-backup-cronjob"},
+							},
+						},
+					},
+					TopologyKey: "kubernetes.io/hostname",
+				},
+			},
+		},
+	}
+
+	// add hostPath per job
+	cronJob.Spec.JobTemplate.Spec.Template.Spec.Volumes = []corev1.Volume{
+		{
+			Name: "etc-kubernetes-cluster-backup",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: etcdDataDirVolPath,
+					Type: ptr.To(corev1.HostPathUnset),
+				},
+			},
+		},
 	}
 
 	cronJob.Name = backup.Name
