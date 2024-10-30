@@ -44,6 +44,7 @@ type PodSubstitutionTemplate struct {
 	LogLevel         string
 	EnvVars          []NameValue
 	BackupArgs       []string
+	CipherSuites     string
 }
 
 type TargetConfigController struct {
@@ -216,6 +217,7 @@ func (c *TargetConfigController) getPodSubstitution(operatorSpec *operatorv1.Sta
 		LocalhostAddress: "127.0.0.1", // TODO this needs updating to detect ipv6-ness
 		LogLevel:         loglevelToZap(operatorSpec.LogLevel),
 		EnvVars:          nameValues,
+		CipherSuites:     envVarMap["ETCD_CIPHER_SUITES"],
 	}
 }
 

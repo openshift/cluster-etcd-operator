@@ -1,6 +1,7 @@
 package etcdenvvar
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net"
 	"runtime"
@@ -17,7 +18,9 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/hwspeedhelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
+	"github.com/openshift/library-go/pkg/crypto"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
+	"go.etcd.io/etcd/client/pkg/v3/tlsutil"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
@@ -75,6 +78,7 @@ var envVarFns = []envVarFunc{
 	getEtcdDBSize,
 	getUnsupportedArch,
 	getCipherSuites,
+	getTLSMinVersion,
 	getMaxLearners,
 }
 
@@ -283,6 +287,39 @@ func getUnsupportedArch(_ envVarContext) (map[string]string, error) {
 	}, nil
 }
 
+func getObservedTLSMinVersion(envVarContext envVarContext) (tlsutil.TLSVersion, error) {
+	var observedConfig map[string]interface{}
+	if err := yaml.Unmarshal(envVarContext.spec.ObservedConfig.Raw, &observedConfig); err != nil {
+		return "", fmt.Errorf("failed to unmarshal the observedConfig: %w", err)
+	}
+	observedMinTLSVersion, _, err := unstructured.NestedString(observedConfig, "servingInfo", "minTLSVersion")
+	if err != nil {
+		return "", fmt.Errorf("couldn't get minTLSVersion from observedConfig: %w", err)
+	}
+
+	// map tls version to string recognized by etcd
+	v, err := crypto.TLSVersion(observedMinTLSVersion)
+	if err != nil {
+		return "", fmt.Errorf("couldn't get minTLSVersion from observedConfig: %w", err)
+	}
+	switch v {
+	case tls.VersionTLS13:
+		return tlsutil.TLSVersion13, nil
+	default:
+		return tlsutil.TLSVersion12, nil
+	}
+}
+
+func getTLSMinVersion(envVarContext envVarContext) (map[string]string, error) {
+	observedMinTLSVersion, err := getObservedTLSMinVersion(envVarContext)
+	if err != nil {
+		return nil, fmt.Errorf("unable to compute ETCD_TLS_MIN_VERSION: %v", err)
+	}
+	return map[string]string{
+		"ETCD_TLS_MIN_VERSION": string(observedMinTLSVersion),
+	}, nil
+}
+
 func getCipherSuites(envVarContext envVarContext) (map[string]string, error) {
 	var observedConfig map[string]interface{}
 	if err := yaml.Unmarshal(envVarContext.spec.ObservedConfig.Raw, &observedConfig); err != nil {
@@ -299,8 +336,20 @@ func getCipherSuites(envVarContext envVarContext) (map[string]string, error) {
 		return nil, fmt.Errorf("no supported cipherSuites not found in observedConfig")
 	}
 
+	observedMinTLSVersion, err := getObservedTLSMinVersion(envVarContext)
+	if err != nil {
+		return nil, fmt.Errorf("unable to compute ETCD_CIPHER_SUITES: %v", err)
+	}
+
+	envName := "ETCD_CIPHER_SUITES"
+	if observedMinTLSVersion == tlsutil.TLSVersion13 {
+		// When --tls-min-version is set to 'TLS1.3', etcd does not allow --cipher-suites to also be specified.
+		// We still outout an env var for informational purposes.
+		envName = "CIPHER_SUITES"
+	}
+
 	return map[string]string{
-		"ETCD_CIPHER_SUITES": strings.Join(actualCipherSuites, ","),
+		envName: strings.Join(actualCipherSuites, ","),
 	}, nil
 }
 

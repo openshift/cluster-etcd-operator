@@ -55,6 +55,7 @@ var (
 		"ETCD_INITIAL_CLUSTER_STATE":                       "existing",
 		"ETCD_QUOTA_BACKEND_BYTES":                         "8589934592",
 		"ETCD_SOCKET_REUSE_ADDRESS":                        "true",
+		"ETCD_TLS_MIN_VERSION":                             "TLS1.2",
 		"NODE_master_0_ETCD_NAME":                          "master-0",
 		"NODE_master_0_ETCD_URL_HOST":                      "192.168.2.0",
 		"NODE_master_0_IP":                                 "192.168.2.0",
