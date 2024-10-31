@@ -66,6 +66,23 @@ func (c NodeController) sync(ctx context.Context, syncCtx factory.SyncContext) e
 		return err
 	}
 
+	arbiterselector, err := labels.NewRequirement("node-role.kubernetes.io/arbiter", selection.Equals, []string{""})
+	if err != nil {
+		panic(err)
+	}
+	arbiternodes, err := c.nodeLister.List(labels.NewSelector().Add(*arbiterselector))
+	if err != nil {
+		return err
+	}
+
+	if len(arbiternodes) > 0 {
+		for _, a := range arbiternodes {
+			syncCtx.Recorder().Warningf("ArbiterNodeObserved", "Observed arbiter node, adding to master node list %s", a.Name)
+		}
+	}
+
+	nodes = append(nodes, arbiternodes...)
+
 	jsonPatch := jsonpatch.New()
 	var removedNodeStatusesCounter int
 	newTargetNodeStates := []*applyoperatorv1.NodeStatusApplyConfiguration{}
