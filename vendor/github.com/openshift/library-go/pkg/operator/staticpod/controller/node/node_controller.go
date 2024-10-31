@@ -12,7 +12,8 @@ import (
 	corelisterv1 "k8s.io/client-go/listers/core/v1"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
-
+	applyoperatorv1 "github.com/openshift/client-go/operator/applyconfigurations/operator/v1"
+	"github.com/openshift/library-go/pkg/apiserver/jsonpatch"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/condition"
 	"github.com/openshift/library-go/pkg/operator/events"
@@ -21,19 +22,22 @@ import (
 
 // NodeController watches for new master nodes and adds them to the node status list in the operator config status.
 type NodeController struct {
-	operatorClient v1helpers.StaticPodOperatorClient
-	nodeLister     corelisterv1.NodeLister
+	controllerInstanceName string
+	operatorClient         v1helpers.StaticPodOperatorClient
+	nodeLister             corelisterv1.NodeLister
 }
 
 // NewNodeController creates a new node controller.
 func NewNodeController(
+	instanceName string,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeInformersClusterScoped informers.SharedInformerFactory,
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &NodeController{
-		operatorClient: operatorClient,
-		nodeLister:     kubeInformersClusterScoped.Core().V1().Nodes().Lister(),
+		controllerInstanceName: factory.ControllerInstanceName(instanceName, "Node"),
+		operatorClient:         operatorClient,
+		nodeLister:             kubeInformersClusterScoped.Core().V1().Nodes().Lister(),
 	}
 	return factory.New().
 		WithInformers(
@@ -42,7 +46,7 @@ func NewNodeController(
 		).
 		WithSync(c.sync).
 		ToController(
-			"NodeController", // don't change what is passed here unless you also remove the old FooDegraded condition
+			c.controllerInstanceName,
 			eventRecorder,
 		)
 }
@@ -62,7 +66,9 @@ func (c NodeController) sync(ctx context.Context, syncCtx factory.SyncContext) e
 		return err
 	}
 
-	newTargetNodeStates := []operatorv1.NodeStatus{}
+	jsonPatch := jsonpatch.New()
+	var removedNodeStatusesCounter int
+	newTargetNodeStates := []*applyoperatorv1.NodeStatusApplyConfiguration{}
 	// remove entries for missing nodes
 	for i, nodeState := range originalOperatorStatus.NodeStatuses {
 		found := false
@@ -72,9 +78,30 @@ func (c NodeController) sync(ctx context.Context, syncCtx factory.SyncContext) e
 			}
 		}
 		if found {
-			newTargetNodeStates = append(newTargetNodeStates, originalOperatorStatus.NodeStatuses[i])
+			newTargetNodeState := applyoperatorv1.NodeStatus().
+				WithNodeName(originalOperatorStatus.NodeStatuses[i].NodeName).
+				WithCurrentRevision(originalOperatorStatus.NodeStatuses[i].CurrentRevision).
+				WithTargetRevision(originalOperatorStatus.NodeStatuses[i].TargetRevision).
+				WithLastFailedRevision(originalOperatorStatus.NodeStatuses[i].LastFailedRevision).
+				WithLastFailedReason(originalOperatorStatus.NodeStatuses[i].LastFailedReason).
+				WithLastFailedCount(originalOperatorStatus.NodeStatuses[i].LastFailedCount).
+				WithLastFallbackCount(originalOperatorStatus.NodeStatuses[i].LastFallbackCount).
+				WithLastFailedRevisionErrors(originalOperatorStatus.NodeStatuses[i].LastFailedRevisionErrors...)
+			if originalOperatorStatus.NodeStatuses[i].LastFailedTime != nil {
+				newTargetNodeState = newTargetNodeState.WithLastFailedTime(*originalOperatorStatus.NodeStatuses[i].LastFailedTime)
+			}
+			newTargetNodeStates = append(newTargetNodeStates, newTargetNodeState)
 		} else {
 			syncCtx.Recorder().Warningf("MasterNodeRemoved", "Observed removal of master node %s", nodeState.NodeName)
+			// each delete operation is applied to the object,
+			// which modifies the array. Thus, we need to
+			// adjust the indices to find the correct node to remove.
+			removeAtIndex := i
+			if !jsonPatch.IsEmpty() {
+				removeAtIndex = removeAtIndex - removedNodeStatusesCounter
+			}
+			jsonPatch.WithRemove(fmt.Sprintf("/status/nodeStatuses/%d", removeAtIndex), jsonpatch.NewTestCondition(fmt.Sprintf("/status/nodeStatuses/%d/nodeName", removeAtIndex), nodeState.NodeName))
+			removedNodeStatusesCounter++
 		}
 	}
 
@@ -91,7 +118,24 @@ func (c NodeController) sync(ctx context.Context, syncCtx factory.SyncContext) e
 		}
 
 		syncCtx.Recorder().Eventf("MasterNodeObserved", "Observed new master node %s", node.Name)
-		newTargetNodeStates = append(newTargetNodeStates, operatorv1.NodeStatus{NodeName: node.Name})
+		newTargetNodeState := applyoperatorv1.NodeStatus().WithNodeName(node.Name)
+		newTargetNodeStates = append(newTargetNodeStates, newTargetNodeState)
+	}
+
+	degradedCondition := applyoperatorv1.OperatorCondition().WithType(condition.NodeControllerDegradedConditionType)
+	if !jsonPatch.IsEmpty() {
+		if err = c.operatorClient.PatchStaticOperatorStatus(ctx, jsonPatch); err != nil {
+			degradedCondition = degradedCondition.
+				WithStatus(operatorv1.ConditionTrue).
+				WithReason("MasterNodeNotRemoved").
+				WithMessage(fmt.Sprintf("failed applying JSONPatch, err: %v", err.Error()))
+
+			status := applyoperatorv1.StaticPodOperatorStatus().
+				WithConditions(degradedCondition).
+				WithNodeStatuses(newTargetNodeStates...)
+
+			return c.operatorClient.ApplyStaticPodOperatorStatus(ctx, c.controllerInstanceName, status)
+		}
 	}
 
 	// detect and report master nodes that are not ready
@@ -110,42 +154,29 @@ func (c NodeController) sync(ctx context.Context, syncCtx factory.SyncContext) e
 		}
 	}
 
-	newCondition := operatorv1.OperatorCondition{
-		Type: condition.NodeControllerDegradedConditionType,
-	}
 	if len(notReadyNodes) > 0 {
-		newCondition.Status = operatorv1.ConditionTrue
-		newCondition.Reason = "MasterNodesReady"
-		newCondition.Message = fmt.Sprintf("The master nodes not ready: %s", strings.Join(notReadyNodes, ", "))
+		degradedCondition = degradedCondition.
+			WithStatus(operatorv1.ConditionTrue).
+			WithReason("MasterNodesReady").
+			WithMessage(fmt.Sprintf("The master nodes not ready: %s", strings.Join(notReadyNodes, ", ")))
 	} else {
-		newCondition.Status = operatorv1.ConditionFalse
-		newCondition.Reason = "MasterNodesReady"
-		newCondition.Message = "All master nodes are ready"
+		degradedCondition = degradedCondition.
+			WithStatus(operatorv1.ConditionFalse).
+			WithReason("MasterNodesReady").
+			WithMessage("All master nodes are ready")
+	}
+	status := applyoperatorv1.StaticPodOperatorStatus().
+		WithConditions(degradedCondition).
+		WithNodeStatuses(newTargetNodeStates...)
+
+	if err = c.operatorClient.ApplyStaticPodOperatorStatus(ctx, c.controllerInstanceName, status); err != nil {
+		return err
 	}
 
-	oldStatus := &operatorv1.StaticPodOperatorStatus{}
-	_, updated, updateError := v1helpers.UpdateStaticPodStatus(ctx, c.operatorClient, func(status *operatorv1.StaticPodOperatorStatus) error {
-		//a hack for storing the old status (before we mutate it)
-		oldStatus = status
-		return nil
-	}, v1helpers.UpdateStaticPodConditionFn(newCondition), func(status *operatorv1.StaticPodOperatorStatus) error {
-		status.NodeStatuses = newTargetNodeStates
-		return nil
-	})
-
-	if updateError != nil {
-		return updateError
+	oldNodeDegradedCondition := v1helpers.FindOperatorCondition(originalOperatorStatus.Conditions, condition.NodeControllerDegradedConditionType)
+	if oldNodeDegradedCondition == nil || oldNodeDegradedCondition.Message != *degradedCondition.Message {
+		syncCtx.Recorder().Eventf("MasterNodesReadyChanged", *degradedCondition.Message)
 	}
-
-	if !updated {
-		return nil
-	}
-
-	oldNodeDegradedCondition := v1helpers.FindOperatorCondition(oldStatus.Conditions, condition.NodeControllerDegradedConditionType)
-	if oldNodeDegradedCondition == nil || oldNodeDegradedCondition.Message != newCondition.Message {
-		syncCtx.Recorder().Eventf("MasterNodesReadyChanged", newCondition.Message)
-	}
-
 	return nil
 }
 

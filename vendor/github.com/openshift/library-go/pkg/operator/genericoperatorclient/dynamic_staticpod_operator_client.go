@@ -2,29 +2,31 @@ package genericoperatorclient
 
 import (
 	"context"
-	applyoperatorv1 "github.com/openshift/client-go/operator/applyconfigurations/operator/v1"
 
 	"github.com/imdario/mergo"
 
-	"k8s.io/apimachinery/pkg/runtime"
-
 	operatorv1 "github.com/openshift/api/operator/v1"
+	applyoperatorv1 "github.com/openshift/client-go/operator/applyconfigurations/operator/v1"
+	"github.com/openshift/library-go/pkg/apiserver/jsonpatch"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/rest"
+	"k8s.io/utils/clock"
 )
 
-func NewStaticPodOperatorClient(config *rest.Config, gvr schema.GroupVersionResource, gvk schema.GroupVersionKind, extractApplySpec StaticPodOperatorSpecExtractorFunc, extractApplyStatus StaticPodOperatorStatusExtractorFunc) (v1helpers.StaticPodOperatorClient, dynamicinformer.DynamicSharedInformerFactory, error) {
+func NewStaticPodOperatorClient(clock clock.PassiveClock, config *rest.Config, gvr schema.GroupVersionResource, gvk schema.GroupVersionKind, extractApplySpec StaticPodOperatorSpecExtractorFunc, extractApplyStatus StaticPodOperatorStatusExtractorFunc) (v1helpers.StaticPodOperatorClient, dynamicinformer.DynamicSharedInformerFactory, error) {
 	dynamicClient, err := dynamic.NewForConfig(config)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return newClusterScopedOperatorClient(dynamicClient, gvr, gvk, defaultConfigName,
+	return newClusterScopedOperatorClient(clock, dynamicClient, gvr, gvk, defaultConfigName,
 		extractApplySpec, extractApplyStatus)
 }
 
@@ -116,6 +118,10 @@ func (c dynamicOperatorClient) ApplyStaticPodOperatorSpec(ctx context.Context, f
 
 func (c dynamicOperatorClient) ApplyStaticPodOperatorStatus(ctx context.Context, fieldManager string, desiredConfiguration *applyoperatorv1.StaticPodOperatorStatusApplyConfiguration) (err error) {
 	return c.applyOperatorStatus(ctx, fieldManager, desiredConfiguration)
+}
+
+func (c dynamicOperatorClient) PatchStaticOperatorStatus(ctx context.Context, jsonPatch *jsonpatch.PatchSet) (err error) {
+	return c.patchOperatorStatus(ctx, jsonPatch)
 }
 
 func getStaticPodOperatorSpecFromUnstructured(obj map[string]interface{}) (*operatorv1.StaticPodOperatorSpec, error) {
