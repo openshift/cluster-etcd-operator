@@ -1868,11 +1868,24 @@ spec:
         #!/bin/sh
         set -euo pipefail
         
+        export REV_JSON="/var/lib/etcd/revision.json"
+        
+        if [ -n "$(ls -A "${REV_JSON}")" ]; then
+           # this will bump by the amount of 20% of the last known live revision.           
+           BUMP_REV=$(jq -r "(.maxRaftIndex*0.2|floor)" "${REV_JSON}")
+           echo "bumping revisions by ${BUMP_REV}"
+        else
+           # 1bn would be an etcd running at 1000 writes/s for about eleven days.
+           echo "no revision.json found, assuming a 1bn revision bump"
+           BUMP_REV=1000000000
+        fi
+        
         set -x
         exec etcd \
           --logger=zap \
           --log-level=${VERBOSITY} \
           --force-new-cluster \
+          --force-new-cluster-bump-amount="${BUMP_REV}" \
           --name="${NODE_NODE_ENVVAR_NAME_ETCD_NAME}" \
           --initial-cluster="${NODE_NODE_ENVVAR_NAME_ETCD_NAME}=https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:2380" \
           --initial-advertise-peer-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2380 \
