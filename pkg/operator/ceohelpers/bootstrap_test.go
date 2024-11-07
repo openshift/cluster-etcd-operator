@@ -164,56 +164,36 @@ func Test_GetBootstrapScalingStrategy(t *testing.T) {
 func Test_IsBootstrapComplete(t *testing.T) {
 	tests := map[string]struct {
 		bootstrapConfigMap *corev1.ConfigMap
-		nodes              []operatorv1.NodeStatus
 		etcdMembers        []*etcdserverpb.Member
 		expectComplete     bool
 		expectError        error
 	}{
-		"bootstrap complete, nodes up to date": {
+		"bootstrap complete, configmap status is complete": {
 			bootstrapConfigMap: bootstrapComplete,
-			nodes:              twoNodesAtCurrentRevision,
 			etcdMembers:        u.DefaultEtcdMembers(),
 			expectComplete:     true,
 			expectError:        nil,
 		},
-		"bootstrap progressing, nodes up to date": {
+		"bootstrap progressing, configmap status is progressing": {
 			bootstrapConfigMap: bootstrapProgressing,
-			nodes:              twoNodesAtCurrentRevision,
 			etcdMembers:        u.DefaultEtcdMembers(),
 			expectComplete:     false,
 			expectError:        nil,
 		},
 		"bootstrap configmap missing": {
 			bootstrapConfigMap: nil,
-			nodes:              twoNodesAtCurrentRevision,
-			etcdMembers:        u.DefaultEtcdMembers(),
-			expectComplete:     false,
-			expectError:        nil,
-		},
-		"bootstrap complete, no recorded revisions": {
-			bootstrapConfigMap: bootstrapComplete,
-			nodes:              zeroNodesAtAnyRevision,
-			etcdMembers:        u.DefaultEtcdMembers(),
-			expectComplete:     true,
-			expectError:        nil,
-		},
-		"bootstrap complete, node progressing": {
-			bootstrapConfigMap: bootstrapComplete,
-			nodes:              twoNodesProgressingTowardsCurrentRevision,
 			etcdMembers:        u.DefaultEtcdMembers(),
 			expectComplete:     false,
 			expectError:        nil,
 		},
 		"bootstrap complete, etcd-bootstrap removed": {
 			bootstrapConfigMap: bootstrapComplete,
-			nodes:              twoNodesAtCurrentRevision,
 			etcdMembers:        u.DefaultEtcdMembers(),
 			expectComplete:     true,
 			expectError:        nil,
 		},
 		"bootstrap complete, etcd-bootstrap exists": {
 			bootstrapConfigMap: bootstrapComplete,
-			nodes:              twoNodesAtCurrentRevision,
 			etcdMembers:        append(u.DefaultEtcdMembers(), u.FakeEtcdBootstrapMember(0)),
 			expectComplete:     false,
 			expectError:        nil,
@@ -230,21 +210,54 @@ func Test_IsBootstrapComplete(t *testing.T) {
 			}
 			fakeConfigMapLister := corev1listers.NewConfigMapLister(indexer)
 
+			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(test.etcdMembers)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			actualComplete, actualErr := IsBootstrapComplete(fakeConfigMapLister, fakeEtcdClient)
+
+			assert.Equal(t, test.expectComplete, actualComplete)
+			assert.Equal(t, test.expectError, actualErr)
+		})
+	}
+}
+
+func Test_IsRevisionStable(t *testing.T) {
+	tests := map[string]struct {
+		nodes             []operatorv1.NodeStatus
+		expectedStability bool
+		expectedError     error
+	}{
+		"is revision stable, node progressing": {
+			nodes:             twoNodesProgressingTowardsCurrentRevision,
+			expectedStability: false,
+			expectedError:     nil,
+		},
+		"is revision stable, nodes up to date": {
+			nodes:             twoNodesAtCurrentRevision,
+			expectedStability: true,
+			expectedError:     nil,
+		},
+		"bootstrap complete, no recorded revisions": {
+			nodes:             zeroNodesAtAnyRevision,
+			expectedStability: true,
+			expectedError:     nil,
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
 			operatorStatus := &operatorv1.StaticPodOperatorStatus{
 				OperatorStatus: operatorv1.OperatorStatus{LatestAvailableRevision: 1},
 				NodeStatuses:   test.nodes,
 			}
 			fakeStaticPodClient := v1helpers.NewFakeStaticPodOperatorClient(nil, operatorStatus, nil, nil)
 
-			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(test.etcdMembers)
-			if err != nil {
-				t.Fatal(err)
-			}
+			actualStability, actualErr := IsRevisionStable(fakeStaticPodClient)
 
-			actualComplete, actualErr := IsBootstrapComplete(fakeConfigMapLister, fakeStaticPodClient, fakeEtcdClient)
+			assert.Equal(t, test.expectedStability, actualStability)
+			assert.Equal(t, test.expectedError, actualErr)
 
-			assert.Equal(t, test.expectComplete, actualComplete)
-			assert.Equal(t, test.expectError, actualErr)
 		})
 	}
 }
