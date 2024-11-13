@@ -138,6 +138,41 @@ ${COMPUTED_ENV_VARS}
         name: data-dir
       - mountPath: /var/lib/etcd-backup/
         name: backup-dir
+  - name: etcd-readyz
+    image: ${OPERATOR_IMAGE}
+    imagePullPolicy: IfNotPresent
+    terminationMessagePolicy: FallbackToLogsOnError
+    command:
+      - /bin/sh
+      - -c
+      - |
+        #!/bin/sh
+        set -euo pipefail
+        
+        exec nice -n -18 cluster-etcd-operator readyz \
+          --target=https://localhost:2379 \
+          --listen-port=9980 \
+          --serving-cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.crt \
+          --serving-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.key \
+          --client-cert-file=$(ETCDCTL_CERT) \
+          --client-key-file=$(ETCDCTL_KEY) \
+          --client-cacert-file=$(ETCDCTL_CACERT) \
+          --listen-cipher-suites=$(ETCD_CIPHER_SUITES)
+    securityContext:
+      privileged: true
+    ports:
+      - containerPort: 9980
+        name: readyz
+        protocol: TCP
+    resources:
+      requests:
+        memory: 50Mi
+        cpu: 10m
+    env:
+${COMPUTED_ENV_VARS}
+    volumeMounts:
+    - mountPath: /etc/kubernetes/static-pod-certs
+      name: cert-dir
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
