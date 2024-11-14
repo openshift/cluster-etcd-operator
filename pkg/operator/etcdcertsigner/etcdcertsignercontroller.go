@@ -152,12 +152,12 @@ func NewEtcdCertSignerController(
 	}
 	if featureGates.Enabled(features.FeatureShortCertRotation) {
 		certValidity = tlshelpers.CertValidity{
-			Validity:  3 * time.Hour,
-			RefreshAt: 2 * time.Hour,
+			Validity:  2 * time.Hour,
+			RefreshAt: 90 * time.Minute,
 		}
 		signerValidity = tlshelpers.CertValidity{
-			Validity:  5 * time.Hour,
-			RefreshAt: 4 * time.Hour,
+			Validity:  4 * time.Hour,
+			RefreshAt: 3 * time.Hour,
 		}
 	}
 
