@@ -511,12 +511,6 @@ func (o *InstallOptions) waitForOtherInstallerRevisionsToSettle(ctx context.Cont
 		return err
 	}
 
-	klog.Infof("Waiting additional period after revisions have settled for node %s", o.NodeName)
-	// once there are no other running revisions, wait Xs.
-	// In an extreme case, this can be grace period seconds+1.  Trying 30s to start. Etcd has been the worst off since
-	// it requires 2 out 3 to be functioning.
-	time.Sleep(30 * time.Second)
-
 	klog.Infof("Getting installer pods for node %s", o.NodeName)
 	installerPods, err := o.getInstallerPodsOnThisNode(ctx)
 	if err != nil {
