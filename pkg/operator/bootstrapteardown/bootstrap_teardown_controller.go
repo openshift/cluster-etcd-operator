@@ -9,7 +9,6 @@ import (
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/library-go/pkg/controller/factory"
-	"github.com/openshift/library-go/pkg/operator/bootstrap"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
@@ -137,10 +136,6 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, safeT
 		return fmt.Errorf("error while updating EnoughEtcdMembers: %w", updateErr)
 	}
 
-	// check to see if bootstrapping is complete
-	if isBootstrapComplete, err := bootstrap.IsBootstrapComplete(c.configmapLister); !isBootstrapComplete || err != nil {
-		return err
-	}
 	klog.Warningf("Removing bootstrap member [%x]", bootstrapID)
 
 	// this is ugly until bootkube is updated, but we want to be sure that bootkube has time to be waiting to watch the condition coming back.

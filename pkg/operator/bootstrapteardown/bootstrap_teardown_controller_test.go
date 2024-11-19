@@ -217,25 +217,6 @@ func TestRemoveBootstrap(t *testing.T) {
 				conditionWaitingForEtcdMembers,
 			},
 		},
-		"safe, has bootstrap, incomplete process": {
-			safeToRemove: true,
-			hasBootstrap: true,
-			bootstrapId:  0,
-			expectedConditions: []operatorv1.OperatorCondition{
-				conditionEnoughEtcdMembers,
-			},
-		},
-		"safe, has bootstrap, incomplete process progressing": {
-			safeToRemove: true,
-			hasBootstrap: true,
-			bootstrapId:  0,
-			expectedConditions: []operatorv1.OperatorCondition{
-				conditionEnoughEtcdMembers,
-			},
-			indexerObjs: []interface{}{
-				bootstrapProgressing,
-			},
-		},
 		"safe, has bootstrap, complete process, fails removal": {
 			safeToRemove: true,
 			hasBootstrap: true,
