@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/bindata"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	corev1 "k8s.io/api/core/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -21,7 +22,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
@@ -109,7 +109,7 @@ func (c *ScriptController) createScriptConfigMap(ctx context.Context, recorder e
 }
 
 func (c *ScriptController) manageScriptConfigMap(ctx context.Context, recorder events.Recorder) (*corev1.ConfigMap, bool, error) {
-	scriptConfigMap := resourceread.ReadConfigMapV1OrDie(etcd_assets.MustAsset("etcd/scripts-cm.yaml"))
+	scriptConfigMap := resourceread.ReadConfigMapV1OrDie(bindata.MustAsset("etcd/scripts-cm.yaml"))
 	// TODO get the env vars to produce a file that we write
 	envVarMap := c.envVarGetter.GetEnvVars()
 	if len(envVarMap) == 0 {
@@ -129,7 +129,7 @@ func (c *ScriptController) manageScriptConfigMap(ctx context.Context, recorder e
 		"etcd/etcd-common-tools",
 	} {
 		basename := filepath.Base(filename)
-		scriptConfigMap.Data[basename] = string(etcd_assets.MustAsset(filename))
+		scriptConfigMap.Data[basename] = string(bindata.MustAsset(filename))
 	}
 	return resourceapply.ApplyConfigMap(ctx, c.kubeClient.CoreV1(), recorder, scriptConfigMap)
 }
