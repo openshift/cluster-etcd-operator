@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/utils/clock"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
@@ -165,7 +166,7 @@ func TestNewDefragController(t *testing.T) {
 				etcdcli.WithFakeClusterHealth(scenario.memberHealth),
 				etcdcli.WithFakeStatus(status),
 			)
-			eventRecorder := events.NewInMemoryRecorder(t.Name())
+			eventRecorder := events.NewInMemoryRecorder(t.Name(), clock.RealClock{})
 			require.NoError(t, err)
 			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 			for _, obj := range scenario.objects {
@@ -324,7 +325,7 @@ func TestNewDefragControllerMultiSyncs(t *testing.T) {
 			}
 
 			fakeEtcdClient, _ := etcdcli.NewFakeEtcdClient(etcdMembers, fakeOpts...)
-			eventRecorder := events.NewInMemoryRecorder(t.Name())
+			eventRecorder := events.NewInMemoryRecorder(t.Name(), clock.RealClock{})
 			require.NoError(t, err)
 			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 			for _, obj := range scenario.objects {

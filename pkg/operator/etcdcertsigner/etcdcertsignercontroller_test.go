@@ -24,6 +24,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/component-base/metrics"
 	"k8s.io/component-base/metrics/legacyregistry"
+	"k8s.io/utils/clock"
 
 	"github.com/openshift/library-go/pkg/crypto"
 	"github.com/openshift/library-go/pkg/operator/events"
@@ -592,6 +593,7 @@ func setupController(t *testing.T, objects []runtime.Object, forceSkipRollout bo
 		fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),
 		"test-cert-signer",
 		&corev1.ObjectReference{},
+		clock.RealClock{},
 	)
 
 	nodeSelector, err := labels.Parse("node-role.kubernetes.io/master")
