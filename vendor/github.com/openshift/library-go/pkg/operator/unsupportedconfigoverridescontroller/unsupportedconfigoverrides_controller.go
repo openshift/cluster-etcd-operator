@@ -13,6 +13,7 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 
+	applyoperatorv1 "github.com/openshift/client-go/operator/applyconfigurations/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/condition"
 	"github.com/openshift/library-go/pkg/operator/events"
@@ -23,20 +24,25 @@ import (
 // UnsupportedConfigOverridesController is a controller that will copy source configmaps and secrets to their destinations.
 // It will also mirror deletions by deleting destinations.
 type UnsupportedConfigOverridesController struct {
-	operatorClient v1helpers.OperatorClient
+	controllerInstanceName string
+	operatorClient         v1helpers.OperatorClient
 }
 
 // NewUnsupportedConfigOverridesController creates UnsupportedConfigOverridesController.
 func NewUnsupportedConfigOverridesController(
+	instanceName string,
 	operatorClient v1helpers.OperatorClient,
 	eventRecorder events.Recorder,
 ) factory.Controller {
-	c := &UnsupportedConfigOverridesController{operatorClient: operatorClient}
+	c := &UnsupportedConfigOverridesController{
+		controllerInstanceName: factory.ControllerInstanceName(instanceName, "UnsupportedConfigOverrides"),
+		operatorClient:         operatorClient,
+	}
 	return factory.New().
 		WithInformers(operatorClient.Informer()).
 		WithSync(c.sync).
 		ToController(
-			"UnsupportedConfigOverridesController", // don't change what is passed here unless you also remove the old FooDegraded condition
+			c.controllerInstanceName,
 			eventRecorder,
 		)
 }
@@ -51,28 +57,29 @@ func (c *UnsupportedConfigOverridesController) sync(ctx context.Context, syncCtx
 		return nil
 	}
 
-	cond := operatorv1.OperatorCondition{
-		Type:   condition.UnsupportedConfigOverridesUpgradeableConditionType,
-		Status: operatorv1.ConditionTrue,
-		Reason: "NoUnsupportedConfigOverrides",
-	}
+	cond := applyoperatorv1.OperatorCondition().
+		WithType(condition.UnsupportedConfigOverridesUpgradeableConditionType).
+		WithStatus(operatorv1.ConditionTrue).
+		WithReason("NoUnsupportedConfigOverrides")
+
 	if len(operatorSpec.UnsupportedConfigOverrides.Raw) > 0 {
-		cond.Status = operatorv1.ConditionFalse
-		cond.Reason = "UnsupportedConfigOverridesSet"
-		cond.Message = fmt.Sprintf("unsupportedConfigOverrides=%v", string(operatorSpec.UnsupportedConfigOverrides.Raw))
+		cond = cond.
+			WithStatus(operatorv1.ConditionFalse).
+			WithReason("UnsupportedConfigOverridesSet").
+			WithMessage(fmt.Sprintf("unsupportedConfigOverrides=%v", string(operatorSpec.UnsupportedConfigOverrides.Raw)))
 
 		// try to get a prettier message
 		keys, err := keysSetInUnsupportedConfig(operatorSpec.UnsupportedConfigOverrides.Raw)
 		if err == nil {
-			cond.Message = fmt.Sprintf("setting: %v", sets.List(keys))
-
+			cond = cond.WithMessage(fmt.Sprintf("setting: %v", sets.List(keys)))
 		}
 	}
 
-	if _, _, updateError := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(cond)); updateError != nil {
-		return updateError
-	}
-	return nil
+	return c.operatorClient.ApplyOperatorStatus(
+		ctx,
+		c.controllerInstanceName,
+		applyoperatorv1.OperatorStatus().WithConditions(cond),
+	)
 }
 
 func keysSetInUnsupportedConfig(configYaml []byte) (sets.Set[string], error) {

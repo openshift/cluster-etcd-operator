@@ -3,6 +3,7 @@ package installerpod
 import (
 	"context"
 	"fmt"
+	"k8s.io/utils/clock"
 	"os"
 	"path"
 	"sort"
@@ -43,6 +44,7 @@ type InstallOptions struct {
 	Revision  string
 	NodeName  string
 	Namespace string
+	Clock     clock.PassiveClock
 
 	PodConfigMapNamePrefix        string
 	SecretNamePrefixes            []string
@@ -73,7 +75,9 @@ type InstallOptions struct {
 type PodMutationFunc func(pod *corev1.Pod) error
 
 func NewInstallOptions() *InstallOptions {
-	return &InstallOptions{}
+	return &InstallOptions{
+		Clock: clock.RealClock{},
+	}
 }
 
 func (o *InstallOptions) WithPodMutationFn(podMutationFn PodMutationFunc) *InstallOptions {
@@ -440,7 +444,7 @@ func (o *InstallOptions) Run(ctx context.Context) error {
 		klog.Infof("Got kubelet version %s on target node %s", o.KubeletVersion, o.NodeName)
 	}
 
-	recorder := events.NewRecorder(o.KubeClient.CoreV1().Events(o.Namespace), "static-pod-installer", eventTarget)
+	recorder := events.NewRecorder(o.KubeClient.CoreV1().Events(o.Namespace), "static-pod-installer", eventTarget, o.Clock)
 	if err := o.copyContent(ctx); err != nil {
 		recorder.Warningf("StaticPodInstallerFailed", "Installing revision %s: %v", o.Revision, err)
 		return fmt.Errorf("failed to copy: %v", err)

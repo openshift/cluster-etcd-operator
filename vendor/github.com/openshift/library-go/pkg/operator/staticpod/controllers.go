@@ -2,6 +2,7 @@ package staticpod
 
 import (
 	"fmt"
+	"k8s.io/utils/clock"
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -39,6 +40,7 @@ type staticPodOperatorControllerBuilder struct {
 	kubeClient              kubernetes.Interface
 	kubeInformers           v1helpers.KubeInformersForNamespaces
 	configInformers         externalversions.SharedInformerFactory
+	clock                   clock.Clock
 	eventRecorder           events.Recorder
 
 	// resource information
@@ -84,12 +86,14 @@ func NewBuilder(
 	kubeClient kubernetes.Interface,
 	kubeInformers v1helpers.KubeInformersForNamespaces,
 	configInformers externalversions.SharedInformerFactory,
+	clock clock.Clock,
 ) Builder {
 	return &staticPodOperatorControllerBuilder{
 		staticPodOperatorClient: staticPodOperatorClient,
 		kubeClient:              kubeClient,
 		kubeInformers:           kubeInformers,
 		configInformers:         configInformers,
+		clock:                   clock,
 	}
 }
 
@@ -209,7 +213,7 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 
 	eventRecorder := b.eventRecorder
 	if eventRecorder == nil {
-		eventRecorder = events.NewLoggingEventRecorder("static-pod-operator-controller")
+		eventRecorder = events.NewLoggingEventRecorder("static-pod-operator-controller", b.clock)
 	}
 	versionRecorder := b.versionRecorder
 	if versionRecorder == nil {
@@ -248,6 +252,7 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 
 	if len(b.installCommand) > 0 {
 		manager.WithController(installer.NewInstallerController(
+			b.operandName,
 			b.operandNamespace,
 			b.staticPodName,
 			b.revisionConfigMaps,
@@ -317,6 +322,7 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 
 	if b.enableStartMonitor != nil {
 		manager.WithController(startupmonitorcondition.New(
+			b.operandName,
 			b.operandNamespace,
 			b.staticPodName,
 			b.staticPodOperatorClient,
@@ -326,6 +332,7 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 		), 1)
 
 		if staticPodFallbackController, err := staticpodfallback.New(
+			b.operandName,
 			b.operandNamespace,
 			b.operandPodLabelSelector,
 			b.staticPodOperatorClient,
@@ -359,7 +366,7 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 		eventRecorder,
 	).AddKubeInformers(b.kubeInformers), 1)
 
-	manager.WithController(unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(b.staticPodOperatorClient, eventRecorder), 1)
+	manager.WithController(unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(b.operatorName, b.staticPodOperatorClient, eventRecorder), 1)
 	manager.WithController(loglevel.NewClusterOperatorLoggingController(b.staticPodOperatorClient, eventRecorder), 1)
 
 	if len(b.operatorNamespace) > 0 && len(b.operatorName) > 0 && len(b.readyzPort) > 0 && len(b.readyzEndpoint) > 0 {

@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
+	applyoperatorv1 "github.com/openshift/client-go/operator/applyconfigurations/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/condition"
 	"github.com/openshift/library-go/pkg/operator/events"
@@ -23,6 +25,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/staticpod/controller/revision"
 	"github.com/openshift/library-go/pkg/operator/staticpod/startupmonitor/annotations"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -33,6 +36,7 @@ import (
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
+	"k8s.io/utils/ptr"
 )
 
 const (
@@ -52,7 +56,7 @@ var podTemplate []byte
 // InstallerController is a controller that watches the currentRevision and targetRevision fields for each node and spawn
 // installer pods to update the static pods on the master nodes.
 type InstallerController struct {
-	targetNamespace, staticPodName string
+	controllerInstanceName, targetNamespace, staticPodName string
 	// configMaps is the list of configmaps that are directly copied.A different actor/controller modifies these.
 	// the first element should be the configmap that contains the static pod manifest
 	configMaps []revision.RevisionResource
@@ -154,7 +158,7 @@ type UnrevisionedResource struct {
 
 // NewInstallerController creates a new installer controller.
 func NewInstallerController(
-	targetNamespace, staticPodName string,
+	instanceName, targetNamespace, staticPodName string,
 	configMaps []revision.RevisionResource,
 	secrets []revision.RevisionResource,
 	command []string,
@@ -166,11 +170,12 @@ func NewInstallerController(
 	eventRecorder events.Recorder,
 ) *InstallerController {
 	c := &InstallerController{
-		targetNamespace: targetNamespace,
-		staticPodName:   staticPodName,
-		configMaps:      configMaps,
-		secrets:         secrets,
-		command:         command,
+		controllerInstanceName: factory.ControllerInstanceName(instanceName, "Installer"),
+		targetNamespace:        targetNamespace,
+		staticPodName:          staticPodName,
+		configMaps:             configMaps,
+		secrets:                secrets,
+		command:                command,
 
 		operatorClient:   operatorClient,
 		configMapsGetter: configMapsGetter,
@@ -189,12 +194,13 @@ func NewInstallerController(
 	}
 
 	c.ownerRefsFn = c.setOwnerRefs
-	c.factory = factory.New().WithInformers(
-		operatorClient.Informer(),
-		// informers are needed here because their Getter are cached lister based
-		kubeInformersForTargetNamespace.Core().V1().Pods().Informer(),
-		kubeInformersForTargetNamespace.Core().V1().ConfigMaps().Informer(),
-		kubeInformersForTargetNamespace.Core().V1().Secrets().Informer())
+	c.factory = factory.New().
+		WithInformers(
+			operatorClient.Informer(),
+			// informers are needed here because their Getter are cached lister based
+			kubeInformersForTargetNamespace.Core().V1().Pods().Informer(),
+			kubeInformersForTargetNamespace.Core().V1().ConfigMaps().Informer(),
+			kubeInformersForTargetNamespace.Core().V1().Secrets().Informer())
 
 	return c
 }
@@ -203,13 +209,19 @@ func (c *InstallerController) Run(ctx context.Context, workers int) {
 	c.factory.
 		WithSync(c.Sync).
 		ToController(
-			c.Name(), // don't change what is passed here unless you also remove the old FooDegraded condition
+			c.Name(),
 			c.eventRecorder,
 		).Run(ctx, workers)
 }
 
 func (c InstallerController) Name() string {
-	return "InstallerController"
+	return "Installer"
+}
+
+// ControllerInstanceName specifies the controller instance.
+// Useful when the same controller is used multiple times.
+func (c InstallerController) ControllerInstanceName() string {
+	return c.controllerInstanceName
 }
 
 // getStaticPodState returns
@@ -433,23 +445,23 @@ func (c *InstallerController) timeToWaitBeforeInstallingNextPod(ctx context.Cont
 
 // manageInstallationPods takes care of creating content for the static pods to install.
 // returns whether or not requeue and if an error happened when updating status.  Normally it updates status itself.
-func (c *InstallerController) manageInstallationPods(ctx context.Context, operatorSpec *operatorv1.StaticPodOperatorSpec, originalOperatorStatus *operatorv1.StaticPodOperatorStatus) (bool, time.Duration, error) {
+func (c *InstallerController) manageInstallationPods(ctx context.Context, operatorSpec *operatorv1.StaticPodOperatorSpec, originalOperatorStatus *operatorv1.StaticPodOperatorStatus) (bool, time.Duration, *operatorv1.NodeStatus, func(), error) {
 	operatorStatus := originalOperatorStatus.DeepCopy()
 
 	if len(operatorStatus.NodeStatuses) == 0 {
-		return false, 0, nil
+		return false, 0, nil, nil, nil
 	}
 
 	// start with node which is in worst state (instead of terminating healthy pods first)
 	startNode, nodeChoiceReason, err := nodeToStartRevisionWith(ctx, c.getStaticPodState, operatorStatus.NodeStatuses)
 	if err != nil {
-		return true, 0, err
+		return true, 0, nil, nil, err
 	}
 
 	// determine the amount of time to delay before creating the next installer pod.  We delay to avoid an LB outage (see godoc on minReadySeconds)
 	requeueAfter := c.timeToWaitBeforeInstallingNextPod(ctx, operatorStatus.NodeStatuses)
 	if requeueAfter > 0 {
-		return true, requeueAfter, nil
+		return true, requeueAfter, nil, nil, nil
 	}
 
 	for l := 0; l < len(operatorStatus.NodeStatuses); l++ {
@@ -479,7 +491,7 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 					earliestRetry := currNodeState.LastFailedTime.Add(delay)
 					if !c.now().After(earliestRetry) {
 						klog.V(4).Infof("Backing off node %s installer retry %d until %v", currNodeState.NodeName, currNodeState.LastFailedCount+1, earliestRetry)
-						return true, earliestRetry.Sub(c.now()), nil
+						return true, earliestRetry.Sub(c.now()), nil, nil, nil
 					}
 				}
 
@@ -488,14 +500,14 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 						currNodeState.TargetRevision, currNodeState.LastFailedCount, currNodeState.NodeName, err)
 					// if a newer revision is pending, continue, so we retry later with the latest available revision
 					if !(operatorStatus.LatestAvailableRevision > currNodeState.TargetRevision) {
-						return true, 0, err
+						return true, 0, nil, nil, err
 					}
 				}
 			}
 
 			newCurrNodeState, _, reason, err := c.newNodeStateForInstallInProgress(ctx, currNodeState, operatorStatus.LatestAvailableRevision)
 			if err != nil {
-				return true, 0, err
+				return true, 0, nil, nil, err
 			}
 			if newCurrNodeState.LastFailedReason == nodeStatusInstalledFailedReason && newCurrNodeState.LastFailedCount != currNodeState.LastFailedCount {
 				klog.Infof("Will retry %q for revision %d for the %s time because %s", currNodeState.NodeName, currNodeState.TargetRevision, nthTimeOr1st(newCurrNodeState.LastFailedCount), reason)
@@ -508,19 +520,17 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 			// it's an extra write/read, but it makes the state debuggable from outside this process
 			if !equality.Semantic.DeepEqual(newCurrNodeState, currNodeState) {
 				klog.Infof("%q moving to %v because %s", currNodeState.NodeName, spew.Sdump(*newCurrNodeState), reason)
-				_, updated, updateError := v1helpers.UpdateStaticPodStatus(ctx, c.operatorClient, setNodeStatusFn(newCurrNodeState), setAvailableProgressingNodeInstallerFailingConditions)
-				if updateError != nil {
-					return false, 0, updateError
-				} else if updated && currNodeState.CurrentRevision != newCurrNodeState.CurrentRevision {
-					c.eventRecorder.Eventf("NodeCurrentRevisionChanged", "Updated node %q from revision %d to %d because %s", currNodeState.NodeName,
-						currNodeState.CurrentRevision, newCurrNodeState.CurrentRevision, reason)
+				nodeCurrentRevisionChangedFn := func() {
+					if currNodeState.CurrentRevision != newCurrNodeState.CurrentRevision {
+						c.eventRecorder.Eventf("NodeCurrentRevisionChanged", "Updated node %q from revision %d to %d because %s", currNodeState.NodeName,
+							currNodeState.CurrentRevision, newCurrNodeState.CurrentRevision, reason)
+					}
 				}
-
-				return false, 0, nil // no requeue because UpdateStaticPodStatus triggers an external event anyway
+				return false, 0, newCurrNodeState, nodeCurrentRevisionChangedFn, nil
 			}
 
 			klog.V(2).Infof("%q is in transition to %d, but has not made progress because %s", currNodeState.NodeName, currNodeState.TargetRevision, reasonWithBlame(reason))
-			return false, 0, nil
+			return false, 0, nil, nil, nil
 		}
 
 		// here we are not in transition, i.e. there is no install pod running
@@ -540,42 +550,73 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 		// it's an extra write/read, but it makes the state debuggable from outside this process
 		if !equality.Semantic.DeepEqual(newCurrNodeState, currNodeState) {
 			klog.Infof("%q moving to %v", currNodeState.NodeName, spew.Sdump(*newCurrNodeState))
-			if _, updated, updateError := v1helpers.UpdateStaticPodStatus(ctx, c.operatorClient, setNodeStatusFn(newCurrNodeState), setAvailableProgressingNodeInstallerFailingConditions); updateError != nil {
-				return false, 0, updateError
-			} else if updated && currNodeState.TargetRevision != newCurrNodeState.TargetRevision && newCurrNodeState.TargetRevision != 0 {
-				c.eventRecorder.Eventf("NodeTargetRevisionChanged", "Updating node %q from revision %d to %d because %s", currNodeState.NodeName,
-					currNodeState.CurrentRevision, newCurrNodeState.TargetRevision, nodeChoiceReason)
-			}
 
-			return false, 0, nil // no requeue because UpdateStaticPodStatus triggers an external event anyway
+			nodeTargetRevisionChangedFn := func() {
+				if currNodeState.TargetRevision != newCurrNodeState.TargetRevision && newCurrNodeState.TargetRevision != 0 {
+					c.eventRecorder.Eventf("NodeTargetRevisionChanged", "Updating node %q from revision %d to %d because %s", currNodeState.NodeName,
+						currNodeState.CurrentRevision, newCurrNodeState.TargetRevision, nodeChoiceReason)
+				}
+			}
+			return false, 0, newCurrNodeState, nodeTargetRevisionChangedFn, nil
 		}
 		break
 	}
 
-	return false, 0, nil
+	return false, 0, nil, nil, nil
 }
 
-func setNodeStatusFn(status *operatorv1.NodeStatus) v1helpers.UpdateStaticPodStatusFunc {
-	return func(operatorStatus *operatorv1.StaticPodOperatorStatus) error {
-		for i := range operatorStatus.NodeStatuses {
-			if operatorStatus.NodeStatuses[i].NodeName == status.NodeName {
-				operatorStatus.NodeStatuses[i] = *status
-				break
-			}
+func prepareNodeStatusApplyConfigurationFor(nodeStatuses []operatorv1.NodeStatus, updatedNodeStatus *operatorv1.NodeStatus) []*applyoperatorv1.NodeStatusApplyConfiguration {
+	var ret []*applyoperatorv1.NodeStatusApplyConfiguration
+
+	for _, nodeStatus := range nodeStatuses {
+		if updatedNodeStatus != nil && nodeStatus.NodeName == updatedNodeStatus.NodeName {
+			nodeStatus = *updatedNodeStatus
 		}
-		return nil
+		ret = append(ret, nodeStatusToNodeStatusApplyConfigurations(nodeStatus))
+	}
+
+	return ret
+}
+
+func nodeStatusToNodeStatusApplyConfigurations(nodeStatus operatorv1.NodeStatus) *applyoperatorv1.NodeStatusApplyConfiguration {
+	nodeStatusApplyConfiguration := applyoperatorv1.NodeStatus().
+		WithNodeName(nodeStatus.NodeName).
+		WithCurrentRevision(nodeStatus.CurrentRevision).
+		WithTargetRevision(nodeStatus.TargetRevision).
+		WithLastFailedRevision(nodeStatus.LastFailedRevision).
+		WithLastFailedReason(nodeStatus.LastFailedReason).
+		WithLastFailedCount(nodeStatus.LastFailedCount).
+		WithLastFallbackCount(nodeStatus.LastFallbackCount).
+		WithLastFailedRevisionErrors(nodeStatus.LastFailedRevisionErrors...)
+	if nodeStatus.LastFailedTime != nil {
+		nodeStatusApplyConfiguration = nodeStatusApplyConfiguration.WithLastFailedTime(*nodeStatus.LastFailedTime)
+	}
+	return nodeStatusApplyConfiguration
+}
+
+func nodeStatusApplyConfigToOperatorNodeStatus(nodeStatusApplyConfiguration *applyoperatorv1.NodeStatusApplyConfiguration) *operatorv1.NodeStatus {
+	return &operatorv1.NodeStatus{
+		NodeName:                 ptr.Deref(nodeStatusApplyConfiguration.NodeName, ""),
+		CurrentRevision:          ptr.Deref(nodeStatusApplyConfiguration.CurrentRevision, 0),
+		TargetRevision:           ptr.Deref(nodeStatusApplyConfiguration.TargetRevision, 0),
+		LastFailedRevision:       ptr.Deref(nodeStatusApplyConfiguration.LastFailedRevision, 0),
+		LastFailedTime:           nodeStatusApplyConfiguration.LastFailedTime,
+		LastFailedReason:         ptr.Deref(nodeStatusApplyConfiguration.LastFailedReason, ""),
+		LastFailedCount:          ptr.Deref(nodeStatusApplyConfiguration.LastFailedCount, 0),
+		LastFallbackCount:        ptr.Deref(nodeStatusApplyConfiguration.LastFallbackCount, 0),
+		LastFailedRevisionErrors: nodeStatusApplyConfiguration.LastFailedRevisionErrors,
 	}
 }
 
-// setAvailableProgressingConditions sets the Available and Progressing conditions
-func setAvailableProgressingNodeInstallerFailingConditions(newStatus *operatorv1.StaticPodOperatorStatus) error {
+func prepareNodeInstallerConditionApplyConfiguration(nodeStatuses []*applyoperatorv1.NodeStatusApplyConfiguration, latestAvailableRevision int32) []*applyoperatorv1.OperatorConditionApplyConfiguration {
 	// Available means that we have at least one pod at the latest level
 	numAvailable := 0
 	numProgressing := 0
 	counts := map[int32]int{}
 	failingCount := map[int32]int{}
 	failing := map[int32][]string{}
-	for _, currNodeStatus := range newStatus.NodeStatuses {
+	for _, nodeStatus := range nodeStatuses {
+		currNodeStatus := nodeStatusApplyConfigToOperatorNodeStatus(nodeStatus)
 		counts[currNodeStatus.CurrentRevision] = counts[currNodeStatus.CurrentRevision] + 1
 		if currNodeStatus.CurrentRevision != 0 {
 			numAvailable++
@@ -589,7 +630,7 @@ func setAvailableProgressingNodeInstallerFailingConditions(newStatus *operatorv1
 			failing[currNodeStatus.LastFailedRevision] = append(failing[currNodeStatus.LastFailedRevision], currNodeStatus.LastFailedRevisionErrors...)
 		}
 
-		if newStatus.LatestAvailableRevision != currNodeStatus.CurrentRevision {
+		if latestAvailableRevision != currNodeStatus.CurrentRevision {
 			numProgressing += 1
 		}
 	}
@@ -605,42 +646,37 @@ func setAvailableProgressingNodeInstallerFailingConditions(newStatus *operatorv1
 		revisionStrings = append(revisionStrings, fmt.Sprintf("%d %s at revision %d", count, nodesStr, currentRevision))
 	}
 	// if we are progressing and no nodes have achieved that level, we should indicate
-	if numProgressing > 0 && counts[newStatus.LatestAvailableRevision] == 0 {
-		revisionStrings = append(revisionStrings, fmt.Sprintf("%d nodes have achieved new revision %d", 0, newStatus.LatestAvailableRevision))
+	if numProgressing > 0 && counts[latestAvailableRevision] == 0 {
+		revisionStrings = append(revisionStrings, fmt.Sprintf("%d nodes have achieved new revision %d", 0, latestAvailableRevision))
 	}
 	revisionDescription := strings.Join(revisionStrings, "; ")
 
+	availableCondition := applyoperatorv1.OperatorCondition().
+		WithType(condition.StaticPodsAvailableConditionType).
+		WithStatus(operatorv1.ConditionFalse).
+		WithReason("ZeroNodesActive").
+		WithMessage(fmt.Sprintf("%d nodes are active; %s", numAvailable, revisionDescription))
 	if numAvailable > 0 {
-		v1helpers.SetOperatorCondition(&newStatus.Conditions, operatorv1.OperatorCondition{
-			Type:    condition.StaticPodsAvailableConditionType,
-			Status:  operatorv1.ConditionTrue,
-			Message: fmt.Sprintf("%d nodes are active; %s", numAvailable, revisionDescription),
-		})
-	} else {
-		v1helpers.SetOperatorCondition(&newStatus.Conditions, operatorv1.OperatorCondition{
-			Type:    condition.StaticPodsAvailableConditionType,
-			Status:  operatorv1.ConditionFalse,
-			Reason:  "ZeroNodesActive",
-			Message: fmt.Sprintf("%d nodes are active; %s", numAvailable, revisionDescription),
-		})
+		availableCondition = availableCondition.
+			WithStatus(operatorv1.ConditionTrue).
+			WithReason("")
 	}
 
-	// Progressing means that the any node is not at the latest available revision
+	// progressing means that any node is not at the latest available revision
+	progressingCondition := applyoperatorv1.OperatorCondition().
+		WithType(condition.NodeInstallerProgressingConditionType).
+		WithStatus(operatorv1.ConditionFalse).
+		WithReason("AllNodesAtLatestRevision").
+		WithMessage(fmt.Sprintf("%s", revisionDescription))
 	if numProgressing > 0 {
-		v1helpers.SetOperatorCondition(&newStatus.Conditions, operatorv1.OperatorCondition{
-			Type:    condition.NodeInstallerProgressingConditionType,
-			Status:  operatorv1.ConditionTrue,
-			Message: fmt.Sprintf("%s", revisionDescription),
-		})
-	} else {
-		v1helpers.SetOperatorCondition(&newStatus.Conditions, operatorv1.OperatorCondition{
-			Type:    condition.NodeInstallerProgressingConditionType,
-			Status:  operatorv1.ConditionFalse,
-			Reason:  "AllNodesAtLatestRevision",
-			Message: fmt.Sprintf("%s", revisionDescription),
-		})
+		progressingCondition = progressingCondition.
+			WithStatus(operatorv1.ConditionTrue).
+			WithReason("")
 	}
 
+	degradedCondition := applyoperatorv1.OperatorCondition().
+		WithType(condition.NodeInstallerDegradedConditionType).
+		WithStatus(operatorv1.ConditionFalse)
 	if len(failing) > 0 {
 		failingStrings := []string{}
 		for _, failingRevision := range sets.List(sets.KeySet(failing)) {
@@ -649,20 +685,27 @@ func setAvailableProgressingNodeInstallerFailingConditions(newStatus *operatorv1
 		}
 		failingDescription := strings.Join(failingStrings, "; ")
 
-		v1helpers.SetOperatorCondition(&newStatus.Conditions, operatorv1.OperatorCondition{
-			Type:    condition.NodeInstallerDegradedConditionType,
-			Status:  operatorv1.ConditionTrue,
-			Reason:  "InstallerPodFailed",
-			Message: failingDescription,
-		})
-	} else {
-		v1helpers.SetOperatorCondition(&newStatus.Conditions, operatorv1.OperatorCondition{
-			Type:   condition.NodeInstallerDegradedConditionType,
-			Status: operatorv1.ConditionFalse,
-		})
+		degradedCondition = degradedCondition.
+			WithStatus(operatorv1.ConditionTrue).
+			WithReason("InstallerPodFailed").
+			WithMessage(failingDescription)
 	}
 
-	return nil
+	return []*applyoperatorv1.OperatorConditionApplyConfiguration{availableCondition, progressingCondition, degradedCondition}
+}
+
+func prepareInstallerDegradedConditionApplyConfigurationFor(err error) *applyoperatorv1.OperatorConditionApplyConfiguration {
+	installerDegradedCondition := applyoperatorv1.OperatorCondition().
+		WithType(condition.InstallerControllerDegradedConditionType).
+		WithStatus(operatorv1.ConditionFalse)
+
+	if err != nil {
+		installerDegradedCondition = installerDegradedCondition.WithReason("Error").
+			WithMessage(err.Error()).
+			WithStatus(operatorv1.ConditionTrue)
+	}
+
+	return installerDegradedCondition
 }
 
 // newNodeStateForInstallInProgress returns the new NodeState
@@ -1076,8 +1119,13 @@ func (c InstallerController) Sync(ctx context.Context, syncCtx factory.SyncConte
 	err = c.ensureRequiredResourcesExist(ctx, originalOperatorStatus.LatestAvailableRevision)
 
 	// Only manage installation pods when all required certs are present.
+	var updatedNode *operatorv1.NodeStatus
+	var updatedNodeReportOnSuccessfulUpdateFn func()
 	if err == nil {
-		requeue, after, syncErr := c.manageInstallationPods(ctx, operatorSpec, operatorStatus)
+		var requeue bool
+		var after time.Duration
+		var syncErr error
+		requeue, after, updatedNode, updatedNodeReportOnSuccessfulUpdateFn, syncErr = c.manageInstallationPods(ctx, operatorSpec, operatorStatus)
 		if requeue && syncErr == nil {
 			syncCtx.Queue().AddAfter(syncCtx.QueueKey(), after)
 			return nil
@@ -1087,21 +1135,17 @@ func (c InstallerController) Sync(ctx context.Context, syncCtx factory.SyncConte
 
 	// Update failing condition
 	// If required certs are missing, this will report degraded as we can't create installer pods because of this pre-condition.
-	cond := operatorv1.OperatorCondition{
-		Type:   condition.InstallerControllerDegradedConditionType,
-		Status: operatorv1.ConditionFalse,
+	nodeStatusApplyConfigurations := prepareNodeStatusApplyConfigurationFor(originalOperatorStatus.NodeStatuses, updatedNode)
+	operatorConditionApplyConfigurations := prepareNodeInstallerConditionApplyConfiguration(nodeStatusApplyConfigurations, originalOperatorStatus.LatestAvailableRevision)
+	operatorConditionApplyConfigurations = append(operatorConditionApplyConfigurations, prepareInstallerDegradedConditionApplyConfigurationFor(err))
+	status := applyoperatorv1.StaticPodOperatorStatus().
+		WithConditions(operatorConditionApplyConfigurations...).
+		WithNodeStatuses(nodeStatusApplyConfigurations...)
+	if updateErr := c.operatorClient.ApplyStaticPodOperatorStatus(ctx, c.controllerInstanceName, status); updateErr != nil {
+		return updateErr
+	} else if updatedNodeReportOnSuccessfulUpdateFn != nil {
+		updatedNodeReportOnSuccessfulUpdateFn()
 	}
-	if err != nil {
-		cond.Status = operatorv1.ConditionTrue
-		cond.Reason = "Error"
-		cond.Message = err.Error()
-	}
-	if _, _, updateError := v1helpers.UpdateStaticPodStatus(ctx, c.operatorClient, v1helpers.UpdateStaticPodConditionFn(cond), setAvailableProgressingNodeInstallerFailingConditions); updateError != nil {
-		if err == nil {
-			return updateError
-		}
-	}
-
 	return err
 }
 
