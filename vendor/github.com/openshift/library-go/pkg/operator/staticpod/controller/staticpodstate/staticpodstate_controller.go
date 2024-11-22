@@ -61,6 +61,7 @@ func NewStaticPodStateController(
 			kubeInformersForTargetNamespace.Core().V1().Pods().Informer(),
 		).
 		WithSync(c.sync).
+		WithControllerInstanceName(c.controllerInstanceName).
 		ResyncEvery(time.Minute).
 		ToController(
 			c.controllerInstanceName,

@@ -2,6 +2,7 @@ package certsyncpod
 
 import (
 	"context"
+	"k8s.io/utils/clock"
 	"os"
 	"time"
 
@@ -23,6 +24,7 @@ type CertSyncControllerOptions struct {
 	KubeConfigFile string
 	Namespace      string
 	DestinationDir string
+	Clock          clock.PassiveClock
 
 	configMaps []installer.UnrevisionedResource
 	secrets    []installer.UnrevisionedResource
@@ -33,6 +35,7 @@ type CertSyncControllerOptions struct {
 
 func NewCertSyncControllerCommand(configmaps, secrets []installer.UnrevisionedResource) *cobra.Command {
 	o := &CertSyncControllerOptions{
+		Clock:      clock.RealClock{},
 		configMaps: configmaps,
 		secrets:    secrets,
 	}
@@ -87,7 +90,7 @@ func (o *CertSyncControllerOptions) Run() error {
 			Kind:       "Pod",
 			Namespace:  os.Getenv("POD_NAMESPACE"),
 			Name:       os.Getenv("POD_NAME"),
-		})
+		}, o.Clock)
 
 	controller := NewCertSyncController(
 		o.DestinationDir,

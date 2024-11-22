@@ -57,6 +57,7 @@ func NewInstallerStateController(instanceName string,
 		WithInformers(kubeInformersForTargetNamespace.Core().V1().Pods().Informer()).
 		WithSync(c.sync).
 		ResyncEvery(1*time.Minute).
+		WithControllerInstanceName(c.controllerInstanceName).
 		ToController(
 			c.controllerInstanceName,
 			recorder,

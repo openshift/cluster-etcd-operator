@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/component-base/metrics"
+	"k8s.io/utils/clock"
 )
 
 // createCertSecrets will run the etcdcertsigner.EtcdCertSignerController once and collect all respective certs created.
@@ -42,7 +43,7 @@ func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMa
 
 	kubeInformers := v1helpers.NewKubeInformersForNamespaces(fakeKubeClient, "", "kube-system",
 		operatorclient.TargetNamespace, operatorclient.OperatorNamespace, operatorclient.GlobalUserSpecifiedConfigNamespace)
-	recorder := events.NewInMemoryRecorder("etcd")
+	recorder := events.NewInMemoryRecorder("etcd", clock.RealClock{})
 	nodeSelector, err := labels.Parse("node-role.kubernetes.io/master")
 	if err != nil {
 		return nil, nil, fmt.Errorf("could not parse master node labels: %w", err)
