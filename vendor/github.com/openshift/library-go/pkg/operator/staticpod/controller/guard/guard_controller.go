@@ -233,6 +233,17 @@ func (c *GuardController) sync(ctx context.Context, syncCtx factory.SyncContext)
 			return err
 		}
 
+		arbiterselector, err := labels.NewRequirement("node-role.kubernetes.io/arbiter", selection.Equals, []string{""})
+		if err != nil {
+			panic(err)
+		}
+		arbiternodes, err := c.nodeLister.List(labels.NewSelector().Add(*arbiterselector))
+		if err != nil {
+			return err
+		}
+
+		nodes = append(nodes, arbiternodes...)
+
 		pods, err := c.podLister.Pods(c.targetNamespace).List(c.operandPodLabelSelector)
 		if err != nil {
 			return err
