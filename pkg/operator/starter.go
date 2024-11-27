@@ -19,6 +19,7 @@ import (
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorversionedclientv1alpha1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
+	"github.com/openshift/cluster-etcd-operator/bindata"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/backupcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertcleaner"
@@ -59,7 +60,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermemberremovalcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/defragcontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdendpointscontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdmemberscontroller"
@@ -207,7 +207,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 	staticResourceController := staticresourcecontroller.NewStaticResourceController(
 		"EtcdStaticResources",
-		etcd_assets.Asset,
+		bindata.Asset,
 		[]string{
 			"etcd/ns.yaml",
 			"etcd/sa.yaml",
