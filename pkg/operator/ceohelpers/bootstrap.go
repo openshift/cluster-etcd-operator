@@ -101,20 +101,10 @@ func GetBootstrapScalingStrategy(staticPodClient v1helpers.StaticPodOperatorClie
 // the etcd cluster based on the scaling strategy in use, and otherwise will return
 // an error explaining why it's unsafe to scale.
 func CheckSafeToScaleCluster(
-	configmapLister corev1listers.ConfigMapLister,
 	staticPodClient v1helpers.StaticPodOperatorClient,
 	namespaceLister corev1listers.NamespaceLister,
 	infraLister configv1listers.InfrastructureLister,
 	etcdClient etcdcli.AllMemberLister) error {
-
-	bootstrapComplete, err := IsBootstrapComplete(configmapLister, etcdClient)
-	if err != nil {
-		return fmt.Errorf("CheckSafeToScaleCluster failed to determine bootstrap status: %w", err)
-	}
-	// while bootstrapping, scaling should be considered safe always
-	if !bootstrapComplete {
-		return nil
-	}
 
 	revisionStable, err := IsRevisionStable(staticPodClient)
 	if err != nil {
