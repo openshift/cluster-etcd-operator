@@ -4,18 +4,22 @@ import (
 	"context"
 	"fmt"
 
+	configv1 "github.com/openshift/api/config/v1"
+	"github.com/openshift/api/features"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/library-go/pkg/controller/factory"
+	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/component-base/metrics"
 	"k8s.io/utils/clock"
@@ -49,7 +53,11 @@ func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMa
 		return nil, nil, fmt.Errorf("could not parse master node labels: %w", err)
 	}
 
-	controller := etcdcertsigner.NewEtcdCertSignerController(
+	// TODO[vrutkovs]: unhardcode this
+	enabledFeatureGates := sets.New[configv1.FeatureGateName](features.FeatureShortCertRotation)
+	disabledFeatureGates := sets.New[configv1.FeatureGateName]()
+	featureGateAccessor := featuregates.NewHardcodedFeatureGateAccess(enabledFeatureGates.UnsortedList(), disabledFeatureGates.UnsortedList())
+	controller, err := etcdcertsigner.NewEtcdCertSignerController(
 		health.NewMultiAlivenessChecker(),
 		fakeKubeClient,
 		fakeOperatorClient,
@@ -59,7 +67,11 @@ func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMa
 		nodeSelector,
 		recorder,
 		metrics.NewKubeRegistry(),
-		true)
+		true,
+		featureGateAccessor)
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not run etcd cert signer control loop: %w", err)
+	}
 
 	stopChan := make(chan struct{})
 	defer close(stopChan)
