@@ -1108,6 +1108,7 @@ spec:
     {{ end -}}
     - name: "ETCD_STATIC_POD_VERSION"
       value: "REVISION"
+{{ if .EnableEtcdContainer }}
   - name: etcd
     image: {{.Image}}
     imagePullPolicy: IfNotPresent
@@ -1215,6 +1216,7 @@ spec:
         name: cert-dir
       - mountPath: /var/lib/etcd/
         name: data-dir
+{{ end }}
   - name: etcd-metrics
     image: {{.Image}}
     imagePullPolicy: IfNotPresent
