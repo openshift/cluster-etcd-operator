@@ -26,7 +26,6 @@ func (c *AlwaysSafeQuorumChecker) IsSafeToUpdateRevision() (bool, error) {
 
 // QuorumCheck is just a convenience struct around bootstrap.go
 type QuorumCheck struct {
-	configMapLister corev1listers.ConfigMapLister
 	namespaceLister corev1listers.NamespaceLister
 	infraLister     configv1listers.InfrastructureLister
 	operatorClient  v1helpers.StaticPodOperatorClient
@@ -34,7 +33,7 @@ type QuorumCheck struct {
 }
 
 func (c *QuorumCheck) IsSafeToUpdateRevision() (bool, error) {
-	err := CheckSafeToScaleCluster(c.configMapLister, c.operatorClient, c.namespaceLister, c.infraLister, c.etcdClient)
+	err := CheckSafeToScaleCluster(c.operatorClient, c.namespaceLister, c.infraLister, c.etcdClient)
 	if err != nil {
 		return false, err
 	}
@@ -43,14 +42,12 @@ func (c *QuorumCheck) IsSafeToUpdateRevision() (bool, error) {
 }
 
 func NewQuorumChecker(
-	configMapLister corev1listers.ConfigMapLister,
 	namespaceLister corev1listers.NamespaceLister,
 	infraLister configv1listers.InfrastructureLister,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	etcdClient etcdcli.AllMemberLister,
 ) QuorumChecker {
 	c := &QuorumCheck{
-		configMapLister,
 		namespaceLister,
 		infraLister,
 		operatorClient,

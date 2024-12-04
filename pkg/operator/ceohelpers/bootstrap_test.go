@@ -358,7 +358,6 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			fakeConfigMapLister := corev1listers.NewConfigMapLister(configmapIndexer)
 
 			operatorStatus := &operatorv1.StaticPodOperatorStatus{
 				OperatorStatus: operatorv1.OperatorStatus{LatestAvailableRevision: 1},
@@ -379,7 +378,6 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			}
 
 			actualErr := CheckSafeToScaleCluster(
-				fakeConfigMapLister,
 				fakeStaticPodClient,
 				fakeNamespaceMapLister,
 				fakeInfraStructure,

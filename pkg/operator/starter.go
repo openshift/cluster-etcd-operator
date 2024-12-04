@@ -240,7 +240,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 
 	quorumChecker := ceohelpers.NewQuorumChecker(
-		kubeInformersForNamespaces.ConfigMapLister(),
 		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Namespaces().Lister(),
 		configInformers.Config().V1().Infrastructures().Lister(),
 		operatorClient,
