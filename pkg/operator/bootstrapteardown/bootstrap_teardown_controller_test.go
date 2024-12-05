@@ -3,6 +3,7 @@ package bootstrapteardown
 import (
 	"context"
 	"fmt"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"testing"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -172,11 +173,95 @@ func TestCanRemoveEtcdBootstrap(t *testing.T) {
 				etcdClient: fakeEtcdClient,
 			}
 
-			safeToRemoveBootstrap, hasBootstrap, bootstrapId, err := c.canRemoveEtcdBootstrap(context.TODO(), test.scalingStrategy)
+			safeToRemoveBootstrap, hasBootstrap, bootstrapMember, err := c.canRemoveEtcdBootstrap(context.TODO(), test.scalingStrategy)
 			require.NoError(t, err)
 			require.Equal(t, test.safeToRemove, safeToRemoveBootstrap, "safe to remove")
 			require.Equal(t, test.hasBootstrap, hasBootstrap, "has bootstrap")
-			require.Equal(t, test.bootstrapId, bootstrapId, "bootstrap id")
+			if hasBootstrap {
+				require.Equal(t, test.bootstrapId, bootstrapMember.ID, "bootstrap member")
+			} else {
+				require.Nil(t, bootstrapMember)
+			}
+		})
+	}
+}
+
+func TestMoveLeaderFromEtcdBootstrap(t *testing.T) {
+	tests := map[string]struct {
+		etcdMembers    []*etcdserverpb.Member
+		clientFakeOpts []etcdcli.FakeClientOption
+		movedToLeader  uint64
+		expectedErr    error
+	}{
+		"happy path no bootstrap member": {
+			etcdMembers: u.DefaultEtcdMembers(),
+			expectedErr: fmt.Errorf("bootstrap member was not provided"),
+		},
+		"happy path bootstrap not leader": {
+			etcdMembers: append(u.DefaultEtcdMembers(), u.FakeEtcdBootstrapMember(3)),
+			clientFakeOpts: []etcdcli.FakeClientOption{
+				etcdcli.WithFakeStatus([]*clientv3.StatusResponse{
+					{Header: &etcdserverpb.ResponseHeader{MemberId: 3}}}),
+				etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Unhealthy: 3, Healthy: 1}),
+				etcdcli.WithLeader(1),
+			},
+			expectedErr: nil,
+		},
+		"no healthy destination": {
+			etcdMembers: append(u.DefaultEtcdMembers(), u.FakeEtcdBootstrapMember(3)),
+			clientFakeOpts: []etcdcli.FakeClientOption{
+				etcdcli.WithFakeStatus([]*clientv3.StatusResponse{
+					{Header: &etcdserverpb.ResponseHeader{MemberId: 0}},
+					{Header: &etcdserverpb.ResponseHeader{MemberId: 1}},
+					{Header: &etcdserverpb.ResponseHeader{MemberId: 2}},
+					{Header: &etcdserverpb.ResponseHeader{MemberId: 3}}}),
+				etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Unhealthy: 4, Healthy: 0}),
+				etcdcli.WithLeader(3),
+			},
+			expectedErr: fmt.Errorf("could not find other healthy member to move leader"),
+		},
+		"moving leader": {
+			etcdMembers: []*etcdserverpb.Member{
+				u.FakeEtcdBootstrapMember(0),
+				u.FakeEtcdMemberWithoutServer(1),
+			},
+			clientFakeOpts: []etcdcli.FakeClientOption{etcdcli.WithFakeStatus(
+				[]*clientv3.StatusResponse{
+					{Header: &etcdserverpb.ResponseHeader{MemberId: 0}},
+					{Header: &etcdserverpb.ResponseHeader{MemberId: 1}}}),
+				etcdcli.WithLeader(0)},
+			movedToLeader: 1,
+			expectedErr:   nil,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			if test.clientFakeOpts == nil {
+				test.clientFakeOpts = []etcdcli.FakeClientOption{etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Unhealthy: 0})}
+			}
+			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(test.etcdMembers, test.clientFakeOpts...)
+			require.NoError(t, err)
+
+			c := &BootstrapTeardownController{
+				etcdClient: fakeEtcdClient,
+			}
+
+			var bootstrapMember *etcdserverpb.Member
+			for _, m := range test.etcdMembers {
+				if m.Name == "etcd-bootstrap" {
+					bootstrapMember = m
+					break
+				}
+			}
+
+			err = c.ensureBootstrapIsNotLeader(context.TODO(), bootstrapMember)
+			require.Equal(t, test.expectedErr, err)
+			if test.movedToLeader != 0 {
+				status, err := fakeEtcdClient.Status(context.TODO(), bootstrapMember.GetClientURLs()[0])
+				require.NoError(t, err)
+				require.Equal(t, test.movedToLeader, status.Leader)
+			}
 		})
 	}
 }
@@ -246,7 +331,7 @@ func TestRemoveBootstrap(t *testing.T) {
 			indexerObjs: []interface{}{
 				bootstrapComplete,
 			},
-			expectedErr: fmt.Errorf("error while removing bootstrap member [%x]: %w", 0, fmt.Errorf("member with the given ID: 0 doesn't exist")),
+			expectedErr: fmt.Errorf("error while removing bootstrap member [%x] (https://10.0.0.1:2907): %w", 0, fmt.Errorf("member with the given ID: 0 doesn't exist")),
 		},
 		"safe, has bootstrap, complete process, successful removal": {
 			safeToRemove: true,
@@ -285,7 +370,7 @@ func TestRemoveBootstrap(t *testing.T) {
 				fakeInfraLister,
 			}
 
-			err = c.removeBootstrap(context.TODO(), test.safeToRemove, test.hasBootstrap, test.bootstrapId)
+			err = c.removeBootstrap(context.TODO(), test.safeToRemove, test.hasBootstrap, u.FakeEtcdMemberWithoutServer(int(test.bootstrapId)))
 			require.Equal(t, test.expectedErr, err)
 
 			_, status, _, err := fakeStaticPodClient.GetStaticPodOperatorState()
