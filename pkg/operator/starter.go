@@ -466,6 +466,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			controllerContext.EventRecorder,
 			os.Getenv("OPERATOR_IMAGE"),
 			featureGateAccessor,
+			backuphelpers.NewDisabledBackupConfig(),
 			configBackupInformer,
 			kubeInformersForNamespaces)
 
