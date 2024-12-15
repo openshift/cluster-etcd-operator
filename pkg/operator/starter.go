@@ -493,6 +493,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			featureGateAccessor,
 			backuphelpers.NewDisabledBackupConfig(),
 			configBackupInformer,
+			etcdClient,
 			kubeInformersForNamespaces)
 
 		backupController := backupcontroller.NewBackupController(

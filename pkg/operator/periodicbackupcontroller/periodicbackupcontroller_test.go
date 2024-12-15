@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
+
 	testing2 "k8s.io/utils/clock/testing"
 
 	"github.com/openshift/library-go/pkg/controller/factory"
@@ -93,6 +96,14 @@ func TestSyncLoopWithDefaultBackupCR(t *testing.T) {
 		&operatorv1.StaticPodOperatorSpec{OperatorSpec: operatorv1.OperatorSpec{ManagementState: operatorv1.Managed}},
 		&operatorv1.StaticPodOperatorStatus{}, nil, nil)
 
+	defaultEtcdMembers := []*etcdserverpb.Member{
+		u.FakeEtcdMemberWithoutServer(0),
+		u.FakeEtcdMemberWithoutServer(1),
+		u.FakeEtcdMemberWithoutServer(2),
+	}
+	fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(defaultEtcdMembers, etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 0}))
+	require.NoError(t, err)
+
 	controller := PeriodicBackupController{
 		operatorClient:        fakeOperatorClient,
 		podLister:             fakeKubeInformerForNamespace.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
@@ -101,6 +112,7 @@ func TestSyncLoopWithDefaultBackupCR(t *testing.T) {
 		operatorImagePullSpec: "pullspec-image",
 		backupVarGetter:       backuphelpers.NewDisabledBackupConfig(),
 		featureGateAccessor:   backupFeatureGateAccessor,
+		etcdClient:            fakeEtcdClient,
 		kubeInformers:         fakeKubeInformerForNamespace,
 	}
 
@@ -117,7 +129,7 @@ func TestSyncLoopWithDefaultBackupCR(t *testing.T) {
 	fakeKubeInformerForNamespace.Start(stopChan)
 
 	expDisabledBackupVar := "    args:\n    - --enabled=false"
-	err := controller.sync(context.TODO(), syncCtx)
+	err = controller.sync(context.TODO(), syncCtx)
 	require.NoError(t, err)
 	require.Equal(t, expDisabledBackupVar, controller.backupVarGetter.ArgString())
 
@@ -181,6 +193,14 @@ func TestSyncLoopWithDefaultBackupCRWithoutRetentionSpec(t *testing.T) {
 		&operatorv1.StaticPodOperatorSpec{OperatorSpec: operatorv1.OperatorSpec{ManagementState: operatorv1.Managed}},
 		&operatorv1.StaticPodOperatorStatus{}, nil, nil)
 
+	defaultEtcdMembers := []*etcdserverpb.Member{
+		u.FakeEtcdMemberWithoutServer(0),
+		u.FakeEtcdMemberWithoutServer(1),
+		u.FakeEtcdMemberWithoutServer(2),
+	}
+	fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(defaultEtcdMembers, etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 0}))
+	require.NoError(t, err)
+
 	controller := PeriodicBackupController{
 		operatorClient:        fakeOperatorClient,
 		podLister:             fakeKubeInformerForNamespace.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
@@ -189,6 +209,7 @@ func TestSyncLoopWithDefaultBackupCRWithoutRetentionSpec(t *testing.T) {
 		operatorImagePullSpec: "pullspec-image",
 		backupVarGetter:       backuphelpers.NewDisabledBackupConfig(),
 		featureGateAccessor:   backupFeatureGateAccessor,
+		etcdClient:            fakeEtcdClient,
 		kubeInformers:         fakeKubeInformerForNamespace,
 	}
 
@@ -205,7 +226,7 @@ func TestSyncLoopWithDefaultBackupCRWithoutRetentionSpec(t *testing.T) {
 	fakeKubeInformerForNamespace.Start(stopChan)
 
 	expDisabledBackupVar := "    args:\n    - --enabled=false"
-	err := controller.sync(context.TODO(), syncCtx)
+	err = controller.sync(context.TODO(), syncCtx)
 	require.NoError(t, err)
 	require.Equal(t, expDisabledBackupVar, controller.backupVarGetter.ArgString())
 
@@ -269,6 +290,14 @@ func TestSyncLoopWithDefaultBackupCRWithoutScheduleSpec(t *testing.T) {
 		&operatorv1.StaticPodOperatorSpec{OperatorSpec: operatorv1.OperatorSpec{ManagementState: operatorv1.Managed}},
 		&operatorv1.StaticPodOperatorStatus{}, nil, nil)
 
+	defaultEtcdMembers := []*etcdserverpb.Member{
+		u.FakeEtcdMemberWithoutServer(0),
+		u.FakeEtcdMemberWithoutServer(1),
+		u.FakeEtcdMemberWithoutServer(2),
+	}
+	fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(defaultEtcdMembers, etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 0}))
+	require.NoError(t, err)
+
 	controller := PeriodicBackupController{
 		operatorClient:        fakeOperatorClient,
 		podLister:             fakeKubeInformerForNamespace.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
@@ -277,6 +306,7 @@ func TestSyncLoopWithDefaultBackupCRWithoutScheduleSpec(t *testing.T) {
 		operatorImagePullSpec: "pullspec-image",
 		backupVarGetter:       backuphelpers.NewDisabledBackupConfig(),
 		featureGateAccessor:   backupFeatureGateAccessor,
+		etcdClient:            fakeEtcdClient,
 		kubeInformers:         fakeKubeInformerForNamespace,
 	}
 
@@ -293,7 +323,7 @@ func TestSyncLoopWithDefaultBackupCRWithoutScheduleSpec(t *testing.T) {
 	fakeKubeInformerForNamespace.Start(stopChan)
 
 	expDisabledBackupVar := "    args:\n    - --enabled=false"
-	err := controller.sync(context.TODO(), syncCtx)
+	err = controller.sync(context.TODO(), syncCtx)
 	require.NoError(t, err)
 	require.Equal(t, expDisabledBackupVar, controller.backupVarGetter.ArgString())
 
@@ -358,6 +388,14 @@ func TestSyncLoopWithDefaultBackupCREditSpec(t *testing.T) {
 		&operatorv1.StaticPodOperatorSpec{OperatorSpec: operatorv1.OperatorSpec{ManagementState: operatorv1.Managed}},
 		&operatorv1.StaticPodOperatorStatus{}, nil, nil)
 
+	defaultEtcdMembers := []*etcdserverpb.Member{
+		u.FakeEtcdMemberWithoutServer(0),
+		u.FakeEtcdMemberWithoutServer(1),
+		u.FakeEtcdMemberWithoutServer(2),
+	}
+	fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(defaultEtcdMembers, etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 0}))
+	require.NoError(t, err)
+
 	controller := PeriodicBackupController{
 		operatorClient:        fakeOperatorClient,
 		podLister:             fakeKubeInformerForNamespace.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
@@ -366,6 +404,7 @@ func TestSyncLoopWithDefaultBackupCREditSpec(t *testing.T) {
 		operatorImagePullSpec: "pullspec-image",
 		backupVarGetter:       backuphelpers.NewDisabledBackupConfig(),
 		featureGateAccessor:   backupFeatureGateAccessor,
+		etcdClient:            fakeEtcdClient,
 		kubeInformers:         fakeKubeInformerForNamespace,
 	}
 
@@ -382,7 +421,7 @@ func TestSyncLoopWithDefaultBackupCREditSpec(t *testing.T) {
 	fakeKubeInformerForNamespace.Start(stopChan)
 
 	expDisabledBackupVar := "    args:\n    - --enabled=false"
-	err := controller.sync(context.TODO(), syncCtx)
+	err = controller.sync(context.TODO(), syncCtx)
 	require.NoError(t, err)
 	require.Equal(t, expDisabledBackupVar, controller.backupVarGetter.ArgString())
 
@@ -473,6 +512,14 @@ func TestSyncLoopFailsDegradesOperatorWithDefaultBackupCR(t *testing.T) {
 	backups.Items = append(backups.Items, backup)
 	operatorFake := fake.NewClientset([]runtime.Object{&backups}...)
 
+	defaultEtcdMembers := []*etcdserverpb.Member{
+		u.FakeEtcdMemberWithoutServer(0),
+		u.FakeEtcdMemberWithoutServer(1),
+		u.FakeEtcdMemberWithoutServer(2),
+	}
+	fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(defaultEtcdMembers, etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 0}))
+	require.NoError(t, err)
+
 	controller := PeriodicBackupController{
 		operatorClient:        fakeOperatorClient,
 		podLister:             fakeKubeInformerForNamespace.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
@@ -481,6 +528,7 @@ func TestSyncLoopFailsDegradesOperatorWithDefaultBackupCR(t *testing.T) {
 		operatorImagePullSpec: "pullspec-image",
 		backupVarGetter:       backuphelpers.NewDisabledBackupConfig(),
 		featureGateAccessor:   backupFeatureGateAccessor,
+		etcdClient:            fakeEtcdClient,
 		kubeInformers:         fakeKubeInformerForNamespace,
 	}
 
@@ -497,7 +545,7 @@ func TestSyncLoopFailsDegradesOperatorWithDefaultBackupCR(t *testing.T) {
 	fakeKubeInformerForNamespace.Start(stopChan)
 
 	expDisabledBackupVar := "    args:\n    - --enabled=false"
-	err := controller.sync(context.TODO(), syncCtx)
+	err = controller.sync(context.TODO(), syncCtx)
 	require.NoError(t, err)
 	require.Equal(t, expDisabledBackupVar, controller.backupVarGetter.ArgString())
 	requireOperatorStatus(t, fakeOperatorClient, false)
@@ -800,4 +848,101 @@ func extractEtcdBackupServerArgVal(t testing.TB, argName string, args []string) 
 
 	t.Errorf("expected [etcd-backup-server] arg [%v], but found none", argName)
 	return ""
+}
+
+func TestEnsureVotingNodesLabeled(t *testing.T) {
+	// arrange
+	defaultEtcdMembers := []*etcdserverpb.Member{
+		u.FakeEtcdMemberWithoutServer(0),
+		u.FakeEtcdMemberWithoutServer(1),
+		u.FakeEtcdMemberWithoutServer(2),
+	}
+	fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(defaultEtcdMembers, etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 0}))
+	require.NoError(t, err)
+
+	allClusterNodes := defaultClusterNodes()
+	var objects []runtime.Object
+	for _, n := range allClusterNodes {
+		objects = append(objects, n)
+	}
+	client := k8sfakeclient.NewClientset(objects...)
+
+	// act
+	err = ensureVotingNodesLabeled(context.TODO(), client, fakeEtcdClient)
+	require.NoError(t, err)
+
+	// assert
+	masterNodes, err := client.CoreV1().Nodes().List(context.TODO(), v1.ListOptions{
+		LabelSelector: labels.Set{masterNodeSelector: ""}.String(),
+	})
+	require.NoError(t, err)
+	for _, m := range masterNodes.Items {
+		require.Contains(t, m.Labels, votingNodeSelector)
+	}
+}
+
+func TestEnsureVotingNodesUnLabeled(t *testing.T) {
+	// arrange
+	allClusterNodes := defaultClusterNodes()
+	for _, n := range allClusterNodes {
+		if _, ok := n.Labels[masterNodeSelector]; ok {
+			n.Labels[votingNodeSelector] = ""
+		}
+	}
+
+	var objects []runtime.Object
+	for _, n := range allClusterNodes {
+		objects = append(objects, n)
+	}
+	client := k8sfakeclient.NewClientset(objects...)
+
+	// act
+	err := ensureVotingNodesUnLabeled(context.TODO(), client)
+	require.NoError(t, err)
+
+	// assert
+	masterNodes, err := client.CoreV1().Nodes().List(context.TODO(), v1.ListOptions{
+		LabelSelector: labels.Set{masterNodeSelector: ""}.String(),
+	})
+	require.NoError(t, err)
+	for _, m := range masterNodes.Items {
+		require.NotContains(t, m.Labels, votingNodeSelector)
+	}
+}
+
+func defaultClusterNodes() []*corev1.Node {
+	var nodes []*corev1.Node
+
+	for i := 1; i <= 6; i++ {
+		isMaster := false
+		if i <= 3 {
+			isMaster = true
+		}
+		nodes = append(nodes, createNode(i, isMaster))
+	}
+	return nodes
+}
+
+func createNode(idx int, isMaster bool) *corev1.Node {
+	node := &corev1.Node{
+		ObjectMeta: v1.ObjectMeta{
+			Name: fmt.Sprintf("n-%d", idx),
+		},
+	}
+
+	if isMaster {
+		node.ObjectMeta.Labels = map[string]string{
+			masterNodeSelector: "",
+		}
+
+		if node.Status.Addresses == nil {
+			node.Status.Addresses = []corev1.NodeAddress{}
+		}
+		node.Status.Addresses = append(node.Status.Addresses, corev1.NodeAddress{
+			Type:    corev1.NodeInternalIP,
+			Address: fmt.Sprintf("10.0.0.%d", idx),
+		})
+	}
+
+	return node
 }
