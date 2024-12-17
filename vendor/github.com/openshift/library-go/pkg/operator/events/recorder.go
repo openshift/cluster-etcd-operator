@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"k8s.io/client-go/kubernetes"
@@ -224,7 +225,7 @@ func makeEvent(clock clock.PassiveClock, involvedObjRef *corev1.ObjectReference,
 	event := &corev1.Event{
 		ObjectMeta: metav1.ObjectMeta{
 			// TODO this is always used to create a unique event.  Perhaps we should hash the message to be unique enough for apply-configuration
-			Name:      fmt.Sprintf("%v.%x", involvedObjRef.Name, currentTime.UnixNano()),
+			Name:      fmt.Sprintf("%v.%x.%s", involvedObjRef.Name, currentTime.UnixNano(), hashForEventNameSuffix(eventType, reason, message)),
 			Namespace: involvedObjRef.Namespace,
 		},
 		InvolvedObject: *involvedObjRef,
@@ -237,4 +238,21 @@ func makeEvent(clock clock.PassiveClock, involvedObjRef *corev1.ObjectReference,
 	}
 	event.Source.Component = sourceComponent
 	return event
+}
+
+func hashForEventNameSuffix(in ...string) string {
+	data := []byte{}
+	for _, curr := range in {
+		data = append(data, []byte(curr)...)
+	}
+	if len(data) == 0 {
+		return "MISSING"
+	}
+
+	hash := sha256.New()
+	hash.Write(data)
+	hashBytes := hash.Sum(nil)
+
+	// we're looking to deconflict names, not protect the crown jewels
+	return fmt.Sprintf("%x", hashBytes[len(hashBytes)-4:])
 }
