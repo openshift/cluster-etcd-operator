@@ -67,5 +67,13 @@ func readDesiredControlPlaneReplicas(configMapListerForKubeSystemNamespace corev
 		return 0, fmt.Errorf("required field: %s.controlPlane.replicas doesn't exist in cm: %s/kube-system", installConfigKeyName, clusterConfigConfigMapName)
 	}
 
+	desiredArbiterReplicas, exists, err := unstructured.NestedFloat64(unstructuredInstallConfig, "arbiterNode", "replicas")
+	if err != nil {
+		return 0, fmt.Errorf("failed to extract field: %s.arbiterNode.replicas from cm: %s/kube-system, err: %v", installConfigKeyName, clusterConfigConfigMapName, err)
+	}
+	if exists {
+		desiredReplicas += desiredArbiterReplicas
+	}
+
 	return int(desiredReplicas), nil
 }
