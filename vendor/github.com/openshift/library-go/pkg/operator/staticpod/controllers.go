@@ -2,8 +2,9 @@ package staticpod
 
 import (
 	"fmt"
-	"k8s.io/utils/clock"
 	"time"
+
+	"k8s.io/utils/clock"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/client-go/config/informers/externalversions"
@@ -79,6 +80,8 @@ type staticPodOperatorControllerBuilder struct {
 	guardCreateConditionalFunc    func() (bool, bool, error)
 
 	revisionControllerPrecondition revisioncontroller.PreconditionFunc
+
+	extraNodeSelector labels.Selector
 }
 
 func NewBuilder(
@@ -108,6 +111,9 @@ type Builder interface {
 	WithMinReadyDuration(minReadyDuration time.Duration) Builder
 	WithStartupMonitor(enabledStartupMonitor func() (bool, error)) Builder
 
+	// WithExtraNodeSelector Informs controllers to handle extra nodes as well as master nodes.
+	WithExtraNodeSelector(extraNodeSelector labels.Selector) Builder
+
 	// WithCustomInstaller allows mutating the installer pod definition just before
 	// the installer pod is created for a revision.
 	WithCustomInstaller(command []string, installerPodMutationFunc installer.InstallerPodMutationFunc) Builder
@@ -122,6 +128,11 @@ type Builder interface {
 	WithPodDisruptionBudgetGuard(operatorNamespace, operatorName, readyzPort, readyzEndpoint string, pdbUnhealthyPodEvictionPolicy *v1.UnhealthyPodEvictionPolicyType, createConditionalFunc func() (bool, bool, error)) Builder
 	WithRevisionControllerPrecondition(revisionControllerPrecondition revisioncontroller.PreconditionFunc) Builder
 	ToControllers() (manager.ControllerManager, error)
+}
+
+func (b *staticPodOperatorControllerBuilder) WithExtraNodeSelector(extraNodeSelector labels.Selector) Builder {
+	b.extraNodeSelector = extraNodeSelector
+	return b
 }
 
 func (b *staticPodOperatorControllerBuilder) WithEvents(eventRecorder events.Recorder) Builder {
@@ -351,6 +362,7 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 		b.staticPodOperatorClient,
 		clusterInformers,
 		eventRecorder,
+		b.extraNodeSelector,
 	), 1)
 
 	// this cleverly sets the same condition that used to be set because of the way that the names are constructed
@@ -385,6 +397,7 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 			pdbClient,
 			eventRecorder,
 			b.guardCreateConditionalFunc,
+			b.extraNodeSelector,
 		); err == nil {
 			manager.WithController(guardController, 1)
 		} else {

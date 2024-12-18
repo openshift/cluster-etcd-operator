@@ -53,6 +53,8 @@ type GuardController struct {
 	// installerPodImageFn returns the image name for the installer pod
 	installerPodImageFn   func() string
 	createConditionalFunc func() (bool, bool, error)
+
+	extraNodeSelector labels.Selector
 }
 
 func NewGuardController(
@@ -70,6 +72,7 @@ func NewGuardController(
 	pdbGetter policyclientv1.PodDisruptionBudgetsGetter,
 	eventRecorder events.Recorder,
 	createConditionalFunc func() (bool, bool, error),
+	extraNodeSelector labels.Selector,
 ) (factory.Controller, error) {
 	if operandPodLabelSelector == nil {
 		return nil, fmt.Errorf("GuardController: missing required operandPodLabelSelector")
@@ -101,6 +104,7 @@ func NewGuardController(
 		pdbLister:                     kubeInformersForTargetNamespace.Policy().V1().PodDisruptionBudgets().Lister(),
 		installerPodImageFn:           getInstallerPodImageFromEnv,
 		createConditionalFunc:         createConditionalFunc,
+		extraNodeSelector:             extraNodeSelector,
 	}
 
 	return factory.New().
@@ -231,6 +235,17 @@ func (c *GuardController) sync(ctx context.Context, syncCtx factory.SyncContext)
 		nodes, err := c.nodeLister.List(labels.NewSelector().Add(*selector))
 		if err != nil {
 			return err
+		}
+
+		// Due to a design choice on ORing keys in label selectors, we run this query again to allow for additional
+		// selectors as well as selectors that want to OR with master nodes.
+		// see: https://github.com/kubernetes/kubernetes/issues/90549#issuecomment-620625847
+		if c.extraNodeSelector != nil {
+			extraNodes, err := c.nodeLister.List(c.extraNodeSelector)
+			if err != nil {
+				return err
+			}
+			nodes = append(nodes, extraNodes...)
 		}
 
 		pods, err := c.podLister.Pods(c.targetNamespace).List(c.operandPodLabelSelector)
