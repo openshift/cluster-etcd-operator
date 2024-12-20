@@ -861,6 +861,56 @@ func (c *InstallerController) newNodeStateForInstallInProgress(ctx context.Conte
 	}
 }
 
+func (c *InstallerController) safeToLaunchInstallerPod(ctx context.Context, candidate *operatorv1.NodeStatus) (safe bool, err error) {
+	// TODO: live check is made here
+	list, err := c.podsGetter.Pods(c.targetNamespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return false, fmt.Errorf("installer pod get error while determining whether it's safe to launch new installer pod - %w", err)
+	}
+	if len(list.Items) == 0 {
+		return true, nil
+	}
+
+	thisPodName := getInstallerPodName(candidate)
+	thisNode := candidate.NodeName
+	for _, existingInstallerPod := range list.Items {
+		// any Pending, or Running Pod on a different node?
+		phase := existingInstallerPod.Status.Phase
+		switch phase {
+		case corev1.PodRunning, corev1.PodPending:
+			// if the existing pod is on the same node then we deem it safe
+			if otherNode := existingInstallerPod.Spec.NodeName; thisNode != otherNode {
+				klog.Warningf("not safe to create installer pod %q just yet, a separate pod %q is %q on a different node: %q", thisPodName, existingInstallerPod.Name, phase, otherNode)
+				return false, nil
+			}
+		}
+	}
+
+	// we did not find any concurrent installer Pods on two separate nodes
+	// TODO: but an operand static pod on a different node could already
+	// be pending or failing
+	_, status, _, err := c.operatorClient.GetStaticPodOperatorState()
+	if err != nil {
+		return false, fmt.Errorf("get operator state error while determining whether it's safe to launch new installer pod - %w", err)
+	}
+	for _, ns := range status.NodeStatuses {
+		otherNode := ns.NodeName
+		if thisNode != otherNode {
+			state, _, _, _, _, err := c.getStaticPodState(ctx, otherNode)
+			if err != nil {
+				return false, fmt.Errorf("static pod check error while determining whether it's safe to launch new installer pod - %w", err)
+			}
+			if state != staticPodStateReady {
+				klog.Warningf("not safe to create installer pod %q just yet, static pod is not ready on node: %q", thisPodName, otherNode)
+				return false, nil
+			}
+		}
+	}
+
+	klog.Infof("safe to create installer pod %q", thisPodName)
+	return true, nil
+}
+
 // getRevisionToStart returns the revision we need to start or zero if none
 func (c *InstallerController) getRevisionToStart(currNodeState, prevNodeState *operatorv1.NodeStatus, operatorStatus *operatorv1.StaticPodOperatorStatus) int32 {
 	if prevNodeState == nil {
@@ -916,6 +966,15 @@ func (c *InstallerController) ensureInstallerPod(ctx context.Context, operatorSp
 
 	if c.configMaps[0].Optional {
 		return fmt.Errorf("pod configmap %s is required, cannot be optional", c.configMaps[0].Name)
+	}
+
+	// experimental
+	safe, err := c.safeToLaunchInstallerPod(ctx, ns)
+	if err != nil {
+		return err
+	}
+	if !safe {
+		return fmt.Errorf("not safe to create installer pod %q", pod.Name)
 	}
 
 	// if the startup monitor is enabled we need to acquire an exclusive lock
