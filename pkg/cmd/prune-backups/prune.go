@@ -23,6 +23,7 @@ const (
 	RetentionTypeNone   = "None"
 	RetentionTypeSize   = "RetentionSize"
 	RetentionTypeNumber = "RetentionNumber"
+	backupVolume        = "/var/lib/etcd-auto-backup"
 )
 
 type backupDirStats []backupDirStat
@@ -69,7 +70,7 @@ func (r *PruneOpts) AddFlags(cmd *cobra.Command) {
 	// the defaults are zero for validation, we inject the real defaults from the periodic backup controller
 	flagSet.IntVar(&r.MaxNumberOfBackups, "maxNumberOfBackups", 0, "how many backups to keep when type=RetentionNumber")
 	flagSet.IntVar(&r.MaxSizeOfBackupsGb, "maxSizeOfBackupsGb", 0, "how many gigabytes of backups to keep when type=RetentionSize")
-	flagSet.StringVar(&r.BackupPath, "backupPath", BasePath, "path for backups to be pruned")
+	flagSet.StringVar(&r.BackupPath, "backupPath", backupVolume, "path for backups to be pruned")
 
 	// adding klog flags to tune verbosity better
 	gfs := goflag.NewFlagSet("", goflag.ExitOnError)
