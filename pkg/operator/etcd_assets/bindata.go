@@ -202,8 +202,8 @@ spec:
               command: [ "cluster-etcd-operator" ]
               args: [ "templated" ]
               volumeMounts:
-                - mountPath: /etc/kubernetes/cluster-backup
-                  name: etc-kubernetes-cluster-backup
+                - mountPath: /var/lib/etcd-auto-backup
+                  name: etcd-auto-backup-dir
           containers:
             - name: cluster-backup
               imagePullPolicy: IfNotPresent
@@ -226,9 +226,10 @@ spec:
             - operator: "Exists"
           restartPolicy: OnFailure
           volumes:
-            - name: etc-kubernetes-cluster-backup
-              persistentVolumeClaim:
-                claimName: templated
+            - name: etcd-auto-backup-dir
+              hostPath:
+                path: /var/lib/etcd-auto-backup
+
 `)
 
 func etcdClusterBackupCronjobYamlBytes() ([]byte, error) {
@@ -269,8 +270,8 @@ spec:
               memory: 50Mi
               cpu: 5m
           volumeMounts:
-            - mountPath: /etc/kubernetes/cluster-backup
-              name: etc-kubernetes-cluster-backup
+            - mountPath: /var/lib/etcd-auto-backup
+              name: etcd-auto-backup-dir
             - mountPath: /var/run/secrets/etcd-client
               name: etcd-client
             - mountPath: /var/run/configmaps/etcd-ca
@@ -303,8 +304,8 @@ spec:
               name: cert-dir
             - mountPath: /etc/kubernetes/manifests
               name: static-pod-dir
-            - mountPath: /etc/kubernetes/cluster-backup
-              name: etc-kubernetes-cluster-backup
+            - mountPath: /var/lib/etcd-auto-backup
+              name: etcd-auto-backup-dir
             - mountPath: /var/run/secrets/etcd-client
               name: etcd-client
             - mountPath: /var/run/configmaps/etcd-ca
@@ -336,9 +337,9 @@ spec:
         - name: etcd-ca
           configMap:
             name: etcd-ca-bundle
-        - name: etc-kubernetes-cluster-backup
-          persistentVolumeClaim:
-            claimName: templated
+        - name: etcd-auto-backup-dir
+          hostPath:
+            path: /var/lib/etcd-auto-backup
 `)
 
 func etcdClusterBackupJobYamlBytes() ([]byte, error) {

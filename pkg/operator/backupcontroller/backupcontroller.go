@@ -428,19 +428,6 @@ func createBackupJob(ctx context.Context,
 		{Name: "ETCDCTL_CACERT", Value: "/var/run/configmaps/etcd-ca/ca-bundle.crt"},
 	}
 
-	injected := false
-	for _, mount := range job.Spec.Template.Spec.Volumes {
-		if mount.Name == "etc-kubernetes-cluster-backup" {
-			mount.PersistentVolumeClaim.ClaimName = backup.Spec.PVCName
-			injected = true
-			break
-		}
-	}
-
-	if !injected {
-		return fmt.Errorf("could not inject PVC into Job template, please check the included cluster-backup-job.yaml")
-	}
-
 	klog.Infof("BackupController starts with backup [%s] as job [%s], writing to filename [%s]", backup.Name, job.Name, backupFileName)
 	_, err = jobClient.Create(ctx, job, v1.CreateOptions{})
 	if err != nil {
