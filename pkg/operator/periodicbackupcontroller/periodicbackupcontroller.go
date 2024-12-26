@@ -32,9 +32,9 @@ import (
 )
 
 const (
-	backupJobLabel                = "backup-name"
-	defaultBackupCRName           = "default"
-	etcdBackupServerContainerName = "etcd-backup-server"
+	backupJobLabel           = "backup-name"
+	etcdAutoBackupDirVolName = "etcd-auto-backup-dir"
+	etcdAutoBackupDirVolPath = "/var/lib/etcd-auto-backup"
 )
 
 type PeriodicBackupController struct {
@@ -183,10 +183,10 @@ func reconcileCronJob(ctx context.Context,
 	// add hostPath per job
 	cronJob.Spec.JobTemplate.Spec.Template.Spec.Volumes = []corev1.Volume{
 		{
-			Name: "etc-kubernetes-cluster-backup",
+			Name: etcdAutoBackupDirVolName,
 			VolumeSource: corev1.VolumeSource{
 				HostPath: &corev1.HostPathVolumeSource{
-					Path: etcdDataDirVolPath,
+					Path: etcdAutoBackupDirVolPath,
 					Type: ptr.To(corev1.HostPathUnset),
 				},
 			},
