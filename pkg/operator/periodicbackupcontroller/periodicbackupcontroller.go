@@ -202,19 +202,6 @@ func reconcileCronJob(ctx context.Context,
 		UID:        backup.UID,
 	})
 
-	injected := false
-	for _, mount := range cronJob.Spec.JobTemplate.Spec.Template.Spec.Volumes {
-		if mount.Name == "etc-kubernetes-cluster-backup" {
-			mount.PersistentVolumeClaim.ClaimName = backup.Spec.EtcdBackupSpec.PVCName
-			injected = true
-			break
-		}
-	}
-
-	if !injected {
-		return fmt.Errorf("could not inject PVC into CronJob template, please check the included cluster-backup-cronjob.yaml")
-	}
-
 	cronJob.Spec.Schedule = backup.Spec.EtcdBackupSpec.Schedule
 	if backup.Spec.EtcdBackupSpec.TimeZone != "" {
 		cronJob.Spec.TimeZone = &backup.Spec.EtcdBackupSpec.TimeZone
