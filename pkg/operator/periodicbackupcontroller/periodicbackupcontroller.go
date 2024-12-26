@@ -187,7 +187,7 @@ func reconcileCronJob(ctx context.Context,
 			VolumeSource: corev1.VolumeSource{
 				HostPath: &corev1.HostPathVolumeSource{
 					Path: etcdAutoBackupDirVolPath,
-					Type: ptr.To(corev1.HostPathUnset),
+					Type: ptr.To(corev1.HostPathDirectoryOrCreate),
 				},
 			},
 		},

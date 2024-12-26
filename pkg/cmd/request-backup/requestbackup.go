@@ -58,8 +58,8 @@ func NewRequestBackupCommand(ctx context.Context) *cobra.Command {
 func (r *requestBackupOpts) AddFlags(cmd *cobra.Command) {
 	flagSet := cmd.Flags()
 
-	flagSet.StringVar(&r.pvcName, "pvc-name", "", "pvc-name specifies the name of the PersistentVolumeClaim (PVC) which binds a PersistentVolume where the etcd backup file would be saved")
-	cobra.MarkFlagRequired(flagSet, "pvcName")
+	flagSet.StringVar(&r.pvcName, "pvc-name", "/var/lib/etcd-auto-backup", "pvc-name specifies the name of the PersistentVolumeClaim (PVC) which binds a PersistentVolume where the etcd backup file would be saved")
+	//cobra.MarkFlagRequired(flagSet, "pvcName")
 
 	flagSet.StringVar(&r.kubeConfig, "kubeconfig", "", "Optional kubeconfig specifies the kubeConfig for when the cmd is running outside of a cluster")
 
@@ -70,10 +70,6 @@ func (r *requestBackupOpts) AddFlags(cmd *cobra.Command) {
 }
 
 func (r *requestBackupOpts) Validate() error {
-	if r.pvcName == "" {
-		return fmt.Errorf("--pvc-name must be set")
-	}
-
 	return nil
 }
 
@@ -95,9 +91,7 @@ func (r *requestBackupOpts) ReadEnvVars() error {
 
 func (r *requestBackupOpts) Run(ctx context.Context) error {
 	if r.pvcName == "" {
-		errMsg := "pvcName must be specified to execute a backup request"
-		klog.Errorf(errMsg)
-		return fmt.Errorf(errMsg)
+		r.pvcName = "/var/lib/etcd-auto-backup"
 	}
 
 	// ReadEnvVars reads the env vars necessary to populate the ownerReference

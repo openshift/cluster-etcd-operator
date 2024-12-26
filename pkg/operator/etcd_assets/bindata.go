@@ -224,7 +224,7 @@ spec:
             node-role.kubernetes.io/master: ""
           tolerations:
             - operator: "Exists"
-          restartPolicy: OnFailure
+          restartPolicy: Never
           volumes:
             - name: etcd-auto-backup-dir
               hostPath:

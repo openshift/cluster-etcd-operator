@@ -35,7 +35,7 @@ import (
 const (
 	backupLabel      = "cluster-backup-job"
 	backupJobLabel   = "backup-name"
-	recentBackupPath = "/etc/kubernetes/cluster-backup"
+	recentBackupPath = "/var/lib/etcd-auto-backup"
 	backupDirEnvName = "CLUSTER_BACKUP_PATH"
 )
 
