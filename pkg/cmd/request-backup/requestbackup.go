@@ -143,7 +143,7 @@ func (r *requestBackupOpts) Run(ctx context.Context) error {
 	}
 
 	for _, backup := range backups.Items {
-		if backup.Name == "default" {
+		if backup.Name == r.etcdBackupName {
 			return nil
 		}
 	}
