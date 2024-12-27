@@ -93,6 +93,7 @@ rules:
       - "create"
       - "update"
       - "delete"
+      - "list"
   - apiGroups:
       - "batch"
     resources:
