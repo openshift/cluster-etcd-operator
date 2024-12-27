@@ -4,7 +4,6 @@ import (
 	"context"
 	goflag "flag"
 	"fmt"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"os"
 	"os/signal"
 	"syscall"
@@ -132,21 +131,6 @@ func (r *requestBackupOpts) Run(ctx context.Context) error {
 		return err
 	}
 	etcdBackupClient := operatorClient.EtcdBackups()
-
-	// if default backup CR exist, skip creating any manual backup
-	backups, err := etcdBackupClient.List(ctx, metav1.ListOptions{})
-	if err != nil {
-		if !apierrors.IsNotFound(err) {
-			klog.Errorf("failed to list EtcdBackup CR: %v", err)
-			return err
-		}
-	}
-
-	for _, backup := range backups.Items {
-		if backup.Name == r.etcdBackupName {
-			return nil
-		}
-	}
 
 	// Create the EtcdBackup CR
 	// TODO(haseeb): This EtcdBackup manifest is small enough but should we template this manifest from bindata/etcd
