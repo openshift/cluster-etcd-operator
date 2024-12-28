@@ -460,6 +460,9 @@ func createBackupJob(ctx context.Context,
 		return fmt.Errorf("could not inject PVC into Job template, please check the included cluster-backup-job.yaml")
 	}
 
+	// apply parallelism for No-Config Backups
+	job = parallelizeBackupJob(job)
+
 	klog.Infof("BackupController starts with backup [%s] as job [%s], writing to filename [%s]", backup.Name, job.Name, backupFileName)
 	_, err = jobClient.Create(ctx, job, v1.CreateOptions{})
 	if err != nil {
@@ -488,4 +491,46 @@ func createBackupJob(ctx context.Context,
 	}
 
 	return nil
+}
+
+func parallelizeBackupJob(job *batchv1.Job) *batchv1.Job {
+	// add job parallelism
+	job.Spec.Parallelism = ptr.To(int32(3))
+	job.Spec.Completions = ptr.To(int32(3))
+
+	job.Spec.Template.Spec.Affinity = &corev1.Affinity{
+		NodeAffinity: &corev1.NodeAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+				NodeSelectorTerms: []corev1.NodeSelectorTerm{
+					{
+						MatchExpressions: []corev1.NodeSelectorRequirement{
+							{
+								Key:      "node-role.kubernetes.io/master",
+								Operator: corev1.NodeSelectorOpExists,
+							},
+						},
+					},
+				},
+			},
+		},
+
+		PodAntiAffinity: &corev1.PodAntiAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+				{
+					LabelSelector: &v1.LabelSelector{
+						MatchExpressions: []v1.LabelSelectorRequirement{
+							{
+								Key:      "batch.kubernetes.io/job-name",
+								Operator: v1.LabelSelectorOpIn,
+								Values:   []string{job.Name},
+							},
+						},
+					},
+					TopologyKey: "kubernetes.io/hostname",
+				},
+			},
+		},
+	}
+
+	return job
 }

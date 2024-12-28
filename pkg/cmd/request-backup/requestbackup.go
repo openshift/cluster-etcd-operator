@@ -15,7 +15,6 @@ import (
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 )
@@ -144,7 +143,7 @@ func (r *requestBackupOpts) Run(ctx context.Context) error {
 	// like we usually do for other manifests?
 	etcdBackup := &operatorv1alpha1.EtcdBackup{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s-%s", r.etcdBackupName, utilrand.String(8)),
+			Name:      r.etcdBackupName,
 			Namespace: operatorclient.TargetNamespace,
 			// Due to a limitation of the kube-controller, we can't rely on the api to garbage collect non-namespaced
 			// etcdbackups from their corresponding namespaced jobs.
