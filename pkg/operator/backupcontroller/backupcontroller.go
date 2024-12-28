@@ -434,20 +434,30 @@ func createBackupJob(ctx context.Context,
 	}
 
 	injected := false
-	for _, mount := range job.Spec.Template.Spec.Volumes {
+	for idx, mount := range job.Spec.Template.Spec.Volumes {
 		if mount.Name == "etc-kubernetes-cluster-backup" {
-			mount.PersistentVolumeClaim.ClaimName = backup.Spec.PVCName
+			if backup.Spec.PVCName != "no-config" {
+				mount.PersistentVolumeClaim.ClaimName = backup.Spec.PVCName
+			} else {
+				// use hostPath instead of PVC in case of `no-config` backup
+				job.Spec.Template.Spec.Volumes[idx] = corev1.Volume{
+					Name: "etc-kubernetes-cluster-backup",
+					VolumeSource: corev1.VolumeSource{
+						HostPath: &corev1.HostPathVolumeSource{
+							Path: "/etc/kubernetes/cluster-backup",
+							Type: ptr.To(corev1.HostPathDirectoryOrCreate),
+						},
+					},
+				}
+			}
+
 			injected = true
 			break
 		}
 	}
 
 	if !injected {
-		if backup.Spec.PVCName == "no-config" {
-			useHostPathVol(job)
-		} else {
-			return fmt.Errorf("could not inject PVC into Job template, please check the included cluster-backup-job.yaml")
-		}
+		return fmt.Errorf("could not inject PVC into Job template, please check the included cluster-backup-job.yaml")
 	}
 
 	klog.Infof("BackupController starts with backup [%s] as job [%s], writing to filename [%s]", backup.Name, job.Name, backupFileName)
@@ -478,21 +488,4 @@ func createBackupJob(ctx context.Context,
 	}
 
 	return nil
-}
-
-func useHostPathVol(job *batchv1.Job) *batchv1.Job {
-
-	job.Spec.Template.Spec.Volumes = []corev1.Volume{
-		{
-			Name: "etc-kubernetes-cluster-backup",
-			VolumeSource: corev1.VolumeSource{
-				HostPath: &corev1.HostPathVolumeSource{
-					Path: "/etc/kubernetes/cluster-backup",
-					Type: ptr.To(corev1.HostPathDirectoryOrCreate),
-				},
-			},
-		},
-	}
-
-	return job
 }
