@@ -159,15 +159,15 @@ func reconcileCronJob(ctx context.Context,
 		}
 	}
 
-	if !injected {
-		if backup.Name == defaultBackupCRName {
-			cronJob, err = applyAutomatedNoConfigBackup(cronJob)
-			if err != nil {
-				return err
-			}
-		} else {
-			return fmt.Errorf("could not inject PVC into CronJob template, please check the included cluster-backup-cronjob.yaml")
+	if backup.Name == defaultBackupCRName {
+		cronJob, err = applyAutomatedNoConfigBackup(cronJob)
+		if err != nil {
+			return fmt.Errorf("could not apply default backup")
 		}
+	}
+
+	if !injected {
+		return fmt.Errorf("could not inject PVC into CronJob template, please check the included cluster-backup-cronjob.yaml")
 	}
 
 	cronJob.Spec.Schedule = backup.Spec.EtcdBackupSpec.Schedule
@@ -189,19 +189,20 @@ func reconcileCronJob(ctx context.Context,
 	// The name of the CR will need to be unique for each scheduled run of the CronJob, so the name is
 	// set at runtime as the pod via the MY_POD_NAME populated via the downward API.
 	// See the CronJob template manifest for reference.
-	if injected {
+	cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Args = []string{
+		"request-backup",
+		"--pvc-name=" + backup.Spec.EtcdBackupSpec.PVCName,
+	}
+
+	if backup.Name == defaultBackupCRName {
 		cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Args = []string{
 			"request-backup",
-			"--pvc-name=" + backup.Spec.EtcdBackupSpec.PVCName,
-		}
-	} else {
-		cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Args = []string{
-			"request-backup",
-			"--pvc-name=" + "no-config",
+			"--pvc-name=no-config",
 		}
 	}
 
 	if create {
+		klog.Infof("cronjob to create is [%v]", *cronJob)
 		_, err := cronJobClient.Create(ctx, cronJob, v1.CreateOptions{})
 		if err != nil {
 			return fmt.Errorf("PeriodicBackupController could not create cronjob %s: %w", cronJob.Name, err)
