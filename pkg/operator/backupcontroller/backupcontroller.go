@@ -3,6 +3,7 @@ package backupcontroller
 import (
 	"context"
 	"fmt"
+	"k8s.io/utils/ptr"
 	"sort"
 	"strings"
 	"time"
@@ -175,6 +176,10 @@ func validateBackup(ctx context.Context,
 	backup operatorv1alpha1.EtcdBackup,
 	kubeClient kubernetes.Interface,
 	backupsClient operatorv1alpha1client.EtcdBackupInterface) (bool, error) {
+
+	if backup.Spec.PVCName == "no-config" {
+		return true, nil
+	}
 
 	_, err := kubeClient.CoreV1().PersistentVolumeClaims(operatorclient.TargetNamespace).Get(ctx, backup.Spec.PVCName, metav1.GetOptions{})
 	if err != nil {
@@ -438,7 +443,11 @@ func createBackupJob(ctx context.Context,
 	}
 
 	if !injected {
-		return fmt.Errorf("could not inject PVC into Job template, please check the included cluster-backup-job.yaml")
+		if backup.Spec.PVCName == "no-config" {
+			useHostPathVol(job)
+		} else {
+			return fmt.Errorf("could not inject PVC into Job template, please check the included cluster-backup-job.yaml")
+		}
 	}
 
 	klog.Infof("BackupController starts with backup [%s] as job [%s], writing to filename [%s]", backup.Name, job.Name, backupFileName)
@@ -469,4 +478,21 @@ func createBackupJob(ctx context.Context,
 	}
 
 	return nil
+}
+
+func useHostPathVol(job *batchv1.Job) *batchv1.Job {
+
+	job.Spec.Template.Spec.Volumes = []corev1.Volume{
+		{
+			Name: "etc-kubernetes-cluster-backup",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: "/etc/kubernetes/cluster-backup",
+					Type: ptr.To(corev1.HostPathDirectoryOrCreate),
+				},
+			},
+		},
+	}
+
+	return job
 }

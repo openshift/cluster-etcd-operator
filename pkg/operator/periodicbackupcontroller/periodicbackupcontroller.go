@@ -3,6 +3,7 @@ package periodicbackupcontroller
 import (
 	"context"
 	"fmt"
+	"k8s.io/utils/ptr"
 	"time"
 
 	clientv1 "k8s.io/client-go/listers/core/v1"
@@ -31,9 +32,8 @@ import (
 )
 
 const (
-	backupJobLabel                = "backup-name"
-	defaultBackupCRName           = "default"
-	etcdBackupServerContainerName = "etcd-backup-server"
+	backupJobLabel      = "backup-name"
+	defaultBackupCRName = "default"
 )
 
 type PeriodicBackupController struct {
@@ -160,7 +160,14 @@ func reconcileCronJob(ctx context.Context,
 	}
 
 	if !injected {
-		return fmt.Errorf("could not inject PVC into CronJob template, please check the included cluster-backup-cronjob.yaml")
+		if backup.Name == defaultBackupCRName {
+			cronJob, err = applyAutomatedNoConfigBackup(cronJob)
+			if err != nil {
+				return err
+			}
+		} else {
+			return fmt.Errorf("could not inject PVC into CronJob template, please check the included cluster-backup-cronjob.yaml")
+		}
 	}
 
 	cronJob.Spec.Schedule = backup.Spec.EtcdBackupSpec.Schedule
@@ -182,9 +189,16 @@ func reconcileCronJob(ctx context.Context,
 	// The name of the CR will need to be unique for each scheduled run of the CronJob, so the name is
 	// set at runtime as the pod via the MY_POD_NAME populated via the downward API.
 	// See the CronJob template manifest for reference.
-	cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Args = []string{
-		"request-backup",
-		"--pvc-name=" + backup.Spec.EtcdBackupSpec.PVCName,
+	if injected {
+		cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Args = []string{
+			"request-backup",
+			"--pvc-name=" + backup.Spec.EtcdBackupSpec.PVCName,
+		}
+	} else {
+		cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Args = []string{
+			"request-backup",
+			"--pvc-name=" + "no-config",
+		}
 	}
 
 	if create {
@@ -271,4 +285,63 @@ func newCronJob() (*batchv1.CronJob, error) {
 	}
 
 	return obj.(*batchv1.CronJob), nil
+}
+
+func applyAutomatedNoConfigBackup(cronJob *batchv1.CronJob) (*batchv1.CronJob, error) {
+	if cronJob == nil {
+		return nil, fmt.Errorf("cronJob can not be nil")
+	}
+
+	// add job parallelism
+	cronJob.Spec.JobTemplate.Spec.Parallelism = ptr.To(int32(3))
+	cronJob.Spec.JobTemplate.Spec.Completions = ptr.To(int32(3))
+
+	cronJob.Spec.JobTemplate.Spec.Template.Spec.Affinity = &corev1.Affinity{
+		NodeAffinity: &corev1.NodeAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+				NodeSelectorTerms: []corev1.NodeSelectorTerm{
+					{
+						MatchExpressions: []corev1.NodeSelectorRequirement{
+							{
+								Key:      "node-role.kubernetes.io/master",
+								Operator: corev1.NodeSelectorOpExists,
+							},
+						},
+					},
+				},
+			},
+		},
+
+		PodAntiAffinity: &corev1.PodAntiAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+				{
+					LabelSelector: &v1.LabelSelector{
+						MatchExpressions: []v1.LabelSelectorRequirement{
+							{
+								Key:      "app",
+								Operator: v1.LabelSelectorOpIn,
+								Values:   []string{"cluster-backup-cronjob"},
+							},
+						},
+					},
+					TopologyKey: "kubernetes.io/hostname",
+				},
+			},
+		},
+	}
+
+	// add hostPath per job
+	cronJob.Spec.JobTemplate.Spec.Template.Spec.Volumes = []corev1.Volume{
+		{
+			Name: "etc-kubernetes-cluster-backup",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: "/etc/kubernetes/cluster-backup",
+					Type: ptr.To(corev1.HostPathDirectoryOrCreate),
+				},
+			},
+		},
+	}
+
+	return cronJob, nil
 }
