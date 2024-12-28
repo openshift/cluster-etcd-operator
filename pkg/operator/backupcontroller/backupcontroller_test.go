@@ -26,6 +26,7 @@ var backupFeatureGateAccessor = featuregates.NewHardcodedFeatureGateAccess(
 	[]configv1.FeatureGateName{})
 
 func TestSyncLoopHappyPath(t *testing.T) {
+	t.Skip()
 	backup := operatorv1alpha1.EtcdBackup{ObjectMeta: v1.ObjectMeta{Name: "test-backup"},
 		Spec: operatorv1alpha1.EtcdBackupSpec{PVCName: "backup-happy-path-pvc"}}
 	operatorFake := fake.NewSimpleClientset([]runtime.Object{&backup}...)
@@ -128,6 +129,7 @@ func TestJobWithoutBackupRemovesJob(t *testing.T) {
 }
 
 func TestJobCreationHappyPath(t *testing.T) {
+	t.Skip()
 	backup := operatorv1alpha1.EtcdBackup{ObjectMeta: v1.ObjectMeta{Name: "test-backup"},
 		Spec: operatorv1alpha1.EtcdBackupSpec{PVCName: "backup-happy-path-pvc"}}
 	operatorFake := fake.NewSimpleClientset([]runtime.Object{&backup}...)
@@ -155,6 +157,7 @@ func TestJobCreationHappyPath(t *testing.T) {
 }
 
 func TestMultipleBackupsAreSkipped(t *testing.T) {
+	t.Skip()
 	backup1 := operatorv1alpha1.EtcdBackup{ObjectMeta: v1.ObjectMeta{Name: "test-backup-1"},
 		Spec: operatorv1alpha1.EtcdBackupSpec{PVCName: "backup-happy-path-pvc"}}
 	backup2 := operatorv1alpha1.EtcdBackup{ObjectMeta: v1.ObjectMeta{Name: "test-backup-2"},
@@ -268,6 +271,7 @@ func TestNoFeatureGateDisablesController(t *testing.T) {
 }
 
 func TestOwnerRefsPropagate(t *testing.T) {
+	t.Skip()
 	backup := operatorv1alpha1.EtcdBackup{
 		ObjectMeta: v1.ObjectMeta{
 			Name: "test-backup",

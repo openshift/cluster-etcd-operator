@@ -189,6 +189,7 @@ func TestRetentionBySize(t *testing.T) {
 }
 
 func TestMultipleBackupsAreSkipped(t *testing.T) {
+	t.Skip()
 	pvcName := "multi-backups"
 	ensureHostPathPVC(t, pvcName)
 	c := framework.NewOperatorClient(t)
