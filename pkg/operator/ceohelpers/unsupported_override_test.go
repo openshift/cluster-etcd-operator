@@ -2,9 +2,10 @@ package ceohelpers
 
 import (
 	"fmt"
+	"testing"
+
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/runtime"
-	"testing"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 )

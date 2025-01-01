@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"k8s.io/apimachinery/pkg/util/sets"
 
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -79,7 +77,6 @@ type PeriodicBackupController struct {
 	backupVarGetter       backuphelpers.BackupVar
 	featureGateAccessor   featuregates.FeatureGateAccess
 	kubeInformers         v1helpers.KubeInformersForNamespaces
-	etcdClient            etcdcli.EtcdClient
 }
 
 func NewPeriodicBackupController(
@@ -92,7 +89,6 @@ func NewPeriodicBackupController(
 	accessor featuregates.FeatureGateAccess,
 	backupVarGetter backuphelpers.BackupVar,
 	backupsInformer factory.Informer,
-	etcdClient etcdcli.EtcdClient,
 	kubeInformers v1helpers.KubeInformersForNamespaces) factory.Controller {
 
 	c := &PeriodicBackupController{
@@ -103,7 +99,6 @@ func NewPeriodicBackupController(
 		operatorImagePullSpec: operatorImagePullSpec,
 		backupVarGetter:       backupVarGetter,
 		featureGateAccessor:   accessor,
-		etcdClient:            etcdClient,
 		kubeInformers:         kubeInformers,
 	}
 
@@ -139,10 +134,6 @@ func (c *PeriodicBackupController) sync(ctx context.Context, syncContext factory
 		if item.Name == defaultBackupCRName {
 			defaultFound = true
 
-			err = ensureVotingNodesLabeled(ctx, c.kubeClient, c.etcdClient)
-			if err != nil {
-				return fmt.Errorf("PeriodicBackupController could not label voting master nodes: %w", err)
-			}
 			currentEtcdBackupDS, err := c.kubeClient.AppsV1().DaemonSets(operatorclient.TargetNamespace).Get(ctx, backupServerDaemonSet, v1.GetOptions{})
 			if err != nil && !apierrors.IsNotFound(err) {
 				return fmt.Errorf("PeriodicBackupController could not retrieve [defaultBackupDeployment]: %w", err)
@@ -151,6 +142,11 @@ func (c *PeriodicBackupController) sync(ctx context.Context, syncContext factory
 			endpoints, err := getEtcdEndpoints(ctx, c.kubeClient)
 			if err != nil {
 				return fmt.Errorf("PeriodicBackupController failed to list etcd-endpoints config-map: %w", err)
+			}
+
+			err = ensureVotingNodesLabeled(ctx, c.kubeClient)
+			if err != nil {
+				return fmt.Errorf("PeriodicBackupController could not label voting master nodes: %w", err)
 			}
 
 			desiredEtcdBackupDS := createBackupServerDaemonSet(item, endpoints)
@@ -535,19 +531,15 @@ func etcdBackupServerDSDiffers(l, r appv1.DaemonSetSpec) bool {
 	return false
 }
 
-func ensureVotingNodesLabeled(ctx context.Context, client kubernetes.Interface, etcdClient etcdcli.EtcdClient) error {
-	members, err := etcdClient.VotingMemberList(ctx)
+func ensureVotingNodesLabeled(ctx context.Context, client kubernetes.Interface) error {
+	etcdEndPointsCM, err := client.CoreV1().ConfigMaps(operatorclient.TargetNamespace).Get(ctx, etcdEndpointConfigMapName, v1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to list voting members: %w", err)
+		return fmt.Errorf("failed to retrieve etcd-endpoints configmap: %v", err)
 	}
 
-	votingMemberIPs := sets.NewString()
-	for _, m := range members {
-		memberIP, mErr := ceohelpers.MemberToNodeInternalIP(m)
-		if mErr != nil {
-			return mErr
-		}
-		votingMemberIPs.Insert(memberIP)
+	votingIPs := sets.NewString()
+	for _, v := range etcdEndPointsCM.Data {
+		votingIPs.Insert(v)
 	}
 
 	masterNodes, err := client.CoreV1().Nodes().List(ctx, v1.ListOptions{
@@ -560,7 +552,7 @@ func ensureVotingNodesLabeled(ctx context.Context, client kubernetes.Interface, 
 	for _, node := range masterNodes.Items {
 		for _, addr := range node.Status.Addresses {
 			if addr.Type == corev1.NodeInternalIP {
-				if votingMemberIPs.Has(addr.Address) {
+				if votingIPs.Has(addr.Address) {
 					// update node's labels
 					node.Labels[votingNodeSelector] = ""
 					_, err = client.CoreV1().Nodes().Update(ctx, &node, v1.UpdateOptions{})
