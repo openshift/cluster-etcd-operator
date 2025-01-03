@@ -136,7 +136,7 @@ func (c *PeriodicBackupController) sync(ctx context.Context, syncContext factory
 
 			currentEtcdBackupDS, err := c.kubeClient.AppsV1().DaemonSets(operatorclient.TargetNamespace).Get(ctx, backupServerDaemonSet, v1.GetOptions{})
 			if err != nil && !apierrors.IsNotFound(err) {
-				return fmt.Errorf("PeriodicBackupController could not retrieve [defaultBackupDeployment]: %w", err)
+				return fmt.Errorf("PeriodicBackupController could not retrieve ds/%s: %w", backupServerDaemonSet, err)
 			}
 
 			endpoints, err := getEtcdEndpoints(ctx, c.kubeClient)
@@ -144,19 +144,21 @@ func (c *PeriodicBackupController) sync(ctx context.Context, syncContext factory
 				return fmt.Errorf("PeriodicBackupController failed to list etcd-endpoints config-map: %w", err)
 			}
 
-			err = ensureVotingNodesLabeled(ctx, c.kubeClient)
-			if err != nil {
+			if err = ensureVotingNodesLabeled(ctx, c.kubeClient); err != nil {
 				return fmt.Errorf("PeriodicBackupController could not label voting master nodes: %w", err)
 			}
 
 			desiredEtcdBackupDS := createBackupServerDaemonSet(item, endpoints)
 			if etcdBackupServerDSDiffers(desiredEtcdBackupDS.Spec, currentEtcdBackupDS.Spec) {
-				_, opStatus, _, _ := c.operatorClient.GetOperatorState()
-				_, _, err := resourceapply.ApplyDaemonSet(ctx, c.kubeClient.AppsV1(), syncContext.Recorder(), desiredEtcdBackupDS,
+				_, opStatus, _, oErr := c.operatorClient.GetOperatorState()
+				if oErr != nil {
+					return fmt.Errorf("PeriodicBackupController could not retrieve operator's state: %w", err)
+				}
+				_, _, dErr := resourceapply.ApplyDaemonSet(ctx, c.kubeClient.AppsV1(), syncContext.Recorder(), desiredEtcdBackupDS,
 					resourcemerge.ExpectedDaemonSetGeneration(desiredEtcdBackupDS, opStatus.Generations),
 				)
-				if err != nil {
-					return fmt.Errorf("PeriodicBackupController could not apply [defaultBackupDeployment]: %w", err)
+				if dErr != nil {
+					return fmt.Errorf("PeriodicBackupController could not apply ds/%v: %w", backupServerDaemonSet, err)
 				}
 				klog.V(4).Infof("PeriodicBackupController applied DaemonSet [%v] successfully", backupServerDaemonSet)
 			}
@@ -183,7 +185,7 @@ func (c *PeriodicBackupController) sync(ctx context.Context, syncContext factory
 		err = c.kubeClient.AppsV1().DaemonSets(operatorclient.TargetNamespace).Delete(ctx, backupServerDaemonSet, v1.DeleteOptions{})
 		if err != nil {
 			if !apierrors.IsNotFound(err) {
-				return fmt.Errorf("PeriodicBackupController could not delete [defaultBackupDeployment]: %w", err)
+				return fmt.Errorf("PeriodicBackupController could not delete ds/%s: %w", backupServerDaemonSet, err)
 			}
 			klog.V(4).Infof("PeriodicBackupController deleted DaemonSet [%v] successfully", backupServerDaemonSet)
 		}
