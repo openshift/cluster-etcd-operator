@@ -198,7 +198,7 @@ github.com/modern-go/reflect2
 # github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822
 ## explicit
 github.com/munnerz/goautoneg
-# github.com/openshift/api v0.0.0-20241001152557-e415140e5d5f
+# github.com/openshift/api v0.0.0-20241101202457-04eb3fd119d2
 ## explicit; go 1.22.0
 github.com/openshift/api
 github.com/openshift/api/annotations
@@ -334,7 +334,7 @@ github.com/openshift/client-go/operator/informers/externalversions/operator/v1
 github.com/openshift/client-go/operator/informers/externalversions/operator/v1alpha1
 github.com/openshift/client-go/operator/listers/operator/v1
 github.com/openshift/client-go/operator/listers/operator/v1alpha1
-# github.com/openshift/library-go v0.0.0-20241119162247-f466fdd82330
+# github.com/openshift/library-go v0.0.0-20241119162247-f466fdd82330 => github.com/benluddy/library-go v0.0.0-20241212160429-c2ea3a4efb88
 ## explicit; go 1.22.0
 github.com/openshift/library-go/pkg/apiserver/jsonpatch
 github.com/openshift/library-go/pkg/assets
@@ -1582,3 +1582,4 @@ sigs.k8s.io/yaml
 sigs.k8s.io/yaml/goyaml.v2
 # github.com/gogo/protobuf => github.com/gogo/protobuf v1.3.2
 # vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787
+# github.com/openshift/library-go => github.com/benluddy/library-go v0.0.0-20241212160429-c2ea3a4efb88
