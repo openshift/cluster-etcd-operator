@@ -141,5 +141,8 @@ require (
 
 replace (
 	github.com/gogo/protobuf => github.com/gogo/protobuf v1.3.2
+
+	// remove
+	github.com/openshift/library-go => github.com/tkashem/library-go v0.0.0-20250113122828-acaa152f13b3
 	vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787
 )

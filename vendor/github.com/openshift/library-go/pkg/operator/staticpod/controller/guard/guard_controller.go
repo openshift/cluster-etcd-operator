@@ -16,7 +16,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/selection"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/informers"
@@ -54,7 +53,8 @@ type GuardController struct {
 	installerPodImageFn   func() string
 	createConditionalFunc func() (bool, bool, error)
 
-	extraNodeSelector labels.Selector
+	extraNodeSelector   labels.Selector
+	masterNodesSelector labels.Selector
 }
 
 func NewGuardController(
@@ -106,6 +106,11 @@ func NewGuardController(
 		createConditionalFunc:         createConditionalFunc,
 		extraNodeSelector:             extraNodeSelector,
 	}
+	masterNodesSelector, err := labels.Parse("node-role.kubernetes.io/master=")
+	if err != nil {
+		panic(err)
+	}
+	c.masterNodesSelector = masterNodesSelector
 
 	return factory.New().
 		WithInformers(
@@ -228,11 +233,7 @@ func (c *GuardController) sync(ctx context.Context, syncCtx factory.SyncContext)
 			}
 		}
 	} else {
-		selector, err := labels.NewRequirement("node-role.kubernetes.io/master", selection.Equals, []string{""})
-		if err != nil {
-			panic(err)
-		}
-		nodes, err := c.nodeLister.List(labels.NewSelector().Add(*selector))
+		nodes, err := c.nodeLister.List(c.masterNodesSelector)
 		if err != nil {
 			return err
 		}
