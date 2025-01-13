@@ -50,6 +50,7 @@ import (
 	"k8s.io/component-base/metrics"
 	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/clock"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
@@ -372,6 +373,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorClient,
 		versionRecorder,
 		controllerContext.EventRecorder,
+		clock.RealClock{},
 	).WithDegradedInertia(status.MustNewInertia(
 		2*time.Minute,
 		status.InertiaCondition{

@@ -10,7 +10,7 @@ require (
 	github.com/go-bindata/go-bindata v3.1.2+incompatible
 	github.com/google/go-cmp v0.6.0
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
-	github.com/openshift/api v0.0.0-20241213110156-c117e1ee5a9c
+	github.com/openshift/api v0.0.0-20250108172834-78bd56dba39b
 	github.com/openshift/build-machinery-go v0.0.0-20240613134303-8359781da660
 	github.com/openshift/client-go v0.0.0-20241203091221-452dfb8fa071
 	github.com/openshift/library-go v0.0.0-20241213140326-389618b826f5
@@ -143,3 +143,5 @@ replace (
 	github.com/gogo/protobuf => github.com/gogo/protobuf v1.3.2
 	vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787
 )
+
+replace github.com/openshift/library-go => github.com/benluddy/library-go v0.0.0-20250114152708-d1f56dced840
