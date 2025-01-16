@@ -69,6 +69,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
+	"k8s.io/utils/clock"
 )
 
 // masterMachineLabelSelectorString allows for getting only the master machines, it matters in larger installations with many worker nodes
@@ -372,6 +373,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorClient,
 		versionRecorder,
 		controllerContext.EventRecorder,
+		clock.RealClock{},
 	).WithDegradedInertia(status.MustNewInertia(
 		2*time.Minute,
 		status.InertiaCondition{
