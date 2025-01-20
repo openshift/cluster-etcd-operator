@@ -3,6 +3,7 @@ package installer
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -571,12 +572,15 @@ func (c *InstallerController) manageInstallationPods(ctx context.Context, operat
 	return false, 0, nil, nil, nil
 }
 
-func prepareNodeStatusApplyConfigurationFor(nodeStatuses []operatorv1.NodeStatus, updatedNodeStatus *operatorv1.NodeStatus) []*applyoperatorv1.NodeStatusApplyConfiguration {
+func prepareNodeStatusApplyConfigurationFor(nodeStatuses []operatorv1.NodeStatus, updatedNodeStatuses ...*operatorv1.NodeStatus) []*applyoperatorv1.NodeStatusApplyConfiguration {
 	var ret []*applyoperatorv1.NodeStatusApplyConfiguration
 
 	for _, nodeStatus := range nodeStatuses {
-		if updatedNodeStatus != nil && nodeStatus.NodeName == updatedNodeStatus.NodeName {
-			nodeStatus = *updatedNodeStatus
+		for _, updatedNodeStatus := range updatedNodeStatuses {
+			if updatedNodeStatus != nil && nodeStatus.NodeName == updatedNodeStatus.NodeName {
+				nodeStatus = *updatedNodeStatus
+				break
+			}
 		}
 		ret = append(ret, nodeStatusToNodeStatusApplyConfigurations(nodeStatus))
 	}
@@ -731,6 +735,7 @@ func (c *InstallerController) newNodeStateForInstallInProgress(ctx context.Conte
 
 	// quickly move to new revision even when an old installer has been seen, if necessary with force by
 	// deleting the old installer (it might be frozen).
+	// FIXME: add special case for currentRevision=0?
 	if pendingNewRevision {
 		// stop early, don't wait for ready static operand pod because a new revision is waiting
 
@@ -1155,24 +1160,51 @@ func (c InstallerController) Sync(ctx context.Context, syncCtx factory.SyncConte
 	err = c.ensureRequiredResourcesExist(ctx, originalOperatorStatus.LatestAvailableRevision)
 
 	// Only manage installation pods when all required certs are present.
-	var updatedNode *operatorv1.NodeStatus
-	var updatedNodeReportOnSuccessfulUpdateFn func()
+	var updatedNodes []*operatorv1.NodeStatus
+	var updatedNodeReportOnSuccessfulUpdateFn []func()
+	var nodeStatusApplyConfigurations []*applyoperatorv1.NodeStatusApplyConfiguration
+	var operatorConditionApplyConfigurations []*applyoperatorv1.OperatorConditionApplyConfiguration
 	if err == nil {
-		var requeue bool
-		var after time.Duration
-		var syncErr error
-		requeue, after, updatedNode, updatedNodeReportOnSuccessfulUpdateFn, syncErr = c.manageInstallationPods(ctx, operatorSpec, operatorStatus)
-		if requeue && syncErr == nil {
-			syncCtx.Queue().AddAfter(syncCtx.QueueKey(), after)
-			return nil
+		// TODO: store the first install completion info
+		var operatorStatuses []*operatorv1.StaticPodOperatorStatus
+		for _, nodeStatus := range operatorStatus.NodeStatuses {
+			if nodeStatus.CurrentRevision != 0 {
+				continue
+			}
+			operatorStatusCopy := operatorStatus.DeepCopy()
+			operatorStatusCopy.NodeStatuses = []operatorv1.NodeStatus{nodeStatus}
+			operatorStatuses = append(operatorStatuses, operatorStatusCopy)
 		}
-		err = syncErr
+		if len(operatorStatuses) < 2 {
+			operatorStatuses = []*operatorv1.StaticPodOperatorStatus{operatorStatus}
+		}
+
+		var syncErrs []error
+		for _, operatorStatus := range operatorStatuses {
+			requeue, after, updatedNodeStatus, reportFn, syncErr := c.manageInstallationPods(ctx, operatorSpec, operatorStatus)
+			if updatedNodeStatus != nil {
+				updatedNodes = append(updatedNodes, updatedNodeStatus)
+			}
+			if reportFn != nil {
+				updatedNodeReportOnSuccessfulUpdateFn = append(updatedNodeReportOnSuccessfulUpdateFn, reportFn)
+			}
+			if syncErr != nil {
+				syncErrs = append(syncErrs, syncErr)
+			}
+
+			if requeue && len(syncErrs) == 0 {
+				syncCtx.Queue().AddAfter(syncCtx.QueueKey(), after)
+				return nil
+			}
+		}
+
+		err = errors.Join(syncErrs...)
 	}
 
 	// Update failing condition
 	// If required certs are missing, this will report degraded as we can't create installer pods because of this pre-condition.
-	nodeStatusApplyConfigurations := prepareNodeStatusApplyConfigurationFor(originalOperatorStatus.NodeStatuses, updatedNode)
-	operatorConditionApplyConfigurations := prepareNodeInstallerConditionApplyConfiguration(nodeStatusApplyConfigurations, originalOperatorStatus.LatestAvailableRevision)
+	nodeStatusApplyConfigurations = prepareNodeStatusApplyConfigurationFor(originalOperatorStatus.NodeStatuses, updatedNodes...)
+	operatorConditionApplyConfigurations = prepareNodeInstallerConditionApplyConfiguration(nodeStatusApplyConfigurations, originalOperatorStatus.LatestAvailableRevision)
 	operatorConditionApplyConfigurations = append(operatorConditionApplyConfigurations, prepareInstallerDegradedConditionApplyConfigurationFor(err))
 	status := applyoperatorv1.StaticPodOperatorStatus().
 		WithConditions(operatorConditionApplyConfigurations...).
@@ -1183,7 +1215,9 @@ func (c InstallerController) Sync(ctx context.Context, syncCtx factory.SyncConte
 	if updateErr := c.operatorClient.ApplyStaticPodOperatorStatus(ctx, c.controllerInstanceName, status); updateErr != nil {
 		return updateErr
 	} else if updatedNodeReportOnSuccessfulUpdateFn != nil {
-		updatedNodeReportOnSuccessfulUpdateFn()
+		for _, fn := range updatedNodeReportOnSuccessfulUpdateFn {
+			fn()
+		}
 	}
 	return err
 }
