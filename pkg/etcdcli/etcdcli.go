@@ -254,7 +254,7 @@ func (g *etcdClientGetter) MemberRemove(ctx context.Context, memberID uint64) er
 	defer cancel()
 	_, err = cli.MemberRemove(ctx, memberID)
 	if err == nil {
-		g.eventRecorder.Eventf("MemberRemove", "removed member with ID: %v", memberID)
+		g.eventRecorder.Eventf("MemberRemove", "removed member with ID: [%x]", memberID)
 	}
 	return err
 }

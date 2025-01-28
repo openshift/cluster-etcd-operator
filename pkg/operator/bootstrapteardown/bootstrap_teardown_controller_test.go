@@ -5,16 +5,24 @@ import (
 	"fmt"
 	"testing"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
+	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/kubernetes/fake"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/utils/clock"
 )
 
 var (
@@ -189,6 +197,7 @@ func TestRemoveBootstrap(t *testing.T) {
 		bootstrapId        uint64
 		expectedConditions []operatorv1.OperatorCondition
 		indexerObjs        []interface{}
+		expEvents          int
 		expectedErr        error
 	}{
 		"unsafe, no bootstrap": {
@@ -199,6 +208,7 @@ func TestRemoveBootstrap(t *testing.T) {
 				conditionBootstrapMemberRemoved,
 				conditionBootstrapAlreadyRemoved,
 			},
+			expEvents: 0,
 		},
 		"safe, no bootstrap": {
 			safeToRemove: true,
@@ -208,6 +218,7 @@ func TestRemoveBootstrap(t *testing.T) {
 				conditionBootstrapMemberRemoved,
 				conditionBootstrapAlreadyRemoved,
 			},
+			expEvents: 0,
 		},
 		"unsafe, has bootstrap": {
 			safeToRemove: false,
@@ -216,6 +227,7 @@ func TestRemoveBootstrap(t *testing.T) {
 			expectedConditions: []operatorv1.OperatorCondition{
 				conditionWaitingForEtcdMembers,
 			},
+			expEvents: 0,
 		},
 		"safe, has bootstrap, incomplete process": {
 			safeToRemove: true,
@@ -224,6 +236,7 @@ func TestRemoveBootstrap(t *testing.T) {
 			expectedConditions: []operatorv1.OperatorCondition{
 				conditionEnoughEtcdMembers,
 			},
+			expEvents: 0,
 		},
 		"safe, has bootstrap, incomplete process progressing": {
 			safeToRemove: true,
@@ -235,6 +248,7 @@ func TestRemoveBootstrap(t *testing.T) {
 			indexerObjs: []interface{}{
 				bootstrapProgressing,
 			},
+			expEvents: 0,
 		},
 		"safe, has bootstrap, complete process, fails removal": {
 			safeToRemove: true,
@@ -246,6 +260,7 @@ func TestRemoveBootstrap(t *testing.T) {
 			indexerObjs: []interface{}{
 				bootstrapComplete,
 			},
+			expEvents:   1,
 			expectedErr: fmt.Errorf("error while removing bootstrap member [%x]: %w", 0, fmt.Errorf("member with the given ID: 0 doesn't exist")),
 		},
 		"safe, has bootstrap, complete process, successful removal": {
@@ -259,6 +274,7 @@ func TestRemoveBootstrap(t *testing.T) {
 			indexerObjs: []interface{}{
 				bootstrapComplete,
 			},
+			expEvents: 2,
 		},
 	}
 
@@ -276,6 +292,9 @@ func TestRemoveBootstrap(t *testing.T) {
 			fakeStaticPodClient := v1helpers.NewFakeStaticPodOperatorClient(&operatorv1.StaticPodOperatorSpec{}, &operatorv1.StaticPodOperatorStatus{}, nil, nil)
 			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient([]*etcdserverpb.Member{u.FakeEtcdBootstrapMember(1)})
 			require.NoError(t, err)
+			fakeKubeClient := fake.NewClientset([]runtime.Object{}...)
+			fakeRecorder := events.NewRecorder(fakeKubeClient.CoreV1().Events(operatorclient.OperatorNamespace),
+				"test-bootstrap-teardown-controller", &corev1.ObjectReference{}, clock.RealClock{})
 
 			c := &BootstrapTeardownController{
 				fakeStaticPodClient,
@@ -283,10 +302,21 @@ func TestRemoveBootstrap(t *testing.T) {
 				fakeConfigmapLister,
 				fakeNamespaceLister,
 				fakeInfraLister,
+				fakeRecorder,
 			}
 
 			err = c.removeBootstrap(context.TODO(), test.safeToRemove, test.hasBootstrap, test.bootstrapId)
 			require.Equal(t, test.expectedErr, err)
+
+			if test.expEvents > 0 {
+				generatedEvents, err := fakeKubeClient.CoreV1().Events(operatorclient.OperatorNamespace).List(context.TODO(), metav1.ListOptions{})
+				require.NoError(t, err)
+				require.Equal(t, test.expEvents, len(generatedEvents.Items))
+				require.Equal(t, generatedEvents.Items[0].Reason, "Removing bootstrap member")
+				if test.expEvents == 2 {
+					require.Equal(t, generatedEvents.Items[1].Reason, "Bootstrap member removed")
+				}
+			}
 
 			_, status, _, err := fakeStaticPodClient.GetStaticPodOperatorState()
 			require.NoError(t, err)
