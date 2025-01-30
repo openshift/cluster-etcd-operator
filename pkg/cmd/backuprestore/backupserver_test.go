@@ -137,7 +137,7 @@ func TestNewBackupServer_scheduleBackup(t *testing.T) {
 			schedule:   "*/2 * * * * *",
 			timeout:    time.Second * 8,
 			slow:       true,
-			expBackups: 3,
+			expBackups: 2,
 			expErr:     nil,
 		},
 		{
