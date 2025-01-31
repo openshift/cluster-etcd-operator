@@ -26,6 +26,7 @@ type BootstrapTeardownController struct {
 	configmapLister      corev1listers.ConfigMapLister
 	namespaceLister      corev1listers.NamespaceLister
 	infrastructureLister configv1listers.InfrastructureLister
+	eventRecorder        events.Recorder
 }
 
 func NewBootstrapTeardownController(
@@ -42,6 +43,7 @@ func NewBootstrapTeardownController(
 		configmapLister:      kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Lister(),
 		namespaceLister:      kubeInformersForNamespaces.InformersFor("").Core().V1().Namespaces().Lister(),
 		infrastructureLister: infrastructureLister,
+		eventRecorder:        eventRecorder.WithComponentSuffix("bootstrap-teardown-controller"),
 	}
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
@@ -50,7 +52,7 @@ func NewBootstrapTeardownController(
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
 		operatorClient.Informer(),
 		kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Informer(),
-	).WithSync(syncer.Sync).ToController("BootstrapTeardownController", eventRecorder.WithComponentSuffix("bootstrap-teardown-controller"))
+	).WithSync(syncer.Sync).ToController("BootstrapTeardownController", c.eventRecorder)
 }
 
 func (c *BootstrapTeardownController) sync(ctx context.Context, _ factory.SyncContext) error {
@@ -142,6 +144,7 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, safeT
 		return err
 	}
 	klog.Warningf("Removing bootstrap member [%x]", bootstrapID)
+	c.eventRecorder.Eventf("Removing bootstrap member", "attempting to remove bootstrap member [%x]", bootstrapID)
 
 	// this is ugly until bootkube is updated, but we want to be sure that bootkube has time to be waiting to watch the condition coming back.
 	if err := c.etcdClient.MemberRemove(ctx, bootstrapID); err != nil {
@@ -149,6 +152,7 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, safeT
 	}
 
 	klog.Infof("Successfully removed bootstrap member [%x]", bootstrapID)
+	c.eventRecorder.Eventf("Bootstrap member removed", "successfully removed bootstrap member [%x]", bootstrapID)
 	// below might fail, since the member removal can cause some downtime for raft to settle on a quorum
 	// it's important that everything below is properly retried above during normal controller reconciliation
 	return setSuccessfulBoostrapRemovalStatus(ctx, c.operatorClient)
