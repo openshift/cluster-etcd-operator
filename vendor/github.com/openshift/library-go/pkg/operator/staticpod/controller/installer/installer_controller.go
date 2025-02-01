@@ -1111,7 +1111,7 @@ func (c InstallerController) ensureRequiredResourcesExist(ctx context.Context, r
 	return fmt.Errorf("missing required resources: %v", aggregatedErr)
 }
 
-func (c InstallerController) Sync(ctx context.Context, syncCtx factory.SyncContext) error {
+func (c *InstallerController) Sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	operatorSpec, originalOperatorStatus, operatorResourceVersion, err := c.operatorClient.GetStaticPodOperatorState()
 	if err != nil {
 		return err
