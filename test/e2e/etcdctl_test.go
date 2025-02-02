@@ -32,7 +32,7 @@ func TestEtcdctlCommands(t *testing.T) {
 		{"etcdctl alarm list", false, "", ""},
 		{"etcdctl check perf", true, "OpenShift disabled command", ""},
 		{"etcdctl compaction 0", false, "", "Error: etcdserver: mvcc: required revision has been compacted"},
-		{"env ETCDCTL_ENDPOINTS=https://127.0.0.1:2379 etcdctl defrag", false, "", ""},
+		{"env ETCDCTL_ENDPOINTS=https://localhost:2379 etcdctl defrag", false, "", ""},
 		{"etcdctl elect myelection", false, "", "no proposal argument but -l not set"},
 		// endpoint
 		{"etcdctl endpoint hashkv", false, "", ""},
