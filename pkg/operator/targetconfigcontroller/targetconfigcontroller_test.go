@@ -3,8 +3,9 @@ package targetconfigcontroller
 import (
 	"context"
 	"fmt"
-	"k8s.io/client-go/kubernetes/scheme"
 	"testing"
+
+	"k8s.io/client-go/kubernetes/scheme"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
