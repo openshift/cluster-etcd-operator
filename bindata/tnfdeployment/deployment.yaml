@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/name: tnf-operator
+    control-plane: tnf-controller-manager
+  name: tnf-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      control-plane: tnf-controller-manager
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: tnf-controller
+        openshift.io/required-scc: "privileged"
+      labels:
+        control-plane: tnf-controller-manager
+    spec:
+      containers:
+        - name: tnf-controller
+          image: quay.io/slintes/tnf-operator:latest
+          imagePullPolicy: Always
+          command: ["tnf-operator", "operator"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          securityContext:
+            privileged: true
+            allowPrivilegeEscalation: true
+      hostIPC: false
+      hostNetwork: false
+      hostPID: true
+      serviceAccountName: tnf-operator-controller-manager
+      terminationGracePeriodSeconds: 10

@@ -1,0 +1,14 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/name: tnf-operator
+  name: tnf-operator-manager-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tnf-operator-manager-role
+subjects:
+  - kind: ServiceAccount
+    name: tnf-operator-controller-manager
+    namespace: openshift-tnf-operator
