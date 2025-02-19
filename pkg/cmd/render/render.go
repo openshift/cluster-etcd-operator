@@ -256,9 +256,10 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 	}
 
 	// If bootstrap scaling strategy is delayed HA set annotation signal
-	if templateData.BootstrapScalingStrategy == ceohelpers.DelayedHAScalingStrategy {
+	if templateData.BootstrapScalingStrategy == ceohelpers.DelayedHAScalingStrategy ||
+		templateData.BootstrapScalingStrategy == ceohelpers.DelayedTwoNodeScalingStrategy {
 		templateData.NamespaceAnnotations = map[string]string{
-			ceohelpers.DelayedHABootstrapScalingStrategyAnnotation: "",
+			ceohelpers.DelayedBootstrapScalingStrategyAnnotation: "",
 		}
 	}
 
@@ -721,24 +722,43 @@ func getInfrastructure(file string) (*configv1.Infrastructure, error) {
 }
 
 func getBootstrapScalingStrategy(installConfig map[string]interface{}, delayedHAMarkerFile string) (ceohelpers.BootstrapScalingStrategy, error) {
-	// Delayed HA strategy is set if marker file exists on disk.
-	if _, err := os.Stat(delayedHAMarkerFile); err == nil {
-		return ceohelpers.DelayedHAScalingStrategy, nil
-	}
-
 	controlPlane, found := installConfig["controlPlane"].(map[string]interface{})
 	if !found {
 		return "", fmt.Errorf("unrecognized data structure in controlPlane field")
 	}
-	replicaCount, found := controlPlane["replicas"].(float64)
+	cpReplicaCount, found := controlPlane["replicas"].(float64)
 	if !found {
 		return "", fmt.Errorf("unrecognized data structure in controlPlane replica field")
 	}
 
 	// Bootstrap in place strategy when bootstrapInPlace root key exists in the install-config
 	// and controlPlane replicas is 1.
-	if _, found := installConfig["bootstrapInPlace"]; found && int(replicaCount) == 1 {
+	if _, found := installConfig["bootstrapInPlace"]; found && int(cpReplicaCount) == 1 {
 		return ceohelpers.BootstrapInPlaceStrategy, nil
+	}
+
+	// Delayed HA strategy is set if marker file exists on disk.
+	if _, err := os.Stat(delayedHAMarkerFile); err == nil {
+
+		// Handle two-node topologies; if an arbiter node is not present
+		// then use DelayedTwoNodeScalingStrategy to allow bootstrap to proceed
+		// without a third etcd member
+		if int(cpReplicaCount) == 2 {
+			arbiter, arbiterDefined := installConfig["aribiter"].(map[string]interface{})
+			if !arbiterDefined {
+				return ceohelpers.DelayedTwoNodeScalingStrategy, nil
+			}
+
+			arbReplicaCount, arbReplicasDefined := arbiter["replicas"].(float64)
+			if !arbReplicasDefined || arbReplicaCount < 1 {
+				return ceohelpers.DelayedTwoNodeScalingStrategy, nil
+			}
+		}
+
+		// TODO check for SNO here?
+
+		// This should handle both delayed two-node with arbiter and delayed HA clusters
+		return ceohelpers.DelayedHAScalingStrategy, nil
 	}
 
 	// HA "default".
