@@ -35,13 +35,48 @@ var (
 			ControlPlaneTopology: configv1.HighlyAvailableTopologyMode},
 	}
 
-	namespaceWithDelayedHAEnabled = &corev1.Namespace{
+	twoNodeInfra = &configv1.Infrastructure{
+		TypeMeta: metav1.TypeMeta{},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: InfrastructureClusterName,
+		},
+		Status: configv1.InfrastructureStatus{
+			ControlPlaneTopology: configv1.DualReplicaTopologyMode},
+	}
+
+	namespaceWithLegacyDelayedHAEnabled = &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: operatorclient.TargetNamespace,
 			Annotations: map[string]string{
 				DelayedHABootstrapScalingStrategyAnnotation: "",
 			},
 		},
+	}
+
+	namespaceWithDelayedEnabled = &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: operatorclient.TargetNamespace,
+			Annotations: map[string]string{
+				DelayedBootstrapScalingStrategyAnnotation: "",
+			},
+		},
+	}
+
+	oneEtcdMember = []*etcdserverpb.Member{
+		u.FakeEtcdMemberWithoutServer(0),
+	}
+
+	twoEtcdMembers = []*etcdserverpb.Member{
+		u.FakeEtcdMemberWithoutServer(0),
+		u.FakeEtcdMemberWithoutServer(1),
+	}
+
+	fiveEtcdMembers = []*etcdserverpb.Member{
+		u.FakeEtcdMemberWithoutServer(0),
+		u.FakeEtcdMemberWithoutServer(1),
+		u.FakeEtcdMemberWithoutServer(2),
+		u.FakeEtcdMemberWithoutServer(3),
+		u.FakeEtcdMemberWithoutServer(4),
 	}
 
 	defaultOperatorConfig = operatorv1.StaticPodOperatorSpec{}
@@ -84,7 +119,27 @@ var (
 		{NodeName: "node-3", CurrentRevision: 1},
 	}
 
+	threeNodesProgressingTowardsCurrentRevision = []operatorv1.NodeStatus{
+		{NodeName: "node-1", CurrentRevision: 1},
+		{NodeName: "node-2", CurrentRevision: 0},
+		{NodeName: "node-3", CurrentRevision: 1},
+	}
+
+	fiveNodesAtCurrentRevision = []operatorv1.NodeStatus{
+		{NodeName: "node-1", CurrentRevision: 1},
+		{NodeName: "node-2", CurrentRevision: 1},
+		{NodeName: "node-3", CurrentRevision: 1},
+		{NodeName: "node-4", CurrentRevision: 1},
+		{NodeName: "node-5", CurrentRevision: 1},
+	}
+
 	zeroNodesAtAnyRevision = []operatorv1.NodeStatus{}
+
+	oneHealthyNode          = etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 1, Unhealthy: 0})
+	twoHealthyNodes         = etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 2, Unhealthy: 0})
+	twoHealthyOfThreeNodes  = etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 2, Unhealthy: 1})
+	threeHealthyNodes       = etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 0})
+	threeHealthyOfFiveNodes = etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 2})
 )
 
 func Test_GetBootstrapScalingStrategy(t *testing.T) {
@@ -121,11 +176,23 @@ func Test_GetBootstrapScalingStrategy(t *testing.T) {
 			expectStrategy: UnsafeScalingStrategy,
 			infraObj:       singleNode,
 		},
+		"two_node": {
+			namespace:      defaultNamespace,
+			operatorConfig: defaultOperatorConfig,
+			expectStrategy: TwoNodeScalingStrategy,
+			infraObj:       twoNodeInfra,
+		},
 		"delayed HA": {
-			namespace:      namespaceWithDelayedHAEnabled,
+			namespace:      namespaceWithLegacyDelayedHAEnabled,
 			operatorConfig: defaultOperatorConfig,
 			expectStrategy: DelayedHAScalingStrategy,
 			infraObj:       defaultInfra,
+		},
+		"delayed two_node": {
+			namespace:      namespaceWithDelayedEnabled,
+			operatorConfig: defaultOperatorConfig,
+			expectStrategy: DelayedTwoNodeScalingStrategy,
+			infraObj:       twoNodeInfra,
 		},
 	}
 
@@ -271,73 +338,128 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 		etcdMembers        []*etcdserverpb.Member
 		expectComplete     bool
 		expectError        error
+		etcdClientOps      etcdcli.FakeClientOption
 		infraObj           *configv1.Infrastructure
 	}{
-		"HA with sufficient nodes": {
+		"HA with sufficient members": {
 			namespace:          defaultNamespace,
 			bootstrapConfigMap: bootstrapComplete,
 			operatorConfig:     defaultOperatorConfig,
 			nodes:              threeNodesAtCurrentRevision,
 			etcdMembers:        u.DefaultEtcdMembers(),
 			infraObj:           defaultInfra,
-			expectError:        nil,
-		},
-		"unsupported with sufficient nodes": {
-			namespace:          defaultNamespace,
-			bootstrapConfigMap: bootstrapComplete,
-			operatorConfig:     unsupportedOperatorConfig,
-			nodes:              oneNodeAtCurrentRevision,
-			etcdMembers:        u.DefaultEtcdMembers(),
-			infraObj:           defaultInfra,
-			expectError:        nil,
-		},
-		"unsupported with insufficient nodes": {
-			namespace:          defaultNamespace,
-			bootstrapConfigMap: bootstrapComplete,
-			operatorConfig:     unsupportedOperatorConfig,
-			nodes:              zeroNodesAtAnyRevision,
-			etcdMembers:        u.DefaultEtcdMembers(),
-			infraObj:           defaultInfra,
-			expectError:        nil,
-		},
-		"delayed HA with sufficient nodes during bootstrap": {
-			namespace:          namespaceWithDelayedHAEnabled,
-			bootstrapConfigMap: bootstrapProgressing,
-			operatorConfig:     defaultOperatorConfig,
-			nodes:              twoNodesAtCurrentRevision,
-			etcdMembers:        u.DefaultEtcdMembers(),
-			infraObj:           defaultInfra,
-			expectError:        nil,
-		},
-		"delayed HA with insufficient nodes during bootstrap should succeed": {
-			namespace:          namespaceWithDelayedHAEnabled,
-			bootstrapConfigMap: bootstrapProgressing,
-			operatorConfig:     defaultOperatorConfig,
-			nodes:              oneNodeAtCurrentRevision,
-			etcdMembers:        u.DefaultEtcdMembers(),
-			infraObj:           defaultInfra,
-			expectError:        nil,
-		},
-		"delayed HA with sufficient nodes during steady state": {
-			namespace:          namespaceWithDelayedHAEnabled,
-			bootstrapConfigMap: bootstrapComplete,
-			operatorConfig:     defaultOperatorConfig,
-			nodes:              threeNodesAtCurrentRevision,
-			etcdMembers:        u.DefaultEtcdMembers(),
-			infraObj:           defaultInfra,
+			etcdClientOps:      threeHealthyNodes,
 			expectError:        nil,
 		},
 		"HA with insufficient etcd members": {
 			namespace:          defaultNamespace,
 			bootstrapConfigMap: bootstrapComplete,
 			operatorConfig:     defaultOperatorConfig,
+			nodes:              twoNodesAtCurrentRevision,
+			etcdMembers:        twoEtcdMembers,
+			infraObj:           defaultInfra,
+			etcdClientOps:      twoHealthyNodes,
+			expectError:        fmt.Errorf("CheckSafeToScaleCluster found 2 healthy member(s) out of the 3 required by the HAScalingStrategy"),
+		},
+		"HA with two out of three healthy members": {
+			namespace:          defaultNamespace,
+			bootstrapConfigMap: bootstrapComplete,
+			operatorConfig:     defaultOperatorConfig,
 			nodes:              threeNodesAtCurrentRevision,
-			etcdMembers: []*etcdserverpb.Member{
-				u.FakeEtcdMemberWithoutServer(0),
-				u.FakeEtcdMemberWithoutServer(1),
-			},
-			infraObj:    defaultInfra,
-			expectError: fmt.Errorf("etcd cluster has quorum of 2 which is not fault tolerant: [{Member:name:\"etcd-0\" peerURLs:\"https://10.0.0.1:2380\" clientURLs:\"https://10.0.0.1:2907\"  Healthy:true Took: Error:<nil>} {Member:ID:1 name:\"etcd-1\" peerURLs:\"https://10.0.0.2:2380\" clientURLs:\"https://10.0.0.2:2907\"  Healthy:true Took: Error:<nil>}]"),
+			etcdMembers:        u.DefaultEtcdMembers(),
+			infraObj:           defaultInfra,
+			etcdClientOps:      twoHealthyOfThreeNodes,
+			expectError:        fmt.Errorf("CheckSafeToScaleCluster found 2 healthy member(s) out of the 3 required by the HAScalingStrategy"),
+		},
+		"HA with three out of five healthy members": {
+			namespace:          defaultNamespace,
+			bootstrapConfigMap: bootstrapComplete,
+			operatorConfig:     defaultOperatorConfig,
+			nodes:              fiveNodesAtCurrentRevision,
+			etcdMembers:        fiveEtcdMembers,
+			infraObj:           defaultInfra,
+			etcdClientOps:      threeHealthyOfFiveNodes,
+			expectError:        fmt.Errorf("etcd cluster has quorum of 3 and 3 healthy members which is not fault tolerant: [{Member:name:\"etcd-0\" peerURLs:\"https://10.0.0.1:2380\" clientURLs:\"https://10.0.0.1:2907\"  Healthy:true Took: Error:<nil>} {Member:ID:1 name:\"etcd-1\" peerURLs:\"https://10.0.0.2:2380\" clientURLs:\"https://10.0.0.2:2907\"  Healthy:true Took: Error:<nil>} {Member:ID:2 name:\"etcd-2\" peerURLs:\"https://10.0.0.3:2380\" clientURLs:\"https://10.0.0.3:2907\"  Healthy:true Took: Error:<nil>} {Member:ID:3 name:\"etcd-3\" peerURLs:\"https://10.0.0.4:2380\" clientURLs:\"https://10.0.0.4:2907\"  Healthy:false Took: Error:<nil>} {Member:ID:4 name:\"etcd-4\" peerURLs:\"https://10.0.0.5:2380\" clientURLs:\"https://10.0.0.5:2907\"  Healthy:false Took: Error:<nil>}]"),
+		},
+		"two node with sufficient members": {
+			namespace:          defaultNamespace,
+			bootstrapConfigMap: bootstrapComplete,
+			operatorConfig:     defaultOperatorConfig,
+			nodes:              twoNodesAtCurrentRevision,
+			etcdMembers:        twoEtcdMembers,
+			infraObj:           twoNodeInfra,
+			etcdClientOps:      twoHealthyNodes,
+			expectError:        nil,
+		},
+		"two node with insufficient etcd members": {
+			namespace:          defaultNamespace,
+			bootstrapConfigMap: bootstrapComplete,
+			operatorConfig:     defaultOperatorConfig,
+			nodes:              oneNodeAtCurrentRevision,
+			etcdMembers:        oneEtcdMember,
+			infraObj:           twoNodeInfra,
+			etcdClientOps:      oneHealthyNode,
+			expectError:        fmt.Errorf("CheckSafeToScaleCluster found 1 healthy member(s) out of the 2 required by the TwoNodeScalingStrategy"),
+		},
+		"two node with two out of three healthy members": {
+			namespace:          defaultNamespace,
+			bootstrapConfigMap: bootstrapComplete,
+			operatorConfig:     defaultOperatorConfig,
+			nodes:              threeNodesAtCurrentRevision,
+			etcdMembers:        u.DefaultEtcdMembers(),
+			infraObj:           twoNodeInfra,
+			etcdClientOps:      twoHealthyOfThreeNodes,
+			expectError:        nil,
+		},
+		"unsupported with sufficient nodes": {
+			namespace:          defaultNamespace,
+			bootstrapConfigMap: bootstrapComplete,
+			operatorConfig:     unsupportedOperatorConfig,
+			nodes:              threeNodesAtCurrentRevision,
+			etcdMembers:        u.DefaultEtcdMembers(),
+			infraObj:           defaultInfra,
+			etcdClientOps:      threeHealthyNodes,
+			expectError:        nil,
+		},
+		"unsupported with insufficient nodes": {
+			namespace:          defaultNamespace,
+			bootstrapConfigMap: bootstrapComplete,
+			operatorConfig:     unsupportedOperatorConfig,
+			nodes:              oneNodeAtCurrentRevision,
+			etcdMembers:        oneEtcdMember,
+			infraObj:           defaultInfra,
+			etcdClientOps:      oneHealthyNode,
+			expectError:        nil,
+		},
+		"delayed HA with sufficient nodes during bootstrap": {
+			namespace:          namespaceWithLegacyDelayedHAEnabled,
+			bootstrapConfigMap: bootstrapProgressing,
+			operatorConfig:     defaultOperatorConfig,
+			nodes:              twoNodesAtCurrentRevision,
+			etcdMembers:        u.DefaultEtcdMembers(),
+			infraObj:           defaultInfra,
+			etcdClientOps:      threeHealthyNodes,
+			expectError:        nil,
+		},
+		"delayed HA with insufficient nodes during bootstrap should succeed": {
+			namespace:          namespaceWithLegacyDelayedHAEnabled,
+			bootstrapConfigMap: bootstrapProgressing,
+			operatorConfig:     defaultOperatorConfig,
+			nodes:              oneNodeAtCurrentRevision,
+			etcdMembers:        u.DefaultEtcdMembers(),
+			infraObj:           defaultInfra,
+			etcdClientOps:      threeHealthyNodes,
+			expectError:        nil,
+		},
+		"delayed HA with sufficient nodes during steady state": {
+			namespace:          namespaceWithLegacyDelayedHAEnabled,
+			bootstrapConfigMap: bootstrapComplete,
+			operatorConfig:     defaultOperatorConfig,
+			nodes:              threeNodesAtCurrentRevision,
+			etcdMembers:        u.DefaultEtcdMembers(),
+			infraObj:           defaultInfra,
+			etcdClientOps:      threeHealthyNodes,
+			expectError:        nil,
 		},
 	}
 
@@ -372,7 +494,7 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 				}
 			}
 			fakeInfraStructure := configv1listers.NewInfrastructureLister(fakeInfraIndexer)
-			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(test.etcdMembers)
+			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(test.etcdMembers, test.etcdClientOps)
 			if err != nil {
 				t.Fatal(err)
 			}

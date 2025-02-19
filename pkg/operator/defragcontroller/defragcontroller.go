@@ -110,8 +110,10 @@ func (c *DefragController) checkDefragEnabled(ctx context.Context, recorder even
 	}
 
 	// Ensure defrag disabled unless HA.
-	if controlPlaneTopology != configv1.HighlyAvailableTopologyMode {
-		klog.V(4).Infof("Defrag controller disabled for non HA cluster topology: %s", controlPlaneTopology)
+	if !(controlPlaneTopology == configv1.HighlyAvailableTopologyMode ||
+		controlPlaneTopology == configv1.HighlyAvailableArbiterMode ||
+		controlPlaneTopology == configv1.DualReplicaTopologyMode) {
+		klog.V(4).Infof("Defrag controller disabled for incompatible cluster topology: %s", controlPlaneTopology)
 		return false, c.ensureControllerDisabledCondition(ctx, operatorv1.ConditionTrue, recorder)
 	}
 

@@ -146,3 +146,5 @@ replace (
 )
 
 replace github.com/openshift/library-go => github.com/benluddy/library-go v0.0.0-20250129150747-314ad28512db
+
+replace github.com/openshift/api => github.com/eggfoobar/api v0.0.0-20250207054050-9a92c12ec7ba
