@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	configv1 "github.com/openshift/api/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/operator/bootstrap"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -35,6 +36,22 @@ const (
 	// annotation to the openshift-etcd namesapce.
 	DelayedHAScalingStrategy BootstrapScalingStrategy = "DelayedHAScalingStrategy"
 
+	// TwoNodeScalingStrategy means the etcd cluster will only be scaled up when at least
+	// 2 nodes are available so that quorum is maintained at all times. This rule applies
+	// during bootstrapping and the steady state.
+	//
+	// This strategy is used for deployments of Two Node OpenShift with Fencing.
+	TwoNodeScalingStrategy BootstrapScalingStrategy = "TwoNodeScalingStrategy"
+
+	// DelayedTwoNodeScalingStrategy means that during bootstrapping, the etcd cluster will
+	// be allowed to scale when at least 1 member is available (which is unsafe),
+	// but after bootstrapping any further scaling will require 2 nodes in the same
+	// way as TwoNodeScalingStrategy.
+	//
+	// This strategy is intended for deploys of Two Node OpenShift with Fencing via
+	// the assisted or agent-based installers.
+	DelayedTwoNodeScalingStrategy BootstrapScalingStrategy = "DelayedTwoNodeScalingStrategy"
+
 	// BootstrapInPlaceStrategy means that the bootstrap node will never exist
 	// during the lifecycle of the cluster. Bootkube will run on a live iso
 	// afterwards the node will pivot into the manifests generated during that
@@ -54,9 +71,18 @@ const (
 )
 
 const (
-	// DelayedHABootstrapScalingStrategyAnnotation is an annotation on the openshift-etcd
-	// namespace which, if present indicates the DelayedHAScalingStrategy strategy
-	// should be used.
+	// DelayedBootstrapScalingStrategyAnnotation is an annotation on the openshift-etcd
+	// namespace which, if present, indicates that one of the delayed scaling strategies
+	// should be used. This is generally used by the assisted installer to ensure that
+	// the bootstrap node can reboot into a cluster node.
+	//
+	// For HA clusters, this will be set to DelayedHAScalingStrategy.
+	//
+	// For Two Node OpenShift with Fencing, this is set to DelayedTwoNodeScalingStrategy.
+	DelayedBootstrapScalingStrategyAnnotation = "openshift.io/delayed-bootstrap"
+
+	// DelayedHABootstrapScalingStrategyAnnotation performs the same function as the annotation
+	// above, and is kept for backwards compatibility.
 	DelayedHABootstrapScalingStrategyAnnotation = "openshift.io/delayed-ha-bootstrap"
 )
 
@@ -78,17 +104,25 @@ func GetBootstrapScalingStrategy(staticPodClient v1helpers.StaticPodOperatorClie
 	if err != nil {
 		return strategy, fmt.Errorf("failed to get %s namespace: %w", operatorclient.TargetNamespace, err)
 	}
-	_, hasDelayedHAAnnotation := etcdNamespace.Annotations[DelayedHABootstrapScalingStrategyAnnotation]
 
-	singleNode, err := IsSingleNodeTopology(infraLister)
+	// Check for both the delayed annotation and the legacy DelayedHABootrapScalingStrategyAnnotation
+	_, hasDelayedAnnotation := etcdNamespace.Annotations[DelayedBootstrapScalingStrategyAnnotation]
+	_, hasDelayedHAAnnotation := etcdNamespace.Annotations[DelayedHABootstrapScalingStrategyAnnotation]
+	hasDelayedAnnotation = hasDelayedAnnotation || hasDelayedHAAnnotation
+
+	topology, err := GetControlPlaneTopology(infraLister)
 	if err != nil {
 		return strategy, fmt.Errorf("failed to get control plane topology: %w", err)
 	}
 
 	switch {
-	case isUnsupportedUnsafeEtcd || singleNode:
+	case isUnsupportedUnsafeEtcd || topology == configv1.SingleReplicaTopologyMode:
 		strategy = UnsafeScalingStrategy
-	case hasDelayedHAAnnotation:
+	case topology == configv1.DualReplicaTopologyMode && hasDelayedAnnotation:
+		strategy = DelayedTwoNodeScalingStrategy
+	case topology == configv1.DualReplicaTopologyMode && !hasDelayedAnnotation:
+		strategy = TwoNodeScalingStrategy
+	case hasDelayedAnnotation:
 		strategy = DelayedHAScalingStrategy
 	default:
 		strategy = HAScalingStrategy

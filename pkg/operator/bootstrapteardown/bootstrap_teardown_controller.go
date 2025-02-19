@@ -194,11 +194,11 @@ func (c *BootstrapTeardownController) canRemoveEtcdBootstrap(ctx context.Context
 		if len(members) < 4 {
 			return false, hasBootstrap, bootstrapMemberID, nil
 		}
-	case ceohelpers.DelayedHAScalingStrategy:
+	case ceohelpers.DelayedHAScalingStrategy, ceohelpers.TwoNodeScalingStrategy:
 		if len(members) < 3 {
 			return false, hasBootstrap, bootstrapMemberID, nil
 		}
-	case ceohelpers.UnsafeScalingStrategy:
+	case ceohelpers.UnsafeScalingStrategy, ceohelpers.DelayedTwoNodeScalingStrategy:
 		if len(members) < 2 {
 			return false, hasBootstrap, bootstrapMemberID, nil
 		}

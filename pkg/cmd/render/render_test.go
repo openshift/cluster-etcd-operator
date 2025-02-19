@@ -298,7 +298,7 @@ func TestRenderScalingStrategyBootstrapInPlace(t *testing.T) {
 func TestRenderScalingStrategyDelayedHA(t *testing.T) {
 	want := TemplateData{
 		BootstrapScalingStrategy: ceohelpers.DelayedHAScalingStrategy,
-		NamespaceAnnotations:     map[string]string{ceohelpers.DelayedHABootstrapScalingStrategyAnnotation: ""},
+		NamespaceAnnotations:     map[string]string{ceohelpers.DelayedBootstrapScalingStrategyAnnotation: ""},
 	}
 	config := &testConfig{
 		t:                                       t,
