@@ -26,15 +26,6 @@ func GetControlPlaneTopology(infraLister configv1listers.InfrastructureLister) (
 	return infraData.Status.ControlPlaneTopology, nil
 }
 
-func IsSingleNodeTopology(infraLister configv1listers.InfrastructureLister) (bool, error) {
-	topology, err := GetControlPlaneTopology(infraLister)
-	if err != nil {
-		return false, err
-	}
-
-	return topology == configv1.SingleReplicaTopologyMode, nil
-}
-
 // IsArbiterNodeTopology returns if the cluster infrastructure ControlPlaneTopology is set to HighlyAvailableArbiterMode
 // We use the infra interface in this situation instead of the lister because typically you are looking to find out this information
 // in order to configure controllers before the informers are running.

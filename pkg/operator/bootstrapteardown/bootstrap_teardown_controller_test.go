@@ -63,6 +63,11 @@ var (
 		Message: "etcd bootstrap member is removed",
 	}
 
+	twoEtcdMembers = []*etcdserverpb.Member{
+		u.FakeEtcdMemberWithoutServer(0),
+		u.FakeEtcdMemberWithoutServer(1),
+	}
+
 	bootstrapProgressing = u.BootstrapConfigMap(u.WithBootstrapStatus("progressing"))
 )
 
@@ -121,6 +126,50 @@ func TestCanRemoveEtcdBootstrap(t *testing.T) {
 			hasBootstrap:    true,
 			bootstrapId:     uint64(0),
 		},
+		"Two Node happy path no bootstrap": {
+			etcdMembers:     twoEtcdMembers,
+			scalingStrategy: ceohelpers.TwoNodeScalingStrategy,
+			safeToRemove:    false,
+			hasBootstrap:    false,
+			bootstrapId:     uint64(0),
+		},
+		"Two Node happy path with bootstrap": {
+			etcdMembers:     append(twoEtcdMembers, u.FakeEtcdBootstrapMember(0)),
+			scalingStrategy: ceohelpers.TwoNodeScalingStrategy,
+			safeToRemove:    true,
+			hasBootstrap:    true,
+			bootstrapId:     uint64(0),
+		},
+		"Two Node happy path with bootstrap and not enough members": {
+			etcdMembers: []*etcdserverpb.Member{
+				u.FakeEtcdBootstrapMember(0),
+				u.FakeEtcdMemberWithoutServer(1),
+			},
+			scalingStrategy: ceohelpers.TwoNodeScalingStrategy,
+			safeToRemove:    false,
+			hasBootstrap:    true,
+			bootstrapId:     uint64(0),
+		},
+		"TwoNode with unhealthy member": {
+			etcdMembers:     append(twoEtcdMembers, u.FakeEtcdBootstrapMember(0)),
+			clientFakeOpts:  etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Unhealthy: 1, Healthy: 2}),
+			scalingStrategy: ceohelpers.TwoNodeScalingStrategy,
+			safeToRemove:    false,
+			hasBootstrap:    true,
+			bootstrapId:     uint64(0),
+		},
+		"TwoNode with unhealthy bootstrap": {
+			etcdMembers: []*etcdserverpb.Member{
+				u.FakeEtcdBootstrapMember(0),
+				u.FakeEtcdMemberWithoutServer(1),
+				u.FakeEtcdMemberWithoutServer(2),
+			},
+			clientFakeOpts:  etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Unhealthy: 1, Healthy: 2}),
+			scalingStrategy: ceohelpers.TwoNodeScalingStrategy,
+			safeToRemove:    true,
+			hasBootstrap:    true,
+			bootstrapId:     uint64(0),
+		},
 		"DelayedScaling happy path no bootstrap": {
 			etcdMembers:     u.DefaultEtcdMembers(),
 			scalingStrategy: ceohelpers.DelayedHAScalingStrategy,
@@ -152,6 +201,39 @@ func TestCanRemoveEtcdBootstrap(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(1),
 			},
 			scalingStrategy: ceohelpers.DelayedHAScalingStrategy,
+			safeToRemove:    false,
+			hasBootstrap:    true,
+			bootstrapId:     uint64(0),
+		},
+		"DelayedTwoNodeScaling happy path no bootstrap": {
+			etcdMembers:     twoEtcdMembers,
+			scalingStrategy: ceohelpers.DelayedTwoNodeScalingStrategy,
+			safeToRemove:    false,
+			hasBootstrap:    false,
+			bootstrapId:     uint64(0),
+		},
+		"DelayedTwoNodeScaling happy path with bootstrap": {
+			etcdMembers:     append(twoEtcdMembers, u.FakeEtcdBootstrapMember(0)),
+			scalingStrategy: ceohelpers.DelayedTwoNodeScalingStrategy,
+			safeToRemove:    true,
+			hasBootstrap:    true,
+			bootstrapId:     uint64(0),
+		},
+		"DelayedTwoNodeScaling happy path with bootstrap and just enough members": {
+			etcdMembers: []*etcdserverpb.Member{
+				u.FakeEtcdBootstrapMember(0),
+				u.FakeEtcdMemberWithoutServer(1),
+			},
+			scalingStrategy: ceohelpers.DelayedTwoNodeScalingStrategy,
+			safeToRemove:    true,
+			hasBootstrap:    true,
+			bootstrapId:     uint64(0),
+		},
+		"DelayedTwoNodeScaling happy path with bootstrap and not enough members": {
+			etcdMembers: []*etcdserverpb.Member{
+				u.FakeEtcdBootstrapMember(0),
+			},
+			scalingStrategy: ceohelpers.DelayedTwoNodeScalingStrategy,
 			safeToRemove:    false,
 			hasBootstrap:    true,
 			bootstrapId:     uint64(0),

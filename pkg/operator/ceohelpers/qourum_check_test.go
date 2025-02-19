@@ -81,7 +81,7 @@ func TestQuorumCheck_IsSafeToUpdateRevision(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(1),
 			},
 			safe:        false,
-			expectedErr: fmt.Errorf("etcd cluster has quorum of 2 which is not fault tolerant: [{Member:name:\"etcd-0\" peerURLs:\"https://10.0.0.1:2380\" clientURLs:\"https://10.0.0.1:2907\"  Healthy:true Took: Error:<nil>} {Member:ID:1 name:\"etcd-1\" peerURLs:\"https://10.0.0.2:2380\" clientURLs:\"https://10.0.0.2:2907\"  Healthy:true Took: Error:<nil>}]"),
+			expectedErr: fmt.Errorf("CheckSafeToScaleCluster found 2 healthy member(s) out of the 3 required by the HAScalingStrategy"),
 		},
 	}
 	for _, scenario := range scenarios {

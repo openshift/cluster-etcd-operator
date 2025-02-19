@@ -71,6 +71,32 @@ func TestNewDefragController(t *testing.T) {
 			wantCondition: operatorv1.ConditionFalse,
 		},
 		{
+			name:                "defrag two node with fencing success",
+			staticPodStatus:     u.StaticPodOperatorStatus(),
+			dbSize:              minDefragBytes,     // 1GB
+			dbInUse:             minDefragBytes / 2, // 500MB
+			defragSuccessEvents: 2,
+			clusterSize:         2,
+			memberHealth:        &etcdcli.FakeMemberHealth{Healthy: 2},
+			objects: []runtime.Object{
+				u.FakeInfrastructureTopology(configv1.DualReplicaTopologyMode),
+			},
+			wantCondition: operatorv1.ConditionFalse,
+		},
+		{
+			name:                "defrag two node with arbiter success",
+			staticPodStatus:     u.StaticPodOperatorStatus(),
+			dbSize:              minDefragBytes,     // 1GB
+			dbInUse:             minDefragBytes / 2, // 500MB
+			defragSuccessEvents: 3,
+			clusterSize:         3,
+			memberHealth:        &etcdcli.FakeMemberHealth{Healthy: 3},
+			objects: []runtime.Object{
+				u.FakeInfrastructureTopology(configv1.HighlyAvailableArbiterMode),
+			},
+			wantCondition: operatorv1.ConditionFalse,
+		},
+		{
 			name:                "defrag controller disabled SNO",
 			staticPodStatus:     u.StaticPodOperatorStatus(),
 			dbSize:              minDefragBytes,     // 1GB

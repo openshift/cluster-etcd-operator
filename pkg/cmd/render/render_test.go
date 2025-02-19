@@ -128,7 +128,7 @@ data:
         region: us-east1
     publish: External
 `
-	clusterConfigMapSingleMaster = `
+	clusterConfigMapSingleNodeBootstrapInPlace = `
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -167,6 +167,115 @@ data:
     publish: External
     bootstrapInPlace:
       installationDisk: /dev/sda
+`
+
+	clusterConfigMapSingleNode = `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-config-v1
+  namespace: kube-system
+data:
+  install-config: |
+    apiVersion: v1
+    baseDomain: gcp.devcluster.openshift.com
+    compute:
+    - architecture: amd64
+      name: worker
+      platform: {}
+      replicas: 3
+    controlPlane:
+      name: master
+      platform:
+        gcp:
+      replicas: 1
+    metadata:
+      name: my-cluster
+    networking:
+      clusterNetwork:
+      - cidr: 10.128.0.0/14
+        hostPrefix: 23
+      machineCIDR: 10.0.0.0/16
+      machineNetwork:
+      - cidr: 10.0.0.0/16
+      networkType: OpenShiftSDN
+      serviceNetwork:
+      - 172.30.0.0/16
+    platform:
+      gcp:
+        projectID: openshift
+        region: us-east1
+    publish: External
+`
+	clusterConfigMapTwoNode = `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-config-v1
+  namespace: kube-system
+data:
+  install-config: |
+    apiVersion: v1
+    baseDomain: devcluster.openshift.com
+    controlPlane:
+      architecture: amd64
+      hyperthreading: Enabled
+      name: master
+      replicas: 2
+    metadata:
+      creationTimestamp: null
+      name: my-cluster
+    networking:
+      clusterNetwork:
+      - cidr: 10.128.0.0/14
+        hostPrefix: 23
+      machineCIDR: 10.0.0.0/16
+      machineNetwork:
+      - cidr: 10.0.0.0/16
+      networkType: OpenShiftSDN
+      serviceNetwork:
+      - 172.30.0.0/16
+    platform:
+      none: {}
+    publish: External
+`
+
+	clusterConfigMapTwoNodeWithArbiter = `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-config-v1
+  namespace: kube-system
+data:
+  install-config: |
+    apiVersion: v1
+    baseDomain: devcluster.openshift.com
+    controlPlane:
+      architecture: amd64
+      hyperthreading: Enabled
+      name: master
+      replicas: 2
+    arbiter:
+      architecture: amd64
+      hyperthreading: Enabled
+      name: arbiter
+      replicas: 1
+    metadata:
+      creationTimestamp: null
+      name: my-cluster
+    networking:
+      clusterNetwork:
+      - cidr: 10.128.0.0/14
+        hostPrefix: 23
+      machineCIDR: 10.0.0.0/16
+      machineNetwork:
+      - cidr: 10.0.0.0/16
+      networkType: OpenShiftSDN
+      serviceNetwork:
+      - 172.30.0.0/16
+    platform:
+      none: {}
+    publish: External
 `
 )
 
@@ -288,7 +397,23 @@ func TestRenderScalingStrategyBootstrapInPlace(t *testing.T) {
 		t:                    t,
 		clusterNetworkConfig: networkConfigIpv4,
 		infraConfig:          infraConfig,
-		clusterConfigMap:     clusterConfigMapSingleMaster,
+		clusterConfigMap:     clusterConfigMapSingleNodeBootstrapInPlace,
+		want:                 want,
+	}
+
+	testTemplateData(config)
+}
+
+func TestRenderScalingStrategyUnsafe(t *testing.T) {
+	want := TemplateData{
+		BootstrapScalingStrategy: ceohelpers.UnsafeScalingStrategy,
+	}
+
+	config := &testConfig{
+		t:                    t,
+		clusterNetworkConfig: networkConfigIpv4,
+		infraConfig:          infraConfig,
+		clusterConfigMap:     clusterConfigMapSingleNode,
 		want:                 want,
 	}
 
@@ -298,13 +423,77 @@ func TestRenderScalingStrategyBootstrapInPlace(t *testing.T) {
 func TestRenderScalingStrategyDelayedHA(t *testing.T) {
 	want := TemplateData{
 		BootstrapScalingStrategy: ceohelpers.DelayedHAScalingStrategy,
-		NamespaceAnnotations:     map[string]string{ceohelpers.DelayedHABootstrapScalingStrategyAnnotation: ""},
+		NamespaceAnnotations:     map[string]string{ceohelpers.DelayedBootstrapScalingStrategyAnnotation: ""},
 	}
 	config := &testConfig{
 		t:                                       t,
 		clusterNetworkConfig:                    networkConfigIpv4,
 		infraConfig:                             infraConfig,
 		clusterConfigMap:                        clusterConfigMap,
+		delayedHABootstrapScalingStrategyMarker: "/dev/null", // exists
+		want:                                    want,
+	}
+
+	testTemplateData(config)
+}
+
+func TestRenderScalingStrategyTwoNode(t *testing.T) {
+	want := TemplateData{
+		BootstrapScalingStrategy: ceohelpers.TwoNodeScalingStrategy,
+	}
+	config := &testConfig{
+		t:                    t,
+		clusterNetworkConfig: networkConfigIpv4,
+		infraConfig:          infraConfig,
+		clusterConfigMap:     clusterConfigMapTwoNode,
+		want:                 want,
+	}
+
+	testTemplateData(config)
+}
+
+func TestRenderScalingStrategyTwoNodeWithArbiter(t *testing.T) {
+	want := TemplateData{
+		BootstrapScalingStrategy: ceohelpers.HAScalingStrategy,
+	}
+	config := &testConfig{
+		t:                    t,
+		clusterNetworkConfig: networkConfigIpv4,
+		infraConfig:          infraConfig,
+		clusterConfigMap:     clusterConfigMapTwoNodeWithArbiter,
+		want:                 want,
+	}
+
+	testTemplateData(config)
+}
+
+func TestRenderScalingStrategyDelayedTwoNode(t *testing.T) {
+	want := TemplateData{
+		BootstrapScalingStrategy: ceohelpers.DelayedTwoNodeScalingStrategy,
+		NamespaceAnnotations:     map[string]string{ceohelpers.DelayedBootstrapScalingStrategyAnnotation: ""},
+	}
+	config := &testConfig{
+		t:                                       t,
+		clusterNetworkConfig:                    networkConfigIpv4,
+		infraConfig:                             infraConfig,
+		clusterConfigMap:                        clusterConfigMapTwoNode,
+		delayedHABootstrapScalingStrategyMarker: "/dev/null", // exists
+		want:                                    want,
+	}
+
+	testTemplateData(config)
+}
+
+func TestRenderScalingStrategyDelayedTwoNodeWithArbiter(t *testing.T) {
+	want := TemplateData{
+		BootstrapScalingStrategy: ceohelpers.DelayedHAScalingStrategy,
+		NamespaceAnnotations:     map[string]string{ceohelpers.DelayedBootstrapScalingStrategyAnnotation: ""},
+	}
+	config := &testConfig{
+		t:                                       t,
+		clusterNetworkConfig:                    networkConfigIpv4,
+		infraConfig:                             infraConfig,
+		clusterConfigMap:                        clusterConfigMapTwoNodeWithArbiter,
 		delayedHABootstrapScalingStrategyMarker: "/dev/null", // exists
 		want:                                    want,
 	}

@@ -256,9 +256,10 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 	}
 
 	// If bootstrap scaling strategy is delayed HA set annotation signal
-	if templateData.BootstrapScalingStrategy == ceohelpers.DelayedHAScalingStrategy {
+	if templateData.BootstrapScalingStrategy == ceohelpers.DelayedHAScalingStrategy ||
+		templateData.BootstrapScalingStrategy == ceohelpers.DelayedTwoNodeScalingStrategy {
 		templateData.NamespaceAnnotations = map[string]string{
-			ceohelpers.DelayedHABootstrapScalingStrategyAnnotation: "",
+			ceohelpers.DelayedBootstrapScalingStrategyAnnotation: "",
 		}
 	}
 
@@ -721,26 +722,54 @@ func getInfrastructure(file string) (*configv1.Infrastructure, error) {
 }
 
 func getBootstrapScalingStrategy(installConfig map[string]interface{}, delayedHAMarkerFile string) (ceohelpers.BootstrapScalingStrategy, error) {
-	// Delayed HA strategy is set if marker file exists on disk.
-	if _, err := os.Stat(delayedHAMarkerFile); err == nil {
-		return ceohelpers.DelayedHAScalingStrategy, nil
-	}
-
 	controlPlane, found := installConfig["controlPlane"].(map[string]interface{})
 	if !found {
 		return "", fmt.Errorf("unrecognized data structure in controlPlane field")
 	}
-	replicaCount, found := controlPlane["replicas"].(float64)
+	cpReplicaCount, found := controlPlane["replicas"].(float64)
 	if !found {
 		return "", fmt.Errorf("unrecognized data structure in controlPlane replica field")
 	}
 
 	// Bootstrap in place strategy when bootstrapInPlace root key exists in the install-config
 	// and controlPlane replicas is 1.
-	if _, found := installConfig["bootstrapInPlace"]; found && int(replicaCount) == 1 {
+	if _, found := installConfig["bootstrapInPlace"]; found && int(cpReplicaCount) == 1 {
 		return ceohelpers.BootstrapInPlaceStrategy, nil
 	}
 
+	// Delayed HA strategy is set if marker file exists on disk.
+	_, err := os.Stat(delayedHAMarkerFile)
+	delayedHAEnabled := err == nil
+
+	// Check for arbiter to distinguish between Two Node OpenShift with
+	// Fencing and Two Node OpenShift with Arbiter
+	arbReplicaCount := int64(0)
+	arbiterConfig, arbiterDefined := installConfig["arbiter"].(map[string]interface{})
+	if arbiterDefined {
+		replicas, arbReplicasDefined := arbiterConfig["replicas"].(float64)
+		if arbReplicasDefined {
+			arbReplicaCount = int64(replicas)
+		}
+	}
+
+	strategy := ceohelpers.HAScalingStrategy
+	switch {
+	// None of this logic is used.
+	// The only code that references the scaling strategy written to the
+	// manifests lives in the 00_etcd-endpoints-cm.yaml and etcd-member-pod.yaml
+	// templates, which just check for BootstrapInPlaceStrategy (see logic above).
+	case cpReplicaCount == 2 && arbReplicaCount == 0 && delayedHAEnabled:
+		strategy = ceohelpers.DelayedTwoNodeScalingStrategy
+	case cpReplicaCount == 2 && arbReplicaCount == 0 && !delayedHAEnabled:
+		strategy = ceohelpers.TwoNodeScalingStrategy
+	case delayedHAEnabled:
+		strategy = ceohelpers.DelayedHAScalingStrategy
+	case cpReplicaCount == 1:
+		strategy = ceohelpers.UnsafeScalingStrategy
+	default:
+		strategy = ceohelpers.HAScalingStrategy
+	}
+
 	// HA "default".
-	return ceohelpers.HAScalingStrategy, nil
+	return strategy, nil
 }
