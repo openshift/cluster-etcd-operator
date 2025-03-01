@@ -19,6 +19,7 @@ IMAGE_REGISTRY :=registry.svc.ci.openshift.org
 # $3 - Dockerfile path
 # $4 - context directory for image build
 $(call build-image,ocp-cluster-etcd-operator,$(IMAGE_REGISTRY)/ocp/4.4:cluster-etcd-operator, ./Dockerfile.ocp,.)
+$(call build-image,ocp-tnf-operator,$(IMAGE_REGISTRY)/ocp/4.4:tnf-operator, ./Dockerfile.tnf.ocp,.)
 
 # This will call a macro called "add-bindata" which will generate bindata specific targets based on the parameters:
 # $0 - macro name
@@ -34,6 +35,7 @@ $(call add-bindata,tnfdeployment,./bindata/tnfdeployment/...,bindata,tnfdeployme
 
 
 $(call verify-golang-versions,Dockerfile.ocp)
+$(call verify-golang-versions,Dockerfile.tnf.ocp)
 
 # Configure the 'telepresence' target
 # See vendor/github.com/openshift/build-machinery-go/scripts/run-telepresence.sh for usage and configuration details
