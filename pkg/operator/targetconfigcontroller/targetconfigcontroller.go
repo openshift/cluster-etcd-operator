@@ -2,13 +2,16 @@ package targetconfigcontroller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"reflect"
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/ghodss/yaml"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
@@ -176,6 +179,11 @@ func (c *TargetConfigController) createTargetConfig(
 		errs = errors.Join(errs, fmt.Errorf("%q: %w", "configmap/restore-etcd-pod", err))
 	}
 
+	_, _, err = c.supportExternalPod(ctx, podSub, c.kubeClient.CoreV1(), recorder, operatorSpec)
+	if err != nil {
+		errs = errors.Join(errs, fmt.Errorf("%q: %w", "configmap/external-etcd-pod", err))
+	}
+
 	return errs
 }
 
@@ -269,6 +277,56 @@ func (c *TargetConfigController) manageStandardPod(ctx context.Context, subs *Po
 
 	podConfigMap := resourceread.ReadConfigMapV1OrDie(etcd_assets.MustAsset("etcd/pod-cm.yaml"))
 	podConfigMap.Data["pod.yaml"] = w.String()
+	podConfigMap.Data["forceRedeploymentReason"] = operatorSpec.ForceRedeploymentReason
+	podConfigMap.Data["version"] = version.Get().String()
+	return resourceapply.ApplyConfigMap(ctx, client, recorder, podConfigMap)
+}
+
+func (c *TargetConfigController) supportExternalPod(ctx context.Context, subs *PodSubstitutionTemplate,
+	client coreclientv1.ConfigMapsGetter, recorder events.Recorder,
+	operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
+
+	fm := template.FuncMap{"quote": func(arg reflect.Value) string {
+		return "\"" + arg.String() + "\""
+	}}
+	podBytes := etcd_assets.MustAsset("etcd/pod.gotpl.yaml")
+	tmpl, err := template.New("pod").Funcs(fm).Parse(string(podBytes))
+	if err != nil {
+		return nil, false, err
+	}
+
+	alwaysEnableEtcdSubs := subs
+	alwaysEnableEtcdSubs.EnableEtcdContainer = true
+
+	w := &strings.Builder{}
+	err = tmpl.Execute(w, alwaysEnableEtcdSubs)
+	if err != nil {
+		return nil, false, err
+	}
+
+	// keep only the etcd container
+	var pod corev1.Pod
+	if err := yaml.Unmarshal([]byte(w.String()), &pod); err != nil {
+		return nil, false, err
+	}
+
+	filteredContainer := []corev1.Container{}
+	for _, container := range pod.Spec.Containers {
+		if container.Name == "etcd" {
+			filteredContainer = append(filteredContainer, container)
+			break
+		}
+	}
+	pod.Spec.Containers = filteredContainer
+
+	// convert it back
+	filteredPodBytes, err := json.Marshal(&pod)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to marshal filtered etcd-pod.json: %w", err)
+	}
+
+	podConfigMap := resourceread.ReadConfigMapV1OrDie(etcd_assets.MustAsset("etcd/external-etcd-pod-cm.yaml"))
+	podConfigMap.Data["etcd-pod.json"] = string(filteredPodBytes)
 	podConfigMap.Data["forceRedeploymentReason"] = operatorSpec.ForceRedeploymentReason
 	podConfigMap.Data["version"] = version.Get().String()
 	return resourceapply.ApplyConfigMap(ctx, client, recorder, podConfigMap)
