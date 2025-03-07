@@ -20,8 +20,10 @@ import (
 	operatorversionedclientv1alpha1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/dualreplicahelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/backupcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertcleaner"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/externaletcdsupportcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/periodicbackupcontroller"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
@@ -597,6 +599,30 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		clusterMemberControllerInformers...,
 	)
 
+	if enabledDualReplicaFeature, err := dualreplicahelpers.DualReplicaFeatureGateEnabled(featureGateAccessor); err != nil {
+		return fmt.Errorf("could not determine DualReplicaFeatureGateEnabled, aborting controller start: %w", err)
+	} else if enabledDualReplicaFeature {
+		if isDualReplicaTopology, err := ceohelpers.IsDualReplicaTopology(ctx, configInformers.Config().V1().Infrastructures().Lister()); err != nil {
+			return fmt.Errorf("could not determine DualReplicaTopology, aborting controller start: %w", err)
+		} else if isDualReplicaTopology {
+			klog.Infof("found external etcd support feature to be enabled, starting controller...")
+			externalEtcdSupportController := externaletcdsupportcontroller.NewExternalEtcdEnablerController(
+				operatorClient,
+				os.Getenv("IMAGE"),
+				os.Getenv("OPERATOR_IMAGE"),
+				envVarController,
+				kubeInformersForNamespaces.InformersFor("openshift-etcd"),
+				kubeInformersForNamespaces,
+				configInformers.Config().V1().Infrastructures(),
+				networkInformer,
+				controlPlaneNodeInformer,
+				kubeClient,
+				controllerContext.EventRecorder)
+
+			go externalEtcdSupportController.Run(ctx, 1)
+		}
+	}
+
 	go controlPlaneNodeInformer.Run(ctx.Done())
 	dynamicInformers.Start(ctx.Done())
 	operatorInformers.Start(ctx.Done())
@@ -657,6 +683,7 @@ var CertConfigMaps = []installer.UnrevisionedResource{
 	{Name: "restore-etcd-pod"},
 	{Name: "etcd-scripts"},
 	{Name: "etcd-all-bundles"},
+	{Name: "external-etcd-pod", Optional: true},
 }
 
 var CertSecrets = []installer.UnrevisionedResource{

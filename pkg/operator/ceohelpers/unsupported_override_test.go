@@ -2,15 +2,16 @@ package ceohelpers
 
 import (
 	"fmt"
+	"testing"
+
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/runtime"
-	"testing"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 )
 
 func TestIsUnsupportedOptions(t *testing.T) {
-	options := []string{"useUnsupportedUnsafeNonHANonProductionUnstableEtcd", "useUnsupportedUnsafeEtcdContainerRemoval"}
+	options := []string{"useUnsupportedUnsafeNonHANonProductionUnstableEtcd", "useUnsupportedUnsafeEtcdContainerRemoval", "useExternalEtcdSupport"}
 	tests := []struct {
 		name    string
 		args    string

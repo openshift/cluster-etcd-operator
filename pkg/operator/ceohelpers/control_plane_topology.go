@@ -37,3 +37,11 @@ func IsArbiterNodeTopology(ctx context.Context, infraClient configv1client.Infra
 	return infra.Status.ControlPlaneTopology == configv1.HighlyAvailableArbiterMode, nil
 
 }
+
+func IsDualReplicaTopology(ctx context.Context, infraLister configv1listers.InfrastructureLister) (bool, error) {
+	cpTopology, err := GetControlPlaneTopology(infraLister)
+	if err != nil {
+		return false, err
+	}
+	return configv1.DualReplicaTopologyMode == cpTopology, nil
+}
