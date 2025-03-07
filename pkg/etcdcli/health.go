@@ -227,6 +227,16 @@ func IsQuorumFaultTolerant(memberHealth []healthCheck) bool {
 	}
 	healthyMembers := len(GetHealthyMemberNames(memberHealth))
 	switch {
+	// This case should never occur when this function is called by CheckSafeToScaleCluster
+	// since this function is never called for the UnsafeScalingStrategy (which covers Single Node OpenShift)
+	// and the TwoNodeScalingStrategy and DelayedTwoNodeScalingStrategy when the cluster has two etcd members
+	// which is a special expection we make for Two Node OpenShift with Fencing (TNF).
+	//
+	// It is also never triggered by the HAScalingStrategy and DelayedHAScalingStrategy because having less
+	// than 3 healthy nodes violates these scaling strategies, which is checked before this function is called.
+	//
+	// The reason this is here is to ensure protection against 1 and 2 node membership if ever this function
+	// is called directly.
 	case totalMembers-quorum < 1:
 		klog.Errorf("etcd cluster has quorum of %d which is not fault tolerant: %+v", quorum, memberHealth)
 		return false
