@@ -4,18 +4,21 @@ import (
 	"context"
 	"fmt"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/library-go/pkg/controller/factory"
+	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/component-base/metrics"
 	"k8s.io/utils/clock"
@@ -23,7 +26,7 @@ import (
 
 // createCertSecrets will run the etcdcertsigner.EtcdCertSignerController once and collect all respective certs created.
 // The secrets will contain all signers, peer, serving and client certs. The configmaps contain all bundles.
-func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMap, error) {
+func createCertSecrets(nodes []*corev1.Node, enabledFeatureGates, disabledFeatureGates sets.Set[configv1.FeatureGateName]) ([]corev1.Secret, []corev1.ConfigMap, error) {
 	var fakeObjs []runtime.Object
 	for _, node := range nodes {
 		fakeObjs = append(fakeObjs, node)
@@ -49,7 +52,8 @@ func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMa
 		return nil, nil, fmt.Errorf("could not parse master node labels: %w", err)
 	}
 
-	controller := etcdcertsigner.NewEtcdCertSignerController(
+	featureGateAccessor := featuregates.NewHardcodedFeatureGateAccess(enabledFeatureGates.UnsortedList(), disabledFeatureGates.UnsortedList())
+	controller, err := etcdcertsigner.NewEtcdCertSignerController(
 		health.NewMultiAlivenessChecker(),
 		fakeKubeClient,
 		fakeOperatorClient,
@@ -59,7 +63,11 @@ func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMa
 		nodeSelector,
 		recorder,
 		metrics.NewKubeRegistry(),
-		true)
+		true,
+		featureGateAccessor)
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not run etcdCertSignerController control loop: %w", err)
+	}
 
 	stopChan := make(chan struct{})
 	defer close(stopChan)
@@ -71,7 +79,7 @@ func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMa
 
 	err = controller.Sync(context.Background(), factory.NewSyncContext("createCertSecrets", recorder))
 	if err != nil {
-		return nil, nil, fmt.Errorf("could not run etcd cert signer control loop: %w", err)
+		return nil, nil, fmt.Errorf("could not run etcdCertSignerController sync loop: %w", err)
 	}
 
 	// to finalize, we need to copy a few certificates around, which is handled by the resourcesynccontroller
@@ -114,11 +122,11 @@ func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMa
 	return secrets, bundles, nil
 }
 
-func createBootstrapCertSecrets(hostName string, ipAddress string) ([]corev1.Secret, []corev1.ConfigMap, error) {
+func createBootstrapCertSecrets(hostName string, ipAddress string, enabledFeatureGates, disabledFeatureGates sets.Set[configv1.FeatureGateName]) ([]corev1.Secret, []corev1.ConfigMap, error) {
 	return createCertSecrets([]*corev1.Node{
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: hostName, Labels: map[string]string{"node-role.kubernetes.io/master": ""}},
 			Status:     corev1.NodeStatus{Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: ipAddress}}},
 		},
-	})
+	}, enabledFeatureGates, disabledFeatureGates)
 }
