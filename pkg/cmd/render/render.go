@@ -270,7 +270,9 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 			base64.StdEncoding.WithPadding(base64.NoPadding).EncodeToString([]byte(templateData.BootstrapIP)), templateData.BootstrapIP)
 	}
 
-	certs, bundles, err := createBootstrapCertSecrets(templateData.Hostname, templateData.BootstrapIP)
+	enabledFeatureGates, disabledFeatureGates := getFeatureGatesStatus(installConfig)
+
+	certs, bundles, err := createBootstrapCertSecrets(templateData.Hostname, templateData.BootstrapIP, enabledFeatureGates, disabledFeatureGates)
 	if err != nil {
 		return nil, err
 	}
@@ -772,4 +774,33 @@ func getBootstrapScalingStrategy(installConfig map[string]interface{}, delayedHA
 
 	// HA "default".
 	return strategy, nil
+}
+
+// getFeatureGatesStatus returns the enabled and disabled feature gates.
+func getFeatureGatesStatus(installConfig map[string]interface{}) (sets.Set[configv1.FeatureGateName], sets.Set[configv1.FeatureGateName]) {
+	enabled, disabled := sets.Set[configv1.FeatureGateName]{}, sets.Set[configv1.FeatureGateName]{}
+
+	// On bootstrap we might not be able to fetch a list of all feature gates
+	// Hardcode a list of necessary for bootstrap here
+	necessaryFeatureGates := []configv1.FeatureGateName{"ShortCertRotation"}
+	disabled.Insert(necessaryFeatureGates...)
+
+	featureGates, found := installConfig["featureGates"]
+	if !found {
+		return enabled, disabled
+	}
+
+	for _, featureGate := range featureGates.([]interface{}) {
+		key := strings.Split(featureGate.(string), "=")[0]
+		value := strings.Split(featureGate.(string), "=")[1]
+		if value == "true" {
+			enabled = enabled.Insert(configv1.FeatureGateName(key))
+			disabled = disabled.Delete(configv1.FeatureGateName(key))
+		} else if value == "false" {
+			enabled = enabled.Delete(configv1.FeatureGateName(key))
+			disabled = disabled.Insert(configv1.FeatureGateName(key))
+		}
+	}
+
+	return enabled, disabled
 }
