@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	features "github.com/openshift/api/features"
 	"github.com/openshift/library-go/pkg/crypto"
 	"github.com/openshift/library-go/pkg/operator/bootstrap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -24,6 +25,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/certrotation"
+	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -85,6 +87,9 @@ type EtcdCertSignerController struct {
 
 	// metrics
 	signerExpirationGauge *metrics.GaugeVec
+
+	signerValidity tlshelpers.CertValidity
+	certValidity   tlshelpers.CertValidity
 }
 
 // NewEtcdCertSignerController watches master nodes and maintains secrets for each master node, placing them in a single secret (NOT a tls secret)
@@ -102,7 +107,8 @@ func NewEtcdCertSignerController(
 	eventRecorder events.Recorder,
 	metricsRegistry metrics.KubeRegistry,
 	forceSkipRollout bool,
-) factory.Controller {
+	featureGateAccessor featuregates.FeatureGateAccess,
+) (factory.Controller, error) {
 	eventRecorder = eventRecorder.WithComponentSuffix("etcd-cert-signer-controller")
 	cmInformer := kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps()
 	cmGetter := kubeClient.CoreV1()
@@ -130,11 +136,35 @@ func NewEtcdCertSignerController(
 		SecretClient: secretClient.Secrets(operatorclient.TargetNamespace),
 		Namespace:    operatorclient.TargetNamespace,
 	}
-	signerCert := tlshelpers.CreateSignerCert(secretInformer, secretLister, secretClient, eventRecorder)
-	etcdClientCert := tlshelpers.CreateEtcdClientCert(secretInformer, secretLister, secretClient, eventRecorder)
 
-	metricsSignerCert := tlshelpers.CreateMetricsSignerCert(secretInformer, secretLister, secretClient, eventRecorder)
-	metricsClientCert := tlshelpers.CreateMetricsClientCert(secretInformer, secretLister, secretClient, eventRecorder)
+	certValidity := tlshelpers.CertValidity{
+		Validity:  tlshelpers.EtcdCaCertValidity,
+		RefreshAt: tlshelpers.EtcdCaCertValidityRefresh,
+	}
+	signerValidity := tlshelpers.CertValidity{
+		Validity:  tlshelpers.EtcdCaCertValidity,
+		RefreshAt: tlshelpers.EtcdCaCertValidityRefresh,
+	}
+	featureGates, err := featureGateAccessor.CurrentFeatureGates()
+	if err != nil {
+		return nil, fmt.Errorf("feature gate accessor: %v", err)
+	}
+	if featureGates.Enabled(features.FeatureShortCertRotation) {
+		certValidity = tlshelpers.CertValidity{
+			Validity:  2 * time.Hour,
+			RefreshAt: 90 * time.Minute,
+		}
+		signerValidity = tlshelpers.CertValidity{
+			Validity:  4 * time.Hour,
+			RefreshAt: 3 * time.Hour,
+		}
+	}
+
+	signerCert := tlshelpers.CreateSignerCert(secretInformer, secretLister, secretClient, eventRecorder, signerValidity)
+	etcdClientCert := tlshelpers.CreateEtcdClientCert(secretInformer, secretLister, secretClient, eventRecorder, certValidity)
+
+	metricsSignerCert := tlshelpers.CreateMetricsSignerCert(secretInformer, secretLister, secretClient, eventRecorder, signerValidity)
+	metricsClientCert := tlshelpers.CreateMetricsClientCert(secretInformer, secretLister, secretClient, eventRecorder, certValidity)
 
 	certCfg := &certConfig{
 		signerCaBundle: signerCaBundle,
@@ -167,19 +197,22 @@ func NewEtcdCertSignerController(
 		certConfig:            certCfg,
 		signerExpirationGauge: signerExpirationGauge,
 		forceSkipRollout:      forceSkipRollout,
+		signerValidity:        signerValidity,
+		certValidity:          certValidity,
 	}
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
 	livenessChecker.Add("EtcdCertSignerController", syncer)
 
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
-		masterNodeInformer,
-		kubeInformers.InformersFor(operatorclient.GlobalUserSpecifiedConfigNamespace).Core().V1().Secrets().Informer(),
-		kubeInformers.InformersFor(operatorclient.KubeSystemNamespace).Core().V1().ConfigMaps().Informer(),
-		cmInformer.Informer(),
-		secretInformer.Informer(),
-		operatorClient.Informer(),
-	).WithSync(syncer.Sync).ToController("EtcdCertSignerController", c.eventRecorder)
+			masterNodeInformer,
+			kubeInformers.InformersFor(operatorclient.GlobalUserSpecifiedConfigNamespace).Core().V1().Secrets().Informer(),
+			kubeInformers.InformersFor(operatorclient.KubeSystemNamespace).Core().V1().ConfigMaps().Informer(),
+			cmInformer.Informer(),
+			secretInformer.Informer(),
+			operatorClient.Informer(),
+		).WithSync(syncer.Sync).ToController("EtcdCertSignerController", c.eventRecorder),
+		nil
 }
 
 func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
@@ -481,7 +514,8 @@ func (c *EtcdCertSignerController) createNodeCertConfigs() ([]*nodeCertConfigs, 
 			c.secretInformer,
 			c.secretLister,
 			c.secretClient,
-			c.eventRecorder)
+			c.eventRecorder,
+			c.certValidity)
 		if err != nil {
 			return cfgs, fmt.Errorf("error creating peer cert for node [%s]: %w", node.Name, err)
 		}
@@ -490,7 +524,8 @@ func (c *EtcdCertSignerController) createNodeCertConfigs() ([]*nodeCertConfigs, 
 			c.secretInformer,
 			c.secretLister,
 			c.secretClient,
-			c.eventRecorder)
+			c.eventRecorder,
+			c.certValidity)
 		if err != nil {
 			return cfgs, fmt.Errorf("error creating serving cert for node [%s]: %w", node.Name, err)
 		}
@@ -499,7 +534,8 @@ func (c *EtcdCertSignerController) createNodeCertConfigs() ([]*nodeCertConfigs, 
 			c.secretInformer,
 			c.secretLister,
 			c.secretClient,
-			c.eventRecorder)
+			c.eventRecorder,
+			c.certValidity)
 		if err != nil {
 			return cfgs, fmt.Errorf("error creating metrics cert for node [%s]: %w", node.Name, err)
 		}
