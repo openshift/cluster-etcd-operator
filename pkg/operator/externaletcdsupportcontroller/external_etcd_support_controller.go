@@ -4,9 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
-	"strings"
-	"text/template"
 	"time"
 
 	"github.com/ghodss/yaml"
@@ -17,7 +14,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
@@ -25,7 +21,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	coreclientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -99,8 +94,9 @@ func (c *ExternalEtcdEnablerController) sync(ctx context.Context, syncCtx factor
 		return fmt.Errorf("ExternalEtcdEnablerController missing env var values")
 	}
 
-	podSub := c.getPodSubstitution(c.targetImagePullSpec, c.operatorImagePullSpec, envVars)
-	_, _, err = c.supportExternalPod(ctx, podSub, c.kubeClient.CoreV1(), syncCtx.Recorder(), operatorSpec)
+	podSub, _ := ceohelpers.GetPodSubstitution(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars)
+
+	_, _, err = c.supportExternalEtcdOnlyPod(ctx, podSub, c.kubeClient.CoreV1(), syncCtx.Recorder(), operatorSpec)
 	if err != nil {
 		err = fmt.Errorf("%q: %w", "configmap/external-etcd-pod", err)
 	}
@@ -108,49 +104,23 @@ func (c *ExternalEtcdEnablerController) sync(ctx context.Context, syncCtx factor
 	return err
 }
 
-func (c *ExternalEtcdEnablerController) getPodSubstitution(
-	imagePullSpec, operatorImagePullSpec string,
-	envVarMap map[string]string) *targetconfigcontroller.PodSubstitutionTemplate {
-
-	var nameValues []targetconfigcontroller.NameValue
-	for _, k := range sets.StringKeySet(envVarMap).List() {
-		v := envVarMap[k]
-		nameValues = append(nameValues, targetconfigcontroller.NameValue{k, v})
-	}
-
-	return &targetconfigcontroller.PodSubstitutionTemplate{
-		Image:               imagePullSpec,
-		OperatorImage:       operatorImagePullSpec,
-		ListenAddress:       "0.0.0.0",   // TODO this needs updating to detect ipv6-ness
-		LocalhostAddress:    "127.0.0.1", // TODO this needs updating to detect ipv6-ness
-		LogLevel:            "info",
-		EnvVars:             nameValues,
-		EnableEtcdContainer: true,
-	}
-}
-
-func (c *ExternalEtcdEnablerController) supportExternalPod(ctx context.Context, subs *targetconfigcontroller.PodSubstitutionTemplate,
-	client coreclientv1.ConfigMapsGetter, recorder events.Recorder,
+func (c *ExternalEtcdEnablerController) supportExternalEtcdOnlyPod(
+	ctx context.Context,
+	subs *ceohelpers.PodSubstitutionTemplate,
+	client coreclientv1.ConfigMapsGetter,
+	recorder events.Recorder,
 	operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
 
-	fm := template.FuncMap{"quote": func(arg reflect.Value) string {
-		return "\"" + arg.String() + "\""
-	}}
-	podBytes := etcd_assets.MustAsset("etcd/pod.gotpl.yaml")
-	tmpl, err := template.New("pod").Funcs(fm).Parse(string(podBytes))
-	if err != nil {
-		return nil, false, err
-	}
-
-	w := &strings.Builder{}
-	err = tmpl.Execute(w, subs)
+	// We always want the etcd container here
+	subs.EnableEtcdContainer = true
+	renderedTemplate, err := ceohelpers.RenderTemplate("etcd/pod.gotpl.yaml", subs)
 	if err != nil {
 		return nil, false, err
 	}
 
 	// keep only the etcd container
 	var pod corev1.Pod
-	if err := yaml.Unmarshal([]byte(w.String()), &pod); err != nil {
+	if err := yaml.Unmarshal([]byte(renderedTemplate), &pod); err != nil {
 		return nil, false, err
 	}
 
