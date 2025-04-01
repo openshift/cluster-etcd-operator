@@ -5,7 +5,6 @@
 // bindata/tnfdeployment/deployment.yaml
 // bindata/tnfdeployment/leaderelection-role.yaml
 // bindata/tnfdeployment/leaderelection-rolebinding.yaml
-// bindata/tnfdeployment/namespace.yaml
 // bindata/tnfdeployment/sa.yaml
 package tnfdeployment_assets
 
@@ -73,7 +72,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: tnf-operator-controller-manager
-    namespace: openshift-tnf-operator
+    namespace: openshift-etcd
 `)
 
 func tnfdeploymentClusterroleBindingYamlBytes() ([]byte, error) {
@@ -111,12 +110,10 @@ rules:
       - config.openshift.io
     resources:
       - clusterversions
+      - infrastructures
     verbs:
-      - create
       - get
       - list
-      - patch
-      - update
       - watch
   - apiGroups:
       - ""
@@ -199,9 +196,9 @@ spec:
     spec:
       containers:
         - name: tnf-controller
-          image: quay.io/slintes/tnf-operator:latest
+          image: quay.io/openshift/origin-cluster-etcd-operator
           imagePullPolicy: Always
-          command: ["tnf-operator", "operator"]
+          command: ["cluster-etcd-operator", "tnf-setup"]
           resources:
             requests:
               cpu: 50m
@@ -302,7 +299,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: tnf-operator-controller-manager
-    namespace: openshift-tnf-operator
+    namespace: openshift-etcd
 `)
 
 func tnfdeploymentLeaderelectionRolebindingYamlBytes() ([]byte, error) {
@@ -316,32 +313,6 @@ func tnfdeploymentLeaderelectionRolebindingYaml() (*asset, error) {
 	}
 
 	info := bindataFileInfo{name: "tnfdeployment/leaderelection-rolebinding.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
-	a := &asset{bytes: bytes, info: info}
-	return a, nil
-}
-
-var _tnfdeploymentNamespaceYaml = []byte(`apiVersion: v1
-kind: Namespace
-metadata:
-  labels:
-    openshift.io/cluster-monitoring: "true"
-    pod-security.kubernetes.io/audit: privileged
-    pod-security.kubernetes.io/enforce: privileged
-    pod-security.kubernetes.io/warn: privileged
-  name: openshift-tnf-operator
-`)
-
-func tnfdeploymentNamespaceYamlBytes() ([]byte, error) {
-	return _tnfdeploymentNamespaceYaml, nil
-}
-
-func tnfdeploymentNamespaceYaml() (*asset, error) {
-	bytes, err := tnfdeploymentNamespaceYamlBytes()
-	if err != nil {
-		return nil, err
-	}
-
-	info := bindataFileInfo{name: "tnfdeployment/namespace.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
@@ -426,7 +397,6 @@ var _bindata = map[string]func() (*asset, error){
 	"tnfdeployment/deployment.yaml":                 tnfdeploymentDeploymentYaml,
 	"tnfdeployment/leaderelection-role.yaml":        tnfdeploymentLeaderelectionRoleYaml,
 	"tnfdeployment/leaderelection-rolebinding.yaml": tnfdeploymentLeaderelectionRolebindingYaml,
-	"tnfdeployment/namespace.yaml":                  tnfdeploymentNamespaceYaml,
 	"tnfdeployment/sa.yaml":                         tnfdeploymentSaYaml,
 }
 
@@ -479,7 +449,6 @@ var _bintree = &bintree{nil, map[string]*bintree{
 		"deployment.yaml":                 {tnfdeploymentDeploymentYaml, map[string]*bintree{}},
 		"leaderelection-role.yaml":        {tnfdeploymentLeaderelectionRoleYaml, map[string]*bintree{}},
 		"leaderelection-rolebinding.yaml": {tnfdeploymentLeaderelectionRolebindingYaml, map[string]*bintree{}},
-		"namespace.yaml":                  {tnfdeploymentNamespaceYaml, map[string]*bintree{}},
 		"sa.yaml":                         {tnfdeploymentSaYaml, map[string]*bintree{}},
 	}},
 }}

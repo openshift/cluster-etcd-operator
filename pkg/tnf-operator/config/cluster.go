@@ -80,7 +80,7 @@ func getInternalIP(addresses []corev1.NodeAddress) string {
 }
 
 func getFencingConfigs(ctx context.Context, kubeClient kubernetes.Interface) ([]FencingConfig, error) {
-	secret, err := kubeClient.CoreV1().Secrets("openshift-tnf-operator").Get(ctx, "tnf-fencing-config", metav1.GetOptions{})
+	secret, err := kubeClient.CoreV1().Secrets("openshift-etcd").Get(ctx, "tnf-fencing-config", metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}

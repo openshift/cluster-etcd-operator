@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	tnf_namespace = "openshift-tnf-operator"
+	tnf_namespace = "openshift-etcd"
 )
 
 type TnfDeploymentController struct {
@@ -118,12 +118,6 @@ func (c *TnfDeploymentController) sync(ctx context.Context, syncCtx factory.Sync
 
 func (c *TnfDeploymentController) createTnf() error {
 
-	// namespace
-	if _, _, err := c.manageNamespace(); err != nil {
-		klog.Error("unable to manage namespace")
-		return err
-	}
-
 	// service account
 	if _, _, err := c.manageServiceAccount(); err != nil {
 		klog.Error("unable to manage service account")
@@ -161,11 +155,6 @@ func (c *TnfDeploymentController) createTnf() error {
 	}
 
 	return nil
-}
-
-func (c *TnfDeploymentController) manageNamespace() (*corev1.Namespace, bool, error) {
-	required := resourceread.ReadNamespaceV1OrDie(tnfdeployment_assets.MustAsset("tnfdeployment/namespace.yaml"))
-	return resourceapply.ApplyNamespace(c.ctx, c.kubeClient.CoreV1(), c.eventRecorder, required)
 }
 
 func (c *TnfDeploymentController) manageServiceAccount() (*corev1.ServiceAccount, bool, error) {
