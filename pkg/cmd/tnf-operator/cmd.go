@@ -16,7 +16,7 @@ import (
 
 func NewTnfOperator() *cobra.Command {
 	cmd := controllercmd.
-		NewControllerCommandConfig("tnf-operator", version.Get(), tnfoperator.RunTnfOperator, clock.RealClock{}).
+		NewControllerCommandConfig("tnf-setup", version.Get(), tnfoperator.RunTnfOperator, clock.RealClock{}).
 		// TODO change or reuse existing function
 		WithEventRecorderOptions(EtcdOperatorCorrelatorOptions()).
 		// TODO implement own health check
@@ -27,8 +27,8 @@ func NewTnfOperator() *cobra.Command {
 		//	return nil
 		//})).
 		NewCommandWithContext(context.Background())
-	cmd.Use = "operator"
-	cmd.Short = "Start the Two node fencing Operator"
+	cmd.Use = "tnf-setup"
+	cmd.Short = "Start the Two node fencing setup"
 
 	return cmd
 }

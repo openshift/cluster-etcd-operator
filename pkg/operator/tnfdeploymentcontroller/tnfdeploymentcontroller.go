@@ -29,14 +29,15 @@ const (
 )
 
 type TnfDeploymentController struct {
-	ctx               context.Context
-	operatorClient    v1helpers.StaticPodOperatorClient
-	kubeClient        kubernetes.Interface
-	eventRecorder     events.Recorder
-	etcdImagePullSpec string
-	resourceCache     resourceapply.ResourceCache
-	envVarGetter      etcdenvvar.EnvVar
-	enqueueFn         func()
+	ctx                   context.Context
+	operatorClient        v1helpers.StaticPodOperatorClient
+	kubeClient            kubernetes.Interface
+	eventRecorder         events.Recorder
+	etcdImagePullSpec     string
+	operatorImagePullSpec string
+	resourceCache         resourceapply.ResourceCache
+	envVarGetter          etcdenvvar.EnvVar
+	enqueueFn             func()
 }
 
 func NewTnfDeploymentController(
@@ -49,13 +50,15 @@ func NewTnfDeploymentController(
 	envVarGetter etcdenvvar.EnvVar,
 	eventRecorder events.Recorder,
 	etcdImagePullSpec string,
+	operatorImagePullSpec string,
 ) factory.Controller {
 	c := &TnfDeploymentController{
-		ctx:               ctx,
-		operatorClient:    operatorClient,
-		kubeClient:        kubeClient,
-		eventRecorder:     eventRecorder,
-		etcdImagePullSpec: etcdImagePullSpec,
+		ctx:                   ctx,
+		operatorClient:        operatorClient,
+		kubeClient:            kubeClient,
+		eventRecorder:         eventRecorder,
+		etcdImagePullSpec:     etcdImagePullSpec,
+		operatorImagePullSpec: operatorImagePullSpec,
 	}
 
 	syncCtx := factory.NewSyncContext("TnfDeploymentController", eventRecorder.WithComponentSuffix("tnf-deployment-controller"))
@@ -198,6 +201,11 @@ func (c *TnfDeploymentController) manageLeaderElectionRoleBinding() (*rbacv1.Rol
 func (c *TnfDeploymentController) manageDeployment() (*appsv1.Deployment, bool, error) {
 	required := resourceread.ReadDeploymentV1OrDie(tnfdeployment_assets.MustAsset("tnfdeployment/deployment.yaml"))
 	required.Namespace = tnf_namespace
+
+	// set image pullspec
+	required.Spec.Template.Spec.Containers[0].Image = c.operatorImagePullSpec
+
+	// set env var with etcd image pullspec
 	env := required.Spec.Template.Spec.Containers[0].Env
 	if env == nil {
 		env = []corev1.EnvVar{}

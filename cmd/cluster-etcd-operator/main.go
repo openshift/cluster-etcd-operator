@@ -10,6 +10,16 @@ import (
 	"time"
 
 	prune_backups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
+	tnfoperator "github.com/openshift/cluster-etcd-operator/pkg/cmd/tnf-operator"
+
+	"github.com/openshift/library-go/pkg/operator/staticpod/certsyncpod"
+	"github.com/openshift/library-go/pkg/operator/staticpod/installerpod"
+	"github.com/openshift/library-go/pkg/operator/staticpod/prune"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+	"google.golang.org/grpc/grpclog"
+	utilflag "k8s.io/component-base/cli/flag"
+	"k8s.io/component-base/logs"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/backuprestore"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/monitor"
@@ -21,14 +31,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/verify"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/waitforceo"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator"
-	"github.com/openshift/library-go/pkg/operator/staticpod/certsyncpod"
-	"github.com/openshift/library-go/pkg/operator/staticpod/installerpod"
-	"github.com/openshift/library-go/pkg/operator/staticpod/prune"
-	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
-	"google.golang.org/grpc/grpclog"
-	utilflag "k8s.io/component-base/cli/flag"
-	"k8s.io/component-base/logs"
 )
 
 func main() {
@@ -78,6 +80,7 @@ func NewSSCSCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(requestbackup.NewRequestBackupCommand(ctx))
 	cmd.AddCommand(rev.NewRevCommand(ctx))
 	cmd.AddCommand(backuprestore.NewBackupServer(ctx))
+	cmd.AddCommand(tnfoperator.NewTnfOperator())
 
 	return cmd
 }

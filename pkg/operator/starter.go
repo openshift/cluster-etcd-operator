@@ -285,6 +285,9 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 
 	// create the two node with fencing (TNF) operator deployment on DualReplica clusters
+	// we need the config informer for checking the cluster topology
+	configInformers.Start(ctx.Done())
+	configInformers.WaitForCacheSync(ctx.Done())
 	var tnfDeploymentReconciler factory.Controller
 	if cpTopology, err := ceohelpers.GetControlPlaneTopology(configInformers.Config().V1().Infrastructures().Lister()); err != nil {
 		return err
@@ -299,6 +302,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			envVarController,
 			controllerContext.EventRecorder,
 			os.Getenv("IMAGE"),
+			os.Getenv("OPERATOR_IMAGE"),
 		)
 	}
 
@@ -479,8 +483,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
-	// the configInformer has to run before the machine and backup feature checks
-	configInformers.Start(ctx.Done())
 	go featureGateAccessor.Run(ctx)
 
 	select {

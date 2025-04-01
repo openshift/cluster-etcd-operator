@@ -20,9 +20,9 @@ spec:
     spec:
       containers:
         - name: tnf-controller
-          image: quay.io/slintes/tnf-operator:latest
+          image: quay.io/openshift/origin-cluster-etcd-operator
           imagePullPolicy: Always
-          command: ["tnf-operator", "operator"]
+          command: ["cluster-etcd-operator", "tnf-setup"]
           resources:
             requests:
               cpu: 50m
