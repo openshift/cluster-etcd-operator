@@ -21,6 +21,11 @@ func IsUnsupportedUnsafeEtcdContainerRemoval(spec *operatorv1.StaticPodOperatorS
 	return tryGetUnsupportedValue(spec, "useUnsupportedUnsafeEtcdContainerRemoval")
 }
 
+// IsExternalEtcdSupport returns true if useExternalEtcdSupport is set to any parsable value.
+func IsExternalEtcdSupport(spec *operatorv1.StaticPodOperatorSpec) (bool, error) {
+	return tryGetUnsupportedValue(spec, "useExternalEtcdSupport")
+}
+
 func tryGetUnsupportedValue(spec *operatorv1.StaticPodOperatorSpec, key string) (bool, error) {
 	unsupportedConfig := map[string]interface{}{}
 	if spec.UnsupportedConfigOverrides.Raw == nil {

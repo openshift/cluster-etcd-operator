@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
-	"reflect"
 	"strings"
-	"text/template"
 	"time"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
@@ -31,23 +30,6 @@ import (
 	coreclientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/cache"
 )
-
-type NameValue struct {
-	Name  string
-	Value string
-}
-
-type PodSubstitutionTemplate struct {
-	Image               string
-	OperatorImage       string
-	ListenAddress       string
-	LocalhostAddress    string
-	LogLevel            string
-	EnvVars             []NameValue
-	BackupArgs          []string
-	CipherSuites        string
-	EnableEtcdContainer bool
-}
 
 type TargetConfigController struct {
 	targetImagePullSpec   string
@@ -161,7 +143,8 @@ func (c *TargetConfigController) createTargetConfig(
 	if err != nil {
 		return err
 	}
-	podSub, err := c.getPodSubstitution(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars)
+
+	podSub, err := ceohelpers.GetPodSubstitution(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars)
 	if err != nil {
 		return err
 	}
@@ -179,15 +162,6 @@ func (c *TargetConfigController) createTargetConfig(
 	return errs
 }
 
-func loglevelToZap(logLevel operatorv1.LogLevel) string {
-	switch logLevel {
-	case operatorv1.Debug, operatorv1.Trace, operatorv1.TraceAll:
-		return "debug"
-	default:
-		return "info"
-	}
-}
-
 func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv1.StaticPodOperatorSpec,
 	imagePullSpec, operatorImagePullSpec string, envVarMap map[string]string) (*strings.Replacer, error) {
 	var envVarLines []string
@@ -200,36 +174,11 @@ func (c *TargetConfigController) getSubstitutionReplacer(operatorSpec *operatorv
 	return strings.NewReplacer(
 		"${IMAGE}", imagePullSpec,
 		"${OPERATOR_IMAGE}", operatorImagePullSpec,
-		"${VERBOSITY}", loglevelToZap(operatorSpec.LogLevel),
+		"${VERBOSITY}", ceohelpers.LoglevelToZap(operatorSpec.LogLevel),
 		"${LISTEN_ON_ALL_IPS}", "0.0.0.0", // TODO this needs updating to detect ipv6-ness
 		"${LOCALHOST_IP}", "127.0.0.1", // TODO this needs updating to detect ipv6-ness
 		"${COMPUTED_ENV_VARS}", strings.Join(envVarLines, "\n"), // lacks beauty, but it works
 	), nil
-}
-
-func (c *TargetConfigController) getPodSubstitution(operatorSpec *operatorv1.StaticPodOperatorSpec,
-	imagePullSpec, operatorImagePullSpec string, envVarMap map[string]string) (*PodSubstitutionTemplate, error) {
-	shouldRemoveEtcdContainer, err := ceohelpers.IsUnsupportedUnsafeEtcdContainerRemoval(operatorSpec)
-	if err != nil {
-		return nil, err
-	}
-
-	var nameValues []NameValue
-	for _, k := range sets.StringKeySet(envVarMap).List() {
-		v := envVarMap[k]
-		nameValues = append(nameValues, NameValue{k, v})
-	}
-
-	return &PodSubstitutionTemplate{
-		Image:               imagePullSpec,
-		OperatorImage:       operatorImagePullSpec,
-		ListenAddress:       "0.0.0.0",   // TODO this needs updating to detect ipv6-ness
-		LocalhostAddress:    "127.0.0.1", // TODO this needs updating to detect ipv6-ness
-		LogLevel:            loglevelToZap(operatorSpec.LogLevel),
-		EnvVars:             nameValues,
-		CipherSuites:        envVarMap["ETCD_CIPHER_SUITES"],
-		EnableEtcdContainer: !shouldRemoveEtcdContainer,
-	}, nil
 }
 
 func (c *TargetConfigController) manageRecoveryPods(
@@ -248,27 +197,17 @@ func (c *TargetConfigController) manageRecoveryPods(
 	return resourceapply.ApplyConfigMap(ctx, client, recorder, podConfigMap)
 }
 
-func (c *TargetConfigController) manageStandardPod(ctx context.Context, subs *PodSubstitutionTemplate,
+func (c *TargetConfigController) manageStandardPod(ctx context.Context, subs *ceohelpers.PodSubstitutionTemplate,
 	client coreclientv1.ConfigMapsGetter, recorder events.Recorder,
 	operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
 
-	fm := template.FuncMap{"quote": func(arg reflect.Value) string {
-		return "\"" + arg.String() + "\""
-	}}
-	podBytes := etcd_assets.MustAsset("etcd/pod.gotpl.yaml")
-	tmpl, err := template.New("pod").Funcs(fm).Parse(string(podBytes))
-	if err != nil {
-		return nil, false, err
-	}
-
-	w := &strings.Builder{}
-	err = tmpl.Execute(w, subs)
+	renderedTemplate, err := ceohelpers.RenderTemplate("etcd/pod.gotpl.yaml", subs)
 	if err != nil {
 		return nil, false, err
 	}
 
 	podConfigMap := resourceread.ReadConfigMapV1OrDie(etcd_assets.MustAsset("etcd/pod-cm.yaml"))
-	podConfigMap.Data["pod.yaml"] = w.String()
+	podConfigMap.Data["pod.yaml"] = renderedTemplate
 	podConfigMap.Data["forceRedeploymentReason"] = operatorSpec.ForceRedeploymentReason
 	podConfigMap.Data["version"] = version.Get().String()
 	return resourceapply.ApplyConfigMap(ctx, client, recorder, podConfigMap)

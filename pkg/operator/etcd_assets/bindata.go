@@ -10,6 +10,7 @@
 // bindata/etcd/cm.yaml
 // bindata/etcd/disable-etcd.sh
 // bindata/etcd/etcd-common-tools
+// bindata/etcd/external-etcd-pod-cm.yaml
 // bindata/etcd/minimal-sm.yaml
 // bindata/etcd/ns.yaml
 // bindata/etcd/pod-cm.yaml
@@ -855,6 +856,30 @@ func etcdEtcdCommonTools() (*asset, error) {
 	}
 
 	info := bindataFileInfo{name: "etcd/etcd-common-tools", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
+var _etcdExternalEtcdPodCmYaml = []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: openshift-etcd
+  name: external-etcd-pod
+data:
+  pod.yaml:
+`)
+
+func etcdExternalEtcdPodCmYamlBytes() ([]byte, error) {
+	return _etcdExternalEtcdPodCmYaml, nil
+}
+
+func etcdExternalEtcdPodCmYaml() (*asset, error) {
+	bytes, err := etcdExternalEtcdPodCmYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "etcd/external-etcd-pod-cm.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
@@ -2500,6 +2525,7 @@ var _bindata = map[string]func() (*asset, error){
 	"etcd/cm.yaml":                     etcdCmYaml,
 	"etcd/disable-etcd.sh":             etcdDisableEtcdSh,
 	"etcd/etcd-common-tools":           etcdEtcdCommonTools,
+	"etcd/external-etcd-pod-cm.yaml":   etcdExternalEtcdPodCmYaml,
 	"etcd/minimal-sm.yaml":             etcdMinimalSmYaml,
 	"etcd/ns.yaml":                     etcdNsYaml,
 	"etcd/pod-cm.yaml":                 etcdPodCmYaml,
@@ -2571,6 +2597,7 @@ var _bintree = &bintree{nil, map[string]*bintree{
 		"cm.yaml":                     {etcdCmYaml, map[string]*bintree{}},
 		"disable-etcd.sh":             {etcdDisableEtcdSh, map[string]*bintree{}},
 		"etcd-common-tools":           {etcdEtcdCommonTools, map[string]*bintree{}},
+		"external-etcd-pod-cm.yaml":   {etcdExternalEtcdPodCmYaml, map[string]*bintree{}},
 		"minimal-sm.yaml":             {etcdMinimalSmYaml, map[string]*bintree{}},
 		"ns.yaml":                     {etcdNsYaml, map[string]*bintree{}},
 		"pod-cm.yaml":                 {etcdPodCmYaml, map[string]*bintree{}},
