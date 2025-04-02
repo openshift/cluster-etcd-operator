@@ -284,28 +284,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
-	// create the two node with fencing (TNF) operator deployment on DualReplica clusters
-	// we need the config informer for checking the cluster topology
-	configInformers.Start(ctx.Done())
-	configInformers.WaitForCacheSync(ctx.Done())
-	var tnfDeploymentReconciler factory.Controller
-	if cpTopology, err := ceohelpers.GetControlPlaneTopology(configInformers.Config().V1().Infrastructures().Lister()); err != nil {
-		return err
-	} else if configv1.DualReplicaTopologyMode == cpTopology {
-		tnfDeploymentReconciler = tnf.NewTnfDeploymentController(
-			ctx,
-			operatorClient,
-			kubeClient,
-			kubeInformersForNamespaces.InformersFor("openshift-etcd"),
-			kubeInformersForNamespaces,
-			configInformers.Config().V1().Infrastructures(),
-			envVarController,
-			controllerContext.EventRecorder,
-			os.Getenv("IMAGE"),
-			os.Getenv("OPERATOR_IMAGE"),
-		)
-	}
-
 	// The guardRolloutPreCheck function always waits until the etcd pods have rolled out to the new version
 	// i.e clusteroperator version is the desired version, so that the PDB doesn't block the rollout
 	// Also prevents guard pods from being created in SNO topology
@@ -483,6 +461,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
+	// the configInformer has to run before the machine and backup feature checks
+	configInformers.Start(ctx.Done())
 	go featureGateAccessor.Run(ctx)
 
 	select {
@@ -620,13 +600,16 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		clusterMemberControllerInformers...,
 	)
 
+	// handle dual replica topology clusters
 	if enabledDualReplicaFeature, err := dualreplicahelpers.DualReplicaFeatureGateEnabled(featureGateAccessor); err != nil {
 		return fmt.Errorf("could not determine DualReplicaFeatureGateEnabled, aborting controller start: %w", err)
 	} else if enabledDualReplicaFeature {
 		if isDualReplicaTopology, err := ceohelpers.IsDualReplicaTopology(ctx, configInformers.Config().V1().Infrastructures().Lister()); err != nil {
 			return fmt.Errorf("could not determine DualReplicaTopology, aborting controller start: %w", err)
 		} else if isDualReplicaTopology {
-			klog.Infof("found external etcd support feature to be enabled, starting controller...")
+			klog.Infof("detected DualReplica topology")
+
+			klog.Infof("starting external etcd support controller")
 			externalEtcdSupportController := externaletcdsupportcontroller.NewExternalEtcdEnablerController(
 				operatorClient,
 				os.Getenv("IMAGE"),
@@ -638,9 +621,25 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 				networkInformer,
 				controlPlaneNodeInformer,
 				kubeClient,
-				controllerContext.EventRecorder)
-
+				controllerContext.EventRecorder,
+			)
 			go externalEtcdSupportController.Run(ctx, 1)
+
+			klog.Infof("starting Two Node Fencing deployment controller")
+			tnfDeploymentReconciler := tnf.NewTnfDeploymentController(
+				ctx,
+				operatorClient,
+				kubeClient,
+				kubeInformersForNamespaces.InformersFor("openshift-etcd"),
+				kubeInformersForNamespaces,
+				configInformers.Config().V1().Infrastructures(),
+				envVarController,
+				controllerContext.EventRecorder,
+				os.Getenv("IMAGE"),
+				os.Getenv("OPERATOR_IMAGE"),
+			)
+			go tnfDeploymentReconciler.Run(ctx, 1)
+
 		}
 	}
 
@@ -652,9 +651,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go fsyncMetricController.Run(ctx, 1)
 	go staticResourceController.Run(ctx, 1)
 	go targetConfigReconciler.Run(ctx, 1)
-	if tnfDeploymentReconciler != nil {
-		go tnfDeploymentReconciler.Run(ctx, 1)
-	}
 	go etcdCertSignerController.Run(ctx, 1)
 	go etcdCertCleanerController.Run(ctx, 1)
 	go etcdEndpointsController.Run(ctx, 1)
