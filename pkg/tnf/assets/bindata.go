@@ -3,8 +3,8 @@
 // bindata/tnfdeployment/clusterrole-binding.yaml
 // bindata/tnfdeployment/clusterrole.yaml
 // bindata/tnfdeployment/deployment.yaml
-// bindata/tnfdeployment/leaderelection-role.yaml
-// bindata/tnfdeployment/leaderelection-rolebinding.yaml
+// bindata/tnfdeployment/leaderelectionrole-binding.yaml
+// bindata/tnfdeployment/leaderelectionrole.yaml
 // bindata/tnfdeployment/sa.yaml
 package assets
 
@@ -63,15 +63,15 @@ var _tnfdeploymentClusterroleBindingYaml = []byte(`apiVersion: rbac.authorizatio
 kind: ClusterRoleBinding
 metadata:
   labels:
-    app.kubernetes.io/name: tnf-operator
-  name: tnf-operator-manager-rolebinding
+    app.kubernetes.io/name: tnf-setup
+  name: tnf-setup-rolebinding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: tnf-operator-manager-role
+  name: tnf-setup-role
 subjects:
   - kind: ServiceAccount
-    name: tnf-operator-controller-manager
+    name: tnf-setup-manager
     namespace: openshift-etcd
 `)
 
@@ -93,7 +93,9 @@ func tnfdeploymentClusterroleBindingYaml() (*asset, error) {
 var _tnfdeploymentClusterroleYaml = []byte(`apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: tnf-operator-manager-role
+  labels:
+    app.kubernetes.io/name: tnf-setup
+  name: tnf-setup-role
 rules:
   - apiGroups:
       - apps
@@ -178,24 +180,24 @@ var _tnfdeploymentDeploymentYaml = []byte(`apiVersion: apps/v1
 kind: Deployment
 metadata:
   labels:
-    app.kubernetes.io/name: tnf-operator
-    control-plane: tnf-controller-manager
-  name: tnf-operator
+    app.kubernetes.io/name: tnf-setup
+  namespace: openshift-etcd
+  name: tnf-setup
 spec:
   replicas: 1
   selector:
     matchLabels:
-      control-plane: tnf-controller-manager
+      control-plane: tnf-setup
   template:
     metadata:
       annotations:
-        kubectl.kubernetes.io/default-container: tnf-controller
+        kubectl.kubernetes.io/default-container: tnf-setup
         openshift.io/required-scc: "privileged"
       labels:
-        control-plane: tnf-controller-manager
+        control-plane: tnf-setup
     spec:
       containers:
-        - name: tnf-controller
+        - name: tnf-setup
           image: quay.io/openshift/origin-cluster-etcd-operator
           imagePullPolicy: Always
           command: ["cluster-etcd-operator", "tnf-setup"]
@@ -212,7 +214,7 @@ spec:
       hostIPC: false
       hostNetwork: false
       hostPID: true
-      serviceAccountName: tnf-operator-controller-manager
+      serviceAccountName: tnf-setup-manager
       terminationGracePeriodSeconds: 10
 `)
 
@@ -231,12 +233,45 @@ func tnfdeploymentDeploymentYaml() (*asset, error) {
 	return a, nil
 }
 
-var _tnfdeploymentLeaderelectionRoleYaml = []byte(`apiVersion: rbac.authorization.k8s.io/v1
+var _tnfdeploymentLeaderelectionroleBindingYaml = []byte(`apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/name: tnf-setup
+  namespace: openshift-etcd
+  name: tnf-setup-leader-election-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: tnf-setup-leader-election-role
+subjects:
+  - kind: ServiceAccount
+    name: tnf-setup-manager
+    namespace: openshift-etcd
+`)
+
+func tnfdeploymentLeaderelectionroleBindingYamlBytes() ([]byte, error) {
+	return _tnfdeploymentLeaderelectionroleBindingYaml, nil
+}
+
+func tnfdeploymentLeaderelectionroleBindingYaml() (*asset, error) {
+	bytes, err := tnfdeploymentLeaderelectionroleBindingYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "tnfdeployment/leaderelectionrole-binding.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
+var _tnfdeploymentLeaderelectionroleYaml = []byte(`apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   labels:
-    app.kubernetes.io/name: tnf-operator
-  name: tnf-operator-leader-election-role
+    app.kubernetes.io/name: tnf-setup
+  namespace: openshift-etcd
+  name: tnf-setup-leader-election-role
 rules:
   - apiGroups:
       - ""
@@ -271,48 +306,17 @@ rules:
       - patch
 `)
 
-func tnfdeploymentLeaderelectionRoleYamlBytes() ([]byte, error) {
-	return _tnfdeploymentLeaderelectionRoleYaml, nil
+func tnfdeploymentLeaderelectionroleYamlBytes() ([]byte, error) {
+	return _tnfdeploymentLeaderelectionroleYaml, nil
 }
 
-func tnfdeploymentLeaderelectionRoleYaml() (*asset, error) {
-	bytes, err := tnfdeploymentLeaderelectionRoleYamlBytes()
+func tnfdeploymentLeaderelectionroleYaml() (*asset, error) {
+	bytes, err := tnfdeploymentLeaderelectionroleYamlBytes()
 	if err != nil {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "tnfdeployment/leaderelection-role.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
-	a := &asset{bytes: bytes, info: info}
-	return a, nil
-}
-
-var _tnfdeploymentLeaderelectionRolebindingYaml = []byte(`apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  labels:
-    app.kubernetes.io/name: tnf-operator
-  name: tnf-operator-leader-election-rolebinding
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: tnf-operator-leader-election-role
-subjects:
-  - kind: ServiceAccount
-    name: tnf-operator-controller-manager
-    namespace: openshift-etcd
-`)
-
-func tnfdeploymentLeaderelectionRolebindingYamlBytes() ([]byte, error) {
-	return _tnfdeploymentLeaderelectionRolebindingYaml, nil
-}
-
-func tnfdeploymentLeaderelectionRolebindingYaml() (*asset, error) {
-	bytes, err := tnfdeploymentLeaderelectionRolebindingYamlBytes()
-	if err != nil {
-		return nil, err
-	}
-
-	info := bindataFileInfo{name: "tnfdeployment/leaderelection-rolebinding.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	info := bindataFileInfo{name: "tnfdeployment/leaderelectionrole.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
@@ -321,8 +325,9 @@ var _tnfdeploymentSaYaml = []byte(`apiVersion: v1
 kind: ServiceAccount
 metadata:
   labels:
-    app.kubernetes.io/name: tnf-operator
-  name: tnf-operator-controller-manager
+    app.kubernetes.io/name: tnf-setup
+  namespace: openshift-etcd
+  name: tnf-setup-manager
 `)
 
 func tnfdeploymentSaYamlBytes() ([]byte, error) {
@@ -395,8 +400,8 @@ var _bindata = map[string]func() (*asset, error){
 	"tnfdeployment/clusterrole-binding.yaml":        tnfdeploymentClusterroleBindingYaml,
 	"tnfdeployment/clusterrole.yaml":                tnfdeploymentClusterroleYaml,
 	"tnfdeployment/deployment.yaml":                 tnfdeploymentDeploymentYaml,
-	"tnfdeployment/leaderelection-role.yaml":        tnfdeploymentLeaderelectionRoleYaml,
-	"tnfdeployment/leaderelection-rolebinding.yaml": tnfdeploymentLeaderelectionRolebindingYaml,
+	"tnfdeployment/leaderelectionrole-binding.yaml": tnfdeploymentLeaderelectionroleBindingYaml,
+	"tnfdeployment/leaderelectionrole.yaml":         tnfdeploymentLeaderelectionroleYaml,
 	"tnfdeployment/sa.yaml":                         tnfdeploymentSaYaml,
 }
 
@@ -447,8 +452,8 @@ var _bintree = &bintree{nil, map[string]*bintree{
 		"clusterrole-binding.yaml":        {tnfdeploymentClusterroleBindingYaml, map[string]*bintree{}},
 		"clusterrole.yaml":                {tnfdeploymentClusterroleYaml, map[string]*bintree{}},
 		"deployment.yaml":                 {tnfdeploymentDeploymentYaml, map[string]*bintree{}},
-		"leaderelection-role.yaml":        {tnfdeploymentLeaderelectionRoleYaml, map[string]*bintree{}},
-		"leaderelection-rolebinding.yaml": {tnfdeploymentLeaderelectionRolebindingYaml, map[string]*bintree{}},
+		"leaderelectionrole-binding.yaml": {tnfdeploymentLeaderelectionroleBindingYaml, map[string]*bintree{}},
+		"leaderelectionrole.yaml":         {tnfdeploymentLeaderelectionroleYaml, map[string]*bintree{}},
 		"sa.yaml":                         {tnfdeploymentSaYaml, map[string]*bintree{}},
 	}},
 }}

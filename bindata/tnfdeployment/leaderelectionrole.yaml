@@ -2,8 +2,9 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   labels:
-    app.kubernetes.io/name: tnf-operator
-  name: tnf-operator-leader-election-role
+    app.kubernetes.io/name: tnf-setup
+  namespace: openshift-etcd
+  name: tnf-setup-leader-election-role
 rules:
   - apiGroups:
       - ""

@@ -1,7 +1,9 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: tnf-operator-manager-role
+  labels:
+    app.kubernetes.io/name: tnf-setup
+  name: tnf-setup-role
 rules:
   - apiGroups:
       - apps

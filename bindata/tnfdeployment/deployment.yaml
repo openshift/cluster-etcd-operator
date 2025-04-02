@@ -2,24 +2,24 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   labels:
-    app.kubernetes.io/name: tnf-operator
-    control-plane: tnf-controller-manager
-  name: tnf-operator
+    app.kubernetes.io/name: tnf-setup
+  namespace: openshift-etcd
+  name: tnf-setup
 spec:
   replicas: 1
   selector:
     matchLabels:
-      control-plane: tnf-controller-manager
+      control-plane: tnf-setup
   template:
     metadata:
       annotations:
-        kubectl.kubernetes.io/default-container: tnf-controller
+        kubectl.kubernetes.io/default-container: tnf-setup
         openshift.io/required-scc: "privileged"
       labels:
-        control-plane: tnf-controller-manager
+        control-plane: tnf-setup
     spec:
       containers:
-        - name: tnf-controller
+        - name: tnf-setup
           image: quay.io/openshift/origin-cluster-etcd-operator
           imagePullPolicy: Always
           command: ["cluster-etcd-operator", "tnf-setup"]
@@ -36,5 +36,5 @@ spec:
       hostIPC: false
       hostNetwork: false
       hostPID: true
-      serviceAccountName: tnf-operator-controller-manager
+      serviceAccountName: tnf-setup-manager
       terminationGracePeriodSeconds: 10

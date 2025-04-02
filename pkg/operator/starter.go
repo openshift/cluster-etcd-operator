@@ -22,6 +22,7 @@ import (
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
+	"github.com/openshift/library-go/pkg/operator/deploymentcontroller"
 	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/staticpod"
@@ -32,6 +33,8 @@ import (
 	"github.com/openshift/library-go/pkg/operator/status"
 	"github.com/openshift/library-go/pkg/operator/unsupportedconfigoverridescontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	v1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -72,7 +75,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
-	tnf "github.com/openshift/cluster-etcd-operator/pkg/tnf/deployment/controller"
+	tnf_assets "github.com/openshift/cluster-etcd-operator/pkg/tnf/assets"
 )
 
 // masterMachineLabelSelectorString allows for getting only the master machines, it matters in larger installations with many worker nodes
@@ -625,20 +628,52 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			)
 			go externalEtcdSupportController.Run(ctx, 1)
 
-			klog.Infof("starting Two Node Fencing deployment controller")
-			tnfDeploymentReconciler := tnf.NewTnfDeploymentController(
-				ctx,
+			klog.Infof("starting Two Node Fencing static resources controller")
+			tnfResourceController := staticresourcecontroller.NewStaticResourceController(
+				"TnfStaticResources",
+				tnf_assets.Asset,
+				[]string{
+					"tnfdeployment/sa.yaml",
+					"tnfdeployment/leaderelectionrole.yaml",
+					"tnfdeployment/leaderelectionrole-binding.yaml",
+					"tnfdeployment/clusterrole.yaml",
+					"tnfdeployment/clusterrole-binding.yaml",
+				},
+				(&resourceapply.ClientHolder{}).WithKubernetes(kubeClient).WithDynamicClient(dynamicClient),
 				operatorClient,
-				kubeClient,
-				kubeInformersForNamespaces.InformersFor("openshift-etcd"),
-				kubeInformersForNamespaces,
-				configInformers.Config().V1().Infrastructures(),
-				envVarController,
 				controllerContext.EventRecorder,
-				os.Getenv("IMAGE"),
-				os.Getenv("OPERATOR_IMAGE"),
+			).WithIgnoreNotFoundOnCreate().AddKubeInformers(kubeInformersForNamespaces)
+			go tnfResourceController.Run(ctx, 1)
+
+			klog.Infof("starting Two Node Fencing deployment controller")
+			tnfDeploymentController := deploymentcontroller.NewDeploymentController(
+				"TnfDeployment",
+				tnf_assets.MustAsset("tnfdeployment/deployment.yaml"),
+				controllerContext.EventRecorder,
+				ceohelpers.NewStaticPodOperatorClientWithFinalizers(operatorClient),
+				kubeClient,
+				kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Apps().V1().Deployments(),
+				[]factory.Informer{},
+				[]deploymentcontroller.ManifestHookFunc{},
+				func(_ *operatorv1.OperatorSpec, deployment *v1.Deployment) error {
+					// set operator image pullspec
+					deployment.Spec.Template.Spec.Containers[0].Image = os.Getenv("OPERATOR_IMAGE")
+
+					// set env var with etcd image pullspec
+					env := deployment.Spec.Template.Spec.Containers[0].Env
+					if env == nil {
+						env = []corev1.EnvVar{}
+					}
+					env = append(env, corev1.EnvVar{
+						Name:  "ETCD_IMAGE_PULLSPEC",
+						Value: os.Getenv("IMAGE"),
+					})
+					deployment.Spec.Template.Spec.Containers[0].Env = env
+
+					return nil
+				},
 			)
-			go tnfDeploymentReconciler.Run(ctx, 1)
+			go tnfDeploymentController.Run(ctx, 1)
 
 		}
 	}
