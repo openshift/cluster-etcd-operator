@@ -1,4 +1,4 @@
-package tnf_operator
+package cmd
 
 import (
 	"context"
@@ -10,13 +10,13 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/clock"
 
-	tnfoperator "github.com/openshift/cluster-etcd-operator/pkg/tnf-operator"
+	tnf "github.com/openshift/cluster-etcd-operator/pkg/tnf/setup"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
 )
 
-func NewTnfOperator() *cobra.Command {
+func NewTnfSetup() *cobra.Command {
 	cmd := controllercmd.
-		NewControllerCommandConfig("tnf-setup", version.Get(), tnfoperator.RunTnfOperator, clock.RealClock{}).
+		NewControllerCommandConfig("tnf-setup", version.Get(), tnf.RunTnfSetup, clock.RealClock{}).
 		// TODO change or reuse existing function
 		WithEventRecorderOptions(EtcdOperatorCorrelatorOptions()).
 		// TODO implement own health check

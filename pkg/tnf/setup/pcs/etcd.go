@@ -7,8 +7,8 @@ import (
 
 	"k8s.io/klog/v2"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf-operator/config"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf-operator/exec"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/setup/config"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/setup/exec"
 )
 
 // ConfigureEtcd configures the etcd resource

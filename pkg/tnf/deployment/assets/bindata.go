@@ -1,4 +1,4 @@
-// Code generated for package tnfdeployment_assets by go-bindata DO NOT EDIT. (@generated)
+// Code generated for package assets by go-bindata DO NOT EDIT. (@generated)
 // sources:
 // bindata/tnfdeployment/clusterrole-binding.yaml
 // bindata/tnfdeployment/clusterrole.yaml
@@ -6,7 +6,7 @@
 // bindata/tnfdeployment/leaderelection-role.yaml
 // bindata/tnfdeployment/leaderelection-rolebinding.yaml
 // bindata/tnfdeployment/sa.yaml
-package tnfdeployment_assets
+package assets
 
 import (
 	"fmt"

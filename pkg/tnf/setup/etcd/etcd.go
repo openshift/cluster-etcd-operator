@@ -10,7 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
 
-	tools "github.com/openshift/cluster-etcd-operator/pkg/tnf-operator/tools"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/setup/tools"
 )
 
 // RemoveStaticContainer removes the CEO managed etcd container

@@ -72,7 +72,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/tnfdeploymentcontroller"
+	tnf "github.com/openshift/cluster-etcd-operator/pkg/tnf/deployment/controller"
 )
 
 // masterMachineLabelSelectorString allows for getting only the master machines, it matters in larger installations with many worker nodes
@@ -292,7 +292,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	if cpTopology, err := ceohelpers.GetControlPlaneTopology(configInformers.Config().V1().Infrastructures().Lister()); err != nil {
 		return err
 	} else if configv1.DualReplicaTopologyMode == cpTopology {
-		tnfDeploymentReconciler = tnfdeploymentcontroller.NewTnfDeploymentController(
+		tnfDeploymentReconciler = tnf.NewTnfDeploymentController(
 			ctx,
 			operatorClient,
 			kubeClient,

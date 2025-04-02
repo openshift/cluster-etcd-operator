@@ -9,9 +9,6 @@ import (
 	"os"
 	"time"
 
-	prune_backups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
-	tnfoperator "github.com/openshift/cluster-etcd-operator/pkg/cmd/tnf-operator"
-
 	"github.com/openshift/library-go/pkg/operator/staticpod/certsyncpod"
 	"github.com/openshift/library-go/pkg/operator/staticpod/installerpod"
 	"github.com/openshift/library-go/pkg/operator/staticpod/prune"
@@ -24,6 +21,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/backuprestore"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/monitor"
 	operatorcmd "github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
+	prune_backups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/readyz"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
 	requestbackup "github.com/openshift/cluster-etcd-operator/pkg/cmd/request-backup"
@@ -31,6 +29,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/verify"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/waitforceo"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator"
+	tnf "github.com/openshift/cluster-etcd-operator/pkg/tnf/setup/cmd"
 )
 
 func main() {
@@ -80,7 +79,7 @@ func NewSSCSCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(requestbackup.NewRequestBackupCommand(ctx))
 	cmd.AddCommand(rev.NewRevCommand(ctx))
 	cmd.AddCommand(backuprestore.NewBackupServer(ctx))
-	cmd.AddCommand(tnfoperator.NewTnfOperator())
+	cmd.AddCommand(tnf.NewTnfSetup())
 
 	return cmd
 }

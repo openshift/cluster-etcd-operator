@@ -1,4 +1,4 @@
-package tnfcontroller
+package controller
 
 import (
 	"context"
@@ -11,12 +11,12 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf-operator/config"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf-operator/etcd"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf-operator/pcs"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/setup/config"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/setup/etcd"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/setup/pcs"
 )
 
-type TnfController struct {
+type TnfSetupController struct {
 	ctx               context.Context
 	kubeClient        kubernetes.Interface
 	operatorClient    *operatorversionedclient.Clientset
@@ -25,9 +25,9 @@ type TnfController struct {
 	enqueueFn         func()
 }
 
-func NewTnfController(ctx context.Context, kubeClient kubernetes.Interface, operatorClient *operatorversionedclient.Clientset,
+func NewTnfSetupController(ctx context.Context, kubeClient kubernetes.Interface, operatorClient *operatorversionedclient.Clientset,
 	eventRecorder events.Recorder, etcdImagePullSpec string) factory.Controller {
-	c := &TnfController{
+	c := &TnfSetupController{
 		ctx:               ctx,
 		kubeClient:        kubeClient,
 		operatorClient:    operatorClient,
@@ -35,7 +35,7 @@ func NewTnfController(ctx context.Context, kubeClient kubernetes.Interface, oper
 		etcdImagePullSpec: etcdImagePullSpec,
 	}
 
-	syncCtx := factory.NewSyncContext("TnfController", eventRecorder.WithComponentSuffix("tnf-controller"))
+	syncCtx := factory.NewSyncContext("TnfSetupController", eventRecorder.WithComponentSuffix("tnf-controller"))
 	c.enqueueFn = func() {
 		syncCtx.Queue().Add(syncCtx.QueueKey())
 	}
@@ -49,11 +49,11 @@ func NewTnfController(ctx context.Context, kubeClient kubernetes.Interface, oper
 		// Without this it never was called...
 		ResyncEvery(time.Minute).
 		WithSync(syncer.Sync).
-		ToController("TnfController", syncCtx.Recorder())
+		ToController("TnfSetupController", syncCtx.Recorder())
 
 }
 
-func (c *TnfController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
+func (c *TnfSetupController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	klog.Info("Reconciling TNF")
 
 	// create tnf cluster config
@@ -112,6 +112,6 @@ func (c *TnfController) sync(ctx context.Context, syncCtx factory.SyncContext) e
 	return nil
 }
 
-func (c *TnfController) Enqueue() {
+func (c *TnfSetupController) Enqueue() {
 	c.enqueueFn()
 }

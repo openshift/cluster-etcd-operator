@@ -1,4 +1,4 @@
-package tnfdeploymentcontroller
+package controller
 
 import (
 	"context"
@@ -21,7 +21,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/tnfdeployment_assets"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/deployment/assets"
 )
 
 const (
@@ -158,37 +158,37 @@ func (c *TnfDeploymentController) createTnf() error {
 }
 
 func (c *TnfDeploymentController) manageServiceAccount() (*corev1.ServiceAccount, bool, error) {
-	required := resourceread.ReadServiceAccountV1OrDie(tnfdeployment_assets.MustAsset("tnfdeployment/sa.yaml"))
+	required := resourceread.ReadServiceAccountV1OrDie(assets.MustAsset("tnfdeployment/sa.yaml"))
 	required.Namespace = tnf_namespace
 	return resourceapply.ApplyServiceAccount(c.ctx, c.kubeClient.CoreV1(), c.eventRecorder, required)
 }
 
 func (c *TnfDeploymentController) manageClusterRole() (*rbacv1.ClusterRole, bool, error) {
-	required := resourceread.ReadClusterRoleV1OrDie(tnfdeployment_assets.MustAsset("tnfdeployment/clusterrole.yaml"))
+	required := resourceread.ReadClusterRoleV1OrDie(assets.MustAsset("tnfdeployment/clusterrole.yaml"))
 	required.Namespace = tnf_namespace
 	return resourceapply.ApplyClusterRole(c.ctx, c.kubeClient.RbacV1(), c.eventRecorder, required)
 }
 
 func (c *TnfDeploymentController) manageClusterRoleBinding() (*rbacv1.ClusterRoleBinding, bool, error) {
-	required := resourceread.ReadClusterRoleBindingV1OrDie(tnfdeployment_assets.MustAsset("tnfdeployment/clusterrole-binding.yaml"))
+	required := resourceread.ReadClusterRoleBindingV1OrDie(assets.MustAsset("tnfdeployment/clusterrole-binding.yaml"))
 	required.Namespace = tnf_namespace
 	return resourceapply.ApplyClusterRoleBinding(c.ctx, c.kubeClient.RbacV1(), c.eventRecorder, required)
 }
 
 func (c *TnfDeploymentController) manageLeaderElectionRole() (*rbacv1.Role, bool, error) {
-	required := resourceread.ReadRoleV1OrDie(tnfdeployment_assets.MustAsset("tnfdeployment/leaderelection-role.yaml"))
+	required := resourceread.ReadRoleV1OrDie(assets.MustAsset("tnfdeployment/leaderelection-role.yaml"))
 	required.Namespace = tnf_namespace
 	return resourceapply.ApplyRole(c.ctx, c.kubeClient.RbacV1(), c.eventRecorder, required)
 }
 
 func (c *TnfDeploymentController) manageLeaderElectionRoleBinding() (*rbacv1.RoleBinding, bool, error) {
-	required := resourceread.ReadRoleBindingV1OrDie(tnfdeployment_assets.MustAsset("tnfdeployment/leaderelection-rolebinding.yaml"))
+	required := resourceread.ReadRoleBindingV1OrDie(assets.MustAsset("tnfdeployment/leaderelection-rolebinding.yaml"))
 	required.Namespace = tnf_namespace
 	return resourceapply.ApplyRoleBinding(c.ctx, c.kubeClient.RbacV1(), c.eventRecorder, required)
 }
 
 func (c *TnfDeploymentController) manageDeployment() (*appsv1.Deployment, bool, error) {
-	required := resourceread.ReadDeploymentV1OrDie(tnfdeployment_assets.MustAsset("tnfdeployment/deployment.yaml"))
+	required := resourceread.ReadDeploymentV1OrDie(assets.MustAsset("tnfdeployment/deployment.yaml"))
 	required.Namespace = tnf_namespace
 
 	// set image pullspec
