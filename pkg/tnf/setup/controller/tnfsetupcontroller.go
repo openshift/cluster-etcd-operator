@@ -41,12 +41,11 @@ func NewTnfSetupController(ctx context.Context, kubeClient kubernetes.Interface,
 	}
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
-	//livenessChecker.Add("TargetConfigController", syncer)
 
 	return factory.New().
 		WithSyncContext(syncCtx).
-		// TODO what's the best way to trigger a reconcile?
-		// Without this it never was called...
+		// TODO We can reconcile the fencing credentials secret once we have it
+		// For now just resync periodically...
 		ResyncEvery(time.Minute).
 		WithSync(syncer.Sync).
 		ToController("TnfSetupController", syncCtx.Recorder())
@@ -108,6 +107,8 @@ func (c *TnfSetupController) sync(ctx context.Context, syncCtx factory.SyncConte
 	// TODO where to store CIB for debugging?
 	// just log for now
 	klog.Infof("HA setup done! CIB:\n%s", cib)
+
+	// TODO report status to CEO!
 
 	return nil
 }

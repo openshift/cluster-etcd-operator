@@ -17,15 +17,7 @@ import (
 func NewTnfSetup() *cobra.Command {
 	cmd := controllercmd.
 		NewControllerCommandConfig("tnf-setup", version.Get(), tnf.RunTnfSetup, clock.RealClock{}).
-		// TODO change or reuse existing function
-		WithEventRecorderOptions(EtcdOperatorCorrelatorOptions()).
-		// TODO implement own health check
-		//WithHealthChecks(healthz.NamedCheck("controller-aliveness", func(_ *http.Request) error {
-		//	if !operator.AlivenessChecker.Alive() {
-		//		return fmt.Errorf("found unhealthy aliveness check, returning error")
-		//	}
-		//	return nil
-		//})).
+		WithEventRecorderOptions(TnfEventRecorderOptions()).
 		NewCommandWithContext(context.Background())
 	cmd.Use = "tnf-setup"
 	cmd.Short = "Start the Two node fencing setup"
@@ -33,8 +25,8 @@ func NewTnfSetup() *cobra.Command {
 	return cmd
 }
 
-// EtcdOperatorCorrelatorOptions is a very strict correlator policy to avoid spamming etcd/apiserver with duplicated events
-func EtcdOperatorCorrelatorOptions() record.CorrelatorOptions {
+// TnfEventRecorderOptions is a very strict correlator policy to avoid spamming etcd/apiserver with duplicated events
+func TnfEventRecorderOptions() record.CorrelatorOptions {
 	return record.CorrelatorOptions{
 		// only allow the same event five times in 10m
 		MaxEvents:            5,

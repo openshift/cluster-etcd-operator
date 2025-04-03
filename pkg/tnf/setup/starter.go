@@ -24,9 +24,6 @@ func RunTnfSetup(ctx context.Context, controllerContext *controllercmd.Controlle
 		return err
 	}
 
-	// TODO configure probes, metrics, ...
-	// TODO update deployment manifest accordingly
-
 	tnfReconciler := controller.NewTnfSetupController(
 		ctx,
 		kubeClient,
