@@ -2,11 +2,8 @@ package config
 
 import (
 	"context"
-	"fmt"
-	"regexp"
 	"sort"
 
-	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -58,13 +55,12 @@ func GetClusterConfig(ctx context.Context, kubeClient kubernetes.Interface, etcd
 		}
 	}
 
-	fcs, err := getFencingConfigs(ctx, kubeClient)
-	if err != nil {
-		return clusterCfg, err
-	}
-	clusterCfg.FencingConfigs = fcs
-
-	klog.V(4).Infof("FencingConfigs: %+v", clusterCfg.FencingConfigs)
+	//fcs, err := getFencingConfigs(ctx, kubeClient)
+	//if err != nil {
+	//	return clusterCfg, err
+	//}
+	//clusterCfg.FencingConfigs = fcs
+	//klog.V(4).Infof("FencingConfigs: %+v", clusterCfg.FencingConfigs)
 
 	return clusterCfg, nil
 }
@@ -79,51 +75,51 @@ func getInternalIP(addresses []corev1.NodeAddress) string {
 	return addresses[0].Address
 }
 
-func getFencingConfigs(ctx context.Context, kubeClient kubernetes.Interface) ([]FencingConfig, error) {
-	secret, err := kubeClient.CoreV1().Secrets("openshift-etcd").Get(ctx, "tnf-fencing-config", metav1.GetOptions{})
-	if err != nil {
-		return nil, err
-	}
-	configYaml := string(secret.Data["config.yaml"])
-	return parseConfigYaml(configYaml)
-}
-
-func parseConfigYaml(configYaml string) ([]FencingConfig, error) {
-
-	// TODO rework once we have the final secret provided by the installer
-
-	fcs := make([]FencingConfig, 0)
-
-	var config secretConfig
-	err := yaml.Unmarshal([]byte(configYaml), &config)
-	if err != nil {
-		return nil, err
-	}
-	for node, values := range config {
-
-		// we need to split the redfish address, e.g.
-		// redfish+https://192.168.111.1:8000/redfish/v1/Systems/b21cdcd8-53ae-4b72-a240-a8230ed74346
-
-		re := regexp.MustCompile(`.*//(.*):(.*)/(redfish.*)`)
-		address := re.FindStringSubmatch(values["address"].(string))
-
-		fc := FencingConfig{
-			FencingID:         fmt.Sprintf("%s_%s", node, "redfish"),
-			FencingDeviceType: "fence_redfish",
-			FencingDeviceOptions: map[string]string{
-				"ip":             address[1],
-				"ipport":         address[2],
-				"systems_uri":    address[3],
-				"username":       values["username"].(string),
-				"password":       values["password"].(string),
-				"pcmk_host_list": node,
-			},
-		}
-		if values["sslInsecure"] != nil && values["sslInsecure"].(bool) {
-			fc.FencingDeviceOptions["ssl_insecure"] = ""
-		}
-		fcs = append(fcs, fc)
-	}
-
-	return fcs, nil
-}
+//func getFencingConfigs(ctx context.Context, kubeClient kubernetes.Interface) ([]FencingConfig, error) {
+//	secret, err := kubeClient.CoreV1().Secrets("openshift-etcd").Get(ctx, "tnf-fencing-config", metav1.GetOptions{})
+//	if err != nil {
+//		return nil, err
+//	}
+//	configYaml := string(secret.Data["config.yaml"])
+//	return parseConfigYaml(configYaml)
+//}
+//
+//func parseConfigYaml(configYaml string) ([]FencingConfig, error) {
+//
+//	// TODO rework once we have the final secret provided by the installer
+//
+//	fcs := make([]FencingConfig, 0)
+//
+//	var config secretConfig
+//	err := yaml.Unmarshal([]byte(configYaml), &config)
+//	if err != nil {
+//		return nil, err
+//	}
+//	for node, values := range config {
+//
+//		// we need to split the redfish address, e.g.
+//		// redfish+https://192.168.111.1:8000/redfish/v1/Systems/b21cdcd8-53ae-4b72-a240-a8230ed74346
+//
+//		re := regexp.MustCompile(`.*//(.*):(.*)/(redfish.*)`)
+//		address := re.FindStringSubmatch(values["address"].(string))
+//
+//		fc := FencingConfig{
+//			FencingID:         fmt.Sprintf("%s_%s", node, "redfish"),
+//			FencingDeviceType: "fence_redfish",
+//			FencingDeviceOptions: map[string]string{
+//				"ip":             address[1],
+//				"ipport":         address[2],
+//				"systems_uri":    address[3],
+//				"username":       values["username"].(string),
+//				"password":       values["password"].(string),
+//				"pcmk_host_list": node,
+//			},
+//		}
+//		if values["sslInsecure"] != nil && values["sslInsecure"].(bool) {
+//			fc.FencingDeviceOptions["ssl_insecure"] = ""
+//		}
+//		fcs = append(fcs, fc)
+//	}
+//
+//	return fcs, nil
+//}
