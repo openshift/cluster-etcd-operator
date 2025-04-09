@@ -174,7 +174,8 @@ spec:
       serviceAccountName: tnf-setup-manager
       terminationGracePeriodSeconds: 10
       restartPolicy: Never
-  backoffLimit: 3`)
+  backoffLimit: 3
+`)
 
 func tnfdeploymentJobYamlBytes() ([]byte, error) {
 	return _tnfdeploymentJobYaml, nil
