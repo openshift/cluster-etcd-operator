@@ -24,13 +24,13 @@ func RemoveStaticContainer(ctx context.Context, operatorClient *operatorversione
 		return err
 	}
 
-	if !strings.Contains(etcd.Spec.UnsupportedConfigOverrides.String(), "useUnsupportedUnsafeEtcdContainerRemoval") {
+	if !strings.Contains(etcd.Spec.UnsupportedConfigOverrides.String(), "useExternalEtcdSupport") {
 		klog.Info("Patching Etcd")
 		oldOverrides := etcd.Spec.UnsupportedConfigOverrides.Raw
 		newOverrides, err := tools.AddToRawJson(oldOverrides, "useUnsupportedUnsafeEtcdContainerRemoval", true)
-		// TODO ADD 2ND FLAG!!
+		newOverrides, err = tools.AddToRawJson(newOverrides, "useExternalEtcdSupport", true)
 		if err != nil {
-			klog.Error(err, "Failed to add useUnsupportedUnsafeEtcdContainerRemoval override to Etcd")
+			klog.Error(err, "Failed to add useUnsupportedUnsafeEtcdContainerRemoval and useExternalEtcdSupport override to Etcd")
 			return err
 		}
 		etcd.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
