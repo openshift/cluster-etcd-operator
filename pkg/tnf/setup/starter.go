@@ -7,6 +7,7 @@ import (
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/setup/controller"
 )
@@ -24,17 +25,19 @@ func RunTnfSetup(ctx context.Context, controllerContext *controllercmd.Controlle
 		return err
 	}
 
-	tnfReconciler := controller.NewTnfSetupController(
-		ctx,
+	tnfSetupRunner := controller.NewTnfSetupRunner(
 		kubeClient,
 		operatorConfigClient,
 		controllerContext.EventRecorder,
 		os.Getenv("ETCD_IMAGE_PULLSPEC"),
 	)
 
-	go tnfReconciler.Run(ctx, 1)
+	err = tnfSetupRunner.Run(ctx)
+	if err != nil {
+		klog.Errorf("Error running setup: %v", err)
+	}
 
 	<-ctx.Done()
 
-	return nil
+	return err
 }

@@ -4,11 +4,11 @@ metadata:
   labels:
     app.kubernetes.io/name: tnf-setup
   namespace: openshift-etcd
-  name: tnf-setup-leader-election-rolebinding
+  name: tnf-setup-role-binding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: tnf-setup-leader-election-role
+  name: tnf-setup-role
 subjects:
   - kind: ServiceAccount
     name: tnf-setup-manager

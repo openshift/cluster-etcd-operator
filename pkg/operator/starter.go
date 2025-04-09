@@ -22,7 +22,6 @@ import (
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
-	"github.com/openshift/library-go/pkg/operator/deploymentcontroller"
 	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/staticpod"
@@ -33,7 +32,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/status"
 	"github.com/openshift/library-go/pkg/operator/unsupportedconfigoverridescontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	v1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -76,6 +75,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
 	tnf_assets "github.com/openshift/cluster-etcd-operator/pkg/tnf/assets"
+	tnflibgo "github.com/openshift/cluster-etcd-operator/pkg/tnf/library-go"
 )
 
 // masterMachineLabelSelectorString allows for getting only the master machines, it matters in larger installations with many worker nodes
@@ -634,8 +634,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 				tnf_assets.Asset,
 				[]string{
 					"tnfdeployment/sa.yaml",
-					"tnfdeployment/leaderelectionrole.yaml",
-					"tnfdeployment/leaderelectionrole-binding.yaml",
+					"tnfdeployment/role.yaml",
+					"tnfdeployment/role-binding.yaml",
 					"tnfdeployment/clusterrole.yaml",
 					"tnfdeployment/clusterrole-binding.yaml",
 				},
@@ -645,35 +645,36 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			).WithIgnoreNotFoundOnCreate().AddKubeInformers(kubeInformersForNamespaces)
 			go tnfResourceController.Run(ctx, 1)
 
-			klog.Infof("starting Two Node Fencing deployment controller")
-			tnfDeploymentController := deploymentcontroller.NewDeploymentController(
-				"TnfDeployment",
-				tnf_assets.MustAsset("tnfdeployment/deployment.yaml"),
+			klog.Infof("starting Two Node Fencing job controller")
+			tnfJobController := tnflibgo.NewJobController(
+				"TnfJob",
+				tnf_assets.MustAsset("tnfdeployment/job.yaml"),
 				controllerContext.EventRecorder,
-				ceohelpers.NewStaticPodOperatorClientWithFinalizers(operatorClient),
+				operatorClient,
 				kubeClient,
-				kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Apps().V1().Deployments(),
+				kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs(),
+				// TODO add secret informer here for rerunning setup with modified fencing credentials
 				[]factory.Informer{},
-				[]deploymentcontroller.ManifestHookFunc{},
-				func(_ *operatorv1.OperatorSpec, deployment *v1.Deployment) error {
-					// set operator image pullspec
-					deployment.Spec.Template.Spec.Containers[0].Image = os.Getenv("OPERATOR_IMAGE")
+				[]tnflibgo.JobHookFunc{
+					func(_ *operatorv1.OperatorSpec, job *batchv1.Job) error {
+						// set operator image pullspec
+						job.Spec.Template.Spec.Containers[0].Image = os.Getenv("OPERATOR_IMAGE")
 
-					// set env var with etcd image pullspec
-					env := deployment.Spec.Template.Spec.Containers[0].Env
-					if env == nil {
-						env = []corev1.EnvVar{}
-					}
-					env = append(env, corev1.EnvVar{
-						Name:  "ETCD_IMAGE_PULLSPEC",
-						Value: os.Getenv("IMAGE"),
-					})
-					deployment.Spec.Template.Spec.Containers[0].Env = env
+						// set env var with etcd image pullspec
+						env := job.Spec.Template.Spec.Containers[0].Env
+						if env == nil {
+							env = []corev1.EnvVar{}
+						}
+						env = append(env, corev1.EnvVar{
+							Name:  "ETCD_IMAGE_PULLSPEC",
+							Value: os.Getenv("IMAGE"),
+						})
+						job.Spec.Template.Spec.Containers[0].Env = env
 
-					return nil
-				},
+						return nil
+					}}...,
 			)
-			go tnfDeploymentController.Run(ctx, 1)
+			go tnfJobController.Run(ctx, 1)
 
 		}
 	}

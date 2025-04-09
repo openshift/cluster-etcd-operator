@@ -3,48 +3,12 @@ kind: ClusterRole
 metadata:
   labels:
     app.kubernetes.io/name: tnf-setup
-  name: tnf-setup-role
+  name: tnf-setup-clusterrole
 rules:
-  - apiGroups:
-      - apps
-    resources:
-      - deployments
-    verbs:
-      - create
-      - get
-      - list
-      - patch
-      - update
-      - watch
-  - apiGroups:
-      - config.openshift.io
-    resources:
-      - clusterversions
-      - infrastructures
-    verbs:
-      - get
-      - list
-      - watch
   - apiGroups:
       - ""
     resources:
       - nodes
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - ""
-    resources:
-      - pods
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - ""
-    resources:
-      - secrets
     verbs:
       - get
       - list

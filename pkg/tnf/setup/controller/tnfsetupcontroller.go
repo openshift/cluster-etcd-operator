@@ -5,55 +5,38 @@ import (
 	"time"
 
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
-	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/setup/config"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/setup/etcd"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/setup/pcs"
 )
 
-type TnfSetupController struct {
-	ctx               context.Context
+type TnfSetupRunner struct {
 	kubeClient        kubernetes.Interface
 	operatorClient    *operatorversionedclient.Clientset
 	eventRecorder     events.Recorder
 	etcdImagePullSpec string
-	enqueueFn         func()
 }
 
-func NewTnfSetupController(ctx context.Context, kubeClient kubernetes.Interface, operatorClient *operatorversionedclient.Clientset,
-	eventRecorder events.Recorder, etcdImagePullSpec string) factory.Controller {
-	c := &TnfSetupController{
-		ctx:               ctx,
+func NewTnfSetupRunner(kubeClient kubernetes.Interface, operatorClient *operatorversionedclient.Clientset,
+	eventRecorder events.Recorder, etcdImagePullSpec string) *TnfSetupRunner {
+
+	c := &TnfSetupRunner{
 		kubeClient:        kubeClient,
 		operatorClient:    operatorClient,
 		eventRecorder:     eventRecorder,
 		etcdImagePullSpec: etcdImagePullSpec,
 	}
 
-	syncCtx := factory.NewSyncContext("TnfSetupController", eventRecorder.WithComponentSuffix("tnf-controller"))
-	c.enqueueFn = func() {
-		syncCtx.Queue().Add(syncCtx.QueueKey())
-	}
-
-	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
-
-	return factory.New().
-		WithSyncContext(syncCtx).
-		// TODO We can reconcile the fencing credentials secret once we have it
-		// For now just resync periodically...
-		ResyncEvery(time.Minute).
-		WithSync(syncer.Sync).
-		ToController("TnfSetupController", syncCtx.Recorder())
-
+	return c
 }
 
-func (c *TnfSetupController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
-	klog.Info("Reconciling TNF")
+func (c *TnfSetupRunner) Run(ctx context.Context) error {
+
+	klog.Info("Running TNF setup")
 
 	// create tnf cluster config
 	cfg, err := config.GetClusterConfig(ctx, c.kubeClient, c.etcdImagePullSpec)
@@ -66,9 +49,8 @@ func (c *TnfSetupController) sync(ctx context.Context, syncCtx factory.SyncConte
 	if err != nil {
 		return err
 	} else if configured {
-		// TODO how to delay the requeue...?
-		c.enqueueFn()
-		return nil
+		// give the cluster some time for sync
+		time.Sleep(15 * time.Second)
 	}
 
 	// Etcd handover
@@ -84,18 +66,14 @@ func (c *TnfSetupController) sync(ctx context.Context, syncCtx factory.SyncConte
 	if err != nil {
 		return err
 	} else if configured {
-		c.enqueueFn()
-		return nil
+		// give the cluster some time for sync
+		time.Sleep(5 * time.Second)
 	}
 
 	// remove CEO managed etcd container
-	etcdOp, err := etcd.RemoveStaticContainer(ctx, c.operatorClient)
+	err = etcd.RemoveStaticContainer(ctx, c.operatorClient)
 	if err != nil {
 		return err
-	}
-	if !etcd.StaticContainerRemoved(etcdOp) {
-		c.enqueueFn()
-		return nil
 	}
 
 	// get pcs cib
@@ -104,15 +82,7 @@ func (c *TnfSetupController) sync(ctx context.Context, syncCtx factory.SyncConte
 		return err
 	}
 
-	// TODO where to store CIB for debugging?
-	// just log for now
 	klog.Infof("HA setup done! CIB:\n%s", cib)
 
-	// TODO report status to CEO!
-
 	return nil
-}
-
-func (c *TnfSetupController) Enqueue() {
-	c.enqueueFn()
 }

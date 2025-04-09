@@ -3,11 +3,11 @@ kind: ClusterRoleBinding
 metadata:
   labels:
     app.kubernetes.io/name: tnf-setup
-  name: tnf-setup-rolebinding
+  name: tnf-setup-clusterrole-binding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: tnf-setup-role
+  name: tnf-setup-clusterrole
 subjects:
   - kind: ServiceAccount
     name: tnf-setup-manager

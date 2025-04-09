@@ -4,8 +4,16 @@ metadata:
   labels:
     app.kubernetes.io/name: tnf-setup
   namespace: openshift-etcd
-  name: tnf-setup-leader-election-role
+  name: tnf-setup-role
 rules:
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
   - apiGroups:
       - ""
     resources:
@@ -37,3 +45,11 @@ rules:
     verbs:
       - create
       - patch
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - get
+      - list
+      - watch

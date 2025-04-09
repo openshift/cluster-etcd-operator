@@ -2,9 +2,9 @@
 // sources:
 // bindata/tnfdeployment/clusterrole-binding.yaml
 // bindata/tnfdeployment/clusterrole.yaml
-// bindata/tnfdeployment/deployment.yaml
-// bindata/tnfdeployment/leaderelectionrole-binding.yaml
-// bindata/tnfdeployment/leaderelectionrole.yaml
+// bindata/tnfdeployment/job.yaml
+// bindata/tnfdeployment/role-binding.yaml
+// bindata/tnfdeployment/role.yaml
 // bindata/tnfdeployment/sa.yaml
 package assets
 
@@ -64,11 +64,11 @@ kind: ClusterRoleBinding
 metadata:
   labels:
     app.kubernetes.io/name: tnf-setup
-  name: tnf-setup-rolebinding
+  name: tnf-setup-clusterrole-binding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: tnf-setup-role
+  name: tnf-setup-clusterrole
 subjects:
   - kind: ServiceAccount
     name: tnf-setup-manager
@@ -95,48 +95,12 @@ kind: ClusterRole
 metadata:
   labels:
     app.kubernetes.io/name: tnf-setup
-  name: tnf-setup-role
+  name: tnf-setup-clusterrole
 rules:
-  - apiGroups:
-      - apps
-    resources:
-      - deployments
-    verbs:
-      - create
-      - get
-      - list
-      - patch
-      - update
-      - watch
-  - apiGroups:
-      - config.openshift.io
-    resources:
-      - clusterversions
-      - infrastructures
-    verbs:
-      - get
-      - list
-      - watch
   - apiGroups:
       - ""
     resources:
       - nodes
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - ""
-    resources:
-      - pods
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - ""
-    resources:
-      - secrets
     verbs:
       - get
       - list
@@ -176,25 +140,15 @@ func tnfdeploymentClusterroleYaml() (*asset, error) {
 	return a, nil
 }
 
-var _tnfdeploymentDeploymentYaml = []byte(`apiVersion: apps/v1
-kind: Deployment
+var _tnfdeploymentJobYaml = []byte(`apiVersion: batch/v1
+kind: Job
 metadata:
   labels:
     app.kubernetes.io/name: tnf-setup
   namespace: openshift-etcd
   name: tnf-setup
 spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      control-plane: tnf-setup
   template:
-    metadata:
-      annotations:
-        kubectl.kubernetes.io/default-container: tnf-setup
-        openshift.io/required-scc: "privileged"
-      labels:
-        control-plane: tnf-setup
     spec:
       containers:
         - name: tnf-setup
@@ -216,63 +170,72 @@ spec:
       hostPID: true
       serviceAccountName: tnf-setup-manager
       terminationGracePeriodSeconds: 10
-`)
+      restartPolicy: Never
+  backoffLimit: 3`)
 
-func tnfdeploymentDeploymentYamlBytes() ([]byte, error) {
-	return _tnfdeploymentDeploymentYaml, nil
+func tnfdeploymentJobYamlBytes() ([]byte, error) {
+	return _tnfdeploymentJobYaml, nil
 }
 
-func tnfdeploymentDeploymentYaml() (*asset, error) {
-	bytes, err := tnfdeploymentDeploymentYamlBytes()
+func tnfdeploymentJobYaml() (*asset, error) {
+	bytes, err := tnfdeploymentJobYamlBytes()
 	if err != nil {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "tnfdeployment/deployment.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	info := bindataFileInfo{name: "tnfdeployment/job.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
 
-var _tnfdeploymentLeaderelectionroleBindingYaml = []byte(`apiVersion: rbac.authorization.k8s.io/v1
+var _tnfdeploymentRoleBindingYaml = []byte(`apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   labels:
     app.kubernetes.io/name: tnf-setup
   namespace: openshift-etcd
-  name: tnf-setup-leader-election-rolebinding
+  name: tnf-setup-role-binding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: tnf-setup-leader-election-role
+  name: tnf-setup-role
 subjects:
   - kind: ServiceAccount
     name: tnf-setup-manager
     namespace: openshift-etcd
 `)
 
-func tnfdeploymentLeaderelectionroleBindingYamlBytes() ([]byte, error) {
-	return _tnfdeploymentLeaderelectionroleBindingYaml, nil
+func tnfdeploymentRoleBindingYamlBytes() ([]byte, error) {
+	return _tnfdeploymentRoleBindingYaml, nil
 }
 
-func tnfdeploymentLeaderelectionroleBindingYaml() (*asset, error) {
-	bytes, err := tnfdeploymentLeaderelectionroleBindingYamlBytes()
+func tnfdeploymentRoleBindingYaml() (*asset, error) {
+	bytes, err := tnfdeploymentRoleBindingYamlBytes()
 	if err != nil {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "tnfdeployment/leaderelectionrole-binding.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	info := bindataFileInfo{name: "tnfdeployment/role-binding.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
 
-var _tnfdeploymentLeaderelectionroleYaml = []byte(`apiVersion: rbac.authorization.k8s.io/v1
+var _tnfdeploymentRoleYaml = []byte(`apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   labels:
     app.kubernetes.io/name: tnf-setup
   namespace: openshift-etcd
-  name: tnf-setup-leader-election-role
+  name: tnf-setup-role
 rules:
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
   - apiGroups:
       - ""
     resources:
@@ -304,19 +267,27 @@ rules:
     verbs:
       - create
       - patch
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - get
+      - list
+      - watch
 `)
 
-func tnfdeploymentLeaderelectionroleYamlBytes() ([]byte, error) {
-	return _tnfdeploymentLeaderelectionroleYaml, nil
+func tnfdeploymentRoleYamlBytes() ([]byte, error) {
+	return _tnfdeploymentRoleYaml, nil
 }
 
-func tnfdeploymentLeaderelectionroleYaml() (*asset, error) {
-	bytes, err := tnfdeploymentLeaderelectionroleYamlBytes()
+func tnfdeploymentRoleYaml() (*asset, error) {
+	bytes, err := tnfdeploymentRoleYamlBytes()
 	if err != nil {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "tnfdeployment/leaderelectionrole.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	info := bindataFileInfo{name: "tnfdeployment/role.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
@@ -397,12 +368,12 @@ func AssetNames() []string {
 
 // _bindata is a table, holding each asset generator, mapped to its name.
 var _bindata = map[string]func() (*asset, error){
-	"tnfdeployment/clusterrole-binding.yaml":        tnfdeploymentClusterroleBindingYaml,
-	"tnfdeployment/clusterrole.yaml":                tnfdeploymentClusterroleYaml,
-	"tnfdeployment/deployment.yaml":                 tnfdeploymentDeploymentYaml,
-	"tnfdeployment/leaderelectionrole-binding.yaml": tnfdeploymentLeaderelectionroleBindingYaml,
-	"tnfdeployment/leaderelectionrole.yaml":         tnfdeploymentLeaderelectionroleYaml,
-	"tnfdeployment/sa.yaml":                         tnfdeploymentSaYaml,
+	"tnfdeployment/clusterrole-binding.yaml": tnfdeploymentClusterroleBindingYaml,
+	"tnfdeployment/clusterrole.yaml":         tnfdeploymentClusterroleYaml,
+	"tnfdeployment/job.yaml":                 tnfdeploymentJobYaml,
+	"tnfdeployment/role-binding.yaml":        tnfdeploymentRoleBindingYaml,
+	"tnfdeployment/role.yaml":                tnfdeploymentRoleYaml,
+	"tnfdeployment/sa.yaml":                  tnfdeploymentSaYaml,
 }
 
 // AssetDir returns the file names below a certain
@@ -449,12 +420,12 @@ type bintree struct {
 
 var _bintree = &bintree{nil, map[string]*bintree{
 	"tnfdeployment": {nil, map[string]*bintree{
-		"clusterrole-binding.yaml":        {tnfdeploymentClusterroleBindingYaml, map[string]*bintree{}},
-		"clusterrole.yaml":                {tnfdeploymentClusterroleYaml, map[string]*bintree{}},
-		"deployment.yaml":                 {tnfdeploymentDeploymentYaml, map[string]*bintree{}},
-		"leaderelectionrole-binding.yaml": {tnfdeploymentLeaderelectionroleBindingYaml, map[string]*bintree{}},
-		"leaderelectionrole.yaml":         {tnfdeploymentLeaderelectionroleYaml, map[string]*bintree{}},
-		"sa.yaml":                         {tnfdeploymentSaYaml, map[string]*bintree{}},
+		"clusterrole-binding.yaml": {tnfdeploymentClusterroleBindingYaml, map[string]*bintree{}},
+		"clusterrole.yaml":         {tnfdeploymentClusterroleYaml, map[string]*bintree{}},
+		"job.yaml":                 {tnfdeploymentJobYaml, map[string]*bintree{}},
+		"role-binding.yaml":        {tnfdeploymentRoleBindingYaml, map[string]*bintree{}},
+		"role.yaml":                {tnfdeploymentRoleYaml, map[string]*bintree{}},
+		"sa.yaml":                  {tnfdeploymentSaYaml, map[string]*bintree{}},
 	}},
 }}
 

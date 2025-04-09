@@ -1,22 +1,15 @@
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: batch/v1
+kind: Job
 metadata:
   labels:
     app.kubernetes.io/name: tnf-setup
   namespace: openshift-etcd
   name: tnf-setup
 spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      control-plane: tnf-setup
   template:
     metadata:
       annotations:
-        kubectl.kubernetes.io/default-container: tnf-setup
         openshift.io/required-scc: "privileged"
-      labels:
-        control-plane: tnf-setup
     spec:
       containers:
         - name: tnf-setup
@@ -38,3 +31,5 @@ spec:
       hostPID: true
       serviceAccountName: tnf-setup-manager
       terminationGracePeriodSeconds: 10
+      restartPolicy: Never
+  backoffLimit: 3
