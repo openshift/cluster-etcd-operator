@@ -290,36 +290,21 @@ func (c *JobController) syncManaged(ctx context.Context, opSpec *opv1.OperatorSp
 		status = status.WithConditions(progressingCondition)
 	}
 
-	// Set Degraded condition
-	if slices.Contains(c.conditions, opv1.OperatorStatusTypeDegraded) {
-		degradedCondition := applyoperatorv1.OperatorCondition().
-			WithType(c.instanceName + opv1.OperatorStatusTypeDegraded)
-
-		if isComplete(job) {
-			degradedCondition = degradedCondition.
-				WithStatus(opv1.ConditionFalse).
-				WithReason("JobComplete").
-				WithMessage("Job completed")
-		} else if isFailed(job) {
-			degradedCondition = degradedCondition.
-				WithStatus(opv1.ConditionTrue).
-				WithReason("JobFailed").
-				WithMessage("Job failed")
-		} else {
-			degradedCondition = degradedCondition.
-				WithStatus(opv1.ConditionFalse).
-				WithReason("JobRunning").
-				WithMessage("Job is running")
-		}
-
-		status = status.WithConditions(degradedCondition)
-	}
-
-	return c.operatorClient.ApplyOperatorStatus(
+	err = c.operatorClient.ApplyOperatorStatus(
 		ctx,
 		c.controllerInstanceName,
 		status,
 	)
+	if err != nil {
+		return err
+	}
+
+	// return an error for reporting degraded status!
+	// setting a condition manually, similar to available and progressing, doesn't work
+	if isFailed(job) {
+		return fmt.Errorf("Job failed")
+	}
+	return nil
 }
 
 func (c *JobController) syncDeleting(ctx context.Context, opSpec *opv1.OperatorSpec, opStatus *opv1.OperatorStatus, syncContext factory.SyncContext) error {
