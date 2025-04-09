@@ -1,12 +1,15 @@
-package controller
+package setup
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"time"
 
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
-	"github.com/openshift/library-go/pkg/operator/events"
+	"k8s.io/apiserver/pkg/server"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/setup/config"
@@ -14,32 +17,47 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/setup/pcs"
 )
 
-type TnfSetupRunner struct {
-	kubeClient        kubernetes.Interface
-	operatorClient    *operatorversionedclient.Clientset
-	eventRecorder     events.Recorder
-	etcdImagePullSpec string
-}
+func RunTnfSetup() error {
 
-func NewTnfSetupRunner(kubeClient kubernetes.Interface, operatorClient *operatorversionedclient.Clientset,
-	eventRecorder events.Recorder, etcdImagePullSpec string) *TnfSetupRunner {
+	klog.Info("Setting up clients etc. for TNF setup")
 
-	c := &TnfSetupRunner{
-		kubeClient:        kubeClient,
-		operatorClient:    operatorClient,
-		eventRecorder:     eventRecorder,
-		etcdImagePullSpec: etcdImagePullSpec,
+	clientConfig, err := rest.InClusterConfig()
+	if err != nil {
+		return err
 	}
 
-	return c
-}
+	protoConfig := rest.CopyConfig(clientConfig)
+	protoConfig.AcceptContentTypes = "application/vnd.kubernetes.protobuf,application/json"
+	protoConfig.ContentType = "application/vnd.kubernetes.protobuf"
 
-func (c *TnfSetupRunner) Run(ctx context.Context) error {
+	// This kube client use protobuf, do not use it for CR
+	kubeClient, err := kubernetes.NewForConfig(clientConfig)
+	if err != nil {
+		return err
+	}
+
+	operatorConfigClient, err := operatorversionedclient.NewForConfig(clientConfig)
+	if err != nil {
+		return err
+	}
+
+	etcdImagePullSpec := os.Getenv("ETCD_IMAGE_PULLSPEC")
+	if etcdImagePullSpec == "" {
+		return fmt.Errorf("ETCD_IMAGE_PULLSPEC environment variable not set")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	shutdownHandler := server.SetupSignalHandler()
+	go func() {
+		defer cancel()
+		<-shutdownHandler
+		klog.Info("Received SIGTERM or SIGINT signal, terminating")
+	}()
 
 	klog.Info("Running TNF setup")
 
 	// create tnf cluster config
-	cfg, err := config.GetClusterConfig(ctx, c.kubeClient, c.etcdImagePullSpec)
+	cfg, err := config.GetClusterConfig(ctx, kubeClient, etcdImagePullSpec)
 	if err != nil {
 		return err
 	}
@@ -50,7 +68,7 @@ func (c *TnfSetupRunner) Run(ctx context.Context) error {
 		return err
 	} else if configured {
 		// give the cluster some time for sync
-		time.Sleep(15 * time.Second)
+		time.Sleep(5 * time.Second)
 	}
 
 	// Etcd handover
@@ -71,7 +89,7 @@ func (c *TnfSetupRunner) Run(ctx context.Context) error {
 	}
 
 	// remove CEO managed etcd container
-	err = etcd.RemoveStaticContainer(ctx, c.operatorClient)
+	err = etcd.RemoveStaticContainer(ctx, operatorConfigClient)
 	if err != nil {
 		return err
 	}

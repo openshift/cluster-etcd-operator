@@ -42,7 +42,6 @@ func RemoveStaticContainer(ctx context.Context, operatorClient *operatorversione
 			klog.Error(err, "Failed to update Etcd")
 			return err
 		}
-
 	}
 
 	err = waitForStaticContainerRemoved(ctx, operatorClient)
@@ -68,16 +67,16 @@ func waitForStaticContainerRemoved(ctx context.Context, operatorClient *operator
 		removed := true
 		for _, nodeStatus := range etcd.Status.NodeStatuses {
 			if nodeStatus.CurrentRevision == etcd.Status.LatestAvailableRevision {
-				klog.Info("static etcd removed", "node", nodeStatus.NodeName, "current revision", nodeStatus.CurrentRevision, "latest revision", etcd.Status.LatestAvailableRevision)
+				klog.Infof("static etcd removed: node %s, current rev %v, latest rev %v", nodeStatus.NodeName, nodeStatus.CurrentRevision, etcd.Status.LatestAvailableRevision)
 			} else {
-				klog.Info("static etcd not removed yet", "node", nodeStatus.NodeName, "current revision", nodeStatus.CurrentRevision, "latest revision", etcd.Status.LatestAvailableRevision)
+				klog.Infof("static etcd not removed yet: node %s, current rev %v, latest rev %v", nodeStatus.NodeName, nodeStatus.CurrentRevision, etcd.Status.LatestAvailableRevision)
 				removed = false
 			}
 		}
 		return removed, nil
 	}
 
-	err := wait.PollUntilContextTimeout(ctx, 15*time.Second, 5*time.Minute, true, isRemoved)
+	err := wait.PollUntilContextTimeout(ctx, 10*time.Second, 10*time.Minute, true, isRemoved)
 	return err
 
 }

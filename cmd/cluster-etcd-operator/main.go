@@ -29,7 +29,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/verify"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/waitforceo"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator"
-	tnf "github.com/openshift/cluster-etcd-operator/pkg/tnf/setup/cmd"
 )
 
 func main() {
@@ -79,7 +78,6 @@ func NewSSCSCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(requestbackup.NewRequestBackupCommand(ctx))
 	cmd.AddCommand(rev.NewRevCommand(ctx))
 	cmd.AddCommand(backuprestore.NewBackupServer(ctx))
-	cmd.AddCommand(tnf.NewTnfSetup())
 
 	return cmd
 }

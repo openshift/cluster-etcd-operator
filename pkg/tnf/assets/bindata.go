@@ -149,12 +149,15 @@ metadata:
   name: tnf-setup
 spec:
   template:
+    metadata:
+      annotations:
+        openshift.io/required-scc: "privileged"
     spec:
       containers:
         - name: tnf-setup
           image: quay.io/openshift/origin-cluster-etcd-operator
           imagePullPolicy: Always
-          command: ["cluster-etcd-operator", "tnf-setup"]
+          command: [ "tnf-setup-runner", "run" ]
           resources:
             requests:
               cpu: 50m
