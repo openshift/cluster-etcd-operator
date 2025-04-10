@@ -24,6 +24,14 @@ rules:
       - update
       - watch
   - apiGroups:
+      - config.openshift.io
+    resources:
+      - clusterversions
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
       - security.openshift.io
     resourceNames:
       - privileged

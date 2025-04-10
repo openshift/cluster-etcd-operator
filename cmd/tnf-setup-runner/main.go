@@ -15,6 +15,7 @@ import (
 	"k8s.io/component-base/logs"
 	"k8s.io/klog/v2"
 
+	tnfauth "github.com/openshift/cluster-etcd-operator/pkg/tnf/auth"
 	tnfsetup "github.com/openshift/cluster-etcd-operator/pkg/tnf/setup"
 )
 
@@ -50,9 +51,23 @@ func NewTnfSetupRunnerCommand() *cobra.Command {
 		},
 	}
 
+	cmd.AddCommand(NewAuthCommand())
 	cmd.AddCommand(NewRunCommand())
 
 	return cmd
+}
+
+func NewAuthCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "auth",
+		Short: "Run Two Node Fencing pcs authentication",
+		Run: func(cmd *cobra.Command, args []string) {
+			err := tnfauth.RunTnfAuth()
+			if err != nil {
+				klog.Fatal(err)
+			}
+		},
+	}
 }
 
 func NewRunCommand() *cobra.Command {

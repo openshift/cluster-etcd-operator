@@ -23,7 +23,7 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/setup/tools"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
 
 // TODO This based on DeploymentController in openshift/library-go

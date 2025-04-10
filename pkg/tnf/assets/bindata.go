@@ -1,5 +1,6 @@
 // Code generated for package assets by go-bindata DO NOT EDIT. (@generated)
 // sources:
+// bindata/tnfdeployment/authjob.yaml
 // bindata/tnfdeployment/clusterrole-binding.yaml
 // bindata/tnfdeployment/clusterrole.yaml
 // bindata/tnfdeployment/job.yaml
@@ -59,6 +60,58 @@ func (fi bindataFileInfo) Sys() interface{} {
 	return nil
 }
 
+var _tnfdeploymentAuthjobYaml = []byte(`apiVersion: batch/v1
+kind: Job
+metadata:
+  labels:
+    app.kubernetes.io/name: tnf-auth
+  namespace: openshift-etcd
+  name: tnf-auth
+spec:
+  template:
+    metadata:
+      annotations:
+        openshift.io/required-scc: "privileged"
+    spec:
+      containers:
+        - name: tnf-auth
+          image: quay.io/openshift/origin-cluster-etcd-operator
+          imagePullPolicy: Always
+          command: [ "tnf-setup-runner", "auth" ]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          securityContext:
+            privileged: true
+            allowPrivilegeEscalation: true
+      hostIPC: false
+      hostNetwork: false
+      hostPID: true
+      serviceAccountName: tnf-setup-manager
+      terminationGracePeriodSeconds: 10
+      restartPolicy: Never
+  backoffLimit: 3
+`)
+
+func tnfdeploymentAuthjobYamlBytes() ([]byte, error) {
+	return _tnfdeploymentAuthjobYaml, nil
+}
+
+func tnfdeploymentAuthjobYaml() (*asset, error) {
+	bytes, err := tnfdeploymentAuthjobYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "tnfdeployment/authjob.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
 var _tnfdeploymentClusterroleBindingYaml = []byte(`apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -114,6 +167,14 @@ rules:
       - list
       - patch
       - update
+      - watch
+  - apiGroups:
+      - config.openshift.io
+    resources:
+      - clusterversions
+    verbs:
+      - get
+      - list
       - watch
   - apiGroups:
       - security.openshift.io
@@ -206,7 +267,6 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: tnf-setup-manager
-    namespace: openshift-etcd
 `)
 
 func tnfdeploymentRoleBindingYamlBytes() ([]byte, error) {
@@ -235,38 +295,6 @@ rules:
   - apiGroups:
       - ""
     resources:
-      - pods
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - ""
-    resources:
-      - configmaps
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
-      - delete
-  - apiGroups:
-      - coordination.k8s.io
-    resources:
-      - leases
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
-      - delete
-  - apiGroups:
-      - ""
-    resources:
       - events
     verbs:
       - create
@@ -275,6 +303,14 @@ rules:
       - ""
     resources:
       - secrets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
     verbs:
       - get
       - list
@@ -372,6 +408,7 @@ func AssetNames() []string {
 
 // _bindata is a table, holding each asset generator, mapped to its name.
 var _bindata = map[string]func() (*asset, error){
+	"tnfdeployment/authjob.yaml":             tnfdeploymentAuthjobYaml,
 	"tnfdeployment/clusterrole-binding.yaml": tnfdeploymentClusterroleBindingYaml,
 	"tnfdeployment/clusterrole.yaml":         tnfdeploymentClusterroleYaml,
 	"tnfdeployment/job.yaml":                 tnfdeploymentJobYaml,
@@ -424,6 +461,7 @@ type bintree struct {
 
 var _bintree = &bintree{nil, map[string]*bintree{
 	"tnfdeployment": {nil, map[string]*bintree{
+		"authjob.yaml":             {tnfdeploymentAuthjobYaml, map[string]*bintree{}},
 		"clusterrole-binding.yaml": {tnfdeploymentClusterroleBindingYaml, map[string]*bintree{}},
 		"clusterrole.yaml":         {tnfdeploymentClusterroleYaml, map[string]*bintree{}},
 		"job.yaml":                 {tnfdeploymentJobYaml, map[string]*bintree{}},

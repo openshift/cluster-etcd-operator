@@ -1,0 +1,35 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  labels:
+    app.kubernetes.io/name: tnf-auth
+  namespace: openshift-etcd
+  name: tnf-auth
+spec:
+  template:
+    metadata:
+      annotations:
+        openshift.io/required-scc: "privileged"
+    spec:
+      containers:
+        - name: tnf-auth
+          image: quay.io/openshift/origin-cluster-etcd-operator
+          imagePullPolicy: Always
+          command: [ "tnf-setup-runner", "auth" ]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          securityContext:
+            privileged: true
+            allowPrivilegeEscalation: true
+      hostIPC: false
+      hostNetwork: false
+      hostPID: true
+      serviceAccountName: tnf-setup-manager
+      terminationGracePeriodSeconds: 10
+      restartPolicy: Never
+  backoffLimit: 3

@@ -7,8 +7,8 @@ import (
 
 	"k8s.io/klog/v2"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/setup/config"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/setup/exec"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/config"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/exec"
 )
 
 // ConfigureCluster checks the pcs cluster status and runs the finalization script if needed

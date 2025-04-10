@@ -12,4 +12,3 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: tnf-setup-manager
-    namespace: openshift-etcd

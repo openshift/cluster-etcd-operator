@@ -55,6 +55,8 @@ func GetClusterConfig(ctx context.Context, kubeClient kubernetes.Interface, etcd
 		}
 	}
 
+	// TODO following isn't needed to the auth runner, make it optional when enabling
+
 	//fcs, err := getFencingConfigs(ctx, kubeClient)
 	//if err != nil {
 	//	return clusterCfg, err

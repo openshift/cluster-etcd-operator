@@ -26,8 +26,8 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/externaletcdsupportcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	tnf_assets "github.com/openshift/cluster-etcd-operator/pkg/tnf/assets"
-	tnflibgo "github.com/openshift/cluster-etcd-operator/pkg/tnf/library-go"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/operator/dualreplicahelpers"
+	tnflibgo "github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/library-go"
 )
 
 // HandleDualReplicaClusters checks feature gate and control plane topology,
@@ -52,71 +52,126 @@ func HandleDualReplicaClusters(
 		} else if isDualReplicaTopology {
 			klog.Infof("detected DualReplica topology")
 
-			klog.Infof("starting external etcd support controller")
-			externalEtcdSupportController := externaletcdsupportcontroller.NewExternalEtcdEnablerController(
-				operatorClient,
-				os.Getenv("IMAGE"),
-				os.Getenv("OPERATOR_IMAGE"),
-				envVarController,
-				kubeInformersForNamespaces.InformersFor("openshift-etcd"),
-				kubeInformersForNamespaces,
-				configInformers.Config().V1().Infrastructures(),
-				networkInformer,
-				controlPlaneNodeInformer,
-				kubeClient,
-				controllerContext.EventRecorder,
-			)
-			go externalEtcdSupportController.Run(ctx, 1)
+			runExternalEtcdSupportController(ctx, controllerContext, operatorClient, envVarController, kubeInformersForNamespaces, configInformers, networkInformer, controlPlaneNodeInformer, kubeClient)
+			runTnfResourceController(ctx, controllerContext, kubeClient, dynamicClient, operatorClient, kubeInformersForNamespaces)
 
-			klog.Infof("starting Two Node Fencing static resources controller")
-			tnfResourceController := staticresourcecontroller.NewStaticResourceController(
-				"TnfStaticResources",
-				tnf_assets.Asset,
-				[]string{
-					"tnfdeployment/sa.yaml",
-					"tnfdeployment/role.yaml",
-					"tnfdeployment/role-binding.yaml",
-					"tnfdeployment/clusterrole.yaml",
-					"tnfdeployment/clusterrole-binding.yaml",
+			// we need node names for assigning auth jobs to specific nodes
+			klog.Infof("watching for nodes...")
+			_, err := controlPlaneNodeInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+				AddFunc: func(obj interface{}) {
+					node, ok := obj.(*corev1.Node)
+					if !ok {
+						klog.Warningf("failed to convert node to Node %+v", obj)
+					}
+					runTnfAuthJobController(ctx, node.GetName(), controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
 				},
-				(&resourceapply.ClientHolder{}).WithKubernetes(kubeClient).WithDynamicClient(dynamicClient),
-				operatorClient,
-				controllerContext.EventRecorder,
-			).WithIgnoreNotFoundOnCreate().AddKubeInformers(kubeInformersForNamespaces)
-			go tnfResourceController.Run(ctx, 1)
+			})
+			if err != nil {
+				klog.Errorf("failed to add eventhandler to control plane informer: %v", err)
+			}
 
-			klog.Infof("starting Two Node Fencing job controller")
-			tnfJobController := tnflibgo.NewJobController(
-				"TnfJob",
-				tnf_assets.MustAsset("tnfdeployment/job.yaml"),
-				controllerContext.EventRecorder,
-				operatorClient,
-				kubeClient,
-				kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs(),
-				// TODO add secret informer here for rerunning setup with modified fencing credentials
-				[]factory.Informer{},
-				[]tnflibgo.JobHookFunc{
-					func(_ *operatorv1.OperatorSpec, job *batchv1.Job) error {
-						// set operator image pullspec
-						job.Spec.Template.Spec.Containers[0].Image = os.Getenv("OPERATOR_IMAGE")
-
-						// set env var with etcd image pullspec
-						env := job.Spec.Template.Spec.Containers[0].Env
-						if env == nil {
-							env = []corev1.EnvVar{}
-						}
-						env = append(env, corev1.EnvVar{
-							Name:  "ETCD_IMAGE_PULLSPEC",
-							Value: os.Getenv("IMAGE"),
-						})
-						job.Spec.Template.Spec.Containers[0].Env = env
-
-						return nil
-					}}...,
-			)
-			go tnfJobController.Run(ctx, 1)
+			runTnfSetupJobController(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
 
 		}
 	}
 	return nil
+}
+
+func runExternalEtcdSupportController(ctx context.Context, controllerContext *controllercmd.ControllerContext,
+	operatorClient v1helpers.StaticPodOperatorClient, envVarController *etcdenvvar.EnvVarController,
+	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces, configInformers configv1informers.SharedInformerFactory,
+	networkInformer v1.NetworkInformer, controlPlaneNodeInformer cache.SharedIndexInformer, kubeClient *kubernetes.Clientset) {
+
+	klog.Infof("starting external etcd support controller")
+	externalEtcdSupportController := externaletcdsupportcontroller.NewExternalEtcdEnablerController(
+		operatorClient,
+		os.Getenv("IMAGE"),
+		os.Getenv("OPERATOR_IMAGE"),
+		envVarController,
+		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
+		kubeInformersForNamespaces,
+		configInformers.Config().V1().Infrastructures(),
+		networkInformer,
+		controlPlaneNodeInformer,
+		kubeClient,
+		controllerContext.EventRecorder,
+	)
+	go externalEtcdSupportController.Run(ctx, 1)
+}
+
+func runTnfResourceController(ctx context.Context, controllerContext *controllercmd.ControllerContext, kubeClient *kubernetes.Clientset, dynamicClient *dynamic.DynamicClient, operatorClient v1helpers.StaticPodOperatorClient, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
+	klog.Infof("starting Two Node Fencing static resources controller")
+	tnfResourceController := staticresourcecontroller.NewStaticResourceController(
+		"TnfStaticResources",
+		tnf_assets.Asset,
+		[]string{
+			"tnfdeployment/sa.yaml",
+			"tnfdeployment/role.yaml",
+			"tnfdeployment/role-binding.yaml",
+			"tnfdeployment/clusterrole.yaml",
+			"tnfdeployment/clusterrole-binding.yaml",
+		},
+		(&resourceapply.ClientHolder{}).WithKubernetes(kubeClient).WithDynamicClient(dynamicClient),
+		operatorClient,
+		controllerContext.EventRecorder,
+	).WithIgnoreNotFoundOnCreate().AddKubeInformers(kubeInformersForNamespaces)
+	go tnfResourceController.Run(ctx, 1)
+}
+
+func runTnfAuthJobController(ctx context.Context, nodeName string, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient *kubernetes.Clientset, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
+	klog.Infof("starting Two Node Fencing auth job controller")
+	tnfJobController := tnflibgo.NewJobController(
+		"TnfJob-"+nodeName,
+		tnf_assets.MustAsset("tnfdeployment/authjob.yaml"),
+		controllerContext.EventRecorder,
+		operatorClient,
+		kubeClient,
+		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs(),
+		[]factory.Informer{},
+		[]tnflibgo.JobHookFunc{
+			func(_ *operatorv1.OperatorSpec, job *batchv1.Job) error {
+				// set operator image pullspec
+				job.Spec.Template.Spec.Containers[0].Image = os.Getenv("OPERATOR_IMAGE")
+
+				// assign to node
+				job.SetName(job.GetName() + "-" + nodeName)
+				job.Spec.Template.Spec.NodeName = nodeName
+
+				return nil
+			}}...,
+	)
+	go tnfJobController.Run(ctx, 1)
+}
+
+func runTnfSetupJobController(ctx context.Context, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient *kubernetes.Clientset, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
+	klog.Infof("starting Two Node Fencing setup job controller")
+	tnfJobController := tnflibgo.NewJobController(
+		"TnfSetupJob",
+		tnf_assets.MustAsset("tnfdeployment/job.yaml"),
+		controllerContext.EventRecorder,
+		operatorClient,
+		kubeClient,
+		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs(),
+		// TODO add secret informer here for rerunning setup with modified fencing credentials
+		[]factory.Informer{},
+		[]tnflibgo.JobHookFunc{
+			func(_ *operatorv1.OperatorSpec, job *batchv1.Job) error {
+				// set operator image pullspec
+				job.Spec.Template.Spec.Containers[0].Image = os.Getenv("OPERATOR_IMAGE")
+
+				// set env var with etcd image pullspec
+				env := job.Spec.Template.Spec.Containers[0].Env
+				if env == nil {
+					env = []corev1.EnvVar{}
+				}
+				env = append(env, corev1.EnvVar{
+					Name:  "ETCD_IMAGE_PULLSPEC",
+					Value: os.Getenv("IMAGE"),
+				})
+				job.Spec.Template.Spec.Containers[0].Env = env
+
+				return nil
+			}}...,
+	)
+	go tnfJobController.Run(ctx, 1)
 }
