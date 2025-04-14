@@ -37,22 +37,22 @@ func HandleDualReplicaClusters(
 	featureGateAccessor featuregates.FeatureGateAccess,
 	configInformers configv1informers.SharedInformerFactory,
 	operatorClient v1helpers.StaticPodOperatorClient,
-	envVarController *etcdenvvar.EnvVarController,
+	envVarGetter etcdenvvar.EnvVar,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	networkInformer v1.NetworkInformer,
 	controlPlaneNodeInformer cache.SharedIndexInformer,
-	kubeClient *kubernetes.Clientset,
-	dynamicClient *dynamic.DynamicClient) error {
+	kubeClient kubernetes.Interface,
+	dynamicClient dynamic.Interface) (bool, error) {
 
 	if isDualReplicaTopology, err := isDualReplicaTopoly(ctx, featureGateAccessor, configInformers); err != nil {
-		return err
+		return false, err
 	} else if !isDualReplicaTopology {
-		return nil
+		return false, nil
 	}
 
 	klog.Infof("detected DualReplica topology")
 
-	runExternalEtcdSupportController(ctx, controllerContext, operatorClient, envVarController, kubeInformersForNamespaces, configInformers, networkInformer, controlPlaneNodeInformer, kubeClient)
+	runExternalEtcdSupportController(ctx, controllerContext, operatorClient, envVarGetter, kubeInformersForNamespaces, configInformers, networkInformer, controlPlaneNodeInformer, kubeClient)
 	runTnfResourceController(ctx, controllerContext, kubeClient, dynamicClient, operatorClient, kubeInformersForNamespaces)
 
 	// we need node names for assigning auth jobs to specific nodes
@@ -72,7 +72,7 @@ func HandleDualReplicaClusters(
 
 	runTnfSetupJobController(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
 
-	return nil
+	return true, nil
 }
 
 func isDualReplicaTopoly(ctx context.Context, featureGateAccessor featuregates.FeatureGateAccess, configInformers configv1informers.SharedInformerFactory) (bool, error) {
@@ -91,16 +91,16 @@ func isDualReplicaTopoly(ctx context.Context, featureGateAccessor featuregates.F
 }
 
 func runExternalEtcdSupportController(ctx context.Context, controllerContext *controllercmd.ControllerContext,
-	operatorClient v1helpers.StaticPodOperatorClient, envVarController *etcdenvvar.EnvVarController,
+	operatorClient v1helpers.StaticPodOperatorClient, envVarGetter etcdenvvar.EnvVar,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces, configInformers configv1informers.SharedInformerFactory,
-	networkInformer v1.NetworkInformer, controlPlaneNodeInformer cache.SharedIndexInformer, kubeClient *kubernetes.Clientset) {
+	networkInformer v1.NetworkInformer, controlPlaneNodeInformer cache.SharedIndexInformer, kubeClient kubernetes.Interface) {
 
 	klog.Infof("starting external etcd support controller")
 	externalEtcdSupportController := externaletcdsupportcontroller.NewExternalEtcdEnablerController(
 		operatorClient,
 		os.Getenv("IMAGE"),
 		os.Getenv("OPERATOR_IMAGE"),
-		envVarController,
+		envVarGetter,
 		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Infrastructures(),
@@ -112,7 +112,7 @@ func runExternalEtcdSupportController(ctx context.Context, controllerContext *co
 	go externalEtcdSupportController.Run(ctx, 1)
 }
 
-func runTnfResourceController(ctx context.Context, controllerContext *controllercmd.ControllerContext, kubeClient *kubernetes.Clientset, dynamicClient *dynamic.DynamicClient, operatorClient v1helpers.StaticPodOperatorClient, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
+func runTnfResourceController(ctx context.Context, controllerContext *controllercmd.ControllerContext, kubeClient kubernetes.Interface, dynamicClient dynamic.Interface, operatorClient v1helpers.StaticPodOperatorClient, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
 	klog.Infof("starting Two Node Fencing static resources controller")
 	tnfResourceController := staticresourcecontroller.NewStaticResourceController(
 		"TnfStaticResources",
@@ -131,7 +131,7 @@ func runTnfResourceController(ctx context.Context, controllerContext *controller
 	go tnfResourceController.Run(ctx, 1)
 }
 
-func runTnfAuthJobController(ctx context.Context, nodeName string, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient *kubernetes.Clientset, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
+func runTnfAuthJobController(ctx context.Context, nodeName string, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
 	klog.Infof("starting Two Node Fencing auth job controller")
 	tnfJobController := jobs.NewJobController(
 		"TnfJob-"+nodeName,
@@ -156,7 +156,7 @@ func runTnfAuthJobController(ctx context.Context, nodeName string, controllerCon
 	go tnfJobController.Run(ctx, 1)
 }
 
-func runTnfSetupJobController(ctx context.Context, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient *kubernetes.Clientset, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
+func runTnfSetupJobController(ctx context.Context, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
 	klog.Infof("starting Two Node Fencing setup job controller")
 	tnfJobController := jobs.NewJobController(
 		"TnfSetupJob",

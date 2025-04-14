@@ -598,7 +598,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		clusterMemberControllerInformers...,
 	)
 
-	err = tnf.HandleDualReplicaClusters(ctx, controllerContext, featureGateAccessor, configInformers, operatorClient,
+	_, err = tnf.HandleDualReplicaClusters(ctx, controllerContext, featureGateAccessor, configInformers, operatorClient,
 		envVarController, kubeInformersForNamespaces, networkInformer, controlPlaneNodeInformer, kubeClient, dynamicClient)
 	if err != nil {
 		return err
