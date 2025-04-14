@@ -27,7 +27,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	tnf_assets "github.com/openshift/cluster-etcd-operator/pkg/tnf/assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/operator/dualreplicahelpers"
-	tnflibgo "github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/library-go"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/jobs"
 )
 
 // HandleDualReplicaClusters checks feature gate and control plane topology,
@@ -133,7 +133,7 @@ func runTnfResourceController(ctx context.Context, controllerContext *controller
 
 func runTnfAuthJobController(ctx context.Context, nodeName string, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient *kubernetes.Clientset, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
 	klog.Infof("starting Two Node Fencing auth job controller")
-	tnfJobController := tnflibgo.NewJobController(
+	tnfJobController := jobs.NewJobController(
 		"TnfJob-"+nodeName,
 		tnf_assets.MustAsset("tnfdeployment/authjob.yaml"),
 		controllerContext.EventRecorder,
@@ -141,7 +141,7 @@ func runTnfAuthJobController(ctx context.Context, nodeName string, controllerCon
 		kubeClient,
 		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs(),
 		[]factory.Informer{},
-		[]tnflibgo.JobHookFunc{
+		[]jobs.JobHookFunc{
 			func(_ *operatorv1.OperatorSpec, job *batchv1.Job) error {
 				// set operator image pullspec
 				job.Spec.Template.Spec.Containers[0].Image = os.Getenv("OPERATOR_IMAGE")
@@ -158,7 +158,7 @@ func runTnfAuthJobController(ctx context.Context, nodeName string, controllerCon
 
 func runTnfSetupJobController(ctx context.Context, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient *kubernetes.Clientset, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
 	klog.Infof("starting Two Node Fencing setup job controller")
-	tnfJobController := tnflibgo.NewJobController(
+	tnfJobController := jobs.NewJobController(
 		"TnfSetupJob",
 		tnf_assets.MustAsset("tnfdeployment/job.yaml"),
 		controllerContext.EventRecorder,
@@ -167,7 +167,7 @@ func runTnfSetupJobController(ctx context.Context, controllerContext *controller
 		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs(),
 		// TODO add secret informer here for rerunning setup with modified fencing credentials
 		[]factory.Informer{},
-		[]tnflibgo.JobHookFunc{
+		[]jobs.JobHookFunc{
 			func(_ *operatorv1.OperatorSpec, job *batchv1.Job) error {
 				// set operator image pullspec
 				job.Spec.Template.Spec.Containers[0].Image = os.Getenv("OPERATOR_IMAGE")

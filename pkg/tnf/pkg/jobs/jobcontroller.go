@@ -1,4 +1,4 @@
-package library_go
+package jobs
 
 import (
 	"context"
