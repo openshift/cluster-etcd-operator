@@ -26,15 +26,10 @@ func ConfigureCluster(ctx context.Context, cfg config.ClusterConfig) (bool, erro
 
 	klog.Info("Starting initial HA cluster setup")
 
-	//stonithArgsNode1 := getStonithArgs(cfg, 0)
-	//stonithArgsNode2 := getStonithArgs(cfg, 1)
-
 	commands := []string{
 		fmt.Sprintf("/usr/sbin/pcs cluster setup TNF %s addr=%s %s addr=%s --debug --force", cfg.NodeName1, cfg.NodeIP1, cfg.NodeName2, cfg.NodeIP2),
 		"/usr/sbin/pcs cluster start --all",
-		//fmt.Sprintf("/usr/sbin/pcs stonith create %s", stonithArgsNode1),
-		//fmt.Sprintf("/usr/sbin/pcs stonith create %s", stonithArgsNode2),
-		// !!! TODO REMOVE WHEN ENABLING STONITH !!!
+		// TODO REMOVE FOLLOWING LINE WHEN ENABLING STONITH
 		"/usr/sbin/pcs property set stonith-enabled=false",
 		"/usr/sbin/pcs resource create kubelet systemctl service=kubelet clone meta interleave=true",
 		"/usr/sbin/pcs cluster enable --all",
@@ -53,18 +48,6 @@ func ConfigureCluster(ctx context.Context, cfg config.ClusterConfig) (bool, erro
 	return true, nil
 
 }
-
-//func getStonithArgs(cfg config.ClusterConfig, nodeNr int) string {
-//	fc := cfg.FencingConfigs[nodeNr]
-//	args := fmt.Sprintf("%s %s", fc.FencingID, fc.FencingDeviceType)
-//	for key, value := range fc.FencingDeviceOptions {
-//		if len(value) == 0 {
-//			value = "1"
-//		}
-//		args += fmt.Sprintf(` %s="%s"`, key, value)
-//	}
-//	return args
-//}
 
 // GetCIB gets the pcs cib
 func GetCIB(ctx context.Context) (string, error) {
