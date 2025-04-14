@@ -13,8 +13,8 @@ spec:
     spec:
       containers:
         - name: tnf-setup
-          image: quay.io/openshift/origin-cluster-etcd-operator
-          imagePullPolicy: Always
+          image: <injected>
+          imagePullPolicy: IfNotPresent
           command: [ "tnf-setup-runner", "run" ]
           resources:
             requests:

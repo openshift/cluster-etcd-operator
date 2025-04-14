@@ -75,8 +75,8 @@ spec:
     spec:
       containers:
         - name: tnf-auth
-          image: quay.io/openshift/origin-cluster-etcd-operator
-          imagePullPolicy: Always
+          image: <injected>
+          imagePullPolicy: IfNotPresent
           command: [ "tnf-setup-runner", "auth" ]
           resources:
             requests:
@@ -216,8 +216,8 @@ spec:
     spec:
       containers:
         - name: tnf-setup
-          image: quay.io/openshift/origin-cluster-etcd-operator
-          imagePullPolicy: Always
+          image: <injected>
+          imagePullPolicy: IfNotPresent
           command: [ "tnf-setup-runner", "run" ]
           resources:
             requests:
