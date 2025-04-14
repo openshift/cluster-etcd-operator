@@ -9,6 +9,18 @@ import (
 	"os"
 	"time"
 
+	prune_backups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/backuprestore"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/monitor"
+	operatorcmd "github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/readyz"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
+	requestbackup "github.com/openshift/cluster-etcd-operator/pkg/cmd/request-backup"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/rev"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/verify"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/waitforceo"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator"
 	"github.com/openshift/library-go/pkg/operator/staticpod/certsyncpod"
 	"github.com/openshift/library-go/pkg/operator/staticpod/installerpod"
 	"github.com/openshift/library-go/pkg/operator/staticpod/prune"
@@ -17,18 +29,6 @@ import (
 	"google.golang.org/grpc/grpclog"
 	utilflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/logs"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/backuprestore"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/monitor"
-	operatorcmd "github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
-	prune_backups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/readyz"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
-	requestbackup "github.com/openshift/cluster-etcd-operator/pkg/cmd/request-backup"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/rev"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/verify"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/waitforceo"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator"
 )
 
 func main() {
