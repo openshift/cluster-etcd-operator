@@ -44,37 +44,50 @@ func HandleDualReplicaClusters(
 	kubeClient *kubernetes.Clientset,
 	dynamicClient *dynamic.DynamicClient) error {
 
-	if enabledDualReplicaFeature, err := dualreplicahelpers.DualReplicaFeatureGateEnabled(featureGateAccessor); err != nil {
-		return fmt.Errorf("could not determine DualReplicaFeatureGateEnabled, aborting controller start: %w", err)
-	} else if enabledDualReplicaFeature {
-		if isDualReplicaTopology, err := ceohelpers.IsDualReplicaTopology(ctx, configInformers.Config().V1().Infrastructures().Lister()); err != nil {
-			return fmt.Errorf("could not determine DualReplicaTopology, aborting controller start: %w", err)
-		} else if isDualReplicaTopology {
-			klog.Infof("detected DualReplica topology")
-
-			runExternalEtcdSupportController(ctx, controllerContext, operatorClient, envVarController, kubeInformersForNamespaces, configInformers, networkInformer, controlPlaneNodeInformer, kubeClient)
-			runTnfResourceController(ctx, controllerContext, kubeClient, dynamicClient, operatorClient, kubeInformersForNamespaces)
-
-			// we need node names for assigning auth jobs to specific nodes
-			klog.Infof("watching for nodes...")
-			_, err := controlPlaneNodeInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-				AddFunc: func(obj interface{}) {
-					node, ok := obj.(*corev1.Node)
-					if !ok {
-						klog.Warningf("failed to convert node to Node %+v", obj)
-					}
-					runTnfAuthJobController(ctx, node.GetName(), controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
-				},
-			})
-			if err != nil {
-				klog.Errorf("failed to add eventhandler to control plane informer: %v", err)
-			}
-
-			runTnfSetupJobController(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
-
-		}
+	if isDualReplicaTopology, err := isDualReplicaTopoly(ctx, featureGateAccessor, configInformers); err != nil {
+		return err
+	} else if !isDualReplicaTopology {
+		return nil
 	}
+
+	klog.Infof("detected DualReplica topology")
+
+	runExternalEtcdSupportController(ctx, controllerContext, operatorClient, envVarController, kubeInformersForNamespaces, configInformers, networkInformer, controlPlaneNodeInformer, kubeClient)
+	runTnfResourceController(ctx, controllerContext, kubeClient, dynamicClient, operatorClient, kubeInformersForNamespaces)
+
+	// we need node names for assigning auth jobs to specific nodes
+	klog.Infof("watching for nodes...")
+	_, err := controlPlaneNodeInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			node, ok := obj.(*corev1.Node)
+			if !ok {
+				klog.Warningf("failed to convert node to Node %+v", obj)
+			}
+			runTnfAuthJobController(ctx, node.GetName(), controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+		},
+	})
+	if err != nil {
+		klog.Errorf("failed to add eventhandler to control plane informer: %v", err)
+	}
+
+	runTnfSetupJobController(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+
 	return nil
+}
+
+func isDualReplicaTopoly(ctx context.Context, featureGateAccessor featuregates.FeatureGateAccess, configInformers configv1informers.SharedInformerFactory) (bool, error) {
+	if isDualReplicaTopology, err := ceohelpers.IsDualReplicaTopology(ctx, configInformers.Config().V1().Infrastructures().Lister()); err != nil {
+		return false, fmt.Errorf("could not determine DualReplicaTopology, aborting controller start: %w", err)
+	} else if !isDualReplicaTopology {
+		return false, nil
+	}
+	// dual replica currently topology has to be enabled by a feature gate
+	if enabledDualReplicaFeature, err := dualreplicahelpers.DualReplicaFeatureGateEnabled(featureGateAccessor); err != nil {
+		return false, fmt.Errorf("could not determine DualReplicaFeatureGateEnabled, aborting controller start: %w", err)
+	} else if !enabledDualReplicaFeature {
+		return false, fmt.Errorf("detected dual replica topology, but dual replica feature gate is disabled, aborting controller start")
+	}
+	return true, nil
 }
 
 func runExternalEtcdSupportController(ctx context.Context, controllerContext *controllercmd.ControllerContext,
