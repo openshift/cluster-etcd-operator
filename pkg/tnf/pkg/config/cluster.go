@@ -11,19 +11,17 @@ import (
 )
 
 type ClusterConfig struct {
-	NodeName1    string
-	NodeName2    string
-	NodeIP1      string
-	NodeIP2      string
-	EtcdPullSpec string
+	NodeName1 string
+	NodeName2 string
+	NodeIP1   string
+	NodeIP2   string
 }
 
 // GetClusterConfig creates an operator specific view of the config
-func GetClusterConfig(ctx context.Context, kubeClient kubernetes.Interface, etcdImagePullSpec string) (ClusterConfig, error) {
+func GetClusterConfig(ctx context.Context, kubeClient kubernetes.Interface) (ClusterConfig, error) {
 
 	klog.Info("Creating HA Cluster Config")
 	clusterCfg := ClusterConfig{}
-	clusterCfg.EtcdPullSpec = etcdImagePullSpec
 
 	// Get nodes
 	nodes, err := kubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})

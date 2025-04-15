@@ -2,8 +2,6 @@ package setup
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"time"
 
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
@@ -45,11 +43,6 @@ func RunTnfSetup() error {
 		return err
 	}
 
-	etcdImagePullSpec := os.Getenv("ETCD_IMAGE_PULLSPEC")
-	if etcdImagePullSpec == "" {
-		return fmt.Errorf("ETCD_IMAGE_PULLSPEC environment variable not set")
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	shutdownHandler := server.SetupSignalHandler()
 	go func() {
@@ -88,7 +81,7 @@ func RunTnfSetup() error {
 	klog.Info("Running TNF setup")
 
 	// create tnf cluster config
-	cfg, err := config.GetClusterConfig(ctx, kubeClient, etcdImagePullSpec)
+	cfg, err := config.GetClusterConfig(ctx, kubeClient)
 	if err != nil {
 		return err
 	}

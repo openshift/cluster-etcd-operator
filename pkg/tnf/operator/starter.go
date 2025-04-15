@@ -172,18 +172,6 @@ func runTnfSetupJobController(ctx context.Context, controllerContext *controller
 			func(_ *operatorv1.OperatorSpec, job *batchv1.Job) error {
 				// set operator image pullspec
 				job.Spec.Template.Spec.Containers[0].Image = os.Getenv("OPERATOR_IMAGE")
-
-				// set env var with etcd image pullspec
-				env := job.Spec.Template.Spec.Containers[0].Env
-				if env == nil {
-					env = []corev1.EnvVar{}
-				}
-				env = append(env, corev1.EnvVar{
-					Name:  "ETCD_IMAGE_PULLSPEC",
-					Value: os.Getenv("IMAGE"),
-				})
-				job.Spec.Template.Spec.Containers[0].Env = env
-
 				return nil
 			}}...,
 	)

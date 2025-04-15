@@ -50,7 +50,7 @@ func RunTnfAuth() error {
 	klog.Info("Running TNF auth")
 
 	// create tnf cluster config
-	cfg, err := config.GetClusterConfig(ctx, kubeClient, "notApplicableHere")
+	cfg, err := config.GetClusterConfig(ctx, kubeClient)
 	if err != nil {
 		return err
 	}

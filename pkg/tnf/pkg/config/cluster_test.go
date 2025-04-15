@@ -12,9 +12,8 @@ import (
 )
 
 type args struct {
-	ctx               context.Context
-	kubeClient        kubernetes.Interface
-	etcdImagePullSpec string
+	ctx        context.Context
+	kubeClient kubernetes.Interface
 }
 
 func TestGetClusterConfig(t *testing.T) {
@@ -50,20 +49,19 @@ func TestGetClusterConfig(t *testing.T) {
 						},
 					},
 				},
-			}, "myEtcdImage"),
+			}),
 			want: ClusterConfig{
-				NodeName1:    "test1",
-				NodeName2:    "test2",
-				NodeIP1:      "IP1",
-				NodeIP2:      "IP2",
-				EtcdPullSpec: "myEtcdImage",
+				NodeName1: "test1",
+				NodeName2: "test2",
+				NodeIP1:   "IP1",
+				NodeIP2:   "IP2",
 			},
 			wantErr: false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := GetClusterConfig(tt.args.ctx, tt.args.kubeClient, tt.args.etcdImagePullSpec)
+			got, err := GetClusterConfig(tt.args.ctx, tt.args.kubeClient)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("GetClusterConfig() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -75,7 +73,7 @@ func TestGetClusterConfig(t *testing.T) {
 	}
 }
 
-func getArgs(t *testing.T, nodes []*corev1.Node, etcdPullImage string) args {
+func getArgs(t *testing.T, nodes []*corev1.Node) args {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -88,8 +86,7 @@ func getArgs(t *testing.T, nodes []*corev1.Node, etcdPullImage string) args {
 	}
 
 	return args{
-		ctx:               ctx,
-		kubeClient:        fakeKubeClient,
-		etcdImagePullSpec: etcdPullImage,
+		ctx:        ctx,
+		kubeClient: fakeKubeClient,
 	}
 }
