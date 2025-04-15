@@ -15,7 +15,7 @@ import (
 )
 
 // RemoveStaticContainer removes the CEO managed etcd container
-func RemoveStaticContainer(ctx context.Context, operatorClient *operatorversionedclient.Clientset) error {
+func RemoveStaticContainer(ctx context.Context, operatorClient operatorversionedclient.Interface) error {
 	klog.Info("Checking etcd operator")
 
 	etcd, err := operatorClient.OperatorV1().Etcds().Get(ctx, "cluster", metav1.GetOptions{})
@@ -54,7 +54,7 @@ func RemoveStaticContainer(ctx context.Context, operatorClient *operatorversione
 }
 
 // waitForStaticContainerRemoved waits until the static etcd container has been removed
-func waitForStaticContainerRemoved(ctx context.Context, operatorClient *operatorversionedclient.Clientset) error {
+func waitForStaticContainerRemoved(ctx context.Context, operatorClient operatorversionedclient.Interface) error {
 	klog.Info("Wait for static etcd removed")
 
 	isRemoved := func(context.Context) (done bool, err error) {
