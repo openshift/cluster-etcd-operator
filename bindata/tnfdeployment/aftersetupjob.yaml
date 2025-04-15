@@ -1,0 +1,35 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  labels:
+    app.kubernetes.io/name: tnf-after-setup
+  namespace: openshift-etcd
+  name: tnf-after-setup
+spec:
+  template:
+    metadata:
+      annotations:
+        openshift.io/required-scc: "privileged"
+    spec:
+      containers:
+        - name: tnf-after-setup
+          image: <injected>
+          imagePullPolicy: IfNotPresent
+          command: [ "tnf-setup-runner", "after-setup" ]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          securityContext:
+            privileged: true
+            allowPrivilegeEscalation: true
+      hostIPC: false
+      hostNetwork: false
+      hostPID: true
+      serviceAccountName: tnf-setup-manager
+      terminationGracePeriodSeconds: 10
+      restartPolicy: Never
+  backoffLimit: 3

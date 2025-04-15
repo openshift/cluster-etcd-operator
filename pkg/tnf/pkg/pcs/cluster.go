@@ -31,7 +31,9 @@ func ConfigureCluster(ctx context.Context, cfg config.ClusterConfig) (bool, erro
 		"/usr/sbin/pcs cluster start --all",
 		// TODO REMOVE FOLLOWING LINE WHEN ENABLING STONITH
 		"/usr/sbin/pcs property set stonith-enabled=false",
-		"/usr/sbin/pcs resource create kubelet systemctl service=kubelet clone meta interleave=true",
+		// Note: the kubelet service needs to be disabled when using systemd agent
+		// Done by after-setup jobs on both nodes
+		"/usr/sbin/pcs resource create kubelet systemd:kubelet clone meta interleave=true",
 		"/usr/sbin/pcs cluster enable --all",
 		"/usr/sbin/pcs cluster sync",
 		"/usr/sbin/pcs cluster reload corosync",

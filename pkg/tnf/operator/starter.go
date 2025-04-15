@@ -64,6 +64,7 @@ func HandleDualReplicaClusters(
 				klog.Warningf("failed to convert node to Node %+v", obj)
 			}
 			runTnfAuthJobController(ctx, node.GetName(), controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+			runTnfAfterSetupJobController(ctx, node.GetName(), controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
 		},
 	})
 	if err != nil {
@@ -132,9 +133,9 @@ func runTnfResourceController(ctx context.Context, controllerContext *controller
 }
 
 func runTnfAuthJobController(ctx context.Context, nodeName string, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
-	klog.Infof("starting Two Node Fencing auth job controller")
+	klog.Infof("starting Two Node Fencing auth job controller for node %s", nodeName)
 	tnfJobController := jobs.NewJobController(
-		"TnfJob-"+nodeName,
+		"TnfAuthJob-"+nodeName,
 		tnf_assets.MustAsset("tnfdeployment/authjob.yaml"),
 		controllerContext.EventRecorder,
 		operatorClient,
@@ -160,7 +161,7 @@ func runTnfSetupJobController(ctx context.Context, controllerContext *controller
 	klog.Infof("starting Two Node Fencing setup job controller")
 	tnfJobController := jobs.NewJobController(
 		"TnfSetupJob",
-		tnf_assets.MustAsset("tnfdeployment/job.yaml"),
+		tnf_assets.MustAsset("tnfdeployment/setupjob.yaml"),
 		controllerContext.EventRecorder,
 		operatorClient,
 		kubeClient,
@@ -182,6 +183,31 @@ func runTnfSetupJobController(ctx context.Context, controllerContext *controller
 					Value: os.Getenv("IMAGE"),
 				})
 				job.Spec.Template.Spec.Containers[0].Env = env
+
+				return nil
+			}}...,
+	)
+	go tnfJobController.Run(ctx, 1)
+}
+
+func runTnfAfterSetupJobController(ctx context.Context, nodeName string, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
+	klog.Infof("starting Two Node Fencing after setup job controller for node %s", nodeName)
+	tnfJobController := jobs.NewJobController(
+		"TnfAfterSetupJob-"+nodeName,
+		tnf_assets.MustAsset("tnfdeployment/aftersetupjob.yaml"),
+		controllerContext.EventRecorder,
+		operatorClient,
+		kubeClient,
+		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs(),
+		[]factory.Informer{},
+		[]jobs.JobHookFunc{
+			func(_ *operatorv1.OperatorSpec, job *batchv1.Job) error {
+				// set operator image pullspec
+				job.Spec.Template.Spec.Containers[0].Image = os.Getenv("OPERATOR_IMAGE")
+
+				// assign to node
+				job.SetName(job.GetName() + "-" + nodeName)
+				job.Spec.Template.Spec.NodeName = nodeName
 
 				return nil
 			}}...,

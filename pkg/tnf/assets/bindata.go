@@ -1,12 +1,13 @@
 // Code generated for package assets by go-bindata DO NOT EDIT. (@generated)
 // sources:
+// bindata/tnfdeployment/aftersetupjob.yaml
 // bindata/tnfdeployment/authjob.yaml
 // bindata/tnfdeployment/clusterrole-binding.yaml
 // bindata/tnfdeployment/clusterrole.yaml
-// bindata/tnfdeployment/job.yaml
 // bindata/tnfdeployment/role-binding.yaml
 // bindata/tnfdeployment/role.yaml
 // bindata/tnfdeployment/sa.yaml
+// bindata/tnfdeployment/setupjob.yaml
 package assets
 
 import (
@@ -58,6 +59,58 @@ func (fi bindataFileInfo) IsDir() bool {
 // Sys return file is sys mode
 func (fi bindataFileInfo) Sys() interface{} {
 	return nil
+}
+
+var _tnfdeploymentAftersetupjobYaml = []byte(`apiVersion: batch/v1
+kind: Job
+metadata:
+  labels:
+    app.kubernetes.io/name: tnf-after-setup
+  namespace: openshift-etcd
+  name: tnf-after-setup
+spec:
+  template:
+    metadata:
+      annotations:
+        openshift.io/required-scc: "privileged"
+    spec:
+      containers:
+        - name: tnf-after-setup
+          image: <injected>
+          imagePullPolicy: IfNotPresent
+          command: [ "tnf-setup-runner", "after-setup" ]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          securityContext:
+            privileged: true
+            allowPrivilegeEscalation: true
+      hostIPC: false
+      hostNetwork: false
+      hostPID: true
+      serviceAccountName: tnf-setup-manager
+      terminationGracePeriodSeconds: 10
+      restartPolicy: Never
+  backoffLimit: 3
+`)
+
+func tnfdeploymentAftersetupjobYamlBytes() ([]byte, error) {
+	return _tnfdeploymentAftersetupjobYaml, nil
+}
+
+func tnfdeploymentAftersetupjobYaml() (*asset, error) {
+	bytes, err := tnfdeploymentAftersetupjobYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "tnfdeployment/aftersetupjob.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
 }
 
 var _tnfdeploymentAuthjobYaml = []byte(`apiVersion: batch/v1
@@ -201,58 +254,6 @@ func tnfdeploymentClusterroleYaml() (*asset, error) {
 	return a, nil
 }
 
-var _tnfdeploymentJobYaml = []byte(`apiVersion: batch/v1
-kind: Job
-metadata:
-  labels:
-    app.kubernetes.io/name: tnf-setup
-  namespace: openshift-etcd
-  name: tnf-setup
-spec:
-  template:
-    metadata:
-      annotations:
-        openshift.io/required-scc: "privileged"
-    spec:
-      containers:
-        - name: tnf-setup
-          image: <injected>
-          imagePullPolicy: IfNotPresent
-          command: [ "tnf-setup-runner", "run" ]
-          resources:
-            requests:
-              cpu: 50m
-              memory: 64Mi
-            limits:
-              cpu: 500m
-              memory: 128Mi
-          securityContext:
-            privileged: true
-            allowPrivilegeEscalation: true
-      hostIPC: false
-      hostNetwork: false
-      hostPID: true
-      serviceAccountName: tnf-setup-manager
-      terminationGracePeriodSeconds: 10
-      restartPolicy: Never
-  backoffLimit: 3
-`)
-
-func tnfdeploymentJobYamlBytes() ([]byte, error) {
-	return _tnfdeploymentJobYaml, nil
-}
-
-func tnfdeploymentJobYaml() (*asset, error) {
-	bytes, err := tnfdeploymentJobYamlBytes()
-	if err != nil {
-		return nil, err
-	}
-
-	info := bindataFileInfo{name: "tnfdeployment/job.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
-	a := &asset{bytes: bytes, info: info}
-	return a, nil
-}
-
 var _tnfdeploymentRoleBindingYaml = []byte(`apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -356,6 +357,58 @@ func tnfdeploymentSaYaml() (*asset, error) {
 	return a, nil
 }
 
+var _tnfdeploymentSetupjobYaml = []byte(`apiVersion: batch/v1
+kind: Job
+metadata:
+  labels:
+    app.kubernetes.io/name: tnf-setup
+  namespace: openshift-etcd
+  name: tnf-setup
+spec:
+  template:
+    metadata:
+      annotations:
+        openshift.io/required-scc: "privileged"
+    spec:
+      containers:
+        - name: tnf-setup
+          image: <injected>
+          imagePullPolicy: IfNotPresent
+          command: [ "tnf-setup-runner", "run" ]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          securityContext:
+            privileged: true
+            allowPrivilegeEscalation: true
+      hostIPC: false
+      hostNetwork: false
+      hostPID: true
+      serviceAccountName: tnf-setup-manager
+      terminationGracePeriodSeconds: 10
+      restartPolicy: Never
+  backoffLimit: 3
+`)
+
+func tnfdeploymentSetupjobYamlBytes() ([]byte, error) {
+	return _tnfdeploymentSetupjobYaml, nil
+}
+
+func tnfdeploymentSetupjobYaml() (*asset, error) {
+	bytes, err := tnfdeploymentSetupjobYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "tnfdeployment/setupjob.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
 // Asset loads and returns the asset for the given name.
 // It returns an error if the asset could not be found or
 // could not be loaded.
@@ -408,13 +461,14 @@ func AssetNames() []string {
 
 // _bindata is a table, holding each asset generator, mapped to its name.
 var _bindata = map[string]func() (*asset, error){
+	"tnfdeployment/aftersetupjob.yaml":       tnfdeploymentAftersetupjobYaml,
 	"tnfdeployment/authjob.yaml":             tnfdeploymentAuthjobYaml,
 	"tnfdeployment/clusterrole-binding.yaml": tnfdeploymentClusterroleBindingYaml,
 	"tnfdeployment/clusterrole.yaml":         tnfdeploymentClusterroleYaml,
-	"tnfdeployment/job.yaml":                 tnfdeploymentJobYaml,
 	"tnfdeployment/role-binding.yaml":        tnfdeploymentRoleBindingYaml,
 	"tnfdeployment/role.yaml":                tnfdeploymentRoleYaml,
 	"tnfdeployment/sa.yaml":                  tnfdeploymentSaYaml,
+	"tnfdeployment/setupjob.yaml":            tnfdeploymentSetupjobYaml,
 }
 
 // AssetDir returns the file names below a certain
@@ -461,13 +515,14 @@ type bintree struct {
 
 var _bintree = &bintree{nil, map[string]*bintree{
 	"tnfdeployment": {nil, map[string]*bintree{
+		"aftersetupjob.yaml":       {tnfdeploymentAftersetupjobYaml, map[string]*bintree{}},
 		"authjob.yaml":             {tnfdeploymentAuthjobYaml, map[string]*bintree{}},
 		"clusterrole-binding.yaml": {tnfdeploymentClusterroleBindingYaml, map[string]*bintree{}},
 		"clusterrole.yaml":         {tnfdeploymentClusterroleYaml, map[string]*bintree{}},
-		"job.yaml":                 {tnfdeploymentJobYaml, map[string]*bintree{}},
 		"role-binding.yaml":        {tnfdeploymentRoleBindingYaml, map[string]*bintree{}},
 		"role.yaml":                {tnfdeploymentRoleYaml, map[string]*bintree{}},
 		"sa.yaml":                  {tnfdeploymentSaYaml, map[string]*bintree{}},
+		"setupjob.yaml":            {tnfdeploymentSetupjobYaml, map[string]*bintree{}},
 	}},
 }}
 
