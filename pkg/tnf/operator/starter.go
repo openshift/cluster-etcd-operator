@@ -69,6 +69,7 @@ func HandleDualReplicaClusters(
 	})
 	if err != nil {
 		klog.Errorf("failed to add eventhandler to control plane informer: %v", err)
+		return false, err
 	}
 
 	runTnfSetupJobController(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)

@@ -11,6 +11,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/config"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/exec"
 )
@@ -48,6 +49,13 @@ func RunTnfAuth() error {
 	}()
 
 	klog.Info("Running TNF auth")
+
+	klog.Infof("Waiting for bootstrap to complete")
+	err = bootstrapteardown.WaitForEtcdBootstrap(ctx, clientConfig)
+	if err != nil {
+		klog.Errorf("failed to wait for bootstrap to complete: %v", err)
+		return err
+	}
 
 	// create tnf cluster config
 	cfg, err := config.GetClusterConfig(ctx, kubeClient)
