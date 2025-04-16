@@ -344,6 +344,7 @@ func (g *etcdClientGetter) UnhealthyMembers(ctx context.Context) ([]*etcdserverp
 	unstartedMemberNames := GetUnstartedMemberNames(memberHealth)
 	if len(unstartedMemberNames) > 0 {
 		klog.Warningf("UnstartedEtcdMember found: %v", unstartedMemberNames)
+		return memberHealth.GetUnstartedMembers(), nil
 	}
 
 	unhealthyMemberNames := GetUnhealthyMemberNames(memberHealth)
