@@ -30,6 +30,8 @@ $(call build-image,ocp-cluster-etcd-operator,$(IMAGE_REGISTRY)/ocp/4.4:cluster-e
 # It will generate targets {update,verify}-bindata-$(1) logically grouping them in unsuffixed versions of these targets
 # and also hooked into {update,verify}-generated for broader integration.
 $(call add-bindata,etcd,./bindata/etcd/...,bindata,etcd_assets,pkg/operator/etcd_assets/bindata.go)
+$(call add-bindata,tnfdeployment,./bindata/tnfdeployment/...,bindata,assets,pkg/tnf/assets/bindata.go)
+
 
 $(call verify-golang-versions,Dockerfile.ocp)
 

@@ -19,13 +19,6 @@ import (
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorversionedclientv1alpha1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
-	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
-	"github.com/openshift/cluster-etcd-operator/pkg/dualreplicahelpers"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/backupcontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertcleaner"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/externaletcdsupportcontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/periodicbackupcontroller"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
@@ -52,9 +45,12 @@ import (
 	"k8s.io/component-base/metrics"
 	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/clock"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/backupcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
@@ -62,16 +58,19 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/defragcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertcleaner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdendpointscontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdmemberscontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/machinedeletionhooks"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/metriccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/periodicbackupcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
-	"k8s.io/utils/clock"
+	tnf "github.com/openshift/cluster-etcd-operator/pkg/tnf/operator"
 )
 
 // masterMachineLabelSelectorString allows for getting only the master machines, it matters in larger installations with many worker nodes
@@ -599,28 +598,10 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		clusterMemberControllerInformers...,
 	)
 
-	if enabledDualReplicaFeature, err := dualreplicahelpers.DualReplicaFeatureGateEnabled(featureGateAccessor); err != nil {
-		return fmt.Errorf("could not determine DualReplicaFeatureGateEnabled, aborting controller start: %w", err)
-	} else if enabledDualReplicaFeature {
-		if isDualReplicaTopology, err := ceohelpers.IsDualReplicaTopology(ctx, configInformers.Config().V1().Infrastructures().Lister()); err != nil {
-			return fmt.Errorf("could not determine DualReplicaTopology, aborting controller start: %w", err)
-		} else if isDualReplicaTopology {
-			klog.Infof("found external etcd support feature to be enabled, starting controller...")
-			externalEtcdSupportController := externaletcdsupportcontroller.NewExternalEtcdEnablerController(
-				operatorClient,
-				os.Getenv("IMAGE"),
-				os.Getenv("OPERATOR_IMAGE"),
-				envVarController,
-				kubeInformersForNamespaces.InformersFor("openshift-etcd"),
-				kubeInformersForNamespaces,
-				configInformers.Config().V1().Infrastructures(),
-				networkInformer,
-				controlPlaneNodeInformer,
-				kubeClient,
-				controllerContext.EventRecorder)
-
-			go externalEtcdSupportController.Run(ctx, 1)
-		}
+	_, err = tnf.HandleDualReplicaClusters(ctx, controllerContext, featureGateAccessor, configInformers, operatorClient,
+		envVarController, kubeInformersForNamespaces, networkInformer, controlPlaneNodeInformer, kubeClient, dynamicClient)
+	if err != nil {
+		return err
 	}
 
 	go controlPlaneNodeInformer.Run(ctx.Done())

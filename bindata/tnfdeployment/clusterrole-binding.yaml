@@ -1,0 +1,14 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/name: tnf-setup
+  name: tnf-setup-clusterrole-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tnf-setup-clusterrole
+subjects:
+  - kind: ServiceAccount
+    name: tnf-setup-manager
+    namespace: openshift-etcd

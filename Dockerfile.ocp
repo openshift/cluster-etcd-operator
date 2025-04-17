@@ -8,6 +8,7 @@ FROM registry.ci.openshift.org/ocp/4.18:base-rhel9
 COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/bindata/bootkube/bootstrap-manifests /usr/share/bootkube/manifests/bootstrap-manifests/
 COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/bindata/bootkube/manifests /usr/share/bootkube/manifests/manifests/
 COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/cluster-etcd-operator /usr/bin/
+COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/tnf-setup-runner /usr/bin/
 COPY manifests/ /manifests
 
 LABEL io.openshift.release.operator true
