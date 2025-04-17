@@ -38,7 +38,7 @@ import (
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	"go.etcd.io/etcd/client/pkg/v3/types"
 	"go.etcd.io/etcd/client/v2"
-	"go.etcd.io/etcd/client/v3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/pkg/v3/grpc_testing"
 	"go.etcd.io/etcd/raft/v3"
 	"go.etcd.io/etcd/server/v3/config"
@@ -84,7 +84,7 @@ var (
 	// member, ensuring restarted members can listen on the same port again.
 	localListenCount = int64(0)
 
-	testTLSInfo = transport.TLSInfo{
+	TestTLSInfo = transport.TLSInfo{
 		KeyFile:        MustAbsPath("../fixtures/server.key.insecure"),
 		CertFile:       MustAbsPath("../fixtures/server.crt"),
 		TrustedCAFile:  MustAbsPath("../fixtures/ca.crt"),
@@ -121,7 +121,7 @@ var (
 		ClientCertAuth: true,
 	}
 
-	defaultTokenJWT = fmt.Sprintf("jwt,pub-key=%s,priv-key=%s,sign-method=RS256,ttl=1s",
+	defaultTokenJWT = fmt.Sprintf("jwt,pub-key=%s,priv-key=%s,sign-method=RS256,ttl=2s",
 		MustAbsPath("../fixtures/server.crt"), MustAbsPath("../fixtures/server.key.insecure"))
 
 	// uniqueNumber is used to generate unique port numbers
@@ -136,7 +136,8 @@ type ClusterConfig struct {
 
 	DiscoveryURL string
 
-	AuthToken string
+	AuthToken    string
+	AuthTokenTTL uint
 
 	UseGRPC bool
 
@@ -191,6 +192,7 @@ func schemeFromTLSInfo(tls *transport.TLSInfo) string {
 	return URLSchemeTLS
 }
 
+// fillClusterForMembers fills up Member.InitialPeerURLsMap from each member's [name, scheme and PeerListeners address]
 func (c *cluster) fillClusterForMembers() error {
 	if c.cfg.DiscoveryURL != "" {
 		// cluster will be discovered
@@ -314,6 +316,7 @@ func (c *cluster) mustNewMember(t testutil.TB, memberNumber int64) *member {
 			name:                        c.generateMemberName(),
 			memberNumber:                memberNumber,
 			authToken:                   c.cfg.AuthToken,
+			authTokenTTL:                c.cfg.AuthTokenTTL,
 			peerTLS:                     c.cfg.PeerTLS,
 			clientTLS:                   c.cfg.ClientTLS,
 			quotaBackendBytes:           c.cfg.QuotaBackendBytes,
@@ -613,6 +616,10 @@ type member struct {
 
 func (m *member) GRPCURL() string { return m.grpcURL }
 
+func (m *member) CorruptionChecker() etcdserver.CorruptionChecker {
+	return m.s.CorruptionChecker()
+}
+
 type memberConfig struct {
 	name                        string
 	uniqNumber                  int64
@@ -620,6 +627,7 @@ type memberConfig struct {
 	peerTLS                     *transport.TLSInfo
 	clientTLS                   *transport.TLSInfo
 	authToken                   string
+	authTokenTTL                uint
 	quotaBackendBytes           int64
 	maxTxnOps                   uint
 	maxRequestBytes             uint
@@ -710,6 +718,9 @@ func mustNewMember(t testutil.TB, mcfg memberConfig) *member {
 	m.AuthToken = "simple"
 	if mcfg.authToken != "" {
 		m.AuthToken = mcfg.authToken
+	}
+	if mcfg.authTokenTTL != 0 {
+		m.TokenTTL = mcfg.authTokenTTL
 	}
 
 	m.BcryptCost = uint(bcrypt.MinCost) // use min bcrypt cost to speedy up integration testing
@@ -1662,4 +1673,9 @@ func (c *ClusterV3) MustNewMember(t testutil.TB, resp *clientv3.MemberAddRespons
 	m.InitialPeerURLsMap[m.Name] = types.MustNewURLs(resp.Member.PeerURLs)
 	c.Members = append(c.Members, m)
 	return m
+}
+
+func newClientV3(cfg clientv3.Config, lg *zap.Logger) (*clientv3.Client, error) {
+	cfg.Logger = lg
+	return clientv3.New(cfg)
 }

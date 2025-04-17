@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/openshift/cluster-etcd-operator/pkg/integration"
 	"io/ioutil"
 	"net/url"
 	"os"
@@ -13,7 +14,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
-	"go.etcd.io/etcd/tests/v3/integration"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/monitor/health"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
