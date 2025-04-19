@@ -12,7 +12,11 @@ import (
 	"testing"
 
 	"github.com/ghodss/yaml"
+	"github.com/google/go-cmp/cmp"
+	configv1 "github.com/openshift/api/config/v1"
+	"github.com/openshift/api/features"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 var (
@@ -127,6 +131,7 @@ data:
         projectID: openshift
         region: us-east1
     publish: External
+    featureGates: [ShortCertRotation=false]
 `
 	clusterConfigMapSingleNodeBootstrapInPlace = `
 apiVersion: v1
@@ -167,6 +172,7 @@ data:
     publish: External
     bootstrapInPlace:
       installationDisk: /dev/sda
+    featureGates: [ShortCertRotation=false]
 `
 
 	clusterConfigMapSingleNode = `
@@ -206,6 +212,7 @@ data:
         projectID: openshift
         region: us-east1
     publish: External
+    featureGates: [ShortCertRotation=false]
 `
 	clusterConfigMapTwoNode = `
 apiVersion: v1
@@ -238,6 +245,7 @@ data:
     platform:
       none: {}
     publish: External
+    featureGates: [ShortCertRotation=false]
 `
 
 	clusterConfigMapTwoNodeWithArbiter = `
@@ -276,6 +284,7 @@ data:
     platform:
       none: {}
     publish: External
+    featureGates: [ShortCertRotation=false]
 `
 )
 
@@ -866,6 +875,82 @@ func Test_preferIPv6(t *testing.T) {
 
 			if result != test.expected {
 				t.Errorf("expected result %v, got %v", test.expected, result)
+			}
+		})
+	}
+}
+
+func Test_getFeatureGates(t *testing.T) {
+	tests := map[string]struct {
+		installConfig    string
+		expectedEnabled  sets.Set[configv1.FeatureGateName]
+		expectedDisabled sets.Set[configv1.FeatureGateName]
+	}{
+		"no feature gates defined": {
+			installConfig: `
+apiVersion: v1
+metadata:
+  name: my-cluster
+`,
+			expectedEnabled:  sets.New[configv1.FeatureGateName](),
+			expectedDisabled: sets.New[configv1.FeatureGateName](),
+		},
+		"enabled feature gates defined": {
+			installConfig: `
+apiVersion: v1
+metadata:
+  name: my-cluster
+featureGates: [ShortCertRotation=true]
+`,
+			expectedEnabled:  sets.New(features.FeatureShortCertRotation),
+			expectedDisabled: sets.New[configv1.FeatureGateName](),
+		},
+		"disabled feature gates defined": {
+			installConfig: `
+apiVersion: v1
+metadata:
+  name: my-cluster
+featureGates: [ShortCertRotation=false]
+`,
+			expectedEnabled:  sets.New[configv1.FeatureGateName](),
+			expectedDisabled: sets.New(features.FeatureShortCertRotation),
+		},
+		"mixed feature gates defined": {
+			installConfig: `
+apiVersion: v1
+metadata:
+  name: my-cluster
+featureGates: [ShortCertRotation=true, UpgradeStatus=false]
+`,
+			expectedEnabled:  sets.New(features.FeatureShortCertRotation),
+			expectedDisabled: sets.New(features.FeatureGateUpgradeStatus),
+		},
+		"unexpected data": {
+			installConfig: `
+apiVersion: v1
+metadata:
+  name: my-cluster
+featureGates: [ShortCertRotation=true, UpgradeStatus=foobar]
+`,
+			expectedEnabled:  sets.New(features.FeatureShortCertRotation),
+			expectedDisabled: sets.New[configv1.FeatureGateName](),
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			var installConfig map[string]interface{}
+			if err := yaml.Unmarshal([]byte(test.installConfig), &installConfig); err != nil {
+				panic(err)
+			}
+			actualEnabled, actualDisabled := getFeatureGatesStatus(installConfig)
+			enabledDiff := cmp.Diff(actualEnabled, test.expectedEnabled)
+			if enabledDiff != "" {
+				t.Errorf("unexpected enabled diff: %s", enabledDiff)
+			}
+			disabledDiff := cmp.Diff(actualDisabled, test.expectedDisabled)
+			if disabledDiff != "" {
+				t.Errorf("unexpected disabled diff: %s", disabledDiff)
 			}
 		})
 	}
