@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
+	features "github.com/openshift/api/features"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
@@ -19,6 +20,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
@@ -27,6 +29,7 @@ import (
 	"k8s.io/utils/clock"
 
 	"github.com/openshift/library-go/pkg/crypto"
+	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/events"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
@@ -601,7 +604,11 @@ func setupController(t *testing.T, objects []runtime.Object, forceSkipRollout bo
 
 	registry := metrics.NewKubeRegistry()
 	legacyregistry.DefaultGatherer = registry
-	controller := NewEtcdCertSignerController(
+
+	enabledFeatureGates := sets.New(features.FeatureShortCertRotation)
+	disabledFeatureGates := sets.New[configv1.FeatureGateName]()
+	featureGateAccessor := featuregates.NewHardcodedFeatureGateAccess(enabledFeatureGates.UnsortedList(), disabledFeatureGates.UnsortedList())
+	controller, err := NewEtcdCertSignerController(
 		health.NewMultiAlivenessChecker(),
 		fakeKubeClient,
 		fakeOperatorClient,
@@ -611,7 +618,9 @@ func setupController(t *testing.T, objects []runtime.Object, forceSkipRollout bo
 		nodeSelector,
 		recorder,
 		registry,
-		forceSkipRollout)
+		forceSkipRollout,
+		featureGateAccessor)
+	require.NoError(t, err)
 
 	stopChan := make(chan struct{})
 	t.Cleanup(func() {
