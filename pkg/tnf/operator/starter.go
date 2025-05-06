@@ -73,6 +73,7 @@ func HandleDualReplicaClusters(
 	}
 
 	runTnfSetupJobController(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+	runTnfFencingJobController(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
 
 	return true, nil
 }
@@ -167,7 +168,6 @@ func runTnfSetupJobController(ctx context.Context, controllerContext *controller
 		operatorClient,
 		kubeClient,
 		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs(),
-		// TODO add secret informer here for rerunning setup with modified fencing credentials
 		[]factory.Informer{},
 		[]jobs.JobHookFunc{
 			func(_ *operatorv1.OperatorSpec, job *batchv1.Job) error {
@@ -198,6 +198,27 @@ func runTnfAfterSetupJobController(ctx context.Context, nodeName string, control
 				job.SetName(job.GetName() + "-" + nodeName)
 				job.Spec.Template.Spec.NodeName = nodeName
 
+				return nil
+			}}...,
+	)
+	go tnfJobController.Run(ctx, 1)
+}
+
+func runTnfFencingJobController(ctx context.Context, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
+	klog.Infof("starting Two Node Fencing pacemaker fencing job controller")
+	tnfJobController := jobs.NewJobController(
+		"TnfFencingJob",
+		tnf_assets.MustAsset("tnfdeployment/fencingjob.yaml"),
+		controllerContext.EventRecorder,
+		operatorClient,
+		kubeClient,
+		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs(),
+		// TODO add secret informer here for rerunning setup with modified fencing credentials
+		[]factory.Informer{},
+		[]jobs.JobHookFunc{
+			func(_ *operatorv1.OperatorSpec, job *batchv1.Job) error {
+				// set operator image pullspec
+				job.Spec.Template.Spec.Containers[0].Image = os.Getenv("OPERATOR_IMAGE")
 				return nil
 			}}...,
 	)

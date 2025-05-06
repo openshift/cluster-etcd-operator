@@ -29,8 +29,6 @@ func ConfigureCluster(ctx context.Context, cfg config.ClusterConfig) (bool, erro
 	commands := []string{
 		fmt.Sprintf("/usr/sbin/pcs cluster setup TNF %s addr=%s %s addr=%s --debug --force", cfg.NodeName1, cfg.NodeIP1, cfg.NodeName2, cfg.NodeIP2),
 		"/usr/sbin/pcs cluster start --all",
-		// TODO REMOVE FOLLOWING LINE WHEN ENABLING STONITH
-		"/usr/sbin/pcs property set stonith-enabled=false",
 		// Note: the kubelet service needs to be disabled when using systemd agent
 		// Done by after-setup jobs on both nodes
 		"/usr/sbin/pcs resource create kubelet systemd:kubelet clone meta interleave=true",
