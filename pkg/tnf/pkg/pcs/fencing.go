@@ -50,16 +50,21 @@ func ConfigureFencing(ctx context.Context, kubeClient kubernetes.Interface, cfg 
 	defer func() {
 		// this only works because we named the returned error to "err"
 		if err != nil {
-			stdOut, stdErr, deferredErr := exec.Execute(ctx, "/usr/sbin/pcs property set stonith-enabled=false")
-			if deferredErr != nil || len(stdErr) > 0 {
-				klog.Error(deferredErr, "Failed to disable stonith", "stdout", stdOut, "stderr", stdErr, "err", deferredErr)
-				err = errors.Join(err, deferredErr)
+			klog.Error("Failed to configure fencing, cleaning up")
+			cleanupErr := disableFencing(ctx)
+			if cleanupErr != nil {
+				klog.Errorf("Failed to cleanup fencing configuration: %v", cleanupErr)
+				err = errors.Join(err, cleanupErr)
 			}
 		}
-
 	}()
 
-	// TODO remove existing fencing devices!
+	klog.Info("Cleaning up old fencing config")
+	err = disableFencing(ctx)
+	if err != nil {
+		klog.Errorf("Failed to clean up old fencing config: %v", err)
+		return fmt.Errorf("failed to clean up old fencing config: %v", err)
+	}
 
 	// get redfish config from secret
 	klog.Info("Getting fencing configs from secrets")
@@ -112,6 +117,43 @@ func ConfigureFencing(ctx context.Context, kubeClient kubernetes.Interface, cfg 
 	klog.Info("All fencing configuration succeeded!")
 	return nil
 
+}
+
+func disableFencing(ctx context.Context) error {
+	klog.Info("Disabling pacemaker fencing")
+	stdOut, stdErr, err := exec.Execute(ctx, "/usr/sbin/pcs property set stonith-enabled=false")
+	if err != nil || len(stdErr) > 0 {
+		klog.Error(err, "Failed to disable stonith", "stdout", stdOut, "stderr", stdErr, "err", err)
+		return fmt.Errorf("failed to disable stonith: %v", err)
+	}
+	klog.Info("Pacemaker fencing disabled")
+
+	return deleteStonithDevices(ctx)
+}
+
+func deleteStonithDevices(ctx context.Context) error {
+	klog.Info("Getting stonith config for device deletion")
+	stdOut, stdErr, err := exec.Execute(ctx, "/usr/sbin/pcs stonith config --output-format json")
+	// stderr contains a warning!
+	if err != nil {
+		klog.Error(err, "Failed to get stonith config", "stdout", stdOut, "stderr", stdErr, "err", err)
+		return fmt.Errorf("failed to get stonith config: %v", err)
+	}
+	stonithConfig, err := UnmarshalStonithConfig(stdOut)
+	if err != nil {
+		klog.Error(err, "Failed to unmarshal stonith config", "stdout", stdOut, "stderr", stdErr, "err", err)
+		return fmt.Errorf("failed to unmarshal stonith config: %v", err)
+	}
+	for _, p := range stonithConfig.Primitives {
+		klog.Info("Deleting stonith device %q", p.Id)
+		stdOut, stdErr, err = exec.Execute(ctx, fmt.Sprintf("/usr/sbin/pcs stonith delete %s", p.Id))
+		if err != nil || len(stdErr) > 0 {
+			klog.Error(err, "Failed to delete stonith device", "stdout", stdOut, "stderr", stdErr, "err", err)
+			return fmt.Errorf("failed to delete stonith device %q: %v", p.Id, err)
+		}
+		klog.Info(fmt.Sprintf("Pacemaker fencing device %q deleted", p.Id))
+	}
+	return nil
 }
 
 func getFencingConfig(nodeName string, secret *corev1.Secret) (*fencingConfig, error) {
