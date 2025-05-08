@@ -9,6 +9,7 @@ import (
 
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/config"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/exec"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
 
 // ConfigureCluster checks the pcs cluster status and runs the finalization script if needed
@@ -53,6 +54,8 @@ func ConfigureCluster(ctx context.Context, cfg config.ClusterConfig) (bool, erro
 func GetCIB(ctx context.Context) (string, error) {
 	klog.Info("Getting pcs cib")
 	stdOut, stdErr, err := exec.Execute(ctx, "/usr/sbin/pcs cluster cib")
+	// redact passwords!
+	stdOut = tools.RedactPasswords(stdOut)
 	if err != nil || len(stdErr) > 0 {
 		klog.Error(err, "Failed to get final pcs cib", "stdout", stdOut, "stderr", stdErr, "err", err)
 		return "", err
