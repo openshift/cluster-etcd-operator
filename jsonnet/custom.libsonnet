@@ -8,9 +8,13 @@
             alert: 'etcdGRPCRequestsSlow',
             expr: |||
               histogram_quantile(0.99, sum(rate(grpc_server_handling_seconds_bucket{job="etcd", grpc_method!="Defragment", grpc_type="unary"}[10m])) without(grpc_type))
-              > 1
+              > on () group_left (type)
+              bottomk(1,
+                1.5 * group by (type) (cluster_infrastructure_provider{type="Azure"})
+                or
+                1 * group by (type) (cluster_infrastructure_provider))
             |||,
-            'for': '60m',
+            'for': '30m',
             labels: {
               severity: 'critical',
             },
