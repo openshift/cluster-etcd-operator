@@ -7,16 +7,12 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/config"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/exec"
-)
-
-const (
-	secretNamePattern = "fencing-credentials-%s"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
 
 var (
@@ -50,11 +46,10 @@ func ConfigureFencing(ctx context.Context, kubeClient kubernetes.Interface, cfg 
 	fencingConfigs := []fencingConfig{}
 
 	for _, nodeName := range []string{cfg.NodeName1, cfg.NodeName2} {
-		secretName := fmt.Sprintf(secretNamePattern, nodeName)
-		secret, err := getSecret(ctx, kubeClient, secretName)
+		secret, err := tools.GetFencingSecret(ctx, kubeClient, nodeName)
 		if err != nil {
-			klog.Errorf("Failed to get secret %s: %v", secretName, err)
-			return fmt.Errorf("failed to get secret %s: %v", secretName, err)
+			klog.Errorf("Failed to get fencing secret for node %s: %v", nodeName, err)
+			return fmt.Errorf("failed to get fencing secret for node %s: %v", nodeName, err)
 		}
 		fc, err := getFencingConfig(nodeName, secret)
 		if err != nil {
@@ -166,15 +161,6 @@ func getFencingConfig(nodeName string, secret *corev1.Secret) (*fencingConfig, e
 	}
 
 	return config, nil
-}
-
-func getSecret(ctx context.Context, kubeClient kubernetes.Interface, secretName string) (*corev1.Secret, error) {
-	secret, err := kubeClient.CoreV1().Secrets("openshift-etcd").Get(ctx, secretName, metav1.GetOptions{})
-	if err != nil {
-		klog.Errorf("Failed to get secret %s: %v", secretName, err)
-		return nil, err
-	}
-	return secret, nil
 }
 
 func getStatusCommand(fc fencingConfig) string {
