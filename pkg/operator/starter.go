@@ -385,7 +385,24 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 	coreClient := kubeClient
 
-	etcdCertSignerController := etcdcertsigner.NewEtcdCertSignerController(
+	// the configInformer has to run before the machine and backup feature checks
+	configInformers.Start(ctx.Done())
+	go featureGateAccessor.Run(ctx)
+
+	select {
+	case <-featureGateAccessor.InitialFeatureGatesObserved():
+		features, err := featureGateAccessor.CurrentFeatureGates()
+		if err != nil {
+			return fmt.Errorf("could not find FeatureGates, aborting controller start: %w", err)
+		}
+
+		enabled, disabled := getEnabledDisabledFeatures(features)
+		klog.Info("FeatureGates initialized", "enabled", enabled, "disabled", disabled)
+	case <-time.After(1 * time.Minute):
+		return fmt.Errorf("timed out waiting for FeatureGate detection, aborting controller start")
+	}
+
+	etcdCertSignerController, err := etcdcertsigner.NewEtcdCertSignerController(
 		AlivenessChecker,
 		coreClient,
 		operatorClient,
@@ -396,7 +413,11 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 		legacyregistry.DefaultGatherer.(metrics.KubeRegistry),
 		false,
+		featureGateAccessor,
 	)
+	if err != nil {
+		return fmt.Errorf("could not start etcdCertSignerController, aborting controller start: %w", err)
+	}
 
 	etcdCertCleanerController := etcdcertcleaner.NewEtcdCertCleanerController(
 		AlivenessChecker,
@@ -458,23 +479,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorClient,
 		controllerContext.EventRecorder,
 	)
-
-	// the configInformer has to run before the machine and backup feature checks
-	configInformers.Start(ctx.Done())
-	go featureGateAccessor.Run(ctx)
-
-	select {
-	case <-featureGateAccessor.InitialFeatureGatesObserved():
-		features, err := featureGateAccessor.CurrentFeatureGates()
-		if err != nil {
-			return fmt.Errorf("could not find FeatureGates, aborting controller start: %w", err)
-		}
-
-		enabled, disabled := getEnabledDisabledFeatures(features)
-		klog.Info("FeatureGates initialized", "enabled", enabled, "disabled", disabled)
-	case <-time.After(1 * time.Minute):
-		return fmt.Errorf("timed out waiting for FeatureGate detection, aborting controller start")
-	}
 
 	enabledAutoBackupFeature, err := backuphelpers.AutoBackupFeatureGateEnabled(featureGateAccessor)
 	if err != nil {
