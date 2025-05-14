@@ -17,6 +17,7 @@ import (
 
 	tnfaftersetup "github.com/openshift/cluster-etcd-operator/pkg/tnf/after-setup"
 	tnfauth "github.com/openshift/cluster-etcd-operator/pkg/tnf/auth"
+	tnffencing "github.com/openshift/cluster-etcd-operator/pkg/tnf/fencing"
 	tnfsetup "github.com/openshift/cluster-etcd-operator/pkg/tnf/setup"
 )
 
@@ -55,6 +56,7 @@ func NewTnfSetupRunnerCommand() *cobra.Command {
 	cmd.AddCommand(NewAuthCommand())
 	cmd.AddCommand(NewRunCommand())
 	cmd.AddCommand(NewAfterSetupCommand())
+	cmd.AddCommand(NewFencingCommand())
 
 	return cmd
 }
@@ -91,6 +93,19 @@ func NewAfterSetupCommand() *cobra.Command {
 		Short: "Run the Two Node Fencing after setup steps",
 		Run: func(cmd *cobra.Command, args []string) {
 			err := tnfaftersetup.RunTnfAfterSetup()
+			if err != nil {
+				klog.Fatal(err)
+			}
+		},
+	}
+}
+
+func NewFencingCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "fencing",
+		Short: "Run the Two Node Fencing pacemaker fencing steps",
+		Run: func(cmd *cobra.Command, args []string) {
+			err := tnffencing.RunFencingSetup()
 			if err != nil {
 				klog.Fatal(err)
 			}
