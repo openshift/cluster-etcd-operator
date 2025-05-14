@@ -3,6 +3,7 @@ package periodicbackupcontroller
 import (
 	"context"
 	"fmt"
+	"k8s.io/utils/ptr"
 	"time"
 
 	clientv1 "k8s.io/client-go/listers/core/v1"
@@ -31,9 +32,8 @@ import (
 )
 
 const (
-	backupJobLabel                = "backup-name"
-	defaultBackupCRName           = "default"
-	etcdBackupServerContainerName = "etcd-backup-server"
+	backupJobLabel      = "backup-name"
+	defaultBackupCRName = "default"
 )
 
 type PeriodicBackupController struct {
@@ -151,9 +151,22 @@ func reconcileCronJob(ctx context.Context,
 	})
 
 	injected := false
-	for _, mount := range cronJob.Spec.JobTemplate.Spec.Template.Spec.Volumes {
+	for idx, mount := range cronJob.Spec.JobTemplate.Spec.Template.Spec.Volumes {
 		if mount.Name == "etc-kubernetes-cluster-backup" {
-			mount.PersistentVolumeClaim.ClaimName = backup.Spec.EtcdBackupSpec.PVCName
+			if len(backup.Spec.EtcdBackupSpec.PVCName) > 0 {
+				mount.PersistentVolumeClaim.ClaimName = backup.Spec.EtcdBackupSpec.PVCName
+			} else {
+				cronJob.Spec.JobTemplate.Spec.Template.Spec.Volumes[idx] = corev1.Volume{
+					Name: "etc-kubernetes-cluster-backup",
+					VolumeSource: corev1.VolumeSource{
+						HostPath: &corev1.HostPathVolumeSource{
+							Path: "/etc/kubernetes/cluster-backup",
+							Type: ptr.To(corev1.HostPathDirectoryOrCreate),
+						},
+					},
+				}
+			}
+
 			injected = true
 			break
 		}
@@ -185,6 +198,13 @@ func reconcileCronJob(ctx context.Context,
 	cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Args = []string{
 		"request-backup",
 		"--pvc-name=" + backup.Spec.EtcdBackupSpec.PVCName,
+	}
+
+	if backup.Name == defaultBackupCRName {
+		cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Args = []string{
+			"request-backup",
+			"--pvc-name=no-config",
+		}
 	}
 
 	if create {
