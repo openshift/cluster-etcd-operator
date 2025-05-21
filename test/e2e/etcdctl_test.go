@@ -55,9 +55,9 @@ func TestEtcdctlCommands(t *testing.T) {
 		{"etcdctl get /foo", false, "", ""},
 		{"etcdctl put /etcdctl-check-perf/foo bar", false, "", ""},
 		// snapshot
-		{"env ETCDCTL_ENDPOINTS=https://127.0.0.1:2379 etcdctl snapshot save ./backup.db", false, "", ""},
-		{"etcdctl snapshot status ./backup.db", false, "", ""},
-		{"etcdctl snapshot restore ./backup.db", false, "", ""},
+		{"env ETCDCTL_ENDPOINTS=https://127.0.0.1:2379 etcdctl snapshot save /tmp/backup.db", false, "", ""},
+		{"etcdctl snapshot status /tmp/backup.db", false, "", ""},
+		{"etcdctl snapshot restore /tmp/backup.db --data-dir /tmp/default.etcd", false, "", ""},
 		{"etcdctl version", false, "", ""},
 		// skip
 		{"etcdctl auth enable", true, "k8s does not use internal etcd RBAC", ""},
@@ -99,10 +99,10 @@ func TestEtcdctlCommands(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
-		if actual, err := exec.Command("oc", getOcExecArgs("rm -rf ./default.etcd", podName)...).CombinedOutput(); err != nil {
+		if actual, err := exec.Command("oc", getOcExecArgs("rm -rf /tmp/default.etcd", podName)...).CombinedOutput(); err != nil {
 			require.NoError(t, fmt.Errorf("cleanup data-dir failed: %s", actual))
 		}
-		if actual, err := exec.Command("oc", getOcExecArgs("rm -f ./backup.db", podName)...).CombinedOutput(); err != nil {
+		if actual, err := exec.Command("oc", getOcExecArgs("rm -f /tmp/backup.db", podName)...).CombinedOutput(); err != nil {
 			require.NoError(t, fmt.Errorf("cleanup db file failed: %s", actual))
 		}
 	})
