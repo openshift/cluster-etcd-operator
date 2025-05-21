@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"k8s.io/klog/v2"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
 
 // Execute executes the command
@@ -18,7 +20,7 @@ func Execute(ctx context.Context, command string) (stdout, stderr string, err er
 	hostCommand := []string{"/usr/bin/nsenter", "-a", "-t 1", "/bin/bash", "-c"}
 	hostCommand = append(hostCommand, command)
 
-	klog.Infof("Executing: %s", strings.Join(hostCommand, " "))
+	klog.Infof("Executing: %s", tools.RedactPasswords(strings.Join(hostCommand, " ")))
 
 	cmd := exec.CommandContext(ctx, hostCommand[0], hostCommand[1:]...)
 
