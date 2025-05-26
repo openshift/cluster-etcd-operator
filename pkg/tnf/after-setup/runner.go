@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -65,7 +64,7 @@ func RunTnfAfterSetup() error {
 		klog.Info("Setup job completed successfully")
 		return true, nil
 	}
-	err = wait.PollUntilContextTimeout(ctx, 15*time.Second, 10*time.Minute, true, setupDone)
+	err = wait.PollUntilContextTimeout(ctx, tools.JobPollIntervall, tools.SetupJobCompletedTimeout, true, setupDone)
 	if err != nil {
 		klog.Errorf("Timed out waiting for setup job to complete: %v", err)
 		return err
