@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"reflect"
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
@@ -46,6 +47,7 @@ type PodSubstitutionTemplate struct {
 	EnvVars             []NameValue
 	BackupArgs          []string
 	EnableEtcdContainer bool
+	CipherSuites        string
 }
 
 type TargetConfigController struct {
@@ -227,6 +229,7 @@ func (c *TargetConfigController) getPodSubstitution(operatorSpec *operatorv1.Sta
 		LogLevel:            loglevelToZap(operatorSpec.LogLevel),
 		EnvVars:             nameValues,
 		EnableEtcdContainer: !shouldRemoveEtcdContainer,
+		CipherSuites:        envVarMap["ETCD_CIPHER_SUITES"],
 	}, nil
 }
 
