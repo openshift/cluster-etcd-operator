@@ -72,7 +72,7 @@ func RunTnfSetup() error {
 		klog.Info("Auth jobs completed successfully")
 		return true, nil
 	}
-	err = wait.PollUntilContextTimeout(ctx, 15*time.Second, 5*time.Minute, true, authDone)
+	err = wait.PollUntilContextTimeout(ctx, tools.JobPollIntervall, tools.AuthJobCompletedTimeout, true, authDone)
 	if err != nil {
 		klog.Errorf("Timed out waiting for auth jobs to complete: %v", err)
 		return err
