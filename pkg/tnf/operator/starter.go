@@ -69,15 +69,37 @@ func HandleDualReplicaClusters(
 	runTnfResourceController(ctx, controllerContext, kubeClient, dynamicClient, operatorClient, kubeInformersForNamespaces)
 
 	// we need node names for assigning auth and after-setup jobs to specific nodes
+	var once sync.Once
 	klog.Infof("watching for nodes...")
 	_, err := controlPlaneNodeInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			node, ok := obj.(*corev1.Node)
+			_, ok := obj.(*corev1.Node)
 			if !ok {
 				klog.Warningf("failed to convert added object to Node %+v", obj)
 			}
-			runTnfAuthJobController(ctx, node.GetName(), controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
-			runTnfAfterSetupJobController(ctx, node.GetName(), controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+			// ensure we have both control plane nodes before creating jobs
+			nodeList, err := kubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{
+				LabelSelector: "node-role.kubernetes.io/master",
+			})
+			if err != nil {
+				klog.Errorf("failed to list nodes while waiting to create TNF jobs: %v", err)
+				return
+			}
+			if len(nodeList.Items) != 2 {
+				klog.Info("not starting TNF jobs yet, waiting for 2 control plane nodes to exist")
+				return
+			}
+			// we can have 2 nodes on the first call of AddFunc already, ensure we create job controllers once only
+			once.Do(func() {
+				klog.Info("found 2 control plane nodes, creating TNF jobs")
+				// the order of job creation does not matter, the jobs wait on each other as needed
+				for _, node := range nodeList.Items {
+					runTnfAuthJobController(ctx, node.GetName(), controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+					runTnfAfterSetupJobController(ctx, node.GetName(), controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+				}
+				runTnfSetupJobController(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+				runTnfFencingJobController(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+			})
 		},
 	})
 	if err != nil {
@@ -104,9 +126,6 @@ func HandleDualReplicaClusters(
 		klog.Errorf("failed to add eventhandler to secrets informer: %v", err)
 		return false, err
 	}
-
-	runTnfSetupJobController(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
-	runTnfFencingJobController(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
 
 	return true, nil
 }
