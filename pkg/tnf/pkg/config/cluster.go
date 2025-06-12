@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"fmt"
 	"sort"
 
 	corev1 "k8s.io/api/core/v1"
@@ -24,9 +25,14 @@ func GetClusterConfig(ctx context.Context, kubeClient kubernetes.Interface) (Clu
 	clusterCfg := ClusterConfig{}
 
 	// Get nodes
-	nodes, err := kubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	nodes, err := kubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{
+		LabelSelector: "node-role.kubernetes.io/master",
+	})
 	if err != nil {
 		return clusterCfg, err
+	}
+	if len(nodes.Items) != 2 {
+		return clusterCfg, fmt.Errorf("expected 2 nodes, got %d", len(nodes.Items))
 	}
 
 	sort.Slice(nodes.Items, func(i, j int) bool {
