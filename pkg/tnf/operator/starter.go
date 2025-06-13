@@ -260,7 +260,7 @@ func runTnfFencingJobController(ctx context.Context, controllerContext *controll
 func handleFencingSecretChange(ctx context.Context, client kubernetes.Interface, oldObj, obj interface{}) {
 	secret, ok := obj.(*corev1.Secret)
 	if !ok {
-		klog.Warningf("failed to convert added / modifed / deleted object to Secret %+v", obj)
+		klog.Warningf("failed to convert added / modified / deleted object to Secret %+v", obj)
 		return
 	}
 	if !tools.IsFencingSecret(secret.GetName()) {
@@ -318,29 +318,29 @@ func handleFencingSecretChange(ctx context.Context, client kubernetes.Interface,
 	fencingJobName := "tnf-fencing"
 	jobFound := false
 
-	isFencingJobRunning := func(context.Context) (done bool, returnErr error) {
+	// helper func for waiting for a running job
+	// finished = Complete, Failed, or not found
+	isFencingJobFinished := func(context.Context) (finished bool, returnErr error) {
 		var err error
 		jobFound = false
 		job, err := client.BatchV1().Jobs(operatorclient.TargetNamespace).Get(ctx, fencingJobName, metav1.GetOptions{})
 		if err != nil {
-			if !apierrors.IsNotFound(err) {
-				klog.Errorf("failed to get fencing job, will retry: %v", err)
-				return false, nil
+			if apierrors.IsNotFound(err) {
+				return true, nil
 			}
-			klog.Infof("fencing job not found, skipping recreation")
-			return true, nil
+			klog.Errorf("failed to get fencing job, will retry: %v", err)
+			return false, nil
 		}
 		jobFound = true
 		if tools.IsConditionTrue(job.Status.Conditions, batchv1.JobComplete) || tools.IsConditionTrue(job.Status.Conditions, batchv1.JobFailed) {
 			return true, nil
 		}
-
 		klog.Infof("fencing job still running, skipping recreation for now, will retry")
 		return false, nil
 	}
 
 	// wait as long as the fencing job waits as well, plus some execution time
-	err := wait.PollUntilContextTimeout(ctx, tools.JobPollIntervall, tools.FencingJobCompletedTimeout, true, isFencingJobRunning)
+	err := wait.PollUntilContextTimeout(ctx, tools.JobPollIntervall, tools.FencingJobCompletedTimeout, true, isFencingJobFinished)
 	if err != nil {
 		// if we set timeouts right, this should not happen...
 		klog.Errorf("timed out waiting for fencing job to complete: %v", err)
