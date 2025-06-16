@@ -83,15 +83,13 @@ spec:
             requests:
               cpu: 50m
               memory: 64Mi
-            limits:
-              cpu: 500m
-              memory: 128Mi
           securityContext:
             privileged: true
             allowPrivilegeEscalation: true
       hostIPC: false
       hostNetwork: false
       hostPID: true
+      priorityClassName: system-node-critical
       serviceAccountName: tnf-setup-manager
       terminationGracePeriodSeconds: 10
       restartPolicy: Never
@@ -135,15 +133,13 @@ spec:
             requests:
               cpu: 50m
               memory: 64Mi
-            limits:
-              cpu: 500m
-              memory: 128Mi
           securityContext:
             privileged: true
             allowPrivilegeEscalation: true
       hostIPC: false
       hostNetwork: false
       hostPID: true
+      priorityClassName: system-node-critical
       serviceAccountName: tnf-setup-manager
       terminationGracePeriodSeconds: 10
       restartPolicy: Never
@@ -379,15 +375,13 @@ spec:
             requests:
               cpu: 50m
               memory: 64Mi
-            limits:
-              cpu: 500m
-              memory: 128Mi
           securityContext:
             privileged: true
             allowPrivilegeEscalation: true
       hostIPC: false
       hostNetwork: false
       hostPID: true
+      priorityClassName: system-node-critical
       serviceAccountName: tnf-setup-manager
       terminationGracePeriodSeconds: 10
       restartPolicy: Never
