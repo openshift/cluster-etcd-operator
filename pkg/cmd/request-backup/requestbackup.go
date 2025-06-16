@@ -2,16 +2,16 @@ package requestbackup
 
 import (
 	"context"
-	goflag "flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	goflag "flag"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorversionedclientv1alpha1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
