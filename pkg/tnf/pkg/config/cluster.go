@@ -2,10 +2,8 @@ package config
 
 import (
 	"context"
-	"sort"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 )
@@ -24,25 +22,30 @@ func GetClusterConfig(ctx context.Context, kubeClient kubernetes.Interface) (Clu
 	clusterCfg := ClusterConfig{}
 
 	// Get nodes
-	nodes, err := kubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return clusterCfg, err
-	}
+	//nodes, err := kubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	//if err != nil {
+	//	return clusterCfg, err
+	//}
+	//
+	//sort.Slice(nodes.Items, func(i, j int) bool {
+	//	return nodes.Items[i].Name < nodes.Items[j].Name
+	//})
+	//
+	//for i, node := range nodes.Items {
+	//	switch i {
+	//	case 0:
+	//		clusterCfg.NodeName1 = node.Name
+	//		clusterCfg.NodeIP1 = getInternalIP(node.Status.Addresses)
+	//	case 1:
+	//		clusterCfg.NodeName2 = node.Name
+	//		clusterCfg.NodeIP2 = getInternalIP(node.Status.Addresses)
+	//	}
+	//}
 
-	sort.Slice(nodes.Items, func(i, j int) bool {
-		return nodes.Items[i].Name < nodes.Items[j].Name
-	})
-
-	for i, node := range nodes.Items {
-		switch i {
-		case 0:
-			clusterCfg.NodeName1 = node.Name
-			clusterCfg.NodeIP1 = getInternalIP(node.Status.Addresses)
-		case 1:
-			clusterCfg.NodeName2 = node.Name
-			clusterCfg.NodeIP2 = getInternalIP(node.Status.Addresses)
-		}
-	}
+	clusterCfg.NodeName1 = "master-0"
+	clusterCfg.NodeIP1 = "192.168.122.208"
+	clusterCfg.NodeName2 = "master-1"
+	clusterCfg.NodeIP2 = "192.168.122.59"
 
 	return clusterCfg, nil
 }
