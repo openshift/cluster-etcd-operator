@@ -9,6 +9,7 @@ import (
 
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/config"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/exec"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
 
 // ConfigureCluster checks the pcs cluster status and runs the finalization script if needed
@@ -29,8 +30,6 @@ func ConfigureCluster(ctx context.Context, cfg config.ClusterConfig) (bool, erro
 	commands := []string{
 		fmt.Sprintf("/usr/sbin/pcs cluster setup TNF %s addr=%s %s addr=%s --debug --force", cfg.NodeName1, cfg.NodeIP1, cfg.NodeName2, cfg.NodeIP2),
 		"/usr/sbin/pcs cluster start --all",
-		// TODO REMOVE FOLLOWING LINE WHEN ENABLING STONITH
-		"/usr/sbin/pcs property set stonith-enabled=false",
 		// Note: the kubelet service needs to be disabled when using systemd agent
 		// Done by after-setup jobs on both nodes
 		"/usr/sbin/pcs resource create kubelet systemd:kubelet clone meta interleave=true",
@@ -55,6 +54,8 @@ func ConfigureCluster(ctx context.Context, cfg config.ClusterConfig) (bool, erro
 func GetCIB(ctx context.Context) (string, error) {
 	klog.Info("Getting pcs cib")
 	stdOut, stdErr, err := exec.Execute(ctx, "/usr/sbin/pcs cluster cib")
+	// redact passwords!
+	stdOut = tools.RedactPasswords(stdOut)
 	if err != nil || len(stdErr) > 0 {
 		klog.Error(err, "Failed to get final pcs cib", "stdout", stdOut, "stderr", stdErr, "err", err)
 		return "", err

@@ -95,6 +95,12 @@ func RunTnfSetup() error {
 		time.Sleep(5 * time.Second)
 	}
 
+	// configure stonith
+	err = pcs.ConfigureFencing(ctx, kubeClient, cfg)
+	if err != nil {
+		return err
+	}
+
 	// Etcd handover
 
 	// configure etcd resource - it won't start etcd before CEO managed etcd is removed per node

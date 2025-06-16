@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"k8s.io/klog/v2"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
 
 // Execute executes the command
@@ -18,7 +20,8 @@ func Execute(ctx context.Context, command string) (stdout, stderr string, err er
 	hostCommand := []string{"/usr/bin/nsenter", "-a", "-t 1", "/bin/bash", "-c"}
 	hostCommand = append(hostCommand, command)
 
-	klog.Infof("Executing: %s", strings.Join(hostCommand, " "))
+	// redact passwords in the command log
+	klog.Infof("Executing: %s", tools.RedactPasswords(strings.Join(hostCommand, " ")))
 
 	cmd := exec.CommandContext(ctx, hostCommand[0], hostCommand[1:]...)
 
@@ -28,9 +31,17 @@ func Execute(ctx context.Context, command string) (stdout, stderr string, err er
 
 	err = cmd.Run()
 
-	klog.Infof("  stdout: %s", outBuilder.String())
-	klog.Infof("  stderr: %s", errBuilder.String())
-	klog.Infof("  err: %v", err)
+	stdout = outBuilder.String()
+	stderr = errBuilder.String()
 
-	return outBuilder.String(), errBuilder.String(), err
+	// redact passwords in logs, but not in return values!
+	klog.Infof("  stdout: %s", tools.RedactPasswords(stdout))
+	klog.Infof("  stderr: %s", tools.RedactPasswords(stderr))
+	if err != nil {
+		klog.Infof("  err: %s", tools.RedactPasswords(err.Error()))
+	} else {
+		klog.Infof("  err: <nil>")
+	}
+
+	return
 }
