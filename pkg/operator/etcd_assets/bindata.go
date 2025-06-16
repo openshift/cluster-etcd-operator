@@ -1439,6 +1439,7 @@ spec:
           echo -n "Fixing etcd log permissions."
           mkdir -p /var/log/etcd  && chmod 0600 /var/log/etcd
       securityContext:
+        readOnlyRootFilesystem: true
         privileged: true
       resources:
         requests:
@@ -1481,6 +1482,7 @@ spec:
           memory: 60Mi
           cpu: 10m
       securityContext:
+        readOnlyRootFilesystem: true
         privileged: true
       env:
 ${COMPUTED_ENV_VARS}
@@ -1508,6 +1510,7 @@ ${COMPUTED_ENV_VARS}
           cpu: 10m
       securityContext:
         privileged: true
+        readOnlyRootFilesystem: true
       volumeMounts:
         - mountPath: /etc/kubernetes/static-pod-resources
           name: resource-dir
@@ -1530,6 +1533,8 @@ ${COMPUTED_ENV_VARS}
       requests:
         memory: 60Mi
         cpu: 10m
+    securityContext:
+      readOnlyRootFilesystem: true
     volumeMounts:
       - mountPath: /etc/kubernetes/manifests
         name: static-pod-dir
@@ -1638,6 +1643,7 @@ ${COMPUTED_ENV_VARS}
       failureThreshold: 18
     securityContext:
       privileged: true
+      readOnlyRootFilesystem: true
     volumeMounts:
       - mountPath: /etc/kubernetes/manifests
         name: static-pod-dir
@@ -1682,6 +1688,7 @@ ${COMPUTED_ENV_VARS}
         cpu: 40m
     securityContext:
       privileged: true
+      readOnlyRootFilesystem: true
     volumeMounts:
       - mountPath: /etc/kubernetes/static-pod-resources
         name: resource-dir
@@ -1711,6 +1718,7 @@ ${COMPUTED_ENV_VARS}
           --listen-cipher-suites=$(ETCD_CIPHER_SUITES)
     securityContext:
       privileged: true
+      readOnlyRootFilesystem: true
     ports:
     - containerPort: 9980
       name: readyz
@@ -1744,6 +1752,7 @@ ${COMPUTED_ENV_VARS}
           --client-cacert-file=$(ETCDCTL_CACERT)
     securityContext:
       privileged: true
+      readOnlyRootFilesystem: true
     resources:
       requests:
         memory: 50Mi
