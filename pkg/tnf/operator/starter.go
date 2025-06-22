@@ -20,9 +20,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
@@ -68,32 +70,35 @@ func HandleDualReplicaClusters(
 	runExternalEtcdSupportController(ctx, controllerContext, operatorClient, envVarGetter, kubeInformersForNamespaces, configInformers, networkInformer, controlPlaneNodeInformer, kubeClient)
 	runTnfResourceController(ctx, controllerContext, kubeClient, dynamicClient, operatorClient, kubeInformersForNamespaces)
 
+	controlPlaneNodeLister := corev1listers.NewNodeLister(controlPlaneNodeInformer.GetIndexer())
+
 	// we need node names for assigning auth and after-setup jobs to specific nodes
 	var once sync.Once
 	klog.Infof("watching for nodes...")
 	_, err := controlPlaneNodeInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			_, ok := obj.(*corev1.Node)
+			node, ok := obj.(*corev1.Node)
 			if !ok {
 				klog.Warningf("failed to convert added object to Node %+v", obj)
-			}
-			// ensure we have both control plane nodes before creating jobs
-			nodeList, err := kubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{
-				LabelSelector: "node-role.kubernetes.io/master",
-			})
-			if err != nil {
-				klog.Errorf("failed to list nodes while waiting to create TNF jobs: %v", err)
 				return
 			}
-			if len(nodeList.Items) != 2 {
+			klog.Infof("node added: %s", node.GetName())
+
+			// ensure we have both control plane nodes before creating jobs
+			nodeList, err := controlPlaneNodeLister.List(labels.Everything())
+			if err != nil {
+				klog.Errorf("failed to list control plane nodes while waiting to create TNF jobs: %v", err)
+				return
+			}
+			if len(nodeList) != 2 {
 				klog.Info("not starting TNF jobs yet, waiting for 2 control plane nodes to exist")
 				return
 			}
 			// we can have 2 nodes on the first call of AddFunc already, ensure we create job controllers once only
 			once.Do(func() {
-				klog.Info("found 2 control plane nodes, creating TNF jobs")
+				klog.Infof("found 2 control plane nodes (%q, %q), creating TNF jobs", nodeList[0].GetName(), nodeList[1].GetName())
 				// the order of job creation does not matter, the jobs wait on each other as needed
-				for _, node := range nodeList.Items {
+				for _, node := range nodeList {
 					runTnfAuthJobController(ctx, node.GetName(), controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
 					runTnfAfterSetupJobController(ctx, node.GetName(), controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
 				}
