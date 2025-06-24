@@ -80,6 +80,29 @@ func TestGetClusterConfig(t *testing.T) {
 			want:    ClusterConfig{},
 			wantErr: true,
 		},
+		{
+			name: "one control plane node only should fail",
+			args: getArgs(t, []*corev1.Node{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "test1",
+						Labels: map[string]string{
+							"node-role.kubernetes.io/master": "",
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "test2",
+						Labels: map[string]string{
+							"node-role.kubernetes.io/no-master": "",
+						},
+					},
+				},
+			}),
+			want:    ClusterConfig{},
+			wantErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
