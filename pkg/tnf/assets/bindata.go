@@ -4,6 +4,7 @@
 // bindata/tnfdeployment/authjob.yaml
 // bindata/tnfdeployment/clusterrole-binding.yaml
 // bindata/tnfdeployment/clusterrole.yaml
+// bindata/tnfdeployment/fencingjob.yaml
 // bindata/tnfdeployment/role-binding.yaml
 // bindata/tnfdeployment/role.yaml
 // bindata/tnfdeployment/sa.yaml
@@ -250,6 +251,58 @@ func tnfdeploymentClusterroleYaml() (*asset, error) {
 	return a, nil
 }
 
+var _tnfdeploymentFencingjobYaml = []byte(`apiVersion: batch/v1
+kind: Job
+metadata:
+  labels:
+    app.kubernetes.io/name: tnf-fencing
+  namespace: openshift-etcd
+  name: tnf-fencing
+spec:
+  template:
+    metadata:
+      annotations:
+        openshift.io/required-scc: "privileged"
+    spec:
+      containers:
+        - name: tnf-fencing
+          image: <injected>
+          imagePullPolicy: IfNotPresent
+          command: [ "tnf-setup-runner", "fencing" ]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          securityContext:
+            privileged: true
+            allowPrivilegeEscalation: true
+      hostIPC: false
+      hostNetwork: false
+      hostPID: true
+      serviceAccountName: tnf-setup-manager
+      terminationGracePeriodSeconds: 10
+      restartPolicy: Never
+  backoffLimit: 3
+`)
+
+func tnfdeploymentFencingjobYamlBytes() ([]byte, error) {
+	return _tnfdeploymentFencingjobYaml, nil
+}
+
+func tnfdeploymentFencingjobYaml() (*asset, error) {
+	bytes, err := tnfdeploymentFencingjobYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "tnfdeployment/fencingjob.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
 var _tnfdeploymentRoleBindingYaml = []byte(`apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -459,6 +512,7 @@ var _bindata = map[string]func() (*asset, error){
 	"tnfdeployment/authjob.yaml":             tnfdeploymentAuthjobYaml,
 	"tnfdeployment/clusterrole-binding.yaml": tnfdeploymentClusterroleBindingYaml,
 	"tnfdeployment/clusterrole.yaml":         tnfdeploymentClusterroleYaml,
+	"tnfdeployment/fencingjob.yaml":          tnfdeploymentFencingjobYaml,
 	"tnfdeployment/role-binding.yaml":        tnfdeploymentRoleBindingYaml,
 	"tnfdeployment/role.yaml":                tnfdeploymentRoleYaml,
 	"tnfdeployment/sa.yaml":                  tnfdeploymentSaYaml,
@@ -513,6 +567,7 @@ var _bintree = &bintree{nil, map[string]*bintree{
 		"authjob.yaml":             {tnfdeploymentAuthjobYaml, map[string]*bintree{}},
 		"clusterrole-binding.yaml": {tnfdeploymentClusterroleBindingYaml, map[string]*bintree{}},
 		"clusterrole.yaml":         {tnfdeploymentClusterroleYaml, map[string]*bintree{}},
+		"fencingjob.yaml":          {tnfdeploymentFencingjobYaml, map[string]*bintree{}},
 		"role-binding.yaml":        {tnfdeploymentRoleBindingYaml, map[string]*bintree{}},
 		"role.yaml":                {tnfdeploymentRoleYaml, map[string]*bintree{}},
 		"sa.yaml":                  {tnfdeploymentSaYaml, map[string]*bintree{}},
