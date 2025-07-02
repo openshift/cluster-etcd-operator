@@ -2,6 +2,7 @@ package fencing
 
 import (
 	"context"
+	"fmt"
 
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -48,7 +49,7 @@ func RunFencingSetup() error {
 	klog.Info("Waiting for completed setup job")
 	setupDone := func(context.Context) (done bool, err error) {
 		jobs, err := kubeClient.BatchV1().Jobs("openshift-etcd").List(ctx, metav1.ListOptions{
-			LabelSelector: "app.kubernetes.io/name=tnf-setup",
+			LabelSelector: fmt.Sprintf("app.kubernetes.io/name=%s", tools.JobTypeSetup.GetNameLabelValue()),
 		})
 		if err != nil {
 			klog.Warningf("Failed to list jobs: %v", err)

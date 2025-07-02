@@ -18,6 +18,7 @@ import (
 	tnfaftersetup "github.com/openshift/cluster-etcd-operator/pkg/tnf/after-setup"
 	tnfauth "github.com/openshift/cluster-etcd-operator/pkg/tnf/auth"
 	tnffencing "github.com/openshift/cluster-etcd-operator/pkg/tnf/fencing"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 	tnfsetup "github.com/openshift/cluster-etcd-operator/pkg/tnf/setup"
 )
 
@@ -54,7 +55,7 @@ func NewTnfSetupRunnerCommand() *cobra.Command {
 	}
 
 	cmd.AddCommand(NewAuthCommand())
-	cmd.AddCommand(NewRunCommand())
+	cmd.AddCommand(NewSetupCommand())
 	cmd.AddCommand(NewAfterSetupCommand())
 	cmd.AddCommand(NewFencingCommand())
 
@@ -63,7 +64,7 @@ func NewTnfSetupRunnerCommand() *cobra.Command {
 
 func NewAuthCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "auth",
+		Use:   tools.JobTypeAuth.GetSubCommand(),
 		Short: "Run Two Node Fencing pcs authentication",
 		Run: func(cmd *cobra.Command, args []string) {
 			err := tnfauth.RunTnfAuth()
@@ -74,9 +75,9 @@ func NewAuthCommand() *cobra.Command {
 	}
 }
 
-func NewRunCommand() *cobra.Command {
+func NewSetupCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "run",
+		Use:   tools.JobTypeSetup.GetSubCommand(),
 		Short: "Run the Two Node Fencing setup",
 		Run: func(cmd *cobra.Command, args []string) {
 			err := tnfsetup.RunTnfSetup()
@@ -89,7 +90,7 @@ func NewRunCommand() *cobra.Command {
 
 func NewAfterSetupCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "after-setup",
+		Use:   tools.JobTypeAfterSetup.GetSubCommand(),
 		Short: "Run the Two Node Fencing after setup steps",
 		Run: func(cmd *cobra.Command, args []string) {
 			err := tnfaftersetup.RunTnfAfterSetup()
@@ -102,7 +103,7 @@ func NewAfterSetupCommand() *cobra.Command {
 
 func NewFencingCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "fencing",
+		Use:   tools.JobTypeFencing.GetSubCommand(),
 		Short: "Run the Two Node Fencing pacemaker fencing steps",
 		Run: func(cmd *cobra.Command, args []string) {
 			err := tnffencing.RunFencingSetup()

@@ -2,9 +2,9 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   labels:
-    app.kubernetes.io/name: tnf-after-setup
+    app.kubernetes.io/name: <injected>
   namespace: openshift-etcd
-  name: tnf-after-setup
+  name: <injected>
 spec:
   template:
     metadata:
@@ -12,10 +12,10 @@ spec:
         openshift.io/required-scc: "privileged"
     spec:
       containers:
-        - name: tnf-after-setup
+        - name: tnf-job
           image: <injected>
           imagePullPolicy: IfNotPresent
-          command: [ "tnf-setup-runner", "after-setup" ]
+          command: [ "tnf-setup-runner", "<injected>" ]
           resources:
             requests:
               cpu: 50m
