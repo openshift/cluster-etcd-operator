@@ -195,7 +195,7 @@ func runTnfAuthJobController(ctx context.Context, nodeName string, controllerCon
 	klog.Infof("starting Two Node Fencing auth job controller for node %s", nodeName)
 	tnfJobController := jobs.NewJobController(
 		"TnfAuthJob-"+nodeName,
-		tnf_assets.MustAsset("tnfdeployment/authjob.yaml"),
+		tnf_assets.MustAsset("tnfdeployment/job.yaml"),
 		controllerContext.EventRecorder,
 		operatorClient,
 		kubeClient,
@@ -203,13 +203,7 @@ func runTnfAuthJobController(ctx context.Context, nodeName string, controllerCon
 		[]factory.Informer{},
 		[]jobs.JobHookFunc{
 			func(_ *operatorv1.OperatorSpec, job *batchv1.Job) error {
-				// set operator image pullspec
-				job.Spec.Template.Spec.Containers[0].Image = os.Getenv("OPERATOR_IMAGE")
-
-				// assign to node
-				job.SetName(job.GetName() + "-" + nodeName)
-				job.Spec.Template.Spec.NodeName = nodeName
-
+				setJobFields(job, &nodeName, "auth")
 				return nil
 			}}...,
 	)
@@ -220,7 +214,7 @@ func runTnfSetupJobController(ctx context.Context, controllerContext *controller
 	klog.Infof("starting Two Node Fencing setup job controller")
 	tnfJobController := jobs.NewJobController(
 		"TnfSetupJob",
-		tnf_assets.MustAsset("tnfdeployment/setupjob.yaml"),
+		tnf_assets.MustAsset("tnfdeployment/job.yaml"),
 		controllerContext.EventRecorder,
 		operatorClient,
 		kubeClient,
@@ -228,8 +222,7 @@ func runTnfSetupJobController(ctx context.Context, controllerContext *controller
 		[]factory.Informer{},
 		[]jobs.JobHookFunc{
 			func(_ *operatorv1.OperatorSpec, job *batchv1.Job) error {
-				// set operator image pullspec
-				job.Spec.Template.Spec.Containers[0].Image = os.Getenv("OPERATOR_IMAGE")
+				setJobFields(job, nil, "setup")
 				return nil
 			}}...,
 	)
@@ -240,7 +233,7 @@ func runTnfAfterSetupJobController(ctx context.Context, nodeName string, control
 	klog.Infof("starting Two Node Fencing after setup job controller for node %s", nodeName)
 	tnfJobController := jobs.NewJobController(
 		"TnfAfterSetupJob-"+nodeName,
-		tnf_assets.MustAsset("tnfdeployment/aftersetupjob.yaml"),
+		tnf_assets.MustAsset("tnfdeployment/job.yaml"),
 		controllerContext.EventRecorder,
 		operatorClient,
 		kubeClient,
@@ -248,13 +241,7 @@ func runTnfAfterSetupJobController(ctx context.Context, nodeName string, control
 		[]factory.Informer{},
 		[]jobs.JobHookFunc{
 			func(_ *operatorv1.OperatorSpec, job *batchv1.Job) error {
-				// set operator image pullspec
-				job.Spec.Template.Spec.Containers[0].Image = os.Getenv("OPERATOR_IMAGE")
-
-				// assign to node
-				job.SetName(job.GetName() + "-" + nodeName)
-				job.Spec.Template.Spec.NodeName = nodeName
-
+				setJobFields(job, &nodeName, "after-setup")
 				return nil
 			}}...,
 	)
@@ -265,7 +252,7 @@ func runTnfFencingJobController(ctx context.Context, controllerContext *controll
 	klog.Infof("starting Two Node Fencing pacemaker fencing job controller")
 	tnfJobController := jobs.NewJobController(
 		"TnfFencingJob",
-		tnf_assets.MustAsset("tnfdeployment/fencingjob.yaml"),
+		tnf_assets.MustAsset("tnfdeployment/job.yaml"),
 		controllerContext.EventRecorder,
 		operatorClient,
 		kubeClient,
@@ -273,12 +260,25 @@ func runTnfFencingJobController(ctx context.Context, controllerContext *controll
 		[]factory.Informer{},
 		[]jobs.JobHookFunc{
 			func(_ *operatorv1.OperatorSpec, job *batchv1.Job) error {
-				// set operator image pullspec
-				job.Spec.Template.Spec.Containers[0].Image = os.Getenv("OPERATOR_IMAGE")
+				setJobFields(job, nil, "fencing")
 				return nil
 			}}...,
 	)
 	go tnfJobController.Run(ctx, 1)
+}
+
+func setJobFields(job *batchv1.Job, nodeName *string, subCommand string) {
+	jobName := fmt.Sprintf("tnf-%s", subCommand)
+	// label is without node name
+	labelName := jobName
+	if nodeName != nil {
+		jobName = fmt.Sprintf("%s-%s", jobName, *nodeName)
+		job.Spec.Template.Spec.NodeName = *nodeName
+	}
+	job.SetName(jobName)
+	job.Labels["app.kubernetes.io/name"] = labelName
+	job.Spec.Template.Spec.Containers[0].Image = os.Getenv("OPERATOR_IMAGE")
+	job.Spec.Template.Spec.Containers[0].Command[1] = subCommand
 }
 
 func handleFencingSecretChange(ctx context.Context, client kubernetes.Interface, oldObj, obj interface{}) {

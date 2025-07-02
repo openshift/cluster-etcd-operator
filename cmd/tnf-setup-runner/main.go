@@ -76,7 +76,7 @@ func NewAuthCommand() *cobra.Command {
 
 func NewRunCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "run",
+		Use:   "setup",
 		Short: "Run the Two Node Fencing setup",
 		Run: func(cmd *cobra.Command, args []string) {
 			err := tnfsetup.RunTnfSetup()
