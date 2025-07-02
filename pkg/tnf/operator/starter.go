@@ -99,11 +99,11 @@ func HandleDualReplicaClusters(
 				klog.Infof("found 2 control plane nodes (%q, %q), creating TNF jobs", nodeList[0].GetName(), nodeList[1].GetName())
 				// the order of job creation does not matter, the jobs wait on each other as needed
 				for _, node := range nodeList {
-					runTnfAuthJobController(ctx, node.GetName(), controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
-					runTnfAfterSetupJobController(ctx, node.GetName(), controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+					runJobController(ctx, tools.JobTypeAuth, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+					runJobController(ctx, tools.JobTypeAfterSetup, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
 				}
-				runTnfSetupJobController(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
-				runTnfFencingJobController(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+				runJobController(ctx, tools.JobTypeSetup, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+				runJobController(ctx, tools.JobTypeFencing, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
 			})
 		},
 	})
@@ -191,94 +191,33 @@ func runTnfResourceController(ctx context.Context, controllerContext *controller
 	go tnfResourceController.Run(ctx, 1)
 }
 
-func runTnfAuthJobController(ctx context.Context, nodeName string, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
-	klog.Infof("starting Two Node Fencing auth job controller for node %s", nodeName)
-	tnfJobController := jobs.NewJobController(
-		"TnfAuthJob-"+nodeName,
-		tnf_assets.MustAsset("tnfdeployment/job.yaml"),
-		controllerContext.EventRecorder,
-		operatorClient,
-		kubeClient,
-		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs(),
-		[]factory.Informer{},
-		[]jobs.JobHookFunc{
-			func(_ *operatorv1.OperatorSpec, job *batchv1.Job) error {
-				setJobFields(job, &nodeName, "auth")
-				return nil
-			}}...,
-	)
-	go tnfJobController.Run(ctx, 1)
-}
-
-func runTnfSetupJobController(ctx context.Context, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
-	klog.Infof("starting Two Node Fencing setup job controller")
-	tnfJobController := jobs.NewJobController(
-		"TnfSetupJob",
-		tnf_assets.MustAsset("tnfdeployment/job.yaml"),
-		controllerContext.EventRecorder,
-		operatorClient,
-		kubeClient,
-		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs(),
-		[]factory.Informer{},
-		[]jobs.JobHookFunc{
-			func(_ *operatorv1.OperatorSpec, job *batchv1.Job) error {
-				setJobFields(job, nil, "setup")
-				return nil
-			}}...,
-	)
-	go tnfJobController.Run(ctx, 1)
-}
-
-func runTnfAfterSetupJobController(ctx context.Context, nodeName string, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
-	klog.Infof("starting Two Node Fencing after setup job controller for node %s", nodeName)
-	tnfJobController := jobs.NewJobController(
-		"TnfAfterSetupJob-"+nodeName,
-		tnf_assets.MustAsset("tnfdeployment/job.yaml"),
-		controllerContext.EventRecorder,
-		operatorClient,
-		kubeClient,
-		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs(),
-		[]factory.Informer{},
-		[]jobs.JobHookFunc{
-			func(_ *operatorv1.OperatorSpec, job *batchv1.Job) error {
-				setJobFields(job, &nodeName, "after-setup")
-				return nil
-			}}...,
-	)
-	go tnfJobController.Run(ctx, 1)
-}
-
-func runTnfFencingJobController(ctx context.Context, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
-	klog.Infof("starting Two Node Fencing pacemaker fencing job controller")
-	tnfJobController := jobs.NewJobController(
-		"TnfFencingJob",
-		tnf_assets.MustAsset("tnfdeployment/job.yaml"),
-		controllerContext.EventRecorder,
-		operatorClient,
-		kubeClient,
-		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs(),
-		[]factory.Informer{},
-		[]jobs.JobHookFunc{
-			func(_ *operatorv1.OperatorSpec, job *batchv1.Job) error {
-				setJobFields(job, nil, "fencing")
-				return nil
-			}}...,
-	)
-	go tnfJobController.Run(ctx, 1)
-}
-
-func setJobFields(job *batchv1.Job, nodeName *string, subCommand string) {
-	jobName := fmt.Sprintf("tnf-%s", subCommand)
-	// label is without node name
-	labelName := jobName
+func runJobController(ctx context.Context, jobType tools.JobType, nodeName *string, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
+	nodeNameForLogs := "n/a"
 	if nodeName != nil {
-		jobName = fmt.Sprintf("%s-%s", jobName, *nodeName)
-		job.Spec.Template.Spec.NodeName = *nodeName
+		nodeNameForLogs = *nodeName
 	}
-	job.SetName(jobName)
-	job.Labels["app.kubernetes.io/name"] = labelName
-	job.Spec.Template.Spec.Containers[0].Image = os.Getenv("OPERATOR_IMAGE")
-	job.Spec.Template.Spec.Containers[0].Command[1] = subCommand
+	klog.Infof("starting Two Node Fencing job controller for command %q on node %q", jobType.GetSubCommand(), nodeNameForLogs)
+	tnfJobController := jobs.NewJobController(
+		jobType.GetJobName(nodeName),
+		tnf_assets.MustAsset("tnfdeployment/job.yaml"),
+		controllerContext.EventRecorder,
+		operatorClient,
+		kubeClient,
+		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs(),
+		[]factory.Informer{},
+		[]jobs.JobHookFunc{
+			func(_ *operatorv1.OperatorSpec, job *batchv1.Job) error {
+				if nodeName != nil {
+					job.Spec.Template.Spec.NodeName = *nodeName
+				}
+				job.SetName(jobType.GetJobName(nodeName))
+				job.Labels["app.kubernetes.io/name"] = jobType.GetNameLabelValue()
+				job.Spec.Template.Spec.Containers[0].Image = os.Getenv("OPERATOR_IMAGE")
+				job.Spec.Template.Spec.Containers[0].Command[1] = jobType.GetSubCommand()
+				return nil
+			}}...,
+	)
+	go tnfJobController.Run(ctx, 1)
 }
 
 func handleFencingSecretChange(ctx context.Context, client kubernetes.Interface, oldObj, obj interface{}) {
@@ -339,7 +278,7 @@ func handleFencingSecretChange(ctx context.Context, client kubernetes.Interface,
 	// we need to recreate the fencing job if it exists, but don't interrupt running jobs
 	klog.Infof("recreating fencing job in case it exists already, and when it's done")
 
-	fencingJobName := "tnf-fencing"
+	fencingJobName := tools.JobTypeFencing.GetJobName(nil)
 	jobFound := false
 
 	// helper func for waiting for a running job
