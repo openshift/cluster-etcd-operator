@@ -306,13 +306,13 @@ func (r *renderOpts) Run() error {
 	certDir := filepath.Join(memberDir, "etcd-all-certs")
 
 	// Creating the cert dir recursively will create the base path too
-	err = os.MkdirAll(certDir, 0755)
+	err = os.MkdirAll(certDir, 0700)
 	if err != nil {
 		return fmt.Errorf("failed to create directory %s: %w", memberDir, err)
 	}
 	// tlsDir contains the ca bundle and client cert pair for bootkube.sh and the bootstrap apiserver
 	tlsDir := filepath.Join(r.assetOutputDir, "tls")
-	err = os.MkdirAll(tlsDir, 0755)
+	err = os.MkdirAll(tlsDir, 0700)
 
 	// Write the etcd ca bundle required by the bootstrap etcd member
 	for _, bundle := range templateData.caBundles {
