@@ -2,6 +2,7 @@ package setup
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
@@ -54,7 +55,7 @@ func RunTnfSetup() error {
 	klog.Info("Waiting for completed auth jobs")
 	authDone := func(context.Context) (done bool, err error) {
 		jobs, err := kubeClient.BatchV1().Jobs("openshift-etcd").List(ctx, metav1.ListOptions{
-			LabelSelector: "app.kubernetes.io/name=tnf-auth",
+			LabelSelector: fmt.Sprintf("app.kubernetes.io/name=%s", tools.JobTypeAuth.GetNameLabelValue()),
 		})
 		if err != nil {
 			klog.Warningf("Failed to list jobs: %v", err)
