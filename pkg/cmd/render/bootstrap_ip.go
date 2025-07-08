@@ -3,6 +3,7 @@ package render
 import (
 	"fmt"
 	"net"
+	"slices"
 
 	"github.com/vishvananda/netlink"
 	"k8s.io/klog/v2"
@@ -15,8 +16,8 @@ var defaultBootstrapIPLocator BootstrapIPLocator = NetlinkBootstrapIPLocator()
 func NetlinkBootstrapIPLocator() *bootstrapIPLocator {
 	return &bootstrapIPLocator{
 		getIPAddresses: ipAddrs,
-		getAddrMap:     getAddrMap,
-		getRouteMap:    getRouteMap,
+		getAddrSlice:   getAddrSlice,
+		getRouteSlice:  getRouteSlice,
 	}
 }
 
@@ -28,10 +29,28 @@ type BootstrapIPLocator interface {
 	getBootstrapIP(ipv6 bool, machineCIDR string, excludedIPs []string) (net.IP, error)
 }
 
+// LinkAddresses represents a link and its associated addresses, preserving order
+type LinkAddresses struct {
+	Link      netlink.Link
+	Addresses []netlink.Addr
+}
+
+// LinkRoutes represents a link index and its associated routes, preserving order
+type LinkRoutes struct {
+	LinkIndex int
+	Routes    []netlink.Route
+}
+
+// addrSlice is a slice of LinkAddresses that preserves ordering
+type addrSlice []LinkAddresses
+
+// routeSlice is a slice of LinkRoutes that preserves ordering
+type routeSlice []LinkRoutes
+
 type bootstrapIPLocator struct {
 	getIPAddresses func() ([]net.IP, error)
-	getAddrMap     func() (addrMap addrMap, err error)
-	getRouteMap    func() (routeMap routeMap, err error)
+	getAddrSlice   func() (addrSlice addrSlice, err error)
+	getRouteSlice  func() (routeSlice routeSlice, err error)
 }
 
 func (l *bootstrapIPLocator) getBootstrapIP(ipv6 bool, machineCIDR string, excludedIPs []string) (net.IP, error) {
@@ -39,11 +58,11 @@ func (l *bootstrapIPLocator) getBootstrapIP(ipv6 bool, machineCIDR string, exclu
 	if err != nil {
 		return nil, err
 	}
-	addrMap, err := l.getAddrMap()
+	addrSlice, err := l.getAddrSlice()
 	if err != nil {
 		return nil, err
 	}
-	routeMap, err := l.getRouteMap()
+	routeSlice, err := l.getRouteSlice()
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +72,7 @@ func (l *bootstrapIPLocator) getBootstrapIP(ipv6 bool, machineCIDR string, exclu
 		ContainedByCIDR(machineCIDR),
 		AddressNotIn(excludedIPs...),
 	)
-	discoveredAddresses, err := routableAddresses(addrMap, routeMap, ips, addressFilter, NonDefaultRoute)
+	discoveredAddresses, err := routableAddresses(addrSlice, routeSlice, ips, addressFilter, NonDefaultRoute)
 	if err != nil {
 		return nil, err
 	}
@@ -140,30 +159,31 @@ func AddressFilters(filters ...AddressFilter) AddressFilter {
 	}
 }
 
-type addrMap map[netlink.Link][]netlink.Addr
-type routeMap map[int][]netlink.Route
-
 // routableAddresses takes a slice of Virtual IPs and returns a slice of
 // configured addresses in the current network namespace that directly route to
 // those vips. You can optionally pass an AddressFilter and/or RouteFilter to
 // further filter down which addresses are considered.
 //
-// This is ported from https://github.com/openshift/baremetal-runtimecfg/blob/master/pkg/utils/utils.go.
-func routableAddresses(addrMap addrMap, routeMap routeMap, vips []net.IP, af AddressFilter, rf RouteFilter) ([]net.IP, error) {
-	matches := map[string]net.IP{}
-	for link, addresses := range addrMap {
-		for _, address := range addresses {
+// This is ported from https://github.com/openshift/baremetal-runtimecfg/blob/master/pkg/utils/utils.go and augmented by AI.
+func routableAddresses(addrSlice addrSlice, routeSlice routeSlice, vips []net.IP, af AddressFilter, rf RouteFilter) ([]net.IP, error) {
+	var matches []net.IP
+	seen := map[string]struct{}{}
+	for _, linkAddresses := range addrSlice {
+		for _, address := range linkAddresses.Addresses {
 			maskPrefix, maskBits := address.Mask.Size()
 			if !af(address) {
 				klog.Infof("Filtered address %+v", address)
 				continue
 			}
 			if address.IP.To4() == nil && maskPrefix == maskBits {
-				routes, ok := routeMap[link.Attrs().Index]
-				if !ok {
+				routesIdx := slices.IndexFunc(routeSlice, func(routes LinkRoutes) bool {
+					return routes.LinkIndex == linkAddresses.Link.Attrs().Index
+				})
+				if routesIdx == -1 {
 					continue
 				}
-				for _, route := range routes {
+
+				for _, route := range routeSlice[routesIdx].Routes {
 					if !rf(route) {
 						klog.Infof("Filtered route %+v for address %+v", route, address)
 						continue
@@ -178,7 +198,11 @@ func routableAddresses(addrMap addrMap, routeMap routeMap, vips []net.IP, af Add
 						klog.Infof("Checking whether address %s with route %s contains VIP %s", address, route, vip)
 						if containmentNet.Contains(vip) {
 							klog.Infof("Address %s with route %s contains VIP %s", address, route, vip)
-							matches[address.IP.String()] = address.IP
+							ipStr := address.IP.String()
+							if _, found := seen[ipStr]; !found {
+								seen[ipStr] = struct{}{}
+								matches = append(matches, address.IP)
+							}
 						}
 					}
 				}
@@ -187,18 +211,18 @@ func routableAddresses(addrMap addrMap, routeMap routeMap, vips []net.IP, af Add
 					klog.Infof("Checking whether address %s contains VIP %s", address, vip)
 					if address.Contains(vip) {
 						klog.Infof("Address %s contains VIP %s", address, vip)
-						matches[address.IP.String()] = address.IP
+						ipStr := address.IP.String()
+						if _, found := seen[ipStr]; !found {
+							seen[ipStr] = struct{}{}
+							matches = append(matches, address.IP)
+						}
 					}
 				}
 			}
 		}
 	}
-	ips := []net.IP{}
-	for _, ip := range matches {
-		ips = append(ips, ip)
-	}
-	klog.Infof("Found routable IPs %+v", ips)
-	return ips, nil
+	klog.Infof("Found routable IPs %+v", matches)
+	return matches, nil
 }
 
 func ipAddrs() ([]net.IP, error) {
