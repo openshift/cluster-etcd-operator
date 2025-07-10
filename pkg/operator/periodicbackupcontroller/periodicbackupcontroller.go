@@ -10,8 +10,8 @@ import (
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	backupv1client "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
+	"github.com/openshift/cluster-etcd-operator/bindata"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/controller/factory"
@@ -265,7 +265,7 @@ func newCronJob() (*batchv1.CronJob, error) {
 		return nil, fmt.Errorf("PeriodicBackupController could not add batchv1 scheme: %w", err)
 	}
 
-	obj, err := runtime.Decode(codec.UniversalDecoder(batchv1.SchemeGroupVersion), etcd_assets.MustAsset("etcd/cluster-backup-cronjob.yaml"))
+	obj, err := runtime.Decode(codec.UniversalDecoder(batchv1.SchemeGroupVersion), bindata.MustAsset("etcd/cluster-backup-cronjob.yaml"))
 	if err != nil {
 		return nil, fmt.Errorf("PeriodicBackupController could not decode batchv1 job scheme: %w", err)
 	}

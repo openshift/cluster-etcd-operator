@@ -28,11 +28,11 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
+	"github.com/openshift/cluster-etcd-operator/bindata"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/externaletcdsupportcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	tnf_assets "github.com/openshift/cluster-etcd-operator/pkg/tnf/assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/operator/dualreplicahelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/jobs"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
@@ -176,7 +176,7 @@ func runTnfResourceController(ctx context.Context, controllerContext *controller
 	klog.Infof("starting Two Node Fencing static resources controller")
 	tnfResourceController := staticresourcecontroller.NewStaticResourceController(
 		"TnfStaticResources",
-		tnf_assets.Asset,
+		bindata.Asset,
 		[]string{
 			"tnfdeployment/sa.yaml",
 			"tnfdeployment/role.yaml",
@@ -199,7 +199,7 @@ func runJobController(ctx context.Context, jobType tools.JobType, nodeName *stri
 	klog.Infof("starting Two Node Fencing job controller for command %q on node %q", jobType.GetSubCommand(), nodeNameForLogs)
 	tnfJobController := jobs.NewJobController(
 		jobType.GetJobName(nodeName),
-		tnf_assets.MustAsset("tnfdeployment/job.yaml"),
+		bindata.MustAsset("tnfdeployment/job.yaml"),
 		controllerContext.EventRecorder,
 		operatorClient,
 		kubeClient,

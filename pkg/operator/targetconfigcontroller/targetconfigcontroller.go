@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/bindata"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
@@ -187,10 +187,10 @@ func (c *TargetConfigController) manageRecoveryPods(
 	client coreclientv1.ConfigMapsGetter,
 	recorder events.Recorder,
 	operatorSpec *operatorv1.StaticPodOperatorSpec) (*corev1.ConfigMap, bool, error) {
-	podConfigMap := resourceread.ReadConfigMapV1OrDie(etcd_assets.MustAsset("etcd/restore-pod-cm.yaml"))
-	restorePodBytes := etcd_assets.MustAsset("etcd/restore-pod.yaml")
+	podConfigMap := resourceread.ReadConfigMapV1OrDie(bindata.MustAsset("etcd/restore-pod-cm.yaml"))
+	restorePodBytes := bindata.MustAsset("etcd/restore-pod.yaml")
 	podConfigMap.Data["pod.yaml"] = substitutionReplacer.Replace(string(restorePodBytes))
-	quorumRestorePodBytes := etcd_assets.MustAsset("etcd/quorum-restore-pod.yaml")
+	quorumRestorePodBytes := bindata.MustAsset("etcd/quorum-restore-pod.yaml")
 	podConfigMap.Data["quorum-restore-pod.yaml"] = substitutionReplacer.Replace(string(quorumRestorePodBytes))
 	podConfigMap.Data["forceRedeploymentReason"] = operatorSpec.ForceRedeploymentReason
 	podConfigMap.Data["version"] = version.Get().String()
@@ -206,7 +206,7 @@ func (c *TargetConfigController) manageStandardPod(ctx context.Context, subs *ce
 		return nil, false, err
 	}
 
-	podConfigMap := resourceread.ReadConfigMapV1OrDie(etcd_assets.MustAsset("etcd/pod-cm.yaml"))
+	podConfigMap := resourceread.ReadConfigMapV1OrDie(bindata.MustAsset("etcd/pod-cm.yaml"))
 	podConfigMap.Data["pod.yaml"] = renderedTemplate
 	podConfigMap.Data["forceRedeploymentReason"] = operatorSpec.ForceRedeploymentReason
 	podConfigMap.Data["version"] = version.Get().String()
