@@ -1191,6 +1191,16 @@ spec:
           --listen-peer-urls=https://{{.ListenAddress}}:2380 \
           --metrics=extensive \
           --listen-metrics-urls=https://{{.ListenAddress}}:9978 ||  mv /etc/kubernetes/etcd-backup-dir/etcd-member.yaml /etc/kubernetes/manifests
+    ports:
+    - containerPort: 2379
+      name: etcd
+      protocol: TCP
+    - containerPort: 2380
+      name: etcd-peer
+      protocol: TCP
+    - containerPort: 9978
+      name: etcd-metrics
+      protocol: TCP
     env:
     {{- range .EnvVars }}
     - name: {{ .Name | quote }}
@@ -1270,6 +1280,10 @@ spec:
           --listen-cipher-suites {{ .CipherSuites }} \
           {{ end -}}
           --tls-min-version $(ETCD_TLS_MIN_VERSION)
+    ports:
+    - containerPort: 9979
+      name: proxy-metrics
+      protocol: TCP
     env:
     {{- range .EnvVars }}
     - name: {{ .Name | quote }}
@@ -2443,8 +2457,17 @@ spec:
     - name: etcd
       port: 2379
       protocol: TCP
+    - name: etcd-peer
+      port: 2380
+      protocol: TCP
+    - name: grpc-proxy
+      port: 9978
+      protocol: TCP
     - name: etcd-metrics
       port: 9979
+      protocol: TCP
+    - name: readyz-sidecar
+      port: 9980
       protocol: TCP
 `)
 
