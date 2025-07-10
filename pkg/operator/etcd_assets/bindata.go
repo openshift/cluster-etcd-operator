@@ -1644,7 +1644,12 @@ ${COMPUTED_ENV_VARS}
     securityContext:
       privileged: true
       readOnlyRootFilesystem: true
+    volumes:
+    - name: slash-tmp
+      emptyDir: {}
     volumeMounts:
+      - mountPath: /tmp
+        name: slash-tmp
       - mountPath: /etc/kubernetes/manifests
         name: static-pod-dir
       - mountPath: /etc/kubernetes/static-pod-resources
