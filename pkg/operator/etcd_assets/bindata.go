@@ -1024,6 +1024,7 @@ spec:
           mkdir -p /var/lib/etcd-auto-backup  && chmod 0600 /var/lib/etcd-auto-backup
       securityContext:
         privileged: true
+        readOnlyRootFilesystem: true
       resources:
         requests:
           memory: 50Mi
@@ -1066,6 +1067,7 @@ spec:
           cpu: 10m
       securityContext:
         privileged: true
+        readOnlyRootFilesystem: true
       env:
       {{ range $i, $k := .EnvVars -}}
       - name: {{ $k.Name | quote }}
@@ -1095,6 +1097,7 @@ spec:
           cpu: 10m
       securityContext:
         privileged: true
+        readOnlyRootFilesystem: true
       volumeMounts:
         - mountPath: /etc/kubernetes/static-pod-resources
           name: resource-dir
@@ -1126,6 +1129,8 @@ spec:
         name: cert-dir
       - mountPath: /var/lib/etcd/
         name: data-dir
+    securityContext:
+      readOnlyRootFilesystem: true
     env:
     {{ range .EnvVars -}}
     - name: {{ .Name | quote }}
@@ -1232,6 +1237,7 @@ spec:
       failureThreshold: 18
     securityContext:
       privileged: true
+      readOnlyRootFilesystem: true
     volumeMounts:
       - mountPath: /etc/kubernetes/manifests
         name: static-pod-dir
@@ -1283,6 +1289,7 @@ spec:
         cpu: 40m
     securityContext:
       privileged: true
+      readOnlyRootFilesystem: true
     volumeMounts:
       - mountPath: /etc/kubernetes/static-pod-resources
         name: resource-dir
@@ -1315,6 +1322,7 @@ spec:
           --listen-tls-min-version=$(ETCD_TLS_MIN_VERSION)
     securityContext:
       privileged: true
+      readOnlyRootFilesystem: true
     ports:
     - containerPort: 9980
       name: readyz
@@ -1351,6 +1359,7 @@ spec:
           --client-cacert-file=$(ETCDCTL_CACERT)
     securityContext:
       privileged: true
+      readOnlyRootFilesystem: true
     resources:
       requests:
         memory: 50Mi
