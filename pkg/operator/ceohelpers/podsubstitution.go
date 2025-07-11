@@ -6,7 +6,7 @@ import (
 	"text/template"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
+	"github.com/openshift/cluster-etcd-operator/bindata"
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
@@ -63,7 +63,7 @@ func RenderTemplate(templateName string, subs *PodSubstitutionTemplate) (string,
 	fm := template.FuncMap{"quote": func(arg reflect.Value) string {
 		return "\"" + arg.String() + "\""
 	}}
-	podBytes := etcd_assets.MustAsset(templateName)
+	podBytes := bindata.MustAsset(templateName)
 	tmpl, err := template.New("pod").Funcs(fm).Parse(string(podBytes))
 	if err != nil {
 		return "", err

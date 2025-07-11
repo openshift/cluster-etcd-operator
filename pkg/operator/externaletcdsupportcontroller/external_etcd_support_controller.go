@@ -9,9 +9,9 @@ import (
 	"github.com/ghodss/yaml"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
+	"github.com/openshift/cluster-etcd-operator/bindata"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
@@ -140,7 +140,7 @@ func (c *ExternalEtcdEnablerController) supportExternalEtcdOnlyPod(
 		return nil, false, fmt.Errorf("failed to marshal pod.yaml: %w", err)
 	}
 
-	podConfigMap := resourceread.ReadConfigMapV1OrDie(etcd_assets.MustAsset("etcd/external-etcd-pod-cm.yaml"))
+	podConfigMap := resourceread.ReadConfigMapV1OrDie(bindata.MustAsset("etcd/external-etcd-pod-cm.yaml"))
 	podConfigMap.Data["pod.yaml"] = string(filteredPodBytes)
 	podConfigMap.Data["forceRedeploymentReason"] = operatorSpec.ForceRedeploymentReason
 	podConfigMap.Data["version"] = version.Get().String()
