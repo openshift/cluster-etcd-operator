@@ -47,6 +47,7 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
 
+	"github.com/openshift/cluster-etcd-operator/bindata"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
@@ -57,7 +58,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermemberremovalcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/defragcontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertcleaner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdendpointscontroller"
@@ -233,7 +233,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 	staticResourceController := staticresourcecontroller.NewStaticResourceController(
 		"EtcdStaticResources",
-		etcd_assets.Asset,
+		bindata.Asset,
 		[]string{
 			"etcd/ns.yaml",
 			"etcd/sa.yaml",
