@@ -2,13 +2,12 @@ reviewers:
   - dusk125
   - ironcladlou
   - hasbro17
-  - Elbehery
   - tjungblu
+  - jubittajohn
 approvers:
   - deads2k
   - hasbro17
   - sttts
   - dusk125
-  - Elbehery
   - tjungblu
 component: "Etcd"
