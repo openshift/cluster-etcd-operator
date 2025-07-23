@@ -169,7 +169,7 @@ func (r *readyzOpts) Run() error {
 	mux.HandleFunc("/readyz", r.getReadyzHandlerFunc(shutdownCtx))
 	// Handle the /healthz endpoint as well since the static pod controller's guard pods check the /healthz endpoint
 	// https://github.com/openshift/library-go/blob/edab248e63516c65a93467eaa8224c86d69f5de9/pkg/operator/staticpod/controller/guard/manifests/guard-pod.yaml#L44
-	mux.HandleFunc("/healthz", r.getReadyzHandlerFunc(shutdownCtx))
+	mux.HandleFunc("/healthz", r.getHealthzHandlerFunc(shutdownCtx))
 
 	addr := fmt.Sprintf("0.0.0.0:%d", r.listenPort)
 	klog.Infof("Listening on %s", addr)
@@ -218,6 +218,44 @@ func (r *readyzOpts) Run() error {
 }
 
 func (r *readyzOpts) getReadyzHandlerFunc(ctx context.Context) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		etcdClient, err := r.clientPool.Get()
+		if err != nil {
+			klog.V(2).Infof("failed to establish etcd client: %v", err)
+			http.Error(w, fmt.Sprintf("failed to establish etcd client: %v", err), http.StatusServiceUnavailable)
+			return
+		}
+
+		defer r.clientPool.Return(etcdClient)
+
+		timeout, cancel := context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
+
+		status, err := etcdClient.Status(ctx, r.targetEndpoint)
+		if err != nil {
+			klog.V(2).Infof("failed to get member status: %v", err)
+			http.Error(w, fmt.Sprintf("failed to get member status: %v", err), http.StatusServiceUnavailable)
+			return
+		}
+		if status.IsLearner {
+			klog.V(2).Info("member is a learner and therefore not ready")
+			http.Error(w, "member is a learner and therefore not ready", http.StatusServiceUnavailable)
+			return
+		}
+
+		// we solely do serializable requests to the local instance, as we don't want the readiness of individual
+		// etcd members to rely on an existing quorum to do linearized requests.
+		_, err = etcdClient.Get(timeout, "health", clientv3.WithSerializable())
+		if err != nil {
+			klog.V(2).Infof("failed to get member health key: %v", err)
+			http.Error(w, fmt.Sprintf("failed to get member health key: %v", err), http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+func (r *readyzOpts) getHealthzHandlerFunc(ctx context.Context) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		etcdClient, err := r.clientPool.Get()
 		if err != nil {
