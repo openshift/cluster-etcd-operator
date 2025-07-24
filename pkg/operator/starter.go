@@ -152,8 +152,12 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	}
 
 	if hasArbiterTopology {
-		controlPlaneNodeInformer = ceohelpers.NewMultiSelectorNodeInformer(kubeClient, 1*time.Hour, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, masterNodeLabelSelectorString, arbiterNodeLabelSelectorString)
-		controlPlaneNodeLister = ceohelpers.NewMultiSelectorNodeLister(controlPlaneNodeInformer.GetIndexer(), arbiterNodeLabelSelector)
+		// In arbiter deployments we have master and arbiter nodes, we can not reliably use a custom informer for two different API calls
+		// since that causes issues with two different ResourceVersion and a race condition between when one node object is added and the order of the
+		// watch events start coming in, leading to missing an object being added. It is more correct to inform on all nodes and filter in the lister.
+		// Note that this should only be used in arbiter deployments where the use case is small edge deployments with limited resources and handful of nodes.
+		controlPlaneNodeInformer = corev1informers.NewNodeInformer(kubeClient, 1*time.Hour, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+		controlPlaneNodeLister = ceohelpers.NewMultiSelectorNodeLister(controlPlaneNodeInformer.GetIndexer(), controlPlaneNodeLabelSelector, arbiterNodeLabelSelector)
 	}
 
 	operatorInformers := operatorv1informers.NewSharedInformerFactory(operatorConfigClient, 10*time.Minute)
@@ -330,7 +334,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		WithRevisionedResources("openshift-etcd", "etcd", RevisionConfigMaps, RevisionSecrets).
 		WithUnrevisionedCerts("etcd-certs", CertConfigMaps, CertSecrets).
 		WithVersioning("etcd", versionRecorder).
-		WithExtraNodeSelector(arbiterNodeLabelSelector).
 		WithPodDisruptionBudgetGuard(
 			"openshift-etcd-operator",
 			"etcd-operator",
