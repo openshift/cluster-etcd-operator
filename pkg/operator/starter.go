@@ -334,7 +334,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		WithRevisionedResources("openshift-etcd", "etcd", RevisionConfigMaps, RevisionSecrets).
 		WithUnrevisionedCerts("etcd-certs", CertConfigMaps, CertSecrets).
 		WithVersioning("etcd", versionRecorder).
-		WithMinReadyDuration(30*time.Second).
+		WithMinReadyDuration(60*time.Second).
 		WithPodDisruptionBudgetGuard(
 			"openshift-etcd-operator",
 			"etcd-operator",
