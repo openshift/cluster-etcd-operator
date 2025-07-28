@@ -3,6 +3,7 @@ package targetconfigcontroller
 import (
 	"context"
 	"fmt"
+	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"testing"
 
@@ -241,6 +242,14 @@ func getController(
 		"OTHER_ENDPOINTS_IP": "192.168.2.42",
 	}}
 
+	etcdIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	require.NoError(t, etcdIndexer.Add(&operatorv1.Etcd{
+		TypeMeta: metav1.TypeMeta{},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: ceohelpers.InfrastructureClusterName,
+		},
+	}))
+
 	controller := &TargetConfigController{
 		targetImagePullSpec:   etcdPullSpec,
 		operatorImagePullSpec: operatorPullSpec,
@@ -248,6 +257,7 @@ func getController(
 		kubeClient:            fakeKubeClient,
 		envVarGetter:          envVar,
 		enqueueFn:             func() {},
+		etcdLister:            operatorv1listers.NewEtcdLister(etcdIndexer),
 	}
 
 	return eventRecorder, fakeOperatorClient, controller, fakeKubeClient

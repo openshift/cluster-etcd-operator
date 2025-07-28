@@ -221,29 +221,31 @@ spec:
         port: 9980
         path: readyz
         scheme: HTTPS
-      timeoutSeconds: 30
-      failureThreshold: 5
-      periodSeconds: 5
-      successThreshold: 1
+      timeoutSeconds: {{ .ReadinessProbe.TimeoutSeconds }}      
+      periodSeconds: {{ .ReadinessProbe.PeriodSeconds }}
+      successThreshold: {{ .ReadinessProbe.SuccessThreshold }}
+      failureThreshold: {{ .ReadinessProbe.FailureThreshold }}
+      initialDelaySeconds: {{ .ReadinessProbe.InitialDelaySeconds }}
     livenessProbe:
       httpGet:
         path: healthz
         port: 9980
         scheme: HTTPS
-      timeoutSeconds: 30
-      periodSeconds: 5
-      successThreshold: 1
-      failureThreshold: 5
+      timeoutSeconds: {{ .LivenessProbe.TimeoutSeconds }}
+      periodSeconds: {{ .LivenessProbe.PeriodSeconds }}
+      successThreshold: {{ .LivenessProbe.SuccessThreshold }}
+      failureThreshold: {{ .LivenessProbe.FailureThreshold }}
+      initialDelaySeconds: {{ .LivenessProbe.InitialDelaySeconds }}
     startupProbe:
       httpGet:
         port: 9980
         path: readyz
-        scheme: HTTPS
-      initialDelaySeconds: 10
-      timeoutSeconds: 1
-      periodSeconds: 10
-      successThreshold: 1
-      failureThreshold: 18
+        scheme: HTTPS      
+      timeoutSeconds: {{ .StartupProbe.TimeoutSeconds }}
+      periodSeconds: {{ .StartupProbe.PeriodSeconds }}
+      successThreshold: {{ .StartupProbe.SuccessThreshold }}
+      failureThreshold: {{ .StartupProbe.FailureThreshold }}
+      initialDelaySeconds: {{ .StartupProbe.InitialDelaySeconds }}
     securityContext:
       privileged: true
     volumeMounts:

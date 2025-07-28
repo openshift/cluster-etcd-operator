@@ -3,6 +3,7 @@ package externaletcdsupportcontroller
 import (
 	"context"
 	"fmt"
+	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -145,6 +146,14 @@ func getController(
 		"OTHER_ENDPOINTS_IP": "192.168.2.42",
 	}}
 
+	etcdIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	require.NoError(t, etcdIndexer.Add(&operatorv1.Etcd{
+		TypeMeta: metav1.TypeMeta{},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: ceohelpers.InfrastructureClusterName,
+		},
+	}))
+
 	controller := &ExternalEtcdEnablerController{
 		operatorClient:        fakeOperatorClient,
 		targetImagePullSpec:   etcdPullSpec,
@@ -152,6 +161,7 @@ func getController(
 		envVarGetter:          envVar,
 		kubeClient:            fakeKubeClient,
 		enqueueFn:             func() {},
+		etcdLister:            operatorv1listers.NewEtcdLister(etcdIndexer),
 	}
 	return eventRecorder, fakeOperatorClient, controller, fakeKubeClient
 }

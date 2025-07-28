@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 	"os"
 	"sync"
 
@@ -47,8 +48,8 @@ var (
 
 // HandleDualReplicaClusters checks feature gate and control plane topology,
 // and handles dual replica aka two node fencing clusters
-func HandleDualReplicaClusters(
-	ctx context.Context, controllerContext *controllercmd.ControllerContext,
+func HandleDualReplicaClusters(ctx context.Context,
+	controllerContext *controllercmd.ControllerContext,
 	featureGateAccessor featuregates.FeatureGateAccess,
 	configInformers configv1informers.SharedInformerFactory,
 	operatorClient v1helpers.StaticPodOperatorClient,
@@ -56,6 +57,7 @@ func HandleDualReplicaClusters(
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	networkInformer v1.NetworkInformer,
 	controlPlaneNodeInformer cache.SharedIndexInformer,
+	etcdInformer operatorv1informers.EtcdInformer,
 	kubeClient kubernetes.Interface,
 	dynamicClient dynamic.Interface) (bool, error) {
 
@@ -67,7 +69,8 @@ func HandleDualReplicaClusters(
 
 	klog.Infof("detected DualReplica topology")
 
-	runExternalEtcdSupportController(ctx, controllerContext, operatorClient, envVarGetter, kubeInformersForNamespaces, configInformers, networkInformer, controlPlaneNodeInformer, kubeClient)
+	runExternalEtcdSupportController(ctx, controllerContext, operatorClient, envVarGetter, kubeInformersForNamespaces,
+		configInformers, networkInformer, controlPlaneNodeInformer, etcdInformer, kubeClient)
 	runTnfResourceController(ctx, controllerContext, kubeClient, dynamicClient, operatorClient, kubeInformersForNamespaces)
 
 	controlPlaneNodeLister := corev1listers.NewNodeLister(controlPlaneNodeInformer.GetIndexer())
@@ -150,10 +153,16 @@ func isDualReplicaTopoly(ctx context.Context, featureGateAccessor featuregates.F
 	return true, nil
 }
 
-func runExternalEtcdSupportController(ctx context.Context, controllerContext *controllercmd.ControllerContext,
-	operatorClient v1helpers.StaticPodOperatorClient, envVarGetter etcdenvvar.EnvVar,
-	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces, configInformers configv1informers.SharedInformerFactory,
-	networkInformer v1.NetworkInformer, controlPlaneNodeInformer cache.SharedIndexInformer, kubeClient kubernetes.Interface) {
+func runExternalEtcdSupportController(ctx context.Context,
+	controllerContext *controllercmd.ControllerContext,
+	operatorClient v1helpers.StaticPodOperatorClient,
+	envVarGetter etcdenvvar.EnvVar,
+	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
+	configInformers configv1informers.SharedInformerFactory,
+	networkInformer v1.NetworkInformer,
+	controlPlaneNodeInformer cache.SharedIndexInformer,
+	etcdInformer operatorv1informers.EtcdInformer,
+	kubeClient kubernetes.Interface) {
 
 	klog.Infof("starting external etcd support controller")
 	externalEtcdSupportController := externaletcdsupportcontroller.NewExternalEtcdEnablerController(
@@ -166,6 +175,7 @@ func runExternalEtcdSupportController(ctx context.Context, controllerContext *co
 		configInformers.Config().V1().Infrastructures(),
 		networkInformer,
 		controlPlaneNodeInformer,
+		etcdInformer,
 		kubeClient,
 		controllerContext.EventRecorder,
 	)
