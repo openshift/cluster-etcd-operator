@@ -88,7 +88,7 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 						actual := createAction.GetObject().(*corev1.ConfigMap)
 						expected := u.EndpointsConfigMap(endpoints...)
 						if !equality.Semantic.DeepEqual(actual, expected) {
-							ts.Errorf(diff.ObjectDiff(expected, actual))
+							ts.Errorf("%s", diff.ObjectDiff(expected, actual))
 						}
 					}
 				}
@@ -123,7 +123,7 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 						actual := updateAction.GetObject().(*corev1.ConfigMap)
 						expected := u.EndpointsConfigMap(endpoints...)
 						if !equality.Semantic.DeepEqual(actual, expected) {
-							ts.Errorf(diff.ObjectDiff(expected, actual))
+							ts.Errorf("%s", diff.ObjectDiff(expected, actual))
 						}
 						wasValidated = true
 						break
@@ -257,7 +257,7 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 						actual := updateAction.GetObject().(*corev1.ConfigMap)
 						expected := u.EndpointsConfigMap(endpoints...)
 						if !equality.Semantic.DeepEqual(actual, expected) {
-							ts.Errorf(diff.ObjectDiff(expected, actual))
+							ts.Errorf("%s", diff.ObjectDiff(expected, actual))
 						}
 						wasValidated = true
 						break
@@ -295,7 +295,7 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 						actual := createAction.GetObject().(*corev1.ConfigMap)
 						expected := u.EndpointsConfigMap(endpoints...)
 						if !equality.Semantic.DeepEqual(actual, expected) {
-							ts.Errorf(diff.ObjectDiff(expected, actual))
+							ts.Errorf("%s", diff.ObjectDiff(expected, actual))
 						}
 						wasValidated = true
 						break

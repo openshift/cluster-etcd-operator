@@ -96,16 +96,16 @@ func (r *requestBackupOpts) ReadEnvVars() error {
 func (r *requestBackupOpts) Run(ctx context.Context) error {
 	if r.pvcName == "" {
 		errMsg := "pvcName must be specified to execute a backup request"
-		klog.Errorf(errMsg)
-		return fmt.Errorf(errMsg)
+		klog.Error(errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	// ReadEnvVars reads the env vars necessary to populate the ownerReference
 	// and name for the EtcdBackup CR.
 	if err := r.ReadEnvVars(); err != nil {
 		errMsg := fmt.Sprintf("failed to read pod envvars %v", err)
-		klog.Errorf(errMsg)
-		return fmt.Errorf(errMsg)
+		klog.Error(errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	// handle teardown
