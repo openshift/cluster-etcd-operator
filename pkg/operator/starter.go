@@ -281,6 +281,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		configInformers.Config().V1().Infrastructures(),
 		networkInformer,
 		controlPlaneNodeInformer,
+		etcdsInformer,
 		kubeClient,
 		envVarController,
 		controllerContext.EventRecorder,
@@ -605,7 +606,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 
 	_, err = tnf.HandleDualReplicaClusters(ctx, controllerContext, featureGateAccessor, configInformers, operatorClient,
-		envVarController, kubeInformersForNamespaces, networkInformer, controlPlaneNodeInformer, kubeClient, dynamicClient)
+		envVarController, kubeInformersForNamespaces, networkInformer, controlPlaneNodeInformer, etcdsInformer,
+		kubeClient, dynamicClient)
 	if err != nil {
 		return err
 	}

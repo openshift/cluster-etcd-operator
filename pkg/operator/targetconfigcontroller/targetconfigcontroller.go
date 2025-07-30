@@ -12,6 +12,9 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
+	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
+	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
+
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
@@ -39,6 +42,7 @@ type TargetConfigController struct {
 
 	kubeClient   kubernetes.Interface
 	envVarGetter etcdenvvar.EnvVar
+	etcdLister   operatorv1listers.EtcdLister
 
 	enqueueFn func()
 }
@@ -52,6 +56,7 @@ func NewTargetConfigController(
 	infrastructureInformer configv1informers.InfrastructureInformer,
 	networkInformer configv1informers.NetworkInformer,
 	masterNodeInformer cache.SharedIndexInformer,
+	etcdsInformer operatorv1informers.EtcdInformer,
 	kubeClient kubernetes.Interface,
 	envVarGetter etcdenvvar.EnvVar,
 	eventRecorder events.Recorder,
@@ -63,6 +68,7 @@ func NewTargetConfigController(
 		operatorClient: operatorClient,
 		kubeClient:     kubeClient,
 		envVarGetter:   envVarGetter,
+		etcdLister:     etcdsInformer.Lister(),
 	}
 
 	syncCtx := factory.NewSyncContext("TargetConfigController", eventRecorder.WithComponentSuffix("target-config-controller"))
@@ -86,6 +92,7 @@ func NewTargetConfigController(
 			masterNodeInformer,
 			infrastructureInformer.Informer(),
 			networkInformer.Informer(),
+			etcdsInformer.Informer(),
 		).ToController("TargetConfigController", syncCtx.Recorder())
 }
 
@@ -101,7 +108,12 @@ func (c *TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncC
 		return err
 	}
 
-	err = c.createTargetConfig(ctx, syncCtx.Recorder(), operatorSpec, envVars)
+	etcd, err := c.etcdLister.Get("cluster")
+	if err != nil {
+		return err
+	}
+
+	err = c.createTargetConfig(ctx, syncCtx.Recorder(), operatorSpec, envVars, etcd)
 	if err != nil {
 		condition := operatorv1.OperatorCondition{
 			Type:    "TargetConfigControllerDegraded",
@@ -136,7 +148,8 @@ func (c *TargetConfigController) createTargetConfig(
 	ctx context.Context,
 	recorder events.Recorder,
 	operatorSpec *operatorv1.StaticPodOperatorSpec,
-	envVars map[string]string) error {
+	envVars map[string]string,
+	etcd *operatorv1.Etcd) error {
 
 	var errs error
 	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars)
@@ -144,7 +157,7 @@ func (c *TargetConfigController) createTargetConfig(
 		return err
 	}
 
-	podSub, err := ceohelpers.GetPodSubstitution(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars)
+	podSub, err := ceohelpers.GetPodSubstitution(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars, etcd)
 	if err != nil {
 		return err
 	}

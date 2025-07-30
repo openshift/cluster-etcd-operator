@@ -15,6 +15,14 @@ type NameValue struct {
 	Value string
 }
 
+type ProbeConfig struct {
+	TimeoutSeconds      int
+	PeriodSeconds       int
+	SuccessThreshold    int
+	FailureThreshold    int
+	InitialDelaySeconds int
+}
+
 type PodSubstitutionTemplate struct {
 	Image               string
 	OperatorImage       string
@@ -25,6 +33,9 @@ type PodSubstitutionTemplate struct {
 	BackupArgs          []string
 	CipherSuites        string
 	EnableEtcdContainer bool
+	ReadinessProbe      ProbeConfig
+	LivenessProbe       ProbeConfig
+	StartupProbe        ProbeConfig
 }
 
 // GetPodSubstitution creates a PodSubstitutionTemplate with values derived from StaticPodOperatorSpec,
@@ -33,7 +44,8 @@ type PodSubstitutionTemplate struct {
 func GetPodSubstitution(
 	operatorSpec *operatorv1.StaticPodOperatorSpec,
 	imagePullSpec, operatorImagePullSpec string,
-	envVarMap map[string]string) (*PodSubstitutionTemplate, error) {
+	envVarMap map[string]string,
+	etcd *operatorv1.Etcd) (*PodSubstitutionTemplate, error) {
 
 	var nameValues []NameValue
 	for _, k := range sets.StringKeySet(envVarMap).List() {
@@ -46,6 +58,23 @@ func GetPodSubstitution(
 		return nil, err
 	}
 
+	// TODO(thomas): derive based on etcd.Spec.BackendQuotaGiB
+	defaultProbeConfig := ProbeConfig{
+		TimeoutSeconds:      30,
+		PeriodSeconds:       5,
+		SuccessThreshold:    1,
+		FailureThreshold:    5,
+		InitialDelaySeconds: 0,
+	}
+
+	startupProbe := ProbeConfig{
+		TimeoutSeconds:      1,
+		PeriodSeconds:       10,
+		SuccessThreshold:    1,
+		FailureThreshold:    18,
+		InitialDelaySeconds: 10,
+	}
+
 	return &PodSubstitutionTemplate{
 		Image:               imagePullSpec,
 		OperatorImage:       operatorImagePullSpec,
@@ -55,6 +84,9 @@ func GetPodSubstitution(
 		EnvVars:             nameValues,
 		CipherSuites:        envVarMap["ETCD_CIPHER_SUITES"],
 		EnableEtcdContainer: !shouldRemoveEtcdContainer,
+		ReadinessProbe:      defaultProbeConfig,
+		LivenessProbe:       defaultProbeConfig,
+		StartupProbe:        startupProbe,
 	}, nil
 }
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
+	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
 	"time"
 
 	"github.com/ghodss/yaml"
@@ -34,6 +36,7 @@ type ExternalEtcdEnablerController struct {
 	targetImagePullSpec   string
 	operatorImagePullSpec string
 	envVarGetter          etcdenvvar.EnvVar
+	etcdLister            operatorv1listers.EtcdLister
 
 	kubeClient kubernetes.Interface
 
@@ -49,6 +52,7 @@ func NewExternalEtcdEnablerController(
 	infrastructureInformer configv1informers.InfrastructureInformer,
 	networkInformer configv1informers.NetworkInformer,
 	masterNodeInformer cache.SharedIndexInformer,
+	etcdsInformer operatorv1informers.EtcdInformer,
 	kubeClient kubernetes.Interface,
 	eventRecorder events.Recorder) factory.Controller {
 
@@ -58,6 +62,7 @@ func NewExternalEtcdEnablerController(
 		operatorImagePullSpec: operatorImagePullSpec,
 		envVarGetter:          envVarGetter,
 		kubeClient:            kubeClient,
+		etcdLister:            etcdsInformer.Lister(),
 	}
 	syncCtx := factory.NewSyncContext("ExternalEtcdSupportController", eventRecorder.WithComponentSuffix("external-etcd-support-controller"))
 	c.enqueueFn = func() {
@@ -78,6 +83,7 @@ func NewExternalEtcdEnablerController(
 			masterNodeInformer,
 			infrastructureInformer.Informer(),
 			networkInformer.Informer(),
+			etcdsInformer.Informer(),
 		).ToController("ExternalEtcdController", eventRecorder.WithComponentSuffix("external-etcd-controller"))
 }
 
@@ -94,7 +100,12 @@ func (c *ExternalEtcdEnablerController) sync(ctx context.Context, syncCtx factor
 		return fmt.Errorf("ExternalEtcdEnablerController missing env var values")
 	}
 
-	podSub, _ := ceohelpers.GetPodSubstitution(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars)
+	etcd, err := c.etcdLister.Get("cluster")
+	if err != nil {
+		return err
+	}
+
+	podSub, _ := ceohelpers.GetPodSubstitution(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars, etcd)
 
 	_, _, err = c.supportExternalEtcdOnlyPod(ctx, podSub, c.kubeClient.CoreV1(), syncCtx.Recorder(), operatorSpec)
 	if err != nil {
