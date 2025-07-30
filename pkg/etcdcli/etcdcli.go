@@ -56,12 +56,17 @@ type etcdClientGetter struct {
 	clientPool *EtcdClientPool
 }
 
-func NewEtcdClient(kubeInformers v1helpers.KubeInformersForNamespaces, networkInformer configv1informers.NetworkInformer, eventRecorder events.Recorder) EtcdClient {
+func NewEtcdClient(
+	kubeInformers v1helpers.KubeInformersForNamespaces,
+	controlPlaneNodeInformer cache.SharedIndexInformer,
+	controlPlaneNodeLister corev1listers.NodeLister,
+	networkInformer configv1informers.NetworkInformer,
+	eventRecorder events.Recorder) EtcdClient {
 	g := &etcdClientGetter{
-		nodeLister:             kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
+		nodeLister:             controlPlaneNodeLister,
 		configmapsLister:       kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister(),
 		networkLister:          networkInformer.Lister(),
-		nodeListerSynced:       kubeInformers.InformersFor("").Core().V1().Nodes().Informer().HasSynced,
+		nodeListerSynced:       controlPlaneNodeInformer.HasSynced,
 		configmapsListerSynced: kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer().HasSynced,
 		networkListerSynced:    networkInformer.Informer().HasSynced,
 		eventRecorder:          eventRecorder.WithComponentSuffix("etcd-client"),

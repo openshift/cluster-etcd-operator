@@ -160,17 +160,22 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controlPlaneNodeLister = ceohelpers.NewMultiSelectorNodeLister(controlPlaneNodeInformer.GetIndexer(), controlPlaneNodeLabelSelector, arbiterNodeLabelSelector)
 	}
 
+	etcdNamespaceInformer := corev1informers.NewFilteredNamespaceInformer(kubeClient, 1*time.Hour, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, func(listOptions *metav1.ListOptions) {
+		listOptions.FieldSelector = "metadata.name=" + operatorclient.TargetNamespace
+	})
+	etcdNamespaceLister := corev1listers.NewNamespaceLister(etcdNamespaceInformer.GetIndexer())
+
 	operatorInformers := operatorv1informers.NewSharedInformerFactory(operatorConfigClient, 10*time.Minute)
 	etcdsInformer := operatorInformers.Operator().V1().Etcds()
 	kubeInformersForNamespaces := v1helpers.NewKubeInformersForNamespaces(
 		kubeClient,
-		"",
 		operatorclient.GlobalUserSpecifiedConfigNamespace,
 		operatorclient.GlobalMachineSpecifiedConfigNamespace,
 		operatorclient.TargetNamespace,
 		operatorclient.OperatorNamespace,
 		"kube-system",
 	)
+	clusterInformers := v1helpers.NewKubeInformersForNamespaces(kubeClient, "")
 
 	configInformers := configv1informers.NewSharedInformerFactory(configClient, 10*time.Minute)
 	clusterVersions := configInformers.Config().V1().ClusterVersions()
@@ -205,6 +210,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 	etcdClient := etcdcli.NewEtcdClient(
 		kubeInformersForNamespaces,
+		controlPlaneNodeInformer,
+		controlPlaneNodeLister,
 		networkInformer,
 		controllerContext.EventRecorder)
 
@@ -266,7 +273,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 
 	quorumChecker := ceohelpers.NewQuorumChecker(
-		kubeInformersForNamespaces.InformersFor("").Core().V1().Namespaces().Lister(),
+		etcdNamespaceLister,
 		configInformers.Config().V1().Infrastructures().Lister(),
 		operatorClient,
 		cachedMemberClient)
@@ -328,7 +335,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return quorumChecker.IsSafeToUpdateRevision()
 	}
 
-	staticPodBuilderControllers := staticpod.NewBuilder(operatorClient, kubeClient, kubeInformersForNamespaces, configInformers, controllerContext.Clock).
+	staticPodBuilderControllers := staticpod.NewBuilder(operatorClient, kubeClient, kubeInformersForNamespaces, clusterInformers.InformersFor(""), configInformers, controllerContext.Clock).
 		WithEvents(controllerContext.EventRecorder).
 		WithInstaller([]string{"cluster-etcd-operator", "installer"}).
 		WithPruning([]string{"cluster-etcd-operator", "prune"}, "etcd-pod").
@@ -453,6 +460,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		AlivenessChecker,
 		operatorClient,
 		kubeInformersForNamespaces,
+		etcdNamespaceInformer,
+		etcdNamespaceLister,
 		etcdClient,
 		controllerContext.EventRecorder,
 		configInformers.Config().V1().Infrastructures().Lister(),
@@ -613,8 +622,10 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	}
 
 	go controlPlaneNodeInformer.Run(ctx.Done())
+	go etcdNamespaceInformer.Run(ctx.Done())
 	dynamicInformers.Start(ctx.Done())
 	operatorInformers.Start(ctx.Done())
+	clusterInformers.Start(ctx.Done())
 	kubeInformersForNamespaces.Start(ctx.Done())
 
 	go fsyncMetricController.Run(ctx, 1)
