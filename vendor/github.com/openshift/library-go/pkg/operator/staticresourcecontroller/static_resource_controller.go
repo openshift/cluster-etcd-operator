@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/restmapper"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	storagev1 "k8s.io/api/storage/v1"
@@ -236,6 +237,8 @@ func (c *StaticResourceController) AddKubeInformers(kubeInformersByNamespace v1h
 				ret = ret.AddInformer(informer.Core().V1().ConfigMaps().Informer())
 			case *corev1.Secret:
 				ret = ret.AddInformer(informer.Core().V1().Secrets().Informer())
+			case *networkingv1.NetworkPolicy:
+				ret = ret.AddInformer(informer.Networking().V1().NetworkPolicies().Informer())
 			case *rbacv1.ClusterRole:
 				ret = ret.AddInformer(informer.Rbac().V1().ClusterRoles().Informer())
 			case *rbacv1.ClusterRoleBinding:

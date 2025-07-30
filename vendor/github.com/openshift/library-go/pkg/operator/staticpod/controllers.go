@@ -32,6 +32,7 @@ import (
 	v1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -39,7 +40,8 @@ type staticPodOperatorControllerBuilder struct {
 	// clients and related
 	staticPodOperatorClient v1helpers.StaticPodOperatorClient
 	kubeClient              kubernetes.Interface
-	kubeInformers           v1helpers.KubeInformersForNamespaces
+	kubeNamespaceInformers  v1helpers.KubeInformersForNamespaces
+	kubeClusterInformers    informers.SharedInformerFactory
 	configInformers         externalversions.SharedInformerFactory
 	clock                   clock.Clock
 	eventRecorder           events.Recorder
@@ -87,14 +89,16 @@ type staticPodOperatorControllerBuilder struct {
 func NewBuilder(
 	staticPodOperatorClient v1helpers.StaticPodOperatorClient,
 	kubeClient kubernetes.Interface,
-	kubeInformers v1helpers.KubeInformersForNamespaces,
+	kubeNamespaceInformers v1helpers.KubeInformersForNamespaces,
+	clusterInformers informers.SharedInformerFactory,
 	configInformers externalversions.SharedInformerFactory,
 	clock clock.Clock,
 ) Builder {
 	return &staticPodOperatorControllerBuilder{
 		staticPodOperatorClient: staticPodOperatorClient,
 		kubeClient:              kubeClient,
-		kubeInformers:           kubeInformers,
+		kubeNamespaceInformers:  kubeNamespaceInformers,
+		kubeClusterInformers:    clusterInformers,
 		configInformers:         configInformers,
 		clock:                   clock,
 	}
@@ -233,13 +237,13 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 
 	// ensure that all controllers that need the secret/configmap informer-based clients
 	// need to wait for their synchronization before starting using WithInformer
-	configMapClient := v1helpers.CachedConfigMapGetter(b.kubeClient.CoreV1(), b.kubeInformers)
-	secretClient := v1helpers.CachedSecretGetter(b.kubeClient.CoreV1(), b.kubeInformers)
+	configMapClient := v1helpers.CachedConfigMapGetter(b.kubeClient.CoreV1(), b.kubeNamespaceInformers)
+	secretClient := v1helpers.CachedSecretGetter(b.kubeClient.CoreV1(), b.kubeNamespaceInformers)
 	podClient := b.kubeClient.CoreV1()
 	eventsClient := b.kubeClient.CoreV1()
 	pdbClient := b.kubeClient.PolicyV1()
-	operandInformers := b.kubeInformers.InformersFor(b.operandNamespace)
-	clusterInformers := b.kubeInformers.InformersFor("")
+	operandInformers := b.kubeNamespaceInformers.InformersFor(b.operandNamespace)
+	clusterInformers := b.kubeClusterInformers
 	infraInformers := b.configInformers.Config().V1().Infrastructures()
 
 	var errs []error
@@ -337,7 +341,7 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 			b.operandNamespace,
 			b.staticPodName,
 			b.staticPodOperatorClient,
-			b.kubeInformers,
+			b.kubeNamespaceInformers,
 			b.enableStartMonitor,
 			eventRecorder,
 		), 1)
@@ -347,7 +351,7 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 			b.operandNamespace,
 			b.operandPodLabelSelector,
 			b.staticPodOperatorClient,
-			b.kubeInformers,
+			b.kubeNamespaceInformers,
 			b.enableStartMonitor,
 			b.eventRecorder,
 		); err == nil {
@@ -376,7 +380,7 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 		resourceapply.NewKubeClientHolder(b.kubeClient),
 		b.staticPodOperatorClient,
 		eventRecorder,
-	).AddKubeInformers(b.kubeInformers), 1)
+	).AddKubeInformers(b.kubeNamespaceInformers), 1)
 
 	manager.WithController(unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(b.operatorName, b.staticPodOperatorClient, eventRecorder), 1)
 	manager.WithController(loglevel.NewClusterOperatorLoggingController(b.staticPodOperatorClient, eventRecorder), 1)
@@ -407,7 +411,7 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 
 	manager.WithController(missingstaticpodcontroller.New(
 		b.staticPodOperatorClient,
-		b.kubeInformers.InformersFor(b.operandNamespace),
+		b.kubeNamespaceInformers.InformersFor(b.operandNamespace),
 		b.eventRecorder,
 		b.operandNamespace,
 		b.staticPodName,

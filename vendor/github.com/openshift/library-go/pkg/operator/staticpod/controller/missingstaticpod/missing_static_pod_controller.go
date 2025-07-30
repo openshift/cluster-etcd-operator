@@ -178,7 +178,7 @@ func (c *missingStaticPodController) sync(ctx context.Context, syncCtx factory.S
 	}
 
 	if len(errors) > 0 {
-		return fmt.Errorf(strings.Join(errors, "\n"))
+		return fmt.Errorf("%s", strings.Join(errors, "\n"))
 	}
 
 	return nil
