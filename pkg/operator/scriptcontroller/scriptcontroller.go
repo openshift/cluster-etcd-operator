@@ -11,7 +11,6 @@ import (
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
-	corev1listers "k8s.io/client-go/listers/core/v1"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
@@ -22,30 +21,26 @@ import (
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
 type ScriptController struct {
-	operatorClient  v1helpers.StaticPodOperatorClient
-	kubeClient      kubernetes.Interface
-	configMapLister corev1listers.ConfigMapLister
-	envVarGetter    *etcdenvvar.EnvVarController
-	enqueueFn       func()
+	operatorClient v1helpers.StaticPodOperatorClient
+	kubeClient     kubernetes.Interface
+	envVarGetter   *etcdenvvar.EnvVarController
+	enqueueFn      func()
 }
 
 func NewScriptControllerController(
 	livenessChecker *health.MultiAlivenessChecker,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeClient kubernetes.Interface,
-	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	envVarGetter *etcdenvvar.EnvVarController,
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &ScriptController{
-		operatorClient:  operatorClient,
-		kubeClient:      kubeClient,
-		configMapLister: kubeInformersForNamespaces.ConfigMapLister(),
-		envVarGetter:    envVarGetter,
+		operatorClient: operatorClient,
+		kubeClient:     kubeClient,
+		envVarGetter:   envVarGetter,
 	}
 	envVarGetter.AddListener(c)
 
@@ -59,7 +54,6 @@ func NewScriptControllerController(
 
 	return factory.New().WithSyncContext(syncCtx).ResyncEvery(time.Minute).WithInformers(
 		operatorClient.Informer(),
-		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer(),
 	).WithSync(syncer.Sync).ToController("ScriptController", syncCtx.Recorder())
 }
 

@@ -56,6 +56,7 @@ func NewEtcdEndpointsController(
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
 		operatorClient.Informer(),
 		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer(),
+		kubeInformers.InformersFor("kube-system").Core().V1().ConfigMaps().Informer(),
 	).WithSync(syncer.Sync).ToController("EtcdEndpointsController", eventRecorder.WithComponentSuffix("etcd-endpoints-controller"))
 }
 

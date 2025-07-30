@@ -52,6 +52,7 @@ func NewBootstrapTeardownController(
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
 		operatorClient.Informer(),
 		kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Informer(),
+		kubeInformersForNamespaces.InformersFor("").Core().V1().Namespaces().Informer(),
 	).WithSync(syncer.Sync).ToController("BootstrapTeardownController", c.eventRecorder)
 }
 

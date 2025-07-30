@@ -96,6 +96,8 @@ func NewClusterMemberRemovalController(
 			masterNodeInformer,
 			masterMachineInformer,
 			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer(),
+			// IsBootstrapComplete() accesses the "kube-system" namespace, so we need this informer to sync
+			kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Informer(),
 		).ToController("ClusterMemberRemovalController", eventRecorder.WithComponentSuffix("cluster-member-removal-controller"))
 }
 
