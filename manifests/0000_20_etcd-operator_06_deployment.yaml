@@ -34,6 +34,7 @@ spec:
       - name: etcd-operator
         securityContext:
           allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
           capabilities:
             drop: ["ALL"]
         image: quay.io/openshift/origin-cluster-etcd-operator
@@ -75,6 +76,8 @@ spec:
           name: etcd-service-ca
         - mountPath: /var/run/secrets/etcd-client
           name: etcd-client
+        - mountPath: /tmp
+          name: tmp-dir
         env:
         - name: IMAGE
           value: quay.io/openshift/origin-etcd
@@ -108,6 +111,8 @@ spec:
       - name: etcd-client
         secret:
           secretName: etcd-client
+      - name: tmp-dir
+        emptyDir: {}
       nodeSelector:
         node-role.kubernetes.io/master: ""
       priorityClassName: "system-cluster-critical"
