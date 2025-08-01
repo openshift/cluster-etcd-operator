@@ -3,6 +3,7 @@ package bootstrapteardown
 import (
 	"context"
 	"fmt"
+	"k8s.io/client-go/tools/cache"
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -33,6 +34,8 @@ func NewBootstrapTeardownController(
 	livenessChecker *health.MultiAlivenessChecker,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
+	namespaceInformer cache.SharedIndexInformer,
+	namespaceLister corev1listers.NamespaceLister,
 	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
 	infrastructureLister configv1listers.InfrastructureLister,
@@ -41,7 +44,7 @@ func NewBootstrapTeardownController(
 		operatorClient:       operatorClient,
 		etcdClient:           etcdClient,
 		configmapLister:      kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Lister(),
-		namespaceLister:      kubeInformersForNamespaces.InformersFor("").Core().V1().Namespaces().Lister(),
+		namespaceLister:      namespaceLister,
 		infrastructureLister: infrastructureLister,
 		eventRecorder:        eventRecorder.WithComponentSuffix("bootstrap-teardown-controller"),
 	}
@@ -52,7 +55,7 @@ func NewBootstrapTeardownController(
 	return factory.New().ResyncEvery(time.Minute).WithInformers(
 		operatorClient.Informer(),
 		kubeInformersForNamespaces.InformersFor("kube-system").Core().V1().ConfigMaps().Informer(),
-		kubeInformersForNamespaces.InformersFor("").Core().V1().Namespaces().Informer(),
+		namespaceInformer,
 	).WithSync(syncer.Sync).ToController("BootstrapTeardownController", c.eventRecorder)
 }
 
