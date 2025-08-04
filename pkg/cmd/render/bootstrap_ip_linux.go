@@ -1,12 +1,16 @@
+//go:build linux
+
 package render
 
 import (
+	"slices"
+
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 	"k8s.io/klog/v2"
 )
 
-func getAddrMap() (addrMap addrMap, err error) {
+func getAddrSlice() (addrSlice addrSlice, err error) {
 	nlHandle, err := netlink.NewHandle(unix.NETLINK_ROUTE)
 	if err != nil {
 		return nil, err
@@ -18,25 +22,34 @@ func getAddrMap() (addrMap addrMap, err error) {
 		return nil, err
 	}
 
-	addrMap = make(map[netlink.Link][]netlink.Addr)
+	addrSlice = make([]LinkAddresses, 0, len(links))
 	for _, link := range links {
 		addresses, err := nlHandle.AddrList(link, netlink.FAMILY_ALL)
 		if err != nil {
 			return nil, err
 		}
+
 		for _, address := range addresses {
-			if _, ok := addrMap[link]; ok {
-				addrMap[link] = append(addrMap[link], address)
+			linkIndex := link.Attrs().Index
+			existingIndex := slices.IndexFunc(addrSlice, func(la LinkAddresses) bool {
+				return la.Link.Attrs().Index == linkIndex
+			})
+
+			if existingIndex != -1 {
+				addrSlice[existingIndex].Addresses = append(addrSlice[existingIndex].Addresses, address)
 			} else {
-				addrMap[link] = []netlink.Addr{address}
+				addrSlice = append(addrSlice, LinkAddresses{
+					Link:      link,
+					Addresses: []netlink.Addr{address},
+				})
 			}
 		}
 	}
-	klog.Infof("retrieved Address map %+v", addrMap)
-	return addrMap, nil
+	klog.Infof("retrieved Address slice %+v", addrSlice)
+	return addrSlice, nil
 }
 
-func getRouteMap() (routeMap routeMap, err error) {
+func getRouteSlice() (routeSlice routeSlice, err error) {
 	nlHandle, err := netlink.NewHandle(unix.NETLINK_ROUTE)
 	if err != nil {
 		return nil, err
@@ -48,20 +61,29 @@ func getRouteMap() (routeMap routeMap, err error) {
 		return nil, err
 	}
 
-	routeMap = make(map[int][]netlink.Route)
+	// Group routes by link index while preserving order
+	linkIndexMap := make(map[int]int) // map from linkIndex to slice index
 	for _, route := range routes {
 		if route.Protocol != unix.RTPROT_RA {
 			klog.Infof("Ignoring route non Router advertisement route %+v", route)
 			continue
 		}
-		if _, ok := routeMap[route.LinkIndex]; ok {
-			routeMap[route.LinkIndex] = append(routeMap[route.LinkIndex], route)
+
+		sliceIndex, exists := linkIndexMap[route.LinkIndex]
+		if exists {
+			// Link index already exists, append to existing routes
+			routeSlice[sliceIndex].Routes = append(routeSlice[sliceIndex].Routes, route)
 		} else {
-			routeMap[route.LinkIndex] = []netlink.Route{route}
+			// New link index, create new entry
+			linkIndexMap[route.LinkIndex] = len(routeSlice)
+			routeSlice = append(routeSlice, LinkRoutes{
+				LinkIndex: route.LinkIndex,
+				Routes:    []netlink.Route{route},
+			})
 		}
 	}
 
-	klog.Infof("Retrieved route map %+v", routeMap)
+	klog.Infof("Retrieved route slice %+v", routeSlice)
 
-	return routeMap, nil
+	return routeSlice, nil
 }
