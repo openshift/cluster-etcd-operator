@@ -15,14 +15,26 @@ local excludeRules = std.map(
   }, alertingRules + promRules
 );
 
-// modifiedRules injects runbook_url to all critical alerts on all rules.
+// modifiedRules injects runbook_url to all critical alerts on all rules and overrides specific alert expressions.
 local modifiedRules = std.map(function(group) group {
-  rules: std.map(function(rule) if 'alert' in rule && !('runbook_url' in rule.annotations) && (rule.labels.severity == 'critical') then rule {
-                   annotations+: {
-                     runbook_url: 'https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/%s.md' % rule.alert,
-                   },
-                 } else rule,
-                 super.rules),
+  rules: std.map(function(rule)
+    if 'alert' in rule && rule.alert == 'etcdHighCommitDurations' then rule {
+      expr: |||
+        histogram_quantile(0.99, rate(etcd_disk_backend_commit_duration_seconds_bucket{job=~".*etcd.*"}[5m]))
+        > on () group_left (type)
+        bottomk(0.25,
+        0.5 * group by (type) (cluster_infrastructure_provider{type="Azure"})
+        or
+        0.25 * group by (type) (cluster_infrastructure_provider)
+        )
+      |||,
+    }
+    else if 'alert' in rule && !('runbook_url' in rule.annotations) && (rule.labels.severity == 'critical') then rule {
+      annotations+: {
+        runbook_url: 'https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/%s.md' % rule.alert,
+      },
+    } else rule,
+    super.rules),
 }, excludeRules + openshiftRules.prometheusRules.groups);
 
 {
