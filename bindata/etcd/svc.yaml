@@ -17,6 +17,16 @@ spec:
     - name: etcd
       port: 2379
       protocol: TCP
+    - name: etcd-peer
+      port: 2380
+      protocol: TCP
+    - name: grpc-proxy
+      port: 9978
+      protocol: TCP
     - name: etcd-metrics
       port: 9979
       protocol: TCP
+    - name: readyz-sidecar
+      port: 9980
+      protocol: TCP
+
