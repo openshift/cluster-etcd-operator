@@ -19,6 +19,11 @@ var (
 	addressRegEx = regexp.MustCompile(`.*//(.*):(.*)(/redfish.*)`)
 )
 
+const (
+	// defaultPcmkDelayBase is the delay applied to the first fence device to prevent simultaneous fencing
+	defaultPcmkDelayBase = "10s"
+)
+
 type fencingOption int
 
 const (
@@ -28,6 +33,7 @@ const (
 	Username
 	Password
 	SslInsecure
+	PcmkDelayBase
 )
 
 type fencingConfig struct {
@@ -45,7 +51,7 @@ func ConfigureFencing(ctx context.Context, kubeClient kubernetes.Interface, cfg 
 	klog.Info("Getting fencing configs from secrets")
 	fencingConfigs := []fencingConfig{}
 
-	for _, nodeName := range []string{cfg.NodeName1, cfg.NodeName2} {
+	for i, nodeName := range []string{cfg.NodeName1, cfg.NodeName2} {
 		secret, err := tools.GetFencingSecret(ctx, kubeClient, nodeName)
 		if err != nil {
 			klog.Errorf("Failed to get fencing secret for node %s: %v", nodeName, err)
@@ -55,6 +61,10 @@ func ConfigureFencing(ctx context.Context, kubeClient kubernetes.Interface, cfg 
 		if err != nil {
 			klog.Errorf("Failed to get fencing config for node %s: %v", nodeName, err)
 			return fmt.Errorf("failed to get fencing config for node %s: %v", nodeName, err)
+		}
+		// Add pcmk_delay_base to the first fence device only
+		if i == 0 {
+			fc.FencingDeviceOptions[PcmkDelayBase] = defaultPcmkDelayBase
 		}
 		fencingConfigs = append(fencingConfigs, *fc)
 	}
@@ -192,6 +202,10 @@ func getStonithCommand(sc StonithConfig, fc fencingConfig) string {
 		cmd += ` ssl_insecure="1"`
 	}
 
+	if delayBase, exists := fc.FencingDeviceOptions[PcmkDelayBase]; exists {
+		cmd += fmt.Sprintf(` pcmk_delay_base=%q`, delayBase)
+	}
+
 	// wait for command execution, so we can check if the device is running
 	cmd += " --wait=30"
 
@@ -234,6 +248,10 @@ func canFencingConfigBeSkipped(fc fencingConfig, stonithConfig StonithConfig) bo
 					}
 				case SslInsecure:
 					if nvPairNeedsUpdate(nvPairs, "ssl_insecure", "1") {
+						return false
+					}
+				case PcmkDelayBase:
+					if nvPairNeedsUpdate(nvPairs, "pcmk_delay_base", value) {
 						return false
 					}
 				}
