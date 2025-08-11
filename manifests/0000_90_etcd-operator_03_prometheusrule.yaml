@@ -10,23 +10,6 @@ spec:
   groups:
   - name: etcd
     rules:
-    - alert: etcdMembersDown
-      annotations:
-        description: 'etcd cluster "{{ $labels.job }}": members are down ({{ $value }}).'
-        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdMembersDown.md
-        summary: etcd cluster members are down.
-      expr: |
-        max without (endpoint) (
-          sum without (instance) (up{job=~".*etcd.*"} == bool 0)
-        or
-          count without (To) (
-            sum without (instance) (rate(etcd_network_peer_sent_failures_total{job=~".*etcd.*"}[120s])) > 0.01
-          )
-        )
-        > 0
-      for: 10m
-      labels:
-        severity: critical
     - alert: etcdNoLeader
       annotations:
         description: 'etcd cluster "{{ $labels.job }}": member {{ $labels.instance }} has no leader.'
@@ -83,12 +66,7 @@ spec:
         summary: etcd cluster 99th percentile commit durations are too high.
       expr: |
         histogram_quantile(0.99, rate(etcd_disk_backend_commit_duration_seconds_bucket{job=~".*etcd.*"}[5m]))
-        > on () group_left (type)
-        bottomk(0.25,
-        0.5 * group by (type) (cluster_infrastructure_provider{type="Azure"})
-        or
-        0.25 * group by (type) (cluster_infrastructure_provider)
-        )
+        > 0.25
       for: 10m
       labels:
         severity: warning
@@ -132,9 +110,9 @@ spec:
         histogram_quantile(0.99, sum(rate(grpc_server_handling_seconds_bucket{job="etcd", grpc_method!="Defragment", grpc_type="unary"}[10m])) without(grpc_type))
         > on () group_left (type)
         bottomk(1,
-        1.5 * group by (type) (cluster_infrastructure_provider{type="Azure"})
-        or
-        1 * group by (type) (cluster_infrastructure_provider))
+          1.5 * group by (type) (cluster_infrastructure_provider{type="Azure"})
+          or
+          1 * group by (type) (cluster_infrastructure_provider))
       for: 30m
       labels:
         severity: critical
@@ -179,6 +157,23 @@ spec:
         summary: etcd is reporting that a majority of instances are unavailable.
       expr: sum(up{job="etcd"} == bool 1 and etcd_server_has_leader{job="etcd"} == bool 1) without (instance,pod) < ((count(up{job="etcd"}) without (instance,pod) + 1) / 2)
       for: 3m
+      labels:
+        severity: critical
+    - alert: etcdMembersDown
+      annotations:
+        description: 'etcd cluster "{{ $labels.job }}": members are down ({{ $value }}).'
+        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdMembersDown.md
+        summary: etcd cluster members are down.
+      expr: |
+        max without (endpoint) (
+            sum without (instance) (up{job=~".*etcd.*"} == bool 0)
+        or
+          count without (To) (
+            sum without (instance) (rate(etcd_network_peer_sent_failures_total{job=~".*etcd.*"}[120s])) > 0.01
+          )
+        )
+        > 0
+      for: 20m
       labels:
         severity: critical
     - alert: etcdSignerCAExpirationWarning

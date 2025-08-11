@@ -84,6 +84,27 @@
             },
           },
           {
+            alert: 'etcdMembersDown',
+            annotations: {
+              description: 'etcd cluster "{{ $labels.job }}": members are down ({{ $value }}).',
+              summary: 'etcd cluster members are down.',
+            },
+            expr: |||
+              max without (endpoint) (
+                  sum without (instance) (up{job=~".*etcd.*"} == bool 0)
+              or
+                count without (To) (
+                  sum without (instance) (rate(etcd_network_peer_sent_failures_total{job=~".*etcd.*"}[120s])) > 0.01
+                )
+              )
+              > 0
+            |||,
+            'for': '20m',
+            labels: {
+              severity: 'critical',
+            },
+          },
+          {
             expr: 'avg(openshift_etcd_operator_signer_expiration_days) by (name) < 730',
             alert: 'etcdSignerCAExpirationWarning',
             'for': '1h',
