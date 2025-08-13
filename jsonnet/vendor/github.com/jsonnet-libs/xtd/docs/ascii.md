@@ -17,6 +17,7 @@ local ascii = import "github.com/jsonnet-libs/xtd/ascii.libsonnet"
 * [`fn isStringJSONNumeric(str)`](#fn-isstringjsonnumeric)
 * [`fn isStringNumeric(str)`](#fn-isstringnumeric)
 * [`fn isUpper(c)`](#fn-isupper)
+* [`fn stringToRFC1123(str)`](#fn-stringtorfc1123)
 
 ## Fields
 
@@ -59,3 +60,17 @@ isUpper(c)
 ```
 
 `isUpper` reports whether ASCII character `c` is a upper case letter
+
+### fn stringToRFC1123
+
+```ts
+stringToRFC1123(str)
+```
+
+`stringToRFC113` converts a strings to match RFC1123, replacing non-alphanumeric characters with dashes. It'll throw an assertion if the string is too long.
+
+* RFC 1123. This means the string must:
+* - contain at most 63 characters
+* - contain only lowercase alphanumeric characters or '-'
+* - start with an alphanumeric character
+* - end with an alphanumeric character
