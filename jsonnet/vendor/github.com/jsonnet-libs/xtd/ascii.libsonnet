@@ -96,37 +96,4 @@ local d = import 'github.com/jsonnet-libs/docsonnet/doc-util/main.libsonnet';
       fraction(expectFraction),
       exponent(expectExponent),
     ]),
-
-  '#stringToRFC1123': d.fn(
-    |||
-      `stringToRFC113` converts a strings to match RFC1123, replacing non-alphanumeric characters with dashes. It'll throw an assertion if the string is too long.
-
-      * RFC 1123. This means the string must:
-      * - contain at most 63 characters
-      * - contain only lowercase alphanumeric characters or '-'
-      * - start with an alphanumeric character
-      * - end with an alphanumeric character
-    |||,
-    [d.arg('str', d.T.string)]
-  ),
-  stringToRFC1123(str):
-    // lowercase alphabetic characters
-    local lowercase = std.asciiLower(str);
-    // replace non-alphanumeric characters with dashes
-    local alphanumeric =
-      std.join(
-        '',
-        std.map(
-          function(c)
-            if self.isLower(c)
-               || self.isNumber(c)
-            then c
-            else '-',
-          std.stringChars(lowercase)
-        )
-      );
-    // remove leading/trailing dashes
-    local return = std.stripChars(alphanumeric, '-');
-    assert std.length(return) <= 63 : 'String too long';
-    return,
 }
