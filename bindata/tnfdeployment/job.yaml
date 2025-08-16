@@ -16,6 +16,7 @@ spec:
           image: <injected>
           imagePullPolicy: IfNotPresent
           command: [ "tnf-setup-runner", "<injected>" ]
+          terminationMessagePolicy: FallbackToLogsOnError
           resources:
             requests:
               cpu: 50m
