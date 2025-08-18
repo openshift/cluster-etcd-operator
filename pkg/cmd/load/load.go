@@ -127,10 +127,13 @@ func (r *loadOpts) Run(ctx context.Context) error {
 		numIterations := 800
 		for j := 0; j < numIterations; j++ {
 			err := retry.OnError(wait.Backoff{Steps: 10, Duration: 1 * time.Second, Factor: 2, Jitter: 0.1}, func(err error) bool {
+				sErr := err.Error()
 				return errors.IsServerTimeout(err) || errors.IsConflict(err) ||
 					errors.IsTooManyRequests(err) || errors.IsServiceUnavailable(err) ||
-					errors.IsTimeout(err) || strings.Contains(err.Error(), "etcdserver: request timed out") ||
-					strings.Contains(err.Error(), "unexpected EOF")
+					errors.IsTimeout(err) || strings.Contains(sErr, "etcdserver: request timed out") ||
+					strings.Contains(sErr, "unexpected EOF") ||
+					strings.Contains(sErr, "context deadline exceeded") ||
+					strings.Contains(sErr, "rpc error: code = Unavailable")
 			}, func() error {
 				k := &unstructured.Unstructured{Object: map[string]interface{}{
 					"apiVersion": gvr.GroupVersion().String(),

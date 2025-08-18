@@ -171,8 +171,7 @@ $ kube-burner init -c crd-fill.yaml
 
 An important place where etcd / CEO breaks, is the defrag routine. The defrag takes linear time w.r.t. the size of the
 database and during the defragmentation the etcd member will not respond to any RPC calls. That may cause liveness
-probes
-to fail and crash loop the etcd instance.
+probes to fail and crash loop the etcd instance.
 
 To also test defragmentation, we can run a third step to delete the CRD objects. CEO will then attempt to defrag
 automatically:
