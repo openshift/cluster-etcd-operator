@@ -37,6 +37,69 @@ spec:
         value: "/etc/ssl/etcd/ca.crt"
       - name: "ETCDCTL_ENDPOINTS"
         value: "https://localhost:2379"
+  - name: bootstrap-remover
+    image: {{ .Image }}
+    imagePullPolicy: IfNotPresent
+    command:
+      - /bin/sh
+      - -c
+      - |
+        #!/bin/sh
+        set -euo pipefail
+
+        echo "Starting bootstrap remover..."
+        
+        while true; do
+          # Get member list and check for bootstrap members
+          MEMBER_LIST=$(etcdctl member list 2>/dev/null || true)
+          
+          if [ -z "$MEMBER_LIST" ]; then
+            echo "Unable to get member list, retrying..."
+            sleep 5
+            continue
+          fi
+          
+          echo "Current member list:"
+          echo "$MEMBER_LIST"
+          
+          # Check if any member contains "bootstrap" in the name
+          BOOTSTRAP_MEMBERS=$(echo "$MEMBER_LIST" | grep -i bootstrap || true)          
+          if [ -z "$BOOTSTRAP_MEMBERS" ]; then
+            echo "No bootstrap member found in cluster"
+            break
+          else
+            echo "Bootstrap member still present:"
+            echo "$BOOTSTRAP_MEMBERS"
+            echo "Waiting 10 seconds before next check..."
+            sleep 10
+          fi
+        done
+        
+        echo "Bootstrap member was removed, removing static pod now..."
+        # remove that members static pod
+        rm -f /etc/kubernetes/manifests/etcd-member-pod.yaml
+        echo "etcd static pod successfully removed"
+    resources:
+      requests:
+        memory: 60Mi
+        cpu: 10m
+    terminationMessagePolicy: FallbackToLogsOnError
+    securityContext:
+      privileged: true
+    volumeMounts:
+      - name: static-pod
+        mountPath: /etc/kubernetes/manifests
+      - name: certs
+        mountPath: /etc/ssl/etcd/
+    env:
+      - name: "ETCDCTL_KEY"
+        value: "/etc/ssl/etcd/etcd-all-certs/etcd-serving-{{ .Hostname }}.key"
+      - name: "ETCDCTL_CERT"
+        value: "/etc/ssl/etcd/etcd-all-certs/etcd-serving-{{ .Hostname }}.crt"
+      - name: "ETCDCTL_CACERT"
+        value: "/etc/ssl/etcd/ca.crt"
+      - name: "ETCDCTL_ENDPOINTS"
+        value: "https://localhost:2379"
   - name: etcd
     image: {{ .Image }}
     command:
@@ -89,6 +152,9 @@ spec:
   - operator: "Exists"
   restartPolicy: Always
   volumes:
+  - name: static-pod
+    hostPath:
+      path: /etc/kubernetes/manifests
   - name: certs
     hostPath:
       path: /etc/kubernetes/static-pod-resources/etcd-member
