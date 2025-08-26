@@ -2,21 +2,15 @@ package externaletcdsupportcontroller
 
 import (
 	"context"
-	"fmt"
-	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/testutils"
+	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/stretchr/testify/require"
-
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -24,21 +18,50 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/clock"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/cluster-etcd-operator/pkg/testutils"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/status"
 )
 
 const etcdPullSpec = "etcd-pull-spec"
 const operatorPullSpec = "operator-pull-spec"
 
+type mockClusterStatus struct {
+	isDualReplicaTopology bool
+	isBootstrapCompleted  bool
+	isReadyForEtcdRemoval bool
+}
+
+func (m *mockClusterStatus) IsDualReplicaTopology() bool {
+	return m.isDualReplicaTopology
+}
+
+func (m *mockClusterStatus) IsBootstrapCompleted() bool {
+	return m.isBootstrapCompleted
+}
+
+func (m *mockClusterStatus) IsReadyForEtcdRemoval() bool {
+	return m.isReadyForEtcdRemoval
+}
+
+func (m *mockClusterStatus) SetBootstrapCompleted() {
+	m.isBootstrapCompleted = true
+}
+
 func TestExternalEtcdSupportController(t *testing.T) {
 	scenarios := []struct {
-		name                      string
-		objects                   []runtime.Object
-		staticPodStatus           *operatorv1.StaticPodOperatorStatus
-		enableExternalEtcdSupport bool
-		expectedErr               error
+		name                    string
+		objects                 []runtime.Object
+		staticPodStatus         *operatorv1.StaticPodOperatorStatus
+		clusterStatus           status.ClusterStatus
+		expectedConfigMapExists bool
+		expectedErr             error
 	}{
 		{
-			name: "DisabledExternalEtcdSupport",
+			name: "Not on dual replica topology",
 			objects: []runtime.Object{
 				testutils.BootstrapConfigMap(testutils.WithBootstrapStatus("complete")),
 			},
@@ -48,11 +71,16 @@ func TestExternalEtcdSupportController(t *testing.T) {
 				testutils.WithNodeStatusAtCurrentRevision(3),
 				testutils.WithNodeStatusAtCurrentRevision(3),
 			),
-			enableExternalEtcdSupport: false,
-			expectedErr:               nil,
+			clusterStatus: &mockClusterStatus{
+				isDualReplicaTopology: false,
+				isBootstrapCompleted:  false,
+				isReadyForEtcdRemoval: false,
+			},
+			expectedConfigMapExists: false,
+			expectedErr:             nil,
 		},
 		{
-			name: "EnabledExternalEtcdSupport",
+			name: "Dual replica but bootstrap not completed",
 			objects: []runtime.Object{
 				testutils.BootstrapConfigMap(testutils.WithBootstrapStatus("complete")),
 			},
@@ -62,14 +90,38 @@ func TestExternalEtcdSupportController(t *testing.T) {
 				testutils.WithNodeStatusAtCurrentRevision(3),
 				testutils.WithNodeStatusAtCurrentRevision(3),
 			),
-			enableExternalEtcdSupport: true,
-			expectedErr:               nil,
+			clusterStatus: &mockClusterStatus{
+				isDualReplicaTopology: true,
+				isBootstrapCompleted:  false,
+				isReadyForEtcdRemoval: false,
+			},
+			expectedConfigMapExists: false,
+			expectedErr:             nil,
+		},
+		{
+			name: "Dual replica and bootstrap completed",
+			objects: []runtime.Object{
+				testutils.BootstrapConfigMap(testutils.WithBootstrapStatus("complete")),
+			},
+			staticPodStatus: testutils.StaticPodOperatorStatus(
+				testutils.WithLatestRevision(3),
+				testutils.WithNodeStatusAtCurrentRevision(3),
+				testutils.WithNodeStatusAtCurrentRevision(3),
+				testutils.WithNodeStatusAtCurrentRevision(3),
+			),
+			clusterStatus: &mockClusterStatus{
+				isDualReplicaTopology: true,
+				isBootstrapCompleted:  true,
+				isReadyForEtcdRemoval: false,
+			},
+			expectedConfigMapExists: true,
+			expectedErr:             nil,
 		},
 	}
 
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
-			eventRecorder, _, controller, fakeKubeClient := getController(t, scenario.staticPodStatus, scenario.objects, scenario.enableExternalEtcdSupport)
+			eventRecorder, _, controller, fakeKubeClient := getController(t, scenario.staticPodStatus, scenario.objects, scenario.clusterStatus)
 			err := controller.sync(context.TODO(), factory.NewSyncContext("test", eventRecorder))
 			require.Equal(t, scenario.expectedErr, err)
 
@@ -78,11 +130,12 @@ func TestExternalEtcdSupportController(t *testing.T) {
 			}
 
 			etcdPodCM, err := fakeKubeClient.CoreV1().ConfigMaps(operatorclient.TargetNamespace).Get(context.TODO(), "external-etcd-pod", metav1.GetOptions{})
-			if !scenario.enableExternalEtcdSupport {
+			if !scenario.expectedConfigMapExists {
 				require.Error(t, err)
 				return
 			}
 
+			require.NoError(t, err)
 			podYaml := etcdPodCM.Data["pod.yaml"]
 			pod := &corev1.Pod{}
 			_, _, err = scheme.Codecs.UniversalDeserializer().Decode([]byte(podYaml), nil, pod)
@@ -99,14 +152,11 @@ func getController(
 	t *testing.T,
 	staticPodStatus *operatorv1.StaticPodOperatorStatus,
 	objects []runtime.Object,
-	useExternalEtcdSupport bool) (events.Recorder, v1helpers.StaticPodOperatorClient, *ExternalEtcdEnablerController, *fake.Clientset) {
+	clusterStatus status.ClusterStatus) (events.Recorder, v1helpers.StaticPodOperatorClient, *ExternalEtcdEnablerController, *fake.Clientset) {
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 		&operatorv1.StaticPodOperatorSpec{
 			OperatorSpec: operatorv1.OperatorSpec{
 				ManagementState: operatorv1.Managed,
-				UnsupportedConfigOverrides: runtime.RawExtension{
-					Raw: []byte(fmt.Sprintf(`{"useExternalEtcdSupport": "%t"}`, useExternalEtcdSupport)),
-				},
 			},
 		},
 		staticPodStatus,
@@ -155,13 +205,14 @@ func getController(
 	}))
 
 	controller := &ExternalEtcdEnablerController{
-		operatorClient:        fakeOperatorClient,
-		targetImagePullSpec:   etcdPullSpec,
-		operatorImagePullSpec: operatorPullSpec,
-		envVarGetter:          envVar,
-		kubeClient:            fakeKubeClient,
-		enqueueFn:             func() {},
-		etcdLister:            operatorv1listers.NewEtcdLister(etcdIndexer),
+		operatorClient:           fakeOperatorClient,
+		targetImagePullSpec:      etcdPullSpec,
+		operatorImagePullSpec:    operatorPullSpec,
+		envVarGetter:             envVar,
+		kubeClient:               fakeKubeClient,
+		enqueueFn:                func() {},
+		etcdLister:               operatorv1listers.NewEtcdLister(etcdIndexer),
+		dualReplicaClusterStatus: clusterStatus,
 	}
 	return eventRecorder, fakeOperatorClient, controller, fakeKubeClient
 }

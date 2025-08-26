@@ -7,24 +7,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openshift/cluster-etcd-operator/bindata"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
-
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/version"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
-
 	corev1 "k8s.io/api/core/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -32,13 +23,23 @@ import (
 	"k8s.io/client-go/kubernetes"
 	coreclientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/klog/v2"
+
+	"github.com/openshift/cluster-etcd-operator/bindata"
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/status"
+	"github.com/openshift/cluster-etcd-operator/pkg/version"
 )
 
 type TargetConfigController struct {
 	targetImagePullSpec   string
 	operatorImagePullSpec string
 
-	operatorClient v1helpers.StaticPodOperatorClient
+	operatorClient           v1helpers.StaticPodOperatorClient
+	dualReplicaClusterStatus status.ClusterStatus
 
 	kubeClient   kubernetes.Interface
 	envVarGetter etcdenvvar.EnvVar
@@ -51,6 +52,7 @@ func NewTargetConfigController(
 	livenessChecker *health.MultiAlivenessChecker,
 	targetImagePullSpec, operatorImagePullSpec string,
 	operatorClient v1helpers.StaticPodOperatorClient,
+	dualReplicaClusterStatus status.ClusterStatus,
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	infrastructureInformer configv1informers.InfrastructureInformer,
@@ -65,10 +67,11 @@ func NewTargetConfigController(
 		targetImagePullSpec:   targetImagePullSpec,
 		operatorImagePullSpec: operatorImagePullSpec,
 
-		operatorClient: operatorClient,
-		kubeClient:     kubeClient,
-		envVarGetter:   envVarGetter,
-		etcdLister:     etcdsInformer.Lister(),
+		operatorClient:           operatorClient,
+		dualReplicaClusterStatus: dualReplicaClusterStatus,
+		kubeClient:               kubeClient,
+		envVarGetter:             envVarGetter,
+		etcdLister:               etcdsInformer.Lister(),
 	}
 
 	syncCtx := factory.NewSyncContext("TargetConfigController", eventRecorder.WithComponentSuffix("target-config-controller"))
@@ -89,6 +92,7 @@ func NewTargetConfigController(
 			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer(),
 			kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer(),
 			kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer(),
+			kubeInformersForOpenshiftEtcdNamespace.Batch().V1().Jobs().Informer(),
 			masterNodeInformer,
 			infrastructureInformer.Informer(),
 			networkInformer.Informer(),
@@ -113,7 +117,22 @@ func (c *TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncC
 		return err
 	}
 
-	err = c.createTargetConfig(ctx, syncCtx.Recorder(), operatorSpec, envVars, etcd)
+	// Check status of dual replica cluster aka Two Node Fencing
+	shouldRemoveEtcdContainer := false
+	if c.dualReplicaClusterStatus.IsDualReplicaTopology() {
+		if c.dualReplicaClusterStatus.IsBootstrapCompleted() && !c.dualReplicaClusterStatus.IsReadyForEtcdRemoval() {
+			// This means we are on a TNF cluster, and bootstrapping completed, but TNF setup job is not ready yet.
+			// Since this can happen during a CEO update, when pacemaker is already running the etcd container,
+			// but TNF jobs were recreated and not ready yet, we should not continue here,
+			// in order to prevent re-adding CEO's etcd container.
+			klog.Infof("Dual replica cluster is in bootstrap completed state, but TNF setup job is not ready yet. Requeue in 5 seconds.")
+			syncCtx.Queue().AddAfter(syncCtx.QueueKey(), 5*time.Second)
+			return nil
+		}
+		shouldRemoveEtcdContainer = c.dualReplicaClusterStatus.IsReadyForEtcdRemoval()
+	}
+
+	err = c.createTargetConfig(ctx, syncCtx.Recorder(), operatorSpec, envVars, etcd, shouldRemoveEtcdContainer)
 	if err != nil {
 		condition := operatorv1.OperatorCondition{
 			Type:    "TargetConfigControllerDegraded",
@@ -149,7 +168,8 @@ func (c *TargetConfigController) createTargetConfig(
 	recorder events.Recorder,
 	operatorSpec *operatorv1.StaticPodOperatorSpec,
 	envVars map[string]string,
-	etcd *operatorv1.Etcd) error {
+	etcd *operatorv1.Etcd,
+	shouldRemoveEtcdContainer bool) error {
 
 	var errs error
 	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars)
@@ -157,7 +177,7 @@ func (c *TargetConfigController) createTargetConfig(
 		return err
 	}
 
-	podSub, err := ceohelpers.GetPodSubstitution(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars, etcd)
+	podSub, err := ceohelpers.GetPodSubstitution(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars, etcd, shouldRemoveEtcdContainer)
 	if err != nil {
 		return err
 	}

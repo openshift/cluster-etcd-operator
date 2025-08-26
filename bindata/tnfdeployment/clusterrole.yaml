@@ -14,6 +14,22 @@ rules:
       - list
       - watch
   - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - batch
+    resources:
+      - jobs/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
       - operator.openshift.io
     resources:
       - etcds

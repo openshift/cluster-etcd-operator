@@ -2,48 +2,29 @@ package etcd
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/jobs"
 )
 
-// RemoveStaticContainer removes the CEO managed etcd container
-func RemoveStaticContainer(ctx context.Context, operatorClient operatorversionedclient.Interface) error {
-	klog.Info("Checking etcd operator")
+// RemoveStaticContainer informs CEO to remove its etcd container
+func RemoveStaticContainer(ctx context.Context, operatorClient operatorversionedclient.Interface, kubeClient kubernetes.Interface) error {
+	klog.Info("Signaling CEO that TNF setup is ready for etcd container removal")
 
-	etcd, err := operatorClient.OperatorV1().Etcds().Get(ctx, "cluster", metav1.GetOptions{})
+	// Set the job status condition as signal to CEO
+	err := jobs.SetTNFReadyForEtcdContainerRemoval(ctx, kubeClient)
 	if err != nil {
-		klog.Error(err, "Failed to get Etcd")
+		klog.Errorf("Failed to set TNF ready condition: %v", err)
 		return err
 	}
 
-	if !strings.Contains(etcd.Spec.UnsupportedConfigOverrides.String(), "useExternalEtcdSupport") {
-		klog.Info("Patching Etcd")
-		oldOverrides := etcd.Spec.UnsupportedConfigOverrides.Raw
-		newOverrides, err := tools.AddToRawJson(oldOverrides, "useUnsupportedUnsafeEtcdContainerRemoval", true)
-		newOverrides, err = tools.AddToRawJson(newOverrides, "useExternalEtcdSupport", true)
-		if err != nil {
-			klog.Error(err, "Failed to add useUnsupportedUnsafeEtcdContainerRemoval and useExternalEtcdSupport override to Etcd")
-			return err
-		}
-		etcd.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-			Raw: newOverrides,
-		}
-
-		etcd, err = operatorClient.OperatorV1().Etcds().Update(ctx, etcd, metav1.UpdateOptions{})
-		if err != nil {
-			klog.Error(err, "Failed to update Etcd")
-			return err
-		}
-	}
-
+	// Wait for CEO to respond by removing static containers
 	err = waitForStaticContainerRemoved(ctx, operatorClient)
 	if err != nil {
 		klog.Error(err, "Failed to wait for Etcd container removal")
@@ -78,5 +59,4 @@ func waitForStaticContainerRemoved(ctx context.Context, operatorClient operatorv
 
 	err := wait.PollUntilContextTimeout(ctx, 10*time.Second, 10*time.Minute, true, isRemoved)
 	return err
-
 }

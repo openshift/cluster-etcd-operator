@@ -4,19 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
-	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
 	"time"
 
 	"github.com/ghodss/yaml"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
-	"github.com/openshift/cluster-etcd-operator/bindata"
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/version"
+	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
+	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -28,17 +22,25 @@ import (
 	coreclientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+
+	"github.com/openshift/cluster-etcd-operator/bindata"
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/status"
+	"github.com/openshift/cluster-etcd-operator/pkg/version"
 )
 
 type ExternalEtcdEnablerController struct {
 	operatorClient v1helpers.StaticPodOperatorClient
 
-	targetImagePullSpec   string
-	operatorImagePullSpec string
-	envVarGetter          etcdenvvar.EnvVar
-	etcdLister            operatorv1listers.EtcdLister
-
-	kubeClient kubernetes.Interface
+	targetImagePullSpec      string
+	operatorImagePullSpec    string
+	envVarGetter             etcdenvvar.EnvVar
+	etcdLister               operatorv1listers.EtcdLister
+	dualReplicaClusterStatus status.ClusterStatus
+	kubeClient               kubernetes.Interface
 
 	enqueueFn func()
 }
@@ -54,15 +56,17 @@ func NewExternalEtcdEnablerController(
 	masterNodeInformer cache.SharedIndexInformer,
 	etcdsInformer operatorv1informers.EtcdInformer,
 	kubeClient kubernetes.Interface,
-	eventRecorder events.Recorder) factory.Controller {
+	eventRecorder events.Recorder,
+	dualReplicaClusterStatus status.ClusterStatus) factory.Controller {
 
 	c := &ExternalEtcdEnablerController{
-		operatorClient:        operatorClient,
-		targetImagePullSpec:   targetImagePullSpec,
-		operatorImagePullSpec: operatorImagePullSpec,
-		envVarGetter:          envVarGetter,
-		kubeClient:            kubeClient,
-		etcdLister:            etcdsInformer.Lister(),
+		operatorClient:           operatorClient,
+		targetImagePullSpec:      targetImagePullSpec,
+		operatorImagePullSpec:    operatorImagePullSpec,
+		envVarGetter:             envVarGetter,
+		kubeClient:               kubeClient,
+		etcdLister:               etcdsInformer.Lister(),
+		dualReplicaClusterStatus: dualReplicaClusterStatus,
 	}
 	syncCtx := factory.NewSyncContext("ExternalEtcdSupportController", eventRecorder.WithComponentSuffix("external-etcd-support-controller"))
 	c.enqueueFn = func() {
@@ -80,6 +84,7 @@ func NewExternalEtcdEnablerController(
 			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer(),
 			kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer(),
 			kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer(),
+			kubeInformersForOpenshiftEtcdNamespace.Batch().V1().Jobs().Informer(),
 			masterNodeInformer,
 			infrastructureInformer.Informer(),
 			networkInformer.Informer(),
@@ -105,7 +110,10 @@ func (c *ExternalEtcdEnablerController) sync(ctx context.Context, syncCtx factor
 		return err
 	}
 
-	podSub, _ := ceohelpers.GetPodSubstitution(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars, etcd)
+	podSub, err := ceohelpers.GetPodSubstitution(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars, etcd, true)
+	if err != nil {
+		return err
+	}
 
 	_, _, err = c.supportExternalEtcdOnlyPod(ctx, podSub, c.kubeClient.CoreV1(), syncCtx.Recorder(), operatorSpec)
 	if err != nil {
@@ -156,11 +164,9 @@ func (c *ExternalEtcdEnablerController) supportExternalEtcdOnlyPod(
 	podConfigMap.Data["forceRedeploymentReason"] = operatorSpec.ForceRedeploymentReason
 	podConfigMap.Data["version"] = version.Get().String()
 
-	enabled, err := ceohelpers.IsExternalEtcdSupport(operatorSpec)
-	if err != nil {
-		return nil, false, fmt.Errorf("could not determine useExternalEtcdSupport config override: %w", err)
-	}
-	if !enabled {
+	// we can prepare the external etcd support already while TNF setup is still running
+	supportExternalEtcd := c.dualReplicaClusterStatus.IsBootstrapCompleted()
+	if !supportExternalEtcd {
 		klog.V(4).Infof("external etcd support is disabled: deleting configmap")
 		return resourceapply.DeleteConfigMap(ctx, client, recorder, podConfigMap)
 	}

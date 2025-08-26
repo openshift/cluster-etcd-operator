@@ -2,10 +2,11 @@ package operator
 
 import (
 	"context"
-	"github.com/stretchr/testify/require"
 	"maps"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -51,46 +52,59 @@ type args struct {
 	etcdInformer               operatorv1informers.EtcdInformer
 	kubeClient                 kubernetes.Interface
 	dynamicClient              dynamic.Interface
+	handler                    *DualReplicaClusterHandler
+	handlerInitErr             error
 }
 
 func TestHandleDualReplicaClusters(t *testing.T) {
 	tests := []struct {
-		name        string
-		args        args
-		wantStarted bool
-		wantErr     bool
+		name               string
+		args               args
+		wantHandlerInitErr bool
+		wantStarted        bool
+		wantErr            bool
 	}{
 		{
-			name:        "Normal cluster",
-			args:        getArgs(t, false, false),
-			wantStarted: false,
-			wantErr:     false,
+			name:               "Normal cluster",
+			args:               getArgs(t, false, false),
+			wantHandlerInitErr: false,
+			wantStarted:        false,
+			wantErr:            false,
 		},
 		{
-			name:        "Dual replica topology without feature gate",
-			args:        getArgs(t, true, false),
-			wantStarted: false,
-			wantErr:     true,
+			name:               "Dual replica topology without feature gate",
+			args:               getArgs(t, true, false),
+			wantHandlerInitErr: true,
+			wantStarted:        false,
+			wantErr:            false,
 		},
 		{
-			name:        "Dual replica feature gate without topology",
-			args:        getArgs(t, false, true),
-			wantStarted: false,
-			wantErr:     false,
+			name:               "Dual replica feature gate without topology",
+			args:               getArgs(t, false, true),
+			wantHandlerInitErr: false,
+			wantStarted:        false,
+			wantErr:            false,
 		},
 		{
-			name:        "Dual replica topology with feature gate",
-			args:        getArgs(t, true, true),
-			wantStarted: true,
-			wantErr:     false,
+			name:               "Dual replica topology with feature gate",
+			args:               getArgs(t, true, true),
+			wantHandlerInitErr: false,
+			wantStarted:        true,
+			wantErr:            false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			started, err := HandleDualReplicaClusters(
-				tt.args.ctx,
+
+			if tt.wantHandlerInitErr && tt.args.handlerInitErr == nil || !tt.wantHandlerInitErr && tt.args.handlerInitErr != nil {
+				t.Errorf("NewDualReplicaClusterHandler handlerInitErr = %v, wantHandlerInitErr %v", tt.args.handlerInitErr, tt.wantHandlerInitErr)
+			}
+			if tt.wantHandlerInitErr {
+				return
+			}
+
+			started, err := tt.args.handler.HandleDualReplicaClusters(
 				tt.args.controllerContext,
-				tt.args.featureGateAccessor,
 				tt.args.configInformers,
 				tt.args.operatorClient,
 				tt.args.envVarGetter,
@@ -195,6 +209,15 @@ func getArgs(t *testing.T, dualReplicaControlPlaneEnabled, dualReplicaFeatureGat
 		}
 	}
 
+	// Create the DualReplicaClusterHandler
+	handler, handlerErr := NewDualReplicaClusterHandler(
+		context.Background(),
+		fakeOperatorClient,
+		fakeKubeClient,
+		fga,
+		configInformers,
+	)
+
 	return args{
 		ctx: context.Background(),
 		controllerContext: &controllercmd.ControllerContext{
@@ -210,5 +233,7 @@ func getArgs(t *testing.T, dualReplicaControlPlaneEnabled, dualReplicaFeatureGat
 		etcdInformer:               etcdInformers.Operator().V1().Etcds(),
 		kubeClient:                 fakeKubeClient,
 		dynamicClient:              fakeDynamicClient,
+		handler:                    handler,
+		handlerInitErr:             handlerErr,
 	}
 }

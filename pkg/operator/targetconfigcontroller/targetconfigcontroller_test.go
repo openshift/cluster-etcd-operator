@@ -2,22 +2,23 @@ package targetconfigcontroller
 
 import (
 	"context"
-	"fmt"
+	"testing"
+
 	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
 	"k8s.io/client-go/kubernetes/scheme"
-	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -32,15 +33,40 @@ import (
 const etcdPullSpec = "etcd-pull-spec"
 const operatorPullSpec = "operator-pull-spec"
 
+// mockClusterStatus implements status.ClusterStatus for testing
+type mockClusterStatus struct {
+	isDualReplicaTopology bool
+	isBootstrapCompleted  bool
+	isReadyForEtcdRemoval bool
+}
+
+func (m *mockClusterStatus) IsDualReplicaTopology() bool {
+	return m.isDualReplicaTopology
+}
+
+func (m *mockClusterStatus) IsBootstrapCompleted() bool {
+	return m.isBootstrapCompleted
+}
+
+func (m *mockClusterStatus) IsReadyForEtcdRemoval() bool {
+	return m.isReadyForEtcdRemoval
+}
+
+func (m *mockClusterStatus) SetBootstrapCompleted() {
+	m.isBootstrapCompleted = true
+}
+
 func TestTargetConfigController(t *testing.T) {
 
 	scenarios := []struct {
-		name                   string
-		objects                []runtime.Object
-		staticPodStatus        *operatorv1.StaticPodOperatorStatus
-		etcdMembers            []*etcdserverpb.Member
-		enableContainerRemoval bool
-		expectedErr            error
+		name                         string
+		objects                      []runtime.Object
+		staticPodStatus              *operatorv1.StaticPodOperatorStatus
+		etcdMembers                  []*etcdserverpb.Member
+		dualReplicaStatus            *mockClusterStatus
+		expectedSyncSkipped          bool
+		expectedEtcdContainerRemoved bool
+		expectedErr                  error
 	}{
 		{
 			name: "HappyPath",
@@ -58,6 +84,7 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(1),
 				u.FakeEtcdMemberWithoutServer(2),
 			},
+			dualReplicaStatus: &mockClusterStatus{},
 		},
 		{
 			name: "Quorum not fault tolerant but bootstrapping",
@@ -74,6 +101,7 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(0),
 				u.FakeEtcdMemberWithoutServer(2),
 			},
+			dualReplicaStatus: &mockClusterStatus{},
 		},
 		{
 			name: "BackupVar Test HappyPath",
@@ -91,6 +119,7 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(1),
 				u.FakeEtcdMemberWithoutServer(2),
 			},
+			dualReplicaStatus: &mockClusterStatus{},
 		},
 		{
 			name: "Backup Var Test with empty spec",
@@ -108,9 +137,10 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(1),
 				u.FakeEtcdMemberWithoutServer(2),
 			},
+			dualReplicaStatus: &mockClusterStatus{},
 		},
 		{
-			name: "Container Removed",
+			name: "Dual Replica Cluster - Topology Enabled",
 			objects: []runtime.Object{
 				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
 			},
@@ -118,19 +148,60 @@ func TestTargetConfigController(t *testing.T) {
 				u.WithLatestRevision(3),
 				u.WithNodeStatusAtCurrentRevision(3),
 				u.WithNodeStatusAtCurrentRevision(3),
+			),
+			etcdMembers: []*etcdserverpb.Member{
+				u.FakeEtcdMemberWithoutServer(0),
+				u.FakeEtcdMemberWithoutServer(1),
+			},
+			dualReplicaStatus: &mockClusterStatus{
+				isDualReplicaTopology: true,
+			},
+		},
+		{
+			name: "Dual Replica Cluster - Bootstrap Completed but Not Ready",
+			objects: []runtime.Object{
+				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
+			},
+			staticPodStatus: u.StaticPodOperatorStatus(
+				u.WithLatestRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
 				u.WithNodeStatusAtCurrentRevision(3),
 			),
 			etcdMembers: []*etcdserverpb.Member{
 				u.FakeEtcdMemberWithoutServer(0),
 				u.FakeEtcdMemberWithoutServer(1),
-				u.FakeEtcdMemberWithoutServer(2),
 			},
-			enableContainerRemoval: true,
+			dualReplicaStatus: &mockClusterStatus{
+				isDualReplicaTopology: true,
+				isBootstrapCompleted:  true,
+			},
+			expectedSyncSkipped: true,
+		},
+		{
+			name: "Dual Replica Cluster - Ready for Etcd Removal",
+			objects: []runtime.Object{
+				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
+			},
+			staticPodStatus: u.StaticPodOperatorStatus(
+				u.WithLatestRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+			),
+			etcdMembers: []*etcdserverpb.Member{
+				u.FakeEtcdMemberWithoutServer(0),
+				u.FakeEtcdMemberWithoutServer(1),
+			},
+			dualReplicaStatus: &mockClusterStatus{
+				isDualReplicaTopology: true,
+				isBootstrapCompleted:  true,
+				isReadyForEtcdRemoval: true,
+			},
+			expectedEtcdContainerRemoved: true,
 		},
 	}
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
-			eventRecorder, _, controller, fakeKubeClient := getController(t, scenario.staticPodStatus, scenario.objects, scenario.enableContainerRemoval)
+			eventRecorder, _, controller, fakeKubeClient := getController(t, scenario.staticPodStatus, scenario.objects, scenario.dualReplicaStatus)
 			err := controller.sync(context.TODO(), factory.NewSyncContext("test", eventRecorder))
 			require.Equal(t, scenario.expectedErr, err)
 
@@ -139,6 +210,10 @@ func TestTargetConfigController(t *testing.T) {
 			}
 
 			etcdPodCM, err := fakeKubeClient.CoreV1().ConfigMaps(operatorclient.TargetNamespace).Get(context.TODO(), "etcd-pod", metav1.GetOptions{})
+			if scenario.expectedSyncSkipped {
+				require.ErrorContains(t, err, "not found")
+				return
+			}
 			require.NoError(t, err)
 
 			podYaml := etcdPodCM.Data["pod.yaml"]
@@ -187,7 +262,7 @@ func TestTargetConfigController(t *testing.T) {
 				}
 			}
 
-			require.Equal(t, !scenario.enableContainerRemoval, etcdContainerFound)
+			require.Equal(t, scenario.expectedEtcdContainerRemoved, !etcdContainerFound)
 		})
 	}
 }
@@ -196,14 +271,11 @@ func getController(
 	t *testing.T,
 	staticPodStatus *operatorv1.StaticPodOperatorStatus,
 	objects []runtime.Object,
-	enabledContainerRemoval bool) (events.Recorder, v1helpers.StaticPodOperatorClient, *TargetConfigController, *fake.Clientset) {
+	dualReplicaStatus *mockClusterStatus) (events.Recorder, v1helpers.StaticPodOperatorClient, *TargetConfigController, *fake.Clientset) {
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 		&operatorv1.StaticPodOperatorSpec{
 			OperatorSpec: operatorv1.OperatorSpec{
 				ManagementState: operatorv1.Managed,
-				UnsupportedConfigOverrides: runtime.RawExtension{
-					Raw: []byte(fmt.Sprintf(`{"useUnsupportedUnsafeEtcdContainerRemoval": "%t"}`, enabledContainerRemoval)),
-				},
 			},
 		},
 		staticPodStatus,
@@ -251,13 +323,14 @@ func getController(
 	}))
 
 	controller := &TargetConfigController{
-		targetImagePullSpec:   etcdPullSpec,
-		operatorImagePullSpec: operatorPullSpec,
-		operatorClient:        fakeOperatorClient,
-		kubeClient:            fakeKubeClient,
-		envVarGetter:          envVar,
-		enqueueFn:             func() {},
-		etcdLister:            operatorv1listers.NewEtcdLister(etcdIndexer),
+		targetImagePullSpec:      etcdPullSpec,
+		operatorImagePullSpec:    operatorPullSpec,
+		operatorClient:           fakeOperatorClient,
+		dualReplicaClusterStatus: dualReplicaStatus,
+		kubeClient:               fakeKubeClient,
+		envVarGetter:             envVar,
+		enqueueFn:                func() {},
+		etcdLister:               operatorv1listers.NewEtcdLister(etcdIndexer),
 	}
 
 	return eventRecorder, fakeOperatorClient, controller, fakeKubeClient

@@ -119,8 +119,8 @@ func RunTnfSetup() error {
 		time.Sleep(5 * time.Second)
 	}
 
-	// remove CEO managed etcd container
-	err = etcd.RemoveStaticContainer(ctx, operatorConfigClient)
+	// Signal CEO that TNF setup is ready for etcd container removal
+	err = etcd.RemoveStaticContainer(ctx, operatorConfigClient, kubeClient)
 	if err != nil {
 		return err
 	}

@@ -278,11 +278,44 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorClient,
 		cachedMemberClient)
 
+	// the configInformer has to be started before using the featureGateAccessor
+	configInformers.Start(ctx.Done())
+	configInformers.WaitForCacheSync(ctx.Done())
+	go featureGateAccessor.Run(ctx)
+
+	select {
+	case <-featureGateAccessor.InitialFeatureGatesObserved():
+		features, err := featureGateAccessor.CurrentFeatureGates()
+		if err != nil {
+			return fmt.Errorf("could not find FeatureGates, aborting controller start: %w", err)
+		}
+
+		enabled, disabled := getEnabledDisabledFeatures(features)
+		klog.Info("FeatureGates initialized", "enabled", enabled, "disabled", disabled)
+	case <-time.After(1 * time.Minute):
+		return fmt.Errorf("timed out waiting for FeatureGate detection, aborting controller start")
+	}
+
+	// we need the dynamic informers to be started before the using dualReplicaClusterHandler
+	// for being able to use the operator client
+	dynamicInformers.Start(ctx.Done())
+	dynamicInformers.WaitForCacheSync(ctx.Done())
+	// for the job informer we also need the kubeInformersForNamespaces to be started
+	kubeInformersForNamespaces.Start(ctx.Done())
+	kubeInformersForNamespaces.WaitForCacheSync(ctx.Done())
+	// the dualReplicaClusterHandler is needed for the targetConfigReconciler for correct handling
+	// of CEO's etcd container
+	dualReplicaClusterHandler, err := tnf.NewDualReplicaClusterHandler(ctx, operatorClient, kubeClient, featureGateAccessor, configInformers)
+	if err != nil {
+		return fmt.Errorf("could not start dualReplicaClusterHandler, aborting controller start: %w", err)
+	}
+
 	targetConfigReconciler := targetconfigcontroller.NewTargetConfigController(
 		AlivenessChecker,
 		os.Getenv("IMAGE"),
 		os.Getenv("OPERATOR_IMAGE"),
 		operatorClient,
+		dualReplicaClusterHandler.GetClusterStatus(),
 		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Infrastructures(),
@@ -395,23 +428,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	).Inertia)
 
 	coreClient := kubeClient
-
-	// the configInformer has to run before the machine and backup feature checks
-	configInformers.Start(ctx.Done())
-	go featureGateAccessor.Run(ctx)
-
-	select {
-	case <-featureGateAccessor.InitialFeatureGatesObserved():
-		features, err := featureGateAccessor.CurrentFeatureGates()
-		if err != nil {
-			return fmt.Errorf("could not find FeatureGates, aborting controller start: %w", err)
-		}
-
-		enabled, disabled := getEnabledDisabledFeatures(features)
-		klog.Info("FeatureGates initialized", "enabled", enabled, "disabled", disabled)
-	case <-time.After(1 * time.Minute):
-		return fmt.Errorf("timed out waiting for FeatureGate detection, aborting controller start")
-	}
 
 	etcdCertSignerController, err := etcdcertsigner.NewEtcdCertSignerController(
 		AlivenessChecker,
@@ -614,15 +630,24 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		clusterMemberControllerInformers...,
 	)
 
-	_, err = tnf.HandleDualReplicaClusters(ctx, controllerContext, featureGateAccessor, configInformers, operatorClient,
-		envVarController, kubeInformersForNamespaces, networkInformer, controlPlaneNodeInformer, etcdsInformer,
-		kubeClient, dynamicClient)
+	_, err = dualReplicaClusterHandler.HandleDualReplicaClusters(
+		controllerContext,
+		configInformers,
+		operatorClient,
+		envVarController,
+		kubeInformersForNamespaces,
+		networkInformer,
+		controlPlaneNodeInformer,
+		etcdsInformer,
+		kubeClient,
+		dynamicClient)
 	if err != nil {
 		return err
 	}
 
 	go controlPlaneNodeInformer.Run(ctx.Done())
 	go etcdNamespaceInformer.Run(ctx.Done())
+	configInformers.Start(ctx.Done())
 	dynamicInformers.Start(ctx.Done())
 	operatorInformers.Start(ctx.Done())
 	clusterInformers.Start(ctx.Done())
