@@ -1102,6 +1102,16 @@ ${COMPUTED_ENV_VARS}
           --listen-peer-urls=https://${LISTEN_ON_ALL_IPS}:2380 \
           --metrics=extensive \
           --listen-metrics-urls=https://${LISTEN_ON_ALL_IPS}:9978 ||  mv /etc/kubernetes/etcd-backup-dir/etcd-member.yaml /etc/kubernetes/manifests
+    ports:
+      - containerPort: 2379
+        name: etcd
+        protocol: TCP
+      - containerPort: 2380
+        name: etcd-peer
+        protocol: TCP
+      - containerPort: 9978
+        name: etcd-metrics
+        protocol: TCP
     env:
 ${COMPUTED_ENV_VARS}
       - name: "ETCD_STATIC_POD_VERSION"
@@ -1174,6 +1184,10 @@ ${COMPUTED_ENV_VARS}
           --cacert /etc/kubernetes/static-pod-certs/configmaps/etcd-peer-client-ca/ca-bundle.crt \
           --trusted-ca-file /etc/kubernetes/static-pod-certs/configmaps/etcd-metrics-proxy-serving-ca/ca-bundle.crt \
           --listen-cipher-suites TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_AES_128_GCM_SHA256,TLS_AES_256_GCM_SHA384,TLS_CHACHA20_POLY1305_SHA256
+    ports:
+      - containerPort: 9979
+        name: proxy-metrics
+        protocol: TCP
     env:
 ${COMPUTED_ENV_VARS}
       - name: "ETCD_STATIC_POD_VERSION"
@@ -1654,10 +1668,18 @@ spec:
     - name: etcd
       port: 2379
       protocol: TCP
+    - name: etcd-peer
+      port: 2380
+      protocol: TCP
+    - name: grpc-proxy
+      port: 9978
+      protocol: TCP
     - name: etcd-metrics
       port: 9979
       protocol: TCP
-`)
+    - name: readyz-sidecar
+      port: 9980
+      protocol: TCP`)
 
 func etcdSvcYamlBytes() ([]byte, error) {
 	return _etcdSvcYaml, nil
