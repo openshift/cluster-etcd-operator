@@ -5,6 +5,22 @@ This sounds trivial, but has some surprising gotchas when using OpenShift.
 
 This doc gives a viable path to test large quotas, but without crashing your cluster.
 
+
+## Enabling the quota feature
+
+Currently, the quota is in tech preview mode, so you have to manually enable it via:
+
+```
+$ oc apply -f hack/featuregate_quota.yaml
+```
+
+The quota can then be set up to 32GiBs using:
+
+```
+$ oc patch etcd/cluster --type=merge -p '{"spec": {"backendQuotaGiB": 32}}' 
+```
+
+
 ## What doesn't work and why
 
 The main limitation to just create a bunch of objects in etcd is the 2GiB limit on sending and receiving data with
@@ -107,20 +123,6 @@ and then moving the static pod back again:
 ```
 $ sudo vi /etc/kubernetes/static-pod-resources/kube-controller-manager-pod-16/configmaps/config/config.yaml
 $ sudo mv kube-controller-manager-pod.yaml /etc/kubernetes/manifests/
-```
-
-## Enabling the quota feature
-
-Currently, the quota is in tech preview mode, so you have to manually enable it via:
-
-```
-$ oc apply -f hack/featuregate_quota.yaml
-```
-
-The quota can then be set up to 32GiBs using:
-
-```
-$ oc patch etcd/cluster --type=merge -p '{"spec": {"backendQuotaGiB": 32}}' 
 ```
 
 ## KubeBurner
