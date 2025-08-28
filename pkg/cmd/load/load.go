@@ -4,6 +4,10 @@ import (
 	"context"
 	goflag "flag"
 	"fmt"
+	"math/rand"
+	"strings"
+	"time"
+
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -15,9 +19,6 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/retry"
-	"math/rand"
-	"strings"
-	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -133,7 +134,8 @@ func (r *loadOpts) Run(ctx context.Context) error {
 					errors.IsTimeout(err) || strings.Contains(sErr, "etcdserver: request timed out") ||
 					strings.Contains(sErr, "unexpected EOF") ||
 					strings.Contains(sErr, "context deadline exceeded") ||
-					strings.Contains(sErr, "rpc error: code = Unavailable")
+					strings.Contains(sErr, "rpc error: code = Unavailable") ||
+					strings.Contains(sErr, "connection reset by peer")
 			}, func() error {
 				k := &unstructured.Unstructured{Object: map[string]interface{}{
 					"apiVersion": gvr.GroupVersion().String(),
