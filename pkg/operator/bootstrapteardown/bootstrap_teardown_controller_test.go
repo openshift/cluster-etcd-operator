@@ -262,11 +262,16 @@ func TestCanRemoveEtcdBootstrap(t *testing.T) {
 				etcdClient: fakeEtcdClient,
 			}
 
-			safeToRemoveBootstrap, hasBootstrap, bootstrapId, err := c.canRemoveEtcdBootstrap(context.TODO(), test.scalingStrategy)
+			safeToRemoveBootstrap, hasBootstrap, bootstrapMember, err := c.canRemoveEtcdBootstrap(context.TODO(), test.scalingStrategy)
 			require.NoError(t, err)
 			require.Equal(t, test.safeToRemove, safeToRemoveBootstrap, "safe to remove")
 			require.Equal(t, test.hasBootstrap, hasBootstrap, "has bootstrap")
-			require.Equal(t, test.bootstrapId, bootstrapId, "bootstrap id")
+			if test.hasBootstrap {
+				require.NotNil(t, bootstrapMember, "bootstrap member")
+				require.Equal(t, test.bootstrapId, bootstrapMember.ID, "bootstrap id")
+			} else {
+				require.Nil(t, bootstrapMember, "bootstrap member")
+			}
 		})
 	}
 }
@@ -387,7 +392,7 @@ func TestRemoveBootstrap(t *testing.T) {
 				fakeRecorder,
 			}
 
-			err = c.removeBootstrap(context.TODO(), test.safeToRemove, test.hasBootstrap, test.bootstrapId)
+			err = c.removeBootstrap(context.TODO(), test.safeToRemove, test.hasBootstrap, u.FakeEtcdMemberWithoutServer(int(test.bootstrapId)))
 			require.Equal(t, test.expectedErr, err)
 
 			if test.expEvents > 0 {
