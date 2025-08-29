@@ -409,6 +409,7 @@ spec:
     - mountPath: /tmp
       name: tmp-dir
   hostNetwork: true
+  priority: 2000001000
   priorityClassName: system-node-critical
   tolerations:
   - operator: "Exists"
