@@ -105,6 +105,14 @@ func (f *fakeEtcdClient) MemberRemove(ctx context.Context, memberID uint64) erro
 	return nil
 }
 
+func (f *fakeEtcdClient) MoveLeader(ctx context.Context, toMember uint64) error {
+	for _, status := range f.opts.status {
+		status.Leader = toMember
+	}
+
+	return nil
+}
+
 func (f *fakeEtcdClient) MemberHealth(ctx context.Context) (memberHealth, error) {
 	var healthy, unhealthy int
 	var memberHealth memberHealth
@@ -248,6 +256,14 @@ func WithFakeClusterHealth(members *FakeMemberHealth) FakeClientOption {
 func WithFakeStatus(status []*clientv3.StatusResponse) FakeClientOption {
 	return func(fo *FakeClientOptions) {
 		fo.status = status
+	}
+}
+
+func WithLeader(leader uint64) FakeClientOption {
+	return func(fo *FakeClientOptions) {
+		for _, status := range fo.status {
+			status.Leader = leader
+		}
 	}
 }
 

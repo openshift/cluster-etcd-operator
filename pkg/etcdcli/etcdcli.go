@@ -264,6 +264,20 @@ func (g *etcdClientGetter) MemberRemove(ctx context.Context, memberID uint64) er
 	return err
 }
 
+func (g *etcdClientGetter) MoveLeader(ctx context.Context, toMember uint64) error {
+	cli, err := g.clientPool.Get()
+	if err != nil {
+		return err
+	}
+
+	defer g.clientPool.Return(cli)
+
+	ctx, cancel := context.WithTimeout(ctx, DefaultClientTimeout)
+	defer cancel()
+	_, err = cli.MoveLeader(ctx, toMember)
+	return err
+}
+
 func (g *etcdClientGetter) MemberList(ctx context.Context) ([]*etcdserverpb.Member, error) {
 	cli, err := g.clientPool.Get()
 	if err != nil {
