@@ -170,8 +170,18 @@ func (f *fakeEtcdClient) HealthyVotingMembers(ctx context.Context) ([]*etcdserve
 	return filterVotingMembers(members), nil
 }
 
-func (f *fakeEtcdClient) MemberStatus(ctx context.Context, member *etcdserverpb.Member) string {
-	panic("implement me")
+func (f *fakeEtcdClient) MemberStatus(ctx context.Context, member *etcdserverpb.Member) (*clientv3.StatusResponse, error) {
+	// Find the status for this member
+	for _, status := range f.opts.status {
+		if status.Header != nil && status.Header.MemberId == member.ID {
+			return status, nil
+		}
+	}
+	// Return a default status if none found
+	return &clientv3.StatusResponse{
+		Header: &etcdserverpb.ResponseHeader{MemberId: member.ID},
+		Leader: member.ID, // Default to self as leader
+	}, nil
 }
 
 func (f *fakeEtcdClient) GetMember(ctx context.Context, name string) (*etcdserverpb.Member, error) {

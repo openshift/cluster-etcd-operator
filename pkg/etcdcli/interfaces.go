@@ -91,5 +91,6 @@ type UnhealthyMemberLister interface {
 }
 
 type MemberStatusChecker interface {
-	MemberStatus(ctx context.Context, member *etcdserverpb.Member) string
+	// MemberStatus will return the etcd status response for the given member
+	MemberStatus(ctx context.Context, member *etcdserverpb.Member) (*clientv3.StatusResponse, error)
 }
