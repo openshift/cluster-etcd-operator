@@ -264,6 +264,20 @@ func (g *etcdClientGetter) MemberRemove(ctx context.Context, memberID uint64) er
 	return err
 }
 
+func (g *etcdClientGetter) MoveLeader(ctx context.Context, toMember uint64) error {
+	cli, err := g.clientPool.Get()
+	if err != nil {
+		return err
+	}
+
+	defer g.clientPool.Return(cli)
+
+	ctx, cancel := context.WithTimeout(ctx, DefaultClientTimeout)
+	defer cancel()
+	_, err = cli.MoveLeader(ctx, toMember)
+	return err
+}
+
 func (g *etcdClientGetter) MemberList(ctx context.Context) ([]*etcdserverpb.Member, error) {
 	cli, err := g.clientPool.Get()
 	if err != nil {
@@ -443,26 +457,20 @@ func (g *etcdClientGetter) IsMemberHealthy(ctx context.Context, member *etcdserv
 	return false, nil
 }
 
-func (g *etcdClientGetter) MemberStatus(ctx context.Context, member *etcdserverpb.Member) string {
+func (g *etcdClientGetter) MemberStatus(ctx context.Context, member *etcdserverpb.Member) (*clientv3.StatusResponse, error) {
 	cli, err := g.clientPool.Get()
 	if err != nil {
-		klog.Errorf("error getting etcd client: %#v", err)
-		return EtcdMemberStatusUnknown
+		return nil, err
 	}
 	defer g.clientPool.Return(cli)
 
-	if len(member.ClientURLs) == 0 && member.Name == "" {
-		return EtcdMemberStatusNotStarted
+	if len(member.ClientURLs) == 0 {
+		return nil, fmt.Errorf("member has no etcd clientURLs")
 	}
 	ctx, cancel := context.WithTimeout(ctx, DefaultClientTimeout)
 	defer cancel()
-	_, err = cli.Status(ctx, member.ClientURLs[0])
-	if err != nil {
-		klog.Errorf("error getting etcd member %s status: %#v", member.Name, err)
-		return EtcdMemberStatusUnhealthy
-	}
 
-	return EtcdMemberStatusAvailable
+	return cli.Status(ctx, member.ClientURLs[0])
 }
 
 // Defragment creates a new uncached clientv3 to the given member url and calls clientv3.Client.Defragment.

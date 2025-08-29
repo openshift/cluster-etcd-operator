@@ -3,8 +3,10 @@ package bootstrapteardown
 import (
 	"context"
 	"fmt"
-	"k8s.io/client-go/tools/cache"
 	"time"
+
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
+	"k8s.io/client-go/tools/cache"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
@@ -68,12 +70,12 @@ func (c *BootstrapTeardownController) sync(ctx context.Context, _ factory.SyncCo
 		return fmt.Errorf("failed to get bootstrap scaling strategy: %w", err)
 	}
 	// checks the actual etcd cluster membership API if etcd-bootstrap exists
-	safeToRemoveBootstrap, hasBootstrap, bootstrapID, err := c.canRemoveEtcdBootstrap(ctx, scalingStrategy)
+	safeToRemoveBootstrap, hasBootstrap, bootstrapMember, err := c.canRemoveEtcdBootstrap(ctx, scalingStrategy)
 	if err != nil {
 		return fmt.Errorf("error while canRemoveEtcdBootstrap: %w", err)
 	}
 
-	err = c.removeBootstrap(timeoutCtx, safeToRemoveBootstrap, hasBootstrap, bootstrapID)
+	err = c.removeBootstrap(timeoutCtx, safeToRemoveBootstrap, hasBootstrap, bootstrapMember)
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "BootstrapTeardownDegraded",
@@ -96,7 +98,7 @@ func (c *BootstrapTeardownController) sync(ctx context.Context, _ factory.SyncCo
 	return updateErr
 }
 
-func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, safeToRemoveBootstrap bool, hasBootstrap bool, bootstrapID uint64) error {
+func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, safeToRemoveBootstrap bool, hasBootstrap bool, bootstrapMember *etcdserverpb.Member) error {
 	if !hasBootstrap {
 		klog.V(4).Infof("no bootstrap anymore setting removal status")
 		// this is to ensure the status is always set correctly, even if the status update below failed
@@ -120,6 +122,7 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, safeT
 		return nil
 	}
 
+	bootstrapID := bootstrapMember.ID
 	if !safeToRemoveBootstrap {
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdRunningInCluster",
@@ -173,57 +176,57 @@ func setSuccessfulBoostrapRemovalStatus(ctx context.Context, client v1helpers.St
 }
 
 // canRemoveEtcdBootstrap returns whether it is safe to remove bootstrap, whether bootstrap is in the list, and an error
-func (c *BootstrapTeardownController) canRemoveEtcdBootstrap(ctx context.Context, scalingStrategy ceohelpers.BootstrapScalingStrategy) (bool, bool, uint64, error) {
+func (c *BootstrapTeardownController) canRemoveEtcdBootstrap(ctx context.Context, scalingStrategy ceohelpers.BootstrapScalingStrategy) (bool, bool, *etcdserverpb.Member, error) {
 	members, err := c.etcdClient.MemberList(ctx)
 	if err != nil {
-		return false, false, 0, err
+		return false, false, nil, err
 	}
 
 	var hasBootstrap bool
-	var bootstrapMemberID uint64
+	var bootstrapMember *etcdserverpb.Member
 	for _, member := range members {
 		if member.Name == "etcd-bootstrap" {
 			hasBootstrap = true
-			bootstrapMemberID = member.ID
+			bootstrapMember = member
 			break
 		}
 	}
 	if !hasBootstrap {
-		return false, hasBootstrap, bootstrapMemberID, nil
+		return false, hasBootstrap, bootstrapMember, nil
 	}
 
 	// First, enforce the main HA invariants in terms of member counts.
 	switch scalingStrategy {
 	case ceohelpers.HAScalingStrategy:
 		if len(members) < 4 {
-			return false, hasBootstrap, bootstrapMemberID, nil
+			return false, hasBootstrap, bootstrapMember, nil
 		}
 	case ceohelpers.DelayedHAScalingStrategy, ceohelpers.TwoNodeScalingStrategy:
 		if len(members) < 3 {
-			return false, hasBootstrap, bootstrapMemberID, nil
+			return false, hasBootstrap, bootstrapMember, nil
 		}
 	case ceohelpers.UnsafeScalingStrategy, ceohelpers.DelayedTwoNodeScalingStrategy:
 		if len(members) < 2 {
-			return false, hasBootstrap, bootstrapMemberID, nil
+			return false, hasBootstrap, bootstrapMember, nil
 		}
 	}
 
 	// Next, given member counts are satisfied, check member health.
 	unhealthyMembers, err := c.etcdClient.UnhealthyMembers(ctx)
 	if err != nil {
-		return false, hasBootstrap, bootstrapMemberID, nil
+		return false, hasBootstrap, bootstrapMember, nil
 	}
 
 	// the etcd-bootstrap member is allowed to be unhealthy and can still be removed
 	switch {
 	case len(unhealthyMembers) == 0:
-		return true, hasBootstrap, bootstrapMemberID, nil
+		return true, hasBootstrap, bootstrapMember, nil
 	case len(unhealthyMembers) > 1:
-		return false, hasBootstrap, bootstrapMemberID, nil
+		return false, hasBootstrap, bootstrapMember, nil
 	default:
 		if unhealthyMembers[0].Name == "etcd-bootstrap" {
-			return true, true, unhealthyMembers[0].ID, nil
+			return true, true, unhealthyMembers[0], nil
 		}
-		return false, hasBootstrap, bootstrapMemberID, nil
+		return false, hasBootstrap, bootstrapMember, nil
 	}
 }
