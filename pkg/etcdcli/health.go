@@ -63,7 +63,12 @@ func GetMemberHealth(ctx context.Context, clipool *EtcdClientPool, etcdMembers [
 			}
 			defer clipool.Return(cli)
 
-			memberHealth[i] = checkSingleMemberHealth(ctx, cli, member)
+			// Create an independent timeout context for each member health check
+			// This prevents one slow member from affecting other members' health checks
+			memberCtx, cancel := context.WithTimeout(ctx, DefaultClientTimeout)
+			defer cancel()
+
+			memberHealth[i] = checkSingleMemberHealth(memberCtx, cli, member)
 		}(i)
 	}
 
