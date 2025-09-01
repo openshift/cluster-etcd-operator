@@ -102,9 +102,9 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, safeT
 	if !hasBootstrap {
 		klog.V(4).Infof("no bootstrap anymore setting removal status")
 		// this is to ensure the status is always set correctly, even if the status update below failed
-		updateErr := setSuccessfulBoostrapRemovalStatus(ctx, c.operatorClient)
+		updateErr := setSuccessfulBootstrapRemovalStatus(ctx, c.operatorClient)
 		if updateErr != nil {
-			return fmt.Errorf("error while setSuccessfulBoostrapRemovalStatus: %w", updateErr)
+			return fmt.Errorf("error while setSuccessfulBootstrapRemovalStatus: %w", updateErr)
 		}
 
 		// if the bootstrap isn't present, then clearly we're available enough to terminate. This avoids any risk of flapping.
@@ -162,10 +162,10 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, safeT
 	c.eventRecorder.Eventf("Bootstrap member removed", "successfully removed bootstrap member [%x]", bootstrapID)
 	// below might fail, since the member removal can cause some downtime for raft to settle on a quorum
 	// it's important that everything below is properly retried above during normal controller reconciliation
-	return setSuccessfulBoostrapRemovalStatus(ctx, c.operatorClient)
+	return setSuccessfulBootstrapRemovalStatus(ctx, c.operatorClient)
 }
 
-func setSuccessfulBoostrapRemovalStatus(ctx context.Context, client v1helpers.StaticPodOperatorClient) error {
+func setSuccessfulBootstrapRemovalStatus(ctx context.Context, client v1helpers.StaticPodOperatorClient) error {
 	_, _, updateErr := v1helpers.UpdateStatus(ctx, client, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 		Type:    "EtcdBootstrapMemberRemoved",
 		Status:  operatorv1.ConditionTrue,
