@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	clientv3 "go.etcd.io/etcd/client/v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
@@ -54,6 +55,13 @@ var (
 		Status:  "True",
 		Reason:  "EnoughEtcdMembers",
 		Message: "enough members found",
+	}
+
+	conditionBootstrapLeaderMoved = operatorv1.OperatorCondition{
+		Type:    "EtcdLeaderMovedAwayFromBootstrap",
+		Status:  "True",
+		Reason:  "BootstrapIsLeader",
+		Message: "bootstrap was leader and has been moved",
 	}
 
 	conditionEtcdMemberRemoved = operatorv1.OperatorCondition{
@@ -281,6 +289,7 @@ func TestRemoveBootstrap(t *testing.T) {
 	tests := map[string]struct {
 		safeToRemove       bool
 		hasBootstrap       bool
+		bootstrapIsLead    bool
 		bootstrapId        uint64
 		expectedConditions []operatorv1.OperatorCondition
 		indexerObjs        []interface{}
@@ -363,6 +372,21 @@ func TestRemoveBootstrap(t *testing.T) {
 			},
 			expEvents: 2,
 		},
+
+		"safe, has bootstrap, moving leader, not removing the bootstrap member": {
+			safeToRemove:    true,
+			hasBootstrap:    true,
+			bootstrapIsLead: true,
+			bootstrapId:     1,
+			expectedConditions: []operatorv1.OperatorCondition{
+				conditionEnoughEtcdMembers,
+				conditionBootstrapLeaderMoved,
+			},
+			indexerObjs: []interface{}{
+				bootstrapComplete,
+			},
+			expEvents: 0,
+		},
 	}
 
 	for name, test := range tests {
@@ -377,8 +401,22 @@ func TestRemoveBootstrap(t *testing.T) {
 			fakeConfigmapLister := corev1listers.NewConfigMapLister(indexer)
 			fakeInfraLister := configv1listers.NewInfrastructureLister(indexer)
 			fakeStaticPodClient := v1helpers.NewFakeStaticPodOperatorClient(&operatorv1.StaticPodOperatorSpec{}, &operatorv1.StaticPodOperatorStatus{}, nil, nil)
-			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient([]*etcdserverpb.Member{u.FakeEtcdBootstrapMember(1)})
+
+			leaderOpt := etcdcli.WithLeader(2)
+			if test.bootstrapIsLead {
+				leaderOpt = etcdcli.WithLeader(1)
+			}
+			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(
+				[]*etcdserverpb.Member{
+					u.FakeEtcdBootstrapMember(1),
+					u.FakeEtcdMemberWithoutServer(2),
+				},
+				etcdcli.WithFakeStatus([]*clientv3.StatusResponse{
+					{Header: &etcdserverpb.ResponseHeader{MemberId: 1}, IsLearner: false},
+					{Header: &etcdserverpb.ResponseHeader{MemberId: 2}, IsLearner: false},
+				}), leaderOpt)
 			require.NoError(t, err)
+
 			fakeKubeClient := fake.NewClientset([]runtime.Object{}...)
 			fakeRecorder := events.NewRecorder(fakeKubeClient.CoreV1().Events(operatorclient.OperatorNamespace),
 				"test-bootstrap-teardown-controller", &corev1.ObjectReference{}, clock.RealClock{})

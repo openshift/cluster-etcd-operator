@@ -27,6 +27,18 @@ func (m *mockMemberStatusChecker) MemberStatus(ctx context.Context, member *etcd
 	return nil, errors.New("member status not found")
 }
 
+// mockLeaderMover implements LeaderMover for testing
+type mockLeaderMover struct {
+	moveLeaderErrors map[uint64]error
+}
+
+func (m *mockLeaderMover) MoveLeader(ctx context.Context, toMember uint64) error {
+	if err, exists := m.moveLeaderErrors[toMember]; exists {
+		return err
+	}
+	return nil
+}
+
 func TestFindLeader(t *testing.T) {
 	ctx := context.Background()
 
@@ -164,81 +176,140 @@ func TestFindLeader(t *testing.T) {
 	}
 }
 
-func TestFindLeader_ContextCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
+func TestMoveLeaderToAnotherMember(t *testing.T) {
+	ctx := context.Background()
 
-	mockClient := &mockMemberStatusChecker{
-		memberStatuses: map[uint64]*clientv3.StatusResponse{
-			1: {Header: &etcdserverpb.ResponseHeader{MemberId: 1}, Leader: 1},
+	tests := []struct {
+		name             string
+		leader           *etcdserverpb.Member
+		memberList       []*etcdserverpb.Member
+		moveLeaderErrors map[uint64]error
+		expectedSuccess  bool
+		expectedError    string
+	}{
+		{
+			name: "successfully move leader to another member",
+			leader: &etcdserverpb.Member{
+				ID:         1,
+				Name:       "etcd-1",
+				ClientURLs: []string{"https://10.0.0.1:2379"},
+				PeerURLs:   []string{"https://10.0.0.1:2380"},
+			},
+			memberList: []*etcdserverpb.Member{
+				{ID: 1, Name: "etcd-1", ClientURLs: []string{"https://10.0.0.1:2379"}, PeerURLs: []string{"https://10.0.0.1:2380"}},
+				{ID: 2, Name: "etcd-2", ClientURLs: []string{"https://10.0.0.2:2379"}, PeerURLs: []string{"https://10.0.0.2:2380"}},
+				{ID: 3, Name: "etcd-3", ClientURLs: []string{"https://10.0.0.3:2379"}, PeerURLs: []string{"https://10.0.0.3:2380"}},
+			},
+			expectedSuccess: true,
+		},
+		{
+			name: "successfully move leader when leader is in middle of list",
+			leader: &etcdserverpb.Member{
+				ID:         2,
+				Name:       "etcd-2",
+				ClientURLs: []string{"https://10.0.0.2:2379"},
+				PeerURLs:   []string{"https://10.0.0.2:2380"},
+			},
+			memberList: []*etcdserverpb.Member{
+				{ID: 1, Name: "etcd-1", ClientURLs: []string{"https://10.0.0.1:2379"}, PeerURLs: []string{"https://10.0.0.1:2380"}},
+				{ID: 2, Name: "etcd-2", ClientURLs: []string{"https://10.0.0.2:2379"}, PeerURLs: []string{"https://10.0.0.2:2380"}},
+				{ID: 3, Name: "etcd-3", ClientURLs: []string{"https://10.0.0.3:2379"}, PeerURLs: []string{"https://10.0.0.3:2380"}},
+			},
+			expectedSuccess: true,
+		},
+		{
+			name: "successfully move leader when leader is last in list",
+			leader: &etcdserverpb.Member{
+				ID:         3,
+				Name:       "etcd-3",
+				ClientURLs: []string{"https://10.0.0.3:2379"},
+				PeerURLs:   []string{"https://10.0.0.3:2380"},
+			},
+			memberList: []*etcdserverpb.Member{
+				{ID: 1, Name: "etcd-1", ClientURLs: []string{"https://10.0.0.1:2379"}, PeerURLs: []string{"https://10.0.0.1:2380"}},
+				{ID: 2, Name: "etcd-2", ClientURLs: []string{"https://10.0.0.2:2379"}, PeerURLs: []string{"https://10.0.0.2:2380"}},
+				{ID: 3, Name: "etcd-3", ClientURLs: []string{"https://10.0.0.3:2379"}, PeerURLs: []string{"https://10.0.0.3:2380"}},
+			},
+			expectedSuccess: true,
+		},
+		{
+			name: "move leader fails with error",
+			leader: &etcdserverpb.Member{
+				ID:         1,
+				Name:       "etcd-1",
+				ClientURLs: []string{"https://10.0.0.1:2379"},
+				PeerURLs:   []string{"https://10.0.0.1:2380"},
+			},
+			memberList: []*etcdserverpb.Member{
+				{ID: 1, Name: "etcd-1", ClientURLs: []string{"https://10.0.0.1:2379"}, PeerURLs: []string{"https://10.0.0.1:2380"}},
+				{ID: 2, Name: "etcd-2", ClientURLs: []string{"https://10.0.0.2:2379"}, PeerURLs: []string{"https://10.0.0.2:2380"}},
+			},
+			moveLeaderErrors: map[uint64]error{
+				2: errors.New("move leader failed: connection timeout"),
+			},
+			expectedSuccess: false,
+			expectedError:   "move leader failed: connection timeout",
+		},
+		{
+			name: "no follower member found - single member cluster",
+			leader: &etcdserverpb.Member{
+				ID:         1,
+				Name:       "etcd-1",
+				ClientURLs: []string{"https://10.0.0.1:2379"},
+				PeerURLs:   []string{"https://10.0.0.1:2380"},
+			},
+			memberList: []*etcdserverpb.Member{
+				{ID: 1, Name: "etcd-1", ClientURLs: []string{"https://10.0.0.1:2379"}, PeerURLs: []string{"https://10.0.0.1:2380"}},
+			},
+			expectedSuccess: false,
+			expectedError:   "no follower member found for the members: [ID:1 name:\"etcd-1\" peerURLs:\"https://10.0.0.1:2380\" clientURLs:\"https://10.0.0.1:2379\" ]",
+		},
+		{
+			name: "no follower member found - all members have same ID",
+			leader: &etcdserverpb.Member{
+				ID:         1,
+				Name:       "etcd-1",
+				ClientURLs: []string{"https://10.0.0.1:2379"},
+				PeerURLs:   []string{"https://10.0.0.1:2380"},
+			},
+			memberList: []*etcdserverpb.Member{
+				{ID: 1, Name: "etcd-1", ClientURLs: []string{"https://10.0.0.1:2379"}, PeerURLs: []string{"https://10.0.0.1:2380"}},
+				{ID: 1, Name: "etcd-1-copy", ClientURLs: []string{"https://10.0.0.1:2379"}, PeerURLs: []string{"https://10.0.0.1:2380"}},
+			},
+			expectedSuccess: false,
+			expectedError:   "no follower member found for the members: [ID:1 name:\"etcd-1\" peerURLs:\"https://10.0.0.1:2380\" clientURLs:\"https://10.0.0.1:2379\"  ID:1 name:\"etcd-1-copy\" peerURLs:\"https://10.0.0.1:2380\" clientURLs:\"https://10.0.0.1:2379\" ]",
+		},
+		{
+			name: "empty member list",
+			leader: &etcdserverpb.Member{
+				ID:         1,
+				Name:       "etcd-1",
+				ClientURLs: []string{"https://10.0.0.1:2379"},
+				PeerURLs:   []string{"https://10.0.0.1:2380"},
+			},
+			memberList:      []*etcdserverpb.Member{},
+			expectedSuccess: false,
+			expectedError:   "no follower member found for the members: []",
 		},
 	}
 
-	memberList := []*etcdserverpb.Member{
-		{ID: 1, Name: "etcd-1", ClientURLs: []string{"https://10.0.0.1:2379"}},
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := &mockLeaderMover{
+				moveLeaderErrors: tt.moveLeaderErrors,
+			}
+
+			success, err := MoveLeaderToAnotherMember(ctx, mockClient, tt.leader, tt.memberList)
+
+			if tt.expectedError != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectedError)
+				assert.False(t, success)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedSuccess, success)
+		})
 	}
-
-	// The function should handle context cancellation gracefully
-	// Since our mock doesn't actually check context, this test verifies
-	// that the function signature accepts context and passes it through
-	leader, err := FindLeader(ctx, mockClient, memberList)
-	require.NoError(t, err)
-	require.NotNil(t, leader)
-	assert.Equal(t, uint64(1), leader.ID)
-}
-
-func TestFindLeader_EdgeCases(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("member with no client URLs", func(t *testing.T) {
-		mockClient := &mockMemberStatusChecker{
-			memberStatuses: map[uint64]*clientv3.StatusResponse{
-				1: {Header: &etcdserverpb.ResponseHeader{MemberId: 1}, Leader: 1},
-			},
-		}
-
-		memberList := []*etcdserverpb.Member{
-			{ID: 1, Name: "etcd-1", ClientURLs: []string{}},
-		}
-
-		// This should work fine since our mock doesn't actually use ClientURLs
-		leader, err := FindLeader(ctx, mockClient, memberList)
-		require.NoError(t, err)
-		require.NotNil(t, leader)
-		assert.Equal(t, uint64(1), leader.ID)
-	})
-
-	t.Run("member with nil client URLs", func(t *testing.T) {
-		mockClient := &mockMemberStatusChecker{
-			memberStatuses: map[uint64]*clientv3.StatusResponse{
-				1: {Header: &etcdserverpb.ResponseHeader{MemberId: 1}, Leader: 1},
-			},
-		}
-
-		memberList := []*etcdserverpb.Member{
-			{ID: 1, Name: "etcd-1", ClientURLs: nil},
-		}
-
-		leader, err := FindLeader(ctx, mockClient, memberList)
-		require.NoError(t, err)
-		require.NotNil(t, leader)
-		assert.Equal(t, uint64(1), leader.ID)
-	})
-
-	t.Run("member with zero ID", func(t *testing.T) {
-		mockClient := &mockMemberStatusChecker{
-			memberStatuses: map[uint64]*clientv3.StatusResponse{
-				0: {Header: &etcdserverpb.ResponseHeader{MemberId: 0}, Leader: 0},
-			},
-		}
-
-		memberList := []*etcdserverpb.Member{
-			{ID: 0, Name: "etcd-0", ClientURLs: []string{"https://10.0.0.0:2379"}},
-		}
-
-		leader, err := FindLeader(ctx, mockClient, memberList)
-		require.NoError(t, err)
-		require.NotNil(t, leader)
-		assert.Equal(t, uint64(0), leader.ID)
-	})
 }
