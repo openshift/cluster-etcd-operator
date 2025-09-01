@@ -150,6 +150,29 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, safeT
 	if isBootstrapComplete, err := bootstrap.IsBootstrapComplete(c.configmapLister); !isBootstrapComplete || err != nil {
 		return err
 	}
+
+	moved, err := c.ensureBootstrapIsNotLeader(ctx, bootstrapMember)
+	if err != nil {
+		return err
+	}
+
+	// if we have just moved it, we will skip this sync iteration to backoff the controller - the next resync will happen after a minute anyway
+	if moved {
+		klog.Warningf("Leader just moved, waiting for next resync to remove bootstrap member [%x]", bootstrapID)
+		c.eventRecorder.Eventf("Bootstrap member was leader and was moved away", "bootstrap member [%x] should no longer be leader", bootstrapID)
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+			Type:    "EtcdLeaderMovedAwayFromBootstrap",
+			Status:  operatorv1.ConditionTrue,
+			Reason:  "BootstrapIsLeader",
+			Message: "bootstrap was leader and has been moved",
+		}))
+		if updateErr != nil {
+			return fmt.Errorf("error while updating EtcdLeaderMovedAwayFromBootstrap: %w", updateErr)
+		}
+
+		return nil
+	}
+
 	klog.Warningf("Removing bootstrap member [%x]", bootstrapID)
 	c.eventRecorder.Eventf("Removing bootstrap member", "attempting to remove bootstrap member [%x]", bootstrapID)
 
@@ -229,4 +252,23 @@ func (c *BootstrapTeardownController) canRemoveEtcdBootstrap(ctx context.Context
 		}
 		return false, hasBootstrap, bootstrapMember, nil
 	}
+}
+
+func (c *BootstrapTeardownController) ensureBootstrapIsNotLeader(ctx context.Context, bootstrapMember *etcdserverpb.Member) (bool, error) {
+	members, err := c.etcdClient.MemberList(ctx)
+	if err != nil {
+		return false, fmt.Errorf("could not list while ensuring bootstrap is not the leader: %w", err)
+	}
+
+	leader, err := ceohelpers.FindLeader(ctx, c.etcdClient, members)
+	if err != nil || leader == nil {
+		return false, fmt.Errorf("could not find leader: %w", err)
+	}
+
+	if bootstrapMember.ID != leader.ID {
+		return false, nil
+	}
+
+	klog.Warningf("Bootstrap member [%x] (%s) detected as leader, trying to move elsewhere...", bootstrapMember.ID, bootstrapMember.GetClientURLs()[0])
+	return ceohelpers.MoveLeaderToAnotherMember(ctx, c.etcdClient, leader, members)
 }
