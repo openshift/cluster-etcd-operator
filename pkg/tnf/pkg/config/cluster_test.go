@@ -38,7 +38,7 @@ func TestGetClusterConfig(t *testing.T) {
 						Addresses: []corev1.NodeAddress{
 							// ensure that internal IP is used
 							{Type: corev1.NodeExternalIP, Address: "xxx"},
-							{Type: corev1.NodeInternalIP, Address: "IP1"},
+							{Type: corev1.NodeInternalIP, Address: "192.168.111.12"},
 						},
 					},
 				},
@@ -52,7 +52,7 @@ func TestGetClusterConfig(t *testing.T) {
 					Status: corev1.NodeStatus{
 						Addresses: []corev1.NodeAddress{
 							// fallback to 1st IP incase no internal IP is set
-							{Type: corev1.NodeExternalIP, Address: "IP2"},
+							{Type: corev1.NodeExternalIP, Address: "192.168.111.13"},
 						},
 					},
 				},
@@ -60,8 +60,88 @@ func TestGetClusterConfig(t *testing.T) {
 			want: ClusterConfig{
 				NodeName1: "test1",
 				NodeName2: "test2",
-				NodeIP1:   "IP1",
-				NodeIP2:   "IP2",
+				NodeIP1:   "192.168.111.12",
+				NodeIP2:   "192.168.111.13",
+			},
+			wantErr: false,
+		},
+		{
+			name: "default-ipv6",
+			args: getArgs(t, []*corev1.Node{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "test1",
+						Labels: map[string]string{
+							"node-role.kubernetes.io/master": "",
+						},
+					},
+					Status: corev1.NodeStatus{
+						Addresses: []corev1.NodeAddress{
+							{Type: corev1.NodeExternalIP, Address: "xxx"},
+							{Type: corev1.NodeInternalIP, Address: "fd2e:6f44:5dd8:c956::16"},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "test2",
+						Labels: map[string]string{
+							"node-role.kubernetes.io/master": "",
+						},
+					},
+					Status: corev1.NodeStatus{
+						Addresses: []corev1.NodeAddress{
+							{Type: corev1.NodeInternalIP, Address: "fd2e:6f44:5dd8:c956::17"},
+						},
+					},
+				},
+			}),
+			want: ClusterConfig{
+				NodeName1: "test1",
+				NodeName2: "test2",
+				NodeIP1:   "fd2e:6f44:5dd8:c956::16",
+				NodeIP2:   "fd2e:6f44:5dd8:c956::17",
+			},
+			wantErr: false,
+		},
+		{
+			name: "default-dualstack-select-first-ip",
+			args: getArgs(t, []*corev1.Node{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "test1",
+						Labels: map[string]string{
+							"node-role.kubernetes.io/master": "",
+						},
+					},
+					Status: corev1.NodeStatus{
+						Addresses: []corev1.NodeAddress{
+							{Type: corev1.NodeExternalIP, Address: "xxx"},
+							{Type: corev1.NodeInternalIP, Address: "192.168.111.12"},
+							{Type: corev1.NodeInternalIP, Address: "fd2e:6f44:5dd8:c956::16"},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "test2",
+						Labels: map[string]string{
+							"node-role.kubernetes.io/master": "",
+						},
+					},
+					Status: corev1.NodeStatus{
+						Addresses: []corev1.NodeAddress{
+							{Type: corev1.NodeInternalIP, Address: "fd2e:6f44:5dd8:c956::17"},
+							{Type: corev1.NodeInternalIP, Address: "192.168.111.13"},
+						},
+					},
+				},
+			}),
+			want: ClusterConfig{
+				NodeName1: "test1",
+				NodeName2: "test2",
+				NodeIP1:   "192.168.111.12",
+				NodeIP2:   "fd2e:6f44:5dd8:c956::17",
 			},
 			wantErr: false,
 		},
