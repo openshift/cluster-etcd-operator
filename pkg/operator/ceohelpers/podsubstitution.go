@@ -1,6 +1,7 @@
 package ceohelpers
 
 import (
+	"math"
 	"reflect"
 	"strings"
 	"text/template"
@@ -38,6 +39,28 @@ type PodSubstitutionTemplate struct {
 	StartupProbe        ProbeConfig
 }
 
+// calculateFailureThreshold calculates the failure threshold based on backend quota size.
+// The base configuration is designed for 8GiB, and we scale proportionally for other sizes.
+// Formula: scaledThreshold = baseThreshold * (quotaGiB / 8.0), rounded to nearest integer
+func calculateFailureThreshold(baseThreshold int, quotaGiB int32) int {
+	// always assume 8GB quota as the default baseline for failure thresholds
+	if quotaGiB <= 8 {
+		quotaGiB = 8
+	}
+
+	// Calculate the scaling factor based on quota size relative to 8GB baseline
+	scalingFactor := float64(quotaGiB) / 8.0
+	scaledThreshold := float64(baseThreshold) * scalingFactor
+
+	// Round to nearest integer, with minimum of 1
+	result := int(math.Round(scaledThreshold))
+	if result < 1 {
+		result = 1
+	}
+
+	return result
+}
+
 // GetPodSubstitution creates a PodSubstitutionTemplate with values derived from StaticPodOperatorSpec,
 // image pull spec and environment variables. It determines whether the Etcd container should be enabled
 // based on the operator's configuration.
@@ -58,21 +81,36 @@ func GetPodSubstitution(
 		return nil, err
 	}
 
-	// TODO(thomas): derive based on etcd.Spec.BackendQuotaGiB
-	defaultProbeConfig := ProbeConfig{
+	// Calculate failure thresholds based on etcd.Spec.BackendQuotaGiB
+	// Base values are designed for 8GiB backend quota, ~4 failure thresholds for each GiB of quota configured.
+	livenessFailureThreshold := calculateFailureThreshold(20, etcd.Spec.BackendQuotaGiB)
+	startupFailureThreshold := calculateFailureThreshold(30, etcd.Spec.BackendQuotaGiB)
+
+	defaultReadinessProbeConfig := ProbeConfig{
 		TimeoutSeconds:      30,
-		PeriodSeconds:       5,
+		PeriodSeconds:       1,
 		SuccessThreshold:    1,
-		FailureThreshold:    5,
+		FailureThreshold:    3,
 		InitialDelaySeconds: 0,
 	}
 
-	startupProbe := ProbeConfig{
-		TimeoutSeconds:      1,
-		PeriodSeconds:       10,
+	// we calculate with 10 gigs to defrag (100s) for additional slack
+	// 20*5s=100s, worst case before restarting etcd
+	defaultLivenessProbeConfig := ProbeConfig{
+		TimeoutSeconds:      30,
+		PeriodSeconds:       5,
 		SuccessThreshold:    1,
-		FailureThreshold:    18,
-		InitialDelaySeconds: 10,
+		FailureThreshold:    livenessFailureThreshold,
+		InitialDelaySeconds: 0,
+	}
+
+	// 30*10s+30s of startup (5.30m total, requires about 23mb/s bandwidth to read 8gigs)
+	defaultStartupProbeConfig := ProbeConfig{
+		TimeoutSeconds:      30,
+		PeriodSeconds:       5,
+		SuccessThreshold:    1,
+		FailureThreshold:    startupFailureThreshold,
+		InitialDelaySeconds: 30,
 	}
 
 	return &PodSubstitutionTemplate{
@@ -84,9 +122,9 @@ func GetPodSubstitution(
 		EnvVars:             nameValues,
 		CipherSuites:        envVarMap["ETCD_CIPHER_SUITES"],
 		EnableEtcdContainer: !shouldRemoveEtcdContainer,
-		ReadinessProbe:      defaultProbeConfig,
-		LivenessProbe:       defaultProbeConfig,
-		StartupProbe:        startupProbe,
+		ReadinessProbe:      defaultReadinessProbeConfig,
+		LivenessProbe:       defaultLivenessProbeConfig,
+		StartupProbe:        defaultStartupProbeConfig,
 	}, nil
 }
 
