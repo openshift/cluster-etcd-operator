@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"net"
 	"sort"
 
 	corev1 "k8s.io/api/core/v1"
@@ -53,12 +54,24 @@ func GetClusterConfig(ctx context.Context, kubeClient kubernetes.Interface) (Clu
 	return clusterCfg, nil
 }
 
+// getInternalIP returns the internal ip address of the node.
+// If no internal ip is found, returns the first ip address as a fallback.
+// If address list is empty, returns the empty string as a fallback.
 func getInternalIP(addresses []corev1.NodeAddress) string {
+
+	if len(addresses) == 0 {
+		return ""
+	}
+
 	for _, addr := range addresses {
-		if addr.Type == corev1.NodeInternalIP {
-			return addr.Address
+		switch addr.Type {
+		case corev1.NodeInternalIP:
+			ip := net.ParseIP(addr.Address)
+			if ip != nil {
+				return ip.String()
+			}
 		}
 	}
-	// fallback...
+
 	return addresses[0].Address
 }
