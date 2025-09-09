@@ -9,7 +9,6 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
-	v1 "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/controller/factory"
@@ -56,7 +55,7 @@ func HandleDualReplicaClusters(
 	operatorClient v1helpers.StaticPodOperatorClient,
 	envVarGetter etcdenvvar.EnvVar,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
-	networkInformer v1.NetworkInformer,
+	networkInformer configv1informers.NetworkInformer,
 	controlPlaneNodeInformer cache.SharedIndexInformer,
 	etcdInformer operatorv1informers.EtcdInformer,
 	kubeClient kubernetes.Interface,
@@ -172,11 +171,23 @@ func handleNodes(
 
 	// the order of job creation does not matter, the jobs wait on each other as needed
 	for _, node := range nodeList {
-		runJobController(ctx, tools.JobTypeAuth, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
-		runJobController(ctx, tools.JobTypeAfterSetup, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+		runJobController(ctx, tools.JobTypeAuth, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
+		runJobController(ctx, tools.JobTypeAfterSetup, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
 	}
-	runJobController(ctx, tools.JobTypeSetup, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
-	runJobController(ctx, tools.JobTypeFencing, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+
+	hasExternalEtcdCompletedTransition, err := ceohelpers.HasExternalEtcdCompletedTransition(ctx, operatorClient)
+	if err != nil {
+		klog.Errorf("failed to get external etcd transition status; proceeding as though it has not transitioned: %v", err)
+		hasExternalEtcdCompletedTransition = false
+	}
+
+	setupConditions := jobs.DefaultConditions
+	if !hasExternalEtcdCompletedTransition {
+		setupConditions = jobs.AllConditions
+	}
+
+	runJobController(ctx, tools.JobTypeSetup, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, setupConditions)
+	runJobController(ctx, tools.JobTypeFencing, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
 }
 
 func waitForEtcdBootstrapCompleted(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient) error {
@@ -204,7 +215,7 @@ func runExternalEtcdSupportController(ctx context.Context,
 	envVarGetter etcdenvvar.EnvVar,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	infrastructureInformer configv1informers.InfrastructureInformer,
-	networkInformer v1.NetworkInformer,
+	networkInformer configv1informers.NetworkInformer,
 	controlPlaneNodeInformer cache.SharedIndexInformer,
 	etcdInformer operatorv1informers.EtcdInformer,
 	kubeClient kubernetes.Interface) {
@@ -246,7 +257,7 @@ func runTnfResourceController(ctx context.Context, controllerContext *controller
 	go tnfResourceController.Run(ctx, 1)
 }
 
-func runJobController(ctx context.Context, jobType tools.JobType, nodeName *string, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
+func runJobController(ctx context.Context, jobType tools.JobType, nodeName *string, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces, conditions []string) {
 	nodeNameForLogs := "n/a"
 	if nodeName != nil {
 		nodeNameForLogs = *nodeName
@@ -259,6 +270,7 @@ func runJobController(ctx context.Context, jobType tools.JobType, nodeName *stri
 		operatorClient,
 		kubeClient,
 		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs(),
+		conditions,
 		[]factory.Informer{},
 		[]jobs.JobHookFunc{
 			func(_ *operatorv1.OperatorSpec, job *batchv1.Job) error {
