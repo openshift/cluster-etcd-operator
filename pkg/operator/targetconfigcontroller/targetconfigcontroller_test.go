@@ -75,7 +75,6 @@ func TestTargetConfigController(t *testing.T) {
 		},
 		{
 			name: "BackupVar Test HappyPath",
-
 			staticPodStatus: u.StaticPodOperatorStatus(
 				u.WithLatestRevision(3),
 				u.WithNodeStatusAtCurrentRevision(3),
