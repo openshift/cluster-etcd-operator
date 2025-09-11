@@ -10,6 +10,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/stretchr/testify/require"
@@ -41,7 +42,7 @@ func TestSyncLoopHappyPath(t *testing.T) {
 	client := k8sfakeclient.NewClientset()
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 		&operatorv1.StaticPodOperatorSpec{OperatorSpec: operatorv1.OperatorSpec{ManagementState: operatorv1.Managed}},
-		&operatorv1.StaticPodOperatorStatus{}, nil, nil)
+		u.StaticPodOperatorStatus(), nil, nil)
 
 	controller := PeriodicBackupController{
 		operatorClient:        fakeOperatorClient,
@@ -73,7 +74,7 @@ func TestSyncLoopExistingCronJob(t *testing.T) {
 	client := k8sfakeclient.NewClientset([]runtime.Object{&cronJob}...)
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 		&operatorv1.StaticPodOperatorSpec{OperatorSpec: operatorv1.OperatorSpec{ManagementState: operatorv1.Managed}},
-		&operatorv1.StaticPodOperatorStatus{}, nil, nil)
+		u.StaticPodOperatorStatus(), nil, nil)
 
 	controller := PeriodicBackupController{
 		operatorClient:        fakeOperatorClient,
@@ -108,7 +109,7 @@ func TestSyncLoopFailsDegradesOperator(t *testing.T) {
 
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 		&operatorv1.StaticPodOperatorSpec{OperatorSpec: operatorv1.OperatorSpec{ManagementState: operatorv1.Managed}},
-		&operatorv1.StaticPodOperatorStatus{}, nil, nil)
+		u.StaticPodOperatorStatus(), nil, nil)
 
 	controller := PeriodicBackupController{
 		operatorClient:        fakeOperatorClient,
