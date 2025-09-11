@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	OperatorConditionEtcdRunningInCluster           = "EtcdRunningInCluster"
-	OperatorConditionExternalEtcdReadyForTransition = "ExternalEtcdReadyForTransition"
+	OperatorConditionEtcdRunningInCluster               = "EtcdRunningInCluster"
+	OperatorConditionExternalEtcdReadyForTransition     = "ExternalEtcdReadyForTransition"
+	OperatorConditionExternalEtcdHasCompletedTransition = "ExternalEtcdHasCompletedTransition"
 )
 
 // RemoveStaticContainer informs CEO to remove its etcd container
@@ -66,5 +67,19 @@ func waitForStaticContainerRemoved(ctx context.Context, operatorClient v1helpers
 
 	// set immediate to false in order to give CEO some time to actually create a new revision if needed
 	err := wait.PollUntilContextTimeout(ctx, 10*time.Second, 10*time.Minute, false, isRemoved)
+	if err != nil {
+		return err
+	}
+
+	// Update the operator status to indicate that the transition has completed.
+	// As soon as the etcd container is removed, this operator won't be able to update this status
+	// unless the etcd container is restarted by the pacemaker resource agent.
+	_, _, err = v1helpers.UpdateStatus(ctx, operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		Type:    OperatorConditionExternalEtcdHasCompletedTransition,
+		Status:  operatorv1.ConditionTrue,
+		Reason:  "PacemakerResourceAgentIsNowRunningEtcd",
+		Message: "pacemaker's resource agent is now running the etcd container",
+	}))
+
 	return err
 }

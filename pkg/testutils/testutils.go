@@ -241,6 +241,12 @@ func WithBootstrapIP(ip string) func(*corev1.ConfigMap) {
 	}
 }
 
+func WithConditions(conditions ...operatorv1.OperatorCondition) func(*operatorv1.StaticPodOperatorStatus) {
+	return func(status *operatorv1.StaticPodOperatorStatus) {
+		status.Conditions = append(status.Conditions, conditions...)
+	}
+}
+
 func WithEndpoint(memberID uint64, peerURl string) func(*corev1.ConfigMap) {
 	if !strings.HasPrefix(peerURl, "https://") {
 		peerURl = "https://" + peerURl
