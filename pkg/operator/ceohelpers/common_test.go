@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 )
 
@@ -57,7 +58,7 @@ func TestReadDesiredControlPlaneReplicaCount(t *testing.T) {
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
 			// test data
-			fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(&scenario.operatorSpec, &operatorv1.StaticPodOperatorStatus{}, nil, nil)
+			fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(&scenario.operatorSpec, u.StaticPodOperatorStatus(), nil, nil)
 
 			// act
 			actualReplicaCount, err := ReadDesiredControlPlaneReplicasCount(fakeOperatorClient)
