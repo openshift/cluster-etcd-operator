@@ -74,17 +74,21 @@ import (
 )
 
 // masterMachineLabelSelectorString allows for getting only the master machines, it matters in larger installations with many worker nodes
-const masterMachineLabelSelectorKeyString = "machine.openshift.io/cluster-api-machine-role"
-const masterMachineLabelSelectorValueString = "master"
-const arbiterMachineLabelSelectorValueString = "arbiter"
+const (
+	masterMachineLabelSelectorKeyString    = "machine.openshift.io/cluster-api-machine-role"
+	masterMachineLabelSelectorValueString  = "master"
+	arbiterMachineLabelSelectorValueString = "arbiter"
+)
 
 // masterNodeLabelSelectorString allows for getting only the master nodes, it matters in larger installations with many worker nodes
 const masterNodeLabelSelectorString = "node-role.kubernetes.io/master"
 
 const arbiterNodeLabelSelectorString = "node-role.kubernetes.io/arbiter"
 
-const releaseVersionEnvVariableName = "RELEASE_VERSION"
-const missingVersion = "0.0.1-snapshot"
+const (
+	releaseVersionEnvVariableName = "RELEASE_VERSION"
+	missingVersion                = "0.0.1-snapshot"
+)
 
 var AlivenessChecker = health.NewMultiAlivenessChecker()
 
@@ -473,6 +477,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeClient,
 		envVarController,
 		controllerContext.EventRecorder,
+		featureGateAccessor,
 	)
 
 	defragController := defragcontroller.NewDefragController(
@@ -706,6 +711,7 @@ func ExtractStaticPodOperatorSpec(obj *unstructured.Unstructured, fieldManager s
 	}
 	return &ret.Spec.StaticPodOperatorSpecApplyConfiguration, nil
 }
+
 func ExtractStaticPodOperatorStatus(obj *unstructured.Unstructured, fieldManager string) (*applyoperatorv1.StaticPodOperatorStatusApplyConfiguration, error) {
 	castObj := &operatorv1.Etcd{}
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, castObj); err != nil {

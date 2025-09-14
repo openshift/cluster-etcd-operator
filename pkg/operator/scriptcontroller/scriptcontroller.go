@@ -8,6 +8,7 @@ import (
 
 	"github.com/openshift/cluster-etcd-operator/bindata"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/operator/dualreplicahelpers"
 	corev1 "k8s.io/api/core/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -21,13 +22,15 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
+	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 )
 
 type ScriptController struct {
-	operatorClient v1helpers.StaticPodOperatorClient
-	kubeClient     kubernetes.Interface
-	envVarGetter   *etcdenvvar.EnvVarController
-	enqueueFn      func()
+	operatorClient      v1helpers.StaticPodOperatorClient
+	kubeClient          kubernetes.Interface
+	envVarGetter        *etcdenvvar.EnvVarController
+	enqueueFn           func()
+	featureGateAccessor featuregates.FeatureGateAccess
 }
 
 func NewScriptControllerController(
@@ -36,11 +39,13 @@ func NewScriptControllerController(
 	kubeClient kubernetes.Interface,
 	envVarGetter *etcdenvvar.EnvVarController,
 	eventRecorder events.Recorder,
+	fgAccess featuregates.FeatureGateAccess,
 ) factory.Controller {
 	c := &ScriptController{
-		operatorClient: operatorClient,
-		kubeClient:     kubeClient,
-		envVarGetter:   envVarGetter,
+		operatorClient:      operatorClient,
+		kubeClient:          kubeClient,
+		envVarGetter:        envVarGetter,
+		featureGateAccessor: fgAccess,
 	}
 	envVarGetter.AddListener(c)
 
@@ -114,14 +119,17 @@ func (c *ScriptController) manageScriptConfigMap(ctx context.Context, recorder e
 		envVarFileContent += fmt.Sprintf("export %v=%q\n", k, envVarMap[k])
 	}
 	scriptConfigMap.Data["etcd.env"] = envVarFileContent
-
-	for _, filename := range []string{
+	files := []string{
 		"etcd/cluster-restore.sh",
 		"etcd/quorum-restore.sh",
 		"etcd/cluster-backup.sh",
 		"etcd/disable-etcd.sh",
 		"etcd/etcd-common-tools",
-	} {
+	}
+	if on, err := dualreplicahelpers.DualReplicaFeatureGateEnabled(c.featureGateAccessor); err == nil && on {
+		files = append(files, "tnfdeployment/tnf-scripts/fencing-validator.sh")
+	}
+	for _, filename := range files {
 		basename := filepath.Base(filename)
 		scriptConfigMap.Data[basename] = string(bindata.MustAsset(filename))
 	}

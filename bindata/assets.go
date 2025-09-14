@@ -2,7 +2,7 @@ package bindata
 
 import "embed"
 
-//go:embed etcd/* tnfdeployment/*
+//go:embed etcd/* tnfdeployment/**/*
 var f embed.FS
 
 // Asset reads and returns the content of the named file.
