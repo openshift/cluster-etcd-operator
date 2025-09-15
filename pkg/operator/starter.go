@@ -19,6 +19,7 @@ import (
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorversionedclientv1alpha1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstraptest"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
@@ -467,6 +468,9 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		configInformers.Config().V1().Infrastructures().Lister(),
 	)
 
+	// TODO(thomas): TEST ONLY, REMOVE AGAIN
+	bootstrapTestController := bootstraptest.NewBootstrapTestController(etcdClient, controllerContext.EventRecorder)
+
 	scriptController := scriptcontroller.NewScriptControllerController(
 		AlivenessChecker,
 		operatorClient,
@@ -640,6 +644,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go clusterMemberController.Run(ctx, 1)
 	go etcdMembersController.Run(ctx, 1)
 	go bootstrapTeardownController.Run(ctx, 1)
+	// TODO(thomas): remove again
+	go bootstrapTestController.Run(ctx, 1)
 	go unsupportedConfigOverridesController.Run(ctx, 1)
 	go scriptController.Run(ctx, 1)
 	go defragController.Run(ctx, 1)
