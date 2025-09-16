@@ -3,7 +3,6 @@ package operator
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"os"
 	"sync"
 
@@ -13,7 +12,6 @@ import (
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/controller/factory"
-	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/staticresourcecontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -36,7 +34,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/externaletcdsupportcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/operator/dualreplicahelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/etcd"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/jobs"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/status"
@@ -59,12 +56,11 @@ type DualReplicaClusterHandler struct {
 func NewDualReplicaClusterHandler(ctx context.Context,
 	opClient v1helpers.StaticPodOperatorClient,
 	kubeClient kubernetes.Interface,
-	featureGateAccessor featuregates.FeatureGateAccess,
 	configInformers configv1informers.SharedInformerFactory) (*DualReplicaClusterHandler, error) {
 
-	dualReplicaEnabled, err := isDualReplicaTopology(ctx, featureGateAccessor, configInformers)
 	bootstrapCompleted := false
 	readyForEtcdRemoval := false
+	dualReplicaEnabled, err := ceohelpers.IsDualReplicaTopology(ctx, configInformers.Config().V1().Infrastructures().Lister())
 	if err != nil {
 		klog.Errorf("failed to determine DualReplicaTopology, aborting controller start: %v", err)
 		return nil, err
@@ -206,21 +202,6 @@ func (h *DualReplicaClusterHandler) HandleDualReplicaClusters(
 		return false, err
 	}
 
-	return true, nil
-}
-
-func isDualReplicaTopology(ctx context.Context, featureGateAccessor featuregates.FeatureGateAccess, configInformers configv1informers.SharedInformerFactory) (bool, error) {
-	if isDualReplicaTopology, err := ceohelpers.IsDualReplicaTopology(ctx, configInformers.Config().V1().Infrastructures().Lister()); err != nil {
-		return false, fmt.Errorf("could not determine DualReplicaTopology, aborting controller start: %w", err)
-	} else if !isDualReplicaTopology {
-		return false, nil
-	}
-	// dual replica currently topology has to be enabled by a feature gate
-	if enabledDualReplicaFeature, err := dualreplicahelpers.DualReplicaFeatureGateEnabled(featureGateAccessor); err != nil {
-		return false, fmt.Errorf("could not determine DualReplicaFeatureGateEnabled, aborting controller start: %w", err)
-	} else if !enabledDualReplicaFeature {
-		return false, fmt.Errorf("detected dual replica topology, but dual replica feature gate is disabled, aborting controller start")
-	}
 	return true, nil
 }
 
