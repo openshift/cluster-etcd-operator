@@ -64,7 +64,6 @@ func TestTargetConfigController(t *testing.T) {
 		staticPodStatus              *operatorv1.StaticPodOperatorStatus
 		etcdMembers                  []*etcdserverpb.Member
 		dualReplicaStatus            *mockClusterStatus
-		expectedSyncSkipped          bool
 		expectedEtcdContainerRemoved bool
 		expectedErr                  error
 	}{
@@ -175,7 +174,6 @@ func TestTargetConfigController(t *testing.T) {
 				isDualReplicaTopology: true,
 				isBootstrapCompleted:  true,
 			},
-			expectedSyncSkipped: true,
 		},
 		{
 			name: "Dual Replica Cluster - Ready for Etcd Removal",
@@ -210,10 +208,6 @@ func TestTargetConfigController(t *testing.T) {
 			}
 
 			etcdPodCM, err := fakeKubeClient.CoreV1().ConfigMaps(operatorclient.TargetNamespace).Get(context.TODO(), "etcd-pod", metav1.GetOptions{})
-			if scenario.expectedSyncSkipped {
-				require.ErrorContains(t, err, "not found")
-				return
-			}
 			require.NoError(t, err)
 
 			podYaml := etcdPodCM.Data["pod.yaml"]

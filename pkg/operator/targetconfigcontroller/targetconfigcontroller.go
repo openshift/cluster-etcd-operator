@@ -23,7 +23,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	coreclientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/bindata"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
@@ -92,7 +91,6 @@ func NewTargetConfigController(
 			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer(),
 			kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer(),
 			kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer(),
-			kubeInformersForOpenshiftEtcdNamespace.Batch().V1().Jobs().Informer(),
 			masterNodeInformer,
 			infrastructureInformer.Informer(),
 			networkInformer.Informer(),
@@ -119,16 +117,7 @@ func (c *TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncC
 
 	// Check status of dual replica cluster aka Two Node Fencing
 	shouldRemoveEtcdContainer := false
-	if c.dualReplicaClusterStatus.IsDualReplicaTopology() {
-		if c.dualReplicaClusterStatus.IsBootstrapCompleted() && !c.dualReplicaClusterStatus.IsReadyForEtcdRemoval() {
-			// This means we are on a TNF cluster, and bootstrapping completed, but TNF setup job is not ready yet.
-			// Since this can happen during a CEO update, when pacemaker is already running the etcd container,
-			// but TNF jobs were recreated and not ready yet, we should not continue here,
-			// in order to prevent re-adding CEO's etcd container.
-			klog.Infof("Dual replica cluster is in bootstrap completed state, but TNF setup job is not ready yet. Requeue in 5 seconds.")
-			syncCtx.Queue().AddAfter(syncCtx.QueueKey(), 5*time.Second)
-			return nil
-		}
+	if c.dualReplicaClusterStatus.IsDualReplicaTopology() && c.dualReplicaClusterStatus.IsReadyForEtcdRemoval() {
 		shouldRemoveEtcdContainer = c.dualReplicaClusterStatus.IsReadyForEtcdRemoval()
 	}
 

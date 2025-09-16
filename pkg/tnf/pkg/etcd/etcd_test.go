@@ -5,23 +5,15 @@ import (
 	"testing"
 
 	v1 "github.com/openshift/api/operator/v1"
-	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
-	operatorfake "github.com/openshift/client-go/operator/clientset/versioned/fake"
-	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	kubefake "k8s.io/client-go/kubernetes/fake"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/jobs"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
 
 type args struct {
 	ctx            context.Context
-	operatorClient operatorversionedclient.Interface
-	kubeClient     *kubefake.Clientset
+	operatorClient v1helpers.StaticPodOperatorClient
 }
 
 func TestRemoveStaticContainer(t *testing.T) {
@@ -38,34 +30,21 @@ func TestRemoveStaticContainer(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := RemoveStaticContainer(tt.args.ctx, tt.args.operatorClient, tt.args.kubeClient); (err != nil) != tt.wantErr {
+			if err := RemoveStaticContainer(tt.args.ctx, tt.args.operatorClient); (err != nil) != tt.wantErr {
 				t.Errorf("RemoveStaticContainer() error = %v, wantErr %v", err, tt.wantErr)
 			}
 
 			// Verify that the job condition was set
-			job, err := tt.args.kubeClient.BatchV1().Jobs(operatorclient.TargetNamespace).Get(tt.args.ctx, tools.JobTypeSetup.GetNameLabelValue(), metav1.GetOptions{})
-			if err != nil {
-				t.Errorf("failed to get TNF setup job: %v", err)
-				return
-			}
-
-			found := false
-			for _, condition := range job.Status.Conditions {
-				if string(condition.Type) == jobs.ReadyForEtcdContainerRemovalCondition && condition.Status == corev1.ConditionTrue {
-					found = true
-					break
-				}
-			}
-			if !found {
-				t.Errorf("Expected ReadyForEtcdContainerRemoval condition to be set to True")
-			}
+			_, status, _, err := tt.args.operatorClient.GetStaticPodOperatorState()
+			require.NoError(t, err, "Failed to get static pod operator state")
+			isSet := v1helpers.IsOperatorConditionTrue(status.Conditions, OperatorConditionExternalEtcdReady)
+			require.True(t, isSet, "Expected ReadyForEtcdContainerRemoval condition to be set to True")
 		})
 	}
 }
 
 func getArgs() args {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := context.Background()
 
 	etcd := &v1.Etcd{
 		ObjectMeta: metav1.ObjectMeta{
@@ -80,24 +59,26 @@ func getArgs() args {
 		},
 	}
 
-	// Create TNF setup job
-	tnfJob := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      tools.JobTypeSetup.GetNameLabelValue(),
-			Namespace: operatorclient.TargetNamespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/name": tools.JobTypeSetup.GetNameLabelValue(),
+	// Create a fake operator client with node statuses that indicate etcd container has been removed
+	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+		&etcd.Spec.StaticPodOperatorSpec,
+		&v1.StaticPodOperatorStatus{
+			OperatorStatus: v1.OperatorStatus{
+				LatestAvailableRevision: 1,
+			},
+			NodeStatuses: []v1.NodeStatus{
+				{
+					NodeName:        "master-0",
+					CurrentRevision: 1,
+				},
 			},
 		},
-		Status: batchv1.JobStatus{},
-	}
-
-	fakeOperatorClient := operatorfake.NewClientset(etcd)
-	fakeKubeClient := kubefake.NewSimpleClientset(tnfJob)
+		nil,
+		nil,
+	)
 
 	return args{
 		ctx:            ctx,
 		operatorClient: fakeOperatorClient,
-		kubeClient:     fakeKubeClient,
 	}
 }

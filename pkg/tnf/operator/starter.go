@@ -37,6 +37,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/externaletcdsupportcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/operator/dualreplicahelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/etcd"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/jobs"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/status"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
@@ -61,24 +62,29 @@ func NewDualReplicaClusterHandler(ctx context.Context,
 	featureGateAccessor featuregates.FeatureGateAccess,
 	configInformers configv1informers.SharedInformerFactory) (*DualReplicaClusterHandler, error) {
 
+	dualReplicaEnabled, err := isDualReplicaTopology(ctx, featureGateAccessor, configInformers)
 	bootstrapCompleted := false
-	isDualReplicaTopology, err := isDualReplicaTopology(ctx, featureGateAccessor, configInformers)
+	readyForEtcdRemoval := false
 	if err != nil {
 		klog.Errorf("failed to determine DualReplicaTopology, aborting controller start: %v", err)
 		return nil, err
-	} else if isDualReplicaTopology {
+	} else if dualReplicaEnabled {
 		klog.Infof("detected DualReplica topology")
 
 		// Check if bootstrap is completed without waiting for it.
 		// If it's completed already, CEO probably was restarted for an update.
 		_, opStatus, _, err := opClient.GetStaticPodOperatorState()
 		if err != nil {
-			// don't return the error here, we don't want to fail the operator...?
 			klog.Errorf("failed to get static pod operator state: %v", err)
+			return nil, err
 		} else {
 			bootstrapCompleted = v1helpers.IsOperatorConditionTrue(opStatus.Conditions, "EtcdRunningInCluster")
 			if bootstrapCompleted {
 				klog.Infof("and bootstrap completed already")
+			}
+			readyForEtcdRemoval = v1helpers.IsOperatorConditionTrue(opStatus.Conditions, etcd.OperatorConditionExternalEtcdReady)
+			if readyForEtcdRemoval {
+				klog.Infof("and ready for etcd removal already")
 			}
 		}
 	}
@@ -86,7 +92,7 @@ func NewDualReplicaClusterHandler(ctx context.Context,
 	return &DualReplicaClusterHandler{
 		ctx:           ctx,
 		kubeClient:    kubeClient,
-		clusterStatus: status.NewClusterStatus(ctx, kubeClient, isDualReplicaTopology, bootstrapCompleted),
+		clusterStatus: status.NewClusterStatus(ctx, opClient, dualReplicaEnabled, bootstrapCompleted, readyForEtcdRemoval),
 	}, nil
 
 }
@@ -149,19 +155,21 @@ func (h *DualReplicaClusterHandler) HandleDualReplicaClusters(
 			once.Do(func() {
 				klog.Infof("found 2 control plane nodes (%q, %q)", nodeList[0].GetName(), nodeList[1].GetName())
 
-				klog.Infof("waiting for bootstrap to complete")
-				clientConfig, err := rest.InClusterConfig()
-				if err != nil {
-					klog.Errorf("failed to get in-cluster config: %v", err)
-					return
+				if !h.clusterStatus.IsBootstrapCompleted() {
+					klog.Infof("waiting for bootstrap to complete")
+					clientConfig, err := rest.InClusterConfig()
+					if err != nil {
+						klog.Errorf("failed to get in-cluster config: %v", err)
+						return
+					}
+					err = bootstrapteardown.WaitForEtcdBootstrap(ctx, clientConfig)
+					if err != nil {
+						klog.Errorf("failed to wait for bootstrap to complete: %v", err)
+						return
+					}
+					h.clusterStatus.SetBootstrapCompleted()
 				}
-				err = bootstrapteardown.WaitForEtcdBootstrap(ctx, clientConfig)
-				if err != nil {
-					klog.Errorf("failed to wait for bootstrap to complete: %v", err)
-					return
-				}
-				h.clusterStatus.SetBootstrapCompleted()
-				klog.Infof("bootstrap to completed, creating TNF job controllers")
+				klog.Infof("bootstrap completed, creating TNF job controllers")
 
 				// the order of job creation does not matter, the jobs wait on each other as needed
 				for _, node := range nodeList {

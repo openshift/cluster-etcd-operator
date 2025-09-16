@@ -300,11 +300,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	// for being able to use the operator client
 	dynamicInformers.Start(ctx.Done())
 	dynamicInformers.WaitForCacheSync(ctx.Done())
-	// for the job informer we also need the kubeInformersForNamespaces to be started
-	kubeInformersForNamespaces.Start(ctx.Done())
-	kubeInformersForNamespaces.WaitForCacheSync(ctx.Done())
-	// the dualReplicaClusterHandler is needed for the targetConfigReconciler for correct handling
-	// of CEO's etcd container
+	// the dualReplicaClusterHandler is needed for the targetConfigReconciler for correct handling of CEO's etcd container
 	dualReplicaClusterHandler, err := tnf.NewDualReplicaClusterHandler(ctx, operatorClient, kubeClient, featureGateAccessor, configInformers)
 	if err != nil {
 		return fmt.Errorf("could not start dualReplicaClusterHandler, aborting controller start: %w", err)

@@ -84,7 +84,6 @@ func NewExternalEtcdEnablerController(
 			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer(),
 			kubeInformersForOpenshiftEtcdNamespace.Core().V1().ConfigMaps().Informer(),
 			kubeInformersForOpenshiftEtcdNamespace.Core().V1().Secrets().Informer(),
-			kubeInformersForOpenshiftEtcdNamespace.Batch().V1().Jobs().Informer(),
 			masterNodeInformer,
 			infrastructureInformer.Informer(),
 			networkInformer.Informer(),
