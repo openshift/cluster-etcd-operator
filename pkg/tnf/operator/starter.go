@@ -3,6 +3,7 @@ package operator
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"sync"
 
@@ -125,57 +126,10 @@ func (h *DualReplicaClusterHandler) HandleDualReplicaClusters(
 	controlPlaneNodeLister := corev1listers.NewNodeLister(controlPlaneNodeInformer.GetIndexer())
 
 	// we need node names for assigning auth and after-setup jobs to specific nodes
-	var once sync.Once
 	klog.Infof("watching for nodes...")
+	var once sync.Once
 	_, err := controlPlaneNodeInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			node, ok := obj.(*corev1.Node)
-			if !ok {
-				klog.Warningf("failed to convert added object to Node %+v", obj)
-				return
-			}
-			klog.Infof("node added: %s", node.GetName())
-
-			// ensure we have both control plane nodes before creating jobs
-			nodeList, err := controlPlaneNodeLister.List(labels.Everything())
-			if err != nil {
-				klog.Errorf("failed to list control plane nodes while waiting to create TNF jobs: %v", err)
-				return
-			}
-			if len(nodeList) != 2 {
-				klog.Info("not starting TNF jobs yet, waiting for 2 control plane nodes to exist")
-				return
-			}
-
-			// we can have 2 nodes on the first call of AddFunc already, ensure we create job controllers once only
-			once.Do(func() {
-				klog.Infof("found 2 control plane nodes (%q, %q)", nodeList[0].GetName(), nodeList[1].GetName())
-
-				if !h.clusterStatus.IsBootstrapCompleted() {
-					klog.Infof("waiting for bootstrap to complete")
-					clientConfig, err := rest.InClusterConfig()
-					if err != nil {
-						klog.Errorf("failed to get in-cluster config: %v", err)
-						return
-					}
-					err = bootstrapteardown.WaitForEtcdBootstrap(ctx, clientConfig)
-					if err != nil {
-						klog.Errorf("failed to wait for bootstrap to complete: %v", err)
-						return
-					}
-					h.clusterStatus.SetBootstrapCompleted()
-				}
-				klog.Infof("bootstrap completed, creating TNF job controllers")
-
-				// the order of job creation does not matter, the jobs wait on each other as needed
-				for _, node := range nodeList {
-					runJobController(ctx, tools.JobTypeAuth, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
-					runJobController(ctx, tools.JobTypeAfterSetup, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
-				}
-				runJobController(ctx, tools.JobTypeSetup, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
-				runJobController(ctx, tools.JobTypeFencing, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
-			})
-		},
+		AddFunc: h.handleAddedNode(controllerContext, controlPlaneNodeLister, &once, ctx, operatorClient, kubeClient, kubeInformersForNamespaces),
 	})
 	if err != nil {
 		klog.Errorf("failed to add eventhandler to control plane informer: %v", err)
@@ -203,6 +157,83 @@ func (h *DualReplicaClusterHandler) HandleDualReplicaClusters(
 	}
 
 	return true, nil
+}
+
+func (h *DualReplicaClusterHandler) handleAddedNode(
+	controllerContext *controllercmd.ControllerContext,
+	controlPlaneNodeLister corev1listers.NodeLister,
+	once *sync.Once,
+	ctx context.Context,
+	operatorClient v1helpers.StaticPodOperatorClient,
+	kubeClient kubernetes.Interface,
+	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) func(obj interface{}) {
+
+	return func(obj interface{}) {
+		node, ok := obj.(*corev1.Node)
+		if !ok {
+			klog.Warningf("failed to convert added object to Node %+v", obj)
+			return
+		}
+		klog.Infof("node added: %s", node.GetName())
+
+		// ensure we have both control plane nodes before creating jobs
+		nodeList, err := controlPlaneNodeLister.List(labels.Everything())
+		if err != nil {
+			klog.Errorf("failed to list control plane nodes while waiting to create TNF jobs: %v", err)
+			return
+		}
+		if len(nodeList) != 2 {
+			klog.Info("not starting TNF jobs yet, waiting for 2 control plane nodes to exist")
+			return
+		}
+		klog.Infof("found 2 control plane nodes (%q, %q)", nodeList[0].GetName(), nodeList[1].GetName())
+
+		// we can have 2 nodes on the first call of AddFunc already, ensure we create job controllers once only
+		once.Do(func() {
+			// this potentially needs some time when we wait for etcd bootstrap to complete, so run it in a goroutine,
+			// to not block the event handler
+			go h.handleNodes(nodeList, ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+		})
+	}
+}
+
+func (h *DualReplicaClusterHandler) handleNodes(
+	nodeList []*corev1.Node,
+	ctx context.Context,
+	controllerContext *controllercmd.ControllerContext,
+	operatorClient v1helpers.StaticPodOperatorClient,
+	kubeClient kubernetes.Interface,
+	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
+
+	if err := h.waitForEtcdBootstrapCompleted(ctx); err != nil {
+		klog.Errorf("failed to wait for etcd bootstrap: %v", err)
+		return
+	}
+	klog.Infof("bootstrap completed, creating TNF job controllers")
+
+	// the order of job creation does not matter, the jobs wait on each other as needed
+	for _, node := range nodeList {
+		runJobController(ctx, tools.JobTypeAuth, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+		runJobController(ctx, tools.JobTypeAfterSetup, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+	}
+	runJobController(ctx, tools.JobTypeSetup, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+	runJobController(ctx, tools.JobTypeFencing, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+}
+
+func (h *DualReplicaClusterHandler) waitForEtcdBootstrapCompleted(ctx context.Context) error {
+	if !h.clusterStatus.IsBootstrapCompleted() {
+		klog.Infof("waiting for bootstrap to complete")
+		clientConfig, err := rest.InClusterConfig()
+		if err != nil {
+			return fmt.Errorf("failed to get in-cluster config: %v", err)
+		}
+		err = bootstrapteardown.WaitForEtcdBootstrap(ctx, clientConfig)
+		if err != nil {
+			return fmt.Errorf("failed to wait for bootstrap to complete: %v", err)
+		}
+		h.clusterStatus.SetBootstrapCompleted()
+	}
+	return nil
 }
 
 func runExternalEtcdSupportController(ctx context.Context,
