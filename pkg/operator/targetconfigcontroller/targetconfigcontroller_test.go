@@ -35,13 +35,13 @@ const operatorPullSpec = "operator-pull-spec"
 
 // mockClusterStatus implements status.ClusterStatus for testing
 type mockClusterStatus struct {
-	isDualReplicaTopology bool
+	isExternalEtcdCluster bool
 	isBootstrapCompleted  bool
 	isReadyForEtcdRemoval bool
 }
 
-func (m *mockClusterStatus) IsDualReplicaTopology() bool {
-	return m.isDualReplicaTopology
+func (m *mockClusterStatus) IsExternalEtcdCluster() bool {
+	return m.isExternalEtcdCluster
 }
 
 func (m *mockClusterStatus) IsBootstrapCompleted() bool {
@@ -63,7 +63,7 @@ func TestTargetConfigController(t *testing.T) {
 		objects                      []runtime.Object
 		staticPodStatus              *operatorv1.StaticPodOperatorStatus
 		etcdMembers                  []*etcdserverpb.Member
-		dualReplicaStatus            *mockClusterStatus
+		externalEtcdClusterStatus    *mockClusterStatus
 		expectedEtcdContainerRemoved bool
 		expectedErr                  error
 	}{
@@ -83,7 +83,7 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(1),
 				u.FakeEtcdMemberWithoutServer(2),
 			},
-			dualReplicaStatus: &mockClusterStatus{},
+			externalEtcdClusterStatus: &mockClusterStatus{},
 		},
 		{
 			name: "Quorum not fault tolerant but bootstrapping",
@@ -100,7 +100,7 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(0),
 				u.FakeEtcdMemberWithoutServer(2),
 			},
-			dualReplicaStatus: &mockClusterStatus{},
+			externalEtcdClusterStatus: &mockClusterStatus{},
 		},
 		{
 			name: "BackupVar Test HappyPath",
@@ -118,7 +118,7 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(1),
 				u.FakeEtcdMemberWithoutServer(2),
 			},
-			dualReplicaStatus: &mockClusterStatus{},
+			externalEtcdClusterStatus: &mockClusterStatus{},
 		},
 		{
 			name: "Backup Var Test with empty spec",
@@ -136,10 +136,10 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(1),
 				u.FakeEtcdMemberWithoutServer(2),
 			},
-			dualReplicaStatus: &mockClusterStatus{},
+			externalEtcdClusterStatus: &mockClusterStatus{},
 		},
 		{
-			name: "Dual Replica Cluster - Topology Enabled",
+			name: "ExternalEtcd Cluster - Enabled",
 			objects: []runtime.Object{
 				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
 			},
@@ -152,12 +152,12 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(0),
 				u.FakeEtcdMemberWithoutServer(1),
 			},
-			dualReplicaStatus: &mockClusterStatus{
-				isDualReplicaTopology: true,
+			externalEtcdClusterStatus: &mockClusterStatus{
+				isExternalEtcdCluster: true,
 			},
 		},
 		{
-			name: "Dual Replica Cluster - Bootstrap Completed but Not Ready",
+			name: "ExternalEtcd Cluster - Bootstrap Completed but Not Ready",
 			objects: []runtime.Object{
 				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
 			},
@@ -170,13 +170,13 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(0),
 				u.FakeEtcdMemberWithoutServer(1),
 			},
-			dualReplicaStatus: &mockClusterStatus{
-				isDualReplicaTopology: true,
+			externalEtcdClusterStatus: &mockClusterStatus{
+				isExternalEtcdCluster: true,
 				isBootstrapCompleted:  true,
 			},
 		},
 		{
-			name: "Dual Replica Cluster - Ready for Etcd Removal",
+			name: "ExternalEtcd Cluster - Ready for Etcd Removal",
 			objects: []runtime.Object{
 				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
 			},
@@ -189,8 +189,8 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(0),
 				u.FakeEtcdMemberWithoutServer(1),
 			},
-			dualReplicaStatus: &mockClusterStatus{
-				isDualReplicaTopology: true,
+			externalEtcdClusterStatus: &mockClusterStatus{
+				isExternalEtcdCluster: true,
 				isBootstrapCompleted:  true,
 				isReadyForEtcdRemoval: true,
 			},
@@ -199,7 +199,7 @@ func TestTargetConfigController(t *testing.T) {
 	}
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
-			eventRecorder, _, controller, fakeKubeClient := getController(t, scenario.staticPodStatus, scenario.objects, scenario.dualReplicaStatus)
+			eventRecorder, _, controller, fakeKubeClient := getController(t, scenario.staticPodStatus, scenario.objects, scenario.externalEtcdClusterStatus)
 			err := controller.sync(context.TODO(), factory.NewSyncContext("test", eventRecorder))
 			require.Equal(t, scenario.expectedErr, err)
 
@@ -265,7 +265,7 @@ func getController(
 	t *testing.T,
 	staticPodStatus *operatorv1.StaticPodOperatorStatus,
 	objects []runtime.Object,
-	dualReplicaStatus *mockClusterStatus) (events.Recorder, v1helpers.StaticPodOperatorClient, *TargetConfigController, *fake.Clientset) {
+	externalEtcdClusterStatus *mockClusterStatus) (events.Recorder, v1helpers.StaticPodOperatorClient, *TargetConfigController, *fake.Clientset) {
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 		&operatorv1.StaticPodOperatorSpec{
 			OperatorSpec: operatorv1.OperatorSpec{
@@ -317,14 +317,14 @@ func getController(
 	}))
 
 	controller := &TargetConfigController{
-		targetImagePullSpec:      etcdPullSpec,
-		operatorImagePullSpec:    operatorPullSpec,
-		operatorClient:           fakeOperatorClient,
-		dualReplicaClusterStatus: dualReplicaStatus,
-		kubeClient:               fakeKubeClient,
-		envVarGetter:             envVar,
-		enqueueFn:                func() {},
-		etcdLister:               operatorv1listers.NewEtcdLister(etcdIndexer),
+		targetImagePullSpec:       etcdPullSpec,
+		operatorImagePullSpec:     operatorPullSpec,
+		operatorClient:            fakeOperatorClient,
+		externalEtcdClusterStatus: externalEtcdClusterStatus,
+		kubeClient:                fakeKubeClient,
+		envVarGetter:              envVar,
+		enqueueFn:                 func() {},
+		etcdLister:                operatorv1listers.NewEtcdLister(etcdIndexer),
 	}
 
 	return eventRecorder, fakeOperatorClient, controller, fakeKubeClient

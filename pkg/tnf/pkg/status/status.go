@@ -10,61 +10,61 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/etcd"
 )
 
-type DualReplicaClusterStatus int
+type status int
 
 const (
-	DualReplicaClusterStatusDisabled = iota
-	DualReplicaClusterStatusEnabled
-	DualReplicaClusterStatusBootstrapCompleted
-	DualReplicaClusterStatusSetupReadyForEtcdRemoval
+	ExternalEtcdClusterStatusDisabled = iota
+	ExternalEtcdClusterStatusEnabled
+	ExternalEtcdClusterStatusBootstrapCompleted
+	ExternalEtcdClusterStatusReadyForEtcdRemoval
 )
 
-type ClusterStatus interface {
-	IsDualReplicaTopology() bool
+type ExternalEtcdClusterStatus interface {
+	IsExternalEtcdCluster() bool
 	IsBootstrapCompleted() bool
 	IsReadyForEtcdRemoval() bool
 	SetBootstrapCompleted()
 }
 
-type clusterStatus struct {
+type externalEtcdClusterStatus struct {
 	ctx                   context.Context
 	operatorClient        v1helpers.StaticPodOperatorClient
-	isDualReplicaTopology bool
+	isExternalEtcdCluster bool
 	bootstrapCompleted    bool
 	readyForEtcdRemoval   bool
 	mu                    sync.Mutex
 }
 
-func NewClusterStatus(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient, isDualReplicaTopology, bootstrapCompleted, readyForEtcdRemoval bool) ClusterStatus {
-	return &clusterStatus{
+func NewClusterStatus(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient, isExternalEtcdCluster, bootstrapCompleted, readyForEtcdRemoval bool) ExternalEtcdClusterStatus {
+	return &externalEtcdClusterStatus{
 		ctx:                   ctx,
 		operatorClient:        operatorClient,
-		isDualReplicaTopology: isDualReplicaTopology,
+		isExternalEtcdCluster: isExternalEtcdCluster,
 		bootstrapCompleted:    bootstrapCompleted,
 		readyForEtcdRemoval:   readyForEtcdRemoval,
 	}
 }
 
-func (cs *clusterStatus) GetStatus() DualReplicaClusterStatus {
+func (cs *externalEtcdClusterStatus) getStatus() status {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 
-	var newStatus DualReplicaClusterStatus
-	newStatus = DualReplicaClusterStatusDisabled
-	if cs.isDualReplicaTopology {
-		newStatus = DualReplicaClusterStatusEnabled
+	var newStatus status
+	newStatus = ExternalEtcdClusterStatusDisabled
+	if cs.isExternalEtcdCluster {
+		newStatus = ExternalEtcdClusterStatusEnabled
 		if cs.bootstrapCompleted {
-			newStatus = DualReplicaClusterStatusBootstrapCompleted
+			newStatus = ExternalEtcdClusterStatusBootstrapCompleted
 			// if we were ready already, no need to check the operator status again
 			if cs.readyForEtcdRemoval {
-				newStatus = DualReplicaClusterStatusSetupReadyForEtcdRemoval
+				newStatus = ExternalEtcdClusterStatusReadyForEtcdRemoval
 			} else {
 				_, status, _, err := cs.operatorClient.GetStaticPodOperatorState()
 				if err != nil {
 					// it's expected to potentially run into errors during etcd handover
 					klog.Errorf("Failed to check if TNF setup is ready for etcd container removal: %v", err)
 				} else if v1helpers.IsOperatorConditionTrue(status.Conditions, etcd.OperatorConditionExternalEtcdReady) {
-					newStatus = DualReplicaClusterStatusSetupReadyForEtcdRemoval
+					newStatus = ExternalEtcdClusterStatusReadyForEtcdRemoval
 					cs.readyForEtcdRemoval = true
 				}
 			}
@@ -73,19 +73,19 @@ func (cs *clusterStatus) GetStatus() DualReplicaClusterStatus {
 	return newStatus
 }
 
-func (cs *clusterStatus) IsDualReplicaTopology() bool {
-	return cs.GetStatus() >= DualReplicaClusterStatusEnabled
+func (cs *externalEtcdClusterStatus) IsExternalEtcdCluster() bool {
+	return cs.getStatus() >= ExternalEtcdClusterStatusEnabled
 }
 
-func (cs *clusterStatus) IsBootstrapCompleted() bool {
-	return cs.GetStatus() >= DualReplicaClusterStatusBootstrapCompleted
+func (cs *externalEtcdClusterStatus) IsBootstrapCompleted() bool {
+	return cs.getStatus() >= ExternalEtcdClusterStatusBootstrapCompleted
 }
 
-func (cs *clusterStatus) IsReadyForEtcdRemoval() bool {
-	return cs.GetStatus() >= DualReplicaClusterStatusSetupReadyForEtcdRemoval
+func (cs *externalEtcdClusterStatus) IsReadyForEtcdRemoval() bool {
+	return cs.getStatus() >= ExternalEtcdClusterStatusReadyForEtcdRemoval
 }
 
-func (cs *clusterStatus) SetBootstrapCompleted() {
+func (cs *externalEtcdClusterStatus) SetBootstrapCompleted() {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.bootstrapCompleted = true

@@ -35,12 +35,12 @@ import (
 type ExternalEtcdEnablerController struct {
 	operatorClient v1helpers.StaticPodOperatorClient
 
-	targetImagePullSpec      string
-	operatorImagePullSpec    string
-	envVarGetter             etcdenvvar.EnvVar
-	etcdLister               operatorv1listers.EtcdLister
-	dualReplicaClusterStatus status.ClusterStatus
-	kubeClient               kubernetes.Interface
+	targetImagePullSpec       string
+	operatorImagePullSpec     string
+	envVarGetter              etcdenvvar.EnvVar
+	etcdLister                operatorv1listers.EtcdLister
+	externalEtcdClusterStatus status.ExternalEtcdClusterStatus
+	kubeClient                kubernetes.Interface
 
 	enqueueFn func()
 }
@@ -57,16 +57,16 @@ func NewExternalEtcdEnablerController(
 	etcdsInformer operatorv1informers.EtcdInformer,
 	kubeClient kubernetes.Interface,
 	eventRecorder events.Recorder,
-	dualReplicaClusterStatus status.ClusterStatus) factory.Controller {
+	externalEtcdClusterStatus status.ExternalEtcdClusterStatus) factory.Controller {
 
 	c := &ExternalEtcdEnablerController{
-		operatorClient:           operatorClient,
-		targetImagePullSpec:      targetImagePullSpec,
-		operatorImagePullSpec:    operatorImagePullSpec,
-		envVarGetter:             envVarGetter,
-		kubeClient:               kubeClient,
-		etcdLister:               etcdsInformer.Lister(),
-		dualReplicaClusterStatus: dualReplicaClusterStatus,
+		operatorClient:            operatorClient,
+		targetImagePullSpec:       targetImagePullSpec,
+		operatorImagePullSpec:     operatorImagePullSpec,
+		envVarGetter:              envVarGetter,
+		kubeClient:                kubeClient,
+		etcdLister:                etcdsInformer.Lister(),
+		externalEtcdClusterStatus: externalEtcdClusterStatus,
 	}
 	syncCtx := factory.NewSyncContext("ExternalEtcdSupportController", eventRecorder.WithComponentSuffix("external-etcd-support-controller"))
 	c.enqueueFn = func() {
@@ -164,7 +164,7 @@ func (c *ExternalEtcdEnablerController) supportExternalEtcdOnlyPod(
 	podConfigMap.Data["version"] = version.Get().String()
 
 	// we can prepare the external etcd support already while TNF setup is still running
-	supportExternalEtcd := c.dualReplicaClusterStatus.IsBootstrapCompleted()
+	supportExternalEtcd := c.externalEtcdClusterStatus.IsBootstrapCompleted()
 	if !supportExternalEtcd {
 		klog.V(4).Infof("external etcd support is disabled: deleting configmap")
 		return resourceapply.DeleteConfigMap(ctx, client, recorder, podConfigMap)

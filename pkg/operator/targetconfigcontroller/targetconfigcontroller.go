@@ -37,8 +37,8 @@ type TargetConfigController struct {
 	targetImagePullSpec   string
 	operatorImagePullSpec string
 
-	operatorClient           v1helpers.StaticPodOperatorClient
-	dualReplicaClusterStatus status.ClusterStatus
+	operatorClient            v1helpers.StaticPodOperatorClient
+	externalEtcdClusterStatus status.ExternalEtcdClusterStatus
 
 	kubeClient   kubernetes.Interface
 	envVarGetter etcdenvvar.EnvVar
@@ -51,7 +51,7 @@ func NewTargetConfigController(
 	livenessChecker *health.MultiAlivenessChecker,
 	targetImagePullSpec, operatorImagePullSpec string,
 	operatorClient v1helpers.StaticPodOperatorClient,
-	dualReplicaClusterStatus status.ClusterStatus,
+	externalEtcdClusterStatus status.ExternalEtcdClusterStatus,
 	kubeInformersForOpenshiftEtcdNamespace informers.SharedInformerFactory,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	infrastructureInformer configv1informers.InfrastructureInformer,
@@ -66,11 +66,11 @@ func NewTargetConfigController(
 		targetImagePullSpec:   targetImagePullSpec,
 		operatorImagePullSpec: operatorImagePullSpec,
 
-		operatorClient:           operatorClient,
-		dualReplicaClusterStatus: dualReplicaClusterStatus,
-		kubeClient:               kubeClient,
-		envVarGetter:             envVarGetter,
-		etcdLister:               etcdsInformer.Lister(),
+		operatorClient:            operatorClient,
+		externalEtcdClusterStatus: externalEtcdClusterStatus,
+		kubeClient:                kubeClient,
+		envVarGetter:              envVarGetter,
+		etcdLister:                etcdsInformer.Lister(),
 	}
 
 	syncCtx := factory.NewSyncContext("TargetConfigController", eventRecorder.WithComponentSuffix("target-config-controller"))
@@ -115,10 +115,11 @@ func (c *TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncC
 		return err
 	}
 
-	// Check status of dual replica cluster aka Two Node Fencing
+	// Check if we need to remove the etcd container for external etcd usage.
+	// Currently used by DualReplica aka Two Node Fencing clusters.
 	shouldRemoveEtcdContainer := false
-	if c.dualReplicaClusterStatus.IsDualReplicaTopology() && c.dualReplicaClusterStatus.IsReadyForEtcdRemoval() {
-		shouldRemoveEtcdContainer = c.dualReplicaClusterStatus.IsReadyForEtcdRemoval()
+	if c.externalEtcdClusterStatus.IsExternalEtcdCluster() && c.externalEtcdClusterStatus.IsReadyForEtcdRemoval() {
+		shouldRemoveEtcdContainer = true
 	}
 
 	err = c.createTargetConfig(ctx, syncCtx.Recorder(), operatorSpec, envVars, etcd, shouldRemoveEtcdContainer)

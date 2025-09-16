@@ -30,13 +30,13 @@ const etcdPullSpec = "etcd-pull-spec"
 const operatorPullSpec = "operator-pull-spec"
 
 type mockClusterStatus struct {
-	isDualReplicaTopology bool
+	isExternalEtcdCluster bool
 	isBootstrapCompleted  bool
 	isReadyForEtcdRemoval bool
 }
 
-func (m *mockClusterStatus) IsDualReplicaTopology() bool {
-	return m.isDualReplicaTopology
+func (m *mockClusterStatus) IsExternalEtcdCluster() bool {
+	return m.isExternalEtcdCluster
 }
 
 func (m *mockClusterStatus) IsBootstrapCompleted() bool {
@@ -56,12 +56,12 @@ func TestExternalEtcdSupportController(t *testing.T) {
 		name                    string
 		objects                 []runtime.Object
 		staticPodStatus         *operatorv1.StaticPodOperatorStatus
-		clusterStatus           status.ClusterStatus
+		clusterStatus           status.ExternalEtcdClusterStatus
 		expectedConfigMapExists bool
 		expectedErr             error
 	}{
 		{
-			name: "Not on dual replica topology",
+			name: "Not on ExternalEtcd cluster",
 			objects: []runtime.Object{
 				testutils.BootstrapConfigMap(testutils.WithBootstrapStatus("complete")),
 			},
@@ -72,7 +72,7 @@ func TestExternalEtcdSupportController(t *testing.T) {
 				testutils.WithNodeStatusAtCurrentRevision(3),
 			),
 			clusterStatus: &mockClusterStatus{
-				isDualReplicaTopology: false,
+				isExternalEtcdCluster: false,
 				isBootstrapCompleted:  false,
 				isReadyForEtcdRemoval: false,
 			},
@@ -80,7 +80,7 @@ func TestExternalEtcdSupportController(t *testing.T) {
 			expectedErr:             nil,
 		},
 		{
-			name: "Dual replica but bootstrap not completed",
+			name: "ExternalEtcd cluster but bootstrap not completed",
 			objects: []runtime.Object{
 				testutils.BootstrapConfigMap(testutils.WithBootstrapStatus("complete")),
 			},
@@ -91,7 +91,7 @@ func TestExternalEtcdSupportController(t *testing.T) {
 				testutils.WithNodeStatusAtCurrentRevision(3),
 			),
 			clusterStatus: &mockClusterStatus{
-				isDualReplicaTopology: true,
+				isExternalEtcdCluster: true,
 				isBootstrapCompleted:  false,
 				isReadyForEtcdRemoval: false,
 			},
@@ -99,7 +99,7 @@ func TestExternalEtcdSupportController(t *testing.T) {
 			expectedErr:             nil,
 		},
 		{
-			name: "Dual replica and bootstrap completed",
+			name: "ExternalEtcd cluster and bootstrap completed",
 			objects: []runtime.Object{
 				testutils.BootstrapConfigMap(testutils.WithBootstrapStatus("complete")),
 			},
@@ -110,7 +110,7 @@ func TestExternalEtcdSupportController(t *testing.T) {
 				testutils.WithNodeStatusAtCurrentRevision(3),
 			),
 			clusterStatus: &mockClusterStatus{
-				isDualReplicaTopology: true,
+				isExternalEtcdCluster: true,
 				isBootstrapCompleted:  true,
 				isReadyForEtcdRemoval: false,
 			},
@@ -152,7 +152,7 @@ func getController(
 	t *testing.T,
 	staticPodStatus *operatorv1.StaticPodOperatorStatus,
 	objects []runtime.Object,
-	clusterStatus status.ClusterStatus) (events.Recorder, v1helpers.StaticPodOperatorClient, *ExternalEtcdEnablerController, *fake.Clientset) {
+	clusterStatus status.ExternalEtcdClusterStatus) (events.Recorder, v1helpers.StaticPodOperatorClient, *ExternalEtcdEnablerController, *fake.Clientset) {
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 		&operatorv1.StaticPodOperatorSpec{
 			OperatorSpec: operatorv1.OperatorSpec{
@@ -205,14 +205,14 @@ func getController(
 	}))
 
 	controller := &ExternalEtcdEnablerController{
-		operatorClient:           fakeOperatorClient,
-		targetImagePullSpec:      etcdPullSpec,
-		operatorImagePullSpec:    operatorPullSpec,
-		envVarGetter:             envVar,
-		kubeClient:               fakeKubeClient,
-		enqueueFn:                func() {},
-		etcdLister:               operatorv1listers.NewEtcdLister(etcdIndexer),
-		dualReplicaClusterStatus: clusterStatus,
+		operatorClient:            fakeOperatorClient,
+		targetImagePullSpec:       etcdPullSpec,
+		operatorImagePullSpec:     operatorPullSpec,
+		envVarGetter:              envVar,
+		kubeClient:                fakeKubeClient,
+		enqueueFn:                 func() {},
+		etcdLister:                operatorv1listers.NewEtcdLister(etcdIndexer),
+		externalEtcdClusterStatus: clusterStatus,
 	}
 	return eventRecorder, fakeOperatorClient, controller, fakeKubeClient
 }

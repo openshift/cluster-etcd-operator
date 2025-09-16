@@ -53,7 +53,7 @@ var (
 type DualReplicaClusterHandler struct {
 	ctx           context.Context
 	kubeClient    kubernetes.Interface
-	clusterStatus status.ClusterStatus
+	clusterStatus status.ExternalEtcdClusterStatus
 }
 
 func NewDualReplicaClusterHandler(ctx context.Context,
@@ -97,7 +97,7 @@ func NewDualReplicaClusterHandler(ctx context.Context,
 
 }
 
-func (h *DualReplicaClusterHandler) GetClusterStatus() status.ClusterStatus {
+func (h *DualReplicaClusterHandler) GetExternalEtcdClusterStatus() status.ExternalEtcdClusterStatus {
 	return h.clusterStatus
 }
 
@@ -115,7 +115,7 @@ func (h *DualReplicaClusterHandler) HandleDualReplicaClusters(
 	kubeClient kubernetes.Interface,
 	dynamicClient dynamic.Interface) (bool, error) {
 
-	if !h.clusterStatus.IsDualReplicaTopology() {
+	if !h.clusterStatus.IsExternalEtcdCluster() {
 		return false, nil
 	}
 
@@ -234,7 +234,7 @@ func runExternalEtcdSupportController(ctx context.Context,
 	controlPlaneNodeInformer cache.SharedIndexInformer,
 	etcdInformer operatorv1informers.EtcdInformer,
 	kubeClient kubernetes.Interface,
-	clusterStatus status.ClusterStatus) {
+	clusterStatus status.ExternalEtcdClusterStatus) {
 
 	klog.Infof("starting external etcd support controller")
 	externalEtcdSupportController := externaletcdsupportcontroller.NewExternalEtcdEnablerController(
