@@ -69,7 +69,7 @@ func TestHandleDualReplicaClusters(t *testing.T) {
 			wantErr:            false,
 		},
 		{
-			name:               "Dual replica topology",
+			name:               "DualReplica topology",
 			args:               getArgs(t, true),
 			wantHandlerInitErr: false,
 			wantStarted:        true,

@@ -65,7 +65,9 @@ func NewDualReplicaClusterHandler(ctx context.Context,
 	if err != nil {
 		klog.Errorf("failed to determine DualReplicaTopology, aborting controller start: %v", err)
 		return nil, err
-	} else if dualReplicaEnabled {
+	}
+
+	if dualReplicaEnabled {
 		klog.Infof("detected DualReplica topology")
 
 		// Check if bootstrap is completed without waiting for it.
@@ -74,15 +76,14 @@ func NewDualReplicaClusterHandler(ctx context.Context,
 		if err != nil {
 			klog.Errorf("failed to get static pod operator state: %v", err)
 			return nil, err
-		} else {
-			bootstrapCompleted = v1helpers.IsOperatorConditionTrue(opStatus.Conditions, "EtcdRunningInCluster")
-			if bootstrapCompleted {
-				klog.Infof("and bootstrap completed already")
-			}
-			readyForEtcdRemoval = v1helpers.IsOperatorConditionTrue(opStatus.Conditions, etcd.OperatorConditionExternalEtcdReady)
-			if readyForEtcdRemoval {
-				klog.Infof("and ready for etcd removal already")
-			}
+		}
+		bootstrapCompleted = v1helpers.IsOperatorConditionTrue(opStatus.Conditions, "EtcdRunningInCluster")
+		if bootstrapCompleted {
+			klog.Infof("and bootstrap completed already")
+		}
+		readyForEtcdRemoval = v1helpers.IsOperatorConditionTrue(opStatus.Conditions, etcd.OperatorConditionExternalEtcdReady)
+		if readyForEtcdRemoval {
+			klog.Infof("and ready for etcd removal already")
 		}
 	}
 
