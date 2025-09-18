@@ -1,4 +1,4 @@
-package fencingvalidate
+package disruptivevalidate
 
 import (
 	"context"
@@ -120,6 +120,29 @@ func RunDisruptiveValidate() error {
 
 	klog.Infof("TNF validate: local=%s peer=%s", local, peer)
 
+	min, max := clusterCfg.NodeName1, clusterCfg.NodeName2
+	if strings.Compare(min, max) > 0 {
+		min, max = max, min
+	}
+
+	// If I'm the "second" node (max), wait for the "first" node's validate Job to Complete.
+	if local == max {
+		targetJobName := tools.JobTypeDisruptiveValidate.GetJobName(&min) // e.g. tnf-disruptive-validate-job-<min>
+		klog.Infof("validate: %s waiting for %s to complete (%s)", local, min, targetJobName)
+
+		err := wait.PollUntilContextTimeout(ctx, tools.JobPollIntervall, 45*time.Minute, true, func(context.Context) (bool, error) {
+			j, err := kubeClient.BatchV1().Jobs(operatorclient.TargetNamespace).Get(ctx, targetJobName, metav1.GetOptions{})
+			if err != nil {
+				// NotFound or transient—keep polling
+				return false, nil
+			}
+			return tools.IsConditionTrue(j.Status.Conditions, batchv1.JobComplete), nil
+		})
+		if err != nil {
+			return fmt.Errorf("timed out waiting for %s (%s) to complete: %w", min, targetJobName, err)
+		}
+		klog.Infof("validate: %s saw %s complete; proceeding to fence", local, min)
+	}
 	// Preflight on host
 	if _, _, err := exec.Execute(ctx, `command -v pcs`); err != nil {
 		return fmt.Errorf("pcs absent on host: %w", err)
@@ -151,8 +174,12 @@ func RunDisruptiveValidate() error {
 	}
 
 	// Fence peer
-	if _, _, err := exec.Execute(ctx, fmt.Sprintf(`/usr/sbin/pcs stonith fence %s --wait=300`, peer)); err != nil {
-		return fmt.Errorf("pcs fence failed: %w", err)
+	if out, _, err := exec.Execute(ctx, fmt.Sprintf(`/usr/sbin/pcs stonith fence %s --wait=60`, peer)); err != nil {
+		last := out
+		if nl := strings.LastIndex(out, "\n"); nl >= 0 && nl+1 < len(out) {
+			last = out[nl+1:]
+		}
+		return fmt.Errorf("pcs fence failed: %w (last: %s)", err, strings.TrimSpace(last))
 	}
 
 	// Wait OFFLINE then ONLINE
