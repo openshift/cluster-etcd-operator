@@ -5,13 +5,11 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/config"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/exec"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
@@ -289,154 +287,5 @@ func deleteObsoleteStonithDevices(ctx context.Context, stonithConfig StonithConf
 			return fmt.Errorf("failed to delete stonith device %q: %v", p.Id, err)
 		}
 	}
-	return nil
-}
-
-func peerOf(cfg config.ClusterConfig, local string) (string, error) {
-	switch local {
-	case cfg.NodeName1:
-		return cfg.NodeName2, nil
-	case cfg.NodeName2:
-		return cfg.NodeName1, nil
-	default:
-		return "", fmt.Errorf("local node %q not in cluster config (%q, %q)", local, cfg.NodeName1, cfg.NodeName2)
-	}
-}
-
-func localHostname(ctx context.Context) (string, error) {
-	out, _, err := exec.Execute(ctx, "hostname -f || hostname")
-	if err != nil {
-		return "", fmt.Errorf("hostname query failed: %v", err)
-	}
-	return strings.TrimSpace(out), nil
-}
-
-func pcsNodesOnline(ctx context.Context) (string, error) {
-	out, _, err := exec.Execute(ctx, "/usr/sbin/pcs status nodes 2>/dev/null || /usr/sbin/crm_mon -1 2>/dev/null || true")
-	return out, err
-}
-
-func isOnline(output, name string) bool {
-	short := name
-	if i := strings.IndexByte(name, '.'); i > 0 {
-		short = name[:i]
-	}
-	return strings.Contains(output, name) || strings.Contains(output, short)
-}
-
-func waitPacemakerOffline(ctx context.Context, name string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		out, pcsErr := pcsNodesOnline(ctx)
-		if pcsErr != nil {
-			return fmt.Errorf("pcs status failed while waiting OFFLINE: %w", pcsErr)
-		}
-		if !isOnline(out, name) {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(5 * time.Second):
-		}
-	}
-	return fmt.Errorf("timeout waiting for %s to go OFFLINE (pcs)", name)
-}
-
-func waitPacemakerOnline(ctx context.Context, name string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		out, pcsErr := pcsNodesOnline(ctx)
-		if pcsErr != nil {
-			return fmt.Errorf("pcs status failed while waiting ONLINE: %w", pcsErr)
-		}
-		if isOnline(out, name) {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(5 * time.Second):
-		}
-	}
-	return fmt.Errorf("timeout waiting for %s to become ONLINE (pcs)", name)
-}
-
-func waitEtcdHealthy(ctx context.Context, timeout time.Duration, ec etcdcli.EtcdClient) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		ok, fatal := etcdTwoStarted(ctx, ec)
-		if fatal != nil {
-			return fmt.Errorf("etcdctl check failed: %v", fatal)
-		}
-		if ok {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(5 * time.Second):
-		}
-	}
-	return fmt.Errorf("timeout waiting for etcd to report 2 started non-learner voters")
-}
-
-func etcdTwoStarted(ctx context.Context, ec etcdcli.EtcdClient) (bool, error) {
-	members, err := ec.VotingMemberList(ctx)
-	if err != nil {
-		return false, fmt.Errorf("list voters: %w", err)
-	}
-	if len(members) < 2 {
-		return false, nil
-	}
-	healthy := 0
-	for _, m := range members {
-		ok, err := ec.IsMemberHealthy(ctx, m)
-		if err != nil {
-			return false, fmt.Errorf("member %s health: %w", m.Name, err)
-		}
-		if ok {
-			healthy++
-		}
-	}
-	return healthy >= 2, nil
-}
-
-func ValidateFencingPeerOnly(ctx context.Context, cfg config.ClusterConfig, ec etcdcli.EtcdClient) error {
-	klog.Info("Validating Fencing (disruptive, peer-only)")
-
-	local, err := localHostname(ctx)
-	if err != nil {
-		return err
-	}
-	target, err := peerOf(cfg, local)
-	if err != nil {
-		return err
-	}
-
-	klog.Infof("Fencing peer node %q from local %q", target, local)
-
-	out, _ := pcsNodesOnline(ctx)
-	if !isOnline(out, target) {
-		return fmt.Errorf("peer %q is not ONLINE before fencing", target)
-	}
-
-	cmd := fmt.Sprintf("/usr/sbin/pcs stonith fence %q --wait=300", target)
-	_, stdErr, fenceErr := exec.Execute(ctx, cmd)
-	if fenceErr != nil {
-		klog.Error(fenceErr, "pcs stonith fence failed", "stderr", stdErr)
-		return fmt.Errorf("pcs stonith fence %q failed: %w", target, fenceErr)
-	}
-	if err := waitPacemakerOffline(ctx, target, 10*time.Minute); err != nil {
-		return err
-	}
-	if err := waitPacemakerOnline(ctx, target, 15*time.Minute); err != nil {
-		return err
-	}
-	if err := waitEtcdHealthy(ctx, 10*time.Minute, ec); err != nil {
-		return err
-	}
-
-	klog.Infof(" peer-only fencing validation passed for peer %q", target)
 	return nil
 }

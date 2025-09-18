@@ -3,11 +3,8 @@ package setup
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
-	configclient "github.com/openshift/client-go/config/clientset/versioned"
-	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -15,30 +12,16 @@ import (
 	"k8s.io/apiserver/pkg/server"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
-	utilclock "k8s.io/utils/clock"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/config"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/etcd"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/pcs"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
-	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
 )
 
 func RunTnfSetup() error {
 	klog.Info("Setting up clients etc. for TNF setup")
-
-	ctx, cancel := context.WithCancel(context.Background())
-	shutdownHandler := server.SetupSignalHandler()
-	go func() {
-		defer cancel()
-		<-shutdownHandler
-		klog.Info("Received SIGTERM or SIGINT signal, terminating")
-	}()
 
 	clientConfig, err := rest.InClusterConfig()
 	if err != nil {
@@ -55,51 +38,18 @@ func RunTnfSetup() error {
 		return err
 	}
 
-	// CRD clients
-	configClient, err := configclient.NewForConfig(clientConfig)
-	if err != nil {
-		return err
-	}
-	kubeInformers := v1helpers.NewKubeInformersForNamespaces(
-		kubeClient,
-		operatorclient.TargetNamespace,
-		"",
-	)
-	nodes := kubeInformers.InformersFor("").Core().V1().Nodes()
-
-	cfgInformers := configv1informers.NewSharedInformerFactory(configClient, 0)
-	networkInformer := cfgInformers.Config().V1().Networks()
-
-	recorder := events.NewInMemoryRecorder("tnf-fencing", utilclock.RealClock{})
-
-	stopCh := make(chan struct{})
-	go func() {
-		<-ctx.Done()
-		close(stopCh)
-	}()
-	kubeInformers.Start(stopCh)
-	cfgInformers.Start(stopCh)
-
-	if ok := cache.WaitForCacheSync(
-		ctx.Done(),
-		nodes.Informer().HasSynced,
-		networkInformer.Informer().HasSynced,
-	); !ok {
-		return fmt.Errorf("failed to sync informers for etcd client")
-	}
-
-	ec := etcdcli.NewEtcdClient(
-		kubeInformers,
-		nodes.Informer(),
-		nodes.Lister(),
-		networkInformer,
-		recorder,
-	)
-
 	operatorConfigClient, err := operatorversionedclient.NewForConfig(clientConfig)
 	if err != nil {
 		return err
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	shutdownHandler := server.SetupSignalHandler()
+	go func() {
+		defer cancel()
+		<-shutdownHandler
+		klog.Info("Received SIGTERM or SIGINT signal, terminating")
+	}()
 
 	klog.Info("Waiting for completed auth jobs")
 	authDone := func(context.Context) (done bool, err error) {
@@ -180,11 +130,6 @@ func RunTnfSetup() error {
 		return err
 	}
 
-	if os.Getenv("TNF_VALIDATE_PEER_ONLY") == "true" {
-		if err := pcs.ValidateFencingPeerOnly(ctx, cfg, ec); err != nil {
-			return fmt.Errorf("peer-only disruptive validation failed: %w", err)
-		}
-	}
 	klog.Infof("HA setup done! CIB:\n%s", cib)
 
 	return nil

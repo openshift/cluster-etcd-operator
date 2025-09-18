@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 	"os"
 	"sync"
+
+	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
@@ -59,8 +60,8 @@ func HandleDualReplicaClusters(ctx context.Context,
 	controlPlaneNodeInformer cache.SharedIndexInformer,
 	etcdInformer operatorv1informers.EtcdInformer,
 	kubeClient kubernetes.Interface,
-	dynamicClient dynamic.Interface) (bool, error) {
-
+	dynamicClient dynamic.Interface,
+) (bool, error) {
 	if isDualReplicaTopology, err := isDualReplicaTopoly(ctx, featureGateAccessor, configInformers); err != nil {
 		return false, err
 	} else if !isDualReplicaTopology {
@@ -104,6 +105,7 @@ func HandleDualReplicaClusters(ctx context.Context,
 				for _, node := range nodeList {
 					runJobController(ctx, tools.JobTypeAuth, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
 					runJobController(ctx, tools.JobTypeAfterSetup, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+					runJobController(ctx, tools.JobTypeDisruptiveValidate, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
 				}
 				runJobController(ctx, tools.JobTypeSetup, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
 				runJobController(ctx, tools.JobTypeFencing, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
@@ -162,8 +164,8 @@ func runExternalEtcdSupportController(ctx context.Context,
 	networkInformer v1.NetworkInformer,
 	controlPlaneNodeInformer cache.SharedIndexInformer,
 	etcdInformer operatorv1informers.EtcdInformer,
-	kubeClient kubernetes.Interface) {
-
+	kubeClient kubernetes.Interface,
+) {
 	klog.Infof("starting external etcd support controller")
 	externalEtcdSupportController := externaletcdsupportcontroller.NewExternalEtcdEnablerController(
 		operatorClient,
@@ -225,7 +227,8 @@ func runJobController(ctx context.Context, jobType tools.JobType, nodeName *stri
 				job.Spec.Template.Spec.Containers[0].Image = os.Getenv("OPERATOR_IMAGE")
 				job.Spec.Template.Spec.Containers[0].Command[1] = jobType.GetSubCommand()
 				return nil
-			}}...,
+			},
+		}...,
 	)
 	go tnfJobController.Run(ctx, 1)
 }

@@ -26,6 +26,7 @@ const (
 	JobTypeSetup
 	JobTypeAfterSetup
 	JobTypeFencing
+	JobTypeDisruptiveValidate
 )
 
 func (t JobType) GetSubCommand() string {
@@ -38,6 +39,8 @@ func (t JobType) GetSubCommand() string {
 		return "after-setup"
 	case JobTypeFencing:
 		return "fencing"
+	case JobTypeDisruptiveValidate:
+		return "disruptive-validate"
 	default:
 		return ""
 	}
