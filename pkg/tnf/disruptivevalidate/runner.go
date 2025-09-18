@@ -152,20 +152,58 @@ func RunDisruptiveValidate() error {
 	}
 
 	// Ensure peer ONLINE before fence
-	peerOnlineRE := regexp.MustCompile(`(?mi)^Node\s+` + regexp.QuoteMeta(peer) + `\s+state:\s+([A-Z]+)`)
+	peerLineRE := regexp.MustCompile(`(?mi)^Node\s+` + regexp.QuoteMeta(peer) + `\s+state:\s+([A-Z]+)`)
+
 	waitPeer := func(wantOnline bool, timeout time.Duration) error {
 		check := func(context.Context) (bool, error) {
 			out, _, err := exec.Execute(ctx, `/usr/sbin/pcs status nodes`)
 			if err != nil {
-				// transient during fencing
-				return false, nil
+				return false, nil // transient
 			}
-			m := peerOnlineRE.FindStringSubmatch(out)
-			if len(m) != 2 {
-				return false, nil
+
+			// Fast path: per-node line format
+			if m := peerLineRE.FindStringSubmatch(out); len(m) == 2 {
+				gotOnline := (m[1] == "ONLINE")
+				return gotOnline == wantOnline, nil
 			}
-			gotOnline := (m[1] == "ONLINE")
-			return gotOnline == wantOnline, nil
+
+			// Fallback: summary lists
+			for _, ln := range strings.Split(out, "\n") {
+				l := strings.TrimSpace(ln)
+				if l == "" {
+					continue
+				}
+				low := strings.ToLower(l)
+
+				// Decide which list this line represents
+				var listType string
+				switch {
+				case strings.HasPrefix(low, "online:"):
+					listType = "online"
+				case strings.HasPrefix(low, "offline:"):
+					listType = "offline"
+				case strings.HasPrefix(low, "standby:"),
+					strings.HasPrefix(low, "standby with resource"):
+					listType = "standby"
+				default:
+					continue
+				}
+
+				// Extract names after the colon and look for exact token match
+				colon := strings.Index(l, ":")
+				if colon < 0 {
+					continue
+				}
+				for _, name := range strings.Fields(strings.TrimSpace(l[colon+1:])) {
+					if name == peer {
+						gotOnline := (listType == "online")
+						return gotOnline == wantOnline, nil
+					}
+				}
+			}
+
+			// Unknown formatting; keep polling
+			return false, nil
 		}
 		return wait.PollUntilContextTimeout(ctx, 3*time.Second, timeout, true, check)
 	}
