@@ -212,7 +212,7 @@ func RunDisruptiveValidate() error {
 	}
 
 	// Fence peer
-	if out, _, err := exec.Execute(ctx, fmt.Sprintf(`/usr/sbin/pcs stonith fence %s --wait=60`, peer)); err != nil {
+	if out, _, err := exec.Execute(ctx, fmt.Sprintf(`/usr/sbin/pcs stonith fence %s`, peer)); err != nil {
 		last := out
 		if nl := strings.LastIndex(out, "\n"); nl >= 0 && nl+1 < len(out) {
 			last = out[nl+1:]
