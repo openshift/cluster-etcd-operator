@@ -118,7 +118,7 @@ func (c *TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncC
 	// Check if we need to remove the etcd container for external etcd usage.
 	// Currently used by DualReplica aka Two Node Fencing clusters.
 	shouldRemoveEtcdContainer := false
-	if c.externalEtcdClusterStatus.IsExternalEtcdCluster() && c.externalEtcdClusterStatus.IsReadyForEtcdRemoval() {
+	if c.externalEtcdClusterStatus.IsExternalEtcdCluster() && c.externalEtcdClusterStatus.IsReadyForEtcdTransition() {
 		shouldRemoveEtcdContainer = true
 	}
 

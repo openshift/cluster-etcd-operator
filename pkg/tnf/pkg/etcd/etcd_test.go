@@ -8,7 +8,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 )
 
 type args struct {
@@ -23,7 +22,7 @@ func TestRemoveStaticContainer(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name:    "sets ReadyForEtcdContainerRemoval condition",
+			name:    "sets ExternalEtcdReadyForTransition condition",
 			args:    getArgs(),
 			wantErr: false,
 		},
@@ -34,10 +33,10 @@ func TestRemoveStaticContainer(t *testing.T) {
 				t.Errorf("RemoveStaticContainer() error = %v, wantErr %v", err, tt.wantErr)
 			}
 
-			// Verify that the job condition was set
+			// Verify that the operator condition was set
 			_, status, _, err := tt.args.operatorClient.GetStaticPodOperatorState()
 			require.NoError(t, err, "Failed to get static pod operator state")
-			isSet := v1helpers.IsOperatorConditionTrue(status.Conditions, OperatorConditionExternalEtcdReady)
+			isSet := v1helpers.IsOperatorConditionTrue(status.Conditions, OperatorConditionExternalEtcdReadyForTransition)
 			require.True(t, isSet, "Expected ReadyForEtcdContainerRemoval condition to be set to True")
 		})
 	}
@@ -49,13 +48,6 @@ func getArgs() args {
 	etcd := &v1.Etcd{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "cluster",
-		},
-		Spec: v1.EtcdSpec{
-			StaticPodOperatorSpec: v1.StaticPodOperatorSpec{
-				OperatorSpec: v1.OperatorSpec{
-					UnsupportedConfigOverrides: runtime.RawExtension{},
-				},
-			},
 		},
 	}
 

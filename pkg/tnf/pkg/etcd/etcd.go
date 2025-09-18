@@ -12,28 +12,28 @@ import (
 )
 
 const (
-	OperatorConditionExternalEtcdReady = "ExternalEtcdReady"
+	OperatorConditionExternalEtcdReadyForTransition = "ExternalEtcdReadyForTransition"
 )
 
 // RemoveStaticContainer informs CEO to remove its etcd container
 func RemoveStaticContainer(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient) error {
-	klog.Info("Signaling CEO that TNF setup is ready for etcd container removal")
+	klog.Info("Signaling CEO that TNF setup is ready for etcd container transition")
 
 	_, _, err := v1helpers.UpdateStatus(ctx, operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-		Type:    OperatorConditionExternalEtcdReady,
+		Type:    OperatorConditionExternalEtcdReadyForTransition,
 		Status:  operatorv1.ConditionTrue,
-		Reason:  "PacemakerConfiguredForEtcdTakeover",
+		Reason:  "PacemakerConfiguredForEtcdTransition",
 		Message: "pacemaker's resource agent is ready to takeover the etcd container",
 	}))
 
 	if err != nil {
-		return fmt.Errorf("error while updating ExternalEtcdReady operator condition: %w", err)
+		return fmt.Errorf("error while updating ExternalEtcdReadyForTransition operator condition: %w", err)
 	}
 
 	// Wait for CEO to respond by removing static containers
 	err = waitForStaticContainerRemoved(ctx, operatorClient)
 	if err != nil {
-		klog.Error(err, "Failed to wait for Etcd container removal")
+		klog.Error(err, "Failed to wait for etcd container transition")
 		return err
 	}
 

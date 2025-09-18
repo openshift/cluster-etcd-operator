@@ -35,9 +35,9 @@ const operatorPullSpec = "operator-pull-spec"
 
 // mockClusterStatus implements status.ClusterStatus for testing
 type mockClusterStatus struct {
-	isExternalEtcdCluster bool
-	isBootstrapCompleted  bool
-	isReadyForEtcdRemoval bool
+	isExternalEtcdCluster    bool
+	isBootstrapCompleted     bool
+	isReadyForEtcdTransition bool
 }
 
 func (m *mockClusterStatus) IsExternalEtcdCluster() bool {
@@ -48,8 +48,8 @@ func (m *mockClusterStatus) IsBootstrapCompleted() bool {
 	return m.isBootstrapCompleted
 }
 
-func (m *mockClusterStatus) IsReadyForEtcdRemoval() bool {
-	return m.isReadyForEtcdRemoval
+func (m *mockClusterStatus) IsReadyForEtcdTransition() bool {
+	return m.isReadyForEtcdTransition
 }
 
 func (m *mockClusterStatus) SetBootstrapCompleted() {
@@ -176,7 +176,7 @@ func TestTargetConfigController(t *testing.T) {
 			},
 		},
 		{
-			name: "ExternalEtcd Cluster - Ready for Etcd Removal",
+			name: "ExternalEtcd Cluster - Ready for Etcd Transition",
 			objects: []runtime.Object{
 				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
 			},
@@ -190,9 +190,9 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(1),
 			},
 			externalEtcdClusterStatus: &mockClusterStatus{
-				isExternalEtcdCluster: true,
-				isBootstrapCompleted:  true,
-				isReadyForEtcdRemoval: true,
+				isExternalEtcdCluster:    true,
+				isBootstrapCompleted:     true,
+				isReadyForEtcdTransition: true,
 			},
 			expectedEtcdContainerRemoved: true,
 		},

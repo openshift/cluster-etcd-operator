@@ -60,7 +60,7 @@ func NewDualReplicaClusterHandler(ctx context.Context,
 	configInformers configv1informers.SharedInformerFactory) (*DualReplicaClusterHandler, error) {
 
 	bootstrapCompleted := false
-	readyForEtcdRemoval := false
+	readyForEtcdTransition := false
 	dualReplicaEnabled, err := ceohelpers.IsDualReplicaTopology(ctx, configInformers.Config().V1().Infrastructures().Lister())
 	if err != nil {
 		klog.Errorf("failed to determine DualReplicaTopology, aborting controller start: %v", err)
@@ -81,16 +81,16 @@ func NewDualReplicaClusterHandler(ctx context.Context,
 		if bootstrapCompleted {
 			klog.Infof("and bootstrap completed already")
 		}
-		readyForEtcdRemoval = v1helpers.IsOperatorConditionTrue(opStatus.Conditions, etcd.OperatorConditionExternalEtcdReady)
-		if readyForEtcdRemoval {
-			klog.Infof("and ready for etcd removal already")
+		readyForEtcdTransition = v1helpers.IsOperatorConditionTrue(opStatus.Conditions, etcd.OperatorConditionExternalEtcdReadyForTransition)
+		if readyForEtcdTransition {
+			klog.Infof("and ready for etcd transition already")
 		}
 	}
 
 	return &DualReplicaClusterHandler{
 		ctx:           ctx,
 		kubeClient:    kubeClient,
-		clusterStatus: status.NewClusterStatus(ctx, opClient, dualReplicaEnabled, bootstrapCompleted, readyForEtcdRemoval),
+		clusterStatus: status.NewClusterStatus(ctx, opClient, dualReplicaEnabled, bootstrapCompleted, readyForEtcdTransition),
 	}, nil
 
 }

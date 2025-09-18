@@ -30,9 +30,9 @@ const etcdPullSpec = "etcd-pull-spec"
 const operatorPullSpec = "operator-pull-spec"
 
 type mockClusterStatus struct {
-	isExternalEtcdCluster bool
-	isBootstrapCompleted  bool
-	isReadyForEtcdRemoval bool
+	isExternalEtcdCluster    bool
+	isBootstrapCompleted     bool
+	isReadyForEtcdTransition bool
 }
 
 func (m *mockClusterStatus) IsExternalEtcdCluster() bool {
@@ -43,8 +43,8 @@ func (m *mockClusterStatus) IsBootstrapCompleted() bool {
 	return m.isBootstrapCompleted
 }
 
-func (m *mockClusterStatus) IsReadyForEtcdRemoval() bool {
-	return m.isReadyForEtcdRemoval
+func (m *mockClusterStatus) IsReadyForEtcdTransition() bool {
+	return m.isReadyForEtcdTransition
 }
 
 func (m *mockClusterStatus) SetBootstrapCompleted() {
@@ -72,9 +72,9 @@ func TestExternalEtcdSupportController(t *testing.T) {
 				testutils.WithNodeStatusAtCurrentRevision(3),
 			),
 			clusterStatus: &mockClusterStatus{
-				isExternalEtcdCluster: false,
-				isBootstrapCompleted:  false,
-				isReadyForEtcdRemoval: false,
+				isExternalEtcdCluster:    false,
+				isBootstrapCompleted:     false,
+				isReadyForEtcdTransition: false,
 			},
 			expectedConfigMapExists: false,
 			expectedErr:             nil,
@@ -91,9 +91,9 @@ func TestExternalEtcdSupportController(t *testing.T) {
 				testutils.WithNodeStatusAtCurrentRevision(3),
 			),
 			clusterStatus: &mockClusterStatus{
-				isExternalEtcdCluster: true,
-				isBootstrapCompleted:  false,
-				isReadyForEtcdRemoval: false,
+				isExternalEtcdCluster:    true,
+				isBootstrapCompleted:     false,
+				isReadyForEtcdTransition: false,
 			},
 			expectedConfigMapExists: false,
 			expectedErr:             nil,
@@ -110,9 +110,9 @@ func TestExternalEtcdSupportController(t *testing.T) {
 				testutils.WithNodeStatusAtCurrentRevision(3),
 			),
 			clusterStatus: &mockClusterStatus{
-				isExternalEtcdCluster: true,
-				isBootstrapCompleted:  true,
-				isReadyForEtcdRemoval: false,
+				isExternalEtcdCluster:    true,
+				isBootstrapCompleted:     true,
+				isReadyForEtcdTransition: false,
 			},
 			expectedConfigMapExists: true,
 			expectedErr:             nil,

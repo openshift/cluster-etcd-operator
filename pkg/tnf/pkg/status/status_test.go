@@ -22,92 +22,92 @@ func TestNewClusterStatus(t *testing.T) {
 	)
 
 	testCases := []struct {
-		name                   string
-		isExternalEtcd         bool
-		bootstrapCompleted     bool
-		readyForEtcdRemoval    bool
-		setBootstrapCompleted  bool
-		operatorConditions     []operatorv1.OperatorCondition
-		expectedIsExternalEtcd bool
-		expectedIsBootstrap    bool
-		expectedIsReady        bool
+		name                         string
+		isExternalEtcd               bool
+		bootstrapCompleted           bool
+		readyForEtcdTransition       bool
+		setBootstrapCompleted        bool
+		operatorConditions           []operatorv1.OperatorCondition
+		expectedIsExternalEtcd       bool
+		expectedIsBootstrap          bool
+		expectedIsReadyForTransition bool
 	}{
 		{
-			name:                   "ExternalEtcd disabled",
-			isExternalEtcd:         false,
-			bootstrapCompleted:     false,
-			setBootstrapCompleted:  false,
-			readyForEtcdRemoval:    false,
-			operatorConditions:     []operatorv1.OperatorCondition{},
-			expectedIsExternalEtcd: false,
-			expectedIsBootstrap:    false,
-			expectedIsReady:        false,
+			name:                         "ExternalEtcd disabled",
+			isExternalEtcd:               false,
+			bootstrapCompleted:           false,
+			setBootstrapCompleted:        false,
+			readyForEtcdTransition:       false,
+			operatorConditions:           []operatorv1.OperatorCondition{},
+			expectedIsExternalEtcd:       false,
+			expectedIsBootstrap:          false,
+			expectedIsReadyForTransition: false,
 		},
 		{
-			name:                   "ExternalEtcd enabled, bootstrap initially not completed",
-			isExternalEtcd:         true,
-			bootstrapCompleted:     false,
-			setBootstrapCompleted:  false,
-			readyForEtcdRemoval:    false,
-			operatorConditions:     []operatorv1.OperatorCondition{},
-			expectedIsExternalEtcd: true,
-			expectedIsBootstrap:    false,
-			expectedIsReady:        false,
+			name:                         "ExternalEtcd enabled, bootstrap initially not completed",
+			isExternalEtcd:               true,
+			bootstrapCompleted:           false,
+			setBootstrapCompleted:        false,
+			readyForEtcdTransition:       false,
+			operatorConditions:           []operatorv1.OperatorCondition{},
+			expectedIsExternalEtcd:       true,
+			expectedIsBootstrap:          false,
+			expectedIsReadyForTransition: false,
 		},
 		{
-			name:                   "ExternalEtcd enabled, bootstrap initially completed",
+			name:                         "ExternalEtcd enabled, bootstrap initially completed",
+			isExternalEtcd:               true,
+			bootstrapCompleted:           true,
+			setBootstrapCompleted:        false,
+			readyForEtcdTransition:       false,
+			operatorConditions:           []operatorv1.OperatorCondition{},
+			expectedIsExternalEtcd:       true,
+			expectedIsBootstrap:          true,
+			expectedIsReadyForTransition: false,
+		},
+		{
+			name:                         "ExternalEtcd enabled, bootstrap set to completed",
+			isExternalEtcd:               true,
+			bootstrapCompleted:           false,
+			setBootstrapCompleted:        true,
+			readyForEtcdTransition:       false,
+			operatorConditions:           []operatorv1.OperatorCondition{},
+			expectedIsExternalEtcd:       true,
+			expectedIsBootstrap:          true,
+			expectedIsReadyForTransition: false,
+		},
+		{
+			name:                         "ExternalEtcd enabled, initially ready for etcd transition",
+			isExternalEtcd:               true,
+			bootstrapCompleted:           true,
+			setBootstrapCompleted:        false,
+			readyForEtcdTransition:       true,
+			operatorConditions:           []operatorv1.OperatorCondition{},
+			expectedIsExternalEtcd:       true,
+			expectedIsBootstrap:          true,
+			expectedIsReadyForTransition: true,
+		},
+		{
+			name:                   "ExternalEtcd enabled, ready for etcd transition by operator condition",
 			isExternalEtcd:         true,
 			bootstrapCompleted:     true,
 			setBootstrapCompleted:  false,
-			readyForEtcdRemoval:    false,
-			operatorConditions:     []operatorv1.OperatorCondition{},
-			expectedIsExternalEtcd: true,
-			expectedIsBootstrap:    true,
-			expectedIsReady:        false,
-		},
-		{
-			name:                   "ExternalEtcd enabled, bootstrap set to completed",
-			isExternalEtcd:         true,
-			bootstrapCompleted:     false,
-			setBootstrapCompleted:  true,
-			readyForEtcdRemoval:    false,
-			operatorConditions:     []operatorv1.OperatorCondition{},
-			expectedIsExternalEtcd: true,
-			expectedIsBootstrap:    true,
-			expectedIsReady:        false,
-		},
-		{
-			name:                   "ExternalEtcd enabled, initially ready for etcd removal",
-			isExternalEtcd:         true,
-			bootstrapCompleted:     true,
-			setBootstrapCompleted:  false,
-			readyForEtcdRemoval:    true,
-			operatorConditions:     []operatorv1.OperatorCondition{},
-			expectedIsExternalEtcd: true,
-			expectedIsBootstrap:    true,
-			expectedIsReady:        true,
-		},
-		{
-			name:                  "ExternalEtcd enabled, ready by operator condition",
-			isExternalEtcd:        true,
-			bootstrapCompleted:    true,
-			setBootstrapCompleted: false,
-			readyForEtcdRemoval:   false,
+			readyForEtcdTransition: false,
 			operatorConditions: []operatorv1.OperatorCondition{
 				{
-					Type:   etcd.OperatorConditionExternalEtcdReady,
+					Type:   etcd.OperatorConditionExternalEtcdReadyForTransition,
 					Status: operatorv1.ConditionTrue,
 				},
 			},
-			expectedIsExternalEtcd: true,
-			expectedIsBootstrap:    true,
-			expectedIsReady:        true,
+			expectedIsExternalEtcd:       true,
+			expectedIsBootstrap:          true,
+			expectedIsReadyForTransition: true,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			cs := NewClusterStatus(ctx, operatorClient, tc.isExternalEtcd, tc.bootstrapCompleted, tc.readyForEtcdRemoval)
+			cs := NewClusterStatus(ctx, operatorClient, tc.isExternalEtcd, tc.bootstrapCompleted, tc.readyForEtcdTransition)
 			require.NotNil(t, cs, "NewClusterStatus returned nil")
 
 			if tc.setBootstrapCompleted {
@@ -117,7 +117,7 @@ func TestNewClusterStatus(t *testing.T) {
 
 			require.Equal(t, tc.expectedIsExternalEtcd, cs.IsExternalEtcdCluster(), "IsExternalEtcdCluster() returned unexpected value")
 			require.Equal(t, tc.expectedIsBootstrap, cs.IsBootstrapCompleted(), "IsBootstrapCompleted() returned unexpected value")
-			require.Equal(t, tc.expectedIsReady, cs.IsReadyForEtcdRemoval(), "IsReadyForEtcdRemoval() returned unexpected value")
+			require.Equal(t, tc.expectedIsReadyForTransition, cs.IsReadyForEtcdTransition(), "IsReadyForEtcdTransition() returned unexpected value")
 		})
 	}
 }
