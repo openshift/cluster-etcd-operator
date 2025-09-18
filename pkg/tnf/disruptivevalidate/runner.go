@@ -59,7 +59,7 @@ func RunDisruptiveValidate() error {
 	}
 	_ = wait.PollUntilContextTimeout(ctx, tools.JobPollIntervall, tools.SetupJobCompletedTimeout, true, setupDone)
 
-	// NEW: wait for FENCING (cluster-wide) to complete
+	// wait for FENCING (cluster-wide) to complete
 	klog.Info("Waiting for completed fencing job before validation")
 	fencingDone := func(context.Context) (bool, error) {
 		jobs, err := kubeClient.BatchV1().Jobs(operatorclient.TargetNamespace).List(ctx, metav1.ListOptions{
@@ -76,7 +76,7 @@ func RunDisruptiveValidate() error {
 	}
 	_ = wait.PollUntilContextTimeout(ctx, tools.JobPollIntervall, tools.FencingJobCompletedTimeout, true, fencingDone)
 
-	// NEW: wait for BOTH AFTER-SETUP (per-node) jobs to complete
+	// wait for BOTH AFTER-SETUP (per-node) jobs to complete
 	klog.Info("Waiting for completed after-setup jobs before validation")
 	afterSetupDone := func(context.Context) (bool, error) {
 		jobs, err := kubeClient.BatchV1().Jobs(operatorclient.TargetNamespace).List(ctx, metav1.ListOptions{
@@ -125,7 +125,7 @@ func RunDisruptiveValidate() error {
 		min, max = max, min
 	}
 
-	// If I'm the "second" node (max), wait for the "first" node's validate Job to Complete.
+	// If "second" node (max), wait for the "first" node's validate Job to Complete.
 	if local == max {
 		targetJobName := tools.JobTypeDisruptiveValidate.GetJobName(&min) // e.g. tnf-disruptive-validate-job-<min>
 		klog.Infof("validate: %s waiting for %s to complete (%s)", local, min, targetJobName)
@@ -151,63 +151,67 @@ func RunDisruptiveValidate() error {
 		return fmt.Errorf("pacemaker not active: %w", err)
 	}
 
-	// Ensure peer ONLINE before fence
-	peerLineRE := regexp.MustCompile(`(?mi)^Node\s+` + regexp.QuoteMeta(peer) + `\s+state:\s+([A-Z]+)`)
-
-	waitPeer := func(wantOnline bool, timeout time.Duration) error {
+	// waiter for both peer state + etcd started-both, using `pcs status`.
+	waitPCS := func(wantPeer *bool, peer string, nodeA, nodeB string, needEtcdBoth bool, timeout time.Duration) error {
+		// wantPeer: nil = don't check peer, &true = want ONLINE, &false = want OFFLINE
+		reNodeLine := regexp.MustCompile(`(?mi)^\s*Node\s+(\S+)\s+state:\s+([A-Z]+)`)
+		reOnline := regexp.MustCompile(`(?mi)^\s*(?:\*\s*)?Online:\s*(.*)$`)
+		reEtcdList := regexp.MustCompile(`(?s)Clone Set:\s*etcd-clone\s*\[etcd\]:.*?Started:\s*\[\s*([^\]]+)\s*\]`)
+		reEtcdOne := regexp.MustCompile(`(?mi)^\s*\*\s+etcd\s+\(.*?\):\s*Started\s+(\S+)`)
 		check := func(context.Context) (bool, error) {
-			out, _, err := exec.Execute(ctx, `/usr/sbin/pcs status nodes`)
+			out, _, err := exec.Execute(ctx, `/usr/sbin/pcs status`)
 			if err != nil {
 				return false, nil // transient
 			}
 
-			// Fast path: per-node line format
-			if m := peerLineRE.FindStringSubmatch(out); len(m) == 2 {
-				gotOnline := (m[1] == "ONLINE")
-				return gotOnline == wantOnline, nil
+			// --- peer ONLINE set ---
+			online := map[string]bool{}
+
+			// Format A: per-node lines
+			for _, m := range reNodeLine.FindAllStringSubmatch(out, -1) {
+				if len(m) == 3 {
+					online[m[1]] = (m[2] == "ONLINE")
+				}
+			}
+			// Format B: summary list
+			if m := reOnline.FindStringSubmatch(out); len(m) == 2 {
+				for _, n := range strings.Fields(m[1]) {
+					online[n] = true
+				}
 			}
 
-			// Fallback: summary lists
-			for _, ln := range strings.Split(out, "\n") {
-				l := strings.TrimSpace(ln)
-				if l == "" {
-					continue
+			// --- etcd started set ---
+			etcdStarted := map[string]bool{}
+			if m := reEtcdList.FindStringSubmatch(out); len(m) == 2 {
+				for _, n := range strings.Fields(m[1]) {
+					etcdStarted[n] = true
 				}
-				low := strings.ToLower(l)
-
-				// Decide which list this line represents
-				var listType string
-				switch {
-				case strings.HasPrefix(low, "online:"):
-					listType = "online"
-				case strings.HasPrefix(low, "offline:"):
-					listType = "offline"
-				case strings.HasPrefix(low, "standby:"),
-					strings.HasPrefix(low, "standby with resource"):
-					listType = "standby"
-				default:
-					continue
-				}
-
-				// Extract names after the colon and look for exact token match
-				colon := strings.Index(l, ":")
-				if colon < 0 {
-					continue
-				}
-				for _, name := range strings.Fields(strings.TrimSpace(l[colon+1:])) {
-					if name == peer {
-						gotOnline := (listType == "online")
-						return gotOnline == wantOnline, nil
+			} else {
+				for _, m := range reEtcdOne.FindAllStringSubmatch(out, -1) {
+					if len(m) == 2 {
+						etcdStarted[m[1]] = true
 					}
 				}
 			}
 
-			// Unknown formatting; keep polling
-			return false, nil
+			// Conditions
+			if wantPeer != nil {
+				if on, ok := online[peer]; !ok || on != *wantPeer {
+					return false, nil
+				}
+			}
+			if needEtcdBoth {
+				if !(etcdStarted[nodeA] && etcdStarted[nodeB]) {
+					return false, nil
+				}
+			}
+			return true, nil
 		}
+
 		return wait.PollUntilContextTimeout(ctx, 3*time.Second, timeout, true, check)
 	}
-	if err := waitPeer(true, 2*time.Minute); err != nil {
+
+	if err := waitPCS(func() *bool { b := true; return &b }(), peer, clusterCfg.NodeName1, clusterCfg.NodeName2, false, 2*time.Minute); err != nil {
 		return fmt.Errorf("peer %q not ONLINE pre-fence: %w", peer, err)
 	}
 
@@ -221,11 +225,12 @@ func RunDisruptiveValidate() error {
 	}
 
 	// Wait OFFLINE then ONLINE
-	if err := waitPeer(false, 10*time.Minute); err != nil {
+	if err := waitPCS(func() *bool { b := false; return &b }(), peer, clusterCfg.NodeName1, clusterCfg.NodeName2, false, 5*time.Minute); err != nil {
 		return fmt.Errorf("peer didn't go OFFLINE: %w", err)
 	}
-	if err := waitPeer(true, 15*time.Minute); err != nil {
-		return fmt.Errorf("peer didn't become ONLINE: %w", err)
+
+	if err := waitPCS(func() *bool { b := true; return &b }(), peer, clusterCfg.NodeName1, clusterCfg.NodeName2, true, 15*time.Minute); err != nil {
+		return fmt.Errorf("peer didn't become ONLINE with etcd started on both: %w", err)
 	}
 
 	klog.Infof("TNF validate: success local=%s peer=%s", local, peer)
