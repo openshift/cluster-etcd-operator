@@ -2,6 +2,7 @@ package disruptivevalidate
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -20,6 +21,13 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/exec"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
+
+type etcdMembers struct {
+	Members []struct {
+		Name      string `json:"name"`
+		IsLearner bool   `json:"isLearner"`
+	} `json:"members"`
+}
 
 func RunDisruptiveValidate() error {
 	klog.Info("Setting up clients for TNF validate job")
@@ -124,7 +132,27 @@ func RunDisruptiveValidate() error {
 	if strings.Compare(min, max) > 0 {
 		min, max = max, min
 	}
-
+	waitEtcdVoters := func(nameA, nameB string, timeout time.Duration) error {
+		check := func(context.Context) (bool, error) {
+			out, _, err := exec.Execute(ctx, `podman exec etcd sh -lc 'ETCDCTL_API=3 etcdctl member list -w json'`)
+			if err != nil || strings.TrimSpace(out) == "" {
+				return false, nil
+			}
+			var ml etcdMembers
+			if e := json.Unmarshal([]byte(out), &ml); e != nil {
+				return false, nil
+			}
+			seen := map[string]bool{}
+			voter := map[string]bool{}
+			for _, m := range ml.Members {
+				seen[m.Name] = true
+				voter[m.Name] = !m.IsLearner
+			}
+			// require both members present and both voters
+			return seen[nameA] && seen[nameB] && voter[nameA] && voter[nameB], nil
+		}
+		return wait.PollUntilContextTimeout(ctx, 3*time.Second, timeout, true, check)
+	}
 	// If "second" node (max), wait for the "first" node's validate Job to Complete.
 	if local == max {
 		targetJobName := tools.JobTypeDisruptiveValidate.GetJobName(&min) // e.g. tnf-disruptive-validate-job-<min>
@@ -141,6 +169,10 @@ func RunDisruptiveValidate() error {
 		if err != nil {
 			return fmt.Errorf("timed out waiting for %s (%s) to complete: %w", min, targetJobName, err)
 		}
+
+		if err := waitEtcdVoters(clusterCfg.NodeName1, clusterCfg.NodeName2, 10*time.Minute); err != nil {
+			return fmt.Errorf("etcd members did not start or both not voters yet; refusing second fence: %w", err)
+		}
 		klog.Infof("validate: %s saw %s complete; proceeding to fence", local, min)
 	}
 	// Preflight on host
@@ -151,22 +183,18 @@ func RunDisruptiveValidate() error {
 		return fmt.Errorf("pacemaker not active: %w", err)
 	}
 
-	// waiter for both peer state + etcd started-both, using `pcs status`.
-	waitPCS := func(wantPeer *bool, peer string, nodeA, nodeB string, needEtcdBoth bool, timeout time.Duration) error {
+	// waiter for both peer state
+	waitPCS := func(wantPeer *bool, peer string, timeout time.Duration) error {
 		// wantPeer: nil = don't check peer, &true = want ONLINE, &false = want OFFLINE
 		reNodeLine := regexp.MustCompile(`(?mi)^\s*Node\s+(\S+)\s+state:\s+([A-Z]+)`)
 		reOnline := regexp.MustCompile(`(?mi)^\s*(?:\*\s*)?Online:\s*(.*)$`)
-		reEtcdList := regexp.MustCompile(`(?s)Clone Set:\s*etcd-clone\s*\[etcd\]:.*?Started:\s*\[\s*([^\]]+)\s*\]`)
-		reEtcdOne := regexp.MustCompile(`(?mi)^\s*\*\s+etcd\s+\(.*?\):\s*Started\s+(\S+)`)
 		check := func(context.Context) (bool, error) {
 			out, _, err := exec.Execute(ctx, `/usr/sbin/pcs status`)
 			if err != nil {
 				return false, nil // transient
 			}
-
 			// --- peer ONLINE set ---
 			online := map[string]bool{}
-
 			// Format A: per-node lines
 			for _, m := range reNodeLine.FindAllStringSubmatch(out, -1) {
 				if len(m) == 3 {
@@ -179,39 +207,18 @@ func RunDisruptiveValidate() error {
 					online[n] = true
 				}
 			}
-
-			// --- etcd started set ---
-			etcdStarted := map[string]bool{}
-			if m := reEtcdList.FindStringSubmatch(out); len(m) == 2 {
-				for _, n := range strings.Fields(m[1]) {
-					etcdStarted[n] = true
-				}
-			} else {
-				for _, m := range reEtcdOne.FindAllStringSubmatch(out, -1) {
-					if len(m) == 2 {
-						etcdStarted[m[1]] = true
-					}
-				}
-			}
-
 			// Conditions
 			if wantPeer != nil {
 				if on, ok := online[peer]; !ok || on != *wantPeer {
 					return false, nil
 				}
 			}
-			if needEtcdBoth {
-				if !(etcdStarted[nodeA] && etcdStarted[nodeB]) {
-					return false, nil
-				}
-			}
 			return true, nil
 		}
-
 		return wait.PollUntilContextTimeout(ctx, 3*time.Second, timeout, true, check)
 	}
 
-	if err := waitPCS(func() *bool { b := true; return &b }(), peer, clusterCfg.NodeName1, clusterCfg.NodeName2, false, 2*time.Minute); err != nil {
+	if err := waitPCS(func() *bool { b := true; return &b }(), peer, 2*time.Minute); err != nil {
 		return fmt.Errorf("peer %q not ONLINE pre-fence: %w", peer, err)
 	}
 
@@ -225,11 +232,11 @@ func RunDisruptiveValidate() error {
 	}
 
 	// Wait OFFLINE then ONLINE
-	if err := waitPCS(func() *bool { b := false; return &b }(), peer, clusterCfg.NodeName1, clusterCfg.NodeName2, false, 5*time.Minute); err != nil {
+	if err := waitPCS(func() *bool { b := false; return &b }(), peer, 5*time.Minute); err != nil {
 		return fmt.Errorf("peer didn't go OFFLINE: %w", err)
 	}
 
-	if err := waitPCS(func() *bool { b := true; return &b }(), peer, clusterCfg.NodeName1, clusterCfg.NodeName2, true, 15*time.Minute); err != nil {
+	if err := waitPCS(func() *bool { b := true; return &b }(), peer, 10*time.Minute); err != nil {
 		return fmt.Errorf("peer didn't become ONLINE with etcd started on both: %w", err)
 	}
 
