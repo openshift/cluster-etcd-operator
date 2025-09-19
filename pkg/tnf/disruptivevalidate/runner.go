@@ -4,22 +4,23 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/config"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/exec"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 	batchv1 "k8s.io/api/batch/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/server"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/config"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/exec"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
 
 type etcdMembers struct {
@@ -65,8 +66,9 @@ func RunDisruptiveValidate() error {
 		}
 		return true, nil
 	}
-	_ = wait.PollUntilContextTimeout(ctx, tools.JobPollIntervall, tools.SetupJobCompletedTimeout, true, setupDone)
-
+	if err := wait.PollUntilContextTimeout(ctx, tools.JobPollIntervall, tools.SetupJobCompletedTimeout, true, setupDone); err != nil {
+		return fmt.Errorf("waiting for setup to complete: %w", err)
+	}
 	// wait for FENCING (cluster-wide) to complete
 	klog.Info("Waiting for completed fencing job before validation")
 	fencingDone := func(context.Context) (bool, error) {
@@ -109,12 +111,19 @@ func RunDisruptiveValidate() error {
 		return err
 	}
 
-	// Determine which host this pod is on (nsenter wrapper runs on host)
-	hostOut, _, err := exec.Execute(ctx, "hostname")
-	if err != nil {
-		return fmt.Errorf("get host hostname: %w", err)
+	// Determine which node this pod is running on
+	podName, err := os.Hostname() // pod name == container hostname
+	if err != nil || strings.TrimSpace(podName) == "" {
+		return fmt.Errorf("get pod hostname/name: %w", err)
 	}
-	local := strings.TrimSpace(hostOut)
+	pod, err := kubeClient.CoreV1().Pods(operatorclient.TargetNamespace).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get Pod %s/%s: %w", operatorclient.TargetNamespace, podName, err)
+	}
+	local := strings.TrimSpace(pod.Spec.NodeName)
+	if local == "" {
+		return fmt.Errorf("pod.Spec.NodeName empty")
+	}
 
 	var peer string
 	switch local {
@@ -132,7 +141,7 @@ func RunDisruptiveValidate() error {
 	if strings.Compare(min, max) > 0 {
 		min, max = max, min
 	}
-	waitEtcdVoters := func(nameA, nameB string, timeout time.Duration) error {
+	waitEtcdVoters := func(timeout time.Duration) error {
 		check := func(context.Context) (bool, error) {
 			out, _, err := exec.Execute(ctx, `podman exec etcd sh -lc 'ETCDCTL_API=3 etcdctl member list -w json'`)
 			if err != nil || strings.TrimSpace(out) == "" {
@@ -142,39 +151,62 @@ func RunDisruptiveValidate() error {
 			if e := json.Unmarshal([]byte(out), &ml); e != nil {
 				return false, nil
 			}
-			seen := map[string]bool{}
-			voter := map[string]bool{}
+			total, voters := 0, 0
 			for _, m := range ml.Members {
-				seen[m.Name] = true
-				voter[m.Name] = !m.IsLearner
+				total++
+				if !m.IsLearner {
+					voters++
+				}
 			}
-			// require both members present and both voters
-			return seen[nameA] && seen[nameB] && voter[nameA] && voter[nameB], nil
+			// Require exactly 2 members and both voters
+			return total == 2 && voters == 2, nil
 		}
 		return wait.PollUntilContextTimeout(ctx, 3*time.Second, timeout, true, check)
 	}
 	// If "second" node (max), wait for the "first" node's validate Job to Complete.
 	if local == max {
-		targetJobName := tools.JobTypeDisruptiveValidate.GetJobName(&min) // e.g. tnf-disruptive-validate-job-<min>
-		klog.Infof("validate: %s waiting for %s to complete (%s)", local, min, targetJobName)
+		targetJobName := tools.JobTypeDisruptiveValidate.GetJobName(&min) // e.g., tnf-disruptive-validate-job-master-0
+		klog.Infof("validate: %s waiting for %s to complete (job=%s)", local, min, targetJobName)
+
+		// Robust job state helpers
+		isJobComplete := func(j *batchv1.Job) bool {
+			if j.Status.Succeeded > 0 {
+				return true
+			}
+			return tools.IsConditionTrue(j.Status.Conditions, batchv1.JobComplete)
+		}
+		isJobFailed := func(j *batchv1.Job) bool {
+			if j.Status.Failed > 0 {
+				return true
+			}
+			return tools.IsConditionTrue(j.Status.Conditions, batchv1.JobFailed)
+		}
 
 		err := wait.PollUntilContextTimeout(ctx, tools.JobPollIntervall, 45*time.Minute, true, func(context.Context) (bool, error) {
 			j, err := kubeClient.BatchV1().Jobs(operatorclient.TargetNamespace).Get(ctx, targetJobName, metav1.GetOptions{})
-			if err != nil {
-				// NotFound or transient—keep polling
+			if apierrors.IsNotFound(err) {
+				klog.Infof("peer job %s not found yet; still waiting", targetJobName)
 				return false, nil
 			}
-			return tools.IsConditionTrue(j.Status.Conditions, batchv1.JobComplete), nil
+			if err != nil {
+				klog.Warningf("peer job get error: %v", err)
+				return false, nil // transient
+			}
+			if isJobFailed(j) {
+				return false, fmt.Errorf("peer validate job %s failed (failed=%d)", targetJobName, j.Status.Failed)
+			}
+			return isJobComplete(j), nil
 		})
 		if err != nil {
 			return fmt.Errorf("timed out waiting for %s (%s) to complete: %w", min, targetJobName, err)
 		}
 
-		if err := waitEtcdVoters(clusterCfg.NodeName1, clusterCfg.NodeName2, 10*time.Minute); err != nil {
-			return fmt.Errorf("etcd members did not start or both not voters yet; refusing second fence: %w", err)
+		if err := waitEtcdVoters(10 * time.Minute); err != nil {
+			return fmt.Errorf("etcd members not both voters after first validate: %w", err)
 		}
-		klog.Infof("validate: %s saw %s complete; proceeding to fence", local, min)
+		klog.Infof("validate: %s saw %s complete + etcd OK; proceeding to fence", local, min)
 	}
+
 	// Preflight on host
 	if _, _, err := exec.Execute(ctx, `command -v pcs`); err != nil {
 		return fmt.Errorf("pcs absent on host: %w", err)
