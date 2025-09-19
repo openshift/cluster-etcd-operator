@@ -219,40 +219,30 @@ func waitEtcdTwoVoters(ctx context.Context, to time.Duration) error {
 
 func waitPCSState(ctx context.Context, want *bool, peer string, to time.Duration) error {
 	return wait.PollUntilContextTimeout(ctx, poll, to, true, func(context.Context) (bool, error) {
-		out, _, err := exec.Execute(ctx, `/usr/sbin/pcs status`)
+		out, _, err := exec.Execute(ctx, `LC_ALL=C /usr/sbin/pcs status nodes`)
 		if err != nil {
-			return false, nil
+			return false, nil // treat as transient
 		}
-		online := map[string]bool{}
+
+		// Find the "Online:" line and build a set of names listed there.
+		var onlineLine string
 		for _, ln := range strings.Split(out, "\n") {
-			s := strings.TrimSpace(strings.TrimPrefix(ln, "*"))
-			// Format A: "Node <name> state: ONLINE|OFFLINE"
-			if strings.HasPrefix(s, "Node ") && strings.Contains(s, " state: ") {
-				fs := strings.Fields(s)
-				if len(fs) >= 4 {
-					state := fs[len(fs)-1]
-					online[fs[1]] = (state == "ONLINE")
-				}
-				continue
-			}
-			// Format B: "Online: n1 n2 ..." / "Offline: nX ..."
+			s := strings.TrimSpace(ln)
 			if strings.HasPrefix(s, "Online:") {
-				for _, n := range strings.Fields(s[len("Online:"):]) {
-					online[strings.TrimSpace(n)] = true
-				}
-			} else if strings.HasPrefix(s, "Offline:") {
-				for _, n := range strings.Fields(s[len("Offline:"):]) {
-					if _, seen := online[strings.TrimSpace(n)]; !seen {
-						online[strings.TrimSpace(n)] = false
-					}
+				onlineLine = strings.TrimSpace(strings.TrimPrefix(s, "Online:"))
+				break
+			}
+		}
+		peerOnline := false
+		if onlineLine != "" {
+			for _, tok := range strings.Fields(onlineLine) {
+				if strings.Trim(tok, "[],") == peer {
+					peerOnline = true
+					break
 				}
 			}
 		}
-		if want == nil {
-			return true, nil
-		}
-		on, ok := online[peer]
-		return ok && on == *want, nil
+		return peerOnline == *want, nil
 	})
 }
 
