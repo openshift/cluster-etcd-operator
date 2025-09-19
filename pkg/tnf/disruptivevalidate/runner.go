@@ -170,24 +170,23 @@ func waitPeerValidateIfSecond(ctx context.Context, kc kubernetes.Interface, loca
 	if local != max {
 		return nil
 	}
+
 	target := tools.JobTypeDisruptiveValidate.GetJobName(&min)
-	missingSince := time.Time{}
 	return wait.PollUntilContextTimeout(ctx, poll, timeoutPeerJob, true, func(context.Context) (bool, error) {
 		j, err := kc.BatchV1().Jobs(operatorclient.TargetNamespace).Get(ctx, target, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
-			if missingSince.IsZero() {
-				missingSince = time.Now()
-			} else if time.Since(missingSince) > 2*time.Minute {
-				return false, fmt.Errorf("peer job %s not found for >2m; likely GC'd or never created", target)
-			}
 			return false, nil
 		}
 		if err != nil {
 			return false, nil
 		}
-		if j.Status.Failed > 0 || tools.IsConditionTrue(j.Status.Conditions, batchv1.JobFailed) {
+		klog.V(2).Infof("peer %s status: succeeded=%d failed=%d conditions=%+v", target, j.Status.Succeeded, j.Status.Failed, j.Status.Conditions)
+
+		// Only treat as failed if the JobFailed condition is set
+		if tools.IsConditionTrue(j.Status.Conditions, batchv1.JobFailed) {
 			return false, fmt.Errorf("peer validate job %s failed", target)
 		}
+		// Proceed when the peer is complete
 		return j.Status.Succeeded > 0 || tools.IsConditionTrue(j.Status.Conditions, batchv1.JobComplete), nil
 	})
 }
