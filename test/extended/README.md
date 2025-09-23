@@ -91,10 +91,6 @@ The CI configuration runs the OTE binary and generates JUnit reports for test re
 | `make tests-ext-build` | Builds the test extension binary. |
 | `make tests-ext-update` | Updates the metadata JSON file and cleans machine-specific codeLocations. |
 | `make tests-ext-clean` | Clean tests extension artifacts. |
-| `make tests-ext-help` | Run tests extension help. |
-| `make tests-ext-sanity` | Run sanity test. |
-| `make tests-ext-list` | List available tests. |
-| `make tests-ext-info` | Show extension info. |
 | `make verify` | Runs formatting, vet, and linter. |
 
 **Note:** Metadata is stored in: `.openshift-tests-extension/openshift_payload_cluster-etcd-operator.json`
