@@ -61,23 +61,3 @@ tests-ext-update:
 .PHONY: tests-ext-clean
 tests-ext-clean:
 	rm -f $(TESTS_EXT_BINARY) $(TESTS_EXT_BINARY).gz
-
-# Run tests extension help
-.PHONY: tests-ext-help
-tests-ext-help:
-	./$(TESTS_EXT_BINARY) --help
-
-# Run sanity test
-.PHONY: tests-ext-sanity
-tests-ext-sanity:
-	./$(TESTS_EXT_BINARY) run-suite "openshift/cluster-etcd-operator/conformance/parallel"
-
-# List available tests
-.PHONY: tests-ext-list
-tests-ext-list:
-	./$(TESTS_EXT_BINARY) list tests
-
-# Show extension info
-.PHONY: tests-ext-info
-tests-ext-info:
-	./$(TESTS_EXT_BINARY) info
