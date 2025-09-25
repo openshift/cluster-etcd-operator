@@ -54,14 +54,7 @@ func RunDisruptiveValidate() error {
 	if err := waitForLabeledJob(ctx, kc, tools.JobTypeSetup.GetNameLabelValue(), 1, timeoutSetup); err != nil {
 		return fmt.Errorf("setup not complete: %w", err)
 	}
-	if err := waitForLabeledJob(ctx, kc, tools.JobTypeFencing.GetNameLabelValue(), 1, timeoutFencing); err != nil {
-		return fmt.Errorf("fencing not complete: %w", err)
-	}
-	if err := waitForLabeledJob(ctx, kc, tools.JobTypeAfterSetup.GetNameLabelValue(), 2, timeoutAfter); err != nil {
-		return fmt.Errorf("after-setup not complete: %w", err)
-	}
 
-	// 2) Local / peer discovery
 	clusterCfg, err := config.GetClusterConfig(ctx, kc)
 	if err != nil {
 		return err
@@ -72,7 +65,17 @@ func RunDisruptiveValidate() error {
 	}
 	klog.Infof("validate: local=%s peer=%s", local, peer)
 
-	// 3) Lexicographic sequencing
+	if err := waitForLabeledJob(ctx, kc, tools.JobTypeFencing.GetNameLabelValue(), 1, timeoutFencing); err != nil {
+		return fmt.Errorf("fencing not complete: %w", err)
+	}
+	if err := waitForJobName(ctx, kc, tools.JobTypeAfterSetup.GetJobName(&clusterCfg.NodeName1), timeoutAfter); err != nil {
+		return fmt.Errorf("after-setup not complete on %s: %w", clusterCfg.NodeName1, err)
+	}
+	if err := waitForJobName(ctx, kc, tools.JobTypeAfterSetup.GetJobName(&clusterCfg.NodeName2), timeoutAfter); err != nil {
+		return fmt.Errorf("after-setup not complete on %s: %w", clusterCfg.NodeName2, err)
+	}
+
+	// 2) Lexicographic sequencing
 	if err := waitPeerValidateIfSecond(ctx, kc, local, clusterCfg.NodeName1, clusterCfg.NodeName2); err != nil {
 		return err
 	}
@@ -125,18 +128,41 @@ func waitForJobs(
 	wantAtLeast int,
 	to time.Duration,
 ) error {
+	// TTL tolerance state (captured by the poll closure)
+	const appearanceGrace = 2 * time.Minute
+	start := time.Now()
+	seen := false
+
 	return wait.PollUntilContextTimeout(ctx, poll, to, true, func(context.Context) (bool, error) {
 		if byName != "" {
 			j, err := kc.BatchV1().Jobs(operatorclient.TargetNamespace).Get(ctx, byName, metav1.GetOptions{})
-			if apierrors.IsNotFound(err) || err != nil {
-				return false, nil // keep polling on transient/not-found
+			if apierrors.IsNotFound(err) {
+				// If we never saw the job and it stays NotFound past a short grace,
+				// assume it completed earlier and was TTL-deleted.
+				if !seen {
+					if time.Since(start) > appearanceGrace {
+						klog.V(2).Infof("job %s not found for %s; assuming completed earlier and TTL-deleted", byName, appearanceGrace)
+						return true, nil
+					}
+					return false, nil
+				}
+				// We saw it before and now it's gone → assume TTL after completion.
+				klog.V(2).Infof("job %s disappeared after observation; assuming TTL after completion", byName)
+				return true, nil
 			}
+			if err != nil {
+				return false, nil // transient
+			}
+
+			seen = true
+
 			if tools.IsConditionTrue(j.Status.Conditions, batchv1.JobFailed) {
 				return false, fmt.Errorf("job %s failed", byName)
 			}
 			return j.Status.Succeeded > 0 || tools.IsConditionTrue(j.Status.Conditions, batchv1.JobComplete), nil
 		}
-		// selector path
+
+		// selector path (aggregate waits)
 		jl, err := kc.BatchV1().Jobs(operatorclient.TargetNamespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
 		if err != nil {
 			return false, nil // transient
