@@ -127,8 +127,8 @@ func waitForJobs(
 	labelSelector string,
 	wantAtLeast int,
 	to time.Duration,
+	allowNeverSeenTTL bool, // NEW
 ) error {
-	// TTL tolerance state (captured by the poll closure)
 	const appearanceGrace = 2 * time.Minute
 	start := time.Now()
 	seen := false
@@ -137,18 +137,15 @@ func waitForJobs(
 		if byName != "" {
 			j, err := kc.BatchV1().Jobs(operatorclient.TargetNamespace).Get(ctx, byName, metav1.GetOptions{})
 			if apierrors.IsNotFound(err) {
-				// If we never saw the job and it stays NotFound past a short grace,
-				// assume it completed earlier and was TTL-deleted.
-				if !seen {
-					if time.Since(start) > appearanceGrace {
-						klog.V(2).Infof("job %s not found for %s; assuming completed earlier and TTL-deleted", byName, appearanceGrace)
-						return true, nil
-					}
-					return false, nil
+				if seen {
+					klog.V(2).Infof("job %s disappeared after observation; assuming TTL after completion", byName)
+					return true, nil
 				}
-				// We saw it before and now it's gone → assume TTL after completion.
-				klog.V(2).Infof("job %s disappeared after observation; assuming TTL after completion", byName)
-				return true, nil
+				if allowNeverSeenTTL && time.Since(start) > appearanceGrace {
+					klog.V(2).Infof("job %s not found for %s; assuming completed earlier and TTL-deleted", byName, appearanceGrace)
+					return true, nil
+				}
+				return false, nil
 			}
 			if err != nil {
 				return false, nil // transient
@@ -188,14 +185,18 @@ func waitForLabeledJob(ctx context.Context, kc kubernetes.Interface, nameLabel s
 	return waitForJobs(ctx, kc,
 		"", // byName
 		fmt.Sprintf("app.kubernetes.io/name=%s", nameLabel),
-		wantAtLeast, to)
+		wantAtLeast, to, false) // strict
 }
 
 func waitForJobName(ctx context.Context, kc kubernetes.Interface, name string, to time.Duration) error {
 	return waitForJobs(ctx, kc,
-		name, // byName
-		"",   // labelSelector
-		1, to)
+		name,         // byName
+		"",           // labelSelector
+		1, to, false) // strict
+}
+
+func waitForJobNamePeerTTL(ctx context.Context, kc kubernetes.Interface, name string, to time.Duration) error {
+	return waitForJobs(ctx, kc, name, "", 1, to, true) // allowNeverSeenTTL = true
 }
 
 func detectLocalAndPeer(n1, n2 string) (string, string, error) {
@@ -239,7 +240,7 @@ func waitPeerValidateIfSecond(ctx context.Context, kc kubernetes.Interface, loca
 	}
 
 	target := tools.JobTypeDisruptiveValidate.GetJobName(&min)
-	if err := waitForJobName(ctx, kc, target, timeoutPeerJob); err != nil {
+	if err := waitForJobNamePeerTTL(ctx, kc, target, timeoutPeerJob); err != nil {
 		return fmt.Errorf("peer validate job %s not complete: %w", min, err)
 	}
 	return nil
