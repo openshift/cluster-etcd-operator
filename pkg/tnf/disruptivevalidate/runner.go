@@ -9,7 +9,6 @@ import (
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	wait "k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/server"
@@ -21,6 +20,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/config"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/exec"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 const (
@@ -66,7 +66,7 @@ func RunDisruptiveValidate() error {
 	if err != nil {
 		return err
 	}
-	local, peer, err := detectLocalAndPeer(ctx, kc, clusterCfg.NodeName1, clusterCfg.NodeName2)
+	local, peer, err := detectLocalAndPeer(clusterCfg.NodeName1, clusterCfg.NodeName2)
 	if err != nil {
 		return err
 	}
@@ -117,16 +117,39 @@ func RunDisruptiveValidate() error {
 }
 
 // helpers
-func waitForLabeledJob(ctx context.Context, kc kubernetes.Interface, nameLabel string, wantAtLeast int, to time.Duration) error {
-	sel := fmt.Sprintf("app.kubernetes.io/name=%s", nameLabel)
+func waitForJobs(
+	ctx context.Context,
+	kc kubernetes.Interface,
+	byName string,
+	labelSelector string,
+	wantAtLeast int,
+	to time.Duration,
+) error {
 	return wait.PollUntilContextTimeout(ctx, poll, to, true, func(context.Context) (bool, error) {
-		jl, err := kc.BatchV1().Jobs(operatorclient.TargetNamespace).List(ctx, metav1.ListOptions{LabelSelector: sel})
-		if err != nil || len(jl.Items) < wantAtLeast {
+		if byName != "" {
+			j, err := kc.BatchV1().Jobs(operatorclient.TargetNamespace).Get(ctx, byName, metav1.GetOptions{})
+			if apierrors.IsNotFound(err) || err != nil {
+				return false, nil // keep polling on transient/not-found
+			}
+			if tools.IsConditionTrue(j.Status.Conditions, batchv1.JobFailed) {
+				return false, fmt.Errorf("job %s failed", byName)
+			}
+			return j.Status.Succeeded > 0 || tools.IsConditionTrue(j.Status.Conditions, batchv1.JobComplete), nil
+		}
+		// selector path
+		jl, err := kc.BatchV1().Jobs(operatorclient.TargetNamespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
+		if err != nil {
+			return false, nil // transient
+		}
+		if len(jl.Items) < wantAtLeast {
 			return false, nil
 		}
 		completed := 0
 		for i := range jl.Items {
 			j := &jl.Items[i]
+			if tools.IsConditionTrue(j.Status.Conditions, batchv1.JobFailed) {
+				return false, fmt.Errorf("job %s failed", j.Name)
+			}
 			if j.Status.Succeeded > 0 || tools.IsConditionTrue(j.Status.Conditions, batchv1.JobComplete) {
 				completed++
 			}
@@ -135,10 +158,28 @@ func waitForLabeledJob(ctx context.Context, kc kubernetes.Interface, nameLabel s
 	})
 }
 
-func detectLocalAndPeer(_ context.Context, _ kubernetes.Interface, n1, n2 string) (string, string, error) {
+func waitForLabeledJob(ctx context.Context, kc kubernetes.Interface, nameLabel string, wantAtLeast int, to time.Duration) error {
+	return waitForJobs(ctx, kc,
+		"", // byName
+		fmt.Sprintf("app.kubernetes.io/name=%s", nameLabel),
+		wantAtLeast, to)
+}
+
+func waitForJobName(ctx context.Context, kc kubernetes.Interface, name string, to time.Duration) error {
+	return waitForJobs(ctx, kc,
+		name, // byName
+		"",   // labelSelector
+		1, to)
+}
+
+func detectLocalAndPeer(n1, n2 string) (string, string, error) {
 	podName, err := os.Hostname()
-	if err != nil || strings.TrimSpace(podName) == "" {
+	if err != nil {
 		return "", "", fmt.Errorf("get pod hostname: %w", err)
+	}
+	podName = strings.TrimSpace(podName)
+	if podName == "" {
+		return "", "", fmt.Errorf("get pod hostname: empty string")
 	}
 	// "<job-name>-<suffix>" -> "<job-name>"
 	i := strings.LastIndex(podName, "-")
@@ -172,23 +213,10 @@ func waitPeerValidateIfSecond(ctx context.Context, kc kubernetes.Interface, loca
 	}
 
 	target := tools.JobTypeDisruptiveValidate.GetJobName(&min)
-	return wait.PollUntilContextTimeout(ctx, poll, timeoutPeerJob, true, func(context.Context) (bool, error) {
-		j, err := kc.BatchV1().Jobs(operatorclient.TargetNamespace).Get(ctx, target, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			return false, nil
-		}
-		if err != nil {
-			return false, nil
-		}
-		klog.V(2).Infof("peer %s status: succeeded=%d failed=%d conditions=%+v", target, j.Status.Succeeded, j.Status.Failed, j.Status.Conditions)
-
-		// Only treat as failed if the JobFailed condition is set
-		if tools.IsConditionTrue(j.Status.Conditions, batchv1.JobFailed) {
-			return false, fmt.Errorf("peer validate job %s failed", target)
-		}
-		// Proceed when the peer is complete
-		return j.Status.Succeeded > 0 || tools.IsConditionTrue(j.Status.Conditions, batchv1.JobComplete), nil
-	})
+	if err := waitForJobName(ctx, kc, target, timeoutPeerJob); err != nil {
+		return fmt.Errorf("peer validate job %s not complete: %w", min, err)
+	}
+	return nil
 }
 
 func waitEtcdTwoVoters(ctx context.Context, to time.Duration) error {
