@@ -278,24 +278,11 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		operatorClient,
 		cachedMemberClient)
 
-	// we need the dynamic and config informers to be started before the using dualReplicaClusterHandler
-	// for being able to check topology and use the operator client
-	dynamicInformers.Start(ctx.Done())
-	dynamicInformers.WaitForCacheSync(ctx.Done())
-	configInformers.Start(ctx.Done())
-	configInformers.WaitForCacheSync(ctx.Done())
-	// the dualReplicaClusterHandler is needed for the targetConfigReconciler for correct handling of CEO's etcd container
-	dualReplicaClusterHandler, err := tnf.NewDualReplicaClusterHandler(ctx, operatorClient, kubeClient, configInformers)
-	if err != nil {
-		return fmt.Errorf("could not start dualReplicaClusterHandler, aborting controller start: %w", err)
-	}
-
 	targetConfigReconciler := targetconfigcontroller.NewTargetConfigController(
 		AlivenessChecker,
 		os.Getenv("IMAGE"),
 		os.Getenv("OPERATOR_IMAGE"),
 		operatorClient,
-		dualReplicaClusterHandler.GetExternalEtcdClusterStatus(),
 		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
 		kubeInformersForNamespaces,
 		configInformers.Config().V1().Infrastructures(),
@@ -627,9 +614,11 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		clusterMemberControllerInformers...,
 	)
 
-	_, err = dualReplicaClusterHandler.HandleDualReplicaClusters(
+	// the dualReplicaClusterHandler handles the dual replica topology transitions to external etcd
+	_, err = tnf.HandleDualReplicaClusters(
+		ctx,
 		controllerContext,
-		configInformers,
+		configInformers.Config().V1().Infrastructures(),
 		operatorClient,
 		envVarController,
 		kubeInformersForNamespaces,

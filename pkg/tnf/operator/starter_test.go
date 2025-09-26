@@ -13,6 +13,7 @@ import (
 
 	fakeconfig "github.com/openshift/client-go/config/clientset/versioned/fake"
 	"github.com/openshift/client-go/config/informers/externalversions"
+	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	v1 "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	operatorversionedclientfake "github.com/openshift/client-go/operator/clientset/versioned/fake"
 	extinfops "github.com/openshift/client-go/operator/informers/externalversions"
@@ -40,7 +41,7 @@ import (
 type args struct {
 	ctx                        context.Context
 	controllerContext          *controllercmd.ControllerContext
-	configInformers            externalversions.SharedInformerFactory
+	infrastructureInformer     configv1informers.InfrastructureInformer
 	operatorClient             v1helpers.StaticPodOperatorClient
 	envVarGetter               etcdenvvar.EnvVar
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces
@@ -49,8 +50,7 @@ type args struct {
 	etcdInformer               operatorv1informers.EtcdInformer
 	kubeClient                 kubernetes.Interface
 	dynamicClient              dynamic.Interface
-	handler                    *DualReplicaClusterHandler
-	handlerInitErr             error
+	initErr                    error
 }
 
 func TestHandleDualReplicaClusters(t *testing.T) {
@@ -79,16 +79,17 @@ func TestHandleDualReplicaClusters(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			if tt.wantHandlerInitErr && tt.args.handlerInitErr == nil || !tt.wantHandlerInitErr && tt.args.handlerInitErr != nil {
-				t.Errorf("NewDualReplicaClusterHandler handlerInitErr = %v, wantHandlerInitErr %v", tt.args.handlerInitErr, tt.wantHandlerInitErr)
+			if tt.wantHandlerInitErr && tt.args.initErr == nil || !tt.wantHandlerInitErr && tt.args.initErr != nil {
+				t.Errorf("NewDualReplicaClusterHandler handlerInitErr = %v, wantHandlerInitErr %v", tt.args.initErr, tt.wantHandlerInitErr)
 			}
 			if tt.wantHandlerInitErr {
 				return
 			}
 
-			started, err := tt.args.handler.HandleDualReplicaClusters(
+			started, err := HandleDualReplicaClusters(
+				tt.args.ctx,
 				tt.args.controllerContext,
-				tt.args.configInformers,
+				tt.args.infrastructureInformer,
 				tt.args.operatorClient,
 				tt.args.envVarGetter,
 				tt.args.kubeInformersForNamespaces,
@@ -183,20 +184,13 @@ func getArgs(t *testing.T, dualReplicaControlPlaneEnabled bool) args {
 		}
 	}
 
-	// Create the DualReplicaClusterHandler
-	handler, handlerErr := NewDualReplicaClusterHandler(
-		context.Background(),
-		fakeOperatorClient,
-		fakeKubeClient,
-		configInformers,
-	)
-
 	return args{
-		ctx: context.Background(),
+		initErr: nil, // Default to no error
+		ctx:     context.Background(),
 		controllerContext: &controllercmd.ControllerContext{
 			EventRecorder: eventRecorder,
 		},
-		configInformers:            configInformers,
+		infrastructureInformer:     configInformers.Config().V1().Infrastructures(),
 		operatorClient:             fakeOperatorClient,
 		envVarGetter:               envVar,
 		kubeInformersForNamespaces: kubeInformersForNamespaces,
@@ -205,7 +199,5 @@ func getArgs(t *testing.T, dualReplicaControlPlaneEnabled bool) args {
 		etcdInformer:               etcdInformers.Operator().V1().Etcds(),
 		kubeClient:                 fakeKubeClient,
 		dynamicClient:              fakeDynamicClient,
-		handler:                    handler,
-		handlerInitErr:             handlerErr,
 	}
 }

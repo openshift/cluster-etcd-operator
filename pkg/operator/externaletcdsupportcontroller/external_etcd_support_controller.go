@@ -9,6 +9,7 @@ import (
 	"github.com/ghodss/yaml"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
@@ -28,19 +29,18 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/status"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
 )
 
 type ExternalEtcdEnablerController struct {
-	operatorClient v1helpers.StaticPodOperatorClient
+	operatorClient       v1helpers.StaticPodOperatorClient
+	infrastructureLister configv1listers.InfrastructureLister
 
-	targetImagePullSpec       string
-	operatorImagePullSpec     string
-	envVarGetter              etcdenvvar.EnvVar
-	etcdLister                operatorv1listers.EtcdLister
-	externalEtcdClusterStatus status.ExternalEtcdClusterStatus
-	kubeClient                kubernetes.Interface
+	targetImagePullSpec   string
+	operatorImagePullSpec string
+	envVarGetter          etcdenvvar.EnvVar
+	etcdLister            operatorv1listers.EtcdLister
+	kubeClient            kubernetes.Interface
 
 	enqueueFn func()
 }
@@ -56,17 +56,16 @@ func NewExternalEtcdEnablerController(
 	masterNodeInformer cache.SharedIndexInformer,
 	etcdsInformer operatorv1informers.EtcdInformer,
 	kubeClient kubernetes.Interface,
-	eventRecorder events.Recorder,
-	externalEtcdClusterStatus status.ExternalEtcdClusterStatus) factory.Controller {
+	eventRecorder events.Recorder) factory.Controller {
 
 	c := &ExternalEtcdEnablerController{
-		operatorClient:            operatorClient,
-		targetImagePullSpec:       targetImagePullSpec,
-		operatorImagePullSpec:     operatorImagePullSpec,
-		envVarGetter:              envVarGetter,
-		kubeClient:                kubeClient,
-		etcdLister:                etcdsInformer.Lister(),
-		externalEtcdClusterStatus: externalEtcdClusterStatus,
+		operatorClient:        operatorClient,
+		infrastructureLister:  infrastructureInformer.Lister(),
+		targetImagePullSpec:   targetImagePullSpec,
+		operatorImagePullSpec: operatorImagePullSpec,
+		envVarGetter:          envVarGetter,
+		kubeClient:            kubeClient,
+		etcdLister:            etcdsInformer.Lister(),
 	}
 	syncCtx := factory.NewSyncContext("ExternalEtcdSupportController", eventRecorder.WithComponentSuffix("external-etcd-support-controller"))
 	c.enqueueFn = func() {
@@ -163,13 +162,18 @@ func (c *ExternalEtcdEnablerController) supportExternalEtcdOnlyPod(
 	podConfigMap.Data["forceRedeploymentReason"] = operatorSpec.ForceRedeploymentReason
 	podConfigMap.Data["version"] = version.Get().String()
 
-	// we can prepare the external etcd support already while TNF setup is still running
-	supportExternalEtcd := c.externalEtcdClusterStatus.IsBootstrapCompleted()
-	if !supportExternalEtcd {
-		klog.V(4).Infof("external etcd support is disabled: deleting configmap")
+	// Check external etcd cluster status including bootstrap completion
+	externalEtcdStatus, err := ceohelpers.GetExternalEtcdClusterStatus(ctx, c.operatorClient, c.infrastructureLister)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to get external etcd cluster status: %w", err)
+	}
+
+	// Only create the ConfigMap if it's an external etcd cluster AND bootstrap is completed
+	if !externalEtcdStatus.IsExternalEtcdCluster || !externalEtcdStatus.IsEtcdRunningInCluster {
+		klog.V(4).Infof("external etcd support is disabled or bootstrap not completed: deleting configmap")
 		return resourceapply.DeleteConfigMap(ctx, client, recorder, podConfigMap)
 	}
-	klog.V(4).Infof("external etcd support enabled: creating configmap")
+	klog.V(4).Infof("external etcd support enabled and bootstrap completed: creating configmap")
 	return resourceapply.ApplyConfigMap(ctx, client, recorder, podConfigMap)
 }
 

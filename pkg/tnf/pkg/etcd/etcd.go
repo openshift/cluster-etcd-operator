@@ -12,6 +12,7 @@ import (
 )
 
 const (
+	OperatorConditionEtcdRunningInCluster           = "EtcdRunningInCluster"
 	OperatorConditionExternalEtcdReadyForTransition = "ExternalEtcdReadyForTransition"
 )
 
