@@ -15,9 +15,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
 
-var (
-	addressRegEx = regexp.MustCompile(`.*//(.*):(.*)(/redfish.*)`)
-)
+var addressRegEx = regexp.MustCompile(`.*//(.*):(.*)(/redfish.*)`)
 
 const (
 	// defaultPcmkDelayBase is the delay applied to the first fence device to prevent simultaneous fencing
@@ -117,11 +115,9 @@ func ConfigureFencing(ctx context.Context, kubeClient kubernetes.Interface, cfg 
 
 	klog.Info("Fencing configuration succeeded!")
 	return nil
-
 }
 
 func getFencingConfig(nodeName string, secret *corev1.Secret) (*fencingConfig, error) {
-
 	address := string(secret.Data["address"])
 	if !strings.Contains(address, "redfish") {
 		klog.Errorf("Secret %s does not contain redfish address", secret.Name)
@@ -184,7 +180,6 @@ func getStatusCommand(fc fencingConfig) string {
 }
 
 func getStonithCommand(sc StonithConfig, fc fencingConfig) string {
-
 	stonithAction := "create"
 	// check if device already exists
 	for _, p := range sc.Primitives {

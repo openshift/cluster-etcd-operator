@@ -17,6 +17,7 @@ import (
 
 	tnfaftersetup "github.com/openshift/cluster-etcd-operator/pkg/tnf/after-setup"
 	tnfauth "github.com/openshift/cluster-etcd-operator/pkg/tnf/auth"
+	disruptivevalidate "github.com/openshift/cluster-etcd-operator/pkg/tnf/disruptivevalidate"
 	tnffencing "github.com/openshift/cluster-etcd-operator/pkg/tnf/fencing"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 	tnfsetup "github.com/openshift/cluster-etcd-operator/pkg/tnf/setup"
@@ -58,6 +59,7 @@ func NewTnfSetupRunnerCommand() *cobra.Command {
 	cmd.AddCommand(NewSetupCommand())
 	cmd.AddCommand(NewAfterSetupCommand())
 	cmd.AddCommand(NewFencingCommand())
+	cmd.AddCommand(NewDisruptiveValidateCommand())
 
 	return cmd
 }
@@ -108,6 +110,18 @@ func NewFencingCommand() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			err := tnffencing.RunFencingSetup()
 			if err != nil {
+				klog.Fatal(err)
+			}
+		},
+	}
+}
+
+func NewDisruptiveValidateCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   tools.JobTypeDisruptiveValidate.GetSubCommand(),
+		Short: "Run disruptive peer validation from this node",
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := disruptivevalidate.RunDisruptiveValidate(); err != nil {
 				klog.Fatal(err)
 			}
 		},

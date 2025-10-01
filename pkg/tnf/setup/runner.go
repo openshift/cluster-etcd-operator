@@ -21,7 +21,6 @@ import (
 )
 
 func RunTnfSetup() error {
-
 	klog.Info("Setting up clients etc. for TNF setup")
 
 	clientConfig, err := rest.InClusterConfig()
