@@ -7,8 +7,9 @@ import (
 	"text/template"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
-	"github.com/openshift/cluster-etcd-operator/bindata"
 	"k8s.io/apimachinery/pkg/util/sets"
+
+	"github.com/openshift/cluster-etcd-operator/bindata"
 )
 
 type NameValue struct {
@@ -62,23 +63,18 @@ func calculateFailureThreshold(baseThreshold int, quotaGiB int32) int {
 }
 
 // GetPodSubstitution creates a PodSubstitutionTemplate with values derived from StaticPodOperatorSpec,
-// image pull spec and environment variables. It determines whether the Etcd container should be enabled
-// based on the operator's configuration.
+// image pull spec, environment variables and the given removeEtcdContainer flag.
 func GetPodSubstitution(
 	operatorSpec *operatorv1.StaticPodOperatorSpec,
 	imagePullSpec, operatorImagePullSpec string,
 	envVarMap map[string]string,
-	etcd *operatorv1.Etcd) (*PodSubstitutionTemplate, error) {
+	etcd *operatorv1.Etcd,
+	shouldRemoveEtcdContainer bool) (*PodSubstitutionTemplate, error) {
 
 	var nameValues []NameValue
 	for _, k := range sets.StringKeySet(envVarMap).List() {
 		v := envVarMap[k]
 		nameValues = append(nameValues, NameValue{Name: k, Value: v})
-	}
-
-	shouldRemoveEtcdContainer, err := IsUnsupportedUnsafeEtcdContainerRemoval(operatorSpec)
-	if err != nil {
-		return nil, err
 	}
 
 	// Calculate failure thresholds based on etcd.Spec.BackendQuotaGiB

@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
+	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -13,7 +14,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/clock"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/config"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/etcd"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/pcs"
@@ -29,17 +32,12 @@ func RunTnfSetup() error {
 		return err
 	}
 
-	protoConfig := rest.CopyConfig(clientConfig)
-	protoConfig.AcceptContentTypes = "application/vnd.kubernetes.protobuf,application/json"
-	protoConfig.ContentType = "application/vnd.kubernetes.protobuf"
-
-	// This kube client use protobuf, do not use it for CR
 	kubeClient, err := kubernetes.NewForConfig(clientConfig)
 	if err != nil {
 		return err
 	}
 
-	operatorConfigClient, err := operatorversionedclient.NewForConfig(clientConfig)
+	operatorClient, dynamicInformers, err := genericoperatorclient.NewStaticPodOperatorClient(clock.RealClock{}, clientConfig, operatorv1.GroupVersion.WithResource("etcds"), operatorv1.GroupVersion.WithKind("Etcd"), operator.ExtractStaticPodOperatorSpec, operator.ExtractStaticPodOperatorStatus)
 	if err != nil {
 		return err
 	}
@@ -51,6 +49,9 @@ func RunTnfSetup() error {
 		<-shutdownHandler
 		klog.Info("Received SIGTERM or SIGINT signal, terminating")
 	}()
+
+	dynamicInformers.Start(ctx.Done())
+	dynamicInformers.WaitForCacheSync(ctx.Done())
 
 	klog.Info("Waiting for completed auth jobs")
 	authDone := func(context.Context) (done bool, err error) {
@@ -119,8 +120,8 @@ func RunTnfSetup() error {
 		time.Sleep(5 * time.Second)
 	}
 
-	// remove CEO managed etcd container
-	err = etcd.RemoveStaticContainer(ctx, operatorConfigClient)
+	// Signal CEO that TNF setup is ready for etcd container removal
+	err = etcd.RemoveStaticContainer(ctx, operatorClient)
 	if err != nil {
 		return err
 	}

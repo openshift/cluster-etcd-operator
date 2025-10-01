@@ -7,24 +7,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openshift/cluster-etcd-operator/bindata"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
-
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/version"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
-
 	corev1 "k8s.io/api/core/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -32,13 +25,21 @@ import (
 	"k8s.io/client-go/kubernetes"
 	coreclientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/cache"
+
+	"github.com/openshift/cluster-etcd-operator/bindata"
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/cluster-etcd-operator/pkg/version"
 )
 
 type TargetConfigController struct {
 	targetImagePullSpec   string
 	operatorImagePullSpec string
 
-	operatorClient v1helpers.StaticPodOperatorClient
+	operatorClient       v1helpers.StaticPodOperatorClient
+	infrastructureLister configv1listers.InfrastructureLister
 
 	kubeClient   kubernetes.Interface
 	envVarGetter etcdenvvar.EnvVar
@@ -65,10 +66,11 @@ func NewTargetConfigController(
 		targetImagePullSpec:   targetImagePullSpec,
 		operatorImagePullSpec: operatorImagePullSpec,
 
-		operatorClient: operatorClient,
-		kubeClient:     kubeClient,
-		envVarGetter:   envVarGetter,
-		etcdLister:     etcdsInformer.Lister(),
+		operatorClient:       operatorClient,
+		infrastructureLister: infrastructureInformer.Lister(),
+		kubeClient:           kubeClient,
+		envVarGetter:         envVarGetter,
+		etcdLister:           etcdsInformer.Lister(),
 	}
 
 	syncCtx := factory.NewSyncContext("TargetConfigController", eventRecorder.WithComponentSuffix("target-config-controller"))
@@ -113,7 +115,18 @@ func (c *TargetConfigController) sync(ctx context.Context, syncCtx factory.SyncC
 		return err
 	}
 
-	err = c.createTargetConfig(ctx, syncCtx.Recorder(), operatorSpec, envVars, etcd)
+	// Check if we need to remove the etcd container for external etcd usage.
+	// Currently used by DualReplica aka Two Node Fencing clusters.
+	shouldRemoveEtcdContainer := false
+	externalEtcdStatus, err := ceohelpers.GetExternalEtcdClusterStatus(ctx, c.operatorClient, c.infrastructureLister)
+	if err != nil {
+		return err
+	}
+	if externalEtcdStatus.IsExternalEtcdCluster && externalEtcdStatus.IsReadyForEtcdTransition {
+		shouldRemoveEtcdContainer = true
+	}
+
+	err = c.createTargetConfig(ctx, syncCtx.Recorder(), operatorSpec, envVars, etcd, shouldRemoveEtcdContainer)
 	if err != nil {
 		condition := operatorv1.OperatorCondition{
 			Type:    "TargetConfigControllerDegraded",
@@ -149,7 +162,8 @@ func (c *TargetConfigController) createTargetConfig(
 	recorder events.Recorder,
 	operatorSpec *operatorv1.StaticPodOperatorSpec,
 	envVars map[string]string,
-	etcd *operatorv1.Etcd) error {
+	etcd *operatorv1.Etcd,
+	shouldRemoveEtcdContainer bool) error {
 
 	var errs error
 	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars)
@@ -157,7 +171,7 @@ func (c *TargetConfigController) createTargetConfig(
 		return err
 	}
 
-	podSub, err := ceohelpers.GetPodSubstitution(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars, etcd)
+	podSub, err := ceohelpers.GetPodSubstitution(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars, etcd, shouldRemoveEtcdContainer)
 	if err != nil {
 		return err
 	}
