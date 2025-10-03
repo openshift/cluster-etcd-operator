@@ -1045,7 +1045,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 				OperatorSpec: operatorv1.OperatorSpec{
 					ObservedConfig: runtime.RawExtension{Raw: []byte(scenario.initialObservedConfigInput)},
 				},
-			}, &operatorv1.StaticPodOperatorStatus{}, nil, nil)
+			}, u.StaticPodOperatorStatus(), nil, nil)
 
 			// act
 			target := clusterMemberRemovalController{

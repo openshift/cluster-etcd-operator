@@ -371,7 +371,7 @@ func TestRemoveBootstrap(t *testing.T) {
 			fakeNamespaceLister := corev1listers.NewNamespaceLister(indexer)
 			fakeConfigmapLister := corev1listers.NewConfigMapLister(indexer)
 			fakeInfraLister := configv1listers.NewInfrastructureLister(indexer)
-			fakeStaticPodClient := v1helpers.NewFakeStaticPodOperatorClient(&operatorv1.StaticPodOperatorSpec{}, &operatorv1.StaticPodOperatorStatus{}, nil, nil)
+			fakeStaticPodClient := v1helpers.NewFakeStaticPodOperatorClient(&operatorv1.StaticPodOperatorSpec{}, u.StaticPodOperatorStatus(), nil, nil)
 			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient([]*etcdserverpb.Member{u.FakeEtcdBootstrapMember(1)})
 			require.NoError(t, err)
 			fakeKubeClient := fake.NewClientset([]runtime.Object{}...)
