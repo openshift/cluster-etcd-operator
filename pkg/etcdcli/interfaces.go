@@ -25,6 +25,7 @@ type EtcdClient interface {
 	HealthyMemberLister
 	UnhealthyMemberLister
 	MemberStatusChecker
+	LeaderMover
 	Status
 
 	GetMember(ctx context.Context, name string) (*etcdserverpb.Member, error)
@@ -64,6 +65,10 @@ type MemberRemover interface {
 	MemberRemove(ctx context.Context, memberID uint64) error
 }
 
+type LeaderMover interface {
+	MoveLeader(ctx context.Context, toMember uint64) error
+}
+
 type MemberLister interface {
 	// MemberList lists all members in a cluster
 	MemberList(ctx context.Context) ([]*etcdserverpb.Member, error)
@@ -86,5 +91,6 @@ type UnhealthyMemberLister interface {
 }
 
 type MemberStatusChecker interface {
-	MemberStatus(ctx context.Context, member *etcdserverpb.Member) string
+	// MemberStatus will return the etcd status response for the given member
+	MemberStatus(ctx context.Context, member *etcdserverpb.Member) (*clientv3.StatusResponse, error)
 }
