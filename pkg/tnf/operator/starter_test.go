@@ -2,22 +2,23 @@ package operator
 
 import (
 	"context"
-	"github.com/stretchr/testify/require"
 	"maps"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 
 	fakeconfig "github.com/openshift/client-go/config/clientset/versioned/fake"
 	"github.com/openshift/client-go/config/informers/externalversions"
+	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	v1 "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	operatorversionedclientfake "github.com/openshift/client-go/operator/clientset/versioned/fake"
 	extinfops "github.com/openshift/client-go/operator/informers/externalversions"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
-	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
@@ -35,14 +36,12 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/operator/dualreplicahelpers"
 )
 
 type args struct {
 	ctx                        context.Context
 	controllerContext          *controllercmd.ControllerContext
-	featureGateAccessor        featuregates.FeatureGateAccess
-	configInformers            externalversions.SharedInformerFactory
+	infrastructureInformer     configv1informers.InfrastructureInformer
 	operatorClient             v1helpers.StaticPodOperatorClient
 	envVarGetter               etcdenvvar.EnvVar
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces
@@ -51,47 +50,46 @@ type args struct {
 	etcdInformer               operatorv1informers.EtcdInformer
 	kubeClient                 kubernetes.Interface
 	dynamicClient              dynamic.Interface
+	initErr                    error
 }
 
 func TestHandleDualReplicaClusters(t *testing.T) {
 	tests := []struct {
-		name        string
-		args        args
-		wantStarted bool
-		wantErr     bool
+		name               string
+		args               args
+		wantHandlerInitErr bool
+		wantStarted        bool
+		wantErr            bool
 	}{
 		{
-			name:        "Normal cluster",
-			args:        getArgs(t, false, false),
-			wantStarted: false,
-			wantErr:     false,
+			name:               "Normal cluster",
+			args:               getArgs(t, false),
+			wantHandlerInitErr: false,
+			wantStarted:        false,
+			wantErr:            false,
 		},
 		{
-			name:        "Dual replica topology without feature gate",
-			args:        getArgs(t, true, false),
-			wantStarted: false,
-			wantErr:     true,
-		},
-		{
-			name:        "Dual replica feature gate without topology",
-			args:        getArgs(t, false, true),
-			wantStarted: false,
-			wantErr:     false,
-		},
-		{
-			name:        "Dual replica topology with feature gate",
-			args:        getArgs(t, true, true),
-			wantStarted: true,
-			wantErr:     false,
+			name:               "DualReplica topology",
+			args:               getArgs(t, true),
+			wantHandlerInitErr: false,
+			wantStarted:        true,
+			wantErr:            false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+
+			if tt.wantHandlerInitErr && tt.args.initErr == nil || !tt.wantHandlerInitErr && tt.args.initErr != nil {
+				t.Errorf("NewDualReplicaClusterHandler handlerInitErr = %v, wantHandlerInitErr %v", tt.args.initErr, tt.wantHandlerInitErr)
+			}
+			if tt.wantHandlerInitErr {
+				return
+			}
+
 			started, err := HandleDualReplicaClusters(
 				tt.args.ctx,
 				tt.args.controllerContext,
-				tt.args.featureGateAccessor,
-				tt.args.configInformers,
+				tt.args.infrastructureInformer,
 				tt.args.operatorClient,
 				tt.args.envVarGetter,
 				tt.args.kubeInformersForNamespaces,
@@ -112,7 +110,7 @@ func TestHandleDualReplicaClusters(t *testing.T) {
 	}
 }
 
-func getArgs(t *testing.T, dualReplicaControlPlaneEnabled, dualReplicaFeatureGateEnabled bool) args {
+func getArgs(t *testing.T, dualReplicaControlPlaneEnabled bool) args {
 
 	fakeKubeClient := fake.NewSimpleClientset()
 	fakeDynamicClient := fakedynamic.NewSimpleDynamicClient(scheme.Scheme)
@@ -137,15 +135,6 @@ func getArgs(t *testing.T, dualReplicaControlPlaneEnabled, dualReplicaFeatureGat
 		nil,
 		nil,
 	)
-
-	enabledFeatureGates := make([]configv1.FeatureGateName, 0)
-	disabledFeatureGates := make([]configv1.FeatureGateName, 0)
-	if dualReplicaFeatureGateEnabled {
-		enabledFeatureGates = append(enabledFeatureGates, dualreplicahelpers.DualReplicaFeatureGateName)
-	} else {
-		disabledFeatureGates = append(disabledFeatureGates, dualreplicahelpers.DualReplicaFeatureGateName)
-	}
-	fga := featuregates.NewHardcodedFeatureGateAccess(enabledFeatureGates, disabledFeatureGates)
 
 	eventRecorder := events.NewRecorder(fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),
 		"test-tnfcontrollers", &corev1.ObjectReference{}, clock.RealClock{})
@@ -196,12 +185,12 @@ func getArgs(t *testing.T, dualReplicaControlPlaneEnabled, dualReplicaFeatureGat
 	}
 
 	return args{
-		ctx: context.Background(),
+		initErr: nil, // Default to no error
+		ctx:     context.Background(),
 		controllerContext: &controllercmd.ControllerContext{
 			EventRecorder: eventRecorder,
 		},
-		featureGateAccessor:        fga,
-		configInformers:            configInformers,
+		infrastructureInformer:     configInformers.Config().V1().Infrastructures(),
 		operatorClient:             fakeOperatorClient,
 		envVarGetter:               envVar,
 		kubeInformersForNamespaces: kubeInformersForNamespaces,

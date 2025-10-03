@@ -2,21 +2,16 @@ package externaletcdsupportcontroller
 
 import (
 	"context"
-	"fmt"
-	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/testutils"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/stretchr/testify/require"
-
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -24,6 +19,11 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/clock"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/cluster-etcd-operator/pkg/testutils"
 )
 
 const etcdPullSpec = "etcd-pull-spec"
@@ -31,45 +31,54 @@ const operatorPullSpec = "operator-pull-spec"
 
 func TestExternalEtcdSupportController(t *testing.T) {
 	scenarios := []struct {
-		name                      string
-		objects                   []runtime.Object
-		staticPodStatus           *operatorv1.StaticPodOperatorStatus
-		enableExternalEtcdSupport bool
-		expectedErr               error
+		name                    string
+		staticPodStatus         *operatorv1.StaticPodOperatorStatus
+		expectedConfigMapExists bool
+		expectedErr             error
+		topology                configv1.TopologyMode
 	}{
 		{
-			name: "DisabledExternalEtcdSupport",
-			objects: []runtime.Object{
-				testutils.BootstrapConfigMap(testutils.WithBootstrapStatus("complete")),
-			},
+			name: "Not on ExternalEtcd cluster",
 			staticPodStatus: testutils.StaticPodOperatorStatus(
 				testutils.WithLatestRevision(3),
 				testutils.WithNodeStatusAtCurrentRevision(3),
 				testutils.WithNodeStatusAtCurrentRevision(3),
 				testutils.WithNodeStatusAtCurrentRevision(3),
 			),
-			enableExternalEtcdSupport: false,
-			expectedErr:               nil,
+			expectedConfigMapExists: false,
+			expectedErr:             nil,
+			topology:                configv1.HighlyAvailableTopologyMode,
 		},
 		{
-			name: "EnabledExternalEtcdSupport",
-			objects: []runtime.Object{
-				testutils.BootstrapConfigMap(testutils.WithBootstrapStatus("complete")),
-			},
+			name: "ExternalEtcd cluster but bootstrap not completed",
 			staticPodStatus: testutils.StaticPodOperatorStatus(
 				testutils.WithLatestRevision(3),
-				testutils.WithNodeStatusAtCurrentRevision(3),
-				testutils.WithNodeStatusAtCurrentRevision(3),
-				testutils.WithNodeStatusAtCurrentRevision(3),
+				testutils.WithNodeStatusAtCurrentRevision(2),
+				testutils.WithNodeStatusAtCurrentRevision(2),
+				testutils.WithNodeStatusAtCurrentRevision(2),
 			),
-			enableExternalEtcdSupport: true,
-			expectedErr:               nil,
+			expectedConfigMapExists: false,
+			expectedErr:             nil,
+			topology:                configv1.DualReplicaTopologyMode,
+		},
+		{
+			name: "ExternalEtcd cluster and bootstrap completed",
+			staticPodStatus: testutils.StaticPodOperatorStatus(
+				testutils.WithLatestRevision(3),
+				testutils.WithNodeStatusAtCurrentRevision(2),
+				testutils.WithNodeStatusAtCurrentRevision(2),
+				testutils.WithNodeStatusAtCurrentRevision(2),
+				testutils.WithOperatorCondition("EtcdRunningInCluster", operatorv1.ConditionTrue),
+			),
+			expectedConfigMapExists: true,
+			expectedErr:             nil,
+			topology:                configv1.DualReplicaTopologyMode,
 		},
 	}
 
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
-			eventRecorder, _, controller, fakeKubeClient := getController(t, scenario.staticPodStatus, scenario.objects, scenario.enableExternalEtcdSupport)
+			eventRecorder, _, controller, fakeKubeClient := getController(t, scenario.staticPodStatus, scenario.topology)
 			err := controller.sync(context.TODO(), factory.NewSyncContext("test", eventRecorder))
 			require.Equal(t, scenario.expectedErr, err)
 
@@ -78,11 +87,12 @@ func TestExternalEtcdSupportController(t *testing.T) {
 			}
 
 			etcdPodCM, err := fakeKubeClient.CoreV1().ConfigMaps(operatorclient.TargetNamespace).Get(context.TODO(), "external-etcd-pod", metav1.GetOptions{})
-			if !scenario.enableExternalEtcdSupport {
+			if !scenario.expectedConfigMapExists {
 				require.Error(t, err)
 				return
 			}
 
+			require.NoError(t, err)
 			podYaml := etcdPodCM.Data["pod.yaml"]
 			pod := &corev1.Pod{}
 			_, _, err = scheme.Codecs.UniversalDeserializer().Decode([]byte(podYaml), nil, pod)
@@ -97,16 +107,11 @@ func TestExternalEtcdSupportController(t *testing.T) {
 
 func getController(
 	t *testing.T,
-	staticPodStatus *operatorv1.StaticPodOperatorStatus,
-	objects []runtime.Object,
-	useExternalEtcdSupport bool) (events.Recorder, v1helpers.StaticPodOperatorClient, *ExternalEtcdEnablerController, *fake.Clientset) {
+	staticPodStatus *operatorv1.StaticPodOperatorStatus, topology configv1.TopologyMode) (events.Recorder, v1helpers.StaticPodOperatorClient, *ExternalEtcdEnablerController, *fake.Clientset) {
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 		&operatorv1.StaticPodOperatorSpec{
 			OperatorSpec: operatorv1.OperatorSpec{
 				ManagementState: operatorv1.Managed,
-				UnsupportedConfigOverrides: runtime.RawExtension{
-					Raw: []byte(fmt.Sprintf(`{"useExternalEtcdSupport": "%t"}`, useExternalEtcdSupport)),
-				},
 			},
 		},
 		staticPodStatus,
@@ -114,7 +119,7 @@ func getController(
 		nil,
 	)
 
-	fakeKubeClient := fake.NewSimpleClientset(objects...)
+	fakeKubeClient := fake.NewSimpleClientset()
 
 	defaultObjects := []runtime.Object{
 		&corev1.Namespace{
@@ -126,7 +131,7 @@ func getController(
 				Name: ceohelpers.InfrastructureClusterName,
 			},
 			Status: configv1.InfrastructureStatus{
-				ControlPlaneTopology: configv1.HighlyAvailableTopologyMode},
+				ControlPlaneTopology: topology},
 		},
 	}
 
@@ -135,9 +140,6 @@ func getController(
 
 	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 	for _, obj := range defaultObjects {
-		require.NoError(t, indexer.Add(obj))
-	}
-	for _, obj := range objects {
 		require.NoError(t, indexer.Add(obj))
 	}
 
@@ -156,6 +158,7 @@ func getController(
 
 	controller := &ExternalEtcdEnablerController{
 		operatorClient:        fakeOperatorClient,
+		infrastructureLister:  configv1listers.NewInfrastructureLister(indexer),
 		targetImagePullSpec:   etcdPullSpec,
 		operatorImagePullSpec: operatorPullSpec,
 		envVarGetter:          envVar,

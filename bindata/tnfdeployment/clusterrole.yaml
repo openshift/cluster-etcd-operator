@@ -20,9 +20,15 @@ rules:
     verbs:
       - get
       - list
+      - watch
+  - apiGroups:
+      - operator.openshift.io
+    resources:
+      - etcds/status
+    verbs:
+      - get
       - patch
       - update
-      - watch
   - apiGroups:
       - config.openshift.io
     resources:

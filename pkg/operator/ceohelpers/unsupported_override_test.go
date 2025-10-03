@@ -11,7 +11,7 @@ import (
 )
 
 func TestIsUnsupportedOptions(t *testing.T) {
-	options := []string{"useUnsupportedUnsafeNonHANonProductionUnstableEtcd", "useUnsupportedUnsafeEtcdContainerRemoval", "useExternalEtcdSupport"}
+	options := []string{"useUnsupportedUnsafeNonHANonProductionUnstableEtcd"}
 	tests := []struct {
 		name    string
 		args    string

@@ -4,18 +4,18 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 	"os"
 	"sync"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
-	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
+	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	v1 "github.com/openshift/client-go/config/informers/externalversions/config/v1"
+	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/controller/factory"
-	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/staticresourcecontroller"
+
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -26,15 +26,16 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/bindata"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/externaletcdsupportcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/operator/dualreplicahelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/jobs"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
@@ -48,10 +49,10 @@ var (
 
 // HandleDualReplicaClusters checks feature gate and control plane topology,
 // and handles dual replica aka two node fencing clusters
-func HandleDualReplicaClusters(ctx context.Context,
+func HandleDualReplicaClusters(
+	ctx context.Context,
 	controllerContext *controllercmd.ControllerContext,
-	featureGateAccessor featuregates.FeatureGateAccess,
-	configInformers configv1informers.SharedInformerFactory,
+	infrastructureInformer configv1informers.InfrastructureInformer,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	envVarGetter etcdenvvar.EnvVar,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
@@ -61,54 +62,33 @@ func HandleDualReplicaClusters(ctx context.Context,
 	kubeClient kubernetes.Interface,
 	dynamicClient dynamic.Interface) (bool, error) {
 
-	if isDualReplicaTopology, err := isDualReplicaTopoly(ctx, featureGateAccessor, configInformers); err != nil {
+	// Since HandleDualReplicaClusters isn't a controller, we need to ensure that the Infrastructure
+	// informer is synced before we use it.
+	if !cache.WaitForCacheSync(ctx.Done(), infrastructureInformer.Informer().HasSynced) {
+		return false, fmt.Errorf("failed to sync Infrastructure informer")
+	}
+	isExternalEtcdCluster, err := ceohelpers.IsExternalEtcdCluster(ctx, infrastructureInformer.Lister())
+	if err != nil {
+		klog.Errorf("failed to check if external etcd cluster is enabled: %v", err)
 		return false, err
-	} else if !isDualReplicaTopology {
+	}
+	if !isExternalEtcdCluster {
 		return false, nil
 	}
 
-	klog.Infof("detected DualReplica topology")
+	klog.Infof("starting Two Node Fencing controllers")
 
 	runExternalEtcdSupportController(ctx, controllerContext, operatorClient, envVarGetter, kubeInformersForNamespaces,
-		configInformers, networkInformer, controlPlaneNodeInformer, etcdInformer, kubeClient)
+		infrastructureInformer, networkInformer, controlPlaneNodeInformer, etcdInformer, kubeClient)
 	runTnfResourceController(ctx, controllerContext, kubeClient, dynamicClient, operatorClient, kubeInformersForNamespaces)
 
 	controlPlaneNodeLister := corev1listers.NewNodeLister(controlPlaneNodeInformer.GetIndexer())
 
 	// we need node names for assigning auth and after-setup jobs to specific nodes
-	var once sync.Once
 	klog.Infof("watching for nodes...")
-	_, err := controlPlaneNodeInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			node, ok := obj.(*corev1.Node)
-			if !ok {
-				klog.Warningf("failed to convert added object to Node %+v", obj)
-				return
-			}
-			klog.Infof("node added: %s", node.GetName())
-
-			// ensure we have both control plane nodes before creating jobs
-			nodeList, err := controlPlaneNodeLister.List(labels.Everything())
-			if err != nil {
-				klog.Errorf("failed to list control plane nodes while waiting to create TNF jobs: %v", err)
-				return
-			}
-			if len(nodeList) != 2 {
-				klog.Info("not starting TNF jobs yet, waiting for 2 control plane nodes to exist")
-				return
-			}
-			// we can have 2 nodes on the first call of AddFunc already, ensure we create job controllers once only
-			once.Do(func() {
-				klog.Infof("found 2 control plane nodes (%q, %q), creating TNF jobs", nodeList[0].GetName(), nodeList[1].GetName())
-				// the order of job creation does not matter, the jobs wait on each other as needed
-				for _, node := range nodeList {
-					runJobController(ctx, tools.JobTypeAuth, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
-					runJobController(ctx, tools.JobTypeAfterSetup, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
-				}
-				runJobController(ctx, tools.JobTypeSetup, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
-				runJobController(ctx, tools.JobTypeFencing, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
-			})
-		},
+	var once sync.Once
+	_, err = controlPlaneNodeInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: handleAddedNode(controllerContext, controlPlaneNodeLister, &once, ctx, operatorClient, kubeClient, kubeInformersForNamespaces),
 	})
 	if err != nil {
 		klog.Errorf("failed to add eventhandler to control plane informer: %v", err)
@@ -138,19 +118,84 @@ func HandleDualReplicaClusters(ctx context.Context,
 	return true, nil
 }
 
-func isDualReplicaTopoly(ctx context.Context, featureGateAccessor featuregates.FeatureGateAccess, configInformers configv1informers.SharedInformerFactory) (bool, error) {
-	if isDualReplicaTopology, err := ceohelpers.IsDualReplicaTopology(ctx, configInformers.Config().V1().Infrastructures().Lister()); err != nil {
-		return false, fmt.Errorf("could not determine DualReplicaTopology, aborting controller start: %w", err)
-	} else if !isDualReplicaTopology {
-		return false, nil
+func handleAddedNode(
+	controllerContext *controllercmd.ControllerContext,
+	controlPlaneNodeLister corev1listers.NodeLister,
+	once *sync.Once,
+	ctx context.Context,
+	operatorClient v1helpers.StaticPodOperatorClient,
+	kubeClient kubernetes.Interface,
+	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) func(obj interface{}) {
+
+	return func(obj interface{}) {
+		node, ok := obj.(*corev1.Node)
+		if !ok {
+			klog.Warningf("failed to convert added object to Node %+v", obj)
+			return
+		}
+		klog.Infof("node added: %s", node.GetName())
+
+		// ensure we have both control plane nodes before creating jobs
+		nodeList, err := controlPlaneNodeLister.List(labels.Everything())
+		if err != nil {
+			klog.Errorf("failed to list control plane nodes while waiting to create TNF jobs: %v", err)
+			return
+		}
+		if len(nodeList) != 2 {
+			klog.Info("not starting TNF jobs yet, waiting for 2 control plane nodes to exist")
+			return
+		}
+		klog.Infof("found 2 control plane nodes (%q, %q)", nodeList[0].GetName(), nodeList[1].GetName())
+
+		// we can have 2 nodes on the first call of AddFunc already, ensure we create job controllers once only
+		once.Do(func() {
+			// this potentially needs some time when we wait for etcd bootstrap to complete, so run it in a goroutine,
+			// to not block the event handler
+			go handleNodes(nodeList, ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+		})
 	}
-	// dual replica currently topology has to be enabled by a feature gate
-	if enabledDualReplicaFeature, err := dualreplicahelpers.DualReplicaFeatureGateEnabled(featureGateAccessor); err != nil {
-		return false, fmt.Errorf("could not determine DualReplicaFeatureGateEnabled, aborting controller start: %w", err)
-	} else if !enabledDualReplicaFeature {
-		return false, fmt.Errorf("detected dual replica topology, but dual replica feature gate is disabled, aborting controller start")
+}
+
+func handleNodes(
+	nodeList []*corev1.Node,
+	ctx context.Context,
+	controllerContext *controllercmd.ControllerContext,
+	operatorClient v1helpers.StaticPodOperatorClient,
+	kubeClient kubernetes.Interface,
+	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
+
+	if err := waitForEtcdBootstrapCompleted(ctx, operatorClient); err != nil {
+		klog.Errorf("failed to wait for etcd bootstrap: %v", err)
+		return
 	}
-	return true, nil
+	klog.Infof("bootstrap completed, creating TNF job controllers")
+
+	// the order of job creation does not matter, the jobs wait on each other as needed
+	for _, node := range nodeList {
+		runJobController(ctx, tools.JobTypeAuth, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+		runJobController(ctx, tools.JobTypeAfterSetup, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+	}
+	runJobController(ctx, tools.JobTypeSetup, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+	runJobController(ctx, tools.JobTypeFencing, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+}
+
+func waitForEtcdBootstrapCompleted(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient) error {
+	isEtcdRunningInCluster, err := ceohelpers.IsEtcdRunningInCluster(ctx, operatorClient)
+	if err != nil {
+		return fmt.Errorf("failed to check if bootstrap is completed: %v", err)
+	}
+	if !isEtcdRunningInCluster {
+		klog.Infof("waiting for bootstrap to complete with etcd running in cluster")
+		clientConfig, err := rest.InClusterConfig()
+		if err != nil {
+			return fmt.Errorf("failed to get in-cluster config: %v", err)
+		}
+		err = bootstrapteardown.WaitForEtcdBootstrap(ctx, clientConfig)
+		if err != nil {
+			return fmt.Errorf("failed to wait for bootstrap to complete: %v", err)
+		}
+	}
+	return nil
 }
 
 func runExternalEtcdSupportController(ctx context.Context,
@@ -158,7 +203,7 @@ func runExternalEtcdSupportController(ctx context.Context,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	envVarGetter etcdenvvar.EnvVar,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
-	configInformers configv1informers.SharedInformerFactory,
+	infrastructureInformer configv1informers.InfrastructureInformer,
 	networkInformer v1.NetworkInformer,
 	controlPlaneNodeInformer cache.SharedIndexInformer,
 	etcdInformer operatorv1informers.EtcdInformer,
@@ -172,7 +217,7 @@ func runExternalEtcdSupportController(ctx context.Context,
 		envVarGetter,
 		kubeInformersForNamespaces.InformersFor("openshift-etcd"),
 		kubeInformersForNamespaces,
-		configInformers.Config().V1().Infrastructures(),
+		infrastructureInformer,
 		networkInformer,
 		controlPlaneNodeInformer,
 		etcdInformer,

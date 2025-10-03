@@ -614,9 +614,19 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		clusterMemberControllerInformers...,
 	)
 
-	_, err = tnf.HandleDualReplicaClusters(ctx, controllerContext, featureGateAccessor, configInformers, operatorClient,
-		envVarController, kubeInformersForNamespaces, networkInformer, controlPlaneNodeInformer, etcdsInformer,
-		kubeClient, dynamicClient)
+	// the dualReplicaClusterHandler handles the dual replica topology transitions to external etcd
+	_, err = tnf.HandleDualReplicaClusters(
+		ctx,
+		controllerContext,
+		configInformers.Config().V1().Infrastructures(),
+		operatorClient,
+		envVarController,
+		kubeInformersForNamespaces,
+		networkInformer,
+		controlPlaneNodeInformer,
+		etcdsInformer,
+		kubeClient,
+		dynamicClient)
 	if err != nil {
 		return err
 	}

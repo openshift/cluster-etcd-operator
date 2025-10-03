@@ -14,6 +14,7 @@ import (
 
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 	"github.com/openshift/library-go/pkg/crypto"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/util/cert"
@@ -218,6 +219,16 @@ func StaticPodOperatorStatus(configs ...func(status *operatorv1.StaticPodOperato
 		config(status)
 	}
 	return status
+}
+
+// WithOperatorCondition adds an operator condition to the StaticPodOperatorStatus
+func WithOperatorCondition(conditionType string, status operatorv1.ConditionStatus) func(*operatorv1.StaticPodOperatorStatus) {
+	return func(operatorStatus *operatorv1.StaticPodOperatorStatus) {
+		v1helpers.SetOperatorCondition(&operatorStatus.Conditions, operatorv1.OperatorCondition{
+			Type:   conditionType,
+			Status: status,
+		})
+	}
 }
 
 func WithBootstrapIP(ip string) func(*corev1.ConfigMap) {
@@ -540,4 +551,31 @@ func AssertNodeSpecificCertificates(t *testing.T, node *corev1.Node, secrets []c
 	}
 
 	require.Equalf(t, 0, expectedSet.Len(), "missing certificates for node: %v", expectedSet.List())
+}
+
+// FakeInfrastructureLister creates a fake infrastructure lister with the specified topology mode
+func FakeInfrastructureLister(t *testing.T, topology configv1.TopologyMode) configv1listers.InfrastructureLister {
+	infrastructure := FakeInfrastructureTopology(topology)
+
+	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	err := indexer.Add(infrastructure)
+	require.NoError(t, err)
+
+	return configv1listers.NewInfrastructureLister(indexer)
+}
+
+// FakeStaticPodOperatorClient creates a fake static pod operator client with the specified conditions
+func FakeStaticPodOperatorClient(t *testing.T, conditions []operatorv1.OperatorCondition) v1helpers.StaticPodOperatorClient {
+	operatorStatus := &operatorv1.StaticPodOperatorStatus{
+		OperatorStatus: operatorv1.OperatorStatus{
+			Conditions: conditions,
+		},
+	}
+
+	return v1helpers.NewFakeStaticPodOperatorClient(
+		&operatorv1.StaticPodOperatorSpec{},
+		operatorStatus,
+		nil,
+		nil,
+	)
 }
