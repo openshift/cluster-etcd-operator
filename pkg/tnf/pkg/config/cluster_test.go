@@ -17,6 +17,7 @@ type args struct {
 }
 
 func TestGetClusterConfig(t *testing.T) {
+
 	tests := []struct {
 		name    string
 		args    args
@@ -29,6 +30,9 @@ func TestGetClusterConfig(t *testing.T) {
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "test1",
+						Labels: map[string]string{
+							"node-role.kubernetes.io/master": "",
+						},
 					},
 					Status: corev1.NodeStatus{
 						Addresses: []corev1.NodeAddress{
@@ -41,6 +45,9 @@ func TestGetClusterConfig(t *testing.T) {
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "test2",
+						Labels: map[string]string{
+							"node-role.kubernetes.io/master": "",
+						},
 					},
 					Status: corev1.NodeStatus{
 						Addresses: []corev1.NodeAddress{
@@ -58,6 +65,44 @@ func TestGetClusterConfig(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "one node only should fail",
+			args: getArgs(t, []*corev1.Node{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "test1",
+						Labels: map[string]string{
+							"node-role.kubernetes.io/master": "",
+						},
+					},
+				},
+			}),
+			want:    ClusterConfig{},
+			wantErr: true,
+		},
+		{
+			name: "one control plane node only should fail",
+			args: getArgs(t, []*corev1.Node{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "test1",
+						Labels: map[string]string{
+							"node-role.kubernetes.io/master": "",
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "test2",
+						Labels: map[string]string{
+							"node-role.kubernetes.io/no-master": "",
+						},
+					},
+				},
+			}),
+			want:    ClusterConfig{},
+			wantErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -68,6 +113,12 @@ func TestGetClusterConfig(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("GetClusterConfig() got = %v, want %v", got, tt.want)
+			}
+			// delete nodes
+			c := tt.args.kubeClient
+			nodes, _ := c.CoreV1().Nodes().List(tt.args.ctx, metav1.ListOptions{})
+			for _, node := range nodes.Items {
+				c.CoreV1().Nodes().Delete(tt.args.ctx, node.Name, metav1.DeleteOptions{})
 			}
 		})
 	}
