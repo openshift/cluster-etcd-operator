@@ -18,3 +18,13 @@ telepresence.log
 # Goland
 .idea
 _output
+cluster-etcd-operator-tests-ext
+cluster-etcd-operator-tests-ext.gz
+
+# Test output files
+junit.xml
+report.json
+test-results/
+
+# OpenShift Tests Extension metadata
+.openshift-tests-extension/openshift_payload_*.json
