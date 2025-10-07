@@ -11,10 +11,11 @@ import (
 // setup job: waits for auth jobs to complete
 // after setup jobs: waits for setup job to complete
 const (
-	JobPollIntervall           = 15 * time.Second
-	AuthJobCompletedTimeout    = 10 * time.Minute
-	SetupJobCompletedTimeout   = 20 * time.Minute
-	FencingJobCompletedTimeout = 25 * time.Minute
+	JobPollIntervall               = 15 * time.Second
+	AuthJobCompletedTimeout        = 10 * time.Minute
+	SetupJobCompletedTimeout       = 20 * time.Minute
+	FencingJobCompletedTimeout     = 25 * time.Minute
+	RestartEtcdJobCompletedTimeout = 10 * time.Minute
 )
 
 // JobType represent the different jobs we run, with some methods needed
@@ -26,6 +27,7 @@ const (
 	JobTypeSetup
 	JobTypeAfterSetup
 	JobTypeFencing
+	JobTypeRestartEtcd
 )
 
 func (t JobType) GetSubCommand() string {
@@ -38,6 +40,8 @@ func (t JobType) GetSubCommand() string {
 		return "after-setup"
 	case JobTypeFencing:
 		return "fencing"
+	case JobTypeRestartEtcd:
+		return "restart-etcd"
 	default:
 		return ""
 	}

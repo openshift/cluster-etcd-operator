@@ -33,6 +33,28 @@ func ConfigureEtcd(ctx context.Context, cfg config.ClusterConfig) error {
 	return nil
 }
 
+func RestartEtcd(ctx context.Context) error {
+	klog.Info("Checking pcs resources")
+
+	stdOut, stdErr, err := exec.Execute(ctx, "/usr/sbin/pcs resource status")
+	if err != nil || len(stdErr) > 0 {
+		klog.Error(err, "Failed to get pcs resource status", "stdout", stdOut, "stderr", stdErr, "err", err)
+		return err
+	}
+	if !strings.Contains(stdOut, "etcd") {
+		klog.Info("etcd resource not found, nothing to do")
+		return nil
+	}
+
+	klog.Info("Restarting etcd")
+	stdOut, stdErr, err = exec.Execute(ctx, "/usr/sbin/pcs resource restart etcd")
+	if err != nil || len(stdErr) > 0 {
+		klog.Error(err, "Failed to restart etcd", "stdout", stdOut, "stderr", stdErr, "err", err)
+		return err
+	}
+	return nil
+}
+
 // ConfigureConstraints configures the etcd constraints
 func ConfigureConstraints(ctx context.Context) (bool, error) {
 	klog.Info("Checking pcs constraints")
