@@ -68,7 +68,7 @@ BACKUP_FILE=$(ls -vd "${BACKUP_DIR}"/static_kuberesources*.tar.gz | tail -1) || 
 SNAPSHOT_FILE=$(ls -vd "${BACKUP_DIR}"/snapshot*.db | tail -1) || true
 
 ETCD_STATIC_POD_LIST=("etcd-pod.yaml")
-ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz" "etcd-rev" "etcd-backup-server")
+ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz" "etcd-rev")
 
 if [ ! -f "${SNAPSHOT_FILE}" ]; then
   echo "etcd snapshot ${SNAPSHOT_FILE} does not exist"

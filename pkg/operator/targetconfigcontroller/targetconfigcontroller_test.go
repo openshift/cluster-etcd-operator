@@ -177,21 +177,19 @@ func TestTargetConfigController(t *testing.T) {
 			})
 
 			expectedEnv := map[string][]corev1.EnvVar{
-				"etcdctl":            envWithRevision,
-				"etcd":               envWithRevision,
-				"etcd-metrics":       envWithRevision,
-				"etcd-readyz":        envWithoutRevision,
-				"etcd-rev":           envWithoutRevision,
-				"etcd-backup-server": envWithoutRevision,
+				"etcdctl":      envWithRevision,
+				"etcd":         envWithRevision,
+				"etcd-metrics": envWithRevision,
+				"etcd-readyz":  envWithoutRevision,
+				"etcd-rev":     envWithoutRevision,
 			}
 
 			expectedImage := map[string]string{
-				"etcdctl":            etcdPullSpec,
-				"etcd":               etcdPullSpec,
-				"etcd-metrics":       etcdPullSpec,
-				"etcd-readyz":        operatorPullSpec,
-				"etcd-rev":           operatorPullSpec,
-				"etcd-backup-server": operatorPullSpec,
+				"etcdctl":      etcdPullSpec,
+				"etcd":         etcdPullSpec,
+				"etcd-metrics": etcdPullSpec,
+				"etcd-readyz":  operatorPullSpec,
+				"etcd-rev":     operatorPullSpec,
 			}
 
 			etcdContainerFound := false

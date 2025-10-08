@@ -29,7 +29,7 @@ source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/confi
 source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd-common-tools
 
 ETCD_STATIC_POD_LIST=("etcd-pod.yaml")
-ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz" "etcd-rev" "etcd-backup-server")
+ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz" "etcd-rev")
 
 # always move etcd pod and wait for all containers to exit
 mv_static_pods "${ETCD_STATIC_POD_LIST[@]}"

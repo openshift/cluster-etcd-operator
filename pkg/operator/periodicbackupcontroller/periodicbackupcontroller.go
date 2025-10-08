@@ -30,11 +30,7 @@ import (
 	"k8s.io/klog/v2"
 )
 
-const (
-	backupJobLabel                = "backup-name"
-	defaultBackupCRName           = "default"
-	etcdBackupServerContainerName = "etcd-backup-server"
-)
+const backupJobLabel = "backup-name"
 
 type PeriodicBackupController struct {
 	operatorClient        v1helpers.OperatorClient
