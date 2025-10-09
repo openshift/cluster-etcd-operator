@@ -8,19 +8,13 @@ metadata:
     include.release.openshift.io/single-node-developer: "true"
 spec:
   endpoints:
-  - bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
-    interval: 30s
+  - interval: 30s
     port: https
     scheme: https
     tlsConfig:
-      caFile: /etc/prometheus/configmaps/serving-certs-ca-bundle/service-ca.crt
       serverName: metrics.openshift-etcd-operator.svc
-      certFile: /etc/prometheus/secrets/metrics-client-certs/tls.crt
-      keyFile: /etc/prometheus/secrets/metrics-client-certs/tls.key
-  jobLabel: component
-  namespaceSelector:
-    matchNames:
-    - openshift-etcd-operator
+  jobLabel: app
+  scrapeClass: tls-client-certificate-auth
   selector:
     matchLabels:
       app: etcd-operator
