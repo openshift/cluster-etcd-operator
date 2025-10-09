@@ -453,6 +453,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		AlivenessChecker,
 		operatorClient,
 		cachedMemberClient,
+		configInformers.Config().V1().Infrastructures(),
 		controllerContext.EventRecorder,
 	)
 

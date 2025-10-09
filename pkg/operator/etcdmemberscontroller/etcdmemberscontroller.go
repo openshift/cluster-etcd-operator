@@ -4,6 +4,9 @@ import (
 	"context"
 	"time"
 
+	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"k8s.io/klog/v2"
 
@@ -20,25 +23,31 @@ import (
 // EtcdMembersController reports the status conditions
 // of etcd members.
 type EtcdMembersController struct {
-	operatorClient v1helpers.OperatorClient
-	etcdClient     etcdcli.AllMemberLister
+	operatorClient       v1helpers.StaticPodOperatorClient
+	etcdClient           etcdcli.AllMemberLister
+	infrastructureLister configv1listers.InfrastructureLister
 }
 
 func NewEtcdMembersController(
 	livenessChecker *health.MultiAlivenessChecker,
-	operatorClient v1helpers.OperatorClient,
+	operatorClient v1helpers.StaticPodOperatorClient,
 	etcdClient etcdcli.AllMemberLister,
+	infrastructureInformer configv1informers.InfrastructureInformer,
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &EtcdMembersController{
-		operatorClient: operatorClient,
-		etcdClient:     etcdClient,
+		operatorClient:       operatorClient,
+		etcdClient:           etcdClient,
+		infrastructureLister: infrastructureInformer.Lister(),
 	}
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
 	livenessChecker.Add("EtcdMembersController", syncer)
 
-	return factory.New().ResyncEvery(time.Minute).WithSync(syncer.Sync).ToController("EtcdMembersController", eventRecorder.WithComponentSuffix("member-observer-controller"))
+	return factory.New().ResyncEvery(time.Minute).WithSync(syncer.Sync).WithInformers(
+		operatorClient.Informer(),
+		infrastructureInformer.Informer(),
+	).ToController("EtcdMembersController", eventRecorder.WithComponentSuffix("member-observer-controller"))
 }
 
 func (c *EtcdMembersController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
@@ -128,7 +137,15 @@ func (c *EtcdMembersController) reportEtcdMembers(ctx context.Context, recorder 
 		}
 	}
 
-	if len(etcdcli.GetHealthyMemberNames(memberHealth)) > len(memberHealth)/2 {
+	hasExternalEtcdCompletedTransition, err := ceohelpers.HasExternalEtcdCompletedTransition(ctx, c.operatorClient)
+	if err != nil {
+		klog.Warningf("Unable to determine if external etcd transition has completed: %v", err)
+	}
+
+	// For Two Node OpenShift with Fencing clusters, we automatically restore quorum on the survivor.
+	// We should never report quorum loss once the ExternalEtcd transition has completed.
+	// Having completed the transition implies that the cluster is also running ExternalEtcd.
+	if len(etcdcli.GetHealthyMemberNames(memberHealth)) > len(memberHealth)/2 || hasExternalEtcdCompletedTransition {
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersAvailable",
 			Status:  operatorv1.ConditionTrue,
@@ -140,8 +157,8 @@ func (c *EtcdMembersController) reportEtcdMembers(ctx context.Context, recorder 
 			updateErrors = append(updateErrors, updateErr)
 		}
 	} else {
-		// we will never reach here, if no quorum, we will always timeout
-		// in the member list call and go to degraded with
+		// For clusters without automatic quorum recovery, we should never reach here.
+		// If no quorum, we will always timeout in the member list call and go to degraded with
 		// etcdserver: request timed out
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersAvailable",

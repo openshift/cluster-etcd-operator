@@ -36,6 +36,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 )
 
 type args struct {
@@ -131,7 +132,7 @@ func getArgs(t *testing.T, dualReplicaControlPlaneEnabled bool) args {
 
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 		&operatorv1.StaticPodOperatorSpec{},
-		&operatorv1.StaticPodOperatorStatus{},
+		u.StaticPodOperatorStatus(),
 		nil,
 		nil,
 	)
