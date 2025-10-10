@@ -15,9 +15,25 @@ local excludeRules = std.map(
   }, alertingRules + promRules
 );
 
-// modifiedRules injects runbook_url to all critical alerts on all rules.
+// Collect alert names for runbook_url annotations.
+// By definition, an alerting rule with a critical severity label must have a
+// runbook URL.
+local alertingRulesWithRunbooks = std.flattenArrays(std.map(
+  function(group)
+    std.map(
+      function(rule)
+        rule.alert,
+      std.filter(
+        function(rule)
+          std.objectHas(rule, 'alert') && rule.labels.severity == 'critical',
+        group.rules
+      )
+    ),
+  excludeRules + openshiftRules.prometheusRules.groups
+));
+
 local modifiedRules = std.map(function(group) group {
-  rules: std.map(function(rule) if 'alert' in rule && !('runbook_url' in rule.annotations) && (rule.labels.severity == 'critical') then rule {
+  rules: std.map(function(rule) if 'alert' in rule && !('runbook_url' in rule.annotations) && std.member(alertingRulesWithRunbooks, rule.alert) then rule {
                    annotations+: {
                      runbook_url: 'https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/%s.md' % rule.alert,
                    },
