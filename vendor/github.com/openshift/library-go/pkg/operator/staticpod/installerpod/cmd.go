@@ -3,13 +3,14 @@ package installerpod
 import (
 	"context"
 	"fmt"
-	"k8s.io/utils/clock"
 	"os"
 	"path"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"k8s.io/utils/clock"
 
 	"k8s.io/apimachinery/pkg/util/wait"
 
