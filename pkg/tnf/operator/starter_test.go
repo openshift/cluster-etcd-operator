@@ -37,6 +37,8 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/etcd"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/jobs"
 )
 
 type args struct {
@@ -107,6 +109,70 @@ func TestHandleDualReplicaClusters(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Errorf("HandleDualReplicaClusters() error = %v, wantErr %v", err, tt.wantErr)
 			}
+		})
+	}
+}
+
+func TestSetupJobConditionsBasedOnExternalEtcd(t *testing.T) {
+	tests := []struct {
+		name                     string
+		isReadyForEtcdTransition bool
+		expectedAvailableInSetup bool
+	}{
+		{
+			name:                     "Job sets the Available condition when not ready for etcd transition",
+			isReadyForEtcdTransition: false,
+			expectedAvailableInSetup: true,
+		},
+		{
+			name:                     "Job does not set the Available condition when ready for etcd transition",
+			isReadyForEtcdTransition: true,
+			expectedAvailableInSetup: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set up operator status with the appropriate condition
+			operatorStatus := &operatorv1.StaticPodOperatorStatus{}
+			if tt.isReadyForEtcdTransition {
+				operatorStatus.Conditions = []operatorv1.OperatorCondition{
+					{
+						Type:   etcd.OperatorConditionExternalEtcdHasCompletedTransition,
+						Status: operatorv1.ConditionTrue,
+					},
+				}
+			}
+
+			fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+				&operatorv1.StaticPodOperatorSpec{},
+				operatorStatus,
+				nil,
+				nil,
+			)
+
+			hasExternalEtcdCompletedTransition, err := ceohelpers.HasExternalEtcdCompletedTransition(context.Background(), fakeOperatorClient)
+			if err != nil {
+				t.Errorf("failed to get external etcd status: %v", err)
+			}
+
+			// Determine setup conditions based on the etcd transition status
+			setupConditions := jobs.DefaultConditions
+			if !hasExternalEtcdCompletedTransition {
+				setupConditions = jobs.AllConditions
+			}
+
+			hasAvailableCondition := false
+			for _, condition := range setupConditions {
+				if condition == operatorv1.OperatorStatusTypeAvailable {
+					hasAvailableCondition = true
+					break
+				}
+			}
+
+			require.Equalf(t, tt.expectedAvailableInSetup, hasAvailableCondition,
+				"Setup job should have Available condition: %v, but got: %v",
+				tt.expectedAvailableInSetup, hasAvailableCondition)
 		})
 	}
 }

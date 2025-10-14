@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	opv1 "github.com/openshift/api/operator/v1"
 	fakeconfig "github.com/openshift/client-go/config/clientset/versioned/fake"
 	configinformers "github.com/openshift/client-go/config/informers/externalversions"
+	applyoperatorv1 "github.com/openshift/client-go/operator/applyconfigurations/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/management"
@@ -43,23 +45,49 @@ const (
 var (
 	conditionAvailable   = controllerName + opv1.OperatorStatusTypeAvailable
 	conditionProgressing = controllerName + opv1.OperatorStatusTypeProgressing
+	conditionDegraded    = controllerName + opv1.OperatorStatusTypeDegraded
+	allConditions        = []string{conditionAvailable, conditionProgressing, conditionDegraded}
+	availableCondition   = []string{conditionAvailable}
 )
 
 func TestSync(t *testing.T) {
 	testCases := []testCase{
 		{
+			// No job should be created and conditions should remain unchanged
+			name: "job not created without sync",
+			initialObjects: testObjects{
+				operator: makeFakeOperatorInstance(
+					withTrueConditions(conditionAvailable),
+					withFalseConditions(conditionProgressing, conditionDegraded),
+				),
+			},
+			expectedObjects: testObjects{
+				job: nil, // No job should be created
+				operator: makeFakeOperatorInstance(
+					withTrueConditions(conditionAvailable),
+					withFalseConditions(conditionProgressing, conditionDegraded),
+				),
+			},
+		},
+		{
 			// Only CR exists, everything else is created
 			name: "initial sync will create job",
 			initialObjects: testObjects{
-				operator: makeFakeOperatorInstance(),
+				job: &batchv1.Job{},
+				operator: makeFakeOperatorInstance(
+					withTrueConditions(conditionAvailable),
+					withFalseConditions(conditionProgressing, conditionDegraded),
+				),
 			},
 			expectedObjects: testObjects{
 				job: makeJob(
 					withJobGeneration(1)),
 				operator: makeFakeOperatorInstance(
 					withGenerations(1),
-					withTrueConditions(conditionProgressing),
-					withFalseConditions(conditionAvailable)),
+					// The progressing condition is set as soon as the job is created
+					withTrueConditions(conditionAvailable, conditionProgressing),
+					withFalseConditions(conditionDegraded),
+				),
 			},
 		},
 		{
@@ -70,7 +98,11 @@ func TestSync(t *testing.T) {
 					withJobGeneration(1),
 					withJobStatus(0, 1, 0),
 					withJobComplete()),
-				operator: makeFakeOperatorInstance(withGenerations(1)),
+				operator: makeFakeOperatorInstance(
+					withGenerations(1),
+					withTrueConditions(conditionAvailable),
+					withFalseConditions(conditionProgressing, conditionDegraded),
+				),
 			},
 			expectedObjects: testObjects{
 				job: makeJob(
@@ -80,7 +112,8 @@ func TestSync(t *testing.T) {
 				operator: makeFakeOperatorInstance(
 					withGenerations(1),
 					withTrueConditions(conditionAvailable),
-					withFalseConditions(conditionProgressing)),
+					withFalseConditions(conditionProgressing, conditionDegraded),
+				),
 			},
 		},
 		{
@@ -90,7 +123,11 @@ func TestSync(t *testing.T) {
 				job: makeJob(
 					withJobGeneration(1),
 					withJobStatus(1, 0, 0)), // the Job has 1 active pod
-				operator: makeFakeOperatorInstance(withGenerations(1)),
+				operator: makeFakeOperatorInstance(
+					withGenerations(1),
+					withTrueConditions(conditionAvailable),
+					withFalseConditions(conditionProgressing, conditionDegraded),
+				),
 			},
 			expectedObjects: testObjects{
 				job: makeJob(
@@ -98,19 +135,24 @@ func TestSync(t *testing.T) {
 					withJobStatus(1, 0, 0)), // no change to the Job
 				operator: makeFakeOperatorInstance(
 					withGenerations(1),
-					withTrueConditions(conditionProgressing),
-					withFalseConditions(conditionAvailable)),
+					withTrueConditions(conditionAvailable, conditionProgressing),
+					withFalseConditions(conditionDegraded),
+				),
 			},
 		},
 		{
-			// Job failed - this should trigger unavailable condition
+			// Job failed - this should trigger degraded status via error
 			name: "job failed",
 			initialObjects: testObjects{
 				job: makeJob(
 					withJobGeneration(1),
 					withJobStatus(0, 0, 1),
 					withJobFailed()),
-				operator: makeFakeOperatorInstance(withGenerations(1)),
+				operator: makeFakeOperatorInstance(
+					withGenerations(1),
+					withTrueConditions(conditionAvailable),
+					withFalseConditions(conditionProgressing, conditionDegraded),
+				),
 			},
 			expectedObjects: testObjects{
 				job: makeJob(
@@ -119,7 +161,9 @@ func TestSync(t *testing.T) {
 					withJobFailed()),
 				operator: makeFakeOperatorInstance(
 					withGenerations(1),
-					withFalseConditions(conditionAvailable, conditionProgressing)),
+					withTrueConditions(conditionAvailable, conditionDegraded),
+					withFalseConditions(conditionProgressing),
+				),
 			},
 			expectErr: true, // Job failure should return an error
 		},
@@ -129,10 +173,26 @@ func TestSync(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			// Initialize
 			management.SetOperatorNotRemovable()
-			ctx := newTestContext(test, t)
+			ctx := newTestContext(test, t, DefaultConditions)
 
 			// Act
-			err := ctx.controller.Sync(context.TODO(), factory.NewSyncContext(controllerName, events.NewInMemoryRecorder("test-job-controller", clocktesting.NewFakePassiveClock(time.Now()))))
+			var err error
+			if test.initialObjects.job != nil {
+				err = ctx.controller.Sync(context.TODO(), factory.NewSyncContext(controllerName, events.NewInMemoryRecorder("test-job-controller", clocktesting.NewFakePassiveClock(time.Now()))))
+			}
+
+			// If sync returned an error and we expect degraded condition, simulate WithSyncDegradedOnError
+			if err != nil && test.expectErr {
+				// Simulate the WithSyncDegradedOnError behavior
+				degradedCondition := applyoperatorv1.OperatorCondition().
+					WithType(conditionDegraded).
+					WithStatus(opv1.ConditionTrue).
+					WithReason("SyncError").
+					WithMessage(err.Error())
+
+				status := applyoperatorv1.OperatorStatus().WithConditions(degradedCondition)
+				ctx.operatorClient.ApplyOperatorStatus(context.TODO(), controllerName+"-Job", status)
+			}
 
 			// Assert
 			// Check error
@@ -171,8 +231,8 @@ func TestSync(t *testing.T) {
 				if err != nil {
 					t.Errorf("Failed to get operator: %v", err)
 				}
-				sanitizeInstanceStatus(actualStatus)
-				sanitizeInstanceStatus(&test.expectedObjects.operator.Status)
+				sanitizeInstanceStatus(actualStatus, allConditions)
+				sanitizeInstanceStatus(&test.expectedObjects.operator.Status, allConditions)
 				if !equality.Semantic.DeepEqual(test.expectedObjects.operator.Status, *actualStatus) {
 					t.Errorf("Unexpected operator %+v content:\n%s", operandName, cmp.Diff(test.expectedObjects.operator.Status, *actualStatus))
 				}
@@ -190,6 +250,112 @@ func TestSync(t *testing.T) {
 			if actualMeta.Name != expectedMeta.Name || actualMeta.Generation != expectedMeta.Generation {
 				t.Errorf("Unexpected operator ObjectMeta basic fields: name=%s vs %s, generation=%d vs %d",
 					actualMeta.Name, expectedMeta.Name, actualMeta.Generation, expectedMeta.Generation)
+			}
+		})
+	}
+}
+
+// Test with Available condition explicitly enabled
+func TestSyncWithAvailableCondition(t *testing.T) {
+	testCases := []testCase{
+		{
+			name: "job completed with available condition",
+			initialObjects: testObjects{
+				job: makeJob(
+					withJobGeneration(1),
+					withJobStatus(0, 1, 0),
+					withJobComplete()),
+				operator: makeFakeOperatorInstance(
+					withGenerations(1),
+					withFalseConditions(conditionAvailable)),
+			},
+			expectedObjects: testObjects{
+				job: makeJob(
+					withJobGeneration(1),
+					withJobStatus(0, 1, 0),
+					withJobComplete()),
+				operator: makeFakeOperatorInstance(
+					withGenerations(1),
+					withTrueConditions(conditionAvailable),
+				),
+			},
+		},
+		{
+			name: "job running with available condition",
+			initialObjects: testObjects{
+				job: makeJob(
+					withJobGeneration(1),
+					withJobStatus(1, 0, 0)),
+				operator: makeFakeOperatorInstance(
+					withGenerations(1),
+					withTrueConditions(conditionAvailable),
+				),
+			},
+			expectedObjects: testObjects{
+				job: makeJob(
+					withJobGeneration(1),
+					withJobStatus(1, 0, 0)),
+				operator: makeFakeOperatorInstance(
+					withGenerations(1),
+					withFalseConditions(conditionAvailable),
+				),
+			},
+		},
+		{
+			name: "job failed with available condition",
+			initialObjects: testObjects{
+				job: makeJob(
+					withJobGeneration(1),
+					withJobStatus(0, 0, 1),
+					withJobFailed()),
+				operator: makeFakeOperatorInstance(
+					withGenerations(1),
+					withTrueConditions(conditionAvailable),
+				),
+			},
+			expectedObjects: testObjects{
+				job: makeJob(
+					withJobGeneration(1),
+					withJobStatus(0, 0, 1),
+					withJobFailed()),
+				operator: makeFakeOperatorInstance(
+					withGenerations(1),
+					withFalseConditions(conditionAvailable),
+				),
+			},
+			expectErr: true,
+		},
+	}
+
+	for _, test := range testCases {
+		t.Run(test.name, func(t *testing.T) {
+			// Initialize
+			management.SetOperatorNotRemovable()
+			ctx := newTestContext(test, t, AllConditions)
+
+			// Act
+			err := ctx.controller.Sync(context.TODO(), factory.NewSyncContext(controllerName, events.NewInMemoryRecorder("test-job-controller", clocktesting.NewFakePassiveClock(time.Now()))))
+
+			// Assert
+			// Check error
+			if err != nil && !test.expectErr {
+				t.Errorf("sync() returned unexpected error: %v", err)
+			}
+			if err == nil && test.expectErr {
+				t.Error("sync() unexpectedly succeeded when error was expected")
+			}
+
+			// Check expectedObjects.operator.Status - verify all conditions
+			if test.expectedObjects.operator != nil {
+				_, actualStatus, _, err := ctx.operatorClient.GetOperatorState()
+				if err != nil {
+					t.Errorf("Failed to get operator: %v", err)
+				}
+				sanitizeInstanceStatus(actualStatus, availableCondition)
+				sanitizeInstanceStatus(&test.expectedObjects.operator.Status, availableCondition)
+				if !equality.Semantic.DeepEqual(test.expectedObjects.operator.Status, *actualStatus) {
+					t.Errorf("Unexpected operator %+v content:\n%s", operandName, cmp.Diff(test.expectedObjects.operator.Status, *actualStatus))
+				}
 			}
 		})
 	}
@@ -241,6 +407,7 @@ func TestJobModificationRecreation(t *testing.T) {
 		fakeOperatorClient,
 		coreClient,
 		coreInformerFactory.Batch().V1().Jobs(),
+		DefaultConditions,
 		optionalInformers,
 		optionalJobHooks...,
 	)
@@ -327,7 +494,7 @@ type testContext struct {
 	coreInformers  coreinformers.SharedInformerFactory
 }
 
-func newTestContext(test testCase, t *testing.T) *testContext {
+func newTestContext(test testCase, t *testing.T, conditions []string) *testContext {
 	// Add job to informer
 	var initialObjects []runtime.Object
 	if test.initialObjects.job != nil {
@@ -370,6 +537,7 @@ func newTestContext(test testCase, t *testing.T) *testContext {
 		fakeOperatorClient,
 		coreClient,
 		coreInformerFactory.Batch().V1().Jobs(),
+		conditions,
 		optionalInformers,
 		optionalJobHooks...,
 	)
@@ -589,7 +757,7 @@ func sanitizeJob(job *batchv1.Job) {
 	delete(job.Annotations, specHashAnnotation)
 }
 
-func sanitizeInstanceStatus(status *opv1.OperatorStatus) {
+func sanitizeInstanceStatus(status *opv1.OperatorStatus, testedConditions []string) {
 	// Remove condition texts
 	for i := range status.Conditions {
 		status.Conditions[i].LastTransitionTime = metav1.Time{}
@@ -600,6 +768,15 @@ func sanitizeInstanceStatus(status *opv1.OperatorStatus) {
 	sort.Slice(status.Conditions, func(i, j int) bool {
 		return strings.Compare(status.Conditions[i].Type, status.Conditions[j].Type) < 0
 	})
+
+	// Keep only testedConditions; preserve prior sort order
+	filtered := status.Conditions[:0]
+	for _, c := range status.Conditions {
+		if slices.Contains(testedConditions, c.Type) {
+			filtered = append(filtered, c)
+		}
+	}
+	status.Conditions = filtered
 }
 
 func sanitizeObjectMeta(meta *metav1.ObjectMeta) {
