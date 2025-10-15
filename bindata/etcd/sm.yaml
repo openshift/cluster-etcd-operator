@@ -6,7 +6,6 @@ metadata:
   labels:
     app.kubernetes.io/name: etcd
     k8s-app: etcd
-    monitoring.openshift.io/collection-profile: full
 spec:
   endpoints:
     - interval: 30s
