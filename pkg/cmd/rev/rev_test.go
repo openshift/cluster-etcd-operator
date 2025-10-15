@@ -11,12 +11,12 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/tests/v3/integration"
+	"go.etcd.io/etcd/tests/v3/framework/integration"
 )
 
 func TestHappyPathRevisionSaving(t *testing.T) {
 	testServer, outputPath, clientPool := setupTestCluster(t)
-	client, err := testServer.ClusterClient()
+	client, err := testServer.ClusterClient(t)
 	require.NoError(t, err)
 
 	trySaveRevision(context.Background(), client.Endpoints(), outputPath, clientPool, 5*time.Second)
@@ -38,7 +38,7 @@ func TestHappyPathRevisionSaving(t *testing.T) {
 
 func TestNodeDownRevisionSaving(t *testing.T) {
 	testServer, outputPath, clientPool := setupTestCluster(t)
-	client, err := testServer.ClusterClient()
+	client, err := testServer.ClusterClient(t)
 	require.NoError(t, err)
 
 	list, err := client.MemberList(context.Background())
@@ -71,7 +71,7 @@ func TestNodeDownRevisionSaving(t *testing.T) {
 
 func TestNoQuorumRevisionSaving(t *testing.T) {
 	testServer, outputPath, clientPool := setupTestCluster(t)
-	client, err := testServer.ClusterClient()
+	client, err := testServer.ClusterClient(t)
 	require.NoError(t, err)
 
 	trySaveRevision(context.Background(), client.Endpoints(), outputPath, clientPool, 5*time.Second)
@@ -119,9 +119,9 @@ func ensureRevStructConsistency(t *testing.T, o outputStruct) {
 	require.Equal(t, maxRev, o.MaxRaftIndex)
 }
 
-func setupTestCluster(t *testing.T) (*integration.ClusterV3, string, *etcdcli.EtcdClientPool) {
+func setupTestCluster(t *testing.T) (*integration.Cluster, string, *etcdcli.EtcdClientPool) {
 	integration.BeforeTestExternal(t)
-	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
+	testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: 3})
 
 	tmpDir, err := os.MkdirTemp("", "TestRevisionSaving")
 	require.NoError(t, err)
@@ -134,10 +134,10 @@ func setupTestCluster(t *testing.T) (*integration.ClusterV3, string, *etcdcli.Et
 
 	clientPool := etcdcli.NewEtcdClientPool(
 		// newFunc
-		func() (*clientv3.Client, error) { return testServer.ClusterClient() },
+		func() (*clientv3.Client, error) { return testServer.ClusterClient(t) },
 		// endpointsFunc
 		func() ([]string, error) {
-			client, err := testServer.ClusterClient()
+			client, err := testServer.ClusterClient(t)
 			if err != nil {
 				return nil, err
 			}

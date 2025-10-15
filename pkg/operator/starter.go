@@ -627,7 +627,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controlPlaneNodeInformer,
 		etcdsInformer,
 		kubeClient,
-		dynamicClient)
+		dynamicClient,
+		AlivenessChecker)
 	if err != nil {
 		return err
 	}
