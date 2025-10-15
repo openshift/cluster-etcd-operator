@@ -2,9 +2,14 @@ package ceohelpers
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/etcd"
@@ -157,4 +162,40 @@ func GetExternalEtcdClusterStatus(ctx context.Context,
 	}
 
 	return externalEtcdStatus, nil
+}
+
+// WaitForEtcdCondition is a generic helper that waits for an etcd-related condition to become true.
+// It first syncs the etcd informer cache, then polls the condition function until it returns true
+// or the timeout is reached.
+func WaitForEtcdCondition(
+	ctx context.Context,
+	etcdInformer operatorv1informers.EtcdInformer,
+	operatorClient v1helpers.StaticPodOperatorClient,
+	conditionCheck func(context.Context, v1helpers.StaticPodOperatorClient) (bool, error),
+	pollInterval time.Duration,
+	timeout time.Duration,
+	conditionName string,
+) error {
+	// Wait for the etcd informer to sync before checking condition
+	// This ensures operatorClient.GetStaticPodOperatorState() has data to work with
+	klog.Infof("waiting for etcd informer to sync before checking %s...", conditionName)
+	if !cache.WaitForCacheSync(ctx.Done(), etcdInformer.Informer().HasSynced) {
+		return fmt.Errorf("failed to sync etcd informer")
+	}
+	klog.Infof("etcd informer synced, checking for %s", conditionName)
+
+	// Poll until the condition is met
+	return wait.PollUntilContextTimeout(ctx, pollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		conditionMet, err := conditionCheck(ctx, operatorClient)
+		if err != nil {
+			klog.Warningf("error checking %s, will retry: %v", conditionName, err)
+			return false, nil
+		}
+		if conditionMet {
+			klog.V(2).Infof("%s condition met", conditionName)
+			return true, nil
+		}
+		klog.V(4).Infof("%s condition not yet met, waiting...", conditionName)
+		return false, nil
+	})
 }

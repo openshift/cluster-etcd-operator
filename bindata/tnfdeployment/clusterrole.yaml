@@ -30,6 +30,25 @@ rules:
       - patch
       - update
   - apiGroups:
+      - etcd.openshift.io
+    resources:
+      - pacemakerclusters
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - etcd.openshift.io
+    resources:
+      - pacemakerclusters/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
       - config.openshift.io
     resources:
       - clusterversions

@@ -19,25 +19,33 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apiextclientv1 "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset/typed/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/bindata"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/externaletcdsupportcontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/jobs"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/pacemaker"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
+)
+
+const (
+	// pacemakerStatusCollectorName is the name of the Pacemaker status collector CronJob
+	pacemakerStatusCollectorName = "pacemaker-status-collector"
 )
 
 var (
@@ -71,7 +79,8 @@ func HandleDualReplicaClusters(
 	controlPlaneNodeInformer cache.SharedIndexInformer,
 	etcdInformer operatorv1informers.EtcdInformer,
 	kubeClient kubernetes.Interface,
-	dynamicClient dynamic.Interface) (bool, error) {
+	dynamicClient dynamic.Interface,
+	alivenessChecker *health.MultiAlivenessChecker) (bool, error) {
 
 	// Since HandleDualReplicaClusters isn't a controller, we need to ensure that the Infrastructure
 	// informer is synced before we use it.
@@ -92,6 +101,7 @@ func HandleDualReplicaClusters(
 	runExternalEtcdSupportController(ctx, controllerContext, operatorClient, envVarGetter, kubeInformersForNamespaces,
 		infrastructureInformer, networkInformer, controlPlaneNodeInformer, etcdInformer, kubeClient)
 	runTnfResourceController(ctx, controllerContext, kubeClient, dynamicClient, operatorClient, kubeInformersForNamespaces)
+	runPacemakerControllers(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, alivenessChecker, etcdInformer)
 
 	controlPlaneNodeLister := corev1listers.NewNodeLister(controlPlaneNodeInformer.GetIndexer())
 
@@ -224,15 +234,15 @@ func handleNodes(
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	etcdInformer operatorv1informers.EtcdInformer) error {
 
-	// Wait for the etcd informer to sync before checking bootstrap status
-	// This ensures operatorClient.GetStaticPodOperatorState() has data to work with
-	klog.Infof("waiting for etcd informer to sync...")
-	if !cache.WaitForCacheSync(ctx.Done(), etcdInformer.Informer().HasSynced) {
-		return fmt.Errorf("failed to sync etcd informer")
-	}
-	klog.Infof("etcd informer synced")
-
-	if err := waitForEtcdBootstrapCompleted(ctx, operatorClient); err != nil {
+	if err := ceohelpers.WaitForEtcdCondition(
+		ctx,
+		etcdInformer,
+		operatorClient,
+		ceohelpers.IsEtcdRunningInCluster,
+		10*time.Second,
+		30*time.Minute,
+		"etcd bootstrap completion",
+	); err != nil {
 		return fmt.Errorf("failed to wait for etcd bootstrap: %w", err)
 	}
 	klog.Infof("bootstrap completed, creating TNF job controllers")
@@ -257,25 +267,6 @@ func handleNodes(
 	runJobController(ctx, tools.JobTypeSetup, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, setupConditions)
 	runJobController(ctx, tools.JobTypeFencing, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
 
-	return nil
-}
-
-func waitForEtcdBootstrapCompleted(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient) error {
-	isEtcdRunningInCluster, err := ceohelpers.IsEtcdRunningInCluster(ctx, operatorClient)
-	if err != nil {
-		return fmt.Errorf("failed to check if bootstrap is completed: %v", err)
-	}
-	if !isEtcdRunningInCluster {
-		klog.Infof("waiting for bootstrap to complete with etcd running in cluster")
-		clientConfig, err := rest.InClusterConfig()
-		if err != nil {
-			return fmt.Errorf("failed to get in-cluster config: %v", err)
-		}
-		err = bootstrapteardown.WaitForEtcdBootstrap(ctx, clientConfig)
-		if err != nil {
-			return fmt.Errorf("failed to wait for bootstrap to complete: %v", err)
-		}
-	}
 	return nil
 }
 
@@ -325,6 +316,132 @@ func runTnfResourceController(ctx context.Context, controllerContext *controller
 		controllerContext.EventRecorder,
 	).WithIgnoreNotFoundOnCreate().AddKubeInformers(kubeInformersForNamespaces)
 	go tnfResourceController.Run(ctx, 1)
+}
+
+func runPacemakerControllers(ctx context.Context, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces, alivenessChecker *health.MultiAlivenessChecker, etcdInformer operatorv1informers.EtcdInformer) {
+	// Wait for external etcd transition before creating any Pacemaker controllers
+	// This runs in a background goroutine to avoid blocking the main thread.
+	go func() {
+		klog.Infof("waiting for etcd to transition to external before creating Pacemaker controllers")
+
+		// Wait for external etcd transition to complete
+		for {
+			if err := ceohelpers.WaitForEtcdCondition(
+				ctx, etcdInformer, operatorClient, ceohelpers.HasExternalEtcdCompletedTransition,
+				10*time.Second, 30*time.Minute, "external etcd transition",
+			); err != nil {
+				if ctx.Err() != nil {
+					klog.Infof("context done while waiting for external etcd transition: %v", err)
+					return
+				}
+				klog.Warningf("external etcd transition not complete yet, will retry in 1m: %v", err)
+				select {
+				case <-time.After(time.Minute):
+					continue
+				case <-ctx.Done():
+					return
+				}
+			}
+			// External etcd transition is complete, break out of the wait loop
+			break
+		}
+
+		klog.Infof("etcd has transitioned to external; applying PacemakerCluster CRD")
+
+		// Apply the PacemakerCluster CRD first before creating any controllers
+		// Both the informer and collector will need this CRD to be registered
+		// Retry until successful or context is cancelled
+		for {
+			if err := applyPacemakerStatusCRD(ctx, controllerContext); err != nil {
+				if ctx.Err() != nil {
+					klog.Infof("context done while applying PacemakerCluster CRD: %v", err)
+					return
+				}
+				klog.Errorf("failed to apply PacemakerCluster CRD, will retry in 30s: %v", err)
+				select {
+				case <-time.After(30 * time.Second):
+					continue
+				case <-ctx.Done():
+					return
+				}
+			}
+			// CRD applied successfully, break out of the retry loop
+			klog.Infof("PacemakerCluster CRD applied successfully")
+			break
+		}
+
+		// Now create the healthcheck controller after transition is complete
+		klog.Infof("creating Pacemaker healthcheck controller")
+		healthCheckController, pacemakerInformer, err := pacemaker.NewHealthCheck(
+			alivenessChecker,
+			operatorClient,
+			kubeClient,
+			controllerContext.EventRecorder,
+			controllerContext.KubeConfig,
+		)
+		if err != nil {
+			klog.Errorf("Failed to create Pacemaker healthcheck controller: %v", err)
+			return
+		}
+
+		// Start the PacemakerCluster informer now that the CRD exists
+		// The controller will wait for this informer to sync before processing events
+		klog.Infof("starting PacemakerCluster informer")
+		go pacemakerInformer.Run(ctx.Done())
+
+		// Start the healthcheck controller
+		klog.Infof("starting Pacemaker healthcheck controller")
+		go healthCheckController.Run(ctx, 1)
+
+		// Start the status collector CronJob
+		klog.Infof("starting Pacemaker status collector CronJob")
+		runPacemakerStatusCollectorCronJob(ctx, controllerContext, operatorClient, kubeClient)
+	}()
+}
+
+func runPacemakerStatusCollectorCronJob(ctx context.Context, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface) {
+	// Start the cronjob controller to create a CronJob for periodic status collection
+	// The CronJob runs "tnf-runtime monitor" which executes "sudo -n pcs status xml"
+	// and updates the PacemakerCluster CR
+	klog.Infof("starting Pacemaker status collector CronJob controller")
+	statusCronJobController := jobs.NewCronJobController(
+		pacemakerStatusCollectorName,
+		bindata.MustAsset("tnfdeployment/cronjob.yaml"),
+		operatorClient,
+		kubeClient,
+		controllerContext.EventRecorder,
+		func(_ *operatorv1.OperatorSpec, cronJob *batchv1.CronJob) error {
+			// Set the name and namespace
+			cronJob.SetName(pacemakerStatusCollectorName)
+			cronJob.SetNamespace(operatorclient.TargetNamespace)
+
+			// Set the schedule - run every minute
+			cronJob.Spec.Schedule = "* * * * *"
+
+			// Initialize labels maps if nil and set labels at all levels
+			if cronJob.Labels == nil {
+				cronJob.Labels = make(map[string]string)
+			}
+			cronJob.Labels["app.kubernetes.io/name"] = pacemakerStatusCollectorName
+
+			if cronJob.Spec.JobTemplate.Labels == nil {
+				cronJob.Spec.JobTemplate.Labels = make(map[string]string)
+			}
+			cronJob.Spec.JobTemplate.Labels["app.kubernetes.io/name"] = pacemakerStatusCollectorName
+
+			if cronJob.Spec.JobTemplate.Spec.Template.Labels == nil {
+				cronJob.Spec.JobTemplate.Spec.Template.Labels = make(map[string]string)
+			}
+			cronJob.Spec.JobTemplate.Spec.Template.Labels["app.kubernetes.io/name"] = pacemakerStatusCollectorName
+
+			// Configure the container
+			cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Image = os.Getenv("OPERATOR_IMAGE")
+			cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Command = []string{"tnf-runtime", "monitor", "-v=4"}
+
+			return nil
+		},
+	)
+	go statusCronJobController.Run(ctx, 1)
 }
 
 func runJobController(ctx context.Context, jobType tools.JobType, nodeName *string, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces, conditions []string) {
@@ -458,4 +575,50 @@ func handleFencingSecretChange(ctx context.Context, client kubernetes.Interface,
 		// TODO how to trigger a retry here...
 		klog.Errorf("failed to delete fencing job: %v", err)
 	}
+}
+
+// applyPacemakerStatusCRD applies the PacemakerCluster CRD to the cluster.
+// This must be called after external etcd transition is complete and before
+// starting the status collector CronJob, as the CronJob will need to create
+// PacemakerCluster custom resources.
+func applyPacemakerStatusCRD(ctx context.Context, controllerContext *controllercmd.ControllerContext) error {
+	klog.Infof("applying PacemakerCluster CRD")
+
+	// Read the CRD manifest from bindata
+	crdBytes, err := bindata.Asset("etcd/pacemakercluster-crd.yaml")
+	if err != nil {
+		return fmt.Errorf("failed to read PacemakerCluster CRD from bindata: %w", err)
+	}
+
+	// Decode the CRD
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewReader(crdBytes), 4096)
+	if err := decoder.Decode(crd); err != nil {
+		return fmt.Errorf("failed to decode PacemakerCluster CRD: %w", err)
+	}
+
+	// Get the apiextensions client
+	apiextClient, err := apiextclientv1.NewForConfig(controllerContext.KubeConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create apiextensions client: %w", err)
+	}
+
+	// Apply the CRD
+	_, updated, err := resourceapply.ApplyCustomResourceDefinitionV1(
+		ctx,
+		apiextClient,
+		controllerContext.EventRecorder,
+		crd,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to apply PacemakerCluster CRD: %w", err)
+	}
+
+	if updated {
+		klog.Infof("PacemakerCluster CRD created or updated successfully")
+	} else {
+		klog.V(2).Infof("PacemakerCluster CRD already exists and is up to date")
+	}
+
+	return nil
 }

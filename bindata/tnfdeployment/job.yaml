@@ -15,7 +15,7 @@ spec:
         - name: tnf-job
           image: <injected>
           imagePullPolicy: IfNotPresent
-          command: [ "tnf-setup-runner", "<injected>" ]
+          command: [ "tnf-runtime", "<injected>" ]
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
             requests:
