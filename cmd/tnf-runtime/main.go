@@ -18,6 +18,7 @@ import (
 	tnfaftersetup "github.com/openshift/cluster-etcd-operator/pkg/tnf/after-setup"
 	tnfauth "github.com/openshift/cluster-etcd-operator/pkg/tnf/auth"
 	tnffencing "github.com/openshift/cluster-etcd-operator/pkg/tnf/fencing"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/pacemaker"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 	tnfsetup "github.com/openshift/cluster-etcd-operator/pkg/tnf/setup"
 )
@@ -37,17 +38,18 @@ func main() {
 	logs.InitLogs()
 	defer logs.FlushLogs()
 
-	command := NewTnfSetupRunnerCommand()
+	command := NewTnfRuntimeCommand()
 	if err := command.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
 }
 
-func NewTnfSetupRunnerCommand() *cobra.Command {
+func NewTnfRuntimeCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "tnf-setup-runner",
-		Short: "OpenShift Two Node Fencing Setup runner",
+		Use:   "tnf-runtime",
+		Short: "OpenShift Two Node Fencing Runtime",
+		Long:  "Runtime commands for Two Node Fencing setup and monitoring operations",
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Help()
 			os.Exit(1)
@@ -58,6 +60,7 @@ func NewTnfSetupRunnerCommand() *cobra.Command {
 	cmd.AddCommand(NewSetupCommand())
 	cmd.AddCommand(NewAfterSetupCommand())
 	cmd.AddCommand(NewFencingCommand())
+	cmd.AddCommand(NewMonitorCommand())
 
 	return cmd
 }
@@ -112,4 +115,15 @@ func NewFencingCommand() *cobra.Command {
 			}
 		},
 	}
+}
+
+func NewMonitorCommand() *cobra.Command {
+	// Reuse the existing collector command as the "monitor" subcommand.
+	cmd := pacemaker.NewPacemakerStatusCollectorCommand()
+	cmd.Use = "monitor"
+	cmd.Short = "Monitor and collect pacemaker cluster status"
+	cmd.Long = "Collects pacemaker status and updates PacemakerCluster CR"
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	return cmd
 }

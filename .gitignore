@@ -11,7 +11,7 @@
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 cluster-etcd-operator
-tnf-setup-runner
+tnf-runtime
 cluster-etcd-operator-tests-ext
 
 # Log output from telepresence

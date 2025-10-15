@@ -226,10 +226,12 @@ github.com/openshift-eng/openshift-tests-extension/pkg/flags
 github.com/openshift-eng/openshift-tests-extension/pkg/junit
 github.com/openshift-eng/openshift-tests-extension/pkg/util/sets
 github.com/openshift-eng/openshift-tests-extension/pkg/version
-# github.com/openshift/api v0.0.0-20251124235416-c11dd82e305c
+# github.com/openshift/api v0.0.0-20251124235416-c11dd82e305c => /home/jpoulin/Projects/jaypoulz/api
 ## explicit; go 1.24.0
 github.com/openshift/api
 github.com/openshift/api/annotations
+github.com/openshift/api/apiextensions
+github.com/openshift/api/apiextensions/v1alpha1
 github.com/openshift/api/apiserver
 github.com/openshift/api/apiserver/v1
 github.com/openshift/api/apps
@@ -247,6 +249,8 @@ github.com/openshift/api/config/v1alpha1/zz_generated.crd-manifests
 github.com/openshift/api/config/v1alpha2
 github.com/openshift/api/console
 github.com/openshift/api/console/v1
+github.com/openshift/api/etcd
+github.com/openshift/api/etcd/v1alpha1
 github.com/openshift/api/features
 github.com/openshift/api/helm
 github.com/openshift/api/helm/v1beta1
@@ -1713,3 +1717,4 @@ sigs.k8s.io/structured-merge-diff/v6/value
 sigs.k8s.io/yaml
 # github.com/gogo/protobuf => github.com/gogo/protobuf v1.3.2
 # vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787
+# github.com/openshift/api => /home/jpoulin/Projects/jaypoulz/api

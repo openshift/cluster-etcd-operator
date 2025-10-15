@@ -10,7 +10,7 @@
   </summary>
   <nodes>
     <node name="master-0" id="1" online="true" standby="false" standby_onfail="false" maintenance="false" pending="false" unclean="false" health="green" feature_set="3.19.6" shutdown="false" expected_up="true" is_dc="true" resources_running="4" type="member"/>
-    <node name="master-1" id="2" online="true" standby="true" standby_onfail="false" maintenance="false" pending="false" unclean="false" health="yellow" feature_set="3.19.6" shutdown="false" expected_up="true" is_dc="false" resources_running="0" type="member"/>
+    <node name="master-1" id="2" online="false" standby="false" standby_onfail="false" maintenance="false" pending="false" unclean="false" health="red" feature_set="3.19.6" shutdown="false" expected_up="true" is_dc="false" resources_running="0" type="member"/>
   </nodes>
   <resources>
     <clone id="kubelet-clone" multi_state="false" unique="false" maintenance="false" managed="true" disabled="false" failed="false" failure_ignored="false">
@@ -37,6 +37,12 @@
       <attribute name="node_ip" value="192.168.111.20"/>
       <attribute name="revision" value="1628960"/>
     </node>
+    <node name="master-1">
+      <attribute name="cluster_id" value="18178232792881147662"/>
+      <attribute name="member_id" value="690b6ec0bad7164e"/>
+      <attribute name="node_ip" value="192.168.111.21"/>
+      <attribute name="revision" value="1628960"/>
+    </node>
   </node_attributes>
   <node_history>
     <node name="master-0">
@@ -61,6 +67,7 @@
     </node>
   </node_history>
   <fence_history>
+    <fence_event action="reboot" target="master-1" client="pacemaker-controld.1758" origin="master-0" status="success" delegate="master-0" completed="2025-09-17 14:54:10.131764Z"/>
   </fence_history>
   <status code="0" message="OK"/>
 </pacemaker-result>
