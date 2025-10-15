@@ -1,8 +1,11 @@
 package pacemaker
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,10 +16,16 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
+	fakerest "k8s.io/client-go/rest/fake"
 	"k8s.io/utils/clock"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pacemaker/v1alpha1"
 )
 
 // Test helper functions
@@ -38,12 +47,72 @@ func createTestHealthCheck() *HealthCheck {
 	)
 	eventRecorder := events.NewInMemoryRecorder("test", clock.RealClock{})
 
+	// Note: This creates a HealthCheck with mock REST client
+	// In a real scenario, we'd need to mock the PacemakerStatus CR
 	return &HealthCheck{
-		operatorClient: operatorClient,
-		kubeClient:     kubeClient,
-		eventRecorder:  eventRecorder,
-		recordedEvents: make(map[string]time.Time),
-		previousStatus: statusUnknown,
+		operatorClient:      operatorClient,
+		kubeClient:          kubeClient,
+		eventRecorder:       eventRecorder,
+		pacemakerRESTClient: nil, // TODO: Mock this for actual tests
+		pacemakerInformer:   nil, // TODO: Mock this for actual tests
+		recordedEvents:      make(map[string]time.Time),
+		previousStatus:      statusUnknown,
+	}
+}
+
+// createTestHealthCheckWithMockStatus creates a HealthCheck with a mocked PacemakerStatus CR
+func createTestHealthCheckWithMockStatus(t *testing.T, mockStatus *v1alpha1.PacemakerStatus) *HealthCheck {
+	kubeClient := fake.NewSimpleClientset()
+	operatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+		&operatorv1.StaticPodOperatorSpec{
+			OperatorSpec: operatorv1.OperatorSpec{
+				ManagementState: operatorv1.Managed,
+			},
+		},
+		&operatorv1.StaticPodOperatorStatus{
+			OperatorStatus: operatorv1.OperatorStatus{
+				Conditions: []operatorv1.OperatorCondition{},
+			},
+		},
+		nil,
+		nil,
+	)
+	eventRecorder := events.NewInMemoryRecorder("test", clock.RealClock{})
+
+	// Create a fake REST client that returns the mock PacemakerStatus
+	scheme := runtime.NewScheme()
+	err := v1alpha1.AddToScheme(scheme)
+	require.NoError(t, err)
+
+	codec := serializer.NewCodecFactory(scheme)
+	fakeClient := &fakerest.RESTClient{
+		Client: fakerest.CreateHTTPClient(func(req *http.Request) (*http.Response, error) {
+			body, err := runtime.Encode(codec.LegacyCodec(v1alpha1.SchemeGroupVersion), mockStatus)
+			if err != nil {
+				return nil, err
+			}
+
+			header := http.Header{}
+			header.Set("Content-Type", runtime.ContentTypeJSON)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     header,
+				Body:       io.NopCloser(bytes.NewReader(body)),
+			}, nil
+		}),
+		NegotiatedSerializer: codec,
+		GroupVersion:         v1alpha1.SchemeGroupVersion,
+		VersionedAPIPath:     "/apis/" + v1alpha1.SchemeGroupVersion.String(),
+	}
+
+	return &HealthCheck{
+		operatorClient:      operatorClient,
+		kubeClient:          kubeClient,
+		eventRecorder:       eventRecorder,
+		pacemakerRESTClient: fakeClient,
+		pacemakerInformer:   nil, // Not needed for getPacemakerStatus tests
+		recordedEvents:      make(map[string]time.Time),
+		previousStatus:      statusUnknown,
 	}
 }
 
@@ -91,28 +160,118 @@ func TestNewHealthCheck(t *testing.T) {
 	livenessChecker := health.NewMultiAlivenessChecker()
 	eventRecorder := events.NewInMemoryRecorder("test", clock.RealClock{})
 
+	// Create a minimal rest.Config for testing
+	restConfig := &rest.Config{
+		Host: "https://localhost:6443",
+	}
+
 	controller := NewHealthCheck(
 		livenessChecker,
 		operatorClient,
 		kubeClient,
 		eventRecorder,
+		restConfig,
 	)
 
 	require.NotNil(t, controller, "Controller should not be nil")
 }
 
 func TestHealthCheck_getPacemakerStatus(t *testing.T) {
-	controller := createTestHealthCheck()
+	healthyXML := loadTestXML(t, "healthy_cluster.xml")
 
-	ctx := context.TODO()
-	status, err := controller.getPacemakerStatus(ctx)
+	tests := []struct {
+		name           string
+		mockStatus     *v1alpha1.PacemakerStatus
+		expectedStatus string
+		expectErrors   bool
+		expectWarnings bool
+	}{
+		{
+			name: "healthy_status",
+			mockStatus: &v1alpha1.PacemakerStatus{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: v1alpha1.SchemeGroupVersion.String(),
+					Kind:       "PacemakerStatus",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "cluster",
+				},
+				Status: v1alpha1.PacemakerStatusStatus{
+					RawXML:          healthyXML,
+					CollectionError: "",
+					LastUpdated:     metav1.Now(),
+				},
+			},
+			expectedStatus: statusHealthy,
+			expectErrors:   false,
+			expectWarnings: false,
+		},
+		{
+			name: "collection_error",
+			mockStatus: &v1alpha1.PacemakerStatus{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: v1alpha1.SchemeGroupVersion.String(),
+					Kind:       "PacemakerStatus",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "cluster",
+				},
+				Status: v1alpha1.PacemakerStatusStatus{
+					RawXML:          "",
+					CollectionError: "Failed to execute pcs command",
+					LastUpdated:     metav1.Now(),
+				},
+			},
+			expectedStatus: statusUnknown,
+			expectErrors:   true,
+			expectWarnings: false,
+		},
+		{
+			name: "stale_status",
+			mockStatus: &v1alpha1.PacemakerStatus{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: v1alpha1.SchemeGroupVersion.String(),
+					Kind:       "PacemakerStatus",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "cluster",
+				},
+				Status: v1alpha1.PacemakerStatusStatus{
+					RawXML:          healthyXML,
+					CollectionError: "",
+					LastUpdated:     metav1.Time{Time: time.Now().Add(-5 * time.Minute)},
+				},
+			},
+			expectedStatus: statusUnknown,
+			expectErrors:   true,
+			expectWarnings: false,
+		},
+	}
 
-	// In test environment, exec.Execute will fail due to permissions.
-	// getPacemakerStatus handles this gracefully by returning Unknown status without propagating the error.
-	require.NoError(t, err, "getPacemakerStatus should not return an error even when exec fails")
-	require.NotNil(t, status, "HealthStatus should not be nil")
-	require.Equal(t, statusUnknown, status.OverallStatus, "Status should be Unknown when exec fails")
-	require.NotEmpty(t, status.Errors, "Should have error messages when exec fails")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			controller := createTestHealthCheckWithMockStatus(t, tt.mockStatus)
+			ctx := context.TODO()
+
+			status, err := controller.getPacemakerStatus(ctx)
+
+			require.NoError(t, err, "getPacemakerStatus should not return an error")
+			require.NotNil(t, status, "HealthStatus should not be nil")
+			require.Equal(t, tt.expectedStatus, status.OverallStatus, "Status should match expected")
+
+			if tt.expectErrors {
+				require.NotEmpty(t, status.Errors, "Should have errors")
+			} else {
+				require.Empty(t, status.Errors, "Should not have errors")
+			}
+
+			if tt.expectWarnings {
+				require.NotEmpty(t, status.Warnings, "Should have warnings")
+			} else {
+				require.Empty(t, status.Warnings, "Should not have warnings")
+			}
+		})
+	}
 }
 
 func TestHealthCheck_updateOperatorStatus(t *testing.T) {

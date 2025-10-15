@@ -1,0 +1,47 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: <injected>
+  namespace: openshift-etcd
+  labels:
+    app.kubernetes.io/name: <injected>
+spec:
+  schedule: <injected>
+  concurrencyPolicy: "Forbid"
+  failedJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 1
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: <injected>
+    spec:
+      template:
+        metadata:
+          annotations:
+            openshift.io/required-scc: "privileged"
+          labels:
+            app.kubernetes.io/name: <injected>
+        spec:
+          containers:
+            - name: collector
+              image: <injected>
+              imagePullPolicy: IfNotPresent
+              terminationMessagePolicy: FallbackToLogsOnError
+              command: <injected>
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+              securityContext:
+                privileged: true
+                allowPrivilegeEscalation: true
+          hostIPC: false
+          hostNetwork: false
+          hostPID: true
+          priorityClassName: system-node-critical
+          serviceAccountName: etcd-sa
+          nodeSelector:
+            node-role.kubernetes.io/master: ""
+          tolerations:
+            - operator: "Exists"
+          restartPolicy: OnFailure

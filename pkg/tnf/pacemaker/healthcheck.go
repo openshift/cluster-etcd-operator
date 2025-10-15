@@ -3,7 +3,6 @@ package pacemaker
 import (
 	"context"
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -13,11 +12,17 @@ import (
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/exec"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pacemaker/v1alpha1"
 )
 
 // Constants for time windows and status strings
@@ -32,9 +37,6 @@ const (
 	// Event deduplication windows - avoid recording the same event within these times
 	eventDeduplicationWindowFencing = 1 * time.Hour   // Fencing events create reminders every hour for 24 hours
 	eventDeduplicationWindowDefault = 5 * time.Minute // Resource actions and general warnings
-
-	// Timeout for executing pcs status xml command
-	execTimeout = 10 * time.Second
 
 	// Expected number of nodes in ExternalEtcd cluster
 	expectedNodeCount = 2
@@ -78,8 +80,8 @@ const (
 	pacemakerTimeFormat      = "Mon Jan 2 15:04:05 2006"     // Format for operation history timestamps
 	pacemakerFenceTimeFormat = "2006-01-02 15:04:05.000000Z" // Format for fence event timestamps
 
-	// Pacemaker commands
-	pcsStatusXMLCommand = "sudo -n pcs status xml"
+	// PacemakerStatus CR name
+	pacemakerStatusName = "cluster"
 
 	// Warning message prefixes for categorizing events
 	warningPrefixFailedAction = "Recent failed resource action:"
@@ -287,9 +289,11 @@ func newUnknownHealthStatus(errMsg string) *HealthStatus {
 
 // HealthCheck monitors pacemaker status in ExternalEtcd topology clusters
 type HealthCheck struct {
-	operatorClient v1helpers.StaticPodOperatorClient
-	kubeClient     kubernetes.Interface
-	eventRecorder  events.Recorder
+	operatorClient      v1helpers.StaticPodOperatorClient
+	kubeClient          kubernetes.Interface
+	eventRecorder       events.Recorder
+	pacemakerRESTClient rest.Interface
+	pacemakerInformer   cache.SharedIndexInformer
 
 	// Track recently recorded events to avoid duplicates
 	recordedEventsMu sync.Mutex
@@ -298,6 +302,10 @@ type HealthCheck struct {
 	// Track previous health status to determine if we should record healthy events
 	previousStatusMu sync.Mutex
 	previousStatus   string
+
+	// Track last processed PacemakerStatus to detect changes
+	lastProcessedStatusMu sync.Mutex
+	lastProcessedStatus   *v1alpha1.PacemakerStatus
 }
 
 // NewHealthCheck creates a new HealthCheck for monitoring pacemaker status
@@ -307,13 +315,56 @@ func NewHealthCheck(
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeClient kubernetes.Interface,
 	eventRecorder events.Recorder,
+	restConfig *rest.Config,
 ) factory.Controller {
+	// Create REST client for PacemakerStatus CRs
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		panic(fmt.Errorf("failed to add scheme: %w", err))
+	}
+
+	pacemakerConfig := rest.CopyConfig(restConfig)
+	pacemakerConfig.GroupVersion = &v1alpha1.SchemeGroupVersion
+	pacemakerConfig.APIPath = "/apis"
+	pacemakerConfig.NegotiatedSerializer = serializer.NewCodecFactory(scheme)
+
+	restClient, err := rest.RESTClientFor(pacemakerConfig)
+	if err != nil {
+		panic(fmt.Errorf("failed to create REST client: %w", err))
+	}
+
+	// Create informer for PacemakerStatus
+	informer := cache.NewSharedIndexInformer(
+		&cache.ListWatch{
+			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+				result := &v1alpha1.PacemakerStatusList{}
+				err := restClient.Get().
+					Resource("pacemakerstatuses").
+					VersionedParams(&options, runtime.NewParameterCodec(scheme)).
+					Do(context.Background()).
+					Into(result)
+				return result, err
+			},
+			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+				return restClient.Get().
+					Resource("pacemakerstatuses").
+					VersionedParams(&options, runtime.NewParameterCodec(scheme)).
+					Watch(context.Background())
+			},
+		},
+		&v1alpha1.PacemakerStatus{},
+		healthCheckResyncInterval,
+		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
+	)
+
 	c := &HealthCheck{
-		operatorClient: operatorClient,
-		kubeClient:     kubeClient,
-		eventRecorder:  eventRecorder,
-		recordedEvents: make(map[string]time.Time),
-		previousStatus: statusUnknown,
+		operatorClient:      operatorClient,
+		kubeClient:          kubeClient,
+		eventRecorder:       eventRecorder,
+		pacemakerRESTClient: restClient,
+		pacemakerInformer:   informer,
+		recordedEvents:      make(map[string]time.Time),
+		previousStatus:      statusUnknown,
 	}
 
 	syncCtx := factory.NewSyncContext("PacemakerHealthCheck", eventRecorder.WithComponentSuffix("pacemaker-health-check"))
@@ -327,6 +378,7 @@ func NewHealthCheck(
 		WithSync(syncer.Sync).
 		WithInformers(
 			operatorClient.Informer(),
+			informer,
 		).ToController("PacemakerHealthCheck", syncCtx.Recorder())
 }
 
@@ -352,33 +404,44 @@ func (c *HealthCheck) sync(ctx context.Context, syncCtx factory.SyncContext) err
 	return nil
 }
 
-// getPacemakerStatus collects pacemaker status information and returns a HealthStatus struct
+// getPacemakerStatus retrieves pacemaker status from the PacemakerStatus CR and returns a HealthStatus struct
 func (c *HealthCheck) getPacemakerStatus(ctx context.Context) (*HealthStatus, error) {
-	klog.V(4).Infof("Collecting pacemaker status...")
+	klog.V(4).Infof("Retrieving pacemaker status from CR...")
 
-	// Execute the pcs status xml command with a timeout and non-interactive sudo
-	ctxExec, cancel := context.WithTimeout(ctx, execTimeout)
-	defer cancel()
-	stdout, stderr, err := exec.Execute(ctxExec, pcsStatusXMLCommand)
+	// Get the PacemakerStatus CR
+	result := &v1alpha1.PacemakerStatus{}
+	err := c.pacemakerRESTClient.Get().
+		Resource("pacemakerstatuses").
+		Name(pacemakerStatusName).
+		Do(ctx).
+		Into(result)
+
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return newUnknownHealthStatus(fmt.Sprintf("pcs status command timed out: %v", err)), nil
-		}
-
-		return newUnknownHealthStatus(fmt.Sprintf("Failed to execute pcs status xml command: %v", err)), nil
+		return newUnknownHealthStatus(fmt.Sprintf("Failed to get PacemakerStatus CR: %v", err)), nil
 	}
 
-	if stderr != "" {
-		klog.Warningf("pcs status xml command produced stderr: %s", stderr)
+	// Check if there was an error collecting the status
+	if result.Status.CollectionError != "" {
+		return newUnknownHealthStatus(fmt.Sprintf("Status collection error: %s", result.Status.CollectionError)), nil
 	}
+
+	// Check if the status is stale (older than 2 minutes)
+	if time.Since(result.Status.LastUpdated.Time) > 2*time.Minute {
+		return newUnknownHealthStatus(fmt.Sprintf("Pacemaker status is stale (last updated: %v)", result.Status.LastUpdated.Time)), nil
+	}
+
+	// Store the last processed status to detect changes
+	c.lastProcessedStatusMu.Lock()
+	c.lastProcessedStatus = result.DeepCopy()
+	c.lastProcessedStatusMu.Unlock()
 
 	// Validate XML size to prevent XML bombs
-	if len(stdout) > maxXMLSize {
-		return newUnknownHealthStatus(fmt.Sprintf("XML output too large: %d bytes (max: %d bytes)", len(stdout), maxXMLSize)), nil
+	if len(result.Status.RawXML) > maxXMLSize {
+		return newUnknownHealthStatus(fmt.Sprintf("XML output too large: %d bytes (max: %d bytes)", len(result.Status.RawXML), maxXMLSize)), nil
 	}
 
 	// Parse the XML output
-	status, err := c.parsePacemakerStatusXML(stdout)
+	status, err := c.parsePacemakerStatusXML(result.Status.RawXML)
 	if err != nil {
 		return newUnknownHealthStatus(fmt.Sprintf("Failed to parse pacemaker XML status: %v", err)), nil
 	}
