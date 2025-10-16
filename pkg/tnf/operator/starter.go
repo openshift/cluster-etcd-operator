@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
@@ -44,6 +45,17 @@ var (
 	fencingUpdateTriggered bool
 	// fencingUpdateMutex is used to make usage of fencingUpdateTriggered thread safe
 	fencingUpdateMutex sync.Mutex
+
+	// handleNodesFunc is a variable to allow mocking in tests
+	handleNodesFunc = handleNodes
+
+	// retryBackoffConfig allows customizing retry behavior for tests
+	retryBackoffConfig = wait.Backoff{
+		Duration: 5 * time.Second,
+		Factor:   2.0,
+		Steps:    9, // ~10 minutes total: 5s + 10s + 20s + 40s + 80s + 120s + 120s + 120s + 120s
+		Cap:      2 * time.Minute,
+	}
 )
 
 // HandleDualReplicaClusters checks feature gate and control plane topology,
@@ -87,7 +99,7 @@ func HandleDualReplicaClusters(
 	klog.Infof("watching for nodes...")
 	var once sync.Once
 	_, err = controlPlaneNodeInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: handleAddedNode(controllerContext, controlPlaneNodeLister, &once, ctx, operatorClient, kubeClient, kubeInformersForNamespaces),
+		AddFunc: handleAddedNode(controllerContext, controlPlaneNodeLister, &once, ctx, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer),
 	})
 	if err != nil {
 		klog.Errorf("failed to add eventhandler to control plane informer: %v", err)
@@ -124,7 +136,8 @@ func handleAddedNode(
 	ctx context.Context,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeClient kubernetes.Interface,
-	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) func(obj interface{}) {
+	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
+	etcdInformer operatorv1informers.EtcdInformer) func(obj interface{}) {
 
 	return func(obj interface{}) {
 		node, ok := obj.(*corev1.Node)
@@ -150,8 +163,55 @@ func handleAddedNode(
 		once.Do(func() {
 			// this potentially needs some time when we wait for etcd bootstrap to complete, so run it in a goroutine,
 			// to not block the event handler
-			go handleNodes(nodeList, ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+			go handleNodesWithRetry(nodeList, ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
 		})
+	}
+}
+
+func handleNodesWithRetry(
+	nodeList []*corev1.Node,
+	ctx context.Context,
+	controllerContext *controllercmd.ControllerContext,
+	operatorClient v1helpers.StaticPodOperatorClient,
+	kubeClient kubernetes.Interface,
+	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
+	etcdInformer operatorv1informers.EtcdInformer) {
+
+	// Retry with exponential backoff to handle transient failures
+	var setupErr error
+	err := wait.ExponentialBackoffWithContext(ctx, retryBackoffConfig, func(ctx context.Context) (bool, error) {
+		setupErr = handleNodesFunc(nodeList, ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
+		if setupErr != nil {
+			klog.Warningf("failed to setup TNF job controllers, will retry: %v", setupErr)
+			return false, nil
+		}
+		return true, nil
+	})
+
+	if err != nil || setupErr != nil {
+		klog.Errorf("failed to setup TNF job controllers after 10 minutes of retries: %v", setupErr)
+
+		// Degrade the operator to indicate TNF job controller setup failed
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+			Type:    "TNFJobControllersDegraded",
+			Status:  operatorv1.ConditionTrue,
+			Reason:  "SetupFailed",
+			Message: fmt.Sprintf("Failed to setup TNF job controllers after retries: %v", setupErr),
+		}))
+		if updateErr != nil {
+			klog.Errorf("failed to update operator status to degraded: %v", updateErr)
+		}
+	} else {
+		// Clear any previous degraded condition on success
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+			Type:    "TNFJobControllersDegraded",
+			Status:  operatorv1.ConditionFalse,
+			Reason:  "AsExpected",
+			Message: "TNF job controllers setup completed successfully",
+		}))
+		if updateErr != nil {
+			klog.Errorf("failed to update operator status: %v", updateErr)
+		}
 	}
 }
 
@@ -161,11 +221,19 @@ func handleNodes(
 	controllerContext *controllercmd.ControllerContext,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeClient kubernetes.Interface,
-	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) {
+	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
+	etcdInformer operatorv1informers.EtcdInformer) error {
+
+	// Wait for the etcd informer to sync before checking bootstrap status
+	// This ensures operatorClient.GetStaticPodOperatorState() has data to work with
+	klog.Infof("waiting for etcd informer to sync...")
+	if !cache.WaitForCacheSync(ctx.Done(), etcdInformer.Informer().HasSynced) {
+		return fmt.Errorf("failed to sync etcd informer")
+	}
+	klog.Infof("etcd informer synced")
 
 	if err := waitForEtcdBootstrapCompleted(ctx, operatorClient); err != nil {
-		klog.Errorf("failed to wait for etcd bootstrap: %v", err)
-		return
+		return fmt.Errorf("failed to wait for etcd bootstrap: %w", err)
 	}
 	klog.Infof("bootstrap completed, creating TNF job controllers")
 
@@ -188,6 +256,8 @@ func handleNodes(
 
 	runJobController(ctx, tools.JobTypeSetup, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, setupConditions)
 	runJobController(ctx, tools.JobTypeFencing, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
+
+	return nil
 }
 
 func waitForEtcdBootstrapCompleted(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient) error {
