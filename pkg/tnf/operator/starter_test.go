@@ -2,11 +2,13 @@ package operator
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/util/wait"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -266,5 +268,135 @@ func getArgs(t *testing.T, dualReplicaControlPlaneEnabled bool) args {
 		etcdInformer:               etcdInformers.Operator().V1().Etcds(),
 		kubeClient:                 fakeKubeClient,
 		dynamicClient:              fakeDynamicClient,
+	}
+}
+
+func TestHandleNodesWithRetry(t *testing.T) {
+	tests := []struct {
+		name                    string
+		setupMockHandleNodes    func() func([]*corev1.Node, context.Context, *controllercmd.ControllerContext, v1helpers.StaticPodOperatorClient, kubernetes.Interface, v1helpers.KubeInformersForNamespaces, operatorv1informers.EtcdInformer) error
+		expectDegradedCondition bool
+		expectDegradedStatus    operatorv1.ConditionStatus
+		expectRetries           bool
+	}{
+		{
+			name: "Success on first attempt",
+			setupMockHandleNodes: func() func([]*corev1.Node, context.Context, *controllercmd.ControllerContext, v1helpers.StaticPodOperatorClient, kubernetes.Interface, v1helpers.KubeInformersForNamespaces, operatorv1informers.EtcdInformer) error {
+				return func(_ []*corev1.Node, _ context.Context, _ *controllercmd.ControllerContext, _ v1helpers.StaticPodOperatorClient, _ kubernetes.Interface, _ v1helpers.KubeInformersForNamespaces, _ operatorv1informers.EtcdInformer) error {
+					return nil
+				}
+			},
+			expectDegradedCondition: true,
+			expectDegradedStatus:    operatorv1.ConditionFalse,
+			expectRetries:           false,
+		},
+		{
+			name: "Success after retries",
+			setupMockHandleNodes: func() func([]*corev1.Node, context.Context, *controllercmd.ControllerContext, v1helpers.StaticPodOperatorClient, kubernetes.Interface, v1helpers.KubeInformersForNamespaces, operatorv1informers.EtcdInformer) error {
+				attemptCount := 0
+				return func(_ []*corev1.Node, _ context.Context, _ *controllercmd.ControllerContext, _ v1helpers.StaticPodOperatorClient, _ kubernetes.Interface, _ v1helpers.KubeInformersForNamespaces, _ operatorv1informers.EtcdInformer) error {
+					attemptCount++
+					if attemptCount < 3 {
+						return errors.New("temporary failure")
+					}
+					return nil
+				}
+			},
+			expectDegradedCondition: true,
+			expectDegradedStatus:    operatorv1.ConditionFalse,
+			expectRetries:           true,
+		},
+		{
+			name: "Failure after all retries",
+			setupMockHandleNodes: func() func([]*corev1.Node, context.Context, *controllercmd.ControllerContext, v1helpers.StaticPodOperatorClient, kubernetes.Interface, v1helpers.KubeInformersForNamespaces, operatorv1informers.EtcdInformer) error {
+				return func(_ []*corev1.Node, _ context.Context, _ *controllercmd.ControllerContext, _ v1helpers.StaticPodOperatorClient, _ kubernetes.Interface, _ v1helpers.KubeInformersForNamespaces, _ operatorv1informers.EtcdInformer) error {
+					return errors.New("persistent failure")
+				}
+			},
+			expectDegradedCondition: true,
+			expectDegradedStatus:    operatorv1.ConditionTrue,
+			expectRetries:           true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Setup test environment
+			testArgs := getArgs(t, true)
+
+			// Create test nodes
+			nodes := []*corev1.Node{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "master-0",
+						Labels: map[string]string{
+							"node-role.kubernetes.io/master": "",
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "master-1",
+						Labels: map[string]string{
+							"node-role.kubernetes.io/master": "",
+						},
+					},
+				},
+			}
+
+			// Store original handleNodesFunc and replace with mock
+			originalHandleNodesFunc := handleNodesFunc
+			handleNodesFunc = tt.setupMockHandleNodes()
+			defer func() { handleNodesFunc = originalHandleNodesFunc }()
+
+			// Store original backoff config and use faster settings for testing
+			originalBackoff := retryBackoffConfig
+			retryBackoffConfig = wait.Backoff{
+				Duration: 100 * time.Millisecond,
+				Factor:   2.0,
+				Steps:    5, // Much shorter for testing
+				Cap:      500 * time.Millisecond,
+			}
+			defer func() { retryBackoffConfig = originalBackoff }()
+
+			// For faster testing, use a reasonable timeout
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			// Run handleNodesWithRetry
+			handleNodesWithRetry(nodes, ctx, testArgs.controllerContext, testArgs.operatorClient,
+				testArgs.kubeClient, testArgs.kubeInformersForNamespaces, testArgs.etcdInformer)
+
+			// Verify the operator condition was set correctly
+			if tt.expectDegradedCondition {
+				_, status, _, err := testArgs.operatorClient.GetStaticPodOperatorState()
+				require.NoError(t, err, "failed to get operator status")
+
+				// Find the TNFJobControllersDegraded condition
+				var foundCondition *operatorv1.OperatorCondition
+				for i, condition := range status.Conditions {
+					if condition.Type == "TNFJobControllersDegraded" {
+						foundCondition = &status.Conditions[i]
+						break
+					}
+				}
+
+				require.NotNil(t, foundCondition, "TNFJobControllersDegraded condition not found")
+				require.Equal(t, tt.expectDegradedStatus, foundCondition.Status,
+					"Expected degraded status %v but got %v", tt.expectDegradedStatus, foundCondition.Status)
+
+				if tt.expectDegradedStatus == operatorv1.ConditionTrue {
+					require.Equal(t, "SetupFailed", foundCondition.Reason,
+						"Expected reason SetupFailed but got %s", foundCondition.Reason)
+					require.Contains(t, foundCondition.Message, "Failed to setup TNF job controllers",
+						"Expected message to contain failure info")
+				} else {
+					require.Equal(t, "AsExpected", foundCondition.Reason,
+						"Expected reason AsExpected but got %s", foundCondition.Reason)
+					require.Contains(t, foundCondition.Message, "successfully",
+						"Expected success message")
+				}
+			}
+		})
 	}
 }
