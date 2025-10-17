@@ -14,6 +14,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/backuprestore"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/monitor"
 	operatorcmd "github.com/openshift/cluster-etcd-operator/pkg/cmd/operator"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/pacemakerstatuscollector"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/readyz"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
 	requestbackup "github.com/openshift/cluster-etcd-operator/pkg/cmd/request-backup"
@@ -78,6 +79,7 @@ func NewSSCSCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(requestbackup.NewRequestBackupCommand(ctx))
 	cmd.AddCommand(rev.NewRevCommand(ctx))
 	cmd.AddCommand(backuprestore.NewBackupServer(ctx))
+	cmd.AddCommand(pacemakerstatuscollector.NewPacemakerStatusCollectorCommand())
 
 	return cmd
 }

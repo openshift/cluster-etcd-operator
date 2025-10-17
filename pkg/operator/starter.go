@@ -244,6 +244,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		[]string{
 			"etcd/ns.yaml",
 			"etcd/sa.yaml",
+			"etcd/etcd-sa-clusterrole.yaml",
+			"etcd/etcd-sa-clusterrolebinding.yaml",
 			"etcd/svc.yaml",
 			"etcd/sm.yaml",
 			"etcd/minimal-sm.yaml",
@@ -627,7 +629,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controlPlaneNodeInformer,
 		etcdsInformer,
 		kubeClient,
-		dynamicClient)
+		dynamicClient,
+		AlivenessChecker)
 	if err != nil {
 		return err
 	}
