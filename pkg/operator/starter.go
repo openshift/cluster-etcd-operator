@@ -246,7 +246,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			"etcd/sa.yaml",
 			"etcd/svc.yaml",
 			"etcd/sm.yaml",
-			"etcd/minimal-sm.yaml",
 			"etcd/prometheus-role.yaml",
 			"etcd/prometheus-rolebinding.yaml",
 			"etcd/backups-sa.yaml",
