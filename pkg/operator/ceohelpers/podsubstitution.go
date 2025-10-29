@@ -125,7 +125,7 @@ func GetPodSubstitution(
 }
 
 // RenderTemplate renders a Pod template from the Assets with the data from a PodSubstitutionTemplate
-func RenderTemplate(templateName string, subs *PodSubstitutionTemplate) (string, error) {
+func RenderTemplate[T interface{}](templateName string, subs *T) (string, error) {
 	fm := template.FuncMap{"quote": func(arg reflect.Value) string {
 		return "\"" + arg.String() + "\""
 	}}
