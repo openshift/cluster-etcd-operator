@@ -3,7 +3,7 @@ package pcs
 import (
 	"context"
 	"fmt"
-	"regexp"
+	"net/url"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -13,10 +13,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/config"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/exec"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
-)
-
-var (
-	addressRegEx = regexp.MustCompile(`.*//(.*):(.*)(/redfish.*)`)
 )
 
 const (
@@ -130,10 +126,26 @@ func getFencingConfig(nodeName string, secret *corev1.Secret) (*fencingConfig, e
 
 	// we need to parse ip, port and systems uri from the address like this:
 	// redfish+https://192.168.111.1:8000/redfish/v1/Systems/af2167e4-c13b-4941-b606-f912e9a86f4b
-	matches := addressRegEx.FindStringSubmatch(address)
-	if len(matches) != 4 {
+	parsedUrl, err := url.Parse(address)
+	if err != nil {
 		klog.Errorf("Failed to parse redfish address %s", address)
 		return nil, fmt.Errorf("failed to parse redfish address %s", address)
+	}
+
+	redfishHostname := parsedUrl.Hostname()
+	redfishPath := parsedUrl.Path
+	redfishPort := parsedUrl.Port()
+	// Try to infer standard schema ports for https/http, otherwise notify user port is needed.
+	if redfishPort == "" {
+		switch {
+		case strings.Contains(parsedUrl.Scheme, "https"):
+			redfishPort = "443"
+		case strings.Contains(parsedUrl.Scheme, "http"):
+			redfishPort = "80"
+		default:
+			klog.Errorf("Failed to parse redfish address, no port number found %s", address)
+			return nil, fmt.Errorf("failed to parse redfish address, no port number found %s", address)
+		}
 	}
 
 	username := string(secret.Data["username"])
@@ -159,9 +171,9 @@ func getFencingConfig(nodeName string, secret *corev1.Secret) (*fencingConfig, e
 		FencingID:         fmt.Sprintf("%s_%s", nodeName, "redfish"),
 		FencingDeviceType: "fence_redfish",
 		FencingDeviceOptions: map[fencingOption]string{
-			Ip:         matches[1],
-			IpPort:     matches[2],
-			SystemsUri: matches[3],
+			Ip:         redfishHostname,
+			IpPort:     redfishPort,
+			SystemsUri: redfishPath,
 			Username:   username,
 			Password:   password,
 		},
