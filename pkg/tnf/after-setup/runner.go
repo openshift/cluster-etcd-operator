@@ -12,7 +12,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/exec"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/kubelet"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
 
@@ -56,6 +56,7 @@ func RunTnfAfterSetup() error {
 		}
 		if jobs.Items == nil || len(jobs.Items) != 1 {
 			klog.Warningf("Expected 1 job, got %d", len(jobs.Items))
+			return false, nil
 		}
 		job := jobs.Items[0]
 		if !tools.IsConditionTrue(job.Status.Conditions, batchv1.JobComplete) {
@@ -72,10 +73,9 @@ func RunTnfAfterSetup() error {
 	}
 
 	// disable kubelet service, it's managed by pacemaker now
-	klog.Info("Disabling kubelet service")
-	command := "systemctl disable kubelet"
-	_, _, err = exec.Execute(ctx, command)
+	err = kubelet.Disable(ctx)
 	if err != nil {
+		klog.Errorf("Failed to disable kubelet service: %v", err)
 		return err
 	}
 

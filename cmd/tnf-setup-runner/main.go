@@ -20,6 +20,7 @@ import (
 	tnffencing "github.com/openshift/cluster-etcd-operator/pkg/tnf/fencing"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 	tnfsetup "github.com/openshift/cluster-etcd-operator/pkg/tnf/setup"
+	tnfupdatesetup "github.com/openshift/cluster-etcd-operator/pkg/tnf/update-setup"
 )
 
 func main() {
@@ -58,6 +59,7 @@ func NewTnfSetupRunnerCommand() *cobra.Command {
 	cmd.AddCommand(NewSetupCommand())
 	cmd.AddCommand(NewAfterSetupCommand())
 	cmd.AddCommand(NewFencingCommand())
+	cmd.AddCommand(NewUpdateSetupCommand())
 
 	return cmd
 }
@@ -107,6 +109,19 @@ func NewFencingCommand() *cobra.Command {
 		Short: "Run the Two Node Fencing pacemaker fencing steps",
 		Run: func(cmd *cobra.Command, args []string) {
 			err := tnffencing.RunFencingSetup()
+			if err != nil {
+				klog.Fatal(err)
+			}
+		},
+	}
+}
+
+func NewUpdateSetupCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   tools.JobTypeUpdateSetup.GetSubCommand(),
+		Short: "Update the Two Node Fencing pacemaker configuration",
+		Run: func(cmd *cobra.Command, args []string) {
+			err := tnfupdatesetup.RunTnfUpdateSetup()
 			if err != nil {
 				klog.Fatal(err)
 			}

@@ -11,69 +11,57 @@ import (
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/jobs"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
 
-func handleAddedNode(
-	controllerContext *controllercmd.ControllerContext,
-	controlPlaneNodeLister corev1listers.NodeLister,
-	once *sync.Once,
-	ctx context.Context,
-	operatorClient v1helpers.StaticPodOperatorClient,
-	kubeClient kubernetes.Interface,
-	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
-	etcdInformer operatorv1informers.EtcdInformer) func(obj interface{}) {
+var (
+	// handleNodesMutex ensures that node handling code doesn't run concurrently
+	handleNodesMutex sync.Mutex
 
-	return func(obj interface{}) {
-		node, ok := obj.(*corev1.Node)
-		if !ok {
-			klog.Warningf("failed to convert added object to Node %+v", obj)
-			return
-		}
-		klog.Infof("node added: %s", node.GetName())
+	// handleNodesFunc is a variable to allow mocking in tests
+	handleNodesFunc = handleNodes
 
-		// ensure we have both control plane nodes before creating jobs
-		nodeList, err := controlPlaneNodeLister.List(labels.Everything())
-		if err != nil {
-			klog.Errorf("failed to list control plane nodes while waiting to create TNF jobs: %v", err)
-			return
-		}
-		if len(nodeList) != 2 {
-			klog.Info("not starting TNF jobs yet, waiting for 2 control plane nodes to exist")
-			return
-		}
-		klog.Infof("found 2 control plane nodes (%q, %q)", nodeList[0].GetName(), nodeList[1].GetName())
-
-		// we can have 2 nodes on the first call of AddFunc already, ensure we create job controllers once only
-		once.Do(func() {
-			// this potentially needs some time when we wait for etcd bootstrap to complete, so run it in a goroutine,
-			// to not block the event handler
-			go handleNodesWithRetry(nodeList, ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
-		})
+	// retryBackoffConfig allows customizing retry behavior for tests
+	retryBackoffConfig = wait.Backoff{
+		Duration: 5 * time.Second,
+		Factor:   2.0,
+		Steps:    9, // ~10 minutes total: 5s + 10s + 20s + 40s + 80s + 120s + 120s + 120s + 120s
+		Cap:      2 * time.Minute,
 	}
-}
+
+	// updateSetupJobWaitTimeout is the maximum time to wait for the update-setup job to complete
+	updateSetupJobWaitTimeout = 10 * time.Minute
+)
 
 func handleNodesWithRetry(
-	nodeList []*corev1.Node,
-	ctx context.Context,
 	controllerContext *controllercmd.ControllerContext,
+	controlPlaneNodeLister corev1listers.NodeLister,
+	ctx context.Context,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeClient kubernetes.Interface,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
-	etcdInformer operatorv1informers.EtcdInformer) {
+	etcdInformer operatorv1informers.EtcdInformer,
+) {
+
+	// Ensure only one execution at a time - don't run in parallel
+	handleNodesMutex.Lock()
+	defer handleNodesMutex.Unlock()
 
 	// Retry with exponential backoff to handle transient failures
 	var setupErr error
 	err := wait.ExponentialBackoffWithContext(ctx, retryBackoffConfig, func(ctx context.Context) (bool, error) {
-		setupErr = handleNodesFunc(nodeList, ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
+		setupErr = handleNodesFunc(controllerContext, controlPlaneNodeLister, ctx, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
 		if setupErr != nil {
 			klog.Warningf("failed to setup TNF job controllers, will retry: %v", setupErr)
 			return false, nil
@@ -109,6 +97,70 @@ func handleNodesWithRetry(
 }
 
 func handleNodes(
+	controllerContext *controllercmd.ControllerContext,
+	controlPlaneNodeLister corev1listers.NodeLister,
+	ctx context.Context,
+	operatorClient v1helpers.StaticPodOperatorClient,
+	kubeClient kubernetes.Interface,
+	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
+	etcdInformer operatorv1informers.EtcdInformer,
+) error {
+
+	// ensure we have 2 control plane nodes before doing anything
+	nodeList, err := controlPlaneNodeLister.List(labels.Everything())
+	if err != nil {
+		return fmt.Errorf("failed to list control plane nodes: %w", err)
+	}
+	if len(nodeList) > 2 {
+		klog.Errorf("found more than 2 control plane nodes (%d), unsupported use case, no further steps are taken for now", len(nodeList))
+		// don't retry
+		return nil
+	}
+	if len(nodeList) < 2 {
+		klog.Warningf("found a single control plane node only, waiting for the second one")
+		// don't retry
+		return nil
+	}
+	bothReady := true
+	for _, node := range nodeList {
+		if !tools.IsNodeReady(node) {
+			klog.Warningf("node %q is not ready yet, waiting for it to become ready", node.GetName())
+			bothReady = false
+		}
+	}
+	if !bothReady {
+		return nil
+	}
+
+	klog.Infof("found 2 control plane nodes (%q, %q)", nodeList[0].GetName(), nodeList[1].GetName())
+
+	// check if TNF was already set up, by looking for existing jobs
+	jobsExist, err := tnfSetupJobsExist(ctx, kubeClient)
+	if err != nil {
+		return fmt.Errorf("failed to check for existing TNF jobs: %w", err)
+	}
+
+	// always start job controllers, otherwise jobs won't be recreated after a CEO restart
+	err = startTnfJobcontrollers(nodeList, ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
+	if err != nil {
+		return fmt.Errorf("failed to start TNF job controllers: %w", err)
+	}
+
+	// in case TNF was not setup yet, we are done here
+	if !jobsExist {
+		return nil
+	}
+
+	// if TNF was already set up, we might need to update
+	err = updateSetup(nodeList, ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+	if err != nil {
+		return fmt.Errorf("failed to update pacemaker setup: %w", err)
+	}
+
+	return nil
+}
+
+func startTnfJobcontrollers(
 	nodeList []*corev1.Node,
 	ctx context.Context,
 	controllerContext *controllercmd.ControllerContext,
@@ -116,6 +168,8 @@ func handleNodes(
 	kubeClient kubernetes.Interface,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	etcdInformer operatorv1informers.EtcdInformer) error {
+
+	klog.Infof("Running TNF setup procedure. Waiting for etcd bootstrap to complete")
 
 	if err := ceohelpers.WaitForEtcdCondition(
 		ctx,
@@ -132,23 +186,108 @@ func handleNodes(
 
 	// the order of job creation does not matter, the jobs wait on each other as needed
 	for _, node := range nodeList {
-		runJobController(ctx, tools.JobTypeAuth, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
-		runJobController(ctx, tools.JobTypeAfterSetup, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
+		jobs.RunTNFJobController(ctx, tools.JobTypeAuth, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
+		jobs.RunTNFJobController(ctx, tools.JobTypeAfterSetup, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
 	}
 
-	hasExternalEtcdCompletedTransition, err := ceohelpers.HasExternalEtcdCompletedTransition(ctx, operatorClient)
+	jobs.RunTNFJobController(ctx, tools.JobTypeSetup, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.AllConditions)
+	jobs.RunTNFJobController(ctx, tools.JobTypeFencing, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
+
+	// wait until the after-setup jobs finished,
+	// in order to avoid races with update jobs
+	return waitForTnfAfterSetupJobsCompletion(ctx, kubeClient, nodeList)
+}
+
+func updateSetup(
+	nodeList []*corev1.Node,
+	ctx context.Context,
+	controllerContext *controllercmd.ControllerContext,
+	operatorClient v1helpers.StaticPodOperatorClient,
+	kubeClient kubernetes.Interface,
+	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
+) error {
+
+	klog.Info("TNF was already setup, checking for needed changes for modified nodes")
+
+	// re-run auth job on both nodes
+	for _, node := range nodeList {
+		klog.Infof("(Re-)running auth job on node %s", node.GetName())
+		err := jobs.RestartJobOrRunController(ctx, tools.JobTypeAuth, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions, tools.AuthJobCompletedTimeout)
+		if err != nil {
+			return fmt.Errorf("failed to (re-)start auth job on node %s: %w", node.GetName(), err)
+		}
+	}
+	// wait for completion
+	for _, node := range nodeList {
+		err := jobs.WaitForCompletion(ctx, kubeClient, tools.JobTypeAuth.GetJobName(&node.Name), operatorclient.TargetNamespace, tools.AuthJobCompletedTimeout)
+		if err != nil {
+			return fmt.Errorf("failed to wait for auth job on node %s to complete: %w", node.Name, err)
+		}
+	}
+
+	// run update-setup job on both nodes, it will detect on which node it needs to do something
+	for _, node := range nodeList {
+		klog.Infof("(Re-)running update setup job on node %s", node.GetName())
+		err := jobs.RestartJobOrRunController(ctx, tools.JobTypeUpdateSetup, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions, tools.SetupJobCompletedTimeout)
+		if err != nil {
+			return fmt.Errorf("failed to (re-)start update setup job on node %s: %w", node.GetName(), err)
+		}
+
+	}
+	// wait for completion
+	for _, node := range nodeList {
+		err := jobs.WaitForCompletion(ctx, kubeClient, tools.JobTypeUpdateSetup.GetJobName(&node.Name), operatorclient.TargetNamespace, tools.SetupJobCompletedTimeout)
+		if err != nil {
+			return fmt.Errorf("failed to wait for update setup job on node %s to complete: %w", node.GetName(), err)
+		}
+	}
+
+	// run after-setup job on both nodes
+	for _, node := range nodeList {
+		klog.Infof("(Re-)running after setup job on node %s", node.GetName())
+		err := jobs.RestartJobOrRunController(ctx, tools.JobTypeAfterSetup, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions, tools.AfterSetupJobCompletedTimeout)
+		if err != nil {
+			return fmt.Errorf("failed to (re-)start after setup job on node %s: %w", node.GetName(), err)
+		}
+
+	}
+	// wait for completion
+	for _, node := range nodeList {
+		err := jobs.WaitForCompletion(ctx, kubeClient, tools.JobTypeAfterSetup.GetJobName(&node.Name), operatorclient.TargetNamespace, tools.AfterSetupJobCompletedTimeout)
+		if err != nil {
+			return fmt.Errorf("failed to wait for after setup job on node %s to complete: %w", node.GetName(), err)
+		}
+	}
+
+	// rerun fencing job
+	err := jobs.RestartJobOrRunController(ctx, tools.JobTypeFencing, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions, tools.FencingJobCompletedTimeout)
 	if err != nil {
-		klog.Errorf("failed to get external etcd transition status; proceeding as though it has not transitioned: %v", err)
-		hasExternalEtcdCompletedTransition = false
+		return fmt.Errorf("failed to restart fencing job: %w", err)
 	}
 
-	setupConditions := jobs.DefaultConditions
-	if !hasExternalEtcdCompletedTransition {
-		setupConditions = jobs.AllConditions
+	return nil
+}
+
+// tnfSetupJobsExist checks if TNF was already set up by checking for any existing TNF jobs
+func tnfSetupJobsExist(ctx context.Context, kubeClient kubernetes.Interface) (bool, error) {
+	// Check if any TNF jobs exist in the target namespace
+	jobsClient := kubeClient.BatchV1().Jobs(operatorclient.TargetNamespace)
+	list, err := jobsClient.List(ctx, v1.ListOptions{
+		LabelSelector: "app.kubernetes.io/component=two-node-fencing-setup",
+	})
+	if err != nil {
+		return false, err
 	}
+	return len(list.Items) > 0, nil
+}
 
-	runJobController(ctx, tools.JobTypeSetup, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, setupConditions)
-	runJobController(ctx, tools.JobTypeFencing, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
-
+func waitForTnfAfterSetupJobsCompletion(ctx context.Context, kubeClient kubernetes.Interface, nodeList []*corev1.Node) error {
+	for _, node := range nodeList {
+		jobName := tools.JobTypeAfterSetup.GetJobName(&node.Name)
+		klog.Infof("Waiting for after-setup job %s to complete", jobName)
+		if err := jobs.WaitForCompletion(ctx, kubeClient, jobName, operatorclient.TargetNamespace, 20*time.Minute); err != nil {
+			return fmt.Errorf("failed to wait for after-setup job %s to complete: %w", jobName, err)
+		}
+	}
 	return nil
 }

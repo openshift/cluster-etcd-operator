@@ -64,6 +64,7 @@ func RunTnfSetup() error {
 		}
 		if jobs.Items == nil || len(jobs.Items) != 2 {
 			klog.Warningf("Expected 2 jobs, got %d", len(jobs.Items))
+			return false, nil
 		}
 		for _, job := range jobs.Items {
 			if !tools.IsConditionTrue(job.Status.Conditions, batchv1.JobComplete) {

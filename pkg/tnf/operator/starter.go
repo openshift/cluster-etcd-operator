@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"sync"
-	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
@@ -15,7 +14,6 @@ import (
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/staticresourcecontroller"
-
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -25,13 +23,11 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/bindata"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/externaletcdsupportcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
@@ -44,17 +40,6 @@ var (
 	fencingUpdateTriggered bool
 	// fencingUpdateMutex is used to make usage of fencingUpdateTriggered thread safe
 	fencingUpdateMutex sync.Mutex
-
-	// handleNodesFunc is a variable to allow mocking in tests
-	handleNodesFunc = handleNodes
-
-	// retryBackoffConfig allows customizing retry behavior for tests
-	retryBackoffConfig = wait.Backoff{
-		Duration: 5 * time.Second,
-		Factor:   2.0,
-		Steps:    9, // ~10 minutes total: 5s + 10s + 20s + 40s + 80s + 120s + 120s + 120s + 120s
-		Cap:      2 * time.Minute,
-	}
 )
 
 // HandleDualReplicaClusters checks feature gate and control plane topology,
@@ -92,13 +77,59 @@ func HandleDualReplicaClusters(
 		infrastructureInformer, networkInformer, controlPlaneNodeInformer, etcdInformer, kubeClient)
 	runTnfResourceController(ctx, controllerContext, kubeClient, dynamicClient, operatorClient, kubeInformersForNamespaces)
 
-	controlPlaneNodeLister := corev1listers.NewNodeLister(controlPlaneNodeInformer.GetIndexer())
-
 	// we need node names for assigning auth and after-setup jobs to specific nodes
+	controlPlaneNodeLister := corev1listers.NewNodeLister(controlPlaneNodeInformer.GetIndexer())
 	klog.Infof("watching for nodes...")
-	var once sync.Once
 	_, err = controlPlaneNodeInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: handleAddedNode(controllerContext, controlPlaneNodeLister, &once, ctx, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer),
+		AddFunc: func(obj interface{}) {
+			node, ok := obj.(*corev1.Node)
+			if !ok {
+				klog.Warningf("failed to convert added object to Node %+v", obj)
+				return
+			}
+
+			// ignore nodes which are not ready yet
+			if !tools.IsNodeReady(node) {
+				klog.Infof("added node %s is not ready yet, skipping handling", node.GetName())
+				return
+			}
+
+			// this potentially needs some time when we wait for etcd bootstrap to complete, so run it in a goroutine,
+			// to not block the event handler
+			klog.Infof("node added and ready: %s", node.GetName())
+			go handleNodesWithRetry(controllerContext, controlPlaneNodeLister, ctx, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
+		},
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			oldNode, oldOk := oldObj.(*corev1.Node)
+			newNode, newOk := newObj.(*corev1.Node)
+			if !oldOk || !newOk {
+				klog.Warningf("failed to convert updated object to Node, old=%+v, new=%+v", oldObj, newObj)
+				return
+			}
+
+			// only handle if node transitioned from not ready to ready
+			oldReady := tools.IsNodeReady(oldNode)
+			newReady := tools.IsNodeReady(newNode)
+			if !oldReady && newReady {
+				klog.Infof("node %s transitioned to ready state", newNode.GetName())
+				// this potentially needs some time when we wait for etcd bootstrap to complete, so run it in a goroutine,
+				// to not block the event handler
+				go handleNodesWithRetry(controllerContext, controlPlaneNodeLister, ctx, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
+			}
+		},
+		DeleteFunc: func(obj interface{}) {
+			node, ok := obj.(*corev1.Node)
+			if !ok {
+				klog.Warningf("failed to convert deleted object to Node %+v", obj)
+				return
+			}
+			klog.Infof("node deleted: %s", node.GetName())
+
+			// always handle node deletion
+			// this potentially needs some time when we wait for etcd bootstrap to complete, so run it in a goroutine,
+			// to not block the event handler
+			go handleNodesWithRetry(controllerContext, controlPlaneNodeLister, ctx, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
+		},
 	})
 	if err != nil {
 		klog.Errorf("failed to add eventhandler to control plane informer: %v", err)

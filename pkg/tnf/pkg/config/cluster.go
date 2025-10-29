@@ -3,13 +3,13 @@ package config
 import (
 	"context"
 	"fmt"
-	"net"
 	"sort"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
 
 type ClusterConfig struct {
@@ -43,35 +43,21 @@ func GetClusterConfig(ctx context.Context, kubeClient kubernetes.Interface) (Clu
 	for i, node := range nodes.Items {
 		switch i {
 		case 0:
+			ip, err := tools.GetNodeIPForPacemaker(node)
+			if err != nil {
+				return clusterCfg, err
+			}
 			clusterCfg.NodeName1 = node.Name
-			clusterCfg.NodeIP1 = getInternalIP(node.Status.Addresses)
+			clusterCfg.NodeIP1 = ip
 		case 1:
+			ip, err := tools.GetNodeIPForPacemaker(node)
+			if err != nil {
+				return clusterCfg, err
+			}
 			clusterCfg.NodeName2 = node.Name
-			clusterCfg.NodeIP2 = getInternalIP(node.Status.Addresses)
+			clusterCfg.NodeIP2 = ip
 		}
 	}
 
 	return clusterCfg, nil
-}
-
-// getInternalIP returns the internal ip address of the node.
-// If no internal ip is found, returns the first ip address as a fallback.
-// If address list is empty, returns the empty string as a fallback.
-func getInternalIP(addresses []corev1.NodeAddress) string {
-
-	if len(addresses) == 0 {
-		return ""
-	}
-
-	for _, addr := range addresses {
-		switch addr.Type {
-		case corev1.NodeInternalIP:
-			ip := net.ParseIP(addr.Address)
-			if ip != nil {
-				return ip.String()
-			}
-		}
-	}
-
-	return addresses[0].Address
 }
