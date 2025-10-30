@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/tests/v3/integration"
+	"go.etcd.io/etcd/tests/v3/framework/integration"
 	"k8s.io/apimachinery/pkg/runtime"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
@@ -169,7 +169,7 @@ func TestNewDefragController(t *testing.T) {
 		t.Run(scenario.name, func(t *testing.T) {
 			integration.BeforeTestExternal(t)
 			// use integration etcd to create etcd members and status
-			testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: scenario.clusterSize})
+			testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: scenario.clusterSize})
 			defer testServer.Terminate(t)
 
 			// populate MemberList
@@ -180,7 +180,7 @@ func TestNewDefragController(t *testing.T) {
 			// populate Status
 			var status []*clientv3.StatusResponse
 			for _, member := range testServer.Members {
-				statusResp, err := testServer.Client(0).Status(context.TODO(), member.GRPCURL())
+				statusResp, err := testServer.Client(0).Status(context.TODO(), member.GRPCURL)
 				require.NoError(t, err)
 				statusResp.DbSizeInUse = scenario.dbInUse
 				statusResp.DbSize = scenario.dbSize
@@ -323,7 +323,7 @@ func TestNewDefragControllerMultiSyncs(t *testing.T) {
 		t.Run(scenario.name, func(t *testing.T) {
 			integration.BeforeTestExternal(t)
 			// use integration etcd to create etcd members and status
-			testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: scenario.clusterSize})
+			testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: scenario.clusterSize})
 			defer testServer.Terminate(t)
 
 			// populate MemberList
@@ -334,7 +334,7 @@ func TestNewDefragControllerMultiSyncs(t *testing.T) {
 			// populate Status
 			var status []*clientv3.StatusResponse
 			for _, member := range testServer.Members {
-				statusResp, err := testServer.Client(0).Status(context.TODO(), member.GRPCURL())
+				statusResp, err := testServer.Client(0).Status(context.TODO(), member.GRPCURL)
 				require.NoError(t, err)
 				statusResp.DbSizeInUse = scenario.dbInUse
 				statusResp.DbSize = scenario.dbSize

@@ -45,12 +45,12 @@ type envVarContext struct {
 }
 
 var FixedEtcdEnvVars = map[string]string{
-	"ETCD_DATA_DIR":              "/var/lib/etcd",
-	"ETCD_INITIAL_CLUSTER_STATE": "existing",
-	"ETCD_ENABLE_PPROF":          "true",
-	"ETCD_EXPERIMENTAL_WATCH_PROGRESS_NOTIFY_INTERVAL": "5s",
-	"ETCD_SOCKET_REUSE_ADDRESS":                        "true",
-	"ETCD_EXPERIMENTAL_WARNING_APPLY_DURATION":         "200ms",
+	"ETCD_DATA_DIR":                       "/var/lib/etcd",
+	"ETCD_INITIAL_CLUSTER_STATE":          "existing",
+	"ETCD_ENABLE_PPROF":                   "true",
+	"ETCD_WATCH_PROGRESS_NOTIFY_INTERVAL": "5s",
+	"ETCD_SOCKET_REUSE_ADDRESS":           "true",
+	"ETCD_WARNING_APPLY_DURATION":         "200ms",
 }
 
 const (
@@ -93,7 +93,7 @@ var envVarFns = []envVarFunc{
 //	ETCD_INITIAL_CLUSTER_STATE
 //	ETCD_UNSUPPORTED_ARCH
 //	ETCD_CIPHER_SUITES
-//	ETCD_EXPERIMENTAL_MAX_LEARNERS
+//	ETCD_MAX_LEARNERS
 //	NODE_%s_IP
 //	NODE_%s_ETCD_URL_HOST
 //	NODE_%s_ETCD_NAME
@@ -378,7 +378,7 @@ func getMaxLearners(envVarContext envVarContext) (map[string]string, error) {
 	}
 
 	return map[string]string{
-		"ETCD_EXPERIMENTAL_MAX_LEARNERS": fmt.Sprint(replicaCount),
+		"ETCD_MAX_LEARNERS": fmt.Sprint(replicaCount),
 	}, nil
 }
 
