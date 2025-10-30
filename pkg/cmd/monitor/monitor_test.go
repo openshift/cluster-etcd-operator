@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
-	"go.etcd.io/etcd/tests/v3/integration"
+	"go.etcd.io/etcd/tests/v3/framework/integration"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/monitor/health"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
@@ -31,7 +31,7 @@ var (
 type testData struct {
 	logDir     string
 	logFile    *os.File
-	testServer *integration.ClusterV3
+	testServer *integration.Cluster
 	URL        *url.URL
 
 	// duration is the duration that the test will run before the context expires default 10s
@@ -80,11 +80,11 @@ func newTestData(t *testing.T, testDuration time.Duration, pauseServer, resumeSe
 	return td
 }
 
-func createAndStartEtcdTestServer(t *testing.T, size int) (*integration.ClusterV3, string) {
+func createAndStartEtcdTestServer(t *testing.T, size int) (*integration.Cluster, string) {
 	srvTLS := testTLSInfo
 	integration.BeforeTestExternal(t)
-	etcd := integration.NewClusterV3(t, &integration.ClusterConfig{Size: size, ClientTLS: &srvTLS})
-	targets := fmt.Sprintf("%s,%s,%s", etcd.Members[0].GRPCURL(), etcd.Members[1].GRPCURL(), etcd.Members[2].GRPCURL())
+	etcd := integration.NewCluster(t, &integration.ClusterConfig{Size: size, ClientTLS: &srvTLS})
+	targets := fmt.Sprintf("%s,%s,%s", etcd.Members[0].GRPCURL, etcd.Members[1].GRPCURL, etcd.Members[2].GRPCURL)
 
 	// populated expected default NS
 	etcd.Client(0).Put(context.Background(), health.DefaultNamespaceKey, "foo")
@@ -217,7 +217,7 @@ func TestMonitor(t *testing.T) {
 	}
 }
 
-func pauseEtcdPeers(testServer *integration.ClusterV3, peers int) {
+func pauseEtcdPeers(testServer *integration.Cluster, peers int) {
 	i := 0
 	for i <= peers {
 		testServer.Members[i].Pause()
@@ -225,7 +225,7 @@ func pauseEtcdPeers(testServer *integration.ClusterV3, peers int) {
 	}
 }
 
-func stopEtcdPeers(t *testing.T, testServer *integration.ClusterV3, peers int) {
+func stopEtcdPeers(t *testing.T, testServer *integration.Cluster, peers int) {
 	i := 0
 	for i <= peers {
 		testServer.Members[i].Stop(t)

@@ -16,7 +16,6 @@ import (
 	fakeconfig "github.com/openshift/client-go/config/clientset/versioned/fake"
 	"github.com/openshift/client-go/config/informers/externalversions"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
-	v1 "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	operatorversionedclientfake "github.com/openshift/client-go/operator/clientset/versioned/fake"
 	extinfops "github.com/openshift/client-go/operator/informers/externalversions"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
@@ -32,11 +31,13 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/clock"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/etcd"
@@ -50,7 +51,7 @@ type args struct {
 	operatorClient             v1helpers.StaticPodOperatorClient
 	envVarGetter               etcdenvvar.EnvVar
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces
-	networkInformer            v1.NetworkInformer
+	networkInformer            configv1informers.NetworkInformer
 	controlPlaneNodeInformer   cache.SharedIndexInformer
 	etcdInformer               operatorv1informers.EtcdInformer
 	kubeClient                 kubernetes.Interface
@@ -91,6 +92,7 @@ func TestHandleDualReplicaClusters(t *testing.T) {
 				return
 			}
 
+			alivenessChecker := health.NewMultiAlivenessChecker()
 			started, err := HandleDualReplicaClusters(
 				tt.args.ctx,
 				tt.args.controllerContext,
@@ -102,7 +104,8 @@ func TestHandleDualReplicaClusters(t *testing.T) {
 				tt.args.controlPlaneNodeInformer,
 				tt.args.etcdInformer,
 				tt.args.kubeClient,
-				tt.args.dynamicClient)
+				tt.args.dynamicClient,
+				alivenessChecker)
 
 			if started != tt.wantStarted {
 				t.Errorf("HandleDualReplicaClusters() started = %v, wantStarted %v", started, tt.wantStarted)
@@ -253,11 +256,17 @@ func getArgs(t *testing.T, dualReplicaControlPlaneEnabled bool) args {
 		}
 	}
 
+	// Create a minimal rest.Config for testing
+	restConfig := &rest.Config{
+		Host: "https://localhost:6443",
+	}
+
 	return args{
 		initErr: nil, // Default to no error
-		ctx:     context.Background(),
+		ctx:     ctx,
 		controllerContext: &controllercmd.ControllerContext{
 			EventRecorder: eventRecorder,
+			KubeConfig:    restConfig,
 		},
 		infrastructureInformer:     configInformers.Config().V1().Infrastructures(),
 		operatorClient:             fakeOperatorClient,
