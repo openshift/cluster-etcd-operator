@@ -65,7 +65,9 @@ func getServerHostNames(nodeInternalIPs []string) []string {
 		"etcd.kube-system.svc",
 		"etcd.kube-system.svc.cluster.local",
 		"etcd.openshift-etcd.svc",
+		"events-etcd.openshift-etcd.svc",
 		"etcd.openshift-etcd.svc.cluster.local",
+		"events-etcd.openshift-etcd.svc.cluster.local",
 		"127.0.0.1",
 		"::1",
 		// "0:0:0:0:0:0:0:1" will be automatically collapsed to "::1", so we don't have to add it on top
