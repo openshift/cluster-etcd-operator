@@ -11,7 +11,7 @@ require (
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
 	github.com/onsi/ginkgo/v2 v2.21.0
 	github.com/onsi/gomega v1.35.1
-	github.com/openshift-eng/openshift-tests-extension v0.0.0-20250804142706-7b3ab438a292
+	github.com/openshift-eng/openshift-tests-extension v0.0.0-20251113163031-356b66aa5c24
 	github.com/openshift/api v0.0.0-20250710004639-926605d3338b
 	github.com/openshift/build-machinery-go v0.0.0-20250530140348-dc5b2804eeee
 	github.com/openshift/client-go v0.0.0-20250710075018-396b36f983ee

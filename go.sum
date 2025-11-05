@@ -199,8 +199,8 @@ github.com/olekukonko/tablewriter v0.0.5 h1:P2Ga83D34wi1o9J6Wh1mRuqd4mF/x/lgBS7N
 github.com/olekukonko/tablewriter v0.0.5/go.mod h1:hPp6KlRPjbx+hW8ykQs1w3UBbZlj6HuIJcUGPhkA7kY=
 github.com/onsi/gomega v1.35.1 h1:Cwbd75ZBPxFSuZ6T+rN/WCb/gOc6YgFBXLlZLhC7Ds4=
 github.com/onsi/gomega v1.35.1/go.mod h1:PvZbdDc8J6XJEpDK4HCuRBm8a6Fzp9/DmhC9C7yFlog=
-github.com/openshift-eng/openshift-tests-extension v0.0.0-20250804142706-7b3ab438a292 h1:3athg6KQ+TaNfW4BWZDlGFt1ImSZEJWgzXtPC1VPITI=
-github.com/openshift-eng/openshift-tests-extension v0.0.0-20250804142706-7b3ab438a292/go.mod h1:6gkP5f2HL0meusT0Aim8icAspcD1cG055xxBZ9yC68M=
+github.com/openshift-eng/openshift-tests-extension v0.0.0-20251113163031-356b66aa5c24 h1:bwmjtFaipakIwAyZxnDLgtkLY1Nf1nK9lRCmADvHirE=
+github.com/openshift-eng/openshift-tests-extension v0.0.0-20251113163031-356b66aa5c24/go.mod h1:6gkP5f2HL0meusT0Aim8icAspcD1cG055xxBZ9yC68M=
 github.com/openshift/api v0.0.0-20250710004639-926605d3338b h1:A8OY6adT2aZNp7tsGsilHuQ3RqhzrFx5dzGr/UwXfJg=
 github.com/openshift/api v0.0.0-20250710004639-926605d3338b/go.mod h1:SPLf21TYPipzCO67BURkCfK6dcIIxx0oNRVWaOyRcXM=
 github.com/openshift/build-machinery-go v0.0.0-20250530140348-dc5b2804eeee h1:+Sp5GGnjHDhT/a/nQ1xdp43UscBMr7G5wxsYotyhzJ4=
