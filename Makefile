@@ -11,14 +11,11 @@ include $(addprefix ./vendor/github.com/openshift/build-machinery-go/make/, \
 
 IMAGE_REGISTRY :=registry.svc.ci.openshift.org
 
-# OpenShift Tests Extension variables
-TESTS_EXT_BINARY ?= cluster-etcd-operator-tests-ext
-TESTS_EXT_PACKAGE ?= ./cmd/cluster-etcd-operator-tests-ext
-TESTS_EXT_LDFLAGS ?= -X 'main.CommitFromGit=$(shell git rev-parse --short HEAD)' \
-                     -X 'main.BuildDate=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)' \
-                     -X 'main.GitTreeState=$(shell if git diff-index --quiet HEAD --; then echo clean; else echo dirty; fi)'
-GOOS ?= linux
-GOARCH ?= amd64
+# -------------------------------------------------------------------
+# OpenShift Tests Extension (Cluster Etcd Operator)
+# -------------------------------------------------------------------
+TESTS_EXT_BINARY := cluster-etcd-operator-tests-ext
+TESTS_EXT_DIR := ./test/extended/tests-extension
 
 # This will call a macro called "build-image" which will generate image specific targets based on the parameters:
 # $0 - macro name
@@ -46,18 +43,30 @@ test-e2e: GO_TEST_FLAGS += -p 1
 test-e2e: test-unit
 .PHONY: test-e2e
 
-# Build the openshift-tests-extension binary
+# -------------------------------------------------------------------
+# Build the test extension binary
+# -------------------------------------------------------------------
 .PHONY: tests-ext-build
 tests-ext-build:
-	GOOS=$(GOOS) GOARCH=$(GOARCH) GO_COMPLIANCE_POLICY=exempt_all CGO_ENABLED=0 \
-	go build -o $(TESTS_EXT_BINARY) -ldflags "$(TESTS_EXT_LDFLAGS)" $(TESTS_EXT_PACKAGE)
+	$(MAKE) -C $(TESTS_EXT_DIR) build
 
-# Update test metadata
+# -------------------------------------------------------------------
+# Run "update" and strip env-specific metadata
+# -------------------------------------------------------------------
 .PHONY: tests-ext-update
 tests-ext-update:
-	./$(TESTS_EXT_BINARY) update
+	$(MAKE) -C $(TESTS_EXT_DIR) build-update
 
-# Clean tests extension artifacts
+# -------------------------------------------------------------------
+# Clean test extension binaries
+# -------------------------------------------------------------------
 .PHONY: tests-ext-clean
 tests-ext-clean:
-	rm -f $(TESTS_EXT_BINARY) $(TESTS_EXT_BINARY).gz
+	$(MAKE) -C $(TESTS_EXT_DIR) clean
+
+# -------------------------------------------------------------------
+# Run test suite
+# -------------------------------------------------------------------
+.PHONY: run-suite
+run-suite:
+	$(MAKE) -C $(TESTS_EXT_DIR) run-suite SUITE=$(SUITE) JUNIT_DIR=$(JUNIT_DIR)
