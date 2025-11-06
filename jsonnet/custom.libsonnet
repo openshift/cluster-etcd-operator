@@ -61,7 +61,7 @@
           },
           {
             alert: 'etcdHighCommitDurations',
-            expr: 'histogram_quantile(0.99, rate(etcd_disk_backend_commit_duration_seconds_bucket{job=~".*etcd.*"}[5m])) > 0.025',
+            expr: 'histogram_quantile(0.99, rate(etcd_disk_backend_commit_duration_seconds_bucket{job=~".*etcd.*"}[5m])) > 0.08',
             'for': '10m',
             labels: {
               severity: 'warning',
@@ -73,7 +73,7 @@
           },
           {
             alert: 'etcdHighFsyncDurations',
-            expr: 'histogram_quantile(0.99, rate(etcd_disk_wal_fsync_duration_seconds_bucket{job=~".*etcd.*"}[5m])) > 0.010',
+            expr: 'histogram_quantile(0.99, rate(etcd_disk_wal_fsync_duration_seconds_bucket{job=~".*etcd.*"}[5m])) > 0.05',
             'for': '10m',
             labels: {
               severity: 'critical',
