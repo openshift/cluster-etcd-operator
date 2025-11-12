@@ -18,8 +18,7 @@ telepresence.log
 # Goland
 .idea
 _output
-cluster-etcd-operator-tests-ext
-cluster-etcd-operator-tests-ext.gz
+/test/extended/tests-extension/bin/
 
 # Test output files
 junit.xml
