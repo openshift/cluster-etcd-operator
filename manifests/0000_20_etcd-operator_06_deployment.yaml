@@ -24,9 +24,12 @@ spec:
       labels:
         app: etcd-operator
     spec:
+      hostUsers: false
       securityContext:
         runAsNonRoot: true
-        runAsUser: 65534
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
       serviceAccountName: etcd-operator
