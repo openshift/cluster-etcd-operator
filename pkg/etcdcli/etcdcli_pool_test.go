@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/tests/v3/integration"
+	"go.etcd.io/etcd/tests/v3/framework/integration"
 )
 
 // rather poor men's approach to mocking
@@ -30,10 +30,10 @@ type clientPoolRecorder struct {
 
 func TestClientGetReturnHappyPath(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
+	testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: 3})
 	defer testServer.Terminate(t)
 
-	poolRecorder := newTestPool(testServer)
+	poolRecorder := newTestPool(t, testServer)
 
 	client, err := poolRecorder.pool.Get()
 	require.NoError(t, err)
@@ -46,10 +46,10 @@ func TestClientGetReturnHappyPath(t *testing.T) {
 
 func TestClientEndpointFailureReturnsImmediately(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
+	testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: 3})
 	defer testServer.Terminate(t)
 
-	poolRecorder := newTestPool(testServer)
+	poolRecorder := newTestPool(t, testServer)
 	poolRecorder.endpointErrReturn = errors.New("fail")
 
 	client, err := poolRecorder.pool.Get()
@@ -63,10 +63,10 @@ func TestClientEndpointFailureReturnsImmediately(t *testing.T) {
 
 func TestClientDoubleGetReturnsNewClient(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
+	testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: 3})
 	defer testServer.Terminate(t)
 
-	poolRecorder := newTestPool(testServer)
+	poolRecorder := newTestPool(t, testServer)
 
 	client, err := poolRecorder.pool.Get()
 	require.NoError(t, err)
@@ -87,10 +87,10 @@ func TestClientDoubleGetReturnsNewClient(t *testing.T) {
 
 func TestClientReusesClientsReturned(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
+	testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: 3})
 	defer testServer.Terminate(t)
 
-	poolRecorder := newTestPool(testServer)
+	poolRecorder := newTestPool(t, testServer)
 
 	client, err := poolRecorder.pool.Get()
 	require.NoError(t, err)
@@ -111,10 +111,10 @@ func TestClientReusesClientsReturned(t *testing.T) {
 
 func TestClientClosesOnChannelCapacity(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
+	testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: 3})
 	defer testServer.Terminate(t)
 
-	poolRecorder := newTestPool(testServer)
+	poolRecorder := newTestPool(t, testServer)
 	var clients []*clientv3.Client
 	for i := 0; i < maxNumCachedClients+1; i++ {
 		client, err := poolRecorder.pool.Get()
@@ -136,10 +136,10 @@ func TestClientClosesOnChannelCapacity(t *testing.T) {
 
 func TestNewClientWithOpenClients(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
+	testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: 3})
 	defer testServer.Terminate(t)
 
-	poolRecorder := newTestPool(testServer)
+	poolRecorder := newTestPool(t, testServer)
 	var clients []*clientv3.Client
 	for i := 0; i < maxNumOpenClients; i++ {
 		client, err := poolRecorder.pool.Get()
@@ -170,10 +170,10 @@ func TestNewClientWithOpenClients(t *testing.T) {
 
 func TestClosesReturnOpenClients(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
+	testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: 3})
 	defer testServer.Terminate(t)
 
-	poolRecorder := newTestPool(testServer)
+	poolRecorder := newTestPool(t, testServer)
 	var clients []*clientv3.Client
 	for i := 0; i < maxNumOpenClients; i++ {
 		client, err := poolRecorder.pool.Get()
@@ -211,10 +211,10 @@ func TestClosesReturnOpenClients(t *testing.T) {
 
 func TestClosesReturnOpenClientCloseError(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
+	testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: 3})
 	defer testServer.Terminate(t)
 
-	poolRecorder := newTestPool(testServer)
+	poolRecorder := newTestPool(t, testServer)
 	var clients []*clientv3.Client
 	for i := 0; i < maxNumOpenClients; i++ {
 		client, err := poolRecorder.pool.Get()
@@ -254,10 +254,10 @@ func TestClosesReturnOpenClientCloseError(t *testing.T) {
 // eventually it will be exhausting all the openClient quota
 func TestFailingOnCreationReturnsClients(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
+	testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: 3})
 	defer testServer.Terminate(t)
 
-	poolRecorder := newTestPool(testServer)
+	poolRecorder := newTestPool(t, testServer)
 	// this should already happen at maxNumOpenClients/numRetries, so we're testing this is working pretty well here.
 	for i := 0; i < maxNumOpenClients; i++ {
 		// this error should fail the first retry consistently
@@ -276,10 +276,10 @@ func TestFailingOnCreationReturnsClients(t *testing.T) {
 
 func TestClientClosesAndCreatesOnError(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
+	testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: 3})
 	defer testServer.Terminate(t)
 
-	poolRecorder := newTestPool(testServer)
+	poolRecorder := newTestPool(t, testServer)
 	client, err := poolRecorder.pool.Get()
 	require.NoError(t, err)
 	assert.NotNil(t, client)
@@ -303,10 +303,10 @@ func TestClientClosesAndCreatesOnError(t *testing.T) {
 
 func TestClientHealthCheckCloseErrorRetriesAndReturnsClient(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
+	testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: 3})
 	defer testServer.Terminate(t)
 
-	poolRecorder := newTestPool(testServer)
+	poolRecorder := newTestPool(t, testServer)
 	client, err := poolRecorder.pool.Get()
 	require.NoError(t, err)
 	assert.NotNil(t, client)
@@ -331,10 +331,10 @@ func TestClientHealthCheckCloseErrorRetriesAndReturnsClient(t *testing.T) {
 
 func TestClientUpdatesEndpoints(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
+	testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: 3})
 	defer testServer.Terminate(t)
 
-	poolRecorder := newTestPool(testServer)
+	poolRecorder := newTestPool(t, testServer)
 	client, err := poolRecorder.pool.Get()
 	require.NoError(t, err)
 	assert.NotNil(t, client)
@@ -360,10 +360,10 @@ func TestClientUpdatesEndpoints(t *testing.T) {
 
 func TestClientOpenClientReturnNil(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
+	testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: 3})
 	defer testServer.Terminate(t)
 
-	poolRecorder := newTestPool(testServer)
+	poolRecorder := newTestPool(t, testServer)
 	// should not panic
 	assert.NotPanics(t, func() {
 		poolRecorder.pool.Return(nil)
@@ -373,10 +373,10 @@ func TestClientOpenClientReturnNil(t *testing.T) {
 // we try to return many more clients than we actually handed out, this should fill the pool but not block when it's full
 func TestClientOpenClientMultiReturns(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
+	testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: 3})
 	defer testServer.Terminate(t)
 
-	poolRecorder := newTestPool(testServer)
+	poolRecorder := newTestPool(t, testServer)
 	for i := 0; i < maxNumOpenClients*3; i++ {
 		poolRecorder.pool.Return(testServer.RandClient())
 	}
@@ -388,10 +388,10 @@ func TestClientOpenClientMultiReturns(t *testing.T) {
 
 func TestClientEndpointChanges(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	testServer := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
+	testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: 3})
 	defer testServer.Terminate(t)
 
-	poolRecorder := newTestPool(testServer)
+	poolRecorder := newTestPool(t, testServer)
 
 	client, err := poolRecorder.pool.Get()
 	require.NoError(t, err)
@@ -402,7 +402,7 @@ func TestClientEndpointChanges(t *testing.T) {
 	assert.Equal(t, 0, poolRecorder.numCloseCalls)
 
 	cachedEndpoints := client.Endpoints()
-	client.SetEndpoints(testServer.Members[0].GRPCURL())
+	client.SetEndpoints(testServer.Members[0].GRPCURL)
 	assert.Equal(t, 1, len(client.Endpoints()))
 
 	alarmList, err := client.AlarmList(context.Background())
@@ -421,7 +421,7 @@ func TestClientEndpointChanges(t *testing.T) {
 	assert.Equal(t, 1, poolRecorder.numNewCalls)
 }
 
-func newTestPool(testServer *integration.ClusterV3) *clientPoolRecorder {
+func newTestPool(t testing.TB, testServer *integration.Cluster) *clientPoolRecorder {
 	rec := &clientPoolRecorder{}
 	endpointFunc := func() ([]string, error) {
 		rec.numEndpointCalls++
@@ -439,7 +439,7 @@ func newTestPool(testServer *integration.ClusterV3) *clientPoolRecorder {
 
 		var endpoints []string
 		for _, member := range testServer.Members {
-			endpoints = append(endpoints, member.GRPCURL())
+			endpoints = append(endpoints, member.GRPCURL)
 		}
 
 		return endpoints, nil
@@ -452,7 +452,7 @@ func newTestPool(testServer *integration.ClusterV3) *clientPoolRecorder {
 			rec.newFuncErrReturn = nil
 			return nil, err
 		}
-		return testServer.ClusterClient()
+		return testServer.ClusterClient(t)
 	}
 
 	healthFunc := func(client *clientv3.Client) error {

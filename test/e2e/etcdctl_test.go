@@ -56,8 +56,8 @@ func TestEtcdctlCommands(t *testing.T) {
 		{"etcdctl put /etcdctl-check-perf/foo bar", false, "", ""},
 		// snapshot
 		{"env ETCDCTL_ENDPOINTS=https://127.0.0.1:2379 etcdctl snapshot save /tmp/backup.db", false, "", ""},
-		{"etcdctl snapshot status /tmp/backup.db", false, "", ""},
-		{"etcdctl snapshot restore /tmp/backup.db --data-dir /tmp/default.etcd", false, "", ""},
+		{"etcdutl snapshot status /tmp/backup.db", false, "", ""},
+		{"etcdutl snapshot restore /tmp/backup.db --data-dir /tmp/default.etcd", false, "", ""},
 		{"etcdctl version", false, "", ""},
 		// skip
 		{"etcdctl auth enable", true, "k8s does not use internal etcd RBAC", ""},

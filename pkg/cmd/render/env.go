@@ -120,6 +120,6 @@ func getMaxLearners(e *envVarData) (map[string]string, error) {
 		return nil, fmt.Errorf("unrecognized data structure in controlPlane replica field")
 	}
 	return map[string]string{
-		"ETCD_EXPERIMENTAL_MAX_LEARNERS": fmt.Sprint(replicaCount),
+		"ETCD_MAX_LEARNERS": fmt.Sprint(replicaCount),
 	}, nil
 }
