@@ -9,7 +9,7 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
-	"go.etcd.io/etcd/server/v3/etcdserver"
+	"go.etcd.io/etcd/server/v3/etcdserver/errors"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -288,7 +288,7 @@ func (c *ClusterMemberController) ensureEtcdLearnerPromotion(ctx context.Context
 			// Note: Cannot use errors.Is(err, etcdserver.ErrLearnerNotReady) as that is always false in this case.
 			// because etcdserver.ErrLearnerNotReady always returns an errors.New() error type
 			// So we compare the error strings here instead
-			if err.Error() == etcdserver.ErrLearnerNotReady.Error() {
+			if err.Error() == errors.ErrLearnerNotReady.Error() {
 				// Not being ready for promotion is an expected state until the learner catches up
 				klog.V(2).Infof("Not ready for promotion: etcd learner member (%s) is not yet in sync with leader's log ", member.PeerURLs[0])
 				continue
