@@ -4,6 +4,7 @@ import (
 	"context"
 	goflag "flag"
 	"fmt"
+	"github.com/openshift/cluster-etcd-operator/pkg/cmd/load"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -78,6 +79,7 @@ func NewSSCSCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(requestbackup.NewRequestBackupCommand(ctx))
 	cmd.AddCommand(rev.NewRevCommand(ctx))
 	cmd.AddCommand(backuprestore.NewBackupServer(ctx))
+	cmd.AddCommand(load.NewLoadCommand(ctx))
 
 	return cmd
 }
