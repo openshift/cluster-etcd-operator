@@ -83,11 +83,11 @@ make build
 
 ```bash
 # Run a specific test suite or test
-./cluster-etcd-operator-tests-ext run-suite SUITE=openshift/cluster-etcd-operator/all
+./cluster-etcd-operator-tests-ext run-suite openshift/cluster-etcd-operator/all
 ./cluster-etcd-operator-tests-ext run-test "test-name"
 
 # Run with JUnit output
-./cluster-etcd-operator-tests-ext run-suite SUITE=openshift/cluster-etcd-operator/all --junit-path=/tmp/junit-results/junit.xml
+./cluster-etcd-operator-tests-ext run-suite openshift/cluster-etcd-operator/all --junit-path=/tmp/junit-results/junit.xml
 ./cluster-etcd-operator-tests-ext run-test "test-name" --junit-path=/tmp/junit-results/junit.xml
 ```
 
@@ -99,6 +99,9 @@ make build
 
 # List tests in a suite
 ./cluster-etcd-operator-tests-ext list tests --suite=openshift/cluster-etcd-operator/all
+
+#for concurrency
+./cluster-etcd-operator-tests-ext run-suite openshift/cluster-etcd-operator/all -c 1
 ```
 
 For more information about the OTE framework, see the [openshift-tests-extension documentation](https://github.com/openshift-eng/openshift-tests-extension).
