@@ -1,0 +1,21 @@
+reviewers:
+  - dusk125
+  - ironcladlou
+  - hasbro17
+  - tjungblu
+  - jubittajohn
+  - wangke19
+  - gangwgr
+  - geliu2016
+  - sandeepknd
+approvers:
+  - deads2k
+  - hasbro17
+  - dusk125
+  - tjungblu
+  - wangke19
+  - gangwgr
+  - geliu2016
+  - sandeepknd 
+component: "Etcd"
+

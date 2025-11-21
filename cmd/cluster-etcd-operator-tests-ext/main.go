@@ -1,105 +1,66 @@
+/*
+This command is used to run the Cluster Etcd Operator tests extension for OpenShift.
+It registers the Cluster Etcd Operator tests with the OpenShift Tests Extension framework
+and provides a command-line interface to execute them.
+For further information, please refer to the documentation at:
+https://github.com/openshift-eng/openshift-tests-extension/blob/main/cmd/example-tests/main.go
+*/
 package main
 
 import (
-	"fmt"
+	"context"
 	"os"
-	"strings"
-
-	"github.com/openshift-eng/openshift-tests-extension/pkg/cmd"
-	e "github.com/openshift-eng/openshift-tests-extension/pkg/extension"
-	et "github.com/openshift-eng/openshift-tests-extension/pkg/extension/extensiontests"
-	g "github.com/openshift-eng/openshift-tests-extension/pkg/ginkgo"
 
 	"github.com/spf13/cobra"
+	"k8s.io/component-base/cli"
 
-	// The import below is necessary to ensure that the cluster etcd operator tests are registered with the extension.
-	_ "github.com/openshift/cluster-etcd-operator/test/extended"
+	otecmd "github.com/openshift-eng/openshift-tests-extension/pkg/cmd"
+	oteextension "github.com/openshift-eng/openshift-tests-extension/pkg/extension"
+	"github.com/openshift/cluster-etcd-operator/pkg/version"
+
+	"k8s.io/klog/v2"
 )
 
 func main() {
-	registry := e.NewRegistry()
-	ext := e.NewExtension("openshift", "payload", "cluster-etcd-operator")
+	command := newOperatorTestCommand(context.Background())
+	code := cli.Run(command)
+	os.Exit(code)
+}
 
-	// Suite: conformance/parallel (fast, parallel-safe)
-	ext.AddSuite(e.Suite{
-		Name:    "openshift/cluster-etcd-operator/conformance/parallel",
-		Parents: []string{"openshift/conformance/parallel"},
-		Qualifiers: []string{
-			`!(name.contains("[Serial]") || name.contains("[Slow]"))`,
-		},
-	})
+func newOperatorTestCommand(ctx context.Context) *cobra.Command {
+	registry := prepareOperatorTestsRegistry()
 
-	// Suite: conformance/serial (explicitly serial tests)
-	ext.AddSuite(e.Suite{
-		Name:    "openshift/cluster-etcd-operator/conformance/serial",
-		Parents: []string{"openshift/conformance/serial"},
-		Qualifiers: []string{
-			`name.contains("[Serial]")`,
-		},
-	})
-
-	// Suite: optional/slow (long-running tests)
-	ext.AddSuite(e.Suite{
-		Name:    "openshift/cluster-etcd-operator/optional/slow",
-		Parents: []string{"openshift/optional/slow"},
-		Qualifiers: []string{
-			`name.contains("[Slow]")`,
-		},
-	})
-
-	// Suite: all (includes everything)
-	ext.AddSuite(e.Suite{
-		Name: "openshift/cluster-etcd-operator/all",
-	})
-
-	specs, err := g.BuildExtensionTestSpecsFromOpenShiftGinkgoSuite()
-	if err != nil {
-		panic(fmt.Sprintf("couldn't build extension test specs from ginkgo: %+v", err.Error()))
-	}
-
-	// Ensure [Disruptive] tests are also [Serial] (for any future tests that might need this)
-	specs = specs.Walk(func(spec *et.ExtensionTestSpec) {
-		if strings.Contains(spec.Name, "[Disruptive]") && !strings.Contains(spec.Name, "[Serial]") {
-			spec.Name = strings.ReplaceAll(
-				spec.Name,
-				"[Disruptive]",
-				"[Serial][Disruptive]",
-			)
-		}
-	})
-
-	// Preserve original-name labels for renamed tests
-	specs = specs.Walk(func(spec *et.ExtensionTestSpec) {
-		for label := range spec.Labels {
-			if strings.HasPrefix(label, "original-name:") {
-				parts := strings.SplitN(label, "original-name:", 2)
-				if len(parts) > 1 {
-					spec.OriginalName = parts[1]
-				}
+	cmd := &cobra.Command{
+		Use:   "cluster-etcd-operator-tests",
+		Short: "A binary used to run cluster-etcd-operator tests as part of OTE.",
+		Run: func(cmd *cobra.Command, args []string) {
+			// no-op, logic is provided by the OTE framework
+			if err := cmd.Help(); err != nil {
+				klog.Fatal(err)
 			}
-		}
-	})
-
-	// Ignore obsolete tests
-	ext.IgnoreObsoleteTests(
-	// "[sig-etcd] <test name here>",
-	)
-
-	// Initialize environment before running any tests
-	specs.AddBeforeAll(func() {
-		// do stuff
-	})
-
-	ext.AddSpecs(specs)
-	registry.Register(ext)
-
-	root := &cobra.Command{
-		Long: "Cluster Etcd Operator Tests Extension",
+		},
 	}
 
-	root.AddCommand(cmd.DefaultExtensionCommands(registry)...)
-
-	if err := root.Execute(); err != nil {
-		os.Exit(1)
+	if v := version.Get().String(); len(v) == 0 {
+		cmd.Version = "<unknown>"
+	} else {
+		cmd.Version = v
 	}
+
+	cmd.AddCommand(otecmd.DefaultExtensionCommands(registry)...)
+
+	return cmd
+}
+
+// prepareOperatorTestsRegistry creates the OTE registry for this operator.
+//
+// Note:
+//
+// This method must be called before adding the registry to the OTE framework.
+func prepareOperatorTestsRegistry() *oteextension.Registry {
+	registry := oteextension.NewRegistry()
+	extension := oteextension.NewExtension("openshift", "payload", "cluster-etcd-operator")
+
+	registry.Register(extension)
+	return registry
 }
