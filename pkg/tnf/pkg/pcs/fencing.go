@@ -3,6 +3,7 @@ package pcs
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 
@@ -37,6 +38,25 @@ type fencingConfig struct {
 	FencingID            string
 	FencingDeviceType    string
 	FencingDeviceOptions map[fencingOption]string
+}
+
+// GetParsedIP returns the IP as a string if IP is IPv4 otherwise
+// if IP is IPv6 wrap with brackets to be used with port
+func (f fencingConfig) GetParsedIP() string {
+	if f.FencingDeviceOptions == nil {
+		return ""
+	}
+
+	ip := net.ParseIP(f.FencingDeviceOptions[Ip])
+	if ip == nil {
+		return f.FencingDeviceOptions[Ip]
+	}
+	switch {
+	case ip.To4() == nil:
+		return fmt.Sprintf("[%s]", ip.String())
+	default:
+		return ip.String()
+	}
 }
 
 // ConfigureFencing configures pacemaker fencing based on fencing credentials provided in secrets
@@ -187,7 +207,7 @@ func getFencingConfig(nodeName string, secret *corev1.Secret) (*fencingConfig, e
 
 func getStatusCommand(fc fencingConfig) string {
 	cmd := fmt.Sprintf("/usr/sbin/%s --username %s --password %s --ip %s --ipport %s --systems-uri %s --action status",
-		fc.FencingDeviceType, fc.FencingDeviceOptions[Username], fc.FencingDeviceOptions[Password], fc.FencingDeviceOptions[Ip], fc.FencingDeviceOptions[IpPort], fc.FencingDeviceOptions[SystemsUri])
+		fc.FencingDeviceType, fc.FencingDeviceOptions[Username], fc.FencingDeviceOptions[Password], fc.GetParsedIP(), fc.FencingDeviceOptions[IpPort], fc.FencingDeviceOptions[SystemsUri])
 
 	if _, exists := fc.FencingDeviceOptions[SslInsecure]; exists {
 		cmd += " --ssl-insecure"
@@ -208,7 +228,7 @@ func getStonithCommand(sc StonithConfig, fc fencingConfig) string {
 
 	cmd := fmt.Sprintf("/usr/sbin/pcs stonith %s %s %s username=%q password=%q ip=%q ipport=%q systems_uri=%q pcmk_host_list=%q",
 		stonithAction, fc.FencingID, fc.FencingDeviceType, fc.FencingDeviceOptions[Username], fc.FencingDeviceOptions[Password],
-		fc.FencingDeviceOptions[Ip], fc.FencingDeviceOptions[IpPort], fc.FencingDeviceOptions[SystemsUri], fc.NodeName)
+		fc.GetParsedIP(), fc.FencingDeviceOptions[IpPort], fc.FencingDeviceOptions[SystemsUri], fc.NodeName)
 
 	if _, exists := fc.FencingDeviceOptions[SslInsecure]; exists {
 		cmd += ` ssl_insecure="1"`

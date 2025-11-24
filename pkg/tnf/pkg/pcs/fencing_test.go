@@ -292,6 +292,23 @@ func TestGetStonithCommand(t *testing.T) {
 			want: `/usr/sbin/pcs stonith create node2_redfish fence_redfish username="admin" password="pass123" ip="192.168.111.2" ipport="8000" systems_uri="redfish/v1/Systems/def" pcmk_host_list="node2" ssl_insecure="1" --wait=30`,
 		},
 		{
+			name: "stonith command with ipv6",
+			fc: fencingConfig{
+				NodeName:          "node2",
+				FencingID:         "node2_redfish",
+				FencingDeviceType: "fence_redfish",
+				FencingDeviceOptions: map[fencingOption]string{
+					Username:    "admin",
+					Password:    "pass123",
+					Ip:          "1234:1234:1234::1234",
+					IpPort:      "8000",
+					SystemsUri:  "redfish/v1/Systems/def",
+					SslInsecure: "",
+				},
+			},
+			want: `/usr/sbin/pcs stonith create node2_redfish fence_redfish username="admin" password="pass123" ip="[1234:1234:1234::1234]" ipport="8000" systems_uri="redfish/v1/Systems/def" pcmk_host_list="node2" ssl_insecure="1" --wait=30`,
+		},
+		{
 			name: "stonith command with pcmk_delay_base",
 			fc: fencingConfig{
 				NodeName:          "node1",
