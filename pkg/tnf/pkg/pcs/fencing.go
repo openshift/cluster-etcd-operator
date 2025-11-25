@@ -3,7 +3,8 @@ package pcs
 import (
 	"context"
 	"fmt"
-	"regexp"
+	"net"
+	"net/url"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -13,10 +14,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/config"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/exec"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
-)
-
-var (
-	addressRegEx = regexp.MustCompile(`.*//(.*):(.*)(/redfish.*)`)
 )
 
 const (
@@ -41,6 +38,25 @@ type fencingConfig struct {
 	FencingID            string
 	FencingDeviceType    string
 	FencingDeviceOptions map[fencingOption]string
+}
+
+// GetParsedIP returns the IP as a string if IP is IPv4 otherwise
+// if IP is IPv6 wrap with brackets to be used with port
+func (f fencingConfig) GetParsedIP() string {
+	if f.FencingDeviceOptions == nil {
+		return ""
+	}
+
+	ip := net.ParseIP(f.FencingDeviceOptions[Ip])
+	if ip == nil {
+		return f.FencingDeviceOptions[Ip]
+	}
+	switch {
+	case ip.To4() == nil:
+		return fmt.Sprintf("[%s]", ip.String())
+	default:
+		return ip.String()
+	}
 }
 
 // ConfigureFencing configures pacemaker fencing based on fencing credentials provided in secrets
@@ -130,10 +146,26 @@ func getFencingConfig(nodeName string, secret *corev1.Secret) (*fencingConfig, e
 
 	// we need to parse ip, port and systems uri from the address like this:
 	// redfish+https://192.168.111.1:8000/redfish/v1/Systems/af2167e4-c13b-4941-b606-f912e9a86f4b
-	matches := addressRegEx.FindStringSubmatch(address)
-	if len(matches) != 4 {
+	parsedUrl, err := url.Parse(address)
+	if err != nil {
 		klog.Errorf("Failed to parse redfish address %s", address)
 		return nil, fmt.Errorf("failed to parse redfish address %s", address)
+	}
+
+	redfishHostname := parsedUrl.Hostname()
+	redfishPath := parsedUrl.Path
+	redfishPort := parsedUrl.Port()
+	// Try to infer standard schema ports for https/http, otherwise notify user port is needed.
+	if redfishPort == "" {
+		switch {
+		case strings.Contains(parsedUrl.Scheme, "https"):
+			redfishPort = "443"
+		case strings.Contains(parsedUrl.Scheme, "http"):
+			redfishPort = "80"
+		default:
+			klog.Errorf("Failed to parse redfish address, no port number found %s", address)
+			return nil, fmt.Errorf("failed to parse redfish address, no port number found %s", address)
+		}
 	}
 
 	username := string(secret.Data["username"])
@@ -159,9 +191,9 @@ func getFencingConfig(nodeName string, secret *corev1.Secret) (*fencingConfig, e
 		FencingID:         fmt.Sprintf("%s_%s", nodeName, "redfish"),
 		FencingDeviceType: "fence_redfish",
 		FencingDeviceOptions: map[fencingOption]string{
-			Ip:         matches[1],
-			IpPort:     matches[2],
-			SystemsUri: matches[3],
+			Ip:         redfishHostname,
+			IpPort:     redfishPort,
+			SystemsUri: redfishPath,
 			Username:   username,
 			Password:   password,
 		},
@@ -175,7 +207,7 @@ func getFencingConfig(nodeName string, secret *corev1.Secret) (*fencingConfig, e
 
 func getStatusCommand(fc fencingConfig) string {
 	cmd := fmt.Sprintf("/usr/sbin/%s --username %s --password %s --ip %s --ipport %s --systems-uri %s --action status",
-		fc.FencingDeviceType, fc.FencingDeviceOptions[Username], fc.FencingDeviceOptions[Password], fc.FencingDeviceOptions[Ip], fc.FencingDeviceOptions[IpPort], fc.FencingDeviceOptions[SystemsUri])
+		fc.FencingDeviceType, fc.FencingDeviceOptions[Username], fc.FencingDeviceOptions[Password], fc.GetParsedIP(), fc.FencingDeviceOptions[IpPort], fc.FencingDeviceOptions[SystemsUri])
 
 	if _, exists := fc.FencingDeviceOptions[SslInsecure]; exists {
 		cmd += " --ssl-insecure"
@@ -196,7 +228,7 @@ func getStonithCommand(sc StonithConfig, fc fencingConfig) string {
 
 	cmd := fmt.Sprintf("/usr/sbin/pcs stonith %s %s %s username=%q password=%q ip=%q ipport=%q systems_uri=%q pcmk_host_list=%q",
 		stonithAction, fc.FencingID, fc.FencingDeviceType, fc.FencingDeviceOptions[Username], fc.FencingDeviceOptions[Password],
-		fc.FencingDeviceOptions[Ip], fc.FencingDeviceOptions[IpPort], fc.FencingDeviceOptions[SystemsUri], fc.NodeName)
+		fc.GetParsedIP(), fc.FencingDeviceOptions[IpPort], fc.FencingDeviceOptions[SystemsUri], fc.NodeName)
 
 	if _, exists := fc.FencingDeviceOptions[SslInsecure]; exists {
 		cmd += ` ssl_insecure="1"`
