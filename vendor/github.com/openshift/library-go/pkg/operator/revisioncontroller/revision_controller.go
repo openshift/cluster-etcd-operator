@@ -22,17 +22,17 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// RevisionController is a controller that watches a set of configmaps and secrets and them against a revision snapshot
-// of them. If the original resources changes, the revision counter is increased, stored in LatestAvailableRevision
-// field of the operator config and new snapshots suffixed by the revision are created.
+// RevisionController monitors configmaps and secrets, comparing them against their revision snapshots.
+// When these resources change, it increments the revision counter, updates the LatestAvailableRevision
+// field in the operator config, and creates new revision-suffixed snapshots.
 type RevisionController struct {
 	controllerInstanceName string
 
 	targetNamespace string
-	// configMaps is the list of configmaps that are directly copied.A different actor/controller modifies these.
+	// configMaps is the list of configmaps that are directly copied. A different actor/controller modifies these.
 	// the first element should be the configmap that contains the static pod manifest
 	configMaps []RevisionResource
-	// secrets is a list of secrets that are directly copied for the current values.  A different actor/controller modifies these.
+	// secrets is a list of secrets that are directly copied for the current values. A different actor/controller modifies these.
 	secrets []RevisionResource
 
 	operatorClient  v1helpers.OperatorClient
@@ -97,7 +97,7 @@ func NewRevisionController(
 }
 
 // createRevisionIfNeeded takes care of creating content for the static pods to use.
-// returns whether or not requeue and if an error happened when updating status.  Normally it updates status itself.
+// returns whether or not requeue and if an error happened when updating status. Normally it updates status itself.
 func (c RevisionController) createRevisionIfNeeded(ctx context.Context, recorder events.Recorder, currentLastAvailableRevision int32) error {
 	isLatestRevisionCurrent, requiredIsNotFound, reason := c.isLatestRevisionCurrent(ctx, currentLastAvailableRevision)
 
@@ -367,9 +367,9 @@ func (c RevisionController) sync(ctx context.Context, syncCtx factory.SyncContex
 	}
 
 	// If the operator status's latest available revision is not the same as the observed latest revision, update the operator.
-	// This needs to be done even if the revision precondition is not required because it ensures our operator status is
+	// This needs to be done even if the revision precondition is not met because it ensures our operator status is
 	// correct for all consumers.
-	// This is what is going to allow us to move where the state is stored in authentications.openshift.io.
+	// This ensures the operator status accurately reflects the latest revision.
 	latestObservedRevision, err := c.getLatestAvailableRevision(ctx)
 	if err != nil {
 		return err

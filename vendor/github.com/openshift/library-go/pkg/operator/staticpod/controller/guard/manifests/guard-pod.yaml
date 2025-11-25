@@ -14,6 +14,7 @@ spec:
   terminationGracePeriodSeconds: 3
   tolerations:
     - operator: Exists
+  hostUsers: false
   containers:
     - name: guard
       image: # Value set by operator
