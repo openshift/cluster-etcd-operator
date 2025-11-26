@@ -3,7 +3,6 @@ WORKDIR /go/src/github.com/openshift/cluster-etcd-operator
 COPY . .
 ENV GO_PACKAGE github.com/openshift/cluster-etcd-operator
 RUN make build --warn-undefined-variables \
-    && make tests-ext-build \
     && gzip cluster-etcd-operator-tests-ext
 
 FROM registry.ci.openshift.org/ocp/4.21:base-rhel9
