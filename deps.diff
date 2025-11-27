@@ -1,6 +1,0 @@
-diff --no-dereference -N -r current/vendor/go.etcd.io/raft/v3/node.go updated/vendor/go.etcd.io/raft/v3/node.go
-401,404d400
-< 			r.logger.Warningf("raft conf change found, transition: %s, confchange: %s, current progress voters: %s",
-< 				cc.Transition.String(),
-< 				cc.Changes[0].String(),
-< 				r.trk.Voters.String())
