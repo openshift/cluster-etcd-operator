@@ -366,6 +366,28 @@ func (c RevisionController) sync(ctx context.Context, syncCtx factory.SyncContex
 		return nil
 	}
 
+	// If there is a revision available, make sure that revision-ready is set to true on the
+	// revision-status{status.latestAvailableRevision} configmap. This prevents
+	// blocking the controller when upgrading to a version that checks revision
+	// readiness.
+	if operatorStatus.LatestAvailableRevision != 0 {
+		configMap, err := c.configMapGetter.ConfigMaps(c.targetNamespace).Get(ctx, nameFor("revision-status", operatorStatus.LatestAvailableRevision), metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+
+		if configMap.Annotations == nil {
+			configMap.Annotations = make(map[string]string)
+		}
+
+		if configMap.Annotations["operator.openshift.io/revision-ready"] != "true" {
+			configMap.Annotations["operator.openshift.io/revision-ready"] = "true"
+			if _, err := c.configMapGetter.ConfigMaps(configMap.Namespace).Update(ctx, configMap, metav1.UpdateOptions{}); err != nil {
+				return err
+			}
+		}
+	}
+
 	// If the operator status's latest available revision is not the same as the observed latest revision, update the operator.
 	// This needs to be done even if the revision precondition is not required because it ensures our operator status is
 	// correct for all consumers.
