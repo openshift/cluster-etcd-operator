@@ -41,9 +41,6 @@ var (
 		Steps:    9, // ~10 minutes total: 5s + 10s + 20s + 40s + 80s + 120s + 120s + 120s + 120s
 		Cap:      2 * time.Minute,
 	}
-
-	// updateSetupJobWaitTimeout is the maximum time to wait for the update-setup job to complete
-	updateSetupJobWaitTimeout = 10 * time.Minute
 )
 
 func handleNodesWithRetry(
@@ -278,12 +275,6 @@ func updateSetup(
 		if err != nil {
 			return fmt.Errorf("failed to wait for after setup job on node %s to complete: %w", node.GetName(), err)
 		}
-	}
-
-	// rerun fencing job
-	err := jobs.RestartJobOrRunController(ctx, tools.JobTypeFencing, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions, tools.FencingJobCompletedTimeout)
-	if err != nil {
-		return fmt.Errorf("failed to restart fencing job: %w", err)
 	}
 
 	return nil

@@ -5,16 +5,15 @@ import (
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
 
-// WaitForStopped waits for a Job to complete (= succeed)
+// WaitForStopped waits for a Job to stop running (= completed or failed)
 func WaitForStopped(ctx context.Context, kubeClient kubernetes.Interface, jobName string, jobNamespace string, timeout time.Duration) error {
 	klog.Infof("Waiting for job %s to complete or fail (=not running anymore) (timeout: %v)", jobName, timeout)
 	return waitWithConditionFunc(ctx, kubeClient, jobName, jobNamespace, timeout, IsStopped)
@@ -34,7 +33,8 @@ func waitWithConditionFunc(ctx context.Context, kubeClient kubernetes.Interface,
 	return wait.PollUntilContextTimeout(timeoutCtx, 5*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		job, err := kubeClient.BatchV1().Jobs(jobNamespace).Get(ctx, jobName, v1.GetOptions{})
 		if err != nil {
-			// not found is not ok, we would return too early when a job was just deleted but not recreated yet
+			// Ignore errors (including NotFound) to avoid returning early. The job might be
+			// temporarily missing during deletion/recreation cycles.
 			klog.Warningf("Failed to get job %s: %v", jobName, err)
 			return false, nil
 		}
@@ -84,9 +84,22 @@ func IsStopped(job batchv1.Job) bool {
 }
 
 func IsComplete(job batchv1.Job) bool {
-	return tools.IsConditionTrue(job.Status.Conditions, batchv1.JobComplete)
+	return IsConditionTrue(job.Status.Conditions, batchv1.JobComplete)
 }
 
 func IsFailed(job batchv1.Job) bool {
-	return tools.IsConditionTrue(job.Status.Conditions, batchv1.JobFailed)
+	return IsConditionTrue(job.Status.Conditions, batchv1.JobFailed)
+}
+
+func IsConditionTrue(conditions []batchv1.JobCondition, conditionType batchv1.JobConditionType) bool {
+	return IsConditionPresentAndEqual(conditions, conditionType, corev1.ConditionTrue)
+}
+
+func IsConditionPresentAndEqual(conditions []batchv1.JobCondition, conditionType batchv1.JobConditionType, status corev1.ConditionStatus) bool {
+	for _, condition := range conditions {
+		if condition.Type == conditionType {
+			return condition.Status == status
+		}
+	}
+	return false
 }

@@ -27,10 +27,15 @@ var (
 	runningControllers = make(map[string]bool)
 	// runningControllersMutex protects the runningControllers map
 	runningControllersMutex sync.Mutex
+
+	// restartJobLocks tracks in-flight RestartJobOrRunController calls to prevent parallel execution
+	restartJobLocks = make(map[string]*sync.Mutex)
+	// restartJobLocksMutex protects the restartJobLocks map
+	restartJobLocksMutex sync.Mutex
 )
 
 func RunTNFJobController(ctx context.Context, jobType tools.JobType, nodeName *string, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces, conditions []string) {
-	nodeNameForLogs := "n/a"
+	nodeNameForLogs := "undefined"
 	if nodeName != nil {
 		nodeNameForLogs = *nodeName
 	}
@@ -83,16 +88,36 @@ func RestartJobOrRunController(
 	conditions []string,
 	existingJobCompletionTimeout time.Duration) error {
 
-	// Check if job already exists
+	// Acquire a lock for this specific jobType/nodeName combination to prevent parallel execution
 	jobName := jobType.GetJobName(nodeName)
+
+	restartJobLocksMutex.Lock()
+	jobLock, exists := restartJobLocks[jobName]
+	if !exists {
+		jobLock = &sync.Mutex{}
+		restartJobLocks[jobName] = jobLock
+	}
+	restartJobLocksMutex.Unlock()
+
+	jobLock.Lock()
+	defer jobLock.Unlock()
+
+	// Check if job already exists
+	jobExists := true
 	_, err := kubeClient.BatchV1().Jobs(operatorclient.TargetNamespace).Get(ctx, jobName, v1.GetOptions{})
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			klog.Infof("Running new job controller for job %q", jobName)
-			RunTNFJobController(ctx, jobType, nodeName, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, conditions)
-			return nil
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to check for existing job %s: %w", jobName, err)
 		}
-		return fmt.Errorf("failed to check for existing job %s: %w", jobName, err)
+		jobExists = false
+	}
+
+	// always try to run the controller, CEO might have been restarted
+	RunTNFJobController(ctx, jobType, nodeName, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, conditions)
+
+	if !jobExists {
+		// we are done
+		return nil
 	}
 
 	// Job exists, wait for completion

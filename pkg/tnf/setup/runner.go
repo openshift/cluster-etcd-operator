@@ -19,6 +19,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/config"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/etcd"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/jobs"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/pcs"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
@@ -55,19 +56,19 @@ func RunTnfSetup() error {
 
 	klog.Info("Waiting for completed auth jobs")
 	authDone := func(context.Context) (done bool, err error) {
-		jobs, err := kubeClient.BatchV1().Jobs("openshift-etcd").List(ctx, metav1.ListOptions{
+		authJobs, err := kubeClient.BatchV1().Jobs("openshift-etcd").List(ctx, metav1.ListOptions{
 			LabelSelector: fmt.Sprintf("app.kubernetes.io/name=%s", tools.JobTypeAuth.GetNameLabelValue()),
 		})
 		if err != nil {
 			klog.Warningf("Failed to list jobs: %v", err)
 			return false, nil
 		}
-		if jobs.Items == nil || len(jobs.Items) != 2 {
-			klog.Warningf("Expected 2 jobs, got %d", len(jobs.Items))
+		if authJobs.Items == nil || len(authJobs.Items) != 2 {
+			klog.Warningf("Expected 2 jobs, got %d", len(authJobs.Items))
 			return false, nil
 		}
-		for _, job := range jobs.Items {
-			if !tools.IsConditionTrue(job.Status.Conditions, batchv1.JobComplete) {
+		for _, job := range authJobs.Items {
+			if !jobs.IsConditionTrue(job.Status.Conditions, batchv1.JobComplete) {
 				klog.Warningf("Job %s not complete", job.Name)
 				return false, nil
 			}
@@ -99,7 +100,7 @@ func RunTnfSetup() error {
 	}
 
 	// configure stonith
-	err = pcs.ConfigureFencing(ctx, kubeClient, cfg)
+	err = pcs.ConfigureFencing(ctx, kubeClient, []string{cfg.NodeName1, cfg.NodeName2})
 	if err != nil {
 		return err
 	}

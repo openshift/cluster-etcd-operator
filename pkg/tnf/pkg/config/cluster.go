@@ -21,6 +21,15 @@ type ClusterConfig struct {
 
 // GetClusterConfig creates an operator specific view of the config
 func GetClusterConfig(ctx context.Context, kubeClient kubernetes.Interface) (ClusterConfig, error) {
+	return getClusterConfig(ctx, kubeClient, false)
+}
+
+// GetClusterConfigIgnoreMissingNode creates an operator specific view of the config and ignores missing second node
+func GetClusterConfigIgnoreMissingNode(ctx context.Context, kubeClient kubernetes.Interface) (ClusterConfig, error) {
+	return getClusterConfig(ctx, kubeClient, true)
+}
+
+func getClusterConfig(ctx context.Context, kubeClient kubernetes.Interface, ignoreMissingNode bool) (ClusterConfig, error) {
 
 	klog.Info("Creating HA Cluster Config")
 	clusterCfg := ClusterConfig{}
@@ -32,8 +41,11 @@ func GetClusterConfig(ctx context.Context, kubeClient kubernetes.Interface) (Clu
 	if err != nil {
 		return clusterCfg, err
 	}
-	if len(nodes.Items) != 2 {
-		return clusterCfg, fmt.Errorf("expected 2 nodes, got %d", len(nodes.Items))
+	if len(nodes.Items) == 0 || len(nodes.Items) > 2 {
+		return clusterCfg, fmt.Errorf("invalid number of nodes, got %d", len(nodes.Items))
+	}
+	if !ignoreMissingNode && len(nodes.Items) == 1 {
+		return clusterCfg, fmt.Errorf("expected 2 nodes, got 1")
 	}
 
 	sort.Slice(nodes.Items, func(i, j int) bool {
