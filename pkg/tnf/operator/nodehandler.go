@@ -17,8 +17,10 @@ import (
 	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/jobs"
@@ -171,15 +173,15 @@ func startTnfJobcontrollers(
 
 	klog.Infof("Running TNF setup procedure. Waiting for etcd bootstrap to complete")
 
-	if err := ceohelpers.WaitForEtcdCondition(
-		ctx,
-		etcdInformer,
-		operatorClient,
-		ceohelpers.IsEtcdRunningInCluster,
-		10*time.Second,
-		30*time.Minute,
-		"etcd bootstrap completion",
-	); err != nil {
+	// Wait for the etcd informer to sync before checking bootstrap status
+	// This ensures operatorClient.GetStaticPodOperatorState() has data to work with
+	klog.Infof("waiting for etcd informer to sync...")
+	if !cache.WaitForCacheSync(ctx.Done(), etcdInformer.Informer().HasSynced) {
+		return fmt.Errorf("failed to sync etcd informer")
+	}
+	klog.Infof("etcd informer synced")
+
+	if err := waitForEtcdBootstrapCompleted(ctx, operatorClient); err != nil {
 		return fmt.Errorf("failed to wait for etcd bootstrap: %w", err)
 	}
 	klog.Infof("bootstrap completed, creating TNF job controllers")
@@ -196,6 +198,25 @@ func startTnfJobcontrollers(
 	// wait until the after-setup jobs finished,
 	// in order to avoid races with update jobs
 	return waitForTnfAfterSetupJobsCompletion(ctx, kubeClient, nodeList)
+}
+
+func waitForEtcdBootstrapCompleted(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient) error {
+	isEtcdRunningInCluster, err := ceohelpers.IsEtcdRunningInCluster(ctx, operatorClient)
+	if err != nil {
+		return fmt.Errorf("failed to check if bootstrap is completed: %v", err)
+	}
+	if !isEtcdRunningInCluster {
+		klog.Infof("waiting for bootstrap to complete with etcd running in cluster")
+		clientConfig, err := rest.InClusterConfig()
+		if err != nil {
+			return fmt.Errorf("failed to get in-cluster config: %v", err)
+		}
+		err = bootstrapteardown.WaitForEtcdBootstrap(ctx, clientConfig)
+		if err != nil {
+			return fmt.Errorf("failed to wait for bootstrap to complete: %v", err)
+		}
+	}
+	return nil
 }
 
 func updateSetup(
