@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"time"
+	"strings"
 
 	"k8s.io/client-go/util/cert"
 
@@ -245,7 +246,11 @@ func createCertForNode(description, secretName string, node *corev1.Node,
 			},
 			CertificateExtensionFn: []crypto.CertificateExtensionFunc{
 				func(certificate *x509.Certificate) error {
-					certificate.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth}
+					if strings.Contains(description, "Serving") {
+					certificate.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
+					} else {
+						certificate.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth}
+					}
 					return nil
 				},
 			},
