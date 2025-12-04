@@ -3,7 +3,6 @@ package extensiontests
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -107,32 +106,16 @@ func (specs ExtensionTestSpecs) MustSelectAll(selectFns []SelectFunction) (Exten
 	return filtered, nil
 }
 
-// ModuleTestsOnly ensures that ginkgo tests from vendored sources aren't selected. Unfortunately, making
-// use of kubernetes test helpers results in the entire Ginkgo suite being initialized (ginkgo loves global state),
-// so we need to be careful about which tests we select.
-//
-// A test is excluded if ALL of its code locations with full paths are external (vendored or from external test
-// suites). If at least one code location with a full path is from the local module, the test is included, because
-// local tests may legitimately call helper functions from vendored test frameworks.
+// ModuleTestsOnly ensures that ginkgo tests from vendored sources aren't selected.
 func ModuleTestsOnly() SelectFunction {
 	return func(spec *ExtensionTestSpec) bool {
-		hasLocalCode := false
-
 		for _, cl := range spec.CodeLocations {
-			// Short-form code locations (e.g., "set up framework | framework.go:200") are ignored in this determination.
-			if !strings.Contains(cl, "/") {
-				continue
-			}
-
-			// If this code location is not external (vendored or k8s test), it's local code
-			if !(strings.Contains(cl, "/vendor/") || strings.HasPrefix(cl, "k8s.io/kubernetes")) {
-				hasLocalCode = true
-				break
+			if strings.Contains(cl, "/vendor/") {
+				return false
 			}
 		}
 
-		// Include the test only if it has at least one local code location
-		return hasLocalCode
+		return true
 	}
 }
 
@@ -198,8 +181,7 @@ func (specs ExtensionTestSpecs) Names() []string {
 // safe. Returns an error if any test spec failed, indicating the quantity of failures.
 func (specs ExtensionTestSpecs) Run(ctx context.Context, w ResultWriter, maxConcurrent int) error {
 	queue := make(chan *ExtensionTestSpec)
-	terminalFailures := atomic.Int64{}
-	nonTerminalFailures := atomic.Int64{}
+	failures := atomic.Int64{}
 
 	// Execute beforeAll
 	for _, spec := range specs {
@@ -235,11 +217,7 @@ func (specs ExtensionTestSpecs) Run(ctx context.Context, w ResultWriter, maxConc
 
 				res := runSpec(ctx, spec, runSingleSpec)
 				if res.Result == ResultFailed {
-					if res.Lifecycle.IsTerminal() {
-						terminalFailures.Add(1)
-					} else {
-						nonTerminalFailures.Add(1)
-					}
+					failures.Add(1)
 				}
 
 				for _, afterEachTask := range spec.afterEach {
@@ -264,22 +242,10 @@ func (specs ExtensionTestSpecs) Run(ctx context.Context, w ResultWriter, maxConc
 		}
 	}
 
-	terminalFailCount := terminalFailures.Load()
-	nonTerminalFailCount := nonTerminalFailures.Load()
-
-	// Non-terminal failures don't cause exit 1, but we still log them
-	if nonTerminalFailCount > 0 {
-		fmt.Fprintf(os.Stderr, "%d informing tests failed (not terminal)\n", nonTerminalFailCount)
+	failCount := failures.Load()
+	if failCount > 0 {
+		return fmt.Errorf("%d tests failed", failCount)
 	}
-
-	// Only exit with error if terminal lifecycle tests failed
-	if terminalFailCount > 0 {
-		if nonTerminalFailCount > 0 {
-			return fmt.Errorf("%d tests failed (%d informing)", terminalFailCount+nonTerminalFailCount, nonTerminalFailCount)
-		}
-		return fmt.Errorf("%d tests failed", terminalFailCount)
-	}
-
 	return nil
 }
 
