@@ -61,7 +61,7 @@
           },
           {
             alert: 'etcdHighCommitDurations',
-            expr: 'histogram_quantile(0.99, rate(etcd_disk_backend_commit_duration_seconds_bucket{job=~".*etcd.*"}[5m])) > 0.5',
+            expr: 'histogram_quantile(0.99, rate(etcd_disk_backend_commit_duration_seconds_bucket{job=~".*etcd.*"}[5m])) > 0.08',
             'for': '10m',
             labels: {
               severity: 'warning',
@@ -69,6 +69,44 @@
             annotations: {
               description: 'etcd cluster "{{ $labels.job }}": 99th percentile commit durations {{ $value }}s on etcd instance {{ $labels.instance }}.',
               summary: 'etcd cluster 99th percentile commit durations are too high.',
+            },
+          },
+          {
+            alert: 'etcdHighCommitDurations',
+            expr: 'histogram_quantile(0.99, rate(etcd_disk_backend_commit_duration_seconds_bucket{job=~".*etcd.*"}[5m])) > 0.10',
+            'for': '10m',
+            labels: {
+              severity: 'critical',
+            },
+            annotations: {
+              description: 'etcd cluster "{{ $labels.job }}": 99th percentile commit durations {{ $value }}s on etcd instance {{ $labels.instance }}.',
+              summary: 'etcd cluster 99th percentile commit durations are too high.',
+            },
+          },
+          {
+            alert: 'etcdHighFsyncDurations',
+            expr: 'histogram_quantile(0.99, rate(etcd_disk_wal_fsync_duration_seconds_bucket{job=~".*etcd.*"}[5m])) > 0.05',
+            'for': '10m',
+            labels: {
+              severity: 'warning',
+            },
+            annotations: {
+              description: 'etcd cluster "{{ $labels.job }}": 99th percentile fsync durations are {{ $value }}s on etcd instance {{ $labels.instance }}.',
+              summary: 'etcd cluster 99th percentile fsync durations are too high.',
+              runbook_url: 'https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdHighFsyncDurations.md'
+            },
+          },
+          {
+            alert: 'etcdHighFsyncDurations',
+            expr: 'histogram_quantile(0.99, rate(etcd_disk_wal_fsync_duration_seconds_bucket{job=~".*etcd.*"}[5m])) > 0.07',
+            'for': '10m',
+            labels: {
+              severity: 'critical',
+            },
+            annotations: {
+              description: 'etcd cluster "{{ $labels.job }}": 99th percentile fsync durations are {{ $value }}s on etcd instance {{ $labels.instance }}.',
+              summary: 'etcd cluster 99th percentile fsync durations are too high.',
+              runbook_url: 'https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdHighFsyncDurations.md'
             },
           },
           {
