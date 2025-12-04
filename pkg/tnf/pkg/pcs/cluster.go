@@ -32,10 +32,11 @@ func ConfigureCluster(ctx context.Context, cfg config.ClusterConfig) (bool, erro
 		"/usr/sbin/pcs cluster start --all",
 		// Note: the kubelet service needs to be disabled when using systemd agent
 		// Done by after-setup jobs on both nodes
-		"/usr/sbin/pcs resource create kubelet systemd:kubelet clone meta interleave=true",
+		"/usr/sbin/pcs resource create kubelet systemd:kubelet clone meta interleave=true migration-threshold=5",
 		"/usr/sbin/pcs cluster enable --all",
 		"/usr/sbin/pcs cluster sync",
 		"/usr/sbin/pcs cluster reload corosync",
+		"/usr/sbin/pcs property set start-failure-is-fatal=false",
 	}
 
 	for _, command := range commands {
