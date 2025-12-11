@@ -472,6 +472,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		AlivenessChecker,
 		operatorClient,
 		kubeClient,
+		configInformers.Config().V1().Infrastructures().Lister(),
 		envVarController,
 		controllerContext.EventRecorder,
 	)
