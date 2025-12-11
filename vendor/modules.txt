@@ -214,10 +214,6 @@ github.com/munnerz/goautoneg
 # github.com/olekukonko/tablewriter v0.0.5
 ## explicit; go 1.12
 github.com/olekukonko/tablewriter
-<<<<<<< HEAD
-||||||| 57c4cb5e6 (Merge pull request #1510 from gangwgr/test-module-infra-only)
-# github.com/openshift-eng/openshift-tests-extension v0.0.0-20251113163031-356b66aa5c24
-=======
 # github.com/onsi/ginkgo/v2 v2.21.0 => github.com/openshift/onsi-ginkgo/v2 v2.6.1-0.20241205171354-8006f302fd12
 ## explicit; go 1.22.0
 github.com/onsi/ginkgo/v2
@@ -252,8 +248,7 @@ github.com/onsi/gomega/matchers/support/goraph/edge
 github.com/onsi/gomega/matchers/support/goraph/node
 github.com/onsi/gomega/matchers/support/goraph/util
 github.com/onsi/gomega/types
->>>>>>> parent of 57c4cb5e6 (Merge pull request #1510 from gangwgr/test-module-infra-only)
-# github.com/openshift-eng/openshift-tests-extension v0.0.0-20250804142706-7b3ab438a292
+# github.com/openshift-eng/openshift-tests-extension v0.0.0-20251113163031-356b66aa5c24
 ## explicit; go 1.23.0
 github.com/openshift-eng/openshift-tests-extension/pkg/cmd
 github.com/openshift-eng/openshift-tests-extension/pkg/cmd/cmdimages
@@ -825,15 +820,8 @@ golang.org/x/sys/windows/registry
 # golang.org/x/term v0.35.0
 ## explicit; go 1.24.0
 golang.org/x/term
-<<<<<<< HEAD
 # golang.org/x/text v0.29.0
 ## explicit; go 1.24.0
-||||||| 57c4cb5e6 (Merge pull request #1510 from gangwgr/test-module-infra-only)
-# golang.org/x/text v0.23.0
-## explicit; go 1.23.0
-=======
-# golang.org/x/text v0.23.0
-## explicit; go 1.23.0
 golang.org/x/text/encoding
 golang.org/x/text/encoding/charmap
 golang.org/x/text/encoding/htmlindex
@@ -844,7 +832,6 @@ golang.org/x/text/encoding/korean
 golang.org/x/text/encoding/simplifiedchinese
 golang.org/x/text/encoding/traditionalchinese
 golang.org/x/text/encoding/unicode
->>>>>>> parent of 57c4cb5e6 (Merge pull request #1510 from gangwgr/test-module-infra-only)
 golang.org/x/text/feature/plural
 golang.org/x/text/internal
 golang.org/x/text/internal/catmsg
@@ -866,16 +853,11 @@ golang.org/x/text/unicode/norm
 # golang.org/x/time v0.9.0
 ## explicit; go 1.18
 golang.org/x/time/rate
-<<<<<<< HEAD
-||||||| 57c4cb5e6 (Merge pull request #1510 from gangwgr/test-module-infra-only)
-# golang.org/x/tools v0.28.0
-## explicit; go 1.22.0
-=======
-# golang.org/x/tools v0.28.0
-## explicit; go 1.22.0
+# golang.org/x/tools v0.36.0
+## explicit; go 1.23.0
 golang.org/x/tools/cover
+golang.org/x/tools/go/ast/edge
 golang.org/x/tools/go/ast/inspector
->>>>>>> parent of 57c4cb5e6 (Merge pull request #1510 from gangwgr/test-module-infra-only)
 # google.golang.org/genproto/googleapis/api v0.0.0-20250303144028-a0af3efb3deb
 ## explicit; go 1.23.0
 google.golang.org/genproto/googleapis/api

@@ -186,40 +186,18 @@ github.com/olekukonko/tablewriter v0.0.5 h1:P2Ga83D34wi1o9J6Wh1mRuqd4mF/x/lgBS7N
 github.com/olekukonko/tablewriter v0.0.5/go.mod h1:hPp6KlRPjbx+hW8ykQs1w3UBbZlj6HuIJcUGPhkA7kY=
 github.com/onsi/gomega v1.35.1 h1:Cwbd75ZBPxFSuZ6T+rN/WCb/gOc6YgFBXLlZLhC7Ds4=
 github.com/onsi/gomega v1.35.1/go.mod h1:PvZbdDc8J6XJEpDK4HCuRBm8a6Fzp9/DmhC9C7yFlog=
-github.com/openshift-eng/openshift-tests-extension v0.0.0-20250804142706-7b3ab438a292 h1:3athg6KQ+TaNfW4BWZDlGFt1ImSZEJWgzXtPC1VPITI=
-github.com/openshift-eng/openshift-tests-extension v0.0.0-20250804142706-7b3ab438a292/go.mod h1:6gkP5f2HL0meusT0Aim8icAspcD1cG055xxBZ9yC68M=
-<<<<<<< HEAD
-github.com/openshift/api v0.0.0-20251124235416-c11dd82e305c h1:O72YjES6M2/H052TIZnrJVUNySjfOZy1t8w5hRcj6MM=
-github.com/openshift/api v0.0.0-20251124235416-c11dd82e305c/go.mod h1:d5uzF0YN2nQQFA0jIEWzzOZ+edmo6wzlGLvx5Fhz4uY=
-||||||| 57c4cb5e6 (Merge pull request #1510 from gangwgr/test-module-infra-only)
 github.com/openshift-eng/openshift-tests-extension v0.0.0-20251113163031-356b66aa5c24 h1:bwmjtFaipakIwAyZxnDLgtkLY1Nf1nK9lRCmADvHirE=
 github.com/openshift-eng/openshift-tests-extension v0.0.0-20251113163031-356b66aa5c24/go.mod h1:6gkP5f2HL0meusT0Aim8icAspcD1cG055xxBZ9yC68M=
-github.com/openshift/api v0.0.0-20250710004639-926605d3338b h1:A8OY6adT2aZNp7tsGsilHuQ3RqhzrFx5dzGr/UwXfJg=
-github.com/openshift/api v0.0.0-20250710004639-926605d3338b/go.mod h1:SPLf21TYPipzCO67BURkCfK6dcIIxx0oNRVWaOyRcXM=
-=======
-github.com/openshift/api v0.0.0-20250710004639-926605d3338b h1:A8OY6adT2aZNp7tsGsilHuQ3RqhzrFx5dzGr/UwXfJg=
-github.com/openshift/api v0.0.0-20250710004639-926605d3338b/go.mod h1:SPLf21TYPipzCO67BURkCfK6dcIIxx0oNRVWaOyRcXM=
->>>>>>> parent of 57c4cb5e6 (Merge pull request #1510 from gangwgr/test-module-infra-only)
+github.com/openshift/api v0.0.0-20251124235416-c11dd82e305c h1:O72YjES6M2/H052TIZnrJVUNySjfOZy1t8w5hRcj6MM=
+github.com/openshift/api v0.0.0-20251124235416-c11dd82e305c/go.mod h1:d5uzF0YN2nQQFA0jIEWzzOZ+edmo6wzlGLvx5Fhz4uY=
 github.com/openshift/build-machinery-go v0.0.0-20250530140348-dc5b2804eeee h1:+Sp5GGnjHDhT/a/nQ1xdp43UscBMr7G5wxsYotyhzJ4=
 github.com/openshift/build-machinery-go v0.0.0-20250530140348-dc5b2804eeee/go.mod h1:8jcm8UPtg2mCAsxfqKil1xrmRMI3a+XU2TZ9fF8A7TE=
-<<<<<<< HEAD
 github.com/openshift/client-go v0.0.0-20251015124057-db0dee36e235 h1:9JBeIXmnHlpXTQPi7LPmu1jdxznBhAE7bb1K+3D8gxY=
 github.com/openshift/client-go v0.0.0-20251015124057-db0dee36e235/go.mod h1:L49W6pfrZkfOE5iC1PqEkuLkXG4W0BX4w8b+L2Bv7fM=
 github.com/openshift/library-go v0.0.0-20251120164824-14a789e09884 h1:6512TMT14gnXQ4vyshzAQGjkctU0PO9G+y0tcBjw6Vk=
 github.com/openshift/library-go v0.0.0-20251120164824-14a789e09884/go.mod h1:ErDfiIrPHH+menTP/B4LKd0nxFDdvCbTamAc6SWMIh8=
-||||||| 57c4cb5e6 (Merge pull request #1510 from gangwgr/test-module-infra-only)
-github.com/openshift/client-go v0.0.0-20250710075018-396b36f983ee h1:tOtrrxfDEW8hK3eEsHqxsXurq/D6LcINGfprkQC3hqY=
-github.com/openshift/client-go v0.0.0-20250710075018-396b36f983ee/go.mod h1:zhRiYyNMk89llof2qEuGPWPD+joQPhCRUc2IK0SB510=
-github.com/openshift/library-go v0.0.0-20250729191057-91376e1b394e h1:xYT+P++PSc9G+Y47pIcU9fm8IDV/tg6tMi3i+0m23pU=
-github.com/openshift/library-go v0.0.0-20250729191057-91376e1b394e/go.mod h1:tptKNust9MdRI0p90DoBSPHIrBa9oh+Rok59tF0vT8c=
-=======
-github.com/openshift/client-go v0.0.0-20250710075018-396b36f983ee h1:tOtrrxfDEW8hK3eEsHqxsXurq/D6LcINGfprkQC3hqY=
-github.com/openshift/client-go v0.0.0-20250710075018-396b36f983ee/go.mod h1:zhRiYyNMk89llof2qEuGPWPD+joQPhCRUc2IK0SB510=
-github.com/openshift/library-go v0.0.0-20250729191057-91376e1b394e h1:xYT+P++PSc9G+Y47pIcU9fm8IDV/tg6tMi3i+0m23pU=
-github.com/openshift/library-go v0.0.0-20250729191057-91376e1b394e/go.mod h1:tptKNust9MdRI0p90DoBSPHIrBa9oh+Rok59tF0vT8c=
 github.com/openshift/onsi-ginkgo/v2 v2.6.1-0.20241205171354-8006f302fd12 h1:AKx/w1qpS8We43bsRgf8Nll3CGlDHpr/WAXvuedTNZI=
 github.com/openshift/onsi-ginkgo/v2 v2.6.1-0.20241205171354-8006f302fd12/go.mod h1:7Du3c42kxCUegi0IImZ1wUQzMBVecgIHjR1C+NkhLQo=
->>>>>>> parent of 57c4cb5e6 (Merge pull request #1510 from gangwgr/test-module-infra-only)
 github.com/opentracing/opentracing-go v1.1.0/go.mod h1:UkNAQd3GIcIGf0SeVgPpRdFStlNbqXla1AfSYxPUl2o=
 github.com/orisano/pixelmatch v0.0.0-20220722002657-fb0b55479cde/go.mod h1:nZgzbfBr3hhjoZnS66nKrHmduYNpc34ny7RK4z5/HM0=
 github.com/pkg/errors v0.8.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=

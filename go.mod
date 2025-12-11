@@ -9,18 +9,10 @@ require (
 	github.com/ghodss/yaml v1.0.0
 	github.com/google/go-cmp v0.7.0
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
-<<<<<<< HEAD
-	github.com/openshift-eng/openshift-tests-extension v0.0.0-20250804142706-7b3ab438a292
-	github.com/openshift/api v0.0.0-20251124235416-c11dd82e305c
-||||||| 57c4cb5e6 (Merge pull request #1510 from gangwgr/test-module-infra-only)
-	github.com/openshift-eng/openshift-tests-extension v0.0.0-20251113163031-356b66aa5c24
-	github.com/openshift/api v0.0.0-20250710004639-926605d3338b
-=======
 	github.com/onsi/ginkgo/v2 v2.21.0
 	github.com/onsi/gomega v1.35.1
-	github.com/openshift-eng/openshift-tests-extension v0.0.0-20250804142706-7b3ab438a292
-	github.com/openshift/api v0.0.0-20250710004639-926605d3338b
->>>>>>> parent of 57c4cb5e6 (Merge pull request #1510 from gangwgr/test-module-infra-only)
+	github.com/openshift-eng/openshift-tests-extension v0.0.0-20251113163031-356b66aa5c24
+	github.com/openshift/api v0.0.0-20251124235416-c11dd82e305c
 	github.com/openshift/build-machinery-go v0.0.0-20250530140348-dc5b2804eeee
 	github.com/openshift/client-go v0.0.0-20251015124057-db0dee36e235
 	github.com/openshift/library-go v0.0.0-20251120164824-14a789e09884
@@ -146,6 +138,7 @@ require (
 	golang.org/x/term v0.35.0 // indirect
 	golang.org/x/text v0.29.0 // indirect
 	golang.org/x/time v0.9.0 // indirect
+	golang.org/x/tools v0.36.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250303144028-a0af3efb3deb // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250303144028-a0af3efb3deb // indirect
 	google.golang.org/protobuf v1.36.5 // indirect
