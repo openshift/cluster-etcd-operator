@@ -34,6 +34,12 @@ var (
 	// handleNodesFunc is a variable to allow mocking in tests
 	handleNodesFunc = handleNodes
 
+	// startTnfJobcontrollersFunc is a variable to allow mocking in tests
+	startTnfJobcontrollersFunc = startTnfJobcontrollers
+
+	// updateSetupFunc is a variable to allow mocking in tests
+	updateSetupFunc = updateSetup
+
 	// retryBackoffConfig allows customizing retry behavior for tests
 	retryBackoffConfig = wait.Backoff{
 		Duration: 5 * time.Second,
@@ -140,7 +146,7 @@ func handleNodes(
 	}
 
 	// always start job controllers, otherwise jobs won't be recreated after a CEO restart
-	err = startTnfJobcontrollers(nodeList, ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
+	err = startTnfJobcontrollersFunc(nodeList, ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
 	if err != nil {
 		return fmt.Errorf("failed to start TNF job controllers: %w", err)
 	}
@@ -151,7 +157,7 @@ func handleNodes(
 	}
 
 	// if TNF was already set up, we might need to update
-	err = updateSetup(nodeList, ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+	err = updateSetupFunc(nodeList, ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
 	if err != nil {
 		return fmt.Errorf("failed to update pacemaker setup: %w", err)
 	}

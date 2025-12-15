@@ -15,106 +15,6 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 )
 
-func TestIsRunning(t *testing.T) {
-	tests := []struct {
-		name       string
-		job        batchv1.Job
-		wantResult bool
-	}{
-		{
-			name: "Job with no conditions - running",
-			job: batchv1.Job{
-				Status: batchv1.JobStatus{
-					Conditions: []batchv1.JobCondition{},
-				},
-			},
-			wantResult: true,
-		},
-		{
-			name: "Job with Complete condition - not running",
-			job: batchv1.Job{
-				Status: batchv1.JobStatus{
-					Conditions: []batchv1.JobCondition{
-						{
-							Type:   batchv1.JobComplete,
-							Status: corev1.ConditionTrue,
-						},
-					},
-				},
-			},
-			wantResult: false,
-		},
-		{
-			name: "Job with Failed condition - not running",
-			job: batchv1.Job{
-				Status: batchv1.JobStatus{
-					Conditions: []batchv1.JobCondition{
-						{
-							Type:   batchv1.JobFailed,
-							Status: corev1.ConditionTrue,
-						},
-					},
-				},
-			},
-			wantResult: false,
-		},
-		{
-			name: "Job with Complete condition false - running",
-			job: batchv1.Job{
-				Status: batchv1.JobStatus{
-					Conditions: []batchv1.JobCondition{
-						{
-							Type:   batchv1.JobComplete,
-							Status: corev1.ConditionFalse,
-						},
-					},
-				},
-			},
-			wantResult: true,
-		},
-		{
-			name: "Job with Failed condition false - running",
-			job: batchv1.Job{
-				Status: batchv1.JobStatus{
-					Conditions: []batchv1.JobCondition{
-						{
-							Type:   batchv1.JobFailed,
-							Status: corev1.ConditionFalse,
-						},
-					},
-				},
-			},
-			wantResult: true,
-		},
-		{
-			name: "Job with both Complete and Failed conditions true - not running",
-			job: batchv1.Job{
-				Status: batchv1.JobStatus{
-					Conditions: []batchv1.JobCondition{
-						{
-							Type:   batchv1.JobComplete,
-							Status: corev1.ConditionTrue,
-						},
-						{
-							Type:   batchv1.JobFailed,
-							Status: corev1.ConditionTrue,
-						},
-					},
-				},
-			},
-			wantResult: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := IsRunning(tt.job)
-			require.Equal(t, tt.wantResult, result,
-				"Expected IsRunning() = %v, got %v", tt.wantResult, result)
-		})
-	}
-}
-
 func TestIsComplete(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -286,7 +186,7 @@ func TestWaitForCompletion(t *testing.T) {
 			expectError:  false,
 		},
 		{
-			name: "Job fails",
+			name: "Job fails - should timeout",
 			setupClient: func() *fake.Clientset {
 				job := &batchv1.Job{
 					ObjectMeta: metav1.ObjectMeta{
@@ -306,11 +206,11 @@ func TestWaitForCompletion(t *testing.T) {
 			},
 			jobName:      "test-job",
 			jobNamespace: "test-namespace",
-			timeout:      5 * time.Second,
-			expectError:  false,
+			timeout:      1 * time.Second,
+			expectError:  true,
 		},
 		{
-			name: "Job is deleted (not found)",
+			name: "Job is deleted (not found) - should timeout",
 			setupClient: func() *fake.Clientset {
 				client := fake.NewSimpleClientset()
 				// No job exists, so Get will return NotFound error
@@ -318,8 +218,8 @@ func TestWaitForCompletion(t *testing.T) {
 			},
 			jobName:      "test-job",
 			jobNamespace: "test-namespace",
-			timeout:      5 * time.Second,
-			expectError:  false,
+			timeout:      1 * time.Second,
+			expectError:  true,
 		},
 		{
 			name: "Job still running - timeout",

@@ -33,7 +33,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/kubernetes/scheme"
 	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/clock"
 
@@ -276,15 +275,15 @@ func getArgs(t *testing.T, dualReplicaControlPlaneEnabled bool) args {
 func TestHandleNodesWithRetry(t *testing.T) {
 	tests := []struct {
 		name                    string
-		setupMockHandleNodes    func() func(*controllercmd.ControllerContext, corev1listers.NodeLister, context.Context, v1helpers.StaticPodOperatorClient, kubernetes.Interface, v1helpers.KubeInformersForNamespaces, operatorv1informers.EtcdInformer, rest.Interface) error
+		setupMockHandleNodes    func() func(*controllercmd.ControllerContext, corev1listers.NodeLister, context.Context, v1helpers.StaticPodOperatorClient, kubernetes.Interface, v1helpers.KubeInformersForNamespaces, operatorv1informers.EtcdInformer) error
 		expectDegradedCondition bool
 		expectDegradedStatus    operatorv1.ConditionStatus
 		expectRetries           bool
 	}{
 		{
 			name: "Success on first attempt",
-			setupMockHandleNodes: func() func(*controllercmd.ControllerContext, corev1listers.NodeLister, context.Context, v1helpers.StaticPodOperatorClient, kubernetes.Interface, v1helpers.KubeInformersForNamespaces, operatorv1informers.EtcdInformer, rest.Interface) error {
-				return func(_ *controllercmd.ControllerContext, _ corev1listers.NodeLister, _ context.Context, _ v1helpers.StaticPodOperatorClient, _ kubernetes.Interface, _ v1helpers.KubeInformersForNamespaces, _ operatorv1informers.EtcdInformer, _ rest.Interface) error {
+			setupMockHandleNodes: func() func(*controllercmd.ControllerContext, corev1listers.NodeLister, context.Context, v1helpers.StaticPodOperatorClient, kubernetes.Interface, v1helpers.KubeInformersForNamespaces, operatorv1informers.EtcdInformer) error {
+				return func(_ *controllercmd.ControllerContext, _ corev1listers.NodeLister, _ context.Context, _ v1helpers.StaticPodOperatorClient, _ kubernetes.Interface, _ v1helpers.KubeInformersForNamespaces, _ operatorv1informers.EtcdInformer) error {
 					return nil
 				}
 			},
@@ -294,9 +293,9 @@ func TestHandleNodesWithRetry(t *testing.T) {
 		},
 		{
 			name: "Success after retries",
-			setupMockHandleNodes: func() func(*controllercmd.ControllerContext, corev1listers.NodeLister, context.Context, v1helpers.StaticPodOperatorClient, kubernetes.Interface, v1helpers.KubeInformersForNamespaces, operatorv1informers.EtcdInformer, rest.Interface) error {
+			setupMockHandleNodes: func() func(*controllercmd.ControllerContext, corev1listers.NodeLister, context.Context, v1helpers.StaticPodOperatorClient, kubernetes.Interface, v1helpers.KubeInformersForNamespaces, operatorv1informers.EtcdInformer) error {
 				attemptCount := 0
-				return func(_ *controllercmd.ControllerContext, _ corev1listers.NodeLister, _ context.Context, _ v1helpers.StaticPodOperatorClient, _ kubernetes.Interface, _ v1helpers.KubeInformersForNamespaces, _ operatorv1informers.EtcdInformer, _ rest.Interface) error {
+				return func(_ *controllercmd.ControllerContext, _ corev1listers.NodeLister, _ context.Context, _ v1helpers.StaticPodOperatorClient, _ kubernetes.Interface, _ v1helpers.KubeInformersForNamespaces, _ operatorv1informers.EtcdInformer) error {
 					attemptCount++
 					if attemptCount < 3 {
 						return errors.New("temporary failure")
@@ -310,8 +309,8 @@ func TestHandleNodesWithRetry(t *testing.T) {
 		},
 		{
 			name: "Failure after all retries",
-			setupMockHandleNodes: func() func(*controllercmd.ControllerContext, corev1listers.NodeLister, context.Context, v1helpers.StaticPodOperatorClient, kubernetes.Interface, v1helpers.KubeInformersForNamespaces, operatorv1informers.EtcdInformer, rest.Interface) error {
-				return func(_ *controllercmd.ControllerContext, _ corev1listers.NodeLister, _ context.Context, _ v1helpers.StaticPodOperatorClient, _ kubernetes.Interface, _ v1helpers.KubeInformersForNamespaces, _ operatorv1informers.EtcdInformer, _ rest.Interface) error {
+			setupMockHandleNodes: func() func(*controllercmd.ControllerContext, corev1listers.NodeLister, context.Context, v1helpers.StaticPodOperatorClient, kubernetes.Interface, v1helpers.KubeInformersForNamespaces, operatorv1informers.EtcdInformer) error {
+				return func(_ *controllercmd.ControllerContext, _ corev1listers.NodeLister, _ context.Context, _ v1helpers.StaticPodOperatorClient, _ kubernetes.Interface, _ v1helpers.KubeInformersForNamespaces, _ operatorv1informers.EtcdInformer) error {
 					return errors.New("persistent failure")
 				}
 			},
@@ -348,12 +347,9 @@ func TestHandleNodesWithRetry(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
-			// Create a nil REST client for testing (not needed for the mocked function)
-			var pacemakerRESTClient rest.Interface
-
 			// Run handleNodesWithRetry
 			handleNodesWithRetry(testArgs.controllerContext, controlPlaneNodeLister, ctx, testArgs.operatorClient,
-				testArgs.kubeClient, testArgs.kubeInformersForNamespaces, testArgs.etcdInformer, pacemakerRESTClient)
+				testArgs.kubeClient, testArgs.kubeInformersForNamespaces, testArgs.etcdInformer)
 
 			// Verify the operator condition was set correctly
 			if tt.expectDegradedCondition {

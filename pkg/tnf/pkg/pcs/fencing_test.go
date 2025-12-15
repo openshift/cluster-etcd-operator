@@ -272,7 +272,7 @@ func TestGetStonithCommand(t *testing.T) {
 					SystemsUri: "redfish/v1/Systems/abc",
 				},
 			},
-			want: `/usr/sbin/pcs stonith create node1_redfish fence_redfish username="admin" password="pass123" ip="192.168.111.1" ipport="8000" systems_uri="redfish/v1/Systems/abc" pcmk_host_list="node1" --wait=30`,
+			want: `/usr/sbin/pcs stonith create node1_redfish fence_redfish username="admin" password="pass123" ip="192.168.111.1" ipport="8000" systems_uri="redfish/v1/Systems/abc" pcmk_host_list="node1" pcmk_delay_base="" ssl_insecure="0" --wait=120`,
 		},
 		{
 			name: "stonith command with ssl_insecure",
@@ -289,7 +289,7 @@ func TestGetStonithCommand(t *testing.T) {
 					SslInsecure: "",
 				},
 			},
-			want: `/usr/sbin/pcs stonith create node2_redfish fence_redfish username="admin" password="pass123" ip="192.168.111.2" ipport="8000" systems_uri="redfish/v1/Systems/def" pcmk_host_list="node2" ssl_insecure="1" --wait=30`,
+			want: `/usr/sbin/pcs stonith create node2_redfish fence_redfish username="admin" password="pass123" ip="192.168.111.2" ipport="8000" systems_uri="redfish/v1/Systems/def" pcmk_host_list="node2" pcmk_delay_base="" ssl_insecure="1" --wait=120`,
 		},
 		{
 			name: "stonith command with ipv6",
@@ -323,7 +323,7 @@ func TestGetStonithCommand(t *testing.T) {
 					PcmkDelayBase: "10s",
 				},
 			},
-			want: `/usr/sbin/pcs stonith create node1_redfish fence_redfish username="admin" password="pass123" ip="192.168.111.1" ipport="8000" systems_uri="redfish/v1/Systems/abc" pcmk_host_list="node1" pcmk_delay_base="10s" --wait=30`,
+			want: `/usr/sbin/pcs stonith create node1_redfish fence_redfish username="admin" password="pass123" ip="192.168.111.1" ipport="8000" systems_uri="redfish/v1/Systems/abc" pcmk_host_list="node1" pcmk_delay_base="10s" ssl_insecure="0" --wait=120`,
 		},
 		{
 			name: "stonith command with both ssl_insecure and pcmk_delay_base",
@@ -341,7 +341,7 @@ func TestGetStonithCommand(t *testing.T) {
 					PcmkDelayBase: "10s",
 				},
 			},
-			want: `/usr/sbin/pcs stonith create node3_redfish fence_redfish username="admin" password="pass123" ip="192.168.111.3" ipport="8000" systems_uri="redfish/v1/Systems/ghi" pcmk_host_list="node3" ssl_insecure="1" pcmk_delay_base="10s" --wait=30`,
+			want: `/usr/sbin/pcs stonith create node3_redfish fence_redfish username="admin" password="pass123" ip="192.168.111.3" ipport="8000" systems_uri="redfish/v1/Systems/ghi" pcmk_host_list="node3" pcmk_delay_base="10s" ssl_insecure="1" --wait=120`,
 		},
 		{
 			name: "stonith command with existing device",
@@ -363,7 +363,7 @@ func TestGetStonithCommand(t *testing.T) {
 					SslInsecure: "",
 				},
 			},
-			want: `/usr/sbin/pcs stonith update node2_redfish fence_redfish username="admin" password="pass123" ip="192.168.111.2" ipport="8000" systems_uri="redfish/v1/Systems/def" pcmk_host_list="node2" ssl_insecure="1" --wait=30`,
+			want: `/usr/sbin/pcs stonith update node2_redfish fence_redfish username="admin" password="pass123" ip="192.168.111.2" ipport="8000" systems_uri="redfish/v1/Systems/def" pcmk_host_list="node2" pcmk_delay_base="" ssl_insecure="1" --wait=120`,
 		},
 	}
 
