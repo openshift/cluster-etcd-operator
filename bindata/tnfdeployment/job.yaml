@@ -3,6 +3,7 @@ kind: Job
 metadata:
   labels:
     app.kubernetes.io/name: <injected>
+    app.kubernetes.io/component: two-node-fencing-setup
   namespace: openshift-etcd
   name: <injected>
 spec:
@@ -24,6 +25,11 @@ spec:
           securityContext:
             privileged: true
             allowPrivilegeEscalation: true
+          env:
+            - name: MY_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
       hostIPC: false
       hostNetwork: false
       hostPID: true

@@ -46,32 +46,8 @@ func RemoveStaticContainer(ctx context.Context, operatorClient v1helpers.StaticP
 func waitForStaticContainerRemoved(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient) error {
 	klog.Info("Wait for static etcd removed")
 
-	isRemoved := func(context.Context) (done bool, err error) {
-		_, status, _, err := operatorClient.GetStaticPodOperatorState()
-		if err != nil {
-			klog.Error(err, "Failed to get Etcd, but will ignore error for now...")
-			return false, nil
-		}
-
-		if status == nil || len(status.NodeStatuses) == 0 {
-			klog.V(2).Info("static pod operator status not yet populated; waiting")
-			return false, nil
-		}
-
-		removed := true
-		for _, nodeStatus := range status.NodeStatuses {
-			if nodeStatus.CurrentRevision == status.LatestAvailableRevision {
-				klog.Infof("static etcd removed: node %s, current rev %v, latest rev %v", nodeStatus.NodeName, nodeStatus.CurrentRevision, status.LatestAvailableRevision)
-			} else {
-				klog.Infof("static etcd not removed yet: node %s, current rev %v, latest rev %v", nodeStatus.NodeName, nodeStatus.CurrentRevision, status.LatestAvailableRevision)
-				removed = false
-			}
-		}
-		return removed, nil
-	}
-
-	// set immediate to false in order to give CEO some time to actually create a new revision if needed
-	err := wait.PollUntilContextTimeout(ctx, 10*time.Second, 10*time.Minute, false, isRemoved)
+	// the container is removed when all nodes run the latest revision
+	err := WaitForUpdatedRevision(ctx, operatorClient)
 	if err != nil {
 		return err
 	}
@@ -87,4 +63,36 @@ func waitForStaticContainerRemoved(ctx context.Context, operatorClient v1helpers
 	}))
 
 	return err
+}
+
+// WaitForUpdatedRevision waits until all nodes run the latest available revision
+func WaitForUpdatedRevision(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient) error {
+	klog.Info("Wait for updated revision")
+
+	isUpdated := func(context.Context) (done bool, err error) {
+		_, status, _, err := operatorClient.GetStaticPodOperatorState()
+		if err != nil {
+			klog.Error(err, "failed to get Etcd, but will ignore error for now...")
+			return false, nil
+		}
+
+		if status == nil || len(status.NodeStatuses) == 0 {
+			klog.V(2).Info("static pod operator status not yet populated; waiting")
+			return false, nil
+		}
+
+		allUpdated := true
+		for _, nodeStatus := range status.NodeStatuses {
+			if nodeStatus.CurrentRevision == status.LatestAvailableRevision {
+				klog.Infof("node %q is running the latest etcd revision %q", nodeStatus.NodeName, nodeStatus.CurrentRevision)
+			} else {
+				klog.Infof("node %q is not running the latest etcd revision yet, expected %q, got %q", nodeStatus.NodeName, status.LatestAvailableRevision, nodeStatus.CurrentRevision)
+				allUpdated = false
+			}
+		}
+		return allUpdated, nil
+	}
+
+	// set immediate to false in order to give CEO some time to actually create a new revision if needed
+	return wait.PollUntilContextTimeout(ctx, 10*time.Second, 10*time.Minute, false, isUpdated)
 }
