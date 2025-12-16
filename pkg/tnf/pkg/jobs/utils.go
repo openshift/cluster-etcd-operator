@@ -27,10 +27,7 @@ func WaitForCompletion(ctx context.Context, kubeClient kubernetes.Interface, job
 
 // waitWithConditionFunc waits for a Job to fulfill given conditionFunc
 func waitWithConditionFunc(ctx context.Context, kubeClient kubernetes.Interface, jobName string, jobNamespace string, timeout time.Duration, conditionFunc func(job batchv1.Job) bool) error {
-	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	return wait.PollUntilContextTimeout(timeoutCtx, 5*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+	return wait.PollUntilContextTimeout(ctx, 5*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		job, err := kubeClient.BatchV1().Jobs(jobNamespace).Get(ctx, jobName, v1.GetOptions{})
 		if err != nil {
 			// Ignore errors (including NotFound) to avoid returning early. The job might be
@@ -74,8 +71,15 @@ func DeleteAndWait(ctx context.Context, kubeClient kubernetes.Interface, jobName
 	klog.V(4).Infof("waiting for job %s to be deleted", jobName)
 	return wait.PollUntilContextTimeout(ctx, 5*time.Second, 1*time.Minute, true, func(ctx context.Context) (bool, error) {
 		newJob, err := kubeClient.BatchV1().Jobs(jobNamespace).Get(ctx, jobName, v1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return true, nil
+		}
+		if err != nil {
+			klog.Warningf("error checking job %s deletion status: %v", jobName, err)
+			return false, nil // retry on transient errors
+		}
 		// job might be recreated already, check UID
-		return apierrors.IsNotFound(err) || newJob.GetUID() != oldJobUID, nil
+		return newJob.GetUID() != oldJobUID, nil
 	})
 }
 

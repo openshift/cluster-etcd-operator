@@ -326,19 +326,19 @@ func TestDeleteAndWait(t *testing.T) {
 				client := fake.NewSimpleClientset(job)
 
 				// After delete, subsequent Gets should return NotFound
+				deleted := false
 				client.PrependReactor("delete", "jobs", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
 					// Simulate successful deletion
+					deleted = true
 					return false, nil, nil
 				})
 
 				// Make Get return NotFound after deletion
-				deleted := false
 				client.PrependReactor("get", "jobs", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
 					if deleted {
 						return true, nil, apierrors.NewNotFound(batchv1.Resource("jobs"), "test-job")
 					}
 					// First get after deletion initiates the wait loop
-					deleted = true
 					return false, nil, nil
 				})
 
