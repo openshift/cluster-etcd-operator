@@ -306,7 +306,7 @@ func TestGetStonithCommand(t *testing.T) {
 					SslInsecure: "",
 				},
 			},
-			want: `/usr/sbin/pcs stonith create node2_redfish fence_redfish username="admin" password="pass123" ip="[1234:1234:1234::1234]" ipport="8000" systems_uri="redfish/v1/Systems/def" pcmk_host_list="node2" ssl_insecure="1" --wait=30`,
+			want: `/usr/sbin/pcs stonith create node2_redfish fence_redfish username="admin" password="pass123" ip="[1234:1234:1234::1234]" ipport="8000" systems_uri="redfish/v1/Systems/def" pcmk_host_list="node2" pcmk_delay_base="" ssl_insecure="1" --wait=120`,
 		},
 		{
 			name: "stonith command with pcmk_delay_base",

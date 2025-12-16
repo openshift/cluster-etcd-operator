@@ -235,7 +235,7 @@ func getStonithCommand(sc StonithConfig, fc fencingConfig) string {
 
 	cmd := fmt.Sprintf("/usr/sbin/pcs stonith %s %s %s username=%q password=%q ip=%q ipport=%q systems_uri=%q pcmk_host_list=%q pcmk_delay_base=%q",
 		stonithAction, fc.FencingID, fc.FencingDeviceType, fc.FencingDeviceOptions[Username], fc.FencingDeviceOptions[Password],
-		fc.GetParsedIP(), fc.FencingDeviceOptions[IpPort], fc.FencingDeviceOptions[SystemsUri], fc.NodeName)
+		fc.GetParsedIP(), fc.FencingDeviceOptions[IpPort], fc.FencingDeviceOptions[SystemsUri], fc.NodeName, fc.FencingDeviceOptions[PcmkDelayBase])
 
 	if _, exists := fc.FencingDeviceOptions[SslInsecure]; exists {
 		cmd += ` ssl_insecure="1"`

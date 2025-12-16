@@ -1,4 +1,4 @@
-package auth
+package after_setup
 
 import (
 	"context"

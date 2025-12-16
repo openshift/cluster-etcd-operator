@@ -15,6 +15,7 @@ const (
 	AuthJobCompletedTimeout       = 10 * time.Minute
 	SetupJobCompletedTimeout      = 20 * time.Minute
 	AfterSetupJobCompletedTimeout = 5 * time.Minute
+	AllCompletedTimeout           = 30 * time.Minute
 	FencingJobCompletedTimeout    = 25 * time.Minute
 )
 

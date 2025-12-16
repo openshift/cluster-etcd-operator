@@ -117,7 +117,7 @@ func handleNodes(
 		return fmt.Errorf("failed to list control plane nodes: %w", err)
 	}
 	if len(nodeList) > 2 {
-		klog.Errorf("found more than 2 control plane nodes (%d), unsupported use case, no further steps are taken for now", len(nodeList))
+		klog.Warningf("found more than 2 control plane nodes (%d), unsupported use case, no further steps are taken for now", len(nodeList))
 		// don't retry
 		return nil
 	}
@@ -303,7 +303,7 @@ func waitForTnfAfterSetupJobsCompletion(ctx context.Context, kubeClient kubernet
 	for _, node := range nodeList {
 		jobName := tools.JobTypeAfterSetup.GetJobName(&node.Name)
 		klog.Infof("Waiting for after-setup job %s to complete", jobName)
-		if err := jobs.WaitForCompletion(ctx, kubeClient, jobName, operatorclient.TargetNamespace, 20*time.Minute); err != nil {
+		if err := jobs.WaitForCompletion(ctx, kubeClient, jobName, operatorclient.TargetNamespace, tools.AllCompletedTimeout); err != nil {
 			return fmt.Errorf("failed to wait for after-setup job %s to complete: %w", jobName, err)
 		}
 	}

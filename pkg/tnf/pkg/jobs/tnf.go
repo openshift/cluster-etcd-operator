@@ -74,7 +74,15 @@ func RunTNFJobController(ctx context.Context, jobType tools.JobType, nodeName *s
 				return nil
 			}}...,
 	)
-	go tnfJobController.Run(ctx, 1)
+	go func() {
+		defer func() {
+			runningControllersMutex.Lock()
+			delete(runningControllers, controllerKey)
+			runningControllersMutex.Unlock()
+			klog.Infof("Two Node Fencing job controller for command %q on node %q stopped", jobType.GetSubCommand(), nodeNameForLogs)
+		}()
+		tnfJobController.Run(ctx, 1)
+	}()
 }
 
 func RestartJobOrRunController(

@@ -118,7 +118,7 @@ func RunTnfUpdateSetup() error {
 		// Add new node to the cluster configuration
 		fmt.Sprintf("/usr/sbin/pcs cluster node add %s", otherNodeName),
 	}
-	err = runCommands(commands, ctx)
+	err = runCommands(ctx, commands)
 	if err != nil {
 		return err
 	}
@@ -138,7 +138,7 @@ func RunTnfUpdateSetup() error {
 		// Update etcd resource
 		fmt.Sprintf("/usr/sbin/pcs resource update etcd node_ip_map=\"%s:%s;%s:%s\" --wait=300", cfg.NodeName1, cfg.NodeIP1, cfg.NodeName2, cfg.NodeIP2),
 	}
-	err = runCommands(commands, ctx)
+	err = runCommands(ctx, commands)
 	if err != nil {
 		return err
 	}
@@ -154,9 +154,9 @@ func RunTnfUpdateSetup() error {
 		stdOut, stdErr, err = exec.Execute(ctx, command)
 		if err != nil {
 			klog.Errorf("Failed to remove unstarted etcd member: %s, stdout: %s, stderr: %s, err: %v", command, stdOut, stdErr, err)
-		} else {
-			klog.Infof("Removed unstarted etcd member: %s", unstartedMemberID)
+			return err
 		}
+		klog.Infof("Removed unstarted etcd member: %s", unstartedMemberID)
 	}
 
 	// wait a bit for things to settle
@@ -169,7 +169,7 @@ func RunTnfUpdateSetup() error {
 		// Start cluster on new node
 		"/usr/sbin/pcs cluster start --all",
 	}
-	err = runCommands(commands, ctx)
+	err = runCommands(ctx, commands)
 	if err != nil {
 		return err
 	}
@@ -177,7 +177,7 @@ func RunTnfUpdateSetup() error {
 	return nil
 }
 
-func runCommands(commands []string, ctx context.Context) error {
+func runCommands(ctx context.Context, commands []string) error {
 	for _, command := range commands {
 		stdOut, stdErr, err := exec.Execute(ctx, command)
 		if err != nil {
