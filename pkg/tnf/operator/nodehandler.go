@@ -23,6 +23,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/etcd"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/jobs"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
@@ -188,7 +189,14 @@ func startTnfJobcontrollers(
 	if err := waitForEtcdBootstrapCompleted(ctx, operatorClient); err != nil {
 		return fmt.Errorf("failed to wait for etcd bootstrap: %w", err)
 	}
-	klog.Infof("bootstrap completed, creating TNF job controllers")
+
+	// Wait for all nodes to have their installers complete (creates /var/lib/etcd)
+	klog.Infof("bootstrap completed, waiting for all nodes to reach latest revision")
+	if err := etcd.WaitForStableRevision(ctx, operatorClient); err != nil {
+		return fmt.Errorf("failed to wait for all nodes at latest revision: %w", err)
+	}
+
+	klog.Infof("all nodes at latest revision, creating TNF job controllers")
 
 	// the order of job creation does not matter, the jobs wait on each other as needed
 	for _, node := range nodeList {
