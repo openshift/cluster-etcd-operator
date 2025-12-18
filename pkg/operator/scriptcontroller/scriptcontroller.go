@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/openshift/cluster-etcd-operator/bindata"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	corev1 "k8s.io/api/core/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -14,6 +15,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -23,10 +25,17 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 )
 
+// EnvVarGetter is an interface for getting environment variables and managing listeners
+type EnvVarGetter interface {
+	GetEnvVars() map[string]string
+	AddListener(listener etcdenvvar.Enqueueable)
+}
+
 type ScriptController struct {
 	operatorClient v1helpers.StaticPodOperatorClient
 	kubeClient     kubernetes.Interface
-	envVarGetter   *etcdenvvar.EnvVarController
+	infraLister    configv1listers.InfrastructureLister
+	envVarGetter   EnvVarGetter
 	enqueueFn      func()
 }
 
@@ -34,12 +43,14 @@ func NewScriptControllerController(
 	livenessChecker *health.MultiAlivenessChecker,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeClient kubernetes.Interface,
-	envVarGetter *etcdenvvar.EnvVarController,
+	infraLister configv1listers.InfrastructureLister,
+	envVarGetter EnvVarGetter,
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &ScriptController{
 		operatorClient: operatorClient,
 		kubeClient:     kubeClient,
+		infraLister:    infraLister,
 		envVarGetter:   envVarGetter,
 	}
 	envVarGetter.AddListener(c)
@@ -115,15 +126,32 @@ func (c *ScriptController) manageScriptConfigMap(ctx context.Context, recorder e
 	}
 	scriptConfigMap.Data["etcd.env"] = envVarFileContent
 
+	// Select the appropriate cluster-restore.sh and disable-etcd.sh based on topology
+	var clusterRestoreScript string
+	var disableEtcdScript string
+	if isTNF, err := ceohelpers.IsExternalEtcdCluster(ctx, c.infraLister); err != nil {
+		return nil, false, fmt.Errorf("failed to detect cluster topology: %v", err)
+	} else if isTNF {
+		clusterRestoreScript = "etcd/cluster-restore-tnf.sh"
+		disableEtcdScript = "etcd/disable-etcd-tnf.sh"
+	} else {
+		clusterRestoreScript = "etcd/cluster-restore.sh"
+		disableEtcdScript = "etcd/disable-etcd.sh"
+	}
+
+	// Deploy common scripts (same for both TNF and standard)
 	for _, filename := range []string{
-		"etcd/cluster-restore.sh",
 		"etcd/quorum-restore.sh",
 		"etcd/cluster-backup.sh",
-		"etcd/disable-etcd.sh",
 		"etcd/etcd-common-tools",
 	} {
 		basename := filepath.Base(filename)
 		scriptConfigMap.Data[basename] = string(bindata.MustAsset(filename))
 	}
+
+	// Deploy topology-specific scripts with standard names
+	scriptConfigMap.Data["cluster-restore.sh"] = string(bindata.MustAsset(clusterRestoreScript))
+	scriptConfigMap.Data["disable-etcd.sh"] = string(bindata.MustAsset(disableEtcdScript))
+
 	return resourceapply.ApplyConfigMap(ctx, c.kubeClient.CoreV1(), recorder, scriptConfigMap)
 }
