@@ -51,7 +51,7 @@ func createPacemakerRESTClient(baseConfig *rest.Config) (rest.Interface, error) 
 	// Configure the REST client for the PacemakerStatus CRD
 	pacemakerConfig := rest.CopyConfig(baseConfig)
 	pacemakerConfig.GroupVersion = &v1alpha1.SchemeGroupVersion
-	pacemakerConfig.APIPath = kubernetesAPIPath
+	pacemakerConfig.APIPath = KubernetesAPIPath
 	pacemakerConfig.NegotiatedSerializer = serializer.NewCodecFactory(scheme)
 	pacemakerConfig.ContentConfig.ContentType = "application/json"
 

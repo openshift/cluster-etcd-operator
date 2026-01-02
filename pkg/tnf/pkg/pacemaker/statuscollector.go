@@ -16,6 +16,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
@@ -42,31 +43,146 @@ const (
 	// maxXMLSize prevents XML bombs and excessive memory consumption (10MB limit)
 	maxXMLSize = 10 * 1024 * 1024
 
-	// Time windows for detecting recent events
-	failedActionTimeWindow = 5 * time.Minute
-	fencingEventTimeWindow = 24 * time.Hour
-
-	// Expected number of nodes in a TNF cluster
-	expectedNodeCountTNF = 2
-
-	// Kubernetes API constants (kubernetesAPIPath and pacemakerResourceName shared with healthcheck.go)
+	// Kubernetes API constants
 	statusSubresource = "status"
-
-	// Event reasons for the status collector (uses shared eventReasonFencingEvent and eventReasonFailedAction from healthcheck.go)
-	eventReasonCollectionError   = "PacemakerStatusCollectionError"
-	eventReasonCollectionSuccess = "PacemakerStatusCollectionSuccess"
 
 	// Time formats for parsing Pacemaker timestamps
 	pacemakerTimeFormat      = "Mon Jan 2 15:04:05 2006"
 	pacemakerFenceTimeFormat = "2006-01-02 15:04:05.000000Z"
 
-	// Namespace for events
-	targetNamespace = "openshift-etcd"
+	// Resource agent prefixes specific to statuscollector
+	resourceAgentRedfish = "stonith:fence_redfish"
+)
 
-	// Resource agent prefixes (uses shared resourceAgentKubelet and resourceAgentEtcd from healthcheck.go)
-	resourceAgentFencing  = "stonith:"
-	resourceAgentFenceAWS = "fence_aws"
-	resourceAgentRedfish  = "stonith:fence_redfish"
+// Condition specs for nodes - used with buildCondition for DRY code
+var (
+	nodeOnlineSpec = ConditionSpec{
+		Type:        v1alpha1.NodeOnlineConditionType,
+		TrueReason:  v1alpha1.NodeOnlineReasonOnline,
+		FalseReason: v1alpha1.NodeOnlineReasonOffline,
+		TrueMsg:     "Node is online",
+		FalseMsg:    "Node is offline",
+	}
+	nodeInServiceSpec = ConditionSpec{
+		Type:        v1alpha1.NodeInServiceConditionType,
+		TrueReason:  v1alpha1.NodeInServiceReasonInService,
+		FalseReason: v1alpha1.NodeInServiceReasonInMaintenance,
+		TrueMsg:     "Node is in service",
+		FalseMsg:    "Node is in maintenance mode",
+	}
+	nodeActiveSpec = ConditionSpec{
+		Type:        v1alpha1.NodeActiveConditionType,
+		TrueReason:  v1alpha1.NodeActiveReasonActive,
+		FalseReason: v1alpha1.NodeActiveReasonStandby,
+		TrueMsg:     "Node is active",
+		FalseMsg:    "Node is in standby mode",
+	}
+	nodeReadySpec = ConditionSpec{
+		Type:        v1alpha1.NodeReadyConditionType,
+		TrueReason:  v1alpha1.NodeReadyReasonReady,
+		FalseReason: v1alpha1.NodeReadyReasonPending,
+		TrueMsg:     "Node is ready",
+		FalseMsg:    "Node is pending",
+	}
+	nodeCleanSpec = ConditionSpec{
+		Type:        v1alpha1.NodeCleanConditionType,
+		TrueReason:  v1alpha1.NodeCleanReasonClean,
+		FalseReason: v1alpha1.NodeCleanReasonUnclean,
+		TrueMsg:     "Node is in a clean state",
+		FalseMsg:    "Node is in an unclean state",
+	}
+	nodeMemberSpec = ConditionSpec{
+		Type:        v1alpha1.NodeMemberConditionType,
+		TrueReason:  v1alpha1.NodeMemberReasonMember,
+		FalseReason: v1alpha1.NodeMemberReasonNotMember,
+		TrueMsg:     "Node is a cluster member",
+		FalseMsg:    "Node is not a cluster member",
+	}
+	nodeHealthySpec = ConditionSpec{
+		Type:        v1alpha1.NodeHealthyConditionType,
+		TrueReason:  v1alpha1.NodeHealthyReasonHealthy,
+		FalseReason: v1alpha1.NodeHealthyReasonUnhealthy,
+		TrueMsg:     "Node is healthy",
+		FalseMsg:    "Node has issues that need investigation",
+	}
+)
+
+// Condition specs for resources - used with buildCondition for DRY code
+var (
+	resourceInServiceSpec = ConditionSpec{
+		Type:        v1alpha1.ResourceInServiceConditionType,
+		TrueReason:  v1alpha1.ResourceInServiceReasonInService,
+		FalseReason: v1alpha1.ResourceInServiceReasonInMaintenance,
+		TrueMsg:     "Resource is in service",
+		FalseMsg:    "Resource is in maintenance mode",
+	}
+	resourceManagedSpec = ConditionSpec{
+		Type:        v1alpha1.ResourceManagedConditionType,
+		TrueReason:  v1alpha1.ResourceManagedReasonManaged,
+		FalseReason: v1alpha1.ResourceManagedReasonUnmanaged,
+		TrueMsg:     "Resource is managed by pacemaker",
+		FalseMsg:    "Resource is not managed by pacemaker",
+	}
+	resourceEnabledSpec = ConditionSpec{
+		Type:        v1alpha1.ResourceEnabledConditionType,
+		TrueReason:  v1alpha1.ResourceEnabledReasonEnabled,
+		FalseReason: v1alpha1.ResourceEnabledReasonDisabled,
+		TrueMsg:     "Resource is enabled",
+		FalseMsg:    "Resource is disabled",
+	}
+	resourceOperationalSpec = ConditionSpec{
+		Type:        v1alpha1.ResourceOperationalConditionType,
+		TrueReason:  v1alpha1.ResourceOperationalReasonOperational,
+		FalseReason: v1alpha1.ResourceOperationalReasonFailed,
+		TrueMsg:     "Resource is operational",
+		FalseMsg:    "Resource has failed",
+	}
+	resourceActiveSpec = ConditionSpec{
+		Type:        v1alpha1.ResourceActiveConditionType,
+		TrueReason:  v1alpha1.ResourceActiveReasonActive,
+		FalseReason: v1alpha1.ResourceActiveReasonInactive,
+		TrueMsg:     "Resource is active",
+		FalseMsg:    "Resource is not active",
+	}
+	resourceStartedSpec = ConditionSpec{
+		Type:        v1alpha1.ResourceStartedConditionType,
+		TrueReason:  v1alpha1.ResourceStartedReasonStarted,
+		FalseReason: v1alpha1.ResourceStartedReasonStopped,
+		TrueMsg:     "Resource is started",
+		FalseMsg:    "Resource is stopped",
+	}
+	resourceSchedulableSpec = ConditionSpec{
+		Type:        v1alpha1.ResourceSchedulableConditionType,
+		TrueReason:  v1alpha1.ResourceSchedulableReasonSchedulable,
+		FalseReason: v1alpha1.ResourceSchedulableReasonUnschedulable,
+		TrueMsg:     "Resource is schedulable",
+		FalseMsg:    "Resource is unschedulable (blocked)",
+	}
+	resourceHealthySpec = ConditionSpec{
+		Type:        v1alpha1.ResourceHealthyConditionType,
+		TrueReason:  v1alpha1.ResourceHealthyReasonHealthy,
+		FalseReason: v1alpha1.ResourceHealthyReasonUnhealthy,
+		TrueMsg:     "Resource is healthy",
+		FalseMsg:    "Resource has issues that need investigation",
+	}
+)
+
+// Condition specs for cluster-level conditions
+var (
+	clusterInServiceSpec = ConditionSpec{
+		Type:        v1alpha1.ClusterInServiceConditionType,
+		TrueReason:  v1alpha1.ClusterInServiceReasonInService,
+		FalseReason: v1alpha1.ClusterInServiceReasonInMaintenance,
+		TrueMsg:     "Cluster is in service (not in maintenance mode)",
+		FalseMsg:    "Cluster is in maintenance mode",
+	}
+	clusterHealthySpec = ConditionSpec{
+		Type:        v1alpha1.ClusterHealthyConditionType,
+		TrueReason:  v1alpha1.ClusterHealthyReasonHealthy,
+		FalseReason: v1alpha1.ClusterHealthyReasonUnhealthy,
+		TrueMsg:     "Pacemaker cluster is healthy",
+		FalseMsg:    "Pacemaker cluster has issues that need investigation",
+	}
 )
 
 // XML structures for parsing pacemaker status from "pcs status xml" command output.
@@ -488,7 +604,7 @@ func buildClusterConditions(nodeCount int, inMaintenance bool, nodes []v1alpha1.
 	conditions = append(conditions, nodeCountCondition)
 
 	// InService condition (not in maintenance mode)
-	inServiceCondition := buildClusterInServiceCondition(inMaintenance, now)
+	inServiceCondition := buildCondition(clusterInServiceSpec, !inMaintenance, now)
 	conditions = append(conditions, inServiceCondition)
 
 	// Healthy condition (aggregate)
@@ -500,18 +616,18 @@ func buildClusterConditions(nodeCount int, inMaintenance bool, nodes []v1alpha1.
 
 // buildNodeCountCondition builds the NodeCountAsExpected condition
 func buildNodeCountCondition(nodeCount int, now metav1.Time) metav1.Condition {
-	if nodeCount == expectedNodeCountTNF {
+	if nodeCount == ExpectedNodeCount {
 		return metav1.Condition{
 			Type:               v1alpha1.ClusterNodeCountAsExpectedConditionType,
 			Status:             metav1.ConditionTrue,
 			Reason:             v1alpha1.ClusterNodeCountAsExpectedReasonAsExpected,
-			Message:            fmt.Sprintf("Expected %d nodes, found %d", expectedNodeCountTNF, nodeCount),
+			Message:            fmt.Sprintf("Expected %d nodes, found %d", ExpectedNodeCount, nodeCount),
 			LastTransitionTime: now,
 		}
 	}
 
 	reason := v1alpha1.ClusterNodeCountAsExpectedReasonInsufficientNodes
-	if nodeCount > expectedNodeCountTNF {
+	if nodeCount > ExpectedNodeCount {
 		reason = v1alpha1.ClusterNodeCountAsExpectedReasonExcessiveNodes
 	}
 
@@ -519,28 +635,7 @@ func buildNodeCountCondition(nodeCount int, now metav1.Time) metav1.Condition {
 		Type:               v1alpha1.ClusterNodeCountAsExpectedConditionType,
 		Status:             metav1.ConditionFalse,
 		Reason:             reason,
-		Message:            fmt.Sprintf("Expected %d nodes, found %d", expectedNodeCountTNF, nodeCount),
-		LastTransitionTime: now,
-	}
-}
-
-// buildClusterInServiceCondition builds the cluster InService condition
-func buildClusterInServiceCondition(inMaintenance bool, now metav1.Time) metav1.Condition {
-	if !inMaintenance {
-		return metav1.Condition{
-			Type:               v1alpha1.ClusterInServiceConditionType,
-			Status:             metav1.ConditionTrue,
-			Reason:             v1alpha1.ClusterInServiceReasonInService,
-			Message:            "Cluster is in service (not in maintenance mode)",
-			LastTransitionTime: now,
-		}
-	}
-
-	return metav1.Condition{
-		Type:               v1alpha1.ClusterInServiceConditionType,
-		Status:             metav1.ConditionFalse,
-		Reason:             v1alpha1.ClusterInServiceReasonInMaintenance,
-		Message:            "Cluster is in maintenance mode",
+		Message:            fmt.Sprintf("Expected %d nodes, found %d", ExpectedNodeCount, nodeCount),
 		LastTransitionTime: now,
 	}
 }
@@ -553,201 +648,39 @@ func buildClusterHealthyCondition(nodeCountCondition, inServiceCondition metav1.
 
 	// Check if all nodes are healthy
 	for _, node := range nodes {
-		nodeHealthy := getConditionStatus(node.Conditions, v1alpha1.NodeHealthyConditionType)
-		if nodeHealthy != metav1.ConditionTrue {
+		if getConditionStatus(node.Conditions, v1alpha1.NodeHealthyConditionType) != metav1.ConditionTrue {
 			allHealthy = false
 			break
 		}
 	}
 
-	if allHealthy {
-		return metav1.Condition{
-			Type:               v1alpha1.ClusterHealthyConditionType,
-			Status:             metav1.ConditionTrue,
-			Reason:             v1alpha1.ClusterHealthyReasonHealthy,
-			Message:            "Pacemaker cluster is healthy",
-			LastTransitionTime: now,
-		}
-	}
-
-	return metav1.Condition{
-		Type:               v1alpha1.ClusterHealthyConditionType,
-		Status:             metav1.ConditionFalse,
-		Reason:             v1alpha1.ClusterHealthyReasonUnhealthy,
-		Message:            "Pacemaker cluster has issues that need investigation",
-		LastTransitionTime: now,
-	}
+	return buildCondition(clusterHealthySpec, allHealthy, now)
 }
 
 // buildNodeConditions builds all conditions for a node
 func buildNodeConditions(xmlNode *Node, state *ResourceStatePerNode, now metav1.Time) []metav1.Condition {
-	conditions := make([]metav1.Condition, 0, 7)
-
-	// Online condition
+	// Extract node state flags
 	online := xmlNode != nil && xmlNode.Online == "true"
-	conditions = append(conditions, buildNodeOnlineCondition(online, now))
-
-	// InService condition (not in maintenance)
 	inMaintenance := xmlNode != nil && xmlNode.Maintenance == "true"
-	conditions = append(conditions, buildNodeInServiceCondition(!inMaintenance, now))
-
-	// Active condition (not in standby)
 	standby := xmlNode != nil && (xmlNode.Standby == "true" || xmlNode.StandbyOnFail == "true")
-	conditions = append(conditions, buildNodeActiveCondition(!standby, now))
-
-	// Ready condition (not pending)
 	pending := xmlNode != nil && xmlNode.Pending == "true"
-	conditions = append(conditions, buildNodeReadyCondition(!pending, now))
-
-	// Clean condition
 	unclean := xmlNode != nil && xmlNode.Unclean == "true"
-	conditions = append(conditions, buildNodeCleanCondition(!unclean, now))
-
-	// Member condition
 	isMember := xmlNode != nil && xmlNode.Type == "member"
-	conditions = append(conditions, buildNodeMemberCondition(isMember, now))
 
-	// Healthy condition (aggregate)
+	// Calculate aggregate health
 	healthy := online && !inMaintenance && !standby && !pending && !unclean && isMember
-	// Also check resource health
 	if state != nil {
 		healthy = healthy && state.KubeletRunning && state.EtcdRunning && state.FencingRunning
 	}
-	conditions = append(conditions, buildNodeHealthyCondition(healthy, now))
 
-	return conditions
-}
-
-func buildNodeOnlineCondition(online bool, now metav1.Time) metav1.Condition {
-	if online {
-		return metav1.Condition{
-			Type:               v1alpha1.NodeOnlineConditionType,
-			Status:             metav1.ConditionTrue,
-			Reason:             v1alpha1.NodeOnlineReasonOnline,
-			Message:            "Node is online",
-			LastTransitionTime: now,
-		}
-	}
-	return metav1.Condition{
-		Type:               v1alpha1.NodeOnlineConditionType,
-		Status:             metav1.ConditionFalse,
-		Reason:             v1alpha1.NodeOnlineReasonOffline,
-		Message:            "Node is offline",
-		LastTransitionTime: now,
-	}
-}
-
-func buildNodeInServiceCondition(inService bool, now metav1.Time) metav1.Condition {
-	if inService {
-		return metav1.Condition{
-			Type:               v1alpha1.NodeInServiceConditionType,
-			Status:             metav1.ConditionTrue,
-			Reason:             v1alpha1.NodeInServiceReasonInService,
-			Message:            "Node is in service",
-			LastTransitionTime: now,
-		}
-	}
-	return metav1.Condition{
-		Type:               v1alpha1.NodeInServiceConditionType,
-		Status:             metav1.ConditionFalse,
-		Reason:             v1alpha1.NodeInServiceReasonInMaintenance,
-		Message:            "Node is in maintenance mode",
-		LastTransitionTime: now,
-	}
-}
-
-func buildNodeActiveCondition(active bool, now metav1.Time) metav1.Condition {
-	if active {
-		return metav1.Condition{
-			Type:               v1alpha1.NodeActiveConditionType,
-			Status:             metav1.ConditionTrue,
-			Reason:             v1alpha1.NodeActiveReasonActive,
-			Message:            "Node is active",
-			LastTransitionTime: now,
-		}
-	}
-	return metav1.Condition{
-		Type:               v1alpha1.NodeActiveConditionType,
-		Status:             metav1.ConditionFalse,
-		Reason:             v1alpha1.NodeActiveReasonStandby,
-		Message:            "Node is in standby mode",
-		LastTransitionTime: now,
-	}
-}
-
-func buildNodeReadyCondition(ready bool, now metav1.Time) metav1.Condition {
-	if ready {
-		return metav1.Condition{
-			Type:               v1alpha1.NodeReadyConditionType,
-			Status:             metav1.ConditionTrue,
-			Reason:             v1alpha1.NodeReadyReasonReady,
-			Message:            "Node is ready",
-			LastTransitionTime: now,
-		}
-	}
-	return metav1.Condition{
-		Type:               v1alpha1.NodeReadyConditionType,
-		Status:             metav1.ConditionFalse,
-		Reason:             v1alpha1.NodeReadyReasonPending,
-		Message:            "Node is pending",
-		LastTransitionTime: now,
-	}
-}
-
-func buildNodeCleanCondition(clean bool, now metav1.Time) metav1.Condition {
-	if clean {
-		return metav1.Condition{
-			Type:               v1alpha1.NodeCleanConditionType,
-			Status:             metav1.ConditionTrue,
-			Reason:             v1alpha1.NodeCleanReasonClean,
-			Message:            "Node is in a clean state",
-			LastTransitionTime: now,
-		}
-	}
-	return metav1.Condition{
-		Type:               v1alpha1.NodeCleanConditionType,
-		Status:             metav1.ConditionFalse,
-		Reason:             v1alpha1.NodeCleanReasonUnclean,
-		Message:            "Node is in an unclean state",
-		LastTransitionTime: now,
-	}
-}
-
-func buildNodeMemberCondition(isMember bool, now metav1.Time) metav1.Condition {
-	if isMember {
-		return metav1.Condition{
-			Type:               v1alpha1.NodeMemberConditionType,
-			Status:             metav1.ConditionTrue,
-			Reason:             v1alpha1.NodeMemberReasonMember,
-			Message:            "Node is a cluster member",
-			LastTransitionTime: now,
-		}
-	}
-	return metav1.Condition{
-		Type:               v1alpha1.NodeMemberConditionType,
-		Status:             metav1.ConditionFalse,
-		Reason:             v1alpha1.NodeMemberReasonNotMember,
-		Message:            "Node is not a cluster member",
-		LastTransitionTime: now,
-	}
-}
-
-func buildNodeHealthyCondition(healthy bool, now metav1.Time) metav1.Condition {
-	if healthy {
-		return metav1.Condition{
-			Type:               v1alpha1.NodeHealthyConditionType,
-			Status:             metav1.ConditionTrue,
-			Reason:             v1alpha1.NodeHealthyReasonHealthy,
-			Message:            "Node is healthy",
-			LastTransitionTime: now,
-		}
-	}
-	return metav1.Condition{
-		Type:               v1alpha1.NodeHealthyConditionType,
-		Status:             metav1.ConditionFalse,
-		Reason:             v1alpha1.NodeHealthyReasonUnhealthy,
-		Message:            "Node has issues that need investigation",
-		LastTransitionTime: now,
+	return []metav1.Condition{
+		buildCondition(nodeOnlineSpec, online, now),
+		buildCondition(nodeInServiceSpec, !inMaintenance, now),
+		buildCondition(nodeActiveSpec, !standby, now),
+		buildCondition(nodeReadySpec, !pending, now),
+		buildCondition(nodeCleanSpec, !unclean, now),
+		buildCondition(nodeMemberSpec, isMember, now),
+		buildCondition(nodeHealthySpec, healthy, now),
 	}
 }
 
@@ -794,13 +727,10 @@ func buildResourceStatus(name v1alpha1.PacemakerClusterResourceName, resource *R
 
 // buildResourceConditions builds all conditions for a resource
 func buildResourceConditions(resource *Resource, running bool, now metav1.Time) []metav1.Condition {
-	conditions := make([]metav1.Condition, 0, 8)
-
-	// Derive states from resource or use defaults
+	// Derive states from resource or use defaults (all false if resource is nil)
 	var inMaintenance, managed, enabled, operational, active, started, schedulable bool
 
 	if resource != nil {
-		// Resource is in maintenance if maintenance="true"
 		inMaintenance = false // Pacemaker XML doesn't expose this per-resource, only per-node
 		managed = resource.Managed == "true"
 		enabled = resource.TargetRole != "Stopped"
@@ -808,194 +738,20 @@ func buildResourceConditions(resource *Resource, running bool, now metav1.Time) 
 		active = resource.Active == "true"
 		started = resource.Role == "Started"
 		schedulable = resource.Blocked != "true"
-	} else {
-		// Default values when resource not found
-		inMaintenance = false
-		managed = false
-		enabled = false
-		operational = false
-		active = false
-		started = false
-		schedulable = false
 	}
 
-	// InService condition
-	conditions = append(conditions, buildResourceInServiceCondition(!inMaintenance, now))
-
-	// Managed condition
-	conditions = append(conditions, buildResourceManagedCondition(managed, now))
-
-	// Enabled condition
-	conditions = append(conditions, buildResourceEnabledCondition(enabled, now))
-
-	// Operational condition
-	conditions = append(conditions, buildResourceOperationalCondition(operational, now))
-
-	// Active condition
-	conditions = append(conditions, buildResourceActiveCondition(active, now))
-
-	// Started condition
-	conditions = append(conditions, buildResourceStartedCondition(started, now))
-
-	// Schedulable condition
-	conditions = append(conditions, buildResourceSchedulableCondition(schedulable, now))
-
-	// Healthy condition (aggregate)
+	// Calculate aggregate health
 	healthy := !inMaintenance && managed && enabled && operational && active && started && schedulable
-	conditions = append(conditions, buildResourceHealthyCondition(healthy, now))
 
-	return conditions
-}
-
-func buildResourceInServiceCondition(inService bool, now metav1.Time) metav1.Condition {
-	if inService {
-		return metav1.Condition{
-			Type:               v1alpha1.ResourceInServiceConditionType,
-			Status:             metav1.ConditionTrue,
-			Reason:             v1alpha1.ResourceInServiceReasonInService,
-			Message:            "Resource is in service",
-			LastTransitionTime: now,
-		}
-	}
-	return metav1.Condition{
-		Type:               v1alpha1.ResourceInServiceConditionType,
-		Status:             metav1.ConditionFalse,
-		Reason:             v1alpha1.ResourceInServiceReasonInMaintenance,
-		Message:            "Resource is in maintenance mode",
-		LastTransitionTime: now,
-	}
-}
-
-func buildResourceManagedCondition(managed bool, now metav1.Time) metav1.Condition {
-	if managed {
-		return metav1.Condition{
-			Type:               v1alpha1.ResourceManagedConditionType,
-			Status:             metav1.ConditionTrue,
-			Reason:             v1alpha1.ResourceManagedReasonManaged,
-			Message:            "Resource is managed by pacemaker",
-			LastTransitionTime: now,
-		}
-	}
-	return metav1.Condition{
-		Type:               v1alpha1.ResourceManagedConditionType,
-		Status:             metav1.ConditionFalse,
-		Reason:             v1alpha1.ResourceManagedReasonUnmanaged,
-		Message:            "Resource is not managed by pacemaker",
-		LastTransitionTime: now,
-	}
-}
-
-func buildResourceEnabledCondition(enabled bool, now metav1.Time) metav1.Condition {
-	if enabled {
-		return metav1.Condition{
-			Type:               v1alpha1.ResourceEnabledConditionType,
-			Status:             metav1.ConditionTrue,
-			Reason:             v1alpha1.ResourceEnabledReasonEnabled,
-			Message:            "Resource is enabled",
-			LastTransitionTime: now,
-		}
-	}
-	return metav1.Condition{
-		Type:               v1alpha1.ResourceEnabledConditionType,
-		Status:             metav1.ConditionFalse,
-		Reason:             v1alpha1.ResourceEnabledReasonDisabled,
-		Message:            "Resource is disabled",
-		LastTransitionTime: now,
-	}
-}
-
-func buildResourceOperationalCondition(operational bool, now metav1.Time) metav1.Condition {
-	if operational {
-		return metav1.Condition{
-			Type:               v1alpha1.ResourceOperationalConditionType,
-			Status:             metav1.ConditionTrue,
-			Reason:             v1alpha1.ResourceOperationalReasonOperational,
-			Message:            "Resource is operational",
-			LastTransitionTime: now,
-		}
-	}
-	return metav1.Condition{
-		Type:               v1alpha1.ResourceOperationalConditionType,
-		Status:             metav1.ConditionFalse,
-		Reason:             v1alpha1.ResourceOperationalReasonFailed,
-		Message:            "Resource has failed",
-		LastTransitionTime: now,
-	}
-}
-
-func buildResourceActiveCondition(active bool, now metav1.Time) metav1.Condition {
-	if active {
-		return metav1.Condition{
-			Type:               v1alpha1.ResourceActiveConditionType,
-			Status:             metav1.ConditionTrue,
-			Reason:             v1alpha1.ResourceActiveReasonActive,
-			Message:            "Resource is active",
-			LastTransitionTime: now,
-		}
-	}
-	return metav1.Condition{
-		Type:               v1alpha1.ResourceActiveConditionType,
-		Status:             metav1.ConditionFalse,
-		Reason:             v1alpha1.ResourceActiveReasonInactive,
-		Message:            "Resource is not active",
-		LastTransitionTime: now,
-	}
-}
-
-func buildResourceStartedCondition(started bool, now metav1.Time) metav1.Condition {
-	if started {
-		return metav1.Condition{
-			Type:               v1alpha1.ResourceStartedConditionType,
-			Status:             metav1.ConditionTrue,
-			Reason:             v1alpha1.ResourceStartedReasonStarted,
-			Message:            "Resource is started",
-			LastTransitionTime: now,
-		}
-	}
-	return metav1.Condition{
-		Type:               v1alpha1.ResourceStartedConditionType,
-		Status:             metav1.ConditionFalse,
-		Reason:             v1alpha1.ResourceStartedReasonStopped,
-		Message:            "Resource is stopped",
-		LastTransitionTime: now,
-	}
-}
-
-func buildResourceSchedulableCondition(schedulable bool, now metav1.Time) metav1.Condition {
-	if schedulable {
-		return metav1.Condition{
-			Type:               v1alpha1.ResourceSchedulableConditionType,
-			Status:             metav1.ConditionTrue,
-			Reason:             v1alpha1.ResourceSchedulableReasonSchedulable,
-			Message:            "Resource is schedulable",
-			LastTransitionTime: now,
-		}
-	}
-	return metav1.Condition{
-		Type:               v1alpha1.ResourceSchedulableConditionType,
-		Status:             metav1.ConditionFalse,
-		Reason:             v1alpha1.ResourceSchedulableReasonUnschedulable,
-		Message:            "Resource is unschedulable (blocked)",
-		LastTransitionTime: now,
-	}
-}
-
-func buildResourceHealthyCondition(healthy bool, now metav1.Time) metav1.Condition {
-	if healthy {
-		return metav1.Condition{
-			Type:               v1alpha1.ResourceHealthyConditionType,
-			Status:             metav1.ConditionTrue,
-			Reason:             v1alpha1.ResourceHealthyReasonHealthy,
-			Message:            "Resource is healthy",
-			LastTransitionTime: now,
-		}
-	}
-	return metav1.Condition{
-		Type:               v1alpha1.ResourceHealthyConditionType,
-		Status:             metav1.ConditionFalse,
-		Reason:             v1alpha1.ResourceHealthyReasonUnhealthy,
-		Message:            "Resource has issues that need investigation",
-		LastTransitionTime: now,
+	return []metav1.Condition{
+		buildCondition(resourceInServiceSpec, !inMaintenance, now),
+		buildCondition(resourceManagedSpec, managed, now),
+		buildCondition(resourceEnabledSpec, enabled, now),
+		buildCondition(resourceOperationalSpec, operational, now),
+		buildCondition(resourceActiveSpec, active, now),
+		buildCondition(resourceStartedSpec, started, now),
+		buildCondition(resourceSchedulableSpec, schedulable, now),
+		buildCondition(resourceHealthySpec, healthy, now),
 	}
 }
 
@@ -1053,14 +809,14 @@ func processResourcesForState(result *PacemakerResult, resourceState map[string]
 
 		// Determine which resource type this is and store both running state and resource details
 		switch {
-		case strings.HasPrefix(resource.ResourceAgent, resourceAgentKubelet):
+		case strings.HasPrefix(resource.ResourceAgent, ResourceAgentKubelet):
 			state.KubeletRunning = isRunning
 			state.KubeletResource = &resource
-		case strings.HasPrefix(resource.ResourceAgent, resourceAgentEtcd):
+		case strings.HasPrefix(resource.ResourceAgent, ResourceAgentEtcd):
 			state.EtcdRunning = isRunning
 			state.EtcdResource = &resource
-		case strings.HasPrefix(resource.ResourceAgent, resourceAgentFencing) ||
-			strings.Contains(resource.ResourceAgent, resourceAgentFenceAWS):
+		case strings.HasPrefix(resource.ResourceAgent, ResourceAgentFencing) ||
+			strings.Contains(resource.ResourceAgent, ResourceAgentFenceAWS):
 			// Fencing resources (stonith: prefix or fence_aws)
 			state.FencingRunning = isRunning
 			state.FencingResource = &resource
@@ -1080,19 +836,9 @@ func processResourcesForState(result *PacemakerResult, resourceState map[string]
 	}
 }
 
-// getConditionStatus gets the status of a condition by type from a list of conditions
-func getConditionStatus(conditions []metav1.Condition, conditionType string) metav1.ConditionStatus {
-	for _, condition := range conditions {
-		if condition.Type == conditionType {
-			return condition.Status
-		}
-	}
-	return metav1.ConditionUnknown
-}
-
 // recordFencingEvents records Kubernetes events for recent fencing events
 func recordFencingEvents(ctx context.Context, kubeClient kubernetes.Interface, result *PacemakerResult) {
-	fenceCutoffTime := time.Now().Add(-fencingEventTimeWindow)
+	fenceCutoffTime := time.Now().Add(-FencingEventTimeWindow)
 
 	for _, fenceEvent := range result.FenceHistory.FenceEvent {
 		if fenceEvent.Target == "" {
@@ -1114,13 +860,13 @@ func recordFencingEvents(ctx context.Context, kubeClient kubernetes.Interface, r
 		// Create event
 		message := fmt.Sprintf("Fencing event: %s of %s completed with status %s at %s",
 			fenceEvent.Action, fenceEvent.Target, fenceEvent.Status, fenceEvent.Completed)
-		recordEvent(ctx, kubeClient, eventReasonFencingEvent, message, corev1.EventTypeWarning)
+		recordEvent(ctx, kubeClient, EventReasonFencingEvent, message, corev1.EventTypeWarning)
 	}
 }
 
 // recordFailedActionEvents records Kubernetes events for recent failed resource actions
 func recordFailedActionEvents(ctx context.Context, kubeClient kubernetes.Interface, result *PacemakerResult) {
-	cutoffTime := time.Now().Add(-failedActionTimeWindow)
+	cutoffTime := time.Now().Add(-FailedActionTimeWindow)
 
 	for _, node := range result.NodeHistory.Node {
 		for _, resourceHistory := range node.ResourceHistory {
@@ -1145,7 +891,7 @@ func recordFailedActionEvents(ctx context.Context, kubeClient kubernetes.Interfa
 				// Create event
 				message := fmt.Sprintf("Failed resource action: %s %s on node %s (rc=%s: %s) at %s",
 					resourceHistory.ID, operation.Task, node.Name, operation.RC, operation.RCText, operation.LastRCChange)
-				recordEvent(ctx, kubeClient, eventReasonFailedAction, message, corev1.EventTypeWarning)
+				recordEvent(ctx, kubeClient, EventReasonFailedAction, message, corev1.EventTypeWarning)
 			}
 		}
 	}
@@ -1154,7 +900,7 @@ func recordFailedActionEvents(ctx context.Context, kubeClient kubernetes.Interfa
 // recordCollectionErrorEvent records an event for collection errors
 func recordCollectionErrorEvent(ctx context.Context, kubeClient kubernetes.Interface, err error) {
 	message := fmt.Sprintf("Failed to collect pacemaker status: %v", err)
-	recordEvent(ctx, kubeClient, eventReasonCollectionError, message, corev1.EventTypeWarning)
+	recordEvent(ctx, kubeClient, EventReasonCollectionError, message, corev1.EventTypeWarning)
 }
 
 // generateEventName generates a consistent event name based on content for deduplication
@@ -1167,36 +913,37 @@ func generateEventName(reason, message string) string {
 }
 
 // recordEventWithDeduplication records a Kubernetes event with deduplication.
-// If an event with the same name exists and was created recently, it updates the count instead of creating a new one.
+// If an event with the same name exists and was created recently, it patches the count instead of creating a new one.
+// Old events outside the deduplication window are left to age out naturally via Kubernetes garbage collection.
 func recordEventWithDeduplication(ctx context.Context, kubeClient kubernetes.Interface, reason, message, eventType string, deduplicationWindow time.Duration) {
 	eventName := generateEventName(reason, message)
 
 	// Try to get existing event
-	existingEvent, err := kubeClient.CoreV1().Events(targetNamespace).Get(ctx, eventName, metav1.GetOptions{})
+	existingEvent, err := kubeClient.CoreV1().Events(TargetNamespace).Get(ctx, eventName, metav1.GetOptions{})
 	if err == nil && existingEvent != nil {
 		// Event exists - check if it's within the deduplication window
 		if time.Since(existingEvent.LastTimestamp.Time) < deduplicationWindow {
-			// Update the existing event (increment count and update timestamp)
-			existingEvent.Count++
-			existingEvent.LastTimestamp = metav1.Now()
-
-			_, updateErr := kubeClient.CoreV1().Events(targetNamespace).Update(ctx, existingEvent, metav1.UpdateOptions{})
-			if updateErr != nil {
-				klog.V(4).Infof("Failed to update existing event %s: %v (will create new)", eventName, updateErr)
+			// Patch the existing event to increment count and update timestamp
+			// Using strategic merge patch to only update specific fields
+			now := metav1.Now()
+			patch := fmt.Sprintf(`{"count":%d,"lastTimestamp":"%s"}`, existingEvent.Count+1, now.Format(time.RFC3339))
+			_, patchErr := kubeClient.CoreV1().Events(TargetNamespace).Patch(ctx, eventName, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{})
+			if patchErr != nil {
+				klog.V(4).Infof("Failed to patch existing event %s: %v (will create new)", eventName, patchErr)
 			} else {
-				klog.V(4).Infof("Updated existing event: %s (count=%d)", eventName, existingEvent.Count)
+				klog.V(4).Infof("Patched existing event: %s (count=%d)", eventName, existingEvent.Count+1)
 				return
 			}
 		}
-		// Event exists but is outside the window - delete it and create fresh
-		_ = kubeClient.CoreV1().Events(targetNamespace).Delete(ctx, eventName, metav1.DeleteOptions{})
+		// Event exists but is outside the window - just create a new one
+		// Old events will be garbage collected by Kubernetes automatically
 	}
 
 	// Create new event
 	event := &corev1.Event{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      eventName,
-			Namespace: targetNamespace,
+			Namespace: TargetNamespace,
 		},
 		InvolvedObject: corev1.ObjectReference{
 			Kind:       "PacemakerCluster",
@@ -1215,17 +962,14 @@ func recordEventWithDeduplication(ctx context.Context, kubeClient kubernetes.Int
 		Count:          1,
 	}
 
-	_, createErr := kubeClient.CoreV1().Events(targetNamespace).Create(ctx, event, metav1.CreateOptions{})
+	_, createErr := kubeClient.CoreV1().Events(TargetNamespace).Create(ctx, event, metav1.CreateOptions{})
 	if createErr != nil {
 		if apierrors.IsAlreadyExists(createErr) {
-			// Race condition - another collector created the event; try to update instead
-			klog.V(4).Infof("Event %s already exists, attempting update", eventName)
-			existingEvent, getErr := kubeClient.CoreV1().Events(targetNamespace).Get(ctx, eventName, metav1.GetOptions{})
-			if getErr == nil {
-				existingEvent.Count++
-				existingEvent.LastTimestamp = metav1.Now()
-				_, _ = kubeClient.CoreV1().Events(targetNamespace).Update(ctx, existingEvent, metav1.UpdateOptions{})
-			}
+			// Race condition - another collector created the event; try to patch instead
+			klog.V(4).Infof("Event %s already exists, attempting patch", eventName)
+			now := metav1.Now()
+			patch := fmt.Sprintf(`{"count":2,"lastTimestamp":"%s"}`, now.Format(time.RFC3339))
+			_, _ = kubeClient.CoreV1().Events(TargetNamespace).Patch(ctx, eventName, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{})
 		} else {
 			klog.Warningf("Failed to create event: %v", createErr)
 		}
@@ -1239,10 +983,10 @@ func recordEvent(ctx context.Context, kubeClient kubernetes.Interface, reason, m
 	// Use default deduplication windows based on event type
 	var window time.Duration
 	switch reason {
-	case eventReasonFencingEvent:
-		window = fencingEventTimeWindow // 24 hours for fencing events
+	case EventReasonFencingEvent:
+		window = FencingEventTimeWindow // 24 hours for fencing events
 	default:
-		window = failedActionTimeWindow // 5 minutes for other events
+		window = FailedActionTimeWindow // 5 minutes for other events
 	}
 	recordEventWithDeduplication(ctx, kubeClient, reason, message, eventType, window)
 }
@@ -1265,7 +1009,7 @@ func updatePacemakerStatusCR(ctx context.Context, status *v1alpha1.PacemakerClus
 	// Try to get existing Pacemaker
 	var existing v1alpha1.PacemakerCluster
 	err = restClient.Get().
-		Resource(pacemakerResourceName).
+		Resource(PacemakerResourceName).
 		Name(PacemakerClusterResourceName).
 		Do(ctx).
 		Into(&existing)
@@ -1292,7 +1036,7 @@ func updatePacemakerStatusCR(ctx context.Context, status *v1alpha1.PacemakerClus
 			}
 
 			result := restClient.Post().
-				Resource(pacemakerResourceName).
+				Resource(PacemakerResourceName).
 				Body(newPacemakerCluster).
 				Do(ctx)
 
@@ -1302,7 +1046,7 @@ func updatePacemakerStatusCR(ctx context.Context, status *v1alpha1.PacemakerClus
 
 			// Ensure status is set on initial create when CRD uses the status subresource
 			result = restClient.Put().
-				Resource(pacemakerResourceName).
+				Resource(PacemakerResourceName).
 				Name(PacemakerClusterResourceName).
 				SubResource(statusSubresource).
 				Body(newPacemakerCluster).
@@ -1334,7 +1078,7 @@ func updatePacemakerStatusCR(ctx context.Context, status *v1alpha1.PacemakerClus
 	existing.Status = status
 
 	result := restClient.Put().
-		Resource(pacemakerResourceName).
+		Resource(PacemakerResourceName).
 		Name(PacemakerClusterResourceName).
 		SubResource(statusSubresource).
 		Body(&existing).

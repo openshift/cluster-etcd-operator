@@ -194,7 +194,7 @@ func TestBuildClusterStatus_ResourceHealth(t *testing.T) {
 						// Kubelet healthy on master-0
 						{
 							ID:            "kubelet-0",
-							ResourceAgent: resourceAgentKubelet,
+							ResourceAgent: ResourceAgentKubelet,
 							Role:          "Started",
 							Active:        "true",
 							Managed:       "true",
@@ -203,7 +203,7 @@ func TestBuildClusterStatus_ResourceHealth(t *testing.T) {
 						// Kubelet unhealthy on master-1
 						{
 							ID:            "kubelet-1",
-							ResourceAgent: resourceAgentKubelet,
+							ResourceAgent: ResourceAgentKubelet,
 							Role:          "Stopped",
 							Active:        "false",
 							Managed:       "true",
@@ -216,7 +216,7 @@ func TestBuildClusterStatus_ResourceHealth(t *testing.T) {
 				// Etcd healthy on both nodes
 				{
 					ID:            "etcd-0",
-					ResourceAgent: resourceAgentEtcd,
+					ResourceAgent: ResourceAgentEtcd,
 					Role:          "Started",
 					Active:        "true",
 					Managed:       "true",
@@ -224,7 +224,7 @@ func TestBuildClusterStatus_ResourceHealth(t *testing.T) {
 				},
 				{
 					ID:            "etcd-1",
-					ResourceAgent: resourceAgentEtcd,
+					ResourceAgent: ResourceAgentEtcd,
 					Role:          "Started",
 					Active:        "true",
 					Managed:       "true",
@@ -465,7 +465,7 @@ func TestProcessResourcesForState(t *testing.T) {
 					Resource: []Resource{
 						{
 							ID:            "kubelet-0",
-							ResourceAgent: resourceAgentKubelet,
+							ResourceAgent: ResourceAgentKubelet,
 							Role:          "Started",
 							Active:        "true",
 							Managed:       "true",
@@ -473,7 +473,7 @@ func TestProcessResourcesForState(t *testing.T) {
 						},
 						{
 							ID:            "kubelet-1",
-							ResourceAgent: resourceAgentKubelet,
+							ResourceAgent: ResourceAgentKubelet,
 							Role:          "Started",
 							Active:        "true",
 							Managed:       "true",
@@ -485,7 +485,7 @@ func TestProcessResourcesForState(t *testing.T) {
 			Resource: []Resource{
 				{
 					ID:            "etcd-0",
-					ResourceAgent: resourceAgentEtcd,
+					ResourceAgent: ResourceAgentEtcd,
 					Role:          "Started",
 					Active:        "true",
 					Managed:       "true",
@@ -493,7 +493,7 @@ func TestProcessResourcesForState(t *testing.T) {
 				},
 				{
 					ID:            "etcd-1",
-					ResourceAgent: resourceAgentEtcd,
+					ResourceAgent: ResourceAgentEtcd,
 					Role:          "Stopped",
 					Active:        "false",
 					Managed:       "true",
@@ -618,7 +618,7 @@ func TestBuildResourceConditions(t *testing.T) {
 	// Test healthy resource
 	resource := &Resource{
 		ID:            "kubelet-0",
-		ResourceAgent: resourceAgentKubelet,
+		ResourceAgent: ResourceAgentKubelet,
 		Role:          "Started",
 		Active:        "true",
 		Managed:       "true",
@@ -636,7 +636,7 @@ func TestBuildResourceConditions(t *testing.T) {
 	// Test unhealthy resource (stopped)
 	stoppedResource := &Resource{
 		ID:            "kubelet-0",
-		ResourceAgent: resourceAgentKubelet,
+		ResourceAgent: ResourceAgentKubelet,
 		Role:          "Stopped",
 		Active:        "false",
 		Managed:       "true",

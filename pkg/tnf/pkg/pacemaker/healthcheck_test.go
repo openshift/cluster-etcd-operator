@@ -808,37 +808,37 @@ func TestHealthCheck_recordErrorEvent(t *testing.T) {
 		{
 			name:           "resource_unhealthy",
 			errorMsg:       "Kubelet resource is unhealthy on node master-0: resource has failed",
-			expectedReason: eventReasonResourceUnhealthy,
+			expectedReason: EventReasonResourceUnhealthy,
 		},
 		{
 			name:           "node_unhealthy",
 			errorMsg:       "Node master-0 is unhealthy: node has issues",
-			expectedReason: eventReasonNodeUnhealthy,
+			expectedReason: EventReasonNodeUnhealthy,
 		},
 		{
 			name:           "insufficient_nodes",
 			errorMsg:       "Insufficient nodes in cluster (expected 2, found 1)",
-			expectedReason: eventReasonInsufficientNodes,
+			expectedReason: EventReasonInsufficientNodes,
 		},
 		{
 			name:           "status_stale",
 			errorMsg:       "Pacemaker status is stale",
-			expectedReason: eventReasonStatusStale,
+			expectedReason: EventReasonStatusStale,
 		},
 		{
 			name:           "cr_not_found",
 			errorMsg:       "Failed to get PacemakerCluster CR: not found",
-			expectedReason: eventReasonCRNotFound,
+			expectedReason: EventReasonCRNotFound,
 		},
 		{
 			name:           "cr_no_status",
 			errorMsg:       "PacemakerCluster CR has no status populated",
-			expectedReason: eventReasonCRNotFound,
+			expectedReason: EventReasonCRNotFound,
 		},
 		{
 			name:           "generic_error",
 			errorMsg:       "Some unknown error",
-			expectedReason: eventReasonGenericError,
+			expectedReason: EventReasonGenericError,
 		},
 	}
 

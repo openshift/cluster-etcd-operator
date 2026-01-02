@@ -23,39 +23,16 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 )
 
-// Constants for time windows and status strings
+// Local constants for healthcheck controller
 const (
-	// Resync interval for health check controller
-	healthCheckResyncInterval = 30 * time.Second
-
-	// Event deduplication windows - avoid recording the same event within these times
-	eventDeduplicationWindowFencing = 24 * time.Hour  // Fencing events logged once within 24 hour window
-	eventDeduplicationWindowDefault = 5 * time.Minute // Resource actions and general warnings
-
-	// Expected number of nodes in ExternalEtcd cluster
-	expectedNodeCount = 2
-
-	// Status strings
+	// Status strings for health assessment
 	statusHealthy = "Healthy"
 	statusWarning = "Warning"
 	statusError   = "Error"
 	statusUnknown = "Unknown"
 
-	// Resource names for error messages
-	resourceKubelet = "Kubelet"
-	resourceEtcd    = "Etcd"
-	resourceFencing = "FencingAgent"
-
-	// Resource agent names (shared with statuscollector.go)
-	resourceAgentKubelet = "systemd:kubelet"
-	resourceAgentEtcd    = "ocf:heartbeat:podman-etcd"
-	resourceAgentIPAddr  = "ocf:heartbeat:IPaddr2"
-
 	// Degraded condition reason
 	reasonPacemakerUnhealthy = "PacemakerUnhealthy"
-
-	// PacemakerCluster CR name
-	PacemakerClusterResourceName = "cluster"
 
 	// Warning message prefixes for categorizing events
 	warningPrefixFailedAction = "Recent failed resource action:"
@@ -64,46 +41,21 @@ const (
 	// Operator condition types
 	conditionTypePacemakerDegraded = "PacemakerHealthCheckDegraded"
 
-	// Event reasons for non-degrading conditions (informational/historical)
-	eventReasonFailedAction = "PacemakerFailedResourceAction"
-	eventReasonFencingEvent = "PacemakerFencingEvent"
-	eventReasonWarning      = "PacemakerWarning"
-	eventReasonHealthy      = "PacemakerHealthy"
-
-	// Event reasons for degrading conditions (current operational problems)
-	eventReasonNodeOffline        = "PacemakerNodeOffline"
-	eventReasonNodeUnhealthy      = "PacemakerNodeUnhealthy"
-	eventReasonResourceStopped    = "PacemakerResourceStopped"
-	eventReasonResourceUnhealthy  = "PacemakerResourceUnhealthy"
-	eventReasonStatusStale        = "PacemakerStatusStale"
-	eventReasonCRNotFound         = "PacemakerCRNotFound"
-	eventReasonInsufficientNodes  = "PacemakerInsufficientNodes"
-	eventReasonClusterInMaintenance = "PacemakerClusterInMaintenance"
-	eventReasonGenericError       = "PacemakerError" // Fallback for unclassified errors
-
-	// Kubernetes API constants
-	kubernetesAPIPath     = "/apis"
-	pacemakerResourceName = "pacemakerclusters"
-
-	// Time thresholds
-	statusStalenessThreshold       = 5 * time.Minute // Status is stale if not updated in 5 minutes
-	statusUnknownDegradedThreshold = 5 * time.Minute // How long to wait before marking degraded when status is unknown
-
 	// Event key prefixes
 	eventKeyPrefixWarning = "warning:"
 	eventKeyPrefixError   = "error:"
 
 	// Error messages
-	msgNoNodesFound           = "No nodes found in cluster"
-	msgNodeUnhealthy          = "Node %s is unhealthy: %s"
-	msgNodeOffline            = "Node %s is offline"
-	msgResourceUnhealthy      = "%s resource is unhealthy on node %s: %s"
-	msgInsufficientNodes      = "Insufficient nodes in cluster (expected %d, found %d)"
-	msgExcessiveNodes         = "Excessive nodes in cluster (expected %d, found %d)"
-	msgClusterInMaintenance   = "Cluster is in maintenance mode"
-	msgClusterUnhealthy       = "Cluster is unhealthy: %s"
-	msgPacemakerDegraded      = "Pacemaker cluster is in degraded state"
-	msgPacemakerHealthy       = "Pacemaker cluster is healthy - all nodes have healthy critical resources"
+	msgNoNodesFound         = "No nodes found in cluster"
+	msgNodeUnhealthy        = "Node %s is unhealthy: %s"
+	msgNodeOffline          = "Node %s is offline"
+	msgResourceUnhealthy    = "%s resource is unhealthy on node %s: %s"
+	msgInsufficientNodes    = "Insufficient nodes in cluster (expected %d, found %d)"
+	msgExcessiveNodes       = "Excessive nodes in cluster (expected %d, found %d)"
+	msgClusterInMaintenance = "Cluster is in maintenance mode"
+	msgClusterUnhealthy     = "Cluster is unhealthy: %s"
+	msgPacemakerDegraded    = "Pacemaker cluster is in degraded state"
+	msgPacemakerHealthy     = "Pacemaker cluster is healthy - all nodes have healthy critical resources"
 
 	// Error message substrings for event categorization (used in recordErrorEvent)
 	errorSubstringResourceUnhealthy  = "resource is unhealthy"
@@ -187,38 +139,38 @@ func NewHealthCheck(
 	}
 
 	// Create informer for PacemakerCluster
-	klog.Infof("Creating PacemakerCluster informer for group %s, resource %s", v1alpha1.SchemeGroupVersion.String(), pacemakerResourceName)
+	klog.Infof("Creating PacemakerCluster informer for group %s, resource %s", v1alpha1.SchemeGroupVersion.String(), PacemakerResourceName)
 	informer := cache.NewSharedIndexInformer(
 		&cache.ListWatch{
 			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-				klog.V(4).Infof("PacemakerCluster informer ListFunc called for resource %s", pacemakerResourceName)
+				klog.V(4).Infof("PacemakerCluster informer ListFunc called for resource %s", PacemakerResourceName)
 				result := &v1alpha1.PacemakerClusterList{}
 				err := restClient.Get().
-					Resource(pacemakerResourceName).
+					Resource(PacemakerResourceName).
 					VersionedParams(&options, runtime.NewParameterCodec(scheme)).
 					Do(context.Background()).
 					Into(result)
 				if err != nil {
-					klog.Errorf("Failed to list PacemakerCluster resources (%s): %v", pacemakerResourceName, err)
+					klog.Errorf("Failed to list PacemakerCluster resources (%s): %v", PacemakerResourceName, err)
 				} else {
 					klog.V(4).Infof("Successfully listed PacemakerCluster resources, found %d items", len(result.Items))
 				}
 				return result, err
 			},
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-				klog.V(4).Infof("PacemakerCluster informer WatchFunc called for resource %s", pacemakerResourceName)
+				klog.V(4).Infof("PacemakerCluster informer WatchFunc called for resource %s", PacemakerResourceName)
 				watcher, err := restClient.Get().
-					Resource(pacemakerResourceName).
+					Resource(PacemakerResourceName).
 					VersionedParams(&options, runtime.NewParameterCodec(scheme)).
 					Watch(context.Background())
 				if err != nil {
-					klog.Errorf("Failed to watch PacemakerCluster resources (%s): %v", pacemakerResourceName, err)
+					klog.Errorf("Failed to watch PacemakerCluster resources (%s): %v", PacemakerResourceName, err)
 				}
 				return watcher, err
 			},
 		},
 		&v1alpha1.PacemakerCluster{},
-		healthCheckResyncInterval,
+		HealthCheckResyncInterval,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
 	)
 
@@ -239,14 +191,14 @@ func NewHealthCheck(
 	livenessChecker.Add("PacemakerHealthCheck", syncer)
 
 	klog.Infof("PacemakerHealthCheck controller created, waiting for informers to sync before starting")
-	klog.Infof("PacemakerHealthCheck will watch: operatorClient and %s/%s resource", v1alpha1.SchemeGroupVersion.String(), pacemakerResourceName)
+	klog.Infof("PacemakerHealthCheck will watch: operatorClient and %s/%s resource", v1alpha1.SchemeGroupVersion.String(), PacemakerResourceName)
 
 	// ResyncEvery ensures the sync function is called at regular intervals (30s)
 	// even if no informer events are detected. This prevents the aliveness checker
 	// from timing out when the PacemakerStatus CR isn't being updated.
 	controller := factory.New().
 		WithSyncContext(syncCtx).
-		ResyncEvery(healthCheckResyncInterval).
+		ResyncEvery(HealthCheckResyncInterval).
 		WithSync(syncer.Sync).
 		WithInformers(
 			operatorClient.Informer(),
@@ -307,7 +259,7 @@ func (c *HealthCheck) getPacemakerStatus(ctx context.Context) (*HealthStatus, er
 	// Get the PacemakerCluster CR
 	pacemakerStatus := &v1alpha1.PacemakerCluster{}
 	err := c.pacemakerRESTClient.Get().
-		Resource(pacemakerResourceName).
+		Resource(PacemakerResourceName).
 		Name(PacemakerClusterResourceName).
 		Do(ctx).
 		Into(pacemakerStatus)
@@ -324,7 +276,7 @@ func (c *HealthCheck) getPacemakerStatus(ctx context.Context) (*HealthStatus, er
 	// Check if the status is stale (check this FIRST before collection errors)
 	// We want to clear staleness whenever we get any update (even with errors)
 	timeSinceUpdate := time.Since(pacemakerStatus.Status.LastUpdated.Time)
-	if timeSinceUpdate > statusStalenessThreshold {
+	if timeSinceUpdate > StatusStalenessThreshold {
 		return newUnknownHealthStatus(fmt.Sprintf("Pacemaker status is stale (last updated: %v ago)", timeSinceUpdate)), nil
 	}
 
@@ -380,9 +332,9 @@ func (c *HealthCheck) checkClusterConditions(pacemakerStatus *v1alpha1.Pacemaker
 	if nodeCountCondition != nil && nodeCountCondition.Status != metav1.ConditionTrue {
 		switch nodeCountCondition.Reason {
 		case v1alpha1.ClusterNodeCountAsExpectedReasonInsufficientNodes:
-			status.Errors = append(status.Errors, fmt.Sprintf(msgInsufficientNodes, expectedNodeCount, len(pacemakerStatus.Status.Nodes)))
+			status.Errors = append(status.Errors, fmt.Sprintf(msgInsufficientNodes, ExpectedNodeCount, len(pacemakerStatus.Status.Nodes)))
 		case v1alpha1.ClusterNodeCountAsExpectedReasonExcessiveNodes:
-			status.Errors = append(status.Errors, fmt.Sprintf(msgExcessiveNodes, expectedNodeCount, len(pacemakerStatus.Status.Nodes)))
+			status.Errors = append(status.Errors, fmt.Sprintf(msgExcessiveNodes, ExpectedNodeCount, len(pacemakerStatus.Status.Nodes)))
 		}
 	}
 
@@ -543,16 +495,6 @@ func (c *HealthCheck) getResourceUnhealthyReason(resource v1alpha1.PacemakerClus
 	return fmt.Sprintf(msgResourceUnhealthy, resource.Name, nodeName, "resource is unhealthy")
 }
 
-// findCondition finds a condition by type from a list of conditions
-func findCondition(conditions []metav1.Condition, conditionType string) *metav1.Condition {
-	for i := range conditions {
-		if conditions[i].Type == conditionType {
-			return &conditions[i]
-		}
-	}
-	return nil
-}
-
 // determineOverallStatus determines the overall health status based on collected information
 func (c *HealthCheck) determineOverallStatus(status *HealthStatus) string {
 	// Determine status based on current state
@@ -593,15 +535,15 @@ func (c *HealthCheck) updateOperatorStatus(ctx context.Context, status *HealthSt
 		timeSinceLastValid := time.Since(c.lastValidStatusTime)
 		c.lastValidStatusTimeMu.Unlock()
 
-		if timeSinceLastValid > statusUnknownDegradedThreshold {
+		if timeSinceLastValid > StatusUnknownDegradedThreshold {
 			klog.Warningf("Pacemaker health check cannot determine status for %v (threshold: %v), marking as degraded: %v",
-				timeSinceLastValid, statusUnknownDegradedThreshold, status.Errors)
+				timeSinceLastValid, StatusUnknownDegradedThreshold, status.Errors)
 			return c.setPacemakerDegradedCondition(ctx, status)
 		}
 
 		// Still within grace period, just log
 		klog.V(2).Infof("Pacemaker health check cannot determine status for %v (threshold: %v), not marking degraded yet: %v",
-			timeSinceLastValid, statusUnknownDegradedThreshold, status.Errors)
+			timeSinceLastValid, StatusUnknownDegradedThreshold, status.Errors)
 		return nil
 	default:
 		// This should never happen, but log it if it does
@@ -719,9 +661,9 @@ func (c *HealthCheck) cleanupExpiredEvents() {
 	for key, timestamp := range c.recordedEvents {
 		// Determine the appropriate window based on event type
 		// Fencing events have longer window
-		window := eventDeduplicationWindowDefault
+		window := EventDeduplicationWindowDefault
 		if strings.Contains(key, warningPrefixFencingEvent) {
-			window = eventDeduplicationWindowFencing
+			window = EventDeduplicationWindowFencing
 		}
 
 		// Remove if expired
@@ -760,9 +702,9 @@ func (c *HealthCheck) recordHealthCheckEvents(status *HealthStatus) {
 	for _, warning := range status.Warnings {
 		eventKey := fmt.Sprintf(eventKeyPrefixWarning+"%s", warning)
 		// Use longer deduplication window for fencing events
-		deduplicationWindow := eventDeduplicationWindowDefault
+		deduplicationWindow := EventDeduplicationWindowDefault
 		if strings.Contains(warning, warningPrefixFencingEvent) {
-			deduplicationWindow = eventDeduplicationWindowFencing
+			deduplicationWindow = EventDeduplicationWindowFencing
 		}
 		if c.shouldRecordEvent(eventKey, deduplicationWindow) {
 			c.recordWarningEvent(warning)
@@ -773,7 +715,7 @@ func (c *HealthCheck) recordHealthCheckEvents(status *HealthStatus) {
 	// Use specific event reasons based on error content for better filtering/alerting
 	for _, err := range status.Errors {
 		eventKey := fmt.Sprintf(eventKeyPrefixError+"%s", err)
-		if c.shouldRecordEvent(eventKey, eventDeduplicationWindowDefault) {
+		if c.shouldRecordEvent(eventKey, EventDeduplicationWindowDefault) {
 			c.recordErrorEvent(err)
 		}
 	}
@@ -796,7 +738,7 @@ func (c *HealthCheck) recordHealthCheckEvents(status *HealthStatus) {
 	previouslyHealthy := previousStatus == statusHealthy || previousStatus == statusWarning
 
 	if currentlyHealthy && !previouslyHealthy {
-		c.eventRecorder.Eventf(eventReasonHealthy, msgPacemakerHealthy)
+		c.eventRecorder.Eventf(EventReasonHealthy, msgPacemakerHealthy)
 		klog.Infof("Pacemaker cluster is now operational (status: %s, transition from: %s)", status.OverallStatus, previousStatus)
 	}
 }
@@ -805,11 +747,11 @@ func (c *HealthCheck) recordHealthCheckEvents(status *HealthStatus) {
 func (c *HealthCheck) recordWarningEvent(warning string) {
 	switch {
 	case strings.Contains(warning, warningPrefixFailedAction):
-		c.eventRecorder.Warningf(eventReasonFailedAction, msgDetectedFailedAction, warning)
+		c.eventRecorder.Warningf(EventReasonFailedAction, msgDetectedFailedAction, warning)
 	case strings.Contains(warning, warningPrefixFencingEvent):
-		c.eventRecorder.Warningf(eventReasonFencingEvent, msgDetectedFencing, warning)
+		c.eventRecorder.Warningf(EventReasonFencingEvent, msgDetectedFencing, warning)
 	default:
-		c.eventRecorder.Warningf(eventReasonWarning, msgPacemakerWarning, warning)
+		c.eventRecorder.Warningf(EventReasonWarning, msgPacemakerWarning, warning)
 	}
 }
 
@@ -824,37 +766,37 @@ func (c *HealthCheck) recordErrorEvent(errorMsg string) {
 	switch {
 	// CR-related errors (check before more generic patterns)
 	case strings.Contains(errorMsg, errorSubstringCRNotFound) || strings.Contains(errorMsg, errorSubstringCRNoStatus):
-		eventReason = eventReasonCRNotFound
+		eventReason = EventReasonCRNotFound
 
 	// Status staleness errors (check before generic status checks)
 	case strings.Contains(errorMsg, errorSubstringStatusStale):
-		eventReason = eventReasonStatusStale
+		eventReason = EventReasonStatusStale
 
 	// Cluster maintenance mode
 	case strings.Contains(errorMsg, errorSubstringClusterMaintenance):
-		eventReason = eventReasonClusterInMaintenance
+		eventReason = EventReasonClusterInMaintenance
 
 	// Node offline
 	case strings.Contains(errorMsg, errorSubstringNodeOffline):
-		eventReason = eventReasonNodeOffline
+		eventReason = EventReasonNodeOffline
 
 	// Resource health errors (check BEFORE node unhealthy since "resource is unhealthy" contains "is unhealthy")
 	case strings.Contains(errorMsg, errorSubstringResourceUnhealthy):
-		eventReason = eventReasonResourceUnhealthy
+		eventReason = EventReasonResourceUnhealthy
 
 	// Node unhealthy (check after resource unhealthy)
 	case strings.Contains(errorMsg, errorSubstringNodeUnhealthy):
-		eventReason = eventReasonNodeUnhealthy
+		eventReason = EventReasonNodeUnhealthy
 
 	// Node count errors
 	case strings.Contains(errorMsg, errorSubstringInsufficientNodes):
-		eventReason = eventReasonInsufficientNodes
+		eventReason = EventReasonInsufficientNodes
 	case strings.Contains(errorMsg, errorSubstringExcessiveNodes):
-		eventReason = eventReasonInsufficientNodes // Use same reason for consistency
+		eventReason = EventReasonInsufficientNodes // Use same reason for consistency
 
 	// Fallback for unclassified errors
 	default:
-		eventReason = eventReasonGenericError
+		eventReason = EventReasonGenericError
 	}
 
 	c.eventRecorder.Warningf(eventReason, msgPacemakerError, errorMsg)
