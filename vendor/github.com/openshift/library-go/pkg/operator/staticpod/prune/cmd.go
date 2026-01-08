@@ -4,11 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/spf13/cobra"
@@ -21,7 +19,6 @@ type PruneOptions struct {
 	ProtectedRevisions  []int
 
 	ResourceDir   string
-	CertDir       string
 	StaticPodName string
 }
 
@@ -58,7 +55,6 @@ func (o *PruneOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.IntSliceVar(&o.ProtectedRevisions, "protected-revisions", o.ProtectedRevisions, "list of revision IDs to preserve (not delete)")
 	fs.StringVar(&o.ResourceDir, "resource-dir", o.ResourceDir, "directory for all files supporting the static pod manifest")
 	fs.StringVar(&o.StaticPodName, "static-pod-name", o.StaticPodName, "name of the static pod")
-	fs.StringVar(&o.CertDir, "cert-dir", o.CertDir, "directory for all certs")
 }
 
 func (o *PruneOptions) Validate() error {
@@ -112,44 +108,5 @@ func (o *PruneOptions) Run() error {
 			return err
 		}
 	}
-
-	// prune any temporary certificate files
-	// we do create temporary files to atomically "write" various certificates to disk
-	// usually, these files are short-lived because they are immediately renamed, the following loop removes old/unused/dangling files
-	//
-	// the temporary files have the following form:
-	//  /etc/kubernetes/static-pod-resources/kube-apiserver-certs/configmaps/control-plane-node-kubeconfig/kubeconfig.tmp753375784
-	//  /etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/service-network-serving-certkey/tls.key.tmp643092404
-	if len(o.CertDir) == 0 {
-		return nil
-	}
-
-	// If the cert dir does not exist, do nothing.
-	// The dir will get eventually created by an installer pod.
-	if _, err := os.Stat(path.Join(o.ResourceDir, o.CertDir)); os.IsNotExist(err) {
-		klog.Infof("Skipping %s as it does not exist", path.Join(o.ResourceDir, o.CertDir))
-		return nil
-	}
-
-	return filepath.Walk(path.Join(o.ResourceDir, o.CertDir),
-		func(filePath string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-			if info.IsDir() {
-				return nil
-			}
-			// info.Name() gives just a filename like tls.key or tls.key.tmp643092404
-			if !strings.Contains(info.Name(), ".tmp") {
-				return nil
-			}
-			if time.Now().Sub(info.ModTime()) > 30*time.Minute {
-				klog.Infof("Removing %s, the last time it was modified was %v", filePath, info.ModTime())
-				if err := os.RemoveAll(filePath); err != nil {
-					return err
-				}
-			}
-			return nil
-		},
-	)
+	return nil
 }

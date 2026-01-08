@@ -51,7 +51,6 @@ const (
 func NewPruneController(
 	targetNamespace string,
 	podResourcePrefix string,
-	certDir string,
 	command []string,
 	configMapGetter corev1client.ConfigMapsGetter,
 	podGetter corev1client.PodsGetter,
@@ -62,7 +61,6 @@ func NewPruneController(
 	c := &PruneController{
 		targetNamespace:   targetNamespace,
 		podResourcePrefix: podResourcePrefix,
-		certDir:           certDir,
 		command:           command,
 
 		operatorClient:  operatorClient,
@@ -212,7 +210,6 @@ func (c *PruneController) ensurePrunePod(ctx context.Context, recorder events.Re
 		fmt.Sprintf("--max-eligible-revision=%d", maxEligibleRevision),
 		fmt.Sprintf("--protected-revisions=%s", revisionsToString(protectedRevisions)),
 		fmt.Sprintf("--resource-dir=%s", "/etc/kubernetes/static-pod-resources"),
-		fmt.Sprintf("--cert-dir=%s", c.certDir),
 		fmt.Sprintf("--static-pod-name=%s", c.podResourcePrefix),
 	)
 
