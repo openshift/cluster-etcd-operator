@@ -140,3 +140,4 @@ else
   mv "${MANIFEST_STOPPED_DIR}/etcd-pod.yaml" "${MANIFEST_DIR}/etcd-pod.yaml"
 fi
 
+print_restore_completion_message

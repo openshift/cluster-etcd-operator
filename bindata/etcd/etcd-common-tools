@@ -92,3 +92,50 @@ function mv_static_pods() {
     mv "${MANIFEST_DIR}/${POD_FILE_NAME}" "${MANIFEST_STOPPED_DIR}"
   done
 }
+
+function wait_for_podman_etcd_to_stop() {
+  echo "waiting for podman-etcd to stop..."
+  local start=$SECONDS
+  local timeout=120
+
+  while [ $((SECONDS - start)) -lt "$timeout" ]; do
+    local location
+    if ! location=$(crm_resource --resource etcd --locate); then
+      echo "could not detect if etcd is running. Retrying..."
+    elif [ -z "$location" ]; then
+      echo "etcd is stopped"
+      return 0
+    fi
+
+    sleep 1
+  done
+
+  echo "timed out waiting for etcd to stop"
+  return 1
+}
+
+function print_restore_completion_message() {
+  cat << 'EOF'
+==============================================================================
+SNAPSHOT RESTORE COMPLETED
+==============================================================================
+
+NEXT STEPS: Monitor the rollout from a system with 'oc' access:
+
+1. Check if the etcd operator completes the rollout successfully:
+    $ oc adm wait-for-stable-cluster  # OR oc get co/etcd -w
+    Note: It may take a few moments for the rollout to initiate before progress is reflected.
+
+2. IF the rollout does NOT complete, apply the forceRedeploymentReason patch:
+    $ oc patch etcd cluster -p="{\"spec\":{\"forceRedeploymentReason\":\"tnf-restore-$(date +%s)\"}}" --type=merge
+
+    Then monitor the rollout again.
+
+3. IF revision.json is still not being re-created on this node after the patch, manually restart the static pods:
+
+    On the current node:
+    $ ssh core@<node_ip> 'sudo mv /etc/kubernetes/manifests/etcd-pod.yaml /tmp/ && sleep 30 && sudo mv /tmp/etcd-pod.yaml /etc/kubernetes/manifests/'
+
+==============================================================================
+EOF
+}
