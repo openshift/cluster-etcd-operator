@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
@@ -171,10 +172,22 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 		}
 	}
 
+	votingMemberFailureDomainCount := machineFailureDomainCountByIndex(votingMembersMachines)
+
 	votingMembersMachinesPendingDeletion := ceohelpers.FilterMachinesPendingDeletion(votingMembersMachines)
 	if len(votingMembersMachinesPendingDeletion) == 0 {
 		return nil
 	}
+
+	// Sort by failure domain count of voting members so that we prefer to remove a member who
+	// has another voting member in the same CPMS failure domain index.
+	// This should help spread etcd across failure domains.
+	slices.SortFunc(votingMembersMachinesPendingDeletion, func(a, b *machinev1beta1.Machine) int {
+		machineAFailureDomainIndex := machineFailureDomainIndex(a)
+		machineBFailureDomainIndex := machineFailureDomainIndex(b)
+
+		return votingMemberFailureDomainCount[machineBFailureDomainIndex] - votingMemberFailureDomainCount[machineAFailureDomainIndex] // sort by failure domain count in descending order
+	})
 
 	// do not trust data in the cache, compare with the current state
 	healthyLiveVotingMembers, err := c.getHealthyVotingMembers(ctx)
@@ -482,4 +495,21 @@ func membersEqual(left, right []*etcdserverpb.Member) bool {
 	return slices.EqualFunc(left, right, func(l *etcdserverpb.Member, r *etcdserverpb.Member) bool {
 		return l.ID == r.ID
 	})
+}
+
+func machineFailureDomainIndex(machine *machinev1beta1.Machine) int {
+	index, err := strconv.Atoi(machine.ObjectMeta.Name[len(machine.ObjectMeta.Name)-1:])
+	if err != nil {
+		return -1
+	}
+	return index
+}
+
+func machineFailureDomainCountByIndex(machines []*machinev1beta1.Machine) map[int]int {
+	count := make(map[int]int)
+	for _, machine := range machines {
+		index := machineFailureDomainIndex(machine)
+		count[index]++
+	}
+	return count
 }
