@@ -8,6 +8,8 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 )
 
 type args struct {
@@ -36,7 +38,7 @@ func TestRemoveStaticContainer(t *testing.T) {
 			// Verify that the operator condition was set
 			_, status, _, err := tt.args.operatorClient.GetStaticPodOperatorState()
 			require.NoError(t, err, "Failed to get static pod operator state")
-			isSet := v1helpers.IsOperatorConditionTrue(status.Conditions, OperatorConditionExternalEtcdReadyForTransition)
+			isSet := v1helpers.IsOperatorConditionTrue(status.Conditions, ceohelpers.OperatorConditionExternalEtcdReadyForTransition)
 			require.True(t, isSet, "Expected ReadyForEtcdContainerRemoval condition to be set to True")
 		})
 	}

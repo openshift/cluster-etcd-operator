@@ -40,7 +40,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/etcd"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/jobs"
 )
 
@@ -141,7 +140,7 @@ func TestSetupJobConditionsBasedOnExternalEtcd(t *testing.T) {
 			if tt.isReadyForEtcdTransition {
 				operatorStatus.Conditions = []operatorv1.OperatorCondition{
 					{
-						Type:   etcd.OperatorConditionExternalEtcdHasCompletedTransition,
+						Type:   ceohelpers.OperatorConditionExternalEtcdHasCompletedTransition,
 						Status: operatorv1.ConditionTrue,
 					},
 				}

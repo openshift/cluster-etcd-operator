@@ -6,8 +6,12 @@ import (
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"k8s.io/klog/v2"
+)
 
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/etcd"
+const (
+	OperatorConditionEtcdRunningInCluster               = "EtcdRunningInCluster"
+	OperatorConditionExternalEtcdReadyForTransition     = "ExternalEtcdReadyForTransition"
+	OperatorConditionExternalEtcdHasCompletedTransition = "ExternalEtcdHasCompletedTransition"
 )
 
 type ExternalEtcdClusterStatus struct {
@@ -49,7 +53,7 @@ func IsReadyForEtcdTransition(operatorClient v1helpers.StaticPodOperatorClient) 
 		return false, nil
 	}
 
-	readyForEtcdTransition := v1helpers.IsOperatorConditionTrue(opStatus.Conditions, etcd.OperatorConditionExternalEtcdReadyForTransition)
+	readyForEtcdTransition := v1helpers.IsOperatorConditionTrue(opStatus.Conditions, OperatorConditionExternalEtcdReadyForTransition)
 	if readyForEtcdTransition {
 		klog.V(4).Infof("ready for etcd transition")
 	}
@@ -71,7 +75,7 @@ func IsEtcdRunningInCluster(ctx context.Context, operatorClient v1helpers.Static
 		return false, nil
 	}
 
-	etcdRunningInCluster := v1helpers.IsOperatorConditionTrue(opStatus.Conditions, etcd.OperatorConditionEtcdRunningInCluster)
+	etcdRunningInCluster := v1helpers.IsOperatorConditionTrue(opStatus.Conditions, OperatorConditionEtcdRunningInCluster)
 	if etcdRunningInCluster {
 		klog.V(4).Infof("bootstrap completed, etcd running in cluster")
 	}
@@ -93,7 +97,7 @@ func HasExternalEtcdCompletedTransition(ctx context.Context, operatorClient v1he
 		return false, nil
 	}
 
-	hasExternalEtcdCompletedTransition := v1helpers.IsOperatorConditionTrue(opStatus.Conditions, etcd.OperatorConditionExternalEtcdHasCompletedTransition)
+	hasExternalEtcdCompletedTransition := v1helpers.IsOperatorConditionTrue(opStatus.Conditions, OperatorConditionExternalEtcdHasCompletedTransition)
 	if hasExternalEtcdCompletedTransition {
 		klog.V(4).Infof("etcd has transitioned to running externally")
 	}
@@ -138,13 +142,13 @@ func GetExternalEtcdClusterStatus(ctx context.Context,
 	}
 
 	// Check bootstrap completion
-	externalEtcdStatus.IsEtcdRunningInCluster = v1helpers.IsOperatorConditionTrue(opStatus.Conditions, etcd.OperatorConditionEtcdRunningInCluster)
+	externalEtcdStatus.IsEtcdRunningInCluster = v1helpers.IsOperatorConditionTrue(opStatus.Conditions, OperatorConditionEtcdRunningInCluster)
 
 	// Check readiness for transition
-	externalEtcdStatus.IsReadyForEtcdTransition = v1helpers.IsOperatorConditionTrue(opStatus.Conditions, etcd.OperatorConditionExternalEtcdReadyForTransition)
+	externalEtcdStatus.IsReadyForEtcdTransition = v1helpers.IsOperatorConditionTrue(opStatus.Conditions, OperatorConditionExternalEtcdReadyForTransition)
 
 	// Check if etcd has completed transition to running externally
-	externalEtcdStatus.HasExternalEtcdCompletedTransition = v1helpers.IsOperatorConditionTrue(opStatus.Conditions, etcd.OperatorConditionExternalEtcdHasCompletedTransition)
+	externalEtcdStatus.HasExternalEtcdCompletedTransition = v1helpers.IsOperatorConditionTrue(opStatus.Conditions, OperatorConditionExternalEtcdHasCompletedTransition)
 
 	if externalEtcdStatus.IsEtcdRunningInCluster {
 		klog.V(4).Infof("bootstrap completed, etcd running in cluster")

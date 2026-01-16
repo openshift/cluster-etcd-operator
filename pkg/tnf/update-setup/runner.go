@@ -106,7 +106,7 @@ func RunTnfUpdateSetup() error {
 
 	// don't start the cluster on the new node too early, it might result in etcd start failure because of missing manifests on the new node
 	klog.Info("Waiting for etcd revision update before going on...")
-	err = etcd.WaitForUpdatedRevision(ctx, operatorClient)
+	err = etcd.WaitForStableRevision(ctx, operatorClient)
 	if err != nil {
 		klog.Error(err, "Failed to wait for etcd container transition")
 		return err

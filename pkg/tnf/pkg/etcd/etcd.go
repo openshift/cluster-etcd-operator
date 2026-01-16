@@ -9,12 +9,8 @@ import (
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
-)
 
-const (
-	OperatorConditionEtcdRunningInCluster               = "EtcdRunningInCluster"
-	OperatorConditionExternalEtcdReadyForTransition     = "ExternalEtcdReadyForTransition"
-	OperatorConditionExternalEtcdHasCompletedTransition = "ExternalEtcdHasCompletedTransition"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 )
 
 // RemoveStaticContainer informs CEO to remove its etcd container
@@ -22,7 +18,7 @@ func RemoveStaticContainer(ctx context.Context, operatorClient v1helpers.StaticP
 	klog.Info("Signaling CEO that TNF setup is ready for etcd container transition")
 
 	_, _, err := v1helpers.UpdateStatus(ctx, operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-		Type:    OperatorConditionExternalEtcdReadyForTransition,
+		Type:    ceohelpers.OperatorConditionExternalEtcdReadyForTransition,
 		Status:  operatorv1.ConditionTrue,
 		Reason:  "PacemakerConfiguredForEtcdTransition",
 		Message: "pacemaker's resource agent is ready to takeover the etcd container",
@@ -47,7 +43,7 @@ func waitForStaticContainerRemoved(ctx context.Context, operatorClient v1helpers
 	klog.Info("Wait for static etcd removed")
 
 	// the container is removed when all nodes run the latest revision
-	err := WaitForUpdatedRevision(ctx, operatorClient)
+	err := WaitForStableRevision(ctx, operatorClient)
 	if err != nil {
 		return err
 	}
@@ -56,7 +52,7 @@ func waitForStaticContainerRemoved(ctx context.Context, operatorClient v1helpers
 	// As soon as the etcd container is removed, this operator won't be able to update this status
 	// unless the etcd container is restarted by the pacemaker resource agent.
 	_, _, err = v1helpers.UpdateStatus(ctx, operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-		Type:    OperatorConditionExternalEtcdHasCompletedTransition,
+		Type:    ceohelpers.OperatorConditionExternalEtcdHasCompletedTransition,
 		Status:  operatorv1.ConditionTrue,
 		Reason:  "PacemakerResourceAgentIsNowRunningEtcd",
 		Message: "pacemaker's resource agent is now running the etcd container",
@@ -65,34 +61,19 @@ func waitForStaticContainerRemoved(ctx context.Context, operatorClient v1helpers
 	return err
 }
 
-// WaitForUpdatedRevision waits until all nodes run the latest available revision
-func WaitForUpdatedRevision(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient) error {
+// WaitForStableRevision waits until all nodes run the latest available revision
+func WaitForStableRevision(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient) error {
 	klog.Info("Wait for updated revision")
 
-	isUpdated := func(context.Context) (done bool, err error) {
-		_, status, _, err := operatorClient.GetStaticPodOperatorState()
+	isStableFunc := func(context.Context) (done bool, err error) {
+		isStable, err := ceohelpers.IsRevisionStable(operatorClient)
 		if err != nil {
 			klog.Error(err, "failed to get Etcd, but will ignore error for now...")
 			return false, nil
 		}
-
-		if status == nil || len(status.NodeStatuses) == 0 {
-			klog.V(2).Info("static pod operator status not yet populated; waiting")
-			return false, nil
-		}
-
-		allUpdated := true
-		for _, nodeStatus := range status.NodeStatuses {
-			if nodeStatus.CurrentRevision == status.LatestAvailableRevision {
-				klog.Infof("node %q is running the latest etcd revision %q", nodeStatus.NodeName, nodeStatus.CurrentRevision)
-			} else {
-				klog.Infof("node %q is not running the latest etcd revision yet, expected %q, got %q", nodeStatus.NodeName, status.LatestAvailableRevision, nodeStatus.CurrentRevision)
-				allUpdated = false
-			}
-		}
-		return allUpdated, nil
+		return isStable, nil
 	}
 
 	// set immediate to false in order to give CEO some time to actually create a new revision if needed
-	return wait.PollUntilContextTimeout(ctx, 10*time.Second, 10*time.Minute, false, isUpdated)
+	return wait.PollUntilContextTimeout(ctx, 10*time.Second, 10*time.Minute, false, isStableFunc)
 }
