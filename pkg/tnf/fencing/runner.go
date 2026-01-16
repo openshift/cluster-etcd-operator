@@ -72,7 +72,7 @@ func RunFencingSetup() error {
 		klog.Info("Setup job completed successfully")
 		return true, nil
 	}
-	err = wait.PollUntilContextTimeout(ctx, tools.JobPollIntervall, tools.SetupJobCompletedTimeout, true, setupDone)
+	err = wait.PollUntilContextTimeout(ctx, tools.JobPollInterval, tools.SetupJobCompletedTimeout, true, setupDone)
 	if err != nil {
 		klog.Errorf("Timed out waiting for setup job to complete: %v", err)
 		return err

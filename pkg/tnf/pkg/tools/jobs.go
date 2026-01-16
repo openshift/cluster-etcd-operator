@@ -11,7 +11,7 @@ import (
 // setup job: waits for auth jobs to complete
 // after setup jobs: waits for setup job to complete
 const (
-	JobPollIntervall              = 15 * time.Second
+	JobPollInterval               = 15 * time.Second
 	AuthJobCompletedTimeout       = 10 * time.Minute
 	SetupJobCompletedTimeout      = 20 * time.Minute
 	AfterSetupJobCompletedTimeout = 5 * time.Minute

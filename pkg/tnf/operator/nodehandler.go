@@ -134,6 +134,7 @@ func handleNodes(
 		}
 	}
 	if !bothReady {
+		// a node condition change will retrigger node handling automatically, no need to trigger a retry here
 		return nil
 	}
 
@@ -206,17 +207,17 @@ func startTnfJobcontrollers(
 func waitForEtcdBootstrapCompleted(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient) error {
 	isEtcdRunningInCluster, err := ceohelpers.IsEtcdRunningInCluster(ctx, operatorClient)
 	if err != nil {
-		return fmt.Errorf("failed to check if bootstrap is completed: %v", err)
+		return fmt.Errorf("failed to check if bootstrap is completed: %w", err)
 	}
 	if !isEtcdRunningInCluster {
 		klog.Infof("waiting for bootstrap to complete with etcd running in cluster")
 		clientConfig, err := rest.InClusterConfig()
 		if err != nil {
-			return fmt.Errorf("failed to get in-cluster config: %v", err)
+			return fmt.Errorf("failed to get in-cluster config: %w", err)
 		}
 		err = bootstrapteardown.WaitForEtcdBootstrap(ctx, clientConfig)
 		if err != nil {
-			return fmt.Errorf("failed to wait for bootstrap to complete: %v", err)
+			return fmt.Errorf("failed to wait for bootstrap to complete: %w", err)
 		}
 	}
 	return nil
