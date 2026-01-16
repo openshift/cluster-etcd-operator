@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -16,17 +17,27 @@ import (
 // WaitForStopped waits for a Job to stop running (= completed or failed)
 func WaitForStopped(ctx context.Context, kubeClient kubernetes.Interface, jobName string, jobNamespace string, timeout time.Duration) error {
 	klog.Infof("Waiting for job %s to complete or fail (=not running anymore) (timeout: %v)", jobName, timeout)
-	return waitWithConditionFunc(ctx, kubeClient, jobName, jobNamespace, timeout, IsStopped)
+	isStopped := func(job batchv1.Job) (bool, error) {
+		return IsStopped(job), nil
+	}
+	return waitWithConditionFunc(ctx, kubeClient, jobName, jobNamespace, timeout, isStopped)
 }
 
 // WaitForCompletion waits for a Job to complete (= succeed)
 func WaitForCompletion(ctx context.Context, kubeClient kubernetes.Interface, jobName string, jobNamespace string, timeout time.Duration) error {
 	klog.Infof("Waiting for job %s to complete (=succeed) (timeout: %v)", jobName, timeout)
-	return waitWithConditionFunc(ctx, kubeClient, jobName, jobNamespace, timeout, IsComplete)
+	isComplete := func(job batchv1.Job) (bool, error) {
+		if IsFailed(job) {
+			// return error to signal that we don't need to wait any longer
+			return false, fmt.Errorf("job %s failed", jobName)
+		}
+		return IsComplete(job), nil
+	}
+	return waitWithConditionFunc(ctx, kubeClient, jobName, jobNamespace, timeout, isComplete)
 }
 
 // waitWithConditionFunc waits for a Job to fulfill given conditionFunc
-func waitWithConditionFunc(ctx context.Context, kubeClient kubernetes.Interface, jobName string, jobNamespace string, timeout time.Duration, conditionFunc func(job batchv1.Job) bool) error {
+func waitWithConditionFunc(ctx context.Context, kubeClient kubernetes.Interface, jobName string, jobNamespace string, timeout time.Duration, conditionFunc func(job batchv1.Job) (bool, error)) error {
 	return wait.PollUntilContextTimeout(ctx, 5*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		job, err := kubeClient.BatchV1().Jobs(jobNamespace).Get(ctx, jobName, v1.GetOptions{})
 		if err != nil {
@@ -36,8 +47,11 @@ func waitWithConditionFunc(ctx context.Context, kubeClient kubernetes.Interface,
 			return false, nil
 		}
 
-		// Check if job condition
-		if conditionFunc(*job) {
+		// Check if job condition is fulfilled
+		if isFulfilled, err := conditionFunc(*job); err != nil {
+			klog.Infof("Job %s condition can not be fulfilled anymore", jobName)
+			return false, err
+		} else if isFulfilled {
 			klog.Infof("Job %s condition fulfilled", jobName)
 			return true, nil
 		}
