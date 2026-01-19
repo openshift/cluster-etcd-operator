@@ -23,7 +23,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/utils/clock"
 
 	"github.com/stretchr/testify/require"
 )
@@ -152,7 +151,7 @@ func getController(t *testing.T, staticPodStatus *operatorv1.StaticPodOperatorSt
 	}
 
 	eventRecorder := events.NewRecorder(fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),
-		"test-targetconfigcontroller", &corev1.ObjectReference{}, clock.RealClock{})
+		"test-targetconfigcontroller", &corev1.ObjectReference{})
 	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 	for _, obj := range defaultObjects {
 		require.NoError(t, indexer.Add(obj))

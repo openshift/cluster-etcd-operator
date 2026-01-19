@@ -18,7 +18,6 @@ import (
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	clientgotesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/utils/clock"
 	"k8s.io/utils/diff"
 
 	"github.com/openshift/library-go/pkg/controller/factory"
@@ -325,7 +324,7 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			eventRecorder := events.NewRecorder(fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace), "test-etcdendpointscontroller", &corev1.ObjectReference{}, clock.RealClock{})
+			eventRecorder := events.NewRecorder(fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace), "test-etcdendpointscontroller", &corev1.ObjectReference{})
 			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 
 			for _, obj := range defaultObjects {

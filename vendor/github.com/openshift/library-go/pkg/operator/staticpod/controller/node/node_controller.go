@@ -45,14 +45,13 @@ func NewNodeController(
 			kubeInformersClusterScoped.Core().V1().Nodes().Informer(),
 		).
 		WithSync(c.sync).
-		WithControllerInstanceName(c.controllerInstanceName).
 		ToController(
 			c.controllerInstanceName,
 			eventRecorder,
 		)
 }
 
-func (c *NodeController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
+func (c NodeController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	_, originalOperatorStatus, _, err := c.operatorClient.GetStaticPodOperatorState()
 	if err != nil {
 		return err

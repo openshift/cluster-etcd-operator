@@ -25,7 +25,6 @@ import (
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/utils/clock"
 )
 
 type testEmbed struct {
@@ -112,7 +111,7 @@ func TestSignerSignatureRotation(t *testing.T) {
 
 				Client:        client.CoreV1(),
 				Lister:        corev1listers.NewSecretLister(indexer),
-				EventRecorder: events.NewInMemoryRecorder("test", clock.RealClock{}),
+				EventRecorder: events.NewInMemoryRecorder("test"),
 			}
 
 			ca, err := test.caFn()

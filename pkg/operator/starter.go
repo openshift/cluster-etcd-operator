@@ -37,6 +37,8 @@ import (
 	"github.com/openshift/library-go/pkg/operator/status"
 	"github.com/openshift/library-go/pkg/operator/unsupportedconfigoverridescontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	"k8s.io/utils/clock"
+
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -172,7 +174,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	// we keep the default behavior of exiting the controller once a gate changes
 	featureGateAccessor.SetChangeHandler(featuregates.ForceExit)
 
-	operatorClient, dynamicInformers, err := genericoperatorclient.NewStaticPodOperatorClient(controllerContext.Clock, controllerContext.KubeConfig, operatorv1.GroupVersion.WithResource("etcds"), operatorv1.GroupVersion.WithKind("Etcd"), ExtractStaticPodOperatorSpec, ExtractStaticPodOperatorStatus)
+	operatorClient, dynamicInformers, err := genericoperatorclient.NewStaticPodOperatorClient(clock.RealClock{}, controllerContext.KubeConfig, operatorv1.GroupVersion.WithResource("etcds"), operatorv1.GroupVersion.WithKind("Etcd"), ExtractStaticPodOperatorSpec, ExtractStaticPodOperatorStatus)
 	if err != nil {
 		return err
 	}
@@ -302,7 +304,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return quorumChecker.IsSafeToUpdateRevision()
 	}
 
-	staticPodControllers, err := staticpod.NewBuilder(operatorClient, kubeClient, kubeInformersForNamespaces, configInformers, controllerContext.Clock).
+	staticPodControllers, err := staticpod.NewBuilder(operatorClient, kubeClient, kubeInformersForNamespaces, configInformers).
 		WithEvents(controllerContext.EventRecorder).
 		WithInstaller([]string{"cluster-etcd-operator", "installer"}).
 		WithPruning([]string{"cluster-etcd-operator", "prune"}, "etcd-pod").
@@ -427,7 +429,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 
 	unsupportedConfigOverridesController := unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(
-		"etcd",
 		operatorClient,
 		controllerContext.EventRecorder,
 	)
