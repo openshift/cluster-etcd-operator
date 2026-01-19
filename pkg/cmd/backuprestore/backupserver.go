@@ -2,45 +2,21 @@ package backuprestore
 
 import (
 	"context"
-	"fmt"
+	"github.com/spf13/pflag"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
-	"k8s.io/klog/v2"
-
-	"github.com/robfig/cron/v3"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
+	"k8s.io/klog/v2"
 )
-
-const backupVolume = "/var/lib/etcd-auto-backup"
 
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
 
-type backupRunner interface {
-	runBackup(opts *backupOptions) error
-}
-
-type backupRunnerImpl struct{}
-
-func (b backupRunnerImpl) runBackup(opts *backupOptions) error {
-	dateString := time.Now().Format("2006-01-02_150405")
-	opts.backupDir = backupVolume + dateString
-	err := backup(opts)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
 type backupServer struct {
-	schedule     string
-	timeZone     string
-	enabled      bool
-	cronSchedule cron.Schedule
+	schedule string
+	timeZone string
+	enabled  bool
 	backupOptions
 }
 
@@ -76,58 +52,16 @@ func (b *backupServer) AddFlags(fs *pflag.FlagSet) {
 }
 
 func (b *backupServer) Validate() error {
-	if !b.enabled {
-		klog.Infof("backup-server is disabled")
-		return nil
-	}
-
-	cronSchedule, err := cron.ParseStandard(b.schedule)
-	if err != nil {
-		return fmt.Errorf("error parsing backup schedule %v: %w", b.schedule, err)
-	}
-	b.cronSchedule = cronSchedule
-
-	b.backupOptions.backupDir = backupVolume
-	err = b.backupOptions.Validate()
-	if err != nil {
-		return fmt.Errorf("error validating backup %v: %w", b.backupOptions, err)
-	}
-
 	return nil
 }
 
 func (b *backupServer) Run(ctx context.Context) error {
 	// handle teardown
-	cCtx, cancel := signal.NotifyContext(ctx, shutdownSignals...)
+	cCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-
-	if b.enabled {
-		bck := backupRunnerImpl{}
-		err := b.scheduleBackup(cCtx, bck)
-		if err != nil {
-			return err
-		}
-	}
+	signal.NotifyContext(cCtx, shutdownSignals...)
 
 	<-ctx.Done()
+
 	return nil
-}
-
-func (b *backupServer) scheduleBackup(ctx context.Context, bck backupRunner) error {
-	ticker := time.NewTicker(time.Until(b.cronSchedule.Next(time.Now())))
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			err := bck.runBackup(&b.backupOptions)
-			if err != nil {
-				klog.Errorf("error running backup: %v", err)
-				return err
-			}
-			ticker.Reset(time.Until(b.cronSchedule.Next(time.Now())))
-		case <-ctx.Done():
-			return nil
-		}
-	}
 }
