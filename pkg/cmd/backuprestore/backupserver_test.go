@@ -3,7 +3,6 @@ package backuprestore
 import (
 	"context"
 	"errors"
-	prune "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 	"testing"
 	"time"
 
@@ -63,9 +62,6 @@ func TestBackupServer_Validate(t *testing.T) {
 			backupServer{
 				enabled:  true,
 				schedule: validSchedule,
-				PruneOpts: prune.PruneOpts{
-					RetentionType: prune.RetentionTypeNone,
-				},
 			},
 			nil,
 		},
@@ -83,13 +79,10 @@ func TestBackupServer_Validate(t *testing.T) {
 		{
 			"BackupServer is enabled and valid schedule and invalid backup directory",
 			backupServer{
-				schedule: validSchedule,
 				enabled:  true,
+				schedule: validSchedule,
 				backupOptions: backupOptions{
 					backupDir: "",
-				},
-				PruneOpts: prune.PruneOpts{
-					RetentionType: prune.RetentionTypeNone,
 				},
 			},
 			nil,
@@ -180,7 +173,7 @@ type backupRunnerMock struct {
 	delay   time.Duration
 }
 
-func (b *backupRunnerMock) runBackup(backupOpts *backupOptions, pruneOpts *prune.PruneOpts) error {
+func (b *backupRunnerMock) runBackup(opts *backupOptions) error {
 	if b.slow {
 		time.Sleep(b.delay)
 	}
