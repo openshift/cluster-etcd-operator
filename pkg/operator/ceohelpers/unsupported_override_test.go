@@ -1,80 +1,118 @@
 package ceohelpers
 
 import (
-	"fmt"
-	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/runtime"
 	"testing"
+
+	"k8s.io/apimachinery/pkg/runtime"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 )
 
-func TestIsUnsupportedOptions(t *testing.T) {
-	options := []string{"useUnsupportedUnsafeNonHANonProductionUnstableEtcd", "useUnsupportedUnsafeEtcdContainerRemoval"}
+func TestIsUnsupportedUnsafeEtcd(t *testing.T) {
+	type args struct {
+		spec *operatorv1.StaticPodOperatorSpec
+	}
 	tests := []struct {
 		name    string
-		args    string
+		args    args
 		want    bool
 		wantErr bool
 	}{
 		{
-			name:    "test value with a bool",
-			args:    "%s: true",
+			name: "test value with a bool",
+			args: args{spec: &operatorv1.StaticPodOperatorSpec{
+				OperatorSpec: operatorv1.OperatorSpec{
+					UnsupportedConfigOverrides: runtime.RawExtension{
+						Raw: []byte("useUnsupportedUnsafeNonHANonProductionUnstableEtcd: true"),
+					},
+				},
+			}},
 			want:    true,
 			wantErr: false,
 		},
 		{
-			name:    "test value=true with a string",
-			args:    `%s: "true"`,
+			name: "test value=true with a string",
+			args: args{spec: &operatorv1.StaticPodOperatorSpec{
+				OperatorSpec: operatorv1.OperatorSpec{
+					UnsupportedConfigOverrides: runtime.RawExtension{
+						Raw: []byte(`useUnsupportedUnsafeNonHANonProductionUnstableEtcd: "true"`),
+					},
+				},
+			}},
 			want:    true,
 			wantErr: false,
 		},
 		{
-			name:    "test value=false with a string",
-			args:    `%s: "false"`,
+			name: "test value=false with a string",
+			args: args{spec: &operatorv1.StaticPodOperatorSpec{
+				OperatorSpec: operatorv1.OperatorSpec{
+					UnsupportedConfigOverrides: runtime.RawExtension{
+						Raw: []byte(`useUnsupportedUnsafeNonHANonProductionUnstableEtcd: "false"`),
+					},
+				},
+			}},
 			want:    false,
 			wantErr: false,
 		},
 		{
-			name:    "test value=true with a json bool",
-			args:    `{"%s": true}`,
+			name: "test value=true with a json bool",
+			args: args{spec: &operatorv1.StaticPodOperatorSpec{
+				OperatorSpec: operatorv1.OperatorSpec{
+					UnsupportedConfigOverrides: runtime.RawExtension{
+						Raw: []byte(`{"useUnsupportedUnsafeNonHANonProductionUnstableEtcd": true}`),
+					},
+				},
+			}},
 			want:    true,
 			wantErr: false,
 		},
 		{
-			name:    "test value=true with a json string",
-			args:    `{"%s": "true"}`,
+			name: "test value=true with a json string",
+			args: args{spec: &operatorv1.StaticPodOperatorSpec{
+				OperatorSpec: operatorv1.OperatorSpec{
+					UnsupportedConfigOverrides: runtime.RawExtension{
+						Raw: []byte(`{"useUnsupportedUnsafeNonHANonProductionUnstableEtcd": "true"}`),
+					},
+				},
+			}},
 			want:    true,
 			wantErr: false,
 		},
 		{
-			name:    "test value=false with a json string",
-			args:    `{"%s": "false"}`,
+			name: "test value=false with a json string",
+			args: args{spec: &operatorv1.StaticPodOperatorSpec{
+				OperatorSpec: operatorv1.OperatorSpec{
+					UnsupportedConfigOverrides: runtime.RawExtension{
+						Raw: []byte(`{"useUnsupportedUnsafeNonHANonProductionUnstableEtcd": "false"}`),
+					},
+				},
+			}},
 			want:    false,
 			wantErr: false,
 		},
 		{
-			name:    "test value=false with a json string",
-			args:    `{"%s": "randomValue"}`,
+			name: "test value=false with a json string",
+			args: args{spec: &operatorv1.StaticPodOperatorSpec{
+				OperatorSpec: operatorv1.OperatorSpec{
+					UnsupportedConfigOverrides: runtime.RawExtension{
+						Raw: []byte(`{"useUnsupportedUnsafeNonHANonProductionUnstableEtcd": "randomValue"}`),
+					},
+				},
+			}},
 			want:    false,
 			wantErr: true,
 		},
 	}
-
-	for _, option := range options {
-		for _, tt := range tests {
-			t.Run(fmt.Sprintf("%s/%s", option, tt.name), func(t *testing.T) {
-				spec := &operatorv1.StaticPodOperatorSpec{
-					OperatorSpec: operatorv1.OperatorSpec{
-						UnsupportedConfigOverrides: runtime.RawExtension{
-							Raw: []byte(fmt.Sprintf(tt.args, option)),
-						},
-					},
-				}
-				got, err := tryGetUnsupportedValue(spec, option)
-				require.Equal(t, tt.wantErr, err != nil)
-				require.Equal(t, tt.want, got)
-			})
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := isUnsupportedUnsafeEtcd(tt.args.spec)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("IsUnsupportedUnsafeEtcd() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("IsUnsupportedUnsafeEtcd() got = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

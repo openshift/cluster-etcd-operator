@@ -2,9 +2,9 @@ package targetconfigcontroller
 
 import (
 	"context"
-	"fmt"
-	"k8s.io/client-go/kubernetes/scheme"
 	"testing"
+
+	"k8s.io/client-go/kubernetes/scheme"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -34,12 +34,11 @@ const operatorPullSpec = "operator-pull-spec"
 func TestTargetConfigController(t *testing.T) {
 
 	scenarios := []struct {
-		name                   string
-		objects                []runtime.Object
-		staticPodStatus        *operatorv1.StaticPodOperatorStatus
-		etcdMembers            []*etcdserverpb.Member
-		enableContainerRemoval bool
-		expectedErr            error
+		name            string
+		objects         []runtime.Object
+		staticPodStatus *operatorv1.StaticPodOperatorStatus
+		etcdMembers     []*etcdserverpb.Member
+		expectedErr     error
 	}{
 		{
 			name: "HappyPath",
@@ -74,69 +73,12 @@ func TestTargetConfigController(t *testing.T) {
 				u.FakeEtcdMemberWithoutServer(2),
 			},
 		},
-		{
-			name: "BackupVar Test HappyPath",
-			objects: []runtime.Object{
-				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
-			},
-			staticPodStatus: u.StaticPodOperatorStatus(
-				u.WithLatestRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-			),
-			etcdMembers: []*etcdserverpb.Member{
-				u.FakeEtcdMemberWithoutServer(0),
-				u.FakeEtcdMemberWithoutServer(1),
-				u.FakeEtcdMemberWithoutServer(2),
-			},
-		},
-		{
-			name: "Backup Var Test with empty spec",
-			objects: []runtime.Object{
-				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
-			},
-			staticPodStatus: u.StaticPodOperatorStatus(
-				u.WithLatestRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-			),
-			etcdMembers: []*etcdserverpb.Member{
-				u.FakeEtcdMemberWithoutServer(0),
-				u.FakeEtcdMemberWithoutServer(1),
-				u.FakeEtcdMemberWithoutServer(2),
-			},
-		},
-		{
-			name: "Container Removed",
-			objects: []runtime.Object{
-				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
-			},
-			staticPodStatus: u.StaticPodOperatorStatus(
-				u.WithLatestRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-				u.WithNodeStatusAtCurrentRevision(3),
-			),
-			etcdMembers: []*etcdserverpb.Member{
-				u.FakeEtcdMemberWithoutServer(0),
-				u.FakeEtcdMemberWithoutServer(1),
-				u.FakeEtcdMemberWithoutServer(2),
-			},
-			enableContainerRemoval: true,
-		},
 	}
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
-			eventRecorder, _, controller, fakeKubeClient := getController(t, scenario.staticPodStatus, scenario.objects, scenario.enableContainerRemoval)
+			eventRecorder, _, controller, fakeKubeClient := getController(t, scenario.staticPodStatus, scenario.objects)
 			err := controller.sync(context.TODO(), factory.NewSyncContext("test", eventRecorder))
 			require.Equal(t, scenario.expectedErr, err)
-
-			if scenario.expectedErr != nil {
-				return
-			}
-
 			etcdPodCM, err := fakeKubeClient.CoreV1().ConfigMaps(operatorclient.TargetNamespace).Get(context.TODO(), "etcd-pod", metav1.GetOptions{})
 			require.NoError(t, err)
 
@@ -156,53 +98,36 @@ func TestTargetConfigController(t *testing.T) {
 			})
 
 			expectedEnv := map[string][]corev1.EnvVar{
-				"etcdctl":            envWithRevision,
-				"etcd":               envWithRevision,
-				"etcd-metrics":       envWithRevision,
-				"etcd-readyz":        envWithoutRevision,
-				"etcd-rev":           envWithoutRevision,
-				"etcd-backup-server": envWithoutRevision,
+				"etcdctl":      envWithRevision,
+				"etcd":         envWithRevision,
+				"etcd-metrics": envWithRevision,
+				"etcd-readyz":  envWithoutRevision,
+				"etcd-rev":     envWithoutRevision,
 			}
 
 			expectedImage := map[string]string{
-				"etcdctl":            etcdPullSpec,
-				"etcd":               etcdPullSpec,
-				"etcd-metrics":       etcdPullSpec,
-				"etcd-readyz":        operatorPullSpec,
-				"etcd-rev":           operatorPullSpec,
-				"etcd-backup-server": operatorPullSpec,
+				"etcdctl":      etcdPullSpec,
+				"etcd":         etcdPullSpec,
+				"etcd-metrics": etcdPullSpec,
+				"etcd-readyz":  operatorPullSpec,
+				"etcd-rev":     operatorPullSpec,
 			}
-
-			etcdContainerFound := false
 
 			for _, container := range pod.Spec.Containers {
 				require.Contains(t, expectedEnv, container.Name)
 				require.Equal(t, expectedEnv[container.Name], container.Env)
 				require.Contains(t, expectedImage, container.Name)
 				require.Equal(t, expectedImage[container.Name], container.Image)
-
-				if container.Name == "etcd" {
-					etcdContainerFound = true
-				}
 			}
-
-			require.Equal(t, !scenario.enableContainerRemoval, etcdContainerFound)
 		})
 	}
 }
 
-func getController(
-	t *testing.T,
-	staticPodStatus *operatorv1.StaticPodOperatorStatus,
-	objects []runtime.Object,
-	enabledContainerRemoval bool) (events.Recorder, v1helpers.StaticPodOperatorClient, *TargetConfigController, *fake.Clientset) {
+func getController(t *testing.T, staticPodStatus *operatorv1.StaticPodOperatorStatus, objects []runtime.Object) (events.Recorder, v1helpers.StaticPodOperatorClient, *TargetConfigController, *fake.Clientset) {
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 		&operatorv1.StaticPodOperatorSpec{
 			OperatorSpec: operatorv1.OperatorSpec{
 				ManagementState: operatorv1.Managed,
-				UnsupportedConfigOverrides: runtime.RawExtension{
-					Raw: []byte(fmt.Sprintf(`{"useUnsupportedUnsafeEtcdContainerRemoval": "%t"}`, enabledContainerRemoval)),
-				},
 			},
 		},
 		staticPodStatus,
