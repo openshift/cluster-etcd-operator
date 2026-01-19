@@ -126,7 +126,7 @@ spec:
       expr: |
         histogram_quantile(0.99, sum(rate(grpc_server_handling_seconds_bucket{job="etcd", grpc_method!="Defragment", grpc_type="unary"}[10m])) without(grpc_type))
         > 1
-      for: 60m
+      for: 30m
       labels:
         severity: critical
     - alert: etcdHighNumberOfFailedGRPCRequests
