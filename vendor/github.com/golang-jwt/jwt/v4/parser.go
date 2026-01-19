@@ -7,8 +7,6 @@ import (
 	"strings"
 )
 
-const tokenDelimiter = "."
-
 type Parser struct {
 	// If populated, only these methods will be considered valid.
 	//
@@ -38,21 +36,19 @@ func NewParser(options ...ParserOption) *Parser {
 	return p
 }
 
-// Parse parses, validates, verifies the signature and returns the parsed token. keyFunc will
-// receive the parsed token and should return the key for validating.
+// Parse parses, validates, verifies the signature and returns the parsed token.
+// keyFunc will receive the parsed token and should return the key for validating.
 func (p *Parser) Parse(tokenString string, keyFunc Keyfunc) (*Token, error) {
 	return p.ParseWithClaims(tokenString, MapClaims{}, keyFunc)
 }
 
-// ParseWithClaims parses, validates, and verifies like Parse, but supplies a default object
-// implementing the Claims interface. This provides default values which can be overridden and
-// allows a caller to use their own type, rather than the default MapClaims implementation of
-// Claims.
+// ParseWithClaims parses, validates, and verifies like Parse, but supplies a default object implementing the Claims
+// interface. This provides default values which can be overridden and allows a caller to use their own type, rather
+// than the default MapClaims implementation of Claims.
 //
-// Note: If you provide a custom claim implementation that embeds one of the standard claims (such
-// as RegisteredClaims), make sure that a) you either embed a non-pointer version of the claims or
-// b) if you are using a pointer, allocate the proper memory for it before passing in the overall
-// claims, otherwise you might run into a panic.
+// Note: If you provide a custom claim implementation that embeds one of the standard claims (such as RegisteredClaims),
+// make sure that a) you either embed a non-pointer version of the claims or b) if you are using a pointer, allocate the
+// proper memory for it before passing in the overall claims, otherwise you might run into a panic.
 func (p *Parser) ParseWithClaims(tokenString string, claims Claims, keyFunc Keyfunc) (*Token, error) {
 	token, parts, err := p.ParseUnverified(tokenString, claims)
 	if err != nil {
@@ -89,17 +85,12 @@ func (p *Parser) ParseWithClaims(tokenString string, claims Claims, keyFunc Keyf
 		return token, &ValidationError{Inner: err, Errors: ValidationErrorUnverifiable}
 	}
 
-	// Perform validation
-	token.Signature = parts[2]
-	if err := token.Method.Verify(strings.Join(parts[0:2], "."), token.Signature, key); err != nil {
-		return token, &ValidationError{Inner: err, Errors: ValidationErrorSignatureInvalid}
-	}
-
 	vErr := &ValidationError{}
 
 	// Validate Claims
 	if !p.SkipClaimsValidation {
 		if err := token.Claims.Valid(); err != nil {
+
 			// If the Claims Valid returned an error, check if it is a validation error,
 			// If it was another error type, create a ValidationError with a generic ClaimsInvalid flag set
 			if e, ok := err.(*ValidationError); !ok {
@@ -107,14 +98,22 @@ func (p *Parser) ParseWithClaims(tokenString string, claims Claims, keyFunc Keyf
 			} else {
 				vErr = e
 			}
-			return token, vErr
 		}
 	}
 
-	// No errors so far, token is valid.
-	token.Valid = true
+	// Perform validation
+	token.Signature = parts[2]
+	if err = token.Method.Verify(strings.Join(parts[0:2], "."), token.Signature, key); err != nil {
+		vErr.Inner = err
+		vErr.Errors |= ValidationErrorSignatureInvalid
+	}
 
-	return token, nil
+	if vErr.valid() {
+		token.Valid = true
+		return token, nil
+	}
+
+	return token, vErr
 }
 
 // ParseUnverified parses the token but doesn't validate the signature.
@@ -124,10 +123,9 @@ func (p *Parser) ParseWithClaims(tokenString string, claims Claims, keyFunc Keyf
 // It's only ever useful in cases where you know the signature is valid (because it has
 // been checked previously in the stack) and you want to extract values from it.
 func (p *Parser) ParseUnverified(tokenString string, claims Claims) (token *Token, parts []string, err error) {
-	var ok bool
-	parts, ok = splitToken(tokenString)
-	if !ok {
-		return nil, nil, NewValidationError("token contains an invalid number of segments", ValidationErrorMalformed)
+	parts = strings.Split(tokenString, ".")
+	if len(parts) != 3 {
+		return nil, parts, NewValidationError("token contains an invalid number of segments", ValidationErrorMalformed)
 	}
 
 	token = &Token{Raw: tokenString}
@@ -176,31 +174,4 @@ func (p *Parser) ParseUnverified(tokenString string, claims Claims) (token *Toke
 	}
 
 	return token, parts, nil
-}
-
-// splitToken splits a token string into three parts: header, claims, and signature. It will only
-// return true if the token contains exactly two delimiters and three parts. In all other cases, it
-// will return nil parts and false.
-func splitToken(token string) ([]string, bool) {
-	parts := make([]string, 3)
-	header, remain, ok := strings.Cut(token, tokenDelimiter)
-	if !ok {
-		return nil, false
-	}
-	parts[0] = header
-	claims, remain, ok := strings.Cut(remain, tokenDelimiter)
-	if !ok {
-		return nil, false
-	}
-	parts[1] = claims
-	// One more cut to ensure the signature is the last part of the token and there are no more
-	// delimiters. This avoids an issue where malicious input could contain additional delimiters
-	// causing unecessary overhead parsing tokens.
-	signature, _, unexpected := strings.Cut(remain, tokenDelimiter)
-	if unexpected {
-		return nil, false
-	}
-	parts[2] = signature
-
-	return parts, true
 }
