@@ -15,8 +15,6 @@
 // bindata/etcd/pod.yaml
 // bindata/etcd/prometheus-role.yaml
 // bindata/etcd/prometheus-rolebinding.yaml
-// bindata/etcd/quorum-restore-pod.yaml
-// bindata/etcd/quorum-restore.sh
 // bindata/etcd/restore-pod-cm.yaml
 // bindata/etcd/restore-pod.yaml
 // bindata/etcd/sa.yaml
@@ -573,6 +571,34 @@ function restore_static_pods() {
   done
 }
 
+function wait_for_containers_to_stop() {
+  local containers=("$@")
+
+  for container_name in "${containers[@]}"; do
+    echo "Waiting for container ${container_name} to stop"
+    while [[ -n $(crictl ps --label io.kubernetes.container.name="${container_name}" -q) ]]; do
+      echo -n "."
+      sleep 1
+    done
+    echo "complete"
+  done
+}
+
+function mv_static_pods() {
+  local containers=("$@")
+
+  # Move manifests and stop static pods
+  if [ ! -d "$MANIFEST_STOPPED_DIR" ]; then
+    mkdir -p "$MANIFEST_STOPPED_DIR"
+  fi
+
+  for POD_FILE_NAME in "${containers[@]}"; do
+    echo "...stopping ${POD_FILE_NAME}"
+    [ ! -f "${MANIFEST_DIR}/${POD_FILE_NAME}" ] && continue
+    mv "${MANIFEST_DIR}/${POD_FILE_NAME}" "${MANIFEST_STOPPED_DIR}"
+  done
+}
+
 BACKUP_DIR="$1"
 # shellcheck disable=SC2012
 BACKUP_FILE=$(ls -vd "${BACKUP_DIR}"/static_kuberesources*.tar.gz | tail -1) || true
@@ -707,7 +733,6 @@ ETCD_DATA_DIR="/var/lib/etcd"
 ETCD_DATA_DIR_BACKUP="/var/lib/etcd-backup"
 MANIFEST_STOPPED_DIR="${ASSET_DIR}/manifests-stopped"
 RESTORE_ETCD_POD_YAML="${CONFIG_FILE_DIR}/static-pod-resources/etcd-certs/configmaps/restore-etcd-pod/pod.yaml"
-QUORUM_RESTORE_ETCD_POD_YAML="${CONFIG_FILE_DIR}/static-pod-resources/etcd-certs/configmaps/restore-etcd-pod/quorum-restore-pod.yaml"
 ETCDCTL_BIN_DIR="${CONFIG_FILE_DIR}/static-pod-resources/bin"
 PATH=${PATH}:${ETCDCTL_BIN_DIR}
 export KUBECONFIG="/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/localhost.kubeconfig"
@@ -762,33 +787,6 @@ function check_snapshot_status() {
   fi
 }
 
-function wait_for_containers_to_stop() {
-  local containers=("$@")
-
-  for container_name in "${containers[@]}"; do
-    echo "Waiting for container ${container_name} to stop"
-    while [[ -n $(crictl ps --label io.kubernetes.container.name="${container_name}" -q) ]]; do
-      echo -n "."
-      sleep 1
-    done
-    echo "complete"
-  done
-}
-
-function mv_static_pods() {
-  local containers=("$@")
-
-  # Move manifests and stop static pods
-  if [ ! -d "$MANIFEST_STOPPED_DIR" ]; then
-    mkdir -p "$MANIFEST_STOPPED_DIR"
-  fi
-
-  for POD_FILE_NAME in "${containers[@]}"; do
-    echo "...stopping ${POD_FILE_NAME}"
-    [ ! -f "${MANIFEST_DIR}/${POD_FILE_NAME}" ] && continue
-    mv "${MANIFEST_DIR}/${POD_FILE_NAME}" "${MANIFEST_STOPPED_DIR}"
-  done
-}
 `)
 
 func etcdEtcdCommonToolsBytes() ([]byte, error) {
@@ -1402,168 +1400,6 @@ func etcdPrometheusRolebindingYaml() (*asset, error) {
 	return a, nil
 }
 
-var _etcdQuorumRestorePodYaml = []byte(`apiVersion: v1
-kind: Pod
-metadata:
-  name: etcd
-  namespace: openshift-etcd
-  labels:
-    app: etcd
-    k8s-app: etcd
-    etcd: "true"
-    revision: "REVISION"
-spec:
-  containers:
-  - name: etcd
-    image: ${IMAGE}
-    imagePullPolicy: IfNotPresent
-    terminationMessagePolicy: FallbackToLogsOnError
-    command:
-      - /bin/sh
-      - -c
-      - |
-        #!/bin/sh
-        set -euo pipefail
-        
-        set -x
-        exec etcd \
-          --logger=zap \
-          --log-level=${VERBOSITY} \
-          --force-new-cluster \
-          --name="${NODE_NODE_ENVVAR_NAME_ETCD_NAME}" \
-          --initial-cluster="${NODE_NODE_ENVVAR_NAME_ETCD_NAME}=https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:2380" \
-          --initial-advertise-peer-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2380 \
-          --cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.crt \
-          --key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.key \
-          --trusted-ca-file=/etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt \
-          --client-cert-auth=true \
-          --peer-cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.crt \
-          --peer-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.key \
-          --peer-trusted-ca-file=/etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt \
-          --peer-client-cert-auth=true \
-          --advertise-client-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2379 \
-          --listen-client-urls=https://${LISTEN_ON_ALL_IPS}:2379 \
-          --listen-peer-urls=https://${LISTEN_ON_ALL_IPS}:2380 \
-          --metrics=extensive \
-          --listen-metrics-urls=https://${LISTEN_ON_ALL_IPS}:9978
-    env:
-${COMPUTED_ENV_VARS}
-      - name: "ETCD_STATIC_POD_REV"
-        value: "REVISION"
-    resources:
-      requests:
-        memory: 600Mi
-        cpu: 300m
-    readinessProbe:
-      tcpSocket:
-        port: 2380
-      failureThreshold: 3
-      initialDelaySeconds: 3
-      periodSeconds: 5
-      successThreshold: 1
-      timeoutSeconds: 5
-    securityContext:
-      privileged: true
-    volumeMounts:
-      - mountPath: /etc/kubernetes/manifests
-        name: static-pod-dir
-      - mountPath: /etc/kubernetes/static-pod-certs
-        name: cert-dir
-      - mountPath: /var/lib/etcd/
-        name: data-dir
-      - mountPath: /var/lib/etcd-backup/
-        name: backup-dir
-  hostNetwork: true
-  priorityClassName: system-node-critical
-  tolerations:
-  - operator: "Exists"
-  volumes:
-    - hostPath:
-        path: /etc/kubernetes/manifests
-      name: static-pod-dir
-    - hostPath:
-        path: /etc/kubernetes/static-pod-resources/etcd-certs
-      name: cert-dir
-    - hostPath:
-        path: /var/lib/etcd
-        type: ""
-      name: data-dir
-    - hostPath:
-        path: /var/lib/etcd-backup
-        type: ""
-      name: backup-dir
-`)
-
-func etcdQuorumRestorePodYamlBytes() ([]byte, error) {
-	return _etcdQuorumRestorePodYaml, nil
-}
-
-func etcdQuorumRestorePodYaml() (*asset, error) {
-	bytes, err := etcdQuorumRestorePodYamlBytes()
-	if err != nil {
-		return nil, err
-	}
-
-	info := bindataFileInfo{name: "etcd/quorum-restore-pod.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
-	a := &asset{bytes: bytes, info: info}
-	return a, nil
-}
-
-var _etcdQuorumRestoreSh = []byte(`#!/usr/bin/env bash
-
-### Created by cluster-etcd-operator. DO NOT edit.
-
-set -o errexit
-set -o pipefail
-set -o errtrace
-
-# ./quorum-restore.sh
-# This script attempts to restore quorum by spawning a revision-bumped etcd without membership information.
-
-if [[ $EUID -ne 0 ]]; then
-  echo "This script must be run as root"
-  exit 1
-fi
-
-function source_required_dependency {
-  local src_path="$1"
-  if [ ! -f "${src_path}" ]; then
-    echo "required dependencies not found, please ensure this script is run on a node with a functional etcd static pod"
-    exit 1
-  fi
-  # shellcheck disable=SC1090
-  source "${src_path}"
-}
-
-source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd.env
-source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd-common-tools
-
-ETCD_STATIC_POD_LIST=("etcd-pod.yaml")
-ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz")
-
-# always move etcd pod and wait for all containers to exit
-mv_static_pods "${ETCD_STATIC_POD_LIST[@]}"
-wait_for_containers_to_stop "${ETCD_STATIC_POD_CONTAINERS[@]}"
-
-echo "starting restore-etcd static pod"
-cp "${QUORUM_RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"
-`)
-
-func etcdQuorumRestoreShBytes() ([]byte, error) {
-	return _etcdQuorumRestoreSh, nil
-}
-
-func etcdQuorumRestoreSh() (*asset, error) {
-	bytes, err := etcdQuorumRestoreShBytes()
-	if err != nil {
-		return nil, err
-	}
-
-	info := bindataFileInfo{name: "etcd/quorum-restore.sh", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
-	a := &asset{bytes: bytes, info: info}
-	return a, nil
-}
-
 var _etcdRestorePodCmYaml = []byte(`apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -1783,7 +1619,6 @@ metadata:
 data:
   etcd.env:
   cluster-restore.sh:
-  quorum-restore.sh:
   cluster-backup.sh:
   etcd-common-tools:
 `)
@@ -1959,8 +1794,6 @@ var _bindata = map[string]func() (*asset, error){
 	"etcd/pod.yaml":                    etcdPodYaml,
 	"etcd/prometheus-role.yaml":        etcdPrometheusRoleYaml,
 	"etcd/prometheus-rolebinding.yaml": etcdPrometheusRolebindingYaml,
-	"etcd/quorum-restore-pod.yaml":     etcdQuorumRestorePodYaml,
-	"etcd/quorum-restore.sh":           etcdQuorumRestoreSh,
 	"etcd/restore-pod-cm.yaml":         etcdRestorePodCmYaml,
 	"etcd/restore-pod.yaml":            etcdRestorePodYaml,
 	"etcd/sa.yaml":                     etcdSaYaml,
@@ -2028,8 +1861,6 @@ var _bintree = &bintree{nil, map[string]*bintree{
 		"pod.yaml":                    {etcdPodYaml, map[string]*bintree{}},
 		"prometheus-role.yaml":        {etcdPrometheusRoleYaml, map[string]*bintree{}},
 		"prometheus-rolebinding.yaml": {etcdPrometheusRolebindingYaml, map[string]*bintree{}},
-		"quorum-restore-pod.yaml":     {etcdQuorumRestorePodYaml, map[string]*bintree{}},
-		"quorum-restore.sh":           {etcdQuorumRestoreSh, map[string]*bintree{}},
 		"restore-pod-cm.yaml":         {etcdRestorePodCmYaml, map[string]*bintree{}},
 		"restore-pod.yaml":            {etcdRestorePodYaml, map[string]*bintree{}},
 		"sa.yaml":                     {etcdSaYaml, map[string]*bintree{}},
