@@ -18,7 +18,6 @@ type BackupVar interface {
 	AddListener(listener Enqueueable)
 	SetBackupSpec(spec *backupv1alpha1.EtcdBackupSpec)
 	ArgString() string
-	ArgList() []string
 }
 
 type BackupConfig struct {
@@ -54,34 +53,6 @@ func (b *BackupConfig) SetBackupSpec(spec *backupv1alpha1.EtcdBackupSpec) {
 	for _, l := range b.listeners {
 		l.Enqueue()
 	}
-}
-
-func (b *BackupConfig) ArgList() []string {
-	b.mux.Lock()
-	defer b.mux.Unlock()
-	args := []string{fmt.Sprintf("--%s=%v", "enabled", b.enabled)}
-
-	if !b.enabled || b.spec == nil {
-		return args
-	}
-
-	if b.spec.TimeZone != "" {
-		args = append(args, fmt.Sprintf("--%s=%s", "timezone", b.spec.TimeZone))
-	}
-
-	if b.spec.Schedule != "" {
-		args = append(args, fmt.Sprintf("--%s=%s", "schedule", b.spec.Schedule))
-	}
-
-	if b.spec.RetentionPolicy.RetentionType == prune.RetentionTypeNumber {
-		args = append(args, fmt.Sprintf("--%s=%s", "type", b.spec.RetentionPolicy.RetentionType))
-		args = append(args, fmt.Sprintf("--%s=%d", "maxNumberOfBackups", b.spec.RetentionPolicy.RetentionNumber.MaxNumberOfBackups))
-	} else if b.spec.RetentionPolicy.RetentionType == prune.RetentionTypeSize {
-		args = append(args, fmt.Sprintf("--%s=%s", "type", b.spec.RetentionPolicy.RetentionType))
-		args = append(args, fmt.Sprintf("--%s=%d", "maxSizeOfBackupsGb", b.spec.RetentionPolicy.RetentionSize.MaxSizeOfBackupsGb))
-	}
-
-	return args
 }
 
 func (b *BackupConfig) ArgString() string {
