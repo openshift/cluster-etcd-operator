@@ -1173,7 +1173,7 @@ ${COMPUTED_ENV_VARS}
           --cert-file /etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-metrics-NODE_NAME.crt \
           --cacert /etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt \
           --trusted-ca-file /etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/metrics-ca-bundle.crt \
-          --listen-cipher-suites ${ETCD_CIPHER_SUITES}
+          --listen-cipher-suites TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_AES_128_GCM_SHA256,TLS_AES_256_GCM_SHA384,TLS_CHACHA20_POLY1305_SHA256
     env:
 ${COMPUTED_ENV_VARS}
       - name: "ETCD_STATIC_POD_VERSION"
@@ -1209,8 +1209,7 @@ ${COMPUTED_ENV_VARS}
           --serving-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.key \
           --client-cert-file=$(ETCDCTL_CERT) \
           --client-key-file=$(ETCDCTL_KEY) \
-          --client-cacert-file=$(ETCDCTL_CACERT) \
-          --listen-cipher-suites=$(ETCD_CIPHER_SUITES)
+          --client-cacert-file=$(ETCDCTL_CACERT)
     securityContext:
       privileged: true
     ports:
