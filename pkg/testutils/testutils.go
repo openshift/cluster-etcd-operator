@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 	"github.com/openshift/library-go/pkg/crypto"
 	"github.com/stretchr/testify/require"
@@ -540,4 +541,11 @@ func AssertNodeSpecificCertificates(t *testing.T, node *corev1.Node, secrets []c
 	}
 
 	require.Equalf(t, 0, expectedSet.Len(), "missing certificates for node: %v", expectedSet.List())
+}
+
+func CreateEtcdBackupSpecPtr(timezone, schedule string) *backupv1alpha1.EtcdBackupSpec {
+	return &backupv1alpha1.EtcdBackupSpec{
+		Schedule: schedule,
+		TimeZone: timezone,
+	}
 }

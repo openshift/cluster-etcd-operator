@@ -361,6 +361,35 @@ spec:
       name: data-dir
     - mountPath: /etc/kubernetes/static-pod-certs
       name: cert-dir
+  - name: etcd-backup-server
+    image: {{.OperatorImage}}
+    imagePullPolicy: IfNotPresent
+    terminationMessagePolicy: FallbackToLogsOnError
+    command: [cluster-etcd-operator, backup-server]
+    args:
+    {{ range $i, $val := .BackupArgs -}}
+      - {{ $val | quote }}
+    {{ end -}}
+    securityContext:
+      privileged: true
+    resources:
+      requests:
+        memory: 50Mi
+        cpu: 10m
+    env:
+    {{ range $i, $k := .EnvVars -}}
+    - name: {{ $k.Name | quote }}
+      value: {{ $k.Value | quote }}
+    {{ end -}}
+    volumeMounts:
+      - mountPath: /var/lib/etcd
+        name: data-dir
+      - mountPath: /etc/kubernetes
+        name: config-dir
+      - mountPath: /var/lib/etcd-auto-backup
+        name: etcd-auto-backup-dir
+      - mountPath: /etc/kubernetes/static-pod-certs
+        name: cert-dir
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
