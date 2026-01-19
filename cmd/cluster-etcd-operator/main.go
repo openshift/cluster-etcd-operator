@@ -77,7 +77,6 @@ func NewSSCSCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(prune_backups.NewPruneCommand())
 	cmd.AddCommand(requestbackup.NewRequestBackupCommand(ctx))
 	cmd.AddCommand(rev.NewRevCommand(ctx))
-	cmd.AddCommand(backuprestore.NewBackupServer(ctx))
 
 	return cmd
 }
