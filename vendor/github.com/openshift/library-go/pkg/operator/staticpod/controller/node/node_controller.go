@@ -79,7 +79,18 @@ func (c *NodeController) sync(ctx context.Context, syncCtx factory.SyncContext) 
 			}
 		}
 		if found {
-			newTargetNodeState := applyoperatorv1.NodeStatus().WithNodeName(originalOperatorStatus.NodeStatuses[i].NodeName)
+			newTargetNodeState := applyoperatorv1.NodeStatus().
+				WithNodeName(originalOperatorStatus.NodeStatuses[i].NodeName).
+				WithCurrentRevision(originalOperatorStatus.NodeStatuses[i].CurrentRevision).
+				WithTargetRevision(originalOperatorStatus.NodeStatuses[i].TargetRevision).
+				WithLastFailedRevision(originalOperatorStatus.NodeStatuses[i].LastFailedRevision).
+				WithLastFailedReason(originalOperatorStatus.NodeStatuses[i].LastFailedReason).
+				WithLastFailedCount(originalOperatorStatus.NodeStatuses[i].LastFailedCount).
+				WithLastFallbackCount(originalOperatorStatus.NodeStatuses[i].LastFallbackCount).
+				WithLastFailedRevisionErrors(originalOperatorStatus.NodeStatuses[i].LastFailedRevisionErrors...)
+			if originalOperatorStatus.NodeStatuses[i].LastFailedTime != nil {
+				newTargetNodeState = newTargetNodeState.WithLastFailedTime(*originalOperatorStatus.NodeStatuses[i].LastFailedTime)
+			}
 			newTargetNodeStates = append(newTargetNodeStates, newTargetNodeState)
 		} else {
 			syncCtx.Recorder().Warningf("MasterNodeRemoved", "Observed removal of master node %s", nodeState.NodeName)

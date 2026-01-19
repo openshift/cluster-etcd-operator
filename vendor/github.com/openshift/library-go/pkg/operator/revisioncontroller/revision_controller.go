@@ -7,8 +7,10 @@ import (
 	"strings"
 	"time"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
 	applyoperatorv1 "github.com/openshift/client-go/operator/applyconfigurations/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
+	"github.com/openshift/library-go/pkg/operator/condition"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/management"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -88,28 +90,26 @@ func NewRevisionController(
 			kubeInformersForTargetNamespace.Core().V1().Secrets().Informer(),
 		).
 		WithSync(c.sync).
-		WithSyncDegradedOnError(operatorClient).
 		ResyncEvery(1*time.Minute).
 		ToController(
-			"RevisionController",
+			"RevisionController", // don't change what is passed here unless you also remove the old FooDegraded condition
 			eventRecorder,
 		)
 }
 
 // createRevisionIfNeeded takes care of creating content for the static pods to use.
 // returns whether or not requeue and if an error happened when updating status.  Normally it updates status itself.
-func (c RevisionController) createRevisionIfNeeded(ctx context.Context, recorder events.Recorder, currentLastAvailableRevision int32) error {
+func (c RevisionController) createRevisionIfNeeded(ctx context.Context, recorder events.Recorder, currentLastAvailableRevision int32) (wroteStatus bool, requeue bool, err error) {
 	isLatestRevisionCurrent, requiredIsNotFound, reason := c.isLatestRevisionCurrent(ctx, currentLastAvailableRevision)
 
 	// check to make sure that the latestRevision has the exact content we expect.  No mutation here, so we start creating the next Revision only when it is required
 	if isLatestRevisionCurrent {
 		klog.V(4).Infof("Returning early, %d triggered and up to date", currentLastAvailableRevision)
-		return nil
+		return false, false, nil
 	}
 
 	nextRevision := currentLastAvailableRevision + 1
 	var createdNewRevision bool
-	var err error
 	// check to make sure no new revision is created when a required object is missing
 	if requiredIsNotFound {
 		err = fmt.Errorf("%v", reason)
@@ -119,24 +119,41 @@ func (c RevisionController) createRevisionIfNeeded(ctx context.Context, recorder
 	}
 
 	if err != nil {
-		return err
+		status := applyoperatorv1.OperatorStatus().
+			WithConditions(applyoperatorv1.OperatorCondition().
+				WithType(condition.RevisionControllerDegradedConditionType).
+				WithStatus(operatorv1.ConditionTrue).
+				WithReason("ContentCreationError").
+				WithMessage(err.Error()),
+			).
+			WithLatestAvailableRevision(currentLastAvailableRevision)
+		updateError := c.operatorClient.ApplyOperatorStatus(ctx, c.controllerInstanceName, status)
+		if updateError != nil {
+			recorder.Warningf("RevisionCreateFailed", "Failed to create revision %d: %v", nextRevision, err.Error())
+			return true, true, updateError
+		}
+		return true, true, nil
 	}
 
 	if !createdNewRevision {
 		klog.V(4).Infof("Revision %v not created", nextRevision)
-		return nil
+		return false, false, nil
 	}
 
 	recorder.Eventf("RevisionTriggered", "new revision %d triggered by %q", nextRevision, reason)
 
 	status := applyoperatorv1.OperatorStatus().
+		WithConditions(applyoperatorv1.OperatorCondition().
+			WithType(condition.RevisionControllerDegradedConditionType).
+			WithStatus(operatorv1.ConditionFalse),
+		).
 		WithLatestAvailableRevision(nextRevision)
 	updateError := c.operatorClient.ApplyOperatorStatus(ctx, c.controllerInstanceName, status)
 	if updateError != nil {
-		return updateError
+		return true, true, updateError
 	}
 
-	return nil
+	return true, false, nil
 }
 
 func nameFor(name string, revision int32) string {
@@ -377,23 +394,47 @@ func (c RevisionController) sync(ctx context.Context, syncCtx factory.SyncContex
 	if latestObservedRevision != 0 && operatorStatus.LatestAvailableRevision != latestObservedRevision {
 		// Then make sure that revision number is what's in the operator status
 		status := applyoperatorv1.OperatorStatus().
+			WithConditions(applyoperatorv1.OperatorCondition().
+				WithType(condition.RevisionControllerDegradedConditionType).
+				WithStatus(operatorv1.ConditionFalse),
+			).
 			WithLatestAvailableRevision(latestObservedRevision)
 		err := c.operatorClient.ApplyOperatorStatus(ctx, c.controllerInstanceName, status)
 		if err != nil {
 			return err
 		}
-		// we will be called again because the update will self-feed the informer
-		return nil
+		// regardless of whether we made a change, requeue to rerun the sync with updated status
+		return factory.SyntheticRequeueError
 	}
 
 	if shouldCreateNewRevision, err := c.revisionPrecondition(ctx); err != nil || !shouldCreateNewRevision {
 		return err
 	}
 
-	syncErr := c.createRevisionIfNeeded(ctx, syncCtx.Recorder(), operatorStatus.LatestAvailableRevision)
-	if syncErr != nil {
+	wroteStatus, requeue, syncErr := c.createRevisionIfNeeded(ctx, syncCtx.Recorder(), operatorStatus.LatestAvailableRevision)
+	switch {
+	case requeue && syncErr == nil:
+		return factory.SyntheticRequeueError
+	case syncErr != nil:
+		// this is updated in status inside of createRevisionIfNeeded
+		return syncErr
+	case wroteStatus:
 		return syncErr
 	}
 
-	return nil
+	// update failing condition
+	status := applyoperatorv1.OperatorStatus().
+		WithConditions(applyoperatorv1.OperatorCondition().
+			WithType(condition.RevisionControllerDegradedConditionType).
+			WithStatus(operatorv1.ConditionFalse),
+		).
+		WithLatestAvailableRevision(operatorStatus.LatestAvailableRevision)
+	updateError := c.operatorClient.ApplyOperatorStatus(ctx, c.controllerInstanceName, status)
+	if updateError != nil {
+		if err == nil {
+			return updateError
+		}
+	}
+
+	return err
 }
