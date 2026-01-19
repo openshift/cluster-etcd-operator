@@ -1102,9 +1102,9 @@ spec:
       - mountPath: /var/lib/etcd/
         name: data-dir
     env:
-    {{ range .EnvVars -}}
-    - name: {{ .Name | quote }}
-      value: {{ .Value | quote }}
+    {{ range $i, $k := .EnvVars -}}
+    - name: {{ $k.Name | quote }}
+      value: {{ $k.Value | quote }}
     {{ end -}}
     - name: "ETCD_STATIC_POD_VERSION"
       value: "REVISION"
@@ -1167,10 +1167,10 @@ spec:
           --metrics=extensive \
           --listen-metrics-urls=https://{{.ListenAddress}}:9978 ||  mv /etc/kubernetes/etcd-backup-dir/etcd-member.yaml /etc/kubernetes/manifests
     env:
-    {{- range .EnvVars }}
-    - name: {{ .Name | quote }}
-      value: {{ .Value | quote }}
-    {{- end }}
+    {{ range $i, $k := .EnvVars -}}
+    - name: {{ $k.Name | quote }}
+      value: {{ $k.Value | quote }}
+    {{ end -}}
     - name: "ETCD_STATIC_POD_VERSION"
       value: "REVISION"
     resources:
@@ -1241,14 +1241,11 @@ spec:
           --cert-file /etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-metrics-NODE_NAME.crt \
           --cacert /etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt \
           --trusted-ca-file /etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/metrics-ca-bundle.crt \
-        {{- if .CipherSuites }}
-          --listen-cipher-suites {{ .CipherSuites }} \
-          {{ end -}}
-          --tls-min-version $(ETCD_TLS_MIN_VERSION)
+          --listen-cipher-suites ${ETCD_CIPHER_SUITES}
     env:
-     {{- range .EnvVars }}
-    - name: {{ .Name | quote }}
-      value: {{ .Value | quote }}
+    {{ range $i, $k := .EnvVars -}}
+    - name: {{ $k.Name | quote }}
+      value: {{ $k.Value | quote }}
     {{ end -}}
     - name: "ETCD_STATIC_POD_VERSION"
       value: "REVISION"
@@ -1284,10 +1281,7 @@ spec:
           --client-cert-file=$(ETCDCTL_CERT) \
           --client-key-file=$(ETCDCTL_KEY) \
           --client-cacert-file=$(ETCDCTL_CACERT) \
-        {{- if .CipherSuites }}
-          --listen-cipher-suites {{ .CipherSuites }} \
-          {{ end -}}
-          --listen-tls-min-version=$(ETCD_TLS_MIN_VERSION)
+          --listen-cipher-suites=$(ETCD_CIPHER_SUITES)
     securityContext:
       privileged: true
     ports:
@@ -1299,9 +1293,9 @@ spec:
         memory: 50Mi
         cpu: 10m
     env:
-    {{ range .EnvVars -}}
-    - name: {{ .Name | quote }}
-      value: {{ .Value | quote }}
+    {{ range $i, $k := .EnvVars -}}
+    - name: {{ $k.Name | quote }}
+      value: {{ $k.Value | quote }}
     {{ end -}}
     volumeMounts:
       - mountPath: /var/log/etcd/
@@ -1331,9 +1325,9 @@ spec:
         memory: 50Mi
         cpu: 10m
     env:
-    {{ range .EnvVars -}}
-    - name: {{ .Name | quote }}
-      value: {{ .Value | quote }}
+    {{ range $i, $k := .EnvVars -}}
+    - name: {{ $k.Name | quote }}
+      value: {{ $k.Value | quote }}
     {{ end -}}
     volumeMounts:
     - mountPath: /var/lib/etcd

@@ -44,7 +44,6 @@ type readyzOpts struct {
 	clientKeyFile    string
 	clientCACertFile string
 	cipherSuites     []string
-	tlsMinVersion    string
 
 	clientPool *etcdcli.EtcdClientPool
 }
@@ -92,7 +91,6 @@ func (r *readyzOpts) AddFlags(cmd *cobra.Command) {
 	fs := cmd.Flags()
 	fs.Uint16Var(&r.listenPort, "listen-port", r.listenPort, "Listen on this port. Default 9980")
 	fs.StringSliceVar(&r.cipherSuites, "listen-cipher-suites", r.cipherSuites, "readyZ server TLS cipher suites.")
-	fs.StringVar(&r.tlsMinVersion, "listen-tls-min-version", r.tlsMinVersion, "Minimum TLS version supported by readyZ server. Possible values: TLS1.2, TLS1.3.")
 	fs.DurationVar(&r.dialTimeout, "dial-timeout", r.dialTimeout, "Dial timeout for the client. Default 2s")
 	fs.StringVar(&r.targetEndpoint, "target", r.targetEndpoint, "Target endpoint to perform health check against. Default https://localhost:2379")
 	fs.StringVar(&r.servingCertFile, "serving-cert-file", r.servingCertFile, "Health probe server TLS client certificate file. (required)")
@@ -180,19 +178,12 @@ func (r *readyzOpts) Run() error {
 		return err
 	}
 
-	tlsMinVersion, err := tlsutil.GetTLSVersion(r.tlsMinVersion)
-	if err != nil {
-		cancel()
-		return err
-	}
-
 	httpServer := &http.Server{
 		Addr:        addr,
 		Handler:     mux,
 		BaseContext: func(_ net.Listener) context.Context { return shutdownCtx },
-		TLSConfig:   &tls.Config{CipherSuites: suites, MinVersion: tlsMinVersion},
+		TLSConfig:   &tls.Config{CipherSuites: suites},
 	}
-
 	go func() {
 		defer cancel()
 		<-shutdownHandler
