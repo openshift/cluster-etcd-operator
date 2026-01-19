@@ -189,30 +189,25 @@ func trySaveRevision(ctx context.Context, endpoints []string, outputFile string,
 	}
 
 	tmpPath := fmt.Sprintf("%s.tmp", outputFile)
-	file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_SYNC, 0644)
+	file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		klog.Errorf("error opening file: %v", err)
 		return
 	}
 	defer func() {
-		if closeErr := file.Close(); closeErr != nil {
-			klog.Errorf("error closing file: %v", closeErr)
-			return
-		}
-		// Only rename if no error occurred before
-		if err != nil {
-			klog.Errorf("could not create temporary revision.json, keeping current version: %v", err)
-			return
-		}
-		if err = os.Rename(tmpPath, outputFile); err != nil {
-			klog.Errorf("error during rename to destination file: %v", err)
-			return
+		if err = file.Close(); err != nil {
+			klog.Errorf("error closing file: %v", err)
 		}
 	}()
 
 	_, err = file.Write(jsonOutput)
 	if err != nil {
 		klog.Errorf("error writing result to file: %v", err)
+		return
+	}
+
+	if err = os.Rename(tmpPath, outputFile); err != nil {
+		klog.Errorf("error during rename to destination file: %v", err)
 		return
 	}
 }
