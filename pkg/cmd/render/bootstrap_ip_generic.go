@@ -7,10 +7,10 @@ import (
 	"fmt"
 )
 
-func getAddrSlice() (addrSlice addrSlice, err error) {
+func getAddrMap() (addrMap addrMap, err error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func getRouteSlice() (routeSlice routeSlice, err error) {
+func getRouteMap() (routeMap routeMap, err error) {
 	return nil, fmt.Errorf("not implemented")
 }
