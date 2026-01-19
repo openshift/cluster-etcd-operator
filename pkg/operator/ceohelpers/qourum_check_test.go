@@ -56,8 +56,10 @@ func TestQuorumCheck_IsSafeToUpdateRevision(t *testing.T) {
 		expectedErr error
 	}{
 		{
-			name:    "HappyPath",
-			objects: []runtime.Object{},
+			name: "HappyPath",
+			objects: []runtime.Object{
+				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
+			},
 			staticPodStatus: u.StaticPodOperatorStatus(
 				u.WithLatestRevision(3),
 				u.WithNodeStatusAtCurrentRevision(3),
@@ -68,8 +70,26 @@ func TestQuorumCheck_IsSafeToUpdateRevision(t *testing.T) {
 			safe:        true,
 		},
 		{
-			name:    "Incomplete Quorum",
-			objects: []runtime.Object{},
+			name: "Incomplete Quorum during bootstrap",
+			objects: []runtime.Object{
+				u.BootstrapConfigMap(u.WithBootstrapStatus("in progress")),
+			},
+			staticPodStatus: u.StaticPodOperatorStatus(
+				u.WithLatestRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+			),
+			etcdMembers: []*etcdserverpb.Member{
+				u.FakeEtcdMemberWithoutServer(0),
+			},
+			safe: true,
+		},
+		{
+			name: "Incomplete Quorum",
+			objects: []runtime.Object{
+				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
+			},
 			staticPodStatus: u.StaticPodOperatorStatus(
 				u.WithLatestRevision(3),
 				u.WithNodeStatusAtCurrentRevision(3),
@@ -111,6 +131,7 @@ func TestQuorumCheck_IsSafeToUpdateRevision(t *testing.T) {
 			}
 
 			quorumChecker := NewQuorumChecker(
+				corev1listers.NewConfigMapLister(indexer),
 				corev1listers.NewNamespaceLister(indexer),
 				configv1listers.NewInfrastructureLister(indexer),
 				fakeOperatorClient,

@@ -2,14 +2,14 @@
 
 package v1
 
-// TokenClaimMappingsApplyConfiguration represents a declarative configuration of the TokenClaimMappings type for use
+// TokenClaimMappingsApplyConfiguration represents an declarative configuration of the TokenClaimMappings type for use
 // with apply.
 type TokenClaimMappingsApplyConfiguration struct {
 	Username *UsernameClaimMappingApplyConfiguration `json:"username,omitempty"`
 	Groups   *PrefixedClaimMappingApplyConfiguration `json:"groups,omitempty"`
 }
 
-// TokenClaimMappingsApplyConfiguration constructs a declarative configuration of the TokenClaimMappings type for use with
+// TokenClaimMappingsApplyConfiguration constructs an declarative configuration of the TokenClaimMappings type for use with
 // apply.
 func TokenClaimMappings() *TokenClaimMappingsApplyConfiguration {
 	return &TokenClaimMappingsApplyConfiguration{}

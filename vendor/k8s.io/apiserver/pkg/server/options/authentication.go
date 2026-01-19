@@ -26,7 +26,6 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/apiserver/pkg/apis/apiserver"
 	"k8s.io/apiserver/pkg/authentication/authenticatorfactory"
 	"k8s.io/apiserver/pkg/authentication/request/headerrequest"
 	"k8s.io/apiserver/pkg/server"
@@ -223,8 +222,8 @@ type DelegatingAuthenticationOptions struct {
 	// CustomRoundTripperFn allows for specifying a middleware function for custom HTTP behaviour for the authentication webhook client.
 	CustomRoundTripperFn transport.WrapperFunc
 
-	// Anonymous gives user an option to enable/disable Anonymous authentication.
-	Anonymous *apiserver.AnonymousAuthConfig
+	// DisableAnonymous gives user an option to disable Anonymous authentication.
+	DisableAnonymous bool
 }
 
 func NewDelegatingAuthenticationOptions() *DelegatingAuthenticationOptions {
@@ -239,7 +238,6 @@ func NewDelegatingAuthenticationOptions() *DelegatingAuthenticationOptions {
 		},
 		WebhookRetryBackoff: DefaultAuthWebhookRetryBackoff(),
 		TokenRequestTimeout: 10 * time.Second,
-		Anonymous:           &apiserver.AnonymousAuthConfig{Enabled: true},
 	}
 }
 
@@ -307,7 +305,7 @@ func (s *DelegatingAuthenticationOptions) ApplyTo(authenticationInfo *server.Aut
 	}
 
 	cfg := authenticatorfactory.DelegatingAuthenticatorConfig{
-		Anonymous:                &apiserver.AnonymousAuthConfig{Enabled: true},
+		Anonymous:                !s.DisableAnonymous,
 		CacheTTL:                 s.CacheTTL,
 		WebhookRetryBackoff:      s.WebhookRetryBackoff,
 		TokenAccessReviewTimeout: s.TokenRequestTimeout,

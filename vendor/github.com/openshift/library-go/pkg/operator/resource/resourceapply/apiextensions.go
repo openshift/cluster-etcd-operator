@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/resource/resourcehelper"
 	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextclientv1 "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset/typed/apiextensions/v1"
@@ -20,7 +19,7 @@ func ApplyCustomResourceDefinitionV1(ctx context.Context, client apiextclientv1.
 		requiredCopy := required.DeepCopy()
 		actual, err := client.CustomResourceDefinitions().Create(
 			ctx, resourcemerge.WithCleanLabelsAndAnnotations(requiredCopy).(*apiextensionsv1.CustomResourceDefinition), metav1.CreateOptions{})
-		resourcehelper.ReportCreateEvent(recorder, required, err)
+		reportCreateEvent(recorder, required, err)
 		return actual, true, err
 	}
 	if err != nil {
@@ -39,7 +38,7 @@ func ApplyCustomResourceDefinitionV1(ctx context.Context, client apiextclientv1.
 	}
 
 	actual, err := client.CustomResourceDefinitions().Update(ctx, existingCopy, metav1.UpdateOptions{})
-	resourcehelper.ReportUpdateEvent(recorder, required, err)
+	reportUpdateEvent(recorder, required, err)
 
 	return actual, true, err
 }
@@ -52,6 +51,6 @@ func DeleteCustomResourceDefinitionV1(ctx context.Context, client apiextclientv1
 	if err != nil {
 		return nil, false, err
 	}
-	resourcehelper.ReportDeleteEvent(recorder, required, err)
+	reportDeleteEvent(recorder, required, err)
 	return nil, true, nil
 }

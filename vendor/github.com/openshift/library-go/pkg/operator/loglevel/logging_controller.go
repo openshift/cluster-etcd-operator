@@ -37,13 +37,7 @@ func NewClusterOperatorLoggingControllerWithLogLevel(operatorClient operatorv1he
 		getLogLevelFn:   GetLogLevel,
 		defaultLogLevel: defaultLogLevel,
 	}
-	return factory.New().
-		WithInformers(operatorClient.Informer()).
-		WithSync(c.sync).
-		ToController(
-			"LoggingSyncer", // don't change what is passed here unless you also remove the old FooDegraded condition
-			recorder,
-		)
+	return factory.New().WithInformers(operatorClient.Informer()).WithSync(c.sync).ToController("LoggingSyncer", recorder)
 }
 
 // sync reacts to a change in prereqs by finding information that is required to match another value in the cluster. This

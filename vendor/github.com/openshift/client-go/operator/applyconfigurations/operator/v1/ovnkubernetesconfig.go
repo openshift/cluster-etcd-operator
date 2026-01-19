@@ -2,11 +2,7 @@
 
 package v1
 
-import (
-	operatorv1 "github.com/openshift/api/operator/v1"
-)
-
-// OVNKubernetesConfigApplyConfiguration represents a declarative configuration of the OVNKubernetesConfig type for use
+// OVNKubernetesConfigApplyConfiguration represents an declarative configuration of the OVNKubernetesConfig type for use
 // with apply.
 type OVNKubernetesConfigApplyConfiguration struct {
 	MTU                 *uint32                                    `json:"mtu,omitempty"`
@@ -20,10 +16,9 @@ type OVNKubernetesConfigApplyConfiguration struct {
 	EgressIPConfig      *EgressIPConfigApplyConfiguration          `json:"egressIPConfig,omitempty"`
 	IPv4                *IPv4OVNKubernetesConfigApplyConfiguration `json:"ipv4,omitempty"`
 	IPv6                *IPv6OVNKubernetesConfigApplyConfiguration `json:"ipv6,omitempty"`
-	RouteAdvertisements *operatorv1.RouteAdvertisementsEnablement  `json:"routeAdvertisements,omitempty"`
 }
 
-// OVNKubernetesConfigApplyConfiguration constructs a declarative configuration of the OVNKubernetesConfig type for use with
+// OVNKubernetesConfigApplyConfiguration constructs an declarative configuration of the OVNKubernetesConfig type for use with
 // apply.
 func OVNKubernetesConfig() *OVNKubernetesConfigApplyConfiguration {
 	return &OVNKubernetesConfigApplyConfiguration{}
@@ -114,13 +109,5 @@ func (b *OVNKubernetesConfigApplyConfiguration) WithIPv4(value *IPv4OVNKubernete
 // If called multiple times, the IPv6 field is set to the value of the last call.
 func (b *OVNKubernetesConfigApplyConfiguration) WithIPv6(value *IPv6OVNKubernetesConfigApplyConfiguration) *OVNKubernetesConfigApplyConfiguration {
 	b.IPv6 = value
-	return b
-}
-
-// WithRouteAdvertisements sets the RouteAdvertisements field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the RouteAdvertisements field is set to the value of the last call.
-func (b *OVNKubernetesConfigApplyConfiguration) WithRouteAdvertisements(value operatorv1.RouteAdvertisementsEnablement) *OVNKubernetesConfigApplyConfiguration {
-	b.RouteAdvertisements = &value
 	return b
 }

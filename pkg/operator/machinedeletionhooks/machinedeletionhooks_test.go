@@ -16,7 +16,6 @@ import (
 	k8sfakeclient "k8s.io/client-go/kubernetes/fake"
 	clientgotesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/utils/clock"
 
 	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
 	machinev1beta1fakeclient "github.com/openshift/client-go/machine/clientset/versioned/fake"
@@ -32,7 +31,7 @@ import (
 )
 
 func TestSyncMethod(t *testing.T) {
-	eventRecorder := events.NewRecorder(k8sfakeclient.NewSimpleClientset().CoreV1().Events("operator"), "test-cluster-machine-deletion-hooks-controller", &corev1.ObjectReference{}, clock.RealClock{})
+	eventRecorder := events.NewRecorder(k8sfakeclient.NewSimpleClientset().CoreV1().Events("operator"), "test-cluster-machine-deletion-hooks-controller", &corev1.ObjectReference{})
 	fakeMachineAPIChecker := &fakeMachineAPI{isMachineAPIFunctional: func() (bool, error) {
 		return false, nil
 	}}
@@ -430,7 +429,7 @@ func TestAttemptToDeleteMachineDeletionHook(t *testing.T) {
 
 	for _, scenario := range scenarios {
 		// test data
-		eventRecorder := events.NewRecorder(k8sfakeclient.NewSimpleClientset().CoreV1().Events("operator"), "test-cluster-machine-deletion-hooks-controller", &corev1.ObjectReference{}, clock.RealClock{})
+		eventRecorder := events.NewRecorder(k8sfakeclient.NewSimpleClientset().CoreV1().Events("operator"), "test-cluster-machine-deletion-hooks-controller", &corev1.ObjectReference{})
 		machineIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
 		for _, initialObj := range scenario.initialObjectsForMachineLister {
 			machineIndexer.Add(initialObj)
@@ -659,7 +658,7 @@ func TestAttemptToDeleteQuorumGuard(t *testing.T) {
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
 			// We only expect a single event.
-			eventRecorder := events.NewInMemoryRecorder("test-cluster-machine-deletion-hooks-controller", clock.RealClock{})
+			eventRecorder := events.NewInMemoryRecorder("test-cluster-machine-deletion-hooks-controller")
 
 			machineIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
 			for _, initialObj := range scenario.initialObjectsForMachineLister {

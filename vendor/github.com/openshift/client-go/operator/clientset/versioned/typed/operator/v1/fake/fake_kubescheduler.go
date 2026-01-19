@@ -27,22 +27,20 @@ var kubeschedulersKind = v1.SchemeGroupVersion.WithKind("KubeScheduler")
 
 // Get takes name of the kubeScheduler, and returns the corresponding kubeScheduler object, and an error if there is any.
 func (c *FakeKubeSchedulers) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.KubeScheduler, err error) {
-	emptyResult := &v1.KubeScheduler{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootGetActionWithOptions(kubeschedulersResource, name, options), emptyResult)
+		Invokes(testing.NewRootGetAction(kubeschedulersResource, name), &v1.KubeScheduler{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.KubeScheduler), err
 }
 
 // List takes label and field selectors, and returns the list of KubeSchedulers that match those selectors.
 func (c *FakeKubeSchedulers) List(ctx context.Context, opts metav1.ListOptions) (result *v1.KubeSchedulerList, err error) {
-	emptyResult := &v1.KubeSchedulerList{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootListActionWithOptions(kubeschedulersResource, kubeschedulersKind, opts), emptyResult)
+		Invokes(testing.NewRootListAction(kubeschedulersResource, kubeschedulersKind, opts), &v1.KubeSchedulerList{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 
 	label, _, _ := testing.ExtractFromListOptions(opts)
@@ -61,39 +59,36 @@ func (c *FakeKubeSchedulers) List(ctx context.Context, opts metav1.ListOptions) 
 // Watch returns a watch.Interface that watches the requested kubeSchedulers.
 func (c *FakeKubeSchedulers) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
 	return c.Fake.
-		InvokesWatch(testing.NewRootWatchActionWithOptions(kubeschedulersResource, opts))
+		InvokesWatch(testing.NewRootWatchAction(kubeschedulersResource, opts))
 }
 
 // Create takes the representation of a kubeScheduler and creates it.  Returns the server's representation of the kubeScheduler, and an error, if there is any.
 func (c *FakeKubeSchedulers) Create(ctx context.Context, kubeScheduler *v1.KubeScheduler, opts metav1.CreateOptions) (result *v1.KubeScheduler, err error) {
-	emptyResult := &v1.KubeScheduler{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootCreateActionWithOptions(kubeschedulersResource, kubeScheduler, opts), emptyResult)
+		Invokes(testing.NewRootCreateAction(kubeschedulersResource, kubeScheduler), &v1.KubeScheduler{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.KubeScheduler), err
 }
 
 // Update takes the representation of a kubeScheduler and updates it. Returns the server's representation of the kubeScheduler, and an error, if there is any.
 func (c *FakeKubeSchedulers) Update(ctx context.Context, kubeScheduler *v1.KubeScheduler, opts metav1.UpdateOptions) (result *v1.KubeScheduler, err error) {
-	emptyResult := &v1.KubeScheduler{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateActionWithOptions(kubeschedulersResource, kubeScheduler, opts), emptyResult)
+		Invokes(testing.NewRootUpdateAction(kubeschedulersResource, kubeScheduler), &v1.KubeScheduler{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.KubeScheduler), err
 }
 
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *FakeKubeSchedulers) UpdateStatus(ctx context.Context, kubeScheduler *v1.KubeScheduler, opts metav1.UpdateOptions) (result *v1.KubeScheduler, err error) {
-	emptyResult := &v1.KubeScheduler{}
+func (c *FakeKubeSchedulers) UpdateStatus(ctx context.Context, kubeScheduler *v1.KubeScheduler, opts metav1.UpdateOptions) (*v1.KubeScheduler, error) {
 	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateSubresourceActionWithOptions(kubeschedulersResource, "status", kubeScheduler, opts), emptyResult)
+		Invokes(testing.NewRootUpdateSubresourceAction(kubeschedulersResource, "status", kubeScheduler), &v1.KubeScheduler{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.KubeScheduler), err
 }
@@ -107,7 +102,7 @@ func (c *FakeKubeSchedulers) Delete(ctx context.Context, name string, opts metav
 
 // DeleteCollection deletes a collection of objects.
 func (c *FakeKubeSchedulers) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
-	action := testing.NewRootDeleteCollectionActionWithOptions(kubeschedulersResource, opts, listOpts)
+	action := testing.NewRootDeleteCollectionAction(kubeschedulersResource, listOpts)
 
 	_, err := c.Fake.Invokes(action, &v1.KubeSchedulerList{})
 	return err
@@ -115,11 +110,10 @@ func (c *FakeKubeSchedulers) DeleteCollection(ctx context.Context, opts metav1.D
 
 // Patch applies the patch and returns the patched kubeScheduler.
 func (c *FakeKubeSchedulers) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.KubeScheduler, err error) {
-	emptyResult := &v1.KubeScheduler{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(kubeschedulersResource, name, pt, data, opts, subresources...), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(kubeschedulersResource, name, pt, data, subresources...), &v1.KubeScheduler{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.KubeScheduler), err
 }
@@ -137,11 +131,10 @@ func (c *FakeKubeSchedulers) Apply(ctx context.Context, kubeScheduler *operatorv
 	if name == nil {
 		return nil, fmt.Errorf("kubeScheduler.Name must be provided to Apply")
 	}
-	emptyResult := &v1.KubeScheduler{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(kubeschedulersResource, *name, types.ApplyPatchType, data, opts.ToPatchOptions()), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(kubeschedulersResource, *name, types.ApplyPatchType, data), &v1.KubeScheduler{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.KubeScheduler), err
 }
@@ -160,11 +153,10 @@ func (c *FakeKubeSchedulers) ApplyStatus(ctx context.Context, kubeScheduler *ope
 	if name == nil {
 		return nil, fmt.Errorf("kubeScheduler.Name must be provided to Apply")
 	}
-	emptyResult := &v1.KubeScheduler{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(kubeschedulersResource, *name, types.ApplyPatchType, data, opts.ToPatchOptions(), "status"), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(kubeschedulersResource, *name, types.ApplyPatchType, data, "status"), &v1.KubeScheduler{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.KubeScheduler), err
 }

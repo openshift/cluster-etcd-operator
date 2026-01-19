@@ -2,10 +2,12 @@ package etcdendpointscontroller
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
@@ -18,7 +20,6 @@ import (
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	clientgotesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/utils/clock"
 	"k8s.io/utils/diff"
 
 	"github.com/openshift/library-go/pkg/controller/factory"
@@ -269,6 +270,29 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			},
 		},
 		{
+			// The configmap should not update when quorum is critical
+			name: "ClusterNotUpdateWithMemberChangeViolatingQuorum",
+			objects: []runtime.Object{
+				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
+				u.EndpointsConfigMap(
+					u.WithEndpoint(etcdMembers[0].ID, etcdMembers[0].PeerURLs[0]),
+					u.WithEndpoint(etcdMembers[1].ID, etcdMembers[1].PeerURLs[0]),
+					u.WithEndpoint(etcdMembers[2].ID, etcdMembers[2].PeerURLs[0]),
+				),
+			},
+			staticPodStatus: u.StaticPodOperatorStatus(
+				u.WithLatestRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+				u.WithNodeStatusAtCurrentRevision(3),
+			),
+			expectBootstrap: false,
+			etcdMembers: []*etcdserverpb.Member{
+				u.FakeEtcdMemberWithoutServer(0),
+			},
+			expectedErr: fmt.Errorf("EtcdEndpointsController can't evaluate whether quorum is safe: %w", fmt.Errorf("etcd cluster has quorum of 1 which is not fault tolerant: [{Member:name:\"etcd-0\" peerURLs:\"https://10.0.0.1:2380\" clientURLs:\"https://10.0.0.1:2907\"  Healthy:true Took: Error:<nil>}]")),
+		},
+		{
 			// The configmap should be created without a bootstrap IP because the
 			// only time the configmap won't already exist is when we've upgraded
 			// from a pre-configmap cluster (in which case bootstrapping already
@@ -325,7 +349,7 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			eventRecorder := events.NewRecorder(fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace), "test-etcdendpointscontroller", &corev1.ObjectReference{}, clock.RealClock{})
+			eventRecorder := events.NewRecorder(fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace), "test-etcdendpointscontroller", &corev1.ObjectReference{})
 			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 
 			for _, obj := range defaultObjects {
@@ -335,11 +359,19 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 				require.NoError(t, indexer.Add(obj))
 			}
 
+			quorumChecker := ceohelpers.NewQuorumChecker(
+				corev1listers.NewConfigMapLister(indexer),
+				corev1listers.NewNamespaceLister(indexer),
+				configv1listers.NewInfrastructureLister(indexer),
+				fakeOperatorClient,
+				fakeEtcdClient)
+
 			controller := &EtcdEndpointsController{
 				operatorClient:  fakeOperatorClient,
 				etcdClient:      fakeEtcdClient,
 				configmapLister: corev1listers.NewConfigMapLister(indexer),
 				configmapClient: fakeKubeClient.CoreV1(),
+				quorumChecker:   quorumChecker,
 			}
 
 			err = controller.sync(context.TODO(), factory.NewSyncContext("test", eventRecorder))

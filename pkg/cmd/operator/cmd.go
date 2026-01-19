@@ -3,9 +3,6 @@ package operator
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"strings"
-
 	"github.com/openshift/cluster-etcd-operator/pkg/operator"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
@@ -13,12 +10,13 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apiserver/pkg/server/healthz"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/utils/clock"
+	"net/http"
+	"strings"
 )
 
 func NewOperator() *cobra.Command {
 	cmd := controllercmd.
-		NewControllerCommandConfig("openshift-cluster-etcd-operator", version.Get(), operator.RunOperator, clock.RealClock{}).
+		NewControllerCommandConfig("openshift-cluster-etcd-operator", version.Get(), operator.RunOperator).
 		WithEventRecorderOptions(EtcdOperatorCorrelatorOptions()).
 		WithHealthChecks(healthz.NamedCheck("controller-aliveness", func(_ *http.Request) error {
 			if !operator.AlivenessChecker.Alive() {

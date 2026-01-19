@@ -2,14 +2,14 @@
 
 package v1alpha1
 
-// PolicyApplyConfiguration represents a declarative configuration of the Policy type for use
+// PolicyApplyConfiguration represents an declarative configuration of the Policy type for use
 // with apply.
 type PolicyApplyConfiguration struct {
 	RootOfTrust    *PolicyRootOfTrustApplyConfiguration `json:"rootOfTrust,omitempty"`
 	SignedIdentity *PolicyIdentityApplyConfiguration    `json:"signedIdentity,omitempty"`
 }
 
-// PolicyApplyConfiguration constructs a declarative configuration of the Policy type for use with
+// PolicyApplyConfiguration constructs an declarative configuration of the Policy type for use with
 // apply.
 func Policy() *PolicyApplyConfiguration {
 	return &PolicyApplyConfiguration{}

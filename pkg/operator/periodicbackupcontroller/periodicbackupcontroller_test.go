@@ -3,8 +3,6 @@ package periodicbackupcontroller
 import (
 	"context"
 	"fmt"
-	"testing"
-
 	configv1 "github.com/openshift/api/config/v1"
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -17,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	k8sfakeclient "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
+	"testing"
 
 	fake "github.com/openshift/client-go/config/clientset/versioned/fake"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,8 +36,8 @@ func TestSyncLoopHappyPath(t *testing.T) {
 					RetentionNumber: &backupv1alpha1.RetentionNumberConfig{MaxNumberOfBackups: 5}},
 				PVCName: "backup-happy-path-pvc"}}}
 
-	operatorFake := fake.NewClientset([]runtime.Object{&backup}...)
-	client := k8sfakeclient.NewClientset()
+	operatorFake := fake.NewSimpleClientset([]runtime.Object{&backup}...)
+	client := k8sfakeclient.NewSimpleClientset()
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 		&operatorv1.StaticPodOperatorSpec{OperatorSpec: operatorv1.OperatorSpec{ManagementState: operatorv1.Managed}},
 		&operatorv1.StaticPodOperatorStatus{}, nil, nil)
@@ -69,8 +68,8 @@ func TestSyncLoopExistingCronJob(t *testing.T) {
 				PVCName: "backup-happy-path-pvc"}}}
 
 	cronJob := batchv1.CronJob{ObjectMeta: v1.ObjectMeta{Name: "test-backup", Namespace: operatorclient.TargetNamespace}}
-	operatorFake := fake.NewClientset([]runtime.Object{&backup}...)
-	client := k8sfakeclient.NewClientset([]runtime.Object{&cronJob}...)
+	operatorFake := fake.NewSimpleClientset([]runtime.Object{&backup}...)
+	client := k8sfakeclient.NewSimpleClientset([]runtime.Object{&cronJob}...)
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 		&operatorv1.StaticPodOperatorSpec{OperatorSpec: operatorv1.OperatorSpec{ManagementState: operatorv1.Managed}},
 		&operatorv1.StaticPodOperatorStatus{}, nil, nil)
@@ -100,8 +99,8 @@ func TestSyncLoopFailsDegradesOperator(t *testing.T) {
 					RetentionNumber: &backupv1alpha1.RetentionNumberConfig{MaxNumberOfBackups: 5}},
 				PVCName: "backup-happy-path-pvc"}}}
 
-	operatorFake := fake.NewClientset([]runtime.Object{&backup}...)
-	client := k8sfakeclient.NewClientset()
+	operatorFake := fake.NewSimpleClientset([]runtime.Object{&backup}...)
+	client := k8sfakeclient.NewSimpleClientset()
 	client.Fake.PrependReactor("create", "cronjobs", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
 		return true, nil, fmt.Errorf("could not create cronjob")
 	})

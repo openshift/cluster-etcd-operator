@@ -3,9 +3,8 @@ package etcdenvvar
 import (
 	"context"
 	"fmt"
-	"testing"
-
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
+	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -25,7 +24,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/utils/clock"
 
 	"github.com/stretchr/testify/require"
 
@@ -56,7 +54,6 @@ var (
 		"ETCD_INITIAL_CLUSTER_STATE":                       "existing",
 		"ETCD_QUOTA_BACKEND_BYTES":                         "8589934592",
 		"ETCD_SOCKET_REUSE_ADDRESS":                        "true",
-		"ETCD_TLS_MIN_VERSION":                             "TLS1.2",
 		"NODE_master_0_ETCD_NAME":                          "master-0",
 		"NODE_master_0_ETCD_URL_HOST":                      "192.168.2.0",
 		"NODE_master_0_IP":                                 "192.168.2.0",
@@ -177,7 +174,7 @@ func TestEnvVarController(t *testing.T) {
 
 			fakeKubeClient := fake.NewSimpleClientset(scenario.objects...)
 			eventRecorder := events.NewRecorder(fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),
-				"test-envvarcontroller", &corev1.ObjectReference{}, clock.RealClock{})
+				"test-envvarcontroller", &corev1.ObjectReference{})
 			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 			for _, obj := range defaultObjects {
 				require.NoError(t, indexer.Add(obj))

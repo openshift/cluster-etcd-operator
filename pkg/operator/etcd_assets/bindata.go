@@ -8,17 +8,13 @@
 // bindata/etcd/cluster-backup.sh
 // bindata/etcd/cluster-restore.sh
 // bindata/etcd/cm.yaml
-// bindata/etcd/disable-etcd.sh
 // bindata/etcd/etcd-common-tools
 // bindata/etcd/minimal-sm.yaml
 // bindata/etcd/ns.yaml
 // bindata/etcd/pod-cm.yaml
-// bindata/etcd/pod.gotpl.yaml
 // bindata/etcd/pod.yaml
 // bindata/etcd/prometheus-role.yaml
 // bindata/etcd/prometheus-rolebinding.yaml
-// bindata/etcd/quorum-restore-pod.yaml
-// bindata/etcd/quorum-restore.sh
 // bindata/etcd/restore-pod-cm.yaml
 // bindata/etcd/restore-pod.yaml
 // bindata/etcd/sa.yaml
@@ -522,10 +518,10 @@ set -o errtrace
 
 # example
 # ./cluster-restore.sh $path-to-backup
-# ETCD_ETCDCTL_RESTORE - when set this script will use ` + "`" + `etcdctl snapshot restore` + "`" + ` instead of a restore pod yaml,
-#                        which can be used when restoring a single member (e.g. on single node OCP).
-#                        Syncing very big snapshots (>8GiB) from the leader might also be expensive, this aids in
-#                        keeping the amount of data pulled to a minimum. This option will neither rev-bump nor mark-compact.
+# There are several customization switches based on env variables:
+# ETCD_RESTORE_SKIP_MOVE_CP_STATIC_PODS - when set this script will not move the other (non-etcd) static pod yamls
+# ETCD_ETCDCTL_RESTORE - when set this script will use ` + "`" + `etcdctl snapshot restore` + "`" + ` instead of a restore pod yaml
+# ETCD_ETCDCTL_RESTORE_ENABLE_BUMP - when set this script will spawn the restore pod with a large enough revision bump
 
 if [[ $EUID -ne 0 ]]; then
   echo "This script must be run as root"
@@ -575,6 +571,34 @@ function restore_static_pods() {
   done
 }
 
+function wait_for_containers_to_stop() {
+  local containers=("$@")
+
+  for container_name in "${containers[@]}"; do
+    echo "Waiting for container ${container_name} to stop"
+    while [[ -n $(crictl ps --label io.kubernetes.container.name="${container_name}" -q) ]]; do
+      echo -n "."
+      sleep 1
+    done
+    echo "complete"
+  done
+}
+
+function mv_static_pods() {
+  local containers=("$@")
+
+  # Move manifests and stop static pods
+  if [ ! -d "$MANIFEST_STOPPED_DIR" ]; then
+    mkdir -p "$MANIFEST_STOPPED_DIR"
+  fi
+
+  for POD_FILE_NAME in "${containers[@]}"; do
+    echo "...stopping ${POD_FILE_NAME}"
+    [ ! -f "${MANIFEST_DIR}/${POD_FILE_NAME}" ] && continue
+    mv "${MANIFEST_DIR}/${POD_FILE_NAME}" "${MANIFEST_STOPPED_DIR}"
+  done
+}
+
 BACKUP_DIR="$1"
 # shellcheck disable=SC2012
 BACKUP_FILE=$(ls -vd "${BACKUP_DIR}"/static_kuberesources*.tar.gz | tail -1) || true
@@ -582,7 +606,10 @@ BACKUP_FILE=$(ls -vd "${BACKUP_DIR}"/static_kuberesources*.tar.gz | tail -1) || 
 SNAPSHOT_FILE=$(ls -vd "${BACKUP_DIR}"/snapshot*.db | tail -1) || true
 
 ETCD_STATIC_POD_LIST=("etcd-pod.yaml")
-ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz" "etcd-rev" "etcd-backup-server")
+AUX_STATIC_POD_LIST=("kube-apiserver-pod.yaml" "kube-controller-manager-pod.yaml" "kube-scheduler-pod.yaml")
+
+ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz")
+AUX_STATIC_POD_CONTAINERS=("kube-controller-manager" "kube-apiserver" "kube-scheduler")
 
 if [ ! -f "${SNAPSHOT_FILE}" ]; then
   echo "etcd snapshot ${SNAPSHOT_FILE} does not exist"
@@ -596,6 +623,12 @@ check_snapshot_status "${SNAPSHOT_FILE}"
 ETCD_CLIENT="${ETCD_ETCDCTL_BIN+etcdctl}"
 if [ -n "${ETCD_ETCDUTL_BIN}" ]; then
   ETCD_CLIENT="${ETCD_ETCDUTL_BIN}"
+fi
+
+# Move static pod manifests out of MANIFEST_DIR, if required
+if [ -z "${ETCD_RESTORE_SKIP_MOVE_CP_STATIC_PODS}" ]; then
+  mv_static_pods "${AUX_STATIC_POD_LIST[@]}"
+  wait_for_containers_to_stop "${AUX_STATIC_POD_CONTAINERS[@]}"
 fi
 
 # always move etcd pod and wait for all containers to exit
@@ -622,28 +655,21 @@ if [ -z "${ETCD_ETCDCTL_RESTORE}" ]; then
 
   # Copy snapshot to backupdir
   cp -p "${SNAPSHOT_FILE}" "${ETCD_DATA_DIR_BACKUP}"/snapshot.db
-  # Move the revision.json when it exists
-  [ ! -f "${ETCD_REV_JSON}" ] ||  mv -f "${ETCD_REV_JSON}" "${ETCD_DATA_DIR_BACKUP}"/revision.json
-  # removing any fio perf files left behind that could be deleted without problems
-  rm -f "${ETCD_DATA_DIR}"/etcd_perf*
-
-  # ensure the folder is really empty, otherwise the restore pod will crash loop
-  if [ -n "$(ls -A "${ETCD_DATA_DIR}")" ]; then
-      echo "folder ${ETCD_DATA_DIR} is not empty, please review and remove all files in it"
-      exit 1
-  fi
 
   echo "starting restore-etcd static pod"
-  cp -p "${RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"
+  # ideally this can be solved with jq and a real env var, but we don't have it available at this point
+  if [ -n "${ETCD_ETCDCTL_RESTORE_ENABLE_BUMP}" ]; then
+    sed "s/export ETCD_ETCDCTL_RESTORE_ENABLE_BUMP=\"false\"/export ETCD_ETCDCTL_RESTORE_ENABLE_BUMP=\"true\"/" "${RESTORE_ETCD_POD_YAML}" > "${MANIFEST_DIR}/etcd-pod.yaml"
+  else
+     cp -p "${RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"
+  fi
+
 else
   echo "removing etcd data dir..."
   rm -rf "${ETCD_DATA_DIR}"
   mkdir -p "${ETCD_DATA_DIR}"
 
   echo "starting snapshot restore through etcdctl..."
-  # We are never going to rev-bump here to ensure we don't cause a revision split between the
-  # remainder of the running cluster and this restore member. Imagine your non-restore quorum members run at rev 100,
-  # we would attempt to rev bump this with snapshot at rev 120, now this member is 20 revisions ahead and RAFT is confused.
   if ! ${ETCD_CLIENT} snapshot restore "${SNAPSHOT_FILE}" --data-dir="${ETCD_DATA_DIR}"; then
       echo "Snapshot restore failed. Aborting!"
       exit 1
@@ -654,6 +680,10 @@ else
   mv "${MANIFEST_STOPPED_DIR}/etcd-pod.yaml" "${MANIFEST_DIR}/etcd-pod.yaml"
 fi
 
+# start remaining static pods
+if [ -z "${ETCD_RESTORE_SKIP_MOVE_CP_STATIC_PODS}" ]; then
+  restore_static_pods "${BACKUP_FILE}" "${AUX_STATIC_POD_LIST[@]}"
+fi
 `)
 
 func etcdClusterRestoreShBytes() ([]byte, error) {
@@ -695,69 +725,14 @@ func etcdCmYaml() (*asset, error) {
 	return a, nil
 }
 
-var _etcdDisableEtcdSh = []byte(`#!/usr/bin/env bash
-
-### Created by cluster-etcd-operator. DO NOT edit.
-
-set -o errexit
-set -o pipefail
-set -o errtrace
-
-# disable-etcd.sh
-# This script will move the etcd static pod into the home/core/assets/manifests-stopped folder and wait for all containers to exit.
-
-if [[ $EUID -ne 0 ]]; then
-  echo "This script must be run as root"
-  exit 1
-fi
-
-
-function source_required_dependency {
-  local src_path="$1"
-  if [ ! -f "${src_path}" ]; then
-    echo "required dependencies not found, please ensure this script is run on a node with a functional etcd static pod"
-    exit 1
-  fi
-  # shellcheck disable=SC1090
-  source "${src_path}"
-}
-
-source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd.env
-source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd-common-tools
-
-ETCD_STATIC_POD_LIST=("etcd-pod.yaml")
-ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz" "etcd-rev" "etcd-backup-server")
-
-# always move etcd pod and wait for all containers to exit
-mv_static_pods "${ETCD_STATIC_POD_LIST[@]}"
-wait_for_containers_to_stop "${ETCD_STATIC_POD_CONTAINERS[@]}"
-`)
-
-func etcdDisableEtcdShBytes() ([]byte, error) {
-	return _etcdDisableEtcdSh, nil
-}
-
-func etcdDisableEtcdSh() (*asset, error) {
-	bytes, err := etcdDisableEtcdShBytes()
-	if err != nil {
-		return nil, err
-	}
-
-	info := bindataFileInfo{name: "etcd/disable-etcd.sh", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
-	a := &asset{bytes: bytes, info: info}
-	return a, nil
-}
-
 var _etcdEtcdCommonTools = []byte(`# Common environment variables
 ASSET_DIR="/home/core/assets"
 CONFIG_FILE_DIR="/etc/kubernetes"
 MANIFEST_DIR="${CONFIG_FILE_DIR}/manifests"
 ETCD_DATA_DIR="/var/lib/etcd"
 ETCD_DATA_DIR_BACKUP="/var/lib/etcd-backup"
-ETCD_REV_JSON="${ETCD_DATA_DIR}/revision.json"
 MANIFEST_STOPPED_DIR="${ASSET_DIR}/manifests-stopped"
 RESTORE_ETCD_POD_YAML="${CONFIG_FILE_DIR}/static-pod-resources/etcd-certs/configmaps/restore-etcd-pod/pod.yaml"
-QUORUM_RESTORE_ETCD_POD_YAML="${CONFIG_FILE_DIR}/static-pod-resources/etcd-certs/configmaps/restore-etcd-pod/quorum-restore-pod.yaml"
 ETCDCTL_BIN_DIR="${CONFIG_FILE_DIR}/static-pod-resources/bin"
 PATH=${PATH}:${ETCDCTL_BIN_DIR}
 export KUBECONFIG="/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/localhost.kubeconfig"
@@ -776,9 +751,6 @@ function dl_etcdctl {
      if [ -f "${etcdmnt}/bin/etcdutl" ]; then
        cp ${etcdmnt}/bin/etcdutl ${ETCDCTL_BIN_DIR}/
        export ETCD_ETCDUTL_BIN=etcdutl
-     fi
-     if ! [ -x "$(command -v jq)" ]; then
-       cp ${etcdmnt}/bin/jq ${ETCDCTL_BIN_DIR}/
      fi
 
      umount "${etcdmnt}"
@@ -815,33 +787,6 @@ function check_snapshot_status() {
   fi
 }
 
-function wait_for_containers_to_stop() {
-  local containers=("$@")
-
-  for container_name in "${containers[@]}"; do
-    echo "Waiting for container ${container_name} to stop"
-    while [[ -n $(crictl ps --label io.kubernetes.container.name="${container_name}" -q) ]]; do
-      echo -n "."
-      sleep 1
-    done
-    echo "complete"
-  done
-}
-
-function mv_static_pods() {
-  local containers=("$@")
-
-  # Move manifests and stop static pods
-  if [ ! -d "$MANIFEST_STOPPED_DIR" ]; then
-    mkdir -p "$MANIFEST_STOPPED_DIR"
-  fi
-
-  for POD_FILE_NAME in "${containers[@]}"; do
-    echo "...stopping ${POD_FILE_NAME}"
-    [ ! -f "${MANIFEST_DIR}/${POD_FILE_NAME}" ] && continue
-    mv "${MANIFEST_DIR}/${POD_FILE_NAME}" "${MANIFEST_STOPPED_DIR}"
-  done
-}
 `)
 
 func etcdEtcdCommonToolsBytes() ([]byte, error) {
@@ -969,438 +914,6 @@ func etcdPodCmYaml() (*asset, error) {
 	return a, nil
 }
 
-var _etcdPodGotplYaml = []byte(`apiVersion: v1
-kind: Pod
-metadata:
-  name: etcd
-  namespace: openshift-etcd
-  annotations:
-    kubectl.kubernetes.io/default-container: etcd
-    target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
-  labels:
-    app: etcd
-    k8s-app: etcd
-    etcd: "true"
-    revision: "REVISION"
-spec:
-  initContainers:
-    - name: setup
-      image: {{.Image}}
-      imagePullPolicy: IfNotPresent
-      terminationMessagePolicy: FallbackToLogsOnError
-      command:
-        - /bin/sh
-        - -c
-        - |
-          #!/bin/sh
-          echo -n "Fixing etcd log permissions."
-          mkdir -p /var/log/etcd  && chmod 0600 /var/log/etcd
-          echo -n "Fixing etcd auto backup permissions."
-          mkdir -p /var/lib/etcd-auto-backup  && chmod 0600 /var/lib/etcd-auto-backup
-      securityContext:
-        privileged: true
-      resources:
-        requests:
-          memory: 50Mi
-          cpu: 5m
-      volumeMounts:
-        - mountPath: /var/log/etcd
-          name: log-dir
-    - name: etcd-ensure-env-vars
-      image: {{.Image}}
-      imagePullPolicy: IfNotPresent
-      terminationMessagePolicy: FallbackToLogsOnError
-      command:
-        - /bin/sh
-        - -c
-        - |
-          #!/bin/sh
-          set -euo pipefail
-
-          : "${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST?not set}"
-          : "${NODE_NODE_ENVVAR_NAME_ETCD_NAME?not set}"
-          : "${NODE_NODE_ENVVAR_NAME_IP?not set}"
-
-          # check for ipv4 addresses as well as ipv6 addresses with extra square brackets
-          if [[ "${NODE_NODE_ENVVAR_NAME_IP}" != "${NODE_IP}" && "${NODE_NODE_ENVVAR_NAME_IP}" != "[${NODE_IP}]" ]]; then
-            # echo the error message to stderr
-            echo "Expected node IP to be ${NODE_IP} got ${NODE_NODE_ENVVAR_NAME_IP}" >&2
-            exit 1
-          fi
-
-          # check for ipv4 addresses as well as ipv6 addresses with extra square brackets
-          if [[ "${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}" != "${NODE_IP}" && "${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}" != "[${NODE_IP}]" ]]; then
-            # echo the error message to stderr
-            echo "Expected etcd url host to be ${NODE_IP} got ${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}" >&2
-            exit 1
-          fi
-
-      resources:
-        requests:
-          memory: 60Mi
-          cpu: 10m
-      securityContext:
-        privileged: true
-      env:
-      {{ range $i, $k := .EnvVars -}}
-      - name: {{ $k.Name | quote }}
-        value: {{ $k.Value | quote }}
-      {{ end -}}
-      - name: NODE_IP
-        valueFrom:
-          fieldRef:
-            fieldPath: status.podIP
-    - name: etcd-resources-copy
-      image: {{.Image}}
-      imagePullPolicy: IfNotPresent
-      terminationMessagePolicy: FallbackToLogsOnError
-      command:
-        - /bin/sh
-        - -c
-        - |
-          #!/bin/sh
-          set -euo pipefail
-
-          rm -f $(grep -l '^### Created by cluster-etcd-operator' /usr/local/bin/*)
-          cp -p /etc/kubernetes/static-pod-certs/configmaps/etcd-scripts/*.sh /usr/local/bin
-
-      resources:
-        requests:
-          memory: 60Mi
-          cpu: 10m
-      securityContext:
-        privileged: true
-      volumeMounts:
-        - mountPath: /etc/kubernetes/static-pod-resources
-          name: resource-dir
-        - mountPath: /etc/kubernetes/static-pod-certs
-          name: cert-dir
-        - mountPath: /usr/local/bin
-          name: usr-local-bin
-  containers:
-  # The etcdctl container should always be first. It is intended to be used
-  # to open a remote shell via ` + "`" + `oc rsh` + "`" + ` that is ready to run ` + "`" + `etcdctl` + "`" + `.
-  - name: etcdctl
-    image: {{.Image}}
-    imagePullPolicy: IfNotPresent
-    terminationMessagePolicy: FallbackToLogsOnError
-    command:
-      - "/bin/bash"
-      - "-c"
-      - "trap TERM INT; sleep infinity & wait"
-    resources:
-      requests:
-        memory: 60Mi
-        cpu: 10m
-    volumeMounts:
-      - mountPath: /etc/kubernetes/manifests
-        name: static-pod-dir
-      - mountPath: /etc/kubernetes/static-pod-resources
-        name: resource-dir
-      - mountPath: /etc/kubernetes/static-pod-certs
-        name: cert-dir
-      - mountPath: /var/lib/etcd/
-        name: data-dir
-    env:
-    {{ range .EnvVars -}}
-    - name: {{ .Name | quote }}
-      value: {{ .Value | quote }}
-    {{ end -}}
-    - name: "ETCD_STATIC_POD_VERSION"
-      value: "REVISION"
-{{ if .EnableEtcdContainer }}
-  - name: etcd
-    image: {{.Image}}
-    imagePullPolicy: IfNotPresent
-    terminationMessagePolicy: FallbackToLogsOnError
-    command:
-      - /bin/sh
-      - -c
-      - |
-        #!/bin/sh
-        set -euo pipefail
-
-        etcdctl member list || true
-
-        # this has a non-zero return code if the command is non-zero.  If you use an export first, it doesn't and you
-        # will succeed when you should fail.
-        ETCD_INITIAL_CLUSTER=$(discover-etcd-initial-cluster \
-          --cacert=/etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt \
-          --cert=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.crt \
-          --key=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.key \
-          --endpoints=${ALL_ETCD_ENDPOINTS} \
-          --data-dir=/var/lib/etcd \
-          --target-peer-url-host=${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST} \
-          --target-name=NODE_NAME)
-        export ETCD_INITIAL_CLUSTER
-
-        # we cannot use the "normal" port conflict initcontainer because when we upgrade, the existing static pod will never yield,
-        # so we do the detection in etcd container itself.
-        echo -n "Waiting for ports 2379, 2380 and 9978 to be released."
-        time while [ -n "$(ss -Htan '( sport = 2379 or sport = 2380 or sport = 9978 )')" ]; do
-          echo -n "."
-          sleep 1
-        done
-
-        export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
-        env | grep ETCD | grep -v NODE
-
-        set -x
-        # See https://etcd.io/docs/v3.4.0/tuning/ for why we use ionice
-        exec nice -n -19 ionice -c2 -n0 etcd \
-          --logger=zap \
-          --log-level={{.LogLevel}} \
-          --experimental-initial-corrupt-check=true \
-          --snapshot-count=10000 \
-          --initial-advertise-peer-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2380 \
-          --cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.crt \
-          --key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.key \
-          --trusted-ca-file=/etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt \
-          --client-cert-auth=true \
-          --peer-cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.crt \
-          --peer-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.key \
-          --peer-trusted-ca-file=/etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt \
-          --peer-client-cert-auth=true \
-          --advertise-client-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2379 \
-          --listen-client-urls=https://{{.ListenAddress}}:2379,unixs://${NODE_NODE_ENVVAR_NAME_IP}:0 \
-          --listen-peer-urls=https://{{.ListenAddress}}:2380 \
-          --metrics=extensive \
-          --listen-metrics-urls=https://{{.ListenAddress}}:9978 ||  mv /etc/kubernetes/etcd-backup-dir/etcd-member.yaml /etc/kubernetes/manifests
-    ports:
-    - containerPort: 2379
-      name: etcd
-      protocol: TCP
-    - containerPort: 2380
-      name: etcd-peer
-      protocol: TCP
-    - containerPort: 9978
-      name: etcd-metrics
-      protocol: TCP
-    env:
-    {{- range .EnvVars }}
-    - name: {{ .Name | quote }}
-      value: {{ .Value | quote }}
-    {{- end }}
-    - name: "ETCD_STATIC_POD_VERSION"
-      value: "REVISION"
-    resources:
-      requests:
-        memory: 600Mi
-        cpu: 300m
-    readinessProbe:
-      httpGet:
-        port: 9980
-        path: readyz
-        scheme: HTTPS
-      timeoutSeconds: 30
-      failureThreshold: 5
-      periodSeconds: 5
-      successThreshold: 1
-    livenessProbe:
-      httpGet:
-        path: healthz
-        port: 9980
-        scheme: HTTPS
-      timeoutSeconds: 30
-      periodSeconds: 5
-      successThreshold: 1
-      failureThreshold: 5
-    startupProbe:
-      httpGet:
-        port: 9980
-        path: readyz
-        scheme: HTTPS
-      initialDelaySeconds: 10
-      timeoutSeconds: 1
-      periodSeconds: 10
-      successThreshold: 1
-      failureThreshold: 18
-    securityContext:
-      privileged: true
-    volumeMounts:
-      - mountPath: /etc/kubernetes/manifests
-        name: static-pod-dir
-      - mountPath: /etc/kubernetes/static-pod-resources
-        name: resource-dir
-      - mountPath: /etc/kubernetes/static-pod-certs
-        name: cert-dir
-      - mountPath: /var/lib/etcd/
-        name: data-dir
-{{ end }}
-  - name: etcd-metrics
-    image: {{.Image}}
-    imagePullPolicy: IfNotPresent
-    terminationMessagePolicy: FallbackToLogsOnError
-    command:
-      - /bin/sh
-      - -c
-      - |
-        #!/bin/sh
-        set -euo pipefail
-
-        export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
-
-        exec nice -n -18 etcd grpc-proxy start \
-          --endpoints https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:9978 \
-          --metrics-addr https://{{.ListenAddress}}:9979 \
-          --listen-addr {{.LocalhostAddress}}:9977 \
-          --advertise-client-url ""  \
-          --key /etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.key \
-          --key-file /etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-metrics-NODE_NAME.key \
-          --cert /etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.crt \
-          --cert-file /etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-metrics-NODE_NAME.crt \
-          --cacert /etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt \
-          --trusted-ca-file /etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/metrics-ca-bundle.crt \
-        {{- if .CipherSuites }}
-          --listen-cipher-suites {{ .CipherSuites }} \
-          {{ end -}}
-          --tls-min-version $(ETCD_TLS_MIN_VERSION)
-    ports:
-    - containerPort: 9979
-      name: proxy-metrics
-      protocol: TCP
-    env:
-     {{- range .EnvVars }}
-    - name: {{ .Name | quote }}
-      value: {{ .Value | quote }}
-    {{ end -}}
-    - name: "ETCD_STATIC_POD_VERSION"
-      value: "REVISION"
-    resources:
-      requests:
-        memory: 200Mi
-        cpu: 40m
-    securityContext:
-      privileged: true
-    volumeMounts:
-      - mountPath: /etc/kubernetes/static-pod-resources
-        name: resource-dir
-      - mountPath: /etc/kubernetes/static-pod-certs
-        name: cert-dir
-      - mountPath: /var/lib/etcd/
-        name: data-dir
-  - name: etcd-readyz
-    image: {{.OperatorImage}}
-    imagePullPolicy: IfNotPresent
-    terminationMessagePolicy: FallbackToLogsOnError
-    command:
-      - /bin/sh
-      - -c
-      - |
-        #!/bin/sh
-        set -euo pipefail
-        
-        exec nice -n -18 cluster-etcd-operator readyz \
-          --target=https://localhost:2379 \
-          --listen-port=9980 \
-          --serving-cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.crt \
-          --serving-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.key \
-          --client-cert-file=$(ETCDCTL_CERT) \
-          --client-key-file=$(ETCDCTL_KEY) \
-          --client-cacert-file=$(ETCDCTL_CACERT) \
-        {{- if .CipherSuites }}
-          --listen-cipher-suites {{ .CipherSuites }} \
-          {{ end -}}
-          --listen-tls-min-version=$(ETCD_TLS_MIN_VERSION)
-    securityContext:
-      privileged: true
-    ports:
-    - containerPort: 9980
-      name: readyz
-      protocol: TCP
-    resources:
-      requests:
-        memory: 50Mi
-        cpu: 10m
-    env:
-    {{ range .EnvVars -}}
-    - name: {{ .Name | quote }}
-      value: {{ .Value | quote }}
-    {{ end -}}
-    volumeMounts:
-      - mountPath: /var/log/etcd/
-        name: log-dir
-      - mountPath: /etc/kubernetes/static-pod-certs
-        name: cert-dir
-  - name: etcd-rev
-    image: {{.OperatorImage}}
-    imagePullPolicy: IfNotPresent
-    terminationMessagePolicy: FallbackToLogsOnError
-    command:
-      - /bin/sh
-      - -c
-      - |
-        #!/bin/sh
-        set -euo pipefail
-        
-        cluster-etcd-operator rev \
-          --endpoints=$(ALL_ETCD_ENDPOINTS) \
-          --client-cert-file=$(ETCDCTL_CERT) \
-          --client-key-file=$(ETCDCTL_KEY) \
-          --client-cacert-file=$(ETCDCTL_CACERT)
-    securityContext:
-      privileged: true
-    resources:
-      requests:
-        memory: 50Mi
-        cpu: 10m
-    env:
-    {{ range .EnvVars -}}
-    - name: {{ .Name | quote }}
-      value: {{ .Value | quote }}
-    {{ end -}}
-    volumeMounts:
-    - mountPath: /var/lib/etcd
-      name: data-dir
-    - mountPath: /etc/kubernetes/static-pod-certs
-      name: cert-dir
-  hostNetwork: true
-  priorityClassName: system-node-critical
-  tolerations:
-  - operator: "Exists"
-  volumes:
-    - hostPath:
-        path: /etc/kubernetes/manifests
-      name: static-pod-dir
-    - hostPath:
-        path: /etc/kubernetes/static-pod-resources/etcd-pod-REVISION
-      name: resource-dir
-    - hostPath:
-        path: /etc/kubernetes/static-pod-resources/etcd-certs
-      name: cert-dir
-    - hostPath:
-        path: /var/lib/etcd
-        type: ""
-      name: data-dir
-    - hostPath:
-        path: /usr/local/bin
-      name: usr-local-bin
-    - hostPath:
-        path: /var/log/etcd
-      name: log-dir
-    - hostPath:
-        path: /etc/kubernetes
-      name: config-dir
-    - hostPath:
-        path: /var/lib/etcd-auto-backup
-      name: etcd-auto-backup-dir
-`)
-
-func etcdPodGotplYamlBytes() ([]byte, error) {
-	return _etcdPodGotplYaml, nil
-}
-
-func etcdPodGotplYaml() (*asset, error) {
-	bytes, err := etcdPodGotplYamlBytes()
-	if err != nil {
-		return nil, err
-	}
-
-	info := bindataFileInfo{name: "etcd/pod.gotpl.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
-	a := &asset{bytes: bytes, info: info}
-	return a, nil
-}
-
 var _etcdPodYaml = []byte(`apiVersion: v1
 kind: Pod
 metadata:
@@ -1426,7 +939,7 @@ spec:
         - |
           #!/bin/sh
           echo -n "Fixing etcd log permissions."
-          mkdir -p /var/log/etcd  && chmod 0600 /var/log/etcd
+          mkdir -p /var/log/etcd && chmod 0700 /var/log/etcd
       securityContext:
         privileged: true
       resources:
@@ -1660,7 +1173,7 @@ ${COMPUTED_ENV_VARS}
           --cert-file /etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-metrics-NODE_NAME.crt \
           --cacert /etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt \
           --trusted-ca-file /etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/metrics-ca-bundle.crt \
-          --listen-cipher-suites ${ETCD_CIPHER_SUITES}
+          --listen-cipher-suites TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_AES_128_GCM_SHA256,TLS_AES_256_GCM_SHA384,TLS_CHACHA20_POLY1305_SHA256
     env:
 ${COMPUTED_ENV_VARS}
       - name: "ETCD_STATIC_POD_VERSION"
@@ -1696,8 +1209,7 @@ ${COMPUTED_ENV_VARS}
           --serving-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.key \
           --client-cert-file=$(ETCDCTL_CERT) \
           --client-key-file=$(ETCDCTL_KEY) \
-          --client-cacert-file=$(ETCDCTL_CACERT) \
-          --listen-cipher-suites=$(ETCD_CIPHER_SUITES)
+          --client-cacert-file=$(ETCDCTL_CACERT)
     securityContext:
       privileged: true
     ports:
@@ -1715,35 +1227,6 @@ ${COMPUTED_ENV_VARS}
         name: log-dir
       - mountPath: /etc/kubernetes/static-pod-certs
         name: cert-dir
-  - name: etcd-rev
-    image: ${OPERATOR_IMAGE}
-    imagePullPolicy: IfNotPresent
-    terminationMessagePolicy: FallbackToLogsOnError
-    command:
-      - /bin/sh
-      - -c
-      - |
-        #!/bin/sh
-        set -euo pipefail
-        
-        cluster-etcd-operator rev \
-          --endpoints=$(ALL_ETCD_ENDPOINTS) \
-          --client-cert-file=$(ETCDCTL_CERT) \
-          --client-key-file=$(ETCDCTL_KEY) \
-          --client-cacert-file=$(ETCDCTL_CACERT)
-    securityContext:
-      privileged: true
-    resources:
-      requests:
-        memory: 50Mi
-        cpu: 10m
-    env:
-${COMPUTED_ENV_VARS}
-    volumeMounts:
-    - mountPath: /var/lib/etcd
-      name: data-dir
-    - mountPath: /etc/kubernetes/static-pod-certs
-      name: cert-dir
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
@@ -1768,9 +1251,6 @@ ${COMPUTED_ENV_VARS}
     - hostPath:
         path: /var/log/etcd
       name: log-dir
-    - hostPath:
-        path: /etc/kubernetes
-      name: config-dir
 `)
 
 func etcdPodYamlBytes() ([]byte, error) {
@@ -1867,216 +1347,6 @@ func etcdPrometheusRolebindingYaml() (*asset, error) {
 	return a, nil
 }
 
-var _etcdQuorumRestorePodYaml = []byte(`apiVersion: v1
-kind: Pod
-metadata:
-  name: etcd
-  namespace: openshift-etcd
-  labels:
-    app: etcd
-    k8s-app: etcd
-    etcd: "true"
-    revision: "REVISION"
-spec:
-  containers:
-  - name: etcd
-    image: ${IMAGE}
-    imagePullPolicy: IfNotPresent
-    terminationMessagePolicy: FallbackToLogsOnError
-    command:
-      - /bin/sh
-      - -c
-      - |
-        #!/bin/sh
-        set -euo pipefail
-        
-        export REV_JSON="/var/lib/etcd/revision.json"
-        
-        if [ -n "$(ls -A "${REV_JSON}")" ]; then
-           # this will bump by the amount of 20% of the last known live revision.           
-           BUMP_REV=$(jq -r "(.maxRaftIndex*0.2|floor)" "${REV_JSON}")
-           echo "bumping revisions by ${BUMP_REV}"
-        else
-           # 1bn would be an etcd running at 1000 writes/s for about eleven days.
-           echo "no revision.json found, assuming a 1bn revision bump"
-           BUMP_REV=1000000000
-        fi
-        
-        set -x
-        exec etcd \
-          --logger=zap \
-          --log-level=${VERBOSITY} \
-          --force-new-cluster \
-          --force-new-cluster-bump-amount="${BUMP_REV}" \
-          --name="${NODE_NODE_ENVVAR_NAME_ETCD_NAME}" \
-          --initial-cluster="${NODE_NODE_ENVVAR_NAME_ETCD_NAME}=https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:2380" \
-          --initial-advertise-peer-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2380 \
-          --cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.crt \
-          --key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.key \
-          --trusted-ca-file=/etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt \
-          --client-cert-auth=true \
-          --peer-cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.crt \
-          --peer-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.key \
-          --peer-trusted-ca-file=/etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt \
-          --peer-client-cert-auth=true \
-          --advertise-client-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2379 \
-          --listen-client-urls=https://${LISTEN_ON_ALL_IPS}:2379 \
-          --listen-peer-urls=https://${LISTEN_ON_ALL_IPS}:2380 \
-          --metrics=extensive \
-          --listen-metrics-urls=https://${LISTEN_ON_ALL_IPS}:9978
-    env:
-${COMPUTED_ENV_VARS}
-      - name: "ETCD_STATIC_POD_REV"
-        value: "REVISION"
-    resources:
-      requests:
-        memory: 600Mi
-        cpu: 300m
-    readinessProbe:
-      tcpSocket:
-        port: 2380
-      failureThreshold: 3
-      initialDelaySeconds: 3
-      periodSeconds: 5
-      successThreshold: 1
-      timeoutSeconds: 5
-    securityContext:
-      privileged: true
-    volumeMounts:
-      - mountPath: /etc/kubernetes/manifests
-        name: static-pod-dir
-      - mountPath: /etc/kubernetes/static-pod-certs
-        name: cert-dir
-      - mountPath: /var/lib/etcd/
-        name: data-dir
-      - mountPath: /var/lib/etcd-backup/
-        name: backup-dir
-  - name: etcd-readyz
-    image: ${OPERATOR_IMAGE}
-    imagePullPolicy: IfNotPresent
-    terminationMessagePolicy: FallbackToLogsOnError
-    command:
-      - /bin/sh
-      - -c
-      - |
-        #!/bin/sh
-        set -euo pipefail
-        
-        exec nice -n -18 cluster-etcd-operator readyz \
-          --target=https://localhost:2379 \
-          --listen-port=9980 \
-          --serving-cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.crt \
-          --serving-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.key \
-          --client-cert-file=$(ETCDCTL_CERT) \
-          --client-key-file=$(ETCDCTL_KEY) \
-          --client-cacert-file=$(ETCDCTL_CACERT) \
-          --listen-cipher-suites=$(ETCD_CIPHER_SUITES)
-    securityContext:
-      privileged: true
-    ports:
-      - containerPort: 9980
-        name: readyz
-        protocol: TCP
-    resources:
-      requests:
-        memory: 50Mi
-        cpu: 10m
-    env:
-${COMPUTED_ENV_VARS}
-    volumeMounts:
-    - mountPath: /etc/kubernetes/static-pod-certs
-      name: cert-dir
-  hostNetwork: true
-  priorityClassName: system-node-critical
-  tolerations:
-  - operator: "Exists"
-  volumes:
-    - hostPath:
-        path: /etc/kubernetes/manifests
-      name: static-pod-dir
-    - hostPath:
-        path: /etc/kubernetes/static-pod-resources/etcd-certs
-      name: cert-dir
-    - hostPath:
-        path: /var/lib/etcd
-        type: ""
-      name: data-dir
-    - hostPath:
-        path: /var/lib/etcd-backup
-        type: ""
-      name: backup-dir
-`)
-
-func etcdQuorumRestorePodYamlBytes() ([]byte, error) {
-	return _etcdQuorumRestorePodYaml, nil
-}
-
-func etcdQuorumRestorePodYaml() (*asset, error) {
-	bytes, err := etcdQuorumRestorePodYamlBytes()
-	if err != nil {
-		return nil, err
-	}
-
-	info := bindataFileInfo{name: "etcd/quorum-restore-pod.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
-	a := &asset{bytes: bytes, info: info}
-	return a, nil
-}
-
-var _etcdQuorumRestoreSh = []byte(`#!/usr/bin/env bash
-
-### Created by cluster-etcd-operator. DO NOT edit.
-
-set -o errexit
-set -o pipefail
-set -o errtrace
-
-# ./quorum-restore.sh
-# This script attempts to restore quorum by spawning a revision-bumped etcd without membership information.
-
-if [[ $EUID -ne 0 ]]; then
-  echo "This script must be run as root"
-  exit 1
-fi
-
-function source_required_dependency {
-  local src_path="$1"
-  if [ ! -f "${src_path}" ]; then
-    echo "required dependencies not found, please ensure this script is run on a node with a functional etcd static pod"
-    exit 1
-  fi
-  # shellcheck disable=SC1090
-  source "${src_path}"
-}
-
-source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd.env
-source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd-common-tools
-
-ETCD_STATIC_POD_LIST=("etcd-pod.yaml")
-ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz" "etcd-rev" "etcd-backup-server")
-
-# always move etcd pod and wait for all containers to exit
-mv_static_pods "${ETCD_STATIC_POD_LIST[@]}"
-wait_for_containers_to_stop "${ETCD_STATIC_POD_CONTAINERS[@]}"
-
-echo "starting restore-etcd static pod"
-cp "${QUORUM_RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"
-`)
-
-func etcdQuorumRestoreShBytes() ([]byte, error) {
-	return _etcdQuorumRestoreSh, nil
-}
-
-func etcdQuorumRestoreSh() (*asset, error) {
-	bytes, err := etcdQuorumRestoreShBytes()
-	if err != nil {
-		return nil, err
-	}
-
-	info := bindataFileInfo{name: "etcd/quorum-restore.sh", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
-	a := &asset{bytes: bytes, info: info}
-	return a, nil
-}
-
 var _etcdRestorePodCmYaml = []byte(`apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -2123,75 +1393,64 @@ spec:
       - |
         #!/bin/sh
         set -euo pipefail
-               
+        
+        # this can be controlled by cluster-restore.sh, which will replace this line entirely when enabled at runtime
+        export ETCD_ETCDCTL_RESTORE_ENABLE_BUMP="false"
+        
         export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
         export ETCD_INITIAL_CLUSTER="${ETCD_NAME}=https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:2380"
         env | grep ETCD | grep -v NODE
         export ETCD_NODE_PEER_URL=https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:2380
-        export REV_JSON="/var/lib/etcd-backup/revision.json"
-        export SNAPSHOT_FILE="/var/lib/etcd-backup/snapshot.db"
 
-        # checking if data directory is empty, if not etcdctl restore will fail         
-        if [ -n "$(ls -A "/var/lib/etcd")" ]; then
-          echo "please delete the contents of the /var/lib/etcd directory before restoring, running the restore script will do this for you"
+        # checking if there are any fio perf file left behind that could be deleted without problems
+        if [ ! -z $(ls -A "/var/lib/etcd/etcd_perf*") ]; then
+          rm -f /var/lib/etcd/etcd_perf*
+        fi
+
+        # checking if data directory is empty, if not etcdctl restore will fail
+        if [ ! -z $(ls -A "/var/lib/etcd") ]; then
+          echo "please delete the contents of data directory before restoring, running the restore script will do this for you"
           exit 1
         fi
         
         ETCD_ETCDCTL_BIN="etcdctl"
         if [ -x "$(command -v etcdutl)" ]; then
-          echo "found etcdutl, using that instead of etcdctl for local operations"
+          echo "found newer etcdutl, using that instead of etcdctl"
           ETCD_ETCDCTL_BIN="etcdutl"
         fi      
 
         # check if we have backup file to be restored
         # if the file exist, check if it has not changed size in last 5 seconds
-        if [ ! -f "${SNAPSHOT_FILE}" ]; then
-          echo "please make a copy of the snapshot db file, then move that copy to ${SNAPSHOT_FILE}"
+        if [ ! -f /var/lib/etcd-backup/snapshot.db ]; then
+          echo "please make a copy of the snapshot db file, then move that copy to /var/lib/etcd-backup/snapshot.db"
           exit 1
         else
-          filesize=$(stat --format=%s "${SNAPSHOT_FILE}")
+          filesize=$(stat --format=%s "/var/lib/etcd-backup/snapshot.db")
           sleep 5
-          newfilesize=$(stat --format=%s "${SNAPSHOT_FILE}")
+          newfilesize=$(stat --format=%s "/var/lib/etcd-backup/snapshot.db")
           if [ "$filesize" != "$newfilesize" ]; then
             echo "file size has changed since last 5 seconds, retry sometime after copying is complete"
             exit 1
           fi
         fi
         
-        SNAPSHOT_REV=$(etcdutl snapshot status -wjson "$SNAPSHOT_FILE" | jq -r ".revision")
-        echo "snapshot is at revision ${SNAPSHOT_REV}"
-        
-        if [ -n "$(ls -A "${REV_JSON}")" ]; then
-           # this will bump by the amount of the last known live revision + 20% slack.
-           # Note: the bump amount is an addition to the current revision stored in the snapshot.
-           # We're avoiding to do any math with SNAPSHOT_REV, uint64 has plenty of space to double revisions
-           # and we're assuming that full disaster restores are a very rare occurrence anyway.
-           BUMP_REV=$(jq -r "(.maxRaftIndex*1.2|floor)" "${REV_JSON}")
-           echo "bumping revisions by ${BUMP_REV}"
-        else
-           # we can't take SNAPSHOT_REV as an indicator here, because the snapshot might be much older
-           # than any currently live served revision. 
-           # 1bn would be an etcd running at 1000 writes/s for about eleven days.
-           echo "no revision.json found, assuming a 1bn revision bump"
-           BUMP_REV=1000000000
+        BUMP_ARGS=""
+        if [[ "${ETCD_ETCDCTL_RESTORE_ENABLE_BUMP}" == "true" ]]; then
+          echo "enabling restore bump"
+          BUMP_ARGS="--bump-revision 1000000000 --mark-compacted"
         fi
-        
+                
         UUID=$(uuidgen)
         echo "restoring to a single node cluster"
-        ${ETCD_ETCDCTL_BIN} snapshot restore "${SNAPSHOT_FILE}" \
-         --name $ETCD_NAME \
+        ${ETCD_ETCDCTL_BIN} snapshot restore /var/lib/etcd-backup/snapshot.db \
+         --name  $ETCD_NAME \
          --initial-cluster=$ETCD_INITIAL_CLUSTER \
          --initial-cluster-token "openshift-etcd-${UUID}" \
          --initial-advertise-peer-urls $ETCD_NODE_PEER_URL \
          --data-dir="/var/lib/etcd/restore-${UUID}" \
-         --mark-compacted \
-         --bump-revision "${BUMP_REV}"
+         ${BUMP_ARGS}
 
         mv /var/lib/etcd/restore-${UUID}/* /var/lib/etcd/
-        # copy the revision.json back in case a second restore needs to be run afterwards
-        if [ -n "$(ls -A "${REV_JSON}")" ]; then
-           cp ${REV_JSON} /var/lib/etcd/
-        fi
 
         rmdir /var/lib/etcd/restore-${UUID}
         rm /var/lib/etcd-backup/snapshot.db
@@ -2241,41 +1500,6 @@ ${COMPUTED_ENV_VARS}
         name: data-dir
       - mountPath: /var/lib/etcd-backup/
         name: backup-dir
-  - name: etcd-readyz
-    image: ${OPERATOR_IMAGE}
-    imagePullPolicy: IfNotPresent
-    terminationMessagePolicy: FallbackToLogsOnError
-    command:
-      - /bin/sh
-      - -c
-      - |
-        #!/bin/sh
-        set -euo pipefail
-        
-        exec nice -n -18 cluster-etcd-operator readyz \
-          --target=https://localhost:2379 \
-          --listen-port=9980 \
-          --serving-cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.crt \
-          --serving-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.key \
-          --client-cert-file=$(ETCDCTL_CERT) \
-          --client-key-file=$(ETCDCTL_KEY) \
-          --client-cacert-file=$(ETCDCTL_CACERT) \
-          --listen-cipher-suites=$(ETCD_CIPHER_SUITES)
-    securityContext:
-      privileged: true
-    ports:
-      - containerPort: 9980
-        name: readyz
-        protocol: TCP
-    resources:
-      requests:
-        memory: 50Mi
-        cpu: 10m
-    env:
-${COMPUTED_ENV_VARS}
-    volumeMounts:
-    - mountPath: /etc/kubernetes/static-pod-certs
-      name: cert-dir
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:
@@ -2342,9 +1566,7 @@ metadata:
 data:
   etcd.env:
   cluster-restore.sh:
-  quorum-restore.sh:
   cluster-backup.sh:
-  disable-etcd.sh:
   etcd-common-tools:
 `)
 
@@ -2432,17 +1654,8 @@ spec:
     - name: etcd
       port: 2379
       protocol: TCP
-    - name: etcd-peer
-      port: 2380
-      protocol: TCP
-    - name: grpc-proxy
-      port: 9978
-      protocol: TCP
     - name: etcd-metrics
       port: 9979
-      protocol: TCP
-    - name: readyz-sidecar
-      port: 9980
       protocol: TCP
 `)
 
@@ -2521,17 +1734,13 @@ var _bindata = map[string]func() (*asset, error){
 	"etcd/cluster-backup.sh":           etcdClusterBackupSh,
 	"etcd/cluster-restore.sh":          etcdClusterRestoreSh,
 	"etcd/cm.yaml":                     etcdCmYaml,
-	"etcd/disable-etcd.sh":             etcdDisableEtcdSh,
 	"etcd/etcd-common-tools":           etcdEtcdCommonTools,
 	"etcd/minimal-sm.yaml":             etcdMinimalSmYaml,
 	"etcd/ns.yaml":                     etcdNsYaml,
 	"etcd/pod-cm.yaml":                 etcdPodCmYaml,
-	"etcd/pod.gotpl.yaml":              etcdPodGotplYaml,
 	"etcd/pod.yaml":                    etcdPodYaml,
 	"etcd/prometheus-role.yaml":        etcdPrometheusRoleYaml,
 	"etcd/prometheus-rolebinding.yaml": etcdPrometheusRolebindingYaml,
-	"etcd/quorum-restore-pod.yaml":     etcdQuorumRestorePodYaml,
-	"etcd/quorum-restore.sh":           etcdQuorumRestoreSh,
 	"etcd/restore-pod-cm.yaml":         etcdRestorePodCmYaml,
 	"etcd/restore-pod.yaml":            etcdRestorePodYaml,
 	"etcd/sa.yaml":                     etcdSaYaml,
@@ -2592,17 +1801,13 @@ var _bintree = &bintree{nil, map[string]*bintree{
 		"cluster-backup.sh":           {etcdClusterBackupSh, map[string]*bintree{}},
 		"cluster-restore.sh":          {etcdClusterRestoreSh, map[string]*bintree{}},
 		"cm.yaml":                     {etcdCmYaml, map[string]*bintree{}},
-		"disable-etcd.sh":             {etcdDisableEtcdSh, map[string]*bintree{}},
 		"etcd-common-tools":           {etcdEtcdCommonTools, map[string]*bintree{}},
 		"minimal-sm.yaml":             {etcdMinimalSmYaml, map[string]*bintree{}},
 		"ns.yaml":                     {etcdNsYaml, map[string]*bintree{}},
 		"pod-cm.yaml":                 {etcdPodCmYaml, map[string]*bintree{}},
-		"pod.gotpl.yaml":              {etcdPodGotplYaml, map[string]*bintree{}},
 		"pod.yaml":                    {etcdPodYaml, map[string]*bintree{}},
 		"prometheus-role.yaml":        {etcdPrometheusRoleYaml, map[string]*bintree{}},
 		"prometheus-rolebinding.yaml": {etcdPrometheusRolebindingYaml, map[string]*bintree{}},
-		"quorum-restore-pod.yaml":     {etcdQuorumRestorePodYaml, map[string]*bintree{}},
-		"quorum-restore.sh":           {etcdQuorumRestoreSh, map[string]*bintree{}},
 		"restore-pod-cm.yaml":         {etcdRestorePodCmYaml, map[string]*bintree{}},
 		"restore-pod.yaml":            {etcdRestorePodYaml, map[string]*bintree{}},
 		"sa.yaml":                     {etcdSaYaml, map[string]*bintree{}},

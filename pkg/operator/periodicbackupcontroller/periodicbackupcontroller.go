@@ -5,45 +5,37 @@ import (
 	"fmt"
 	"time"
 
-	clientv1 "k8s.io/client-go/listers/core/v1"
-
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	backupv1client "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
-	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
-
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
-	"k8s.io/client-go/kubernetes"
 	batchv1client "k8s.io/client-go/kubernetes/typed/batch/v1"
 	"k8s.io/klog/v2"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
+	"github.com/openshift/library-go/pkg/controller/factory"
+	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	"k8s.io/client-go/kubernetes"
 )
 
-const (
-	backupJobLabel                = "backup-name"
-	defaultBackupCRName           = "default"
-	etcdBackupServerContainerName = "etcd-backup-server"
-)
+const backupJobLabel = "backup-name"
 
 type PeriodicBackupController struct {
 	operatorClient        v1helpers.OperatorClient
-	podLister             clientv1.PodLister
 	backupsClient         backupv1client.BackupsGetter
 	kubeClient            kubernetes.Interface
 	operatorImagePullSpec string
 	featureGateAccessor   featuregates.FeatureGateAccess
-	kubeInformers         v1helpers.KubeInformersForNamespaces
 }
 
 func NewPeriodicBackupController(
@@ -54,17 +46,14 @@ func NewPeriodicBackupController(
 	eventRecorder events.Recorder,
 	operatorImagePullSpec string,
 	accessor featuregates.FeatureGateAccess,
-	backupsInformer factory.Informer,
-	kubeInformers v1helpers.KubeInformersForNamespaces) factory.Controller {
+	backupsInformer factory.Informer) factory.Controller {
 
 	c := &PeriodicBackupController{
 		operatorClient:        operatorClient,
-		podLister:             kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
 		backupsClient:         backupsClient,
 		kubeClient:            kubeClient,
 		operatorImagePullSpec: operatorImagePullSpec,
 		featureGateAccessor:   accessor,
-		kubeInformers:         kubeInformers,
 	}
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
@@ -72,8 +61,7 @@ func NewPeriodicBackupController(
 
 	return factory.New().
 		ResyncEvery(1*time.Minute).
-		WithInformers(backupsInformer,
-			kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer()).
+		WithInformers(backupsInformer).
 		WithSync(syncer.Sync).
 		ToController("PeriodicBackupController", eventRecorder.WithComponentSuffix("periodic-backup-controller"))
 }

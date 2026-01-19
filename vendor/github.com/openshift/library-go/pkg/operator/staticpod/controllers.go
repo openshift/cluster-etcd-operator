@@ -2,7 +2,6 @@ package staticpod
 
 import (
 	"fmt"
-	"k8s.io/utils/clock"
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -40,7 +39,6 @@ type staticPodOperatorControllerBuilder struct {
 	kubeClient              kubernetes.Interface
 	kubeInformers           v1helpers.KubeInformersForNamespaces
 	configInformers         externalversions.SharedInformerFactory
-	clock                   clock.Clock
 	eventRecorder           events.Recorder
 
 	// resource information
@@ -77,8 +75,6 @@ type staticPodOperatorControllerBuilder struct {
 	readyzEndpoint                string
 	pdbUnhealthyPodEvictionPolicy *v1.UnhealthyPodEvictionPolicyType
 	guardCreateConditionalFunc    func() (bool, bool, error)
-
-	revisionControllerPrecondition revisioncontroller.PreconditionFunc
 }
 
 func NewBuilder(
@@ -86,14 +82,12 @@ func NewBuilder(
 	kubeClient kubernetes.Interface,
 	kubeInformers v1helpers.KubeInformersForNamespaces,
 	configInformers externalversions.SharedInformerFactory,
-	clock clock.Clock,
 ) Builder {
 	return &staticPodOperatorControllerBuilder{
 		staticPodOperatorClient: staticPodOperatorClient,
 		kubeClient:              kubeClient,
 		kubeInformers:           kubeInformers,
 		configInformers:         configInformers,
-		clock:                   clock,
 	}
 }
 
@@ -120,7 +114,6 @@ type Builder interface {
 	// This can help to drain/maintain a node and recover without a manual intervention when multiple instances of nodes or pods are misbehaving.
 	// Use this with caution, as this option can disrupt perspective pods that have not yet had a chance to become healthy.
 	WithPodDisruptionBudgetGuard(operatorNamespace, operatorName, readyzPort, readyzEndpoint string, pdbUnhealthyPodEvictionPolicy *v1.UnhealthyPodEvictionPolicyType, createConditionalFunc func() (bool, bool, error)) Builder
-	WithRevisionControllerPrecondition(revisionControllerPrecondition revisioncontroller.PreconditionFunc) Builder
 	ToControllers() (manager.ControllerManager, error)
 }
 
@@ -203,17 +196,12 @@ func (b *staticPodOperatorControllerBuilder) WithPodDisruptionBudgetGuard(operat
 	return b
 }
 
-func (b *staticPodOperatorControllerBuilder) WithRevisionControllerPrecondition(revisionControllerPrecondition revisioncontroller.PreconditionFunc) Builder {
-	b.revisionControllerPrecondition = revisionControllerPrecondition
-	return b
-}
-
 func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.ControllerManager, error) {
 	manager := manager.NewControllerManager()
 
 	eventRecorder := b.eventRecorder
 	if eventRecorder == nil {
-		eventRecorder = events.NewLoggingEventRecorder("static-pod-operator-controller", b.clock)
+		eventRecorder = events.NewLoggingEventRecorder("static-pod-operator-controller")
 	}
 	versionRecorder := b.versionRecorder
 	if versionRecorder == nil {
@@ -235,16 +223,14 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 
 	if len(b.operandNamespace) > 0 {
 		manager.WithController(revisioncontroller.NewRevisionController(
-			b.operandName,
 			b.operandNamespace,
 			b.revisionConfigMaps,
 			b.revisionSecrets,
 			operandInformers,
-			b.staticPodOperatorClient,
+			revisioncontroller.StaticPodLatestRevisionClient{StaticPodOperatorClient: b.staticPodOperatorClient},
 			configMapClient,
 			secretClient,
 			eventRecorder,
-			b.revisionControllerPrecondition,
 		), 1)
 	} else {
 		errs = append(errs, fmt.Errorf("missing revisionController; cannot proceed"))
@@ -252,7 +238,6 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 
 	if len(b.installCommand) > 0 {
 		manager.WithController(installer.NewInstallerController(
-			b.operandName,
 			b.operandNamespace,
 			b.staticPodName,
 			b.revisionConfigMaps,
@@ -275,7 +260,6 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 		), 1)
 
 		manager.WithController(installerstate.NewInstallerStateController(
-			b.operandName,
 			operandInformers,
 			podClient,
 			eventsClient,
@@ -290,7 +274,6 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 	if len(b.operandName) > 0 {
 		// TODO add handling for operator configmap changes to get version-mapping changes
 		manager.WithController(staticpodstate.NewStaticPodStateController(
-			b.operandName,
 			b.operandNamespace,
 			b.staticPodName,
 			b.operandName,
@@ -322,7 +305,6 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 
 	if b.enableStartMonitor != nil {
 		manager.WithController(startupmonitorcondition.New(
-			b.operandName,
 			b.operandNamespace,
 			b.staticPodName,
 			b.staticPodOperatorClient,
@@ -332,7 +314,6 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 		), 1)
 
 		if staticPodFallbackController, err := staticpodfallback.New(
-			b.operandName,
 			b.operandNamespace,
 			b.operandPodLabelSelector,
 			b.staticPodOperatorClient,
@@ -347,7 +328,6 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 	}
 
 	manager.WithController(node.NewNodeController(
-		b.operandName,
 		b.staticPodOperatorClient,
 		clusterInformers,
 		eventRecorder,
@@ -366,7 +346,7 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 		eventRecorder,
 	).AddKubeInformers(b.kubeInformers), 1)
 
-	manager.WithController(unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(b.operatorName, b.staticPodOperatorClient, eventRecorder), 1)
+	manager.WithController(unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(b.staticPodOperatorClient, eventRecorder), 1)
 	manager.WithController(loglevel.NewClusterOperatorLoggingController(b.staticPodOperatorClient, eventRecorder), 1)
 
 	if len(b.operatorNamespace) > 0 && len(b.operatorName) > 0 && len(b.readyzPort) > 0 && len(b.readyzEndpoint) > 0 {

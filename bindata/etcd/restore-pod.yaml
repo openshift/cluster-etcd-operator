@@ -20,75 +20,64 @@ spec:
       - |
         #!/bin/sh
         set -euo pipefail
-               
+        
+        # this can be controlled by cluster-restore.sh, which will replace this line entirely when enabled at runtime
+        export ETCD_ETCDCTL_RESTORE_ENABLE_BUMP="false"
+        
         export ETCD_NAME=${NODE_NODE_ENVVAR_NAME_ETCD_NAME}
         export ETCD_INITIAL_CLUSTER="${ETCD_NAME}=https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:2380"
         env | grep ETCD | grep -v NODE
         export ETCD_NODE_PEER_URL=https://${NODE_NODE_ENVVAR_NAME_ETCD_URL_HOST}:2380
-        export REV_JSON="/var/lib/etcd-backup/revision.json"
-        export SNAPSHOT_FILE="/var/lib/etcd-backup/snapshot.db"
 
-        # checking if data directory is empty, if not etcdctl restore will fail         
-        if [ -n "$(ls -A "/var/lib/etcd")" ]; then
-          echo "please delete the contents of the /var/lib/etcd directory before restoring, running the restore script will do this for you"
+        # checking if there are any fio perf file left behind that could be deleted without problems
+        if [ ! -z $(ls -A "/var/lib/etcd/etcd_perf*") ]; then
+          rm -f /var/lib/etcd/etcd_perf*
+        fi
+
+        # checking if data directory is empty, if not etcdctl restore will fail
+        if [ ! -z $(ls -A "/var/lib/etcd") ]; then
+          echo "please delete the contents of data directory before restoring, running the restore script will do this for you"
           exit 1
         fi
         
         ETCD_ETCDCTL_BIN="etcdctl"
         if [ -x "$(command -v etcdutl)" ]; then
-          echo "found etcdutl, using that instead of etcdctl for local operations"
+          echo "found newer etcdutl, using that instead of etcdctl"
           ETCD_ETCDCTL_BIN="etcdutl"
         fi      
 
         # check if we have backup file to be restored
         # if the file exist, check if it has not changed size in last 5 seconds
-        if [ ! -f "${SNAPSHOT_FILE}" ]; then
-          echo "please make a copy of the snapshot db file, then move that copy to ${SNAPSHOT_FILE}"
+        if [ ! -f /var/lib/etcd-backup/snapshot.db ]; then
+          echo "please make a copy of the snapshot db file, then move that copy to /var/lib/etcd-backup/snapshot.db"
           exit 1
         else
-          filesize=$(stat --format=%s "${SNAPSHOT_FILE}")
+          filesize=$(stat --format=%s "/var/lib/etcd-backup/snapshot.db")
           sleep 5
-          newfilesize=$(stat --format=%s "${SNAPSHOT_FILE}")
+          newfilesize=$(stat --format=%s "/var/lib/etcd-backup/snapshot.db")
           if [ "$filesize" != "$newfilesize" ]; then
             echo "file size has changed since last 5 seconds, retry sometime after copying is complete"
             exit 1
           fi
         fi
         
-        SNAPSHOT_REV=$(etcdutl snapshot status -wjson "$SNAPSHOT_FILE" | jq -r ".revision")
-        echo "snapshot is at revision ${SNAPSHOT_REV}"
-        
-        if [ -n "$(ls -A "${REV_JSON}")" ]; then
-           # this will bump by the amount of the last known live revision + 20% slack.
-           # Note: the bump amount is an addition to the current revision stored in the snapshot.
-           # We're avoiding to do any math with SNAPSHOT_REV, uint64 has plenty of space to double revisions
-           # and we're assuming that full disaster restores are a very rare occurrence anyway.
-           BUMP_REV=$(jq -r "(.maxRaftIndex*1.2|floor)" "${REV_JSON}")
-           echo "bumping revisions by ${BUMP_REV}"
-        else
-           # we can't take SNAPSHOT_REV as an indicator here, because the snapshot might be much older
-           # than any currently live served revision. 
-           # 1bn would be an etcd running at 1000 writes/s for about eleven days.
-           echo "no revision.json found, assuming a 1bn revision bump"
-           BUMP_REV=1000000000
+        BUMP_ARGS=""
+        if [[ "${ETCD_ETCDCTL_RESTORE_ENABLE_BUMP}" == "true" ]]; then
+          echo "enabling restore bump"
+          BUMP_ARGS="--bump-revision 1000000000 --mark-compacted"
         fi
-        
+                
         UUID=$(uuidgen)
         echo "restoring to a single node cluster"
-        ${ETCD_ETCDCTL_BIN} snapshot restore "${SNAPSHOT_FILE}" \
-         --name $ETCD_NAME \
+        ${ETCD_ETCDCTL_BIN} snapshot restore /var/lib/etcd-backup/snapshot.db \
+         --name  $ETCD_NAME \
          --initial-cluster=$ETCD_INITIAL_CLUSTER \
          --initial-cluster-token "openshift-etcd-${UUID}" \
          --initial-advertise-peer-urls $ETCD_NODE_PEER_URL \
          --data-dir="/var/lib/etcd/restore-${UUID}" \
-         --mark-compacted \
-         --bump-revision "${BUMP_REV}"
+         ${BUMP_ARGS}
 
         mv /var/lib/etcd/restore-${UUID}/* /var/lib/etcd/
-        # copy the revision.json back in case a second restore needs to be run afterwards
-        if [ -n "$(ls -A "${REV_JSON}")" ]; then
-           cp ${REV_JSON} /var/lib/etcd/
-        fi
 
         rmdir /var/lib/etcd/restore-${UUID}
         rm /var/lib/etcd-backup/snapshot.db
@@ -138,41 +127,6 @@ ${COMPUTED_ENV_VARS}
         name: data-dir
       - mountPath: /var/lib/etcd-backup/
         name: backup-dir
-  - name: etcd-readyz
-    image: ${OPERATOR_IMAGE}
-    imagePullPolicy: IfNotPresent
-    terminationMessagePolicy: FallbackToLogsOnError
-    command:
-      - /bin/sh
-      - -c
-      - |
-        #!/bin/sh
-        set -euo pipefail
-        
-        exec nice -n -18 cluster-etcd-operator readyz \
-          --target=https://localhost:2379 \
-          --listen-port=9980 \
-          --serving-cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.crt \
-          --serving-key-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.key \
-          --client-cert-file=$(ETCDCTL_CERT) \
-          --client-key-file=$(ETCDCTL_KEY) \
-          --client-cacert-file=$(ETCDCTL_CACERT) \
-          --listen-cipher-suites=$(ETCD_CIPHER_SUITES)
-    securityContext:
-      privileged: true
-    ports:
-      - containerPort: 9980
-        name: readyz
-        protocol: TCP
-    resources:
-      requests:
-        memory: 50Mi
-        cpu: 10m
-    env:
-${COMPUTED_ENV_VARS}
-    volumeMounts:
-    - mountPath: /etc/kubernetes/static-pod-certs
-      name: cert-dir
   hostNetwork: true
   priorityClassName: system-node-critical
   tolerations:

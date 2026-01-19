@@ -88,10 +88,7 @@ func New(
 		).
 		WithSync(c.sync).
 		WithSyncDegradedOnError(operatorClient).
-		ToController(
-			"MissingStaticPodController", // don't change what is passed here unless you also remove the old FooDegraded condition
-			eventRecorder,
-		)
+		ToController("MissingStaticPodController", eventRecorder)
 }
 
 func (c *missingStaticPodController) sync(ctx context.Context, syncCtx factory.SyncContext) error {

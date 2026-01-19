@@ -41,7 +41,7 @@ type healthCheck struct {
 
 type memberHealth []healthCheck
 
-func GetMemberHealth(ctx context.Context, clipool *EtcdClientPool, etcdMembers []*etcdserverpb.Member) memberHealth {
+func GetMemberHealth(ctx context.Context, etcdMembers []*etcdserverpb.Member) memberHealth {
 	// while we don't explicitly mention that the returned ordering has to be the same as etcdMembers,
 	// we try to keep it that way for backward compatibility reasons
 	memberHealth := make([]healthCheck, len(etcdMembers))
@@ -54,16 +54,8 @@ func GetMemberHealth(ctx context.Context, clipool *EtcdClientPool, etcdMembers [
 
 		wg.Add(1)
 		go func(i int) {
-			defer wg.Done()
-
-			cli, err := clipool.Get()
-			if err != nil {
-				memberHealth[i] = healthCheck{Member: member, Healthy: false, Error: err}
-				return
-			}
-			defer clipool.Return(cli)
-
-			memberHealth[i] = checkSingleMemberHealth(ctx, cli, member)
+			memberHealth[i] = checkSingleMemberHealth(ctx, member)
+			wg.Done()
 		}(i)
 	}
 
@@ -88,13 +80,30 @@ func GetMemberHealth(ctx context.Context, clipool *EtcdClientPool, etcdMembers [
 	return memberHealth
 }
 
-func checkSingleMemberHealth(ctx context.Context, cli *clientv3.Client, member *etcdserverpb.Member) healthCheck {
-	// we only want to check that one member that was passed, we're restoring the original client endpoints at the end
-	defer cli.SetEndpoints(cli.Endpoints()...)
-	cli.SetEndpoints(member.ClientURLs...)
+func checkSingleMemberHealth(ctx context.Context, member *etcdserverpb.Member) healthCheck {
+	// If the endpoint is for a learner member then we should skip testing the connection
+	// via the member list call as learners don't support that.
+	// The learner's connection would get tested in the health check below
+	skipConnectionTest := false
+	if member.IsLearner {
+		skipConnectionTest = true
+	}
+	cli, err := newEtcdClientWithClientOpts([]string{member.ClientURLs[0]}, skipConnectionTest)
+	if err != nil {
+		return healthCheck{
+			Member:  member,
+			Healthy: false,
+			Error:   fmt.Errorf("create client failure: %w", err)}
+	}
+
+	defer func() {
+		if err := cli.Close(); err != nil {
+			klog.Errorf("error closing etcd client for GetMemberHealth: %v", err)
+		}
+	}()
 
 	st := time.Now()
-	var err error
+
 	var resp *clientv3.GetResponse
 	if member.IsLearner {
 		// Learner members only support serializable (without consensus) read requests

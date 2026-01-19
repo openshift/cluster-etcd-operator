@@ -7,13 +7,13 @@ import (
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 
-// ServiceCatalogControllerManagerSpecApplyConfiguration represents a declarative configuration of the ServiceCatalogControllerManagerSpec type for use
+// ServiceCatalogControllerManagerSpecApplyConfiguration represents an declarative configuration of the ServiceCatalogControllerManagerSpec type for use
 // with apply.
 type ServiceCatalogControllerManagerSpecApplyConfiguration struct {
 	OperatorSpecApplyConfiguration `json:",inline"`
 }
 
-// ServiceCatalogControllerManagerSpecApplyConfiguration constructs a declarative configuration of the ServiceCatalogControllerManagerSpec type for use with
+// ServiceCatalogControllerManagerSpecApplyConfiguration constructs an declarative configuration of the ServiceCatalogControllerManagerSpec type for use with
 // apply.
 func ServiceCatalogControllerManagerSpec() *ServiceCatalogControllerManagerSpecApplyConfiguration {
 	return &ServiceCatalogControllerManagerSpecApplyConfiguration{}

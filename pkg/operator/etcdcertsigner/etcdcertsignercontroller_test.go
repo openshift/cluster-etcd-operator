@@ -10,25 +10,28 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/stretchr/testify/require"
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/component-base/metrics"
 	"k8s.io/component-base/metrics/legacyregistry"
-	"k8s.io/utils/clock"
 
 	"github.com/openshift/library-go/pkg/crypto"
 	"github.com/openshift/library-go/pkg/operator/events"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
@@ -353,7 +356,7 @@ func TestClientCertsRemoval(t *testing.T) {
 func TestSecretApplyFailureSyncError(t *testing.T) {
 	fakeKubeClient, _, controller, recorder := setupController(t, []runtime.Object{}, true)
 	fakeKubeClient.PrependReactor("create", "secrets", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
-		return true, &corev1.Secret{}, fmt.Errorf("apply failed")
+		return true, nil, fmt.Errorf("apply failed")
 	})
 	require.Error(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
 }
@@ -361,7 +364,7 @@ func TestSecretApplyFailureSyncError(t *testing.T) {
 func TestConfigmapApplyFailureSyncError(t *testing.T) {
 	fakeKubeClient, _, controller, recorder := setupController(t, []runtime.Object{}, true)
 	fakeKubeClient.PrependReactor("create", "configmaps", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
-		return true, &corev1.ConfigMap{}, fmt.Errorf("apply failed")
+		return true, nil, fmt.Errorf("apply failed")
 	})
 	require.Error(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
 }
@@ -532,6 +535,11 @@ func checkCertPairSecret(t *testing.T, secretName, certName, keyName string, sec
 }
 
 func setupController(t *testing.T, objects []runtime.Object, forceSkipRollout bool) (*fake.Clientset, v1helpers.StaticPodOperatorClient, factory.Controller, events.Recorder) {
+	etcdMembers := []*etcdserverpb.Member{
+		u.FakeEtcdMemberWithoutServer(0),
+		u.FakeEtcdMemberWithoutServer(1),
+		u.FakeEtcdMemberWithoutServer(2),
+	}
 	// Add nodes and CAs
 	objects = append(objects,
 		&corev1.Namespace{
@@ -589,11 +597,20 @@ func setupController(t *testing.T, objects []runtime.Object, forceSkipRollout bo
 		nil,
 	)
 
+	fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(etcdMembers)
+	require.NoError(t, err)
+
+	quorumChecker := ceohelpers.NewQuorumChecker(
+		corev1listers.NewConfigMapLister(indexer),
+		corev1listers.NewNamespaceLister(indexer),
+		configv1listers.NewInfrastructureLister(indexer),
+		fakeOperatorClient,
+		fakeEtcdClient)
+
 	recorder := events.NewRecorder(
 		fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),
 		"test-cert-signer",
 		&corev1.ObjectReference{},
-		clock.RealClock{},
 	)
 
 	nodeSelector, err := labels.Parse("node-role.kubernetes.io/master")
@@ -610,6 +627,7 @@ func setupController(t *testing.T, objects []runtime.Object, forceSkipRollout bo
 		kubeInformerForNamespace.InformersFor("").Core().V1().Nodes().Lister(),
 		nodeSelector,
 		recorder,
+		quorumChecker,
 		registry,
 		forceSkipRollout)
 

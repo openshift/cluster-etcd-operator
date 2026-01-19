@@ -2,9 +2,8 @@ package ceohelpers
 
 import (
 	"errors"
-	"testing"
-
 	"github.com/stretchr/testify/require"
+	"testing"
 
 	"k8s.io/apimachinery/pkg/runtime"
 
@@ -88,7 +87,7 @@ func TestRevisionRolloutInProgress(t *testing.T) {
 		{
 			name: "revs equal single node",
 			status: operatorv1.StaticPodOperatorStatus{
-				OperatorStatus: operatorv1.OperatorStatus{LatestAvailableRevision: 1},
+				LatestAvailableRevision: 1,
 				NodeStatuses: []operatorv1.NodeStatus{
 					{NodeName: "node-1", CurrentRevision: 1, TargetRevision: 1},
 				},
@@ -98,7 +97,7 @@ func TestRevisionRolloutInProgress(t *testing.T) {
 		{
 			name: "revs not equal single node",
 			status: operatorv1.StaticPodOperatorStatus{
-				OperatorStatus: operatorv1.OperatorStatus{LatestAvailableRevision: 3},
+				LatestAvailableRevision: 3,
 				NodeStatuses: []operatorv1.NodeStatus{
 					{NodeName: "node-1", CurrentRevision: 1, TargetRevision: 3},
 				},
@@ -108,7 +107,7 @@ func TestRevisionRolloutInProgress(t *testing.T) {
 		{
 			name: "revs not equal multi node",
 			status: operatorv1.StaticPodOperatorStatus{
-				OperatorStatus: operatorv1.OperatorStatus{LatestAvailableRevision: 3},
+				LatestAvailableRevision: 3,
 				NodeStatuses: []operatorv1.NodeStatus{
 					{NodeName: "node-1", CurrentRevision: 3, TargetRevision: 3},
 					{NodeName: "node-2", CurrentRevision: 1, TargetRevision: 3},
@@ -119,7 +118,7 @@ func TestRevisionRolloutInProgress(t *testing.T) {
 		{
 			name: "revs equal multi node",
 			status: operatorv1.StaticPodOperatorStatus{
-				OperatorStatus: operatorv1.OperatorStatus{LatestAvailableRevision: 3},
+				LatestAvailableRevision: 3,
 				NodeStatuses: []operatorv1.NodeStatus{
 					{NodeName: "node-1", CurrentRevision: 3, TargetRevision: 3},
 					{NodeName: "node-2", CurrentRevision: 3, TargetRevision: 3},
@@ -153,7 +152,7 @@ func TestCurrentRevision(t *testing.T) {
 		{
 			name: "revs equal single node",
 			status: operatorv1.StaticPodOperatorStatus{
-				OperatorStatus: operatorv1.OperatorStatus{LatestAvailableRevision: 22},
+				LatestAvailableRevision: 22,
 				NodeStatuses: []operatorv1.NodeStatus{
 					{NodeName: "node-1", CurrentRevision: 22, TargetRevision: 22},
 				},
@@ -163,7 +162,7 @@ func TestCurrentRevision(t *testing.T) {
 		{
 			name: "revs not equal single node",
 			status: operatorv1.StaticPodOperatorStatus{
-				OperatorStatus: operatorv1.OperatorStatus{LatestAvailableRevision: 3},
+				LatestAvailableRevision: 3,
 				NodeStatuses: []operatorv1.NodeStatus{
 					{NodeName: "node-1", CurrentRevision: 1, TargetRevision: 3},
 				},
@@ -174,7 +173,7 @@ func TestCurrentRevision(t *testing.T) {
 		{
 			name: "target revs not equal multi node",
 			status: operatorv1.StaticPodOperatorStatus{
-				OperatorStatus: operatorv1.OperatorStatus{LatestAvailableRevision: 3},
+				LatestAvailableRevision: 3,
 				NodeStatuses: []operatorv1.NodeStatus{
 					{NodeName: "node-1", CurrentRevision: 3, TargetRevision: 3},
 					{NodeName: "node-2", CurrentRevision: 1, TargetRevision: 3},
@@ -186,7 +185,7 @@ func TestCurrentRevision(t *testing.T) {
 		{
 			name: "revs equal multi node",
 			status: operatorv1.StaticPodOperatorStatus{
-				OperatorStatus: operatorv1.OperatorStatus{LatestAvailableRevision: 3},
+				LatestAvailableRevision: 3,
 				NodeStatuses: []operatorv1.NodeStatus{
 					{NodeName: "node-1", CurrentRevision: 3, TargetRevision: 0},
 					{NodeName: "node-2", CurrentRevision: 3, TargetRevision: 0},
@@ -197,7 +196,7 @@ func TestCurrentRevision(t *testing.T) {
 		{
 			name: "revs differ multi node",
 			status: operatorv1.StaticPodOperatorStatus{
-				OperatorStatus: operatorv1.OperatorStatus{LatestAvailableRevision: 3},
+				LatestAvailableRevision: 3,
 				NodeStatuses: []operatorv1.NodeStatus{
 					{NodeName: "node-1", CurrentRevision: 3, TargetRevision: 3},
 					{NodeName: "node-2", CurrentRevision: 2, TargetRevision: 2},
@@ -209,7 +208,7 @@ func TestCurrentRevision(t *testing.T) {
 		{
 			name: "latest rev far ahead",
 			status: operatorv1.StaticPodOperatorStatus{
-				OperatorStatus: operatorv1.OperatorStatus{LatestAvailableRevision: 25},
+				LatestAvailableRevision: 25,
 				NodeStatuses: []operatorv1.NodeStatus{
 					{NodeName: "node-1", CurrentRevision: 3, TargetRevision: 3},
 				},

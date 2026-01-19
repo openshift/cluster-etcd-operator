@@ -4,9 +4,8 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
-	"time"
-
 	"k8s.io/client-go/util/cert"
+	"time"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"

@@ -8,10 +8,10 @@ set -o errtrace
 
 # example
 # ./cluster-restore.sh $path-to-backup
-# ETCD_ETCDCTL_RESTORE - when set this script will use `etcdctl snapshot restore` instead of a restore pod yaml,
-#                        which can be used when restoring a single member (e.g. on single node OCP).
-#                        Syncing very big snapshots (>8GiB) from the leader might also be expensive, this aids in
-#                        keeping the amount of data pulled to a minimum. This option will neither rev-bump nor mark-compact.
+# There are several customization switches based on env variables:
+# ETCD_RESTORE_SKIP_MOVE_CP_STATIC_PODS - when set this script will not move the other (non-etcd) static pod yamls
+# ETCD_ETCDCTL_RESTORE - when set this script will use `etcdctl snapshot restore` instead of a restore pod yaml
+# ETCD_ETCDCTL_RESTORE_ENABLE_BUMP - when set this script will spawn the restore pod with a large enough revision bump
 
 if [[ $EUID -ne 0 ]]; then
   echo "This script must be run as root"
@@ -61,6 +61,34 @@ function restore_static_pods() {
   done
 }
 
+function wait_for_containers_to_stop() {
+  local containers=("$@")
+
+  for container_name in "${containers[@]}"; do
+    echo "Waiting for container ${container_name} to stop"
+    while [[ -n $(crictl ps --label io.kubernetes.container.name="${container_name}" -q) ]]; do
+      echo -n "."
+      sleep 1
+    done
+    echo "complete"
+  done
+}
+
+function mv_static_pods() {
+  local containers=("$@")
+
+  # Move manifests and stop static pods
+  if [ ! -d "$MANIFEST_STOPPED_DIR" ]; then
+    mkdir -p "$MANIFEST_STOPPED_DIR"
+  fi
+
+  for POD_FILE_NAME in "${containers[@]}"; do
+    echo "...stopping ${POD_FILE_NAME}"
+    [ ! -f "${MANIFEST_DIR}/${POD_FILE_NAME}" ] && continue
+    mv "${MANIFEST_DIR}/${POD_FILE_NAME}" "${MANIFEST_STOPPED_DIR}"
+  done
+}
+
 BACKUP_DIR="$1"
 # shellcheck disable=SC2012
 BACKUP_FILE=$(ls -vd "${BACKUP_DIR}"/static_kuberesources*.tar.gz | tail -1) || true
@@ -68,7 +96,10 @@ BACKUP_FILE=$(ls -vd "${BACKUP_DIR}"/static_kuberesources*.tar.gz | tail -1) || 
 SNAPSHOT_FILE=$(ls -vd "${BACKUP_DIR}"/snapshot*.db | tail -1) || true
 
 ETCD_STATIC_POD_LIST=("etcd-pod.yaml")
-ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz" "etcd-rev" "etcd-backup-server")
+AUX_STATIC_POD_LIST=("kube-apiserver-pod.yaml" "kube-controller-manager-pod.yaml" "kube-scheduler-pod.yaml")
+
+ETCD_STATIC_POD_CONTAINERS=("etcd" "etcdctl" "etcd-metrics" "etcd-readyz")
+AUX_STATIC_POD_CONTAINERS=("kube-controller-manager" "kube-apiserver" "kube-scheduler")
 
 if [ ! -f "${SNAPSHOT_FILE}" ]; then
   echo "etcd snapshot ${SNAPSHOT_FILE} does not exist"
@@ -82,6 +113,12 @@ check_snapshot_status "${SNAPSHOT_FILE}"
 ETCD_CLIENT="${ETCD_ETCDCTL_BIN+etcdctl}"
 if [ -n "${ETCD_ETCDUTL_BIN}" ]; then
   ETCD_CLIENT="${ETCD_ETCDUTL_BIN}"
+fi
+
+# Move static pod manifests out of MANIFEST_DIR, if required
+if [ -z "${ETCD_RESTORE_SKIP_MOVE_CP_STATIC_PODS}" ]; then
+  mv_static_pods "${AUX_STATIC_POD_LIST[@]}"
+  wait_for_containers_to_stop "${AUX_STATIC_POD_CONTAINERS[@]}"
 fi
 
 # always move etcd pod and wait for all containers to exit
@@ -108,28 +145,21 @@ if [ -z "${ETCD_ETCDCTL_RESTORE}" ]; then
 
   # Copy snapshot to backupdir
   cp -p "${SNAPSHOT_FILE}" "${ETCD_DATA_DIR_BACKUP}"/snapshot.db
-  # Move the revision.json when it exists
-  [ ! -f "${ETCD_REV_JSON}" ] ||  mv -f "${ETCD_REV_JSON}" "${ETCD_DATA_DIR_BACKUP}"/revision.json
-  # removing any fio perf files left behind that could be deleted without problems
-  rm -f "${ETCD_DATA_DIR}"/etcd_perf*
-
-  # ensure the folder is really empty, otherwise the restore pod will crash loop
-  if [ -n "$(ls -A "${ETCD_DATA_DIR}")" ]; then
-      echo "folder ${ETCD_DATA_DIR} is not empty, please review and remove all files in it"
-      exit 1
-  fi
 
   echo "starting restore-etcd static pod"
-  cp -p "${RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"
+  # ideally this can be solved with jq and a real env var, but we don't have it available at this point
+  if [ -n "${ETCD_ETCDCTL_RESTORE_ENABLE_BUMP}" ]; then
+    sed "s/export ETCD_ETCDCTL_RESTORE_ENABLE_BUMP=\"false\"/export ETCD_ETCDCTL_RESTORE_ENABLE_BUMP=\"true\"/" "${RESTORE_ETCD_POD_YAML}" > "${MANIFEST_DIR}/etcd-pod.yaml"
+  else
+     cp -p "${RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"
+  fi
+
 else
   echo "removing etcd data dir..."
   rm -rf "${ETCD_DATA_DIR}"
   mkdir -p "${ETCD_DATA_DIR}"
 
   echo "starting snapshot restore through etcdctl..."
-  # We are never going to rev-bump here to ensure we don't cause a revision split between the
-  # remainder of the running cluster and this restore member. Imagine your non-restore quorum members run at rev 100,
-  # we would attempt to rev bump this with snapshot at rev 120, now this member is 20 revisions ahead and RAFT is confused.
   if ! ${ETCD_CLIENT} snapshot restore "${SNAPSHOT_FILE}" --data-dir="${ETCD_DATA_DIR}"; then
       echo "Snapshot restore failed. Aborting!"
       exit 1
@@ -140,3 +170,7 @@ else
   mv "${MANIFEST_STOPPED_DIR}/etcd-pod.yaml" "${MANIFEST_DIR}/etcd-pod.yaml"
 fi
 
+# start remaining static pods
+if [ -z "${ETCD_RESTORE_SKIP_MOVE_CP_STATIC_PODS}" ]; then
+  restore_static_pods "${BACKUP_FILE}" "${AUX_STATIC_POD_LIST[@]}"
+fi

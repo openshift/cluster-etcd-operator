@@ -3,27 +3,23 @@ package prune_backups
 import (
 	goflag "flag"
 	"fmt"
+	"github.com/spf13/cobra"
 	"io/fs"
+	"k8s.io/klog/v2"
 	"os"
 	"path"
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/spf13/cobra"
-	"k8s.io/klog/v2"
 )
 
-const (
-	// BasePath for Backups we assume we have full ownership over the root folder at /etc/kubernetes/cluster-backup
-	// for backup-server we use another path for storing backups (i.e. /var/lib/etcd-auto-backup)
-	// for tests we will change this to a tmp directory
-	BasePath = "/etc/kubernetes/cluster-backup/"
+// BasePath for Backups we assume we have full ownership over the root folder at /etc/kubernetes/cluster-backup
+// for tests we will change this to a tmp directory
+var BasePath = "/etc/kubernetes/cluster-backup/"
 
-	RetentionTypeNone   = "None"
-	RetentionTypeSize   = "RetentionSize"
-	RetentionTypeNumber = "RetentionNumber"
-)
+const RetentionTypeNone = "None"
+const RetentionTypeSize = "RetentionSize"
+const RetentionTypeNumber = "RetentionNumber"
 
 type backupDirStats []backupDirStat
 
@@ -37,13 +33,10 @@ type PruneOpts struct {
 	RetentionType      string
 	MaxNumberOfBackups int
 	MaxSizeOfBackupsGb int
-	BackupPath         string
 }
 
 func NewPruneCommand() *cobra.Command {
-	opts := PruneOpts{
-		RetentionType: "None",
-	}
+	opts := PruneOpts{RetentionType: "None"}
 	cmd := &cobra.Command{
 		Use:   "prune-backups",
 		Short: "Prunes existing backups on the filesystem.",
@@ -69,7 +62,6 @@ func (r *PruneOpts) AddFlags(cmd *cobra.Command) {
 	// the defaults are zero for validation, we inject the real defaults from the periodic backup controller
 	flagSet.IntVar(&r.MaxNumberOfBackups, "maxNumberOfBackups", 0, "how many backups to keep when type=RetentionNumber")
 	flagSet.IntVar(&r.MaxSizeOfBackupsGb, "maxSizeOfBackupsGb", 0, "how many gigabytes of backups to keep when type=RetentionSize")
-	flagSet.StringVar(&r.BackupPath, "backupPath", BasePath, "path for backups to be pruned")
 
 	// adding klog flags to tune verbosity better
 	gfs := goflag.NewFlagSet("", goflag.ExitOnError)
@@ -109,16 +101,16 @@ func (r *PruneOpts) Run() error {
 		klog.Infof("nothing to do, retention type is none")
 		return nil
 	} else if r.RetentionType == RetentionTypeSize {
-		return retainBySizeGb(r.MaxSizeOfBackupsGb, r.BackupPath)
+		return retainBySizeGb(r.MaxSizeOfBackupsGb)
 	} else if r.RetentionType == RetentionTypeNumber {
-		return retainByNumber(r.MaxNumberOfBackups, r.BackupPath)
+		return retainByNumber(r.MaxNumberOfBackups)
 	}
 
 	return nil
 }
 
-func retainBySizeGb(sizeInGb int, backupPath string) error {
-	folders, err := listAllBackupFolders(backupPath)
+func retainBySizeGb(sizeInGb int) error {
+	folders, err := listAllBackupFolders()
 	if err != nil {
 		return err
 	}
@@ -134,7 +126,7 @@ func retainBySizeGb(sizeInGb int, backupPath string) error {
 	for _, f := range folders {
 		accBytes += f.sizeBytes
 		if accBytes > cutOffBytes {
-			toRemove = append(toRemove, path.Join(backupPath, f.name))
+			toRemove = append(toRemove, path.Join(BasePath, f.name))
 		} else {
 			klog.Infof("retaining [%s], found [%d] bytes so far", f.name, accBytes)
 		}
@@ -152,8 +144,8 @@ func retainBySizeGb(sizeInGb int, backupPath string) error {
 	return nil
 }
 
-func retainByNumber(maxNumBackups int, backupPath string) error {
-	folders, err := listAllBackupFolders(backupPath)
+func retainByNumber(maxNumBackups int) error {
+	folders, err := listAllBackupFolders()
 	if err != nil {
 		return err
 	}
@@ -166,7 +158,7 @@ func retainByNumber(maxNumBackups int, backupPath string) error {
 	sort.Sort(folders)
 	// the newest backups are always found at the beginning of the list
 	for _, f := range folders[maxNumBackups:] {
-		bPath := path.Join(backupPath, f.name)
+		bPath := path.Join(BasePath, f.name)
 		klog.Infof("deleting [%s]...", bPath)
 		err = os.RemoveAll(bPath)
 		if err != nil {
@@ -177,10 +169,10 @@ func retainByNumber(maxNumBackups int, backupPath string) error {
 	return nil
 }
 
-func listAllBackupFolders(backupPath string) (backupDirStats, error) {
+func listAllBackupFolders() (backupDirStats, error) {
 	var stats []backupDirStat
 
-	dir, err := os.ReadDir(backupPath)
+	dir, err := os.ReadDir(BasePath)
 	if err != nil {
 		return nil, fmt.Errorf("could not list dir [%s]: %w", dir, err)
 	}
@@ -192,7 +184,7 @@ func listAllBackupFolders(backupPath string) (backupDirStats, error) {
 
 		var dirSize int64
 		var latestModTime time.Time
-		err := fs.WalkDir(os.DirFS(path.Join(backupPath, d.Name())), ".", func(path string, d fs.DirEntry, err error) error {
+		err := fs.WalkDir(os.DirFS(path.Join(BasePath, d.Name())), ".", func(path string, d fs.DirEntry, err error) error {
 			if !d.IsDir() {
 				info, err := d.Info()
 				if err != nil {

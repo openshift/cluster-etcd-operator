@@ -28,24 +28,22 @@ var imagepoliciesKind = v1alpha1.SchemeGroupVersion.WithKind("ImagePolicy")
 
 // Get takes name of the imagePolicy, and returns the corresponding imagePolicy object, and an error if there is any.
 func (c *FakeImagePolicies) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha1.ImagePolicy, err error) {
-	emptyResult := &v1alpha1.ImagePolicy{}
 	obj, err := c.Fake.
-		Invokes(testing.NewGetActionWithOptions(imagepoliciesResource, c.ns, name, options), emptyResult)
+		Invokes(testing.NewGetAction(imagepoliciesResource, c.ns, name), &v1alpha1.ImagePolicy{})
 
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1alpha1.ImagePolicy), err
 }
 
 // List takes label and field selectors, and returns the list of ImagePolicies that match those selectors.
 func (c *FakeImagePolicies) List(ctx context.Context, opts v1.ListOptions) (result *v1alpha1.ImagePolicyList, err error) {
-	emptyResult := &v1alpha1.ImagePolicyList{}
 	obj, err := c.Fake.
-		Invokes(testing.NewListActionWithOptions(imagepoliciesResource, imagepoliciesKind, c.ns, opts), emptyResult)
+		Invokes(testing.NewListAction(imagepoliciesResource, imagepoliciesKind, c.ns, opts), &v1alpha1.ImagePolicyList{})
 
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 
 	label, _, _ := testing.ExtractFromListOptions(opts)
@@ -64,43 +62,40 @@ func (c *FakeImagePolicies) List(ctx context.Context, opts v1.ListOptions) (resu
 // Watch returns a watch.Interface that watches the requested imagePolicies.
 func (c *FakeImagePolicies) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
 	return c.Fake.
-		InvokesWatch(testing.NewWatchActionWithOptions(imagepoliciesResource, c.ns, opts))
+		InvokesWatch(testing.NewWatchAction(imagepoliciesResource, c.ns, opts))
 
 }
 
 // Create takes the representation of a imagePolicy and creates it.  Returns the server's representation of the imagePolicy, and an error, if there is any.
 func (c *FakeImagePolicies) Create(ctx context.Context, imagePolicy *v1alpha1.ImagePolicy, opts v1.CreateOptions) (result *v1alpha1.ImagePolicy, err error) {
-	emptyResult := &v1alpha1.ImagePolicy{}
 	obj, err := c.Fake.
-		Invokes(testing.NewCreateActionWithOptions(imagepoliciesResource, c.ns, imagePolicy, opts), emptyResult)
+		Invokes(testing.NewCreateAction(imagepoliciesResource, c.ns, imagePolicy), &v1alpha1.ImagePolicy{})
 
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1alpha1.ImagePolicy), err
 }
 
 // Update takes the representation of a imagePolicy and updates it. Returns the server's representation of the imagePolicy, and an error, if there is any.
 func (c *FakeImagePolicies) Update(ctx context.Context, imagePolicy *v1alpha1.ImagePolicy, opts v1.UpdateOptions) (result *v1alpha1.ImagePolicy, err error) {
-	emptyResult := &v1alpha1.ImagePolicy{}
 	obj, err := c.Fake.
-		Invokes(testing.NewUpdateActionWithOptions(imagepoliciesResource, c.ns, imagePolicy, opts), emptyResult)
+		Invokes(testing.NewUpdateAction(imagepoliciesResource, c.ns, imagePolicy), &v1alpha1.ImagePolicy{})
 
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1alpha1.ImagePolicy), err
 }
 
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *FakeImagePolicies) UpdateStatus(ctx context.Context, imagePolicy *v1alpha1.ImagePolicy, opts v1.UpdateOptions) (result *v1alpha1.ImagePolicy, err error) {
-	emptyResult := &v1alpha1.ImagePolicy{}
+func (c *FakeImagePolicies) UpdateStatus(ctx context.Context, imagePolicy *v1alpha1.ImagePolicy, opts v1.UpdateOptions) (*v1alpha1.ImagePolicy, error) {
 	obj, err := c.Fake.
-		Invokes(testing.NewUpdateSubresourceActionWithOptions(imagepoliciesResource, "status", c.ns, imagePolicy, opts), emptyResult)
+		Invokes(testing.NewUpdateSubresourceAction(imagepoliciesResource, "status", c.ns, imagePolicy), &v1alpha1.ImagePolicy{})
 
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1alpha1.ImagePolicy), err
 }
@@ -115,7 +110,7 @@ func (c *FakeImagePolicies) Delete(ctx context.Context, name string, opts v1.Del
 
 // DeleteCollection deletes a collection of objects.
 func (c *FakeImagePolicies) DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error {
-	action := testing.NewDeleteCollectionActionWithOptions(imagepoliciesResource, c.ns, opts, listOpts)
+	action := testing.NewDeleteCollectionAction(imagepoliciesResource, c.ns, listOpts)
 
 	_, err := c.Fake.Invokes(action, &v1alpha1.ImagePolicyList{})
 	return err
@@ -123,12 +118,11 @@ func (c *FakeImagePolicies) DeleteCollection(ctx context.Context, opts v1.Delete
 
 // Patch applies the patch and returns the patched imagePolicy.
 func (c *FakeImagePolicies) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha1.ImagePolicy, err error) {
-	emptyResult := &v1alpha1.ImagePolicy{}
 	obj, err := c.Fake.
-		Invokes(testing.NewPatchSubresourceActionWithOptions(imagepoliciesResource, c.ns, name, pt, data, opts, subresources...), emptyResult)
+		Invokes(testing.NewPatchSubresourceAction(imagepoliciesResource, c.ns, name, pt, data, subresources...), &v1alpha1.ImagePolicy{})
 
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1alpha1.ImagePolicy), err
 }
@@ -146,12 +140,11 @@ func (c *FakeImagePolicies) Apply(ctx context.Context, imagePolicy *configv1alph
 	if name == nil {
 		return nil, fmt.Errorf("imagePolicy.Name must be provided to Apply")
 	}
-	emptyResult := &v1alpha1.ImagePolicy{}
 	obj, err := c.Fake.
-		Invokes(testing.NewPatchSubresourceActionWithOptions(imagepoliciesResource, c.ns, *name, types.ApplyPatchType, data, opts.ToPatchOptions()), emptyResult)
+		Invokes(testing.NewPatchSubresourceAction(imagepoliciesResource, c.ns, *name, types.ApplyPatchType, data), &v1alpha1.ImagePolicy{})
 
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1alpha1.ImagePolicy), err
 }
@@ -170,12 +163,11 @@ func (c *FakeImagePolicies) ApplyStatus(ctx context.Context, imagePolicy *config
 	if name == nil {
 		return nil, fmt.Errorf("imagePolicy.Name must be provided to Apply")
 	}
-	emptyResult := &v1alpha1.ImagePolicy{}
 	obj, err := c.Fake.
-		Invokes(testing.NewPatchSubresourceActionWithOptions(imagepoliciesResource, c.ns, *name, types.ApplyPatchType, data, opts.ToPatchOptions(), "status"), emptyResult)
+		Invokes(testing.NewPatchSubresourceAction(imagepoliciesResource, c.ns, *name, types.ApplyPatchType, data, "status"), &v1alpha1.ImagePolicy{})
 
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1alpha1.ImagePolicy), err
 }

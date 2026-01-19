@@ -4,10 +4,8 @@ CONFIG_FILE_DIR="/etc/kubernetes"
 MANIFEST_DIR="${CONFIG_FILE_DIR}/manifests"
 ETCD_DATA_DIR="/var/lib/etcd"
 ETCD_DATA_DIR_BACKUP="/var/lib/etcd-backup"
-ETCD_REV_JSON="${ETCD_DATA_DIR}/revision.json"
 MANIFEST_STOPPED_DIR="${ASSET_DIR}/manifests-stopped"
 RESTORE_ETCD_POD_YAML="${CONFIG_FILE_DIR}/static-pod-resources/etcd-certs/configmaps/restore-etcd-pod/pod.yaml"
-QUORUM_RESTORE_ETCD_POD_YAML="${CONFIG_FILE_DIR}/static-pod-resources/etcd-certs/configmaps/restore-etcd-pod/quorum-restore-pod.yaml"
 ETCDCTL_BIN_DIR="${CONFIG_FILE_DIR}/static-pod-resources/bin"
 PATH=${PATH}:${ETCDCTL_BIN_DIR}
 export KUBECONFIG="/etc/kubernetes/static-pod-resources/kube-apiserver-certs/secrets/node-kubeconfigs/localhost.kubeconfig"
@@ -26,9 +24,6 @@ function dl_etcdctl {
      if [ -f "${etcdmnt}/bin/etcdutl" ]; then
        cp ${etcdmnt}/bin/etcdutl ${ETCDCTL_BIN_DIR}/
        export ETCD_ETCDUTL_BIN=etcdutl
-     fi
-     if ! [ -x "$(command -v jq)" ]; then
-       cp ${etcdmnt}/bin/jq ${ETCDCTL_BIN_DIR}/
      fi
 
      umount "${etcdmnt}"
@@ -65,30 +60,3 @@ function check_snapshot_status() {
   fi
 }
 
-function wait_for_containers_to_stop() {
-  local containers=("$@")
-
-  for container_name in "${containers[@]}"; do
-    echo "Waiting for container ${container_name} to stop"
-    while [[ -n $(crictl ps --label io.kubernetes.container.name="${container_name}" -q) ]]; do
-      echo -n "."
-      sleep 1
-    done
-    echo "complete"
-  done
-}
-
-function mv_static_pods() {
-  local containers=("$@")
-
-  # Move manifests and stop static pods
-  if [ ! -d "$MANIFEST_STOPPED_DIR" ]; then
-    mkdir -p "$MANIFEST_STOPPED_DIR"
-  fi
-
-  for POD_FILE_NAME in "${containers[@]}"; do
-    echo "...stopping ${POD_FILE_NAME}"
-    [ ! -f "${MANIFEST_DIR}/${POD_FILE_NAME}" ] && continue
-    mv "${MANIFEST_DIR}/${POD_FILE_NAME}" "${MANIFEST_STOPPED_DIR}"
-  done
-}

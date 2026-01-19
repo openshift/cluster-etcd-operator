@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	applyoperatorv1 "github.com/openshift/client-go/operator/applyconfigurations/operator/v1"
-
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
@@ -61,8 +59,7 @@ func init() {
 type StaticResourcesPreconditionsFuncType func(ctx context.Context) (bool, error)
 
 type StaticResourceController struct {
-	instanceName           string
-	controllerInstanceName string
+	name                   string
 	manifests              []conditionalManifests
 	ignoreNotFoundOnCreate bool
 	preconditions          []StaticResourcesPreconditionsFuncType
@@ -97,7 +94,7 @@ type conditionalManifests struct {
 // Optionally, the controller can ignore NotFound errors. This is useful when syncing CRs for CRDs that may not yet exist
 // when the controller runs, such as ServiceMonitor.
 func NewStaticResourceController(
-	instanceName string,
+	name string,
 	manifests resourceapply.AssetFunc,
 	files []string,
 	clients *resourceapply.ClientHolder,
@@ -105,15 +102,14 @@ func NewStaticResourceController(
 	eventRecorder events.Recorder,
 ) *StaticResourceController {
 	c := &StaticResourceController{
-		instanceName:           instanceName,
-		controllerInstanceName: factory.ControllerInstanceName(instanceName, "StaticResources"),
+		name: name,
 
 		operatorClient: operatorClient,
 		clients:        clients,
 
 		preconditions: []StaticResourcesPreconditionsFuncType{defaultStaticResourcesPreconditionsFunc},
 
-		eventRecorder: eventRecorder.WithComponentSuffix(strings.ToLower(instanceName)),
+		eventRecorder: eventRecorder.WithComponentSuffix(strings.ToLower(name)),
 
 		factory:          factory.New().WithInformers(operatorClient.Informer()).ResyncEvery(1 * time.Minute),
 		performanceCache: resourceapply.NewResourceCache(),
@@ -300,14 +296,12 @@ func (c *StaticResourceController) Sync(ctx context.Context, syncContext factory
 			} else {
 				message = "the operator didn't specify what preconditions are missing"
 			}
-			condition := applyoperatorv1.OperatorStatus().
-				WithConditions(applyoperatorv1.OperatorCondition().
-					WithType(fmt.Sprintf("%sDegraded", c.instanceName)).
-					WithStatus(operatorv1.ConditionTrue).
-					WithReason("PreconditionNotReady").
-					WithMessage(message))
-			updateErr := c.operatorClient.ApplyOperatorStatus(ctx, c.controllerInstanceName, condition)
-			if updateErr != nil {
+			if _, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+				Type:    fmt.Sprintf("%sDegraded", c.name),
+				Status:  operatorv1.ConditionTrue,
+				Reason:  "PreconditionNotReady",
+				Message: message,
+			})); updateErr != nil {
 				return updateErr
 			}
 			return err
@@ -347,30 +341,28 @@ func (c *StaticResourceController) Sync(ctx context.Context, syncContext factory
 		}
 	}
 
-	cnd := applyoperatorv1.OperatorCondition().
-		WithType(fmt.Sprintf("%sDegraded", c.instanceName)).
-		WithStatus(operatorv1.ConditionFalse).
-		WithReason("AsExpected").
-		WithMessage("")
-
+	cnd := operatorv1.OperatorCondition{
+		Type:    fmt.Sprintf("%sDegraded", c.name),
+		Status:  operatorv1.ConditionFalse,
+		Reason:  "AsExpected",
+		Message: "",
+	}
 	if len(errors) > 0 {
 		message := ""
 		for _, err := range errors {
 			message = message + err.Error() + "\n"
 		}
-		cnd = cnd.
-			WithStatus(operatorv1.ConditionTrue).
-			WithMessage(message).
-			WithReason("SyncError")
+		cnd.Status = operatorv1.ConditionTrue
+		cnd.Message = message
+		cnd.Reason = "SyncError"
 
 		if c.ignoreNotFoundOnCreate && len(errors) == notFoundErrorsCount {
 			// all errors were NotFound
-			cnd = cnd.WithStatus(operatorv1.ConditionFalse)
+			cnd.Status = operatorv1.ConditionFalse
 		}
 	}
 
-	status := applyoperatorv1.OperatorStatus().WithConditions(cnd)
-	err = c.operatorClient.ApplyOperatorStatus(ctx, c.controllerInstanceName, status)
+	_, _, err = v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(cnd))
 	if err != nil {
 		errors = append(errors, err)
 	}
@@ -378,7 +370,7 @@ func (c *StaticResourceController) Sync(ctx context.Context, syncContext factory
 }
 
 func (c *StaticResourceController) Name() string {
-	return c.controllerInstanceName
+	return c.name
 }
 
 func (c *StaticResourceController) RelatedObjects() ([]configv1.ObjectReference, error) {
@@ -445,13 +437,7 @@ func (c *StaticResourceController) RelatedObjects() ([]configv1.ObjectReference,
 }
 
 func (c *StaticResourceController) Run(ctx context.Context, workers int) {
-	c.factory.
-		WithSync(c.Sync).
-		ToController(
-			c.Name(), // don't change what is passed here unless you also remove the old FooDegraded condition
-			c.eventRecorder,
-		).
-		Run(ctx, workers)
+	c.factory.WithSync(c.Sync).ToController(c.Name(), c.eventRecorder).Run(ctx, workers)
 }
 
 func defaultStaticResourcesPreconditionsFunc(_ context.Context) (bool, error) {

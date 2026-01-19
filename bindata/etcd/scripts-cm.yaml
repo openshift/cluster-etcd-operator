@@ -6,7 +6,5 @@ metadata:
 data:
   etcd.env:
   cluster-restore.sh:
-  quorum-restore.sh:
   cluster-backup.sh:
-  disable-etcd.sh:
   etcd-common-tools:

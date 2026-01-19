@@ -7,13 +7,13 @@ import (
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 
-// InsightsOperatorSpecApplyConfiguration represents a declarative configuration of the InsightsOperatorSpec type for use
+// InsightsOperatorSpecApplyConfiguration represents an declarative configuration of the InsightsOperatorSpec type for use
 // with apply.
 type InsightsOperatorSpecApplyConfiguration struct {
 	OperatorSpecApplyConfiguration `json:",inline"`
 }
 
-// InsightsOperatorSpecApplyConfiguration constructs a declarative configuration of the InsightsOperatorSpec type for use with
+// InsightsOperatorSpecApplyConfiguration constructs an declarative configuration of the InsightsOperatorSpec type for use with
 // apply.
 func InsightsOperatorSpec() *InsightsOperatorSpecApplyConfiguration {
 	return &InsightsOperatorSpecApplyConfiguration{}

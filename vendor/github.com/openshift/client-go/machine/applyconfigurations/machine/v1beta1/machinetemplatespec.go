@@ -6,14 +6,14 @@ import (
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
-// MachineTemplateSpecApplyConfiguration represents a declarative configuration of the MachineTemplateSpec type for use
+// MachineTemplateSpecApplyConfiguration represents an declarative configuration of the MachineTemplateSpec type for use
 // with apply.
 type MachineTemplateSpecApplyConfiguration struct {
 	*ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
 	Spec                          *MachineSpecApplyConfiguration `json:"spec,omitempty"`
 }
 
-// MachineTemplateSpecApplyConfiguration constructs a declarative configuration of the MachineTemplateSpec type for use with
+// MachineTemplateSpecApplyConfiguration constructs an declarative configuration of the MachineTemplateSpec type for use with
 // apply.
 func MachineTemplateSpec() *MachineTemplateSpecApplyConfiguration {
 	return &MachineTemplateSpecApplyConfiguration{}

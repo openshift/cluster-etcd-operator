@@ -3,8 +3,8 @@ package render
 import (
 	"context"
 	"fmt"
-
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
@@ -18,7 +18,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/component-base/metrics"
-	"k8s.io/utils/clock"
 )
 
 // createCertSecrets will run the etcdcertsigner.EtcdCertSignerController once and collect all respective certs created.
@@ -35,7 +34,8 @@ func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMa
 			ManagementState: operatorv1.Managed,
 		},
 	}, &operatorv1.StaticPodOperatorStatus{
-		OperatorStatus: operatorv1.OperatorStatus{Conditions: []operatorv1.OperatorCondition{}, LatestAvailableRevision: 1},
+		OperatorStatus:          operatorv1.OperatorStatus{Conditions: []operatorv1.OperatorCondition{}},
+		LatestAvailableRevision: 1,
 		NodeStatuses: []operatorv1.NodeStatus{
 			{CurrentRevision: 1},
 		},
@@ -43,7 +43,7 @@ func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMa
 
 	kubeInformers := v1helpers.NewKubeInformersForNamespaces(fakeKubeClient, "", "kube-system",
 		operatorclient.TargetNamespace, operatorclient.OperatorNamespace, operatorclient.GlobalUserSpecifiedConfigNamespace)
-	recorder := events.NewInMemoryRecorder("etcd", clock.RealClock{})
+	recorder := events.NewInMemoryRecorder("etcd")
 	nodeSelector, err := labels.Parse("node-role.kubernetes.io/master")
 	if err != nil {
 		return nil, nil, fmt.Errorf("could not parse master node labels: %w", err)
@@ -58,6 +58,7 @@ func createCertSecrets(nodes []*corev1.Node) ([]corev1.Secret, []corev1.ConfigMa
 		kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
 		nodeSelector,
 		recorder,
+		&ceohelpers.AlwaysSafeQuorumChecker{},
 		metrics.NewKubeRegistry(),
 		true)
 

@@ -17,7 +17,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/readyz"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/render"
 	requestbackup "github.com/openshift/cluster-etcd-operator/pkg/cmd/request-backup"
-	"github.com/openshift/cluster-etcd-operator/pkg/cmd/rev"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/verify"
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/waitforceo"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator"
@@ -76,8 +75,6 @@ func NewSSCSCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(readyz.NewReadyzCommand())
 	cmd.AddCommand(prune_backups.NewPruneCommand())
 	cmd.AddCommand(requestbackup.NewRequestBackupCommand(ctx))
-	cmd.AddCommand(rev.NewRevCommand(ctx))
-	cmd.AddCommand(backuprestore.NewBackupServer(ctx))
 
 	return cmd
 }

@@ -27,22 +27,20 @@ var schedulersKind = v1.SchemeGroupVersion.WithKind("Scheduler")
 
 // Get takes name of the scheduler, and returns the corresponding scheduler object, and an error if there is any.
 func (c *FakeSchedulers) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.Scheduler, err error) {
-	emptyResult := &v1.Scheduler{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootGetActionWithOptions(schedulersResource, name, options), emptyResult)
+		Invokes(testing.NewRootGetAction(schedulersResource, name), &v1.Scheduler{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.Scheduler), err
 }
 
 // List takes label and field selectors, and returns the list of Schedulers that match those selectors.
 func (c *FakeSchedulers) List(ctx context.Context, opts metav1.ListOptions) (result *v1.SchedulerList, err error) {
-	emptyResult := &v1.SchedulerList{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootListActionWithOptions(schedulersResource, schedulersKind, opts), emptyResult)
+		Invokes(testing.NewRootListAction(schedulersResource, schedulersKind, opts), &v1.SchedulerList{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 
 	label, _, _ := testing.ExtractFromListOptions(opts)
@@ -61,39 +59,36 @@ func (c *FakeSchedulers) List(ctx context.Context, opts metav1.ListOptions) (res
 // Watch returns a watch.Interface that watches the requested schedulers.
 func (c *FakeSchedulers) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
 	return c.Fake.
-		InvokesWatch(testing.NewRootWatchActionWithOptions(schedulersResource, opts))
+		InvokesWatch(testing.NewRootWatchAction(schedulersResource, opts))
 }
 
 // Create takes the representation of a scheduler and creates it.  Returns the server's representation of the scheduler, and an error, if there is any.
 func (c *FakeSchedulers) Create(ctx context.Context, scheduler *v1.Scheduler, opts metav1.CreateOptions) (result *v1.Scheduler, err error) {
-	emptyResult := &v1.Scheduler{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootCreateActionWithOptions(schedulersResource, scheduler, opts), emptyResult)
+		Invokes(testing.NewRootCreateAction(schedulersResource, scheduler), &v1.Scheduler{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.Scheduler), err
 }
 
 // Update takes the representation of a scheduler and updates it. Returns the server's representation of the scheduler, and an error, if there is any.
 func (c *FakeSchedulers) Update(ctx context.Context, scheduler *v1.Scheduler, opts metav1.UpdateOptions) (result *v1.Scheduler, err error) {
-	emptyResult := &v1.Scheduler{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateActionWithOptions(schedulersResource, scheduler, opts), emptyResult)
+		Invokes(testing.NewRootUpdateAction(schedulersResource, scheduler), &v1.Scheduler{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.Scheduler), err
 }
 
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *FakeSchedulers) UpdateStatus(ctx context.Context, scheduler *v1.Scheduler, opts metav1.UpdateOptions) (result *v1.Scheduler, err error) {
-	emptyResult := &v1.Scheduler{}
+func (c *FakeSchedulers) UpdateStatus(ctx context.Context, scheduler *v1.Scheduler, opts metav1.UpdateOptions) (*v1.Scheduler, error) {
 	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateSubresourceActionWithOptions(schedulersResource, "status", scheduler, opts), emptyResult)
+		Invokes(testing.NewRootUpdateSubresourceAction(schedulersResource, "status", scheduler), &v1.Scheduler{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.Scheduler), err
 }
@@ -107,7 +102,7 @@ func (c *FakeSchedulers) Delete(ctx context.Context, name string, opts metav1.De
 
 // DeleteCollection deletes a collection of objects.
 func (c *FakeSchedulers) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
-	action := testing.NewRootDeleteCollectionActionWithOptions(schedulersResource, opts, listOpts)
+	action := testing.NewRootDeleteCollectionAction(schedulersResource, listOpts)
 
 	_, err := c.Fake.Invokes(action, &v1.SchedulerList{})
 	return err
@@ -115,11 +110,10 @@ func (c *FakeSchedulers) DeleteCollection(ctx context.Context, opts metav1.Delet
 
 // Patch applies the patch and returns the patched scheduler.
 func (c *FakeSchedulers) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.Scheduler, err error) {
-	emptyResult := &v1.Scheduler{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(schedulersResource, name, pt, data, opts, subresources...), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(schedulersResource, name, pt, data, subresources...), &v1.Scheduler{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.Scheduler), err
 }
@@ -137,11 +131,10 @@ func (c *FakeSchedulers) Apply(ctx context.Context, scheduler *configv1.Schedule
 	if name == nil {
 		return nil, fmt.Errorf("scheduler.Name must be provided to Apply")
 	}
-	emptyResult := &v1.Scheduler{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(schedulersResource, *name, types.ApplyPatchType, data, opts.ToPatchOptions()), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(schedulersResource, *name, types.ApplyPatchType, data), &v1.Scheduler{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.Scheduler), err
 }
@@ -160,11 +153,10 @@ func (c *FakeSchedulers) ApplyStatus(ctx context.Context, scheduler *configv1.Sc
 	if name == nil {
 		return nil, fmt.Errorf("scheduler.Name must be provided to Apply")
 	}
-	emptyResult := &v1.Scheduler{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(schedulersResource, *name, types.ApplyPatchType, data, opts.ToPatchOptions(), "status"), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(schedulersResource, *name, types.ApplyPatchType, data, "status"), &v1.Scheduler{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.Scheduler), err
 }

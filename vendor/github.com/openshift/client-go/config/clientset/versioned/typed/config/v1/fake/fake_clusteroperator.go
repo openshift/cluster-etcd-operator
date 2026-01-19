@@ -27,22 +27,20 @@ var clusteroperatorsKind = v1.SchemeGroupVersion.WithKind("ClusterOperator")
 
 // Get takes name of the clusterOperator, and returns the corresponding clusterOperator object, and an error if there is any.
 func (c *FakeClusterOperators) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.ClusterOperator, err error) {
-	emptyResult := &v1.ClusterOperator{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootGetActionWithOptions(clusteroperatorsResource, name, options), emptyResult)
+		Invokes(testing.NewRootGetAction(clusteroperatorsResource, name), &v1.ClusterOperator{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.ClusterOperator), err
 }
 
 // List takes label and field selectors, and returns the list of ClusterOperators that match those selectors.
 func (c *FakeClusterOperators) List(ctx context.Context, opts metav1.ListOptions) (result *v1.ClusterOperatorList, err error) {
-	emptyResult := &v1.ClusterOperatorList{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootListActionWithOptions(clusteroperatorsResource, clusteroperatorsKind, opts), emptyResult)
+		Invokes(testing.NewRootListAction(clusteroperatorsResource, clusteroperatorsKind, opts), &v1.ClusterOperatorList{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 
 	label, _, _ := testing.ExtractFromListOptions(opts)
@@ -61,39 +59,36 @@ func (c *FakeClusterOperators) List(ctx context.Context, opts metav1.ListOptions
 // Watch returns a watch.Interface that watches the requested clusterOperators.
 func (c *FakeClusterOperators) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
 	return c.Fake.
-		InvokesWatch(testing.NewRootWatchActionWithOptions(clusteroperatorsResource, opts))
+		InvokesWatch(testing.NewRootWatchAction(clusteroperatorsResource, opts))
 }
 
 // Create takes the representation of a clusterOperator and creates it.  Returns the server's representation of the clusterOperator, and an error, if there is any.
 func (c *FakeClusterOperators) Create(ctx context.Context, clusterOperator *v1.ClusterOperator, opts metav1.CreateOptions) (result *v1.ClusterOperator, err error) {
-	emptyResult := &v1.ClusterOperator{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootCreateActionWithOptions(clusteroperatorsResource, clusterOperator, opts), emptyResult)
+		Invokes(testing.NewRootCreateAction(clusteroperatorsResource, clusterOperator), &v1.ClusterOperator{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.ClusterOperator), err
 }
 
 // Update takes the representation of a clusterOperator and updates it. Returns the server's representation of the clusterOperator, and an error, if there is any.
 func (c *FakeClusterOperators) Update(ctx context.Context, clusterOperator *v1.ClusterOperator, opts metav1.UpdateOptions) (result *v1.ClusterOperator, err error) {
-	emptyResult := &v1.ClusterOperator{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateActionWithOptions(clusteroperatorsResource, clusterOperator, opts), emptyResult)
+		Invokes(testing.NewRootUpdateAction(clusteroperatorsResource, clusterOperator), &v1.ClusterOperator{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.ClusterOperator), err
 }
 
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *FakeClusterOperators) UpdateStatus(ctx context.Context, clusterOperator *v1.ClusterOperator, opts metav1.UpdateOptions) (result *v1.ClusterOperator, err error) {
-	emptyResult := &v1.ClusterOperator{}
+func (c *FakeClusterOperators) UpdateStatus(ctx context.Context, clusterOperator *v1.ClusterOperator, opts metav1.UpdateOptions) (*v1.ClusterOperator, error) {
 	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateSubresourceActionWithOptions(clusteroperatorsResource, "status", clusterOperator, opts), emptyResult)
+		Invokes(testing.NewRootUpdateSubresourceAction(clusteroperatorsResource, "status", clusterOperator), &v1.ClusterOperator{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.ClusterOperator), err
 }
@@ -107,7 +102,7 @@ func (c *FakeClusterOperators) Delete(ctx context.Context, name string, opts met
 
 // DeleteCollection deletes a collection of objects.
 func (c *FakeClusterOperators) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
-	action := testing.NewRootDeleteCollectionActionWithOptions(clusteroperatorsResource, opts, listOpts)
+	action := testing.NewRootDeleteCollectionAction(clusteroperatorsResource, listOpts)
 
 	_, err := c.Fake.Invokes(action, &v1.ClusterOperatorList{})
 	return err
@@ -115,11 +110,10 @@ func (c *FakeClusterOperators) DeleteCollection(ctx context.Context, opts metav1
 
 // Patch applies the patch and returns the patched clusterOperator.
 func (c *FakeClusterOperators) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.ClusterOperator, err error) {
-	emptyResult := &v1.ClusterOperator{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(clusteroperatorsResource, name, pt, data, opts, subresources...), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(clusteroperatorsResource, name, pt, data, subresources...), &v1.ClusterOperator{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.ClusterOperator), err
 }
@@ -137,11 +131,10 @@ func (c *FakeClusterOperators) Apply(ctx context.Context, clusterOperator *confi
 	if name == nil {
 		return nil, fmt.Errorf("clusterOperator.Name must be provided to Apply")
 	}
-	emptyResult := &v1.ClusterOperator{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(clusteroperatorsResource, *name, types.ApplyPatchType, data, opts.ToPatchOptions()), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(clusteroperatorsResource, *name, types.ApplyPatchType, data), &v1.ClusterOperator{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.ClusterOperator), err
 }
@@ -160,11 +153,10 @@ func (c *FakeClusterOperators) ApplyStatus(ctx context.Context, clusterOperator 
 	if name == nil {
 		return nil, fmt.Errorf("clusterOperator.Name must be provided to Apply")
 	}
-	emptyResult := &v1.ClusterOperator{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(clusteroperatorsResource, *name, types.ApplyPatchType, data, opts.ToPatchOptions(), "status"), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(clusteroperatorsResource, *name, types.ApplyPatchType, data, "status"), &v1.ClusterOperator{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.ClusterOperator), err
 }

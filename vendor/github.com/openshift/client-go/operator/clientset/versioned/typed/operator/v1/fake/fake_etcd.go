@@ -27,22 +27,20 @@ var etcdsKind = v1.SchemeGroupVersion.WithKind("Etcd")
 
 // Get takes name of the etcd, and returns the corresponding etcd object, and an error if there is any.
 func (c *FakeEtcds) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.Etcd, err error) {
-	emptyResult := &v1.Etcd{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootGetActionWithOptions(etcdsResource, name, options), emptyResult)
+		Invokes(testing.NewRootGetAction(etcdsResource, name), &v1.Etcd{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.Etcd), err
 }
 
 // List takes label and field selectors, and returns the list of Etcds that match those selectors.
 func (c *FakeEtcds) List(ctx context.Context, opts metav1.ListOptions) (result *v1.EtcdList, err error) {
-	emptyResult := &v1.EtcdList{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootListActionWithOptions(etcdsResource, etcdsKind, opts), emptyResult)
+		Invokes(testing.NewRootListAction(etcdsResource, etcdsKind, opts), &v1.EtcdList{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 
 	label, _, _ := testing.ExtractFromListOptions(opts)
@@ -61,39 +59,36 @@ func (c *FakeEtcds) List(ctx context.Context, opts metav1.ListOptions) (result *
 // Watch returns a watch.Interface that watches the requested etcds.
 func (c *FakeEtcds) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
 	return c.Fake.
-		InvokesWatch(testing.NewRootWatchActionWithOptions(etcdsResource, opts))
+		InvokesWatch(testing.NewRootWatchAction(etcdsResource, opts))
 }
 
 // Create takes the representation of a etcd and creates it.  Returns the server's representation of the etcd, and an error, if there is any.
 func (c *FakeEtcds) Create(ctx context.Context, etcd *v1.Etcd, opts metav1.CreateOptions) (result *v1.Etcd, err error) {
-	emptyResult := &v1.Etcd{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootCreateActionWithOptions(etcdsResource, etcd, opts), emptyResult)
+		Invokes(testing.NewRootCreateAction(etcdsResource, etcd), &v1.Etcd{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.Etcd), err
 }
 
 // Update takes the representation of a etcd and updates it. Returns the server's representation of the etcd, and an error, if there is any.
 func (c *FakeEtcds) Update(ctx context.Context, etcd *v1.Etcd, opts metav1.UpdateOptions) (result *v1.Etcd, err error) {
-	emptyResult := &v1.Etcd{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateActionWithOptions(etcdsResource, etcd, opts), emptyResult)
+		Invokes(testing.NewRootUpdateAction(etcdsResource, etcd), &v1.Etcd{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.Etcd), err
 }
 
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *FakeEtcds) UpdateStatus(ctx context.Context, etcd *v1.Etcd, opts metav1.UpdateOptions) (result *v1.Etcd, err error) {
-	emptyResult := &v1.Etcd{}
+func (c *FakeEtcds) UpdateStatus(ctx context.Context, etcd *v1.Etcd, opts metav1.UpdateOptions) (*v1.Etcd, error) {
 	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateSubresourceActionWithOptions(etcdsResource, "status", etcd, opts), emptyResult)
+		Invokes(testing.NewRootUpdateSubresourceAction(etcdsResource, "status", etcd), &v1.Etcd{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.Etcd), err
 }
@@ -107,7 +102,7 @@ func (c *FakeEtcds) Delete(ctx context.Context, name string, opts metav1.DeleteO
 
 // DeleteCollection deletes a collection of objects.
 func (c *FakeEtcds) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
-	action := testing.NewRootDeleteCollectionActionWithOptions(etcdsResource, opts, listOpts)
+	action := testing.NewRootDeleteCollectionAction(etcdsResource, listOpts)
 
 	_, err := c.Fake.Invokes(action, &v1.EtcdList{})
 	return err
@@ -115,11 +110,10 @@ func (c *FakeEtcds) DeleteCollection(ctx context.Context, opts metav1.DeleteOpti
 
 // Patch applies the patch and returns the patched etcd.
 func (c *FakeEtcds) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.Etcd, err error) {
-	emptyResult := &v1.Etcd{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(etcdsResource, name, pt, data, opts, subresources...), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(etcdsResource, name, pt, data, subresources...), &v1.Etcd{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.Etcd), err
 }
@@ -137,11 +131,10 @@ func (c *FakeEtcds) Apply(ctx context.Context, etcd *operatorv1.EtcdApplyConfigu
 	if name == nil {
 		return nil, fmt.Errorf("etcd.Name must be provided to Apply")
 	}
-	emptyResult := &v1.Etcd{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(etcdsResource, *name, types.ApplyPatchType, data, opts.ToPatchOptions()), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(etcdsResource, *name, types.ApplyPatchType, data), &v1.Etcd{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.Etcd), err
 }
@@ -160,11 +153,10 @@ func (c *FakeEtcds) ApplyStatus(ctx context.Context, etcd *operatorv1.EtcdApplyC
 	if name == nil {
 		return nil, fmt.Errorf("etcd.Name must be provided to Apply")
 	}
-	emptyResult := &v1.Etcd{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(etcdsResource, *name, types.ApplyPatchType, data, opts.ToPatchOptions(), "status"), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(etcdsResource, *name, types.ApplyPatchType, data, "status"), &v1.Etcd{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.Etcd), err
 }

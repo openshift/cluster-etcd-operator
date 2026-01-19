@@ -123,9 +123,7 @@ func (c *ScriptController) manageScriptConfigMap(ctx context.Context, recorder e
 
 	for _, filename := range []string{
 		"etcd/cluster-restore.sh",
-		"etcd/quorum-restore.sh",
 		"etcd/cluster-backup.sh",
-		"etcd/disable-etcd.sh",
 		"etcd/etcd-common-tools",
 	} {
 		basename := filepath.Base(filename)

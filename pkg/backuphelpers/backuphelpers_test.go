@@ -1,11 +1,10 @@
 package backuphelpers
 
 import (
-	"testing"
-
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/stretchr/testify/require"
+	"testing"
 )
 
 func TestAutoBackupFeatureGateEnabled(t *testing.T) {

@@ -15,7 +15,6 @@ import (
 	machineclient "github.com/openshift/client-go/machine/clientset/versioned"
 	machineinformersv1beta1 "github.com/openshift/client-go/machine/informers/externalversions/machine/v1beta1"
 	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
-	applyoperatorv1 "github.com/openshift/client-go/operator/applyconfigurations/operator/v1"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorversionedclientv1alpha1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
@@ -37,11 +36,10 @@ import (
 	"github.com/openshift/library-go/pkg/operator/status"
 	"github.com/openshift/library-go/pkg/operator/unsupportedconfigoverridescontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
 	corev1informers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
@@ -105,6 +103,10 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return err
 	}
 	configClient, err := configv1client.NewForConfig(controllerContext.KubeConfig)
+	if err != nil {
+		return err
+	}
+	clientset, err := kubernetes.NewForConfig(controllerContext.KubeConfig)
 	if err != nil {
 		return err
 	}
@@ -172,7 +174,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	// we keep the default behavior of exiting the controller once a gate changes
 	featureGateAccessor.SetChangeHandler(featuregates.ForceExit)
 
-	operatorClient, dynamicInformers, err := genericoperatorclient.NewStaticPodOperatorClient(controllerContext.Clock, controllerContext.KubeConfig, operatorv1.GroupVersion.WithResource("etcds"), operatorv1.GroupVersion.WithKind("Etcd"), ExtractStaticPodOperatorSpec, ExtractStaticPodOperatorStatus)
+	operatorClient, dynamicInformers, err := genericoperatorclient.NewStaticPodOperatorClient(controllerContext.KubeConfig, operatorv1.GroupVersion.WithResource("etcds"))
 	if err != nil {
 		return err
 	}
@@ -240,6 +242,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 
 	quorumChecker := ceohelpers.NewQuorumChecker(
+		kubeInformersForNamespaces.ConfigMapLister(),
 		kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Namespaces().Lister(),
 		configInformers.Config().V1().Infrastructures().Lister(),
 		operatorClient,
@@ -258,6 +261,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		kubeClient,
 		envVarController,
 		controllerContext.EventRecorder,
+		quorumChecker,
 	)
 
 	// The guardRolloutPreCheck function always waits until the etcd pods have rolled out to the new version
@@ -297,11 +301,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return !isSNO, precheckSucceeded, err
 	}
 
-	quorumSafe := func(ctx context.Context) (bool, error) {
-		return quorumChecker.IsSafeToUpdateRevision()
-	}
-
-	staticPodControllers, err := staticpod.NewBuilder(operatorClient, kubeClient, kubeInformersForNamespaces, configInformers, controllerContext.Clock).
+	staticPodControllers, err := staticpod.NewBuilder(operatorClient, kubeClient, kubeInformersForNamespaces, configInformers).
 		WithEvents(controllerContext.EventRecorder).
 		WithInstaller([]string{"cluster-etcd-operator", "installer"}).
 		WithPruning([]string{"cluster-etcd-operator", "prune"}, "etcd-pod").
@@ -321,7 +321,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			nil,
 			guardRolloutPreCheck,
 		).
-		WithRevisionControllerPrecondition(quorumSafe).
 		WithOperandPodLabelSelector(labels.Set{"etcd": "true"}.AsSelector()).
 		ToControllers()
 	if err != nil {
@@ -355,7 +354,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		},
 	).Inertia)
 
-	coreClient := kubeClient
+	coreClient := clientset
 
 	etcdCertSignerController := etcdcertsigner.NewEtcdCertSignerController(
 		AlivenessChecker,
@@ -366,6 +365,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		masterNodeLister,
 		masterNodeLabelSelector,
 		controllerContext.EventRecorder,
+		quorumChecker,
 		legacyregistry.DefaultGatherer.(metrics.KubeRegistry),
 		false,
 	)
@@ -387,6 +387,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 		coreClient,
 		kubeInformersForNamespaces,
+		quorumChecker,
 	)
 
 	etcdMembersController := etcdmemberscontroller.NewEtcdMembersController(
@@ -426,7 +427,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	)
 
 	unsupportedConfigOverridesController := unsupportedconfigoverridescontroller.NewUnsupportedConfigOverridesController(
-		"etcd",
 		operatorClient,
 		controllerContext.EventRecorder,
 	)
@@ -466,8 +466,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			controllerContext.EventRecorder,
 			os.Getenv("OPERATOR_IMAGE"),
 			featureGateAccessor,
-			configBackupInformer,
-			kubeInformersForNamespaces)
+			configBackupInformer)
 
 		backupController := backupcontroller.NewBackupController(
 			AlivenessChecker,
@@ -636,33 +635,4 @@ var CertSecrets = []installer.UnrevisionedResource{
 	// these are also copied to certs to have a constant file location so we can refer to them in various recovery scripts
 	// and in the PDB
 	{Name: "etcd-all-certs"},
-}
-
-func ExtractStaticPodOperatorSpec(obj *unstructured.Unstructured, fieldManager string) (*applyoperatorv1.StaticPodOperatorSpecApplyConfiguration, error) {
-	castObj := &operatorv1.Etcd{}
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, castObj); err != nil {
-		return nil, fmt.Errorf("unable to convert to Etcd: %w", err)
-	}
-	ret, err := applyoperatorv1.ExtractEtcd(castObj, fieldManager)
-	if err != nil {
-		return nil, fmt.Errorf("unable to extract fields for %q: %w", fieldManager, err)
-	}
-	if ret.Spec == nil {
-		return nil, nil
-	}
-	return &ret.Spec.StaticPodOperatorSpecApplyConfiguration, nil
-}
-func ExtractStaticPodOperatorStatus(obj *unstructured.Unstructured, fieldManager string) (*applyoperatorv1.StaticPodOperatorStatusApplyConfiguration, error) {
-	castObj := &operatorv1.Etcd{}
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, castObj); err != nil {
-		return nil, fmt.Errorf("unable to convert to Etcd: %w", err)
-	}
-	ret, err := applyoperatorv1.ExtractEtcdStatus(castObj, fieldManager)
-	if err != nil {
-		return nil, fmt.Errorf("unable to extract fields for %q: %w", fieldManager, err)
-	}
-	if ret.Status == nil {
-		return nil, nil
-	}
-	return &ret.Status.StaticPodOperatorStatusApplyConfiguration, nil
 }

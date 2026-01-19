@@ -3,10 +3,9 @@ package clustermemberremovalcontroller
 import (
 	"context"
 	"fmt"
-	"testing"
-
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/stretchr/testify/require"
+	"testing"
 
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 
@@ -26,7 +25,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/utils/clock"
 )
 
 var (
@@ -134,7 +132,7 @@ func TestAttemptToRemoveLearningMember(t *testing.T) {
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
 			// test data
-			eventRecorder := events.NewRecorder(fake.NewSimpleClientset().CoreV1().Events("operator"), "test-cluster-member-removal-controller", &corev1.ObjectReference{}, clock.RealClock{})
+			eventRecorder := events.NewRecorder(fake.NewSimpleClientset().CoreV1().Events("operator"), "test-cluster-member-removal-controller", &corev1.ObjectReference{})
 			configMapTargetNSIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
 			for _, initialObj := range scenario.initialObjectsForConfigMapTargetNSLister {
 				configMapTargetNSIndexer.Add(initialObj)
@@ -1012,7 +1010,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
 			// test data
-			eventRecorder := events.NewRecorder(fake.NewSimpleClientset().CoreV1().Events("operator"), "test-cluster-member-removal-controller", &corev1.ObjectReference{}, clock.RealClock{})
+			eventRecorder := events.NewRecorder(fake.NewSimpleClientset().CoreV1().Events("operator"), "test-cluster-member-removal-controller", &corev1.ObjectReference{})
 			configMapTargetNSIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
 			for _, initialObj := range scenario.initialObjectsForConfigMapTargetNSLister {
 				configMapTargetNSIndexer.Add(initialObj)

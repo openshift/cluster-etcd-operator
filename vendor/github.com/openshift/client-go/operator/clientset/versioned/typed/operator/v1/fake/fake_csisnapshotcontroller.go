@@ -27,22 +27,20 @@ var csisnapshotcontrollersKind = v1.SchemeGroupVersion.WithKind("CSISnapshotCont
 
 // Get takes name of the cSISnapshotController, and returns the corresponding cSISnapshotController object, and an error if there is any.
 func (c *FakeCSISnapshotControllers) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.CSISnapshotController, err error) {
-	emptyResult := &v1.CSISnapshotController{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootGetActionWithOptions(csisnapshotcontrollersResource, name, options), emptyResult)
+		Invokes(testing.NewRootGetAction(csisnapshotcontrollersResource, name), &v1.CSISnapshotController{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.CSISnapshotController), err
 }
 
 // List takes label and field selectors, and returns the list of CSISnapshotControllers that match those selectors.
 func (c *FakeCSISnapshotControllers) List(ctx context.Context, opts metav1.ListOptions) (result *v1.CSISnapshotControllerList, err error) {
-	emptyResult := &v1.CSISnapshotControllerList{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootListActionWithOptions(csisnapshotcontrollersResource, csisnapshotcontrollersKind, opts), emptyResult)
+		Invokes(testing.NewRootListAction(csisnapshotcontrollersResource, csisnapshotcontrollersKind, opts), &v1.CSISnapshotControllerList{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 
 	label, _, _ := testing.ExtractFromListOptions(opts)
@@ -61,39 +59,36 @@ func (c *FakeCSISnapshotControllers) List(ctx context.Context, opts metav1.ListO
 // Watch returns a watch.Interface that watches the requested cSISnapshotControllers.
 func (c *FakeCSISnapshotControllers) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
 	return c.Fake.
-		InvokesWatch(testing.NewRootWatchActionWithOptions(csisnapshotcontrollersResource, opts))
+		InvokesWatch(testing.NewRootWatchAction(csisnapshotcontrollersResource, opts))
 }
 
 // Create takes the representation of a cSISnapshotController and creates it.  Returns the server's representation of the cSISnapshotController, and an error, if there is any.
 func (c *FakeCSISnapshotControllers) Create(ctx context.Context, cSISnapshotController *v1.CSISnapshotController, opts metav1.CreateOptions) (result *v1.CSISnapshotController, err error) {
-	emptyResult := &v1.CSISnapshotController{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootCreateActionWithOptions(csisnapshotcontrollersResource, cSISnapshotController, opts), emptyResult)
+		Invokes(testing.NewRootCreateAction(csisnapshotcontrollersResource, cSISnapshotController), &v1.CSISnapshotController{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.CSISnapshotController), err
 }
 
 // Update takes the representation of a cSISnapshotController and updates it. Returns the server's representation of the cSISnapshotController, and an error, if there is any.
 func (c *FakeCSISnapshotControllers) Update(ctx context.Context, cSISnapshotController *v1.CSISnapshotController, opts metav1.UpdateOptions) (result *v1.CSISnapshotController, err error) {
-	emptyResult := &v1.CSISnapshotController{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateActionWithOptions(csisnapshotcontrollersResource, cSISnapshotController, opts), emptyResult)
+		Invokes(testing.NewRootUpdateAction(csisnapshotcontrollersResource, cSISnapshotController), &v1.CSISnapshotController{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.CSISnapshotController), err
 }
 
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *FakeCSISnapshotControllers) UpdateStatus(ctx context.Context, cSISnapshotController *v1.CSISnapshotController, opts metav1.UpdateOptions) (result *v1.CSISnapshotController, err error) {
-	emptyResult := &v1.CSISnapshotController{}
+func (c *FakeCSISnapshotControllers) UpdateStatus(ctx context.Context, cSISnapshotController *v1.CSISnapshotController, opts metav1.UpdateOptions) (*v1.CSISnapshotController, error) {
 	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateSubresourceActionWithOptions(csisnapshotcontrollersResource, "status", cSISnapshotController, opts), emptyResult)
+		Invokes(testing.NewRootUpdateSubresourceAction(csisnapshotcontrollersResource, "status", cSISnapshotController), &v1.CSISnapshotController{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.CSISnapshotController), err
 }
@@ -107,7 +102,7 @@ func (c *FakeCSISnapshotControllers) Delete(ctx context.Context, name string, op
 
 // DeleteCollection deletes a collection of objects.
 func (c *FakeCSISnapshotControllers) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
-	action := testing.NewRootDeleteCollectionActionWithOptions(csisnapshotcontrollersResource, opts, listOpts)
+	action := testing.NewRootDeleteCollectionAction(csisnapshotcontrollersResource, listOpts)
 
 	_, err := c.Fake.Invokes(action, &v1.CSISnapshotControllerList{})
 	return err
@@ -115,11 +110,10 @@ func (c *FakeCSISnapshotControllers) DeleteCollection(ctx context.Context, opts 
 
 // Patch applies the patch and returns the patched cSISnapshotController.
 func (c *FakeCSISnapshotControllers) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.CSISnapshotController, err error) {
-	emptyResult := &v1.CSISnapshotController{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(csisnapshotcontrollersResource, name, pt, data, opts, subresources...), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(csisnapshotcontrollersResource, name, pt, data, subresources...), &v1.CSISnapshotController{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.CSISnapshotController), err
 }
@@ -137,11 +131,10 @@ func (c *FakeCSISnapshotControllers) Apply(ctx context.Context, cSISnapshotContr
 	if name == nil {
 		return nil, fmt.Errorf("cSISnapshotController.Name must be provided to Apply")
 	}
-	emptyResult := &v1.CSISnapshotController{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(csisnapshotcontrollersResource, *name, types.ApplyPatchType, data, opts.ToPatchOptions()), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(csisnapshotcontrollersResource, *name, types.ApplyPatchType, data), &v1.CSISnapshotController{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.CSISnapshotController), err
 }
@@ -160,11 +153,10 @@ func (c *FakeCSISnapshotControllers) ApplyStatus(ctx context.Context, cSISnapsho
 	if name == nil {
 		return nil, fmt.Errorf("cSISnapshotController.Name must be provided to Apply")
 	}
-	emptyResult := &v1.CSISnapshotController{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(csisnapshotcontrollersResource, *name, types.ApplyPatchType, data, opts.ToPatchOptions(), "status"), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(csisnapshotcontrollersResource, *name, types.ApplyPatchType, data, "status"), &v1.CSISnapshotController{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.CSISnapshotController), err
 }

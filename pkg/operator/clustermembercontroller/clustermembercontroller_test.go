@@ -22,7 +22,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/utils/clock"
 )
 
 type fakePodLister struct {
@@ -558,7 +557,7 @@ func TestEnsureEtcdLearnerPromotion(t *testing.T) {
 		t.Run(scenario.name, func(t *testing.T) {
 			// test data
 			fakeMachineAPIChecker := &fakeMachineAPI{isMachineAPIFunctional: scenario.isFunctionalMachineAPIFn}
-			eventRecorder := events.NewRecorder(fake.NewSimpleClientset().CoreV1().Events("operator"), "test-cluster-member-controller", &corev1.ObjectReference{}, clock.RealClock{})
+			eventRecorder := events.NewRecorder(fake.NewSimpleClientset().CoreV1().Events("operator"), "test-cluster-member-controller", &corev1.ObjectReference{})
 			machineIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
 			for _, initialObj := range scenario.initialObjectsForMachineLister {
 				machineIndexer.Add(initialObj)
@@ -795,7 +794,7 @@ func TestReconcileMembers(t *testing.T) {
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
 			// test data
-			eventRecorder := events.NewRecorder(fake.NewSimpleClientset().CoreV1().Events("operator"), "test-cluster-member-controller", &corev1.ObjectReference{}, clock.RealClock{})
+			eventRecorder := events.NewRecorder(fake.NewSimpleClientset().CoreV1().Events("operator"), "test-cluster-member-controller", &corev1.ObjectReference{})
 			fakeMachineAPIChecker := &fakeMachineAPI{isMachineAPIFunctional: scenario.isFunctionalMachineAPIFn}
 
 			machineIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
