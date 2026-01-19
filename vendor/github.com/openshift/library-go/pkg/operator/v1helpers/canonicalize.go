@@ -2,15 +2,14 @@ package v1helpers
 
 import (
 	"fmt"
+	operatorv1 "github.com/openshift/api/operator/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/json"
+	"k8s.io/utils/ptr"
 	"slices"
 	"strings"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
 	applyoperatorv1 "github.com/openshift/client-go/operator/applyconfigurations/operator/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/json"
-	"k8s.io/utils/clock"
-	"k8s.io/utils/ptr"
 )
 
 // ToStaticPodOperator returns the equivalent typed kind for the applyconfiguration. Due to differences in serialization like
@@ -33,12 +32,12 @@ func ToStaticPodOperator(in *applyoperatorv1.StaticPodOperatorStatusApplyConfigu
 	return ret, nil
 }
 
-func SetApplyConditionsLastTransitionTime(clock clock.PassiveClock, newConditions *[]applyoperatorv1.OperatorConditionApplyConfiguration, oldConditions []applyoperatorv1.OperatorConditionApplyConfiguration) {
+func SetApplyConditionsLastTransitionTime(newConditions *[]applyoperatorv1.OperatorConditionApplyConfiguration, oldConditions []applyoperatorv1.OperatorConditionApplyConfiguration) {
 	if newConditions == nil {
 		return
 	}
 
-	now := metav1.NewTime(clock.Now())
+	now := metav1.Now()
 	for i := range *newConditions {
 		newCondition := (*newConditions)[i]
 

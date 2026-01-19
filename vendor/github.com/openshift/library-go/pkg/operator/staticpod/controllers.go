@@ -340,7 +340,6 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 	}
 
 	manager.WithController(node.NewNodeController(
-		b.operandName,
 		b.staticPodOperatorClient,
 		clusterInformers,
 		eventRecorder,

@@ -334,9 +334,8 @@ github.com/openshift/client-go/operator/informers/externalversions/operator/v1
 github.com/openshift/client-go/operator/informers/externalversions/operator/v1alpha1
 github.com/openshift/client-go/operator/listers/operator/v1
 github.com/openshift/client-go/operator/listers/operator/v1alpha1
-# github.com/openshift/library-go v0.0.0-20241022210936-abb8c75b88dc
+# github.com/openshift/library-go v0.0.0-20241007132721-695e3914ffaa
 ## explicit; go 1.22.0
-github.com/openshift/library-go/pkg/apiserver/jsonpatch
 github.com/openshift/library-go/pkg/assets
 github.com/openshift/library-go/pkg/authorization/hardcodedauthorizer
 github.com/openshift/library-go/pkg/certs
