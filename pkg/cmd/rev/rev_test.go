@@ -3,15 +3,14 @@ package rev
 import (
 	"context"
 	"encoding/json"
-	"os"
-	"path"
-	"testing"
-	"time"
-
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
+	"os"
+	"path"
+	"testing"
+	"time"
 )
 
 func TestHappyPathRevisionSaving(t *testing.T) {

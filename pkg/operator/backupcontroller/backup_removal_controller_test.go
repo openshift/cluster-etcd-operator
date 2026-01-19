@@ -2,12 +2,11 @@ package backupcontroller
 
 import (
 	"context"
-	"testing"
-
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	batchv1 "k8s.io/api/batch/v1"
 	"k8s.io/apimachinery/pkg/types"
 	k8stesting "k8s.io/client-go/testing"
+	"testing"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	fake "github.com/openshift/client-go/operator/clientset/versioned/fake"

@@ -1,9 +1,8 @@
 package ceohelpers
 
 import (
-	"testing"
-
 	"k8s.io/apimachinery/pkg/runtime"
+	"testing"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 )

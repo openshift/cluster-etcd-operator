@@ -2,9 +2,8 @@ package etcdcli
 
 import (
 	"fmt"
-	"testing"
-
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
+	"testing"
 
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/stretchr/testify/require"

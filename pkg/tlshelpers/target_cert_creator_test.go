@@ -8,13 +8,12 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
-	"math/big"
-	"testing"
-	"time"
-
 	"github.com/openshift/library-go/pkg/operator/certrotation"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	"math/big"
+	"testing"
+	"time"
 
 	"github.com/davecgh/go-spew/spew"
 

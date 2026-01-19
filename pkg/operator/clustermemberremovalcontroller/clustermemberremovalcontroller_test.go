@@ -3,10 +3,9 @@ package clustermemberremovalcontroller
 import (
 	"context"
 	"fmt"
-	"testing"
-
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/stretchr/testify/require"
+	"testing"
 
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 

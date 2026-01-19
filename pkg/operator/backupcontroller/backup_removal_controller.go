@@ -3,12 +3,11 @@ package backupcontroller
 import (
 	"context"
 	"fmt"
-	"time"
-
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	batchv1 "k8s.io/api/batch/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"time"
 
 	operatorv1alpha1client "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"

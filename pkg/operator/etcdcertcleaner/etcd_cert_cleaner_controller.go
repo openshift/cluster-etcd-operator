@@ -3,9 +3,6 @@ package etcdcertcleaner
 import (
 	"context"
 	"fmt"
-	"strings"
-	"time"
-
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
@@ -21,6 +18,8 @@ import (
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
+	"strings"
+	"time"
 )
 
 const DeletionGracePeriodAnnotation = "openshift.io/ceo-delete-grace-start"

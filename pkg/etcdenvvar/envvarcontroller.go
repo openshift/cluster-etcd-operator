@@ -3,12 +3,11 @@ package etcdenvvar
 import (
 	"context"
 	"fmt"
+	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 	"reflect"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"

@@ -2,7 +2,6 @@ package controlplanereplicascount
 
 import (
 	"fmt"
-
 	"github.com/ghodss/yaml"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation"

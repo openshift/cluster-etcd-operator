@@ -3,7 +3,6 @@ package ceohelpers
 import (
 	"context"
 	"fmt"
-
 	configv1 "github.com/openshift/api/config/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
