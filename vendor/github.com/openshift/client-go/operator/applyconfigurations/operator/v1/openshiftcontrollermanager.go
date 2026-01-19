@@ -11,7 +11,7 @@ import (
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
-// OpenShiftControllerManagerApplyConfiguration represents a declarative configuration of the OpenShiftControllerManager type for use
+// OpenShiftControllerManagerApplyConfiguration represents an declarative configuration of the OpenShiftControllerManager type for use
 // with apply.
 type OpenShiftControllerManagerApplyConfiguration struct {
 	v1.TypeMetaApplyConfiguration    `json:",inline"`
@@ -20,7 +20,7 @@ type OpenShiftControllerManagerApplyConfiguration struct {
 	Status                           *OpenShiftControllerManagerStatusApplyConfiguration `json:"status,omitempty"`
 }
 
-// OpenShiftControllerManager constructs a declarative configuration of the OpenShiftControllerManager type for use with
+// OpenShiftControllerManager constructs an declarative configuration of the OpenShiftControllerManager type for use with
 // apply.
 func OpenShiftControllerManager(name string) *OpenShiftControllerManagerApplyConfiguration {
 	b := &OpenShiftControllerManagerApplyConfiguration{}
@@ -237,10 +237,4 @@ func (b *OpenShiftControllerManagerApplyConfiguration) WithSpec(value *OpenShift
 func (b *OpenShiftControllerManagerApplyConfiguration) WithStatus(value *OpenShiftControllerManagerStatusApplyConfiguration) *OpenShiftControllerManagerApplyConfiguration {
 	b.Status = value
 	return b
-}
-
-// GetName retrieves the value of the Name field in the declarative configuration.
-func (b *OpenShiftControllerManagerApplyConfiguration) GetName() *string {
-	b.ensureObjectMetaApplyConfigurationExists()
-	return b.Name
 }

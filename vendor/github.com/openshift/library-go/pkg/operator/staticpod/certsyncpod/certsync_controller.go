@@ -48,16 +48,7 @@ func NewCertSyncController(targetDir, targetNamespace string, configmaps, secret
 		secretGetter:    kubeClient.CoreV1().Secrets(targetNamespace),
 	}
 
-	return factory.New().
-		WithInformers(
-			informers.Core().V1().ConfigMaps().Informer(),
-			informers.Core().V1().Secrets().Informer(),
-		).
-		WithSync(c.sync).
-		ToController(
-			"CertSyncController", // don't change what is passed here unless you also remove the old FooDegraded condition
-			eventRecorder,
-		)
+	return factory.New().WithInformers(informers.Core().V1().ConfigMaps().Informer(), informers.Core().V1().Secrets().Informer()).WithSync(c.sync).ToController("CertSyncController", eventRecorder)
 }
 
 func getConfigMapDir(targetDir, configMapName string) string {

@@ -78,15 +78,6 @@ func ValidateAuthenticationConfiguration(c *api.AuthenticationConfiguration, dis
 		}
 	}
 
-	if c.Anonymous != nil {
-		if !utilfeature.DefaultFeatureGate.Enabled(features.AnonymousAuthConfigurableEndpoints) {
-			allErrs = append(allErrs, field.Forbidden(field.NewPath("anonymous"), "anonymous is not supported when AnonymousAuthConfigurableEnpoints feature gate is disabled"))
-		}
-		if !c.Anonymous.Enabled && len(c.Anonymous.Conditions) > 0 {
-			allErrs = append(allErrs, field.Invalid(field.NewPath("anonymous", "conditions"), c.Anonymous.Conditions, "enabled should be set to true when conditions are defined"))
-		}
-	}
-
 	return allErrs
 }
 
@@ -100,8 +91,7 @@ func CompileAndValidateJWTAuthenticator(authenticator api.JWTAuthenticator, disa
 func validateJWTAuthenticator(authenticator api.JWTAuthenticator, fldPath *field.Path, disallowedIssuers sets.Set[string], structuredAuthnFeatureEnabled bool) (authenticationcel.CELMapper, field.ErrorList) {
 	var allErrs field.ErrorList
 
-	// strictCost is set to true which enables the strict cost for CEL validation.
-	compiler := authenticationcel.NewCompiler(environment.MustBaseEnvSet(environment.DefaultCompatibilityVersion(), true))
+	compiler := authenticationcel.NewCompiler(environment.MustBaseEnvSet(environment.DefaultCompatibilityVersion()))
 	state := &validationState{}
 
 	allErrs = append(allErrs, validateIssuer(authenticator.Issuer, disallowedIssuers, fldPath.Child("issuer"))...)
@@ -732,11 +722,9 @@ func compileMatchConditions(matchConditions []api.WebhookMatchCondition, fldPath
 		return nil, allErrs
 	}
 
-	// strictCost is set to true which enables the strict cost for CEL validation.
-	compiler := authorizationcel.NewCompiler(environment.MustBaseEnvSet(environment.DefaultCompatibilityVersion(), true))
+	compiler := authorizationcel.NewCompiler(environment.MustBaseEnvSet(environment.DefaultCompatibilityVersion()))
 	seenExpressions := sets.NewString()
 	var compilationResults []authorizationcel.CompilationResult
-	var usesFieldSelector, usesLabelSelector bool
 
 	for i, condition := range matchConditions {
 		fldPath := fldPath.Child("matchConditions").Index(i).Child("expression")
@@ -755,16 +743,12 @@ func compileMatchConditions(matchConditions []api.WebhookMatchCondition, fldPath
 			continue
 		}
 		compilationResults = append(compilationResults, compilationResult)
-		usesFieldSelector = usesFieldSelector || compilationResult.UsesFieldSelector
-		usesLabelSelector = usesLabelSelector || compilationResult.UsesLabelSelector
 	}
 	if len(compilationResults) == 0 {
 		return nil, allErrs
 	}
 	return &authorizationcel.CELMatcher{
 		CompilationResults: compilationResults,
-		UsesFieldSelector:  usesFieldSelector,
-		UsesLabelSelector:  usesLabelSelector,
 	}, allErrs
 }
 

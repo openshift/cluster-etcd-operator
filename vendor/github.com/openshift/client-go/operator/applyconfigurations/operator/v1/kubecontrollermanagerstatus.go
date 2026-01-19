@@ -2,13 +2,13 @@
 
 package v1
 
-// KubeControllerManagerStatusApplyConfiguration represents a declarative configuration of the KubeControllerManagerStatus type for use
+// KubeControllerManagerStatusApplyConfiguration represents an declarative configuration of the KubeControllerManagerStatus type for use
 // with apply.
 type KubeControllerManagerStatusApplyConfiguration struct {
 	StaticPodOperatorStatusApplyConfiguration `json:",inline"`
 }
 
-// KubeControllerManagerStatusApplyConfiguration constructs a declarative configuration of the KubeControllerManagerStatus type for use with
+// KubeControllerManagerStatusApplyConfiguration constructs an declarative configuration of the KubeControllerManagerStatus type for use with
 // apply.
 func KubeControllerManagerStatus() *KubeControllerManagerStatusApplyConfiguration {
 	return &KubeControllerManagerStatusApplyConfiguration{}
@@ -51,14 +51,6 @@ func (b *KubeControllerManagerStatusApplyConfiguration) WithReadyReplicas(value 
 	return b
 }
 
-// WithLatestAvailableRevision sets the LatestAvailableRevision field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the LatestAvailableRevision field is set to the value of the last call.
-func (b *KubeControllerManagerStatusApplyConfiguration) WithLatestAvailableRevision(value int32) *KubeControllerManagerStatusApplyConfiguration {
-	b.LatestAvailableRevision = &value
-	return b
-}
-
 // WithGenerations adds the given value to the Generations field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the Generations field.
@@ -69,6 +61,14 @@ func (b *KubeControllerManagerStatusApplyConfiguration) WithGenerations(values .
 		}
 		b.Generations = append(b.Generations, *values[i])
 	}
+	return b
+}
+
+// WithLatestAvailableRevision sets the LatestAvailableRevision field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the LatestAvailableRevision field is set to the value of the last call.
+func (b *KubeControllerManagerStatusApplyConfiguration) WithLatestAvailableRevision(value int32) *KubeControllerManagerStatusApplyConfiguration {
+	b.LatestAvailableRevision = &value
 	return b
 }
 

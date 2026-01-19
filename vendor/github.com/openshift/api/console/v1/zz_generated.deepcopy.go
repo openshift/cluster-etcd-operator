@@ -648,9 +648,7 @@ func (in *ConsoleQuickStartSpec) DeepCopyInto(out *ConsoleQuickStartSpec) {
 	if in.AccessReviewResources != nil {
 		in, out := &in.AccessReviewResources, &out.AccessReviewResources
 		*out = make([]authorizationv1.ResourceAttributes, len(*in))
-		for i := range *in {
-			(*in)[i].DeepCopyInto(&(*out)[i])
-		}
+		copy(*out, *in)
 	}
 	return
 }

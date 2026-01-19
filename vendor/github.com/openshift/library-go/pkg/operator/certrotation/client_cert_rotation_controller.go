@@ -98,10 +98,7 @@ func NewCertRotationController(
 		WithPostStartHooks(
 			c.targetCertRecheckerPostRunHook,
 		).
-		ToController(
-			"CertRotationController", // don't change what is passed here unless you also remove the old FooDegraded condition
-			recorder.WithComponentSuffix("cert-rotation-controller").WithComponentSuffix(name),
-		)
+		ToController("CertRotationController", recorder.WithComponentSuffix("cert-rotation-controller").WithComponentSuffix(name))
 }
 
 func (c CertRotationController) Sync(ctx context.Context, syncCtx factory.SyncContext) error {

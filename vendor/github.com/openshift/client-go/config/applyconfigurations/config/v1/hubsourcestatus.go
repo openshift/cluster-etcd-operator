@@ -2,7 +2,7 @@
 
 package v1
 
-// HubSourceStatusApplyConfiguration represents a declarative configuration of the HubSourceStatus type for use
+// HubSourceStatusApplyConfiguration represents an declarative configuration of the HubSourceStatus type for use
 // with apply.
 type HubSourceStatusApplyConfiguration struct {
 	*HubSourceApplyConfiguration `json:"HubSource,omitempty"`
@@ -10,7 +10,7 @@ type HubSourceStatusApplyConfiguration struct {
 	Message                      *string `json:"message,omitempty"`
 }
 
-// HubSourceStatusApplyConfiguration constructs a declarative configuration of the HubSourceStatus type for use with
+// HubSourceStatusApplyConfiguration constructs an declarative configuration of the HubSourceStatus type for use with
 // apply.
 func HubSourceStatus() *HubSourceStatusApplyConfiguration {
 	return &HubSourceStatusApplyConfiguration{}

@@ -4,8 +4,8 @@ package v1alpha1
 
 import (
 	v1alpha1 "github.com/openshift/api/config/v1alpha1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/listers"
 	"k8s.io/client-go/tools/cache"
 )
 
@@ -22,17 +22,25 @@ type ImagePolicyLister interface {
 
 // imagePolicyLister implements the ImagePolicyLister interface.
 type imagePolicyLister struct {
-	listers.ResourceIndexer[*v1alpha1.ImagePolicy]
+	indexer cache.Indexer
 }
 
 // NewImagePolicyLister returns a new ImagePolicyLister.
 func NewImagePolicyLister(indexer cache.Indexer) ImagePolicyLister {
-	return &imagePolicyLister{listers.New[*v1alpha1.ImagePolicy](indexer, v1alpha1.Resource("imagepolicy"))}
+	return &imagePolicyLister{indexer: indexer}
+}
+
+// List lists all ImagePolicies in the indexer.
+func (s *imagePolicyLister) List(selector labels.Selector) (ret []*v1alpha1.ImagePolicy, err error) {
+	err = cache.ListAll(s.indexer, selector, func(m interface{}) {
+		ret = append(ret, m.(*v1alpha1.ImagePolicy))
+	})
+	return ret, err
 }
 
 // ImagePolicies returns an object that can list and get ImagePolicies.
 func (s *imagePolicyLister) ImagePolicies(namespace string) ImagePolicyNamespaceLister {
-	return imagePolicyNamespaceLister{listers.NewNamespaced[*v1alpha1.ImagePolicy](s.ResourceIndexer, namespace)}
+	return imagePolicyNamespaceLister{indexer: s.indexer, namespace: namespace}
 }
 
 // ImagePolicyNamespaceLister helps list and get ImagePolicies.
@@ -50,5 +58,26 @@ type ImagePolicyNamespaceLister interface {
 // imagePolicyNamespaceLister implements the ImagePolicyNamespaceLister
 // interface.
 type imagePolicyNamespaceLister struct {
-	listers.ResourceIndexer[*v1alpha1.ImagePolicy]
+	indexer   cache.Indexer
+	namespace string
+}
+
+// List lists all ImagePolicies in the indexer for a given namespace.
+func (s imagePolicyNamespaceLister) List(selector labels.Selector) (ret []*v1alpha1.ImagePolicy, err error) {
+	err = cache.ListAllByNamespace(s.indexer, s.namespace, selector, func(m interface{}) {
+		ret = append(ret, m.(*v1alpha1.ImagePolicy))
+	})
+	return ret, err
+}
+
+// Get retrieves the ImagePolicy from the indexer for a given namespace and name.
+func (s imagePolicyNamespaceLister) Get(name string) (*v1alpha1.ImagePolicy, error) {
+	obj, exists, err := s.indexer.GetByKey(s.namespace + "/" + name)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, errors.NewNotFound(v1alpha1.Resource("imagepolicy"), name)
+	}
+	return obj.(*v1alpha1.ImagePolicy), nil
 }

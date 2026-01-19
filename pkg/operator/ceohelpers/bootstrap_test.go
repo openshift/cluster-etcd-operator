@@ -231,8 +231,8 @@ func Test_IsBootstrapComplete(t *testing.T) {
 			fakeConfigMapLister := corev1listers.NewConfigMapLister(indexer)
 
 			operatorStatus := &operatorv1.StaticPodOperatorStatus{
-				OperatorStatus: operatorv1.OperatorStatus{LatestAvailableRevision: 1},
-				NodeStatuses:   test.nodes,
+				LatestAvailableRevision: 1,
+				NodeStatuses:            test.nodes,
 			}
 			fakeStaticPodClient := v1helpers.NewFakeStaticPodOperatorClient(nil, operatorStatus, nil, nil)
 
@@ -348,8 +348,8 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			fakeConfigMapLister := corev1listers.NewConfigMapLister(configmapIndexer)
 
 			operatorStatus := &operatorv1.StaticPodOperatorStatus{
-				OperatorStatus: operatorv1.OperatorStatus{LatestAvailableRevision: 1},
-				NodeStatuses:   test.nodes,
+				LatestAvailableRevision: 1,
+				NodeStatuses:            test.nodes,
 			}
 			fakeStaticPodClient := v1helpers.NewFakeStaticPodOperatorClient(&test.operatorConfig, operatorStatus, nil, nil)
 

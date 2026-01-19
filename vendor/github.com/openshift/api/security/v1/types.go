@@ -216,7 +216,6 @@ var (
 	FSStorageOS                 FSType = "storageOS"
 	FSTypeCSI                   FSType = "csi"
 	FSTypeEphemeral             FSType = "ephemeral"
-	FSTypeImage                 FSType = "image"
 	FSTypeAll                   FSType = "*"
 	FSTypeNone                  FSType = "none"
 )

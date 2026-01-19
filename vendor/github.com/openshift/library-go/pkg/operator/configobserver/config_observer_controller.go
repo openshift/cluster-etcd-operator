@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	applyoperatorv1 "github.com/openshift/client-go/operator/applyconfigurations/operator/v1"
-
 	"github.com/imdario/mergo"
 	"k8s.io/klog/v2"
 
@@ -46,8 +44,6 @@ type Listers interface {
 type ObserveConfigFunc func(listers Listers, recorder events.Recorder, existingConfig map[string]interface{}) (observedConfig map[string]interface{}, errs []error)
 
 type ConfigObserver struct {
-	controllerInstanceName string
-
 	// observers are called in an undefined order and their results are merged to
 	// determine the observed configuration.
 	observers []ObserveConfigFunc
@@ -62,7 +58,6 @@ type ConfigObserver struct {
 }
 
 func NewConfigObserver(
-	name string,
 	operatorClient v1helpers.OperatorClient,
 	eventRecorder events.Recorder,
 	listers Listers,
@@ -70,7 +65,6 @@ func NewConfigObserver(
 	observers ...ObserveConfigFunc,
 ) factory.Controller {
 	return NewNestedConfigObserver(
-		name,
 		operatorClient,
 		eventRecorder,
 		listers,
@@ -101,7 +95,6 @@ func NewConfigObserver(
 // oauthAPIController    := NewNestedConfigObserver(..., []string{"oauthAPIServer"}
 // oauthServerController := NewNestedConfigObserver(..., []string{"oauthServer"}
 func NewNestedConfigObserver(
-	name string,
 	operatorClient v1helpers.OperatorClient,
 	eventRecorder events.Recorder,
 	listers Listers,
@@ -111,22 +104,14 @@ func NewNestedConfigObserver(
 	observers ...ObserveConfigFunc,
 ) factory.Controller {
 	c := &ConfigObserver{
-		controllerInstanceName: factory.ControllerInstanceName(name, "ConfigObserver"),
-		operatorClient:         operatorClient,
-		observers:              observers,
-		listers:                listers,
-		nestedConfigPath:       nestedConfigPath,
-		degradedConditionType:  degradedConditionPrefix + condition.ConfigObservationDegradedConditionType,
+		operatorClient:        operatorClient,
+		observers:             observers,
+		listers:               listers,
+		nestedConfigPath:      nestedConfigPath,
+		degradedConditionType: degradedConditionPrefix + condition.ConfigObservationDegradedConditionType,
 	}
 
-	return factory.New().
-		ResyncEvery(time.Minute).
-		WithSync(c.sync).
-		WithInformers(append(informers, listersToInformer(listers)...)...).
-		ToController(
-			"ConfigObserver", // don't change what is passed here unless you also remove the old FooDegraded condition
-			eventRecorder.WithComponentSuffix("config-observer"),
-		)
+	return factory.New().ResyncEvery(time.Minute).WithSync(c.sync).WithInformers(append(informers, listersToInformer(listers)...)...).ToController("ConfigObserver", eventRecorder.WithComponentSuffix("config-observer"))
 }
 
 // sync reacts to a change in prereqs by finding information that is required to match another value in the cluster. This
@@ -180,18 +165,16 @@ func (c ConfigObserver) sync(ctx context.Context, syncCtx factory.SyncContext) e
 	configError := v1helpers.NewMultiLineAggregate(errs)
 
 	// update failing condition
-	condition := applyoperatorv1.OperatorCondition().
-		WithType(c.degradedConditionType).
-		WithStatus(operatorv1.ConditionFalse)
-	if configError != nil {
-		condition = condition.
-			WithStatus(operatorv1.ConditionTrue).
-			WithReason("Error").
-			WithMessage(configError.Error())
+	cond := operatorv1.OperatorCondition{
+		Type:   c.degradedConditionType,
+		Status: operatorv1.ConditionFalse,
 	}
-	status := applyoperatorv1.OperatorStatus().WithConditions(condition)
-	updateError := c.operatorClient.ApplyOperatorStatus(ctx, c.controllerInstanceName, status)
-	if updateError != nil {
+	if configError != nil {
+		cond.Status = operatorv1.ConditionTrue
+		cond.Reason = "Error"
+		cond.Message = configError.Error()
+	}
+	if _, _, updateError := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(cond)); updateError != nil {
 		return updateError
 	}
 

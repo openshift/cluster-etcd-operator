@@ -44,14 +44,7 @@ func New(targetNamespace string,
 		podLister:               kubeInformersForNamespaces.InformersFor(targetNamespace).Core().V1().Pods().Lister().Pods(targetNamespace),
 		startupMonitorEnabledFn: startupMonitorEnabledFn,
 	}
-	return factory.New().
-		WithSync(fd.sync).
-		ResyncEvery(6*time.Minute).
-		WithInformers(kubeInformersForNamespaces.InformersFor(targetNamespace).Core().V1().Pods().Informer()).
-		ToController(
-			"StaticPodStateFallback", // don't change what is passed here unless you also remove the old FooDegraded condition
-			eventRecorder,
-		), nil
+	return factory.New().WithSync(fd.sync).ResyncEvery(6*time.Minute).WithInformers(kubeInformersForNamespaces.InformersFor(targetNamespace).Core().V1().Pods().Informer()).ToController("StaticPodStateFallback", eventRecorder), nil
 }
 
 // sync sets/unsets a StaticPodFallbackRevisionDegraded condition if a pod that matches the given label selector is annotated with FallbackForRevision

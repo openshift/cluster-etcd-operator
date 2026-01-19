@@ -2,13 +2,13 @@
 
 package v1
 
-// AzureCSIDriverConfigSpecApplyConfiguration represents a declarative configuration of the AzureCSIDriverConfigSpec type for use
+// AzureCSIDriverConfigSpecApplyConfiguration represents an declarative configuration of the AzureCSIDriverConfigSpec type for use
 // with apply.
 type AzureCSIDriverConfigSpecApplyConfiguration struct {
 	DiskEncryptionSet *AzureDiskEncryptionSetApplyConfiguration `json:"diskEncryptionSet,omitempty"`
 }
 
-// AzureCSIDriverConfigSpecApplyConfiguration constructs a declarative configuration of the AzureCSIDriverConfigSpec type for use with
+// AzureCSIDriverConfigSpecApplyConfiguration constructs an declarative configuration of the AzureCSIDriverConfigSpec type for use with
 // apply.
 func AzureCSIDriverConfigSpec() *AzureCSIDriverConfigSpecApplyConfiguration {
 	return &AzureCSIDriverConfigSpecApplyConfiguration{}

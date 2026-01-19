@@ -6,13 +6,13 @@ import (
 	v1 "github.com/openshift/api/operator/v1"
 )
 
-// GCPLoadBalancerParametersApplyConfiguration represents a declarative configuration of the GCPLoadBalancerParameters type for use
+// GCPLoadBalancerParametersApplyConfiguration represents an declarative configuration of the GCPLoadBalancerParameters type for use
 // with apply.
 type GCPLoadBalancerParametersApplyConfiguration struct {
 	ClientAccess *v1.GCPClientAccess `json:"clientAccess,omitempty"`
 }
 
-// GCPLoadBalancerParametersApplyConfiguration constructs a declarative configuration of the GCPLoadBalancerParameters type for use with
+// GCPLoadBalancerParametersApplyConfiguration constructs an declarative configuration of the GCPLoadBalancerParameters type for use with
 // apply.
 func GCPLoadBalancerParameters() *GCPLoadBalancerParametersApplyConfiguration {
 	return &GCPLoadBalancerParametersApplyConfiguration{}

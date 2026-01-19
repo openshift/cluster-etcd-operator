@@ -59,7 +59,7 @@ type AdmissionOptions struct {
 	// RecommendedPluginOrder holds an ordered list of plugin names we recommend to use by default
 	RecommendedPluginOrder []string
 	// DefaultOffPlugins is a set of plugin names that is disabled by default
-	DefaultOffPlugins sets.Set[string]
+	DefaultOffPlugins sets.String
 
 	// EnablePlugins indicates plugins to be enabled passed through `--enable-admission-plugins`.
 	EnablePlugins []string
@@ -91,7 +91,7 @@ func NewAdmissionOptions() *AdmissionOptions {
 		// after all the mutating ones, so their relative order in this list
 		// doesn't matter.
 		RecommendedPluginOrder: []string{lifecycle.PluginName, mutatingwebhook.PluginName, validatingadmissionpolicy.PluginName, validatingwebhook.PluginName},
-		DefaultOffPlugins:      sets.Set[string]{},
+		DefaultOffPlugins:      sets.NewString(),
 	}
 	server.RegisterAllAdmissionPlugins(options.Plugins)
 	return options
@@ -138,9 +138,6 @@ func (a *AdmissionOptions) ApplyTo(
 	// Admission depends on CoreAPI to set SharedInformerFactory and ClientConfig.
 	if informers == nil {
 		return fmt.Errorf("admission depends on a Kubernetes core API shared informer, it cannot be nil")
-	}
-	if kubeClient == nil || dynamicClient == nil {
-		return fmt.Errorf("admission depends on a Kubernetes core API client, it cannot be nil")
 	}
 
 	pluginNames := a.enabledPluginNames()
@@ -226,7 +223,7 @@ func (a *AdmissionOptions) Validate() []error {
 // EnablePlugins, DisablePlugins fields
 // to prepare a list of ordered plugin names that are enabled.
 func (a *AdmissionOptions) enabledPluginNames() []string {
-	allOffPlugins := append(sets.List[string](a.DefaultOffPlugins), a.DisablePlugins...)
+	allOffPlugins := append(a.DefaultOffPlugins.List(), a.DisablePlugins...)
 	disabledPlugins := sets.NewString(allOffPlugins...)
 	enabledPlugins := sets.NewString(a.EnablePlugins...)
 	disabledPlugins = disabledPlugins.Difference(enabledPlugins)

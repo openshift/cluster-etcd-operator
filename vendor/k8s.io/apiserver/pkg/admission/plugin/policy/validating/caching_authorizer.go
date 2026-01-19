@@ -22,8 +22,6 @@ import (
 	"sort"
 	"strings"
 
-	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 )
@@ -60,8 +58,6 @@ var _ authorizer.Attributes = (interface {
 	GetAPIVersion() string
 	IsResourceRequest() bool
 	GetPath() string
-	GetFieldSelector() (fields.Requirements, error)
-	GetLabelSelector() (labels.Requirements, error)
 })(nil)
 
 // The user info accessors known to cache key construction. If this fails to compile, the cache
@@ -76,31 +72,16 @@ var _ user.Info = (interface {
 // Authorize returns an authorization decision by delegating to another Authorizer. If an equivalent
 // check has already been performed, a cached result is returned. Not safe for concurrent use.
 func (ca *cachingAuthorizer) Authorize(ctx context.Context, a authorizer.Attributes) (authorizer.Decision, string, error) {
-	type SerializableAttributes struct {
-		authorizer.AttributesRecord
-		LabelSelector string
-	}
-
-	serializableAttributes := SerializableAttributes{
-		AttributesRecord: authorizer.AttributesRecord{
-			Verb:            a.GetVerb(),
-			Namespace:       a.GetNamespace(),
-			APIGroup:        a.GetAPIGroup(),
-			APIVersion:      a.GetAPIVersion(),
-			Resource:        a.GetResource(),
-			Subresource:     a.GetSubresource(),
-			Name:            a.GetName(),
-			ResourceRequest: a.IsResourceRequest(),
-			Path:            a.GetPath(),
-		},
-	}
-	// in the error case, we won't honor this field selector, so the cache doesn't need it.
-	if fieldSelector, err := a.GetFieldSelector(); len(fieldSelector) > 0 {
-		serializableAttributes.FieldSelectorRequirements, serializableAttributes.FieldSelectorParsingErr = fieldSelector, err
-	}
-	if labelSelector, _ := a.GetLabelSelector(); len(labelSelector) > 0 {
-		// the labels requirements have private elements so those don't help us serialize to a unique key
-		serializableAttributes.LabelSelector = labelSelector.String()
+	serializableAttributes := authorizer.AttributesRecord{
+		Verb:            a.GetVerb(),
+		Namespace:       a.GetNamespace(),
+		APIGroup:        a.GetAPIGroup(),
+		APIVersion:      a.GetAPIVersion(),
+		Resource:        a.GetResource(),
+		Subresource:     a.GetSubresource(),
+		Name:            a.GetName(),
+		ResourceRequest: a.IsResourceRequest(),
+		Path:            a.GetPath(),
 	}
 
 	if u := a.GetUser(); u != nil {

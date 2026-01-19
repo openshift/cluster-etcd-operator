@@ -46,9 +46,8 @@ import (
 
 const (
 	// We have set a buffer in order to reduce times of context switches.
-	incomingBufSize         = 100
-	outgoingBufSize         = 100
-	processEventConcurrency = 10
+	incomingBufSize = 100
+	outgoingBufSize = 100
 )
 
 // defaultWatcherMaxLimit is used to facilitate construction tests
@@ -231,7 +230,8 @@ func (wc *watchChan) run(initialEventsEndBookmarkRequired, forceInitialEvents bo
 	go wc.startWatching(watchClosedCh, initialEventsEndBookmarkRequired, forceInitialEvents)
 
 	var resultChanWG sync.WaitGroup
-	wc.processEvents(&resultChanWG)
+	resultChanWG.Add(1)
+	go wc.processEvent(&resultChanWG)
 
 	select {
 	case err := <-wc.errChan:
@@ -424,17 +424,10 @@ func (wc *watchChan) startWatching(watchClosedCh chan struct{}, initialEventsEnd
 	close(watchClosedCh)
 }
 
-// processEvents processes events from etcd watcher and sends results to resultChan.
-func (wc *watchChan) processEvents(wg *sync.WaitGroup) {
-	if utilfeature.DefaultFeatureGate.Enabled(features.ConcurrentWatchObjectDecode) {
-		wc.concurrentProcessEvents(wg)
-	} else {
-		wg.Add(1)
-		go wc.serialProcessEvents(wg)
-	}
-}
-func (wc *watchChan) serialProcessEvents(wg *sync.WaitGroup) {
+// processEvent processes events from etcd watcher and sends results to resultChan.
+func (wc *watchChan) processEvent(wg *sync.WaitGroup) {
 	defer wg.Done()
+
 	for {
 		select {
 		case e := <-wc.incomingEventChan:
@@ -442,7 +435,7 @@ func (wc *watchChan) serialProcessEvents(wg *sync.WaitGroup) {
 			if res == nil {
 				continue
 			}
-			if len(wc.resultChan) == cap(wc.resultChan) {
+			if len(wc.resultChan) == outgoingBufSize {
 				klog.V(3).InfoS("Fast watcher, slow processing. Probably caused by slow dispatching events to watchers", "outgoingEvents", outgoingBufSize, "objectType", wc.watcher.objectType, "groupResource", wc.watcher.groupResource)
 			}
 			// If user couldn't receive results fast enough, we also block incoming events from watcher.
@@ -455,95 +448,6 @@ func (wc *watchChan) serialProcessEvents(wg *sync.WaitGroup) {
 			}
 		case <-wc.ctx.Done():
 			return
-		}
-	}
-}
-
-func (wc *watchChan) concurrentProcessEvents(wg *sync.WaitGroup) {
-	p := concurrentOrderedEventProcessing{
-		input:           wc.incomingEventChan,
-		processFunc:     wc.transform,
-		output:          wc.resultChan,
-		processingQueue: make(chan chan *watch.Event, processEventConcurrency-1),
-
-		objectType:    wc.watcher.objectType,
-		groupResource: wc.watcher.groupResource,
-	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		p.scheduleEventProcessing(wc.ctx, wg)
-	}()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		p.collectEventProcessing(wc.ctx)
-	}()
-}
-
-type concurrentOrderedEventProcessing struct {
-	input       chan *event
-	processFunc func(*event) *watch.Event
-	output      chan watch.Event
-
-	processingQueue chan chan *watch.Event
-	// Metadata for logging
-	objectType    string
-	groupResource schema.GroupResource
-}
-
-func (p *concurrentOrderedEventProcessing) scheduleEventProcessing(ctx context.Context, wg *sync.WaitGroup) {
-	var e *event
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case e = <-p.input:
-		}
-		processingResponse := make(chan *watch.Event, 1)
-		select {
-		case <-ctx.Done():
-			return
-		case p.processingQueue <- processingResponse:
-		}
-		wg.Add(1)
-		go func(e *event, response chan<- *watch.Event) {
-			defer wg.Done()
-			select {
-			case <-ctx.Done():
-			case response <- p.processFunc(e):
-			}
-		}(e, processingResponse)
-	}
-}
-
-func (p *concurrentOrderedEventProcessing) collectEventProcessing(ctx context.Context) {
-	var processingResponse chan *watch.Event
-	var e *watch.Event
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case processingResponse = <-p.processingQueue:
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case e = <-processingResponse:
-		}
-		if e == nil {
-			continue
-		}
-		if len(p.output) == cap(p.output) {
-			klog.V(3).InfoS("Fast watcher, slow processing. Probably caused by slow dispatching events to watchers", "outgoingEvents", outgoingBufSize, "objectType", p.objectType, "groupResource", p.groupResource)
-		}
-		// If user couldn't receive results fast enough, we also block incoming events from watcher.
-		// Because storing events in local will cause more memory usage.
-		// The worst case would be closing the fast watcher.
-		select {
-		case <-ctx.Done():
-			return
-		case p.output <- *e:
 		}
 	}
 }

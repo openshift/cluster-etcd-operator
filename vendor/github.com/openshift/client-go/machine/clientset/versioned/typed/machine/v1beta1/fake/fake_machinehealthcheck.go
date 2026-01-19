@@ -28,24 +28,22 @@ var machinehealthchecksKind = v1beta1.SchemeGroupVersion.WithKind("MachineHealth
 
 // Get takes name of the machineHealthCheck, and returns the corresponding machineHealthCheck object, and an error if there is any.
 func (c *FakeMachineHealthChecks) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1beta1.MachineHealthCheck, err error) {
-	emptyResult := &v1beta1.MachineHealthCheck{}
 	obj, err := c.Fake.
-		Invokes(testing.NewGetActionWithOptions(machinehealthchecksResource, c.ns, name, options), emptyResult)
+		Invokes(testing.NewGetAction(machinehealthchecksResource, c.ns, name), &v1beta1.MachineHealthCheck{})
 
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1beta1.MachineHealthCheck), err
 }
 
 // List takes label and field selectors, and returns the list of MachineHealthChecks that match those selectors.
 func (c *FakeMachineHealthChecks) List(ctx context.Context, opts v1.ListOptions) (result *v1beta1.MachineHealthCheckList, err error) {
-	emptyResult := &v1beta1.MachineHealthCheckList{}
 	obj, err := c.Fake.
-		Invokes(testing.NewListActionWithOptions(machinehealthchecksResource, machinehealthchecksKind, c.ns, opts), emptyResult)
+		Invokes(testing.NewListAction(machinehealthchecksResource, machinehealthchecksKind, c.ns, opts), &v1beta1.MachineHealthCheckList{})
 
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 
 	label, _, _ := testing.ExtractFromListOptions(opts)
@@ -64,43 +62,40 @@ func (c *FakeMachineHealthChecks) List(ctx context.Context, opts v1.ListOptions)
 // Watch returns a watch.Interface that watches the requested machineHealthChecks.
 func (c *FakeMachineHealthChecks) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
 	return c.Fake.
-		InvokesWatch(testing.NewWatchActionWithOptions(machinehealthchecksResource, c.ns, opts))
+		InvokesWatch(testing.NewWatchAction(machinehealthchecksResource, c.ns, opts))
 
 }
 
 // Create takes the representation of a machineHealthCheck and creates it.  Returns the server's representation of the machineHealthCheck, and an error, if there is any.
 func (c *FakeMachineHealthChecks) Create(ctx context.Context, machineHealthCheck *v1beta1.MachineHealthCheck, opts v1.CreateOptions) (result *v1beta1.MachineHealthCheck, err error) {
-	emptyResult := &v1beta1.MachineHealthCheck{}
 	obj, err := c.Fake.
-		Invokes(testing.NewCreateActionWithOptions(machinehealthchecksResource, c.ns, machineHealthCheck, opts), emptyResult)
+		Invokes(testing.NewCreateAction(machinehealthchecksResource, c.ns, machineHealthCheck), &v1beta1.MachineHealthCheck{})
 
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1beta1.MachineHealthCheck), err
 }
 
 // Update takes the representation of a machineHealthCheck and updates it. Returns the server's representation of the machineHealthCheck, and an error, if there is any.
 func (c *FakeMachineHealthChecks) Update(ctx context.Context, machineHealthCheck *v1beta1.MachineHealthCheck, opts v1.UpdateOptions) (result *v1beta1.MachineHealthCheck, err error) {
-	emptyResult := &v1beta1.MachineHealthCheck{}
 	obj, err := c.Fake.
-		Invokes(testing.NewUpdateActionWithOptions(machinehealthchecksResource, c.ns, machineHealthCheck, opts), emptyResult)
+		Invokes(testing.NewUpdateAction(machinehealthchecksResource, c.ns, machineHealthCheck), &v1beta1.MachineHealthCheck{})
 
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1beta1.MachineHealthCheck), err
 }
 
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *FakeMachineHealthChecks) UpdateStatus(ctx context.Context, machineHealthCheck *v1beta1.MachineHealthCheck, opts v1.UpdateOptions) (result *v1beta1.MachineHealthCheck, err error) {
-	emptyResult := &v1beta1.MachineHealthCheck{}
+func (c *FakeMachineHealthChecks) UpdateStatus(ctx context.Context, machineHealthCheck *v1beta1.MachineHealthCheck, opts v1.UpdateOptions) (*v1beta1.MachineHealthCheck, error) {
 	obj, err := c.Fake.
-		Invokes(testing.NewUpdateSubresourceActionWithOptions(machinehealthchecksResource, "status", c.ns, machineHealthCheck, opts), emptyResult)
+		Invokes(testing.NewUpdateSubresourceAction(machinehealthchecksResource, "status", c.ns, machineHealthCheck), &v1beta1.MachineHealthCheck{})
 
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1beta1.MachineHealthCheck), err
 }
@@ -115,7 +110,7 @@ func (c *FakeMachineHealthChecks) Delete(ctx context.Context, name string, opts 
 
 // DeleteCollection deletes a collection of objects.
 func (c *FakeMachineHealthChecks) DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error {
-	action := testing.NewDeleteCollectionActionWithOptions(machinehealthchecksResource, c.ns, opts, listOpts)
+	action := testing.NewDeleteCollectionAction(machinehealthchecksResource, c.ns, listOpts)
 
 	_, err := c.Fake.Invokes(action, &v1beta1.MachineHealthCheckList{})
 	return err
@@ -123,12 +118,11 @@ func (c *FakeMachineHealthChecks) DeleteCollection(ctx context.Context, opts v1.
 
 // Patch applies the patch and returns the patched machineHealthCheck.
 func (c *FakeMachineHealthChecks) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1beta1.MachineHealthCheck, err error) {
-	emptyResult := &v1beta1.MachineHealthCheck{}
 	obj, err := c.Fake.
-		Invokes(testing.NewPatchSubresourceActionWithOptions(machinehealthchecksResource, c.ns, name, pt, data, opts, subresources...), emptyResult)
+		Invokes(testing.NewPatchSubresourceAction(machinehealthchecksResource, c.ns, name, pt, data, subresources...), &v1beta1.MachineHealthCheck{})
 
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1beta1.MachineHealthCheck), err
 }
@@ -146,12 +140,11 @@ func (c *FakeMachineHealthChecks) Apply(ctx context.Context, machineHealthCheck 
 	if name == nil {
 		return nil, fmt.Errorf("machineHealthCheck.Name must be provided to Apply")
 	}
-	emptyResult := &v1beta1.MachineHealthCheck{}
 	obj, err := c.Fake.
-		Invokes(testing.NewPatchSubresourceActionWithOptions(machinehealthchecksResource, c.ns, *name, types.ApplyPatchType, data, opts.ToPatchOptions()), emptyResult)
+		Invokes(testing.NewPatchSubresourceAction(machinehealthchecksResource, c.ns, *name, types.ApplyPatchType, data), &v1beta1.MachineHealthCheck{})
 
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1beta1.MachineHealthCheck), err
 }
@@ -170,12 +163,11 @@ func (c *FakeMachineHealthChecks) ApplyStatus(ctx context.Context, machineHealth
 	if name == nil {
 		return nil, fmt.Errorf("machineHealthCheck.Name must be provided to Apply")
 	}
-	emptyResult := &v1beta1.MachineHealthCheck{}
 	obj, err := c.Fake.
-		Invokes(testing.NewPatchSubresourceActionWithOptions(machinehealthchecksResource, c.ns, *name, types.ApplyPatchType, data, opts.ToPatchOptions(), "status"), emptyResult)
+		Invokes(testing.NewPatchSubresourceAction(machinehealthchecksResource, c.ns, *name, types.ApplyPatchType, data, "status"), &v1beta1.MachineHealthCheck{})
 
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1beta1.MachineHealthCheck), err
 }

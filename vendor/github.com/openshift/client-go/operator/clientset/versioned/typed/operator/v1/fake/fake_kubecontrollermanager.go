@@ -27,22 +27,20 @@ var kubecontrollermanagersKind = v1.SchemeGroupVersion.WithKind("KubeControllerM
 
 // Get takes name of the kubeControllerManager, and returns the corresponding kubeControllerManager object, and an error if there is any.
 func (c *FakeKubeControllerManagers) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.KubeControllerManager, err error) {
-	emptyResult := &v1.KubeControllerManager{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootGetActionWithOptions(kubecontrollermanagersResource, name, options), emptyResult)
+		Invokes(testing.NewRootGetAction(kubecontrollermanagersResource, name), &v1.KubeControllerManager{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.KubeControllerManager), err
 }
 
 // List takes label and field selectors, and returns the list of KubeControllerManagers that match those selectors.
 func (c *FakeKubeControllerManagers) List(ctx context.Context, opts metav1.ListOptions) (result *v1.KubeControllerManagerList, err error) {
-	emptyResult := &v1.KubeControllerManagerList{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootListActionWithOptions(kubecontrollermanagersResource, kubecontrollermanagersKind, opts), emptyResult)
+		Invokes(testing.NewRootListAction(kubecontrollermanagersResource, kubecontrollermanagersKind, opts), &v1.KubeControllerManagerList{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 
 	label, _, _ := testing.ExtractFromListOptions(opts)
@@ -61,39 +59,36 @@ func (c *FakeKubeControllerManagers) List(ctx context.Context, opts metav1.ListO
 // Watch returns a watch.Interface that watches the requested kubeControllerManagers.
 func (c *FakeKubeControllerManagers) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
 	return c.Fake.
-		InvokesWatch(testing.NewRootWatchActionWithOptions(kubecontrollermanagersResource, opts))
+		InvokesWatch(testing.NewRootWatchAction(kubecontrollermanagersResource, opts))
 }
 
 // Create takes the representation of a kubeControllerManager and creates it.  Returns the server's representation of the kubeControllerManager, and an error, if there is any.
 func (c *FakeKubeControllerManagers) Create(ctx context.Context, kubeControllerManager *v1.KubeControllerManager, opts metav1.CreateOptions) (result *v1.KubeControllerManager, err error) {
-	emptyResult := &v1.KubeControllerManager{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootCreateActionWithOptions(kubecontrollermanagersResource, kubeControllerManager, opts), emptyResult)
+		Invokes(testing.NewRootCreateAction(kubecontrollermanagersResource, kubeControllerManager), &v1.KubeControllerManager{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.KubeControllerManager), err
 }
 
 // Update takes the representation of a kubeControllerManager and updates it. Returns the server's representation of the kubeControllerManager, and an error, if there is any.
 func (c *FakeKubeControllerManagers) Update(ctx context.Context, kubeControllerManager *v1.KubeControllerManager, opts metav1.UpdateOptions) (result *v1.KubeControllerManager, err error) {
-	emptyResult := &v1.KubeControllerManager{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateActionWithOptions(kubecontrollermanagersResource, kubeControllerManager, opts), emptyResult)
+		Invokes(testing.NewRootUpdateAction(kubecontrollermanagersResource, kubeControllerManager), &v1.KubeControllerManager{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.KubeControllerManager), err
 }
 
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *FakeKubeControllerManagers) UpdateStatus(ctx context.Context, kubeControllerManager *v1.KubeControllerManager, opts metav1.UpdateOptions) (result *v1.KubeControllerManager, err error) {
-	emptyResult := &v1.KubeControllerManager{}
+func (c *FakeKubeControllerManagers) UpdateStatus(ctx context.Context, kubeControllerManager *v1.KubeControllerManager, opts metav1.UpdateOptions) (*v1.KubeControllerManager, error) {
 	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateSubresourceActionWithOptions(kubecontrollermanagersResource, "status", kubeControllerManager, opts), emptyResult)
+		Invokes(testing.NewRootUpdateSubresourceAction(kubecontrollermanagersResource, "status", kubeControllerManager), &v1.KubeControllerManager{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.KubeControllerManager), err
 }
@@ -107,7 +102,7 @@ func (c *FakeKubeControllerManagers) Delete(ctx context.Context, name string, op
 
 // DeleteCollection deletes a collection of objects.
 func (c *FakeKubeControllerManagers) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
-	action := testing.NewRootDeleteCollectionActionWithOptions(kubecontrollermanagersResource, opts, listOpts)
+	action := testing.NewRootDeleteCollectionAction(kubecontrollermanagersResource, listOpts)
 
 	_, err := c.Fake.Invokes(action, &v1.KubeControllerManagerList{})
 	return err
@@ -115,11 +110,10 @@ func (c *FakeKubeControllerManagers) DeleteCollection(ctx context.Context, opts 
 
 // Patch applies the patch and returns the patched kubeControllerManager.
 func (c *FakeKubeControllerManagers) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.KubeControllerManager, err error) {
-	emptyResult := &v1.KubeControllerManager{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(kubecontrollermanagersResource, name, pt, data, opts, subresources...), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(kubecontrollermanagersResource, name, pt, data, subresources...), &v1.KubeControllerManager{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.KubeControllerManager), err
 }
@@ -137,11 +131,10 @@ func (c *FakeKubeControllerManagers) Apply(ctx context.Context, kubeControllerMa
 	if name == nil {
 		return nil, fmt.Errorf("kubeControllerManager.Name must be provided to Apply")
 	}
-	emptyResult := &v1.KubeControllerManager{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(kubecontrollermanagersResource, *name, types.ApplyPatchType, data, opts.ToPatchOptions()), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(kubecontrollermanagersResource, *name, types.ApplyPatchType, data), &v1.KubeControllerManager{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.KubeControllerManager), err
 }
@@ -160,11 +153,10 @@ func (c *FakeKubeControllerManagers) ApplyStatus(ctx context.Context, kubeContro
 	if name == nil {
 		return nil, fmt.Errorf("kubeControllerManager.Name must be provided to Apply")
 	}
-	emptyResult := &v1.KubeControllerManager{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(kubecontrollermanagersResource, *name, types.ApplyPatchType, data, opts.ToPatchOptions(), "status"), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(kubecontrollermanagersResource, *name, types.ApplyPatchType, data, "status"), &v1.KubeControllerManager{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.KubeControllerManager), err
 }

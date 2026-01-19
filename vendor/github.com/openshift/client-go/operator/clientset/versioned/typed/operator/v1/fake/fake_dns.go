@@ -27,22 +27,20 @@ var dnsesKind = v1.SchemeGroupVersion.WithKind("DNS")
 
 // Get takes name of the dNS, and returns the corresponding dNS object, and an error if there is any.
 func (c *FakeDNSes) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.DNS, err error) {
-	emptyResult := &v1.DNS{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootGetActionWithOptions(dnsesResource, name, options), emptyResult)
+		Invokes(testing.NewRootGetAction(dnsesResource, name), &v1.DNS{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.DNS), err
 }
 
 // List takes label and field selectors, and returns the list of DNSes that match those selectors.
 func (c *FakeDNSes) List(ctx context.Context, opts metav1.ListOptions) (result *v1.DNSList, err error) {
-	emptyResult := &v1.DNSList{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootListActionWithOptions(dnsesResource, dnsesKind, opts), emptyResult)
+		Invokes(testing.NewRootListAction(dnsesResource, dnsesKind, opts), &v1.DNSList{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 
 	label, _, _ := testing.ExtractFromListOptions(opts)
@@ -61,39 +59,36 @@ func (c *FakeDNSes) List(ctx context.Context, opts metav1.ListOptions) (result *
 // Watch returns a watch.Interface that watches the requested dNSes.
 func (c *FakeDNSes) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
 	return c.Fake.
-		InvokesWatch(testing.NewRootWatchActionWithOptions(dnsesResource, opts))
+		InvokesWatch(testing.NewRootWatchAction(dnsesResource, opts))
 }
 
 // Create takes the representation of a dNS and creates it.  Returns the server's representation of the dNS, and an error, if there is any.
 func (c *FakeDNSes) Create(ctx context.Context, dNS *v1.DNS, opts metav1.CreateOptions) (result *v1.DNS, err error) {
-	emptyResult := &v1.DNS{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootCreateActionWithOptions(dnsesResource, dNS, opts), emptyResult)
+		Invokes(testing.NewRootCreateAction(dnsesResource, dNS), &v1.DNS{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.DNS), err
 }
 
 // Update takes the representation of a dNS and updates it. Returns the server's representation of the dNS, and an error, if there is any.
 func (c *FakeDNSes) Update(ctx context.Context, dNS *v1.DNS, opts metav1.UpdateOptions) (result *v1.DNS, err error) {
-	emptyResult := &v1.DNS{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateActionWithOptions(dnsesResource, dNS, opts), emptyResult)
+		Invokes(testing.NewRootUpdateAction(dnsesResource, dNS), &v1.DNS{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.DNS), err
 }
 
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *FakeDNSes) UpdateStatus(ctx context.Context, dNS *v1.DNS, opts metav1.UpdateOptions) (result *v1.DNS, err error) {
-	emptyResult := &v1.DNS{}
+func (c *FakeDNSes) UpdateStatus(ctx context.Context, dNS *v1.DNS, opts metav1.UpdateOptions) (*v1.DNS, error) {
 	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateSubresourceActionWithOptions(dnsesResource, "status", dNS, opts), emptyResult)
+		Invokes(testing.NewRootUpdateSubresourceAction(dnsesResource, "status", dNS), &v1.DNS{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.DNS), err
 }
@@ -107,7 +102,7 @@ func (c *FakeDNSes) Delete(ctx context.Context, name string, opts metav1.DeleteO
 
 // DeleteCollection deletes a collection of objects.
 func (c *FakeDNSes) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
-	action := testing.NewRootDeleteCollectionActionWithOptions(dnsesResource, opts, listOpts)
+	action := testing.NewRootDeleteCollectionAction(dnsesResource, listOpts)
 
 	_, err := c.Fake.Invokes(action, &v1.DNSList{})
 	return err
@@ -115,11 +110,10 @@ func (c *FakeDNSes) DeleteCollection(ctx context.Context, opts metav1.DeleteOpti
 
 // Patch applies the patch and returns the patched dNS.
 func (c *FakeDNSes) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.DNS, err error) {
-	emptyResult := &v1.DNS{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(dnsesResource, name, pt, data, opts, subresources...), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(dnsesResource, name, pt, data, subresources...), &v1.DNS{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.DNS), err
 }
@@ -137,11 +131,10 @@ func (c *FakeDNSes) Apply(ctx context.Context, dNS *operatorv1.DNSApplyConfigura
 	if name == nil {
 		return nil, fmt.Errorf("dNS.Name must be provided to Apply")
 	}
-	emptyResult := &v1.DNS{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(dnsesResource, *name, types.ApplyPatchType, data, opts.ToPatchOptions()), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(dnsesResource, *name, types.ApplyPatchType, data), &v1.DNS{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.DNS), err
 }
@@ -160,11 +153,10 @@ func (c *FakeDNSes) ApplyStatus(ctx context.Context, dNS *operatorv1.DNSApplyCon
 	if name == nil {
 		return nil, fmt.Errorf("dNS.Name must be provided to Apply")
 	}
-	emptyResult := &v1.DNS{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(dnsesResource, *name, types.ApplyPatchType, data, opts.ToPatchOptions(), "status"), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(dnsesResource, *name, types.ApplyPatchType, data, "status"), &v1.DNS{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1.DNS), err
 }

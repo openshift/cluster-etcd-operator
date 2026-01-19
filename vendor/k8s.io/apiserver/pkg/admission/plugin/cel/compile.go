@@ -163,12 +163,11 @@ type variableDeclEnvs map[OptionalVariableDeclarations]*environment.EnvSet
 // CompileCELExpression returns a compiled CEL expression.
 // perCallLimit was added for testing purpose only. Callers should always use const PerCallLimit from k8s.io/apiserver/pkg/apis/cel/config.go as input.
 func (c compiler) CompileCELExpression(expressionAccessor ExpressionAccessor, options OptionalVariableDeclarations, envType environment.Type) CompilationResult {
-	resultError := func(errorString string, errType apiservercel.ErrorType, cause error) CompilationResult {
+	resultError := func(errorString string, errType apiservercel.ErrorType) CompilationResult {
 		return CompilationResult{
 			Error: &apiservercel.Error{
 				Type:   errType,
 				Detail: errorString,
-				Cause:  cause,
 			},
 			ExpressionAccessor: expressionAccessor,
 		}
@@ -176,12 +175,12 @@ func (c compiler) CompileCELExpression(expressionAccessor ExpressionAccessor, op
 
 	env, err := c.varEnvs[options].Env(envType)
 	if err != nil {
-		return resultError(fmt.Sprintf("unexpected error loading CEL environment: %v", err), apiservercel.ErrorTypeInternal, nil)
+		return resultError(fmt.Sprintf("unexpected error loading CEL environment: %v", err), apiservercel.ErrorTypeInternal)
 	}
 
 	ast, issues := env.Compile(expressionAccessor.GetExpression())
 	if issues != nil {
-		return resultError("compilation failed: "+issues.String(), apiservercel.ErrorTypeInvalid, apiservercel.NewCompilationError(issues))
+		return resultError("compilation failed: "+issues.String(), apiservercel.ErrorTypeInvalid)
 	}
 	found := false
 	returnTypes := expressionAccessor.ReturnTypes()
@@ -199,19 +198,19 @@ func (c compiler) CompileCELExpression(expressionAccessor ExpressionAccessor, op
 			reason = fmt.Sprintf("must evaluate to one of %v", returnTypes)
 		}
 
-		return resultError(reason, apiservercel.ErrorTypeInvalid, nil)
+		return resultError(reason, apiservercel.ErrorTypeInvalid)
 	}
 
 	_, err = cel.AstToCheckedExpr(ast)
 	if err != nil {
 		// should be impossible since env.Compile returned no issues
-		return resultError("unexpected compilation error: "+err.Error(), apiservercel.ErrorTypeInternal, nil)
+		return resultError("unexpected compilation error: "+err.Error(), apiservercel.ErrorTypeInternal)
 	}
 	prog, err := env.Program(ast,
 		cel.InterruptCheckFrequency(celconfig.CheckFrequency),
 	)
 	if err != nil {
-		return resultError("program instantiation failed: "+err.Error(), apiservercel.ErrorTypeInternal, nil)
+		return resultError("program instantiation failed: "+err.Error(), apiservercel.ErrorTypeInternal)
 	}
 	return CompilationResult{
 		Program:            prog,
@@ -223,48 +222,40 @@ func (c compiler) CompileCELExpression(expressionAccessor ExpressionAccessor, op
 func mustBuildEnvs(baseEnv *environment.EnvSet) variableDeclEnvs {
 	requestType := BuildRequestType()
 	namespaceType := BuildNamespaceType()
-	envs := make(variableDeclEnvs, 8) // since the number of variable combinations is small, pre-build a environment for each
+	envs := make(variableDeclEnvs, 4) // since the number of variable combinations is small, pre-build a environment for each
 	for _, hasParams := range []bool{false, true} {
 		for _, hasAuthorizer := range []bool{false, true} {
-			for _, strictCost := range []bool{false, true} {
-				var envOpts []cel.EnvOption
-				if hasParams {
-					envOpts = append(envOpts, cel.Variable(ParamsVarName, cel.DynType))
-				}
-				if hasAuthorizer {
-					envOpts = append(envOpts,
-						cel.Variable(AuthorizerVarName, library.AuthorizerType),
-						cel.Variable(RequestResourceAuthorizerVarName, library.ResourceCheckType))
-				}
-				envOpts = append(envOpts,
-					cel.Variable(ObjectVarName, cel.DynType),
-					cel.Variable(OldObjectVarName, cel.DynType),
-					cel.Variable(NamespaceVarName, namespaceType.CelType()),
-					cel.Variable(RequestVarName, requestType.CelType()))
-
-				extended, err := baseEnv.Extend(
-					environment.VersionedOptions{
-						// Feature epoch was actually 1.26, but we artificially set it to 1.0 because these
-						// options should always be present.
-						IntroducedVersion: version.MajorMinor(1, 0),
-						EnvOptions:        envOpts,
-						DeclTypes: []*apiservercel.DeclType{
-							namespaceType,
-							requestType,
-						},
-					},
-				)
-				if err != nil {
-					panic(fmt.Sprintf("environment misconfigured: %v", err))
-				}
-				if strictCost {
-					extended, err = extended.Extend(environment.StrictCostOpt)
-					if err != nil {
-						panic(fmt.Sprintf("environment misconfigured: %v", err))
-					}
-				}
-				envs[OptionalVariableDeclarations{HasParams: hasParams, HasAuthorizer: hasAuthorizer, StrictCost: strictCost}] = extended
+			var envOpts []cel.EnvOption
+			if hasParams {
+				envOpts = append(envOpts, cel.Variable(ParamsVarName, cel.DynType))
 			}
+			if hasAuthorizer {
+				envOpts = append(envOpts,
+					cel.Variable(AuthorizerVarName, library.AuthorizerType),
+					cel.Variable(RequestResourceAuthorizerVarName, library.ResourceCheckType))
+			}
+			envOpts = append(envOpts,
+				cel.Variable(ObjectVarName, cel.DynType),
+				cel.Variable(OldObjectVarName, cel.DynType),
+				cel.Variable(NamespaceVarName, namespaceType.CelType()),
+				cel.Variable(RequestVarName, requestType.CelType()))
+
+			extended, err := baseEnv.Extend(
+				environment.VersionedOptions{
+					// Feature epoch was actually 1.26, but we artificially set it to 1.0 because these
+					// options should always be present.
+					IntroducedVersion: version.MajorMinor(1, 0),
+					EnvOptions:        envOpts,
+					DeclTypes: []*apiservercel.DeclType{
+						namespaceType,
+						requestType,
+					},
+				},
+			)
+			if err != nil {
+				panic(fmt.Sprintf("environment misconfigured: %v", err))
+			}
+			envs[OptionalVariableDeclarations{HasParams: hasParams, HasAuthorizer: hasAuthorizer}] = extended
 		}
 	}
 	return envs

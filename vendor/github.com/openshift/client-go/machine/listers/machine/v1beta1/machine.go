@@ -4,8 +4,8 @@ package v1beta1
 
 import (
 	v1beta1 "github.com/openshift/api/machine/v1beta1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/listers"
 	"k8s.io/client-go/tools/cache"
 )
 
@@ -22,17 +22,25 @@ type MachineLister interface {
 
 // machineLister implements the MachineLister interface.
 type machineLister struct {
-	listers.ResourceIndexer[*v1beta1.Machine]
+	indexer cache.Indexer
 }
 
 // NewMachineLister returns a new MachineLister.
 func NewMachineLister(indexer cache.Indexer) MachineLister {
-	return &machineLister{listers.New[*v1beta1.Machine](indexer, v1beta1.Resource("machine"))}
+	return &machineLister{indexer: indexer}
+}
+
+// List lists all Machines in the indexer.
+func (s *machineLister) List(selector labels.Selector) (ret []*v1beta1.Machine, err error) {
+	err = cache.ListAll(s.indexer, selector, func(m interface{}) {
+		ret = append(ret, m.(*v1beta1.Machine))
+	})
+	return ret, err
 }
 
 // Machines returns an object that can list and get Machines.
 func (s *machineLister) Machines(namespace string) MachineNamespaceLister {
-	return machineNamespaceLister{listers.NewNamespaced[*v1beta1.Machine](s.ResourceIndexer, namespace)}
+	return machineNamespaceLister{indexer: s.indexer, namespace: namespace}
 }
 
 // MachineNamespaceLister helps list and get Machines.
@@ -50,5 +58,26 @@ type MachineNamespaceLister interface {
 // machineNamespaceLister implements the MachineNamespaceLister
 // interface.
 type machineNamespaceLister struct {
-	listers.ResourceIndexer[*v1beta1.Machine]
+	indexer   cache.Indexer
+	namespace string
+}
+
+// List lists all Machines in the indexer for a given namespace.
+func (s machineNamespaceLister) List(selector labels.Selector) (ret []*v1beta1.Machine, err error) {
+	err = cache.ListAllByNamespace(s.indexer, s.namespace, selector, func(m interface{}) {
+		ret = append(ret, m.(*v1beta1.Machine))
+	})
+	return ret, err
+}
+
+// Get retrieves the Machine from the indexer for a given namespace and name.
+func (s machineNamespaceLister) Get(name string) (*v1beta1.Machine, error) {
+	obj, exists, err := s.indexer.GetByKey(s.namespace + "/" + name)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, errors.NewNotFound(v1beta1.Resource("machine"), name)
+	}
+	return obj.(*v1beta1.Machine), nil
 }

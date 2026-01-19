@@ -2,13 +2,13 @@
 
 package v1
 
-// AWSDNSSpecApplyConfiguration represents a declarative configuration of the AWSDNSSpec type for use
+// AWSDNSSpecApplyConfiguration represents an declarative configuration of the AWSDNSSpec type for use
 // with apply.
 type AWSDNSSpecApplyConfiguration struct {
 	PrivateZoneIAMRole *string `json:"privateZoneIAMRole,omitempty"`
 }
 
-// AWSDNSSpecApplyConfiguration constructs a declarative configuration of the AWSDNSSpec type for use with
+// AWSDNSSpecApplyConfiguration constructs an declarative configuration of the AWSDNSSpec type for use with
 // apply.
 func AWSDNSSpec() *AWSDNSSpecApplyConfiguration {
 	return &AWSDNSSpecApplyConfiguration{}

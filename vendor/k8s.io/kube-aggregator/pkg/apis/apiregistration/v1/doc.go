@@ -20,7 +20,6 @@ limitations under the License.
 // +k8s:openapi-gen=true
 // +groupName=apiregistration.k8s.io
 // +k8s:defaulter-gen=TypeMeta
-// +k8s:prerelease-lifecycle-gen=true
 
 // Package v1 contains the API Registration API, which is responsible for
 // registering an API `Group`/`Version` with another kubernetes like API server.

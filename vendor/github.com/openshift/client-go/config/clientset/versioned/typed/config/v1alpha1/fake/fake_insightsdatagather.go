@@ -27,22 +27,20 @@ var insightsdatagathersKind = v1alpha1.SchemeGroupVersion.WithKind("InsightsData
 
 // Get takes name of the insightsDataGather, and returns the corresponding insightsDataGather object, and an error if there is any.
 func (c *FakeInsightsDataGathers) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha1.InsightsDataGather, err error) {
-	emptyResult := &v1alpha1.InsightsDataGather{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootGetActionWithOptions(insightsdatagathersResource, name, options), emptyResult)
+		Invokes(testing.NewRootGetAction(insightsdatagathersResource, name), &v1alpha1.InsightsDataGather{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1alpha1.InsightsDataGather), err
 }
 
 // List takes label and field selectors, and returns the list of InsightsDataGathers that match those selectors.
 func (c *FakeInsightsDataGathers) List(ctx context.Context, opts v1.ListOptions) (result *v1alpha1.InsightsDataGatherList, err error) {
-	emptyResult := &v1alpha1.InsightsDataGatherList{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootListActionWithOptions(insightsdatagathersResource, insightsdatagathersKind, opts), emptyResult)
+		Invokes(testing.NewRootListAction(insightsdatagathersResource, insightsdatagathersKind, opts), &v1alpha1.InsightsDataGatherList{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 
 	label, _, _ := testing.ExtractFromListOptions(opts)
@@ -61,39 +59,36 @@ func (c *FakeInsightsDataGathers) List(ctx context.Context, opts v1.ListOptions)
 // Watch returns a watch.Interface that watches the requested insightsDataGathers.
 func (c *FakeInsightsDataGathers) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
 	return c.Fake.
-		InvokesWatch(testing.NewRootWatchActionWithOptions(insightsdatagathersResource, opts))
+		InvokesWatch(testing.NewRootWatchAction(insightsdatagathersResource, opts))
 }
 
 // Create takes the representation of a insightsDataGather and creates it.  Returns the server's representation of the insightsDataGather, and an error, if there is any.
 func (c *FakeInsightsDataGathers) Create(ctx context.Context, insightsDataGather *v1alpha1.InsightsDataGather, opts v1.CreateOptions) (result *v1alpha1.InsightsDataGather, err error) {
-	emptyResult := &v1alpha1.InsightsDataGather{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootCreateActionWithOptions(insightsdatagathersResource, insightsDataGather, opts), emptyResult)
+		Invokes(testing.NewRootCreateAction(insightsdatagathersResource, insightsDataGather), &v1alpha1.InsightsDataGather{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1alpha1.InsightsDataGather), err
 }
 
 // Update takes the representation of a insightsDataGather and updates it. Returns the server's representation of the insightsDataGather, and an error, if there is any.
 func (c *FakeInsightsDataGathers) Update(ctx context.Context, insightsDataGather *v1alpha1.InsightsDataGather, opts v1.UpdateOptions) (result *v1alpha1.InsightsDataGather, err error) {
-	emptyResult := &v1alpha1.InsightsDataGather{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateActionWithOptions(insightsdatagathersResource, insightsDataGather, opts), emptyResult)
+		Invokes(testing.NewRootUpdateAction(insightsdatagathersResource, insightsDataGather), &v1alpha1.InsightsDataGather{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1alpha1.InsightsDataGather), err
 }
 
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *FakeInsightsDataGathers) UpdateStatus(ctx context.Context, insightsDataGather *v1alpha1.InsightsDataGather, opts v1.UpdateOptions) (result *v1alpha1.InsightsDataGather, err error) {
-	emptyResult := &v1alpha1.InsightsDataGather{}
+func (c *FakeInsightsDataGathers) UpdateStatus(ctx context.Context, insightsDataGather *v1alpha1.InsightsDataGather, opts v1.UpdateOptions) (*v1alpha1.InsightsDataGather, error) {
 	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateSubresourceActionWithOptions(insightsdatagathersResource, "status", insightsDataGather, opts), emptyResult)
+		Invokes(testing.NewRootUpdateSubresourceAction(insightsdatagathersResource, "status", insightsDataGather), &v1alpha1.InsightsDataGather{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1alpha1.InsightsDataGather), err
 }
@@ -107,7 +102,7 @@ func (c *FakeInsightsDataGathers) Delete(ctx context.Context, name string, opts 
 
 // DeleteCollection deletes a collection of objects.
 func (c *FakeInsightsDataGathers) DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error {
-	action := testing.NewRootDeleteCollectionActionWithOptions(insightsdatagathersResource, opts, listOpts)
+	action := testing.NewRootDeleteCollectionAction(insightsdatagathersResource, listOpts)
 
 	_, err := c.Fake.Invokes(action, &v1alpha1.InsightsDataGatherList{})
 	return err
@@ -115,11 +110,10 @@ func (c *FakeInsightsDataGathers) DeleteCollection(ctx context.Context, opts v1.
 
 // Patch applies the patch and returns the patched insightsDataGather.
 func (c *FakeInsightsDataGathers) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha1.InsightsDataGather, err error) {
-	emptyResult := &v1alpha1.InsightsDataGather{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(insightsdatagathersResource, name, pt, data, opts, subresources...), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(insightsdatagathersResource, name, pt, data, subresources...), &v1alpha1.InsightsDataGather{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1alpha1.InsightsDataGather), err
 }
@@ -137,11 +131,10 @@ func (c *FakeInsightsDataGathers) Apply(ctx context.Context, insightsDataGather 
 	if name == nil {
 		return nil, fmt.Errorf("insightsDataGather.Name must be provided to Apply")
 	}
-	emptyResult := &v1alpha1.InsightsDataGather{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(insightsdatagathersResource, *name, types.ApplyPatchType, data, opts.ToPatchOptions()), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(insightsdatagathersResource, *name, types.ApplyPatchType, data), &v1alpha1.InsightsDataGather{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1alpha1.InsightsDataGather), err
 }
@@ -160,11 +153,10 @@ func (c *FakeInsightsDataGathers) ApplyStatus(ctx context.Context, insightsDataG
 	if name == nil {
 		return nil, fmt.Errorf("insightsDataGather.Name must be provided to Apply")
 	}
-	emptyResult := &v1alpha1.InsightsDataGather{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(insightsdatagathersResource, *name, types.ApplyPatchType, data, opts.ToPatchOptions(), "status"), emptyResult)
+		Invokes(testing.NewRootPatchSubresourceAction(insightsdatagathersResource, *name, types.ApplyPatchType, data, "status"), &v1alpha1.InsightsDataGather{})
 	if obj == nil {
-		return emptyResult, err
+		return nil, err
 	}
 	return obj.(*v1alpha1.InsightsDataGather), err
 }
