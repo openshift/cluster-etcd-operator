@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path"
 	"syscall"
 	"time"
 
@@ -29,12 +28,13 @@ type backupRunnerImpl struct{}
 
 func (b backupRunnerImpl) runBackup(backupOpts *backupOptions, pruneOpts *prune.PruneOpts) error {
 	dateString := time.Now().Format("2006-01-02_150405")
-	backupOpts.backupDir = path.Join(backupVolume, dateString)
+	backupOpts.backupDir = backupVolume + "/" + dateString
 	err := backup(backupOpts)
 	if err != nil {
 		return err
 	}
 
+	pruneOpts.BackupPath = backupVolume + "/" + dateString
 	err = pruneOpts.Run()
 	if err != nil {
 		return err
