@@ -11,7 +11,6 @@ import (
 	apiregistrationv1client "k8s.io/kube-aggregator/pkg/client/clientset_generated/clientset/typed/apiregistration/v1"
 
 	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/resource/resourcehelper"
 	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
 )
 
@@ -22,7 +21,7 @@ func ApplyAPIService(ctx context.Context, client apiregistrationv1client.APIServ
 		requiredCopy := required.DeepCopy()
 		actual, err := client.APIServices().Create(
 			ctx, resourcemerge.WithCleanLabelsAndAnnotations(requiredCopy).(*apiregistrationv1.APIService), metav1.CreateOptions{})
-		resourcehelper.ReportCreateEvent(recorder, required, err)
+		reportCreateEvent(recorder, required, err)
 		return actual, true, err
 	}
 	if err != nil {
@@ -47,6 +46,6 @@ func ApplyAPIService(ctx context.Context, client apiregistrationv1client.APIServ
 		klog.Infof("APIService %q changes: %s", existing.Name, JSONPatchNoError(existing, existingCopy))
 	}
 	actual, err := client.APIServices().Update(ctx, existingCopy, metav1.UpdateOptions{})
-	resourcehelper.ReportUpdateEvent(recorder, required, err)
+	reportUpdateEvent(recorder, required, err)
 	return actual, true, err
 }

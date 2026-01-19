@@ -356,7 +356,7 @@ func TestClientCertsRemoval(t *testing.T) {
 func TestSecretApplyFailureSyncError(t *testing.T) {
 	fakeKubeClient, _, controller, recorder := setupController(t, []runtime.Object{}, true)
 	fakeKubeClient.PrependReactor("create", "secrets", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
-		return true, &corev1.Secret{}, fmt.Errorf("apply failed")
+		return true, nil, fmt.Errorf("apply failed")
 	})
 	require.Error(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
 }
@@ -364,7 +364,7 @@ func TestSecretApplyFailureSyncError(t *testing.T) {
 func TestConfigmapApplyFailureSyncError(t *testing.T) {
 	fakeKubeClient, _, controller, recorder := setupController(t, []runtime.Object{}, true)
 	fakeKubeClient.PrependReactor("create", "configmaps", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
-		return true, &corev1.ConfigMap{}, fmt.Errorf("apply failed")
+		return true, nil, fmt.Errorf("apply failed")
 	})
 	require.Error(t, controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder)))
 }

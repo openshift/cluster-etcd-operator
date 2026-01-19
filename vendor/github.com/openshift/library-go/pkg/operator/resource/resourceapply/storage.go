@@ -12,7 +12,6 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/resource/resourcehelper"
 	"github.com/openshift/library-go/pkg/operator/resource/resourcemerge"
 )
 
@@ -38,7 +37,7 @@ func ApplyStorageClass(ctx context.Context, client storageclientv1.StorageClasse
 		requiredCopy := required.DeepCopy()
 		actual, err := client.StorageClasses().Create(
 			ctx, resourcemerge.WithCleanLabelsAndAnnotations(requiredCopy).(*storagev1.StorageClass), metav1.CreateOptions{})
-		resourcehelper.ReportCreateEvent(recorder, required, err)
+		reportCreateEvent(recorder, required, err)
 		return actual, true, err
 	}
 	if err != nil {
@@ -85,7 +84,7 @@ func ApplyStorageClass(ctx context.Context, client storageclientv1.StorageClasse
 	if storageClassNeedsRecreate(existingCopy, requiredCopy) {
 		requiredCopy.ObjectMeta.ResourceVersion = ""
 		err = client.StorageClasses().Delete(ctx, existingCopy.Name, metav1.DeleteOptions{})
-		resourcehelper.ReportDeleteEvent(recorder, requiredCopy, err, "Deleting StorageClass to re-create it with updated parameters")
+		reportDeleteEvent(recorder, requiredCopy, err, "Deleting StorageClass to re-create it with updated parameters")
 		if err != nil && !apierrors.IsNotFound(err) {
 			return existing, false, err
 		}
@@ -100,13 +99,13 @@ func ApplyStorageClass(ctx context.Context, client storageclientv1.StorageClasse
 		} else if err != nil {
 			err = fmt.Errorf("failed to re-create StorageClass %s: %s", existingCopy.Name, err)
 		}
-		resourcehelper.ReportCreateEvent(recorder, actual, err)
+		reportCreateEvent(recorder, actual, err)
 		return actual, true, err
 	}
 
 	// Only mutable fields need a change
 	actual, err := client.StorageClasses().Update(ctx, requiredCopy, metav1.UpdateOptions{})
-	resourcehelper.ReportUpdateEvent(recorder, required, err)
+	reportUpdateEvent(recorder, required, err)
 	return actual, true, err
 }
 
@@ -154,7 +153,7 @@ func ApplyCSIDriver(ctx context.Context, client storageclientv1.CSIDriversGetter
 		requiredCopy := required.DeepCopy()
 		actual, err := client.CSIDrivers().Create(
 			ctx, resourcemerge.WithCleanLabelsAndAnnotations(requiredCopy).(*storagev1.CSIDriver), metav1.CreateOptions{})
-		resourcehelper.ReportCreateEvent(recorder, required, err)
+		reportCreateEvent(recorder, required, err)
 		return actual, true, err
 	}
 	if err != nil {
@@ -188,7 +187,7 @@ func ApplyCSIDriver(ctx context.Context, client storageclientv1.CSIDriversGetter
 	if sameSpec {
 		// Update metadata by a simple Update call
 		actual, err := client.CSIDrivers().Update(ctx, existingCopy, metav1.UpdateOptions{})
-		resourcehelper.ReportUpdateEvent(recorder, required, err)
+		reportUpdateEvent(recorder, required, err)
 		return actual, true, err
 	}
 
@@ -196,7 +195,7 @@ func ApplyCSIDriver(ctx context.Context, client storageclientv1.CSIDriversGetter
 	existingCopy.ObjectMeta.ResourceVersion = ""
 	// Spec is read-only after creation. Delete and re-create the object
 	err = client.CSIDrivers().Delete(ctx, existingCopy.Name, metav1.DeleteOptions{})
-	resourcehelper.ReportDeleteEvent(recorder, existingCopy, err, "Deleting CSIDriver to re-create it with updated parameters")
+	reportDeleteEvent(recorder, existingCopy, err, "Deleting CSIDriver to re-create it with updated parameters")
 	if err != nil && !apierrors.IsNotFound(err) {
 		return existing, false, err
 	}
@@ -211,7 +210,7 @@ func ApplyCSIDriver(ctx context.Context, client storageclientv1.CSIDriversGetter
 	} else if err != nil {
 		err = fmt.Errorf("failed to re-create CSIDriver %s: %s", existingCopy.Name, err)
 	}
-	resourcehelper.ReportCreateEvent(recorder, existingCopy, err)
+	reportCreateEvent(recorder, existingCopy, err)
 	return actual, true, err
 }
 
@@ -243,7 +242,7 @@ func DeleteStorageClass(ctx context.Context, client storageclientv1.StorageClass
 	if err != nil {
 		return nil, false, err
 	}
-	resourcehelper.ReportDeleteEvent(recorder, required, err)
+	reportDeleteEvent(recorder, required, err)
 	return nil, true, nil
 }
 
@@ -255,6 +254,6 @@ func DeleteCSIDriver(ctx context.Context, client storageclientv1.CSIDriversGette
 	if err != nil {
 		return nil, false, err
 	}
-	resourcehelper.ReportDeleteEvent(recorder, required, err)
+	reportDeleteEvent(recorder, required, err)
 	return nil, true, nil
 }

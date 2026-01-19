@@ -22,10 +22,9 @@ func (c *CARotatingTargetCertCreator) NeedNewTargetCertKeyPair(
 	signer *crypto.CA,
 	caBundleCerts []*x509.Certificate,
 	refresh time.Duration,
-	refreshOnlyWhenExpired bool,
-	creationRequired bool) string {
+	refreshOnlyWhenExpired bool) string {
 
-	result := c.TargetCertCreator.NeedNewTargetCertKeyPair(secret, signer, caBundleCerts, refresh, refreshOnlyWhenExpired, creationRequired)
+	result := c.TargetCertCreator.NeedNewTargetCertKeyPair(secret, signer, caBundleCerts, refresh, refreshOnlyWhenExpired)
 	if result != "" {
 		return result
 	}

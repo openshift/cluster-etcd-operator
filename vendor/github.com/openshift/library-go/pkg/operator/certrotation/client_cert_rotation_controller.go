@@ -121,17 +121,13 @@ func (c CertRotationController) Sync(ctx context.Context, syncCtx factory.SyncCo
 	return syncErr
 }
 
-func (c CertRotationController) getSigningCertKeyPairLocation() string {
-	return fmt.Sprintf("%s/%s", c.RotatedSelfSignedCertKeySecret.Namespace, c.RotatedSelfSignedCertKeySecret.Name)
-}
-
 func (c CertRotationController) SyncWorker(ctx context.Context) error {
 	signingCertKeyPair, _, err := c.RotatedSigningCASecret.EnsureSigningCertKeyPair(ctx)
 	if err != nil {
 		return err
 	}
 
-	cabundleCerts, err := c.CABundleConfigMap.EnsureConfigMapCABundle(ctx, signingCertKeyPair, c.getSigningCertKeyPairLocation())
+	cabundleCerts, err := c.CABundleConfigMap.EnsureConfigMapCABundle(ctx, signingCertKeyPair)
 	if err != nil {
 		return err
 	}
