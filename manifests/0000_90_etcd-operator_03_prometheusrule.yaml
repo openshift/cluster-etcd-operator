@@ -83,12 +83,7 @@ spec:
         summary: etcd cluster 99th percentile commit durations are too high.
       expr: |
         histogram_quantile(0.99, rate(etcd_disk_backend_commit_duration_seconds_bucket{job=~".*etcd.*"}[5m]))
-        > on () group_left (type)
-        bottomk(0.25,
-        0.5 * group by (type) (cluster_infrastructure_provider{type="Azure"})
-        or
-        0.25 * group by (type) (cluster_infrastructure_provider)
-        )
+        > 0.25
       for: 10m
       labels:
         severity: warning
@@ -130,12 +125,8 @@ spec:
         summary: etcd grpc requests are slow
       expr: |
         histogram_quantile(0.99, sum(rate(grpc_server_handling_seconds_bucket{job="etcd", grpc_method!="Defragment", grpc_type="unary"}[10m])) without(grpc_type))
-        > on () group_left (type)
-        bottomk(1,
-        1.5 * group by (type) (cluster_infrastructure_provider{type="Azure"})
-        or
-        1 * group by (type) (cluster_infrastructure_provider))
-      for: 30m
+        > 1
+      for: 60m
       labels:
         severity: critical
     - alert: etcdHighNumberOfFailedGRPCRequests
