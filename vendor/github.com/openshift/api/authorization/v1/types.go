@@ -154,10 +154,6 @@ type NamedRoleBinding struct {
 type SelfSubjectRulesReview struct {
 	metav1.TypeMeta `json:",inline"`
 
-	// metadata is the standard object's metadata.
-	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
-	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,3,opt,name=metadata"`
-
 	// Spec adds information about how to conduct the check
 	Spec SelfSubjectRulesReviewSpec `json:"spec" protobuf:"bytes,1,opt,name=spec"`
 
@@ -183,10 +179,6 @@ type SelfSubjectRulesReviewSpec struct {
 // +openshift:compatibility-gen:level=1
 type SubjectRulesReview struct {
 	metav1.TypeMeta `json:",inline"`
-
-	// metadata is the standard object's metadata.
-	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
-	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,3,opt,name=metadata"`
 
 	// Spec adds information about how to conduct the check
 	Spec SubjectRulesReviewSpec `json:"spec" protobuf:"bytes,1,opt,name=spec"`
@@ -240,7 +232,7 @@ type ResourceAccessReviewResponse struct {
 
 // +genclient
 // +genclient:nonNamespaced
-// +genclient:skipVerbs=apply,applyStatus,get,list,create,update,updateStatus,patch,delete,deleteCollection,watch
+// +genclient:skipVerbs=apply,get,list,create,update,patch,delete,deleteCollection,watch
 // +genclient:method=Create,verb=create,result=ResourceAccessReviewResponse
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
@@ -251,10 +243,6 @@ type ResourceAccessReviewResponse struct {
 // +openshift:compatibility-gen:level=1
 type ResourceAccessReview struct {
 	metav1.TypeMeta `json:",inline"`
-
-	// metadata is the standard object's metadata.
-	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
-	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,2,opt,name=metadata"`
 
 	// Action describes the action being tested.
 	Action `json:",inline" protobuf:"bytes,1,opt,name=Action"`
@@ -292,7 +280,7 @@ func (t OptionalScopes) String() string {
 
 // +genclient
 // +genclient:nonNamespaced
-// +genclient:skipVerbs=apply,applyStatus,get,list,create,update,updateStatus,patch,delete,deleteCollection,watch
+// +genclient:skipVerbs=apply,get,list,create,update,patch,delete,deleteCollection,watch
 // +genclient:method=Create,verb=create,result=SubjectAccessReviewResponse
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
@@ -302,10 +290,6 @@ func (t OptionalScopes) String() string {
 // +openshift:compatibility-gen:level=1
 type SubjectAccessReview struct {
 	metav1.TypeMeta `json:",inline"`
-
-	// metadata is the standard object's metadata.
-	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
-	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,5,opt,name=metadata"`
 
 	// Action describes the action being tested.
 	Action `json:",inline" protobuf:"bytes,1,opt,name=Action"`
@@ -322,7 +306,7 @@ type SubjectAccessReview struct {
 }
 
 // +genclient
-// +genclient:skipVerbs=apply,applyStatus,get,list,create,update,updateStatus,patch,delete,deleteCollection,watch
+// +genclient:skipVerbs=apply,get,list,create,update,patch,delete,deleteCollection,watch
 // +genclient:method=Create,verb=create,result=ResourceAccessReviewResponse
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
@@ -333,16 +317,12 @@ type SubjectAccessReview struct {
 type LocalResourceAccessReview struct {
 	metav1.TypeMeta `json:",inline"`
 
-	// metadata is the standard object's metadata.
-	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
-	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,2,opt,name=metadata"`
-
-	// Action describes the action being tested. The Namespace element is FORCED to the current namespace.
+	// Action describes the action being tested.  The Namespace element is FORCED to the current namespace.
 	Action `json:",inline" protobuf:"bytes,1,opt,name=Action"`
 }
 
 // +genclient
-// +genclient:skipVerbs=apply,applyStatus,get,list,create,update,updateStatus,patch,delete,deleteCollection,watch
+// +genclient:skipVerbs=apply,get,list,create,update,patch,delete,deleteCollection,watch
 // +genclient:method=Create,verb=create,result=SubjectAccessReviewResponse
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
@@ -352,10 +332,6 @@ type LocalResourceAccessReview struct {
 // +openshift:compatibility-gen:level=1
 type LocalSubjectAccessReview struct {
 	metav1.TypeMeta `json:",inline"`
-
-	// metadata is the standard object's metadata.
-	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
-	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,5,opt,name=metadata"`
 
 	// Action describes the action being tested.  The Namespace element is FORCED to the current namespace.
 	Action `json:",inline" protobuf:"bytes,1,opt,name=Action"`

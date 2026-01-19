@@ -91,8 +91,7 @@ func (IsPersonalSubjectAccessReview) SwaggerDoc() map[string]string {
 }
 
 var map_LocalResourceAccessReview = map[string]string{
-	"":         "LocalResourceAccessReview is a means to request a list of which users and groups are authorized to perform the action specified by spec in a particular namespace\n\nCompatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).",
-	"metadata": "metadata is the standard object's metadata. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata",
+	"": "LocalResourceAccessReview is a means to request a list of which users and groups are authorized to perform the action specified by spec in a particular namespace\n\nCompatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).",
 }
 
 func (LocalResourceAccessReview) SwaggerDoc() map[string]string {
@@ -100,11 +99,10 @@ func (LocalResourceAccessReview) SwaggerDoc() map[string]string {
 }
 
 var map_LocalSubjectAccessReview = map[string]string{
-	"":         "LocalSubjectAccessReview is an object for requesting information about whether a user or group can perform an action in a particular namespace\n\nCompatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).",
-	"metadata": "metadata is the standard object's metadata. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata",
-	"user":     "User is optional.  If both User and Groups are empty, the current authenticated user is used.",
-	"groups":   "Groups is optional.  Groups is the list of groups to which the User belongs.",
-	"scopes":   "Scopes to use for the evaluation.  Empty means \"use the unscoped (full) permissions of the user/groups\". Nil for a self-SAR, means \"use the scopes on this request\". Nil for a regular SAR, means the same as empty.",
+	"":       "LocalSubjectAccessReview is an object for requesting information about whether a user or group can perform an action in a particular namespace\n\nCompatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).",
+	"user":   "User is optional.  If both User and Groups are empty, the current authenticated user is used.",
+	"groups": "Groups is optional.  Groups is the list of groups to which the User belongs.",
+	"scopes": "Scopes to use for the evaluation.  Empty means \"use the unscoped (full) permissions of the user/groups\". Nil for a self-SAR, means \"use the scopes on this request\". Nil for a regular SAR, means the same as empty.",
 }
 
 func (LocalSubjectAccessReview) SwaggerDoc() map[string]string {
@@ -166,8 +164,7 @@ func (PolicyRule) SwaggerDoc() map[string]string {
 }
 
 var map_ResourceAccessReview = map[string]string{
-	"":         "ResourceAccessReview is a means to request a list of which users and groups are authorized to perform the action specified by spec\n\nCompatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).",
-	"metadata": "metadata is the standard object's metadata. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata",
+	"": "ResourceAccessReview is a means to request a list of which users and groups are authorized to perform the action specified by spec\n\nCompatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).",
 }
 
 func (ResourceAccessReview) SwaggerDoc() map[string]string {
@@ -261,10 +258,9 @@ func (RoleList) SwaggerDoc() map[string]string {
 }
 
 var map_SelfSubjectRulesReview = map[string]string{
-	"":         "SelfSubjectRulesReview is a resource you can create to determine which actions you can perform in a namespace\n\nCompatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).",
-	"metadata": "metadata is the standard object's metadata. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata",
-	"spec":     "Spec adds information about how to conduct the check",
-	"status":   "Status is completed by the server to tell which permissions you have",
+	"":       "SelfSubjectRulesReview is a resource you can create to determine which actions you can perform in a namespace\n\nCompatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).",
+	"spec":   "Spec adds information about how to conduct the check",
+	"status": "Status is completed by the server to tell which permissions you have",
 }
 
 func (SelfSubjectRulesReview) SwaggerDoc() map[string]string {
@@ -301,11 +297,10 @@ func (ServiceAccountRestriction) SwaggerDoc() map[string]string {
 }
 
 var map_SubjectAccessReview = map[string]string{
-	"":         "SubjectAccessReview is an object for requesting information about whether a user or group can perform an action\n\nCompatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).",
-	"metadata": "metadata is the standard object's metadata. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata",
-	"user":     "User is optional. If both User and Groups are empty, the current authenticated user is used.",
-	"groups":   "GroupsSlice is optional. Groups is the list of groups to which the User belongs.",
-	"scopes":   "Scopes to use for the evaluation.  Empty means \"use the unscoped (full) permissions of the user/groups\". Nil for a self-SAR, means \"use the scopes on this request\". Nil for a regular SAR, means the same as empty.",
+	"":       "SubjectAccessReview is an object for requesting information about whether a user or group can perform an action\n\nCompatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).",
+	"user":   "User is optional. If both User and Groups are empty, the current authenticated user is used.",
+	"groups": "GroupsSlice is optional. Groups is the list of groups to which the User belongs.",
+	"scopes": "Scopes to use for the evaluation.  Empty means \"use the unscoped (full) permissions of the user/groups\". Nil for a self-SAR, means \"use the scopes on this request\". Nil for a regular SAR, means the same as empty.",
 }
 
 func (SubjectAccessReview) SwaggerDoc() map[string]string {
@@ -325,10 +320,9 @@ func (SubjectAccessReviewResponse) SwaggerDoc() map[string]string {
 }
 
 var map_SubjectRulesReview = map[string]string{
-	"":         "SubjectRulesReview is a resource you can create to determine which actions another user can perform in a namespace\n\nCompatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).",
-	"metadata": "metadata is the standard object's metadata. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata",
-	"spec":     "Spec adds information about how to conduct the check",
-	"status":   "Status is completed by the server to tell which permissions you have",
+	"":       "SubjectRulesReview is a resource you can create to determine which actions another user can perform in a namespace\n\nCompatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).",
+	"spec":   "Spec adds information about how to conduct the check",
+	"status": "Status is completed by the server to tell which permissions you have",
 }
 
 func (SubjectRulesReview) SwaggerDoc() map[string]string {

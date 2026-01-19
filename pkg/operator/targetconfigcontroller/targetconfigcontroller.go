@@ -11,6 +11,7 @@ import (
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcd_assets"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
@@ -40,7 +41,8 @@ type TargetConfigController struct {
 	envVarGetter    etcdenvvar.EnvVar
 	backupVarGetter backuphelpers.BackupVar
 
-	enqueueFn func()
+	enqueueFn     func()
+	quorumChecker ceohelpers.QuorumChecker
 }
 
 func NewTargetConfigController(
@@ -56,6 +58,7 @@ func NewTargetConfigController(
 	envVarGetter etcdenvvar.EnvVar,
 	backupVarGetter backuphelpers.BackupVar,
 	eventRecorder events.Recorder,
+	quorumChecker ceohelpers.QuorumChecker,
 ) factory.Controller {
 	c := &TargetConfigController{
 		targetImagePullSpec:   targetImagePullSpec,
@@ -65,6 +68,7 @@ func NewTargetConfigController(
 		kubeClient:      kubeClient,
 		envVarGetter:    envVarGetter,
 		backupVarGetter: backupVarGetter,
+		quorumChecker:   quorumChecker,
 	}
 
 	syncCtx := factory.NewSyncContext("TargetConfigController", eventRecorder.WithComponentSuffix("target-config-controller"))
@@ -141,6 +145,16 @@ func (c *TargetConfigController) createTargetConfig(
 	operatorSpec *operatorv1.StaticPodOperatorSpec,
 	envVars map[string]string,
 	backupVar backuphelpers.BackupVar) error {
+
+	// check the cluster is healthy or not after get env var, to ensure it is safe to rollout
+	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
+	if err != nil {
+		return fmt.Errorf("TargetConfigController can't evaluate whether quorum is safe: %w", err)
+	}
+
+	if !safe {
+		return fmt.Errorf("skipping TargetConfigController reconciliation due to insufficient quorum")
+	}
 
 	var errs error
 	contentReplacer, err := c.getSubstitutionReplacer(operatorSpec, c.targetImagePullSpec, c.operatorImagePullSpec, envVars, backupVar)

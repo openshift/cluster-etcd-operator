@@ -2,10 +2,6 @@
 
 package v1
 
-import (
-	configv1 "github.com/openshift/api/config/v1"
-)
-
 // ImageSpecApplyConfiguration represents an declarative configuration of the ImageSpec type for use
 // with apply.
 type ImageSpecApplyConfiguration struct {
@@ -13,7 +9,6 @@ type ImageSpecApplyConfiguration struct {
 	ExternalRegistryHostnames  []string                                  `json:"externalRegistryHostnames,omitempty"`
 	AdditionalTrustedCA        *ConfigMapNameReferenceApplyConfiguration `json:"additionalTrustedCA,omitempty"`
 	RegistrySources            *RegistrySourcesApplyConfiguration        `json:"registrySources,omitempty"`
-	ImageStreamImportMode      *configv1.ImportModeType                  `json:"imageStreamImportMode,omitempty"`
 }
 
 // ImageSpecApplyConfiguration constructs an declarative configuration of the ImageSpec type for use with
@@ -58,13 +53,5 @@ func (b *ImageSpecApplyConfiguration) WithAdditionalTrustedCA(value *ConfigMapNa
 // If called multiple times, the RegistrySources field is set to the value of the last call.
 func (b *ImageSpecApplyConfiguration) WithRegistrySources(value *RegistrySourcesApplyConfiguration) *ImageSpecApplyConfiguration {
 	b.RegistrySources = value
-	return b
-}
-
-// WithImageStreamImportMode sets the ImageStreamImportMode field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the ImageStreamImportMode field is set to the value of the last call.
-func (b *ImageSpecApplyConfiguration) WithImageStreamImportMode(value configv1.ImportModeType) *ImageSpecApplyConfiguration {
-	b.ImageStreamImportMode = &value
 	return b
 }

@@ -75,8 +75,6 @@ type staticPodOperatorControllerBuilder struct {
 	readyzEndpoint                string
 	pdbUnhealthyPodEvictionPolicy *v1.UnhealthyPodEvictionPolicyType
 	guardCreateConditionalFunc    func() (bool, bool, error)
-
-	revisionControllerPrecondition revisioncontroller.PreconditionFunc
 }
 
 func NewBuilder(
@@ -116,7 +114,6 @@ type Builder interface {
 	// This can help to drain/maintain a node and recover without a manual intervention when multiple instances of nodes or pods are misbehaving.
 	// Use this with caution, as this option can disrupt perspective pods that have not yet had a chance to become healthy.
 	WithPodDisruptionBudgetGuard(operatorNamespace, operatorName, readyzPort, readyzEndpoint string, pdbUnhealthyPodEvictionPolicy *v1.UnhealthyPodEvictionPolicyType, createConditionalFunc func() (bool, bool, error)) Builder
-	WithRevisionControllerPrecondition(revisionControllerPrecondition revisioncontroller.PreconditionFunc) Builder
 	ToControllers() (manager.ControllerManager, error)
 }
 
@@ -199,11 +196,6 @@ func (b *staticPodOperatorControllerBuilder) WithPodDisruptionBudgetGuard(operat
 	return b
 }
 
-func (b *staticPodOperatorControllerBuilder) WithRevisionControllerPrecondition(revisionControllerPrecondition revisioncontroller.PreconditionFunc) Builder {
-	b.revisionControllerPrecondition = revisionControllerPrecondition
-	return b
-}
-
 func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.ControllerManager, error) {
 	manager := manager.NewControllerManager()
 
@@ -239,7 +231,6 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 			configMapClient,
 			secretClient,
 			eventRecorder,
-			b.revisionControllerPrecondition,
 		), 1)
 	} else {
 		errs = append(errs, fmt.Errorf("missing revisionController; cannot proceed"))

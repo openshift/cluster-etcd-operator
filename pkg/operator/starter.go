@@ -264,6 +264,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		envVarController,
 		backupVar,
 		controllerContext.EventRecorder,
+		quorumChecker,
 	)
 
 	// The guardRolloutPreCheck function always waits until the etcd pods have rolled out to the new version
@@ -303,10 +304,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return !isSNO, precheckSucceeded, err
 	}
 
-	quorumSafe := func(ctx context.Context) (bool, error) {
-		return quorumChecker.IsSafeToUpdateRevision()
-	}
-
 	staticPodControllers, err := staticpod.NewBuilder(operatorClient, kubeClient, kubeInformersForNamespaces, configInformers).
 		WithEvents(controllerContext.EventRecorder).
 		WithInstaller([]string{"cluster-etcd-operator", "installer"}).
@@ -327,7 +324,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			nil,
 			guardRolloutPreCheck,
 		).
-		WithRevisionControllerPrecondition(quorumSafe).
 		WithOperandPodLabelSelector(labels.Set{"etcd": "true"}.AsSelector()).
 		ToControllers()
 	if err != nil {
@@ -372,6 +368,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		masterNodeLister,
 		masterNodeLabelSelector,
 		controllerContext.EventRecorder,
+		quorumChecker,
 		legacyregistry.DefaultGatherer.(metrics.KubeRegistry),
 		false,
 	)
@@ -393,6 +390,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 		coreClient,
 		kubeInformersForNamespaces,
+		quorumChecker,
 	)
 
 	etcdMembersController := etcdmemberscontroller.NewEtcdMembersController(

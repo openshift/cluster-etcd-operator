@@ -33,6 +33,7 @@ type EtcdEndpointsController struct {
 	etcdClient      etcdcli.EtcdClient
 	configmapLister corev1listers.ConfigMapLister
 	configmapClient corev1client.ConfigMapsGetter
+	quorumChecker   ceohelpers.QuorumChecker
 }
 
 func NewEtcdEndpointsController(
@@ -41,13 +42,15 @@ func NewEtcdEndpointsController(
 	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
 	kubeClient kubernetes.Interface,
-	kubeInformers operatorv1helpers.KubeInformersForNamespaces) factory.Controller {
+	kubeInformers operatorv1helpers.KubeInformersForNamespaces,
+	quorumChecker ceohelpers.QuorumChecker) factory.Controller {
 
 	c := &EtcdEndpointsController{
 		operatorClient:  operatorClient,
 		etcdClient:      etcdClient,
 		configmapLister: kubeInformers.ConfigMapLister(),
 		configmapClient: kubeClient.CoreV1(),
+		quorumChecker:   quorumChecker,
 	}
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
@@ -139,6 +142,14 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 	}
 
 	required.Data = endpointAddresses
+
+	safe, err := c.quorumChecker.IsSafeToUpdateRevision()
+	if err != nil {
+		return fmt.Errorf("EtcdEndpointsController can't evaluate whether quorum is safe: %w", err)
+	}
+	if !safe {
+		return fmt.Errorf("skipping EtcdEndpointsController reconciliation due to insufficient quorum")
+	}
 
 	// Apply endpoint updates
 	if _, _, err := resourceapply.ApplyConfigMap(ctx, c.configmapClient, recorder, required); err != nil {
