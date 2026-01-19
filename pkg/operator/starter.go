@@ -109,6 +109,10 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	if err != nil {
 		return err
 	}
+	clientset, err := kubernetes.NewForConfig(controllerContext.KubeConfig)
+	if err != nil {
+		return err
+	}
 	machineClientSet, err := machineclient.NewForConfig(controllerContext.KubeConfig)
 	if err != nil {
 		return err
@@ -357,7 +361,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		},
 	).Inertia)
 
-	coreClient := kubeClient
+	coreClient := clientset
 
 	etcdCertSignerController := etcdcertsigner.NewEtcdCertSignerController(
 		AlivenessChecker,
