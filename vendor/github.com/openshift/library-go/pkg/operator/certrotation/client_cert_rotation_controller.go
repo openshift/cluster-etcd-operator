@@ -130,7 +130,7 @@ func (c CertRotationController) getSigningCertKeyPairLocation() string {
 
 func (c CertRotationController) SyncWorker(ctx context.Context) error {
 	signingCertKeyPair, _, err := c.RotatedSigningCASecret.EnsureSigningCertKeyPair(ctx)
-	if err != nil || signingCertKeyPair == nil {
+	if err != nil {
 		return err
 	}
 
