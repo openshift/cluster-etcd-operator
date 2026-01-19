@@ -124,7 +124,6 @@ func (b *backupServer) Run(ctx context.Context) error {
 		bck := backupRunnerImpl{}
 		err := b.scheduleBackup(cCtx, bck)
 		if err != nil {
-			klog.Infof("error running etcd backup: %v", err)
 			return err
 		}
 	}

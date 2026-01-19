@@ -3,11 +3,7 @@ package periodicbackupcontroller
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
-
-	"k8s.io/apimachinery/pkg/labels"
-	clientv1 "k8s.io/client-go/listers/core/v1"
 
 	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -33,20 +29,17 @@ import (
 )
 
 const (
-	backupJobLabel                = "backup-name"
-	defaultBackupCRName           = "default"
-	etcdBackupServerContainerName = "etcd-backup-server"
+	backupJobLabel      = "backup-name"
+	defaultBackupCRName = "default"
 )
 
 type PeriodicBackupController struct {
 	operatorClient        v1helpers.OperatorClient
-	podLister             clientv1.PodLister
 	backupsClient         backupv1client.BackupsGetter
 	kubeClient            kubernetes.Interface
 	operatorImagePullSpec string
 	backupVarGetter       backuphelpers.BackupVar
 	featureGateAccessor   featuregates.FeatureGateAccess
-	kubeInformers         v1helpers.KubeInformersForNamespaces
 }
 
 func NewPeriodicBackupController(
@@ -58,18 +51,15 @@ func NewPeriodicBackupController(
 	operatorImagePullSpec string,
 	accessor featuregates.FeatureGateAccess,
 	backupVarGetter backuphelpers.BackupVar,
-	backupsInformer factory.Informer,
-	kubeInformers v1helpers.KubeInformersForNamespaces) factory.Controller {
+	backupsInformer factory.Informer) factory.Controller {
 
 	c := &PeriodicBackupController{
 		operatorClient:        operatorClient,
-		podLister:             kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
 		backupsClient:         backupsClient,
 		kubeClient:            kubeClient,
 		operatorImagePullSpec: operatorImagePullSpec,
 		backupVarGetter:       backupVarGetter,
 		featureGateAccessor:   accessor,
-		kubeInformers:         kubeInformers,
 	}
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
@@ -77,8 +67,7 @@ func NewPeriodicBackupController(
 
 	return factory.New().
 		ResyncEvery(1*time.Minute).
-		WithInformers(backupsInformer,
-			kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer()).
+		WithInformers(backupsInformer).
 		WithSync(syncer.Sync).
 		ToController("PeriodicBackupController", eventRecorder.WithComponentSuffix("periodic-backup-controller"))
 }
@@ -121,37 +110,7 @@ func (c *PeriodicBackupController) sync(ctx context.Context, _ factory.SyncConte
 		}
 	}
 
-	if defaultFound {
-		mirrorPods, err := c.podLister.List(labels.Set{"app": "etcd"}.AsSelector())
-		if err != nil {
-			return fmt.Errorf("PeriodicBackupController could not list etcd pods: %w", err)
-		}
-
-		var terminationReasons []string
-		for _, p := range mirrorPods {
-			for _, cStatus := range p.Status.ContainerStatuses {
-				if cStatus.Name == etcdBackupServerContainerName {
-					// TODO we can also try different cStatus.State.Terminated.ExitCode
-					terminationReasons = append(terminationReasons, fmt.Sprintf("container %s within pod %s has been terminated: %s", etcdBackupServerContainerName, p.Name, cStatus.State.Terminated.Message))
-				}
-			}
-		}
-
-		if len(terminationReasons) > 0 {
-			_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-				Type:    "PeriodicBackupControllerDegraded",
-				Status:  operatorv1.ConditionTrue,
-				Reason:  "Error",
-				Message: fmt.Sprintf("found default backup errors: %s", strings.Join(terminationReasons, " ,")),
-			}))
-			if updateErr != nil {
-				klog.V(4).Infof("PeriodicBackupController error during default backup UpdateStatus: %v", err)
-			}
-
-			return nil
-		}
-	} else {
-		// disable etcd-backup-server
+	if !defaultFound {
 		c.backupVarGetter.SetBackupSpec(nil)
 	}
 
