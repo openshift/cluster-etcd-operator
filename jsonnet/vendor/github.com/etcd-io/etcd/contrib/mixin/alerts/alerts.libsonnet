@@ -16,9 +16,9 @@
               )
               > 0
             ||| % { etcd_instance_labels: $._config.etcd_instance_labels, etcd_selector: $._config.etcd_selector, network_failure_range: $._config.scrape_interval_seconds * 4 },
-            'for': '20m',
+            'for': '10m',
             labels: {
-              severity: 'warning',
+              severity: 'critical',
             },
             annotations: {
               description: 'etcd cluster "{{ $labels.%s }}": members are down ({{ $value }}).' % $._config.clusterLabel,
