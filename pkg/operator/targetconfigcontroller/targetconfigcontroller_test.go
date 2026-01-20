@@ -19,7 +19,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/etcd"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -122,7 +121,7 @@ func TestTargetConfigController(t *testing.T) {
 				u.WithLatestRevision(3),
 				u.WithNodeStatusAtCurrentRevision(3),
 				u.WithNodeStatusAtCurrentRevision(3),
-				u.WithOperatorCondition(etcd.OperatorConditionEtcdRunningInCluster, operatorv1.ConditionTrue),
+				u.WithOperatorCondition(ceohelpers.OperatorConditionEtcdRunningInCluster, operatorv1.ConditionTrue),
 			),
 			etcdMembers: []*etcdserverpb.Member{
 				u.FakeEtcdMemberWithoutServer(0),
@@ -136,8 +135,8 @@ func TestTargetConfigController(t *testing.T) {
 				u.WithLatestRevision(3),
 				u.WithNodeStatusAtCurrentRevision(3),
 				u.WithNodeStatusAtCurrentRevision(3),
-				u.WithOperatorCondition(etcd.OperatorConditionEtcdRunningInCluster, operatorv1.ConditionTrue),
-				u.WithOperatorCondition(etcd.OperatorConditionExternalEtcdReadyForTransition, operatorv1.ConditionTrue),
+				u.WithOperatorCondition(ceohelpers.OperatorConditionEtcdRunningInCluster, operatorv1.ConditionTrue),
+				u.WithOperatorCondition(ceohelpers.OperatorConditionExternalEtcdReadyForTransition, operatorv1.ConditionTrue),
 			),
 			etcdMembers: []*etcdserverpb.Member{
 				u.FakeEtcdMemberWithoutServer(0),

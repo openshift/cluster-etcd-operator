@@ -11,14 +11,15 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/config"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/exec"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
 
 const (
-	// defaultPcmkDelayBase is the delay applied to the first fence device to prevent simultaneous fencing
-	defaultPcmkDelayBase = "10s"
+	// firstPcmkDelayBase is the delay applied to the first fence device to prevent simultaneous fencing
+	firstPcmkDelayBase = "10s"
+	// defaultPcmkDelayBase is the delay applied to other fence devices to prevent simultaneous fencing
+	defaultPcmkDelayBase = "1s"
 )
 
 type fencingOption int
@@ -60,14 +61,17 @@ func (f fencingConfig) GetParsedIP() string {
 }
 
 // ConfigureFencing configures pacemaker fencing based on fencing credentials provided in secrets
-func ConfigureFencing(ctx context.Context, kubeClient kubernetes.Interface, cfg config.ClusterConfig) error {
+func ConfigureFencing(ctx context.Context, kubeClient kubernetes.Interface, nodeNames []string) error {
 	klog.Info("Setting up pacemaker fencing")
 
 	// get redfish config from secret
 	klog.Info("Getting fencing configs from secrets")
 	fencingConfigs := []fencingConfig{}
 
-	for i, nodeName := range []string{cfg.NodeName1, cfg.NodeName2} {
+	for i, nodeName := range nodeNames {
+		if nodeName == "" {
+			continue
+		}
 		secret, err := tools.GetFencingSecret(ctx, kubeClient, nodeName)
 		if err != nil {
 			klog.Errorf("Failed to get fencing secret for node %s: %v", nodeName, err)
@@ -78,8 +82,11 @@ func ConfigureFencing(ctx context.Context, kubeClient kubernetes.Interface, cfg 
 			klog.Errorf("Failed to get fencing config for node %s: %v", nodeName, err)
 			return fmt.Errorf("failed to get fencing config for node %s: %v", nodeName, err)
 		}
-		// Add pcmk_delay_base to the first fence device only
+		// Add pcmk_delay_base to both devices but with different values.
+		// This prevents fencing races and device update issues.
 		if i == 0 {
+			fc.FencingDeviceOptions[PcmkDelayBase] = firstPcmkDelayBase
+		} else {
 			fc.FencingDeviceOptions[PcmkDelayBase] = defaultPcmkDelayBase
 		}
 		fencingConfigs = append(fencingConfigs, *fc)
@@ -226,20 +233,18 @@ func getStonithCommand(sc StonithConfig, fc fencingConfig) string {
 		}
 	}
 
-	cmd := fmt.Sprintf("/usr/sbin/pcs stonith %s %s %s username=%q password=%q ip=%q ipport=%q systems_uri=%q pcmk_host_list=%q",
+	cmd := fmt.Sprintf("/usr/sbin/pcs stonith %s %s %s username=%q password=%q ip=%q ipport=%q systems_uri=%q pcmk_host_list=%q pcmk_delay_base=%q",
 		stonithAction, fc.FencingID, fc.FencingDeviceType, fc.FencingDeviceOptions[Username], fc.FencingDeviceOptions[Password],
-		fc.GetParsedIP(), fc.FencingDeviceOptions[IpPort], fc.FencingDeviceOptions[SystemsUri], fc.NodeName)
+		fc.GetParsedIP(), fc.FencingDeviceOptions[IpPort], fc.FencingDeviceOptions[SystemsUri], fc.NodeName, fc.FencingDeviceOptions[PcmkDelayBase])
 
 	if _, exists := fc.FencingDeviceOptions[SslInsecure]; exists {
 		cmd += ` ssl_insecure="1"`
-	}
-
-	if delayBase, exists := fc.FencingDeviceOptions[PcmkDelayBase]; exists {
-		cmd += fmt.Sprintf(` pcmk_delay_base=%q`, delayBase)
+	} else {
+		cmd += ` ssl_insecure="0"`
 	}
 
 	// wait for command execution, so we can check if the device is running
-	cmd += " --wait=30"
+	cmd += " --wait=120"
 
 	return cmd
 }

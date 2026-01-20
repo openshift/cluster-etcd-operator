@@ -22,8 +22,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
 
 // By default, we only set the progressing and degraded conditions for TNF setup.
@@ -250,12 +248,12 @@ func (c *JobController) syncManaged(ctx context.Context, opSpec *opv1.OperatorSp
 		availableCondition := applyoperatorv1.
 			OperatorCondition().WithType(c.instanceName + opv1.OperatorStatusTypeAvailable)
 
-		if isComplete(job) {
+		if IsComplete(*job) {
 			availableCondition = availableCondition.
 				WithStatus(opv1.ConditionTrue).
 				WithReason("JobComplete").
 				WithMessage("Job completed")
-		} else if isFailed(job) {
+		} else if IsFailed(*job) {
 			availableCondition = availableCondition.
 				WithStatus(opv1.ConditionFalse).
 				WithReason("JobFailed").
@@ -275,12 +273,12 @@ func (c *JobController) syncManaged(ctx context.Context, opSpec *opv1.OperatorSp
 		progressingCondition := applyoperatorv1.OperatorCondition().
 			WithType(c.instanceName + opv1.OperatorStatusTypeProgressing)
 
-		if isComplete(job) {
+		if IsComplete(*job) {
 			progressingCondition = progressingCondition.
 				WithStatus(opv1.ConditionFalse).
 				WithReason("JobComplete").
 				WithMessage("Job completed")
-		} else if isFailed(job) {
+		} else if IsFailed(*job) {
 			progressingCondition = progressingCondition.
 				WithStatus(opv1.ConditionFalse).
 				WithReason("JobFailed").
@@ -306,7 +304,7 @@ func (c *JobController) syncManaged(ctx context.Context, opSpec *opv1.OperatorSp
 
 	// return an error for reporting degraded status!
 	// setting a condition manually, similar to available and progressing, doesn't work
-	if isFailed(job) {
+	if IsFailed(*job) {
 		return fmt.Errorf("Job failed")
 	}
 	return nil
@@ -338,12 +336,4 @@ func (c *JobController) getJob(opSpec *opv1.OperatorSpec) (*batchv1.Job, error) 
 		}
 	}
 	return required, nil
-}
-
-func isComplete(job *batchv1.Job) bool {
-	return tools.IsConditionTrue(job.Status.Conditions, batchv1.JobComplete)
-}
-
-func isFailed(job *batchv1.Job) bool {
-	return tools.IsConditionTrue(job.Status.Conditions, batchv1.JobFailed)
 }

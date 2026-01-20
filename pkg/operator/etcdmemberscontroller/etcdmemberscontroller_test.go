@@ -13,8 +13,8 @@ import (
 	"k8s.io/utils/clock"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/etcd"
 )
 
 var (
@@ -85,7 +85,7 @@ func TestEtcdMembersController_ReportEtcdMembers(t *testing.T) {
 			expectedAvailableReason: "EtcdQuorate",
 			description:             "TNF cluster with 1/2 healthy nodes should report available due to automatic quorum recovery",
 			operatorStatus: u.WithConditions(operatorv1.OperatorCondition{
-				Type:   etcd.OperatorConditionExternalEtcdHasCompletedTransition,
+				Type:   ceohelpers.OperatorConditionExternalEtcdHasCompletedTransition,
 				Status: operatorv1.ConditionTrue,
 			}),
 		},

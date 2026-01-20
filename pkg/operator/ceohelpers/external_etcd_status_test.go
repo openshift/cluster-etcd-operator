@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/testutils"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/etcd"
 )
 
 func TestIsExternalEtcdCluster(t *testing.T) {
@@ -75,7 +74,7 @@ func TestIsReadyForEtcdTransition(t *testing.T) {
 			name: "ExternalEtcdReadyForTransition condition true - ready",
 			operatorConditions: []operatorv1.OperatorCondition{
 				{
-					Type:   etcd.OperatorConditionExternalEtcdReadyForTransition,
+					Type:   OperatorConditionExternalEtcdReadyForTransition,
 					Status: operatorv1.ConditionTrue,
 				},
 			},
@@ -86,7 +85,7 @@ func TestIsReadyForEtcdTransition(t *testing.T) {
 			name: "ExternalEtcdReadyForTransition condition false - not ready",
 			operatorConditions: []operatorv1.OperatorCondition{
 				{
-					Type:   etcd.OperatorConditionExternalEtcdReadyForTransition,
+					Type:   OperatorConditionExternalEtcdReadyForTransition,
 					Status: operatorv1.ConditionFalse,
 				},
 			},
@@ -97,7 +96,7 @@ func TestIsReadyForEtcdTransition(t *testing.T) {
 			name: "Other conditions present but not ExternalEtcdReadyForTransition - not ready",
 			operatorConditions: []operatorv1.OperatorCondition{
 				{
-					Type:   etcd.OperatorConditionEtcdRunningInCluster,
+					Type:   OperatorConditionEtcdRunningInCluster,
 					Status: operatorv1.ConditionTrue,
 				},
 			},
@@ -141,7 +140,7 @@ func TestIsEtcdRunningInCluster(t *testing.T) {
 			name: "EtcdRunningInCluster condition true - completed",
 			operatorConditions: []operatorv1.OperatorCondition{
 				{
-					Type:   etcd.OperatorConditionEtcdRunningInCluster,
+					Type:   OperatorConditionEtcdRunningInCluster,
 					Status: operatorv1.ConditionTrue,
 				},
 			},
@@ -152,7 +151,7 @@ func TestIsEtcdRunningInCluster(t *testing.T) {
 			name: "EtcdRunningInCluster condition false - not completed",
 			operatorConditions: []operatorv1.OperatorCondition{
 				{
-					Type:   etcd.OperatorConditionEtcdRunningInCluster,
+					Type:   OperatorConditionEtcdRunningInCluster,
 					Status: operatorv1.ConditionFalse,
 				},
 			},
@@ -195,7 +194,7 @@ func TestHasExternalEtcdCompletedTransition(t *testing.T) {
 		{
 			name: "ExternalEtcdHasCompletedTransition condition true - transition completed",
 			operatorStatus: testutils.WithConditions(operatorv1.OperatorCondition{
-				Type:   etcd.OperatorConditionExternalEtcdHasCompletedTransition,
+				Type:   OperatorConditionExternalEtcdHasCompletedTransition,
 				Status: operatorv1.ConditionTrue,
 			}),
 			expectedResult: true,
@@ -204,7 +203,7 @@ func TestHasExternalEtcdCompletedTransition(t *testing.T) {
 		{
 			name: "ExternalEtcdHasCompletedTransition condition false - transition not completed",
 			operatorStatus: testutils.WithConditions(operatorv1.OperatorCondition{
-				Type:   etcd.OperatorConditionExternalEtcdHasCompletedTransition,
+				Type:   OperatorConditionExternalEtcdHasCompletedTransition,
 				Status: operatorv1.ConditionFalse,
 			}),
 			expectedResult: false,
@@ -214,11 +213,11 @@ func TestHasExternalEtcdCompletedTransition(t *testing.T) {
 			name: "Other conditions present but not ExternalEtcdHasCompletedTransition - transition not completed",
 			operatorStatus: testutils.WithConditions(
 				operatorv1.OperatorCondition{
-					Type:   etcd.OperatorConditionEtcdRunningInCluster,
+					Type:   OperatorConditionEtcdRunningInCluster,
 					Status: operatorv1.ConditionTrue,
 				},
 				operatorv1.OperatorCondition{
-					Type:   etcd.OperatorConditionExternalEtcdReadyForTransition,
+					Type:   OperatorConditionExternalEtcdReadyForTransition,
 					Status: operatorv1.ConditionTrue,
 				},
 			),
@@ -291,7 +290,7 @@ func TestGetExternalEtcdClusterStatus(t *testing.T) {
 			topology: configv1.DualReplicaTopologyMode,
 			operatorConditions: []operatorv1.OperatorCondition{
 				{
-					Type:   etcd.OperatorConditionEtcdRunningInCluster,
+					Type:   OperatorConditionEtcdRunningInCluster,
 					Status: operatorv1.ConditionTrue,
 				},
 			},
@@ -306,11 +305,11 @@ func TestGetExternalEtcdClusterStatus(t *testing.T) {
 			topology: configv1.DualReplicaTopologyMode,
 			operatorConditions: []operatorv1.OperatorCondition{
 				{
-					Type:   etcd.OperatorConditionEtcdRunningInCluster,
+					Type:   OperatorConditionEtcdRunningInCluster,
 					Status: operatorv1.ConditionTrue,
 				},
 				{
-					Type:   etcd.OperatorConditionExternalEtcdReadyForTransition,
+					Type:   OperatorConditionExternalEtcdReadyForTransition,
 					Status: operatorv1.ConditionTrue,
 				},
 			},
@@ -325,15 +324,15 @@ func TestGetExternalEtcdClusterStatus(t *testing.T) {
 			topology: configv1.DualReplicaTopologyMode,
 			operatorConditions: []operatorv1.OperatorCondition{
 				{
-					Type:   etcd.OperatorConditionEtcdRunningInCluster,
+					Type:   OperatorConditionEtcdRunningInCluster,
 					Status: operatorv1.ConditionTrue,
 				},
 				{
-					Type:   etcd.OperatorConditionExternalEtcdReadyForTransition,
+					Type:   OperatorConditionExternalEtcdReadyForTransition,
 					Status: operatorv1.ConditionTrue,
 				},
 				{
-					Type:   etcd.OperatorConditionExternalEtcdHasCompletedTransition,
+					Type:   OperatorConditionExternalEtcdHasCompletedTransition,
 					Status: operatorv1.ConditionTrue,
 				},
 			},
@@ -348,7 +347,7 @@ func TestGetExternalEtcdClusterStatus(t *testing.T) {
 			topology: configv1.DualReplicaTopologyMode,
 			operatorConditions: []operatorv1.OperatorCondition{
 				{
-					Type:   etcd.OperatorConditionExternalEtcdHasCompletedTransition,
+					Type:   OperatorConditionExternalEtcdHasCompletedTransition,
 					Status: operatorv1.ConditionTrue,
 				},
 			},
@@ -417,7 +416,7 @@ func TestExternalEtcdTransitionLifecycle(t *testing.T) {
 			&operatorv1.StaticPodOperatorSpec{},
 			testutils.StaticPodOperatorStatus(
 				testutils.WithConditions(operatorv1.OperatorCondition{
-					Type:   etcd.OperatorConditionEtcdRunningInCluster,
+					Type:   OperatorConditionEtcdRunningInCluster,
 					Status: operatorv1.ConditionTrue,
 				}),
 			),
@@ -441,11 +440,11 @@ func TestExternalEtcdTransitionLifecycle(t *testing.T) {
 			testutils.StaticPodOperatorStatus(
 				testutils.WithConditions(
 					operatorv1.OperatorCondition{
-						Type:   etcd.OperatorConditionEtcdRunningInCluster,
+						Type:   OperatorConditionEtcdRunningInCluster,
 						Status: operatorv1.ConditionTrue,
 					},
 					operatorv1.OperatorCondition{
-						Type:   etcd.OperatorConditionExternalEtcdReadyForTransition,
+						Type:   OperatorConditionExternalEtcdReadyForTransition,
 						Status: operatorv1.ConditionTrue,
 					},
 				),
@@ -470,15 +469,15 @@ func TestExternalEtcdTransitionLifecycle(t *testing.T) {
 			testutils.StaticPodOperatorStatus(
 				testutils.WithConditions(
 					operatorv1.OperatorCondition{
-						Type:   etcd.OperatorConditionEtcdRunningInCluster,
+						Type:   OperatorConditionEtcdRunningInCluster,
 						Status: operatorv1.ConditionTrue,
 					},
 					operatorv1.OperatorCondition{
-						Type:   etcd.OperatorConditionExternalEtcdReadyForTransition,
+						Type:   OperatorConditionExternalEtcdReadyForTransition,
 						Status: operatorv1.ConditionTrue,
 					},
 					operatorv1.OperatorCondition{
-						Type:   etcd.OperatorConditionExternalEtcdHasCompletedTransition,
+						Type:   OperatorConditionExternalEtcdHasCompletedTransition,
 						Status: operatorv1.ConditionTrue,
 					},
 				),
@@ -502,11 +501,11 @@ func TestExternalEtcdTransitionLifecycle(t *testing.T) {
 			testutils.StaticPodOperatorStatus(
 				testutils.WithConditions(
 					operatorv1.OperatorCondition{
-						Type:   etcd.OperatorConditionEtcdRunningInCluster,
+						Type:   OperatorConditionEtcdRunningInCluster,
 						Status: operatorv1.ConditionTrue,
 					},
 					operatorv1.OperatorCondition{
-						Type:   etcd.OperatorConditionExternalEtcdReadyForTransition,
+						Type:   OperatorConditionExternalEtcdReadyForTransition,
 						Status: operatorv1.ConditionTrue,
 					},
 				),
