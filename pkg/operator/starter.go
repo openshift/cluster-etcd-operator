@@ -390,7 +390,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		2*time.Minute,
 		status.InertiaCondition{
 			ConditionTypeMatcher: regexp.MustCompile(".*Degraded$"),
-			Duration:             5 * time.Minute,
+			Duration:             10 * time.Minute,
 		},
 	).Inertia)
 
