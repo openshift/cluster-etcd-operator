@@ -21,5 +21,6 @@ local d = import 'github.com/jsonnet-libs/docsonnet/doc-util/main.libsonnet';
   jsonpath: (import './jsonpath.libsonnet'),
   number: (import './number.libsonnet'),
   string: (import './string.libsonnet'),
+  units: (import './units.libsonnet'),
   url: (import './url.libsonnet'),
 }
