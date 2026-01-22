@@ -608,6 +608,7 @@ func setupController(t *testing.T, objects []runtime.Object, forceSkipRollout bo
 	enabledFeatureGates := sets.New(features.FeatureShortCertRotation)
 	disabledFeatureGates := sets.New[configv1.FeatureGateName]()
 	featureGateAccessor := featuregates.NewHardcodedFeatureGateAccess(enabledFeatureGates.UnsortedList(), disabledFeatureGates.UnsortedList())
+	infraLister := u.FakeInfrastructureLister(t, configv1.HighlyAvailableTopologyMode)
 	controller, err := NewEtcdCertSignerController(
 		health.NewMultiAlivenessChecker(),
 		fakeKubeClient,
@@ -616,6 +617,7 @@ func setupController(t *testing.T, objects []runtime.Object, forceSkipRollout bo
 		kubeInformerForNamespace.InformersFor("").Core().V1().Nodes().Informer(),
 		kubeInformerForNamespace.InformersFor("").Core().V1().Nodes().Lister(),
 		nodeSelector,
+		infraLister,
 		recorder,
 		registry,
 		forceSkipRollout,

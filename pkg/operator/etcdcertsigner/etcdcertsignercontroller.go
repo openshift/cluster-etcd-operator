@@ -9,34 +9,33 @@ import (
 	"strings"
 	"time"
 
+	apiannotations "github.com/openshift/api/annotations"
 	features "github.com/openshift/api/features"
+	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
+	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/crypto"
 	"github.com/openshift/library-go/pkg/operator/bootstrap"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	corev1informers "k8s.io/client-go/informers/core/v1"
-	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
-	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/tools/cache"
-	"k8s.io/component-base/metrics"
-	"k8s.io/klog/v2"
-
-	apiannotations "github.com/openshift/api/annotations"
-	operatorv1 "github.com/openshift/api/operator/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
-	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/certrotation"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	corev1informers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
+	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
+	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/component-base/metrics"
+	"k8s.io/klog/v2"
 )
 
 const BundleRolloutRevisionAnnotation = "openshift.io/ceo-bundle-rollout-revision"
@@ -69,16 +68,17 @@ type nodeCertConfigs struct {
 }
 
 type EtcdCertSignerController struct {
-	eventRecorder      events.Recorder
-	kubeClient         kubernetes.Interface
-	operatorClient     v1helpers.StaticPodOperatorClient
-	masterNodeLister   corev1listers.NodeLister
-	masterNodeSelector labels.Selector
-	secretInformer     corev1informers.SecretInformer
-	secretLister       corev1listers.SecretLister
-	secretClient       corev1client.SecretsGetter
-	configMapClient    corev1client.ConfigMapsGetter
-	configmapLister    corev1listers.ConfigMapLister
+	eventRecorder        events.Recorder
+	kubeClient           kubernetes.Interface
+	operatorClient       v1helpers.StaticPodOperatorClient
+	masterNodeLister     corev1listers.NodeLister
+	masterNodeSelector   labels.Selector
+	secretInformer       corev1informers.SecretInformer
+	secretLister         corev1listers.SecretLister
+	secretClient         corev1client.SecretsGetter
+	configMapClient      corev1client.ConfigMapsGetter
+	configmapLister      corev1listers.ConfigMapLister
+	infrastructureLister configv1listers.InfrastructureLister
 
 	// when true we skip all checks related to the rollout of static pods, this is used in render
 	forceSkipRollout bool
@@ -104,6 +104,7 @@ func NewEtcdCertSignerController(
 	masterNodeInformer cache.SharedIndexInformer,
 	masterNodeLister corev1listers.NodeLister,
 	masterNodeSelector labels.Selector,
+	infrastructureLister configv1listers.InfrastructureLister,
 	eventRecorder events.Recorder,
 	metricsRegistry metrics.KubeRegistry,
 	forceSkipRollout bool,
@@ -194,6 +195,7 @@ func NewEtcdCertSignerController(
 		configMapClient:    cmGetter,
 		// this one can go through the informers, it's only used for bootstrap checks
 		configmapLister:       kubeInformers.InformersFor(operatorclient.KubeSystemNamespace).Core().V1().ConfigMaps().Lister(),
+		infrastructureLister:  infrastructureLister,
 		certConfig:            certCfg,
 		signerExpirationGauge: signerExpirationGauge,
 		forceSkipRollout:      forceSkipRollout,
@@ -321,6 +323,8 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(
 		return fmt.Errorf("error on ensuring bundles: %w", err)
 	}
 
+	isDegradedDualReplica := c.isDegradedDualReplica(ctx)
+
 	if !forceSkipRollout {
 		if rolloutTriggered {
 			klog.Infof("skipping EtcdCertSignerController leaf cert generation as revision rollout has been triggered")
@@ -328,12 +332,49 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(
 		}
 
 		if currentRevision <= lastRotationRevision {
-			klog.Infof("skipping EtcdCertSignerController leaf cert generation as safe revision is not yet achieved, currently at %d - rotation happend at %d", currentRevision, lastRotationRevision)
-			return nil
+			// In degraded DualReplica (TNF), safe revision may never be achieved (TwoNodeScalingStrategy
+			// requires 2 healthy members). Allow leaf rotation to avoid permanent blocking.
+			if !isDegradedDualReplica {
+				klog.Infof("skipping EtcdCertSignerController leaf cert generation as safe revision is not yet achieved, currently at %d - rotation happened at %d",
+					currentRevision, lastRotationRevision)
+				return nil
+			}
+			klog.V(2).Infof("allowing EtcdCertSignerController leaf cert generation on degraded DualReplica topology despite safe revision not achieved: current=%d lastRotation=%d",
+				currentRevision, lastRotationRevision)
 		}
 	}
 
 	return c.syncLeafCertificates(ctx, recorder, forceSkipRollout, signerCaPair, signerBundle, metricsSignerCaPair, metricsSignerBundle)
+}
+
+// isDegradedDualReplica returns true for DualReplica topology when exactly 1 of 2 control-plane nodes is Ready.
+func (c *EtcdCertSignerController) isDegradedDualReplica(ctx context.Context) bool {
+	if c.infrastructureLister == nil {
+		return false
+	}
+
+	isDual, err := ceohelpers.IsDualReplicaTopology(ctx, c.infrastructureLister)
+	if err != nil || !isDual {
+		return false
+	}
+
+	nodes, err := c.masterNodeLister.List(c.masterNodeSelector)
+	if err != nil {
+		return false
+	}
+
+	if len(nodes) != 2 {
+		return false
+	}
+
+	readyCount := 0
+	for _, node := range nodes {
+		if ceohelpers.IsNodeReady(node) {
+			readyCount++
+		}
+	}
+
+	return readyCount == 1
 }
 
 // forcedSyncLeafCertificates will ensure we only read signer certificates and bundles, never re-create them.

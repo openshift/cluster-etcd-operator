@@ -421,6 +421,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controlPlaneNodeInformer,
 		controlPlaneNodeLister,
 		controlPlaneNodeLabelSelector,
+		configInformers.Config().V1().Infrastructures().Lister(),
 		controllerContext.EventRecorder,
 		legacyregistry.DefaultGatherer.(metrics.KubeRegistry),
 		false,
