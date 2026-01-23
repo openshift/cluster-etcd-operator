@@ -105,6 +105,34 @@ func HasExternalEtcdCompletedTransition(ctx context.Context, operatorClient v1he
 	return hasExternalEtcdCompletedTransition, nil
 }
 
+// ShouldSkipMemberManagementForDualReplica checks if member management should be skipped
+// for DualReplica clusters after the transition to external etcd (Pacemaker) is complete.
+// This function implements fail-open behavior: on any error, it returns false to allow
+// member management to proceed normally.
+func ShouldSkipMemberManagementForDualReplica(
+	ctx context.Context,
+	operatorClient v1helpers.StaticPodOperatorClient,
+	infraLister configv1listers.InfrastructureLister,
+) bool {
+	isDualReplica, err := IsDualReplicaTopology(ctx, infraLister)
+	if err != nil {
+		klog.Warningf("ShouldSkipMemberManagementForDualReplica: failed to check DualReplica topology: %v", err)
+		return false
+	}
+
+	if !isDualReplica {
+		return false
+	}
+
+	hasTransitioned, err := HasExternalEtcdCompletedTransition(ctx, operatorClient)
+	if err != nil {
+		klog.Warningf("ShouldSkipMemberManagementForDualReplica: failed to check external etcd transition status: %v", err)
+		return false
+	}
+
+	return hasTransitioned
+}
+
 // GetExternalEtcdClusterStatus provides a comprehensive status check for external etcd clusters.
 // It returns the external etcd status, bootstrap completion status, and readiness for transition.
 func GetExternalEtcdClusterStatus(ctx context.Context,

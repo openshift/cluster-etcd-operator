@@ -43,6 +43,7 @@ type ClusterMemberController struct {
 	podLister       corev1listers.PodLister
 	networkLister   configv1listers.NetworkLister
 	configMapLister corev1listers.ConfigMapNamespaceLister
+	infraLister     configv1listers.InfrastructureLister
 	// machineAPIChecker determines if the precondition for this controller is met,
 	// this controller can be run only on a cluster that exposes a functional Machine API
 	machineAPIChecker ceohelpers.MachineAPIChecker
@@ -64,6 +65,7 @@ func NewClusterMemberController(
 	masterMachineSelector labels.Selector,
 	kubeInformers v1helpers.KubeInformersForNamespaces,
 	networkInformer configv1informers.NetworkInformer,
+	infrastructureInformer configv1informers.InfrastructureInformer,
 	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
 	additionalInformers ...factory.Informer) factory.Controller {
@@ -73,6 +75,7 @@ func NewClusterMemberController(
 		etcdClient:            etcdClient,
 		podLister:             kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Lister(),
 		networkLister:         networkInformer.Lister(),
+		infraLister:           infrastructureInformer.Lister(),
 		masterMachineLister:   machineLister,
 		masterMachineSelector: masterMachineSelector,
 		masterNodeLister:      masterNodeLister,
@@ -91,7 +94,7 @@ func NewClusterMemberController(
 	informers = append(informers, additionalInformers...)
 
 	return factory.New().ResyncEvery(time.Minute).
-		WithBareInformers(networkInformer.Informer()).
+		WithBareInformers(networkInformer.Informer(), infrastructureInformer.Informer()).
 		WithInformers(informers...).
 		WithSync(syncer.Sync).
 		WithSyncDegradedOnError(operatorClient).
@@ -111,6 +114,18 @@ func (c *ClusterMemberController) reconcileMembers(ctx context.Context, recorder
 		klog.V(4).Infof("unhealthy members: %v", spew.Sdump(unhealthyMembers))
 		// see https://issues.redhat.com/browse/OCPBUGS-14296
 		return nil
+	}
+
+	// Check if DualReplica topology and transition to Pacemaker is complete.
+	// In DualReplica clusters, after the transition is complete, member management
+	// is handled by the TNF/Pacemaker component to avoid race conditions.
+	if staticPodClient, ok := c.operatorClient.(v1helpers.StaticPodOperatorClient); ok {
+		if ceohelpers.ShouldSkipMemberManagementForDualReplica(ctx, staticPodClient, c.infraLister) {
+			klog.V(4).Infof("skipping member management: DualReplica cluster has completed transition to external etcd (Pacemaker)")
+			return nil
+		}
+	} else {
+		klog.Warningf("operatorClient does not implement StaticPodOperatorClient, cannot check DualReplica transition status")
 	}
 
 	// Add a learner member if next peer found

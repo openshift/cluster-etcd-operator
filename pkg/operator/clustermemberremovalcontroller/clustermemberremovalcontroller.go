@@ -47,6 +47,7 @@ type clusterMemberRemovalController struct {
 	masterMachineSelector labels.Selector
 	masterNodeSelector    labels.Selector
 	configMapLister       corev1listers.ConfigMapLister
+	infraLister           configv1listers.InfrastructureLister
 
 	lastTimeScaleDownEventWasSent time.Time
 }
@@ -69,6 +70,7 @@ func NewClusterMemberRemovalController(
 	masterMachineInformer cache.SharedIndexInformer,
 	networkInformer configv1informers.NetworkInformer,
 	configMapLister corev1listers.ConfigMapLister,
+	infrastructureInformer configv1informers.InfrastructureInformer,
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &clusterMemberRemovalController{
@@ -82,6 +84,7 @@ func NewClusterMemberRemovalController(
 		networkLister:                     networkInformer.Lister(),
 		configMapListerForTargetNamespace: kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister().ConfigMaps(operatorclient.TargetNamespace),
 		configMapLister:                   configMapLister,
+		infraLister:                       infrastructureInformer.Lister(),
 	}
 
 	syncer := health.NewCheckingSyncWrapper(c.sync, 10*time.Minute)
@@ -91,7 +94,7 @@ func NewClusterMemberRemovalController(
 		WithSync(syncer.Sync).
 		WithSyncDegradedOnError(operatorClient).
 		ResyncEvery(33*time.Minute). // make it slow since nodes are updated every few minutes
-		WithBareInformers(networkInformer.Informer()).
+		WithBareInformers(networkInformer.Informer(), infrastructureInformer.Informer()).
 		WithInformers(
 			masterNodeInformer,
 			masterMachineInformer,
@@ -108,6 +111,14 @@ func (c *clusterMemberRemovalController) sync(ctx context.Context, syncCtx facto
 		return fmt.Errorf("IsBootstrapComplete failed to determine bootstrap status: %w", err)
 	}
 	if !bootstrapComplete {
+		return nil
+	}
+
+	// Check if DualReplica topology and transition to Pacemaker is complete.
+	// In DualReplica clusters, after the transition is complete, member management
+	// is handled by the TNF/Pacemaker component to avoid race conditions.
+	if ceohelpers.ShouldSkipMemberManagementForDualReplica(ctx, c.operatorClient, c.infraLister) {
+		klog.V(4).Infof("skipping member removal: DualReplica cluster has completed transition to external etcd (Pacemaker)")
 		return nil
 	}
 
