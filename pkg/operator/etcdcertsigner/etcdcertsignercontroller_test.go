@@ -98,6 +98,49 @@ func TestHasNodeCertDiffDoesNotRotateSigners(t *testing.T) {
 	assertExpirationMetric(t)
 }
 
+func TestDegradedDualReplica_AllowsLeafSyncWhenSafeRevisionNotAchieved(t *testing.T) {
+	fakeKubeClient, fakeOperatorClient, controller, recorder := setupControllerDualReplicaDegraded(t, nil, false)
+
+	// 1) Stabilize to avoid rolloutTriggered and create all certs/bundles
+	runSyncWithRevisionRollout(t, controller, fakeOperatorClient, recorder)
+
+	// Get current revision
+	_, status, _, err := fakeOperatorClient.GetStaticPodOperatorStateWithQuorum(context.TODO())
+	require.NoError(t, err)
+	currentRevision := status.LatestAvailableRevision
+
+	// 2) Force "safe revision not achieved" by setting bundle annotation to currentRevision
+	// This makes currentRevision == lastRotationRevision, which normally blocks leaf sync
+	bundleCM, err := fakeKubeClient.CoreV1().ConfigMaps(operatorclient.TargetNamespace).Get(
+		context.TODO(), tlshelpers.EtcdAllBundlesConfigMapName, metav1.GetOptions{})
+	require.NoError(t, err)
+
+	if bundleCM.Annotations == nil {
+		bundleCM.Annotations = map[string]string{}
+	}
+	bundleCM.Annotations[BundleRolloutRevisionAnnotation] = fmt.Sprintf("%d", currentRevision)
+	_, err = fakeKubeClient.CoreV1().ConfigMaps(operatorclient.TargetNamespace).Update(
+		context.TODO(), bundleCM, metav1.UpdateOptions{})
+	require.NoError(t, err)
+
+	// 3) Delete etcd-client leaf to force regeneration
+	err = fakeKubeClient.CoreV1().Secrets(operatorclient.TargetNamespace).Delete(
+		context.TODO(), tlshelpers.EtcdClientCertSecretName, metav1.DeleteOptions{})
+	require.NoError(t, err)
+
+	// 4) Sync - on normal HA cluster this would be blocked by currentRevision <= lastRotationRevision
+	// But on degraded DualReplica it should proceed
+	err = controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder))
+	require.NoError(t, err)
+
+	// 5) Verify etcd-client secret was recreated despite safe revision not achieved
+	recreated, err := fakeKubeClient.CoreV1().Secrets(operatorclient.TargetNamespace).Get(
+		context.TODO(), tlshelpers.EtcdClientCertSecretName, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.NotNil(t, recreated, "expected etcd-client secret to be recreated on degraded DualReplica despite safe revision not achieved")
+	require.NotEmpty(t, recreated.Data["tls.crt"])
+}
+
 // Validate that a successful test run will result in a secret per
 // cert type per node and an aggregated secret per cert type.
 func TestSyncAllMasters(t *testing.T) {
@@ -628,6 +671,109 @@ func setupController(t *testing.T, objects []runtime.Object, forceSkipRollout bo
 	t.Cleanup(func() {
 		close(stopChan)
 	})
+
+	kubeInformerForNamespace.Start(stopChan)
+	for ns := range kubeInformerForNamespace.Namespaces() {
+		kubeInformerForNamespace.InformersFor(ns).WaitForCacheSync(stopChan)
+	}
+
+	return fakeKubeClient, fakeOperatorClient, controller, recorder
+}
+
+func setupControllerDualReplicaDegraded(t *testing.T, objects []runtime.Object, forceSkipRollout bool) (*fake.Clientset, v1helpers.StaticPodOperatorClient, factory.Controller, events.Recorder) {
+	// Same as setupController BUT:
+	// - 2 masters only (cp-0, cp-1)
+	// - cp-1 is NotReady (degraded state)
+	// - infra topology DualReplica
+	objects = append(objects,
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: operatorclient.TargetNamespace}},
+		u.FakeNode("cp-0", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.1")),
+		u.FakeNode("cp-1", u.WithMasterLabel(), u.WithNodeInternalIP("10.0.0.2")),
+		u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
+		u.FakeSecret(operatorclient.TargetNamespace, tlshelpers.EtcdAllCertsSecretName, map[string][]byte{
+			fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode("cp-0")): {},
+			fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode("cp-1")): {},
+		}),
+		u.FakeConfigMap(operatorclient.TargetNamespace, tlshelpers.EtcdAllBundlesConfigMapName, map[string]string{}),
+	)
+
+	fakeKubeClient := fake.NewSimpleClientset(objects...)
+	kubeInformerForNamespace := v1helpers.NewKubeInformersForNamespaces(fakeKubeClient,
+		"",
+		operatorclient.TargetNamespace,
+		operatorclient.OperatorNamespace,
+		operatorclient.GlobalUserSpecifiedConfigNamespace,
+		operatorclient.KubeSystemNamespace)
+
+	// Infra says DualReplica
+	infraLister := u.FakeInfrastructureLister(t, configv1.DualReplicaTopologyMode)
+
+	// Mark cp-0 Ready
+	cp0, err := fakeKubeClient.CoreV1().Nodes().Get(context.TODO(), "cp-0", metav1.GetOptions{})
+	require.NoError(t, err)
+	cp0.Status.Conditions = []corev1.NodeCondition{{
+		Type:   corev1.NodeReady,
+		Status: corev1.ConditionTrue,
+	}}
+	_, err = fakeKubeClient.CoreV1().Nodes().UpdateStatus(context.TODO(), cp0, metav1.UpdateOptions{})
+	require.NoError(t, err)
+
+	// Mark cp-1 NotReady (degraded state)
+	cp1, err := fakeKubeClient.CoreV1().Nodes().Get(context.TODO(), "cp-1", metav1.GetOptions{})
+	require.NoError(t, err)
+	cp1.Status.Conditions = []corev1.NodeCondition{{
+		Type:   corev1.NodeReady,
+		Status: corev1.ConditionFalse,
+	}}
+	_, err = fakeKubeClient.CoreV1().Nodes().UpdateStatus(context.TODO(), cp1, metav1.UpdateOptions{})
+	require.NoError(t, err)
+
+	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+		&operatorv1.StaticPodOperatorSpec{OperatorSpec: operatorv1.OperatorSpec{ManagementState: operatorv1.Managed}},
+		u.StaticPodOperatorStatus(
+			u.WithLatestRevision(3),
+			u.WithNodeStatusAtCurrentRevision(3),
+			u.WithNodeStatusAtCurrentRevision(3),
+		),
+		nil,
+		nil,
+	)
+
+	recorder := events.NewRecorder(
+		fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),
+		"test-cert-signer",
+		&corev1.ObjectReference{},
+		clock.RealClock{},
+	)
+
+	nodeSelector, err := labels.Parse("node-role.kubernetes.io/master")
+	require.NoError(t, err)
+
+	registry := metrics.NewKubeRegistry()
+	legacyregistry.DefaultGatherer = registry
+
+	enabledFeatureGates := sets.New(features.FeatureShortCertRotation)
+	disabledFeatureGates := sets.New[configv1.FeatureGateName]()
+	featureGateAccessor := featuregates.NewHardcodedFeatureGateAccess(enabledFeatureGates.UnsortedList(), disabledFeatureGates.UnsortedList())
+
+	controller, err := NewEtcdCertSignerController(
+		health.NewMultiAlivenessChecker(),
+		fakeKubeClient,
+		fakeOperatorClient,
+		kubeInformerForNamespace,
+		kubeInformerForNamespace.InformersFor("").Core().V1().Nodes().Informer(),
+		kubeInformerForNamespace.InformersFor("").Core().V1().Nodes().Lister(),
+		nodeSelector,
+		infraLister,
+		recorder,
+		registry,
+		forceSkipRollout,
+		featureGateAccessor,
+	)
+	require.NoError(t, err)
+
+	stopChan := make(chan struct{})
+	t.Cleanup(func() { close(stopChan) })
 
 	kubeInformerForNamespace.Start(stopChan)
 	for ns := range kubeInformerForNamespace.Namespaces() {

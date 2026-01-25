@@ -324,6 +324,8 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(
 	}
 
 	isDegradedDualReplica := c.isDegradedDualReplica(ctx)
+	klog.V(4).Infof("EtcdCertSignerController sync: forceSkipRollout=%v, rolloutTriggered=%v, currentRevision=%d, lastRotationRevision=%d, isDegradedDualReplica=%v",
+		forceSkipRollout, rolloutTriggered, currentRevision, lastRotationRevision, isDegradedDualReplica)
 
 	if !forceSkipRollout {
 		if rolloutTriggered {
@@ -344,26 +346,36 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(
 		}
 	}
 
+	klog.V(4).Infof("EtcdCertSignerController: proceeding to syncLeafCertificates")
+
 	return c.syncLeafCertificates(ctx, recorder, forceSkipRollout, signerCaPair, signerBundle, metricsSignerCaPair, metricsSignerBundle)
 }
 
 // isDegradedDualReplica returns true for DualReplica topology when exactly 1 of 2 control-plane nodes is Ready.
 func (c *EtcdCertSignerController) isDegradedDualReplica(ctx context.Context) bool {
 	if c.infrastructureLister == nil {
+		klog.V(4).Infof("isDegradedDualReplica: infrastructureLister is nil, returning false")
 		return false
 	}
 
 	isDual, err := ceohelpers.IsDualReplicaTopology(ctx, c.infrastructureLister)
-	if err != nil || !isDual {
+	if err != nil {
+		klog.V(4).Infof("isDegradedDualReplica: error checking topology: %v", err)
+		return false
+	}
+	if !isDual {
+		klog.V(4).Infof("isDegradedDualReplica: not DualReplica topology, returning false")
 		return false
 	}
 
 	nodes, err := c.masterNodeLister.List(c.masterNodeSelector)
 	if err != nil {
+		klog.V(4).Infof("isDegradedDualReplica: error listing nodes: %v", err)
 		return false
 	}
 
 	if len(nodes) != 2 {
+		klog.V(4).Infof("isDegradedDualReplica: found %d nodes (expected 2), returning false", len(nodes))
 		return false
 	}
 
@@ -371,10 +383,15 @@ func (c *EtcdCertSignerController) isDegradedDualReplica(ctx context.Context) bo
 	for _, node := range nodes {
 		if ceohelpers.IsNodeReady(node) {
 			readyCount++
+			klog.V(4).Infof("isDegradedDualReplica: node %s is Ready", node.Name)
+		} else {
+			klog.V(4).Infof("isDegradedDualReplica: node %s is NOT Ready", node.Name)
 		}
 	}
 
-	return readyCount == 1
+	result := readyCount == 1
+	klog.V(4).Infof("isDegradedDualReplica: readyCount=%d, returning %v", readyCount, result)
+	return result
 }
 
 // forcedSyncLeafCertificates will ensure we only read signer certificates and bundles, never re-create them.
