@@ -12,10 +12,10 @@ include $(addprefix ./vendor/github.com/openshift/build-machinery-go/make/, \
 IMAGE_REGISTRY :=registry.svc.ci.openshift.org
 
 # Build packages including test extension
-GO_BUILD_PACKAGES :=./cmd/cluster-etcd-operator ./cmd/tnf-setup-runner ./cmd/cluster-etcd-operator-tests-ext
+GO_BUILD_PACKAGES :=./cmd/cluster-etcd-operator ./cmd/tnf-setup-runner ./cmd/tnf-monitor ./cmd/cluster-etcd-operator-tests-ext
 
 # Exclude e2e tests from unit testing (they should be run separately)
-GO_TEST_PACKAGES :=./pkg/... ./cmd/cluster-etcd-operator ./cmd/tnf-setup-runner
+GO_TEST_PACKAGES :=./pkg/... ./cmd/cluster-etcd-operator ./cmd/tnf-setup-runner ./cmd/tnf-monitor
 
 # This will call a macro called "build-image" which will generate image specific targets based on the parameters:
 # $0 - macro name

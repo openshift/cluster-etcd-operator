@@ -1,0 +1,17 @@
+<pacemaker-result api-version="2.38">
+  <summary>
+    <cluster_options maintenance-mode="false"/>
+  </summary>
+  <nodes>
+    <!-- master-0: healthy baseline -->
+    <node name="master-0" id="1" online="true" type="member"/>
+    <!-- master-1: in maintenance mode -->
+    <node name="master-1" id="2" online="true" maintenance="true" type="member"/>
+    <!-- master-2: unclean (fencing issue) -->
+    <node name="master-2" id="3" online="true" unclean="true" type="member"/>
+    <!-- master-3: pending -->
+    <node name="master-3" id="4" online="true" pending="true" type="member"/>
+  </nodes>
+  <resources/>
+  <node_attributes/>
+</pacemaker-result>

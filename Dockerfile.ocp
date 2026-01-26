@@ -10,6 +10,7 @@ COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/bindata/b
 COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/bindata/bootkube/manifests /usr/share/bootkube/manifests/manifests/
 COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/cluster-etcd-operator /usr/bin/
 COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/tnf-setup-runner /usr/bin/
+COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/tnf-monitor /usr/bin/
 COPY --from=builder /go/src/github.com/openshift/cluster-etcd-operator/cluster-etcd-operator-tests-ext.gz /usr/bin/
 COPY manifests/ /manifests
 
