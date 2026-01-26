@@ -323,10 +323,6 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(
 		return fmt.Errorf("error on ensuring bundles: %w", err)
 	}
 
-	isDegradedDualReplica := c.isDegradedDualReplica(ctx)
-	klog.V(4).Infof("EtcdCertSignerController sync: forceSkipRollout=%v, rolloutTriggered=%v, currentRevision=%d, lastRotationRevision=%d, isDegradedDualReplica=%v",
-		forceSkipRollout, rolloutTriggered, currentRevision, lastRotationRevision, isDegradedDualReplica)
-
 	if !forceSkipRollout {
 		if rolloutTriggered {
 			klog.Infof("skipping EtcdCertSignerController leaf cert generation as revision rollout has been triggered")
@@ -336,6 +332,7 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(
 		if currentRevision <= lastRotationRevision {
 			// In degraded DualReplica (TNF), safe revision may never be achieved (TwoNodeScalingStrategy
 			// requires 2 healthy members). Allow leaf rotation to avoid permanent blocking.
+			isDegradedDualReplica := c.isDegradedDualReplica(ctx)
 			if !isDegradedDualReplica {
 				klog.Infof("skipping EtcdCertSignerController leaf cert generation as safe revision is not yet achieved, currently at %d - rotation happened at %d",
 					currentRevision, lastRotationRevision)
@@ -345,8 +342,6 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(
 				currentRevision, lastRotationRevision)
 		}
 	}
-
-	klog.V(4).Infof("EtcdCertSignerController: proceeding to syncLeafCertificates")
 
 	return c.syncLeafCertificates(ctx, recorder, forceSkipRollout, signerCaPair, signerBundle, metricsSignerCaPair, metricsSignerBundle)
 }
