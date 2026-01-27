@@ -389,8 +389,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	).WithDegradedInertia(status.MustNewInertia(
 		2*time.Minute,
 		status.InertiaCondition{
-			ConditionTypeMatcher: regexp.MustCompile("^(NodeController|EtcdMembers|DefragController)Degraded$"),
-			Duration:             5 * time.Minute,
+			ConditionTypeMatcher: regexp.MustCompile(".*Degraded$"),
+			Duration:             10 * time.Minute,
 		},
 	).Inertia)
 
