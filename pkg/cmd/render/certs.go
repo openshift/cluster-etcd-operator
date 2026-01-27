@@ -61,6 +61,7 @@ func createCertSecrets(nodes []*corev1.Node, enabledFeatureGates, disabledFeatur
 		kubeInformers.InformersFor("").Core().V1().Nodes().Informer(),
 		kubeInformers.InformersFor("").Core().V1().Nodes().Lister(),
 		nodeSelector,
+		nil, // infrastructureLister: render does not need topology detection; nil disables DualReplica bypass logic
 		recorder,
 		metrics.NewKubeRegistry(),
 		true,

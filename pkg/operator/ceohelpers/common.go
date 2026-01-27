@@ -236,3 +236,14 @@ func CurrentRevision(status operatorv1.StaticPodOperatorStatus) (int32, error) {
 
 	return latestRevision, nil
 }
+
+// IsNodeReady returns true if the node has a Ready condition with status True.
+func IsNodeReady(node *corev1.Node) bool {
+	for i := range node.Status.Conditions {
+		condition := node.Status.Conditions[i]
+		if condition.Type == corev1.NodeReady {
+			return condition.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
