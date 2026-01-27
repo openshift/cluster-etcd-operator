@@ -580,6 +580,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			masterMachineInformer,
 			networkInformer,
 			kubeInformersForNamespaces.ConfigMapLister(),
+			configInformers.Config().V1().Infrastructures(),
 			controllerContext.EventRecorder,
 		)
 
@@ -611,6 +612,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		masterMachineLabelSelector,
 		kubeInformersForNamespaces,
 		networkInformer,
+		configInformers.Config().V1().Infrastructures(),
 		etcdClient,
 		controllerContext.EventRecorder,
 		clusterMemberControllerInformers...,

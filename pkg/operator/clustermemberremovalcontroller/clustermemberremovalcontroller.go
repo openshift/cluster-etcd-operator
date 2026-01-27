@@ -48,6 +48,7 @@ type clusterMemberRemovalController struct {
 	masterMachineSelector labels.Selector
 	masterNodeSelector    labels.Selector
 	configMapLister       corev1listers.ConfigMapLister
+	infraLister           configv1listers.InfrastructureLister
 
 	lastTimeScaleDownEventWasSent time.Time
 }
@@ -70,6 +71,7 @@ func NewClusterMemberRemovalController(
 	masterMachineInformer cache.SharedIndexInformer,
 	networkInformer configv1informers.NetworkInformer,
 	configMapLister corev1listers.ConfigMapLister,
+	infrastructureInformer configv1informers.InfrastructureInformer,
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &clusterMemberRemovalController{
@@ -83,6 +85,7 @@ func NewClusterMemberRemovalController(
 		networkLister:                     networkInformer.Lister(),
 		configMapListerForTargetNamespace: kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister().ConfigMaps(operatorclient.TargetNamespace),
 		configMapLister:                   configMapLister,
+		infraLister:                       infrastructureInformer.Lister(),
 	}
 
 	syncer := health.NewCheckingSyncWrapper(c.sync, 10*time.Minute)
@@ -110,6 +113,36 @@ func (c *clusterMemberRemovalController) sync(ctx context.Context, syncCtx facto
 	}
 	if !bootstrapComplete {
 		return nil
+	}
+
+	// Check if DualReplica topology and transition to Pacemaker is complete.
+	// In DualReplica clusters, after the transition is complete, member management
+	// is handled by the TNF/Pacemaker component to avoid race conditions.
+	isDualReplica, err := ceohelpers.IsDualReplicaTopology(ctx, c.infraLister)
+	if err != nil {
+		// Fail-open: continue with member management if topology check fails
+		klog.Warningf("failed to check DualReplica topology: %v", err)
+		isDualReplica = false
+	}
+	if isDualReplica {
+		klog.V(2).Infof("DualReplica (TNF) found in ClusterMemberRemovalController")
+		staticPodOperatorClient, ok := c.operatorClient.(operatorv1helpers.StaticPodOperatorClient)
+		if !ok {
+			klog.Warningf("operatorClient does not implement StaticPodOperatorClient, cannot check transition status")
+		} else {
+			hasTransitioned, err := ceohelpers.HasExternalEtcdCompletedTransition(ctx, staticPodOperatorClient)
+			if err != nil {
+				// Fail-open: continue with member management if transition check fails
+				klog.Warningf("failed to check external etcd transition status: %v", err)
+			}
+			if hasTransitioned {
+				// Pacemaker owns member management after transition
+				klog.V(2).Infof("skipping removal member management: DualReplica cluster has completed transition to external etcd (Pacemaker)")
+				return nil
+			}
+		}
+	} else {
+		klog.V(2).Infof("DualReplica (TNF) NOT found in ClusterMemberRemovalController")
 	}
 
 	// only attempt to scale down if the machine API is functional

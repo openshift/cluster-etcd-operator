@@ -7,6 +7,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
@@ -833,6 +834,9 @@ func TestReconcileMembers(t *testing.T) {
 			}
 			configMapLister := corev1listers.NewConfigMapLister(configMapIndexer).ConfigMaps("openshift-etcd")
 
+			// Create infrastructure lister with HA topology (default behavior for existing tests)
+			infraLister := u.FakeInfrastructureLister(t, configv1.HighlyAvailableTopologyMode)
+
 			// act
 			target := ClusterMemberController{
 				etcdClient:            fakeEtcdClient,
@@ -841,6 +845,7 @@ func TestReconcileMembers(t *testing.T) {
 				masterMachineLister:   machineLister,
 				masterMachineSelector: machineSelector,
 				networkLister:         networkLister,
+				infraLister:           infraLister,
 				masterNodeLister:      nodeLister,
 				masterNodeSelector:    nodeSelector,
 				configMapLister:       configMapLister,
@@ -957,5 +962,205 @@ func (dm *fakeMachineAPI) IsAvailable() (bool, error) {
 func withEndpoint(memberID uint64, ip string) func(*corev1.ConfigMap) {
 	return func(endpoints *corev1.ConfigMap) {
 		endpoints.Data[fmt.Sprintf("%016x", memberID)] = ip
+	}
+}
+
+// TestReconcileMembersDualReplicaGuard tests the guard logic that skips member management
+// for DualReplica clusters after the transition to external etcd (Pacemaker) is complete.
+func TestReconcileMembersDualReplicaGuard(t *testing.T) {
+	alwaysTrueIsFunctionalMachineAPIFn := func() (bool, error) { return true, nil }
+	containerRunning := &corev1.ContainerStateRunning{}
+
+	scenarios := []struct {
+		name                             string
+		topology                         configv1.TopologyMode
+		hasCompletedTransition           bool
+		isFunctionalMachineAPIFn         func() (bool, error)
+		initialEtcdMemberList            []*etcdserverpb.Member
+		initialObjectsForMachineLister   []runtime.Object
+		initialObjectsForPodLister       []runtime.Object
+		initialObjectsForConfigmapLister []runtime.Object
+		initialObjectsForNodeLister      []runtime.Object
+		expectedError                    error
+		expectMemberAdded                bool
+		serviceNetwork                   string
+	}{
+		{
+			name:                     "HA topology - member management proceeds normally",
+			topology:                 configv1.HighlyAvailableTopologyMode,
+			hasCompletedTransition:   false,
+			serviceNetwork:           "172.30.0.0/16",
+			isFunctionalMachineAPIFn: alwaysTrueIsFunctionalMachineAPIFn,
+			initialEtcdMemberList:    []*etcdserverpb.Member{},
+			initialObjectsForMachineLister: []runtime.Object{
+				machineFor("m-0", "10.0.0.0", true, false),
+			},
+			initialObjectsForNodeLister: []runtime.Object{
+				nodeFor("m-0", "10.0.0.0"),
+			},
+			initialObjectsForPodLister: []runtime.Object{
+				etcdPodFor("m-0", containerRunning, false),
+			},
+			initialObjectsForConfigmapLister: []runtime.Object{
+				u.EndpointsConfigMap(),
+			},
+			expectMemberAdded: true,
+		},
+		{
+			name:                     "SNO topology - member management proceeds normally",
+			topology:                 configv1.SingleReplicaTopologyMode,
+			hasCompletedTransition:   false,
+			serviceNetwork:           "172.30.0.0/16",
+			isFunctionalMachineAPIFn: alwaysTrueIsFunctionalMachineAPIFn,
+			initialEtcdMemberList:    []*etcdserverpb.Member{},
+			initialObjectsForMachineLister: []runtime.Object{
+				machineFor("m-0", "10.0.0.0", true, false),
+			},
+			initialObjectsForNodeLister: []runtime.Object{
+				nodeFor("m-0", "10.0.0.0"),
+			},
+			initialObjectsForPodLister: []runtime.Object{
+				etcdPodFor("m-0", containerRunning, false),
+			},
+			initialObjectsForConfigmapLister: []runtime.Object{
+				u.EndpointsConfigMap(),
+			},
+			expectMemberAdded: true,
+		},
+		{
+			name:                     "DualReplica topology with transition NOT complete - member management proceeds",
+			topology:                 configv1.DualReplicaTopologyMode,
+			hasCompletedTransition:   false,
+			serviceNetwork:           "172.30.0.0/16",
+			isFunctionalMachineAPIFn: alwaysTrueIsFunctionalMachineAPIFn,
+			initialEtcdMemberList:    []*etcdserverpb.Member{},
+			initialObjectsForMachineLister: []runtime.Object{
+				machineFor("m-0", "10.0.0.0", true, false),
+			},
+			initialObjectsForNodeLister: []runtime.Object{
+				nodeFor("m-0", "10.0.0.0"),
+			},
+			initialObjectsForPodLister: []runtime.Object{
+				etcdPodFor("m-0", containerRunning, false),
+			},
+			initialObjectsForConfigmapLister: []runtime.Object{
+				u.EndpointsConfigMap(),
+			},
+			expectMemberAdded: true,
+		},
+		{
+			name:                     "DualReplica topology with transition complete - member management skipped",
+			topology:                 configv1.DualReplicaTopologyMode,
+			hasCompletedTransition:   true,
+			serviceNetwork:           "172.30.0.0/16",
+			isFunctionalMachineAPIFn: alwaysTrueIsFunctionalMachineAPIFn,
+			initialEtcdMemberList:    []*etcdserverpb.Member{},
+			initialObjectsForMachineLister: []runtime.Object{
+				machineFor("m-0", "10.0.0.0", true, false),
+			},
+			initialObjectsForNodeLister: []runtime.Object{
+				nodeFor("m-0", "10.0.0.0"),
+			},
+			initialObjectsForPodLister: []runtime.Object{
+				etcdPodFor("m-0", containerRunning, false),
+			},
+			initialObjectsForConfigmapLister: []runtime.Object{
+				u.EndpointsConfigMap(),
+			},
+			expectMemberAdded: false,
+		},
+	}
+
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			// test data
+			eventRecorder := events.NewRecorder(fake.NewSimpleClientset().CoreV1().Events("operator"), "test-cluster-member-controller", &corev1.ObjectReference{}, clock.RealClock{})
+			fakeMachineAPIChecker := &fakeMachineAPI{isMachineAPIFunctional: scenario.isFunctionalMachineAPIFn}
+
+			machineIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+			for _, initialObj := range scenario.initialObjectsForMachineLister {
+				machineIndexer.Add(initialObj)
+			}
+			machineLister := machinelistersv1beta1.NewMachineLister(machineIndexer)
+			machineSelector, err := labels.Parse("machine.openshift.io/cluster-api-machine-role=master")
+			if err != nil {
+				t.Fatal(err)
+			}
+			networkIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+			networkIndexer.Add(&configv1.Network{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Spec: configv1.NetworkSpec{ServiceNetwork: []string{scenario.serviceNetwork}}})
+			networkLister := configv1listers.NewNetworkLister(networkIndexer)
+			nodeIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+			for _, initialObj := range scenario.initialObjectsForNodeLister {
+				nodeIndexer.Add(initialObj)
+			}
+			nodeLister := corev1listers.NewNodeLister(nodeIndexer)
+			nodeSelector, err := labels.Parse("node-role.kubernetes.io/master")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(scenario.initialEtcdMemberList)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			configMapIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+			for _, obj := range scenario.initialObjectsForConfigmapLister {
+				if err := configMapIndexer.Add(obj); err != nil {
+					t.Fatal(err)
+				}
+			}
+			configMapLister := corev1listers.NewConfigMapLister(configMapIndexer).ConfigMaps("openshift-etcd")
+
+			// Create infrastructure lister with the specified topology
+			infraLister := u.FakeInfrastructureLister(t, scenario.topology)
+
+			// Create operator client with the transition condition
+			var conditions []operatorv1.OperatorCondition
+			if scenario.hasCompletedTransition {
+				conditions = append(conditions, operatorv1.OperatorCondition{
+					Type:   ceohelpers.OperatorConditionExternalEtcdHasCompletedTransition,
+					Status: operatorv1.ConditionTrue,
+				})
+			}
+			operatorClient := u.FakeStaticPodOperatorClient(t, conditions)
+
+			// act
+			target := ClusterMemberController{
+				etcdClient:            fakeEtcdClient,
+				operatorClient:        operatorClient,
+				podLister:             &fakePodLister{fake.NewSimpleClientset(scenario.initialObjectsForPodLister...), "openshift-etcd"},
+				machineAPIChecker:     fakeMachineAPIChecker,
+				masterMachineLister:   machineLister,
+				masterMachineSelector: machineSelector,
+				networkLister:         networkLister,
+				infraLister:           infraLister,
+				masterNodeLister:      nodeLister,
+				masterNodeSelector:    nodeSelector,
+				configMapLister:       configMapLister,
+			}
+			err = target.reconcileMembers(context.TODO(), eventRecorder)
+			if err == nil && scenario.expectedError != nil {
+				t.Fatal("expected to get an error from reconcileMembers() method")
+			}
+			if err != nil && scenario.expectedError == nil {
+				t.Fatal(err)
+			}
+			if err != nil && scenario.expectedError != nil && err.Error() != scenario.expectedError.Error() {
+				t.Fatalf("unexpected error returned = %v, expected = %v", err, scenario.expectedError)
+			}
+
+			// Verify whether member was added based on expectation
+			memberList, err := fakeEtcdClient.MemberList(context.TODO())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scenario.expectMemberAdded && len(memberList) == 0 {
+				t.Error("expected member to be added, but no members found")
+			}
+			if !scenario.expectMemberAdded && len(memberList) > 0 {
+				t.Errorf("expected no member to be added (member management should be skipped), but found %d members", len(memberList))
+			}
+		})
 	}
 }
