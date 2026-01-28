@@ -812,6 +812,11 @@ func TestBuildClusterConditions(t *testing.T) {
 }
 
 func TestIsClusterInMaintenance(t *testing.T) {
+	// isClusterInMaintenance only checks cluster-level maintenance mode.
+	// Node-level maintenance is handled separately per-node and does NOT
+	// cause the function to return true. This distinction is important:
+	// - Cluster maintenance (pcs property set maintenance-mode=true) affects ALL nodes
+	// - Node maintenance (pcs node maintenance <node>) affects only that specific node
 	tests := []struct {
 		name                   string
 		clusterMaintenanceMode string
@@ -831,10 +836,11 @@ func TestIsClusterInMaintenance(t *testing.T) {
 			expectedResult:         false,
 		},
 		{
+			// Node-level maintenance does NOT trigger cluster-level maintenance
 			name:                   "cluster_level_maintenance_mode_false_one_node_in_maintenance",
 			clusterMaintenanceMode: "false",
 			nodeMaintenanceModes:   []string{"true", "false"},
-			expectedResult:         true,
+			expectedResult:         false,
 		},
 		{
 			name:                   "cluster_level_maintenance_mode_empty_nodes_not_in_maintenance",
@@ -843,6 +849,7 @@ func TestIsClusterInMaintenance(t *testing.T) {
 			expectedResult:         false,
 		},
 		{
+			// Cluster maintenance is what matters, node state is irrelevant
 			name:                   "both_cluster_and_node_in_maintenance",
 			clusterMaintenanceMode: "true",
 			nodeMaintenanceModes:   []string{"true", "false"},
@@ -1042,11 +1049,13 @@ func TestBuildClusterStatus_NodeStates(t *testing.T) {
 		require.Equal(t, metav1.ConditionFalse, healthyCondition.Status, "Node should be unhealthy when pending")
 	})
 
-	t.Run("cluster_in_maintenance_due_to_node", func(t *testing.T) {
-		// Cluster should be in maintenance because master-1 has maintenance=true
+	t.Run("cluster_in_service_despite_node_maintenance", func(t *testing.T) {
+		// Node-level maintenance (pcs node maintenance <node>) does NOT affect cluster-level InService.
+		// Only cluster-level maintenance (pcs property set maintenance-mode=true) sets InService=False.
+		// This is intentional: node maintenance affects only that node's resources, not the cluster.
 		clusterInServiceCondition := FindCondition(status.Conditions, v1alpha1.ClusterInServiceConditionType)
 		require.NotNil(t, clusterInServiceCondition)
-		require.Equal(t, metav1.ConditionFalse, clusterInServiceCondition.Status, "Cluster should NOT be in service when a node is in maintenance")
+		require.Equal(t, metav1.ConditionTrue, clusterInServiceCondition.Status, "Cluster should be in service even when individual nodes are in maintenance")
 	})
 }
 
@@ -1152,21 +1161,130 @@ func TestIsAgentHealthy(t *testing.T) {
 	}
 }
 
+func TestIsAgentAvailable(t *testing.T) {
+	now := metav1.Now()
+
+	tests := []struct {
+		name           string
+		agent          v1alpha1.PacemakerClusterFencingAgentStatus
+		expectedResult bool
+	}{
+		{
+			name: "available_fully_healthy",
+			agent: v1alpha1.PacemakerClusterFencingAgentStatus{
+				Name:   "master-0_redfish",
+				Method: v1alpha1.FencingMethodRedfish,
+				Conditions: []metav1.Condition{
+					{Type: v1alpha1.ResourceActiveConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+					{Type: v1alpha1.ResourceStartedConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+					{Type: v1alpha1.ResourceOperationalConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+					{Type: v1alpha1.ResourceHealthyConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+				},
+			},
+			expectedResult: true,
+		},
+		{
+			name: "available_but_on_maintenance_node",
+			agent: v1alpha1.PacemakerClusterFencingAgentStatus{
+				Name:   "master-0_redfish",
+				Method: v1alpha1.FencingMethodRedfish,
+				Conditions: []metav1.Condition{
+					// Running - can fence
+					{Type: v1alpha1.ResourceActiveConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+					{Type: v1alpha1.ResourceStartedConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+					{Type: v1alpha1.ResourceOperationalConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+					// Not managed due to maintenance - doesn't affect availability
+					{Type: v1alpha1.ResourceHealthyConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+					{Type: v1alpha1.ResourceManagedConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+				},
+			},
+			expectedResult: true, // Still available - it's running
+		},
+		{
+			name: "not_available_stopped",
+			agent: v1alpha1.PacemakerClusterFencingAgentStatus{
+				Name:   "master-0_redfish",
+				Method: v1alpha1.FencingMethodRedfish,
+				Conditions: []metav1.Condition{
+					{Type: v1alpha1.ResourceActiveConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+					{Type: v1alpha1.ResourceStartedConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+					{Type: v1alpha1.ResourceOperationalConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+				},
+			},
+			expectedResult: false, // Not running, cannot fence
+		},
+		{
+			name: "not_available_active_but_not_started",
+			agent: v1alpha1.PacemakerClusterFencingAgentStatus{
+				Name:   "master-0_redfish",
+				Method: v1alpha1.FencingMethodRedfish,
+				Conditions: []metav1.Condition{
+					{Type: v1alpha1.ResourceActiveConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+					{Type: v1alpha1.ResourceStartedConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+					{Type: v1alpha1.ResourceOperationalConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+				},
+			},
+			expectedResult: false, // Needs all three conditions
+		},
+		{
+			name: "empty_conditions",
+			agent: v1alpha1.PacemakerClusterFencingAgentStatus{
+				Name:       "master-0_redfish",
+				Method:     v1alpha1.FencingMethodRedfish,
+				Conditions: []metav1.Condition{},
+			},
+			expectedResult: false, // No conditions means not available
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isAgentAvailable(tt.agent)
+			require.Equal(t, tt.expectedResult, result)
+		})
+	}
+}
+
 func TestCalculateFencingHealth(t *testing.T) {
 	now := metav1.Now()
 
+	// A healthy agent is running (available) AND fully managed (healthy)
 	healthyAgent := v1alpha1.PacemakerClusterFencingAgentStatus{
 		Name:   "master-0_redfish",
 		Method: v1alpha1.FencingMethodRedfish,
 		Conditions: []metav1.Condition{
+			{Type: v1alpha1.ResourceActiveConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+			{Type: v1alpha1.ResourceStartedConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+			{Type: v1alpha1.ResourceOperationalConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
 			{Type: v1alpha1.ResourceHealthyConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
 		},
 	}
 
+	// An agent on a maintenance node: running (available) but NOT managed (not healthy).
+	// This is the key distinction - the agent CAN fence, but won't be recovered if it fails.
+	availableButNotHealthyAgent := v1alpha1.PacemakerClusterFencingAgentStatus{
+		Name:   "master-0_redfish_maintenance",
+		Method: v1alpha1.FencingMethodRedfish,
+		Conditions: []metav1.Condition{
+			// Running - can fence
+			{Type: v1alpha1.ResourceActiveConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+			{Type: v1alpha1.ResourceStartedConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+			{Type: v1alpha1.ResourceOperationalConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+			// Not healthy because managed=false (on maintenance node)
+			{Type: v1alpha1.ResourceHealthyConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+			{Type: v1alpha1.ResourceManagedConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+			{Type: v1alpha1.ResourceInServiceConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+		},
+	}
+
+	// An unhealthy agent is not running (not available) AND not managed (not healthy)
 	unhealthyAgent := v1alpha1.PacemakerClusterFencingAgentStatus{
 		Name:   "master-0_ipmi",
 		Method: v1alpha1.FencingMethodIPMI,
 		Conditions: []metav1.Condition{
+			{Type: v1alpha1.ResourceActiveConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+			{Type: v1alpha1.ResourceStartedConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+			{Type: v1alpha1.ResourceOperationalConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
 			{Type: v1alpha1.ResourceHealthyConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
 		},
 	}
@@ -1190,9 +1308,16 @@ func TestCalculateFencingHealth(t *testing.T) {
 			expectedFencingHealthy: false,
 		},
 		{
+			// Key test: agent on maintenance node - available but not healthy
+			name:                   "available_but_not_healthy_maintenance_node",
+			agents:                 []v1alpha1.PacemakerClusterFencingAgentStatus{availableButNotHealthyAgent},
+			expectedFencingAvail:   true,  // Agent IS running, CAN fence
+			expectedFencingHealthy: false, // Agent is NOT managed, won't be recovered
+		},
+		{
 			name:                   "mixed_one_healthy_one_unhealthy",
 			agents:                 []v1alpha1.PacemakerClusterFencingAgentStatus{healthyAgent, unhealthyAgent},
-			expectedFencingAvail:   true,  // At least one is healthy
+			expectedFencingAvail:   true,  // At least one is available
 			expectedFencingHealthy: false, // Not all are healthy
 		},
 		{

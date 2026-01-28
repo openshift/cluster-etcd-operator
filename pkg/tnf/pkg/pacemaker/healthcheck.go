@@ -22,13 +22,16 @@ import (
 	v1alpha1 "github.com/openshift/api/etcd/v1alpha1"
 )
 
+// HealthStatusValue represents the overall health status of the pacemaker cluster.
+type HealthStatusValue string
+
 // Local constants for healthcheck controller
 const (
-	// Status strings for health assessment
-	statusHealthy = "Healthy"
-	statusWarning = "Warning"
-	statusError   = "Error"
-	statusUnknown = "Unknown"
+	// Status values for health assessment
+	statusHealthy HealthStatusValue = "Healthy"
+	statusWarning HealthStatusValue = "Warning"
+	statusError   HealthStatusValue = "Error"
+	statusUnknown HealthStatusValue = "Unknown"
 
 	// Degraded condition reason
 	reasonPacemakerUnhealthy = "PacemakerUnhealthy"
@@ -49,7 +52,6 @@ const (
 	msgNoNodesFound             = "No nodes found in cluster"
 	msgNodeUnhealthy            = "%s node is unhealthy: %s"
 	msgNodeOffline              = "Node %s is offline"
-	msgResourceUnhealthy        = "%s resource is unhealthy on node %s: %s"
 	msgInsufficientNodes        = "Insufficient nodes in cluster (expected %d, found %d)"
 	msgExcessiveNodes           = "Excessive nodes in cluster (expected %d, found %d)"
 	msgClusterInMaintenance     = "Cluster is in maintenance mode"
@@ -57,7 +59,7 @@ const (
 	msgPacemakerDegraded        = "Pacemaker cluster is in degraded state"
 	msgPacemakerHealthy         = "Pacemaker cluster is healthy - all nodes have healthy critical resources"
 	msgPacemakerWarningsCleared = "Pacemaker cluster warnings cleared"
-	msgFencingRedundancyLost    = "fencing redundancy degraded (some agents unhealthy, but node can still be fenced)"
+	msgFencingRedundancyLost    = "fencing at risk (agent running but not managed for recovery)"
 
 	// Error message substrings for event categorization (used in recordErrorEvent)
 	// Order matters: more specific patterns should be checked before generic ones
@@ -88,7 +90,7 @@ const (
 //
 // The operator degrades on Errors but not Warnings. Warnings generate events for observability.
 type HealthStatus struct {
-	OverallStatus string
+	OverallStatus HealthStatusValue
 	Warnings      []string
 	Errors        []string
 	// CRLastUpdated is the timestamp from the PacemakerCluster CR's status.lastUpdated field.
@@ -379,16 +381,16 @@ func (c *HealthCheck) getClusterConditionIssues(conditions []metav1.Condition, p
 		}
 		switch nodeCountCondition.Reason {
 		case v1alpha1.ClusterNodeCountAsExpectedReasonInsufficientNodes:
-			issues = append(issues, fmt.Sprintf("insufficient nodes (expected %d, found %d)", ExpectedNodeCount, nodeCount))
+			issues = append(issues, fmt.Sprintf(msgInsufficientNodes, ExpectedNodeCount, nodeCount))
 		case v1alpha1.ClusterNodeCountAsExpectedReasonExcessiveNodes:
-			issues = append(issues, fmt.Sprintf("excessive nodes (expected %d, found %d)", ExpectedNodeCount, nodeCount))
+			issues = append(issues, fmt.Sprintf(msgExcessiveNodes, ExpectedNodeCount, nodeCount))
 		}
 	}
 
 	// Check InService condition (cluster not in maintenance mode)
 	inServiceCondition := FindCondition(conditions, v1alpha1.ClusterInServiceConditionType)
 	if inServiceCondition != nil && inServiceCondition.Status != metav1.ConditionTrue {
-		issues = append(issues, "cluster in maintenance mode")
+		issues = append(issues, msgClusterInMaintenance)
 	}
 
 	return issues
@@ -509,7 +511,7 @@ var nodeConditionChecks = []nodeConditionCheck{
 	{v1alpha1.NodeActiveConditionType, "in standby mode"},
 	{v1alpha1.NodeCleanConditionType, "unclean state (fencing/communication issue)"},
 	{v1alpha1.NodeMemberConditionType, "not a cluster member"},
-	{v1alpha1.NodeFencingAvailableConditionType, "fencing unavailable (all agents unhealthy)"},
+	{v1alpha1.NodeFencingAvailableConditionType, "fencing unavailable (no agents running)"},
 }
 
 // getNodeConditionErrors returns errors from node-level conditions.
@@ -728,7 +730,7 @@ func (c *HealthCheck) updateOperatorCondition(ctx context.Context, condition ope
 }
 
 // cleanupExpiredEvents removes events from the deduplication map that have exceeded their window.
-// Fencing events are kept for 1 hour, other events for 5 minutes.
+// Fencing events are kept for 24 hours, other events for 5 minutes.
 func (c *HealthCheck) cleanupExpiredEvents() {
 	c.recordedEventsMu.Lock()
 	defer c.recordedEventsMu.Unlock()

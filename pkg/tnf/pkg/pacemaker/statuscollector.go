@@ -54,7 +54,7 @@ type ResourceStatePerNode struct {
 type FencingAgentInfo struct {
 	Name       string
 	TargetNode string
-	Method     string // "redfish", "ipmi", etc.
+	Method     v1alpha1.FencingMethod
 	Resource   *Resource
 	IsRunning  bool
 }
@@ -343,22 +343,38 @@ func buildNodeConditions(xmlNode *Node, state *ResourceStatePerNode, fencingAgen
 }
 
 // calculateFencingHealth returns (available, allHealthy).
-// Available means at least one agent is healthy; allHealthy means all agents are healthy.
+// Available means at least one agent can fence right now (is running).
+// AllHealthy means all agents are fully managed (will be recovered if they fail).
 func calculateFencingHealth(fencingAgents []v1alpha1.PacemakerClusterFencingAgentStatus) (bool, bool) {
 	if len(fencingAgents) == 0 {
 		return false, false
 	}
 
+	availableCount := 0
 	healthyCount := 0
 	for _, agent := range fencingAgents {
+		if isAgentAvailable(agent) {
+			availableCount++
+		}
 		if isAgentHealthy(agent) {
 			healthyCount++
 		}
 	}
 
-	return healthyCount > 0, healthyCount == len(fencingAgents)
+	return availableCount > 0, healthyCount == len(fencingAgents)
 }
 
+// isAgentAvailable returns true if the agent can fence right now (is running).
+// An agent on a maintenance node is still available - it's running and can fence.
+func isAgentAvailable(agent v1alpha1.PacemakerClusterFencingAgentStatus) bool {
+	conditions := agent.Conditions
+	active := getConditionStatus(conditions, v1alpha1.ResourceActiveConditionType) == metav1.ConditionTrue
+	started := getConditionStatus(conditions, v1alpha1.ResourceStartedConditionType) == metav1.ConditionTrue
+	operational := getConditionStatus(conditions, v1alpha1.ResourceOperationalConditionType) == metav1.ConditionTrue
+	return active && started && operational
+}
+
+// isAgentHealthy returns true if the agent is fully managed (will be recovered if it fails).
 func isAgentHealthy(agent v1alpha1.PacemakerClusterFencingAgentStatus) bool {
 	return getConditionStatus(agent.Conditions, v1alpha1.ResourceHealthyConditionType) == metav1.ConditionTrue
 }
@@ -379,7 +395,7 @@ func buildFencingAgentStatuses(agents []FencingAgentInfo, now metav1.Time) []v1a
 		statuses = append(statuses, v1alpha1.PacemakerClusterFencingAgentStatus{
 			Conditions: conditions,
 			Name:       agent.Name,
-			Method:     methodStringToEnum(agent.Method),
+			Method:     agent.Method,
 		})
 	}
 
@@ -389,9 +405,14 @@ func buildFencingAgentStatuses(agents []FencingAgentInfo, now metav1.Time) []v1a
 // methodStringToEnum converts method string to FencingMethod enum, defaulting to Redfish.
 func methodStringToEnum(method string) v1alpha1.FencingMethod {
 	switch strings.ToLower(method) {
-	case "ipmi":
+	case "ipmi", "ipmilan", "ipmitool":
 		return v1alpha1.FencingMethodIPMI
+	case "redfish":
+		return v1alpha1.FencingMethodRedfish
 	default:
+		// Log unknown method so it's visible, but default to Redfish
+		// since that's the primary TNF fencing method
+		klog.Warningf("Unknown fencing method %q, defaulting to Redfish", method)
 		return v1alpha1.FencingMethodRedfish
 	}
 }
@@ -407,7 +428,11 @@ func buildResourceConditions(resource *Resource, running bool, now metav1.Time) 
 	var inMaintenance, managed, enabled, operational, active, started, schedulable bool
 
 	if resource != nil {
-		inMaintenance = false // Pacemaker XML exposes maintenance per-node, not per-resource
+		// Pacemaker sets maintenance="true" on resources running on a node in maintenance mode.
+		// These resources also have managed="false" because pacemaker won't manage them for
+		// recovery. This is a degraded state: the resource may be running, but if it fails,
+		// pacemaker won't restart it.
+		inMaintenance = resource.Maintenance == "true"
 		managed = resource.Managed == "true"
 		enabled = resource.TargetRole != "Stopped"
 		operational = resource.Failed != "true"
@@ -416,7 +441,9 @@ func buildResourceConditions(resource *Resource, running bool, now metav1.Time) 
 		schedulable = resource.Blocked != "true"
 	}
 
-	healthy := !inMaintenance && managed && enabled && operational && active && started && schedulable
+	// A resource is healthy only when all operational conditions are met AND it's managed.
+	// Resources in maintenance mode are NOT healthy - they won't be managed for recovery.
+	healthy := managed && enabled && operational && active && started && schedulable
 
 	return []metav1.Condition{
 		buildCondition(resourceInServiceSpec, !inMaintenance, now),
@@ -457,17 +484,11 @@ func getNodeAddresses(configNode ClusterConfigNode) []v1alpha1.PacemakerNodeAddr
 	return addresses
 }
 
-// isClusterInMaintenance returns true if cluster or any node is in maintenance mode.
+// isClusterInMaintenance returns true if cluster-wide maintenance mode is enabled
+// (pcs property set maintenance-mode=true). Node-level maintenance (pcs node maintenance <node>)
+// is handled separately via buildNodeConditions.
 func isClusterInMaintenance(result *PacemakerResult) bool {
-	if result.Summary.ClusterOptions.MaintenanceMode == "true" {
-		return true
-	}
-	for _, node := range result.Nodes.Node {
-		if node.Maintenance == "true" {
-			return true
-		}
-	}
-	return false
+	return result.Summary.ClusterOptions.MaintenanceMode == "true"
 }
 
 // processResourcesForState populates resourceState map. Fencing agents are handled separately.
@@ -520,7 +541,7 @@ func processFencingAgents(result *PacemakerResult) map[string][]FencingAgentInfo
 			return
 		}
 
-		targetNode, method := parseFencingResourceID(resource.ID)
+		targetNode, methodStr := parseFencingResourceID(resource.ID)
 		if targetNode == "" {
 			klog.Warningf("Could not parse target node from fencing resource ID: %s", resource.ID)
 			return
@@ -532,7 +553,7 @@ func processFencingAgents(result *PacemakerResult) map[string][]FencingAgentInfo
 		fencingAgents[targetNode] = append(fencingAgents[targetNode], FencingAgentInfo{
 			Name:       resource.ID,
 			TargetNode: targetNode,
-			Method:     method,
+			Method:     methodStringToEnum(methodStr),
 			Resource:   &resourceCopy,
 			IsRunning:  isRunning,
 		})
@@ -686,6 +707,10 @@ func recordEventWithDeduplication(ctx context.Context, kubeClient kubernetes.Int
 	eventName := generateEventName(reason, message)
 
 	existingEvent, err := kubeClient.CoreV1().Events(TargetNamespace).Get(ctx, eventName, metav1.GetOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		// Log unexpected errors (not NotFound) for debugging
+		klog.V(4).Infof("Failed to get existing event %s: %v (will create new)", eventName, err)
+	}
 	if err == nil && existingEvent != nil {
 		if time.Since(existingEvent.LastTimestamp.Time) < deduplicationWindow {
 			now := metav1.Now()
@@ -735,7 +760,10 @@ func recordEventWithDeduplication(ctx context.Context, kubeClient kubernetes.Int
 			klog.V(4).Infof("Event %s already exists, attempting patch", eventName)
 			now := metav1.Now()
 			patch := fmt.Sprintf(`{"count":2,"lastTimestamp":"%s"}`, now.Format(time.RFC3339))
-			_, _ = kubeClient.CoreV1().Events(TargetNamespace).Patch(ctx, eventName, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{})
+			_, patchErr := kubeClient.CoreV1().Events(TargetNamespace).Patch(ctx, eventName, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{})
+			if patchErr != nil {
+				klog.V(4).Infof("Failed to patch event %s after race: %v", eventName, patchErr)
+			}
 		} else {
 			klog.Warningf("Failed to create event: %v", createErr)
 		}

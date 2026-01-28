@@ -98,6 +98,7 @@ type Resource struct {
 	Active         string  `xml:"active,attr"`
 	Orphaned       string  `xml:"orphaned,attr"`
 	Blocked        string  `xml:"blocked,attr"`
+	Maintenance    string  `xml:"maintenance,attr"` // "true" when resource is on a node in maintenance mode
 	Managed        string  `xml:"managed,attr"`
 	Failed         string  `xml:"failed,attr"`
 	FailureIgnored string  `xml:"failure_ignored,attr"`

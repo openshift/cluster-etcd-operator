@@ -115,7 +115,7 @@ func TestHealthCheck_getPacemakerStatus(t *testing.T) {
 	tests := []struct {
 		name           string
 		mockStatus     *v1alpha1.PacemakerCluster
-		expectedStatus string
+		expectedStatus HealthStatusValue
 		expectErrors   bool
 		expectWarnings bool
 	}{
@@ -516,7 +516,7 @@ func TestHealthCheck_buildHealthStatusFromCR(t *testing.T) {
 	tests := []struct {
 		name           string
 		cr             *v1alpha1.PacemakerCluster
-		expectedStatus string
+		expectedStatus HealthStatusValue
 		expectErrors   bool
 		errorContains  string // Optional: check error contains this substring
 	}{
@@ -580,7 +580,7 @@ func TestHealthCheck_buildHealthStatusFromCR(t *testing.T) {
 			},
 			expectedStatus: statusError,
 			expectErrors:   true,
-			errorContains:  "insufficient nodes",
+			errorContains:  "Insufficient nodes",
 		},
 		{
 			name: "no_nodes",
@@ -658,7 +658,7 @@ func TestHealthCheck_checkClusterConditions(t *testing.T) {
 				createHealthyNodeStatus("master-0", []string{"192.168.1.10"}),
 			},
 			expectErrors:  true,
-			errorContains: []string{"insufficient nodes"},
+			errorContains: []string{"Insufficient nodes"},
 		},
 		{
 			name:       "excessive_nodes",
@@ -669,7 +669,7 @@ func TestHealthCheck_checkClusterConditions(t *testing.T) {
 				createHealthyNodeStatus("master-2", []string{"192.168.1.12"}),
 			},
 			expectErrors:  true,
-			errorContains: []string{"excessive nodes", "expected 2, found 3"},
+			errorContains: []string{"Excessive nodes", "expected 2, found 3"},
 		},
 		{
 			name:       "maintenance_mode",
@@ -1090,7 +1090,7 @@ func TestHealthCheck_getNodeConditionErrorsAndWarnings(t *testing.T) {
 			conditions: []metav1.Condition{
 				{Type: v1alpha1.NodeFencingAvailableConditionType, Status: metav1.ConditionFalse, Reason: v1alpha1.NodeFencingAvailableReasonUnavailable, LastTransitionTime: now},
 			},
-			expectedErrors:   []string{"fencing unavailable (all agents unhealthy)"},
+			expectedErrors:   []string{"fencing unavailable (no agents running)"},
 			expectedWarnings: []string{},
 		},
 		{
@@ -1100,7 +1100,7 @@ func TestHealthCheck_getNodeConditionErrorsAndWarnings(t *testing.T) {
 				{Type: v1alpha1.NodeFencingHealthyConditionType, Status: metav1.ConditionFalse, Reason: v1alpha1.NodeFencingHealthyReasonUnhealthy, LastTransitionTime: now},
 			},
 			expectedErrors:   []string{},
-			expectedWarnings: []string{"fencing redundancy degraded"},
+			expectedWarnings: []string{"fencing at risk"},
 		},
 		{
 			name: "pending_state_no_error_or_warning",
@@ -1128,7 +1128,7 @@ func TestHealthCheck_getNodeConditionErrorsAndWarnings(t *testing.T) {
 				{Type: v1alpha1.NodeFencingHealthyConditionType, Status: metav1.ConditionFalse, Reason: v1alpha1.NodeFencingHealthyReasonUnhealthy, LastTransitionTime: now},
 			},
 			expectedErrors:   []string{"in maintenance mode"},
-			expectedWarnings: []string{"fencing redundancy degraded"},
+			expectedWarnings: []string{"fencing at risk"},
 		},
 	}
 
@@ -1186,7 +1186,7 @@ func TestHealthCheck_FencingRedundancyWarning(t *testing.T) {
 			inMaintenance:          false,
 			expectWarnings:         true,
 			expectErrors:           false, // Only fencing issue, which is a warning
-			expectedWarningContain: "fencing redundancy degraded",
+			expectedWarningContain: "fencing at risk",
 		},
 		{
 			name:                   "fencing_degraded_node_healthy",
@@ -1194,7 +1194,7 @@ func TestHealthCheck_FencingRedundancyWarning(t *testing.T) {
 			inMaintenance:          false,
 			expectWarnings:         true,
 			expectErrors:           false,
-			expectedWarningContain: "fencing redundancy degraded",
+			expectedWarningContain: "fencing at risk",
 		},
 		{
 			name:                   "fencing_degraded_with_other_errors",
@@ -1202,7 +1202,7 @@ func TestHealthCheck_FencingRedundancyWarning(t *testing.T) {
 			inMaintenance:          true, // Causes error
 			expectWarnings:         true,
 			expectErrors:           true,
-			expectedWarningContain: "fencing redundancy degraded",
+			expectedWarningContain: "fencing at risk",
 			expectedErrorContain:   "maintenance mode",
 		},
 	}
