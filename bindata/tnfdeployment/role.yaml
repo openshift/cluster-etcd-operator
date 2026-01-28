@@ -11,6 +11,7 @@ rules:
     resources:
       - events
     verbs:
+      - get
       - create
       - patch
   - apiGroups:
