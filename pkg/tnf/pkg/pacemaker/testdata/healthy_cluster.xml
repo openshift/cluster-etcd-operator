@@ -1,0 +1,49 @@
+<!-- Test fixture: Healthy two-node cluster
+     Key states:
+     - Both nodes online, healthy
+     - All resources started and active
+     - No failures
+-->
+<pacemaker-result api-version="2.38">
+  <summary>
+    <cluster_options maintenance-mode="false"/>
+  </summary>
+  <nodes>
+    <node name="master-0" id="1" online="true" type="member"/>
+    <node name="master-1" id="2" online="true" type="member"/>
+  </nodes>
+  <resources>
+    <clone id="kubelet-clone">
+      <resource id="kubelet" resource_agent="systemd:kubelet" role="Started" active="true" managed="true">
+        <node name="master-1" id="2"/>
+      </resource>
+      <resource id="kubelet" resource_agent="systemd:kubelet" role="Started" active="true" managed="true">
+        <node name="master-0" id="1"/>
+      </resource>
+    </clone>
+    <resource id="master-0_redfish" resource_agent="stonith:fence_redfish" role="Started" active="true" managed="true">
+      <node name="master-0" id="1"/>
+    </resource>
+    <resource id="master-1_redfish" resource_agent="stonith:fence_redfish" role="Started" active="true" managed="true">
+      <node name="master-0" id="1"/>
+    </resource>
+    <clone id="etcd-clone">
+      <resource id="etcd" resource_agent="ocf:heartbeat:podman-etcd" role="Started" active="true" managed="true">
+        <node name="master-1" id="2"/>
+      </resource>
+      <resource id="etcd" resource_agent="ocf:heartbeat:podman-etcd" role="Started" active="true" managed="true">
+        <node name="master-0" id="1"/>
+      </resource>
+    </clone>
+  </resources>
+  <node_attributes>
+    <node name="master-0">
+      <attribute name="node_ip" value="192.168.111.20"/>
+    </node>
+    <node name="master-1">
+      <attribute name="node_ip" value="192.168.111.21"/>
+    </node>
+  </node_attributes>
+  <node_history/>
+  <fence_history/>
+</pacemaker-result>

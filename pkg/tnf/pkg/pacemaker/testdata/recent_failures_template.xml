@@ -1,0 +1,55 @@
+<!-- Test fixture template: Recent failures for testing time-based filtering
+     {{RECENT_TIMESTAMP}} and {{RECENT_TIMESTAMP_ISO}} are replaced at test runtime
+-->
+<pacemaker-result api-version="2.38">
+  <summary>
+    <cluster_options maintenance-mode="false"/>
+  </summary>
+  <nodes>
+    <node name="master-0" id="1" online="true" type="member"/>
+    <node name="master-1" id="2" online="true" type="member"/>
+  </nodes>
+  <resources>
+    <clone id="kubelet-clone">
+      <resource id="kubelet" resource_agent="systemd:kubelet" role="Started" active="true" managed="true">
+        <node name="master-1" id="2"/>
+      </resource>
+      <resource id="kubelet" resource_agent="systemd:kubelet" role="Started" active="true" managed="true">
+        <node name="master-0" id="1"/>
+      </resource>
+    </clone>
+    <resource id="master-0_redfish" resource_agent="stonith:fence_redfish" role="Started" active="true" managed="true">
+      <node name="master-0" id="1"/>
+    </resource>
+    <resource id="master-1_redfish" resource_agent="stonith:fence_redfish" role="Started" active="true" managed="true">
+      <node name="master-0" id="1"/>
+    </resource>
+    <clone id="etcd-clone">
+      <resource id="etcd" resource_agent="ocf:heartbeat:podman-etcd" role="Started" active="true" managed="true">
+        <node name="master-1" id="2"/>
+      </resource>
+      <resource id="etcd" resource_agent="ocf:heartbeat:podman-etcd" role="Started" active="true" managed="true">
+        <node name="master-0" id="1"/>
+      </resource>
+    </clone>
+  </resources>
+  <node_attributes>
+    <node name="master-0">
+      <attribute name="node_ip" value="192.168.111.20"/>
+    </node>
+    <node name="master-1">
+      <attribute name="node_ip" value="192.168.111.21"/>
+    </node>
+  </node_attributes>
+  <node_history>
+    <node name="master-0">
+      <resource_history id="kubelet">
+        <operation_history call="330" task="monitor" rc="1" rc_text="not running" last-rc-change="{{RECENT_TIMESTAMP}}"/>
+        <operation_history call="331" task="start" rc="0" rc_text="ok" last-rc-change="Thu Sep 18 13:12:05 2025"/>
+      </resource_history>
+    </node>
+  </node_history>
+  <fence_history>
+    <fence_event action="reboot" target="master-1" origin="master-0" status="success" completed="{{RECENT_TIMESTAMP_ISO}}"/>
+  </fence_history>
+</pacemaker-result>

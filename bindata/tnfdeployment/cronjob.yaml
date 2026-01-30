@@ -1,0 +1,84 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: <injected>
+  namespace: <injected>
+  labels:
+    app.kubernetes.io/name: <injected>
+spec:
+  schedule: <injected>
+  concurrencyPolicy: "Replace"
+  startingDeadlineSeconds: 120
+  failedJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 1
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: <injected>
+    spec:
+      activeDeadlineSeconds: 90
+      ttlSecondsAfterFinished: 600
+      template:
+        metadata:
+          annotations:
+            openshift.io/required-scc: "privileged"
+          labels:
+            app.kubernetes.io/name: <injected>
+        spec:
+          terminationGracePeriodSeconds: 1
+          containers:
+            - name: collector
+              image: <injected>
+              imagePullPolicy: IfNotPresent
+              terminationMessagePolicy: FallbackToLogsOnError
+              command: ["<injected>"]
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+              # Two Node Fencing (TNF) requires privileged access to run whitelisted
+              # pacemaker/PCS commands for etcd fencing and cluster status collection:
+              #   - sudo -n pcs status xml (cluster status)
+              #   - sudo -n pcs cluster config show (node configuration)
+              # privileged and allowPrivilegeEscalation are intentional to enable
+              # these operations which must run as root.
+              securityContext:
+                privileged: true
+                allowPrivilegeEscalation: true
+          hostIPC: false
+          hostNetwork: false
+          # hostPID is required to observe host process state for pacemaker
+          # resource monitoring (e.g., detecting if pacemaker daemons are running).
+          hostPID: true
+          # Note: automountServiceAccountToken, enableServiceLinks, and shareProcessNamespace
+          # are intentionally omitted. These pointer fields default to nil and remain nil on
+          # the server (unlike fields like DNSPolicy which get server-applied defaults).
+          # The kubelet interprets nil as: automountServiceAccountToken=true (needed for API
+          # access), enableServiceLinks=true, shareProcessNamespace=false (required since
+          # hostPID=true). No drift occurs from these omissions.
+          serviceAccountName: tnf-setup-manager
+          nodeSelector:
+            node-role.kubernetes.io/master: ""
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                - matchExpressions:
+                  - key: node.kubernetes.io/not-ready
+                    operator: DoesNotExist
+                  - key: node.kubernetes.io/unreachable
+                    operator: DoesNotExist
+          tolerations:
+            - key: node-role.kubernetes.io/master
+              operator: Exists
+              effect: NoSchedule
+            - key: node.kubernetes.io/memory-pressure
+              operator: Exists
+              effect: NoSchedule
+            - key: node.kubernetes.io/disk-pressure
+              operator: Exists
+              effect: NoSchedule
+            - key: node.kubernetes.io/pid-pressure
+              operator: Exists
+              effect: NoSchedule
+          restartPolicy: Never
