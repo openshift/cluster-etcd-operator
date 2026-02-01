@@ -2,15 +2,28 @@ package ceohelpers
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/stretchr/testify/require"
+	"k8s.io/client-go/tools/cache"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/testutils"
 )
+
+// failingOperatorClient wraps a StaticPodOperatorClient and makes GetStaticPodOperatorState return an error
+type failingOperatorClient struct {
+	v1helpers.StaticPodOperatorClient
+	err error
+}
+
+func (f *failingOperatorClient) GetStaticPodOperatorState() (*operatorv1.StaticPodOperatorSpec, *operatorv1.StaticPodOperatorStatus, string, error) {
+	return nil, nil, "", f.err
+}
 
 func TestIsExternalEtcdCluster(t *testing.T) {
 	tests := []struct {
@@ -250,6 +263,90 @@ func TestHasExternalEtcdCompletedTransition(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, tt.expectedResult, result)
 			}
+		})
+	}
+}
+
+func TestShouldSkipMemberManagementForDualReplica(t *testing.T) {
+	tests := []struct {
+		name                     string
+		topology                 configv1.TopologyMode
+		hasCompletedTransition   bool
+		useEmptyInfraLister      bool
+		useFailingOperatorClient bool
+		expectedResult           bool
+	}{
+		{
+			name:                   "HA topology - returns false",
+			topology:               configv1.HighlyAvailableTopologyMode,
+			hasCompletedTransition: false,
+			expectedResult:         false,
+		},
+		{
+			name:                   "SNO topology - returns false",
+			topology:               configv1.SingleReplicaTopologyMode,
+			hasCompletedTransition: false,
+			expectedResult:         false,
+		},
+		{
+			name:                   "DualReplica without transition complete - returns false",
+			topology:               configv1.DualReplicaTopologyMode,
+			hasCompletedTransition: false,
+			expectedResult:         false,
+		},
+		{
+			name:                   "DualReplica with transition complete - returns true",
+			topology:               configv1.DualReplicaTopologyMode,
+			hasCompletedTransition: true,
+			expectedResult:         true,
+		},
+		{
+			name:                   "IsDualReplicaTopology fails - fail-open returns false",
+			hasCompletedTransition: true,
+			useEmptyInfraLister:    true,
+			expectedResult:         false,
+		},
+		{
+			name:                     "HasExternalEtcdCompletedTransition fails - fail-open returns false",
+			topology:                 configv1.DualReplicaTopologyMode,
+			useFailingOperatorClient: true,
+			expectedResult:           false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create fake infrastructure lister
+			var infraLister configv1listers.InfrastructureLister
+			if tt.useEmptyInfraLister {
+				// Empty indexer causes Get() to return "not found" error, testing fail-open behavior
+				emptyIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+				infraLister = configv1listers.NewInfrastructureLister(emptyIndexer)
+			} else {
+				infraLister = testutils.FakeInfrastructureLister(t, tt.topology)
+			}
+
+			// Create operator client
+			var operatorClient v1helpers.StaticPodOperatorClient
+			if tt.useFailingOperatorClient {
+				// Create operator client that returns an error when GetStaticPodOperatorState is called
+				operatorClient = &failingOperatorClient{
+					err: errors.New("simulated operator client error"),
+				}
+			} else {
+				var conditions []operatorv1.OperatorCondition
+				if tt.hasCompletedTransition {
+					conditions = append(conditions, operatorv1.OperatorCondition{
+						Type:   OperatorConditionExternalEtcdHasCompletedTransition,
+						Status: operatorv1.ConditionTrue,
+					})
+				}
+				operatorClient = testutils.FakeStaticPodOperatorClient(t, conditions)
+			}
+
+			// Test the function
+			result := ShouldSkipMemberManagementForDualReplica(context.Background(), operatorClient, infraLister)
+			require.Equal(t, tt.expectedResult, result)
 		})
 	}
 }
