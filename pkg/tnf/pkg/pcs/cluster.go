@@ -30,9 +30,11 @@ func ConfigureCluster(ctx context.Context, cfg config.ClusterConfig) (bool, erro
 	commands := []string{
 		fmt.Sprintf("/usr/sbin/pcs cluster setup TNF %s addr=%s %s addr=%s --debug --force", cfg.NodeName1, cfg.NodeIP1, cfg.NodeName2, cfg.NodeIP2),
 		"/usr/sbin/pcs cluster start --all",
+		"/usr/sbin/pcs property set start-failure-is-fatal=false",
 		// Note: the kubelet service needs to be disabled when using systemd agent
 		// Done by after-setup jobs on both nodes
-		"/usr/sbin/pcs resource create kubelet systemd:kubelet clone meta interleave=true",
+		// Note: Setting `migration-threshold=5` to prevent endless restart loops caused by the infinite default. This provides a safe limit on retries.
+		"/usr/sbin/pcs resource create kubelet systemd:kubelet clone meta interleave=true migration-threshold=5",
 		"/usr/sbin/pcs cluster enable --all",
 		"/usr/sbin/pcs cluster sync",
 		"/usr/sbin/pcs cluster reload corosync",

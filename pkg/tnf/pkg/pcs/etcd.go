@@ -22,7 +22,8 @@ func ConfigureEtcd(ctx context.Context, cfg config.ClusterConfig) error {
 	}
 	if !strings.Contains(stdOut, "etcd") {
 		klog.Info("Creating etcd resource")
-		cmd := fmt.Sprintf("/usr/sbin/pcs resource create etcd ocf:heartbeat:podman-etcd node_ip_map=\"%s:%s;%s:%s\" drop_in_dependency=true clone interleave=true notify=true",
+		// Note: Setting `migration-threshold=5` to prevent endless restart loops caused by the infinite default. This provides a safe limit on retries.
+		cmd := fmt.Sprintf("/usr/sbin/pcs resource create etcd ocf:heartbeat:podman-etcd node_ip_map=\"%s:%s;%s:%s\" drop_in_dependency=true clone interleave=true notify=true meta migration-threshold=5",
 			cfg.NodeName1, cfg.NodeIP1, cfg.NodeName2, cfg.NodeIP2)
 		stdOut, stdErr, err = exec.Execute(ctx, cmd)
 		if err != nil || len(stdErr) > 0 {
