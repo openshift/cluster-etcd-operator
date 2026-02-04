@@ -1,0 +1,45 @@
+<!-- Test fixture: Failed fencing scenario
+     Key states:
+     - master-0: online=true (healthy)
+     - master-1: online=false, unclean=true (fencing failed, node is UNCLEAN)
+     - Multiple failed fencing attempts in fence_history
+-->
+<pacemaker-result api-version="2.38">
+  <summary>
+    <cluster_options maintenance-mode="false"/>
+  </summary>
+  <nodes>
+    <node name="master-0" id="1" online="true" type="member"/>
+    <node name="master-1" id="2" online="false" unclean="true" type="member"/>
+  </nodes>
+  <resources>
+    <clone id="kubelet-clone">
+      <resource id="kubelet" resource_agent="systemd:kubelet" role="Started" active="true" managed="true">
+        <node name="master-0" id="1"/>
+      </resource>
+    </clone>
+    <resource id="master-0_redfish" resource_agent="stonith:fence_redfish" role="Started" active="true" managed="true">
+      <node name="master-0" id="1"/>
+    </resource>
+    <resource id="master-1_redfish" resource_agent="stonith:fence_redfish" role="Started" active="true" managed="true">
+      <node name="master-0" id="1"/>
+    </resource>
+    <clone id="etcd-clone">
+      <resource id="etcd" resource_agent="ocf:heartbeat:podman-etcd" role="Started" active="true" managed="true" failed="true">
+        <node name="master-0" id="1"/>
+      </resource>
+    </clone>
+  </resources>
+  <node_history>
+    <node name="master-0">
+      <resource_history id="etcd">
+        <operation_history call="61" task="monitor" rc="1" rc_text="error" last-rc-change="Fri Jan 23 20:46:37 2026"/>
+      </resource_history>
+    </node>
+  </node_history>
+  <fence_history>
+    <fence_event action="reboot" target="master-1" origin="master-0" status="failed" completed="2026-01-23 20:51:39.667602Z"/>
+    <fence_event action="reboot" target="master-1" origin="master-0" status="failed" completed="2026-01-23 20:46:59.733173Z"/>
+    <fence_event action="reboot" target="master-1" origin="master-0" status="success" completed="2026-01-23 19:31:13.593705Z"/>
+  </fence_history>
+</pacemaker-result>

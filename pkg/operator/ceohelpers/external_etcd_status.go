@@ -2,9 +2,14 @@ package ceohelpers
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
+	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 )
 
@@ -189,4 +194,55 @@ func GetExternalEtcdClusterStatus(ctx context.Context,
 	}
 
 	return externalEtcdStatus, nil
+}
+
+// WaitForEtcdCondition is a generic helper that waits for an etcd-related condition to become true.
+// It first syncs the etcd informer cache, then polls the condition function until it returns true
+// or the timeout is reached. The timeout applies to the entire operation (sync + polling).
+func WaitForEtcdCondition(
+	ctx context.Context,
+	etcdInformer operatorv1informers.EtcdInformer,
+	operatorClient v1helpers.StaticPodOperatorClient,
+	conditionCheck func(context.Context, v1helpers.StaticPodOperatorClient) (bool, error),
+	pollInterval time.Duration,
+	timeout time.Duration,
+	conditionName string,
+) error {
+	// Create a context with the timeout to enforce it during cache sync
+	startTime := time.Now()
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// Wait for the etcd informer to sync before checking condition
+	// This ensures operatorClient.GetStaticPodOperatorState() has data to work with
+	klog.V(2).Infof("waiting for etcd informer to sync before checking %s...", conditionName)
+	if !cache.WaitForCacheSync(timeoutCtx.Done(), etcdInformer.Informer().HasSynced) {
+		if timeoutCtx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("timed out waiting for etcd informer to sync for %q", conditionName)
+		}
+		return fmt.Errorf("failed to sync etcd informer for %q: %v", conditionName, ctx.Err())
+	}
+	klog.V(2).Infof("etcd informer synced, checking for %s", conditionName)
+
+	// Compute remaining time for polling after cache sync consumed some of the timeout
+	elapsed := time.Since(startTime)
+	remainingTimeout := timeout - elapsed
+	if remainingTimeout <= 0 {
+		return fmt.Errorf("timeout exhausted during cache sync for %q", conditionName)
+	}
+
+	// Poll until the condition is met using the remaining timeout
+	return wait.PollUntilContextTimeout(timeoutCtx, pollInterval, remainingTimeout, true, func(ctx context.Context) (bool, error) {
+		conditionMet, err := conditionCheck(ctx, operatorClient)
+		if err != nil {
+			klog.Warningf("error checking %s, will retry: %v", conditionName, err)
+			return false, nil
+		}
+		if conditionMet {
+			klog.V(2).Infof("%s condition met", conditionName)
+			return true, nil
+		}
+		klog.V(4).Infof("%s condition not yet met, waiting...", conditionName)
+		return false, nil
+	})
 }

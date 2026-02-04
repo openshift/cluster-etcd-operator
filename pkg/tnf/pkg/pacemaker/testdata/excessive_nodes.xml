@@ -1,0 +1,12 @@
+<pacemaker-result api-version="2.38">
+  <summary>
+    <cluster_options maintenance-mode="false"/>
+  </summary>
+  <nodes>
+    <node name="master-0" id="1" online="true" type="member"/>
+    <node name="master-1" id="2" online="true" type="member"/>
+    <node name="master-2" id="3" online="true" type="member"/>
+  </nodes>
+  <resources/>
+  <node_attributes/>
+</pacemaker-result>

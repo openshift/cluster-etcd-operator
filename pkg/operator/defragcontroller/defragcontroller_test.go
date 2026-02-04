@@ -32,6 +32,26 @@ import (
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 )
 
+// waitForMembersWithClientURLs waits until all etcd members have their ClientURLs populated.
+// This is necessary because members publish their ClientURLs asynchronously after joining the cluster.
+func waitForMembersWithClientURLs(t *testing.T, testServer *integration.Cluster) []*etcdserverpb.Member {
+	var etcdMembers []*etcdserverpb.Member
+	require.Eventually(t, func() bool {
+		memberListResp, err := testServer.Client(0).MemberList(context.TODO())
+		if err != nil {
+			return false
+		}
+		for _, member := range memberListResp.Members {
+			if len(member.ClientURLs) == 0 {
+				return false
+			}
+		}
+		etcdMembers = memberListResp.Members
+		return true
+	}, 10*time.Second, 100*time.Millisecond, "timed out waiting for all members to have ClientURLs")
+	return etcdMembers
+}
+
 func TestNewDefragController(t *testing.T) {
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 		&operatorv1.StaticPodOperatorSpec{
@@ -172,10 +192,8 @@ func TestNewDefragController(t *testing.T) {
 			testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: scenario.clusterSize})
 			defer testServer.Terminate(t)
 
-			// populate MemberList
-			memberListResp, err := testServer.Client(0).MemberList(context.TODO())
-			require.NoError(t, err)
-			etcdMembers := memberListResp.Members
+			// Wait for all members to have ClientURLs populated (they publish asynchronously)
+			etcdMembers := waitForMembersWithClientURLs(t, testServer)
 
 			// populate Status
 			var status []*clientv3.StatusResponse
@@ -193,7 +211,6 @@ func TestNewDefragController(t *testing.T) {
 				etcdcli.WithFakeStatus(status),
 			)
 			eventRecorder := events.NewInMemoryRecorder(t.Name(), clock.RealClock{})
-			require.NoError(t, err)
 			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 			for _, obj := range scenario.objects {
 				if err := indexer.Add(obj); err != nil {
@@ -211,7 +228,7 @@ func TestNewDefragController(t *testing.T) {
 				defragWaitDuration: 1 * time.Second,
 			}
 
-			err = controller.sync(context.TODO(), factory.NewSyncContext("defrag-controller", eventRecorder))
+			err := controller.sync(context.TODO(), factory.NewSyncContext("defrag-controller", eventRecorder))
 			if err != nil && !scenario.wantErr {
 				t.Fatalf("unexepected error %v", err)
 			}
@@ -326,10 +343,8 @@ func TestNewDefragControllerMultiSyncs(t *testing.T) {
 			testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: scenario.clusterSize})
 			defer testServer.Terminate(t)
 
-			// populate MemberList
-			memberListResp, err := testServer.Client(0).MemberList(context.TODO())
-			require.NoError(t, err)
-			etcdMembers := memberListResp.Members
+			// Wait for all members to have ClientURLs populated (they publish asynchronously)
+			etcdMembers := waitForMembersWithClientURLs(t, testServer)
 
 			// populate Status
 			var status []*clientv3.StatusResponse
@@ -352,7 +367,6 @@ func TestNewDefragControllerMultiSyncs(t *testing.T) {
 
 			fakeEtcdClient, _ := etcdcli.NewFakeEtcdClient(etcdMembers, fakeOpts...)
 			eventRecorder := events.NewInMemoryRecorder(t.Name(), clock.RealClock{})
-			require.NoError(t, err)
 			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 			for _, obj := range scenario.objects {
 				if err := indexer.Add(obj); err != nil {
@@ -372,7 +386,7 @@ func TestNewDefragControllerMultiSyncs(t *testing.T) {
 
 			numSyncErr := 0
 			for i := 0; i < scenario.syncLoops; i++ {
-				err = controller.sync(context.TODO(), factory.NewSyncContext("defrag-controller", eventRecorder))
+				err := controller.sync(context.TODO(), factory.NewSyncContext("defrag-controller", eventRecorder))
 				if err != nil {
 					numSyncErr++
 					fmt.Printf("error on sync: %v\n", err)

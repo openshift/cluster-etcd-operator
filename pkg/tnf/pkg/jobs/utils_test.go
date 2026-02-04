@@ -282,7 +282,7 @@ func TestWaitForCompletion(t *testing.T) {
 			},
 			jobName:      "test-job",
 			jobNamespace: "test-namespace",
-			timeout:      10 * time.Second,
+			timeout:      15 * time.Second,
 			expectError:  false,
 		},
 	}

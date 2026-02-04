@@ -33,6 +33,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/kubernetes/scheme"
 	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/clock"
 
@@ -258,6 +259,7 @@ func getArgs(t *testing.T, dualReplicaControlPlaneEnabled bool) args {
 		ctx:     context.Background(),
 		controllerContext: &controllercmd.ControllerContext{
 			EventRecorder: eventRecorder,
+			KubeConfig:    &rest.Config{Host: "https://localhost:6443"},
 		},
 		infrastructureInformer:     configInformers.Config().V1().Infrastructures(),
 		operatorClient:             fakeOperatorClient,

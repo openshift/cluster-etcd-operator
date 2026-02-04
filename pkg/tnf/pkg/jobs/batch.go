@@ -39,6 +39,14 @@ func ReadJobV1OrDie(objBytes []byte) *batchv1.Job {
 	return requiredObj.(*batchv1.Job)
 }
 
+func ReadCronJobV1OrDie(objBytes []byte) *batchv1.CronJob {
+	requiredObj, err := runtime.Decode(batchCodecs.UniversalDecoder(batchv1.SchemeGroupVersion), objBytes)
+	if err != nil {
+		panic(err)
+	}
+	return requiredObj.(*batchv1.CronJob)
+}
+
 // ApplyJob ensures the form of the specified job is present in the API. If it
 // does not exist, it will be created. If it does exist, the existing job will be stopped,
 // and a new Job will be created.
