@@ -1355,6 +1355,7 @@ spec:
     - mountPath: /etc/kubernetes/static-pod-certs
       name: cert-dir
   hostNetwork: true
+  priority: 2000001000
   priorityClassName: system-node-critical
   tolerations:
   - operator: "Exists"
