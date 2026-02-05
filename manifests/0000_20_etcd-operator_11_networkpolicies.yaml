@@ -115,14 +115,9 @@ spec:
 # - Perform backup and restore operations
 #
 # etcd pods run with hostNetwork: true, which means they bypass
-# NetworkPolicy entirely. Since the operator needs to connect to etcd on the
-# host network, we must allow egress to the etcd client port (2379),
-# metrics ports (9978, 9979), and readyz health check port (9980) without destination restrictions.
-#
-# Note: We allow egress on these specific ports to any destination because:
-# 1. etcd runs on the host network and is accessed via node IPs
-# 2. NetworkPolicy cannot select host-networked pods
-# 3. The operator discovers etcd endpoints dynamically via the API server
+# NetworkPolicy entirely. We restrict egress to the openshift-etcd namespace
+# on specific ports for defense in depth, even though etcd itself runs on
+# the host network and is accessed via node IPs.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -136,7 +131,11 @@ spec:
     matchLabels:
       app: etcd-operator
   egress:
-  - ports:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: openshift-etcd
+    ports:
     - protocol: TCP
       port: 2379
     - protocol: TCP
