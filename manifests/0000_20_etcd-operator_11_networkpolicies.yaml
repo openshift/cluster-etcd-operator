@@ -99,10 +99,10 @@ spec:
 # - Check etcd health and status
 # - Perform backup and restore operations
 #
-# IMPORTANT: etcd pods run with hostNetwork: true, which means they bypass
+# etcd pods run with hostNetwork: true, which means they bypass
 # NetworkPolicy entirely. Since the operator needs to connect to etcd on the
-# host network, we must allow egress to the etcd client port (2379) and
-# metrics ports (9978, 9979) without destination restrictions.
+# host network, we must allow egress to the etcd client port (2379),
+# metrics ports (9978, 9979), and readyz health check port (9980) without destination restrictions.
 #
 # Note: We allow egress on these specific ports to any destination because:
 # 1. etcd runs on the host network and is accessed via node IPs
@@ -128,6 +128,8 @@ spec:
       port: 9978
     - protocol: TCP
       port: 9979
+    - protocol: TCP
+      port: 9980
   policyTypes:
   - Egress
 ---
