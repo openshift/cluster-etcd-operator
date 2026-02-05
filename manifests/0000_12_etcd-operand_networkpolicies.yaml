@@ -47,6 +47,7 @@ spec:
 ---
 # Allow installer and pruner pods to access the API server
 # These pods manage etcd static pod manifests and need API access.
+# We allow all egress because the API server IP address and port can vary.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -64,9 +65,7 @@ spec:
       - installer
       - pruner
   egress:
-  - ports:
-    - protocol: TCP
-      port: 6443
+  - {}
   policyTypes:
   - Egress
 ---
