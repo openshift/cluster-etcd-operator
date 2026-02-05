@@ -40,9 +40,6 @@ spec:
     - namespaceSelector:
         matchLabels:
           kubernetes.io/metadata.name: openshift-dns
-      podSelector:
-        matchLabels:
-          dns.operator.openshift.io/daemonset-dns: default
     ports:
     - protocol: TCP
       port: 5353
@@ -98,11 +95,7 @@ spec:
     matchLabels:
       app: etcd-operator
   ingress:
-  - from:
-    - namespaceSelector:
-        matchLabels:
-          policy-group.network.openshift.io/host-network: ""
-    ports:
+  - ports:
     - protocol: TCP
       port: 8443
   policyTypes:
