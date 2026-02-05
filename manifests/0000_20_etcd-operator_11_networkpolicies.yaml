@@ -62,9 +62,8 @@ spec:
 # - Update cluster operator status
 # - Watch nodes and other cluster resources
 #
-# Note: Only the operator pods need API access, not all pods in the namespace.
-# However, since this is a core component that controls the entire namespace,
-# we use podSelector: {} for simplicity.
+# Note: We allow all egress because the API server IP address and port can vary
+# depending on cluster configuration (external load balancer, internal service, etc.).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -76,9 +75,7 @@ metadata:
 spec:
   podSelector: {}
   egress:
-  - ports:
-    - protocol: TCP
-      port: 6443
+  - {}
   policyTypes:
   - Egress
 ---
