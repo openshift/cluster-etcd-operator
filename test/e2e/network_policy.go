@@ -26,7 +26,7 @@ const (
 )
 
 var _ = g.Describe("[sig-etcd] cluster-etcd-operator", func() {
-	g.It("[Operator][NetworkPolicy][Serial] should ensure etcd NetworkPolicies are defined", func() {
+	g.It("[Operator][NetworkPolicy] should ensure etcd NetworkPolicies are defined", func() {
 		ctx := context.Background()
 		kubeConfig, err := framework.NewClientConfigForTest("")
 		o.Expect(err).NotTo(o.HaveOccurred())
@@ -40,7 +40,7 @@ var _ = g.Describe("[sig-etcd] cluster-etcd-operator", func() {
 		validateEtcdNamespacePolicies(ctx, kubeClient)
 	})
 
-	g.It("[Operator][NetworkPolicy][Serial] should restore etcd NetworkPolicies after delete or mutation", func() {
+	g.It("[Operator][NetworkPolicy] should restore etcd NetworkPolicies after delete or mutation", func() {
 		ctx := context.Background()
 		kubeConfig, err := framework.NewClientConfigForTest("")
 		o.Expect(err).NotTo(o.HaveOccurred())
@@ -62,7 +62,7 @@ var _ = g.Describe("[sig-etcd] cluster-etcd-operator", func() {
 		mutateAndRestoreNetworkPolicy(ctx, kubeClient, etcdOperatorNamespace, "allow-to-metrics")
 	})
 
-	g.It("[Operator][NetworkPolicy][Serial] should enforce etcd-operator egress to apiserver", func() {
+	g.It("[Operator][NetworkPolicy] should enforce etcd-operator egress to apiserver", func() {
 		ctx := context.Background()
 		kubeConfig, err := framework.NewClientConfigForTest("")
 		o.Expect(err).NotTo(o.HaveOccurred())
@@ -79,7 +79,7 @@ var _ = g.Describe("[sig-etcd] cluster-etcd-operator", func() {
 		expectConnectivity(ctx, kubeClient, etcdOperatorNamespace, clientLabels, host, 12345, false)
 	})
 
-	g.It("[Operator][NetworkPolicy][Serial] should enforce etcd-operator egress to DNS", func() {
+	g.It("[Operator][NetworkPolicy] should enforce etcd-operator egress to DNS", func() {
 		ctx := context.Background()
 		kubeConfig, err := framework.NewClientConfigForTest("")
 		o.Expect(err).NotTo(o.HaveOccurred())
@@ -99,7 +99,7 @@ var _ = g.Describe("[sig-etcd] cluster-etcd-operator", func() {
 		expectConnectivity(ctx, kubeClient, etcdOperatorNamespace, clientLabels, dnsHost, 12345, false)
 	})
 
-	g.It("[Operator][NetworkPolicy][Serial] should enforce etcd-operator egress to etcd", func() {
+	g.It("[Operator][NetworkPolicy] should enforce etcd-operator egress to etcd", func() {
 		ctx := context.Background()
 		kubeConfig, err := framework.NewClientConfigForTest("")
 		o.Expect(err).NotTo(o.HaveOccurred())
@@ -122,7 +122,7 @@ var _ = g.Describe("[sig-etcd] cluster-etcd-operator", func() {
 		expectConnectivity(ctx, kubeClient, etcdOperatorNamespace, clientLabels, etcdHost, 12345, false)
 	})
 
-	g.It("[Operator][NetworkPolicy][Serial] should enforce etcd-operator egress to monitoring", func() {
+	g.It("[Operator][NetworkPolicy] should enforce etcd-operator egress to monitoring", func() {
 		ctx := context.Background()
 		kubeConfig, err := framework.NewClientConfigForTest("")
 		o.Expect(err).NotTo(o.HaveOccurred())
@@ -139,7 +139,7 @@ var _ = g.Describe("[sig-etcd] cluster-etcd-operator", func() {
 		expectConnectivity(ctx, kubeClient, etcdOperatorNamespace, clientLabels, monitoringHost, 12345, false)
 	})
 
-	g.It("[Operator][NetworkPolicy][Serial] should enforce etcd-operator denied egress to unauthorized destinations", func() {
+	g.It("[Operator][NetworkPolicy] should enforce etcd-operator denied egress to unauthorized destinations", func() {
 		ctx := context.Background()
 		kubeConfig, err := framework.NewClientConfigForTest("")
 		o.Expect(err).NotTo(o.HaveOccurred())
