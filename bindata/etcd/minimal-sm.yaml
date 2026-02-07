@@ -36,3 +36,4 @@ spec:
   selector:
     matchLabels:
       k8s-app: etcd
+  serviceDiscoveryRole: EndpointSlice

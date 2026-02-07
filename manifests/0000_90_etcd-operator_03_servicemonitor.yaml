@@ -18,3 +18,4 @@ spec:
   selector:
     matchLabels:
       app: etcd-operator
+  serviceDiscoveryRole: EndpointSlice
