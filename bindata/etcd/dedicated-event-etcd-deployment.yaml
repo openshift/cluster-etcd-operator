@@ -1,0 +1,158 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dedicated-event-etcd
+  namespace: openshift-etcd
+  labels:
+    app: dedicated-event-etcd
+    k8s-app: dedicated-event-etcd
+spec:
+  strategy:
+    type: "Recreate"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dedicated-event-etcd
+      k8s-app: dedicated-event-etcd
+  template:
+    metadata:
+      name: dedicated-event-etcd
+      annotations:
+        kubectl.kubernetes.io/default-container: etcdctl
+      labels:
+        app: dedicated-event-etcd
+        k8s-app: dedicated-event-etcd
+    spec:
+      hostNetwork: true
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ''
+        kubernetes.io/hostname: {{.NodeName}}
+      tolerations:
+        - operator: "Exists"
+      containers:
+        - name: etcdctl
+          image: {{.Image}}
+          imagePullPolicy: IfNotPresent
+          terminationMessagePolicy: FallbackToLogsOnError
+          command:
+            - "/bin/bash"
+            - "-c"
+            - "trap TERM INT; sleep infinity & wait"
+          volumeMounts:
+            - mountPath: /var/lib/etcd/
+              name: data-dir
+            - mountPath: /etcd-all-bundles
+              name: etcd-ca-bundle
+            - mountPath: /etcd-all-certs
+              name: etcd-all-certs
+          env:
+            # export ETCDCTL_ENDPOINTS="https://${MY_POD_IP}:20379"
+            # export ETCDCTL_CACERT="/etcd-all-bundles/ca-bundle.crt"
+            # export ETCDCTL_CERT="/etcd-all-certs/etcd-peer-${MY_NODE_NAME}.crt"
+            # export ETCDCTL_KEY="/etcd-all-certs/etcd-peer-${MY_NODE_NAME}.key"
+
+            - name: MY_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: MY_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: ETCD_DATA_DIR
+              value: "/var/lib/etcd"
+            - name: ETCDCTL_ENDPOINTS
+              value: "https://${MY_POD_IP}:20379"
+            - name: ETCDCTL_CACERT
+              value: "/etcd-all-bundles/ca-bundle.crt"
+            - name: ETCDCTL_CERT
+              value: "/etcd-all-certs/etcd-peer-${MY_NODE_NAME}.crt"
+            - name: ETCDCTL_KEY
+              value: "/etcd-all-certs/etcd-peer-${MY_NODE_NAME}.key"
+        - name: etcd
+          image: {{.Image}}
+          imagePullPolicy: IfNotPresent
+          terminationMessagePolicy: FallbackToLogsOnError
+          env:
+            - name: MY_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: MY_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          command:
+            - /bin/sh
+            - -c
+            - |
+              #!/bin/sh
+              set -euo pipefail
+              set -x
+              
+              export ETCD_NAME=events-etcd
+              
+              echo "----------------"
+              env | grep ETCD | grep -v NODE
+              echo "----------------"
+              echo "$MY_NODE_NAME"
+              echo "$MY_POD_IP"
+              echo "----------------"
+              ls -l /etcd-all-certs
+              echo "----------------"
+              ls -l /etcd-all-bundles
+              echo "----------------"
+              
+              etcd \
+                --data-dir=/var/lib/etcd \
+                --logger=zap \
+                --log-level=WARN \
+                --snapshot-count=10000 \
+                --quota-backend-bytes 8589934592 \
+                --cert-file="/etcd-all-certs/etcd-serving-${MY_NODE_NAME}.crt" \
+                --key-file="/etcd-all-certs/etcd-serving-${MY_NODE_NAME}.key" \
+                --trusted-ca-file="/etcd-all-bundles/ca-bundle.crt" \
+                --client-cert-auth=true \
+                --initial-cluster="${ETCD_NAME}=https://${MY_POD_IP}:20380" \
+                --initial-advertise-peer-urls="https://${MY_POD_IP}:20380" \
+                --listen-peer-urls="https://${MY_POD_IP}:20380" \
+                --peer-cert-file="/etcd-all-certs/etcd-peer-${MY_NODE_NAME}.crt"\
+                --peer-key-file="/etcd-all-certs/etcd-peer-${MY_NODE_NAME}.key" \
+                --peer-trusted-ca-file="/etcd-all-bundles/ca-bundle.crt" \
+                --peer-client-cert-auth=true \
+                --advertise-client-urls=https://${MY_POD_IP}:20379 \
+                --listen-client-urls=https://0.0.0.0:20379 
+
+          ports:
+            - containerPort: 20379
+              name: events-etcd
+              protocol: TCP
+            - containerPort: 20380
+              # shortened to fit into 15 chars
+              name: events-etcdpeer
+              protocol: TCP
+          resources:
+            limits:
+              memory: 8Gi
+          securityContext:
+            privileged: true
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - mountPath: /var/lib/etcd/
+              name: data-dir
+            - mountPath: /etcd-all-bundles
+              name: etcd-ca-bundle
+            - mountPath: /etcd-all-certs
+              name: etcd-all-certs
+      volumes:
+        - configMap:
+            name: etcd-ca-bundle
+          name: etcd-ca-bundle
+        - secret:
+            secretName: etcd-all-certs
+          name: etcd-all-certs
+        - name: data-dir
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi
+

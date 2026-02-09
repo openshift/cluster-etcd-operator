@@ -19,6 +19,7 @@ import (
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	operatorversionedclientv1alpha1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/dedicatedetcdcontroller"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
@@ -494,6 +495,19 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
+	dedicatedEtcdController := dedicatedetcdcontroller.NewDedicatedEtcdController(
+		AlivenessChecker,
+		os.Getenv("IMAGE"),
+		operatorClient,
+		kubeClient,
+		kubeInformersForNamespaces,
+		controlPlaneNodeLister,
+		controlPlaneNodeLabelSelector,
+		operatorConfigClient.OperatorV1(),
+		networkInformer,
+		controllerContext.EventRecorder,
+	)
+
 	enabledAutoBackupFeature, err := backuphelpers.AutoBackupFeatureGateEnabled(featureGateAccessor)
 	if err != nil {
 		return fmt.Errorf("could not determine AutoBackupFeatureGateEnabled, aborting controller start: %w", err)
@@ -657,6 +671,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	go unsupportedConfigOverridesController.Run(ctx, 1)
 	go scriptController.Run(ctx, 1)
 	go defragController.Run(ctx, 1)
+	go dedicatedEtcdController.Run(ctx, 1)
 
 	go envVarController.Run(1, ctx.Done())
 	go staticPodControllers.Start(ctx)
