@@ -131,7 +131,7 @@ NEXT STEPS: Monitor the rollout from a system with 'oc' access:
 
     Then monitor the rollout again.
 
-3. IF revision.json is still not being re-created on this node after the patch, manually restart the static pods:
+3. IF /var/lib/etcd/revision.json is still not being re-created on this node after the patch, manually restart the static pods:
 
     On the current node:
     $ ssh core@<node_ip> 'sudo mv /etc/kubernetes/manifests/etcd-pod.yaml /tmp/ && sleep 30 && sudo mv /tmp/etcd-pod.yaml /etc/kubernetes/manifests/'

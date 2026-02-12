@@ -48,6 +48,13 @@ function get_etcd_advertise_ip() {
   echo "$IP"
 }
 
+function get_peer_node_name() {
+  NODENAME_UNDERSCORE=$(echo "${NODENAME}" | tr '-' '_')
+
+  # Find all NODE_*_ETCD_NAME environment variables, exclude current node, get the value
+  env | grep -E '^NODE_.*_ETCD_NAME' | grep -v "${NODENAME_UNDERSCORE}" | cut -d= -f2
+}
+
 function wait_for_podman_etcd_start() {
   local start=$SECONDS
   local timeout=$((5*60))  # 5 minutes at most
@@ -65,6 +72,23 @@ function wait_for_podman_etcd_start() {
 
   echo "timed out waiting for etcd resources to start (timeout: $timeout seconds)"
   return 1
+}
+
+function cleanup_podman_etcd_attributes() {
+  # Ensure that none of the podman-etcd's attributes is set (e.g. force_new_cluster, standalone_node, learner_node)
+  local peer_node_name
+
+  crm_attribute --delete --name "standalone_node" || true
+  crm_attribute --delete --name "learner_node" || true
+  crm_attribute --delete --name "force_new_cluster" --lifetime reboot --node "${NODENAME}" || true
+
+  peer_node_name=$(get_peer_node_name)
+  if [ "$(echo "$peer_node_name" | wc -w)" -eq 1 ]; then
+    crm_attribute --delete --name "force_new_cluster" --lifetime reboot --node "${peer_node_name}" || true
+  else
+    echo "Warning: could not find peer node name. If restore fails, manually run on the peer node, and try again:" >&2
+    echo "  crm_attribute --delete --name force_new_cluster --lifetime reboot --node \"\$(hostname)\"" >&2
+  fi
 }
 
 function setup_pacemaker_restore() {
@@ -99,6 +123,13 @@ function setup_pacemaker_restore() {
     echo "could not wait for podman-etcd to stop"
     exit 1
   fi
+
+  # Clean up any stale CIB attributes
+  echo "Clean up any stale CIB attributes"
+  cleanup_podman_etcd_attributes
+
+  echo "Clean up any resource agent stale error"
+  pcs resource cleanup etcd || true
 
   # Move podman-etcd configuration files to BACKUP_DIR, to allow snapshot restore (ignore missing files).
   for file in "${PODMAN_ETCD_CONFIGURATION_FILES[@]}"; do
