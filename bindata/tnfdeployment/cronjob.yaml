@@ -57,6 +57,7 @@ spec:
           # access), enableServiceLinks=true, shareProcessNamespace=false (required since
           # hostPID=true). No drift occurs from these omissions.
           serviceAccountName: tnf-setup-manager
+          priorityClassName: system-node-critical
           nodeSelector:
             node-role.kubernetes.io/master: ""
           affinity:
