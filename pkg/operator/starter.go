@@ -294,38 +294,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 	)
 
-	// The guardRolloutPreCheck function always waits until the etcd pods have rolled out to the new version
-	// i.e clusteroperator version is the desired version, so that the PDB doesn't block the rollout
-	// Also prevents guard pods from being created in SNO topology
 	guardRolloutPreCheck := func() (bool, bool, error) {
-		clusterOperatorInformer := configInformers.Config().V1().ClusterOperators().Informer()
-		clusterOperatorLister := configInformers.Config().V1().ClusterOperators().Lister()
-		expectedOperatorVersion := status.VersionForOperatorFromEnv()
-
-		if !clusterOperatorInformer.HasSynced() {
-			// Skip and don't error until synced
-			return false, false, nil
-		}
-
-		etcdClusterOperator, err := clusterOperatorLister.Get("etcd")
-		if err != nil {
-			return false, false, fmt.Errorf("failed to get clusteroperator/etcd: %w", err)
-		}
-		operatorVersion := ""
-		for _, version := range etcdClusterOperator.Status.Versions {
-			if version.Name == "operator" {
-				operatorVersion = version.Version
-			}
-		}
-		if len(operatorVersion) == 0 {
-			return false, true, nil
-		}
-
-		if operatorVersion != expectedOperatorVersion {
-			klog.V(2).Infof("clusterOperator/etcd's operator version (%s) and expected operator version (%s) do not match. Will not create guard pods until operator reaches desired version.", operatorVersion, expectedOperatorVersion)
-			return false, true, nil
-		}
-
 		// create only when not a single node topology
 		isSNO, precheckSucceeded, err := common.NewIsSingleNodePlatformFn(configInformers.Config().V1().Infrastructures())()
 		return !isSNO, precheckSucceeded, err
