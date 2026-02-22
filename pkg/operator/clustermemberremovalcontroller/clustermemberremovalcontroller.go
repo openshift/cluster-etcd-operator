@@ -123,6 +123,45 @@ func (c *clusterMemberRemovalController) sync(ctx context.Context, syncCtx facto
 		return nil
 	}
 
+	// Removing multiple members in the middle of a revision rollout can cause API unavailability
+	// when simultaneously deleting multiple machines with the controlplanemachineset "OnDelete" strategy,
+	// i.e we have multiple machines pending deletion and multiple new replacements added
+	//
+	// This controller currently has conditions to allow scaling down unhealthy members whose machines
+	// are pending deletion. However a revision rollout can temporarily make an etcd member seem unhealthy while
+	// the etcd pod is reinstalled to the latest revision.
+	// This is different from when the member is indefinitely unhealthy when the revision is stable.
+	//
+	// Additionally the EtcdEndpointsController pauses while a revision rollout is in progress
+	// So initially if the etcd-endpoints configmap is updated from 3->4 when the first replacement machine
+	// is added to the membership, a revision rollout will start and the configmap won't update in this period.
+	// But the ClusterMemberRemovalController will still delete a seemingly unhealthy machine during rollout
+	// The API servers on the old revision will neither see the new replacement etcd endpoint, and will also
+	// be using a removed member's endpoint.
+	//
+	// Moreover the EtcdEndpointsController uses the live etcd membership list to make scale down considerations for etcd quorum so the etcd-endpoints configmap always lags behind it.
+	//
+	// So the EtcdEndpointsController skips until the revision is stable so we remove members one at a time and unhealthy members are truly unhealthy
+	revisionStable, err := ceohelpers.IsRevisionStable(c.operatorClient)
+	if err != nil {
+		return fmt.Errorf("couldn't determine stability of revisions: %w", err)
+	}
+	if !revisionStable {
+		klog.V(2).Infof("skipping due to revision in progress")
+		return nil
+	}
+
+	// Ensure the live etcd membership matches the etcd-endpoints configmap.
+	// This prevents removing multiple members in quick succession before the configmap is updated
+	// and propagated through a revision rollout.
+	etcdEndpointsUpdated, err := c.isEtcdEndpointsUpdated(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to check if etcd endpoints are updated: %w", err)
+	}
+	if !etcdEndpointsUpdated {
+		return nil
+	}
+
 	// only attempt to scale down if the machine API is functional
 	if isFunctional, err := c.machineAPIChecker.IsFunctional(); err != nil {
 		return err
@@ -523,4 +562,29 @@ func machineFailureDomainCountByIndex(machines []*machinev1beta1.Machine) map[in
 		count[index]++
 	}
 	return count
+}
+
+// isEtcdEndpointsUpdated checks whether the live etcd membership matches the etcd-endpoints configmap.
+// This prevents removing multiple members in quick succession before the configmap is updated
+// and propagated through a revision rollout.
+func (c *clusterMemberRemovalController) isEtcdEndpointsUpdated(ctx context.Context) (bool, error) {
+	liveVotingMemberIPs, err := ceohelpers.VotingMemberIPListSet(ctx, c.etcdClient)
+	if err != nil {
+		return false, fmt.Errorf("failed to get live voting member IPs: %w", err)
+	}
+
+	etcdEndpointsConfigMap, err := c.configMapListerForTargetNamespace.Get("etcd-endpoints")
+	if err != nil {
+		return false, fmt.Errorf("failed to get etcd-endpoints configmap: %w", err)
+	}
+
+	configMapMemberIPs := ceohelpers.MemberIPSetFromConfigMap(etcdEndpointsConfigMap)
+
+	if !liveVotingMemberIPs.Equal(configMapMemberIPs) {
+		klog.V(2).Infof("skipping member removal: live etcd membership differs from etcd-endpoints configmap. Live members: %v, ConfigMap members: %v",
+			liveVotingMemberIPs.List(), configMapMemberIPs.List())
+		return false, nil
+	}
+
+	return true, nil
 }

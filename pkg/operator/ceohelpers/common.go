@@ -202,6 +202,16 @@ func VotingMemberIPListSet(ctx context.Context, cli etcdcli.EtcdClient) (sets.St
 	return currentVotingMemberIPListSet, nil
 }
 
+// MemberIPSetFromConfigMap extracts member IP addresses from the etcd-endpoints configmap
+// into a set for comparison with live etcd membership
+func MemberIPSetFromConfigMap(cm *corev1.ConfigMap) sets.String {
+	memberIPs := sets.NewString()
+	for _, ip := range cm.Data {
+		memberIPs.Insert(ip)
+	}
+	return memberIPs
+}
+
 // RevisionRolloutInProgress will return true if any node status reports its target revision is different from the current revision and the latest known revision.
 func RevisionRolloutInProgress(status operatorv1.StaticPodOperatorStatus) bool {
 	latestRevision := status.LatestAvailableRevision
