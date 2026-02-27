@@ -1,0 +1,133 @@
+# NetworkPolicy for etcd operand pods in the openshift-etcd namespace.
+#
+# The etcd static pods use hostNetwork: true and bypass NetworkPolicy entirely.
+# The guard, installer, and pruner pods run on the pod network and are subject to NetworkPolicy.
+---
+# Default-deny policy for the openshift-etcd namespace.
+# This policy selects all pods in the namespace and enables default-deny for both
+# ingress and egress by specifying policyTypes without any allow rules.
+#
+# NetworkPolicies are additive (use OR logic):
+# - This policy enables default-deny for all pods
+# - Subsequent policies add specific allow rules
+# - If any policy allows traffic, that traffic is permitted
+# - Policies cannot override or block traffic allowed by other policies
+#
+# Note: etcd static pods use hostNetwork: true and bypass all NetworkPolicy rules.
+# This policy only affects pods running on the pod network (guard, installer, pruner).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: openshift-etcd
+  annotations:
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+---
+# Documentation-only policy for etcd static pods (hostNetwork bypasses NetworkPolicy)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: etcd-host-network-documentation
+  namespace: openshift-etcd
+  annotations:
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+    description: "Documentation-only policy - etcd pods use hostNetwork and bypass NetworkPolicy"
+spec:
+  podSelector:
+    matchLabels:
+      app: etcd
+  policyTypes: []
+---
+# Allow installer and pruner pods to access the API server
+# These pods manage etcd static pod manifests and need API access.
+# We allow all egress because the API server IP address and port can vary.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-installer-pruner-to-apiserver
+  namespace: openshift-etcd
+  annotations:
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+spec:
+  podSelector:
+    matchExpressions:
+    - key: app
+      operator: In
+      values:
+      - installer
+      - pruner
+  egress:
+  - {}
+  policyTypes:
+  - Egress
+---
+# Allow guard pods to access etcd for health checks
+# Guard pods probe etcd health endpoints. Since etcd uses hostNetwork,
+# we allow egress to etcd's health check ports without destination restrictions.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-guard-to-etcd
+  namespace: openshift-etcd
+  annotations:
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+spec:
+  podSelector:
+    matchLabels:
+      app: guard
+  egress:
+  - ports:
+    - protocol: TCP
+      port: 2379
+    - protocol: TCP
+      port: 9980
+  policyTypes:
+  - Egress
+---
+# Allow guard, installer, and pruner pods to access DNS
+# These pods may need to resolve service names.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-operand-helpers-to-dns
+  namespace: openshift-etcd
+  annotations:
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+spec:
+  podSelector:
+    matchExpressions:
+    - key: app
+      operator: In
+      values:
+      - guard
+      - installer
+      - pruner
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: openshift-dns
+      podSelector:
+        matchLabels:
+          dns.operator.openshift.io/daemonset-dns: default
+    ports:
+    - protocol: TCP
+      port: 5353
+    - protocol: UDP
+      port: 5353
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+  policyTypes:
+  - Egress
