@@ -49,7 +49,7 @@ func TestRunTNFJobController(t *testing.T) {
 			nodeName:              stringPtr("master-0"),
 			existingControllers:   make(map[string]bool),
 			expectControllerRun:   true,
-			expectedControllerKey: "tnf-auth-job-master-0",
+			expectedControllerKey: tools.JobTypeAuth.GetJobName(stringPtr("master-0")),
 		},
 		{
 			name:     "Skip starting controller when already running",
@@ -76,10 +76,10 @@ func TestRunTNFJobController(t *testing.T) {
 			jobType:  tools.JobTypeAuth,
 			nodeName: stringPtr("master-1"),
 			existingControllers: map[string]bool{
-				"tnf-auth-job-master-0": true,
+				tools.JobTypeAuth.GetJobName(stringPtr("master-0")): true,
 			},
 			expectControllerRun:   true,
-			expectedControllerKey: "tnf-auth-job-master-1",
+			expectedControllerKey: tools.JobTypeAuth.GetJobName(stringPtr("master-1")),
 		},
 	}
 
@@ -259,9 +259,10 @@ func TestRestartJobOrRunController(t *testing.T) {
 			jobType:  tools.JobTypeAfterSetup,
 			nodeName: stringPtr("master-1"),
 			setupClient: func() *fake.Clientset {
+				jobName := tools.JobTypeAfterSetup.GetJobName(stringPtr("master-1"))
 				job := &batchv1.Job{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "tnf-after-setup-job-master-1",
+						Name:      jobName,
 						Namespace: operatorclient.TargetNamespace,
 						UID:       "test-uid",
 					},
@@ -278,7 +279,7 @@ func TestRestartJobOrRunController(t *testing.T) {
 
 				// Make Get succeed initially, then fail on delete
 				client.PrependReactor("delete", "jobs", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
-					return true, nil, apierrors.NewForbidden(batchv1.Resource("jobs"), "tnf-after-setup-job-master-1", nil)
+					return true, nil, apierrors.NewForbidden(batchv1.Resource("jobs"), jobName, nil)
 				})
 
 				return client
