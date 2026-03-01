@@ -16,6 +16,11 @@ func isUnsupportedUnsafeEtcd(spec *operatorv1.StaticPodOperatorSpec) (bool, erro
 	return tryGetUnsupportedValue(spec, "useUnsupportedUnsafeNonHANonProductionUnstableEtcd")
 }
 
+// IsDedicatedEtcdForEventsEnabled returns true if useUnsupportedDedicatedEtcdForEvents key is set to any parsable value
+func IsDedicatedEtcdForEventsEnabled(spec *operatorv1.StaticPodOperatorSpec) (bool, error) {
+	return tryGetUnsupportedValue(spec, "useUnsupportedDedicatedEtcdForEvents")
+}
+
 func tryGetUnsupportedValue(spec *operatorv1.StaticPodOperatorSpec, key string) (bool, error) {
 	unsupportedConfig := map[string]interface{}{}
 	if spec.UnsupportedConfigOverrides.Raw == nil {
