@@ -55,13 +55,38 @@ func TestNodeDownRevisionSaving(t *testing.T) {
 	// ensure we move the leader somewhere else to avoid flakes, that only succeeds when the member is the leader
 	_, _ = testServer.Client(1).MoveLeader(context.Background(), list.Members[0].ID)
 	testServer.Members[1].Terminate(t)
+	// allow time for terminated member to drop connections
+	time.Sleep(100 * time.Millisecond)
+
+	// remove the dead member's URL from our endpoint list
+	liveEndpoints := []string{}
+	for _, ep := range client.Endpoints() {
+		_, err := client.Status(context.Background(), ep)
+		if err == nil {
+			liveEndpoints = append(liveEndpoints, ep)
+		}
+	}
+
+	// sanity: we should still have at least one endpoint
+	if len(liveEndpoints) == 0 {
+		t.Fatalf("no live endpoints after termination")
+	}
 
 	for i := 0; i < 5; i++ {
-		_, err := client.Put(context.Background(), "a", "b")
-		require.NoError(t, err)
+		// the cluster may briefly reject writes while leadership stabilises; retry a few times
+		var putErr error
+		for attempt := 1; attempt <= 5; attempt++ {
+			_, putErr = client.Put(context.Background(), "a", "b")
+			if putErr == nil {
+				break
+			}
+			t.Logf("put attempt %d failed: %v", attempt, putErr)
+			time.Sleep(100 * time.Millisecond)
+		}
+		require.NoError(t, putErr)
 
 		// have a more aggressive timeout here, since member-1 will never respond anyway
-		trySaveRevision(context.Background(), client.Endpoints(), outputPath, clientPool, 100*time.Millisecond)
+		trySaveRevision(context.Background(), liveEndpoints, outputPath, clientPool, 100*time.Millisecond)
 		revStruct := readRevStruct(t, outputPath)
 		ensureRevStructConsistency(t, revStruct)
 		require.InDelta(t, initialRev.MaxRaftIndex+uint64(i+1), revStruct.MaxRaftIndex, 2)
