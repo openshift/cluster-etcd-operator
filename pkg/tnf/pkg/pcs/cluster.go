@@ -33,8 +33,9 @@ func ConfigureCluster(ctx context.Context, cfg config.ClusterConfig) (bool, erro
 		"/usr/sbin/pcs property set start-failure-is-fatal=false",
 		// Note: the kubelet service needs to be disabled when using systemd agent
 		// Done by after-setup jobs on both nodes
-		// Note: Setting `migration-threshold=5` to prevent endless restart loops caused by the infinite default. This provides a safe limit on retries.
-		"/usr/sbin/pcs resource create kubelet systemd:kubelet clone meta interleave=true migration-threshold=5",
+		// Note: Setting `migration-threshold=10` to prevent endless restart loops caused by the infinite default. This provides a safe limit on retries.
+		// Note: Adding a op start timeout of 180s to allow network to boot up before kubelet starts. This should prevent kubelet bootstrap failures.
+		"/usr/sbin/pcs resource create kubelet systemd:kubelet clone meta interleave=true migration-threshold=10 op start timeout=180s",
 		"/usr/sbin/pcs cluster enable --all",
 		"/usr/sbin/pcs cluster sync",
 		"/usr/sbin/pcs cluster reload corosync",
