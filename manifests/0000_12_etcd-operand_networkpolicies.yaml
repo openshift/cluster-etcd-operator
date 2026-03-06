@@ -38,6 +38,7 @@ spec:
       values:
       - installer
       - pruner
+      - cluster-backup-cronjob
   egress:
   - {}
   policyTypes:
@@ -86,6 +87,7 @@ spec:
       - guard
       - installer
       - pruner
+      - cluster-backup-cronjob
   egress:
   - to:
     - namespaceSelector:
