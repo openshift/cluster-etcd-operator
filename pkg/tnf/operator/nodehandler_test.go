@@ -35,6 +35,7 @@ func TestHandleNodes(t *testing.T) {
 	tests := []struct {
 		name                   string
 		nodes                  []*corev1.Node
+		transitionCompleted    bool // operator condition ExternalEtcdHasCompletedTransition (replaces fragile job-existence check)
 		existingJobs           []runtime.Object
 		mockStartControllers   func() error
 		mockUpdateSetup        func() error
@@ -88,12 +89,13 @@ func TestHandleNodes(t *testing.T) {
 			expectUpdateSetup:      false,
 		},
 		{
-			name: "2 ready nodes, no existing jobs - starts controllers only",
+			name: "2 ready nodes, transition not completed - starts controllers only",
 			nodes: []*corev1.Node{
 				createReadyNode("master-0"),
 				createReadyNode("master-1"),
 			},
-			existingJobs: []runtime.Object{},
+			transitionCompleted: false,
+			existingJobs:        []runtime.Object{},
 			mockStartControllers: func() error {
 				return nil
 			},
@@ -102,14 +104,13 @@ func TestHandleNodes(t *testing.T) {
 			expectUpdateSetup:      false,
 		},
 		{
-			name: "2 ready nodes, existing jobs - starts controllers and updates setup",
+			name: "2 ready nodes, transition completed - starts controllers and updates setup",
 			nodes: []*corev1.Node{
 				createReadyNode("master-0"),
 				createReadyNode("master-1"),
 			},
-			existingJobs: []runtime.Object{
-				createTNFJob("tnf-setup"),
-			},
+			transitionCompleted: true,
+			existingJobs:        []runtime.Object{},
 			mockStartControllers: func() error {
 				return nil
 			},
@@ -136,14 +137,13 @@ func TestHandleNodes(t *testing.T) {
 			errorContains:          "failed to start TNF job controllers",
 		},
 		{
-			name: "2 ready nodes, existing jobs - error updating setup",
+			name: "2 ready nodes, transition completed - error updating setup",
 			nodes: []*corev1.Node{
 				createReadyNode("master-0"),
 				createReadyNode("master-1"),
 			},
-			existingJobs: []runtime.Object{
-				createTNFJob("tnf-setup"),
-			},
+			transitionCompleted: true,
+			existingJobs:        []runtime.Object{},
 			mockStartControllers: func() error {
 				return nil
 			},
@@ -151,7 +151,7 @@ func TestHandleNodes(t *testing.T) {
 				return errors.New("failed to update")
 			},
 			expectError:            true,
-			expectStartControllers: true,
+			expectStartControllers: false, // updateSetup runs first and fails, so startControllers is never called
 			expectUpdateSetup:      true,
 			errorContains:          "failed to update pacemaker setup",
 		},
@@ -165,14 +165,18 @@ func TestHandleNodes(t *testing.T) {
 			// Create fake kubernetes client with jobs
 			fakeKubeClient := fake.NewSimpleClientset(tt.existingJobs...)
 
-			// Create fake operator client
+			// Create fake operator client (condition ExternalEtcdHasCompletedTransition drives updateSetup + skip-revision path)
+			statusConfigs := []func(*operatorv1.StaticPodOperatorStatus){
+				u.WithLatestRevision(1),
+				u.WithNodeStatusAtCurrentRevision(1),
+				u.WithNodeStatusAtCurrentRevision(1),
+			}
+			if tt.transitionCompleted {
+				statusConfigs = append(statusConfigs, u.WithOperatorCondition(ceohelpers.OperatorConditionExternalEtcdHasCompletedTransition, operatorv1.ConditionTrue))
+			}
 			fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 				&operatorv1.StaticPodOperatorSpec{},
-				u.StaticPodOperatorStatus(
-					u.WithLatestRevision(1),
-					u.WithNodeStatusAtCurrentRevision(1),
-					u.WithNodeStatusAtCurrentRevision(1),
-				),
+				u.StaticPodOperatorStatus(statusConfigs...),
 				nil,
 				nil,
 			)
@@ -240,8 +244,12 @@ func TestHandleNodes(t *testing.T) {
 					kubeClient kubernetes.Interface,
 					kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 					etcdInformer operatorv1informers.EtcdInformer,
+					externalEtcdTransitionCompleted bool,
 				) error {
 					startControllersCalled = true
+					if externalEtcdTransitionCompleted != tt.transitionCompleted {
+						t.Errorf("startTnfJobcontrollersFunc called with externalEtcdTransitionCompleted=%v, want %v (tt.transitionCompleted)", externalEtcdTransitionCompleted, tt.transitionCompleted)
+					}
 					return tt.mockStartControllers()
 				}
 			}
