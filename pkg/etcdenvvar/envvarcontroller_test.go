@@ -39,7 +39,6 @@ var (
 
 	defaultEnvResult = map[string]string{
 		"ALL_ETCD_ENDPOINTS":                  "https://192.168.2.0:2379,https://192.168.2.1:2379,https://192.168.2.2:2379",
-		"ETCDCTL_API":                         "3",
 		"ETCDCTL_CACERT":                      "/etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt",
 		"ETCDCTL_CERT":                        "/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.crt",
 		"ETCDCTL_ENDPOINTS":                   "https://192.168.2.0:2379,https://192.168.2.1:2379,https://192.168.2.2:2379",
