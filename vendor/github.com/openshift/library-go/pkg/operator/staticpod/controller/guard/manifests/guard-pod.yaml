@@ -9,6 +9,8 @@ metadata:
     app: guard
   ownerReferences: # Value set by operator
 spec:
+  serviceAccountName: # Value set by operator
+  automountServiceAccountToken: false
   affinity: # Value set by operator
   priorityClassName: "system-cluster-critical"
   terminationGracePeriodSeconds: 3
