@@ -29,25 +29,28 @@ import (
 // EtcdEndpointsController maintains a configmap resource with
 // IP addresses for etcd. It should never depend on DNS directly or transitively.
 type EtcdEndpointsController struct {
-	operatorClient  v1helpers.StaticPodOperatorClient
-	etcdClient      etcdcli.EtcdClient
-	configmapLister corev1listers.ConfigMapLister
-	configmapClient corev1client.ConfigMapsGetter
+	operatorClient     v1helpers.StaticPodOperatorClient
+	etcdClient         etcdcli.EtcdClient
+	configmapLister    corev1listers.ConfigMapLister
+	configmapClient    corev1client.ConfigMapsGetter
+	cachedMemberClient etcdcli.AllMemberListerInvalidator
 }
 
 func NewEtcdEndpointsController(
 	livenessChecker *health.MultiAlivenessChecker,
 	operatorClient operatorv1helpers.StaticPodOperatorClient,
 	etcdClient etcdcli.EtcdClient,
+	cachedMemberClient etcdcli.AllMemberListerInvalidator,
 	eventRecorder events.Recorder,
 	kubeClient kubernetes.Interface,
 	kubeInformers operatorv1helpers.KubeInformersForNamespaces) factory.Controller {
 
 	c := &EtcdEndpointsController{
-		operatorClient:  operatorClient,
-		etcdClient:      etcdClient,
-		configmapLister: kubeInformers.ConfigMapLister(),
-		configmapClient: kubeClient.CoreV1(),
+		operatorClient:     operatorClient,
+		etcdClient:         etcdClient,
+		configmapLister:    kubeInformers.ConfigMapLister(),
+		configmapClient:    kubeClient.CoreV1(),
+		cachedMemberClient: cachedMemberClient,
 	}
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
@@ -147,8 +150,18 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 	required.Data = endpointAddresses
 
 	// Apply endpoint updates
-	if _, _, err := resourceapply.ApplyConfigMap(ctx, c.configmapClient, recorder, required); err != nil {
+	_, modified, err := resourceapply.ApplyConfigMap(ctx, c.configmapClient, recorder, required)
+	if err != nil {
 		return fmt.Errorf("applying configmap update failed :%w", err)
+	}
+
+	// When the endpoints configmap changes, the revision controller will wake up and check
+	// whether a new revision is safe via CheckSafeToScaleCluster, which reads member health
+	// from the cached member client. Invalidate the cache so that stale health data from
+	// before the membership change does not cause a revision to be created targeting a node
+	// that is no longer healthy.
+	if modified && c.cachedMemberClient != nil {
+		c.cachedMemberClient.Invalidate()
 	}
 
 	return nil

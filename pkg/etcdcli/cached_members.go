@@ -18,17 +18,24 @@ type CachedMembers struct {
 	lastRefresh     time.Time
 }
 
-func NewMemberCache(client EtcdClient) AllMemberLister {
+func NewMemberCache(client EtcdClient) AllMemberListerInvalidator {
 	return newMemberCache(client, refreshPeriod)
 }
 
-func newMemberCache(client EtcdClient, refreshInterval time.Duration) AllMemberLister {
+func newMemberCache(client EtcdClient, refreshInterval time.Duration) AllMemberListerInvalidator {
 	return &CachedMembers{
 		client:          client,
 		lock:            sync.Mutex{},
 		refreshInterval: refreshInterval,
 		lastRefresh:     time.UnixMilli(0),
 	}
+}
+
+// Invalidate resets the cache so the next access will fetch fresh data from etcd.
+func (c *CachedMembers) Invalidate() {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.lastRefresh = time.UnixMilli(0)
 }
 
 func (c *CachedMembers) shouldRefresh() bool {
