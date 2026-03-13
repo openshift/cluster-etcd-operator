@@ -13,14 +13,14 @@
 cluster-etcd-operator
 tnf-monitor
 tnf-setup-runner
-cluster-etcd-operator-tests-ext
+/cluster-etcd-operator-tests-ext
+cluster-etcd-operator-tests-ext.gz
 
 # Log output from telepresence
 telepresence.log
 # Goland
 .idea
 _output
-./cluster-etcd-operator-tests-ext
 
 # Test output files
 junit.xml
