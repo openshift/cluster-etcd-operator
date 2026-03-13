@@ -411,8 +411,8 @@ github.com/openshift/client-go/operator/informers/externalversions/operator/v1
 github.com/openshift/client-go/operator/informers/externalversions/operator/v1alpha1
 github.com/openshift/client-go/operator/listers/operator/v1
 github.com/openshift/client-go/operator/listers/operator/v1alpha1
-# github.com/openshift/library-go v0.0.0-20260205095356-7bced6e899b6 => github.com/gangwgr/library-go v0.0.0-20260310101044-f40c084021b2
-## explicit; go 1.25.0
+# github.com/openshift/library-go v0.0.0-20260205095356-7bced6e899b6
+## explicit; go 1.24.0
 github.com/openshift/library-go/pkg/apiserver/jsonpatch
 github.com/openshift/library-go/pkg/assets
 github.com/openshift/library-go/pkg/authorization/hardcodedauthorizer
@@ -476,7 +476,6 @@ github.com/openshift/library-go/pkg/operator/unsupportedconfigoverridescontrolle
 github.com/openshift/library-go/pkg/operator/v1helpers
 github.com/openshift/library-go/pkg/serviceability
 github.com/openshift/library-go/test/library
-github.com/openshift/library-go/test/library/networkpolicy
 # github.com/pkg/errors v0.9.1
 ## explicit
 github.com/pkg/errors
@@ -1786,4 +1785,3 @@ sigs.k8s.io/yaml
 # github.com/gogo/protobuf => github.com/gogo/protobuf v1.3.2
 # github.com/onsi/ginkgo/v2 => github.com/openshift/onsi-ginkgo/v2 v2.6.1-0.20241205171354-8006f302fd12
 # vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787
-# github.com/openshift/library-go => github.com/gangwgr/library-go v0.0.0-20260310101044-f40c084021b2

@@ -1,8 +1,4 @@
-// Package networkpolicy provides reusable helpers for testing Kubernetes
-// NetworkPolicy enforcement.  The helpers are framework-agnostic: they accept
-// a testing.TB for logging and return errors so callers can use any test
-// framework (standard Go testing, Ginkgo, etc.).
-package networkpolicy
+package e2e
 
 import (
 	"context"
@@ -115,27 +111,27 @@ func NetexecPodWithImage(name, namespace string, labels map[string]string, port 
 // CreateServerPod creates an agnhost netexec server pod in the given namespace,
 // waits for it to be Ready, and returns all its PodIPs along with a cleanup
 // function.
-func CreateServerPod(t testing.TB, kubeClient kubernetes.Interface, namespace, name string, labels map[string]string, port int32) ([]string, func()) {
-	return CreateServerPodWithImage(t, kubeClient, namespace, name, labels, port, DefaultAgnhostImage)
+func CreateServerPod(ctx context.Context, t testing.TB, kubeClient kubernetes.Interface, namespace, name string, labels map[string]string, port int32) ([]string, func()) {
+	return CreateServerPodWithImage(ctx, t, kubeClient, namespace, name, labels, port, DefaultAgnhostImage)
 }
 
 // CreateServerPodWithImage is like CreateServerPod but allows specifying a
 // custom agnhost image.
-func CreateServerPodWithImage(t testing.TB, kubeClient kubernetes.Interface, namespace, name string, labels map[string]string, port int32, image string) ([]string, func()) {
+func CreateServerPodWithImage(ctx context.Context, t testing.TB, kubeClient kubernetes.Interface, namespace, name string, labels map[string]string, port int32, image string) ([]string, func()) {
 	t.Helper()
 	t.Logf("creating server pod %s/%s port=%d labels=%v", namespace, name, port, labels)
 
 	pod := NetexecPodWithImage(name, namespace, labels, port, image)
-	_, err := kubeClient.CoreV1().Pods(namespace).Create(context.TODO(), pod, metav1.CreateOptions{})
+	_, err := kubeClient.CoreV1().Pods(namespace).Create(ctx, pod, metav1.CreateOptions{})
 	if err != nil {
 		t.Fatalf("failed to create server pod %s/%s: %v", namespace, name, err)
 	}
 
-	if err := WaitForPodReady(kubeClient, namespace, name); err != nil {
+	if err := WaitForPodReady(ctx, kubeClient, namespace, name); err != nil {
 		t.Fatalf("server pod %s/%s never became ready: %v", namespace, name, err)
 	}
 
-	created, err := kubeClient.CoreV1().Pods(namespace).Get(context.TODO(), name, metav1.GetOptions{})
+	created, err := kubeClient.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("failed to get server pod %s/%s: %v", namespace, name, err)
 	}
@@ -148,7 +144,7 @@ func CreateServerPodWithImage(t testing.TB, kubeClient kubernetes.Interface, nam
 
 	return ips, func() {
 		t.Logf("deleting server pod %s/%s", namespace, name)
-		_ = kubeClient.CoreV1().Pods(namespace).Delete(context.TODO(), name, metav1.DeleteOptions{})
+		_ = kubeClient.CoreV1().Pods(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 	}
 }
 
@@ -157,13 +153,13 @@ func CreateServerPodWithImage(t testing.TB, kubeClient kubernetes.Interface, nam
 // RunConnectivityCheck creates an ephemeral agnhost connect pod in the given
 // namespace with the specified labels, attempts a TCP connection to
 // serverIP:port, and returns whether the connection succeeded.
-func RunConnectivityCheck(kubeClient kubernetes.Interface, namespace string, labels map[string]string, serverIP string, port int32) (bool, error) {
-	return RunConnectivityCheckWithImage(kubeClient, namespace, labels, serverIP, port, DefaultAgnhostImage)
+func RunConnectivityCheck(ctx context.Context, kubeClient kubernetes.Interface, namespace string, labels map[string]string, serverIP string, port int32) (bool, error) {
+	return RunConnectivityCheckWithImage(ctx, kubeClient, namespace, labels, serverIP, port, DefaultAgnhostImage)
 }
 
 // RunConnectivityCheckWithImage is like RunConnectivityCheck but allows
 // specifying a custom agnhost image.
-func RunConnectivityCheckWithImage(kubeClient kubernetes.Interface, namespace string, labels map[string]string, serverIP string, port int32, image string) (bool, error) {
+func RunConnectivityCheckWithImage(ctx context.Context, kubeClient kubernetes.Interface, namespace string, labels map[string]string, serverIP string, port int32, image string) (bool, error) {
 	name := fmt.Sprintf("np-client-%s", rand.String(5))
 
 	pod := &corev1.Pod{
@@ -201,33 +197,36 @@ func RunConnectivityCheckWithImage(kubeClient kubernetes.Interface, namespace st
 		},
 	}
 
-	_, err := kubeClient.CoreV1().Pods(namespace).Create(context.TODO(), pod, metav1.CreateOptions{})
+	_, err := kubeClient.CoreV1().Pods(namespace).Create(ctx, pod, metav1.CreateOptions{})
 	if err != nil {
 		return false, err
 	}
 	defer func() {
-		_ = kubeClient.CoreV1().Pods(namespace).Delete(context.TODO(), name, metav1.DeleteOptions{})
+		_ = kubeClient.CoreV1().Pods(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 	}()
 
-	if err := WaitForPodCompletion(kubeClient, namespace, name); err != nil {
+	if err := WaitForPodCompletion(ctx, kubeClient, namespace, name); err != nil {
 		return false, err
 	}
-	completed, err := kubeClient.CoreV1().Pods(namespace).Get(context.TODO(), name, metav1.GetOptions{})
+	completed, err := kubeClient.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return false, err
 	}
 	if len(completed.Status.ContainerStatuses) == 0 {
 		return false, fmt.Errorf("no container status recorded for pod %s", name)
 	}
-	exitCode := completed.Status.ContainerStatuses[0].State.Terminated.ExitCode
-	return exitCode == 0, nil
+	terminated := completed.Status.ContainerStatuses[0].State.Terminated
+	if terminated == nil {
+		return false, fmt.Errorf("container in pod %s has not terminated", name)
+	}
+	return terminated.ExitCode == 0, nil
 }
 
 // ExpectConnectivity checks connectivity from a pod in the given namespace
 // (with clientLabels) to each serverIP on the specified port. The check is
 // retried for up to 2 minutes per IP. If the result does not match
 // shouldSucceed the test is failed via t.Fatalf.
-func ExpectConnectivity(t testing.TB, kubeClient kubernetes.Interface, namespace string, clientLabels map[string]string, serverIPs []string, port int32, shouldSucceed bool) {
+func ExpectConnectivity(ctx context.Context, t testing.TB, kubeClient kubernetes.Interface, namespace string, clientLabels map[string]string, serverIPs []string, port int32, shouldSucceed bool) {
 	t.Helper()
 	for _, ip := range serverIPs {
 		family := "IPv4"
@@ -235,15 +234,15 @@ func ExpectConnectivity(t testing.TB, kubeClient kubernetes.Interface, namespace
 			family = "IPv6"
 		}
 		t.Logf("checking %s connectivity %s -> %s expected=%t", family, namespace, FormatIPPort(ip, port), shouldSucceed)
-		if err := pollConnectivity(kubeClient, namespace, clientLabels, ip, port, shouldSucceed, 2*time.Minute); err != nil {
+		if err := pollConnectivity(ctx, kubeClient, namespace, clientLabels, ip, port, shouldSucceed, 2*time.Minute); err != nil {
 			t.Fatalf("connectivity check failed for %s %s -> %s (expected %t): %v", family, namespace, FormatIPPort(ip, port), shouldSucceed, err)
 		}
 	}
 }
 
-func pollConnectivity(kubeClient kubernetes.Interface, namespace string, clientLabels map[string]string, serverIP string, port int32, shouldSucceed bool, timeout time.Duration) error {
-	return wait.PollImmediate(5*time.Second, timeout, func() (bool, error) {
-		succeeded, err := RunConnectivityCheck(kubeClient, namespace, clientLabels, serverIP, port)
+func pollConnectivity(ctx context.Context, kubeClient kubernetes.Interface, namespace string, clientLabels map[string]string, serverIP string, port int32, shouldSucceed bool, timeout time.Duration) error {
+	return wait.PollUntilContextTimeout(ctx, 5*time.Second, timeout, true, func(_ context.Context) (bool, error) {
+		succeeded, err := RunConnectivityCheck(ctx, kubeClient, namespace, clientLabels, serverIP, port)
 		if err != nil {
 			return false, err
 		}
@@ -255,7 +254,7 @@ func pollConnectivity(kubeClient kubernetes.Interface, namespace string, clientL
 // timeout (30s) and only logs failures instead of failing the test. This is
 // useful when external factors (e.g. other namespaces' egress policies, mTLS)
 // can interfere with the check.
-func LogConnectivityBestEffort(t testing.TB, kubeClient kubernetes.Interface, namespace string, clientLabels map[string]string, serverIPs []string, port int32, shouldSucceed bool) {
+func LogConnectivityBestEffort(ctx context.Context, t testing.TB, kubeClient kubernetes.Interface, namespace string, clientLabels map[string]string, serverIPs []string, port int32, shouldSucceed bool) {
 	t.Helper()
 	for _, ip := range serverIPs {
 		family := "IPv4"
@@ -263,7 +262,7 @@ func LogConnectivityBestEffort(t testing.TB, kubeClient kubernetes.Interface, na
 			family = "IPv6"
 		}
 		t.Logf("checking %s connectivity (best-effort) %s -> %s expected=%t", family, namespace, FormatIPPort(ip, port), shouldSucceed)
-		if err := pollConnectivity(kubeClient, namespace, clientLabels, ip, port, shouldSucceed, 30*time.Second); err != nil {
+		if err := pollConnectivity(ctx, kubeClient, namespace, clientLabels, ip, port, shouldSucceed, 30*time.Second); err != nil {
 			t.Logf("connectivity (best-effort) %s -> %s expected=%t FAILED: %v", namespace, FormatIPPort(ip, port), shouldSucceed, err)
 		}
 	}
@@ -296,7 +295,7 @@ func AllowIngressPolicy(name, namespace string, podLabels, fromLabels map[string
 						{PodSelector: &metav1.LabelSelector{MatchLabels: fromLabels}},
 					},
 					Ports: []networkingv1.NetworkPolicyPort{
-						{Port: &intstr.IntOrString{Type: intstr.Int, IntVal: port}, Protocol: ProtocolPtr(corev1.ProtocolTCP)},
+						{Port: &intstr.IntOrString{Type: intstr.Int, IntVal: port}, Protocol: protocolPtr(corev1.ProtocolTCP)},
 					},
 				},
 			},
@@ -318,7 +317,7 @@ func AllowEgressPolicy(name, namespace string, podLabels, toLabels map[string]st
 						{PodSelector: &metav1.LabelSelector{MatchLabels: toLabels}},
 					},
 					Ports: []networkingv1.NetworkPolicyPort{
-						{Port: &intstr.IntOrString{Type: intstr.Int, IntVal: port}, Protocol: ProtocolPtr(corev1.ProtocolTCP)},
+						{Port: &intstr.IntOrString{Type: intstr.Int, IntVal: port}, Protocol: protocolPtr(corev1.ProtocolTCP)},
 					},
 				},
 			},
@@ -330,13 +329,14 @@ func AllowEgressPolicy(name, namespace string, podLabels, toLabels map[string]st
 // ----- Policy inspection helpers (pure functions, no test framework) -----
 
 // HasPort returns true if the given list of NetworkPolicy ports includes a port
-// matching the specified protocol and port number.
+// matching the specified protocol and port number. A nil port field means "all
+// ports" and is treated as a match.
 func HasPort(ports []networkingv1.NetworkPolicyPort, protocol corev1.Protocol, port int32) bool {
 	for _, p := range ports {
-		if p.Port == nil || p.Port.IntValue() != int(port) {
+		if p.Protocol != nil && *p.Protocol != protocol {
 			continue
 		}
-		if p.Protocol == nil || *p.Protocol == protocol {
+		if p.Port == nil || p.Port.IntValue() == int(port) {
 			return true
 		}
 	}
@@ -572,7 +572,7 @@ func EgressAllowsNamespace(policy *networkingv1.NetworkPolicy, namespace string,
 }
 
 // PodMatch returns true if the given label selector matches the provided
-// labels.
+// labels. Both MatchLabels and MatchExpressions are evaluated.
 func PodMatch(selector *metav1.LabelSelector, labels map[string]string) bool {
 	if selector == nil {
 		return true
@@ -582,7 +582,40 @@ func PodMatch(selector *metav1.LabelSelector, labels map[string]string) bool {
 			return false
 		}
 	}
+	for _, expr := range selector.MatchExpressions {
+		val, exists := labels[expr.Key]
+		switch expr.Operator {
+		case metav1.LabelSelectorOpIn:
+			if !matchesIn(val, exists, expr.Values) {
+				return false
+			}
+		case metav1.LabelSelectorOpNotIn:
+			if exists && matchesIn(val, exists, expr.Values) {
+				return false
+			}
+		case metav1.LabelSelectorOpExists:
+			if !exists {
+				return false
+			}
+		case metav1.LabelSelectorOpDoesNotExist:
+			if exists {
+				return false
+			}
+		}
+	}
 	return true
+}
+
+func matchesIn(val string, exists bool, values []string) bool {
+	if !exists {
+		return false
+	}
+	for _, v := range values {
+		if v == val {
+			return true
+		}
+	}
+	return false
 }
 
 // RuleAllowsPort returns true if the given list of policy ports includes the
@@ -593,7 +626,7 @@ func RuleAllowsPort(ports []networkingv1.NetworkPolicyPort, port int32) bool {
 	}
 	for _, p := range ports {
 		if p.Port == nil {
-			continue
+			return true
 		}
 		if p.Port.Type == intstr.Int && p.Port.IntVal == port {
 			return true
@@ -666,19 +699,21 @@ func RequireEgressPort(t testing.TB, policy *networkingv1.NetworkPolicy, protoco
 	}
 }
 
-// RequireUnrestrictedEgress asserts that the policy has exactly one egress rule
+// RequireUnrestrictedEgress asserts that the policy has at least one egress rule
 // with no port and no destination restrictions (allows all egress).
 func RequireUnrestrictedEgress(t testing.TB, policy *networkingv1.NetworkPolicy) {
 	t.Helper()
-	if len(policy.Spec.Egress) != 1 {
-		t.Fatalf("%s/%s: expected exactly one egress rule for unrestricted egress, got %d rules",
-			policy.Namespace, policy.Name, len(policy.Spec.Egress))
+	if len(policy.Spec.Egress) == 0 {
+		t.Fatalf("%s/%s: expected at least one egress rule, got none",
+			policy.Namespace, policy.Name)
 	}
-	egressRule := policy.Spec.Egress[0]
-	if len(egressRule.Ports) != 0 || len(egressRule.To) != 0 {
-		t.Fatalf("%s/%s: expected unrestricted egress rule (no ports, no to), got ports=%v to=%v",
-			policy.Namespace, policy.Name, egressRule.Ports, egressRule.To)
+	for _, rule := range policy.Spec.Egress {
+		if len(rule.Ports) == 0 && len(rule.To) == 0 {
+			return
+		}
 	}
+	t.Fatalf("%s/%s: no unrestricted egress rule [{}] found among %d rules",
+		policy.Namespace, policy.Name, len(policy.Spec.Egress))
 }
 
 // RequireIngressFromNamespace asserts that the policy allows ingress from the
@@ -726,7 +761,7 @@ func RestoreNetworkPolicy(t testing.TB, ctx context.Context, client kubernetes.I
 	if err := client.NetworkingV1().NetworkPolicies(namespace).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
 		t.Fatalf("failed to delete NetworkPolicy %s/%s: %v", namespace, name, err)
 	}
-	err := wait.PollImmediate(5*time.Second, timeout, func() (bool, error) {
+	err := wait.PollUntilContextTimeout(ctx, 5*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		current, err := client.NetworkingV1().NetworkPolicies(namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return false, nil
@@ -752,7 +787,7 @@ func MutateAndRestoreNetworkPolicy(t testing.TB, ctx context.Context, client kub
 		t.Fatalf("failed to patch NetworkPolicy %s/%s: %v", namespace, name, err)
 	}
 
-	err = wait.PollImmediate(5*time.Second, timeout, func() (bool, error) {
+	err = wait.PollUntilContextTimeout(ctx, 5*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		current := GetNetworkPolicy(t, ctx, client, namespace, name)
 		return equality.Semantic.DeepEqual(original.Spec, current.Spec), nil
 	})
@@ -857,7 +892,7 @@ func LogEgressAllowAllTCP(t testing.TB, policy *networkingv1.NetworkPolicy) {
 func LogNetworkPolicyEvents(t testing.TB, ctx context.Context, client kubernetes.Interface, namespaces []string, policyName string) {
 	t.Helper()
 	found := false
-	_ = wait.PollImmediate(5*time.Second, 2*time.Minute, func() (bool, error) {
+	_ = wait.PollUntilContextTimeout(ctx, 5*time.Second, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
 		for _, namespace := range namespaces {
 			eventList, err := client.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{})
 			if err != nil {
@@ -957,9 +992,9 @@ func FormatSelector(sel *metav1.LabelSelector) string {
 
 // WaitForPodReady waits up to 2 minutes for a pod to reach the Running phase
 // with a Ready condition.
-func WaitForPodReady(kubeClient kubernetes.Interface, namespace, name string) error {
-	return wait.PollImmediate(2*time.Second, 2*time.Minute, func() (bool, error) {
-		pod, err := kubeClient.CoreV1().Pods(namespace).Get(context.TODO(), name, metav1.GetOptions{})
+func WaitForPodReady(ctx context.Context, kubeClient kubernetes.Interface, namespace, name string) error {
+	return wait.PollUntilContextTimeout(ctx, 2*time.Second, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
+		pod, err := kubeClient.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return false, err
 		}
@@ -972,9 +1007,9 @@ func WaitForPodReady(kubeClient kubernetes.Interface, namespace, name string) er
 
 // WaitForPodCompletion waits up to 2 minutes for a pod to reach Succeeded or
 // Failed phase.
-func WaitForPodCompletion(kubeClient kubernetes.Interface, namespace, name string) error {
-	return wait.PollImmediate(2*time.Second, 2*time.Minute, func() (bool, error) {
-		pod, err := kubeClient.CoreV1().Pods(namespace).Get(context.TODO(), name, metav1.GetOptions{})
+func WaitForPodCompletion(ctx context.Context, kubeClient kubernetes.Interface, namespace, name string) error {
+	return wait.PollUntilContextTimeout(ctx, 2*time.Second, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
+		pod, err := kubeClient.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return false, err
 		}
@@ -987,7 +1022,7 @@ func WaitForPodCompletion(kubeClient kubernetes.Interface, namespace, name strin
 func WaitForPodsReadyByLabel(t testing.TB, ctx context.Context, client kubernetes.Interface, namespace, labelSelector string) {
 	t.Helper()
 	t.Logf("waiting for pods ready in %s with selector %s", namespace, labelSelector)
-	err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
+	err := wait.PollUntilContextTimeout(ctx, 5*time.Second, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
 		pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
 		if err != nil {
 			return false, err
@@ -1027,8 +1062,7 @@ func BoolToAllowDeny(allow bool) string {
 	return "deny"
 }
 
-// ProtocolPtr returns a pointer to the given Protocol.
-func ProtocolPtr(protocol corev1.Protocol) *corev1.Protocol {
+func protocolPtr(protocol corev1.Protocol) *corev1.Protocol {
 	return &protocol
 }
 
