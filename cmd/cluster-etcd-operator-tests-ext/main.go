@@ -8,7 +8,7 @@ https://github.com/openshift-eng/openshift-tests-extension/blob/main/cmd/example
 package main
 
 import (
-	"context"
+	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -16,25 +16,32 @@ import (
 
 	otecmd "github.com/openshift-eng/openshift-tests-extension/pkg/cmd"
 	oteextension "github.com/openshift-eng/openshift-tests-extension/pkg/extension"
+	oteginkgo "github.com/openshift-eng/openshift-tests-extension/pkg/ginkgo"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
 
 	"k8s.io/klog/v2"
 )
 
 func main() {
-	command := newOperatorTestCommand(context.Background())
-	code := cli.Run(command)
+	cmd, err := newOperatorTestCommand()
+	if err != nil {
+		klog.Fatal(err)
+	}
+
+	code := cli.Run(cmd)
 	os.Exit(code)
 }
 
-func newOperatorTestCommand(ctx context.Context) *cobra.Command {
-	registry := prepareOperatorTestsRegistry()
+func newOperatorTestCommand() (*cobra.Command, error) {
+	registry, err := prepareOperatorTestsRegistry()
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare test registry: %w", err)
+	}
 
 	cmd := &cobra.Command{
-		Use:   "cluster-etcd-operator-tests",
+		Use:   "cluster-etcd-operator-tests-ext",
 		Short: "A binary used to run cluster-etcd-operator tests as part of OTE.",
 		Run: func(cmd *cobra.Command, args []string) {
-			// no-op, logic is provided by the OTE framework
 			if err := cmd.Help(); err != nil {
 				klog.Fatal(err)
 			}
@@ -49,18 +56,44 @@ func newOperatorTestCommand(ctx context.Context) *cobra.Command {
 
 	cmd.AddCommand(otecmd.DefaultExtensionCommands(registry)...)
 
-	return cmd
+	return cmd, nil
 }
 
-// prepareOperatorTestsRegistry creates the OTE registry for this operator.
-//
-// Note:
-//
-// This method must be called before adding the registry to the OTE framework.
-func prepareOperatorTestsRegistry() *oteextension.Registry {
+func prepareOperatorTestsRegistry() (*oteextension.Registry, error) {
 	registry := oteextension.NewRegistry()
 	extension := oteextension.NewExtension("openshift", "payload", "cluster-etcd-operator")
 
+	// The following suite runs tests that verify the cluster-etcd-operator's behaviour.
+	// This suite is executed only on pull requests targeting this repository.
+	// Tests tagged with [Serial] are included in this suite.
+	extension.AddSuite(oteextension.Suite{
+		Name:        "openshift/cluster-etcd-operator/operator/serial",
+		Parents:     []string{"openshift/conformance/serial"},
+		Parallelism: 1,
+		Qualifiers: []string{
+			`name.contains("[Serial]")`,
+		},
+	})
+
+	// The following suite runs tests that verify the cluster-etcd-operator's behaviour.
+	// This suite is executed only on pull requests targeting this repository.
+	// Parallel tests are included in this suite.
+	extension.AddSuite(oteextension.Suite{
+		Name:        "openshift/cluster-etcd-operator/operator/parallel",
+		Parents:     []string{"openshift/conformance/parallel"},
+		Parallelism: 1,
+		Qualifiers: []string{
+			`!name.contains("[Serial]")`,
+		},
+	})
+
+	// Build OTE specs from Ginkgo tests
+	specs, err := oteginkgo.BuildExtensionTestSpecsFromOpenShiftGinkgoSuite()
+	if err != nil {
+		return nil, fmt.Errorf("couldn't build extension test specs from ginkgo: %w", err)
+	}
+
+	extension.AddSpecs(specs)
 	registry.Register(extension)
-	return registry
+	return registry, nil
 }
