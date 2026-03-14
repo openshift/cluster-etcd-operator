@@ -444,6 +444,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		AlivenessChecker,
 		operatorClient,
 		etcdClient,
+		cachedMemberClient,
 		controllerContext.EventRecorder,
 		coreClient,
 		kubeInformersForNamespaces,

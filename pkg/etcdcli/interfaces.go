@@ -38,6 +38,13 @@ type AllMemberLister interface {
 	MemberHealth
 }
 
+// AllMemberListerInvalidator extends AllMemberLister with the ability to
+// invalidate cached member data so the next access fetches fresh results.
+type AllMemberListerInvalidator interface {
+	AllMemberLister
+	Invalidate()
+}
+
 type Defragment interface {
 	Defragment(ctx context.Context, member *etcdserverpb.Member) (*clientv3.DefragmentResponse, error)
 }

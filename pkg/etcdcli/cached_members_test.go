@@ -25,6 +25,33 @@ func TestCachedMembers_refresh(t *testing.T) {
 	require.Equal(t, fakeEtcdMembers(1, 3), currentMembers)
 }
 
+func TestCachedMembers_Invalidate(t *testing.T) {
+	client, err := NewFakeEtcdClient(defaultEtcdMembers(), WithFakeClusterHealth(&FakeMemberHealth{Healthy: 3, Unhealthy: 0}))
+	require.NoError(t, err)
+	// Use a long refresh interval so the cache would not naturally refresh
+	memberCache := newMemberCache(client, 10*time.Minute)
+
+	// Populate the cache
+	currentMembers, err := memberCache.MemberList(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, defaultEtcdMembers(), currentMembers)
+
+	// Remove a member from the underlying client
+	err = client.MemberRemove(context.Background(), uint64(2))
+	require.NoError(t, err)
+
+	// Without invalidation, the cache still returns stale data
+	currentMembers, err = memberCache.MemberList(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, defaultEtcdMembers(), currentMembers, "cache should return stale data before invalidation")
+
+	// After invalidation, the cache should fetch fresh data
+	memberCache.Invalidate()
+	currentMembers, err = memberCache.MemberList(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, fakeEtcdMembers(1, 3), currentMembers, "cache should return fresh data after invalidation")
+}
+
 func TestCachedMembers_MemberList(t *testing.T) {
 	testCases := []struct {
 		name            string
