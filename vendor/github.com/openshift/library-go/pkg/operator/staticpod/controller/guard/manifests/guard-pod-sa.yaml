@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  namespace: # Value set by operator
+  name: guard-sa
+  labels:
+    app: guard
