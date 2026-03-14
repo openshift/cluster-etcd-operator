@@ -1,0 +1,30 @@
+# Allow all egress for guard, installer, pruner, and backup pods in the
+# openshift-etcd namespace.
+#
+# These pods run on the pod network (unlike etcd which uses hostNetwork and
+# bypasses NetworkPolicy entirely). They need egress for:
+# - installer/pruner/backup: API server access to manage static pod manifests
+# - guard: etcd health checks
+# - all: DNS resolution via openshift-dns
+#
+# All egress is permitted because the API server address can vary by cluster
+# configuration.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-all-egress
+  namespace: openshift-etcd
+spec:
+  podSelector:
+    matchExpressions:
+    - key: app
+      operator: In
+      values:
+      - guard
+      - installer
+      - pruner
+      - cluster-backup-cronjob
+  egress:
+  - {}
+  policyTypes:
+  - Egress
