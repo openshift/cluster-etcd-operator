@@ -26,5 +26,16 @@ spec:
       - cluster-backup-cronjob
   egress:
   - {}
+  # DNS egress documented explicitly for clarity, though already covered by
+  # the allow-all rule above.
+  - ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 5353
+    - protocol: TCP
+      port: 5353
   policyTypes:
   - Egress
