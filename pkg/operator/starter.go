@@ -277,15 +277,11 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	// cause a stale "2 healthy" result when a node has just gone down, allowing a
 	// revision to be created targeting the dead node.
 	var quorumMemberClient etcdcli.AllMemberLister = cachedMemberClient
-	infraInformer := configInformers.Config().V1().Infrastructures()
-	if !cache.WaitForCacheSync(ctx.Done(), infraInformer.Informer().HasSynced) {
-		return fmt.Errorf("failed to sync Infrastructure informer")
-	}
-	isDualReplica, err := ceohelpers.IsDualReplicaTopology(ctx, infraInformer.Lister())
+	infra, err := configClient.ConfigV1().Infrastructures().Get(ctx, ceohelpers.InfrastructureClusterName, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
-	if isDualReplica {
+	if infra.Status.ControlPlaneTopology == configv1.DualReplicaTopologyMode {
 		quorumMemberClient = etcdClient
 	}
 
