@@ -12,7 +12,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/policy/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -48,6 +47,8 @@ type GuardController struct {
 	podGetter  corev1client.PodsGetter
 	pdbGetter  policyclientv1.PodDisruptionBudgetsGetter
 	pdbLister  policylisterv1.PodDisruptionBudgetLister
+	saLister   corelisterv1.ServiceAccountLister
+	saGetter   corev1client.ServiceAccountsGetter
 
 	// installerPodImageFn returns the image name for the installer pod
 	installerPodImageFn   func() string
@@ -70,6 +71,7 @@ func NewGuardController(
 	operatorClient operatorv1helpers.StaticPodOperatorClient,
 	podGetter corev1client.PodsGetter,
 	pdbGetter policyclientv1.PodDisruptionBudgetsGetter,
+	saGetter corev1client.ServiceAccountsGetter,
 	eventRecorder events.Recorder,
 	createConditionalFunc func() (bool, bool, error),
 	extraNodeSelector labels.Selector,
@@ -102,6 +104,8 @@ func NewGuardController(
 		podGetter:                     podGetter,
 		pdbGetter:                     pdbGetter,
 		pdbLister:                     kubeInformersForTargetNamespace.Policy().V1().PodDisruptionBudgets().Lister(),
+		saGetter:                      saGetter,
+		saLister:                      kubeInformersForTargetNamespace.Core().V1().ServiceAccounts().Lister(),
 		installerPodImageFn:           getInstallerPodImageFromEnv,
 		createConditionalFunc:         createConditionalFunc,
 		extraNodeSelector:             extraNodeSelector,
@@ -116,6 +120,7 @@ func NewGuardController(
 		WithInformers(
 			kubeInformersForTargetNamespace.Core().V1().Pods().Informer(),
 			kubeInformersClusterScoped.Core().V1().Nodes().Informer(),
+			kubeInformersForTargetNamespace.Core().V1().ServiceAccounts().Informer(),
 		).
 		WithSync(c.sync).
 		WithSyncDegradedOnError(operatorClient).
@@ -178,6 +183,9 @@ var pdbTemplate []byte
 //go:embed manifests/guard-pod.yaml
 var podTemplate []byte
 
+//go:embed manifests/guard-pod-sa.yaml
+var serviceAccountTemplate []byte
+
 func (c *GuardController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	klog.V(5).Info("Syncing guards")
 
@@ -227,10 +235,25 @@ func (c *GuardController) sync(ctx context.Context, syncCtx factory.SyncContext)
 			for _, pod := range pods {
 				_, _, err = resourceapply.DeletePod(ctx, c.podGetter, syncCtx.Recorder(), pod)
 				if err != nil {
-					klog.Errorf("Unable to delete Pod: %v", err)
+					klog.Errorf("unable to delete Pod: %v", err)
 					errs = append(errs, err)
 				}
 			}
+		}
+
+		// delete the guard service account
+		serviceAccount := resourceread.ReadServiceAccountV1OrDie(serviceAccountTemplate)
+		serviceAccount.Namespace = c.targetNamespace
+
+		// Check if the service account exists using the lister to avoid unnecessary API calls
+		_, err = c.saLister.ServiceAccounts(serviceAccount.Namespace).Get(serviceAccount.Name)
+		if err == nil {
+			_, _, err = resourceapply.DeleteServiceAccount(ctx, c.saGetter, syncCtx.Recorder(), serviceAccount)
+			if err != nil {
+				errs = append(errs, err)
+			}
+		} else if !apierrors.IsNotFound(err) {
+			errs = append(errs, err)
 		}
 	} else {
 		nodes, err := c.nodeLister.List(c.masterNodesSelector)
@@ -275,7 +298,7 @@ func (c *GuardController) sync(ctx context.Context, syncCtx factory.SyncContext)
 					return fmt.Errorf("Unable to apply PodDisruptionBudget changes: %v", err)
 				}
 			}
-		} else if errors.IsNotFound(err) {
+		} else if apierrors.IsNotFound(err) {
 			_, _, err = resourceapply.ApplyPodDisruptionBudget(ctx, c.pdbGetter, syncCtx.Recorder(), pdb)
 			if err != nil {
 				klog.Errorf("Unable to create PodDisruptionBudget: %v", err)
@@ -289,6 +312,24 @@ func (c *GuardController) sync(ctx context.Context, syncCtx factory.SyncContext)
 		operands := map[string]*corev1.Pod{}
 		for _, pod := range pods {
 			operands[pod.Spec.NodeName] = pod
+		}
+
+		// Create the guard service account once for all guard pods
+		serviceAccount := resourceread.ReadServiceAccountV1OrDie(serviceAccountTemplate)
+		serviceAccount.Namespace = c.targetNamespace
+
+		// Check if the service account exists using the lister to avoid unnecessary API calls
+		// There are no secrets, no image pull secrets, no annotations.
+		// The guard pod uses automountServiceAccountToken: false.
+		// There's nothing meaningful to update. So update logic isn't needed right now.
+		_, err = c.saLister.ServiceAccounts(serviceAccount.Namespace).Get(serviceAccount.Name)
+		if apierrors.IsNotFound(err) {
+			_, _, err = resourceapply.ApplyServiceAccount(ctx, c.saGetter, syncCtx.Recorder(), serviceAccount)
+			if err != nil {
+				return fmt.Errorf("unable to create service account %v for Guard Pods: %w", serviceAccount.Name, err)
+			}
+		} else if err != nil {
+			return err
 		}
 
 		for _, node := range nodes {
@@ -328,6 +369,7 @@ func (c *GuardController) sync(ctx context.Context, syncCtx factory.SyncContext)
 			pod.Spec.NodeName = node.Name
 			pod.Spec.Containers[0].Image = c.installerPodImageFn()
 			pod.Spec.Containers[0].ReadinessProbe.HTTPGet.Host = operands[node.Name].Status.PodIP
+			pod.Spec.ServiceAccountName = serviceAccount.Name
 			// The readyz port as string type is expected to be convertible into int!!!
 			readyzPort, err := strconv.Atoi(c.readyzPort)
 			if err != nil {
@@ -362,6 +404,10 @@ func (c *GuardController) sync(ctx context.Context, syncCtx factory.SyncContext)
 				}
 				if actual.Status.Phase != "" && actual.Status.Phase != corev1.PodPending && actual.Status.Phase != corev1.PodRunning {
 					klog.V(5).Infof("Pod phase is neither pending nor running, deleting %v so the guard can be re-created", pod.Name)
+					delete = true
+				}
+				if actual.Spec.ServiceAccountName != pod.Spec.ServiceAccountName {
+					klog.V(5).Infof("Service Account changed, deleting %v so the guard can be re-created", pod.Name)
 					delete = true
 				}
 				if delete {
