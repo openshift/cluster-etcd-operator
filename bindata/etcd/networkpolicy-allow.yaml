@@ -1,10 +1,11 @@
-# Allow all egress for guard, installer, pruner, and backup pods in the
+# Allow all egress for guard, installer, pruner, backup, and TNF job pods in the
 # openshift-etcd namespace.
 #
 # These pods run on the pod network (unlike etcd which uses hostNetwork and
 # bypasses NetworkPolicy entirely). They need egress for:
 # - installer/pruner/backup: API server access to manage static pod manifests
 # - guard: etcd health checks
+# - tnf-job: Two Node Fencing jobs (setup, auth, after-setup, fencing) need API server access
 # - all: DNS resolution via openshift-dns
 #
 # All egress is permitted because the API server address can vary by cluster
@@ -24,6 +25,7 @@ spec:
       - installer
       - pruner
       - cluster-backup-cronjob
+      - tnf-job
   egress:
   - {}
   # DNS egress documented explicitly for clarity, though already covered by

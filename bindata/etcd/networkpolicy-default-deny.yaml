@@ -9,7 +9,7 @@
 # - Policies cannot override or block traffic allowed by other policies
 #
 # Note: etcd static pods use hostNetwork: true and bypass all NetworkPolicy rules.
-# This policy only affects pods running on the pod network (guard, installer, pruner).
+# This policy only affects pods running on the pod network (guard, installer, pruner, TNF jobs).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
