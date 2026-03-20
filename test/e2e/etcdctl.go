@@ -7,16 +7,22 @@ import (
 	"strings"
 	"testing"
 
+	g "github.com/onsi/ginkgo/v2"
 	"github.com/openshift/cluster-etcd-operator/test/e2e/framework"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+var _ = g.Describe("[sig-etcd] cluster-etcd-operator", func() {
+	g.It("[Operator][Serial][Disruptive] TestEtcdctlCommands", func() {
+		TestEtcdctlCommands(g.GinkgoTB())
+	})
+})
+
 // TestEtcdctlCommands executes all known etcdctl commands inside of the etcdctl container.
 // The test is not intended to be a functional test yet a sanity test that the container
 // ENV is populated correctly and that etcdctl consumes that ENV properly.
-func TestEtcdctlCommands(t *testing.T) {
-	// setup
+func TestEtcdctlCommands(t testing.TB) {
 	cs := framework.NewClientSet("")
 	pod, err := cs.CoreV1Interface.Pods("").List(context.TODO(), metav1.ListOptions{LabelSelector: "k8s-app=etcd"})
 	require.NoError(t, err)
@@ -84,18 +90,18 @@ func TestEtcdctlCommands(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		t.Run(fmt.Sprintf("%s", tc.command), func(t *testing.T) {
-			if tc.skip {
-				t.Skip(tc.skipReason)
-			}
-			actual, err := exec.Command("oc", getOcExecArgs(tc.command, podName)...).CombinedOutput()
-			s := string(actual)
-			if len(tc.expectedError) > 0 {
-				require.Contains(t, s, tc.expectedError, "expected error not reported: %q", tc.expectedError)
-			} else {
-				require.NoErrorf(t, err, "output was %s", s)
-			}
-		})
+		if tc.skip {
+			t.Logf("SKIP: %s (%s)", tc.command, tc.skipReason)
+			continue
+		}
+		t.Logf("RUN: %s", tc.command)
+		actual, err := exec.Command("oc", getOcExecArgs(tc.command, podName)...).CombinedOutput()
+		s := string(actual)
+		if len(tc.expectedError) > 0 {
+			require.Contains(t, s, tc.expectedError, "expected error not reported: %q", tc.expectedError)
+		} else {
+			require.NoErrorf(t, err, "command %q failed, output was %s", tc.command, s)
+		}
 	}
 
 	t.Cleanup(func() {

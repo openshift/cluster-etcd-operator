@@ -14,16 +14,23 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
+
+	g "github.com/onsi/ginkgo/v2"
 )
 
 const (
 	masterNodeLabel = "node-role.kubernetes.io/master"
 	backupPath      = "/etc/kubernetes/backup-happy-path-2023-08-03_152313"
 	debugNamespace  = "default"
-	backupName      = "backup-happy-path"
 )
 
-func TestBackupScript(t *testing.T) {
+var _ = g.Describe("[sig-etcd] cluster-etcd-operator", func() {
+	g.It("[Operator][Serial][Disruptive] TestBackupScript", func() {
+		TestBackupScript(g.GinkgoTB())
+	})
+})
+
+func TestBackupScript(t testing.TB) {
 	clientSet := framework.NewClientSet("")
 	masterNodes, err := clientSet.CoreV1Interface.Nodes().List(context.Background(), metav1.ListOptions{LabelSelector: masterNodeLabel})
 	require.NoErrorf(t, err, "error while listing master nodes")
@@ -84,7 +91,7 @@ func getOcArgs(podName, cmdAsStr string) []string {
 	return strings.Split(fmt.Sprintf("rsh -n default %s %s", podName, cmdAsStr), " ")
 }
 
-func runDebugPod(t *testing.T, debugNodeName string) {
+func runDebugPod(t testing.TB, debugNodeName string) {
 	debugArgs := strings.Split(fmt.Sprintf("debug node/%s %s %s %s", debugNodeName, "--to-namespace=default", "--as-root=true", "-- sleep 1800s"), " ")
 	output, err := exec.Command("oc", debugArgs...).CombinedOutput()
 	require.NoErrorf(t, err, string(output))

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	g "github.com/onsi/ginkgo/v2"
 	configv1alpha1 "github.com/openshift/api/config/v1alpha1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	"github.com/openshift/cluster-etcd-operator/test/e2e/framework"
@@ -35,7 +36,28 @@ const (
 	ShellImage = "image-registry.openshift-image-registry.svc:5000/openshift/tools:latest"
 )
 
-func TestBackupHappyPath(t *testing.T) {
+var _ = g.Describe("[sig-etcd] cluster-etcd-operator", func() {
+	g.It("[Operator][Serial][Disruptive] TestBackupHappyPath", func() {
+		TestBackupHappyPath(g.GinkgoTB())
+	})
+	g.It("[Operator][Serial][Disruptive] TestPeriodicBackupHappyPath", func() {
+		TestPeriodicBackupHappyPath(g.GinkgoTB())
+	})
+	g.It("[Operator][Serial][Disruptive] TestRetentionBySize", func() {
+		TestRetentionBySize(g.GinkgoTB())
+	})
+	g.It("[Operator][Serial][Disruptive] TestMultipleBackupsAreSkipped", func() {
+		TestMultipleBackupsAreSkipped(g.GinkgoTB())
+	})
+	g.It("[Operator][Serial][Disruptive] TestBackupFailureOnMissingPVC", func() {
+		TestBackupFailureOnMissingPVC(g.GinkgoTB())
+	})
+	g.It("[Operator][Serial][Disruptive] TestWrongScheduleDegradesOperator", func() {
+		TestWrongScheduleDegradesOperator(g.GinkgoTB())
+	})
+})
+
+func TestBackupHappyPath(t testing.TB) {
 	pvcName := "backup-happy-path-pvc"
 	ensureHostPathPVC(t, pvcName)
 	c := framework.NewOperatorClient(t)
@@ -89,7 +111,7 @@ func TestBackupHappyPath(t *testing.T) {
 	requireBackupFilesFound(t, backupCrd.Name, foundFiles)
 }
 
-func TestPeriodicBackupHappyPath(t *testing.T) {
+func TestPeriodicBackupHappyPath(t testing.TB) {
 	pvcName := "periodic-backup-happy-path-pvc"
 	ensureHostPathPVC(t, pvcName)
 	configClient := framework.NewConfigClient(t)
@@ -140,7 +162,7 @@ func TestPeriodicBackupHappyPath(t *testing.T) {
 	}
 }
 
-func TestRetentionBySize(t *testing.T) {
+func TestRetentionBySize(t testing.TB) {
 	pvcName := "retention-by-size"
 	ensureHostPathPVC(t, pvcName)
 	configClient := framework.NewConfigClient(t)
@@ -188,7 +210,7 @@ func TestRetentionBySize(t *testing.T) {
 	}
 }
 
-func TestMultipleBackupsAreSkipped(t *testing.T) {
+func TestMultipleBackupsAreSkipped(t testing.TB) {
 	pvcName := "multi-backups"
 	ensureHostPathPVC(t, pvcName)
 	c := framework.NewOperatorClient(t)
@@ -230,7 +252,7 @@ func TestMultipleBackupsAreSkipped(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestBackupFailureOnMissingPVC(t *testing.T) {
+func TestBackupFailureOnMissingPVC(t testing.TB) {
 	backupCrd := operatorv1alpha1.EtcdBackup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "failing-backup-missing-pvc",
@@ -264,7 +286,7 @@ func TestBackupFailureOnMissingPVC(t *testing.T) {
 }
 
 // pushRandomConfigMaps pushes about 125mb of random configmaps into the etcd cluster
-func pushRandomConfigMaps(t *testing.T) {
+func pushRandomConfigMaps(t testing.TB) {
 	coreClient := framework.NewCoreClient(t)
 	// we only allow retention on the order of gigabytes, so we have to fill up etcd for a while to get sizable snapshots
 	// the maximum we can push without errors is: Too long: must have at most 1048576 bytes
@@ -307,7 +329,7 @@ func pushRandomConfigMaps(t *testing.T) {
 	t.Logf("done pushng %d configmaps at 1mb!", kn*n)
 }
 
-func TestWrongScheduleDegradesOperator(t *testing.T) {
+func TestWrongScheduleDegradesOperator(t testing.TB) {
 	operatorClient := framework.NewOperatorClient(t)
 	configClient := framework.NewConfigClient(t)
 
@@ -392,7 +414,7 @@ func TestWrongScheduleDegradesOperator(t *testing.T) {
 	require.NoError(t, err, "expected operator to recover after degrade")
 }
 
-func awaitBackupInvocations(t *testing.T, backupCrd configv1alpha1.Backup) {
+func awaitBackupInvocations(t testing.TB, backupCrd configv1alpha1.Backup) {
 	batchClient := framework.NewBatchClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
@@ -435,7 +457,7 @@ func awaitBackupInvocations(t *testing.T, backupCrd configv1alpha1.Backup) {
 	require.NoError(t, err)
 }
 
-func ensureHostPathPVC(t *testing.T, pvcName string) {
+func ensureHostPathPVC(t testing.TB, pvcName string) {
 	kubeConfig, err := framework.NewClientConfigForTest("")
 	require.NoError(t, err)
 
@@ -498,7 +520,7 @@ func ensureHostPathPVC(t *testing.T, pvcName string) {
 	}
 }
 
-func ensureCronJobRemoved(t *testing.T, name string) {
+func ensureCronJobRemoved(t testing.TB, name string) {
 	c := framework.NewBatchClient(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -518,7 +540,7 @@ func ensureCronJobRemoved(t *testing.T, name string) {
 	require.NoErrorf(t, err, "waiting for cronjob deletion error")
 }
 
-func ensureEtcdBackupsRemoved(t *testing.T, name string) {
+func ensureEtcdBackupsRemoved(t testing.TB, name string) {
 	c := framework.NewOperatorClient(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -542,7 +564,7 @@ func ensureEtcdBackupsRemoved(t *testing.T, name string) {
 	require.NoErrorf(t, err, "waiting for etcdbackups deletion error")
 }
 
-func ensureAllBackupPodsAreRemoved(t *testing.T) {
+func ensureAllBackupPodsAreRemoved(t testing.TB) {
 	c := framework.NewCoreClient(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -579,7 +601,7 @@ func backupHasCondition(backup *operatorv1alpha1.EtcdBackup,
 	return false
 }
 
-func collectFilesInPVCAcrossAllNodes(t *testing.T, pvcName string) []string {
+func collectFilesInPVCAcrossAllNodes(t testing.TB, pvcName string) []string {
 	client := framework.NewCoreClient(t)
 
 	list, err := client.Nodes().List(context.Background(), metav1.ListOptions{LabelSelector: "node-role.kubernetes.io/master"})
@@ -600,7 +622,7 @@ func collectFilesInPVCAcrossAllNodes(t *testing.T, pvcName string) []string {
 	return lines
 }
 
-func listFilesInPVC(t *testing.T, pvcName string, node corev1.Node) []string {
+func listFilesInPVC(t testing.TB, pvcName string, node corev1.Node) []string {
 	client := framework.NewCoreClient(t)
 	pod := corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -669,7 +691,7 @@ func listFilesInPVC(t *testing.T, pvcName string, node corev1.Node) []string {
 	return files
 }
 
-func requireBackupFilesFound(t *testing.T, name string, files []string) {
+func requireBackupFilesFound(t testing.TB, name string, files []string) {
 	// a successful backup will look like this:
 	// ./backup-backup-happy-path-2023-08-03_152313
 	// ./backup-backup-happy-path-2023-08-03_152313/static_kuberesources_2023-08-03_152316__POSSIBLY_DIRTY__.tar.gz
@@ -698,7 +720,7 @@ func requireBackupFilesFound(t *testing.T, name string, files []string) {
 	require.Truef(t, snapMatchFound, "expected snapshot for backup: %s, found files: %v ", name, files)
 }
 
-func groupBackupFilesByRunPrefix(t *testing.T, files []string) map[string][]string {
+func groupBackupFilesByRunPrefix(t testing.TB, files []string) map[string][]string {
 	// find will return a dir prefix always before any files like this:
 	// ./backup-backup-happy-path-2023-08-03_152313
 	// which is what we're going to use to group on
