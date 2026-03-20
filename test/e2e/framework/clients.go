@@ -10,7 +10,7 @@ import (
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 )
 
-func NewOperatorClient(t *testing.T) *operatorversionedclient.Clientset {
+func NewOperatorClient(t testing.TB) *operatorversionedclient.Clientset {
 	kubeConfig, err := NewClientConfigForTest("")
 	require.NoError(t, err)
 
@@ -20,7 +20,7 @@ func NewOperatorClient(t *testing.T) *operatorversionedclient.Clientset {
 	return operatorConfigClient
 }
 
-func NewConfigClient(t *testing.T) *configversionedclientv1alpha1.ConfigV1alpha1Client {
+func NewConfigClient(t testing.TB) *configversionedclientv1alpha1.ConfigV1alpha1Client {
 	kubeConfig, err := NewClientConfigForTest("")
 	require.NoError(t, err)
 
@@ -30,7 +30,7 @@ func NewConfigClient(t *testing.T) *configversionedclientv1alpha1.ConfigV1alpha1
 	return c
 }
 
-func NewBatchClient(t *testing.T) *batchv1client.BatchV1Client {
+func NewBatchClient(t testing.TB) *batchv1client.BatchV1Client {
 	kubeConfig, err := NewClientConfigForTest("")
 	require.NoError(t, err)
 
@@ -40,7 +40,7 @@ func NewBatchClient(t *testing.T) *batchv1client.BatchV1Client {
 	return c
 }
 
-func NewCoreClient(t *testing.T) *corev1client.CoreV1Client {
+func NewCoreClient(t testing.TB) *corev1client.CoreV1Client {
 	kubeConfig, err := NewClientConfigForTest("")
 	require.NoError(t, err)
 
