@@ -9,6 +9,8 @@ metadata:
 spec:
   template:
     metadata:
+      labels:
+        app: tnf-job
       annotations:
         openshift.io/required-scc: "privileged"
     spec:

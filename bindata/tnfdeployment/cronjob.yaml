@@ -23,6 +23,7 @@ spec:
           annotations:
             openshift.io/required-scc: "privileged"
           labels:
+            app: tnf-job
             app.kubernetes.io/name: <injected>
         spec:
           terminationGracePeriodSeconds: 1
