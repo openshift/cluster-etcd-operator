@@ -274,11 +274,24 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		featureGateAccessor,
 	)
 
+	// For Two Node without Arbiter, use the uncached
+	// etcd client for the quorum checker. With only 2 members, the 60s cache TTL can
+	// cause a stale "2 healthy" result when a node has just gone down, allowing a
+	// revision to be created targeting the dead node.
+	var quorumMemberClient etcdcli.AllMemberLister = cachedMemberClient
+	infra, err := configClient.ConfigV1().Infrastructures().Get(ctx, ceohelpers.InfrastructureClusterName, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	if infra.Status.ControlPlaneTopology == configv1.DualReplicaTopologyMode {
+		quorumMemberClient = etcdClient
+	}
+
 	quorumChecker := ceohelpers.NewQuorumChecker(
 		etcdNamespaceLister,
 		configInformers.Config().V1().Infrastructures().Lister(),
 		operatorClient,
-		cachedMemberClient)
+		quorumMemberClient)
 
 	targetConfigReconciler := targetconfigcontroller.NewTargetConfigController(
 		AlivenessChecker,
