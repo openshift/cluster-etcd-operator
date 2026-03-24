@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 )
@@ -225,6 +226,82 @@ func TestCurrentRevision(t *testing.T) {
 			revision, err := CurrentRevision(scenario.status)
 			require.Equal(t, scenario.expectedErr, err)
 			require.Equal(t, scenario.expected, revision)
+		})
+	}
+}
+
+func TestCanonicalizeIP(t *testing.T) {
+	scenarios := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "valid IPv4",
+			input:    "192.168.1.10",
+			expected: "192.168.1.10",
+		},
+		{
+			name:     "valid IPv6 compressed",
+			input:    "2001:db8::1",
+			expected: "2001:db8::1",
+		},
+		{
+			name:     "IPv6 with leading zeros",
+			input:    "2001:0db8:0000:0000:0000:0000:0000:0001",
+			expected: "2001:db8::1",
+		},
+		{
+			name:     "IPv6 mixed case",
+			input:    "2001:DB8::1",
+			expected: "2001:db8::1",
+		},
+		{
+			name:     "IPv4-mapped IPv6 converts to IPv4",
+			input:    "::ffff:192.0.2.1",
+			expected: "192.0.2.1",
+		},
+		{
+			name:     "IPv4-mapped IPv6 with zeros converts to IPv4",
+			input:    "::ffff:c000:0201",
+			expected: "192.0.2.1",
+		},
+		{
+			name:     "IPv6 loopback",
+			input:    "::1",
+			expected: "::1",
+		},
+		{
+			name:     "IPv4 loopback",
+			input:    "127.0.0.1",
+			expected: "127.0.0.1",
+		},
+		{
+			name:     "invalid IP returns original",
+			input:    "not-an-ip",
+			expected: "not-an-ip",
+		},
+		{
+			name:     "empty string returns original",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "IPv6 with redundant zeros",
+			input:    "fe80:0000:0000:0000:0202:b3ff:fe1e:8329",
+			expected: "fe80::202:b3ff:fe1e:8329",
+		},
+		{
+			name:     "IPv6 full form",
+			input:    "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
+			expected: "2001:db8:85a3::8a2e:370:7334",
+		},
+	}
+
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			actual := dnshelpers.CanonicalizeIP(scenario.input)
+			require.Equal(t, scenario.expected, actual)
 		})
 	}
 }
