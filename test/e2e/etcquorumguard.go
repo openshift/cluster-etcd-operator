@@ -15,7 +15,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
+
+	g "github.com/onsi/ginkgo/v2"
 )
+
+var _ = g.Describe("[sig-etcd] cluster-etcd-operator", func() {
+	g.It("[Operator][Serial][Disruptive] TestEtcdQuorumGuard", func() {
+		TestEtcdQuorumGuard(g.GinkgoTB())
+	})
+})
 
 type podstatus struct {
 	node   string
@@ -37,7 +45,7 @@ const guardPodsLabelSelectorString = "app=guard"
 // then makes all nodes schedulable and checks that the EQG pod is
 // present/restarted on all masters.  It then makes one node
 // unschedulable again and checks that the EQG pod is evicted.
-func TestEtcdQuorumGuard(t *testing.T) {
+func TestEtcdQuorumGuard(t testing.TB) {
 	cs := framework.NewClientSet("")
 	fmt.Print("Make all schedulable\n")
 	if err := makeAllNodesSchedulable(cs); err != nil {

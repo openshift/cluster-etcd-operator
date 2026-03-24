@@ -12,8 +12,15 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	g "github.com/onsi/ginkgo/v2"
 	"github.com/stretchr/testify/require"
 )
+
+var _ = g.Describe("[sig-etcd] cluster-etcd-operator", func() {
+	g.It("[Operator][Serial][Disruptive] TestEtcdDBScaling", func() {
+		TestEtcdDBScaling(g.GinkgoTB())
+	})
+})
 
 const (
 	operandNameSpace  = "openshift-etcd"
@@ -23,7 +30,7 @@ const (
 	etcdPodName       = "etcd"
 )
 
-func TestEtcdDBScaling(t *testing.T) {
+func TestEtcdDBScaling(t testing.TB) {
 	dbSize32GB := int32(32)
 	opClientSet := framework.NewOperatorClient(t)
 	clientSet := framework.NewClientSet("")
