@@ -389,17 +389,31 @@ func getEtcdEndpoints(configmapLister corev1listers.ConfigMapLister, skipBootstr
 	bootstrapAddress := etcdEndpoints.Annotations["alpha.installer.openshift.io/etcd-bootstrap"]
 	// In some cases we want to exclude the ephemeral bootstrap-etcd member from the endpoint list.
 	if !skipBootstrap && len(bootstrapAddress) > 0 {
-		if ip := net.ParseIP(bootstrapAddress); ip == nil {
+		ip := net.ParseIP(bootstrapAddress)
+		if ip == nil {
 			return "", fmt.Errorf("configmaps/%s contains invalid bootstrap ip address: %s: %v", etcdEndpointName, bootstrapAddress, err)
 		}
-		etcdURLs = append(etcdURLs, fmt.Sprintf("https://%s", net.JoinHostPort(bootstrapAddress, "2379")))
+		canonicalBootstrapIP := ip.String()
+		// Add canonical version
+		etcdURLs = append(etcdURLs, fmt.Sprintf("https://%s", net.JoinHostPort(canonicalBootstrapIP, "2379")))
+		// Add non-canonical version for backward compatibility if different
+		if canonicalBootstrapIP != bootstrapAddress {
+			etcdURLs = append(etcdURLs, fmt.Sprintf("https://%s", net.JoinHostPort(bootstrapAddress, "2379")))
+		}
 	}
 	for k := range etcdEndpoints.Data {
 		address := etcdEndpoints.Data[k]
-		if ip := net.ParseIP(address); ip == nil {
+		ip := net.ParseIP(address)
+		if ip == nil {
 			return "", fmt.Errorf("configmaps/%s contains invalid ip address: %s: %v", etcdEndpointName, address, err)
 		}
-		etcdURLs = append(etcdURLs, fmt.Sprintf("https://%s", net.JoinHostPort(address, "2379")))
+		canonicalIP := ip.String()
+		// Add canonical version
+		etcdURLs = append(etcdURLs, fmt.Sprintf("https://%s", net.JoinHostPort(canonicalIP, "2379")))
+		// Add non-canonical version for backward compatibility if different
+		if canonicalIP != address {
+			etcdURLs = append(etcdURLs, fmt.Sprintf("https://%s", net.JoinHostPort(address, "2379")))
+		}
 	}
 	sort.Strings(etcdURLs)
 
