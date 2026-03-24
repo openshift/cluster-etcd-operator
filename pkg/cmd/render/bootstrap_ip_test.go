@@ -234,3 +234,194 @@ func withRoute(linkIndex int, dst string, protocol int) LinkRoutes {
 		},
 	}
 }
+
+func TestAddressNotIn(t *testing.T) {
+	scenarios := []struct {
+		name        string
+		excludedIPs []string
+		testAddr    string
+		expected    bool
+	}{
+		{
+			name:        "address not in empty exclusion list",
+			excludedIPs: []string{},
+			testAddr:    "192.0.2.1",
+			expected:    true,
+		},
+		{
+			name:        "address not in exclusion list",
+			excludedIPs: []string{"192.0.2.2", "192.0.2.3"},
+			testAddr:    "192.0.2.1",
+			expected:    true,
+		},
+		{
+			name:        "address in exclusion list",
+			excludedIPs: []string{"192.0.2.1", "192.0.2.2"},
+			testAddr:    "192.0.2.1",
+			expected:    false,
+		},
+		{
+			name:        "IPv4 canonicalization - leading zeros",
+			excludedIPs: []string{"192.000.002.001"},
+			testAddr:    "192.0.2.1",
+			expected:    false,
+		},
+		{
+			name:        "IPv6 address not in exclusion list",
+			excludedIPs: []string{"2001:db8::2", "2001:db8::3"},
+			testAddr:    "2001:db8::1",
+			expected:    true,
+		},
+		{
+			name:        "IPv6 address in exclusion list",
+			excludedIPs: []string{"2001:db8::1", "2001:db8::2"},
+			testAddr:    "2001:db8::1",
+			expected:    false,
+		},
+		{
+			name:        "IPv6 canonicalization - expanded form",
+			excludedIPs: []string{"2001:0db8:0000:0000:0000:0000:0000:0001"},
+			testAddr:    "2001:db8::1",
+			expected:    false,
+		},
+		{
+			name:        "IPv6 canonicalization - compressed form matches expanded",
+			excludedIPs: []string{"2001:db8::1"},
+			testAddr:    "2001:0db8:0000:0000:0000:0000:0000:0001",
+			expected:    false,
+		},
+		{
+			name:        "invalid IP in exclusion list is ignored",
+			excludedIPs: []string{"not-an-ip", "192.0.2.2"},
+			testAddr:    "192.0.2.1",
+			expected:    true,
+		},
+		{
+			name:        "multiple exclusions with mixed valid and invalid",
+			excludedIPs: []string{"invalid", "192.0.2.1", "also-invalid"},
+			testAddr:    "192.0.2.1",
+			expected:    false,
+		},
+		{
+			name:        "IPv4-mapped IPv6 address",
+			excludedIPs: []string{"::ffff:192.0.2.1"},
+			testAddr:    "::ffff:192.0.2.1",
+			expected:    false,
+		},
+		{
+			name:        "single IP exclusion",
+			excludedIPs: []string{"10.0.0.1"},
+			testAddr:    "10.0.0.1",
+			expected:    false,
+		},
+		{
+			name:        "many exclusions, address not present",
+			excludedIPs: []string{"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4", "10.0.0.5"},
+			testAddr:    "10.0.0.100",
+			expected:    true,
+		},
+		{
+			name:        "many exclusions, address present at end",
+			excludedIPs: []string{"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4", "10.0.0.100"},
+			testAddr:    "10.0.0.100",
+			expected:    false,
+		},
+	}
+
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			filter := AddressNotIn(scenario.excludedIPs...)
+			testNetlinkAddr := netlink.Addr{
+				IPNet: netlink.NewIPNet(net.ParseIP(scenario.testAddr)),
+			}
+			result := filter(testNetlinkAddr)
+			if result != scenario.expected {
+				t.Errorf("expected %v, got %v for address %s with exclusions %v",
+					scenario.expected, result, scenario.testAddr, scenario.excludedIPs)
+			}
+		})
+	}
+}
+
+func TestNormalizeIPv4(t *testing.T) {
+	scenarios := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "IPv4 with leading zeros",
+			input:    "192.000.002.001",
+			expected: "192.0.2.1",
+		},
+		{
+			name:     "IPv4 without leading zeros",
+			input:    "192.0.2.1",
+			expected: "192.0.2.1",
+		},
+		{
+			name:     "IPv4 with mixed leading zeros",
+			input:    "010.000.002.100",
+			expected: "10.0.2.100",
+		},
+		{
+			name:     "IPv4 all zeros",
+			input:    "000.000.000.000",
+			expected: "0.0.0.0",
+		},
+		{
+			name:     "IPv4 with all leading zeros in last octet",
+			input:    "192.168.1.001",
+			expected: "192.168.1.1",
+		},
+		{
+			name:     "IPv6 address - should return as-is",
+			input:    "2001:db8::1",
+			expected: "2001:db8::1",
+		},
+		{
+			name:     "IPv6 with leading zeros - should return as-is",
+			input:    "2001:0db8:0000:0000:0000:0000:0000:0001",
+			expected: "2001:0db8:0000:0000:0000:0000:0000:0001",
+		},
+		{
+			name:     "invalid IP - should return as-is",
+			input:    "not-an-ip",
+			expected: "not-an-ip",
+		},
+		{
+			name:     "empty string - should return as-is",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "IPv4 with too few octets - should return as-is",
+			input:    "192.168.1",
+			expected: "192.168.1",
+		},
+		{
+			name:     "IPv4 with too many octets - should return as-is",
+			input:    "192.168.1.1.1",
+			expected: "192.168.1.1.1",
+		},
+		{
+			name:     "IPv4 with invalid characters - should return as-is",
+			input:    "192.168.1.a",
+			expected: "192.168.1.a",
+		},
+		{
+			name:     "IPv4 with out-of-range octet after normalization - should return as-is",
+			input:    "192.168.1.999",
+			expected: "192.168.1.999",
+		},
+	}
+
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			result := normalizeIPv4(scenario.input)
+			if result != scenario.expected {
+				t.Errorf("normalizeIPv4(%q) = %q, expected %q", scenario.input, result, scenario.expected)
+			}
+		})
+	}
+}

@@ -37,7 +37,11 @@ var (
 		[]configv1.FeatureGateName{backendquotahelpers.BackendQuotaFeatureGateName},
 		[]configv1.FeatureGateName{})
 
-	defaultEnvResult = map[string]string{
+	defaultEnvResult = getDefaultEnvResult()
+)
+
+func getDefaultEnvResult() map[string]string {
+	result := map[string]string{
 		"ALL_ETCD_ENDPOINTS":                  "https://192.168.2.0:2379,https://192.168.2.1:2379,https://192.168.2.2:2379",
 		"ETCDCTL_CACERT":                      "/etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/server-ca-bundle.crt",
 		"ETCDCTL_CERT":                        "/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-peer-NODE_NAME.crt",
@@ -66,7 +70,9 @@ var (
 		"NODE_master_2_ETCD_URL_HOST":         "192.168.2.2",
 		"NODE_master_2_IP":                    "192.168.2.2",
 	}
-)
+
+	return result
+}
 
 func TestEnvVarController(t *testing.T) {
 	scenarios := []struct {

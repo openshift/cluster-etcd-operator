@@ -362,7 +362,7 @@ func (c *clusterMemberRemovalController) removeMemberWithoutMachine(ctx context.
 			if err != nil {
 				return err
 			}
-			if memberIP != potentialMemberToRemoveIP {
+			if !ceohelpers.IPsEqual(memberIP, potentialMemberToRemoveIP) {
 				continue
 			}
 			// a member without a node must be reported as unhealthy
@@ -479,7 +479,7 @@ func (c *clusterMemberRemovalController) getNodeForMember(memberInternalIP strin
 		if err != nil {
 			return nil, fmt.Errorf("failed to get internal IP for node: %w", err)
 		}
-		if memberInternalIP == internalNodeIP {
+		if ceohelpers.IPsEqual(memberInternalIP, internalNodeIP) {
 			return masterNode, nil
 		}
 	}
@@ -526,12 +526,7 @@ func (c *clusterMemberRemovalController) getAllVotingMembers(ctx context.Context
 }
 
 func hasInternalIP(machine *machinev1beta1.Machine, memberInternalIP string) bool {
-	for _, addr := range machine.Status.Addresses {
-		if addr.Type == corev1.NodeInternalIP && addr.Address == memberInternalIP {
-			return true
-		}
-	}
-	return false
+	return ceohelpers.HasCanonicalInternalIPInMachine(machine.Status.Addresses, memberInternalIP)
 }
 
 func membersEqual(left, right []*etcdserverpb.Member) bool {
