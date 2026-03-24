@@ -6,11 +6,13 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"k8s.io/apimachinery/pkg/runtime"
-
+	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 var (
@@ -225,6 +227,201 @@ func TestCurrentRevision(t *testing.T) {
 			revision, err := CurrentRevision(scenario.status)
 			require.Equal(t, scenario.expectedErr, err)
 			require.Equal(t, scenario.expected, revision)
+		})
+	}
+}
+
+func TestIndexMachinesByNodeInternalIP(t *testing.T) {
+	scenarios := []struct {
+		name                      string
+		machines                  []*machinev1beta1.Machine
+		expectedIndexKeys         []string
+		expectedMachineNameForKey map[string]string
+	}{
+		{
+			name: "single machine with IPv4",
+			machines: []*machinev1beta1.Machine{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "machine1"},
+					Status: machinev1beta1.MachineStatus{
+						Addresses: []corev1.NodeAddress{
+							{Type: corev1.NodeInternalIP, Address: "192.168.1.10"},
+						},
+					},
+				},
+			},
+			expectedIndexKeys: []string{"192.168.1.10"},
+			expectedMachineNameForKey: map[string]string{
+				"192.168.1.10": "machine1",
+			},
+		},
+		{
+			name: "single machine with IPv6 expanded form - should use canonical key only",
+			machines: []*machinev1beta1.Machine{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "machine1"},
+					Status: machinev1beta1.MachineStatus{
+						Addresses: []corev1.NodeAddress{
+							{Type: corev1.NodeInternalIP, Address: "2001:0db8:0000:0000:0000:0000:0000:0001"},
+						},
+					},
+				},
+			},
+			expectedIndexKeys: []string{"2001:db8::1"},
+			expectedMachineNameForKey: map[string]string{
+				"2001:db8::1": "machine1",
+			},
+		},
+		{
+			name: "single machine with dual-stack IPs",
+			machines: []*machinev1beta1.Machine{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "machine1"},
+					Status: machinev1beta1.MachineStatus{
+						Addresses: []corev1.NodeAddress{
+							{Type: corev1.NodeInternalIP, Address: "192.168.1.10"},
+							{Type: corev1.NodeInternalIP, Address: "2001:db8::1"},
+						},
+					},
+				},
+			},
+			expectedIndexKeys: []string{"192.168.1.10", "2001:db8::1"},
+			expectedMachineNameForKey: map[string]string{
+				"192.168.1.10": "machine1",
+				"2001:db8::1":  "machine1",
+			},
+		},
+		{
+			name: "multiple machines with different IPs",
+			machines: []*machinev1beta1.Machine{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "machine1"},
+					Status: machinev1beta1.MachineStatus{
+						Addresses: []corev1.NodeAddress{
+							{Type: corev1.NodeInternalIP, Address: "192.168.1.10"},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "machine2"},
+					Status: machinev1beta1.MachineStatus{
+						Addresses: []corev1.NodeAddress{
+							{Type: corev1.NodeInternalIP, Address: "192.168.1.20"},
+						},
+					},
+				},
+			},
+			expectedIndexKeys: []string{"192.168.1.10", "192.168.1.20"},
+			expectedMachineNameForKey: map[string]string{
+				"192.168.1.10": "machine1",
+				"192.168.1.20": "machine2",
+			},
+		},
+		{
+			name: "machine with multiple network interfaces (same machine, multiple IPs)",
+			machines: []*machinev1beta1.Machine{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "machine1"},
+					Status: machinev1beta1.MachineStatus{
+						Addresses: []corev1.NodeAddress{
+							{Type: corev1.NodeInternalIP, Address: "10.0.1.10"},
+							{Type: corev1.NodeInternalIP, Address: "10.0.2.10"},
+							{Type: corev1.NodeHostName, Address: "node1.example.com"},
+						},
+					},
+				},
+			},
+			expectedIndexKeys: []string{"10.0.1.10", "10.0.2.10"},
+			expectedMachineNameForKey: map[string]string{
+				"10.0.1.10": "machine1",
+				"10.0.2.10": "machine1",
+			},
+		},
+		{
+			name: "IPv4-mapped IPv6 should convert to IPv4",
+			machines: []*machinev1beta1.Machine{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "machine1"},
+					Status: machinev1beta1.MachineStatus{
+						Addresses: []corev1.NodeAddress{
+							{Type: corev1.NodeInternalIP, Address: "::ffff:192.0.2.1"},
+						},
+					},
+				},
+			},
+			expectedIndexKeys: []string{"192.0.2.1"},
+			expectedMachineNameForKey: map[string]string{
+				"192.0.2.1": "machine1",
+			},
+		},
+		{
+			name: "filters out non-internal IP addresses",
+			machines: []*machinev1beta1.Machine{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "machine1"},
+					Status: machinev1beta1.MachineStatus{
+						Addresses: []corev1.NodeAddress{
+							{Type: corev1.NodeInternalIP, Address: "192.168.1.10"},
+							{Type: corev1.NodeExternalIP, Address: "1.2.3.4"},
+							{Type: corev1.NodeHostName, Address: "node1.example.com"},
+						},
+					},
+				},
+			},
+			expectedIndexKeys: []string{"192.168.1.10"},
+			expectedMachineNameForKey: map[string]string{
+				"192.168.1.10": "machine1",
+			},
+		},
+		{
+			name: "empty address should be filtered out",
+			machines: []*machinev1beta1.Machine{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "machine1"},
+					Status: machinev1beta1.MachineStatus{
+						Addresses: []corev1.NodeAddress{
+							{Type: corev1.NodeInternalIP, Address: ""},
+							{Type: corev1.NodeInternalIP, Address: "192.168.1.10"},
+						},
+					},
+				},
+			},
+			expectedIndexKeys: []string{"192.168.1.10"},
+			expectedMachineNameForKey: map[string]string{
+				"192.168.1.10": "machine1",
+			},
+		},
+		{
+			name:                      "empty machine list",
+			machines:                  []*machinev1beta1.Machine{},
+			expectedIndexKeys:         []string{},
+			expectedMachineNameForKey: map[string]string{},
+		},
+	}
+
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			index := IndexMachinesByNodeInternalIP(scenario.machines)
+
+			// Verify the number of keys matches expected
+			require.Equal(t, len(scenario.expectedIndexKeys), len(index),
+				"index should have exactly %d entries, but has %d",
+				len(scenario.expectedIndexKeys), len(index))
+
+			// Verify each expected key exists and points to the correct machine
+			for ip, expectedMachineName := range scenario.expectedMachineNameForKey {
+				machine, exists := index[ip]
+				require.True(t, exists, "expected IP %s to exist in index", ip)
+				require.NotNil(t, machine, "machine should not be nil for IP %s", ip)
+				require.Equal(t, expectedMachineName, machine.Name,
+					"machine name mismatch for IP %s", ip)
+			}
+
+			// Verify no unexpected keys exist
+			for ip := range index {
+				_, expected := scenario.expectedMachineNameForKey[ip]
+				require.True(t, expected, "unexpected IP %s found in index", ip)
+			}
 		})
 	}
 }
