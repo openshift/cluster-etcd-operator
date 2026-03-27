@@ -134,7 +134,8 @@ func CanonicalizeIP(ip string) string {
 	return parsed.String() // Returns canonical representation
 }
 
-// GetIPFromAddress takes a client or peer address and returns the IP address (unescaped if IPv6).
+// GetIPFromAddress takes a client or peer address and returns the canonical IP address (unescaped if IPv6).
+// The returned IP is in canonical form for consistent comparisons.
 func GetIPFromAddress(address string) (string, error) {
 	u, err := url.Parse(address)
 	if err != nil {
@@ -145,5 +146,5 @@ func GetIPFromAddress(address string) (string, error) {
 		return "", fmt.Errorf("failed to split host port: %s: %w", u.Host, err)
 	}
 
-	return host, nil
+	return CanonicalizeIP(host), nil
 }

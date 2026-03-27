@@ -194,8 +194,8 @@ func VotingMemberIPListSet(ctx context.Context, cli etcdcli.EtcdClient) (sets.St
 		if err != nil {
 			return sets.NewString(), err
 		}
-		// Canonicalize for consistent set membership (GetIPFromAddress returns raw form)
-		currentVotingMemberIPListSet.Insert(dnshelpers.CanonicalizeIP(ip))
+		// GetIPFromAddress returns canonical IP, insert directly for consistent set membership
+		currentVotingMemberIPListSet.Insert(ip)
 	}
 
 	return currentVotingMemberIPListSet, nil

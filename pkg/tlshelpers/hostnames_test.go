@@ -24,11 +24,11 @@ func TestGetServerHostNames(t *testing.T) {
 			name:            "IPv4 canonical form",
 			nodeInternalIPs: []string{"192.168.1.1"},
 			expectedToContain: []string{
-				"192.168.1.1",     // raw form
-				"192.168.1.1",     // canonical form (same as raw for standard IPv4)
-				"localhost",       // static entries
-				"127.0.0.1",       // static IPv4 localhost
-				"::1",             // static IPv6 localhost
+				"192.168.1.1", // raw form
+				"192.168.1.1", // canonical form (same as raw for standard IPv4)
+				"localhost",   // static entries
+				"127.0.0.1",   // static IPv4 localhost
+				"::1",         // static IPv6 localhost
 			},
 			description: "Standard IPv4 address should include both canonical and raw forms",
 		},
@@ -54,7 +54,7 @@ func TestGetServerHostNames(t *testing.T) {
 			nodeInternalIPs: []string{"2001:0db8:0000:0000:0000:0000:0000:0001"},
 			expectedToContain: []string{
 				"2001:0db8:0000:0000:0000:0000:0000:0001", // raw form (expanded)
-				"2001:db8::1",                             // canonical form (compressed)
+				"2001:db8::1", // canonical form (compressed)
 			},
 			description: "IPv6 expanded form should include both expanded (raw) and compressed (canonical) forms",
 		},
@@ -146,11 +146,11 @@ func TestGetServerHostNames(t *testing.T) {
 // This test demonstrates why we need to include both forms in certificate SANs.
 func TestIPCanonicalizeInCertificate(t *testing.T) {
 	scenarios := []struct {
-		name           string
-		certIPs        []string
-		connectIP      string
-		shouldMatch    bool
-		description    string
+		name        string
+		certIPs     []string
+		connectIP   string
+		shouldMatch bool
+		description string
 	}{
 		{
 			name:        "IPv6 canonical in cert, canonical connection",
