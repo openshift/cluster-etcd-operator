@@ -28,7 +28,7 @@ func NewOperator() *cobra.Command {
 		})).
 		NewCommandWithContext(context.Background())
 	cmd.Use = "operator"
-	cmd.Short = "Start the Cluster etcd Operator"
+	cmd.Short = "Start the Cluster etcd Operator-test"
 
 	return cmd
 }
