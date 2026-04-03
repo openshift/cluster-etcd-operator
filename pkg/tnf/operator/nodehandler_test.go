@@ -206,8 +206,7 @@ func TestHandleNodes(t *testing.T) {
 				},
 			}))
 			etcdInformers.Operator().V1().Etcds().Informer().AddIndexers(etcdIndexer.GetIndexers())
-			ctx2, cancel := context.WithCancel(context.Background())
-			defer cancel()
+			ctx2 := t.Context()
 			etcdInformers.Start(ctx2.Done())
 			synced := etcdInformers.WaitForCacheSync(ctx2.Done())
 			for v, ok := range synced {
