@@ -68,7 +68,7 @@ func TestIsUnsupportedOptions(t *testing.T) {
 				spec := &operatorv1.StaticPodOperatorSpec{
 					OperatorSpec: operatorv1.OperatorSpec{
 						UnsupportedConfigOverrides: runtime.RawExtension{
-							Raw: []byte(fmt.Sprintf(tt.args, option)),
+							Raw: fmt.Appendf(nil, tt.args, option),
 						},
 					},
 				}
