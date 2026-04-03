@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -170,11 +171,9 @@ func (g *etcdClientGetter) MemberAddAsLearner(ctx context.Context, peerURL strin
 	}
 
 	for _, member := range membersResp.Members {
-		for _, currPeerURL := range member.PeerURLs {
-			if currPeerURL == peerURL {
-				g.eventRecorder.Warningf("MemberAlreadyAdded", "member with peerURL %s already part of the cluster", peerURL)
-				return nil
-			}
+		if slices.Contains(member.PeerURLs, peerURL) {
+			g.eventRecorder.Warningf("MemberAlreadyAdded", "member with peerURL %s already part of the cluster", peerURL)
+			return nil
 		}
 	}
 

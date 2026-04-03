@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -515,10 +516,8 @@ func NamespaceSelectorMatchesNamespace(selector *metav1.LabelSelector, namespace
 		if expr.Operator != metav1.LabelSelectorOpIn {
 			continue
 		}
-		for _, value := range expr.Values {
-			if value == namespace {
-				return true
-			}
+		if slices.Contains(expr.Values, namespace) {
+			return true
 		}
 	}
 	return false
@@ -610,12 +609,7 @@ func matchesIn(val string, exists bool, values []string) bool {
 	if !exists {
 		return false
 	}
-	for _, v := range values {
-		if v == val {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, val)
 }
 
 // RuleAllowsPort returns true if the given list of policy ports includes the

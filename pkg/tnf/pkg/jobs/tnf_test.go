@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"testing"
 	"time"
@@ -88,9 +89,7 @@ func TestRunTNFJobController(t *testing.T) {
 			// Reset the global tracking maps
 			runningControllersMutex.Lock()
 			runningControllers = make(map[string]bool)
-			for k, v := range tt.existingControllers {
-				runningControllers[k] = v
-			}
+			maps.Copy(runningControllers, tt.existingControllers)
 			runningControllersMutex.Unlock()
 
 			// Setup

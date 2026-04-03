@@ -3,6 +3,7 @@ package etcdenvvar
 import (
 	"context"
 	"fmt"
+	"maps"
 	"reflect"
 	"strings"
 	"sync"
@@ -126,9 +127,7 @@ func (c *EnvVarController) GetEnvVars() map[string]string {
 	defer c.envVarMapLock.Unlock()
 
 	ret := map[string]string{}
-	for k, v := range c.envVarMap {
-		ret[k] = v
-	}
+	maps.Copy(ret, c.envVarMap)
 	return ret
 }
 
