@@ -145,7 +145,7 @@ func TestEtcdEnv(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var installConfig map[string]interface{}
+			var installConfig map[string]any
 			installConfigJson, _ := yaml.YAMLToJSON([]byte(tt.installConfig))
 			err := json.Unmarshal(installConfigJson, &installConfig)
 			if err != nil {

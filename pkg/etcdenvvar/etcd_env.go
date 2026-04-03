@@ -286,7 +286,7 @@ func getUnsupportedArch(_ envVarContext) (map[string]string, error) {
 }
 
 func getObservedTLSMinVersion(envVarContext envVarContext) (tlsutil.TLSVersion, error) {
-	var observedConfig map[string]interface{}
+	var observedConfig map[string]any
 	if err := yaml.Unmarshal(envVarContext.spec.ObservedConfig.Raw, &observedConfig); err != nil {
 		return "", fmt.Errorf("failed to unmarshal the observedConfig: %w", err)
 	}
@@ -319,7 +319,7 @@ func getTLSMinVersion(envVarContext envVarContext) (map[string]string, error) {
 }
 
 func getCipherSuites(envVarContext envVarContext) (map[string]string, error) {
-	var observedConfig map[string]interface{}
+	var observedConfig map[string]any
 	if err := yaml.Unmarshal(envVarContext.spec.ObservedConfig.Raw, &observedConfig); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal the observedConfig: %w", err)
 	}

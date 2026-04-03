@@ -155,8 +155,8 @@ func FakeSecretWithAnnotations(namespace, name string, cert map[string][]byte, a
 }
 
 func ClusterConfigConfigMap(maxLearner int) *corev1.ConfigMap {
-	installConfig := map[string]interface{}{
-		"ControlPlane": map[string]interface{}{
+	installConfig := map[string]any{
+		"ControlPlane": map[string]any{
 			"Replicas": fmt.Sprintf("%d", maxLearner),
 		},
 	}

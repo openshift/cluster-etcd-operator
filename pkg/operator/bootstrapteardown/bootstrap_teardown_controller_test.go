@@ -278,7 +278,7 @@ func TestRemoveBootstrap(t *testing.T) {
 		hasBootstrap       bool
 		bootstrapId        uint64
 		expectedConditions []operatorv1.OperatorCondition
-		indexerObjs        []interface{}
+		indexerObjs        []any
 		expEvents          int
 		expectedErr        error
 	}{
@@ -327,7 +327,7 @@ func TestRemoveBootstrap(t *testing.T) {
 			expectedConditions: []operatorv1.OperatorCondition{
 				conditionEnoughEtcdMembers,
 			},
-			indexerObjs: []interface{}{
+			indexerObjs: []any{
 				bootstrapProgressing,
 			},
 			expEvents: 0,
@@ -339,7 +339,7 @@ func TestRemoveBootstrap(t *testing.T) {
 			expectedConditions: []operatorv1.OperatorCondition{
 				conditionEnoughEtcdMembers,
 			},
-			indexerObjs: []interface{}{
+			indexerObjs: []any{
 				bootstrapComplete,
 			},
 			expEvents:   1,
@@ -353,7 +353,7 @@ func TestRemoveBootstrap(t *testing.T) {
 				conditionEnoughEtcdMembers,
 				conditionEtcdMemberRemoved,
 			},
-			indexerObjs: []interface{}{
+			indexerObjs: []any{
 				bootstrapComplete,
 			},
 			expEvents: 2,

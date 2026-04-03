@@ -23,7 +23,7 @@ var envVarFns = []envVarFunc{
 type envVarData struct {
 	platform         string
 	arch             string
-	installConfig    map[string]interface{}
+	installConfig    map[string]any
 	platformData     string
 	hostname         string
 	inPlaceBootstrap bool
@@ -111,7 +111,7 @@ func getTLSCipherSuites(_ *envVarData) (map[string]string, error) {
 }
 
 func getMaxLearners(e *envVarData) (map[string]string, error) {
-	controlPlane, found := e.installConfig["controlPlane"].(map[string]interface{})
+	controlPlane, found := e.installConfig["controlPlane"].(map[string]any)
 	if !found {
 		return nil, fmt.Errorf("unrecognized data structure in controlPlane field")
 	}

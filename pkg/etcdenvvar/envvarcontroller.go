@@ -280,8 +280,8 @@ func (c *EnvVarController) processNextWorkItem(ctx context.Context) bool {
 // eventHandler queues the operator to check spec and status
 func (c *EnvVarController) eventHandler() cache.ResourceEventHandler {
 	return cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj interface{}) { c.queue.Add(workQueueKey) },
-		UpdateFunc: func(old, new interface{}) { c.queue.Add(workQueueKey) },
-		DeleteFunc: func(obj interface{}) { c.queue.Add(workQueueKey) },
+		AddFunc:    func(obj any) { c.queue.Add(workQueueKey) },
+		UpdateFunc: func(old, new any) { c.queue.Add(workQueueKey) },
+		DeleteFunc: func(obj any) { c.queue.Add(workQueueKey) },
 	}
 }

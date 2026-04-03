@@ -246,7 +246,7 @@ func (c *TargetConfigController) Enqueue() {
 
 func (c *TargetConfigController) namespaceEventHandler() cache.ResourceEventHandler {
 	return cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			ns, ok := obj.(*corev1.Namespace)
 			if !ok {
 				c.Enqueue()
@@ -255,7 +255,7 @@ func (c *TargetConfigController) namespaceEventHandler() cache.ResourceEventHand
 				c.Enqueue()
 			}
 		},
-		UpdateFunc: func(old, new interface{}) {
+		UpdateFunc: func(old, new any) {
 			ns, ok := old.(*corev1.Namespace)
 			if !ok {
 				c.Enqueue()
@@ -264,7 +264,7 @@ func (c *TargetConfigController) namespaceEventHandler() cache.ResourceEventHand
 				c.Enqueue()
 			}
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			ns, ok := obj.(*corev1.Namespace)
 			if !ok {
 				tombstone, ok := obj.(cache.DeletedFinalStateUnknown)

@@ -18,27 +18,27 @@ func TestObserveControlPlaneReplicasCount(t *testing.T) {
 	scenarios := []struct {
 		name                       string
 		installConfigPayload       string
-		existingEtcdOperatorConfig map[string]interface{}
-		expectedEtcdOperatorConfig map[string]interface{}
+		existingEtcdOperatorConfig map[string]any
+		expectedEtcdOperatorConfig map[string]any
 	}{
 		{
 			name:                       "replica count taken from the install config",
 			installConfigPayload:       validInstallConfigYaml,
-			expectedEtcdOperatorConfig: map[string]interface{}{"controlPlane": map[string]interface{}{"replicas": float64(3)}},
+			expectedEtcdOperatorConfig: map[string]any{"controlPlane": map[string]any{"replicas": float64(3)}},
 		},
 
 		{
 			name:                       "noop, all set",
 			installConfigPayload:       validInstallConfigYaml,
-			existingEtcdOperatorConfig: map[string]interface{}{"controlPlane": map[string]interface{}{"replicas": float64(3)}},
-			expectedEtcdOperatorConfig: map[string]interface{}{"controlPlane": map[string]interface{}{"replicas": float64(3)}},
+			existingEtcdOperatorConfig: map[string]any{"controlPlane": map[string]any{"replicas": float64(3)}},
+			expectedEtcdOperatorConfig: map[string]any{"controlPlane": map[string]any{"replicas": float64(3)}},
 		},
 
 		{
 			name:                       "replica count updated",
 			installConfigPayload:       validInstallConfigYaml,
-			existingEtcdOperatorConfig: map[string]interface{}{"controlPlane": map[string]interface{}{"replicas": float64(6)}},
-			expectedEtcdOperatorConfig: map[string]interface{}{"controlPlane": map[string]interface{}{"replicas": float64(3)}},
+			existingEtcdOperatorConfig: map[string]any{"controlPlane": map[string]any{"replicas": float64(6)}},
+			expectedEtcdOperatorConfig: map[string]any{"controlPlane": map[string]any{"replicas": float64(3)}},
 		},
 	}
 	for _, scenario := range scenarios {

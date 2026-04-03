@@ -83,7 +83,7 @@ func HandleDualReplicaClusters(
 	controlPlaneNodeLister := corev1listers.NewNodeLister(controlPlaneNodeInformer.GetIndexer())
 	klog.Infof("watching for nodes...")
 	_, err = controlPlaneNodeInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			node, ok := obj.(*corev1.Node)
 			if !ok {
 				klog.Warningf("failed to convert added object to Node %+v", obj)
@@ -101,7 +101,7 @@ func HandleDualReplicaClusters(
 			klog.Infof("node added and ready: %s", node.GetName())
 			go handleNodesWithRetry(controllerContext, controlPlaneNodeLister, ctx, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
 		},
-		UpdateFunc: func(oldObj, newObj interface{}) {
+		UpdateFunc: func(oldObj, newObj any) {
 			oldNode, oldOk := oldObj.(*corev1.Node)
 			newNode, newOk := newObj.(*corev1.Node)
 			if !oldOk || !newOk {
@@ -119,7 +119,7 @@ func HandleDualReplicaClusters(
 				go handleNodesWithRetry(controllerContext, controlPlaneNodeLister, ctx, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
 			}
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			node, ok := obj.(*corev1.Node)
 			if !ok {
 				klog.Warningf("failed to convert deleted object to Node %+v", obj)
@@ -143,13 +143,13 @@ func HandleDualReplicaClusters(
 	// that's why we do it with an event handler
 	klog.Infof("watching for secrets...")
 	_, err = kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			go handleFencingSecretChange(ctx, nil, obj, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
 		},
-		UpdateFunc: func(oldObj, newObj interface{}) {
+		UpdateFunc: func(oldObj, newObj any) {
 			go handleFencingSecretChange(ctx, oldObj, newObj, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
 		},
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			// nothing to do
 			// removing orphaned fence devices is handled by update-setup job
 			// when handling node replacements
@@ -367,7 +367,7 @@ func runPacemakerStatusCollectorCronJob(ctx context.Context, controllerContext *
 
 func handleFencingSecretChange(
 	ctx context.Context,
-	oldObj, obj interface{},
+	oldObj, obj any,
 	controllerContext *controllercmd.ControllerContext,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeClient kubernetes.Interface,

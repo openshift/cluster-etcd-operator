@@ -53,7 +53,7 @@ func createTestHealthCheck() *HealthCheck {
 // createFakeInformer creates a fake SharedIndexInformer with a store containing the given object.
 // If obj is nil, the store will be empty.
 func createFakeInformer(obj *pacmkrv1.PacemakerCluster) cache.SharedIndexInformer {
-	store := cache.NewStore(func(obj interface{}) (string, error) {
+	store := cache.NewStore(func(obj any) (string, error) {
 		if pc, ok := obj.(*pacmkrv1.PacemakerCluster); ok {
 			return pc.Name, nil
 		}

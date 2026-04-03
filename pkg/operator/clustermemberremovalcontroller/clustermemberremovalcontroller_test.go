@@ -408,7 +408,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 		initialObjectsForConfigMapTargetNSLister []runtime.Object
 		initialEtcdMemberList                    []*etcdserverpb.Member
 		fakeEtcdClientOptions                    etcdcli.FakeClientOption
-		indexerObjs                              []interface{}
+		indexerObjs                              []any
 		validateFn                               func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient)
 		expectedError                            error
 	}{
@@ -436,7 +436,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 				return []runtime.Object{cm}
 			}(),
 			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 4, Unhealthy: 0}),
-			indexerObjs:           []interface{}{bootstrapComplete},
+			indexerObjs:           []any{bootstrapComplete},
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
 				memberList, err := fakeEtcdClient.MemberList(context.TODO())
 				if err != nil {
@@ -468,7 +468,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 				return []runtime.Object{wellKnownEtcdEndpointsConfigMap()}
 			}(),
 			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 2, Unhealthy: 1}),
-			indexerObjs:           []interface{}{bootstrapComplete},
+			indexerObjs:           []any{bootstrapComplete},
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
 				memberList, err := fakeEtcdClient.MemberList(context.TODO())
 				if err != nil {
@@ -500,7 +500,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 				return []runtime.Object{wellKnownEtcdEndpointsConfigMap()}
 			}(),
 			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 2, Unhealthy: 1}),
-			indexerObjs:           []interface{}{bootstrapComplete},
+			indexerObjs:           []any{bootstrapComplete},
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
 				memberList, err := fakeEtcdClient.MemberList(context.TODO())
 				if err != nil {
@@ -533,7 +533,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 				return []runtime.Object{wellKnownEtcdEndpointsConfigMap()}
 			}(),
 			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 0}),
-			indexerObjs:           []interface{}{bootstrapComplete},
+			indexerObjs:           []any{bootstrapComplete},
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
 				memberList, err := fakeEtcdClient.MemberList(context.TODO())
 				if err != nil {
@@ -566,7 +566,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 				return []runtime.Object{cm}
 			}(),
 			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 1}),
-			indexerObjs:           []interface{}{bootstrapComplete},
+			indexerObjs:           []any{bootstrapComplete},
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
 				memberList, err := fakeEtcdClient.MemberList(context.TODO())
 				if err != nil {
@@ -601,7 +601,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 				return []runtime.Object{cm}
 			}(),
 			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 1}),
-			indexerObjs:           []interface{}{bootstrapComplete},
+			indexerObjs:           []any{bootstrapComplete},
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
 				memberList, err := fakeEtcdClient.MemberList(context.TODO())
 				if err != nil {
@@ -622,7 +622,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 			initialObjectsForMachineLister:           wellKnownMasterMachines(),
 			initialObservedConfigInput:               wellKnownReplicasCountSet,
 			initialObjectsForConfigMapTargetNSLister: []runtime.Object{wellKnownEtcdEndpointsConfigMap()},
-			indexerObjs:                              []interface{}{bootstrapComplete},
+			indexerObjs:                              []any{bootstrapComplete},
 		},
 		{
 			name:                       "excessive machine without the hooks",
@@ -647,7 +647,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 				cm.Data["m-4"] = "10.0.139.81"
 				return []runtime.Object{cm}
 			}(),
-			indexerObjs: []interface{}{bootstrapComplete},
+			indexerObjs: []any{bootstrapComplete},
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
 				memberList, err := fakeEtcdClient.MemberList(context.TODO())
 				if err != nil {
@@ -680,7 +680,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 				cm.Data["m-4"] = "10.0.139.81"
 				return []runtime.Object{cm}
 			}(),
-			indexerObjs: []interface{}{bootstrapComplete},
+			indexerObjs: []any{bootstrapComplete},
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
 				memberList, err := fakeEtcdClient.MemberList(context.TODO())
 				if err != nil {
@@ -702,7 +702,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 				return machines
 			}(),
 			initialObjectsForConfigMapTargetNSLister: []runtime.Object{wellKnownEtcdEndpointsConfigMap()},
-			indexerObjs:                              []interface{}{bootstrapComplete},
+			indexerObjs:                              []any{bootstrapComplete},
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
 				memberList, err := fakeEtcdClient.MemberList(context.TODO())
 				if err != nil {
@@ -732,7 +732,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 				return machines
 			}(),
 			initialObjectsForConfigMapTargetNSLister: []runtime.Object{wellKnownEtcdEndpointsConfigMap()},
-			indexerObjs:                              []interface{}{bootstrapComplete},
+			indexerObjs:                              []any{bootstrapComplete},
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
 				memberList, err := fakeEtcdClient.MemberList(context.TODO())
 				if err != nil {
@@ -770,7 +770,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 				cm.Data["m-4"] = "10.0.139.81"
 				return []runtime.Object{cm}
 			}(),
-			indexerObjs: []interface{}{bootstrapComplete},
+			indexerObjs: []any{bootstrapComplete},
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
 				memberList, err := fakeEtcdClient.MemberList(context.TODO())
 				if err != nil {
@@ -812,7 +812,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 				return []runtime.Object{cm}
 			}(),
 			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 5, Unhealthy: 0}),
-			indexerObjs:           []interface{}{bootstrapComplete},
+			indexerObjs:           []any{bootstrapComplete},
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
 				memberList, err := fakeEtcdClient.MemberList(context.TODO())
 				if err != nil {
@@ -858,7 +858,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 			}(),
 			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 1}),
 			expectedError:         fmt.Errorf("cannot proceed with scaling down, unhealthy voting etcd members found: [https://10.0.139.78:1234] but none are pending deletion"),
-			indexerObjs:           []interface{}{bootstrapComplete},
+			indexerObjs:           []any{bootstrapComplete},
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
 				memberList, err := fakeEtcdClient.MemberList(context.TODO())
 				if err != nil {
@@ -898,7 +898,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 				return []runtime.Object{cm}
 			}(),
 			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 1}),
-			indexerObjs:           []interface{}{bootstrapComplete},
+			indexerObjs:           []any{bootstrapComplete},
 			expectedError:         nil,
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
 				memberList, err := fakeEtcdClient.MemberList(context.TODO())
@@ -940,7 +940,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 			}(),
 			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 1}),
 			expectedError:         fmt.Errorf("cannot proceed with scaling down, unhealthy voting etcd members found: [https://10.0.139.78:1234] but none are pending deletion"),
-			indexerObjs:           []interface{}{bootstrapComplete},
+			indexerObjs:           []any{bootstrapComplete},
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
 				memberList, err := fakeEtcdClient.MemberList(context.TODO())
 				if err != nil {
@@ -991,7 +991,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 				return []runtime.Object{cm}
 			}(),
 			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 2}),
-			indexerObjs:           []interface{}{bootstrapComplete},
+			indexerObjs:           []any{bootstrapComplete},
 			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
 				memberList, err := fakeEtcdClient.MemberList(context.TODO())
 				if err != nil {

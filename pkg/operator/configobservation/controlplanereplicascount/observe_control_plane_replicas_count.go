@@ -15,7 +15,7 @@ import (
 var ControlPlaneReplicasPath = []string{"controlPlane", "replicas"}
 
 // ObserveControlPlaneReplicas sets the current control plane replicas count
-func ObserveControlPlaneReplicas(genericListers configobserver.Listers, _ events.Recorder, existingConfig map[string]interface{}) (ret map[string]interface{}, errs []error) {
+func ObserveControlPlaneReplicas(genericListers configobserver.Listers, _ events.Recorder, existingConfig map[string]any) (ret map[string]any, errs []error) {
 	defer func() {
 		// Prune the observed config so that it only contains controlPlane replicas field.
 		ret = configobserver.Pruned(ret, ControlPlaneReplicasPath)
@@ -31,7 +31,7 @@ func ObserveControlPlaneReplicas(genericListers configobserver.Listers, _ events
 	observedControlPlaneReplicas := float64(observedControlPlaneReplicasInt)
 
 	// always set the observed value
-	observedConfig := map[string]interface{}{}
+	observedConfig := map[string]any{}
 	if err = unstructured.SetNestedField(observedConfig, observedControlPlaneReplicas, ControlPlaneReplicasPath...); err != nil {
 		return existingConfig, append(errs, err)
 	}
@@ -53,7 +53,7 @@ func readDesiredControlPlaneReplicas(configMapListerForKubeSystemNamespace corev
 		return 0, fmt.Errorf("missing required key: %s for cm: %s/kube-system", installConfigKeyName, clusterConfigConfigMapName)
 	}
 
-	var unstructuredInstallConfig map[string]interface{}
+	var unstructuredInstallConfig map[string]any
 	if err := yaml.Unmarshal([]byte(rawInstallConfig), &unstructuredInstallConfig); err != nil {
 		return 0, fmt.Errorf("failed to unmarshal key: %s to yaml from cm: %s/kube-system, err: %w", installConfigKeyName, clusterConfigConfigMapName, err)
 	}

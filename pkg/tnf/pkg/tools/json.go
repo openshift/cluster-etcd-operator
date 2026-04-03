@@ -4,7 +4,7 @@ import "encoding/json"
 
 func AddToRawJson(in []byte, key string, value any) ([]byte, error) {
 
-	var jsonData map[string]interface{}
+	var jsonData map[string]any
 
 	if in == nil || len(in) == 0 {
 		in = []byte(`{}`)

@@ -793,7 +793,7 @@ func Test_getMachineCIDR(t *testing.T) {
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			var installConfig map[string]interface{}
+			var installConfig map[string]any
 			if err := yaml.Unmarshal([]byte(test.installConfig), &installConfig); err != nil {
 				panic(err)
 			}
@@ -940,7 +940,7 @@ featureGates: [ShortCertRotation=true, UpgradeStatus=foobar]
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			var installConfig map[string]interface{}
+			var installConfig map[string]any
 			if err := yaml.Unmarshal([]byte(test.installConfig), &installConfig); err != nil {
 				panic(err)
 			}
