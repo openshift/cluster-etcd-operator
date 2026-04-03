@@ -244,7 +244,7 @@ func cronSpecDiffers(l batchv1.CronJobSpec, r batchv1.CronJobSpec) bool {
 		return true
 	}
 
-	for i := 0; i < len(lBytes); i++ {
+	for i := range lBytes {
 		if lBytes[i] != rBytes[i] {
 			return true
 		}

@@ -116,7 +116,7 @@ func TestClientClosesOnChannelCapacity(t *testing.T) {
 
 	poolRecorder := newTestPool(t, testServer)
 	var clients []*clientv3.Client
-	for i := 0; i < maxNumCachedClients+1; i++ {
+	for range maxNumCachedClients + 1 {
 		client, err := poolRecorder.pool.Get()
 		require.NoError(t, err)
 		assert.NotNil(t, client)
@@ -141,7 +141,7 @@ func TestNewClientWithOpenClients(t *testing.T) {
 
 	poolRecorder := newTestPool(t, testServer)
 	var clients []*clientv3.Client
-	for i := 0; i < maxNumOpenClients; i++ {
+	for range maxNumOpenClients {
 		client, err := poolRecorder.pool.Get()
 		require.NoError(t, err)
 		assert.NotNil(t, client)
@@ -175,7 +175,7 @@ func TestClosesReturnOpenClients(t *testing.T) {
 
 	poolRecorder := newTestPool(t, testServer)
 	var clients []*clientv3.Client
-	for i := 0; i < maxNumOpenClients; i++ {
+	for range maxNumOpenClients {
 		client, err := poolRecorder.pool.Get()
 		require.NoError(t, err)
 		assert.NotNil(t, client)
@@ -188,13 +188,13 @@ func TestClosesReturnOpenClients(t *testing.T) {
 	assert.Equal(t, 0, poolRecorder.numCloseCalls)
 
 	// return all clients to fill the internal cache and cause five to close
-	for i := 0; i < maxNumOpenClients; i++ {
+	for i := range maxNumOpenClients {
 		poolRecorder.pool.Return(clients[i])
 	}
 	assert.Equal(t, maxNumCachedClients, poolRecorder.numCloseCalls)
 
 	// now we should be able to get the full amount of clients again
-	for i := 0; i < maxNumOpenClients; i++ {
+	for range maxNumOpenClients {
 		client, err := poolRecorder.pool.Get()
 		require.NoError(t, err)
 		assert.NotNil(t, client)
@@ -216,7 +216,7 @@ func TestClosesReturnOpenClientCloseError(t *testing.T) {
 
 	poolRecorder := newTestPool(t, testServer)
 	var clients []*clientv3.Client
-	for i := 0; i < maxNumOpenClients; i++ {
+	for range maxNumOpenClients {
 		client, err := poolRecorder.pool.Get()
 		require.NoError(t, err)
 		assert.NotNil(t, client)
@@ -231,13 +231,13 @@ func TestClosesReturnOpenClientCloseError(t *testing.T) {
 	// return all clients to fill the internal cache and cause five to close
 	// first close should fail, but not impact anything and certainly not block
 	poolRecorder.closeFuncErrReturn = errors.New("fail")
-	for i := 0; i < maxNumOpenClients; i++ {
+	for i := range maxNumOpenClients {
 		poolRecorder.pool.Return(clients[i])
 	}
 	assert.Equal(t, maxNumCachedClients, poolRecorder.numCloseCalls)
 
 	// now we should be able to get the full amount of clients again
-	for i := 0; i < maxNumOpenClients; i++ {
+	for range maxNumOpenClients {
 		client, err := poolRecorder.pool.Get()
 		require.NoError(t, err)
 		assert.NotNil(t, client)
@@ -259,7 +259,7 @@ func TestFailingOnCreationReturnsClients(t *testing.T) {
 
 	poolRecorder := newTestPool(t, testServer)
 	// this should already happen at maxNumOpenClients/numRetries, so we're testing this is working pretty well here.
-	for i := 0; i < maxNumOpenClients; i++ {
+	for range maxNumOpenClients {
 		// this error should fail the first retry consistently
 		poolRecorder.newFuncErrReturn = fmt.Errorf("constant error")
 		client, err := poolRecorder.pool.Get()
@@ -377,7 +377,7 @@ func TestClientOpenClientMultiReturns(t *testing.T) {
 	defer testServer.Terminate(t)
 
 	poolRecorder := newTestPool(t, testServer)
-	for i := 0; i < maxNumOpenClients*3; i++ {
+	for range maxNumOpenClients * 3 {
 		poolRecorder.pool.Return(testServer.RandClient())
 	}
 	assert.Equal(t, 0, poolRecorder.numNewCalls)

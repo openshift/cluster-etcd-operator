@@ -450,7 +450,7 @@ func TestRestartJobOrRunController_ParallelExecution(t *testing.T) {
 	numCalls := 3
 	errors := make([]error, numCalls)
 
-	for i := 0; i < numCalls; i++ {
+	for i := range numCalls {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()

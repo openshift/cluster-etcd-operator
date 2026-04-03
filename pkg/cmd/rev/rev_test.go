@@ -24,7 +24,7 @@ func TestHappyPathRevisionSaving(t *testing.T) {
 	require.Equal(t, 3, len(initialRev.RaftIndexByEndpoint))
 	ensureRevStructConsistency(t, initialRev)
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		_, err := client.Put(context.Background(), "a", "b")
 		require.NoError(t, err)
 
@@ -72,7 +72,7 @@ func TestNodeDownRevisionSaving(t *testing.T) {
 		t.Fatalf("no live endpoints after termination")
 	}
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		// the cluster may briefly reject writes while leadership stabilises; retry a few times
 		var putErr error
 		for attempt := 1; attempt <= 5; attempt++ {
@@ -107,7 +107,7 @@ func TestNoQuorumRevisionSaving(t *testing.T) {
 	testServer.Members[0].Terminate(t)
 	testServer.Members[1].Terminate(t)
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		func() {
 			// to make it fail quick
 			timeout, cancelFunc := context.WithTimeout(context.Background(), 10*time.Millisecond)
