@@ -19,7 +19,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
-	v1alpha1 "github.com/openshift/api/etcd/v1alpha1"
+	pacmkrv1 "github.com/openshift/api/etcd/v1"
 )
 
 // HealthStatusValue represents the overall health status of the pacemaker cluster.
@@ -145,17 +145,17 @@ func NewHealthCheck(
 
 	// Create scheme for the parameter codec
 	scheme := runtime.NewScheme()
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
+	if err := pacmkrv1.AddToScheme(scheme); err != nil {
 		return nil, nil, fmt.Errorf("failed to add scheme for informer: %w", err)
 	}
 
 	// Create informer for PacemakerCluster
-	klog.Infof("Creating PacemakerCluster informer for group %s, resource %s", v1alpha1.SchemeGroupVersion.String(), PacemakerResourceName)
+	klog.Infof("Creating PacemakerCluster informer for group %s, resource %s", pacmkrv1.SchemeGroupVersion.String(), PacemakerResourceName)
 	informer := cache.NewSharedIndexInformer(
 		&cache.ListWatch{
 			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
 				klog.V(4).Infof("PacemakerCluster informer ListFunc called for resource %s", PacemakerResourceName)
-				result := &v1alpha1.PacemakerClusterList{}
+				result := &pacmkrv1.PacemakerClusterList{}
 				err := restClient.Get().
 					Resource(PacemakerResourceName).
 					VersionedParams(&options, runtime.NewParameterCodec(scheme)).
@@ -180,7 +180,7 @@ func NewHealthCheck(
 				return watcher, err
 			},
 		},
-		&v1alpha1.PacemakerCluster{},
+		&pacmkrv1.PacemakerCluster{},
 		HealthCheckResyncInterval,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
 	)
@@ -197,7 +197,7 @@ func NewHealthCheck(
 	syncCtx := factory.NewSyncContext("PacemakerHealthCheck", eventRecorder.WithComponentSuffix("pacemaker-health-check"))
 
 	klog.Infof("PacemakerHealthCheck controller created, waiting for informers to sync before starting")
-	klog.Infof("PacemakerHealthCheck will watch: operatorClient and %s/%s resource", v1alpha1.SchemeGroupVersion.String(), PacemakerResourceName)
+	klog.Infof("PacemakerHealthCheck will watch: operatorClient and %s/%s resource", pacmkrv1.SchemeGroupVersion.String(), PacemakerResourceName)
 
 	// ResyncEvery ensures the sync function is called at regular intervals (30s)
 	// even if no informer events are detected.
@@ -279,7 +279,7 @@ func (c *HealthCheck) getPacemakerStatus(ctx context.Context) (*HealthStatus, *H
 		}, previous, nil
 	}
 
-	pacemakerCR, ok := item.(*v1alpha1.PacemakerCluster)
+	pacemakerCR, ok := item.(*pacmkrv1.PacemakerCluster)
 	if !ok {
 		return &HealthStatus{
 			OverallStatus: statusUnknown,
@@ -336,7 +336,7 @@ func (c *HealthCheck) getPacemakerStatus(ctx context.Context) (*HealthStatus, *H
 
 // buildHealthStatusFromCR builds a HealthStatus from the PacemakerCluster CR status fields
 // Note: This function assumes Status is not nil (checked by caller in getPacemakerStatus)
-func (c *HealthCheck) buildHealthStatusFromCR(pacemakerStatus *v1alpha1.PacemakerCluster) *HealthStatus {
+func (c *HealthCheck) buildHealthStatusFromCR(pacemakerStatus *pacmkrv1.PacemakerCluster) *HealthStatus {
 	status := &HealthStatus{
 		OverallStatus: statusUnknown,
 		Warnings:      []string{},
@@ -372,7 +372,7 @@ func (c *HealthCheck) buildHealthStatusFromCR(pacemakerStatus *v1alpha1.Pacemake
 // checkClusterConditions checks cluster-level configuration issues (node count, maintenance mode).
 // These are ALWAYS reported regardless of node-level errors, as they often represent root causes.
 // For example, "excessive nodes" causes resource failures on the extra node.
-func (c *HealthCheck) checkClusterConditions(pacemakerStatus *v1alpha1.PacemakerCluster, status *HealthStatus) {
+func (c *HealthCheck) checkClusterConditions(pacemakerStatus *pacmkrv1.PacemakerCluster, status *HealthStatus) {
 	conditions := pacemakerStatus.Status.Conditions
 	if len(conditions) == 0 {
 		// Missing cluster conditions means we can't verify cluster health configuration
@@ -391,26 +391,26 @@ func (c *HealthCheck) checkClusterConditions(pacemakerStatus *v1alpha1.Pacemaker
 }
 
 // getClusterConditionIssues returns specific issues from cluster-level conditions (non-summary conditions)
-func (c *HealthCheck) getClusterConditionIssues(conditions []metav1.Condition, pacemakerStatus *v1alpha1.PacemakerCluster) []string {
+func (c *HealthCheck) getClusterConditionIssues(conditions []metav1.Condition, pacemakerStatus *pacmkrv1.PacemakerCluster) []string {
 	var issues []string
 
 	// Check NodeCountAsExpected condition
-	nodeCountCondition := FindCondition(conditions, v1alpha1.ClusterNodeCountAsExpectedConditionType)
+	nodeCountCondition := FindCondition(conditions, pacmkrv1.ClusterNodeCountAsExpectedConditionType)
 	if nodeCountCondition != nil && nodeCountCondition.Status != metav1.ConditionTrue {
 		nodeCount := 0
 		if pacemakerStatus.Status.Nodes != nil {
 			nodeCount = len(*pacemakerStatus.Status.Nodes)
 		}
 		switch nodeCountCondition.Reason {
-		case v1alpha1.ClusterNodeCountAsExpectedReasonInsufficientNodes:
+		case pacmkrv1.ClusterNodeCountAsExpectedReasonInsufficientNodes:
 			issues = append(issues, fmt.Sprintf(msgInsufficientNodes, ExpectedNodeCount, nodeCount))
-		case v1alpha1.ClusterNodeCountAsExpectedReasonExcessiveNodes:
+		case pacmkrv1.ClusterNodeCountAsExpectedReasonExcessiveNodes:
 			issues = append(issues, fmt.Sprintf(msgExcessiveNodes, ExpectedNodeCount, nodeCount))
 		}
 	}
 
 	// Check InService condition (cluster not in maintenance mode)
-	inServiceCondition := FindCondition(conditions, v1alpha1.ClusterInServiceConditionType)
+	inServiceCondition := FindCondition(conditions, pacmkrv1.ClusterInServiceConditionType)
 	if inServiceCondition != nil && inServiceCondition.Status != metav1.ConditionTrue {
 		issues = append(issues, msgClusterInMaintenance)
 	}
@@ -419,7 +419,7 @@ func (c *HealthCheck) getClusterConditionIssues(conditions []metav1.Condition, p
 }
 
 // checkNodeStatuses checks if all nodes have healthy conditions and resources
-func (c *HealthCheck) checkNodeStatuses(pacemakerStatus *v1alpha1.PacemakerCluster, status *HealthStatus) {
+func (c *HealthCheck) checkNodeStatuses(pacemakerStatus *pacmkrv1.PacemakerCluster, status *HealthStatus) {
 	// Nil-guard for Nodes field - missing node data is an error (cannot verify cluster health)
 	if pacemakerStatus.Status.Nodes == nil {
 		klog.V(2).Infof("Pacemaker.Status.Nodes is nil, cannot determine node status")
@@ -445,7 +445,7 @@ func (c *HealthCheck) checkNodeStatuses(pacemakerStatus *v1alpha1.PacemakerClust
 // checkNodeConditions checks the conditions of a single node and its resources,
 // routing issues to errors or warnings based on severity.
 // Errors degrade the operator; warnings are informational (e.g., fencing redundancy lost).
-func (c *HealthCheck) checkNodeConditions(node v1alpha1.PacemakerClusterNodeStatus, status *HealthStatus) {
+func (c *HealthCheck) checkNodeConditions(node pacmkrv1.PacemakerClusterNodeStatus, status *HealthStatus) {
 	conditions := node.Conditions
 	if len(conditions) == 0 {
 		klog.V(2).Infof("Node %s has no conditions", node.NodeName)
@@ -453,7 +453,7 @@ func (c *HealthCheck) checkNodeConditions(node v1alpha1.PacemakerClusterNodeStat
 	}
 
 	// Check Online condition - this is critical for degraded status
-	onlineCondition := FindCondition(conditions, v1alpha1.NodeOnlineConditionType)
+	onlineCondition := FindCondition(conditions, pacmkrv1.NodeOnlineConditionType)
 	if onlineCondition != nil && onlineCondition.Status != metav1.ConditionTrue {
 		status.Errors = append(status.Errors, fmt.Sprintf(msgNodeOffline, node.NodeName))
 		return // If node is offline, other conditions don't matter
@@ -468,7 +468,7 @@ func (c *HealthCheck) checkNodeConditions(node v1alpha1.PacemakerClusterNodeStat
 	}
 
 	// Check overall node Healthy condition
-	healthyCondition := FindCondition(conditions, v1alpha1.NodeHealthyConditionType)
+	healthyCondition := FindCondition(conditions, pacmkrv1.NodeHealthyConditionType)
 	if healthyCondition == nil || healthyCondition.Status == metav1.ConditionTrue {
 		return // Node is healthy (except for warnings already captured above)
 	}
@@ -502,8 +502,8 @@ func (c *HealthCheck) getFencingWarnings(conditions []metav1.Condition) []string
 
 	// Check FencingHealthy - if false but FencingAvailable is true, fencing redundancy is degraded (warning)
 	// This is a warning because the node CAN still be fenced, just with reduced redundancy.
-	fencingAvailableCondition := FindCondition(conditions, v1alpha1.NodeFencingAvailableConditionType)
-	fencingHealthyCondition := FindCondition(conditions, v1alpha1.NodeFencingHealthyConditionType)
+	fencingAvailableCondition := FindCondition(conditions, pacmkrv1.NodeFencingAvailableConditionType)
+	fencingHealthyCondition := FindCondition(conditions, pacmkrv1.NodeFencingHealthyConditionType)
 
 	if fencingHealthyCondition != nil && fencingHealthyCondition.Status != metav1.ConditionTrue {
 		if fencingAvailableCondition != nil && fencingAvailableCondition.Status == metav1.ConditionTrue {
@@ -529,11 +529,11 @@ type nodeConditionCheck struct {
 // If delays in failure detection are observed, the fail-count thresholds for fencing agents may need
 // review to ensure failures are reported within a reasonable time window.
 var nodeConditionChecks = []nodeConditionCheck{
-	{v1alpha1.NodeInServiceConditionType, "in maintenance mode"},
-	{v1alpha1.NodeActiveConditionType, "in standby mode"},
-	{v1alpha1.NodeCleanConditionType, "unclean state (fencing/communication issue)"},
-	{v1alpha1.NodeMemberConditionType, "not a cluster member"},
-	{v1alpha1.NodeFencingAvailableConditionType, "fencing unavailable (no agents running)"},
+	{pacmkrv1.NodeInServiceConditionType, "in maintenance mode"},
+	{pacmkrv1.NodeActiveConditionType, "in standby mode"},
+	{pacmkrv1.NodeCleanConditionType, "unclean state (fencing/communication issue)"},
+	{pacmkrv1.NodeMemberConditionType, "not a cluster member"},
+	{pacmkrv1.NodeFencingAvailableConditionType, "fencing unavailable (no agents running)"},
 }
 
 // getNodeConditionErrors returns errors from node-level conditions.
@@ -548,7 +548,7 @@ func (c *HealthCheck) getNodeConditionErrors(conditions []metav1.Condition) []st
 	}
 
 	// Ready/Pending is logged but not reported - it's a temporary transitional state
-	if cond := FindCondition(conditions, v1alpha1.NodeReadyConditionType); cond != nil && cond.Status != metav1.ConditionTrue {
+	if cond := FindCondition(conditions, pacmkrv1.NodeReadyConditionType); cond != nil && cond.Status != metav1.ConditionTrue {
 		klog.V(2).Infof("Node is pending (temporary state)")
 	}
 
@@ -557,11 +557,11 @@ func (c *HealthCheck) getNodeConditionErrors(conditions []metav1.Condition) []st
 
 // getNodeResourceSummaries returns summaries of unhealthy resources on a node.
 // Each summary includes the resource name and its specific issue.
-func (c *HealthCheck) getNodeResourceSummaries(node v1alpha1.PacemakerClusterNodeStatus) []string {
+func (c *HealthCheck) getNodeResourceSummaries(node pacmkrv1.PacemakerClusterNodeStatus) []string {
 	var summaries []string
 
 	for _, resource := range node.Resources {
-		healthyCondition := FindCondition(resource.Conditions, v1alpha1.ResourceHealthyConditionType)
+		healthyCondition := FindCondition(resource.Conditions, pacmkrv1.ResourceHealthyConditionType)
 		if healthyCondition != nil && healthyCondition.Status != metav1.ConditionTrue {
 			// Get specific reason for this resource
 			reason := c.getResourceIssue(resource.Conditions)
@@ -581,22 +581,22 @@ func (c *HealthCheck) getNodeResourceSummaries(node v1alpha1.PacemakerClusterNod
 // degradation anyway, so treating it as an error is appropriate.
 func (c *HealthCheck) getResourceIssue(conditions []metav1.Condition) string {
 	// Check for specific failure conditions (prioritized by severity)
-	operationalCondition := FindCondition(conditions, v1alpha1.ResourceOperationalConditionType)
+	operationalCondition := FindCondition(conditions, pacmkrv1.ResourceOperationalConditionType)
 	if operationalCondition != nil && operationalCondition.Status != metav1.ConditionTrue {
 		return "has failed"
 	}
 
-	startedCondition := FindCondition(conditions, v1alpha1.ResourceStartedConditionType)
+	startedCondition := FindCondition(conditions, pacmkrv1.ResourceStartedConditionType)
 	if startedCondition != nil && startedCondition.Status != metav1.ConditionTrue {
 		return "is stopped"
 	}
 
-	activeCondition := FindCondition(conditions, v1alpha1.ResourceActiveConditionType)
+	activeCondition := FindCondition(conditions, pacmkrv1.ResourceActiveConditionType)
 	if activeCondition != nil && activeCondition.Status != metav1.ConditionTrue {
 		return "is not active"
 	}
 
-	managedCondition := FindCondition(conditions, v1alpha1.ResourceManagedConditionType)
+	managedCondition := FindCondition(conditions, pacmkrv1.ResourceManagedConditionType)
 	if managedCondition != nil && managedCondition.Status != metav1.ConditionTrue {
 		return "is unmanaged"
 	}

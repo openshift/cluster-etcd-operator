@@ -17,7 +17,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/clock"
 
-	v1alpha1 "github.com/openshift/api/etcd/v1alpha1"
+	pacmkrv1 "github.com/openshift/api/etcd/v1"
 )
 
 // Test helper functions
@@ -52,9 +52,9 @@ func createTestHealthCheck() *HealthCheck {
 
 // createFakeInformer creates a fake SharedIndexInformer with a store containing the given object.
 // If obj is nil, the store will be empty.
-func createFakeInformer(obj *v1alpha1.PacemakerCluster) cache.SharedIndexInformer {
+func createFakeInformer(obj *pacmkrv1.PacemakerCluster) cache.SharedIndexInformer {
 	store := cache.NewStore(func(obj interface{}) (string, error) {
-		if pc, ok := obj.(*v1alpha1.PacemakerCluster); ok {
+		if pc, ok := obj.(*pacmkrv1.PacemakerCluster); ok {
 			return pc.Name, nil
 		}
 		return "", fmt.Errorf("object is not a PacemakerCluster")
@@ -99,7 +99,7 @@ func (f *fakeInformer) AddIndexers(indexers cache.Indexers) error      { return 
 func (f *fakeInformer) GetIndexer() cache.Indexer                      { return nil }
 
 // createTestHealthCheckWithMockStatus creates a HealthCheck with a mocked Pacemaker CR in the informer cache
-func createTestHealthCheckWithMockStatus(t *testing.T, mockStatus *v1alpha1.PacemakerCluster) *HealthCheck {
+func createTestHealthCheckWithMockStatus(t *testing.T, mockStatus *pacmkrv1.PacemakerCluster) *HealthCheck {
 	return &HealthCheck{
 		operatorClient:    createFakeOperatorClient(),
 		kubeClient:        fake.NewSimpleClientset(),
@@ -130,24 +130,24 @@ func TestNewHealthCheck(t *testing.T) {
 func TestHealthCheck_getPacemakerStatus(t *testing.T) {
 	tests := []struct {
 		name           string
-		mockStatus     *v1alpha1.PacemakerCluster
+		mockStatus     *pacmkrv1.PacemakerCluster
 		expectedStatus HealthStatusValue
 		expectErrors   bool
 		expectWarnings bool
 	}{
 		{
 			name: "healthy_status",
-			mockStatus: &v1alpha1.PacemakerCluster{
+			mockStatus: &pacmkrv1.PacemakerCluster{
 				TypeMeta: metav1.TypeMeta{
-					APIVersion: v1alpha1.SchemeGroupVersion.String(),
+					APIVersion: pacmkrv1.SchemeGroupVersion.String(),
 					Kind:       "PacemakerCluster",
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "cluster",
 				},
-				Status: v1alpha1.PacemakerClusterStatus{
+				Status: pacmkrv1.PacemakerClusterStatus{
 					Conditions: createHealthyClusterConditions(),
-					Nodes: &[]v1alpha1.PacemakerClusterNodeStatus{
+					Nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
 						createHealthyNodeStatus("master-0", []string{"192.168.1.10"}),
 						createHealthyNodeStatus("master-1", []string{"192.168.1.11"}),
 					},
@@ -160,17 +160,17 @@ func TestHealthCheck_getPacemakerStatus(t *testing.T) {
 		},
 		{
 			name: "stale_status",
-			mockStatus: &v1alpha1.PacemakerCluster{
+			mockStatus: &pacmkrv1.PacemakerCluster{
 				TypeMeta: metav1.TypeMeta{
-					APIVersion: v1alpha1.SchemeGroupVersion.String(),
+					APIVersion: pacmkrv1.SchemeGroupVersion.String(),
 					Kind:       "PacemakerCluster",
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "cluster",
 				},
-				Status: v1alpha1.PacemakerClusterStatus{
+				Status: pacmkrv1.PacemakerClusterStatus{
 					Conditions: createHealthyClusterConditions(),
-					Nodes: &[]v1alpha1.PacemakerClusterNodeStatus{
+					Nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
 						createHealthyNodeStatus("master-0", []string{"192.168.1.10"}),
 						createHealthyNodeStatus("master-1", []string{"192.168.1.11"}),
 					},
@@ -183,15 +183,15 @@ func TestHealthCheck_getPacemakerStatus(t *testing.T) {
 		},
 		{
 			name: "nil_status",
-			mockStatus: &v1alpha1.PacemakerCluster{
+			mockStatus: &pacmkrv1.PacemakerCluster{
 				TypeMeta: metav1.TypeMeta{
-					APIVersion: v1alpha1.SchemeGroupVersion.String(),
+					APIVersion: pacmkrv1.SchemeGroupVersion.String(),
 					Kind:       "PacemakerCluster",
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "cluster",
 				},
-				Status: v1alpha1.PacemakerClusterStatus{}, // Status not populated yet (zero LastUpdated)
+				Status: pacmkrv1.PacemakerClusterStatus{}, // Status not populated yet (zero LastUpdated)
 			},
 			expectedStatus: statusUnknown,
 			expectErrors:   true,
@@ -199,17 +199,17 @@ func TestHealthCheck_getPacemakerStatus(t *testing.T) {
 		},
 		{
 			name: "insufficient_nodes",
-			mockStatus: &v1alpha1.PacemakerCluster{
+			mockStatus: &pacmkrv1.PacemakerCluster{
 				TypeMeta: metav1.TypeMeta{
-					APIVersion: v1alpha1.SchemeGroupVersion.String(),
+					APIVersion: pacmkrv1.SchemeGroupVersion.String(),
 					Kind:       "PacemakerCluster",
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "cluster",
 				},
-				Status: v1alpha1.PacemakerClusterStatus{
+				Status: pacmkrv1.PacemakerClusterStatus{
 					Conditions: createInsufficientNodesClusterConditions(),
-					Nodes: &[]v1alpha1.PacemakerClusterNodeStatus{
+					Nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
 						createHealthyNodeStatus("master-0", []string{"192.168.1.10"}),
 					},
 					LastUpdated: metav1.Now(),
@@ -221,18 +221,18 @@ func TestHealthCheck_getPacemakerStatus(t *testing.T) {
 		},
 		{
 			name: "unhealthy_kubelet",
-			mockStatus: &v1alpha1.PacemakerCluster{
+			mockStatus: &pacmkrv1.PacemakerCluster{
 				TypeMeta: metav1.TypeMeta{
-					APIVersion: v1alpha1.SchemeGroupVersion.String(),
+					APIVersion: pacmkrv1.SchemeGroupVersion.String(),
 					Kind:       "PacemakerCluster",
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "cluster",
 				},
-				Status: v1alpha1.PacemakerClusterStatus{
+				Status: pacmkrv1.PacemakerClusterStatus{
 					Conditions: createHealthyClusterConditions(),
-					Nodes: &[]v1alpha1.PacemakerClusterNodeStatus{
-						createUnhealthyNodeStatus("master-0", []string{"192.168.1.10"}, v1alpha1.PacemakerClusterResourceNameKubelet),
+					Nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
+						createUnhealthyNodeStatus("master-0", []string{"192.168.1.10"}, pacmkrv1.PacemakerClusterResourceNameKubelet),
 						createHealthyNodeStatus("master-1", []string{"192.168.1.11"}),
 					},
 					LastUpdated: metav1.Now(),
@@ -244,19 +244,19 @@ func TestHealthCheck_getPacemakerStatus(t *testing.T) {
 		},
 		{
 			name: "unhealthy_etcd",
-			mockStatus: &v1alpha1.PacemakerCluster{
+			mockStatus: &pacmkrv1.PacemakerCluster{
 				TypeMeta: metav1.TypeMeta{
-					APIVersion: v1alpha1.SchemeGroupVersion.String(),
+					APIVersion: pacmkrv1.SchemeGroupVersion.String(),
 					Kind:       "PacemakerCluster",
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "cluster",
 				},
-				Status: v1alpha1.PacemakerClusterStatus{
+				Status: pacmkrv1.PacemakerClusterStatus{
 					Conditions: createHealthyClusterConditions(),
-					Nodes: &[]v1alpha1.PacemakerClusterNodeStatus{
+					Nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
 						createHealthyNodeStatus("master-0", []string{"192.168.1.10"}),
-						createUnhealthyNodeStatus("master-1", []string{"192.168.1.11"}, v1alpha1.PacemakerClusterResourceNameEtcd),
+						createUnhealthyNodeStatus("master-1", []string{"192.168.1.11"}, pacmkrv1.PacemakerClusterResourceNameEtcd),
 					},
 					LastUpdated: metav1.Now(),
 				},
@@ -267,18 +267,18 @@ func TestHealthCheck_getPacemakerStatus(t *testing.T) {
 		},
 		{
 			name: "unhealthy_etcd_first_node",
-			mockStatus: &v1alpha1.PacemakerCluster{
+			mockStatus: &pacmkrv1.PacemakerCluster{
 				TypeMeta: metav1.TypeMeta{
-					APIVersion: v1alpha1.SchemeGroupVersion.String(),
+					APIVersion: pacmkrv1.SchemeGroupVersion.String(),
 					Kind:       "PacemakerCluster",
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "cluster",
 				},
-				Status: v1alpha1.PacemakerClusterStatus{
+				Status: pacmkrv1.PacemakerClusterStatus{
 					Conditions: createHealthyClusterConditions(),
-					Nodes: &[]v1alpha1.PacemakerClusterNodeStatus{
-						createUnhealthyNodeStatus("master-0", []string{"192.168.1.10"}, v1alpha1.PacemakerClusterResourceNameEtcd),
+					Nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
+						createUnhealthyNodeStatus("master-0", []string{"192.168.1.10"}, pacmkrv1.PacemakerClusterResourceNameEtcd),
 						createHealthyNodeStatus("master-1", []string{"192.168.1.11"}),
 					},
 					LastUpdated: metav1.Now(),
@@ -320,17 +320,17 @@ func TestHealthCheck_getPacemakerStatus_UnchangedTimestamp(t *testing.T) {
 	// Create a fixed timestamp for the test
 	fixedTime := metav1.Now()
 
-	mockStatus := &v1alpha1.PacemakerCluster{
+	mockStatus := &pacmkrv1.PacemakerCluster{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: v1alpha1.SchemeGroupVersion.String(),
+			APIVersion: pacmkrv1.SchemeGroupVersion.String(),
 			Kind:       "PacemakerCluster",
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "cluster",
 		},
-		Status: v1alpha1.PacemakerClusterStatus{
+		Status: pacmkrv1.PacemakerClusterStatus{
 			Conditions: createHealthyClusterConditions(),
-			Nodes: &[]v1alpha1.PacemakerClusterNodeStatus{
+			Nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
 				createHealthyNodeStatus("master-0", []string{"192.168.1.10"}),
 				createHealthyNodeStatus("master-1", []string{"192.168.1.11"}),
 			},
@@ -531,18 +531,18 @@ func TestHealthCheck_eventDeduplication(t *testing.T) {
 func TestHealthCheck_buildHealthStatusFromCR(t *testing.T) {
 	tests := []struct {
 		name           string
-		cr             *v1alpha1.PacemakerCluster
+		cr             *pacmkrv1.PacemakerCluster
 		expectedStatus HealthStatusValue
 		expectErrors   bool
 		errorContains  string // Optional: check error contains this substring
 	}{
 		{
 			name: "healthy_cluster",
-			cr: &v1alpha1.PacemakerCluster{
-				Status: v1alpha1.PacemakerClusterStatus{
+			cr: &pacmkrv1.PacemakerCluster{
+				Status: pacmkrv1.PacemakerClusterStatus{
 					LastUpdated: metav1.Now(),
 					Conditions:  createHealthyClusterConditions(),
-					Nodes: &[]v1alpha1.PacemakerClusterNodeStatus{
+					Nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
 						createHealthyNodeStatus("master-0", []string{"192.168.1.10"}),
 						createHealthyNodeStatus("master-1", []string{"192.168.1.11"}),
 					},
@@ -553,43 +553,43 @@ func TestHealthCheck_buildHealthStatusFromCR(t *testing.T) {
 		},
 		{
 			name: "unhealthy_kubelet",
-			cr: &v1alpha1.PacemakerCluster{
-				Status: v1alpha1.PacemakerClusterStatus{
+			cr: &pacmkrv1.PacemakerCluster{
+				Status: pacmkrv1.PacemakerClusterStatus{
 					LastUpdated: metav1.Now(),
 					Conditions:  createHealthyClusterConditions(),
-					Nodes: &[]v1alpha1.PacemakerClusterNodeStatus{
-						createUnhealthyNodeStatus("master-0", []string{"192.168.1.10"}, v1alpha1.PacemakerClusterResourceNameKubelet),
+					Nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
+						createUnhealthyNodeStatus("master-0", []string{"192.168.1.10"}, pacmkrv1.PacemakerClusterResourceNameKubelet),
 						createHealthyNodeStatus("master-1", []string{"192.168.1.11"}),
 					},
 				},
 			},
 			expectedStatus: statusError,
 			expectErrors:   true,
-			errorContains:  string(v1alpha1.PacemakerClusterResourceNameKubelet),
+			errorContains:  string(pacmkrv1.PacemakerClusterResourceNameKubelet),
 		},
 		{
 			name: "unhealthy_etcd",
-			cr: &v1alpha1.PacemakerCluster{
-				Status: v1alpha1.PacemakerClusterStatus{
+			cr: &pacmkrv1.PacemakerCluster{
+				Status: pacmkrv1.PacemakerClusterStatus{
 					LastUpdated: metav1.Now(),
 					Conditions:  createHealthyClusterConditions(),
-					Nodes: &[]v1alpha1.PacemakerClusterNodeStatus{
+					Nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
 						createHealthyNodeStatus("master-0", []string{"192.168.1.10"}),
-						createUnhealthyNodeStatus("master-1", []string{"192.168.1.11"}, v1alpha1.PacemakerClusterResourceNameEtcd),
+						createUnhealthyNodeStatus("master-1", []string{"192.168.1.11"}, pacmkrv1.PacemakerClusterResourceNameEtcd),
 					},
 				},
 			},
 			expectedStatus: statusError,
 			expectErrors:   true,
-			errorContains:  string(v1alpha1.PacemakerClusterResourceNameEtcd),
+			errorContains:  string(pacmkrv1.PacemakerClusterResourceNameEtcd),
 		},
 		{
 			name: "insufficient_nodes",
-			cr: &v1alpha1.PacemakerCluster{
-				Status: v1alpha1.PacemakerClusterStatus{
+			cr: &pacmkrv1.PacemakerCluster{
+				Status: pacmkrv1.PacemakerClusterStatus{
 					LastUpdated: metav1.Now(),
 					Conditions:  createInsufficientNodesClusterConditions(),
-					Nodes: &[]v1alpha1.PacemakerClusterNodeStatus{
+					Nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
 						createHealthyNodeStatus("master-0", []string{"192.168.1.10"}),
 					},
 				},
@@ -600,11 +600,11 @@ func TestHealthCheck_buildHealthStatusFromCR(t *testing.T) {
 		},
 		{
 			name: "no_nodes",
-			cr: &v1alpha1.PacemakerCluster{
-				Status: v1alpha1.PacemakerClusterStatus{
+			cr: &pacmkrv1.PacemakerCluster{
+				Status: pacmkrv1.PacemakerClusterStatus{
 					LastUpdated: metav1.Now(),
 					Conditions:  createHealthyClusterConditions(),
-					Nodes:       &[]v1alpha1.PacemakerClusterNodeStatus{},
+					Nodes:       &[]pacmkrv1.PacemakerClusterNodeStatus{},
 				},
 			},
 			expectedStatus: statusError,
@@ -613,8 +613,8 @@ func TestHealthCheck_buildHealthStatusFromCR(t *testing.T) {
 		},
 		{
 			name: "unpopulated_status",
-			cr: &v1alpha1.PacemakerCluster{
-				Status: v1alpha1.PacemakerClusterStatus{}, // Zero LastUpdated
+			cr: &pacmkrv1.PacemakerCluster{
+				Status: pacmkrv1.PacemakerClusterStatus{}, // Zero LastUpdated
 			},
 			expectedStatus: statusUnknown,
 			expectErrors:   true,
@@ -654,14 +654,14 @@ func TestHealthCheck_checkClusterConditions(t *testing.T) {
 	tests := []struct {
 		name          string
 		conditions    []metav1.Condition
-		nodes         *[]v1alpha1.PacemakerClusterNodeStatus
+		nodes         *[]pacmkrv1.PacemakerClusterNodeStatus
 		expectErrors  bool
 		errorContains []string // Multiple strings to check
 	}{
 		{
 			name:       "healthy_cluster",
 			conditions: createHealthyClusterConditions(),
-			nodes: &[]v1alpha1.PacemakerClusterNodeStatus{
+			nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
 				createHealthyNodeStatus("master-0", []string{"192.168.1.10"}),
 				createHealthyNodeStatus("master-1", []string{"192.168.1.11"}),
 			},
@@ -670,7 +670,7 @@ func TestHealthCheck_checkClusterConditions(t *testing.T) {
 		{
 			name:       "insufficient_nodes",
 			conditions: createInsufficientNodesClusterConditions(),
-			nodes: &[]v1alpha1.PacemakerClusterNodeStatus{
+			nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
 				createHealthyNodeStatus("master-0", []string{"192.168.1.10"}),
 			},
 			expectErrors:  true,
@@ -679,7 +679,7 @@ func TestHealthCheck_checkClusterConditions(t *testing.T) {
 		{
 			name:       "excessive_nodes",
 			conditions: createExcessiveNodesClusterConditions(),
-			nodes: &[]v1alpha1.PacemakerClusterNodeStatus{
+			nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
 				createHealthyNodeStatus("master-0", []string{"192.168.1.10"}),
 				createHealthyNodeStatus("master-1", []string{"192.168.1.11"}),
 				createHealthyNodeStatus("master-2", []string{"192.168.1.12"}),
@@ -690,7 +690,7 @@ func TestHealthCheck_checkClusterConditions(t *testing.T) {
 		{
 			name:       "maintenance_mode",
 			conditions: createMaintenanceModeClusterConditions(),
-			nodes: &[]v1alpha1.PacemakerClusterNodeStatus{
+			nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
 				createHealthyNodeStatus("master-0", []string{"192.168.1.10"}),
 				createHealthyNodeStatus("master-1", []string{"192.168.1.11"}),
 			},
@@ -700,7 +700,7 @@ func TestHealthCheck_checkClusterConditions(t *testing.T) {
 		{
 			name:       "empty_conditions",
 			conditions: []metav1.Condition{},
-			nodes: &[]v1alpha1.PacemakerClusterNodeStatus{
+			nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
 				createHealthyNodeStatus("master-0", []string{"192.168.1.10"}),
 			},
 			expectErrors:  true, // Empty conditions means we can't verify cluster health
@@ -711,8 +711,8 @@ func TestHealthCheck_checkClusterConditions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			controller := &HealthCheck{}
-			pacemakerStatus := &v1alpha1.PacemakerCluster{
-				Status: v1alpha1.PacemakerClusterStatus{
+			pacemakerStatus := &pacmkrv1.PacemakerCluster{
+				Status: pacmkrv1.PacemakerClusterStatus{
 					Conditions: tt.conditions,
 					Nodes:      tt.nodes,
 				},
@@ -736,13 +736,13 @@ func TestHealthCheck_checkClusterConditions(t *testing.T) {
 func TestHealthCheck_checkNodeStatuses(t *testing.T) {
 	tests := []struct {
 		name          string
-		nodes         *[]v1alpha1.PacemakerClusterNodeStatus
+		nodes         *[]pacmkrv1.PacemakerClusterNodeStatus
 		expectErrors  bool
 		errorContains string
 	}{
 		{
 			name: "healthy_nodes",
-			nodes: &[]v1alpha1.PacemakerClusterNodeStatus{
+			nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
 				createHealthyNodeStatus("master-0", []string{"192.168.1.10"}),
 				createHealthyNodeStatus("master-1", []string{"192.168.1.11"}),
 			},
@@ -750,21 +750,21 @@ func TestHealthCheck_checkNodeStatuses(t *testing.T) {
 		},
 		{
 			name: "unhealthy_kubelet",
-			nodes: &[]v1alpha1.PacemakerClusterNodeStatus{
-				createUnhealthyNodeStatus("master-0", []string{"192.168.1.10"}, v1alpha1.PacemakerClusterResourceNameKubelet),
+			nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
+				createUnhealthyNodeStatus("master-0", []string{"192.168.1.10"}, pacmkrv1.PacemakerClusterResourceNameKubelet),
 				createHealthyNodeStatus("master-1", []string{"192.168.1.11"}),
 			},
 			expectErrors:  true,
-			errorContains: string(v1alpha1.PacemakerClusterResourceNameKubelet),
+			errorContains: string(pacmkrv1.PacemakerClusterResourceNameKubelet),
 		},
 		{
 			name: "unhealthy_etcd",
-			nodes: &[]v1alpha1.PacemakerClusterNodeStatus{
-				createUnhealthyNodeStatus("master-1", []string{"192.168.1.11"}, v1alpha1.PacemakerClusterResourceNameEtcd),
+			nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
+				createUnhealthyNodeStatus("master-1", []string{"192.168.1.11"}, pacmkrv1.PacemakerClusterResourceNameEtcd),
 				createHealthyNodeStatus("master-0", []string{"192.168.1.10"}),
 			},
 			expectErrors:  true,
-			errorContains: string(v1alpha1.PacemakerClusterResourceNameEtcd),
+			errorContains: string(pacmkrv1.PacemakerClusterResourceNameEtcd),
 		},
 		{
 			name:          "nil_nodes",
@@ -777,8 +777,8 @@ func TestHealthCheck_checkNodeStatuses(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			controller := &HealthCheck{}
-			pacemakerStatus := &v1alpha1.PacemakerCluster{
-				Status: v1alpha1.PacemakerClusterStatus{
+			pacemakerStatus := &pacmkrv1.PacemakerCluster{
+				Status: pacmkrv1.PacemakerClusterStatus{
 					Conditions: createHealthyClusterConditions(),
 					Nodes:      tt.nodes,
 				},
@@ -813,22 +813,22 @@ func TestHealthCheck_checkNodeStatuses_MultipleUnhealthyResources(t *testing.T) 
 	node := createHealthyNodeStatus("master-0", []string{"192.168.1.10"})
 	// Mark node as unhealthy
 	for i := range node.Conditions {
-		if node.Conditions[i].Type == v1alpha1.NodeHealthyConditionType {
+		if node.Conditions[i].Type == pacmkrv1.NodeHealthyConditionType {
 			node.Conditions[i].Status = metav1.ConditionFalse
-			node.Conditions[i].Reason = v1alpha1.NodeHealthyReasonUnhealthy
+			node.Conditions[i].Reason = pacmkrv1.NodeHealthyReasonUnhealthy
 		}
 	}
 	// Mark kubelet and etcd as unhealthy
 	for i := range node.Resources {
-		if node.Resources[i].Name == v1alpha1.PacemakerClusterResourceNameKubelet ||
-			node.Resources[i].Name == v1alpha1.PacemakerClusterResourceNameEtcd {
+		if node.Resources[i].Name == pacmkrv1.PacemakerClusterResourceNameKubelet ||
+			node.Resources[i].Name == pacmkrv1.PacemakerClusterResourceNameEtcd {
 			node.Resources[i].Conditions = createUnhealthyResourceConditions()
 		}
 	}
 
-	pacemakerStatus := &v1alpha1.PacemakerCluster{
-		Status: v1alpha1.PacemakerClusterStatus{
-			Nodes: &[]v1alpha1.PacemakerClusterNodeStatus{
+	pacemakerStatus := &pacmkrv1.PacemakerCluster{
+		Status: pacmkrv1.PacemakerClusterStatus{
+			Nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
 				node,
 				createHealthyNodeStatus("master-1", []string{"192.168.1.11"}),
 			},
@@ -845,8 +845,8 @@ func TestHealthCheck_checkNodeStatuses_MultipleUnhealthyResources(t *testing.T) 
 	nodeError := status.Errors[0]
 	require.Contains(t, nodeError, "master-0", "Error should mention the node name")
 	require.Contains(t, nodeError, "node is unhealthy", "Error should indicate node is unhealthy")
-	require.Contains(t, nodeError, string(v1alpha1.PacemakerClusterResourceNameKubelet), "Error should mention Kubelet")
-	require.Contains(t, nodeError, string(v1alpha1.PacemakerClusterResourceNameEtcd), "Error should mention Etcd")
+	require.Contains(t, nodeError, string(pacmkrv1.PacemakerClusterResourceNameKubelet), "Error should mention Kubelet")
+	require.Contains(t, nodeError, string(pacmkrv1.PacemakerClusterResourceNameEtcd), "Error should mention Etcd")
 }
 
 func TestHealthCheck_getResourceIssue(t *testing.T) {
@@ -859,27 +859,27 @@ func TestHealthCheck_getResourceIssue(t *testing.T) {
 	}{
 		{
 			name:       "failed takes priority",
-			conditions: []metav1.Condition{{Type: v1alpha1.ResourceOperationalConditionType, Status: metav1.ConditionFalse}},
+			conditions: []metav1.Condition{{Type: pacmkrv1.ResourceOperationalConditionType, Status: metav1.ConditionFalse}},
 			wantIssue:  "has failed",
 		},
 		{
 			name:       "stopped",
-			conditions: []metav1.Condition{{Type: v1alpha1.ResourceStartedConditionType, Status: metav1.ConditionFalse}},
+			conditions: []metav1.Condition{{Type: pacmkrv1.ResourceStartedConditionType, Status: metav1.ConditionFalse}},
 			wantIssue:  "is stopped",
 		},
 		{
 			name:       "inactive",
-			conditions: []metav1.Condition{{Type: v1alpha1.ResourceActiveConditionType, Status: metav1.ConditionFalse}},
+			conditions: []metav1.Condition{{Type: pacmkrv1.ResourceActiveConditionType, Status: metav1.ConditionFalse}},
 			wantIssue:  "is not active",
 		},
 		{
 			name:       "unmanaged",
-			conditions: []metav1.Condition{{Type: v1alpha1.ResourceManagedConditionType, Status: metav1.ConditionFalse}},
+			conditions: []metav1.Condition{{Type: pacmkrv1.ResourceManagedConditionType, Status: metav1.ConditionFalse}},
 			wantIssue:  "is unmanaged",
 		},
 		{
 			name:       "fallback to generic unhealthy",
-			conditions: []metav1.Condition{{Type: v1alpha1.ResourceHealthyConditionType, Status: metav1.ConditionFalse}},
+			conditions: []metav1.Condition{{Type: pacmkrv1.ResourceHealthyConditionType, Status: metav1.ConditionFalse}},
 			wantIssue:  "is unhealthy",
 		},
 	}
@@ -1072,7 +1072,7 @@ func TestHealthCheck_getNodeConditionErrorsAndWarnings(t *testing.T) {
 		{
 			name: "in_maintenance_mode",
 			conditions: []metav1.Condition{
-				{Type: v1alpha1.NodeInServiceConditionType, Status: metav1.ConditionFalse, Reason: v1alpha1.NodeInServiceReasonInMaintenance, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeInServiceConditionType, Status: metav1.ConditionFalse, Reason: pacmkrv1.NodeInServiceReasonInMaintenance, LastTransitionTime: now},
 			},
 			expectedErrors:   []string{"in maintenance mode"},
 			expectedWarnings: []string{},
@@ -1080,7 +1080,7 @@ func TestHealthCheck_getNodeConditionErrorsAndWarnings(t *testing.T) {
 		{
 			name: "in_standby_mode",
 			conditions: []metav1.Condition{
-				{Type: v1alpha1.NodeActiveConditionType, Status: metav1.ConditionFalse, Reason: v1alpha1.NodeActiveReasonStandby, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeActiveConditionType, Status: metav1.ConditionFalse, Reason: pacmkrv1.NodeActiveReasonStandby, LastTransitionTime: now},
 			},
 			expectedErrors:   []string{"in standby mode"},
 			expectedWarnings: []string{},
@@ -1088,7 +1088,7 @@ func TestHealthCheck_getNodeConditionErrorsAndWarnings(t *testing.T) {
 		{
 			name: "unclean_state",
 			conditions: []metav1.Condition{
-				{Type: v1alpha1.NodeCleanConditionType, Status: metav1.ConditionFalse, Reason: v1alpha1.NodeCleanReasonUnclean, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeCleanConditionType, Status: metav1.ConditionFalse, Reason: pacmkrv1.NodeCleanReasonUnclean, LastTransitionTime: now},
 			},
 			expectedErrors:   []string{"unclean state (fencing/communication issue)"},
 			expectedWarnings: []string{},
@@ -1096,7 +1096,7 @@ func TestHealthCheck_getNodeConditionErrorsAndWarnings(t *testing.T) {
 		{
 			name: "not_a_member",
 			conditions: []metav1.Condition{
-				{Type: v1alpha1.NodeMemberConditionType, Status: metav1.ConditionFalse, Reason: v1alpha1.NodeMemberReasonNotMember, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeMemberConditionType, Status: metav1.ConditionFalse, Reason: pacmkrv1.NodeMemberReasonNotMember, LastTransitionTime: now},
 			},
 			expectedErrors:   []string{"not a cluster member"},
 			expectedWarnings: []string{},
@@ -1104,7 +1104,7 @@ func TestHealthCheck_getNodeConditionErrorsAndWarnings(t *testing.T) {
 		{
 			name: "fencing_unavailable",
 			conditions: []metav1.Condition{
-				{Type: v1alpha1.NodeFencingAvailableConditionType, Status: metav1.ConditionFalse, Reason: v1alpha1.NodeFencingAvailableReasonUnavailable, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeFencingAvailableConditionType, Status: metav1.ConditionFalse, Reason: pacmkrv1.NodeFencingAvailableReasonUnavailable, LastTransitionTime: now},
 			},
 			expectedErrors:   []string{"fencing unavailable (no agents running)"},
 			expectedWarnings: []string{},
@@ -1112,8 +1112,8 @@ func TestHealthCheck_getNodeConditionErrorsAndWarnings(t *testing.T) {
 		{
 			name: "fencing_unhealthy_but_available_is_warning",
 			conditions: []metav1.Condition{
-				{Type: v1alpha1.NodeFencingAvailableConditionType, Status: metav1.ConditionTrue, Reason: v1alpha1.NodeFencingAvailableReasonAvailable, LastTransitionTime: now},
-				{Type: v1alpha1.NodeFencingHealthyConditionType, Status: metav1.ConditionFalse, Reason: v1alpha1.NodeFencingHealthyReasonUnhealthy, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeFencingAvailableConditionType, Status: metav1.ConditionTrue, Reason: pacmkrv1.NodeFencingAvailableReasonAvailable, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeFencingHealthyConditionType, Status: metav1.ConditionFalse, Reason: pacmkrv1.NodeFencingHealthyReasonUnhealthy, LastTransitionTime: now},
 			},
 			expectedErrors:   []string{},
 			expectedWarnings: []string{"fencing at risk"},
@@ -1121,7 +1121,7 @@ func TestHealthCheck_getNodeConditionErrorsAndWarnings(t *testing.T) {
 		{
 			name: "pending_state_no_error_or_warning",
 			conditions: []metav1.Condition{
-				{Type: v1alpha1.NodeReadyConditionType, Status: metav1.ConditionFalse, Reason: v1alpha1.NodeReadyReasonPending, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeReadyConditionType, Status: metav1.ConditionFalse, Reason: pacmkrv1.NodeReadyReasonPending, LastTransitionTime: now},
 			},
 			expectedErrors:   []string{},
 			expectedWarnings: []string{},
@@ -1129,9 +1129,9 @@ func TestHealthCheck_getNodeConditionErrorsAndWarnings(t *testing.T) {
 		{
 			name: "multiple_errors",
 			conditions: []metav1.Condition{
-				{Type: v1alpha1.NodeInServiceConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
-				{Type: v1alpha1.NodeActiveConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
-				{Type: v1alpha1.NodeCleanConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeInServiceConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeActiveConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeCleanConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
 			},
 			expectedErrors:   []string{"in maintenance mode", "in standby mode", "unclean state (fencing/communication issue)"},
 			expectedWarnings: []string{},
@@ -1139,9 +1139,9 @@ func TestHealthCheck_getNodeConditionErrorsAndWarnings(t *testing.T) {
 		{
 			name: "error_and_warning_together",
 			conditions: []metav1.Condition{
-				{Type: v1alpha1.NodeInServiceConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
-				{Type: v1alpha1.NodeFencingAvailableConditionType, Status: metav1.ConditionTrue, Reason: v1alpha1.NodeFencingAvailableReasonAvailable, LastTransitionTime: now},
-				{Type: v1alpha1.NodeFencingHealthyConditionType, Status: metav1.ConditionFalse, Reason: v1alpha1.NodeFencingHealthyReasonUnhealthy, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeInServiceConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeFencingAvailableConditionType, Status: metav1.ConditionTrue, Reason: pacmkrv1.NodeFencingAvailableReasonAvailable, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeFencingHealthyConditionType, Status: metav1.ConditionFalse, Reason: pacmkrv1.NodeFencingHealthyReasonUnhealthy, LastTransitionTime: now},
 			},
 			expectedErrors:   []string{"in maintenance mode"},
 			expectedWarnings: []string{"fencing at risk"},
@@ -1230,38 +1230,38 @@ func TestHealthCheck_FencingRedundancyWarning(t *testing.T) {
 
 			// Build conditions based on test case
 			nodeHealthyStatus := metav1.ConditionFalse
-			nodeHealthyReason := v1alpha1.NodeHealthyReasonUnhealthy
+			nodeHealthyReason := pacmkrv1.NodeHealthyReasonUnhealthy
 			if tt.nodeHealthy {
 				nodeHealthyStatus = metav1.ConditionTrue
-				nodeHealthyReason = v1alpha1.NodeHealthyReasonHealthy
+				nodeHealthyReason = pacmkrv1.NodeHealthyReasonHealthy
 			}
 
 			inServiceStatus := metav1.ConditionTrue
-			inServiceReason := v1alpha1.NodeInServiceReasonInService
+			inServiceReason := pacmkrv1.NodeInServiceReasonInService
 			if tt.inMaintenance {
 				inServiceStatus = metav1.ConditionFalse
-				inServiceReason = v1alpha1.NodeInServiceReasonInMaintenance
+				inServiceReason = pacmkrv1.NodeInServiceReasonInMaintenance
 			}
 
 			conditions := []metav1.Condition{
-				{Type: v1alpha1.NodeHealthyConditionType, Status: nodeHealthyStatus, Reason: nodeHealthyReason, LastTransitionTime: now},
-				{Type: v1alpha1.NodeOnlineConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
-				{Type: v1alpha1.NodeInServiceConditionType, Status: inServiceStatus, Reason: inServiceReason, LastTransitionTime: now},
-				{Type: v1alpha1.NodeActiveConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
-				{Type: v1alpha1.NodeReadyConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
-				{Type: v1alpha1.NodeCleanConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
-				{Type: v1alpha1.NodeMemberConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeHealthyConditionType, Status: nodeHealthyStatus, Reason: nodeHealthyReason, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeOnlineConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeInServiceConditionType, Status: inServiceStatus, Reason: inServiceReason, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeActiveConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeReadyConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeCleanConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeMemberConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
 				// Fencing available but not healthy - warning
-				{Type: v1alpha1.NodeFencingAvailableConditionType, Status: metav1.ConditionTrue, Reason: v1alpha1.NodeFencingAvailableReasonAvailable, LastTransitionTime: now},
-				{Type: v1alpha1.NodeFencingHealthyConditionType, Status: metav1.ConditionFalse, Reason: v1alpha1.NodeFencingHealthyReasonUnhealthy, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeFencingAvailableConditionType, Status: metav1.ConditionTrue, Reason: pacmkrv1.NodeFencingAvailableReasonAvailable, LastTransitionTime: now},
+				{Type: pacmkrv1.NodeFencingHealthyConditionType, Status: metav1.ConditionFalse, Reason: pacmkrv1.NodeFencingHealthyReasonUnhealthy, LastTransitionTime: now},
 			}
 
-			healthyResources := []v1alpha1.PacemakerClusterResourceStatus{
-				{Name: v1alpha1.PacemakerClusterResourceNameKubelet, Conditions: createHealthyResourceConditions()},
-				{Name: v1alpha1.PacemakerClusterResourceNameEtcd, Conditions: createHealthyResourceConditions()},
+			healthyResources := []pacmkrv1.PacemakerClusterResourceStatus{
+				{Name: pacmkrv1.PacemakerClusterResourceNameKubelet, Conditions: createHealthyResourceConditions()},
+				{Name: pacmkrv1.PacemakerClusterResourceNameEtcd, Conditions: createHealthyResourceConditions()},
 			}
 
-			node := v1alpha1.PacemakerClusterNodeStatus{
+			node := pacmkrv1.PacemakerClusterNodeStatus{
 				NodeName:   "master-0",
 				Conditions: conditions,
 				Resources:  healthyResources,

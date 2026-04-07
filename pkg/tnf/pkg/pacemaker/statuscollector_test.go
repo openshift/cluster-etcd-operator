@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	v1alpha1 "github.com/openshift/api/etcd/v1alpha1"
+	pacmkrv1 "github.com/openshift/api/etcd/v1"
 )
 
 // =============================================================================
@@ -114,10 +114,10 @@ func TestBuildClusterStatus_HealthyCluster(t *testing.T) {
 
 	// Verify cluster conditions
 	require.NotEmpty(t, status.Conditions, "Should have cluster conditions")
-	nodeCountCondition := FindCondition(status.Conditions, v1alpha1.ClusterNodeCountAsExpectedConditionType)
+	nodeCountCondition := FindCondition(status.Conditions, pacmkrv1.ClusterNodeCountAsExpectedConditionType)
 	require.NotNil(t, nodeCountCondition)
 	require.Equal(t, metav1.ConditionTrue, nodeCountCondition.Status)
-	require.Equal(t, v1alpha1.ClusterNodeCountAsExpectedReasonAsExpected, nodeCountCondition.Reason)
+	require.Equal(t, pacmkrv1.ClusterNodeCountAsExpectedReasonAsExpected, nodeCountCondition.Reason)
 
 	// Verify nodes
 	require.NotNil(t, status.Nodes)
@@ -140,7 +140,7 @@ func TestBuildClusterStatus_OfflineNode(t *testing.T) {
 	status := buildClusterStatus(&result, createTestClusterConfig())
 
 	// Verify cluster conditions
-	nodeCountCondition := FindCondition(status.Conditions, v1alpha1.ClusterNodeCountAsExpectedConditionType)
+	nodeCountCondition := FindCondition(status.Conditions, pacmkrv1.ClusterNodeCountAsExpectedConditionType)
 	require.NotNil(t, nodeCountCondition)
 	require.Equal(t, metav1.ConditionTrue, nodeCountCondition.Status) // Still 2 nodes configured
 
@@ -175,10 +175,10 @@ func TestBuildClusterStatus_InsufficientNodes(t *testing.T) {
 	status := buildClusterStatus(result, singleNodeConfig)
 
 	// Verify node count condition is False (insufficient nodes)
-	nodeCountCondition := FindCondition(status.Conditions, v1alpha1.ClusterNodeCountAsExpectedConditionType)
+	nodeCountCondition := FindCondition(status.Conditions, pacmkrv1.ClusterNodeCountAsExpectedConditionType)
 	require.NotNil(t, nodeCountCondition)
 	require.Equal(t, metav1.ConditionFalse, nodeCountCondition.Status)
-	require.Equal(t, v1alpha1.ClusterNodeCountAsExpectedReasonInsufficientNodes, nodeCountCondition.Reason)
+	require.Equal(t, pacmkrv1.ClusterNodeCountAsExpectedReasonInsufficientNodes, nodeCountCondition.Reason)
 
 	// Verify nodes
 	require.Len(t, *status.Nodes, 1)
@@ -268,7 +268,7 @@ func TestBuildClusterStatus_ResourceHealth(t *testing.T) {
 	require.Len(t, *status.Nodes, 2)
 
 	// Find master-0 and master-1
-	var master0, master1 *v1alpha1.PacemakerClusterNodeStatus
+	var master0, master1 *pacmkrv1.PacemakerClusterNodeStatus
 	for i := range *status.Nodes {
 		if (*status.Nodes)[i].NodeName == "master-0" {
 			master0 = &(*status.Nodes)[i]
@@ -281,42 +281,42 @@ func TestBuildClusterStatus_ResourceHealth(t *testing.T) {
 	require.NotNil(t, master1, "Should find master-1")
 
 	// Master-0 should have healthy kubelet, etcd, and fencing
-	kubeletResource := findResourceInList(master0.Resources, v1alpha1.PacemakerClusterResourceNameKubelet)
+	kubeletResource := findResourceInList(master0.Resources, pacmkrv1.PacemakerClusterResourceNameKubelet)
 	require.NotNil(t, kubeletResource)
-	kubeletHealthy := FindCondition(kubeletResource.Conditions, v1alpha1.ResourceHealthyConditionType)
+	kubeletHealthy := FindCondition(kubeletResource.Conditions, pacmkrv1.ResourceHealthyConditionType)
 	require.NotNil(t, kubeletHealthy)
 	require.Equal(t, metav1.ConditionTrue, kubeletHealthy.Status)
 
-	etcdResource := findResourceInList(master0.Resources, v1alpha1.PacemakerClusterResourceNameEtcd)
+	etcdResource := findResourceInList(master0.Resources, pacmkrv1.PacemakerClusterResourceNameEtcd)
 	require.NotNil(t, etcdResource)
-	etcdHealthy := FindCondition(etcdResource.Conditions, v1alpha1.ResourceHealthyConditionType)
+	etcdHealthy := FindCondition(etcdResource.Conditions, pacmkrv1.ResourceHealthyConditionType)
 	require.NotNil(t, etcdHealthy)
 	require.Equal(t, metav1.ConditionTrue, etcdHealthy.Status)
 
 	// Check fencing agents for master-0 (should be healthy)
 	require.NotEmpty(t, master0.FencingAgents, "Node should have fencing agents")
 	fencingAgent0 := master0.FencingAgents[0]
-	fencingHealthy := FindCondition(fencingAgent0.Conditions, v1alpha1.ResourceHealthyConditionType)
+	fencingHealthy := FindCondition(fencingAgent0.Conditions, pacmkrv1.ResourceHealthyConditionType)
 	require.NotNil(t, fencingHealthy)
 	require.Equal(t, metav1.ConditionTrue, fencingHealthy.Status)
 
 	// Master-1 should have unhealthy kubelet, healthy etcd
-	kubeletResource1 := findResourceInList(master1.Resources, v1alpha1.PacemakerClusterResourceNameKubelet)
+	kubeletResource1 := findResourceInList(master1.Resources, pacmkrv1.PacemakerClusterResourceNameKubelet)
 	require.NotNil(t, kubeletResource1)
-	kubeletHealthy1 := FindCondition(kubeletResource1.Conditions, v1alpha1.ResourceHealthyConditionType)
+	kubeletHealthy1 := FindCondition(kubeletResource1.Conditions, pacmkrv1.ResourceHealthyConditionType)
 	require.NotNil(t, kubeletHealthy1)
 	require.Equal(t, metav1.ConditionFalse, kubeletHealthy1.Status)
 
-	etcdResource1 := findResourceInList(master1.Resources, v1alpha1.PacemakerClusterResourceNameEtcd)
+	etcdResource1 := findResourceInList(master1.Resources, pacmkrv1.PacemakerClusterResourceNameEtcd)
 	require.NotNil(t, etcdResource1)
-	etcdHealthy1 := FindCondition(etcdResource1.Conditions, v1alpha1.ResourceHealthyConditionType)
+	etcdHealthy1 := FindCondition(etcdResource1.Conditions, pacmkrv1.ResourceHealthyConditionType)
 	require.NotNil(t, etcdHealthy1)
 	require.Equal(t, metav1.ConditionTrue, etcdHealthy1.Status)
 
 	// Check fencing agents for master-1 (should be unhealthy based on test data)
 	require.NotEmpty(t, master1.FencingAgents, "Node should have fencing agents")
 	fencingAgent1 := master1.FencingAgents[0]
-	fencingHealthy1 := FindCondition(fencingAgent1.Conditions, v1alpha1.ResourceHealthyConditionType)
+	fencingHealthy1 := FindCondition(fencingAgent1.Conditions, pacmkrv1.ResourceHealthyConditionType)
 	require.NotNil(t, fencingHealthy1)
 	require.Equal(t, metav1.ConditionFalse, fencingHealthy1.Status)
 }
@@ -337,7 +337,7 @@ func TestBuildClusterStatus_NodeIPExtraction(t *testing.T) {
 }
 
 // containsAddress checks if a PacemakerNodeAddress slice contains a specific address
-func containsAddress(addresses []v1alpha1.PacemakerNodeAddress, addr string) bool {
+func containsAddress(addresses []pacmkrv1.PacemakerNodeAddress, addr string) bool {
 	for _, a := range addresses {
 		if a.Address == addr {
 			return true
@@ -455,25 +455,25 @@ func TestBuildNodeCountCondition(t *testing.T) {
 
 	// Test with expected node count
 	condition := buildNodeCountCondition(2, now)
-	require.Equal(t, v1alpha1.ClusterNodeCountAsExpectedConditionType, condition.Type)
+	require.Equal(t, pacmkrv1.ClusterNodeCountAsExpectedConditionType, condition.Type)
 	require.Equal(t, metav1.ConditionTrue, condition.Status)
-	require.Equal(t, v1alpha1.ClusterNodeCountAsExpectedReasonAsExpected, condition.Reason)
+	require.Equal(t, pacmkrv1.ClusterNodeCountAsExpectedReasonAsExpected, condition.Reason)
 
 	// Test with insufficient nodes
 	condition = buildNodeCountCondition(1, now)
-	require.Equal(t, v1alpha1.ClusterNodeCountAsExpectedConditionType, condition.Type)
+	require.Equal(t, pacmkrv1.ClusterNodeCountAsExpectedConditionType, condition.Type)
 	require.Equal(t, metav1.ConditionFalse, condition.Status)
-	require.Equal(t, v1alpha1.ClusterNodeCountAsExpectedReasonInsufficientNodes, condition.Reason)
+	require.Equal(t, pacmkrv1.ClusterNodeCountAsExpectedReasonInsufficientNodes, condition.Reason)
 
 	// Test with no nodes
 	condition = buildNodeCountCondition(0, now)
 	require.Equal(t, metav1.ConditionFalse, condition.Status)
-	require.Equal(t, v1alpha1.ClusterNodeCountAsExpectedReasonInsufficientNodes, condition.Reason)
+	require.Equal(t, pacmkrv1.ClusterNodeCountAsExpectedReasonInsufficientNodes, condition.Reason)
 
 	// Test with excessive nodes
 	condition = buildNodeCountCondition(3, now)
 	require.Equal(t, metav1.ConditionFalse, condition.Status)
-	require.Equal(t, v1alpha1.ClusterNodeCountAsExpectedReasonExcessiveNodes, condition.Reason)
+	require.Equal(t, pacmkrv1.ClusterNodeCountAsExpectedReasonExcessiveNodes, condition.Reason)
 }
 
 func TestCollectPacemakerStatus_XMLSizeValidation(t *testing.T) {
@@ -670,7 +670,7 @@ func TestBuildResourceConditions(t *testing.T) {
 
 	require.Len(t, conditions, 8, "Should have 8 resource conditions")
 
-	healthyCondition := FindCondition(conditions, v1alpha1.ResourceHealthyConditionType)
+	healthyCondition := FindCondition(conditions, pacmkrv1.ResourceHealthyConditionType)
 	require.NotNil(t, healthyCondition)
 	require.Equal(t, metav1.ConditionTrue, healthyCondition.Status)
 
@@ -686,11 +686,11 @@ func TestBuildResourceConditions(t *testing.T) {
 	}
 	stoppedConditions := buildResourceConditions(stoppedResource, false, now)
 
-	stoppedHealthy := FindCondition(stoppedConditions, v1alpha1.ResourceHealthyConditionType)
+	stoppedHealthy := FindCondition(stoppedConditions, pacmkrv1.ResourceHealthyConditionType)
 	require.NotNil(t, stoppedHealthy)
 	require.Equal(t, metav1.ConditionFalse, stoppedHealthy.Status)
 
-	startedCondition := FindCondition(stoppedConditions, v1alpha1.ResourceStartedConditionType)
+	startedCondition := FindCondition(stoppedConditions, pacmkrv1.ResourceStartedConditionType)
 	require.NotNil(t, startedCondition)
 	require.Equal(t, metav1.ConditionFalse, startedCondition.Status)
 }
@@ -699,11 +699,11 @@ func TestBuildNodeConditions(t *testing.T) {
 	now := metav1.Now()
 
 	// Create healthy fencing agents for testing
-	healthyFencingAgents := []v1alpha1.PacemakerClusterFencingAgentStatus{
+	healthyFencingAgents := []pacmkrv1.PacemakerClusterFencingAgentStatus{
 		{
 			Conditions: createHealthyResourceConditions(),
 			Name:       "master-0_redfish",
-			Method:     v1alpha1.FencingMethodRedfish,
+			Method:     pacmkrv1.FencingMethodRedfish,
 		},
 	}
 
@@ -725,20 +725,20 @@ func TestBuildNodeConditions(t *testing.T) {
 
 	require.Len(t, conditions, 9, "Should have 9 node conditions (including FencingAvailable and FencingHealthy)")
 
-	healthyCondition := FindCondition(conditions, v1alpha1.NodeHealthyConditionType)
+	healthyCondition := FindCondition(conditions, pacmkrv1.NodeHealthyConditionType)
 	require.NotNil(t, healthyCondition)
 	require.Equal(t, metav1.ConditionTrue, healthyCondition.Status)
 
-	onlineCondition := FindCondition(conditions, v1alpha1.NodeOnlineConditionType)
+	onlineCondition := FindCondition(conditions, pacmkrv1.NodeOnlineConditionType)
 	require.NotNil(t, onlineCondition)
 	require.Equal(t, metav1.ConditionTrue, onlineCondition.Status)
 
 	// Check fencing conditions
-	fencingAvailable := FindCondition(conditions, v1alpha1.NodeFencingAvailableConditionType)
+	fencingAvailable := FindCondition(conditions, pacmkrv1.NodeFencingAvailableConditionType)
 	require.NotNil(t, fencingAvailable)
 	require.Equal(t, metav1.ConditionTrue, fencingAvailable.Status)
 
-	fencingHealthy := FindCondition(conditions, v1alpha1.NodeFencingHealthyConditionType)
+	fencingHealthy := FindCondition(conditions, pacmkrv1.NodeFencingHealthyConditionType)
 	require.NotNil(t, fencingHealthy)
 	require.Equal(t, metav1.ConditionTrue, fencingHealthy.Status)
 
@@ -754,16 +754,16 @@ func TestBuildNodeConditions(t *testing.T) {
 	}
 	offlineConditions := buildNodeConditions(offlineNode, nil, nil, now)
 
-	offlineHealthy := FindCondition(offlineConditions, v1alpha1.NodeHealthyConditionType)
+	offlineHealthy := FindCondition(offlineConditions, pacmkrv1.NodeHealthyConditionType)
 	require.NotNil(t, offlineHealthy)
 	require.Equal(t, metav1.ConditionFalse, offlineHealthy.Status)
 
-	offlineOnline := FindCondition(offlineConditions, v1alpha1.NodeOnlineConditionType)
+	offlineOnline := FindCondition(offlineConditions, pacmkrv1.NodeOnlineConditionType)
 	require.NotNil(t, offlineOnline)
 	require.Equal(t, metav1.ConditionFalse, offlineOnline.Status)
 
 	// Fencing should be unavailable when no agents
-	offlineFencingAvailable := FindCondition(offlineConditions, v1alpha1.NodeFencingAvailableConditionType)
+	offlineFencingAvailable := FindCondition(offlineConditions, pacmkrv1.NodeFencingAvailableConditionType)
 	require.NotNil(t, offlineFencingAvailable)
 	require.Equal(t, metav1.ConditionFalse, offlineFencingAvailable.Status)
 }
@@ -772,41 +772,41 @@ func TestBuildClusterConditions(t *testing.T) {
 	now := metav1.Now()
 
 	// Create healthy nodes
-	healthyNode := v1alpha1.PacemakerClusterNodeStatus{
+	healthyNode := pacmkrv1.PacemakerClusterNodeStatus{
 		NodeName:  "master-0",
-		Addresses: []v1alpha1.PacemakerNodeAddress{{Type: v1alpha1.PacemakerNodeInternalIP, Address: "192.168.1.10"}},
+		Addresses: []pacmkrv1.PacemakerNodeAddress{{Type: pacmkrv1.PacemakerNodeInternalIP, Address: "192.168.1.10"}},
 		Conditions: []metav1.Condition{
 			{
-				Type:               v1alpha1.NodeHealthyConditionType,
+				Type:               pacmkrv1.NodeHealthyConditionType,
 				Status:             metav1.ConditionTrue,
-				Reason:             v1alpha1.NodeHealthyReasonHealthy,
+				Reason:             pacmkrv1.NodeHealthyReasonHealthy,
 				LastTransitionTime: now,
 			},
 		},
 	}
-	nodes := []v1alpha1.PacemakerClusterNodeStatus{healthyNode, healthyNode}
+	nodes := []pacmkrv1.PacemakerClusterNodeStatus{healthyNode, healthyNode}
 
 	// Test healthy cluster
 	conditions := buildClusterConditions(2, false, nodes, now)
 
 	require.Len(t, conditions, 3, "Should have 3 cluster conditions")
 
-	healthyCondition := FindCondition(conditions, v1alpha1.ClusterHealthyConditionType)
+	healthyCondition := FindCondition(conditions, pacmkrv1.ClusterHealthyConditionType)
 	require.NotNil(t, healthyCondition)
 	require.Equal(t, metav1.ConditionTrue, healthyCondition.Status)
 
-	inServiceCondition := FindCondition(conditions, v1alpha1.ClusterInServiceConditionType)
+	inServiceCondition := FindCondition(conditions, pacmkrv1.ClusterInServiceConditionType)
 	require.NotNil(t, inServiceCondition)
 	require.Equal(t, metav1.ConditionTrue, inServiceCondition.Status)
 
-	nodeCountCondition := FindCondition(conditions, v1alpha1.ClusterNodeCountAsExpectedConditionType)
+	nodeCountCondition := FindCondition(conditions, pacmkrv1.ClusterNodeCountAsExpectedConditionType)
 	require.NotNil(t, nodeCountCondition)
 	require.Equal(t, metav1.ConditionTrue, nodeCountCondition.Status)
 
 	// Test cluster in maintenance
 	maintenanceConditions := buildClusterConditions(2, true, nodes, now)
 
-	maintenanceInService := FindCondition(maintenanceConditions, v1alpha1.ClusterInServiceConditionType)
+	maintenanceInService := FindCondition(maintenanceConditions, pacmkrv1.ClusterInServiceConditionType)
 	require.NotNil(t, maintenanceInService)
 	require.Equal(t, metav1.ConditionFalse, maintenanceInService.Status)
 }
@@ -904,9 +904,9 @@ func TestBuildClusterStatus_ClusterConditionScenarios(t *testing.T) {
 			expectedNodeCount:       2,
 			expectedClusterHealthy:  metav1.ConditionFalse,
 			expectedNodeCountStatus: metav1.ConditionTrue,
-			expectedNodeCountReason: v1alpha1.ClusterNodeCountAsExpectedReasonAsExpected,
+			expectedNodeCountReason: pacmkrv1.ClusterNodeCountAsExpectedReasonAsExpected,
 			expectedInServiceStatus: ptr(metav1.ConditionFalse),
-			expectedInServiceReason: v1alpha1.ClusterInServiceReasonInMaintenance,
+			expectedInServiceReason: pacmkrv1.ClusterInServiceReasonInMaintenance,
 		},
 		{
 			name:                    "single_node_insufficient",
@@ -914,7 +914,7 @@ func TestBuildClusterStatus_ClusterConditionScenarios(t *testing.T) {
 			expectedNodeCount:       1,
 			expectedClusterHealthy:  metav1.ConditionFalse,
 			expectedNodeCountStatus: metav1.ConditionFalse,
-			expectedNodeCountReason: v1alpha1.ClusterNodeCountAsExpectedReasonInsufficientNodes,
+			expectedNodeCountReason: pacmkrv1.ClusterNodeCountAsExpectedReasonInsufficientNodes,
 		},
 		{
 			name:                    "excessive_nodes",
@@ -922,7 +922,7 @@ func TestBuildClusterStatus_ClusterConditionScenarios(t *testing.T) {
 			expectedNodeCount:       3,
 			expectedClusterHealthy:  metav1.ConditionFalse,
 			expectedNodeCountStatus: metav1.ConditionFalse,
-			expectedNodeCountReason: v1alpha1.ClusterNodeCountAsExpectedReasonExcessiveNodes,
+			expectedNodeCountReason: pacmkrv1.ClusterNodeCountAsExpectedReasonExcessiveNodes,
 		},
 	}
 
@@ -939,19 +939,19 @@ func TestBuildClusterStatus_ClusterConditionScenarios(t *testing.T) {
 			require.Len(t, *status.Nodes, tt.expectedNodeCount)
 
 			// Verify cluster healthy condition
-			healthyCondition := FindCondition(status.Conditions, v1alpha1.ClusterHealthyConditionType)
+			healthyCondition := FindCondition(status.Conditions, pacmkrv1.ClusterHealthyConditionType)
 			require.NotNil(t, healthyCondition, "Healthy condition should exist")
 			require.Equal(t, tt.expectedClusterHealthy, healthyCondition.Status)
 
 			// Verify node count condition
-			nodeCountCondition := FindCondition(status.Conditions, v1alpha1.ClusterNodeCountAsExpectedConditionType)
+			nodeCountCondition := FindCondition(status.Conditions, pacmkrv1.ClusterNodeCountAsExpectedConditionType)
 			require.NotNil(t, nodeCountCondition, "NodeCountAsExpected condition should exist")
 			require.Equal(t, tt.expectedNodeCountStatus, nodeCountCondition.Status)
 			require.Equal(t, tt.expectedNodeCountReason, nodeCountCondition.Reason)
 
 			// Verify in-service condition if expected
 			if tt.expectedInServiceStatus != nil {
-				inServiceCondition := FindCondition(status.Conditions, v1alpha1.ClusterInServiceConditionType)
+				inServiceCondition := FindCondition(status.Conditions, pacmkrv1.ClusterInServiceConditionType)
 				require.NotNil(t, inServiceCondition, "InService condition should exist")
 				require.Equal(t, *tt.expectedInServiceStatus, inServiceCondition.Status)
 				require.Equal(t, tt.expectedInServiceReason, inServiceCondition.Reason)
@@ -979,7 +979,7 @@ func TestBuildClusterStatus_NodeStates(t *testing.T) {
 	status := buildClusterStatus(&result, nil)
 
 	// Helper to find node by name
-	findNode := func(name string) *v1alpha1.PacemakerClusterNodeStatus {
+	findNode := func(name string) *pacmkrv1.PacemakerClusterNodeStatus {
 		for i := range *status.Nodes {
 			if (*status.Nodes)[i].NodeName == name {
 				return &(*status.Nodes)[i]
@@ -993,19 +993,19 @@ func TestBuildClusterStatus_NodeStates(t *testing.T) {
 		require.NotNil(t, node, "master-0 should exist")
 
 		// Verify all node-level conditions are True (even though overall health may be False due to missing resources)
-		onlineCondition := FindCondition(node.Conditions, v1alpha1.NodeOnlineConditionType)
+		onlineCondition := FindCondition(node.Conditions, pacmkrv1.NodeOnlineConditionType)
 		require.NotNil(t, onlineCondition)
 		require.Equal(t, metav1.ConditionTrue, onlineCondition.Status, "Node should be online")
 
-		inServiceCondition := FindCondition(node.Conditions, v1alpha1.NodeInServiceConditionType)
+		inServiceCondition := FindCondition(node.Conditions, pacmkrv1.NodeInServiceConditionType)
 		require.NotNil(t, inServiceCondition)
 		require.Equal(t, metav1.ConditionTrue, inServiceCondition.Status, "Node should be in service")
 
-		cleanCondition := FindCondition(node.Conditions, v1alpha1.NodeCleanConditionType)
+		cleanCondition := FindCondition(node.Conditions, pacmkrv1.NodeCleanConditionType)
 		require.NotNil(t, cleanCondition)
 		require.Equal(t, metav1.ConditionTrue, cleanCondition.Status, "Node should be clean")
 
-		readyCondition := FindCondition(node.Conditions, v1alpha1.NodeReadyConditionType)
+		readyCondition := FindCondition(node.Conditions, pacmkrv1.NodeReadyConditionType)
 		require.NotNil(t, readyCondition)
 		require.Equal(t, metav1.ConditionTrue, readyCondition.Status, "Node should be ready")
 	})
@@ -1014,11 +1014,11 @@ func TestBuildClusterStatus_NodeStates(t *testing.T) {
 		node := findNode("master-1")
 		require.NotNil(t, node, "master-1 should exist")
 
-		inServiceCondition := FindCondition(node.Conditions, v1alpha1.NodeInServiceConditionType)
+		inServiceCondition := FindCondition(node.Conditions, pacmkrv1.NodeInServiceConditionType)
 		require.NotNil(t, inServiceCondition)
 		require.Equal(t, metav1.ConditionFalse, inServiceCondition.Status, "Node should NOT be in service when in maintenance")
 
-		healthyCondition := FindCondition(node.Conditions, v1alpha1.NodeHealthyConditionType)
+		healthyCondition := FindCondition(node.Conditions, pacmkrv1.NodeHealthyConditionType)
 		require.NotNil(t, healthyCondition)
 		require.Equal(t, metav1.ConditionFalse, healthyCondition.Status, "Node should be unhealthy when in maintenance")
 	})
@@ -1027,11 +1027,11 @@ func TestBuildClusterStatus_NodeStates(t *testing.T) {
 		node := findNode("master-2")
 		require.NotNil(t, node, "master-2 should exist")
 
-		cleanCondition := FindCondition(node.Conditions, v1alpha1.NodeCleanConditionType)
+		cleanCondition := FindCondition(node.Conditions, pacmkrv1.NodeCleanConditionType)
 		require.NotNil(t, cleanCondition)
 		require.Equal(t, metav1.ConditionFalse, cleanCondition.Status, "Node should NOT be clean when unclean=true")
 
-		healthyCondition := FindCondition(node.Conditions, v1alpha1.NodeHealthyConditionType)
+		healthyCondition := FindCondition(node.Conditions, pacmkrv1.NodeHealthyConditionType)
 		require.NotNil(t, healthyCondition)
 		require.Equal(t, metav1.ConditionFalse, healthyCondition.Status, "Node should be unhealthy when unclean")
 	})
@@ -1040,11 +1040,11 @@ func TestBuildClusterStatus_NodeStates(t *testing.T) {
 		node := findNode("master-3")
 		require.NotNil(t, node, "master-3 should exist")
 
-		readyCondition := FindCondition(node.Conditions, v1alpha1.NodeReadyConditionType)
+		readyCondition := FindCondition(node.Conditions, pacmkrv1.NodeReadyConditionType)
 		require.NotNil(t, readyCondition)
 		require.Equal(t, metav1.ConditionFalse, readyCondition.Status, "Node should NOT be ready when pending=true")
 
-		healthyCondition := FindCondition(node.Conditions, v1alpha1.NodeHealthyConditionType)
+		healthyCondition := FindCondition(node.Conditions, pacmkrv1.NodeHealthyConditionType)
 		require.NotNil(t, healthyCondition)
 		require.Equal(t, metav1.ConditionFalse, healthyCondition.Status, "Node should be unhealthy when pending")
 	})
@@ -1053,7 +1053,7 @@ func TestBuildClusterStatus_NodeStates(t *testing.T) {
 		// Node-level maintenance (pcs node maintenance <node>) does NOT affect cluster-level InService.
 		// Only cluster-level maintenance (pcs property set maintenance-mode=true) sets InService=False.
 		// This is intentional: node maintenance affects only that node's resources, not the cluster.
-		clusterInServiceCondition := FindCondition(status.Conditions, v1alpha1.ClusterInServiceConditionType)
+		clusterInServiceCondition := FindCondition(status.Conditions, pacmkrv1.ClusterInServiceConditionType)
 		require.NotNil(t, clusterInServiceCondition)
 		require.Equal(t, metav1.ConditionTrue, clusterInServiceCondition.Status, "Cluster should be in service even when individual nodes are in maintenance")
 	})
@@ -1104,49 +1104,49 @@ func TestIsAgentHealthy(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		agent          v1alpha1.PacemakerClusterFencingAgentStatus
+		agent          pacmkrv1.PacemakerClusterFencingAgentStatus
 		expectedResult bool
 	}{
 		{
 			name: "healthy_agent",
-			agent: v1alpha1.PacemakerClusterFencingAgentStatus{
+			agent: pacmkrv1.PacemakerClusterFencingAgentStatus{
 				Name:   "master-0_redfish",
-				Method: v1alpha1.FencingMethodRedfish,
+				Method: pacmkrv1.FencingMethodRedfish,
 				Conditions: []metav1.Condition{
-					{Type: v1alpha1.ResourceHealthyConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+					{Type: pacmkrv1.ResourceHealthyConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
 				},
 			},
 			expectedResult: true,
 		},
 		{
 			name: "unhealthy_agent",
-			agent: v1alpha1.PacemakerClusterFencingAgentStatus{
+			agent: pacmkrv1.PacemakerClusterFencingAgentStatus{
 				Name:   "master-0_redfish",
-				Method: v1alpha1.FencingMethodRedfish,
+				Method: pacmkrv1.FencingMethodRedfish,
 				Conditions: []metav1.Condition{
-					{Type: v1alpha1.ResourceHealthyConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+					{Type: pacmkrv1.ResourceHealthyConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
 				},
 			},
 			expectedResult: false,
 		},
 		{
 			name: "no_healthy_condition",
-			agent: v1alpha1.PacemakerClusterFencingAgentStatus{
+			agent: pacmkrv1.PacemakerClusterFencingAgentStatus{
 				Name:   "master-0_redfish",
-				Method: v1alpha1.FencingMethodRedfish,
+				Method: pacmkrv1.FencingMethodRedfish,
 				Conditions: []metav1.Condition{
 					// Only other conditions, no Healthy condition
-					{Type: v1alpha1.ResourceManagedConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
-					{Type: v1alpha1.ResourceStartedConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+					{Type: pacmkrv1.ResourceManagedConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+					{Type: pacmkrv1.ResourceStartedConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
 				},
 			},
 			expectedResult: false, // Assume unhealthy if no Healthy condition
 		},
 		{
 			name: "empty_conditions",
-			agent: v1alpha1.PacemakerClusterFencingAgentStatus{
+			agent: pacmkrv1.PacemakerClusterFencingAgentStatus{
 				Name:       "master-0_redfish",
-				Method:     v1alpha1.FencingMethodRedfish,
+				Method:     pacmkrv1.FencingMethodRedfish,
 				Conditions: []metav1.Condition{},
 			},
 			expectedResult: false, // Assume unhealthy if no conditions
@@ -1166,71 +1166,71 @@ func TestIsAgentAvailable(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		agent          v1alpha1.PacemakerClusterFencingAgentStatus
+		agent          pacmkrv1.PacemakerClusterFencingAgentStatus
 		expectedResult bool
 	}{
 		{
 			name: "available_fully_healthy",
-			agent: v1alpha1.PacemakerClusterFencingAgentStatus{
+			agent: pacmkrv1.PacemakerClusterFencingAgentStatus{
 				Name:   "master-0_redfish",
-				Method: v1alpha1.FencingMethodRedfish,
+				Method: pacmkrv1.FencingMethodRedfish,
 				Conditions: []metav1.Condition{
-					{Type: v1alpha1.ResourceActiveConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
-					{Type: v1alpha1.ResourceStartedConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
-					{Type: v1alpha1.ResourceOperationalConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
-					{Type: v1alpha1.ResourceHealthyConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+					{Type: pacmkrv1.ResourceActiveConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+					{Type: pacmkrv1.ResourceStartedConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+					{Type: pacmkrv1.ResourceOperationalConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+					{Type: pacmkrv1.ResourceHealthyConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
 				},
 			},
 			expectedResult: true,
 		},
 		{
 			name: "available_but_on_maintenance_node",
-			agent: v1alpha1.PacemakerClusterFencingAgentStatus{
+			agent: pacmkrv1.PacemakerClusterFencingAgentStatus{
 				Name:   "master-0_redfish",
-				Method: v1alpha1.FencingMethodRedfish,
+				Method: pacmkrv1.FencingMethodRedfish,
 				Conditions: []metav1.Condition{
 					// Running - can fence
-					{Type: v1alpha1.ResourceActiveConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
-					{Type: v1alpha1.ResourceStartedConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
-					{Type: v1alpha1.ResourceOperationalConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+					{Type: pacmkrv1.ResourceActiveConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+					{Type: pacmkrv1.ResourceStartedConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+					{Type: pacmkrv1.ResourceOperationalConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
 					// Not managed due to maintenance - doesn't affect availability
-					{Type: v1alpha1.ResourceHealthyConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
-					{Type: v1alpha1.ResourceManagedConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+					{Type: pacmkrv1.ResourceHealthyConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+					{Type: pacmkrv1.ResourceManagedConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
 				},
 			},
 			expectedResult: true, // Still available - it's running
 		},
 		{
 			name: "not_available_stopped",
-			agent: v1alpha1.PacemakerClusterFencingAgentStatus{
+			agent: pacmkrv1.PacemakerClusterFencingAgentStatus{
 				Name:   "master-0_redfish",
-				Method: v1alpha1.FencingMethodRedfish,
+				Method: pacmkrv1.FencingMethodRedfish,
 				Conditions: []metav1.Condition{
-					{Type: v1alpha1.ResourceActiveConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
-					{Type: v1alpha1.ResourceStartedConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
-					{Type: v1alpha1.ResourceOperationalConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+					{Type: pacmkrv1.ResourceActiveConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+					{Type: pacmkrv1.ResourceStartedConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+					{Type: pacmkrv1.ResourceOperationalConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
 				},
 			},
 			expectedResult: false, // Not running, cannot fence
 		},
 		{
 			name: "not_available_active_but_not_started",
-			agent: v1alpha1.PacemakerClusterFencingAgentStatus{
+			agent: pacmkrv1.PacemakerClusterFencingAgentStatus{
 				Name:   "master-0_redfish",
-				Method: v1alpha1.FencingMethodRedfish,
+				Method: pacmkrv1.FencingMethodRedfish,
 				Conditions: []metav1.Condition{
-					{Type: v1alpha1.ResourceActiveConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
-					{Type: v1alpha1.ResourceStartedConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
-					{Type: v1alpha1.ResourceOperationalConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+					{Type: pacmkrv1.ResourceActiveConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+					{Type: pacmkrv1.ResourceStartedConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+					{Type: pacmkrv1.ResourceOperationalConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
 				},
 			},
 			expectedResult: false, // Needs all three conditions
 		},
 		{
 			name: "empty_conditions",
-			agent: v1alpha1.PacemakerClusterFencingAgentStatus{
+			agent: pacmkrv1.PacemakerClusterFencingAgentStatus{
 				Name:       "master-0_redfish",
-				Method:     v1alpha1.FencingMethodRedfish,
+				Method:     pacmkrv1.FencingMethodRedfish,
 				Conditions: []metav1.Condition{},
 			},
 			expectedResult: false, // No conditions means not available
@@ -1249,86 +1249,86 @@ func TestCalculateFencingHealth(t *testing.T) {
 	now := metav1.Now()
 
 	// A healthy agent is running (available) AND fully managed (healthy)
-	healthyAgent := v1alpha1.PacemakerClusterFencingAgentStatus{
+	healthyAgent := pacmkrv1.PacemakerClusterFencingAgentStatus{
 		Name:   "master-0_redfish",
-		Method: v1alpha1.FencingMethodRedfish,
+		Method: pacmkrv1.FencingMethodRedfish,
 		Conditions: []metav1.Condition{
-			{Type: v1alpha1.ResourceActiveConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
-			{Type: v1alpha1.ResourceStartedConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
-			{Type: v1alpha1.ResourceOperationalConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
-			{Type: v1alpha1.ResourceHealthyConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+			{Type: pacmkrv1.ResourceActiveConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+			{Type: pacmkrv1.ResourceStartedConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+			{Type: pacmkrv1.ResourceOperationalConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+			{Type: pacmkrv1.ResourceHealthyConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
 		},
 	}
 
 	// An agent on a maintenance node: running (available) but NOT managed (not healthy).
 	// This is the key distinction - the agent CAN fence, but won't be recovered if it fails.
-	availableButNotHealthyAgent := v1alpha1.PacemakerClusterFencingAgentStatus{
+	availableButNotHealthyAgent := pacmkrv1.PacemakerClusterFencingAgentStatus{
 		Name:   "master-0_redfish_maintenance",
-		Method: v1alpha1.FencingMethodRedfish,
+		Method: pacmkrv1.FencingMethodRedfish,
 		Conditions: []metav1.Condition{
 			// Running - can fence
-			{Type: v1alpha1.ResourceActiveConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
-			{Type: v1alpha1.ResourceStartedConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
-			{Type: v1alpha1.ResourceOperationalConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+			{Type: pacmkrv1.ResourceActiveConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+			{Type: pacmkrv1.ResourceStartedConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
+			{Type: pacmkrv1.ResourceOperationalConditionType, Status: metav1.ConditionTrue, LastTransitionTime: now},
 			// Not healthy because managed=false (on maintenance node)
-			{Type: v1alpha1.ResourceHealthyConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
-			{Type: v1alpha1.ResourceManagedConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
-			{Type: v1alpha1.ResourceInServiceConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+			{Type: pacmkrv1.ResourceHealthyConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+			{Type: pacmkrv1.ResourceManagedConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+			{Type: pacmkrv1.ResourceInServiceConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
 		},
 	}
 
 	// An unhealthy agent is not running (not available) AND not managed (not healthy)
-	unhealthyAgent := v1alpha1.PacemakerClusterFencingAgentStatus{
+	unhealthyAgent := pacmkrv1.PacemakerClusterFencingAgentStatus{
 		Name:   "master-0_ipmi",
-		Method: v1alpha1.FencingMethodIPMI,
+		Method: pacmkrv1.FencingMethodIPMI,
 		Conditions: []metav1.Condition{
-			{Type: v1alpha1.ResourceActiveConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
-			{Type: v1alpha1.ResourceStartedConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
-			{Type: v1alpha1.ResourceOperationalConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
-			{Type: v1alpha1.ResourceHealthyConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+			{Type: pacmkrv1.ResourceActiveConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+			{Type: pacmkrv1.ResourceStartedConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+			{Type: pacmkrv1.ResourceOperationalConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
+			{Type: pacmkrv1.ResourceHealthyConditionType, Status: metav1.ConditionFalse, LastTransitionTime: now},
 		},
 	}
 
 	tests := []struct {
 		name                   string
-		agents                 []v1alpha1.PacemakerClusterFencingAgentStatus
+		agents                 []pacmkrv1.PacemakerClusterFencingAgentStatus
 		expectedFencingAvail   bool
 		expectedFencingHealthy bool
 	}{
 		{
 			name:                   "all_healthy",
-			agents:                 []v1alpha1.PacemakerClusterFencingAgentStatus{healthyAgent},
+			agents:                 []pacmkrv1.PacemakerClusterFencingAgentStatus{healthyAgent},
 			expectedFencingAvail:   true,
 			expectedFencingHealthy: true,
 		},
 		{
 			name:                   "all_unhealthy",
-			agents:                 []v1alpha1.PacemakerClusterFencingAgentStatus{unhealthyAgent},
+			agents:                 []pacmkrv1.PacemakerClusterFencingAgentStatus{unhealthyAgent},
 			expectedFencingAvail:   false,
 			expectedFencingHealthy: false,
 		},
 		{
 			// Key test: agent on maintenance node - available but not healthy
 			name:                   "available_but_not_healthy_maintenance_node",
-			agents:                 []v1alpha1.PacemakerClusterFencingAgentStatus{availableButNotHealthyAgent},
+			agents:                 []pacmkrv1.PacemakerClusterFencingAgentStatus{availableButNotHealthyAgent},
 			expectedFencingAvail:   true,  // Agent IS running, CAN fence
 			expectedFencingHealthy: false, // Agent is NOT managed, won't be recovered
 		},
 		{
 			name:                   "mixed_one_healthy_one_unhealthy",
-			agents:                 []v1alpha1.PacemakerClusterFencingAgentStatus{healthyAgent, unhealthyAgent},
+			agents:                 []pacmkrv1.PacemakerClusterFencingAgentStatus{healthyAgent, unhealthyAgent},
 			expectedFencingAvail:   true,  // At least one is available
 			expectedFencingHealthy: false, // Not all are healthy
 		},
 		{
 			name:                   "empty_agents",
-			agents:                 []v1alpha1.PacemakerClusterFencingAgentStatus{},
+			agents:                 []pacmkrv1.PacemakerClusterFencingAgentStatus{},
 			expectedFencingAvail:   false, // No agents means unavailable
 			expectedFencingHealthy: false,
 		},
 		{
 			name:                   "multiple_healthy",
-			agents:                 []v1alpha1.PacemakerClusterFencingAgentStatus{healthyAgent, healthyAgent},
+			agents:                 []pacmkrv1.PacemakerClusterFencingAgentStatus{healthyAgent, healthyAgent},
 			expectedFencingAvail:   true,
 			expectedFencingHealthy: true,
 		},
@@ -1932,7 +1932,7 @@ func TestBuildClusterStatus_FencingFailure_NodeUnclean(t *testing.T) {
 	status := buildClusterStatus(&result, nil)
 
 	// Helper to find node by name
-	findNode := func(name string) *v1alpha1.PacemakerClusterNodeStatus {
+	findNode := func(name string) *pacmkrv1.PacemakerClusterNodeStatus {
 		for i := range *status.Nodes {
 			if (*status.Nodes)[i].NodeName == name {
 				return &(*status.Nodes)[i]
@@ -1946,17 +1946,17 @@ func TestBuildClusterStatus_FencingFailure_NodeUnclean(t *testing.T) {
 		require.NotNil(t, node, "master-1 should exist")
 
 		// Node should be marked as UNCLEAN (Clean condition = False)
-		cleanCondition := FindCondition(node.Conditions, v1alpha1.NodeCleanConditionType)
+		cleanCondition := FindCondition(node.Conditions, pacmkrv1.NodeCleanConditionType)
 		require.NotNil(t, cleanCondition, "Clean condition should exist")
 		require.Equal(t, metav1.ConditionFalse, cleanCondition.Status, "Node should NOT be clean after failed fencing")
 
 		// Node should be offline
-		onlineCondition := FindCondition(node.Conditions, v1alpha1.NodeOnlineConditionType)
+		onlineCondition := FindCondition(node.Conditions, pacmkrv1.NodeOnlineConditionType)
 		require.NotNil(t, onlineCondition, "Online condition should exist")
 		require.Equal(t, metav1.ConditionFalse, onlineCondition.Status, "Node should be offline")
 
 		// Node should be unhealthy overall
-		healthyCondition := FindCondition(node.Conditions, v1alpha1.NodeHealthyConditionType)
+		healthyCondition := FindCondition(node.Conditions, pacmkrv1.NodeHealthyConditionType)
 		require.NotNil(t, healthyCondition, "Healthy condition should exist")
 		require.Equal(t, metav1.ConditionFalse, healthyCondition.Status, "Node should be unhealthy when unclean")
 	})
@@ -1966,18 +1966,18 @@ func TestBuildClusterStatus_FencingFailure_NodeUnclean(t *testing.T) {
 		require.NotNil(t, node, "master-0 should exist")
 
 		// Surviving node should be online
-		onlineCondition := FindCondition(node.Conditions, v1alpha1.NodeOnlineConditionType)
+		onlineCondition := FindCondition(node.Conditions, pacmkrv1.NodeOnlineConditionType)
 		require.NotNil(t, onlineCondition)
 		require.Equal(t, metav1.ConditionTrue, onlineCondition.Status, "Surviving node should be online")
 
 		// Clean condition should be True
-		cleanCondition := FindCondition(node.Conditions, v1alpha1.NodeCleanConditionType)
+		cleanCondition := FindCondition(node.Conditions, pacmkrv1.NodeCleanConditionType)
 		require.NotNil(t, cleanCondition)
 		require.Equal(t, metav1.ConditionTrue, cleanCondition.Status, "Surviving node should be clean")
 	})
 
 	t.Run("cluster_unhealthy_with_unclean_node", func(t *testing.T) {
-		healthyCondition := FindCondition(status.Conditions, v1alpha1.ClusterHealthyConditionType)
+		healthyCondition := FindCondition(status.Conditions, pacmkrv1.ClusterHealthyConditionType)
 		require.NotNil(t, healthyCondition)
 		require.Equal(t, metav1.ConditionFalse, healthyCondition.Status, "Cluster should be unhealthy with UNCLEAN node")
 	})
@@ -1997,7 +1997,7 @@ func TestBuildClusterStatus_FencingDegraded_AgentStopped(t *testing.T) {
 	status := buildClusterStatus(&result, nil)
 
 	// Helper to find node by name
-	findNode := func(name string) *v1alpha1.PacemakerClusterNodeStatus {
+	findNode := func(name string) *pacmkrv1.PacemakerClusterNodeStatus {
 		for i := range *status.Nodes {
 			if (*status.Nodes)[i].NodeName == name {
 				return &(*status.Nodes)[i]
@@ -2011,24 +2011,24 @@ func TestBuildClusterStatus_FencingDegraded_AgentStopped(t *testing.T) {
 		require.NotNil(t, node, "master-1 should exist")
 
 		// Node should be online
-		onlineCondition := FindCondition(node.Conditions, v1alpha1.NodeOnlineConditionType)
+		onlineCondition := FindCondition(node.Conditions, pacmkrv1.NodeOnlineConditionType)
 		require.NotNil(t, onlineCondition)
 		require.Equal(t, metav1.ConditionTrue, onlineCondition.Status, "Node should be online")
 
 		// Fencing should be unavailable (fencing agent stopped)
-		fencingAvailableCondition := FindCondition(node.Conditions, v1alpha1.NodeFencingAvailableConditionType)
+		fencingAvailableCondition := FindCondition(node.Conditions, pacmkrv1.NodeFencingAvailableConditionType)
 		require.NotNil(t, fencingAvailableCondition, "FencingAvailable condition should exist")
 		require.Equal(t, metav1.ConditionFalse, fencingAvailableCondition.Status,
 			"Fencing should be unavailable when fencing agent is stopped")
 
 		// FencingHealthy should also be false
-		fencingHealthyCondition := FindCondition(node.Conditions, v1alpha1.NodeFencingHealthyConditionType)
+		fencingHealthyCondition := FindCondition(node.Conditions, pacmkrv1.NodeFencingHealthyConditionType)
 		require.NotNil(t, fencingHealthyCondition, "FencingHealthy condition should exist")
 		require.Equal(t, metav1.ConditionFalse, fencingHealthyCondition.Status,
 			"Fencing should not be healthy when agent is stopped")
 
 		// Node should be unhealthy (fencing unavailable is critical)
-		healthyCondition := FindCondition(node.Conditions, v1alpha1.NodeHealthyConditionType)
+		healthyCondition := FindCondition(node.Conditions, pacmkrv1.NodeHealthyConditionType)
 		require.NotNil(t, healthyCondition)
 		require.Equal(t, metav1.ConditionFalse, healthyCondition.Status,
 			"Node should be unhealthy when fencing is unavailable")
@@ -2039,14 +2039,14 @@ func TestBuildClusterStatus_FencingDegraded_AgentStopped(t *testing.T) {
 		require.NotNil(t, node, "master-0 should exist")
 
 		// master-0's fencing should still be available (master-0_redfish is running)
-		fencingAvailableCondition := FindCondition(node.Conditions, v1alpha1.NodeFencingAvailableConditionType)
+		fencingAvailableCondition := FindCondition(node.Conditions, pacmkrv1.NodeFencingAvailableConditionType)
 		require.NotNil(t, fencingAvailableCondition, "FencingAvailable condition should exist")
 		require.Equal(t, metav1.ConditionTrue, fencingAvailableCondition.Status,
 			"Fencing should be available for master-0")
 	})
 
 	t.Run("cluster_unhealthy_with_fencing_degraded", func(t *testing.T) {
-		healthyCondition := FindCondition(status.Conditions, v1alpha1.ClusterHealthyConditionType)
+		healthyCondition := FindCondition(status.Conditions, pacmkrv1.ClusterHealthyConditionType)
 		require.NotNil(t, healthyCondition)
 		require.Equal(t, metav1.ConditionFalse, healthyCondition.Status,
 			"Cluster should be unhealthy when a node has no fencing")
@@ -2064,7 +2064,7 @@ func TestBuildClusterStatus_ResourceFailure_WithExitReason(t *testing.T) {
 	status := buildClusterStatus(&result, nil)
 
 	// Helper to find node by name
-	findNode := func(name string) *v1alpha1.PacemakerClusterNodeStatus {
+	findNode := func(name string) *pacmkrv1.PacemakerClusterNodeStatus {
 		for i := range *status.Nodes {
 			if (*status.Nodes)[i].NodeName == name {
 				return &(*status.Nodes)[i]
@@ -2078,15 +2078,15 @@ func TestBuildClusterStatus_ResourceFailure_WithExitReason(t *testing.T) {
 		require.NotNil(t, node, "master-0 should exist")
 
 		// Kubelet should be healthy (recovered from failure)
-		kubeletResource := findResourceInList(node.Resources, v1alpha1.PacemakerClusterResourceNameKubelet)
+		kubeletResource := findResourceInList(node.Resources, pacmkrv1.PacemakerClusterResourceNameKubelet)
 		require.NotNil(t, kubeletResource, "Kubelet resource should exist")
 
-		healthyCondition := FindCondition(kubeletResource.Conditions, v1alpha1.ResourceHealthyConditionType)
+		healthyCondition := FindCondition(kubeletResource.Conditions, pacmkrv1.ResourceHealthyConditionType)
 		require.NotNil(t, healthyCondition)
 		require.Equal(t, metav1.ConditionTrue, healthyCondition.Status,
 			"Kubelet should be healthy after recovery")
 
-		startedCondition := FindCondition(kubeletResource.Conditions, v1alpha1.ResourceStartedConditionType)
+		startedCondition := FindCondition(kubeletResource.Conditions, pacmkrv1.ResourceStartedConditionType)
 		require.NotNil(t, startedCondition)
 		require.Equal(t, metav1.ConditionTrue, startedCondition.Status,
 			"Kubelet should be started after recovery")

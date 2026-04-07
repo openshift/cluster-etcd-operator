@@ -3,7 +3,7 @@ package pacemaker
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	v1alpha1 "github.com/openshift/api/etcd/v1alpha1"
+	pacmkrv1 "github.com/openshift/api/etcd/v1"
 )
 
 // =============================================================================
@@ -67,65 +67,65 @@ func getConditionStatus(conditions []metav1.Condition, conditionType string) met
 
 var (
 	nodeOnlineSpec = ConditionSpec{
-		Type:        v1alpha1.NodeOnlineConditionType,
-		TrueReason:  v1alpha1.NodeOnlineReasonOnline,
-		FalseReason: v1alpha1.NodeOnlineReasonOffline,
+		Type:        pacmkrv1.NodeOnlineConditionType,
+		TrueReason:  pacmkrv1.NodeOnlineReasonOnline,
+		FalseReason: pacmkrv1.NodeOnlineReasonOffline,
 		TrueMsg:     "Node is online",
 		FalseMsg:    "Node is offline",
 	}
 	nodeInServiceSpec = ConditionSpec{
-		Type:        v1alpha1.NodeInServiceConditionType,
-		TrueReason:  v1alpha1.NodeInServiceReasonInService,
-		FalseReason: v1alpha1.NodeInServiceReasonInMaintenance,
+		Type:        pacmkrv1.NodeInServiceConditionType,
+		TrueReason:  pacmkrv1.NodeInServiceReasonInService,
+		FalseReason: pacmkrv1.NodeInServiceReasonInMaintenance,
 		TrueMsg:     "Node is in service",
 		FalseMsg:    "Node is in maintenance mode",
 	}
 	nodeActiveSpec = ConditionSpec{
-		Type:        v1alpha1.NodeActiveConditionType,
-		TrueReason:  v1alpha1.NodeActiveReasonActive,
-		FalseReason: v1alpha1.NodeActiveReasonStandby,
+		Type:        pacmkrv1.NodeActiveConditionType,
+		TrueReason:  pacmkrv1.NodeActiveReasonActive,
+		FalseReason: pacmkrv1.NodeActiveReasonStandby,
 		TrueMsg:     "Node is active",
 		FalseMsg:    "Node is in standby mode",
 	}
 	nodeReadySpec = ConditionSpec{
-		Type:        v1alpha1.NodeReadyConditionType,
-		TrueReason:  v1alpha1.NodeReadyReasonReady,
-		FalseReason: v1alpha1.NodeReadyReasonPending,
+		Type:        pacmkrv1.NodeReadyConditionType,
+		TrueReason:  pacmkrv1.NodeReadyReasonReady,
+		FalseReason: pacmkrv1.NodeReadyReasonPending,
 		TrueMsg:     "Node is ready",
 		FalseMsg:    "Node is pending",
 	}
 	nodeCleanSpec = ConditionSpec{
-		Type:        v1alpha1.NodeCleanConditionType,
-		TrueReason:  v1alpha1.NodeCleanReasonClean,
-		FalseReason: v1alpha1.NodeCleanReasonUnclean,
+		Type:        pacmkrv1.NodeCleanConditionType,
+		TrueReason:  pacmkrv1.NodeCleanReasonClean,
+		FalseReason: pacmkrv1.NodeCleanReasonUnclean,
 		TrueMsg:     "Node is in a clean state",
 		FalseMsg:    "Node is in an unclean state",
 	}
 	nodeMemberSpec = ConditionSpec{
-		Type:        v1alpha1.NodeMemberConditionType,
-		TrueReason:  v1alpha1.NodeMemberReasonMember,
-		FalseReason: v1alpha1.NodeMemberReasonNotMember,
+		Type:        pacmkrv1.NodeMemberConditionType,
+		TrueReason:  pacmkrv1.NodeMemberReasonMember,
+		FalseReason: pacmkrv1.NodeMemberReasonNotMember,
 		TrueMsg:     "Node is a cluster member",
 		FalseMsg:    "Node is not a cluster member",
 	}
 	nodeHealthySpec = ConditionSpec{
-		Type:        v1alpha1.NodeHealthyConditionType,
-		TrueReason:  v1alpha1.NodeHealthyReasonHealthy,
-		FalseReason: v1alpha1.NodeHealthyReasonUnhealthy,
+		Type:        pacmkrv1.NodeHealthyConditionType,
+		TrueReason:  pacmkrv1.NodeHealthyReasonHealthy,
+		FalseReason: pacmkrv1.NodeHealthyReasonUnhealthy,
 		TrueMsg:     "Node is healthy",
 		FalseMsg:    "Node has issues that need investigation",
 	}
 	nodeFencingAvailableSpec = ConditionSpec{
-		Type:        v1alpha1.NodeFencingAvailableConditionType,
-		TrueReason:  v1alpha1.NodeFencingAvailableReasonAvailable,
-		FalseReason: v1alpha1.NodeFencingAvailableReasonUnavailable,
+		Type:        pacmkrv1.NodeFencingAvailableConditionType,
+		TrueReason:  pacmkrv1.NodeFencingAvailableReasonAvailable,
+		FalseReason: pacmkrv1.NodeFencingAvailableReasonUnavailable,
 		TrueMsg:     "At least one fencing agent is healthy",
 		FalseMsg:    "No fencing agents are healthy",
 	}
 	nodeFencingHealthySpec = ConditionSpec{
-		Type:        v1alpha1.NodeFencingHealthyConditionType,
-		TrueReason:  v1alpha1.NodeFencingHealthyReasonHealthy,
-		FalseReason: v1alpha1.NodeFencingHealthyReasonUnhealthy,
+		Type:        pacmkrv1.NodeFencingHealthyConditionType,
+		TrueReason:  pacmkrv1.NodeFencingHealthyReasonHealthy,
+		FalseReason: pacmkrv1.NodeFencingHealthyReasonUnhealthy,
 		TrueMsg:     "All fencing agents are healthy",
 		FalseMsg:    "One or more fencing agents are unhealthy",
 	}
@@ -137,58 +137,58 @@ var (
 
 var (
 	resourceInServiceSpec = ConditionSpec{
-		Type:        v1alpha1.ResourceInServiceConditionType,
-		TrueReason:  v1alpha1.ResourceInServiceReasonInService,
-		FalseReason: v1alpha1.ResourceInServiceReasonInMaintenance,
+		Type:        pacmkrv1.ResourceInServiceConditionType,
+		TrueReason:  pacmkrv1.ResourceInServiceReasonInService,
+		FalseReason: pacmkrv1.ResourceInServiceReasonInMaintenance,
 		TrueMsg:     "Resource is in service",
 		FalseMsg:    "Resource is in maintenance mode",
 	}
 	resourceManagedSpec = ConditionSpec{
-		Type:        v1alpha1.ResourceManagedConditionType,
-		TrueReason:  v1alpha1.ResourceManagedReasonManaged,
-		FalseReason: v1alpha1.ResourceManagedReasonUnmanaged,
+		Type:        pacmkrv1.ResourceManagedConditionType,
+		TrueReason:  pacmkrv1.ResourceManagedReasonManaged,
+		FalseReason: pacmkrv1.ResourceManagedReasonUnmanaged,
 		TrueMsg:     "Resource is managed by pacemaker",
 		FalseMsg:    "Resource is not managed by pacemaker",
 	}
 	resourceEnabledSpec = ConditionSpec{
-		Type:        v1alpha1.ResourceEnabledConditionType,
-		TrueReason:  v1alpha1.ResourceEnabledReasonEnabled,
-		FalseReason: v1alpha1.ResourceEnabledReasonDisabled,
+		Type:        pacmkrv1.ResourceEnabledConditionType,
+		TrueReason:  pacmkrv1.ResourceEnabledReasonEnabled,
+		FalseReason: pacmkrv1.ResourceEnabledReasonDisabled,
 		TrueMsg:     "Resource is enabled",
 		FalseMsg:    "Resource is disabled",
 	}
 	resourceOperationalSpec = ConditionSpec{
-		Type:        v1alpha1.ResourceOperationalConditionType,
-		TrueReason:  v1alpha1.ResourceOperationalReasonOperational,
-		FalseReason: v1alpha1.ResourceOperationalReasonFailed,
+		Type:        pacmkrv1.ResourceOperationalConditionType,
+		TrueReason:  pacmkrv1.ResourceOperationalReasonOperational,
+		FalseReason: pacmkrv1.ResourceOperationalReasonFailed,
 		TrueMsg:     "Resource is operational",
 		FalseMsg:    "Resource has failed",
 	}
 	resourceActiveSpec = ConditionSpec{
-		Type:        v1alpha1.ResourceActiveConditionType,
-		TrueReason:  v1alpha1.ResourceActiveReasonActive,
-		FalseReason: v1alpha1.ResourceActiveReasonInactive,
+		Type:        pacmkrv1.ResourceActiveConditionType,
+		TrueReason:  pacmkrv1.ResourceActiveReasonActive,
+		FalseReason: pacmkrv1.ResourceActiveReasonInactive,
 		TrueMsg:     "Resource is active",
 		FalseMsg:    "Resource is not active",
 	}
 	resourceStartedSpec = ConditionSpec{
-		Type:        v1alpha1.ResourceStartedConditionType,
-		TrueReason:  v1alpha1.ResourceStartedReasonStarted,
-		FalseReason: v1alpha1.ResourceStartedReasonStopped,
+		Type:        pacmkrv1.ResourceStartedConditionType,
+		TrueReason:  pacmkrv1.ResourceStartedReasonStarted,
+		FalseReason: pacmkrv1.ResourceStartedReasonStopped,
 		TrueMsg:     "Resource is started",
 		FalseMsg:    "Resource is stopped",
 	}
 	resourceSchedulableSpec = ConditionSpec{
-		Type:        v1alpha1.ResourceSchedulableConditionType,
-		TrueReason:  v1alpha1.ResourceSchedulableReasonSchedulable,
-		FalseReason: v1alpha1.ResourceSchedulableReasonUnschedulable,
+		Type:        pacmkrv1.ResourceSchedulableConditionType,
+		TrueReason:  pacmkrv1.ResourceSchedulableReasonSchedulable,
+		FalseReason: pacmkrv1.ResourceSchedulableReasonUnschedulable,
 		TrueMsg:     "Resource is schedulable",
 		FalseMsg:    "Resource is unschedulable (blocked)",
 	}
 	resourceHealthySpec = ConditionSpec{
-		Type:        v1alpha1.ResourceHealthyConditionType,
-		TrueReason:  v1alpha1.ResourceHealthyReasonHealthy,
-		FalseReason: v1alpha1.ResourceHealthyReasonUnhealthy,
+		Type:        pacmkrv1.ResourceHealthyConditionType,
+		TrueReason:  pacmkrv1.ResourceHealthyReasonHealthy,
+		FalseReason: pacmkrv1.ResourceHealthyReasonUnhealthy,
 		TrueMsg:     "Resource is healthy",
 		FalseMsg:    "Resource has issues that need investigation",
 	}
@@ -200,16 +200,16 @@ var (
 
 var (
 	clusterInServiceSpec = ConditionSpec{
-		Type:        v1alpha1.ClusterInServiceConditionType,
-		TrueReason:  v1alpha1.ClusterInServiceReasonInService,
-		FalseReason: v1alpha1.ClusterInServiceReasonInMaintenance,
+		Type:        pacmkrv1.ClusterInServiceConditionType,
+		TrueReason:  pacmkrv1.ClusterInServiceReasonInService,
+		FalseReason: pacmkrv1.ClusterInServiceReasonInMaintenance,
 		TrueMsg:     "Cluster is in service (not in maintenance mode)",
 		FalseMsg:    "Cluster is in maintenance mode",
 	}
 	clusterHealthySpec = ConditionSpec{
-		Type:        v1alpha1.ClusterHealthyConditionType,
-		TrueReason:  v1alpha1.ClusterHealthyReasonHealthy,
-		FalseReason: v1alpha1.ClusterHealthyReasonUnhealthy,
+		Type:        pacmkrv1.ClusterHealthyConditionType,
+		TrueReason:  pacmkrv1.ClusterHealthyReasonHealthy,
+		FalseReason: pacmkrv1.ClusterHealthyReasonUnhealthy,
 		TrueMsg:     "Pacemaker cluster is healthy",
 		FalseMsg:    "Pacemaker cluster has issues that need investigation",
 	}
