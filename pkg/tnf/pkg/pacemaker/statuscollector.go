@@ -20,7 +20,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
-	v1alpha1 "github.com/openshift/api/etcd/v1alpha1"
+	pacmkrv1 "github.com/openshift/api/etcd/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/exec"
 )
 
@@ -54,7 +54,7 @@ type ResourceStatePerNode struct {
 type FencingAgentInfo struct {
 	Name       string
 	TargetNode string
-	Method     v1alpha1.FencingMethod
+	Method     pacmkrv1.FencingMethod
 	Resource   *Resource
 	IsRunning  bool
 }
@@ -178,7 +178,7 @@ func collectPacemakerStatus(ctx context.Context) (*PacemakerResult, error) {
 	return &result, nil
 }
 
-func buildClusterStatus(result *PacemakerResult, clusterConfig *ClusterConfig) *v1alpha1.PacemakerClusterStatus {
+func buildClusterStatus(result *PacemakerResult, clusterConfig *ClusterConfig) *pacmkrv1.PacemakerClusterStatus {
 	now := metav1.Now()
 
 	resourceState := make(map[string]*ResourceStatePerNode)
@@ -191,7 +191,7 @@ func buildClusterStatus(result *PacemakerResult, clusterConfig *ClusterConfig) *
 		xmlNodeMap[result.Nodes.Node[i].Name] = &result.Nodes.Node[i]
 	}
 
-	var nodes []v1alpha1.PacemakerClusterNodeStatus
+	var nodes []pacmkrv1.PacemakerClusterNodeStatus
 
 	// Use cluster config as authoritative node list when available
 	if clusterConfig != nil && len(clusterConfig.Nodes) > 0 {
@@ -235,7 +235,7 @@ func buildClusterStatus(result *PacemakerResult, clusterConfig *ClusterConfig) *
 			}
 			fencingAgents := fencingAgentsByTarget[xmlNode.Name]
 
-			placeholderAddresses := []v1alpha1.PacemakerNodeAddress{{Type: v1alpha1.PacemakerNodeInternalIP, Address: "0.0.0.0"}}
+			placeholderAddresses := []pacmkrv1.PacemakerNodeAddress{{Type: pacmkrv1.PacemakerNodeInternalIP, Address: "0.0.0.0"}}
 			nodeStatus := buildNodeStatus(xmlNode.Name, placeholderAddresses, &xmlNode, state, fencingAgents, now)
 			nodes = append(nodes, nodeStatus)
 		}
@@ -244,19 +244,19 @@ func buildClusterStatus(result *PacemakerResult, clusterConfig *ClusterConfig) *
 	clusterInMaintenance := isClusterInMaintenance(result)
 	clusterConditions := buildClusterConditions(len(nodes), clusterInMaintenance, nodes, now)
 
-	return &v1alpha1.PacemakerClusterStatus{
+	return &pacmkrv1.PacemakerClusterStatus{
 		Conditions:  clusterConditions,
 		LastUpdated: now,
 		Nodes:       &nodes,
 	}
 }
 
-func buildNodeStatus(name string, addresses []v1alpha1.PacemakerNodeAddress, xmlNode *Node, state *ResourceStatePerNode, fencingAgents []FencingAgentInfo, now metav1.Time) v1alpha1.PacemakerClusterNodeStatus {
+func buildNodeStatus(name string, addresses []pacmkrv1.PacemakerNodeAddress, xmlNode *Node, state *ResourceStatePerNode, fencingAgents []FencingAgentInfo, now metav1.Time) pacmkrv1.PacemakerClusterNodeStatus {
 	fencingAgentStatuses := buildFencingAgentStatuses(fencingAgents, now)
 	nodeConditions := buildNodeConditions(xmlNode, state, fencingAgentStatuses, now)
 	resources := buildResourceStatuses(state, now)
 
-	return v1alpha1.PacemakerClusterNodeStatus{
+	return pacmkrv1.PacemakerClusterNodeStatus{
 		Conditions:    nodeConditions,
 		NodeName:      name,
 		Addresses:     addresses,
@@ -265,7 +265,7 @@ func buildNodeStatus(name string, addresses []v1alpha1.PacemakerNodeAddress, xml
 	}
 }
 
-func buildClusterConditions(nodeCount int, inMaintenance bool, nodes []v1alpha1.PacemakerClusterNodeStatus, now metav1.Time) []metav1.Condition {
+func buildClusterConditions(nodeCount int, inMaintenance bool, nodes []pacmkrv1.PacemakerClusterNodeStatus, now metav1.Time) []metav1.Condition {
 	nodeCountCondition := buildNodeCountCondition(nodeCount, now)
 	inServiceCondition := buildCondition(clusterInServiceSpec, !inMaintenance, now)
 	healthyCondition := buildClusterHealthyCondition(nodeCountCondition, inServiceCondition, nodes, now)
@@ -276,21 +276,21 @@ func buildClusterConditions(nodeCount int, inMaintenance bool, nodes []v1alpha1.
 func buildNodeCountCondition(nodeCount int, now metav1.Time) metav1.Condition {
 	if nodeCount == ExpectedNodeCount {
 		return metav1.Condition{
-			Type:               v1alpha1.ClusterNodeCountAsExpectedConditionType,
+			Type:               pacmkrv1.ClusterNodeCountAsExpectedConditionType,
 			Status:             metav1.ConditionTrue,
-			Reason:             v1alpha1.ClusterNodeCountAsExpectedReasonAsExpected,
+			Reason:             pacmkrv1.ClusterNodeCountAsExpectedReasonAsExpected,
 			Message:            fmt.Sprintf("Expected %d nodes, found %d", ExpectedNodeCount, nodeCount),
 			LastTransitionTime: now,
 		}
 	}
 
-	reason := v1alpha1.ClusterNodeCountAsExpectedReasonInsufficientNodes
+	reason := pacmkrv1.ClusterNodeCountAsExpectedReasonInsufficientNodes
 	if nodeCount > ExpectedNodeCount {
-		reason = v1alpha1.ClusterNodeCountAsExpectedReasonExcessiveNodes
+		reason = pacmkrv1.ClusterNodeCountAsExpectedReasonExcessiveNodes
 	}
 
 	return metav1.Condition{
-		Type:               v1alpha1.ClusterNodeCountAsExpectedConditionType,
+		Type:               pacmkrv1.ClusterNodeCountAsExpectedConditionType,
 		Status:             metav1.ConditionFalse,
 		Reason:             reason,
 		Message:            fmt.Sprintf("Expected %d nodes, found %d", ExpectedNodeCount, nodeCount),
@@ -299,12 +299,12 @@ func buildNodeCountCondition(nodeCount int, now metav1.Time) metav1.Condition {
 }
 
 // buildClusterHealthyCondition aggregates node count, maintenance mode, and per-node health.
-func buildClusterHealthyCondition(nodeCountCondition, inServiceCondition metav1.Condition, nodes []v1alpha1.PacemakerClusterNodeStatus, now metav1.Time) metav1.Condition {
+func buildClusterHealthyCondition(nodeCountCondition, inServiceCondition metav1.Condition, nodes []pacmkrv1.PacemakerClusterNodeStatus, now metav1.Time) metav1.Condition {
 	allHealthy := nodeCountCondition.Status == metav1.ConditionTrue &&
 		inServiceCondition.Status == metav1.ConditionTrue
 
 	for _, node := range nodes {
-		if getConditionStatus(node.Conditions, v1alpha1.NodeHealthyConditionType) != metav1.ConditionTrue {
+		if getConditionStatus(node.Conditions, pacmkrv1.NodeHealthyConditionType) != metav1.ConditionTrue {
 			allHealthy = false
 			break
 		}
@@ -313,7 +313,7 @@ func buildClusterHealthyCondition(nodeCountCondition, inServiceCondition metav1.
 	return buildCondition(clusterHealthySpec, allHealthy, now)
 }
 
-func buildNodeConditions(xmlNode *Node, state *ResourceStatePerNode, fencingAgents []v1alpha1.PacemakerClusterFencingAgentStatus, now metav1.Time) []metav1.Condition {
+func buildNodeConditions(xmlNode *Node, state *ResourceStatePerNode, fencingAgents []pacmkrv1.PacemakerClusterFencingAgentStatus, now metav1.Time) []metav1.Condition {
 	online := xmlNode != nil && xmlNode.Online == "true"
 	inMaintenance := xmlNode != nil && xmlNode.Maintenance == "true"
 	standby := xmlNode != nil && (xmlNode.Standby == "true" || xmlNode.StandbyOnFail == "true")
@@ -345,7 +345,7 @@ func buildNodeConditions(xmlNode *Node, state *ResourceStatePerNode, fencingAgen
 // calculateFencingHealth returns (available, allHealthy).
 // Available means at least one agent can fence right now (is running).
 // AllHealthy means all agents are fully managed (will be recovered if they fail).
-func calculateFencingHealth(fencingAgents []v1alpha1.PacemakerClusterFencingAgentStatus) (bool, bool) {
+func calculateFencingHealth(fencingAgents []pacmkrv1.PacemakerClusterFencingAgentStatus) (bool, bool) {
 	if len(fencingAgents) == 0 {
 		return false, false
 	}
@@ -366,33 +366,33 @@ func calculateFencingHealth(fencingAgents []v1alpha1.PacemakerClusterFencingAgen
 
 // isAgentAvailable returns true if the agent can fence right now (is running).
 // An agent on a maintenance node is still available - it's running and can fence.
-func isAgentAvailable(agent v1alpha1.PacemakerClusterFencingAgentStatus) bool {
+func isAgentAvailable(agent pacmkrv1.PacemakerClusterFencingAgentStatus) bool {
 	conditions := agent.Conditions
-	active := getConditionStatus(conditions, v1alpha1.ResourceActiveConditionType) == metav1.ConditionTrue
-	started := getConditionStatus(conditions, v1alpha1.ResourceStartedConditionType) == metav1.ConditionTrue
-	operational := getConditionStatus(conditions, v1alpha1.ResourceOperationalConditionType) == metav1.ConditionTrue
+	active := getConditionStatus(conditions, pacmkrv1.ResourceActiveConditionType) == metav1.ConditionTrue
+	started := getConditionStatus(conditions, pacmkrv1.ResourceStartedConditionType) == metav1.ConditionTrue
+	operational := getConditionStatus(conditions, pacmkrv1.ResourceOperationalConditionType) == metav1.ConditionTrue
 	return active && started && operational
 }
 
 // isAgentHealthy returns true if the agent is fully managed (will be recovered if it fails).
-func isAgentHealthy(agent v1alpha1.PacemakerClusterFencingAgentStatus) bool {
-	return getConditionStatus(agent.Conditions, v1alpha1.ResourceHealthyConditionType) == metav1.ConditionTrue
+func isAgentHealthy(agent pacmkrv1.PacemakerClusterFencingAgentStatus) bool {
+	return getConditionStatus(agent.Conditions, pacmkrv1.ResourceHealthyConditionType) == metav1.ConditionTrue
 }
 
-func buildResourceStatuses(state *ResourceStatePerNode, now metav1.Time) []v1alpha1.PacemakerClusterResourceStatus {
-	return []v1alpha1.PacemakerClusterResourceStatus{
-		buildResourceStatus(v1alpha1.PacemakerClusterResourceNameKubelet, state.KubeletResource, state.KubeletRunning, now),
-		buildResourceStatus(v1alpha1.PacemakerClusterResourceNameEtcd, state.EtcdResource, state.EtcdRunning, now),
+func buildResourceStatuses(state *ResourceStatePerNode, now metav1.Time) []pacmkrv1.PacemakerClusterResourceStatus {
+	return []pacmkrv1.PacemakerClusterResourceStatus{
+		buildResourceStatus(pacmkrv1.PacemakerClusterResourceNameKubelet, state.KubeletResource, state.KubeletRunning, now),
+		buildResourceStatus(pacmkrv1.PacemakerClusterResourceNameEtcd, state.EtcdResource, state.EtcdRunning, now),
 	}
 }
 
-func buildFencingAgentStatuses(agents []FencingAgentInfo, now metav1.Time) []v1alpha1.PacemakerClusterFencingAgentStatus {
-	statuses := make([]v1alpha1.PacemakerClusterFencingAgentStatus, 0, len(agents))
+func buildFencingAgentStatuses(agents []FencingAgentInfo, now metav1.Time) []pacmkrv1.PacemakerClusterFencingAgentStatus {
+	statuses := make([]pacmkrv1.PacemakerClusterFencingAgentStatus, 0, len(agents))
 
 	for _, agent := range agents {
 		// Fencing agents use the same condition structure as resources
 		conditions := buildResourceConditions(agent.Resource, agent.IsRunning, now)
-		statuses = append(statuses, v1alpha1.PacemakerClusterFencingAgentStatus{
+		statuses = append(statuses, pacmkrv1.PacemakerClusterFencingAgentStatus{
 			Conditions: conditions,
 			Name:       agent.Name,
 			Method:     agent.Method,
@@ -403,22 +403,22 @@ func buildFencingAgentStatuses(agents []FencingAgentInfo, now metav1.Time) []v1a
 }
 
 // methodStringToEnum converts method string to FencingMethod enum, defaulting to Redfish.
-func methodStringToEnum(method string) v1alpha1.FencingMethod {
+func methodStringToEnum(method string) pacmkrv1.FencingMethod {
 	switch strings.ToLower(method) {
 	case "ipmi", "ipmilan", "ipmitool":
-		return v1alpha1.FencingMethodIPMI
+		return pacmkrv1.FencingMethodIPMI
 	case "redfish":
-		return v1alpha1.FencingMethodRedfish
+		return pacmkrv1.FencingMethodRedfish
 	default:
 		// Log unknown method so it's visible, but default to Redfish
 		// since that's the primary TNF fencing method
 		klog.Warningf("Unknown fencing method %q, defaulting to Redfish", method)
-		return v1alpha1.FencingMethodRedfish
+		return pacmkrv1.FencingMethodRedfish
 	}
 }
 
-func buildResourceStatus(name v1alpha1.PacemakerClusterResourceName, resource *Resource, running bool, now metav1.Time) v1alpha1.PacemakerClusterResourceStatus {
-	return v1alpha1.PacemakerClusterResourceStatus{
+func buildResourceStatus(name pacmkrv1.PacemakerClusterResourceName, resource *Resource, running bool, now metav1.Time) pacmkrv1.PacemakerClusterResourceStatus {
+	return pacmkrv1.PacemakerClusterResourceStatus{
 		Conditions: buildResourceConditions(resource, running, now),
 		Name:       name,
 	}
@@ -458,13 +458,13 @@ func buildResourceConditions(resource *Resource, running bool, now metav1.Time) 
 }
 
 // getNodeAddresses extracts and validates IP addresses from cluster config.
-func getNodeAddresses(configNode ClusterConfigNode) []v1alpha1.PacemakerNodeAddress {
+func getNodeAddresses(configNode ClusterConfigNode) []pacmkrv1.PacemakerNodeAddress {
 	if len(configNode.Addrs) == 0 {
 		klog.Warningf("Node %s in cluster config has no addresses", configNode.Name)
 		return nil
 	}
 
-	var addresses []v1alpha1.PacemakerNodeAddress
+	var addresses []pacmkrv1.PacemakerNodeAddress
 	for _, addr := range configNode.Addrs {
 		parsedIP := net.ParseIP(addr.Addr)
 		if parsedIP == nil {
@@ -475,8 +475,8 @@ func getNodeAddresses(configNode ClusterConfigNode) []v1alpha1.PacemakerNodeAddr
 			klog.Warningf("IP address '%s' for node %s is not a global unicast address", addr.Addr, configNode.Name)
 			continue
 		}
-		addresses = append(addresses, v1alpha1.PacemakerNodeAddress{
-			Type:    v1alpha1.PacemakerNodeInternalIP,
+		addresses = append(addresses, pacmkrv1.PacemakerNodeAddress{
+			Type:    pacmkrv1.PacemakerNodeInternalIP,
 			Address: parsedIP.String(),
 		})
 	}
@@ -782,7 +782,7 @@ func recordEvent(ctx context.Context, kubeClient kubernetes.Interface, reason, m
 }
 
 // updatePacemakerStatusCR creates or updates the singleton "cluster" PacemakerCluster CR.
-func updatePacemakerStatusCR(ctx context.Context, status *v1alpha1.PacemakerClusterStatus) error {
+func updatePacemakerStatusCR(ctx context.Context, status *pacmkrv1.PacemakerClusterStatus) error {
 	config, err := getKubeConfig()
 	if err != nil {
 		return err
@@ -793,7 +793,7 @@ func updatePacemakerStatusCR(ctx context.Context, status *v1alpha1.PacemakerClus
 		return err
 	}
 
-	var existing v1alpha1.PacemakerCluster
+	var existing pacmkrv1.PacemakerCluster
 	err = restClient.Get().
 		Resource(PacemakerResourceName).
 		Name(PacemakerClusterResourceName).
@@ -814,9 +814,9 @@ func updatePacemakerStatusCR(ctx context.Context, status *v1alpha1.PacemakerClus
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			klog.Infof("PacemakerCluster CR not found, creating new one")
-			newPacemakerCluster := &v1alpha1.PacemakerCluster{
+			newPacemakerCluster := &pacmkrv1.PacemakerCluster{
 				TypeMeta: metav1.TypeMeta{
-					APIVersion: v1alpha1.SchemeGroupVersion.String(),
+					APIVersion: pacmkrv1.SchemeGroupVersion.String(),
 					Kind:       "PacemakerCluster",
 				},
 				ObjectMeta: metav1.ObjectMeta{
@@ -826,7 +826,7 @@ func updatePacemakerStatusCR(ctx context.Context, status *v1alpha1.PacemakerClus
 			}
 
 			// Capture the server response to get the resourceVersion populated by the API server
-			createdPacemakerCluster := &v1alpha1.PacemakerCluster{}
+			createdPacemakerCluster := &pacmkrv1.PacemakerCluster{}
 			err = restClient.Post().
 				Resource(PacemakerResourceName).
 				Body(newPacemakerCluster).

@@ -7,7 +7,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/client-go/rest"
 
-	v1alpha1 "github.com/openshift/api/etcd/v1alpha1"
+	pacmkrv1 "github.com/openshift/api/etcd/v1"
 )
 
 // getKubeConfig returns a Kubernetes REST config for in-cluster use.
@@ -32,13 +32,13 @@ func createPacemakerRESTClient(baseConfig *rest.Config) (rest.Interface, error) 
 
 	// Set up the scheme for PacemakerStatus CRD
 	scheme := runtime.NewScheme()
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
+	if err := pacmkrv1.AddToScheme(scheme); err != nil {
 		return nil, fmt.Errorf("failed to add PacemakerStatus scheme: %w", err)
 	}
 
 	// Configure the REST client for the PacemakerStatus CRD
 	pacemakerConfig := rest.CopyConfig(baseConfig)
-	pacemakerConfig.GroupVersion = &v1alpha1.SchemeGroupVersion
+	pacemakerConfig.GroupVersion = &pacmkrv1.SchemeGroupVersion
 	pacemakerConfig.APIPath = KubernetesAPIPath
 	pacemakerConfig.NegotiatedSerializer = serializer.NewCodecFactory(scheme)
 	pacemakerConfig.ContentConfig.ContentType = "application/json"
