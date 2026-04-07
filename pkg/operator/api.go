@@ -10,6 +10,10 @@ import (
 
 	_ "github.com/openshift/api/operator/v1"
 	_ "github.com/openshift/api/operator/v1/zz_generated.crd-manifests"
+
 	// TODO(thomas): do we need to import the HWspeed feature separately?
 	// operator/v1/zz_generated.featuregated-crd-manifests/etcds.operator.openshift.io/HardwareSpeed.yaml
+
+	// Pull in generated CRD for pacemaker
+	_ "github.com/openshift/api/etcd/v1/zz_generated.crd-manifests"
 )
