@@ -10,14 +10,15 @@ spec:
   concurrencyPolicy: "Replace"
   startingDeadlineSeconds: 120
   failedJobsHistoryLimit: 3
-  successfulJobsHistoryLimit: 1
+  # successfulJobsHistoryLimit + ttlSecondsAfterFinished: TTL deletes finished Jobs before CronJob pruning (OCPBUGS-81340).
+  successfulJobsHistoryLimit: 12
   jobTemplate:
     metadata:
       labels:
         app.kubernetes.io/name: <injected>
     spec:
       activeDeadlineSeconds: 90
-      ttlSecondsAfterFinished: 600
+      ttlSecondsAfterFinished: 300
       template:
         metadata:
           annotations:
