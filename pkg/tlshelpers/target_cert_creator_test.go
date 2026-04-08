@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/openshift/library-go/pkg/operator/certrotation"
+	"github.com/openshift/library-go/pkg/pki"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 
@@ -32,7 +33,7 @@ type testEmbed struct {
 	result string
 }
 
-func (t *testEmbed) NewCertificate(_ *crypto.CA, _ time.Duration) (*crypto.TLSCertificateConfig, error) {
+func (t *testEmbed) NewCertificate(_ *crypto.CA, _ time.Duration, _ crypto.KeyPairGenerator) (*crypto.TLSCertificateConfig, error) {
 	panic("implement me")
 }
 
@@ -42,6 +43,10 @@ func (t *testEmbed) SetAnnotations(_ *crypto.TLSCertificateConfig, _ map[string]
 
 func (t *testEmbed) NeedNewTargetCertKeyPair(_ *corev1.Secret, _ *crypto.CA, _ []*x509.Certificate, _ time.Duration, _ bool, _ bool) string {
 	return t.result
+}
+
+func (t *testEmbed) CertificateType() pki.CertificateType {
+	return pki.CertificateTypeServing
 }
 
 func TestEmbeddedStructHasPriority(t *testing.T) {
