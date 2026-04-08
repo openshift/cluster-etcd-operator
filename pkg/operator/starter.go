@@ -440,6 +440,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		legacyregistry.DefaultGatherer.(metrics.KubeRegistry),
 		false,
 		featureGateAccessor,
+		configInformers,
 	)
 	if err != nil {
 		return fmt.Errorf("could not start etcdCertSignerController, aborting controller start: %w", err)
