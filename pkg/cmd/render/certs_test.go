@@ -14,8 +14,9 @@ import (
 func TestCertSingleNode(t *testing.T) {
 	enabled, disabled := sets.Set[configv1.FeatureGateName]{}, sets.Set[configv1.FeatureGateName]{}
 	disabled.Insert(features.FeatureShortCertRotation)
+	disabled.Insert(features.FeatureGateConfigurablePKI)
 	node := u.FakeNode("cp-1", u.WithMasterLabel(), u.WithNodeInternalIP("192.168.2.1"))
-	secrets, bundles, err := createCertSecrets([]*corev1.Node{node}, enabled, disabled)
+	secrets, bundles, err := createCertSecrets([]*corev1.Node{node}, enabled, disabled, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, 8, len(secrets))
@@ -29,12 +30,13 @@ func TestCertSingleNode(t *testing.T) {
 func TestCertsMultiNode(t *testing.T) {
 	enabled, disabled := sets.Set[configv1.FeatureGateName]{}, sets.Set[configv1.FeatureGateName]{}
 	disabled.Insert(features.FeatureShortCertRotation)
+	disabled.Insert(features.FeatureGateConfigurablePKI)
 	nodes := []*corev1.Node{
 		u.FakeNode("cp-1", u.WithMasterLabel(), u.WithNodeInternalIP("192.168.2.1")),
 		u.FakeNode("cp-2", u.WithMasterLabel(), u.WithNodeInternalIP("192.168.2.2")),
 		u.FakeNode("cp-3", u.WithMasterLabel(), u.WithNodeInternalIP("192.168.2.3")),
 	}
-	secrets, bundles, err := createCertSecrets(nodes, enabled, disabled)
+	secrets, bundles, err := createCertSecrets(nodes, enabled, disabled, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, 14, len(secrets))
