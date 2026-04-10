@@ -62,6 +62,9 @@ func GetServingMetricsSecretNameForNode(nodeName string) string {
 func getServerHostNames(nodeInternalIPs []string) []string {
 	completeIPList := make([]string, 0, len(nodeInternalIPs))
 	for _, ip := range nodeInternalIPs {
+		if ip == "" {
+			continue
+		}
 		// add the canonicalized IP address and normal ip address for backwards compatibility
 		completeIPList = append(completeIPList, dnshelpers.CanonicalizeIP(ip), ip)
 	}

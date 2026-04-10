@@ -109,7 +109,7 @@ func IsIPv4(ipString string) (bool, error) {
 func GetInternalIPAddressesForNodeName(node *corev1.Node) ([]string, error) {
 	addresses := []string{}
 	for _, currAddress := range node.Status.Addresses {
-		if currAddress.Type == corev1.NodeInternalIP {
+		if currAddress.Type == corev1.NodeInternalIP && currAddress.Address != "" {
 			addresses = append(addresses, currAddress.Address)
 		}
 	}

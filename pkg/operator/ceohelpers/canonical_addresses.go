@@ -29,7 +29,7 @@ func NewCanonicalAddress(addr corev1.NodeAddress) CanonicalAddress {
 func GetCanonicalInternalIPs(node *corev1.Node) []string {
 	var ips []string
 	for _, addr := range node.Status.Addresses {
-		if addr.Type == corev1.NodeInternalIP {
+		if addr.Type == corev1.NodeInternalIP && addr.Address != "" {
 			ips = append(ips, dnshelpers.CanonicalizeIP(addr.Address))
 		}
 	}
@@ -41,7 +41,7 @@ func GetCanonicalInternalIPs(node *corev1.Node) []string {
 func GetCanonicalInternalIPsFromMachine(addresses []corev1.NodeAddress) []string {
 	var ips []string
 	for _, addr := range addresses {
-		if addr.Type == corev1.NodeInternalIP {
+		if addr.Type == corev1.NodeInternalIP && addr.Address != "" {
 			ips = append(ips, dnshelpers.CanonicalizeIP(addr.Address))
 		}
 	}
@@ -63,7 +63,7 @@ func GetCanonicalAddresses(addresses []corev1.NodeAddress) []CanonicalAddress {
 func HasCanonicalInternalIP(node *corev1.Node, ip string) bool {
 	canonicalIP := dnshelpers.CanonicalizeIP(ip)
 	for _, addr := range node.Status.Addresses {
-		if addr.Type == corev1.NodeInternalIP {
+		if addr.Type == corev1.NodeInternalIP && addr.Address != "" {
 			if dnshelpers.CanonicalizeIP(addr.Address) == canonicalIP {
 				return true
 			}
@@ -77,7 +77,7 @@ func HasCanonicalInternalIP(node *corev1.Node, ip string) bool {
 func HasCanonicalInternalIPInMachine(addresses []corev1.NodeAddress, ip string) bool {
 	canonicalIP := dnshelpers.CanonicalizeIP(ip)
 	for _, addr := range addresses {
-		if addr.Type == corev1.NodeInternalIP {
+		if addr.Type == corev1.NodeInternalIP && addr.Address != "" {
 			if dnshelpers.CanonicalizeIP(addr.Address) == canonicalIP {
 				return true
 			}

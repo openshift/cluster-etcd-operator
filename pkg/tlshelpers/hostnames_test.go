@@ -94,6 +94,16 @@ func TestGetServerHostNames(t *testing.T) {
 			},
 			description: "IPv4-mapped IPv6 should include both IPv6 and converted IPv4 forms",
 		},
+		{
+			name:            "empty string should be filtered out",
+			nodeInternalIPs: []string{"192.168.1.1", "", "2001:db8::1"},
+			expectedToContain: []string{
+				"192.168.1.1",
+				"2001:db8::1",
+				"localhost", // verify static entries still present
+			},
+			description: "Empty strings in nodeInternalIPs should be filtered out",
+		},
 	}
 
 	for _, scenario := range scenarios {
@@ -135,6 +145,13 @@ func TestGetServerHostNames(t *testing.T) {
 				if !found {
 					t.Errorf("expected static entry %q to be in hostname list, but it wasn't. Got: %v",
 						staticEntry, hostnames)
+				}
+			}
+
+			// Verify no empty strings are ever in the output
+			for _, hostname := range hostnames {
+				if hostname == "" {
+					t.Errorf("found empty string in hostname list, which should be filtered out. Full list: %v", hostnames)
 				}
 			}
 		})
