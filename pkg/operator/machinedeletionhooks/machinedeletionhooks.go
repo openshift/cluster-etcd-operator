@@ -137,6 +137,7 @@ func (c *machineDeletionHooksController) attemptToDeleteMachineDeletionHook(ctx 
 		if err != nil {
 			return err
 		}
+		// MemberToNodeInternalIP already returns canonical IP
 		currentMemberIPListSet.Insert(memberIP)
 	}
 
@@ -144,12 +145,11 @@ func (c *machineDeletionHooksController) attemptToDeleteMachineDeletionHook(ctx 
 	for _, machinePendingDeletion := range machinesPendingDeletion {
 		// if none of the addresses for a machinePendingDeletion are in the member list, we can safely remove the hook
 		skipNode := false
-		for _, addr := range machinePendingDeletion.Status.Addresses {
-			if addr.Type == corev1.NodeInternalIP {
-				if currentMemberIPListSet.Has(addr.Address) {
-					skipNode = true
-					break
-				}
+		machineIPs := ceohelpers.GetCanonicalInternalIPsFromMachine(machinePendingDeletion.Status.Addresses)
+		for _, ip := range machineIPs {
+			if currentMemberIPListSet.Has(ip) {
+				skipNode = true
+				break
 			}
 		}
 

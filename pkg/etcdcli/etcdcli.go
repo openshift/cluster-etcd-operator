@@ -534,10 +534,22 @@ func endpoints(nodeLister corev1listers.NodeLister,
 		}
 	} else {
 		if bootstrapIP, ok := configmap.Annotations[BootstrapIPAnnotationKey]; ok && bootstrapIP != "" {
-			etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s", net.JoinHostPort(bootstrapIP, "2379")))
+			canonicalIP := dnshelpers.CanonicalizeIP(bootstrapIP)
+			// Add canonical version
+			etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s", net.JoinHostPort(canonicalIP, "2379")))
+			// Add non-canonical version for backward compatibility if different
+			if canonicalIP != bootstrapIP {
+				etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s", net.JoinHostPort(bootstrapIP, "2379")))
+			}
 		}
 		for _, etcdEndpointIp := range configmap.Data {
-			etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s", net.JoinHostPort(etcdEndpointIp, "2379")))
+			canonicalIP := dnshelpers.CanonicalizeIP(etcdEndpointIp)
+			// Add canonical version
+			etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s", net.JoinHostPort(canonicalIP, "2379")))
+			// Add non-canonical version for backward compatibility if different
+			if canonicalIP != etcdEndpointIp {
+				etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s", net.JoinHostPort(etcdEndpointIp, "2379")))
+			}
 		}
 	}
 
