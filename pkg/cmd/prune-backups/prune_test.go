@@ -161,7 +161,7 @@ func TestDirectorySortingByName(t *testing.T) {
 
 func randBytes(n int) []byte {
 	var s []byte
-	for i := 0; i < n; i++ {
+	for range n {
 		s = append(s, byte(rand.Intn(255)))
 	}
 	return s

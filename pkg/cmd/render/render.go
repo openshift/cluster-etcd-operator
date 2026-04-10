@@ -448,7 +448,7 @@ func (t *TemplateData) setEtcdAddress(ipv6 bool, bootstrapIP string) {
 	}
 }
 
-func (t *TemplateData) setMachineCIDR(installConfig map[string]interface{}, ipv6 bool) error {
+func (t *TemplateData) setMachineCIDR(installConfig map[string]any, ipv6 bool) error {
 	cidr, err := getMachineCIDR(installConfig, ipv6)
 	if err != nil {
 		return err
@@ -469,12 +469,12 @@ func (t *TemplateData) setHostname() error {
 	return nil
 }
 
-func getInstallConfig(clusterConfigMap *unstructured.Unstructured) (map[string]interface{}, error) {
+func getInstallConfig(clusterConfigMap *unstructured.Unstructured) (map[string]any, error) {
 	installConfigYaml, found, err := unstructured.NestedString(clusterConfigMap.Object, "data", "install-config")
 	if err != nil {
 		return nil, err
 	}
-	var installConfig map[string]interface{}
+	var installConfig map[string]any
 	if found {
 		installConfigJson, err := yaml.YAMLToJSON([]byte(installConfigYaml))
 		if err != nil {
@@ -490,17 +490,17 @@ func getInstallConfig(clusterConfigMap *unstructured.Unstructured) (map[string]i
 // getMachineCIDR extracts the machine CIDR from the machineNetwork portion of
 // the networking field of the install config. If that doesn't work, tries to
 // fall back to the deprecated machineCIDR networking field.
-func getMachineCIDR(installConfig map[string]interface{}, preferIPv6 bool) (string, error) {
+func getMachineCIDR(installConfig map[string]any, preferIPv6 bool) (string, error) {
 	if _, found := installConfig["networking"]; !found {
 		return "", fmt.Errorf("install config missing networking key")
 	}
-	networking, ok := installConfig["networking"].(map[string]interface{})
+	networking, ok := installConfig["networking"].(map[string]any)
 	if !ok {
 		return "", fmt.Errorf("unrecognized data structure in networking field")
 	}
 
-	for _, machineNetwork := range networking["machineNetwork"].([]interface{}) {
-		network := machineNetwork.(map[string]interface{})
+	for _, machineNetwork := range networking["machineNetwork"].([]any) {
+		network := machineNetwork.(map[string]any)
 		machineCIDR := fmt.Sprintf("%v", network["cidr"])
 		if len(machineCIDR) == 0 {
 			return "", fmt.Errorf("malformed machineNetwork entry is missing the cidr field: %#v", network)
@@ -550,18 +550,18 @@ func getMachineCIDR(installConfig map[string]interface{}, preferIPv6 bool) (stri
 // with automatic discovery.
 //
 // [1] https://elixir.bootlin.com/linux/v4.14/source/include/linux/inetdevice.h#L146
-func getExcludedMachineIPs(installConfig map[string]interface{}) ([]string, error) {
+func getExcludedMachineIPs(installConfig map[string]any) ([]string, error) {
 	platform, found := installConfig["platform"]
 	if !found {
 		return nil, fmt.Errorf("install config missing platforn key")
 	}
 	ips := []string{}
-	bm, found := platform.(map[string]interface{})["baremetal"]
+	bm, found := platform.(map[string]any)["baremetal"]
 	if !found {
 		return ips, nil
 	}
 	for _, key := range []string{"apiVIP", "dnsVIP"} {
-		if val, found := bm.(map[string]interface{})[key]; found {
+		if val, found := bm.(map[string]any)[key]; found {
 			ips = append(ips, val.(string))
 		}
 	}
@@ -579,7 +579,7 @@ func (t *TemplateData) setPreferIPv6(serviceCIDR []string) error {
 	return nil
 }
 
-func (t *TemplateData) setComputedEnvVars(platform, platformData string, installConfig map[string]interface{}) error {
+func (t *TemplateData) setComputedEnvVars(platform, platformData string, installConfig map[string]any) error {
 	envVarData := &envVarData{
 		platform:         platform,
 		platformData:     platformData,
@@ -606,7 +606,7 @@ func (t *TemplateData) setComputedEnvVars(platform, platformData string, install
 	return nil
 }
 
-func (t *TemplateData) setBootstrapStrategy(installConfig map[string]interface{}, delayedHAMarkerFile string) error {
+func (t *TemplateData) setBootstrapStrategy(installConfig map[string]any, delayedHAMarkerFile string) error {
 	bootstrapStrategy, err := getBootstrapScalingStrategy(installConfig, delayedHAMarkerFile)
 	if err != nil {
 		return err
@@ -616,7 +616,7 @@ func (t *TemplateData) setBootstrapStrategy(installConfig map[string]interface{}
 	return nil
 }
 
-func writeManifests(outputDir, templateDir string, templateData interface{}) error {
+func writeManifests(outputDir, templateDir string, templateData any) error {
 	assetPaths := map[string]string{
 		// The etc-kubernetes path will be copied recursively by the installer to /etc/kubernetes/
 		"bootstrap-manifests": filepath.Join("etc-kubernetes", "manifests"),
@@ -723,8 +723,8 @@ func getInfrastructure(file string) (*configv1.Infrastructure, error) {
 	return config, nil
 }
 
-func getBootstrapScalingStrategy(installConfig map[string]interface{}, delayedHAMarkerFile string) (ceohelpers.BootstrapScalingStrategy, error) {
-	controlPlane, found := installConfig["controlPlane"].(map[string]interface{})
+func getBootstrapScalingStrategy(installConfig map[string]any, delayedHAMarkerFile string) (ceohelpers.BootstrapScalingStrategy, error) {
+	controlPlane, found := installConfig["controlPlane"].(map[string]any)
 	if !found {
 		return "", fmt.Errorf("unrecognized data structure in controlPlane field")
 	}
@@ -746,7 +746,7 @@ func getBootstrapScalingStrategy(installConfig map[string]interface{}, delayedHA
 	// Check for arbiter to distinguish between Two Node OpenShift with
 	// Fencing and Two Node OpenShift with Arbiter
 	arbReplicaCount := int64(0)
-	arbiterConfig, arbiterDefined := installConfig["arbiter"].(map[string]interface{})
+	arbiterConfig, arbiterDefined := installConfig["arbiter"].(map[string]any)
 	if arbiterDefined {
 		replicas, arbReplicasDefined := arbiterConfig["replicas"].(float64)
 		if arbReplicasDefined {
@@ -777,7 +777,7 @@ func getBootstrapScalingStrategy(installConfig map[string]interface{}, delayedHA
 }
 
 // getFeatureGatesStatus returns the enabled and disabled feature gates.
-func getFeatureGatesStatus(installConfig map[string]interface{}) (sets.Set[configv1.FeatureGateName], sets.Set[configv1.FeatureGateName]) {
+func getFeatureGatesStatus(installConfig map[string]any) (sets.Set[configv1.FeatureGateName], sets.Set[configv1.FeatureGateName]) {
 	enabled, disabled := sets.Set[configv1.FeatureGateName]{}, sets.Set[configv1.FeatureGateName]{}
 
 	// On bootstrap we might not be able to fetch a list of all feature gates
@@ -790,7 +790,7 @@ func getFeatureGatesStatus(installConfig map[string]interface{}) (sets.Set[confi
 		return enabled, disabled
 	}
 
-	for _, featureGate := range featureGates.([]interface{}) {
+	for _, featureGate := range featureGates.([]any) {
 		key := strings.Split(featureGate.(string), "=")[0]
 		value := strings.Split(featureGate.(string), "=")[1]
 		if value == "true" {

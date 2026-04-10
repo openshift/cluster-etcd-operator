@@ -224,7 +224,7 @@ func TestMultipleBackupsAreSkipped(t testing.TB) {
 		},
 	}
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		backupCrd.Name = fmt.Sprintf("multi-backup-%d", i)
 		_, err := c.OperatorV1alpha1().EtcdBackups().Create(context.Background(), &backupCrd, metav1.CreateOptions{})
 		require.NoError(t, err)
@@ -298,11 +298,11 @@ func pushRandomConfigMaps(t testing.TB) {
 	wg := sync.WaitGroup{}
 	wg.Add(kn)
 
-	for k := 0; k < kn; k++ {
+	for k := range kn {
 		go func(k int) {
 			defer wg.Done()
 
-			for i := 0; i < n; i++ {
+			for i := range n {
 				cm := corev1.ConfigMap{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      names.SimpleNameGenerator.GenerateName("retention-by-size"),

@@ -3,6 +3,7 @@ package etcdenvvar
 import (
 	"context"
 	"fmt"
+	"maps"
 	"reflect"
 	"strings"
 	"sync"
@@ -126,9 +127,7 @@ func (c *EnvVarController) GetEnvVars() map[string]string {
 	defer c.envVarMapLock.Unlock()
 
 	ret := map[string]string{}
-	for k, v := range c.envVarMap {
-		ret[k] = v
-	}
+	maps.Copy(ret, c.envVarMap)
 	return ret
 }
 
@@ -280,8 +279,8 @@ func (c *EnvVarController) processNextWorkItem(ctx context.Context) bool {
 // eventHandler queues the operator to check spec and status
 func (c *EnvVarController) eventHandler() cache.ResourceEventHandler {
 	return cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj interface{}) { c.queue.Add(workQueueKey) },
-		UpdateFunc: func(old, new interface{}) { c.queue.Add(workQueueKey) },
-		DeleteFunc: func(obj interface{}) { c.queue.Add(workQueueKey) },
+		AddFunc:    func(obj any) { c.queue.Add(workQueueKey) },
+		UpdateFunc: func(old, new any) { c.queue.Add(workQueueKey) },
+		DeleteFunc: func(obj any) { c.queue.Add(workQueueKey) },
 	}
 }

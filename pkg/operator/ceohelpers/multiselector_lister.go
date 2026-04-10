@@ -33,7 +33,7 @@ func (s *mergedNodeLister) List(selector labels.Selector) (ret []*corev1.Node, e
 		if labelSelector.String() == selector.String() {
 			isSelectorPartOfList = true
 		}
-		err = cache.ListAll(s.indexer, labelSelector, func(m interface{}) {
+		err = cache.ListAll(s.indexer, labelSelector, func(m any) {
 			nodeList = append(nodeList, m.(*corev1.Node))
 		})
 	}

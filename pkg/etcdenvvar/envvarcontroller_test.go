@@ -99,8 +99,8 @@ func TestEnvVarController(t *testing.T) {
 	}
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
-			observedConfig := map[string]interface{}{
-				"servingInfo": map[string]interface{}{
+			observedConfig := map[string]any{
+				"servingInfo": map[string]any{
 					"cipherSuites": []string{
 						"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
 						"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",

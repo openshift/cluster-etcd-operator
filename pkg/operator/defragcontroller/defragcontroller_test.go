@@ -467,7 +467,7 @@ func Test_isEndpointBackendFragmented(t *testing.T) {
 
 func generateErrors(n int) []error {
 	var errs []error
-	for i := 0; i < n; i++ {
+	for range n {
 		errs = append(errs, errors.New("fail"))
 	}
 	return errs

@@ -3,6 +3,7 @@ package ceohelpers
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	configv1 "github.com/openshift/api/config/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
@@ -126,13 +127,7 @@ func (m *MachineAPI) IsEnabled() (bool, error) {
 	// this is a special case introduced from 4.14 on, where MachineAPI can be optional.
 	// on upgrades from prior versions of OpenShift the status should have MachineAPI listed as an EnabledCapabilities
 	if clusterVersion != nil {
-		machineAPIEnabled := false
-		for _, capability := range clusterVersion.Status.Capabilities.EnabledCapabilities {
-			if capability == configv1.ClusterVersionCapabilityMachineAPI {
-				machineAPIEnabled = true
-				break
-			}
-		}
+		machineAPIEnabled := slices.Contains(clusterVersion.Status.Capabilities.EnabledCapabilities, configv1.ClusterVersionCapabilityMachineAPI)
 
 		if !machineAPIEnabled {
 			return false, nil

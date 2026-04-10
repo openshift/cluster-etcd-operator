@@ -17,7 +17,7 @@ func isUnsupportedUnsafeEtcd(spec *operatorv1.StaticPodOperatorSpec) (bool, erro
 }
 
 func tryGetUnsupportedValue(spec *operatorv1.StaticPodOperatorSpec, key string) (bool, error) {
-	unsupportedConfig := map[string]interface{}{}
+	unsupportedConfig := map[string]any{}
 	if spec.UnsupportedConfigOverrides.Raw == nil {
 		return false, nil
 	}

@@ -49,7 +49,7 @@ func ReadDesiredControlPlaneReplicasCount(operatorClient v1helpers.StaticPodOper
 		return 0, err
 	}
 
-	var unstructuredConfig map[string]interface{}
+	var unstructuredConfig map[string]any
 	if err := json.Unmarshal(unstructuredMergedCfg, &unstructuredConfig); err != nil {
 		return 0, fmt.Errorf("failed to unmarshal merged operator's config, err: %w", err)
 	}

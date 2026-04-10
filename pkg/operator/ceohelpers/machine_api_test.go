@@ -256,26 +256,26 @@ func masterMachineFor(name, phase string) *v1beta1.Machine {
 
 func createUnstructuredMachine(apiVersion, name, namespace, ip, nodeName string) unstructured.Unstructured {
 	return unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": apiVersion,
 			"kind":       "Machine",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      name,
 				"namespace": namespace,
 			},
-			"spec": map[string]interface{}{},
-			"status": map[string]interface{}{
-				"addresses": []interface{}{
-					map[string]interface{}{
+			"spec": map[string]any{},
+			"status": map[string]any{
+				"addresses": []any{
+					map[string]any{
 						"address": nodeName,
 						"type":    "InternalDNS",
 					},
-					map[string]interface{}{
+					map[string]any{
 						"address": ip,
 						"type":    "InternalIP",
 					},
 				},
-				"nodeRef": map[string]interface{}{
+				"nodeRef": map[string]any{
 					"kind": "Node",
 					"name": nodeName,
 				},

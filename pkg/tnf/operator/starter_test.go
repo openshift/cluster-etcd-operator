@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"slices"
 	"testing"
 	"time"
 
@@ -165,13 +166,7 @@ func TestSetupJobConditionsBasedOnExternalEtcd(t *testing.T) {
 				setupConditions = jobs.AllConditions
 			}
 
-			hasAvailableCondition := false
-			for _, condition := range setupConditions {
-				if condition == operatorv1.OperatorStatusTypeAvailable {
-					hasAvailableCondition = true
-					break
-				}
-			}
+			hasAvailableCondition := slices.Contains(setupConditions, operatorv1.OperatorStatusTypeAvailable)
 
 			require.Equalf(t, tt.expectedAvailableInSetup, hasAvailableCondition,
 				"Setup job should have Available condition: %v, but got: %v",

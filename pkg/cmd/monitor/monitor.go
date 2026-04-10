@@ -182,11 +182,9 @@ func (o *monitorOpts) Run(ctx context.Context) error {
 	)
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		monitor.Schedule(ctx, &wg)
-	}()
+	})
 	wg.Wait()
 	lg.Info("health monitor is shutting down",
 		zap.String("pod", o.podName),

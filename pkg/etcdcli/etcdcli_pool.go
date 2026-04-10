@@ -51,7 +51,7 @@ func (p *EtcdClientPool) Get() (*clientv3.Client, error) {
 	}
 
 	// retrying this a few times until the caller gets a healthy client
-	for i := 0; i < retries; i++ {
+	for i := range retries {
 		if i != 0 {
 			time.Sleep(linearRetryBaseSleep * time.Duration(i))
 		}
@@ -169,7 +169,7 @@ func NewEtcdClientPool(
 
 	// pre-populate clients for client creation
 	availableOpenClients := make(chan int, maxNumOpenClients)
-	for i := 0; i < maxNumOpenClients; i++ {
+	for i := range maxNumOpenClients {
 		availableOpenClients <- i
 	}
 

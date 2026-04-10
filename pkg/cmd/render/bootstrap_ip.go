@@ -139,12 +139,7 @@ func ContainedByCIDR(cidr string) AddressFilter {
 
 func AddressNotIn(ips ...string) AddressFilter {
 	return func(addr netlink.Addr) bool {
-		for _, ip := range ips {
-			if addr.IP.String() == ip {
-				return false
-			}
-		}
-		return true
+		return !slices.Contains(ips, addr.IP.String())
 	}
 }
 

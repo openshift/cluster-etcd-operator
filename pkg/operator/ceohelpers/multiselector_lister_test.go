@@ -1,7 +1,6 @@
 package ceohelpers
 
 import (
-	"context"
 	"testing"
 	time "time"
 
@@ -251,8 +250,7 @@ func TestMultiSelectors(t *testing.T) {
 
 			lister := NewMultiSelectorNodeLister(informer.GetIndexer(), masterNodeLabelSelector, arbiterNodeLabelSelector)
 
-			ctx, cancel := context.WithCancel(context.TODO())
-			defer cancel()
+			ctx := t.Context()
 
 			go informer.Run(ctx.Done())
 			cache.WaitForCacheSync(ctx.Done(), informer.HasSynced)

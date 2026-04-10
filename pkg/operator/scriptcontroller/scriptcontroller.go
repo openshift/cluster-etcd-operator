@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/openshift/cluster-etcd-operator/bindata"
@@ -120,11 +121,11 @@ func (c *ScriptController) manageScriptConfigMap(ctx context.Context, recorder e
 	if len(envVarMap) == 0 {
 		return nil, false, fmt.Errorf("missing env var values")
 	}
-	envVarFileContent := ""
+	var envVarFileContent strings.Builder
 	for _, k := range sets.StringKeySet(envVarMap).List() { // sort for stable output
-		envVarFileContent += fmt.Sprintf("export %v=%q\n", k, envVarMap[k])
+		envVarFileContent.WriteString(fmt.Sprintf("export %v=%q\n", k, envVarMap[k]))
 	}
-	scriptConfigMap.Data["etcd.env"] = envVarFileContent
+	scriptConfigMap.Data["etcd.env"] = envVarFileContent.String()
 
 	// Select the appropriate cluster-restore.sh and disable-etcd.sh based on topology
 	var clusterRestoreScript string
