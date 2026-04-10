@@ -23,10 +23,12 @@ import (
 	apiannotations "github.com/openshift/api/annotations"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
+	configinformers "github.com/openshift/client-go/config/informers/externalversions"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/certrotation"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/pki"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
@@ -85,6 +87,10 @@ type EtcdCertSignerController struct {
 
 	certConfig *certConfig
 
+	// pkiProfileProvider is set when the ConfigurablePKI feature gate is enabled.
+	// It is used to resolve key algorithms for per-node certificates created at sync time.
+	pkiProfileProvider pki.PKIProfileProvider
+
 	// metrics
 	signerExpirationGauge *metrics.GaugeVec
 
@@ -108,6 +114,7 @@ func NewEtcdCertSignerController(
 	metricsRegistry metrics.KubeRegistry,
 	forceSkipRollout bool,
 	featureGateAccessor featuregates.FeatureGateAccess,
+	configInformer configinformers.SharedInformerFactory,
 ) (factory.Controller, error) {
 	eventRecorder = eventRecorder.WithComponentSuffix("etcd-cert-signer-controller")
 	cmInformer := kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps()
@@ -160,11 +167,26 @@ func NewEtcdCertSignerController(
 		}
 	}
 
+	var pkiProfileProvider pki.PKIProfileProvider
+	if featureGates.Enabled(features.FeatureGateConfigurablePKI) && configInformer != nil {
+		pkiProfileProvider = pki.NewClusterPKIProfileProvider(configInformer.Config().V1alpha1().PKIs().Lister())
+	}
+
 	signerCert := tlshelpers.CreateSignerCert(secretInformer, secretLister, secretClient, eventRecorder, signerValidity)
+	signerCert.CertificateName = "etcd.etcd-signer"
+	signerCert.PKIProfileProvider = pkiProfileProvider
+
 	etcdClientCert := tlshelpers.CreateEtcdClientCert(secretInformer, secretLister, secretClient, eventRecorder, certValidity)
+	etcdClientCert.CertificateName = "etcd.etcd-client"
+	etcdClientCert.PKIProfileProvider = pkiProfileProvider
 
 	metricsSignerCert := tlshelpers.CreateMetricsSignerCert(secretInformer, secretLister, secretClient, eventRecorder, signerValidity)
+	metricsSignerCert.CertificateName = "etcd.etcd-metric-signer"
+	metricsSignerCert.PKIProfileProvider = pkiProfileProvider
+
 	metricsClientCert := tlshelpers.CreateMetricsClientCert(secretInformer, secretLister, secretClient, eventRecorder, certValidity)
+	metricsClientCert.CertificateName = "etcd.etcd-metric-client"
+	metricsClientCert.PKIProfileProvider = pkiProfileProvider
 
 	certCfg := &certConfig{
 		signerCaBundle: signerCaBundle,
@@ -195,6 +217,7 @@ func NewEtcdCertSignerController(
 		// this one can go through the informers, it's only used for bootstrap checks
 		configmapLister:       kubeInformers.InformersFor(operatorclient.KubeSystemNamespace).Core().V1().ConfigMaps().Lister(),
 		certConfig:            certCfg,
+		pkiProfileProvider:    pkiProfileProvider,
 		signerExpirationGauge: signerExpirationGauge,
 		forceSkipRollout:      forceSkipRollout,
 		signerValidity:        signerValidity,
@@ -519,6 +542,8 @@ func (c *EtcdCertSignerController) createNodeCertConfigs() ([]*nodeCertConfigs, 
 		if err != nil {
 			return cfgs, fmt.Errorf("error creating peer cert for node [%s]: %w", node.Name, err)
 		}
+		peerCert.CertificateName = "etcd.etcd-peer"
+		peerCert.PKIProfileProvider = c.pkiProfileProvider
 
 		servingCert, err := tlshelpers.CreateServingCertificate(node,
 			c.secretInformer,
@@ -529,6 +554,8 @@ func (c *EtcdCertSignerController) createNodeCertConfigs() ([]*nodeCertConfigs, 
 		if err != nil {
 			return cfgs, fmt.Errorf("error creating serving cert for node [%s]: %w", node.Name, err)
 		}
+		servingCert.CertificateName = "etcd.etcd-serving"
+		servingCert.PKIProfileProvider = c.pkiProfileProvider
 
 		metricsCert, err := tlshelpers.CreateMetricsServingCertificate(node,
 			c.secretInformer,
@@ -539,6 +566,8 @@ func (c *EtcdCertSignerController) createNodeCertConfigs() ([]*nodeCertConfigs, 
 		if err != nil {
 			return cfgs, fmt.Errorf("error creating metrics cert for node [%s]: %w", node.Name, err)
 		}
+		metricsCert.CertificateName = "etcd.etcd-serving-metrics"
+		metricsCert.PKIProfileProvider = c.pkiProfileProvider
 
 		cfgs = append(cfgs, &nodeCertConfigs{
 			node:        node.DeepCopy(),
