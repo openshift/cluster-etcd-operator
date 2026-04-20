@@ -1,14 +1,14 @@
 reviewers:
+  - control-plane-approvers
   - dusk125
   - ironcladlou
   - hasbro17
-  - tjungblu
   - jubittajohn
   - lance5890
 approvers:
+  - control-plane-approvers
   - deads2k
   - hasbro17
   - sttts
   - dusk125
-  - tjungblu
 component: "Etcd"
