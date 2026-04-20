@@ -394,6 +394,92 @@ func TestAttemptToDeleteMachineDeletionHook(t *testing.T) {
 			initialEtcdMemberList: wellKnownEtcdMemberList(),
 		},
 		{
+			name: "machine pending deletion with only a learner member should remove hook",
+			initialObjectsForMachineLister: func() []runtime.Object {
+				m1 := machineWithHooksFor("m-1", "10.0.139.78")
+				m1.DeletionTimestamp = &metav1.Time{}
+				return []runtime.Object{
+					m1,
+					machineWithHooksFor("m-2", "10.0.139.79"),
+					machineWithHooksFor("m-3", "10.0.139.80"),
+				}
+			}(),
+			initialEtcdMemberList: []*etcdserverpb.Member{
+				{
+					Name:      "",
+					ID:        1,
+					PeerURLs:  []string{"https://10.0.139.78:2380"},
+					IsLearner: true,
+				},
+				{
+					Name:     "m-2",
+					ID:       2,
+					PeerURLs: []string{"https://10.0.139.79:2380"},
+				},
+				{
+					Name:     "m-3",
+					ID:       3,
+					PeerURLs: []string{"https://10.0.139.80:2380"},
+				},
+			},
+			expectedActions: []string{"update:machines:"},
+			validateFunc: func(t *testing.T, machineClientActions []clientgotesting.Action) {
+				wasMachineUpdated := false
+				for _, action := range machineClientActions {
+					if action.Matches("update", "machines") {
+						updateAction := action.(clientgotesting.UpdateAction)
+						updatedMachine := updateAction.GetObject().(*machinev1beta1.Machine)
+						if updatedMachine.Name != "m-1" {
+							t.Fatalf("expected machine m-1 to be updated, got %v", updatedMachine.Name)
+						}
+						if hasMachineDeletionHook(updatedMachine) {
+							t.Fatalf("machine %v should have had its deletion hook removed (learner-only member)", updatedMachine)
+						}
+						wasMachineUpdated = true
+					}
+				}
+				if !wasMachineUpdated {
+					t.Errorf("expected to see an updated machine but didn't get any, fake machine client actions: %v", machineClientActions)
+				}
+			},
+		},
+		{
+			name: "machine pending deletion with a voting member should keep hook",
+			initialObjectsForMachineLister: func() []runtime.Object {
+				m1 := machineWithHooksFor("m-1", "10.0.139.78")
+				m1.DeletionTimestamp = &metav1.Time{}
+				return []runtime.Object{
+					m1,
+					machineWithHooksFor("m-2", "10.0.139.79"),
+					machineWithHooksFor("m-3", "10.0.139.80"),
+				}
+			}(),
+			initialEtcdMemberList: []*etcdserverpb.Member{
+				{
+					Name:     "m-1",
+					ID:       1,
+					PeerURLs: []string{"https://10.0.139.78:2380"},
+				},
+				{
+					Name:     "m-2",
+					ID:       2,
+					PeerURLs: []string{"https://10.0.139.79:2380"},
+				},
+				{
+					Name:     "m-3",
+					ID:       3,
+					PeerURLs: []string{"https://10.0.139.80:2380"},
+				},
+			},
+			validateFunc: func(t *testing.T, machineClientActions []clientgotesting.Action) {
+				for _, action := range machineClientActions {
+					if action.Matches("update", "machines") {
+						t.Fatalf("expected no machine updates, but got: %v", machineClientActions)
+					}
+				}
+			},
+		},
+		{
 			name: "two excessive, the first one with pending deletion and without the hooks, the second pending deletion without a member",
 			initialObjectsForMachineLister: func() []runtime.Object {
 				machines := wellKnownMasterMachines()

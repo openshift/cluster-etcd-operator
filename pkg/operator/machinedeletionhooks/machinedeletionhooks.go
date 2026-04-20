@@ -124,9 +124,9 @@ func (c *machineDeletionHooksController) attemptToDeleteMachineDeletionHook(ctx 
 		return nil
 	}
 
-	// get the members, issue a live call instead of reading from the config map
-	// because we need to take into account learners
-	members, err := c.etcdClient.MemberList(ctx)
+	// only voting members should block machine deletion — learners do not participate
+	// in quorum, so a learner-only match should not keep the preDrain hook
+	members, err := c.etcdClient.VotingMemberList(ctx)
 	if err != nil {
 		return err
 	}
