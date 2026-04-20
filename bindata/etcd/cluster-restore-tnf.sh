@@ -112,6 +112,7 @@ function setup_pacemaker_restore() {
     --name="$NODENAME"
     --initial-cluster="$NODENAME=https://$IP:2380"
     --initial-advertise-peer-urls="https://$IP:2380"
+    --skip-hash-check
   )
 
   if ! pcs resource disable etcd; then
