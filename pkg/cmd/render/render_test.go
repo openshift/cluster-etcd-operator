@@ -359,109 +359,80 @@ func TestTemplateDataIpv4(t *testing.T) {
 	)
 }
 
-func TestRenderScalingStrategyBootstrapInPlace(t *testing.T) {
-	config := &testConfig{
-		clusterNetworkConfig: networkConfigIpv4,
-		infraConfig:          infraConfig,
-		clusterConfigMap:     clusterConfigMapSingleNodeBootstrapInPlace,
+func TestRenderScalingStrategy(t *testing.T) {
+	tests := []struct {
+		name                 string
+		clusterConfigMap     string
+		delayedHAMarkerFile  string
+		expectedStrategy     ceohelpers.BootstrapScalingStrategy
+		additionalValidators []func(*testing.T, *TemplateData)
+	}{
+		{
+			name:             "BootstrapInPlace",
+			clusterConfigMap: clusterConfigMapSingleNodeBootstrapInPlace,
+			expectedStrategy: ceohelpers.BootstrapInPlaceStrategy,
+			additionalValidators: []func(*testing.T, *TemplateData){
+				hasEtcdEndpointConfigmapData("MTAuMC4wLjE: 10.0.0.1"),
+			},
+		},
+		{
+			name:             "Unsafe",
+			clusterConfigMap: clusterConfigMapSingleNode,
+			expectedStrategy: ceohelpers.UnsafeScalingStrategy,
+		},
+		{
+			name:                "DelayedHA",
+			clusterConfigMap:    clusterConfigMap,
+			delayedHAMarkerFile: "/dev/null", // exists
+			expectedStrategy:    ceohelpers.DelayedHAScalingStrategy,
+			additionalValidators: []func(*testing.T, *TemplateData){
+				hasNamespaceAnnotations(map[string]string{ceohelpers.DelayedBootstrapScalingStrategyAnnotation: ""}),
+			},
+		},
+		{
+			name:             "TwoNode",
+			clusterConfigMap: clusterConfigMapTwoNode,
+			expectedStrategy: ceohelpers.TwoNodeScalingStrategy,
+		},
+		{
+			name:             "TwoNodeWithArbiter",
+			clusterConfigMap: clusterConfigMapTwoNodeWithArbiter,
+			expectedStrategy: ceohelpers.HAScalingStrategy,
+		},
+		{
+			name:                "DelayedTwoNode",
+			clusterConfigMap:    clusterConfigMapTwoNode,
+			delayedHAMarkerFile: "/dev/null", // exists
+			expectedStrategy:    ceohelpers.DelayedTwoNodeScalingStrategy,
+			additionalValidators: []func(*testing.T, *TemplateData){
+				hasNamespaceAnnotations(map[string]string{ceohelpers.DelayedBootstrapScalingStrategyAnnotation: ""}),
+			},
+		},
+		{
+			name:                "DelayedTwoNodeWithArbiter",
+			clusterConfigMap:    clusterConfigMapTwoNodeWithArbiter,
+			delayedHAMarkerFile: "/dev/null", // exists
+			expectedStrategy:    ceohelpers.DelayedHAScalingStrategy,
+			additionalValidators: []func(*testing.T, *TemplateData){
+				hasNamespaceAnnotations(map[string]string{ceohelpers.DelayedBootstrapScalingStrategyAnnotation: ""}),
+			},
+		},
 	}
 
-	testTemplateData(
-		t,
-		config,
-		hasBootstrapScalingStrategy(ceohelpers.BootstrapInPlaceStrategy),
-		hasEtcdEndpointConfigmapData("MTAuMC4wLjE: 10.0.0.1"),
-	)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &testConfig{
+				clusterNetworkConfig:                    networkConfigIpv4,
+				infraConfig:                             infraConfig,
+				clusterConfigMap:                        tt.clusterConfigMap,
+				delayedHABootstrapScalingStrategyMarker: tt.delayedHAMarkerFile,
+			}
 
-func TestRenderScalingStrategyUnsafe(t *testing.T) {
-	config := &testConfig{
-		clusterNetworkConfig: networkConfigIpv4,
-		infraConfig:          infraConfig,
-		clusterConfigMap:     clusterConfigMapSingleNode,
+			validators := append(tt.additionalValidators, hasBootstrapScalingStrategy(tt.expectedStrategy))
+
+			testTemplateData(t, config, validators...)
+		})
 	}
-
-	testTemplateData(
-		t,
-		config,
-		hasBootstrapScalingStrategy(ceohelpers.UnsafeScalingStrategy),
-	)
-}
-
-func TestRenderScalingStrategyDelayedHA(t *testing.T) {
-	config := &testConfig{
-		clusterNetworkConfig:                    networkConfigIpv4,
-		infraConfig:                             infraConfig,
-		clusterConfigMap:                        clusterConfigMap,
-		delayedHABootstrapScalingStrategyMarker: "/dev/null", // exists
-	}
-
-	testTemplateData(
-		t,
-		config,
-		hasBootstrapScalingStrategy(ceohelpers.DelayedHAScalingStrategy),
-		hasNamespaceAnnotations(map[string]string{ceohelpers.DelayedBootstrapScalingStrategyAnnotation: ""}),
-	)
-}
-
-func TestRenderScalingStrategyTwoNode(t *testing.T) {
-	config := &testConfig{
-		clusterNetworkConfig: networkConfigIpv4,
-		infraConfig:          infraConfig,
-		clusterConfigMap:     clusterConfigMapTwoNode,
-	}
-
-	testTemplateData(
-		t,
-		config,
-		hasBootstrapScalingStrategy(ceohelpers.TwoNodeScalingStrategy),
-	)
-}
-
-func TestRenderScalingStrategyTwoNodeWithArbiter(t *testing.T) {
-	config := &testConfig{
-		clusterNetworkConfig: networkConfigIpv4,
-		infraConfig:          infraConfig,
-		clusterConfigMap:     clusterConfigMapTwoNodeWithArbiter,
-	}
-
-	testTemplateData(
-		t,
-		config,
-		hasBootstrapScalingStrategy(ceohelpers.HAScalingStrategy),
-	)
-}
-
-func TestRenderScalingStrategyDelayedTwoNode(t *testing.T) {
-	config := &testConfig{
-		clusterNetworkConfig:                    networkConfigIpv4,
-		infraConfig:                             infraConfig,
-		clusterConfigMap:                        clusterConfigMapTwoNode,
-		delayedHABootstrapScalingStrategyMarker: "/dev/null", // exists
-	}
-
-	testTemplateData(
-		t,
-		config,
-		hasBootstrapScalingStrategy(ceohelpers.DelayedTwoNodeScalingStrategy),
-		hasNamespaceAnnotations(map[string]string{ceohelpers.DelayedBootstrapScalingStrategyAnnotation: ""}),
-	)
-}
-
-func TestRenderScalingStrategyDelayedTwoNodeWithArbiter(t *testing.T) {
-	config := &testConfig{
-		clusterNetworkConfig:                    networkConfigIpv4,
-		infraConfig:                             infraConfig,
-		clusterConfigMap:                        clusterConfigMapTwoNodeWithArbiter,
-		delayedHABootstrapScalingStrategyMarker: "/dev/null", // exists
-	}
-
-	testTemplateData(
-		t,
-		config,
-		hasBootstrapScalingStrategy(ceohelpers.DelayedHAScalingStrategy),
-		hasNamespaceAnnotations(map[string]string{ceohelpers.DelayedBootstrapScalingStrategyAnnotation: ""}),
-	)
 }
 
 func TestTemplateDataMixed(t *testing.T) {
