@@ -1,10 +1,8 @@
 package render
 
 import (
-	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"os"
 	"path/filepath"
@@ -290,12 +288,10 @@ data:
 )
 
 type testConfig struct {
-	t                                       *testing.T
 	clusterNetworkConfig                    string
 	infraConfig                             string
 	clusterConfigMap                        string
 	delayedHABootstrapScalingStrategyMarker string
-	want                                    TemplateData
 }
 
 func TestMain(m *testing.M) {
@@ -305,335 +301,277 @@ func TestMain(m *testing.M) {
 }
 
 func TestRenderIpv4(t *testing.T) {
-	want := TemplateData{
-		EtcdAddress: etcdAddress{
-			LocalHost: "127.0.0.1",
-		},
-		ClusterCIDR: []string{"10.128.0.0/14"},
-		ServiceCIDR: []string{"172.30.0.0/16"},
-		PreferIPv6:  false,
-	}
-
 	config := &testConfig{
-		t:                    t,
 		clusterNetworkConfig: networkConfigIpv4,
 		infraConfig:          infraConfig,
 		clusterConfigMap:     clusterConfigMap,
-		want:                 want,
 	}
 
-	testRender(config)
+	testRender(t, config)
 }
 
-func testRender(tc *testConfig) {
+func testRender(t *testing.T, tc *testConfig) {
 	var errOut io.Writer
-	dir, err := ioutil.TempDir("/tmp", "assets-")
-	if err != nil {
-		tc.t.Fatal(err)
+	dir := t.TempDir()
+
+	clusterConfigPath := filepath.Join(dir, "cluster-network-02-config.yaml")
+	if err := os.WriteFile(clusterConfigPath, []byte(tc.clusterNetworkConfig), 0600); err != nil {
+		t.Fatal(err)
 	}
 
-	defer os.RemoveAll(dir) // clean up
-
-	clusterConfigFile, err := ioutil.TempFile(dir, "cluster-network-02-config.*.yaml")
-	if err != nil {
-		tc.t.Fatal(err)
+	infraConfigPath := filepath.Join(dir, "cluster-infrastructure-02-config.yaml")
+	if err := os.WriteFile(infraConfigPath, []byte(tc.infraConfig), 0600); err != nil {
+		t.Fatal(err)
 	}
 
-	infraConfigFile, err := ioutil.TempFile(dir, "cluster-infrastructure-02-config.*.yaml")
-	if err != nil {
-		tc.t.Fatal(err)
-	}
-	defer infraConfigFile.Close()
-
-	clusterConfigMapFile, err := ioutil.TempFile(dir, "cluster-config.*.yaml")
-	if err != nil {
-		tc.t.Fatal(err)
-	}
-	defer clusterConfigMapFile.Close()
-
-	if err := writeFile(tc.clusterNetworkConfig, clusterConfigFile); err != nil {
-		tc.t.Fatal(err)
-	}
-
-	if err := writeFile(tc.infraConfig, infraConfigFile); err != nil {
-		tc.t.Fatal(err)
-	}
-
-	if err := writeFile(tc.clusterConfigMap, clusterConfigMapFile); err != nil {
-		tc.t.Fatal(err)
+	clusterConfigMapPath := filepath.Join(dir, "cluster-config.yaml")
+	if err := os.WriteFile(clusterConfigMapPath, []byte(tc.clusterConfigMap), 0600); err != nil {
+		t.Fatal(err)
 	}
 
 	render := renderOpts{
 		assetOutputDir:       dir,
 		templateDir:          filepath.Join("../../..", "bindata", "bootkube"),
 		errOut:               errOut,
-		networkConfigFile:    clusterConfigFile.Name(),
-		infraConfigFile:      infraConfigFile.Name(),
-		clusterConfigMapFile: clusterConfigMapFile.Name(),
+		networkConfigFile:    clusterConfigPath,
+		infraConfigFile:      infraConfigPath,
+		clusterConfigMapFile: clusterConfigMapPath,
 	}
 
 	if err := render.Run(); err != nil {
-		tc.t.Errorf("failed render.Run(): %v", err)
+		t.Errorf("failed render.Run(): %v", err)
 	}
 }
 
 func TestTemplateDataIpv4(t *testing.T) {
-	want := TemplateData{
-		EtcdAddress: etcdAddress{
-			LocalHost: "127.0.0.1",
-		},
-		ClusterCIDR: []string{"10.128.0.0/14"},
-		ServiceCIDR: []string{"172.30.0.0/16"},
-		PreferIPv6:  false,
-	}
-
 	config := &testConfig{
-		t:                    t,
 		clusterNetworkConfig: networkConfigIpv4,
 		infraConfig:          infraConfig,
 		clusterConfigMap:     clusterConfigMap,
-		want:                 want,
 	}
-	testTemplateData(config)
+	testTemplateData(
+		t,
+		config,
+		hasEtcdAddress("127.0.0.1"),
+		hasClusterCIDR("10.128.0.0/14"),
+		hasServiceCIDR("172.30.0.0/16"),
+		prefersIPv6(false),
+	)
 }
 
-func TestRenderScalingStrategyBootstrapInPlace(t *testing.T) {
-	want := TemplateData{
-		BootstrapScalingStrategy:  ceohelpers.BootstrapInPlaceStrategy,
-		EtcdEndpointConfigmapData: "MTAuMC4wLjE: 10.0.0.1",
+func TestRenderScalingStrategy(t *testing.T) {
+	tests := []struct {
+		name                 string
+		clusterConfigMap     string
+		delayedHAMarkerFile  string
+		expectedStrategy     ceohelpers.BootstrapScalingStrategy
+		additionalValidators []func(*testing.T, *TemplateData)
+	}{
+		{
+			name:             "BootstrapInPlace",
+			clusterConfigMap: clusterConfigMapSingleNodeBootstrapInPlace,
+			expectedStrategy: ceohelpers.BootstrapInPlaceStrategy,
+			additionalValidators: []func(*testing.T, *TemplateData){
+				hasEtcdEndpointConfigmapData("MTAuMC4wLjE: 10.0.0.1"),
+			},
+		},
+		{
+			name:             "Unsafe",
+			clusterConfigMap: clusterConfigMapSingleNode,
+			expectedStrategy: ceohelpers.UnsafeScalingStrategy,
+		},
+		{
+			name:                "DelayedHA",
+			clusterConfigMap:    clusterConfigMap,
+			delayedHAMarkerFile: "/dev/null", // exists
+			expectedStrategy:    ceohelpers.DelayedHAScalingStrategy,
+			additionalValidators: []func(*testing.T, *TemplateData){
+				hasNamespaceAnnotations(map[string]string{ceohelpers.DelayedBootstrapScalingStrategyAnnotation: ""}),
+			},
+		},
+		{
+			name:             "TwoNode",
+			clusterConfigMap: clusterConfigMapTwoNode,
+			expectedStrategy: ceohelpers.TwoNodeScalingStrategy,
+		},
+		{
+			name:             "TwoNodeWithArbiter",
+			clusterConfigMap: clusterConfigMapTwoNodeWithArbiter,
+			expectedStrategy: ceohelpers.HAScalingStrategy,
+		},
+		{
+			name:                "DelayedTwoNode",
+			clusterConfigMap:    clusterConfigMapTwoNode,
+			delayedHAMarkerFile: "/dev/null", // exists
+			expectedStrategy:    ceohelpers.DelayedTwoNodeScalingStrategy,
+			additionalValidators: []func(*testing.T, *TemplateData){
+				hasNamespaceAnnotations(map[string]string{ceohelpers.DelayedBootstrapScalingStrategyAnnotation: ""}),
+			},
+		},
+		{
+			name:                "DelayedTwoNodeWithArbiter",
+			clusterConfigMap:    clusterConfigMapTwoNodeWithArbiter,
+			delayedHAMarkerFile: "/dev/null", // exists
+			expectedStrategy:    ceohelpers.DelayedHAScalingStrategy,
+			additionalValidators: []func(*testing.T, *TemplateData){
+				hasNamespaceAnnotations(map[string]string{ceohelpers.DelayedBootstrapScalingStrategyAnnotation: ""}),
+			},
+		},
 	}
 
-	config := &testConfig{
-		t:                    t,
-		clusterNetworkConfig: networkConfigIpv4,
-		infraConfig:          infraConfig,
-		clusterConfigMap:     clusterConfigMapSingleNodeBootstrapInPlace,
-		want:                 want,
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &testConfig{
+				clusterNetworkConfig:                    networkConfigIpv4,
+				infraConfig:                             infraConfig,
+				clusterConfigMap:                        tt.clusterConfigMap,
+				delayedHABootstrapScalingStrategyMarker: tt.delayedHAMarkerFile,
+			}
+
+			validators := append(tt.additionalValidators, hasBootstrapScalingStrategy(tt.expectedStrategy))
+
+			testTemplateData(t, config, validators...)
+		})
 	}
-
-	testTemplateData(config)
-}
-
-func TestRenderScalingStrategyUnsafe(t *testing.T) {
-	want := TemplateData{
-		BootstrapScalingStrategy: ceohelpers.UnsafeScalingStrategy,
-	}
-
-	config := &testConfig{
-		t:                    t,
-		clusterNetworkConfig: networkConfigIpv4,
-		infraConfig:          infraConfig,
-		clusterConfigMap:     clusterConfigMapSingleNode,
-		want:                 want,
-	}
-
-	testTemplateData(config)
-}
-
-func TestRenderScalingStrategyDelayedHA(t *testing.T) {
-	want := TemplateData{
-		BootstrapScalingStrategy: ceohelpers.DelayedHAScalingStrategy,
-		NamespaceAnnotations:     map[string]string{ceohelpers.DelayedBootstrapScalingStrategyAnnotation: ""},
-	}
-	config := &testConfig{
-		t:                                       t,
-		clusterNetworkConfig:                    networkConfigIpv4,
-		infraConfig:                             infraConfig,
-		clusterConfigMap:                        clusterConfigMap,
-		delayedHABootstrapScalingStrategyMarker: "/dev/null", // exists
-		want:                                    want,
-	}
-
-	testTemplateData(config)
-}
-
-func TestRenderScalingStrategyTwoNode(t *testing.T) {
-	want := TemplateData{
-		BootstrapScalingStrategy: ceohelpers.TwoNodeScalingStrategy,
-	}
-	config := &testConfig{
-		t:                    t,
-		clusterNetworkConfig: networkConfigIpv4,
-		infraConfig:          infraConfig,
-		clusterConfigMap:     clusterConfigMapTwoNode,
-		want:                 want,
-	}
-
-	testTemplateData(config)
-}
-
-func TestRenderScalingStrategyTwoNodeWithArbiter(t *testing.T) {
-	want := TemplateData{
-		BootstrapScalingStrategy: ceohelpers.HAScalingStrategy,
-	}
-	config := &testConfig{
-		t:                    t,
-		clusterNetworkConfig: networkConfigIpv4,
-		infraConfig:          infraConfig,
-		clusterConfigMap:     clusterConfigMapTwoNodeWithArbiter,
-		want:                 want,
-	}
-
-	testTemplateData(config)
-}
-
-func TestRenderScalingStrategyDelayedTwoNode(t *testing.T) {
-	want := TemplateData{
-		BootstrapScalingStrategy: ceohelpers.DelayedTwoNodeScalingStrategy,
-		NamespaceAnnotations:     map[string]string{ceohelpers.DelayedBootstrapScalingStrategyAnnotation: ""},
-	}
-	config := &testConfig{
-		t:                                       t,
-		clusterNetworkConfig:                    networkConfigIpv4,
-		infraConfig:                             infraConfig,
-		clusterConfigMap:                        clusterConfigMapTwoNode,
-		delayedHABootstrapScalingStrategyMarker: "/dev/null", // exists
-		want:                                    want,
-	}
-
-	testTemplateData(config)
-}
-
-func TestRenderScalingStrategyDelayedTwoNodeWithArbiter(t *testing.T) {
-	want := TemplateData{
-		BootstrapScalingStrategy: ceohelpers.DelayedHAScalingStrategy,
-		NamespaceAnnotations:     map[string]string{ceohelpers.DelayedBootstrapScalingStrategyAnnotation: ""},
-	}
-	config := &testConfig{
-		t:                                       t,
-		clusterNetworkConfig:                    networkConfigIpv4,
-		infraConfig:                             infraConfig,
-		clusterConfigMap:                        clusterConfigMapTwoNodeWithArbiter,
-		delayedHABootstrapScalingStrategyMarker: "/dev/null", // exists
-		want:                                    want,
-	}
-
-	testTemplateData(config)
 }
 
 func TestTemplateDataMixed(t *testing.T) {
-	want := TemplateData{
-		EtcdAddress: etcdAddress{
-			LocalHost: "[::1]",
-		},
-		ClusterCIDR: []string{"10.128.10.0/14"},
-		ServiceCIDR: []string{"2001:db8::/32", "172.30.0.0/16"},
-		PreferIPv6:  true,
-	}
-
 	config := &testConfig{
-		t:                    t,
 		clusterNetworkConfig: networkConfigMixedSwap,
 		infraConfig:          infraConfig,
 		clusterConfigMap:     clusterConfigMap,
-		want:                 want,
 	}
-	testTemplateData(config)
+	testTemplateData(
+		t,
+		config,
+		hasEtcdAddress("[::1]"),
+		hasClusterCIDR("10.128.10.0/14"),
+		hasServiceCIDR("2001:db8::/32", "172.30.0.0/16"),
+		prefersIPv6(true),
+	)
 }
 
 func TestTemplateDataSingleStack(t *testing.T) {
-	want := TemplateData{
-		EtcdAddress: etcdAddress{
-			LocalHost: "[::1]",
-		},
-		ClusterCIDR: []string{"10.128.0.0/14"},
-		ServiceCIDR: []string{"2001:db8::/32"},
-		PreferIPv6:  true,
-	}
-
 	config := &testConfig{
-		t:                    t,
 		clusterNetworkConfig: networkConfigIPv6SingleStack,
 		infraConfig:          infraConfig,
 		clusterConfigMap:     clusterConfigMap,
-		want:                 want,
 	}
-	testTemplateData(config)
+	testTemplateData(
+		t,
+		config,
+		hasEtcdAddress("[::1]"),
+		hasClusterCIDR("10.128.0.0/14"),
+		hasServiceCIDR("2001:db8::/32"),
+		prefersIPv6(true),
+	)
 }
 
-func testTemplateData(tc *testConfig) {
+func hasClusterCIDR(expected ...string) func(*testing.T, *TemplateData) {
+	return func(t *testing.T, td *TemplateData) {
+		if len(td.ClusterCIDR) != len(expected) {
+			t.Errorf("len(ClusterCIDR) want: %d got: %d", len(expected), len(td.ClusterCIDR))
+			return
+		}
+		for i, cidr := range expected {
+			if td.ClusterCIDR[i] != cidr {
+				t.Errorf("ClusterCIDR[%d] want: %q got: %q", i, cidr, td.ClusterCIDR[i])
+			}
+		}
+	}
+}
+
+func hasServiceCIDR(expected ...string) func(*testing.T, *TemplateData) {
+	return func(t *testing.T, td *TemplateData) {
+		if len(td.ServiceCIDR) != len(expected) {
+			t.Errorf("len(ServiceCIDR) want: %d got: %d", len(expected), len(td.ServiceCIDR))
+			return
+		}
+		for i, cidr := range expected {
+			if td.ServiceCIDR[i] != cidr {
+				t.Errorf("ServiceCIDR[%d] want: %q got: %q", i, cidr, td.ServiceCIDR[i])
+			}
+		}
+	}
+}
+
+func prefersIPv6(expected bool) func(*testing.T, *TemplateData) {
+	return func(t *testing.T, td *TemplateData) {
+		if td.PreferIPv6 != expected {
+			t.Errorf("PreferIPv6 want: %v got: %v", expected, td.PreferIPv6)
+		}
+	}
+}
+
+func hasEtcdAddress(localhost string) func(*testing.T, *TemplateData) {
+	return func(t *testing.T, td *TemplateData) {
+		if td.EtcdAddress.LocalHost != localhost {
+			t.Errorf("LocalHost want: %q got: %q", localhost, td.EtcdAddress.LocalHost)
+		}
+	}
+}
+
+func hasBootstrapScalingStrategy(expected ceohelpers.BootstrapScalingStrategy) func(*testing.T, *TemplateData) {
+	return func(t *testing.T, td *TemplateData) {
+		if td.BootstrapScalingStrategy != expected {
+			t.Errorf("BootstrapScalingStrategy want: %q got: %q", expected, td.BootstrapScalingStrategy)
+		}
+	}
+}
+
+func hasEtcdEndpointConfigmapData(expected string) func(*testing.T, *TemplateData) {
+	return func(t *testing.T, td *TemplateData) {
+		if td.EtcdEndpointConfigmapData != expected {
+			t.Errorf("EtcdEndpointConfigmapData want: %q got: %q", expected, td.EtcdEndpointConfigmapData)
+		}
+	}
+}
+
+func hasNamespaceAnnotations(expected map[string]string) func(*testing.T, *TemplateData) {
+	return func(t *testing.T, td *TemplateData) {
+		if !reflect.DeepEqual(td.NamespaceAnnotations, expected) {
+			t.Errorf("NamespaceAnnotations want: %q got: %q", expected, td.NamespaceAnnotations)
+		}
+	}
+}
+
+func testTemplateData(t *testing.T, tc *testConfig, validators ...func(*testing.T, *TemplateData)) {
 	var errOut io.Writer
-	dir, err := ioutil.TempDir("/tmp", "assets-")
-	if err != nil {
-		tc.t.Fatal(err)
-	}
-	defer os.RemoveAll(dir) // clean up
+	dir := t.TempDir()
 
-	clusterConfigFile, err := ioutil.TempFile(dir, "cluster-network-02-config.*.yaml")
-	if err != nil {
-		tc.t.Fatal(err)
-	}
-	defer clusterConfigFile.Close()
-
-	infraConfigFile, err := ioutil.TempFile(dir, "cluster-infrastructures-02-config.*.yaml")
-	if err != nil {
-		tc.t.Fatal(err)
-	}
-	defer infraConfigFile.Close()
-
-	clusterConfigMapFile, err := ioutil.TempFile(dir, "cluster-config.*.yaml")
-	if err != nil {
-		tc.t.Fatal(err)
-	}
-	defer clusterConfigMapFile.Close()
-
-	if err := writeFile(tc.clusterNetworkConfig, clusterConfigFile); err != nil {
-		tc.t.Fatal(err)
+	clusterConfigPath := filepath.Join(dir, "cluster-network-02-config.yaml")
+	if err := os.WriteFile(clusterConfigPath, []byte(tc.clusterNetworkConfig), 0600); err != nil {
+		t.Fatal(err)
 	}
 
-	if err := writeFile(tc.infraConfig, infraConfigFile); err != nil {
-		tc.t.Fatal(err)
+	infraConfigPath := filepath.Join(dir, "cluster-infrastructures-02-config.yaml")
+	if err := os.WriteFile(infraConfigPath, []byte(tc.infraConfig), 0600); err != nil {
+		t.Fatal(err)
 	}
 
-	if err := writeFile(tc.clusterConfigMap, clusterConfigMapFile); err != nil {
-		tc.t.Fatal(err)
+	clusterConfigMapPath := filepath.Join(dir, "cluster-config.yaml")
+	if err := os.WriteFile(clusterConfigMapPath, []byte(tc.clusterConfigMap), 0600); err != nil {
+		t.Fatal(err)
 	}
 
 	render := &renderOpts{
 		assetOutputDir:                          dir,
 		templateDir:                             filepath.Join("../../..", "bindata", "bootkube"),
 		errOut:                                  errOut,
-		networkConfigFile:                       clusterConfigFile.Name(),
-		infraConfigFile:                         infraConfigFile.Name(),
-		clusterConfigMapFile:                    clusterConfigMapFile.Name(),
+		networkConfigFile:                       clusterConfigPath,
+		infraConfigFile:                         infraConfigPath,
+		clusterConfigMapFile:                    clusterConfigMapPath,
 		delayedHABootstrapScalingStrategyMarker: tc.delayedHABootstrapScalingStrategyMarker,
 	}
 
 	got, err := newTemplateData(render)
 	if err != nil {
-		tc.t.Fatal(err)
+		t.Fatal(err)
 	}
 
-	//TODO make more readable possibly as []func
-	switch {
-	case tc.want.ClusterCIDR != nil && got.ClusterCIDR[0] != tc.want.ClusterCIDR[0]:
-		tc.t.Errorf("ClusterCIDR[0] want: %q got: %q", tc.want.ClusterCIDR[0], got.ClusterCIDR[0])
-	case tc.want.ClusterCIDR != nil && len(got.ClusterCIDR) != len(tc.want.ClusterCIDR):
-		tc.t.Errorf("len(ClusterCIDR) want: %d got: %d", len(tc.want.ClusterCIDR), len(got.ClusterCIDR))
-	case tc.want.ServiceCIDR != nil && got.ServiceCIDR[0] != tc.want.ServiceCIDR[0]:
-		tc.t.Errorf("ServiceCIDR[0] want: %q got: %q", tc.want.ServiceCIDR[0], got.ServiceCIDR[0])
-	case tc.want.ServiceCIDR != nil && len(got.ServiceCIDR) != len(tc.want.ServiceCIDR):
-		tc.t.Errorf("len(ServiceCIDR) want: %d got: %d", len(tc.want.ServiceCIDR), len(got.ServiceCIDR))
-	case got.PreferIPv6 != tc.want.PreferIPv6:
-		tc.t.Errorf("PreferIPv6 want: %v got: %v", tc.want.PreferIPv6, got.PreferIPv6)
-	case tc.want.EtcdAddress.LocalHost != "" && got.EtcdAddress.LocalHost != tc.want.EtcdAddress.LocalHost:
-		tc.t.Errorf("LocalHost want: %q got: %q", tc.want.EtcdAddress.LocalHost, got.EtcdAddress.LocalHost)
-	case tc.want.EtcdEndpointConfigmapData != "" && got.EtcdEndpointConfigmapData != tc.want.EtcdEndpointConfigmapData:
-		tc.t.Errorf("EtcdEndpointConfigmapData want: %q got: %q", tc.want.EtcdEndpointConfigmapData, got.EtcdEndpointConfigmapData)
-	case tc.want.BootstrapScalingStrategy != "" && got.BootstrapScalingStrategy != tc.want.BootstrapScalingStrategy:
-		tc.t.Errorf("BootstrapScalingStrategy want: %q got: %q", tc.want.BootstrapScalingStrategy, got.BootstrapScalingStrategy)
-	case tc.want.NamespaceAnnotations != nil && !reflect.DeepEqual(got.NamespaceAnnotations, tc.want.NamespaceAnnotations):
-		tc.t.Errorf("NamespaceAnnotations want: %q got: %q", tc.want.NamespaceAnnotations, got.NamespaceAnnotations)
+	for _, validate := range validators {
+		validate(t, got)
 	}
-}
-
-func writeFile(input string, w io.Writer) error {
-	var buffer bytes.Buffer
-	buffer.WriteString(input)
-	if _, err := buffer.WriteTo(w); err != nil {
-		return err
-	}
-	return nil
 }
 
 type fakeBootstrapIPLocator struct {
