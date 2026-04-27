@@ -11,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/server"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
@@ -34,6 +35,11 @@ func RunTnfSetup() error {
 	}
 
 	kubeClient, err := kubernetes.NewForConfig(clientConfig)
+	if err != nil {
+		return err
+	}
+
+	dyClient, err := dynamic.NewForConfig(clientConfig)
 	if err != nil {
 		return err
 	}
@@ -100,7 +106,7 @@ func RunTnfSetup() error {
 	}
 
 	// configure stonith
-	err = pcs.ConfigureFencing(ctx, kubeClient, []string{cfg.NodeName1, cfg.NodeName2})
+	err = pcs.ConfigureFencing(ctx, kubeClient, dyClient, []string{cfg.NodeName1, cfg.NodeName2})
 	if err != nil {
 		return err
 	}

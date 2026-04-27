@@ -10,6 +10,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
 	"k8s.io/apiserver/pkg/server"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
@@ -32,6 +33,11 @@ func RunTnfUpdateSetup() error {
 	}
 
 	kubeClient, err := kubernetes.NewForConfig(clientConfig)
+	if err != nil {
+		return err
+	}
+
+	dyClient, err := dynamic.NewForConfig(clientConfig)
 	if err != nil {
 		return err
 	}
@@ -126,7 +132,7 @@ func RunTnfUpdateSetup() error {
 	// update fence devices
 	// this is needed for being able to start resources on the new node!
 	// node order matters here: resources can't be restarted while fencing isn't configured on all nodes!
-	err = pcs.ConfigureFencing(ctx, kubeClient, []string{otherNodeName, currentNodeName})
+	err = pcs.ConfigureFencing(ctx, kubeClient, dyClient, []string{otherNodeName, currentNodeName})
 	if err != nil {
 		klog.Error(err, "Failed to configure fencing, skipping update of etcd! Restart update-setup job when fencing config is fixed!")
 		return err
