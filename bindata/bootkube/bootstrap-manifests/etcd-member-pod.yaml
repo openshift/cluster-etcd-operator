@@ -60,6 +60,7 @@ spec:
         --peer-client-cert-auth=true \
         --advertise-client-urls=https://{{ .EtcdAddress.EscapedBootstrapIP }}:2379 \
         --listen-client-urls=https://{{ .EtcdAddress.ListenClient }} \
+        --listen-client-http-urls=https://{{ .EtcdAddress.ListenClientHTTP }} \
         --listen-peer-urls=https://{{ .EtcdAddress.ListenPeer }} \
         --listen-metrics-urls=https://{{ .EtcdAddress.ListenMetricServer }} \
     resources:
@@ -82,6 +83,9 @@ spec:
       protocol: TCP
     - name: server
       containerPort: 2379
+      protocol: TCP
+    - name: etcd-http
+      containerPort: 2381
       protocol: TCP
   hostNetwork: true
   priorityClassName: system-node-critical

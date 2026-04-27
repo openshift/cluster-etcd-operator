@@ -112,6 +112,7 @@ func (r *renderOpts) Validate() error {
 // pod spec
 type etcdAddress struct {
 	ListenClient       string
+	ListenClientHTTP   string
 	ListenPeer         string
 	ListenMetricServer string
 	ListenMetricProxy  string
@@ -440,6 +441,7 @@ func (t *TemplateData) setEtcdAddress(ipv6 bool, bootstrapIP string) {
 
 	t.EtcdAddress = etcdAddress{
 		ListenClient:       net.JoinHostPort(allAddresses, "2379"),
+		ListenClientHTTP:   net.JoinHostPort(allAddresses, "2381"),
 		ListenPeer:         net.JoinHostPort(allAddresses, "2380"),
 		LocalHost:          localhost,
 		ListenMetricServer: net.JoinHostPort(allAddresses, "9978"),

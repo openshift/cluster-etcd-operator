@@ -17,6 +17,9 @@ spec:
     - name: etcd
       port: 2379
       protocol: TCP
+    - name: etcd-http
+      port: 2381
+      protocol: TCP
     - name: etcd-peer
       port: 2380
       protocol: TCP
