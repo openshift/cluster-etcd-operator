@@ -656,11 +656,12 @@ func listFilesInPVC(t testing.TB, pvcName string, node corev1.Node) []string {
 			},
 			Containers: []corev1.Container{
 				{
-					Name:       "finder",
-					Image:      ShellImage,
-					Command:    []string{"find", "."},
-					WorkingDir: HostPathBasePath,
-					Resources:  corev1.ResourceRequirements{},
+					Name:                     "finder",
+					Image:                    ShellImage,
+					Command:                  []string{"find", "."},
+					WorkingDir:               HostPathBasePath,
+					Resources:                corev1.ResourceRequirements{},
+					TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 					VolumeMounts: []corev1.VolumeMount{
 						{
 							Name:      "backup-dir",
