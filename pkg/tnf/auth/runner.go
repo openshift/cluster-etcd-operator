@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"os"
 
 	configversionedclient "github.com/openshift/client-go/config/clientset/versioned"
 	"k8s.io/apiserver/pkg/server"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/config"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/pcs"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
 
 func RunTnfAuth() error {
@@ -59,6 +61,14 @@ func RunTnfAuth() error {
 	if err != nil {
 		klog.Errorf("Failed to authenticate: %v", err)
 		return err
+	}
+
+	// Annotate this node with its MAC addresses for fencing secret resolution
+	nodeName := os.Getenv("MY_NODE_NAME")
+	if nodeName != "" {
+		if err := tools.AnnotateNodeMACs(ctx, kubeClient, nodeName); err != nil {
+			klog.Warningf("Failed to annotate node %s with MAC addresses: %v", nodeName, err)
+		}
 	}
 
 	klog.Info("TNF auth done")

@@ -13,6 +13,7 @@ rules:
       - get
       - list
       - watch
+      - patch
   - apiGroups:
       - operator.openshift.io
     resources:
@@ -64,3 +65,4 @@ rules:
       - securitycontextconstraints
     verbs:
       - use
+
