@@ -18,7 +18,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -82,6 +84,9 @@ func HandleDualReplicaClusters(
 	// we need node names for assigning auth and after-setup jobs to specific nodes
 	controlPlaneNodeLister := corev1listers.NewNodeLister(controlPlaneNodeInformer.GetIndexer())
 	klog.Infof("watching for nodes...")
+	// OCPBUGS-84695: previously Add skipped non-ready nodes; we now always enqueue Add and let
+	// handleNodeAddition no-op until ExternalEtcdHasCompletedTransition so day-2 membership work
+	// is not tied to the first Ready transition of the new node.
 	_, err = controlPlaneNodeInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
 			node, ok := obj.(*corev1.Node)
@@ -89,17 +94,8 @@ func HandleDualReplicaClusters(
 				klog.Warningf("failed to convert added object to Node %+v", obj)
 				return
 			}
-
-			// ignore nodes which are not ready yet
-			if !tools.IsNodeReady(node) {
-				klog.Infof("added node %s is not ready yet, skipping handling", node.GetName())
-				return
-			}
-
-			// this potentially needs some time when we wait for etcd bootstrap to complete, so run it in a goroutine,
-			// to not block the event handler
-			klog.Infof("node added and ready: %s", node.GetName())
-			go handleNodesWithRetry(controllerContext, controlPlaneNodeLister, ctx, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
+			klog.Infof("node added: %s", node.GetName())
+			go handleNodesWithRetry(controllerContext, controlPlaneNodeLister, ctx, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer, node, NodeEventTypeAdd)
 		},
 		UpdateFunc: func(oldObj, newObj any) {
 			oldNode, oldOk := oldObj.(*corev1.Node)
@@ -109,14 +105,11 @@ func HandleDualReplicaClusters(
 				return
 			}
 
-			// only handle if node transitioned from not ready to ready
 			oldReady := tools.IsNodeReady(oldNode)
 			newReady := tools.IsNodeReady(newNode)
 			if !oldReady && newReady {
 				klog.Infof("node %s transitioned to ready state", newNode.GetName())
-				// this potentially needs some time when we wait for etcd bootstrap to complete, so run it in a goroutine,
-				// to not block the event handler
-				go handleNodesWithRetry(controllerContext, controlPlaneNodeLister, ctx, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
+				go handleNodesWithRetry(controllerContext, controlPlaneNodeLister, ctx, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer, newNode, NodeEventTypeReady)
 			}
 		},
 		DeleteFunc: func(obj any) {
@@ -126,17 +119,18 @@ func HandleDualReplicaClusters(
 				return
 			}
 			klog.Infof("node deleted: %s", node.GetName())
-
-			// always handle node deletion
-			// this potentially needs some time when we wait for etcd bootstrap to complete, so run it in a goroutine,
-			// to not block the event handler
-			go handleNodesWithRetry(controllerContext, controlPlaneNodeLister, ctx, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
+			go handleNodesWithRetry(controllerContext, controlPlaneNodeLister, ctx, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer, node, NodeEventTypeDelete)
 		},
 	})
 	if err != nil {
 		klog.Errorf("failed to add eventhandler to control plane informer: %v", err)
 		return false, err
 	}
+
+	// If etcd-operator (re)starts after both control-plane nodes are already Ready, the informer never
+	// emits NotReady→Ready, so handleNodeReady never runs. ExternalEtcdHasCompletedTransition is set
+	// only after TNF setup drives etcd handoff (pkg/tnf/pkg/etcd), so we must not wait on it here.
+	go reconcileTnfInitialBootstrapIfTwoReadyNodesMissed(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer, controlPlaneNodeInformer, controlPlaneNodeLister)
 
 	// we need to update fencing config when fencing secrets change
 	// adding a secret informer to the jobcontroller would trigger fencing setup for *every* secret change,
@@ -218,6 +212,60 @@ func runTnfResourceController(ctx context.Context, controllerContext *controller
 	).WithIgnoreNotFoundOnCreate().AddKubeInformers(kubeInformersForNamespaces)
 	go tnfResourceController.Run(ctx, 1)
 	return nil
+}
+
+// reconcileTnfInitialBootstrapIfTwoReadyNodesMissed runs the same path as a control-plane NotReady→Ready
+// transition when initial TNF bootstrap never started (e.g. operator restarted after both nodes were
+// already Ready). Skips if tnf-setup-job already exists. Does not wait on ExternalEtcdHasCompletedTransition:
+// that condition is set only after TNF setup completes the etcd handoff (see pkg/tnf/pkg/etcd).
+func reconcileTnfInitialBootstrapIfTwoReadyNodesMissed(
+	ctx context.Context,
+	controllerContext *controllercmd.ControllerContext,
+	operatorClient v1helpers.StaticPodOperatorClient,
+	kubeClient kubernetes.Interface,
+	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
+	etcdInformer operatorv1informers.EtcdInformer,
+	controlPlaneNodeInformer cache.SharedIndexInformer,
+	controlPlaneNodeLister corev1listers.NodeLister,
+) {
+	if !cache.WaitForCacheSync(ctx.Done(), controlPlaneNodeInformer.HasSynced) {
+		klog.Errorf("control-plane node informer did not sync before TNF bootstrap catch-up")
+		return
+	}
+
+	setupJobName := tools.JobTypeSetup.GetJobName(nil)
+	if _, err := kubeClient.BatchV1().Jobs(operatorclient.TargetNamespace).Get(ctx, setupJobName, metav1.GetOptions{}); err == nil {
+		klog.V(4).Infof("TNF setup job %s already exists, skipping bootstrap catch-up", setupJobName)
+		return
+	} else if !apierrors.IsNotFound(err) {
+		klog.Warningf("could not determine whether TNF setup job exists: %v", err)
+		return
+	}
+
+	nodeList, err := controlPlaneNodeLister.List(labels.Everything())
+	if err != nil {
+		klog.Errorf("failed to list control-plane nodes for TNF bootstrap catch-up: %v", err)
+		return
+	}
+
+	readyCount := 0
+	var firstReady *corev1.Node
+	for _, n := range nodeList {
+		if !tools.IsNodeReady(n) {
+			continue
+		}
+		readyCount++
+		if firstReady == nil {
+			firstReady = n
+		}
+	}
+	if readyCount < 2 {
+		klog.V(4).Infof("TNF bootstrap catch-up: only %d ready control-plane node(s), waiting for Ready handling", readyCount)
+		return
+	}
+
+	klog.Infof("TNF bootstrap catch-up: %d ready control-plane nodes and no %s; running Ready path", readyCount, setupJobName)
+	handleNodesWithRetry(controllerContext, controlPlaneNodeLister, ctx, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer, firstReady, NodeEventTypeReady)
 }
 
 func runPacemakerControllers(ctx context.Context, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, etcdInformer operatorv1informers.EtcdInformer) {
@@ -413,7 +461,19 @@ func handleFencingSecretChange(
 		}
 	}
 
-	err := jobs.RestartJobOrRunController(ctx, tools.JobTypeFencing, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions, tools.FencingJobCompletedTimeout)
+	// OCPBUGS-84695: before handoff, ignore secret-driven fencing (install orders fencing via startTnfJobcontrollers).
+	transitionComplete, err := ceohelpers.HasExternalEtcdCompletedTransition(ctx, operatorClient)
+	if err != nil {
+		klog.Errorf("failed to check external etcd transition for fencing secret handler: %v", err)
+		return
+	}
+	if !transitionComplete {
+		klog.V(4).Infof("skipping fencing job restart from fencing secret change until %s is True",
+			ceohelpers.OperatorConditionExternalEtcdHasCompletedTransition)
+		return
+	}
+
+	err = jobs.RestartJobOrRunController(ctx, tools.JobTypeFencing, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions, tools.FencingJobCompletedTimeout)
 	if err != nil {
 		klog.Errorf("failed to restart fencing job: %v", err)
 		return
