@@ -42,6 +42,7 @@ func TestManageScriptConfigMap(t *testing.T) {
 		expectedDisableContent   string
 		unexpectedRestoreContent string
 		unexpectedDisableContent string
+		expectedFencingScript    bool
 	}{
 		{
 			name:                     "TNF topology deploys TNF-specific scripts",
@@ -50,6 +51,7 @@ func TestManageScriptConfigMap(t *testing.T) {
 			expectedDisableContent:   "pcs resource disable etcd",
 			unexpectedRestoreContent: "wait_for_containers_to_stop",
 			unexpectedDisableContent: "restore_static_pods",
+			expectedFencingScript:    true,
 		},
 		{
 			name:                     "HighlyAvailable topology deploys standard scripts",
@@ -58,6 +60,7 @@ func TestManageScriptConfigMap(t *testing.T) {
 			expectedDisableContent:   "mv_static_pods",
 			unexpectedRestoreContent: "pcs resource disable etcd",
 			unexpectedDisableContent: "podman container exists",
+			expectedFencingScript:    false,
 		},
 		{
 			name:                     "SingleReplica topology deploys standard scripts",
@@ -66,6 +69,7 @@ func TestManageScriptConfigMap(t *testing.T) {
 			expectedDisableContent:   "mv_static_pods",
 			unexpectedRestoreContent: "crm_attribute",
 			unexpectedDisableContent: "ensure_etcd_container_stopped",
+			expectedFencingScript:    false,
 		},
 	}
 
@@ -109,6 +113,13 @@ func TestManageScriptConfigMap(t *testing.T) {
 			require.Contains(t, scriptCM.Data, "cluster-backup.sh", "cluster-backup.sh should be in ConfigMap")
 			require.Contains(t, scriptCM.Data, "etcd-common-tools", "etcd-common-tools should be in ConfigMap")
 			require.Contains(t, scriptCM.Data, "etcd.env", "etcd.env should be in ConfigMap")
+			if tc.expectedFencingScript {
+				require.Contains(t, scriptCM.Data, "update-fencing-credentials.sh",
+					"update-fencing-credentials.sh should be in ConfigMap for TNF topology")
+			} else {
+				require.NotContains(t, scriptCM.Data, "update-fencing-credentials.sh",
+					"update-fencing-credentials.sh should not be in ConfigMap for non TNF topology")
+			}
 
 			// Verify etcd.env has correct content
 			require.Contains(t, scriptCM.Data["etcd.env"], "ETCD_IMAGE", "etcd.env should contain environment variables")
