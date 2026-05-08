@@ -77,7 +77,7 @@ func (r *PruneOpts) AddFlags(cmd *cobra.Command) {
 func (r *PruneOpts) Validate() error {
 	retType := backupv1alpha1.RetentionType(r.RetentionType)
 	switch retType {
-	case "":
+	case "", "None":
 		return nil
 	case backupv1alpha1.RetentionTypeNumber:
 		if r.MaxNumberOfBackups < 1 {
