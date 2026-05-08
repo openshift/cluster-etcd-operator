@@ -19,7 +19,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
@@ -242,45 +241,4 @@ func (c *TargetConfigController) manageStandardPod(ctx context.Context, subs *ce
 
 func (c *TargetConfigController) Enqueue() {
 	c.enqueueFn()
-}
-
-func (c *TargetConfigController) namespaceEventHandler() cache.ResourceEventHandler {
-	return cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj any) {
-			ns, ok := obj.(*corev1.Namespace)
-			if !ok {
-				c.Enqueue()
-			}
-			if ns.Name == ("openshift-etcd") {
-				c.Enqueue()
-			}
-		},
-		UpdateFunc: func(old, new any) {
-			ns, ok := old.(*corev1.Namespace)
-			if !ok {
-				c.Enqueue()
-			}
-			if ns.Name == ("openshift-etcd") {
-				c.Enqueue()
-			}
-		},
-		DeleteFunc: func(obj any) {
-			ns, ok := obj.(*corev1.Namespace)
-			if !ok {
-				tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
-				if !ok {
-					utilruntime.HandleError(fmt.Errorf("couldn't get object from tombstone %#v", obj))
-					return
-				}
-				ns, ok = tombstone.Obj.(*corev1.Namespace)
-				if !ok {
-					utilruntime.HandleError(fmt.Errorf("tombstone contained object that is not a Namespace %#v", obj))
-					return
-				}
-			}
-			if ns.Name == ("openshift-etcd") {
-				c.Enqueue()
-			}
-		},
-	}
 }
