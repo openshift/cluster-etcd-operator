@@ -8,12 +8,14 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/cluster-etcd-operator/bindata"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorversionedclientv1alpha1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
@@ -138,28 +140,28 @@ func (r *requestBackupOpts) Run(ctx context.Context) error {
 	}
 	etcdBackupClient := operatorClient.EtcdBackups()
 
-	// Create the EtcdBackup CR
-	// TODO(haseeb): This EtcdBackup manifest is small enough but should we template this manifest from bindata/etcd
-	// like we usually do for other manifests?
-	etcdBackup := &operatorv1alpha1.EtcdBackup{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      r.etcdBackupName,
-			Namespace: operatorclient.TargetNamespace,
-			// Due to a limitation of the kube-controller, we can't rely on the api to garbage collect non-namespaced
-			// etcdbackups from their corresponding namespaced jobs.
-			// We set this job information solely to prune those in the backup controller.
-			OwnerReferences: []metav1.OwnerReference{
-				{
-					APIVersion: "batch/v1",
-					Kind:       "Job",
-					Name:       r.ownerJobName,
-					UID:        types.UID(r.ownerJobUID),
-				},
-			},
-		},
-		Spec: operatorv1alpha1.EtcdBackupSpec{
-			PVCName: r.pvcName,
-		},
+	// Create the EtcdBackup CR from the bindata template
+	scheme := runtime.NewScheme()
+	if err := operatorv1alpha1.Install(scheme); err != nil {
+		return fmt.Errorf("could not add operatorv1alpha1 scheme: %w", err)
+	}
+	codec := serializer.NewCodecFactory(scheme)
+	obj, err := runtime.Decode(codec.UniversalDecoder(operatorv1alpha1.GroupVersion), bindata.MustAsset("etcd/etcd-backup-cr.yaml"))
+	if err != nil {
+		return fmt.Errorf("could not decode EtcdBackup template: %w", err)
+	}
+	etcdBackup := obj.(*operatorv1alpha1.EtcdBackup)
+	etcdBackup.Name = r.etcdBackupName
+	etcdBackup.Spec.PVCName = r.pvcName
+	// Due to a limitation of the kube-controller, we can't rely on the api to garbage collect non-namespaced
+	// etcdbackups from their corresponding namespaced jobs.
+	// We set this job information solely to prune those in the backup controller.
+	for i := range etcdBackup.OwnerReferences {
+		if etcdBackup.OwnerReferences[i].Kind == "Job" {
+			etcdBackup.OwnerReferences[i].Name = r.ownerJobName
+			etcdBackup.OwnerReferences[i].UID = types.UID(r.ownerJobUID)
+			break
+		}
 	}
 
 	klog.Infof("creating CRD: %v", etcdBackup)
