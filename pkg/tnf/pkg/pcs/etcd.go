@@ -22,7 +22,11 @@ func ConfigureEtcd(ctx context.Context, cfg config.ClusterConfig) error {
 	}
 	if !strings.Contains(stdOut, "etcd") {
 		klog.Info("Creating etcd resource")
-		cmd := fmt.Sprintf("/usr/sbin/pcs resource create etcd ocf:heartbeat:podman-etcd node_ip_map=\"%s:%s;%s:%s\" drop_in_dependency=true clone interleave=true notify=true",
+		// migration-threshold=60 caps how many failed start operations Pacemaker allows before the etcd clone is treated as blocked.
+		// We raise this from the previous low value so that, together with a planned podman-etcd change to pace retries on
+		// missing-precondition / fast-fail starts (e.g. ~15s between failed attempts), the cluster has on the order of
+		// 60 × 15s ≈ 15 minutes of start attempts before etcd is considered blocked—not a few seconds of burst failures.
+		cmd := fmt.Sprintf("/usr/sbin/pcs resource create etcd ocf:heartbeat:podman-etcd node_ip_map=\"%s:%s;%s:%s\" drop_in_dependency=true clone interleave=true notify=true meta migration-threshold=60",
 			cfg.NodeName1, cfg.NodeIP1, cfg.NodeName2, cfg.NodeIP2)
 		stdOut, stdErr, err = exec.Execute(ctx, cmd)
 		if err != nil || len(stdErr) > 0 {
