@@ -41,22 +41,27 @@
             },
           },
           {
-            alert: 'etcdGRPCRequestsSlow',
-            expr: |||
-              histogram_quantile(0.99, sum(rate(grpc_server_handling_seconds_bucket{job="etcd", grpc_method!="Defragment", grpc_type="unary"}[10m])) without(grpc_type))
-              > on () group_left (type)
-              bottomk(1,
-                1.5 * group by (type) (cluster_infrastructure_provider{type="Azure"})
-                or
-                1 * group by (type) (cluster_infrastructure_provider))
-            |||,
-            'for': '30m',
+            alert: 'etcdGRPCReadRequestsSlow',
+            expr: 'histogram_quantile(0.99, sum(rate(grpc_server_handling_seconds_bucket{job="etcd", grpc_method="Range", grpc_type="unary"}[10m])) without(grpc_type)) > 3',
+            'for': '10m',
             labels: {
               severity: 'critical',
             },
             annotations: {
-              description: 'etcd cluster "{{ $labels.job }}": 99th percentile of gRPC requests is {{ $value }}s on etcd instance {{ $labels.instance }} for {{ $labels.grpc_method }} method.',
-              summary: 'etcd grpc requests are slow',
+              description: 'etcd cluster "{{ $labels.job }}": 99th percentile of gRPC read requests is {{ $value }}s on etcd instance {{ $labels.instance }}.',
+              summary: 'etcd grpc read requests are slow',
+            },
+          },
+          {
+            alert: 'etcdGRPCWriteRequestsSlow',
+            expr: 'histogram_quantile(0.99, sum(rate(grpc_server_handling_seconds_bucket{job="etcd", grpc_method="Txn", grpc_type="unary"}[10m])) without(grpc_type)) > 5',
+            'for': '10m',
+            labels: {
+              severity: 'critical',
+            },
+            annotations: {
+              description: 'etcd cluster "{{ $labels.job }}": 99th percentile of gRPC write requests is {{ $value }}s on etcd instance {{ $labels.instance }}.',
+              summary: 'etcd grpc write requests are slow',
             },
           },
           {
