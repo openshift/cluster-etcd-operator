@@ -461,7 +461,7 @@ func TestDefragBudgetExceeded(t *testing.T) {
 		infrastructureLister: configv1listers.NewInfrastructureLister(indexer),
 		configmapLister:      corev1listers.NewConfigMapLister(indexer),
 		defragWaitDuration:   1 * time.Second,
-		defragBudget:         1 * time.Nanosecond,
+		defragBudget:         0,
 	}
 
 	err := controller.sync(context.TODO(), factory.NewSyncContext("defrag-controller", eventRecorder))
