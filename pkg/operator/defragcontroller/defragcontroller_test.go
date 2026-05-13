@@ -226,6 +226,7 @@ func TestNewDefragController(t *testing.T) {
 				configmapLister:      corev1listers.NewConfigMapLister(indexer),
 				// to speed the tests up, in real life we use minDefragWaitDuration
 				defragWaitDuration: 1 * time.Second,
+				defragBudget:       defaultDefragBudget,
 			}
 
 			err := controller.sync(context.TODO(), factory.NewSyncContext("defrag-controller", eventRecorder))
@@ -382,6 +383,7 @@ func TestNewDefragControllerMultiSyncs(t *testing.T) {
 				configmapLister:      corev1listers.NewConfigMapLister(indexer),
 				// to speed the tests up, in real life we use minDefragWaitDuration
 				defragWaitDuration: 1 * time.Second,
+				defragBudget:       defaultDefragBudget,
 			}
 
 			numSyncErr := 0
@@ -410,6 +412,78 @@ func TestNewDefragControllerMultiSyncs(t *testing.T) {
 			controllerDegradedCondition := v1helpers.FindOperatorCondition(currentState.Conditions, defragDegradedCondition)
 			assert.Equal(t, scenario.wantDegradedCondition, controllerDegradedCondition.Status)
 		})
+	}
+}
+
+func TestDefragBudgetExceeded(t *testing.T) {
+	integration.BeforeTestExternal(t)
+
+	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+		&operatorv1.StaticPodOperatorSpec{
+			OperatorSpec: operatorv1.OperatorSpec{
+				ManagementState: operatorv1.Managed,
+			},
+		},
+		u.StaticPodOperatorStatus(),
+		nil,
+		nil,
+	)
+
+	testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: 3})
+	defer testServer.Terminate(t)
+
+	etcdMembers := waitForMembersWithClientURLs(t, testServer)
+
+	var status []*clientv3.StatusResponse
+	for _, member := range testServer.Members {
+		statusResp, err := testServer.Client(0).Status(context.TODO(), member.GRPCURL)
+		require.NoError(t, err)
+		statusResp.DbSizeInUse = minDefragBytes / 2
+		statusResp.DbSize = minDefragBytes
+		status = append(status, statusResp)
+	}
+
+	fakeEtcdClient, _ := etcdcli.NewFakeEtcdClient(
+		etcdMembers,
+		etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3}),
+		etcdcli.WithFakeStatus(status),
+	)
+
+	eventRecorder := events.NewInMemoryRecorder(t.Name(), clock.RealClock{})
+	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	require.NoError(t, indexer.Add(u.FakeInfrastructureTopology(configv1.HighlyAvailableTopologyMode)))
+
+	controller := &DefragController{
+		operatorClient:       fakeOperatorClient,
+		memberLister:         fakeEtcdClient,
+		defragClient:         fakeEtcdClient,
+		statusClient:         fakeEtcdClient,
+		infrastructureLister: configv1listers.NewInfrastructureLister(indexer),
+		configmapLister:      corev1listers.NewConfigMapLister(indexer),
+		defragWaitDuration:   1 * time.Second,
+		defragBudget:         1 * time.Nanosecond,
+	}
+
+	err := controller.sync(context.TODO(), factory.NewSyncContext("defrag-controller", eventRecorder))
+	require.NoError(t, err)
+
+	var budgetEvents int
+	var defragSuccessEvents int
+	for _, event := range eventRecorder.Events() {
+		if strings.Contains(event.Message, "budget") {
+			budgetEvents++
+		}
+		if strings.HasPrefix(event.Message, "etcd member has been defragmented") {
+			defragSuccessEvents++
+		}
+	}
+	assert.Equal(t, 1, budgetEvents, "expected exactly one budget exceeded event")
+	assert.Equal(t, 0, defragSuccessEvents, "expected no defrag success events when budget is exhausted immediately")
+
+	_, currentState, _, _ := fakeOperatorClient.GetOperatorState()
+	controllerDegradedCondition := v1helpers.FindOperatorCondition(currentState.Conditions, defragDegradedCondition)
+	if controllerDegradedCondition != nil {
+		assert.Equal(t, operatorv1.ConditionFalse, controllerDegradedCondition.Status, "budget skip should not degrade the controller")
 	}
 }
 

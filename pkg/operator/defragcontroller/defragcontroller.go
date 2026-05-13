@@ -28,6 +28,7 @@ import (
 const (
 	minDefragBytes                 int64   = 100 * 1024 * 1024 // 100MB
 	minDefragWaitDuration                  = 36 * time.Second
+	defaultDefragBudget                    = 5 * time.Minute
 	maxFragmentedPercentage        float64 = 45
 	pollWaitDuration                       = 2 * time.Second
 	pollTimeoutDuration                    = 60 * time.Second
@@ -52,6 +53,7 @@ type DefragController struct {
 
 	numDefragFailures  int
 	defragWaitDuration time.Duration
+	defragBudget       time.Duration
 }
 
 func NewDefragController(
@@ -71,6 +73,7 @@ func NewDefragController(
 		infrastructureLister: infrastructureLister,
 		configmapLister:      kubeInformers.ConfigMapLister(),
 		defragWaitDuration:   minDefragWaitDuration,
+		defragBudget:         defaultDefragBudget,
 	}
 	syncer := health.NewCheckingSyncWrapper(c.sync, 3*compactionInterval+1*time.Minute)
 	livenessChecker.Add("DefragController", syncer)
@@ -171,11 +174,21 @@ func (c *DefragController) runDefrag(ctx context.Context, recorder events.Record
 		endpointStatus = append(endpointStatus, leader)
 	}
 
+	startTime := time.Now()
 	successfulDefrags := 0
+	attemptedDefrags := 0
 	var errors []error
 	for _, status := range endpointStatus {
+		if time.Since(startTime) >= c.defragBudget {
+			remaining := len(endpointStatus) - attemptedDefrags
+			klog.V(2).Infof("Defrag time budget of %v exceeded, skipping %d remaining member(s)", c.defragBudget, remaining)
+			recorder.Eventf("DefragControllerBudgetExceeded", "Defrag time budget of %v exceeded after %d member(s), skipping %d remaining member(s)", c.defragBudget, attemptedDefrags, remaining)
+			break
+		}
+
 		member, err := getMemberFromStatus(etcdMembers, status)
 		if err != nil {
+			attemptedDefrags++
 			errors = append(errors, err)
 			continue
 		}
@@ -190,11 +203,13 @@ func (c *DefragController) runDefrag(ctx context.Context, recorder events.Record
 				// Defrag can timeout if defragmentation takes longer than etcdcli.DefragDialTimeout.
 				errMsg := fmt.Sprintf("failed defrag on member: %s, memberID: %x: %v", member.Name, member.ID, err)
 				recorder.Eventf("DefragControllerDefragmentFailed", errMsg)
+				attemptedDefrags++
 				errors = append(errors, fmt.Errorf("%s", errMsg))
 				continue
 			}
 
 			recorder.Eventf("DefragControllerDefragmentSuccess", "etcd member has been defragmented: %s, memberID: %d", member.Name, member.ID)
+			attemptedDefrags++
 			successfulDefrags++
 
 			// Give cluster time to recover before we move to the next member.
@@ -220,16 +235,17 @@ func (c *DefragController) runDefrag(ctx context.Context, recorder events.Record
 				errors = append(errors, fmt.Errorf("timeout waiting for cluster to stabilize after defrag: %w", err))
 			}
 		} else {
+			attemptedDefrags++
 			// no fragmentation needed is also a success
 			successfulDefrags++
 		}
 	}
 
-	if successfulDefrags != len(endpointStatus) {
+	if successfulDefrags != attemptedDefrags {
 		c.numDefragFailures++
 		recorder.Eventf("DefragControllerDefragmentPartialFailure",
 			"only %d/%d members were successfully defragmented, %d tries left before controller degrades",
-			successfulDefrags, len(endpointStatus), maxDefragFailuresBeforeDegrade-c.numDefragFailures)
+			successfulDefrags, attemptedDefrags, maxDefragFailuresBeforeDegrade-c.numDefragFailures)
 
 		if c.numDefragFailures >= maxDefragFailuresBeforeDegrade {
 			_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
