@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/openshift/cluster-etcd-operator/bindata"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorversionedclientv1alpha1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
@@ -152,6 +153,7 @@ func (r *requestBackupOpts) Run(ctx context.Context) error {
 	}
 	etcdBackup := obj.(*operatorv1alpha1.EtcdBackup)
 	etcdBackup.Name = r.etcdBackupName
+	etcdBackup.Namespace = operatorclient.TargetNamespace
 	etcdBackup.Spec.PVCName = r.pvcName
 	// Due to a limitation of the kube-controller, we can't rely on the api to garbage collect non-namespaced
 	// etcdbackups from their corresponding namespaced jobs.
