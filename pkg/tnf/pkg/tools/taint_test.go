@@ -146,11 +146,9 @@ func TestHasOutOfServiceAnnotation(t *testing.T) {
 
 func TestRemoveOutOfServiceTaintIfNeeded(t *testing.T) {
 	tests := []struct {
-		name            string
-		node            *corev1.Node
-		expectPatch     bool
-		expectTaintGone bool
-		expectAnnoGone  bool
+		name           string
+		node           *corev1.Node
+		expectModified bool
 	}{
 		{
 			name: "both taint and annotation present - removes both",
@@ -176,12 +174,10 @@ func TestRemoveOutOfServiceTaintIfNeeded(t *testing.T) {
 					},
 				},
 			},
-			expectPatch:     true,
-			expectTaintGone: true,
-			expectAnnoGone:  true,
+			expectModified: true,
 		},
 		{
-			name: "taint only, no annotation - no patch",
+			name: "taint only, no annotation - no-op",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "master-0",
@@ -196,10 +192,10 @@ func TestRemoveOutOfServiceTaintIfNeeded(t *testing.T) {
 					},
 				},
 			},
-			expectPatch: false,
+			expectModified: false,
 		},
 		{
-			name: "annotation only, no taint - no patch",
+			name: "annotation only, no taint - no-op",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "master-0",
@@ -208,19 +204,19 @@ func TestRemoveOutOfServiceTaintIfNeeded(t *testing.T) {
 					},
 				},
 			},
-			expectPatch: false,
+			expectModified: false,
 		},
 		{
-			name: "neither taint nor annotation - no patch",
+			name: "neither taint nor annotation - no-op",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "master-0",
 				},
 			},
-			expectPatch: false,
+			expectModified: false,
 		},
 		{
-			name: "taint key matches but wrong value - no patch",
+			name: "taint key matches but wrong value - no-op",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "master-0",
@@ -238,10 +234,10 @@ func TestRemoveOutOfServiceTaintIfNeeded(t *testing.T) {
 					},
 				},
 			},
-			expectPatch: false,
+			expectModified: false,
 		},
 		{
-			name: "annotation key matches but wrong value - no patch",
+			name: "annotation key matches but wrong value - no-op",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "master-0",
@@ -259,7 +255,7 @@ func TestRemoveOutOfServiceTaintIfNeeded(t *testing.T) {
 					},
 				},
 			},
-			expectPatch: false,
+			expectModified: false,
 		},
 	}
 
@@ -271,48 +267,52 @@ func TestRemoveOutOfServiceTaintIfNeeded(t *testing.T) {
 			require.NoError(t, err)
 
 			actions := kubeClient.Actions()
-			patchFound := false
+			hasUpdate := false
+			hasPatch := false
 			for _, action := range actions {
-				if action.GetVerb() == "patch" && action.GetResource().Resource == "nodes" {
-					patchFound = true
+				if action.GetResource().Resource == "nodes" {
+					if action.GetVerb() == "update" {
+						hasUpdate = true
+					}
+					if action.GetVerb() == "patch" {
+						hasPatch = true
+					}
 				}
 			}
 
-			if tt.expectPatch {
-				require.True(t, patchFound, "expected a patch action but none was found")
+			if tt.expectModified {
+				require.True(t, hasUpdate, "expected a node update action for taint removal")
+				require.True(t, hasPatch, "expected a node patch action for annotation removal")
 
 				updatedNode, err := kubeClient.CoreV1().Nodes().Get(context.Background(), tt.node.Name, metav1.GetOptions{})
 				require.NoError(t, err)
 
-				if tt.expectTaintGone {
-					require.False(t, hasOutOfServiceTaint(updatedNode),
-						"expected out-of-service taint to be removed")
-					for _, taint := range tt.node.Spec.Taints {
-						if taint.Key != OutOfServiceTaintKey {
-							found := false
-							for _, remaining := range updatedNode.Spec.Taints {
-								if remaining.Key == taint.Key {
-									found = true
-									break
-								}
+				require.False(t, hasOutOfServiceTaint(updatedNode),
+					"expected out-of-service taint to be removed")
+				for _, taint := range tt.node.Spec.Taints {
+					if taint.Key != OutOfServiceTaintKey {
+						found := false
+						for _, remaining := range updatedNode.Spec.Taints {
+							if remaining.Key == taint.Key {
+								found = true
+								break
 							}
-							require.True(t, found, "expected taint %s to be preserved", taint.Key)
 						}
+						require.True(t, found, "expected taint %s to be preserved", taint.Key)
 					}
 				}
 
-				if tt.expectAnnoGone {
-					_, exists := updatedNode.Annotations[OutOfServiceAnnotationKey]
-					require.False(t, exists, "expected out-of-service annotation to be removed")
-					for key, val := range tt.node.Annotations {
-						if key != OutOfServiceAnnotationKey {
-							require.Equal(t, val, updatedNode.Annotations[key],
-								"expected annotation %s to be preserved", key)
-						}
+				_, exists := updatedNode.Annotations[OutOfServiceAnnotationKey]
+				require.False(t, exists, "expected out-of-service annotation to be removed")
+				for key, val := range tt.node.Annotations {
+					if key != OutOfServiceAnnotationKey {
+						require.Equal(t, val, updatedNode.Annotations[key],
+							"expected annotation %s to be preserved", key)
 					}
 				}
 			} else {
-				require.False(t, patchFound, "expected no patch action but one was found")
+				require.False(t, hasUpdate, "expected no node update action")
+				require.False(t, hasPatch, "expected no node patch action")
 			}
 		})
 	}
