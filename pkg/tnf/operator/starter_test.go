@@ -269,17 +269,29 @@ func getArgs(t *testing.T, dualReplicaControlPlaneEnabled bool) args {
 }
 
 func TestHandleNodesWithRetry(t *testing.T) {
+	type handleNodesFn = func(
+		*controllercmd.ControllerContext,
+		corev1listers.NodeLister,
+		context.Context,
+		v1helpers.StaticPodOperatorClient,
+		kubernetes.Interface,
+		v1helpers.KubeInformersForNamespaces,
+		operatorv1informers.EtcdInformer,
+		*corev1.Node,
+		string,
+	) error
+
 	tests := []struct {
 		name                    string
-		setupMockHandleNodes    func() func(*controllercmd.ControllerContext, corev1listers.NodeLister, context.Context, v1helpers.StaticPodOperatorClient, kubernetes.Interface, v1helpers.KubeInformersForNamespaces, operatorv1informers.EtcdInformer) error
+		setupMockHandleNodes    func() handleNodesFn
 		expectDegradedCondition bool
 		expectDegradedStatus    operatorv1.ConditionStatus
 		expectRetries           bool
 	}{
 		{
 			name: "Success on first attempt",
-			setupMockHandleNodes: func() func(*controllercmd.ControllerContext, corev1listers.NodeLister, context.Context, v1helpers.StaticPodOperatorClient, kubernetes.Interface, v1helpers.KubeInformersForNamespaces, operatorv1informers.EtcdInformer) error {
-				return func(_ *controllercmd.ControllerContext, _ corev1listers.NodeLister, _ context.Context, _ v1helpers.StaticPodOperatorClient, _ kubernetes.Interface, _ v1helpers.KubeInformersForNamespaces, _ operatorv1informers.EtcdInformer) error {
+			setupMockHandleNodes: func() handleNodesFn {
+				return func(_ *controllercmd.ControllerContext, _ corev1listers.NodeLister, _ context.Context, _ v1helpers.StaticPodOperatorClient, _ kubernetes.Interface, _ v1helpers.KubeInformersForNamespaces, _ operatorv1informers.EtcdInformer, _ *corev1.Node, _ string) error {
 					return nil
 				}
 			},
@@ -289,9 +301,9 @@ func TestHandleNodesWithRetry(t *testing.T) {
 		},
 		{
 			name: "Success after retries",
-			setupMockHandleNodes: func() func(*controllercmd.ControllerContext, corev1listers.NodeLister, context.Context, v1helpers.StaticPodOperatorClient, kubernetes.Interface, v1helpers.KubeInformersForNamespaces, operatorv1informers.EtcdInformer) error {
+			setupMockHandleNodes: func() handleNodesFn {
 				attemptCount := 0
-				return func(_ *controllercmd.ControllerContext, _ corev1listers.NodeLister, _ context.Context, _ v1helpers.StaticPodOperatorClient, _ kubernetes.Interface, _ v1helpers.KubeInformersForNamespaces, _ operatorv1informers.EtcdInformer) error {
+				return func(_ *controllercmd.ControllerContext, _ corev1listers.NodeLister, _ context.Context, _ v1helpers.StaticPodOperatorClient, _ kubernetes.Interface, _ v1helpers.KubeInformersForNamespaces, _ operatorv1informers.EtcdInformer, _ *corev1.Node, _ string) error {
 					attemptCount++
 					if attemptCount < 3 {
 						return errors.New("temporary failure")
@@ -305,8 +317,8 @@ func TestHandleNodesWithRetry(t *testing.T) {
 		},
 		{
 			name: "Failure after all retries",
-			setupMockHandleNodes: func() func(*controllercmd.ControllerContext, corev1listers.NodeLister, context.Context, v1helpers.StaticPodOperatorClient, kubernetes.Interface, v1helpers.KubeInformersForNamespaces, operatorv1informers.EtcdInformer) error {
-				return func(_ *controllercmd.ControllerContext, _ corev1listers.NodeLister, _ context.Context, _ v1helpers.StaticPodOperatorClient, _ kubernetes.Interface, _ v1helpers.KubeInformersForNamespaces, _ operatorv1informers.EtcdInformer) error {
+			setupMockHandleNodes: func() handleNodesFn {
+				return func(_ *controllercmd.ControllerContext, _ corev1listers.NodeLister, _ context.Context, _ v1helpers.StaticPodOperatorClient, _ kubernetes.Interface, _ v1helpers.KubeInformersForNamespaces, _ operatorv1informers.EtcdInformer, _ *corev1.Node, _ string) error {
 					return errors.New("persistent failure")
 				}
 			},
@@ -343,9 +355,14 @@ func TestHandleNodesWithRetry(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
+			triggeringNode := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "master-0"},
+			}
+
 			// Run handleNodesWithRetry
 			handleNodesWithRetry(testArgs.controllerContext, controlPlaneNodeLister, ctx, testArgs.operatorClient,
-				testArgs.kubeClient, testArgs.kubeInformersForNamespaces, testArgs.etcdInformer)
+				testArgs.kubeClient, testArgs.kubeInformersForNamespaces, testArgs.etcdInformer,
+				triggeringNode, NodeEventTypeReady)
 
 			// Verify the operator condition was set correctly
 			if tt.expectDegradedCondition {
@@ -379,4 +396,50 @@ func TestHandleNodesWithRetry(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHandleFencingSecretChange_skipsBeforeExternalEtcdTransition(t *testing.T) {
+	ctx := context.Background()
+	fakeKube := fake.NewSimpleClientset()
+
+	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+		&operatorv1.StaticPodOperatorSpec{},
+		u.StaticPodOperatorStatus(),
+		nil,
+		nil,
+	)
+
+	eventRecorder := events.NewRecorder(
+		fakeKube.CoreV1().Events(operatorclient.TargetNamespace),
+		"test-fencing-secret",
+		&corev1.ObjectReference{},
+		clock.RealClock{},
+	)
+	controllerContext := &controllercmd.ControllerContext{
+		EventRecorder: eventRecorder,
+	}
+
+	kubeInformersForNamespaces := v1helpers.NewKubeInformersForNamespaces(
+		fakeKube,
+		"",
+		operatorclient.GlobalUserSpecifiedConfigNamespace,
+		operatorclient.GlobalMachineSpecifiedConfigNamespace,
+		operatorclient.TargetNamespace,
+		operatorclient.OperatorNamespace,
+		"kube-system",
+	)
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "fencing-credentials-master-0",
+			Namespace: operatorclient.TargetNamespace,
+		},
+		Data: map[string][]byte{"token": []byte("x")},
+	}
+
+	handleFencingSecretChange(ctx, nil, secret, controllerContext, fakeOperatorClient, fakeKube, kubeInformersForNamespaces)
+
+	jobList, err := fakeKube.BatchV1().Jobs(operatorclient.TargetNamespace).List(ctx, metav1.ListOptions{})
+	require.NoError(t, err)
+	require.Empty(t, jobList.Items, "fencing job should not be created from secrets before external etcd transition completes")
 }

@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,83 +34,36 @@ import (
 
 func TestHandleNodes(t *testing.T) {
 	tests := []struct {
-		name                   string
-		nodes                  []*corev1.Node
-		existingJobs           []runtime.Object
-		mockStartControllers   func() error
-		mockUpdateSetup        func() error
-		expectError            bool
-		expectStartControllers bool
-		expectUpdateSetup      bool
-		errorContains          string
+		name                           string
+		nodes                          []*corev1.Node
+		triggeringNode                 *corev1.Node
+		eventType                      string
+		existingJobs                   []runtime.Object
+		externalEtcdTransitionComplete bool
+		mockStartControllers           func() error
+		mockUpdateSetup                func() error
+		expectError                    bool
+		expectStartControllers         bool
+		expectUpdateSetup              bool
+		errorContains                  string
 	}{
 		{
-			name: "Less than 2 nodes - returns nil without action",
-			nodes: []*corev1.Node{
-				createReadyNode("master-0"),
-			},
+			name:                   "ready event: 1 node, no jobs - wait for 2 nodes (initial setup requires 2 nodes)",
+			nodes:                  []*corev1.Node{createReadyNode("master-0")},
+			triggeringNode:         createReadyNode("master-0"),
+			eventType:              NodeEventTypeReady,
 			existingJobs:           []runtime.Object{},
 			expectError:            false,
 			expectStartControllers: false,
 			expectUpdateSetup:      false,
 		},
 		{
-			name: "More than 2 nodes - returns nil without action",
-			nodes: []*corev1.Node{
-				createReadyNode("master-0"),
-				createReadyNode("master-1"),
-				createReadyNode("master-2"),
-			},
-			existingJobs:           []runtime.Object{},
-			expectError:            false,
-			expectStartControllers: false,
-			expectUpdateSetup:      false,
-		},
-		{
-			name: "2 nodes but first not ready - returns nil without action",
-			nodes: []*corev1.Node{
-				createNotReadyNode("master-0"),
-				createReadyNode("master-1"),
-			},
-			existingJobs:           []runtime.Object{},
-			expectError:            false,
-			expectStartControllers: false,
-			expectUpdateSetup:      false,
-		},
-		{
-			name: "2 nodes but second not ready - returns nil without action",
-			nodes: []*corev1.Node{
-				createReadyNode("master-0"),
-				createNotReadyNode("master-1"),
-			},
-			existingJobs:           []runtime.Object{},
-			expectError:            false,
-			expectStartControllers: false,
-			expectUpdateSetup:      false,
-		},
-		{
-			name: "2 ready nodes, no existing jobs - starts controllers only",
-			nodes: []*corev1.Node{
-				createReadyNode("master-0"),
-				createReadyNode("master-1"),
-			},
-			existingJobs: []runtime.Object{},
-			mockStartControllers: func() error {
-				return nil
-			},
-			expectError:            false,
-			expectStartControllers: true,
-			expectUpdateSetup:      false,
-		},
-		{
-			name: "2 ready nodes, existing jobs - starts controllers and updates setup",
-			nodes: []*corev1.Node{
-				createReadyNode("master-0"),
-				createReadyNode("master-1"),
-			},
-			existingJobs: []runtime.Object{
-				createTNFJob("tnf-setup"),
-			},
+			name:                           "delete event: 1 node remaining, transition complete - run reconciliation",
+			nodes:                          []*corev1.Node{createReadyNode("master-0")},
+			triggeringNode:                 createReadyNode("master-1"), // deleted node
+			eventType:                      NodeEventTypeDelete,
+			existingJobs:                   []runtime.Object{createTNFJob("tnf-after-setup-master-0")},
+			externalEtcdTransitionComplete: true,
 			mockStartControllers: func() error {
 				return nil
 			},
@@ -121,12 +75,152 @@ func TestHandleNodes(t *testing.T) {
 			expectUpdateSetup:      true,
 		},
 		{
-			name: "2 ready nodes - error starting controllers",
+			name:                           "delete event: 1 node, after-setup job in progress, transition complete - run controllers and update-setup",
+			nodes:                          []*corev1.Node{createReadyNode("master-0")},
+			triggeringNode:                 createReadyNode("master-1"),
+			eventType:                      NodeEventTypeDelete,
+			existingJobs:                   []runtime.Object{createTNFJobWithStatus("tnf-after-setup-master-0", 0)},
+			externalEtcdTransitionComplete: true,
+			mockStartControllers: func() error {
+				return nil
+			},
+			mockUpdateSetup: func() error {
+				return nil
+			},
+			expectError:            false,
+			expectStartControllers: true,
+			expectUpdateSetup:      true,
+		},
+		{
+			name: "delete event: deleted node NotReady in list, survivor Ready - readiness uses survivors only",
+			nodes: []*corev1.Node{
+				createReadyNode("master-0"),
+				createNotReadyNode("master-1"),
+			},
+			triggeringNode:                 createNotReadyNode("master-1"),
+			eventType:                      NodeEventTypeDelete,
+			existingJobs:                   []runtime.Object{createTNFJob("tnf-after-setup-master-0")},
+			externalEtcdTransitionComplete: true,
+			mockStartControllers: func() error {
+				return nil
+			},
+			mockUpdateSetup: func() error {
+				return nil
+			},
+			expectError:            false,
+			expectStartControllers: true,
+			expectUpdateSetup:      true,
+		},
+		{
+			name:                           "delete event: survivor not Ready - error so retries can run update-setup later",
+			nodes:                          []*corev1.Node{createNotReadyNode("master-0")},
+			triggeringNode:                 createReadyNode("master-1"),
+			eventType:                      NodeEventTypeDelete,
+			existingJobs:                   []runtime.Object{},
+			externalEtcdTransitionComplete: true,
+			expectError:                    true,
+			expectStartControllers:         false,
+			expectUpdateSetup:              false,
+			errorContains:                  "waiting for remaining control-plane nodes to be Ready",
+		},
+		{
+			name: "add event: >3 nodes - returns nil without action",
 			nodes: []*corev1.Node{
 				createReadyNode("master-0"),
 				createReadyNode("master-1"),
+				createReadyNode("master-2"),
+				createReadyNode("master-3"),
 			},
-			existingJobs: []runtime.Object{},
+			triggeringNode:         createReadyNode("master-3"),
+			eventType:              NodeEventTypeAdd,
+			existingJobs:           []runtime.Object{},
+			expectError:            false,
+			expectStartControllers: false,
+			expectUpdateSetup:      false,
+		},
+		{
+			name:                   "ready event: 2 nodes but first not ready - returns nil without action",
+			nodes:                  []*corev1.Node{createNotReadyNode("master-0"), createReadyNode("master-1")},
+			triggeringNode:         createReadyNode("master-1"),
+			eventType:              NodeEventTypeReady,
+			existingJobs:           []runtime.Object{},
+			expectError:            false,
+			expectStartControllers: false,
+			expectUpdateSetup:      false,
+		},
+		{
+			name:                   "ready event: 2 nodes but second not ready - returns nil without action",
+			nodes:                  []*corev1.Node{createReadyNode("master-0"), createNotReadyNode("master-1")},
+			triggeringNode:         createReadyNode("master-0"),
+			eventType:              NodeEventTypeReady,
+			existingJobs:           []runtime.Object{},
+			expectError:            false,
+			expectStartControllers: false,
+			expectUpdateSetup:      false,
+		},
+		{
+			name:           "ready event: 2 ready nodes, no existing jobs - starts controllers only (initial setup)",
+			nodes:          []*corev1.Node{createReadyNode("master-0"), createReadyNode("master-1")},
+			triggeringNode: createReadyNode("master-1"),
+			eventType:      NodeEventTypeReady,
+			existingJobs:   []runtime.Object{},
+			mockStartControllers: func() error {
+				return nil
+			},
+			expectError:            false,
+			expectStartControllers: true,
+			expectUpdateSetup:      false,
+		},
+		{
+			name:                           "ready event: 2 ready nodes, ExternalEtcdHasCompletedTransition true but no jobs - still starts initial bootstrap",
+			nodes:                          []*corev1.Node{createReadyNode("master-0"), createReadyNode("master-1")},
+			triggeringNode:                 createReadyNode("master-1"),
+			eventType:                      NodeEventTypeReady,
+			existingJobs:                   []runtime.Object{},
+			externalEtcdTransitionComplete: true,
+			mockStartControllers: func() error {
+				return nil
+			},
+			expectError:            false,
+			expectStartControllers: true,
+			expectUpdateSetup:      false,
+		},
+		{
+			name:           "ready event: 2 ready nodes, TNF jobs already exist - still starts controllers (idempotent)",
+			nodes:          []*corev1.Node{createReadyNode("master-0"), createReadyNode("master-1")},
+			triggeringNode: createReadyNode("master-1"),
+			eventType:      NodeEventTypeReady,
+			existingJobs:   []runtime.Object{createTNFJob("tnf-auth-job-master-0")},
+			mockStartControllers: func() error {
+				return nil
+			},
+			expectError:            false,
+			expectStartControllers: true,
+			expectUpdateSetup:      false,
+		},
+		{
+			name:                           "add event: 2 ready nodes, transition complete - start controllers and update-setup",
+			nodes:                          []*corev1.Node{createReadyNode("master-0"), createReadyNode("master-1")},
+			triggeringNode:                 createReadyNode("master-1"), // newly added node
+			eventType:                      NodeEventTypeAdd,
+			existingJobs:                   []runtime.Object{},
+			externalEtcdTransitionComplete: true,
+			mockStartControllers: func() error {
+				return nil
+			},
+			mockUpdateSetup: func() error {
+				return nil
+			},
+			expectError:            false,
+			expectStartControllers: true,
+			expectUpdateSetup:      true,
+		},
+		{
+			name:           "ready event: 2 ready nodes - error starting controllers",
+			nodes:          []*corev1.Node{createReadyNode("master-0"), createReadyNode("master-1")},
+			triggeringNode: createReadyNode("master-1"),
+			eventType:      NodeEventTypeReady,
+			existingJobs:   []runtime.Object{},
 			mockStartControllers: func() error {
 				return errors.New("failed to start controllers")
 			},
@@ -136,14 +230,12 @@ func TestHandleNodes(t *testing.T) {
 			errorContains:          "failed to start TNF job controllers",
 		},
 		{
-			name: "2 ready nodes, existing jobs - error updating setup",
-			nodes: []*corev1.Node{
-				createReadyNode("master-0"),
-				createReadyNode("master-1"),
-			},
-			existingJobs: []runtime.Object{
-				createTNFJob("tnf-setup"),
-			},
+			name:                           "add event: 2 ready nodes, transition complete - error updating setup",
+			nodes:                          []*corev1.Node{createReadyNode("master-0"), createReadyNode("master-1")},
+			triggeringNode:                 createReadyNode("master-1"),
+			eventType:                      NodeEventTypeAdd,
+			existingJobs:                   []runtime.Object{},
+			externalEtcdTransitionComplete: true,
 			mockStartControllers: func() error {
 				return nil
 			},
@@ -154,6 +246,22 @@ func TestHandleNodes(t *testing.T) {
 			expectStartControllers: true,
 			expectUpdateSetup:      true,
 			errorContains:          "failed to update pacemaker setup",
+		},
+		{
+			name:           "add event: 2 ready nodes, TNF jobs exist but transition not complete - no update-setup (regression)",
+			nodes:          []*corev1.Node{createReadyNode("master-0"), createReadyNode("master-1")},
+			triggeringNode: createReadyNode("master-1"),
+			eventType:      NodeEventTypeAdd,
+			existingJobs:   []runtime.Object{createTNFJob("tnf-auth-job-master-0")},
+			mockStartControllers: func() error {
+				return nil
+			},
+			mockUpdateSetup: func() error {
+				return nil
+			},
+			expectError:            false,
+			expectStartControllers: false,
+			expectUpdateSetup:      false,
 		},
 	}
 
@@ -166,13 +274,17 @@ func TestHandleNodes(t *testing.T) {
 			fakeKubeClient := fake.NewSimpleClientset(tt.existingJobs...)
 
 			// Create fake operator client
+			statusOpts := []func(*operatorv1.StaticPodOperatorStatus){
+				u.WithLatestRevision(1),
+				u.WithNodeStatusAtCurrentRevision(1),
+				u.WithNodeStatusAtCurrentRevision(1),
+			}
+			if tt.externalEtcdTransitionComplete {
+				statusOpts = append(statusOpts, u.WithOperatorCondition(ceohelpers.OperatorConditionExternalEtcdHasCompletedTransition, operatorv1.ConditionTrue))
+			}
 			fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
 				&operatorv1.StaticPodOperatorSpec{},
-				u.StaticPodOperatorStatus(
-					u.WithLatestRevision(1),
-					u.WithNodeStatusAtCurrentRevision(1),
-					u.WithNodeStatusAtCurrentRevision(1),
-				),
+				u.StaticPodOperatorStatus(statusOpts...),
 				nil,
 				nil,
 			)
@@ -251,6 +363,8 @@ func TestHandleNodes(t *testing.T) {
 			if tt.mockUpdateSetup != nil {
 				updateSetupFunc = func(
 					nodeList []*corev1.Node,
+					triggeringNode *corev1.Node,
+					eventType string,
 					ctx context.Context,
 					controllerContext *controllercmd.ControllerContext,
 					operatorClient v1helpers.StaticPodOperatorClient,
@@ -272,6 +386,8 @@ func TestHandleNodes(t *testing.T) {
 				fakeKubeClient,
 				kubeInformersForNamespaces,
 				etcdInformers.Operator().V1().Etcds(),
+				tt.triggeringNode,
+				tt.eventType,
 			)
 
 			// Verify
@@ -330,14 +446,52 @@ func createNotReadyNode(name string) *corev1.Node {
 	}
 }
 
+func TestControlPlaneNodesExceptName(t *testing.T) {
+	m0 := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "master-0"}}
+	m1 := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "master-1"}}
+	nilNode := (*corev1.Node)(nil)
+
+	require.Empty(t, controlPlaneNodesExceptName(nil, "master-0"))
+	require.Empty(t, controlPlaneNodesExceptName([]*corev1.Node{nilNode, nilNode}, "master-0"))
+
+	out := controlPlaneNodesExceptName([]*corev1.Node{m0, m1}, "master-0")
+	require.Len(t, out, 1)
+	require.Equal(t, "master-1", out[0].Name)
+
+	out = controlPlaneNodesExceptName([]*corev1.Node{m0, m1}, "unknown")
+	require.Len(t, out, 2)
+}
+
 func createTNFJob(name string) *batchv1.Job {
+	return createTNFJobWithStatus(name, 1)
+}
+
+func createTNFJobWithStatus(name string, succeeded int32) *batchv1.Job {
+	labels := map[string]string{
+		"app.kubernetes.io/component": "two-node-fencing-setup",
+	}
+	// Align app.kubernetes.io/name with production Job manifests (see jobs.RunTNFJobController hooks).
+	switch {
+	case strings.HasPrefix(name, "tnf-after-setup"):
+		labels["app.kubernetes.io/name"] = "tnf-after-setup"
+	case strings.HasPrefix(name, "tnf-fencing-job"):
+		labels["app.kubernetes.io/name"] = "tnf-fencing-job"
+	case strings.HasPrefix(name, "tnf-auth-job"):
+		labels["app.kubernetes.io/name"] = "tnf-auth-job"
+	case strings.HasPrefix(name, "tnf-setup-job"):
+		labels["app.kubernetes.io/name"] = "tnf-setup-job"
+	case strings.HasPrefix(name, "tnf-update-setup-job"):
+		labels["app.kubernetes.io/name"] = "tnf-update-setup-job"
+	}
+
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: operatorclient.TargetNamespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/component": "two-node-fencing-setup",
-			},
+			Labels:    labels,
+		},
+		Status: batchv1.JobStatus{
+			Succeeded: succeeded,
 		},
 	}
 }
