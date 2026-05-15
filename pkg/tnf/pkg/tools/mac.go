@@ -48,15 +48,23 @@ func HashMAC(macAddress string) (string, error) {
 // bootMACAddress first (if present), followed by any additional NICs
 // from status.hardware.nics.
 //
-// When Machine CRs are absent (e.g. Assisted Installer deployments),
-// falls back to reading the node's machine.openshift.io/machine annotation.
+// Fallback order when the primary lookup fails:
+//  1. Machine CR (status.nodeRef.name → machine name → BMH consumerRef)
+//  2. Node annotation (machine.openshift.io/machine → machine name → BMH consumerRef)
+//  3. Node providerID (baremetalhost:///ns/name/uid → BMH directly)
 func GetNodeMACAddresses(ctx context.Context, kubeClient kubernetes.Interface, dyClient dynamic.Interface, nodeName string) ([]string, error) {
 	machineName, err := findMachineForNode(ctx, dyClient, nodeName)
 	if err != nil {
 		klog.Infof("Machine CR lookup failed for node %s: %v; trying node annotation fallback", nodeName, err)
 		machineName, err = findMachineNameFromNodeAnnotation(ctx, kubeClient, nodeName)
 		if err != nil {
-			return nil, fmt.Errorf("failed to resolve machine for node %s: %w", nodeName, err)
+			klog.Infof("Node annotation fallback failed for node %s: %v; trying providerID fallback", nodeName, err)
+			macs, pidErr := findBMHMACsByProviderID(ctx, kubeClient, dyClient, nodeName)
+			if pidErr != nil {
+				return nil, fmt.Errorf("failed to resolve MACs for node %s (tried Machine CRs, node annotation, providerID): %w", nodeName, pidErr)
+			}
+			klog.Infof("Resolved %d MAC(s) for node %s via providerID: %v", len(macs), nodeName, macs)
+			return macs, nil
 		}
 	}
 
@@ -116,6 +124,78 @@ func findMachineForNode(ctx context.Context, dyClient dynamic.Interface, nodeNam
 		}
 	}
 	return "", fmt.Errorf("no machine found with nodeRef pointing to node %s", nodeName)
+}
+
+// findBMHMACsByProviderID resolves the node's BareMetalHost via the
+// node's spec.providerID field (format: "baremetalhost:///ns/name/uid"
+// or "metal3://ns/name/uid") and extracts its MAC addresses.
+func findBMHMACsByProviderID(ctx context.Context, kubeClient kubernetes.Interface, dyClient dynamic.Interface, nodeName string) ([]string, error) {
+	node, err := kubeClient.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get node %s: %w", nodeName, err)
+	}
+
+	providerID := node.Spec.ProviderID
+	if providerID == "" {
+		return nil, fmt.Errorf("node %s has no providerID set", nodeName)
+	}
+
+	bmhName, bmhNamespace := parseBMHProviderID(providerID)
+	if bmhName == "" {
+		return nil, fmt.Errorf("node %s providerID %q is not a baremetalhost reference", nodeName, providerID)
+	}
+	if bmhNamespace == "" {
+		bmhNamespace = machineAPINamespace
+	}
+
+	klog.Infof("Resolved BMH %s/%s from node %s providerID", bmhNamespace, bmhName, nodeName)
+
+	bmh, err := dyClient.Resource(bmhGVR).Namespace(bmhNamespace).Get(ctx, bmhName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get baremetalhost %s/%s: %w", bmhNamespace, bmhName, err)
+	}
+
+	var macs []string
+	seen := make(map[string]bool)
+
+	if spec, ok := bmh.Object["spec"].(map[string]interface{}); ok {
+		if bootMAC, ok := spec["bootMACAddress"].(string); ok && bootMAC != "" {
+			normalized := normalizeMAC(bootMAC)
+			if normalized != "" {
+				seen[normalized] = true
+				macs = append(macs, bootMAC)
+			}
+		}
+	}
+
+	macs = append(macs, extractNICMACs(bmh.Object, seen)...)
+
+	if len(macs) == 0 {
+		return nil, fmt.Errorf("baremetalhost %s/%s has no MAC addresses", bmhNamespace, bmhName)
+	}
+	return macs, nil
+}
+
+// parseBMHProviderID extracts the BMH namespace and name from a
+// providerID string. Supported formats:
+//   - baremetalhost:///namespace/name/uid
+//   - metal3://namespace/name/uid
+func parseBMHProviderID(providerID string) (name, namespace string) {
+	var path string
+	switch {
+	case strings.HasPrefix(providerID, "baremetalhost:///"):
+		path = strings.TrimPrefix(providerID, "baremetalhost:///")
+	case strings.HasPrefix(providerID, "metal3://"):
+		path = strings.TrimPrefix(providerID, "metal3://")
+	default:
+		return "", ""
+	}
+
+	parts := strings.SplitN(path, "/", 3)
+	if len(parts) < 2 {
+		return "", ""
+	}
+	return parts[1], parts[0]
 }
 
 // findBMHMACs returns all unique MAC addresses from the BareMetalHost

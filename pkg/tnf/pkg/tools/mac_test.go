@@ -122,6 +122,13 @@ func newNodeWithAnnotation(name, machineName string) *corev1.Node {
 	}
 }
 
+func newNodeWithProviderID(name, providerID string) *corev1.Node {
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec:       corev1.NodeSpec{ProviderID: providerID},
+	}
+}
+
 func TestGetNodeMACAddresses(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -266,7 +273,7 @@ func TestGetNodeMACAddresses(t *testing.T) {
 			errContain: "have no MAC addresses",
 		},
 		{
-			name:     "no matching machine and no node annotation",
+			name:     "all fallbacks fail",
 			nodeName: "master-99",
 			machines: []map[string]interface{}{
 				{
@@ -277,7 +284,7 @@ func TestGetNodeMACAddresses(t *testing.T) {
 				},
 			},
 			wantErr:    true,
-			errContain: "failed to resolve machine",
+			errContain: "tried Machine CRs, node annotation, providerID",
 		},
 		{
 			name:     "no matching BMH",
@@ -377,6 +384,74 @@ func TestGetNodeMACAddresses(t *testing.T) {
 			},
 			wantMACs: []string{"AA:BB:CC:DD:EE:01", "AA:BB:CC:DD:EE:02"},
 		},
+		{
+			name:     "providerID fallback when no Machine CRs and no annotation",
+			nodeName: "master-0",
+			nodes: []*corev1.Node{
+				newNodeWithProviderID("master-0", "baremetalhost:///openshift-machine-api/bmh-0/some-uid"),
+			},
+			bmhs: []map[string]interface{}{
+				{
+					"name": "bmh-0",
+					"spec": map[string]interface{}{
+						"bootMACAddress": "AA:BB:CC:DD:EE:01",
+					},
+					"status": map[string]interface{}{
+						"hardware": map[string]interface{}{
+							"nics": []interface{}{
+								map[string]interface{}{"mac": "AA:BB:CC:DD:EE:02", "name": "eth0"},
+							},
+						},
+					},
+				},
+			},
+			wantMACs: []string{"AA:BB:CC:DD:EE:01", "AA:BB:CC:DD:EE:02"},
+		},
+		{
+			name:     "providerID fallback with metal3:// scheme",
+			nodeName: "master-0",
+			nodes: []*corev1.Node{
+				newNodeWithProviderID("master-0", "metal3://openshift-machine-api/bmh-0/some-uid"),
+			},
+			bmhs: []map[string]interface{}{
+				{
+					"name": "bmh-0",
+					"spec": map[string]interface{}{
+						"bootMACAddress": "AA:BB:CC:DD:EE:01",
+					},
+				},
+			},
+			wantMACs: []string{"AA:BB:CC:DD:EE:01"},
+		},
+		{
+			name:     "providerID fallback picks correct BMH",
+			nodeName: "master-1",
+			nodes: []*corev1.Node{
+				newNodeWithProviderID("master-1", "baremetalhost:///openshift-machine-api/bmh-1/uid-1"),
+			},
+			bmhs: []map[string]interface{}{
+				{
+					"name": "bmh-0",
+					"spec": map[string]interface{}{
+						"bootMACAddress": "AA:BB:CC:DD:EE:01",
+					},
+				},
+				{
+					"name": "bmh-1",
+					"spec": map[string]interface{}{
+						"bootMACAddress": "AA:BB:CC:DD:EE:03",
+					},
+					"status": map[string]interface{}{
+						"hardware": map[string]interface{}{
+							"nics": []interface{}{
+								map[string]interface{}{"mac": "AA:BB:CC:DD:EE:04", "name": "eth0"},
+							},
+						},
+					},
+				},
+			},
+			wantMACs: []string{"AA:BB:CC:DD:EE:03", "AA:BB:CC:DD:EE:04"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -407,6 +482,34 @@ func TestGetNodeMACAddresses(t *testing.T) {
 				if mac != tt.wantMACs[i] {
 					t.Errorf("GetNodeMACAddresses()[%d] = %q, want %q", i, mac, tt.wantMACs[i])
 				}
+			}
+		})
+	}
+}
+
+func TestParseBMHProviderID(t *testing.T) {
+	tests := []struct {
+		providerID    string
+		wantName      string
+		wantNamespace string
+	}{
+		{"baremetalhost:///openshift-machine-api/bmh-0/some-uid", "bmh-0", "openshift-machine-api"},
+		{"metal3://openshift-machine-api/bmh-0/some-uid", "bmh-0", "openshift-machine-api"},
+		{"baremetalhost:///custom-ns/my-host/uid-123", "my-host", "custom-ns"},
+		{"aws:///us-east-1/i-123", "", ""},
+		{"", "", ""},
+		{"metal3://", "", ""},
+		{"baremetalhost:///", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.providerID, func(t *testing.T) {
+			name, ns := parseBMHProviderID(tt.providerID)
+			if name != tt.wantName {
+				t.Errorf("parseBMHProviderID(%q) name = %q, want %q", tt.providerID, name, tt.wantName)
+			}
+			if ns != tt.wantNamespace {
+				t.Errorf("parseBMHProviderID(%q) namespace = %q, want %q", tt.providerID, ns, tt.wantNamespace)
 			}
 		})
 	}
