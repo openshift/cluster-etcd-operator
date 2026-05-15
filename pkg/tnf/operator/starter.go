@@ -3,6 +3,7 @@ package operator
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -36,6 +37,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/externaletcdsupportcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/etcd"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/jobs"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
@@ -46,17 +48,46 @@ var (
 	// fencingUpdateMutex is used to make usage of fencingUpdateTriggered thread safe
 	fencingUpdateMutex sync.Mutex
 
-	// handleNodesFunc is a variable to allow mocking in tests
-	handleNodesFunc = handleNodes
+	handleNodesFunc = handleNodes // test hook
 
-	// retryBackoffConfig allows customizing retry behavior for tests
+	// Per wave: exponential backoff, then Degraded + checkpoint (OCPBUGS-84695).
 	retryBackoffConfig = wait.Backoff{
 		Duration: 5 * time.Second,
 		Factor:   2.0,
-		Steps:    9, // ~10 minutes total: 5s + 10s + 20s + 40s + 80s + 120s + 120s + 120s + 120s
+		Steps:    9,
 		Cap:      2 * time.Minute,
 	}
+
+	// Between waves after backoff exhaustion (OCPBUGS-84695); tests shorten.
+	tnfJobControllerSetupCheckpointInterval = 10 * time.Minute
 )
+
+const (
+	masterNodeLabelKey       = "node-role.kubernetes.io/master"
+	controlPlaneNodeLabelKey = "node-role.kubernetes.io/control-plane"
+)
+
+// hasControlPlaneRoleLabels is true when the node has master or control-plane role labels.
+// Arbiter nodes are not full control-plane nodes and do not carry these labels; other call sites must union arbiter when needed.
+func hasControlPlaneRoleLabels(node *corev1.Node) bool {
+	if node == nil {
+		return false
+	}
+	l := node.Labels
+	_, master := l[masterNodeLabelKey]
+	_, controlPlane := l[controlPlaneNodeLabelKey]
+	return master || controlPlane
+}
+
+func filterControlPlaneNodesForTNF(nodes []*corev1.Node) []*corev1.Node {
+	out := make([]*corev1.Node, 0, len(nodes))
+	for _, n := range nodes {
+		if hasControlPlaneRoleLabels(n) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
 
 // HandleDualReplicaClusters checks feature gate and control plane topology,
 // and handles dual replica aka two node fencing clusters
@@ -112,13 +143,13 @@ func HandleDualReplicaClusters(
 	klog.Infof("watching for secrets...")
 	_, err = kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			handleFencingSecretChange(ctx, kubeClient, nil, obj)
+			handleFencingSecretChange(ctx, operatorClient, kubeClient, nil, obj)
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
-			handleFencingSecretChange(ctx, kubeClient, oldObj, newObj)
+			handleFencingSecretChange(ctx, operatorClient, kubeClient, oldObj, newObj)
 		},
 		DeleteFunc: func(obj interface{}) {
-			handleFencingSecretChange(ctx, kubeClient, nil, obj)
+			handleFencingSecretChange(ctx, operatorClient, kubeClient, nil, obj)
 		},
 	})
 	if err != nil {
@@ -146,26 +177,49 @@ func handleAddedNode(
 			return
 		}
 		klog.Infof("node added: %s", node.GetName())
-
-		// ensure we have both control plane nodes before creating jobs
-		nodeList, err := controlPlaneNodeLister.List(labels.Everything())
-		if err != nil {
-			klog.Errorf("failed to list control plane nodes while waiting to create TNF jobs: %v", err)
-			return
-		}
-		if len(nodeList) != 2 {
-			klog.Info("not starting TNF jobs yet, waiting for 2 control plane nodes to exist")
-			return
-		}
-		klog.Infof("found 2 control plane nodes (%q, %q)", nodeList[0].GetName(), nodeList[1].GetName())
-
-		// we can have 2 nodes on the first call of AddFunc already, ensure we create job controllers once only
-		once.Do(func() {
-			// this potentially needs some time when we wait for etcd bootstrap to complete, so run it in a goroutine,
-			// to not block the event handler
-			go handleNodesWithRetry(nodeList, ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
-		})
+		tryStartTnfJobControllers(controllerContext, controlPlaneNodeLister, once, ctx, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
 	}
+}
+
+func tryStartTnfJobControllers(
+	controllerContext *controllercmd.ControllerContext,
+	controlPlaneNodeLister corev1listers.NodeLister,
+	once *sync.Once,
+	ctx context.Context,
+	operatorClient v1helpers.StaticPodOperatorClient,
+	kubeClient kubernetes.Interface,
+	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
+	etcdInformer operatorv1informers.EtcdInformer,
+) {
+	nodeList, err := controlPlaneNodeLister.List(labels.Everything())
+	if err != nil {
+		klog.Errorf("failed to list control plane nodes while waiting to create TNF jobs: %v", err)
+		return
+	}
+	nodes := filterControlPlaneNodesForTNF(nodeList)
+	if len(nodes) != 2 {
+		if len(nodes) > 2 {
+			klog.Warningf("found %d control-plane role nodes; TNF expects 2, not starting TNF jobs", len(nodes))
+		} else {
+			klog.V(4).Infof("TNF jobs: need 2 control-plane role nodes, have %d", len(nodes))
+		}
+		return
+	}
+	klog.Infof("found 2 control plane nodes for TNF (%q, %q)", nodes[0].Name, nodes[1].Name)
+
+	once.Do(func() {
+		freshList, listErr := controlPlaneNodeLister.List(labels.Everything())
+		if listErr != nil {
+			klog.Errorf("failed to list control plane nodes for TNF job startup: %v", listErr)
+			return
+		}
+		fresh := filterControlPlaneNodesForTNF(freshList)
+		if len(fresh) != 2 {
+			klog.Warningf("expected 2 control-plane role nodes at TNF startup, got %d", len(fresh))
+			return
+		}
+		go handleNodesWithRetry(fresh, ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
+	})
 }
 
 func handleNodesWithRetry(
@@ -177,41 +231,75 @@ func handleNodesWithRetry(
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	etcdInformer operatorv1informers.EtcdInformer) {
 
-	// Retry with exponential backoff to handle transient failures
-	var setupErr error
-	err := wait.ExponentialBackoffWithContext(ctx, retryBackoffConfig, func(ctx context.Context) (bool, error) {
-		setupErr = handleNodesFunc(nodeList, ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
-		if setupErr != nil {
-			klog.Warningf("failed to setup TNF job controllers, will retry: %v", setupErr)
-			return false, nil
+	// Exponential backoff per wave; Degraded + checkpoint on exhaustion (OCPBUGS-84695).
+	for {
+		if ctx.Err() != nil {
+			klog.Infof("stopping TNF job controller setup: %v", ctx.Err())
+			return
 		}
-		return true, nil
-	})
 
-	if err != nil || setupErr != nil {
-		klog.Errorf("failed to setup TNF job controllers after 10 minutes of retries: %v", setupErr)
+		waveBackoff := retryBackoffConfig
+		var lastSetupErr error
+		err := wait.ExponentialBackoffWithContext(ctx, waveBackoff, func(ctx context.Context) (bool, error) {
+			setupErr := handleNodesFunc(nodeList, ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
+			if setupErr == nil {
+				return true, nil
+			}
+			lastSetupErr = setupErr
+			klog.Warningf("TNF job controller setup failed, retrying: %v", setupErr)
+			return false, nil
+		})
 
-		// Degrade the operator to indicate TNF job controller setup failed
+		if err == nil {
+			// Clear TNFJobControllersDegraded after setup succeeds (e.g. following an earlier failed wave).
+			_, _, updateErr := v1helpers.UpdateStatus(ctx, operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+				Type:    "TNFJobControllersDegraded",
+				Status:  operatorv1.ConditionFalse,
+				Reason:  "AsExpected",
+				Message: "TNF job controllers setup completed successfully",
+			}))
+			if updateErr != nil {
+				klog.Errorf("failed to update operator status: %v", updateErr)
+			}
+			return
+		}
+
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			klog.Infof("stopping TNF job controller setup: %v", err)
+			return
+		}
+
+		msg := fmt.Sprintf("TNF setup: backoff error %v; pauses %v then retries", err, tnfJobControllerSetupCheckpointInterval)
+		if errors.Is(err, wait.ErrWaitTimeout) {
+			klog.Errorf("TNF setup: backoff exhausted, pause %v then retry (last error: %v)", tnfJobControllerSetupCheckpointInterval, lastSetupErr)
+			msg = fmt.Sprintf("TNF setup: backoff exhausted; pauses %v then retries (last error: %v)", tnfJobControllerSetupCheckpointInterval, lastSetupErr)
+		} else {
+			klog.Errorf("TNF setup: unexpected backoff error: %v", err)
+		}
+
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "TNFJobControllersDegraded",
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "SetupFailed",
-			Message: fmt.Sprintf("Failed to setup TNF job controllers after retries: %v", setupErr),
+			Message: msg,
 		}))
 		if updateErr != nil {
 			klog.Errorf("failed to update operator status to degraded: %v", updateErr)
 		}
-	} else {
-		// Clear any previous degraded condition on success
-		_, _, updateErr := v1helpers.UpdateStatus(ctx, operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:    "TNFJobControllersDegraded",
-			Status:  operatorv1.ConditionFalse,
-			Reason:  "AsExpected",
-			Message: "TNF job controllers setup completed successfully",
-		}))
-		if updateErr != nil {
-			klog.Errorf("failed to update operator status: %v", updateErr)
+
+		if !waitTnfSetupCheckpoint(ctx) {
+			return
 		}
+	}
+}
+
+func waitTnfSetupCheckpoint(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		klog.Infof("stopping TNF job controller setup: %v", ctx.Err())
+		return false
+	case <-time.After(tnfJobControllerSetupCheckpointInterval):
+		return true
 	}
 }
 
@@ -235,7 +323,10 @@ func handleNodes(
 	if err := waitForEtcdBootstrapCompleted(ctx, operatorClient); err != nil {
 		return fmt.Errorf("failed to wait for etcd bootstrap: %w", err)
 	}
-	klog.Infof("bootstrap completed, creating TNF job controllers")
+	if err := waitForTnfControlPlaneReadyAndStableRevision(ctx, kubeClient, operatorClient, nodeList); err != nil {
+		return fmt.Errorf("TNF pre-job gates: %w", err)
+	}
+	klog.Infof("TNF pre-job gates passed; creating job controllers")
 
 	// the order of job creation does not matter, the jobs wait on each other as needed
 	for _, node := range nodeList {
@@ -258,6 +349,58 @@ func handleNodes(
 	runJobController(ctx, tools.JobTypeFencing, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
 
 	return nil
+}
+
+// waitForTnfControlPlaneReadyAndStableRevision polls 10s/10m until nodeList are Ready with control-plane labels and IsRevisionStable (OCPBUGS-84695).
+func waitForTnfControlPlaneReadyAndStableRevision(ctx context.Context, kubeClient kubernetes.Interface, operatorClient v1helpers.StaticPodOperatorClient, nodeList []*corev1.Node) error {
+	if len(nodeList) != 2 {
+		return fmt.Errorf("TNF gates: want 2 nodes, have %d", len(nodeList))
+	}
+	if nodeList[0] == nil || nodeList[1] == nil {
+		return fmt.Errorf("TNF gates: nil node in list")
+	}
+	const interval = 10 * time.Second
+	const timeout = 10 * time.Minute
+	klog.Infof("TNF gates: poll %v timeout %v for %q %q", interval, timeout, nodeList[0].Name, nodeList[1].Name)
+	return wait.PollUntilContextTimeout(ctx, interval, timeout, false, func(ctx context.Context) (bool, error) {
+		for _, ref := range nodeList {
+			n, err := kubeClient.CoreV1().Nodes().Get(ctx, ref.Name, metav1.GetOptions{})
+			if err != nil {
+				if apierrors.IsNotFound(err) {
+					klog.V(4).Infof("TNF gate: node %q missing", ref.Name)
+					return false, nil
+				}
+				return false, err
+			}
+			if !hasControlPlaneRoleLabels(n) {
+				klog.V(4).Infof("TNF gate: node %q lacks control-plane role labels", ref.Name)
+				return false, nil
+			}
+			ready := false
+			for _, c := range n.Status.Conditions {
+				if c.Type == corev1.NodeReady && c.Status == corev1.ConditionTrue {
+					ready = true
+					break
+				}
+			}
+			if !ready {
+				klog.V(4).Infof("TNF gate: node %q not Ready", ref.Name)
+				return false, nil
+			}
+		}
+
+		stable, err := ceohelpers.IsRevisionStable(operatorClient)
+		if err != nil {
+			klog.Errorf("IsRevisionStable: %v", err)
+			return false, err
+		}
+		if !stable {
+			klog.V(4).Infof("TNF gate: etcd revision not stable")
+			return false, nil
+		}
+
+		return true, nil
+	})
 }
 
 func waitForEtcdBootstrapCompleted(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient) error {
@@ -357,7 +500,7 @@ func runJobController(ctx context.Context, jobType tools.JobType, nodeName *stri
 	go tnfJobController.Run(ctx, 1)
 }
 
-func handleFencingSecretChange(ctx context.Context, client kubernetes.Interface, oldObj, obj interface{}) {
+func handleFencingSecretChange(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient, client kubernetes.Interface, oldObj, obj interface{}) {
 	secret, ok := obj.(*corev1.Secret)
 	if !ok {
 		klog.Warningf("failed to convert added / modified / deleted object to Secret %+v", obj)
@@ -392,6 +535,18 @@ func handleFencingSecretChange(ctx context.Context, client kubernetes.Interface,
 		klog.Infof("handling modified fencing secret %s", secret.GetName())
 	} else {
 		klog.Infof("handling added or deleted fencing secret %s", secret.GetName())
+	}
+
+	// Defer fencing job restart from secrets until external etcd transition completes (OCPBUGS-84695).
+	transitionComplete, err := ceohelpers.HasExternalEtcdCompletedTransition(ctx, operatorClient)
+	if err != nil {
+		klog.Errorf("failed to check external etcd transition for fencing secret handler: %v", err)
+		return
+	}
+	if !transitionComplete {
+		klog.V(4).Infof("skipping fencing job restart from fencing secret change until %s is True",
+			etcd.OperatorConditionExternalEtcdHasCompletedTransition)
+		return
 	}
 
 	// check if fencing update is triggered already
@@ -440,7 +595,7 @@ func handleFencingSecretChange(ctx context.Context, client kubernetes.Interface,
 	}
 
 	// wait as long as the fencing job waits as well, plus some execution time
-	err := wait.PollUntilContextTimeout(ctx, tools.JobPollIntervall, tools.FencingJobCompletedTimeout, true, isFencingJobFinished)
+	err = wait.PollUntilContextTimeout(ctx, tools.JobPollIntervall, tools.FencingJobCompletedTimeout, true, isFencingJobFinished)
 	if err != nil {
 		// if we set timeouts right, this should not happen...
 		klog.Errorf("timed out waiting for fencing job to complete: %v", err)
