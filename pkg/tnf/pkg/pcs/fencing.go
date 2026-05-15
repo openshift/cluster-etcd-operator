@@ -69,22 +69,22 @@ func ConfigureFencing(ctx context.Context, kubeClient kubernetes.Interface, dyCl
 	klog.Info("Getting fencing configs from secrets")
 	fencingConfigs := []fencingConfig{}
 
+	secretMap, err := tools.GetFencingSecrets(ctx, kubeClient, dyClient, nodeNames)
+	if err != nil {
+		klog.Errorf("Failed to get fencing secrets: %v", err)
+		return fmt.Errorf("failed to get fencing secrets: %v", err)
+	}
+
 	for i, nodeName := range nodeNames {
 		if nodeName == "" {
 			continue
 		}
-		secret, err := tools.GetFencingSecret(ctx, kubeClient, dyClient, nodeName)
-		if err != nil {
-			klog.Errorf("Failed to get fencing secret for node %s: %v", nodeName, err)
-			return fmt.Errorf("failed to get fencing secret for node %s: %v", nodeName, err)
-		}
+		secret := secretMap[nodeName]
 		fc, err := getFencingConfig(nodeName, secret)
 		if err != nil {
 			klog.Errorf("Failed to get fencing config for node %s: %v", nodeName, err)
 			return fmt.Errorf("failed to get fencing config for node %s: %v", nodeName, err)
 		}
-		// Add pcmk_delay_base to both devices but with different values.
-		// This prevents fencing races and device update issues.
 		if i == 0 {
 			fc.FencingDeviceOptions[PcmkDelayBase] = firstPcmkDelayBase
 		} else {
