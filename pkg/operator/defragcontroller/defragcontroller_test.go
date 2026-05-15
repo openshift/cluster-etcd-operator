@@ -69,6 +69,7 @@ func TestNewDefragController(t *testing.T) {
 		staticPodStatus     *operatorv1.StaticPodOperatorStatus
 		objects             []runtime.Object
 		clusterSize         int
+		syncLoops           int
 		memberHealth        *etcdcli.FakeMemberHealth
 		dbInUse             int64
 		dbSize              int64
@@ -84,6 +85,7 @@ func TestNewDefragController(t *testing.T) {
 			dbInUse:             minDefragBytes / 2, // 500MB
 			defragSuccessEvents: 3,
 			clusterSize:         3,
+			syncLoops:           3,
 			memberHealth:        &etcdcli.FakeMemberHealth{Healthy: 3},
 			objects: []runtime.Object{
 				u.FakeInfrastructureTopology(configv1.HighlyAvailableTopologyMode),
@@ -97,6 +99,7 @@ func TestNewDefragController(t *testing.T) {
 			dbInUse:             minDefragBytes / 2, // 500MB
 			defragSuccessEvents: 2,
 			clusterSize:         2,
+			syncLoops:           2,
 			memberHealth:        &etcdcli.FakeMemberHealth{Healthy: 2},
 			objects: []runtime.Object{
 				u.FakeInfrastructureTopology(configv1.DualReplicaTopologyMode),
@@ -110,6 +113,7 @@ func TestNewDefragController(t *testing.T) {
 			dbInUse:             minDefragBytes / 2, // 500MB
 			defragSuccessEvents: 3,
 			clusterSize:         3,
+			syncLoops:           3,
 			memberHealth:        &etcdcli.FakeMemberHealth{Healthy: 3},
 			objects: []runtime.Object{
 				u.FakeInfrastructureTopology(configv1.HighlyAvailableArbiterMode),
@@ -226,19 +230,26 @@ func TestNewDefragController(t *testing.T) {
 				configmapLister:      corev1listers.NewConfigMapLister(indexer),
 				// to speed the tests up, in real life we use minDefragWaitDuration
 				defragWaitDuration: 1 * time.Second,
-				defragBudget:       defaultDefragBudget,
+				defragCooldown:     0,
 			}
 
-			err := controller.sync(context.TODO(), factory.NewSyncContext("defrag-controller", eventRecorder))
-			if err != nil && !scenario.wantErr {
-				t.Fatalf("unexepected error %v", err)
+			syncLoops := scenario.syncLoops
+			if syncLoops == 0 {
+				syncLoops = 1
+			}
+			var err error
+			for i := 0; i < syncLoops; i++ {
+				err = controller.sync(context.TODO(), factory.NewSyncContext("defrag-controller", eventRecorder))
+				if err != nil && !scenario.wantErr {
+					t.Fatalf("unexpected error on sync %d: %v", i, err)
+				}
 			}
 			if err == nil && scenario.wantErr {
 				t.Fatal("expected error got nil")
 			}
 			if err != nil && scenario.wantErr {
 				if !strings.HasPrefix(err.Error(), scenario.wantErrMsg) {
-					t.Fatalf("unexepected error prefix want: %q got: %q", scenario.wantErrMsg, err.Error())
+					t.Fatalf("unexpected error prefix want: %q got: %q", scenario.wantErrMsg, err.Error())
 				}
 			}
 			var defragSuccessEvents int
@@ -311,7 +322,7 @@ func TestNewDefragControllerMultiSyncs(t *testing.T) {
 				u.FakeInfrastructureTopology(configv1.HighlyAvailableTopologyMode),
 			},
 			fakeClientOpts: []etcdcli.FakeClientOption{
-				etcdcli.WithFakeDefragErrors(generateErrors(maxDefragFailuresBeforeDegrade * 3)),
+				etcdcli.WithFakeDefragErrors(generateErrors(maxDefragFailuresBeforeDegrade)),
 			},
 			wantDisabledCondition: operatorv1.ConditionFalse,
 			wantDegradedCondition: operatorv1.ConditionTrue,
@@ -323,16 +334,15 @@ func TestNewDefragControllerMultiSyncs(t *testing.T) {
 			dbInUse:             minDefragBytes / 2,
 			defragSuccessEvents: 3,
 			clusterSize:         3,
-			syncLoops:           maxDefragFailuresBeforeDegrade + 1,
+			syncLoops:           maxDefragFailuresBeforeDegrade + 3,
 			errSyncLoops:        maxDefragFailuresBeforeDegrade,
 			memberHealth:        &etcdcli.FakeMemberHealth{Healthy: 3},
 			objects: []runtime.Object{
 				u.FakeInfrastructureTopology(configv1.HighlyAvailableTopologyMode),
 			},
 			fakeClientOpts: []etcdcli.FakeClientOption{
-				etcdcli.WithFakeDefragErrors(generateErrors(maxDefragFailuresBeforeDegrade * 3)),
+				etcdcli.WithFakeDefragErrors(generateErrors(maxDefragFailuresBeforeDegrade)),
 			},
-			// ignoring errors here since the first maxDefragFailuresBeforeDegrade invocations will return an error, the ones after won't
 			wantDisabledCondition: operatorv1.ConditionFalse,
 			wantDegradedCondition: operatorv1.ConditionFalse,
 		},
@@ -383,7 +393,7 @@ func TestNewDefragControllerMultiSyncs(t *testing.T) {
 				configmapLister:      corev1listers.NewConfigMapLister(indexer),
 				// to speed the tests up, in real life we use minDefragWaitDuration
 				defragWaitDuration: 1 * time.Second,
-				defragBudget:       defaultDefragBudget,
+				defragCooldown:     0,
 			}
 
 			numSyncErr := 0
@@ -415,7 +425,7 @@ func TestNewDefragControllerMultiSyncs(t *testing.T) {
 	}
 }
 
-func TestDefragBudgetExceeded(t *testing.T) {
+func TestDefragCooldown(t *testing.T) {
 	integration.BeforeTestExternal(t)
 
 	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
@@ -461,30 +471,39 @@ func TestDefragBudgetExceeded(t *testing.T) {
 		infrastructureLister: configv1listers.NewInfrastructureLister(indexer),
 		configmapLister:      corev1listers.NewConfigMapLister(indexer),
 		defragWaitDuration:   1 * time.Second,
-		defragBudget:         0,
+		defragCooldown:       1 * time.Hour,
 	}
 
+	// Sync 1: should defrag exactly one member
 	err := controller.sync(context.TODO(), factory.NewSyncContext("defrag-controller", eventRecorder))
 	require.NoError(t, err)
 
-	var budgetEvents int
+	eventsAfterSync1 := len(eventRecorder.Events())
 	var defragSuccessEvents int
 	for _, event := range eventRecorder.Events() {
-		if strings.Contains(event.Message, "budget") {
-			budgetEvents++
-		}
 		if strings.HasPrefix(event.Message, "etcd member has been defragmented") {
 			defragSuccessEvents++
 		}
 	}
-	assert.Equal(t, 1, budgetEvents, "expected exactly one budget exceeded event")
-	assert.Equal(t, 0, defragSuccessEvents, "expected no defrag success events when budget is exhausted immediately")
+	assert.Equal(t, 1, defragSuccessEvents, "first sync should defrag exactly one member")
 
-	_, currentState, _, _ := fakeOperatorClient.GetOperatorState()
-	controllerDegradedCondition := v1helpers.FindOperatorCondition(currentState.Conditions, defragDegradedCondition)
-	if controllerDegradedCondition != nil {
-		assert.Equal(t, operatorv1.ConditionFalse, controllerDegradedCondition.Status, "budget skip should not degrade the controller")
+	// Sync 2: should be blocked by cooldown (no new events)
+	err = controller.sync(context.TODO(), factory.NewSyncContext("defrag-controller", eventRecorder))
+	require.NoError(t, err)
+	assert.Equal(t, eventsAfterSync1, len(eventRecorder.Events()), "cooldown should prevent new defrag events")
+
+	// Reset cooldown and sync again: should defrag the next member
+	controller.lastDefragTime = time.Time{}
+	err = controller.sync(context.TODO(), factory.NewSyncContext("defrag-controller", eventRecorder))
+	require.NoError(t, err)
+
+	defragSuccessEvents = 0
+	for _, event := range eventRecorder.Events() {
+		if strings.HasPrefix(event.Message, "etcd member has been defragmented") {
+			defragSuccessEvents++
+		}
 	}
+	assert.Equal(t, 2, defragSuccessEvents, "after cooldown reset, should have defragged a second member")
 }
 
 func Test_isEndpointBackendFragmented(t *testing.T) {
