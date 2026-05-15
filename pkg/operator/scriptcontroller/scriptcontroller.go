@@ -135,6 +135,7 @@ func (c *ScriptController) manageScriptConfigMap(ctx context.Context, recorder e
 	} else if isTNF {
 		clusterRestoreScript = "etcd/cluster-restore-tnf.sh"
 		disableEtcdScript = "etcd/disable-etcd-tnf.sh"
+		scriptConfigMap.Data["update-fencing-credentials.sh"] = string(bindata.MustAsset("etcd/update-fencing-credentials.sh"))
 	} else {
 		clusterRestoreScript = "etcd/cluster-restore.sh"
 		disableEtcdScript = "etcd/disable-etcd.sh"
