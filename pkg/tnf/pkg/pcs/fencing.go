@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
@@ -61,29 +62,29 @@ func (f fencingConfig) GetParsedIP() string {
 }
 
 // ConfigureFencing configures pacemaker fencing based on fencing credentials provided in secrets
-func ConfigureFencing(ctx context.Context, kubeClient kubernetes.Interface, nodeNames []string) error {
+func ConfigureFencing(ctx context.Context, kubeClient kubernetes.Interface, dyClient dynamic.Interface, nodeNames []string) error {
 	klog.Info("Setting up pacemaker fencing")
 
 	// get redfish config from secret
 	klog.Info("Getting fencing configs from secrets")
 	fencingConfigs := []fencingConfig{}
 
+	secretMap, err := tools.GetFencingSecrets(ctx, kubeClient, dyClient, nodeNames)
+	if err != nil {
+		klog.Errorf("Failed to get fencing secrets: %v", err)
+		return fmt.Errorf("failed to get fencing secrets: %v", err)
+	}
+
 	for i, nodeName := range nodeNames {
 		if nodeName == "" {
 			continue
 		}
-		secret, err := tools.GetFencingSecret(ctx, kubeClient, nodeName)
-		if err != nil {
-			klog.Errorf("Failed to get fencing secret for node %s: %v", nodeName, err)
-			return fmt.Errorf("failed to get fencing secret for node %s: %v", nodeName, err)
-		}
+		secret := secretMap[nodeName]
 		fc, err := getFencingConfig(nodeName, secret)
 		if err != nil {
 			klog.Errorf("Failed to get fencing config for node %s: %v", nodeName, err)
 			return fmt.Errorf("failed to get fencing config for node %s: %v", nodeName, err)
 		}
-		// Add pcmk_delay_base to both devices but with different values.
-		// This prevents fencing races and device update issues.
 		if i == 0 {
 			fc.FencingDeviceOptions[PcmkDelayBase] = firstPcmkDelayBase
 		} else {

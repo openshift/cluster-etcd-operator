@@ -64,3 +64,18 @@ rules:
       - securitycontextconstraints
     verbs:
       - use
+  - apiGroups:
+      - machine.openshift.io
+    resources:
+      - machines
+    verbs:
+      - get
+      - list
+  - apiGroups:
+      - metal3.io
+    resources:
+      - baremetalhosts
+    verbs:
+      - get
+      - list
+
