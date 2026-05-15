@@ -96,6 +96,9 @@ func HandleDualReplicaClusters(
 				return
 			}
 
+			// clean up Pacemaker's out-of-service taint if the node recovered while CEO was down
+			go tools.RemoveOutOfServiceTaintIfNeeded(ctx, kubeClient, node)
+
 			// this potentially needs some time when we wait for etcd bootstrap to complete, so run it in a goroutine,
 			// to not block the event handler
 			klog.Infof("node added and ready: %s", node.GetName())
@@ -114,6 +117,8 @@ func HandleDualReplicaClusters(
 			newReady := tools.IsNodeReady(newNode)
 			if !oldReady && newReady {
 				klog.Infof("node %s transitioned to ready state", newNode.GetName())
+				// clean up Pacemaker's out-of-service taint now that the failed node is back
+				go tools.RemoveOutOfServiceTaintIfNeeded(ctx, kubeClient, newNode)
 				// this potentially needs some time when we wait for etcd bootstrap to complete, so run it in a goroutine,
 				// to not block the event handler
 				go handleNodesWithRetry(controllerContext, controlPlaneNodeLister, ctx, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
