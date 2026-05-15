@@ -3,6 +3,7 @@ package etcdenvvar
 import (
 	"context"
 	"fmt"
+	goruntime "runtime"
 	"testing"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
@@ -67,6 +68,14 @@ var (
 		"NODE_master_2_IP":                    "192.168.2.2",
 	}
 )
+
+func init() {
+	// getUnsupportedArch sets ETCD_UNSUPPORTED_ARCH based on runtime.GOARCH, so unit tests on arm64 (e.g. Apple Silicon) or s390x need to include it in the expected output
+	switch goruntime.GOARCH {
+	case "arm64", "s390x":
+		defaultEnvResult["ETCD_UNSUPPORTED_ARCH"] = goruntime.GOARCH
+	}
+}
 
 func TestEnvVarController(t *testing.T) {
 	scenarios := []struct {

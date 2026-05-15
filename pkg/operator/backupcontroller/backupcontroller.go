@@ -3,7 +3,7 @@ package backupcontroller
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -89,9 +89,8 @@ func (c *BackupController) sync(ctx context.Context, _ factory.SyncContext) erro
 	}
 
 	// we only allow to run one at a time, if there's currently a job running then we will skip it in this reconciliation step
-	runningJobs := findRunningJobs(currentJobs)
-	if len(runningJobs) > 0 {
-		klog.V(4).Infof("BackupController already found [%d] running jobs, skipping", len(runningJobs))
+	if numRunningJobs := findNumRunningJobs(currentJobs); numRunningJobs > 0 {
+		klog.V(4).Infof("BackupController already found [%d] running jobs, skipping", numRunningJobs)
 		return nil
 	}
 
@@ -138,8 +137,8 @@ func (c *BackupController) sync(ctx context.Context, _ factory.SyncContext) erro
 	}
 
 	// in case of multiple backups requested, we're trying to reconcile in order of their names (also to reduce flakiness in tests)
-	sort.Slice(backupsToRun, func(i, j int) bool {
-		return strings.Compare(backupsToRun[i].Name, backupsToRun[j].Name) < 0
+	slices.SortFunc(backupsToRun, func(a, b operatorv1alpha1.EtcdBackup) int {
+		return strings.Compare(a.Name, b.Name)
 	})
 
 	klog.V(4).Infof("BackupController backupsToRun: %v, chooses %v", backupsToRun, backupsToRun[0])
@@ -195,7 +194,7 @@ func validateBackup(ctx context.Context,
 
 func markBackupSkipped(ctx context.Context, client operatorv1alpha1client.EtcdBackupInterface, backup operatorv1alpha1.EtcdBackup) error {
 	// mark all previous conditions as false, only BackupSkipped should be true
-	for i := 0; i < len(backup.Status.Conditions); i++ {
+	for i := range backup.Status.Conditions {
 		backup.Status.Conditions[i].Status = v1.ConditionFalse
 	}
 
@@ -233,7 +232,7 @@ func markBackupFailed(ctx context.Context,
 	failedMessage string) error {
 
 	// mark all previous conditions as false, only BackupFailed should be true
-	for i := 0; i < len(backup.Status.Conditions); i++ {
+	for i := range backup.Status.Conditions {
 		backup.Status.Conditions[i].Status = v1.ConditionFalse
 	}
 
@@ -281,15 +280,15 @@ func indexJobsByBackupLabelName(jobs *batchv1.JobList) map[string]batchv1.Job {
 	return m
 }
 
-func findRunningJobs(jobs *batchv1.JobList) []batchv1.Job {
-	var running []batchv1.Job
+func findNumRunningJobs(jobs *batchv1.JobList) int {
 	if jobs == nil {
-		return running
+		return 0
 	}
 
+	running := 0
 	for _, j := range jobs.Items {
 		if !isJobFinished(&j) {
-			running = append(running, *j.DeepCopy())
+			running++
 		}
 	}
 
@@ -351,7 +350,7 @@ func reconcileJobStatus(ctx context.Context,
 	}
 
 	// only the new completed condition should stay true, mark all others false
-	for i := 0; i < len(bp.Status.Conditions); i++ {
+	for i := range bp.Status.Conditions {
 		bp.Status.Conditions[i].Status = v1.ConditionFalse
 	}
 
