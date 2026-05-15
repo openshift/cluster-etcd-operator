@@ -245,6 +245,13 @@ func (c *HealthCheck) sync(ctx context.Context, syncCtx factory.SyncContext) err
 
 	c.recordHealthCheckEvents(currentStatus, previousStatus)
 
+	// Only mark as processed after status was successfully updated
+	if currentStatus.OverallStatus != statusUnknown {
+		c.previousMu.Lock()
+		c.previous = currentStatus
+		c.previousMu.Unlock()
+	}
+
 	return nil
 }
 
@@ -323,13 +330,6 @@ func (c *HealthCheck) getPacemakerStatus(ctx context.Context) (*HealthStatus, *H
 	// Build health status from the CRD status fields
 	currentStatus := c.buildHealthStatusFromCR(pacemakerCR)
 	currentStatus.CRLastUpdated = crLastUpdated
-
-	// Only update previous for non-Unknown status (preserves last valid for grace period)
-	if currentStatus.OverallStatus != statusUnknown {
-		c.previousMu.Lock()
-		c.previous = currentStatus
-		c.previousMu.Unlock()
-	}
 
 	return currentStatus, previous, nil
 }
