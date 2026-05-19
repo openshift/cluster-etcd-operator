@@ -42,14 +42,14 @@ fi
 
 function get_etcd_advertise_ip() {
   # Try to detect IP from etcd.env (NODE_<nodename>_IP variable)
-  NODENAME_UNDERSCORE=$(echo "${NODENAME}" | tr '-' '_')
+  NODENAME_UNDERSCORE=$(echo "${NODENAME}" | tr '.-' '_')
   NODE_IP_VAR="NODE_${NODENAME_UNDERSCORE}_IP"
   IP="${!NODE_IP_VAR}"
   echo "$IP"
 }
 
 function get_peer_node_name() {
-  NODENAME_UNDERSCORE=$(echo "${NODENAME}" | tr '-' '_')
+  NODENAME_UNDERSCORE=$(echo "${NODENAME}" | tr '.-' '_')
 
   # Find all NODE_*_ETCD_NAME environment variables, exclude current node, get the value
   env | grep -E '^NODE_.*_ETCD_NAME' | grep -v "${NODENAME_UNDERSCORE}" | cut -d= -f2
