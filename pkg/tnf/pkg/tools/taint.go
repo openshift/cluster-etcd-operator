@@ -8,6 +8,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
@@ -51,6 +52,10 @@ func RemoveOutOfServiceTaintIfNeeded(ctx context.Context, kubeClient kubernetes.
 
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		freshNode, err := kubeClient.CoreV1().Nodes().Get(ctx, node.Name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			klog.V(4).Infof("node %s no longer exists, skipping cleanup", node.Name)
+			return nil
+		}
 		if err != nil {
 			return fmt.Errorf("failed to get node %s: %w", node.Name, err)
 		}
@@ -64,6 +69,10 @@ func RemoveOutOfServiceTaintIfNeeded(ctx context.Context, kubeClient kubernetes.
 		delete(freshNode.Annotations, OutOfServiceAnnotationKey)
 
 		_, err = kubeClient.CoreV1().Nodes().Update(ctx, freshNode, metav1.UpdateOptions{})
+		if apierrors.IsNotFound(err) {
+			klog.V(4).Infof("node %s no longer exists during update, skipping cleanup", node.Name)
+			return nil
+		}
 		return err
 	})
 	if err != nil {
