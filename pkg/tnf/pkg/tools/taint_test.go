@@ -195,7 +195,7 @@ func TestRemoveOutOfServiceTaintIfNeeded(t *testing.T) {
 			expectModified: false,
 		},
 		{
-			name: "annotation only, no taint - no-op",
+			name: "annotation only, no taint - removes stale annotation",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "master-0",
@@ -204,7 +204,7 @@ func TestRemoveOutOfServiceTaintIfNeeded(t *testing.T) {
 					},
 				},
 			},
-			expectModified: false,
+			expectModified: true,
 		},
 		{
 			name: "neither taint nor annotation - no-op",
@@ -216,7 +216,7 @@ func TestRemoveOutOfServiceTaintIfNeeded(t *testing.T) {
 			expectModified: false,
 		},
 		{
-			name: "taint key matches but wrong value - no-op",
+			name: "taint key matches but wrong value - removes stale annotation, preserves unrelated taint",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "master-0",
@@ -234,7 +234,7 @@ func TestRemoveOutOfServiceTaintIfNeeded(t *testing.T) {
 					},
 				},
 			},
-			expectModified: false,
+			expectModified: true,
 		},
 		{
 			name: "annotation key matches but wrong value - no-op",
@@ -281,8 +281,8 @@ func TestRemoveOutOfServiceTaintIfNeeded(t *testing.T) {
 			}
 
 			if tt.expectModified {
-				require.True(t, hasUpdate, "expected a node update action for taint removal")
-				require.True(t, hasPatch, "expected a node patch action for annotation removal")
+				require.True(t, hasUpdate, "expected a node update action for taint and annotation removal")
+				require.False(t, hasPatch, "expected no separate patch — taint and annotation should be removed atomically in a single update")
 
 				updatedNode, err := kubeClient.CoreV1().Nodes().Get(context.Background(), tt.node.Name, metav1.GetOptions{})
 				require.NoError(t, err)
@@ -290,16 +290,17 @@ func TestRemoveOutOfServiceTaintIfNeeded(t *testing.T) {
 				require.False(t, hasOutOfServiceTaint(updatedNode),
 					"expected out-of-service taint to be removed")
 				for _, taint := range tt.node.Spec.Taints {
-					if taint.Key != OutOfServiceTaintKey {
-						found := false
-						for _, remaining := range updatedNode.Spec.Taints {
-							if remaining.Key == taint.Key {
-								found = true
-								break
-							}
-						}
-						require.True(t, found, "expected taint %s to be preserved", taint.Key)
+					if isOutOfServiceTaint(taint) {
+						continue
 					}
+					found := false
+					for _, remaining := range updatedNode.Spec.Taints {
+						if remaining.Key == taint.Key && remaining.Value == taint.Value && remaining.Effect == taint.Effect {
+							found = true
+							break
+						}
+					}
+					require.True(t, found, "expected taint %s=%s:%s to be preserved", taint.Key, taint.Value, taint.Effect)
 				}
 
 				_, exists := updatedNode.Annotations[OutOfServiceAnnotationKey]
