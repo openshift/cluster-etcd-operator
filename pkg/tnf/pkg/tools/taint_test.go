@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -72,7 +74,7 @@ func TestHasOutOfServiceTaint(t *testing.T) {
 				Spec: corev1.NodeSpec{
 					Taints: []corev1.Taint{
 						{
-							Key:    "node.kubernetes.io/not-ready",
+							Key:    corev1.TaintNodeNotReady,
 							Effect: corev1.TaintEffectNoSchedule,
 						},
 					},
@@ -90,7 +92,7 @@ func TestHasOutOfServiceTaint(t *testing.T) {
 	}
 }
 
-func TestHasOutOfServiceAnnotation(t *testing.T) {
+func Test_hasOutOfServiceAnnotation(t *testing.T) {
 	tests := []struct {
 		name string
 		node *corev1.Node
@@ -163,7 +165,7 @@ func TestRemoveOutOfServiceTaintIfNeeded(t *testing.T) {
 				Spec: corev1.NodeSpec{
 					Taints: []corev1.Taint{
 						{
-							Key:    "node.kubernetes.io/not-ready",
+							Key:    corev1.TaintNodeNotReady,
 							Effect: corev1.TaintEffectNoSchedule,
 						},
 						{
@@ -262,9 +264,18 @@ func TestRemoveOutOfServiceTaintIfNeeded(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			kubeClient := fake.NewClientset(tt.node)
+			operatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+				&operatorv1.StaticPodOperatorSpec{
+					OperatorSpec: operatorv1.OperatorSpec{
+						ManagementState: operatorv1.Managed,
+					},
+				},
+				&operatorv1.StaticPodOperatorStatus{},
+				nil,
+				nil,
+			)
 
-			err := RemoveOutOfServiceTaintIfNeeded(context.Background(), kubeClient, tt.node)
-			require.NoError(t, err)
+			RemoveOutOfServiceTaintIfNeeded(context.Background(), kubeClient, operatorClient, tt.node)
 
 			actions := kubeClient.Actions()
 			hasUpdate := false

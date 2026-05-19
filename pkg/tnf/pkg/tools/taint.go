@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"slices"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -17,6 +19,9 @@ const (
 	OutOfServiceTaintValue      = "nodeshutdown"
 	OutOfServiceAnnotationKey   = "node.kubernetes.io/out-of-service-applied-by"
 	OutOfServiceAnnotationValue = "pacemaker"
+
+	conditionTypeTNFTaintRemoval = "TNFTaintRemovalControllerDegraded"
+	reasonTaintRemovalFailed     = "TaintRemovalFailed"
 )
 
 func isOutOfServiceTaint(taint corev1.Taint) bool {
@@ -36,10 +41,10 @@ func hasOutOfServiceAnnotation(node *corev1.Node) bool {
 	return node.Annotations[OutOfServiceAnnotationKey] == OutOfServiceAnnotationValue
 }
 
-func RemoveOutOfServiceTaintIfNeeded(ctx context.Context, kubeClient kubernetes.Interface, node *corev1.Node) error {
+func RemoveOutOfServiceTaintIfNeeded(ctx context.Context, kubeClient kubernetes.Interface, operatorClient v1helpers.StaticPodOperatorClient, node *corev1.Node) {
 	if !hasOutOfServiceAnnotation(node) {
 		klog.V(4).Infof("node %s does not have %s=%s annotation, skipping (taint not ours to remove)", node.Name, OutOfServiceAnnotationKey, OutOfServiceAnnotationValue)
-		return nil
+		return
 	}
 
 	klog.Infof("node %s has pacemaker annotation, cleaning up out-of-service taint and annotation", node.Name)
@@ -63,9 +68,34 @@ func RemoveOutOfServiceTaintIfNeeded(ctx context.Context, kubeClient kubernetes.
 	})
 	if err != nil {
 		klog.Errorf("failed to remove out-of-service taint and annotation from node %s: %v", node.Name, err)
-		return fmt.Errorf("failed to remove out-of-service taint and annotation from node %s: %w", node.Name, err)
+		setTaintRemovalDegradedCondition(ctx, operatorClient, node.Name, err)
+		return
 	}
 
 	klog.Infof("successfully removed out-of-service taint and pacemaker annotation from node %s", node.Name)
-	return nil
+	clearTaintRemovalDegradedCondition(ctx, operatorClient)
+}
+
+func setTaintRemovalDegradedCondition(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient, nodeName string, err error) {
+	condition := operatorv1.OperatorCondition{
+		Type:    conditionTypeTNFTaintRemoval,
+		Status:  operatorv1.ConditionTrue,
+		Reason:  reasonTaintRemovalFailed,
+		Message: fmt.Sprintf("failed to remove out-of-service taint from node %s: %v", nodeName, err),
+	}
+	_, _, updateErr := v1helpers.UpdateStaticPodStatus(ctx, operatorClient, v1helpers.UpdateStaticPodConditionFn(condition))
+	if updateErr != nil {
+		klog.Errorf("failed to set %s condition: %v", conditionTypeTNFTaintRemoval, updateErr)
+	}
+}
+
+func clearTaintRemovalDegradedCondition(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient) {
+	condition := operatorv1.OperatorCondition{
+		Type:   conditionTypeTNFTaintRemoval,
+		Status: operatorv1.ConditionFalse,
+	}
+	_, _, updateErr := v1helpers.UpdateStaticPodStatus(ctx, operatorClient, v1helpers.UpdateStaticPodConditionFn(condition))
+	if updateErr != nil {
+		klog.Errorf("failed to clear %s condition: %v", conditionTypeTNFTaintRemoval, updateErr)
+	}
 }
