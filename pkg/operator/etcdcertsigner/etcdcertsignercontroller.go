@@ -328,7 +328,7 @@ func (c *EtcdCertSignerController) syncAllMasterCertificates(
 		}
 
 		if currentRevision <= lastRotationRevision {
-			klog.Infof("skipping EtcdCertSignerController leaf cert generation as safe revision is not yet achieved, currently at %d - rotation happend at %d", currentRevision, lastRotationRevision)
+			klog.Infof("skipping EtcdCertSignerController leaf cert generation as safe revision is not yet achieved, currently at %d - rotation happened at %d", currentRevision, lastRotationRevision)
 			return nil
 		}
 	}
