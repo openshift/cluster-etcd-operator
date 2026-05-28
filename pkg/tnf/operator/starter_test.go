@@ -307,7 +307,7 @@ func TestHandleNodesWithRetry(t *testing.T) {
 			expectRetries:           true,
 		},
 		{
-			name: "Failure after all retries",
+			name: "Degraded until cancel when setup always fails",
 			setupMockHandleNodes: func() func([]*corev1.Node, context.Context, *controllercmd.ControllerContext, v1helpers.StaticPodOperatorClient, kubernetes.Interface, v1helpers.KubeInformersForNamespaces, operatorv1informers.EtcdInformer) error {
 				return func(_ []*corev1.Node, _ context.Context, _ *controllercmd.ControllerContext, _ v1helpers.StaticPodOperatorClient, _ kubernetes.Interface, _ v1helpers.KubeInformersForNamespaces, _ operatorv1informers.EtcdInformer) error {
 					return errors.New("persistent failure")
@@ -349,17 +349,19 @@ func TestHandleNodesWithRetry(t *testing.T) {
 			handleNodesFunc = tt.setupMockHandleNodes()
 			defer func() { handleNodesFunc = originalHandleNodesFunc }()
 
-			// Store original backoff config and use faster settings for testing
 			originalBackoff := retryBackoffConfig
 			retryBackoffConfig = wait.Backoff{
 				Duration: 100 * time.Millisecond,
 				Factor:   2.0,
-				Steps:    5, // Much shorter for testing
+				Steps:    5,
 				Cap:      500 * time.Millisecond,
 			}
 			defer func() { retryBackoffConfig = originalBackoff }()
 
-			// For faster testing, use a reasonable timeout
+			originalCheckpoint := tnfJobControllerSetupCheckpointInterval
+			tnfJobControllerSetupCheckpointInterval = 50 * time.Millisecond
+			defer func() { tnfJobControllerSetupCheckpointInterval = originalCheckpoint }()
+
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
@@ -388,8 +390,8 @@ func TestHandleNodesWithRetry(t *testing.T) {
 				if tt.expectDegradedStatus == operatorv1.ConditionTrue {
 					require.Equal(t, "SetupFailed", foundCondition.Reason,
 						"Expected reason SetupFailed but got %s", foundCondition.Reason)
-					require.Contains(t, foundCondition.Message, "Failed to setup TNF job controllers",
-						"Expected message to contain failure info")
+					require.Contains(t, foundCondition.Message, "backoff exhausted",
+						"expected backoff exhausted message")
 				} else {
 					require.Equal(t, "AsExpected", foundCondition.Reason,
 						"Expected reason AsExpected but got %s", foundCondition.Reason)
