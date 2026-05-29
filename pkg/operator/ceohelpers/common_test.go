@@ -8,9 +8,13 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 
+	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	u "github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var (
@@ -78,6 +82,33 @@ func TestReadDesiredControlPlaneReplicaCount(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestIndexMachinesByNodeInternalIP_MultipleInternalIPsPerMachine(t *testing.T) {
+	mDual := &machinev1beta1.Machine{
+		ObjectMeta: metav1.ObjectMeta{Name: "m-dual"},
+		Status: machinev1beta1.MachineStatus{
+			Addresses: []corev1.NodeAddress{
+				{Type: corev1.NodeInternalIP, Address: "10.0.0.1"},
+				{Type: corev1.NodeInternalIP, Address: "2001:db8::1"},
+			},
+		},
+	}
+	mSingle := &machinev1beta1.Machine{
+		ObjectMeta: metav1.ObjectMeta{Name: "m-single"},
+		Status: machinev1beta1.MachineStatus{
+			Addresses: []corev1.NodeAddress{
+				{Type: corev1.NodeInternalIP, Address: "10.0.0.2"},
+			},
+		},
+	}
+
+	index := IndexMachinesByNodeInternalIP([]*machinev1beta1.Machine{mDual, mSingle})
+
+	require.Len(t, index, 3)
+	require.Same(t, mDual, index["10.0.0.1"])
+	require.Same(t, mDual, index["2001:db8::1"])
+	require.Same(t, mSingle, index["10.0.0.2"])
 }
 
 func TestRevisionRolloutInProgress(t *testing.T) {

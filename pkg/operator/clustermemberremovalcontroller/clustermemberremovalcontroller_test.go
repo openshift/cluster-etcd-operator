@@ -129,6 +129,44 @@ func TestAttemptToRemoveLearningMember(t *testing.T) {
 				}
 			},
 		},
+
+		// Regression (fails today): one Machine with two NodeInternalIP addresses is appended twice when
+		// attemptToRemoveLearningMember walks IndexMachinesByNodeInternalIP, so MemberRemove runs twice for the
+		// same learner. Expect: nil error and three members after fix (dedupe machines when building the list).
+		{
+			name: "REGRESSION learner pending deletion with multiple NodeInternalIPs should remove member once without error",
+			initialObjectsForMachineLister: func() []runtime.Object {
+				m4 := machineWithHooksForDualInternalIP("m-4", "10.0.139.81", "2001:db8:dead:beef::81")
+				m4.DeletionTimestamp = &metav1.Time{}
+				machines := wellKnownMasterMachines()
+				machines = append(machines, m4)
+				return machines
+			}(),
+			initialObjectsForConfigMapTargetNSLister: []runtime.Object{wellKnownEtcdEndpointsConfigMap()},
+			initialEtcdMemberList: func() []*etcdserverpb.Member {
+				members := append(wellKnownEtcdMemberList(), &etcdserverpb.Member{
+					Name:      "m-4",
+					ID:        4,
+					IsLearner: true,
+					PeerURLs:  []string{"https://10.0.139.81:1234"},
+				})
+				return members
+			}(),
+			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
+				memberList, err := fakeEtcdClient.MemberList(context.TODO())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(memberList) != 3 {
+					t.Errorf("expected exactly 3 members, got %v", len(memberList))
+				}
+				for _, member := range memberList {
+					if member.ID == 4 {
+						t.Fatalf("expected the member: %v to be removed from the etcd cluster but it wasn't", member)
+					}
+				}
+			},
+		},
 	}
 
 	for _, scenario := range scenarios {
@@ -448,6 +486,55 @@ func TestAttemptToScaleDown(t *testing.T) {
 				for _, member := range memberList {
 					if member.ID == 4 {
 						t.Fatalf("expected the member: %v to be removed from the etcd cluster but it wasn't", member)
+					}
+				}
+			},
+		},
+		{
+			// m-1 lists two NodeInternalIPs that are both live voting addresses, so IndexMachinesByNodeInternalIP +
+			// the votingMembersMachines loop appends m-1 twice. That inflates machineFailureDomainCountByIndex for
+			// m-1's domain so it sorts before m-4, and the controller removes m-1's etcd member first instead of the
+			// excess m-4 member. Expected after fix: dedupe when building votingMembersMachines (or equivalent), then
+			// member id 4 is removed like "scale down by one machine".
+			name:                       "REGRESSION scale down should remove excess m-4 but dual NodeInternalIP on m-1 skews failure-domain ordering",
+			initialObservedConfigInput: wellKnownReplicasCountSet,
+			initialEtcdMemberList: func() []*etcdserverpb.Member {
+				members := append(wellKnownEtcdMemberList(), &etcdserverpb.Member{
+					Name:     "m-4",
+					ID:       4,
+					PeerURLs: []string{"https://10.0.139.81:1234"},
+				})
+				return members
+			}(),
+			initialObjectsForMachineLister: func() []runtime.Object {
+				m1 := machineWithHooksFor("m-1", "10.0.139.78")
+				m1.Status.Addresses = append(m1.Status.Addresses, corev1.NodeAddress{
+					Type: corev1.NodeInternalIP, Address: "10.0.139.79",
+				})
+				m1.DeletionTimestamp = &metav1.Time{}
+				m3 := machineWithHooksFor("m-3", "10.0.139.80")
+				m4 := machineWithHooksFor("m-4", "10.0.139.81")
+				m4.DeletionTimestamp = &metav1.Time{}
+				return []runtime.Object{m1, m3, m4}
+			}(),
+			initialObjectsForConfigMapTargetNSLister: func() []runtime.Object {
+				cm := wellKnownEtcdEndpointsConfigMap()
+				cm.Data["m-4"] = "10.0.139.81"
+				return []runtime.Object{cm}
+			}(),
+			fakeEtcdClientOptions: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 4, Unhealthy: 0}),
+			indexerObjs:           []interface{}{bootstrapComplete},
+			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
+				memberList, err := fakeEtcdClient.MemberList(context.TODO())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(memberList) != 3 {
+					t.Fatalf("expected exactly 3 members, got %v", len(memberList))
+				}
+				for _, member := range memberList {
+					if member.ID == 4 {
+						t.Fatal("expected excess member m-4 (id 4) to be removed; m-1 was ordered first because votingMembersMachines contained m-1 twice (dual NodeInternalIP), inflating failure-domain counts")
 					}
 				}
 			},
@@ -1282,6 +1369,23 @@ func machineWithHooksFor(name, internalIP string) *machinev1beta1.Machine {
 	m := machineFor(name, internalIP)
 	m.Spec.LifecycleHooks.PreDrain = append(m.Spec.LifecycleHooks.PreDrain, machinev1beta1.LifecycleHook{Name: "EtcdQuorumOperator", Owner: "clusteroperator/etcd"})
 	return m
+}
+
+// machineWithHooksForDualInternalIP is a control-plane machine with two NodeInternalIP entries (e.g. dual-stack
+// or multiple NICs), matching real Machine status where IndexMachinesByNodeInternalIP yields multiple keys per Machine.
+func machineWithHooksForDualInternalIP(name, internalIPv4, internalIPv6 string) *machinev1beta1.Machine {
+	return &machinev1beta1.Machine{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"machine.openshift.io/cluster-api-machine-role": "master"}},
+		Spec: machinev1beta1.MachineSpec{
+			LifecycleHooks: machinev1beta1.LifecycleHooks{
+				PreDrain: []machinev1beta1.LifecycleHook{{Name: "EtcdQuorumOperator", Owner: "clusteroperator/etcd"}},
+			},
+		},
+		Status: machinev1beta1.MachineStatus{Addresses: []corev1.NodeAddress{
+			{Type: corev1.NodeInternalIP, Address: internalIPv4},
+			{Type: corev1.NodeInternalIP, Address: internalIPv6},
+		}},
+	}
 }
 
 func wellKnownMasterMachines() []runtime.Object {
