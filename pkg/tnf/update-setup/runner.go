@@ -132,6 +132,12 @@ func RunTnfUpdateSetup() error {
 		return err
 	}
 
+	// register pacemaker alert agents for fencing taint/untaint
+	err = pcs.ConfigureAlerts(ctx)
+	if err != nil {
+		return err
+	}
+
 	commands = []string{
 		// Force new cluster on next etcd restart on this node
 		fmt.Sprintf("crm_attribute --lifetime reboot --node %s --name \"force_new_cluster\" --update %s", currentNodeName, currentNodeName),

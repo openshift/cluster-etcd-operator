@@ -1,0 +1,91 @@
+package pcs
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"k8s.io/klog/v2"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/exec"
+)
+
+type alertConfig struct {
+	id   string
+	path string
+}
+
+var alertConfigs = []alertConfig{
+	{id: "tnf-taint-alert", path: "/var/lib/pacemaker/alerts/tnf-taint-alert.sh"},
+	{id: "tnf-untaint-alert", path: "/var/lib/pacemaker/alerts/tnf-untaint-alert.sh"},
+}
+
+// ConfigureAlerts registers pacemaker alert agents for fencing taint/untaint.
+// It is idempotent: existing alerts are deleted and re-created to handle upgrades.
+// Returns an error if alert scripts are not yet on disk (MCO rollout pending),
+// which causes the calling job to retry.
+func ConfigureAlerts(ctx context.Context) error {
+	klog.Info("Configuring pacemaker alert agents")
+
+	for _, ac := range alertConfigs {
+		if err := configureAlert(ctx, ac); err != nil {
+			return err
+		}
+	}
+
+	klog.Info("Pacemaker alert agent configuration succeeded")
+	return nil
+}
+
+func configureAlert(ctx context.Context, ac alertConfig) error {
+	scriptPresent, err := fileExistsOnHost(ctx, ac.path)
+	if err != nil {
+		return fmt.Errorf("failed to check for alert script %s: %w", ac.path, err)
+	}
+	if !scriptPresent {
+		return fmt.Errorf("alert script %s not yet present (MCO rollout pending), will retry", ac.path)
+	}
+
+	exists, err := alertExists(ctx, ac.id)
+	if err != nil {
+		return fmt.Errorf("failed to check existing alert %q: %w", ac.id, err)
+	}
+
+	if exists {
+		klog.Infof("Alert %q already exists, deleting for re-creation", ac.id)
+		deleteCmd := fmt.Sprintf("/usr/sbin/pcs alert delete %s", ac.id)
+		if _, stdErr, err := exec.Execute(ctx, deleteCmd); err != nil {
+			return fmt.Errorf("failed to delete existing alert %q: %s: %w", ac.id, stdErr, err)
+		}
+	}
+
+	createCmd := fmt.Sprintf("/usr/sbin/pcs alert create id=%s path=%s meta timeout=30s", ac.id, ac.path)
+	stdOut, stdErr, err := exec.Execute(ctx, createCmd)
+	if err != nil {
+		return fmt.Errorf("failed to create alert %q: stdout=%s stderr=%s: %w", ac.id, stdOut, stdErr, err)
+	}
+
+	klog.Infof("Successfully configured pacemaker alert %q", ac.id)
+	return nil
+}
+
+func alertExists(ctx context.Context, alertID string) (bool, error) {
+	cmd := fmt.Sprintf("/usr/sbin/pcs alert config %s", alertID)
+	_, stdErr, err := exec.Execute(ctx, cmd)
+	if err != nil {
+		if strings.Contains(stdErr, "does not exist") {
+			return false, nil
+		}
+		return false, fmt.Errorf("pcs alert config %s failed: %w", alertID, err)
+	}
+	return true, nil
+}
+
+func fileExistsOnHost(ctx context.Context, path string) (bool, error) {
+	cmd := fmt.Sprintf("test -x %s", path)
+	_, _, err := exec.Execute(ctx, cmd)
+	if err != nil {
+		return false, nil
+	}
+	return true, nil
+}
