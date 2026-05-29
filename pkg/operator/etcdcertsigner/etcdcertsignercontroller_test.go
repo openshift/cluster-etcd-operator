@@ -606,7 +606,7 @@ func setupController(t *testing.T, objects []runtime.Object, forceSkipRollout bo
 	legacyregistry.DefaultGatherer = registry
 
 	enabledFeatureGates := sets.New(features.FeatureShortCertRotation)
-	disabledFeatureGates := sets.New[configv1.FeatureGateName]()
+	disabledFeatureGates := sets.New[configv1.FeatureGateName](features.FeatureGateConfigurablePKI)
 	featureGateAccessor := featuregates.NewHardcodedFeatureGateAccess(enabledFeatureGates.UnsortedList(), disabledFeatureGates.UnsortedList())
 	controller, err := NewEtcdCertSignerController(
 		health.NewMultiAlivenessChecker(),
@@ -619,7 +619,8 @@ func setupController(t *testing.T, objects []runtime.Object, forceSkipRollout bo
 		recorder,
 		registry,
 		forceSkipRollout,
-		featureGateAccessor)
+		featureGateAccessor,
+		nil)
 	require.NoError(t, err)
 
 	stopChan := make(chan struct{})
