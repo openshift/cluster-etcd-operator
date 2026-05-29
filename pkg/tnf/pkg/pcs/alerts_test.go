@@ -10,8 +10,8 @@ func TestAlertConfigs(t *testing.T) {
 	}
 
 	expectedConfigs := []alertConfig{
-		{id: "tnf-taint-alert", path: "/var/lib/pacemaker/alerts/tnf-taint-alert.sh"},
-		{id: "tnf-untaint-alert", path: "/var/lib/pacemaker/alerts/tnf-untaint-alert.sh"},
+		{id: "tnf-taint-alert", path: "/var/lib/pacemaker/alerts/tnf-taint-alert.sh", selectXML: "<select_fencing/>"},
+		{id: "tnf-untaint-alert", path: "/var/lib/pacemaker/alerts/tnf-untaint-alert.sh", selectXML: "<select_nodes/><select_attributes/>"},
 	}
 
 	for i, expected := range expectedConfigs {
@@ -20,6 +20,9 @@ func TestAlertConfigs(t *testing.T) {
 		}
 		if alertConfigs[i].path != expected.path {
 			t.Errorf("alertConfigs[%d].path = %q, want %q", i, alertConfigs[i].path, expected.path)
+		}
+		if alertConfigs[i].selectXML != expected.selectXML {
+			t.Errorf("alertConfigs[%d].selectXML = %q, want %q", i, alertConfigs[i].selectXML, expected.selectXML)
 		}
 	}
 }

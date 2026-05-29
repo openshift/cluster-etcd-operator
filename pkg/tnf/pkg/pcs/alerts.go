@@ -2,7 +2,9 @@ package pcs
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	osexec "os/exec"
 	"strings"
 
 	"k8s.io/klog/v2"
@@ -11,13 +13,22 @@ import (
 )
 
 type alertConfig struct {
-	id   string
-	path string
+	id        string
+	path      string
+	selectXML string // CIB <select> element content to filter event types
 }
 
 var alertConfigs = []alertConfig{
-	{id: "tnf-taint-alert", path: "/var/lib/pacemaker/alerts/tnf-taint-alert.sh"},
-	{id: "tnf-untaint-alert", path: "/var/lib/pacemaker/alerts/tnf-untaint-alert.sh"},
+	{
+		id:        "tnf-taint-alert",
+		path:      "/var/lib/pacemaker/alerts/tnf-taint-alert.sh",
+		selectXML: "<select_fencing/>",
+	},
+	{
+		id:        "tnf-untaint-alert",
+		path:      "/var/lib/pacemaker/alerts/tnf-untaint-alert.sh",
+		selectXML: "<select_nodes/><select_attributes/>",
+	},
 }
 
 // ConfigureAlerts registers pacemaker alert agents for fencing taint/untaint.
@@ -65,7 +76,26 @@ func configureAlert(ctx context.Context, ac alertConfig) error {
 		return fmt.Errorf("failed to create alert %q: stdout=%s stderr=%s: %w", ac.id, stdOut, stdErr, err)
 	}
 
+	if ac.selectXML != "" {
+		if err := applyAlertSelectFilter(ctx, ac.id, ac.selectXML); err != nil {
+			return fmt.Errorf("failed to apply select filter for alert %q: %w", ac.id, err)
+		}
+	}
+
 	klog.Infof("Successfully configured pacemaker alert %q", ac.id)
+	return nil
+}
+
+// applyAlertSelectFilter adds a <select> element to an alert via cibadmin.
+// pcs does not expose select filters, so we modify the CIB directly.
+func applyAlertSelectFilter(ctx context.Context, alertID, selectContent string) error {
+	selectXML := fmt.Sprintf(`<select>%s</select>`, selectContent)
+	cmd := fmt.Sprintf("/usr/sbin/cibadmin --modify --xpath //alerts/alert[@id='%s'] --xml-text '%s'", alertID, selectXML)
+	_, stdErr, err := exec.Execute(ctx, cmd)
+	if err != nil {
+		return fmt.Errorf("cibadmin modify for alert %q failed: %s: %w", alertID, stdErr, err)
+	}
+	klog.Infof("Applied select filter to alert %q: %s", alertID, selectContent)
 	return nil
 }
 
@@ -85,7 +115,11 @@ func fileExistsOnHost(ctx context.Context, path string) (bool, error) {
 	cmd := fmt.Sprintf("test -x %s", path)
 	_, _, err := exec.Execute(ctx, cmd)
 	if err != nil {
-		return false, nil
+		var exitErr *osexec.ExitError
+		if errors.As(err, &exitErr) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to check file %s on host: %w", path, err)
 	}
 	return true, nil
 }
