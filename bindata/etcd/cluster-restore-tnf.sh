@@ -163,6 +163,22 @@ if [ -n "${ETCD_ETCDUTL_BIN}" ]; then
   ETCD_CLIENT="${ETCD_ETCDUTL_BIN}"
 fi
 
+# Validate that the snapshot can be restored before performing any destructive
+# operations. A failed dry-run here is safe — etcd is still running, no state
+# has been modified.
+RESTORE_DRYRUN_DIR=$(mktemp -d)
+trap "rm -rf ${RESTORE_DRYRUN_DIR}" EXIT
+echo "validating snapshot restorability..."
+if ! ${ETCD_CLIENT} snapshot restore "${SNAPSHOT_FILE}" \
+    --data-dir="${RESTORE_DRYRUN_DIR}/data" \
+    --skip-hash-check 2>&1; then
+  rm -rf "${RESTORE_DRYRUN_DIR}"
+  echo "Snapshot validation failed: the snapshot cannot be restored."
+  echo "Aborting before any cluster modifications."
+  exit 1
+fi
+rm -rf "${RESTORE_DRYRUN_DIR}"
+
 if [ ! -d "${ETCD_DATA_DIR_BACKUP}" ]; then
   mkdir -p "${ETCD_DATA_DIR_BACKUP}"
 fi
@@ -188,7 +204,7 @@ echo "starting snapshot restore through etcdctl..."
 # We are never going to rev-bump here to ensure we don't cause a revision split between the
 # remainder of the running cluster and this restore member. Imagine your non-restore quorum members run at rev 100,
 # we would attempt to rev bump this with snapshot at rev 120, now this member is 20 revisions ahead and RAFT is confused.
-if ! ${ETCD_CLIENT} snapshot restore "${SNAPSHOT_FILE}" "${ETCDCTL_RESTORE_FLAGS[@]}"; then
+if ! ${ETCD_CLIENT} snapshot restore "${SNAPSHOT_FILE}" --skip-hash-check "${ETCDCTL_RESTORE_FLAGS[@]}"; then
     echo "Snapshot restore failed. Aborting!"
     exit 1
 fi
