@@ -204,6 +204,8 @@ echo "starting snapshot restore through etcdctl..."
 # We are never going to rev-bump here to ensure we don't cause a revision split between the
 # remainder of the running cluster and this restore member. Imagine your non-restore quorum members run at rev 100,
 # we would attempt to rev bump this with snapshot at rev 120, now this member is 20 revisions ahead and RAFT is confused.
+# --skip-hash-check: learner snapshots from podman-etcd lack the trailing
+# integrity hash that etcdctl snapshot save appends (OCPBUGS-79662).
 if ! ${ETCD_CLIENT} snapshot restore "${SNAPSHOT_FILE}" --skip-hash-check "${ETCDCTL_RESTORE_FLAGS[@]}"; then
     echo "Snapshot restore failed. Aborting!"
     exit 1
