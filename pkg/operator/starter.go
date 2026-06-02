@@ -8,6 +8,7 @@ import (
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
+	"github.com/openshift/api/features"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
 	configversionedclientv1alpha1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
@@ -32,6 +33,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/status"
 	"github.com/openshift/library-go/pkg/operator/unsupportedconfigoverridescontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	"github.com/openshift/library-go/pkg/pki"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -415,17 +417,27 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	configInformers.Start(ctx.Done())
 	go featureGateAccessor.Run(ctx)
 
+	var fg featuregates.FeatureGate
 	select {
 	case <-featureGateAccessor.InitialFeatureGatesObserved():
-		features, err := featureGateAccessor.CurrentFeatureGates()
+		fg, err = featureGateAccessor.CurrentFeatureGates()
 		if err != nil {
 			return fmt.Errorf("could not find FeatureGates, aborting controller start: %w", err)
 		}
 
-		enabled, disabled := getEnabledDisabledFeatures(features)
+		enabled, disabled := getEnabledDisabledFeatures(fg)
 		klog.Info("FeatureGates initialized", "enabled", enabled, "disabled", disabled)
 	case <-time.After(1 * time.Minute):
 		return fmt.Errorf("timed out waiting for FeatureGate detection, aborting controller start")
+	}
+
+	var additionalInformers []factory.Informer
+	var pkiProfileProvider pki.PKIProfileProvider
+	if fg.Enabled(features.FeatureGateConfigurablePKI) {
+		pkiProfileProvider = pki.NewClusterPKIProfileProvider(configInformers.Config().V1alpha1().PKIs().Lister())
+		additionalInformers = []factory.Informer{
+			configInformers.Config().V1alpha1().PKIs().Informer(),
+		}
 	}
 
 	etcdCertSignerController, err := etcdcertsigner.NewEtcdCertSignerController(
@@ -440,6 +452,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		legacyregistry.DefaultGatherer.(metrics.KubeRegistry),
 		false,
 		featureGateAccessor,
+		pkiProfileProvider,
+		additionalInformers...,
 	)
 	if err != nil {
 		return fmt.Errorf("could not start etcdCertSignerController, aborting controller start: %w", err)

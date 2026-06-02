@@ -21,7 +21,10 @@ import (
 
 	"github.com/ghodss/yaml"
 	configv1 "github.com/openshift/api/config/v1"
+	configv1alpha1 "github.com/openshift/api/config/v1alpha1"
+	features "github.com/openshift/api/features"
 	"github.com/openshift/library-go/pkg/assets"
+	"github.com/openshift/library-go/pkg/pki"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -273,7 +276,15 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 
 	enabledFeatureGates, disabledFeatureGates := getFeatureGatesStatus(installConfig)
 
-	certs, bundles, err := createBootstrapCertSecrets(templateData.Hostname, templateData.BootstrapIP, enabledFeatureGates, disabledFeatureGates)
+	var pkiProfileProvider pki.PKIProfileProvider
+	if enabledFeatureGates.Has(features.FeatureGateConfigurablePKI) {
+		pkiProfileProvider, err = getPKIProfileProvider(installConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get PKI profile provider: %w", err)
+		}
+	}
+
+	certs, bundles, err := createBootstrapCertSecrets(templateData.Hostname, templateData.BootstrapIP, enabledFeatureGates, disabledFeatureGates, pkiProfileProvider)
 	if err != nil {
 		return nil, err
 	}
@@ -805,4 +816,62 @@ func getFeatureGatesStatus(installConfig map[string]any) (sets.Set[configv1.Feat
 	}
 
 	return enabled, disabled
+}
+
+// getPKIProfileProvider extracts PKI configuration from install-config and returns a PKI profile provider.
+// Returns a provider with default profile if PKI is not specified in install-config.
+func getPKIProfileProvider(installConfig map[string]any) (pki.PKIProfileProvider, error) {
+	profile := pki.DefaultPKIProfile()
+
+	if _, found := installConfig["pki"]; !found {
+		// no PKI config specified, fall back to defaults
+		return pki.NewStaticPKIProfileProvider(&profile), nil
+	}
+
+	certConfig, err := getCertificateConfig(installConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	profile.SignerCertificates = certConfig
+
+	return pki.NewStaticPKIProfileProvider(&profile), nil
+}
+
+// getCertificateConfig extracts signer certificate key configuration from install-config.
+func getCertificateConfig(installConfig map[string]any) (configv1alpha1.CertificateConfig, error) {
+	// PKI shape is validated by the installer (see installer#10396).
+	keyConfigMap, found, err := unstructured.NestedMap(installConfig, "pki", "signerCertificates", "key")
+	if err != nil || !found {
+		return configv1alpha1.CertificateConfig{}, fmt.Errorf("failed to get key config from install-config pki.signerCertificates: %w", err)
+	}
+
+	algorithm, found, err := unstructured.NestedString(keyConfigMap, "algorithm")
+	if err != nil || !found {
+		return configv1alpha1.CertificateConfig{}, fmt.Errorf("failed to get key algorithm from install-config pki.signerCertificates: %w", err)
+	}
+
+	var key configv1alpha1.KeyConfig
+	key.Algorithm = configv1alpha1.KeyAlgorithm(algorithm)
+
+	switch algorithm {
+	case "RSA":
+		keySize, found, err := unstructured.NestedFloat64(keyConfigMap, "rsa", "keySize")
+		if err != nil || !found {
+			return configv1alpha1.CertificateConfig{}, fmt.Errorf("failed to get RSA key size from install-config pki.signerCertificates: %w", err)
+		}
+		key.RSA = configv1alpha1.RSAKeyConfig{KeySize: int32(keySize)}
+
+	case "ECDSA":
+		curve, found, err := unstructured.NestedString(keyConfigMap, "ecdsa", "curve")
+		if err != nil || !found {
+			return configv1alpha1.CertificateConfig{}, fmt.Errorf("failed to get ECDSA curve from install-config pki.signerCertificates: %w", err)
+		}
+		key.ECDSA = configv1alpha1.ECDSAKeyConfig{Curve: configv1alpha1.ECDSACurve(curve)}
+
+	default:
+		return configv1alpha1.CertificateConfig{}, fmt.Errorf("unsupported key algorithm %q in install-config pki.signerCertificates", algorithm)
+	}
+
+	return configv1alpha1.CertificateConfig{Key: key}, nil
 }
