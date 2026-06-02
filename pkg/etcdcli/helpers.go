@@ -22,6 +22,12 @@ func (f *fakeEtcdClient) Defragment(ctx context.Context, member *etcdserverpb.Me
 		f.opts.defragErrors = f.opts.defragErrors[1:]
 		return nil, err
 	}
+	for _, status := range f.opts.status {
+		if status.Header.MemberId == member.ID {
+			status.DbSize = status.DbSizeInUse
+			break
+		}
+	}
 	// dramatic simplification
 	f.opts.dbSize = f.opts.dbSizeInUse
 	return nil, nil
