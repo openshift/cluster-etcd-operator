@@ -77,7 +77,7 @@ func configureAlert(ctx context.Context, ac alertConfig) error {
 	}
 
 	if ac.selectXML != "" {
-		if err := applyAlertSelectFilter(ctx, ac.id, ac.selectXML); err != nil {
+		if err := applyAlertSelectFilter(ctx, ac.id, ac.path, ac.selectXML); err != nil {
 			return fmt.Errorf("failed to apply select filter for alert %q: %w", ac.id, err)
 		}
 	}
@@ -88,9 +88,12 @@ func configureAlert(ctx context.Context, ac alertConfig) error {
 
 // applyAlertSelectFilter adds a <select> element to an alert via cibadmin.
 // pcs does not expose select filters, so we modify the CIB directly.
-func applyAlertSelectFilter(ctx context.Context, alertID, selectContent string) error {
-	selectXML := fmt.Sprintf(`<select>%s</select>`, selectContent)
-	cmd := fmt.Sprintf("/usr/sbin/cibadmin --modify --xpath //alerts/alert[@id='%s'] --xml-text '%s'", alertID, selectXML)
+// We use cibadmin --modify with the full <alert> element (matched by id attribute)
+// rather than --xpath, because --xpath with a child xml-text that doesn't match
+// the target element type fails with "No such device or address" on Pacemaker 2.1.x.
+func applyAlertSelectFilter(ctx context.Context, alertID, alertPath, selectContent string) error {
+	alertXML := fmt.Sprintf(`<alert id="%s" path="%s"><select>%s</select></alert>`, alertID, alertPath, selectContent)
+	cmd := fmt.Sprintf("/usr/sbin/cibadmin --modify --xml-text '%s'", alertXML)
 	_, stdErr, err := exec.Execute(ctx, cmd)
 	if err != nil {
 		return fmt.Errorf("cibadmin modify for alert %q failed: %s: %w", alertID, stdErr, err)
