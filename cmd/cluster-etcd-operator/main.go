@@ -4,10 +4,8 @@ import (
 	"context"
 	goflag "flag"
 	"fmt"
-	"io/ioutil"
-	"math/rand"
+	"io"
 	"os"
-	"time"
 
 	prune_backups "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
 
@@ -36,9 +34,7 @@ func main() {
 	// overwrite gRPC logger, to discard all gRPC info-level logging
 	// https://github.com/kubernetes/kubernetes/issues/80741
 	// https://github.com/kubernetes/kubernetes/pull/84061
-	grpclog.SetLoggerV2(grpclog.NewLoggerV2(ioutil.Discard, os.Stderr, os.Stderr))
-
-	rand.Seed(time.Now().UTC().UnixNano())
+	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
 
 	pflag.CommandLine.SetNormalizeFunc(utilflag.WordSepNormalizeFunc)
 	pflag.CommandLine.AddGoFlagSet(goflag.CommandLine)
@@ -78,7 +74,6 @@ func NewSSCSCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(prune_backups.NewPruneCommand())
 	cmd.AddCommand(requestbackup.NewRequestBackupCommand(ctx))
 	cmd.AddCommand(rev.NewRevCommand(ctx))
-	cmd.AddCommand(backuprestore.NewBackupServer(ctx))
 	cmd.AddCommand(ensureenv.NewEnsureEnvCommand())
 
 	return cmd
