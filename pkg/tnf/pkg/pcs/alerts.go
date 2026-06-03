@@ -2,10 +2,10 @@ package pcs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	osexec "os/exec"
-	"strings"
 
 	"k8s.io/klog/v2"
 
@@ -99,16 +99,31 @@ func applyAlertSelectFilter(ctx context.Context, alertID, selectContent string) 
 	return nil
 }
 
+// pcsAlertConfigOutput represents the JSON output of `pcs alert config --output-format json`.
+type pcsAlertConfigOutput struct {
+	Alerts []struct {
+		ID string `json:"id"`
+	} `json:"alerts"`
+}
+
 func alertExists(ctx context.Context, alertID string) (bool, error) {
-	cmd := fmt.Sprintf("/usr/sbin/pcs alert config %s", alertID)
-	_, stdErr, err := exec.Execute(ctx, cmd)
+	cmd := "/usr/sbin/pcs alert config --output-format json"
+	stdOut, stdErr, err := exec.Execute(ctx, cmd)
 	if err != nil {
-		if strings.Contains(stdErr, "does not exist") {
-			return false, nil
-		}
-		return false, fmt.Errorf("pcs alert config %s failed: %w", alertID, err)
+		return false, fmt.Errorf("pcs alert config failed: stderr=%s: %w", stdErr, err)
 	}
-	return true, nil
+
+	var config pcsAlertConfigOutput
+	if err := json.Unmarshal([]byte(stdOut), &config); err != nil {
+		return false, fmt.Errorf("failed to parse pcs alert config JSON: %w", err)
+	}
+
+	for _, alert := range config.Alerts {
+		if alert.ID == alertID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func fileExistsOnHost(ctx context.Context, path string) (bool, error) {
