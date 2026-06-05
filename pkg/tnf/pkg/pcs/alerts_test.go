@@ -11,7 +11,7 @@ func TestAlertConfigs(t *testing.T) {
 
 	expectedConfigs := []alertConfig{
 		{id: "tnf-taint-alert", path: "/var/lib/pacemaker/alerts/tnf-taint-alert.sh", selectXML: "<select_fencing/>"},
-		{id: "tnf-untaint-alert", path: "/var/lib/pacemaker/alerts/tnf-untaint-alert.sh", selectXML: "<select_nodes/><select_attributes/>"},
+		{id: "tnf-untaint-alert", path: "/var/lib/pacemaker/alerts/tnf-untaint-alert.sh", selectXML: "<select_nodes/>"},
 	}
 
 	for i, expected := range expectedConfigs {

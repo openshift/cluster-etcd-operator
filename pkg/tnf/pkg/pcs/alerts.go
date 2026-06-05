@@ -27,12 +27,13 @@ var alertConfigs = []alertConfig{
 	{
 		id:        "tnf-untaint-alert",
 		path:      "/var/lib/pacemaker/alerts/tnf-untaint-alert.sh",
-		selectXML: "<select_nodes/><select_attributes/>",
+		selectXML: "<select_nodes/>",
 	},
 }
 
 // ConfigureAlerts registers pacemaker alert agents for fencing taint/untaint.
-// It is idempotent: existing alerts are deleted and re-created to handle upgrades.
+// It is idempotent: existing alerts are updated in-place via cibadmin --modify
+// to avoid a race window where the alert is temporarily absent.
 // Returns an error if alert scripts are not yet on disk (MCO rollout pending),
 // which causes the calling job to retry.
 func ConfigureAlerts(ctx context.Context) error {
@@ -63,26 +64,46 @@ func configureAlert(ctx context.Context, ac alertConfig) error {
 	}
 
 	if exists {
-		klog.Infof("Alert %q already exists, deleting for re-creation", ac.id)
-		deleteCmd := fmt.Sprintf("/usr/sbin/pcs alert delete %s", ac.id)
-		if _, stdErr, err := exec.Execute(ctx, deleteCmd); err != nil {
-			return fmt.Errorf("failed to delete existing alert %q: %s: %w", ac.id, stdErr, err)
+		klog.Infof("Alert %q already exists, updating in-place", ac.id)
+		if err := modifyAlert(ctx, ac); err != nil {
+			return fmt.Errorf("failed to update alert %q in-place: %w", ac.id, err)
 		}
-	}
-
-	createCmd := fmt.Sprintf("/usr/sbin/pcs alert create id=%s path=%s meta timeout=30s", ac.id, ac.path)
-	stdOut, stdErr, err := exec.Execute(ctx, createCmd)
-	if err != nil {
-		return fmt.Errorf("failed to create alert %q: stdout=%s stderr=%s: %w", ac.id, stdOut, stdErr, err)
-	}
-
-	if ac.selectXML != "" {
-		if err := applyAlertSelectFilter(ctx, ac.id, ac.path, ac.selectXML); err != nil {
-			return fmt.Errorf("failed to apply select filter for alert %q: %w", ac.id, err)
+	} else {
+		createCmd := fmt.Sprintf("/usr/sbin/pcs alert create id=%s path=%s meta timeout=30s", ac.id, ac.path)
+		stdOut, stdErr, err := exec.Execute(ctx, createCmd)
+		if err != nil {
+			return fmt.Errorf("failed to create alert %q: stdout=%s stderr=%s: %w", ac.id, stdOut, stdErr, err)
+		}
+		if ac.selectXML != "" {
+			if err := applyAlertSelectFilter(ctx, ac.id, ac.path, ac.selectXML); err != nil {
+				return fmt.Errorf("failed to apply select filter for alert %q: %w", ac.id, err)
+			}
 		}
 	}
 
 	klog.Infof("Successfully configured pacemaker alert %q", ac.id)
+	return nil
+}
+
+// modifyAlert atomically updates an existing alert via cibadmin --modify,
+// setting path, meta timeout, and select filter in a single CIB write.
+func modifyAlert(ctx context.Context, ac alertConfig) error {
+	metaXML := fmt.Sprintf(
+		`<meta_attributes id="%s-meta_attributes">`+
+			`<nvpair id="%s-meta_attributes-timeout" name="timeout" value="30s"/>`+
+			`</meta_attributes>`,
+		ac.id, ac.id,
+	)
+	selectXML := ""
+	if ac.selectXML != "" {
+		selectXML = fmt.Sprintf("<select>%s</select>", ac.selectXML)
+	}
+	alertXML := fmt.Sprintf(`<alert id="%s" path="%s">%s%s</alert>`, ac.id, ac.path, metaXML, selectXML)
+	cmd := fmt.Sprintf("/usr/sbin/cibadmin --modify --xml-text '%s'", alertXML)
+	_, stdErr, err := exec.Execute(ctx, cmd)
+	if err != nil {
+		return fmt.Errorf("cibadmin modify for alert %q failed: %s: %w", ac.id, stdErr, err)
+	}
 	return nil
 }
 
