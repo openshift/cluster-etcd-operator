@@ -61,6 +61,22 @@ function restore_static_pods() {
   done
 }
 
+function backup_remaining_etcd_data_dir_contents() {
+  local entry base
+
+  shopt -s nullglob dotglob
+  for entry in "${ETCD_DATA_DIR}"/*; do
+    base=$(basename "${entry}")
+    if [ -e "${ETCD_DATA_DIR_BACKUP}/${base}" ]; then
+      echo "removing previous backup ${ETCD_DATA_DIR_BACKUP}/${base}"
+      rm -rf "${ETCD_DATA_DIR_BACKUP:?}/${base}"
+    fi
+    echo "Moving ${entry} to ${ETCD_DATA_DIR_BACKUP}/"
+    mv "${entry}" "${ETCD_DATA_DIR_BACKUP}/"
+  done
+  shopt -u nullglob dotglob
+}
+
 BACKUP_DIR="$1"
 # shellcheck disable=SC2012
 BACKUP_FILE=$(ls -vd "${BACKUP_DIR}"/static_kuberesources*.tar.gz | tail -1) || true
@@ -110,14 +126,9 @@ if [ -z "${ETCD_ETCDCTL_RESTORE}" ]; then
   cp -p "${SNAPSHOT_FILE}" "${ETCD_DATA_DIR_BACKUP}"/snapshot.db
   # Move the revision.json when it exists
   [ ! -f "${ETCD_REV_JSON}" ] ||  mv -f "${ETCD_REV_JSON}" "${ETCD_DATA_DIR_BACKUP}"/revision.json
-  # removing any fio perf files left behind that could be deleted without problems
-  rm -f "${ETCD_DATA_DIR}"/etcd_perf*
-
-  # ensure the folder is really empty, otherwise the restore pod will crash loop
-  if [ -n "$(ls -A "${ETCD_DATA_DIR}")" ]; then
-      echo "folder ${ETCD_DATA_DIR} is not empty, please review and remove all files in it"
-      exit 1
-  fi
+  # Move any remaining files (fio perf artifacts, stray snapshots, etc.) out of the data dir.
+  # The restore pod requires /var/lib/etcd to be empty before it runs.
+  backup_remaining_etcd_data_dir_contents
 
   echo "starting restore-etcd static pod"
   cp -p "${RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"
