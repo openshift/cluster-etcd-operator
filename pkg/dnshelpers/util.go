@@ -40,7 +40,7 @@ func GetPreferredInternalIPAddressForNodeName(network *configv1.Network, node *c
 					return "", "", err
 				}
 				if isIPv4 {
-					return currAddress.Address, ipFamily, nil
+					return CanonicalizeIP(currAddress.Address), ipFamily, nil
 				}
 			case "tcp6":
 				isIPv4, err := IsIPv4(currAddress.Address)
@@ -48,7 +48,7 @@ func GetPreferredInternalIPAddressForNodeName(network *configv1.Network, node *c
 					return "", "", err
 				}
 				if !isIPv4 {
-					return currAddress.Address, ipFamily, nil
+					return CanonicalizeIP(currAddress.Address), ipFamily, nil
 				}
 			default:
 				return "", "", fmt.Errorf("unexpected ip family: %q", ipFamily)
@@ -109,7 +109,7 @@ func IsIPv4(ipString string) (bool, error) {
 func GetInternalIPAddressesForNodeName(node *corev1.Node) ([]string, error) {
 	addresses := []string{}
 	for _, currAddress := range node.Status.Addresses {
-		if currAddress.Type == corev1.NodeInternalIP {
+		if currAddress.Type == corev1.NodeInternalIP && currAddress.Address != "" {
 			addresses = append(addresses, currAddress.Address)
 		}
 	}
@@ -120,7 +120,22 @@ func GetInternalIPAddressesForNodeName(node *corev1.Node) ([]string, error) {
 	return addresses, nil
 }
 
-// GetIPFromAddress takes a client or peer address and returns the IP address (unescaped if IPv6).
+// CanonicalizeIP returns the canonical string representation of an IP address.
+// This ensures consistent IP comparisons by:
+// - Normalizing IPv6 addresses to their compressed form (e.g., "2001:0db8::1" → "2001:db8::1")
+// - Converting IPv4-mapped IPv6 addresses to IPv4 (e.g., "::ffff:192.0.2.1" → "192.0.2.1")
+// - Preserving IPv4 addresses as-is
+// If the input is not a valid IP address, it returns the original string unchanged.
+func CanonicalizeIP(ip string) string {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return ip // Return original if invalid
+	}
+	return parsed.String() // Returns canonical representation
+}
+
+// GetIPFromAddress takes a client or peer address and returns the canonical IP address (unescaped if IPv6).
+// The returned IP is in canonical form for consistent comparisons.
 func GetIPFromAddress(address string) (string, error) {
 	u, err := url.Parse(address)
 	if err != nil {
@@ -131,5 +146,5 @@ func GetIPFromAddress(address string) (string, error) {
 		return "", fmt.Errorf("failed to split host port: %s: %w", u.Host, err)
 	}
 
-	return host, nil
+	return CanonicalizeIP(host), nil
 }

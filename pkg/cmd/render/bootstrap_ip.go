@@ -137,9 +137,71 @@ func ContainedByCIDR(cidr string) AddressFilter {
 	}
 }
 
+// normalizeIPv4 removes leading zeros from IPv4 addresses.
+// For example, "192.000.002.001" becomes "192.0.2.1".
+// Returns the normalized string if it's a valid IPv4, otherwise returns the original.
+func normalizeIPv4(ip string) string {
+	// Try parsing as-is first
+	if parsed := net.ParseIP(ip); parsed != nil {
+		return ip
+	}
+
+	// Check if it looks like an IPv4 with potential leading zeros
+	parts := make([]string, 0, 4)
+	octet := ""
+	dotCount := 0
+
+	for _, ch := range ip {
+		if ch == '.' {
+			if octet == "" {
+				return ip // Invalid: empty octet
+			}
+			// Remove leading zeros from octet
+			normalized := octet
+			for len(normalized) > 1 && normalized[0] == '0' {
+				normalized = normalized[1:]
+			}
+			parts = append(parts, normalized)
+			octet = ""
+			dotCount++
+		} else if ch >= '0' && ch <= '9' {
+			octet += string(ch)
+		} else {
+			return ip // Invalid character
+		}
+	}
+
+	// Add the last octet
+	if octet == "" || dotCount != 3 {
+		return ip // Invalid format
+	}
+	normalized := octet
+	for len(normalized) > 1 && normalized[0] == '0' {
+		normalized = normalized[1:]
+	}
+	parts = append(parts, normalized)
+
+	result := fmt.Sprintf("%s.%s.%s.%s", parts[0], parts[1], parts[2], parts[3])
+
+	// Verify it's valid
+	if net.ParseIP(result) == nil {
+		return ip // Return original if normalization failed
+	}
+
+	return result
+}
+
 func AddressNotIn(ips ...string) AddressFilter {
 	return func(addr netlink.Addr) bool {
-		return !slices.Contains(ips, addr.IP.String())
+		canonicalAddr := addr.IP.String()
+		for _, ip := range ips {
+			normalizedIP := normalizeIPv4(ip)
+			parsedIP := net.ParseIP(normalizedIP)
+			if parsedIP != nil && canonicalAddr == parsedIP.String() {
+				return false
+			}
+		}
+		return true
 	}
 }
 
