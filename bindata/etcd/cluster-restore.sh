@@ -62,17 +62,19 @@ function restore_static_pods() {
 }
 
 function backup_remaining_etcd_data_dir_contents() {
-  local entry base
+  local entry base extras_dir="${ETCD_DATA_DIR_BACKUP}/extra-data-dir-contents"
+
+  mkdir -p "${extras_dir}"
 
   shopt -s nullglob dotglob
   for entry in "${ETCD_DATA_DIR}"/*; do
     base=$(basename "${entry}")
-    if [ -e "${ETCD_DATA_DIR_BACKUP}/${base}" ]; then
-      echo "removing previous backup ${ETCD_DATA_DIR_BACKUP}/${base}"
-      rm -rf "${ETCD_DATA_DIR_BACKUP:?}/${base}"
+    if [ -e "${extras_dir}/${base}" ]; then
+      echo "removing previous backup ${extras_dir}/${base}"
+      rm -rf "${extras_dir:?}/${base}"
     fi
-    echo "Moving ${entry} to ${ETCD_DATA_DIR_BACKUP}/"
-    mv "${entry}" "${ETCD_DATA_DIR_BACKUP}/"
+    echo "Moving ${entry} to ${extras_dir}/"
+    mv "${entry}" "${extras_dir}/"
   done
   shopt -u nullglob dotglob
 }
