@@ -29,6 +29,72 @@ function usage {
     exit 1
 }
 
+# mirrors hashMAC in pkg/tnf/pkg/tools/mac.go
+function normalize_and_hash_mac {
+    local mac="$1"
+    local normalized
+    normalized=$(echo "${mac}" | tr '[:upper:]' '[:lower:]' | tr -d ':-')
+    if ! [[ "${normalized}" =~ ^[0-9a-f]{12}$ ]]; then
+        echo "Invalid MAC address: ${mac}" >&2
+        return 1
+    fi
+    echo -n "${normalized}" | sha256sum | awk '{print $1}'
+}
+
+# mirrors GetFencingSecrets in pkg/tnf/pkg/tools/secrets.go
+function detect_fencing_secret {
+    local node="$1"
+    local namespace="openshift-etcd"
+    local mac_annotation_key="tnf.openshift.io/mac-addresses"
+
+    # Phase 1: hostname-based lookup
+    local hostname_secret="fencing-credentials-${node}"
+    if oc get secret "${hostname_secret}" --namespace="${namespace}" &>/dev/null; then
+        echo "${hostname_secret}"
+        return 0
+    fi
+
+    # Phase 2: MAC hash lookup from node annotation
+    local mac_annotation
+    mac_annotation=$(oc get node "${node}" -o jsonpath="{.metadata.annotations.${mac_annotation_key//\./\\.}}" 2>/dev/null) || true
+    if [ -n "${mac_annotation}" ]; then
+        IFS=',' read -ra macs <<< "${mac_annotation}"
+        for mac in "${macs[@]}"; do
+            mac=$(echo "${mac}" | tr -d '[:space:]')
+            [ -z "${mac}" ] && continue
+            local hash
+            hash=$(normalize_and_hash_mac "${mac}") || continue
+            local mac_secret="fencing-credentials-${hash}"
+            if oc get secret "${mac_secret}" --namespace="${namespace}" &>/dev/null; then
+                echo "${mac_secret}"
+                return 0
+            fi
+        done
+    fi
+
+    # Phase 3: match by stonith device's configured BMC address
+    local device_id="$2"
+    if [ -n "${device_id}" ]; then
+        local stonith_ip stonith_uri
+        stonith_ip=$(pcs stonith config "${device_id}" 2>/dev/null | sed -n 's/.*[[:space:]]ip=\([^[:space:]]*\).*/\1/p' | head -1)
+        stonith_uri=$(pcs stonith config "${device_id}" 2>/dev/null | sed -n 's/.*[[:space:]]systems_uri=\([^[:space:]]*\).*/\1/p' | head -1)
+        if [ -n "${stonith_ip}" ] && [ -n "${stonith_uri}" ]; then
+            local match
+            match=$(oc get secrets --namespace="${namespace}" -o json | \
+                jq -r --arg ip "${stonith_ip}" --arg uri "${stonith_uri}" \
+                '.items[] | select(.metadata.name | startswith("fencing-credentials-")) |
+                 select((.data.address // "") | @base64d | (contains($ip) and contains($uri))) |
+                 .metadata.name' 2>/dev/null | head -1)
+            if [ -n "${match}" ]; then
+                echo "${match}"
+                return 0
+            fi
+        fi
+    fi
+
+    return 1
+}
+
 function redact_credentials {
     local input
     input=$(cat)
@@ -99,6 +165,27 @@ fi
 
 DEVICE_ID="${NODE}_redfish"
 
+NAMESPACE="openshift-etcd"
+
+echo "Detecting fencing secret for node ${NODE}..."
+if ! SECRET_NAME=$(detect_fencing_secret "${NODE}" "${DEVICE_ID}"); then
+    echo "No fencing secret found for node ${NODE} (tried hostname, MAC hash, and stonith device address lookup)"
+    exit 1
+fi
+echo "Detected fencing secret: ${SECRET_NAME}"
+
+STONITH_IP=$(pcs stonith config "${DEVICE_ID}" 2>/dev/null | sed -n 's/.*[[:space:]]ip=\([^[:space:]]*\).*/\1/p' | head -1)
+STONITH_URI=$(pcs stonith config "${DEVICE_ID}" 2>/dev/null | sed -n 's/.*[[:space:]]systems_uri=\([^[:space:]]*\).*/\1/p' | head -1)
+if [ -n "${STONITH_IP}" ] && [ -n "${STONITH_URI}" ]; then
+    if [ "${STONITH_IP}" != "${REDFISH_IP}" ] || [ "${STONITH_URI}" != "${REDFISH_PATH}" ]; then
+        echo "ERROR: --address does not match the BMC address configured on stonith device ${DEVICE_ID}"
+        echo "  Stonith device: ip=${STONITH_IP} systems_uri=${STONITH_URI}"
+        echo "  --address:      ip=${REDFISH_IP} systems_uri=${REDFISH_PATH}"
+        echo "No changes were made"
+        exit 1
+    fi
+fi
+
 echo "Validating new credentials against Redfish endpoint ${REDFISH_IP}:${REDFISH_PORT}${REDFISH_PATH}..."
 
 FENCE_ARGS=(--username "${USERNAME}" --password "${PASSWORD}" --ip "${REDFISH_IP}" --ipport "${REDFISH_PORT}" --systems-uri "${REDFISH_PATH}" --action status)
@@ -131,9 +218,6 @@ if [[ "${STDERR}" != *"is running"* ]]; then
     exit 1
 fi
 echo "Stonith device ${DEVICE_ID} updated successfully"
-
-SECRET_NAME="fencing-credentials-${NODE}"
-NAMESPACE="openshift-etcd"
 
 echo "Updating secret ${SECRET_NAME} in namespace ${NAMESPACE}"
 # KUBECONFIG is set by etcd-common-tools
