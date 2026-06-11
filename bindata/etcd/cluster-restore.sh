@@ -61,24 +61,6 @@ function restore_static_pods() {
   done
 }
 
-function backup_remaining_etcd_data_dir_contents() {
-  local entry base extras_dir="${ETCD_DATA_DIR_BACKUP}/extra-data-dir-contents"
-
-  mkdir -p "${extras_dir}"
-
-  shopt -s nullglob dotglob
-  for entry in "${ETCD_DATA_DIR}"/*; do
-    base=$(basename "${entry}")
-    if [ -e "${extras_dir}/${base}" ]; then
-      echo "removing previous backup ${extras_dir}/${base}"
-      rm -rf "${extras_dir:?}/${base}"
-    fi
-    echo "Moving ${entry} to ${extras_dir}/"
-    mv "${entry}" "${extras_dir}/"
-  done
-  shopt -u nullglob dotglob
-}
-
 BACKUP_DIR="$1"
 # shellcheck disable=SC2012
 BACKUP_FILE=$(ls -vd "${BACKUP_DIR}"/static_kuberesources*.tar.gz | tail -1) || true
