@@ -701,7 +701,7 @@ func TestBuildNodeConditions(t *testing.T) {
 	// Create healthy fencing agents for testing
 	healthyFencingAgents := []pacmkrv1.PacemakerClusterFencingAgentStatus{
 		{
-			Conditions: createHealthyResourceConditions(),
+			Conditions: CreateHealthyResourceConditions(),
 			Name:       "master-0_redfish",
 			Method:     pacmkrv1.FencingMethodRedfish,
 		},

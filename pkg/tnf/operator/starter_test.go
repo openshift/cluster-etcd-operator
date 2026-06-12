@@ -1,15 +1,35 @@
 package operator
 
+/*
+TEST COVERAGE SUMMARY - starter_test.go
+========================================
+
+This file tests TNF bootstrap and initial setup logic for Two-Node Fencing clusters.
+
+WHAT'S TESTED
+-------------
+
+Bootstrap Scenarios:
+├── TestHandleDualReplicaClusters - Dual-replica bootstrap logic
+│   ├── ✅ Non-TNF cluster (skip TNF bootstrap)
+│   ├── ✅ 1 ready node (wait for 2nd node)
+│   ├── ✅ 2 ready nodes, no jobs (run bootstrap)
+│   └── ✅ 2 ready nodes, existing jobs (already bootstrapped)
+├── TestSetupJobConditionsBasedOnExternalEtcd - Job condition selection
+│   ├── ✅ Before external etcd transition (AllConditions)
+│   └── ✅ After external etcd transition (DefaultConditions)
+└── TestHandleFencingSecretChange_skipsBeforeExternalEtcdTransition
+    └── ✅ Skips fencing secret watch before external etcd transition
+*/
+
 import (
 	"context"
-	"errors"
 	"maps"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/util/wait"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -33,7 +53,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/kubernetes/scheme"
-	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/clock"
@@ -268,115 +287,48 @@ func getArgs(t *testing.T, dualReplicaControlPlaneEnabled bool) args {
 	}
 }
 
-func TestHandleNodesWithRetry(t *testing.T) {
-	tests := []struct {
-		name                    string
-		setupMockHandleNodes    func() func(*controllercmd.ControllerContext, corev1listers.NodeLister, context.Context, v1helpers.StaticPodOperatorClient, kubernetes.Interface, v1helpers.KubeInformersForNamespaces, operatorv1informers.EtcdInformer) error
-		expectDegradedCondition bool
-		expectDegradedStatus    operatorv1.ConditionStatus
-		expectRetries           bool
-	}{
-		{
-			name: "Success on first attempt",
-			setupMockHandleNodes: func() func(*controllercmd.ControllerContext, corev1listers.NodeLister, context.Context, v1helpers.StaticPodOperatorClient, kubernetes.Interface, v1helpers.KubeInformersForNamespaces, operatorv1informers.EtcdInformer) error {
-				return func(_ *controllercmd.ControllerContext, _ corev1listers.NodeLister, _ context.Context, _ v1helpers.StaticPodOperatorClient, _ kubernetes.Interface, _ v1helpers.KubeInformersForNamespaces, _ operatorv1informers.EtcdInformer) error {
-					return nil
-				}
-			},
-			expectDegradedCondition: true,
-			expectDegradedStatus:    operatorv1.ConditionFalse,
-			expectRetries:           false,
-		},
-		{
-			name: "Success after retries",
-			setupMockHandleNodes: func() func(*controllercmd.ControllerContext, corev1listers.NodeLister, context.Context, v1helpers.StaticPodOperatorClient, kubernetes.Interface, v1helpers.KubeInformersForNamespaces, operatorv1informers.EtcdInformer) error {
-				attemptCount := 0
-				return func(_ *controllercmd.ControllerContext, _ corev1listers.NodeLister, _ context.Context, _ v1helpers.StaticPodOperatorClient, _ kubernetes.Interface, _ v1helpers.KubeInformersForNamespaces, _ operatorv1informers.EtcdInformer) error {
-					attemptCount++
-					if attemptCount < 3 {
-						return errors.New("temporary failure")
-					}
-					return nil
-				}
-			},
-			expectDegradedCondition: true,
-			expectDegradedStatus:    operatorv1.ConditionFalse,
-			expectRetries:           true,
-		},
-		{
-			name: "Failure after all retries",
-			setupMockHandleNodes: func() func(*controllercmd.ControllerContext, corev1listers.NodeLister, context.Context, v1helpers.StaticPodOperatorClient, kubernetes.Interface, v1helpers.KubeInformersForNamespaces, operatorv1informers.EtcdInformer) error {
-				return func(_ *controllercmd.ControllerContext, _ corev1listers.NodeLister, _ context.Context, _ v1helpers.StaticPodOperatorClient, _ kubernetes.Interface, _ v1helpers.KubeInformersForNamespaces, _ operatorv1informers.EtcdInformer) error {
-					return errors.New("persistent failure")
-				}
-			},
-			expectDegradedCondition: true,
-			expectDegradedStatus:    operatorv1.ConditionTrue,
-			expectRetries:           true,
-		},
+func TestHandleFencingSecretChange_skipsBeforeExternalEtcdTransition(t *testing.T) {
+	ctx := context.Background()
+	fakeKube := fake.NewSimpleClientset()
+
+	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+		&operatorv1.StaticPodOperatorSpec{},
+		u.StaticPodOperatorStatus(),
+		nil,
+		nil,
+	)
+
+	eventRecorder := events.NewRecorder(
+		fakeKube.CoreV1().Events(operatorclient.TargetNamespace),
+		"test-fencing-secret",
+		&corev1.ObjectReference{},
+		clock.RealClock{},
+	)
+	controllerContext := &controllercmd.ControllerContext{
+		EventRecorder: eventRecorder,
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Setup test environment
-			testArgs := getArgs(t, true)
+	kubeInformersForNamespaces := v1helpers.NewKubeInformersForNamespaces(
+		fakeKube,
+		"",
+		operatorclient.GlobalUserSpecifiedConfigNamespace,
+		operatorclient.GlobalMachineSpecifiedConfigNamespace,
+		operatorclient.TargetNamespace,
+		operatorclient.OperatorNamespace,
+		"kube-system",
+	)
 
-			// Create NodeLister from the informer
-			controlPlaneNodeLister := corev1listers.NewNodeLister(testArgs.controlPlaneNodeInformer.GetIndexer())
-
-			// Store original handleNodesFunc and replace with mock
-			originalHandleNodesFunc := handleNodesFunc
-			handleNodesFunc = tt.setupMockHandleNodes()
-			defer func() { handleNodesFunc = originalHandleNodesFunc }()
-
-			// Store original backoff config and use faster settings for testing
-			originalBackoff := retryBackoffConfig
-			retryBackoffConfig = wait.Backoff{
-				Duration: 100 * time.Millisecond,
-				Factor:   2.0,
-				Steps:    5, // Much shorter for testing
-				Cap:      500 * time.Millisecond,
-			}
-			defer func() { retryBackoffConfig = originalBackoff }()
-
-			// For faster testing, use a reasonable timeout
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-
-			// Run handleNodesWithRetry
-			handleNodesWithRetry(testArgs.controllerContext, controlPlaneNodeLister, ctx, testArgs.operatorClient,
-				testArgs.kubeClient, testArgs.kubeInformersForNamespaces, testArgs.etcdInformer)
-
-			// Verify the operator condition was set correctly
-			if tt.expectDegradedCondition {
-				_, status, _, err := testArgs.operatorClient.GetStaticPodOperatorState()
-				require.NoError(t, err, "failed to get operator status")
-
-				// Find the TNFJobControllersDegraded condition
-				var foundCondition *operatorv1.OperatorCondition
-				for i, condition := range status.Conditions {
-					if condition.Type == "TNFJobControllersDegraded" {
-						foundCondition = &status.Conditions[i]
-						break
-					}
-				}
-
-				require.NotNil(t, foundCondition, "TNFJobControllersDegraded condition not found")
-				require.Equal(t, tt.expectDegradedStatus, foundCondition.Status,
-					"Expected degraded status %v but got %v", tt.expectDegradedStatus, foundCondition.Status)
-
-				if tt.expectDegradedStatus == operatorv1.ConditionTrue {
-					require.Equal(t, "SetupFailed", foundCondition.Reason,
-						"Expected reason SetupFailed but got %s", foundCondition.Reason)
-					require.Contains(t, foundCondition.Message, "Failed to setup TNF job controllers",
-						"Expected message to contain failure info")
-				} else {
-					require.Equal(t, "AsExpected", foundCondition.Reason,
-						"Expected reason AsExpected but got %s", foundCondition.Reason)
-					require.Contains(t, foundCondition.Message, "successfully",
-						"Expected success message")
-				}
-			}
-		})
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "fencing-credentials-master-0",
+			Namespace: operatorclient.TargetNamespace,
+		},
+		Data: map[string][]byte{"token": []byte("x")},
 	}
+
+	handleFencingSecretChange(ctx, nil, secret, controllerContext, fakeOperatorClient, fakeKube, kubeInformersForNamespaces)
+
+	jobList, err := fakeKube.BatchV1().Jobs(operatorclient.TargetNamespace).List(ctx, metav1.ListOptions{})
+	require.NoError(t, err)
+	require.Empty(t, jobList.Items, "fencing job should not be created from secrets before external etcd transition completes")
 }

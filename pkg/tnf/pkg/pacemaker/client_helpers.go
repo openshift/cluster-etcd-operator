@@ -22,10 +22,10 @@ func getKubeConfig() (*rest.Config, error) {
 	return config, nil
 }
 
-// createPacemakerRESTClient creates a REST client configured for PacemakerStatus CRs.
+// CreatePacemakerRESTClient creates a REST client configured for PacemakerStatus CRs.
 // It takes a base Kubernetes REST config and configures it with the necessary
 // scheme, group version, and serializer for the PacemakerStatus CRD.
-func createPacemakerRESTClient(baseConfig *rest.Config) (rest.Interface, error) {
+func CreatePacemakerRESTClient(baseConfig *rest.Config) (rest.Interface, error) {
 	if baseConfig == nil {
 		return nil, fmt.Errorf("baseConfig cannot be nil")
 	}

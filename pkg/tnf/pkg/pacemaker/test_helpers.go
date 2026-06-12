@@ -18,7 +18,7 @@ import (
 // =============================================================================
 
 // createHealthyClusterConditions creates healthy cluster-level conditions
-func createHealthyClusterConditions() []metav1.Condition {
+func CreateHealthyClusterConditions() []metav1.Condition {
 	now := metav1.Now()
 	return []metav1.Condition{
 		{
@@ -46,7 +46,7 @@ func createHealthyClusterConditions() []metav1.Condition {
 }
 
 // createInsufficientNodesClusterConditions creates cluster conditions with insufficient nodes
-func createInsufficientNodesClusterConditions() []metav1.Condition {
+func CreateInsufficientNodesClusterConditions() []metav1.Condition {
 	now := metav1.Now()
 	return []metav1.Condition{
 		{
@@ -74,7 +74,7 @@ func createInsufficientNodesClusterConditions() []metav1.Condition {
 }
 
 // createExcessiveNodesClusterConditions creates cluster conditions with excessive nodes
-func createExcessiveNodesClusterConditions() []metav1.Condition {
+func CreateExcessiveNodesClusterConditions() []metav1.Condition {
 	now := metav1.Now()
 	return []metav1.Condition{
 		{
@@ -102,7 +102,7 @@ func createExcessiveNodesClusterConditions() []metav1.Condition {
 }
 
 // createMaintenanceModeClusterConditions creates cluster conditions for maintenance mode
-func createMaintenanceModeClusterConditions() []metav1.Condition {
+func CreateMaintenanceModeClusterConditions() []metav1.Condition {
 	now := metav1.Now()
 	return []metav1.Condition{
 		{
@@ -208,7 +208,7 @@ func createHealthyNodeConditions() []metav1.Condition {
 // =============================================================================
 
 // createHealthyResourceConditions creates healthy resource-level conditions
-func createHealthyResourceConditions() []metav1.Condition {
+func CreateHealthyResourceConditions() []metav1.Condition {
 	now := metav1.Now()
 	return []metav1.Condition{
 		{
@@ -271,7 +271,7 @@ func createHealthyResourceConditions() []metav1.Condition {
 }
 
 // createUnhealthyResourceConditions creates unhealthy resource-level conditions
-func createUnhealthyResourceConditions() []metav1.Condition {
+func CreateUnhealthyResourceConditions() []metav1.Condition {
 	now := metav1.Now()
 	return []metav1.Condition{
 		{
@@ -338,7 +338,7 @@ func createUnhealthyResourceConditions() []metav1.Condition {
 // =============================================================================
 
 // createHealthyNodeStatus creates a healthy node status for testing
-func createHealthyNodeStatus(name string, ipAddresses []string) pacmkrv1.PacemakerClusterNodeStatus {
+func CreateHealthyNodeStatus(name string, ipAddresses []string) pacmkrv1.PacemakerClusterNodeStatus {
 	// Convert IP strings to PacemakerNodeAddress format
 	addresses := make([]pacmkrv1.PacemakerNodeAddress, len(ipAddresses))
 	for i, ip := range ipAddresses {
@@ -351,17 +351,17 @@ func createHealthyNodeStatus(name string, ipAddresses []string) pacmkrv1.Pacemak
 		Addresses:  addresses,
 		Resources: []pacmkrv1.PacemakerClusterResourceStatus{
 			{
-				Conditions: createHealthyResourceConditions(),
+				Conditions: CreateHealthyResourceConditions(),
 				Name:       pacmkrv1.PacemakerClusterResourceNameKubelet,
 			},
 			{
-				Conditions: createHealthyResourceConditions(),
+				Conditions: CreateHealthyResourceConditions(),
 				Name:       pacmkrv1.PacemakerClusterResourceNameEtcd,
 			},
 		},
 		FencingAgents: []pacmkrv1.PacemakerClusterFencingAgentStatus{
 			{
-				Conditions: createHealthyResourceConditions(),
+				Conditions: CreateHealthyResourceConditions(),
 				Name:       name + "_redfish",
 				Method:     pacmkrv1.FencingMethodRedfish,
 			},
@@ -370,7 +370,7 @@ func createHealthyNodeStatus(name string, ipAddresses []string) pacmkrv1.Pacemak
 }
 
 // createUnhealthyNodeStatus creates an unhealthy node status with specified unhealthy resource
-func createUnhealthyNodeStatus(name string, ipAddresses []string, unhealthyResourceName pacmkrv1.PacemakerClusterResourceName) pacmkrv1.PacemakerClusterNodeStatus {
+func CreateUnhealthyNodeStatus(name string, ipAddresses []string, unhealthyResourceName pacmkrv1.PacemakerClusterResourceName) pacmkrv1.PacemakerClusterNodeStatus {
 	now := metav1.Now()
 
 	// Convert IP strings to PacemakerNodeAddress format
@@ -393,11 +393,11 @@ func createUnhealthyNodeStatus(name string, ipAddresses []string, unhealthyResou
 
 	resources := []pacmkrv1.PacemakerClusterResourceStatus{
 		{
-			Conditions: createHealthyResourceConditions(),
+			Conditions: CreateHealthyResourceConditions(),
 			Name:       pacmkrv1.PacemakerClusterResourceNameKubelet,
 		},
 		{
-			Conditions: createHealthyResourceConditions(),
+			Conditions: CreateHealthyResourceConditions(),
 			Name:       pacmkrv1.PacemakerClusterResourceNameEtcd,
 		},
 	}
@@ -405,14 +405,14 @@ func createUnhealthyNodeStatus(name string, ipAddresses []string, unhealthyResou
 	// Mark the specified resource as unhealthy
 	for i := range resources {
 		if resources[i].Name == unhealthyResourceName {
-			resources[i].Conditions = createUnhealthyResourceConditions()
+			resources[i].Conditions = CreateUnhealthyResourceConditions()
 		}
 	}
 
 	// Create fencing agent - healthy by default
 	fencingAgents := []pacmkrv1.PacemakerClusterFencingAgentStatus{
 		{
-			Conditions: createHealthyResourceConditions(),
+			Conditions: CreateHealthyResourceConditions(),
 			Name:       name + "_redfish",
 			Method:     pacmkrv1.FencingMethodRedfish,
 		},
