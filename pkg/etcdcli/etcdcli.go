@@ -83,8 +83,15 @@ func NewEtcdClient(
 		}
 		return newEtcdClientWithClientOpts(endpoints, true)
 	}
+	fallbackEndpointsFunc := func() ([]string, error) {
+		return endpointsFromNodes(g.nodeLister, g.networkLister,
+			g.nodeListerSynced, g.networkListerSynced)
+	}
 
-	g.clientPool = NewDefaultEtcdClientPool(newFunc, endpointFunc)
+	g.clientPool = NewDefaultEtcdClientPool(newFunc, endpointFunc, fallbackEndpointsFunc)
+	g.clientPool.SetNewFuncWithEndpoints(func(endpoints []string) (*clientv3.Client, error) {
+		return newEtcdClientWithClientOpts(endpoints, true)
+	})
 	return g
 }
 
@@ -550,6 +557,53 @@ func endpoints(nodeLister corev1listers.NodeLister,
 	return etcdEndpoints, nil
 }
 
+// endpointsFromNodes discovers etcd endpoints by listing control plane node internal IPs.
+// This is used as a fallback when the etcd-endpoints configmap is stale or contains only
+// unreachable member IPs.
+func endpointsFromNodes(nodeLister corev1listers.NodeLister,
+	networkLister configv1listers.NetworkLister,
+	nodeListerSynced cache.InformerSynced,
+	networkListerSynced cache.InformerSynced) ([]string, error) {
+
+	if !nodeListerSynced() {
+		return nil, fmt.Errorf("node lister not synced")
+	}
+	if !networkListerSynced() {
+		return nil, fmt.Errorf("network lister not synced")
+	}
+
+	network, err := networkLister.Get("cluster")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list cluster network: %w", err)
+	}
+
+	nodes, err := nodeLister.List(labels.Set{"node-role.kubernetes.io/master": ""}.AsSelector())
+	if err != nil {
+		return nil, fmt.Errorf("failed to list control plane nodes: %w", err)
+	}
+	nodesArbiter, err := nodeLister.List(labels.Set{"node-role.kubernetes.io/arbiter": ""}.AsSelector())
+	if err != nil {
+		return nil, fmt.Errorf("failed to list arbiter nodes: %w", err)
+	}
+	nodes = append(nodes, nodesArbiter...)
+
+	var etcdEndpoints []string
+	for _, node := range nodes {
+		internalIP, _, err := dnshelpers.GetPreferredInternalIPAddressForNodeName(network, node)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get internal IP for node: %w", err)
+		}
+		etcdEndpoints = append(etcdEndpoints, fmt.Sprintf("https://%s", net.JoinHostPort(internalIP, "2379")))
+	}
+
+	if len(etcdEndpoints) == 0 {
+		return nil, fmt.Errorf("no control plane node endpoints found")
+	}
+
+	sort.Strings(etcdEndpoints)
+	return etcdEndpoints, nil
+}
+
 // filterVotingMembers filters out learner members
 func filterVotingMembers(members []*etcdserverpb.Member) []*etcdserverpb.Member {
 	var votingMembers []*etcdserverpb.Member
@@ -560,4 +614,16 @@ func filterVotingMembers(members []*etcdserverpb.Member) []*etcdserverpb.Member 
 		votingMembers = append(votingMembers, member)
 	}
 	return votingMembers
+}
+
+// IsListersNotSynced returns true if the error is due to cache listers not being synced yet (e.g. at startup).
+// Controllers that get this from the etcd client pool should not report degraded and will retry on next sync.
+func IsListersNotSynced(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "node lister not synced") ||
+		strings.Contains(s, "configmaps lister not synced") ||
+		strings.Contains(s, "network lister not synced")
 }

@@ -83,6 +83,10 @@ func NewDefragController(
 func (c *DefragController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	enabled, err := c.checkDefragEnabled(ctx, syncCtx.Recorder())
 	if err != nil {
+		if etcdcli.IsListersNotSynced(err) {
+			klog.V(4).Infof("DefragController: skipping sync, listers not ready: %v", err)
+			return nil
+		}
 		return err
 	}
 
@@ -90,7 +94,12 @@ func (c *DefragController) sync(ctx context.Context, syncCtx factory.SyncContext
 		return nil
 	}
 
-	return c.runDefrag(ctx, syncCtx.Recorder())
+	err = c.runDefrag(ctx, syncCtx.Recorder())
+	if err != nil && etcdcli.IsListersNotSynced(err) {
+		klog.V(4).Infof("DefragController: skipping defrag, listers not ready: %v", err)
+		return nil
+	}
+	return err
 }
 
 func (c *DefragController) checkDefragEnabled(ctx context.Context, recorder events.Recorder) (bool, error) {

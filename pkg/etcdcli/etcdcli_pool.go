@@ -21,10 +21,12 @@ type EtcdClientPool struct {
 	pool                 chan *clientv3.Client
 	availableOpenClients chan int
 
-	newFunc       func() (*clientv3.Client, error)
-	endpointsFunc func() ([]string, error)
-	healthFunc    func(*clientv3.Client) error
-	closeFunc     func(*clientv3.Client) error
+	newFunc               func() (*clientv3.Client, error)
+	endpointsFunc         func() ([]string, error)
+	healthFunc            func(*clientv3.Client) error
+	closeFunc             func(*clientv3.Client) error
+	fallbackEndpointsFunc func() ([]string, error)
+	newFuncWithEndpoints  func(endpoints []string) (*clientv3.Client, error)
 }
 
 const retries = 3
@@ -84,7 +86,7 @@ func (p *EtcdClientPool) Get() (*clientv3.Client, error) {
 		// client returns a defensive copy, so should be fine to sort in-place
 		sort.Strings(currentEndpoints)
 		if !reflect.DeepEqual(desiredEndpoints, currentEndpoints) {
-			klog.Warningf("cached client detected change in endpoints [%s] vs. [%s]", currentEndpoints, desiredEndpoints)
+			klog.V(4).Infof("cached client detected change in endpoints (%d current vs. %d desired)", len(currentEndpoints), len(desiredEndpoints))
 			// normally we could just set the endpoints directly, but this allows us to add some useful logging
 			client.SetEndpoints(desiredEndpoints...)
 		}
@@ -102,6 +104,40 @@ func (p *EtcdClientPool) Get() (*clientv3.Client, error) {
 		}
 
 		return client, nil
+	}
+
+	if p.fallbackEndpointsFunc != nil && p.newFuncWithEndpoints != nil {
+		fallbackEndpoints, fbErr := p.fallbackEndpointsFunc()
+		if fbErr == nil && len(fallbackEndpoints) > 0 {
+			klog.Warningf("all configmap endpoints unreachable, falling back to node-based endpoint discovery (%d endpoints found)", len(fallbackEndpoints))
+
+			select {
+			case <-p.availableOpenClients:
+			case <-time.After(maxAcquireTime):
+				return nil, fmt.Errorf("giving up getting a cached client after %d tries, fallback also failed: too many active clients", retries)
+			}
+
+			sort.Strings(fallbackEndpoints)
+			klog.Infof("creating a new cached client via fallback endpoints")
+			c, err := p.newFuncWithEndpoints(fallbackEndpoints)
+			if err != nil {
+				klog.Warningf("could not create fallback cached client: %v", err)
+				returnClosedClient(p.availableOpenClients)
+				return nil, fmt.Errorf("giving up getting a cached client after %d tries, fallback client creation failed: %v", retries, err)
+			}
+
+			err = p.healthFunc(c)
+			if err != nil {
+				klog.Warningf("fallback cached client considered unhealthy: %v", err)
+				returnClosedClient(p.availableOpenClients)
+				if closeErr := p.closeFunc(c); closeErr != nil {
+					klog.Errorf("could not close unhealthy fallback cache client: %v", closeErr)
+				}
+				return nil, fmt.Errorf("giving up getting a cached client after %d tries, fallback also unhealthy: %v", retries, err)
+			}
+
+			return c, nil
+		}
 	}
 
 	return nil, fmt.Errorf("giving up getting a cached client after %d tries", retries)
@@ -133,7 +169,10 @@ func returnClosedClient(channel chan int) {
 	}
 }
 
-func NewDefaultEtcdClientPool(newFunc func() (*clientv3.Client, error), endpointsFunc func() ([]string, error)) *EtcdClientPool {
+// NewDefaultEtcdClientPool creates an EtcdClientPool with production-default health checking (MemberList)
+// and client lifecycle management. An optional fallbackEndpointsFunc enables node-based endpoint discovery
+// when the primary endpoint source is unreachable.
+func NewDefaultEtcdClientPool(newFunc func() (*clientv3.Client, error), endpointsFunc func() ([]string, error), fallbackEndpointsFunc ...func() ([]string, error)) *EtcdClientPool {
 	healthFunc := func(client *clientv3.Client) error {
 		if client == nil {
 			return fmt.Errorf("cached client was nil")
@@ -158,14 +197,24 @@ func NewDefaultEtcdClientPool(newFunc func() (*clientv3.Client, error), endpoint
 		return client.Close()
 	}
 
-	return NewEtcdClientPool(newFunc, endpointsFunc, healthFunc, closeFunc)
+	var fbFunc func() ([]string, error)
+	if len(fallbackEndpointsFunc) > 0 {
+		fbFunc = fallbackEndpointsFunc[0]
+	}
+	pool := NewEtcdClientPool(newFunc, endpointsFunc, healthFunc, closeFunc, fbFunc)
+	return pool
 }
 
+// NewEtcdClientPool creates an EtcdClientPool with caller-provided health and close functions.
+// An optional fallbackEndpointsFunc enables node-based endpoint discovery when the primary
+// endpoint source is unreachable. Use SetNewFuncWithEndpoints to wire a client factory that
+// dials fallback endpoints directly.
 func NewEtcdClientPool(
 	newFunc func() (*clientv3.Client, error),
 	endpointsFunc func() ([]string, error),
 	healthFunc func(*clientv3.Client) error,
-	closeFunc func(*clientv3.Client) error) *EtcdClientPool {
+	closeFunc func(*clientv3.Client) error,
+	fallbackEndpointsFunc ...func() ([]string, error)) *EtcdClientPool {
 
 	// pre-populate clients for client creation
 	availableOpenClients := make(chan int, maxNumOpenClients)
@@ -173,12 +222,25 @@ func NewEtcdClientPool(
 		availableOpenClients <- i
 	}
 
-	return &EtcdClientPool{
-		pool:                 make(chan *clientv3.Client, maxNumCachedClients),
-		availableOpenClients: availableOpenClients,
-		newFunc:              newFunc,
-		endpointsFunc:        endpointsFunc,
-		healthFunc:           healthFunc,
-		closeFunc:            closeFunc,
+	var fbFunc func() ([]string, error)
+	if len(fallbackEndpointsFunc) > 0 {
+		fbFunc = fallbackEndpointsFunc[0]
 	}
+
+	return &EtcdClientPool{
+		pool:                  make(chan *clientv3.Client, maxNumCachedClients),
+		availableOpenClients:  availableOpenClients,
+		newFunc:               newFunc,
+		endpointsFunc:         endpointsFunc,
+		healthFunc:            healthFunc,
+		closeFunc:             closeFunc,
+		fallbackEndpointsFunc: fbFunc,
+	}
+}
+
+// SetNewFuncWithEndpoints sets a client factory that dials a specific set of endpoints,
+// bypassing the default endpoint resolution. This must be set alongside fallbackEndpointsFunc
+// for the fallback path to create clients that connect to the node-derived endpoints directly.
+func (p *EtcdClientPool) SetNewFuncWithEndpoints(fn func(endpoints []string) (*clientv3.Client, error)) {
+	p.newFuncWithEndpoints = fn
 }

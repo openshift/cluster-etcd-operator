@@ -53,6 +53,10 @@ func NewEtcdMembersController(
 func (c *EtcdMembersController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	err := c.reportEtcdMembers(ctx, syncCtx.Recorder())
 	if err != nil {
+		if etcdcli.IsListersNotSynced(err) {
+			klog.V(4).Infof("EtcdMembersController: skipping sync, listers not ready: %v", err)
+			return nil
+		}
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EtcdMembersControllerDegraded",
 			Status:  operatorv1.ConditionTrue,

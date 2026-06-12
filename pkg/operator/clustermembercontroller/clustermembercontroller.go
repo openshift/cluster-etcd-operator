@@ -137,7 +137,15 @@ func (c *ClusterMemberController) reconcileMembers(ctx context.Context, recorder
 	if len(peerURL) > 0 {
 		err = c.etcdClient.MemberAddAsLearner(ctx, peerURL)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("failed to add learner member :%w", err))
+			// When a member is down (e.g. etcd pod in CrashLoopBackOff), etcd rejects
+			// reconfiguration with "etcdserver: unhealthy cluster". Treat as transient:
+			// skip and retry on next sync once the cluster is healthy again.
+			if err.Error() == errors.ErrUnhealthy.Error() {
+				klog.V(2).Infof("Skipping add learner %q: cluster is unhealthy (e.g. an etcd member may be down). Will retry on next sync.", peerURL)
+				// Do not append to errs so the controller does not report degraded.
+			} else {
+				errs = append(errs, fmt.Errorf("failed to add learner member :%w", err))
+			}
 		}
 	}
 
