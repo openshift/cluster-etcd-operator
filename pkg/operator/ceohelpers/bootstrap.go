@@ -205,7 +205,12 @@ func IsBootstrapComplete(configmapLister corev1listers.ConfigMapLister, etcdClie
 	// check if etcd-bootstrap member is still present within the etcd cluster membership
 	membersList, err := etcdClient.MemberList(context.Background())
 	if err != nil {
-		return false, fmt.Errorf("IsBootstrapComplete couldn't list the etcd cluster members: %w", err)
+		// The K8s bootstrap configmap says complete, but we can't verify via etcd.
+		// On a running cluster this is safe: the etcd-bootstrap member is removed
+		// immediately after bootstrap and never comes back. Blocking here would
+		// prevent recovery controllers from operating during etcd connectivity issues.
+		klog.Warningf("IsBootstrapComplete: etcd unreachable but kube-system/bootstrap configmap says complete, assuming bootstrap is done: %v", err)
+		return true, nil
 	}
 	for _, m := range membersList {
 		if m.Name == "etcd-bootstrap" {

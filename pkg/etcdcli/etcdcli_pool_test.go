@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -419,6 +420,145 @@ func TestClientEndpointChanges(t *testing.T) {
 
 	// ensure we never created a new client here, otherwise the test passing might be unexpected
 	assert.Equal(t, 1, poolRecorder.numNewCalls)
+}
+
+func TestClientGetFallsBackToNodeEndpoints(t *testing.T) {
+	integration.BeforeTestExternal(t)
+	testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: 3})
+	defer testServer.Terminate(t)
+
+	rec := &clientPoolRecorder{}
+
+	endpointFunc := func() ([]string, error) {
+		rec.numEndpointCalls++
+		return []string{"https://127.0.0.1:1"}, nil
+	}
+
+	// newFunc simulates the production path: dialing stale configmap endpoints fails
+	newFunc := func() (*clientv3.Client, error) {
+		rec.numNewCalls++
+		return nil, fmt.Errorf("failed to make etcd client for endpoints [https://127.0.0.1:1]: context deadline exceeded")
+	}
+
+	healthFunc := func(client *clientv3.Client) error {
+		rec.numHealthCalls++
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := client.MemberList(ctx)
+		return err
+	}
+
+	closeFunc := func(client *clientv3.Client) error {
+		rec.numCloseCalls++
+		return nil
+	}
+
+	fallbackCalled := false
+	var realEndpoints []string
+	for _, member := range testServer.Members {
+		realEndpoints = append(realEndpoints, member.GRPCURL)
+	}
+	fallbackFunc := func() ([]string, error) {
+		fallbackCalled = true
+		return realEndpoints, nil
+	}
+
+	// newFuncWithEndpoints dials the given endpoints directly (no stale configmap involved)
+	newFuncWithEndpointsCalled := false
+	newFuncWithEndpoints := func(endpoints []string) (*clientv3.Client, error) {
+		newFuncWithEndpointsCalled = true
+		return testServer.ClusterClient(t)
+	}
+
+	rec.pool = NewEtcdClientPool(newFunc, endpointFunc, healthFunc, closeFunc, fallbackFunc)
+	rec.pool.SetNewFuncWithEndpoints(newFuncWithEndpoints)
+
+	client, err := rec.pool.Get()
+	require.NoError(t, err)
+	assert.NotNil(t, client)
+	assert.True(t, fallbackCalled, "fallback endpoint func should have been called")
+	assert.True(t, newFuncWithEndpointsCalled, "newFuncWithEndpoints should have been called for fallback")
+	assert.Equal(t, 3, rec.numNewCalls, "primary newFunc should have been called exactly 3 times (retries)")
+}
+
+func TestClientGetFallbackAlsoFails(t *testing.T) {
+	integration.BeforeTestExternal(t)
+	testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: 3})
+	defer testServer.Terminate(t)
+
+	rec := &clientPoolRecorder{}
+
+	endpointFunc := func() ([]string, error) {
+		rec.numEndpointCalls++
+		return []string{"https://127.0.0.1:1"}, nil
+	}
+
+	newFunc := func() (*clientv3.Client, error) {
+		rec.numNewCalls++
+		return nil, fmt.Errorf("failed to make etcd client for endpoints [https://127.0.0.1:1]: context deadline exceeded")
+	}
+
+	healthFunc := func(client *clientv3.Client) error {
+		rec.numHealthCalls++
+		return fmt.Errorf("connection refused")
+	}
+
+	closeFunc := func(client *clientv3.Client) error {
+		rec.numCloseCalls++
+		return nil
+	}
+
+	fallbackFunc := func() ([]string, error) {
+		return []string{"https://127.0.0.1:2"}, nil
+	}
+
+	newFuncWithEndpoints := func(endpoints []string) (*clientv3.Client, error) {
+		return nil, fmt.Errorf("failed to make etcd client for endpoints %v: context deadline exceeded", endpoints)
+	}
+
+	rec.pool = NewEtcdClientPool(newFunc, endpointFunc, healthFunc, closeFunc, fallbackFunc)
+	rec.pool.SetNewFuncWithEndpoints(newFuncWithEndpoints)
+
+	client, err := rec.pool.Get()
+	assert.Nil(t, client)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "fallback client creation failed")
+}
+
+func TestClientGetNoFallbackFunc(t *testing.T) {
+	integration.BeforeTestExternal(t)
+	testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: 3})
+	defer testServer.Terminate(t)
+
+	rec := &clientPoolRecorder{}
+
+	endpointFunc := func() ([]string, error) {
+		rec.numEndpointCalls++
+		return []string{"https://127.0.0.1:1"}, nil
+	}
+
+	newFunc := func() (*clientv3.Client, error) {
+		rec.numNewCalls++
+		return nil, fmt.Errorf("failed to make etcd client for endpoints [https://127.0.0.1:1]: context deadline exceeded")
+	}
+
+	healthFunc := func(client *clientv3.Client) error {
+		rec.numHealthCalls++
+		return fmt.Errorf("connection refused")
+	}
+
+	closeFunc := func(client *clientv3.Client) error {
+		rec.numCloseCalls++
+		return nil
+	}
+
+	// No fallback -- nil
+	rec.pool = NewEtcdClientPool(newFunc, endpointFunc, healthFunc, closeFunc)
+
+	client, err := rec.pool.Get()
+	assert.Nil(t, client)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "giving up getting a cached client after 3 tries")
 }
 
 func newTestPool(t testing.TB, testServer *integration.Cluster) *clientPoolRecorder {

@@ -76,6 +76,11 @@ func (c *ScriptController) Enqueue() {
 func (c ScriptController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	err := c.createScriptConfigMap(ctx, syncCtx.Recorder())
 	if err != nil {
+		// Env vars are populated by EnvVarController (listeners). Until listers are synced
+		// and etcd-endpoints exist, GetEnvVars() can be empty. Treat as transient: don't degrade.
+		if strings.Contains(err.Error(), "missing env var values") {
+			return nil
+		}
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "ScriptControllerDegraded",
 			Status:  operatorv1.ConditionTrue,

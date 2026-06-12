@@ -209,6 +209,7 @@ func Test_IsBootstrapComplete(t *testing.T) {
 	tests := map[string]struct {
 		bootstrapConfigMap *corev1.ConfigMap
 		etcdMembers        []*etcdserverpb.Member
+		etcdClientOpts     []etcdcli.FakeClientOption
 		expectComplete     bool
 		expectError        error
 	}{
@@ -242,6 +243,20 @@ func Test_IsBootstrapComplete(t *testing.T) {
 			expectComplete:     false,
 			expectError:        nil,
 		},
+		"bootstrap complete, etcd unreachable": {
+			bootstrapConfigMap: bootstrapComplete,
+			etcdMembers:        u.DefaultEtcdMembers(),
+			etcdClientOpts:     []etcdcli.FakeClientOption{etcdcli.WithMemberListError(fmt.Errorf("giving up getting a cached client after 3 tries"))},
+			expectComplete:     true,
+			expectError:        nil,
+		},
+		"bootstrap incomplete, etcd unreachable": {
+			bootstrapConfigMap: bootstrapProgressing,
+			etcdMembers:        u.DefaultEtcdMembers(),
+			etcdClientOpts:     []etcdcli.FakeClientOption{etcdcli.WithMemberListError(fmt.Errorf("giving up getting a cached client after 3 tries"))},
+			expectComplete:     false,
+			expectError:        nil,
+		},
 	}
 
 	for name, test := range tests {
@@ -254,7 +269,7 @@ func Test_IsBootstrapComplete(t *testing.T) {
 			}
 			fakeConfigMapLister := corev1listers.NewConfigMapLister(indexer)
 
-			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(test.etcdMembers)
+			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(test.etcdMembers, test.etcdClientOpts...)
 			if err != nil {
 				t.Fatal(err)
 			}

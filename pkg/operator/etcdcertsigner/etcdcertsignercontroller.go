@@ -265,7 +265,15 @@ func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.Syn
 
 	_, currentStatus, _, err := c.operatorClient.GetStaticPodOperatorStateWithQuorum(ctx)
 	if err != nil || currentStatus == nil {
-		return fmt.Errorf("skipping EtcdCertSignerController can't get current status: %w", err)
+		// When operator status cannot be read (e.g. etcd down, API unavailable), still ensure leaf certs
+		// and etcd-all-certs exist so that when the cluster recovers, etcd pods have required certs.
+		// Otherwise we get a chicken-and-egg: etcd needs certs to start, but cert signer refuses to
+		// create certs until it can read status.
+		klog.Warningf("EtcdCertSignerController can't get current status (%v); forcing cert sync so required secrets (etcd-peer, etcd-serving, etcd-serving-metrics) are created", err)
+		if syncErr := c.syncAllMasterCertificates(ctx, syncCtx.Recorder(), true, 0, 0); syncErr != nil {
+			return fmt.Errorf("EtcdCertSignerController failed to sync certs when status unavailable: %w", syncErr)
+		}
+		return nil
 	}
 
 	currentRevision, err := ceohelpers.CurrentRevision(*currentStatus)

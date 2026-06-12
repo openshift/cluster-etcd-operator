@@ -74,6 +74,9 @@ func (f *fakeEtcdClient) MemberPromote(ctx context.Context, member *etcdserverpb
 }
 
 func (f *fakeEtcdClient) MemberList(ctx context.Context) ([]*etcdserverpb.Member, error) {
+	if f.opts.memberListError != nil {
+		return nil, f.opts.memberListError
+	}
 	return f.members, nil
 }
 
@@ -210,6 +213,7 @@ type FakeClientOptions struct {
 	dbSize          int64
 	dbSizeInUse     int64
 	defragErrors    []error
+	memberListError error
 }
 
 func newFakeClientOpts(opts ...FakeClientOption) *FakeClientOptions {
@@ -248,6 +252,13 @@ func WithFakeClusterHealth(members *FakeMemberHealth) FakeClientOption {
 func WithFakeStatus(status []*clientv3.StatusResponse) FakeClientOption {
 	return func(fo *FakeClientOptions) {
 		fo.status = status
+	}
+}
+
+// WithMemberListError configures MemberList to return the given error, simulating etcd unreachability.
+func WithMemberListError(err error) FakeClientOption {
+	return func(fo *FakeClientOptions) {
+		fo.memberListError = err
 	}
 }
 
