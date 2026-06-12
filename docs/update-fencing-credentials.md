@@ -68,10 +68,18 @@ validation fails, the script exits without making any changes to the stonith dev
 4. **Updates the Pacemaker stonith device** -- runs `pcs stonith update <node>_redfish` with the new credentials (username, password, ip, ipport,
 systems_uri, ssl_insecure) and waits up to 120 seconds for the update to apply.
 
-5. **Creates or updates the Kubernetes secret** -- writes a secret named `fencing-credentials-<node>` in the `openshift-etcd` namespace
-containing the address, username, password, and certificate verification setting. Uses `--dry-run=client -o yaml | oc apply` for idempotency.
+5. **Detects the fencing secret** -- automatically finds the correct fencing secret for the node using a three-phase fallback:
+   1. **Hostname**: tries `fencing-credentials-<node>` by direct lookup.
+   2. **MAC hash**: reads MAC addresses from the node's `tnf.openshift.io/mac-addresses` annotation, hashes each one (SHA-256 of the normalized
+      MAC), and looks for `fencing-credentials-<sha256>`.
+   3. **Stonith device address**: reads the `ip` and `systems_uri` parameters from the existing stonith device (`<node>_redfish`, configured by
+      CEO), and scans all `fencing-credentials-*` secrets for one whose `address` field matches. This covers the case where the Kubernetes node
+      name differs from the hostname used to create the secret and no MAC-based secret exists.
 
-6. **Checks Pacemaker health** -- parses `pcs status xml` to ensure no stonith resources are in a blocked state.
+6. **Updates the Kubernetes secret** -- writes the detected secret in the `openshift-etcd` namespace with the new address, username, password,
+and certificate verification setting. Uses `--dry-run=client -o yaml | oc apply` for idempotency.
+
+7. **Checks Pacemaker health** -- parses `pcs status xml` to ensure no stonith resources are in a blocked state.
 
 ## Running the script
 
@@ -101,4 +109,4 @@ sudo /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/upd
 
 - The script requires root access on the node.
 - The BMC password is passed as a command-line argument and will be visible in the process list while the script runs.
-- The password is stored in a Kubernetes secret (`fencing-credentials-<node>`) in the `openshift-etcd` namespace.
+- The password is stored in a Kubernetes fencing secret in the `openshift-etcd` namespace.
