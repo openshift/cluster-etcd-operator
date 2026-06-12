@@ -246,3 +246,18 @@ func CurrentRevision(status operatorv1.StaticPodOperatorStatus) (int32, error) {
 
 	return latestRevision, nil
 }
+
+// IPAddressesEqual compares two IP addresses for equality.
+// Handles both IPv4 and IPv6 addresses by parsing and comparing.
+// Falls back to string comparison if either address fails to parse.
+func IPAddressesEqual(ip1, ip2 string) bool {
+	parsed1 := net.ParseIP(ip1)
+	parsed2 := net.ParseIP(ip2)
+
+	if parsed1 == nil || parsed2 == nil {
+		// If either fails to parse, do string comparison as fallback
+		return ip1 == ip2
+	}
+
+	return parsed1.Equal(parsed2)
+}
