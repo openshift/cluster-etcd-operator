@@ -2,10 +2,12 @@ package etcdendpointscontroller
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
@@ -354,6 +356,160 @@ func TestBootstrapAnnotationRemoval(t *testing.T) {
 			}
 			if scenario.validateFunc != nil {
 				scenario.validateFunc(t, endpoints, fakeKubeClient.Actions())
+			}
+		})
+	}
+}
+
+func TestMemberListFallbackToNodeIPs(t *testing.T) {
+	network := &configv1.Network{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+		Status: configv1.NetworkStatus{
+			ServiceNetwork: []string{"10.0.0.0/16"},
+		},
+	}
+
+	masterNodes := []*corev1.Node{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "master-0",
+				Labels: map[string]string{"node-role.kubernetes.io/master": ""},
+			},
+			Status: corev1.NodeStatus{
+				Addresses: []corev1.NodeAddress{
+					{Type: corev1.NodeInternalIP, Address: "10.0.0.1"},
+				},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "master-1",
+				Labels: map[string]string{"node-role.kubernetes.io/master": ""},
+			},
+			Status: corev1.NodeStatus{
+				Addresses: []corev1.NodeAddress{
+					{Type: corev1.NodeInternalIP, Address: "10.0.0.2"},
+				},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "master-2",
+				Labels: map[string]string{"node-role.kubernetes.io/master": ""},
+			},
+			Status: corev1.NodeStatus{
+				Addresses: []corev1.NodeAddress{
+					{Type: corev1.NodeInternalIP, Address: "10.0.0.3"},
+				},
+			},
+		},
+	}
+
+	scenarios := []struct {
+		name           string
+		memberListErr  error
+		nodes          []*corev1.Node
+		expectErr      bool
+		expectedData   map[string]string
+		expectFallback bool
+	}{
+		{
+			name:          "MemberListFails_FallbackToNodeIPs",
+			memberListErr: fmt.Errorf("context deadline exceeded"),
+			nodes:         masterNodes,
+			expectedData: map[string]string{
+				"master-0": "10.0.0.1",
+				"master-1": "10.0.0.2",
+				"master-2": "10.0.0.3",
+			},
+			expectFallback: true,
+		},
+		{
+			name:          "MemberListFails_NoNodes_BothFail",
+			memberListErr: fmt.Errorf("connection refused"),
+			nodes:         []*corev1.Node{},
+			expectErr:     true,
+		},
+	}
+
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+				&operatorv1.StaticPodOperatorSpec{
+					OperatorSpec: operatorv1.OperatorSpec{
+						ManagementState: operatorv1.Managed,
+					},
+				},
+				u.StaticPodOperatorStatus(
+					u.WithLatestRevision(3),
+					u.WithNodeStatusAtCurrentRevision(3),
+					u.WithNodeStatusAtCurrentRevision(3),
+					u.WithNodeStatusAtCurrentRevision(3),
+				),
+				nil,
+				nil,
+			)
+
+			objects := []runtime.Object{
+				u.BootstrapConfigMap(u.WithBootstrapStatus("complete")),
+			}
+			fakeKubeClient := fake.NewSimpleClientset(objects...)
+
+			var opts []etcdcli.FakeClientOption
+			if scenario.memberListErr != nil {
+				opts = append(opts, etcdcli.WithMemberListError(scenario.memberListErr))
+			}
+			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(nil, opts...)
+			require.NoError(t, err)
+
+			coreIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+			require.NoError(t, coreIndexer.Add(&corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{Name: operatorclient.TargetNamespace},
+			}))
+			for _, obj := range objects {
+				require.NoError(t, coreIndexer.Add(obj))
+			}
+
+			nodeIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+			for _, node := range scenario.nodes {
+				require.NoError(t, nodeIndexer.Add(node))
+			}
+
+			networkIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+			require.NoError(t, networkIndexer.Add(network))
+
+			eventRecorder := events.NewRecorder(
+				fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),
+				"test-etcdendpointscontroller", &corev1.ObjectReference{}, clock.RealClock{},
+			)
+
+			controller := &EtcdEndpointsController{
+				operatorClient:  fakeOperatorClient,
+				etcdClient:      fakeEtcdClient,
+				configmapLister: corev1listers.NewConfigMapLister(coreIndexer),
+				configmapClient: fakeKubeClient.CoreV1(),
+				nodeLister:      corev1listers.NewNodeLister(nodeIndexer),
+				networkLister:   configv1listers.NewNetworkLister(networkIndexer),
+			}
+
+			syncErr := controller.sync(context.TODO(), factory.NewSyncContext("test", eventRecorder))
+			if scenario.expectErr {
+				require.Error(t, syncErr)
+				return
+			}
+			require.NoError(t, syncErr)
+
+			if scenario.expectFallback {
+				for _, action := range fakeKubeClient.Actions() {
+					if action.Matches("create", "configmaps") {
+						createAction := action.(clientgotesting.CreateAction)
+						actual := createAction.GetObject().(*corev1.ConfigMap)
+						assert.Equal(t, scenario.expectedData, actual.Data,
+							"configmap data should contain node IPs as fallback")
+						return
+					}
+				}
+				t.Error("expected configmap create action not found")
 			}
 		})
 	}
