@@ -462,6 +462,9 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controllerContext.EventRecorder,
 		coreClient,
 		kubeInformersForNamespaces,
+		controlPlaneNodeInformer,
+		controlPlaneNodeLister,
+		networkInformer,
 	)
 
 	etcdMembersController := etcdmemberscontroller.NewEtcdMembersController(
