@@ -120,6 +120,11 @@ func (c *DefragController) checkDefragEnabled(ctx context.Context, recorder even
 	return true, nil
 }
 
+type StatusMember struct {
+	Status *clientv3.StatusResponse
+	Member *etcdserverpb.Member
+}
+
 func (c *DefragController) runDefrag(ctx context.Context, recorder events.Recorder) error {
 	// Do not defrag if any of the cluster members are unhealthy.
 	memberHealth, err := c.memberLister.MemberHealth(ctx)
@@ -136,8 +141,7 @@ func (c *DefragController) runDefrag(ctx context.Context, recorder events.Record
 	}
 
 	var (
-		etcdMembers    []*etcdserverpb.Member
-		endpointStatus []*clientv3.StatusResponse
+		statusMembers = make([]StatusMember, 0, len(members))
 	)
 	for _, member := range members {
 		// filter out learner members since they don't support the defragment API call
@@ -149,30 +153,28 @@ func (c *DefragController) runDefrag(ctx context.Context, recorder events.Record
 		status, err := c.statusClient.Status(ctx, member.ClientURLs[0])
 		if err != nil {
 			return err
+		} else if status == nil {
+			return fmt.Errorf("endpoint status returned nil for member %q (%s)", member.Name, member.ClientURLs[0])
 		}
 
-		etcdMembers = append(etcdMembers, member)
-		endpointStatus = append(endpointStatus, status)
+		statusMembers = append(statusMembers, StatusMember{
+			Status: status,
+			Member: member,
+		})
 	}
 
 	// Sort members by fragmentation percentage descending so we
 	// defrag the most fragmented member first.
-	slices.SortFunc(endpointStatus, func(a, b *clientv3.StatusResponse) int {
+	slices.SortFunc(statusMembers, func(a, b StatusMember) int {
 		return cmp.Compare(
-			checkFragmentationPercentage(b.DbSize, b.DbSizeInUse),
-			checkFragmentationPercentage(a.DbSize, a.DbSizeInUse),
+			checkFragmentationPercentage(b.Status.DbSize, b.Status.DbSizeInUse),
+			checkFragmentationPercentage(a.Status.DbSize, a.Status.DbSizeInUse),
 		)
 	})
 
-	for _, status := range endpointStatus {
-		member, err := getMemberFromStatus(etcdMembers, status)
-		if err != nil {
-			c.numDefragFailures++
-			if c.numDefragFailures >= maxDefragFailuresBeforeDegrade {
-				c.setDegraded(ctx, recorder)
-			}
-			return err
-		}
+	for _, statusMember := range statusMembers {
+		status := statusMember.Status
+		member := statusMember.Member
 
 		if !isEndpointBackendFragmented(member, status) {
 			continue
@@ -252,10 +254,6 @@ func (c *DefragController) ensureControllerDisabledCondition(ctx context.Context
 // This can happen if the operator starts defrag of the cluster but then loses leader status and is rescheduled before
 // the operator can defrag all members.
 func isEndpointBackendFragmented(member *etcdserverpb.Member, endpointStatus *clientv3.StatusResponse) bool {
-	if endpointStatus == nil {
-		klog.Errorf("endpoint status validation failed: %v", endpointStatus)
-		return false
-	}
 	fragmentedPercentage := checkFragmentationPercentage(endpointStatus.DbSize, endpointStatus.DbSizeInUse)
 	if fragmentedPercentage > 0.00 {
 		klog.Infof("etcd member %q backend store fragmented: %.2f %%, dbSize: %d", member.Name, fragmentedPercentage, endpointStatus.DbSize)
@@ -267,16 +265,4 @@ func checkFragmentationPercentage(ondisk, inuse int64) float64 {
 	diff := float64(ondisk - inuse)
 	fragmentedPercentage := (diff / float64(ondisk)) * 100
 	return math.Round(fragmentedPercentage*100) / 100
-}
-
-func getMemberFromStatus(members []*etcdserverpb.Member, endpointStatus *clientv3.StatusResponse) (*etcdserverpb.Member, error) {
-	if endpointStatus == nil {
-		return nil, fmt.Errorf("endpoint status validation failed: %v", endpointStatus)
-	}
-	for _, member := range members {
-		if member.ID == endpointStatus.Header.MemberId {
-			return member, nil
-		}
-	}
-	return nil, fmt.Errorf("no member found in MemberList matching ID: %v", endpointStatus.Header.MemberId)
 }
