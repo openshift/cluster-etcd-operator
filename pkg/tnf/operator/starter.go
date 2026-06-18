@@ -24,6 +24,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/component-base/metrics"
+	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/bindata"
@@ -32,6 +34,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/externaletcdsupportcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/jobs"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/metriccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/pacemaker"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
@@ -313,6 +316,16 @@ func runPacemakerControllers(ctx context.Context, controllerContext *controllerc
 		// Start the healthcheck controller
 		klog.Infof("starting Pacemaker healthcheck controller")
 		go healthCheckController.Run(ctx, 1)
+
+		// Create and start the metrics controller, sharing the same informer
+		klog.Infof("creating Pacemaker metrics controller")
+		metricsController := metriccontroller.NewPacemakerMetricsController(
+			pacemakerInformer,
+			controllerContext.EventRecorder,
+			legacyregistry.DefaultGatherer.(metrics.KubeRegistry),
+		)
+		klog.Infof("starting Pacemaker metrics controller")
+		go metricsController.Run(ctx, 1)
 
 		// Start the status collector CronJob
 		klog.Infof("starting Pacemaker status collector CronJob")
