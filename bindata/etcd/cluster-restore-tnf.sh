@@ -44,7 +44,7 @@ function resolve_k8s_node_name() {
   while IFS='=' read -r var_name var_value; do
     if [[ "$var_name" =~ ^NODE_(.+)_IP$ ]]; then
       node_prefix="${BASH_REMATCH[1]}"
-      if echo "$local_ips" | grep -qxF "$var_value"; then
+      if echo "$local_ips" | grep -qxF "${var_value//[\[\]]/}"; then
         local name_var="NODE_${node_prefix}_ETCD_NAME"
         if [ -n "${!name_var}" ]; then
           echo "${!name_var}"
