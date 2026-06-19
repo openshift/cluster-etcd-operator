@@ -2,70 +2,20 @@ package metriccontroller
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	pacmkrv1 "github.com/openshift/api/etcd/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/component-base/metrics"
 	"k8s.io/component-base/metrics/testutil"
 	"k8s.io/utils/clock"
+
+	tnftestutil "github.com/openshift/cluster-etcd-operator/pkg/tnf/internal/testutil"
 )
-
-// ---------------------------------------------------------------------------
-// fakeInformer — copied from pacemaker/healthcheck_test.go (package-private)
-// ---------------------------------------------------------------------------
-
-func createFakeInformer(obj *pacmkrv1.PacemakerCluster) cache.SharedIndexInformer {
-	store := cache.NewStore(func(obj any) (string, error) {
-		if pc, ok := obj.(*pacmkrv1.PacemakerCluster); ok {
-			return pc.Name, nil
-		}
-		return "", fmt.Errorf("object is not a PacemakerCluster")
-	})
-	if obj != nil {
-		_ = store.Add(obj)
-	}
-	return &fakeInformer{store: store}
-}
-
-type fakeInformer struct {
-	store cache.Store
-}
-
-func (f *fakeInformer) AddEventHandler(handler cache.ResourceEventHandler) (cache.ResourceEventHandlerRegistration, error) {
-	return nil, nil
-}
-func (f *fakeInformer) AddEventHandlerWithResyncPeriod(handler cache.ResourceEventHandler, resyncPeriod time.Duration) (cache.ResourceEventHandlerRegistration, error) {
-	return nil, nil
-}
-func (f *fakeInformer) AddEventHandlerWithOptions(handler cache.ResourceEventHandler, options cache.HandlerOptions) (cache.ResourceEventHandlerRegistration, error) {
-	return nil, nil
-}
-func (f *fakeInformer) RemoveEventHandler(handle cache.ResourceEventHandlerRegistration) error {
-	return nil
-}
-func (f *fakeInformer) GetStore() cache.Store           { return f.store }
-func (f *fakeInformer) GetController() cache.Controller { return nil }
-func (f *fakeInformer) Run(stopCh <-chan struct{})      {}
-func (f *fakeInformer) RunWithContext(ctx context.Context) {
-}
-func (f *fakeInformer) HasSynced() bool                                            { return true }
-func (f *fakeInformer) LastSyncResourceVersion() string                            { return "" }
-func (f *fakeInformer) SetWatchErrorHandler(handler cache.WatchErrorHandler) error { return nil }
-func (f *fakeInformer) SetWatchErrorHandlerWithContext(handler cache.WatchErrorHandlerWithContext) error {
-	return nil
-}
-func (f *fakeInformer) SetTransform(handler cache.TransformFunc) error { return nil }
-func (f *fakeInformer) IsStopped() bool                                { return false }
-func (f *fakeInformer) AddIndexers(indexers cache.Indexers) error      { return nil }
-func (f *fakeInformer) GetIndexer() cache.Indexer                      { return nil }
 
 // ---------------------------------------------------------------------------
 // CR builder
@@ -221,7 +171,7 @@ func setCondition(conditions *[]metav1.Condition, condType string, status metav1
 func setupAndSync(t *testing.T, cr *pacmkrv1.PacemakerCluster) metrics.KubeRegistry {
 	t.Helper()
 	registry := metrics.NewKubeRegistry()
-	informer := createFakeInformer(cr)
+	informer := tnftestutil.CreateFakeInformer(cr)
 	recorder := events.NewInMemoryRecorder("test", clock.RealClock{})
 	controller := NewPacemakerMetricsController(informer, recorder, registry)
 	err := controller.Sync(context.TODO(), factory.NewSyncContext("test", recorder))
@@ -360,7 +310,7 @@ tnf_node_clean{node="master-1"} 1
 
 func TestNodeRemovalBetweenSyncs(t *testing.T) {
 	registry := metrics.NewKubeRegistry()
-	informer := createFakeInformer(buildCluster())
+	informer := tnftestutil.CreateFakeInformer(buildCluster())
 	recorder := events.NewInMemoryRecorder("test", clock.RealClock{})
 	controller := NewPacemakerMetricsController(informer, recorder, registry)
 	syncCtx := factory.NewSyncContext("test", recorder)
@@ -426,7 +376,7 @@ tnf_resource_healthy{node="node-beta",resource="Kubelet"} 1
 
 func TestSyncIdempotency(t *testing.T) {
 	registry := metrics.NewKubeRegistry()
-	informer := createFakeInformer(buildCluster())
+	informer := tnftestutil.CreateFakeInformer(buildCluster())
 	recorder := events.NewInMemoryRecorder("test", clock.RealClock{})
 	controller := NewPacemakerMetricsController(informer, recorder, registry)
 	syncCtx := factory.NewSyncContext("test", recorder)
