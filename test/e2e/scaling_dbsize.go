@@ -31,7 +31,7 @@ const (
 )
 
 func TestEtcdDBScaling(t testing.TB) {
-	dbSize32GB := int32(32)
+	dbSizeGB := int32(16)
 	opClientSet := framework.NewOperatorClient(t)
 	clientSet := framework.NewClientSet("")
 	etcdPodsClient := clientSet.CoreV1Interface.Pods(operandNameSpace)
@@ -39,7 +39,7 @@ func TestEtcdDBScaling(t testing.TB) {
 	etcdCR, err := opClientSet.OperatorV1().Etcds().Get(context.Background(), etcdCRName, metav1.GetOptions{})
 	require.NoError(t, err)
 
-	etcdCR.Spec.BackendQuotaGiB = dbSize32GB
+	etcdCR.Spec.BackendQuotaGiB = dbSizeGB
 	etcdCR, err = opClientSet.OperatorV1().Etcds().Update(context.Background(), etcdCR, metav1.UpdateOptions{})
 	require.NoError(t, err)
 
@@ -51,7 +51,7 @@ func TestEtcdDBScaling(t testing.TB) {
 	etcdPod := etcdPods.Items[0]
 	require.True(t, etcdPod.Status.Phase == v1.PodRunning)
 
-	assertPodsSpec(t, &etcdPod, etcdenvvar.GibibytesToBytesString(int64(dbSize32GB)))
+	assertPodsSpec(t, &etcdPod, etcdenvvar.GibibytesToBytesString(int64(dbSizeGB)))
 }
 
 func assertPodsSpec(t testing.TB, etcdPod *v1.Pod, expectedSize string) {
