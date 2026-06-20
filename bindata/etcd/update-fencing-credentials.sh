@@ -29,6 +29,74 @@ function usage {
     exit 1
 }
 
+# mirrors hashMAC in pkg/tnf/pkg/tools/mac.go
+function normalize_and_hash_mac {
+    local mac="$1"
+    local normalized
+    normalized=$(echo "${mac}" | tr '[:upper:]' '[:lower:]' | tr -d ':-')
+    if ! [[ "${normalized}" =~ ^[0-9a-f]{12}$ ]]; then
+        echo "Invalid MAC address: ${mac}" >&2
+        return 1
+    fi
+    echo -n "${normalized}" | sha256sum | awk '{print $1}'
+}
+
+# mirrors Phases 1-2 of GetFencingSecrets in pkg/tnf/pkg/tools/secrets.go;
+# Phase 3 uses stonith device address matching instead of Redfish UUID query
+function detect_fencing_secret {
+    local node="$1"
+    local namespace="openshift-etcd"
+    local mac_annotation_key="tnf.openshift.io/mac-addresses"
+
+    if ! oc get namespace "${namespace}" &>/dev/null; then
+        echo "ERROR: Cannot reach Kubernetes API server" >&2
+        return 1
+    fi
+
+    # Phase 1: hostname-based lookup
+    local hostname_secret="fencing-credentials-${node}"
+    if oc get secret "${hostname_secret}" --namespace="${namespace}" &>/dev/null; then
+        echo "${hostname_secret}"
+        return 0
+    fi
+
+    # Phase 2: MAC hash lookup from node annotation
+    local mac_annotation
+    mac_annotation=$(oc get node "${node}" -o jsonpath="{.metadata.annotations.${mac_annotation_key//\./\\.}}" 2>/dev/null) || true
+    if [ -n "${mac_annotation}" ]; then
+        IFS=',' read -ra macs <<< "${mac_annotation}"
+        for mac in "${macs[@]}"; do
+            mac=$(echo "${mac}" | tr -d '[:space:]')
+            [ -z "${mac}" ] && continue
+            local hash
+            hash=$(normalize_and_hash_mac "${mac}") || continue
+            local mac_secret="fencing-credentials-${hash}"
+            if oc get secret "${mac_secret}" --namespace="${namespace}" &>/dev/null; then
+                echo "${mac_secret}"
+                return 0
+            fi
+        done
+    fi
+
+    # Phase 3: targeted address matching (no bulk secret dump)
+    local stonith_ip="$2"
+    local stonith_uri="$3"
+    if [ -n "${stonith_ip}" ] && [ -n "${stonith_uri}" ]; then
+        local name addr
+        for name in $(oc get secrets -n "${namespace}" -o name 2>/dev/null | grep fencing-credentials-); do
+            addr=$(oc get "${name}" -n "${namespace}" -o jsonpath='{.data.address}' 2>/dev/null | base64 -d) || continue
+            if [[ "${addr}" == *"://${stonith_ip}:"* ]] || [[ "${addr}" == *"://[${stonith_ip}]:"* ]]; then
+                if [[ "${addr}" == *"${stonith_uri}" ]]; then
+                    echo "${name#secret/}"
+                    return 0
+                fi
+            fi
+        done
+    fi
+
+    return 1
+}
+
 function redact_credentials {
     local input
     input=$(cat)
@@ -99,6 +167,43 @@ fi
 
 DEVICE_ID="${NODE}_redfish"
 
+if ! pcs stonith config "${DEVICE_ID}" &>/dev/null; then
+    echo "ERROR: Stonith device '${DEVICE_ID}' not found"
+    echo "Available devices: $(pcs stonith status 2>/dev/null | grep -oP '\S+_redfish' || echo 'none')"
+    echo "Verify node name with: oc get nodes"
+    exit 1
+fi
+
+NAMESPACE="openshift-etcd"
+
+STONITH_CFG=$(pcs stonith config "${DEVICE_ID}" 2>/dev/null || true)
+STONITH_IP=$(echo "${STONITH_CFG}" | sed -n 's/.*[[:space:]]ip=\([^[:space:]]*\).*/\1/p' | head -1)
+STONITH_URI=$(echo "${STONITH_CFG}" | sed -n 's/.*[[:space:]]systems_uri=\([^[:space:]]*\).*/\1/p' | head -1)
+
+echo "Detecting fencing secret for node ${NODE}..."
+if ! SECRET_NAME=$(detect_fencing_secret "${NODE}" "${STONITH_IP}" "${STONITH_URI}"); then
+    echo "No fencing secret found for node ${NODE}"
+    echo "  Phase 1: tried fencing-credentials-${NODE}"
+    echo "  Phase 2: tried MAC hashes from annotation tnf.openshift.io/mac-addresses"
+    if [ -n "${STONITH_IP}" ] && [ -n "${STONITH_URI}" ]; then
+        echo "  Phase 3: tried matching stonith address ip=${STONITH_IP} systems_uri=${STONITH_URI}"
+    else
+        echo "  Phase 3: skipped (stonith device has no address configured)"
+    fi
+    echo "Verify the node name matches 'oc get nodes' and that a fencing secret exists in namespace openshift-etcd"
+    exit 1
+fi
+echo "Detected fencing secret: ${SECRET_NAME}"
+if [ -n "${STONITH_IP}" ] && [ -n "${STONITH_URI}" ]; then
+    if [ "${STONITH_IP}" != "${REDFISH_IP}" ] || [ "${STONITH_URI}" != "${REDFISH_PATH}" ]; then
+        echo "ERROR: --address does not match the BMC address configured on stonith device ${DEVICE_ID}"
+        echo "  Stonith device: ip=${STONITH_IP} systems_uri=${STONITH_URI}"
+        echo "  --address:      ip=${REDFISH_IP} systems_uri=${REDFISH_PATH}"
+        echo "No changes were made"
+        exit 1
+    fi
+fi
+
 echo "Validating new credentials against Redfish endpoint ${REDFISH_IP}:${REDFISH_PORT}${REDFISH_PATH}..."
 
 FENCE_ARGS=(--username "${USERNAME}" --password "${PASSWORD}" --ip "${REDFISH_IP}" --ipport "${REDFISH_PORT}" --systems-uri "${REDFISH_PATH}" --action status)
@@ -108,7 +213,10 @@ fi
 
 if ! PREFLIGHT_OUTPUT=$(/usr/sbin/fence_redfish "${FENCE_ARGS[@]}" 2>&1); then
     echo "Pre-flight validation failed: new credentials do not work against the Redfish endpoint"
+    echo "  Endpoint: ${REDFISH_IP}:${REDFISH_PORT}${REDFISH_PATH}"
+    echo "  SSL insecure: ${SSL_INSECURE}"
     echo "${PREFLIGHT_OUTPUT}" | redact_credentials
+    echo "Check BMC connectivity and verify credentials are correct"
     echo "No changes were made to stonith device or Kubernetes secret"
     exit 1
 fi
@@ -131,9 +239,6 @@ if [[ "${STDERR}" != *"is running"* ]]; then
     exit 1
 fi
 echo "Stonith device ${DEVICE_ID} updated successfully"
-
-SECRET_NAME="fencing-credentials-${NODE}"
-NAMESPACE="openshift-etcd"
 
 echo "Updating secret ${SECRET_NAME} in namespace ${NAMESPACE}"
 # KUBECONFIG is set by etcd-common-tools
