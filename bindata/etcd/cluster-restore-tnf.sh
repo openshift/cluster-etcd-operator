@@ -29,6 +29,32 @@ function source_required_dependency {
 source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd.env
 source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd-common-tools
 
+function resolve_k8s_node_name() {
+  # Resolve the Kubernetes node name by matching local IPs against NODE_*_IP
+  # entries sourced from etcd.env. This avoids relying on hostname which may
+  # diverge from the Kubernetes node name (e.g. when hostname is set to FQDN).
+  local local_ips
+  local_ips=$(ip -o addr show scope global | awk '{print $4}' | cut -d/ -f1)
+
+  if [ -z "$local_ips" ]; then
+    return
+  fi
+
+  local var_name var_value node_prefix
+  while IFS='=' read -r var_name var_value; do
+    if [[ "$var_name" =~ ^NODE_(.+)_IP$ ]]; then
+      node_prefix="${BASH_REMATCH[1]}"
+      if echo "$local_ips" | grep -qxF "${var_value//[\[\]]/}"; then
+        local name_var="NODE_${node_prefix}_ETCD_NAME"
+        if [ -n "${!name_var}" ]; then
+          echo "${!name_var}"
+          return
+        fi
+      fi
+    fi
+  done < <(env | grep -E '^NODE_.*_IP=')
+}
+
 function usage() {
   echo 'Path to the directory containing backup files is required: ./cluster-restore.sh <path-to-backup>'
   echo 'The backup directory is expected to contain the etcd snapshot'
@@ -49,10 +75,11 @@ function get_etcd_advertise_ip() {
 }
 
 function get_peer_node_name() {
-  NODENAME_UNDERSCORE=$(echo "${NODENAME}" | tr '.-' '_')
+  local safe_name
+  safe_name=$(echo "${NODENAME}" | tr '.-' '_')
 
   # Find all NODE_*_ETCD_NAME environment variables, exclude current node, get the value
-  env | grep -E '^NODE_.*_ETCD_NAME' | grep -v "${NODENAME_UNDERSCORE}" | cut -d= -f2
+  env | grep -E '^NODE_.*_ETCD_NAME=' | grep -v "NODE_${safe_name}_ETCD_NAME=" | cut -d= -f2
 }
 
 function wait_for_podman_etcd_start() {
@@ -94,9 +121,15 @@ function cleanup_podman_etcd_attributes() {
 function setup_pacemaker_restore() {
   PODMAN_ETCD_CONFIGURATION_FILES=(certs.hash config-previous.tar.gz config.yaml pod.yaml)
 
-  NODENAME=${NODENAME:-$(hostname)}
-  if [ -z "${NODENAME}" ] ; then
-    echo "could not determine the node hostname. Please set NODENAME env variable and try again"
+  if [ -z "${NODENAME}" ]; then
+    NODENAME=$(resolve_k8s_node_name)
+    if [ -z "${NODENAME}" ]; then
+      echo "Warning: could not auto-detect Kubernetes node name from etcd.env IPs. Falling back to hostname." >&2
+      NODENAME=$(hostname)
+    fi
+  fi
+  if [ -z "${NODENAME}" ]; then
+    echo "could not determine the node name. Please set NODENAME env variable and try again"
     exit 1
   fi
 
