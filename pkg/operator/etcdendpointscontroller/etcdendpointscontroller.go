@@ -6,6 +6,8 @@ import (
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
@@ -15,9 +17,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
@@ -33,6 +37,8 @@ type EtcdEndpointsController struct {
 	etcdClient      etcdcli.EtcdClient
 	configmapLister corev1listers.ConfigMapLister
 	configmapClient corev1client.ConfigMapsGetter
+	nodeLister      corev1listers.NodeLister
+	networkLister   configv1listers.NetworkLister
 }
 
 func NewEtcdEndpointsController(
@@ -41,13 +47,19 @@ func NewEtcdEndpointsController(
 	etcdClient etcdcli.EtcdClient,
 	eventRecorder events.Recorder,
 	kubeClient kubernetes.Interface,
-	kubeInformers operatorv1helpers.KubeInformersForNamespaces) factory.Controller {
+	kubeInformers operatorv1helpers.KubeInformersForNamespaces,
+	controlPlaneNodeInformer cache.SharedIndexInformer,
+	nodeLister corev1listers.NodeLister,
+	networkInformer configv1informers.NetworkInformer,
+) factory.Controller {
 
 	c := &EtcdEndpointsController{
 		operatorClient:  operatorClient,
 		etcdClient:      etcdClient,
 		configmapLister: kubeInformers.ConfigMapLister(),
 		configmapClient: kubeClient.CoreV1(),
+		nodeLister:      nodeLister,
+		networkLister:   networkInformer.Lister(),
 	}
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
@@ -57,6 +69,8 @@ func NewEtcdEndpointsController(
 		operatorClient.Informer(),
 		kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer(),
 		kubeInformers.InformersFor("kube-system").Core().V1().ConfigMaps().Informer(),
+		controlPlaneNodeInformer,
+		networkInformer.Informer(),
 	).WithSync(syncer.Sync).ToController("EtcdEndpointsController", eventRecorder.WithComponentSuffix("etcd-endpoints-controller"))
 }
 
@@ -116,7 +130,17 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 
 	members, err := c.etcdClient.MemberList(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get member list: %w", err)
+		klog.Warningf("EtcdEndpointsController: MemberList failed (%v), falling back to control-plane node IPs", err)
+		fallbackAddresses, fbErr := c.endpointsFromNodeLister()
+		if fbErr != nil {
+			return fmt.Errorf("failed to get member list: %v; node fallback also failed: %w", err, fbErr)
+		}
+		required.Data = fallbackAddresses
+		if _, _, applyErr := resourceapply.ApplyConfigMap(ctx, c.configmapClient, recorder, required); applyErr != nil {
+			return fmt.Errorf("applying fallback configmap update failed: %w", applyErr)
+		}
+		klog.Infof("EtcdEndpointsController: populated etcd-endpoints configmap from node IPs (%d endpoints)", len(fallbackAddresses))
+		return nil
 	}
 
 	endpointAddresses := make(map[string]string, len(members))
@@ -152,6 +176,44 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 	}
 
 	return nil
+}
+
+// endpointsFromNodeLister populates endpoint addresses from control-plane node internal IPs.
+// Used as a fallback when MemberList is unreachable due to stale configmap endpoints.
+// Keys are derived from node names since member IDs are unavailable without etcd.
+// On the next successful sync, MemberList will overwrite with authoritative member data.
+func (c *EtcdEndpointsController) endpointsFromNodeLister() (map[string]string, error) {
+	network, err := c.networkLister.Get("cluster")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cluster network: %w", err)
+	}
+
+	// The nodeLister is already scoped to control-plane nodes (master + arbiter in arbiter topology)
+	// via the controlPlaneNodeLister constructed in starter.go, so List(Everything) is correct here.
+	nodes, err := c.nodeLister.List(labels.Everything())
+	if err != nil {
+		return nil, fmt.Errorf("failed to list control-plane nodes: %w", err)
+	}
+
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("no control-plane nodes found")
+	}
+
+	endpointAddresses := make(map[string]string, len(nodes))
+	for _, node := range nodes {
+		internalIP, _, err := dnshelpers.GetPreferredInternalIPAddressForNodeName(network, node)
+		if err != nil {
+			klog.Warningf("EtcdEndpointsController: could not get internal IP for node %s: %v", node.Name, err)
+			continue
+		}
+		endpointAddresses[node.Name] = internalIP
+	}
+
+	if len(endpointAddresses) == 0 {
+		return nil, fmt.Errorf("no control-plane node IPs found")
+	}
+
+	return endpointAddresses, nil
 }
 
 func configMapAsset() *corev1.ConfigMap {
