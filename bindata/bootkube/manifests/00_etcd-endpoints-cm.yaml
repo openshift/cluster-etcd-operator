@@ -5,7 +5,7 @@ metadata:
   namespace: openshift-etcd
 {{- if ne .BootstrapScalingStrategy "BootstrapInPlaceStrategy" }}
   annotations:
-    alpha.installer.openshift.io/etcd-bootstrap: {{ .BootstrapIP }}
+    alpha.installer.openshift.io/etcd-bootstrap: "{{ .BootstrapIP }}"
 {{- else }}
 data:
   {{ .EtcdEndpointConfigmapData }}
