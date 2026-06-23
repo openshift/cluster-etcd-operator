@@ -52,4 +52,18 @@ local d = import 'github.com/jsonnet-libs/docsonnet/doc-util/main.libsonnet';
     for i in std.range(0, std.length(arr) - 1)
     if filter_func(i, arr[i])
   ],
+
+  '#chunkArray':: d.fn(
+    |||
+      `chunkArray` chunks an array into smaller arrays of the given max size.
+    |||,
+    [
+      d.arg('arr', d.T.array),
+      d.arg('maxSize', d.T.number),
+    ]
+  ),
+  chunkArray(arr, maxSize): [
+    arr[i * maxSize:std.min((i + 1) * maxSize, std.length(arr))]
+    for i in std.range(0, std.ceil(std.length(arr) / maxSize) - 1)
+  ],
 }
