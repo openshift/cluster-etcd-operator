@@ -310,6 +310,19 @@ func TestRenderIpv4(t *testing.T) {
 	testRender(t, config)
 }
 
+func TestRenderIpv6(t *testing.T) {
+	orig := defaultBootstrapIPLocator
+	defaultBootstrapIPLocator = &fakeBootstrapIPLocator{ip: net.ParseIP("2001:db8::1")}
+	defer func() { defaultBootstrapIPLocator = orig }()
+
+	config := &testConfig{
+		clusterNetworkConfig: networkConfigIPv6SingleStack,
+		infraConfig:          infraConfig,
+		clusterConfigMap:     clusterConfigMap,
+	}
+	testRender(t, config)
+}
+
 func testRender(t *testing.T, tc *testConfig) {
 	var errOut io.Writer
 	dir := t.TempDir()
