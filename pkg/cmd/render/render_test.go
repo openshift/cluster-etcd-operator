@@ -15,6 +15,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/api/features"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
@@ -320,10 +321,30 @@ func TestRenderIpv6(t *testing.T) {
 		infraConfig:          infraConfig,
 		clusterConfigMap:     clusterConfigMap,
 	}
-	testRender(t, config)
+	dir := renderManifests(t, config)
+
+	etcdEndpointsPath := filepath.Join(dir, "manifests", "00_etcd-endpoints-cm.yaml")
+	etcdEndpointsBytes, err := os.ReadFile(etcdEndpointsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	etcdEndpoints := &corev1.ConfigMap{}
+	if err := yaml.Unmarshal(etcdEndpointsBytes, etcdEndpoints); err != nil {
+		t.Fatal(err)
+	}
+
+	expectedBootstrapIP := "2001:db8::1"
+	if got := etcdEndpoints.Annotations["alpha.installer.openshift.io/etcd-bootstrap"]; got != expectedBootstrapIP {
+		t.Errorf("etcd bootstrap annotation want: %q got: %q", expectedBootstrapIP, got)
+	}
 }
 
 func testRender(t *testing.T, tc *testConfig) {
+	renderManifests(t, tc)
+}
+
+func renderManifests(t *testing.T, tc *testConfig) string {
 	var errOut io.Writer
 	dir := t.TempDir()
 
@@ -354,6 +375,8 @@ func testRender(t *testing.T, tc *testConfig) {
 	if err := render.Run(); err != nil {
 		t.Errorf("failed render.Run(): %v", err)
 	}
+
+	return dir
 }
 
 func TestTemplateDataIpv4(t *testing.T) {
