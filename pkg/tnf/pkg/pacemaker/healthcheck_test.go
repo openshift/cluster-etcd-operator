@@ -347,6 +347,9 @@ func TestHealthCheck_getPacemakerStatus_UnchangedTimestamp(t *testing.T) {
 	require.NotNil(t, current1, "First call should return a status")
 	require.Equal(t, statusHealthy, current1.OverallStatus, "First call should return healthy status")
 
+	// Simulate what sync() does after successful updateOperatorStatus
+	controller.previous = current1
+
 	// Second call with same timestamp should return nil (no change)
 	current2, _, err2 := controller.getPacemakerStatus(ctx)
 	require.NoError(t, err2, "Second getPacemakerStatus should not return an error")
