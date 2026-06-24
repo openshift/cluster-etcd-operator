@@ -85,7 +85,8 @@ function detect_fencing_secret {
         local name addr
         for name in $(oc get secrets -n "${namespace}" -o name 2>/dev/null | grep fencing-credentials-); do
             addr=$(oc get "${name}" -n "${namespace}" -o jsonpath='{.data.address}' 2>/dev/null | base64 -d) || continue
-            if [[ "${addr}" == *"://${stonith_ip}:"* ]] || [[ "${addr}" == *"://[${stonith_ip}]:"* ]]; then
+            if [[ "${addr}" == *"://${stonith_ip}:"* ]] || [[ "${addr}" == *"://${stonith_ip}/"* ]] || \
+               [[ "${addr}" == *"://\[${stonith_ip}\]:"* ]] || [[ "${addr}" == *"://\[${stonith_ip}\]/"* ]]; then
                 if [[ "${addr}" == *"${stonith_uri}" ]]; then
                     echo "${name#secret/}"
                     return 0
