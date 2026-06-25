@@ -426,7 +426,23 @@ func handleFencingSecretChange(
 		}
 	}
 
-	err := jobs.RestartJobOrRunController(ctx, tools.JobTypeFencing, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions, tools.FencingJobCompletedTimeout)
+	// Create schedulableNodesFunc that returns all control plane nodes
+	// Uses kubeClient directly since we don't have access to nodeInformer in this context
+	schedulableNodesFunc := func() ([]*corev1.Node, error) {
+		nodeList, err := kubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{
+			LabelSelector: "node-role.kubernetes.io/control-plane",
+		})
+		if err != nil {
+			return nil, err
+		}
+		nodes := make([]*corev1.Node, len(nodeList.Items))
+		for i := range nodeList.Items {
+			nodes[i] = &nodeList.Items[i]
+		}
+		return nodes, nil
+	}
+
+	err := jobs.RestartClusterJobOrRunController(ctx, tools.JobTypeFencing, schedulableNodesFunc, nil, nil, 0, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions, tools.FencingJobCompletedTimeout)
 	if err != nil {
 		klog.Errorf("failed to restart fencing job: %v", err)
 		return

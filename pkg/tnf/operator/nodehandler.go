@@ -200,12 +200,19 @@ func startTnfJobcontrollers(
 
 	// the order of job creation does not matter, the jobs wait on each other as needed
 	for _, node := range nodeList {
-		jobs.RunTNFJobController(ctx, tools.JobTypeAuth, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
-		jobs.RunTNFJobController(ctx, tools.JobTypeAfterSetup, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
+		nodeTarget := jobs.NodeTarget{Name: node.Name, UID: string(node.UID)}
+		jobs.RunNodeJobController(ctx, tools.JobTypeAuth, nodeTarget, 0, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
+		jobs.RunNodeJobController(ctx, tools.JobTypeAfterSetup, nodeTarget, 0, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
 	}
 
-	jobs.RunTNFJobController(ctx, tools.JobTypeSetup, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.AllConditions)
-	jobs.RunTNFJobController(ctx, tools.JobTypeFencing, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
+	// Multi-node jobs: schedule on all control plane nodes
+	// In commit 2, this will be updated to use intersection of schedulable and affected nodes
+	allNodesFunc := func() ([]*corev1.Node, error) {
+		return nodeList, nil
+	}
+
+	jobs.RunClusterJobController(ctx, tools.JobTypeSetup, allNodesFunc, nil, nil, 0, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.AllConditions)
+	jobs.RunClusterJobController(ctx, tools.JobTypeFencing, allNodesFunc, nil, nil, 0, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
 
 	// wait until the after-setup jobs finished,
 	// in order to avoid races with update jobs
@@ -245,7 +252,8 @@ func updateSetup(
 	// re-run auth job on both nodes
 	for _, node := range nodeList {
 		klog.Infof("(Re-)running auth job on node %s", node.GetName())
-		err := jobs.RestartJobOrRunController(ctx, tools.JobTypeAuth, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions, tools.AuthJobCompletedTimeout)
+		nodeTarget := jobs.NodeTarget{Name: node.Name, UID: string(node.UID)}
+		err := jobs.RestartNodeJobOrRunController(ctx, tools.JobTypeAuth, nodeTarget, 0, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions, tools.AuthJobCompletedTimeout)
 		if err != nil {
 			return fmt.Errorf("failed to (re-)start auth job on node %s: %w", node.GetName(), err)
 		}
@@ -258,27 +266,29 @@ func updateSetup(
 		}
 	}
 
-	// run update-setup job on both nodes, it will detect on which node it needs to do something
-	for _, node := range nodeList {
-		klog.Infof("(Re-)running update setup job on node %s", node.GetName())
-		err := jobs.RestartJobOrRunController(ctx, tools.JobTypeUpdateSetup, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions, tools.SetupJobCompletedTimeout)
-		if err != nil {
-			return fmt.Errorf("failed to (re-)start update setup job on node %s: %w", node.GetName(), err)
-		}
-
+	// run update-setup job (cluster job with round-robin retry across nodes)
+	// In commit 1: schedules on all CP nodes
+	// Later commit: uses intersection of CP nodes and Pacemaker cluster members
+	klog.Info("(Re-)running update-setup job")
+	allNodesFunc := func() ([]*corev1.Node, error) {
+		return nodeList, nil
 	}
+	err := jobs.RestartClusterJobOrRunController(ctx, tools.JobTypeUpdateSetup, allNodesFunc, nil, nil, 0, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions, tools.SetupJobCompletedTimeout)
+	if err != nil {
+		return fmt.Errorf("failed to (re-)start update-setup job: %w", err)
+	}
+
 	// wait for completion
-	for _, node := range nodeList {
-		err := jobs.WaitForCompletion(ctx, kubeClient, tools.JobTypeUpdateSetup.GetJobName(&node.Name), operatorclient.TargetNamespace, tools.UpdateSetupJobCompletedTimeout)
-		if err != nil {
-			return fmt.Errorf("failed to wait for update setup job on node %s to complete: %w", node.GetName(), err)
-		}
+	err = jobs.WaitForCompletion(ctx, kubeClient, tools.JobTypeUpdateSetup.GetJobName(nil), operatorclient.TargetNamespace, tools.SetupJobCompletedTimeout)
+	if err != nil {
+		return fmt.Errorf("failed to wait for update-setup job to complete: %w", err)
 	}
 
 	// run after-setup job on both nodes
 	for _, node := range nodeList {
 		klog.Infof("(Re-)running after setup job on node %s", node.GetName())
-		err := jobs.RestartJobOrRunController(ctx, tools.JobTypeAfterSetup, &node.Name, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions, tools.AfterSetupJobCompletedTimeout)
+		nodeTarget := jobs.NodeTarget{Name: node.Name, UID: string(node.UID)}
+		err := jobs.RestartNodeJobOrRunController(ctx, tools.JobTypeAfterSetup, nodeTarget, 0, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions, tools.AfterSetupJobCompletedTimeout)
 		if err != nil {
 			return fmt.Errorf("failed to (re-)start after setup job on node %s: %w", node.GetName(), err)
 		}

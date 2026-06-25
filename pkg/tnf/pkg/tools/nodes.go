@@ -41,3 +41,12 @@ func GetNodeIPForPacemaker(node corev1.Node) (string, error) {
 	// fallback
 	return addresses[0].Address, nil
 }
+
+// GetNodeNames extracts node names from a slice of nodes.
+func GetNodeNames(nodes []*corev1.Node) []string {
+	names := make([]string, len(nodes))
+	for i, node := range nodes {
+		names[i] = node.Name
+	}
+	return names
+}
