@@ -304,12 +304,11 @@ func RunTnfUpdateSetup() error {
 	}
 	klog.Info("Completed pcs cluster sync and pcs cluster start --all after update-setup")
 
-	// Register pacemaker alert agents for fencing taint/untaint with retry
+	// Register pacemaker alert agents for fencing taint/untaint
 	// This is done last so core functionality (node membership, fencing, etcd resource) works even if alerts fail
-	// Uses retry because alert scripts may only become available after MCO rollout
-	err = pcs.ConfigureAlertsWithRetry(ctx)
-	if err != nil {
-		return err
+	// Fail fast - job framework will retry if scripts not yet delivered by MCO
+	if err = pcs.ConfigureAlerts(ctx); err != nil {
+		return fmt.Errorf("failed to configure pacemaker alerts: %w", err)
 	}
 
 	return nil
