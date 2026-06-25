@@ -105,12 +105,6 @@ func RunTnfSetup() error {
 		return err
 	}
 
-	// register pacemaker alert agents for fencing taint/untaint
-	err = pcs.ConfigureAlerts(ctx)
-	if err != nil {
-		return err
-	}
-
 	// Etcd handover
 
 	// configure etcd resource - it won't start etcd before CEO managed etcd is removed per node
@@ -130,6 +124,13 @@ func RunTnfSetup() error {
 
 	// Signal CEO that TNF setup is ready for etcd container removal
 	err = etcd.RemoveStaticContainer(ctx, operatorClient)
+	if err != nil {
+		return err
+	}
+
+	// register pacemaker alert agents for fencing taint/untaint
+	// this is done last so core functionality (etcd resource, stonith) works even if alerts fail
+	err = pcs.ConfigureAlerts(ctx)
 	if err != nil {
 		return err
 	}

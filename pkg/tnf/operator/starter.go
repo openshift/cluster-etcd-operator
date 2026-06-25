@@ -3,26 +3,26 @@ package operator
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/staticresourcecontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
-	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
@@ -32,13 +32,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/externaletcdsupportcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/jobs"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/pacemaker"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
-)
-
-const (
-	// pacemakerStatusCollectorName is the name of the Pacemaker status collector CronJob
-	pacemakerStatusCollectorName = "pacemaker-status-collector"
 )
 
 // HandleDualReplicaClusters checks feature gate and control plane topology,
@@ -77,66 +71,12 @@ func HandleDualReplicaClusters(
 	if err := runTnfResourceController(ctx, controllerContext, kubeClient, dynamicClient, operatorClient, kubeInformersForNamespaces); err != nil {
 		return false, err
 	}
-	runPacemakerControllers(ctx, controllerContext, operatorClient, kubeClient, etcdInformer)
 
-	// we need node names for assigning auth and after-setup jobs to specific nodes
-	controlPlaneNodeLister := corev1listers.NewNodeLister(controlPlaneNodeInformer.GetIndexer())
-	klog.Infof("watching for nodes...")
-	_, err = controlPlaneNodeInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj any) {
-			node, ok := obj.(*corev1.Node)
-			if !ok {
-				klog.Warningf("failed to convert added object to Node %+v", obj)
-				return
-			}
-
-			// ignore nodes which are not ready yet
-			if !tools.IsNodeReady(node) {
-				klog.Infof("added node %s is not ready yet, skipping handling", node.GetName())
-				return
-			}
-
-			// this potentially needs some time when we wait for etcd bootstrap to complete, so run it in a goroutine,
-			// to not block the event handler
-			klog.Infof("node added and ready: %s", node.GetName())
-			go handleNodesWithRetry(controllerContext, controlPlaneNodeLister, ctx, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
-		},
-		UpdateFunc: func(oldObj, newObj any) {
-			oldNode, oldOk := oldObj.(*corev1.Node)
-			newNode, newOk := newObj.(*corev1.Node)
-			if !oldOk || !newOk {
-				klog.Warningf("failed to convert updated object to Node, old=%+v, new=%+v", oldObj, newObj)
-				return
-			}
-
-			// only handle if node transitioned from not ready to ready
-			oldReady := tools.IsNodeReady(oldNode)
-			newReady := tools.IsNodeReady(newNode)
-			if !oldReady && newReady {
-				klog.Infof("node %s transitioned to ready state", newNode.GetName())
-				// this potentially needs some time when we wait for etcd bootstrap to complete, so run it in a goroutine,
-				// to not block the event handler
-				go handleNodesWithRetry(controllerContext, controlPlaneNodeLister, ctx, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
-			}
-		},
-		DeleteFunc: func(obj any) {
-			node, ok := obj.(*corev1.Node)
-			if !ok {
-				klog.Warningf("failed to convert deleted object to Node %+v", obj)
-				return
-			}
-			klog.Infof("node deleted: %s", node.GetName())
-
-			// always handle node deletion
-			// this potentially needs some time when we wait for etcd bootstrap to complete, so run it in a goroutine,
-			// to not block the event handler
-			go handleNodesWithRetry(controllerContext, controlPlaneNodeLister, ctx, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer)
-		},
-	})
-	if err != nil {
-		klog.Errorf("failed to add eventhandler to control plane informer: %v", err)
-		return false, err
-	}
+	// Start pacemaker controllers (lifecycle manager, status collector)
+	// PacemakerLifecycleManager handles ALL node lifecycle events:
+	//  - UpdateFunc: Ready transitions for initial bootstrap
+	//  - AddFunc/DeleteFunc: drift-driven reconciliation
+	runPacemakerControllers(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer, controlPlaneNodeInformer)
 
 	// we need to update fencing config when fencing secrets change
 	// adding a secret informer to the jobcontroller would trigger fencing setup for *every* secret change,
@@ -144,10 +84,10 @@ func HandleDualReplicaClusters(
 	klog.Infof("watching for secrets...")
 	_, err = kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
-			go handleFencingSecretChange(ctx, nil, obj, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+			go handleFencingSecretChange(ctx, nil, obj, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, controlPlaneNodeInformer)
 		},
 		UpdateFunc: func(oldObj, newObj any) {
-			go handleFencingSecretChange(ctx, oldObj, newObj, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces)
+			go handleFencingSecretChange(ctx, oldObj, newObj, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, controlPlaneNodeInformer)
 		},
 		DeleteFunc: func(obj any) {
 			// nothing to do
@@ -220,35 +160,12 @@ func runTnfResourceController(ctx context.Context, controllerContext *controller
 	return nil
 }
 
-func runPacemakerControllers(ctx context.Context, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, etcdInformer operatorv1informers.EtcdInformer) {
-	// Wait for external etcd transition before creating any Pacemaker controllers
+func runPacemakerControllers(ctx context.Context, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces, etcdInformer operatorv1informers.EtcdInformer, nodeInformer cache.SharedIndexInformer) {
+	// Pacemaker controllers start after PacemakerCluster CRD is established.
+	// The lifecycle manager's sync() handles bootstrap vs post-transition modes internally.
 	// This runs in a background goroutine to avoid blocking the main thread.
 	go func() {
-		klog.Infof("waiting for etcd to transition to external before creating Pacemaker controllers")
-
-		// Wait for external etcd transition to complete
-		for {
-			if err := ceohelpers.WaitForEtcdCondition(
-				ctx, etcdInformer, operatorClient, ceohelpers.HasExternalEtcdCompletedTransition,
-				10*time.Second, 30*time.Minute, "external etcd transition",
-			); err != nil {
-				if ctx.Err() != nil {
-					klog.Infof("context done while waiting for external etcd transition: %v", err)
-					return
-				}
-				klog.Warningf("external etcd transition not complete yet, will retry in 1m: %v", err)
-				select {
-				case <-time.After(time.Minute):
-					continue
-				case <-ctx.Done():
-					return
-				}
-			}
-			// External etcd transition is complete, break out of the wait loop
-			break
-		}
-
-		klog.Infof("etcd has transitioned to external; verifying PacemakerCluster CRD is established")
+		klog.Infof("waiting for PacemakerCluster CRD to be established before starting Pacemaker controllers")
 
 		// The PacemakerCluster CRD is applied by the static resource controller.
 		// Wait for it to be established before starting the informer.
@@ -258,7 +175,7 @@ func runPacemakerControllers(ctx context.Context, controllerContext *controllerc
 			return
 		}
 
-		// Retry until the CRD is established or context is cancelled
+		// Wait for CRD to be established.
 		for {
 			err = wait.PollUntilContextTimeout(ctx, 2*time.Second, time.Minute, true, func(ctx context.Context) (bool, error) {
 				crd, getErr := apiextClient.ApiextensionsV1().CustomResourceDefinitions().Get(ctx, "pacemakerclusters.etcd.openshift.io", metav1.GetOptions{})
@@ -275,7 +192,6 @@ func runPacemakerControllers(ctx context.Context, controllerContext *controllerc
 				return false, nil
 			})
 			if err == nil {
-				// CRD is established, break out of the retry loop
 				break
 			}
 			if ctx.Err() != nil {
@@ -290,79 +206,86 @@ func runPacemakerControllers(ctx context.Context, controllerContext *controllerc
 				return
 			}
 		}
+
 		klog.Infof("PacemakerCluster CRD is established")
 
-		// Now create the healthcheck controller after transition is complete
-		klog.Infof("creating Pacemaker healthcheck controller")
-		healthCheckController, pacemakerInformer, err := pacemaker.NewHealthCheck(
+		// Prerequisites met: create and start lifecycle manager controller.
+		lifecycleController, lifecycleManager, pacemakerInformer, err := NewPacemakerLifecycleManager(
 			operatorClient,
 			kubeClient,
 			controllerContext.EventRecorder,
 			controllerContext.KubeConfig,
+			nodeInformer,
+			controllerContext,
+			kubeInformersForNamespaces,
+			etcdInformer,
 		)
 		if err != nil {
-			klog.Errorf("Failed to create Pacemaker healthcheck controller: %v", err)
+			klog.Errorf("Failed to create Pacemaker lifecycle manager: %v", err)
 			return
 		}
 
-		// Start the PacemakerCluster informer now that the CRD exists
-		// The controller will wait for this informer to sync before processing events
-		klog.Infof("starting PacemakerCluster informer")
+		// Start the PacemakerCluster informer (controller waits for sync before processing events).
 		go pacemakerInformer.Run(ctx.Done())
 
-		// Start the healthcheck controller
-		klog.Infof("starting Pacemaker healthcheck controller")
-		go healthCheckController.Run(ctx, 1)
+		// Start the lifecycle manager controller.
+		// PacemakerLifecycleManager.sync() handles both bootstrap and post-transition:
+		// - Bootstrap: StartJobControllers() drives external etcd transition
+		// - Post-transition: MonitorHealth(), ReconcilePacemakerConfig(), CleanupOrphanedJobs()
+		go lifecycleController.Run(ctx, 1)
 
-		// Start the status collector CronJob
-		klog.Infof("starting Pacemaker status collector CronJob")
-		runPacemakerStatusCollectorCronJob(ctx, controllerContext, operatorClient, kubeClient)
+		// Create shared validNodeFunc for both update-setup job and status collector CronJob
+		// Returns intersection of K8s (ready) nodes and pacemaker nodes, or all ready nodes if CR unavailable
+		validNodeFunc := func() ([]*corev1.Node, error) {
+			return lifecycleManager.getActivePacemakerNodes()
+		}
+
+		// Start the status collector CronJob with the same valid node logic
+		runPacemakerStatusCollectorCronJob(ctx, controllerContext, operatorClient, kubeClient, validNodeFunc)
+
+		klog.Infof("started Pacemaker controllers (lifecycle manager, status collector)")
 	}()
 }
 
-func runPacemakerStatusCollectorCronJob(ctx context.Context, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface) {
-	// Start the cronjob controller to create a CronJob for periodic status collection
-	// The CronJob runs "tnf-monitor collect" which executes "sudo -n pcs status xml"
-	// and updates the PacemakerCluster CR
-	klog.Infof("starting Pacemaker status collector CronJob controller")
-	statusCronJobController := jobs.NewCronJobController(
-		pacemakerStatusCollectorName,
-		bindata.MustAsset("tnfdeployment/cronjob.yaml"),
-		operatorClient,
-		kubeClient,
-		controllerContext.EventRecorder,
-		func(_ *operatorv1.OperatorSpec, cronJob *batchv1.CronJob) error {
-			// Set the name and namespace
-			cronJob.SetName(pacemakerStatusCollectorName)
-			cronJob.SetNamespace(operatorclient.TargetNamespace)
+// createFencingJobConfigFunc creates a JobConfigFunc for the fencing job.
+// Returns a function that captures node UIDs and fencing secret UIDs for drift detection.
+func createFencingJobConfigFunc(nodeList []*corev1.Node, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) jobs.JobConfigFunc {
+	return func() (string, error) {
+		// Collect node UIDs
+		nodeUIDs := make([]string, len(nodeList))
+		for i, node := range nodeList {
+			nodeUIDs[i] = string(node.UID)
+		}
+		sort.Strings(nodeUIDs)
 
-			// Set the schedule - run every minute
-			cronJob.Spec.Schedule = "* * * * *"
+		// Collect fencing secret UIDs from informer
+		secretsLister := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Lister()
+		allSecrets, err := secretsLister.List(labels.Everything())
+		if err != nil {
+			return "", fmt.Errorf("failed to list secrets: %w", err)
+		}
 
-			// Initialize labels maps if nil and set labels at all levels
-			if cronJob.Labels == nil {
-				cronJob.Labels = make(map[string]string)
+		var secretUIDs []string
+		for _, secret := range allSecrets {
+			if tools.IsFencingSecret(secret.Name) {
+				secretUIDs = append(secretUIDs, string(secret.UID))
 			}
-			cronJob.Labels["app.kubernetes.io/name"] = pacemakerStatusCollectorName
+		}
+		sort.Strings(secretUIDs)
 
-			if cronJob.Spec.JobTemplate.Labels == nil {
-				cronJob.Spec.JobTemplate.Labels = make(map[string]string)
-			}
-			cronJob.Spec.JobTemplate.Labels["app.kubernetes.io/name"] = pacemakerStatusCollectorName
+		// Create config map with both node and secret UIDs
+		config := map[string]interface{}{
+			"nodeUIDs":   nodeUIDs,
+			"secretUIDs": secretUIDs,
+		}
 
-			if cronJob.Spec.JobTemplate.Spec.Template.Labels == nil {
-				cronJob.Spec.JobTemplate.Spec.Template.Labels = make(map[string]string)
-			}
-			cronJob.Spec.JobTemplate.Spec.Template.Labels["app.kubernetes.io/name"] = pacemakerStatusCollectorName
+		configJSON, err := json.Marshal(config)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal fencing config: %w", err)
+		}
 
-			// Configure the container
-			cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Image = os.Getenv("OPERATOR_IMAGE")
-			cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Command = []string{"tnf-monitor", "collect", "-v=4"}
-
-			return nil
-		},
-	)
-	go statusCronJobController.Run(ctx, 1)
+		return string(configJSON), nil
+	}
 }
 
 func handleFencingSecretChange(
@@ -372,6 +295,7 @@ func handleFencingSecretChange(
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeClient kubernetes.Interface,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
+	nodeInformer cache.SharedIndexInformer,
 ) {
 
 	// obj can be nil, always restart fencing job in that case
@@ -413,7 +337,30 @@ func handleFencingSecretChange(
 		}
 	}
 
-	err := jobs.RestartJobOrRunController(ctx, tools.JobTypeFencing, nil, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions, tools.FencingJobCompletedTimeout)
+	// OCPBUGS-84695: before handoff, ignore secret-driven fencing (install orders fencing via startTnfJobcontrollers).
+	transitionComplete, err := ceohelpers.HasExternalEtcdCompletedTransition(ctx, operatorClient)
+	if err != nil {
+		klog.Errorf("failed to check external etcd transition for fencing secret handler: %v", err)
+		return
+	}
+	if !transitionComplete {
+		klog.V(4).Infof("skipping fencing job restart from fencing secret change until %s is True",
+			ceohelpers.OperatorConditionExternalEtcdHasCompletedTransition)
+		return
+	}
+
+	// Get control plane nodes for jobConfigFunc
+	nodes, err := ceohelpers.ListNodesFromInformer(nodeInformer)
+	if err != nil {
+		klog.Errorf("failed to list control plane nodes for fencing job config: %v", err)
+		return
+	}
+
+	// Create jobConfigFunc to capture node UIDs + fencing secret UIDs for drift detection
+	fencingJobConfigFunc := createFencingJobConfigFunc(nodes, kubeInformersForNamespaces)
+
+	// Restart fencing job with drift detection
+	err = jobs.RestartJobOrRunController(ctx, tools.JobTypeFencing, nil, nil, fencingJobConfigFunc, 3, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions, tools.FencingJobCompletedTimeout)
 	if err != nil {
 		klog.Errorf("failed to restart fencing job: %v", err)
 		return
