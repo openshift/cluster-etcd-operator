@@ -56,6 +56,7 @@ spec:
         - "--terminate-on-files=/var/run/secrets/etcd-client/tls.key"
         - "--terminate-on-files=/var/run/configmaps/etcd-ca/ca-bundle.crt"
         - "--terminate-on-files=/var/run/configmaps/etcd-service-ca/service-ca.crt"
+        - "-v=4"
         resources:
           requests:
             memory: 50Mi
