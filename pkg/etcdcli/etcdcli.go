@@ -520,6 +520,8 @@ func endpoints(nodeLister corev1listers.NodeLister,
 		if err != nil {
 			return nil, fmt.Errorf("failed to list control plane nodes: %w", err)
 		}
+		// Note: arbiter label selector matches constant in pkg/operator/ceohelpers/node_helpers.go
+		// but we can't import it here due to import cycle
 		nodesArbiter, err := nodeLister.List(labels.Set{"node-role.kubernetes.io/arbiter": ""}.AsSelector())
 		if err != nil {
 			return nil, fmt.Errorf("failed to list arbiter nodes: %w", err)

@@ -15,9 +15,9 @@ import (
 )
 
 const (
-	masterNodeLabelSelectorString  = "node-role.kubernetes.io/master"
-	arbiterNodeLabelSelectorString = "node-role.kubernetes.io/arbiter"
-	workerNodeLabelSelectorString  = "node-role.kubernetes.io/worker"
+	masterNodeLabelSelectorString = "node-role.kubernetes.io/master"
+	// ArbiterNodeLabelSelector and controlPlaneNodeLabelSelector defined in node_helpers.go
+	workerNodeLabelSelectorString = "node-role.kubernetes.io/worker"
 )
 
 func TestMultiSelectors(t *testing.T) {
@@ -97,7 +97,7 @@ func TestMultiSelectors(t *testing.T) {
 					ObjectMeta: v1.ObjectMeta{
 						Name: "arbiter0",
 						Labels: map[string]string{
-							arbiterNodeLabelSelectorString: "",
+							ArbiterNodeLabelSelector: "",
 						},
 					},
 				},
@@ -143,7 +143,7 @@ func TestMultiSelectors(t *testing.T) {
 					ObjectMeta: v1.ObjectMeta{
 						Name: "arbiter0",
 						Labels: map[string]string{
-							arbiterNodeLabelSelectorString: "",
+							ArbiterNodeLabelSelector: "",
 						},
 					},
 				},
@@ -201,7 +201,7 @@ func TestMultiSelectors(t *testing.T) {
 					ObjectMeta: v1.ObjectMeta{
 						Name: "arbiter0",
 						Labels: map[string]string{
-							arbiterNodeLabelSelectorString: "",
+							ArbiterNodeLabelSelector: "",
 						},
 					},
 				},
@@ -241,7 +241,7 @@ func TestMultiSelectors(t *testing.T) {
 				kubeClient.Tracker().Add(&n)
 			}
 
-			arbiterNodeLabelSelector, err := labels.Parse(arbiterNodeLabelSelectorString)
+			arbiterNodeLabelSelector, err := labels.Parse(ArbiterNodeLabelSelector)
 			require.Nil(t, err)
 			masterNodeLabelSelector, err := labels.Parse(masterNodeLabelSelectorString)
 			require.Nil(t, err)

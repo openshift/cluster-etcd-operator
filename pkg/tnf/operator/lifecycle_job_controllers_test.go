@@ -301,7 +301,7 @@ func TestStartJobControllers(t *testing.T) {
 				node := &corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:   fmt.Sprintf("master-%d", i),
-						Labels: map[string]string{"node-role.kubernetes.io/control-plane": ""},
+						Labels: map[string]string{ceohelpers.ControlPlaneNodeLabelSelector: ""},
 					},
 					Status: corev1.NodeStatus{},
 				}

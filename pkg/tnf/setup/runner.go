@@ -140,6 +140,13 @@ func RunTnfSetup() error {
 		return err
 	}
 
+	// register pacemaker alert agents for fencing taint/untaint
+	// this is done last so core functionality (etcd resource, stonith) works even if alerts fail
+	err = pcs.ConfigureAlerts(ctx)
+	if err != nil {
+		return err
+	}
+
 	// get pcs cib
 	cib, err := pcs.GetCIB(ctx)
 	if err != nil {
