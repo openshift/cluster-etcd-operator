@@ -293,12 +293,7 @@ type testConfig struct {
 	infraConfig                             string
 	clusterConfigMap                        string
 	delayedHABootstrapScalingStrategyMarker string
-}
-
-func TestMain(m *testing.M) {
-	// TODO: implement tests for bootstrap IP determination
-	defaultBootstrapIPLocator = &fakeBootstrapIPLocator{ip: net.ParseIP("10.0.0.1")}
-	os.Exit(m.Run())
+	bootstrapIP                             net.IP
 }
 
 func TestRenderIpv4(t *testing.T) {
@@ -312,16 +307,13 @@ func TestRenderIpv4(t *testing.T) {
 }
 
 func TestRenderIpv6(t *testing.T) {
-	orig := defaultBootstrapIPLocator
-	defaultBootstrapIPLocator = &fakeBootstrapIPLocator{ip: net.ParseIP("2001:db8::1")}
-	defer func() { defaultBootstrapIPLocator = orig }()
-
 	config := &testConfig{
 		clusterNetworkConfig: networkConfigIPv6SingleStack,
 		infraConfig:          infraConfig,
 		clusterConfigMap:     clusterConfigMap,
+		bootstrapIP:          net.ParseIP("2001:db8::1"),
 	}
-	dir := renderManifests(t, config)
+	dir := testRender(t, config)
 
 	etcdEndpointsPath := filepath.Join(dir, "manifests", "00_etcd-endpoints-cm.yaml")
 	etcdEndpointsBytes, err := os.ReadFile(etcdEndpointsPath)
@@ -340,11 +332,12 @@ func TestRenderIpv6(t *testing.T) {
 	}
 }
 
-func testRender(t *testing.T, tc *testConfig) {
-	renderManifests(t, tc)
-}
+func testRender(t *testing.T, tc *testConfig) string {
+	bootstrapIP := tc.bootstrapIP
+	if bootstrapIP == nil {
+		bootstrapIP = net.ParseIP("10.0.0.1")
+	}
 
-func renderManifests(t *testing.T, tc *testConfig) string {
 	var errOut io.Writer
 	dir := t.TempDir()
 
@@ -370,6 +363,7 @@ func renderManifests(t *testing.T, tc *testConfig) string {
 		networkConfigFile:    clusterConfigPath,
 		infraConfigFile:      infraConfigPath,
 		clusterConfigMapFile: clusterConfigMapPath,
+		bootstrapIPLocator:   &fakeBootstrapIPLocator{ip: bootstrapIP},
 	}
 
 	if err := render.Run(); err != nil {
@@ -572,6 +566,11 @@ func hasNamespaceAnnotations(expected map[string]string) func(*testing.T, *Templ
 }
 
 func testTemplateData(t *testing.T, tc *testConfig, validators ...func(*testing.T, *TemplateData)) {
+	bootstrapIP := tc.bootstrapIP
+	if bootstrapIP == nil {
+		bootstrapIP = net.ParseIP("10.0.0.1")
+	}
+
 	var errOut io.Writer
 	dir := t.TempDir()
 
@@ -598,6 +597,7 @@ func testTemplateData(t *testing.T, tc *testConfig, validators ...func(*testing.
 		infraConfigFile:                         infraConfigPath,
 		clusterConfigMapFile:                    clusterConfigMapPath,
 		delayedHABootstrapScalingStrategyMarker: tc.delayedHABootstrapScalingStrategyMarker,
+		bootstrapIPLocator:                      &fakeBootstrapIPLocator{ip: bootstrapIP},
 	}
 
 	got, err := newTemplateData(render)
