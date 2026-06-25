@@ -130,9 +130,12 @@ func RunTnfSetup() error {
 
 	// register pacemaker alert agents for fencing taint/untaint
 	// this is done last so core functionality (etcd resource, stonith) works even if alerts fail
+	// alerts are optional - don't fail setup if they can't be configured
 	err = pcs.ConfigureAlerts(ctx)
 	if err != nil {
-		return err
+		klog.Warningf("Failed to configure pacemaker alerts (non-fatal, continuing): %v", err)
+	} else {
+		klog.Infof("Successfully configured pacemaker alerts")
 	}
 
 	// get pcs cib

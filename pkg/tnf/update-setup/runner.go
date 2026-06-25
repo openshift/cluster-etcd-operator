@@ -306,9 +306,12 @@ func RunTnfUpdateSetup() error {
 
 	// Register pacemaker alert agents for fencing taint/untaint
 	// This is done last so core functionality (node membership, fencing, etcd resource) works even if alerts fail
+	// Alerts are optional - don't fail update-setup if they can't be configured
 	err = pcs.ConfigureAlerts(ctx)
 	if err != nil {
-		return err
+		klog.Warningf("Failed to configure pacemaker alerts (non-fatal, continuing): %v", err)
+	} else {
+		klog.Infof("Successfully configured pacemaker alerts")
 	}
 
 	return nil
