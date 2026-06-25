@@ -213,3 +213,9 @@ func matchRedfishUUIDsToSecrets(ctx context.Context, kubeClient kubernetes.Inter
 func IsFencingSecret(secretName string) bool {
 	return strings.HasPrefix(secretName, fencingSecretNamePrefix)
 }
+
+// GetFencingSecretName returns the expected fencing secret name for a node.
+// Returns "fencing-credentials-{nodeName}".
+func GetFencingSecretName(nodeName string) string {
+	return fmt.Sprintf(fencingSecretNamePattern, nodeName)
+}
