@@ -14,12 +14,13 @@ import (
 // setup job: waits for auth jobs to complete
 // after setup jobs: waits for setup job to complete
 const (
-	JobPollInterval               = 15 * time.Second
-	AuthJobCompletedTimeout       = 10 * time.Minute
-	SetupJobCompletedTimeout      = 20 * time.Minute
-	AfterSetupJobCompletedTimeout = 5 * time.Minute
-	AllCompletedTimeout           = 30 * time.Minute
-	FencingJobCompletedTimeout    = 25 * time.Minute
+	JobPollInterval                = 15 * time.Second
+	AuthJobCompletedTimeout        = 10 * time.Minute
+	SetupJobCompletedTimeout       = 20 * time.Minute
+	AfterSetupJobCompletedTimeout  = 5 * time.Minute
+	UpdateSetupJobCompletedTimeout = 20 * time.Minute
+	AllCompletedTimeout            = 30 * time.Minute
+	FencingJobCompletedTimeout     = 25 * time.Minute
 )
 
 // JobType represent the different jobs we run, with some methods needed
