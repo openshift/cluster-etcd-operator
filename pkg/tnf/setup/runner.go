@@ -105,12 +105,6 @@ func RunTnfSetup() error {
 		return err
 	}
 
-	// register pacemaker alert agents for fencing taint/untaint
-	err = pcs.ConfigureAlerts(ctx)
-	if err != nil {
-		return err
-	}
-
 	// Etcd handover
 
 	// configure etcd resource - it won't start etcd before CEO managed etcd is removed per node
@@ -128,7 +122,17 @@ func RunTnfSetup() error {
 		time.Sleep(5 * time.Second)
 	}
 
+	// register pacemaker alert agents for fencing taint/untaint
+	// alerts are optional - don't fail setup if they can't be configured
+	err = pcs.ConfigureAlerts(ctx)
+	if err != nil {
+		klog.Warningf("Failed to configure pacemaker alerts (non-fatal, continuing): %v", err)
+	} else {
+		klog.Infof("Successfully configured pacemaker alerts")
+	}
+
 	// Signal CEO that TNF setup is ready for etcd container removal
+	// After this point, the transition flag is set and other components can proceed
 	err = etcd.RemoveStaticContainer(ctx, operatorClient)
 	if err != nil {
 		return err
