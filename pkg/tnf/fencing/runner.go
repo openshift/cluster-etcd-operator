@@ -4,18 +4,24 @@ import (
 	"context"
 	"fmt"
 
-	batchv1 "k8s.io/api/batch/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/server"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/clock"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/config"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/jobs"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/pcs"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
+	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
 )
 
 func RunFencingSetup() error {
@@ -47,46 +53,65 @@ func RunFencingSetup() error {
 
 	klog.Info("Running TNF pacemaker fencing configuration")
 
-	klog.Info("Waiting for completed setup job")
-	setupDone := func(context.Context) (done bool, err error) {
-		setupJobs, err := kubeClient.BatchV1().Jobs("openshift-etcd").List(ctx, metav1.ListOptions{
-			LabelSelector: fmt.Sprintf("app.kubernetes.io/name=%s", tools.JobTypeSetup.GetNameLabelValue()),
-		})
+	// Set up operator client to check transition status
+	operatorClient, dynamicInformers, err := genericoperatorclient.NewStaticPodOperatorClient(
+		clock.RealClock{},
+		clientConfig,
+		operatorv1.GroupVersion.WithResource("etcds"),
+		operatorv1.GroupVersion.WithKind("Etcd"),
+		operator.ExtractStaticPodOperatorSpec,
+		operator.ExtractStaticPodOperatorStatus,
+	)
+	if err != nil {
+		return err
+	}
+	dynamicInformers.Start(ctx.Done())
+	dynamicInformers.WaitForCacheSync(ctx.Done())
+
+	// Check if update-setup ConfigMap exists to determine what to wait for
+	configMaps, err := kubeClient.CoreV1().ConfigMaps(operatorclient.TargetNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app.kubernetes.io/component=" + tools.TnfUpdateSetupComponentValue,
+	})
+	if err != nil {
+		klog.Errorf("Failed to list update-setup ConfigMaps: %v", err)
+		return fmt.Errorf("failed to list update-setup ConfigMaps: %w", err)
+	}
+
+	if len(configMaps.Items) > 0 {
+		// Post-transition: update-setup ConfigMap exists, wait for job to complete
+		klog.Info("Update-setup ConfigMap found, waiting for update-setup job to complete")
+		err = waitForUpdateSetupCompletion(ctx, kubeClient)
 		if err != nil {
-			klog.Warningf("Failed to list setupJobs: %v", err)
-			return false, nil
+			return err
 		}
-		if setupJobs.Items == nil {
-			klog.Warningf("Expected 1 job, found none")
-			return false, nil
+	} else {
+		// Pre-transition: no ConfigMap, wait for transition
+		klog.Info("No update-setup ConfigMap found, waiting for transition to complete")
+		err = waitForTransitionComplete(ctx, operatorClient)
+		if err != nil {
+			return err
 		}
-		if len(setupJobs.Items) != 1 {
-			klog.Warningf("Expected 1 job, found %d", len(setupJobs.Items))
-			return false, nil
-		}
-		job := setupJobs.Items[0]
-		if !jobs.IsConditionTrue(job.Status.Conditions, batchv1.JobComplete) {
-			klog.Warningf("Job %s not complete", job.Name)
-			return false, nil
-		}
-		klog.Info("Setup job completed successfully")
-		return true, nil
 	}
-	err = wait.PollUntilContextTimeout(ctx, tools.JobPollInterval, tools.SetupJobCompletedTimeout, true, setupDone)
+
+	// Get current ready control plane nodes from K8s
+	nodes, err := ceohelpers.ListReadyNodes(ctx, kubeClient)
 	if err != nil {
-		klog.Errorf("Timed out waiting for setup job to complete: %v", err)
-		return err
+		klog.Errorf("Failed to list ready control plane nodes: %v", err)
+		return fmt.Errorf("failed to list ready control plane nodes: %w", err)
 	}
 
-	klog.Info("Running TNF pacemaker fencing configuration")
-
-	// create tnf cluster config
-	cfg, err := config.GetClusterConfigIgnoreMissingNode(ctx, kubeClient)
-	if err != nil {
-		return err
+	if len(nodes) == 0 {
+		klog.Errorf("No ready control plane nodes found")
+		return fmt.Errorf("no ready control plane nodes found")
 	}
 
-	err = pcs.ConfigureFencing(ctx, kubeClient, []string{cfg.NodeName1, cfg.NodeName2})
+	nodeNames := make([]string, len(nodes))
+	for i, node := range nodes {
+		nodeNames[i] = node.Name
+	}
+
+	klog.Infof("Configuring fencing for nodes: %v", nodeNames)
+	err = pcs.ConfigureFencing(ctx, kubeClient, nodeNames)
 	if err != nil {
 		return err
 	}
@@ -99,5 +124,67 @@ func RunFencingSetup() error {
 
 	klog.Infof("TNF pacemaker fencing configuration done! CIB:\n%s", cib)
 
+	return nil
+}
+
+// waitForTransitionComplete waits for the ExternalEtcdTransitionCompleted flag to be set (bootstrap phase).
+func waitForTransitionComplete(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient) error {
+	klog.Info("Waiting for external etcd transition to complete")
+	transitionDone := func(context.Context) (done bool, err error) {
+		complete, err := ceohelpers.HasExternalEtcdCompletedTransition(ctx, operatorClient)
+		if err != nil {
+			klog.Warningf("Failed to check transition status: %v", err)
+			return false, nil
+		}
+		if !complete {
+			klog.V(4).Info("Transition not yet complete")
+			return false, nil
+		}
+		klog.Info("External etcd transition completed successfully")
+		return true, nil
+	}
+	err := wait.PollUntilContextTimeout(ctx, tools.JobPollInterval, tools.SetupJobCompletedTimeout, true, transitionDone)
+	if err != nil {
+		klog.Errorf("Timed out waiting for transition to complete: %v", err)
+		return fmt.Errorf("timed out waiting for transition to complete: %w", err)
+	}
+	return nil
+}
+
+// waitForUpdateSetupCompletion waits for the update-setup job to complete (post-transition phase).
+func waitForUpdateSetupCompletion(ctx context.Context, kubeClient kubernetes.Interface) error {
+	klog.Info("Waiting for update-setup job to complete")
+	updateSetupDone := func(context.Context) (done bool, err error) {
+		updateSetupJobName := tools.JobTypeUpdateSetup.GetJobName(nil)
+		job, err := kubeClient.BatchV1().Jobs(operatorclient.TargetNamespace).Get(ctx, updateSetupJobName, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				// No job exists - nothing to wait for
+				klog.V(4).Info("Update-setup job not found, proceeding")
+				return true, nil
+			}
+			klog.Warningf("Failed to get update-setup job: %v", err)
+			return false, nil
+		}
+
+		if jobs.IsComplete(*job) {
+			klog.Info("Update-setup job completed successfully")
+			return true, nil
+		}
+
+		if jobs.IsFailed(*job) {
+			klog.Warningf("Update-setup job failed, but proceeding with fencing configuration")
+			return true, nil
+		}
+
+		klog.V(4).Info("Update-setup job still running")
+		return false, nil
+	}
+
+	err := wait.PollUntilContextTimeout(ctx, tools.JobPollInterval, tools.UpdateSetupJobCompletedTimeout, true, updateSetupDone)
+	if err != nil {
+		klog.Errorf("Timed out waiting for update-setup job to complete: %v", err)
+		return fmt.Errorf("timed out waiting for update-setup job to complete: %w", err)
+	}
 	return nil
 }

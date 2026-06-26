@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"time"
 
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
@@ -248,17 +249,39 @@ func runPacemakerControllers(ctx context.Context, controllerContext *controllerc
 }
 
 // createFencingJobConfigFunc creates a JobConfigFunc for the fencing job.
-// Returns a function that captures node UIDs and fencing secret UIDs for drift detection.
+// Returns a function that captures update-setup generation, node UIDs, and fencing secret UIDs for drift detection.
+// Drift triggers fencing job restart:
+// - Generation change: membership changed (node add/remove)
+// - Secret UID change: BMC credentials rotated
+// - Node UID change: node replaced (same name, different UID)
 func createFencingJobConfigFunc(nodeList []*corev1.Node, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) jobs.JobConfigFunc {
 	return func() (string, error) {
-		// Collect node UIDs
+		// Get latest update-setup ConfigMap generation (detects membership changes)
+		configMapsLister := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister()
+		configMaps, err := configMapsLister.List(labels.SelectorFromSet(labels.Set{
+			"app.kubernetes.io/component": tools.TnfUpdateSetupComponentValue,
+		}))
+		if err != nil {
+			return "", fmt.Errorf("failed to list update-setup ConfigMaps: %w", err)
+		}
+
+		var latestGeneration int64 = 0
+		for _, cm := range configMaps {
+			genStr := cm.Data["generation"]
+			gen, _ := strconv.ParseInt(genStr, 10, 64)
+			if gen > latestGeneration {
+				latestGeneration = gen
+			}
+		}
+
+		// Collect node UIDs (detects node replacements)
 		nodeUIDs := make([]string, len(nodeList))
 		for i, node := range nodeList {
 			nodeUIDs[i] = string(node.UID)
 		}
 		sort.Strings(nodeUIDs)
 
-		// Collect fencing secret UIDs from informer
+		// Collect fencing secret UIDs from informer (detects credential rotation)
 		secretsLister := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Lister()
 		allSecrets, err := secretsLister.List(labels.Everything())
 		if err != nil {
@@ -273,8 +296,9 @@ func createFencingJobConfigFunc(nodeList []*corev1.Node, kubeInformersForNamespa
 		}
 		sort.Strings(secretUIDs)
 
-		// Create config map with both node and secret UIDs
+		// Create config with generation + UIDs
 		config := map[string]interface{}{
+			"generation": latestGeneration,
 			"nodeUIDs":   nodeUIDs,
 			"secretUIDs": secretUIDs,
 		}

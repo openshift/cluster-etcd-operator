@@ -56,12 +56,3 @@ func (c *PacemakerLifecycleManager) getPacemakerNodesWithCR() (map[string]string
 
 	return pmNodes, pacemakerCR, nil
 }
-
-// getNodeNames extracts node names from a list of nodes.
-func getNodeNames(nodes []*corev1.Node) []string {
-	names := make([]string, len(nodes))
-	for i, node := range nodes {
-		names[i] = node.Name
-	}
-	return names
-}

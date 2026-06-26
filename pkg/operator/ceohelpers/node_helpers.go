@@ -20,6 +20,8 @@ const (
 
 // ListNodesFromInformer returns all nodes from the given informer.
 // This is a convenience wrapper around creating a lister and listing all nodes.
+// Note: The informer is typically pre-filtered (e.g., controlPlaneNodeInformer),
+// so this returns only the nodes that match the informer's filter.
 func ListNodesFromInformer(informer cache.SharedIndexInformer) ([]*corev1.Node, error) {
 	if informer == nil {
 		return nil, fmt.Errorf("informer is nil")
@@ -27,14 +29,4 @@ func ListNodesFromInformer(informer cache.SharedIndexInformer) ([]*corev1.Node, 
 
 	lister := corev1listers.NewNodeLister(informer.GetIndexer())
 	return lister.List(labels.Everything())
-}
-
-// ListNodesBySelector returns nodes matching the given label selector from the informer.
-func ListNodesBySelector(informer cache.SharedIndexInformer, selector labels.Selector) ([]*corev1.Node, error) {
-	if informer == nil {
-		return nil, fmt.Errorf("informer is nil")
-	}
-
-	lister := corev1listers.NewNodeLister(informer.GetIndexer())
-	return lister.List(selector)
 }

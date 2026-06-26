@@ -363,14 +363,14 @@ func RunTNFJobController(ctx context.Context, jobType tools.JobType, nodeTarget 
 	runningControllersMutex.Lock()
 	if runningControllers[controllerKey] {
 		runningControllersMutex.Unlock()
-		klog.Infof("Two Node Fencing job controller for command %q on node %q is already running, skipping duplicate start", jobType.GetSubCommand(), nodeNameForLogs)
+		klog.V(4).Infof("Two Node Fencing job controller for command %q on node %q is already running, skipping duplicate start", jobType.GetSubCommand(), nodeNameForLogs)
 		return
 	}
 	// Mark this controller as running
 	runningControllers[controllerKey] = true
 	runningControllersMutex.Unlock()
 
-	klog.Infof("starting Two Node Fencing job controller for command %q on node %q", jobType.GetSubCommand(), nodeNameForLogs)
+	klog.Infof("Starting Two Node Fencing job controller for command %q on node %q", jobType.GetSubCommand(), nodeNameForLogs)
 	tnfJobController := NewJobController(
 		jobType.GetJobName(jobNodeName),
 		bindata.MustAsset("tnfdeployment/job.yaml"),

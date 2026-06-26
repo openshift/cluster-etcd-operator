@@ -137,7 +137,7 @@ func RunTnfUpdateSetup() error {
 	}
 
 	klog.Infof("Running update-setup for %d-node cluster", len(capturedNodes))
-	klog.V(2).Infof("Captured nodes: %v", getNodeNames(capturedNodes))
+	klog.V(2).Infof("Captured nodes: %v", tools.GetNodeNames(capturedNodes))
 
 	cfg, err := buildClusterConfigFromNodeList(capturedNodes)
 	if err != nil {
@@ -235,17 +235,9 @@ func RunTnfUpdateSetup() error {
 		}
 	}
 
-	// Reconcile STONITH after membership changes (other node first, then current).
-	if len(nodesToRemove) > 0 || len(nodesToAdd) > 0 {
-		fencingNodes := make([]string, 0, 2)
-		if otherNodeName != "" {
-			fencingNodes = append(fencingNodes, otherNodeName)
-		}
-		fencingNodes = append(fencingNodes, currentNodeName)
-		if err = pcs.ConfigureFencing(ctx, kubeClient, fencingNodes); err != nil {
-			return fmt.Errorf("failed to configure fencing: %w", err)
-		}
-	}
+	// Fencing configuration is now handled by the fencing job (not inline).
+	// The fencing job will detect the generation change via jobConfigFunc and restart,
+	// waiting for this update-setup job to complete before running ConfigureFencing.
 
 	// Update etcd resource with current node IPs after any membership changes
 	// This runs once regardless of whether we removed, added, or both
@@ -545,14 +537,6 @@ func decodeNodeList(data string) ([]*corev1.Node, error) {
 	}
 
 	return nodes, nil
-}
-
-func getNodeNames(nodes []*corev1.Node) []string {
-	names := make([]string, len(nodes))
-	for i, node := range nodes {
-		names[i] = node.Name
-	}
-	return names
 }
 
 func buildClusterConfigFromNodeList(nodes []*corev1.Node) (config.ClusterConfig, error) {

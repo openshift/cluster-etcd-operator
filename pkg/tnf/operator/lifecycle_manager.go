@@ -59,8 +59,6 @@ type PacemakerLifecycleManager struct {
 
 	// Job controller startup protection: prevents concurrent StartJobControllers calls
 	startJobControllersMu sync.Mutex
-	// Track if job controllers have been started (set once, never reset)
-	jobControllersStarted bool
 
 	// Lifecycle context for goroutines spawned by event handlers
 	lifecycleCtx       context.Context

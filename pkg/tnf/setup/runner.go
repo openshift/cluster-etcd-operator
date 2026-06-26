@@ -122,20 +122,20 @@ func RunTnfSetup() error {
 		time.Sleep(5 * time.Second)
 	}
 
-	// Signal CEO that TNF setup is ready for etcd container removal
-	err = etcd.RemoveStaticContainer(ctx, operatorClient)
-	if err != nil {
-		return err
-	}
-
 	// register pacemaker alert agents for fencing taint/untaint
-	// this is done last so core functionality (etcd resource, stonith) works even if alerts fail
 	// alerts are optional - don't fail setup if they can't be configured
 	err = pcs.ConfigureAlerts(ctx)
 	if err != nil {
 		klog.Warningf("Failed to configure pacemaker alerts (non-fatal, continuing): %v", err)
 	} else {
 		klog.Infof("Successfully configured pacemaker alerts")
+	}
+
+	// Signal CEO that TNF setup is ready for etcd container removal
+	// After this point, the transition flag is set and other components can proceed
+	err = etcd.RemoveStaticContainer(ctx, operatorClient)
+	if err != nil {
+		return err
 	}
 
 	// get pcs cib

@@ -24,6 +24,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/kubelet"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 	"github.com/openshift/library-go/pkg/operator/genericoperatorclient"
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
 )
 
 func RunTnfAfterSetup() error {
@@ -76,9 +77,10 @@ func RunTnfAfterSetup() error {
 	}
 
 	if !transitionComplete {
-		// Pre-transition (bootstrap): wait for setup job
-		klog.Info("Pre-transition: waiting for setup job to complete")
-		err = waitForSetupJobCompletion(ctx, kubeClient)
+		// Pre-transition (bootstrap): wait for transition flag to be set
+		// The setup job sets this flag when Pacemaker configuration is complete
+		klog.Info("Pre-transition: waiting for transition to complete")
+		err = waitForTransitionComplete(ctx, operatorClient)
 		if err != nil {
 			return err
 		}
@@ -103,32 +105,26 @@ func RunTnfAfterSetup() error {
 	return nil
 }
 
-// waitForSetupJobCompletion waits for the setup job to complete (bootstrap phase)
-func waitForSetupJobCompletion(ctx context.Context, kubeClient kubernetes.Interface) error {
-	klog.Info("Waiting for setup job to complete")
-	setupDone := func(context.Context) (done bool, err error) {
-		setupJobs, err := kubeClient.BatchV1().Jobs("openshift-etcd").List(ctx, metav1.ListOptions{
-			LabelSelector: fmt.Sprintf("app.kubernetes.io/name=%s", tools.JobTypeSetup.GetNameLabelValue()),
-		})
+// waitForTransitionComplete waits for the ExternalEtcdTransitionCompleted flag to be set (bootstrap phase)
+// The setup job sets this flag when Pacemaker configuration is complete
+func waitForTransitionComplete(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient) error {
+	klog.Info("Waiting for external etcd transition to complete")
+	transitionDone := func(context.Context) (done bool, err error) {
+		complete, err := ceohelpers.HasExternalEtcdCompletedTransition(ctx, operatorClient)
 		if err != nil {
-			klog.Warningf("Failed to list setup jobs: %v", err)
+			klog.Warningf("Failed to check transition status: %v", err)
 			return false, nil
 		}
-		if setupJobs.Items == nil || len(setupJobs.Items) != 1 {
-			klog.V(4).Infof("Expected 1 setup job, got %d", len(setupJobs.Items))
+		if !complete {
+			klog.V(4).Info("Transition not yet complete")
 			return false, nil
 		}
-		job := setupJobs.Items[0]
-		if !jobs.IsConditionTrue(job.Status.Conditions, batchv1.JobComplete) {
-			klog.V(4).Infof("Setup job %s not yet complete", job.Name)
-			return false, nil
-		}
-		klog.Info("Setup job completed successfully")
+		klog.Info("External etcd transition completed successfully")
 		return true, nil
 	}
-	err := wait.PollUntilContextTimeout(ctx, tools.JobPollInterval, tools.SetupJobCompletedTimeout, true, setupDone)
+	err := wait.PollUntilContextTimeout(ctx, tools.JobPollInterval, tools.SetupJobCompletedTimeout, true, transitionDone)
 	if err != nil {
-		return fmt.Errorf("timed out waiting for setup job to complete: %w", err)
+		return fmt.Errorf("timed out waiting for transition to complete: %w", err)
 	}
 	return nil
 }

@@ -103,8 +103,9 @@ func (c *PacemakerLifecycleManager) StartJobControllers(ctx context.Context) err
 		klog.V(2).Infof("Both control plane nodes ready - starting initial job controllers with retry")
 		return c.retryInitialTransitionOrDegrade(ctx, k8sNodes)
 	} else {
-		// Post-transition: idempotent call (handles operator restart, single-node case)
-		// Uses mutex to prevent concurrent startup attempts
+		// Post-transition: ensure controllers running for all ready nodes
+		// Called on every sync to handle missed node add/delete/update events
+		// RunTNFJobController has internal duplicate prevention
 
 		// Defensive check: ensure we have at least one control plane node
 		if len(k8sNodes) == 0 {
@@ -120,26 +121,12 @@ func (c *PacemakerLifecycleManager) StartJobControllers(ctx context.Context) err
 			}
 		}
 
-		// Check if controllers have already been started
-		c.startJobControllersMu.Lock()
-		if c.jobControllersStarted {
-			c.startJobControllersMu.Unlock()
-			klog.V(4).Infof("Job controllers already started, skipping")
-			return nil
-		}
-		c.startJobControllersMu.Unlock()
-
-		klog.V(2).Infof("Transition complete - ensuring job controllers running with %d ready control plane nodes", len(k8sNodes))
+		klog.V(4).Infof("Transition complete - ensuring job controllers running for %d ready control plane nodes", len(k8sNodes))
 		err = c.startJobControllersWithLock(ctx, k8sNodes)
 		if err != nil {
 			return err
 		}
 
-		// Mark as started on success
-		c.startJobControllersMu.Lock()
-		c.jobControllersStarted = true
-		c.startJobControllersMu.Unlock()
-		klog.Infof("Job controllers successfully started")
 		return nil
 	}
 }
@@ -223,15 +210,18 @@ func startTnfJobcontrollers(
 	etcdInformer operatorv1informers.EtcdInformer,
 	lifecycleManager *PacemakerLifecycleManager) error {
 
-	// Check if setup job already exists and is complete (operator restart scenario)
+	// Check if transition already complete (operator restart scenario)
 	// If so, skip bootstrap flow and just ensure controllers are running
-	setupJobName := tools.JobTypeSetup.GetJobName(nil)
-	setupJob, err := kubeClient.BatchV1().Jobs(operatorclient.TargetNamespace).Get(ctx, setupJobName, metav1.GetOptions{})
-	if err == nil && jobs.IsComplete(*setupJob) {
-		klog.Infof("Setup job already complete - skipping bootstrap flow, ensuring controllers are running")
+	transitionComplete, err := ceohelpers.HasExternalEtcdCompletedTransition(ctx, operatorClient)
+	if err != nil {
+		klog.Warningf("Failed to check transition status: %v - proceeding with bootstrap flow", err)
+	}
+
+	if transitionComplete {
+		klog.Infof("Transition already complete - skipping bootstrap flow, ensuring controllers are running")
 
 		// Just start the controllers without going through bootstrap/setup again
-		// This prevents recreating jobs and racing with reconciliation
+		// This prevents recreating setup job and racing with reconciliation
 		for _, node := range nodeList {
 			nodeTarget := &jobs.NodeTarget{Name: node.Name, UID: string(node.UID)}
 			jobs.RunTNFJobController(ctx, tools.JobTypeAuth, nodeTarget, nil, nil, 3, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
@@ -242,7 +232,8 @@ func startTnfJobcontrollers(
 			return lifecycleManager.getActivePacemakerNodes()
 		}
 
-		jobs.RunTNFJobController(ctx, tools.JobTypeSetup, nil, clusterWideTargetNodesFunc, nil, 3, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.AllConditions)
+		// DO NOT start setup job controller - transition already complete, setup job is one-time only
+		// Day 2 changes are handled by update-setup job via ReconcilePacemakerConfig
 
 		fencingJobConfigFunc := createFencingJobConfigFunc(nodeList, kubeInformersForNamespaces)
 		jobs.RunTNFJobController(ctx, tools.JobTypeFencing, nil, clusterWideTargetNodesFunc, fencingJobConfigFunc, 3, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
@@ -256,11 +247,8 @@ func startTnfJobcontrollers(
 			jobs.RunTNFJobController(ctx, tools.JobTypeUpdateSetup, nil, clusterWideTargetNodesFunc, nil, 3, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
 		}
 
-		klog.Infof("Controllers running for existing completed jobs")
+		klog.V(4).Infof("Controllers running (post-transition)")
 		return nil
-	}
-	if err != nil && !apierrors.IsNotFound(err) {
-		klog.Warningf("Failed to check setup job status: %v - proceeding with bootstrap flow", err)
 	}
 
 	klog.Infof("Running TNF setup procedure. Waiting for etcd bootstrap to complete")

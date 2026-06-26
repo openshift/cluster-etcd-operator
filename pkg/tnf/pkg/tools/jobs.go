@@ -21,6 +21,10 @@ const (
 	UpdateSetupJobCompletedTimeout = 20 * time.Minute
 	AllCompletedTimeout            = 30 * time.Minute
 	FencingJobCompletedTimeout     = 25 * time.Minute
+
+	// TnfUpdateSetupComponentValue is app.kubernetes.io/component for update-setup snapshot ConfigMaps.
+	// CEO creates ConfigMaps with this value; the in-cluster update-setup job lists by the same selector.
+	TnfUpdateSetupComponentValue = "tnf-update-setup"
 )
 
 // JobType represent the different jobs we run, with some methods needed

@@ -148,7 +148,7 @@ func (c *PacemakerLifecycleManager) ReconcilePacemakerConfig(ctx context.Context
 		needsReconciliation = true
 		if reason == "" {
 			// Format node names for better readability
-			k8sNodeNames := getNodeNames(k8sNodes)
+			k8sNodeNames := tools.GetNodeNames(k8sNodes)
 			pmNodeNames := make([]string, 0, len(pacemakerNodes))
 			for nodeName := range pacemakerNodes {
 				pmNodeNames = append(pmNodeNames, nodeName)
@@ -221,7 +221,7 @@ func (c *PacemakerLifecycleManager) ReconcilePacemakerConfig(ctx context.Context
 			return fmt.Errorf("no nodes in both K8s and pacemaker - manual intervention may be required")
 		}
 		validTargetNodes = intersection
-		klog.Infof("Found %d nodes in intersection (K8s ∩ pacemaker): %v", len(validTargetNodes), getNodeNames(validTargetNodes))
+		klog.Infof("Found %d nodes in intersection (K8s ∩ pacemaker): %v", len(validTargetNodes), tools.GetNodeNames(validTargetNodes))
 	} else {
 		// CR unavailable/stale - try nodes sequentially to discover which has pacemaker running
 		// Use stopped job to determine which node we already tried (to avoid retrying same node)
@@ -229,7 +229,7 @@ func (c *PacemakerLifecycleManager) ReconcilePacemakerConfig(ctx context.Context
 		if len(validTargetNodes) == 0 {
 			return fmt.Errorf("no valid nodes for discovery - all nodes have been tried and failed")
 		}
-		klog.Infof("Discovery mode (no actionable CR): will try nodes %v", getNodeNames(validTargetNodes))
+		klog.Infof("Discovery mode (no actionable CR): will try nodes %v", tools.GetNodeNames(validTargetNodes))
 	}
 
 	// Create function that calculates valid target nodes
@@ -332,7 +332,7 @@ func (c *PacemakerLifecycleManager) getActivePacemakerNodes() ([]*corev1.Node, e
 		// CR exists and is fresh - use intersection logic (K8s ∩ pacemaker)
 		intersection := c.getIntersection(readyNodes, pacemakerNodes)
 		if len(intersection) > 0 {
-			klog.V(2).Infof("Valid targets (intersection, ready only): %v", getNodeNames(intersection))
+			klog.V(2).Infof("Valid targets (intersection, ready only): %v", tools.GetNodeNames(intersection))
 			return intersection, nil
 		}
 		// No intersection - fall through to using all ready nodes
@@ -346,7 +346,7 @@ func (c *PacemakerLifecycleManager) getActivePacemakerNodes() ([]*corev1.Node, e
 	}
 
 	// CR doesn't exist, is stale, or no intersection - use all ready nodes
-	klog.V(2).Infof("Valid targets (all ready nodes): %v", getNodeNames(readyNodes))
+	klog.V(2).Infof("Valid targets (all ready nodes): %v", tools.GetNodeNames(readyNodes))
 	return readyNodes, nil
 }
 
@@ -580,7 +580,7 @@ func updateSetup(
 	}
 
 	klog.Infof("Generation %d: Will try nodes %v (desired state: %v)",
-		generation, getNodeNames(validTargetNodes), getNodeNames(allK8sNodes))
+		generation, tools.GetNodeNames(validTargetNodes), tools.GetNodeNames(allK8sNodes))
 
 	cmName := fmt.Sprintf("tnf-update-setup-%d", generation)
 
@@ -650,7 +650,7 @@ func updateSetup(
 	// Restart update-setup job with new information (deletes existing job immediately, starts controller)
 	// Controller will manage job lifecycle via sync loop and retry across valid nodes
 	// Note: Auth and after-setup jobs are managed by separate background controllers (lifecycle_job_controllers.go)
-	klog.Infof("Starting update-setup job controller for generation %d with %d initial valid target(s): %v", generation, len(validTargetNodes), getNodeNames(validTargetNodes))
+	klog.Infof("Starting update-setup job controller for generation %d with %d initial valid target(s): %v", generation, len(validTargetNodes), tools.GetNodeNames(validTargetNodes))
 
 	// Create jobConfigFunc that captures config for drift detection
 	jobConfigFunc := func() (string, error) {
