@@ -15,6 +15,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/api/features"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
@@ -292,12 +293,7 @@ type testConfig struct {
 	infraConfig                             string
 	clusterConfigMap                        string
 	delayedHABootstrapScalingStrategyMarker string
-}
-
-func TestMain(m *testing.M) {
-	// TODO: implement tests for bootstrap IP determination
-	defaultBootstrapIPLocator = &fakeBootstrapIPLocator{ip: net.ParseIP("10.0.0.1")}
-	os.Exit(m.Run())
+	bootstrapIP                             net.IP
 }
 
 func TestRenderIpv4(t *testing.T) {
@@ -310,7 +306,38 @@ func TestRenderIpv4(t *testing.T) {
 	testRender(t, config)
 }
 
-func testRender(t *testing.T, tc *testConfig) {
+func TestRenderIpv6(t *testing.T) {
+	config := &testConfig{
+		clusterNetworkConfig: networkConfigIPv6SingleStack,
+		infraConfig:          infraConfig,
+		clusterConfigMap:     clusterConfigMap,
+		bootstrapIP:          net.ParseIP("2001:db8::1"),
+	}
+	dir := testRender(t, config)
+
+	etcdEndpointsPath := filepath.Join(dir, "manifests", "00_etcd-endpoints-cm.yaml")
+	etcdEndpointsBytes, err := os.ReadFile(etcdEndpointsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	etcdEndpoints := &corev1.ConfigMap{}
+	if err := yaml.Unmarshal(etcdEndpointsBytes, etcdEndpoints); err != nil {
+		t.Fatal(err)
+	}
+
+	expectedBootstrapIP := "2001:db8::1"
+	if got := etcdEndpoints.Annotations["alpha.installer.openshift.io/etcd-bootstrap"]; got != expectedBootstrapIP {
+		t.Errorf("etcd bootstrap annotation want: %q got: %q", expectedBootstrapIP, got)
+	}
+}
+
+func testRender(t *testing.T, tc *testConfig) string {
+	bootstrapIP := tc.bootstrapIP
+	if bootstrapIP == nil {
+		bootstrapIP = net.ParseIP("10.0.0.1")
+	}
+
 	var errOut io.Writer
 	dir := t.TempDir()
 
@@ -336,11 +363,14 @@ func testRender(t *testing.T, tc *testConfig) {
 		networkConfigFile:    clusterConfigPath,
 		infraConfigFile:      infraConfigPath,
 		clusterConfigMapFile: clusterConfigMapPath,
+		bootstrapIPLocator:   &fakeBootstrapIPLocator{ip: bootstrapIP},
 	}
 
 	if err := render.Run(); err != nil {
 		t.Errorf("failed render.Run(): %v", err)
 	}
+
+	return dir
 }
 
 func TestTemplateDataIpv4(t *testing.T) {
@@ -536,6 +566,11 @@ func hasNamespaceAnnotations(expected map[string]string) func(*testing.T, *Templ
 }
 
 func testTemplateData(t *testing.T, tc *testConfig, validators ...func(*testing.T, *TemplateData)) {
+	bootstrapIP := tc.bootstrapIP
+	if bootstrapIP == nil {
+		bootstrapIP = net.ParseIP("10.0.0.1")
+	}
+
 	var errOut io.Writer
 	dir := t.TempDir()
 
@@ -562,6 +597,7 @@ func testTemplateData(t *testing.T, tc *testConfig, validators ...func(*testing.
 		infraConfigFile:                         infraConfigPath,
 		clusterConfigMapFile:                    clusterConfigMapPath,
 		delayedHABootstrapScalingStrategyMarker: tc.delayedHABootstrapScalingStrategyMarker,
+		bootstrapIPLocator:                      &fakeBootstrapIPLocator{ip: bootstrapIP},
 	}
 
 	got, err := newTemplateData(render)

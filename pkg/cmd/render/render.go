@@ -45,6 +45,7 @@ type renderOpts struct {
 	infraConfigFile      string
 
 	delayedHABootstrapScalingStrategyMarker string
+	bootstrapIPLocator                      BootstrapIPLocator
 }
 
 // NewRenderCommand creates a render command.
@@ -235,7 +236,11 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := templateData.setBootstrapIP(templateData.MachineCIDR, templateData.PreferIPv6, excludedIPs); err != nil {
+	bootstrapIPLocator := opts.bootstrapIPLocator
+	if bootstrapIPLocator == nil {
+		bootstrapIPLocator = defaultBootstrapIPLocator
+	}
+	if err := templateData.setBootstrapIP(bootstrapIPLocator, templateData.MachineCIDR, templateData.PreferIPv6, excludedIPs); err != nil {
 		return nil, err
 	}
 
@@ -417,8 +422,8 @@ func writeKeyFile(dir, name string, keyData []byte) error {
 	return nil
 }
 
-func (t *TemplateData) setBootstrapIP(machineCIDR string, ipv6 bool, excludedIPs []string) error {
-	ip, err := defaultBootstrapIPLocator.getBootstrapIP(ipv6, machineCIDR, excludedIPs)
+func (t *TemplateData) setBootstrapIP(locator BootstrapIPLocator, machineCIDR string, ipv6 bool, excludedIPs []string) error {
+	ip, err := locator.getBootstrapIP(ipv6, machineCIDR, excludedIPs)
 	if err != nil {
 		return err
 	}
