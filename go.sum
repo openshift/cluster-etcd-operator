@@ -190,8 +190,8 @@ github.com/openshift-eng/openshift-tests-extension v0.0.0-20250804142706-7b3ab43
 github.com/openshift-eng/openshift-tests-extension v0.0.0-20250804142706-7b3ab438a292/go.mod h1:6gkP5f2HL0meusT0Aim8icAspcD1cG055xxBZ9yC68M=
 github.com/openshift/api v0.0.0-20260514151338-8ecf6a78d1b0 h1:m1iFB5kHFUihF14rFCaAV6T8UGsQRia/2upXxb7UhwQ=
 github.com/openshift/api v0.0.0-20260514151338-8ecf6a78d1b0/go.mod h1:pyVjK0nZ4sRs4fuQVQ4rubsJdahI1PB94LnQ8sGdvxo=
-github.com/openshift/build-machinery-go v0.0.0-20250530140348-dc5b2804eeee h1:+Sp5GGnjHDhT/a/nQ1xdp43UscBMr7G5wxsYotyhzJ4=
-github.com/openshift/build-machinery-go v0.0.0-20250530140348-dc5b2804eeee/go.mod h1:8jcm8UPtg2mCAsxfqKil1xrmRMI3a+XU2TZ9fF8A7TE=
+github.com/openshift/build-machinery-go v0.0.0-20260625204636-d138cd032dd0 h1:q8HMWZmLIlxScephlS0bd/q0gMNn0h32+Dd7GbpClKU=
+github.com/openshift/build-machinery-go v0.0.0-20260625204636-d138cd032dd0/go.mod h1:8jcm8UPtg2mCAsxfqKil1xrmRMI3a+XU2TZ9fF8A7TE=
 github.com/openshift/client-go v0.0.0-20260330134249-7e1499aaacd7 h1:5GSoQlywIwYsRCw3qN+ZDmN6HrXTMZfI33bdRNm2jRQ=
 github.com/openshift/client-go v0.0.0-20260330134249-7e1499aaacd7/go.mod h1:HhXTUIMhgzxR3Ln/zEkr4QjTL0NN7A+t9Py/we9j2ug=
 github.com/openshift/library-go v0.0.0-20260304110309-c56f4c30de58 h1:3RQXdeYCfbQazMJ/iRr3DL81IGPh/OTN6nGLNsFeRfA=
