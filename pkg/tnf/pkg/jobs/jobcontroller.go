@@ -14,6 +14,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/management"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/errors"
@@ -231,6 +232,35 @@ func (c *JobController) syncManaged(ctx context.Context, opSpec *opv1.OperatorSp
 	)
 	if err != nil {
 		return err
+	}
+
+	// Auto-recovery: delete jobs stuck in Failed state for > 10 minutes
+	// This handles controller parameter migrations and stuck jobs
+	if IsFailed(*job) {
+		// Check when the job failed
+		var failedTime *metav1.Time
+		for _, condition := range job.Status.Conditions {
+			if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
+				failedTime = &condition.LastTransitionTime
+				break
+			}
+		}
+
+		if failedTime != nil && time.Since(failedTime.Time) > 10*time.Minute {
+			klog.Warningf("Job %s has been failed for %v, deleting to force restart (controller parameter migration or stuck job recovery)",
+				job.Name, time.Since(failedTime.Time).Round(time.Second))
+
+			err := c.kubeClient.BatchV1().Jobs(job.Namespace).Delete(ctx, job.Name, metav1.DeleteOptions{
+				PropagationPolicy: ptr.To(metav1.DeletePropagationBackground),
+			})
+			if err != nil && !apierrors.IsNotFound(err) {
+				klog.Warningf("Failed to delete stuck job %s: %v", job.Name, err)
+			} else {
+				klog.Infof("Deleted stuck failed job %s, will recreate on next sync", job.Name)
+			}
+			// Return early - next sync will recreate the job
+			return nil
+		}
 	}
 
 	// Create an OperatorStatusApplyConfiguration with generations
