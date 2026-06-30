@@ -5,10 +5,10 @@ import (
 	"math/rand"
 	"os"
 	"path"
-	"sort"
 	"testing"
 	"time"
 
+	"github.com/openshift/api/config/v1alpha1"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,17 +17,17 @@ func TestCommandValidation(t *testing.T) {
 		opts        PruneOpts
 		expectedErr error
 	}{
-		"none happy":   {opts: PruneOpts{RetentionType: RetentionTypeNone}},
-		"number happy": {opts: PruneOpts{RetentionType: RetentionTypeNumber, MaxNumberOfBackups: 1}},
-		"number zero": {opts: PruneOpts{RetentionType: RetentionTypeNumber, MaxNumberOfBackups: 0},
+		"none happy":   {opts: PruneOpts{RetentionType: ""}},
+		"number happy": {opts: PruneOpts{RetentionType: string(v1alpha1.RetentionTypeNumber), MaxNumberOfBackups: 1}},
+		"number zero": {opts: PruneOpts{RetentionType: string(v1alpha1.RetentionTypeNumber), MaxNumberOfBackups: 0},
 			expectedErr: fmt.Errorf("unexpected amount of backups [0] found, expected at least 1")},
-		"number flipped": {opts: PruneOpts{RetentionType: RetentionTypeNumber, MaxNumberOfBackups: 2, MaxSizeOfBackupsGb: 25},
+		"number flipped": {opts: PruneOpts{RetentionType: string(v1alpha1.RetentionTypeNumber), MaxNumberOfBackups: 2, MaxSizeOfBackupsGb: 25},
 			expectedErr: fmt.Errorf("unexpected argument [MaxSizeOfBackupsGb] found while using RetentionNumber")},
 
-		"size happy": {opts: PruneOpts{RetentionType: RetentionTypeSize, MaxSizeOfBackupsGb: 1}},
-		"size zero": {opts: PruneOpts{RetentionType: RetentionTypeSize, MaxSizeOfBackupsGb: 0},
+		"size happy": {opts: PruneOpts{RetentionType: string(v1alpha1.RetentionTypeSize), MaxSizeOfBackupsGb: 1}},
+		"size zero": {opts: PruneOpts{RetentionType: string(v1alpha1.RetentionTypeSize), MaxSizeOfBackupsGb: 0},
 			expectedErr: fmt.Errorf("unexpected size of backups [0]gb found, expected at least 1")},
-		"size flipped": {opts: PruneOpts{RetentionType: RetentionTypeSize, MaxSizeOfBackupsGb: 2, MaxNumberOfBackups: 25},
+		"size flipped": {opts: PruneOpts{RetentionType: string(v1alpha1.RetentionTypeSize), MaxSizeOfBackupsGb: 2, MaxNumberOfBackups: 25},
 			expectedErr: fmt.Errorf("unexpected argument [MaxNumberOfBackups] found while using RetentionSize")},
 	}
 
@@ -133,7 +133,7 @@ func TestDirectorySorting(t *testing.T) {
 	stats = append(stats, backupDirStat{name: "a", modTime: time.Unix(2500, 0)})
 	stats = append(stats, backupDirStat{name: "b", modTime: time.Unix(3500, 0)})
 
-	sort.Sort(stats)
+	stats.Sort()
 	var names []string
 	for _, a := range stats {
 		names = append(names, a.name)
@@ -147,7 +147,7 @@ func TestDirectorySortingByName(t *testing.T) {
 	stats = append(stats, backupDirStat{name: "backup-name-2022-01-02_150405"})
 	stats = append(stats, backupDirStat{name: "backup-name-2022-01-02_50405"})
 
-	sort.Sort(stats)
+	stats.Sort()
 	var names []string
 	for _, a := range stats {
 		names = append(names, a.name)

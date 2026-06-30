@@ -212,14 +212,15 @@ func setRetentionPolicyInitContainer(retentionPolicy backupv1alpha1.RetentionPol
 		fmt.Sprintf("--type=%s", retentionType),
 	}
 
-	if retentionType == backupv1alpha1.RetentionTypeNumber {
+	switch retentionType {
+	case backupv1alpha1.RetentionTypeNumber:
 		maxNum := 15
 		if retentionPolicy.RetentionNumber != nil {
 			maxNum = retentionPolicy.RetentionNumber.MaxNumberOfBackups
 		}
 
 		retentionInitArgs = append(retentionInitArgs, fmt.Sprintf("--maxNumberOfBackups=%d", maxNum))
-	} else if retentionType == backupv1alpha1.RetentionTypeSize {
+	case backupv1alpha1.RetentionTypeSize:
 		// that's not defined in the API, but we assume that's about 15-20 median sized snapshots in line with MaxNumberOfBackups
 		maxSizeGb := 10
 		if retentionPolicy.RetentionSize != nil {
@@ -227,7 +228,7 @@ func setRetentionPolicyInitContainer(retentionPolicy backupv1alpha1.RetentionPol
 		}
 
 		retentionInitArgs = append(retentionInitArgs, fmt.Sprintf("--maxSizeOfBackupsGb=%d", maxSizeGb))
-	} else {
+	default:
 		return fmt.Errorf("unknown retention type: %s", retentionPolicy.RetentionType)
 	}
 

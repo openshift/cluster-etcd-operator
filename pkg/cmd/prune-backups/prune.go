@@ -6,10 +6,11 @@ import (
 	"io/fs"
 	"os"
 	"path"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
+	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 )
@@ -19,10 +20,6 @@ const (
 	// for backup-server we use another path for storing backups (i.e. /var/lib/etcd-auto-backup)
 	// for tests we will change this to a tmp directory
 	BasePath = "/etc/kubernetes/cluster-backup/"
-
-	RetentionTypeNone   = "None"
-	RetentionTypeSize   = "RetentionSize"
-	RetentionTypeNumber = "RetentionNumber"
 )
 
 type backupDirStats []backupDirStat
@@ -78,43 +75,43 @@ func (r *PruneOpts) AddFlags(cmd *cobra.Command) {
 }
 
 func (r *PruneOpts) Validate() error {
-	if r.RetentionType != RetentionTypeNone && r.RetentionType != RetentionTypeNumber && r.RetentionType != RetentionTypeSize {
-		return fmt.Errorf("unknown retention type: [%s]", r.RetentionType)
-	}
-
-	if r.RetentionType == RetentionTypeNumber {
+	retType := backupv1alpha1.RetentionType(r.RetentionType)
+	switch retType {
+	case "", "None":
+		return nil
+	case backupv1alpha1.RetentionTypeNumber:
 		if r.MaxNumberOfBackups < 1 {
 			return fmt.Errorf("unexpected amount of backups [%d] found, expected at least 1", r.MaxNumberOfBackups)
 		}
 
 		if r.MaxSizeOfBackupsGb != 0 {
-			return fmt.Errorf("unexpected argument [MaxSizeOfBackupsGb] found while using %s", RetentionTypeNumber)
+			return fmt.Errorf("unexpected argument [MaxSizeOfBackupsGb] found while using %s", retType)
 		}
-
-	} else if r.RetentionType == RetentionTypeSize {
+	case backupv1alpha1.RetentionTypeSize:
 		if r.MaxSizeOfBackupsGb < 1 {
 			return fmt.Errorf("unexpected size of backups [%d]gb found, expected at least 1", r.MaxSizeOfBackupsGb)
 		}
 
 		if r.MaxNumberOfBackups != 0 {
-			return fmt.Errorf("unexpected argument [MaxNumberOfBackups] found while using %s", RetentionTypeSize)
+			return fmt.Errorf("unexpected argument [MaxNumberOfBackups] found while using %s", retType)
 		}
+	default:
+		return fmt.Errorf("unknown retention type: [%s]", r.RetentionType)
 	}
 
 	return nil
 }
 
 func (r *PruneOpts) Run() error {
-	if r.RetentionType == RetentionTypeNone {
+	switch backupv1alpha1.RetentionType(r.RetentionType) {
+	case backupv1alpha1.RetentionTypeSize:
+		return retainBySizeGb(r.MaxSizeOfBackupsGb, r.BackupPath)
+	case backupv1alpha1.RetentionTypeNumber:
+		return retainByNumber(r.MaxNumberOfBackups, r.BackupPath)
+	default:
 		klog.Infof("nothing to do, retention type is none")
 		return nil
-	} else if r.RetentionType == RetentionTypeSize {
-		return retainBySizeGb(r.MaxSizeOfBackupsGb, r.BackupPath)
-	} else if r.RetentionType == RetentionTypeNumber {
-		return retainByNumber(r.MaxNumberOfBackups, r.BackupPath)
 	}
-
-	return nil
 }
 
 func retainBySizeGb(sizeInGb int, backupPath string) error {
@@ -123,7 +120,7 @@ func retainBySizeGb(sizeInGb int, backupPath string) error {
 		return err
 	}
 
-	sort.Sort(folders)
+	folders.Sort()
 
 	// we keep the latest - up to sizeInGb folders around, the remainder is deleted
 	// the newest backups are always found at the beginning of the list
@@ -163,7 +160,7 @@ func retainByNumber(maxNumBackups int, backupPath string) error {
 		return nil
 	}
 
-	sort.Sort(folders)
+	folders.Sort()
 	// the newest backups are always found at the beginning of the list
 	for _, f := range folders[maxNumBackups:] {
 		bPath := path.Join(backupPath, f.name)
@@ -226,21 +223,14 @@ func (s backupDirStat) String() string {
 	return fmt.Sprintf("Name=[%s] SizeBytes=[%d] ModTime=[%s]", s.name, s.sizeBytes, s.modTime.String())
 }
 
-func (b backupDirStats) Len() int {
-	return len(b)
-}
-
-// Less causes the slice to be sorted descending by modtime, the newest comes first
+// Sorts descending by modtime, the newest comes first
 // in case the mod times are equal, we compare on the names in the same order.
-func (b backupDirStats) Less(i, j int) bool {
-	if b[j].modTime == b[i].modTime {
-		return strings.Compare(b[j].name, b[i].name) < 0
-	}
-	return b[j].modTime.Before(b[i].modTime)
-}
-
-func (b backupDirStats) Swap(i, j int) {
-	tmp := b[i]
-	b[i] = b[j]
-	b[j] = tmp
+func (s backupDirStats) Sort() {
+	slices.SortFunc(s, func(a, b backupDirStat) int {
+		modTimeComp := b.modTime.Compare(a.modTime)
+		if modTimeComp == 0 {
+			return strings.Compare(b.name, a.name)
+		}
+		return modTimeComp
+	})
 }

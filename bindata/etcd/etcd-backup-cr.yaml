@@ -1,0 +1,12 @@
+apiVersion: operator.openshift.io/v1alpha1
+kind: EtcdBackup
+metadata:
+  name: templated
+  namespace: openshift-etcd
+  ownerReferences:
+    - apiVersion: batch/v1
+      kind: Job
+      name: templated
+      uid: templated
+spec:
+  pvcName: templated
