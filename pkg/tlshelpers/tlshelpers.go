@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
+	"slices"
 	"time"
 
 	"k8s.io/client-go/util/cert"
@@ -237,17 +238,14 @@ func createCertForNode(description, secretName string, node *corev1.Node,
 		return nil, fmt.Errorf("could not retrieve internal IP addresses for node: %w", err)
 	}
 	hostNames := getServerHostNames(ipAddresses)
-
+	slices.Sort(hostNames)
 	creator := &CARotatingTargetCertCreator{
-		&certrotation.ServingRotation{
+		&certrotation.PeerRotation{
 			Hostnames: func() []string {
 				return hostNames
 			},
-			CertificateExtensionFn: []crypto.CertificateExtensionFunc{
-				func(certificate *x509.Certificate) error {
-					certificate.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth}
-					return nil
-				},
+			UserInfo: &user.DefaultInfo{
+				Name: hostNames[0],
 			},
 		},
 	}
