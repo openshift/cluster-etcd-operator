@@ -39,7 +39,8 @@ type RevisionController struct {
 	configMapGetter corev1client.ConfigMapsGetter
 	secretGetter    corev1client.SecretsGetter
 
-	revisionPrecondition PreconditionFunc
+	revisionPrecondition   PreconditionFunc
+	revisionReadinessCheck ReadinessCheckFunc
 }
 
 type RevisionResource struct {
@@ -49,6 +50,9 @@ type RevisionResource struct {
 
 // PreconditionFunc checks if revision precondition is met (is true) and then proceeeds with the creation of new revision
 type PreconditionFunc func(ctx context.Context) (bool, error)
+
+// ReadinessCheckFunc validates the assembled revision data after all resources have been copied but before the revision is marked as ready.
+type ReadinessCheckFunc func(ctx context.Context, revision int32) (bool, error)
 
 // NewRevisionController create a new revision controller.
 func NewRevisionController(
@@ -62,9 +66,15 @@ func NewRevisionController(
 	secretGetter corev1client.SecretsGetter,
 	eventRecorder events.Recorder,
 	revisionPrecondition PreconditionFunc,
+	revisionReadinessCheck ReadinessCheckFunc,
 ) factory.Controller {
 	if revisionPrecondition == nil {
 		revisionPrecondition = func(ctx context.Context) (bool, error) {
+			return true, nil
+		}
+	}
+	if revisionReadinessCheck == nil {
+		revisionReadinessCheck = func(_ context.Context, _ int32) (bool, error) {
 			return true, nil
 		}
 	}
@@ -75,10 +85,11 @@ func NewRevisionController(
 		configMaps:             configMaps,
 		secrets:                secrets,
 
-		operatorClient:       operatorClient,
-		configMapGetter:      configMapGetter,
-		secretGetter:         secretGetter,
-		revisionPrecondition: revisionPrecondition,
+		operatorClient:         operatorClient,
+		configMapGetter:        configMapGetter,
+		secretGetter:           secretGetter,
+		revisionPrecondition:   revisionPrecondition,
+		revisionReadinessCheck: revisionReadinessCheck,
 	}
 
 	return factory.New().
@@ -307,6 +318,21 @@ func (c RevisionController) createNewRevision(ctx context.Context, recorder even
 		if obj == nil && !s.Optional {
 			return false, apierrors.NewNotFound(corev1.Resource("secrets"), s.Name)
 		}
+	}
+
+	// We run the revision readiness check here because the revision-status ConfigMap is already
+	// created, but it isn't marked as ready yet (it doesn't have the "revision-ready" annotation yet).
+	// It is safe for this check to fail because without that annotation, getLatestAvailableRevision
+	// will not include it, LatestAvailableRevision will not advance, and the installer controller will
+	// never attempt to deploy it.
+	// The platform converges by retrying: on the next sync loop, createNewRevision is called again for
+	// the same revision number. The revision-status ConfigMap already exists, so the Create call falls
+	// into the IsAlreadyExists branch, which detects the missing annotation and re-runs the readiness
+	// check. This repeats until the check passes or the error is resolved.
+	if ready, err := c.revisionReadinessCheck(ctx, revision); err != nil {
+		return false, fmt.Errorf("revision readiness check failed for revision %d: %w", revision, err)
+	} else if !ready {
+		return false, nil
 	}
 
 	if createdStatus.Annotations == nil {

@@ -236,6 +236,10 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &operatorv1.IPv6OVNKubernetesConfigApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("IrreconcilableValidationOverrides"):
 		return &operatorv1.IrreconcilableValidationOverridesApplyConfiguration{}
+	case v1.SchemeGroupVersion.WithKind("KMSEncryptionStatus"):
+		return &operatorv1.KMSEncryptionStatusApplyConfiguration{}
+	case v1.SchemeGroupVersion.WithKind("KMSPluginHealthReport"):
+		return &operatorv1.KMSPluginHealthReportApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("KubeAPIServer"):
 		return &operatorv1.KubeAPIServerApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("KubeAPIServerSpec"):
@@ -448,8 +452,12 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &operatorv1alpha1.ClusterAPIInstallerComponentApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ClusterAPIInstallerComponentImage"):
 		return &operatorv1alpha1.ClusterAPIInstallerComponentImageApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ClusterAPIInstallerComponentSource"):
+		return &operatorv1alpha1.ClusterAPIInstallerComponentSourceApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ClusterAPIInstallerRevision"):
 		return &operatorv1alpha1.ClusterAPIInstallerRevisionApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ClusterAPIInstallerRevisionManifestSubstitution"):
+		return &operatorv1alpha1.ClusterAPIInstallerRevisionManifestSubstitutionApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ClusterAPISpec"):
 		return &operatorv1alpha1.ClusterAPISpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ClusterAPIStatus"):
