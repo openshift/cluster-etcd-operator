@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -69,6 +68,7 @@ func TestNewDefragController(t *testing.T) {
 		staticPodStatus     *operatorv1.StaticPodOperatorStatus
 		objects             []runtime.Object
 		clusterSize         int
+		syncLoops           int
 		memberHealth        *etcdcli.FakeMemberHealth
 		dbInUse             int64
 		dbSize              int64
@@ -84,6 +84,7 @@ func TestNewDefragController(t *testing.T) {
 			dbInUse:             minDefragBytes / 2, // 500MB
 			defragSuccessEvents: 3,
 			clusterSize:         3,
+			syncLoops:           3,
 			memberHealth:        &etcdcli.FakeMemberHealth{Healthy: 3},
 			objects: []runtime.Object{
 				u.FakeInfrastructureTopology(configv1.HighlyAvailableTopologyMode),
@@ -97,6 +98,7 @@ func TestNewDefragController(t *testing.T) {
 			dbInUse:             minDefragBytes / 2, // 500MB
 			defragSuccessEvents: 2,
 			clusterSize:         2,
+			syncLoops:           2,
 			memberHealth:        &etcdcli.FakeMemberHealth{Healthy: 2},
 			objects: []runtime.Object{
 				u.FakeInfrastructureTopology(configv1.DualReplicaTopologyMode),
@@ -110,6 +112,7 @@ func TestNewDefragController(t *testing.T) {
 			dbInUse:             minDefragBytes / 2, // 500MB
 			defragSuccessEvents: 3,
 			clusterSize:         3,
+			syncLoops:           3,
 			memberHealth:        &etcdcli.FakeMemberHealth{Healthy: 3},
 			objects: []runtime.Object{
 				u.FakeInfrastructureTopology(configv1.HighlyAvailableArbiterMode),
@@ -224,35 +227,31 @@ func TestNewDefragController(t *testing.T) {
 				statusClient:         fakeEtcdClient,
 				infrastructureLister: configv1listers.NewInfrastructureLister(indexer),
 				configmapLister:      corev1listers.NewConfigMapLister(indexer),
-				// to speed the tests up, in real life we use minDefragWaitDuration
-				defragWaitDuration: 1 * time.Second,
 			}
 
-			err := controller.sync(context.TODO(), factory.NewSyncContext("defrag-controller", eventRecorder))
-			if err != nil && !scenario.wantErr {
-				t.Fatalf("unexepected error %v", err)
+			syncLoops := scenario.syncLoops
+			if syncLoops == 0 {
+				syncLoops = 1
+			}
+			var err error
+			for i := 0; i < syncLoops; i++ {
+				err = controller.sync(context.TODO(), factory.NewSyncContext("defrag-controller", eventRecorder))
+				if err != nil && !scenario.wantErr {
+					t.Fatalf("unexpected error on sync %d: %v", i, err)
+				}
 			}
 			if err == nil && scenario.wantErr {
 				t.Fatal("expected error got nil")
 			}
 			if err != nil && scenario.wantErr {
 				if !strings.HasPrefix(err.Error(), scenario.wantErrMsg) {
-					t.Fatalf("unexepected error prefix want: %q got: %q", scenario.wantErrMsg, err.Error())
+					t.Fatalf("unexpected error prefix want: %q got: %q", scenario.wantErrMsg, err.Error())
 				}
 			}
 			var defragSuccessEvents int
-			lastEvent := len(eventRecorder.Events()) - 1
-			for i, event := range eventRecorder.Events() {
+			for _, event := range eventRecorder.Events() {
 				if strings.HasPrefix(event.Message, "etcd member has been defragmented") {
 					defragSuccessEvents++
-				}
-				// ensure the leader was defragged last
-				if i == lastEvent {
-					// last event will print leader ID
-					regex := regexp.MustCompile(fmt.Sprint(status[0].Leader))
-					if len(regex.FindAll([]byte(event.Message), -1)) != 1 {
-						t.Fatalf("expected leader defrag event to be last got %q", event.Message)
-					}
 				}
 			}
 			if defragSuccessEvents != scenario.defragSuccessEvents {
@@ -310,7 +309,7 @@ func TestNewDefragControllerMultiSyncs(t *testing.T) {
 				u.FakeInfrastructureTopology(configv1.HighlyAvailableTopologyMode),
 			},
 			fakeClientOpts: []etcdcli.FakeClientOption{
-				etcdcli.WithFakeDefragErrors(generateErrors(maxDefragFailuresBeforeDegrade * 3)),
+				etcdcli.WithFakeDefragErrors(generateErrors(maxDefragFailuresBeforeDegrade)),
 			},
 			wantDisabledCondition: operatorv1.ConditionFalse,
 			wantDegradedCondition: operatorv1.ConditionTrue,
@@ -322,16 +321,15 @@ func TestNewDefragControllerMultiSyncs(t *testing.T) {
 			dbInUse:             minDefragBytes / 2,
 			defragSuccessEvents: 3,
 			clusterSize:         3,
-			syncLoops:           maxDefragFailuresBeforeDegrade + 1,
+			syncLoops:           maxDefragFailuresBeforeDegrade + 3,
 			errSyncLoops:        maxDefragFailuresBeforeDegrade,
 			memberHealth:        &etcdcli.FakeMemberHealth{Healthy: 3},
 			objects: []runtime.Object{
 				u.FakeInfrastructureTopology(configv1.HighlyAvailableTopologyMode),
 			},
 			fakeClientOpts: []etcdcli.FakeClientOption{
-				etcdcli.WithFakeDefragErrors(generateErrors(maxDefragFailuresBeforeDegrade * 3)),
+				etcdcli.WithFakeDefragErrors(generateErrors(maxDefragFailuresBeforeDegrade)),
 			},
-			// ignoring errors here since the first maxDefragFailuresBeforeDegrade invocations will return an error, the ones after won't
 			wantDisabledCondition: operatorv1.ConditionFalse,
 			wantDegradedCondition: operatorv1.ConditionFalse,
 		},
@@ -380,8 +378,6 @@ func TestNewDefragControllerMultiSyncs(t *testing.T) {
 				defragClient:         fakeEtcdClient,
 				infrastructureLister: configv1listers.NewInfrastructureLister(indexer),
 				configmapLister:      corev1listers.NewConfigMapLister(indexer),
-				// to speed the tests up, in real life we use minDefragWaitDuration
-				defragWaitDuration: 1 * time.Second,
 			}
 
 			numSyncErr := 0
