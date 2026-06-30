@@ -60,6 +60,14 @@ func GetServingMetricsSecretNameForNode(nodeName string) string {
 }
 
 func getServerHostNames(nodeInternalIPs []string) []string {
+	completeIPList := make([]string, 0, len(nodeInternalIPs))
+	for _, ip := range nodeInternalIPs {
+		if ip == "" {
+			continue
+		}
+		// add the canonicalized IP address and normal ip address for backwards compatibility
+		completeIPList = append(completeIPList, dnshelpers.CanonicalizeIP(ip), ip)
+	}
 	return append([]string{
 		"localhost",
 		"etcd.kube-system.svc",
@@ -68,8 +76,10 @@ func getServerHostNames(nodeInternalIPs []string) []string {
 		"etcd.openshift-etcd.svc.cluster.local",
 		"127.0.0.1",
 		"::1",
-		// "0:0:0:0:0:0:0:1" will be automatically collapsed to "::1", so we don't have to add it on top
-	}, nodeInternalIPs...)
+		// Note: "0:0:0:0:0:0:0:1" and "::1" parse to the same IP bytes in certificates,
+		// so TLS verification works with both forms even when only "::1" is listed here.
+		// For dynamic node IPs above, we include both canonical and raw forms for maximum compatibility.
+	}, completeIPList...)
 }
 
 func CreateSignerCertRotationBundleConfigMap(

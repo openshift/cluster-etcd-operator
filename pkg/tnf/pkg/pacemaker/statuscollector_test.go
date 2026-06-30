@@ -3,6 +3,7 @@ package pacemaker
 import (
 	"encoding/xml"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -337,9 +338,30 @@ func TestBuildClusterStatus_NodeIPExtraction(t *testing.T) {
 }
 
 // containsAddress checks if a PacemakerNodeAddress slice contains a specific address
+// using canonical IP comparison
 func containsAddress(addresses []pacmkrv1.PacemakerNodeAddress, addr string) bool {
+	canonicalAddr := net.ParseIP(addr)
+	if canonicalAddr == nil {
+		// Not a valid IP, fall back to string comparison
+		for _, a := range addresses {
+			if a.Address == addr {
+				return true
+			}
+		}
+		return false
+	}
+	canonicalAddrStr := canonicalAddr.String()
+
 	for _, a := range addresses {
-		if a.Address == addr {
+		addressIP := net.ParseIP(a.Address)
+		if addressIP == nil {
+			// Not a valid IP, do string comparison
+			if a.Address == addr {
+				return true
+			}
+			continue
+		}
+		if addressIP.String() == canonicalAddrStr {
 			return true
 		}
 	}
