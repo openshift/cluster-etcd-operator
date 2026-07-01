@@ -2,7 +2,6 @@ package pacemaker
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -14,10 +13,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/clock"
 
 	pacmkrv1 "github.com/openshift/api/etcd/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/internal/testutil"
 )
 
 // Test helper functions
@@ -45,58 +44,10 @@ func createTestHealthCheck() *HealthCheck {
 		operatorClient:    createFakeOperatorClient(),
 		kubeClient:        fake.NewSimpleClientset(),
 		eventRecorder:     events.NewInMemoryRecorder("test", clock.RealClock{}),
-		pacemakerInformer: createFakeInformer(nil),
+		pacemakerInformer: testutil.CreateFakeInformer(nil),
 		recordedEvents:    make(map[string]time.Time),
 	}
 }
-
-// createFakeInformer creates a fake SharedIndexInformer with a store containing the given object.
-// If obj is nil, the store will be empty.
-func createFakeInformer(obj *pacmkrv1.PacemakerCluster) cache.SharedIndexInformer {
-	store := cache.NewStore(func(obj any) (string, error) {
-		if pc, ok := obj.(*pacmkrv1.PacemakerCluster); ok {
-			return pc.Name, nil
-		}
-		return "", fmt.Errorf("object is not a PacemakerCluster")
-	})
-	if obj != nil {
-		_ = store.Add(obj)
-	}
-	return &fakeInformer{store: store}
-}
-
-// fakeInformer implements cache.SharedIndexInformer for testing
-type fakeInformer struct {
-	store cache.Store
-}
-
-func (f *fakeInformer) AddEventHandler(handler cache.ResourceEventHandler) (cache.ResourceEventHandlerRegistration, error) {
-	return nil, nil
-}
-func (f *fakeInformer) AddEventHandlerWithResyncPeriod(handler cache.ResourceEventHandler, resyncPeriod time.Duration) (cache.ResourceEventHandlerRegistration, error) {
-	return nil, nil
-}
-func (f *fakeInformer) AddEventHandlerWithOptions(handler cache.ResourceEventHandler, options cache.HandlerOptions) (cache.ResourceEventHandlerRegistration, error) {
-	return nil, nil
-}
-func (f *fakeInformer) RemoveEventHandler(handle cache.ResourceEventHandlerRegistration) error {
-	return nil
-}
-func (f *fakeInformer) GetStore() cache.Store           { return f.store }
-func (f *fakeInformer) GetController() cache.Controller { return nil }
-func (f *fakeInformer) Run(stopCh <-chan struct{})      {}
-func (f *fakeInformer) RunWithContext(ctx context.Context) {
-}
-func (f *fakeInformer) HasSynced() bool                                            { return true }
-func (f *fakeInformer) LastSyncResourceVersion() string                            { return "" }
-func (f *fakeInformer) SetWatchErrorHandler(handler cache.WatchErrorHandler) error { return nil }
-func (f *fakeInformer) SetWatchErrorHandlerWithContext(handler cache.WatchErrorHandlerWithContext) error {
-	return nil
-}
-func (f *fakeInformer) SetTransform(handler cache.TransformFunc) error { return nil }
-func (f *fakeInformer) IsStopped() bool                                { return false }
-func (f *fakeInformer) AddIndexers(indexers cache.Indexers) error      { return nil }
-func (f *fakeInformer) GetIndexer() cache.Indexer                      { return nil }
 
 // createTestHealthCheckWithMockStatus creates a HealthCheck with a mocked Pacemaker CR in the informer cache
 func createTestHealthCheckWithMockStatus(t *testing.T, mockStatus *pacmkrv1.PacemakerCluster) *HealthCheck {
@@ -104,7 +55,7 @@ func createTestHealthCheckWithMockStatus(t *testing.T, mockStatus *pacmkrv1.Pace
 		operatorClient:    createFakeOperatorClient(),
 		kubeClient:        fake.NewSimpleClientset(),
 		eventRecorder:     events.NewInMemoryRecorder("test", clock.RealClock{}),
-		pacemakerInformer: createFakeInformer(mockStatus),
+		pacemakerInformer: testutil.CreateFakeInformer(mockStatus),
 		recordedEvents:    make(map[string]time.Time),
 	}
 }
