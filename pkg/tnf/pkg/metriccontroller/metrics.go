@@ -9,104 +9,144 @@ import (
 
 var (
 	clusterHealthyGauge = metrics.NewGauge(&metrics.GaugeOpts{
-		Name:           "tnf_cluster_healthy",
+		Namespace:      "tnf",
+		Subsystem:      "cluster",
+		Name:           "healthy",
 		Help:           "Whether the TNF cluster is healthy (1=healthy, 0=unhealthy)",
 		StabilityLevel: metrics.ALPHA,
 	})
 	clusterInServiceGauge = metrics.NewGauge(&metrics.GaugeOpts{
-		Name:           "tnf_cluster_in_service",
+		Namespace:      "tnf",
+		Subsystem:      "cluster",
+		Name:           "in_service",
 		Help:           "Whether the TNF cluster is in service (1=in-service, 0=maintenance)",
 		StabilityLevel: metrics.ALPHA,
 	})
 	clusterNodeCountAsExpectedGauge = metrics.NewGauge(&metrics.GaugeOpts{
-		Name:           "tnf_cluster_node_count_as_expected",
+		Namespace:      "tnf",
+		Subsystem:      "cluster",
+		Name:           "node_count_as_expected",
 		Help:           "Whether the TNF cluster has the expected node count (1=expected, 0=mismatch)",
 		StabilityLevel: metrics.ALPHA,
 	})
 
 	nodeHealthyGauge = metrics.NewGaugeVec(&metrics.GaugeOpts{
-		Name:           "tnf_node_healthy",
+		Namespace:      "tnf",
+		Subsystem:      "node",
+		Name:           "healthy",
 		Help:           "Whether a TNF node is healthy (1=healthy, 0=unhealthy)",
 		StabilityLevel: metrics.ALPHA,
 	}, []string{"node"})
 	nodeOnlineGauge = metrics.NewGaugeVec(&metrics.GaugeOpts{
-		Name:           "tnf_node_online",
+		Namespace:      "tnf",
+		Subsystem:      "node",
+		Name:           "online",
 		Help:           "Whether a TNF node is online (1=online, 0=offline)",
 		StabilityLevel: metrics.ALPHA,
 	}, []string{"node"})
 	nodeInServiceGauge = metrics.NewGaugeVec(&metrics.GaugeOpts{
-		Name:           "tnf_node_in_service",
+		Namespace:      "tnf",
+		Subsystem:      "node",
+		Name:           "in_service",
 		Help:           "Whether a TNF node is in service (1=in-service, 0=maintenance)",
 		StabilityLevel: metrics.ALPHA,
 	}, []string{"node"})
 	nodeActiveGauge = metrics.NewGaugeVec(&metrics.GaugeOpts{
-		Name:           "tnf_node_active",
+		Namespace:      "tnf",
+		Subsystem:      "node",
+		Name:           "active",
 		Help:           "Whether a TNF node is active (1=active, 0=standby)",
 		StabilityLevel: metrics.ALPHA,
 	}, []string{"node"})
 	nodeReadyGauge = metrics.NewGaugeVec(&metrics.GaugeOpts{
-		Name:           "tnf_node_ready",
+		Namespace:      "tnf",
+		Subsystem:      "node",
+		Name:           "ready",
 		Help:           "Whether a TNF node is ready (1=ready, 0=pending)",
 		StabilityLevel: metrics.ALPHA,
 	}, []string{"node"})
 	nodeCleanGauge = metrics.NewGaugeVec(&metrics.GaugeOpts{
-		Name:           "tnf_node_clean",
+		Namespace:      "tnf",
+		Subsystem:      "node",
+		Name:           "clean",
 		Help:           "Whether a TNF node is in a clean state (1=clean, 0=unclean)",
 		StabilityLevel: metrics.ALPHA,
 	}, []string{"node"})
 	nodeMemberGauge = metrics.NewGaugeVec(&metrics.GaugeOpts{
-		Name:           "tnf_node_member",
+		Namespace:      "tnf",
+		Subsystem:      "node",
+		Name:           "member",
 		Help:           "Whether a TNF node is a cluster member (1=member, 0=not-member)",
 		StabilityLevel: metrics.ALPHA,
 	}, []string{"node"})
 	nodeFencingAvailableGauge = metrics.NewGaugeVec(&metrics.GaugeOpts{
-		Name:           "tnf_node_fencing_available",
+		Namespace:      "tnf",
+		Subsystem:      "node",
+		Name:           "fencing_available",
 		Help:           "Whether a TNF node has at least one healthy fence device (1=available, 0=unavailable)",
 		StabilityLevel: metrics.ALPHA,
 	}, []string{"node"})
 	nodeFencingHealthyGauge = metrics.NewGaugeVec(&metrics.GaugeOpts{
-		Name:           "tnf_node_fencing_healthy",
+		Namespace:      "tnf",
+		Subsystem:      "node",
+		Name:           "fencing_healthy",
 		Help:           "Whether all fence devices for a TNF node are healthy (1=all-healthy, 0=degraded)",
 		StabilityLevel: metrics.ALPHA,
 	}, []string{"node"})
 
 	resourceHealthyGauge = metrics.NewGaugeVec(&metrics.GaugeOpts{
-		Name:           "tnf_resource_healthy",
+		Namespace:      "tnf",
+		Subsystem:      "resource",
+		Name:           "healthy",
 		Help:           "Whether a TNF resource is healthy (1=healthy, 0=unhealthy)",
 		StabilityLevel: metrics.ALPHA,
 	}, []string{"node", "resource"})
 	resourceInServiceGauge = metrics.NewGaugeVec(&metrics.GaugeOpts{
-		Name:           "tnf_resource_in_service",
+		Namespace:      "tnf",
+		Subsystem:      "resource",
+		Name:           "in_service",
 		Help:           "Whether a TNF resource is in service (1=in-service, 0=maintenance)",
 		StabilityLevel: metrics.ALPHA,
 	}, []string{"node", "resource"})
 	resourceManagedGauge = metrics.NewGaugeVec(&metrics.GaugeOpts{
-		Name:           "tnf_resource_managed",
+		Namespace:      "tnf",
+		Subsystem:      "resource",
+		Name:           "managed",
 		Help:           "Whether a TNF resource is managed by Pacemaker (1=managed, 0=unmanaged)",
 		StabilityLevel: metrics.ALPHA,
 	}, []string{"node", "resource"})
 	resourceEnabledGauge = metrics.NewGaugeVec(&metrics.GaugeOpts{
-		Name:           "tnf_resource_enabled",
+		Namespace:      "tnf",
+		Subsystem:      "resource",
+		Name:           "enabled",
 		Help:           "Whether a TNF resource is enabled (1=enabled, 0=disabled)",
 		StabilityLevel: metrics.ALPHA,
 	}, []string{"node", "resource"})
 	resourceOperationalGauge = metrics.NewGaugeVec(&metrics.GaugeOpts{
-		Name:           "tnf_resource_operational",
+		Namespace:      "tnf",
+		Subsystem:      "resource",
+		Name:           "operational",
 		Help:           "Whether a TNF resource is operational (1=operational, 0=failed)",
 		StabilityLevel: metrics.ALPHA,
 	}, []string{"node", "resource"})
 	resourceActiveGauge = metrics.NewGaugeVec(&metrics.GaugeOpts{
-		Name:           "tnf_resource_active",
+		Namespace:      "tnf",
+		Subsystem:      "resource",
+		Name:           "active",
 		Help:           "Whether a TNF resource is active (1=active, 0=inactive)",
 		StabilityLevel: metrics.ALPHA,
 	}, []string{"node", "resource"})
 	resourceStartedGauge = metrics.NewGaugeVec(&metrics.GaugeOpts{
-		Name:           "tnf_resource_started",
+		Namespace:      "tnf",
+		Subsystem:      "resource",
+		Name:           "started",
 		Help:           "Whether a TNF resource is started (1=started, 0=stopped)",
 		StabilityLevel: metrics.ALPHA,
 	}, []string{"node", "resource"})
 	resourceSchedulableGauge = metrics.NewGaugeVec(&metrics.GaugeOpts{
-		Name:           "tnf_resource_schedulable",
+		Namespace:      "tnf",
+		Subsystem:      "resource",
+		Name:           "schedulable",
 		Help:           "Whether a TNF resource is schedulable (1=schedulable, 0=unschedulable)",
 		StabilityLevel: metrics.ALPHA,
 	}, []string{"node", "resource"})
