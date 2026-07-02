@@ -64,7 +64,8 @@ func createCertSecrets(nodes []*corev1.Node, enabledFeatureGates, disabledFeatur
 		recorder,
 		metrics.NewKubeRegistry(),
 		true,
-		featureGateAccessor)
+		featureGateAccessor,
+		nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("could not run etcdCertSignerController control loop: %w", err)
 	}
