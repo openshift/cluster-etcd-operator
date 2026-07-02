@@ -23,7 +23,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed architecture documentation.
 
 ## Repository Structure
 
-```
+```text
 cluster-etcd-operator/
 ├── bindata/             # Embedded YAML manifests and scripts
 │   ├── bootkube/        # Bootstrap manifests
@@ -103,7 +103,9 @@ Guidelines for status conditions:
 
 ### Bootstrap Scaling Strategies
 
-Openshift supports anywhere from 1 to 5 control-plane nodes depending on the level of high availability needed. The bootstrap scaling strategy describes the invariants which will be enforced when scaling the etcd cluster.
+OpenShift supports control plane sizes from 1 to 5 nodes depending on the level of high availability needed. The bootstrap scaling strategy describes the invariants which will be enforced when scaling the etcd cluster.
+
+MicroShift embeds CEO into its binary, which imposes tighter Go version and dependency constraints — changes here must stay compatible with MicroShift's build requirements.
 
 The operator enforces different quorum requirements during bootstrap:
 - `HAScalingStrategy` - requires at least 3 nodes to scale up (default)
@@ -118,7 +120,7 @@ Check `pkg/operator/ceohelpers/bootstrap.go` for implementation.
 ## Important Constraints
 
 1. **DNS Independence** - The `EtcdEndpointsController` must never depend on DNS (directly or transitively) as it maintains the IP-based ConfigMap that DNS depends on. DNS has no guarantee that a single static IP is returned. Previously, member nodes confused their identity by alternating between IPs. Using only IPs is a core design choice in this operator
-2. **CVO Resource Management** - Resources in `manifests/` are managed by CVO; removal requires special handling (see [CVO Resource Removal](#cvo-resource-removal)). The numeric ordering of file names in `manifests/` determines CVO deployment order — incorrect ordering has caused outages in CI (e.g., when a manifest was deployed before its dependency)
+2. **CVO Resource Management** - Resources in `manifests/` are managed by CVO. The numeric ordering of file names in `manifests/` determines CVO deployment order — incorrect ordering has caused outages in CI (e.g., when a manifest was deployed before its dependency). Removing a manifest requires the `release.openshift.io/delete: "true"` annotation rather than deleting the file
 3. **Never Remove Controllers** - An agent should never remove a controller. Controller removals are extremely rare (only one in the history of the project) and require cleaning up stale status conditions to prevent upgrade blockers. This is a human decision
 4. **Static Pod Revisions** - Follow library-go static pod revision pattern; don't invent custom update logic
 5. **Namespace** - Primary namespace for the operator resources is `openshift-etcd-operator`; target namespace for the operand is `openshift-etcd`. Constants are found in `pkg/operator/operatorclient/interfaces.go` and should always be used
@@ -147,6 +149,8 @@ go mod tidy && go mod vendor
 ### Live Debugging
 
 When debugging live systems, use commands in [profiling and debugging](docs/profiling_and_debugging.md).
+
+**Local debugging limits:** Controllers that don't use the etcd client (e.g., `TargetConfigController`, `EtcdEndpointsController`) can be debugged locally against a remote cluster. Controllers that need etcd connectivity generally require in-cluster deployment because etcd members run on the host network — port-forwarding and reconfiguring the etcd client is possible but brittle due to TLS and certificate mismatches.
 
 To run CEO locally against a cluster:
 ```sh
@@ -221,18 +225,24 @@ Almost all files in the `jsonnet/` directory can be changed, but the lock file (
 Requires: `jsonnet`, `jb` (jsonnet-bundler), `gojsontoyaml`
 See https://github.com/google/jsonnet
 
-## CVO Resource Removal
+## Two-Node Fencing (TNF)
 
-Resources in `manifests/` are managed by CVO. To remove one:
+Two-Node OpenShift with Fencing (TNF) is a specialized deployment for DualReplica topology clusters where etcd runs under Pacemaker management on the control plane nodes.
 
-1. **Don't just delete the manifest file** - it won't be removed from clusters
-2. Add the `release.openshift.io/delete: "true"` annotation to the resource
-3. CVO will garbage collect it on next update
-4. Keep the annotation in manifests for 1 release, then remove the file
+Key points for agents working in this area:
 
-See:
-- https://github.com/openshift/enhancements/blob/master/enhancements/update/object-removal-manifest-annotation.md
-- https://github.com/openshift/cluster-etcd-operator/pull/1016
+- **Topology gating** — TNF controllers start only when `ceohelpers.IsExternalEtcdCluster()` returns true (DualReplica topology with external etcd). See `tnf.HandleDualReplicaClusters()` in `pkg/operator/starter.go`
+- **Scaling strategies** — Use `TwoNodeScalingStrategy` or `DelayedTwoNodeScalingStrategy` instead of the HA strategies
+- **Uncached etcd client** — 2-node topologies use an uncached etcd client because cache TTL can mask member failures and allow unsafe revision rollouts
+- **Membership deferral** — `ClusterMemberController` defers to TNF/Pacemaker after the Pacemaker transition completes
+- **Separate binaries** — `cmd/tnf-monitor/` and `cmd/tnf-setup-runner/` for Pacemaker monitoring and setup
+- **Code layout** — TNF-specific logic lives in `pkg/tnf/` with its own operator starter (`pkg/tnf/operator/starter.go`)
+- **Manifests** — Deployment manifests in `bindata/tnfdeployment/`; fencing shell scripts in `bindata/etcd/`
+- **Controllers** — `ExternalEtcdEnablerController`, `TnfStaticResources`, `PacemakerHealthCheck`, `PacemakerStatusCollectorCronJob` (see [ARCHITECTURE.md](ARCHITECTURE.md#two-node-fencing-controllers-topology-gated))
+- **Network policies** — TNF jobs require explicit network policy exceptions (see CNTRLPLANE-2663/2683)
+- **Quorum reporting** — `EtcdMembersController` always reports quorum as available for DualReplica with completed Pacemaker transition
+
+See `ARCHITECTURE.md` for controller details and `pkg/tnf/OWNERS` for ownership.
 
 ## Known Bug Patterns
 

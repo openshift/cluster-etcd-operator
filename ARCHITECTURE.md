@@ -67,7 +67,7 @@ one concern per controller
 
 ### Endpoints and Health Controllers
 
-- **EtcdEndpointsController** (`pkg/operator/etcdendpointscontroller/etcdendpointscontroller.go`) — **Critical:** Maintains the `etcd-endpoints` ConfigMap with current member IP addresses. **Must never depend on DNS** (circular bootstrap dependency). Falls back to node IPs when etcd member list is unavailable. Changes trigger new revisions.
+- **EtcdEndpointsController** (`pkg/operator/etcdendpointscontroller/etcdendpointscontroller.go`) — **Critical:** Maintains the `openshift-etcd/etcd-endpoints` ConfigMap with current member IP addresses. **Must never depend on DNS** (circular bootstrap dependency). Falls back to node internal IPs when etcd member list is unavailable. Changes trigger new revisions.
 
 - **EtcdMembersController** (`pkg/operator/etcdmemberscontroller/etcdmemberscontroller.go`) — Reports etcd member health as operator status conditions: `EtcdMembersDegraded` (unhealthy members), `EtcdMembersProgressing` (unstarted members), `EtcdMembersAvailable` (quorum check). For DualReplica with completed Pacemaker transition, always reports quorum as available.
 
@@ -212,12 +212,12 @@ Revisions roll out config changes. RevisionController watches `etcd-pod`, `etcd-
 
 ## etcd Client Abstraction
 
-CEO's etcd client (`pkg/etcdcli/interfaces.go`) composes 10+ interfaces (MemberAdder, MemberRemover, Defragment, etc.). Two implementations:
+CEO's etcd client (`pkg/etcdcli/etcdcli.go`) composes 10+ interfaces (MemberAdder, MemberRemover, Defragment, etc.). Two implementations:
 
 - **etcdcli.EtcdClient** - Direct client using TLS certs
 - **etcdcli.MemberCache** - Caching wrapper (60s TTL); not used for 2-node quorum checks
 
-**Connection fallback:** IP-based `openshift-etcd/etcd-endpoints` ConfigMap → direct control plane node IPs.
+**Connection fallback:** `openshift-etcd/etcd-endpoints` ConfigMap (IP-based, maintained by EtcdEndpointsController) → direct node internal IPs (from Node objects via `GetPreferredInternalIPAddressForNodeName`).
 
 ## Deployment & Infrastructure
 
@@ -279,7 +279,7 @@ CEO's etcd client (`pkg/etcdcli/interfaces.go`) composes 10+ interfaces (MemberA
 
 **Breaking Changes:** If a controller is removed (extremely rare — human decision only), its status condition names must be added to `staleconditions.NewRemoveStaleConditionsController` in `pkg/operator/starter.go` for at least 1 release to prevent stale conditions from blocking upgrades.
 
-**CVO Resource Removal:** Use `release.openshift.io/delete: "true"` annotation, not file deletion (see [AGENTS.md CVO Resource Removal](AGENTS.md#cvo-resource-removal)).
+**CVO manifest removal:** Use `release.openshift.io/delete: "true"` annotation, not file deletion (see [AGENTS.md Important Constraints](AGENTS.md#important-constraints)).
 
 ## Testing
 
