@@ -349,6 +349,64 @@ data:
           ecdsa:
             curve: P521
 `
+
+	clusterConfigMapWithCustomPKIAndFeatureSet = `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-config-v1
+  namespace: kube-system
+data:
+  install-config: |
+    apiVersion: v1
+    baseDomain: gcp.devcluster.openshift.com
+    compute:
+    - architecture: amd64
+      hyperthreading: Enabled
+      name: worker
+      platform: {}
+      replicas: 3
+    controlPlane:
+      architecture: amd64
+      hyperthreading: Enabled
+      name: master
+      platform:
+        gcp:
+          osDisk:
+            DiskSizeGB: 128
+            DiskType: pd-ssd
+          type: n1-standard-4
+          zones:
+          - us-east1-b
+          - us-east1-c
+          - us-east1-d
+      replicas: 3
+    metadata:
+      creationTimestamp: null
+      name: my-cluster
+    networking:
+      clusterNetwork:
+      - cidr: 10.128.0.0/14
+        hostPrefix: 23
+      machineCIDR: 10.0.0.0/16
+      machineNetwork:
+      - cidr: 10.0.0.0/16
+      networkType: OpenShiftSDN
+      serviceNetwork:
+      - 172.30.0.0/16
+    platform:
+      gcp:
+        projectID: openshift
+        region: us-east1
+    publish: External
+    featureSet: TechPreviewNoUpgrade
+    pki:
+      signerCertificates:
+        key:
+          algorithm: ECDSA
+          ecdsa:
+            curve: P521
+`
 )
 
 type testConfig struct {
@@ -602,6 +660,53 @@ func TestTemplateDataWithCustomPKI(t *testing.T) {
 		clusterNetworkConfig: networkConfigIpv4,
 		infraConfig:          infraConfig,
 		clusterConfigMap:     clusterConfigMapWithCustomPKI,
+	}
+
+	testTemplateData(t, config, validateECDSAP521Signer)
+}
+
+func TestTemplateDataWithCustomPKIFeatureSet(t *testing.T) {
+	validateECDSAP521Signer := func(t *testing.T, td *TemplateData) {
+		if len(td.certificates) == 0 {
+			t.Fatal("no certificates generated")
+		}
+
+		var signerCert []byte
+		for _, cert := range td.certificates {
+			if cert.Name == "etcd-signer" {
+				signerCert = cert.Data["tls.crt"]
+				break
+			}
+		}
+
+		if signerCert == nil {
+			t.Fatal("etcd-signer certificate not found in generated certificates")
+		}
+
+		block, _ := pem.Decode(signerCert)
+		if block == nil {
+			t.Fatal("failed to decode PEM block from etcd-signer certificate")
+		}
+
+		x509Cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			t.Fatalf("failed to parse x509 certificate: %v", err)
+		}
+
+		ecdsaKey, ok := x509Cert.PublicKey.(*ecdsa.PublicKey)
+		if !ok {
+			t.Fatalf("expected ECDSA public key, got %T", x509Cert.PublicKey)
+		}
+
+		if ecdsaKey.Curve != elliptic.P521() {
+			t.Errorf("expected P521 curve, got %v", ecdsaKey.Curve.Params().Name)
+		}
+	}
+
+	config := &testConfig{
+		clusterNetworkConfig: networkConfigIpv4,
+		infraConfig:          infraConfig,
+		clusterConfigMap:     clusterConfigMapWithCustomPKIAndFeatureSet,
 	}
 
 	testTemplateData(t, config, validateECDSAP521Signer)
@@ -1020,6 +1125,27 @@ featureGates: [ShortCertRotation=true, UpgradeStatus=foobar]
 			expectedEnabled:  sets.New(features.FeatureShortCertRotation),
 			expectedDisabled: sets.New[configv1.FeatureGateName](),
 		},
+		"featureSet TechPreviewNoUpgrade": {
+			installConfig: `
+apiVersion: v1
+metadata:
+  name: my-cluster
+featureSet: TechPreviewNoUpgrade
+`,
+			expectedEnabled:  techPreviewEnabledGates(),
+			expectedDisabled: techPreviewDisabledGates(),
+		},
+		"featureSet with featureGates override": {
+			installConfig: `
+apiVersion: v1
+metadata:
+  name: my-cluster
+featureSet: TechPreviewNoUpgrade
+featureGates: [ConfigurablePKI=false]
+`,
+			expectedEnabled:  techPreviewEnabledGatesWithout(features.FeatureGateConfigurablePKI),
+			expectedDisabled: techPreviewDisabledGatesWith(features.FeatureGateConfigurablePKI),
+		},
 	}
 
 	for name, test := range tests {
@@ -1196,4 +1322,34 @@ pki:
 			}
 		})
 	}
+}
+
+func techPreviewEnabledGates() sets.Set[configv1.FeatureGateName] {
+	resolved := features.FeatureSets(0, features.SelfManaged, configv1.TechPreviewNoUpgrade)
+	s := sets.New[configv1.FeatureGateName]()
+	for _, fg := range resolved.Enabled {
+		s.Insert(fg.FeatureGateAttributes.Name)
+	}
+	return s
+}
+
+func techPreviewDisabledGates() sets.Set[configv1.FeatureGateName] {
+	resolved := features.FeatureSets(0, features.SelfManaged, configv1.TechPreviewNoUpgrade)
+	s := sets.New[configv1.FeatureGateName]()
+	for _, fg := range resolved.Disabled {
+		s.Insert(fg.FeatureGateAttributes.Name)
+	}
+	return s
+}
+
+func techPreviewEnabledGatesWithout(gates ...configv1.FeatureGateName) sets.Set[configv1.FeatureGateName] {
+	s := techPreviewEnabledGates()
+	s.Delete(gates...)
+	return s
+}
+
+func techPreviewDisabledGatesWith(gates ...configv1.FeatureGateName) sets.Set[configv1.FeatureGateName] {
+	s := techPreviewDisabledGates()
+	s.Insert(gates...)
+	return s
 }

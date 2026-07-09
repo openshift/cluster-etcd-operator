@@ -803,20 +803,32 @@ func getFeatureGatesStatus(installConfig map[string]any) (sets.Set[configv1.Feat
 	necessaryFeatureGates := []configv1.FeatureGateName{"ShortCertRotation"}
 	disabled.Insert(necessaryFeatureGates...)
 
-	featureGates, found := installConfig["featureGates"]
-	if !found {
-		return enabled, disabled
+	if featureSetRaw, found := installConfig["featureSet"]; found {
+		featureSet := configv1.FeatureSet(featureSetRaw.(string))
+		if resolved := features.FeatureSets(0, features.SelfManaged, featureSet); resolved != nil {
+			for _, fg := range resolved.Enabled {
+				enabled.Insert(fg.FeatureGateAttributes.Name)
+				disabled.Delete(fg.FeatureGateAttributes.Name)
+			}
+			for _, fg := range resolved.Disabled {
+				if !enabled.Has(fg.FeatureGateAttributes.Name) {
+					disabled.Insert(fg.FeatureGateAttributes.Name)
+				}
+			}
+		}
 	}
 
-	for _, featureGate := range featureGates.([]any) {
-		key := strings.Split(featureGate.(string), "=")[0]
-		value := strings.Split(featureGate.(string), "=")[1]
-		if value == "true" {
-			enabled = enabled.Insert(configv1.FeatureGateName(key))
-			disabled = disabled.Delete(configv1.FeatureGateName(key))
-		} else if value == "false" {
-			enabled = enabled.Delete(configv1.FeatureGateName(key))
-			disabled = disabled.Insert(configv1.FeatureGateName(key))
+	if featureGates, found := installConfig["featureGates"]; found {
+		for _, featureGate := range featureGates.([]any) {
+			key := strings.Split(featureGate.(string), "=")[0]
+			value := strings.Split(featureGate.(string), "=")[1]
+			if value == "true" {
+				enabled = enabled.Insert(configv1.FeatureGateName(key))
+				disabled = disabled.Delete(configv1.FeatureGateName(key))
+			} else if value == "false" {
+				enabled = enabled.Delete(configv1.FeatureGateName(key))
+				disabled = disabled.Insert(configv1.FeatureGateName(key))
+			}
 		}
 	}
 
