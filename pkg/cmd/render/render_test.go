@@ -13,15 +13,12 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-
 	"github.com/ghodss/yaml"
 	configv1 "github.com/openshift/api/config/v1"
 	configv1alpha1 "github.com/openshift/api/config/v1alpha1"
 	"github.com/openshift/api/features"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 var (
@@ -341,7 +338,6 @@ data:
         projectID: openshift
         region: us-east1
     publish: External
-    featureGates: [ConfigurablePKI=true]
     pki:
       signerCertificates:
         key:
@@ -351,12 +347,52 @@ data:
 `
 )
 
+const testPayloadVersion = "4.22.0"
+
 type testConfig struct {
 	clusterNetworkConfig                    string
 	infraConfig                             string
 	clusterConfigMap                        string
 	delayedHABootstrapScalingStrategyMarker string
 	bootstrapIP                             net.IP
+	enabledFeatureGates                     []configv1.FeatureGateName
+	disabledFeatureGates                    []configv1.FeatureGateName
+}
+
+func defaultFeatureGates() ([]configv1.FeatureGateName, []configv1.FeatureGateName) {
+	resolved := features.FeatureSets(0, features.SelfManaged, configv1.Default)
+	var enabled, disabled []configv1.FeatureGateName
+	for _, fg := range resolved.Enabled {
+		enabled = append(enabled, fg.FeatureGateAttributes.Name)
+	}
+	for _, fg := range resolved.Disabled {
+		disabled = append(disabled, fg.FeatureGateAttributes.Name)
+	}
+	return enabled, disabled
+}
+
+func writeFeatureGateManifest(t *testing.T, dir string, enabled, disabled []configv1.FeatureGateName) {
+	t.Helper()
+	var enabledEntries, disabledEntries string
+	for _, name := range enabled {
+		enabledEntries += fmt.Sprintf("      - name: %s\n", name)
+	}
+	for _, name := range disabled {
+		disabledEntries += fmt.Sprintf("      - name: %s\n", name)
+	}
+	manifest := fmt.Sprintf(`apiVersion: config.openshift.io/v1
+kind: FeatureGate
+metadata:
+  name: cluster
+status:
+  featureGates:
+  - version: "%s"
+    enabled:
+%s    disabled:
+%s`, testPayloadVersion, enabledEntries, disabledEntries)
+	if err := os.WriteFile(filepath.Join(dir, "99_feature-gate.yaml"), []byte(manifest), 0600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestRenderIpv4(t *testing.T) {
@@ -404,6 +440,17 @@ func testRender(t *testing.T, tc *testConfig) string {
 	var errOut io.Writer
 	dir := t.TempDir()
 
+	manifestDir := filepath.Join(dir, "manifests")
+	if err := os.MkdirAll(manifestDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	enabled, disabled := tc.enabledFeatureGates, tc.disabledFeatureGates
+	if enabled == nil && disabled == nil {
+		enabled, disabled = defaultFeatureGates()
+	}
+	writeFeatureGateManifest(t, manifestDir, enabled, disabled)
+
 	clusterConfigPath := filepath.Join(dir, "cluster-network-02-config.yaml")
 	if err := os.WriteFile(clusterConfigPath, []byte(tc.clusterNetworkConfig), 0600); err != nil {
 		t.Fatal(err)
@@ -420,13 +467,15 @@ func testRender(t *testing.T, tc *testConfig) string {
 	}
 
 	render := renderOpts{
-		assetOutputDir:       dir,
-		templateDir:          filepath.Join("../../..", "bindata", "bootkube"),
-		errOut:               errOut,
-		networkConfigFile:    clusterConfigPath,
-		infraConfigFile:      infraConfigPath,
-		clusterConfigMapFile: clusterConfigMapPath,
-		bootstrapIPLocator:   &fakeBootstrapIPLocator{ip: bootstrapIP},
+		assetOutputDir:        dir,
+		templateDir:           filepath.Join("../../..", "bindata", "bootkube"),
+		errOut:                errOut,
+		networkConfigFile:     clusterConfigPath,
+		infraConfigFile:       infraConfigPath,
+		clusterConfigMapFile:  clusterConfigMapPath,
+		renderedManifestFiles: []string{manifestDir},
+		payloadVersion:        testPayloadVersion,
+		bootstrapIPLocator:    &fakeBootstrapIPLocator{ip: bootstrapIP},
 	}
 
 	if err := render.Run(); err != nil {
@@ -598,10 +647,15 @@ func TestTemplateDataWithCustomPKI(t *testing.T) {
 		}
 	}
 
+	enabled, disabled := defaultFeatureGates()
+	enabled = append(enabled, features.FeatureGateConfigurablePKI)
+
 	config := &testConfig{
 		clusterNetworkConfig: networkConfigIpv4,
 		infraConfig:          infraConfig,
 		clusterConfigMap:     clusterConfigMapWithCustomPKI,
+		enabledFeatureGates:  enabled,
+		disabledFeatureGates: disabled,
 	}
 
 	testTemplateData(t, config, validateECDSAP521Signer)
@@ -684,6 +738,17 @@ func testTemplateData(t *testing.T, tc *testConfig, validators ...func(*testing.
 	var errOut io.Writer
 	dir := t.TempDir()
 
+	manifestDir := filepath.Join(dir, "manifests")
+	if err := os.MkdirAll(manifestDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	enabled, disabled := tc.enabledFeatureGates, tc.disabledFeatureGates
+	if enabled == nil && disabled == nil {
+		enabled, disabled = defaultFeatureGates()
+	}
+	writeFeatureGateManifest(t, manifestDir, enabled, disabled)
+
 	clusterConfigPath := filepath.Join(dir, "cluster-network-02-config.yaml")
 	if err := os.WriteFile(clusterConfigPath, []byte(tc.clusterNetworkConfig), 0600); err != nil {
 		t.Fatal(err)
@@ -706,6 +771,8 @@ func testTemplateData(t *testing.T, tc *testConfig, validators ...func(*testing.
 		networkConfigFile:                       clusterConfigPath,
 		infraConfigFile:                         infraConfigPath,
 		clusterConfigMapFile:                    clusterConfigMapPath,
+		renderedManifestFiles:                   []string{manifestDir},
+		payloadVersion:                          testPayloadVersion,
 		delayedHABootstrapScalingStrategyMarker: tc.delayedHABootstrapScalingStrategyMarker,
 		bootstrapIPLocator:                      &fakeBootstrapIPLocator{ip: bootstrapIP},
 	}
@@ -965,72 +1032,53 @@ func Test_preferIPv6(t *testing.T) {
 	}
 }
 
-func Test_getFeatureGates(t *testing.T) {
-	tests := map[string]struct {
-		installConfig    string
-		expectedEnabled  sets.Set[configv1.FeatureGateName]
-		expectedDisabled sets.Set[configv1.FeatureGateName]
+func Test_getFeatureGatesFromInstallConfig(t *testing.T) {
+	testCases := map[string]struct {
+		installConfig         string
+		expectConfigurablePKI bool
 	}{
-		"no feature gates defined": {
+		"featureSet TechPreviewNoUpgrade enables ConfigurablePKI": {
 			installConfig: `
 apiVersion: v1
 metadata:
   name: my-cluster
+featureSet: TechPreviewNoUpgrade
 `,
-			expectedEnabled:  sets.New[configv1.FeatureGateName](),
-			expectedDisabled: sets.New(features.FeatureShortCertRotation),
+			expectConfigurablePKI: true,
 		},
-		"enabled feature gates defined": {
+		"default featureSet does not enable ConfigurablePKI": {
 			installConfig: `
 apiVersion: v1
 metadata:
   name: my-cluster
-featureGates: [ShortCertRotation=true]
 `,
-			expectedEnabled:  sets.New(features.FeatureShortCertRotation),
-			expectedDisabled: sets.New[configv1.FeatureGateName](),
+			expectConfigurablePKI: false,
 		},
-		"disabled feature gates defined": {
+		"featureGates override disables ConfigurablePKI even with TechPreview": {
 			installConfig: `
 apiVersion: v1
 metadata:
   name: my-cluster
-featureGates: [ShortCertRotation=false]
+featureSet: TechPreviewNoUpgrade
+featureGates: [ConfigurablePKI=false]
 `,
-			expectedEnabled:  sets.New[configv1.FeatureGateName](),
-			expectedDisabled: sets.New(features.FeatureShortCertRotation),
-		},
-		"mixed feature gates defined": {
-			installConfig: `
-apiVersion: v1
-metadata:
-  name: my-cluster
-featureGates: [ShortCertRotation=true, UpgradeStatus=false]
-`,
-			expectedEnabled:  sets.New(features.FeatureShortCertRotation),
-			expectedDisabled: sets.New(features.FeatureGateUpgradeStatus),
-		},
-		"unexpected data": {
-			installConfig: `
-apiVersion: v1
-metadata:
-  name: my-cluster
-featureGates: [ShortCertRotation=true, UpgradeStatus=foobar]
-`,
-			expectedEnabled:  sets.New(features.FeatureShortCertRotation),
-			expectedDisabled: sets.New[configv1.FeatureGateName](),
+			expectConfigurablePKI: false,
 		},
 	}
 
-	for name, test := range tests {
+	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 			var installConfig map[string]any
-			if err := yaml.Unmarshal([]byte(test.installConfig), &installConfig); err != nil {
-				panic(err)
+			if err := yaml.Unmarshal([]byte(tc.installConfig), &installConfig); err != nil {
+				t.Fatal(err)
 			}
-			actualEnabled, actualDisabled := getFeatureGatesStatus(installConfig)
-			assert.Equal(t, actualEnabled, test.expectedEnabled)
-			assert.Equal(t, actualDisabled, test.expectedDisabled)
+			enabled, disabled := getFeatureGatesFromInstallConfig(installConfig)
+			if got := enabled.Has(features.FeatureGateConfigurablePKI); got != tc.expectConfigurablePKI {
+				t.Errorf("ConfigurablePKI enabled: want %v, got %v", tc.expectConfigurablePKI, got)
+			}
+			if enabled.Len()+disabled.Len() == 0 {
+				t.Errorf("expected non-empty feature gate sets for any install-config, got empty enabled and disabled sets")
+			}
 		})
 	}
 }
