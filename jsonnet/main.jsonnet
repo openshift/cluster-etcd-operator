@@ -1,5 +1,6 @@
 local etcdMixin = (import 'github.com/etcd-io/etcd/contrib/mixin/mixin.libsonnet');
 local openshiftRules = (import 'custom.libsonnet');
+local tnfRules = (import 'tnf-alerts.libsonnet');
 
 local alertingRules = if std.objectHasAll(etcdMixin, 'prometheusAlerts') then etcdMixin.prometheusAlerts.groups else [];
 local promRules = if std.objectHasAll(etcdMixin, 'prometheusRules') then etcdMixin.prometheusRules.groups else [];
@@ -29,7 +30,7 @@ local alertingRulesWithRunbooks = std.flattenArrays(std.map(
         group.rules
       )
     ),
-  excludeRules + openshiftRules.prometheusRules.groups
+  excludeRules + openshiftRules.prometheusRules.groups + tnfRules.prometheusRules.groups
 ));
 
 local modifiedRules = std.map(function(group) group {
@@ -39,7 +40,7 @@ local modifiedRules = std.map(function(group) group {
                    },
                  } else rule,
                  super.rules),
-}, excludeRules + openshiftRules.prometheusRules.groups);
+}, excludeRules + openshiftRules.prometheusRules.groups + tnfRules.prometheusRules.groups);
 
 {
   apiVersion: 'monitoring.coreos.com/v1',
