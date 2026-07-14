@@ -27,6 +27,8 @@ type resourceKey struct {
 	resource string
 }
 
+var registerDisruptionCounter sync.Once
+
 // DisruptionTracker detects started-to-stopped resource transitions and
 // increments an in-memory Prometheus counter. The counter survives API
 // outages (lives in the CEO pod) so Prometheus can detect disruptions
@@ -37,7 +39,9 @@ type DisruptionTracker struct {
 }
 
 func NewDisruptionTracker() *DisruptionTracker {
-	legacyregistry.MustRegister(resourceDisruptionCounter)
+	registerDisruptionCounter.Do(func() {
+		legacyregistry.MustRegister(resourceDisruptionCounter)
+	})
 	return &DisruptionTracker{
 		lastStarted: make(map[resourceKey]bool),
 	}
