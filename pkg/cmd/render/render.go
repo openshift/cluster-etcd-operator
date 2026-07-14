@@ -24,6 +24,7 @@ import (
 	configv1alpha1 "github.com/openshift/api/config/v1alpha1"
 	features "github.com/openshift/api/features"
 	"github.com/openshift/library-go/pkg/assets"
+	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/pki"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -46,6 +47,9 @@ type renderOpts struct {
 	networkConfigFile    string
 	clusterConfigMapFile string
 	infraConfigFile      string
+
+	renderedManifestFiles []string
+	payloadVersion        string
 
 	delayedHABootstrapScalingStrategyMarker string
 	bootstrapIPLocator                      BootstrapIPLocator
@@ -86,6 +90,8 @@ func (r *renderOpts) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&r.networkConfigFile, "network-config-file", "", "File containing the network.config.openshift.io manifest.")
 	fs.StringVar(&r.clusterConfigMapFile, "cluster-configmap-file", "", "File containing the cluster-config-v1 configmap.")
 	fs.StringVar(&r.infraConfigFile, "infra-config-file", "", "File containing infrastructure.config.openshift.io manifest.")
+	fs.StringArrayVar(&r.renderedManifestFiles, "rendered-manifest-files", nil, "Files or directories containing pre-rendered manifests, used to determine FeatureGate status.")
+	fs.StringVar(&r.payloadVersion, "payload-version", "", "Version that will eventually be placed into ClusterOperator.status. This normally comes from the CVO set via env var: OPERATOR_IMAGE_VERSION.")
 
 	// TODO(marun) Discover scaling strategy with less hack
 	fs.StringVar(&r.delayedHABootstrapScalingStrategyMarker, "delayed-ha-bootstrap-scaling-marker-file", "/assets/assisted-install-bootstrap", "Marker file that, if present, enables the delayed HA bootstrap scaling strategy")
@@ -279,7 +285,10 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 			base64.StdEncoding.WithPadding(base64.NoPadding).EncodeToString([]byte(templateData.BootstrapIP)), templateData.BootstrapIP)
 	}
 
-	enabledFeatureGates, disabledFeatureGates := getFeatureGatesStatus(installConfig)
+	enabledFeatureGates, disabledFeatureGates, err := opts.getFeatureGates(installConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get feature gates: %w", err)
+	}
 
 	var pkiProfileProvider pki.PKIProfileProvider
 	if enabledFeatureGates.Has(features.FeatureGateConfigurablePKI) {
@@ -794,29 +803,136 @@ func getBootstrapScalingStrategy(installConfig map[string]any, delayedHAMarkerFi
 	return strategy, nil
 }
 
-// getFeatureGatesStatus returns the enabled and disabled feature gates.
-func getFeatureGatesStatus(installConfig map[string]any) (sets.Set[configv1.FeatureGateName], sets.Set[configv1.FeatureGateName]) {
-	enabled, disabled := sets.Set[configv1.FeatureGateName]{}, sets.Set[configv1.FeatureGateName]{}
+// getFeatureGates returns the enabled and disabled feature gate sets.
+//
+// Primary path: when --rendered-manifest-files and --payload-version are
+// provided, reads the pre-resolved FeatureGate CR from rendered manifests.
+// This is the standard operator render pattern used by CKASO and CKCMO.
+//
+// Fallback path: when rendered manifests are not available, resolves
+// feature gates from the install-config's featureSet and featureGates
+// fields directly. This fallback exists for transition until the
+// installer passes the new flags to the etcd-render invocation, and
+// should be removed once openshift/installer carries the change.
+func (r *renderOpts) getFeatureGates(installConfig map[string]any) (sets.Set[configv1.FeatureGateName], sets.Set[configv1.FeatureGateName], error) {
+	if len(r.renderedManifestFiles) > 0 && len(r.payloadVersion) > 0 {
+		return r.getFeatureGatesFromManifests()
+	}
+	klog.Warningf("--rendered-manifest-files or --payload-version not provided, falling back to install-config feature gate parsing")
+	enabled, disabled := getFeatureGatesFromInstallConfig(installConfig)
+	return enabled, disabled, nil
+}
 
-	// On bootstrap we might not be able to fetch a list of all feature gates
-	// Hardcode a list of necessary for bootstrap here
-	necessaryFeatureGates := []configv1.FeatureGateName{"ShortCertRotation"}
-	disabled.Insert(necessaryFeatureGates...)
+// getFeatureGatesFromManifests reads the FeatureGate CR from pre-rendered
+// manifests and returns enabled/disabled sets.
+func (r *renderOpts) getFeatureGatesFromManifests() (sets.Set[configv1.FeatureGateName], sets.Set[configv1.FeatureGateName], error) {
+	fg, err := r.readFeatureGate()
+	if err != nil {
+		return nil, nil, err
+	}
+	accessor, err := featuregates.NewHardcodedFeatureGateAccessFromFeatureGate(fg, r.payloadVersion)
+	if err != nil {
+		return nil, nil, err
+	}
+	featureGate, err := accessor.CurrentFeatureGates()
+	if err != nil {
+		return nil, nil, err
+	}
+	enabled := sets.New[configv1.FeatureGateName]()
+	disabled := sets.New[configv1.FeatureGateName]()
+	for _, name := range featureGate.KnownFeatures() {
+		if featureGate.Enabled(name) {
+			enabled.Insert(name)
+		} else {
+			disabled.Insert(name)
+		}
+	}
+	return enabled, disabled, nil
+}
 
-	featureGates, found := installConfig["featureGates"]
-	if !found {
-		return enabled, disabled
+// readFeatureGate scans rendered manifest files/directories for a FeatureGate CR.
+func (r *renderOpts) readFeatureGate() (*configv1.FeatureGate, error) {
+	for _, manifestPath := range r.renderedManifestFiles {
+		info, err := os.Stat(manifestPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to stat %s: %w", manifestPath, err)
+		}
+
+		var files []string
+		if info.IsDir() {
+			entries, err := os.ReadDir(manifestPath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read directory %s: %w", manifestPath, err)
+			}
+			for _, entry := range entries {
+				if entry.IsDir() {
+					continue
+				}
+				files = append(files, filepath.Join(manifestPath, entry.Name()))
+			}
+		} else {
+			files = []string{manifestPath}
+		}
+
+		for _, file := range files {
+			data, err := os.ReadFile(file)
+			if err != nil {
+				continue
+			}
+			jsonBytes, err := yaml.YAMLToJSON(data)
+			if err != nil {
+				continue
+			}
+			fg := &configv1.FeatureGate{}
+			if err := json.Unmarshal(jsonBytes, fg); err != nil {
+				continue
+			}
+			if fg.APIVersion == "config.openshift.io/v1" && fg.Kind == "FeatureGate" {
+				return fg, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("no FeatureGate manifest found in %v", r.renderedManifestFiles)
+}
+
+// getFeatureGatesFromInstallConfig resolves feature gates from the
+// install-config featureSet and featureGates fields. This is the fallback
+// for when rendered manifests are not available.
+// TODO: Remove this fallback once the installer passes --rendered-manifest-files
+// and --payload-version to the etcd-render invocation.
+func getFeatureGatesFromInstallConfig(installConfig map[string]any) (sets.Set[configv1.FeatureGateName], sets.Set[configv1.FeatureGateName]) {
+	enabled := sets.New[configv1.FeatureGateName]()
+	disabled := sets.New[configv1.FeatureGateName]()
+
+	featureSet := configv1.Default
+	if featureSetRaw, found := installConfig["featureSet"]; found {
+		if featureSetStr, ok := featureSetRaw.(string); ok {
+			featureSet = configv1.FeatureSet(featureSetStr)
+		}
+	}
+	if resolved := features.FeatureSets(0, features.SelfManaged, featureSet); resolved != nil {
+		for _, fg := range resolved.Enabled {
+			enabled.Insert(fg.FeatureGateAttributes.Name)
+		}
+		for _, fg := range resolved.Disabled {
+			disabled.Insert(fg.FeatureGateAttributes.Name)
+		}
 	}
 
-	for _, featureGate := range featureGates.([]any) {
-		key := strings.Split(featureGate.(string), "=")[0]
-		value := strings.Split(featureGate.(string), "=")[1]
-		if value == "true" {
-			enabled = enabled.Insert(configv1.FeatureGateName(key))
-			disabled = disabled.Delete(configv1.FeatureGateName(key))
-		} else if value == "false" {
-			enabled = enabled.Delete(configv1.FeatureGateName(key))
-			disabled = disabled.Insert(configv1.FeatureGateName(key))
+	if featureGatesRaw, found := installConfig["featureGates"]; found {
+		for _, entry := range featureGatesRaw.([]any) {
+			key, value, found := strings.Cut(entry.(string), "=")
+			if !found {
+				continue
+			}
+			name := configv1.FeatureGateName(key)
+			if value == "true" {
+				enabled.Insert(name)
+				disabled.Delete(name)
+			} else if value == "false" {
+				enabled.Delete(name)
+				disabled.Insert(name)
+			}
 		}
 	}
 
