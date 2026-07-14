@@ -126,6 +126,8 @@ type HealthCheck struct {
 	// Only updated when status is non-Unknown, so CRLastUpdated reflects the last valid CR timestamp.
 	previousMu sync.Mutex
 	previous   *HealthStatus
+
+	disruptionTracker *DisruptionTracker
 }
 
 // NewHealthCheck creates a new HealthCheck for monitoring pacemaker status
@@ -191,6 +193,7 @@ func NewHealthCheck(
 		eventRecorder:     eventRecorder,
 		pacemakerInformer: informer,
 		recordedEvents:    make(map[string]time.Time),
+		disruptionTracker: NewDisruptionTracker(),
 		// previous starts as nil - first sync will be treated as "from Unknown"
 	}
 
@@ -234,6 +237,8 @@ func (c *HealthCheck) sync(ctx context.Context, syncCtx factory.SyncContext) err
 	if currentStatus == nil {
 		return nil
 	}
+
+	c.trackResourceDisruptions()
 
 	// Log the determined status for visibility
 	klog.V(2).Infof("Pacemaker health status: %s (errors: %d, warnings: %d)",
@@ -891,4 +896,16 @@ func getEventReasonForError(errorMsg string) string {
 func (c *HealthCheck) recordErrorEvent(errorMsg string) {
 	eventReason := getEventReasonForError(errorMsg)
 	c.eventRecorder.Warningf(eventReason, msgPacemakerError, errorMsg)
+}
+
+func (c *HealthCheck) trackResourceDisruptions() {
+	item, exists, err := c.pacemakerInformer.GetStore().GetByKey(PacemakerClusterResourceName)
+	if err != nil || !exists {
+		return
+	}
+	cr, ok := item.(*pacmkrv1.PacemakerCluster)
+	if !ok {
+		return
+	}
+	c.disruptionTracker.TrackResourceStates(cr.Status.Nodes)
 }
