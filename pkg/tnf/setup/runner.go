@@ -2,6 +2,7 @@ package setup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -105,10 +106,15 @@ func RunTnfSetup() error {
 		return err
 	}
 
-	// register pacemaker alert agents for fencing taint/untaint
-	err = pcs.ConfigureAlerts(ctx)
-	if err != nil {
-		return err
+	// Register pacemaker alert agents for fencing taint/untaint.
+	// Tolerate the scripts not being present yet, they are delivered by
+	// MCO which may not have rolled out at this point
+	if err := pcs.ConfigureAlerts(ctx); err != nil {
+		if errors.Is(err, pcs.ErrAlertScriptNotPresent) {
+			klog.Warningf("Deferring pacemaker alert agent configuration: %v", err)
+		} else {
+			return err
+		}
 	}
 
 	// Etcd handover

@@ -20,6 +20,8 @@ const (
 	AfterSetupJobCompletedTimeout = 5 * time.Minute
 	AllCompletedTimeout           = 30 * time.Minute
 	FencingJobCompletedTimeout    = 25 * time.Minute
+	AlertConfigurationTimeout      = 60 * time.Minute
+	UpdateSetupJobCompletedTimeout = 65 * time.Minute
 )
 
 // JobType represent the different jobs we run, with some methods needed

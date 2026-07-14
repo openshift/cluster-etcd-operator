@@ -68,6 +68,15 @@ func RunTnfUpdateSetup() error {
 		return nil
 	}
 
+	// Register pacemaker alert agents for fencing taint/untaint. This runs on
+	// every invocation (i.e. on every CEO reconcile once TNF is set up,
+	// including upgrades), independent of whether a node is being replaced,
+	// because the alert scripts may only become available well after this job
+	// first starts running.
+	if err := pcs.ConfigureAlertsWithRetry(ctx); err != nil {
+		return err
+	}
+
 	// Get current cluster config from Kubernetes
 	cfg, err := config.GetClusterConfig(ctx, kubeClient)
 	if err != nil {
@@ -129,12 +138,6 @@ func RunTnfUpdateSetup() error {
 	err = pcs.ConfigureFencing(ctx, kubeClient, []string{otherNodeName, currentNodeName})
 	if err != nil {
 		klog.Error(err, "Failed to configure fencing, skipping update of etcd! Restart update-setup job when fencing config is fixed!")
-		return err
-	}
-
-	// register pacemaker alert agents for fencing taint/untaint
-	err = pcs.ConfigureAlerts(ctx)
-	if err != nil {
 		return err
 	}
 
