@@ -269,7 +269,7 @@ func updateSetup(
 	}
 	// wait for completion
 	for _, node := range nodeList {
-		err := jobs.WaitForCompletion(ctx, kubeClient, tools.JobTypeUpdateSetup.GetJobName(&node.Name), operatorclient.TargetNamespace, tools.SetupJobCompletedTimeout)
+		err := jobs.WaitForCompletion(ctx, kubeClient, tools.JobTypeUpdateSetup.GetJobName(&node.Name), operatorclient.TargetNamespace, tools.UpdateSetupJobCompletedTimeout)
 		if err != nil {
 			return fmt.Errorf("failed to wait for update setup job on node %s to complete: %w", node.GetName(), err)
 		}
