@@ -7,10 +7,17 @@ import (
 	"fmt"
 	osexec "os/exec"
 
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/exec"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
+
+// ErrAlertScriptNotPresent indicates the alert script has not yet been delivered
+// to the host by MCO. Callers can check for this with errors.Is to distinguish
+// it from other, unexpected failures.
+var ErrAlertScriptNotPresent = errors.New("alert script not yet present")
 
 type alertConfig struct {
 	id        string
@@ -49,13 +56,55 @@ func ConfigureAlerts(ctx context.Context) error {
 	return nil
 }
 
+// AllAlertsConfigured returns true if every known pacemaker alert agent is
+// already registered in the CIB.
+func AllAlertsConfigured(ctx context.Context) (bool, error) {
+	for _, ac := range alertConfigs {
+		exists, err := alertExists(ctx, ac.id)
+		if err != nil {
+			return false, fmt.Errorf("failed to check existing alert %q: %w", ac.id, err)
+		}
+		if !exists {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// ConfigureAlertsWithRetry ensures the pacemaker alert agents are registered,
+// tolerating the alert scripts not yet being present on-node (they are delivered
+// asynchronously by MCO, which can lag behind an
+// etcd-operator upgrade). It skips entirely if the alerts are already configured,
+// and otherwise polls until they can be configured or the timeout is reached.
+func ConfigureAlertsWithRetry(ctx context.Context) error {
+	alreadyConfigured, err := AllAlertsConfigured(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to check existing alert configuration: %w", err)
+	}
+	if alreadyConfigured {
+		klog.Info("Pacemaker alert agents are already configured, skipping registration")
+		return nil
+	}
+
+	return wait.PollUntilContextTimeout(ctx, tools.JobPollInterval, tools.AlertConfigurationTimeout, true, func(ctx context.Context) (bool, error) {
+		if err := ConfigureAlerts(ctx); err != nil {
+			if errors.Is(err, ErrAlertScriptNotPresent) {
+				klog.Warningf("Pacemaker alert agent configuration not yet possible, will retry: %v", err)
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+	})
+}
+
 func configureAlert(ctx context.Context, ac alertConfig) error {
 	scriptPresent, err := fileExistsOnHost(ctx, ac.path)
 	if err != nil {
 		return fmt.Errorf("failed to check for alert script %s: %w", ac.path, err)
 	}
 	if !scriptPresent {
-		return fmt.Errorf("alert script %s not yet present (MCO rollout pending), will retry", ac.path)
+		return fmt.Errorf("%w: %s (MCO rollout pending)", ErrAlertScriptNotPresent, ac.path)
 	}
 
 	exists, err := alertExists(ctx, ac.id)
