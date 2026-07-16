@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -23,7 +24,7 @@ const (
 func RecordSetupEvent(ctx context.Context, kubeClient kubernetes.Interface, reason, message string) {
 	event := &corev1.Event{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("tnf-%s-%d", reason, time.Now().UnixNano()),
+			Name:      fmt.Sprintf("tnf-%s-%d", strings.ToLower(reason), time.Now().UnixNano()),
 			Namespace: setupEventNamespace,
 		},
 		InvolvedObject: corev1.ObjectReference{
