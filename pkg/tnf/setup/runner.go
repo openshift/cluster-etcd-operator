@@ -83,6 +83,9 @@ func RunTnfSetup() error {
 		return err
 	}
 
+	tools.RecordSetupEvent(ctx, kubeClient, "EtcdTransitionAuthCompleted",
+		"PCS authentication completed on all nodes")
+
 	klog.Info("Running TNF setup")
 
 	// create tnf cluster config
@@ -100,11 +103,17 @@ func RunTnfSetup() error {
 		time.Sleep(5 * time.Second)
 	}
 
+	tools.RecordSetupEvent(ctx, kubeClient, "EtcdTransitionClusterConfigured",
+		"Pacemaker cluster configured successfully")
+
 	// configure stonith
 	err = pcs.ConfigureFencing(ctx, kubeClient, []string{cfg.NodeName1, cfg.NodeName2})
 	if err != nil {
 		return err
 	}
+
+	tools.RecordSetupEvent(ctx, kubeClient, "EtcdTransitionFencingConfigured",
+		"STONITH fencing configured successfully")
 
 	// Register pacemaker alert agents for fencing taint/untaint.
 	// Tolerate the scripts not being present yet, they are delivered by
@@ -125,6 +134,9 @@ func RunTnfSetup() error {
 		return err
 	}
 
+	tools.RecordSetupEvent(ctx, kubeClient, "EtcdTransitionEtcdResourceCreated",
+		"Pacemaker etcd resource agent (podman-etcd) configured")
+
 	// configure etcd constraints
 	configured, err = pcs.ConfigureConstraints(ctx)
 	if err != nil {
@@ -134,8 +146,11 @@ func RunTnfSetup() error {
 		time.Sleep(5 * time.Second)
 	}
 
+	tools.RecordSetupEvent(ctx, kubeClient, "EtcdTransitionConstraintsConfigured",
+		"Pacemaker ordering and colocation constraints configured")
+
 	// Signal CEO that TNF setup is ready for etcd container removal
-	err = etcd.RemoveStaticContainer(ctx, operatorClient)
+	err = etcd.RemoveStaticContainer(ctx, operatorClient, kubeClient)
 	if err != nil {
 		return err
 	}
