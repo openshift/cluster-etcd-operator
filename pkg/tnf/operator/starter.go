@@ -80,7 +80,7 @@ func HandleDualReplicaClusters(
 	if err := runTnfResourceController(ctx, controllerContext, kubeClient, dynamicClient, operatorClient, kubeInformersForNamespaces); err != nil {
 		return false, err
 	}
-	runPacemakerControllers(ctx, controllerContext, operatorClient, kubeClient, etcdInformer)
+	runPacemakerControllers(ctx, controllerContext, operatorClient, kubeClient, dynamicClient, etcdInformer)
 
 	// we need node names for assigning auth and after-setup jobs to specific nodes
 	controlPlaneNodeLister := corev1listers.NewNodeLister(controlPlaneNodeInformer.GetIndexer())
@@ -223,7 +223,7 @@ func runTnfResourceController(ctx context.Context, controllerContext *controller
 	return nil
 }
 
-func runPacemakerControllers(ctx context.Context, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, etcdInformer operatorv1informers.EtcdInformer) {
+func runPacemakerControllers(ctx context.Context, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, dynamicClient dynamic.Interface, etcdInformer operatorv1informers.EtcdInformer) {
 	// Wait for external etcd transition before creating any Pacemaker controllers
 	// This runs in a background goroutine to avoid blocking the main thread.
 	go func() {
@@ -326,6 +326,16 @@ func runPacemakerControllers(ctx context.Context, controllerContext *controllerc
 		)
 		klog.Infof("starting Pacemaker metrics controller")
 		go metricsController.Run(ctx, 1)
+
+		// Create and start the console notification controller, sharing the same informer
+		klog.Infof("creating Pacemaker console notification controller")
+		notificationController := pacemaker.NewConsoleNotificationController(
+			pacemakerInformer,
+			dynamicClient,
+			controllerContext.EventRecorder,
+		)
+		klog.Infof("starting Pacemaker console notification controller")
+		go notificationController.Run(ctx, 1)
 
 		// Start the status collector CronJob
 		klog.Infof("starting Pacemaker status collector CronJob")
