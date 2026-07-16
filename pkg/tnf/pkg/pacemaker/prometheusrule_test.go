@@ -69,10 +69,10 @@ var expectedAlerts = []expectedAlert{
 	{"TNFNodeUnclean", "tnf_node_clean == 0", "5m", "critical"},
 	{"TNFNodeInMaintenance", "tnf_node_in_service == 0", "2m", "warning"},
 	{"TNFNodeStandby", "tnf_node_active == 0", "5m", "warning"},
-	{"TNFResourceStopped", "tnf_resource_started == 0", "5m", "critical"},
-	{"TNFResourceFailed", "tnf_resource_operational == 0", "2m", "critical"},
-	{"TNFResourceUnmanaged", "tnf_resource_managed == 0", "5m", "warning"},
-	{"TNFResourceDisabled", "tnf_resource_enabled == 0", "5m", "warning"},
+	{"TNFResourceStopped", "tnf_resource_started == 0 and on(node) tnf_node_active == 1", "5m", "critical"},
+	{"TNFResourceFailed", "tnf_resource_operational == 0 and on(node) tnf_node_active == 1", "2m", "critical"},
+	{"TNFResourceUnmanaged", "tnf_resource_managed == 0 and on(node) tnf_node_in_service == 1 and on(node) tnf_node_active == 1", "5m", "warning"},
+	{"TNFResourceDisabled", "tnf_resource_enabled == 0 and on(node) tnf_node_active == 1", "5m", "warning"},
 }
 
 func TestTNFAlerts_Count(t *testing.T) {

@@ -292,7 +292,7 @@ spec:
         description: TNF resource {{ $labels.resource }} on node {{ $labels.node }} has been stopped for more than 5 minutes. This may indicate quorum loss or a failed resource action.
         runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/TNFResourceStopped.md
         summary: TNF resource {{ $labels.resource }} is stopped on node {{ $labels.node }}.
-      expr: tnf_resource_started == 0
+      expr: tnf_resource_started == 0 and on(node) tnf_node_active == 1
       for: 5m
       labels:
         severity: critical
@@ -301,7 +301,7 @@ spec:
         description: TNF resource {{ $labels.resource }} on node {{ $labels.node }} is not operational. This may indicate a resource agent failure or configuration error requiring immediate investigation.
         runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/TNFResourceFailed.md
         summary: TNF resource {{ $labels.resource }} has failed on node {{ $labels.node }}.
-      expr: tnf_resource_operational == 0
+      expr: tnf_resource_operational == 0 and on(node) tnf_node_active == 1
       for: 2m
       labels:
         severity: critical
@@ -310,7 +310,7 @@ spec:
         description: TNF resource {{ $labels.resource }} on node {{ $labels.node }} has been placed in unmanaged mode. Pacemaker will not monitor or recover this resource until it is re-managed.
         runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/TNFResourceUnmanaged.md
         summary: TNF resource {{ $labels.resource }} is unmanaged on node {{ $labels.node }}.
-      expr: tnf_resource_managed == 0
+      expr: tnf_resource_managed == 0 and on(node) tnf_node_in_service == 1 and on(node) tnf_node_active == 1
       for: 5m
       labels:
         severity: warning
@@ -319,7 +319,7 @@ spec:
         description: TNF resource {{ $labels.resource }} on node {{ $labels.node }} has been disabled. The resource will not be started by Pacemaker until it is re-enabled.
         runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/TNFResourceDisabled.md
         summary: TNF resource {{ $labels.resource }} is disabled on node {{ $labels.node }}.
-      expr: tnf_resource_enabled == 0
+      expr: tnf_resource_enabled == 0 and on(node) tnf_node_active == 1
       for: 5m
       labels:
         severity: warning

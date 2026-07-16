@@ -113,7 +113,7 @@
           // Resource-level alerts
           {
             alert: 'TNFResourceStopped',
-            expr: 'tnf_resource_started == 0',
+            expr: 'tnf_resource_started == 0 and on(node) tnf_node_active == 1',
             'for': '5m',
             labels: {
               severity: 'critical',
@@ -126,7 +126,7 @@
           },
           {
             alert: 'TNFResourceFailed',
-            expr: 'tnf_resource_operational == 0',
+            expr: 'tnf_resource_operational == 0 and on(node) tnf_node_active == 1',
             'for': '2m',
             labels: {
               severity: 'critical',
@@ -139,7 +139,7 @@
           },
           {
             alert: 'TNFResourceUnmanaged',
-            expr: 'tnf_resource_managed == 0',
+            expr: 'tnf_resource_managed == 0 and on(node) tnf_node_in_service == 1 and on(node) tnf_node_active == 1',
             'for': '5m',
             labels: {
               severity: 'warning',
@@ -152,7 +152,7 @@
           },
           {
             alert: 'TNFResourceDisabled',
-            expr: 'tnf_resource_enabled == 0',
+            expr: 'tnf_resource_enabled == 0 and on(node) tnf_node_active == 1',
             'for': '5m',
             labels: {
               severity: 'warning',
