@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	setupEventNamespace = "openshift-etcd"
-	setupJobName        = "tnf-setup-job"
+	setupEventNamespace  = "openshift-etcd"
+	setupJobName         = "tnf-setup-job"
 	setupSourceComponent = "tnf-setup-runner"
 )
 
