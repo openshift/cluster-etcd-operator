@@ -111,6 +111,16 @@ type HealthStatus struct {
 	CRLastUpdated time.Time
 }
 
+// pacemakerListWatch wraps cache.ListWatch to opt out of WatchList semantics.
+// The OCP apiextensions-apiserver does not enable the server-side WatchList gate,
+// so the reflector's sendInitialEvents request is rejected. This wrapper tells
+// the reflector to skip watchList() and use list+watch directly.
+type pacemakerListWatch struct {
+	cache.ListWatch
+}
+
+func (pacemakerListWatch) IsWatchListSemanticsUnSupported() bool { return true }
+
 // HealthCheck monitors pacemaker status in ExternalEtcd topology clusters
 type HealthCheck struct {
 	operatorClient    v1helpers.StaticPodOperatorClient
@@ -154,7 +164,7 @@ func NewHealthCheck(
 	// Create informer for PacemakerCluster
 	klog.Infof("Creating PacemakerCluster informer for group %s, resource %s", pacmkrv1.SchemeGroupVersion.String(), PacemakerResourceName)
 	informer := cache.NewSharedIndexInformer(
-		&cache.ListWatch{
+		&pacemakerListWatch{cache.ListWatch{
 			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
 				klog.V(4).Infof("PacemakerCluster informer ListFunc called for resource %s", PacemakerResourceName)
 				result := &pacmkrv1.PacemakerClusterList{}
@@ -181,7 +191,7 @@ func NewHealthCheck(
 				}
 				return watcher, err
 			},
-		},
+		}},
 		&pacmkrv1.PacemakerCluster{},
 		HealthCheckResyncInterval,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
