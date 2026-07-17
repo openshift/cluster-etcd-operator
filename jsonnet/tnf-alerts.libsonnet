@@ -60,7 +60,7 @@
           },
           {
             alert: 'TNFNodeFencingDegraded',
-            expr: 'tnf_node_fencing_healthy == 0 and tnf_node_fencing_available == 1',
+            expr: 'tnf_node_fencing_healthy == 0 and tnf_node_fencing_available == 1 and on(node) tnf_node_in_service == 1',
             'for': '10m',
             labels: {
               severity: 'warning',

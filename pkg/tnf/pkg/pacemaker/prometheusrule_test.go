@@ -65,7 +65,7 @@ var expectedAlerts = []expectedAlert{
 	{"TNFClusterInMaintenance", "tnf_cluster_in_service == 0", "2m", "warning"},
 	{"TNFNodeOffline", "tnf_node_online == 0", "2m", "critical"},
 	{"TNFNodeFencingUnavailable", "tnf_node_fencing_available == 0", "5m", "critical"},
-	{"TNFNodeFencingDegraded", "tnf_node_fencing_healthy == 0 and tnf_node_fencing_available == 1", "10m", "warning"},
+	{"TNFNodeFencingDegraded", "tnf_node_fencing_healthy == 0 and tnf_node_fencing_available == 1 and on(node) tnf_node_in_service == 1", "10m", "warning"},
 	{"TNFNodeUnclean", "tnf_node_clean == 0", "5m", "critical"},
 	{"TNFNodeInMaintenance", "tnf_node_in_service == 0", "2m", "warning"},
 	{"TNFNodeStandby", "tnf_node_active == 0", "5m", "warning"},
