@@ -139,7 +139,7 @@ func evaluateHealth(cr *pacmkrv1.PacemakerCluster) []string {
 }
 
 func (c *consoleNotificationController) ensureNotification(ctx context.Context, problems []string) error {
-	text := strings.Join(problems, "; ") + ". Check pacemaker status for details."
+	text := strings.Join(problems, ". ") + ". Check pacemaker status for details."
 
 	notification := &consolev1.ConsoleNotification{
 		TypeMeta: metav1.TypeMeta{
