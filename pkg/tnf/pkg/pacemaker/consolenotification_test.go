@@ -22,6 +22,20 @@ func withNodeCondition(conditions []metav1.Condition, condType string, status me
 	return out
 }
 
+// withUnhealthyResource returns a copy of node with the given resource's Healthy condition set to False.
+func withUnhealthyResource(node pacmkrv1.PacemakerClusterNodeStatus, resourceName pacmkrv1.PacemakerClusterResourceName) pacmkrv1.PacemakerClusterNodeStatus {
+	for i := range node.Resources {
+		if node.Resources[i].Name == resourceName {
+			for j := range node.Resources[i].Conditions {
+				if node.Resources[i].Conditions[j].Type == pacmkrv1.ResourceHealthyConditionType {
+					node.Resources[i].Conditions[j].Status = metav1.ConditionFalse
+				}
+			}
+		}
+	}
+	return node
+}
+
 // makeNodeWithConditions creates a node status with custom conditions and healthy resources.
 func makeNodeWithConditions(name, ip string, conditions []metav1.Condition) pacmkrv1.PacemakerClusterNodeStatus {
 	return pacmkrv1.PacemakerClusterNodeStatus{
@@ -108,11 +122,13 @@ func TestEvaluateHealth(t *testing.T) {
 					Conditions:  createHealthyClusterConditions(),
 					Nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
 						// Node is offline AND has unhealthy etcd AND no fencing — should only report offline.
-						makeNodeWithConditions("master-0", "192.168.111.20",
-							withNodeCondition(
-								withNodeCondition(createHealthyNodeConditions(),
-									pacmkrv1.NodeOnlineConditionType, metav1.ConditionFalse),
-								pacmkrv1.NodeFencingAvailableConditionType, metav1.ConditionFalse)),
+						withUnhealthyResource(
+							makeNodeWithConditions("master-0", "192.168.111.20",
+								withNodeCondition(
+									withNodeCondition(createHealthyNodeConditions(),
+										pacmkrv1.NodeOnlineConditionType, metav1.ConditionFalse),
+									pacmkrv1.NodeFencingAvailableConditionType, metav1.ConditionFalse)),
+							pacmkrv1.PacemakerClusterResourceNameEtcd),
 					},
 				},
 			},
