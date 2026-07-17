@@ -43,9 +43,7 @@ func makeResource(name string, started bool) pacmkrv1.PacemakerClusterResourceSt
 func getDisruptionCount(t *testing.T, node, resource string) float64 {
 	t.Helper()
 	val, err := testutil.GetCounterMetricValue(resourceDisruptionCounter.WithLabelValues(node, resource))
-	if err != nil {
-		return 0
-	}
+	require.NoError(t, err, "failed to read disruption counter for node=%s resource=%s", node, resource)
 	return val
 }
 
