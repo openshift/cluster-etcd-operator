@@ -277,9 +277,9 @@ func TestDisruptionTracker_ConsecutiveDisruptions(t *testing.T) {
 	dt.TrackResourceStates(started)
 	baseline := getDisruptionCount(t, node, res)
 
-	dt.TrackResourceStates(stopped)  // disruption 1
-	dt.TrackResourceStates(started)  // recovery
-	dt.TrackResourceStates(stopped)  // disruption 2
+	dt.TrackResourceStates(stopped) // disruption 1
+	dt.TrackResourceStates(started) // recovery
+	dt.TrackResourceStates(stopped) // disruption 2
 
 	final := getDisruptionCount(t, node, res)
 	require.Equal(t, baseline+2, final, "two started→stopped transitions should increment counter twice")
