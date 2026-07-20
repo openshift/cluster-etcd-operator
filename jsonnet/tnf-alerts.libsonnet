@@ -86,7 +86,7 @@
           },
           {
             alert: 'TNFNodeInMaintenance',
-            expr: 'tnf_node_in_service == 0',
+            expr: 'tnf_node_in_service == 0 and tnf_cluster_in_service == 1',
             'for': '2m',
             labels: {
               severity: 'warning',
