@@ -138,6 +138,10 @@ type HealthCheck struct {
 	previous   *HealthStatus
 
 	disruptionTracker *DisruptionTracker
+
+	// crNodes holds the PacemakerCluster node statuses retrieved during getPacemakerStatus.
+	// Used by trackResourceDisruptions to avoid a redundant informer store lookup.
+	crNodes *[]pacmkrv1.PacemakerClusterNodeStatus
 }
 
 // NewHealthCheck creates a new HealthCheck for monitoring pacemaker status
@@ -268,6 +272,7 @@ func (c *HealthCheck) sync(ctx context.Context, syncCtx factory.SyncContext) err
 // Returns (nil, nil, nil) if the CR hasn't changed since last sync (same lastUpdated timestamp).
 // For Unknown status, previous is not updated (preserves last valid status for grace period).
 func (c *HealthCheck) getPacemakerStatus(ctx context.Context) (*HealthStatus, *HealthStatus, error) {
+	c.crNodes = nil
 	klog.V(4).Infof("Retrieving pacemaker status from CR...")
 
 	// Read previous status
@@ -302,6 +307,7 @@ func (c *HealthCheck) getPacemakerStatus(ctx context.Context) (*HealthStatus, *H
 			Errors:        []string{"Failed to convert cached item to PacemakerCluster"},
 		}, previous, nil
 	}
+	c.crNodes = pacemakerCR.Status.Nodes
 
 	// Check if status is populated (LastUpdated is zero means status was never set)
 	if pacemakerCR.Status.LastUpdated.IsZero() {
@@ -909,13 +915,8 @@ func (c *HealthCheck) recordErrorEvent(errorMsg string) {
 }
 
 func (c *HealthCheck) trackResourceDisruptions() {
-	item, exists, err := c.pacemakerInformer.GetStore().GetByKey(PacemakerClusterResourceName)
-	if err != nil || !exists {
+	if c.crNodes == nil {
 		return
 	}
-	cr, ok := item.(*pacmkrv1.PacemakerCluster)
-	if !ok {
-		return
-	}
-	c.disruptionTracker.TrackResourceStates(cr.Status.Nodes)
+	c.disruptionTracker.TrackResourceStates(c.crNodes)
 }
