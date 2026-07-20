@@ -3,14 +3,15 @@ package pacemaker
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
-	"time"
 
 	consolev1 "github.com/openshift/api/console/v1"
 	pacmkrv1 "github.com/openshift/api/etcd/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -21,36 +22,73 @@ import (
 )
 
 const (
-	consoleNotificationName = "pacemaker-etcd-failure"
-
-	// PatternFly danger palette for the banner.
 	notificationTextColor       = "#fff"
 	notificationBackgroundColor = "#c9190b"
 
-	troubleshootingURL  = "https://docs.openshift.com/container-platform/latest/edge_computing/two-node-fencing/tnf-troubleshooting.html"
-	troubleshootingText = "Troubleshooting guide"
+	docsBasePath = "https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/installing_a_two_node_openshift_cluster/two-node-with-fencing"
 )
 
-var consoleNotificationGVR = schema.GroupVersionResource{
-	Group:    "console.openshift.io",
-	Version:  "v1",
-	Resource: "consolenotifications",
+type notificationCategory struct {
+	name     string
+	linkHref string
+	linkText string
 }
 
-// consoleNotificationController manages a ConsoleNotification banner that surfaces
-// pacemaker health problems directly in the OpenShift web console. It watches the
-// PacemakerCluster CR (via a shared informer) and creates or removes the banner
-// based on the health of etcd resources and fencing agents.
-//
-// Uses the dynamic client because the console client-go package is not vendored.
+var (
+	categoryDegraded = notificationCategory{
+		name:     "pacemaker-cluster-degraded",
+		linkHref: docsBasePath + "#operating-a-degraded-tnf",
+		linkText: "Recovery guide",
+	}
+
+	categoryTroubleshooting = notificationCategory{
+		name:     "pacemaker-troubleshooting",
+		linkHref: docsBasePath + "#installing-post-tnf",
+		linkText: "Troubleshooting guide",
+	}
+
+	allCategories = []notificationCategory{categoryDegraded, categoryTroubleshooting}
+
+	// degradedPatterns match problems routed to the degraded-operations notification.
+	degradedPatterns = []string{"offline", "unhealthy", "fencing", "maintenance", "insufficient", "excessive"}
+
+	consoleNotificationGVR = schema.GroupVersionResource{
+		Group:    "console.openshift.io",
+		Version:  "v1",
+		Resource: "consolenotifications",
+	}
+)
+
+// classifyProblems splits errors and warnings into the two notification categories.
+// Problems not matching any degraded pattern are routed to troubleshooting.
+func classifyProblems(status *HealthStatus) (degraded, troubleshooting []string) {
+	for _, msg := range slices.Concat(status.Errors, status.Warnings) {
+		if isDegradedProblem(msg) {
+			degraded = append(degraded, msg)
+		} else {
+			troubleshooting = append(troubleshooting, msg)
+		}
+	}
+	return
+}
+
+func isDegradedProblem(msg string) bool {
+	lower := strings.ToLower(msg)
+	for _, p := range degradedPatterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
 type consoleNotificationController struct {
-	dynamicClient     dynamic.Interface
-	pacemakerInformer cache.SharedIndexInformer
+	dynamicClient      dynamic.Interface
+	recorder           events.Recorder
+	pacemakerInformer  cache.SharedIndexInformer
+	consoleUnavailable bool
 }
 
-// NewConsoleNotificationController creates a controller that manages a ConsoleNotification
-// banner for pacemaker podman-etcd failures. The controller shares the PacemakerCluster
-// informer with the healthcheck and metrics controllers.
 func NewConsoleNotificationController(
 	pacemakerInformer cache.SharedIndexInformer,
 	dynamicClient dynamic.Interface,
@@ -58,6 +96,7 @@ func NewConsoleNotificationController(
 ) factory.Controller {
 	c := &consoleNotificationController{
 		dynamicClient:     dynamicClient,
+		recorder:          eventRecorder,
 		pacemakerInformer: pacemakerInformer,
 	}
 
@@ -69,15 +108,16 @@ func NewConsoleNotificationController(
 }
 
 func (c *consoleNotificationController) sync(ctx context.Context, _ factory.SyncContext) error {
-	klog.V(4).Infof("syncing console notification for pacemaker health")
+	if c.consoleUnavailable {
+		return nil
+	}
 
 	item, exists, err := c.pacemakerInformer.GetStore().GetByKey(PacemakerClusterResourceName)
 	if err != nil {
 		return err
 	}
-
 	if !exists {
-		return c.deleteNotification(ctx)
+		return c.deleteAllNotifications(ctx)
 	}
 
 	cr, ok := item.(*pacmkrv1.PacemakerCluster)
@@ -85,69 +125,78 @@ func (c *consoleNotificationController) sync(ctx context.Context, _ factory.Sync
 		return fmt.Errorf("unexpected object type in informer store: %T", item)
 	}
 
-	problems := evaluateHealth(cr)
+	status := BuildHealthStatusFromCR(cr)
+	degradedProblems, troubleshootingProblems := classifyProblems(status)
+
+	if err := c.manageNotification(ctx, categoryDegraded, degradedProblems); err != nil {
+		return err
+	}
+	return c.manageNotification(ctx, categoryTroubleshooting, troubleshootingProblems)
+}
+
+func (c *consoleNotificationController) manageNotification(ctx context.Context, cat notificationCategory, problems []string) error {
 	if len(problems) == 0 {
-		return c.deleteNotification(ctx)
+		return c.deleteNotification(ctx, cat)
 	}
-
-	return c.ensureNotification(ctx, problems)
+	return c.ensureNotification(ctx, cat, problems)
 }
 
-// evaluateHealth inspects the PacemakerCluster CR for conditions that warrant a
-// console notification. Returns a list of human-readable problem descriptions,
-// or nil when the cluster is healthy.
-func evaluateHealth(cr *pacmkrv1.PacemakerCluster) []string {
-	var problems []string
-
-	if !cr.Status.LastUpdated.IsZero() && time.Since(cr.Status.LastUpdated.Time) > StatusStalenessThreshold {
-		problems = append(problems, "Pacemaker status has not been updated recently — health monitoring may be offline")
-	}
-
-	if getConditionStatus(cr.Status.Conditions, pacmkrv1.ClusterInServiceConditionType) == metav1.ConditionFalse {
-		problems = append(problems, "Pacemaker cluster is in maintenance mode")
-	}
-
-	if cr.Status.Nodes == nil {
-		return problems
-	}
-
-	for i := range *cr.Status.Nodes {
-		node := &(*cr.Status.Nodes)[i]
-		name := node.NodeName
-
-		if getConditionStatus(node.Conditions, pacmkrv1.NodeOnlineConditionType) == metav1.ConditionFalse {
-			problems = append(problems, fmt.Sprintf("Node %s is offline", name))
-			continue
-		}
-
-		for j := range node.Resources {
-			res := &node.Resources[j]
-			if res.Name != pacmkrv1.PacemakerClusterResourceNameEtcd {
-				continue
-			}
-			if getConditionStatus(res.Conditions, pacmkrv1.ResourceHealthyConditionType) == metav1.ConditionFalse {
-				problems = append(problems, fmt.Sprintf("Etcd resource is unhealthy on node %s", name))
-			}
-		}
-
-		if getConditionStatus(node.Conditions, pacmkrv1.NodeFencingAvailableConditionType) == metav1.ConditionFalse {
-			problems = append(problems, fmt.Sprintf("Fencing is unavailable on node %s — automatic recovery is not possible", name))
-		}
-	}
-
-	return problems
-}
-
-func (c *consoleNotificationController) ensureNotification(ctx context.Context, problems []string) error {
+func (c *consoleNotificationController) ensureNotification(ctx context.Context, cat notificationCategory, problems []string) error {
 	text := strings.Join(problems, ". ") + ". Check pacemaker status for details."
 
+	u, err := buildNotificationUnstructured(cat, text)
+	if err != nil {
+		return err
+	}
+
+	_, _, err = resourceapply.ApplyUnstructuredResourceImproved(
+		ctx, c.dynamicClient, c.recorder, u, nil, consoleNotificationGVR, nil, nil)
+	return c.filterConsoleError(err)
+}
+
+func (c *consoleNotificationController) deleteNotification(ctx context.Context, cat notificationCategory) error {
+	u := &unstructured.Unstructured{}
+	u.SetName(cat.name)
+	u.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "console.openshift.io",
+		Version: "v1",
+		Kind:    "ConsoleNotification",
+	})
+
+	_, _, err := resourceapply.DeleteUnstructuredResource(
+		ctx, c.dynamicClient, c.recorder, u, consoleNotificationGVR)
+	return c.filterConsoleError(err)
+}
+
+func (c *consoleNotificationController) deleteAllNotifications(ctx context.Context) error {
+	for _, cat := range allCategories {
+		if err := c.deleteNotification(ctx, cat); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *consoleNotificationController) filterConsoleError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if meta.IsNoMatchError(err) {
+		klog.Infof("Console API not available on this cluster, disabling notification management")
+		c.consoleUnavailable = true
+		return nil
+	}
+	return err
+}
+
+func buildNotificationUnstructured(cat notificationCategory, text string) (*unstructured.Unstructured, error) {
 	notification := &consolev1.ConsoleNotification{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "console.openshift.io/v1",
 			Kind:       "ConsoleNotification",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name: consoleNotificationName,
+			Name: cat.name,
 			Labels: map[string]string{
 				"app":                          "cluster-etcd-operator",
 				"app.kubernetes.io/part-of":    "cluster-etcd-operator",
@@ -160,51 +209,15 @@ func (c *consoleNotificationController) ensureNotification(ctx context.Context, 
 			Color:           notificationTextColor,
 			BackgroundColor: notificationBackgroundColor,
 			Link: &consolev1.Link{
-				Href: troubleshootingURL,
-				Text: troubleshootingText,
+				Href: cat.linkHref,
+				Text: cat.linkText,
 			},
 		},
 	}
 
 	obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(notification)
 	if err != nil {
-		return fmt.Errorf("failed to convert ConsoleNotification to unstructured: %w", err)
+		return nil, fmt.Errorf("failed to convert ConsoleNotification to unstructured: %w", err)
 	}
-	u := &unstructured.Unstructured{Object: obj}
-
-	existing, err := c.dynamicClient.Resource(consoleNotificationGVR).Get(ctx, consoleNotificationName, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		if _, err := c.dynamicClient.Resource(consoleNotificationGVR).Create(ctx, u, metav1.CreateOptions{}); err != nil {
-			return fmt.Errorf("failed to create ConsoleNotification: %w", err)
-		}
-		klog.Infof("Created console notification: %s", text)
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("failed to get ConsoleNotification: %w", err)
-	}
-
-	existingText, _, _ := unstructured.NestedString(existing.Object, "spec", "text")
-	if existingText == text {
-		klog.V(4).Infof("Console notification already up to date")
-		return nil
-	}
-
-	u.SetResourceVersion(existing.GetResourceVersion())
-	if _, err := c.dynamicClient.Resource(consoleNotificationGVR).Update(ctx, u, metav1.UpdateOptions{}); err != nil {
-		return fmt.Errorf("failed to update ConsoleNotification: %w", err)
-	}
-	klog.Infof("Updated console notification: %s", text)
-	return nil
-}
-
-func (c *consoleNotificationController) deleteNotification(ctx context.Context) error {
-	err := c.dynamicClient.Resource(consoleNotificationGVR).Delete(ctx, consoleNotificationName, metav1.DeleteOptions{})
-	if err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete ConsoleNotification: %w", err)
-	}
-	if err == nil {
-		klog.Infof("Deleted console notification: pacemaker health restored")
-	}
-	return nil
+	return &unstructured.Unstructured{Object: obj}, nil
 }

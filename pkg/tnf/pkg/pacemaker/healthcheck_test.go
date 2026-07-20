@@ -105,7 +105,7 @@ func TestHealthCheck_getPacemakerStatus(t *testing.T) {
 					LastUpdated: metav1.Now(),
 				},
 			},
-			expectedStatus: statusHealthy,
+			expectedStatus: StatusHealthy,
 			expectErrors:   false,
 			expectWarnings: false,
 		},
@@ -128,7 +128,7 @@ func TestHealthCheck_getPacemakerStatus(t *testing.T) {
 					LastUpdated: metav1.Time{Time: time.Now().Add(-10 * time.Minute)}, // > 5 min threshold
 				},
 			},
-			expectedStatus: statusUnknown,
+			expectedStatus: StatusUnknown,
 			expectErrors:   true,
 			expectWarnings: false,
 		},
@@ -144,7 +144,7 @@ func TestHealthCheck_getPacemakerStatus(t *testing.T) {
 				},
 				Status: pacmkrv1.PacemakerClusterStatus{}, // Status not populated yet (zero LastUpdated)
 			},
-			expectedStatus: statusUnknown,
+			expectedStatus: StatusUnknown,
 			expectErrors:   true,
 			expectWarnings: false,
 		},
@@ -166,7 +166,7 @@ func TestHealthCheck_getPacemakerStatus(t *testing.T) {
 					LastUpdated: metav1.Now(),
 				},
 			},
-			expectedStatus: statusError,
+			expectedStatus: StatusError,
 			expectErrors:   true,
 			expectWarnings: false,
 		},
@@ -189,7 +189,7 @@ func TestHealthCheck_getPacemakerStatus(t *testing.T) {
 					LastUpdated: metav1.Now(),
 				},
 			},
-			expectedStatus: statusError,
+			expectedStatus: StatusError,
 			expectErrors:   true,
 			expectWarnings: false,
 		},
@@ -212,7 +212,7 @@ func TestHealthCheck_getPacemakerStatus(t *testing.T) {
 					LastUpdated: metav1.Now(),
 				},
 			},
-			expectedStatus: statusError,
+			expectedStatus: StatusError,
 			expectErrors:   true,
 			expectWarnings: false,
 		},
@@ -235,7 +235,7 @@ func TestHealthCheck_getPacemakerStatus(t *testing.T) {
 					LastUpdated: metav1.Now(),
 				},
 			},
-			expectedStatus: statusError,
+			expectedStatus: StatusError,
 			expectErrors:   true,
 			expectWarnings: false,
 		},
@@ -296,7 +296,7 @@ func TestHealthCheck_getPacemakerStatus_UnchangedTimestamp(t *testing.T) {
 	current1, _, err1 := controller.getPacemakerStatus(ctx)
 	require.NoError(t, err1, "First getPacemakerStatus should not return an error")
 	require.NotNil(t, current1, "First call should return a status")
-	require.Equal(t, statusHealthy, current1.OverallStatus, "First call should return healthy status")
+	require.Equal(t, StatusHealthy, current1.OverallStatus, "First call should return healthy status")
 
 	// Second call with same timestamp should return nil (no change)
 	current2, _, err2 := controller.getPacemakerStatus(ctx)
@@ -313,36 +313,36 @@ func TestHealthCheck_updateOperatorStatus(t *testing.T) {
 		{
 			name: "error_status_sets_degraded",
 			status: &HealthStatus{
-				OverallStatus: statusError,
+				OverallStatus: StatusError,
 				Warnings:      []string{"Test warning"},
 				Errors:        []string{"Test error"},
 			},
 			previous: &HealthStatus{
-				OverallStatus: statusHealthy,
+				OverallStatus: StatusHealthy,
 				CRLastUpdated: time.Now().Add(-1 * time.Minute),
 			},
 		},
 		{
 			name: "healthy_status_clears_degraded",
 			status: &HealthStatus{
-				OverallStatus: statusHealthy,
+				OverallStatus: StatusHealthy,
 				Warnings:      []string{},
 				Errors:        []string{},
 			},
 			previous: &HealthStatus{
-				OverallStatus: statusHealthy,
+				OverallStatus: StatusHealthy,
 				CRLastUpdated: time.Now().Add(-1 * time.Minute),
 			},
 		},
 		{
 			name: "warning_status_clears_degraded",
 			status: &HealthStatus{
-				OverallStatus: statusWarning,
+				OverallStatus: StatusWarning,
 				Warnings:      []string{"Test warning"},
 				Errors:        []string{},
 			},
 			previous: &HealthStatus{
-				OverallStatus: statusHealthy,
+				OverallStatus: StatusHealthy,
 				CRLastUpdated: time.Now().Add(-1 * time.Minute),
 			},
 		},
@@ -363,9 +363,9 @@ func TestHealthCheck_recordHealthCheckEvents(t *testing.T) {
 	controller := createTestHealthCheck()
 
 	// Test with warnings and errors - previous was healthy (not degraded, no warnings, known status)
-	previousHealthy := &HealthStatus{OverallStatus: statusHealthy, Warnings: []string{}, Errors: []string{}}
+	previousHealthy := &HealthStatus{OverallStatus: StatusHealthy, Warnings: []string{}, Errors: []string{}}
 	currentWithWarnings := &HealthStatus{
-		OverallStatus: statusWarning,
+		OverallStatus: StatusWarning,
 		Warnings: []string{
 			"Recent failed resource action: kubelet monitor on master-0 failed",
 			"Recent fencing event: reboot of master-1 success",
@@ -378,7 +378,7 @@ func TestHealthCheck_recordHealthCheckEvents(t *testing.T) {
 
 	// Test with healthy status - previous had warnings
 	currentHealthy := &HealthStatus{
-		OverallStatus: statusHealthy,
+		OverallStatus: StatusHealthy,
 		Warnings:      []string{},
 		Errors:        []string{},
 	}
@@ -396,7 +396,7 @@ func TestHealthCheck_eventDeduplication(t *testing.T) {
 	// First recording - Error state (start in Error to test transitions properly)
 	// previousStatus=nil because this is first sync
 	errorStatus := &HealthStatus{
-		OverallStatus: statusError,
+		OverallStatus: StatusError,
 		Warnings:      []string{},
 		Errors:        []string{"Test error"},
 	}
@@ -416,7 +416,7 @@ func TestHealthCheck_eventDeduplication(t *testing.T) {
 	// Transition to Warning (operationally healthy) - should record PacemakerHealthy event
 	// previousStatus is errorStatus (degraded), so healthy event should fire
 	warningStatus := &HealthStatus{
-		OverallStatus: statusWarning,
+		OverallStatus: StatusWarning,
 		Warnings: []string{
 			"Recent failed resource action: kubelet monitor on master-0 failed",
 		},
@@ -434,7 +434,7 @@ func TestHealthCheck_eventDeduplication(t *testing.T) {
 
 	// Test fencing event deduplication (longer window)
 	fencingStatus := &HealthStatus{
-		OverallStatus: statusWarning,
+		OverallStatus: StatusWarning,
 		Warnings: []string{
 			"Recent fencing event: reboot of master-1 success",
 		},
@@ -453,7 +453,7 @@ func TestHealthCheck_eventDeduplication(t *testing.T) {
 	// Transition from Warning to Healthy - fires PacemakerWarningsCleared event
 	// previousStatus has warnings, so WarningsCleared should fire
 	healthyStatus := &HealthStatus{
-		OverallStatus: statusHealthy,
+		OverallStatus: StatusHealthy,
 		Warnings:      []string{},
 		Errors:        []string{},
 	}
@@ -479,7 +479,7 @@ func TestHealthCheck_eventDeduplication(t *testing.T) {
 	require.Greater(t, afterRecovery, beforeRecovery, "PacemakerHealthy event should be recorded on transition from Error to Healthy")
 }
 
-func TestHealthCheck_buildHealthStatusFromCR(t *testing.T) {
+func TestBuildHealthStatusFromCR(t *testing.T) {
 	tests := []struct {
 		name           string
 		cr             *pacmkrv1.PacemakerCluster
@@ -499,7 +499,7 @@ func TestHealthCheck_buildHealthStatusFromCR(t *testing.T) {
 					},
 				},
 			},
-			expectedStatus: statusHealthy,
+			expectedStatus: StatusHealthy,
 			expectErrors:   false,
 		},
 		{
@@ -514,7 +514,7 @@ func TestHealthCheck_buildHealthStatusFromCR(t *testing.T) {
 					},
 				},
 			},
-			expectedStatus: statusError,
+			expectedStatus: StatusError,
 			expectErrors:   true,
 			errorContains:  string(pacmkrv1.PacemakerClusterResourceNameKubelet),
 		},
@@ -530,7 +530,7 @@ func TestHealthCheck_buildHealthStatusFromCR(t *testing.T) {
 					},
 				},
 			},
-			expectedStatus: statusError,
+			expectedStatus: StatusError,
 			expectErrors:   true,
 			errorContains:  string(pacmkrv1.PacemakerClusterResourceNameEtcd),
 		},
@@ -545,7 +545,7 @@ func TestHealthCheck_buildHealthStatusFromCR(t *testing.T) {
 					},
 				},
 			},
-			expectedStatus: statusError,
+			expectedStatus: StatusError,
 			expectErrors:   true,
 			errorContains:  "Insufficient nodes",
 		},
@@ -558,7 +558,7 @@ func TestHealthCheck_buildHealthStatusFromCR(t *testing.T) {
 					Nodes:       &[]pacmkrv1.PacemakerClusterNodeStatus{},
 				},
 			},
-			expectedStatus: statusError,
+			expectedStatus: StatusError,
 			expectErrors:   true,
 			errorContains:  "No nodes found",
 		},
@@ -567,16 +567,15 @@ func TestHealthCheck_buildHealthStatusFromCR(t *testing.T) {
 			cr: &pacmkrv1.PacemakerCluster{
 				Status: pacmkrv1.PacemakerClusterStatus{}, // Zero LastUpdated
 			},
-			expectedStatus: statusUnknown,
+			expectedStatus: StatusUnknown,
 			expectErrors:   true,
-			errorContains:  "Internal error",
+			errorContains:  "no status populated",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller := &HealthCheck{}
-			status := controller.buildHealthStatusFromCR(tt.cr)
+			status := BuildHealthStatusFromCR(tt.cr)
 
 			require.NotNil(t, status, "HealthStatus should not be nil")
 			require.Equal(t, tt.expectedStatus, status.OverallStatus)
@@ -601,7 +600,7 @@ func TestHealthCheck_buildHealthStatusFromCR(t *testing.T) {
 	}
 }
 
-func TestHealthCheck_checkClusterConditions(t *testing.T) {
+func TestCheckClusterConditions(t *testing.T) {
 	tests := []struct {
 		name          string
 		conditions    []metav1.Condition
@@ -661,8 +660,7 @@ func TestHealthCheck_checkClusterConditions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller := &HealthCheck{}
-			pacemakerStatus := &pacmkrv1.PacemakerCluster{
+			cr := &pacmkrv1.PacemakerCluster{
 				Status: pacmkrv1.PacemakerClusterStatus{
 					Conditions: tt.conditions,
 					Nodes:      tt.nodes,
@@ -670,7 +668,7 @@ func TestHealthCheck_checkClusterConditions(t *testing.T) {
 			}
 
 			status := &HealthStatus{Warnings: []string{}, Errors: []string{}}
-			controller.checkClusterConditions(pacemakerStatus, status)
+			checkClusterConditions(cr, status)
 
 			if tt.expectErrors {
 				require.NotEmpty(t, status.Errors, "Should have errors")
@@ -684,7 +682,7 @@ func TestHealthCheck_checkClusterConditions(t *testing.T) {
 	}
 }
 
-func TestHealthCheck_checkNodeStatuses(t *testing.T) {
+func TestCheckNodeStatuses(t *testing.T) {
 	tests := []struct {
 		name          string
 		nodes         *[]pacmkrv1.PacemakerClusterNodeStatus
@@ -727,8 +725,7 @@ func TestHealthCheck_checkNodeStatuses(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller := &HealthCheck{}
-			pacemakerStatus := &pacmkrv1.PacemakerCluster{
+			cr := &pacmkrv1.PacemakerCluster{
 				Status: pacmkrv1.PacemakerClusterStatus{
 					Conditions: createHealthyClusterConditions(),
 					Nodes:      tt.nodes,
@@ -736,7 +733,7 @@ func TestHealthCheck_checkNodeStatuses(t *testing.T) {
 			}
 
 			status := &HealthStatus{Warnings: []string{}, Errors: []string{}}
-			controller.checkNodeStatuses(pacemakerStatus, status)
+			checkNodeStatuses(cr, status)
 
 			if tt.expectErrors {
 				require.NotEmpty(t, status.Errors, "Should have errors")
@@ -757,19 +754,14 @@ func TestHealthCheck_checkNodeStatuses(t *testing.T) {
 	}
 }
 
-func TestHealthCheck_checkNodeStatuses_MultipleUnhealthyResources(t *testing.T) {
-	controller := &HealthCheck{}
-
-	// Create a node with multiple unhealthy resources
+func TestCheckNodeStatuses_MultipleUnhealthyResources(t *testing.T) {
 	node := createHealthyNodeStatus("master-0", []string{"192.168.1.10"})
-	// Mark node as unhealthy
 	for i := range node.Conditions {
 		if node.Conditions[i].Type == pacmkrv1.NodeHealthyConditionType {
 			node.Conditions[i].Status = metav1.ConditionFalse
 			node.Conditions[i].Reason = pacmkrv1.NodeHealthyReasonUnhealthy
 		}
 	}
-	// Mark kubelet and etcd as unhealthy
 	for i := range node.Resources {
 		if node.Resources[i].Name == pacmkrv1.PacemakerClusterResourceNameKubelet ||
 			node.Resources[i].Name == pacmkrv1.PacemakerClusterResourceNameEtcd {
@@ -787,9 +779,7 @@ func TestHealthCheck_checkNodeStatuses_MultipleUnhealthyResources(t *testing.T) 
 	}
 
 	status := &HealthStatus{Warnings: []string{}, Errors: []string{}}
-	controller.checkNodeStatuses(pacemakerStatus, status)
-
-	// Should have 1 consolidated error for the unhealthy node (includes all resource issues)
+	checkNodeStatuses(pacemakerStatus, status)
 	require.Len(t, status.Errors, 1, "Should have 1 consolidated error for unhealthy node")
 
 	// Verify the single error mentions both resources
@@ -800,9 +790,7 @@ func TestHealthCheck_checkNodeStatuses_MultipleUnhealthyResources(t *testing.T) 
 	require.Contains(t, nodeError, string(pacmkrv1.PacemakerClusterResourceNameEtcd), "Error should mention Etcd")
 }
 
-func TestHealthCheck_getResourceIssue(t *testing.T) {
-	controller := &HealthCheck{}
-
+func TestGetResourceIssue(t *testing.T) {
 	tests := []struct {
 		name       string
 		conditions []metav1.Condition
@@ -837,7 +825,7 @@ func TestHealthCheck_getResourceIssue(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := controller.getResourceIssue(tt.conditions)
+			got := getResourceIssue(tt.conditions)
 			require.Equal(t, tt.wantIssue, got)
 		})
 	}
@@ -936,7 +924,7 @@ func TestHealthCheck_eventDeduplication_StatusTransitions(t *testing.T) {
 	// Start with healthy status from Unknown state (first sync or recovering from stale)
 	// previousStatus=nil: PacemakerHealthy event fires on initial healthy status
 	healthyStatus := &HealthStatus{
-		OverallStatus: statusHealthy,
+		OverallStatus: StatusHealthy,
 		Warnings:      []string{},
 		Errors:        []string{},
 	}
@@ -951,7 +939,7 @@ func TestHealthCheck_eventDeduplication_StatusTransitions(t *testing.T) {
 
 	// Transition to Warning - should record warning but not healthy event (already in healthy state)
 	warningStatus := &HealthStatus{
-		OverallStatus: statusWarning,
+		OverallStatus: StatusWarning,
 		Warnings:      []string{"Some warning"},
 		Errors:        []string{},
 	}
@@ -969,7 +957,7 @@ func TestHealthCheck_eventDeduplication_StatusTransitions(t *testing.T) {
 
 	// Transition to Error
 	errorStatus := &HealthStatus{
-		OverallStatus: statusError,
+		OverallStatus: StatusError,
 		Warnings:      []string{},
 		Errors:        []string{"Critical error"},
 	}
@@ -995,9 +983,9 @@ func TestHealthCheck_eventDeduplication_CleanupOldEntries(t *testing.T) {
 	controller.recordedEventsMu.Unlock()
 
 	// Trigger cleanup by recording a new event
-	previousStatus := &HealthStatus{OverallStatus: statusHealthy, Warnings: []string{}, Errors: []string{}}
+	previousStatus := &HealthStatus{OverallStatus: StatusHealthy, Warnings: []string{}, Errors: []string{}}
 	currentStatus := &HealthStatus{
-		OverallStatus: statusWarning,
+		OverallStatus: StatusWarning,
 		Warnings:      []string{"New warning"},
 		Errors:        []string{},
 	}
@@ -1010,8 +998,7 @@ func TestHealthCheck_eventDeduplication_CleanupOldEntries(t *testing.T) {
 	controller.recordedEventsMu.Unlock()
 }
 
-func TestHealthCheck_getNodeConditionErrorsAndWarnings(t *testing.T) {
-	controller := &HealthCheck{}
+func TestGetNodeConditionErrorsAndWarnings(t *testing.T) {
 	now := metav1.Now()
 
 	tests := []struct {
@@ -1102,8 +1089,8 @@ func TestHealthCheck_getNodeConditionErrorsAndWarnings(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Check errors and warnings using the separate functions
-			errors := controller.getNodeConditionErrors(tt.conditions)
-			warnings := controller.getFencingWarnings(tt.conditions)
+			errors := getNodeConditionErrors(tt.conditions)
+			warnings := getFencingWarnings(tt.conditions)
 
 			// Check errors
 			require.Equal(t, len(tt.expectedErrors), len(errors), "Number of errors should match")
@@ -1137,7 +1124,7 @@ func TestHealthCheck_getNodeConditionErrorsAndWarnings(t *testing.T) {
 // TestHealthCheck_FencingRedundancyWarning tests fencing redundancy warnings in various scenarios.
 // Fencing redundancy degraded (FencingHealthy=False but FencingAvailable=True) should be
 // reported as a warning, not an error, and should be captured regardless of overall node health.
-func TestHealthCheck_FencingRedundancyWarning(t *testing.T) {
+func TestCheckNodeConditions_FencingRedundancyWarning(t *testing.T) {
 	tests := []struct {
 		name                   string
 		nodeHealthy            bool   // Overall node healthy condition
@@ -1176,7 +1163,6 @@ func TestHealthCheck_FencingRedundancyWarning(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller := &HealthCheck{}
 			now := metav1.Now()
 
 			// Build conditions based on test case
@@ -1219,7 +1205,7 @@ func TestHealthCheck_FencingRedundancyWarning(t *testing.T) {
 			}
 
 			status := &HealthStatus{Warnings: []string{}, Errors: []string{}}
-			controller.checkNodeConditions(node, status)
+			checkNodeConditions(node, status)
 
 			// Check warnings
 			if tt.expectWarnings {
@@ -1254,12 +1240,12 @@ func TestHealthCheck_WarningsClearedEvent(t *testing.T) {
 		{
 			name: "warning_to_healthy",
 			previousStatus: &HealthStatus{
-				OverallStatus: statusWarning,
+				OverallStatus: StatusWarning,
 				Warnings:      []string{"master-0: " + msgFencingRedundancyLost},
 				Errors:        []string{},
 			},
 			currentStatus: &HealthStatus{
-				OverallStatus: statusHealthy,
+				OverallStatus: StatusHealthy,
 				Warnings:      []string{},
 				Errors:        []string{},
 			},
@@ -1269,12 +1255,12 @@ func TestHealthCheck_WarningsClearedEvent(t *testing.T) {
 		{
 			name: "error_without_warnings_to_healthy",
 			previousStatus: &HealthStatus{
-				OverallStatus: statusError,
+				OverallStatus: StatusError,
 				Warnings:      []string{},
 				Errors:        []string{"Critical error"},
 			},
 			currentStatus: &HealthStatus{
-				OverallStatus: statusHealthy,
+				OverallStatus: StatusHealthy,
 				Warnings:      []string{},
 				Errors:        []string{},
 			},
@@ -1284,12 +1270,12 @@ func TestHealthCheck_WarningsClearedEvent(t *testing.T) {
 		{
 			name: "error_with_warnings_to_error_without_warnings",
 			previousStatus: &HealthStatus{
-				OverallStatus: statusError,
+				OverallStatus: StatusError,
 				Warnings:      []string{"master-0: " + msgFencingRedundancyLost},
 				Errors:        []string{"Critical error"},
 			},
 			currentStatus: &HealthStatus{
-				OverallStatus: statusError,
+				OverallStatus: StatusError,
 				Warnings:      []string{},
 				Errors:        []string{"Critical error"},
 			},
@@ -1299,12 +1285,12 @@ func TestHealthCheck_WarningsClearedEvent(t *testing.T) {
 		{
 			name: "error_with_warnings_to_healthy",
 			previousStatus: &HealthStatus{
-				OverallStatus: statusError,
+				OverallStatus: StatusError,
 				Warnings:      []string{"master-0: " + msgFencingRedundancyLost},
 				Errors:        []string{"Critical error"},
 			},
 			currentStatus: &HealthStatus{
-				OverallStatus: statusHealthy,
+				OverallStatus: StatusHealthy,
 				Warnings:      []string{},
 				Errors:        []string{},
 			},
