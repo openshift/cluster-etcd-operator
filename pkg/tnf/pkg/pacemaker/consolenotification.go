@@ -125,6 +125,10 @@ func (c *consoleNotificationController) sync(ctx context.Context, _ factory.Sync
 		return fmt.Errorf("unexpected object type in informer store: %T", item)
 	}
 
+	if cr.Status.LastUpdated.IsZero() {
+		return c.deleteAllNotifications(ctx)
+	}
+
 	status := BuildHealthStatusFromCR(cr)
 	degradedProblems, troubleshootingProblems := classifyProblems(status)
 

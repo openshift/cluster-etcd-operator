@@ -362,6 +362,18 @@ func TestSync_FencingDegraded_CreatesDegradedNotification(t *testing.T) {
 	require.Equal(t, categoryDegraded.name, getCreatedName(t, dynClient))
 }
 
+func TestSync_UninitializedCR_DeletesBothNotifications(t *testing.T) {
+	cr := &pacmkrv1.PacemakerCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: PacemakerClusterResourceName},
+	}
+	ctrl, dynClient := newTestController(cr)
+
+	err := ctrl.sync(context.Background(), nil)
+	require.NoError(t, err)
+	require.Equal(t, 2, countActions(dynClient, "delete"), "expected delete actions for both categories")
+	require.Equal(t, 0, countActions(dynClient, "create"), "should not create any notification")
+}
+
 func TestSync_CRNotFound_DeletesBothNotifications(t *testing.T) {
 	ctrl, dynClient := newTestController(nil)
 
