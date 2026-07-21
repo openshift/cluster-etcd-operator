@@ -36,6 +36,8 @@ kind: Event
 metadata:
   name: ${name}
   namespace: ${NAMESPACE}
+  labels:
+    tnf-test: "true"
 involvedObject:
   kind: Job
   name: tnf-setup-job
@@ -60,5 +62,5 @@ echo ""
 oc get events -n "${NAMESPACE}" --field-selector reason!=="" --sort-by='.lastTimestamp' | grep -i "EtcdTransition" || echo "No EtcdTransition events found!"
 
 echo ""
-echo "Cleanup: oc delete events -n ${NAMESPACE} -l ''"
+echo "Cleanup: oc delete events -n ${NAMESPACE} -l tnf-test=true"
 echo "  (events auto-expire after ~1 hour)"
