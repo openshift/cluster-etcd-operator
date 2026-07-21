@@ -16,6 +16,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: <injected>
+        app.kubernetes.io/component: two-node-fencing-setup
     spec:
       activeDeadlineSeconds: 90
       ttlSecondsAfterFinished: 300

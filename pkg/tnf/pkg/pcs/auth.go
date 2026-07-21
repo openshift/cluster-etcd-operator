@@ -46,7 +46,11 @@ func Authenticate(ctx context.Context, configClient *versioned.Clientset, cfg co
 		return false, fmt.Errorf("failed to accept token: %w", err)
 	}
 
-	command = fmt.Sprintf("/usr/sbin/pcs host auth %s addr=%s %s addr=%s --token %s --debug", cfg.NodeName1, cfg.NodeIP1, cfg.NodeName2, cfg.NodeIP2, TokenPath)
+	if cfg.NodeName2 != "" && cfg.NodeIP2 != "" {
+		command = fmt.Sprintf("/usr/sbin/pcs host auth %s addr=%s %s addr=%s --token %s --debug", cfg.NodeName1, cfg.NodeIP1, cfg.NodeName2, cfg.NodeIP2, TokenPath)
+	} else {
+		command = fmt.Sprintf("/usr/sbin/pcs host auth %s addr=%s --token %s --debug", cfg.NodeName1, cfg.NodeIP1, TokenPath)
+	}
 	_, _, err = exec.Execute(ctx, command)
 	if err != nil {
 		return false, fmt.Errorf("failed to authenticate node: %w", err)

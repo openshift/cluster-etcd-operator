@@ -228,3 +228,92 @@ func TestCurrentRevision(t *testing.T) {
 		})
 	}
 }
+
+func TestIPAddressesEqual(t *testing.T) {
+	tests := []struct {
+		name     string
+		ip1      string
+		ip2      string
+		expected bool
+	}{
+		{
+			name:     "IPv4 addresses equal",
+			ip1:      "192.168.1.10",
+			ip2:      "192.168.1.10",
+			expected: true,
+		},
+		{
+			name:     "IPv4 addresses not equal",
+			ip1:      "192.168.1.10",
+			ip2:      "192.168.1.11",
+			expected: false,
+		},
+		{
+			name:     "IPv6 addresses equal - same format",
+			ip1:      "fd00::1",
+			ip2:      "fd00::1",
+			expected: true,
+		},
+		{
+			name:     "IPv6 addresses equal - different format",
+			ip1:      "fd00::1",
+			ip2:      "fd00:0000:0000:0000:0000:0000:0000:0001",
+			expected: true,
+		},
+		{
+			name:     "IPv6 addresses not equal",
+			ip1:      "fd00::1",
+			ip2:      "fd00::2",
+			expected: false,
+		},
+		{
+			name:     "IPv6 addresses equal - expanded vs compressed",
+			ip1:      "fd00:0000:0000:0000:0000:0000:0000:0002",
+			ip2:      "fd00::2",
+			expected: true,
+		},
+		{
+			name:     "IPv4 vs IPv6 not equal",
+			ip1:      "192.168.1.10",
+			ip2:      "fd00::1",
+			expected: false,
+		},
+		{
+			name:     "empty strings equal",
+			ip1:      "",
+			ip2:      "",
+			expected: true,
+		},
+		{
+			name:     "empty vs non-empty not equal",
+			ip1:      "",
+			ip2:      "192.168.1.10",
+			expected: false,
+		},
+		{
+			name:     "invalid IP addresses - string comparison fallback (equal)",
+			ip1:      "not-an-ip",
+			ip2:      "not-an-ip",
+			expected: true,
+		},
+		{
+			name:     "invalid IP addresses - string comparison fallback (not equal)",
+			ip1:      "not-an-ip",
+			ip2:      "different-not-an-ip",
+			expected: false,
+		},
+		{
+			name:     "IPv4-mapped IPv6 addresses",
+			ip1:      "::ffff:192.168.1.10",
+			ip2:      "192.168.1.10",
+			expected: true, // IPv4-mapped IPv6 represents the same address
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IPAddressesEqual(tt.ip1, tt.ip2)
+			require.Equal(t, tt.expected, result, "IPAddressesEqual(%q, %q) = %v, expected %v", tt.ip1, tt.ip2, result, tt.expected)
+		})
+	}
+}

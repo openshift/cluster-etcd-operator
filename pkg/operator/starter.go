@@ -80,10 +80,8 @@ const masterMachineLabelSelectorKeyString = "machine.openshift.io/cluster-api-ma
 const masterMachineLabelSelectorValueString = "master"
 const arbiterMachineLabelSelectorValueString = "arbiter"
 
-// masterNodeLabelSelectorString allows for getting only the master nodes, it matters in larger installations with many worker nodes
-const masterNodeLabelSelectorString = "node-role.kubernetes.io/master"
-
-const arbiterNodeLabelSelectorString = "node-role.kubernetes.io/arbiter"
+// Note: node label selector constants moved to pkg/operator/ceohelpers/node_helpers.go
+// to consolidate all node-role label selectors in one place
 
 const releaseVersionEnvVariableName = "RELEASE_VERSION"
 const missingVersion = "0.0.1-snapshot"
@@ -132,7 +130,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return err
 	}
 
-	arbiterNodeLabelSelector, err := labels.Parse(arbiterNodeLabelSelectorString)
+	arbiterNodeLabelSelector, err := labels.Parse(ceohelpers.ArbiterNodeLabelSelector)
 	if err != nil {
 		return err
 	}
@@ -140,10 +138,10 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	// we create a new informer directly because we are only interested in observing changes to the master nodes
 	// primarily to avoid reconciling on every update in large clusters (~2K nodes)
 	controlPlaneNodeInformer := corev1informers.NewFilteredNodeInformer(kubeClient, 1*time.Hour, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, func(listOptions *metav1.ListOptions) {
-		listOptions.LabelSelector = masterNodeLabelSelectorString
+		listOptions.LabelSelector = ceohelpers.ControlPlaneNodeLabelSelector
 	})
 	controlPlaneNodeLister := corev1listers.NewNodeLister(controlPlaneNodeInformer.GetIndexer())
-	controlPlaneNodeLabelSelector, err := labels.Parse(masterNodeLabelSelectorString)
+	controlPlaneNodeLabelSelector, err := labels.Parse(ceohelpers.ControlPlaneNodeLabelSelector)
 	if err != nil {
 		return err
 	}
