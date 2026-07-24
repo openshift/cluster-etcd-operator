@@ -3,8 +3,8 @@
     <cluster_options maintenance-mode="true"/>
   </summary>
   <nodes>
-    <node name="master-0" id="1" online="true" type="member"/>
-    <node name="master-1" id="2" online="true" type="member"/>
+    <node name="master-0" id="1" online="true" maintenance="true" type="member"/>
+    <node name="master-1" id="2" online="true" maintenance="true" type="member"/>
   </nodes>
   <resources/>
   <node_attributes/>
