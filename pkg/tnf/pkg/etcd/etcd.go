@@ -8,13 +8,15 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
 
 // RemoveStaticContainer informs CEO to remove its etcd container
-func RemoveStaticContainer(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient) error {
+func RemoveStaticContainer(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface) error {
 	klog.Info("Signaling CEO that TNF setup is ready for etcd container transition")
 
 	_, _, err := v1helpers.UpdateStatus(ctx, operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
@@ -28,8 +30,11 @@ func RemoveStaticContainer(ctx context.Context, operatorClient v1helpers.StaticP
 		return fmt.Errorf("error while updating ExternalEtcdReadyForTransition operator condition: %w", err)
 	}
 
+	tools.RecordSetupEvent(ctx, kubeClient, "EtcdTransitionStarted",
+		"Etcd transition from CEO-controlled to pacemaker-controlled has started")
+
 	// Wait for CEO to respond by removing static containers
-	err = waitForStaticContainerRemoved(ctx, operatorClient)
+	err = waitForStaticContainerRemoved(ctx, operatorClient, kubeClient)
 	if err != nil {
 		klog.Error(err, "Failed to wait for etcd container transition")
 		return err
@@ -39,14 +44,20 @@ func RemoveStaticContainer(ctx context.Context, operatorClient v1helpers.StaticP
 }
 
 // waitForStaticContainerRemoved waits until the static etcd container has been removed
-func waitForStaticContainerRemoved(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient) error {
+func waitForStaticContainerRemoved(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface) error {
 	klog.Info("Wait for static etcd removed")
+
+	tools.RecordSetupEvent(ctx, kubeClient, "EtcdTransitionWaitingForRemoval",
+		"Waiting for CEO to remove static etcd container from all nodes")
 
 	// the container is removed when all nodes run the latest revision
 	err := WaitForStableRevision(ctx, operatorClient)
 	if err != nil {
 		return err
 	}
+
+	tools.RecordSetupEvent(ctx, kubeClient, "EtcdTransitionStaticContainerRemoved",
+		"Static etcd container removed from all nodes, revision is stable")
 
 	// Update the operator status to indicate that the transition has completed.
 	// As soon as the etcd container is removed, this operator won't be able to update this status
@@ -58,7 +69,14 @@ func waitForStaticContainerRemoved(ctx context.Context, operatorClient v1helpers
 		Message: "pacemaker's resource agent is now running the etcd container",
 	}))
 
-	return err
+	if err != nil {
+		return err
+	}
+
+	tools.RecordSetupEvent(ctx, kubeClient, "EtcdTransitionCompleted",
+		"Etcd transition to pacemaker-controlled has completed, pacemaker's resource agent is now running the etcd container")
+
+	return nil
 }
 
 // WaitForStableRevision waits until all nodes run the latest available revision
