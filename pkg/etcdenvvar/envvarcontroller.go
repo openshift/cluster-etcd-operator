@@ -23,6 +23,7 @@ import (
 	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -30,6 +31,8 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
+
+	"github.com/ghodss/yaml"
 )
 
 const workQueueKey = "key"
@@ -132,7 +135,27 @@ func (c *EnvVarController) GetEnvVars() map[string]string {
 }
 
 func (c *EnvVarController) sync(ctx context.Context) error {
-	err := c.checkEnvVars()
+	// During bootstrap the config observation controller has not converged yet,
+	// so servingInfo (cipherSuites, minTLSVersion) will be absent from the
+	// observedConfig.  This is a transient state that resolves once the config
+	// observer runs—not a degraded condition.  The bootstrap etcd member is
+	// already configured via the render path (pkg/cmd/render/env.go) which
+	// hardcodes TLSProfileIntermediateType defaults.
+	//
+	// We intentionally do NOT fall back to default ciphers inside
+	// getCipherSuites() because at runtime an empty observedConfig would
+	// indicate a real problem that should surface as degraded, not be
+	// silently papered over with a potentially less-secure default set.
+	operatorSpec, _, _, err := c.operatorClient.GetStaticPodOperatorState()
+	if err != nil {
+		return err
+	}
+	if !observedConfigHasCipherSuites(operatorSpec.ObservedConfig.Raw) {
+		klog.V(2).Infof("EnvVarController: observedConfig does not yet contain servingInfo.cipherSuites, waiting for config observer to converge")
+		return fmt.Errorf("observedConfig has not yet converged: servingInfo.cipherSuites is missing")
+	}
+
+	err = c.checkEnvVars()
 	if err != nil {
 		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 			Type:    "EnvVarControllerDegraded",
@@ -153,6 +176,21 @@ func (c *EnvVarController) sync(ctx context.Context) error {
 			Reason: "AsExpected",
 		}))
 	return updateErr
+}
+
+// observedConfigHasCipherSuites checks whether the observedConfig contains a
+// non-empty servingInfo.cipherSuites list.  During bootstrap the config
+// observation controller has not converged yet, so this field will be absent.
+func observedConfigHasCipherSuites(raw []byte) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var observedConfig map[string]any
+	if err := yaml.Unmarshal(raw, &observedConfig); err != nil {
+		return false
+	}
+	cipherSuites, found, err := unstructured.NestedStringSlice(observedConfig, "servingInfo", "cipherSuites")
+	return err == nil && found && len(cipherSuites) > 0
 }
 
 func (c *EnvVarController) checkEnvVars() error {

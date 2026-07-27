@@ -68,6 +68,61 @@ var (
 	}
 )
 
+// TestSyncWithEmptyObservedConfig verifies that when the observedConfig does
+// not yet contain servingInfo.cipherSuites (typical during bootstrap), sync()
+// returns an error to trigger retry but does NOT set EnvVarControllerDegraded.
+func TestSyncWithEmptyObservedConfig(t *testing.T) {
+	emptyObservedConfigYaml, err := yaml.Marshal(map[string]any{})
+	require.NoError(t, err)
+
+	staticPodStatus := u.StaticPodOperatorStatus(
+		u.WithLatestRevision(3),
+		u.WithNodeStatusAtCurrentRevisionNamed(3, "master-0"),
+	)
+
+	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+		&operatorv1.StaticPodOperatorSpec{
+			OperatorSpec: operatorv1.OperatorSpec{
+				ManagementState: operatorv1.Managed,
+				ObservedConfig:  runtime.RawExtension{Raw: emptyObservedConfigYaml},
+			},
+		},
+		staticPodStatus,
+		nil,
+		nil,
+	)
+
+	fakeKubeClient := fake.NewSimpleClientset()
+	eventRecorder := events.NewRecorder(fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),
+		"test-envvarcontroller", &corev1.ObjectReference{}, clock.RealClock{})
+
+	controller := EnvVarController{
+		operatorClient: fakeOperatorClient,
+		eventRecorder:  eventRecorder,
+	}
+
+	err = controller.sync(context.TODO())
+
+	// sync() should return an error to trigger workqueue retry
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "observedConfig has not yet converged")
+
+	// The env var map should remain empty (no fallback to defaults)
+	m := controller.GetEnvVars()
+	require.Empty(t, m)
+
+	// Verify degraded condition was NOT set: re-read the operator status and
+	// confirm no EnvVarControllerDegraded=True condition exists.
+	_, status, _, specErr := fakeOperatorClient.GetStaticPodOperatorState()
+	require.NoError(t, specErr)
+	for _, cond := range status.Conditions {
+		if cond.Type == "EnvVarControllerDegraded" {
+			require.NotEqual(t, operatorv1.ConditionTrue, cond.Status,
+				"EnvVarControllerDegraded should not be True when observedConfig has not converged")
+		}
+	}
+}
+
 func TestEnvVarController(t *testing.T) {
 	scenarios := []struct {
 		name            string

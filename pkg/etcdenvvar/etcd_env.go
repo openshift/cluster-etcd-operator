@@ -330,16 +330,6 @@ func getCipherSuites(envVarContext envVarContext) (map[string]string, error) {
 		return nil, fmt.Errorf("couldn't get cipherSuites from observedConfig: %w", err)
 	}
 
-	// During bootstrap the config observation controller hasn't converged yet,
-	// so observedConfig.servingInfo.cipherSuites will be empty. Fall back to
-	// TLSProfileIntermediateType defaults, matching the render path
-	// (pkg/cmd/render/env.go:getTLSCipherSuites).
-	if len(observedCipherSuites) == 0 {
-		klog.Warningf("observedConfig cipherSuites is empty, falling back to TLSProfileIntermediateType defaults")
-		profileSpec := v1.TLSProfiles[v1.TLSProfileIntermediateType]
-		observedCipherSuites = crypto.OpenSSLToIANACipherSuites(profileSpec.Ciphers)
-	}
-
 	actualCipherSuites := tlshelpers.SupportedEtcdCiphers(observedCipherSuites)
 
 	if len(actualCipherSuites) == 0 {

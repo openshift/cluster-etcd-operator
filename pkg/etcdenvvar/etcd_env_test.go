@@ -40,20 +40,10 @@ func TestGetCipherSuites(t *testing.T) {
 			},
 		},
 		{
-			name:           "empty observedConfig falls back to TLSProfileIntermediateType defaults",
+			name:           "empty observedConfig returns error",
 			observedConfig: map[string]any{},
-			expectEnvKey:   "ETCD_CIPHER_SUITES",
-			expectCiphers: []string{
-				"TLS_AES_128_GCM_SHA256",
-				"TLS_AES_256_GCM_SHA384",
-				"TLS_CHACHA20_POLY1305_SHA256",
-				"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
-				"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
-				"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
-				"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
-				"TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
-				"TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
-			},
+			expectErr:      true,
+			errContains:    "no supported cipherSuites found",
 		},
 		{
 			name: "observedConfig with only unsupported ciphers returns error",
@@ -164,6 +154,56 @@ func TestGetTLSMinVersion(t *testing.T) {
 			minVersion, ok := result["ETCD_TLS_MIN_VERSION"]
 			require.True(t, ok, "expected key ETCD_TLS_MIN_VERSION in result")
 			assert.Equal(t, tc.expectMinVersion, minVersion)
+		})
+	}
+}
+
+func TestObservedConfigHasCipherSuites(t *testing.T) {
+	testCases := []struct {
+		name     string
+		raw      []byte
+		expected bool
+	}{
+		{
+			name:     "nil raw returns false",
+			raw:      nil,
+			expected: false,
+		},
+		{
+			name:     "empty raw returns false",
+			raw:      []byte{},
+			expected: false,
+		},
+		{
+			name:     "empty object returns false",
+			raw:      []byte("{}"),
+			expected: false,
+		},
+		{
+			name:     "servingInfo without cipherSuites returns false",
+			raw:      []byte(`{"servingInfo": {"minTLSVersion": "VersionTLS12"}}`),
+			expected: false,
+		},
+		{
+			name:     "servingInfo with empty cipherSuites returns false",
+			raw:      []byte(`{"servingInfo": {"cipherSuites": []}}`),
+			expected: false,
+		},
+		{
+			name:     "servingInfo with cipherSuites returns true",
+			raw:      []byte(`{"servingInfo": {"cipherSuites": ["TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256"]}}`),
+			expected: true,
+		},
+		{
+			name:     "invalid yaml returns false",
+			raw:      []byte("not valid yaml: ["),
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, observedConfigHasCipherSuites(tc.raw))
 		})
 	}
 }
