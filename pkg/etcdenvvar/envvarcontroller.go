@@ -150,7 +150,12 @@ func (c *EnvVarController) sync(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if !observedConfigHasCipherSuites(operatorSpec.ObservedConfig.Raw) {
+	hasCiphers, cipherErr := observedConfigHasCipherSuites(operatorSpec.ObservedConfig.Raw)
+	if cipherErr != nil {
+		// Malformed observedConfig or type error — this is a real problem, surface as degraded.
+		return cipherErr
+	}
+	if !hasCiphers {
 		klog.V(2).Infof("EnvVarController: observedConfig does not yet contain servingInfo.cipherSuites, waiting for config observer to converge")
 		return fmt.Errorf("observedConfig has not yet converged: servingInfo.cipherSuites is missing")
 	}
@@ -181,16 +186,24 @@ func (c *EnvVarController) sync(ctx context.Context) error {
 // observedConfigHasCipherSuites checks whether the observedConfig contains a
 // non-empty servingInfo.cipherSuites list.  During bootstrap the config
 // observation controller has not converged yet, so this field will be absent.
-func observedConfigHasCipherSuites(raw []byte) bool {
+//
+// Returns (false, nil) for empty/nil input or valid YAML that simply lacks
+// the cipherSuites key—these are transient bootstrap conditions that resolve
+// on their own.  Returns (false, error) for malformed YAML or type errors so
+// that the caller can surface them as degraded.
+func observedConfigHasCipherSuites(raw []byte) (bool, error) {
 	if len(raw) == 0 {
-		return false
+		return false, nil
 	}
 	var observedConfig map[string]any
 	if err := yaml.Unmarshal(raw, &observedConfig); err != nil {
-		return false
+		return false, fmt.Errorf("failed to parse observedConfig: %w", err)
 	}
 	cipherSuites, found, err := unstructured.NestedStringSlice(observedConfig, "servingInfo", "cipherSuites")
-	return err == nil && found && len(cipherSuites) > 0
+	if err != nil {
+		return false, fmt.Errorf("observedConfig servingInfo.cipherSuites has wrong type: %w", err)
+	}
+	return found && len(cipherSuites) > 0, nil
 }
 
 func (c *EnvVarController) checkEnvVars() error {

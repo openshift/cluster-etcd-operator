@@ -160,9 +160,10 @@ func TestGetTLSMinVersion(t *testing.T) {
 
 func TestObservedConfigHasCipherSuites(t *testing.T) {
 	testCases := []struct {
-		name     string
-		raw      []byte
-		expected bool
+		name      string
+		raw       []byte
+		expected  bool
+		wantError string
 	}{
 		{
 			name:     "nil raw returns false",
@@ -195,15 +196,35 @@ func TestObservedConfigHasCipherSuites(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "invalid yaml returns false",
-			raw:      []byte("not valid yaml: ["),
-			expected: false,
+			name:      "malformed YAML returns error",
+			raw:       []byte("not valid yaml: ["),
+			expected:  false,
+			wantError: "failed to parse observedConfig",
+		},
+		{
+			name:      "cipherSuites is a scalar not a slice returns error",
+			raw:       []byte(`{"servingInfo": {"cipherSuites": 123}}`),
+			expected:  false,
+			wantError: "observedConfig servingInfo.cipherSuites has wrong type",
+		},
+		{
+			name:      "cipherSuites contains non-string elements returns error",
+			raw:       []byte(`{"servingInfo": {"cipherSuites": [1, 2, 3]}}`),
+			expected:  false,
+			wantError: "observedConfig servingInfo.cipherSuites has wrong type",
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.expected, observedConfigHasCipherSuites(tc.raw))
+			ok, err := observedConfigHasCipherSuites(tc.raw)
+			assert.Equal(t, tc.expected, ok)
+			if tc.wantError != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantError)
+			} else {
+				require.NoError(t, err)
+			}
 		})
 	}
 }
