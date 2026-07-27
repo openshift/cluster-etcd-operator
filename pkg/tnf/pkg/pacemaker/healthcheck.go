@@ -109,6 +109,16 @@ type HealthStatus struct {
 	CRLastUpdated time.Time
 }
 
+// pacemakerListWatch wraps cache.ListWatch to opt out of WatchList semantics.
+// The OCP apiextensions-apiserver does not enable the server-side WatchList gate,
+// so the reflector's sendInitialEvents request is rejected. This wrapper tells
+// the reflector to skip watchList() and use list+watch directly.
+type pacemakerListWatch struct {
+	cache.ListWatch
+}
+
+func (pacemakerListWatch) IsWatchListSemanticsUnSupported() bool { return true }
+
 // HealthCheck monitors pacemaker status in ExternalEtcd topology clusters
 type HealthCheck struct {
 	operatorClient    v1helpers.StaticPodOperatorClient
@@ -124,6 +134,12 @@ type HealthCheck struct {
 	// Only updated when status is non-Unknown, so CRLastUpdated reflects the last valid CR timestamp.
 	previousMu sync.Mutex
 	previous   *HealthStatus
+
+	disruptionTracker *DisruptionTracker
+
+	// crNodes holds the PacemakerCluster node statuses retrieved during getPacemakerStatus.
+	// Used by trackResourceDisruptions to avoid a redundant informer store lookup.
+	crNodes *[]pacmkrv1.PacemakerClusterNodeStatus
 }
 
 // NewHealthCheck creates a new HealthCheck for monitoring pacemaker status
@@ -150,7 +166,7 @@ func NewHealthCheck(
 	// Create informer for PacemakerCluster
 	klog.Infof("Creating PacemakerCluster informer for group %s, resource %s", pacmkrv1.SchemeGroupVersion.String(), PacemakerResourceName)
 	informer := cache.NewSharedIndexInformer(
-		&cache.ListWatch{
+		&pacemakerListWatch{cache.ListWatch{
 			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
 				klog.V(4).Infof("PacemakerCluster informer ListFunc called for resource %s", PacemakerResourceName)
 				result := &pacmkrv1.PacemakerClusterList{}
@@ -177,7 +193,7 @@ func NewHealthCheck(
 				}
 				return watcher, err
 			},
-		},
+		}},
 		&pacmkrv1.PacemakerCluster{},
 		HealthCheckResyncInterval,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
@@ -189,6 +205,7 @@ func NewHealthCheck(
 		eventRecorder:     eventRecorder,
 		pacemakerInformer: informer,
 		recordedEvents:    make(map[string]time.Time),
+		disruptionTracker: NewDisruptionTracker(),
 		// previous starts as nil - first sync will be treated as "from Unknown"
 	}
 
@@ -233,6 +250,8 @@ func (c *HealthCheck) sync(ctx context.Context, syncCtx factory.SyncContext) err
 		return nil
 	}
 
+	c.trackResourceDisruptions()
+
 	// Log the determined status for visibility
 	klog.V(2).Infof("Pacemaker health status: %s (errors: %d, warnings: %d)",
 		currentStatus.OverallStatus, len(currentStatus.Errors), len(currentStatus.Warnings))
@@ -251,6 +270,7 @@ func (c *HealthCheck) sync(ctx context.Context, syncCtx factory.SyncContext) err
 // Returns (nil, nil, nil) if the CR hasn't changed since last sync (same lastUpdated timestamp).
 // For Unknown status, previous is not updated (preserves last valid status for grace period).
 func (c *HealthCheck) getPacemakerStatus(ctx context.Context) (*HealthStatus, *HealthStatus, error) {
+	c.crNodes = nil
 	klog.V(4).Infof("Retrieving pacemaker status from CR...")
 
 	c.previousMu.Lock()
@@ -269,6 +289,7 @@ func (c *HealthCheck) getPacemakerStatus(ctx context.Context) (*HealthStatus, *H
 	if !ok {
 		return unknownHealthStatus("Failed to convert cached item to PacemakerCluster"), previous, nil
 	}
+	c.crNodes = pacemakerCR.Status.Nodes
 
 	// Staleness grows over time and must bypass the timestamp-unchanged optimization.
 	isStale := pacemakerCR.Status.LastUpdated.IsZero() ||
@@ -810,4 +831,11 @@ func getEventReasonForError(errorMsg string) string {
 func (c *HealthCheck) recordErrorEvent(errorMsg string) {
 	eventReason := getEventReasonForError(errorMsg)
 	c.eventRecorder.Warningf(eventReason, msgPacemakerError, errorMsg)
+}
+
+func (c *HealthCheck) trackResourceDisruptions() {
+	if c.crNodes == nil {
+		return
+	}
+	c.disruptionTracker.TrackResourceStates(c.crNodes)
 }
