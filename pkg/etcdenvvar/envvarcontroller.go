@@ -153,6 +153,15 @@ func (c *EnvVarController) sync(ctx context.Context) error {
 	hasCiphers, cipherErr := observedConfigHasCipherSuites(operatorSpec.ObservedConfig.Raw)
 	if cipherErr != nil {
 		// Malformed observedConfig or type error — this is a real problem, surface as degraded.
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+			Type:    "EnvVarControllerDegraded",
+			Status:  operatorv1.ConditionTrue,
+			Reason:  "Error",
+			Message: cipherErr.Error(),
+		}))
+		if updateErr != nil {
+			c.eventRecorder.Warning("EnvVarControllerUpdatingStatus", updateErr.Error())
+		}
 		return cipherErr
 	}
 	if !hasCiphers {

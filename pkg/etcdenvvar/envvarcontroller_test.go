@@ -123,6 +123,68 @@ func TestSyncWithEmptyObservedConfig(t *testing.T) {
 	}
 }
 
+// TestSyncWithMalformedObservedConfig verifies that when the observedConfig
+// contains malformed YAML, sync() returns an error AND sets
+// EnvVarControllerDegraded=True.  This is a real problem (not a transient
+// bootstrap condition) and must be surfaced to the operator status.
+func TestSyncWithMalformedObservedConfig(t *testing.T) {
+	// Raw bytes that are not valid YAML/JSON — will cause observedConfigHasCipherSuites to fail.
+	malformedRaw := []byte(`{not valid yaml: [}`)
+
+	staticPodStatus := u.StaticPodOperatorStatus(
+		u.WithLatestRevision(3),
+		u.WithNodeStatusAtCurrentRevisionNamed(3, "master-0"),
+	)
+
+	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+		&operatorv1.StaticPodOperatorSpec{
+			OperatorSpec: operatorv1.OperatorSpec{
+				ManagementState: operatorv1.Managed,
+				ObservedConfig:  runtime.RawExtension{Raw: malformedRaw},
+			},
+		},
+		staticPodStatus,
+		nil,
+		nil,
+	)
+
+	fakeKubeClient := fake.NewSimpleClientset()
+	eventRecorder := events.NewRecorder(fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),
+		"test-envvarcontroller", &corev1.ObjectReference{}, clock.RealClock{})
+
+	controller := EnvVarController{
+		operatorClient: fakeOperatorClient,
+		eventRecorder:  eventRecorder,
+	}
+
+	err := controller.sync(context.TODO())
+
+	// sync() should return an error because the YAML is unparseable
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to parse observedConfig")
+
+	// The env var map should remain empty
+	m := controller.GetEnvVars()
+	require.Empty(t, m)
+
+	// Verify that EnvVarControllerDegraded=True WAS set — malformed config is
+	// a real problem, not a transient bootstrap condition.
+	_, status, _, specErr := fakeOperatorClient.GetStaticPodOperatorState()
+	require.NoError(t, specErr)
+	foundDegraded := false
+	for _, cond := range status.Conditions {
+		if cond.Type == "EnvVarControllerDegraded" {
+			foundDegraded = true
+			require.Equal(t, operatorv1.ConditionTrue, cond.Status,
+				"EnvVarControllerDegraded should be True when observedConfig is malformed")
+			require.Equal(t, "Error", cond.Reason)
+			require.Contains(t, cond.Message, "failed to parse observedConfig")
+			break
+		}
+	}
+	require.True(t, foundDegraded, "EnvVarControllerDegraded condition should exist when observedConfig is malformed")
+}
+
 func TestEnvVarController(t *testing.T) {
 	scenarios := []struct {
 		name            string
