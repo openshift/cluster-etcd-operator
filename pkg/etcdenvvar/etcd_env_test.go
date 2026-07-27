@@ -104,6 +104,70 @@ func TestGetCipherSuites(t *testing.T) {
 	}
 }
 
+func TestGetTLSMinVersion(t *testing.T) {
+	testCases := []struct {
+		name             string
+		observedConfig   map[string]any
+		expectErr        bool
+		errContains      string
+		expectMinVersion string
+	}{
+		{
+			name: "populated observedConfig with TLS 1.2 returns TLS1.2",
+			observedConfig: map[string]any{
+				"servingInfo": map[string]any{
+					"minTLSVersion": "VersionTLS12",
+				},
+			},
+			expectMinVersion: "TLS1.2",
+		},
+		{
+			name: "populated observedConfig with TLS 1.3 returns TLS1.3",
+			observedConfig: map[string]any{
+				"servingInfo": map[string]any{
+					"minTLSVersion": "VersionTLS13",
+				},
+			},
+			expectMinVersion: "TLS1.3",
+		},
+		{
+			name:             "empty observedConfig falls back to TLS1.2",
+			observedConfig:   map[string]any{},
+			expectMinVersion: "TLS1.2",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			observedConfigYaml, err := yaml.Marshal(tc.observedConfig)
+			require.NoError(t, err)
+
+			ctx := envVarContext{
+				spec: operatorv1.StaticPodOperatorSpec{
+					OperatorSpec: operatorv1.OperatorSpec{
+						ObservedConfig: runtime.RawExtension{Raw: observedConfigYaml},
+					},
+				},
+			}
+
+			result, err := getTLSMinVersion(ctx)
+
+			if tc.expectErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.errContains)
+				return
+			}
+
+			require.NoError(t, err)
+			require.NotNil(t, result)
+
+			minVersion, ok := result["ETCD_TLS_MIN_VERSION"]
+			require.True(t, ok, "expected key ETCD_TLS_MIN_VERSION in result")
+			assert.Equal(t, tc.expectMinVersion, minVersion)
+		})
+	}
+}
+
 func TestConvertDBSize(t *testing.T) {
 	testCases := []struct {
 		name  string

@@ -295,15 +295,9 @@ func getObservedTLSMinVersion(envVarContext envVarContext) (tlsutil.TLSVersion, 
 		return "", fmt.Errorf("couldn't get minTLSVersion from observedConfig: %w", err)
 	}
 
-	// During bootstrap the config observation controller hasn't converged yet,
-	// so observedConfig.servingInfo.minTLSVersion will be empty. Fall back to
-	// TLSProfileIntermediateType defaults (TLS 1.2).
-	if observedMinTLSVersion == "" {
-		klog.Warningf("observedConfig minTLSVersion is empty, falling back to TLSProfileIntermediateType default (TLS 1.2)")
-		return tlsutil.TLSVersion12, nil
-	}
-
 	// map tls version to string recognized by etcd
+	// Note: crypto.TLSVersion("") returns DefaultTLSVersion() (TLS 1.2),
+	// so an empty observedConfig during bootstrap is handled automatically.
 	v, err := crypto.TLSVersion(observedMinTLSVersion)
 	if err != nil {
 		return "", fmt.Errorf("couldn't get minTLSVersion from observedConfig: %w", err)
