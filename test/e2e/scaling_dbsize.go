@@ -17,7 +17,7 @@ import (
 )
 
 var _ = g.Describe("[sig-etcd] cluster-etcd-operator", func() {
-	g.It("[Operator][Serial][Disruptive] TestEtcdDBScaling", func() {
+	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:EtcdBackendQuota] TestEtcdDBScaling", func() {
 		TestEtcdDBScaling(g.GinkgoTB())
 	})
 })
@@ -32,13 +32,28 @@ const (
 
 func TestEtcdDBScaling(t testing.TB) {
 	dbSizeGB := int32(16)
+	invalidLowDBSizeGB := int32(7)
+	invalidHighDBSizeGB := int32(17)
 	opClientSet := framework.NewOperatorClient(t)
 	clientSet := framework.NewClientSet("")
 	etcdPodsClient := clientSet.CoreV1Interface.Pods(operandNameSpace)
 
+	// first check the validation
 	etcdCR, err := opClientSet.OperatorV1().Etcds().Get(context.Background(), etcdCRName, metav1.GetOptions{})
 	require.NoError(t, err)
+	etcdCR.Spec.BackendQuotaGiB = invalidLowDBSizeGB
+	etcdCR, err = opClientSet.OperatorV1().Etcds().Update(context.Background(), etcdCR, metav1.UpdateOptions{})
+	require.Error(t, err)
 
+	etcdCR, err = opClientSet.OperatorV1().Etcds().Get(context.Background(), etcdCRName, metav1.GetOptions{})
+	require.NoError(t, err)
+	etcdCR.Spec.BackendQuotaGiB = invalidHighDBSizeGB
+	etcdCR, err = opClientSet.OperatorV1().Etcds().Update(context.Background(), etcdCR, metav1.UpdateOptions{})
+	require.Error(t, err)
+
+	// valid update
+	etcdCR, err = opClientSet.OperatorV1().Etcds().Get(context.Background(), etcdCRName, metav1.GetOptions{})
+	require.NoError(t, err)
 	etcdCR.Spec.BackendQuotaGiB = dbSizeGB
 	etcdCR, err = opClientSet.OperatorV1().Etcds().Update(context.Background(), etcdCR, metav1.UpdateOptions{})
 	require.NoError(t, err)
