@@ -9,11 +9,13 @@ import (
 
 	opv1 "github.com/openshift/api/operator/v1"
 	applyoperatorv1 "github.com/openshift/client-go/operator/applyconfigurations/operator/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/management"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/errors"
@@ -30,11 +32,21 @@ import (
 var DefaultConditions = []string{opv1.OperatorStatusTypeProgressing, opv1.OperatorStatusTypeDegraded}
 var AllConditions = []string{opv1.OperatorStatusTypeAvailable, opv1.OperatorStatusTypeProgressing, opv1.OperatorStatusTypeDegraded}
 
+const (
+	// stuckJobRecoveryTimeout is how long a job must be in Failed state before auto-deletion.
+	// Used to recover from controller parameter migrations or stuck jobs.
+	stuckJobRecoveryTimeout = 10 * time.Minute
+)
+
 // TODO This based on DeploymentController in openshift/library-go
 // TODO should be moved there once it proved to be useful
 
 // JobHookFunc is a hook function to modify the Job.
-type JobHookFunc func(*opv1.OperatorSpec, *batchv1.Job) error
+// Returns (shouldApply bool, error):
+//   - (true, nil): Apply the job (proceed with ApplyJob)
+//   - (false, nil): Skip applying the job (nodes not ready, conditions not met)
+//   - (false, error): Error occurred, set Degraded condition
+type JobHookFunc func(*opv1.OperatorSpec, *batchv1.Job) (bool, error)
 
 // JobController is a generic controller that manages a job.
 //
@@ -56,9 +68,10 @@ type JobController struct {
 	recorder          events.Recorder
 	conditions        []string
 	// Optional hook functions to modify the Job.
-	// If one of these functions returns an error, the sync
-	// fails indicating the ordinal position of the failed function.
-	// Also, in that scenario the Degraded status is set to True.
+	// Each hook returns (shouldApply bool, error):
+	//   - If error is non-nil, sync fails and Degraded status is set to True
+	//   - If shouldApply is false, job creation is skipped (nodes not ready, etc.)
+	//   - If shouldApply is true, job is applied via ApplyJob
 	optionalJobHooks []JobHookFunc
 	// errors contains any errors that occur during the configuration
 	// and setup of the JobController.
@@ -177,7 +190,7 @@ func (c *JobController) ToController() (factory.Controller, error) {
 		controller = controller.WithSyncDegradedOnError(c.operatorClient)
 	}
 	return controller.ToController(
-		c.instanceName, // don't change what is passed here unless you also remove the old FooDegraded condition
+		tools.ToPascalCase(c.instanceName), // Use PascalCase for condition names (e.g., TNFSetupJob, TNFAuthJobMaster0637363be)
 		c.recorder.WithComponentSuffix(strings.ToLower(c.instanceName)+"-job-controller-"),
 	), errors.NewAggregate(c.errors)
 }
@@ -222,6 +235,12 @@ func (c *JobController) syncManaged(ctx context.Context, opSpec *opv1.OperatorSp
 		return err
 	}
 
+	// If hook returned nil job, skip applying (nodes not ready, etc.)
+	if required == nil {
+		klog.V(4).Infof("Skipping job application: hook requested skip")
+		return nil
+	}
+
 	job, _, err := ApplyJob(
 		ctx,
 		c.kubeClient.BatchV1(),
@@ -231,6 +250,35 @@ func (c *JobController) syncManaged(ctx context.Context, opSpec *opv1.OperatorSp
 	)
 	if err != nil {
 		return err
+	}
+
+	// Auto-recovery: delete jobs stuck in Failed state for > 10 minutes
+	// This handles controller parameter migrations and stuck jobs
+	if IsFailed(*job) {
+		// Check when the job failed
+		var failedTime *metav1.Time
+		for _, condition := range job.Status.Conditions {
+			if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
+				failedTime = &condition.LastTransitionTime
+				break
+			}
+		}
+
+		if failedTime != nil && time.Since(failedTime.Time) > stuckJobRecoveryTimeout {
+			klog.Warningf("Job %s has been failed for %v, deleting to force restart (controller parameter migration or stuck job recovery)",
+				job.Name, time.Since(failedTime.Time).Round(time.Second))
+
+			err := c.kubeClient.BatchV1().Jobs(job.Namespace).Delete(ctx, job.Name, metav1.DeleteOptions{
+				PropagationPolicy: ptr.To(metav1.DeletePropagationBackground),
+			})
+			if err != nil && !apierrors.IsNotFound(err) {
+				klog.Warningf("Failed to delete stuck job %s: %v", job.Name, err)
+			} else {
+				klog.Infof("Deleted stuck failed job %s, will recreate on next sync", job.Name)
+			}
+			// Return early - next sync will recreate the job
+			return nil
+		}
 	}
 
 	// Create an OperatorStatusApplyConfiguration with generations
@@ -246,7 +294,7 @@ func (c *JobController) syncManaged(ctx context.Context, opSpec *opv1.OperatorSp
 	// Set Available condition
 	if slices.Contains(c.conditions, opv1.OperatorStatusTypeAvailable) {
 		availableCondition := applyoperatorv1.
-			OperatorCondition().WithType(c.instanceName + opv1.OperatorStatusTypeAvailable)
+			OperatorCondition().WithType(tools.ToPascalCase(c.instanceName) + opv1.OperatorStatusTypeAvailable)
 
 		if IsComplete(*job) {
 			availableCondition = availableCondition.
@@ -271,7 +319,7 @@ func (c *JobController) syncManaged(ctx context.Context, opSpec *opv1.OperatorSp
 	// Set Progressing condition
 	if slices.Contains(c.conditions, opv1.OperatorStatusTypeProgressing) {
 		progressingCondition := applyoperatorv1.OperatorCondition().
-			WithType(c.instanceName + opv1.OperatorStatusTypeProgressing)
+			WithType(tools.ToPascalCase(c.instanceName) + opv1.OperatorStatusTypeProgressing)
 
 		if IsComplete(*job) {
 			progressingCondition = progressingCondition.
@@ -330,9 +378,13 @@ func (c *JobController) getJob(opSpec *opv1.OperatorSpec) (*batchv1.Job, error) 
 	manifest := c.manifest
 	required := ReadJobV1OrDie(manifest)
 	for i := range c.optionalJobHooks {
-		err := c.optionalJobHooks[i](opSpec, required)
+		shouldApply, err := c.optionalJobHooks[i](opSpec, required)
 		if err != nil {
 			return nil, fmt.Errorf("error running hook function (index=%d): %w", i, err)
+		}
+		if !shouldApply {
+			// Hook requested to skip job application (nodes not ready, etc.)
+			return nil, nil
 		}
 	}
 	return required, nil
