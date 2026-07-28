@@ -30,6 +30,16 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
 
+// memberListFailureThreshold is the number of consecutive MemberList failures
+// required before the controller falls back to node-IP-based endpoints.
+// This prevents a single transient error from rewriting the configmap with
+// node-name keys (instead of member-ID keys), which would cause key format
+// flip-flopping and unnecessary static pod revision rollouts on the next
+// successful sync. The controller resyncs every minute, so 3 consecutive
+// failures means roughly 3 minutes of sustained etcd unavailability before
+// the fallback activates.
+const memberListFailureThreshold = 3
+
 // EtcdEndpointsController maintains a configmap resource with
 // IP addresses for etcd. It should never depend on DNS directly or transitively.
 type EtcdEndpointsController struct {
@@ -39,6 +49,11 @@ type EtcdEndpointsController struct {
 	configmapClient corev1client.ConfigMapsGetter
 	nodeLister      corev1listers.NodeLister
 	networkLister   configv1listers.NetworkLister
+
+	// consecutiveMemberListFailures tracks how many consecutive times MemberList
+	// has failed. The node-IP fallback is only triggered after this reaches
+	// memberListFailureThreshold to avoid configmap key format flip-flopping.
+	consecutiveMemberListFailures int
 }
 
 func NewEtcdEndpointsController(
@@ -130,7 +145,15 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 
 	members, err := c.etcdClient.MemberList(ctx)
 	if err != nil {
-		klog.Warningf("EtcdEndpointsController: MemberList failed (%v), falling back to control-plane node IPs", err)
+		c.consecutiveMemberListFailures++
+		if c.consecutiveMemberListFailures < memberListFailureThreshold {
+			klog.Warningf("EtcdEndpointsController: MemberList failed (%v), attempt %d/%d before fallback",
+				err, c.consecutiveMemberListFailures, memberListFailureThreshold)
+			return fmt.Errorf("MemberList failed (%d/%d before fallback): %w",
+				c.consecutiveMemberListFailures, memberListFailureThreshold, err)
+		}
+		klog.Warningf("EtcdEndpointsController: MemberList failed %d consecutive times (%v), falling back to control-plane node IPs",
+			c.consecutiveMemberListFailures, err)
 		fallbackAddresses, fbErr := c.endpointsFromNodeLister()
 		if fbErr != nil {
 			return fmt.Errorf("failed to get member list: %v; node fallback also failed: %w", err, fbErr)
@@ -142,6 +165,7 @@ func (c *EtcdEndpointsController) syncConfigMap(ctx context.Context, recorder ev
 		klog.Infof("EtcdEndpointsController: populated etcd-endpoints configmap from node IPs (%d endpoints)", len(fallbackAddresses))
 		return nil
 	}
+	c.consecutiveMemberListFailures = 0
 
 	endpointAddresses := make(map[string]string, len(members))
 	// Create endpoint addresses for each member of the cluster.
