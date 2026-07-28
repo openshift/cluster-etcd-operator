@@ -2,6 +2,7 @@ package updatesetup
 
 import (
 	"context"
+	"encoding/xml"
 	"fmt"
 	"os"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/config"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/etcd"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/exec"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/pacemaker"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/pcs"
 )
 
@@ -64,8 +66,7 @@ func RunTnfUpdateSetup() error {
 	command := "/usr/sbin/pcs cluster status"
 	_, _, err = exec.Execute(ctx, command)
 	if err != nil {
-		klog.Infof("Cluster not running (err: %v), skipping update-setup on this node", err)
-		return nil
+		return fmt.Errorf("cluster not running on this node, will retry on other node: %w", err)
 	}
 
 	// Register pacemaker alert agents for fencing taint/untaint. This runs on
@@ -183,6 +184,40 @@ func RunTnfUpdateSetup() error {
 		return err
 	}
 
+	// Wait for cluster to fully start before validating
+	klog.Info("Waiting for cluster to stabilize...")
+	time.Sleep(10 * time.Second)
+
+	// Validate final cluster state: must have exactly 2 nodes
+	// This ensures we don't succeed if auth hasn't run on the new node yet
+	// or if node add/remove operations didn't complete correctly
+	klog.Info("Validating final cluster configuration...")
+	command = "/usr/sbin/pcs status xml"
+	stdOut, stdErr, err = exec.Execute(ctx, command)
+	if err != nil {
+		klog.Errorf("Failed to query cluster status: %s, stdout: %s, stderr: %s, err: %v", command, stdOut, stdErr, err)
+		return fmt.Errorf("failed to validate cluster state: %w", err)
+	}
+
+	var result pacemaker.PacemakerResult
+	if parseErr := xml.Unmarshal([]byte(stdOut), &result); parseErr != nil {
+		klog.Errorf("Failed to parse pcs status xml: %v", parseErr)
+		return fmt.Errorf("failed to parse cluster status: %w", parseErr)
+	}
+
+	// Count online nodes
+	onlineNodes := []string{}
+	for _, node := range result.Nodes.Node {
+		if node.Online == "true" {
+			onlineNodes = append(onlineNodes, node.Name)
+		}
+	}
+
+	if len(onlineNodes) != 2 {
+		return fmt.Errorf("invalid cluster state: expected 2 online nodes, found %d: %v (this will retry until auth runs on new node and cluster is complete)", len(onlineNodes), onlineNodes)
+	}
+
+	klog.Infof("Cluster validation successful: 2 nodes online: %v", onlineNodes)
 	return nil
 }
 

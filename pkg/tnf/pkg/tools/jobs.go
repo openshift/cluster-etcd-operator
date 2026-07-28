@@ -142,3 +142,35 @@ func sanitizeDNSLabel(name string) string {
 	name = strings.TrimLeft(name, "-")
 	return name
 }
+
+// ToPascalCase converts kebab-case job names to PascalCase for condition names.
+// Capitalizes the first letter of each part, keeping the rest lowercase.
+// Special cases "tnf" to be all uppercase "TNF" (acronym).
+// Examples:
+//   - "tnf-setup-job" → "TNFSetupJob"
+//   - "tnf-auth-master-0" → "TNFAuthMaster0"
+//   - "tnf-update-setup-job" → "TNFUpdateSetupJob"
+func ToPascalCase(s string) string {
+	if s == "" {
+		return ""
+	}
+
+	// Split on hyphens
+	parts := strings.Split(s, "-")
+
+	// Capitalize first letter of each part
+	for i, part := range parts {
+		if len(part) == 0 {
+			continue
+		}
+		// Special case: keep "tnf" as uppercase acronym
+		if strings.ToLower(part) == "tnf" {
+			parts[i] = "TNF"
+		} else {
+			// Capitalize first letter, keep rest as-is (handles numbers like "0")
+			parts[i] = strings.ToUpper(part[:1]) + part[1:]
+		}
+	}
+
+	return strings.Join(parts, "")
+}
