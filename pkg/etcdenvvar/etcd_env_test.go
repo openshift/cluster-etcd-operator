@@ -15,6 +15,7 @@ func TestGetCipherSuites(t *testing.T) {
 	testCases := []struct {
 		name           string
 		observedConfig map[string]any
+		revision       int32
 		expectErr      bool
 		errContains    string
 		expectEnvKey   string
@@ -32,6 +33,7 @@ func TestGetCipherSuites(t *testing.T) {
 					"minTLSVersion": "VersionTLS12",
 				},
 			},
+			revision:     3,
 			expectEnvKey: "ETCD_CIPHER_SUITES",
 			expectCiphers: []string{
 				"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
@@ -40,13 +42,31 @@ func TestGetCipherSuites(t *testing.T) {
 			},
 		},
 		{
-			name:           "empty observedConfig returns error",
+			name:           "empty observedConfig at runtime returns error",
 			observedConfig: map[string]any{},
+			revision:       3,
 			expectErr:      true,
 			errContains:    "no supported cipherSuites found",
 		},
 		{
-			name: "observedConfig with only unsupported ciphers returns error",
+			name:           "empty observedConfig at bootstrap falls back to IntermediateType",
+			observedConfig: map[string]any{},
+			revision:       0,
+			expectEnvKey:   "ETCD_CIPHER_SUITES",
+			expectCiphers: []string{
+				"TLS_AES_128_GCM_SHA256",
+				"TLS_AES_256_GCM_SHA384",
+				"TLS_CHACHA20_POLY1305_SHA256",
+				"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+				"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+				"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+				"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+				"TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+				"TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
+			},
+		},
+		{
+			name: "observedConfig with only unsupported ciphers at runtime returns error",
 			observedConfig: map[string]any{
 				"servingInfo": map[string]any{
 					"cipherSuites": []string{
@@ -56,6 +76,7 @@ func TestGetCipherSuites(t *testing.T) {
 					"minTLSVersion": "VersionTLS12",
 				},
 			},
+			revision:    3,
 			expectErr:   true,
 			errContains: "no supported cipherSuites found",
 		},
@@ -71,6 +92,9 @@ func TestGetCipherSuites(t *testing.T) {
 					OperatorSpec: operatorv1.OperatorSpec{
 						ObservedConfig: runtime.RawExtension{Raw: observedConfigYaml},
 					},
+				},
+				status: operatorv1.StaticPodOperatorStatus{
+					OperatorStatus: operatorv1.OperatorStatus{LatestAvailableRevision: tc.revision},
 				},
 			}
 

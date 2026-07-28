@@ -135,18 +135,7 @@ func (c *EnvVarController) GetEnvVars() map[string]string {
 }
 
 func (c *EnvVarController) sync(ctx context.Context) error {
-	// During bootstrap the config observation controller has not converged yet,
-	// so servingInfo (cipherSuites, minTLSVersion) will be absent from the
-	// observedConfig.  This is a transient state that resolves once the config
-	// observer runs—not a degraded condition.  The bootstrap etcd member is
-	// already configured via the render path (pkg/cmd/render/env.go) which
-	// hardcodes TLSProfileIntermediateType defaults.
-	//
-	// We intentionally do NOT fall back to default ciphers inside
-	// getCipherSuites() because at runtime an empty observedConfig would
-	// indicate a real problem that should surface as degraded, not be
-	// silently papered over with a potentially less-secure default set.
-	operatorSpec, _, _, err := c.operatorClient.GetStaticPodOperatorState()
+	operatorSpec, operatorStatus, _, err := c.operatorClient.GetStaticPodOperatorState()
 	if err != nil {
 		return err
 	}
@@ -165,8 +154,27 @@ func (c *EnvVarController) sync(ctx context.Context) error {
 		return cipherErr
 	}
 	if !hasCiphers {
-		klog.V(2).Infof("EnvVarController: observedConfig does not yet contain servingInfo.cipherSuites, waiting for config observer to converge")
-		return fmt.Errorf("observedConfig has not yet converged: servingInfo.cipherSuites is missing")
+		if operatorStatus.LatestAvailableRevision > 0 {
+			// Runtime: observedConfig should have converged by now — this is a
+			// real problem that must surface as degraded.
+			msg := "observedConfig has not yet converged: servingInfo.cipherSuites is missing"
+			_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+				Type:    "EnvVarControllerDegraded",
+				Status:  operatorv1.ConditionTrue,
+				Reason:  "Error",
+				Message: msg,
+			}))
+			if updateErr != nil {
+				c.eventRecorder.Warning("EnvVarControllerUpdatingStatus", updateErr.Error())
+			}
+			return fmt.Errorf("%s", msg)
+		}
+		// Bootstrap (revision 0): the config observer can't converge until etcd
+		// is running, but etcd can't start without env vars from this controller.
+		// Break the deadlock by falling back to TLSProfileIntermediateType ciphers
+		// (same defaults the render path uses).  getCipherSuites() handles the
+		// actual fallback when it sees revision 0 — we just log and proceed here.
+		klog.Warningf("EnvVarController: bootstrap detected (revision 0), observedConfig has no cipherSuites; proceeding with TLSProfileIntermediateType fallback")
 	}
 
 	err = c.checkEnvVars()

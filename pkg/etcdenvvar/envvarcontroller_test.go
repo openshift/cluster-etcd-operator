@@ -68,59 +68,181 @@ var (
 	}
 )
 
-// TestSyncWithEmptyObservedConfig verifies that when the observedConfig does
-// not yet contain servingInfo.cipherSuites (typical during bootstrap), sync()
-// returns an error to trigger retry but does NOT set EnvVarControllerDegraded.
+// TestSyncWithEmptyObservedConfig verifies the revision-based cipher suite
+// fallback: at bootstrap (revision 0) the controller falls back to
+// TLSProfileIntermediateType ciphers without degrading; at runtime (revision > 0)
+// missing cipherSuites is a real problem that sets degraded.
 func TestSyncWithEmptyObservedConfig(t *testing.T) {
-	emptyObservedConfigYaml, err := yaml.Marshal(map[string]any{})
-	require.NoError(t, err)
+	t.Run("RuntimeRevisionGt0_ErrorsAndSetsDegraded", func(t *testing.T) {
+		emptyObservedConfigYaml, err := yaml.Marshal(map[string]any{})
+		require.NoError(t, err)
 
-	staticPodStatus := u.StaticPodOperatorStatus(
-		u.WithLatestRevision(3),
-		u.WithNodeStatusAtCurrentRevisionNamed(3, "master-0"),
-	)
+		staticPodStatus := u.StaticPodOperatorStatus(
+			u.WithLatestRevision(3),
+			u.WithNodeStatusAtCurrentRevisionNamed(3, "master-0"),
+		)
 
-	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
-		&operatorv1.StaticPodOperatorSpec{
-			OperatorSpec: operatorv1.OperatorSpec{
-				ManagementState: operatorv1.Managed,
-				ObservedConfig:  runtime.RawExtension{Raw: emptyObservedConfigYaml},
+		fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+			&operatorv1.StaticPodOperatorSpec{
+				OperatorSpec: operatorv1.OperatorSpec{
+					ManagementState: operatorv1.Managed,
+					ObservedConfig:  runtime.RawExtension{Raw: emptyObservedConfigYaml},
+				},
 			},
-		},
-		staticPodStatus,
-		nil,
-		nil,
-	)
+			staticPodStatus,
+			nil,
+			nil,
+		)
 
-	fakeKubeClient := fake.NewSimpleClientset()
-	eventRecorder := events.NewRecorder(fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),
-		"test-envvarcontroller", &corev1.ObjectReference{}, clock.RealClock{})
+		fakeKubeClient := fake.NewSimpleClientset()
+		eventRecorder := events.NewRecorder(fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),
+			"test-envvarcontroller", &corev1.ObjectReference{}, clock.RealClock{})
 
-	controller := EnvVarController{
-		operatorClient: fakeOperatorClient,
-		eventRecorder:  eventRecorder,
-	}
-
-	err = controller.sync(context.TODO())
-
-	// sync() should return an error to trigger workqueue retry
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "observedConfig has not yet converged")
-
-	// The env var map should remain empty (no fallback to defaults)
-	m := controller.GetEnvVars()
-	require.Empty(t, m)
-
-	// Verify degraded condition was NOT set: re-read the operator status and
-	// confirm no EnvVarControllerDegraded=True condition exists.
-	_, status, _, specErr := fakeOperatorClient.GetStaticPodOperatorState()
-	require.NoError(t, specErr)
-	for _, cond := range status.Conditions {
-		if cond.Type == "EnvVarControllerDegraded" {
-			require.NotEqual(t, operatorv1.ConditionTrue, cond.Status,
-				"EnvVarControllerDegraded should not be True when observedConfig has not converged")
+		controller := EnvVarController{
+			operatorClient: fakeOperatorClient,
+			eventRecorder:  eventRecorder,
 		}
-	}
+
+		err = controller.sync(context.TODO())
+
+		// sync() should return an error and set degraded at runtime
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "observedConfig has not yet converged")
+
+		// The env var map should remain empty
+		m := controller.GetEnvVars()
+		require.Empty(t, m)
+
+		// Verify degraded WAS set — at runtime, missing ciphers is a real problem.
+		_, status, _, specErr := fakeOperatorClient.GetStaticPodOperatorState()
+		require.NoError(t, specErr)
+		foundDegraded := false
+		for _, cond := range status.Conditions {
+			if cond.Type == "EnvVarControllerDegraded" {
+				foundDegraded = true
+				require.Equal(t, operatorv1.ConditionTrue, cond.Status,
+					"EnvVarControllerDegraded should be True when observedConfig has not converged at runtime")
+				require.Equal(t, "Error", cond.Reason)
+				require.Contains(t, cond.Message, "observedConfig has not yet converged")
+				break
+			}
+		}
+		require.True(t, foundDegraded, "EnvVarControllerDegraded condition should exist when ciphers are missing at runtime")
+	})
+
+	t.Run("BootstrapRevision0_FallsBackNoDegraded", func(t *testing.T) {
+		emptyObservedConfigYaml, err := yaml.Marshal(map[string]any{})
+		require.NoError(t, err)
+
+		staticPodStatus := u.StaticPodOperatorStatus(
+			u.WithLatestRevision(0),
+			u.WithNodeStatusAtCurrentRevisionNamed(0, "master-0"),
+			u.WithNodeStatusAtCurrentRevisionNamed(0, "master-1"),
+			u.WithNodeStatusAtCurrentRevisionNamed(0, "master-2"),
+		)
+
+		fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+			&operatorv1.StaticPodOperatorSpec{
+				OperatorSpec: operatorv1.OperatorSpec{
+					ManagementState: operatorv1.Managed,
+					ObservedConfig:  runtime.RawExtension{Raw: emptyObservedConfigYaml},
+				},
+			},
+			staticPodStatus,
+			nil,
+			nil,
+		)
+
+		// Set up the same infrastructure as the happy-path test so that
+		// checkEnvVars() can succeed with the fallback ciphers.
+		networkIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+		require.NoError(t, networkIndexer.Add(
+			&configv1.Network{
+				TypeMeta:   metav1.TypeMeta{},
+				ObjectMeta: metav1.ObjectMeta{Name: ceohelpers.InfrastructureClusterName},
+				Status:     configv1.NetworkStatus{ServiceNetwork: []string{"192.168.0.0/32"}},
+			},
+		))
+
+		certSecret := map[string][]byte{
+			fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode("master-0")): {},
+			fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode("master-1")): {},
+			fmt.Sprintf("%s.key", tlshelpers.GetServingSecretNameForNode("master-2")): {},
+		}
+
+		defaultObjects := []runtime.Object{
+			&corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{Name: operatorclient.TargetNamespace},
+			},
+			&configv1.Infrastructure{
+				TypeMeta:   metav1.TypeMeta{},
+				ObjectMeta: metav1.ObjectMeta{Name: ceohelpers.InfrastructureClusterName},
+				Status: configv1.InfrastructureStatus{
+					ControlPlaneTopology: configv1.HighlyAvailableTopologyMode},
+			},
+			u.FakeNode("master-0", u.WithNodeInternalIP("192.168.2.0")),
+			u.FakeNode("master-1", u.WithNodeInternalIP("192.168.2.1")),
+			u.FakeNode("master-2", u.WithNodeInternalIP("192.168.2.2")),
+			u.EndpointsConfigMap(
+				u.WithEndpoint(0, "https://192.168.2.0:2379"),
+				u.WithEndpoint(1, "https://192.168.2.1:2379"),
+				u.WithEndpoint(2, "https://192.168.2.2:2379")),
+			u.ClusterConfigConfigMap(1),
+			u.FakeSecret(operatorclient.TargetNamespace, tlshelpers.EtcdAllCertsSecretName, certSecret),
+		}
+
+		fakeKubeClient := fake.NewSimpleClientset()
+		eventRecorder := events.NewRecorder(fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),
+			"test-envvarcontroller", &corev1.ObjectReference{}, clock.RealClock{})
+		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+		for _, obj := range defaultObjects {
+			require.NoError(t, indexer.Add(obj))
+		}
+
+		etcdIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+		require.NoError(t, etcdIndexer.Add(&operatorv1.Etcd{
+			TypeMeta:   metav1.TypeMeta{},
+			ObjectMeta: metav1.ObjectMeta{Name: ceohelpers.InfrastructureClusterName},
+		}))
+
+		controller := EnvVarController{
+			operatorClient:       fakeOperatorClient,
+			eventRecorder:        eventRecorder,
+			configmapLister:      corev1listers.NewConfigMapLister(indexer),
+			secretLister:         corev1listers.NewSecretLister(indexer),
+			infrastructureLister: configv1listers.NewInfrastructureLister(indexer),
+			masterNodeLister:     corev1listers.NewNodeLister(indexer),
+			networkLister:        configv1listers.NewNetworkLister(networkIndexer),
+			etcdLister:           operatorv1listers.NewEtcdLister(etcdIndexer),
+			featureGateAccessor:  backendQuotaFeatureGateAccessor,
+		}
+
+		err = controller.sync(context.TODO())
+
+		// sync() should succeed — bootstrap falls back to IntermediateType ciphers
+		require.NoError(t, err)
+
+		// Env vars should contain the fallback cipher suites
+		m := controller.GetEnvVars()
+		require.NotEmpty(t, m)
+		require.Contains(t, m, "ETCD_CIPHER_SUITES")
+		require.Equal(t,
+			"TLS_AES_128_GCM_SHA256,TLS_AES_256_GCM_SHA384,TLS_CHACHA20_POLY1305_SHA256,"+
+				"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,"+
+				"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,"+
+				"TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
+			m["ETCD_CIPHER_SUITES"])
+
+		// Verify degraded condition was NOT set
+		_, status, _, specErr := fakeOperatorClient.GetStaticPodOperatorState()
+		require.NoError(t, specErr)
+		for _, cond := range status.Conditions {
+			if cond.Type == "EnvVarControllerDegraded" {
+				require.NotEqual(t, operatorv1.ConditionTrue, cond.Status,
+					"EnvVarControllerDegraded should not be True during bootstrap with fallback ciphers")
+			}
+		}
+	})
 }
 
 // TestSyncWithMalformedObservedConfig verifies that when the observedConfig

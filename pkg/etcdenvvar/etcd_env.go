@@ -333,7 +333,19 @@ func getCipherSuites(envVarContext envVarContext) (map[string]string, error) {
 	actualCipherSuites := tlshelpers.SupportedEtcdCiphers(observedCipherSuites)
 
 	if len(actualCipherSuites) == 0 {
-		return nil, fmt.Errorf("no supported cipherSuites found in observedConfig")
+		// During bootstrap (revision 0), the observedConfig hasn't converged yet
+		// because the config observer requires etcd to be running.  Fall back to
+		// TLSProfileIntermediateType ciphers — the same defaults the render path
+		// (pkg/cmd/render/env.go) uses for the bootstrap etcd member.
+		if envVarContext.status.LatestAvailableRevision == 0 {
+			profileSpec := v1.TLSProfiles[v1.TLSProfileIntermediateType]
+			fallbackCiphers := crypto.OpenSSLToIANACipherSuites(profileSpec.Ciphers)
+			actualCipherSuites = tlshelpers.SupportedEtcdCiphers(fallbackCiphers)
+			klog.Warningf("getCipherSuites: bootstrap (revision 0), falling back to TLSProfileIntermediateType ciphers")
+		}
+		if len(actualCipherSuites) == 0 {
+			return nil, fmt.Errorf("no supported cipherSuites found in observedConfig")
+		}
 	}
 
 	observedMinTLSVersion, err := getObservedTLSMinVersion(envVarContext)
