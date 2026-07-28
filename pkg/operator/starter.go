@@ -271,6 +271,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controlPlaneNodeLabelSelector,
 		configInformers.Config().V1().Infrastructures(),
 		networkInformer,
+		configInformers.Config().V1().APIServers(),
 		controllerContext.EventRecorder,
 		etcdsInformer,
 		featureGateAccessor,
