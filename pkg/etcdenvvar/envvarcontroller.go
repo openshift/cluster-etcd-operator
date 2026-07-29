@@ -76,6 +76,7 @@ func NewEnvVarController(
 	masterNodeLabelSelector labels.Selector,
 	infrastructureInformer configv1informers.InfrastructureInformer,
 	networkInformer configv1informers.NetworkInformer,
+	apiServerInformer configv1informers.APIServerInformer,
 	eventRecorder events.Recorder,
 	etcdsInformer operatorv1informers.EtcdInformer,
 	featureGateAccessor featuregates.FeatureGateAccess,
@@ -97,6 +98,12 @@ func NewEnvVarController(
 			operatorClient.Informer().HasSynced,
 			infrastructureInformer.Informer().HasSynced,
 			networkInformer.Informer().HasSynced,
+			// The EnvVarController reads cipher suites from observedConfig, which is
+			// populated by the ConfigObserver watching the APIServer CR. Waiting for
+			// the APIServer informer cache to sync ensures the ConfigObserver can run
+			// before the EnvVarController reads observedConfig, preventing bootstrap
+			// timing races where observedConfig is still empty.
+			apiServerInformer.Informer().HasSynced,
 			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().HasSynced,
 			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Informer().HasSynced,
 			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer().HasSynced,
@@ -114,6 +121,7 @@ func NewEnvVarController(
 	kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
 	etcdsInformer.Informer().AddEventHandler(c.eventHandler())
 	masterNodeInformer.AddEventHandler(c.eventHandler())
+	apiServerInformer.Informer().AddEventHandler(c.eventHandler())
 
 	return c
 }
