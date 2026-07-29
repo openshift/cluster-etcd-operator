@@ -31,6 +31,7 @@ type PodSubstitutionTemplate struct {
 	ListenAddress       string
 	LocalhostAddress    string
 	LogLevel            string
+	SnapshotCount       uint64
 	EnvVars             []NameValue
 	BackupArgs          []string
 	CipherSuites        string
@@ -115,6 +116,7 @@ func GetPodSubstitution(
 		ListenAddress:       "0.0.0.0",   // TODO: this needs updating to detect ipv6-ness
 		LocalhostAddress:    "127.0.0.1", // TODO: this needs updating to detect ipv6-ness
 		LogLevel:            LoglevelToZap(operatorSpec.LogLevel),
+		SnapshotCount:       5000,
 		EnvVars:             nameValues,
 		CipherSuites:        envVarMap["ETCD_CIPHER_SUITES"],
 		EnableEtcdContainer: !shouldRemoveEtcdContainer,
