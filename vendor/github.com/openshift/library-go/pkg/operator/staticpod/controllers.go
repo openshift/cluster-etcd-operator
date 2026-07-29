@@ -66,6 +66,7 @@ type staticPodOperatorControllerBuilder struct {
 	installCommand           []string
 	installerPodMutationFunc installer.InstallerPodMutationFunc
 	minReadyDuration         time.Duration
+	installerPrecondition    installer.InstallerPreconditionFunc
 	enableStartMonitor       func() (bool, error)
 
 	// pruning information
@@ -114,6 +115,9 @@ type Builder interface {
 	WithUnrevisionedCerts(certDir string, certConfigMaps, certSecrets []installer.UnrevisionedResource) Builder
 	WithInstaller(command []string) Builder
 	WithMinReadyDuration(minReadyDuration time.Duration) Builder
+	// WithInstallerPrecondition sets a precondition consulted immediately before an installer pod is
+	// created for a node; see installer.InstallerPreconditionFunc.
+	WithInstallerPrecondition(precondition installer.InstallerPreconditionFunc) Builder
 	WithStartupMonitor(enabledStartupMonitor func() (bool, error)) Builder
 
 	// WithExtraNodeSelector Informs controllers to handle extra nodes as well as master nodes.
@@ -182,6 +186,11 @@ func (b *staticPodOperatorControllerBuilder) WithInstaller(command []string) Bui
 
 func (b *staticPodOperatorControllerBuilder) WithMinReadyDuration(minReadyDuration time.Duration) Builder {
 	b.minReadyDuration = minReadyDuration
+	return b
+}
+
+func (b *staticPodOperatorControllerBuilder) WithInstallerPrecondition(precondition installer.InstallerPreconditionFunc) Builder {
+	b.installerPrecondition = precondition
 	return b
 }
 
@@ -296,6 +305,8 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 			b.installerPodMutationFunc,
 		).WithMinReadyDuration(
 			b.minReadyDuration,
+		).WithInstallerPrecondition(
+			b.installerPrecondition,
 		), 1)
 
 		manager.WithController(installerstate.NewInstallerStateController(

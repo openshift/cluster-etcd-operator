@@ -293,7 +293,18 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		etcdNamespaceLister,
 		configInformers.Config().V1().Infrastructures().Lister(),
 		operatorClient,
-		quorumMemberClient)
+		quorumMemberClient,
+		controlPlaneNodeLister)
+
+	// memberRestartChecker gates per-node installer pods (which restart the etcd member on that node).
+	// It deliberately uses the non-cached etcd client: the cached member health (60s TTL) can report a
+	// member as healthy well after its node started going down (OCPBUGS-100060).
+	memberRestartChecker := ceohelpers.NewQuorumChecker(
+		etcdNamespaceLister,
+		configInformers.Config().V1().Infrastructures().Lister(),
+		operatorClient,
+		etcdClient,
+		controlPlaneNodeLister)
 
 	targetConfigReconciler := targetconfigcontroller.NewTargetConfigController(
 		AlivenessChecker,
@@ -342,6 +353,9 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			guardRolloutPreCheck,
 		).
 		WithRevisionControllerPrecondition(quorumSafe).
+		WithInstallerPrecondition(func(ctx context.Context, nodeName string) (bool, string, error) {
+			return memberRestartChecker.IsSafeToRestartMember(ctx, nodeName)
+		}).
 		WithOperandPodLabelSelector(labels.Set{"etcd": "true"}.AsSelector())
 	if hasArbiterTopology {
 		staticPodBuilderControllers = staticPodBuilderControllers.WithExtraNodeSelector(arbiterNodeLabelSelector)
