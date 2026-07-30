@@ -274,7 +274,7 @@ spec:
         description: TNF node {{ $labels.node }} has been placed into maintenance mode. Resources on this node will not be managed by Pacemaker until maintenance mode is cleared.
         runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/TNFNodeInMaintenance.md
         summary: TNF node {{ $labels.node }} is in maintenance mode.
-      expr: tnf_node_in_service == 0 and tnf_cluster_in_service == 1
+      expr: tnf_node_in_service == 0 and on() tnf_cluster_in_service == 1
       for: 2m
       labels:
         severity: warning
