@@ -74,9 +74,6 @@ func (f *fakeEtcdClient) MemberPromote(ctx context.Context, member *etcdserverpb
 }
 
 func (f *fakeEtcdClient) MemberList(ctx context.Context) ([]*etcdserverpb.Member, error) {
-	if f.opts.memberListError != nil {
-		return nil, f.opts.memberListError
-	}
 	return f.members, nil
 }
 
@@ -213,7 +210,6 @@ type FakeClientOptions struct {
 	dbSize          int64
 	dbSizeInUse     int64
 	defragErrors    []error
-	memberListError error
 }
 
 func newFakeClientOpts(opts ...FakeClientOption) *FakeClientOptions {
@@ -259,12 +255,5 @@ func WithFakeStatus(status []*clientv3.StatusResponse) FakeClientOption {
 func WithFakeDefragErrors(errors []error) FakeClientOption {
 	return func(fo *FakeClientOptions) {
 		fo.defragErrors = errors
-	}
-}
-
-// WithMemberListError configures MemberList to return the given error.
-func WithMemberListError(err error) FakeClientOption {
-	return func(fo *FakeClientOptions) {
-		fo.memberListError = err
 	}
 }
