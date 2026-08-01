@@ -68,6 +68,7 @@ func prepareOperatorTestsRegistry() (*oteextension.Registry, error) {
 	// Tests tagged with [Serial] [Disruptive] are included in this suite.
 	extension.AddSuite(oteextension.Suite{
 		Name:        "openshift/cluster-etcd-operator/operator/disruptive",
+		Parents:     []string{"openshift/disruptive-longrunning"},
 		Parallelism: 1,
 		Qualifiers: []string{
 			`name.contains("[Disruptive]") && name.contains("[Serial]")`,
