@@ -1,11 +1,18 @@
 package jobs
 
 import (
+	"context"
 	"testing"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/utils/clock"
 )
 
 func TestReadCronJobV1OrDie(t *testing.T) {
@@ -332,4 +339,263 @@ func TestInferImagePullPolicy(t *testing.T) {
 			require.Equal(t, tt.expected, result, "ImagePullPolicy for %q", tt.image)
 		})
 	}
+}
+
+func TestApplyJob_ClusterJobIgnoresRetryState(t *testing.T) {
+	// Test that cluster jobs (with job-type=cluster label) are not recreated
+	// when only NodeName and retry-related labels differ (operator restart scenario).
+	// BUT they ARE recreated if there's real drift (image, command, etc.)
+
+	tests := []struct {
+		name              string
+		existingNodeName  string
+		existingNodeIndex string
+		existingAttempt   string
+		existingImage     string
+		requiredNodeName  string
+		requiredNodeIndex string
+		requiredAttempt   string
+		requiredImage     string
+		jobStatus         string // "complete", "failed", or "running"
+		expectRecreation  bool
+	}{
+		{
+			name:              "completed cluster job with different NodeName and retry labels - should NOT recreate",
+			existingNodeName:  "master-2",
+			existingNodeIndex: "2",
+			existingAttempt:   "1",
+			existingImage:     "busybox:1.36",
+			requiredNodeName:  "master-0",
+			requiredNodeIndex: "0",
+			requiredAttempt:   "1",
+			requiredImage:     "busybox:1.36",
+			jobStatus:         "complete",
+			expectRecreation:  false,
+		},
+		{
+			name:              "completed cluster job with different image - SHOULD recreate",
+			existingNodeName:  "master-0",
+			existingNodeIndex: "0",
+			existingAttempt:   "1",
+			existingImage:     "busybox:1.36",
+			requiredNodeName:  "master-0",
+			requiredNodeIndex: "0",
+			requiredAttempt:   "1",
+			requiredImage:     "busybox:1.37",
+			jobStatus:         "complete",
+			expectRecreation:  true,
+		},
+		{
+			name:              "running cluster job with different NodeName and retry labels - should NOT recreate",
+			existingNodeName:  "master-2",
+			existingNodeIndex: "2",
+			existingAttempt:   "1",
+			existingImage:     "busybox:1.36",
+			requiredNodeName:  "master-0",
+			requiredNodeIndex: "0",
+			requiredAttempt:   "1",
+			requiredImage:     "busybox:1.36",
+			jobStatus:         "running",
+			expectRecreation:  false,
+		},
+		{
+			name:              "failed cluster job with different NodeName - SHOULD recreate (round-robin retry)",
+			existingNodeName:  "master-0",
+			existingNodeIndex: "0",
+			existingAttempt:   "1",
+			existingImage:     "busybox:1.36",
+			requiredNodeName:  "master-1",
+			requiredNodeIndex: "1",
+			requiredAttempt:   "1",
+			requiredImage:     "busybox:1.36",
+			jobStatus:         "failed",
+			expectRecreation:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			fakeKubeClient := fake.NewSimpleClientset()
+
+			// Create existing cluster job with specific NodeName and retry labels
+			existingJob := &batchv1.Job{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "tnf-setup-job",
+					Namespace: "openshift-etcd",
+					Labels: map[string]string{
+						LabelJobType:   "cluster",
+						LabelNodeIndex: tt.existingNodeIndex,
+						LabelAttempt:   tt.existingAttempt,
+					},
+					Generation: 1,
+				},
+				Spec: batchv1.JobSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							NodeName: tt.existingNodeName,
+							Containers: []corev1.Container{
+								{Name: "test", Image: tt.existingImage},
+							},
+							RestartPolicy: corev1.RestartPolicyNever,
+						},
+					},
+				},
+			}
+
+			// Set job status based on test case
+			switch tt.jobStatus {
+			case "complete":
+				existingJob.Status.Conditions = []batchv1.JobCondition{
+					{Type: batchv1.JobComplete, Status: corev1.ConditionTrue},
+				}
+			case "failed":
+				existingJob.Status.Conditions = []batchv1.JobCondition{
+					{Type: batchv1.JobFailed, Status: corev1.ConditionTrue},
+				}
+			case "running":
+				// No conditions - job is running
+				existingJob.Status.Conditions = []batchv1.JobCondition{}
+			}
+
+			// Apply spec hash to existing job
+			err := resourceapply.SetSpecHashAnnotation(&existingJob.ObjectMeta, existingJob.Spec)
+			require.NoError(t, err)
+
+			_, err = fakeKubeClient.BatchV1().Jobs(existingJob.Namespace).Create(ctx, existingJob, metav1.CreateOptions{})
+			require.NoError(t, err)
+
+			// Create required job with potentially different NodeName, retry labels, and image
+			requiredJob := &batchv1.Job{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "tnf-setup-job",
+					Namespace: "openshift-etcd",
+					Labels: map[string]string{
+						LabelJobType:   "cluster",
+						LabelNodeIndex: tt.requiredNodeIndex,
+						LabelAttempt:   tt.requiredAttempt,
+					},
+				},
+				Spec: batchv1.JobSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							NodeName: tt.requiredNodeName,
+							Containers: []corev1.Container{
+								{Name: "test", Image: tt.requiredImage},
+							},
+							RestartPolicy: corev1.RestartPolicyNever,
+						},
+					},
+				},
+			}
+
+			// Call ApplyJob
+			recorder := events.NewRecorder(
+				fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),
+				"test-apply-job",
+				&corev1.ObjectReference{},
+				clock.RealClock{},
+			)
+			resultJob, created, err := ApplyJob(ctx, fakeKubeClient.BatchV1(), recorder, requiredJob, 1)
+
+			if tt.expectRecreation {
+				// Should return error indicating job was deleted for recreation
+				require.Error(t, err)
+				require.Contains(t, err.Error(), "job spec was modified, old job is deleted")
+				require.Nil(t, resultJob)
+				require.False(t, created)
+			} else {
+				// Should return existing job unchanged
+				require.NoError(t, err)
+				require.NotNil(t, resultJob)
+				require.False(t, created)
+				require.Equal(t, existingJob.Name, resultJob.Name)
+				// Verify job was not deleted
+				job, getErr := fakeKubeClient.BatchV1().Jobs(existingJob.Namespace).Get(ctx, existingJob.Name, metav1.GetOptions{})
+				require.NoError(t, getErr)
+				require.NotNil(t, job)
+			}
+		})
+	}
+}
+
+func TestApplyJob_NodeUIDDrift(t *testing.T) {
+	// Test that node-specific jobs are recreated when the node UID changes
+	// (node replaced with same name but different UID).
+	// The "node" label contains the UID, so changing it triggers real drift detection.
+
+	ctx := context.Background()
+	fakeKubeClient := fake.NewSimpleClientset()
+
+	// Create existing node job with UID from old node
+	existingJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tnf-auth-job-master-0",
+			Namespace: "openshift-etcd",
+			Labels: map[string]string{
+				"node": "old-uid-12345", // Old node UID
+			},
+			Generation: 1,
+		},
+		Spec: batchv1.JobSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					NodeName: "master-0",
+					Containers: []corev1.Container{
+						{Name: "test", Image: "busybox:1.36"},
+					},
+					RestartPolicy: corev1.RestartPolicyNever,
+				},
+			},
+		},
+		Status: batchv1.JobStatus{
+			Conditions: []batchv1.JobCondition{
+				{Type: batchv1.JobComplete, Status: corev1.ConditionTrue},
+			},
+		},
+	}
+
+	// Apply spec hash to existing job
+	err := resourceapply.SetSpecHashAnnotation(&existingJob.ObjectMeta, existingJob.Spec)
+	require.NoError(t, err)
+
+	_, err = fakeKubeClient.BatchV1().Jobs(existingJob.Namespace).Create(ctx, existingJob, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// Create required job with UID from new node (node was replaced)
+	requiredJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tnf-auth-job-master-0",
+			Namespace: "openshift-etcd",
+			Labels: map[string]string{
+				"node": "new-uid-67890", // New node UID - this is real drift\!
+			},
+		},
+		Spec: batchv1.JobSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					NodeName: "master-0", // Same node name
+					Containers: []corev1.Container{
+						{Name: "test", Image: "busybox:1.36"}, // Same image
+					},
+					RestartPolicy: corev1.RestartPolicyNever,
+				},
+			},
+		},
+	}
+
+	// Call ApplyJob
+	recorder := events.NewRecorder(
+		fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),
+		"test-apply-job",
+		&corev1.ObjectReference{},
+		clock.RealClock{},
+	)
+	resultJob, created, err := ApplyJob(ctx, fakeKubeClient.BatchV1(), recorder, requiredJob, 1)
+
+	// Should detect drift and delete job for recreation
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "job spec was modified, old job is deleted")
+	require.Nil(t, resultJob)
+	require.False(t, created)
 }

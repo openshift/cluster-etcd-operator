@@ -5,6 +5,13 @@ import (
 	"net"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
+)
+
+const (
+	ControlPlaneNodeLabelSelector = "node-role.kubernetes.io/control-plane"
 )
 
 // IsNodeReady checks if a node is in Ready state.
@@ -27,7 +34,6 @@ func GetNodeIPForPacemaker(node corev1.Node) (string, error) {
 		return "", fmt.Errorf("node %q has no configured address", node.Name)
 	}
 
-	// find internal ip
 	for _, addr := range addresses {
 		switch addr.Type {
 		case corev1.NodeInternalIP:
@@ -38,6 +44,37 @@ func GetNodeIPForPacemaker(node corev1.Node) (string, error) {
 		}
 	}
 
-	// fallback
 	return addresses[0].Address, nil
+}
+
+func GetNodeNames(nodes []*corev1.Node) []string {
+	names := make([]string, len(nodes))
+	for i, node := range nodes {
+		names[i] = node.Name
+	}
+	return names
+}
+
+// StringSlicesEqual checks if two string slices are equal (same order).
+func StringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// ListNodesFromInformer returns all nodes from the informer.
+// Returns only nodes matching the informer's filter (e.g., controlPlaneNodeInformer).
+func ListNodesFromInformer(informer cache.SharedIndexInformer) ([]*corev1.Node, error) {
+	if informer == nil {
+		return nil, fmt.Errorf("informer is nil")
+	}
+
+	lister := corev1listers.NewNodeLister(informer.GetIndexer())
+	return lister.List(labels.Everything())
 }
