@@ -12,9 +12,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
@@ -70,6 +67,7 @@ type pacemakerLifecycleManager struct {
 // Returns the controller, the PacemakerLifecycleManager instance, and the PacemakerCluster informer
 // (which must be started separately - see runPacemakerControllers in pkg/tnf/operator/starter.go).
 func newPacemakerLifecycleManager(
+	ctx context.Context,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	kubeClient kubernetes.Interface,
 	eventRecorder events.Recorder,
@@ -79,55 +77,11 @@ func newPacemakerLifecycleManager(
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	etcdInformer operatorv1informers.EtcdInformer,
 ) (factory.Controller, *pacemakerLifecycleManager, cache.SharedIndexInformer, error) {
-	// Create REST client for PacemakerStatus CRs
-	restClient, err := pacemaker.CreatePacemakerRESTClient(restConfig)
+	// Create PacemakerCluster informer
+	informer, err := pacemaker.NewPacemakerClusterInformer(restConfig)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to create REST client: %w", err)
+		return nil, nil, nil, err
 	}
-
-	// Create scheme for the parameter codec
-	scheme := runtime.NewScheme()
-	if err := pacmkrv1.AddToScheme(scheme); err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to add scheme for informer: %w", err)
-	}
-
-	// Create informer for PacemakerCluster
-	klog.Infof("Creating PacemakerCluster informer for group %s, resource %s", pacmkrv1.SchemeGroupVersion.String(), pacemaker.PacemakerResourceName)
-	informer := cache.NewSharedIndexInformer(
-		&pacemaker.PacemakerListWatch{ListWatch: cache.ListWatch{
-			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-				klog.V(4).Infof("PacemakerCluster informer ListFunc called for resource %s", pacemaker.PacemakerResourceName)
-				sanitizedOptions := pacemaker.SanitizeListOptions(options)
-				result := &pacmkrv1.PacemakerClusterList{}
-				err := restClient.Get().
-					Resource(pacemaker.PacemakerResourceName).
-					VersionedParams(&sanitizedOptions, runtime.NewParameterCodec(scheme)).
-					Do(context.Background()).
-					Into(result)
-				if err != nil {
-					klog.Errorf("Failed to list PacemakerCluster resources (%s): %v", pacemaker.PacemakerResourceName, err)
-				} else {
-					klog.V(4).Infof("Successfully listed PacemakerCluster resources, found %d items", len(result.Items))
-				}
-				return result, err
-			},
-			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-				klog.V(4).Infof("PacemakerCluster informer WatchFunc called for resource %s", pacemaker.PacemakerResourceName)
-				sanitizedOptions := pacemaker.SanitizeListOptions(options)
-				watcher, err := restClient.Get().
-					Resource(pacemaker.PacemakerResourceName).
-					VersionedParams(&sanitizedOptions, runtime.NewParameterCodec(scheme)).
-					Watch(context.Background())
-				if err != nil {
-					klog.Errorf("Failed to watch PacemakerCluster resources (%s): %v", pacemaker.PacemakerResourceName, err)
-				}
-				return watcher, err
-			},
-		}},
-		&pacmkrv1.PacemakerCluster{},
-		pacemaker.HealthCheckResyncInterval,
-		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
-	)
 
 	c := &pacemakerLifecycleManager{
 		operatorClient:             operatorClient,
@@ -138,6 +92,7 @@ func newPacemakerLifecycleManager(
 		controllerContext:          controllerContext,
 		kubeInformersForNamespaces: kubeInformersForNamespaces,
 		etcdInformer:               etcdInformer,
+		controllerCtx:              ctx,
 	}
 
 	syncCtx := factory.NewSyncContext(controllerNamePacemakerLifecycle, eventRecorder.WithComponentSuffix("pacemaker-lifecycle-manager"))
@@ -145,13 +100,14 @@ func newPacemakerLifecycleManager(
 	klog.Infof("%s controller created, waiting for informers to sync before starting", controllerNamePacemakerLifecycle)
 	klog.Infof("PacemakerLifecycleManager will watch: operatorClient and %s/%s resource", pacmkrv1.SchemeGroupVersion.String(), pacemaker.PacemakerResourceName)
 
-	// ResyncEvery ensures the sync function is called at regular intervals (1 minute)
-	// even if no informer events are detected.
+	// ResyncEvery ensures the sync function is called every minute with fresh cache data.
+	// We use WithBareInformers to keep caches synced without triggering sync on every event.
+	// Custom event handlers (registered below) handle specific cases like node Ready transitions.
 	controller := factory.New().
 		WithSyncContext(syncCtx).
 		ResyncEvery(time.Minute).
 		WithSync(c.sync).
-		WithInformers(
+		WithBareInformers(
 			operatorClient.Informer(),
 			informer,
 			controlPlaneNodeInformer,
@@ -193,17 +149,11 @@ func (c *pacemakerLifecycleManager) registerNodeEventHandlers() error {
 			if !oldReady && newReady {
 				klog.Infof("node %s transitioned to ready state - restarting update-setup job", newNode.GetName())
 				go func() {
-					// Use controller context (cancelled on shutdown) instead of background context
+					// Use controller context (cancelled on shutdown)
+					// Context is initialized in constructor, so always available
 					c.controllerCtxMu.Lock()
 					ctx := c.controllerCtx
 					c.controllerCtxMu.Unlock()
-
-					if ctx == nil {
-						// Controller hasn't started yet, event fired before first sync
-						// This shouldn't happen (informers sync before events fire), but be defensive
-						klog.V(4).Infof("Skipping node ready event handler - controller context not yet available")
-						return
-					}
 
 					// Restart update-setup job when nodes become ready (e.g., after replacement)
 					// This ensures update-setup reruns if it completed before auth ran on new node
@@ -228,13 +178,6 @@ func (c *pacemakerLifecycleManager) sync(ctx context.Context, syncCtx factory.Sy
 	klog.V(4).Infof("PacemakerLifecycleManager sync started")
 	defer klog.V(4).Infof("PacemakerLifecycleManager sync completed")
 
-	// Store controller context on first sync (for event handler goroutines)
-	c.controllerCtxMu.Lock()
-	if c.controllerCtx == nil {
-		c.controllerCtx = ctx
-	}
-	c.controllerCtxMu.Unlock()
-
 	// Start job controllers (runs in both bootstrap and runtime modes)
 	if err := c.startJobControllers(ctx); err != nil {
 		klog.Errorf("Failed to start job controllers: %v", err)
@@ -255,7 +198,6 @@ func (c *pacemakerLifecycleManager) runPacemakerHealthCheckController(ctx contex
 		klog.V(4).Infof("Health check controller already started, skipping duplicate start")
 		return
 	}
-	c.healthCheckStarted = true
 	c.healthCheckMu.Unlock()
 
 	healthCheckController, _, err := pacemaker.NewHealthCheckWithInformer(
@@ -268,6 +210,11 @@ func (c *pacemakerLifecycleManager) runPacemakerHealthCheckController(ctx contex
 		klog.Errorf("Failed to create health check controller: %v", err)
 		return
 	}
+
+	// Only set flag after successful creation
+	c.healthCheckMu.Lock()
+	c.healthCheckStarted = true
+	c.healthCheckMu.Unlock()
 
 	go healthCheckController.Run(ctx, 1)
 	klog.Infof("Health check controller started")
@@ -307,10 +254,12 @@ func (c *pacemakerLifecycleManager) restartUpdateSetupJob(ctx context.Context) e
 		return c.getActivePacemakerNodes()
 	}
 
-	// affectedNodesFunc: all control plane nodes (ready or not)
-	// Job waits for these nodes to become ready before proceeding
+	// affectedNodesFunc: K8s ∩ Pacemaker active nodes (ready only)
+	// Only blocks on nodes that are actually in the Pacemaker cluster configuration.
+	// This prevents deadlock when a node is removed from Pacemaker but can't become Ready
+	// without update-setup re-adding it (kubelet is a Pacemaker resource).
 	updateSetupAffectedNodesFunc := func() ([]*corev1.Node, error) {
-		return tools.ListNodesFromInformer(c.controlPlaneNodeInformer)
+		return c.getActivePacemakerNodes()
 	}
 
 	klog.Infof("Restarting update-setup job controller after node ready event")
