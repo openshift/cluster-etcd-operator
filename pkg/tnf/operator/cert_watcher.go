@@ -7,6 +7,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,6 +37,15 @@ func (c *pacemakerLifecycleManager) ensureCertWatcherDaemonSet(ctx context.Conte
 	}
 	if err != nil {
 		return fmt.Errorf("failed to get cert-watcher DaemonSet: %w", err)
+	}
+
+	// Only update when a field we manage has actually drifted. Use DeepDerivative
+	// (not DeepEqual) so server-defaulted fields present on the live object but
+	// unset in our desired template don't register as a difference. With DeepEqual
+	// every sync would see a "diff", issue a redundant Update, and flip the
+	// pod-template hash back and forth — churning the DaemonSet on each reconcile.
+	if equality.Semantic.DeepDerivative(desired.Spec.Template, existing.Spec.Template) {
+		return nil
 	}
 
 	existing.Spec.Template = desired.Spec.Template
