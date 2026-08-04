@@ -6,9 +6,11 @@ import (
 	"os"
 	"time"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
+	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/staticresourcecontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -26,6 +28,26 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/externaletcdsupportcontroller"
 )
+
+const (
+	conditionTypePacemakerLifecycleManagerDegraded = "PacemakerLifecycleManagerDegraded"
+	reasonPacemakerLifecycleManagerStartupFailed   = "StartupFailed"
+)
+
+func setPacemakerLifecycleManagerStartupCondition(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient, startupErr error) error {
+	condition := operatorv1.OperatorCondition{
+		Type:   conditionTypePacemakerLifecycleManagerDegraded,
+		Status: operatorv1.ConditionFalse,
+		Reason: "AsExpected",
+	}
+	if startupErr != nil {
+		condition.Status = operatorv1.ConditionTrue
+		condition.Reason = reasonPacemakerLifecycleManagerStartupFailed
+		condition.Message = fmt.Sprintf("Failed to create Pacemaker lifecycle manager: %v", startupErr)
+	}
+	_, _, err := v1helpers.UpdateStatus(ctx, operatorClient, v1helpers.UpdateConditionFn(condition))
+	return err
+}
 
 // HandleDualReplicaClusters checks feature gate and control plane topology,
 // and handles dual replica aka two node fencing clusters
@@ -64,10 +86,8 @@ func HandleDualReplicaClusters(
 		return false, err
 	}
 	// Start pacemaker controllers (lifecycle manager, status collector)
-	// PacemakerLifecycleManager handles ALL node lifecycle events:
-	//  - UpdateFunc: Ready transitions for initial bootstrap
-	//  - AddFunc/DeleteFunc: drift-driven reconciliation
-	// Secret handler registration happens inside runPacemakerControllers after lifecycleManager is created
+	// PacemakerLifecycleManager registers UpdateFunc handler for node Ready transitions
+	// to trigger update-setup job restart during initial bootstrap.
 	runPacemakerControllers(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer, controlPlaneNodeInformer)
 
 	return true, nil
@@ -168,18 +188,34 @@ func runPacemakerControllers(ctx context.Context, controllerContext *controllerc
 		klog.Infof("PacemakerCluster CRD is established")
 
 		// Prerequisites met: create and start lifecycle manager controller.
-		lifecycleController, _, pacemakerInformer, err := newPacemakerLifecycleManager(
-			operatorClient,
-			kubeClient,
-			controllerContext.EventRecorder,
-			controllerContext.KubeConfig,
-			controlPlaneNodeInformer,
-			controllerContext,
-			kubeInformersForNamespaces,
-			etcdInformer,
-		)
+		// Retry with backoff to handle transient errors (e.g., API server unavailable).
+		var lifecycleController factory.Controller
+		var pacemakerInformer cache.SharedIndexInformer
+		err = wait.PollUntilContextCancel(ctx, 30*time.Second, true, func(ctx context.Context) (bool, error) {
+			var createErr error
+			lifecycleController, _, pacemakerInformer, createErr = newPacemakerLifecycleManager(
+				ctx,
+				operatorClient,
+				kubeClient,
+				controllerContext.EventRecorder,
+				controllerContext.KubeConfig,
+				controlPlaneNodeInformer,
+				controllerContext,
+				kubeInformersForNamespaces,
+				etcdInformer,
+			)
+			if createErr != nil {
+				klog.Errorf("Failed to create Pacemaker lifecycle manager, will retry: %v", createErr)
+				if statusErr := setPacemakerLifecycleManagerStartupCondition(ctx, operatorClient, createErr); statusErr != nil {
+					klog.Errorf("Failed to report Pacemaker lifecycle manager startup failure: %v", statusErr)
+				}
+				return false, nil
+			}
+			return true, nil
+		})
 		if err != nil {
-			klog.Fatalf("Failed to create Pacemaker lifecycle manager: %v", err)
+			klog.Errorf("Context cancelled while creating Pacemaker lifecycle manager: %v", err)
+			return
 		}
 
 		// Start the PacemakerCluster informer (controller waits for sync before processing events).
@@ -190,6 +226,15 @@ func runPacemakerControllers(ctx context.Context, controllerContext *controllerc
 		// - Bootstrap: StartJobControllers() drives external etcd transition
 		// - Post-transition: MonitorHealth(), ReconcilePacemakerConfig(), CleanupOrphanedJobs()
 		go lifecycleController.Run(ctx, 1)
+		go func() {
+			_ = wait.PollUntilContextCancel(ctx, 30*time.Second, true, func(ctx context.Context) (bool, error) {
+				if err := setPacemakerLifecycleManagerStartupCondition(ctx, operatorClient, nil); err != nil {
+					klog.Errorf("Failed to clear Pacemaker lifecycle manager startup condition, will retry: %v", err)
+					return false, nil
+				}
+				return true, nil
+			})
+		}()
 
 		// Note: Status collector is started by lifecycle manager only after transition is complete
 		// (see startJobControllersWithLock in job_controllers.go)

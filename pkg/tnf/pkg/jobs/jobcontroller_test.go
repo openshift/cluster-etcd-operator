@@ -1,7 +1,49 @@
 package jobs
 
+/*
+TEST COVERAGE SUMMARY - jobcontroller_test.go
+==============================================
+
+This file tests TNF job controller sync logic and MaxRetriesExceeded condition handling.
+
+WHAT'S TESTED
+-------------
+
+Job Controller Sync:
+├── TestSync - Job controller sync loop and job lifecycle
+│   ├── Job not created without sync
+│   ├── Initial sync will create job
+│   ├── Job completed -> clears degraded condition
+│   ├── Job running -> no-op
+│   ├── Job failed -> updates retry state
+│   └── Job failed stuck -> auto-deleted after 10 minutes
+├── TestSyncWithAvailableCondition - Available condition management
+│   ├── Job completed with available condition -> Available=True
+│   ├── Job running with available condition -> Available=False
+│   └── Job failed with available condition -> Available=False
+└── TestJobModificationRecreation - Job drift detection and recreation
+    └── Job spec modified -> detected and recreated
+
+MaxRetriesExceeded Condition Handling:
+├── TestIsJobMaxRetriesExceeded - Detection via Message field
+│   ├── No degraded condition -> false
+│   ├── Degraded false -> false
+│   ├── Degraded true with exact MaxRetries message -> true
+│   ├── Degraded true with concatenated MaxRetries message -> true
+│   ├── Degraded true with SyncError but different message -> false
+│   └── Degraded true with different reason and no MaxRetries -> false
+└── TestPreserveMaxRetriesOnReturn - Preservation for both nil and error returns
+    ├── err=nil, MaxRetriesExceeded not set -> returns nil
+    ├── err=nil, degraded false -> returns nil
+    ├── err=nil, MaxRetriesExceeded set -> returns wrapped error with reason
+    ├── err!=nil, MaxRetriesExceeded not set -> returns original error
+    ├── err!=nil, MaxRetriesExceeded set -> returns wrapped error
+    └── err=nil, different degraded reason -> returns nil
+*/
+
 import (
 	"context"
+	"errors"
 	"slices"
 	"sort"
 	"strings"
@@ -23,7 +65,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	coreinformers "k8s.io/client-go/informers"
@@ -245,7 +287,7 @@ func TestSync(t *testing.T) {
 				if err == nil {
 					t.Errorf("Expected Job to be deleted, found generation %d", actualJob.Generation)
 				}
-				if !errors.IsNotFound(err) {
+				if !apierrors.IsNotFound(err) {
 					t.Errorf("Expected error to be NotFound, got %s", err)
 				}
 			}
@@ -454,7 +496,7 @@ func TestJobModificationRecreation(t *testing.T) {
 	if err == nil {
 		t.Errorf("Job should have been deleted after first sync")
 	}
-	if !errors.IsNotFound(err) {
+	if !apierrors.IsNotFound(err) {
 		t.Errorf("Expected NotFound error, got: %v", err)
 	}
 
@@ -830,5 +872,200 @@ func sanitizeObjectMeta(meta *metav1.ObjectMeta) {
 	// Treat empty array as nil for easier comparison.
 	if len(meta.Finalizers) == 0 {
 		meta.Finalizers = nil
+	}
+}
+
+func TestIsJobMaxRetriesExceeded(t *testing.T) {
+	tests := []struct {
+		name              string
+		degradedCondition *opv1.OperatorCondition
+		expectedResult    bool
+	}{
+		{
+			name:              "no degraded condition",
+			degradedCondition: nil,
+			expectedResult:    false,
+		},
+		{
+			name: "degraded false",
+			degradedCondition: &opv1.OperatorCondition{
+				Type:   conditionDegraded,
+				Status: opv1.ConditionFalse,
+			},
+			expectedResult: false,
+		},
+		{
+			name: "degraded true with exact MaxRetries message",
+			degradedCondition: &opv1.OperatorCondition{
+				Type:    conditionDegraded,
+				Status:  opv1.ConditionTrue,
+				Reason:  "SyncError",
+				Message: DegradedMessageMaxRetries,
+			},
+			expectedResult: true,
+		},
+		{
+			name: "degraded true with concatenated MaxRetries message",
+			degradedCondition: &opv1.OperatorCondition{
+				Type:    conditionDegraded,
+				Status:  opv1.ConditionTrue,
+				Reason:  "SyncError",
+				Message: DegradedMessageMaxRetries + "; job spec was modified, old job is deleted",
+			},
+			expectedResult: true,
+		},
+		{
+			name: "degraded true with SyncError reason and message does not contain MaxRetries",
+			degradedCondition: &opv1.OperatorCondition{
+				Type:    conditionDegraded,
+				Status:  opv1.ConditionTrue,
+				Reason:  "SyncError",
+				Message: "some other error",
+			},
+			expectedResult: false,
+		},
+		{
+			name: "degraded true with different reason and no MaxRetries in message",
+			degradedCondition: &opv1.OperatorCondition{
+				Type:    conditionDegraded,
+				Status:  opv1.ConditionTrue,
+				Reason:  "SomeOtherReason",
+				Message: "different error",
+			},
+			expectedResult: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create fake operator client with the condition
+			var conditions []opv1.OperatorCondition
+			if tt.degradedCondition != nil {
+				conditions = append(conditions, *tt.degradedCondition)
+			}
+
+			opStatus := &opv1.StaticPodOperatorStatus{
+				OperatorStatus: opv1.OperatorStatus{
+					Conditions: conditions,
+				},
+			}
+
+			result := isJobMaxRetriesExceeded(controllerName, &opStatus.OperatorStatus)
+			if result != tt.expectedResult {
+				t.Errorf("isJobMaxRetriesExceeded() = %v, want %v", result, tt.expectedResult)
+			}
+		})
+	}
+}
+
+func TestPreserveMaxRetriesOnReturn(t *testing.T) {
+	// Sentinel error for testing error wrapping and identity preservation
+	sentinelErr := errors.New("ApplyJob failed")
+
+	tests := []struct {
+		name                string
+		degradedCondition   *opv1.OperatorCondition
+		inputErr            error
+		reason              string
+		expectError         bool
+		expectedErrContains string
+	}{
+		{
+			name:              "err=nil, MaxRetriesExceeded not set - returns nil",
+			degradedCondition: nil,
+			inputErr:          nil,
+			reason:            "waiting for success",
+			expectError:       false,
+		},
+		{
+			name: "err=nil, degraded false - returns nil",
+			degradedCondition: &opv1.OperatorCondition{
+				Type:   conditionDegraded,
+				Status: opv1.ConditionFalse,
+			},
+			inputErr:    nil,
+			reason:      "waiting for success",
+			expectError: false,
+		},
+		{
+			name: "err=nil, MaxRetriesExceeded set - returns wrapped error with reason",
+			degradedCondition: &opv1.OperatorCondition{
+				Type:    conditionDegraded,
+				Status:  opv1.ConditionTrue,
+				Reason:  "SyncError",
+				Message: DegradedMessageMaxRetries,
+			},
+			inputErr:            nil,
+			reason:              "waiting for success",
+			expectError:         true,
+			expectedErrContains: DegradedMessageMaxRetries + "; waiting for success",
+		},
+		{
+			name:                "err!=nil, MaxRetriesExceeded not set - returns original error",
+			degradedCondition:   nil,
+			inputErr:            sentinelErr,
+			reason:              "",
+			expectError:         true,
+			expectedErrContains: "ApplyJob failed",
+		},
+		{
+			name: "err!=nil, MaxRetriesExceeded set - returns wrapped error",
+			degradedCondition: &opv1.OperatorCondition{
+				Type:    conditionDegraded,
+				Status:  opv1.ConditionTrue,
+				Reason:  "SyncError",
+				Message: DegradedMessageMaxRetries,
+			},
+			inputErr:            sentinelErr,
+			reason:              "",
+			expectError:         true,
+			expectedErrContains: DegradedMessageMaxRetries + "; ApplyJob failed",
+		},
+		{
+			name: "err=nil, different degraded reason - returns nil",
+			degradedCondition: &opv1.OperatorCondition{
+				Type:    conditionDegraded,
+				Status:  opv1.ConditionTrue,
+				Reason:  "SomeOtherReason",
+				Message: "some other error",
+			},
+			inputErr:    nil,
+			reason:      "waiting for success",
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create fake operator status with the condition
+			var conditions []opv1.OperatorCondition
+			if tt.degradedCondition != nil {
+				conditions = append(conditions, *tt.degradedCondition)
+			}
+
+			opStatus := &opv1.OperatorStatus{
+				Conditions: conditions,
+			}
+
+			err := preserveMaxRetriesOnReturn(controllerName, tt.inputErr, tt.reason, opStatus)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("preserveMaxRetriesOnReturn() expected error, got nil")
+				} else {
+					if !strings.Contains(err.Error(), tt.expectedErrContains) {
+						t.Errorf("preserveMaxRetriesOnReturn() error = %v, want to contain %v", err.Error(), tt.expectedErrContains)
+					}
+					// Verify error wrapping preserves identity when inputErr is non-nil
+					if tt.inputErr != nil && !errors.Is(err, tt.inputErr) {
+						t.Errorf("preserveMaxRetriesOnReturn() error does not wrap inputErr: errors.Is(err, inputErr) = false")
+					}
+				}
+			} else {
+				if err != nil {
+					t.Errorf("preserveMaxRetriesOnReturn() expected nil, got error: %v", err)
+				}
+			}
+		})
 	}
 }
