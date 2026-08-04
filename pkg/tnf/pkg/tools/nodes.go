@@ -70,9 +70,14 @@ func StringSlicesEqual(a, b []string) bool {
 
 // ListNodesFromInformer returns all nodes from the informer.
 // Returns only nodes matching the informer's filter (e.g., controlPlaneNodeInformer).
+// Returns error if informer hasn't synced yet (helps callers distinguish unsynced cache from empty node list).
 func ListNodesFromInformer(informer cache.SharedIndexInformer) ([]*corev1.Node, error) {
 	if informer == nil {
 		return nil, fmt.Errorf("informer is nil")
+	}
+
+	if !informer.HasSynced() {
+		return nil, fmt.Errorf("informer has not synced yet")
 	}
 
 	lister := corev1listers.NewNodeLister(informer.GetIndexer())
