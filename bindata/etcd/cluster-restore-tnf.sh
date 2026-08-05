@@ -196,6 +196,9 @@ if [ -d "${ETCD_DATA_DIR}/member" ]; then
   mv "${ETCD_DATA_DIR}"/member "${ETCD_DATA_DIR_BACKUP}"/
 fi
 
+# Move any remaining files out of the data dir before wiping it.
+backup_remaining_etcd_data_dir_contents
+
 echo "removing etcd data dir..."
 rm -rf "${ETCD_DATA_DIR}"
 mkdir -p "${ETCD_DATA_DIR}"
