@@ -263,7 +263,10 @@ func canFencingConfigBeSkipped(fc fencingConfig, stonithConfig StonithConfig) bo
 			for option, value := range fc.FencingDeviceOptions {
 				switch option {
 				case Ip:
-					if nvPairNeedsUpdate(nvPairs, "ip", value) {
+					// Compare against GetParsedIP(): stonith create/update stores IPv6
+					// addresses bracketed (e.g. "[fd2e::1]"), while FencingDeviceOptions[Ip]
+					// keeps the unbracketed form from the fencing secret.
+					if nvPairNeedsUpdate(nvPairs, "ip", fc.GetParsedIP()) {
 						klog.V(1).Info("ip needs update")
 						return false
 					}

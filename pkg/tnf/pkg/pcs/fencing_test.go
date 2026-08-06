@@ -753,6 +753,126 @@ func TestCanFencingConfigBeSkipped(t *testing.T) {
 			},
 			want: true,
 		},
+		{
+			// Regression: pcs stores IPv6 as "[addr]" via GetParsedIP(), but the
+			// fencing secret keeps the unbracketed form. Skip must treat them as equal
+			// or every tnf-setup retry re-runs stonith update --wait and times out.
+			name: "can be skipped with ipv6 bracketed cib ip",
+			fc: fencingConfig{
+				NodeName:          "node1",
+				FencingID:         "node1_redfish",
+				FencingDeviceType: "fence_redfish",
+				FencingDeviceOptions: map[fencingOption]string{
+					Username:    "admin",
+					Password:    "pass123",
+					Ip:          "fd2e:6f44:5dd8:c956::1",
+					IpPort:      "8000",
+					SystemsUri:  "redfish/v1/Systems/abc",
+					SslInsecure: "",
+				},
+			},
+			sc: StonithConfig{
+				Primitives: []Primitive{
+					{
+						Id: "node1_redfish",
+						AgentName: AgentName{
+							Type: "fence_redfish",
+						},
+						InstanceAttributes: []InstanceAttributes{
+							{
+								NvPairs: []NvPair{
+									{
+										Name:  "username",
+										Value: "admin",
+									},
+									{
+										Name:  "password",
+										Value: "pass123",
+									},
+									{
+										Name:  "ip",
+										Value: "[fd2e:6f44:5dd8:c956::1]",
+									},
+									{
+										Name:  "ipport",
+										Value: "8000",
+									},
+									{
+										Name:  "systems_uri",
+										Value: "redfish/v1/Systems/abc",
+									},
+									{
+										Name:  "pcmk_host_list",
+										Value: "node1",
+									},
+									{
+										Name:  "ssl_insecure",
+										Value: "1",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "needs update for different ipv6 address",
+			fc: fencingConfig{
+				NodeName:          "node1",
+				FencingID:         "node1_redfish",
+				FencingDeviceType: "fence_redfish",
+				FencingDeviceOptions: map[fencingOption]string{
+					Username:   "admin",
+					Password:   "pass123",
+					Ip:         "fd2e:6f44:5dd8:c956::2",
+					IpPort:     "8000",
+					SystemsUri: "redfish/v1/Systems/abc",
+				},
+			},
+			sc: StonithConfig{
+				Primitives: []Primitive{
+					{
+						Id: "node1_redfish",
+						AgentName: AgentName{
+							Type: "fence_redfish",
+						},
+						InstanceAttributes: []InstanceAttributes{
+							{
+								NvPairs: []NvPair{
+									{
+										Name:  "username",
+										Value: "admin",
+									},
+									{
+										Name:  "password",
+										Value: "pass123",
+									},
+									{
+										Name:  "ip",
+										Value: "[fd2e:6f44:5dd8:c956::1]",
+									},
+									{
+										Name:  "ipport",
+										Value: "8000",
+									},
+									{
+										Name:  "systems_uri",
+										Value: "redfish/v1/Systems/abc",
+									},
+									{
+										Name:  "pcmk_host_list",
+										Value: "node1",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
