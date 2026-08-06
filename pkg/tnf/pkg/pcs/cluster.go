@@ -36,7 +36,8 @@ func ConfigureCluster(ctx context.Context, cfg config.ClusterConfig) (bool, erro
 		// Note: `migration-threshold=60` caps Pacemaker start failures before the resource is treated as blocked (60 retries).
 		// Note: `op start start-delay=15s` waits 15s before each start attempt so dependencies (e.g. resolv prepender) can settle; fast-fail ExecConditions still return quickly.
 		// Note: `op start timeout=180s` bounds how long a single start may run; it does not add delay between retries (that is start-delay).
-		"/usr/sbin/pcs resource create kubelet systemd:kubelet op start timeout=180s start-delay=15s clone meta interleave=true migration-threshold=60",
+		// Use `clone meta ... --future` so clone meta lands on the clone under pcs 0.11.6+/0.12 (rhbz#2168155).
+		"/usr/sbin/pcs resource create kubelet systemd:kubelet op start timeout=180s start-delay=15s clone meta interleave=true migration-threshold=60 --future",
 		"/usr/sbin/pcs cluster enable --all",
 		"/usr/sbin/pcs cluster sync",
 		"/usr/sbin/pcs cluster reload corosync",
