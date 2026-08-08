@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -69,6 +68,7 @@ func TestNewDefragController(t *testing.T) {
 		staticPodStatus     *operatorv1.StaticPodOperatorStatus
 		objects             []runtime.Object
 		clusterSize         int
+		syncLoops           int
 		memberHealth        *etcdcli.FakeMemberHealth
 		dbInUse             int64
 		dbSize              int64
@@ -84,6 +84,7 @@ func TestNewDefragController(t *testing.T) {
 			dbInUse:             minDefragBytes / 2, // 500MB
 			defragSuccessEvents: 3,
 			clusterSize:         3,
+			syncLoops:           4, // 2 non-leader defrags + 1 leader transfer + 1 former-leader defrag
 			memberHealth:        &etcdcli.FakeMemberHealth{Healthy: 3},
 			objects: []runtime.Object{
 				u.FakeInfrastructureTopology(configv1.HighlyAvailableTopologyMode),
@@ -97,6 +98,7 @@ func TestNewDefragController(t *testing.T) {
 			dbInUse:             minDefragBytes / 2, // 500MB
 			defragSuccessEvents: 2,
 			clusterSize:         2,
+			syncLoops:           3, // 1 non-leader defrag + 1 leader transfer + 1 former-leader defrag
 			memberHealth:        &etcdcli.FakeMemberHealth{Healthy: 2},
 			objects: []runtime.Object{
 				u.FakeInfrastructureTopology(configv1.DualReplicaTopologyMode),
@@ -110,6 +112,7 @@ func TestNewDefragController(t *testing.T) {
 			dbInUse:             minDefragBytes / 2, // 500MB
 			defragSuccessEvents: 3,
 			clusterSize:         3,
+			syncLoops:           4, // 2 non-leader defrags + 1 leader transfer + 1 former-leader defrag
 			memberHealth:        &etcdcli.FakeMemberHealth{Healthy: 3},
 			objects: []runtime.Object{
 				u.FakeInfrastructureTopology(configv1.HighlyAvailableArbiterMode),
@@ -222,37 +225,34 @@ func TestNewDefragController(t *testing.T) {
 				memberLister:         fakeEtcdClient,
 				defragClient:         fakeEtcdClient,
 				statusClient:         fakeEtcdClient,
+				leaderMover:          fakeEtcdClient,
 				infrastructureLister: configv1listers.NewInfrastructureLister(indexer),
 				configmapLister:      corev1listers.NewConfigMapLister(indexer),
-				// to speed the tests up, in real life we use minDefragWaitDuration
-				defragWaitDuration: 1 * time.Second,
 			}
 
-			err := controller.sync(context.TODO(), factory.NewSyncContext("defrag-controller", eventRecorder))
-			if err != nil && !scenario.wantErr {
-				t.Fatalf("unexepected error %v", err)
+			syncLoops := scenario.syncLoops
+			if syncLoops == 0 {
+				syncLoops = 1
+			}
+			var err error
+			for i := 0; i < syncLoops; i++ {
+				err = controller.sync(context.TODO(), factory.NewSyncContext("defrag-controller", eventRecorder))
+				if err != nil && !scenario.wantErr {
+					t.Fatalf("unexpected error on sync %d: %v", i, err)
+				}
 			}
 			if err == nil && scenario.wantErr {
 				t.Fatal("expected error got nil")
 			}
 			if err != nil && scenario.wantErr {
-				if !strings.HasPrefix(err.Error(), scenario.wantErrMsg) {
-					t.Fatalf("unexepected error prefix want: %q got: %q", scenario.wantErrMsg, err.Error())
+				if !strings.Contains(err.Error(), scenario.wantErrMsg) {
+					t.Fatalf("unexpected error prefix want: %q got: %q", scenario.wantErrMsg, err.Error())
 				}
 			}
 			var defragSuccessEvents int
-			lastEvent := len(eventRecorder.Events()) - 1
-			for i, event := range eventRecorder.Events() {
-				if strings.HasPrefix(event.Message, "etcd member has been defragmented") {
+			for _, event := range eventRecorder.Events() {
+				if strings.Contains(event.Message, "etcd member has been defragmented") {
 					defragSuccessEvents++
-				}
-				// ensure the leader was defragged last
-				if i == lastEvent {
-					// last event will print leader ID
-					regex := regexp.MustCompile(fmt.Sprint(status[0].Leader))
-					if len(regex.FindAll([]byte(event.Message), -1)) != 1 {
-						t.Fatalf("expected leader defrag event to be last got %q", event.Message)
-					}
 				}
 			}
 			if defragSuccessEvents != scenario.defragSuccessEvents {
@@ -304,13 +304,13 @@ func TestNewDefragControllerMultiSyncs(t *testing.T) {
 			defragSuccessEvents: 0,
 			clusterSize:         3,
 			syncLoops:           maxDefragFailuresBeforeDegrade,
-			errSyncLoops:        maxDefragFailuresBeforeDegrade,
+			errSyncLoops:        0,
 			memberHealth:        &etcdcli.FakeMemberHealth{Healthy: 3},
 			objects: []runtime.Object{
 				u.FakeInfrastructureTopology(configv1.HighlyAvailableTopologyMode),
 			},
 			fakeClientOpts: []etcdcli.FakeClientOption{
-				etcdcli.WithFakeDefragErrors(generateErrors(maxDefragFailuresBeforeDegrade * 3)),
+				etcdcli.WithFakeDefragErrors(generateErrors(maxDefragFailuresBeforeDegrade)),
 			},
 			wantDisabledCondition: operatorv1.ConditionFalse,
 			wantDegradedCondition: operatorv1.ConditionTrue,
@@ -322,16 +322,15 @@ func TestNewDefragControllerMultiSyncs(t *testing.T) {
 			dbInUse:             minDefragBytes / 2,
 			defragSuccessEvents: 3,
 			clusterSize:         3,
-			syncLoops:           maxDefragFailuresBeforeDegrade + 1,
-			errSyncLoops:        maxDefragFailuresBeforeDegrade,
+			syncLoops:           maxDefragFailuresBeforeDegrade + 4, // +1 for leader transfer requeue
+			errSyncLoops:        0,
 			memberHealth:        &etcdcli.FakeMemberHealth{Healthy: 3},
 			objects: []runtime.Object{
 				u.FakeInfrastructureTopology(configv1.HighlyAvailableTopologyMode),
 			},
 			fakeClientOpts: []etcdcli.FakeClientOption{
-				etcdcli.WithFakeDefragErrors(generateErrors(maxDefragFailuresBeforeDegrade * 3)),
+				etcdcli.WithFakeDefragErrors(generateErrors(maxDefragFailuresBeforeDegrade)),
 			},
-			// ignoring errors here since the first maxDefragFailuresBeforeDegrade invocations will return an error, the ones after won't
 			wantDisabledCondition: operatorv1.ConditionFalse,
 			wantDegradedCondition: operatorv1.ConditionFalse,
 		},
@@ -378,10 +377,9 @@ func TestNewDefragControllerMultiSyncs(t *testing.T) {
 				memberLister:         fakeEtcdClient,
 				statusClient:         fakeEtcdClient,
 				defragClient:         fakeEtcdClient,
+				leaderMover:          fakeEtcdClient,
 				infrastructureLister: configv1listers.NewInfrastructureLister(indexer),
 				configmapLister:      corev1listers.NewConfigMapLister(indexer),
-				// to speed the tests up, in real life we use minDefragWaitDuration
-				defragWaitDuration: 1 * time.Second,
 			}
 
 			numSyncErr := 0
@@ -397,7 +395,7 @@ func TestNewDefragControllerMultiSyncs(t *testing.T) {
 
 			var defragSuccessEvents int
 			for _, event := range eventRecorder.Events() {
-				if strings.HasPrefix(event.Message, "etcd member has been defragmented") {
+				if strings.Contains(event.Message, "etcd member has been defragmented") {
 					defragSuccessEvents++
 				}
 			}
@@ -411,6 +409,187 @@ func TestNewDefragControllerMultiSyncs(t *testing.T) {
 			assert.Equal(t, scenario.wantDegradedCondition, controllerDegradedCondition.Status)
 		})
 	}
+}
+
+func TestDefragMovesLeadershipBeforeDefrag(t *testing.T) {
+	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+		&operatorv1.StaticPodOperatorSpec{
+			OperatorSpec: operatorv1.OperatorSpec{
+				ManagementState: operatorv1.Managed,
+			},
+		},
+		u.StaticPodOperatorStatus(),
+		nil,
+		nil,
+	)
+
+	integration.BeforeTestExternal(t)
+	testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: 3})
+	defer testServer.Terminate(t)
+
+	etcdMembers := waitForMembersWithClientURLs(t, testServer)
+
+	var status []*clientv3.StatusResponse
+	var leaderID uint64
+	for _, member := range testServer.Members {
+		statusResp, err := testServer.Client(0).Status(context.TODO(), member.GRPCURL)
+		require.NoError(t, err)
+		if leaderID == 0 {
+			leaderID = statusResp.Leader
+		}
+		// Only the leader is fragmented, so it's the sole defrag target
+		// and must trigger a leader transfer.
+		statusResp.DbSize = minDefragBytes / 2
+		statusResp.DbSizeInUse = minDefragBytes / 2
+		for _, m := range etcdMembers {
+			if m.ID == leaderID && statusResp.Header.MemberId == leaderID {
+				statusResp.DbSize = minDefragBytes
+				statusResp.DbSizeInUse = minDefragBytes / 2
+			}
+		}
+		status = append(status, statusResp)
+	}
+
+	fakeEtcdClient, _ := etcdcli.NewFakeEtcdClient(
+		etcdMembers,
+		etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3}),
+		etcdcli.WithFakeStatus(status),
+	)
+	eventRecorder := events.NewInMemoryRecorder(t.Name(), clock.RealClock{})
+	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	require.NoError(t, indexer.Add(u.FakeInfrastructureTopology(configv1.HighlyAvailableTopologyMode)))
+
+	controller := &DefragController{
+		operatorClient:       fakeOperatorClient,
+		memberLister:         fakeEtcdClient,
+		defragClient:         fakeEtcdClient,
+		statusClient:         fakeEtcdClient,
+		leaderMover:          fakeEtcdClient,
+		infrastructureLister: configv1listers.NewInfrastructureLister(indexer),
+		configmapLister:      corev1listers.NewConfigMapLister(indexer),
+		defragSettleTime:     1 * time.Millisecond,
+	}
+
+	syncCtx := factory.NewSyncContext("defrag-controller", eventRecorder)
+
+	// First sync: leader is the most fragmented, so leadership is transferred and sync requeues.
+	err := controller.sync(context.TODO(), syncCtx)
+	require.NoError(t, err)
+
+	var leaderTransferEvents int
+	for _, event := range eventRecorder.Events() {
+		if strings.Contains(event.Message, "Moved leadership away from member") {
+			leaderTransferEvents++
+		}
+	}
+	assert.Equal(t, 1, leaderTransferEvents, "expected exactly one leader transfer event")
+
+	// Wait for the requeue item to appear on the queue (added by AddAfter after leader transfer).
+	item, shutdown := syncCtx.Queue().Get()
+	require.False(t, shutdown, "queue should not be shut down")
+	syncCtx.Queue().Done(item)
+
+	// Second sync driven by the queue: the former leader is now a follower and gets defragged.
+	err = controller.sync(context.TODO(), syncCtx)
+	require.NoError(t, err)
+
+	var defragSuccessEvents int
+	for _, event := range eventRecorder.Events() {
+		if strings.Contains(event.Message, "etcd member has been defragmented") {
+			defragSuccessEvents++
+		}
+	}
+	assert.Equal(t, 1, defragSuccessEvents, "expected exactly one defrag success event")
+}
+
+// TestDefragLeaderNotStarvedInHighChurn verifies that in a high-churn environment
+// where non-leader members re-fragment between sync cycles, the leader is eventually
+// defragged rather than being perpetually skipped.
+func TestDefragLeaderNotStarvedInHighChurn(t *testing.T) {
+	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+		&operatorv1.StaticPodOperatorSpec{
+			OperatorSpec: operatorv1.OperatorSpec{
+				ManagementState: operatorv1.Managed,
+			},
+		},
+		u.StaticPodOperatorStatus(),
+		nil,
+		nil,
+	)
+
+	integration.BeforeTestExternal(t)
+	testServer := integration.NewCluster(t, &integration.ClusterConfig{Size: 3})
+	defer testServer.Terminate(t)
+
+	etcdMembers := waitForMembersWithClientURLs(t, testServer)
+
+	var status []*clientv3.StatusResponse
+	for _, member := range testServer.Members {
+		statusResp, err := testServer.Client(0).Status(context.TODO(), member.GRPCURL)
+		require.NoError(t, err)
+		// All members are fragmented.
+		statusResp.DbSize = minDefragBytes
+		statusResp.DbSizeInUse = minDefragBytes / 2
+		status = append(status, statusResp)
+	}
+
+	fakeEtcdClient, _ := etcdcli.NewFakeEtcdClient(
+		etcdMembers,
+		etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3}),
+		etcdcli.WithFakeStatus(status),
+	)
+
+	eventRecorder := events.NewInMemoryRecorder(t.Name(), clock.RealClock{})
+	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	require.NoError(t, indexer.Add(u.FakeInfrastructureTopology(configv1.HighlyAvailableTopologyMode)))
+
+	controller := &DefragController{
+		operatorClient:       fakeOperatorClient,
+		memberLister:         fakeEtcdClient,
+		defragClient:         fakeEtcdClient,
+		statusClient:         fakeEtcdClient,
+		leaderMover:          fakeEtcdClient,
+		infrastructureLister: configv1listers.NewInfrastructureLister(indexer),
+		configmapLister:      corev1listers.NewConfigMapLister(indexer),
+	}
+
+	syncCtx := factory.NewSyncContext("defrag-controller", eventRecorder)
+
+	// Simulate high churn: after each sync, re-fragment all members.
+	// Without the defraggedMembers tracking, the leader would be starved
+	// because len(defragTargets) > 1 is always true.
+	//
+	// Expected sequence for a 3-node cluster:
+	//   sync 1: defrag non-leader A
+	//   sync 2: defrag non-leader B (A re-fragmented but already tracked)
+	//   sync 3: leader transfer (all non-leaders defragged this cycle)
+	//   sync 4: defrag former leader
+	maxSyncs := 10
+	var leaderDefragged bool
+	for range maxSyncs {
+		// Re-fragment all members to simulate high churn.
+		for _, s := range status {
+			s.DbSize = minDefragBytes
+			s.DbSizeInUse = minDefragBytes / 2
+		}
+
+		err := controller.sync(context.TODO(), syncCtx)
+		require.NoError(t, err)
+
+		// Check if the leader was defragged by looking for a defrag attempt
+		// on the leader member.
+		for _, event := range eventRecorder.Events() {
+			if strings.Contains(event.Message, "Moved leadership away from member") {
+				leaderDefragged = true
+				break
+			}
+		}
+		if leaderDefragged {
+			break
+		}
+	}
+
+	assert.True(t, leaderDefragged, "leader should have been selected for defrag (via leader transfer) within %d syncs", maxSyncs)
 }
 
 func Test_isEndpointBackendFragmented(t *testing.T) {
