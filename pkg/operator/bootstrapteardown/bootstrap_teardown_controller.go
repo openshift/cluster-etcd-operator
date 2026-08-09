@@ -60,7 +60,8 @@ func NewBootstrapTeardownController(
 }
 
 func (c *BootstrapTeardownController) sync(ctx context.Context, _ factory.SyncContext) error {
-	timeoutCtx, cancelFunc := context.WithTimeout(ctx, 1*time.Minute)
+	// TEST ONLY (OCPBUGS-105240): extend timeout from 1m to 10m to accommodate the 5m sleep in removeBootstrap(). DO NOT MERGE.
+	timeoutCtx, cancelFunc := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancelFunc()
 
 	scalingStrategy, err := ceohelpers.GetBootstrapScalingStrategy(c.operatorClient, c.namespaceLister, c.infrastructureLister)
@@ -142,6 +143,13 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, safeT
 	if updateErr != nil {
 		return fmt.Errorf("error while updating EnoughEtcdMembers: %w", updateErr)
 	}
+
+	// TEST ONLY (OCPBUGS-105240): delay bootstrap member removal by 5 minutes
+	// to hold the race window open between EtcdRunningInCluster=True and MemberRemove().
+	// This forces the TNF pacemaker startup deadlock deterministically.
+	// DO NOT MERGE.
+	klog.Warningf("TEST ONLY (OCPBUGS-105240): delaying bootstrap member removal by 5 minutes to reproduce race condition")
+	time.Sleep(5 * time.Minute)
 
 	// check to see if bootstrapping is complete
 	if isBootstrapComplete, err := bootstrap.IsBootstrapComplete(c.configmapLister); !isBootstrapComplete || err != nil {
