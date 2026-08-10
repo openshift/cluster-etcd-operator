@@ -250,6 +250,13 @@ func startTnfJobcontrollers(
 		fencingJobConfigFunc := createFencingJobConfigFunc(lifecycleManager, kubeInformersForNamespaces)
 		jobs.RunClusterJobController(ctx, tools.JobTypeFencing, schedulableNodesFunc, fencingAffectedNodesFunc, fencingJobConfigFunc, 3, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
 
+		// Cert watcher DaemonSet: watches CA bundle files on disk and restarts
+		// the local etcd when they change. Runs independently of the operator
+		// and API server — prevents force_new_cluster during CA rotation.
+		if err := lifecycleManager.ensureCertWatcherDaemonSet(ctx); err != nil {
+			return fmt.Errorf("failed to ensure cert-watcher DaemonSet: %w", err)
+		}
+
 		// Start status collector (only after transition is complete, when Pacemaker exists)
 		lifecycleManager.runPacemakerStatusCollectorCronJob(ctx)
 

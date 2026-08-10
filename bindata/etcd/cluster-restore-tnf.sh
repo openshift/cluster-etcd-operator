@@ -108,10 +108,12 @@ function cleanup_podman_etcd_attributes() {
   crm_attribute --delete --name "standalone_node" || true
   crm_attribute --delete --name "learner_node" || true
   crm_attribute --delete --name "force_new_cluster" --lifetime reboot --node "${NODENAME}" || true
+  crm_attribute --delete --name "restart_no_leave" --lifetime reboot --node "${NODENAME}" || true
 
   peer_node_name=$(get_peer_node_name)
   if [ "$(echo "$peer_node_name" | wc -w)" -eq 1 ]; then
     crm_attribute --delete --name "force_new_cluster" --lifetime reboot --node "${peer_node_name}" || true
+    crm_attribute --delete --name "restart_no_leave" --lifetime reboot --node "${peer_node_name}" || true
   else
     echo "Warning: could not find peer node name. If restore fails, manually run on the peer node, and try again:" >&2
     echo "  crm_attribute --delete --name force_new_cluster --lifetime reboot --node \"\$(hostname)\"" >&2
