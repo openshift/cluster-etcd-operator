@@ -60,9 +60,12 @@ func GetCIB(ctx context.Context) (string, error) {
 	stdOut, stdErr, err := exec.Execute(ctx, "/usr/sbin/pcs cluster cib")
 	// redact passwords!
 	stdOut = tools.RedactPasswords(stdOut)
-	if err != nil || len(stdErr) > 0 {
-		klog.Error(err, "Failed to get final pcs cib", "stdout", stdOut, "stderr", stdErr, "err", err)
+	if err != nil {
+		klog.Error(err, "Failed to get final pcs cib", "stdout", stdOut, "stderr", tools.RedactPasswords(stdErr))
 		return "", err
+	}
+	if len(stdErr) > 0 {
+		klog.Warningf("pcs cluster cib produced stderr: %s", tools.RedactPasswords(stdErr))
 	}
 	return stdOut, nil
 }
