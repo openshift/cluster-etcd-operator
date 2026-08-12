@@ -22,6 +22,12 @@ func (f *fakeEtcdClient) Defragment(ctx context.Context, member *etcdserverpb.Me
 		f.opts.defragErrors = f.opts.defragErrors[1:]
 		return nil, err
 	}
+	for _, status := range f.opts.status {
+		if status.Header.MemberId == member.ID {
+			status.DbSize = status.DbSizeInUse
+			break
+		}
+	}
 	// dramatic simplification
 	f.opts.dbSize = f.opts.dbSizeInUse
 	return nil, nil
@@ -80,6 +86,13 @@ func (f *fakeEtcdClient) MemberList(ctx context.Context) ([]*etcdserverpb.Member
 func (f *fakeEtcdClient) VotingMemberList(ctx context.Context) ([]*etcdserverpb.Member, error) {
 	members, _ := f.MemberList(ctx)
 	return filterVotingMembers(members), nil
+}
+
+func (f *fakeEtcdClient) MoveLeader(ctx context.Context, leader *etcdserverpb.Member, toMember uint64) error {
+	for _, status := range f.opts.status {
+		status.Leader = toMember
+	}
+	return nil
 }
 
 func (f *fakeEtcdClient) MemberRemove(ctx context.Context, memberID uint64) error {

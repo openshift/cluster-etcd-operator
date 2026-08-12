@@ -246,6 +246,27 @@ func (g *etcdClientGetter) MemberUpdatePeerURL(ctx context.Context, id uint64, p
 	return err
 }
 
+// MoveLeader creates a new client connected directly to the given leader member
+// and issues the MoveLeader RPC. The MoveLeader API requires the request to be
+// sent to the current leader; using the client pool can route to a follower and
+// return "etcdserver: not leader".
+func (g *etcdClientGetter) MoveLeader(ctx context.Context, leader *etcdserverpb.Member, toMember uint64) error {
+	cli, err := newEtcdClientWithClientOpts([]string{leader.ClientURLs[0]}, false)
+	if err != nil {
+		return fmt.Errorf("failed to create client to leader %s for MoveLeader: %w", leader.ClientURLs[0], err)
+	}
+	defer func() {
+		if err := cli.Close(); err != nil {
+			klog.Errorf("error closing leader client for MoveLeader: %v", err)
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(ctx, DefaultClientTimeout)
+	defer cancel()
+	_, err = cli.MoveLeader(ctx, toMember)
+	return err
+}
+
 func (g *etcdClientGetter) MemberRemove(ctx context.Context, memberID uint64) error {
 	cli, err := g.clientPool.Get()
 	if err != nil {
