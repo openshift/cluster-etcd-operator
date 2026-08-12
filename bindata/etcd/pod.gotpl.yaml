@@ -170,7 +170,7 @@ spec:
         exec nice -n -19 ionice -c2 -n0 etcd \
           --logger=zap \
           --log-level={{.LogLevel}} \
-          --feature-gates=InitialCorruptCheck=true,StopGRPCServiceOnDefrag=true,NonBlockingDefrag=true \
+          --feature-gates=InitialCorruptCheck=true,StopGRPCServiceOnDefrag=true \
           --snapshot-count={{.SnapshotCount}} \
           --initial-advertise-peer-urls=https://${NODE_NODE_ENVVAR_NAME_IP}:2380 \
           --cert-file=/etc/kubernetes/static-pod-certs/secrets/etcd-all-certs/etcd-serving-NODE_NAME.crt \
@@ -216,7 +216,7 @@ spec:
         port: 9980
         path: readyz
         scheme: HTTPS
-      timeoutSeconds: {{ .ReadinessProbe.TimeoutSeconds }}      
+      timeoutSeconds: {{ .ReadinessProbe.TimeoutSeconds }}
       periodSeconds: {{ .ReadinessProbe.PeriodSeconds }}
       successThreshold: {{ .ReadinessProbe.SuccessThreshold }}
       failureThreshold: {{ .ReadinessProbe.FailureThreshold }}
@@ -235,7 +235,7 @@ spec:
       httpGet:
         port: 9980
         path: readyz
-        scheme: HTTPS      
+        scheme: HTTPS
       timeoutSeconds: {{ .StartupProbe.TimeoutSeconds }}
       periodSeconds: {{ .StartupProbe.PeriodSeconds }}
       successThreshold: {{ .StartupProbe.SuccessThreshold }}
@@ -321,7 +321,7 @@ spec:
       - |
         #!/bin/sh
         set -euo pipefail
-        
+
         exec nice -n -18 cluster-etcd-operator readyz \
           --target=https://localhost:2379 \
           --listen-port=9980 \
@@ -367,7 +367,7 @@ spec:
       - |
         #!/bin/sh
         set -euo pipefail
-        
+
         cluster-etcd-operator rev \
           --endpoints=$(ALL_ETCD_ENDPOINTS) \
           --client-cert-file=$(ETCDCTL_CERT) \
