@@ -113,9 +113,12 @@ func ConfigureFencing(ctx context.Context, kubeClient kubernetes.Interface, node
 		// verify credentials by getting the current BMC status
 		klog.Infof("Verifying fencing credentials for node %s", fc.NodeName)
 		stdOut, stdErr, err := exec.Execute(ctx, getStatusCommand(fc))
-		if err != nil || len(stdErr) > 0 {
-			klog.Error(err, "Failed to verify fencing credentials", "stdout", stdOut, "stderr", stdErr, "err", err)
+		if err != nil {
+			klog.Error(err, "Failed to verify fencing credentials", "stdout", tools.RedactPasswords(stdOut), "stderr", tools.RedactPasswords(stdErr))
 			return fmt.Errorf("failed to verify fencing credentials for node %s: %v", fc.NodeName, err)
+		}
+		if len(stdErr) > 0 {
+			klog.Warningf("Fencing status check for node %s produced stderr: %s", fc.NodeName, tools.RedactPasswords(stdErr))
 		}
 		klog.Info(fmt.Sprintf("Fencing credentials for node %s are valid, status command returned %q", fc.NodeName, stdOut))
 

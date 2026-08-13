@@ -16,9 +16,12 @@ func ConfigureEtcd(ctx context.Context, cfg config.ClusterConfig) error {
 	klog.Info("Checking pcs resources")
 
 	stdOut, stdErr, err := exec.Execute(ctx, "/usr/sbin/pcs resource status")
-	if err != nil || len(stdErr) > 0 {
-		klog.Error(err, "Failed to get pcs resource status", "stdout", stdOut, "stderr", stdErr, "err", err)
+	if err != nil {
+		klog.Error(err, "Failed to get pcs resource status", "stdout", stdOut, "stderr", stdErr)
 		return err
+	}
+	if len(stdErr) > 0 {
+		klog.Warningf("pcs resource status produced stderr: %s", stdErr)
 	}
 	if !strings.Contains(stdOut, "etcd") {
 		klog.Info("Creating etcd resource")
@@ -29,9 +32,12 @@ func ConfigureEtcd(ctx context.Context, cfg config.ClusterConfig) error {
 		cmd := fmt.Sprintf("/usr/sbin/pcs resource create etcd ocf:heartbeat:podman-etcd node_ip_map=\"%s:%s;%s:%s\" drop_in_dependency=true clone interleave=true notify=true meta migration-threshold=60",
 			cfg.NodeName1, cfg.NodeIP1, cfg.NodeName2, cfg.NodeIP2)
 		stdOut, stdErr, err = exec.Execute(ctx, cmd)
-		if err != nil || len(stdErr) > 0 {
-			klog.Error(err, "Failed to create etcd resource", "stdout", stdOut, "stderr", stdErr, "err", err)
+		if err != nil {
+			klog.Error(err, "Failed to create etcd resource", "stdout", stdOut, "stderr", stdErr)
 			return err
+		}
+		if len(stdErr) > 0 {
+			klog.Warningf("pcs resource create produced stderr: %s", stdErr)
 		}
 	}
 	return nil
@@ -41,16 +47,22 @@ func ConfigureEtcd(ctx context.Context, cfg config.ClusterConfig) error {
 func ConfigureConstraints(ctx context.Context) (bool, error) {
 	klog.Info("Checking pcs constraints")
 	stdOut, stdErr, err := exec.Execute(ctx, "/usr/sbin/pcs constraint")
-	if err != nil || len(stdErr) > 0 {
-		klog.Error(err, "Failed to get pcs resource status", "stdout", stdOut, "stderr", stdErr, "err", err)
+	if err != nil {
+		klog.Error(err, "Failed to list pcs constraints", "stdout", stdOut, "stderr", stdErr)
 		return false, err
+	}
+	if len(stdErr) > 0 {
+		klog.Warningf("pcs constraint produced stderr: %s", stdErr)
 	}
 	if !strings.Contains(stdOut, "etcd") {
 		klog.Info("Configuring etcd constraints")
 		stdOut, stdErr, err = exec.Execute(ctx, "/usr/sbin/pcs constraint order kubelet-clone then etcd-clone && /usr/sbin/pcs constraint colocation add etcd-clone with kubelet-clone")
-		if err != nil || len(stdErr) > 0 {
-			klog.Error(err, "Failed to configure etcd constraints", "stdout", stdOut, "stderr", stdErr, "err", err)
+		if err != nil {
+			klog.Error(err, "Failed to configure etcd constraints", "stdout", stdOut, "stderr", stdErr)
 			return false, err
+		}
+		if len(stdErr) > 0 {
+			klog.Warningf("pcs constraint configuration produced stderr: %s", stdErr)
 		}
 		return true, nil
 	}
