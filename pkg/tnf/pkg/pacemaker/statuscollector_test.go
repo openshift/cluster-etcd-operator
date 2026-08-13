@@ -812,11 +812,6 @@ func TestBuildClusterConditions(t *testing.T) {
 }
 
 func TestIsClusterInMaintenance(t *testing.T) {
-	// isClusterInMaintenance only checks cluster-level maintenance mode.
-	// Node-level maintenance is handled separately per-node and does NOT
-	// cause the function to return true. This distinction is important:
-	// - Cluster maintenance (pcs property set maintenance-mode=true) affects ALL nodes
-	// - Node maintenance (pcs node maintenance <node>) affects only that specific node
 	tests := []struct {
 		name                   string
 		clusterMaintenanceMode string
@@ -836,24 +831,34 @@ func TestIsClusterInMaintenance(t *testing.T) {
 			expectedResult:         false,
 		},
 		{
-			// Node-level maintenance does NOT trigger cluster-level maintenance
-			name:                   "cluster_level_maintenance_mode_false_one_node_in_maintenance",
+			name:                   "one_node_in_maintenance",
 			clusterMaintenanceMode: "false",
 			nodeMaintenanceModes:   []string{"true", "false"},
 			expectedResult:         false,
 		},
 		{
-			name:                   "cluster_level_maintenance_mode_empty_nodes_not_in_maintenance",
+			name:                   "all_nodes_individually_in_maintenance",
+			clusterMaintenanceMode: "false",
+			nodeMaintenanceModes:   []string{"true", "true"},
+			expectedResult:         true,
+		},
+		{
+			name:                   "cluster_level_maintenance_mode_empty",
 			clusterMaintenanceMode: "",
 			nodeMaintenanceModes:   []string{"false", "false"},
 			expectedResult:         false,
 		},
 		{
-			// Cluster maintenance is what matters, node state is irrelevant
 			name:                   "both_cluster_and_node_in_maintenance",
 			clusterMaintenanceMode: "true",
 			nodeMaintenanceModes:   []string{"true", "false"},
 			expectedResult:         true,
+		},
+		{
+			name:                   "no_nodes",
+			clusterMaintenanceMode: "false",
+			nodeMaintenanceModes:   []string{},
+			expectedResult:         false,
 		},
 	}
 
@@ -901,6 +906,16 @@ func TestBuildClusterStatus_ClusterConditionScenarios(t *testing.T) {
 		{
 			name:                    "cluster_maintenance",
 			xmlFile:                 "cluster_maintenance.xml",
+			expectedNodeCount:       2,
+			expectedClusterHealthy:  metav1.ConditionFalse,
+			expectedNodeCountStatus: metav1.ConditionTrue,
+			expectedNodeCountReason: pacmkrv1.ClusterNodeCountAsExpectedReasonAsExpected,
+			expectedInServiceStatus: ptr(metav1.ConditionFalse),
+			expectedInServiceReason: pacmkrv1.ClusterInServiceReasonInMaintenance,
+		},
+		{
+			name:                    "all_nodes_individually_in_maintenance",
+			xmlFile:                 "all_nodes_maintenance.xml",
 			expectedNodeCount:       2,
 			expectedClusterHealthy:  metav1.ConditionFalse,
 			expectedNodeCountStatus: metav1.ConditionTrue,
