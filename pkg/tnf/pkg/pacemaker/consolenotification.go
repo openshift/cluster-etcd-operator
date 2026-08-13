@@ -8,6 +8,7 @@ import (
 
 	consolev1 "github.com/openshift/api/console/v1"
 	pacmkrv1 "github.com/openshift/api/etcd/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
@@ -25,26 +26,26 @@ const (
 	notificationTextColor       = "#fff"
 	notificationBackgroundColor = "#c9190b"
 
-	docsBasePath = "https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/installing_a_two_node_openshift_cluster/two-node-with-fencing"
+	docsURLFormat = "https://docs.redhat.com/en/documentation/openshift_container_platform/%s/html/installing_a_two_node_openshift_cluster/two-node-with-fencing"
 )
 
 type notificationCategory struct {
-	name     string
-	linkHref string
-	linkText string
+	name         string
+	docsFragment string
+	linkText     string
 }
 
 var (
 	categoryDegraded = notificationCategory{
-		name:     "pacemaker-cluster-degraded",
-		linkHref: docsBasePath + "#operating-a-degraded-tnf",
-		linkText: "Recovery guide",
+		name:         "pacemaker-cluster-degraded",
+		docsFragment: "#operating-a-degraded-tnf",
+		linkText:     "Recovery guide",
 	}
 
 	categoryTroubleshooting = notificationCategory{
-		name:     "pacemaker-troubleshooting",
-		linkHref: docsBasePath + "#installing-post-tnf",
-		linkText: "Troubleshooting guide",
+		name:         "pacemaker-troubleshooting",
+		docsFragment: "#installing-post-tnf",
+		linkText:     "Troubleshooting guide",
 	}
 
 	allCategories = []notificationCategory{categoryDegraded, categoryTroubleshooting}
@@ -83,21 +84,24 @@ func isDegradedProblem(msg string) bool {
 }
 
 type consoleNotificationController struct {
-	dynamicClient      dynamic.Interface
-	recorder           events.Recorder
-	pacemakerInformer  cache.SharedIndexInformer
-	consoleUnavailable bool
+	dynamicClient        dynamic.Interface
+	recorder             events.Recorder
+	pacemakerInformer    cache.SharedIndexInformer
+	clusterVersionLister configv1listers.ClusterVersionLister
+	consoleUnavailable   bool
 }
 
 func NewConsoleNotificationController(
 	pacemakerInformer cache.SharedIndexInformer,
 	dynamicClient dynamic.Interface,
+	clusterVersionLister configv1listers.ClusterVersionLister,
 	eventRecorder events.Recorder,
 ) factory.Controller {
 	c := &consoleNotificationController{
-		dynamicClient:     dynamicClient,
-		recorder:          eventRecorder,
-		pacemakerInformer: pacemakerInformer,
+		dynamicClient:        dynamicClient,
+		recorder:             eventRecorder,
+		pacemakerInformer:    pacemakerInformer,
+		clusterVersionLister: clusterVersionLister,
 	}
 
 	return factory.New().
@@ -105,6 +109,21 @@ func NewConsoleNotificationController(
 		WithInformers(pacemakerInformer).
 		WithSync(c.sync).
 		ToController("ConsoleNotificationController", eventRecorder.WithComponentSuffix("console-notification"))
+}
+
+func (c *consoleNotificationController) docsBaseURL() string {
+	version := "latest"
+	cv, err := c.clusterVersionLister.Get("version")
+	if err != nil {
+		klog.V(4).Infof("Failed to get ClusterVersion for docs URL, using %q: %v", version, err)
+		return fmt.Sprintf(docsURLFormat, version)
+	}
+	if len(cv.Status.History) > 0 {
+		if parts := strings.SplitN(cv.Status.History[0].Version, ".", 3); len(parts) >= 2 {
+			version = parts[0] + "." + parts[1]
+		}
+	}
+	return fmt.Sprintf(docsURLFormat, version)
 }
 
 func (c *consoleNotificationController) sync(ctx context.Context, _ factory.SyncContext) error {
@@ -147,8 +166,9 @@ func (c *consoleNotificationController) manageNotification(ctx context.Context, 
 
 func (c *consoleNotificationController) ensureNotification(ctx context.Context, cat notificationCategory, problems []string) error {
 	text := strings.Join(problems, ". ") + ". Check pacemaker status for details."
+	linkHref := c.docsBaseURL() + cat.docsFragment
 
-	u, err := buildNotificationUnstructured(cat, text)
+	u, err := buildNotificationUnstructured(cat, linkHref, text)
 	if err != nil {
 		return err
 	}
@@ -193,7 +213,7 @@ func (c *consoleNotificationController) filterConsoleError(err error) error {
 	return err
 }
 
-func buildNotificationUnstructured(cat notificationCategory, text string) (*unstructured.Unstructured, error) {
+func buildNotificationUnstructured(cat notificationCategory, linkHref, text string) (*unstructured.Unstructured, error) {
 	notification := &consolev1.ConsoleNotification{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "console.openshift.io/v1",
@@ -213,7 +233,7 @@ func buildNotificationUnstructured(cat notificationCategory, text string) (*unst
 			Color:           notificationTextColor,
 			BackgroundColor: notificationBackgroundColor,
 			Link: &consolev1.Link{
-				Href: cat.linkHref,
+				Href: linkHref,
 				Text: cat.linkText,
 			},
 		},
