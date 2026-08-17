@@ -484,11 +484,21 @@ func getNodeAddresses(configNode ClusterConfigNode) []pacmkrv1.PacemakerNodeAddr
 	return addresses
 }
 
-// isClusterInMaintenance returns true if cluster-wide maintenance mode is enabled
-// (pcs property set maintenance-mode=true). Node-level maintenance (pcs node maintenance <node>)
-// is handled separately via buildNodeConditions.
+// isClusterInMaintenance returns true if the cluster is in maintenance, either
+// via the cluster-level property or because every node is individually in maintenance.
 func isClusterInMaintenance(result *PacemakerResult) bool {
-	return result.Summary.ClusterOptions.MaintenanceMode == "true"
+	if result.Summary.ClusterOptions.MaintenanceMode == "true" {
+		return true
+	}
+	if len(result.Nodes.Node) == 0 {
+		return false
+	}
+	for _, node := range result.Nodes.Node {
+		if node.Maintenance != "true" {
+			return false
+		}
+	}
+	return true
 }
 
 // processResourcesForState populates resourceState map. Fencing agents are handled separately.
