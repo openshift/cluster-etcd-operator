@@ -6,6 +6,8 @@ import (
 	"os"
 	"time"
 
+	configv1client "github.com/openshift/client-go/config/clientset/versioned"
+	configv1informersfactory "github.com/openshift/client-go/config/informers/externalversions"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions/config/v1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
@@ -205,11 +207,23 @@ func runPacemakerControllers(ctx context.Context, controllerContext *controllerc
 		klog.Infof("starting Pacemaker metrics controller")
 		go metricsController.Run(ctx, 1)
 
+		// Create a config client for ClusterVersion access (console notification docs URL).
+		configClient, err := configv1client.NewForConfig(controllerContext.KubeConfig)
+		if err != nil {
+			klog.Errorf("failed to create config client: %v", err)
+			return
+		}
+		configInformers := configv1informersfactory.NewSharedInformerFactory(configClient, 10*time.Minute)
+		clusterVersionLister := configInformers.Config().V1().ClusterVersions().Lister()
+		configInformers.Start(ctx.Done())
+		configInformers.WaitForCacheSync(ctx.Done())
+
 		// Create and start the console notification controller, sharing the same informer
 		klog.Infof("creating Pacemaker console notification controller")
 		notificationController := pacemaker.NewConsoleNotificationController(
 			pacemakerInformer,
 			dynamicClient,
+			clusterVersionLister,
 			controllerContext.EventRecorder,
 		)
 		klog.Infof("starting Pacemaker console notification controller")

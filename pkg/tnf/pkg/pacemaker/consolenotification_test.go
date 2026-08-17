@@ -2,12 +2,15 @@ package pacemaker
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	configv1 "github.com/openshift/api/config/v1"
 	pacmkrv1 "github.com/openshift/api/etcd/v1"
+	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/internal/testutil"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/stretchr/testify/require"
@@ -15,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	fakedynamic "k8s.io/client-go/dynamic/fake"
+	"k8s.io/client-go/tools/cache"
 	clocktesting "k8s.io/utils/clock/testing"
 )
 
@@ -106,6 +110,22 @@ func testCluster(opts ...clusterOpt) *pacmkrv1.PacemakerCluster {
 		opt(cr)
 	}
 	return cr
+}
+
+func fakeClusterVersionLister(t *testing.T, version string) configv1listers.ClusterVersionLister {
+	t.Helper()
+	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	if version != "" {
+		require.NoError(t, indexer.Add(&configv1.ClusterVersion{
+			ObjectMeta: metav1.ObjectMeta{Name: "version"},
+			Status: configv1.ClusterVersionStatus{
+				History: []configv1.UpdateHistory{
+					{Version: version},
+				},
+			},
+		}))
+	}
+	return configv1listers.NewClusterVersionLister(indexer)
 }
 
 // ---------------------------------------------------------------------------
@@ -287,14 +307,16 @@ func TestClassifyProblems(t *testing.T) {
 // Sync-level tests
 // ---------------------------------------------------------------------------
 
-func newTestController(cr *pacmkrv1.PacemakerCluster) (*consoleNotificationController, *fakedynamic.FakeDynamicClient) {
+func newTestController(t *testing.T, cr *pacmkrv1.PacemakerCluster) (*consoleNotificationController, *fakedynamic.FakeDynamicClient) {
+	t.Helper()
 	scheme := runtime.NewScheme()
 	dynClient := fakedynamic.NewSimpleDynamicClient(scheme)
 
 	return &consoleNotificationController{
-		dynamicClient:     dynClient,
-		recorder:          events.NewInMemoryRecorder("test", clocktesting.NewFakeClock(time.Now())),
-		pacemakerInformer: testutil.CreateFakeInformer(cr),
+		dynamicClient:        dynClient,
+		recorder:             events.NewInMemoryRecorder("test", clocktesting.NewFakeClock(time.Now())),
+		pacemakerInformer:    testutil.CreateFakeInformer(cr),
+		clusterVersionLister: fakeClusterVersionLister(t, "4.22.0"),
 	}, dynClient
 }
 
@@ -322,7 +344,7 @@ func countActions(dynClient *fakedynamic.FakeDynamicClient, verb string) int {
 
 func TestSync_HealthyCluster_DeletesBothNotifications(t *testing.T) {
 	cr := testCluster(withNodes(testNode("master-0", "192.168.111.20"), testNode("master-1", "192.168.111.21")))
-	ctrl, dynClient := newTestController(cr)
+	ctrl, dynClient := newTestController(t, cr)
 
 	err := ctrl.sync(context.Background(), nil)
 	require.NoError(t, err)
@@ -334,7 +356,7 @@ func TestSync_NodeOffline_CreatesDegradedNotification(t *testing.T) {
 		testNode("master-0", "192.168.111.20", offline()),
 		testNode("master-1", "192.168.111.21"),
 	))
-	ctrl, dynClient := newTestController(cr)
+	ctrl, dynClient := newTestController(t, cr)
 
 	err := ctrl.sync(context.Background(), nil)
 	require.NoError(t, err)
@@ -343,7 +365,7 @@ func TestSync_NodeOffline_CreatesDegradedNotification(t *testing.T) {
 
 func TestSync_StaleStatus_CreatesTroubleshootingNotification(t *testing.T) {
 	cr := testCluster(staleBy(10*time.Minute), withNodes(testNode("master-0", "192.168.111.20")))
-	ctrl, dynClient := newTestController(cr)
+	ctrl, dynClient := newTestController(t, cr)
 
 	err := ctrl.sync(context.Background(), nil)
 	require.NoError(t, err)
@@ -355,7 +377,7 @@ func TestSync_FencingDegraded_CreatesDegradedNotification(t *testing.T) {
 		testNode("master-0", "192.168.111.20", fencingDegraded()),
 		testNode("master-1", "192.168.111.21"),
 	))
-	ctrl, dynClient := newTestController(cr)
+	ctrl, dynClient := newTestController(t, cr)
 
 	err := ctrl.sync(context.Background(), nil)
 	require.NoError(t, err)
@@ -366,7 +388,7 @@ func TestSync_UninitializedCR_DeletesBothNotifications(t *testing.T) {
 	cr := &pacmkrv1.PacemakerCluster{
 		ObjectMeta: metav1.ObjectMeta{Name: PacemakerClusterResourceName},
 	}
-	ctrl, dynClient := newTestController(cr)
+	ctrl, dynClient := newTestController(t, cr)
 
 	err := ctrl.sync(context.Background(), nil)
 	require.NoError(t, err)
@@ -375,7 +397,7 @@ func TestSync_UninitializedCR_DeletesBothNotifications(t *testing.T) {
 }
 
 func TestSync_CRNotFound_DeletesBothNotifications(t *testing.T) {
-	ctrl, dynClient := newTestController(nil)
+	ctrl, dynClient := newTestController(t, nil)
 
 	err := ctrl.sync(context.Background(), nil)
 	require.NoError(t, err)
@@ -387,7 +409,7 @@ func TestSync_ConsoleUnavailable_SkipsSilently(t *testing.T) {
 		testNode("master-0", "192.168.111.20", unhealthyEtcd()),
 		testNode("master-1", "192.168.111.21"),
 	))
-	ctrl, _ := newTestController(cr)
+	ctrl, _ := newTestController(t, cr)
 	ctrl.consoleUnavailable = true
 
 	err := ctrl.sync(context.Background(), nil)
@@ -395,11 +417,51 @@ func TestSync_ConsoleUnavailable_SkipsSilently(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// docsBaseURL tests
+// ---------------------------------------------------------------------------
+
+func TestDocsBaseURL(t *testing.T) {
+	tests := []struct {
+		name        string
+		version     string
+		wantContain string
+	}{
+		{
+			name:        "extracts major.minor from full version",
+			version:     "4.23.0",
+			wantContain: "/openshift_container_platform/4.23/",
+		},
+		{
+			name:        "extracts major.minor from nightly version",
+			version:     "4.24.0-0.nightly-2026-08-10-123456",
+			wantContain: "/openshift_container_platform/4.24/",
+		},
+		{
+			name:        "falls back to latest when ClusterVersion unavailable",
+			version:     "",
+			wantContain: "/openshift_container_platform/latest/",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := &consoleNotificationController{
+				clusterVersionLister: fakeClusterVersionLister(t, tt.version),
+			}
+			url := ctrl.docsBaseURL()
+			require.Contains(t, url, tt.wantContain)
+			require.Contains(t, url, "two-node-with-fencing")
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
 // buildNotificationUnstructured tests
 // ---------------------------------------------------------------------------
 
 func TestBuildNotificationUnstructured_DegradedCategory(t *testing.T) {
-	u, err := buildNotificationUnstructured(categoryDegraded, "Node master-0 is offline. Check pacemaker status for details.")
+	linkHref := fmt.Sprintf(docsURLFormat, "4.22") + categoryDegraded.docsFragment
+	u, err := buildNotificationUnstructured(categoryDegraded, linkHref, "Node master-0 is offline. Check pacemaker status for details.")
 	require.NoError(t, err)
 	require.Equal(t, categoryDegraded.name, u.GetName())
 
@@ -410,20 +472,25 @@ func TestBuildNotificationUnstructured_DegradedCategory(t *testing.T) {
 	require.Equal(t, notificationBackgroundColor, bg)
 
 	href, _, _ := unstructured.NestedString(u.Object, "spec", "link", "href")
-	require.Equal(t, categoryDegraded.linkHref, href)
+	require.Equal(t, linkHref, href)
+	require.Contains(t, href, "/4.22/")
+	require.Contains(t, href, "#operating-a-degraded-tnf")
 
-	linkText, _, _ := unstructured.NestedString(u.Object, "spec", "link", "text")
-	require.Equal(t, categoryDegraded.linkText, linkText)
+	lt, _, _ := unstructured.NestedString(u.Object, "spec", "link", "text")
+	require.Equal(t, categoryDegraded.linkText, lt)
 }
 
 func TestBuildNotificationUnstructured_TroubleshootingCategory(t *testing.T) {
-	u, err := buildNotificationUnstructured(categoryTroubleshooting, "Pacemaker status is stale. Check pacemaker status for details.")
+	linkHref := fmt.Sprintf(docsURLFormat, "4.23") + categoryTroubleshooting.docsFragment
+	u, err := buildNotificationUnstructured(categoryTroubleshooting, linkHref, "Pacemaker status is stale. Check pacemaker status for details.")
 	require.NoError(t, err)
 	require.Equal(t, categoryTroubleshooting.name, u.GetName())
 
 	href, _, _ := unstructured.NestedString(u.Object, "spec", "link", "href")
-	require.Equal(t, categoryTroubleshooting.linkHref, href)
+	require.Equal(t, linkHref, href)
+	require.Contains(t, href, "/4.23/")
+	require.Contains(t, href, "#installing-post-tnf")
 
-	linkText, _, _ := unstructured.NestedString(u.Object, "spec", "link", "text")
-	require.Equal(t, categoryTroubleshooting.linkText, linkText)
+	lt, _, _ := unstructured.NestedString(u.Object, "spec", "link", "text")
+	require.Equal(t, categoryTroubleshooting.linkText, lt)
 }
