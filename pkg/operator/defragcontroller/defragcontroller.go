@@ -260,7 +260,7 @@ func (c *DefragController) runDefrag(ctx context.Context, syncCtx factory.SyncCo
 	recorder.Eventf("DefragControllerDefragmentAttempt", "Attempting defrag on member: %s, memberID: %x, dbSize: %d, dbInUse: %d, leader ID: %d", defragTargetMember.Name, defragTargetMember.ID, defragTargetStatus.DbSize, defragTargetStatus.DbSizeInUse, defragTargetStatus.Leader)
 	if _, err := c.defragClient.Defragment(ctx, defragTargetMember); err != nil {
 		errMsg := fmt.Sprintf("failed defrag on member: %s, memberID: %x: %v", defragTargetMember.Name, defragTargetMember.ID, err)
-		recorder.Warningf("DefragControllerDefragmentFailed", errMsg)
+		recorder.Warningf("DefragControllerDefragmentFailed", "%s", errMsg)
 		klog.Errorf("%s", errMsg)
 		c.numDefragFailures++
 		if c.numDefragFailures >= maxDefragFailuresBeforeDegrade {

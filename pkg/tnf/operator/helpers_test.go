@@ -413,3 +413,26 @@ func (m *mockNodeInformer) RunWithContext(ctx context.Context) {
 func (m *mockNodeInformer) SetWatchErrorHandlerWithContext(handler cache.WatchErrorHandlerWithContext) error {
 	return nil
 }
+
+func (m *mockNodeInformer) HasSyncedChecker() cache.DoneChecker {
+	return mockDoneChecker{synced: m.synced}
+}
+
+func (m *mockPacemakerInformer) HasSyncedChecker() cache.DoneChecker {
+	return mockDoneChecker{synced: true}
+}
+
+// mockDoneChecker is a cache.DoneChecker whose Done channel is closed only when
+// synced is true, mirroring the informer mock's HasSynced result.
+type mockDoneChecker struct {
+	synced bool
+}
+
+func (mockDoneChecker) Name() string { return "mockInformer" }
+func (c mockDoneChecker) Done() <-chan struct{} {
+	ch := make(chan struct{})
+	if c.synced {
+		close(ch)
+	}
+	return ch
+}

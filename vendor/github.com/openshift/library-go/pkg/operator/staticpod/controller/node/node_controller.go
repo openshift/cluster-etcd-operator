@@ -182,7 +182,7 @@ func (c *NodeController) sync(ctx context.Context, syncCtx factory.SyncContext) 
 
 	oldNodeDegradedCondition := v1helpers.FindOperatorCondition(originalOperatorStatus.Conditions, condition.NodeControllerDegradedConditionType)
 	if oldNodeDegradedCondition == nil || oldNodeDegradedCondition.Message != *degradedCondition.Message {
-		syncCtx.Recorder().Eventf("MasterNodesReadyChanged", *degradedCondition.Message)
+		syncCtx.Recorder().Eventf("MasterNodesReadyChanged", "%s", *degradedCondition.Message)
 	}
 	return nil
 }
