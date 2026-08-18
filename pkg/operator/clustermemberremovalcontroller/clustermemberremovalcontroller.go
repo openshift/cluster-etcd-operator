@@ -123,6 +123,21 @@ func (c *clusterMemberRemovalController) sync(ctx context.Context, syncCtx facto
 		return nil
 	}
 
+	// Only proceed if the machine API is functional.
+	if isFunctional, err := c.machineAPIChecker.IsFunctional(); err != nil {
+		return err
+	} else if !isFunctional {
+		return nil
+	}
+
+	// Remove members with no backing Machine or Node unconditionally: they are already
+	// non-functional and safe to clean up regardless of revision stability. Leaving them
+	// causes stale entries in the etcd-endpoints configmap.
+	var errs []error
+	if err := c.removeMemberWithoutMachine(ctx); err != nil {
+		errs = append(errs, err)
+	}
+
 	// Removing multiple members in the middle of a revision rollout can cause API unavailability
 	// when simultaneously deleting multiple machines with the controlplanemachineset "OnDelete" strategy,
 	// i.e we have multiple machines pending deletion and multiple new replacements added
@@ -132,23 +147,16 @@ func (c *clusterMemberRemovalController) sync(ctx context.Context, syncCtx facto
 	// the etcd pod is reinstalled to the latest revision.
 	// This is different from when the member is indefinitely unhealthy when the revision is stable.
 	//
-	// Additionally the EtcdEndpointsController pauses while a revision rollout is in progress
-	// So initially if the etcd-endpoints configmap is updated from 3->4 when the first replacement machine
-	// is added to the membership, a revision rollout will start and the configmap won't update in this period.
-	// But the ClusterMemberRemovalController will still delete a seemingly unhealthy machine during rollout
-	// The API servers on the old revision will neither see the new replacement etcd endpoint, and will also
-	// be using a removed member's endpoint.
-	//
 	// Moreover the EtcdEndpointsController uses the live etcd membership list to make scale down considerations for etcd quorum so the etcd-endpoints configmap always lags behind it.
 	//
 	// So the EtcdEndpointsController skips until the revision is stable so we remove members one at a time and unhealthy members are truly unhealthy
 	revisionStable, err := ceohelpers.IsRevisionStable(c.operatorClient)
 	if err != nil {
-		return fmt.Errorf("couldn't determine stability of revisions: %w", err)
+		return kerrors.NewAggregate(append(errs, fmt.Errorf("couldn't determine stability of revisions: %w", err)))
 	}
 	if !revisionStable {
-		klog.V(2).Infof("skipping due to revision in progress")
-		return nil
+		klog.V(2).Infof("skipping scale-down due to revision in progress")
+		return kerrors.NewAggregate(errs)
 	}
 
 	// Ensure the live etcd membership matches the etcd-endpoints configmap.
@@ -156,23 +164,12 @@ func (c *clusterMemberRemovalController) sync(ctx context.Context, syncCtx facto
 	// and propagated through a revision rollout.
 	etcdEndpointsUpdated, err := c.isEtcdEndpointsUpdated(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to check if etcd endpoints are updated: %w", err)
+		return kerrors.NewAggregate(append(errs, fmt.Errorf("failed to check if etcd endpoints are updated: %w", err)))
 	}
 	if !etcdEndpointsUpdated {
-		return nil
+		return kerrors.NewAggregate(errs)
 	}
 
-	// only attempt to scale down if the machine API is functional
-	if isFunctional, err := c.machineAPIChecker.IsFunctional(); err != nil {
-		return err
-	} else if !isFunctional {
-		return nil
-	}
-
-	var errs []error
-	if err := c.removeMemberWithoutMachine(ctx); err != nil {
-		errs = append(errs, err)
-	}
 	if err := c.attemptToRemoveLearningMember(ctx, syncCtx.Recorder()); err != nil {
 		errs = append(errs, err)
 	}
