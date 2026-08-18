@@ -31,6 +31,14 @@ var alertConfigs = []alertConfig{
 		path:      "/var/lib/pacemaker/alerts/tnf-taint-alert.sh",
 		selectXML: "<select_fencing/>",
 	},
+	// Node-lost uses the same script as fencing. Graceful ACPI shutdown takes
+	// the peer Offline without a STONITH completion, so select_fencing alone
+	// never taints and DaemonSet endpoints (e.g. DNS) stay Ready on the dead node.
+	{
+		id:        "tnf-taint-lost-alert",
+		path:      "/var/lib/pacemaker/alerts/tnf-taint-alert.sh",
+		selectXML: "<select_nodes/>",
+	},
 	{
 		id:        "tnf-untaint-alert",
 		path:      "/var/lib/pacemaker/alerts/tnf-untaint-alert.sh",

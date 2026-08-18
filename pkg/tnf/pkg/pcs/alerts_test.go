@@ -5,12 +5,13 @@ import (
 )
 
 func TestAlertConfigs(t *testing.T) {
-	if len(alertConfigs) != 2 {
-		t.Fatalf("expected 2 alert configs, got %d", len(alertConfigs))
+	if len(alertConfigs) != 3 {
+		t.Fatalf("expected 3 alert configs, got %d", len(alertConfigs))
 	}
 
 	expectedConfigs := []alertConfig{
 		{id: "tnf-taint-alert", path: "/var/lib/pacemaker/alerts/tnf-taint-alert.sh", selectXML: "<select_fencing/>"},
+		{id: "tnf-taint-lost-alert", path: "/var/lib/pacemaker/alerts/tnf-taint-alert.sh", selectXML: "<select_nodes/>"},
 		{id: "tnf-untaint-alert", path: "/var/lib/pacemaker/alerts/tnf-untaint-alert.sh", selectXML: "<select_nodes/>"},
 	}
 
