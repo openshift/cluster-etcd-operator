@@ -66,7 +66,7 @@ func NewCertSyncController(targetDir, targetNamespace string, configmaps, secret
 
 func (c *CertSyncController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	if err := os.RemoveAll(getStagingDir(c.destinationDir)); err != nil {
-		c.eventRecorder.Warningf("CertificateUpdateFailed", fmt.Sprintf("Failed to prune staging directory: %v", err))
+		c.eventRecorder.Warningf("CertificateUpdateFailed", "%s", fmt.Sprintf("Failed to prune staging directory: %v", err))
 		return err
 	}
 

@@ -53,3 +53,15 @@ func (f *fakeInformer) SetTransform(handler cache.TransformFunc) error { return 
 func (f *fakeInformer) IsStopped() bool                                { return false }
 func (f *fakeInformer) AddIndexers(indexers cache.Indexers) error      { return nil }
 func (f *fakeInformer) GetIndexer() cache.Indexer                      { return nil }
+func (f *fakeInformer) HasSyncedChecker() cache.DoneChecker            { return doneChecker{} }
+
+// doneChecker is an always-done cache.DoneChecker, matching HasSynced always
+// returning true for this fake informer.
+type doneChecker struct{}
+
+func (doneChecker) Name() string { return "fakeInformer" }
+func (doneChecker) Done() <-chan struct{} {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}

@@ -1119,7 +1119,7 @@ func (c InstallerController) ensureRequiredResourcesExist(ctx context.Context, r
 	for _, err := range aggregatedErr.Errors() {
 		eventMessages = append(eventMessages, err.Error())
 	}
-	c.eventRecorder.Warningf("RequiredInstallerResourcesMissing", strings.Join(eventMessages, ", "))
+	c.eventRecorder.Warningf("RequiredInstallerResourcesMissing", "%s", strings.Join(eventMessages, ", "))
 	return fmt.Errorf("missing required resources: %v", aggregatedErr)
 }
 
