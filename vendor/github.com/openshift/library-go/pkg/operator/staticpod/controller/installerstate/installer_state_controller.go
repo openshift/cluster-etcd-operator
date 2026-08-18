@@ -185,7 +185,7 @@ func (c *InstallerStateController) handlePendingInstallerPodsNetworkEvents(ctx c
 				Message: fmt.Sprintf("Pod %q on node %q observed degraded networking: %s", pod.Name, pod.Spec.NodeName, event.Message),
 			}
 			conditions = append(conditions, condition)
-			recorder.Warningf(condition.Reason, condition.Message)
+			recorder.Warningf(condition.Reason, "%s", condition.Message)
 		}
 	}
 	return conditions, nil
@@ -204,7 +204,7 @@ func (c *InstallerStateController) handlePendingInstallerPods(recorder events.Re
 				Message: fmt.Sprintf("Pod %q on node %q is Pending since %s because %s", pod.Name, pod.Spec.NodeName, pod.Status.StartTime.Time, pod.Status.Message),
 			}
 			conditions = append(conditions, condition)
-			recorder.Warningf(condition.Reason, condition.Message)
+			recorder.Warningf(condition.Reason, "%s", condition.Message)
 		}
 
 		// one or more containers are in waiting state for longer than maxToleratedPodPendingDuration, report the reason and message
@@ -227,7 +227,7 @@ func (c *InstallerStateController) handlePendingInstallerPods(recorder events.Re
 					Message: message,
 				}
 				conditions = append(conditions, condition)
-				recorder.Warningf(condition.Reason, condition.Message)
+				recorder.Warningf(condition.Reason, "%s", condition.Message)
 			}
 		}
 	}
