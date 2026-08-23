@@ -198,7 +198,7 @@ spec:
         severity: critical
     - alert: etcdSignerCAExpirationWarning
       annotations:
-        description: etcd is reporting the signer ca "{{ $labels.name }}" to have less than two years (({{ printf "%.f" $value }} days) of validity left.
+        description: etcd is reporting the signer ca "{{ $labels.name }}" to have less than two years ({{ printf "%.f" $value }} days) of validity left.
         summary: etcd signer ca is about to expire
       expr: avg(openshift_etcd_operator_signer_expiration_days) by (name) < 730
       for: 1h
@@ -206,7 +206,7 @@ spec:
         severity: warning
     - alert: etcdSignerCAExpirationCritical
       annotations:
-        description: etcd is reporting the signer ca "{{ $labels.name }}" to have less than year  (({{ printf "%.f" $value }} days) of validity left.
+        description: etcd is reporting the signer ca "{{ $labels.name }}" to have less than one year ({{ printf "%.f" $value }} days) of validity left.
         runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdSignerCAExpirationCritical.md
         summary: etcd has critical signer ca expiration
       expr: avg(openshift_etcd_operator_signer_expiration_days) by (name) < 365
