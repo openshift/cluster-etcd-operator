@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
+	"github.com/pkg/errors"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	applyoperatorv1 "github.com/openshift/client-go/operator/applyconfigurations/operator/v1"
@@ -34,6 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/informers"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
 	"k8s.io/utils/ptr"
@@ -94,6 +96,7 @@ type InstallerController struct {
 	configMapsGetter corev1client.ConfigMapsGetter
 	secretsGetter    corev1client.SecretsGetter
 	podsGetter       corev1client.PodsGetter
+	nodeLister       corev1listers.NodeLister
 	eventRecorder    events.Recorder
 	now              func() time.Time // for test plumbing
 
@@ -179,6 +182,7 @@ func NewInstallerController(
 	secrets []revision.RevisionResource,
 	command []string,
 	kubeInformersForTargetNamespace informers.SharedInformerFactory,
+	kubeInformersClusterScoped informers.SharedInformerFactory,
 	operatorClient v1helpers.StaticPodOperatorClient,
 	configMapsGetter corev1client.ConfigMapsGetter,
 	secretsGetter corev1client.SecretsGetter,
@@ -197,6 +201,7 @@ func NewInstallerController(
 		configMapsGetter: configMapsGetter,
 		secretsGetter:    secretsGetter,
 		podsGetter:       podsGetter,
+		nodeLister:       kubeInformersClusterScoped.Core().V1().Nodes().Lister(),
 		eventRecorder:    eventRecorder.WithComponentSuffix("installer-controller"),
 		now:              time.Now,
 		startupMonitorEnabled: func() (bool, error) {
@@ -218,7 +223,12 @@ func NewInstallerController(
 			// informers are needed here because their Getter are cached lister based
 			kubeInformersForTargetNamespace.Core().V1().Pods().Informer(),
 			kubeInformersForTargetNamespace.Core().V1().ConfigMaps().Informer(),
-			kubeInformersForTargetNamespace.Core().V1().Secrets().Informer())
+			kubeInformersForTargetNamespace.Core().V1().Secrets().Informer(),
+		).
+		WithBareInformers(
+			// Don't need to sync on node changes, just wait for informer cache sync
+			kubeInformersClusterScoped.Core().V1().Nodes().Informer(),
+		)
 
 	return c
 }
@@ -606,6 +616,9 @@ func nodeStatusToNodeStatusApplyConfigurations(nodeStatus operatorv1.NodeStatus)
 		WithLastFailedCount(nodeStatus.LastFailedCount).
 		WithLastFallbackCount(nodeStatus.LastFallbackCount).
 		WithLastFailedRevisionErrors(nodeStatus.LastFailedRevisionErrors...)
+	if nodeStatus.NodeUID != "" {
+		nodeStatusApplyConfiguration = nodeStatusApplyConfiguration.WithNodeUID(nodeStatus.NodeUID)
+	}
 	if nodeStatus.LastFailedTime != nil {
 		nodeStatusApplyConfiguration = nodeStatusApplyConfiguration.WithLastFailedTime(*nodeStatus.LastFailedTime)
 	}
@@ -615,6 +628,7 @@ func nodeStatusToNodeStatusApplyConfigurations(nodeStatus operatorv1.NodeStatus)
 func nodeStatusApplyConfigToOperatorNodeStatus(nodeStatusApplyConfiguration *applyoperatorv1.NodeStatusApplyConfiguration) *operatorv1.NodeStatus {
 	return &operatorv1.NodeStatus{
 		NodeName:                 ptr.Deref(nodeStatusApplyConfiguration.NodeName, ""),
+		NodeUID:                  ptr.Deref(nodeStatusApplyConfiguration.NodeUID, ""),
 		CurrentRevision:          ptr.Deref(nodeStatusApplyConfiguration.CurrentRevision, 0),
 		TargetRevision:           ptr.Deref(nodeStatusApplyConfiguration.TargetRevision, 0),
 		LastFailedRevision:       ptr.Deref(nodeStatusApplyConfiguration.LastFailedRevision, 0),
@@ -1123,6 +1137,25 @@ func (c InstallerController) ensureRequiredResourcesExist(ctx context.Context, r
 	return fmt.Errorf("missing required resources: %v", aggregatedErr)
 }
 
+func (c *InstallerController) shouldSkipNodeStatusUpdate(nodeName, nodeUid string) (bool, error) {
+	if nodeUid == "" {
+		return false, nil
+	}
+	node, err := c.nodeLister.Get(nodeName)
+	if apierrors.IsNotFound(err) {
+		klog.Warningf("Skipping node status update for %s: node not found", nodeName)
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if string(node.UID) != nodeUid {
+		klog.Warningf("Skipping node status update for %s: node UID changed (stored=%s, actual=%s)", nodeName, nodeUid, node.UID)
+		return true, nil
+	}
+	return false, nil
+}
+
 func (c *InstallerController) Sync(ctx context.Context, syncCtx factory.SyncContext) error {
 	operatorSpec, originalOperatorStatus, operatorResourceVersion, err := c.operatorClient.GetStaticPodOperatorState()
 	if err != nil {
@@ -1162,6 +1195,17 @@ func (c *InstallerController) Sync(ctx context.Context, syncCtx factory.SyncCont
 
 	if !management.IsOperatorManaged(operatorSpec.ManagementState) {
 		return nil
+	}
+
+	// Check for stale node status entries with mismatched UID
+	for _, nodeStatus := range originalOperatorStatus.NodeStatuses {
+		if shouldSkip, err := c.shouldSkipNodeStatusUpdate(nodeStatus.NodeName, nodeStatus.NodeUID); err != nil {
+			return errors.Wrapf(err, "error validating uid for node %s", nodeStatus.NodeName)
+		} else if shouldSkip {
+			// Avoid applying node statuses when a stale entry is found
+			// Sync will retrigger when the old node status is removed by the node controller
+			return nil
+		}
 	}
 
 	err = c.ensureRequiredResourcesExistFn(ctx, originalOperatorStatus.LatestAvailableRevision)
@@ -1204,6 +1248,7 @@ func deepCopyNodeStatusWithoutOldFailedState(ns *operatorv1.NodeStatus) *operato
 	if ns.TargetRevision == 0 || ns.TargetRevision != ns.LastFailedRevision {
 		return &operatorv1.NodeStatus{
 			NodeName:        ns.NodeName,
+			NodeUID:         ns.NodeUID,
 			CurrentRevision: ns.CurrentRevision,
 			TargetRevision:  ns.TargetRevision,
 		}
