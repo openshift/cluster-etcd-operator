@@ -162,7 +162,7 @@
             alert: 'etcdSignerCAExpirationWarning',
             'for': '1h',
             annotations: {
-              description: 'etcd is reporting the signer ca "{{ $labels.name }}" to have less than two years (({{ printf "%.f" $value }} days) of validity left.',
+              description: 'etcd is reporting the signer ca "{{ $labels.name }}" to have less than two years ({{ printf "%.f" $value }} days) of validity left.',
               summary: 'etcd signer ca is about to expire',
             },
             labels: {
@@ -174,7 +174,7 @@
             alert: 'etcdSignerCAExpirationCritical',
             'for': '1h',
             annotations: {
-              description: 'etcd is reporting the signer ca "{{ $labels.name }}" to have less than year  (({{ printf "%.f" $value }} days) of validity left.',
+              description: 'etcd is reporting the signer ca "{{ $labels.name }}" to have less than one year ({{ printf "%.f" $value }} days) of validity left.',
               summary: 'etcd has critical signer ca expiration',
             },
             labels: {
