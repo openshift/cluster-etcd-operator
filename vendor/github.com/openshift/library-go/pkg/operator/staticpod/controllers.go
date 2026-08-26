@@ -283,6 +283,7 @@ func (b *staticPodOperatorControllerBuilder) ToControllers() (manager.Controller
 			b.revisionSecrets,
 			b.installCommand,
 			operandInformers,
+			clusterInformers,
 			b.staticPodOperatorClient,
 			configMapClient,
 			secretClient,

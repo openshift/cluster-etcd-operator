@@ -84,22 +84,24 @@ func (c *NodeController) sync(ctx context.Context, syncCtx factory.SyncContext) 
 		nodes = append(nodes, extraNodes...)
 	}
 
+	nodeUIDs := map[string]string{}
+	for _, node := range nodes {
+		nodeUIDs[node.Name] = string(node.UID)
+	}
+
 	jsonPatch := jsonpatch.New()
 	var removedNodeStatusesCounter int
 	newTargetNodeStates := []*applyoperatorv1.NodeStatusApplyConfiguration{}
 	// remove entries for missing nodes
 	for i, nodeState := range originalOperatorStatus.NodeStatuses {
-		found := false
-		for _, node := range nodes {
-			if nodeState.NodeName == node.Name {
-				found = true
-			}
-		}
-		if found {
-			newTargetNodeState := applyoperatorv1.NodeStatus().WithNodeName(originalOperatorStatus.NodeStatuses[i].NodeName)
+		currentUID, found := nodeUIDs[nodeState.NodeName]
+		if found && (nodeState.NodeUID == currentUID || nodeState.NodeUID == "") {
+			newTargetNodeState := applyoperatorv1.NodeStatus().
+				WithNodeName(nodeState.NodeName).
+				WithNodeUID(currentUID)
 			newTargetNodeStates = append(newTargetNodeStates, newTargetNodeState)
 		} else {
-			syncCtx.Recorder().Warningf("MasterNodeRemoved", "Observed removal of master node %s", nodeState.NodeName)
+			syncCtx.Recorder().Warningf("MasterNodeRemoved", "Observed removal of master node %s (UID: %s)", nodeState.NodeName, nodeState.NodeUID)
 			// each delete operation is applied to the object,
 			// which modifies the array. Thus, we need to
 			// adjust the indices to find the correct node to remove.
@@ -116,16 +118,19 @@ func (c *NodeController) sync(ctx context.Context, syncCtx factory.SyncContext) 
 	for _, node := range nodes {
 		found := false
 		for _, nodeState := range originalOperatorStatus.NodeStatuses {
+			// NodeUID is intentionally ignored here. Nodes that are replaced with the same name will get added in the next sync
+			// to ensure previous nodeStatus from a stale cache isn't merged in with the fresh status.
 			if nodeState.NodeName == node.Name {
 				found = true
+				break
 			}
 		}
 		if found {
 			continue
 		}
 
-		syncCtx.Recorder().Eventf("MasterNodeObserved", "Observed new master node %s", node.Name)
-		newTargetNodeState := applyoperatorv1.NodeStatus().WithNodeName(node.Name)
+		syncCtx.Recorder().Eventf("MasterNodeObserved", "Observed new master node %s (UID: %s)", node.Name, node.UID)
+		newTargetNodeState := applyoperatorv1.NodeStatus().WithNodeName(node.Name).WithNodeUID(string(node.UID))
 		newTargetNodeStates = append(newTargetNodeStates, newTargetNodeState)
 	}
 
