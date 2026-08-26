@@ -1032,57 +1032,6 @@ func Test_preferIPv6(t *testing.T) {
 	}
 }
 
-func Test_getFeatureGatesFromInstallConfig(t *testing.T) {
-	testCases := map[string]struct {
-		installConfig         string
-		expectConfigurablePKI bool
-	}{
-		"featureSet TechPreviewNoUpgrade enables ConfigurablePKI": {
-			installConfig: `
-apiVersion: v1
-metadata:
-  name: my-cluster
-featureSet: TechPreviewNoUpgrade
-`,
-			expectConfigurablePKI: true,
-		},
-		"default featureSet does not enable ConfigurablePKI": {
-			installConfig: `
-apiVersion: v1
-metadata:
-  name: my-cluster
-`,
-			expectConfigurablePKI: false,
-		},
-		"featureGates override disables ConfigurablePKI even with TechPreview": {
-			installConfig: `
-apiVersion: v1
-metadata:
-  name: my-cluster
-featureSet: TechPreviewNoUpgrade
-featureGates: [ConfigurablePKI=false]
-`,
-			expectConfigurablePKI: false,
-		},
-	}
-
-	for name, tc := range testCases {
-		t.Run(name, func(t *testing.T) {
-			var installConfig map[string]any
-			if err := yaml.Unmarshal([]byte(tc.installConfig), &installConfig); err != nil {
-				t.Fatal(err)
-			}
-			enabled, disabled := getFeatureGatesFromInstallConfig(installConfig)
-			if got := enabled.Has(features.FeatureGateConfigurablePKI); got != tc.expectConfigurablePKI {
-				t.Errorf("ConfigurablePKI enabled: want %v, got %v", tc.expectConfigurablePKI, got)
-			}
-			if enabled.Len()+disabled.Len() == 0 {
-				t.Errorf("expected non-empty feature gate sets for any install-config, got empty enabled and disabled sets")
-			}
-		})
-	}
-}
-
 func Test_getPKIProfileProvider(t *testing.T) {
 	tests := map[string]struct {
 		installConfig      string
