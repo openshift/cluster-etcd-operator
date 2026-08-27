@@ -295,7 +295,11 @@ func getObservedTLSMinVersion(envVarContext envVarContext) (tlsutil.TLSVersion, 
 		return "", fmt.Errorf("couldn't get minTLSVersion from observedConfig: %w", err)
 	}
 
-	// map tls version to string recognized by etcd
+	// map tls version to string recognized by etcd.
+	// Note: an empty observedMinTLSVersion (e.g. during bootstrap before the
+	// config observer has converged) is tolerated - crypto.TLSVersion("")
+	// returns the default (TLS 1.2) without error, matching the bootstrap
+	// etcd member rendered by pkg/cmd/render/env.go.
 	v, err := crypto.TLSVersion(observedMinTLSVersion)
 	if err != nil {
 		return "", fmt.Errorf("couldn't get minTLSVersion from observedConfig: %w", err)
@@ -331,7 +335,28 @@ func getCipherSuites(envVarContext envVarContext) (map[string]string, error) {
 	actualCipherSuites := tlshelpers.SupportedEtcdCiphers(observedCipherSuites)
 
 	if len(actualCipherSuites) == 0 {
-		return nil, fmt.Errorf("no supported cipherSuites not found in observedConfig")
+		// During bootstrap (revision 0) the observedConfig has not converged yet:
+		// the config observer cannot populate servingInfo.cipherSuites until the
+		// control plane (apiserver/etcd) is running, but etcd cannot start until
+		// this controller produces the ETCD_CIPHER_SUITES env var. Hard-erroring
+		// here degrades the operator and blocks the first etcd revision, which can
+		// exceed the installer's 45-minute bootstrap window on slower platforms
+		// (OCPBUGS-94106). Break the deadlock by falling back to the same
+		// TLSProfileIntermediateType ciphers the render path bakes into the
+		// bootstrap etcd member (see pkg/cmd/render/env.go:getTLSCipherSuites), so
+		// etcd runs with an identical cipher set until observedConfig converges.
+		if envVarContext.status.LatestAvailableRevision == 0 {
+			profileSpec := v1.TLSProfiles[v1.TLSProfileIntermediateType]
+			fallbackCiphers := crypto.OpenSSLToIANACipherSuites(profileSpec.Ciphers)
+			actualCipherSuites = tlshelpers.SupportedEtcdCiphers(fallbackCiphers)
+			klog.Warning("getCipherSuites: observedConfig has no cipherSuites during bootstrap (revision 0), falling back to TLSProfileIntermediateType ciphers")
+		}
+
+		// Past bootstrap (revision > 0) an empty observedConfig is a genuine
+		// convergence failure and must still surface as degraded.
+		if len(actualCipherSuites) == 0 {
+			return nil, fmt.Errorf("no supported cipherSuites found in observedConfig")
+		}
 	}
 
 	observedMinTLSVersion, err := getObservedTLSMinVersion(envVarContext)
