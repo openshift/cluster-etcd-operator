@@ -3,9 +3,11 @@ package etcdenvvar
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
+	"github.com/openshift/library-go/pkg/crypto"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -69,17 +71,35 @@ var (
 )
 
 func TestEnvVarController(t *testing.T) {
+	// bootstrapFallbackEnv is defaultEnvResult with the OCPBUGS-94106 bootstrap
+	// fallback ciphers substituted for the observed ones.
+	bootstrapFallbackEnv := map[string]string{}
+	for k, v := range defaultEnvResult {
+		bootstrapFallbackEnv[k] = v
+	}
+	bootstrapFallbackEnv["ETCD_CIPHER_SUITES"] = strings.Join(tlshelpers.SupportedEtcdCiphers(
+		crypto.OpenSSLToIANACipherSuites(configv1.TLSProfiles[configv1.TLSProfileIntermediateType].Ciphers)), ",")
+
 	scenarios := []struct {
-		name            string
-		objects         []runtime.Object
-		staticPodStatus *operatorv1.StaticPodOperatorStatus
-		certSecret      map[string][]byte
-		expectedEnv     map[string]string
-		expectedErr     error
+		name                string
+		objects             []runtime.Object
+		staticPodStatus     *operatorv1.StaticPodOperatorStatus
+		certSecret          map[string][]byte
+		emptyObservedConfig bool
+		bootstrapComplete   bool
+		expectedEnv         map[string]string
+		expectedErr         error
 	}{
 		{
 			name:        "HappyPath",
 			expectedEnv: defaultEnvResult,
+		},
+		{
+			// OCPBUGS-94106: empty observedConfig during bootstrap must fall back
+			// (not degrade), so the first etcd revision is not blocked.
+			name:                "BootstrapFallbackNoDegrade",
+			emptyObservedConfig: true,
+			expectedEnv:         bootstrapFallbackEnv,
 		},
 		{
 			name:            "MissingNodeStatus",
@@ -99,16 +119,20 @@ func TestEnvVarController(t *testing.T) {
 	}
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
-			observedConfig := map[string]any{
-				"servingInfo": map[string]any{
-					"cipherSuites": []string{
-						"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
-						"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
-						"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
-				},
+			observedConfigYaml := []byte("{}")
+			if !scenario.emptyObservedConfig {
+				observedConfig := map[string]any{
+					"servingInfo": map[string]any{
+						"cipherSuites": []string{
+							"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+							"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+							"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
+					},
+				}
+				marshalled, err := yaml.Marshal(observedConfig)
+				require.NoError(t, err)
+				observedConfigYaml = marshalled
 			}
-			observedConfigYaml, err := yaml.Marshal(observedConfig)
-			require.NoError(t, err)
 
 			if scenario.staticPodStatus == nil {
 				scenario.staticPodStatus = u.StaticPodOperatorStatus(
@@ -173,6 +197,12 @@ func TestEnvVarController(t *testing.T) {
 				u.ClusterConfigConfigMap(1),
 				u.FakeSecret(operatorclient.TargetNamespace, tlshelpers.EtcdAllCertsSecretName, scenario.certSecret),
 			}
+			if scenario.bootstrapComplete {
+				defaultObjects = append(defaultObjects, &corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{Namespace: operatorclient.KubeSystemNamespace, Name: "bootstrap"},
+					Data:       map[string]string{"status": "complete"},
+				})
+			}
 
 			fakeKubeClient := fake.NewSimpleClientset(scenario.objects...)
 			eventRecorder := events.NewRecorder(fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),
@@ -195,18 +225,19 @@ func TestEnvVarController(t *testing.T) {
 			}))
 
 			controller := EnvVarController{
-				operatorClient:       fakeOperatorClient,
-				eventRecorder:        eventRecorder,
-				configmapLister:      corev1listers.NewConfigMapLister(indexer),
-				secretLister:         corev1listers.NewSecretLister(indexer),
-				infrastructureLister: configv1listers.NewInfrastructureLister(indexer),
-				masterNodeLister:     corev1listers.NewNodeLister(indexer),
-				networkLister:        configv1listers.NewNetworkLister(networkIndexer),
-				etcdLister:           operatorv1listers.NewEtcdLister(etcdIndexer),
-				featureGateAccessor:  backendQuotaFeatureGateAccessor,
+				operatorClient:           fakeOperatorClient,
+				eventRecorder:            eventRecorder,
+				configmapLister:          corev1listers.NewConfigMapLister(indexer),
+				bootstrapConfigMapLister: corev1listers.NewConfigMapLister(indexer),
+				secretLister:             corev1listers.NewSecretLister(indexer),
+				infrastructureLister:     configv1listers.NewInfrastructureLister(indexer),
+				masterNodeLister:         corev1listers.NewNodeLister(indexer),
+				networkLister:            configv1listers.NewNetworkLister(networkIndexer),
+				etcdLister:               operatorv1listers.NewEtcdLister(etcdIndexer),
+				featureGateAccessor:      backendQuotaFeatureGateAccessor,
 			}
 
-			err = controller.sync(context.TODO())
+			err := controller.sync(context.TODO())
 			require.Equal(t, err, scenario.expectedErr)
 
 			m := controller.GetEnvVars()
