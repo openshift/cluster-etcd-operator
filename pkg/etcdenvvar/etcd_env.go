@@ -19,6 +19,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 	"github.com/openshift/library-go/pkg/crypto"
+	"github.com/openshift/library-go/pkg/operator/bootstrap"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"go.etcd.io/etcd/client/pkg/v3/tlsutil"
 
@@ -34,14 +35,15 @@ type envVarContext struct {
 	spec   operatorv1.StaticPodOperatorSpec
 	status operatorv1.StaticPodOperatorStatus
 
-	masterNodeLister        corev1listers.NodeLister
-	masterNodeLabelSelector labels.Selector
-	infrastructureLister    configv1listers.InfrastructureLister
-	networkLister           configv1listers.NetworkLister
-	configmapLister         corev1listers.ConfigMapLister
-	targetImagePullSpec     string
-	etcdLister              operatorv1listers.EtcdLister
-	featureGateAccessor     featuregates.FeatureGateAccess
+	masterNodeLister         corev1listers.NodeLister
+	masterNodeLabelSelector  labels.Selector
+	infrastructureLister     configv1listers.InfrastructureLister
+	networkLister            configv1listers.NetworkLister
+	configmapLister          corev1listers.ConfigMapLister
+	bootstrapConfigMapLister corev1listers.ConfigMapLister
+	targetImagePullSpec      string
+	etcdLister               operatorv1listers.EtcdLister
+	featureGateAccessor      featuregates.FeatureGateAccess
 }
 
 var FixedEtcdEnvVars = map[string]string{
@@ -295,11 +297,8 @@ func getObservedTLSMinVersion(envVarContext envVarContext) (tlsutil.TLSVersion, 
 		return "", fmt.Errorf("couldn't get minTLSVersion from observedConfig: %w", err)
 	}
 
-	// map tls version to string recognized by etcd.
-	// Note: an empty observedMinTLSVersion (e.g. during bootstrap before the
-	// config observer has converged) is tolerated - crypto.TLSVersion("")
-	// returns the default (TLS 1.2) without error, matching the bootstrap
-	// etcd member rendered by pkg/cmd/render/env.go.
+	// map tls version to string recognized by etcd. An empty observedMinTLSVersion
+	// (e.g. during bootstrap) is tolerated: crypto.TLSVersion("") returns TLS 1.2.
 	v, err := crypto.TLSVersion(observedMinTLSVersion)
 	if err != nil {
 		return "", fmt.Errorf("couldn't get minTLSVersion from observedConfig: %w", err)
@@ -335,27 +334,25 @@ func getCipherSuites(envVarContext envVarContext) (map[string]string, error) {
 	actualCipherSuites := tlshelpers.SupportedEtcdCiphers(observedCipherSuites)
 
 	if len(actualCipherSuites) == 0 {
-		// During bootstrap (revision 0) the observedConfig has not converged yet:
-		// the config observer cannot populate servingInfo.cipherSuites until the
-		// control plane (apiserver/etcd) is running, but etcd cannot start until
-		// this controller produces the ETCD_CIPHER_SUITES env var. Hard-erroring
-		// here degrades the operator and blocks the first etcd revision, which can
-		// exceed the installer's 45-minute bootstrap window on slower platforms
-		// (OCPBUGS-94106). Break the deadlock by falling back to the same
-		// TLSProfileIntermediateType ciphers the render path bakes into the
-		// bootstrap etcd member (see pkg/cmd/render/env.go:getTLSCipherSuites), so
-		// etcd runs with an identical cipher set until observedConfig converges.
-		if envVarContext.status.LatestAvailableRevision == 0 {
+		// While bootstrap is in progress, observedConfig may not be populated yet
+		// (config observer can't converge until etcd runs, but etcd needs these env
+		// vars to start). Fall back to the render path's TLSProfileIntermediateType
+		// ciphers instead of degrading, which would block the first revision past
+		// the installer's bootstrap window (OCPBUGS-94106). Once bootstrap completes,
+		// an empty observedConfig is a real failure and must still degrade.
+		bootstrapComplete, err := bootstrap.IsBootstrapComplete(envVarContext.bootstrapConfigMapLister)
+		if err != nil {
+			return nil, fmt.Errorf("unable to determine bootstrap status for cipherSuites fallback: %w", err)
+		}
+		if !bootstrapComplete {
 			profileSpec := v1.TLSProfiles[v1.TLSProfileIntermediateType]
 			fallbackCiphers := crypto.OpenSSLToIANACipherSuites(profileSpec.Ciphers)
 			actualCipherSuites = tlshelpers.SupportedEtcdCiphers(fallbackCiphers)
-			klog.Warning("getCipherSuites: observedConfig has no cipherSuites during bootstrap (revision 0), falling back to TLSProfileIntermediateType ciphers")
+			klog.Warning("getCipherSuites: observedConfig has no cipherSuites during bootstrap, falling back to TLSProfileIntermediateType ciphers")
 		}
 
-		// Past bootstrap (revision > 0) an empty observedConfig is a genuine
-		// convergence failure and must still surface as degraded.
 		if len(actualCipherSuites) == 0 {
-			return nil, fmt.Errorf("no supported cipherSuites found in observedConfig")
+			return nil, fmt.Errorf("no supported cipherSuites not found in observedConfig")
 		}
 	}
 

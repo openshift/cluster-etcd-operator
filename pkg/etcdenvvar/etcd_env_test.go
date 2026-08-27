@@ -13,8 +13,25 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 )
+
+// bootstrapConfigMapLister returns a ConfigMapLister containing (or omitting)
+// the kube-system/bootstrap configmap that bootstrap.IsBootstrapComplete reads.
+func bootstrapConfigMapLister(complete bool) corev1listers.ConfigMapLister {
+	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	if complete {
+		_ = indexer.Add(&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "kube-system", Name: "bootstrap"},
+			Data:       map[string]string{"status": "complete"},
+		})
+	}
+	return corev1listers.NewConfigMapLister(indexer)
+}
 
 func TestConvertDBSize(t *testing.T) {
 	testCases := []struct {
@@ -56,11 +73,10 @@ func TestConvertDBSize(t *testing.T) {
 	}
 }
 
-// TestGetCipherSuites covers the OCPBUGS-94106 bootstrap fallback: during
-// bootstrap (revision 0) an empty observedConfig must not degrade the operator;
-// instead getCipherSuites falls back to the same TLSProfileIntermediateType
-// ciphers the render path bakes into the bootstrap etcd member. Past bootstrap
-// (revision > 0) an empty observedConfig is still a genuine failure.
+// TestGetCipherSuites covers the OCPBUGS-94106 bootstrap fallback: while bootstrap
+// is in progress an empty observedConfig falls back to the render path's
+// TLSProfileIntermediateType ciphers instead of degrading; once bootstrap is
+// complete an empty observedConfig is a genuine failure.
 func TestGetCipherSuites(t *testing.T) {
 	intermediate := tlshelpers.SupportedEtcdCiphers(
 		crypto.OpenSSLToIANACipherSuites(configv1.TLSProfiles[configv1.TLSProfileIntermediateType].Ciphers),
@@ -68,35 +84,33 @@ func TestGetCipherSuites(t *testing.T) {
 	require.NotEmpty(t, intermediate, "intermediate profile must yield etcd-supported ciphers")
 
 	testCases := []struct {
-		name           string
-		observedConfig []byte
-		revision       int32
-		wantErr        bool
-		wantCiphers    []string
+		name              string
+		observedConfig    []byte
+		bootstrapComplete bool
+		wantErr           bool
+		wantCiphers       []string
 	}{
 		{
-			name:           "bootstrap revision 0 with nil observedConfig falls back to intermediate ciphers",
+			name:           "bootstrap in progress with nil observedConfig falls back to intermediate ciphers",
 			observedConfig: nil,
-			revision:       0,
 			wantCiphers:    intermediate,
 		},
 		{
-			name:           "bootstrap revision 0 with empty observedConfig falls back to intermediate ciphers",
+			name:           "bootstrap in progress with empty observedConfig falls back to intermediate ciphers",
 			observedConfig: []byte("{}"),
-			revision:       0,
 			wantCiphers:    intermediate,
 		},
 		{
-			name:           "post-bootstrap revision >0 with empty observedConfig errors",
-			observedConfig: []byte("{}"),
-			revision:       3,
-			wantErr:        true,
+			name:              "bootstrap complete with empty observedConfig errors",
+			observedConfig:    []byte("{}"),
+			bootstrapComplete: true,
+			wantErr:           true,
 		},
 		{
-			name:           "observed cipherSuites are used verbatim when present",
-			observedConfig: []byte(`{"servingInfo":{"cipherSuites":["TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"],"minTLSVersion":"VersionTLS12"}}`),
-			revision:       3,
-			wantCiphers:    []string{"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
+			name:              "observed cipherSuites are used verbatim when present",
+			observedConfig:    []byte(`{"servingInfo":{"cipherSuites":["TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"],"minTLSVersion":"VersionTLS12"}}`),
+			bootstrapComplete: true,
+			wantCiphers:       []string{"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
 		},
 	}
 
@@ -108,16 +122,14 @@ func TestGetCipherSuites(t *testing.T) {
 						ObservedConfig: runtime.RawExtension{Raw: tc.observedConfig},
 					},
 				},
-				status: operatorv1.StaticPodOperatorStatus{
-					OperatorStatus: operatorv1.OperatorStatus{
-						LatestAvailableRevision: tc.revision,
-					},
-				},
+				bootstrapConfigMapLister: bootstrapConfigMapLister(tc.bootstrapComplete),
 			}
 
 			got, err := getCipherSuites(ctx)
 			if tc.wantErr {
 				require.Error(t, err)
+				// guard the symptom-matched error string (EtcdBootstrapRev0CipherSuitesOCPBUGS94106)
+				assert.Contains(t, err.Error(), "no supported cipherSuites not found in observedConfig")
 				return
 			}
 			require.NoError(t, err)
