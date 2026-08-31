@@ -469,5 +469,21 @@ func waitForEtcdBootstrapCompleted(ctx context.Context, operatorClient v1helpers
 			return fmt.Errorf("failed to wait for bootstrap to complete: %w", err)
 		}
 	}
+
+	// EtcdRunningInCluster is set before the bootstrap member is removed, as
+	// it signals bootkube that it can proceed with bootstrap teardown. TNF
+	// setup must not start pacemaker while etcd-bootstrap is still a member:
+	// podman-etcd requires exactly 2 members and deadlocks on 3
+	// (OCPBUGS-105240). EtcdBootstrapMemberRemoved is only set once the
+	// member is confirmed gone, so gate on it as well. Returning an error
+	// here is safe: the caller retries with backoff.
+	bootstrapMemberRemoved, err := ceohelpers.IsEtcdBootstrapMemberRemoved(ctx, operatorClient)
+	if err != nil {
+		return fmt.Errorf("failed to check if etcd-bootstrap member is removed: %w", err)
+	}
+	if !bootstrapMemberRemoved {
+		return fmt.Errorf("etcd-bootstrap member has not been removed yet")
+	}
+
 	return nil
 }
