@@ -48,14 +48,15 @@ type EnvVarController struct {
 	targetImagePullSpec string
 	listeners           []Enqueueable
 
-	infrastructureLister    configv1listers.InfrastructureLister
-	networkLister           configv1listers.NetworkLister
-	configmapLister         corev1listers.ConfigMapLister
-	secretLister            corev1listers.SecretLister
-	masterNodeLister        corev1listers.NodeLister
-	masterNodeLabelSelector labels.Selector
-	etcdLister              operatorv1listers.EtcdLister
-	featureGateAccessor     featuregates.FeatureGateAccess
+	infrastructureLister     configv1listers.InfrastructureLister
+	networkLister            configv1listers.NetworkLister
+	configmapLister          corev1listers.ConfigMapLister
+	bootstrapConfigMapLister corev1listers.ConfigMapLister
+	secretLister             corev1listers.SecretLister
+	masterNodeLister         corev1listers.NodeLister
+	masterNodeLabelSelector  labels.Selector
+	etcdLister               operatorv1listers.EtcdLister
+	featureGateAccessor      featuregates.FeatureGateAccess
 
 	// queue only ever has one item, but it has nice error handling backoff/retry semantics
 	queue         workqueue.RateLimitingInterface
@@ -82,28 +83,25 @@ func NewEnvVarController(
 	featureGateAccessor featuregates.FeatureGateAccess,
 ) *EnvVarController {
 	c := &EnvVarController{
-		operatorClient:          operatorClient,
-		infrastructureLister:    infrastructureInformer.Lister(),
-		networkLister:           networkInformer.Lister(),
-		configmapLister:         kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister(),
-		secretLister:            kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Lister(),
-		masterNodeLister:        masterNodeLister,
-		masterNodeLabelSelector: masterNodeLabelSelector,
-		targetImagePullSpec:     targetImagePullSpec,
-		etcdLister:              etcdsInformer.Lister(),
-		featureGateAccessor:     featureGateAccessor,
+		operatorClient:           operatorClient,
+		infrastructureLister:     infrastructureInformer.Lister(),
+		networkLister:            networkInformer.Lister(),
+		configmapLister:          kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Lister(),
+		bootstrapConfigMapLister: kubeInformersForNamespaces.InformersFor(operatorclient.KubeSystemNamespace).Core().V1().ConfigMaps().Lister(),
+		secretLister:             kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Lister(),
+		masterNodeLister:         masterNodeLister,
+		masterNodeLabelSelector:  masterNodeLabelSelector,
+		targetImagePullSpec:      targetImagePullSpec,
+		etcdLister:               etcdsInformer.Lister(),
+		featureGateAccessor:      featureGateAccessor,
 
 		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "EnvVarController"),
 		cachesToSync: []cache.InformerSynced{
 			operatorClient.Informer().HasSynced,
 			infrastructureInformer.Informer().HasSynced,
 			networkInformer.Informer().HasSynced,
-			// The EnvVarController reads cipher suites from observedConfig, which is
-			// populated by the ConfigObserver watching the APIServer CR. Waiting for
-			// the APIServer informer cache to sync ensures the ConfigObserver can run
-			// before the EnvVarController reads observedConfig, preventing bootstrap
-			// timing races where observedConfig is still empty.
 			apiServerInformer.Informer().HasSynced,
+			kubeInformersForNamespaces.InformersFor(operatorclient.KubeSystemNamespace).Core().V1().ConfigMaps().Informer().HasSynced,
 			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().HasSynced,
 			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Informer().HasSynced,
 			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer().HasSynced,
@@ -119,6 +117,7 @@ func NewEnvVarController(
 	kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Endpoints().Informer().AddEventHandler(c.eventHandler())
 	kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Informer().AddEventHandler(c.eventHandler())
 	kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
+	kubeInformersForNamespaces.InformersFor(operatorclient.KubeSystemNamespace).Core().V1().ConfigMaps().Informer().AddEventHandler(c.eventHandler())
 	etcdsInformer.Informer().AddEventHandler(c.eventHandler())
 	masterNodeInformer.AddEventHandler(c.eventHandler())
 	apiServerInformer.Informer().AddEventHandler(c.eventHandler())
@@ -170,16 +169,17 @@ func (c *EnvVarController) checkEnvVars() error {
 	}
 
 	currEnvVarMap, err := getEtcdEnvVars(envVarContext{
-		targetImagePullSpec:     c.targetImagePullSpec,
-		spec:                    *operatorSpec,
-		status:                  *operatorStatus,
-		configmapLister:         c.configmapLister,
-		masterNodeLister:        c.masterNodeLister,
-		masterNodeLabelSelector: c.masterNodeLabelSelector,
-		infrastructureLister:    c.infrastructureLister,
-		networkLister:           c.networkLister,
-		etcdLister:              c.etcdLister,
-		featureGateAccessor:     c.featureGateAccessor,
+		targetImagePullSpec:      c.targetImagePullSpec,
+		spec:                     *operatorSpec,
+		status:                   *operatorStatus,
+		configmapLister:          c.configmapLister,
+		bootstrapConfigMapLister: c.bootstrapConfigMapLister,
+		masterNodeLister:         c.masterNodeLister,
+		masterNodeLabelSelector:  c.masterNodeLabelSelector,
+		infrastructureLister:     c.infrastructureLister,
+		networkLister:            c.networkLister,
+		etcdLister:               c.etcdLister,
+		featureGateAccessor:      c.featureGateAccessor,
 	})
 	if err != nil {
 		return err
