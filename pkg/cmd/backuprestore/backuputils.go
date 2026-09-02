@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"k8s.io/klog/v2"
 )
 
@@ -17,24 +18,24 @@ var backupResourcePodList = []string{
 	"etcd-pod",
 }
 
-func archiveLatestResources(configDir, backupFile string) error {
+func archiveLatestResources(configDir, backupFile string) (int64, error) {
 	klog.Info("Static Pod Resources are being stored in: ", backupFile)
 
 	paths := []string{}
 	for _, podName := range backupResourcePodList {
 		latestPod, err := findTheLatestRevision(filepath.Join(configDir, "static-pod-resources"), podName, true)
 		if err != nil {
-			return fmt.Errorf("findTheLatestRevision failed: %w", err)
+			return 0, fmt.Errorf("findTheLatestRevision failed: %w", err)
 		}
 		paths = append(paths, latestPod)
 		klog.Info("\tAdding the latest revision for podName ", podName, ": ", latestPod)
 	}
 
-	err := createTarball(backupFile, paths, configDir)
+	size, err := createTarball(backupFile, paths, configDir)
 	if err != nil {
-		return fmt.Errorf("Got error creating the tar archive: %w", err)
+		return 0, fmt.Errorf("Got error creating the tar archive: %w", err)
 	}
-	return nil
+	return size, nil
 }
 
 func backup(r *backupOptions) error {
@@ -52,15 +53,25 @@ func backup(r *backupOptions) error {
 	dateString := time.Now().Format("2006-01-02_150405")
 	outputArchive := "static_kuberesources_" + dateString + ".tar.gz"
 	snapshotOutFile := "snapshot_" + dateString + ".db"
+	snapshotFilepath := filepath.Join(r.backupDir, snapshotOutFile)
+	archiveFilepath := filepath.Join(r.backupDir, outputArchive)
 
 	// Save snapshot
-	if err := saveSnapshot(cli, filepath.Join(r.backupDir, snapshotOutFile)); err != nil {
+	var snapshotSize int64
+	if snapshotSize, err = saveSnapshot(cli, snapshotFilepath); err != nil {
 		return fmt.Errorf("saveSnapshot failed: %w", err)
 	}
 
 	// Save the corresponding static pod resources
-	if err := archiveLatestResources(r.configDir, filepath.Join(r.backupDir, outputArchive)); err != nil {
+	var archiveSize int64
+	if archiveSize, err = archiveLatestResources(r.configDir, archiveFilepath); err != nil {
 		return fmt.Errorf("archiveLatestResources failed: %w", err)
+	}
+
+	if r.terminationLog != "" {
+		if err := backuphelpers.WriteTerminationLog(r.terminationLog, snapshotFilepath, snapshotSize, archiveFilepath, archiveSize); err != nil {
+			return fmt.Errorf("termiantionLog failed: %w", err)
+		}
 	}
 
 	return nil
