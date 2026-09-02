@@ -88,7 +88,7 @@ func runBackupControllerTest(t *testing.T, tc testCaseBackupController) {
 
 func TestSyncLoopHappyPath(t *testing.T) {
 	// Create a backup job for an EtcdBackup
-	backup := testutils.FakeEtcdBackup("test-backup")
+	backup := testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPending("test-node"))
 	runBackupControllerTest(t, testCaseBackupController{
 		backups: []*operatorv1alpha1.EtcdBackup{backup},
 		pvcs: []*corev1.PersistentVolumeClaim{
@@ -157,7 +157,7 @@ func TestPVCNotFound(t *testing.T) {
 	// EtcdBackup with missing PVC is handled gracefully
 	runBackupControllerTest(t, testCaseBackupController{
 		backups: []*operatorv1alpha1.EtcdBackup{
-			testutils.FakeEtcdBackup("test-backup", testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
+			testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPending("test-node"), testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
 				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
 				PVC:  &operatorv1alpha1.EtcdBackupStoragePvc{Name: "backup-pvc-that-doesnt-exist"},
 			}))},
