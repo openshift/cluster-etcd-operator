@@ -351,6 +351,118 @@ func FakeNetwork(isIPv6 bool) *configv1.Network {
 	}
 }
 
+func FakeEtcdBackup(name string, configs ...func(backup *operatorv1alpha1.EtcdBackup)) *operatorv1alpha1.EtcdBackup {
+	backup := &operatorv1alpha1.EtcdBackup{
+		ObjectMeta: v1.ObjectMeta{
+			Name:              name,
+			UID:               types.UID(name + "-uid"),
+			CreationTimestamp: v1.Now(),
+			Finalizers:        []string{backuphelpers.FinalizerEtcdBackup},
+		},
+		Spec: operatorv1alpha1.EtcdBackupSpec{
+			Storage: operatorv1alpha1.EtcdBackupStorage{
+				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+				PVC:  &operatorv1alpha1.EtcdBackupStoragePvc{Name: name + "-pvc"},
+			},
+		},
+	}
+	for _, config := range configs {
+		config(backup)
+	}
+	return backup
+}
+
+func WithBackupNodeName(nodeName string) func(backup *operatorv1alpha1.EtcdBackup) {
+	return func(backup *operatorv1alpha1.EtcdBackup) {
+		backup.Spec.NodeName = nodeName
+	}
+}
+
+func WithBackupAge(d time.Duration) func(backup *operatorv1alpha1.EtcdBackup) {
+	return func(backup *operatorv1alpha1.EtcdBackup) {
+		backup.CreationTimestamp = v1.Time{Time: time.Now().Add(-d)}
+	}
+}
+
+func WithBackupDeleted() func(backup *operatorv1alpha1.EtcdBackup) {
+	return func(backup *operatorv1alpha1.EtcdBackup) {
+		backup.DeletionTimestamp = ptr.To(v1.Now())
+	}
+}
+
+func WithBackupStorage(storage operatorv1alpha1.EtcdBackupStorage) func(backup *operatorv1alpha1.EtcdBackup) {
+	return func(backup *operatorv1alpha1.EtcdBackup) {
+		backup.Spec.Storage = storage
+	}
+}
+
+func WithBackupStatus(status operatorv1alpha1.EtcdBackupStatus) func(backup *operatorv1alpha1.EtcdBackup) {
+	return func(backup *operatorv1alpha1.EtcdBackup) {
+		backup.Status = status
+	}
+}
+
+func WithBackupPending(nodeName string) func(backup *operatorv1alpha1.EtcdBackup) {
+	return func(backup *operatorv1alpha1.EtcdBackup) {
+		backup.Status.NodeName = nodeName
+		backup.Status.Conditions = append(backup.Status.Conditions, v1.Condition{
+			Type:   string(operatorv1alpha1.BackupPending),
+			Status: v1.ConditionTrue,
+		})
+	}
+}
+
+func WithBackupCompleted() func(backup *operatorv1alpha1.EtcdBackup) {
+	return func(backup *operatorv1alpha1.EtcdBackup) {
+		backup.Status.Conditions = append(backup.Status.Conditions, v1.Condition{
+			Type:   string(operatorv1alpha1.BackupCompleted),
+			Status: v1.ConditionTrue,
+		})
+		if backup.Status.Files == nil {
+			dir := ""
+			switch backup.Spec.Storage.Type {
+			case operatorv1alpha1.EtcdBackupStorageTypeLocal:
+				dir = backup.Spec.Storage.Local.HostPath
+			case operatorv1alpha1.EtcdBackupStorageTypePVC:
+				dir = backup.Spec.Storage.PVC.Path
+			}
+			backup.Status.Files = append(backup.Status.Files, operatorv1alpha1.EtcdBackupFile{
+				Path: path.Join(dir, backup.Name, "snapshot.db"),
+				Size: *resource.NewQuantity(100000, resource.BinarySI),
+			}, operatorv1alpha1.EtcdBackupFile{
+				Path: path.Join(dir, backup.Name, "archive.tar.gz"),
+				Size: *resource.NewQuantity(100, resource.BinarySI),
+			})
+		}
+		if backup.Status.NodeName == "" {
+			if backup.Spec.NodeName == "" {
+				backup.Status.NodeName = "test-node"
+			} else {
+				backup.Status.NodeName = backup.Spec.NodeName
+			}
+		}
+	}
+}
+
+func WithBackupFailed() func(backup *operatorv1alpha1.EtcdBackup) {
+	return func(backup *operatorv1alpha1.EtcdBackup) {
+		backup.Status.Conditions = append(backup.Status.Conditions, v1.Condition{
+			Type:   string(operatorv1alpha1.BackupFailed),
+			Status: v1.ConditionTrue,
+		})
+		if backup.Status.Files != nil {
+			backup.Status.Files = nil
+		}
+		if backup.Status.NodeName == "" {
+			if backup.Spec.NodeName == "" {
+				backup.Status.NodeName = "test-node"
+			} else {
+				backup.Status.NodeName = backup.Spec.NodeName
+			}
+		}
+	}
+}
+
 type FakePodLister struct {
 	PodList []*corev1.Pod
 }
@@ -584,4 +696,51 @@ func FakeStaticPodOperatorClient(t *testing.T, conditions []operatorv1.OperatorC
 		nil,
 		nil,
 	)
+}
+
+func AppendRuntimeObjects[T runtime.Object](runtimeObjs []runtime.Object, objs []T) []runtime.Object {
+	for _, obj := range objs {
+		runtimeObjs = append(runtimeObjs, obj)
+	}
+	return runtimeObjs
+}
+
+func GetStatusAction[T k8stesting.Action](actions []k8stesting.Action, filters ...func(a T) bool) (T, bool) {
+	filters = append(filters, func(a T) bool { return a.GetSubresource() == "status" })
+	return GetAction(actions, filters...)
+}
+
+func GetAction[T k8stesting.Action](actions []k8stesting.Action, filters ...func(a T) bool) (T, bool) {
+	for _, action := range actions {
+		if a, ok := action.(T); ok {
+			for _, f := range filters {
+				if !f(a) {
+					continue
+				}
+			}
+			return a, true
+		}
+	}
+	var zero T
+	return zero, false
+}
+
+func ListStatusActions[T k8stesting.Action](actions []k8stesting.Action, filters ...func(a T) bool) []T {
+	filters = append(filters, func(a T) bool { return a.GetSubresource() == "status" })
+	return ListActions(actions, filters...)
+}
+
+func ListActions[T k8stesting.Action](actions []k8stesting.Action, filters ...func(a T) bool) []T {
+	var typedActions []T
+	for _, action := range actions {
+		if a, ok := action.(T); ok {
+			for _, f := range filters {
+				if !f(a) {
+					continue
+				}
+			}
+			typedActions = append(typedActions, a)
+		}
+	}
+	return typedActions
 }

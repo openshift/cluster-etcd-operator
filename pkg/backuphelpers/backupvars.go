@@ -6,8 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
-	prune "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 )
 
 type Enqueueable interface {
@@ -16,14 +15,14 @@ type Enqueueable interface {
 
 type BackupVar interface {
 	AddListener(listener Enqueueable)
-	SetBackupSpec(spec *backupv1alpha1.EtcdBackupSpec)
+	SetBackupSpec(spec *operatorv1alpha1.EtcdBackupPolicySpec)
 	ArgString() string
 	ArgList() []string
 }
 
 type BackupConfig struct {
 	enabled   bool
-	spec      *backupv1alpha1.EtcdBackupSpec
+	spec      *operatorv1alpha1.EtcdBackupPolicySpec
 	listeners []Enqueueable
 	mux       sync.Mutex
 }
@@ -35,7 +34,7 @@ func NewDisabledBackupConfig() *BackupConfig {
 	}
 }
 
-func (b *BackupConfig) SetBackupSpec(spec *backupv1alpha1.EtcdBackupSpec) {
+func (b *BackupConfig) SetBackupSpec(spec *operatorv1alpha1.EtcdBackupPolicySpec) {
 	b.mux.Lock()
 	defer b.mux.Unlock()
 
@@ -73,14 +72,6 @@ func (b *BackupConfig) ArgList() []string {
 		args = append(args, fmt.Sprintf("--%s=%s", "schedule", b.spec.Schedule))
 	}
 
-	if b.spec.RetentionPolicy.RetentionType == prune.RetentionTypeNumber {
-		args = append(args, fmt.Sprintf("--%s=%s", "type", b.spec.RetentionPolicy.RetentionType))
-		args = append(args, fmt.Sprintf("--%s=%d", "maxNumberOfBackups", b.spec.RetentionPolicy.RetentionNumber.MaxNumberOfBackups))
-	} else if b.spec.RetentionPolicy.RetentionType == prune.RetentionTypeSize {
-		args = append(args, fmt.Sprintf("--%s=%s", "type", b.spec.RetentionPolicy.RetentionType))
-		args = append(args, fmt.Sprintf("--%s=%d", "maxSizeOfBackupsGb", b.spec.RetentionPolicy.RetentionSize.MaxSizeOfBackupsGb))
-	}
-
 	return args
 }
 
@@ -101,14 +92,6 @@ func (b *BackupConfig) ArgString() string {
 
 	if b.spec.Schedule != "" {
 		args = append(args, fmt.Sprintf("- --%s=%s", "schedule", b.spec.Schedule))
-	}
-
-	if b.spec.RetentionPolicy.RetentionType == prune.RetentionTypeNumber {
-		args = append(args, fmt.Sprintf("- --%s=%s", "type", b.spec.RetentionPolicy.RetentionType))
-		args = append(args, fmt.Sprintf("- --%s=%d", "maxNumberOfBackups", b.spec.RetentionPolicy.RetentionNumber.MaxNumberOfBackups))
-	} else if b.spec.RetentionPolicy.RetentionType == prune.RetentionTypeSize {
-		args = append(args, fmt.Sprintf("- --%s=%s", "type", b.spec.RetentionPolicy.RetentionType))
-		args = append(args, fmt.Sprintf("- --%s=%d", "maxSizeOfBackupsGb", b.spec.RetentionPolicy.RetentionSize.MaxSizeOfBackupsGb))
 	}
 
 	return strings.Join(args, "\n    ")
