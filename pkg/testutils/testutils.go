@@ -351,6 +351,18 @@ func FakeNetwork(isIPv6 bool) *configv1.Network {
 	}
 }
 
+func FakePVC(namespace, name string) *corev1.PersistentVolumeClaim {
+	return &corev1.PersistentVolumeClaim{
+		ObjectMeta: v1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			VolumeName: "test-volume",
+		},
+	}
+}
+
 func FakeEtcdBackup(name string, configs ...func(backup *operatorv1alpha1.EtcdBackup)) *operatorv1alpha1.EtcdBackup {
 	backup := &operatorv1alpha1.EtcdBackup{
 		ObjectMeta: v1.ObjectMeta{
