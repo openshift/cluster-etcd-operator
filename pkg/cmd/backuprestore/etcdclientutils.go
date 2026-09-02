@@ -45,33 +45,34 @@ func getEtcdClient(endpoints []string) (*clientv3.Client, error) {
 	return cli, nil
 }
 
-func saveSnapshot(cli *clientv3.Client, dbPath string) error {
+func saveSnapshot(cli *clientv3.Client, dbPath string) (int64, error) {
 	partpath := dbPath + ".part"
 	defer os.RemoveAll(partpath)
 
 	f, err := os.OpenFile(partpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		return fmt.Errorf("could not open %s (%w)", partpath, err)
+		return -1, fmt.Errorf("could not open %s (%w)", partpath, err)
 	}
 
 	opBegin := time.Now()
 	var rd io.ReadCloser
 	rd, err = cli.Snapshot(context.Background())
 	if err != nil {
-		return fmt.Errorf("saveSnapshot failed: %w", err)
+		return -1, fmt.Errorf("saveSnapshot failed: %w", err)
 	}
 
-	if _, err := io.Copy(f, rd); err != nil {
-		return fmt.Errorf("saveSnapshot failed: %w", err)
+	var size int64
+	if size, err = io.Copy(f, rd); err != nil {
+		return -1, fmt.Errorf("saveSnapshot failed: %w", err)
 	}
 	if err := f.Close(); err != nil {
-		return fmt.Errorf("saveSnapshot failed: %w", err)
+		return -1, fmt.Errorf("saveSnapshot failed: %w", err)
 	}
 	klog.Infof("fetched snapshot, took: %v", time.Since(opBegin))
 
 	if err := os.Rename(partpath, dbPath); err != nil {
-		return fmt.Errorf("could not rename %s to %s (%v)", partpath, dbPath, err)
+		return -1, fmt.Errorf("could not rename %s to %s (%v)", partpath, dbPath, err)
 	}
 	klog.Infof("saved snapshot to path %s", dbPath)
-	return nil
+	return size, nil
 }
