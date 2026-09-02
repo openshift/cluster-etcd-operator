@@ -4465,11 +4465,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: path
       type:
         scalar: string
-      default: ""
-    - name: sizeBytes
+    - name: size
       type:
-        scalar: numeric
-      default: 0
+        namedType: io.k8s.apimachinery.pkg.api.resource.Quantity
 - name: com.github.openshift.api.operator.v1alpha1.EtcdBackupJobReference
   map:
     fields:
@@ -4544,9 +4542,7 @@ var schemaYAML = typed.YAMLObject(`types:
         list:
           elementType:
             namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyRetentionRule
-          elementRelationship: associative
-          keys:
-          - type
+          elementRelationship: atomic
     - name: schedule
       type:
         scalar: string
@@ -4566,7 +4562,7 @@ var schemaYAML = typed.YAMLObject(`types:
         list:
           elementType:
             namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupReference
-          elementRelationship: associative
+          elementRelationship: atomic
     - name: lastScheduleTime
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
@@ -4584,11 +4580,9 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: com.github.openshift.api.operator.v1alpha1.EtcdBackupSpec
   map:
     fields:
-    - name: nodeSelector
+    - name: nodeName
       type:
-        map:
-          elementType:
-            scalar: string
+        scalar: string
     - name: storage
       type:
         namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupStorage
@@ -4609,9 +4603,7 @@ var schemaYAML = typed.YAMLObject(`types:
         list:
           elementType:
             namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupFile
-          elementRelationship: associative
-          keys:
-          - path
+          elementRelationship: atomic
     - name: job
       type:
         namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupJobReference
@@ -4655,6 +4647,7 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: path
       type:
         scalar: string
+      default: ""
 - name: com.github.openshift.api.operator.v1alpha1.GatewayAPIIngressConfig
   map:
     fields:

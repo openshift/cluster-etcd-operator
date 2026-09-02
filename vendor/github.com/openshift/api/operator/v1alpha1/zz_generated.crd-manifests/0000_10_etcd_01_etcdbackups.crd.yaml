@@ -68,16 +68,13 @@ spec:
           spec:
             description: spec holds user settable values for configuration
             properties:
-              nodeSelector:
-                additionalProperties:
-                  type: string
+              nodeName:
                 description: |-
-                  nodeSelector specifies which master node(s) to run the backup job on.
-                  If no selector is specified, the default node-role.kubernetes.io/control-plane label will be used.
-                  If no nodes are matched, then no backup will run.
-                type: object
+                  nodeName specifies the master node where an etcd backup should be taken.
+                  If not specified, a random master node will be selected.
+                type: string
                 x-kubernetes-validations:
-                - message: nodeSelector is immutable once set
+                - message: nodeName is immutable once set
                   rule: self == oldSelf
               storage:
                 description: storage specifies the location where etcd backup files
@@ -107,8 +104,6 @@ spec:
                       name:
                         description: name is a reference to a PVC in the "openshift-etcd"
                           namespace where the etcd backup file will be saved.
-                        maxLength: 253
-                        minLength: 1
                         type: string
                         x-kubernetes-validations:
                         - message: name is immutable once set
@@ -218,38 +213,26 @@ spec:
                     path:
                       description: path to the backup file on the storage backend.
                       type: string
-                    sizeBytes:
-                      description: sizeBytes is the size of the backup file on the
-                        storage backend in bytes.
-                      format: int64
-                      minimum: 0
-                      type: integer
-                  required:
-                  - path
-                  - sizeBytes
+                    size:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      description: size of the backup file on the storage backend.
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
                   type: object
                 type: array
-                x-kubernetes-list-map-keys:
-                - path
-                x-kubernetes-list-type: map
               job:
                 description: job is a reference to the Job created for the backup.
                 properties:
                   name:
                     description: name of the backup job
-                    maxLength: 253
-                    minLength: 1
                     type: string
                   namespace:
                     description: namespace of the backup job
-                    maxLength: 63
-                    minLength: 1
                     type: string
                   uid:
                     description: uid of the backup job
-                    format: uuid
-                    maxLength: 36
-                    minLength: 36
                     type: string
                 required:
                 - name
@@ -257,10 +240,8 @@ spec:
                 - uid
                 type: object
               nodeName:
-                description: nodeName is used for Local backups to bind the control
-                  plane node where the snapshot will be taken.
-                maxLength: 63
-                minLength: 1
+                description: nodeName is the master node where the backup snapshot
+                  was taken.
                 type: string
             type: object
         required:
