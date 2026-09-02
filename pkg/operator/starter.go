@@ -182,7 +182,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	configInformers := configv1informers.NewSharedInformerFactory(configClient, 10*time.Minute)
 	clusterVersions := configInformers.Config().V1().ClusterVersions()
 	networkInformer := configInformers.Config().V1().Networks()
-	jobsInformer := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs().Informer()
 
 	versionRecorder := status.NewVersionGetter()
 	clusterOperator, err := configClient.ConfigV1().ClusterOperators().Get(ctx, "etcd", metav1.GetOptions{})
