@@ -103,9 +103,9 @@ These are instantiated via `staticpod.NewBuilder()` in `pkg/operator/starter.go`
 
 These controllers are only started when the `AutomatedEtcdBackup` feature gate is enabled:
 
-- **PeriodicBackupController** (`pkg/operator/periodicbackupcontroller/periodicbackupcontroller.go`) — Watches `Backup` CRs (config.openshift.io/v1alpha1) and reconciles CronJobs to trigger scheduled backups.
-
 - **BackupController** (`pkg/operator/backupcontroller/backupcontroller.go`) — Watches `EtcdBackup` CRs (operator.openshift.io/v1alpha1) and creates Jobs for on-demand backups. Enforces serial execution — only one backup job at a time. Reconciles job status back to the CR.
+
+- **BackupPolicyController** (`pkg/operator/backuppolicycontroller/backuppolicy_controller.go`) — Watches `EtcdBackupPolicy` CRs (operator.openshift.io/v1alpha1) and creates backups according to a cron schedule.
 
 - **BackupRemovalController** (`pkg/operator/backupcontroller/backup_removal_controller.go`) — Garbage-collects orphaned `EtcdBackup` CRs whose owning Jobs no longer exist (needed because EtcdBackups are cluster-scoped while Jobs are namespaced).
 
