@@ -484,9 +484,6 @@ func WithBackupFailed() func(backup *operatorv1alpha1.EtcdBackup) {
 			Type:   string(operatorv1alpha1.BackupFailed),
 			Status: v1.ConditionTrue,
 		})
-		if backup.Status.Files != nil {
-			backup.Status.Files = nil
-		}
 		if backup.Status.NodeName == "" {
 			if backup.Spec.NodeName == "" {
 				backup.Status.NodeName = "test-node"

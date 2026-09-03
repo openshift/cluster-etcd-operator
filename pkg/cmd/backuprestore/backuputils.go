@@ -1,11 +1,15 @@
 package backuprestore
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/klog/v2"
 )
 
@@ -38,7 +42,7 @@ func archiveLatestResources(configDir, backupFile string) (int64, error) {
 	return size, nil
 }
 
-func backup(r *backupOptions) error {
+func backup(r *backupOptions) (err error) {
 	cli, err := getEtcdClient(r.endpoints)
 	if err != nil {
 		return fmt.Errorf("backup: failed to get etcd client: %w", err)
@@ -56,22 +60,74 @@ func backup(r *backupOptions) error {
 	snapshotFilepath := filepath.Join(r.backupDir, snapshotOutFile)
 	archiveFilepath := filepath.Join(r.backupDir, outputArchive)
 
+	var files []operatorv1alpha1.EtcdBackupFile
+
+	defer func() {
+		if r.terminationLog != "" {
+			if logErr := writeTerminationLog(r.terminationLog, files); logErr != nil {
+				if err == nil {
+					err = fmt.Errorf("terminationLog failed: %w", logErr)
+				}
+			}
+		}
+	}()
+
 	// Save snapshot
 	var snapshotSize int64
-	if snapshotSize, err = saveSnapshot(cli, snapshotFilepath); err != nil {
+	snapshotPartialPath := snapshotFilepath + ".part"
+	if snapshotSize, err = saveSnapshot(cli, snapshotPartialPath, snapshotFilepath); err != nil {
+		// Record partial snapshot path for GC
+		if backupFile, ok := statBackupFile(snapshotPartialPath); ok {
+			files = append(files, backupFile)
+		}
 		return fmt.Errorf("saveSnapshot failed: %w", err)
+	} else {
+		files = append(files, newEtcdBackupFile(snapshotFilepath, snapshotSize))
 	}
 
 	// Save the corresponding static pod resources
 	var archiveSize int64
 	if archiveSize, err = archiveLatestResources(r.configDir, archiveFilepath); err != nil {
+		// Record partial archive path for GC
+		if backupFile, ok := statBackupFile(archiveFilepath); ok {
+			files = append(files, backupFile)
+		}
 		return fmt.Errorf("archiveLatestResources failed: %w", err)
+	} else {
+		files = append(files, newEtcdBackupFile(archiveFilepath, archiveSize))
 	}
 
-	if r.terminationLog != "" {
-		if err := backuphelpers.WriteTerminationLog(r.terminationLog, snapshotFilepath, snapshotSize, archiveFilepath, archiveSize); err != nil {
-			return fmt.Errorf("termiantionLog failed: %w", err)
+	return
+}
+
+func newEtcdBackupFile(path string, size int64) operatorv1alpha1.EtcdBackupFile {
+	return operatorv1alpha1.EtcdBackupFile{
+		Path: path,
+		Size: *resource.NewQuantity(size, resource.BinarySI),
+	}
+}
+
+func statBackupFile(path string) (file operatorv1alpha1.EtcdBackupFile, ok bool) {
+	if info, err := os.Stat(path); err != nil {
+		return newEtcdBackupFile(path, info.Size()), true
+	}
+	return
+}
+
+func writeTerminationLog(terminationLog string, files []operatorv1alpha1.EtcdBackupFile) (retErr error) {
+	f, err := os.OpenFile(terminationLog, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return fmt.Errorf("Error opening termination log: %w", err)
+	}
+	defer func() {
+		if err := f.Close(); err != nil && retErr != nil {
+			retErr = fmt.Errorf("Error closing termination log: %w", err)
 		}
+	}()
+
+	termLog := backuphelpers.BackupTerminationLog{Files: files}
+	if err := json.NewEncoder(f).Encode(termLog); err != nil {
+		return fmt.Errorf("Error writing termination log: %w", err)
 	}
 
 	return nil

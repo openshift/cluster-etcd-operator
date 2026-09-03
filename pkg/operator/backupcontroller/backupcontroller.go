@@ -42,10 +42,12 @@ import (
 
 const (
 	backupAppName           = "cluster-backup-job"
-	backupNameLabel         = "operator.openshift.io/etcd-backup"
 	backupPathMount         = "/etc/kubernetes/cluster-backup"
 	backupDirEnvName        = "CLUSTER_BACKUP_PATH"
 	ttlSecondsAfterFinished = int32(4 * 60 * 60)
+
+	labelBackupName = "operator.openshift.io/etcd-backup"
+	labelJobName    = "batch.kubernetes.io/job-name"
 
 	maxNameLength = 63
 )
@@ -223,7 +225,7 @@ func indexJobsByBackupLabelName(jobs []*batchv1.Job) map[string]*batchv1.Job {
 	m := map[string]*batchv1.Job{}
 	for _, j := range jobs {
 		if slices.Contains(j.Finalizers, backuphelpers.FinalizerEtcdBackup) && j.Labels != nil {
-			backupCrdName := j.Labels[backupNameLabel]
+			backupCrdName := j.Labels[labelBackupName]
 			if backupCrdName != "" {
 				m[backupCrdName] = j
 			}
@@ -276,7 +278,7 @@ func reconcileJobStatus(ctx context.Context,
 			v1.Condition{
 				Type:               string(statusReason),
 				Reason:             string(statusReason),
-				Message:            fmt.Sprintf("%s", jobState),
+				Message:            string(jobState),
 				Status:             v1.ConditionTrue,
 				LastTransitionTime: metav1.NewTime(time.Now()),
 			})
@@ -290,22 +292,16 @@ func reconcileJobStatus(ctx context.Context,
 			}
 		}
 
-		if jobState == batchv1.JobComplete {
-			// TODO(bhperry): If pod is not found, backup will be marked completed but won't have status.files info.
-			// 		In this case we can still GC, it just won't count towards total size with MaxSize rule.
-			//		Backup directory can be inferred based on backup name and storage path.
-			if pod, err := findCompletedBackupPod(podLister, job.Name); err != nil {
-				return fmt.Errorf("error listing pods for backup job [%s]: %w", job.Name, err)
-			} else if pod != nil {
-				var terminationMessage string
-				if len(pod.Status.ContainerStatuses) > 0 {
-					terminationMessage = pod.Status.ContainerStatuses[0].State.Terminated.Message
-				}
-				if files, err := parseTerminationMessage(terminationMessage); err != nil {
-					klog.Infof("BackupController error reading termination message for backup [%s]: %v", backup.Name, err)
-				} else {
-					backup.Status.Files = files
-				}
+		// TODO(bhperry): If pod is not found, backup will be marked completed but won't have status.files info.
+		// 		In this case we can still GC, it just won't count towards total size with MaxSize rule.
+		//		Backup directory can be inferred based on backup name and storage path.
+		if terminationMessage, err := findBackupTerminationMessage(podLister, job.Name); err != nil {
+			return fmt.Errorf("error listing pods for backup job [%s]: %w", job.Name, err)
+		} else if terminationMessage != "" {
+			if files, err := parseTerminationMessage(terminationMessage); err != nil {
+				klog.Infof("BackupController error reading termination message for backup [%s]: %v", backup.Name, err)
+			} else {
+				backup.Status.Files = files
 			}
 		}
 
@@ -358,7 +354,7 @@ func createBackupJob(ctx context.Context,
 	jobName := backup.Name
 	job := obj.(*batchv1.Job)
 	job.Name = jobName
-	job.Labels[backupNameLabel] = backup.Name
+	job.Labels[labelBackupName] = backup.Name
 	job.OwnerReferences = append(job.OwnerReferences, v1.OwnerReference{
 		APIVersion: operatorv1alpha1.GroupVersion.String(),
 		Kind:       "EtcdBackup",
@@ -431,17 +427,35 @@ func createBackupJob(ctx context.Context,
 	return nil
 }
 
-func findCompletedBackupPod(podLister corev1listers.PodNamespaceLister, jobName string) (*corev1.Pod, error) {
-	pods, err := podLister.List(labels.SelectorFromSet(labels.Set{"batch.kubernetes.io/job-name": jobName}))
+func findBackupTerminationMessage(podLister corev1listers.PodNamespaceLister, jobName string) (string, error) {
+	pods, err := podLister.List(labels.SelectorFromSet(labels.Set{labelJobName: jobName}))
 	if err != nil {
-		return nil, err
+		return "", err
 	}
+	// Order pods latest first
+	slices.SortFunc(pods, func(a, b *corev1.Pod) int {
+		return b.CreationTimestamp.Compare(a.CreationTimestamp.Time)
+	})
 	for _, pod := range pods {
-		if pod.Status.Phase == corev1.PodSucceeded && len(pod.Status.ContainerStatuses) > 0 && pod.Status.ContainerStatuses[0].State.Terminated != nil {
-			return pod, nil
+		if pod.Status.Phase == corev1.PodSucceeded {
+			return podTerminationMessage(pod), nil
 		}
 	}
-	return nil, nil
+	// If none are succeeded, then take the termination message of the most recent one
+	if len(pods) > 0 {
+		return podTerminationMessage(pods[0]), nil
+	}
+	return "", nil
+}
+
+func podTerminationMessage(pod *corev1.Pod) string {
+	if len(pod.Status.ContainerStatuses) > 0 {
+		status := pod.Status.ContainerStatuses[0]
+		if status.State.Terminated != nil {
+			return status.State.Terminated.Message
+		}
+	}
+	return ""
 }
 
 func parseTerminationMessage(message string) ([]operatorv1alpha1.EtcdBackupFile, error) {
