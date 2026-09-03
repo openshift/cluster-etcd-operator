@@ -21,7 +21,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -225,46 +224,14 @@ func (c *BackupGarbageCollectionController) syncBackups(ctx context.Context, act
 					return nil, err
 				}
 			}
-		} else if v1helpers.IsConditionTrue(backup.Status.Conditions, string(operatorv1alpha1.BackupFailed)) {
-			// Remove backup finalizer if the backup failed
-			if err := removeBackupFinalizer(ctx, backupsClient, backup); err != nil {
+		} else if backuphelpers.IsBackupFinished(backup) {
+			if storage, requiresGC, err := isGarbageCollectionRequired(c.nodesLister, c.pvcsLister, backup); err != nil {
+				return nil, err
+			} else if requiresGC {
+				newGC[storage] = append(newGC[storage], backup)
+			} else if err := removeBackupFinalizer(ctx, backupsClient, backup); err != nil {
 				return nil, err
 			}
-		} else if v1helpers.IsConditionTrue(backup.Status.Conditions, string(operatorv1alpha1.BackupCompleted)) {
-			// Check if new GC Job should be created
-			storage := storageBackend{storageType: backup.Spec.Storage.Type}
-			switch backup.Spec.Storage.Type {
-			case operatorv1alpha1.EtcdBackupStorageTypeLocal:
-				// Check if node still exists
-				if _, err := c.nodesLister.Get(backup.Status.NodeName); err != nil {
-					if apierrors.IsNotFound(err) {
-						klog.Infof("BackupGarbageCollectionController node %s not found, finalizing backup %s", backup.Status.NodeName, backup.Name)
-						if err := removeBackupFinalizer(ctx, backupsClient, backup); err != nil {
-							return nil, err
-						}
-						continue
-					}
-					return nil, err
-				}
-				storage.nodeName = backup.Status.NodeName
-			case operatorv1alpha1.EtcdBackupStorageTypePVC:
-				// Check if PVC still exists
-				if _, err := c.pvcsLister.Get(backup.Spec.Storage.PVC.Name); err != nil {
-					if apierrors.IsNotFound(err) {
-						klog.Infof("BackupGarbageCollectionController PVC %s not found, finalizing backup %s", backup.Spec.Storage.PVC.Name, backup.Name)
-						if err := removeBackupFinalizer(ctx, backupsClient, backup); err != nil {
-							return nil, err
-						}
-						continue
-					}
-					return nil, err
-				}
-				storage.pvcName = backup.Spec.Storage.PVC.Name
-			default:
-				continue
-			}
-
-			newGC[storage] = append(newGC[storage], backup)
 		}
 	}
 	return newGC, nil
@@ -316,6 +283,7 @@ func createGarbageCollectionJob(ctx context.Context,
 	job.Spec.TTLSecondsAfterFinished = new(gcTtlSecondsAfterFinished)
 	job.Spec.Template.Spec.Containers[0].Image = operatorImagePullSpec
 
+	// TODO(bhperry): If backup is missing files but GC is requested, infer files by directory
 	gcFiles := make([]string, 0, len(backups))
 	switch storage.storageType {
 	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
@@ -382,6 +350,48 @@ func createGarbageCollectionJob(ctx context.Context,
 	}
 
 	return nil
+}
+
+func isGarbageCollectionRequired(
+	nodesLister corev1listers.NodeLister,
+	pvcsLister corev1listers.PersistentVolumeClaimNamespaceLister,
+	backup *operatorv1alpha1.EtcdBackup,
+) (storageBackend, bool, error) {
+	// Check if new GC Job should be created
+	storage := storageBackend{storageType: backup.Spec.Storage.Type}
+
+	// Skip GC if backup failed and created no files
+	if backuphelpers.IsBackupFailed(backup) && len(backup.Status.Files) == 0 {
+		return storage, false, nil
+	}
+
+	switch backup.Spec.Storage.Type {
+	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
+		// Check if node still exists
+		if _, err := nodesLister.Get(backup.Status.NodeName); err != nil {
+			if apierrors.IsNotFound(err) {
+				klog.Infof("BackupGarbageCollectionController node %s not found, ignoring GC for etcdbackup %s", backup.Status.NodeName, backup.Name)
+				err = nil
+			}
+			return storage, false, err
+		}
+		storage.nodeName = backup.Status.NodeName
+	case operatorv1alpha1.EtcdBackupStorageTypePVC:
+		// Check if PVC still exists
+		if _, err := pvcsLister.Get(backup.Spec.Storage.PVC.Name); err != nil {
+			if apierrors.IsNotFound(err) {
+				klog.Infof("BackupGarbageCollectionController PVC %s not found, ignoring GC for etcdbackup %s", backup.Spec.Storage.PVC.Name, backup.Name)
+				err = nil
+			}
+			return storage, false, err
+		}
+		storage.pvcName = backup.Spec.Storage.PVC.Name
+	default:
+		klog.Infof("BackupGarbageCollectionController unknown storage type %s, ignoring GC for etcdbackup %s", backup.Spec.Storage.Type, backup.Name)
+		return storage, false, nil
+	}
+
+	return storage, true, nil
 }
 
 func finalizeJob(ctx context.Context, jobsClient batchv1client.JobInterface, job *batchv1.Job) error {
