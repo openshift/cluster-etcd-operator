@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -327,10 +328,10 @@ func TestBackupGarbageCollectionMultipleBackupsPerJob(t *testing.T) {
 	})
 }
 
-func TestBackupGarbageCollectionFailedBackupFinalized(t *testing.T) {
-	// Finalize a failed EtcdBackup without creating a GC Job
+func TestBackupGarbageCollectionSuccessfulBackupMissingPVCFinalized(t *testing.T) {
+	// Finalize a successful EtcdBackup that references a deleted PVC
 	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
-		backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupFailed(), testutils.WithBackupDeleted())},
+		backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupCompleted(), testutils.WithBackupDeleted())},
 		validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			jobList, err := client.BatchV1().Jobs(operatorclient.TargetNamespace).List(t.Context(), v1.ListOptions{
 				LabelSelector: labels.Set{"app": backupGCAppName}.String(),
@@ -341,6 +342,69 @@ func TestBackupGarbageCollectionFailedBackupFinalized(t *testing.T) {
 			backup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), "test-backup", v1.GetOptions{})
 			require.NoError(t, err)
 			require.Empty(t, backup.Finalizers)
+		},
+	})
+}
+
+func TestBackupGarbageCollectionSuccessfulBackupMissingNodeFinalized(t *testing.T) {
+	// Finalize a successful Local EtcdBackup that references a deleted node
+	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
+		backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupCompleted(), testutils.WithBackupDeleted(), testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
+			Type:  operatorv1alpha1.EtcdBackupStorageTypeLocal,
+			Local: &operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/backups"},
+		}))},
+		validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			jobList, err := client.BatchV1().Jobs(operatorclient.TargetNamespace).List(t.Context(), v1.ListOptions{
+				LabelSelector: labels.Set{"app": backupGCAppName}.String(),
+			})
+			require.NoError(t, err)
+			require.Len(t, jobList.Items, 0)
+
+			backup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), "test-backup", v1.GetOptions{})
+			require.NoError(t, err)
+			require.Empty(t, backup.Finalizers)
+		},
+	})
+}
+
+func TestBackupGarbageCollectionFailedBackupFinalized(t *testing.T) {
+	// Finalize a failed EtcdBackup without creating a GC Job
+	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
+		backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupFailed(), testutils.WithBackupDeleted())},
+		pvcs:    []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
+		validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			jobList, err := client.BatchV1().Jobs(operatorclient.TargetNamespace).List(t.Context(), v1.ListOptions{
+				LabelSelector: labels.Set{"app": backupGCAppName}.String(),
+			})
+			require.NoError(t, err)
+			require.Len(t, jobList.Items, 0)
+
+			backup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), "test-backup", v1.GetOptions{})
+			require.NoError(t, err)
+			require.Empty(t, backup.Finalizers)
+		},
+	})
+}
+
+func TestBackupGarbageCollectionPartiallyFailedBackupRunsGC(t *testing.T) {
+	// Create GC job for failed EtcdBackup that created some files but didn't complete
+	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
+		backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupFailed(), testutils.WithBackupDeleted(), func(backup *operatorv1alpha1.EtcdBackup) {
+			backup.Status.Files = []operatorv1alpha1.EtcdBackupFile{{
+				Path: "/backups/backup.db.part", Size: *resource.NewQuantity(100, resource.BinarySI),
+			}}
+		})},
+		pvcs: []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
+		validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			jobList, err := client.BatchV1().Jobs(operatorclient.TargetNamespace).List(t.Context(), v1.ListOptions{
+				LabelSelector: labels.Set{"app": backupGCAppName}.String(),
+			})
+			require.NoError(t, err)
+			require.Len(t, jobList.Items, 1)
+
+			backup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), "test-backup", v1.GetOptions{})
+			require.NoError(t, err)
+			require.Contains(t, backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
 		},
 	})
 }
