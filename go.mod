@@ -156,3 +156,5 @@ replace (
 	github.com/gogo/protobuf => github.com/gogo/protobuf v1.3.2
 	vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787
 )
+
+replace golang.org/x/net => github.com/openshift-sustaining/net v0.43.0-sec.3
