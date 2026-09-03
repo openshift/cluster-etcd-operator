@@ -29,7 +29,7 @@ require (
 	go.etcd.io/etcd/server/v3 v3.5.16
 	go.etcd.io/etcd/tests/v3 v3.5.4
 	go.uber.org/zap v1.27.0
-	golang.org/x/sys v0.30.0
+	golang.org/x/sys v0.35.0
 	google.golang.org/grpc v1.65.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
@@ -115,13 +115,13 @@ require (
 	go.opentelemetry.io/otel/trace v1.28.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.3.1 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/crypto v0.35.0 // indirect
+	golang.org/x/crypto v0.41.0 // indirect
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56 // indirect
-	golang.org/x/net v0.36.0 // indirect
+	golang.org/x/net v0.42.0 // indirect
 	golang.org/x/oauth2 v0.23.0 // indirect
-	golang.org/x/sync v0.12.0 // indirect
-	golang.org/x/term v0.29.0 // indirect
-	golang.org/x/text v0.23.0 // indirect
+	golang.org/x/sync v0.16.0 // indirect
+	golang.org/x/term v0.34.0 // indirect
+	golang.org/x/text v0.28.0 // indirect
 	golang.org/x/time v0.7.0 // indirect
 	google.golang.org/genproto v0.0.0-20240123012728-ef4313101c80 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240826202546-f6391c0de4c7 // indirect
@@ -146,3 +146,5 @@ replace (
 )
 
 replace github.com/openshift/library-go => github.com/benluddy/library-go v0.0.0-20250129150747-314ad28512db
+
+replace golang.org/x/net => github.com/openshift-sustaining/net v0.43.0-sec.3
