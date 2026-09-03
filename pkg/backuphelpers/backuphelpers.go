@@ -24,6 +24,10 @@ const (
 	masterNodeLabel = "node-role.kubernetes.io/master"
 )
 
+type BackupTerminationLog struct {
+	Files []operatorv1alpha1.EtcdBackupFile `json:"files"`
+}
+
 func AutoBackupFeatureGateEnabled(featureGateAccessor featuregates.FeatureGateAccess) (bool, error) {
 	gates, err := featureGateAccessor.CurrentFeatureGates()
 	if err != nil {
