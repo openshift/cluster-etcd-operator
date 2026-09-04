@@ -57,8 +57,8 @@ func NewBackupQueueController(
 		ResyncEvery(1*time.Minute).
 		WithFilteredEventsInformers(func(obj interface{}) bool {
 			if backup, ok := obj.(*operatorv1alpha1.EtcdBackup); ok {
-				// Don't trigger sync for backups marked pending
-				return !backuphelpers.IsBackupPending(backup)
+				// Don't trigger sync for backups marked pending or running
+				return !backuphelpers.IsBackupActive(backup)
 			}
 			return false
 		}, backupInformer).
@@ -88,8 +88,6 @@ func (c *BackupQueueController) sync(ctx context.Context, _ factory.SyncContext)
 
 	backupsClient := c.operatorClient.EtcdBackups()
 	for _, backup := range backupsQueue {
-		klog.Infof("BackupQueueController found backup [%s] queued for start", backup.Name)
-
 		nodeName := backup.Spec.NodeName
 		if nodeName == "" {
 			// Round robin master nodes until all in use
@@ -115,13 +113,18 @@ func (c *BackupQueueController) sync(ctx context.Context, _ factory.SyncContext)
 		backup.Status.NodeName = nodeName
 		backup.Status.Conditions = append(backup.Status.Conditions, metav1.Condition{
 			Type:               string(operatorv1alpha1.BackupPending),
-			Reason:             string(operatorv1alpha1.BackupPending),
+			Reason:             string(operatorv1alpha1.BackupReasonReadyToStart),
 			Status:             metav1.ConditionTrue,
 			LastTransitionTime: metav1.Now(),
 		})
 		if _, err := backupsClient.UpdateStatus(ctx, backup, metav1.UpdateOptions{}); err != nil {
-			return fmt.Errorf("BackupQueueController failed to update backup [%s]: %w", backup.Name, err)
+			if apierrors.IsConflict(err) {
+				klog.Infof("BackupQueueController conflict updating backup [%s]: %s", backup.Name, err)
+				continue
+			}
+			return fmt.Errorf("BackupQueueController failed to promote backup [%s] to pending: %w", backup.Name, err)
 		}
+		klog.Infof("BackupQueueController promoted backup [%s] to pending on node [%s]", backup.Name, nodeName)
 		c.activeCache.add(backup)
 	}
 
