@@ -2,6 +2,7 @@ package backupcontroller
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,7 @@ type testCaseBackupController struct {
 	backups     []*operatorv1alpha1.EtcdBackup
 	jobs        []*batchv1.Job
 	pods        []*corev1.Pod
+	nodes       []*corev1.Node
 	pvcs        []*corev1.PersistentVolumeClaim
 	expectError bool
 	validate    func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset)
@@ -45,9 +47,10 @@ func runBackupControllerTest(t *testing.T, tc testCaseBackupController) {
 	operatorObjs := make([]runtime.Object, 0, len(tc.backups))
 	operatorObjs = testutils.AppendRuntimeObjects(operatorObjs, tc.backups)
 
-	k8sObjs := make([]runtime.Object, 0, len(tc.jobs)+len(tc.pods)+len(tc.pvcs))
+	k8sObjs := make([]runtime.Object, 0, len(tc.jobs)+len(tc.pods)+len(tc.nodes)+len(tc.pvcs))
 	k8sObjs = testutils.AppendRuntimeObjects(k8sObjs, tc.jobs)
 	k8sObjs = testutils.AppendRuntimeObjects(k8sObjs, tc.pods)
+	k8sObjs = testutils.AppendRuntimeObjects(k8sObjs, tc.nodes)
 	k8sObjs = testutils.AppendRuntimeObjects(k8sObjs, tc.pvcs)
 
 	client := k8sfakeclient.NewSimpleClientset(k8sObjs...)
@@ -95,8 +98,8 @@ func TestSyncLoopHappyPath(t *testing.T) {
 	backup := testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPending("test-node"))
 	runBackupControllerTest(t, testCaseBackupController{
 		backups: []*operatorv1alpha1.EtcdBackup{backup},
-		pvcs: []*corev1.PersistentVolumeClaim{
-			{ObjectMeta: v1.ObjectMeta{Name: "test-backup-pvc", Namespace: operatorclient.TargetNamespace}}},
+		nodes:   []*corev1.Node{testutils.FakeNode("test-node")},
+		pvcs:    []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			job := requireBackupJobCreated(t, client, backup)
 
@@ -147,9 +150,11 @@ func TestJobBackupJobCompleted(t *testing.T) {
 	pods := []*corev1.Pod{
 		testutils.FakePod("failed-backup-job-pod-1",
 			testutils.WithPodLabels(map[string]string{labelJobName: job.Name}),
+			testutils.WithPodOwner(v1.OwnerReference{Kind: "Job", Name: job.Name, UID: job.UID}),
 			testutils.WithCreationTimestamp(v1.Time{Time: time.Now().Add(-time.Minute)})),
 		testutils.FakePod("failed-backup-job-pod-2",
 			testutils.WithPodLabels(map[string]string{labelJobName: job.Name}),
+			testutils.WithPodOwner(v1.OwnerReference{Kind: "Job", Name: job.Name, UID: job.UID}),
 			testutils.WithCreationTimestamp(v1.Now()),
 			func(pod *corev1.Pod) {
 				pod.Status.Phase = corev1.PodSucceeded
@@ -170,10 +175,9 @@ func TestJobBackupJobCompleted(t *testing.T) {
 		pods:    pods,
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			requireNoBackupJobCreated(t, client)
-			requireBackupUpdated(t, operatorFake, string(operatorv1alpha1.BackupCompleted), string(batchv1.JobComplete), []operatorv1alpha1.EtcdBackupFile{
+			requireBackupUpdated(t, operatorFake, operatorv1alpha1.BackupCompleted, operatorv1alpha1.BackupReasonJobCompleted, fmt.Sprintf("backup job status %s", batchv1.JobComplete), []operatorv1alpha1.EtcdBackupFile{
 				{Path: "/my/successful/backup.db", Size: *resource.NewQuantity(100*1024*1024, resource.BinarySI)},
-				{Path: "/my/successful/static_kuberesources.tar.gz", Size: *resource.NewQuantity(4321, resource.BinarySI)},
-			})
+				{Path: "/my/successful/static_kuberesources.tar.gz", Size: *resource.NewQuantity(4321, resource.BinarySI)}})
 			requireJobUpdated(t, client, "test-backup")
 		},
 	})
@@ -196,9 +200,11 @@ func TestBackupJobFailed(t *testing.T) {
 	pods := []*corev1.Pod{
 		testutils.FakePod("failed-backup-job-pod-1",
 			testutils.WithPodLabels(map[string]string{labelJobName: job.Name}),
+			testutils.WithPodOwner(v1.OwnerReference{Kind: "Job", Name: job.Name, UID: job.UID}),
 			testutils.WithCreationTimestamp(v1.Time{Time: time.Now().Add(-time.Minute)})),
 		testutils.FakePod("failed-backup-job-pod-2",
 			testutils.WithPodLabels(map[string]string{labelJobName: job.Name}),
+			testutils.WithPodOwner(v1.OwnerReference{Kind: "Job", Name: job.Name, UID: job.UID}),
 			testutils.WithCreationTimestamp(v1.Now()),
 			func(pod *corev1.Pod) {
 				pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
@@ -219,7 +225,7 @@ func TestBackupJobFailed(t *testing.T) {
 		pods:    pods,
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			requireNoBackupJobCreated(t, client)
-			requireBackupUpdated(t, operatorFake, string(operatorv1alpha1.BackupFailed), string(batchv1.JobFailed), []operatorv1alpha1.EtcdBackupFile{{
+			requireBackupUpdated(t, operatorFake, operatorv1alpha1.BackupFailed, operatorv1alpha1.BackupReasonJobFailed, fmt.Sprintf("backup job status %s", batchv1.JobFailed), []operatorv1alpha1.EtcdBackupFile{{
 				Path: "/my/broken/backup.db.part",
 				Size: *resource.NewQuantity(12345, resource.BinarySI),
 			}})
@@ -235,9 +241,10 @@ func TestPVCNotFound(t *testing.T) {
 				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
 				PVC:  &operatorv1alpha1.EtcdBackupStoragePvc{Name: "backup-pvc-that-doesnt-exist"},
 			}))},
+		nodes: []*corev1.Node{testutils.FakeNode("test-node")},
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			requireNoBackupJobCreated(t, client)
-			requireBackupUpdated(t, operatorFake, string(operatorv1alpha1.BackupFailed), "unable to find PVC [backup-pvc-that-doesnt-exist]", nil)
+			requireBackupUpdated(t, operatorFake, operatorv1alpha1.BackupFailed, operatorv1alpha1.BackupReasonPVCNotFound, "unable to find PVC [backup-pvc-that-doesnt-exist]", nil)
 		},
 	})
 }
@@ -362,19 +369,23 @@ func findFirstCreateAction(client *k8sfakeclient.Clientset) *k8stesting.CreateAc
 	return createAction
 }
 
-func requireBackupUpdated(t *testing.T, client *operatorfake.Clientset, expectedConditionType string, expectedConditionMessage string, expectedFiles []operatorv1alpha1.EtcdBackupFile) {
+func requireBackupUpdated(
+	t *testing.T,
+	client *operatorfake.Clientset,
+	expectedConditionType operatorv1alpha1.BackupConditionType,
+	expectedConditionReason operatorv1alpha1.BackupConditionReason,
+	expectedConditionMessage string,
+	expectedFiles []operatorv1alpha1.EtcdBackupFile) {
 	t.Helper()
 	action, ok := testutils.GetStatusAction[k8stesting.UpdateActionImpl](client.Fake.Actions())
 	require.Truef(t, ok, "expected to find at least one status updateAction, but found %v", client.Fake.Actions())
 	b := action.Object.(*operatorv1alpha1.EtcdBackup)
-	require.Equal(t, []v1.Condition{
-		{
-			Type:    expectedConditionType,
-			Reason:  expectedConditionType,
-			Message: expectedConditionMessage,
-			Status:  v1.ConditionTrue,
-		},
-	}, removeTransitionTime(b.Status.Conditions))
+	require.Contains(t, removeTransitionTime(b.Status.Conditions), v1.Condition{
+		Type:    string(expectedConditionType),
+		Reason:  string(expectedConditionReason),
+		Message: expectedConditionMessage,
+		Status:  v1.ConditionTrue,
+	})
 	if expectedFiles != nil {
 		require.Len(t, b.Status.Files, len(expectedFiles))
 		for i, file := range expectedFiles {

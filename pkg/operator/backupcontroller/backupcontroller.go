@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	batchv1client "k8s.io/client-go/kubernetes/typed/batch/v1"
+	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	batchv1listers "k8s.io/client-go/listers/batch/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 
@@ -131,6 +132,11 @@ func (c *BackupController) sync(ctx context.Context, _ factory.SyncContext) erro
 
 	backupsClient := c.operatorClient.EtcdBackups()
 	jobsClient := c.kubeClient.BatchV1().Jobs(operatorclient.TargetNamespace)
+	pvcsClient := c.kubeClient.CoreV1().PersistentVolumeClaims(operatorclient.TargetNamespace)
+	nodesClient := c.kubeClient.CoreV1().Nodes()
+
+	validatedNodes := map[string]bool{}
+	validatedPVCs := map[string]bool{}
 	var backupsToRun []*operatorv1alpha1.EtcdBackup
 	for _, backup := range backups {
 		if job, ok := jobIndexed[backup.Name]; ok {
@@ -143,6 +149,35 @@ func (c *BackupController) sync(ctx context.Context, _ factory.SyncContext) erro
 		}
 
 		if backup.DeletionTimestamp == nil && backup.Status.Job == nil && backuphelpers.IsBackupPending(backup) {
+			nodeName := backup.Status.NodeName
+			validNode, ok := validatedNodes[nodeName]
+			if !ok {
+				if validNode, err = isValidNode(ctx, nodesClient, nodeName); err != nil {
+					return fmt.Errorf("BackupController could not validate Node [%s]: %w", nodeName, err)
+				}
+				validatedNodes[nodeName] = validNode
+			}
+			if !validNode {
+				klog.Infof("Skipping backup [%s], node [%s] not found", backup.Name, backup.Status.NodeName)
+				markBackupFailed(ctx, backupsClient, backup, operatorv1alpha1.BackupReasonNodeNotFound, fmt.Sprintf("unable to find node [%s]", nodeName))
+				continue
+			}
+
+			if backup.Spec.Storage.Type == operatorv1alpha1.EtcdBackupStorageTypePVC {
+				pvcName := backup.Spec.Storage.PVC.Name
+				validPVC, ok := validatedPVCs[pvcName]
+				if !ok {
+					if validPVC, err = isValidPVC(ctx, pvcsClient, pvcName); err != nil {
+						return fmt.Errorf("BackupController could not validate PVC [%s]: %w", pvcName, err)
+					}
+					validatedPVCs[pvcName] = validPVC
+				}
+				if !validPVC {
+					klog.Infof("Skipping backup [%s], PVC [%s] not found", backup.Name, pvcName)
+					markBackupFailed(ctx, backupsClient, backup, operatorv1alpha1.BackupReasonPVCNotFound, fmt.Sprintf("unable to find PVC [%s]", pvcName))
+					continue
+				}
+			}
 			backupsToRun = append(backupsToRun, backup)
 		}
 	}
@@ -152,21 +187,13 @@ func (c *BackupController) sync(ctx context.Context, _ factory.SyncContext) erro
 		return nil
 	}
 
-	// in case of multiple backups requested, we're trying to reconcile in order of their names (also to reduce flakiness in tests)
+	// in case of multiple backups requested, we reconcile in order of their names (also to reduce flakiness in tests)
 	slices.SortFunc(backupsToRun, func(a, b *operatorv1alpha1.EtcdBackup) int {
 		return strings.Compare(a.Name, b.Name)
 	})
 
-	// klog.V(4).Infof("BackupController backupsToRun: %v, chooses %v", backupsToRun, backupsToRun[0])
 	for _, backup := range backupsToRun {
 		klog.V(4).Infof("BackupController processing EtcdBackup %s", backup.Name)
-		if valid, err := validateBackup(ctx, backup, c.kubeClient, backupsClient); err != nil {
-			return err
-		} else if !valid {
-			klog.V(4).Infof("BackupController deems EtcdBackup %s invalid, skipping", backup.Name)
-			continue
-		}
-
 		if err := createBackupJob(ctx, backup, c.operatorImagePullSpec, jobsClient, backupsClient); err != nil {
 			return err
 		}
@@ -175,41 +202,17 @@ func (c *BackupController) sync(ctx context.Context, _ factory.SyncContext) erro
 	return nil
 }
 
-func validateBackup(ctx context.Context,
-	backup *operatorv1alpha1.EtcdBackup,
-	kubeClient kubernetes.Interface,
-	backupsClient operatorv1alpha1client.EtcdBackupInterface) (bool, error) {
-
-	switch backup.Spec.Storage.Type {
-	case operatorv1alpha1.EtcdBackupStorageTypePVC:
-		_, err := kubeClient.CoreV1().PersistentVolumeClaims(operatorclient.TargetNamespace).Get(ctx, backup.Spec.Storage.PVC.Name, metav1.GetOptions{})
-		if err != nil {
-			if errors.IsNotFound(err) {
-				markFailedErr := markBackupFailed(ctx, backupsClient, backup, fmt.Sprintf("unable to find PVC [%s]", backup.Spec.Storage.PVC.Name))
-				if markFailedErr != nil {
-					return false, fmt.Errorf("BackupController unable to mark backup [%s] with missing PVC as failed: %w", backup.Name, markFailedErr)
-				}
-
-				return false, nil
-			}
-
-			return false, fmt.Errorf("BackupController could not get PVC [%s]: %w", backup.Spec.Storage.PVC.Name, err)
-		}
-	}
-
-	return true, nil
-}
-
 func markBackupFailed(ctx context.Context,
 	client operatorv1alpha1client.EtcdBackupInterface,
 	backup *operatorv1alpha1.EtcdBackup,
-	failedMessage string) error {
+	reason operatorv1alpha1.BackupConditionReason,
+	message string) error {
 	backup = backup.DeepCopy()
 	backup.Status.Conditions = slices.DeleteFunc(backup.Status.Conditions, isBackupPhaseCondition)
 	backup.Status.Conditions = append(backup.Status.Conditions, v1.Condition{
 		Type:               string(operatorv1alpha1.BackupFailed),
-		Reason:             string(operatorv1alpha1.BackupFailed),
-		Message:            failedMessage,
+		Reason:             string(reason),
+		Message:            message,
 		Status:             v1.ConditionTrue,
 		LastTransitionTime: metav1.NewTime(time.Now()),
 	})
@@ -268,20 +271,65 @@ func reconcileJobStatus(ctx context.Context,
 
 	if !backuphelpers.IsBackupFinished(backup) {
 		backup = backup.DeepCopy()
-		statusReason := operatorv1alpha1.BackupCompleted
+
+		conditionType := operatorv1alpha1.BackupCompleted
+		conditionReason := operatorv1alpha1.BackupReasonJobCompleted
+		conditionMessage := fmt.Sprintf("backup job status %s", jobState)
 		if jobState == batchv1.JobFailed {
-			statusReason = operatorv1alpha1.BackupFailed
+			conditionType = operatorv1alpha1.BackupFailed
+			conditionReason = operatorv1alpha1.BackupReasonJobFailed
+		}
+		now := metav1.Now()
+		backup.Status.Conditions = []v1.Condition{{
+			Type:               string(conditionType),
+			Reason:             string(conditionReason),
+			Message:            conditionMessage,
+			Status:             v1.ConditionTrue,
+			LastTransitionTime: now,
+		}}
+
+		pods, err := listJobPods(podLister, job)
+		if err != nil {
+			return fmt.Errorf("error listing pods for backup job [%s]: %w", job.Name, err)
 		}
 
-		backup.Status.Conditions = slices.DeleteFunc(backup.Status.Conditions, isBackupPhaseCondition)
-		backup.Status.Conditions = append(backup.Status.Conditions,
-			v1.Condition{
-				Type:               string(statusReason),
-				Reason:             string(statusReason),
-				Message:            string(jobState),
-				Status:             v1.ConditionTrue,
-				LastTransitionTime: metav1.NewTime(time.Now()),
-			})
+		if terminationMessage, err := findBackupTerminationMessage(pods); err != nil {
+			return fmt.Errorf("error listing pods for backup job [%s]: %w", job.Name, err)
+		} else if files, err := parseTerminationMessage(terminationMessage); err != nil {
+			klog.Infof("BackupController failed to read termination message for backup [%s]: %v", backup.Name, err)
+			if conditionType == operatorv1alpha1.BackupFailed {
+				// If no termination message is found, it's possible a backup pod crashed without being able to write out the status of files it created.
+				// Assume that GC is required, file paths can be inferred based on storage backend and EtcdBackup name
+				backup.Status.Conditions = append(backup.Status.Conditions, v1.Condition{
+					Type:               string(operatorv1alpha1.BackupGarbageCollectionRequired),
+					Reason:             string(operatorv1alpha1.BackupReasonFileStateUnknown),
+					Message:            "unable to determine if backup job created files before failing",
+					Status:             v1.ConditionTrue,
+					LastTransitionTime: now,
+				})
+			}
+		} else {
+			backup.Status.Files = files
+			if conditionType == operatorv1alpha1.BackupFailed {
+				if len(files) > 0 {
+					backup.Status.Conditions = append(backup.Status.Conditions, v1.Condition{
+						Type:               string(operatorv1alpha1.BackupGarbageCollectionRequired),
+						Reason:             string(operatorv1alpha1.BackupReasonFilesPartiallyCreated),
+						Message:            "backup job created some files before failing",
+						Status:             v1.ConditionTrue,
+						LastTransitionTime: now,
+					})
+				} else {
+					backup.Status.Conditions = append(backup.Status.Conditions, v1.Condition{
+						Type:               string(operatorv1alpha1.BackupGarbageCollectionRequired),
+						Reason:             string(operatorv1alpha1.BackupReasonFilesNotCreated),
+						Message:            "backup job didn't create any files before failing",
+						Status:             v1.ConditionFalse,
+						LastTransitionTime: now,
+					})
+				}
+			}
+		}
 
 		// In case etcdbackup status update failed after job was created
 		if backup.Status.Job == nil {
@@ -292,21 +340,7 @@ func reconcileJobStatus(ctx context.Context,
 			}
 		}
 
-		// TODO(bhperry): If pod is not found, backup will be marked completed but won't have status.files info.
-		// 		In this case we can still GC, it just won't count towards total size with MaxSize rule.
-		//		Backup directory can be inferred based on backup name and storage path.
-		if terminationMessage, err := findBackupTerminationMessage(podLister, job.Name); err != nil {
-			return fmt.Errorf("error listing pods for backup job [%s]: %w", job.Name, err)
-		} else if terminationMessage != "" {
-			if files, err := parseTerminationMessage(terminationMessage); err != nil {
-				klog.Infof("BackupController error reading termination message for backup [%s]: %v", backup.Name, err)
-			} else {
-				backup.Status.Files = files
-			}
-		}
-
-		_, err := backupClient.UpdateStatus(ctx, backup, v1.UpdateOptions{})
-		if err != nil {
+		if _, err := backupClient.UpdateStatus(ctx, backup, v1.UpdateOptions{}); err != nil {
 			return fmt.Errorf("error while updating backup status [%s]: %w", backup.Name, err)
 		}
 	}
@@ -427,11 +461,46 @@ func createBackupJob(ctx context.Context,
 	return nil
 }
 
-func findBackupTerminationMessage(podLister corev1listers.PodNamespaceLister, jobName string) (string, error) {
-	pods, err := podLister.List(labels.SelectorFromSet(labels.Set{labelJobName: jobName}))
-	if err != nil {
-		return "", err
+func isValidNode(ctx context.Context, nodeClient corev1client.NodeInterface, name string) (bool, error) {
+	if _, err := nodeClient.Get(ctx, name, metav1.GetOptions{}); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
 	}
+	return true, nil
+}
+
+func isValidPVC(ctx context.Context, pvcClient corev1client.PersistentVolumeClaimInterface, name string) (bool, error) {
+	if _, err := pvcClient.Get(ctx, name, metav1.GetOptions{}); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("BackupController could not get PVC [%s]: %w", name, err)
+	}
+	return true, nil
+}
+
+func listJobPods(podLister corev1listers.PodNamespaceLister, job *batchv1.Job) ([]*corev1.Pod, error) {
+	pods, err := podLister.List(labels.SelectorFromSet(labels.Set{labelJobName: job.Name}))
+	if err != nil {
+		return nil, err
+	}
+
+	n := 0
+	for _, pod := range pods {
+		for _, owner := range pod.OwnerReferences {
+			if owner.Kind == "Job" && owner.Name == job.Name && owner.UID == job.UID {
+				pods[n] = pod
+				n++
+				break
+			}
+		}
+	}
+	return pods[:n], nil
+}
+
+func findBackupTerminationMessage(pods []*corev1.Pod) (string, error) {
 	// Order pods latest first
 	slices.SortFunc(pods, func(a, b *corev1.Pod) int {
 		return b.CreationTimestamp.Compare(a.CreationTimestamp.Time)
