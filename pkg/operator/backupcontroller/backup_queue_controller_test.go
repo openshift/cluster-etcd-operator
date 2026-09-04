@@ -94,6 +94,42 @@ func runBackupQueueControllerTest(t *testing.T, tc testCaseBackupQueueController
 	}
 }
 
+func TestBackupQueueSelectAvailableNode(t *testing.T) {
+	runBackupQueueControllerTest(t, testCaseBackupQueueController{
+		backups: []*operatorv1alpha1.EtcdBackup{
+			testutils.FakeEtcdBackup("pending", testutils.WithBackupPending("test-node-1")),
+			testutils.FakeEtcdBackup("new")},
+		nodes: []*corev1.Node{
+			testutils.FakeNode("test-node-1", testutils.WithMasterLabel()),
+			testutils.FakeNode("test-node-2", testutils.WithMasterLabel())},
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			action, ok := testutils.GetStatusAction[k8stesting.UpdateActionImpl](operatorFake.Actions())
+			require.True(t, ok, "Expected update action")
+
+			backup := action.Object.(*operatorv1alpha1.EtcdBackup)
+			require.Equal(t, backup.Name, "new")
+			require.True(t, backuphelpers.IsBackupPending(backup), "Expected backup to be pending")
+			require.Equal(t, backup.Status.NodeName, "test-node-2", "Expected backup to be assigned to an available node")
+		},
+	})
+}
+
+func TestBackupQueueAllNodesInUse(t *testing.T) {
+	runBackupQueueControllerTest(t, testCaseBackupQueueController{
+		backups: []*operatorv1alpha1.EtcdBackup{
+			testutils.FakeEtcdBackup("pending-1", testutils.WithBackupPending("test-node-1")),
+			testutils.FakeEtcdBackup("pending-2", testutils.WithBackupPending("test-node-2")),
+			testutils.FakeEtcdBackup("new")},
+		nodes: []*corev1.Node{
+			testutils.FakeNode("test-node-1", testutils.WithMasterLabel()),
+			testutils.FakeNode("test-node-2", testutils.WithMasterLabel())},
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			_, ok := testutils.GetStatusAction[k8stesting.UpdateActionImpl](operatorFake.Actions())
+			require.False(t, ok, "Expected no update action")
+		},
+	})
+}
+
 func TestBackupQueueAlreadyPending(t *testing.T) {
 	runBackupQueueControllerTest(t, testCaseBackupQueueController{
 		backups: []*operatorv1alpha1.EtcdBackup{
@@ -264,9 +300,13 @@ func TestBackupQueueRemoveFinishedFromActive(t *testing.T) {
 	for _, backup := range backups {
 		activeCache.add(backup)
 	}
-	require.Len(t, activeCache.backups, 2, "Expected 2 nodes with active backups")
-	require.Len(t, activeCache.backups["test-node-1"], 1, "Expected 1 backup on test-node-1")
-	require.Len(t, activeCache.backups["test-node-2"], 1, "Expected 1 backup on test-node-2")
+	require.Len(t, activeCache.backups, 2, "Expected 2 active backups")
+	require.Len(t, activeCache.nodes, 2, "Expected 2 nodes with active backups")
+	require.Len(t, activeCache.pvcs, 2, "Expected 2 pvcs with active backups")
+	for _, backup := range backups {
+		require.Len(t, activeCache.nodes[backup.Status.NodeName], 1, "Expected 1 backup on node %s", backup.Status.NodeName)
+		require.Len(t, activeCache.pvcs[backup.Spec.Storage.PVC.Name], 1, "Expected 1 backup on pvc %s", backup.Spec.Storage.PVC.Name)
+	}
 
 	runBackupQueueControllerTest(t, testCaseBackupQueueController{
 		backups:     backups,
@@ -280,6 +320,29 @@ func TestBackupQueueRemoveFinishedFromActive(t *testing.T) {
 			require.Falsef(t, ok, "Expected no get action, found %+v", getAction)
 
 			require.Len(t, activeCache.backups, 0)
+			require.Len(t, activeCache.nodes, 0)
+			require.Len(t, activeCache.pvcs, 0)
+		},
+	})
+}
+
+func TestBackupQueueRemoveDeletedFromActive(t *testing.T) {
+	backup := testutils.FakeEtcdBackup("deleted", testutils.WithBackupPending("test-node-1"), testutils.WithBackupDeleted())
+	activeCache := newActiveBackupCache()
+	activeCache.add(backup)
+
+	runBackupQueueControllerTest(t, testCaseBackupQueueController{
+		backups:     []*operatorv1alpha1.EtcdBackup{},
+		activeCache: &activeCache,
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			// Expect get request to verify backup is deleted before removing from backup cache
+			action, ok := testutils.GetStatusAction[k8stesting.GetActionImpl](operatorFake.Actions())
+			require.True(t, ok, "Expected get action")
+			require.Equal(t, backup.Name, action.Name)
+
+			require.Len(t, activeCache.backups, 0)
+			require.Len(t, activeCache.nodes, 0)
+			require.Len(t, activeCache.pvcs, 0)
 		},
 	})
 }
