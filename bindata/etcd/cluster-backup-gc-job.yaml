@@ -22,9 +22,19 @@ spec:
               echo "Garbage Collecting etcd backup files"
               declare -A DIRS
               for BACKUP_FILE in ${CLUSTER_BACKUP_GC_FILES}; do
-                echo "Deleting ${BACKUP_FILE}"
-                rm "${BACKUP_FILE}"
-                DIRS[$(dirname ${BACKUP_FILE})]=1
+                if [ -d ${BACKUP_FILE} ]; then
+                  for FILE in ${BACKUP_FILE}/snapshot_*.db ${BACKUP_FILE}/snapshot_*.db.part ${BACKUP_FILE}/static_kuberesources_*.tar.gz; do
+                    if [ -f ${FILE} ]; then
+                      echo "Deleting {FILE}"
+                      rm ${FILE}
+                    fi
+                  done
+                  DIRS[${BACKUP_FILE}]=1
+                else
+                  echo "Deleting ${BACKUP_FILE}"
+                  rm "${BACKUP_FILE}"
+                  DIRS[$(dirname ${BACKUP_FILE})]=1
+                fi
               done
 
               for DIR in ${!DIRS[@]}; do

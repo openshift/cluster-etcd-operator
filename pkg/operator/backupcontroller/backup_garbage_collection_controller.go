@@ -24,6 +24,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -284,7 +285,7 @@ func createGarbageCollectionJob(ctx context.Context,
 	job.Spec.Template.Spec.Containers[0].Image = operatorImagePullSpec
 
 	// TODO(bhperry): If backup is missing files but GC is requested, infer files by directory
-	gcFiles := make([]string, 0, len(backups))
+	gcFiles := make([]string, 0, 2*len(backups))
 	switch storage.storageType {
 	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
 		job.Spec.Template.Spec.NodeName = storage.nodeName
@@ -294,9 +295,15 @@ func createGarbageCollectionJob(ctx context.Context,
 		paths := map[string]struct{}{}
 		for _, backup := range backups {
 			hostPath := backup.Spec.Storage.Local.HostPath
-			for _, file := range backup.Status.Files {
-				gcFiles = append(gcFiles, filepath.Join(backupPathMount, file.Path))
+			if len(backup.Status.Files) > 0 {
+				for _, file := range backup.Status.Files {
+					gcFiles = append(gcFiles, filepath.Join(backupPathMount, file.Path))
+				}
+			} else {
+				// Infer file directory from host path and backup name
+				gcFiles = append(gcFiles, filepath.Join(backupPathMount, hostPath, backup.Name))
 			}
+
 			if _, ok := paths[hostPath]; !ok {
 				name := fmt.Sprintf("etc-kubernetes-cluster-backup-%d", len(paths))
 				paths[hostPath] = struct{}{}
@@ -316,6 +323,17 @@ func createGarbageCollectionJob(ctx context.Context,
 			}
 		}
 	case operatorv1alpha1.EtcdBackupStorageTypePVC:
+		for _, backup := range backups {
+			if len(backup.Status.Files) > 0 {
+				for _, file := range backup.Status.Files {
+					gcFiles = append(gcFiles, filepath.Join(backupPathMount, file.Path))
+				}
+			} else {
+				// Infer file directory from pvc path and backup name
+				gcFiles = append(gcFiles, filepath.Join(backupPathMount, backup.Spec.Storage.PVC.Path, backup.Name))
+			}
+		}
+
 		job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, corev1.Volume{
 			Name: "etc-kubernetes-cluster-backup",
 			VolumeSource: corev1.VolumeSource{
@@ -328,11 +346,6 @@ func createGarbageCollectionJob(ctx context.Context,
 			Name:      "etc-kubernetes-cluster-backup",
 			MountPath: backupPathMount,
 		})
-		for _, backup := range backups {
-			for _, file := range backup.Status.Files {
-				gcFiles = append(gcFiles, filepath.Join(backupPathMount, file.Path))
-			}
-		}
 	default:
 		return fmt.Errorf("unknown storage backend: %s", storage.storageType)
 	}
@@ -360,9 +373,17 @@ func isGarbageCollectionRequired(
 	// Check if new GC Job should be created
 	storage := storageBackend{storageType: backup.Spec.Storage.Type}
 
-	// Skip GC if backup failed and created no files
-	if backuphelpers.IsBackupFailed(backup) && len(backup.Status.Files) == 0 {
-		return storage, false, nil
+	// Skip GC if backup failed gracefully and created no files
+	// If unknown, assume that GC should be run.
+	if backuphelpers.IsBackupFailed(backup) {
+		for _, condition := range backup.Status.Conditions {
+			if condition.Type == string(operatorv1alpha1.BackupGarbageCollectionRequired) {
+				if condition.Status == metav1.ConditionFalse {
+					return storage, false, nil
+				}
+				break
+			}
+		}
 	}
 
 	switch backup.Spec.Storage.Type {
