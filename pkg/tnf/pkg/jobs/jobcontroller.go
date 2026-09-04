@@ -36,6 +36,11 @@ const (
 	// stuckJobRecoveryTimeout is how long a job must be in Failed state before auto-deletion.
 	// Used to recover from controller parameter migrations or stuck jobs.
 	stuckJobRecoveryTimeout = 10 * time.Minute
+
+	// DegradedMessageMaxRetries is the error message used for MaxRetriesExceeded conditions.
+	// Used both as the full message when first set, and as a prefix when concatenating with additional errors.
+	// Detection relies on this message being present in the condition's Message field.
+	DegradedMessageMaxRetries = "Job failed after maximum retry attempts"
 )
 
 // TODO This based on DeploymentController in openshift/library-go
@@ -232,13 +237,13 @@ func (c *JobController) syncManaged(ctx context.Context, opSpec *opv1.OperatorSp
 
 	required, err := c.getJob(opSpec)
 	if err != nil {
-		return err
+		return preserveMaxRetriesOnReturn(c.instanceName, err, "hook error", opStatus)
 	}
 
 	// If hook returned nil job, skip applying (nodes not ready, etc.)
 	if required == nil {
 		klog.V(4).Infof("Skipping job application: hook requested skip")
-		return nil
+		return preserveMaxRetriesOnReturn(c.instanceName, nil, "hook skipped job application", opStatus)
 	}
 
 	job, _, err := ApplyJob(
@@ -249,7 +254,7 @@ func (c *JobController) syncManaged(ctx context.Context, opSpec *opv1.OperatorSp
 		ExpectedJobGeneration(required, opStatus.Generations),
 	)
 	if err != nil {
-		return err
+		return preserveMaxRetriesOnReturn(c.instanceName, err, "ApplyJob error", opStatus)
 	}
 
 	// Auto-recovery: delete jobs stuck in Failed state for > 10 minutes
@@ -277,7 +282,7 @@ func (c *JobController) syncManaged(ctx context.Context, opSpec *opv1.OperatorSp
 				klog.Infof("Deleted stuck failed job %s, will recreate on next sync", job.Name)
 			}
 			// Return early - next sync will recreate the job
-			return nil
+			return preserveMaxRetriesOnReturn(c.instanceName, nil, "deleted stuck job", opStatus)
 		}
 	}
 
@@ -347,14 +352,22 @@ func (c *JobController) syncManaged(ctx context.Context, opSpec *opv1.OperatorSp
 		status,
 	)
 	if err != nil {
-		return err
+		return preserveMaxRetriesOnReturn(c.instanceName, err, "ApplyOperatorStatus error", opStatus)
 	}
 
 	// return an error for reporting degraded status!
 	// setting a condition manually, similar to available and progressing, doesn't work
 	if IsFailed(*job) {
-		return fmt.Errorf("Job failed")
+		return preserveMaxRetriesOnReturn(c.instanceName, fmt.Errorf("Job failed"), "", opStatus)
 	}
+
+	// Preserve MaxRetriesExceeded if job hasn't completed
+	// (only cleared on actual job success below)
+	if !IsComplete(*job) {
+		return preserveMaxRetriesOnReturn(c.instanceName, nil, "waiting for success", opStatus)
+	}
+
+	// Job complete - actual success, don't preserve degraded conditions
 	return nil
 }
 
@@ -388,4 +401,38 @@ func (c *JobController) getJob(opSpec *opv1.OperatorSpec) (*batchv1.Job, error) 
 		}
 	}
 	return required, nil
+}
+
+// isJobMaxRetriesExceeded checks if the job has the MaxRetriesExceeded degraded condition set.
+// Checks both the Reason field (exact match for MaxRetriesExceeded) and Message field (contains prefix).
+// This handles cases where other errors (e.g., SyncError) override the Reason but preserve MaxRetriesExceeded in the message.
+func isJobMaxRetriesExceeded(jobName string, opStatus *opv1.OperatorStatus) bool {
+	degradedCondition := v1helpers.FindOperatorCondition(opStatus.Conditions,
+		tools.ToPascalCase(jobName)+opv1.OperatorStatusTypeDegraded)
+
+	if degradedCondition == nil || degradedCondition.Status != opv1.ConditionTrue {
+		return false
+	}
+
+	// Check if Message contains the MaxRetriesExceeded message
+	return strings.Contains(degradedCondition.Message, DegradedMessageMaxRetries)
+}
+
+// preserveMaxRetriesOnReturn preserves MaxRetriesExceeded condition when returning from syncManaged.
+// If MaxRetriesExceeded is not set, returns the original error/nil unchanged.
+// If MaxRetriesExceeded is set:
+//   - If err != nil: wraps error to preserve MaxRetriesExceeded message
+//   - If err == nil: returns error with reason to prevent clearing condition
+func preserveMaxRetriesOnReturn(jobName string, err error, reason string, opStatus *opv1.OperatorStatus) error {
+	if !isJobMaxRetriesExceeded(jobName, opStatus) {
+		return err // Return original error or nil
+	}
+
+	// MaxRetriesExceeded is set, need to preserve it
+	if err != nil {
+		// Wrap the error to preserve MaxRetriesExceeded message
+		return fmt.Errorf("%s; %w", DegradedMessageMaxRetries, err)
+	}
+	// err is nil but MaxRetriesExceeded set, return error to prevent clearing
+	return fmt.Errorf("%s; %s", DegradedMessageMaxRetries, reason)
 }

@@ -50,6 +50,7 @@ func TestCheckLastJobFailed(t *testing.T) {
 		jobConditions  []batchv1.JobCondition
 		jobFailedCount int32
 		wantFailed     bool
+		createJob      bool // Explicitly control job creation
 		// For multi-job tests
 		multipleJobs []jobSetup
 	}{
@@ -58,6 +59,7 @@ func TestCheckLastJobFailed(t *testing.T) {
 			jobConditions: []batchv1.JobCondition{
 				{Type: batchv1.JobComplete, Status: corev1.ConditionTrue},
 			},
+			createJob:  true,
 			wantFailed: false,
 		},
 		{
@@ -65,6 +67,7 @@ func TestCheckLastJobFailed(t *testing.T) {
 			jobConditions: []batchv1.JobCondition{
 				{Type: batchv1.JobFailed, Status: corev1.ConditionTrue},
 			},
+			createJob:  true,
 			wantFailed: true,
 		},
 		{
@@ -72,6 +75,7 @@ func TestCheckLastJobFailed(t *testing.T) {
 			jobConditions: []batchv1.JobCondition{
 				{Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue},
 			},
+			createJob:  true,
 			wantFailed: true,
 		},
 		{
@@ -81,16 +85,19 @@ func TestCheckLastJobFailed(t *testing.T) {
 				{Type: batchv1.JobFailed, Status: corev1.ConditionTrue},
 			},
 			jobFailedCount: 2, // Had pod failures during retries
+			createJob:      true,
 			wantFailed:     false,
 		},
 		{
 			name:          "job still running - no conditions set",
 			jobConditions: []batchv1.JobCondition{},
+			createJob:     true,
 			wantFailed:    false,
 		},
 		{
 			name:          "no jobs exist",
-			jobConditions: nil, // Will result in empty list
+			jobConditions: nil,
+			createJob:     false,
 			wantFailed:    false,
 		},
 		{
@@ -154,7 +161,7 @@ func TestCheckLastJobFailed(t *testing.T) {
 					_, err := kubeClient.BatchV1().Jobs(operatorclient.TargetNamespace).Create(context.Background(), job, metav1.CreateOptions{})
 					require.NoError(t, err)
 				}
-			} else if tt.jobConditions != nil {
+			} else if tt.createJob {
 				job := &batchv1.Job{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "test-job-1",
