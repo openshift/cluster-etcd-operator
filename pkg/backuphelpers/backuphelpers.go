@@ -41,6 +41,20 @@ func IsBackupPending(backup *operatorv1alpha1.EtcdBackup) bool {
 	return v1helpers.IsConditionTrue(backup.Status.Conditions, string(operatorv1alpha1.BackupPending))
 }
 
+func IsBackupRunning(backup *operatorv1alpha1.EtcdBackup) bool {
+	return v1helpers.IsConditionTrue(backup.Status.Conditions, string(operatorv1alpha1.BackupRunning))
+}
+
+func IsBackupActive(backup *operatorv1alpha1.EtcdBackup) bool {
+	for _, condition := range backup.Status.Conditions {
+		if condition.Status == metav1.ConditionTrue &&
+			(condition.Type == string(operatorv1alpha1.BackupPending) || condition.Type == string(operatorv1alpha1.BackupRunning)) {
+			return true
+		}
+	}
+	return false
+}
+
 func IsBackupCompleted(backup *operatorv1alpha1.EtcdBackup) bool {
 	return v1helpers.IsConditionTrue(backup.Status.Conditions, string(operatorv1alpha1.BackupCompleted))
 }

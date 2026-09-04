@@ -165,6 +165,8 @@ type BackupConditionType string
 var (
 	// BackupPending means the backup is ready to start.
 	BackupPending BackupConditionType = "Pending"
+	// BackupPending means the backup job has started.
+	BackupRunning BackupConditionType = "Running"
 	// BackupCompleted means the backup completed successfully.
 	BackupCompleted BackupConditionType = "Completed"
 	// BackupFailed means the backup failed.
@@ -180,8 +182,9 @@ type BackupConditionReason string
 var (
 	// BackupReasonReadyToStart means the backup has been queued to start.
 	BackupReasonReadyToStart BackupConditionReason = "ReadyToStart"
-	// BackupReasonRunning means the backup is currently running
-	BackupReasonRunning BackupConditionReason = "Running"
+
+	// BackupReasonJobStarted means the backup job is currently running.
+	BackupReasonJobStarted BackupConditionReason = "JobStarted"
 
 	// BackupReasonJobCompleted means the backup job completed successfully.
 	BackupReasonJobCompleted BackupConditionReason = "JobCompleted"

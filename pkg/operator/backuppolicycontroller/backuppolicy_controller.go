@@ -252,7 +252,9 @@ func (c *BackupPolicyController) executeBackup(ctx context.Context, backupPolicy
 		return nil
 	}
 	if backupPolicy.Spec.Storage.Type == operatorv1alpha1.EtcdBackupStorageTypePVC {
-		// TODO: Randomize?
+		// TODO(bhperry): Ideally the decision would be left up to the queue controller, since it can
+		// 	more intelligently schedule the backup to a node. But EtcdBackup doesn't have a NodeSelector.
+		//  Should both types have NodeName and NodeSelector?
 		masterNodes = masterNodes[:1]
 	}
 

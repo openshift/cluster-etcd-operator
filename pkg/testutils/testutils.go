@@ -36,6 +36,7 @@ import (
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/v3/mock/mockserver"
 	"gopkg.in/yaml.v3"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -60,7 +61,7 @@ func MustAbsPath(path string) string {
 	return abs
 }
 
-func FakePod(name string, configs ...func(node *corev1.Pod)) *corev1.Pod {
+func FakePod(name string, configs ...func(pod *corev1.Pod)) *corev1.Pod {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -445,6 +446,24 @@ func WithBackupStatus(status operatorv1alpha1.EtcdBackupStatus) func(backup *ope
 func WithBackupPending(nodeName string) func(backup *operatorv1alpha1.EtcdBackup) {
 	return func(backup *operatorv1alpha1.EtcdBackup) {
 		backup.Status.NodeName = nodeName
+		backup.Status.Conditions = append(backup.Status.Conditions, v1.Condition{
+			Type:   string(operatorv1alpha1.BackupPending),
+			Status: v1.ConditionTrue,
+		})
+	}
+}
+
+func WithBackupRunning(job *batchv1.Job) func(backup *operatorv1alpha1.EtcdBackup) {
+	return func(backup *operatorv1alpha1.EtcdBackup) {
+		backup.Status.NodeName = job.Spec.Template.Spec.NodeName
+		if backup.Status.NodeName == "" {
+			backup.Status.NodeName = "test-node"
+		}
+		backup.Status.Job = &operatorv1alpha1.EtcdBackupJobReference{
+			Name:      job.Name,
+			Namespace: job.Namespace,
+			UID:       string(job.UID),
+		}
 		backup.Status.Conditions = append(backup.Status.Conditions, v1.Condition{
 			Type:   string(operatorv1alpha1.BackupPending),
 			Status: v1.ConditionTrue,
