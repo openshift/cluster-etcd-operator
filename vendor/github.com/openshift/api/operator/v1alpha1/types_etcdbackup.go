@@ -159,20 +159,46 @@ type EtcdBackupFile struct {
 	Size resource.Quantity `json:"size,omitempty"`
 }
 
+// BackupConditionType enumerates the Condition types added to EtcdBackupStatus at different points in its lifecycle
+type BackupConditionType string
+
+var (
+	// BackupPending means the backup is ready to start.
+	BackupPending BackupConditionType = "Pending"
+	// BackupCompleted means the backup completed successfully.
+	BackupCompleted BackupConditionType = "Completed"
+	// BackupFailed means the backup failed.
+	BackupFailed BackupConditionType = "Failed"
+	// BackupGarbageCollectionRequired indicates whether or not garbage collection is required
+	// on a failed backup to cleanup partially created files.
+	BackupGarbageCollectionRequired BackupConditionType = "GarbageCollectionRequired"
+)
+
+// BackupConditionReason enumerates the Condition reasons associated with BackupConditionTypes
 type BackupConditionReason string
 
 var (
-	// BackupPending is added to the EtcdBackupStatus Conditions when the etcd backup has started processing.
-	BackupPending BackupConditionReason = "BackupPending"
+	// BackupReasonReadyToStart means the backup has been queued to start.
+	BackupReasonReadyToStart BackupConditionReason = "ReadyToStart"
+	// BackupReasonRunning means the backup is currently running
+	BackupReasonRunning BackupConditionReason = "Running"
 
-	// BackupCompleted is added to the EtcdBackupStatus Conditions when the etcd backup has completed.
-	BackupCompleted BackupConditionReason = "BackupCompleted"
+	// BackupReasonJobCompleted means the backup job completed successfully.
+	BackupReasonJobCompleted BackupConditionReason = "JobCompleted"
 
-	// BackupFailed is added to the EtcdBackupStatus Conditions when the etcd backup has failed.
-	BackupFailed BackupConditionReason = "BackupFailed"
+	// BackupReasonPVCNotFound means the backup failed due to a missing PVC.
+	BackupReasonPVCNotFound BackupConditionReason = "PVCNotFound"
+	// BackupReasonNotNotFound means the backup failed due to a missing node.
+	BackupReasonNodeNotFound BackupConditionReason = "NodeNotFound"
+	// BackupReasonJobFailed means the backup job failed.
+	BackupReasonJobFailed BackupConditionReason = "JobFailed"
 
-	// BackupSkipped is added to the EtcdBackupStatus Conditions when the etcd backup has been skipped.
-	BackupSkipped BackupConditionReason = "BackupSkipped"
+	// BackupReasonFilesPartiallyCreated means the backup job failed after partially creating some files.
+	BackupReasonFilesPartiallyCreated BackupConditionReason = "FilesPartiallyCreated"
+	// BackupReasonFilesNotCreated means the backup job failed without creating any files.
+	BackupReasonFilesNotCreated BackupConditionReason = "FilesNotCreated"
+	// BackupReasonFileStateUnknown means the backup job failed without indicating if it had created any files.
+	BackupReasonFileStateUnknown BackupConditionReason = "FileStateUnknown"
 )
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

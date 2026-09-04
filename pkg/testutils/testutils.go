@@ -88,6 +88,12 @@ func WithPodLabels(labels map[string]string) func(pod *corev1.Pod) {
 	}
 }
 
+func WithPodOwner(ownerRef metav1.OwnerReference) func(pod *corev1.Pod) {
+	return func(pod *corev1.Pod) {
+		pod.OwnerReferences = append(pod.OwnerReferences, ownerRef)
+	}
+}
+
 func WithCreationTimestamp(time metav1.Time) func(pod *corev1.Pod) {
 	return func(pod *corev1.Pod) {
 		pod.CreationTimestamp = time
@@ -482,6 +488,7 @@ func WithBackupFailed() func(backup *operatorv1alpha1.EtcdBackup) {
 	return func(backup *operatorv1alpha1.EtcdBackup) {
 		backup.Status.Conditions = append(backup.Status.Conditions, v1.Condition{
 			Type:   string(operatorv1alpha1.BackupFailed),
+			Reason: string(operatorv1alpha1.BackupReasonJobFailed),
 			Status: v1.ConditionTrue,
 		})
 		if backup.Status.NodeName == "" {
