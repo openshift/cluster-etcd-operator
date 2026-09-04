@@ -16,6 +16,7 @@ import (
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
@@ -23,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes/fake"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
@@ -183,8 +185,10 @@ func TestClusterMemberRemovalController(t *testing.T) {
 		initialObjectsForNodeLister      []runtime.Object
 		initialObjectsForMachineLister   []runtime.Object
 		initialEtcdMemberList            []*etcdserverpb.Member
+		fakeEtcdClientOptions            []etcdcli.FakeClientOption
 		validateFn                       func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient)
 		serviceNetwork                   string
+		expectError                      bool
 	}{
 		// scenario 1
 		{
@@ -337,6 +341,50 @@ func TestClusterMemberRemovalController(t *testing.T) {
 				}
 			},
 		},
+
+		// scenario 5: half-orphan - node is gone but the machine is a tombstone (pending deletion)
+		{
+			name:                             "an etcd member whose node is gone and whose machine is pending deletion is removed",
+			serviceNetwork:                   "172.30.0.0/16",
+			isFunctionalMachineAPIFn:         alwaysTrueIsFunctionalMachineAPIFn,
+			initialObjectsForConfigMapLister: []runtime.Object{wellKnownEtcdEndpointsConfigMap()},
+			initialObjectsForMachineLister: []runtime.Object{
+				machinePendingDeletionFor("m-1", "10.0.139.78"),
+				machinePendingDeletionFor("m-2", "10.0.139.79"),
+				machinePendingDeletionFor("m-3", "10.0.139.80"),
+			},
+			initialEtcdMemberList: wellKnownEtcdMemberList(),
+			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
+				memberList, err := fakeEtcdClient.MemberList(context.TODO())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(memberList) != 0 {
+					t.Errorf("expected an empty member list, got %v", memberList)
+				}
+			},
+		},
+
+		// scenario 6: node and machine are gone but the member still reports healthy -> not removed, error
+		{
+			name:                             "an etcd member whose node is gone but that reports healthy is not removed and errors",
+			serviceNetwork:                   "172.30.0.0/16",
+			isFunctionalMachineAPIFn:         alwaysTrueIsFunctionalMachineAPIFn,
+			initialObjectsForConfigMapLister: []runtime.Object{wellKnownEtcdEndpointsConfigMap()},
+			initialEtcdMemberList:            wellKnownEtcdMemberList(),
+			// all members report healthy, so the unbacked member must not be removed
+			fakeEtcdClientOptions: []etcdcli.FakeClientOption{etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3})},
+			expectError:           true,
+			validateFn: func(t *testing.T, fakeEtcdClient etcdcli.EtcdClient) {
+				memberList, err := fakeEtcdClient.MemberList(context.TODO())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(memberList) != 3 {
+					t.Errorf("expected all three etcd members to remain, got %v", memberList)
+				}
+			},
+		},
 	}
 
 	for _, scenario := range scenarios {
@@ -373,7 +421,7 @@ func TestClusterMemberRemovalController(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(scenario.initialEtcdMemberList)
+			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(scenario.initialEtcdMemberList, scenario.fakeEtcdClientOptions...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -389,12 +437,272 @@ func TestClusterMemberRemovalController(t *testing.T) {
 				masterMachineLister:               machineLister,
 				networkLister:                     networkLister,
 			}
-			err = target.removeMemberWithoutMachine(context.TODO())
-			if err != nil {
+			err = target.removeUnhealthyMemberWithoutNode(context.TODO())
+			if scenario.expectError {
+				require.Error(t, err)
+			} else if err != nil {
 				t.Fatal(err)
 			}
 			if scenario.validateFn != nil {
 				scenario.validateFn(t, fakeEtcdClient)
+			}
+		})
+	}
+}
+
+// TestSync exercises the full sync() gate ordering, in particular that dead members (node gone)
+// are removed even while a revision rollout is in progress, while the quorum-sensitive scale-down
+// and learner paths remain gated behind revision stability.
+func TestSync(t *testing.T) {
+	votingMember4 := &etcdserverpb.Member{Name: "m-4", ID: 4, PeerURLs: []string{"https://10.0.139.81:1234"}}
+	learnerMember4 := &etcdserverpb.Member{Name: "m-4", ID: 4, IsLearner: true, PeerURLs: []string{"https://10.0.139.81:1234"}}
+
+	members4 := func() []*etcdserverpb.Member { return append(wellKnownEtcdMemberList(), votingMember4) }
+	membersLearner := func() []*etcdserverpb.Member { return append(wellKnownEtcdMemberList(), learnerMember4) }
+
+	nodes123 := func() []runtime.Object {
+		return []runtime.Object{
+			masterNodeFor("m-1", "10.0.139.78"),
+			masterNodeFor("m-2", "10.0.139.79"),
+			masterNodeFor("m-3", "10.0.139.80"),
+		}
+	}
+	nodes1234 := func() []runtime.Object { return append(nodes123(), masterNodeFor("m-4", "10.0.139.81")) }
+
+	machines123AndPendingM4 := func() []runtime.Object {
+		return append(wellKnownMasterMachines(), machinePendingDeletionFor("m-4", "10.0.139.81"))
+	}
+
+	endpoints4 := map[string]string{"m-1": "10.0.139.78", "m-2": "10.0.139.79", "m-3": "10.0.139.80", "m-4": "10.0.139.81"}
+	endpoints3 := map[string]string{"m-1": "10.0.139.78", "m-2": "10.0.139.79", "m-3": "10.0.139.80"}
+
+	scenarios := []struct {
+		name                 string
+		bootstrapComplete    bool
+		machineAPIFunctional bool
+		revisionStable       bool
+		members              []*etcdserverpb.Member
+		health               *etcdcli.FakeMemberHealth
+		nodes                []runtime.Object
+		machines             []runtime.Object
+		endpoints            map[string]string
+		expectError          bool
+		expectedRemainingIDs []uint64
+	}{
+		{
+			// A: dead member with no node and no machine is removed mid-rollout
+			name:                 "true orphan is removed while a revision rollout is in progress",
+			bootstrapComplete:    true,
+			machineAPIFunctional: true,
+			revisionStable:       false,
+			members:              members4(),
+			health:               &etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 1},
+			nodes:                nodes123(),
+			machines:             wellKnownMasterMachines(),
+			endpoints:            endpoints4,
+			expectedRemainingIDs: []uint64{1, 2, 3},
+		},
+		{
+			// J: half-orphan (node gone, machine pending deletion) is removed mid-rollout
+			name:                 "half-orphan with a tombstone machine is removed while a revision rollout is in progress",
+			bootstrapComplete:    true,
+			machineAPIFunctional: true,
+			revisionStable:       false,
+			members:              members4(),
+			health:               &etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 1},
+			nodes:                nodes123(),
+			machines:             machines123AndPendingM4(),
+			endpoints:            endpoints4,
+			expectedRemainingIDs: []uint64{1, 2, 3},
+		},
+		{
+			// B: a member pending deletion whose node still exists is not removed during a rollout
+			name:                 "voting member pending deletion with a node is not removed during a rollout",
+			bootstrapComplete:    true,
+			machineAPIFunctional: true,
+			revisionStable:       false,
+			members:              members4(),
+			health:               &etcdcli.FakeMemberHealth{Healthy: 4},
+			nodes:                nodes1234(),
+			machines:             machines123AndPendingM4(),
+			endpoints:            endpoints4,
+			expectedRemainingIDs: []uint64{1, 2, 3, 4},
+		},
+		{
+			// C: a learner pending deletion is not removed during a rollout
+			name:                 "learner pending deletion is not removed during a rollout",
+			bootstrapComplete:    true,
+			machineAPIFunctional: true,
+			revisionStable:       false,
+			members:              membersLearner(),
+			health:               &etcdcli.FakeMemberHealth{Healthy: 4},
+			nodes:                nodes123(),
+			machines:             machines123AndPendingM4(),
+			endpoints:            endpoints3, // learners are excluded from the etcd-endpoints configmap
+			expectedRemainingIDs: []uint64{1, 2, 3, 4},
+		},
+		{
+			// D: with a stable revision and matching endpoints, scale-down removes the member pending deletion
+			name:                 "scale-down removes a member pending deletion when the revision is stable",
+			bootstrapComplete:    true,
+			machineAPIFunctional: true,
+			revisionStable:       true,
+			members:              members4(),
+			health:               &etcdcli.FakeMemberHealth{Healthy: 4},
+			nodes:                nodes1234(),
+			machines:             machines123AndPendingM4(),
+			endpoints:            endpoints4,
+			expectedRemainingIDs: []uint64{1, 2, 3},
+		},
+		{
+			// E: stable revision but the endpoints configmap lags live membership -> nothing removed
+			name:                 "nothing is removed when the etcd-endpoints configmap lags live membership",
+			bootstrapComplete:    true,
+			machineAPIFunctional: true,
+			revisionStable:       true,
+			members:              members4(),
+			health:               &etcdcli.FakeMemberHealth{Healthy: 4},
+			nodes:                nodes123(),
+			machines:             machines123AndPendingM4(),
+			endpoints:            endpoints3, // does not include the 4th live voting member
+			expectedRemainingIDs: []uint64{1, 2, 3, 4},
+		},
+		{
+			// F: machine API not functional -> the whole controller is a no-op, even for a true orphan
+			name:                 "no removal when the machine API is not functional",
+			bootstrapComplete:    true,
+			machineAPIFunctional: false,
+			revisionStable:       false,
+			members:              members4(),
+			health:               &etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 1},
+			nodes:                nodes123(),
+			machines:             wellKnownMasterMachines(),
+			endpoints:            endpoints4,
+			expectedRemainingIDs: []uint64{1, 2, 3, 4},
+		},
+		{
+			// G: bootstrap not complete -> the whole controller is a no-op
+			name:                 "no removal when bootstrap is not complete",
+			bootstrapComplete:    false,
+			machineAPIFunctional: true,
+			revisionStable:       false,
+			members:              members4(),
+			health:               &etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 1},
+			nodes:                nodes123(),
+			machines:             wellKnownMasterMachines(),
+			endpoints:            endpoints4,
+			expectedRemainingIDs: []uint64{1, 2, 3, 4},
+		},
+		{
+			// H+I: an unbacked member that still reports healthy is not removed and the error is
+			// returned (aggregated) even though the revision is in progress (previously swallowed).
+			name:                 "unbacked but healthy member is not removed and the error is surfaced during a rollout",
+			bootstrapComplete:    true,
+			machineAPIFunctional: true,
+			revisionStable:       false,
+			members:              members4(),
+			health:               &etcdcli.FakeMemberHealth{Healthy: 4}, // IsMemberHealthy reports healthy
+			nodes:                nodes123(),
+			machines:             wellKnownMasterMachines(),
+			endpoints:            endpoints4,
+			expectError:          true,
+			expectedRemainingIDs: []uint64{1, 2, 3, 4},
+		},
+	}
+
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			fakeMachineAPIChecker := &fakeMachineAPI{isMachineAPIFunctional: func() (bool, error) { return scenario.machineAPIFunctional, nil }}
+
+			// general configmap lister (kube-system/bootstrap for IsBootstrapComplete)
+			generalCMIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+			if scenario.bootstrapComplete {
+				require.NoError(t, generalCMIndexer.Add(bootstrapComplete))
+			}
+			generalCMLister := corev1listers.NewConfigMapLister(generalCMIndexer)
+
+			// target-namespace configmap lister (etcd-endpoints)
+			targetCMIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+			require.NoError(t, targetCMIndexer.Add(&corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Name: "etcd-endpoints", Namespace: "openshift-etcd"},
+				Data:       scenario.endpoints,
+			}))
+			targetCMLister := corev1listers.NewConfigMapLister(targetCMIndexer).ConfigMaps("openshift-etcd")
+
+			nodeIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+			for _, obj := range scenario.nodes {
+				require.NoError(t, nodeIndexer.Add(obj))
+			}
+			nodeLister := corev1listers.NewNodeLister(nodeIndexer)
+			nodeSelector, err := labels.Parse("node-role.kubernetes.io/master")
+			require.NoError(t, err)
+
+			machineIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+			for _, obj := range scenario.machines {
+				require.NoError(t, machineIndexer.Add(obj))
+			}
+			machineLister := machinelistersv1beta1.NewMachineLister(machineIndexer)
+			machineSelector, err := labels.Parse("machine.openshift.io/cluster-api-machine-role=master")
+			require.NoError(t, err)
+
+			networkIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+			require.NoError(t, networkIndexer.Add(&configv1.Network{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Spec: configv1.NetworkSpec{ServiceNetwork: []string{"172.30.0.0/16"}}}))
+			networkLister := configv1listers.NewNetworkLister(networkIndexer)
+
+			infraIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+			require.NoError(t, infraIndexer.Add(&configv1.Infrastructure{
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+				Status:     configv1.InfrastructureStatus{ControlPlaneTopology: configv1.HighlyAvailableTopologyMode},
+			}))
+			infraLister := configv1listers.NewInfrastructureLister(infraIndexer)
+
+			var status *operatorv1.StaticPodOperatorStatus
+			if scenario.revisionStable {
+				status = u.StaticPodOperatorStatus(u.WithLatestRevision(1), u.WithNodeStatusAtCurrentRevision(1), u.WithNodeStatusAtCurrentRevision(1), u.WithNodeStatusAtCurrentRevision(1))
+			} else {
+				status = u.StaticPodOperatorStatus(u.WithLatestRevision(2), u.WithNodeStatusAtCurrentRevision(1))
+			}
+			fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(&operatorv1.StaticPodOperatorSpec{
+				OperatorSpec: operatorv1.OperatorSpec{ObservedConfig: runtime.RawExtension{Raw: []byte(wellKnownReplicasCountSet)}},
+			}, status, nil, nil)
+
+			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(scenario.members, etcdcli.WithFakeClusterHealth(scenario.health))
+			require.NoError(t, err)
+
+			target := clusterMemberRemovalController{
+				operatorClient:                    fakeOperatorClient,
+				etcdClient:                        fakeEtcdClient,
+				machineAPIChecker:                 fakeMachineAPIChecker,
+				configMapLister:                   generalCMLister,
+				configMapListerForTargetNamespace: targetCMLister,
+				masterNodeSelector:                nodeSelector,
+				masterNodeLister:                  nodeLister,
+				masterMachineSelector:             machineSelector,
+				masterMachineLister:               machineLister,
+				networkLister:                     networkLister,
+				infraLister:                       infraLister,
+			}
+
+			recorder := events.NewInMemoryRecorder("test", clock.RealClock{})
+			err = target.sync(context.TODO(), factory.NewSyncContext("test", recorder))
+			if scenario.expectError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			memberList, err := fakeEtcdClient.MemberList(context.TODO())
+			require.NoError(t, err)
+			gotIDs := sets.NewInt64()
+			for _, m := range memberList {
+				gotIDs.Insert(int64(m.ID))
+			}
+			wantIDs := sets.NewInt64()
+			for _, id := range scenario.expectedRemainingIDs {
+				wantIDs.Insert(int64(id))
+			}
+			if !gotIDs.Equal(wantIDs) {
+				t.Errorf("unexpected remaining members: got IDs %v, want %v", gotIDs.List(), wantIDs.List())
 			}
 		})
 	}
@@ -1214,6 +1522,18 @@ func wellKnownMasterNode() *corev1.Node {
 	}
 }
 
+func masterNodeFor(name, internalIP string) *corev1.Node {
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"node-role.kubernetes.io/master": ""}},
+		Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{
+			{
+				Type:    corev1.NodeInternalIP,
+				Address: internalIP,
+			},
+		}},
+	}
+}
+
 func wellKnownMasterNodeIpv6() *corev1.Node {
 	return &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: "m-0", Labels: map[string]string{"node-role.kubernetes.io/master": ""}},
@@ -1290,6 +1610,15 @@ func wellKnownMasterMachines() []runtime.Object {
 		machineWithHooksFor("m-2", "10.0.139.79"),
 		machineWithHooksFor("m-3", "10.0.139.80"),
 	}
+}
+
+// machinePendingDeletionFor builds a master machine with the etcd deletion hook and a set
+// DeletionTimestamp, i.e. a tombstone whose finalization is blocked by the PreDrain hook until
+// the etcd member leaves the cluster.
+func machinePendingDeletionFor(name, internalIP string) *machinev1beta1.Machine {
+	m := machineWithHooksFor(name, internalIP)
+	m.DeletionTimestamp = &metav1.Time{}
+	return m
 }
 
 func TestIsEtcdEndpointsUpdated(t *testing.T) {
