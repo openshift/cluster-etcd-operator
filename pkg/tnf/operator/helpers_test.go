@@ -361,6 +361,10 @@ func (m *mockPacemakerInformer) HasSynced() bool {
 	return true
 }
 
+func (m *mockPacemakerInformer) HasSyncedChecker() cache.DoneChecker {
+	return nil
+}
+
 func (m *mockPacemakerInformer) Run(stopCh <-chan struct{}) {
 }
 
@@ -416,10 +420,6 @@ func (m *mockNodeInformer) SetWatchErrorHandlerWithContext(handler cache.WatchEr
 
 func (m *mockNodeInformer) HasSyncedChecker() cache.DoneChecker {
 	return mockDoneChecker{synced: m.synced}
-}
-
-func (m *mockPacemakerInformer) HasSyncedChecker() cache.DoneChecker {
-	return mockDoneChecker{synced: true}
 }
 
 // mockDoneChecker is a cache.DoneChecker whose Done channel is closed only when

@@ -11,7 +11,6 @@ import (
 	"github.com/openshift/api/features"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
-	configversionedclientv1alpha1 "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1alpha1"
 	configv1informers "github.com/openshift/client-go/config/informers/externalversions"
 	machineclient "github.com/openshift/client-go/machine/clientset/versioned"
 	machineinformersv1beta1 "github.com/openshift/client-go/machine/informers/externalversions/machine/v1beta1"
@@ -54,6 +53,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/backupcontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/backuppolicycontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/bootstrapteardown"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
@@ -68,7 +68,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/machinedeletionhooks"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/metriccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/periodicbackupcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/scriptcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/targetconfigcontroller"
@@ -105,10 +104,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		return err
 	}
 	operatorConfigClientv1Alpha1, err := operatorversionedclientv1alpha1.NewForConfig(controllerContext.KubeConfig)
-	if err != nil {
-		return err
-	}
-	configClientv1Alpha1, err := configversionedclientv1alpha1.NewForConfig(controllerContext.KubeConfig)
 	if err != nil {
 		return err
 	}
@@ -182,7 +177,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	configInformers := configv1informers.NewSharedInformerFactory(configClient, 10*time.Minute)
 	clusterVersions := configInformers.Config().V1().ClusterVersions()
 	networkInformer := configInformers.Config().V1().Networks()
-	jobsInformer := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs().Informer()
 
 	versionRecorder := status.NewVersionGetter()
 	clusterOperator, err := configClient.ConfigV1().ClusterOperators().Get(ctx, "etcd", metav1.GetOptions{})
@@ -500,47 +494,92 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	}
 
 	if enabledAutoBackupFeature {
-		etcdBackupInformer := operatorInformers.Operator().V1alpha1().EtcdBackups().Informer()
-		configBackupInformer := configInformers.Config().V1alpha1().Backups().Informer()
+		etcdBackupInformer := operatorInformers.Operator().V1alpha1().EtcdBackups()
+		etcdBackupPoliciesInformer := operatorInformers.Operator().V1alpha1().EtcdBackupPolicies()
+		jobsInformer := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs()
+		podsInformer := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods()
+		pvcsInformer := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().PersistentVolumeClaims()
+
+		backupsLister := etcdBackupInformer.Lister()
+		backupPoliciesLister := etcdBackupPoliciesInformer.Lister()
+		jobsLister := jobsInformer.Lister().Jobs(operatorclient.TargetNamespace)
+		podsLister := podsInformer.Lister().Pods(operatorclient.TargetNamespace)
+		pvcsLister := pvcsInformer.Lister().PersistentVolumeClaims(operatorclient.TargetNamespace)
 
 		klog.Infof("found automated backup feature to be enabled, starting controllers...")
-		periodicBackupController := periodicbackupcontroller.NewPeriodicBackupController(
-			AlivenessChecker,
-			operatorClient,
-			configClientv1Alpha1,
-			kubeClient,
-			controllerContext.EventRecorder,
-			os.Getenv("OPERATOR_IMAGE"),
-			featureGateAccessor,
-			configBackupInformer,
-			kubeInformersForNamespaces)
-
 		backupController := backupcontroller.NewBackupController(
 			AlivenessChecker,
+			backupsLister,
+			podsLister,
+			jobsLister,
 			operatorConfigClientv1Alpha1,
 			kubeClient,
 			controllerContext.EventRecorder,
 			os.Getenv("OPERATOR_IMAGE"),
 			featureGateAccessor,
-			etcdBackupInformer,
-			jobsInformer)
+			etcdBackupInformer.Informer(),
+			jobsInformer.Informer(),
+			podsInformer.Informer())
 
-		backupRemovalController := backupcontroller.NewBackupRemovalController(
+		backupQueueController := backupcontroller.NewBackupQueueController(
 			AlivenessChecker,
+			backupsLister,
+			controlPlaneNodeLister,
+			operatorConfigClientv1Alpha1,
+			controllerContext.EventRecorder,
+			featureGateAccessor,
+			etcdBackupInformer.Informer(),
+			controlPlaneNodeInformer)
+
+		backupPolicyController := backuppolicycontroller.NewBackupPolicyController(
+			AlivenessChecker,
+			backupsLister,
+			backupPoliciesLister,
+			controlPlaneNodeLister,
+			operatorConfigClientv1Alpha1,
+			operatorClient,
+			controllerContext.EventRecorder,
+			os.Getenv("OPERATOR_IMAGE"),
+			featureGateAccessor,
+			etcdBackupPoliciesInformer.Informer(),
+			etcdBackupInformer.Informer(),
+			controlPlaneNodeInformer)
+
+		backupPolicyRetentionController := backuppolicycontroller.NewBackupPolicyRetentionController(
+			AlivenessChecker,
+			backupsLister,
+			backupPoliciesLister,
+			operatorConfigClientv1Alpha1,
+			controllerContext.EventRecorder,
+			featureGateAccessor,
+			etcdBackupPoliciesInformer.Informer(),
+			etcdBackupInformer.Informer())
+
+		backupGarbageCollectionController := backupcontroller.NewBackupGarbageCollectionController(
+			AlivenessChecker,
+			backupsLister,
+			jobsLister,
+			controlPlaneNodeLister,
+			pvcsLister,
 			operatorConfigClientv1Alpha1,
 			kubeClient,
 			controllerContext.EventRecorder,
+			os.Getenv("OPERATOR_IMAGE"),
 			featureGateAccessor,
-			etcdBackupInformer,
-			jobsInformer)
+			etcdBackupInformer.Informer(),
+			jobsInformer.Informer(),
+			controlPlaneNodeInformer,
+			pvcsInformer.Informer(),
+		)
 
-		go etcdBackupInformer.Run(ctx.Done())
-		go configBackupInformer.Run(ctx.Done())
-		go jobsInformer.Run(ctx.Done())
+		go etcdBackupInformer.Informer().Run(ctx.Done())
+		go etcdBackupPoliciesInformer.Informer().Run(ctx.Done())
 
-		go periodicBackupController.Run(ctx, 1)
 		go backupController.Run(ctx, 1)
-		go backupRemovalController.Run(ctx, 1)
+		go backupQueueController.Run(ctx, 1)
+		go backupPolicyController.Run(ctx, 1)
+		go backupPolicyRetentionController.Run(ctx, 1)
+		go backupGarbageCollectionController.Run(ctx, 1)
 	}
 
 	// we have to wait for the definitive result of the cluster version informer to make the correct machine API decision
