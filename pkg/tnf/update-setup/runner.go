@@ -145,12 +145,22 @@ func RunTnfUpdateSetup() error {
 	commands = []string{
 		// Force new cluster on next etcd restart on this node
 		fmt.Sprintf("crm_attribute --lifetime reboot --node %s --name \"force_new_cluster\" --update %s", currentNodeName, currentNodeName),
-		// Update etcd resource
-		fmt.Sprintf("/usr/sbin/pcs resource update etcd node_ip_map=\"%s:%s;%s:%s\" --wait=300", cfg.NodeName1, cfg.NodeIP1, cfg.NodeName2, cfg.NodeIP2),
+		// Update etcd resource (--wait deprecated in pcs 0.12; settle via status wait/query below)
+		fmt.Sprintf("/usr/sbin/pcs resource update etcd node_ip_map=\"%s:%s;%s:%s\"", cfg.NodeName1, cfg.NodeIP1, cfg.NodeName2, cfg.NodeIP2),
 	}
 	err = runCommands(ctx, commands)
 	if err != nil {
 		return err
+	}
+	if err := pcs.WaitForClusterIdle(ctx, pcs.EtcdClusterIdleWait); err != nil {
+		return fmt.Errorf("cluster did not settle after etcd resource update: %w", err)
+	}
+	started, err := pcs.IsResourceStarted(ctx, "etcd")
+	if err != nil {
+		return fmt.Errorf("failed to query etcd resource state after update: %w", err)
+	}
+	if !started {
+		return fmt.Errorf("etcd resource is not started after update")
 	}
 
 	// remove old node from etcd members
