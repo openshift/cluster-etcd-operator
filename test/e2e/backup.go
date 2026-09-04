@@ -219,6 +219,7 @@ func TestRetentionBySize(t testing.TB) {
 }
 
 func TestMultipleBackupsAreSkipped(t testing.TB) {
+	t.Skip("Multiple backups are no longer skipped, they are queued and processed one at a time (per master node)")
 	pvcName := "multi-backups"
 	ensureHostPathPVC(t, pvcName)
 	c := framework.NewOperatorClient(t)
@@ -253,7 +254,7 @@ func TestMultipleBackupsAreSkipped(t testing.TB) {
 			}
 
 			for _, b := range list.Items {
-				if backupHasCondition(&b, operatorv1alpha1.BackupSkipped, metav1.ConditionTrue) {
+				if backupHasCondition(&b, operatorv1alpha1.BackupConditionType("BackupSkipped"), metav1.ConditionTrue) {
 					return true, nil
 				}
 			}
@@ -619,7 +620,7 @@ func ensureAllBackupPodsAreRemoved(t testing.TB) {
 }
 
 func backupHasCondition(backup *operatorv1alpha1.EtcdBackup,
-	conditionType operatorv1alpha1.BackupConditionReason,
+	conditionType operatorv1alpha1.BackupConditionType,
 	status metav1.ConditionStatus) bool {
 
 	for _, condition := range backup.Status.Conditions {
