@@ -94,7 +94,7 @@ func (c *BackupQueueController) sync(ctx context.Context, _ factory.SyncContext)
 			for len(masterNodes) > 0 {
 				node := masterNodes[0]
 				masterNodes = masterNodes[1:]
-				if c.activeCache.nodeInUse(node.Name) {
+				if !c.activeCache.nodes.inUse(node.Name) {
 					nodeName = node.Name
 					break
 				}
@@ -141,14 +141,18 @@ func (c *BackupQueueController) listBackupsQueue(ctx context.Context) ([]*operat
 	observedActive := newActiveBackupCache()
 	n := 0
 	for _, backup := range backups {
-		if backup.DeletionTimestamp == nil && len(backup.Status.Conditions) == 0 {
-			backups[n] = backup
-			n++
-		} else if !backuphelpers.IsBackupFinished(backup) {
+		if backuphelpers.IsBackupActive(backup) {
 			observedActive.add(backup)
 			c.activeCache.add(backup)
+		} else if backup.DeletionTimestamp == nil && !backuphelpers.IsBackupFinished(backup) {
+			// Queue new backups that haven't been deleted
+			// Check cache in case of informer lag
+			if !c.activeCache.isActive(backup.Name) {
+				backups[n] = backup
+				n++
+			}
 		} else {
-			c.activeCache.remove(backup.Status.NodeName, backup.Name)
+			c.activeCache.remove(backup.Name)
 		}
 	}
 	backups = backups[:n]
@@ -159,24 +163,12 @@ func (c *BackupQueueController) listBackupsQueue(ctx context.Context) ([]*operat
 	// Any items in activeBackups that weren't observed this sync are either new entries that haven't synced to the
 	// informer cache yet, or no longer exist. Compare against source of truth (k8s API).
 	backupsClient := c.operatorClient.EtcdBackups()
-	for nodeName, activeBackups := range c.activeCache.backups {
-		if observedBackups, exists := observedActive.backups[nodeName]; exists {
-			for backupName := range activeBackups {
-				if _, exists := observedBackups[backupName]; !exists {
-					if exists, err := backupExists(ctx, backupsClient, backupName); err != nil {
-						return nil, err
-					} else if !exists {
-						c.activeCache.remove(nodeName, backupName)
-					}
-				}
-			}
-		} else {
-			for backupName := range activeBackups {
-				if exists, err := backupExists(ctx, backupsClient, backupName); err != nil {
-					return nil, err
-				} else if !exists {
-					c.activeCache.remove(nodeName, backupName)
-				}
+	for backupName := range c.activeCache.backups {
+		if _, exists := observedActive.backups[backupName]; !exists {
+			if exists, err := backupExists(ctx, backupsClient, backupName); err != nil {
+				return nil, err
+			} else if !exists {
+				c.activeCache.remove(backupName)
 			}
 		}
 	}
@@ -196,64 +188,106 @@ func backupExists(ctx context.Context, backupsClient operatorv1alpha1client.Etcd
 
 func newActiveBackupCache() activeBackupCache {
 	return activeBackupCache{
-		backups: map[string]map[string]string{},
-		pvcs:    map[string]struct{}{},
+		backups: map[string]activeBackup{},
+		nodes:   activeResources{},
+		pvcs:    activeResources{},
 	}
 }
 
 type activeBackupCache struct {
-	backups map[string]map[string]string
-	pvcs    map[string]struct{}
+	// map active backups by name
+	backups map[string]activeBackup
+	// map nodes to the active backups running on the node. Should be at most 1 unless something unexpected happens.
+	nodes activeResources
+	// map active pvcs. Should be at most 1 unless something unexpected happens.
+	pvcs activeResources
 }
 
-func (abm activeBackupCache) add(backup *operatorv1alpha1.EtcdBackup) {
-	backups, ok := abm.backups[backup.Status.NodeName]
-	if !ok {
-		backups = map[string]string{}
-		abm.backups[backup.Status.NodeName] = backups
-	}
+type activeBackup struct {
+	nodeName, pvcName string
+}
 
+func (abc activeBackupCache) isActive(backupName string) bool {
+	_, ok := abc.backups[backupName]
+	return ok
+}
+
+func (abc activeBackupCache) add(backup *operatorv1alpha1.EtcdBackup) {
+	nodeName := backup.Status.NodeName
+	var pvcName string
 	if backup.Spec.Storage.Type == operatorv1alpha1.EtcdBackupStorageTypePVC {
-		backups[backup.Name] = backup.Spec.Storage.PVC.Name
-		abm.pvcs[backup.Spec.Storage.PVC.Name] = struct{}{}
+		pvcName = backup.Spec.Storage.PVC.Name
+	}
+
+	if active, ok := abc.backups[backup.Name]; ok {
+		// Backup already cached. Make sure nothing has changed.
+		if active.nodeName != nodeName {
+			abc.nodes.remove(active.nodeName, backup.Name)
+			abc.nodes.add(nodeName, backup.Name)
+		}
+		if pvcName != active.pvcName {
+			abc.pvcs.remove(active.pvcName, backup.Name)
+			if pvcName != "" {
+				abc.pvcs.add(pvcName, backup.Name)
+			}
+		}
 	} else {
-		backups[backup.Name] = ""
+		abc.nodes.add(nodeName, backup.Name)
+		if pvcName != "" {
+			abc.pvcs.add(pvcName, backup.Name)
+		}
+	}
+	abc.backups[backup.Name] = activeBackup{nodeName: nodeName, pvcName: pvcName}
+}
+
+func (abc activeBackupCache) remove(backupName string) {
+	if activeBackup, ok := abc.backups[backupName]; ok {
+		abc.nodes.remove(activeBackup.nodeName, backupName)
+		if activeBackup.pvcName != "" {
+			abc.pvcs.remove(activeBackup.pvcName, backupName)
+		}
+		delete(abc.backups, backupName)
 	}
 }
 
-func (abm activeBackupCache) remove(nodeName, backupName string) {
-	if backups, ok := abm.backups[nodeName]; ok {
-		if pvcName, ok := backups[backupName]; ok {
-			delete(abm.pvcs, pvcName)
-		}
-		delete(backups, backupName)
-		if len(backups) == 0 {
-			delete(abm.backups, nodeName)
-		}
-	}
-}
-
-func (abm activeBackupCache) canStart(backup *operatorv1alpha1.EtcdBackup, nodeName string) (ok bool, reason string) {
-	if abm.nodeInUse(nodeName) {
-		backupNames := make([]string, 0, len(abm.backups[nodeName]))
-		for name := range abm.backups[nodeName] {
+func (abc activeBackupCache) canStart(backup *operatorv1alpha1.EtcdBackup, nodeName string) (ok bool, reason string) {
+	if abc.nodes.inUse(nodeName) {
+		backupNames := make([]string, 0, len(abc.nodes[nodeName]))
+		for name := range abc.nodes[nodeName] {
 			backupNames = append(backupNames, name)
 		}
 		return false, fmt.Sprintf("Node %s has active backup(s): %v", nodeName, backupNames)
 	}
 	if backup.Spec.Storage.Type == operatorv1alpha1.EtcdBackupStorageTypePVC {
-		if pvcName := backup.Spec.Storage.PVC.Name; abm.pvcInUse(pvcName) {
+		if pvcName := backup.Spec.Storage.PVC.Name; abc.pvcs.inUse(pvcName) {
 			return false, fmt.Sprintf("PVC %s in use", pvcName)
 		}
 	}
 	return true, ""
 }
 
-func (abm activeBackupCache) nodeInUse(nodeName string) bool {
-	return len(abm.backups[nodeName]) > 0
+type activeResources map[string]map[string]struct{}
+
+func (ar activeResources) inUse(name string) bool {
+	if _, ok := ar[name]; ok {
+		return ok
+	}
+	return false
 }
 
-func (abm activeBackupCache) pvcInUse(pvcName string) bool {
-	_, ok := abm.pvcs[pvcName]
-	return ok
+func (ar activeResources) add(name, backupName string) {
+	if backups, ok := ar[name]; ok {
+		backups[backupName] = struct{}{}
+	} else {
+		ar[name] = map[string]struct{}{backupName: {}}
+	}
+}
+
+func (ar activeResources) remove(name, backupName string) {
+	if backups, ok := ar[name]; ok {
+		delete(backups, backupName)
+		if len(backups) == 0 {
+			delete(ar, name)
+		}
+	}
 }
