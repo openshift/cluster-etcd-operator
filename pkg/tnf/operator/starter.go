@@ -124,8 +124,6 @@ func runTnfResourceController(ctx context.Context, controllerContext *controller
 			"tnfdeployment/sa.yaml",
 			"tnfdeployment/role.yaml",
 			"tnfdeployment/role-binding.yaml",
-			"tnfdeployment/clusterrole.yaml",
-			"tnfdeployment/clusterrole-binding.yaml",
 			"etcd/pacemakercluster-crd.yaml",
 		},
 		(&resourceapply.ClientHolder{}).WithKubernetes(kubeClient).WithDynamicClient(dynamicClient).WithAPIExtensionsClient(apiextClient),
