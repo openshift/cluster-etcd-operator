@@ -299,7 +299,7 @@ func (c *BackupPolicyController) executeBackup(ctx context.Context, backupPolicy
 			}
 		} else {
 			active = append(active, operatorv1alpha1.EtcdBackupReference{Name: backup.Name, UID: string(backup.UID)})
-			klog.V(2).Infof("Created EtcdBackup %s for node %s", backupName, node.Name)
+			klog.V(2).Infof("BackupPolicyController created EtcdBackup %s for node %s", backupName, node.Name)
 		}
 	}
 

@@ -297,7 +297,7 @@ func createBackupJob(ctx context.Context,
 		{Name: "ETCDCTL_CACERT", Value: "/var/run/configmaps/etcd-ca/ca-bundle.crt"},
 	}
 
-	klog.Infof("BackupController starts with backup [%s] as job [%s]", backup.Name, jobName)
+	klog.Infof("BackupController starts backup [%s] as job [%s]", backup.Name, jobName)
 	job, err = jobClient.Create(ctx, job, metav1.CreateOptions{})
 	if err != nil {
 		if apierrors.IsAlreadyExists(err) {
@@ -426,7 +426,7 @@ func reconcileJobStatus(ctx context.Context,
 		job = job.DeepCopy()
 		job.Finalizers = slices.DeleteFunc(job.Finalizers, func(finalizer string) bool { return finalizer == backuphelpers.FinalizerEtcdBackup })
 		if _, err := jobClient.Update(ctx, job, metav1.UpdateOptions{}); err != nil {
-			return fmt.Errorf("error while updating job finalizer [%s]: %w", job.Name, err)
+			return fmt.Errorf("error while updating finalizer for job: %w", err)
 		}
 	}
 
