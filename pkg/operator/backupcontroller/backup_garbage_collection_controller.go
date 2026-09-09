@@ -2,6 +2,7 @@ package backupcontroller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"path/filepath"
@@ -41,7 +42,7 @@ import (
 
 const (
 	backupGCAppName           = "cluster-backup-gc-job"
-	backupGcFilesEnvName      = "CLUSTER_BACKUP_GC_FILES"
+	backupGCFilesEnvName      = "CLUSTER_BACKUP_GC_FILES"
 	gcTtlSecondsAfterFinished = int32(2 * 60 * 60)
 	gcMaxBackupsPerJob        = 100
 	gcBackoffBase             = 30 * time.Second
@@ -133,11 +134,11 @@ func (c *BackupGarbageCollectionController) sync(ctx context.Context, syncCtx fa
 	jobsClient := c.kubeClient.BatchV1().Jobs(operatorclient.TargetNamespace)
 	for key, job := range finishedJobs {
 		if isJobCompleted(job) {
-			if err := finalizeJob(ctx, jobsClient, job); err != nil {
+			if err := finalizeJob(ctx, jobsClient, job, true); err != nil {
 				if apierrors.IsNotFound(err) {
 					delete(finishedJobs, key)
 				} else {
-					return fmt.Errorf("BackupGarbageCollectionController failed to remove finalizer on job %s: %w", job.Name, err)
+					return fmt.Errorf("BackupGarbageCollectionController error: %w", err)
 				}
 			}
 		}
@@ -164,7 +165,7 @@ func (c *BackupGarbageCollectionController) sync(ctx context.Context, syncCtx fa
 				continue
 			}
 			if err := deleteJob(ctx, jobsClient, job); err != nil {
-				return fmt.Errorf("BackupGarbageCollectionController failed to delete job %s: %w", job.Name, err)
+				return fmt.Errorf("BackupGarbageCollectionController error: %w", err)
 			}
 			klog.Infof("BackupGarbageCollectionController deleted job %s for storage backend %s", job.Name, storage.String())
 		}
@@ -350,7 +351,7 @@ func createGarbageCollectionJob(ctx context.Context,
 		return fmt.Errorf("unknown storage backend: %s", storage.storageType)
 	}
 
-	job.Spec.Template.Spec.Containers[0].Env = []corev1.EnvVar{{Name: backupGcFilesEnvName, Value: strings.Join(gcFiles, " ")}}
+	job.Spec.Template.Spec.Containers[0].Env = []corev1.EnvVar{{Name: backupGCFilesEnvName, Value: strings.Join(gcFiles, " ")}}
 
 	klog.Infof("BackupGarbageCollectionController starts backup GC as job [%s]", job.Name)
 	_, err = jobsClient.Create(ctx, job, v1.CreateOptions{})
@@ -415,32 +416,49 @@ func isGarbageCollectionRequired(
 	return storage, true, nil
 }
 
-func finalizeJob(ctx context.Context, jobsClient batchv1client.JobInterface, job *batchv1.Job) error {
+func finalizeJob(ctx context.Context, jobsClient batchv1client.JobInterface, job *batchv1.Job, removeOwnerRefs bool) error {
 	if slices.Contains(job.Finalizers, backuphelpers.FinalizerEtcdBackup) {
-		job := job.DeepCopy()
-		job.Finalizers = slices.DeleteFunc(job.Finalizers, isEtcdBackupFinalizer)
-		job.OwnerReferences = slices.DeleteFunc(job.OwnerReferences, func(owner v1.OwnerReference) bool {
-			return owner.Kind == "EtcdBackup"
-		})
-		if _, err := jobsClient.Update(ctx, job, v1.UpdateOptions{}); err != nil {
-			return err
+		metadata := map[string]any{
+			"$deleteFromPrimitiveList/finalizers": []string{backuphelpers.FinalizerEtcdBackup},
+		}
+		if removeOwnerRefs {
+			ownerReferencesPatch := []map[string]any{}
+			for _, ownerRef := range job.OwnerReferences {
+				if ownerRef.Kind == "EtcdBackup" {
+					ownerReferencesPatch = append(ownerReferencesPatch, map[string]any{
+						"uid":    ownerRef.UID,
+						"$patch": "delete",
+					})
+				}
+			}
+			if len(ownerReferencesPatch) > 0 {
+				metadata["ownerReferences"] = ownerReferencesPatch
+			}
+		}
+
+		patchData, err := json.Marshal(map[string]any{"metadata": metadata})
+		if err != nil {
+			return fmt.Errorf("error marshalling job %q patch: %w", job.Name, err)
+		}
+		if _, err := jobsClient.Patch(ctx, job.Name, types.StrategicMergePatchType, patchData, metav1.PatchOptions{}); err != nil {
+			return fmt.Errorf("error finalizing job: %w", err)
 		}
 	}
 	return nil
 }
 
 func deleteJob(ctx context.Context, jobsClient batchv1client.JobInterface, job *batchv1.Job) (err error) {
-	if err := finalizeJob(ctx, jobsClient, job); err != nil {
+	if err := finalizeJob(ctx, jobsClient, job, true); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
-		return fmt.Errorf("BackupGarbageCollectionController failed to finalize job %s: %w", job.Name, err)
+		return err
 	}
 	if err := jobsClient.Delete(ctx, job.Name, v1.DeleteOptions{PropagationPolicy: ptr.To(v1.DeletePropagationBackground)}); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
-		return fmt.Errorf("BackupGarbageCollectionController failed to delete job %s: %w", job.Name, err)
+		return fmt.Errorf("failed to delete job %s: %w", job.Name, err)
 	}
 	return nil
 }
