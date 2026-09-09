@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	batchv1client "k8s.io/client-go/kubernetes/typed/batch/v1"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -297,7 +298,6 @@ func createBackupJob(ctx context.Context,
 		{Name: "ETCDCTL_CACERT", Value: "/var/run/configmaps/etcd-ca/ca-bundle.crt"},
 	}
 
-	klog.Infof("BackupController starts backup [%s] as job [%s]", backup.Name, jobName)
 	job, err = jobClient.Create(ctx, job, metav1.CreateOptions{})
 	if err != nil {
 		if apierrors.IsAlreadyExists(err) {
@@ -307,6 +307,7 @@ func createBackupJob(ctx context.Context,
 		}
 		return fmt.Errorf("failed to create job: %w", err)
 	}
+	klog.Infof("BackupController started job [%s] for backup [%s]", jobName, backup.Name)
 
 	backup = backup.DeepCopy()
 	setBackupRunning(backup, job)
@@ -422,14 +423,11 @@ func reconcileJobStatus(ctx context.Context,
 		}
 	}
 
-	if slices.Contains(job.Finalizers, backuphelpers.FinalizerEtcdBackup) {
-		job = job.DeepCopy()
-		job.Finalizers = slices.DeleteFunc(job.Finalizers, func(finalizer string) bool { return finalizer == backuphelpers.FinalizerEtcdBackup })
-		if _, err := jobClient.Update(ctx, job, metav1.UpdateOptions{}); err != nil {
-			return fmt.Errorf("error while updating finalizer for job: %w", err)
+	if err := finalizeJob(ctx, jobClient, job, false); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return err
 		}
 	}
-
 	return nil
 }
 
@@ -448,10 +446,15 @@ func reconcileMissingJobStatus(ctx context.Context, jobsClient batchv1client.Job
 			return fmt.Sprintf("found Job [%s] with incorrect UID [%s]", jobName, job.UID), nil
 		} else {
 			// Correct job exists, make sure it is labeled appropriately. Otherwise assume it will be handled on a future sync.
-			if job.Labels[labelBackupName] == "" {
-				job.Labels[labelBackupName] = backup.Name
-				if _, err := jobsClient.Update(ctx, job, metav1.UpdateOptions{}); err != nil {
-					return "", fmt.Errorf("BackupController failed to update mislabeled job [%s] for backup [%s]", jobName, backup.Name)
+			if job.Labels == nil || job.Labels[labelBackupName] == "" {
+				patchBody, err := json.Marshal(metav1.ObjectMeta{
+					Labels: map[string]string{labelBackupName: backup.Name},
+				})
+				if err != nil {
+					return "", fmt.Errorf("error marshalling job %q patch: %w", job.Name, err)
+				}
+				if _, err := jobsClient.Patch(ctx, job.Name, types.StrategicMergePatchType, patchBody, metav1.PatchOptions{}); err != nil {
+					return "", fmt.Errorf("error adding label to job: %w", err)
 				}
 			}
 		}
