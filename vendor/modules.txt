@@ -292,7 +292,7 @@ github.com/openshift-eng/openshift-tests-extension/pkg/ginkgo
 github.com/openshift-eng/openshift-tests-extension/pkg/junit
 github.com/openshift-eng/openshift-tests-extension/pkg/util/sets
 github.com/openshift-eng/openshift-tests-extension/pkg/version
-# github.com/openshift/api v0.0.0-20260817181206-aa91c5e2b221
+# github.com/openshift/api v0.0.0-20260817181206-aa91c5e2b221 => github.com/bhperry/openshift-api v0.0.0-20260904200415-546fe417549f
 ## explicit; go 1.26.0
 github.com/openshift/api
 github.com/openshift/api/annotations
@@ -384,7 +384,7 @@ github.com/openshift/build-machinery-go/make/targets/golang
 github.com/openshift/build-machinery-go/make/targets/openshift
 github.com/openshift/build-machinery-go/make/targets/openshift/operator
 github.com/openshift/build-machinery-go/scripts
-# github.com/openshift/client-go v0.0.0-20260810202730-ddca5e0b7146
+# github.com/openshift/client-go v0.0.0-20260810202730-ddca5e0b7146 => github.com/bhperry/openshift-client-go v0.0.0-20260904200522-f969b6c0050b
 ## explicit; go 1.26.0
 github.com/openshift/client-go/config/applyconfigurations
 github.com/openshift/client-go/config/applyconfigurations/config/v1
@@ -1837,6 +1837,8 @@ sigs.k8s.io/structured-merge-diff/v6/value
 # sigs.k8s.io/yaml v1.6.0
 ## explicit; go 1.22
 sigs.k8s.io/yaml
+# github.com/openshift/api => github.com/bhperry/openshift-api v0.0.0-20260904200415-546fe417549f
+# github.com/openshift/client-go => github.com/bhperry/openshift-client-go v0.0.0-20260904200522-f969b6c0050b
 # github.com/gogo/protobuf => github.com/gogo/protobuf v1.3.2
 # github.com/onsi/ginkgo/v2 => github.com/openshift/onsi-ginkgo/v2 v2.6.1-0.20241205171354-8006f302fd12
 # vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787

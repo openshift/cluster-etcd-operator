@@ -1,0 +1,58 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: backup-gc
+  namespace: openshift-etcd
+  labels:
+    app: cluster-backup-gc-job
+spec:
+  template:
+    spec:
+      containers:
+        - name: cluster-backup-gc
+          imagePullPolicy: IfNotPresent
+          terminationMessagePolicy: FallbackToLogsOnError
+          command:
+            - /bin/sh
+            - -c
+            - |
+              #!/bin/sh
+              set -exuo pipefail
+
+              echo "Garbage Collecting etcd backup files"
+              declare -A DIRS
+              for BACKUP_FILE in ${CLUSTER_BACKUP_GC_FILES}; do
+                if [ -d ${BACKUP_FILE} ]; then
+                  for FILE in ${BACKUP_FILE}/snapshot_*.db ${BACKUP_FILE}/snapshot_*.db.part ${BACKUP_FILE}/static_kuberesources_*.tar.gz; do
+                    if [ -f ${FILE} ]; then
+                      echo "Deleting {FILE}"
+                      rm ${FILE}
+                    fi
+                  done
+                  DIRS[${BACKUP_FILE}]=1
+                else
+                  echo "Deleting ${BACKUP_FILE}"
+                  rm "${BACKUP_FILE}"
+                  DIRS[$(dirname ${BACKUP_FILE})]=1
+                fi
+              done
+
+              for DIR in ${!DIRS[@]}; do
+                echo "Deleting directory ${DIR}"
+                if ! rmdir ${DIR}; then
+                  echo "Directory is not empty, ignoring"
+                fi
+              done
+          resources:
+            requests:
+              memory: 20Mi
+              cpu: 10m
+          securityContext:
+            privileged: true
+      priorityClassName: system-node-critical
+      activeDeadlineSeconds: 900
+      nodeSelector:
+        node-role.kubernetes.io/master: ""
+      restartPolicy: Never
+      tolerations:
+        - operator: "Exists"
