@@ -88,6 +88,7 @@ func (c *BackupQueueController) sync(ctx context.Context, _ factory.SyncContext)
 
 	backupsClient := c.operatorClient.EtcdBackups()
 	for _, backup := range backupsQueue {
+		backupName := backup.Name
 		nodeName := backup.Spec.NodeName
 		if nodeName == "" {
 			// Round robin master nodes until all in use
@@ -100,31 +101,22 @@ func (c *BackupQueueController) sync(ctx context.Context, _ factory.SyncContext)
 				}
 			}
 			if nodeName == "" {
-				klog.Infof("BackupQueueController unable to start backup [%s]: all master nodes in use", backup.Name)
+				klog.Infof("BackupQueueController unable to start backup [%s]: all master nodes in use", backupName)
 				continue
 			}
 		}
 		if ok, reason := c.activeCache.canStart(backup, nodeName); !ok {
-			klog.Infof("BackupQueueController unable to start backup [%s]: %s", backup.Name, reason)
+			klog.Infof("BackupQueueController unable to start backup [%s]: %s", backupName, reason)
 			continue
 		}
 
-		backup = backup.DeepCopy()
-		backup.Status.NodeName = nodeName
-		backup.Status.Conditions = append(backup.Status.Conditions, metav1.Condition{
-			Type:               string(operatorv1alpha1.BackupPending),
-			Reason:             string(operatorv1alpha1.BackupReasonReadyToStart),
-			Status:             metav1.ConditionTrue,
-			LastTransitionTime: metav1.Now(),
-		})
-		if _, err := backupsClient.UpdateStatus(ctx, backup, metav1.UpdateOptions{}); err != nil {
-			if apierrors.IsConflict(err) {
-				klog.Infof("BackupQueueController conflict updating backup [%s]: %s", backup.Name, err)
-				continue
+		if backup, err = applyBackupPending(ctx, backupsClient, backup, nodeName); err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil
 			}
-			return fmt.Errorf("BackupQueueController failed to promote backup [%s] to pending: %w", backup.Name, err)
+			return fmt.Errorf("BackupQueueController failed to promote backup %q to pending: %w", backupName, err)
 		}
-		klog.Infof("BackupQueueController promoted backup [%s] to pending on node [%s]", backup.Name, nodeName)
+		klog.Infof("BackupQueueController promoted backup [%s] to pending on node [%s]", backupName, nodeName)
 		c.activeCache.add(backup)
 	}
 

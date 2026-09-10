@@ -273,9 +273,6 @@ func (c *BackupPolicyController) executeBackup(ctx context.Context, backupPolicy
 				Labels: map[string]string{
 					backuphelpers.LabelEtcdBackupPolicy: backupPolicy.Name,
 				},
-				Finalizers: []string{
-					backuphelpers.FinalizerEtcdBackup,
-				},
 			},
 			Spec: operatorv1alpha1.EtcdBackupSpec{
 				NodeName: node.Name,
@@ -315,9 +312,9 @@ func (c *BackupPolicyController) executeBackup(ctx context.Context, backupPolicy
 	if len(failedCreations) > 0 {
 		c.eventRecorder.Warningf("PartialBackupFailure",
 			"Failed to create backups for nodes: %v", failedCreations)
-	} else {
+	} else if len(active) > 0 {
 		c.eventRecorder.Eventf("BackupScheduled",
-			"Created %d EtcdBackup resources for scheduled backup", len(masterNodes))
+			"Created %d EtcdBackup resources for scheduled backup", len(active))
 	}
 
 	return nil

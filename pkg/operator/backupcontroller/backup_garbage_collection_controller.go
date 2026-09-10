@@ -222,8 +222,8 @@ func (c *BackupGarbageCollectionController) syncBackups(ctx context.Context, act
 		if completed, ok := activeGC[backup.UID]; ok {
 			// Remove backup finalizer if GC completed successfully
 			if completed {
-				if err := removeBackupFinalizer(ctx, backupsClient, backup); err != nil {
-					return nil, err
+				if _, err := applyBackupFinalizer(ctx, backupsClient, backup, false); err != nil {
+					return nil, fmt.Errorf("BackupGarbageCollectionController failed to remove backup finalizer after GC completed: %w", err)
 				}
 			}
 		} else if backuphelpers.IsBackupFinished(backup) {
@@ -231,8 +231,8 @@ func (c *BackupGarbageCollectionController) syncBackups(ctx context.Context, act
 				return nil, err
 			} else if requiresGC {
 				newGC[storage] = append(newGC[storage], backup)
-			} else if err := removeBackupFinalizer(ctx, backupsClient, backup); err != nil {
-				return nil, err
+			} else if _, err := applyBackupFinalizer(ctx, backupsClient, backup, false); err != nil {
+				return nil, fmt.Errorf("BackupGarbageCollectionController failed to remove backup finalizer: %w", err)
 			}
 		}
 	}
@@ -479,22 +479,6 @@ func isJobFailed(job *batchv1.Job) bool {
 		}
 	}
 	return false
-}
-
-func isEtcdBackupFinalizer(finalizer string) bool {
-	return finalizer == backuphelpers.FinalizerEtcdBackup
-}
-
-func removeBackupFinalizer(ctx context.Context, backupsClient operatorv1alpha1client.EtcdBackupInterface, backup *operatorv1alpha1.EtcdBackup) error {
-	if !slices.ContainsFunc(backup.Finalizers, isEtcdBackupFinalizer) {
-		return nil
-	}
-	updatedBackup := backup.DeepCopy()
-	updatedBackup.Finalizers = slices.DeleteFunc(backup.Finalizers, isEtcdBackupFinalizer)
-	if _, err := backupsClient.Update(ctx, updatedBackup, v1.UpdateOptions{}); err != nil {
-		return fmt.Errorf("BackupGarbageCollectionController could not remove finalizer for etcdbackup %s: %w", backup.Name, err)
-	}
-	return nil
 }
 
 type storageBackend struct {
