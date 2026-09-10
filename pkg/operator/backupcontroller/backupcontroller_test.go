@@ -111,9 +111,10 @@ func TestSyncLoopHappyPath(t *testing.T) {
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				job := requireBackupJobCreated(t, client, backup)
 
-				action, ok := testutils.GetAction[k8stesting.UpdateActionImpl](operatorFake.Actions())
-				require.True(t, ok, "Expected update action")
-				updatedBackup := action.Object.(*operatorv1alpha1.EtcdBackup)
+				action, ok := testutils.GetAction[k8stesting.PatchActionImpl](operatorFake.Actions())
+				require.True(t, ok, "Expected patch action")
+				updatedBackup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), action.Name, metav1.GetOptions{})
+				require.NoError(t, err)
 
 				requireBackupJob(t, updatedBackup, job)
 			},
@@ -129,9 +130,10 @@ func TestSyncLoopHappyPath(t *testing.T) {
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				job := requireBackupJobCreated(t, client, backup)
 
-				action, ok := testutils.GetAction[k8stesting.UpdateActionImpl](operatorFake.Actions())
-				require.True(t, ok, "Expected update action")
-				updatedBackup := action.Object.(*operatorv1alpha1.EtcdBackup)
+				action, ok := testutils.GetAction[k8stesting.PatchActionImpl](operatorFake.Actions())
+				require.True(t, ok, "Expected patch action")
+				updatedBackup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), action.Name, metav1.GetOptions{})
+				require.NoError(t, err)
 
 				require.Equal(t, updatedBackup.Status.Job, &operatorv1alpha1.EtcdBackupJobReference{
 					Name:      job.Name,
@@ -202,15 +204,15 @@ func TestJobBackupJobCompleted(t *testing.T) {
 		pods:    pods,
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			requireNoBackupJobCreated(t, client)
-			requireBackupUpdated(t, operatorFake, []metav1.Condition{{
+			requireBackupStatusApplied(t, operatorFake, []metav1.Condition{{
 				Type:    string(operatorv1alpha1.BackupCompleted),
 				Reason:  string(operatorv1alpha1.BackupReasonJobCompleted),
-				Message: fmt.Sprintf("backup job status %s", batchv1.JobComplete),
+				Message: "backup job completed",
 				Status:  metav1.ConditionTrue,
 			}}, []operatorv1alpha1.EtcdBackupFile{
 				{Path: "/my/successful/backup.db", Size: *resource.NewQuantity(100*1024*1024, resource.BinarySI)},
 				{Path: "/my/successful/static_kuberesources.tar.gz", Size: *resource.NewQuantity(4321, resource.BinarySI)}})
-			requireJobUpdated(t, client, "test-backup")
+			requireJobPatched(t, client, "test-backup")
 		},
 	})
 }
@@ -259,10 +261,10 @@ func TestBackupFailedRequiresGC(t *testing.T) {
 			pods: []*corev1.Pod{podFailedSilently, podFailedGracefully},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				requireNoBackupJobCreated(t, client)
-				requireBackupUpdated(t, operatorFake, []metav1.Condition{{
+				requireBackupStatusApplied(t, operatorFake, []metav1.Condition{{
 					Type:    string(operatorv1alpha1.BackupFailed),
 					Reason:  string(operatorv1alpha1.BackupReasonJobFailed),
-					Message: fmt.Sprintf("backup job status %s", batchv1.JobFailed),
+					Message: "backup job failed",
 					Status:  metav1.ConditionTrue,
 				}, {
 					Type:    string(operatorv1alpha1.BackupGarbageCollectionRequired),
@@ -283,15 +285,15 @@ func TestBackupFailedRequiresGC(t *testing.T) {
 			pods:    []*corev1.Pod{podFailedSilently},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				requireNoBackupJobCreated(t, client)
-				requireBackupUpdated(t, operatorFake, []metav1.Condition{{
+				requireBackupStatusApplied(t, operatorFake, []metav1.Condition{{
 					Type:    string(operatorv1alpha1.BackupFailed),
 					Reason:  string(operatorv1alpha1.BackupReasonJobFailed),
-					Message: fmt.Sprintf("backup job status %s", batchv1.JobFailed),
+					Message: "backup job failed",
 					Status:  metav1.ConditionTrue,
 				}, {
 					Type:    string(operatorv1alpha1.BackupGarbageCollectionRequired),
 					Reason:  string(operatorv1alpha1.BackupReasonFileStateUnknown),
-					Message: "unable to determine if backup job created files before failing",
+					Message: "unable to determine if backup job created files",
 					Status:  metav1.ConditionTrue,
 				}}, nil)
 			},
@@ -302,7 +304,7 @@ func TestBackupFailedRequiresGC(t *testing.T) {
 			backups: []*operatorv1alpha1.EtcdBackup{backup},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				requireNoBackupJobCreated(t, client)
-				requireBackupUpdated(t, operatorFake, []metav1.Condition{{
+				requireBackupStatusApplied(t, operatorFake, []metav1.Condition{{
 					Type:    string(operatorv1alpha1.BackupFailed),
 					Reason:  string(operatorv1alpha1.BackupReasonJobFailed),
 					Message: fmt.Sprintf("unable to find Job [%s]", job.Name),
@@ -310,7 +312,7 @@ func TestBackupFailedRequiresGC(t *testing.T) {
 				}, {
 					Type:    string(operatorv1alpha1.BackupGarbageCollectionRequired),
 					Reason:  string(operatorv1alpha1.BackupReasonFileStateUnknown),
-					Message: "unable to determine if backup job created files before failing",
+					Message: "unable to determine if backup job created files",
 					Status:  metav1.ConditionTrue,
 				}}, nil)
 			},
@@ -330,15 +332,15 @@ func TestBackupFailedNoGC(t *testing.T) {
 			nodes: []*corev1.Node{testutils.FakeNode("test-node")},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				requireNoBackupJobCreated(t, client)
-				requireBackupUpdated(t, operatorFake, []metav1.Condition{{
+				requireBackupStatusApplied(t, operatorFake, []metav1.Condition{{
 					Type:    string(operatorv1alpha1.BackupFailed),
 					Reason:  string(operatorv1alpha1.BackupReasonPVCNotFound),
-					Message: "unable to find PVC [backup-pvc-that-doesnt-exist]",
+					Message: "unable to find PVC \"backup-pvc-that-doesnt-exist\"",
 					Status:  metav1.ConditionTrue,
 				}, {
 					Type:    string(operatorv1alpha1.BackupGarbageCollectionRequired),
 					Reason:  string(operatorv1alpha1.BackupReasonFilesNotCreated),
-					Message: "backup is invalid",
+					Message: "backup failed without creating files",
 					Status:  metav1.ConditionFalse,
 				}}, nil)
 			},
@@ -353,15 +355,15 @@ func TestBackupFailedNoGC(t *testing.T) {
 				}))},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				requireNoBackupJobCreated(t, client)
-				requireBackupUpdated(t, operatorFake, []metav1.Condition{{
+				requireBackupStatusApplied(t, operatorFake, []metav1.Condition{{
 					Type:    string(operatorv1alpha1.BackupFailed),
 					Reason:  string(operatorv1alpha1.BackupReasonNodeNotFound),
-					Message: "unable to find Node [test-node-that-doesnt-exist]",
+					Message: "unable to find Node \"test-node-that-doesnt-exist\"",
 					Status:  metav1.ConditionTrue,
 				}, {
 					Type:    string(operatorv1alpha1.BackupGarbageCollectionRequired),
 					Reason:  string(operatorv1alpha1.BackupReasonFilesNotCreated),
-					Message: "backup is invalid",
+					Message: "backup failed without creating files",
 					Status:  metav1.ConditionFalse,
 				}}, nil)
 			},
@@ -397,15 +399,15 @@ func TestBackupFailedNoGC(t *testing.T) {
 			},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				requireNoBackupJobCreated(t, client)
-				requireBackupUpdated(t, operatorFake, []metav1.Condition{{
+				requireBackupStatusApplied(t, operatorFake, []metav1.Condition{{
 					Type:    string(operatorv1alpha1.BackupFailed),
 					Reason:  string(operatorv1alpha1.BackupReasonJobFailed),
-					Message: fmt.Sprintf("backup job status %s", batchv1.JobFailed),
+					Message: "backup job failed",
 					Status:  metav1.ConditionTrue,
 				}, {
 					Type:    string(operatorv1alpha1.BackupGarbageCollectionRequired),
 					Reason:  string(operatorv1alpha1.BackupReasonFilesNotCreated),
-					Message: "backup job didn't create any files before failing",
+					Message: "backup failed without creating files",
 					Status:  metav1.ConditionFalse,
 				}}, nil)
 			},
@@ -533,29 +535,36 @@ func findFirstCreateAction(client *k8sfakeclient.Clientset) *k8stesting.CreateAc
 	return createAction
 }
 
-func requireBackupUpdated(
+func requireBackupStatusApplied(
 	t *testing.T,
 	client *operatorfake.Clientset,
 	expectedConditions []metav1.Condition,
 	expectedFiles []operatorv1alpha1.EtcdBackupFile) {
 	t.Helper()
-	action, ok := testutils.GetStatusAction[k8stesting.UpdateActionImpl](client.Fake.Actions())
-	require.Truef(t, ok, "expected to find at least one status updateAction, but found %v", client.Fake.Actions())
-	b := action.Object.(*operatorv1alpha1.EtcdBackup)
-	require.ElementsMatch(t, removeTransitionTime(b.Status.Conditions), expectedConditions)
-	require.Len(t, b.Status.Files, len(expectedFiles))
+	action, ok := testutils.GetStatusAction[k8stesting.PatchActionImpl](client.Fake.Actions())
+	require.Truef(t, ok, "expected to find at least one status patchAction, but found %v", client.Fake.Actions())
+
+	backup, err := client.OperatorV1alpha1().EtcdBackups().Get(t.Context(), action.Name, metav1.GetOptions{})
+	require.NoError(t, err)
+
+	require.ElementsMatch(t, removeTransitionTime(backup.Status.Conditions), expectedConditions)
+	require.Len(t, backup.Status.Files, len(expectedFiles))
 	for i, file := range expectedFiles {
-		require.Equal(t, file.Path, b.Status.Files[i].Path)
-		require.True(t, file.Size.Equal(b.Status.Files[i].Size))
+		require.Equal(t, file.Path, backup.Status.Files[i].Path)
+		require.True(t, file.Size.Equal(backup.Status.Files[i].Size))
 	}
 }
 
-func requireJobUpdated(t *testing.T, client *k8sfakeclient.Clientset, backupName string) {
+func requireJobPatched(t *testing.T, client *k8sfakeclient.Clientset, backupName string) {
 	t.Helper()
-	action, ok := testutils.GetStatusAction[k8stesting.UpdateActionImpl](client.Fake.Actions())
-	require.Truef(t, ok, "expected to find at least one status updateAction, but found %v", client.Fake.Actions())
-	j := action.Object.(*batchv1.Job)
-	require.Equal(t, map[string]string{"app": "cluster-backup-job", labelBackupName: backupName}, j.Labels)
+	action, ok := testutils.GetStatusAction[k8stesting.PatchActionImpl](client.Fake.Actions())
+	require.Truef(t, ok, "expected to find at least one patchAction, but found %v", client.Fake.Actions())
+
+	job, err := client.BatchV1().Jobs(action.Namespace).Get(t.Context(), action.Name, metav1.GetOptions{})
+	require.NoError(t, err)
+
+	require.Equal(t, map[string]string{"app": "cluster-backup-job", labelBackupName: backupName}, job.Labels)
+	require.NotContains(t, job.Finalizers, backuphelpers.FinalizerEtcdBackup)
 }
 
 func requireBackupJob(t *testing.T, backup *operatorv1alpha1.EtcdBackup, job *batchv1.Job) {
