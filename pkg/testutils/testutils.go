@@ -872,7 +872,9 @@ func GetAction[T k8stesting.Action](actions []k8stesting.Action, filters ...func
 }
 
 func ListStatusActions[T k8stesting.Action](actions []k8stesting.Action, filters ...func(a T) bool) []T {
-	filters = append(filters, func(a T) bool { return a.GetSubresource() == "status" })
+	filters = append(filters, func(a T) bool {
+		return a.GetSubresource() == "status"
+	})
 	return ListActions(actions, filters...)
 }
 
@@ -880,12 +882,16 @@ func ListActions[T k8stesting.Action](actions []k8stesting.Action, filters ...fu
 	var typedActions []T
 	for _, action := range actions {
 		if a, ok := action.(T); ok {
+			filtered := false
 			for _, f := range filters {
 				if !f(a) {
-					continue
+					filtered = true
+					break
 				}
 			}
-			typedActions = append(typedActions, a)
+			if !filtered {
+				typedActions = append(typedActions, a)
+			}
 		}
 	}
 	return typedActions
