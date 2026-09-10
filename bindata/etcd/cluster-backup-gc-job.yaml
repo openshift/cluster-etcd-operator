@@ -26,13 +26,13 @@ spec:
                   for FILE in ${BACKUP_FILE}/snapshot_*.db ${BACKUP_FILE}/snapshot_*.db.part ${BACKUP_FILE}/static_kuberesources_*.tar.gz; do
                     if [ -f ${FILE} ]; then
                       echo "Deleting {FILE}"
-                      rm ${FILE}
+                      rm ${FILE} || true
                     fi
                   done
                   DIRS[${BACKUP_FILE}]=1
                 else
                   echo "Deleting ${BACKUP_FILE}"
-                  rm "${BACKUP_FILE}"
+                  rm "${BACKUP_FILE}" || true
                   DIRS[$(dirname ${BACKUP_FILE})]=1
                 fi
               done
