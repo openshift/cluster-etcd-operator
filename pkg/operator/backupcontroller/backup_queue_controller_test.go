@@ -11,6 +11,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
 	k8sfakeclient "k8s.io/client-go/kubernetes/fake"
@@ -103,10 +104,11 @@ func TestBackupQueueSelectAvailableNode(t *testing.T) {
 			testutils.FakeNode("test-node-1", testutils.WithMasterLabel()),
 			testutils.FakeNode("test-node-2", testutils.WithMasterLabel())},
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
-			action, ok := testutils.GetStatusAction[k8stesting.UpdateActionImpl](operatorFake.Actions())
-			require.True(t, ok, "Expected update action")
+			action, ok := testutils.GetStatusAction[k8stesting.PatchActionImpl](operatorFake.Actions())
+			require.True(t, ok, "Expected patch action")
+			backup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), action.Name, metav1.GetOptions{})
+			require.NoError(t, err)
 
-			backup := action.Object.(*operatorv1alpha1.EtcdBackup)
 			require.Equal(t, backup.Name, "new")
 			require.True(t, backuphelpers.IsBackupPending(backup), "Expected backup to be pending")
 			require.Equal(t, backup.Status.NodeName, "test-node-2", "Expected backup to be assigned to an available node")
@@ -177,10 +179,11 @@ func TestBackupQueueAlreadyPendingDifferentNodeDifferentPVC(t *testing.T) {
 			testutils.FakeEtcdBackup("pending", testutils.WithBackupPending("test-node-1")),
 			testutils.FakeEtcdBackup("new", testutils.WithBackupNodeName("test-node-2"))},
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
-			action, ok := testutils.GetStatusAction[k8stesting.UpdateActionImpl](operatorFake.Actions())
-			require.True(t, ok, "Expected update action")
+			action, ok := testutils.GetStatusAction[k8stesting.PatchActionImpl](operatorFake.Actions())
+			require.True(t, ok, "Expected patch action")
+			backup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), action.Name, metav1.GetOptions{})
+			require.NoError(t, err)
 
-			backup := action.Object.(*operatorv1alpha1.EtcdBackup)
 			require.Equal(t, backup.Name, "new")
 			require.True(t, backuphelpers.IsBackupPending(backup), "Expected backup to be pending")
 		},
@@ -213,10 +216,11 @@ func TestBackupQueueAlreadyPendingDifferentNodesLocal(t *testing.T) {
 			testutils.FakeEtcdBackup("pending", testutils.WithBackupPending("test-node-1"), testutils.WithBackupStorage(storage)),
 			testutils.FakeEtcdBackup("new", testutils.WithBackupNodeName("test-node-2"), testutils.WithBackupStorage(storage))},
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
-			action, ok := testutils.GetStatusAction[k8stesting.UpdateActionImpl](operatorFake.Actions())
-			require.True(t, ok, "Expected update action")
+			action, ok := testutils.GetStatusAction[k8stesting.PatchActionImpl](operatorFake.Actions())
+			require.True(t, ok, "Expected patch action")
+			backup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), action.Name, metav1.GetOptions{})
+			require.NoError(t, err)
 
-			backup := action.Object.(*operatorv1alpha1.EtcdBackup)
 			require.Equal(t, backup.Name, "new")
 			require.True(t, backuphelpers.IsBackupPending(backup), "Expected backup to be pending")
 		},
@@ -267,12 +271,14 @@ func TestBackupQueueOrderByAge(t *testing.T) {
 			testutils.FakeEtcdBackup("test-backup-4", testutils.WithBackupNodeName("test-node-2"), testutils.WithBackupAge(0))},
 		populateActiveCache: true,
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
-			updateActions := testutils.ListStatusActions[k8stesting.UpdateActionImpl](operatorFake.Actions())
-			require.Len(t, updateActions, 2, "Expected 2 update actions")
+			patchActions := testutils.ListStatusActions[k8stesting.PatchActionImpl](operatorFake.Actions())
+			require.Len(t, patchActions, 2, "Expected 2 patch actions")
 
 			var backup1, backup3 *operatorv1alpha1.EtcdBackup
-			for _, action := range updateActions {
-				backup := action.Object.(*operatorv1alpha1.EtcdBackup)
+			for _, action := range patchActions {
+				backup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), action.Name, metav1.GetOptions{})
+				require.NoError(t, err)
+
 				switch backup.Name {
 				case "test-backup-1":
 					backup1 = backup
