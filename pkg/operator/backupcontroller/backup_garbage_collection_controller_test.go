@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
 	k8sfakeclient "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 	clocktesting "k8s.io/utils/clock/testing"
 )
@@ -434,7 +435,9 @@ func TestBackupGarbageCollectionActiveBackupsIgnored(t *testing.T) {
 	// Backups that haven't been deleted are ignored by the garbage collection controller
 	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
 		backups: []*operatorv1alpha1.EtcdBackup{
-			testutils.FakeEtcdBackup("test-pending-backup"),
+			testutils.FakeEtcdBackup("test-new-backup"),
+			testutils.FakeEtcdBackup("test-pending-backup", testutils.WithBackupPending("test-node")),
+			testutils.FakeEtcdBackup("test-running-backup", testutils.WithBackupRunning(&batchv1.Job{ObjectMeta: v1.ObjectMeta{Name: "test-running-backup"}})),
 			testutils.FakeEtcdBackup("test-completed-backup", testutils.WithBackupCompleted()),
 			testutils.FakeEtcdBackup("test-failed-backup", testutils.WithBackupFailed()),
 		},
@@ -445,11 +448,17 @@ func TestBackupGarbageCollectionActiveBackupsIgnored(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, jobList.Items, 0)
 
+			_, ok := testutils.GetAction[k8stesting.PatchActionImpl](operatorFake.Actions())
+			require.False(t, ok, "Expected no patch actions")
+
 			backupList, err := operatorFake.OperatorV1alpha1().EtcdBackups().List(t.Context(), v1.ListOptions{})
 			require.NoError(t, err)
-			require.Len(t, backupList.Items, 3)
+			require.Len(t, backupList.Items, 5)
 			for _, backup := range backupList.Items {
-				require.Contains(t, backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
+				require.Nil(t, backup.DeletionTimestamp)
+				if backuphelpers.IsBackupRunning(&backup) || backuphelpers.IsBackupFinished(&backup) {
+					require.Contains(t, backup.Finalizers, backuphelpers.FinalizerEtcdBackup, "Expected backup %q to have finalizer", backup.Name)
+				}
 			}
 		},
 	})
