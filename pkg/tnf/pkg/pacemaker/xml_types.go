@@ -121,6 +121,7 @@ type NodeHistoryNode struct {
 
 type ResourceHistory struct {
 	ID               string             `xml:"id,attr"`
+	FailCount        string             `xml:"fail-count,attr"`
 	OperationHistory []OperationHistory `xml:"operation_history"`
 }
 

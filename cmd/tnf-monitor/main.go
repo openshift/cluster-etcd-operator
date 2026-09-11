@@ -47,6 +47,7 @@ func NewTnfMonitorCommand() *cobra.Command {
 	logs.AddFlags(cmd.PersistentFlags())
 
 	cmd.AddCommand(NewCollectCommand())
+	cmd.AddCommand(NewWatchCertsCommand())
 
 	return cmd
 }
