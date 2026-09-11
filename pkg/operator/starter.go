@@ -545,7 +545,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			etcdBackupInformer.Informer(),
 			controlPlaneNodeInformer)
 
-		backupPolicyRetentionController := backuppolicycontroller.NewBackupPolicyRetentionController(
+		backupPolicyRetentionController, err := backuppolicycontroller.NewBackupPolicyRetentionController(
 			AlivenessChecker,
 			backupsLister,
 			backupPoliciesLister,
@@ -554,6 +554,9 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			featureGateAccessor,
 			etcdBackupPoliciesInformer.Informer(),
 			etcdBackupInformer.Informer())
+		if err != nil {
+			return fmt.Errorf("could not start backupPolicyRetentionController, aborting controller start: %w", err)
+		}
 
 		backupGarbageCollectionController := backupcontroller.NewBackupGarbageCollectionController(
 			AlivenessChecker,
