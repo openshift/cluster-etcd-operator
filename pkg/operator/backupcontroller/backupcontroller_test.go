@@ -2,6 +2,7 @@ package backupcontroller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -78,18 +79,23 @@ func runBackupControllerTest(t *testing.T, tc testCaseBackupController) {
 	controller := BackupController{
 		backupsLister:         backupsInformer.Lister(),
 		podsLister:            podsInformer.Lister().Pods(operatorclient.TargetNamespace),
-		jobsLister:            jobsInformer.Lister().Jobs(operatorclient.TargetNamespace),
+		jobInformer:           jobsInformer.Informer(),
 		operatorClient:        operatorFake.OperatorV1alpha1(),
 		kubeClient:            client,
 		operatorImagePullSpec: "operator-pullspec-image",
 		featureGateAccessor:   backupFeatureGateAccessor,
 	}
+	err := controller.addIndexers()
+	require.NoError(t, err)
 
-	err := controller.sync(ctx, nil)
-	if tc.expectError {
-		require.Error(t, err)
-	} else {
-		require.NoError(t, err)
+	for _, backup := range tc.backups {
+		syncCtx := testutils.FakeSyncContext(t, backup.Name)
+		err := controller.sync(ctx, syncCtx)
+		if tc.expectError {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+		}
 	}
 	if tc.validate != nil {
 		tc.validate(t, client, operatorFake)
@@ -147,44 +153,94 @@ func TestSyncLoopHappyPath(t *testing.T) {
 
 func TestJobAlreadyRunning(t *testing.T) {
 	// Don't create a new backup job when one already exists
-	runBackupControllerTest(t, testCaseBackupController{
-		backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup")},
-		jobs: []*batchv1.Job{
-			{ObjectMeta: v1.ObjectMeta{
-				Name:      "running-backup-job",
-				Namespace: operatorclient.TargetNamespace,
-				Labels:    map[string]string{"app": backupAppName},
-			}}},
-		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
-			requireNoBackupJobCreated(t, client)
-		},
+	job := &batchv1.Job{
+		ObjectMeta: v1.ObjectMeta{
+			Name:       "test-backup",
+			Namespace:  operatorclient.TargetNamespace,
+			Labels:     map[string]string{"app": backupAppName, backuphelpers.LabelEtcdBackup: "test-backup"},
+			Finalizers: []string{backuphelpers.FinalizerEtcdBackup}}}
+
+	t.Run("correct-labels-and-status", func(t *testing.T) {
+		runBackupControllerTest(t, testCaseBackupController{
+			backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupRunning(job))},
+			jobs:    []*batchv1.Job{job},
+			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+				requireNoBackupJobCreated(t, client)
+				_, ok := testutils.GetAction[k8stesting.PatchActionImpl](operatorFake.Actions())
+				require.False(t, ok, "Did not expect a patch action")
+			},
+		})
+	})
+	t.Run("backup-missing-job-status", func(t *testing.T) {
+		runBackupControllerTest(t, testCaseBackupController{
+			backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPending("test-node"))},
+			jobs:    []*batchv1.Job{job},
+			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+				requireNoBackupJobCreated(t, client)
+
+				action, ok := testutils.GetAction[k8stesting.PatchActionImpl](operatorFake.Actions())
+				require.True(t, ok, "Expected patch action")
+
+				updatedBackup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), action.Name, metav1.GetOptions{})
+				require.NoError(t, err)
+
+				require.Equal(t, &operatorv1alpha1.EtcdBackupJobReference{
+					Name:      job.Name,
+					Namespace: job.Namespace,
+					UID:       string(job.UID),
+				}, updatedBackup.Status.Job)
+			},
+		})
+	})
+	t.Run("job-missing-backup-label", func(t *testing.T) {
+		job = job.DeepCopy()
+		delete(job.Labels, backuphelpers.LabelEtcdBackup)
+		runBackupControllerTest(t, testCaseBackupController{
+			backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupAge(time.Hour), testutils.WithBackupRunning(job))},
+			jobs:    []*batchv1.Job{job},
+			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+				requireNoBackupJobCreated(t, client)
+
+				action, ok := testutils.GetAction(client.Actions(), func(a k8stesting.PatchActionImpl) bool {
+					return a.PatchOptions.Kind == "Job"
+				})
+				require.True(t, ok, "Expected job patch action")
+
+				patchBody, err := json.Marshal(metav1.ObjectMeta{Labels: map[string]string{backuphelpers.LabelEtcdBackup: "test-backup"}})
+				require.NoError(t, err)
+				require.Equal(t, patchBody, action.Patch)
+			},
+		})
 	})
 }
 
-func TestJobBackupJobCompleted(t *testing.T) {
+func TestBackupJobCompleted(t *testing.T) {
 	// Completed backup job is processed and does not start a new job
-	backup := testutils.FakeEtcdBackup("test-backup")
+	now := metav1.Now()
 	job := &batchv1.Job{
 		ObjectMeta: v1.ObjectMeta{
 			Name:       "completed-backup-job",
 			Namespace:  operatorclient.TargetNamespace,
-			Labels:     map[string]string{"app": backupAppName, labelBackupName: "test-backup"},
+			Labels:     map[string]string{"app": backupAppName, backuphelpers.LabelEtcdBackup: "test-backup"},
 			Finalizers: []string{backuphelpers.FinalizerEtcdBackup},
 		},
 		Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
 			NodeName: "test-node"}}},
-		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
-			Type:   batchv1.JobComplete,
-			Status: corev1.ConditionTrue}}}}
+		Status: batchv1.JobStatus{
+			CompletionTime: &now,
+			Conditions: []batchv1.JobCondition{{
+				Type:   batchv1.JobComplete,
+				Status: corev1.ConditionTrue}}}}
+	backup := testutils.FakeEtcdBackup("test-backup", testutils.WithBackupRunning(job))
 	pods := []*corev1.Pod{
 		testutils.FakePod("failed-backup-job-pod-1",
 			testutils.WithPodLabels(map[string]string{labelJobName: job.Name}),
 			testutils.WithPodOwner(v1.OwnerReference{Kind: "Job", Name: job.Name, UID: job.UID}),
-			testutils.WithCreationTimestamp(v1.Time{Time: time.Now().Add(-time.Minute)})),
+			testutils.WithCreationTimestamp(v1.Time{Time: now.Add(-time.Minute)})),
 		testutils.FakePod("failed-backup-job-pod-2",
 			testutils.WithPodLabels(map[string]string{labelJobName: job.Name}),
 			testutils.WithPodOwner(v1.OwnerReference{Kind: "Job", Name: job.Name, UID: job.UID}),
-			testutils.WithCreationTimestamp(v1.Now()),
+			testutils.WithCreationTimestamp(now),
 			func(pod *corev1.Pod) {
 				pod.Status.Phase = corev1.PodSucceeded
 				pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
@@ -217,20 +273,55 @@ func TestJobBackupJobCompleted(t *testing.T) {
 	})
 }
 
+func TestPendingBackupDeleted(t *testing.T) {
+	t.Run("before-grace-period", func(t *testing.T) {
+		runBackupControllerTest(t, testCaseBackupController{
+			backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPending("test-node"), func(backup *operatorv1alpha1.EtcdBackup) {
+				now := v1.Now()
+				backup.DeletionTimestamp = &now
+				backup.Finalizers = append(backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
+			})},
+			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+				requireNoBackupJobCreated(t, client)
+				_, ok := testutils.GetAction[k8stesting.PatchActionImpl](operatorFake.Actions())
+				require.False(t, ok, "Expected no patch action")
+			},
+		})
+	})
+	t.Run("after-grace-period", func(t *testing.T) {
+		runBackupControllerTest(t, testCaseBackupController{
+			backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPending("test-node"), func(backup *operatorv1alpha1.EtcdBackup) {
+				backup.DeletionTimestamp = &v1.Time{Time: time.Now().Add(-(backupDeletedGracePeriod + time.Second))}
+				backup.Finalizers = append(backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
+			})},
+			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+				requireNoBackupJobCreated(t, client)
+
+				action, ok := testutils.GetAction[k8stesting.PatchActionImpl](operatorFake.Actions())
+				require.True(t, ok, "Expected patch action")
+				updatedBackup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), action.Name, metav1.GetOptions{})
+				require.NoError(t, err)
+
+				require.NotContains(t, updatedBackup.Finalizers, backuphelpers.FinalizerEtcdBackup)
+			},
+		})
+	})
+}
+
 func TestBackupFailedRequiresGC(t *testing.T) {
 	// EtcdBackups that failed after creating some files, or failure state is unknown and files could have been created
 	job := &batchv1.Job{
 		ObjectMeta: v1.ObjectMeta{
 			Name:       "failed-backup-job",
 			Namespace:  operatorclient.TargetNamespace,
-			Labels:     map[string]string{"app": backupAppName, labelBackupName: "test-backup"},
+			Labels:     map[string]string{"app": backupAppName, backuphelpers.LabelEtcdBackup: "test-backup"},
 			Finalizers: []string{backuphelpers.FinalizerEtcdBackup}},
 		Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
 			NodeName: "test-node"}}},
 		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
 			Type:   batchv1.JobFailed,
 			Status: corev1.ConditionTrue}}}}
-	backup := testutils.FakeEtcdBackup("test-backup", testutils.WithBackupRunning(job))
+	backup := testutils.FakeEtcdBackup("test-backup", testutils.WithBackupAge(time.Hour), testutils.WithBackupRunning(job))
 	podFailedSilently := testutils.FakePod("failed-backup-job-pod-1",
 		testutils.WithPodLabels(map[string]string{labelJobName: job.Name}),
 		testutils.WithPodOwner(v1.OwnerReference{Kind: "Job", Name: job.Name, UID: job.UID}),
@@ -307,7 +398,7 @@ func TestBackupFailedRequiresGC(t *testing.T) {
 				requireBackupStatusApplied(t, operatorFake, []metav1.Condition{{
 					Type:    string(operatorv1alpha1.BackupFailed),
 					Reason:  string(operatorv1alpha1.BackupReasonJobFailed),
-					Message: fmt.Sprintf("unable to find Job [%s]", job.Name),
+					Message: fmt.Sprintf("unable to find job %q", job.Name),
 					Status:  metav1.ConditionTrue,
 				}, {
 					Type:    string(operatorv1alpha1.BackupGarbageCollectionRequired),
@@ -374,7 +465,7 @@ func TestBackupFailedNoGC(t *testing.T) {
 			ObjectMeta: v1.ObjectMeta{
 				Name:       "failed-backup-job",
 				Namespace:  operatorclient.TargetNamespace,
-				Labels:     map[string]string{"app": backupAppName, labelBackupName: "test-backup"},
+				Labels:     map[string]string{"app": backupAppName, backuphelpers.LabelEtcdBackup: "test-backup"},
 				Finalizers: []string{backuphelpers.FinalizerEtcdBackup}},
 			Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
 				NodeName: "test-node"}}},
@@ -413,22 +504,6 @@ func TestBackupFailedNoGC(t *testing.T) {
 			},
 		})
 	})
-}
-
-func TestIndexJobsByBackupLabelName(t *testing.T) {
-	jobs := []*batchv1.Job{
-		{ObjectMeta: v1.ObjectMeta{Name: "test-1", Labels: map[string]string{labelBackupName: "test-1"}, Finalizers: []string{backuphelpers.FinalizerEtcdBackup}}},
-		{ObjectMeta: v1.ObjectMeta{Name: "test-2", Labels: map[string]string{labelBackupName: "test-2"}, Finalizers: []string{backuphelpers.FinalizerEtcdBackup}}},
-		{ObjectMeta: v1.ObjectMeta{Name: "test-3", Labels: map[string]string{labelBackupName: "test-3"}, Finalizers: []string{backuphelpers.FinalizerEtcdBackup}}},
-		{ObjectMeta: v1.ObjectMeta{Name: "test-4", Labels: map[string]string{"some-other-label": "value"}, Finalizers: []string{backuphelpers.FinalizerEtcdBackup}}},
-	}
-	expected := map[string]*batchv1.Job{}
-	expected["test-1"] = jobs[0]
-	expected["test-2"] = jobs[1]
-	expected["test-3"] = jobs[2]
-
-	m := indexJobsByBackupLabelName(jobs)
-	require.Equal(t, expected, m)
 }
 
 func TestIsJobComplete(t *testing.T) {
@@ -496,7 +571,7 @@ func requireBackupJobCreated(t *testing.T, client *k8sfakeclient.Clientset, back
 
 	require.Truef(t, strings.HasPrefix(createdJob.Name, backup.Name), "expected job.name [%s] to have prefix [%s]", createdJob.Name, backup.Name)
 	require.Equal(t, operatorclient.TargetNamespace, createdJob.Namespace)
-	require.Equal(t, backup.Name, createdJob.Labels[labelBackupName])
+	require.Equal(t, backup.Name, createdJob.Labels[backuphelpers.LabelEtcdBackup])
 	require.Equal(t, "operator-pullspec-image", createdJob.Spec.Template.Spec.InitContainers[0].Image)
 	require.Equal(t, "operator-pullspec-image", createdJob.Spec.Template.Spec.Containers[0].Image)
 
@@ -563,17 +638,17 @@ func requireJobPatched(t *testing.T, client *k8sfakeclient.Clientset, backupName
 	job, err := client.BatchV1().Jobs(action.Namespace).Get(t.Context(), action.Name, metav1.GetOptions{})
 	require.NoError(t, err)
 
-	require.Equal(t, map[string]string{"app": "cluster-backup-job", labelBackupName: backupName}, job.Labels)
+	require.Equal(t, map[string]string{"app": "cluster-backup-job", backuphelpers.LabelEtcdBackup: backupName}, job.Labels)
 	require.NotContains(t, job.Finalizers, backuphelpers.FinalizerEtcdBackup)
 }
 
 func requireBackupJob(t *testing.T, backup *operatorv1alpha1.EtcdBackup, job *batchv1.Job) {
 	t.Helper()
-	require.Equal(t, backup.Status.Job, &operatorv1alpha1.EtcdBackupJobReference{
+	require.Equal(t, &operatorv1alpha1.EtcdBackupJobReference{
 		Name:      job.Name,
 		Namespace: job.Namespace,
 		UID:       string(job.UID),
-	})
+	}, backup.Status.Job)
 	require.Contains(t, job.OwnerReferences, metav1.OwnerReference{
 		APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: backup.Name, UID: backup.UID,
 	})
