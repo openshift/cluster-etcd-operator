@@ -9,6 +9,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/tools/cache"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorv1alpha1client "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
@@ -23,6 +24,10 @@ import (
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
+)
+
+const (
+	pruneDebounce = 10 * time.Second
 )
 
 type BackupPolicyRetentionController struct {
@@ -40,7 +45,7 @@ func NewBackupPolicyRetentionController(
 	eventRecorder events.Recorder,
 	accessor featuregates.FeatureGateAccess,
 	etcdBackupPolicyInformer factory.Informer,
-	etcdBackupInformer factory.Informer) factory.Controller {
+	etcdBackupInformer factory.Informer) (factory.Controller, error) {
 
 	c := &BackupPolicyRetentionController{
 		backupsLister:        backupsLister,
@@ -51,25 +56,34 @@ func NewBackupPolicyRetentionController(
 
 	syncer := health.NewCheckingSyncWrapper(c.sync, 15*time.Minute)
 	livenessChecker.Add("BackupPolicyRetentionController", syncer)
+	eventRecorder = eventRecorder.WithComponentSuffix("backup-policy-retention-controller")
+
+	// Add policies with small delay. When multiple backups are completing at the same time it can
+	// cause prune to fire multiple times on stale informer cache.
+	syncCtx := factory.NewSyncContext("BackupPolicyRetentionController", eventRecorder)
+	handler := newResourceEventDebounceHandler(syncCtx, pruneDebounce, func(o runtime.Object) []string {
+		if backupPolicy, ok := o.(*operatorv1alpha1.EtcdBackupPolicy); ok {
+			return []string{backupPolicy.Name}
+		}
+		if backup, ok := o.(*operatorv1alpha1.EtcdBackup); ok && backup.Labels != nil {
+			// Only trigger sync on backups owned by an EtcdBackupPolicy when they are not deleted and have complfailed
+			backupPolicyName := backup.Labels[backuphelpers.LabelEtcdBackupPolicy]
+			if backupPolicyName != "" && backup.DeletionTimestamp == nil && backuphelpers.IsBackupFinished(backup) {
+				return []string{backupPolicyName}
+			}
+		}
+		return nil
+	})
+	if _, err := etcdBackupPolicyInformer.AddEventHandler(handler); err != nil {
+		return nil, fmt.Errorf("BackupPolicyRetentionController failed to add EtcdBackupPolicy event handler: %v", err)
+	}
+	if _, err := etcdBackupInformer.AddEventHandler(handler); err != nil {
+		return nil, fmt.Errorf("BackupPolicyRetentionController failed to add EtcdBackup event handler: %v", err)
+	}
 
 	return factory.New().
-		WithInformersQueueKeysFunc(
-			func(o runtime.Object) []string {
-				if backupPolicy, ok := o.(*operatorv1alpha1.EtcdBackupPolicy); ok {
-					return []string{backupPolicy.Name}
-				}
-				if backup, ok := o.(*operatorv1alpha1.EtcdBackup); ok && backup.Labels != nil {
-					// Only trigget sync on backups owned by an EtcdBackupPolicy when they are not deleted and have completed or failed
-					backupPolicyName := backup.Labels[backuphelpers.LabelEtcdBackupPolicy]
-					if backupPolicyName != "" && backup.DeletionTimestamp == nil && backuphelpers.IsBackupFinished(backup) {
-						return []string{backupPolicyName}
-					}
-				}
-				return nil
-			},
-			etcdBackupInformer,
-			etcdBackupPolicyInformer,
-		).
+		WithSyncContext(syncCtx).
+		WithBareInformers(etcdBackupPolicyInformer, etcdBackupInformer).
 		WithSync(syncer.Sync).
 		WithPostStartHooks(func(ctx context.Context, syncCtx factory.SyncContext) error {
 			wait.UntilWithContext(ctx, func(ctx context.Context) {
@@ -80,12 +94,12 @@ func NewBackupPolicyRetentionController(
 				}
 
 				for _, backupPolicy := range backupPolicies {
-					syncCtx.Queue().Add(backupPolicy.Name)
+					syncCtx.Queue().AddAfter(backupPolicy.Name, pruneDebounce)
 				}
 			}, 5*time.Minute)
 			return nil
 		}).
-		ToController("BackupPolicyRetentionController", eventRecorder.WithComponentSuffix("backup-policy-retention-controller"))
+		ToController("BackupPolicyRetentionController", eventRecorder), nil
 }
 
 func (c *BackupPolicyRetentionController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
@@ -223,4 +237,44 @@ func filterPruneableBackups(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, bac
 type pruneGroup struct {
 	quantity int
 	size     resource.Quantity
+}
+
+func newResourceEventDebounceHandler(syncCtx factory.SyncContext, delay time.Duration, queueKeyFn factory.ObjectQueueKeysFunc) cache.ResourceEventHandler {
+	if queueKeyFn == nil {
+		queueKeyFn = factory.DefaultQueueKeysFunc
+	}
+	return resourceEventDebounceHandler{delay, syncCtx, queueKeyFn}
+}
+
+type resourceEventDebounceHandler struct {
+	delay      time.Duration
+	syncCtx    factory.SyncContext
+	queueKeyFn factory.ObjectQueueKeysFunc
+}
+
+func (r resourceEventDebounceHandler) OnAdd(obj any, isInInitialList bool) {
+	r.enqueue(obj)
+}
+
+func (r resourceEventDebounceHandler) OnUpdate(_, newObj any) {
+	r.enqueue(newObj)
+}
+
+func (r resourceEventDebounceHandler) OnDelete(obj any) {
+	if tombstone, ok := obj.(cache.DeletedFinalStateUnknown); ok {
+		obj = tombstone.Obj
+	}
+	r.enqueue(obj)
+}
+
+func (r resourceEventDebounceHandler) enqueue(obj any) {
+	runtimeObj, ok := obj.(runtime.Object)
+	if !ok {
+		return
+	}
+
+	keys := r.queueKeyFn(runtimeObj)
+	for _, key := range keys {
+		r.syncCtx.Queue().AddAfter(key, r.delay)
+	}
 }
