@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
 	"time"
 
 	"github.com/ghodss/yaml"
@@ -18,6 +19,8 @@ import (
 	"github.com/openshift/library-go/pkg/operator/resource/resourceread"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	coreclientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -30,6 +33,23 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/version"
+)
+
+const (
+	// externalEtcdPodConfigMapName is the name of the ConfigMap that holds the
+	// external etcd pod manifest, used by the installer to place the static pod
+	// on each node.
+	externalEtcdPodConfigMapName = "external-etcd-pod"
+
+	// conditionExternalEtcdConfigMapSynced is the operator condition type set
+	// after the forced installer revision for the external-etcd-pod ConfigMap
+	// has been triggered. It persists forever, immune to revision pruning.
+	conditionExternalEtcdConfigMapSynced = "ExternalEtcdConfigMapSynced"
+
+	// forceRedeployReasonExternalEtcdSync is the ForceRedeploymentReason value
+	// used to trigger a new installer revision when the external-etcd-pod
+	// ConfigMap is first created.
+	forceRedeployReasonExternalEtcdSync = "external-etcd-config-map-sync"
 )
 
 type ExternalEtcdEnablerController struct {
@@ -115,10 +135,78 @@ func (c *ExternalEtcdEnablerController) sync(ctx context.Context, syncCtx factor
 
 	_, _, err = c.supportExternalEtcdOnlyPod(ctx, podSub, c.kubeClient.CoreV1(), syncCtx.Recorder(), operatorSpec)
 	if err != nil {
-		err = fmt.Errorf("%q: %w", "configmap/external-etcd-pod", err)
+		return fmt.Errorf("configmap/%s: %w", externalEtcdPodConfigMapName, err)
 	}
 
-	return err
+	// After applying the external-etcd-pod ConfigMap, ensure that the
+	// installer runs a new revision so every node picks it up. The ConfigMap
+	// is Optional:true, so the installer silently skips it if it doesn't
+	// exist yet. Once created, a forced revision ensures all nodes sync it.
+	if err := c.ensureInstallerRevisionForExternalEtcdPod(ctx, syncCtx.Recorder()); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ensureInstallerRevisionForExternalEtcdPod triggers a one-time installer
+// revision after the external-etcd-pod ConfigMap is first created. It uses
+// an operator condition to track whether the forced revision has already
+// been triggered. The controller is implicitly gated on TNF (DualReplica)
+// topology because supportExternalEtcdOnlyPod only creates the ConfigMap
+// on external-etcd clusters with bootstrap completed; on all other
+// topologies the ConfigMap does not exist and this function returns nil
+// immediately.
+func (c *ExternalEtcdEnablerController) ensureInstallerRevisionForExternalEtcdPod(
+	ctx context.Context,
+	recorder events.Recorder,
+) error {
+	// The external-etcd-pod ConfigMap does not exist yet — the transition
+	// to external etcd is not complete.
+	_, err := c.kubeClient.CoreV1().ConfigMaps(operatorclient.TargetNamespace).Get(ctx, externalEtcdPodConfigMapName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to check %s configmap: %w", externalEtcdPodConfigMapName, err)
+	}
+
+	// Get fresh operator state so we have the latest status (for condition
+	// check) and a current resourceVersion for the spec update.
+	operatorSpec, operatorStatus, resourceVersion, err := c.operatorClient.GetStaticPodOperatorState()
+	if err != nil {
+		return err
+	}
+
+	// The operator condition persists forever, immune to revision pruning.
+	if v1helpers.IsOperatorConditionTrue(operatorStatus.Conditions, conditionExternalEtcdConfigMapSynced) {
+		klog.V(4).Infof("ExternalEtcdConfigMapSynced condition already set, forced revision already triggered")
+		return nil
+	}
+
+	// ConfigMap exists but condition not set: force a new revision so the
+	// installer syncs the ConfigMap to all nodes.
+	operatorSpec.ForceRedeploymentReason = forceRedeployReasonExternalEtcdSync
+	_, _, err = c.operatorClient.UpdateStaticPodOperatorSpec(ctx, resourceVersion, operatorSpec)
+	if err != nil {
+		return fmt.Errorf("failed to set ForceRedeploymentReason for %s sync: %w", externalEtcdPodConfigMapName, err)
+	}
+
+	// Mark the forced revision as done via an operator condition.
+	_, _, err = v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+		Type:    conditionExternalEtcdConfigMapSynced,
+		Status:  operatorv1.ConditionTrue,
+		Reason:  "ConfigMapSynced",
+		Message: fmt.Sprintf("%s configmap created, forced installer revision to sync to all nodes", externalEtcdPodConfigMapName),
+	}))
+	if err != nil {
+		return fmt.Errorf("failed to set ExternalEtcdConfigMapSynced condition: %w", err)
+	}
+
+	recorder.Eventf("ExternalEtcdPodConfigMapSyncForced",
+		"%s configmap created, forcing installer revision to sync to all nodes", externalEtcdPodConfigMapName)
+	klog.V(2).Infof("%s configmap exists, set ForceRedeploymentReason to trigger new installer revision", externalEtcdPodConfigMapName)
+	return nil
 }
 
 func (c *ExternalEtcdEnablerController) supportExternalEtcdOnlyPod(
