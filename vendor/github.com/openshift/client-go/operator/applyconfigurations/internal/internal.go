@@ -4600,7 +4600,9 @@ var schemaYAML = typed.YAMLObject(`types:
         list:
           elementType:
             namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupFile
-          elementRelationship: atomic
+          elementRelationship: associative
+          keys:
+          - path
     - name: job
       type:
         namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupJobReference
