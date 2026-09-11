@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -389,7 +390,6 @@ func FakeEtcdBackup(name string, configs ...func(backup *operatorv1alpha1.EtcdBa
 			Name:              name,
 			UID:               types.UID(name + "-uid"),
 			CreationTimestamp: v1.Now(),
-			Finalizers:        []string{backuphelpers.FinalizerEtcdBackup},
 		},
 		Spec: operatorv1alpha1.EtcdBackupSpec{
 			Storage: operatorv1alpha1.EtcdBackupStorage{
@@ -447,14 +447,18 @@ func WithBackupPending(nodeName string) func(backup *operatorv1alpha1.EtcdBackup
 	return func(backup *operatorv1alpha1.EtcdBackup) {
 		backup.Status.NodeName = nodeName
 		backup.Status.Conditions = append(backup.Status.Conditions, v1.Condition{
-			Type:   string(operatorv1alpha1.BackupPending),
-			Status: v1.ConditionTrue,
+			Type:               string(operatorv1alpha1.BackupPending),
+			Status:             v1.ConditionTrue,
+			LastTransitionTime: v1.Time{Time: backup.CreationTimestamp.Add(time.Second)},
 		})
 	}
 }
 
 func WithBackupRunning(job *batchv1.Job) func(backup *operatorv1alpha1.EtcdBackup) {
 	return func(backup *operatorv1alpha1.EtcdBackup) {
+		if !slices.Contains(backup.Finalizers, backuphelpers.FinalizerEtcdBackup) {
+			backup.Finalizers = append(backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
+		}
 		backup.Status.NodeName = job.Spec.Template.Spec.NodeName
 		if backup.Status.NodeName == "" {
 			backup.Status.NodeName = "test-node"
@@ -465,17 +469,22 @@ func WithBackupRunning(job *batchv1.Job) func(backup *operatorv1alpha1.EtcdBacku
 			UID:       string(job.UID),
 		}
 		backup.Status.Conditions = append(backup.Status.Conditions, v1.Condition{
-			Type:   string(operatorv1alpha1.BackupPending),
-			Status: v1.ConditionTrue,
+			Type:               string(operatorv1alpha1.BackupPending),
+			Status:             v1.ConditionTrue,
+			LastTransitionTime: v1.Time{Time: backup.CreationTimestamp.Add(time.Minute)},
 		})
 	}
 }
 
 func WithBackupCompleted() func(backup *operatorv1alpha1.EtcdBackup) {
 	return func(backup *operatorv1alpha1.EtcdBackup) {
+		if !slices.Contains(backup.Finalizers, backuphelpers.FinalizerEtcdBackup) {
+			backup.Finalizers = append(backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
+		}
 		backup.Status.Conditions = append(backup.Status.Conditions, v1.Condition{
-			Type:   string(operatorv1alpha1.BackupCompleted),
-			Status: v1.ConditionTrue,
+			Type:               string(operatorv1alpha1.BackupCompleted),
+			Status:             v1.ConditionTrue,
+			LastTransitionTime: v1.Time{Time: backup.CreationTimestamp.Add(2 * time.Minute)},
 		})
 		if backup.Status.Files == nil {
 			dir := ""
@@ -505,10 +514,14 @@ func WithBackupCompleted() func(backup *operatorv1alpha1.EtcdBackup) {
 
 func WithBackupFailed() func(backup *operatorv1alpha1.EtcdBackup) {
 	return func(backup *operatorv1alpha1.EtcdBackup) {
+		if !slices.Contains(backup.Finalizers, backuphelpers.FinalizerEtcdBackup) {
+			backup.Finalizers = append(backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
+		}
 		backup.Status.Conditions = append(backup.Status.Conditions, v1.Condition{
-			Type:   string(operatorv1alpha1.BackupFailed),
-			Reason: string(operatorv1alpha1.BackupReasonJobFailed),
-			Status: v1.ConditionTrue,
+			Type:               string(operatorv1alpha1.BackupFailed),
+			Reason:             string(operatorv1alpha1.BackupReasonJobFailed),
+			Status:             v1.ConditionTrue,
+			LastTransitionTime: v1.Time{Time: backup.CreationTimestamp.Add(2 * time.Minute)},
 		})
 		if backup.Status.NodeName == "" {
 			if backup.Spec.NodeName == "" {

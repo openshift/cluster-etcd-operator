@@ -507,7 +507,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		pvcsLister := pvcsInformer.Lister().PersistentVolumeClaims(operatorclient.TargetNamespace)
 
 		klog.Infof("found automated backup feature to be enabled, starting controllers...")
-		backupController := backupcontroller.NewBackupController(
+		backupController, err := backupcontroller.NewBackupController(
 			AlivenessChecker,
 			backupsLister,
 			podsLister,
@@ -520,6 +520,9 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			etcdBackupInformer.Informer(),
 			jobsInformer.Informer(),
 			podsInformer.Informer())
+		if err != nil {
+			return fmt.Errorf("could not start backupController, aborting controller start: %w", err)
+		}
 
 		backupQueueController := backupcontroller.NewBackupQueueController(
 			AlivenessChecker,
