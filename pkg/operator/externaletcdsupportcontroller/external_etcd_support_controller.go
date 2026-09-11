@@ -50,6 +50,10 @@ const (
 	// used to trigger a new installer revision when the external-etcd-pod
 	// ConfigMap is first created.
 	forceRedeployReasonExternalEtcdSync = "external-etcd-config-map-sync"
+
+	// conditionReasonConfigMapSynced is the Reason value used in the
+	// ExternalEtcdConfigMapSynced operator condition.
+	conditionReasonConfigMapSynced = "ConfigMapSynced"
 )
 
 type ExternalEtcdEnablerController struct {
@@ -196,7 +200,7 @@ func (c *ExternalEtcdEnablerController) ensureInstallerRevisionForExternalEtcdPo
 	_, _, err = v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
 		Type:    conditionExternalEtcdConfigMapSynced,
 		Status:  operatorv1.ConditionTrue,
-		Reason:  "ConfigMapSynced",
+		Reason:  conditionReasonConfigMapSynced,
 		Message: fmt.Sprintf("%s configmap created, forced installer revision to sync to all nodes", externalEtcdPodConfigMapName),
 	}))
 	if err != nil {
