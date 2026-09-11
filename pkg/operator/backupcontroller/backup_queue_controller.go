@@ -88,6 +88,17 @@ func (c *BackupQueueController) sync(ctx context.Context, _ factory.SyncContext)
 
 	backupsClient := c.operatorClient.EtcdBackups()
 	for _, backup := range backupsQueue {
+		if backup.DeletionTimestamp != nil {
+			// Backup deleted before it could be queued.
+			// Shouldn't have finalizer at this stage, but check just in case.
+			if slices.Contains(backup.Finalizers, backuphelpers.FinalizerEtcdBackup) {
+				if _, err := applyBackupFinalizer(ctx, backupsClient, backup, false); err != nil {
+					return fmt.Errorf("BackupQueueController failed to finalize deleted backup %q: %w", backup.Name, err)
+				}
+			}
+			continue
+		}
+
 		backupName := backup.Name
 		nodeName := backup.Spec.NodeName
 		if nodeName == "" {
@@ -136,9 +147,8 @@ func (c *BackupQueueController) listBackupsQueue(ctx context.Context) ([]*operat
 		if backuphelpers.IsBackupActive(backup) {
 			observedActive.add(backup)
 			c.activeCache.add(backup)
-		} else if backup.DeletionTimestamp == nil && !backuphelpers.IsBackupFinished(backup) {
-			// Queue new backups that haven't been deleted
-			// Check cache in case of informer lag
+		} else if !backuphelpers.IsBackupFinished(backup) {
+			// Queue new backups. Check cache in case of informer lag
 			if !c.activeCache.isActive(backup.Name) {
 				backups[n] = backup
 				n++
