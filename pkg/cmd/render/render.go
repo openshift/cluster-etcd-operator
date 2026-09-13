@@ -115,6 +115,12 @@ func (r *renderOpts) Validate() error {
 	if len(r.clusterConfigMapFile) == 0 {
 		return errors.New("missing required flag: --cluster-configmap-file")
 	}
+	if len(r.renderedManifestFiles) == 0 {
+		return errors.New("missing required flag: --rendered-manifest-files")
+	}
+	if len(r.payloadVersion) == 0 {
+		return errors.New("missing required flag: --payload-version")
+	}
 	return nil
 }
 
@@ -285,7 +291,7 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 			base64.StdEncoding.WithPadding(base64.NoPadding).EncodeToString([]byte(templateData.BootstrapIP)), templateData.BootstrapIP)
 	}
 
-	enabledFeatureGates, disabledFeatureGates, err := opts.getFeatureGates(installConfig)
+	enabledFeatureGates, disabledFeatureGates, err := opts.getFeatureGatesFromManifests()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get feature gates: %w", err)
 	}
@@ -803,26 +809,6 @@ func getBootstrapScalingStrategy(installConfig map[string]any, delayedHAMarkerFi
 	return strategy, nil
 }
 
-// getFeatureGates returns the enabled and disabled feature gate sets.
-//
-// Primary path: when --rendered-manifest-files and --payload-version are
-// provided, reads the pre-resolved FeatureGate CR from rendered manifests.
-// This is the standard operator render pattern used by CKASO and CKCMO.
-//
-// Fallback path: when rendered manifests are not available, resolves
-// feature gates from the install-config's featureSet and featureGates
-// fields directly. This fallback exists for transition until the
-// installer passes the new flags to the etcd-render invocation, and
-// should be removed once openshift/installer carries the change.
-func (r *renderOpts) getFeatureGates(installConfig map[string]any) (sets.Set[configv1.FeatureGateName], sets.Set[configv1.FeatureGateName], error) {
-	if len(r.renderedManifestFiles) > 0 && len(r.payloadVersion) > 0 {
-		return r.getFeatureGatesFromManifests()
-	}
-	klog.Warningf("--rendered-manifest-files or --payload-version not provided, falling back to install-config feature gate parsing")
-	enabled, disabled := getFeatureGatesFromInstallConfig(installConfig)
-	return enabled, disabled, nil
-}
-
 // getFeatureGatesFromManifests reads the FeatureGate CR from pre-rendered
 // manifests and returns enabled/disabled sets.
 func (r *renderOpts) getFeatureGatesFromManifests() (sets.Set[configv1.FeatureGateName], sets.Set[configv1.FeatureGateName], error) {
@@ -893,50 +879,6 @@ func (r *renderOpts) readFeatureGate() (*configv1.FeatureGate, error) {
 		}
 	}
 	return nil, fmt.Errorf("no FeatureGate manifest found in %v", r.renderedManifestFiles)
-}
-
-// getFeatureGatesFromInstallConfig resolves feature gates from the
-// install-config featureSet and featureGates fields. This is the fallback
-// for when rendered manifests are not available.
-// TODO: Remove this fallback once the installer passes --rendered-manifest-files
-// and --payload-version to the etcd-render invocation.
-func getFeatureGatesFromInstallConfig(installConfig map[string]any) (sets.Set[configv1.FeatureGateName], sets.Set[configv1.FeatureGateName]) {
-	enabled := sets.New[configv1.FeatureGateName]()
-	disabled := sets.New[configv1.FeatureGateName]()
-
-	featureSet := configv1.Default
-	if featureSetRaw, found := installConfig["featureSet"]; found {
-		if featureSetStr, ok := featureSetRaw.(string); ok {
-			featureSet = configv1.FeatureSet(featureSetStr)
-		}
-	}
-	if resolved := features.FeatureSets(0, features.SelfManaged, featureSet); resolved != nil {
-		for _, fg := range resolved.Enabled {
-			enabled.Insert(fg.FeatureGateAttributes.Name)
-		}
-		for _, fg := range resolved.Disabled {
-			disabled.Insert(fg.FeatureGateAttributes.Name)
-		}
-	}
-
-	if featureGatesRaw, found := installConfig["featureGates"]; found {
-		for _, entry := range featureGatesRaw.([]any) {
-			key, value, found := strings.Cut(entry.(string), "=")
-			if !found {
-				continue
-			}
-			name := configv1.FeatureGateName(key)
-			if value == "true" {
-				enabled.Insert(name)
-				disabled.Delete(name)
-			} else if value == "false" {
-				enabled.Delete(name)
-				disabled.Insert(name)
-			}
-		}
-	}
-
-	return enabled, disabled
 }
 
 // getPKIProfileProvider extracts PKI configuration from install-config and returns a PKI profile provider.
