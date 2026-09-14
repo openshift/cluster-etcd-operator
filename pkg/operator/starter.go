@@ -252,8 +252,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			"etcd/prometheus-role.yaml",
 			"etcd/prometheus-rolebinding.yaml",
 			"etcd/backups-sa.yaml",
-			"etcd/backups-cr.yaml",
-			"etcd/backups-crb.yaml",
 			"etcd/networkpolicy-allow.yaml",
 			"etcd/networkpolicy-default-deny.yaml",
 		},

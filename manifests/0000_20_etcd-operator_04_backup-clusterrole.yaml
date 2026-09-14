@@ -1,0 +1,24 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: system:openshift:operator:etcd-backup-role
+  annotations:
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+rules:
+- apiGroups:
+  - operator.openshift.io
+  resources:
+  - etcdbackups
+  - etcdbackups/status
+  - etcdbackups/finalizers
+  verbs:
+  - create
+  - update
+  - delete
+- apiGroups:
+  - batch
+  resources:
+  - jobs/finalizers
+  verbs:
+  - update

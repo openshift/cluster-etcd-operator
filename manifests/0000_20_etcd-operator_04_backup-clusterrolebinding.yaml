@@ -1,15 +1,15 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: system:openshift:operator:etcd-operator
+  name: system:openshift:operator:etcd-backup-crb
   annotations:
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
-    release.openshift.io/delete: "true"
 roleRef:
+  apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: cluster-admin
+  name: system:openshift:operator:etcd-backup-role
 subjects:
 - kind: ServiceAccount
-  namespace: openshift-etcd-operator
-  name: etcd-operator
+  namespace: openshift-etcd
+  name: etcd-backup-sa
