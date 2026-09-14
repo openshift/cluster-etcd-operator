@@ -68,7 +68,8 @@ func buildCertWatcherDaemonSet() *appsv1.DaemonSet {
 						"app.kubernetes.io/name": certWatcherName,
 					},
 					Annotations: map[string]string{
-						"openshift.io/required-scc": "privileged",
+						"openshift.io/required-scc":               "privileged",
+						"target.workload.openshift.io/management": `{"effect": "PreferredDuringScheduling"}`,
 					},
 				},
 				Spec: corev1.PodSpec{

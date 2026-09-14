@@ -17,6 +17,7 @@ spec:
         app.kubernetes.io/name: tnf-cert-watcher
       annotations:
         openshift.io/required-scc: "privileged"
+        target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
     spec:
       terminationGracePeriodSeconds: 10
       containers:
