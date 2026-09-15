@@ -81,9 +81,9 @@ func (c *BackupQueueController) sync(ctx context.Context, _ factory.SyncContext)
 		return nil
 	}
 
-	masterNodes, err := backuphelpers.SelectBackupNodes(c.nodeLister, nil)
+	controlPlaneNodes, err := backuphelpers.SelectBackupNodes(c.nodeLister, nil)
 	if err != nil {
-		return fmt.Errorf("BackupPolicyController failed to select master nodes for backup: %w", err)
+		return fmt.Errorf("BackupPolicyController failed to select control plane nodes for backup: %w", err)
 	}
 
 	backupsClient := c.operatorClient.EtcdBackups()
@@ -100,19 +100,27 @@ func (c *BackupQueueController) sync(ctx context.Context, _ factory.SyncContext)
 		}
 
 		backupName := backup.Name
-		nodeName := backup.Spec.NodeName
-		if nodeName == "" {
-			// Round robin master nodes until all in use
-			for len(masterNodes) > 0 {
-				node := masterNodes[0]
-				masterNodes = masterNodes[1:]
-				if !c.activeCache.nodes.inUse(node.Name) {
+		nodeName := backup.Status.NodeName
+		// Only Local backups are pinned to a specific node. For PVC backups the node is left unset so that
+		// the scheduler can place the job on a node that satisfies the volume's topology constraints. The
+		// PVC itself is the concurrency key for PVC backups (see canStart).
+		if nodeName == "" && backup.Spec.Storage.Type == operatorv1alpha1.EtcdBackupStorageTypeLocal {
+			selector := labels.Everything()
+			if len(backup.Spec.NodeSelector) > 0 {
+				selector = labels.SelectorFromSet(backup.Spec.NodeSelector)
+			}
+
+			// Round robin control plane nodes: pick the first matching node that isn't already running a backup,
+			// and consume it so subsequent backups in this sync are assigned to a different node.
+			for idx, node := range controlPlaneNodes {
+				if selector.Matches(labels.Set(node.Labels)) && !c.activeCache.nodes.inUse(node.Name) {
 					nodeName = node.Name
+					controlPlaneNodes = append(controlPlaneNodes[:idx], controlPlaneNodes[idx+1:]...)
 					break
 				}
 			}
 			if nodeName == "" {
-				klog.Infof("BackupQueueController unable to start backup [%s]: all master nodes in use", backupName)
+				klog.Infof("BackupQueueController unable to start backup [%s]: all control plane nodes in use", backupName)
 				continue
 			}
 		}
@@ -191,8 +199,10 @@ func backupExists(ctx context.Context, backupsClient operatorv1alpha1client.Etcd
 func newActiveBackupCache() activeBackupCache {
 	return activeBackupCache{
 		backups: map[string]activeBackup{},
-		nodes:   activeResources{},
-		pvcs:    activeResources{},
+		// Limit 1 active Local backup per Node
+		nodes: activeResources{},
+		// Limit 1 active PVC backup per PVC
+		pvcs: activeResources{},
 	}
 }
 
@@ -224,17 +234,25 @@ func (abc activeBackupCache) add(backup *operatorv1alpha1.EtcdBackup) {
 	if active, ok := abc.backups[backup.Name]; ok {
 		// Backup already cached. Make sure nothing has changed.
 		if active.nodeName != nodeName {
-			abc.nodes.remove(active.nodeName, backup.Name)
-			abc.nodes.add(nodeName, backup.Name)
+			if active.nodeName != "" {
+				abc.nodes.remove(active.nodeName, backup.Name)
+			}
+			if nodeName != "" {
+				abc.nodes.add(nodeName, backup.Name)
+			}
 		}
 		if pvcName != active.pvcName {
-			abc.pvcs.remove(active.pvcName, backup.Name)
+			if active.pvcName != "" {
+				abc.pvcs.remove(active.pvcName, backup.Name)
+			}
 			if pvcName != "" {
 				abc.pvcs.add(pvcName, backup.Name)
 			}
 		}
 	} else {
-		abc.nodes.add(nodeName, backup.Name)
+		if nodeName != "" {
+			abc.nodes.add(nodeName, backup.Name)
+		}
 		if pvcName != "" {
 			abc.pvcs.add(pvcName, backup.Name)
 		}
@@ -253,7 +271,7 @@ func (abc activeBackupCache) remove(backupName string) {
 }
 
 func (abc activeBackupCache) canStart(backup *operatorv1alpha1.EtcdBackup, nodeName string) (ok bool, reason string) {
-	if abc.nodes.inUse(nodeName) {
+	if nodeName != "" && abc.nodes.inUse(nodeName) {
 		backupNames := make([]string, 0, len(abc.nodes[nodeName]))
 		for name := range abc.nodes[nodeName] {
 			backupNames = append(backupNames, name)

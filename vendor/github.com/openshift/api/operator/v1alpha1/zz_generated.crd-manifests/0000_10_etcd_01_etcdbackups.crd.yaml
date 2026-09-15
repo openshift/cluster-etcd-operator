@@ -68,13 +68,16 @@ spec:
           spec:
             description: spec holds user settable values for configuration
             properties:
-              nodeName:
+              nodeSelector:
+                additionalProperties:
+                  type: string
                 description: |-
-                  nodeName specifies the master node where an etcd backup should be taken.
-                  If not specified, a random master node will be selected.
-                type: string
+                  nodeSelector specifies which master node(s) to run the backup job on.
+                  If no selector is specified, the default node-role.kubernetes.io/control-plane label will be used.
+                  If no nodes are matched, then no backup will run.
+                type: object
                 x-kubernetes-validations:
-                - message: nodeName is immutable once set
+                - message: nodeSelector is immutable once set
                   rule: self == oldSelf
               storage:
                 description: storage specifies the location where etcd backup files
@@ -243,8 +246,8 @@ spec:
                 - uid
                 type: object
               nodeName:
-                description: nodeName is the master node where the backup snapshot
-                  was taken.
+                description: nodeName is used for Local backups to bind the control
+                  plane node where the snapshot will be taken.
                 type: string
             type: object
         required:

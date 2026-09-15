@@ -415,7 +415,7 @@ func WithBackupPolicy(backupPolicyName string) func(backup *operatorv1alpha1.Etc
 
 func WithBackupNodeName(nodeName string) func(backup *operatorv1alpha1.EtcdBackup) {
 	return func(backup *operatorv1alpha1.EtcdBackup) {
-		backup.Spec.NodeName = nodeName
+		backup.Status.NodeName = nodeName
 	}
 }
 
@@ -503,11 +503,7 @@ func WithBackupCompleted() func(backup *operatorv1alpha1.EtcdBackup) {
 			})
 		}
 		if backup.Status.NodeName == "" {
-			if backup.Spec.NodeName == "" {
-				backup.Status.NodeName = "test-node"
-			} else {
-				backup.Status.NodeName = backup.Spec.NodeName
-			}
+			backup.Status.NodeName = "test-node"
 		}
 	}
 }
@@ -524,11 +520,7 @@ func WithBackupFailed() func(backup *operatorv1alpha1.EtcdBackup) {
 			LastTransitionTime: v1.Time{Time: backup.CreationTimestamp.Add(2 * time.Minute)},
 		})
 		if backup.Status.NodeName == "" {
-			if backup.Spec.NodeName == "" {
-				backup.Status.NodeName = "test-node"
-			} else {
-				backup.Status.NodeName = backup.Spec.NodeName
-			}
+			backup.Status.NodeName = "test-node"
 		}
 	}
 }

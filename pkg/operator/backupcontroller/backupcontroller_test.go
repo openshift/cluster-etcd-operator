@@ -654,6 +654,10 @@ func requireBackupJob(t *testing.T, backup *operatorv1alpha1.EtcdBackup, job *ba
 	})
 	switch backup.Spec.Storage.Type {
 	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
+		// Local backups are pinned to the node chosen by the queue controller.
+		require.Equal(t, backup.Status.NodeName, job.Spec.Template.Spec.NodeName)
+		require.Empty(t, job.Spec.Template.Spec.NodeSelector)
+		require.Nil(t, job.Spec.Template.Spec.Affinity)
 		require.Contains(t, job.Spec.Template.Spec.Volumes, corev1.Volume{
 			Name: "etc-kubernetes-cluster-backup",
 			VolumeSource: corev1.VolumeSource{
@@ -668,6 +672,12 @@ func requireBackupJob(t *testing.T, backup *operatorv1alpha1.EtcdBackup, job *ba
 			MountPath: filepath.Join(backupPathMount, backup.Spec.Storage.Local.HostPath),
 		})
 	case operatorv1alpha1.EtcdBackupStorageTypePVC:
+		// PVC backups are not pinned to a node; they are constrained to master nodes and placed by the scheduler.
+		require.Empty(t, job.Spec.Template.Spec.NodeName)
+		require.Equal(t, "", job.Spec.Template.Spec.NodeSelector[backuphelpers.ControlPlaneNodeLabelSelector])
+		require.Contains(t, job.Spec.Template.Spec.NodeSelector, backuphelpers.ControlPlaneNodeLabelSelector)
+		require.NotNil(t, job.Spec.Template.Spec.Affinity)
+		require.NotNil(t, job.Spec.Template.Spec.Affinity.PodAntiAffinity)
 		require.Contains(t, job.Spec.Template.Spec.Volumes, corev1.Volume{
 			Name: "etc-kubernetes-cluster-backup",
 			VolumeSource: corev1.VolumeSource{

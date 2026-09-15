@@ -314,13 +314,15 @@ func createBackupJob(ctx context.Context,
 	job.Spec.TTLSecondsAfterFinished = ptr.To(ttlSecondsAfterFinished)
 	job.Spec.Template.Spec.InitContainers[0].Image = operatorImagePullSpec
 	job.Spec.Template.Spec.Containers[0].Image = operatorImagePullSpec
-	job.Spec.Template.Spec.NodeName = backup.Status.NodeName
 
 	backupDir := backupPathMount
 	volume := corev1.Volume{Name: "etc-kubernetes-cluster-backup"}
 	volumeMount := corev1.VolumeMount{Name: "etc-kubernetes-cluster-backup", MountPath: backupPathMount}
 	switch backup.Spec.Storage.Type {
 	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
+		// Local backups write to a hostPath, so the job is pinned to the node chosen by the queue controller.
+		job.Spec.Template.Spec.NodeName = backup.Status.NodeName
+
 		storageLocal := backup.Spec.Storage.Local
 		backupDir = filepath.Join(backupDir, storageLocal.HostPath)
 		volume.HostPath = &corev1.HostPathVolumeSource{
@@ -330,6 +332,12 @@ func createBackupJob(ctx context.Context,
 		// HostPath is appended to mount so that path handling is always consistent between local and pvc storage backend
 		volumeMount.MountPath = filepath.Join(volumeMount.MountPath, storageLocal.HostPath)
 	case operatorv1alpha1.EtcdBackupStorageTypePVC:
+		// PVC backups are not pinned to a node. Instead the job is constrained to eligible master nodes and
+		// the scheduler picks a node that satisfies the volume's topology (e.g. WaitForFirstConsumer). A
+		// preferred pod anti-affinity spreads backup pods across nodes without hard-pinning.
+		job.Spec.Template.Spec.NodeSelector = pvcNodeSelector(backup.Spec.NodeSelector)
+		job.Spec.Template.Spec.Affinity = backupSpreadAffinity()
+
 		storagePVC := backup.Spec.Storage.PVC
 		backupDir = filepath.Join(backupDir, storagePVC.Path)
 		volume.PersistentVolumeClaim = &corev1.PersistentVolumeClaimVolumeSource{
@@ -365,6 +373,37 @@ func createBackupJob(ctx context.Context,
 	}
 
 	return nil
+}
+
+// pvcNodeSelector constrains a PVC backup job to eligible master nodes, merging the backup's node selector
+// on top of the master role label. The master label always applies since the backup job reads etcd's data
+// from the host and must run on a control-plane node.
+func pvcNodeSelector(backupSelector map[string]string) map[string]string {
+	selector := map[string]string{backuphelpers.ControlPlaneNodeLabelSelector: ""}
+	for k, v := range backupSelector {
+		selector[k] = v
+	}
+	return selector
+}
+
+// backupSpreadAffinity prefers scheduling backup pods onto different nodes so that concurrent backups
+// don't all target the same etcd member.
+func backupSpreadAffinity() *corev1.Affinity {
+	return &corev1.Affinity{
+		PodAntiAffinity: &corev1.PodAntiAffinity{
+			PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{
+				{
+					Weight: 100,
+					PodAffinityTerm: corev1.PodAffinityTerm{
+						LabelSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{"app": backupAppName},
+						},
+						TopologyKey: "kubernetes.io/hostname",
+					},
+				},
+			},
+		},
+	}
 }
 
 func reconcileJobStatus(ctx context.Context,
@@ -484,12 +523,14 @@ func reconcileJobNotFound(
 }
 
 func validatePendingBackup(ctx context.Context, nodeClient corev1client.NodeInterface, pvcClient corev1client.PersistentVolumeClaimInterface, backup *operatorv1alpha1.EtcdBackup) (operatorv1alpha1.BackupConditionReason, string, bool, error) {
-	// Validate the assigned node
-	nodeName := backup.Status.NodeName
-	if validNode, err := isValidNode(ctx, nodeClient, nodeName); err != nil {
-		return "", "", false, fmt.Errorf("error validating Node %q: %w", nodeName, err)
-	} else if !validNode {
-		return operatorv1alpha1.BackupReasonNodeNotFound, fmt.Sprintf("unable to find Node %q", nodeName), false, nil
+	// Validate the assigned node, if one was assigned. PVC backups are not pinned to a node; the scheduler
+	// places them based on the volume's topology, so there is nothing to validate here.
+	if nodeName := backup.Status.NodeName; nodeName != "" {
+		if validNode, err := isValidNode(ctx, nodeClient, nodeName); err != nil {
+			return "", "", false, fmt.Errorf("error validating Node %q: %w", nodeName, err)
+		} else if !validNode {
+			return operatorv1alpha1.BackupReasonNodeNotFound, fmt.Sprintf("unable to find Node %q", nodeName), false, nil
+		}
 	}
 
 	// Validate PVC, if backup has one

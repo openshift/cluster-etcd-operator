@@ -229,57 +229,74 @@ func (c *BackupPolicyController) syncActive(ctx context.Context, backupPolicy *o
 	return backupPolicy, nil
 }
 
-// executeBackup creates EtcdBackup resources for each master node
+// executeBackup creates EtcdBackup resources the current schedule execution
 func (c *BackupPolicyController) executeBackup(ctx context.Context, backupPolicy *operatorv1alpha1.EtcdBackupPolicy, scheduleTime time.Time) error {
 	// If any backups for this policy are currently active, then we skip this execution
 	if c.hasActiveBackup(ctx, backupPolicy) {
 		return nil
 	}
 
-	// Get master nodes
+	// Get control plane nodes
 	var selector labels.Selector
 	if len(backupPolicy.Spec.NodeSelector) != 0 {
 		selector = labels.SelectorFromSet(backupPolicy.Spec.NodeSelector)
 	}
-	masterNodes, err := backuphelpers.SelectBackupNodes(c.nodeLister, selector)
+	controlPlaneNodes, err := backuphelpers.SelectBackupNodes(c.nodeLister, selector)
 	if err != nil {
-		return fmt.Errorf("BackupPolicyController failed to select master nodes for backup: %w", err)
+		return fmt.Errorf("BackupPolicyController failed to select control plane nodes for backup: %w", err)
 	}
-	if len(masterNodes) == 0 {
+	if len(controlPlaneNodes) == 0 {
 		c.eventRecorder.Warningf("BackupExecutionSkipped",
-			"No master nodes found for backup %s, skipping this execution", backupPolicy.Name)
+			"No control plane nodes found for backup %s, skipping this execution", backupPolicy.Name)
 		// TODO: Retry backoff?
 		return nil
 	}
+
+	// Build the set of EtcdBackups to create. Local backups are taken once per control plane node and pinned to that
+	// node (the hostPath is node-specific). PVC backups are node-independent: a single backup is created and
+	// the scheduler decides placement based on the volume's topology.
+	var toCreate []*operatorv1alpha1.EtcdBackup
 	if backupPolicy.Spec.Storage.Type == operatorv1alpha1.EtcdBackupStorageTypePVC {
-		// TODO(bhperry): Ideally the decision would be left up to the queue controller, since it can
-		// 	more intelligently schedule the backup to a node. But EtcdBackup doesn't have a NodeSelector.
-		//  Should both types have NodeName and NodeSelector?
-		masterNodes = masterNodes[:1]
-	}
-
-	// Track failed creations
-	failedCreations := []string{}
-
-	// Create EtcdBackup for each selected master node
-	etcdBackupsClient := c.operatorClient.EtcdBackups()
-	active := make([]operatorv1alpha1.EtcdBackupReference, 0, len(masterNodes))
-	for _, node := range masterNodes {
-		// Deterministic naming to prevent duplicate EtcdBackups from stale informers
-		backupName := generateEtcdBackupName(backupPolicy.Name, node.UID, scheduleTime)
-		etcdBackup := &operatorv1alpha1.EtcdBackup{
+		toCreate = append(toCreate, &operatorv1alpha1.EtcdBackup{
 			ObjectMeta: v1.ObjectMeta{
-				Name: backupName,
+				Name: generatePVCEtcdBackupName(backupPolicy.Name, scheduleTime),
 				Labels: map[string]string{
 					backuphelpers.LabelEtcdBackupPolicy: backupPolicy.Name,
 				},
 			},
 			Spec: operatorv1alpha1.EtcdBackupSpec{
-				NodeName: node.Name,
-				Storage:  backupPolicy.Spec.Storage,
+				NodeSelector: backupPolicy.Spec.NodeSelector,
+				Storage:      backupPolicy.Spec.Storage,
 			},
+		})
+	} else {
+		for _, node := range controlPlaneNodes {
+			toCreate = append(toCreate, &operatorv1alpha1.EtcdBackup{
+				ObjectMeta: v1.ObjectMeta{
+					Name: generateEtcdBackupName(backupPolicy.Name, node.UID, scheduleTime),
+					Labels: map[string]string{
+						backuphelpers.LabelEtcdBackupPolicy: backupPolicy.Name,
+					},
+				},
+				Spec: operatorv1alpha1.EtcdBackupSpec{
+					NodeSelector: backupPolicy.Spec.NodeSelector,
+					Storage:      backupPolicy.Spec.Storage,
+				},
+				Status: operatorv1alpha1.EtcdBackupStatus{
+					NodeName: node.Name,
+				},
+			})
 		}
+	}
 
+	// Track failed creations
+	failedCreations := []string{}
+
+	etcdBackupsClient := c.operatorClient.EtcdBackups()
+	active := make([]operatorv1alpha1.EtcdBackupReference, 0, len(toCreate))
+	for _, etcdBackup := range toCreate {
+		backupName := etcdBackup.Name
+		nodeName := etcdBackup.Status.NodeName
 		if backup, err := etcdBackupsClient.Create(ctx, etcdBackup, v1.CreateOptions{}); err != nil {
 			if apierrors.IsAlreadyExists(err) {
 				backup, err = etcdBackupsClient.Get(ctx, backupName, v1.GetOptions{})
@@ -291,12 +308,12 @@ func (c *BackupPolicyController) executeBackup(ctx context.Context, backupPolicy
 				}
 
 			} else {
-				failedCreations = append(failedCreations, node.Name)
-				klog.Warningf("Failed to create EtcdBackup %s for node %s: %v", backupName, node.Name, err)
+				failedCreations = append(failedCreations, backupName)
+				klog.Warningf("Failed to create EtcdBackup %s (node %q): %v", backupName, nodeName, err)
 			}
 		} else {
 			active = append(active, operatorv1alpha1.EtcdBackupReference{Name: backup.Name, UID: string(backup.UID)})
-			klog.V(2).Infof("BackupPolicyController created EtcdBackup %s for node %s", backupName, node.Name)
+			klog.V(2).Infof("BackupPolicyController created EtcdBackup %s (node %q)", backupName, nodeName)
 		}
 	}
 
@@ -311,7 +328,7 @@ func (c *BackupPolicyController) executeBackup(ctx context.Context, backupPolicy
 
 	if len(failedCreations) > 0 {
 		c.eventRecorder.Warningf("PartialBackupFailure",
-			"Failed to create backups for nodes: %v", failedCreations)
+			"Failed to create backups: %v", failedCreations)
 	} else if len(active) > 0 {
 		c.eventRecorder.Eventf("BackupScheduled",
 			"Created %d EtcdBackup resources for scheduled backup", len(active))
@@ -329,6 +346,19 @@ func updateControllerDegradedCondition(ctx context.Context, operatorClient v1hel
 	if updateErr != nil {
 		klog.V(4).Infof("BackupPolicyController error during UpdateStatus: %v", updateErr)
 	}
+}
+
+// generatePVCEtcdBackupName produces a deterministic name for a node-independent PVC backup. Only one PVC
+// backup is created per policy execution, so the node UID is not part of the name.
+// TODO(bhperry): follow up with a hash-based naming scheme shared across both backup types.
+func generatePVCEtcdBackupName(backupPolicyName string, scheduleTime time.Time) string {
+	minutesHash := strconv.FormatInt(scheduleTime.Unix()/60, 10)
+
+	maxLen := maxNameLength - len(minutesHash) - 1
+	if len(backupPolicyName) > maxLen {
+		backupPolicyName = backupPolicyName[:maxLen]
+	}
+	return backupPolicyName + "-" + minutesHash
 }
 
 func generateEtcdBackupName(backupPolicyName string, nodeUID types.UID, scheduleTime time.Time) string {
