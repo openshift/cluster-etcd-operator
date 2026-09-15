@@ -78,7 +78,7 @@ func TestExternalEtcdSupportController(t *testing.T) {
 
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
-			eventRecorder, _, controller, fakeKubeClient := getController(t, scenario.staticPodStatus, scenario.topology)
+			eventRecorder, _, controller, fakeKubeClient := getController(t, scenario.staticPodStatus, scenario.topology, nil)
 			err := controller.sync(context.TODO(), factory.NewSyncContext("test", eventRecorder))
 			require.Equal(t, scenario.expectedErr, err)
 
@@ -86,7 +86,7 @@ func TestExternalEtcdSupportController(t *testing.T) {
 				return
 			}
 
-			etcdPodCM, err := fakeKubeClient.CoreV1().ConfigMaps(operatorclient.TargetNamespace).Get(context.TODO(), "external-etcd-pod", metav1.GetOptions{})
+			etcdPodCM, err := fakeKubeClient.CoreV1().ConfigMaps(operatorclient.TargetNamespace).Get(context.TODO(), externalEtcdPodConfigMapName, metav1.GetOptions{})
 			if !scenario.expectedConfigMapExists {
 				require.Error(t, err)
 				return
@@ -105,63 +105,111 @@ func TestExternalEtcdSupportController(t *testing.T) {
 	}
 }
 
-func getController(
-	t *testing.T,
-	staticPodStatus *operatorv1.StaticPodOperatorStatus, topology configv1.TopologyMode) (events.Recorder, v1helpers.StaticPodOperatorClient, *ExternalEtcdEnablerController, *fake.Clientset) {
-	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
-		&operatorv1.StaticPodOperatorSpec{
-			OperatorSpec: operatorv1.OperatorSpec{
-				ManagementState: operatorv1.Managed,
-			},
+func TestEnsureInstallerRevisionForExternalEtcdPod(t *testing.T) {
+	scenarios := []struct {
+		name              string
+		bootstrapComplete bool
+		conditionSet      bool
+		latestRevision    int32
+		expectMarkerSet   bool
+	}{
+		{
+			name:              "configmap exists and condition not set triggers forced revision",
+			bootstrapComplete: true,
+			latestRevision:    3,
+			expectMarkerSet:   true,
 		},
-		staticPodStatus,
-		nil,
-		nil,
-	)
-
-	fakeKubeClient := fake.NewSimpleClientset()
-
-	defaultObjects := []runtime.Object{
-		&corev1.Namespace{
-			ObjectMeta: metav1.ObjectMeta{Name: operatorclient.TargetNamespace},
+		{
+			name:              "configmap exists and condition already set is a no-op",
+			bootstrapComplete: true,
+			conditionSet:      true,
+			latestRevision:    3,
+			expectMarkerSet:   false,
 		},
-		&configv1.Infrastructure{
-			TypeMeta: metav1.TypeMeta{},
-			ObjectMeta: metav1.ObjectMeta{
-				Name: ceohelpers.InfrastructureClusterName,
-			},
-			Status: configv1.InfrastructureStatus{
-				ControlPlaneTopology: topology},
+		{
+			name:              "configmap does not exist yet is a no-op",
+			bootstrapComplete: false,
+			latestRevision:    3,
+			expectMarkerSet:   false,
+		},
+		{
+			name:              "condition set from prior sync is a no-op even after many revisions",
+			bootstrapComplete: true,
+			conditionSet:      true,
+			latestRevision:    7,
+			expectMarkerSet:   false,
 		},
 	}
+	for _, sc := range scenarios {
+		t.Run(sc.name, func(t *testing.T) {
+			t.Parallel()
+			opts := []func(*operatorv1.StaticPodOperatorStatus){
+				testutils.WithLatestRevision(sc.latestRevision),
+				testutils.WithNodeStatusAtCurrentRevision(sc.latestRevision),
+				testutils.WithNodeStatusAtCurrentRevision(sc.latestRevision),
+			}
+			if sc.bootstrapComplete {
+				opts = append(opts, testutils.WithOperatorCondition("EtcdRunningInCluster", operatorv1.ConditionTrue))
+			}
+			if sc.conditionSet {
+				opts = append(opts, testutils.WithOperatorCondition(conditionExternalEtcdConfigMapSynced, operatorv1.ConditionTrue))
+			}
+			var specErr func(string, *operatorv1.StaticPodOperatorSpec) error
+			if !sc.expectMarkerSet {
+				specErr = func(string, *operatorv1.StaticPodOperatorSpec) error {
+					t.Fatal("unexpected spec update")
+					return nil
+				}
+			}
+			recorder, opClient, ctrl, _ := getController(t, testutils.StaticPodOperatorStatus(opts...), configv1.DualReplicaTopologyMode, specErr)
+			require.NoError(t, ctrl.sync(context.TODO(), factory.NewSyncContext("test", recorder)))
+			spec, status, _, err := opClient.GetStaticPodOperatorState()
+			require.NoError(t, err)
+			if sc.expectMarkerSet {
+				require.Equal(t, forceRedeployReasonExternalEtcdSync, spec.ForceRedeploymentReason)
+				require.True(t, v1helpers.IsOperatorConditionTrue(status.Conditions, conditionExternalEtcdConfigMapSynced))
+			} else {
+				require.Empty(t, spec.ForceRedeploymentReason)
+			}
+		})
+	}
+}
 
+func getController(
+	t *testing.T,
+	staticPodStatus *operatorv1.StaticPodOperatorStatus,
+	topology configv1.TopologyMode,
+	triggerSpecErr func(rv string, spec *operatorv1.StaticPodOperatorSpec) error,
+) (events.Recorder, v1helpers.StaticPodOperatorClient, *ExternalEtcdEnablerController, *fake.Clientset) {
+	t.Helper()
+	fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
+		&operatorv1.StaticPodOperatorSpec{
+			OperatorSpec: operatorv1.OperatorSpec{ManagementState: operatorv1.Managed},
+		},
+		staticPodStatus, nil, triggerSpecErr,
+	)
+	fakeKubeClient := fake.NewSimpleClientset()
+	defaultObjects := []runtime.Object{
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: operatorclient.TargetNamespace}},
+		&configv1.Infrastructure{
+			ObjectMeta: metav1.ObjectMeta{Name: ceohelpers.InfrastructureClusterName},
+			Status:     configv1.InfrastructureStatus{ControlPlaneTopology: topology},
+		},
+	}
 	eventRecorder := events.NewRecorder(fakeKubeClient.CoreV1().Events(operatorclient.TargetNamespace),
 		"test-externaletcdsupportcontroller", &corev1.ObjectReference{}, clock.RealClock{})
-
 	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 	for _, obj := range defaultObjects {
 		require.NoError(t, indexer.Add(obj))
 	}
-
-	envVar := etcdenvvar.FakeEnvVar{EnvVars: map[string]string{
-		"ALL_ETCD_ENDPOINTS": "1,3",
-		"OTHER_ENDPOINTS_IP": "192.168.2.42",
-	}}
-
 	etcdIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
-	require.NoError(t, etcdIndexer.Add(&operatorv1.Etcd{
-		TypeMeta: metav1.TypeMeta{},
-		ObjectMeta: metav1.ObjectMeta{
-			Name: ceohelpers.InfrastructureClusterName,
-		},
-	}))
-
+	require.NoError(t, etcdIndexer.Add(&operatorv1.Etcd{ObjectMeta: metav1.ObjectMeta{Name: ceohelpers.InfrastructureClusterName}}))
 	controller := &ExternalEtcdEnablerController{
 		operatorClient:        fakeOperatorClient,
 		infrastructureLister:  configv1listers.NewInfrastructureLister(indexer),
 		targetImagePullSpec:   etcdPullSpec,
 		operatorImagePullSpec: operatorPullSpec,
-		envVarGetter:          envVar,
+		envVarGetter:          etcdenvvar.FakeEnvVar{EnvVars: map[string]string{"ALL_ETCD_ENDPOINTS": "1,3", "OTHER_ENDPOINTS_IP": "192.168.2.42"}},
 		kubeClient:            fakeKubeClient,
 		enqueueFn:             func() {},
 		etcdLister:            operatorv1listers.NewEtcdLister(etcdIndexer),
