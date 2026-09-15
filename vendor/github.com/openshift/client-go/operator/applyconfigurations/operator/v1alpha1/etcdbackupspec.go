@@ -5,9 +5,10 @@ package v1alpha1
 // EtcdBackupSpecApplyConfiguration represents a declarative configuration of the EtcdBackupSpec type for use
 // with apply.
 type EtcdBackupSpecApplyConfiguration struct {
-	// nodeName specifies the master node where an etcd backup should be taken.
-	// If not specified, a random master node will be selected.
-	NodeName *string `json:"nodeName,omitempty"`
+	// nodeSelector specifies which master node(s) to run the backup job on.
+	// If no selector is specified, the default node-role.kubernetes.io/control-plane label will be used.
+	// If no nodes are matched, then no backup will run.
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 	// storage specifies the location where etcd backup files will be saved.
 	Storage *EtcdBackupStorageApplyConfiguration `json:"storage,omitempty"`
 }
@@ -18,11 +19,17 @@ func EtcdBackupSpec() *EtcdBackupSpecApplyConfiguration {
 	return &EtcdBackupSpecApplyConfiguration{}
 }
 
-// WithNodeName sets the NodeName field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the NodeName field is set to the value of the last call.
-func (b *EtcdBackupSpecApplyConfiguration) WithNodeName(value string) *EtcdBackupSpecApplyConfiguration {
-	b.NodeName = &value
+// WithNodeSelector puts the entries into the NodeSelector field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, the entries provided by each call will be put on the NodeSelector field,
+// overwriting an existing map entries in NodeSelector field with the same key.
+func (b *EtcdBackupSpecApplyConfiguration) WithNodeSelector(entries map[string]string) *EtcdBackupSpecApplyConfiguration {
+	if b.NodeSelector == nil && len(entries) > 0 {
+		b.NodeSelector = make(map[string]string, len(entries))
+	}
+	for k, v := range entries {
+		b.NodeSelector[k] = v
+	}
 	return b
 }
 

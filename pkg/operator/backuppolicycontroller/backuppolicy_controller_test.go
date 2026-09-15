@@ -108,7 +108,8 @@ func TestBackupPolicyCreateBackup(t *testing.T) {
 
 			backup := backups.Items[0]
 			require.Equal(t, "test-backup-policy", backup.Labels[backuphelpers.LabelEtcdBackupPolicy])
-			require.Equal(t, backup.Spec.NodeName, "test-node")
+			// PVC backups are node-independent; the queue controller / scheduler decides placement.
+			require.Empty(t, backup.Status.NodeName)
 
 			// Verify LastScheduleTime and LastScheduleNodes are set
 			backupPolicy, err := operatorFake.OperatorV1alpha1().EtcdBackupPolicies().Get(context.TODO(), "test-backup-policy", v1.GetOptions{})
@@ -148,7 +149,7 @@ func TestBackupPolicyCreateMultipleLocalBackupsWithSelector(t *testing.T) {
 			backupNodes := make([]string, 2)
 			for i, backup := range backups.Items {
 				require.Equal(t, "test-backup-policy", backup.Labels[backuphelpers.LabelEtcdBackupPolicy])
-				backupNodes[i] = backup.Spec.NodeName
+				backupNodes[i] = backup.Status.NodeName
 			}
 			require.ElementsMatch(t, backupNodes, expectedNodes)
 
