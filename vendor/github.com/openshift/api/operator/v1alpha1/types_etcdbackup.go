@@ -37,12 +37,13 @@ type EtcdBackup struct {
 }
 
 type EtcdBackupSpec struct {
-	// nodeName specifies the master node where an etcd backup should be taken.
-	// If not specified, a random master node will be selected.
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="nodeName is immutable once set"
+	// nodeSelector specifies which master node(s) to run the backup job on.
+	// If no selector is specified, the default node-role.kubernetes.io/control-plane label will be used.
+	// If no nodes are matched, then no backup will run.
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="nodeSelector is immutable once set"
 	// +kubebuilder:validation:Optional
 	// +optional
-	NodeName string `json:"nodeName,omitempty"`
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
 	// storage specifies the location where etcd backup files will be saved.
 	// +kubebuilder:validation:Required
@@ -120,7 +121,7 @@ type EtcdBackupStatus struct {
 	// +optional
 	Job *EtcdBackupJobReference `json:"job,omitempty"`
 
-	// nodeName is the master node where the backup snapshot was taken.
+	// nodeName is used for Local backups to bind the control plane node where the snapshot will be taken.
 	// +kubebuilder:validation:Optional
 	// +optional
 	NodeName string `json:"nodeName,omitempty"`

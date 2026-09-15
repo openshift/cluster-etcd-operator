@@ -24,7 +24,7 @@ const (
 
 	FinalizerEtcdBackup = "operator.openshift.io/etcd-backup"
 
-	masterNodeLabel = "node-role.kubernetes.io/master"
+	ControlPlaneNodeLabelSelector = "node-role.kubernetes.io/control-plane"
 )
 
 type BackupTerminationLog struct {
@@ -79,16 +79,16 @@ func IsBackupFinished(backup *operatorv1alpha1.EtcdBackup) bool {
 // TODO(bhperry): Ideally this would be aware of the health of etcd on nodes so it selects the nodes most likely to succeed
 func SelectBackupNodes(nodeLister corev1listers.NodeLister, selector labels.Selector) ([]*corev1.Node, error) {
 	if selector == nil {
-		if req, err := labels.NewRequirement(masterNodeLabel, selection.Exists, nil); err == nil {
+		if req, err := labels.NewRequirement(ControlPlaneNodeLabelSelector, selection.Exists, nil); err == nil {
 			selector = labels.NewSelector().Add(*req)
 		} else {
 			return nil, fmt.Errorf("invalid selector: %w", err)
 		}
 	}
 
-	masterNodes, err := nodeLister.List(selector)
+	controlPlaneNodess, err := nodeLister.List(selector)
 	if err != nil {
 		return nil, fmt.Errorf("error listing nodes: %w", err)
 	}
-	return masterNodes, nil
+	return controlPlaneNodess, nil
 }
