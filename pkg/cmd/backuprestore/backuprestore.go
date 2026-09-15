@@ -14,11 +14,12 @@ import (
 )
 
 type backupOptions struct {
-	endpoints []string
-	configDir string
-	dataDir   string
-	backupDir string
-	errOut    io.Writer
+	endpoints      []string
+	configDir      string
+	dataDir        string
+	backupDir      string
+	terminationLog string
+	errOut         io.Writer
 }
 
 func NewBackupCommand(errOut io.Writer) *cobra.Command {
@@ -52,6 +53,7 @@ func (r *backupOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&r.configDir, "config-dir", "/etc/kubernetes", "Path to the kubernetes config directory")
 	fs.StringVar(&r.dataDir, "data-dir", "/var/lib/etcd", "Path to the data directory")
 	fs.StringVar(&r.backupDir, "backup-dir", "", "Path to the directory where the backup is generated")
+	fs.StringVar(&r.terminationLog, "termination-log", "", "Path to file where status is reported on termination")
 }
 
 func (r *backupOptions) Validate() error {
@@ -63,9 +65,8 @@ func (r *backupOptions) Validate() error {
 
 func (r *backupOptions) Run() error {
 	if err := backup(r); err != nil {
-		klog.Errorf("run: backup failed: %v", err)
+		return fmt.Errorf("run: backup failed: %w", err)
 	}
-	klog.Infof("config-dir is: %s", r.configDir)
 	return nil
 }
 
@@ -128,7 +129,7 @@ func (r *restoreOptions) Run() error {
 	}()
 
 	if err := restore(ctx, r); err != nil {
-		klog.Errorf("run: restore failed: %v", err)
+		return fmt.Errorf("run: restore failed: %w", err)
 	}
 
 	return nil
