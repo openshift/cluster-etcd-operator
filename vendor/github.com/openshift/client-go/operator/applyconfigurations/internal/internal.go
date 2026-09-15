@@ -4628,9 +4628,11 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: com.github.openshift.api.operator.v1alpha1.EtcdBackupSpec
   map:
     fields:
-    - name: nodeName
+    - name: nodeSelector
       type:
-        scalar: string
+        map:
+          elementType:
+            scalar: string
     - name: storage
       type:
         namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupStorage

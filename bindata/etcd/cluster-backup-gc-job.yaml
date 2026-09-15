@@ -52,7 +52,7 @@ spec:
       priorityClassName: system-node-critical
       activeDeadlineSeconds: 900
       nodeSelector:
-        node-role.kubernetes.io/master: ""
+        node-role.kubernetes.io/control-plane: ""
       restartPolicy: Never
       tolerations:
         - operator: "Exists"

@@ -290,7 +290,7 @@ func createGarbageCollectionJob(ctx context.Context,
 	switch storage.storageType {
 	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
 		job.Spec.Template.Spec.NodeName = storage.nodeName
-		delete(job.Spec.Template.Spec.NodeSelector, "node-role.kubernetes.io/master")
+		delete(job.Spec.Template.Spec.NodeSelector, backuphelpers.ControlPlaneNodeLabelSelector)
 		klog.V(4).Infof("BackupGarbageCollectionController assigned job [%s] to node [%s]", job.Name, storage.nodeName)
 
 		paths := map[string]struct{}{}
