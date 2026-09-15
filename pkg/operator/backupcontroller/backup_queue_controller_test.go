@@ -95,11 +95,15 @@ func runBackupQueueControllerTest(t *testing.T, tc testCaseBackupQueueController
 	}
 }
 
-func TestBackupQueueSelectAvailableNode(t *testing.T) {
+func TestBackupQueueLocalSelectAvailableNode(t *testing.T) {
+	// Node round-robin selection only applies to Local backups; PVC backups are placed by the scheduler.
+	storage := operatorv1alpha1.EtcdBackupStorage{
+		Type:  operatorv1alpha1.EtcdBackupStorageTypeLocal,
+		Local: &operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"}}
 	runBackupQueueControllerTest(t, testCaseBackupQueueController{
 		backups: []*operatorv1alpha1.EtcdBackup{
-			testutils.FakeEtcdBackup("pending", testutils.WithBackupPending("test-node-1")),
-			testutils.FakeEtcdBackup("new")},
+			testutils.FakeEtcdBackup("pending", testutils.WithBackupPending("test-node-1"), testutils.WithBackupStorage(storage)),
+			testutils.FakeEtcdBackup("new", testutils.WithBackupStorage(storage))},
 		nodes: []*corev1.Node{
 			testutils.FakeNode("test-node-1", testutils.WithMasterLabel()),
 			testutils.FakeNode("test-node-2", testutils.WithMasterLabel())},
@@ -112,6 +116,27 @@ func TestBackupQueueSelectAvailableNode(t *testing.T) {
 			require.Equal(t, backup.Name, "new")
 			require.True(t, backuphelpers.IsBackupPending(backup), "Expected backup to be pending")
 			require.Equal(t, backup.Status.NodeName, "test-node-2", "Expected backup to be assigned to an available node")
+		},
+	})
+}
+
+func TestBackupQueuePVCNotAssignedNode(t *testing.T) {
+	// PVC backups must not be pinned to a node; the scheduler places them based on volume topology.
+	runBackupQueueControllerTest(t, testCaseBackupQueueController{
+		backups: []*operatorv1alpha1.EtcdBackup{
+			testutils.FakeEtcdBackup("new")},
+		nodes: []*corev1.Node{
+			testutils.FakeNode("test-node-1", testutils.WithMasterLabel()),
+			testutils.FakeNode("test-node-2", testutils.WithMasterLabel())},
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			action, ok := testutils.GetStatusAction[k8stesting.PatchActionImpl](operatorFake.Actions())
+			require.True(t, ok, "Expected patch action")
+			backup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), action.Name, metav1.GetOptions{})
+			require.NoError(t, err)
+
+			require.Equal(t, backup.Name, "new")
+			require.True(t, backuphelpers.IsBackupPending(backup), "Expected backup to be pending")
+			require.Empty(t, backup.Status.NodeName, "Expected no node to be assigned to a PVC backup")
 		},
 	})
 }
