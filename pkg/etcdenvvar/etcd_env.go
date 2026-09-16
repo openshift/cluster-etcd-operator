@@ -331,9 +331,17 @@ func getCipherSuites(envVarContext envVarContext) (map[string]string, error) {
 		return nil, fmt.Errorf("couldn't get cipherSuites from observedConfig: %w", err)
 	}
 
+	observedMinTLSVersion, err := getObservedTLSMinVersion(envVarContext)
+	if err != nil {
+		return nil, fmt.Errorf("unable to compute the minimal TLS version: %v", err)
+	}
+
 	actualCipherSuites := tlshelpers.SupportedEtcdCiphers(observedCipherSuites)
 
-	if len(actualCipherSuites) == 0 {
+	// The empty cipher-suite check only applies to TLS 1.2. etcd (and Go) do not allow
+	// selecting the cipher suites used by TLS 1.3, so a TLS 1.3 profile legitimately
+	// configures no cipher suites and must not be treated as a failure here.
+	if observedMinTLSVersion == tlsutil.TLSVersion12 && len(actualCipherSuites) == 0 {
 		// While bootstrap is in progress, observedConfig may not be populated yet
 		// (config observer can't converge until etcd runs, but etcd needs these env
 		// vars to start). Fall back to the render path's TLSProfileIntermediateType
@@ -356,15 +364,10 @@ func getCipherSuites(envVarContext envVarContext) (map[string]string, error) {
 		}
 	}
 
-	observedMinTLSVersion, err := getObservedTLSMinVersion(envVarContext)
-	if err != nil {
-		return nil, fmt.Errorf("unable to compute ETCD_CIPHER_SUITES: %v", err)
-	}
-
 	envName := "ETCD_CIPHER_SUITES"
 	if observedMinTLSVersion == tlsutil.TLSVersion13 {
-		// When --tls-min-version is set to 'TLS1.3', etcd does not allow --cipher-suites to also be specified.
-		// We still outout an env var for informational purposes.
+		// When --tls-min-version is set to 'TLS1.3', etcd does not allow --cipher-suites to
+		// also be specified. We still output an env var for informational purposes.
 		envName = "CIPHER_SUITES"
 	}
 
