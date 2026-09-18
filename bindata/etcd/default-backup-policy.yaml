@@ -1,0 +1,14 @@
+apiVersion: operator.openshift.io/v1alpha1
+kind: EtcdBackupPolicy
+metadata:
+  name: default
+spec:
+  schedule: "@daily"
+  failedBackupsHistoryLimit: 1
+  retentionRules:
+  - type: MaxQuantity
+    maxQuantity: 2
+  storage:
+    type: Local
+    local:
+      hostPath: /etc/kubernetes/cluster-backup
