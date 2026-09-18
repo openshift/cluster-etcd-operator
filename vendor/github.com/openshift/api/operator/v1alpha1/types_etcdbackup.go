@@ -112,7 +112,6 @@ type EtcdBackupStatus struct {
 	// +kubebuilder:validation:Optional
 	// +listType=map
 	// +listMapKey=type
-	// +kubebuilder:validation:Optional
 	// +optional
 	Conditions []metav1.Condition `json:"conditions"`
 
@@ -160,64 +159,20 @@ type EtcdBackupFile struct {
 	Size resource.Quantity `json:"size,omitempty"`
 }
 
-type EtcdBackupFile struct {
-	// path to the backup file on the storage backend.
-	// +kubebuilder:validation:Required
-	// +required
-	Path string `json:"path"`
-
-	// sizeBytes is the size of the backup file on the storage backend in bytes.
-	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Required
-	// +required
-	SizeBytes int64 `json:"sizeBytes"`
-}
-
-// BackupConditionType enumerates the Condition types added to EtcdBackupStatus at different points in its lifecycle
-type BackupConditionType string
-
-var (
-	// BackupPending means the backup is ready to start.
-	BackupPending BackupConditionType = "Pending"
-	// BackupPending means the backup job has started.
-	BackupRunning BackupConditionType = "Running"
-	// BackupCompleted means the backup completed successfully.
-	BackupCompleted BackupConditionType = "Completed"
-	// BackupFailed means the backup failed.
-	BackupFailed BackupConditionType = "Failed"
-	// BackupGarbageCollectionRequired indicates whether or not garbage collection is required
-	// on a failed backup to cleanup partially created files.
-	BackupGarbageCollectionRequired BackupConditionType = "GarbageCollectionRequired"
-)
-
-// BackupConditionReason enumerates the Condition reasons associated with BackupConditionTypes
 type BackupConditionReason string
 
 var (
 	// BackupPending is added to the EtcdBackupStatus Conditions when the etcd backup has started processing.
 	BackupPending BackupConditionReason = "BackupPending"
 
-	// BackupReasonJobStarted means the backup job is currently running.
-	BackupReasonJobStarted BackupConditionReason = "JobStarted"
+	// BackupCompleted is added to the EtcdBackupStatus Conditions when the etcd backup has completed.
+	BackupCompleted BackupConditionReason = "BackupCompleted"
 
-	// BackupReasonJobCompleted means the backup job completed successfully.
-	BackupReasonJobCompleted BackupConditionReason = "JobCompleted"
+	// BackupFailed is added to the EtcdBackupStatus Conditions when the etcd backup has failed.
+	BackupFailed BackupConditionReason = "BackupFailed"
 
-	// BackupReasonPVCNotFound means the backup failed due to a missing PVC.
-	BackupReasonPVCNotFound BackupConditionReason = "PVCNotFound"
-	// BackupReasonNotNotFound means the backup failed due to a missing node.
-	BackupReasonNodeNotFound BackupConditionReason = "NodeNotFound"
-	// BackupReasonJobFailed means the backup job failed.
-	BackupReasonJobFailed BackupConditionReason = "JobFailed"
-	// BackupReasonDeleted means the backup was deleted while in progress.
-	BackupReasonDeleted BackupConditionReason = "Deleted"
-
-	// BackupReasonFilesPartiallyCreated means the backup job failed after partially creating some files.
-	BackupReasonFilesPartiallyCreated BackupConditionReason = "FilesPartiallyCreated"
-	// BackupReasonFilesNotCreated means the backup job failed without creating any files.
-	BackupReasonFilesNotCreated BackupConditionReason = "FilesNotCreated"
-	// BackupReasonFileStateUnknown means the backup job failed without indicating if it had created any files.
-	BackupReasonFileStateUnknown BackupConditionReason = "FileStateUnknown"
+	// BackupSkipped is added to the EtcdBackupStatus Conditions when the etcd backup has been skipped.
+	BackupSkipped BackupConditionReason = "BackupSkipped"
 )
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
