@@ -59,6 +59,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermemberremovalcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/defaultbackuppolicyinitializer"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/defragcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertcleaner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
@@ -577,6 +578,14 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			controlPlaneNodeInformer,
 			pvcsInformer.Informer(),
 		)
+
+		if err := defaultbackuppolicyinitializer.InitializeDefaultBackupPolicy(
+			ctx,
+			operatorClient,
+			operatorConfigClientv1Alpha1.EtcdBackupPolicies(),
+		); err != nil {
+			return fmt.Errorf("could not initialize default EtcdBackupPolicy: %w", err)
+		}
 
 		go etcdBackupInformer.Informer().Run(ctx.Done())
 		go etcdBackupPoliciesInformer.Informer().Run(ctx.Done())
