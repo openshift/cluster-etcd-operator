@@ -59,6 +59,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermembercontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/clustermemberremovalcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/configobservercontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/defaultbackuppolicyinitializer"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/defragcontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertcleaner"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/etcdcertsigner"
@@ -506,7 +507,19 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		podsLister := podsInformer.Lister().Pods(operatorclient.TargetNamespace)
 		pvcsLister := pvcsInformer.Lister().PersistentVolumeClaims(operatorclient.TargetNamespace)
 
+		initCtx, stopInit := context.WithCancel(ctx)
+		defer stopInit()
+
 		klog.Infof("found automated backup feature to be enabled, starting controllers...")
+
+		defaultBackupPolicyInitializerController := defaultbackuppolicyinitializer.NewDefaultBackupPolicyInitController(
+			operatorClient,
+			operatorConfigClientv1Alpha1.EtcdBackupPolicies(),
+			etcdBackupPoliciesInformer.Informer(),
+			controllerContext.EventRecorder,
+			stopInit,
+		)
+
 		backupController, err := backupcontroller.NewBackupController(
 			AlivenessChecker,
 			backupsLister,
@@ -572,6 +585,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		go etcdBackupInformer.Informer().Run(ctx.Done())
 		go etcdBackupPoliciesInformer.Informer().Run(ctx.Done())
 
+		go defaultBackupPolicyInitializerController.Run(initCtx, 1)
 		go backupController.Run(ctx, 1)
 		go backupPolicyController.Run(ctx, 1)
 		go backupPolicyRetentionController.Run(ctx, 1)
