@@ -2,6 +2,8 @@ module github.com/openshift/cluster-etcd-operator
 
 go 1.26.0
 
+replace github.com/openshift/api => github.com/bhperry/openshift-api v0.0.0-20260915205613-3994e264d0ca
+
 replace github.com/openshift/client-go => github.com/bhperry/openshift-client-go v0.0.0-20260915210744-0ede47c7c71c
 
 require (
@@ -171,5 +173,3 @@ replace (
 	github.com/onsi/ginkgo/v2 => github.com/openshift/onsi-ginkgo/v2 v2.6.1-0.20241205171354-8006f302fd12
 	vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787
 )
-
-replace github.com/openshift/api => github.com/bhperry/openshift-api v0.0.0-20260915205613-3994e264d0ca

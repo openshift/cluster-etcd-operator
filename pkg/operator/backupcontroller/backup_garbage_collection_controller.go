@@ -59,6 +59,7 @@ type BackupGarbageCollectionController struct {
 	kubeClient            kubernetes.Interface
 	featureGateAccessor   featuregates.FeatureGateAccess
 	operatorImagePullSpec string
+	metrics               *backupMetrics
 }
 
 func NewBackupGarbageCollectionController(
@@ -72,6 +73,7 @@ func NewBackupGarbageCollectionController(
 	eventRecorder events.Recorder,
 	operatorImagePullSpec string,
 	accessor featuregates.FeatureGateAccess,
+	metrics *backupMetrics,
 	backupInformer factory.Informer,
 	jobInformer factory.Informer,
 	nodeInformer cache.SharedIndexInformer,
@@ -86,6 +88,7 @@ func NewBackupGarbageCollectionController(
 		kubeClient:            kubeClient,
 		operatorImagePullSpec: operatorImagePullSpec,
 		featureGateAccessor:   accessor,
+		metrics:               metrics,
 	}
 
 	syncer := health.NewCheckingSyncWrapper(c.sync, 30*time.Minute) // GC runs infrequently if no backups are deleted
@@ -225,6 +228,7 @@ func (c *BackupGarbageCollectionController) syncBackups(ctx context.Context, act
 				if _, err := applyBackupFinalizer(ctx, backupsClient, backup, false); err != nil {
 					return nil, fmt.Errorf("BackupGarbageCollectionController failed to remove backup finalizer after GC completed: %w", err)
 				}
+				c.metrics.deleteBackup(*backup)
 			}
 		} else if backuphelpers.IsBackupFinished(backup) {
 			if storage, requiresGC, err := isGarbageCollectionRequired(c.nodesLister, c.pvcsLister, backup); err != nil {
@@ -233,6 +237,8 @@ func (c *BackupGarbageCollectionController) syncBackups(ctx context.Context, act
 				newGC[storage] = append(newGC[storage], backup)
 			} else if _, err := applyBackupFinalizer(ctx, backupsClient, backup, false); err != nil {
 				return nil, fmt.Errorf("BackupGarbageCollectionController failed to remove backup finalizer: %w", err)
+			} else {
+				c.metrics.deleteBackup(*backup)
 			}
 		}
 	}

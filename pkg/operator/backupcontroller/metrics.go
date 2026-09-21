@@ -189,6 +189,9 @@ func getSizeBytes(backup operatorv1alpha1.EtcdBackup) float64 {
 }
 
 func (m *backupMetrics) recordBackup(backup operatorv1alpha1.EtcdBackup) {
+	if m == nil {
+		return
+	}
 	state := extractBackupState(backup)
 
 	m.mu.Lock()
@@ -227,6 +230,9 @@ func (m *backupMetrics) recordBackup(backup operatorv1alpha1.EtcdBackup) {
 }
 
 func (m *backupMetrics) deleteBackup(backup operatorv1alpha1.EtcdBackup) {
+	if m == nil {
+		return
+	}
 	m.mu.Lock()
 	state, exists := m.trackedBackups[backup.UID]
 	if !exists {
