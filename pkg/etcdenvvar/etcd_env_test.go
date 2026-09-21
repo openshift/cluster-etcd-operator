@@ -76,7 +76,7 @@ func TestConvertDBSize(t *testing.T) {
 // TestGetCipherSuites covers the OCPBUGS-94106 bootstrap fallback: while bootstrap
 // is in progress an empty observedConfig falls back to the render path's
 // TLSProfileIntermediateType ciphers instead of degrading; once bootstrap is
-// complete an empty observedConfig is a genuine failure.
+// complete an empty TLS 1.2 or older configuration is a genuine failure.
 func TestGetCipherSuites(t *testing.T) {
 	intermediate := tlshelpers.SupportedEtcdCiphers(
 		crypto.OpenSSLToIANACipherSuites(configv1.TLSProfiles[configv1.TLSProfileIntermediateType].Ciphers),
@@ -89,6 +89,10 @@ func TestGetCipherSuites(t *testing.T) {
 		bootstrapComplete bool
 		wantErr           bool
 		wantCiphers       []string
+		// wantInformationalCiphers, when set, asserts that ETCD_CIPHER_SUITES is not
+		// emitted (etcd rejects cipher suites under TLS 1.3) and that the informational
+		// CIPHER_SUITES env var carries the expected values instead.
+		wantInformationalCiphers []string
 	}{
 		{
 			name:           "bootstrap in progress with nil observedConfig falls back to intermediate ciphers",
@@ -103,6 +107,18 @@ func TestGetCipherSuites(t *testing.T) {
 		{
 			name:              "bootstrap complete with empty observedConfig errors",
 			observedConfig:    []byte("{}"),
+			bootstrapComplete: true,
+			wantErr:           true,
+		},
+		{
+			name:                     "bootstrap complete with TLS 1.3 and empty cipherSuites emits an empty informational env var",
+			observedConfig:           []byte(`{"servingInfo":{"cipherSuites":[],"minTLSVersion":"VersionTLS13"}}`),
+			bootstrapComplete:        true,
+			wantInformationalCiphers: []string{},
+		},
+		{
+			name:              "bootstrap complete with TLS 1.2 and empty cipherSuites errors",
+			observedConfig:    []byte(`{"servingInfo":{"cipherSuites":[],"minTLSVersion":"VersionTLS12"}}`),
 			bootstrapComplete: true,
 			wantErr:           true,
 		},
@@ -133,6 +149,11 @@ func TestGetCipherSuites(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+			if tc.wantInformationalCiphers != nil {
+				assert.NotContains(t, got, "ETCD_CIPHER_SUITES")
+				assert.Equal(t, strings.Join(tc.wantInformationalCiphers, ","), got["CIPHER_SUITES"])
+				return
+			}
 			assert.Equal(t, strings.Join(tc.wantCiphers, ","), got["ETCD_CIPHER_SUITES"])
 		})
 	}
