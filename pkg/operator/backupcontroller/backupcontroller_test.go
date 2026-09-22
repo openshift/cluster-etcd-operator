@@ -77,7 +77,7 @@ func runBackupControllerTest(t *testing.T, tc testCaseBackupController) {
 	operatorSharedFactory.Start(ctx.Done())
 	cache.WaitForCacheSync(ctx.Done(), backupsInformerHasSynced, podsInformerHasSynced, jobsInformerHasSynced)
 
-	testMetrics := createBackupMetrics(metrics.NewKubeRegistry())
+	testMetrics := NewBackupMetrics(metrics.NewKubeRegistry())
 
 	controller := BackupController{
 		backupsLister:         backupsInformer.Lister(),

@@ -45,7 +45,7 @@ type backupState struct {
 	currentStatus   string
 }
 
-func createBackupMetrics(metricsRegistry metrics.KubeRegistry) *backupMetrics {
+func NewBackupMetrics(metricsRegistry metrics.KubeRegistry) *backupMetrics {
 	info := metrics.NewGaugeVec(
 		&metrics.GaugeOpts{
 			Name:           backupInfoMetricName,
@@ -260,6 +260,9 @@ func (m *backupMetrics) deleteBackup(backup operatorv1alpha1.EtcdBackup) {
 	m.sizeBytes.DeleteLabelValues(state.name, state.uid)
 }
 
+// MustRegisterDefaultBackupMetrics creates backup metrics using the default registry.
+// Deprecated: Use NewBackupMetrics with an explicit registry for production code.
+// This function remains for test compatibility.
 func MustRegisterDefaultBackupMetrics() *backupMetrics {
-	return createBackupMetrics(legacyregistry.DefaultGatherer.(metrics.KubeRegistry))
+	return NewBackupMetrics(legacyregistry.DefaultGatherer.(metrics.KubeRegistry))
 }

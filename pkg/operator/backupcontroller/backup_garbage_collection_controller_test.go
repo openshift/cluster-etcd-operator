@@ -64,7 +64,7 @@ func runBackupGarbageCollectionControllerTest(t *testing.T, tc testCaseBackupGar
 	pvcvsInformerHasSynced := pvcsInformer.Informer().HasSynced
 	backupsInformerHasSynced := backupsInformer.Informer().HasSynced
 
-	testMetrics := createBackupMetrics(metrics.NewKubeRegistry())
+	testMetrics := NewBackupMetrics(metrics.NewKubeRegistry())
 
 	controller := BackupGarbageCollectionController{
 		backupsLister:         backupsInformer.Lister(),

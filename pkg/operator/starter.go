@@ -509,7 +509,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		klog.Infof("found automated backup feature to be enabled, starting controllers...")
 
 		// Create shared metrics instance for backup controllers
-		backupMetrics := backupcontroller.MustRegisterDefaultBackupMetrics()
+		metricsRegistry := legacyregistry.DefaultGatherer.(metrics.KubeRegistry)
+		backupMetrics := backupcontroller.NewBackupMetrics(metricsRegistry)
 
 		backupController, err := backupcontroller.NewBackupController(
 			AlivenessChecker,
