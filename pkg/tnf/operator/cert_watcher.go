@@ -88,6 +88,7 @@ func buildCertWatcherDaemonSet() *appsv1.DaemonSet {
 						SecurityContext: &corev1.SecurityContext{
 							Privileged:               ptr.To(true),
 							AllowPrivilegeEscalation: ptr.To(true),
+							ReadOnlyRootFilesystem:   ptr.To(true),
 						},
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "etcd-certs",
