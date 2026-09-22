@@ -13,7 +13,7 @@ import (
 
 func TestMetricsRegistration(t *testing.T) {
 	registry := metrics.NewKubeRegistry()
-	m := createBackupMetrics(registry)
+	m := NewBackupMetrics(registry)
 
 	if m.info == nil {
 		t.Error("info metric not initialized")
@@ -34,7 +34,7 @@ func TestMetricsRegistration(t *testing.T) {
 
 func TestRecordBackup_NeverRun(t *testing.T) {
 	registry := metrics.NewKubeRegistry()
-	m := createBackupMetrics(registry)
+	m := NewBackupMetrics(registry)
 
 	backup := operatorv1alpha1.EtcdBackup{
 		ObjectMeta: v1.ObjectMeta{
@@ -71,7 +71,7 @@ func TestRecordBackup_NeverRun(t *testing.T) {
 
 func TestRecordBackup_PVCStorage_Success(t *testing.T) {
 	registry := metrics.NewKubeRegistry()
-	m := createBackupMetrics(registry)
+	m := NewBackupMetrics(registry)
 
 	now := v1.NewTime(time.Now())
 	later := v1.NewTime(now.Add(5 * time.Minute))
@@ -126,7 +126,7 @@ func TestRecordBackup_PVCStorage_Success(t *testing.T) {
 
 func TestRecordBackup_PVCStorage_Failure(t *testing.T) {
 	registry := metrics.NewKubeRegistry()
-	m := createBackupMetrics(registry)
+	m := NewBackupMetrics(registry)
 
 	now := v1.NewTime(time.Now())
 	later := v1.NewTime(now.Add(2 * time.Minute))
@@ -173,7 +173,7 @@ func TestRecordBackup_PVCStorage_Failure(t *testing.T) {
 
 func TestRecordBackup_PVCWithPath(t *testing.T) {
 	registry := metrics.NewKubeRegistry()
-	m := createBackupMetrics(registry)
+	m := NewBackupMetrics(registry)
 
 	backup := operatorv1alpha1.EtcdBackup{
 		ObjectMeta: v1.ObjectMeta{
@@ -205,7 +205,7 @@ func TestRecordBackup_PVCWithPath(t *testing.T) {
 
 func TestRecordBackup_LocalStorage(t *testing.T) {
 	registry := metrics.NewKubeRegistry()
-	m := createBackupMetrics(registry)
+	m := NewBackupMetrics(registry)
 
 	backup := operatorv1alpha1.EtcdBackup{
 		ObjectMeta: v1.ObjectMeta{
@@ -248,7 +248,7 @@ func TestRecordBackup_LocalStorage(t *testing.T) {
 
 func TestRecordBackup_CreatedByPolicy(t *testing.T) {
 	registry := metrics.NewKubeRegistry()
-	m := createBackupMetrics(registry)
+	m := NewBackupMetrics(registry)
 
 	backup := operatorv1alpha1.EtcdBackup{
 		ObjectMeta: v1.ObjectMeta{
@@ -286,7 +286,7 @@ func TestRecordBackup_CreatedByPolicy(t *testing.T) {
 
 func TestRecordBackup_ConcurrentCompletions(t *testing.T) {
 	registry := metrics.NewKubeRegistry()
-	m := createBackupMetrics(registry)
+	m := NewBackupMetrics(registry)
 
 	done := make(chan bool)
 
@@ -335,7 +335,7 @@ func TestRecordBackup_ConcurrentCompletions(t *testing.T) {
 
 func TestRecordBackup_RepeatedReconciliation(t *testing.T) {
 	registry := metrics.NewKubeRegistry()
-	m := createBackupMetrics(registry)
+	m := NewBackupMetrics(registry)
 
 	now := v1.NewTime(time.Now())
 	backup := operatorv1alpha1.EtcdBackup{
@@ -382,7 +382,7 @@ func TestRecordBackup_RepeatedReconciliation(t *testing.T) {
 
 func TestDeleteBackup(t *testing.T) {
 	registry := metrics.NewKubeRegistry()
-	m := createBackupMetrics(registry)
+	m := NewBackupMetrics(registry)
 
 	backup := operatorv1alpha1.EtcdBackup{
 		ObjectMeta: v1.ObjectMeta{
@@ -420,7 +420,7 @@ func TestDeleteBackup(t *testing.T) {
 
 func TestDeleteBackup_NotTracked(t *testing.T) {
 	registry := metrics.NewKubeRegistry()
-	m := createBackupMetrics(registry)
+	m := NewBackupMetrics(registry)
 
 	backup := operatorv1alpha1.EtcdBackup{
 		ObjectMeta: v1.ObjectMeta{
@@ -509,7 +509,7 @@ func TestSizeBytes_MultipleFiles(t *testing.T) {
 
 func TestNode_FromStatus(t *testing.T) {
 	registry := metrics.NewKubeRegistry()
-	m := createBackupMetrics(registry)
+	m := NewBackupMetrics(registry)
 
 	backup := operatorv1alpha1.EtcdBackup{
 		ObjectMeta: v1.ObjectMeta{
@@ -542,7 +542,7 @@ func TestNode_FromStatus(t *testing.T) {
 
 func TestNode_Empty_WhenStatusMissing(t *testing.T) {
 	registry := metrics.NewKubeRegistry()
-	m := createBackupMetrics(registry)
+	m := NewBackupMetrics(registry)
 
 	backup := operatorv1alpha1.EtcdBackup{
 		ObjectMeta: v1.ObjectMeta{
@@ -591,7 +591,7 @@ func TestMetricNamesMatchConstants(t *testing.T) {
 
 func TestMetricCollection(t *testing.T) {
 	registry := metrics.NewKubeRegistry()
-	m := createBackupMetrics(registry)
+	m := NewBackupMetrics(registry)
 
 	backup := operatorv1alpha1.EtcdBackup{
 		ObjectMeta: v1.ObjectMeta{

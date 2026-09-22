@@ -71,7 +71,7 @@ func runBackupQueueControllerTest(t *testing.T, tc testCaseBackupQueueController
 		activeCache = *tc.activeCache
 	}
 
-	testMetrics := createBackupMetrics(metrics.NewKubeRegistry())
+	testMetrics := NewBackupMetrics(metrics.NewKubeRegistry())
 
 	controller := BackupQueueController{
 		backupsLister:       backupsInformer.Lister(),
