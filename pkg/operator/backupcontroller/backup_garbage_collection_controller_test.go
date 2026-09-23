@@ -17,7 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -398,7 +397,7 @@ func TestBackupGarbageCollectionFailedBackupRequireGC(t *testing.T) {
 					Status: v1.ConditionTrue,
 				})
 				backup.Status.Files = []operatorv1alpha1.EtcdBackupFile{{
-					Path: "/backups/backup.db.part", Size: *resource.NewQuantity(100, resource.BinarySI),
+					Path: "/backups/backup.db.part", SizeBytes: 100,
 				}}
 			})},
 			pvcs:     []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},

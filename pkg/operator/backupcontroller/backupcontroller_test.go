@@ -21,7 +21,6 @@ import (
 	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -266,8 +265,8 @@ func TestBackupJobCompleted(t *testing.T) {
 				Message: "backup job completed",
 				Status:  metav1.ConditionTrue,
 			}}, []operatorv1alpha1.EtcdBackupFile{
-				{Path: "/my/successful/backup.db", Size: *resource.NewQuantity(100*1024*1024, resource.BinarySI)},
-				{Path: "/my/successful/static_kuberesources.tar.gz", Size: *resource.NewQuantity(4321, resource.BinarySI)}})
+				{Path: "/my/successful/backup.db", SizeBytes: 100 * 1024 * 1024},
+				{Path: "/my/successful/static_kuberesources.tar.gz", SizeBytes: 4321}})
 			requireJobPatched(t, client, "test-backup")
 		},
 	})
@@ -363,8 +362,8 @@ func TestBackupFailedRequiresGC(t *testing.T) {
 					Message: "backup job created some files before failing",
 					Status:  metav1.ConditionTrue,
 				}}, []operatorv1alpha1.EtcdBackupFile{{
-					Path: "/my/broken/backup.db.part",
-					Size: *resource.NewQuantity(12345, resource.BinarySI),
+					Path:      "/my/broken/backup.db.part",
+					SizeBytes: 12345,
 				}})
 			},
 		})
@@ -626,7 +625,7 @@ func requireBackupStatusApplied(
 	require.Len(t, backup.Status.Files, len(expectedFiles))
 	for i, file := range expectedFiles {
 		require.Equal(t, file.Path, backup.Status.Files[i].Path)
-		require.True(t, file.Size.Equal(backup.Status.Files[i].Size))
+		require.Equal(t, file.SizeBytes, backup.Status.Files[i].SizeBytes)
 	}
 }
 

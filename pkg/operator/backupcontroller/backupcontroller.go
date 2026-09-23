@@ -642,8 +642,8 @@ func parseTerminationMessage(message string) ([]operatorv1alpha1.EtcdBackupFile,
 	for i, file := range data.Files {
 		filePath, _ := strings.CutPrefix(file.Path, backupPathMount)
 		files[i] = operatorv1alpha1.EtcdBackupFile{
-			Path: filePath,
-			Size: file.Size,
+			Path:      filePath,
+			SizeBytes: file.SizeBytes,
 		}
 	}
 	return files, nil
@@ -798,7 +798,7 @@ func applyBackupStatusConditions(ctx context.Context,
 			for i, file := range files {
 				status.Files[i] = *applyconfigurationsoperatorv1alpha1.EtcdBackupFile().
 					WithPath(file.Path).
-					WithSize(file.Size)
+					WithSizeBytes(file.SizeBytes)
 			}
 		}
 		if nodeName != nil {

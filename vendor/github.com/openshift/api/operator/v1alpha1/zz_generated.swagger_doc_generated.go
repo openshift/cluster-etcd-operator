@@ -279,8 +279,8 @@ func (EtcdBackup) SwaggerDoc() map[string]string {
 }
 
 var map_EtcdBackupFile = map[string]string{
-	"path": "path to the backup file on the storage backend.",
-	"size": "size of the backup file on the storage backend.",
+	"path":      "path to the backup file on the storage backend.",
+	"sizeBytes": "sizeBytes is the size of the backup file on the storage backend in bytes.",
 }
 
 func (EtcdBackupFile) SwaggerDoc() map[string]string {

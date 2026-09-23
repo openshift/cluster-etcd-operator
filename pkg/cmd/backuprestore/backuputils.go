@@ -9,7 +9,6 @@ import (
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/klog/v2"
 )
 
@@ -82,7 +81,7 @@ func backup(r *backupOptions) (err error) {
 		}
 		return fmt.Errorf("saveSnapshot failed: %w", err)
 	} else {
-		files = append(files, newEtcdBackupFile(snapshotFilepath, snapshotSize))
+		files = append(files, operatorv1alpha1.EtcdBackupFile{Path: snapshotFilepath, SizeBytes: snapshotSize})
 	}
 
 	// Save the corresponding static pod resources
@@ -94,22 +93,15 @@ func backup(r *backupOptions) (err error) {
 		}
 		return fmt.Errorf("archiveLatestResources failed: %w", err)
 	} else {
-		files = append(files, newEtcdBackupFile(archiveFilepath, archiveSize))
+		files = append(files, operatorv1alpha1.EtcdBackupFile{Path: archiveFilepath, SizeBytes: archiveSize})
 	}
 
 	return
 }
 
-func newEtcdBackupFile(path string, size int64) operatorv1alpha1.EtcdBackupFile {
-	return operatorv1alpha1.EtcdBackupFile{
-		Path: path,
-		Size: *resource.NewQuantity(size, resource.BinarySI),
-	}
-}
-
 func statBackupFile(path string) (file operatorv1alpha1.EtcdBackupFile, ok bool) {
 	if info, err := os.Stat(path); err != nil {
-		return newEtcdBackupFile(path, info.Size()), true
+		return operatorv1alpha1.EtcdBackupFile{Path: path, SizeBytes: info.Size()}, true
 	}
 	return
 }
