@@ -1559,6 +1559,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: routingViaHost
       type:
         scalar: boolean
+    - name: uplinkMode
+      type:
+        scalar: string
 - name: com.github.openshift.api.operator.v1.GatherStatus
   map:
     fields:
