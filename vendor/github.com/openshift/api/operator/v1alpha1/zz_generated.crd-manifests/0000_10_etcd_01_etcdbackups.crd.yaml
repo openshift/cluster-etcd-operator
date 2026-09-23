@@ -216,13 +216,15 @@ spec:
                     path:
                       description: path to the backup file on the storage backend.
                       type: string
-                    size:
-                      anyOf:
-                      - type: integer
-                      - type: string
-                      description: size of the backup file on the storage backend.
-                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                      x-kubernetes-int-or-string: true
+                    sizeBytes:
+                      description: sizeBytes is the size of the backup file on the
+                        storage backend in bytes.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                  required:
+                  - path
+                  - sizeBytes
                   type: object
                 type: array
                 x-kubernetes-list-map-keys:
