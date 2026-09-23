@@ -20,7 +20,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/events"
 
-	"k8s.io/apimachinery/pkg/api/resource"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
@@ -214,9 +213,9 @@ func filterPruneableBackups(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, bac
 			case operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxSize:
 				if !rule.MaxSize.IsZero() {
 					for _, file := range backup.Status.Files {
-						group.size.Add(file.Size)
+						group.sizeBytes += file.SizeBytes
 					}
-					if rule.MaxSize.Cmp(group.size) < 0 {
+					if rule.MaxSize.CmpInt64(group.sizeBytes) < 0 {
 						backups[n] = backup
 						n++
 					}
@@ -235,8 +234,8 @@ func filterPruneableBackups(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, bac
 }
 
 type pruneGroup struct {
-	quantity int
-	size     resource.Quantity
+	quantity  int
+	sizeBytes int64
 }
 
 func newResourceEventDebounceHandler(syncCtx factory.SyncContext, delay time.Duration, queueKeyFn factory.ObjectQueueKeysFunc) cache.ResourceEventHandler {
