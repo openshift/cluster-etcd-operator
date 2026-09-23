@@ -1,0 +1,62 @@
+<?xml version="1.0"?>
+<pacemaker-result>
+  <summary>
+    <stack pacemakerd-state="running"/>
+    <current_dc with_quorum="true"/>
+    <nodes_configured number="2"/>
+    <resources_configured number="4"/>
+    <cluster_options maintenance-mode="false"/>
+  </summary>
+  <nodes>
+    <node name="master-0" id="1" online="true" standby="false" standby_onfail="false" maintenance="false" pending="false" unclean="false" shutdown="false" expected_up="true" is_dc="true" resources_running="2" type="member"/>
+    <node name="master-1" id="2" online="true" standby="false" standby_onfail="false" maintenance="false" pending="false" unclean="false" shutdown="false" expected_up="true" is_dc="false" resources_running="2" type="member"/>
+  </nodes>
+  <resources>
+    <clone id="kubelet-clone">
+      <resource id="kubelet" resource_agent="systemd:kubelet" role="Started" active="true" orphaned="false" blocked="false" maintenance="false" managed="true" failed="false" failure_ignored="false" nodes_running_on="1">
+        <node name="master-0"/>
+      </resource>
+      <resource id="kubelet" resource_agent="systemd:kubelet" role="Started" active="true" orphaned="false" blocked="false" maintenance="false" managed="true" failed="false" failure_ignored="false" nodes_running_on="1">
+        <node name="master-1"/>
+      </resource>
+    </clone>
+    <resource id="master-0_redfish" resource_agent="stonith:fence_redfish" role="Started" active="true" orphaned="false" blocked="false" maintenance="false" managed="true" failed="false" failure_ignored="false" nodes_running_on="1">
+      <node name="master-1"/>
+    </resource>
+    <resource id="master-1_redfish" resource_agent="stonith:fence_redfish" role="Started" active="true" orphaned="false" blocked="false" maintenance="false" managed="true" failed="false" failure_ignored="false" nodes_running_on="1">
+      <node name="master-0"/>
+    </resource>
+    <clone id="etcd-clone">
+      <resource id="etcd" resource_agent="ocf:heartbeat:podman-etcd" role="Started" active="true" orphaned="false" blocked="false" maintenance="false" managed="true" failed="false" failure_ignored="false" nodes_running_on="1">
+        <node name="master-0"/>
+      </resource>
+      <resource id="etcd" resource_agent="ocf:heartbeat:podman-etcd" role="Started" active="true" orphaned="false" blocked="false" maintenance="false" managed="true" failed="false" failure_ignored="false" nodes_running_on="1">
+        <node name="master-1"/>
+      </resource>
+    </clone>
+  </resources>
+  <node_attributes/>
+  <node_history>
+    <node name="master-0">
+      <resource_history id="kubelet" fail-count="0" migration-threshold="1000000">
+        <operation_history call="10" task="start" rc="0" rc_text="ok" last-rc-change="Fri Jan 23 20:10:00 2026"/>
+        <operation_history call="15" task="monitor" rc="0" rc_text="ok" last-rc-change="Fri Jan 23 20:15:00 2026"/>
+      </resource_history>
+      <resource_history id="etcd" fail-count="3" migration-threshold="5" last-failure="Fri Jan 23 20:45:00 2026">
+        <operation_history call="20" task="start" rc="0" rc_text="ok" last-rc-change="Fri Jan 23 20:20:00 2026"/>
+        <operation_history call="25" task="monitor" rc="1" rc_text="error" last-rc-change="Fri Jan 23 20:40:00 2026"/>
+        <operation_history call="30" task="stop" rc="0" rc_text="ok" last-rc-change="Fri Jan 23 20:42:00 2026"/>
+        <operation_history call="35" task="start" rc="0" rc_text="ok" last-rc-change="Fri Jan 23 20:43:00 2026"/>
+      </resource_history>
+    </node>
+    <node name="master-1">
+      <resource_history id="kubelet" fail-count="0" migration-threshold="1000000">
+        <operation_history call="11" task="start" rc="0" rc_text="ok" last-rc-change="Fri Jan 23 20:10:30 2026"/>
+      </resource_history>
+      <resource_history id="etcd" fail-count="0" migration-threshold="5">
+        <operation_history call="21" task="start" rc="0" rc_text="ok" last-rc-change="Fri Jan 23 20:20:30 2026"/>
+      </resource_history>
+    </node>
+  </node_history>
+  <fence_history/>
+</pacemaker-result>
