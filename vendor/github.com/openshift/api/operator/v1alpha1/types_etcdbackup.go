@@ -1,7 +1,6 @@
 package v1alpha1
 
 import (
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -152,14 +151,15 @@ type EtcdBackupJobReference struct {
 
 type EtcdBackupFile struct {
 	// path to the backup file on the storage backend.
-	// +kubebuilder:validation:Optional
-	// +optional
-	Path string `json:"path,omitempty"`
+	// +kubebuilder:validation:Required
+	// +required
+	Path string `json:"path"`
 
-	// size of the backup file on the storage backend.
-	// +kubebuilder:validation:Optional
-	// +optional
-	Size resource.Quantity `json:"size,omitempty"`
+	// sizeBytes is the size of the backup file on the storage backend in bytes.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Required
+	// +required
+	SizeBytes int64 `json:"sizeBytes"`
 }
 
 // BackupConditionType enumerates the Condition types added to EtcdBackupStatus at different points in its lifecycle

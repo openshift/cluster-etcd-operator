@@ -495,11 +495,11 @@ func WithBackupCompleted() func(backup *operatorv1alpha1.EtcdBackup) {
 				dir = backup.Spec.Storage.PVC.Path
 			}
 			backup.Status.Files = append(backup.Status.Files, operatorv1alpha1.EtcdBackupFile{
-				Path: path.Join(dir, backup.Name, "snapshot.db"),
-				Size: *resource.NewQuantity(100000, resource.BinarySI),
+				Path:      path.Join(dir, backup.Name, "snapshot.db"),
+				SizeBytes: 100000,
 			}, operatorv1alpha1.EtcdBackupFile{
-				Path: path.Join(dir, backup.Name, "archive.tar.gz"),
-				Size: *resource.NewQuantity(100, resource.BinarySI),
+				Path:      path.Join(dir, backup.Name, "archive.tar.gz"),
+				SizeBytes: 100,
 			})
 		}
 		if backup.Status.NodeName == "" {

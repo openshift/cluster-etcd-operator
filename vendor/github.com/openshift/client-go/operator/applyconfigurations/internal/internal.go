@@ -4465,9 +4465,11 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: path
       type:
         scalar: string
-    - name: size
+      default: ""
+    - name: sizeBytes
       type:
-        namedType: io.k8s.apimachinery.pkg.api.resource.Quantity
+        scalar: numeric
+      default: 0
 - name: com.github.openshift.api.operator.v1alpha1.EtcdBackupJobReference
   map:
     fields:
