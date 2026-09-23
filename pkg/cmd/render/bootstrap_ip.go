@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/vishvananda/netlink"
 	"k8s.io/klog/v2"
@@ -137,9 +139,48 @@ func ContainedByCIDR(cidr string) AddressFilter {
 	}
 }
 
+// normalizeIPv4 removes leading zeros from the octets of a dotted-quad IPv4
+// address, for example "192.000.002.001" becomes "192.0.2.1". net.ParseIP
+// rejects octets with leading zeros since go1.17, so they have to be stripped
+// before the address can be parsed. An error is returned if ip is not a valid
+// dotted-quad IPv4 address.
+func normalizeIPv4(ip string) (string, error) {
+	octets := make([]string, 0, 4)
+	for octet := range strings.SplitSeq(ip, ".") {
+		// ParseUint with a bit size of 8 rejects both non-numeric octets and
+		// octets outside of the 0-255 range.
+		parsed, err := strconv.ParseUint(octet, 10, 8)
+		if err != nil {
+			return "", fmt.Errorf("invalid IPv4 octet %q in address %q: %w", octet, ip, err)
+		}
+		octets = append(octets, strconv.FormatUint(parsed, 10))
+	}
+	if len(octets) != 4 {
+		return "", fmt.Errorf("invalid IPv4 address %q: expected 4 octets, got %d", ip, len(octets))
+	}
+
+	return strings.Join(octets, "."), nil
+}
+
 func AddressNotIn(ips ...string) AddressFilter {
 	return func(addr netlink.Addr) bool {
-		return !slices.Contains(ips, addr.IP.String())
+		canonicalAddr := addr.IP.String()
+		for _, ip := range ips {
+			parsedIP := net.ParseIP(ip)
+			if parsedIP == nil {
+				// net.ParseIP rejects IPv4 octets with leading zeros, retry with them stripped.
+				normalizedIP, err := normalizeIPv4(ip)
+				if err != nil {
+					klog.Warningf("ignoring excluded IP %q: %v", ip, err)
+					continue
+				}
+				parsedIP = net.ParseIP(normalizedIP)
+			}
+			if parsedIP != nil && canonicalAddr == parsedIP.String() {
+				return false
+			}
+		}
+		return true
 	}
 }
 

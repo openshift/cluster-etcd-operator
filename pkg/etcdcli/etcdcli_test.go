@@ -73,8 +73,8 @@ func TestEndpointFunc(t *testing.T) {
 				u.FakeNode("2", u.WithMasterLabel(), u.WithNodeInternalIP("fda6:cfed:b298:2514:0000:0000:0000:0001")),
 			},
 			[]string{
-				"https://[fda6:cfed:b298:2514:0000:0000:0000:0000]:2379",
-				"https://[fda6:cfed:b298:2514:0000:0000:0000:0001]:2379",
+				"https://[fda6:cfed:b298:2514::1]:2379",
+				"https://[fda6:cfed:b298:2514::]:2379",
 			},
 			nil,
 		},
