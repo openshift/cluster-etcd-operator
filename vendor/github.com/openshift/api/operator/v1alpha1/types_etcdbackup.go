@@ -88,6 +88,8 @@ const (
 type EtcdBackupStoragePvc struct {
 	// name is a reference to a PVC in the "openshift-etcd" namespace where the etcd backup file will be saved.
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="name is immutable once set"
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Required
 	// +required
 	Name string `json:"name"`
@@ -96,7 +98,7 @@ type EtcdBackupStoragePvc struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="path is immutable once set"
 	// +kubebuilder:validation:Optional
 	// +optional
-	Path string `json:"path"`
+	Path string `json:"path,omitempty"`
 }
 
 type EtcdBackupStorageLocal struct {
@@ -121,6 +123,8 @@ type EtcdBackupStatus struct {
 	Job *EtcdBackupJobReference `json:"job,omitempty"`
 
 	// nodeName is used for Local backups to bind the control plane node where the snapshot will be taken.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Optional
 	// +optional
 	NodeName string `json:"nodeName,omitempty"`
@@ -136,14 +140,21 @@ type EtcdBackupStatus struct {
 
 type EtcdBackupJobReference struct {
 	// name of the backup job
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Required
 	// +required
 	Name string `json:"name"`
 	// namespace of the backup job
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Required
 	// +required
 	Namespace string `json:"namespace"`
 	// uid of the backup job
+	// +kubebuilder:validation:MinLength=36
+	// +kubebuilder:validation:MaxLength=36
+	// +kubebuilder:validation:Format=uuid
 	// +kubebuilder:validation:Required
 	// +required
 	UID string `json:"uid"`

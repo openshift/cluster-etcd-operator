@@ -452,11 +452,11 @@ func reconcileJobStatus(ctx context.Context,
 		terminationMessage, started := findBackupTerminationMessage(pods)
 		if started {
 			// Backup container started, expect to be able to parse termination message
-			termLog, err := parseTerminationMessage(terminationMessage)
-			if err != nil {
+			if termLog, err := parseTerminationMessage(terminationMessage); err == nil {
+				message, files = termLog.Message, termLog.Files
+			} else {
 				klog.Infof("BackupController failed to read termination message for backup %q: %v", backup.Name, err)
 			}
-			message, files = termLog.Message, termLog.Files
 		} else {
 			// Backup container never started, most likely the init container failed or PVC was unable to mount
 			message = terminationMessage
@@ -620,9 +620,12 @@ func findBackupTerminationMessage(pods []*corev1.Pod) (message string, started b
 			// Prefer termination message of successful pod
 			message, started = podTerminationMessage(pod)
 			break
-		} else if m, s := podTerminationMessage(pod); s && m != "" {
+		} else if podMessage, podStarted := podTerminationMessage(pod); podStarted {
 			// If no success message is found, the latest non-empty failure message will be returned instead
-			message, started = m, s
+			started = true
+			if podMessage != "" {
+				message = podMessage
+			}
 		}
 	}
 	return message, started
@@ -630,8 +633,8 @@ func findBackupTerminationMessage(pods []*corev1.Pod) (message string, started b
 
 func podTerminationMessage(pod *corev1.Pod) (message string, started bool) {
 	if len(pod.Status.ContainerStatuses) > 0 {
-		if status := pod.Status.ContainerStatuses[0]; status.Started != nil {
-			started = *status.Started
+		if status := pod.Status.ContainerStatuses[0]; (status.Started != nil && *status.Started) || status.State.Terminated != nil {
+			started = true
 			if status.State.Terminated != nil {
 				message = status.State.Terminated.Message
 			}
