@@ -123,6 +123,29 @@ func (c *clusterMemberRemovalController) sync(ctx context.Context, syncCtx facto
 		return nil
 	}
 
+	// only attempt member removal if the machine API is functional. This is a precondition
+	// for classifying a member as dead: removeUnhealthyMemberWithoutNode decides whether a
+	// member's Machine still exists via the machine lister, which is only meaningful when the
+	// Machine API is functional.
+	if isFunctional, err := c.machineAPIChecker.IsFunctional(); err != nil {
+		return err
+	} else if !isFunctional {
+		return nil
+	}
+
+	var errs []error
+
+	// Remove members whose backing Node is gone and that are reported unhealthy, regardless of
+	// revision stability. A revision rollout never deletes the Node object (it only reinstalls the
+	// static pod), so "Node gone + unhealthy" reliably identifies a genuinely decommissioned member
+	// rather than one that is transiently unhealthy mid-rollout. Such a member is dead: its static
+	// pod cannot be running without a Node. Leaving it in the membership keeps churning the
+	// etcd-endpoints configmap, which keeps rolling revisions, which would otherwise block its own
+	// removal behind the revision gate below (OCPBUGS-105882).
+	if err := c.removeUnhealthyMemberWithoutNode(ctx); err != nil {
+		errs = append(errs, err)
+	}
+
 	// Removing multiple members in the middle of a revision rollout can cause API unavailability
 	// when simultaneously deleting multiple machines with the controlplanemachineset "OnDelete" strategy,
 	// i.e we have multiple machines pending deletion and multiple new replacements added
@@ -132,23 +155,16 @@ func (c *clusterMemberRemovalController) sync(ctx context.Context, syncCtx facto
 	// the etcd pod is reinstalled to the latest revision.
 	// This is different from when the member is indefinitely unhealthy when the revision is stable.
 	//
-	// Additionally the EtcdEndpointsController pauses while a revision rollout is in progress
-	// So initially if the etcd-endpoints configmap is updated from 3->4 when the first replacement machine
-	// is added to the membership, a revision rollout will start and the configmap won't update in this period.
-	// But the ClusterMemberRemovalController will still delete a seemingly unhealthy machine during rollout
-	// The API servers on the old revision will neither see the new replacement etcd endpoint, and will also
-	// be using a removed member's endpoint.
-	//
 	// Moreover the EtcdEndpointsController uses the live etcd membership list to make scale down considerations for etcd quorum so the etcd-endpoints configmap always lags behind it.
 	//
-	// So the EtcdEndpointsController skips until the revision is stable so we remove members one at a time and unhealthy members are truly unhealthy
+	// So the scale-down paths below wait until the revision is stable so we remove members one at a time and unhealthy members are truly unhealthy.
 	revisionStable, err := ceohelpers.IsRevisionStable(c.operatorClient)
 	if err != nil {
-		return fmt.Errorf("couldn't determine stability of revisions: %w", err)
+		return kerrors.NewAggregate(append(errs, fmt.Errorf("couldn't determine stability of revisions: %w", err)))
 	}
 	if !revisionStable {
-		klog.V(2).Infof("skipping due to revision in progress")
-		return nil
+		klog.V(2).Infof("skipping scale-down due to revision in progress")
+		return kerrors.NewAggregate(errs)
 	}
 
 	// Ensure the live etcd membership matches the etcd-endpoints configmap.
@@ -156,23 +172,12 @@ func (c *clusterMemberRemovalController) sync(ctx context.Context, syncCtx facto
 	// and propagated through a revision rollout.
 	etcdEndpointsUpdated, err := c.isEtcdEndpointsUpdated(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to check if etcd endpoints are updated: %w", err)
+		return kerrors.NewAggregate(append(errs, fmt.Errorf("failed to check if etcd endpoints are updated: %w", err)))
 	}
 	if !etcdEndpointsUpdated {
-		return nil
+		return kerrors.NewAggregate(errs)
 	}
 
-	// only attempt to scale down if the machine API is functional
-	if isFunctional, err := c.machineAPIChecker.IsFunctional(); err != nil {
-		return err
-	} else if !isFunctional {
-		return nil
-	}
-
-	var errs []error
-	if err := c.removeMemberWithoutMachine(ctx); err != nil {
-		errs = append(errs, err)
-	}
 	if err := c.attemptToRemoveLearningMember(ctx, syncCtx.Recorder()); err != nil {
 		errs = append(errs, err)
 	}
@@ -323,7 +328,16 @@ func (c *clusterMemberRemovalController) attemptToScaleDown(ctx context.Context,
 	return kerrors.NewAggregate(allErrs)
 }
 
-func (c *clusterMemberRemovalController) removeMemberWithoutMachine(ctx context.Context) error {
+// removeUnhealthyMemberWithoutNode removes etcd members that are dead: their backing Node is gone,
+// their Machine is either absent (true orphan) or pending deletion (a tombstone whose finalization
+// is blocked by the etcd PreDrain hook until the member leaves), and etcd reports them unhealthy.
+//
+// It is safe to run this regardless of revision stability. A revision rollout never deletes the Node
+// object, so a member that is only transiently unhealthy because its static pod is being reinstalled
+// still has a Node and is skipped here. A member with no Node has no running static pod, so it is
+// genuinely dead. Removing an unhealthy member is always quorum-safe: it only lowers etcd's quorum
+// threshold and does not change the count of healthy members, so no explicit quorum check is needed.
+func (c *clusterMemberRemovalController) removeUnhealthyMemberWithoutNode(ctx context.Context) error {
 	etcdEndpointsConfigMap, err := c.configMapListerForTargetNamespace.Get("etcd-endpoints")
 	if err != nil {
 		return err // should not happen
@@ -333,14 +347,6 @@ func (c *clusterMemberRemovalController) removeMemberWithoutMachine(ctx context.
 	}
 	for _, potentialMemberToRemoveIP := range etcdEndpointsConfigMap.Data {
 		memberLocator := potentialMemberToRemoveIP
-		machine, err := c.getMachineForMember(potentialMemberToRemoveIP)
-		if err != nil && err != errNotFound {
-			return fmt.Errorf("unable to get a machine for member: %v, err: %v", memberLocator, err)
-		}
-		if machine != nil {
-			klog.V(4).Infof("cannot remove member: %v because a machine resource still exists (%v/%v)", memberLocator, machine.Name, machine.UID)
-			continue
-		}
 
 		node, err := c.getNodeForMember(potentialMemberToRemoveIP)
 		if err != nil && err != errNotFound {
@@ -351,8 +357,20 @@ func (c *clusterMemberRemovalController) removeMemberWithoutMachine(ctx context.
 			continue
 		}
 
-		// it looks like we have found a member that isn't backed by a machine nor a node
-		// issue a live request to the etcd cluster and remove it from the cluster
+		// The node is gone. Look up the machine by the node's internal IP; a machine pending deletion
+		// keeps its addresses as a tombstone. A machine that still exists and is not pending deletion
+		// means the node loss should be handled by remediation, not by removing the member here.
+		machine, err := ceohelpers.FindMachineByNodeInternalIP(potentialMemberToRemoveIP, c.masterMachineSelector, c.masterMachineLister)
+		if err != nil {
+			return fmt.Errorf("unable to get a machine for member: %v, err: %v", memberLocator, err)
+		}
+		if machine != nil && machine.DeletionTimestamp == nil {
+			klog.V(4).Infof("cannot remove member: %v because a machine resource still exists and is not pending deletion (%v/%v)", memberLocator, machine.Name, machine.UID)
+			continue
+		}
+
+		// it looks like we have found a member whose node is gone and whose machine is absent or
+		// pending deletion, issue a live request to the etcd cluster and remove it from the cluster
 		memberList, err := c.etcdClient.MemberList(ctx)
 		if err != nil {
 			return err
@@ -371,7 +389,7 @@ func (c *clusterMemberRemovalController) removeMemberWithoutMachine(ctx context.
 				return err
 			}
 			if isMemberHealthy {
-				return fmt.Errorf("cannot remove member: %v because it is reported as healthy but it doesn't have a machine nor a node resource", memberLocator)
+				return fmt.Errorf("cannot remove member: %v because it is reported as healthy but its node is gone", memberLocator)
 			}
 
 			memberLocator = fmt.Sprintf("[ url: %v, name: %v, id: %v ]", memberIP, member.Name, member.ID)
@@ -432,35 +450,6 @@ func (c *clusterMemberRemovalController) attemptToRemoveLearningMember(ctx conte
 	}
 
 	return kerrors.NewAggregate(allErrs)
-}
-
-func (c *clusterMemberRemovalController) getMachineForMember(memberInternalIP string) (*machinev1beta1.Machine, error) {
-	node, err := c.getNodeForMember(memberInternalIP)
-	if err != nil && err != errNotFound {
-		return nil, err
-	}
-
-	// node is gone, make sure we don't have a machine with
-	// the same internal IP as the node would have had
-	if node == nil {
-		nodeInternalIP := memberInternalIP
-		machine, err := ceohelpers.FindMachineByNodeInternalIP(nodeInternalIP, c.masterMachineSelector, c.masterMachineLister)
-		if err != nil {
-			return nil, err
-		}
-		return machine, nil
-	}
-
-	machines, err := c.masterMachineLister.List(c.masterMachineSelector)
-	if err != nil {
-		return nil, err
-	}
-	for _, machine := range machines {
-		if machine.Status.NodeRef != nil && machine.Status.NodeRef.Name == node.Name {
-			return machine, nil
-		}
-	}
-	return nil, errNotFound
 }
 
 func (c *clusterMemberRemovalController) getNodeForMember(memberInternalIP string) (*corev1.Node, error) {
