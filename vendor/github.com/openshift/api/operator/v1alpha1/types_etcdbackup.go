@@ -113,7 +113,7 @@ type EtcdBackupStatus struct {
 	// +listMapKey=type
 	// +kubebuilder:validation:Optional
 	// +optional
-	Conditions []metav1.Condition `json:"conditions"`
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	// job is a reference to the Job created for the backup.
 	// +kubebuilder:validation:Optional
