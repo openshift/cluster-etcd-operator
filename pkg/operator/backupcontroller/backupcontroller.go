@@ -447,17 +447,27 @@ func reconcileJobStatus(ctx context.Context,
 			return fmt.Errorf("error listing pods for backup job %q: %w", job.Name, err)
 		}
 
-		terminationMessage, err := findBackupTerminationMessage(pods)
-		if err != nil {
-			return fmt.Errorf("error finding termination message for backup job %q: %w", job.Name, err)
+		var message string
+		var files []operatorv1alpha1.EtcdBackupFile
+		terminationMessage, started := findBackupTerminationMessage(pods)
+		if started {
+			// Backup container started, expect to be able to parse termination message
+			termLog, err := parseTerminationMessage(terminationMessage)
+			if err != nil {
+				klog.Infof("BackupController failed to read termination message for backup %q: %v", backup.Name, err)
+			}
+			message, files = termLog.Message, termLog.Files
+		} else {
+			// Backup container never started, most likely the init container failed or PVC was unable to mount
+			message = terminationMessage
+			if message == "" {
+				message = "failed to verify storage"
+			}
+			// Zero length non-nil slice indicates that no files were created, and GC is not required.
+			files = make([]operatorv1alpha1.EtcdBackupFile, 0)
 		}
 
-		termLog, err := parseTerminationMessage(terminationMessage)
-		if err != nil {
-			klog.Infof("BackupController failed to read termination message for backup %q: %v", backup.Name, err)
-		}
-
-		if _, err := applyBackupFinished(ctx, backupClient, backup, job, conditionType, conditionReason, termLog.Message, termLog.Files); err != nil {
+		if _, err := applyBackupFinished(ctx, backupClient, backup, job, conditionType, conditionReason, message, files); err != nil {
 			if apierrors.IsNotFound(err) {
 				return nil
 			}
@@ -601,31 +611,33 @@ func listJobPods(podLister corev1listers.PodNamespaceLister, job *batchv1.Job) (
 	return pods[:n], nil
 }
 
-func findBackupTerminationMessage(pods []*corev1.Pod) (string, error) {
+func findBackupTerminationMessage(pods []*corev1.Pod) (message string, started bool) {
 	slices.SortFunc(pods, func(a, b *corev1.Pod) int {
 		return a.CreationTimestamp.Compare(b.CreationTimestamp.Time)
 	})
-	var failed string
 	for _, pod := range pods {
 		if pod.Status.Phase == corev1.PodSucceeded {
 			// Prefer termination message of successful pod
-			return podTerminationMessage(pod), nil
-		} else if message := podTerminationMessage(pod); message != "" {
+			message, started = podTerminationMessage(pod)
+			break
+		} else if m, s := podTerminationMessage(pod); s && m != "" {
 			// If no success message is found, the latest non-empty failure message will be returned instead
-			failed = message
+			message, started = m, s
 		}
 	}
-	return failed, nil
+	return message, started
 }
 
-func podTerminationMessage(pod *corev1.Pod) string {
+func podTerminationMessage(pod *corev1.Pod) (message string, started bool) {
 	if len(pod.Status.ContainerStatuses) > 0 {
-		status := pod.Status.ContainerStatuses[0]
-		if status.State.Terminated != nil {
-			return status.State.Terminated.Message
+		if status := pod.Status.ContainerStatuses[0]; status.Started != nil {
+			started = *status.Started
+			if status.State.Terminated != nil {
+				message = status.State.Terminated.Message
+			}
 		}
 	}
-	return ""
+	return message, started
 }
 
 func parseTerminationMessage(message string) (backuphelpers.BackupTerminationLog, error) {
