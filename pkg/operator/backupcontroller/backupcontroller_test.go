@@ -339,7 +339,7 @@ func TestBackupFailedRequiresGC(t *testing.T) {
 			pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
 				State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
 					ExitCode: 1,
-					Message:  `{"files": [{"path": "/my/broken/backup.db.part", "size": "12345"}]}`,
+					Message:  `{"message": "snapshot failed: no disk space", "files": [{"path": "/my/broken/backup.db.part", "size": "12345"}]}`,
 				}}}}
 		})
 
@@ -354,7 +354,7 @@ func TestBackupFailedRequiresGC(t *testing.T) {
 				requireBackupStatusApplied(t, operatorFake, []metav1.Condition{{
 					Type:    string(operatorv1alpha1.BackupFailed),
 					Reason:  string(operatorv1alpha1.BackupReasonJobFailed),
-					Message: "backup job failed",
+					Message: "snapshot failed: no disk space",
 					Status:  metav1.ConditionTrue,
 				}, {
 					Type:    string(operatorv1alpha1.BackupGarbageCollectionRequired),

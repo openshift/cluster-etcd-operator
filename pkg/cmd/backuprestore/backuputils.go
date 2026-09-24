@@ -2,9 +2,11 @@ package backuprestore
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
@@ -59,11 +61,12 @@ func backup(r *backupOptions) (err error) {
 	snapshotFilepath := filepath.Join(r.backupDir, snapshotOutFile)
 	archiveFilepath := filepath.Join(r.backupDir, outputArchive)
 
+	var message string
 	var files []operatorv1alpha1.EtcdBackupFile
 
 	defer func() {
 		if r.terminationLog != "" {
-			if logErr := writeTerminationLog(r.terminationLog, files); logErr != nil {
+			if logErr := writeTerminationLog(r.terminationLog, message, files); logErr != nil {
 				if err == nil {
 					err = fmt.Errorf("terminationLog failed: %w", logErr)
 				}
@@ -75,7 +78,11 @@ func backup(r *backupOptions) (err error) {
 	var snapshotSize int64
 	snapshotPartialPath := snapshotFilepath + ".part"
 	if snapshotSize, err = saveSnapshot(cli, snapshotPartialPath, snapshotFilepath); err != nil {
-		// Record partial snapshot path for GC
+		// Record partial snapshot path for GC, if present
+		message = "snapshot failed"
+		if msg, ok := isDiskFull(err); ok {
+			message = fmt.Sprintf("%s: %s", message, msg)
+		}
 		if backupFile, ok := statBackupFile(snapshotPartialPath); ok {
 			files = append(files, backupFile)
 		}
@@ -87,7 +94,11 @@ func backup(r *backupOptions) (err error) {
 	// Save the corresponding static pod resources
 	var archiveSize int64
 	if archiveSize, err = archiveLatestResources(r.configDir, archiveFilepath); err != nil {
-		// Record partial archive path for GC
+		// Record partial archive path for GC, if present
+		message = "static pod archive failed"
+		if msg, ok := isDiskFull(err); ok {
+			message = fmt.Sprintf("%s: %s", message, msg)
+		}
 		if backupFile, ok := statBackupFile(archiveFilepath); ok {
 			files = append(files, backupFile)
 		}
@@ -106,7 +117,7 @@ func statBackupFile(path string) (file operatorv1alpha1.EtcdBackupFile, ok bool)
 	return
 }
 
-func writeTerminationLog(terminationLog string, files []operatorv1alpha1.EtcdBackupFile) (retErr error) {
+func writeTerminationLog(terminationLog string, message string, files []operatorv1alpha1.EtcdBackupFile) (retErr error) {
 	f, err := os.OpenFile(terminationLog, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("Error opening termination log: %w", err)
@@ -117,10 +128,17 @@ func writeTerminationLog(terminationLog string, files []operatorv1alpha1.EtcdBac
 		}
 	}()
 
-	termLog := backuphelpers.BackupTerminationLog{Files: files}
+	termLog := backuphelpers.BackupTerminationLog{Message: message, Files: files}
 	if err := json.NewEncoder(f).Encode(termLog); err != nil {
 		return fmt.Errorf("Error writing termination log: %w", err)
 	}
 
 	return nil
+}
+
+func isDiskFull(err error) (string, bool) {
+	if errors.Is(err, syscall.ENOSPC) {
+		return "no disk space", true
+	}
+	return "", false
 }
