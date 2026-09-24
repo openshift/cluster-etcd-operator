@@ -247,7 +247,7 @@ func TestBackupJobCompleted(t *testing.T) {
 					State: corev1.ContainerState{
 						Terminated: &corev1.ContainerStateTerminated{
 							ExitCode: 0,
-							Message:  `{"files": [{"path": "/my/successful/backup.db", "size": "100Mi"}, {"path": "/my/successful/static_kuberesources.tar.gz", "size": "4321"}]}`,
+							Message:  `{"files": [{"path": "/my/successful/backup.db", "sizeBytes": 104857600}, {"path": "/my/successful/static_kuberesources.tar.gz", "sizeBytes": 4321}]}`,
 						},
 					},
 				}}
@@ -337,9 +337,10 @@ func TestBackupFailedRequiresGC(t *testing.T) {
 		testutils.WithCreationTimestamp(v1.Now()),
 		func(pod *corev1.Pod) {
 			pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+				Started: new(true),
 				State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
 					ExitCode: 1,
-					Message:  `{"message": "snapshot failed: no disk space", "files": [{"path": "/my/broken/backup.db.part", "size": "12345"}]}`,
+					Message:  `{"message": "snapshot failed: no disk space", "files": [{"path": "/my/broken/backup.db.part", "sizeBytes": 12345}]}`,
 				}}}}
 		})
 
@@ -621,12 +622,8 @@ func requireBackupStatusApplied(
 	backup, err := client.OperatorV1alpha1().EtcdBackups().Get(t.Context(), action.Name, metav1.GetOptions{})
 	require.NoError(t, err)
 
-	require.ElementsMatch(t, removeTransitionTime(backup.Status.Conditions), expectedConditions)
-	require.Len(t, backup.Status.Files, len(expectedFiles))
-	for i, file := range expectedFiles {
-		require.Equal(t, file.Path, backup.Status.Files[i].Path)
-		require.Equal(t, file.SizeBytes, backup.Status.Files[i].SizeBytes)
-	}
+	require.ElementsMatch(t, expectedConditions, removeTransitionTime(backup.Status.Conditions))
+	require.ElementsMatch(t, expectedFiles, backup.Status.Files)
 }
 
 func requireJobPatched(t *testing.T, client *k8sfakeclient.Clientset, backupName string) {

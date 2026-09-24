@@ -107,6 +107,8 @@ spec:
                       name:
                         description: name is a reference to a PVC in the "openshift-etcd"
                           namespace where the etcd backup file will be saved.
+                        maxLength: 253
+                        minLength: 1
                         type: string
                         x-kubernetes-validations:
                         - message: name is immutable once set
@@ -235,12 +237,19 @@ spec:
                 properties:
                   name:
                     description: name of the backup job
+                    maxLength: 253
+                    minLength: 1
                     type: string
                   namespace:
                     description: namespace of the backup job
+                    maxLength: 63
+                    minLength: 1
                     type: string
                   uid:
                     description: uid of the backup job
+                    format: uuid
+                    maxLength: 36
+                    minLength: 36
                     type: string
                 required:
                 - name
@@ -250,6 +259,8 @@ spec:
               nodeName:
                 description: nodeName is used for Local backups to bind the control
                   plane node where the snapshot will be taken.
+                maxLength: 63
+                minLength: 1
                 type: string
             type: object
         required:

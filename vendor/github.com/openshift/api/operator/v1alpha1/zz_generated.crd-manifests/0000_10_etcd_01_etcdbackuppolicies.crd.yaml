@@ -119,6 +119,9 @@ spec:
                       otherwise
                     rule: '(self.type == ''MaxSize'') ? has(self.maxSize) : !has(self.maxSize)'
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
               schedule:
                 description: schedule sets the backup schedule in Cron format, see
                   https://en.wikipedia.org/wiki/Cron.
@@ -151,6 +154,8 @@ spec:
                       name:
                         description: name is a reference to a PVC in the "openshift-etcd"
                           namespace where the etcd backup file will be saved.
+                        maxLength: 253
+                        minLength: 1
                         type: string
                         x-kubernetes-validations:
                         - message: name is immutable once set
@@ -203,15 +208,21 @@ spec:
                   properties:
                     name:
                       description: name of the backup
+                      maxLength: 253
+                      minLength: 1
                       type: string
                     uid:
                       description: uid of the backup
+                      format: uuid
+                      maxLength: 36
+                      minLength: 36
                       type: string
                   required:
                   - name
                   - uid
                   type: object
                 type: array
+                x-kubernetes-list-type: set
               lastScheduleTime:
                 description: |-
                   lastScheduleTime is the time when the last scheduled backup was triggered.

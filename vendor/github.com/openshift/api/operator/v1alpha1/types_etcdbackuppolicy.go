@@ -63,6 +63,8 @@ type EtcdBackupPolicySpec struct {
 	// retentionRules defines the policy for retaining and deleting existing backups.
 	// Backups are deleted from the oldest first until all rules are satisfied.
 	// If no rules are specified then backups created by this policy will not be automatically deleted.
+	// +listType=map
+	// +listMapKey=type
 	// +kubebuilder:validation:Optional
 	// +optional
 	RetentionRules []EtcdBackupPolicyRetentionRule `json:"retentionRules,omitzero"`
@@ -108,6 +110,7 @@ const (
 
 type EtcdBackupPolicyStatus struct {
 	// active is a list of references to in progress backups controlled by this policy
+	// +listType=set
 	// +kubebuilder:validation:Optional
 	// +optional
 	Active []EtcdBackupReference `json:"active,omitempty"`
@@ -122,10 +125,15 @@ type EtcdBackupPolicyStatus struct {
 
 type EtcdBackupReference struct {
 	// name of the backup
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Required
 	// +required
 	Name string `json:"name"`
 	// uid of the backup
+	// +kubebuilder:validation:MinLength=36
+	// +kubebuilder:validation:MaxLength=36
+	// +kubebuilder:validation:Format=uuid
 	// +kubebuilder:validation:Required
 	// +required
 	UID string `json:"uid"`

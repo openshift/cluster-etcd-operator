@@ -31,7 +31,7 @@ spec:
                     fi
                   done
                   DIRS[${BACKUP_FILE}]=1
-                else
+                elif [ -f ${BACKUP_FILE} ]; then
                   echo "Deleting ${BACKUP_FILE}"
                   rm "${BACKUP_FILE}" || true
                   DIRS[$(dirname ${BACKUP_FILE})]=1
