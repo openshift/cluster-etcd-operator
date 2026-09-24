@@ -508,9 +508,9 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 		klog.Infof("found automated backup feature to be enabled, starting controllers...")
 
-		// Create shared metrics instance for backup controllers
+		// Create shared metrics collector for backup metrics (reads from backupsLister at scrape time)
 		metricsRegistry := legacyregistry.DefaultGatherer.(metrics.KubeRegistry)
-		backupMetrics := backupcontroller.NewBackupMetrics(metricsRegistry)
+		_ = backupcontroller.NewBackupMetrics(metricsRegistry, backupsLister)
 
 		backupController, err := backupcontroller.NewBackupController(
 			AlivenessChecker,
@@ -522,7 +522,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			controllerContext.EventRecorder,
 			os.Getenv("OPERATOR_IMAGE"),
 			featureGateAccessor,
-			backupMetrics,
 			etcdBackupInformer.Informer(),
 			jobsInformer.Informer(),
 			podsInformer.Informer())
@@ -537,7 +536,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			operatorConfigClientv1Alpha1,
 			controllerContext.EventRecorder,
 			featureGateAccessor,
-			backupMetrics,
 			etcdBackupInformer.Informer(),
 			controlPlaneNodeInformer)
 
@@ -579,7 +577,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			controllerContext.EventRecorder,
 			os.Getenv("OPERATOR_IMAGE"),
 			featureGateAccessor,
-			backupMetrics,
 			etcdBackupInformer.Informer(),
 			jobsInformer.Informer(),
 			controlPlaneNodeInformer,

@@ -17,7 +17,6 @@ import (
 	k8sfakeclient "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/component-base/metrics"
 )
 
 type testCaseBackupQueueController struct {
@@ -71,15 +70,12 @@ func runBackupQueueControllerTest(t *testing.T, tc testCaseBackupQueueController
 		activeCache = *tc.activeCache
 	}
 
-	testMetrics := NewBackupMetrics(metrics.NewKubeRegistry())
-
 	controller := BackupQueueController{
 		backupsLister:       backupsInformer.Lister(),
 		nodeLister:          nodesInformer.Lister(),
 		operatorClient:      operatorFake.OperatorV1alpha1(),
 		featureGateAccessor: backupFeatureGateAccessor,
 		activeCache:         activeCache,
-		metrics:             testMetrics,
 	}
 	if tc.populateActiveCache {
 		for _, backup := range tc.backups {
