@@ -14,14 +14,8 @@ import (
 	operatorversionedclientv1alpha1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
-)
-
-const (
-	JobNameEnvVar = "MY_JOB_NAME"
-	JobUIDEnvVar  = "MY_JOB_UID"
 )
 
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
@@ -29,9 +23,9 @@ var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
 type requestBackupOpts struct {
 	etcdBackupName string
 	pvcName        string
+	pvcPath        string
+	hostPath       string
 	kubeConfig     string
-	ownerJobName   string
-	ownerJobUID    string
 }
 
 func NewRequestBackupCommand(ctx context.Context) *cobra.Command {
@@ -58,10 +52,14 @@ func NewRequestBackupCommand(ctx context.Context) *cobra.Command {
 func (r *requestBackupOpts) AddFlags(cmd *cobra.Command) {
 	flagSet := cmd.Flags()
 
+	flagSet.StringVar(&r.etcdBackupName, "name", "", "name specifies the name of the EtcdBackup CR.")
 	flagSet.StringVar(&r.pvcName, "pvc-name", "", "pvc-name specifies the name of the PersistentVolumeClaim (PVC) which binds a PersistentVolume where the etcd backup file would be saved")
-	cobra.MarkFlagRequired(flagSet, "pvcName")
+	flagSet.StringVar(&r.pvcPath, "pvc-path", "", "pvc-path specifies the directory on the PVC where the etcd backup file would be saved")
+	flagSet.StringVar(&r.hostPath, "host-path", "", "host-path specifies the directory on the host where the etcd backup file would be saved")
 
 	flagSet.StringVar(&r.kubeConfig, "kubeconfig", "", "Optional kubeconfig specifies the kubeConfig for when the cmd is running outside of a cluster")
+
+	cobra.MarkFlagRequired(flagSet, "name")
 
 	// adding klog flags to tune verbosity better
 	gfs := goflag.NewFlagSet("", goflag.ExitOnError)
@@ -70,40 +68,19 @@ func (r *requestBackupOpts) AddFlags(cmd *cobra.Command) {
 }
 
 func (r *requestBackupOpts) Validate() error {
-	if r.pvcName == "" {
-		return fmt.Errorf("--pvc-name must be set")
+	if r.pvcName == "" && r.hostPath == "" {
+		return fmt.Errorf("--pvc-name or --host-path must be set")
+	}
+	if (r.pvcName != "" || r.pvcPath != "") && r.hostPath != "" {
+		return fmt.Errorf("--pvc-name and --pvc-path are incompatible with --host-path")
 	}
 
-	return nil
-}
-
-func (r *requestBackupOpts) ReadEnvVars() error {
-	r.ownerJobName = os.Getenv(JobNameEnvVar)
-	if r.ownerJobName == "" {
-		return fmt.Errorf("job name must be set via %v env var", JobNameEnvVar)
-	}
-	// The backup name is set to be the same as the pod name so that each scheduled run of the cronjob
-	// executing this cmd results in a unique EtcdBackup name.
-	r.etcdBackupName = r.ownerJobName
-
-	r.ownerJobUID = os.Getenv(JobUIDEnvVar)
-	if len(r.ownerJobUID) == 0 {
-		return fmt.Errorf("job UID must be set via %v env var", JobUIDEnvVar)
-	}
 	return nil
 }
 
 func (r *requestBackupOpts) Run(ctx context.Context) error {
-	if r.pvcName == "" {
-		errMsg := "pvcName must be specified to execute a backup request"
-		klog.Error(errMsg)
-		return fmt.Errorf("%s", errMsg)
-	}
-
-	// ReadEnvVars reads the env vars necessary to populate the ownerReference
-	// and name for the EtcdBackup CR.
-	if err := r.ReadEnvVars(); err != nil {
-		errMsg := fmt.Sprintf("failed to read pod envvars %v", err)
+	if r.pvcName == "" && r.hostPath == "" {
+		errMsg := "pvcName or hostPath must be specified to execute a backup request"
 		klog.Error(errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
@@ -145,21 +122,23 @@ func (r *requestBackupOpts) Run(ctx context.Context) error {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      r.etcdBackupName,
 			Namespace: operatorclient.TargetNamespace,
-			// Due to a limitation of the kube-controller, we can't rely on the api to garbage collect non-namespaced
-			// etcdbackups from their corresponding namespaced jobs.
-			// We set this job information solely to prune those in the backup controller.
-			OwnerReferences: []metav1.OwnerReference{
-				{
-					APIVersion: "batch/v1",
-					Kind:       "Job",
-					Name:       r.ownerJobName,
-					UID:        types.UID(r.ownerJobUID),
-				},
+		},
+	}
+	if r.pvcName != "" {
+		etcdBackup.Spec.Storage = operatorv1alpha1.EtcdBackupStorage{
+			Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+			PVC: &operatorv1alpha1.EtcdBackupStoragePvc{
+				Name: r.pvcName,
+				Path: r.pvcPath,
 			},
-		},
-		Spec: operatorv1alpha1.EtcdBackupSpec{
-			PVCName: r.pvcName,
-		},
+		}
+	} else {
+		etcdBackup.Spec.Storage = operatorv1alpha1.EtcdBackupStorage{
+			Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
+			Local: &operatorv1alpha1.EtcdBackupStorageLocal{
+				HostPath: r.hostPath,
+			},
+		}
 	}
 
 	klog.Infof("creating CRD: %v", etcdBackup)
