@@ -579,6 +579,17 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			pvcsInformer.Informer(),
 		)
 
+		// The initializer records its condition through UpdateStatus, which reads
+		// Etcd/cluster from the operator client's informer cache.
+		dynamicInformers.Start(ctx.Done())
+		klog.Infof("waiting for Etcd operator informer sync before default backup policy initialization...")
+		operatorTimeoutCtx, operatorTimeoutCancel := context.WithTimeout(ctx, 5*time.Minute)
+		operatorInformerSynced := cache.WaitForCacheSync(operatorTimeoutCtx.Done(), operatorClient.Informer().HasSynced)
+		operatorTimeoutCancel()
+		if !operatorInformerSynced {
+			return fmt.Errorf("could not sync Etcd operator informer, aborting default backup policy initialization")
+		}
+
 		if err := defaultbackuppolicyinitializer.InitializeDefaultBackupPolicy(
 			ctx,
 			operatorClient,
