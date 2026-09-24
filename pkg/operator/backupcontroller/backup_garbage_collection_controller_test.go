@@ -25,7 +25,6 @@ import (
 	k8sfakeclient "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/component-base/metrics"
 	clocktesting "k8s.io/utils/clock/testing"
 )
 
@@ -64,8 +63,6 @@ func runBackupGarbageCollectionControllerTest(t *testing.T, tc testCaseBackupGar
 	pvcvsInformerHasSynced := pvcsInformer.Informer().HasSynced
 	backupsInformerHasSynced := backupsInformer.Informer().HasSynced
 
-	testMetrics := NewBackupMetrics(metrics.NewKubeRegistry())
-
 	controller := BackupGarbageCollectionController{
 		backupsLister:         backupsInformer.Lister(),
 		jobsLister:            jobInformer.Lister().Jobs(operatorclient.TargetNamespace),
@@ -75,7 +72,6 @@ func runBackupGarbageCollectionControllerTest(t *testing.T, tc testCaseBackupGar
 		kubeClient:            client,
 		operatorImagePullSpec: "operator-pullspec-image",
 		featureGateAccessor:   backupFeatureGateAccessor,
-		metrics:               testMetrics,
 	}
 
 	ctx := t.Context()

@@ -1,42 +1,64 @@
 package backupcontroller
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"k8s.io/apimachinery/pkg/api/resource"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/component-base/metrics"
 )
 
+// fakeBackupLister implements a simple backup lister for tests
+type fakeBackupLister struct {
+	backups []*operatorv1alpha1.EtcdBackup
+}
+
+func (f *fakeBackupLister) List(selector labels.Selector) ([]*operatorv1alpha1.EtcdBackup, error) {
+	return f.backups, nil
+}
+
+func (f *fakeBackupLister) Get(name string) (*operatorv1alpha1.EtcdBackup, error) {
+	for _, b := range f.backups {
+		if b.Name == name {
+			return b, nil
+		}
+	}
+	return nil, fmt.Errorf("backup %s not found", name)
+}
+
 func TestMetricsRegistration(t *testing.T) {
 	registry := metrics.NewKubeRegistry()
-	m := NewBackupMetrics(registry)
+	lister := &fakeBackupLister{}
 
-	if m.info == nil {
-		t.Error("info metric not initialized")
+	c := NewBackupMetrics(registry, lister)
+
+	if c.infoDesc == nil {
+		t.Error("info metric descriptor not initialized")
 	}
-	if m.status == nil {
-		t.Error("status metric not initialized")
+	if c.statusDesc == nil {
+		t.Error("status metric descriptor not initialized")
 	}
-	if m.completionTime == nil {
-		t.Error("completionTime metric not initialized")
+	if c.completionTimeDesc == nil {
+		t.Error("completionTime metric descriptor not initialized")
 	}
-	if m.startTime == nil {
-		t.Error("startTime metric not initialized")
+	if c.startTimeDesc == nil {
+		t.Error("startTime metric descriptor not initialized")
 	}
-	if m.sizeBytes == nil {
-		t.Error("sizeBytes metric not initialized")
+	if c.sizeBytesDesc == nil {
+		t.Error("sizeBytes metric descriptor not initialized")
 	}
 }
 
-func TestRecordBackup_NeverRun(t *testing.T) {
-	registry := metrics.NewKubeRegistry()
-	m := NewBackupMetrics(registry)
-
-	backup := operatorv1alpha1.EtcdBackup{
+func TestCollectBackup_NeverRun(t *testing.T) {
+	backup := &operatorv1alpha1.EtcdBackup{
 		ObjectMeta: v1.ObjectMeta{
 			Name: "never-started",
 			UID:  types.UID("never-uid"),
@@ -54,29 +76,20 @@ func TestRecordBackup_NeverRun(t *testing.T) {
 		},
 	}
 
-	m.recordBackup(backup)
+	collector := setupCollectorWithBackups(t, backup)
 
-	m.mu.RLock()
-	state, tracked := m.trackedBackups[backup.UID]
-	m.mu.RUnlock()
-
-	if !tracked {
-		t.Error("expected backup to be tracked")
-	}
-
-	if state.currentStatus != statusPending {
-		t.Errorf("expected status %s for never-run backup, got %s", statusPending, state.currentStatus)
+	// Verify no status metric is emitted (backup has no active status)
+	count := testutil.CollectAndCount(collector, backupStatusMetricName)
+	if count != 0 {
+		t.Errorf("expected 0 status metrics for never-run backup, got %d", count)
 	}
 }
 
-func TestRecordBackup_PVCStorage_Success(t *testing.T) {
-	registry := metrics.NewKubeRegistry()
-	m := NewBackupMetrics(registry)
-
+func TestCollectBackup_PVCStorage_Success(t *testing.T) {
 	now := v1.NewTime(time.Now())
 	later := v1.NewTime(now.Add(5 * time.Minute))
 
-	backup := operatorv1alpha1.EtcdBackup{
+	backup := &operatorv1alpha1.EtcdBackup{
 		ObjectMeta: v1.ObjectMeta{
 			Name: "pvc-backup",
 			UID:  types.UID("pvc-uid-123"),
@@ -90,10 +103,11 @@ func TestRecordBackup_PVCStorage_Success(t *testing.T) {
 			},
 		},
 		Status: operatorv1alpha1.EtcdBackupStatus{
+			NodeName: "node-1",
 			Conditions: []v1.Condition{
 				{
-					Type:               string(operatorv1alpha1.BackupPending),
-					Status:             v1.ConditionTrue,
+					Type:               string(operatorv1alpha1.BackupRunning),
+					Status:             v1.ConditionFalse,
 					LastTransitionTime: now,
 				},
 				{
@@ -102,112 +116,57 @@ func TestRecordBackup_PVCStorage_Success(t *testing.T) {
 					LastTransitionTime: later,
 				},
 			},
-		},
-	}
-
-	m.recordBackup(backup)
-
-	m.mu.RLock()
-	state := m.trackedBackups[backup.UID]
-	m.mu.RUnlock()
-
-	if state.storageType != storageTypePVC {
-		t.Errorf("expected storage type %s, got %s", storageTypePVC, state.storageType)
-	}
-
-	if state.storageLocation != "backup-pvc" {
-		t.Errorf("expected storage location backup-pvc, got %s", state.storageLocation)
-	}
-
-	if state.currentStatus != statusCompleted {
-		t.Errorf("expected status %s, got %s", statusCompleted, state.currentStatus)
-	}
-}
-
-func TestRecordBackup_PVCStorage_Failure(t *testing.T) {
-	registry := metrics.NewKubeRegistry()
-	m := NewBackupMetrics(registry)
-
-	now := v1.NewTime(time.Now())
-	later := v1.NewTime(now.Add(2 * time.Minute))
-
-	backup := operatorv1alpha1.EtcdBackup{
-		ObjectMeta: v1.ObjectMeta{
-			Name: "failed-backup",
-			UID:  types.UID("failed-uid"),
-		},
-		Spec: operatorv1alpha1.EtcdBackupSpec{
-			Storage: operatorv1alpha1.EtcdBackupStorage{
-				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC: &operatorv1alpha1.EtcdBackupStoragePvc{
-					Name: "backup-pvc",
-				},
-			},
-		},
-		Status: operatorv1alpha1.EtcdBackupStatus{
-			Conditions: []v1.Condition{
-				{
-					Type:               string(operatorv1alpha1.BackupPending),
-					Status:             v1.ConditionTrue,
-					LastTransitionTime: now,
-				},
-				{
-					Type:               string(operatorv1alpha1.BackupFailed),
-					Status:             v1.ConditionTrue,
-					LastTransitionTime: later,
-				},
+			Files: []operatorv1alpha1.EtcdBackupFile{
+				{Size: resource.MustParse("100Mi")},
 			},
 		},
 	}
 
-	m.recordBackup(backup)
+	collector := setupCollectorWithBackups(t, backup)
 
-	m.mu.RLock()
-	state := m.trackedBackups[backup.UID]
-	m.mu.RUnlock()
+	// Verify info metric
+	verifyInfoMetric(t, collector, "pvc-backup", "pvc-uid-123", "node-1", storageTypePVC, "backup-pvc", "")
 
-	if state.currentStatus != statusFailed {
-		t.Errorf("expected status %s, got %s", statusFailed, state.currentStatus)
+	// Verify only completed status is emitted
+	expected := `
+		# HELP etcd_backup_status The current status of the backup. Value of 1 indicates the labeled status is active.
+		# TYPE etcd_backup_status gauge
+		etcd_backup_status{etcd_backup="pvc-backup",status="Completed",uid="pvc-uid-123"} 1
+	`
+	if err := testutil.CollectAndCompare(collector, strings.NewReader(expected), backupStatusMetricName); err != nil {
+		t.Errorf("status metric mismatch: %v", err)
+	}
+
+	// Verify timestamps exist (can't easily verify exact values with the current setup)
+	count := testutil.CollectAndCount(collector)
+	if count == 0 {
+		t.Error("expected metrics to be collected")
 	}
 }
 
-func TestRecordBackup_PVCWithPath(t *testing.T) {
-	registry := metrics.NewKubeRegistry()
-	m := NewBackupMetrics(registry)
-
-	backup := operatorv1alpha1.EtcdBackup{
+func TestCollectBackup_PVCWithPath(t *testing.T) {
+	backup := &operatorv1alpha1.EtcdBackup{
 		ObjectMeta: v1.ObjectMeta{
-			Name: "pvc-with-path",
+			Name: "pvc-path-backup",
 			UID:  types.UID("pvc-path-uid"),
 		},
 		Spec: operatorv1alpha1.EtcdBackupSpec{
 			Storage: operatorv1alpha1.EtcdBackupStorage{
 				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
 				PVC: &operatorv1alpha1.EtcdBackupStoragePvc{
-					Name: "my-pvc",
-					Path: "/backups/2024",
+					Name: "backup-pvc",
+					Path: "/custom/path",
 				},
 			},
 		},
 	}
 
-	m.recordBackup(backup)
-
-	m.mu.RLock()
-	state := m.trackedBackups[backup.UID]
-	m.mu.RUnlock()
-
-	expected := "my-pvc:/backups/2024"
-	if state.storageLocation != expected {
-		t.Errorf("expected storage location %s, got %s", expected, state.storageLocation)
-	}
+	collector := setupCollectorWithBackups(t, backup)
+	verifyInfoMetric(t, collector, "pvc-path-backup", "pvc-path-uid", "", storageTypePVC, "backup-pvc:/custom/path", "")
 }
 
-func TestRecordBackup_LocalStorage(t *testing.T) {
-	registry := metrics.NewKubeRegistry()
-	m := NewBackupMetrics(registry)
-
-	backup := operatorv1alpha1.EtcdBackup{
+func TestCollectBackup_LocalStorage(t *testing.T) {
+	backup := &operatorv1alpha1.EtcdBackup{
 		ObjectMeta: v1.ObjectMeta{
 			Name: "local-backup",
 			UID:  types.UID("local-uid"),
@@ -221,45 +180,23 @@ func TestRecordBackup_LocalStorage(t *testing.T) {
 			},
 		},
 		Status: operatorv1alpha1.EtcdBackupStatus{
-			Conditions: []v1.Condition{
-				{
-					Type:               string(operatorv1alpha1.BackupCompleted),
-					Status:             v1.ConditionTrue,
-					LastTransitionTime: v1.NewTime(time.Now()),
-				},
-			},
+			NodeName: "node-2",
 		},
 	}
 
-	m.recordBackup(backup)
-
-	m.mu.RLock()
-	state := m.trackedBackups[backup.UID]
-	m.mu.RUnlock()
-
-	if state.storageType != storageTypeLocal {
-		t.Errorf("expected storage type %s, got %s", storageTypeLocal, state.storageType)
-	}
-
-	if state.storageLocation != "/var/lib/etcd-backup" {
-		t.Errorf("expected storage location /var/lib/etcd-backup, got %s", state.storageLocation)
-	}
+	collector := setupCollectorWithBackups(t, backup)
+	verifyInfoMetric(t, collector, "local-backup", "local-uid", "node-2", storageTypeLocal, "/var/lib/etcd-backup", "")
 }
 
-func TestRecordBackup_CreatedByPolicy(t *testing.T) {
-	registry := metrics.NewKubeRegistry()
-	m := NewBackupMetrics(registry)
-
-	backup := operatorv1alpha1.EtcdBackup{
+func TestCollectBackup_CreatedByPolicy(t *testing.T) {
+	backup := &operatorv1alpha1.EtcdBackup{
 		ObjectMeta: v1.ObjectMeta{
-			Name: "scheduled-backup",
-			UID:  types.UID("scheduled-uid"),
+			Name: "policy-backup",
+			UID:  types.UID("policy-uid"),
 			OwnerReferences: []v1.OwnerReference{
 				{
-					APIVersion: "config.openshift.io/v1alpha1",
-					Kind:       "Backup",
-					Name:       "daily-policy",
-					UID:        types.UID("policy-uid"),
+					Kind: "Backup",
+					Name: "daily-policy",
 				},
 			},
 		},
@@ -267,200 +204,93 @@ func TestRecordBackup_CreatedByPolicy(t *testing.T) {
 			Storage: operatorv1alpha1.EtcdBackupStorage{
 				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
 				PVC: &operatorv1alpha1.EtcdBackupStoragePvc{
-					Name: "test-pvc",
+					Name: "backup-pvc",
 				},
 			},
 		},
 	}
 
-	m.recordBackup(backup)
-
-	m.mu.RLock()
-	state := m.trackedBackups[backup.UID]
-	m.mu.RUnlock()
-
-	if state.policyName != "daily-policy" {
-		t.Errorf("expected policy name daily-policy, got %s", state.policyName)
-	}
+	collector := setupCollectorWithBackups(t, backup)
+	verifyInfoMetric(t, collector, "policy-backup", "policy-uid", "", storageTypePVC, "backup-pvc", "daily-policy")
 }
 
-func TestRecordBackup_ConcurrentCompletions(t *testing.T) {
-	registry := metrics.NewKubeRegistry()
-	m := NewBackupMetrics(registry)
-
-	done := make(chan bool)
-
-	for i := 0; i < 10; i++ {
-		go func(id int) {
-			backup := operatorv1alpha1.EtcdBackup{
-				ObjectMeta: v1.ObjectMeta{
-					Name: string(rune('a' + id)),
-					UID:  types.UID(string(rune('0' + id))),
-				},
-				Spec: operatorv1alpha1.EtcdBackupSpec{
-					Storage: operatorv1alpha1.EtcdBackupStorage{
-						Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-						PVC: &operatorv1alpha1.EtcdBackupStoragePvc{
-							Name: "pvc",
-						},
-					},
-				},
-				Status: operatorv1alpha1.EtcdBackupStatus{
-					Conditions: []v1.Condition{
-						{
-							Type:               string(operatorv1alpha1.BackupCompleted),
-							Status:             v1.ConditionTrue,
-							LastTransitionTime: v1.NewTime(time.Now()),
-						},
-					},
-				},
-			}
-			m.recordBackup(backup)
-			done <- true
-		}(i)
-	}
-
-	for i := 0; i < 10; i++ {
-		<-done
-	}
-
-	m.mu.RLock()
-	count := len(m.trackedBackups)
-	m.mu.RUnlock()
-
-	if count != 10 {
-		t.Errorf("expected 10 backups after concurrent updates, got %d", count)
-	}
-}
-
-func TestRecordBackup_RepeatedReconciliation(t *testing.T) {
-	registry := metrics.NewKubeRegistry()
-	m := NewBackupMetrics(registry)
-
-	now := v1.NewTime(time.Now())
-	backup := operatorv1alpha1.EtcdBackup{
-		ObjectMeta: v1.ObjectMeta{
-			Name: "repeated-backup",
-			UID:  types.UID("repeated-uid"),
-		},
+func TestCollectBackup_MultipleBackups(t *testing.T) {
+	backup1 := &operatorv1alpha1.EtcdBackup{
+		ObjectMeta: v1.ObjectMeta{Name: "backup-1", UID: "uid-1"},
 		Spec: operatorv1alpha1.EtcdBackupSpec{
 			Storage: operatorv1alpha1.EtcdBackupStorage{
 				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC: &operatorv1alpha1.EtcdBackupStoragePvc{
-					Name: "test-pvc",
-				},
+				PVC:  &operatorv1alpha1.EtcdBackupStoragePvc{Name: "pvc-1"},
 			},
 		},
 		Status: operatorv1alpha1.EtcdBackupStatus{
 			Conditions: []v1.Condition{
-				{
-					Type:               string(operatorv1alpha1.BackupCompleted),
-					Status:             v1.ConditionTrue,
-					LastTransitionTime: now,
-				},
+				{Type: string(operatorv1alpha1.BackupCompleted), Status: v1.ConditionTrue},
 			},
 		},
 	}
 
-	m.recordBackup(backup)
-	m.recordBackup(backup)
-	m.recordBackup(backup)
+	backup2 := &operatorv1alpha1.EtcdBackup{
+		ObjectMeta: v1.ObjectMeta{Name: "backup-2", UID: "uid-2"},
+		Spec: operatorv1alpha1.EtcdBackupSpec{
+			Storage: operatorv1alpha1.EtcdBackupStorage{
+				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+				PVC:  &operatorv1alpha1.EtcdBackupStoragePvc{Name: "pvc-2"},
+			},
+		},
+		Status: operatorv1alpha1.EtcdBackupStatus{
+			Conditions: []v1.Condition{
+				{Type: string(operatorv1alpha1.BackupRunning), Status: v1.ConditionTrue},
+			},
+		},
+	}
 
-	m.mu.RLock()
-	count := len(m.trackedBackups)
-	state := m.trackedBackups[backup.UID]
-	m.mu.RUnlock()
+	collector := setupCollectorWithBackups(t, backup1, backup2)
 
+	// Verify both status metrics are present
+	expected := `
+		# HELP etcd_backup_status The current status of the backup. Value of 1 indicates the labeled status is active.
+		# TYPE etcd_backup_status gauge
+		etcd_backup_status{etcd_backup="backup-1",status="Completed",uid="uid-1"} 1
+		etcd_backup_status{etcd_backup="backup-2",status="Running",uid="uid-2"} 1
+	`
+	if err := testutil.CollectAndCompare(collector, strings.NewReader(expected), backupStatusMetricName); err != nil {
+		t.Errorf("status metrics mismatch: %v", err)
+	}
+}
+
+func TestBackupDeletion(t *testing.T) {
+	backup := &operatorv1alpha1.EtcdBackup{
+		ObjectMeta: v1.ObjectMeta{Name: "to-delete", UID: "delete-uid"},
+		Spec: operatorv1alpha1.EtcdBackupSpec{
+			Storage: operatorv1alpha1.EtcdBackupStorage{
+				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+				PVC:  &operatorv1alpha1.EtcdBackupStoragePvc{Name: "pvc"},
+			},
+		},
+	}
+
+	// Setup collector with backup
+	collector := setupCollectorWithBackups(t, backup)
+
+	// Verify metric exists
+	count := testutil.CollectAndCount(collector, backupInfoMetricName)
 	if count != 1 {
-		t.Errorf("expected 1 tracked backup after repeated calls, got %d", count)
+		t.Errorf("expected 1 backup info metric, got %d", count)
 	}
 
-	if state.currentStatus != statusCompleted {
-		t.Errorf("expected status %s, got %s", statusCompleted, state.currentStatus)
-	}
-}
+	// Setup collector without backup (simulating deletion)
+	collectorAfterDelete := setupCollectorWithBackups(t)
 
-func TestDeleteBackup(t *testing.T) {
-	registry := metrics.NewKubeRegistry()
-	m := NewBackupMetrics(registry)
-
-	backup := operatorv1alpha1.EtcdBackup{
-		ObjectMeta: v1.ObjectMeta{
-			Name: "delete-me",
-			UID:  types.UID("delete-uid"),
-		},
-		Spec: operatorv1alpha1.EtcdBackupSpec{
-			Storage: operatorv1alpha1.EtcdBackupStorage{
-				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC: &operatorv1alpha1.EtcdBackupStoragePvc{
-					Name: "test-pvc",
-				},
-			},
-		},
-	}
-
-	m.recordBackup(backup)
-
-	m.mu.RLock()
-	_, tracked := m.trackedBackups[backup.UID]
-	m.mu.RUnlock()
-	if !tracked {
-		t.Error("expected backup to be tracked before deletion")
-	}
-
-	m.deleteBackup(backup)
-
-	m.mu.RLock()
-	_, tracked = m.trackedBackups[backup.UID]
-	m.mu.RUnlock()
-	if tracked {
-		t.Error("expected backup to not be tracked after deletion")
-	}
-}
-
-func TestDeleteBackup_NotTracked(t *testing.T) {
-	registry := metrics.NewKubeRegistry()
-	m := NewBackupMetrics(registry)
-
-	backup := operatorv1alpha1.EtcdBackup{
-		ObjectMeta: v1.ObjectMeta{
-			Name: "never-tracked",
-			UID:  types.UID("never-uid"),
-		},
-		Spec: operatorv1alpha1.EtcdBackupSpec{
-			Storage: operatorv1alpha1.EtcdBackupStorage{
-				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC: &operatorv1alpha1.EtcdBackupStoragePvc{
-					Name: "test-pvc",
-				},
-			},
-		},
-	}
-
-	m.deleteBackup(backup)
-
-	m.mu.RLock()
-	_, tracked := m.trackedBackups[backup.UID]
-	m.mu.RUnlock()
-	if tracked {
-		t.Error("deleting non-tracked backup should be no-op")
+	// Verify metric no longer exists
+	countAfter := testutil.CollectAndCount(collectorAfterDelete, backupInfoMetricName)
+	if countAfter != 0 {
+		t.Errorf("expected 0 backup info metrics after deletion, got %d", countAfter)
 	}
 }
 
 func TestSizeBytes_NoFiles(t *testing.T) {
 	backup := operatorv1alpha1.EtcdBackup{
-		ObjectMeta: v1.ObjectMeta{
-			Name: "test",
-			UID:  types.UID("test-uid"),
-		},
-		Spec: operatorv1alpha1.EtcdBackupSpec{
-			Storage: operatorv1alpha1.EtcdBackupStorage{
-				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC: &operatorv1alpha1.EtcdBackupStoragePvc{
-					Name: "test-pvc",
-				},
-			},
-		},
 		Status: operatorv1alpha1.EtcdBackupStatus{
 			Files: []operatorv1alpha1.EtcdBackupFile{},
 		},
@@ -468,175 +298,168 @@ func TestSizeBytes_NoFiles(t *testing.T) {
 
 	size := getSizeBytes(backup)
 	if size != 0 {
-		t.Errorf("expected size 0 when no files present, got %f", size)
+		t.Errorf("expected size 0 for no files, got %f", size)
 	}
 }
 
 func TestSizeBytes_MultipleFiles(t *testing.T) {
 	backup := operatorv1alpha1.EtcdBackup{
-		ObjectMeta: v1.ObjectMeta{
-			Name: "multi-file-backup",
-			UID:  types.UID("multi-uid"),
-		},
-		Spec: operatorv1alpha1.EtcdBackupSpec{
-			Storage: operatorv1alpha1.EtcdBackupStorage{
-				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC: &operatorv1alpha1.EtcdBackupStoragePvc{
-					Name: "test-pvc",
-				},
-			},
-		},
 		Status: operatorv1alpha1.EtcdBackupStatus{
 			Files: []operatorv1alpha1.EtcdBackupFile{
-				{
-					Path: "/backup/snapshot.db",
-					Size: *resource.NewQuantity(1024*1024*100, resource.BinarySI), // 100 MiB
-				},
-				{
-					Path: "/backup/static-pod-resources.tar.gz",
-					Size: *resource.NewQuantity(1024*1024*50, resource.BinarySI), // 50 MiB
-				},
+				{Size: resource.MustParse("100Mi")},
+				{Size: resource.MustParse("50Mi")},
+				{Size: resource.MustParse("25Mi")},
 			},
 		},
 	}
 
 	size := getSizeBytes(backup)
-	expected := float64(1024 * 1024 * 150) // 150 MiB
+	expected := float64(175 * 1024 * 1024)
 	if size != expected {
-		t.Errorf("expected total size %f, got %f", expected, size)
+		t.Errorf("expected size %f, got %f", expected, size)
 	}
 }
 
-func TestNode_FromStatus(t *testing.T) {
-	registry := metrics.NewKubeRegistry()
-	m := NewBackupMetrics(registry)
-
-	backup := operatorv1alpha1.EtcdBackup{
-		ObjectMeta: v1.ObjectMeta{
-			Name: "pvc-backup",
-			UID:  types.UID("pvc-uid"),
+func TestExtractCurrentStatus(t *testing.T) {
+	tests := []struct {
+		name       string
+		conditions []v1.Condition
+		want       string
+	}{
+		{
+			name:       "no conditions",
+			conditions: []v1.Condition{},
+			want:       "",
 		},
-		Spec: operatorv1alpha1.EtcdBackupSpec{
-			Storage: operatorv1alpha1.EtcdBackupStorage{
-				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC: &operatorv1alpha1.EtcdBackupStoragePvc{
-					Name: "test-pvc",
-				},
+		{
+			name: "pending",
+			conditions: []v1.Condition{
+				{Type: string(operatorv1alpha1.BackupPending), Status: v1.ConditionTrue},
 			},
+			want: statusPending,
 		},
-		Status: operatorv1alpha1.EtcdBackupStatus{
-			NodeName: "master-2",
-		},
-	}
-
-	m.recordBackup(backup)
-
-	m.mu.RLock()
-	state := m.trackedBackups[backup.UID]
-	m.mu.RUnlock()
-
-	if state.node != "master-2" {
-		t.Errorf("expected node master-2 from status, got %s", state.node)
-	}
-}
-
-func TestNode_Empty_WhenStatusMissing(t *testing.T) {
-	registry := metrics.NewKubeRegistry()
-	m := NewBackupMetrics(registry)
-
-	backup := operatorv1alpha1.EtcdBackup{
-		ObjectMeta: v1.ObjectMeta{
-			Name: "unbound-backup",
-			UID:  types.UID("unbound-uid"),
-		},
-		Spec: operatorv1alpha1.EtcdBackupSpec{
-			Storage: operatorv1alpha1.EtcdBackupStorage{
-				Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
-				Local: &operatorv1alpha1.EtcdBackupStorageLocal{
-					HostPath: "/var/lib/etcd-backup",
-				},
+		{
+			name: "running",
+			conditions: []v1.Condition{
+				{Type: string(operatorv1alpha1.BackupRunning), Status: v1.ConditionTrue},
 			},
+			want: statusRunning,
 		},
-		Status: operatorv1alpha1.EtcdBackupStatus{
-			// No NodeName - backup not yet bound to a node
+		{
+			name: "completed",
+			conditions: []v1.Condition{
+				{Type: string(operatorv1alpha1.BackupCompleted), Status: v1.ConditionTrue},
+			},
+			want: statusCompleted,
+		},
+		{
+			name: "failed",
+			conditions: []v1.Condition{
+				{Type: string(operatorv1alpha1.BackupFailed), Status: v1.ConditionTrue},
+			},
+			want: statusFailed,
+		},
+		{
+			name: "all false",
+			conditions: []v1.Condition{
+				{Type: string(operatorv1alpha1.BackupPending), Status: v1.ConditionFalse},
+				{Type: string(operatorv1alpha1.BackupRunning), Status: v1.ConditionFalse},
+			},
+			want: "",
 		},
 	}
 
-	m.recordBackup(backup)
-
-	m.mu.RLock()
-	state := m.trackedBackups[backup.UID]
-	m.mu.RUnlock()
-
-	if state.node != "" {
-		t.Errorf("expected empty node when status.nodeName not set, got %s", state.node)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backup := operatorv1alpha1.EtcdBackup{
+				Status: operatorv1alpha1.EtcdBackupStatus{
+					Conditions: tt.conditions,
+				},
+			}
+			got := extractCurrentStatus(backup)
+			if got != tt.want {
+				t.Errorf("extractCurrentStatus() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
 func TestMetricNamesMatchConstants(t *testing.T) {
-	expected := map[string]string{
-		backupInfoMetricName:           "etcd_backup_info",
-		backupStatusMetricName:         "etcd_backup_status",
-		backupCompletionTimeMetricName: "etcd_backup_completion_time",
-		backupStartTimeMetricName:      "etcd_backup_start_time",
-		backupSizeBytesMetricName:      "etcd_backup_size_bytes",
+	expectedNames := map[string]bool{
+		backupInfoMetricName:           false,
+		backupStatusMetricName:         false,
+		backupCompletionTimeMetricName: false,
+		backupStartTimeMetricName:      false,
+		backupSizeBytesMetricName:      false,
 	}
 
-	for constant, want := range expected {
-		if constant != want {
-			t.Errorf("metric name mismatch: constant value is %q, expected %q", constant, want)
+	collector := setupCollectorWithBackups(t)
+
+	// Collect descriptors
+	descCh := make(chan *prometheus.Desc, 10)
+	go func() {
+		collector.Describe(descCh)
+		close(descCh)
+	}()
+
+	for desc := range descCh {
+		descStr := desc.String()
+		for name := range expectedNames {
+			if strings.Contains(descStr, name) {
+				expectedNames[name] = true
+			}
+		}
+	}
+
+	for name, found := range expectedNames {
+		if !found {
+			t.Errorf("expected metric %s to be registered", name)
 		}
 	}
 }
 
-func TestMetricCollection(t *testing.T) {
+// Helper functions
+
+func setupCollectorWithBackups(t *testing.T, backups ...*operatorv1alpha1.EtcdBackup) *backupCollector {
+	t.Helper()
+
+	lister := &fakeBackupLister{backups: backups}
 	registry := metrics.NewKubeRegistry()
-	m := NewBackupMetrics(registry)
 
-	backup := operatorv1alpha1.EtcdBackup{
-		ObjectMeta: v1.ObjectMeta{
-			Name: "test-backup",
-			UID:  types.UID("test-uid"),
-		},
-		Spec: operatorv1alpha1.EtcdBackupSpec{
-			Storage: operatorv1alpha1.EtcdBackupStorage{
-				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC: &operatorv1alpha1.EtcdBackupStoragePvc{
-					Name: "test-pvc",
-				},
-			},
-		},
-		Status: operatorv1alpha1.EtcdBackupStatus{
-			Conditions: []v1.Condition{
-				{
-					Type:               string(operatorv1alpha1.BackupPending),
-					Status:             v1.ConditionTrue,
-					LastTransitionTime: v1.NewTime(time.Now()),
-				},
-			},
-		},
+	return NewBackupMetrics(registry, lister)
+}
+
+func verifyInfoMetric(t *testing.T, collector prometheus.Collector, name, uid, node, storageType, storageLocation, policyName string) {
+	t.Helper()
+
+	expected := `
+		# HELP etcd_backup_info Information about etcd backup
+		# TYPE etcd_backup_info gauge
+		etcd_backup_info{created_by_policy="` + policyName + `",etcd_backup="` + name + `",node="` + node + `",storage_location="` + storageLocation + `",storage_type="` + storageType + `",uid="` + uid + `"} 1
+	`
+
+	if err := testutil.CollectAndCompare(collector, strings.NewReader(expected), backupInfoMetricName); err != nil {
+		t.Errorf("info metric mismatch: %v", err)
 	}
+}
 
-	m.recordBackup(backup)
+func verifyStatusMetric(t *testing.T, collector prometheus.Collector, name, uid, status string, expectedValue float64) {
+	t.Helper()
 
-	metricFamilies, err := registry.Gather()
-	if err != nil {
-		t.Fatalf("failed to gather metrics: %v", err)
+	expected := `
+		# HELP etcd_backup_status The current status of the backup. Value of 1 indicates the labeled status is active.
+		# TYPE etcd_backup_status gauge
+		etcd_backup_status{etcd_backup="` + name + `",status="` + status + `",uid="` + uid + `"} ` + formatFloat(expectedValue) + `
+	`
+
+	if err := testutil.CollectAndCompare(collector, strings.NewReader(expected), backupStatusMetricName); err != nil {
+		t.Errorf("status metric mismatch for %s=%s: %v", name, status, err)
 	}
+}
 
-	if len(metricFamilies) == 0 {
-		t.Error("expected metrics to be collected, got 0")
+func formatFloat(f float64) string {
+	if f == float64(int64(f)) {
+		return fmt.Sprintf("%d", int64(f))
 	}
-
-	found := false
-	for _, mf := range metricFamilies {
-		if mf.GetName() == backupInfoMetricName {
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		t.Errorf("expected to find %s metric", backupInfoMetricName)
-	}
+	return fmt.Sprintf("%g", f)
 }

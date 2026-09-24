@@ -70,7 +70,6 @@ type BackupController struct {
 	kubeClient            kubernetes.Interface
 	operatorImagePullSpec string
 	featureGateAccessor   featuregates.FeatureGateAccess
-	metrics               *backupMetrics
 }
 
 func NewBackupController(
@@ -83,7 +82,6 @@ func NewBackupController(
 	eventRecorder events.Recorder,
 	operatorImagePullSpec string,
 	accessor featuregates.FeatureGateAccess,
-	metrics *backupMetrics,
 	backupInformer factory.Informer,
 	jobInformer cache.SharedIndexInformer,
 	podInformer factory.Informer) (factory.Controller, error) {
@@ -95,7 +93,6 @@ func NewBackupController(
 		kubeClient:            kubeClient,
 		operatorImagePullSpec: operatorImagePullSpec,
 		featureGateAccessor:   accessor,
-		metrics:               metrics,
 	}
 	if err := c.addIndexers(); err != nil {
 		return nil, err
@@ -199,10 +196,6 @@ func (c *BackupController) sync(ctx context.Context, syncCtx factory.SyncContext
 		if err != nil {
 			return fmt.Errorf("BackupController could not reconcile job status for backup %q: %w", backup.Name, err)
 		}
-		// Fetch updated backup to record latest status
-		if updated, err := c.backupsLister.Get(backupName); err == nil {
-			c.metrics.recordBackup(*updated)
-		}
 		return nil
 	} else if backup.Status.Job != nil {
 		if backuphelpers.IsBackupFinished(backup) {
@@ -220,10 +213,6 @@ func (c *BackupController) sync(ctx context.Context, syncCtx factory.SyncContext
 		if err := reconcileJobNotFound(ctx, backupsClient, jobsClient, backup); err != nil {
 			return fmt.Errorf("Backup controller failed to reconcile missing job %q for backup %q: %w", jobName, backupName, err)
 		}
-		// Fetch updated backup to record latest status
-		if updated, err := c.backupsLister.Get(backupName); err == nil {
-			c.metrics.recordBackup(*updated)
-		}
 		return nil
 	}
 
@@ -238,7 +227,6 @@ func (c *BackupController) sync(ctx context.Context, syncCtx factory.SyncContext
 		if _, err := applyBackupFinalizer(ctx, backupsClient, backup, false); err != nil {
 			return fmt.Errorf("BackupController failed to remove finalizer from deleted backup: %w", err)
 		}
-		c.metrics.deleteBackup(*backup)
 		return nil
 	} else if !backuphelpers.IsBackupActive(backup) {
 		// Ignore inactive backups
@@ -258,20 +246,12 @@ func (c *BackupController) sync(ctx context.Context, syncCtx factory.SyncContext
 			return fmt.Errorf("BackupController failed to apply status on invalid backup: %w", err)
 		}
 		klog.Infof("BackupController failed backup %q: %s", backup.Name, message)
-		// Fetch updated backup to record latest status
-		if updated, err := c.backupsLister.Get(backupName); err == nil {
-			c.metrics.recordBackup(*updated)
-		}
 		return nil
 	}
 
 	klog.V(4).Infof("BackupController starting backup %q", backup.Name)
 	if err := createBackupJob(ctx, backup, c.operatorImagePullSpec, jobsClient, backupsClient); err != nil {
 		return fmt.Errorf("BackupController failed to start backup %q: %w", backup.Name, err)
-	}
-	// Fetch updated backup to record latest status
-	if updated, err := c.backupsLister.Get(backupName); err == nil {
-		c.metrics.recordBackup(*updated)
 	}
 	return nil
 }
