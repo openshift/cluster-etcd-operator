@@ -4592,7 +4592,9 @@ var schemaYAML = typed.YAMLObject(`types:
         list:
           elementType:
             namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyRetentionRule
-          elementRelationship: atomic
+          elementRelationship: associative
+          keys:
+          - type
     - name: schedule
       type:
         scalar: string
@@ -4612,7 +4614,9 @@ var schemaYAML = typed.YAMLObject(`types:
         list:
           elementType:
             namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupReference
-          elementRelationship: atomic
+          elementRelationship: associative
+          keys:
+          - name
     - name: lastScheduleTime
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
@@ -4701,7 +4705,6 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: path
       type:
         scalar: string
-      default: ""
 - name: com.github.openshift.api.operator.v1alpha1.GatewayAPIIngressConfig
   map:
     fields:
