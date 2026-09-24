@@ -20,6 +20,7 @@ const (
 	storageTypeLocal = "Local"
 
 	statusPending   = "Pending"
+	statusRunning   = "Running"
 	statusCompleted = "Completed"
 	statusFailed    = "Failed"
 )
@@ -148,6 +149,8 @@ func extractBackupState(backup operatorv1alpha1.EtcdBackup) backupState {
 		switch condition.Type {
 		case string(operatorv1alpha1.BackupPending):
 			state.currentStatus = statusPending
+		case string(operatorv1alpha1.BackupRunning):
+			state.currentStatus = statusRunning
 		case string(operatorv1alpha1.BackupCompleted):
 			state.currentStatus = statusCompleted
 		case string(operatorv1alpha1.BackupFailed):
@@ -160,7 +163,9 @@ func extractBackupState(backup operatorv1alpha1.EtcdBackup) backupState {
 
 func getStartTime(backup operatorv1alpha1.EtcdBackup) float64 {
 	for _, condition := range backup.Status.Conditions {
-		if condition.Type == string(operatorv1alpha1.BackupPending) && condition.Status == "True" {
+		if condition.Type == string(operatorv1alpha1.BackupRunning) && condition.Status == "True" {
+			return float64(condition.LastTransitionTime.Unix())
+		} else if condition.Type == string(operatorv1alpha1.BackupPending) && condition.Status == "True" {
 			return float64(condition.LastTransitionTime.Unix())
 		}
 	}
@@ -208,7 +213,7 @@ func (m *backupMetrics) recordBackup(backup operatorv1alpha1.EtcdBackup) {
 	).Set(1)
 
 	// Update status metric: set current status to 1, others to 0
-	for _, s := range []string{statusPending, statusCompleted, statusFailed} {
+	for _, s := range []string{statusPending, statusRunning, statusCompleted, statusFailed} {
 		value := float64(0)
 		if s == state.currentStatus {
 			value = 1
@@ -251,7 +256,7 @@ func (m *backupMetrics) deleteBackup(backup operatorv1alpha1.EtcdBackup) {
 		state.policyName,
 	)
 
-	for _, s := range []string{statusPending, statusCompleted, statusFailed} {
+	for _, s := range []string{statusPending, statusRunning, statusCompleted, statusFailed} {
 		m.status.DeleteLabelValues(state.name, state.uid, s)
 	}
 

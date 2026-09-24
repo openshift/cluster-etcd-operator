@@ -70,7 +70,7 @@ type BackupController struct {
 	kubeClient            kubernetes.Interface
 	operatorImagePullSpec string
 	featureGateAccessor   featuregates.FeatureGateAccess
-	metrics 			  *backupMetrics
+	metrics               *backupMetrics
 }
 
 func NewBackupController(
@@ -200,9 +200,9 @@ func (c *BackupController) sync(ctx context.Context, syncCtx factory.SyncContext
 			return fmt.Errorf("BackupController could not reconcile job status for backup %q: %w", backup.Name, err)
 		}
 		// Fetch updated backup to record latest status
-    	if updated, err := c.backupsLister.Get(backupName); err == nil {
-      		c.metrics.recordBackup(*updated)
-    	}
+		if updated, err := c.backupsLister.Get(backupName); err == nil {
+			c.metrics.recordBackup(*updated)
+		}
 		return nil
 	} else if backup.Status.Job != nil {
 		if backuphelpers.IsBackupFinished(backup) {
@@ -221,9 +221,9 @@ func (c *BackupController) sync(ctx context.Context, syncCtx factory.SyncContext
 			return fmt.Errorf("Backup controller failed to reconcile missing job %q for backup %q: %w", jobName, backupName, err)
 		}
 		// Fetch updated backup to record latest status
-    	if updated, err := c.backupsLister.Get(backupName); err == nil {
-      	c.metrics.recordBackup(*updated)
-    	}
+		if updated, err := c.backupsLister.Get(backupName); err == nil {
+			c.metrics.recordBackup(*updated)
+		}
 		return nil
 	}
 
@@ -259,8 +259,8 @@ func (c *BackupController) sync(ctx context.Context, syncCtx factory.SyncContext
 		}
 		klog.Infof("BackupController failed backup %q: %s", backup.Name, message)
 		// Fetch updated backup to record latest status
-    	if updated, err := c.backupsLister.Get(backupName); err == nil {
-      		c.metrics.recordBackup(*updated)
+		if updated, err := c.backupsLister.Get(backupName); err == nil {
+			c.metrics.recordBackup(*updated)
 		}
 		return nil
 	}
@@ -270,9 +270,9 @@ func (c *BackupController) sync(ctx context.Context, syncCtx factory.SyncContext
 		return fmt.Errorf("BackupController failed to start backup %q: %w", backup.Name, err)
 	}
 	// Fetch updated backup to record latest status
-  	if updated, err := c.backupsLister.Get(backupName); err == nil {
-    	c.metrics.recordBackup(*updated)
-  	}
+	if updated, err := c.backupsLister.Get(backupName); err == nil {
+		c.metrics.recordBackup(*updated)
+	}
 	return nil
 }
 
