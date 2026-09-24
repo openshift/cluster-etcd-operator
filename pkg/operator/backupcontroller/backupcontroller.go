@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -380,9 +381,7 @@ func createBackupJob(ctx context.Context,
 // from the host and must run on a control-plane node.
 func pvcNodeSelector(backupSelector map[string]string) map[string]string {
 	selector := map[string]string{backuphelpers.ControlPlaneNodeLabelSelector: ""}
-	for k, v := range backupSelector {
-		selector[k] = v
-	}
+	maps.Copy(selector, backupSelector)
 	return selector
 }
 
@@ -453,12 +452,12 @@ func reconcileJobStatus(ctx context.Context,
 			return fmt.Errorf("error finding termination message for backup job %q: %w", job.Name, err)
 		}
 
-		files, err := parseTerminationMessage(terminationMessage)
+		termLog, err := parseTerminationMessage(terminationMessage)
 		if err != nil {
 			klog.Infof("BackupController failed to read termination message for backup %q: %v", backup.Name, err)
 		}
 
-		if _, err := applyBackupFinished(ctx, backupClient, backup, job, conditionType, conditionReason, "", files); err != nil {
+		if _, err := applyBackupFinished(ctx, backupClient, backup, job, conditionType, conditionReason, termLog.Message, termLog.Files); err != nil {
 			if apierrors.IsNotFound(err) {
 				return nil
 			}
@@ -629,24 +628,23 @@ func podTerminationMessage(pod *corev1.Pod) string {
 	return ""
 }
 
-func parseTerminationMessage(message string) ([]operatorv1alpha1.EtcdBackupFile, error) {
+func parseTerminationMessage(message string) (backuphelpers.BackupTerminationLog, error) {
 	if message == "" {
-		return nil, fmt.Errorf("missing termination message")
+		return backuphelpers.BackupTerminationLog{}, fmt.Errorf("missing termination message")
 	}
 	data := backuphelpers.BackupTerminationLog{}
 	if err := json.Unmarshal([]byte(message), &data); err != nil {
-		return nil, fmt.Errorf("error reading termination message: %w", err)
+		return backuphelpers.BackupTerminationLog{}, fmt.Errorf("error reading termination message: %w", err)
 	}
 
-	files := make([]operatorv1alpha1.EtcdBackupFile, len(data.Files))
 	for i, file := range data.Files {
 		filePath, _ := strings.CutPrefix(file.Path, backupPathMount)
-		files[i] = operatorv1alpha1.EtcdBackupFile{
+		data.Files[i] = operatorv1alpha1.EtcdBackupFile{
 			Path:      filePath,
 			SizeBytes: file.SizeBytes,
 		}
 	}
-	return files, nil
+	return data, nil
 }
 
 func applyBackupPending(

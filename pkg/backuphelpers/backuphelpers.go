@@ -28,7 +28,8 @@ const (
 )
 
 type BackupTerminationLog struct {
-	Files []operatorv1alpha1.EtcdBackupFile `json:"files"`
+	Message string                            `json:"message,omitempty"`
+	Files   []operatorv1alpha1.EtcdBackupFile `json:"files"`
 }
 
 func AutoBackupFeatureGateEnabled(featureGateAccessor featuregates.FeatureGateAccess) (bool, error) {

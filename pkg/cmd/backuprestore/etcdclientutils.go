@@ -50,7 +50,7 @@ func saveSnapshot(cli *clientv3.Client, partPath, dbPath string) (int64, error) 
 
 	f, err := os.OpenFile(partPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		return -1, fmt.Errorf("could not open %s (%w)", partPath, err)
+		return -1, fmt.Errorf("could not open %s: %w", partPath, err)
 	}
 
 	opBegin := time.Now()
@@ -70,7 +70,7 @@ func saveSnapshot(cli *clientv3.Client, partPath, dbPath string) (int64, error) 
 	klog.Infof("fetched snapshot, took: %v", time.Since(opBegin))
 
 	if err := os.Rename(partPath, dbPath); err != nil {
-		return -1, fmt.Errorf("could not rename %s to %s (%v)", partPath, dbPath, err)
+		return -1, fmt.Errorf("could not rename %s to %s: %w", partPath, dbPath, err)
 	}
 	klog.Infof("saved snapshot to path %s", dbPath)
 	return size, nil

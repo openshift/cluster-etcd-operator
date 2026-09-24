@@ -6,6 +6,7 @@ metadata:
   labels:
     app: cluster-backup-gc-job
 spec:
+  backoffLimit: 2
   template:
     spec:
       containers:
