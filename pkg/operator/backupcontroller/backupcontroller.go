@@ -92,7 +92,6 @@ func NewBackupController(
 	eventRecorder events.Recorder,
 	operatorImagePullSpec string,
 	accessor featuregates.FeatureGateAccess,
-	metrics *backupMetrics,
 	backupInformer factory.Informer,
 	jobInformer cache.SharedIndexInformer,
 	podInformer factory.Informer,
@@ -339,7 +338,6 @@ func (c *BackupController) reconcileBackupState(ctx context.Context, jobsClient 
 		if err := removeBackupFinalizer(ctx, backupsClient, backup); err != nil && !apierrors.IsNotFound(err) {
 			return backupActive, 0, fmt.Errorf("BackupController failed to remove finalizer from deleted backup %q: %w", backupName, err)
 		}
-		c.metrics.deleteBackup(*backup)
 		return backupFinished, 0, nil
 	} else if !backuphelpers.IsBackupActive(backup) {
 		// Ignore inactive backups
@@ -359,10 +357,6 @@ func (c *BackupController) reconcileBackupState(ctx context.Context, jobsClient 
 			return backupActive, 0, fmt.Errorf("BackupController failed to apply status on invalid backup: %w", err)
 		}
 		klog.Infof("BackupController failed backup %q: %s", backup.Name, message)
-		// Fetch updated backup to record latest status
-		if updated, err := c.backupsLister.Get(backupName); err == nil {
-			c.metrics.recordBackup(*updated)
-		}
 		return backupFinished, 0, nil
 	}
 
