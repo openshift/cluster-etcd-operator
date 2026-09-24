@@ -30,7 +30,6 @@ import (
 	k8sfakeclient "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/component-base/metrics"
 	"k8s.io/utils/ptr"
 )
 
@@ -98,7 +97,6 @@ func runBackupControllerTest(t *testing.T, tc testCaseBackupController) {
 	if tc.activeCache != nil {
 		activeCache = *tc.activeCache
 	}
-	testMetrics := NewBackupMetrics(metrics.NewKubeRegistry())
 
 	controller := BackupController{
 		backupsLister:         backupsInformer.Lister(),
@@ -110,7 +108,6 @@ func runBackupControllerTest(t *testing.T, tc testCaseBackupController) {
 		operatorImagePullSpec: "operator-pullspec-image",
 		featureGateAccessor:   backupFeatureGateAccessor,
 		activeCache:           activeCache,
-		metrics:               testMetrics,
 	}
 	err := controller.addIndexers()
 	require.NoError(t, err)
