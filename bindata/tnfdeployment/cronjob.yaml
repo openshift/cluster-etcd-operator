@@ -47,6 +47,7 @@ spec:
               securityContext:
                 privileged: true
                 allowPrivilegeEscalation: true
+                readOnlyRootFilesystem: true
           hostIPC: false
           hostNetwork: false
           # hostPID is required to observe host process state for pacemaker
