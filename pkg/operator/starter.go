@@ -479,10 +479,9 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	defragController := defragcontroller.NewDefragController(
 		AlivenessChecker,
 		operatorClient,
-		etcdClient, // for member list/health calls
-		etcdClient, // for defrag calls
-		etcdClient, // for status calls
-		etcdClient, // for leader transfer before defrag
+		cachedMemberClient, // for cached List/Health calls
+		etcdClient,         // for status calls
+		etcdClient,         // for defrag calls
 		configInformers.Config().V1().Infrastructures().Lister(),
 		controllerContext.EventRecorder,
 		kubeInformersForNamespaces,
