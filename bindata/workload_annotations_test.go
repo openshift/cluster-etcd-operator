@@ -103,14 +103,12 @@ func TestWorkloadAnnotations(t *testing.T) {
 
 		data, err := fs.ReadFile(f, path)
 		if err != nil {
-			t.Logf("skipping %s: cannot read file: %v", path, err)
-			return nil
+			return fmt.Errorf("read %s: %w", path, err)
 		}
 
 		var m manifest
 		if err := yaml.Unmarshal(data, &m); err != nil {
-			t.Logf("skipping %s: cannot unmarshal: %v", path, err)
-			return nil
+			return fmt.Errorf("unmarshal %s: %w", path, err)
 		}
 
 		if !workloadKinds[m.Kind] {
@@ -119,8 +117,7 @@ func TestWorkloadAnnotations(t *testing.T) {
 
 		annotations, err := getPodAnnotations(m)
 		if err != nil {
-			t.Logf("skipping %s (%s): cannot extract pod annotations: %v", path, m.Kind, err)
-			return nil
+			return fmt.Errorf("extract pod annotations from %s (%s): %w", path, m.Kind, err)
 		}
 
 		value, ok := annotations[workloadAnnotationKey]
