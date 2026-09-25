@@ -189,7 +189,7 @@ func (c *DefragController) runDefrag(ctx context.Context, recorder events.Record
 			if _, err := c.defragClient.Defragment(ctx, member); err != nil {
 				// Defrag can timeout if defragmentation takes longer than etcdcli.DefragDialTimeout.
 				errMsg := fmt.Sprintf("failed defrag on member: %s, memberID: %x: %v", member.Name, member.ID, err)
-				recorder.Eventf("DefragControllerDefragmentFailed", errMsg)
+				recorder.Eventf("DefragControllerDefragmentFailed", "%s", errMsg)
 				errors = append(errors, fmt.Errorf("%s", errMsg))
 				continue
 			}
