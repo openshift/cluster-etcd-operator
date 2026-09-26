@@ -97,8 +97,11 @@ startJobControllers()
         └─ YES (Runtime Mode):
            │
            ├─ Ensure auth/after-setup controllers running (per-node)
+           ├─ Ensure setup job controller running (maintains conditions)
            ├─ Ensure update-setup controller running (if 2 nodes)
-           └─ Ensure fencing controller running (cluster-wide)
+           ├─ Ensure fencing controller running (cluster-wide)
+           ├─ Start status collector CronJob
+           └─ Start Pacemaker health check controller
 ```
 
 See [Job Controllers](job-controllers.md) for details on job execution patterns and retry logic.

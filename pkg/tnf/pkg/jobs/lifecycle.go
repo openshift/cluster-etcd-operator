@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -82,29 +83,22 @@ const (
 	// blockedConditionTimeout is how long to wait before returning error when jobs are blocked.
 	// Error triggers Degraded condition via WithSyncDegradedOnError.
 	blockedConditionTimeout = 10 * time.Minute
-
-	// Degraded condition reasons
-	degradedReasonAsExpected         = "AsExpected"
-	degradedReasonMaxRetriesExceeded = "MaxRetriesExceeded"
 )
 
 // manageTimedBlockedCondition manages the Degraded condition for blocked jobs.
-// Returns error after timeout to trigger WithSyncDegradedOnError, manually clears when unblocked.
+// Returns error after timeout to trigger WithSyncDegradedOnError. When unblocked, returns success
+// and lets natural syncManaged flow determine degraded state (job complete/failed/running).
 // Returns (ready bool, error):
 //   - (true, nil): unblocked, ready to proceed
 //   - (false, nil): blocked but < timeout, wait without reporting
 //   - (false, error): blocked >= timeout, error triggers Degraded
 func manageTimedBlockedCondition(
-	ctx context.Context,
 	jobName string,
 	isBlocked bool,
 	blockedSinceMap map[string]time.Time,
 	mapMutex *sync.Mutex,
 	errorMessage string,
-	operatorClient v1helpers.StaticPodOperatorClient,
 ) (bool, error) {
-	conditionName := tools.ToPascalCase(jobName) + "Degraded"
-
 	if isBlocked {
 		// Track blocked time
 		mapMutex.Lock()
@@ -124,61 +118,44 @@ func manageTimedBlockedCondition(
 		return false, nil // Blocked but not long enough yet
 	}
 
-	// Clear blocked tracking and Degraded condition
+	// Clear blocked tracking (condition cleared naturally via syncManaged flow)
 	mapMutex.Lock()
-	_, wasBlocked := blockedSinceMap[jobName]
-	if wasBlocked {
-		delete(blockedSinceMap, jobName)
-	}
+	delete(blockedSinceMap, jobName)
 	mapMutex.Unlock()
-
-	// Manually clear Degraded condition when unblocked (empty message to avoid cluttering ClusterOperator rollup)
-	if wasBlocked {
-		_, _, updateErr := v1helpers.UpdateStatus(ctx, operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:    conditionName,
-			Status:  operatorv1.ConditionFalse,
-			Reason:  degradedReasonAsExpected,
-			Message: "",
-		}))
-		if updateErr != nil {
-			klog.Errorf("Failed to clear %s condition: %v", conditionName, updateErr)
-		}
-	}
 
 	return true, nil
 }
 
-// manageBlockedCondition manages Degraded for jobs blocked by nodes not ready.
-// Returns error after 10 min timeout, manually clears when ready.
-func manageBlockedCondition(ctx context.Context, jobName string, notReadyNodes []string, operatorClient v1helpers.StaticPodOperatorClient) (bool, error) {
+// manageBlockedCondition tracks blocked state for jobs waiting on nodes to become ready.
+// Returns (true, nil) if nodes are ready, (false, nil) if blocked but not timed out,
+// or (false, error) after 10 min timeout (triggers WithSyncDegradedOnError).
+func manageBlockedCondition(jobName string, notReadyNodes []string) (bool, error) {
 	return manageTimedBlockedCondition(
-		ctx,
 		jobName,
 		len(notReadyNodes) > 0,
 		jobBlockedSince,
 		&jobBlockedMutex,
 		fmt.Sprintf("Affected nodes not ready: %v", notReadyNodes),
-		operatorClient,
 	)
 }
 
-// manageNoSchedulableNodesBlockedCondition manages Degraded when no schedulable nodes available.
-// Returns error after 10 min timeout, manually clears when nodes available.
-func manageNoSchedulableNodesBlockedCondition(ctx context.Context, jobName string, hasSchedulableNodes bool, operatorClient v1helpers.StaticPodOperatorClient) (bool, error) {
+// manageNoSchedulableNodesBlockedCondition tracks blocked state when no schedulable nodes are available.
+// Returns (true, nil) if schedulable nodes exist, (false, nil) if blocked but not timed out,
+// or (false, error) after 10 min timeout (triggers WithSyncDegradedOnError).
+func manageNoSchedulableNodesBlockedCondition(jobName string, hasSchedulableNodes bool) (bool, error) {
 	return manageTimedBlockedCondition(
-		ctx,
 		jobName,
 		!hasSchedulableNodes,
 		jobNoSchedulableNodesSince,
 		&jobNoSchedulableNodesMutex,
 		"No schedulable nodes available",
-		operatorClient,
 	)
 }
 
-// checkNodesReadinessAndSetCondition checks node readiness and manages Degraded condition.
-// Returns error if nodes not ready > 10 min (triggers WithSyncDegradedOnError).
-func checkNodesReadinessAndSetCondition(ctx context.Context, nodes []*corev1.Node, jobName string, operatorClient v1helpers.StaticPodOperatorClient) (bool, error) {
+// checkNodesReadinessAndSetCondition checks if all nodes are ready and tracks blocked state with timeout.
+// Returns (true, nil) if all nodes ready, (false, nil) if some not ready but not timed out,
+// or (false, error) if nodes not ready > 10 min (triggers WithSyncDegradedOnError).
+func checkNodesReadinessAndSetCondition(nodes []*corev1.Node, jobName string) (bool, error) {
 	// Collect all not-ready nodes
 	var notReadyNodes []string
 
@@ -188,8 +165,8 @@ func checkNodesReadinessAndSetCondition(ctx context.Context, nodes []*corev1.Nod
 		}
 	}
 
-	// Manage degraded condition, propagate error if blocked >= timeout
-	ready, err := manageBlockedCondition(ctx, jobName, notReadyNodes, operatorClient)
+	// Track blocked state with timeout, propagate error if blocked >= timeout
+	ready, err := manageBlockedCondition(jobName, notReadyNodes)
 	if err != nil {
 		return false, err // Propagate error to trigger WithSyncDegradedOnError
 	}
@@ -213,7 +190,7 @@ func syncMultiNodeJobState(ctx context.Context, jobName string, schedulableNodes
 		}
 
 		// Check readiness and manage blocked condition
-		ready, err := checkNodesReadinessAndSetCondition(ctx, affectedNodes, jobName, operatorClient)
+		ready, err := checkNodesReadinessAndSetCondition(affectedNodes, jobName)
 		if err != nil {
 			return err
 		}
@@ -236,7 +213,7 @@ func syncMultiNodeJobState(ctx context.Context, jobName string, schedulableNodes
 			return fmt.Errorf("failed to get schedulable nodes: %w", err)
 		}
 		if len(schedulableNodes) == 0 {
-			_, err := manageNoSchedulableNodesBlockedCondition(ctx, jobName, false, operatorClient)
+			_, err := manageNoSchedulableNodesBlockedCondition(jobName, false)
 			return err // Propagate error to trigger WithSyncDegradedOnError if blocked >= timeout
 		}
 
@@ -266,7 +243,7 @@ func syncMultiNodeJobState(ctx context.Context, jobName string, schedulableNodes
 		retryStateMutex.Unlock()
 
 		// Clear blocked condition now that schedulable nodes are available
-		if _, err := manageNoSchedulableNodesBlockedCondition(ctx, jobName, true, operatorClient); err != nil {
+		if _, err := manageNoSchedulableNodesBlockedCondition(jobName, true); err != nil {
 			klog.Errorf("Failed to clear blocked condition for %s: %v", jobName, err)
 		}
 
@@ -285,12 +262,12 @@ func syncMultiNodeJobState(ctx context.Context, jobName string, schedulableNodes
 		return fmt.Errorf("failed to get schedulable nodes: %w", err)
 	}
 	if len(schedulableNodes) == 0 {
-		_, err = manageNoSchedulableNodesBlockedCondition(ctx, jobName, false, operatorClient)
+		_, err = manageNoSchedulableNodesBlockedCondition(jobName, false)
 		return err // Propagate error to trigger WithSyncDegradedOnError if blocked >= timeout
 	}
 
 	// Clear blocked condition if schedulable nodes are now available
-	if _, err := manageNoSchedulableNodesBlockedCondition(ctx, jobName, true, operatorClient); err != nil {
+	if _, err := manageNoSchedulableNodesBlockedCondition(jobName, true); err != nil {
 		klog.Errorf("Failed to clear blocked condition for %s: %v", jobName, err)
 	}
 
@@ -353,20 +330,8 @@ func syncMultiNodeJobState(ctx context.Context, jobName string, schedulableNodes
 
 	// Job exists - check if it's done
 	if IsComplete(*existingJob) {
-		// Success - clear degraded condition
+		// Success - condition cleared naturally via syncManaged flow
 		klog.V(4).Infof("Job %s completed successfully", jobName)
-
-		// Clear degraded condition if it was set
-		_, _, err := v1helpers.UpdateStatus(ctx, operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-			Type:    tools.ToPascalCase(jobName) + operatorv1.OperatorStatusTypeDegraded,
-			Status:  operatorv1.ConditionFalse,
-			Reason:  "AsExpected",
-			Message: fmt.Sprintf("Job %s completed successfully", jobName),
-		}))
-		if err != nil {
-			klog.Errorf("Failed to clear degraded condition for %s: %v", jobName, err)
-		}
-
 		return nil
 	}
 
@@ -383,27 +348,16 @@ func syncMultiNodeJobState(ctx context.Context, jobName string, schedulableNodes
 
 		// Check if we've exhausted all nodes in this attempt
 		exhaustedNodes := nextNodeIndex >= len(schedulableNodes)
+		maxRetriesExceeded := false
 		if exhaustedNodes {
 			nextNodeIndex = 0
 			exhaustedAttempts := currentAttemptNumber >= state.MaxRetryAttempts
 			if exhaustedAttempts {
-				// Exceeded max attempts - set degraded condition and reset to attempt 1
+				// Exceeded max attempts - reset to attempt 1 and continue trying
 				klog.Warningf("Job %s exhausted all %d attempts (tried %d nodes each), marking degraded",
 					jobName, state.MaxRetryAttempts, len(schedulableNodes))
-
-				// Set degraded condition to indicate job has failed after all retries
-				_, _, err := v1helpers.UpdateStatus(ctx, operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-					Type:    tools.ToPascalCase(jobName) + operatorv1.OperatorStatusTypeDegraded,
-					Status:  operatorv1.ConditionTrue,
-					Reason:  degradedReasonMaxRetriesExceeded,
-					Message: fmt.Sprintf("Job failed after %d attempts across all nodes", state.MaxRetryAttempts),
-				}))
-				if err != nil {
-					klog.Errorf("Failed to set degraded condition for %s: %v", jobName, err)
-				}
-
-				// Reset to attempt 1 and continue trying (degraded condition remains set until success)
 				nextAttemptNumber = 1
+				maxRetriesExceeded = true
 			} else {
 				// Start new attempt
 				nextAttemptNumber++
@@ -416,6 +370,11 @@ func syncMultiNodeJobState(ctx context.Context, jobName string, schedulableNodes
 		klog.V(4).Infof("Job %s failed - updating retry state to node index %d", jobName, nextNodeIndex)
 		state.NodeIndex = nextNodeIndex
 		state.AttemptNumber = nextAttemptNumber
+
+		// If we just exceeded max retries, return error to set degraded condition
+		if maxRetriesExceeded {
+			return errors.New(DegradedMessageMaxRetries)
+		}
 	}
 
 	// Job is running - nothing to do
@@ -517,7 +476,7 @@ func RunNodeJobController(ctx context.Context, jobType tools.JobType, node *core
 				}
 
 				// Check node readiness before configuring job
-				ready, err := checkNodesReadinessAndSetCondition(ctx, []*corev1.Node{freshNode}, job.Name, operatorClient)
+				ready, err := checkNodesReadinessAndSetCondition([]*corev1.Node{freshNode}, job.Name)
 				if err != nil {
 					return false, err
 				}
