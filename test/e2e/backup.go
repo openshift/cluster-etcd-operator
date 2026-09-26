@@ -37,22 +37,22 @@ const (
 )
 
 var _ = g.Describe("[sig-etcd] cluster-etcd-operator", func() {
-	g.It("[Operator][Serial][Disruptive] TestBackupHappyPath [Timeout:30m]", func() {
+	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestBackupHappyPath [Timeout:30m]", func() {
 		TestBackupHappyPath(g.GinkgoTB())
 	})
-	g.It("[Operator][Serial][Disruptive] TestPeriodicBackupHappyPath [Timeout:30m]", func() {
+	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestPeriodicBackupHappyPath [Timeout:30m]", func() {
 		TestPeriodicBackupHappyPath(g.GinkgoTB())
 	})
-	g.It("[Operator][Serial][Disruptive] TestRetentionBySize", func() {
+	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestRetentionBySize", func() {
 		TestRetentionBySize(g.GinkgoTB())
 	})
-	g.It("[Operator][Serial][Disruptive] TestMultipleBackupsAreSkipped", func() {
+	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestMultipleBackupsAreSkipped", func() {
 		TestMultipleBackupsAreSkipped(g.GinkgoTB())
 	})
-	g.It("[Operator][Serial][Disruptive] TestBackupFailureOnMissingPVC", func() {
+	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestBackupFailureOnMissingPVC", func() {
 		TestBackupFailureOnMissingPVC(g.GinkgoTB())
 	})
-	g.It("[Operator][Serial][Disruptive] TestWrongScheduleDegradesOperator", func() {
+	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestWrongScheduleDegradesOperator", func() {
 		TestWrongScheduleDegradesOperator(g.GinkgoTB())
 	})
 })
