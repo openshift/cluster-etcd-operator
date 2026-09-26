@@ -3,7 +3,6 @@ package backuprestore
 import (
 	"archive/tar"
 	"compress/gzip"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,13 +13,25 @@ import (
 	"k8s.io/klog/v2"
 )
 
-func createTarball(tarballFilePath string, filePaths []string, prefixTrim string) error {
+func createTarball(tarballFilePath string, filePaths []string, prefixTrim string) (int64, error) {
 	file, err := os.OpenFile(tarballFilePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		return errors.New(fmt.Sprintf("Could not create tarball file '%s', got error '%s'", tarballFilePath, err.Error()))
+		return 0, fmt.Errorf("Could not create tarball file '%s', got error '%s'", tarballFilePath, err.Error())
 	}
 	defer file.Close()
 
+	if err := writeTarballToFile(file, filePaths, prefixTrim); err != nil {
+		return 0, err
+	}
+
+	stat, err := file.Stat()
+	if err != nil {
+		return 0, fmt.Errorf("Could not stat tarball file '%s', go error '%s'", tarballFilePath, err.Error())
+	}
+	return stat.Size(), nil
+}
+
+func writeTarballToFile(file *os.File, filePaths []string, prefixTrim string) error {
 	gzipWriter := gzip.NewWriter(file)
 	defer gzipWriter.Close()
 
@@ -34,10 +45,9 @@ func createTarball(tarballFilePath string, filePaths []string, prefixTrim string
 	for _, filePath := range filePaths {
 		err := addFileToTarWriter(filePath, tarWriter, prefixTrim)
 		if err != nil {
-			return errors.New(fmt.Sprintf("Could not add file '%s', to tarball, got error '%s'", filePath, err.Error()))
+			return fmt.Errorf("Could not add file '%s', to tarball, got error '%s'", filePath, err.Error())
 		}
 	}
-
 	return nil
 }
 
