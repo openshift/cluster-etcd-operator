@@ -251,8 +251,9 @@ fi
 echo "Snapshot restore succeeded!"
 
 echo "restarting etcd in a new cluster"
-# start podman-etcd resource agent to force a new cluster
-if ! crm_attribute --lifetime reboot --node "$NODENAME" --name "force_new_cluster" --update "$NODENAME"; then
+# start podman-etcd resource agent to force a new cluster; the value is the
+# claim time (epoch seconds), which podman-etcd uses to resolve concurrent claims
+if ! crm_attribute --lifetime reboot --node "$NODENAME" --name "force_new_cluster" --update "$(date +%s)"; then
   echo "could not setup etcd to force a new cluster on restart: crm_attribute error code $?"
   exit 1
 fi
