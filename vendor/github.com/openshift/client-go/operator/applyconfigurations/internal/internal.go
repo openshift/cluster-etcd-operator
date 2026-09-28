@@ -1559,6 +1559,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: routingViaHost
       type:
         scalar: boolean
+    - name: uplinkMode
+      type:
+        scalar: string
 - name: com.github.openshift.api.operator.v1.GatherStatus
   map:
     fields:
@@ -4462,9 +4465,11 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: path
       type:
         scalar: string
-    - name: size
+      default: ""
+    - name: sizeBytes
       type:
-        namedType: io.k8s.apimachinery.pkg.api.resource.Quantity
+        scalar: numeric
+      default: 0
 - name: com.github.openshift.api.operator.v1alpha1.EtcdBackupJobReference
   map:
     fields:
@@ -4539,7 +4544,9 @@ var schemaYAML = typed.YAMLObject(`types:
         list:
           elementType:
             namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyRetentionRule
-          elementRelationship: atomic
+          elementRelationship: associative
+          keys:
+          - type
     - name: schedule
       type:
         scalar: string
@@ -4559,7 +4566,7 @@ var schemaYAML = typed.YAMLObject(`types:
         list:
           elementType:
             namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupReference
-          elementRelationship: atomic
+          elementRelationship: associative
     - name: lastScheduleTime
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
@@ -4577,9 +4584,11 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: com.github.openshift.api.operator.v1alpha1.EtcdBackupSpec
   map:
     fields:
-    - name: nodeName
+    - name: nodeSelector
       type:
-        scalar: string
+        map:
+          elementType:
+            scalar: string
     - name: storage
       type:
         namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupStorage
@@ -4600,7 +4609,9 @@ var schemaYAML = typed.YAMLObject(`types:
         list:
           elementType:
             namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupFile
-          elementRelationship: atomic
+          elementRelationship: associative
+          keys:
+          - path
     - name: job
       type:
         namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupJobReference
@@ -4644,7 +4655,6 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: path
       type:
         scalar: string
-      default: ""
 - name: com.github.openshift.api.operator.v1alpha1.GatewayAPIIngressConfig
   map:
     fields:

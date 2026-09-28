@@ -2,17 +2,13 @@
 
 package v1alpha1
 
-import (
-	resource "k8s.io/apimachinery/pkg/api/resource"
-)
-
 // EtcdBackupFileApplyConfiguration represents a declarative configuration of the EtcdBackupFile type for use
 // with apply.
 type EtcdBackupFileApplyConfiguration struct {
 	// path to the backup file on the storage backend.
 	Path *string `json:"path,omitempty"`
-	// size of the backup file on the storage backend.
-	Size *resource.Quantity `json:"size,omitempty"`
+	// sizeBytes is the size of the backup file on the storage backend in bytes.
+	SizeBytes *int64 `json:"sizeBytes,omitempty"`
 }
 
 // EtcdBackupFileApplyConfiguration constructs a declarative configuration of the EtcdBackupFile type for use with
@@ -29,10 +25,10 @@ func (b *EtcdBackupFileApplyConfiguration) WithPath(value string) *EtcdBackupFil
 	return b
 }
 
-// WithSize sets the Size field in the declarative configuration to the given value
+// WithSizeBytes sets the SizeBytes field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the Size field is set to the value of the last call.
-func (b *EtcdBackupFileApplyConfiguration) WithSize(value resource.Quantity) *EtcdBackupFileApplyConfiguration {
-	b.Size = &value
+// If called multiple times, the SizeBytes field is set to the value of the last call.
+func (b *EtcdBackupFileApplyConfiguration) WithSizeBytes(value int64) *EtcdBackupFileApplyConfiguration {
+	b.SizeBytes = &value
 	return b
 }
