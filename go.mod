@@ -2,6 +2,10 @@ module github.com/openshift/cluster-etcd-operator
 
 go 1.26.0
 
+replace github.com/openshift/api => github.com/bhperry/openshift-api v0.0.0-20260924181613-9421f1f88121
+
+replace github.com/openshift/client-go => github.com/bhperry/openshift-client-go v0.0.0-20260924192918-c1bea8f2e1c1
+
 require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
 	github.com/fsnotify/fsnotify v1.9.0
@@ -11,7 +15,7 @@ require (
 	github.com/onsi/ginkgo/v2 v2.27.2
 	github.com/onsi/gomega v1.38.2
 	github.com/openshift-eng/openshift-tests-extension v0.0.0-20250804142706-7b3ab438a292
-	github.com/openshift/api v0.0.0-20260817181206-aa91c5e2b221
+	github.com/openshift/api v0.0.0-20260923043708-9abfa327cff2
 	github.com/openshift/build-machinery-go v0.0.0-20260625204636-d138cd032dd0
 	github.com/openshift/client-go v0.0.0-20260810202730-ddca5e0b7146
 	github.com/openshift/library-go v0.0.0-20260821222658-93ac9206ae34
