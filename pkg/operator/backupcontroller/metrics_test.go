@@ -12,7 +12,6 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
-	"k8s.io/apimachinery/pkg/api/resource"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -121,8 +120,8 @@ func TestCollectBackup_PVCStorage_Success(t *testing.T) {
 				},
 			},
 			Files: []operatorv1alpha1.EtcdBackupFile{
-				{Path: "/backups/snapshot_2026-09-28_120000.db", Size: resource.MustParse("100Mi")},
-				{Path: "/backups/static_kuberesources_2026-09-28_120000.tar.gz", Size: resource.MustParse("50Mi")},
+				{Path: "/backups/snapshot_2026-09-28_120000.db", SizeBytes: 100 * 1024 * 1024},
+				{Path: "/backups/static_kuberesources_2026-09-28_120000.tar.gz", SizeBytes: 50 * 1024 * 1024},
 			},
 		},
 	}
@@ -293,10 +292,10 @@ func TestBackupDeletion(t *testing.T) {
 
 func TestGetSizeBytes(t *testing.T) {
 	tests := []struct {
-		name       string
-		files      []operatorv1alpha1.EtcdBackupFile
-		wantSize   float64
-		wantOk     bool
+		name     string
+		files    []operatorv1alpha1.EtcdBackupFile
+		wantSize float64
+		wantOk   bool
 	}{
 		{
 			name:     "no files",
@@ -307,8 +306,8 @@ func TestGetSizeBytes(t *testing.T) {
 		{
 			name: "valid snapshot with archive",
 			files: []operatorv1alpha1.EtcdBackupFile{
-				{Path: "/backups/snapshot_2026-09-28_120000.db", Size: resource.MustParse("100Mi")},
-				{Path: "/backups/static_kuberesources_2026-09-28_120000.tar.gz", Size: resource.MustParse("50Mi")},
+				{Path: "/backups/snapshot_2026-09-28_120000.db", SizeBytes: 100 * 1024 * 1024},
+				{Path: "/backups/static_kuberesources_2026-09-28_120000.tar.gz", SizeBytes: 50 * 1024 * 1024},
 			},
 			wantSize: float64(100 * 1024 * 1024),
 			wantOk:   true,
@@ -316,8 +315,8 @@ func TestGetSizeBytes(t *testing.T) {
 		{
 			name: "partial snapshot (.db.part) excluded",
 			files: []operatorv1alpha1.EtcdBackupFile{
-				{Path: "/backups/snapshot_2026-09-28_120000.db.part", Size: resource.MustParse("100Mi")},
-				{Path: "/backups/static_kuberesources_2026-09-28_120000.tar.gz", Size: resource.MustParse("50Mi")},
+				{Path: "/backups/snapshot_2026-09-28_120000.db.part", SizeBytes: 100 * 1024 * 1024},
+				{Path: "/backups/static_kuberesources_2026-09-28_120000.tar.gz", SizeBytes: 50 * 1024 * 1024},
 			},
 			wantSize: 0,
 			wantOk:   false,
@@ -325,7 +324,7 @@ func TestGetSizeBytes(t *testing.T) {
 		{
 			name: "nested path still matches basename",
 			files: []operatorv1alpha1.EtcdBackupFile{
-				{Path: "/var/lib/etcd/backups/deep/path/snapshot_2026-09-28_120000.db", Size: resource.MustParse("200Mi")},
+				{Path: "/var/lib/etcd/backups/deep/path/snapshot_2026-09-28_120000.db", SizeBytes: 200 * 1024 * 1024},
 			},
 			wantSize: float64(200 * 1024 * 1024),
 			wantOk:   true,
@@ -333,8 +332,8 @@ func TestGetSizeBytes(t *testing.T) {
 		{
 			name: "duplicate snapshots rejected",
 			files: []operatorv1alpha1.EtcdBackupFile{
-				{Path: "/backups/snapshot_2026-09-28_120000.db", Size: resource.MustParse("100Mi")},
-				{Path: "/backups/snapshot_2026-09-28_130000.db", Size: resource.MustParse("100Mi")},
+				{Path: "/backups/snapshot_2026-09-28_120000.db", SizeBytes: 100 * 1024 * 1024},
+				{Path: "/backups/snapshot_2026-09-28_130000.db", SizeBytes: 100 * 1024 * 1024},
 			},
 			wantSize: 0,
 			wantOk:   false,
@@ -342,7 +341,7 @@ func TestGetSizeBytes(t *testing.T) {
 		{
 			name: "invalid size (zero) rejected",
 			files: []operatorv1alpha1.EtcdBackupFile{
-				{Path: "/backups/snapshot_2026-09-28_120000.db", Size: resource.MustParse("0")},
+				{Path: "/backups/snapshot_2026-09-28_120000.db", SizeBytes: 0},
 			},
 			wantSize: 0,
 			wantOk:   false,
@@ -350,7 +349,7 @@ func TestGetSizeBytes(t *testing.T) {
 		{
 			name: "invalid size (negative) rejected",
 			files: []operatorv1alpha1.EtcdBackupFile{
-				{Path: "/backups/snapshot_2026-09-28_120000.db", Size: resource.MustParse("-100Mi")},
+				{Path: "/backups/snapshot_2026-09-28_120000.db", SizeBytes: -100},
 			},
 			wantSize: 0,
 			wantOk:   false,
@@ -358,7 +357,7 @@ func TestGetSizeBytes(t *testing.T) {
 		{
 			name: "only archive, no snapshot",
 			files: []operatorv1alpha1.EtcdBackupFile{
-				{Path: "/backups/static_kuberesources_2026-09-28_120000.tar.gz", Size: resource.MustParse("50Mi")},
+				{Path: "/backups/static_kuberesources_2026-09-28_120000.tar.gz", SizeBytes: 50 * 1024 * 1024},
 			},
 			wantSize: 0,
 			wantOk:   false,
@@ -366,7 +365,7 @@ func TestGetSizeBytes(t *testing.T) {
 		{
 			name: "wrong prefix not matched",
 			files: []operatorv1alpha1.EtcdBackupFile{
-				{Path: "/backups/backup_2026-09-28_120000.db", Size: resource.MustParse("100Mi")},
+				{Path: "/backups/backup_2026-09-28_120000.db", SizeBytes: 100 * 1024 * 1024},
 			},
 			wantSize: 0,
 			wantOk:   false,
@@ -374,7 +373,7 @@ func TestGetSizeBytes(t *testing.T) {
 		{
 			name: "wrong suffix not matched",
 			files: []operatorv1alpha1.EtcdBackupFile{
-				{Path: "/backups/snapshot_2026-09-28_120000.txt", Size: resource.MustParse("100Mi")},
+				{Path: "/backups/snapshot_2026-09-28_120000.txt", SizeBytes: 100 * 1024 * 1024},
 			},
 			wantSize: 0,
 			wantOk:   false,

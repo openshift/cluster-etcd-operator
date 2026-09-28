@@ -241,10 +241,10 @@ func getSizeBytes(backup operatorv1alpha1.EtcdBackup) (float64, bool) {
 		if !strings.HasPrefix(name, "snapshot_") || !strings.HasSuffix(name, ".db") {
 			continue // Excludes the archive and .db.part files.
 		}
-		if found || file.Size.Value() <= 0 {
+		if found || file.SizeBytes <= 0 {
 			return 0, false // Ambiguous or invalid snapshot size.
 		}
-		size = float64(file.Size.Value())
+		size = float64(file.SizeBytes)
 		found = true
 	}
 	return size, found
