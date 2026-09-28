@@ -1,9 +1,15 @@
 package backupcontroller
 
 import (
+	"path/filepath"
+	"strings"
+
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorv1alpha1listers "github.com/openshift/client-go/operator/listers/operator/v1alpha1"
+	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/prometheus/client_golang/prometheus"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/component-base/metrics"
 	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/klog/v2"
@@ -89,7 +95,10 @@ func (c *backupCollector) Describe(ch chan<- *prometheus.Desc) {
 
 // Collect implements prometheus.Collector
 func (c *backupCollector) Collect(ch chan<- prometheus.Metric) {
-	backups, err := c.backupsLister.List(nil)
+	// IMPORTANT: Must pass labels.Everything(), not nil. The generated lister
+	// expects a non-nil selector, while test fakes may silently accept nil.
+	// See TestScrapeSafetyWithRealLister for regression protection.
+	backups, err := c.backupsLister.List(labels.Everything())
 	if err != nil {
 		klog.Errorf("backupCollector failed to list backups: %v", err)
 		return
@@ -147,7 +156,7 @@ func (c *backupCollector) collectBackupMetrics(ch chan<- prometheus.Metric, back
 	}
 
 	// Emit size if available
-	if sizeBytes := getSizeBytes(backup); sizeBytes > 0 {
+	if sizeBytes, ok := getSizeBytes(backup); ok {
 		ch <- prometheus.MustNewConstMetric(
 			c.sizeBytesDesc,
 			prometheus.GaugeValue,
@@ -180,12 +189,11 @@ func extractStorageInfo(backup operatorv1alpha1.EtcdBackup) (string, string) {
 }
 
 func extractPolicyName(backup operatorv1alpha1.EtcdBackup) string {
-	for _, owner := range backup.OwnerReferences {
-		if owner.Kind == "Backup" {
-			return owner.Name
-		}
+	policyName := backup.Labels[backuphelpers.LabelEtcdBackupPolicy]
+	if policyName == "" {
+		return ""
 	}
-	return ""
+	return policyName
 }
 
 func extractCurrentStatus(backup operatorv1alpha1.EtcdBackup) string {
@@ -209,7 +217,7 @@ func extractCurrentStatus(backup operatorv1alpha1.EtcdBackup) string {
 
 func getStartTime(backup operatorv1alpha1.EtcdBackup) float64 {
 	for _, condition := range backup.Status.Conditions {
-		if condition.Type == string(operatorv1alpha1.BackupRunning) {
+		if condition.Status == metav1.ConditionTrue && condition.Type == string(operatorv1alpha1.BackupRunning) {
 			return float64(condition.LastTransitionTime.Unix())
 		}
 	}
@@ -218,20 +226,28 @@ func getStartTime(backup operatorv1alpha1.EtcdBackup) float64 {
 
 func getCompletionTime(backup operatorv1alpha1.EtcdBackup) float64 {
 	for _, condition := range backup.Status.Conditions {
-		if condition.Type == string(operatorv1alpha1.BackupCompleted) ||
-			condition.Type == string(operatorv1alpha1.BackupFailed) {
+		if condition.Status == metav1.ConditionTrue && condition.Type == string(operatorv1alpha1.BackupCompleted) {
 			return float64(condition.LastTransitionTime.Unix())
 		}
 	}
 	return 0
 }
 
-func getSizeBytes(backup operatorv1alpha1.EtcdBackup) float64 {
-	var total int64
+func getSizeBytes(backup operatorv1alpha1.EtcdBackup) (float64, bool) {
+	var size float64
+	found := false
 	for _, file := range backup.Status.Files {
-		total += file.Size.Value()
+		name := filepath.Base(file.Path)
+		if !strings.HasPrefix(name, "snapshot_") || !strings.HasSuffix(name, ".db") {
+			continue // Excludes the archive and .db.part files.
+		}
+		if found || file.Size.Value() <= 0 {
+			return 0, false // Ambiguous or invalid snapshot size.
+		}
+		size = float64(file.Size.Value())
+		found = true
 	}
-	return float64(total)
+	return size, found
 }
 
 // MustRegisterDefaultBackupMetrics creates backup metrics using the default registry.

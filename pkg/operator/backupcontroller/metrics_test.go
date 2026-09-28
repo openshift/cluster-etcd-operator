@@ -7,11 +7,15 @@ import (
 	"time"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorfake "github.com/openshift/client-go/operator/clientset/versioned/fake"
+	operatorinformers "github.com/openshift/client-go/operator/informers/externalversions"
+	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"k8s.io/apimachinery/pkg/api/resource"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/component-base/metrics"
 )
@@ -117,7 +121,8 @@ func TestCollectBackup_PVCStorage_Success(t *testing.T) {
 				},
 			},
 			Files: []operatorv1alpha1.EtcdBackupFile{
-				{Size: resource.MustParse("100Mi")},
+				{Path: "/backups/snapshot_2026-09-28_120000.db", Size: resource.MustParse("100Mi")},
+				{Path: "/backups/static_kuberesources_2026-09-28_120000.tar.gz", Size: resource.MustParse("50Mi")},
 			},
 		},
 	}
@@ -193,11 +198,8 @@ func TestCollectBackup_CreatedByPolicy(t *testing.T) {
 		ObjectMeta: v1.ObjectMeta{
 			Name: "policy-backup",
 			UID:  types.UID("policy-uid"),
-			OwnerReferences: []v1.OwnerReference{
-				{
-					Kind: "Backup",
-					Name: "daily-policy",
-				},
+			Labels: map[string]string{
+				backuphelpers.LabelEtcdBackupPolicy: "daily-policy",
 			},
 		},
 		Spec: operatorv1alpha1.EtcdBackupSpec{
@@ -289,34 +291,111 @@ func TestBackupDeletion(t *testing.T) {
 	}
 }
 
-func TestSizeBytes_NoFiles(t *testing.T) {
-	backup := operatorv1alpha1.EtcdBackup{
-		Status: operatorv1alpha1.EtcdBackupStatus{
-			Files: []operatorv1alpha1.EtcdBackupFile{},
+func TestGetSizeBytes(t *testing.T) {
+	tests := []struct {
+		name       string
+		files      []operatorv1alpha1.EtcdBackupFile
+		wantSize   float64
+		wantOk     bool
+	}{
+		{
+			name:     "no files",
+			files:    []operatorv1alpha1.EtcdBackupFile{},
+			wantSize: 0,
+			wantOk:   false,
 		},
-	}
-
-	size := getSizeBytes(backup)
-	if size != 0 {
-		t.Errorf("expected size 0 for no files, got %f", size)
-	}
-}
-
-func TestSizeBytes_MultipleFiles(t *testing.T) {
-	backup := operatorv1alpha1.EtcdBackup{
-		Status: operatorv1alpha1.EtcdBackupStatus{
-			Files: []operatorv1alpha1.EtcdBackupFile{
-				{Size: resource.MustParse("100Mi")},
-				{Size: resource.MustParse("50Mi")},
-				{Size: resource.MustParse("25Mi")},
+		{
+			name: "valid snapshot with archive",
+			files: []operatorv1alpha1.EtcdBackupFile{
+				{Path: "/backups/snapshot_2026-09-28_120000.db", Size: resource.MustParse("100Mi")},
+				{Path: "/backups/static_kuberesources_2026-09-28_120000.tar.gz", Size: resource.MustParse("50Mi")},
 			},
+			wantSize: float64(100 * 1024 * 1024),
+			wantOk:   true,
+		},
+		{
+			name: "partial snapshot (.db.part) excluded",
+			files: []operatorv1alpha1.EtcdBackupFile{
+				{Path: "/backups/snapshot_2026-09-28_120000.db.part", Size: resource.MustParse("100Mi")},
+				{Path: "/backups/static_kuberesources_2026-09-28_120000.tar.gz", Size: resource.MustParse("50Mi")},
+			},
+			wantSize: 0,
+			wantOk:   false,
+		},
+		{
+			name: "nested path still matches basename",
+			files: []operatorv1alpha1.EtcdBackupFile{
+				{Path: "/var/lib/etcd/backups/deep/path/snapshot_2026-09-28_120000.db", Size: resource.MustParse("200Mi")},
+			},
+			wantSize: float64(200 * 1024 * 1024),
+			wantOk:   true,
+		},
+		{
+			name: "duplicate snapshots rejected",
+			files: []operatorv1alpha1.EtcdBackupFile{
+				{Path: "/backups/snapshot_2026-09-28_120000.db", Size: resource.MustParse("100Mi")},
+				{Path: "/backups/snapshot_2026-09-28_130000.db", Size: resource.MustParse("100Mi")},
+			},
+			wantSize: 0,
+			wantOk:   false,
+		},
+		{
+			name: "invalid size (zero) rejected",
+			files: []operatorv1alpha1.EtcdBackupFile{
+				{Path: "/backups/snapshot_2026-09-28_120000.db", Size: resource.MustParse("0")},
+			},
+			wantSize: 0,
+			wantOk:   false,
+		},
+		{
+			name: "invalid size (negative) rejected",
+			files: []operatorv1alpha1.EtcdBackupFile{
+				{Path: "/backups/snapshot_2026-09-28_120000.db", Size: resource.MustParse("-100Mi")},
+			},
+			wantSize: 0,
+			wantOk:   false,
+		},
+		{
+			name: "only archive, no snapshot",
+			files: []operatorv1alpha1.EtcdBackupFile{
+				{Path: "/backups/static_kuberesources_2026-09-28_120000.tar.gz", Size: resource.MustParse("50Mi")},
+			},
+			wantSize: 0,
+			wantOk:   false,
+		},
+		{
+			name: "wrong prefix not matched",
+			files: []operatorv1alpha1.EtcdBackupFile{
+				{Path: "/backups/backup_2026-09-28_120000.db", Size: resource.MustParse("100Mi")},
+			},
+			wantSize: 0,
+			wantOk:   false,
+		},
+		{
+			name: "wrong suffix not matched",
+			files: []operatorv1alpha1.EtcdBackupFile{
+				{Path: "/backups/snapshot_2026-09-28_120000.txt", Size: resource.MustParse("100Mi")},
+			},
+			wantSize: 0,
+			wantOk:   false,
 		},
 	}
 
-	size := getSizeBytes(backup)
-	expected := float64(175 * 1024 * 1024)
-	if size != expected {
-		t.Errorf("expected size %f, got %f", expected, size)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backup := operatorv1alpha1.EtcdBackup{
+				Status: operatorv1alpha1.EtcdBackupStatus{
+					Files: tt.files,
+				},
+			}
+			gotSize, gotOk := getSizeBytes(backup)
+			if gotSize != tt.wantSize {
+				t.Errorf("getSizeBytes() size = %v, want %v", gotSize, tt.wantSize)
+			}
+			if gotOk != tt.wantOk {
+				t.Errorf("getSizeBytes() ok = %v, want %v", gotOk, tt.wantOk)
+			}
+		})
 	}
 }
 
@@ -418,6 +497,151 @@ func TestMetricNamesMatchConstants(t *testing.T) {
 	}
 }
 
+// TestScrapeSafetyWithRealLister verifies that Collect() doesn't panic when using
+// the real generated lister. The production code must pass labels.Everything() to List(),
+// not nil — the generated lister panics on nil, while fakeBackupLister silently accepts it.
+// This test uses the real generated lister backed by a cache indexer.
+func TestScrapeSafetyWithRealLister(t *testing.T) {
+	backup := &operatorv1alpha1.EtcdBackup{
+		ObjectMeta: v1.ObjectMeta{
+			Name: "scrape-safety-test",
+			UID:  types.UID("scrape-uid"),
+		},
+		Spec: operatorv1alpha1.EtcdBackupSpec{
+			Storage: operatorv1alpha1.EtcdBackupStorage{
+				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+				PVC:  &operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-pvc"},
+			},
+		},
+	}
+
+	// Create a real generated lister backed by a cache indexer (not the fake)
+	fakeClient := operatorfake.NewSimpleClientset(backup)
+	informerFactory := operatorinformers.NewSharedInformerFactory(fakeClient, 0)
+	backupInformer := informerFactory.Operator().V1alpha1().EtcdBackups()
+
+	// Add object directly to the indexer (bypass sync wait)
+	if err := backupInformer.Informer().GetIndexer().Add(backup); err != nil {
+		t.Fatalf("failed to add backup to indexer: %v", err)
+	}
+
+	// Create collector with real generated lister (not fake)
+	registry := metrics.NewKubeRegistry()
+	collector := NewBackupMetrics(registry, backupInformer.Lister())
+
+	// This scrape must not panic. If List(nil) was passed instead of List(labels.Everything()),
+	// the real generated lister would panic here.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Collect() panicked with real lister: %v", r)
+		}
+	}()
+
+	metricCh := make(chan prometheus.Metric, 10)
+	go func() {
+		collector.Collect(metricCh)
+		close(metricCh)
+	}()
+
+	// Drain the channel to complete the scrape
+	var metricCount int
+	for range metricCh {
+		metricCount++
+	}
+
+	// Should have at least one info metric
+	if metricCount < 1 {
+		t.Errorf("expected at least 1 metric from scrape, got %d", metricCount)
+	}
+}
+
+// TestCollectorWithRealLister verifies the collector works with the real generated lister
+// producing correct metrics for multiple backups.
+func TestCollectorWithRealLister(t *testing.T) {
+	backup1 := &operatorv1alpha1.EtcdBackup{
+		ObjectMeta: v1.ObjectMeta{
+			Name: "real-lister-backup-1",
+			UID:  types.UID("real-uid-1"),
+		},
+		Spec: operatorv1alpha1.EtcdBackupSpec{
+			Storage: operatorv1alpha1.EtcdBackupStorage{
+				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+				PVC:  &operatorv1alpha1.EtcdBackupStoragePvc{Name: "pvc-1"},
+			},
+		},
+		Status: operatorv1alpha1.EtcdBackupStatus{
+			Conditions: []v1.Condition{
+				{Type: string(operatorv1alpha1.BackupCompleted), Status: v1.ConditionTrue},
+			},
+		},
+	}
+
+	backup2 := &operatorv1alpha1.EtcdBackup{
+		ObjectMeta: v1.ObjectMeta{
+			Name: "real-lister-backup-2",
+			UID:  types.UID("real-uid-2"),
+		},
+		Spec: operatorv1alpha1.EtcdBackupSpec{
+			Storage: operatorv1alpha1.EtcdBackupStorage{
+				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+				PVC:  &operatorv1alpha1.EtcdBackupStoragePvc{Name: "pvc-2"},
+			},
+		},
+		Status: operatorv1alpha1.EtcdBackupStatus{
+			Conditions: []v1.Condition{
+				{Type: string(operatorv1alpha1.BackupPending), Status: v1.ConditionTrue},
+			},
+		},
+	}
+
+	// Use real generated client and informer
+	objects := []runtime.Object{backup1, backup2}
+	fakeClient := operatorfake.NewSimpleClientset(objects...)
+	informerFactory := operatorinformers.NewSharedInformerFactory(fakeClient, 0)
+	backupInformer := informerFactory.Operator().V1alpha1().EtcdBackups()
+
+	// Add objects directly to the indexer (bypass sync wait)
+	indexer := backupInformer.Informer().GetIndexer()
+	if err := indexer.Add(backup1); err != nil {
+		t.Fatalf("failed to add backup1 to indexer: %v", err)
+	}
+	if err := indexer.Add(backup2); err != nil {
+		t.Fatalf("failed to add backup2 to indexer: %v", err)
+	}
+
+	// Create collector with real generated lister
+	registry := metrics.NewKubeRegistry()
+	collector := NewBackupMetrics(registry, backupInformer.Lister())
+
+	// Verify scrape doesn't panic and returns expected metrics
+	metricCh := make(chan prometheus.Metric, 100)
+	go func() {
+		collector.Collect(metricCh)
+		close(metricCh)
+	}()
+
+	var metricCount int
+	for range metricCh {
+		metricCount++
+	}
+
+	// Should have metrics for both backups (at minimum: 2 info metrics + 2 status metrics)
+	if metricCount < 4 {
+		t.Errorf("expected at least 4 metrics from real lister, got %d", metricCount)
+	}
+
+	// Verify we can actually collect and compare
+	expected := `
+		# HELP etcd_backup_status The current status of the backup. Value of 1 indicates the labeled status is active.
+		# TYPE etcd_backup_status gauge
+		etcd_backup_status{etcd_backup="real-lister-backup-1",status="Completed",uid="real-uid-1"} 1
+		etcd_backup_status{etcd_backup="real-lister-backup-2",status="Pending",uid="real-uid-2"} 1
+	`
+	if err := testutil.CollectAndCompare(collector, strings.NewReader(expected), backupStatusMetricName); err != nil {
+		t.Errorf("status metrics mismatch with real lister: %v", err)
+	}
+}
+
 // Helper functions
 
 func setupCollectorWithBackups(t *testing.T, backups ...*operatorv1alpha1.EtcdBackup) *backupCollector {
@@ -441,25 +665,4 @@ func verifyInfoMetric(t *testing.T, collector prometheus.Collector, name, uid, n
 	if err := testutil.CollectAndCompare(collector, strings.NewReader(expected), backupInfoMetricName); err != nil {
 		t.Errorf("info metric mismatch: %v", err)
 	}
-}
-
-func verifyStatusMetric(t *testing.T, collector prometheus.Collector, name, uid, status string, expectedValue float64) {
-	t.Helper()
-
-	expected := `
-		# HELP etcd_backup_status The current status of the backup. Value of 1 indicates the labeled status is active.
-		# TYPE etcd_backup_status gauge
-		etcd_backup_status{etcd_backup="` + name + `",status="` + status + `",uid="` + uid + `"} ` + formatFloat(expectedValue) + `
-	`
-
-	if err := testutil.CollectAndCompare(collector, strings.NewReader(expected), backupStatusMetricName); err != nil {
-		t.Errorf("status metric mismatch for %s=%s: %v", name, status, err)
-	}
-}
-
-func formatFloat(f float64) string {
-	if f == float64(int64(f)) {
-		return fmt.Sprintf("%d", int64(f))
-	}
-	return fmt.Sprintf("%g", f)
 }
