@@ -18,10 +18,25 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/component-base/metrics"
+	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/klog/v2"
 
 	pacmkrv1 "github.com/openshift/api/etcd/v1"
 )
+
+var resourceFailCountGauge = metrics.NewGaugeVec(
+	&metrics.GaugeOpts{
+		Namespace:      "tnf",
+		Subsystem:      "resource",
+		Name:           "fail_count",
+		Help:           "Current Pacemaker fail-count for a TNF resource on a node, as reported by the CIB",
+		StabilityLevel: metrics.ALPHA,
+	},
+	[]string{"node", "resource"},
+)
+
+var registerFailCountGauge sync.Once
 
 // HealthStatusValue represents the overall health status of the pacemaker cluster.
 type HealthStatusValue string
@@ -124,12 +139,6 @@ type HealthCheck struct {
 	// Only updated when status is non-Unknown, so CRLastUpdated reflects the last valid CR timestamp.
 	previousMu sync.Mutex
 	previous   *HealthStatus
-
-	disruptionTracker *DisruptionTracker
-
-	// crNodes holds the PacemakerCluster node statuses retrieved during getPacemakerStatus.
-	// Used by trackResourceDisruptions to avoid a redundant informer store lookup.
-	crNodes *[]pacmkrv1.PacemakerClusterNodeStatus
 }
 
 // NewHealthCheck creates a new HealthCheck for monitoring pacemaker status
@@ -202,13 +211,16 @@ func NewHealthCheckWithInformer(
 	eventRecorder events.Recorder,
 	pacemakerInformer cache.SharedIndexInformer,
 ) (factory.Controller, cache.SharedIndexInformer, error) {
+	registerFailCountGauge.Do(func() {
+		legacyregistry.MustRegister(resourceFailCountGauge)
+	})
+
 	c := &HealthCheck{
 		operatorClient:    operatorClient,
 		kubeClient:        kubeClient,
 		eventRecorder:     eventRecorder,
 		pacemakerInformer: pacemakerInformer,
 		recordedEvents:    make(map[string]time.Time),
-		disruptionTracker: NewDisruptionTracker(),
 		// previous starts as nil - first sync will be treated as "from Unknown"
 	}
 
@@ -253,7 +265,7 @@ func (c *HealthCheck) sync(ctx context.Context, syncCtx factory.SyncContext) err
 		return nil
 	}
 
-	c.trackResourceDisruptions()
+	c.updateFailCountGauge()
 
 	// Log the determined status for visibility
 	klog.V(4).Infof("Pacemaker health status: %s (errors: %d, warnings: %d)",
@@ -279,7 +291,6 @@ func (c *HealthCheck) sync(ctx context.Context, syncCtx factory.SyncContext) err
 // Returns (nil, nil, nil) if the CR hasn't changed since last sync (same lastUpdated timestamp).
 // For Unknown status, previous is not updated (preserves last valid status for grace period).
 func (c *HealthCheck) getPacemakerStatus(ctx context.Context) (*HealthStatus, *HealthStatus, error) {
-	c.crNodes = nil
 	klog.V(4).Infof("Retrieving pacemaker status from CR...")
 
 	c.previousMu.Lock()
@@ -298,7 +309,6 @@ func (c *HealthCheck) getPacemakerStatus(ctx context.Context) (*HealthStatus, *H
 	if !ok {
 		return unknownHealthStatus("Failed to convert cached item to PacemakerCluster"), previous, nil
 	}
-	c.crNodes = pacemakerCR.Status.Nodes
 
 	// Staleness grows over time and must bypass the timestamp-unchanged optimization.
 	isStale := pacemakerCR.Status.LastUpdated.IsZero() ||
@@ -838,9 +848,22 @@ func (c *HealthCheck) recordErrorEvent(errorMsg string) {
 	c.eventRecorder.Warningf(eventReason, msgPacemakerError, errorMsg)
 }
 
-func (c *HealthCheck) trackResourceDisruptions() {
-	if c.crNodes == nil {
+// updateFailCountGauge sets the tnf_resource_fail_count gauge from the CR's CIB-sourced fields.
+func (c *HealthCheck) updateFailCountGauge() {
+	item, exists, err := c.pacemakerInformer.GetStore().GetByKey(PacemakerClusterResourceName)
+	if err != nil || !exists {
 		return
 	}
-	c.disruptionTracker.TrackResourceStates(c.crNodes)
+	cr, ok := item.(*pacmkrv1.PacemakerCluster)
+	if !ok || cr.Status.Nodes == nil {
+		return
+	}
+	resourceFailCountGauge.Reset()
+	for _, node := range *cr.Status.Nodes {
+		for _, resource := range node.Resources {
+			if resource.FailCount != nil {
+				resourceFailCountGauge.WithLabelValues(node.NodeName, string(resource.Name)).Set(float64(*resource.FailCount))
+			}
+		}
+	}
 }
