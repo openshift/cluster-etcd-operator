@@ -36,8 +36,6 @@ var workloadKinds = map[string]bool{
 var exemptManifests = map[string]string{
 	"etcd/restore-pod.yaml":        "ephemeral restore pod",
 	"etcd/quorum-restore-pod.yaml": "ephemeral restore pod",
-	// TODO: remove this exemption once PR #1706 merges (OCPBUGS-123168).
-	"tnfdeployment/cert-watcher-daemonset.yaml": "annotation added by PR #1706 (OCPBUGS-123168)",
 }
 
 // manifest is a minimal representation of a Kubernetes resource used to
