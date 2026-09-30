@@ -15,6 +15,7 @@ import (
 
 const (
 	OperatorConditionEtcdRunningInCluster               = "EtcdRunningInCluster"
+	OperatorConditionEtcdBootstrapMemberRemoved         = "EtcdBootstrapMemberRemoved"
 	OperatorConditionExternalEtcdReadyForTransition     = "ExternalEtcdReadyForTransition"
 	OperatorConditionExternalEtcdHasCompletedTransition = "ExternalEtcdHasCompletedTransition"
 )
@@ -86,6 +87,31 @@ func IsEtcdRunningInCluster(ctx context.Context, operatorClient v1helpers.Static
 	}
 
 	return etcdRunningInCluster, nil
+}
+
+// IsEtcdBootstrapMemberRemoved checks if the etcd-bootstrap member has been
+// removed from the etcd cluster by examining the operator status for the
+// EtcdBootstrapMemberRemoved condition. Unlike EtcdRunningInCluster, which is
+// set before the bootstrap member is removed, this condition is only set once
+// the member removal has been confirmed.
+func IsEtcdBootstrapMemberRemoved(ctx context.Context, operatorClient v1helpers.StaticPodOperatorClient) (bool, error) {
+	_, opStatus, _, err := operatorClient.GetStaticPodOperatorState()
+	if err != nil {
+		klog.Errorf("failed to get static pod operator state: %v", err)
+		return false, err
+	}
+
+	if opStatus == nil {
+		klog.V(2).Info("static pod operator status not yet populated; bootstrap member removal unknown")
+		return false, nil
+	}
+
+	bootstrapMemberRemoved := v1helpers.IsOperatorConditionTrue(opStatus.Conditions, OperatorConditionEtcdBootstrapMemberRemoved)
+	if bootstrapMemberRemoved {
+		klog.V(4).Infof("etcd-bootstrap member has been removed")
+	}
+
+	return bootstrapMemberRemoved, nil
 }
 
 // HasExternalEtcdCompletedTransition checks if the transition to external etcd process is completed
