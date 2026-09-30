@@ -18,6 +18,8 @@ spec:
     spec:
       template:
         metadata:
+          annotations:
+            target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
           labels:
             app: cluster-backup-cronjob
         spec:

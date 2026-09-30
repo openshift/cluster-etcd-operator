@@ -8,6 +8,9 @@ metadata:
     backup-name: templated
 spec:
   template:
+    metadata:
+      annotations:
+        target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
     spec:
       initContainers:
         - name: verify-storage
