@@ -145,11 +145,13 @@ func RunTnfUpdateSetup() error {
 	// Only this node may hold force_new_cluster here: the replacement node has no
 	// etcd data and must never seed. Its Pacemaker is not started until
 	// "pcs cluster start --all" below, so no agent can claim on it concurrently;
-	// clear any leftover claim so the write below is the only one. A failure here
-	// is only logged: the claim below and podman-etcd's checks still apply.
+	// clear any leftover claim so the write below is the only one.
+	// crm_attribute treats deleting an absent attribute as success, so an error
+	// here is a real attrd/CIB failure: stop before writing our claim.
 	command = fmt.Sprintf("crm_attribute --delete --lifetime reboot --node %s --name \"force_new_cluster\"", otherNodeName)
 	if stdOut, stdErr, err = exec.Execute(ctx, command); err != nil {
-		klog.Warningf("Could not clear force_new_cluster on replacement node %s, continuing: stdout: %s, stderr: %s, err: %v", otherNodeName, stdOut, stdErr, err)
+		klog.Errorf("Failed to clear force_new_cluster on replacement node %s: stdout: %s, stderr: %s, err: %v", otherNodeName, stdOut, stdErr, err)
+		return fmt.Errorf("failed to clear force_new_cluster on replacement node %s: %w", otherNodeName, err)
 	}
 
 	commands = []string{
