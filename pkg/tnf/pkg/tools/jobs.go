@@ -144,7 +144,7 @@ func sanitizeDNSLabel(name string) string {
 }
 
 // ToPascalCase converts kebab-case job names to PascalCase for condition names.
-// Capitalizes the first letter of each part, keeping the rest lowercase.
+// Capitalizes the first letter of each part, preserving remaining characters as-is.
 // Special cases "tnf" to be all uppercase "TNF" (acronym).
 // Examples:
 //   - "tnf-setup-job" → "TNFSetupJob"
