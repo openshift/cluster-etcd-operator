@@ -152,7 +152,12 @@ func TestJobAlreadyRunning(t *testing.T) {
 			Name:       "test-backup",
 			Namespace:  operatorclient.TargetNamespace,
 			Labels:     map[string]string{"app": backupAppName, backuphelpers.LabelEtcdBackup: "test-backup"},
-			Finalizers: []string{backuphelpers.FinalizerEtcdBackup}}}
+			Finalizers: []string{backuphelpers.FinalizerEtcdBackup},
+			OwnerReferences: []v1.OwnerReference{{
+				Kind: "EtcdBackup",
+				Name: "test-backup",
+				UID:  "test-backup-uid",
+			}}}}
 
 	t.Run("correct-labels-and-status", func(t *testing.T) {
 		runBackupControllerTest(t, testCaseBackupController{

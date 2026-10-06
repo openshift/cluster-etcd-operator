@@ -215,12 +215,12 @@ func filterPruneableBackups(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, bac
 						n++
 					}
 				}
-			case operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxSize:
-				if rule.MaxSize != nil && !rule.MaxSize.IsZero() {
+			case operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxTotalSizeGb:
+				if rule.MaxTotalSizeGb > 0 {
 					for _, file := range backup.Status.Files {
 						group.sizeBytes += file.SizeBytes
 					}
-					if rule.MaxSize.CmpInt64(group.sizeBytes) < 0 {
+					if int64(rule.MaxTotalSizeGb*1024*1024*1024) < group.sizeBytes {
 						backups[n] = backup
 						n++
 					}

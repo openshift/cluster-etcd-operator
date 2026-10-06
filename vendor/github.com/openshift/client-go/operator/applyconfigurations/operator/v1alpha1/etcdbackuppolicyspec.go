@@ -6,24 +6,44 @@ package v1alpha1
 // with apply.
 type EtcdBackupPolicySpecApplyConfiguration struct {
 	// schedule sets the backup schedule in Cron format, see https://en.wikipedia.org/wiki/Cron.
+	// The value must be one of the following forms:
+	// a predefined macro "@yearly", "@annually", "@monthly", "@weekly", "@daily" or "@hourly";
+	// an "@every <duration>" expression where duration is a sequence of decimal numbers each with
+	// a unit of "ns", "us", "ms", "s", "m" or "h" (for example "@every 2h" or "@every 1h30m");
+	// or a standard cron expression of five space separated fields (minute, hour, day-of-month,
+	// month and day-of-week), where each field may only contain digits, the names used for months
+	// and days of the week, and the cron special characters "*", "/", "-" and ",".
+	// This validation only checks the overall shape of the value; the individual field values are
+	// validated when the schedule is parsed by the controller, which reports parsing failures via
+	// the schedule's status condition.
+	// Must be between 1 and 1024 characters long.
+	// This field is required.
 	Schedule *string `json:"schedule,omitempty"`
 	// nodeSelector specifies which control plane nodes to select from for running backup jobs.
 	// The default node-role.kubernetes.io/control-plane label will always be required in addition to any labels set here.
 	// If no nodes are matched, then no EtcdBackups will be created.
 	// For Local storage type, an EtcdBackup will be created for each selected control plane node every time the schedule is triggered. This is a special case to provide some resiliancy in the event of control plane node loss.
 	// For PVC storage type, a single EtcdBackup will be created with the given nodeSelector every time the schedule is triggered.
-	// When specified, nodeSelector must contain at least 1 entry and must not contain more than 10 entries.
+	// When specified, must contain between 1 and 10 entries.
+	// This field is optional.
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 	// storage specifies the location where etcd backup files will be saved.
+	// This field is required.
 	Storage *EtcdBackupStorageApplyConfiguration `json:"storage,omitempty"`
 	// retentionRules defines the policy for retaining and deleting existing backups.
 	// Backups are deleted from the oldest first until all rules are satisfied.
 	// If no rules are specified then backups created by this policy will not be automatically deleted.
 	// When an EtcdBackup is deleted the files created by it will be deleted as well, as long as the storage backend is still accessible.
+	// When specified, must contain between 1 and 2 entries.
+	// Must not have more than 1 entry of each rule type.
+	// This field is optional.
 	RetentionRules []EtcdBackupPolicyRetentionRuleApplyConfiguration `json:"retentionRules,omitempty"`
-	// failedBackupsHistoryLimit defined the number of failed etcdbackups to retain. Value must be non-negative integer.
+	// failedBackupsHistoryLimit defined the number of failed etcdbackups to retain. Failed backups are deleted from the oldest first.
+	// Must be non-negative integer.
 	// If set to to 0, then failed backups will be deleted immediately.
 	// If unset, defaults to 1.
+	// Must be a positive integer no greater than 1000.
+	// This field is optional.
 	FailedBackupsHistoryLimit *int32 `json:"failedBackupsHistoryLimit,omitempty"`
 }
 

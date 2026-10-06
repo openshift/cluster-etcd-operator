@@ -6,9 +6,13 @@ package v1alpha1
 // with apply.
 type EtcdBackupFileApplyConfiguration struct {
 	// path to the backup file on the storage backend.
+	// Must be an absolute filepath between 1 and 4096 characters containing only alphanumeric characters, '/', '.', '_', or '-', starting with a '/'.
+	// This field is required.
 	Path *string `json:"path,omitempty"`
 	// sizeBytes is the size of the backup file on the storage backend in bytes.
 	// If omitted, then the file specified by path is an empty file.
+	// When specified, must be between 1 and 1000000000000 (1 TB).
+	// This field is optional.
 	SizeBytes *int64 `json:"sizeBytes,omitempty"`
 }
 

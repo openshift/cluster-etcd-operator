@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
-	"k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/stretchr/testify/require"
 )
@@ -122,7 +121,7 @@ func withRetentionNumberThreeBackups(b *operatorv1alpha1.EtcdBackupPolicySpec) *
 
 func withRetentionSizeOneGB(b *operatorv1alpha1.EtcdBackupPolicySpec) *operatorv1alpha1.EtcdBackupPolicySpec {
 	b.RetentionRules = append(b.RetentionRules, operatorv1alpha1.EtcdBackupPolicyRetentionRule{
-		Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxSize, MaxSize: resource.NewQuantity(10*1024*1024*1024, resource.BinarySI),
+		Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxTotalSizeGb, MaxTotalSizeGb: 10,
 	})
 	return b
 }

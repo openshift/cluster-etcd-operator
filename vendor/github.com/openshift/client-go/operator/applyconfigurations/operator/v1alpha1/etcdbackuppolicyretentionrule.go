@@ -4,19 +4,26 @@ package v1alpha1
 
 import (
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
-	resource "k8s.io/apimachinery/pkg/api/resource"
 )
 
 // EtcdBackupPolicyRetentionRuleApplyConfiguration represents a declarative configuration of the EtcdBackupPolicyRetentionRule type for use
 // with apply.
 type EtcdBackupPolicyRetentionRuleApplyConfiguration struct {
 	// type defined which rule field is set
+	// Allowed values are MaxQuantity and MaxTotalSizeGb.
+	// When set to MaxQuantity, this rule deletes old EtcdBackups when the quantity is exceeded.
+	// When set to MaxTotalSizeGb, this rule deletes old EtcdBackups when the total aggregate size of backup files exceeds the value.
+	// This field is required.
 	Type *operatorv1alpha1.EtcdBackupPolicyRetentionRuleType `json:"type,omitempty"`
 	// maxQuantity enforces the deletion of backups that exceed the given count.
+	// Must be between 1 and 1000.
+	// This field is required when the rule type is "MaxQuantity", and forbidden otherwise.
 	MaxQuantity *int32 `json:"maxQuantity,omitempty"`
-	// maxSize enforces the deletion of backups by the total size of backups on the storage backend.
+	// maxTotalSizeGb enforces the deletion of backups by the total size of backups on the storage backend (in GB).
 	// This is a soft threshold. The total size of backups may temporarily exceed the limit when new backups are created.
-	MaxSize *resource.Quantity `json:"maxSize,omitempty"`
+	// Must be between 1 and 10000.
+	// This field is required when the rule type is "MaxTotalSizeGb", and forbidden otherwise.
+	MaxTotalSizeGb *int32 `json:"maxTotalSizeGb,omitempty"`
 }
 
 // EtcdBackupPolicyRetentionRuleApplyConfiguration constructs a declarative configuration of the EtcdBackupPolicyRetentionRule type for use with
@@ -41,10 +48,10 @@ func (b *EtcdBackupPolicyRetentionRuleApplyConfiguration) WithMaxQuantity(value 
 	return b
 }
 
-// WithMaxSize sets the MaxSize field in the declarative configuration to the given value
+// WithMaxTotalSizeGb sets the MaxTotalSizeGb field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the MaxSize field is set to the value of the last call.
-func (b *EtcdBackupPolicyRetentionRuleApplyConfiguration) WithMaxSize(value resource.Quantity) *EtcdBackupPolicyRetentionRuleApplyConfiguration {
-	b.MaxSize = &value
+// If called multiple times, the MaxTotalSizeGb field is set to the value of the last call.
+func (b *EtcdBackupPolicyRetentionRuleApplyConfiguration) WithMaxTotalSizeGb(value int32) *EtcdBackupPolicyRetentionRuleApplyConfiguration {
+	b.MaxTotalSizeGb = &value
 	return b
 }

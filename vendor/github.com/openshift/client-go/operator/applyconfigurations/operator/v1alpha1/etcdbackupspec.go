@@ -10,9 +10,11 @@ type EtcdBackupSpecApplyConfiguration struct {
 	// If no nodes are matched, then the backup will be marked failed.
 	// For Local storage type, this may be used to target a specific node to take and store the backup.
 	// For PVC storage type, this may be used to control where the backup is taken from.
-	// When specified, nodeSelector must contain at least 1 entry and must not contain more than 10 entries.
+	// When specified, must contain between 1 and 10 entries.
+	// This field is optional.
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 	// storage specifies the location where etcd backup files will be saved.
+	// This field is required.
 	Storage *EtcdBackupStorageApplyConfiguration `json:"storage,omitempty"`
 }
 

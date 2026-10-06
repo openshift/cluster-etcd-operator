@@ -8,9 +8,11 @@ type EtcdBackupStoragePvcApplyConfiguration struct {
 	// name is a reference to a PVC in the "openshift-etcd" namespace where the etcd backup file will be saved.
 	// name must be between 1 and 253 characters and conform to RFC 1123 subdomain format:
 	// lowercase alphanumeric characters, '-' or '.', starting and ending with alphanumeric characters.
+	// This field is required.
 	Name *string `json:"name,omitempty"`
 	// path is a directory on the volume where the etcd backup file will be saved.
 	// When present, path must be an absolute filepath between 1 and 2048 characters containing only alphanumeric characters, '/', '.', '_', or '-', starting with a '/'.
+	// This field is optional.
 	Path *string `json:"path,omitempty"`
 }
 
