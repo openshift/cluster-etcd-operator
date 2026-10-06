@@ -6,6 +6,7 @@ package v1alpha1
 // with apply.
 type EtcdBackupStorageLocalApplyConfiguration struct {
 	// hostPath is a local directory on the master node where the etcd backup file will be saved.
+	// hostPath must be an absolute filepath between 1 and 2048 characters containing only alphanumeric characters, '/', '.', '_', or '-', starting with a '/'.
 	HostPath *string `json:"hostPath,omitempty"`
 }
 

@@ -64,10 +64,6 @@ func (b *BackupConfig) ArgList() []string {
 		return args
 	}
 
-	if b.spec.TimeZone != "" {
-		args = append(args, fmt.Sprintf("--%s=%s", "timezone", b.spec.TimeZone))
-	}
-
 	if b.spec.Schedule != "" {
 		args = append(args, fmt.Sprintf("--%s=%s", "schedule", b.spec.Schedule))
 	}
@@ -84,10 +80,6 @@ func (b *BackupConfig) ArgString() string {
 
 	if !b.enabled || b.spec == nil {
 		return strings.Join(args, "\n    ")
-	}
-
-	if b.spec.TimeZone != "" {
-		args = append(args, fmt.Sprintf("- --%s=%s", "timezone", b.spec.TimeZone))
 	}
 
 	if b.spec.Schedule != "" {
