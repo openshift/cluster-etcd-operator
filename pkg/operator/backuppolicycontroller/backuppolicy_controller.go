@@ -3,6 +3,7 @@ package backuppolicycontroller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -142,7 +143,7 @@ func (c *BackupPolicyController) sync(ctx context.Context, syncCtx factory.SyncC
 		}
 	}
 
-	schedule, err := c.parseSchedule(backupPolicy)
+	schedule, err := c.cronParser.Parse(backupPolicy.Spec.Schedule)
 	if err != nil {
 		return fmt.Errorf("BackupPolicyController failed to parse %s schedule: %w", backupPolicyName, err)
 	}
@@ -157,18 +158,6 @@ func (c *BackupPolicyController) sync(ctx context.Context, syncCtx factory.SyncC
 		}
 	}
 	return nil
-}
-
-// parseSchedule parses the cron schedule with timezone support
-func (c *BackupPolicyController) parseSchedule(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) (cron.Schedule, error) {
-	spec := backupPolicy.Spec
-
-	schedule := spec.Schedule
-	if spec.TimeZone != "" {
-		schedule = fmt.Sprintf("TZ=%s %s", spec.TimeZone, spec.Schedule)
-	}
-
-	return c.cronParser.Parse(schedule)
 }
 
 func (c *BackupPolicyController) hasActiveBackup(ctx context.Context, backupPolicy *operatorv1alpha1.EtcdBackupPolicy) bool {
@@ -197,11 +186,28 @@ func (c *BackupPolicyController) syncActive(ctx context.Context, backupPolicy *o
 	}
 	backupPolicy = backupPolicy.DeepCopy()
 
+	updateStatus := false
 	activeMap := map[types.UID]string{}
+	lastSuccessfulTime, _ := getConditionTimestamp(backupPolicy.Status.Conditions, string(operatorv1alpha1.BackupPolicyLastSuccessfulTime))
 	for _, backup := range backups {
 		if !backuphelpers.IsBackupFinished(backup) {
 			activeMap[backup.UID] = backup.Name
+		} else {
+			for _, condition := range backup.Status.Conditions {
+				if condition.Status == v1.ConditionTrue && condition.Type == string(operatorv1alpha1.BackupCompleted) && condition.LastTransitionTime.After(lastSuccessfulTime) {
+					lastSuccessfulTime = condition.LastTransitionTime.Time
+					updateStatus = true
+				}
+			}
 		}
+	}
+	if updateStatus {
+		updateCondition(backupPolicy.Status.Conditions, v1.Condition{
+			Type:               string(operatorv1alpha1.BackupPolicyLastSuccessfulTime),
+			Reason:             string(operatorv1alpha1.BackupPolicyLastSuccessfulTime),
+			LastTransitionTime: v1.Time{Time: lastSuccessfulTime},
+			Status:             v1.ConditionTrue,
+		})
 	}
 
 	active := backupPolicy.Status.Active[:0]
@@ -213,7 +219,9 @@ func (c *BackupPolicyController) syncActive(ctx context.Context, backupPolicy *o
 		}
 	}
 
-	updateStatus := len(active) != len(backupPolicy.Status.Active) || len(activeMap) > 0
+	if len(active) != len(backupPolicy.Status.Active) || len(activeMap) > 0 {
+		updateStatus = true
+	}
 	for uid, name := range activeMap {
 		klog.Warningf("BackupPolicyController saw unexepected backup that the controller didn't create or it forgot: %s", name)
 		active = append(active, operatorv1alpha1.EtcdBackupReference{Name: name, UID: string(uid)})
@@ -320,7 +328,12 @@ func (c *BackupPolicyController) executeBackup(ctx context.Context, backupPolicy
 	// Update Backup status with last execution time
 	backupPolicy = backupPolicy.DeepCopy()
 	backupPolicy.Status.Active = active
-	backupPolicy.Status.LastScheduleTime = &v1.Time{Time: time.Now()}
+	backupPolicy.Status.Conditions = updateCondition(backupPolicy.Status.Conditions, v1.Condition{
+		Type:               string(operatorv1alpha1.BackupPolicyLastScheduled),
+		Reason:             string(operatorv1alpha1.BackupPolicyLastScheduled),
+		LastTransitionTime: v1.Time{Time: time.Now()},
+		Status:             v1.ConditionTrue,
+	})
 	if _, err := c.operatorClient.EtcdBackupPolicies().UpdateStatus(ctx, backupPolicy, v1.UpdateOptions{}); err != nil {
 		// Don't fail the backup execution if status update fails
 		klog.Warningf("Failed to update backup status: %v", err)
@@ -389,8 +402,8 @@ func nextScheduleTime(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, now time.
 
 func mostRecentScheduleTime(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, now time.Time, schedule cron.Schedule) (time.Time, *time.Time, int64, error) {
 	earliestTime := backupPolicy.CreationTimestamp.Time
-	if backupPolicy.Status.LastScheduleTime != nil {
-		earliestTime = backupPolicy.Status.LastScheduleTime.Time
+	if lastScheduled, ok := getConditionTimestamp(backupPolicy.Status.Conditions, string(operatorv1alpha1.BackupPolicyLastScheduled)); ok {
+		earliestTime = lastScheduled
 	}
 
 	t1 := schedule.Next(earliestTime)
@@ -434,4 +447,24 @@ func mostRecentScheduleTime(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, now
 		return earliestTime, nil, numberOfMissedSchedules, nil
 	}
 	return earliestTime, &mostRecentTime, numberOfMissedSchedules, nil
+}
+
+func getConditionTimestamp(conditions []v1.Condition, conditionType string) (time.Time, bool) {
+	for _, condition := range conditions {
+		if condition.Type == conditionType {
+			return condition.LastTransitionTime.Time, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func updateCondition(conditions []v1.Condition, updated v1.Condition) []v1.Condition {
+	i := slices.IndexFunc(conditions, func(c v1.Condition) bool {
+		return c.Type == updated.Type
+	})
+	if i < 0 {
+		return append(conditions, updated)
+	}
+	conditions[i] = updated
+	return conditions
 }

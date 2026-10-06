@@ -99,7 +99,7 @@ func TestBackupGarbageCollectionNewJob(t *testing.T) {
 				testutils.FakeEtcdBackup("test-backup",
 					testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
 						Type:  operatorv1alpha1.EtcdBackupStorageTypeLocal,
-						Local: &operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etcdbackups"},
+						Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etcdbackups"},
 					}), testutils.WithBackupNodeName("test-node"), testutils.WithBackupCompleted(), testutils.WithBackupDeleted())},
 			nodes: []*corev1.Node{testutils.FakeNode("test-node")},
 			validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
@@ -182,7 +182,7 @@ func TestBackupGarbageCollectionNewAndExistingJob(t *testing.T) {
 	// Create a new GC Job for the newly deleted EtcdBackup, but not for the one with an existing GC Job
 	storage := operatorv1alpha1.EtcdBackupStorage{
 		Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-		PVC:  &operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-backup-pvc"},
+		PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-backup-pvc"},
 	}
 	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
 		backups: []*operatorv1alpha1.EtcdBackup{
@@ -226,7 +226,7 @@ func TestBackupGarbageCollectionFinalizeOnMissingStorageBackend(t *testing.T) {
 				testutils.FakeEtcdBackup("test-backup",
 					testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
 						Type:  operatorv1alpha1.EtcdBackupStorageTypeLocal,
-						Local: &operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etcdbackups"},
+						Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etcdbackups"},
 					}), testutils.WithBackupNodeName("test-node"), testutils.WithBackupCompleted(), testutils.WithBackupDeleted())},
 			validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				jobList, err := client.BatchV1().Jobs(operatorclient.TargetNamespace).List(t.Context(), v1.ListOptions{
@@ -264,7 +264,7 @@ func TestBackupGarbageCollectionMultipleBackupsPerJob(t *testing.T) {
 	// Combine muliple deleted EtcdBackups on the same sharedStorage backend into one GC Job
 	sharedStorage := operatorv1alpha1.EtcdBackupStorage{
 		Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-		PVC: &operatorv1alpha1.EtcdBackupStoragePvc{
+		PVC: operatorv1alpha1.EtcdBackupStoragePvc{
 			Name: "test-backup-pvc",
 		},
 	}
@@ -275,7 +275,7 @@ func TestBackupGarbageCollectionMultipleBackupsPerJob(t *testing.T) {
 			testutils.FakeEtcdBackup("test-backup-3", testutils.WithBackupCompleted(), testutils.WithBackupDeleted(),
 				testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
 					Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-					PVC: &operatorv1alpha1.EtcdBackupStoragePvc{
+					PVC: operatorv1alpha1.EtcdBackupStoragePvc{
 						Name: "test-different-pvc",
 					},
 				})),
@@ -360,7 +360,7 @@ func TestBackupGarbageCollectionFailedBackupFinalizedWithoutGC(t *testing.T) {
 		runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
 			backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupCompleted(), testutils.WithBackupDeleted(), testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
 				Type:  operatorv1alpha1.EtcdBackupStorageTypeLocal,
-				Local: &operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/backups"},
+				Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/backups"},
 			}))},
 			validate: validate,
 		})

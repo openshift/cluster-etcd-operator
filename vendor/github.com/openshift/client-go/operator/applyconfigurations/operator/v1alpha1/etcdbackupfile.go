@@ -8,6 +8,7 @@ type EtcdBackupFileApplyConfiguration struct {
 	// path to the backup file on the storage backend.
 	Path *string `json:"path,omitempty"`
 	// sizeBytes is the size of the backup file on the storage backend in bytes.
+	// If omitted, then the file specified by path is an empty file.
 	SizeBytes *int64 `json:"sizeBytes,omitempty"`
 }
 

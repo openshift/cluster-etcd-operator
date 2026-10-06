@@ -394,7 +394,7 @@ func FakeEtcdBackup(name string, configs ...func(backup *operatorv1alpha1.EtcdBa
 		Spec: operatorv1alpha1.EtcdBackupSpec{
 			Storage: operatorv1alpha1.EtcdBackupStorage{
 				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC:  &operatorv1alpha1.EtcdBackupStoragePvc{Name: name + "-pvc"},
+				PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: name + "-pvc"},
 			},
 		},
 	}
@@ -463,11 +463,7 @@ func WithBackupRunning(job *batchv1.Job) func(backup *operatorv1alpha1.EtcdBacku
 		if backup.Status.NodeName == "" {
 			backup.Status.NodeName = "test-node"
 		}
-		backup.Status.Job = &operatorv1alpha1.EtcdBackupJobReference{
-			Name:      job.Name,
-			Namespace: job.Namespace,
-			UID:       string(job.UID),
-		}
+		backup.Status.JobName = job.Name
 		backup.Status.Conditions = append(backup.Status.Conditions, v1.Condition{
 			Type:               string(operatorv1alpha1.BackupPending),
 			Status:             v1.ConditionTrue,
@@ -536,9 +532,9 @@ func FakeEtcdBackupPolicy(name, schedule string, configs ...func(backup *operato
 			Schedule: schedule,
 			Storage: operatorv1alpha1.EtcdBackupStorage{
 				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC:  &operatorv1alpha1.EtcdBackupStoragePvc{Name: name + "-pvc"},
+				PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: name + "-pvc"},
 			},
-			FailedBackupsHistoryLimit: 1,
+			FailedBackupsHistoryLimit: new(int32(1)),
 		},
 	}
 	for _, config := range configs {
@@ -556,12 +552,6 @@ func WithBackupPolicyAge(age time.Duration) func(backupPolicy *operatorv1alpha1.
 func WithBackupPolicyDeleted() func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
 	return func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
 		backupPolicy.DeletionTimestamp = ptr.To(v1.Now())
-	}
-}
-
-func WithBackupPolicyTimeZone(timeZone string) func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
-	return func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
-		backupPolicy.Spec.TimeZone = timeZone
 	}
 }
 

@@ -7,21 +7,24 @@ package v1alpha1
 type EtcdBackupPolicySpecApplyConfiguration struct {
 	// schedule sets the backup schedule in Cron format, see https://en.wikipedia.org/wiki/Cron.
 	Schedule *string `json:"schedule,omitempty"`
-	// timeZone name for the given schedule, see https://en.wikipedia.org/wiki/List_of_tz_database_time_zones.
-	// If not specified, this will default to the time zone of the cluster-etcd-operator process.
-	TimeZone *string `json:"timeZone,omitempty"`
-	// nodeSelector specifies which master node(s) to run backup jobs on.
-	// If no selector is specified, the default node-role.kubernetes.io/master label will be used.
-	// If no nodes are matched, then no backups will run.
+	// nodeSelector specifies which control plane nodes to select from for running backup jobs.
+	// The default node-role.kubernetes.io/control-plane label will always be required in addition to any labels set here.
+	// If no nodes are matched, then no EtcdBackups will be created.
+	// For Local storage type, an EtcdBackup will be created for each selected control plane node every time the schedule is triggered. This is a special case to provide some resiliancy in the event of control plane node loss.
+	// For PVC storage type, a single EtcdBackup will be created with the given nodeSelector every time the schedule is triggered.
+	// When specified, nodeSelector must contain at least 1 entry and must not contain more than 10 entries.
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 	// storage specifies the location where etcd backup files will be saved.
 	Storage *EtcdBackupStorageApplyConfiguration `json:"storage,omitempty"`
 	// retentionRules defines the policy for retaining and deleting existing backups.
 	// Backups are deleted from the oldest first until all rules are satisfied.
 	// If no rules are specified then backups created by this policy will not be automatically deleted.
+	// When an EtcdBackup is deleted the files created by it will be deleted as well, as long as the storage backend is still accessible.
 	RetentionRules []EtcdBackupPolicyRetentionRuleApplyConfiguration `json:"retentionRules,omitempty"`
-	// failedBackupsHistoryLimit defined the number of failed etcdbackups to retain. Value must be non-negative integer. Defaults to 1.
-	FailedBackupsHistoryLimit *int `json:"failedBackupsHistoryLimit,omitempty"`
+	// failedBackupsHistoryLimit defined the number of failed etcdbackups to retain. Value must be non-negative integer.
+	// If set to to 0, then failed backups will be deleted immediately.
+	// If unset, defaults to 1.
+	FailedBackupsHistoryLimit *int32 `json:"failedBackupsHistoryLimit,omitempty"`
 }
 
 // EtcdBackupPolicySpecApplyConfiguration constructs a declarative configuration of the EtcdBackupPolicySpec type for use with
@@ -35,14 +38,6 @@ func EtcdBackupPolicySpec() *EtcdBackupPolicySpecApplyConfiguration {
 // If called multiple times, the Schedule field is set to the value of the last call.
 func (b *EtcdBackupPolicySpecApplyConfiguration) WithSchedule(value string) *EtcdBackupPolicySpecApplyConfiguration {
 	b.Schedule = &value
-	return b
-}
-
-// WithTimeZone sets the TimeZone field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the TimeZone field is set to the value of the last call.
-func (b *EtcdBackupPolicySpecApplyConfiguration) WithTimeZone(value string) *EtcdBackupPolicySpecApplyConfiguration {
-	b.TimeZone = &value
 	return b
 }
 
@@ -84,7 +79,7 @@ func (b *EtcdBackupPolicySpecApplyConfiguration) WithRetentionRules(values ...*E
 // WithFailedBackupsHistoryLimit sets the FailedBackupsHistoryLimit field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the FailedBackupsHistoryLimit field is set to the value of the last call.
-func (b *EtcdBackupPolicySpecApplyConfiguration) WithFailedBackupsHistoryLimit(value int) *EtcdBackupPolicySpecApplyConfiguration {
+func (b *EtcdBackupPolicySpecApplyConfiguration) WithFailedBackupsHistoryLimit(value int32) *EtcdBackupPolicySpecApplyConfiguration {
 	b.FailedBackupsHistoryLimit = &value
 	return b
 }

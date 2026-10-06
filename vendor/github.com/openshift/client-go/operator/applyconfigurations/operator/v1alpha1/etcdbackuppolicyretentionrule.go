@@ -13,7 +13,7 @@ type EtcdBackupPolicyRetentionRuleApplyConfiguration struct {
 	// type defined which rule field is set
 	Type *operatorv1alpha1.EtcdBackupPolicyRetentionRuleType `json:"type,omitempty"`
 	// maxQuantity enforces the deletion of backups that exceed the given count.
-	MaxQuantity *int `json:"maxQuantity,omitempty"`
+	MaxQuantity *int32 `json:"maxQuantity,omitempty"`
 	// maxSize enforces the deletion of backups by the total size of backups on the storage backend.
 	// This is a soft threshold. The total size of backups may temporarily exceed the limit when new backups are created.
 	MaxSize *resource.Quantity `json:"maxSize,omitempty"`
@@ -36,7 +36,7 @@ func (b *EtcdBackupPolicyRetentionRuleApplyConfiguration) WithType(value operato
 // WithMaxQuantity sets the MaxQuantity field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the MaxQuantity field is set to the value of the last call.
-func (b *EtcdBackupPolicyRetentionRuleApplyConfiguration) WithMaxQuantity(value int) *EtcdBackupPolicyRetentionRuleApplyConfiguration {
+func (b *EtcdBackupPolicyRetentionRuleApplyConfiguration) WithMaxQuantity(value int32) *EtcdBackupPolicyRetentionRuleApplyConfiguration {
 	b.MaxQuantity = &value
 	return b
 }

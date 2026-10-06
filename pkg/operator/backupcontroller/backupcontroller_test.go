@@ -106,7 +106,7 @@ func TestSyncLoopHappyPath(t *testing.T) {
 	t.Run("local", func(t *testing.T) {
 		backup := testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPending("test-node"), testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
 			Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
-			Local: &operatorv1alpha1.EtcdBackupStorageLocal{
+			Local: operatorv1alpha1.EtcdBackupStorageLocal{
 				HostPath: "/etc/backups",
 			},
 		}))
@@ -139,12 +139,7 @@ func TestSyncLoopHappyPath(t *testing.T) {
 				require.True(t, ok, "Expected patch action")
 				updatedBackup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), action.Name, metav1.GetOptions{})
 				require.NoError(t, err)
-
-				require.Equal(t, updatedBackup.Status.Job, &operatorv1alpha1.EtcdBackupJobReference{
-					Name:      job.Name,
-					Namespace: job.Namespace,
-					UID:       string(job.UID),
-				})
+				require.Equal(t, job.Name, updatedBackup.Status.JobName)
 			},
 		})
 	})
@@ -182,12 +177,7 @@ func TestJobAlreadyRunning(t *testing.T) {
 
 				updatedBackup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), action.Name, metav1.GetOptions{})
 				require.NoError(t, err)
-
-				require.Equal(t, &operatorv1alpha1.EtcdBackupJobReference{
-					Name:      job.Name,
-					Namespace: job.Namespace,
-					UID:       string(job.UID),
-				}, updatedBackup.Status.Job)
+				require.Equal(t, job.Name, updatedBackup.Status.JobName)
 			},
 		})
 	})
@@ -418,7 +408,7 @@ func TestBackupFailedNoGC(t *testing.T) {
 			backups: []*operatorv1alpha1.EtcdBackup{
 				testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPending("test-node"), testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
 					Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-					PVC:  &operatorv1alpha1.EtcdBackupStoragePvc{Name: "backup-pvc-that-doesnt-exist"},
+					PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "backup-pvc-that-doesnt-exist"},
 				}))},
 			nodes: []*corev1.Node{testutils.FakeNode("test-node")},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
@@ -442,7 +432,7 @@ func TestBackupFailedNoGC(t *testing.T) {
 			backups: []*operatorv1alpha1.EtcdBackup{
 				testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPending("test-node-that-doesnt-exist"), testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
 					Type:  operatorv1alpha1.EtcdBackupStorageTypeLocal,
-					Local: &operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/backups"},
+					Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/backups"},
 				}))},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				requireNoBackupJobCreated(t, client)
@@ -640,11 +630,7 @@ func requireJobPatched(t *testing.T, client *k8sfakeclient.Clientset, backupName
 
 func requireBackupJob(t *testing.T, backup *operatorv1alpha1.EtcdBackup, job *batchv1.Job) {
 	t.Helper()
-	require.Equal(t, &operatorv1alpha1.EtcdBackupJobReference{
-		Name:      job.Name,
-		Namespace: job.Namespace,
-		UID:       string(job.UID),
-	}, backup.Status.Job)
+	require.Equal(t, job.Name, backup.Status.JobName)
 	require.Contains(t, job.OwnerReferences, metav1.OwnerReference{
 		APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: backup.Name, UID: backup.UID,
 	})
