@@ -10,8 +10,17 @@ import (
 // with apply.
 type EtcdBackupPolicyStatusApplyConfiguration struct {
 	// conditions provide details on the status of the etcd backup policy.
+	// When specified, must contain between 1 and 3 entries, with no more than 1 of each type.
+	//
+	// Supported conditions include Error, LastScheduled, and LastSuccessfulTime.
+	// If Error is true, the EtcdBackupPolicy is invalid and the condition reason and message will include details on the error.
+	// If LastScheduled is true, the most recently scheduled EtcdBackup was created at the condition's lastTransitionTime.
+	// If LastSuccessfulTime is true, the most recently completed EtcdBackup finished at the condition's lastTransitionTime.
+	// This field is optional.
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 	// active is a list of references to in progress backups controlled by this policy
+	// When specified, must contain between 1 and 20 entries.
+	// This field is optional.
 	Active []EtcdBackupReferenceApplyConfiguration `json:"active,omitempty"`
 }
 

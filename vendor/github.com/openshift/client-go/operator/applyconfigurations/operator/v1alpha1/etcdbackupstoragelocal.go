@@ -5,8 +5,9 @@ package v1alpha1
 // EtcdBackupStorageLocalApplyConfiguration represents a declarative configuration of the EtcdBackupStorageLocal type for use
 // with apply.
 type EtcdBackupStorageLocalApplyConfiguration struct {
-	// hostPath is a local directory on the master node where the etcd backup file will be saved.
+	// hostPath is a local directory on the control plane node where the etcd backup file will be saved.
 	// hostPath must be an absolute filepath between 1 and 2048 characters containing only alphanumeric characters, '/', '.', '_', or '-', starting with a '/'.
+	// This field is required.
 	HostPath *string `json:"hostPath,omitempty"`
 }
 

@@ -13,12 +13,13 @@ type EtcdBackupStorageApplyConfiguration struct {
 	// Allowed values are Local and PVC.
 	// When set to Local, the backup will be saved to a host path directory on the control plane node it was taken on.
 	// When set to PVC, the backup will be saved to a volume bound by a PersistentVolumeClaim.
+	// This field is required.
 	Type *operatorv1alpha1.EtcdBackupStorageType `json:"type,omitempty"`
 	// pvc specifies the PersistentVolumeClaim (PVC) which binds a PersistentVolume where the etcd backup file will be saved.
 	// The PVC must always be created in the "openshift-etcd" namespace.
 	// This field is required when the storage type is "PVC", and forbidden otherwise.
 	PVC *EtcdBackupStoragePvcApplyConfiguration `json:"pvc,omitempty"`
-	// local specifies a host path directory on the master node where the etcd backup file will be saved.
+	// local specifies a host path directory on the control plane node where the etcd backup file will be saved.
 	// This field is required when storage type is "Local", and forbidden otherwise.
 	Local *EtcdBackupStorageLocalApplyConfiguration `json:"local,omitempty"`
 }

@@ -4543,9 +4543,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: maxQuantity
       type:
         scalar: numeric
-    - name: maxSize
+    - name: maxTotalSizeGb
       type:
-        namedType: io.k8s.apimachinery.pkg.api.resource.Quantity
+        scalar: numeric
     - name: type
       type:
         scalar: string
@@ -4554,8 +4554,8 @@ var schemaYAML = typed.YAMLObject(`types:
       fields:
       - fieldName: maxQuantity
         discriminatorValue: MaxQuantity
-      - fieldName: maxSize
-        discriminatorValue: MaxSize
+      - fieldName: maxTotalSizeGb
+        discriminatorValue: MaxTotalSizeGb
 - name: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicySpec
   map:
     fields:
@@ -4925,8 +4925,6 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: value
       type:
         scalar: string
-- name: io.k8s.apimachinery.pkg.api.resource.Quantity
-  scalar: untyped
 - name: io.k8s.apimachinery.pkg.apis.meta.v1.Condition
   map:
     fields:

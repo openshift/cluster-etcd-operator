@@ -9,7 +9,6 @@ import (
 	operatorinformers "github.com/openshift/client-go/operator/informers/externalversions"
 	"github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
@@ -149,7 +148,7 @@ func TestBackupPolicyRetentionPruneBySize(t *testing.T) {
 						Type: operatorv1alpha1.EtcdBackupStorageTypeLocal, Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"},
 					}),
 					testutils.WithBackupPolicyRetentionRules(operatorv1alpha1.EtcdBackupPolicyRetentionRule{
-						Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxSize, MaxSize: resource.NewQuantity(1000, resource.BinarySI),
+						Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxTotalSizeGb, MaxTotalSizeGb: 1,
 					}))},
 			backups: []*operatorv1alpha1.EtcdBackup{
 				testutils.FakeEtcdBackup("test-backup-1",
@@ -160,7 +159,7 @@ func TestBackupPolicyRetentionPruneBySize(t *testing.T) {
 					testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
 						NodeName: "test-node-1",
 						Files: []operatorv1alpha1.EtcdBackupFile{
-							{Path: "1.db", SizeBytes: 300},
+							{Path: "1.db", SizeBytes: 300 * 1024 * 1024},
 						}}),
 					testutils.WithBackupCompleted(),
 					testutils.WithBackupAge(2*time.Hour)),
@@ -172,7 +171,7 @@ func TestBackupPolicyRetentionPruneBySize(t *testing.T) {
 					testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
 						NodeName: "test-node-2",
 						Files: []operatorv1alpha1.EtcdBackupFile{
-							{Path: "2.db", SizeBytes: 500},
+							{Path: "2.db", SizeBytes: 500 * 1024 * 1024},
 						}}),
 					testutils.WithBackupCompleted(),
 					testutils.WithBackupAge(1*time.Hour)),
@@ -184,7 +183,7 @@ func TestBackupPolicyRetentionPruneBySize(t *testing.T) {
 					testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
 						NodeName: "test-node-2",
 						Files: []operatorv1alpha1.EtcdBackupFile{
-							{Path: "3.db", SizeBytes: 600},
+							{Path: "3.db", SizeBytes: 600 * 1024 * 1024},
 						}}),
 					testutils.WithBackupCompleted(),
 					testutils.WithBackupAge(0*time.Hour)),
@@ -200,14 +199,14 @@ func TestBackupPolicyRetentionPruneBySize(t *testing.T) {
 						Type: operatorv1alpha1.EtcdBackupStorageTypePVC, PVC: operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-backup-pvc"},
 					}),
 					testutils.WithBackupPolicyRetentionRules(operatorv1alpha1.EtcdBackupPolicyRetentionRule{
-						Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxSize, MaxSize: resource.NewQuantity(1000, resource.BinarySI),
+						Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxTotalSizeGb, MaxTotalSizeGb: 1,
 					}))},
 			backups: []*operatorv1alpha1.EtcdBackup{
 				testutils.FakeEtcdBackup("test-backup-1",
 					testutils.WithBackupPolicy("test-backup-policy"),
 					testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
 						Files: []operatorv1alpha1.EtcdBackupFile{
-							{Path: "1.db", SizeBytes: 300},
+							{Path: "1.db", SizeBytes: 300 * 1024 * 1024},
 						}}),
 					testutils.WithBackupCompleted(),
 					testutils.WithBackupAge(2*time.Hour)),
@@ -215,7 +214,7 @@ func TestBackupPolicyRetentionPruneBySize(t *testing.T) {
 					testutils.WithBackupPolicy("test-backup-policy"),
 					testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
 						Files: []operatorv1alpha1.EtcdBackupFile{
-							{Path: "2.db", SizeBytes: 400},
+							{Path: "2.db", SizeBytes: 400 * 1024 * 1024},
 						}}),
 					testutils.WithBackupCompleted(),
 					testutils.WithBackupAge(1*time.Hour)),
@@ -223,7 +222,7 @@ func TestBackupPolicyRetentionPruneBySize(t *testing.T) {
 					testutils.WithBackupPolicy("test-backup-policy"),
 					testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
 						Files: []operatorv1alpha1.EtcdBackupFile{
-							{Path: "3.db", SizeBytes: 500},
+							{Path: "3.db", SizeBytes: 500 * 1024 * 1024},
 						}}),
 					testutils.WithBackupCompleted(),
 					testutils.WithBackupAge(0*time.Hour)),

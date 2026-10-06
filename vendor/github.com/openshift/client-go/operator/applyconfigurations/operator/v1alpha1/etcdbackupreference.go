@@ -6,8 +6,13 @@ package v1alpha1
 // with apply.
 type EtcdBackupReferenceApplyConfiguration struct {
 	// name of the backup
+	// Must be between 1 and 253 characters and conform to RFC 1123 subdomain format:
+	// lowercase alphanumeric characters, '-' or '.', starting and ending with alphanumeric characters.
+	// This field is required.
 	Name *string `json:"name,omitempty"`
-	// uid of the backup
+	// uid of the backup.
+	// Must be a valid UUID formatted string with 36 characters.
+	// This field is required.
 	UID *string `json:"uid,omitempty"`
 }
 

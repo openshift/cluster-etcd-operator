@@ -127,6 +127,7 @@ func WithMasterLabel() func(*corev1.Node) {
 			node.Labels = map[string]string{}
 		}
 		node.Labels["node-role.kubernetes.io/master"] = ""
+		node.Labels["node-role.kubernetes.io/control-plane"] = ""
 	}
 }
 
