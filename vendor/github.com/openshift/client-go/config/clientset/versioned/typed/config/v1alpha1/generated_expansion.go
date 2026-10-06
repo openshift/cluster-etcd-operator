@@ -6,6 +6,8 @@ type CRIOCredentialProviderConfigExpansion interface{}
 
 type ClusterMonitoringExpansion interface{}
 
+type ControllerManagerExpansion interface{}
+
 type InsightsDataGatherExpansion interface{}
 
 type PKIExpansion interface{}

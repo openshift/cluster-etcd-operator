@@ -8,6 +8,9 @@ metadata:
 spec:
   backoffLimit: 2
   template:
+    metadata:
+      annotations:
+        target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
     spec:
       containers:
         - name: cluster-backup-gc

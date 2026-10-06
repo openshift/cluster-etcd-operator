@@ -14,6 +14,7 @@ type ConfigV1alpha1Interface interface {
 	RESTClient() rest.Interface
 	CRIOCredentialProviderConfigsGetter
 	ClusterMonitoringsGetter
+	ControllerManagersGetter
 	InsightsDataGathersGetter
 	PKIsGetter
 }
@@ -29,6 +30,10 @@ func (c *ConfigV1alpha1Client) CRIOCredentialProviderConfigs() CRIOCredentialPro
 
 func (c *ConfigV1alpha1Client) ClusterMonitorings() ClusterMonitoringInterface {
 	return newClusterMonitorings(c)
+}
+
+func (c *ConfigV1alpha1Client) ControllerManagers() ControllerManagerInterface {
+	return newControllerManagers(c)
 }
 
 func (c *ConfigV1alpha1Client) InsightsDataGathers() InsightsDataGatherInterface {
