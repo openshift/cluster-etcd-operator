@@ -127,7 +127,7 @@ func (r *requestBackupOpts) Run(ctx context.Context) error {
 	if r.pvcName != "" {
 		etcdBackup.Spec.Storage = operatorv1alpha1.EtcdBackupStorage{
 			Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-			PVC: &operatorv1alpha1.EtcdBackupStoragePvc{
+			PVC: operatorv1alpha1.EtcdBackupStoragePvc{
 				Name: r.pvcName,
 				Path: r.pvcPath,
 			},
@@ -135,7 +135,7 @@ func (r *requestBackupOpts) Run(ctx context.Context) error {
 	} else {
 		etcdBackup.Spec.Storage = operatorv1alpha1.EtcdBackupStorage{
 			Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
-			Local: &operatorv1alpha1.EtcdBackupStorageLocal{
+			Local: operatorv1alpha1.EtcdBackupStorageLocal{
 				HostPath: r.hostPath,
 			},
 		}

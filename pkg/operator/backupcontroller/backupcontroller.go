@@ -198,13 +198,13 @@ func (c *BackupController) sync(ctx context.Context, syncCtx factory.SyncContext
 			return fmt.Errorf("BackupController could not reconcile job status for backup %q: %w", backup.Name, err)
 		}
 		return nil
-	} else if backup.Status.Job != nil {
+	} else if backup.Status.JobName != "" {
 		if backuphelpers.IsBackupFinished(backup) {
 			return nil
 		}
 
 		// Give informers some time to catch up. Will reconcile sooner if the job is observed.
-		jobName := backup.Status.Job.Name
+		jobName := backup.Status.JobName
 		if requeueAfter, ok := shouldDelay(backupStartTime(backup), jobNotFoundGracePeriod); ok {
 			syncCtx.Queue().AddAfter(backupName, requeueAfter)
 			klog.Infof("BackupController requeueing backup %q with missing job %q", backupName, jobName)
@@ -422,7 +422,7 @@ func reconcileJobStatus(ctx context.Context,
 
 	if jobFinishedState == "" {
 		// Job is not finished
-		if backup.Status.Job == nil {
+		if backup.Status.JobName == "" {
 			// Status update failed when job was created. Attempt to update now.
 			if _, err := applyBackupRunning(ctx, backupClient, backup, job); err != nil {
 				return err
@@ -496,7 +496,7 @@ func reconcileJobNotFound(
 	jobsClient batchv1client.JobInterface,
 	backup *operatorv1alpha1.EtcdBackup,
 ) error {
-	jobName := backup.Status.Job.Name
+	jobName := backup.Status.JobName
 	job, err := jobsClient.Get(ctx, jobName, metav1.GetOptions{})
 
 	var message string
@@ -505,20 +505,24 @@ func reconcileJobNotFound(
 			return fmt.Errorf("error getting job %q for backup %q: %w", jobName, backup.Name, err)
 		}
 		message = fmt.Sprintf("unable to find job %q", jobName)
-	} else if string(job.UID) != backup.Status.Job.UID {
-		message = fmt.Sprintf("found job %q with incorrect UID %q", jobName, job.UID)
 	} else {
-		// Correct job exists, make sure it is labeled appropriately. Otherwise assume it will be handled on a future sync.
-		if job.Labels == nil || job.Labels[backuphelpers.LabelEtcdBackup] == "" {
-			patchBody, err := json.Marshal(metav1.ObjectMeta{Labels: map[string]string{backuphelpers.LabelEtcdBackup: backup.Name}})
-			if err != nil {
-				return fmt.Errorf("error marshalling job %q patch: %w", job.Name, err)
-			}
-			if _, err := jobsClient.Patch(ctx, job.Name, types.StrategicMergePatchType, patchBody, metav1.PatchOptions{}); err != nil {
-				return fmt.Errorf("error adding label to job: %w", err)
+		for _, ownerRef := range job.OwnerReferences {
+			if ownerRef.Kind == "EtcdBackup" && ownerRef.Name == backup.Name && ownerRef.UID == backup.UID {
+				// Correct job exists, make sure it is labeled appropriately. Otherwise assume it will be handled on a future sync.
+				if job.Labels == nil || job.Labels[backuphelpers.LabelEtcdBackup] != backup.Name {
+					patchBody, err := json.Marshal(metav1.ObjectMeta{Labels: map[string]string{backuphelpers.LabelEtcdBackup: backup.Name}})
+					if err != nil {
+						return fmt.Errorf("error marshalling job %q patch: %w", job.Name, err)
+					}
+					if _, err := jobsClient.Patch(ctx, job.Name, types.StrategicMergePatchType, patchBody, metav1.PatchOptions{}); err != nil {
+						return fmt.Errorf("error adding label to job: %w", err)
+					}
+				}
+				return nil
 			}
 		}
-		return nil
+
+		message = fmt.Sprintf("found job %q missing owner reference for %s", jobName, backup.Name)
 	}
 
 	if _, err := applyBackupFinished(ctx, backupClient, backup, nil, operatorv1alpha1.BackupFailed, operatorv1alpha1.BackupReasonJobFailed, message, nil); err != nil {
@@ -790,10 +794,7 @@ func applyBackupStatusConditions(ctx context.Context,
 ) (*operatorv1alpha1.EtcdBackup, error) {
 	backup, err := applyBackupStatus(ctx, backupClient, backup, func(status *applyconfigurationsoperatorv1alpha1.EtcdBackupStatusApplyConfiguration) {
 		if job != nil {
-			status.Job = applyconfigurationsoperatorv1alpha1.EtcdBackupJobReference().
-				WithName(job.Name).
-				WithNamespace(job.Namespace).
-				WithUID(string(job.UID))
+			status.JobName = &job.Name
 		}
 		if conditions != nil {
 			status.Conditions = make([]applyconfigurationsmetav1.ConditionApplyConfiguration, len(conditions))

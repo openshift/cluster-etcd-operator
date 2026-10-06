@@ -99,7 +99,7 @@ func TestBackupQueueLocalSelectAvailableNode(t *testing.T) {
 	// Node round-robin selection only applies to Local backups; PVC backups are placed by the scheduler.
 	storage := operatorv1alpha1.EtcdBackupStorage{
 		Type:  operatorv1alpha1.EtcdBackupStorageTypeLocal,
-		Local: &operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"}}
+		Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"}}
 	runBackupQueueControllerTest(t, testCaseBackupQueueController{
 		backups: []*operatorv1alpha1.EtcdBackup{
 			testutils.FakeEtcdBackup("pending", testutils.WithBackupPending("test-node-1"), testutils.WithBackupStorage(storage)),
@@ -171,7 +171,7 @@ func TestBackupQueueAlreadyPending(t *testing.T) {
 func TestBackupQueueAlreadyPendingSameNode(t *testing.T) {
 	storage := operatorv1alpha1.EtcdBackupStorage{
 		Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-		PVC:  &operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-backup-pvc"}}
+		PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-backup-pvc"}}
 	runBackupQueueControllerTest(t, testCaseBackupQueueController{
 		backups: []*operatorv1alpha1.EtcdBackup{
 			testutils.FakeEtcdBackup("pending", testutils.WithBackupPending("test-node"), testutils.WithBackupStorage(storage)),
@@ -186,7 +186,7 @@ func TestBackupQueueAlreadyPendingSameNode(t *testing.T) {
 func TestBackupQueueAlreadyPendingDifferentNodeSamePVC(t *testing.T) {
 	storage := operatorv1alpha1.EtcdBackupStorage{
 		Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-		PVC:  &operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-backup-pvc"}}
+		PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-backup-pvc"}}
 	runBackupQueueControllerTest(t, testCaseBackupQueueController{
 		backups: []*operatorv1alpha1.EtcdBackup{
 			testutils.FakeEtcdBackup("pending", testutils.WithBackupPending("test-node-1"), testutils.WithBackupStorage(storage)),
@@ -220,10 +220,10 @@ func TestBackupQueueAlreadyPendingSameNodeLocal(t *testing.T) {
 		backups: []*operatorv1alpha1.EtcdBackup{
 			testutils.FakeEtcdBackup("pending", testutils.WithBackupPending("test-node-1"), testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
 				Type:  operatorv1alpha1.EtcdBackupStorageTypeLocal,
-				Local: &operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"}})),
+				Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"}})),
 			testutils.FakeEtcdBackup("new", testutils.WithBackupNodeName("test-node-1"), testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
 				Type:  operatorv1alpha1.EtcdBackupStorageTypeLocal,
-				Local: &operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"}})),
+				Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"}})),
 		},
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			_, ok := testutils.GetStatusAction[k8stesting.UpdateActionImpl](operatorFake.Actions())
@@ -235,7 +235,7 @@ func TestBackupQueueAlreadyPendingSameNodeLocal(t *testing.T) {
 func TestBackupQueueAlreadyPendingDifferentNodesLocal(t *testing.T) {
 	storage := operatorv1alpha1.EtcdBackupStorage{
 		Type:  operatorv1alpha1.EtcdBackupStorageTypeLocal,
-		Local: &operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"}}
+		Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"}}
 	runBackupQueueControllerTest(t, testCaseBackupQueueController{
 		backups: []*operatorv1alpha1.EtcdBackup{
 			testutils.FakeEtcdBackup("pending", testutils.WithBackupPending("test-node-1"), testutils.WithBackupStorage(storage)),

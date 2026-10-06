@@ -174,11 +174,16 @@ func filterPruneableBackups(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, bac
 	})
 
 	n := 0
-	numFailed := 0
+	var numFailed, maxFailed int32
+	if backupPolicy.Spec.FailedBackupsHistoryLimit != nil {
+		maxFailed = *backupPolicy.Spec.FailedBackupsHistoryLimit
+	} else {
+		maxFailed = 1
+	}
 	for _, backup := range backups {
 		// Prune failed backups by total history limit
 		if backuphelpers.IsBackupFailed(backup) {
-			if numFailed >= backupPolicy.Spec.FailedBackupsHistoryLimit {
+			if numFailed >= maxFailed {
 				backups[n] = backup
 				n++
 			}
@@ -211,7 +216,7 @@ func filterPruneableBackups(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, bac
 					}
 				}
 			case operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxSize:
-				if !rule.MaxSize.IsZero() {
+				if rule.MaxSize != nil && !rule.MaxSize.IsZero() {
 					for _, file := range backup.Status.Files {
 						group.sizeBytes += file.SizeBytes
 					}
@@ -234,7 +239,7 @@ func filterPruneableBackups(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, bac
 }
 
 type pruneGroup struct {
-	quantity  int
+	quantity  int32
 	sizeBytes int64
 }
 

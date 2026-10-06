@@ -114,8 +114,8 @@ func TestBackupPolicyCreateBackup(t *testing.T) {
 			// Verify LastScheduleTime and LastScheduleNodes are set
 			backupPolicy, err := operatorFake.OperatorV1alpha1().EtcdBackupPolicies().Get(context.TODO(), "test-backup-policy", v1.GetOptions{})
 			require.NoError(t, err)
-			require.NotNil(t, backupPolicy.Status.LastScheduleTime)
 			require.Len(t, backupPolicy.Status.Active, 1)
+			requireHasLastScheduled(t, backupPolicy)
 		},
 	})
 }
@@ -129,7 +129,7 @@ func TestBackupPolicyCreateMultipleLocalBackupsWithSelector(t *testing.T) {
 			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour), func(backup *operatorv1alpha1.EtcdBackupPolicy) {
 				backup.Spec.Storage = operatorv1alpha1.EtcdBackupStorage{
 					Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
-					Local: &operatorv1alpha1.EtcdBackupStorageLocal{
+					Local: operatorv1alpha1.EtcdBackupStorageLocal{
 						HostPath: "/etc/backups",
 					},
 				}
@@ -155,8 +155,8 @@ func TestBackupPolicyCreateMultipleLocalBackupsWithSelector(t *testing.T) {
 
 			backupPolicy, err := operatorFake.OperatorV1alpha1().EtcdBackupPolicies().Get(context.TODO(), "test-backup-policy", v1.GetOptions{})
 			require.NoError(t, err)
-			require.NotNil(t, backupPolicy.Status.LastScheduleTime)
 			require.Len(t, backupPolicy.Status.Active, len(expectedNodes))
+			requireHasLastScheduled(t, backupPolicy)
 		},
 	})
 }
@@ -180,7 +180,12 @@ func TestBackupPolicyActiveBackups(t *testing.T) {
 	runBackupPolicyControllerTest(t, testCaseBackupPolicyController{
 		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
 			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@hourly", testutils.WithBackupPolicyStatus(operatorv1alpha1.EtcdBackupPolicyStatus{
-				LastScheduleTime: &v1.Time{Time: time.Now().Add(-2 * time.Hour)},
+				Conditions: []v1.Condition{{
+					Type:               string(operatorv1alpha1.BackupPolicyLastScheduled),
+					Reason:             string(operatorv1alpha1.BackupPolicyLastScheduled),
+					LastTransitionTime: v1.Time{Time: time.Now().Add(-2 * time.Hour)},
+					Status:             v1.ConditionTrue,
+				}},
 				Active: []operatorv1alpha1.EtcdBackupReference{
 					{Name: "test-backup-completed", UID: "test-backup-completed-uid"},
 					{Name: "test-backup-failed", UID: "test-backup-failed-uid"},
@@ -207,7 +212,12 @@ func TestBackupPolicyActiveBackupsAllFinished(t *testing.T) {
 	runBackupPolicyControllerTest(t, testCaseBackupPolicyController{
 		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
 			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@hourly", testutils.WithBackupPolicyStatus(operatorv1alpha1.EtcdBackupPolicyStatus{
-				LastScheduleTime: &v1.Time{Time: time.Now().Add(-2 * time.Hour)},
+				Conditions: []v1.Condition{{
+					Type:               string(operatorv1alpha1.BackupPolicyLastScheduled),
+					Reason:             string(operatorv1alpha1.BackupPolicyLastScheduled),
+					LastTransitionTime: v1.Time{Time: time.Now().Add(-2 * time.Hour)},
+					Status:             v1.ConditionTrue,
+				}},
 				Active: []operatorv1alpha1.EtcdBackupReference{
 					{Name: "test-backup-completed", UID: "test-backup-completed-uid"},
 					{Name: "test-backup-failed", UID: "test-backup-failed-uid"},
@@ -232,7 +242,12 @@ func TestBackupPolicyMissedBackupSchedules(t *testing.T) {
 	runBackupPolicyControllerTest(t, testCaseBackupPolicyController{
 		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
 			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@hourly", testutils.WithBackupPolicyAge(25*time.Hour), testutils.WithBackupPolicyStatus(operatorv1alpha1.EtcdBackupPolicyStatus{
-				LastScheduleTime: &v1.Time{Time: time.Now().Add(-4 * time.Hour)},
+				Conditions: []v1.Condition{{
+					Type:               string(operatorv1alpha1.BackupPolicyLastScheduled),
+					Reason:             string(operatorv1alpha1.BackupPolicyLastScheduled),
+					LastTransitionTime: v1.Time{Time: time.Now().Add(-4 * time.Hour)},
+					Status:             v1.ConditionTrue,
+				}},
 			}))},
 		nodes: []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
@@ -259,29 +274,14 @@ func TestBackupPolicyIgnoreDeleted(t *testing.T) {
 
 func TestBackupPolicyScheduleParsing(t *testing.T) {
 	testCases := map[string]testCaseBackupPolicyController{
-		"valid schedule without timezone": {
+		"valid schedule": {
 			backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
 				testutils.FakeEtcdBackupPolicy("test-backup-policy", "0 4 * * *")},
-			expectError: false,
-		},
-		"valid schedule with UTC timezone": {
-			backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
-				testutils.FakeEtcdBackupPolicy("test-backup-policy", "0 4 * * *", testutils.WithBackupPolicyTimeZone("UTC"))},
-			expectError: false,
-		},
-		"valid schedule with America/New_York timezone": {
-			backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
-				testutils.FakeEtcdBackupPolicy("test-backup-policy", "0 4 * * *", testutils.WithBackupPolicyTimeZone("America/New_York"))},
 			expectError: false,
 		},
 		"valid named schedule": {
 			backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
 				testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily")},
-			expectError: false,
-		},
-		"valid named schedule with America/New_York timezone": {
-			backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
-				testutils.FakeEtcdBackupPolicy("test-backup-policy", "@every 2h", testutils.WithBackupPolicyTimeZone("America/New_York"))},
 			expectError: false,
 		},
 		"invalid schedule": {
@@ -292,11 +292,6 @@ func TestBackupPolicyScheduleParsing(t *testing.T) {
 		"invalid named schedule": {
 			backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
 				testutils.FakeEtcdBackupPolicy("test-backup-policy", "@invalidcron")},
-			expectError: true,
-		},
-		"invalid timezone": {
-			backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
-				testutils.FakeEtcdBackupPolicy("test-backup-policy", "0 4 * * *", testutils.WithBackupPolicyTimeZone("Invalid/Timezone"))},
 			expectError: true,
 		},
 	}
@@ -311,7 +306,12 @@ func TestBackupPolicyScheduleParsing(t *testing.T) {
 func TestNextScheduleTime(t *testing.T) {
 	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	backupPolicy := testutils.FakeEtcdBackupPolicy("test-backup-policy", "@hourly", testutils.WithBackupPolicyStatus(operatorv1alpha1.EtcdBackupPolicyStatus{
-		LastScheduleTime: &v1.Time{Time: now.Add(-4 * time.Hour)},
+		Conditions: []v1.Condition{{
+			Type:               string(operatorv1alpha1.BackupPolicyLastScheduled),
+			Reason:             string(operatorv1alpha1.BackupPolicyLastScheduled),
+			LastTransitionTime: v1.Time{Time: now.Add(-4 * time.Hour)},
+			Status:             v1.ConditionTrue,
+		}},
 	}))
 	schedule, err := cron.NewParser(cron.Descriptor).Parse(backupPolicy.Spec.Schedule)
 	require.NoError(t, err)
@@ -341,4 +341,16 @@ func getCreatedBackups(t *testing.T, operatorFake *operatorfake.Clientset) []*op
 		}
 	}
 	return createdBackups
+}
+
+func requireHasLastScheduled(t *testing.T, backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
+	t.Helper()
+	require.Condition(t, func() bool {
+		for _, condition := range backupPolicy.Status.Conditions {
+			if condition.Type == string(operatorv1alpha1.BackupPolicyLastScheduled) {
+				return true
+			}
+		}
+		return false
+	}, "Expected to find LastScheduled condition")
 }

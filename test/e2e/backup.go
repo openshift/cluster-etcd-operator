@@ -69,7 +69,7 @@ func TestBackupHappyPath(t testing.TB) {
 		Spec: operatorv1alpha1.EtcdBackupSpec{
 			Storage: operatorv1alpha1.EtcdBackupStorage{
 				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC:  &operatorv1alpha1.EtcdBackupStoragePvc{Name: pvcName},
+				PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: pvcName},
 			},
 		},
 	}
@@ -95,7 +95,7 @@ func TestBackupHappyPath(t testing.TB) {
 				return false, nil
 			}
 
-			klog.Infof("current backup job: %v", b.Status.Job.Name)
+			klog.Infof("current backup job: %v", b.Status.JobName)
 			klog.Infof("current backup conditions: %v", b.Status.Conditions)
 
 			backupSuccess := backupHasCondition(b, operatorv1alpha1.BackupCompleted, metav1.ConditionTrue)
@@ -125,7 +125,6 @@ func TestPeriodicBackupHappyPath(t testing.TB) {
 		},
 		Spec: operatorv1alpha1.EtcdBackupPolicySpec{
 			Schedule: "* * * * *",
-			TimeZone: "UTC",
 			RetentionRules: []operatorv1alpha1.EtcdBackupPolicyRetentionRule{
 				{
 					Type:        operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxQuantity,
@@ -134,7 +133,7 @@ func TestPeriodicBackupHappyPath(t testing.TB) {
 			},
 			Storage: operatorv1alpha1.EtcdBackupStorage{
 				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC:  &operatorv1alpha1.EtcdBackupStoragePvc{Name: pvcName},
+				PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: pvcName},
 			},
 		},
 	}
@@ -181,16 +180,15 @@ func TestRetentionBySize(t testing.TB) {
 		},
 		Spec: operatorv1alpha1.EtcdBackupPolicySpec{
 			Schedule: "* * * * *",
-			TimeZone: "UTC",
 			RetentionRules: []operatorv1alpha1.EtcdBackupPolicyRetentionRule{
 				{
 					Type:    operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxSize,
-					MaxSize: *resource.NewQuantity(5*1024*1024*1024, resource.BinarySI),
+					MaxSize: resource.NewQuantity(5*1024*1024*1024, resource.BinarySI),
 				},
 			},
 			Storage: operatorv1alpha1.EtcdBackupStorage{
 				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC:  &operatorv1alpha1.EtcdBackupStoragePvc{Name: pvcName},
+				PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: pvcName},
 			},
 		},
 	}
@@ -231,7 +229,7 @@ func TestMultipleBackupsAreSkipped(t testing.TB) {
 		Spec: operatorv1alpha1.EtcdBackupSpec{
 			Storage: operatorv1alpha1.EtcdBackupStorage{
 				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC:  &operatorv1alpha1.EtcdBackupStoragePvc{Name: pvcName},
+				PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: pvcName},
 			},
 		},
 	}
@@ -273,7 +271,7 @@ func TestBackupFailureOnMissingPVC(t testing.TB) {
 		Spec: operatorv1alpha1.EtcdBackupSpec{
 			Storage: operatorv1alpha1.EtcdBackupStorage{
 				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC:  &operatorv1alpha1.EtcdBackupStoragePvc{Name: "something that does not exist"},
+				PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "something that does not exist"},
 			},
 		},
 	}
@@ -292,7 +290,7 @@ func TestBackupFailureOnMissingPVC(t testing.TB) {
 				return false, nil
 			}
 
-			klog.Infof("current backup job: %v", b.Status.Job.Name)
+			klog.Infof("current backup job: %v", b.Status.JobName)
 			klog.Infof("current backup conditions: %v", b.Status.Conditions)
 
 			return backupHasCondition(b, operatorv1alpha1.BackupFailed, metav1.ConditionTrue), nil
@@ -354,7 +352,6 @@ func TestWrongScheduleDegradesOperator(t testing.TB) {
 		},
 		Spec: operatorv1alpha1.EtcdBackupPolicySpec{
 			Schedule: "*/5 */0 * * *",
-			TimeZone: "UTC",
 			RetentionRules: []operatorv1alpha1.EtcdBackupPolicyRetentionRule{
 				{
 					Type:        operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxQuantity,
@@ -363,7 +360,7 @@ func TestWrongScheduleDegradesOperator(t testing.TB) {
 			},
 			Storage: operatorv1alpha1.EtcdBackupStorage{
 				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC:  &operatorv1alpha1.EtcdBackupStoragePvc{Name: "not-existing-pvc"},
+				PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "not-existing-pvc"},
 			},
 		},
 	}

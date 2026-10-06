@@ -490,8 +490,6 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &operatorv1alpha1.EtcdBackupApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("EtcdBackupFile"):
 		return &operatorv1alpha1.EtcdBackupFileApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("EtcdBackupJobReference"):
-		return &operatorv1alpha1.EtcdBackupJobReferenceApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("EtcdBackupPolicy"):
 		return &operatorv1alpha1.EtcdBackupPolicyApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("EtcdBackupPolicyRetentionRule"):

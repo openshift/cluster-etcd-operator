@@ -5,9 +5,12 @@ package v1alpha1
 // EtcdBackupSpecApplyConfiguration represents a declarative configuration of the EtcdBackupSpec type for use
 // with apply.
 type EtcdBackupSpecApplyConfiguration struct {
-	// nodeSelector specifies which master node(s) to run the backup job on.
-	// If no selector is specified, the default node-role.kubernetes.io/control-plane label will be used.
-	// If no nodes are matched, then no backup will run.
+	// nodeSelector specifies which control plane nodes to select from for running the backup job. Only one backup job is run per EtcdBackup.
+	// The default node-role.kubernetes.io/control-plane label will always be selected for in addition to any labels set here.
+	// If no nodes are matched, then the backup will be marked failed.
+	// For Local storage type, this may be used to target a specific node to take and store the backup.
+	// For PVC storage type, this may be used to control where the backup is taken from.
+	// When specified, nodeSelector must contain at least 1 entry and must not contain more than 10 entries.
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 	// storage specifies the location where etcd backup files will be saved.
 	Storage *EtcdBackupStorageApplyConfiguration `json:"storage,omitempty"`
