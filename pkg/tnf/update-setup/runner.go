@@ -270,8 +270,10 @@ func reconfigureClusterAfterNodeChange(ctx context.Context, kubeClient kubernete
 	}
 
 	commands := []string{
-		// Force new cluster on next etcd restart on current node
-		fmt.Sprintf("crm_attribute --lifetime reboot --node %s --name \"force_new_cluster\" --update %s", currentNodeName, currentNodeName),
+		// Force new cluster on next etcd restart on current node. The value is the
+		// claim time (epoch seconds): podman-etcd resolves concurrent claims by
+		// earliest claim, the same scheme as member_removal_lock.
+		fmt.Sprintf("crm_attribute --lifetime reboot --node %s --name \"force_new_cluster\" --update %d", currentNodeName, time.Now().Unix()),
 		// Update etcd resource with correct node IP map
 		fmt.Sprintf("/usr/sbin/pcs resource update etcd node_ip_map=\"%s:%s;%s:%s\" --wait=300", cfg.NodeName1, cfg.NodeIP1, cfg.NodeName2, cfg.NodeIP2),
 	}
