@@ -72,6 +72,7 @@ The lifecycle manager ([pkg/tnf/operator/lifecycle_manager.go](../../pkg/tnf/ope
 - The `sync()` function handles both bootstrap and runtime modes internally
 - CRD must be established before informers can start
 - Controller syncs every 1 minute to ensure job controllers are running
+- Lifecycle-manager construction failures set `PacemakerLifecycleManagerDegraded` while startup retries every 30 seconds; the condition clears after construction succeeds. The ClusterOperator's Degraded condition applies its existing 10-minute inertia.
 
 ## Sync Loop
 
@@ -97,8 +98,11 @@ startJobControllers()
         └─ YES (Runtime Mode):
            │
            ├─ Ensure auth/after-setup controllers running (per-node)
+           ├─ Ensure setup job controller running (maintains conditions)
            ├─ Ensure update-setup controller running (if 2 nodes)
-           └─ Ensure fencing controller running (cluster-wide)
+           ├─ Ensure fencing controller running (cluster-wide)
+           ├─ Start status collector CronJob
+           └─ Start Pacemaker health check controller
 ```
 
 See [Job Controllers](job-controllers.md) for details on job execution patterns and retry logic.
