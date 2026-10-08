@@ -511,6 +511,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		// Create shared metrics collector for backup metrics (reads from backupsLister at scrape time)
 		metricsRegistry := legacyregistry.DefaultGatherer.(metrics.KubeRegistry)
 		_ = backupcontroller.NewBackupMetrics(metricsRegistry, backupsLister)
+		// Policy metrics are registered after controller creation (need runTracker reference)
 
 		backupController, err := backupcontroller.NewBackupController(
 			AlivenessChecker,
@@ -530,7 +531,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			return fmt.Errorf("could not start backupController, aborting controller start: %w", err)
 		}
 
-		backupPolicyController := backuppolicycontroller.NewBackupPolicyController(
+		backupPolicyControllerImpl, backupPolicyController := backuppolicycontroller.NewBackupPolicyController(
 			AlivenessChecker,
 			backupsLister,
 			backupPoliciesLister,
@@ -540,9 +541,18 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			controllerContext.EventRecorder,
 			os.Getenv("OPERATOR_IMAGE"),
 			featureGateAccessor,
+			kubeClient,
+			operatorclient.OperatorNamespace,
 			etcdBackupPoliciesInformer.Informer(),
 			etcdBackupInformer.Informer(),
 			controlPlaneNodeInformer)
+
+		// Register policy metrics (needs RunTracker from controller)
+		_ = backuppolicycontroller.NewBackupPolicyMetrics(
+			metricsRegistry,
+			backupPoliciesLister,
+			backupPolicyControllerImpl.RunTracker,
+		)
 
 		backupPolicyRetentionController, err := backuppolicycontroller.NewBackupPolicyRetentionController(
 			AlivenessChecker,
