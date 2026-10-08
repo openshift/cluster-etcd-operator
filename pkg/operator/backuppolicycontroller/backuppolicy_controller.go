@@ -294,7 +294,8 @@ func (c *BackupPolicyController) executeBackup(ctx context.Context, backupPolicy
 			ObjectMeta: v1.ObjectMeta{
 				Name: generatePVCEtcdBackupName(backupPolicy.Name, scheduleTime),
 				Labels: map[string]string{
-					backuphelpers.LabelEtcdBackupPolicy: backupPolicy.Name,
+					backuphelpers.LabelEtcdBackupPolicy:    backupPolicy.Name,
+					backuphelpers.LabelEtcdBackupPolicyUID: string(backupPolicy.UID),
 				},
 			},
 			Spec: operatorv1alpha1.EtcdBackupSpec{
@@ -310,6 +311,7 @@ func (c *BackupPolicyController) executeBackup(ctx context.Context, backupPolicy
 						Name: generateEtcdBackupName(backupPolicy.Name, node.UID, scheduleTime),
 						Labels: map[string]string{
 							backuphelpers.LabelEtcdBackupPolicy: backupPolicy.Name,
+							backuphelpers.LabelEtcdBackupPolicyUID: string(backupPolicy.UID),
 						},
 					},
 					Spec: operatorv1alpha1.EtcdBackupSpec{

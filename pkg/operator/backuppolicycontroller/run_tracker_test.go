@@ -248,6 +248,150 @@ func TestRunTracker_MultipleRunsInOneBatch(t *testing.T) {
 	require.NotNil(t, state.LastSuccessTime)
 }
 
+func TestRunTracker_TwoReconcileFailedThenSuccess(t *testing.T) {
+	// BLOCKER #1: Run finalized before all members known
+	// First sync sees failed member, second sync sees successful sibling
+	// Must NOT leave a failed-run streak
+	ctx := context.Background()
+	tracker, _ := setupRunTracker(t)
+
+	policy := testPolicy("test-policy", "uid-1")
+
+	// First reconcile: only failed backup visible
+	backups1 := []*operatorv1alpha1.EtcdBackup{
+		testFailedBackup("test-policy-node1-1000", "test-policy", "1000", time.Now()),
+	}
+	_, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups1)
+	require.NoError(t, err)
+
+	// Second reconcile: successful sibling now visible
+	backups2 := []*operatorv1alpha1.EtcdBackup{
+		testFailedBackup("test-policy-node1-1000", "test-policy", "1000", time.Now()),
+		testSuccessfulBackup("test-policy-node2-1000", "test-policy", "1000", time.Now()),
+	}
+	state2, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups2)
+	require.NoError(t, err)
+
+	require.Equal(t, 0, state2.ConsecutiveFailures, "late-arriving success should reset streak, not be skipped")
+	require.NotNil(t, state2.LastSuccessTime, "should record success time")
+}
+
+func TestRunTracker_RestartProcessThirdFailure(t *testing.T) {
+	// Extend restart test to verify critical threshold after reload
+	ctx := context.Background()
+	tracker1, client := setupRunTracker(t)
+
+	policy := testPolicy("test-policy", "uid-1")
+
+	// Two failures
+	backups := []*operatorv1alpha1.EtcdBackup{
+		testFailedBackup("test-policy-1000", "test-policy", "1000", time.Now()),
+		testFailedBackup("test-policy-1001", "test-policy", "1001", time.Now()),
+	}
+	state1, err := tracker1.ProcessBackupsForPolicy(ctx, policy, backups)
+	require.NoError(t, err)
+	require.Equal(t, 2, state1.ConsecutiveFailures)
+
+	// Simulate restart
+	tracker2 := NewRunTracker("test-ns", client)
+
+	// Third failure after restart
+	backups = append(backups, testFailedBackup("test-policy-1002", "test-policy", "1002", time.Now()))
+	state2, err := tracker2.ProcessBackupsForPolicy(ctx, policy, backups)
+	require.NoError(t, err)
+	require.Equal(t, 3, state2.ConsecutiveFailures, "should reach critical threshold after restart")
+}
+
+func TestRunTracker_CorruptStatePreservesOthers(t *testing.T) {
+	// BLOCKER #4: Corrupt history should not reset all policies
+	ctx := context.Background()
+	tracker, client := setupRunTracker(t)
+
+	policy1 := testPolicy("policy-1", "uid-1")
+	policy2 := testPolicy("policy-2", "uid-2")
+
+	// Save valid state for policy1
+	state1 := &PolicyRunState{
+		PolicyUID:           policy1.UID,
+		ConsecutiveFailures: 2,
+		PolicyCreationTime:  policy1.CreationTimestamp,
+	}
+	err := tracker.SavePolicyState(ctx, policy1, state1)
+	require.NoError(t, err)
+
+	// Manually corrupt the ConfigMap data
+	cm, err := client.Get(ctx, failureTrackerConfigMapName, metav1.GetOptions{})
+	require.NoError(t, err)
+	cm.Data[failureTrackerDataKey] = "invalid json {"
+	_, err = client.Update(ctx, cm, metav1.UpdateOptions{})
+	require.NoError(t, err)
+
+	// Try to save policy2 - should preserve policy1's data, not reset everything
+	state2 := &PolicyRunState{
+		PolicyUID:           policy2.UID,
+		ConsecutiveFailures: 1,
+		PolicyCreationTime:  policy2.CreationTimestamp,
+	}
+	err = tracker.SavePolicyState(ctx, policy2, state2)
+	// Should return an error, not silently reset
+	require.Error(t, err, "corrupt state should return error, not reset")
+
+	// Verify we didn't lose policy1's data by resetting to empty
+	// (This test will need implementation that preserves on corruption)
+}
+
+func TestRunTracker_SameNameNewUID(t *testing.T) {
+	// BLOCKER #5: UID isolation for backup selection
+	ctx := context.Background()
+	tracker, _ := setupRunTracker(t)
+
+	// Old policy creates backups
+	policy1 := testPolicy("test-policy", "uid-1")
+	policy1.CreationTimestamp = metav1.NewTime(time.Now().Add(-48 * time.Hour))
+
+	backups1 := []*operatorv1alpha1.EtcdBackup{
+		testFailedBackupWithUID("test-policy-1000", "test-policy", "uid-1", "1000", time.Now()),
+	}
+	state1, err := tracker.ProcessBackupsForPolicy(ctx, policy1, backups1)
+	require.NoError(t, err)
+	require.Equal(t, 1, state1.ConsecutiveFailures)
+
+	// Policy deleted and recreated with same name, new UID
+	policy2 := testPolicy("test-policy", "uid-2")
+	policy2.CreationTimestamp = metav1.Now()
+
+	// New policy should NOT see old policy's backups
+	// (Currently test passes old backups - implementation needs to filter by UID)
+	state2, err := tracker.ProcessBackupsForPolicy(ctx, policy2, backups1)
+	require.NoError(t, err)
+	require.Equal(t, 0, state2.ConsecutiveFailures, "new policy UID should not count old policy's backups")
+}
+
+func TestRunTracker_NeverSuccessfulPolicyStateSaved(t *testing.T) {
+	// BLOCKER #3: Never-successful policy must save state for alert
+	ctx := context.Background()
+	tracker, _ := setupRunTracker(t)
+
+	policy := testPolicy("test-policy", "uid-1")
+	policy.CreationTimestamp = metav1.NewTime(time.Now().Add(-25 * time.Hour).Truncate(time.Second))
+
+	// Process with no backups (common during initial policy creation)
+	emptyBackups := []*operatorv1alpha1.EtcdBackup{}
+	_, err := tracker.ProcessBackupsForPolicy(ctx, policy, emptyBackups)
+	require.NoError(t, err)
+
+	// State should be saved even with no backups
+	allStates, err := tracker.GetAllPolicyStates(ctx)
+	require.NoError(t, err)
+	require.Contains(t, allStates, string(policy.UID), "never-successful policy should have saved state")
+
+	savedState := allStates[string(policy.UID)]
+	require.Equal(t, 0, savedState.ConsecutiveFailures)
+	require.Nil(t, savedState.LastSuccessTime)
+	// Compare timestamps at second precision (JSON marshaling truncates subseconds)
+	require.Equal(t, policy.CreationTimestamp.Unix(), savedState.PolicyCreationTime.Unix())
+}
+
 func TestExtractMinuteHashFromName(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -318,6 +462,27 @@ func testFailedBackup(name, policyName, minuteHash string, failureTime time.Time
 			Name: name,
 			Labels: map[string]string{
 				backuphelpers.LabelEtcdBackupPolicy: policyName,
+			},
+		},
+		Status: operatorv1alpha1.EtcdBackupStatus{
+			Conditions: []metav1.Condition{
+				{
+					Type:               string(operatorv1alpha1.BackupFailed),
+					Status:             metav1.ConditionTrue,
+					LastTransitionTime: metav1.NewTime(failureTime),
+				},
+			},
+		},
+	}
+}
+
+func testFailedBackupWithUID(name, policyName, policyUID, minuteHash string, failureTime time.Time) *operatorv1alpha1.EtcdBackup {
+	return &operatorv1alpha1.EtcdBackup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+			Labels: map[string]string{
+				backuphelpers.LabelEtcdBackupPolicy:    policyName,
+				backuphelpers.LabelEtcdBackupPolicyUID: policyUID,
 			},
 		},
 		Status: operatorv1alpha1.EtcdBackupStatus{

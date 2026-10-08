@@ -16,8 +16,9 @@ import (
 const (
 	AutomatedEtcdBackupFeatureGateName = "AutomatedEtcdBackup"
 
-	LabelEtcdBackup       = "operator.openshift.io/etcd-backup"
-	LabelEtcdBackupPolicy = "operator.openshift.io/etcd-backup-policy"
+	LabelEtcdBackup          = "operator.openshift.io/etcd-backup"
+	LabelEtcdBackupPolicy    = "operator.openshift.io/etcd-backup-policy"
+	LabelEtcdBackupPolicyUID = "operator.openshift.io/etcd-backup-policy-uid"
 
 	AnnotationBackupStorage = "operator.openshift.io/etcd-backup-storage"
 
