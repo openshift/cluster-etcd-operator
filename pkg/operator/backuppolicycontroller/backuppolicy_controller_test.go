@@ -67,6 +67,9 @@ func runBackupPolicyControllerTest(t *testing.T, tc testCaseBackupPolicyControll
 	eventRecorder := events.NewInMemoryRecorder("test", fakeClock)
 	t.Cleanup(eventRecorder.Shutdown)
 
+	// Create RunTracker for failure tracking
+	runTracker := NewRunTracker("test-namespace", client.CoreV1().ConfigMaps("test-namespace"))
+
 	controller := &BackupPolicyController{
 		backupPoliciesLister:  backupPoliciesInformer.Lister(),
 		cronJobLister:         cronJobsInformer.Lister().CronJobs(operatorclient.TargetNamespace),
@@ -76,6 +79,7 @@ func runBackupPolicyControllerTest(t *testing.T, tc testCaseBackupPolicyControll
 		featureGateAccessor:   backupFeatureGateAccessor,
 		eventRecorder:         eventRecorder,
 		cronParser:            cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
+		RunTracker:            runTracker,
 	}
 
 	for _, backupPolicy := range tc.backupPolicies {

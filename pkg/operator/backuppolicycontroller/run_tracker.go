@@ -114,11 +114,12 @@ func (t *RunTracker) SavePolicyState(ctx context.Context, policy *operatorv1alph
 	}
 
 	// Load existing states
+	// BLOCKER #4: Don't reset on corruption - preserve data and return error
 	var allStates map[string]*PolicyRunState
 	if data, ok := cm.Data[failureTrackerDataKey]; ok {
 		if err := json.Unmarshal([]byte(data), &allStates); err != nil {
-			klog.Warningf("failed to unmarshal failure tracker data, resetting: %v", err)
-			allStates = make(map[string]*PolicyRunState)
+			// Corruption detected - return error instead of resetting
+			return fmt.Errorf("failed to unmarshal failure tracker data (corrupted ConfigMap): %w", err)
 		}
 	} else {
 		allStates = make(map[string]*PolicyRunState)
@@ -159,53 +160,105 @@ func (t *RunTracker) ProcessBackupsForPolicy(
 		return nil, err
 	}
 
+	// BLOCKER #5: Filter backups to only those belonging to this policy UID
+	policyBackups := t.filterBackupsByPolicyUID(backups, policy.UID)
+
 	// Group backups by run (minute hash)
-	runs := t.groupBackupsByRun(backups)
+	runs := t.groupBackupsByRun(policyBackups)
+
+	// BLOCKER #3: Always save state for new policies, even with no backups
+	// This ensures never-successful policies have metrics for alerts
 	if len(runs) == 0 {
-		// No backups yet - return current state
+		if state.LastProcessedRunMinuteHash == "" {
+			// New policy with no backups yet - save initial state
+			if err := t.SavePolicyState(ctx, policy, state); err != nil {
+				return nil, err
+			}
+		}
 		return state, nil
 	}
 
 	// Sort runs chronologically (by minute hash)
 	sortedRuns := t.sortRuns(runs)
 
-	// Process runs newer than last processed
+	// BLOCKER #1 & #2: Process all runs to find latest success, but only increment failures once
+	// Track which runs we've already counted as failures
 	lastProcessedHash, _ := strconv.ParseInt(state.LastProcessedRunMinuteHash, 10, 64)
 	modified := false
+	latestSuccessTime := state.LastSuccessTime
+	latestSuccessHash := int64(0)
+	consecutiveFailuresSinceSuccess := 0
 
 	for _, runHash := range sortedRuns {
 		runHashInt, _ := strconv.ParseInt(runHash, 10, 64)
-		if runHashInt <= lastProcessedHash {
-			continue // Already counted this run
-		}
-
 		runBackups := runs[runHash]
 		outcome := t.determineRunOutcome(runBackups)
 
 		switch outcome {
 		case runSucceeded:
-			// Any backup succeeded - reset failure counter
-			state.ConsecutiveFailures = 0
-			state.LastSuccessTime = t.getRunCompletionTime(runBackups)
-			state.LastProcessedRunMinuteHash = runHash
-			modified = true
-			klog.V(4).Infof("BackupRunTracker: policy %s run %s succeeded, reset failure counter", policy.Name, runHash)
+			// Track latest success (may come in late)
+			successTime := t.getRunCompletionTime(runBackups)
+			if successTime != nil && (latestSuccessTime == nil || successTime.After(latestSuccessTime.Time)) {
+				latestSuccessTime = successTime
+				latestSuccessHash = runHashInt
+				modified = true
+				klog.V(4).Infof("BackupRunTracker: policy %s run %s succeeded", policy.Name, runHash)
+			}
 
 		case runFailed:
-			// All backups failed - increment failure counter
-			state.ConsecutiveFailures++
-			state.LastProcessedRunMinuteHash = runHash
-			modified = true
-			klog.Warningf("BackupRunTracker: policy %s run %s failed, consecutive failures: %d", policy.Name, runHash, state.ConsecutiveFailures)
+			// Only count this failure if we haven't processed it yet
+			if runHashInt > lastProcessedHash {
+				consecutiveFailuresSinceSuccess++
+				klog.Warningf("BackupRunTracker: policy %s run %s failed", policy.Name, runHash)
+			}
 
 		case runInProgress:
-			// Don't process incomplete runs yet
+			// Don't process incomplete runs
 			klog.V(4).Infof("BackupRunTracker: policy %s run %s still in progress, skipping", policy.Name, runHash)
-			// Don't update lastProcessedRunMinuteHash - will reprocess next sync
 		}
 	}
 
+	// Update state: failures since last success
+	if latestSuccessTime != nil && (state.LastSuccessTime == nil || latestSuccessTime.After(state.LastSuccessTime.Time)) {
+		// New success found - reset counter and update success time
+		state.LastSuccessTime = latestSuccessTime
+		state.ConsecutiveFailures = 0
+		modified = true
+
+		// Count failures after this success
+		for _, runHash := range sortedRuns {
+			runHashInt, _ := strconv.ParseInt(runHash, 10, 64)
+			if runHashInt > latestSuccessHash {
+				runBackups := runs[runHash]
+				if t.determineRunOutcome(runBackups) == runFailed {
+					state.ConsecutiveFailures++
+				}
+			}
+		}
+	} else if consecutiveFailuresSinceSuccess > 0 {
+		// New failures since last processed, no new success
+		state.ConsecutiveFailures += consecutiveFailuresSinceSuccess
+		modified = true
+	}
+
+	// Update cursor to latest processed run (failed or succeeded, not in-progress)
+	latestProcessed := ""
+	for i := len(sortedRuns) - 1; i >= 0; i-- {
+		runHash := sortedRuns[i]
+		outcome := t.determineRunOutcome(runs[runHash])
+		if outcome != runInProgress {
+			latestProcessed = runHash
+			break
+		}
+	}
+	if latestProcessed != "" && latestProcessed != state.LastProcessedRunMinuteHash {
+		state.LastProcessedRunMinuteHash = latestProcessed
+		modified = true
+	}
+
 	if modified {
+		klog.V(4).Infof("BackupRunTracker: policy %s state update - failures: %d, lastSuccess: %v",
+			policy.Name, state.ConsecutiveFailures, state.LastSuccessTime)
 		if err := t.SavePolicyState(ctx, policy, state); err != nil {
 			return nil, err
 		}
@@ -283,6 +336,26 @@ func (t *RunTracker) determineRunOutcome(backups []*operatorv1alpha1.EtcdBackup)
 		return runInProgress
 	}
 	return runFailed
+}
+
+// filterBackupsByPolicyUID filters backups to only include those created by this policy UID.
+// This prevents counting backups from a deleted policy with the same name.
+func (t *RunTracker) filterBackupsByPolicyUID(backups []*operatorv1alpha1.EtcdBackup, policyUID types.UID) []*operatorv1alpha1.EtcdBackup {
+	filtered := make([]*operatorv1alpha1.EtcdBackup, 0, len(backups))
+	for _, backup := range backups {
+		// Check if backup has policy UID label matching this policy
+		if backupPolicyUID, ok := backup.Labels[backuphelpers.LabelEtcdBackupPolicyUID]; ok {
+			if backupPolicyUID == string(policyUID) {
+				filtered = append(filtered, backup)
+			}
+		} else {
+			// Backups without UID label are from before UID tracking was added
+			// Include them for backward compatibility (old backups)
+			// This is safe because policy names are unique at any point in time
+			filtered = append(filtered, backup)
+		}
+	}
+	return filtered
 }
 
 // groupBackupsByRun groups backups by their minute hash (scheduled run identifier)
