@@ -232,9 +232,9 @@
           {
             alert: 'etcdBackupNoPolicyConfigured',
             expr: |||
-              absent(etcd_backup_info{created_by_policy!=""})
+              absent(etcd_backup_policy_info)
             |||,
-            'for': '1h',
+            'for': '15m',
             labels: {
               severity: 'warning',
             },
@@ -244,35 +244,52 @@
             },
           },
           {
-            alert: 'etcdBackupNoRecentSuccess',
+            alert: 'etcdBackupPolicyConsecutiveFailures',
             expr: |||
-              (time() - max(etcd_backup_completion_time{}) > 86400)
-              or
-              absent(etcd_backup_completion_time{})
+              etcd_backup_policy_consecutive_failures >= 2
             |||,
-            'for': '1h',
             labels: {
               severity: 'warning',
             },
             annotations: {
-              description: 'etcd has not completed a successful backup in over 24 hours. The last successful backup was {{ $value | humanizeDuration }} ago.',
-              summary: 'No successful etcd backup in over 24 hours.',
+              description: 'Backup policy "{{ $labels.policy }}" has {{ $value }} consecutive backup run failures. Check the EtcdBackup resources for error details.',
+              summary: 'Backup policy has consecutive failures.',
             },
           },
           {
-            alert: 'etcdBackupNoRecentSuccess',
+            alert: 'etcdBackupPolicyConsecutiveFailures',
             expr: |||
-              (time() - max(etcd_backup_completion_time{}) > 172800)
-              or
-              (absent(etcd_backup_completion_time{}) and time() > 172800)
+              etcd_backup_policy_consecutive_failures >= 3
             |||,
-            'for': '1h',
             labels: {
               severity: 'critical',
             },
             annotations: {
-              description: 'etcd has not completed a successful backup in over 48 hours. This is a critical issue that may prevent disaster recovery.',
-              summary: 'No successful etcd backup in over 48 hours.',
+              description: 'Backup policy "{{ $labels.policy }}" has {{ $value }} consecutive backup run failures. Immediate investigation required to restore backup capability.',
+              summary: 'Backup policy has critical consecutive failures.',
+            },
+          },
+          {
+            alert: 'etcdBackupPolicyNoRecentSuccess',
+            expr: |||
+              (
+                etcd_backup_policy_last_success_time == 0
+                and
+                time() - etcd_backup_policy_creation_time > 86400
+              )
+              or
+              (
+                etcd_backup_policy_last_success_time > 0
+                and
+                time() - etcd_backup_policy_last_success_time > 86400
+              )
+            |||,
+            labels: {
+              severity: 'critical',
+            },
+            annotations: {
+              description: 'Backup policy "{{ $labels.policy }}" has not completed a successful backup in over 24 hours. This is a critical issue that may prevent disaster recovery.',
+              summary: 'Backup policy has no successful backup in over 24 hours.',
             },
           },
           {

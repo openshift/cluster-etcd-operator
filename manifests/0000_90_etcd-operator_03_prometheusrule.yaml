@@ -254,32 +254,45 @@ spec:
         description: No EtcdBackupPolicy is configured for automated etcd backups. Configure an EtcdBackupPolicy resource to ensure regular backups are taken.
         summary: No automated etcd backup policy is configured.
       expr: |
-        absent(etcd_backup_info{created_by_policy!=""})
-      for: 1h
+        absent(etcd_backup_policy_info)
+      for: 15m
       labels:
         severity: warning
-    - alert: etcdBackupNoRecentSuccess
+    - alert: etcdBackupPolicyConsecutiveFailures
       annotations:
-        description: etcd has not completed a successful backup in over 24 hours. The last successful backup was {{ $value | humanizeDuration }} ago.
-        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupNoRecentSuccess.md
-        summary: No successful etcd backup in over 24 hours.
+        description: Backup policy "{{ $labels.policy }}" has {{ $value }} consecutive backup run failures. Check the EtcdBackup resources for error details.
+        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyConsecutiveFailures.md
+        summary: Backup policy has consecutive failures.
       expr: |
-        (time() - max(etcd_backup_completion_time{}) > 86400)
-        or
-        absent(etcd_backup_completion_time{})
-      for: 1h
+        etcd_backup_policy_consecutive_failures >= 2
       labels:
         severity: warning
-    - alert: etcdBackupNoRecentSuccess
+    - alert: etcdBackupPolicyConsecutiveFailures
       annotations:
-        description: etcd has not completed a successful backup in over 48 hours. This is a critical issue that may prevent disaster recovery.
-        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupNoRecentSuccess.md
-        summary: No successful etcd backup in over 48 hours.
+        description: Backup policy "{{ $labels.policy }}" has {{ $value }} consecutive backup run failures. Immediate investigation required to restore backup capability.
+        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyConsecutiveFailures.md
+        summary: Backup policy has critical consecutive failures.
       expr: |
-        (time() - max(etcd_backup_completion_time{}) > 172800)
+        etcd_backup_policy_consecutive_failures >= 3
+      labels:
+        severity: critical
+    - alert: etcdBackupPolicyNoRecentSuccess
+      annotations:
+        description: Backup policy "{{ $labels.policy }}" has not completed a successful backup in over 24 hours. This is a critical issue that may prevent disaster recovery.
+        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyNoRecentSuccess.md
+        summary: Backup policy has no successful backup in over 24 hours.
+      expr: |
+        (
+          etcd_backup_policy_last_success_time == 0
+          and
+          time() - etcd_backup_policy_creation_time > 86400
+        )
         or
-        (absent(etcd_backup_completion_time{}) and time() > 172800)
-      for: 1h
+        (
+          etcd_backup_policy_last_success_time > 0
+          and
+          time() - etcd_backup_policy_last_success_time > 86400
+        )
       labels:
         severity: critical
     - alert: etcdBackupDurationHigh
