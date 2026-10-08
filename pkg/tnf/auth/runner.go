@@ -47,8 +47,7 @@ func RunTnfAuth() error {
 
 	klog.Info("Running TNF auth")
 
-	// create tnf cluster config
-	cfg, err := config.GetClusterConfig(ctx, kubeClient)
+	cfg, err := config.GetClusterConfigIgnoreMissingNode(ctx, kubeClient)
 	if err != nil {
 		klog.Errorf("Failed to get cluster config: %v", err)
 		return err

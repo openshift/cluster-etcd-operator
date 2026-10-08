@@ -3,6 +3,7 @@ package pacemaker
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -28,17 +29,14 @@ type HealthStatusValue string
 // Local constants for healthcheck controller
 const (
 	// Status values for health assessment
-	statusHealthy HealthStatusValue = "Healthy"
-	statusWarning HealthStatusValue = "Warning"
-	statusError   HealthStatusValue = "Error"
-	statusUnknown HealthStatusValue = "Unknown"
+	StatusHealthy HealthStatusValue = "Healthy"
+	StatusWarning HealthStatusValue = "Warning"
+	StatusError   HealthStatusValue = "Error"
+	StatusUnknown HealthStatusValue = "Unknown"
 
 	// Degraded condition reason
 	reasonPacemakerUnhealthy = "PacemakerUnhealthy"
 
-	// Warning message prefixes for categorizing events.
-	// Note: warningPrefixFailedAction was removed - failed action events are recorded
-	// by the status collector directly from pacemaker XML, not the healthcheck controller.
 	warningPrefixFencingEvent = "Recent fencing event:"
 
 	// Operator condition types
@@ -126,6 +124,12 @@ type HealthCheck struct {
 	// Only updated when status is non-Unknown, so CRLastUpdated reflects the last valid CR timestamp.
 	previousMu sync.Mutex
 	previous   *HealthStatus
+
+	disruptionTracker *DisruptionTracker
+
+	// crNodes holds the PacemakerCluster node statuses retrieved during getPacemakerStatus.
+	// Used by trackResourceDisruptions to avoid a redundant informer store lookup.
+	crNodes *[]pacmkrv1.PacemakerClusterNodeStatus
 }
 
 // NewHealthCheck creates a new HealthCheck for monitoring pacemaker status
@@ -138,7 +142,7 @@ func NewHealthCheck(
 	restConfig *rest.Config,
 ) (factory.Controller, cache.SharedIndexInformer, error) {
 	// Create REST client for PacemakerStatus CRs
-	restClient, err := createPacemakerRESTClient(restConfig)
+	restClient, err := CreatePacemakerRESTClient(restConfig)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create REST client: %w", err)
 	}
@@ -152,13 +156,14 @@ func NewHealthCheck(
 	// Create informer for PacemakerCluster
 	klog.Infof("Creating PacemakerCluster informer for group %s, resource %s", pacmkrv1.SchemeGroupVersion.String(), PacemakerResourceName)
 	informer := cache.NewSharedIndexInformer(
-		&cache.ListWatch{
+		&PacemakerListWatch{ListWatch: cache.ListWatch{
 			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
 				klog.V(4).Infof("PacemakerCluster informer ListFunc called for resource %s", PacemakerResourceName)
+				sanitizedOptions := SanitizeListOptions(options)
 				result := &pacmkrv1.PacemakerClusterList{}
 				err := restClient.Get().
 					Resource(PacemakerResourceName).
-					VersionedParams(&options, runtime.NewParameterCodec(scheme)).
+					VersionedParams(&sanitizedOptions, runtime.NewParameterCodec(scheme)).
 					Do(context.Background()).
 					Into(result)
 				if err != nil {
@@ -170,27 +175,40 @@ func NewHealthCheck(
 			},
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 				klog.V(4).Infof("PacemakerCluster informer WatchFunc called for resource %s", PacemakerResourceName)
+				sanitizedOptions := SanitizeListOptions(options)
 				watcher, err := restClient.Get().
 					Resource(PacemakerResourceName).
-					VersionedParams(&options, runtime.NewParameterCodec(scheme)).
+					VersionedParams(&sanitizedOptions, runtime.NewParameterCodec(scheme)).
 					Watch(context.Background())
 				if err != nil {
 					klog.Errorf("Failed to watch PacemakerCluster resources (%s): %v", PacemakerResourceName, err)
 				}
 				return watcher, err
 			},
-		},
+		}},
 		&pacmkrv1.PacemakerCluster{},
 		HealthCheckResyncInterval,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
 	)
 
+	return NewHealthCheckWithInformer(operatorClient, kubeClient, eventRecorder, informer)
+}
+
+// NewHealthCheckWithInformer creates a new HealthCheck using an existing PacemakerCluster informer.
+// Use this when the informer is already created and managed by another controller (e.g., lifecycle manager).
+func NewHealthCheckWithInformer(
+	operatorClient v1helpers.StaticPodOperatorClient,
+	kubeClient kubernetes.Interface,
+	eventRecorder events.Recorder,
+	pacemakerInformer cache.SharedIndexInformer,
+) (factory.Controller, cache.SharedIndexInformer, error) {
 	c := &HealthCheck{
 		operatorClient:    operatorClient,
 		kubeClient:        kubeClient,
 		eventRecorder:     eventRecorder,
-		pacemakerInformer: informer,
+		pacemakerInformer: pacemakerInformer,
 		recordedEvents:    make(map[string]time.Time),
+		disruptionTracker: NewDisruptionTracker(),
 		// previous starts as nil - first sync will be treated as "from Unknown"
 	}
 
@@ -207,14 +225,14 @@ func NewHealthCheck(
 		WithSync(c.sync).
 		WithInformers(
 			operatorClient.Informer(),
-			informer,
+			pacemakerInformer,
 		).ToController("PacemakerHealthCheck", syncCtx.Recorder())
 
 	klog.Infof("PacemakerHealthCheck controller successfully created and ready to start")
 	klog.Infof("PacemakerHealthCheck informers to sync: 1) operatorClient.Informer(), 2) PacemakerCluster informer")
 	klog.Infof("PacemakerCluster informer must be started separately before controller.Run() is called")
 	klog.Infof("factory.Controller will wait up to 10 minutes for informers to sync, then exit if they fail to sync")
-	return controller, informer, nil
+	return controller, pacemakerInformer, nil
 }
 
 // sync is the main sync function that gets called periodically to check pacemaker status
@@ -235,8 +253,10 @@ func (c *HealthCheck) sync(ctx context.Context, syncCtx factory.SyncContext) err
 		return nil
 	}
 
+	c.trackResourceDisruptions()
+
 	// Log the determined status for visibility
-	klog.V(2).Infof("Pacemaker health status: %s (errors: %d, warnings: %d)",
+	klog.V(4).Infof("Pacemaker health status: %s (errors: %d, warnings: %d)",
 		currentStatus.OverallStatus, len(currentStatus.Errors), len(currentStatus.Warnings))
 
 	if err := c.updateOperatorStatus(ctx, currentStatus, previousStatus); err != nil {
@@ -253,79 +273,40 @@ func (c *HealthCheck) sync(ctx context.Context, syncCtx factory.SyncContext) err
 // Returns (nil, nil, nil) if the CR hasn't changed since last sync (same lastUpdated timestamp).
 // For Unknown status, previous is not updated (preserves last valid status for grace period).
 func (c *HealthCheck) getPacemakerStatus(ctx context.Context) (*HealthStatus, *HealthStatus, error) {
+	c.crNodes = nil
 	klog.V(4).Infof("Retrieving pacemaker status from CR...")
 
-	// Read previous status
 	c.previousMu.Lock()
 	previous := c.previous
 	c.previousMu.Unlock()
 
-	// Get the PacemakerCluster CR from the informer cache
 	item, exists, err := c.pacemakerInformer.GetStore().GetByKey(PacemakerClusterResourceName)
 	if err != nil {
-		// Unknown status - don't update previous (preserves last valid for grace period)
-		return &HealthStatus{
-			OverallStatus: statusUnknown,
-			Warnings:      []string{},
-			Errors:        []string{fmt.Sprintf("Failed to get PacemakerCluster CR from cache: %v", err)},
-		}, previous, nil
+		return unknownHealthStatus(fmt.Sprintf("Failed to get PacemakerCluster CR from cache: %v", err)), previous, nil
 	}
 	if !exists {
-		// Unknown status - CR not found in cache
-		return &HealthStatus{
-			OverallStatus: statusUnknown,
-			Warnings:      []string{},
-			Errors:        []string{"PacemakerCluster CR not found in cache"},
-		}, previous, nil
+		return unknownHealthStatus("PacemakerCluster CR not found in cache"), previous, nil
 	}
 
 	pacemakerCR, ok := item.(*pacmkrv1.PacemakerCluster)
 	if !ok {
-		return &HealthStatus{
-			OverallStatus: statusUnknown,
-			Warnings:      []string{},
-			Errors:        []string{"Failed to convert cached item to PacemakerCluster"},
-		}, previous, nil
+		return unknownHealthStatus("Failed to convert cached item to PacemakerCluster"), previous, nil
 	}
+	c.crNodes = pacemakerCR.Status.Nodes
 
-	// Check if status is populated (LastUpdated is zero means status was never set)
-	if pacemakerCR.Status.LastUpdated.IsZero() {
-		// Unknown status - don't update previous
-		return &HealthStatus{
-			OverallStatus: statusUnknown,
-			Warnings:      []string{},
-			Errors:        []string{"PacemakerCluster CR has no status populated"},
-		}, previous, nil
-	}
+	// Staleness grows over time and must bypass the timestamp-unchanged optimization.
+	isStale := pacemakerCR.Status.LastUpdated.IsZero() ||
+		time.Since(pacemakerCR.Status.LastUpdated.Time) > StatusStalenessThreshold
 
-	crLastUpdated := pacemakerCR.Status.LastUpdated.Time
-
-	// Check staleness first - any update (even with errors) clears staleness.
-	timeSinceUpdate := time.Since(crLastUpdated)
-	if timeSinceUpdate > StatusStalenessThreshold {
-		// Unknown status - don't update previous
-		// Use absolute timestamp (stable) for event deduplication.
-		return &HealthStatus{
-			OverallStatus: statusUnknown,
-			Warnings:      []string{},
-			Errors:        []string{fmt.Sprintf("Pacemaker status is stale (last updated: %s)", crLastUpdated.Format(time.RFC3339))},
-		}, previous, nil
-	}
-
-	// Check if lastUpdated timestamp has changed since last sync.
-	// If unchanged, skip processing to avoid redundant work on timer-triggered syncs.
-	// Use previous.CRLastUpdated for comparison (only set for non-Unknown status).
-	if previous != nil && !previous.CRLastUpdated.IsZero() && crLastUpdated.Equal(previous.CRLastUpdated) {
-		klog.V(4).Infof("Skipping sync: lastUpdated timestamp unchanged (%v)", crLastUpdated)
+	if !isStale && previous != nil && !previous.CRLastUpdated.IsZero() &&
+		pacemakerCR.Status.LastUpdated.Time.Equal(previous.CRLastUpdated) {
+		klog.V(4).Infof("Skipping sync: lastUpdated timestamp unchanged (%v)", pacemakerCR.Status.LastUpdated.Time)
 		return nil, nil, nil
 	}
 
-	// Build health status from the CRD status fields
-	currentStatus := c.buildHealthStatusFromCR(pacemakerCR)
-	currentStatus.CRLastUpdated = crLastUpdated
+	currentStatus := BuildHealthStatusFromCR(pacemakerCR)
 
-	// Only update previous for non-Unknown status (preserves last valid for grace period)
-	if currentStatus.OverallStatus != statusUnknown {
+	if currentStatus.OverallStatus != StatusUnknown {
 		c.previousMu.Lock()
 		c.previous = currentStatus
 		c.previousMu.Unlock()
@@ -334,36 +315,44 @@ func (c *HealthCheck) getPacemakerStatus(ctx context.Context) (*HealthStatus, *H
 	return currentStatus, previous, nil
 }
 
-// buildHealthStatusFromCR builds a HealthStatus from the PacemakerCluster CR status fields
-// Note: This function assumes Status is not nil (checked by caller in getPacemakerStatus)
-func (c *HealthCheck) buildHealthStatusFromCR(pacemakerStatus *pacmkrv1.PacemakerCluster) *HealthStatus {
+func unknownHealthStatus(msg string) *HealthStatus {
+	return &HealthStatus{
+		OverallStatus: StatusUnknown,
+		Warnings:      []string{},
+		Errors:        []string{msg},
+	}
+}
+
+// BuildHealthStatusFromCR evaluates a PacemakerCluster CR and returns its complete health status.
+func BuildHealthStatusFromCR(cr *pacmkrv1.PacemakerCluster) *HealthStatus {
 	status := &HealthStatus{
-		OverallStatus: statusUnknown,
+		OverallStatus: StatusUnknown,
 		Warnings:      []string{},
 		Errors:        []string{},
 	}
 
-	// Defensive check: this should not happen as getPacemakerStatus checks for unpopulated Status
-	if pacemakerStatus == nil || pacemakerStatus.Status.LastUpdated.IsZero() {
-		klog.Errorf("buildHealthStatusFromCR called with nil PacemakerCluster or unpopulated Status")
-		status.Errors = append(status.Errors, "Internal error: unpopulated Status in buildHealthStatusFromCR")
+	if cr == nil || cr.Status.LastUpdated.IsZero() {
+		status.Errors = append(status.Errors, "PacemakerCluster CR has no status populated")
 		return status
 	}
 
-	// Check cluster-level configuration issues FIRST (node count, maintenance mode)
-	// These are often root causes (e.g., "excessive nodes" causes resource failures on extra node)
-	c.checkClusterConditions(pacemakerStatus, status)
+	status.CRLastUpdated = cr.Status.LastUpdated.Time
 
-	// Check node statuses (node-level conditions and resource health)
-	c.checkNodeStatuses(pacemakerStatus, status)
+	if time.Since(cr.Status.LastUpdated.Time) > StatusStalenessThreshold {
+		status.Errors = append(status.Errors, fmt.Sprintf("Pacemaker status is stale (last updated: %s)",
+			cr.Status.LastUpdated.Time.Format(time.RFC3339)))
+		return status
+	}
 
-	// Determine overall status: errors > warnings > healthy
+	checkClusterConditions(cr, status)
+	checkNodeStatuses(cr, status)
+
 	if len(status.Errors) > 0 {
-		status.OverallStatus = statusError
+		status.OverallStatus = StatusError
 	} else if len(status.Warnings) > 0 {
-		status.OverallStatus = statusWarning
+		status.OverallStatus = StatusWarning
 	} else {
-		status.OverallStatus = statusHealthy
+		status.OverallStatus = StatusHealthy
 	}
 
 	return status
@@ -372,34 +361,29 @@ func (c *HealthCheck) buildHealthStatusFromCR(pacemakerStatus *pacmkrv1.Pacemake
 // checkClusterConditions checks cluster-level configuration issues (node count, maintenance mode).
 // These are ALWAYS reported regardless of node-level errors, as they often represent root causes.
 // For example, "excessive nodes" causes resource failures on the extra node.
-func (c *HealthCheck) checkClusterConditions(pacemakerStatus *pacmkrv1.PacemakerCluster, status *HealthStatus) {
-	conditions := pacemakerStatus.Status.Conditions
+func checkClusterConditions(cr *pacmkrv1.PacemakerCluster, status *HealthStatus) {
+	conditions := cr.Status.Conditions
 	if len(conditions) == 0 {
-		// Missing cluster conditions means we can't verify cluster health configuration
 		klog.V(2).Infof("No cluster conditions present in status")
 		status.Errors = append(status.Errors, "No cluster conditions available")
 		return
 	}
 
-	// Always check cluster-level configuration issues - these are root causes
-	clusterIssues := c.getClusterConditionIssues(conditions, pacemakerStatus)
-
-	// Add cluster-level error if there are configuration issues
-	if len(clusterIssues) > 0 {
-		status.Errors = append(status.Errors, fmt.Sprintf(msgClusterUnhealthy, strings.Join(clusterIssues, ", ")))
+	if issues := getClusterConditionIssues(conditions, cr); len(issues) > 0 {
+		status.Errors = append(status.Errors, fmt.Sprintf(msgClusterUnhealthy, strings.Join(issues, ", ")))
 	}
 }
 
 // getClusterConditionIssues returns specific issues from cluster-level conditions (non-summary conditions)
-func (c *HealthCheck) getClusterConditionIssues(conditions []metav1.Condition, pacemakerStatus *pacmkrv1.PacemakerCluster) []string {
+func getClusterConditionIssues(conditions []metav1.Condition, cr *pacmkrv1.PacemakerCluster) []string {
 	var issues []string
 
 	// Check NodeCountAsExpected condition
 	nodeCountCondition := FindCondition(conditions, pacmkrv1.ClusterNodeCountAsExpectedConditionType)
 	if nodeCountCondition != nil && nodeCountCondition.Status != metav1.ConditionTrue {
 		nodeCount := 0
-		if pacemakerStatus.Status.Nodes != nil {
-			nodeCount = len(*pacemakerStatus.Status.Nodes)
+		if cr.Status.Nodes != nil {
+			nodeCount = len(*cr.Status.Nodes)
 		}
 		switch nodeCountCondition.Reason {
 		case pacmkrv1.ClusterNodeCountAsExpectedReasonInsufficientNodes:
@@ -419,15 +403,15 @@ func (c *HealthCheck) getClusterConditionIssues(conditions []metav1.Condition, p
 }
 
 // checkNodeStatuses checks if all nodes have healthy conditions and resources
-func (c *HealthCheck) checkNodeStatuses(pacemakerStatus *pacmkrv1.PacemakerCluster, status *HealthStatus) {
+func checkNodeStatuses(cr *pacmkrv1.PacemakerCluster, status *HealthStatus) {
 	// Nil-guard for Nodes field - missing node data is an error (cannot verify cluster health)
-	if pacemakerStatus.Status.Nodes == nil {
+	if cr.Status.Nodes == nil {
 		klog.V(2).Infof("Pacemaker.Status.Nodes is nil, cannot determine node status")
 		status.Errors = append(status.Errors, msgNoNodesFound)
 		return
 	}
 
-	nodes := *pacemakerStatus.Status.Nodes
+	nodes := *cr.Status.Nodes
 
 	// Empty nodes list is also an error - cannot verify cluster health without node data
 	if len(nodes) == 0 {
@@ -438,58 +422,39 @@ func (c *HealthCheck) checkNodeStatuses(pacemakerStatus *pacmkrv1.PacemakerClust
 
 	// Check each node's conditions and resource health (consolidated into single error per node)
 	for _, node := range nodes {
-		c.checkNodeConditions(node, status)
+		checkNodeConditions(node, status)
 	}
 }
 
 // checkNodeConditions checks the conditions of a single node and its resources,
 // routing issues to errors or warnings based on severity.
 // Errors degrade the operator; warnings are informational (e.g., fencing redundancy lost).
-func (c *HealthCheck) checkNodeConditions(node pacmkrv1.PacemakerClusterNodeStatus, status *HealthStatus) {
+func checkNodeConditions(node pacmkrv1.PacemakerClusterNodeStatus, status *HealthStatus) {
 	conditions := node.Conditions
 	if len(conditions) == 0 {
 		klog.V(2).Infof("Node %s has no conditions", node.NodeName)
 		return
 	}
 
-	// Check Online condition - this is critical for degraded status
-	onlineCondition := FindCondition(conditions, pacmkrv1.NodeOnlineConditionType)
-	if onlineCondition != nil && onlineCondition.Status != metav1.ConditionTrue {
+	if cond := FindCondition(conditions, pacmkrv1.NodeOnlineConditionType); cond != nil && cond.Status != metav1.ConditionTrue {
 		status.Errors = append(status.Errors, fmt.Sprintf(msgNodeOffline, node.NodeName))
-		return // If node is offline, other conditions don't matter
+		return
 	}
 
-	// Always check for fencing warnings - these are independent of overall node health.
-	// Fencing redundancy degraded (FencingHealthy=False but FencingAvailable=True) is a warning
-	// that should be reported even when the node is otherwise healthy.
-	fencingWarnings := c.getFencingWarnings(conditions)
+	fencingWarnings := getFencingWarnings(conditions)
 	for _, warning := range fencingWarnings {
 		status.Warnings = append(status.Warnings, fmt.Sprintf("%s: %s", node.NodeName, warning))
 	}
 
-	// Check overall node Healthy condition
 	healthyCondition := FindCondition(conditions, pacmkrv1.NodeHealthyConditionType)
 	if healthyCondition == nil || healthyCondition.Status == metav1.ConditionTrue {
-		return // Node is healthy (except for warnings already captured above)
+		return
 	}
 
-	// Node is unhealthy - collect errors (warnings already captured above)
-	nodeErrors := c.getNodeConditionErrors(conditions)
-
-	// Collect resource errors (all resource issues are currently errors)
-	resourceErrors := c.getNodeResourceSummaries(node)
-
-	// Combine all errors
-	allErrors := append(nodeErrors, resourceErrors...)
-
-	// If there are errors, build consolidated error message
+	allErrors := slices.Concat(getNodeConditionErrors(conditions), getNodeResourceSummaries(node))
 	if len(allErrors) > 0 {
 		status.Errors = append(status.Errors, fmt.Sprintf(msgNodeUnhealthy, node.NodeName, strings.Join(allErrors, ", ")))
-	}
-
-	// If no specific issues found but node is unhealthy, use generic message.
-	// Skip if we already captured fencing warnings - those explain the unhealthy state.
-	if len(allErrors) == 0 && len(fencingWarnings) == 0 {
+	} else if len(fencingWarnings) == 0 {
 		status.Errors = append(status.Errors, fmt.Sprintf(msgNodeUnhealthy, node.NodeName, healthyCondition.Message))
 	}
 }
@@ -497,11 +462,9 @@ func (c *HealthCheck) checkNodeConditions(node pacmkrv1.PacemakerClusterNodeStat
 // getFencingWarnings returns warnings about degraded fencing redundancy.
 // This is checked independently of overall node health because fencing redundancy
 // degradation should be reported even when the node is otherwise healthy.
-func (c *HealthCheck) getFencingWarnings(conditions []metav1.Condition) []string {
+func getFencingWarnings(conditions []metav1.Condition) []string {
 	var warnings []string
 
-	// Check FencingHealthy - if false but FencingAvailable is true, fencing redundancy is degraded (warning)
-	// This is a warning because the node CAN still be fenced, just with reduced redundancy.
 	fencingAvailableCondition := FindCondition(conditions, pacmkrv1.NodeFencingAvailableConditionType)
 	fencingHealthyCondition := FindCondition(conditions, pacmkrv1.NodeFencingHealthyConditionType)
 
@@ -538,7 +501,7 @@ var nodeConditionChecks = []nodeConditionCheck{
 
 // getNodeConditionErrors returns errors from node-level conditions.
 // Errors require immediate action and cause the operator to degrade.
-func (c *HealthCheck) getNodeConditionErrors(conditions []metav1.Condition) []string {
+func getNodeConditionErrors(conditions []metav1.Condition) []string {
 	var errors []string
 
 	for _, check := range nodeConditionChecks {
@@ -557,50 +520,34 @@ func (c *HealthCheck) getNodeConditionErrors(conditions []metav1.Condition) []st
 
 // getNodeResourceSummaries returns summaries of unhealthy resources on a node.
 // Each summary includes the resource name and its specific issue.
-func (c *HealthCheck) getNodeResourceSummaries(node pacmkrv1.PacemakerClusterNodeStatus) []string {
+func getNodeResourceSummaries(node pacmkrv1.PacemakerClusterNodeStatus) []string {
 	var summaries []string
 
 	for _, resource := range node.Resources {
-		healthyCondition := FindCondition(resource.Conditions, pacmkrv1.ResourceHealthyConditionType)
-		if healthyCondition != nil && healthyCondition.Status != metav1.ConditionTrue {
-			// Get specific reason for this resource
-			reason := c.getResourceIssue(resource.Conditions)
-			summaries = append(summaries, fmt.Sprintf("%s %s", resource.Name, reason))
+		if cond := FindCondition(resource.Conditions, pacmkrv1.ResourceHealthyConditionType); cond != nil && cond.Status != metav1.ConditionTrue {
+			summaries = append(summaries, fmt.Sprintf("%s %s", resource.Name, getResourceIssue(resource.Conditions)))
 		}
 	}
 
 	return summaries
 }
 
-// getResourceIssue returns a specific issue description for an unhealthy resource.
-//
-// All resource-level issues are treated as errors. The Active=True with Started=False state
-// (anomalous transitional state) could theoretically be a warning since it might self-resolve,
-// but routing resource issues to warnings vs errors would require significant refactoring.
-// Additionally: (1) this state is rare and brief and (2) etcd not running causes API server
-// degradation anyway, so treating it as an error is appropriate.
-func (c *HealthCheck) getResourceIssue(conditions []metav1.Condition) string {
-	// Check for specific failure conditions (prioritized by severity)
-	operationalCondition := FindCondition(conditions, pacmkrv1.ResourceOperationalConditionType)
-	if operationalCondition != nil && operationalCondition.Status != metav1.ConditionTrue {
-		return "has failed"
+// getResourceIssue returns a human-readable issue for an unhealthy resource, prioritized by severity.
+func getResourceIssue(conditions []metav1.Condition) string {
+	checks := []struct {
+		condType string
+		msg      string
+	}{
+		{pacmkrv1.ResourceOperationalConditionType, "has failed"},
+		{pacmkrv1.ResourceStartedConditionType, "is stopped"},
+		{pacmkrv1.ResourceActiveConditionType, "is not active"},
+		{pacmkrv1.ResourceManagedConditionType, "is unmanaged"},
 	}
-
-	startedCondition := FindCondition(conditions, pacmkrv1.ResourceStartedConditionType)
-	if startedCondition != nil && startedCondition.Status != metav1.ConditionTrue {
-		return "is stopped"
+	for _, check := range checks {
+		if cond := FindCondition(conditions, check.condType); cond != nil && cond.Status != metav1.ConditionTrue {
+			return check.msg
+		}
 	}
-
-	activeCondition := FindCondition(conditions, pacmkrv1.ResourceActiveConditionType)
-	if activeCondition != nil && activeCondition.Status != metav1.ConditionTrue {
-		return "is not active"
-	}
-
-	managedCondition := FindCondition(conditions, pacmkrv1.ResourceManagedConditionType)
-	if managedCondition != nil && managedCondition.Status != metav1.ConditionTrue {
-		return "is unmanaged"
-	}
-
 	return "is unhealthy"
 }
 
@@ -619,16 +566,16 @@ func (c *HealthCheck) updateOperatorStatus(ctx context.Context, status *HealthSt
 
 	// Update operator conditions based on pacemaker status
 	switch status.OverallStatus {
-	case statusError:
+	case StatusError:
 		return c.setPacemakerDegradedCondition(ctx, status)
-	case statusHealthy, statusWarning:
+	case StatusHealthy, StatusWarning:
 		// Both healthy and warning states should clear degraded condition
 		// Warnings are informational (e.g. recent fencing, node count mismatch) and don't indicate degradation
-		if status.OverallStatus == statusWarning {
+		if status.OverallStatus == StatusWarning {
 			klog.V(2).Infof("Pacemaker health check has warnings but cluster is operational: %v", status.Warnings)
 		}
 		return c.clearPacemakerDegradedCondition(ctx, status)
-	case statusUnknown:
+	case StatusUnknown:
 		// Unknown status means we cannot determine pacemaker health (CR not found, stale, no status, etc.)
 		// Only mark as degraded if we haven't received a valid status in a while (grace period).
 		// Use previous.CRLastUpdated which reflects when we last had valid cluster data.
@@ -831,12 +778,12 @@ func (c *HealthCheck) recordHealthCheckEvents(current *HealthStatus, previous *H
 func (c *HealthCheck) recordHealthTransitionEvents(current *HealthStatus, previous *HealthStatus) {
 	// Determine previous state from the previous HealthStatus we computed.
 	// This is derived from the previous PacemakerCluster CR we processed.
-	previousWasUnknown := previous == nil || previous.OverallStatus == statusUnknown
-	previousWasDegraded := previous != nil && previous.OverallStatus == statusError
+	previousWasUnknown := previous == nil || previous.OverallStatus == StatusUnknown
+	previousWasDegraded := previous != nil && previous.OverallStatus == StatusError
 	previousHadWarnings := previous != nil && len(previous.Warnings) > 0
 
 	// Determine current state
-	operationallyHealthy := current.OverallStatus == statusHealthy || current.OverallStatus == statusWarning
+	operationallyHealthy := current.OverallStatus == StatusHealthy || current.OverallStatus == StatusWarning
 	currentHasNoWarnings := len(current.Warnings) == 0
 
 	// Record PacemakerHealthy when transitioning to operationally healthy from:
@@ -862,10 +809,6 @@ func (c *HealthCheck) recordHealthTransitionEvents(current *HealthStatus, previo
 	}
 }
 
-// recordWarningEvent records appropriate warning events based on warning type.
-// Note: Failed action events (warningPrefixFailedAction) are recorded by the status collector
-// directly from pacemaker XML, not by the healthcheck controller. The PacemakerCluster CR
-// only contains conditions, not raw failed action history.
 func (c *HealthCheck) recordWarningEvent(warning string) {
 	switch {
 	case strings.Contains(warning, warningPrefixFencingEvent):
@@ -891,4 +834,11 @@ func getEventReasonForError(errorMsg string) string {
 func (c *HealthCheck) recordErrorEvent(errorMsg string) {
 	eventReason := getEventReasonForError(errorMsg)
 	c.eventRecorder.Warningf(eventReason, msgPacemakerError, errorMsg)
+}
+
+func (c *HealthCheck) trackResourceDisruptions() {
+	if c.crNodes == nil {
+		return
+	}
+	c.disruptionTracker.TrackResourceStates(c.crNodes)
 }
