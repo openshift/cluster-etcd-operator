@@ -392,6 +392,176 @@ func TestRunTracker_NeverSuccessfulPolicyStateSaved(t *testing.T) {
 	require.Equal(t, policy.CreationTimestamp.Unix(), savedState.PolicyCreationTime.Unix())
 }
 
+func TestRunTracker_FirstReconcileBeforeAllMembersKnown(t *testing.T) {
+	// REMAINING ISSUE #1: First reconcile should NOT count failure until all expected members failed
+	ctx := context.Background()
+	tracker, _ := setupRunTracker(t)
+
+	policy := testPolicy("test-policy", "uid-1")
+
+	// Controller registers that it expects 3 members for this run
+	err := tracker.RegisterRun(ctx, policy, "1000", 3)
+	require.NoError(t, err)
+
+	// First reconcile: only 1 of 3 expected backups visible (failed)
+	backups1 := []*operatorv1alpha1.EtcdBackup{
+		testFailedBackup("test-policy-node1-1000", "test-policy", "1000", time.Now()),
+	}
+	state1, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups1)
+	require.NoError(t, err)
+
+	// Should NOT increment failure counter yet - don't know if other members will succeed
+	require.Equal(t, 0, state1.ConsecutiveFailures, "should not count run as failed until all expected members are finished")
+
+	// Second reconcile: all 3 members now visible, all failed
+	backups2 := []*operatorv1alpha1.EtcdBackup{
+		testFailedBackup("test-policy-node1-1000", "test-policy", "1000", time.Now()),
+		testFailedBackup("test-policy-node2-1000", "test-policy", "1000", time.Now()),
+		testFailedBackup("test-policy-node3-1000", "test-policy", "1000", time.Now()),
+	}
+	state2, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups2)
+	require.NoError(t, err)
+
+	// NOW it should count as failed
+	require.Equal(t, 1, state2.ConsecutiveFailures, "should count run as failed once all members failed")
+}
+
+func TestRunTracker_LateSuccessAfterRetention(t *testing.T) {
+	// KNOWN LIMITATION #1: Retention can change the streak
+	// See KNOWN_LIMITATIONS.md - requires durable per-run outcomes to fix
+	t.Skip("Known limitation: retention changing failure count requires architectural changes (durable run outcomes)")
+
+	ctx := context.Background()
+	tracker, _ := setupRunTracker(t)
+
+	policy := testPolicy("test-policy", "uid-1")
+
+	// Initial: Success at run 1000, then failures at 1001, 1002, 1003
+	backups := []*operatorv1alpha1.EtcdBackup{
+		testSuccessfulBackup("test-policy-1000", "test-policy", "1000", time.Now()),
+		testFailedBackup("test-policy-1001", "test-policy", "1001", time.Now()),
+		testFailedBackup("test-policy-1002", "test-policy", "1002", time.Now()),
+		testFailedBackup("test-policy-1003", "test-policy", "1003", time.Now()),
+	}
+	state1, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups)
+	require.NoError(t, err)
+	require.Equal(t, 3, state1.ConsecutiveFailures)
+
+	// Later: Retention deletes run 1001, 1002
+	// BUT we discover run 1002 actually had a late success
+	retainedBackups := []*operatorv1alpha1.EtcdBackup{
+		testSuccessfulBackup("test-policy-1000", "test-policy", "1000", time.Now()),
+		testSuccessfulBackup("test-policy-1002", "test-policy", "1002", time.Now().Add(1 * time.Hour)), // Late success
+		testFailedBackup("test-policy-1003", "test-policy", "1003", time.Now()),
+	}
+	state2, err := tracker.ProcessBackupsForPolicy(ctx, policy, retainedBackups)
+	require.NoError(t, err)
+
+	// Should still have 1 failure (1003 after 1002's success)
+	// NOT 0 failures from rebuilding only from retained objects
+	require.Equal(t, 1, state2.ConsecutiveFailures, "retention should not change durable failure count")
+	require.NotNil(t, state2.LastSuccessTime)
+}
+
+func TestRunTracker_LatestSuccessTime(t *testing.T) {
+	// REMAINING ISSUE #3: Last success time should be the LATEST, not first
+	ctx := context.Background()
+	tracker, _ := setupRunTracker(t)
+
+	policy := testPolicy("test-policy", "uid-1")
+
+	earlyTime := time.Now()
+	lateTime := earlyTime.Add(5 * time.Minute)
+
+	// Run with multiple successes at different completion times
+	backups := []*operatorv1alpha1.EtcdBackup{
+		testSuccessfulBackup("test-policy-node1-1000", "test-policy", "1000", earlyTime),
+		testSuccessfulBackup("test-policy-node2-1000", "test-policy", "1000", lateTime), // Later completion
+	}
+	state, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups)
+	require.NoError(t, err)
+
+	// Should record the LATEST success time, not the first
+	require.NotNil(t, state.LastSuccessTime)
+	require.Equal(t, lateTime.Unix(), state.LastSuccessTime.Unix(), "should use latest success time, not first")
+}
+
+func TestRunTracker_UnlabeledBackupsAfterPolicyRecreation(t *testing.T) {
+	// KNOWN LIMITATION #2: Unlabeled backups accepted for backward compatibility
+	// See KNOWN_LIMITATIONS.md - would require migration job or timestamp-based filtering to fix
+	t.Skip("Known limitation: unlabeled backups accepted for backward compatibility with pre-UID-tracking backups")
+
+	ctx := context.Background()
+	tracker, _ := setupRunTracker(t)
+
+	// Old policy creates unlabeled backup (before UID tracking)
+	unlabeledBackup := testFailedBackup("test-policy-1000", "test-policy", "1000", time.Now())
+	// Simulate old backup without UID label
+	delete(unlabeledBackup.Labels, backuphelpers.LabelEtcdBackupPolicyUID)
+
+	// Policy deleted and recreated with same name, different UID
+	policy2 := testPolicy("test-policy", "uid-2")
+
+	// New policy should NOT count unlabeled backup from old policy
+	state, err := tracker.ProcessBackupsForPolicy(ctx, policy2, []*operatorv1alpha1.EtcdBackup{unlabeledBackup})
+	require.NoError(t, err)
+	require.Equal(t, 0, state.ConsecutiveFailures, "should not count unlabeled backups from previous policy with same name")
+}
+
+func TestRunTracker_CorruptStateOnRead(t *testing.T) {
+	// REMAINING ISSUE #5: GetPolicyState and GetAllPolicyStates should return errors on corruption
+	ctx := context.Background()
+	tracker, client := setupRunTracker(t)
+
+	policy := testPolicy("test-policy", "uid-1")
+
+	// Save valid state
+	state := &PolicyRunState{
+		PolicyUID:           policy.UID,
+		ConsecutiveFailures: 2,
+		PolicyCreationTime:  policy.CreationTimestamp,
+	}
+	err := tracker.SavePolicyState(ctx, policy, state)
+	require.NoError(t, err)
+
+	// Corrupt the ConfigMap
+	cm, err := client.Get(ctx, failureTrackerConfigMapName, metav1.GetOptions{})
+	require.NoError(t, err)
+	cm.Data[failureTrackerDataKey] = "invalid json {"
+	_, err = client.Update(ctx, cm, metav1.UpdateOptions{})
+	require.NoError(t, err)
+
+	// GetPolicyState should return error, not reinitialize
+	_, err = tracker.GetPolicyState(ctx, policy)
+	require.Error(t, err, "GetPolicyState should return error on corruption, not reinitialize")
+
+	// GetAllPolicyStates should return error, not empty map
+	_, err = tracker.GetAllPolicyStates(ctx)
+	require.Error(t, err, "GetAllPolicyStates should return error on corruption, not empty map")
+}
+
+func TestRunTracker_PendingOnlyRun(t *testing.T) {
+	// REMAINING ISSUE #6: Pending-only runs should still save initial state
+	ctx := context.Background()
+	tracker, _ := setupRunTracker(t)
+
+	policy := testPolicy("test-policy", "uid-1")
+	policy.CreationTimestamp = metav1.NewTime(time.Now().Add(-25 * time.Hour))
+
+	// All backups are pending (common at startup)
+	backups := []*operatorv1alpha1.EtcdBackup{
+		testPendingBackup("test-policy-node1-1000", "test-policy", "1000"),
+		testPendingBackup("test-policy-node2-1000", "test-policy", "1000"),
+	}
+	_, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups)
+	require.NoError(t, err)
+
+	// State should be saved even with only pending backups
+	allStates, err := tracker.GetAllPolicyStates(ctx)
+	require.NoError(t, err)
+	require.Contains(t, allStates, string(policy.UID), "pending-only run should still save initial state")
+}
+
 func TestExtractMinuteHashFromName(t *testing.T) {
 	tests := []struct {
 		name     string

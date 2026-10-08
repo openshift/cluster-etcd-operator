@@ -354,6 +354,16 @@ func (c *BackupPolicyController) executeBackup(ctx context.Context, backupPolicy
 		}
 	}
 
+	// Register run metadata for proper failure accounting
+	// This allows the tracker to distinguish "partial run" from "complete run with all failures"
+	if len(toCreate) > 0 {
+		minuteHash := strconv.FormatInt(scheduleTime.Unix()/60, 10)
+		if err := c.RunTracker.RegisterRun(ctx, backupPolicy, minuteHash, len(toCreate)); err != nil {
+			// Log but don't fail - tracking is non-critical
+			klog.Warningf("Failed to register run metadata for policy %s: %v", backupPolicy.Name, err)
+		}
+	}
+
 	// Update Backup status with last execution time
 	backupPolicy = backupPolicy.DeepCopy()
 	backupPolicy.Status.Active = active
