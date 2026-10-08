@@ -43,6 +43,17 @@ type PolicyRunState struct {
 	// PolicyCreationTime tracks when we first saw this policy
 	// Used for grace periods ("first-policy24h allowance")
 	PolicyCreationTime metav1.Time `json:"policyCreationTime"`
+
+	// RunMetadata tracks expected member count per run for proper finalization
+	// Key is minute hash, pruned for runs older than retention window
+	RunMetadata map[string]*RunMetadata `json:"runMetadata,omitempty"`
+}
+
+// RunMetadata stores metadata about a scheduled backup run
+type RunMetadata struct {
+	// ExpectedMembers is the number of backup objects expected for this run
+	// Used to distinguish "partial run" from "complete run with all failures"
+	ExpectedMembers int `json:"expectedMembers"`
 }
 
 // RunTracker manages durable tracking of backup run failures per policy.
@@ -51,12 +62,40 @@ type RunTracker struct {
 	configMapClient corev1client.ConfigMapInterface
 }
 
+const (
+	// runMetadataRetentionWindow is how many runs to keep metadata for
+	// This allows late arrivals to be properly accounted while preventing unbounded growth
+	runMetadataRetentionWindow = 100
+)
+
 // NewRunTracker creates a new RunTracker
 func NewRunTracker(namespace string, configMapClient corev1client.ConfigMapInterface) *RunTracker {
 	return &RunTracker{
 		namespace:      namespace,
 		configMapClient: configMapClient,
 	}
+}
+
+// RegisterRun records metadata for a scheduled backup run.
+// Called by the controller when it creates backup objects for a run.
+func (t *RunTracker) RegisterRun(ctx context.Context, policy *operatorv1alpha1.EtcdBackupPolicy, minuteHash string, expectedMembers int) error {
+	state, err := t.GetPolicyState(ctx, policy)
+	if err != nil {
+		return err
+	}
+
+	if state.RunMetadata == nil {
+		state.RunMetadata = make(map[string]*RunMetadata)
+	}
+
+	state.RunMetadata[minuteHash] = &RunMetadata{
+		ExpectedMembers: expectedMembers,
+	}
+
+	// Prune old metadata to prevent unbounded growth
+	t.pruneOldRunMetadata(state)
+
+	return t.SavePolicyState(ctx, policy, state)
 }
 
 // GetPolicyState loads the state for a given policy from the ConfigMap.
@@ -79,8 +118,8 @@ func (t *RunTracker) GetPolicyState(ctx context.Context, policy *operatorv1alpha
 
 	var allStates map[string]*PolicyRunState
 	if err := json.Unmarshal([]byte(data), &allStates); err != nil {
-		klog.Warningf("failed to unmarshal failure tracker data, reinitializing: %v", err)
-		return t.initializePolicyState(policy), nil
+		// REMAINING ISSUE #5 FIX: Return error instead of reinitializing
+		return nil, fmt.Errorf("failed to unmarshal failure tracker data (corrupted ConfigMap): %w", err)
 	}
 
 	state, ok := allStates[string(policy.UID)]
@@ -192,7 +231,16 @@ func (t *RunTracker) ProcessBackupsForPolicy(
 	for _, runHash := range sortedRuns {
 		runHashInt, _ := strconv.ParseInt(runHash, 10, 64)
 		runBackups := runs[runHash]
-		outcome := t.determineRunOutcome(runBackups)
+
+		// Get expected member count from metadata
+		expectedMembers := 0
+		if state.RunMetadata != nil {
+			if metadata, ok := state.RunMetadata[runHash]; ok {
+				expectedMembers = metadata.ExpectedMembers
+			}
+		}
+
+		outcome := t.determineRunOutcome(runBackups, expectedMembers)
 
 		switch outcome {
 		case runSucceeded:
@@ -230,7 +278,13 @@ func (t *RunTracker) ProcessBackupsForPolicy(
 			runHashInt, _ := strconv.ParseInt(runHash, 10, 64)
 			if runHashInt > latestSuccessHash {
 				runBackups := runs[runHash]
-				if t.determineRunOutcome(runBackups) == runFailed {
+				expectedMembers := 0
+				if state.RunMetadata != nil {
+					if metadata, ok := state.RunMetadata[runHash]; ok {
+						expectedMembers = metadata.ExpectedMembers
+					}
+				}
+				if t.determineRunOutcome(runBackups, expectedMembers) == runFailed {
 					state.ConsecutiveFailures++
 				}
 			}
@@ -245,7 +299,13 @@ func (t *RunTracker) ProcessBackupsForPolicy(
 	latestProcessed := ""
 	for i := len(sortedRuns) - 1; i >= 0; i-- {
 		runHash := sortedRuns[i]
-		outcome := t.determineRunOutcome(runs[runHash])
+		expectedMembers := 0
+		if state.RunMetadata != nil {
+			if metadata, ok := state.RunMetadata[runHash]; ok {
+				expectedMembers = metadata.ExpectedMembers
+			}
+		}
+		outcome := t.determineRunOutcome(runs[runHash], expectedMembers)
 		if outcome != runInProgress {
 			latestProcessed = runHash
 			break
@@ -256,7 +316,9 @@ func (t *RunTracker) ProcessBackupsForPolicy(
 		modified = true
 	}
 
-	if modified {
+	// REMAINING ISSUE #6 FIX: Save initial state for new policies even if all runs are pending
+	isNewPolicy := state.LastProcessedRunMinuteHash == ""
+	if modified || isNewPolicy {
 		klog.V(4).Infof("BackupRunTracker: policy %s state update - failures: %d, lastSuccess: %v",
 			policy.Name, state.ConsecutiveFailures, state.LastSuccessTime)
 		if err := t.SavePolicyState(ctx, policy, state); err != nil {
@@ -284,8 +346,8 @@ func (t *RunTracker) GetAllPolicyStates(ctx context.Context) (map[string]*Policy
 
 	var allStates map[string]*PolicyRunState
 	if err := json.Unmarshal([]byte(data), &allStates); err != nil {
-		klog.Warningf("failed to unmarshal failure tracker data: %v", err)
-		return make(map[string]*PolicyRunState), nil
+		// REMAINING ISSUE #5 FIX: Return error instead of empty map
+		return nil, fmt.Errorf("failed to unmarshal failure tracker data (corrupted ConfigMap): %w", err)
 	}
 
 	return allStates, nil
@@ -312,9 +374,9 @@ const (
 
 // determineRunOutcome determines if a run succeeded, failed, or is still in progress.
 // Success: ANY backup in the run completed successfully
-// Failure: ALL backups in the run failed
-// In Progress: At least one backup not finished
-func (t *RunTracker) determineRunOutcome(backups []*operatorv1alpha1.EtcdBackup) runOutcome {
+// Failure: ALL EXPECTED backups in the run failed
+// In Progress: Not all expected members are finished
+func (t *RunTracker) determineRunOutcome(backups []*operatorv1alpha1.EtcdBackup, expectedMembers int) runOutcome {
 	allFinished := true
 	anySucceeded := false
 
@@ -332,10 +394,50 @@ func (t *RunTracker) determineRunOutcome(backups []*operatorv1alpha1.EtcdBackup)
 	if anySucceeded {
 		return runSucceeded
 	}
+
 	if !allFinished {
 		return runInProgress
 	}
+
+	// All visible members are finished and failed
+	// If we have expected member count, verify we have all members
+	if expectedMembers > 0 {
+		if len(backups) < expectedMembers {
+			// Missing members - run is in progress
+			return runInProgress
+		}
+		// All expected members are finished and all failed
+		return runFailed
+	}
+
+	// No metadata - fall back to conservative: all visible finished and failed = failed
+	// This maintains backward compatibility for runs without RegisterRun
 	return runFailed
+}
+
+// pruneOldRunMetadata removes metadata for runs older than the retention window
+func (t *RunTracker) pruneOldRunMetadata(state *PolicyRunState) {
+	if len(state.RunMetadata) <= runMetadataRetentionWindow {
+		return
+	}
+
+	// Get all run hashes and sort them
+	hashes := make([]string, 0, len(state.RunMetadata))
+	for hash := range state.RunMetadata {
+		hashes = append(hashes, hash)
+	}
+
+	sort.Slice(hashes, func(i, j int) bool {
+		hi, _ := strconv.ParseInt(hashes[i], 10, 64)
+		hj, _ := strconv.ParseInt(hashes[j], 10, 64)
+		return hi < hj
+	})
+
+	// Keep only the most recent runMetadataRetentionWindow runs
+	toDelete := len(hashes) - runMetadataRetentionWindow
+	for i := 0; i < toDelete; i++ {
+		delete(state.RunMetadata, hashes[i])
+	}
 }
 
 // filterBackupsByPolicyUID filters backups to only include those created by this policy UID.
@@ -409,16 +511,21 @@ func extractMinuteHashFromName(name string) string {
 	return lastPart
 }
 
-// getRunCompletionTime finds the completion time of the first successful backup in the run
+// getRunCompletionTime finds the LATEST completion time among successful backups in the run
+// REMAINING ISSUE #3 FIX: Returns maximum timestamp, not first
 func (t *RunTracker) getRunCompletionTime(backups []*operatorv1alpha1.EtcdBackup) *metav1.Time {
+	var latestTime *metav1.Time
+
 	for _, backup := range backups {
 		if backuphelpers.IsBackupCompleted(backup) {
 			for _, cond := range backup.Status.Conditions {
 				if cond.Type == string(operatorv1alpha1.BackupCompleted) && cond.Status == metav1.ConditionTrue {
-					return &cond.LastTransitionTime
+					if latestTime == nil || cond.LastTransitionTime.After(latestTime.Time) {
+						latestTime = &cond.LastTransitionTime
+					}
 				}
 			}
 		}
 	}
-	return nil
+	return latestTime
 }
