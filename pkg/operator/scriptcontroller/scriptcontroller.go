@@ -133,9 +133,9 @@ func (c *ScriptController) manageScriptConfigMap(ctx context.Context, recorder e
 	if isTNF, err := ceohelpers.IsExternalEtcdCluster(ctx, c.infraLister); err != nil {
 		return nil, false, fmt.Errorf("failed to detect cluster topology: %v", err)
 	} else if isTNF {
-		clusterRestoreScript = "etcd/cluster-restore-tnf.sh"
-		disableEtcdScript = "etcd/disable-etcd-tnf.sh"
-		scriptConfigMap.Data["update-fencing-credentials.sh"] = string(bindata.MustAsset("etcd/update-fencing-credentials.sh"))
+		clusterRestoreScript = "etcd/tnf/cluster-restore-tnf.sh"
+		disableEtcdScript = "etcd/tnf/disable-etcd-tnf.sh"
+		scriptConfigMap.Data["update-fencing-credentials.sh"] = string(bindata.MustAsset("etcd/tnf/update-fencing-credentials.sh"))
 	} else {
 		clusterRestoreScript = "etcd/cluster-restore.sh"
 		disableEtcdScript = "etcd/disable-etcd.sh"

@@ -261,7 +261,7 @@ This mechanism exists because the operator historically had severe stability pro
 
 ## Fencing Scripts
 
-Fencing scripts in `bindata/etcd/` (shell scripts) and `bindata/tnfdeployment/` (deployment manifests) should be reviewed for injection vulnerabilities when modified.
+Fencing scripts in `bindata/etcd/tnf/` (shell scripts) and `bindata/tnfdeployment/` (deployment manifests) should be reviewed for injection vulnerabilities when modified.
 
 ## Key Files
 
