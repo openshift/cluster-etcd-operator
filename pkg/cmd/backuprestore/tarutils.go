@@ -3,7 +3,6 @@ package backuprestore
 import (
 	"archive/tar"
 	"compress/gzip"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,18 +13,42 @@ import (
 	"k8s.io/klog/v2"
 )
 
-func createTarball(tarballFilePath string, filePaths []string, prefixTrim string) error {
+func createTarball(tarballFilePath string, filePaths []string, prefixTrim string) (size int64, err error) {
 	file, err := os.OpenFile(tarballFilePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		return errors.New(fmt.Sprintf("Could not create tarball file '%s', got error '%s'", tarballFilePath, err.Error()))
+		return 0, fmt.Errorf("Could not create tarball file '%s', got error '%s'", tarballFilePath, err.Error())
 	}
-	defer file.Close()
+	defer func() {
+		if e := file.Close(); e != nil && err == nil {
+			err = e
+		}
+	}()
 
+	if err := writeTarballToFile(file, filePaths, prefixTrim); err != nil {
+		return 0, err
+	}
+
+	stat, err := file.Stat()
+	if err != nil {
+		return 0, fmt.Errorf("Could not stat tarball file '%s', go error '%s'", tarballFilePath, err.Error())
+	}
+	return stat.Size(), nil
+}
+
+func writeTarballToFile(file *os.File, filePaths []string, prefixTrim string) (err error) {
 	gzipWriter := gzip.NewWriter(file)
-	defer gzipWriter.Close()
+	defer func() {
+		if e := gzipWriter.Close(); e != nil && err == nil {
+			err = e
+		}
+	}()
 
 	tarWriter := tar.NewWriter(gzipWriter)
-	defer tarWriter.Close()
+	defer func() {
+		if e := tarWriter.Close(); e != nil && err == nil {
+			err = e
+		}
+	}()
 
 	if prefixTrim != "" && !strings.HasSuffix(prefixTrim, "/") {
 		prefixTrim += "/"
@@ -34,10 +57,9 @@ func createTarball(tarballFilePath string, filePaths []string, prefixTrim string
 	for _, filePath := range filePaths {
 		err := addFileToTarWriter(filePath, tarWriter, prefixTrim)
 		if err != nil {
-			return errors.New(fmt.Sprintf("Could not add file '%s', to tarball, got error '%s'", filePath, err.Error()))
+			return fmt.Errorf("Could not add file %q, to tarball: %w", filePath, err)
 		}
 	}
-
 	return nil
 }
 
@@ -83,9 +105,7 @@ func addFileToTarWriter(src string, tarWriter *tar.Writer, prefixTrim string) er
 
 		// manually close here after each file operation; defering would cause each file close
 		// to wait until all operations have completed.
-		f.Close()
-
-		return nil
+		return f.Close()
 	})
 
 }
