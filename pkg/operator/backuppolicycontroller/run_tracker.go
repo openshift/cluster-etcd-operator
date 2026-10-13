@@ -30,29 +30,34 @@ type PolicyRunState struct {
 	PolicyUID types.UID `json:"policyUID"`
 
 	// ConsecutiveFailures counts failed runs since last success
+	// DERIVED from RunOutcomes, not stored independently
 	ConsecutiveFailures int `json:"consecutiveFailures"`
 
 	// LastSuccessTime is when the last successful run completed (any backup in run succeeded)
 	// Nil if policy has never succeeded
 	LastSuccessTime *metav1.Time `json:"lastSuccessTime,omitempty"`
 
-	// LastProcessedRunMinuteHash is the minute hash of the last run we counted
-	// Prevents double-counting on duplicate reconciles
-	LastProcessedRunMinuteHash string `json:"lastProcessedRunMinuteHash,omitempty"`
-
 	// PolicyCreationTime tracks when we first saw this policy
 	// Used for grace periods ("first-policy24h allowance")
 	PolicyCreationTime metav1.Time `json:"policyCreationTime"`
 
-	// RunMetadata tracks expected member count per run for proper finalization
-	// Key is minute hash, pruned for runs older than retention window
+	// RunOutcomes stores durable per-run outcomes to decouple accounting from retention
+	// Key is minute hash, value is outcome ("success" or "failure")
+	// Pruned to keep recent N runs only
+	// This is the SOURCE OF TRUTH for consecutive failures
+	RunOutcomes map[string]string `json:"runOutcomes,omitempty"`
+
+	// DEPRECATED FIELDS (kept for backward compatibility)
+
+	// LastProcessedRunMinuteHash is DEPRECATED - replaced by RunOutcomes
+	LastProcessedRunMinuteHash string `json:"lastProcessedRunMinuteHash,omitempty"`
+
+	// RunMetadata is DEPRECATED - expected members now stored in backup annotations
 	RunMetadata map[string]*RunMetadata `json:"runMetadata,omitempty"`
 }
 
-// RunMetadata stores metadata about a scheduled backup run
+// RunMetadata is DEPRECATED - kept for backward compatibility only
 type RunMetadata struct {
-	// ExpectedMembers is the number of backup objects expected for this run
-	// Used to distinguish "partial run" from "complete run with all failures"
 	ExpectedMembers int `json:"expectedMembers"`
 }
 
@@ -74,28 +79,6 @@ func NewRunTracker(namespace string, configMapClient corev1client.ConfigMapInter
 		namespace:      namespace,
 		configMapClient: configMapClient,
 	}
-}
-
-// RegisterRun records metadata for a scheduled backup run.
-// Called by the controller when it creates backup objects for a run.
-func (t *RunTracker) RegisterRun(ctx context.Context, policy *operatorv1alpha1.EtcdBackupPolicy, minuteHash string, expectedMembers int) error {
-	state, err := t.GetPolicyState(ctx, policy)
-	if err != nil {
-		return err
-	}
-
-	if state.RunMetadata == nil {
-		state.RunMetadata = make(map[string]*RunMetadata)
-	}
-
-	state.RunMetadata[minuteHash] = &RunMetadata{
-		ExpectedMembers: expectedMembers,
-	}
-
-	// Prune old metadata to prevent unbounded growth
-	t.pruneOldRunMetadata(state)
-
-	return t.SavePolicyState(ctx, policy, state)
 }
 
 // GetPolicyState loads the state for a given policy from the ConfigMap.
@@ -199,8 +182,9 @@ func (t *RunTracker) ProcessBackupsForPolicy(
 		return nil, err
 	}
 
-	// BLOCKER #5: Filter backups to only those belonging to this policy UID
-	policyBackups := t.filterBackupsByPolicyUID(backups, policy.UID)
+	// Filter backups to only those belonging to this policy UID
+	// Also prevents attributing old unlabeled backups to recreated policy with same name
+	policyBackups := t.filterBackupsByPolicyUID(backups, policy.UID, state.PolicyCreationTime)
 
 	// Group backups by run (minute hash)
 	runs := t.groupBackupsByRun(policyBackups)
@@ -220,104 +204,73 @@ func (t *RunTracker) ProcessBackupsForPolicy(
 	// Sort runs chronologically (by minute hash)
 	sortedRuns := t.sortRuns(runs)
 
-	// BLOCKER #1 & #2: Process all runs to find latest success, but only increment failures once
-	// Track which runs we've already counted as failures
-	lastProcessedHash, _ := strconv.ParseInt(state.LastProcessedRunMinuteHash, 10, 64)
+	// Initialize RunOutcomes map if needed
+	if state.RunOutcomes == nil {
+		state.RunOutcomes = make(map[string]string)
+	}
+
+	// DURABLE OUTCOMES: Process runs and record outcomes durably
+	// This decouples consecutive failure counting from backup retention
 	modified := false
 	latestSuccessTime := state.LastSuccessTime
-	latestSuccessHash := int64(0)
-	consecutiveFailuresSinceSuccess := 0
 
 	for _, runHash := range sortedRuns {
-		runHashInt, _ := strconv.ParseInt(runHash, 10, 64)
 		runBackups := runs[runHash]
 
-		// Get expected member count from metadata
-		expectedMembers := 0
-		if state.RunMetadata != nil {
-			if metadata, ok := state.RunMetadata[runHash]; ok {
-				expectedMembers = metadata.ExpectedMembers
-			}
-		}
-
+		// Get expected member count from backup annotations (stored atomically with backup creation)
+		expectedMembers := t.getExpectedMembersFromBackups(runBackups)
 		outcome := t.determineRunOutcome(runBackups, expectedMembers)
 
-		switch outcome {
-		case runSucceeded:
-			// Track latest success (may come in late)
+		// Only record finalized outcomes (skip in-progress)
+		if outcome == runInProgress {
+			klog.V(4).Infof("BackupRunTracker: policy %s run %s still in progress, skipping", policy.Name, runHash)
+			continue
+		}
+
+		// Check if this run's outcome changed
+		previousOutcome, exists := state.RunOutcomes[runHash]
+		var currentOutcomeStr string
+		if outcome == runSucceeded {
+			currentOutcomeStr = "success"
+			// Track latest success time
 			successTime := t.getRunCompletionTime(runBackups)
 			if successTime != nil && (latestSuccessTime == nil || successTime.After(latestSuccessTime.Time)) {
 				latestSuccessTime = successTime
-				latestSuccessHash = runHashInt
 				modified = true
 				klog.V(4).Infof("BackupRunTracker: policy %s run %s succeeded", policy.Name, runHash)
 			}
+		} else {
+			currentOutcomeStr = "failure"
+			klog.Warningf("BackupRunTracker: policy %s run %s failed", policy.Name, runHash)
+		}
 
-		case runFailed:
-			// Only count this failure if we haven't processed it yet
-			if runHashInt > lastProcessedHash {
-				consecutiveFailuresSinceSuccess++
-				klog.Warningf("BackupRunTracker: policy %s run %s failed", policy.Name, runHash)
-			}
-
-		case runInProgress:
-			// Don't process incomplete runs
-			klog.V(4).Infof("BackupRunTracker: policy %s run %s still in progress, skipping", policy.Name, runHash)
+		// Record outcome if new or changed
+		if !exists || previousOutcome != currentOutcomeStr {
+			state.RunOutcomes[runHash] = currentOutcomeStr
+			modified = true
 		}
 	}
 
-	// Update state: failures since last success
+	// Update last success time if we found a newer one
 	if latestSuccessTime != nil && (state.LastSuccessTime == nil || latestSuccessTime.After(state.LastSuccessTime.Time)) {
-		// New success found - reset counter and update success time
 		state.LastSuccessTime = latestSuccessTime
-		state.ConsecutiveFailures = 0
-		modified = true
-
-		// Count failures after this success
-		for _, runHash := range sortedRuns {
-			runHashInt, _ := strconv.ParseInt(runHash, 10, 64)
-			if runHashInt > latestSuccessHash {
-				runBackups := runs[runHash]
-				expectedMembers := 0
-				if state.RunMetadata != nil {
-					if metadata, ok := state.RunMetadata[runHash]; ok {
-						expectedMembers = metadata.ExpectedMembers
-					}
-				}
-				if t.determineRunOutcome(runBackups, expectedMembers) == runFailed {
-					state.ConsecutiveFailures++
-				}
-			}
-		}
-	} else if consecutiveFailuresSinceSuccess > 0 {
-		// New failures since last processed, no new success
-		state.ConsecutiveFailures += consecutiveFailuresSinceSuccess
 		modified = true
 	}
 
-	// Update cursor to latest processed run (failed or succeeded, not in-progress)
-	latestProcessed := ""
-	for i := len(sortedRuns) - 1; i >= 0; i-- {
-		runHash := sortedRuns[i]
-		expectedMembers := 0
-		if state.RunMetadata != nil {
-			if metadata, ok := state.RunMetadata[runHash]; ok {
-				expectedMembers = metadata.ExpectedMembers
-			}
-		}
-		outcome := t.determineRunOutcome(runs[runHash], expectedMembers)
-		if outcome != runInProgress {
-			latestProcessed = runHash
-			break
-		}
-	}
-	if latestProcessed != "" && latestProcessed != state.LastProcessedRunMinuteHash {
-		state.LastProcessedRunMinuteHash = latestProcessed
+	// Recalculate consecutive failures from durable outcomes
+	// Find the latest success hash, then count failures after it
+	state.ConsecutiveFailures = t.calculateConsecutiveFailures(state.RunOutcomes, state.LastSuccessTime)
+
+	// Prune old run outcomes to prevent unbounded growth
+	// Keep recent N runs plus any runs after last success
+	if len(state.RunOutcomes) > runMetadataRetentionWindow {
+		t.pruneOldRunOutcomes(state)
 		modified = true
 	}
 
-	// REMAINING ISSUE #6 FIX: Save initial state for new policies even if all runs are pending
-	isNewPolicy := state.LastProcessedRunMinuteHash == ""
+	// Always save state for new policies (even with no finished runs)
+	// This ensures never-successful policies appear in metrics
+	isNewPolicy := len(state.RunOutcomes) == 0 && state.LastSuccessTime == nil
 	if modified || isNewPolicy {
 		klog.V(4).Infof("BackupRunTracker: policy %s state update - failures: %d, lastSuccess: %v",
 			policy.Name, state.ConsecutiveFailures, state.LastSuccessTime)
@@ -411,38 +364,13 @@ func (t *RunTracker) determineRunOutcome(backups []*operatorv1alpha1.EtcdBackup,
 	}
 
 	// No metadata - fall back to conservative: all visible finished and failed = failed
-	// This maintains backward compatibility for runs without RegisterRun
+	// This maintains backward compatibility for runs without annotations
 	return runFailed
-}
-
-// pruneOldRunMetadata removes metadata for runs older than the retention window
-func (t *RunTracker) pruneOldRunMetadata(state *PolicyRunState) {
-	if len(state.RunMetadata) <= runMetadataRetentionWindow {
-		return
-	}
-
-	// Get all run hashes and sort them
-	hashes := make([]string, 0, len(state.RunMetadata))
-	for hash := range state.RunMetadata {
-		hashes = append(hashes, hash)
-	}
-
-	sort.Slice(hashes, func(i, j int) bool {
-		hi, _ := strconv.ParseInt(hashes[i], 10, 64)
-		hj, _ := strconv.ParseInt(hashes[j], 10, 64)
-		return hi < hj
-	})
-
-	// Keep only the most recent runMetadataRetentionWindow runs
-	toDelete := len(hashes) - runMetadataRetentionWindow
-	for i := 0; i < toDelete; i++ {
-		delete(state.RunMetadata, hashes[i])
-	}
 }
 
 // filterBackupsByPolicyUID filters backups to only include those created by this policy UID.
 // This prevents counting backups from a deleted policy with the same name.
-func (t *RunTracker) filterBackupsByPolicyUID(backups []*operatorv1alpha1.EtcdBackup, policyUID types.UID) []*operatorv1alpha1.EtcdBackup {
+func (t *RunTracker) filterBackupsByPolicyUID(backups []*operatorv1alpha1.EtcdBackup, policyUID types.UID, policyCreationTime metav1.Time) []*operatorv1alpha1.EtcdBackup {
 	filtered := make([]*operatorv1alpha1.EtcdBackup, 0, len(backups))
 	for _, backup := range backups {
 		// Check if backup has policy UID label matching this policy
@@ -450,11 +378,18 @@ func (t *RunTracker) filterBackupsByPolicyUID(backups []*operatorv1alpha1.EtcdBa
 			if backupPolicyUID == string(policyUID) {
 				filtered = append(filtered, backup)
 			}
+			// Skip backups with different UID (from deleted policy with same name)
 		} else {
 			// Backups without UID label are from before UID tracking was added
-			// Include them for backward compatibility (old backups)
-			// This is safe because policy names are unique at any point in time
-			filtered = append(filtered, backup)
+			// Only include them if they were created AFTER this policy was created
+			// This prevents attributing old backups to a recreated policy with the same name
+			if backup.CreationTimestamp.After(policyCreationTime.Time) || backup.CreationTimestamp.Equal(&policyCreationTime) {
+				filtered = append(filtered, backup)
+			} else {
+				// Old backup from before this policy existed - likely from deleted policy with same name
+				klog.V(4).Infof("BackupRunTracker: skipping unlabeled backup %s (created %v before policy creation %v)",
+					backup.Name, backup.CreationTimestamp.Time, policyCreationTime.Time)
+			}
 		}
 	}
 	return filtered
@@ -528,4 +463,102 @@ func (t *RunTracker) getRunCompletionTime(backups []*operatorv1alpha1.EtcdBackup
 		}
 	}
 	return latestTime
+}
+
+// getExpectedMembersFromBackups extracts the expected member count from backup annotations.
+// All backups in a run should have the same annotation (set atomically at creation time).
+// Returns 0 if annotation is missing (pre-annotation backups) or invalid.
+func (t *RunTracker) getExpectedMembersFromBackups(backups []*operatorv1alpha1.EtcdBackup) int {
+	for _, backup := range backups {
+		if backup.Annotations == nil {
+			continue
+		}
+		if expectedStr, ok := backup.Annotations[backuphelpers.AnnotationBackupExpectedMembers]; ok {
+			if expected, err := strconv.Atoi(expectedStr); err == nil && expected > 0 {
+				return expected
+			}
+		}
+	}
+	return 0
+}
+
+// calculateConsecutiveFailures counts failures since the last success from durable outcomes.
+// This is the ONLY source of truth for consecutive failures, decoupling from backup retention.
+func (t *RunTracker) calculateConsecutiveFailures(outcomes map[string]string, lastSuccessTime *metav1.Time) int {
+	if len(outcomes) == 0 {
+		return 0
+	}
+
+	// Find the latest success hash (if any)
+	latestSuccessHash := int64(0)
+	if lastSuccessTime != nil {
+		for hash, outcome := range outcomes {
+			if outcome == "success" {
+				hashInt, _ := strconv.ParseInt(hash, 10, 64)
+				if hashInt > latestSuccessHash {
+					latestSuccessHash = hashInt
+				}
+			}
+		}
+	}
+
+	// Count failures after latest success
+	consecutiveFailures := 0
+	for hash, outcome := range outcomes {
+		if outcome == "failure" {
+			hashInt, _ := strconv.ParseInt(hash, 10, 64)
+			if hashInt > latestSuccessHash {
+				consecutiveFailures++
+			}
+		}
+	}
+
+	return consecutiveFailures
+}
+
+// pruneOldRunOutcomes removes old run outcomes to prevent unbounded growth.
+// Keeps the most recent runMetadataRetentionWindow runs, plus all runs after last success.
+func (t *RunTracker) pruneOldRunOutcomes(state *PolicyRunState) {
+	if len(state.RunOutcomes) <= runMetadataRetentionWindow {
+		return
+	}
+
+	// Find latest success hash to preserve all runs after it
+	latestSuccessHash := int64(0)
+	if state.LastSuccessTime != nil {
+		for hash, outcome := range state.RunOutcomes {
+			if outcome == "success" {
+				hashInt, _ := strconv.ParseInt(hash, 10, 64)
+				if hashInt > latestSuccessHash {
+					latestSuccessHash = hashInt
+				}
+			}
+		}
+	}
+
+	// Sort all hashes chronologically
+	allHashes := make([]string, 0, len(state.RunOutcomes))
+	for hash := range state.RunOutcomes {
+		allHashes = append(allHashes, hash)
+	}
+	sort.Slice(allHashes, func(i, j int) bool {
+		hi, _ := strconv.ParseInt(allHashes[i], 10, 64)
+		hj, _ := strconv.ParseInt(allHashes[j], 10, 64)
+		return hi < hj
+	})
+
+	// Keep recent N runs plus anything after last success
+	cutoffIndex := len(allHashes) - runMetadataRetentionWindow
+	if cutoffIndex <= 0 {
+		return
+	}
+
+	for i := 0; i < cutoffIndex; i++ {
+		hash := allHashes[i]
+		hashInt, _ := strconv.ParseInt(hash, 10, 64)
+		// Don't prune runs after latest success (needed for consecutive failure count)
+		if hashInt <= latestSuccessHash {
+			delete(state.RunOutcomes, hash)
+		}
+	}
 }
