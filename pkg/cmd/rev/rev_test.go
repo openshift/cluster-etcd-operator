@@ -106,6 +106,19 @@ func TestNoQuorumRevisionSaving(t *testing.T) {
 
 	testServer.Members[0].Terminate(t)
 	testServer.Members[1].Terminate(t)
+	time.Sleep(100 * time.Millisecond)
+
+	liveEndpoints := []string{}
+	for _, ep := range client.Endpoints() {
+		_, err := client.Status(context.Background(), ep)
+		if err == nil {
+			liveEndpoints = append(liveEndpoints, ep)
+		}
+	}
+
+	if len(liveEndpoints) == 0 {
+		t.Fatalf("no live endpoints after termination")
+	}
 
 	for range 5 {
 		func() {
@@ -117,8 +130,8 @@ func TestNoQuorumRevisionSaving(t *testing.T) {
 			require.Error(t, err)
 		}()
 
-		// have a more aggressive timeout here, since member-1 will never respond anyway
-		trySaveRevision(context.Background(), client.Endpoints(), outputPath, clientPool, 100*time.Millisecond)
+		// have a more aggressive timeout here, since member-0 and member-1 will never respond anyway
+		trySaveRevision(context.Background(), liveEndpoints, outputPath, clientPool, 100*time.Millisecond)
 		revStruct := readRevStruct(t, outputPath)
 		ensureRevStructConsistency(t, revStruct)
 		// no change in max should be expected
