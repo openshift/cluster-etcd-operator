@@ -148,6 +148,14 @@ func (c *BackupPolicyController) sync(ctx context.Context, syncCtx factory.SyncC
 		return nil
 	}
 
+	// Update failure tracking FIRST, independently of scheduling
+	// This ensures metrics reflect reality even if scheduling is paused or invalid
+	// Non-critical: log errors but don't fail the sync
+	if err := c.updateFailureTracking(ctx, backupPolicy); err != nil {
+		klog.Warningf("BackupPolicyController failed to update failure tracking for policy %s: %v", backupPolicy.Name, err)
+	}
+
+	// Now proceed with scheduling logic
 	if len(backupPolicy.Status.Active) > 0 {
 		backupPolicy, err = c.syncActive(ctx, backupPolicy)
 		if err != nil {
@@ -163,6 +171,7 @@ func (c *BackupPolicyController) sync(ctx context.Context, syncCtx factory.SyncC
 	}
 	schedule, err := c.cronParser.Parse(cronSched)
 	if err != nil {
+		// Schedule parsing error doesn't prevent tracking (already done above)
 		return fmt.Errorf("BackupPolicyController failed to parse %s schedule: %w", backupPolicyName, err)
 	}
 	scheduleTime, err := nextScheduleTime(backupPolicy, time.Now(), schedule)
@@ -174,12 +183,6 @@ func (c *BackupPolicyController) sync(ctx context.Context, syncCtx factory.SyncC
 		if err := c.executeBackup(ctx, backupPolicy, *scheduleTime); err != nil {
 			return fmt.Errorf("BackupPolicyController failed to execute backup for EtcdBackupPolicy %s: %w", backupPolicy.Name, err)
 		}
-	}
-
-	// Update failure tracking based on finished backups
-	// This is non-critical, so log errors but don't fail the sync
-	if err := c.updateFailureTracking(ctx, backupPolicy); err != nil {
-		klog.Warningf("BackupPolicyController failed to update failure tracking for policy %s: %v", backupPolicy.Name, err)
 	}
 
 	return nil
@@ -326,6 +329,16 @@ func (c *BackupPolicyController) executeBackup(ctx context.Context, backupPolicy
 		}
 	}
 
+	// Add expected member count annotation to all backups atomically
+	// This eliminates the race between backup creation and metadata registration
+	expectedMembers := strconv.Itoa(len(toCreate))
+	for _, backup := range toCreate {
+		if backup.Annotations == nil {
+			backup.Annotations = make(map[string]string)
+		}
+		backup.Annotations[backuphelpers.AnnotationBackupExpectedMembers] = expectedMembers
+	}
+
 	// Track failed creations
 	failedCreations := []string{}
 
@@ -351,16 +364,6 @@ func (c *BackupPolicyController) executeBackup(ctx context.Context, backupPolicy
 		} else {
 			active = append(active, operatorv1alpha1.EtcdBackupReference{Name: backup.Name, UID: string(backup.UID)})
 			klog.V(2).Infof("BackupPolicyController created EtcdBackup %s (node %q)", backupName, nodeName)
-		}
-	}
-
-	// Register run metadata for proper failure accounting
-	// This allows the tracker to distinguish "partial run" from "complete run with all failures"
-	if len(toCreate) > 0 {
-		minuteHash := strconv.FormatInt(scheduleTime.Unix()/60, 10)
-		if err := c.RunTracker.RegisterRun(ctx, backupPolicy, minuteHash, len(toCreate)); err != nil {
-			// Log but don't fail - tracking is non-critical
-			klog.Warningf("Failed to register run metadata for policy %s: %v", backupPolicy.Name, err)
 		}
 	}
 

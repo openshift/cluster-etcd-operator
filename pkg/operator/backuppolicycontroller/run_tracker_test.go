@@ -393,20 +393,20 @@ func TestRunTracker_NeverSuccessfulPolicyStateSaved(t *testing.T) {
 }
 
 func TestRunTracker_FirstReconcileBeforeAllMembersKnown(t *testing.T) {
-	// REMAINING ISSUE #1: First reconcile should NOT count failure until all expected members failed
+	// Expected members stored atomically in backup annotations
 	ctx := context.Background()
 	tracker, _ := setupRunTracker(t)
 
 	policy := testPolicy("test-policy", "uid-1")
 
-	// Controller registers that it expects 3 members for this run
-	err := tracker.RegisterRun(ctx, policy, "1000", 3)
-	require.NoError(t, err)
-
 	// First reconcile: only 1 of 3 expected backups visible (failed)
-	backups1 := []*operatorv1alpha1.EtcdBackup{
-		testFailedBackup("test-policy-node1-1000", "test-policy", "1000", time.Now()),
+	// Annotation indicates 3 expected members
+	backup1 := testFailedBackup("test-policy-node1-1000", "test-policy", "1000", time.Now())
+	backup1.Annotations = map[string]string{
+		backuphelpers.AnnotationBackupExpectedMembers: "3",
 	}
+	backups1 := []*operatorv1alpha1.EtcdBackup{backup1}
+
 	state1, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups1)
 	require.NoError(t, err)
 
@@ -414,11 +414,16 @@ func TestRunTracker_FirstReconcileBeforeAllMembersKnown(t *testing.T) {
 	require.Equal(t, 0, state1.ConsecutiveFailures, "should not count run as failed until all expected members are finished")
 
 	// Second reconcile: all 3 members now visible, all failed
-	backups2 := []*operatorv1alpha1.EtcdBackup{
-		testFailedBackup("test-policy-node1-1000", "test-policy", "1000", time.Now()),
-		testFailedBackup("test-policy-node2-1000", "test-policy", "1000", time.Now()),
-		testFailedBackup("test-policy-node3-1000", "test-policy", "1000", time.Now()),
+	backup2 := testFailedBackup("test-policy-node2-1000", "test-policy", "1000", time.Now())
+	backup2.Annotations = map[string]string{
+		backuphelpers.AnnotationBackupExpectedMembers: "3",
 	}
+	backup3 := testFailedBackup("test-policy-node3-1000", "test-policy", "1000", time.Now())
+	backup3.Annotations = map[string]string{
+		backuphelpers.AnnotationBackupExpectedMembers: "3",
+	}
+	backups2 := []*operatorv1alpha1.EtcdBackup{backup1, backup2, backup3}
+
 	state2, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups2)
 	require.NoError(t, err)
 

@@ -6,6 +6,8 @@ import (
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorv1alpha1listers "github.com/openshift/client-go/operator/listers/operator/v1alpha1"
+	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
+	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/component-base/metrics"
@@ -14,6 +16,7 @@ import (
 )
 
 const (
+	automatedBackupEnabledMetricName          = "etcd_automated_backup_enabled"
 	backupPolicyInfoMetricName                = "etcd_backup_policy_info"
 	backupPolicyConsecutiveFailuresMetricName = "etcd_backup_policy_consecutive_failures"
 	backupPolicyLastSuccessTimeMetricName     = "etcd_backup_policy_last_success_time"
@@ -26,9 +29,11 @@ const (
 // policyCollector implements prometheus.Collector and generates metrics
 // on-demand at scrape time by reading current EtcdBackupPolicy objects and RunTracker state.
 type policyCollector struct {
-	policiesLister operatorv1alpha1listers.EtcdBackupPolicyLister
-	runTracker     *RunTracker
+	policiesLister      operatorv1alpha1listers.EtcdBackupPolicyLister
+	runTracker          *RunTracker
+	featureGateAccessor featuregates.FeatureGateAccess
 
+	enabledDesc             *prometheus.Desc
 	infoDesc                *prometheus.Desc
 	consecutiveFailuresDesc *prometheus.Desc
 	lastSuccessTimeDesc     *prometheus.Desc
@@ -38,10 +43,17 @@ type policyCollector struct {
 // NewBackupPolicyMetrics creates and registers a policy collector with the provided registry.
 // The collector dynamically generates metrics at scrape time from the EtcdBackupPolicyLister
 // and RunTracker state.
-func NewBackupPolicyMetrics(metricsRegistry metrics.KubeRegistry, policiesLister operatorv1alpha1listers.EtcdBackupPolicyLister, runTracker *RunTracker) *policyCollector {
+func NewBackupPolicyMetrics(metricsRegistry metrics.KubeRegistry, policiesLister operatorv1alpha1listers.EtcdBackupPolicyLister, runTracker *RunTracker, featureGateAccessor featuregates.FeatureGateAccess) *policyCollector {
 	c := &policyCollector{
-		policiesLister: policiesLister,
-		runTracker:     runTracker,
+		policiesLister:      policiesLister,
+		runTracker:          runTracker,
+		featureGateAccessor: featureGateAccessor,
+		enabledDesc: prometheus.NewDesc(
+			automatedBackupEnabledMetricName,
+			"Whether AutomatedEtcdBackup feature gate is enabled (1) or disabled (0)",
+			nil,
+			nil,
+		),
 		infoDesc: prometheus.NewDesc(
 			backupPolicyInfoMetricName,
 			"Information about etcd backup policy",
@@ -74,6 +86,7 @@ func NewBackupPolicyMetrics(metricsRegistry metrics.KubeRegistry, policiesLister
 
 // Describe implements prometheus.Collector
 func (c *policyCollector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- c.enabledDesc
 	ch <- c.infoDesc
 	ch <- c.consecutiveFailuresDesc
 	ch <- c.lastSuccessTimeDesc
@@ -83,6 +96,17 @@ func (c *policyCollector) Describe(ch chan<- *prometheus.Desc) {
 // Collect implements prometheus.Collector
 func (c *policyCollector) Collect(ch chan<- prometheus.Metric) {
 	ctx := context.Background()
+
+	// Emit feature gate enabled metric
+	enabled := float64(0)
+	if isEnabled, err := backuphelpers.AutoBackupFeatureGateEnabled(c.featureGateAccessor); err == nil && isEnabled {
+		enabled = 1
+	}
+	ch <- prometheus.MustNewConstMetric(
+		c.enabledDesc,
+		prometheus.GaugeValue,
+		enabled,
+	)
 
 	// Get all policies
 	policies, err := c.policiesLister.List(labels.Everything())
@@ -185,6 +209,6 @@ func extractPolicyStorageInfo(policy *operatorv1alpha1.EtcdBackupPolicy) (string
 // MustRegisterDefaultBackupPolicyMetrics creates policy metrics using the default registry.
 // Deprecated: Use NewBackupPolicyMetrics with an explicit registry for production code.
 // This function remains for test compatibility.
-func MustRegisterDefaultBackupPolicyMetrics(policiesLister operatorv1alpha1listers.EtcdBackupPolicyLister, runTracker *RunTracker) *policyCollector {
-	return NewBackupPolicyMetrics(legacyregistry.DefaultGatherer.(metrics.KubeRegistry), policiesLister, runTracker)
+func MustRegisterDefaultBackupPolicyMetrics(policiesLister operatorv1alpha1listers.EtcdBackupPolicyLister, runTracker *RunTracker, featureGateAccessor featuregates.FeatureGateAccess) *policyCollector {
+	return NewBackupPolicyMetrics(legacyregistry.DefaultGatherer.(metrics.KubeRegistry), policiesLister, runTracker, featureGateAccessor)
 }

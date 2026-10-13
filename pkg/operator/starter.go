@@ -552,6 +552,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			metricsRegistry,
 			backupPoliciesLister,
 			backupPolicyControllerImpl.RunTracker,
+			featureGateAccessor,
 		)
 
 		backupPolicyRetentionController, err := backuppolicycontroller.NewBackupPolicyRetentionController(
