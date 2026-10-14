@@ -12,10 +12,20 @@ local array = import "github.com/jsonnet-libs/xtd/array.libsonnet"
 
 ## Index
 
+* [`fn chunkArray(arr, maxSize)`](#fn-chunkarray)
 * [`fn filterMapWithIndex(filter_func, map_func, arr)`](#fn-filtermapwithindex)
 * [`fn slice(indexable, index, end='null', step=1)`](#fn-slice)
 
 ## Fields
+
+### fn chunkArray
+
+```ts
+chunkArray(arr, maxSize)
+```
+
+`chunkArray` chunks an array into smaller arrays of the given max size.
+
 
 ### fn filterMapWithIndex
 

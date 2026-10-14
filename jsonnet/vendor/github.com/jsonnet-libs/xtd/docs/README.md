@@ -23,4 +23,5 @@ in the future, but also provides a place for less general, yet useful utilities.
 * [jsonpath](jsonpath.md)
 * [number](number.md)
 * [string](string.md)
+* [units](units.md)
 * [url](url.md)

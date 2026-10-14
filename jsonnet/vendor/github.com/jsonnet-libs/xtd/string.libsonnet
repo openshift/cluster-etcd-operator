@@ -32,4 +32,30 @@ local d = import 'github.com/jsonnet-libs/docsonnet/doc-util/main.libsonnet';
         c,
       )
     ),
+
+  '#strReplaceMulti':: d.fn(
+    |||
+      `strReplaceMulti` replaces multiple substrings in a string.
+
+      Example:
+      ```jsonnet
+      strReplaceMulti('hello world', [['hello', 'goodbye'], ['world', 'universe']])
+      // 'goodbye universe'
+      ```
+    |||,
+    [
+      d.arg('str', d.T.string),
+      d.arg('replacements', d.T.array),
+    ]
+  ),
+  strReplaceMulti(str, replacements):
+    assert std.isString(str) : 'str must be a string';
+    assert std.isArray(replacements) : 'replacements must be an array';
+    assert std.all([std.isArray(r) && std.length(r) == 2 && std.isString(r[0]) && std.isString(r[1]) for r in replacements]) : 'replacements must be an array of arrays of strings';
+    std.foldl(
+      function(acc, replacement)
+        std.strReplace(acc, replacement[0], replacement[1]),
+      replacements,
+      str,
+    ),
 }
