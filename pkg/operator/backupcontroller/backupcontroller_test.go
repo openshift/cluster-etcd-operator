@@ -188,9 +188,15 @@ func TestJobAlreadyRunning(t *testing.T) {
 	t.Run("job-missing-backup-label", func(t *testing.T) {
 		job = job.DeepCopy()
 		delete(job.Labels, backuphelpers.LabelEtcdBackup)
+		backup := testutils.FakeEtcdBackup("test-backup", testutils.WithBackupAge(time.Hour), testutils.WithBackupRunning(job))
+		job.OwnerReferences = append(job.OwnerReferences, metav1.OwnerReference{
+			APIVersion: operatorv1alpha1.GroupVersion.String(),
+			Kind:       "EtcdBackup",
+			Name:       backup.Name,
+			UID:        backup.UID,
+		})
 		runBackupControllerTest(t, testCaseBackupController{
-			backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupAge(time.Hour), testutils.WithBackupRunning(job))},
-			jobs:    []*batchv1.Job{job},
+			backups: []*operatorv1alpha1.EtcdBackup{backup}, jobs: []*batchv1.Job{job},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				requireNoBackupJobCreated(t, client)
 
