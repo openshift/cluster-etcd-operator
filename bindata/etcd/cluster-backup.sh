@@ -61,6 +61,9 @@ function backup_latest_kube_static_resources {
   for resource in "${backup_resource_list[@]}"; do
     if [ ! -f "/etc/kubernetes/manifests/${resource}-pod.yaml" ]; then
       echo "error finding manifests for the ${resource} pod. please check if it is running."
+      if [ "${resource}" == "kube-apiserver" ]; then
+        echo "Run this script on a control-plane node with a running kube-apiserver."
+      fi
       exit 1
     fi
 
