@@ -30,6 +30,7 @@ type BackupQueueController struct {
 	operatorClient      operatorv1alpha1client.OperatorV1alpha1Interface
 	featureGateAccessor featuregates.FeatureGateAccess
 	activeCache         activeBackupCache
+	metrics             *backupMetrics
 }
 
 func NewBackupQueueController(
@@ -39,6 +40,7 @@ func NewBackupQueueController(
 	operatorClient operatorv1alpha1client.OperatorV1alpha1Interface,
 	eventRecorder events.Recorder,
 	accessor featuregates.FeatureGateAccess,
+	metrics *backupMetrics,
 	backupInformer factory.Informer,
 	nodeInformer cache.SharedIndexInformer) factory.Controller {
 
@@ -48,6 +50,7 @@ func NewBackupQueueController(
 		operatorClient:      operatorClient,
 		featureGateAccessor: accessor,
 		activeCache:         newActiveBackupCache(),
+		metrics:             metrics,
 	}
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
@@ -95,6 +98,7 @@ func (c *BackupQueueController) sync(ctx context.Context, _ factory.SyncContext)
 				if _, err := applyBackupFinalizer(ctx, backupsClient, backup, false); err != nil {
 					return fmt.Errorf("BackupQueueController failed to finalize deleted backup %q: %w", backup.Name, err)
 				}
+				c.metrics.deleteBackup(*backup)
 			}
 			continue
 		}
@@ -136,6 +140,7 @@ func (c *BackupQueueController) sync(ctx context.Context, _ factory.SyncContext)
 			return fmt.Errorf("BackupQueueController failed to promote backup %q to pending: %w", backupName, err)
 		}
 		klog.Infof("BackupQueueController promoted backup [%s] to pending on node [%s]", backupName, nodeName)
+		c.metrics.recordBackup(*backup)
 		c.activeCache.add(backup)
 	}
 
