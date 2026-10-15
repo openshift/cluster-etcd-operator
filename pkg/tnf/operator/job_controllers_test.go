@@ -17,7 +17,7 @@ Job Controller Startup:
 └── TestStartJobControllers - Entry point logic and path selection
     ├── Before transition (bootstrap path):
     │   ├── 2 ready nodes → bootstrap with retry
-    │   └── 3 nodes → skip (pacemaker only supports 2)
+    │   └── 3 nodes → error (pacemaker only supports 2)
     └── After transition (post-transition path):
         ├── 2 ready nodes → ensure running
         └── 1 ready node → ensure running (single-node case)
@@ -147,10 +147,10 @@ func TestRetryInitialTransitionOrDegrade(t *testing.T) {
 				etcdInformer:               etcdInformers.Operator().V1().Etcds(),
 			}
 
-			// Store original startTnfJobcontrollersFunc and replace with mock
-			originalStartFunc := startTnfJobcontrollersFunc
-			startTnfJobcontrollersFunc = tt.setupMockStartFunc()
-			defer func() { startTnfJobcontrollersFunc = originalStartFunc }()
+			// Store original startBootstrapJobControllersFunc and replace with mock
+			originalStartFunc := startBootstrapJobControllersFunc
+			startBootstrapJobControllersFunc = tt.setupMockStartFunc()
+			defer func() { startBootstrapJobControllersFunc = originalStartFunc }()
 
 			// Store original backoff config and use faster settings for testing
 			originalBackoff := retryBackoffConfig
@@ -353,14 +353,27 @@ func TestStartJobControllers(t *testing.T) {
 				etcdInformer:               etcdInformers.Operator().V1().Etcds(),
 			}
 
-			// Track if startTnfJobcontrollersFunc was called
-			startCalled := false
-			originalStartFunc := startTnfJobcontrollersFunc
-			startTnfJobcontrollersFunc = func(_ context.Context, _ []*corev1.Node, _ *controllercmd.ControllerContext, _ v1helpers.StaticPodOperatorClient, _ kubernetes.Interface, _ v1helpers.KubeInformersForNamespaces, _ operatorv1informers.EtcdInformer, _ *pacemakerLifecycleManager) error {
-				startCalled = true
+			// Track if job controller startup functions were called
+			bootstrapCalled := 0
+			runtimeCalled := 0
+			mockBootstrapFunc := func(_ context.Context, _ []*corev1.Node, _ *controllercmd.ControllerContext, _ v1helpers.StaticPodOperatorClient, _ kubernetes.Interface, _ v1helpers.KubeInformersForNamespaces, _ operatorv1informers.EtcdInformer, _ *pacemakerLifecycleManager) error {
+				bootstrapCalled++
 				return nil
 			}
-			defer func() { startTnfJobcontrollersFunc = originalStartFunc }()
+			mockRuntimeFunc := func(_ context.Context, _ []*corev1.Node, _ *controllercmd.ControllerContext, _ v1helpers.StaticPodOperatorClient, _ kubernetes.Interface, _ v1helpers.KubeInformersForNamespaces, _ operatorv1informers.EtcdInformer, _ *pacemakerLifecycleManager) error {
+				runtimeCalled++
+				return nil
+			}
+
+			// Mock both bootstrap and runtime paths
+			originalBootstrapFunc := startBootstrapJobControllersFunc
+			originalRuntimeFunc := startRuntimeJobControllersFunc
+			startBootstrapJobControllersFunc = mockBootstrapFunc
+			startRuntimeJobControllersFunc = mockRuntimeFunc
+			defer func() {
+				startBootstrapJobControllersFunc = originalBootstrapFunc
+				startRuntimeJobControllersFunc = originalRuntimeFunc
+			}()
 
 			// Use faster backoff for testing
 			originalBackoff := retryBackoffConfig
@@ -381,8 +394,23 @@ func TestStartJobControllers(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 			}
-			require.Equal(t, tt.expectStartCalled, startCalled,
-				"Expected startTnfJobcontrollersFunc called=%v, got=%v", tt.expectStartCalled, startCalled)
+
+			// Check correct code path was taken
+			if tt.transitionComplete {
+				require.Equal(t, 0, bootstrapCalled, "Bootstrap should not be called when transition complete")
+				if tt.expectStartCalled {
+					require.Equal(t, 1, runtimeCalled, "Runtime should be called once when transition complete")
+				} else {
+					require.Equal(t, 0, runtimeCalled, "Runtime should not be called when start not expected")
+				}
+			} else {
+				require.Equal(t, 0, runtimeCalled, "Runtime should not be called when transition not complete")
+				if tt.expectStartCalled {
+					require.Equal(t, 1, bootstrapCalled, "Bootstrap should be called once when transition not complete")
+				} else {
+					require.Equal(t, 0, bootstrapCalled, "Bootstrap should not be called when start not expected")
+				}
+			}
 
 			// If retry path expected, verify TNFJobControllersDegraded condition was set
 			if tt.expectRetryPath && tt.expectStartCalled {

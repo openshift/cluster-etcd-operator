@@ -143,7 +143,7 @@ RunNodeJobController(jobType, node, retries, ...)
  │     ├─ Check node readiness via checkNodesReadinessAndSetCondition
  │     │  ├─ Not ready < 10min → Return (skip job, retry on next sync)
  │     │  ├─ Not ready ≥ 10min → Return error (triggers Degraded via WithSyncDegradedOnError)
- │     │  └─ Ready → Clear Degraded condition (if was blocked), continue
+ │     │  └─ Ready → Continue (Degraded clears naturally when job succeeds/completes)
  │     │
  │     └─ Create job spec:
  │        - Fetch fresh node from informer (handles node replacement)
@@ -208,11 +208,11 @@ RunClusterJobController(jobType, schedulableNodesFunc, affectedNodesFunc, jobCon
  │     │  │
  │     │  ├─ Check affectedNodesFunc() → any nodes not ready?
  │     │  │  ├─ YES → Return error after 10min (triggers Degraded via WithSyncDegradedOnError)
- │     │  │  └─ NO → Clear Degraded condition (if was blocked), continue
+ │     │  │  └─ NO → Continue (Degraded clears naturally when job succeeds/completes)
  │     │  │
  │     │  ├─ Check schedulableNodesFunc() → any nodes available?
  │     │  │  ├─ NO → Return error after 10min (triggers Degraded via WithSyncDegradedOnError)
- │     │  │  └─ YES → Clear Degraded condition (if was blocked), continue
+ │     │  │  └─ YES → Continue (Degraded clears naturally when job succeeds/completes)
  │     │  │
  │     │  ├─ Get or initialize retry state (AttemptNumber, NodeIndex, config)
  │     │  │
@@ -224,12 +224,12 @@ RunClusterJobController(jobType, schedulableNodesFunc, affectedNodesFunc, jobCon
  │     │  │
  │     │  ├─ Get current job from cluster
  │     │  │  │
- │     │  │  ├─ Complete? → Clear degraded, preserve state, return
+ │     │  │  ├─ Complete? → Return success (Degraded clears naturally via syncManaged flow)
  │     │  │  │
  │     │  │  └─ Failed?
  │     │  │     ├─ Move to next node (NodeIndex++)
  │     │  │     ├─ All nodes tried? → Increment attempt (AttemptNumber++)
- │     │  │     ├─ Max attempts exhausted? → Set Degraded, reset to attempt 1
+ │     │  │     ├─ Max attempts exhausted? → Return error (triggers Degraded via WithSyncDegradedOnError), reset to attempt 1
  │     │  │     └─ Update retry state (ApplyJob will detect retry field drift and delete/recreate)
  │     │  │
  │     │  └─ ApplyJob detects drift (NodeName, node-index, or attempt labels changed) → Deletes and recreates job

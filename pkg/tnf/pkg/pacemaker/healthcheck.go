@@ -132,25 +132,20 @@ type HealthCheck struct {
 	crNodes *[]pacmkrv1.PacemakerClusterNodeStatus
 }
 
-// NewHealthCheck creates a new HealthCheck for monitoring pacemaker status
-// in clusters that use ExternalEtcd clusters.
-// Returns the controller and the PacemakerCluster informer (which must be started separately).
-func NewHealthCheck(
-	operatorClient v1helpers.StaticPodOperatorClient,
-	kubeClient kubernetes.Interface,
-	eventRecorder events.Recorder,
-	restConfig *rest.Config,
-) (factory.Controller, cache.SharedIndexInformer, error) {
-	// Create REST client for PacemakerStatus CRs
+// NewPacemakerClusterInformer creates a PacemakerCluster informer with standard configuration.
+// Returns a SharedIndexInformer ready to be started and used by controllers.
+// The caller is responsible for starting the informer (via informer.Run(stopCh)).
+func NewPacemakerClusterInformer(restConfig *rest.Config) (cache.SharedIndexInformer, error) {
+	// Create REST client for PacemakerCluster CRs
 	restClient, err := CreatePacemakerRESTClient(restConfig)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create REST client: %w", err)
+		return nil, fmt.Errorf("failed to create REST client: %w", err)
 	}
 
 	// Create scheme for the parameter codec
 	scheme := runtime.NewScheme()
 	if err := pacmkrv1.AddToScheme(scheme); err != nil {
-		return nil, nil, fmt.Errorf("failed to add scheme for informer: %w", err)
+		return nil, fmt.Errorf("failed to add scheme for informer: %w", err)
 	}
 
 	// Create informer for PacemakerCluster
@@ -190,6 +185,24 @@ func NewHealthCheck(
 		HealthCheckResyncInterval,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
 	)
+
+	return informer, nil
+}
+
+// NewHealthCheck creates a new HealthCheck for monitoring pacemaker status
+// in clusters that use ExternalEtcd clusters.
+// Returns the controller and the PacemakerCluster informer (which must be started separately).
+func NewHealthCheck(
+	operatorClient v1helpers.StaticPodOperatorClient,
+	kubeClient kubernetes.Interface,
+	eventRecorder events.Recorder,
+	restConfig *rest.Config,
+) (factory.Controller, cache.SharedIndexInformer, error) {
+	// Create PacemakerCluster informer
+	informer, err := NewPacemakerClusterInformer(restConfig)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	return NewHealthCheckWithInformer(operatorClient, kubeClient, eventRecorder, informer)
 }

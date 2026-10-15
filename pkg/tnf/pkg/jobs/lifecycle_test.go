@@ -16,8 +16,8 @@ Job Controller Lifecycle:
 ├── TestSyncMultiNodeJobState_RetryProgression - Multi-node retry state machine
 │   ├── Job fails on node 0 -> advances to node 1
 │   ├── All nodes fail in attempt 1 -> starts attempt 2
-│   ├── Max attempts exhausted -> degraded condition set, reset to attempt 1
-│   └── Job succeeds -> degraded cleared
+│   ├── Max attempts exhausted -> returns error with DegradedMessageMaxRetries, resets to attempt 1
+│   └── Job succeeds -> returns no error
 ├── TestSyncMultiNodeJobState_DriftDetection - Infrastructure drift detection
 │   ├── schedulableNodesFunc changes (node added) -> reset state, delete job
 │   ├── schedulableNodesFunc changes (node removed) -> reset state, delete job
@@ -137,7 +137,8 @@ func TestRestartJobOrRunController(t *testing.T) {
 			restartJobLocksMutex.Unlock()
 
 			// Setup
-			ctx := context.Background()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 			client := tt.setupClient()
 
 			fakeOperatorClient := v1helpers.NewFakeStaticPodOperatorClient(
@@ -216,8 +217,8 @@ func TestSyncMultiNodeJobState_RetryProgression(t *testing.T) {
 	// This test verifies the multi-node retry state machine:
 	// - Job fails on node 0 -> retries on node 1
 	// - Job fails on node 1 -> new attempt, back to node 0
-	// - Max attempts exhausted -> degraded condition set, reset to attempt 1
-	// - Job succeeds -> degraded cleared, state reset
+	// - Max attempts exhausted -> returns error (not nil), resets to attempt 1
+	// - Job succeeds -> returns no error
 
 	ctx := context.Background()
 	jobName := "tnf-update-setup-job"
@@ -261,17 +262,6 @@ func TestSyncMultiNodeJobState_RetryProgression(t *testing.T) {
 		}
 	}
 
-	// Helper to check degraded condition
-	isDegraded := func() bool {
-		_, status, _, _ := fakeOperatorClient.GetStaticPodOperatorState()
-		for _, cond := range status.Conditions {
-			if cond.Type == tools.ToPascalCase(jobName)+operatorv1.OperatorStatusTypeDegraded && cond.Status == operatorv1.ConditionTrue {
-				return true
-			}
-		}
-		return false
-	}
-
 	// Step 1: Initialize - should create state at attempt 1, node 0
 	err := syncMultiNodeJobState(ctx, jobName, targetNodesFunc, nil, nil, maxRetries, fakeKubeClient, fakeOperatorClient)
 	require.NoError(t, err)
@@ -310,7 +300,6 @@ func TestSyncMultiNodeJobState_RetryProgression(t *testing.T) {
 	state = getState()
 	require.Equal(t, 2, state.AttemptNumber, "Should advance to attempt 2")
 	require.Equal(t, 0, state.NodeIndex, "Should reset to node index 0")
-	require.False(t, isDegraded(), "Should not be degraded yet")
 
 	// Delete job to simulate ApplyJob detecting drift
 	err = fakeKubeClient.BatchV1().Jobs(operatorclient.TargetNamespace).Delete(ctx, jobName, metav1.DeleteOptions{})
@@ -328,16 +317,17 @@ func TestSyncMultiNodeJobState_RetryProgression(t *testing.T) {
 	_, err = fakeKubeClient.BatchV1().Jobs(operatorclient.TargetNamespace).Create(ctx, failedJob.DeepCopy(), metav1.CreateOptions{})
 	require.NoError(t, err)
 	err = syncMultiNodeJobState(ctx, jobName, targetNodesFunc, nil, nil, maxRetries, fakeKubeClient, fakeOperatorClient)
-	require.NoError(t, err)
+	require.Error(t, err, "syncMultiNodeJobState returns error when max retries exceeded")
+	require.Contains(t, err.Error(), DegradedMessageMaxRetries, "Error should contain MaxRetriesExceeded message")
 	state = getState()
 	require.Equal(t, 1, state.AttemptNumber, "Should reset to attempt 1 after exhausting max attempts")
 	require.Equal(t, 0, state.NodeIndex, "Should reset to node index 0")
-	require.True(t, isDegraded(), "Should be degraded after exhausting max attempts")
 
 	// Delete job to simulate ApplyJob detecting drift
-	fakeKubeClient.BatchV1().Jobs(operatorclient.TargetNamespace).Delete(ctx, jobName, metav1.DeleteOptions{})
+	err = fakeKubeClient.BatchV1().Jobs(operatorclient.TargetNamespace).Delete(ctx, jobName, metav1.DeleteOptions{})
+	require.NoError(t, err)
 
-	// Step 5: Job succeeds -> should clear degraded and preserve state
+	// Step 5: Job succeeds -> should return no error
 	successJob := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: operatorclient.TargetNamespace},
 		Status: batchv1.JobStatus{
@@ -346,11 +336,11 @@ func TestSyncMultiNodeJobState_RetryProgression(t *testing.T) {
 			},
 		},
 	}
-	fakeKubeClient.BatchV1().Jobs(operatorclient.TargetNamespace).Create(ctx, successJob, metav1.CreateOptions{})
+	_, err = fakeKubeClient.BatchV1().Jobs(operatorclient.TargetNamespace).Create(ctx, successJob, metav1.CreateOptions{})
+	require.NoError(t, err)
 
 	err = syncMultiNodeJobState(ctx, jobName, targetNodesFunc, nil, nil, maxRetries, fakeKubeClient, fakeOperatorClient)
 	require.NoError(t, err)
-	require.False(t, isDegraded(), "Degraded should be cleared after success")
 }
 
 func TestSyncMultiNodeJobState_DriftDetection(t *testing.T) {
@@ -474,7 +464,8 @@ func TestSyncMultiNodeJobState_DriftDetection(t *testing.T) {
 					},
 				},
 			}
-			fakeKubeClient.BatchV1().Jobs(operatorclient.TargetNamespace).Create(ctx, failedJob, metav1.CreateOptions{})
+			_, err = fakeKubeClient.BatchV1().Jobs(operatorclient.TargetNamespace).Create(ctx, failedJob, metav1.CreateOptions{})
+			require.NoError(t, err)
 
 			// Step 2: Trigger drift (either nodes or config change)
 			if tt.testDriftType == "nodes" {
@@ -490,7 +481,8 @@ func TestSyncMultiNodeJobState_DriftDetection(t *testing.T) {
 			// For non-drift cases, simulate ApplyJob deleting the job due to NodeName change from retry progression
 			// (syncMultiNodeJobState updated state, next sync ApplyJob would detect NodeName drift and delete)
 			if !tt.expectStateReset && tt.expectJobDeleted {
-				fakeKubeClient.BatchV1().Jobs(operatorclient.TargetNamespace).Delete(ctx, jobName, metav1.DeleteOptions{})
+				err = fakeKubeClient.BatchV1().Jobs(operatorclient.TargetNamespace).Delete(ctx, jobName, metav1.DeleteOptions{})
+				require.NoError(t, err)
 			}
 
 			// Step 4: Verify state reset
