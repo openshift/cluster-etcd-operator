@@ -523,6 +523,9 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			stopInit,
 		)
 
+		metricsRegistry := legacyregistry.DefaultGatherer.(metrics.KubeRegistry)
+		backupMetrics := backupcontroller.NewBackupMetrics(metricsRegistry)
+
 		backupController, err := backupcontroller.NewBackupController(
 			AlivenessChecker,
 			backupsLister,
@@ -534,6 +537,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			controllerContext.EventRecorder,
 			os.Getenv("OPERATOR_IMAGE"),
 			featureGateAccessor,
+			backupMetrics,
 			etcdBackupInformer.Informer(),
 			jobsInformer.Informer(),
 			podsInformer.Informer(),
@@ -579,6 +583,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			controllerContext.EventRecorder,
 			os.Getenv("OPERATOR_IMAGE"),
 			featureGateAccessor,
+			backupMetrics,
 			etcdBackupInformer.Informer(),
 			jobsInformer.Informer(),
 			controlPlaneNodeInformer,
