@@ -71,6 +71,7 @@ type BackupController struct {
 	operatorImagePullSpec string
 	featureGateAccessor   featuregates.FeatureGateAccess
 	activeCache           activeBackupCache
+	metrics               *backupMetrics
 }
 
 // NewBackupController creates a controller that runs EtcdBackups. Each sync reconciles every EtcdBackup: the status
@@ -86,6 +87,7 @@ func NewBackupController(
 	eventRecorder events.Recorder,
 	operatorImagePullSpec string,
 	accessor featuregates.FeatureGateAccess,
+	metrics *backupMetrics,
 	backupInformer factory.Informer,
 	jobInformer cache.SharedIndexInformer,
 	podInformer factory.Informer,
@@ -100,6 +102,7 @@ func NewBackupController(
 		operatorImagePullSpec: operatorImagePullSpec,
 		featureGateAccessor:   accessor,
 		activeCache:           newActiveBackupCache(),
+		metrics:               metrics,
 	}
 	if err := c.addIndexers(); err != nil {
 		return nil, err
@@ -245,6 +248,11 @@ func (c *BackupController) reconcileBackupState(ctx context.Context, backup *ope
 			return backupFinished, 0, nil
 		}
 		return backupActive, 0, nil
+		// Fetch updated backup to record latest status
+		if updated, err := c.backupsLister.Get(backupName); err == nil {
+			c.metrics.recordBackup(*updated)
+		}
+		return nil
 	} else if backup.Status.JobName != "" {
 		// Give informers some time to catch up. Will reconcile sooner if the job is observed.
 		jobName := backup.Status.JobName
@@ -258,6 +266,11 @@ func (c *BackupController) reconcileBackupState(ctx context.Context, backup *ope
 		}
 		// Either the backup was failed, or the job was relabeled and will be reconciled on the next sync
 		return backupActive, 0, nil
+		// Fetch updated backup to record latest status
+		if updated, err := c.backupsLister.Get(backupName); err == nil {
+			c.metrics.recordBackup(*updated)
+		}
+		return nil
 	}
 
 	if backup.DeletionTimestamp != nil {
@@ -275,6 +288,30 @@ func (c *BackupController) reconcileBackupState(ctx context.Context, backup *ope
 
 		if _, err := applyBackupFinalizer(ctx, backupsClient, backup, false); err != nil {
 			return backupActive, 0, fmt.Errorf("BackupController failed to remove finalizer from deleted backup %q: %w", backupName, err)
+		}
+		c.metrics.deleteBackup(*backup)
+		return backupFinished, 0, nil
+	} else if !backuphelpers.IsBackupActive(backup) {
+		// Ignore inactive backups
+		return backupFinished, 0, nil
+	}
+
+	// Backup has just been promoted to Pending by the queue controller
+	pvcsClient := c.kubeClient.CoreV1().PersistentVolumeClaims(operatorclient.TargetNamespace)
+	nodesClient := c.kubeClient.CoreV1().Nodes()
+	if reason, message, ok, err := validatePendingBackup(ctx, nodesClient, pvcsClient, backup); err != nil {
+		return backupActive, 0, fmt.Errorf("BackupController failed to validate backup %q: %w", backup.Name, err)
+	} else if !ok {
+		if _, err := applyBackupFinished(ctx, backupsClient, backup, nil, operatorv1alpha1.BackupFailed, reason, message, nil); err != nil {
+			if apierrors.IsNotFound(err) {
+				return backupFinished, 0, nil
+			}
+			return backupActive, 0, fmt.Errorf("BackupController failed to apply status on invalid backup: %w", err)
+		}
+		klog.Infof("BackupController failed backup %q: %s", backup.Name, message)
+		// Fetch updated backup to record latest status
+		if updated, err := c.backupsLister.Get(backupName); err == nil {
+			c.metrics.recordBackup(*updated)
 		}
 		return backupFinished, 0, nil
 	}
@@ -296,6 +333,10 @@ func (c *BackupController) pruneActiveCache(ctx context.Context, observedActive 
 		} else if !exists {
 			c.activeCache.remove(backupName)
 		}
+	}
+	// Fetch updated backup to record latest status
+	if updated, err := c.backupsLister.Get(backupName); err == nil {
+		c.metrics.recordBackup(*updated)
 	}
 	return nil
 }
