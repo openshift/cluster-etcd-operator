@@ -126,6 +126,7 @@ func WithMasterLabel() func(*corev1.Node) {
 		if node.Labels == nil {
 			node.Labels = map[string]string{}
 		}
+		// Add both labels for compatibility - real clusters often have both during transition
 		node.Labels["node-role.kubernetes.io/master"] = ""
 		node.Labels["node-role.kubernetes.io/control-plane"] = ""
 	}
