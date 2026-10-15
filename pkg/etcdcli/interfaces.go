@@ -25,7 +25,6 @@ type EtcdClient interface {
 	HealthyMemberLister
 	UnhealthyMemberLister
 	MemberStatusChecker
-	LeaderMover
 	Status
 
 	GetMember(ctx context.Context, name string) (*etcdserverpb.Member, error)
@@ -63,10 +62,6 @@ type IsMemberHealthy interface {
 }
 type MemberRemover interface {
 	MemberRemove(ctx context.Context, memberID uint64) error
-}
-
-type LeaderMover interface {
-	MoveLeader(ctx context.Context, leader *etcdserverpb.Member, toMember uint64) error
 }
 
 type MemberLister interface {
