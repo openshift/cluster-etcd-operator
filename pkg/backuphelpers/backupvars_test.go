@@ -3,52 +3,41 @@ package backuphelpers
 import (
 	"testing"
 
-	backupv1alpha1 "github.com/openshift/api/config/v1alpha1"
-	prune "github.com/openshift/cluster-etcd-operator/pkg/cmd/prune-backups"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	"k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/stretchr/testify/require"
 )
 
 const (
 	schedule = "0 */2 * * *"
-	timezone = "GMT"
 )
 
 func TestBackupConfig_ToArgs(t *testing.T) {
 	testCases := []struct {
 		name     string
-		cr       *backupv1alpha1.EtcdBackupSpec
+		cr       *operatorv1alpha1.EtcdBackupPolicySpec
 		expected string
 	}{
 		{
-			"backup spec with timezone and schedule",
-			createEtcdBackupSpec(timezone, schedule),
-			"    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *",
-		},
-		{
-			"backup spec with timezone and empty schedule",
-			createEtcdBackupSpec(timezone, ""),
-			"    args:\n    - --enabled=true\n    - --timezone=GMT",
-		},
-		{
-			"backup spec with empty timezone and schedule",
-			createEtcdBackupSpec("", schedule),
+			"backup spec with schedule",
+			createEtcdBackupPolicySpec(schedule),
 			"    args:\n    - --enabled=true\n    - --schedule=0 */2 * * *",
 		},
 		{
-			"backup spec with timezone and schedule and retention number",
-			withRetentionNumberThreeBackups(createEtcdBackupSpec(timezone, schedule)),
-			"    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *\n    - --type=RetentionNumber\n    - --maxNumberOfBackups=3",
+			"backup spec with empty schedule",
+			createEtcdBackupPolicySpec(""),
+			"    args:\n    - --enabled=true",
+		},
+		{
+			"backup spec with schedule and retention number",
+			withRetentionNumberThreeBackups(createEtcdBackupPolicySpec(schedule)),
+			"    args:\n    - --enabled=true\n    - --schedule=0 */2 * * *\n    - --type=RetentionNumber\n    - --maxNumberOfBackups=3",
 		},
 		{
 			"backup spec with timezone and schedule and retention size",
-			withRetentionSizeOneGB(createEtcdBackupSpec(timezone, schedule)),
-			"    args:\n    - --enabled=true\n    - --timezone=GMT\n    - --schedule=0 */2 * * *\n    - --type=RetentionSize\n    - --maxSizeOfBackupsGb=1",
-		},
-		{
-			"backup spec with empty timezone and empty schedule",
-			nil,
-			"    args:\n    - --enabled=false",
+			withRetentionSizeOneGB(createEtcdBackupPolicySpec(schedule)),
+			"    args:\n    - --enabled=true\n    - --schedule=0 */2 * * *\n    - --type=RetentionSize\n    - --maxSizeOfBackupsGb=1",
 		},
 	}
 
@@ -68,40 +57,29 @@ func TestBackupConfig_ToArgs(t *testing.T) {
 func TestBackupConfig_ToArgList(t *testing.T) {
 	testCases := []struct {
 		name     string
-		cr       *backupv1alpha1.EtcdBackupSpec
+		cr       *operatorv1alpha1.EtcdBackupPolicySpec
 		expected []string
 	}{
 		{
-			"backup spec with timezone and schedule",
-			createEtcdBackupSpec(timezone, schedule),
-			[]string{
-				"--enabled=true",
-				"--timezone=GMT",
-				"--schedule=0 */2 * * *",
-			},
-		},
-		{
-			"backup spec with timezone and empty schedule",
-			createEtcdBackupSpec(timezone, ""),
-			[]string{
-				"--enabled=true",
-				"--timezone=GMT",
-			},
-		},
-		{
-			"backup spec with empty timezone and schedule",
-			createEtcdBackupSpec("", schedule),
+			"backup spec schedule",
+			createEtcdBackupPolicySpec(schedule),
 			[]string{
 				"--enabled=true",
 				"--schedule=0 */2 * * *",
 			},
 		},
 		{
-			"backup spec with timezone and schedule and retention number",
-			withRetentionNumberThreeBackups(createEtcdBackupSpec(timezone, schedule)),
+			"backup spec with empty schedule",
+			createEtcdBackupPolicySpec(""),
 			[]string{
 				"--enabled=true",
-				"--timezone=GMT",
+			},
+		},
+		{
+			"backup spec with schedule and retention number",
+			withRetentionNumberThreeBackups(createEtcdBackupPolicySpec(schedule)),
+			[]string{
+				"--enabled=true",
 				"--schedule=0 */2 * * *",
 				"--type=RetentionNumber",
 				"--maxNumberOfBackups=3",
@@ -109,20 +87,12 @@ func TestBackupConfig_ToArgList(t *testing.T) {
 		},
 		{
 			"backup spec with timezone and schedule and retention size",
-			withRetentionSizeOneGB(createEtcdBackupSpec(timezone, schedule)),
+			withRetentionSizeOneGB(createEtcdBackupPolicySpec(schedule)),
 			[]string{
 				"--enabled=true",
-				"--timezone=GMT",
 				"--schedule=0 */2 * * *",
 				"--type=RetentionSize",
 				"--maxSizeOfBackupsGb=1",
-			},
-		},
-		{
-			"backup spec with empty timezone and empty schedule",
-			nil,
-			[]string{
-				"--enabled=false",
 			},
 		},
 	}
@@ -137,25 +107,22 @@ func TestBackupConfig_ToArgList(t *testing.T) {
 	}
 }
 
-func createEtcdBackupSpec(timezone, schedule string) *backupv1alpha1.EtcdBackupSpec {
-	return &backupv1alpha1.EtcdBackupSpec{
+func createEtcdBackupPolicySpec(schedule string) *operatorv1alpha1.EtcdBackupPolicySpec {
+	return &operatorv1alpha1.EtcdBackupPolicySpec{
 		Schedule: schedule,
-		TimeZone: timezone,
 	}
 }
 
-func withRetentionNumberThreeBackups(b *backupv1alpha1.EtcdBackupSpec) *backupv1alpha1.EtcdBackupSpec {
-	b.RetentionPolicy.RetentionType = prune.RetentionTypeNumber
-	b.RetentionPolicy.RetentionNumber = &backupv1alpha1.RetentionNumberConfig{
-		MaxNumberOfBackups: 3,
-	}
+func withRetentionNumberThreeBackups(b *operatorv1alpha1.EtcdBackupPolicySpec) *operatorv1alpha1.EtcdBackupPolicySpec {
+	b.RetentionRules = append(b.RetentionRules, operatorv1alpha1.EtcdBackupPolicyRetentionRule{
+		Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxQuantity, MaxQuantity: 3,
+	})
 	return b
 }
 
-func withRetentionSizeOneGB(b *backupv1alpha1.EtcdBackupSpec) *backupv1alpha1.EtcdBackupSpec {
-	b.RetentionPolicy.RetentionType = prune.RetentionTypeSize
-	b.RetentionPolicy.RetentionSize = &backupv1alpha1.RetentionSizeConfig{
-		MaxSizeOfBackupsGb: 1,
-	}
+func withRetentionSizeOneGB(b *operatorv1alpha1.EtcdBackupPolicySpec) *operatorv1alpha1.EtcdBackupPolicySpec {
+	b.RetentionRules = append(b.RetentionRules, operatorv1alpha1.EtcdBackupPolicyRetentionRule{
+		Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxSize, MaxSize: resource.NewQuantity(10*1024*1024*1024, resource.BinarySI),
+	})
 	return b
 }
