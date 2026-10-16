@@ -39,8 +39,10 @@ var (
 // NewEndpointCommand returns the cobra command for "endpoint".
 func NewEndpointCommand() *cobra.Command {
 	ec := &cobra.Command{
-		Use:   "endpoint <subcommand>",
-		Short: "Endpoint related commands",
+		Use:     "endpoint <subcommand>",
+		Short:   "Endpoint related commands. Use `etcdctl endpoint --help` to see subcommands",
+		Long:    "Endpoint related commands",
+		GroupID: groupClusterMaintenanceID,
 	}
 
 	ec.PersistentFlags().BoolVar(&epClusterEndpoints, "cluster", false, "use all endpoints from the cluster member list")
@@ -251,6 +253,7 @@ func endpointsFromCluster(cmd *cobra.Command) []string {
 	}
 
 	sec := secureCfgFromCmd(cmd)
+	au := authCfgFromCmd(cmd)
 	dt := dialTimeoutFromCmd(cmd)
 	ka := keepAliveTimeFromCmd(cmd)
 	kat := keepAliveTimeoutFromCmd(cmd)
@@ -267,6 +270,7 @@ func endpointsFromCluster(cmd *cobra.Command) []string {
 		KeepAliveTime:    ka,
 		KeepAliveTimeout: kat,
 		Secure:           sec,
+		Auth:             au,
 	}, lg)
 	if err != nil {
 		cobrautl.ExitWithError(cobrautl.ExitError, err)

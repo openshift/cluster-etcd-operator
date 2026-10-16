@@ -24,6 +24,7 @@ import (
 	"go.etcd.io/etcd/server/v3/etcdserver/errors"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/grpclog"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
@@ -89,6 +90,32 @@ func NewEtcdClient(
 	return g
 }
 
+// WaitForConnectionReady checks if the connection is ready, and connects it if in the Idle state.
+// Replaces the grpc.WithBlock() dial option from before etcd 3.7 to ensure the connection is valid before using it.
+func WaitForConnectionReady(conn *grpc.ClientConn, timeout time.Duration) error {
+	if conn == nil {
+		return fmt.Errorf("no grpc connection")
+	}
+	ctx := context.Background()
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	for {
+		state := conn.GetState()
+		switch state {
+		case connectivity.Ready:
+			return nil
+		case connectivity.Idle:
+			conn.Connect()
+		}
+		if !conn.WaitForStateChange(ctx, state) {
+			return fmt.Errorf("etcd grpc connection not ready (last state %s): %w", state, ctx.Err())
+		}
+	}
+}
+
 // newEtcdClientWithClientOpts allows customization of the etcd client using ClientOptions. All clients must be manually
 // closed by the caller with Close().
 func newEtcdClientWithClientOpts(endpoints []string, skipConnectionTest bool, opts ...ClientOption) (*clientv3.Client, error) {
@@ -99,7 +126,6 @@ func newEtcdClientWithClientOpts(endpoints []string, skipConnectionTest bool, op
 	}
 
 	dialOptions := []grpc.DialOption{
-		grpc.WithBlock(), // block until the underlying connection is up
 		grpc.WithChainUnaryInterceptor(grpcprom.UnaryClientInterceptor),
 		grpc.WithChainStreamInterceptor(grpcprom.StreamClientInterceptor),
 	}
@@ -135,6 +161,11 @@ func newEtcdClientWithClientOpts(endpoints []string, skipConnectionTest bool, op
 		return nil, fmt.Errorf("failed to make etcd client for endpoints %v: %w", endpoints, err)
 	}
 
+	if err := WaitForConnectionReady(cli.ActiveConnection(), clientOpts.dialTimeout); err != nil {
+		cli.Close()
+		return nil, fmt.Errorf("failed to connect to etcd endpoints %v: %w", endpoints, err)
+	}
+
 	// If the endpoint includes a learner member then we skip the test
 	// as learner members don't support member list
 	if skipConnectionTest {
@@ -146,6 +177,7 @@ func newEtcdClientWithClientOpts(endpoints []string, skipConnectionTest bool, op
 	defer cancel()
 	_, err = cli.MemberList(ctx)
 	if err != nil {
+		cli.Close()
 		if clientv3.IsConnCanceled(err) {
 			return nil, fmt.Errorf("client connection was canceled: %w", err)
 		}
@@ -501,11 +533,14 @@ func (g *etcdClientGetter) Defragment(ctx context.Context, member *etcdserverpb.
 		}
 	}()
 
-	resp, err := cli.Defragment(ctx, member.ClientURLs[0])
+	// cli.Defragment would open a second connection to the member that only
+	// ctx can bound, and ctx has no deadline here. Use cli's own connection
+	// instead: it targets only this member and was just checked.
+	resp, err := etcdserverpb.NewMaintenanceClient(cli.ActiveConnection()).Defragment(ctx, &etcdserverpb.DefragmentRequest{})
 	if err != nil {
 		return nil, fmt.Errorf("error while running defragment: %w", err)
 	}
-	return resp, nil
+	return (*clientv3.DefragmentResponse)(resp), nil
 }
 
 func endpoints(nodeLister corev1listers.NodeLister,
