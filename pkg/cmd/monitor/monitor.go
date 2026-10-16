@@ -18,12 +18,12 @@ import (
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/cmd/monitor/health"
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 )
 
 const (
@@ -271,13 +271,9 @@ func newETCD3Client(ctx context.Context, tlsInfo transport.TLSInfo, endpoints []
 	if err != nil {
 		return nil, err
 	}
-	dialOptions := []grpc.DialOption{
-		grpc.WithBlock(), // block until the underlying connection is up
-	}
 
 	cfg := &clientv3.Config{
 		DialTimeout:          dialTimeout,
-		DialOptions:          dialOptions,
 		DialKeepAliveTime:    keepaliveTime,
 		DialKeepAliveTimeout: keepaliveTimeout,
 		Endpoints:            endpoints,
@@ -285,5 +281,13 @@ func newETCD3Client(ctx context.Context, tlsInfo transport.TLSInfo, endpoints []
 		Context:              ctx,
 	}
 
-	return clientv3.New(*cfg)
+	cli, err := clientv3.New(*cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := etcdcli.WaitForConnectionReady(cli.ActiveConnection(), dialTimeout); err != nil {
+		cli.Close()
+		return nil, err
+	}
+	return cli, nil
 }

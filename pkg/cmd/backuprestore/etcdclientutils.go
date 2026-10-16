@@ -8,18 +8,15 @@ import (
 	"os"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/grpclog"
 	"k8s.io/klog/v2"
 )
 
 func getEtcdClient(endpoints []string) (*clientv3.Client, error) {
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(ioutil.Discard, ioutil.Discard, os.Stderr))
-	dialOptions := []grpc.DialOption{
-		grpc.WithBlock(), // block until the underlying connection is up
-	}
 
 	tlsInfo := transport.TLSInfo{
 		CertFile:      os.Getenv("ETCDCTL_CERT"),
@@ -32,7 +29,6 @@ func getEtcdClient(endpoints []string) (*clientv3.Client, error) {
 	}
 
 	cfg := &clientv3.Config{
-		DialOptions: dialOptions,
 		Endpoints:   endpoints,
 		DialTimeout: 10 * time.Second,
 		TLS:         tlsConfig,
@@ -41,6 +37,12 @@ func getEtcdClient(endpoints []string) (*clientv3.Client, error) {
 	cli, err := clientv3.New(*cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to make etcd client for endpoints %v and env %v: %w", endpoints, os.Environ(), err)
+	}
+
+	// Wait until the connection is ready, as WithBlock did before etcd 3.7
+	if err := etcdcli.WaitForConnectionReady(cli.ActiveConnection(), cfg.DialTimeout); err != nil {
+		cli.Close()
+		return nil, fmt.Errorf("error during client connection check: %w", err)
 	}
 	return cli, nil
 }

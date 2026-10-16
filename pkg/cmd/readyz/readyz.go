@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/pkg/v3/tlsutil"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
@@ -19,7 +20,6 @@ import (
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"golang.org/x/sys/unix"
-	"google.golang.org/grpc"
 	"k8s.io/apiserver/pkg/server"
 	"k8s.io/klog/v2"
 )
@@ -32,6 +32,8 @@ const (
 	// https://github.com/kubernetes/apiserver/blob/de6ba2aa0a752d077719fcee186291d7af73a825/pkg/storage/storagebackend/factory/etcd3.go#L55-L56
 	keepaliveTime    = 30 * time.Second
 	keepaliveTimeout = 10 * time.Second
+	// statusTimeout stays below the 30s kubelet probe timeout.
+	statusTimeout = 25 * time.Second
 )
 
 type readyzOpts struct {
@@ -148,7 +150,12 @@ func (r *readyzOpts) Run() error {
 		},
 		// health check
 		func(client *clientv3.Client) error {
-			_, err := client.Status(context.Background(), r.targetEndpoint)
+			if err := etcdcli.WaitForConnectionReady(client.ActiveConnection(), r.dialTimeout); err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), statusTimeout)
+			defer cancel()
+			_, err := etcdserverpb.NewMaintenanceClient(client.ActiveConnection()).Status(ctx, &etcdserverpb.StatusRequest{})
 			return err
 		},
 		// closing
@@ -262,13 +269,9 @@ func (r *readyzOpts) newETCD3Client(ctx context.Context, endpoint string) (*clie
 	if err != nil {
 		return nil, err
 	}
-	dialOptions := []grpc.DialOption{
-		grpc.WithBlock(), // block until the underlying connection is up
-	}
 
 	cfg := &clientv3.Config{
 		DialTimeout:          r.dialTimeout,
-		DialOptions:          dialOptions,
 		DialKeepAliveTime:    keepaliveTime,
 		DialKeepAliveTimeout: keepaliveTimeout,
 		Endpoints:            []string{endpoint},
@@ -276,5 +279,13 @@ func (r *readyzOpts) newETCD3Client(ctx context.Context, endpoint string) (*clie
 		Context:              ctx,
 	}
 
-	return clientv3.New(*cfg)
+	cli, err := clientv3.New(*cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := etcdcli.WaitForConnectionReady(cli.ActiveConnection(), r.dialTimeout); err != nil {
+		cli.Close()
+		return nil, err
+	}
+	return cli, nil
 }

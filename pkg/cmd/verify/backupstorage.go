@@ -17,7 +17,6 @@ import (
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"golang.org/x/sys/unix"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/grpclog"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -166,13 +165,9 @@ func newETCD3Client(ctx context.Context, tlsInfo transport.TLSInfo) (*clientv3.C
 	if err != nil {
 		return nil, err
 	}
-	dialOptions := []grpc.DialOption{
-		grpc.WithBlock(), // block until the underlying connection is up
-	}
 
 	cfg := &clientv3.Config{
 		DialTimeout:          dialTimeout,
-		DialOptions:          dialOptions,
 		DialKeepAliveTime:    keepaliveTime,
 		DialKeepAliveTimeout: keepaliveTimeout,
 		Endpoints:            []string{defaultEndpoint},
@@ -180,7 +175,15 @@ func newETCD3Client(ctx context.Context, tlsInfo transport.TLSInfo) (*clientv3.C
 		Context:              ctx,
 	}
 
-	return clientv3.New(*cfg)
+	cli, err := clientv3.New(*cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := etcdcli.WaitForConnectionReady(cli.ActiveConnection(), dialTimeout); err != nil {
+		cli.Close()
+		return nil, err
+	}
+	return cli, nil
 }
 
 // getBackupSizeBytes asks the etcd leader for DbSize as an approximation for how large the backup state will be. If
