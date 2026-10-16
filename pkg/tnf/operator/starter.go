@@ -19,16 +19,12 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/component-base/metrics"
-	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/bindata"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/externaletcdsupportcontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/metriccontroller"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/pacemaker"
 )
 
 // HandleDualReplicaClusters checks feature gate and control plane topology,
@@ -72,7 +68,7 @@ func HandleDualReplicaClusters(
 	//  - UpdateFunc: Ready transitions for initial bootstrap
 	//  - AddFunc/DeleteFunc: drift-driven reconciliation
 	// Secret handler registration happens inside runPacemakerControllers after lifecycleManager is created
-	runPacemakerControllers(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer, controlPlaneNodeInformer, dynamicClient)
+	runPacemakerControllers(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer, controlPlaneNodeInformer)
 
 	return true, nil
 }
@@ -134,7 +130,7 @@ func runTnfResourceController(ctx context.Context, controllerContext *controller
 	return nil
 }
 
-func runPacemakerControllers(ctx context.Context, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces, etcdInformer operatorv1informers.EtcdInformer, controlPlaneNodeInformer cache.SharedIndexInformer, dynamicClient dynamic.Interface) {
+func runPacemakerControllers(ctx context.Context, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces, etcdInformer operatorv1informers.EtcdInformer, controlPlaneNodeInformer cache.SharedIndexInformer) {
 	// Pacemaker controllers start after PacemakerCluster CRD is established.
 	// The lifecycle manager's sync() handles bootstrap vs post-transition modes internally.
 	// This runs in a background goroutine to avoid blocking the main thread.
@@ -195,29 +191,9 @@ func runPacemakerControllers(ctx context.Context, controllerContext *controllerc
 		// - Post-transition: MonitorHealth(), ReconcilePacemakerConfig(), CleanupOrphanedJobs()
 		go lifecycleController.Run(ctx, 1)
 
-		// Create and start the metrics controller, sharing the same informer
-		klog.Infof("creating Pacemaker metrics controller")
-		metricsController := metriccontroller.NewPacemakerMetricsController(
-			pacemakerInformer,
-			controllerContext.EventRecorder,
-			legacyregistry.DefaultGatherer.(metrics.KubeRegistry),
-		)
-		klog.Infof("starting Pacemaker metrics controller")
-		go metricsController.Run(ctx, 1)
-
-		// Create and start the console notification controller, sharing the same informer
-		klog.Infof("creating Pacemaker console notification controller")
-		notificationController := pacemaker.NewConsoleNotificationController(
-			pacemakerInformer,
-			dynamicClient,
-			controllerContext.EventRecorder,
-		)
-		klog.Infof("starting Pacemaker console notification controller")
-		go notificationController.Run(ctx, 1)
-
 		// Note: Status collector is started by lifecycle manager only after transition is complete
 		// (see startJobControllersWithLock in job_controllers.go)
 
-		klog.Infof("started Pacemaker controllers (lifecycle manager, metrics controller, console notification)")
+		klog.Infof("started Pacemaker lifecycle manager")
 	}()
 }
