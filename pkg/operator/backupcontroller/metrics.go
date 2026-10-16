@@ -219,7 +219,11 @@ func getStartTime(backup operatorv1alpha1.EtcdBackup) float64 {
 
 func getCompletionTime(backup operatorv1alpha1.EtcdBackup) float64 {
 	for _, condition := range backup.Status.Conditions {
-		if condition.Status == metav1.ConditionTrue && condition.Type == string(operatorv1alpha1.BackupCompleted) {
+		if condition.Status != metav1.ConditionTrue {
+			continue
+		}
+		switch condition.Type {
+		case string(operatorv1alpha1.BackupCompleted), string(operatorv1alpha1.BackupFailed):
 			return float64(condition.LastTransitionTime.Unix())
 		}
 	}

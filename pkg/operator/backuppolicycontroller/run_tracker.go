@@ -213,6 +213,7 @@ func (t *RunTracker) ProcessBackupsForPolicy(
 	// This decouples consecutive failure counting from backup retention
 	modified := false
 	latestSuccessTime := state.LastSuccessTime
+	successReset := false
 
 	for _, runHash := range sortedRuns {
 		runBackups := runs[runHash]
@@ -246,6 +247,9 @@ func (t *RunTracker) ProcessBackupsForPolicy(
 
 		// Record outcome if new or changed
 		if !exists || previousOutcome != currentOutcomeStr {
+			if currentOutcomeStr == "success" && previousOutcome != "success" {
+				successReset = true
+			}
 			state.RunOutcomes[runHash] = currentOutcomeStr
 			modified = true
 		}
@@ -254,15 +258,20 @@ func (t *RunTracker) ProcessBackupsForPolicy(
 	// Update last success time if we found a newer one
 	if latestSuccessTime != nil && (state.LastSuccessTime == nil || latestSuccessTime.After(state.LastSuccessTime.Time)) {
 		state.LastSuccessTime = latestSuccessTime
+		successReset = true
 		modified = true
 	}
 
-	// Recalculate consecutive failures from durable outcomes
-	// Find the latest success hash, then count failures after it
-	state.ConsecutiveFailures = t.calculateConsecutiveFailures(state.RunOutcomes, state.LastSuccessTime)
+	// ConsecutiveFailures is a durable summary independent of bounded RunOutcomes history.
+	// Recalculate from the current window; on success reset to that value, otherwise never
+	// shrink below the persisted streak (truncation must not hide sustained failure).
+	calculatedFailures := t.calculateConsecutiveFailures(state.RunOutcomes, state.LastSuccessTime)
+	if successReset || calculatedFailures > state.ConsecutiveFailures {
+		state.ConsecutiveFailures = calculatedFailures
+		modified = true
+	}
 
-	// Prune old run outcomes to prevent unbounded growth
-	// Keep recent N runs plus any runs after last success
+	// Hard-bound history: keep only the most recent N run outcomes.
 	if len(state.RunOutcomes) > runMetadataRetentionWindow {
 		t.pruneOldRunOutcomes(state)
 		modified = true
@@ -282,7 +291,8 @@ func (t *RunTracker) ProcessBackupsForPolicy(
 	return state, nil
 }
 
-// GetAllPolicyStates returns states for all policies (for metrics emission)
+// GetAllPolicyStates returns states for all policies via a live ConfigMap GET.
+// Prefer parseAllPolicyStates / a ConfigMap lister for scrape-time metrics.
 func (t *RunTracker) GetAllPolicyStates(ctx context.Context) (map[string]*PolicyRunState, error) {
 	cm, err := t.configMapClient.Get(ctx, failureTrackerConfigMapName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
@@ -291,18 +301,27 @@ func (t *RunTracker) GetAllPolicyStates(ctx context.Context) (map[string]*Policy
 	if err != nil {
 		return nil, fmt.Errorf("failed to get failure tracker ConfigMap: %w", err)
 	}
+	return parseAllPolicyStates(cm)
+}
 
+// parseAllPolicyStates decodes tracker state from a ConfigMap. A nil ConfigMap or
+// missing data key yields an empty map (no error). Corrupt JSON returns an error.
+func parseAllPolicyStates(cm *corev1.ConfigMap) (map[string]*PolicyRunState, error) {
+	if cm == nil {
+		return make(map[string]*PolicyRunState), nil
+	}
 	data, ok := cm.Data[failureTrackerDataKey]
-	if !ok {
+	if !ok || data == "" {
 		return make(map[string]*PolicyRunState), nil
 	}
 
 	var allStates map[string]*PolicyRunState
 	if err := json.Unmarshal([]byte(data), &allStates); err != nil {
-		// REMAINING ISSUE #5 FIX: Return error instead of empty map
 		return nil, fmt.Errorf("failed to unmarshal failure tracker data (corrupted ConfigMap): %w", err)
 	}
-
+	if allStates == nil {
+		return make(map[string]*PolicyRunState), nil
+	}
 	return allStates, nil
 }
 
@@ -517,26 +536,13 @@ func (t *RunTracker) calculateConsecutiveFailures(outcomes map[string]string, la
 }
 
 // pruneOldRunOutcomes removes old run outcomes to prevent unbounded growth.
-// Keeps the most recent runMetadataRetentionWindow runs, plus all runs after last success.
+// Keeps only the most recent runMetadataRetentionWindow runs. Durable summary
+// fields (LastSuccessTime, ConsecutiveFailures) are preserved separately.
 func (t *RunTracker) pruneOldRunOutcomes(state *PolicyRunState) {
 	if len(state.RunOutcomes) <= runMetadataRetentionWindow {
 		return
 	}
 
-	// Find latest success hash to preserve all runs after it
-	latestSuccessHash := int64(0)
-	if state.LastSuccessTime != nil {
-		for hash, outcome := range state.RunOutcomes {
-			if outcome == "success" {
-				hashInt, _ := strconv.ParseInt(hash, 10, 64)
-				if hashInt > latestSuccessHash {
-					latestSuccessHash = hashInt
-				}
-			}
-		}
-	}
-
-	// Sort all hashes chronologically
 	allHashes := make([]string, 0, len(state.RunOutcomes))
 	for hash := range state.RunOutcomes {
 		allHashes = append(allHashes, hash)
@@ -547,18 +553,8 @@ func (t *RunTracker) pruneOldRunOutcomes(state *PolicyRunState) {
 		return hi < hj
 	})
 
-	// Keep recent N runs plus anything after last success
 	cutoffIndex := len(allHashes) - runMetadataRetentionWindow
-	if cutoffIndex <= 0 {
-		return
-	}
-
 	for i := 0; i < cutoffIndex; i++ {
-		hash := allHashes[i]
-		hashInt, _ := strconv.ParseInt(hash, 10, 64)
-		// Don't prune runs after latest success (needed for consecutive failure count)
-		if hashInt <= latestSuccessHash {
-			delete(state.RunOutcomes, hash)
-		}
+		delete(state.RunOutcomes, allHashes[i])
 	}
 }

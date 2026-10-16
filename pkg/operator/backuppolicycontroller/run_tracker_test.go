@@ -2,6 +2,7 @@ package backuppolicycontroller
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -21,7 +22,7 @@ func TestRunTracker_DuplicateReconcile(t *testing.T) {
 
 	policy := testPolicy("test-policy", "uid-1")
 	backups := []*operatorv1alpha1.EtcdBackup{
-		testFailedBackup("test-policy-1000", "test-policy", "1000", time.Now()),
+		testFailedBackup("test-policy-1000", policy, "1000", time.Now()),
 	}
 
 	// First sync - should count the failure
@@ -44,9 +45,9 @@ func TestRunTracker_MixedNodeOutcomes(t *testing.T) {
 
 	// Run with 3 backups: 2 failed, 1 succeeded
 	backups := []*operatorv1alpha1.EtcdBackup{
-		testFailedBackup("test-policy-node1-1000", "test-policy", "1000", time.Now()),
-		testFailedBackup("test-policy-node2-1000", "test-policy", "1000", time.Now()),
-		testSuccessfulBackup("test-policy-node3-1000", "test-policy", "1000", time.Now()),
+		testFailedBackup("test-policy-node1-1000", policy, "1000", time.Now()),
+		testFailedBackup("test-policy-node2-1000", policy, "1000", time.Now()),
+		testSuccessfulBackup("test-policy-node3-1000", policy, "1000", time.Now()),
 	}
 
 	state, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups)
@@ -64,9 +65,9 @@ func TestRunTracker_AllNodeFailure(t *testing.T) {
 
 	// Run with 3 backups: all failed
 	backups := []*operatorv1alpha1.EtcdBackup{
-		testFailedBackup("test-policy-node1-1000", "test-policy", "1000", time.Now()),
-		testFailedBackup("test-policy-node2-1000", "test-policy", "1000", time.Now()),
-		testFailedBackup("test-policy-node3-1000", "test-policy", "1000", time.Now()),
+		testFailedBackup("test-policy-node1-1000", policy, "1000", time.Now()),
+		testFailedBackup("test-policy-node2-1000", policy, "1000", time.Now()),
+		testFailedBackup("test-policy-node3-1000", policy, "1000", time.Now()),
 	}
 
 	state, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups)
@@ -83,14 +84,14 @@ func TestRunTracker_RestartAfterTwoFailedRuns(t *testing.T) {
 
 	// First run fails
 	backups1 := []*operatorv1alpha1.EtcdBackup{
-		testFailedBackup("test-policy-1000", "test-policy", "1000", time.Now()),
+		testFailedBackup("test-policy-1000", policy, "1000", time.Now()),
 	}
 	state1, err := tracker1.ProcessBackupsForPolicy(ctx, policy, backups1)
 	require.NoError(t, err)
 	require.Equal(t, 1, state1.ConsecutiveFailures)
 
 	// Second run fails
-	backups2 := append(backups1, testFailedBackup("test-policy-1001", "test-policy", "1001", time.Now()))
+	backups2 := append(backups1, testFailedBackup("test-policy-1001", policy, "1001", time.Now()))
 	state2, err := tracker1.ProcessBackupsForPolicy(ctx, policy, backups2)
 	require.NoError(t, err)
 	require.Equal(t, 2, state2.ConsecutiveFailures)
@@ -102,7 +103,8 @@ func TestRunTracker_RestartAfterTwoFailedRuns(t *testing.T) {
 	loadedState, err := tracker2.GetPolicyState(ctx, policy)
 	require.NoError(t, err)
 	require.Equal(t, 2, loadedState.ConsecutiveFailures, "state should persist across restart")
-	require.Equal(t, "1001", loadedState.LastProcessedRunMinuteHash)
+	require.Equal(t, "failure", loadedState.RunOutcomes["1001"])
+	require.Equal(t, "failure", loadedState.RunOutcomes["1000"])
 }
 
 func TestRunTracker_Retention(t *testing.T) {
@@ -114,8 +116,8 @@ func TestRunTracker_Retention(t *testing.T) {
 
 	// Two failed runs
 	backups := []*operatorv1alpha1.EtcdBackup{
-		testFailedBackup("test-policy-1000", "test-policy", "1000", time.Now()),
-		testFailedBackup("test-policy-1001", "test-policy", "1001", time.Now()),
+		testFailedBackup("test-policy-1000", policy, "1000", time.Now()),
+		testFailedBackup("test-policy-1001", policy, "1001", time.Now()),
 	}
 	state1, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups)
 	require.NoError(t, err)
@@ -135,8 +137,8 @@ func TestRunTracker_PolicyUIDReplacement(t *testing.T) {
 
 	policy1 := testPolicy("test-policy", "uid-1")
 	backups1 := []*operatorv1alpha1.EtcdBackup{
-		testFailedBackup("test-policy-1000", "test-policy", "1000", time.Now()),
-		testFailedBackup("test-policy-1001", "test-policy", "1001", time.Now()),
+		testFailedBackup("test-policy-1000", policy1, "1000", time.Now()),
+		testFailedBackup("test-policy-1001", policy1, "1001", time.Now()),
 	}
 	state1, err := tracker.ProcessBackupsForPolicy(ctx, policy1, backups1)
 	require.NoError(t, err)
@@ -145,7 +147,7 @@ func TestRunTracker_PolicyUIDReplacement(t *testing.T) {
 	// Policy deleted and recreated - new UID
 	policy2 := testPolicy("test-policy", "uid-2")
 	backups2 := []*operatorv1alpha1.EtcdBackup{
-		testFailedBackup("test-policy-1002", "test-policy", "1002", time.Now()),
+		testFailedBackup("test-policy-1002", policy2, "1002", time.Now()),
 	}
 	state2, err := tracker.ProcessBackupsForPolicy(ctx, policy2, backups2)
 	require.NoError(t, err)
@@ -166,9 +168,9 @@ func TestRunTracker_InProgressRun(t *testing.T) {
 
 	// Run with mixed states: 1 failed, 1 completed, 1 still pending
 	backups := []*operatorv1alpha1.EtcdBackup{
-		testFailedBackup("test-policy-node1-1000", "test-policy", "1000", time.Now()),
-		testSuccessfulBackup("test-policy-node2-1000", "test-policy", "1000", time.Now()),
-		testPendingBackup("test-policy-node3-1000", "test-policy", "1000"),
+		testFailedBackup("test-policy-node1-1000", policy, "1000", time.Now()),
+		testSuccessfulBackup("test-policy-node2-1000", policy, "1000", time.Now()),
+		testPendingBackup("test-policy-node3-1000", policy, "1000"),
 	}
 
 	state, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups)
@@ -187,9 +189,9 @@ func TestRunTracker_NeverSuccessfulPolicy(t *testing.T) {
 	policy := testPolicy("test-policy", "uid-1")
 
 	backups := []*operatorv1alpha1.EtcdBackup{
-		testFailedBackup("test-policy-1000", "test-policy", "1000", time.Now()),
-		testFailedBackup("test-policy-1001", "test-policy", "1001", time.Now()),
-		testFailedBackup("test-policy-1002", "test-policy", "1002", time.Now()),
+		testFailedBackup("test-policy-1000", policy, "1000", time.Now()),
+		testFailedBackup("test-policy-1001", policy, "1001", time.Now()),
+		testFailedBackup("test-policy-1002", policy, "1002", time.Now()),
 	}
 
 	state, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups)
@@ -207,22 +209,22 @@ func TestRunTracker_FailureResetOnSuccess(t *testing.T) {
 
 	// Two failures
 	backups := []*operatorv1alpha1.EtcdBackup{
-		testFailedBackup("test-policy-1000", "test-policy", "1000", time.Now()),
-		testFailedBackup("test-policy-1001", "test-policy", "1001", time.Now()),
+		testFailedBackup("test-policy-1000", policy, "1000", time.Now()),
+		testFailedBackup("test-policy-1001", policy, "1001", time.Now()),
 	}
 	state1, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups)
 	require.NoError(t, err)
 	require.Equal(t, 2, state1.ConsecutiveFailures)
 
 	// Then a success
-	backups = append(backups, testSuccessfulBackup("test-policy-1002", "test-policy", "1002", time.Now()))
+	backups = append(backups, testSuccessfulBackup("test-policy-1002", policy, "1002", time.Now()))
 	state2, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups)
 	require.NoError(t, err)
 	require.Equal(t, 0, state2.ConsecutiveFailures, "success should reset counter to 0")
 	require.NotNil(t, state2.LastSuccessTime)
 
 	// Then another failure
-	backups = append(backups, testFailedBackup("test-policy-1003", "test-policy", "1003", time.Now()))
+	backups = append(backups, testFailedBackup("test-policy-1003", policy, "1003", time.Now()))
 	state3, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups)
 	require.NoError(t, err)
 	require.Equal(t, 1, state3.ConsecutiveFailures, "counter should restart from 0 after reset")
@@ -237,9 +239,9 @@ func TestRunTracker_MultipleRunsInOneBatch(t *testing.T) {
 
 	// 3 runs: success, fail, fail
 	backups := []*operatorv1alpha1.EtcdBackup{
-		testSuccessfulBackup("test-policy-1000", "test-policy", "1000", time.Now()),
-		testFailedBackup("test-policy-1001", "test-policy", "1001", time.Now()),
-		testFailedBackup("test-policy-1002", "test-policy", "1002", time.Now()),
+		testSuccessfulBackup("test-policy-1000", policy, "1000", time.Now()),
+		testFailedBackup("test-policy-1001", policy, "1001", time.Now()),
+		testFailedBackup("test-policy-1002", policy, "1002", time.Now()),
 	}
 
 	state, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups)
@@ -259,15 +261,15 @@ func TestRunTracker_TwoReconcileFailedThenSuccess(t *testing.T) {
 
 	// First reconcile: only failed backup visible
 	backups1 := []*operatorv1alpha1.EtcdBackup{
-		testFailedBackup("test-policy-node1-1000", "test-policy", "1000", time.Now()),
+		testFailedBackup("test-policy-node1-1000", policy, "1000", time.Now()),
 	}
 	_, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups1)
 	require.NoError(t, err)
 
 	// Second reconcile: successful sibling now visible
 	backups2 := []*operatorv1alpha1.EtcdBackup{
-		testFailedBackup("test-policy-node1-1000", "test-policy", "1000", time.Now()),
-		testSuccessfulBackup("test-policy-node2-1000", "test-policy", "1000", time.Now()),
+		testFailedBackup("test-policy-node1-1000", policy, "1000", time.Now()),
+		testSuccessfulBackup("test-policy-node2-1000", policy, "1000", time.Now()),
 	}
 	state2, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups2)
 	require.NoError(t, err)
@@ -285,8 +287,8 @@ func TestRunTracker_RestartProcessThirdFailure(t *testing.T) {
 
 	// Two failures
 	backups := []*operatorv1alpha1.EtcdBackup{
-		testFailedBackup("test-policy-1000", "test-policy", "1000", time.Now()),
-		testFailedBackup("test-policy-1001", "test-policy", "1001", time.Now()),
+		testFailedBackup("test-policy-1000", policy, "1000", time.Now()),
+		testFailedBackup("test-policy-1001", policy, "1001", time.Now()),
 	}
 	state1, err := tracker1.ProcessBackupsForPolicy(ctx, policy, backups)
 	require.NoError(t, err)
@@ -296,7 +298,7 @@ func TestRunTracker_RestartProcessThirdFailure(t *testing.T) {
 	tracker2 := NewRunTracker("test-ns", client)
 
 	// Third failure after restart
-	backups = append(backups, testFailedBackup("test-policy-1002", "test-policy", "1002", time.Now()))
+	backups = append(backups, testFailedBackup("test-policy-1002", policy, "1002", time.Now()))
 	state2, err := tracker2.ProcessBackupsForPolicy(ctx, policy, backups)
 	require.NoError(t, err)
 	require.Equal(t, 3, state2.ConsecutiveFailures, "should reach critical threshold after restart")
@@ -350,7 +352,7 @@ func TestRunTracker_SameNameNewUID(t *testing.T) {
 	policy1.CreationTimestamp = metav1.NewTime(time.Now().Add(-48 * time.Hour))
 
 	backups1 := []*operatorv1alpha1.EtcdBackup{
-		testFailedBackupWithUID("test-policy-1000", "test-policy", "uid-1", "1000", time.Now()),
+		testFailedBackup("test-policy-1000", policy1, "1000", time.Now()),
 	}
 	state1, err := tracker.ProcessBackupsForPolicy(ctx, policy1, backups1)
 	require.NoError(t, err)
@@ -360,8 +362,7 @@ func TestRunTracker_SameNameNewUID(t *testing.T) {
 	policy2 := testPolicy("test-policy", "uid-2")
 	policy2.CreationTimestamp = metav1.Now()
 
-	// New policy should NOT see old policy's backups
-	// (Currently test passes old backups - implementation needs to filter by UID)
+	// New policy should NOT see old policy's backups (UID mismatch)
 	state2, err := tracker.ProcessBackupsForPolicy(ctx, policy2, backups1)
 	require.NoError(t, err)
 	require.Equal(t, 0, state2.ConsecutiveFailures, "new policy UID should not count old policy's backups")
@@ -401,7 +402,7 @@ func TestRunTracker_FirstReconcileBeforeAllMembersKnown(t *testing.T) {
 
 	// First reconcile: only 1 of 3 expected backups visible (failed)
 	// Annotation indicates 3 expected members
-	backup1 := testFailedBackup("test-policy-node1-1000", "test-policy", "1000", time.Now())
+	backup1 := testFailedBackup("test-policy-node1-1000", policy, "1000", time.Now())
 	backup1.Annotations = map[string]string{
 		backuphelpers.AnnotationBackupExpectedMembers: "3",
 	}
@@ -414,11 +415,11 @@ func TestRunTracker_FirstReconcileBeforeAllMembersKnown(t *testing.T) {
 	require.Equal(t, 0, state1.ConsecutiveFailures, "should not count run as failed until all expected members are finished")
 
 	// Second reconcile: all 3 members now visible, all failed
-	backup2 := testFailedBackup("test-policy-node2-1000", "test-policy", "1000", time.Now())
+	backup2 := testFailedBackup("test-policy-node2-1000", policy, "1000", time.Now())
 	backup2.Annotations = map[string]string{
 		backuphelpers.AnnotationBackupExpectedMembers: "3",
 	}
-	backup3 := testFailedBackup("test-policy-node3-1000", "test-policy", "1000", time.Now())
+	backup3 := testFailedBackup("test-policy-node3-1000", policy, "1000", time.Now())
 	backup3.Annotations = map[string]string{
 		backuphelpers.AnnotationBackupExpectedMembers: "3",
 	}
@@ -432,10 +433,6 @@ func TestRunTracker_FirstReconcileBeforeAllMembersKnown(t *testing.T) {
 }
 
 func TestRunTracker_LateSuccessAfterRetention(t *testing.T) {
-	// KNOWN LIMITATION #1: Retention can change the streak
-	// See KNOWN_LIMITATIONS.md - requires durable per-run outcomes to fix
-	t.Skip("Known limitation: retention changing failure count requires architectural changes (durable run outcomes)")
-
 	ctx := context.Background()
 	tracker, _ := setupRunTracker(t)
 
@@ -443,10 +440,10 @@ func TestRunTracker_LateSuccessAfterRetention(t *testing.T) {
 
 	// Initial: Success at run 1000, then failures at 1001, 1002, 1003
 	backups := []*operatorv1alpha1.EtcdBackup{
-		testSuccessfulBackup("test-policy-1000", "test-policy", "1000", time.Now()),
-		testFailedBackup("test-policy-1001", "test-policy", "1001", time.Now()),
-		testFailedBackup("test-policy-1002", "test-policy", "1002", time.Now()),
-		testFailedBackup("test-policy-1003", "test-policy", "1003", time.Now()),
+		testSuccessfulBackup("test-policy-1000", policy, "1000", time.Now()),
+		testFailedBackup("test-policy-1001", policy, "1001", time.Now()),
+		testFailedBackup("test-policy-1002", policy, "1002", time.Now()),
+		testFailedBackup("test-policy-1003", policy, "1003", time.Now()),
 	}
 	state1, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups)
 	require.NoError(t, err)
@@ -455,9 +452,9 @@ func TestRunTracker_LateSuccessAfterRetention(t *testing.T) {
 	// Later: Retention deletes run 1001, 1002
 	// BUT we discover run 1002 actually had a late success
 	retainedBackups := []*operatorv1alpha1.EtcdBackup{
-		testSuccessfulBackup("test-policy-1000", "test-policy", "1000", time.Now()),
-		testSuccessfulBackup("test-policy-1002", "test-policy", "1002", time.Now().Add(1 * time.Hour)), // Late success
-		testFailedBackup("test-policy-1003", "test-policy", "1003", time.Now()),
+		testSuccessfulBackup("test-policy-1000", policy, "1000", time.Now()),
+		testSuccessfulBackup("test-policy-1002", policy, "1002", time.Now().Add(1 * time.Hour)), // Late success
+		testFailedBackup("test-policy-1003", policy, "1003", time.Now()),
 	}
 	state2, err := tracker.ProcessBackupsForPolicy(ctx, policy, retainedBackups)
 	require.NoError(t, err)
@@ -480,8 +477,8 @@ func TestRunTracker_LatestSuccessTime(t *testing.T) {
 
 	// Run with multiple successes at different completion times
 	backups := []*operatorv1alpha1.EtcdBackup{
-		testSuccessfulBackup("test-policy-node1-1000", "test-policy", "1000", earlyTime),
-		testSuccessfulBackup("test-policy-node2-1000", "test-policy", "1000", lateTime), // Later completion
+		testSuccessfulBackup("test-policy-node1-1000", policy, "1000", earlyTime),
+		testSuccessfulBackup("test-policy-node2-1000", policy, "1000", lateTime), // Later completion
 	}
 	state, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups)
 	require.NoError(t, err)
@@ -492,25 +489,45 @@ func TestRunTracker_LatestSuccessTime(t *testing.T) {
 }
 
 func TestRunTracker_UnlabeledBackupsAfterPolicyRecreation(t *testing.T) {
-	// KNOWN LIMITATION #2: Unlabeled backups accepted for backward compatibility
-	// See KNOWN_LIMITATIONS.md - would require migration job or timestamp-based filtering to fix
-	t.Skip("Known limitation: unlabeled backups accepted for backward compatibility with pre-UID-tracking backups")
-
 	ctx := context.Background()
 	tracker, _ := setupRunTracker(t)
 
-	// Old policy creates unlabeled backup (before UID tracking)
-	unlabeledBackup := testFailedBackup("test-policy-1000", "test-policy", "1000", time.Now())
-	// Simulate old backup without UID label
-	delete(unlabeledBackup.Labels, backuphelpers.LabelEtcdBackupPolicyUID)
-
 	// Policy deleted and recreated with same name, different UID
 	policy2 := testPolicy("test-policy", "uid-2")
+
+	// Old unlabeled backup from before this policy existed
+	unlabeledBackup := testFailedBackup("test-policy-1000", policy2, "1000", time.Now())
+	delete(unlabeledBackup.Labels, backuphelpers.LabelEtcdBackupPolicyUID)
+	unlabeledBackup.CreationTimestamp = metav1.NewTime(policy2.CreationTimestamp.Add(-time.Hour))
 
 	// New policy should NOT count unlabeled backup from old policy
 	state, err := tracker.ProcessBackupsForPolicy(ctx, policy2, []*operatorv1alpha1.EtcdBackup{unlabeledBackup})
 	require.NoError(t, err)
 	require.Equal(t, 0, state.ConsecutiveFailures, "should not count unlabeled backups from previous policy with same name")
+}
+
+func TestRunTracker_PruneBoundsSustainedFailure(t *testing.T) {
+	ctx := context.Background()
+	tracker, _ := setupRunTracker(t)
+	policy := testPolicy("test-policy", "uid-1")
+
+	// Create more failed runs than the retention window
+	backups := make([]*operatorv1alpha1.EtcdBackup, 0, runMetadataRetentionWindow+25)
+	for i := 0; i < runMetadataRetentionWindow+25; i++ {
+		hash := fmt.Sprintf("%d", 1000+i)
+		backups = append(backups, testFailedBackup("test-policy-"+hash, policy, hash, time.Now()))
+	}
+
+	state, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups)
+	require.NoError(t, err)
+	require.Equal(t, runMetadataRetentionWindow+25, state.ConsecutiveFailures)
+	require.LessOrEqual(t, len(state.RunOutcomes), runMetadataRetentionWindow)
+
+	// Reload and process again with no backups — durable streak must remain
+	state2, err := tracker.ProcessBackupsForPolicy(ctx, policy, nil)
+	require.NoError(t, err)
+	require.Equal(t, runMetadataRetentionWindow+25, state2.ConsecutiveFailures)
+	require.LessOrEqual(t, len(state2.RunOutcomes), runMetadataRetentionWindow)
 }
 
 func TestRunTracker_CorruptStateOnRead(t *testing.T) {
@@ -555,8 +572,8 @@ func TestRunTracker_PendingOnlyRun(t *testing.T) {
 
 	// All backups are pending (common at startup)
 	backups := []*operatorv1alpha1.EtcdBackup{
-		testPendingBackup("test-policy-node1-1000", "test-policy", "1000"),
-		testPendingBackup("test-policy-node2-1000", "test-policy", "1000"),
+		testPendingBackup("test-policy-node1-1000", policy, "1000"),
+		testPendingBackup("test-policy-node2-1000", policy, "1000"),
 	}
 	_, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups)
 	require.NoError(t, err)
@@ -611,12 +628,14 @@ func testPolicy(name string, uid string) *operatorv1alpha1.EtcdBackupPolicy {
 	}
 }
 
-func testSuccessfulBackup(name, policyName, minuteHash string, completionTime time.Time) *operatorv1alpha1.EtcdBackup {
+func testSuccessfulBackup(name string, policy *operatorv1alpha1.EtcdBackupPolicy, minuteHash string, completionTime time.Time) *operatorv1alpha1.EtcdBackup {
 	return &operatorv1alpha1.EtcdBackup{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
+			Name:              name,
+			CreationTimestamp: metav1.NewTime(policy.CreationTimestamp.Add(time.Second)),
 			Labels: map[string]string{
-				backuphelpers.LabelEtcdBackupPolicy: policyName,
+				backuphelpers.LabelEtcdBackupPolicy:    policy.Name,
+				backuphelpers.LabelEtcdBackupPolicyUID: string(policy.UID),
 			},
 		},
 		Status: operatorv1alpha1.EtcdBackupStatus{
@@ -631,12 +650,14 @@ func testSuccessfulBackup(name, policyName, minuteHash string, completionTime ti
 	}
 }
 
-func testFailedBackup(name, policyName, minuteHash string, failureTime time.Time) *operatorv1alpha1.EtcdBackup {
+func testFailedBackup(name string, policy *operatorv1alpha1.EtcdBackupPolicy, minuteHash string, failureTime time.Time) *operatorv1alpha1.EtcdBackup {
 	return &operatorv1alpha1.EtcdBackup{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
+			Name:              name,
+			CreationTimestamp: metav1.NewTime(policy.CreationTimestamp.Add(time.Second)),
 			Labels: map[string]string{
-				backuphelpers.LabelEtcdBackupPolicy: policyName,
+				backuphelpers.LabelEtcdBackupPolicy:    policy.Name,
+				backuphelpers.LabelEtcdBackupPolicyUID: string(policy.UID),
 			},
 		},
 		Status: operatorv1alpha1.EtcdBackupStatus{
@@ -651,33 +672,14 @@ func testFailedBackup(name, policyName, minuteHash string, failureTime time.Time
 	}
 }
 
-func testFailedBackupWithUID(name, policyName, policyUID, minuteHash string, failureTime time.Time) *operatorv1alpha1.EtcdBackup {
+func testPendingBackup(name string, policy *operatorv1alpha1.EtcdBackupPolicy, minuteHash string) *operatorv1alpha1.EtcdBackup {
 	return &operatorv1alpha1.EtcdBackup{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
+			Name:              name,
+			CreationTimestamp: metav1.NewTime(policy.CreationTimestamp.Add(time.Second)),
 			Labels: map[string]string{
-				backuphelpers.LabelEtcdBackupPolicy:    policyName,
-				backuphelpers.LabelEtcdBackupPolicyUID: policyUID,
-			},
-		},
-		Status: operatorv1alpha1.EtcdBackupStatus{
-			Conditions: []metav1.Condition{
-				{
-					Type:               string(operatorv1alpha1.BackupFailed),
-					Status:             metav1.ConditionTrue,
-					LastTransitionTime: metav1.NewTime(failureTime),
-				},
-			},
-		},
-	}
-}
-
-func testPendingBackup(name, policyName, minuteHash string) *operatorv1alpha1.EtcdBackup {
-	return &operatorv1alpha1.EtcdBackup{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-			Labels: map[string]string{
-				backuphelpers.LabelEtcdBackupPolicy: policyName,
+				backuphelpers.LabelEtcdBackupPolicy:    policy.Name,
+				backuphelpers.LabelEtcdBackupPolicyUID: string(policy.UID),
 			},
 		},
 		Status: operatorv1alpha1.EtcdBackupStatus{
