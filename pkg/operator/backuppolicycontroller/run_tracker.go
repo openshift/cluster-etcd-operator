@@ -94,14 +94,14 @@ func (t *RunTracker) GetPolicyState(ctx context.Context, policy *operatorv1alpha
 	}
 
 	data, ok := cm.Data[failureTrackerDataKey]
-	if !ok {
-		// ConfigMap exists but has no data
-		return t.initializePolicyState(policy), nil
+	if !ok || data == "" {
+		// ConfigMap exists but tracking payload is missing: treat as lost state,
+		// not first initialization (NotFound above). Recovery is to delete the CM.
+		return nil, fmt.Errorf("failure tracker ConfigMap missing %q data (lost tracking state)", failureTrackerDataKey)
 	}
 
 	var allStates map[string]*PolicyRunState
 	if err := json.Unmarshal([]byte(data), &allStates); err != nil {
-		// REMAINING ISSUE #5 FIX: Return error instead of reinitializing
 		return nil, fmt.Errorf("failed to unmarshal failure tracker data (corrupted ConfigMap): %w", err)
 	}
 
@@ -135,14 +135,15 @@ func (t *RunTracker) SavePolicyState(ctx context.Context, policy *operatorv1alph
 		return fmt.Errorf("failed to get failure tracker ConfigMap: %w", err)
 	}
 
-	// Load existing states
-	// BLOCKER #4: Don't reset on corruption - preserve data and return error
+	// Load existing states. Missing/empty key or corrupt JSON: do not reset in place;
+	// return an error so the operator surfaces tracker health instead of wiping history.
 	var allStates map[string]*PolicyRunState
-	if data, ok := cm.Data[failureTrackerDataKey]; ok {
+	if data, ok := cm.Data[failureTrackerDataKey]; ok && data != "" {
 		if err := json.Unmarshal([]byte(data), &allStates); err != nil {
-			// Corruption detected - return error instead of resetting
 			return fmt.Errorf("failed to unmarshal failure tracker data (corrupted ConfigMap): %w", err)
 		}
+	} else if cmExists {
+		return fmt.Errorf("failure tracker ConfigMap missing %q data (lost tracking state)", failureTrackerDataKey)
 	} else {
 		allStates = make(map[string]*PolicyRunState)
 	}
@@ -214,6 +215,10 @@ func (t *RunTracker) ProcessBackupsForPolicy(
 	modified := false
 	latestSuccessTime := state.LastSuccessTime
 	successReset := false
+	// newlyFinalizedFailures counts runs whose outcome is recorded as failure for the
+	// first time (or changed to failure) in this sync. That is the accounting boundary:
+	// each finalized failure advances the durable streak exactly once.
+	newlyFinalizedFailures := 0
 
 	for _, runHash := range sortedRuns {
 		runBackups := runs[runHash]
@@ -250,6 +255,9 @@ func (t *RunTracker) ProcessBackupsForPolicy(
 			if currentOutcomeStr == "success" && previousOutcome != "success" {
 				successReset = true
 			}
+			if currentOutcomeStr == "failure" && previousOutcome != "failure" {
+				newlyFinalizedFailures++
+			}
 			state.RunOutcomes[runHash] = currentOutcomeStr
 			modified = true
 		}
@@ -263,11 +271,20 @@ func (t *RunTracker) ProcessBackupsForPolicy(
 	}
 
 	// ConsecutiveFailures is a durable summary independent of bounded RunOutcomes history.
-	// Recalculate from the current window; on success reset to that value, otherwise never
-	// shrink below the persisted streak (truncation must not hide sustained failure).
+	// On success, rebuild from the retained window. Otherwise advance exactly once per
+	// newly finalized failure; never shrink when pruning truncates older failures.
 	calculatedFailures := t.calculateConsecutiveFailures(state.RunOutcomes, state.LastSuccessTime)
-	if successReset || calculatedFailures > state.ConsecutiveFailures {
+	prevFailures := state.ConsecutiveFailures
+	if successReset {
 		state.ConsecutiveFailures = calculatedFailures
+	} else {
+		state.ConsecutiveFailures += newlyFinalizedFailures
+		if calculatedFailures > state.ConsecutiveFailures {
+			// Heal undersized summaries (e.g. upgrade) from the retained window.
+			state.ConsecutiveFailures = calculatedFailures
+		}
+	}
+	if state.ConsecutiveFailures != prevFailures {
 		modified = true
 	}
 
@@ -304,15 +321,17 @@ func (t *RunTracker) GetAllPolicyStates(ctx context.Context) (map[string]*Policy
 	return parseAllPolicyStates(cm)
 }
 
-// parseAllPolicyStates decodes tracker state from a ConfigMap. A nil ConfigMap or
-// missing data key yields an empty map (no error). Corrupt JSON returns an error.
+// parseAllPolicyStates decodes tracker state from a ConfigMap.
+// A nil ConfigMap means first initialization (empty map, no error).
+// A present ConfigMap with a missing/empty data key is lost established state (error).
+// Corrupt JSON returns an error.
 func parseAllPolicyStates(cm *corev1.ConfigMap) (map[string]*PolicyRunState, error) {
 	if cm == nil {
 		return make(map[string]*PolicyRunState), nil
 	}
 	data, ok := cm.Data[failureTrackerDataKey]
 	if !ok || data == "" {
-		return make(map[string]*PolicyRunState), nil
+		return nil, fmt.Errorf("failure tracker ConfigMap missing %q data (lost tracking state)", failureTrackerDataKey)
 	}
 
 	var allStates map[string]*PolicyRunState
