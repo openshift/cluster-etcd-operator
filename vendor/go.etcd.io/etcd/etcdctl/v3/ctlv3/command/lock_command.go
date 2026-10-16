@@ -35,9 +35,10 @@ var lockTTL = 10
 // NewLockCommand returns the cobra command for "lock".
 func NewLockCommand() *cobra.Command {
 	c := &cobra.Command{
-		Use:   "lock <lockname> [exec-command arg1 arg2 ...]",
-		Short: "Acquires a named lock",
-		Run:   lockCommandFunc,
+		Use:     "lock <lockname> [exec-command arg1 arg2 ...]",
+		Short:   "Acquires a named lock",
+		Run:     lockCommandFunc,
+		GroupID: groupConcurrencyID,
 	}
 	c.Flags().IntVarP(&lockTTL, "ttl", "", lockTTL, "timeout for session")
 	return c
@@ -111,7 +112,7 @@ func lockUntilSignal(c *clientv3.Client, lockname string, cmdArgs []string) erro
 	if len(k.Kvs) == 0 {
 		return errors.New("lock lost on init")
 	}
-	display.Get(*k)
+	display.Get(k)
 
 	select {
 	case <-donec:

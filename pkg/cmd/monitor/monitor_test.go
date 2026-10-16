@@ -113,6 +113,8 @@ func TestMonitor(t *testing.T) {
 		wantHealthCheck health.CheckName
 		// the expected time duration of disruption.
 		wantDuration time.Duration
+		// badClientCert if set to true the monitor is configured with a client cert file that does not exist.
+		badClientCert bool
 
 		wantErr bool
 	}{
@@ -159,11 +161,9 @@ func TestMonitor(t *testing.T) {
 			wantDuration:            3 * time.Second,
 		},
 		"monitor error from failed etcd client creation": {
-			duration:                1 * time.Second,
-			stopServer:              true,
-			stopEtcdPeers:           2,
-			stopServerAfterDuration: 1 * time.Millisecond,
-			wantErr:                 true,
+			duration:      1 * time.Second,
+			badClientCert: true,
+			wantErr:       true,
 		},
 	}
 	for testName, tc := range testCases {
@@ -180,6 +180,9 @@ func TestMonitor(t *testing.T) {
 				tc.pauseEtcdPeers,
 				tc.stopEtcdPeers,
 			)
+			if tc.badClientCert {
+				td.monitorOpts.clientCertFile = "/does/not/exist.crt"
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), td.duration)
 			defer cancel()
 			testServer := td.testServer
@@ -189,24 +192,29 @@ func TestMonitor(t *testing.T) {
 					pauseEtcdPeers(testServer, td.pauseEtcdPeers)
 				})
 			}
+			// the members must be fully stopped before the test returns, otherwise cleanup removes their data dirs
+			// while they are still shutting down and etcd's verification on close fails fatally.
+			stopped := make(chan struct{})
 			if td.stopServer {
 				time.AfterFunc(td.stopServerAfterDuration, func() {
+					defer close(stopped)
 					stopEtcdPeers(t, testServer, td.stopEtcdPeers)
 				})
+			} else {
+				close(stopped)
 			}
 			err := td.monitorOpts.Run(ctx)
-			if err != nil && !tc.wantErr {
-				t.Fatalf("healthCheck unexpected error: %v", err)
-			}
+			<-stopped
 			_ = td.logFile.Close()
 			// don't terminate if already stopped
 			if !tc.stopServer {
 				td.testServer.Terminate(t)
 			}
-			if err != nil && tc.wantErr {
-				// error expected nothing else to do
+			if tc.wantErr {
+				require.Error(t, err)
 				return
 			}
+			require.NoError(t, err, "healthCheck unexpected error")
 			// check logs for disruption
 			gotDuration, err := getDisruptionDurationFromLogs(t, tc.wantHealthCheck, td.logFile.Name(), td.logDir)
 			require.NoError(t, err)

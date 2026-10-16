@@ -31,8 +31,10 @@ var userShowDetail bool
 // NewUserCommand returns the cobra command for "user".
 func NewUserCommand() *cobra.Command {
 	ac := &cobra.Command{
-		Use:   "user <subcommand>",
-		Short: "User related commands",
+		Use:     "user <subcommand>",
+		Short:   "User related commands. Use `etcdctl user --help` to see subcommands",
+		Long:    "User related commands",
+		GroupID: groupAuthenticationID,
 	}
 
 	ac.AddCommand(newUserAddCommand())
@@ -166,7 +168,7 @@ func userAddCommandFunc(cmd *cobra.Command, args []string) {
 		cobrautl.ExitWithError(cobrautl.ExitError, err)
 	}
 
-	display.UserAdd(user, *resp)
+	display.UserAdd(user, resp)
 }
 
 // userDeleteCommandFunc executes the "user delete" command.
@@ -179,7 +181,7 @@ func userDeleteCommandFunc(cmd *cobra.Command, args []string) {
 	if err != nil {
 		cobrautl.ExitWithError(cobrautl.ExitError, err)
 	}
-	display.UserDelete(args[0], *resp)
+	display.UserDelete(args[0], resp)
 }
 
 // userGetCommandFunc executes the "user get" command.
@@ -203,10 +205,10 @@ func userGetCommandFunc(cmd *cobra.Command, args []string) {
 			if err != nil {
 				cobrautl.ExitWithError(cobrautl.ExitError, err)
 			}
-			display.RoleGet(role, *roleResp)
+			display.RoleGet(role, roleResp)
 		}
 	} else {
-		display.UserGet(name, *resp)
+		display.UserGet(name, resp)
 	}
 }
 
@@ -221,7 +223,7 @@ func userListCommandFunc(cmd *cobra.Command, args []string) {
 		cobrautl.ExitWithError(cobrautl.ExitError, err)
 	}
 
-	display.UserList(*resp)
+	display.UserList(resp)
 }
 
 // userChangePasswordCommandFunc executes the "user passwd" command.
@@ -243,7 +245,7 @@ func userChangePasswordCommandFunc(cmd *cobra.Command, args []string) {
 		cobrautl.ExitWithError(cobrautl.ExitError, err)
 	}
 
-	display.UserChangePassword(*resp)
+	display.UserChangePassword(resp)
 }
 
 // userGrantRoleCommandFunc executes the "user grant-role" command.
@@ -257,7 +259,7 @@ func userGrantRoleCommandFunc(cmd *cobra.Command, args []string) {
 		cobrautl.ExitWithError(cobrautl.ExitError, err)
 	}
 
-	display.UserGrantRole(args[0], args[1], *resp)
+	display.UserGrantRole(args[0], args[1], resp)
 }
 
 // userRevokeRoleCommandFunc executes the "user revoke-role" command.
@@ -271,7 +273,7 @@ func userRevokeRoleCommandFunc(cmd *cobra.Command, args []string) {
 		cobrautl.ExitWithError(cobrautl.ExitError, err)
 	}
 
-	display.UserRevokeRole(args[0], args[1], *resp)
+	display.UserRevokeRole(args[0], args[1], resp)
 }
 
 func readPasswordInteractive(name string) string {
