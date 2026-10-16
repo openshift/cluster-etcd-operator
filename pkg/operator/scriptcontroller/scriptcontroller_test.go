@@ -114,6 +114,8 @@ func TestManageScriptConfigMap(t *testing.T) {
 			require.Contains(t, scriptCM.Data, "etcd-common-tools", "etcd-common-tools should be in ConfigMap")
 			require.Contains(t, scriptCM.Data["quorum-restore.sh"], "wait_for_restored_etcd_to_start")
 			require.Contains(t, scriptCM.Data["etcd-common-tools"], "function wait_for_restored_etcd_to_start()")
+			require.Contains(t, scriptCM.Data["etcd-common-tools"], "https://localhost:9980/readyz")
+			require.Contains(t, scriptCM.Data["quorum-restore.sh"], "ETCDCTL_CACERT")
 			require.Contains(t, scriptCM.Data, "etcd.env", "etcd.env should be in ConfigMap")
 			if tc.expectedFencingScript {
 				require.Contains(t, scriptCM.Data, "update-fencing-credentials.sh",

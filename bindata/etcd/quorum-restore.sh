@@ -11,7 +11,7 @@ set -o errtrace
 
 function usage() {
   echo "Usage: $0 [--wait [SECONDS]]" >&2
-  echo "--wait waits for the restored etcd container to be RUNNING, not healthy (default: 300 seconds)" >&2
+  echo "--wait waits for local etcd readiness at https://localhost:9980/readyz, not full cluster recovery (default: 300 seconds)" >&2
 }
 
 function parse_arguments() {
@@ -53,9 +53,22 @@ function source_required_dependency {
 }
 
 function restore_quorum() {
+  local ca_cert
   if "${WAIT_FOR_ETCD}"; then
-    if ! command -v crictl >/dev/null 2>&1; then
-      echo "crictl is required for --wait" >&2
+    if ! command -v curl >/dev/null 2>&1; then
+      echo "curl is required for --wait" >&2
+      return 1
+    fi
+    ca_cert="${ETCDCTL_CACERT:-}"
+    if ! test -f "${ca_cert}" || ! test -r "${ca_cert}"; then
+      case "${ca_cert}" in
+        /etc/kubernetes/static-pod-certs/*)
+          ca_cert="/etc/kubernetes/static-pod-resources/etcd-certs/${ca_cert#/etc/kubernetes/static-pod-certs/}"
+          ;;
+      esac
+    fi
+    if ! test -f "${ca_cert}" || ! test -r "${ca_cert}"; then
+      echo "A readable ETCDCTL_CACERT CA file is required for --wait: ${ca_cert}" >&2
       return 1
     fi
     if ! command -v timeout >/dev/null 2>&1 || ! timeout --signal=KILL 1s true >/dev/null 2>&1; then
@@ -73,7 +86,7 @@ function restore_quorum() {
   echo "starting restore-etcd static pod"
   cp "${QUORUM_RESTORE_ETCD_POD_YAML}" "${MANIFEST_DIR}/etcd-pod.yaml"
   if "${WAIT_FOR_ETCD}"; then
-    wait_for_restored_etcd_to_start "${WAIT_TIMEOUT}"
+    wait_for_restored_etcd_to_start "${WAIT_TIMEOUT}" "${ca_cert}"
   fi
 }
 

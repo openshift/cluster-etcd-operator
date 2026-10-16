@@ -80,10 +80,11 @@ function wait_for_containers_to_stop() {
 
 function wait_for_restored_etcd_to_start() {
   local timeout_seconds="$1"
+  local ca_cert="$2"
   local deadline=$((SECONDS + timeout_seconds))
-  local remaining container_ids status
+  local remaining http_status status
 
-  echo "Waiting for restored etcd container to start (timeout: ${timeout_seconds}s)"
+  echo "Waiting for restored etcd readiness at https://localhost:9980/readyz (timeout: ${timeout_seconds}s)"
   while true; do
     remaining=$((deadline - SECONDS))
     if (( remaining <= 0 )); then
@@ -91,24 +92,24 @@ function wait_for_restored_etcd_to_start() {
     fi
 
     status=0
-    container_ids=$(timeout --signal=KILL "${remaining}s" crictl ps --state Running \
-      --label io.kubernetes.container.name=etcd \
-      --label io.kubernetes.pod.namespace=openshift-etcd -q) || status=$?
+    http_status=$(timeout --signal=KILL "${remaining}s" curl --disable --silent --show-error \
+      --noproxy '*' --cacert "${ca_cert}" --output /dev/null --write-out '%{http_code}' \
+      https://localhost:9980/readyz) || status=$?
     if (( SECONDS >= deadline )); then
       break
     fi
-    if (( status != 0 )); then
-      echo "Unable to determine restored etcd container state: crictl lookup failed; restore manifest remains installed" >&2
+    if (( status != 0 && status != 7 )); then
+      echo "Unable to check restored etcd readiness: curl/timeout request failed (exit ${status}); restore manifest remains installed" >&2
       return 1
     fi
-    if [[ -n "${container_ids}" ]]; then
-      echo "Restored etcd container is RUNNING"
+    if (( status == 0 )) && [[ "${http_status}" == 200 ]]; then
+      echo "Restored etcd readyz reports local readiness (HTTP 200)"
       return 0
     fi
     sleep 1
   done
 
-  echo "Timed out after ${timeout_seconds}s waiting for the restored etcd container to be RUNNING; restore manifest remains installed" >&2
+  echo "Timed out after ${timeout_seconds}s waiting for restored etcd readiness at https://localhost:9980/readyz; restore manifest remains installed" >&2
   return 124
 }
 
