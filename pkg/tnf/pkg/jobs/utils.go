@@ -60,7 +60,8 @@ func waitWithConditionFunc(ctx context.Context, kubeClient kubernetes.Interface,
 	})
 }
 
-// DeleteAndWait deletes a job and waits until it disappears from the API
+// DeleteAndWait deletes a job and waits until it disappears from the API.
+// Uses Background propagation to automatically delete child pods.
 func DeleteAndWait(ctx context.Context, kubeClient kubernetes.Interface, jobName string, jobNamespace string) error {
 	klog.V(4).Infof("deleting oldJob %s", jobName)
 	oldJob, err := kubeClient.BatchV1().Jobs(jobNamespace).Get(ctx, jobName, v1.GetOptions{})
@@ -73,7 +74,11 @@ func DeleteAndWait(ctx context.Context, kubeClient kubernetes.Interface, jobName
 	}
 	oldJobUID := oldJob.GetUID()
 
-	err = kubeClient.BatchV1().Jobs(jobNamespace).Delete(ctx, jobName, v1.DeleteOptions{})
+	// Delete job with Background propagation to automatically clean up pods
+	propagationPolicy := v1.DeletePropagationBackground
+	err = kubeClient.BatchV1().Jobs(jobNamespace).Delete(ctx, jobName, v1.DeleteOptions{
+		PropagationPolicy: &propagationPolicy,
+	})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil
@@ -98,7 +103,34 @@ func DeleteAndWait(ctx context.Context, kubeClient kubernetes.Interface, jobName
 }
 
 func IsStopped(job batchv1.Job) bool {
-	return IsComplete(job) || IsFailed(job)
+	// Check for explicit conditions
+	if IsComplete(job) || IsFailed(job) {
+		return true
+	}
+
+	// Check for FailureTarget condition (Kubernetes 1.31+)
+	// FailureTarget means job is targeting failure but pods may still be terminating
+	if IsConditionTrue(job.Status.Conditions, batchv1.JobConditionType("FailureTarget")) {
+		klog.V(2).Infof("Job %s considered stopped: FailureTarget condition is True", job.Name)
+		return true
+	}
+
+	// Also check if job has no active pods and has exceeded backoff limit
+	// This handles cases where pods are stuck (e.g., Terminating on dead node) and
+	// Kubernetes hasn't set the Failed condition yet
+	if job.Status.Active == 0 && job.Status.Failed > 0 {
+		backoffLimit := int32(6) // Kubernetes default
+		if job.Spec.BackoffLimit != nil {
+			backoffLimit = *job.Spec.BackoffLimit
+		}
+		if job.Status.Failed > backoffLimit {
+			klog.V(2).Infof("Job %s considered stopped: Active=0, Failed=%d > BackoffLimit=%d (no explicit condition set)",
+				job.Name, job.Status.Failed, backoffLimit)
+			return true
+		}
+	}
+
+	return false
 }
 
 func IsComplete(job batchv1.Job) bool {

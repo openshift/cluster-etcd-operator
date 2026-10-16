@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: <injected>
 spec:
   schedule: <injected>
-  concurrencyPolicy: "Replace"
+  concurrencyPolicy: "Forbid"
   startingDeadlineSeconds: 120
   failedJobsHistoryLimit: 3
   # successfulJobsHistoryLimit + ttlSecondsAfterFinished: TTL deletes finished Jobs before CronJob pruning (OCPBUGS-81340).

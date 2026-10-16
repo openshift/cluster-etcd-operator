@@ -14,6 +14,7 @@ import (
 	fakeconfig "github.com/openshift/client-go/config/clientset/versioned/fake"
 	configinformers "github.com/openshift/client-go/config/informers/externalversions"
 	applyoperatorv1 "github.com/openshift/client-go/operator/applyconfigurations/operator/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/management"
@@ -43,9 +44,9 @@ const (
 )
 
 var (
-	conditionAvailable   = controllerName + opv1.OperatorStatusTypeAvailable
-	conditionProgressing = controllerName + opv1.OperatorStatusTypeProgressing
-	conditionDegraded    = controllerName + opv1.OperatorStatusTypeDegraded
+	conditionAvailable   = tools.ToPascalCase(controllerName) + opv1.OperatorStatusTypeAvailable
+	conditionProgressing = tools.ToPascalCase(controllerName) + opv1.OperatorStatusTypeProgressing
+	conditionDegraded    = tools.ToPascalCase(controllerName) + opv1.OperatorStatusTypeDegraded
 	allConditions        = []string{conditionAvailable, conditionProgressing, conditionDegraded}
 	availableCondition   = []string{conditionAvailable}
 )
@@ -166,6 +167,30 @@ func TestSync(t *testing.T) {
 				),
 			},
 			expectErr: true, // Job failure should return an error
+		},
+		{
+			// Job stuck in failed state for >10 minutes - auto-delete and succeed (will recreate next sync)
+			name: "job failed stuck auto-deleted",
+			initialObjects: testObjects{
+				job: makeJob(
+					withJobGeneration(1),
+					withJobStatus(0, 0, 1),
+					withJobFailedStuck()),
+				operator: makeFakeOperatorInstance(
+					withGenerations(1),
+					withTrueConditions(conditionAvailable),
+					withFalseConditions(conditionProgressing, conditionDegraded),
+				),
+			},
+			expectedObjects: testObjects{
+				job: nil, // Job should be deleted
+				operator: makeFakeOperatorInstance(
+					withGenerations(1),
+					withTrueConditions(conditionAvailable),
+					withFalseConditions(conditionProgressing, conditionDegraded),
+				),
+			},
+			expectErr: false, // Auto-deletion succeeds (will recreate next sync)
 		},
 	}
 
@@ -720,9 +745,26 @@ func withJobComplete() jobModifier {
 
 func withJobFailed() jobModifier {
 	return func(instance *batchv1.Job) *batchv1.Job {
+		// Set LastTransitionTime to recent time (1 minute ago) to avoid auto-deletion
+		// Timestamp will be cleared by sanitizeJob() for deterministic comparison
 		instance.Status.Conditions = append(instance.Status.Conditions, batchv1.JobCondition{
-			Type:   batchv1.JobFailed,
-			Status: v1.ConditionTrue,
+			Type:               batchv1.JobFailed,
+			Status:             v1.ConditionTrue,
+			LastTransitionTime: metav1.NewTime(time.Now().Add(-1 * time.Minute)),
+		})
+		return instance
+	}
+}
+
+func withJobFailedStuck() jobModifier {
+	return func(instance *batchv1.Job) *batchv1.Job {
+		// Set LastTransitionTime to fixed old time (>10 minutes ago) to trigger auto-deletion
+		// Using time way in the past to ensure auto-deletion threshold is met
+		stuckTime := time.Date(2020, time.January, 1, 12, 0, 0, 0, time.UTC)
+		instance.Status.Conditions = append(instance.Status.Conditions, batchv1.JobCondition{
+			Type:               batchv1.JobFailed,
+			Status:             v1.ConditionTrue,
+			LastTransitionTime: metav1.NewTime(stuckTime),
 		})
 		return instance
 	}
@@ -755,6 +797,11 @@ func sanitizeJob(job *batchv1.Job) {
 	}
 	// Remove random annotations set by ApplyJob
 	delete(job.Annotations, specHashAnnotation)
+	// Clear condition timestamps for deterministic comparison
+	for i := range job.Status.Conditions {
+		job.Status.Conditions[i].LastTransitionTime = metav1.Time{}
+		job.Status.Conditions[i].LastProbeTime = metav1.Time{}
+	}
 }
 
 func sanitizeInstanceStatus(status *opv1.OperatorStatus, testedConditions []string) {
