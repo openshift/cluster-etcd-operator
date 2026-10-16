@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
 	"math/big"
@@ -326,6 +327,7 @@ func newReadyzTestCertificate(test *testing.T) (tls.Certificate, []byte) {
 	require.NoError(test, err)
 	template := &x509.Certificate{
 		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "readyz-test"},
 		NotBefore:             time.Now().Add(-time.Minute),
 		NotAfter:              time.Now().Add(time.Hour),
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
@@ -419,6 +421,10 @@ wait_for_restored_etcd_to_start "$WAIT_LIMIT" "$TEST_CA"
 			})
 			require.Equal(test, testCase.wantStatus, status, output)
 			require.Equal(test, testCase.wantRequests, requests.Load())
+			if testCase.untrustedCA {
+				require.Contains(test, output, "curl: (60)")
+				require.Contains(test, output, "self-signed certificate")
+			}
 			if status == 0 {
 				require.Contains(test, output, "readyz reports local readiness (HTTP 200)")
 			} else {
