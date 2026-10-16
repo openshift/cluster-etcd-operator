@@ -27,8 +27,10 @@ import (
 // NewAuthCommand returns the cobra command for "auth".
 func NewAuthCommand() *cobra.Command {
 	ac := &cobra.Command{
-		Use:   "auth <enable or disable>",
-		Short: "Enable or disable authentication",
+		Use:     "auth <enable or disable>",
+		Short:   "Enable or disable authentication. Use `etcdctl auth --help` to see subcommands",
+		Long:    "Enable or disable authentication",
+		GroupID: groupAuthenticationID,
 	}
 
 	ac.AddCommand(newAuthEnableCommand())
@@ -59,7 +61,7 @@ func authStatusCommandFunc(cmd *cobra.Command, args []string) {
 		cobrautl.ExitWithError(cobrautl.ExitError, err)
 	}
 
-	display.AuthStatus(*result)
+	display.AuthStatus(result)
 }
 
 func newAuthEnableCommand() *cobra.Command {

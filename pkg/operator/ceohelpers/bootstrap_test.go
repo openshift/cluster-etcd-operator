@@ -368,7 +368,7 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			},
 			infraObj:      defaultInfra,
 			etcdClientOps: etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 3, Unhealthy: 2}),
-			expectError:   fmt.Errorf("etcd cluster has quorum of 3 and 3 healthy members which is not fault tolerant: [{Member:name:\"etcd-0\" peerURLs:\"https://10.0.0.1:2380\" clientURLs:\"https://10.0.0.1:2907\"  Healthy:true Took: Error:<nil>} {Member:ID:1 name:\"etcd-1\" peerURLs:\"https://10.0.0.2:2380\" clientURLs:\"https://10.0.0.2:2907\"  Healthy:true Took: Error:<nil>} {Member:ID:2 name:\"etcd-2\" peerURLs:\"https://10.0.0.3:2380\" clientURLs:\"https://10.0.0.3:2907\"  Healthy:true Took: Error:<nil>} {Member:ID:3 name:\"etcd-3\" peerURLs:\"https://10.0.0.4:2380\" clientURLs:\"https://10.0.0.4:2907\"  Healthy:false Took: Error:<nil>} {Member:ID:4 name:\"etcd-4\" peerURLs:\"https://10.0.0.5:2380\" clientURLs:\"https://10.0.0.5:2907\"  Healthy:false Took: Error:<nil>}]"),
+			expectError:   fmt.Errorf("etcd cluster has quorum of 3 and 3 healthy members which is not fault tolerant"),
 		},
 		"two node with sufficient members": {
 			namespace:          defaultNamespace,
@@ -417,7 +417,7 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 			etcdMembers:        u.DefaultEtcdMembers(),
 			infraObj:           twoNodeInfra,
 			etcdClientOps:      twoHealthyOfThreeNodes,
-			expectError:        fmt.Errorf("etcd cluster has quorum of 2 and 2 healthy members which is not fault tolerant: [{Member:name:\"etcd-0\" peerURLs:\"https://10.0.0.1:2380\" clientURLs:\"https://10.0.0.1:2907\"  Healthy:true Took: Error:<nil>} {Member:ID:1 name:\"etcd-1\" peerURLs:\"https://10.0.0.2:2380\" clientURLs:\"https://10.0.0.2:2907\"  Healthy:true Took: Error:<nil>} {Member:ID:2 name:\"etcd-2\" peerURLs:\"https://10.0.0.3:2380\" clientURLs:\"https://10.0.0.3:2907\"  Healthy:false Took: Error:<nil>}]"),
+			expectError:        fmt.Errorf("etcd cluster has quorum of 2 and 2 healthy members which is not fault tolerant"),
 		},
 		"delayed Two Node with sufficient nodes during bootstrap": {
 			namespace:          namespaceWithDelayedEnabled,
@@ -543,7 +543,13 @@ func Test_CheckSafeToScaleCluster(t *testing.T) {
 				fakeInfraStructure,
 				fakeEtcdClient)
 
-			assert.Equal(t, test.expectError, actualErr)
+			// The member list in the error is rendered with protobuf's text format, which
+			// randomizes whitespace between builds, so only match the stable prefix.
+			if test.expectError != nil {
+				assert.ErrorContains(t, actualErr, test.expectError.Error())
+			} else {
+				assert.NoError(t, actualErr)
+			}
 		})
 	}
 }

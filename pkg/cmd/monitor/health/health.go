@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	"google.golang.org/grpc/connectivity"
 )
 
 const (
@@ -19,6 +19,9 @@ const (
 	DefaultSlowRequestDuration = 500 * time.Millisecond
 	DefaultContextDeadline     = 1 * time.Second
 	DefaultNamespaceKey        = "/kubernetes.io/namespaces/default"
+
+	// Default used by kube-apiserver
+	dialTimeout = 20 * time.Second
 )
 
 type CheckFunc func(context.Context, *Check)
@@ -105,17 +108,18 @@ func (c *Check) checkDialStatus(_ context.Context) {
 	})
 	defer slowRequestTimer.Stop()
 
-	resp, err := c.client.Dial(c.targets[0])
+	conn, err := c.client.Dial(c.targets[0])
 	if err != nil {
 		c.logHealthFail(err)
 		return
 	}
-	defer resp.Close()
-	if resp.GetState() == connectivity.Ready {
-		c.logHealthSuccess()
+	defer conn.Close()
+
+	if err := etcdcli.WaitForConnectionReady(conn, dialTimeout); err != nil {
+		c.logHealthFail(err)
 		return
 	}
-	c.logHealthFail(fmt.Errorf("grpc: ClientConn state %q", resp.GetState()))
+	c.logHealthSuccess()
 }
 
 func (c *Check) checkKVSRead(ctx context.Context, opts []clientv3.OpOption) {

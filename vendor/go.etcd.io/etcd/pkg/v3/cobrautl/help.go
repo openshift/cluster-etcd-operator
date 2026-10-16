@@ -151,6 +151,8 @@ func getSubCommands(cmd *cobra.Command) []*cobra.Command {
 	return subCommands
 }
 
+// UsageFunc is the usage function for the cobra command.
+// Deprecated: Please use go.etcd.io/etcd/etcdctl/v3/util instead.
 func UsageFunc(cmd *cobra.Command, version, APIVersion string) error {
 	subCommands := getSubCommands(cmd)
 	tabOut := getTabOutWithWriter(os.Stdout)
