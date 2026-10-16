@@ -1,0 +1,121 @@
+# promtool rule unit tests for backup alerts.
+# Uses realistic scrape labels (job/instance) to catch default vector-matching bugs.
+#
+# Run via: hack/test-backup-alerts.sh
+rule_files:
+  - backup_alerts_rules_for_test.yaml
+evaluation_interval: 1m
+
+tests:
+  # etcdBackupNoPolicyConfigured must fire with scrape labels present.
+  # Plain `and` would fail because absent() has no job/instance labels.
+  - interval: 1m
+    input_series:
+      - series: 'etcd_automated_backup_enabled{job="cluster-etcd-operator",instance="10.0.0.1:9090"}'
+        values: "1+0x20"
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: etcdBackupNoPolicyConfigured
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: cluster-etcd-operator
+              instance: "10.0.0.1:9090"
+            exp_annotations:
+              summary: No automated etcd backup policy is configured.
+              description: AutomatedEtcdBackup feature is enabled but no EtcdBackupPolicy is configured. Configure an EtcdBackupPolicy resource to ensure regular backups are taken.
+
+  # When a policy info series exists (with scrape labels), the alert must not fire.
+  - interval: 1m
+    input_series:
+      - series: 'etcd_automated_backup_enabled{job="cluster-etcd-operator",instance="10.0.0.1:9090"}'
+        values: "1+0x20"
+      - series: 'etcd_backup_policy_info{job="cluster-etcd-operator",instance="10.0.0.1:9090",policy="daily",uid="uid-1",schedule="0 1 * * *",timezone="UTC",storage_type="PVC",storage_location="etcd-backup-pvc"}'
+        values: "1+0x20"
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: etcdBackupNoPolicyConfigured
+        exp_alerts: []
+
+  # Running-branch duration alert: status has an extra status label; must match on backup identity.
+  # In promtool tests, time() equals eval_time seconds from epoch 0.
+  - interval: 1m
+    input_series:
+      - series: 'etcd_backup_start_time{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="backup-1",uid="backup-uid-1"}'
+        values: "0+0x40"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="backup-1",uid="backup-uid-1",status="Running"}'
+        values: "1+0x40"
+    alert_rule_test:
+      # time()=2400 at 40m; start_time=0 → age>1800 since ~31m; for:5m → firing by 40m.
+      # Expected labels include status from the left-hand Running series.
+      - eval_time: 40m
+        alertname: etcdBackupDurationHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: cluster-etcd-operator
+              instance: "10.0.0.1:9090"
+              etcd_backup: backup-1
+              uid: backup-uid-1
+              status: Running
+            exp_annotations:
+              summary: etcd backup duration is high.
+              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+
+  # Tracker-health alert (for:5m) — use a 1m interval so samples stay within lookback.
+  - interval: 1m
+    input_series:
+      - series: 'etcd_backup_policy_tracker_error{job="cluster-etcd-operator",instance="10.0.0.1:9090"}'
+        values: "1+0x20"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: etcdBackupPolicyTrackerError
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: cluster-etcd-operator
+              instance: "10.0.0.1:9090"
+            exp_annotations:
+              summary: etcd backup policy tracker state is unhealthy.
+              description: The etcd backup failure tracker ConfigMap could not be read (missing data or corrupt). Backup success freshness is unknown until tracking is restored; etcdBackupPolicyNoRecentSuccess is suppressed while this alert fires.
+
+  # Unhealthy tracker suppresses NoRecentSuccess even for an old never-succeeded policy.
+  - interval: 1h
+    input_series:
+      - series: 'etcd_backup_policy_tracker_error{job="cluster-etcd-operator",instance="10.0.0.1:9090"}'
+        values: "1+0x30"
+      - series: 'etcd_backup_policy_last_success_time{job="cluster-etcd-operator",instance="10.0.0.1:9090",policy="daily",uid="uid-1"}'
+        values: "0+0x30"
+      - series: 'etcd_backup_policy_creation_time{job="cluster-etcd-operator",instance="10.0.0.1:9090",policy="daily",uid="uid-1"}'
+        values: "1+0x30"
+    alert_rule_test:
+      - eval_time: 26h
+        alertname: etcdBackupPolicyNoRecentSuccess
+        exp_alerts: []
+
+  # Healthy tracker + never-succeeded old policy → NoRecentSuccess fires.
+  - interval: 1h
+    input_series:
+      - series: 'etcd_backup_policy_tracker_error{job="cluster-etcd-operator",instance="10.0.0.1:9090"}'
+        values: "0+0x30"
+      - series: 'etcd_backup_policy_last_success_time{job="cluster-etcd-operator",instance="10.0.0.1:9090",policy="daily",uid="uid-1"}'
+        values: "0+0x30"
+      - series: 'etcd_backup_policy_creation_time{job="cluster-etcd-operator",instance="10.0.0.1:9090",policy="daily",uid="uid-1"}'
+        values: "1+0x30"
+    alert_rule_test:
+      - eval_time: 26h
+        alertname: etcdBackupPolicyNoRecentSuccess
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: cluster-etcd-operator
+              instance: "10.0.0.1:9090"
+              policy: daily
+              uid: uid-1
+            exp_annotations:
+              summary: Backup policy has no successful backup in over 24 hours.
+              description: 'Backup policy "daily" has not completed a successful backup in over 24 hours. This is a critical issue that may prevent disaster recovery.'
+              runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyNoRecentSuccess.md
+      - eval_time: 26h
+        alertname: etcdBackupPolicyTrackerError
+        exp_alerts: []

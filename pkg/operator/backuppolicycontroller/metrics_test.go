@@ -31,7 +31,7 @@ func TestBackupPolicyMetricsMissingStateEmitsLastSuccessZero(t *testing.T) {
 	collector := setupPolicyCollector(t, []*operatorv1alpha1.EtcdBackupPolicy{policy}, nil)
 
 	expectedLastSuccess := `
-		# HELP etcd_backup_policy_last_success_time Unix timestamp of last successful backup run (0 if never succeeded or tracking unknown)
+		# HELP etcd_backup_policy_last_success_time Unix timestamp of last successful backup run (0 if never succeeded). When etcd_backup_policy_tracker_error is 1 this value is unknown and also emitted as 0; alerts must gate on tracker_error.
 		# TYPE etcd_backup_policy_last_success_time gauge
 		etcd_backup_policy_last_success_time{policy="daily",uid="daily-uid"} 0
 	`
@@ -45,7 +45,7 @@ func TestBackupPolicyMetricsMissingStateEmitsLastSuccessZero(t *testing.T) {
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expectedCreation), backupPolicyCreationTimeMetricName))
 
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(`
-		# HELP etcd_backup_policy_tracker_error Whether reading backup failure tracker state failed (1) or succeeded (0). When 1, last_success_time may be unknown and is emitted as 0.
+		# HELP etcd_backup_policy_tracker_error Whether reading backup failure tracker state failed (1) or succeeded (0). 1 covers corrupt JSON or a present ConfigMap missing tracker data (lost state). A missing ConfigMap is first initialization and yields 0.
 		# TYPE etcd_backup_policy_tracker_error gauge
 		etcd_backup_policy_tracker_error 0
 	`), backupPolicyTrackerErrorMetricName))
@@ -61,13 +61,13 @@ func TestBackupPolicyMetricsCorruptTrackerEmitsErrorAndLastSuccessZero(t *testin
 	collector := setupPolicyCollector(t, []*operatorv1alpha1.EtcdBackupPolicy{policy}, cm)
 
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(`
-		# HELP etcd_backup_policy_tracker_error Whether reading backup failure tracker state failed (1) or succeeded (0). When 1, last_success_time may be unknown and is emitted as 0.
+		# HELP etcd_backup_policy_tracker_error Whether reading backup failure tracker state failed (1) or succeeded (0). 1 covers corrupt JSON or a present ConfigMap missing tracker data (lost state). A missing ConfigMap is first initialization and yields 0.
 		# TYPE etcd_backup_policy_tracker_error gauge
 		etcd_backup_policy_tracker_error 1
 	`), backupPolicyTrackerErrorMetricName))
 
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(`
-		# HELP etcd_backup_policy_last_success_time Unix timestamp of last successful backup run (0 if never succeeded or tracking unknown)
+		# HELP etcd_backup_policy_last_success_time Unix timestamp of last successful backup run (0 if never succeeded). When etcd_backup_policy_tracker_error is 1 this value is unknown and also emitted as 0; alerts must gate on tracker_error.
 		# TYPE etcd_backup_policy_last_success_time gauge
 		etcd_backup_policy_last_success_time{policy="daily",uid="daily-uid"} 0
 	`), backupPolicyLastSuccessTimeMetricName))
@@ -96,13 +96,13 @@ func TestBackupPolicyMetricsWithState(t *testing.T) {
 	collector := setupPolicyCollector(t, []*operatorv1alpha1.EtcdBackupPolicy{policy}, cm)
 
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(`
-		# HELP etcd_backup_policy_tracker_error Whether reading backup failure tracker state failed (1) or succeeded (0). When 1, last_success_time may be unknown and is emitted as 0.
+		# HELP etcd_backup_policy_tracker_error Whether reading backup failure tracker state failed (1) or succeeded (0). 1 covers corrupt JSON or a present ConfigMap missing tracker data (lost state). A missing ConfigMap is first initialization and yields 0.
 		# TYPE etcd_backup_policy_tracker_error gauge
 		etcd_backup_policy_tracker_error 0
 	`), backupPolicyTrackerErrorMetricName))
 
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(fmt.Sprintf(`
-		# HELP etcd_backup_policy_last_success_time Unix timestamp of last successful backup run (0 if never succeeded or tracking unknown)
+		# HELP etcd_backup_policy_last_success_time Unix timestamp of last successful backup run (0 if never succeeded). When etcd_backup_policy_tracker_error is 1 this value is unknown and also emitted as 0; alerts must gate on tracker_error.
 		# TYPE etcd_backup_policy_last_success_time gauge
 		etcd_backup_policy_last_success_time{policy="daily",uid="daily-uid"} %d
 	`, successAt.Unix())), backupPolicyLastSuccessTimeMetricName))
@@ -120,10 +120,15 @@ func TestParseAllPolicyStates(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, states)
 	})
-	t.Run("missing-key", func(t *testing.T) {
-		states, err := parseAllPolicyStates(&corev1.ConfigMap{Data: map[string]string{}})
-		require.NoError(t, err)
-		require.Empty(t, states)
+	t.Run("missing-key-is-lost-state", func(t *testing.T) {
+		_, err := parseAllPolicyStates(&corev1.ConfigMap{Data: map[string]string{}})
+		require.Error(t, err, "present ConfigMap without tracker key is lost state")
+	})
+	t.Run("empty-key-is-lost-state", func(t *testing.T) {
+		_, err := parseAllPolicyStates(&corev1.ConfigMap{
+			Data: map[string]string{failureTrackerDataKey: ""},
+		})
+		require.Error(t, err)
 	})
 	t.Run("corrupt", func(t *testing.T) {
 		_, err := parseAllPolicyStates(&corev1.ConfigMap{
@@ -131,6 +136,38 @@ func TestParseAllPolicyStates(t *testing.T) {
 		})
 		require.Error(t, err)
 	})
+}
+
+func TestBackupPolicyMetricsMissingConfigMapIsFirstInit(t *testing.T) {
+	policy := testutils.FakeEtcdBackupPolicy("daily", "0 1 * * *")
+	collector := setupPolicyCollector(t, []*operatorv1alpha1.EtcdBackupPolicy{policy}, nil)
+
+	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(`
+		# HELP etcd_backup_policy_tracker_error Whether reading backup failure tracker state failed (1) or succeeded (0). 1 covers corrupt JSON or a present ConfigMap missing tracker data (lost state). A missing ConfigMap is first initialization and yields 0.
+		# TYPE etcd_backup_policy_tracker_error gauge
+		etcd_backup_policy_tracker_error 0
+	`), backupPolicyTrackerErrorMetricName))
+}
+
+func TestBackupPolicyMetricsMissingTrackerKeyEmitsError(t *testing.T) {
+	policy := testutils.FakeEtcdBackupPolicy("daily", "0 1 * * *")
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: failureTrackerConfigMapName, Namespace: "openshift-etcd-operator"},
+		Data:       map[string]string{},
+	}
+	collector := setupPolicyCollector(t, []*operatorv1alpha1.EtcdBackupPolicy{policy}, cm)
+
+	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(`
+		# HELP etcd_backup_policy_tracker_error Whether reading backup failure tracker state failed (1) or succeeded (0). 1 covers corrupt JSON or a present ConfigMap missing tracker data (lost state). A missing ConfigMap is first initialization and yields 0.
+		# TYPE etcd_backup_policy_tracker_error gauge
+		etcd_backup_policy_tracker_error 1
+	`), backupPolicyTrackerErrorMetricName))
+
+	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(`
+		# HELP etcd_backup_policy_last_success_time Unix timestamp of last successful backup run (0 if never succeeded). When etcd_backup_policy_tracker_error is 1 this value is unknown and also emitted as 0; alerts must gate on tracker_error.
+		# TYPE etcd_backup_policy_last_success_time gauge
+		etcd_backup_policy_last_success_time{policy="daily",uid="daily-uid"} 0
+	`), backupPolicyLastSuccessTimeMetricName))
 }
 
 func setupPolicyCollector(t *testing.T, policies []*operatorv1alpha1.EtcdBackupPolicy, trackerCM *corev1.ConfigMap) prometheus.Collector {

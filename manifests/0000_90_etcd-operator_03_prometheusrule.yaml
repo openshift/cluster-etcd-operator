@@ -299,9 +299,17 @@ spec:
         summary: No automated etcd backup policy is configured.
       expr: |
         etcd_automated_backup_enabled == 1
-        and
+        and on()
         absent(etcd_backup_policy_info)
       for: 15m
+      labels:
+        severity: warning
+    - alert: etcdBackupPolicyTrackerError
+      annotations:
+        description: The etcd backup failure tracker ConfigMap could not be read (missing data or corrupt). Backup success freshness is unknown until tracking is restored; etcdBackupPolicyNoRecentSuccess is suppressed while this alert fires.
+        summary: etcd backup policy tracker state is unhealthy.
+      expr: etcd_backup_policy_tracker_error == 1
+      for: 5m
       labels:
         severity: warning
     - alert: etcdBackupPolicyNoRecentSuccess
@@ -311,16 +319,20 @@ spec:
         summary: Backup policy has no successful backup in over 24 hours.
       expr: |
         (
-          etcd_backup_policy_last_success_time == 0
-          and
-          time() - etcd_backup_policy_creation_time > 86400
+          (
+            etcd_backup_policy_last_success_time == 0
+            and on(policy, uid)
+            (time() - etcd_backup_policy_creation_time > 86400)
+          )
+          or
+          (
+            etcd_backup_policy_last_success_time > 0
+            and on(policy, uid)
+            (time() - etcd_backup_policy_last_success_time > 86400)
+          )
         )
-        or
-        (
-          etcd_backup_policy_last_success_time > 0
-          and
-          time() - etcd_backup_policy_last_success_time > 86400
-        )
+        and on()
+        (etcd_backup_policy_tracker_error == 0)
       labels:
         severity: critical
     - alert: etcdBackupDurationHigh
@@ -328,9 +340,15 @@ spec:
         description: etcd backup "{{ $labels.etcd_backup }}" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.
         summary: etcd backup duration is high.
       expr: |
-        (etcd_backup_completion_time - etcd_backup_start_time) > 1800
+        (
+          etcd_backup_completion_time - on(etcd_backup, uid) etcd_backup_start_time
+        ) > 1800
         or
-        (time() - etcd_backup_start_time > 1800 and etcd_backup_status{status="Running"} == 1)
+        (
+          (etcd_backup_status{status="Running"} == 1)
+          and on(etcd_backup, uid)
+          (time() - etcd_backup_start_time > 1800)
+        )
       for: 5m
       labels:
         severity: warning

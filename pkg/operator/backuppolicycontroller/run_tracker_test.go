@@ -508,26 +508,106 @@ func TestRunTracker_UnlabeledBackupsAfterPolicyRecreation(t *testing.T) {
 
 func TestRunTracker_PruneBoundsSustainedFailure(t *testing.T) {
 	ctx := context.Background()
-	tracker, _ := setupRunTracker(t)
+	tracker, client := setupRunTracker(t)
 	policy := testPolicy("test-policy", "uid-1")
 
-	// Create more failed runs than the retention window
-	backups := make([]*operatorv1alpha1.EtcdBackup, 0, runMetadataRetentionWindow+25)
-	for i := 0; i < runMetadataRetentionWindow+25; i++ {
+	initialFailures := runMetadataRetentionWindow + 25
+	backups := make([]*operatorv1alpha1.EtcdBackup, 0, initialFailures)
+	for i := 0; i < initialFailures; i++ {
 		hash := fmt.Sprintf("%d", 1000+i)
 		backups = append(backups, testFailedBackup("test-policy-"+hash, policy, hash, time.Now()))
 	}
 
 	state, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups)
 	require.NoError(t, err)
-	require.Equal(t, runMetadataRetentionWindow+25, state.ConsecutiveFailures)
+	require.Equal(t, initialFailures, state.ConsecutiveFailures)
 	require.LessOrEqual(t, len(state.RunOutcomes), runMetadataRetentionWindow)
 
-	// Reload and process again with no backups — durable streak must remain
+	// Reload with no backups — durable streak must remain
 	state2, err := tracker.ProcessBackupsForPolicy(ctx, policy, nil)
 	require.NoError(t, err)
-	require.Equal(t, runMetadataRetentionWindow+25, state2.ConsecutiveFailures)
+	require.Equal(t, initialFailures, state2.ConsecutiveFailures)
 	require.LessOrEqual(t, len(state2.RunOutcomes), runMetadataRetentionWindow)
+
+	// Incremental failure beyond the window after older backups are gone:
+	// map has window+1 failures, but durable streak must become initial+1 (not stall).
+	nextHash := fmt.Sprintf("%d", 1000+initialFailures)
+	incremental := []*operatorv1alpha1.EtcdBackup{
+		testFailedBackup("test-policy-"+nextHash, policy, nextHash, time.Now()),
+	}
+	state3, err := tracker.ProcessBackupsForPolicy(ctx, policy, incremental)
+	require.NoError(t, err)
+	require.Equal(t, initialFailures+1, state3.ConsecutiveFailures,
+		"newly finalized failure must advance durable streak past pruned window count")
+
+	// Duplicate reconcile of the same incremental failure must not double-count
+	state4, err := tracker.ProcessBackupsForPolicy(ctx, policy, incremental)
+	require.NoError(t, err)
+	require.Equal(t, initialFailures+1, state4.ConsecutiveFailures)
+
+	// Restart, then another incremental failure
+	tracker2 := NewRunTracker("test-ns", client)
+	nextHash2 := fmt.Sprintf("%d", 1000+initialFailures+1)
+	incremental2 := []*operatorv1alpha1.EtcdBackup{
+		testFailedBackup("test-policy-"+nextHash2, policy, nextHash2, time.Now()),
+	}
+	state5, err := tracker2.ProcessBackupsForPolicy(ctx, policy, incremental2)
+	require.NoError(t, err)
+	require.Equal(t, initialFailures+2, state5.ConsecutiveFailures,
+		"streak must continue advancing across restart after pruning")
+
+	// Late success within the retained window resets the durable streak
+	successHash := nextHash2
+	lateSuccess := []*operatorv1alpha1.EtcdBackup{
+		testSuccessfulBackup("test-policy-"+successHash, policy, successHash, time.Now()),
+	}
+	state6, err := tracker2.ProcessBackupsForPolicy(ctx, policy, lateSuccess)
+	require.NoError(t, err)
+	require.Equal(t, 0, state6.ConsecutiveFailures, "late success must reset durable streak")
+	require.NotNil(t, state6.LastSuccessTime)
+}
+
+func TestRunTracker_MissingTrackerKeyIsLostState(t *testing.T) {
+	ctx := context.Background()
+	tracker, client := setupRunTracker(t)
+	policy := testPolicy("test-policy", "uid-1")
+
+	// Establish tracker state
+	_, err := tracker.ProcessBackupsForPolicy(ctx, policy, []*operatorv1alpha1.EtcdBackup{
+		testFailedBackup("test-policy-1000", policy, "1000", time.Now()),
+	})
+	require.NoError(t, err)
+
+	// Wipe the data key but leave the ConfigMap (lost established state)
+	cm, err := client.Get(ctx, failureTrackerConfigMapName, metav1.GetOptions{})
+	require.NoError(t, err)
+	cm.Data = map[string]string{}
+	_, err = client.Update(ctx, cm, metav1.UpdateOptions{})
+	require.NoError(t, err)
+
+	_, err = tracker.GetPolicyState(ctx, policy)
+	require.Error(t, err, "missing tracker key must be treated as lost state, not first init")
+
+	_, err = tracker.GetAllPolicyStates(ctx)
+	require.Error(t, err)
+
+	_, err = tracker.ProcessBackupsForPolicy(ctx, policy, nil)
+	require.Error(t, err)
+}
+
+func TestRunTracker_FirstInitMissingConfigMap(t *testing.T) {
+	ctx := context.Background()
+	tracker, _ := setupRunTracker(t)
+	policy := testPolicy("test-policy", "uid-1")
+
+	state, err := tracker.GetPolicyState(ctx, policy)
+	require.NoError(t, err, "missing ConfigMap is first initialization, not an error")
+	require.Equal(t, 0, state.ConsecutiveFailures)
+	require.Nil(t, state.LastSuccessTime)
+
+	allStates, err := tracker.GetAllPolicyStates(ctx)
+	require.NoError(t, err)
+	require.Empty(t, allStates)
 }
 
 func TestRunTracker_CorruptStateOnRead(t *testing.T) {

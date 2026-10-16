@@ -75,7 +75,7 @@ func NewBackupPolicyMetrics(
 		),
 		lastSuccessTimeDesc: prometheus.NewDesc(
 			backupPolicyLastSuccessTimeMetricName,
-			"Unix timestamp of last successful backup run (0 if never succeeded or tracking unknown)",
+			"Unix timestamp of last successful backup run (0 if never succeeded). When etcd_backup_policy_tracker_error is 1 this value is unknown and also emitted as 0; alerts must gate on tracker_error.",
 			[]string{"policy", "uid"},
 			nil,
 		),
@@ -87,7 +87,7 @@ func NewBackupPolicyMetrics(
 		),
 		trackerErrorDesc: prometheus.NewDesc(
 			backupPolicyTrackerErrorMetricName,
-			"Whether reading backup failure tracker state failed (1) or succeeded (0). When 1, last_success_time may be unknown and is emitted as 0.",
+			"Whether reading backup failure tracker state failed (1) or succeeded (0). 1 covers corrupt JSON or a present ConfigMap missing tracker data (lost state). A missing ConfigMap is first initialization and yields 0.",
 			nil,
 			nil,
 		),
