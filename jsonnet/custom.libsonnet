@@ -182,6 +182,78 @@
             },
           },
           {
+            alert: 'etcdBackupFailed',
+            expr: 'etcd_backup_status{status="Failed"} == 1',
+            'for': '5m',
+            labels: {
+              severity: 'warning',
+            },
+            annotations: {
+              description: 'etcd backup "{{ $labels.etcd_backup }}" has failed. Check the EtcdBackup resource status for details.',
+              summary: 'etcd backup has failed.',
+            },
+          },
+          {
+            alert: 'etcdBackupHighFailureRate',
+            expr: |||
+              (
+                count(
+                  (etcd_backup_status{status="Failed"} == 1)
+                  and on(etcd_backup, uid)
+                  ((time() - etcd_backup_completion_time) < 86400)
+                )
+                /
+                count(
+                  (
+                    (etcd_backup_status{status="Failed"} == 1)
+                    or
+                    (etcd_backup_status{status="Completed"} == 1)
+                  )
+                  and on(etcd_backup, uid)
+                  ((time() - etcd_backup_completion_time) < 86400)
+                )
+              ) > 0.5
+            |||,
+            'for': '30m',
+            labels: {
+              severity: 'warning',
+            },
+            annotations: {
+              description: 'More than 50% of etcd backups finished in the last 24 hours have failed. This indicates a persistent issue with backup configuration or storage that requires investigation.',
+              summary: 'etcd backup failure rate is high.',
+            },
+          },
+          {
+            alert: 'etcdBackupHighFailureRate',
+            expr: |||
+              (
+                count(
+                  (etcd_backup_status{status="Failed"} == 1)
+                  and on(etcd_backup, uid)
+                  ((time() - etcd_backup_completion_time) < 86400)
+                )
+                /
+                count(
+                  (
+                    (etcd_backup_status{status="Failed"} == 1)
+                    or
+                    (etcd_backup_status{status="Completed"} == 1)
+                  )
+                  and on(etcd_backup, uid)
+                  ((time() - etcd_backup_completion_time) < 86400)
+                )
+              ) >= 0.75
+            |||,
+            'for': '30m',
+            labels: {
+              severity: 'critical',
+            },
+            annotations: {
+              description: 'More than 75% of etcd backups finished in the last 24 hours have failed. This is a critical issue that may prevent disaster recovery and requires immediate investigation.',
+              summary: 'etcd backup failure rate is critically high.',
+            },
+          },
+          {
             alert: 'etcdBackupPolicyConsecutiveFailures',
             expr: |||
               etcd_backup_policy_consecutive_failures >= 2
@@ -246,6 +318,22 @@
             annotations: {
               description: 'Backup policy "{{ $labels.policy }}" has not completed a successful backup in over 24 hours. This is a critical issue that may prevent disaster recovery.',
               summary: 'Backup policy has no successful backup in over 24 hours.',
+            },
+          },
+          {
+            alert: 'etcdBackupDurationHigh',
+            expr: |||
+              (etcd_backup_completion_time - etcd_backup_start_time) > 1800
+              or
+              (time() - etcd_backup_start_time > 1800 and etcd_backup_status{status="Running"} == 1)
+            |||,
+            'for': '5m',
+            labels: {
+              severity: 'warning',
+            },
+            annotations: {
+              description: 'etcd backup "{{ $labels.etcd_backup }}" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.',
+              summary: 'etcd backup duration is high.',
             },
           },
         ],
