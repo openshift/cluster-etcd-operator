@@ -444,17 +444,6 @@ func WithBackupStatus(status operatorv1alpha1.EtcdBackupStatus) func(backup *ope
 	}
 }
 
-func WithBackupPending(nodeName string) func(backup *operatorv1alpha1.EtcdBackup) {
-	return func(backup *operatorv1alpha1.EtcdBackup) {
-		backup.Status.NodeName = nodeName
-		backup.Status.Conditions = append(backup.Status.Conditions, v1.Condition{
-			Type:               string(operatorv1alpha1.BackupPending),
-			Status:             v1.ConditionTrue,
-			LastTransitionTime: v1.Time{Time: backup.CreationTimestamp.Add(time.Second)},
-		})
-	}
-}
-
 func WithBackupRunning(job *batchv1.Job) func(backup *operatorv1alpha1.EtcdBackup) {
 	return func(backup *operatorv1alpha1.EtcdBackup) {
 		if !slices.Contains(backup.Finalizers, backuphelpers.FinalizerEtcdBackup) {
@@ -466,7 +455,7 @@ func WithBackupRunning(job *batchv1.Job) func(backup *operatorv1alpha1.EtcdBacku
 		}
 		backup.Status.JobName = job.Name
 		backup.Status.Conditions = append(backup.Status.Conditions, v1.Condition{
-			Type:               string(operatorv1alpha1.BackupPending),
+			Type:               string(operatorv1alpha1.BackupRunning),
 			Status:             v1.ConditionTrue,
 			LastTransitionTime: v1.Time{Time: backup.CreationTimestamp.Add(time.Minute)},
 		})
@@ -855,12 +844,16 @@ func GetStatusAction[T k8stesting.Action](actions []k8stesting.Action, filters .
 func GetAction[T k8stesting.Action](actions []k8stesting.Action, filters ...func(a T) bool) (T, bool) {
 	for _, action := range actions {
 		if a, ok := action.(T); ok {
+			filtered := false
 			for _, f := range filters {
 				if !f(a) {
-					continue
+					filtered = true
+					break
 				}
 			}
-			return a, true
+			if !filtered {
+				return a, true
+			}
 		}
 	}
 	var zero T

@@ -12,6 +12,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/testutils"
+	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
@@ -24,6 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/informers"
 	k8sfakeclient "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
@@ -35,14 +37,22 @@ var backupFeatureGateAccessor = featuregates.NewHardcodedFeatureGateAccess(
 	[]configv1.FeatureGateName{backuphelpers.AutomatedEtcdBackupFeatureGateName},
 	[]configv1.FeatureGateName{})
 
+var localStorage = operatorv1alpha1.EtcdBackupStorage{
+	Type:  operatorv1alpha1.EtcdBackupStorageTypeLocal,
+	Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/backups"},
+}
+
 type testCaseBackupController struct {
-	backups     []*operatorv1alpha1.EtcdBackup
-	jobs        []*batchv1.Job
-	pods        []*corev1.Pod
-	nodes       []*corev1.Node
-	pvcs        []*corev1.PersistentVolumeClaim
-	expectError bool
-	validate    func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset)
+	backups []*operatorv1alpha1.EtcdBackup
+	// staleBackups, if set, populates the backup informer instead of backups to simulate informer lag
+	staleBackups []*operatorv1alpha1.EtcdBackup
+	jobs         []*batchv1.Job
+	pods         []*corev1.Pod
+	nodes        []*corev1.Node
+	pvcs         []*corev1.PersistentVolumeClaim
+	activeCache  *activeBackupCache
+	expectError  bool
+	validate     func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset)
 }
 
 func runBackupControllerTest(t *testing.T, tc testCaseBackupController) {
@@ -60,41 +70,52 @@ func runBackupControllerTest(t *testing.T, tc testCaseBackupController) {
 	operatorFake := operatorfake.NewSimpleClientset(operatorObjs...)
 
 	sharedFactory := informers.NewSharedInformerFactory(client, 0)
-	operatorSharedFactory := operatorinformers.NewSharedInformerFactory(operatorFake, 0)
+	operatorInformerClient := operatorFake
+	if tc.staleBackups != nil {
+		staleOperatorObjs := make([]runtime.Object, 0, len(tc.staleBackups))
+		staleOperatorObjs = testutils.AppendRuntimeObjects(staleOperatorObjs, tc.staleBackups)
+		operatorInformerClient = operatorfake.NewSimpleClientset(staleOperatorObjs...)
+	}
+	operatorSharedFactory := operatorinformers.NewSharedInformerFactory(operatorInformerClient, 0)
 
 	podsInformer := sharedFactory.Core().V1().Pods()
 	jobsInformer := sharedFactory.Batch().V1().Jobs()
+	nodesInformer := sharedFactory.Core().V1().Nodes()
 	backupsInformer := operatorSharedFactory.Operator().V1alpha1().EtcdBackups()
 
 	podsInformerHasSynced := podsInformer.Informer().HasSynced
 	jobsInformerHasSynced := jobsInformer.Informer().HasSynced
+	nodesInformerHasSynced := nodesInformer.Informer().HasSynced
 	backupsInformerHasSynced := backupsInformer.Informer().HasSynced
 
 	ctx := t.Context()
 	sharedFactory.Start(ctx.Done())
 	operatorSharedFactory.Start(ctx.Done())
-	cache.WaitForCacheSync(ctx.Done(), backupsInformerHasSynced, podsInformerHasSynced, jobsInformerHasSynced)
+	cache.WaitForCacheSync(ctx.Done(), backupsInformerHasSynced, podsInformerHasSynced, jobsInformerHasSynced, nodesInformerHasSynced)
 
+	activeCache := newActiveBackupCache()
+	if tc.activeCache != nil {
+		activeCache = *tc.activeCache
+	}
 	controller := BackupController{
 		backupsLister:         backupsInformer.Lister(),
 		podsLister:            podsInformer.Lister().Pods(operatorclient.TargetNamespace),
+		nodesLister:           nodesInformer.Lister(),
 		jobInformer:           jobsInformer.Informer(),
 		operatorClient:        operatorFake.OperatorV1alpha1(),
 		kubeClient:            client,
 		operatorImagePullSpec: "operator-pullspec-image",
 		featureGateAccessor:   backupFeatureGateAccessor,
+		activeCache:           activeCache,
 	}
 	err := controller.addIndexers()
 	require.NoError(t, err)
 
-	for _, backup := range tc.backups {
-		syncCtx := testutils.FakeSyncContext(t, backup.Name)
-		err := controller.sync(ctx, syncCtx)
-		if tc.expectError {
-			require.Error(t, err)
-		} else {
-			require.NoError(t, err)
-		}
+	err = controller.sync(ctx, testutils.FakeSyncContext(t, factory.DefaultQueueKey))
+	if tc.expectError {
+		require.Error(t, err)
+	} else {
+		require.NoError(t, err)
 	}
 	if tc.validate != nil {
 		tc.validate(t, client, operatorFake)
@@ -104,42 +125,42 @@ func runBackupControllerTest(t *testing.T, tc testCaseBackupController) {
 func TestSyncLoopHappyPath(t *testing.T) {
 	// Create a backup job for an EtcdBackup
 	t.Run("local", func(t *testing.T) {
-		backup := testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPending("test-node"), testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-			Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
-			Local: operatorv1alpha1.EtcdBackupStorageLocal{
-				HostPath: "/etc/backups",
-			},
-		}))
+		backup := testutils.FakeEtcdBackup("test-backup", testutils.WithBackupStorage(localStorage))
 		runBackupControllerTest(t, testCaseBackupController{
 			backups: []*operatorv1alpha1.EtcdBackup{backup},
-			nodes:   []*corev1.Node{testutils.FakeNode("test-node")},
+			nodes:   []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				job := requireBackupJobCreated(t, client, backup)
 
-				action, ok := testutils.GetAction[k8stesting.PatchActionImpl](operatorFake.Actions())
-				require.True(t, ok, "Expected patch action")
+				action, ok := testutils.GetStatusAction[k8stesting.PatchActionImpl](operatorFake.Actions())
+				require.True(t, ok, "Expected status patch action")
 				updatedBackup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), action.Name, metav1.GetOptions{})
 				require.NoError(t, err)
 
+				require.True(t, backuphelpers.IsBackupRunning(updatedBackup), "Expected backup to be running")
+				require.Equal(t, "test-node", updatedBackup.Status.NodeName)
 				requireBackupJob(t, updatedBackup, job)
 			},
 		})
 	})
 
 	t.Run("pvc", func(t *testing.T) {
-		backup := testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPending("test-node"))
+		backup := testutils.FakeEtcdBackup("test-backup")
 		runBackupControllerTest(t, testCaseBackupController{
 			backups: []*operatorv1alpha1.EtcdBackup{backup},
-			nodes:   []*corev1.Node{testutils.FakeNode("test-node")},
+			nodes:   []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
 			pvcs:    []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				job := requireBackupJobCreated(t, client, backup)
 
-				action, ok := testutils.GetAction[k8stesting.PatchActionImpl](operatorFake.Actions())
-				require.True(t, ok, "Expected patch action")
+				action, ok := testutils.GetStatusAction[k8stesting.PatchActionImpl](operatorFake.Actions())
+				require.True(t, ok, "Expected status patch action")
 				updatedBackup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), action.Name, metav1.GetOptions{})
 				require.NoError(t, err)
-				require.Equal(t, job.Name, updatedBackup.Status.JobName)
+
+				require.True(t, backuphelpers.IsBackupRunning(updatedBackup), "Expected backup to be running")
+				require.Empty(t, updatedBackup.Status.NodeName, "Expected no node to be assigned to a PVC backup")
+				requireBackupJob(t, updatedBackup, job)
 			},
 		})
 	})
@@ -172,7 +193,7 @@ func TestJobAlreadyRunning(t *testing.T) {
 	})
 	t.Run("backup-missing-job-status", func(t *testing.T) {
 		runBackupControllerTest(t, testCaseBackupController{
-			backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPending("test-node"))},
+			backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup")},
 			jobs:    []*batchv1.Job{job},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				requireNoBackupJobCreated(t, client)
@@ -196,7 +217,7 @@ func TestJobAlreadyRunning(t *testing.T) {
 				requireNoBackupJobCreated(t, client)
 
 				action, ok := testutils.GetAction(client.Actions(), func(a k8stesting.PatchActionImpl) bool {
-					return a.PatchOptions.Kind == "Job"
+					return a.GetResource().Resource == "jobs"
 				})
 				require.True(t, ok, "Expected job patch action")
 
@@ -267,10 +288,23 @@ func TestBackupJobCompleted(t *testing.T) {
 	})
 }
 
-func TestPendingBackupDeleted(t *testing.T) {
+func TestQueuedBackupDeleted(t *testing.T) {
+	t.Run("no-finalizer", func(t *testing.T) {
+		// Backup deleted before it was started, nothing to clean up
+		runBackupControllerTest(t, testCaseBackupController{
+			backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupDeleted())},
+			nodes:   []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
+			pvcs:    []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
+			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+				requireNoBackupJobCreated(t, client)
+				_, ok := testutils.GetAction[k8stesting.PatchActionImpl](operatorFake.Actions())
+				require.False(t, ok, "Expected no patch action")
+			},
+		})
+	})
 	t.Run("before-grace-period", func(t *testing.T) {
 		runBackupControllerTest(t, testCaseBackupController{
-			backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPending("test-node"), func(backup *operatorv1alpha1.EtcdBackup) {
+			backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", func(backup *operatorv1alpha1.EtcdBackup) {
 				now := v1.Now()
 				backup.DeletionTimestamp = &now
 				backup.Finalizers = append(backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
@@ -284,7 +318,7 @@ func TestPendingBackupDeleted(t *testing.T) {
 	})
 	t.Run("after-grace-period", func(t *testing.T) {
 		runBackupControllerTest(t, testCaseBackupController{
-			backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPending("test-node"), func(backup *operatorv1alpha1.EtcdBackup) {
+			backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", func(backup *operatorv1alpha1.EtcdBackup) {
 				backup.DeletionTimestamp = &v1.Time{Time: time.Now().Add(-(backupDeletedGracePeriod + time.Second))}
 				backup.Finalizers = append(backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
 			})},
@@ -411,7 +445,7 @@ func TestBackupFailedNoGC(t *testing.T) {
 	t.Run("pvc-not-found", func(t *testing.T) {
 		runBackupControllerTest(t, testCaseBackupController{
 			backups: []*operatorv1alpha1.EtcdBackup{
-				testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPending("test-node"), testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
+				testutils.FakeEtcdBackup("test-backup", testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
 					Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
 					PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "backup-pvc-that-doesnt-exist"},
 				}))},
@@ -435,16 +469,16 @@ func TestBackupFailedNoGC(t *testing.T) {
 	t.Run("node-not-found", func(t *testing.T) {
 		runBackupControllerTest(t, testCaseBackupController{
 			backups: []*operatorv1alpha1.EtcdBackup{
-				testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPending("test-node-that-doesnt-exist"), testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-					Type:  operatorv1alpha1.EtcdBackupStorageTypeLocal,
-					Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/backups"},
-				}))},
+				testutils.FakeEtcdBackup("test-backup", testutils.WithBackupStorage(localStorage), func(backup *operatorv1alpha1.EtcdBackup) {
+					backup.Spec.NodeSelector = map[string]string{"kubernetes.io/hostname": "test-node-that-doesnt-exist"}
+				})},
+			nodes: []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				requireNoBackupJobCreated(t, client)
 				requireBackupStatusApplied(t, operatorFake, []metav1.Condition{{
 					Type:    string(operatorv1alpha1.BackupFailed),
 					Reason:  string(operatorv1alpha1.BackupReasonNodeNotFound),
-					Message: "unable to find Node \"test-node-that-doesnt-exist\"",
+					Message: "unable to find a control plane Node matching the selector",
 					Status:  metav1.ConditionTrue,
 				}, {
 					Type:    string(operatorv1alpha1.BackupGarbageCollectionRequired),
@@ -501,6 +535,237 @@ func TestBackupFailedNoGC(t *testing.T) {
 	})
 }
 
+func TestConcurrencyLocalSelectAvailableNode(t *testing.T) {
+	// Node selection only applies to Local backups; PVC backups are placed by the scheduler.
+	running, runningJob := fakeRunningBackup("running", "test-node-1", localStorage)
+	runBackupControllerTest(t, testCaseBackupController{
+		backups: []*operatorv1alpha1.EtcdBackup{running, testutils.FakeEtcdBackup("new", testutils.WithBackupStorage(localStorage))},
+		jobs:    []*batchv1.Job{runningJob},
+		nodes: []*corev1.Node{
+			testutils.FakeNode("test-node-1", testutils.WithMasterLabel()),
+			testutils.FakeNode("test-node-2", testutils.WithMasterLabel())},
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			jobs := listCreatedJobs(client)
+			require.Len(t, jobs, 1)
+			require.Equal(t, "new", jobs[0].Name)
+			require.Equal(t, "test-node-2", jobs[0].Spec.Template.Spec.NodeName, "Expected backup to be assigned to an available node")
+
+			backup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), "new", metav1.GetOptions{})
+			require.NoError(t, err)
+			require.True(t, backuphelpers.IsBackupRunning(backup), "Expected backup to be running")
+			require.Equal(t, "test-node-2", backup.Status.NodeName)
+		},
+	})
+}
+
+func TestConcurrencyLocalAllNodesInUse(t *testing.T) {
+	running1, runningJob1 := fakeRunningBackup("running-1", "test-node-1", localStorage)
+	running2, runningJob2 := fakeRunningBackup("running-2", "test-node-2", localStorage)
+	runBackupControllerTest(t, testCaseBackupController{
+		backups: []*operatorv1alpha1.EtcdBackup{running1, running2, testutils.FakeEtcdBackup("new", testutils.WithBackupStorage(localStorage))},
+		jobs:    []*batchv1.Job{runningJob1, runningJob2},
+		nodes: []*corev1.Node{
+			testutils.FakeNode("test-node-1", testutils.WithMasterLabel()),
+			testutils.FakeNode("test-node-2", testutils.WithMasterLabel())},
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			requireNoBackupJobCreated(t, client)
+			_, ok := testutils.GetStatusAction[k8stesting.PatchActionImpl](operatorFake.Actions())
+			require.False(t, ok, "Expected no status patch action")
+		},
+	})
+}
+
+func TestConcurrencyLocalNodeSelector(t *testing.T) {
+	// Backup waits for the node matching its selector, even when other nodes are available
+	running, runningJob := fakeRunningBackup("running", "test-node-1", localStorage)
+	runBackupControllerTest(t, testCaseBackupController{
+		backups: []*operatorv1alpha1.EtcdBackup{running, testutils.FakeEtcdBackup("new", testutils.WithBackupStorage(localStorage), func(backup *operatorv1alpha1.EtcdBackup) {
+			backup.Spec.NodeSelector = map[string]string{"kubernetes.io/hostname": "test-node-1"}
+		})},
+		jobs: []*batchv1.Job{runningJob},
+		nodes: []*corev1.Node{
+			testutils.FakeNode("test-node-1", testutils.WithMasterLabel(), func(node *corev1.Node) { node.Labels["kubernetes.io/hostname"] = "test-node-1" }),
+			testutils.FakeNode("test-node-2", testutils.WithMasterLabel(), func(node *corev1.Node) { node.Labels["kubernetes.io/hostname"] = "test-node-2" })},
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			requireNoBackupJobCreated(t, client)
+			_, ok := testutils.GetStatusAction[k8stesting.PatchActionImpl](operatorFake.Actions())
+			require.False(t, ok, "Expected no status patch action")
+		},
+	})
+}
+
+func TestConcurrencyPVCSamePVC(t *testing.T) {
+	storage := operatorv1alpha1.EtcdBackupStorage{
+		Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+		PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-backup-pvc"}}
+	running, runningJob := fakeRunningBackup("running", "", storage)
+	runBackupControllerTest(t, testCaseBackupController{
+		backups: []*operatorv1alpha1.EtcdBackup{running, testutils.FakeEtcdBackup("new", testutils.WithBackupStorage(storage))},
+		jobs:    []*batchv1.Job{runningJob},
+		nodes:   []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
+		pvcs:    []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			requireNoBackupJobCreated(t, client)
+		},
+	})
+}
+
+func TestConcurrencyPVCDifferentPVC(t *testing.T) {
+	running, runningJob := fakeRunningBackup("running", "", operatorv1alpha1.EtcdBackupStorage{
+		Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+		PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "running-pvc"}})
+	runBackupControllerTest(t, testCaseBackupController{
+		backups: []*operatorv1alpha1.EtcdBackup{running, testutils.FakeEtcdBackup("new")},
+		jobs:    []*batchv1.Job{runningJob},
+		nodes:   []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
+		pvcs: []*corev1.PersistentVolumeClaim{
+			testutils.FakePVC(operatorclient.TargetNamespace, "running-pvc"),
+			testutils.FakePVC(operatorclient.TargetNamespace, "new-pvc")},
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			jobs := listCreatedJobs(client)
+			require.Len(t, jobs, 1)
+			require.Equal(t, "new", jobs[0].Name)
+		},
+	})
+}
+
+func TestConcurrencyFinishedJobReleasesNode(t *testing.T) {
+	// A backup finishing in the same sync frees its node for a queued backup
+	now := metav1.Now()
+	finished, finishedJob := fakeRunningBackup("finished", "test-node", localStorage)
+	finishedJob.Status = batchv1.JobStatus{
+		CompletionTime: &now,
+		Conditions:     []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}}
+	runBackupControllerTest(t, testCaseBackupController{
+		backups: []*operatorv1alpha1.EtcdBackup{finished, testutils.FakeEtcdBackup("new", testutils.WithBackupStorage(localStorage))},
+		jobs:    []*batchv1.Job{finishedJob},
+		nodes:   []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			jobs := listCreatedJobs(client)
+			require.Len(t, jobs, 1)
+			require.Equal(t, "new", jobs[0].Name)
+			require.Equal(t, "test-node", jobs[0].Spec.Template.Spec.NodeName)
+
+			backup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), "finished", metav1.GetOptions{})
+			require.NoError(t, err)
+			require.True(t, backuphelpers.IsBackupCompleted(backup), "Expected backup to be completed")
+		},
+	})
+}
+
+func TestConcurrencyOrderByAge(t *testing.T) {
+	// Oldest backups are started first, one per node
+	runBackupControllerTest(t, testCaseBackupController{
+		backups: []*operatorv1alpha1.EtcdBackup{
+			testutils.FakeEtcdBackup("test-backup-4", testutils.WithBackupStorage(localStorage), testutils.WithBackupAge(0)),
+			testutils.FakeEtcdBackup("test-backup-2", testutils.WithBackupStorage(localStorage), testutils.WithBackupAge(2*time.Hour)),
+			testutils.FakeEtcdBackup("test-backup-1", testutils.WithBackupStorage(localStorage), testutils.WithBackupAge(3*time.Hour)),
+			testutils.FakeEtcdBackup("test-backup-3", testutils.WithBackupStorage(localStorage), testutils.WithBackupAge(time.Hour))},
+		nodes: []*corev1.Node{
+			testutils.FakeNode("test-node-1", testutils.WithMasterLabel()),
+			testutils.FakeNode("test-node-2", testutils.WithMasterLabel())},
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			jobs := listCreatedJobs(client)
+			require.Len(t, jobs, 2)
+			nodes := map[string]string{}
+			for _, job := range jobs {
+				nodes[job.Name] = job.Spec.Template.Spec.NodeName
+			}
+			require.Contains(t, nodes, "test-backup-1")
+			require.Contains(t, nodes, "test-backup-2")
+			require.NotEqual(t, nodes["test-backup-1"], nodes["test-backup-2"], "Expected backups to be started on different nodes")
+		},
+	})
+}
+
+func TestActiveCacheStaleInformer(t *testing.T) {
+	// Backup was started by a previous sync, but the informer hasn't observed the update yet
+	running, _ := fakeRunningBackup("running", "test-node-1", localStorage)
+	activeCache := newActiveBackupCache()
+	activeCache.add(running)
+	runBackupControllerTest(t, testCaseBackupController{
+		backups:      []*operatorv1alpha1.EtcdBackup{running},
+		staleBackups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("running", testutils.WithBackupStorage(localStorage))},
+		nodes:        []*corev1.Node{testutils.FakeNode("test-node-1", testutils.WithMasterLabel())},
+		activeCache:  &activeCache,
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			requireNoBackupJobCreated(t, client)
+
+			// Get request sent to verify mismatch between active cache and observed active backups from informer
+			getAction, ok := testutils.GetAction[k8stesting.GetActionImpl](operatorFake.Actions())
+			require.True(t, ok, "Expected get action")
+			require.Equal(t, "running", getAction.Name)
+			require.True(t, activeCache.isActive("running"))
+		},
+	})
+}
+
+func TestActiveCacheSyncedInformer(t *testing.T) {
+	running, runningJob := fakeRunningBackup("running", "test-node-1", localStorage)
+	activeCache := newActiveBackupCache()
+	activeCache.add(running)
+	runBackupControllerTest(t, testCaseBackupController{
+		backups:     []*operatorv1alpha1.EtcdBackup{running},
+		jobs:        []*batchv1.Job{runningJob},
+		activeCache: &activeCache,
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			// No get request needed since active cache matched active backups observed from informer
+			getAction, ok := testutils.GetAction[k8stesting.GetActionImpl](operatorFake.Actions())
+			require.Falsef(t, ok, "Expected no get action, found %+v", getAction)
+			require.True(t, activeCache.isActive("running"))
+		},
+	})
+}
+
+func TestActiveCacheRemoveFinished(t *testing.T) {
+	backups := []*operatorv1alpha1.EtcdBackup{
+		testutils.FakeEtcdBackup("completed", testutils.WithBackupNodeName("test-node-1"), testutils.WithBackupCompleted()),
+		testutils.FakeEtcdBackup("failed", testutils.WithBackupNodeName("test-node-2"), testutils.WithBackupFailed()),
+	}
+	activeCache := newActiveBackupCache()
+	for _, backup := range backups {
+		activeCache.add(backup)
+	}
+	require.Len(t, activeCache.backups, 2, "Expected 2 active backups")
+	require.Len(t, activeCache.local, 0, "Expected 0 nodes with active Local backups")
+	require.Len(t, activeCache.pvc, 2, "Expected 2 pvcs with active PVC backups")
+
+	runBackupControllerTest(t, testCaseBackupController{
+		backups:     backups,
+		activeCache: &activeCache,
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			// No get request needed to remove inactive backups from the cache
+			getAction, ok := testutils.GetAction[k8stesting.GetActionImpl](operatorFake.Actions())
+			require.Falsef(t, ok, "Expected no get action, found %+v", getAction)
+
+			require.Len(t, activeCache.backups, 0)
+			require.Len(t, activeCache.local, 0)
+			require.Len(t, activeCache.pvc, 0)
+		},
+	})
+}
+
+func TestActiveCacheRemoveDeleted(t *testing.T) {
+	backup, _ := fakeRunningBackup("deleted", "test-node-1", localStorage)
+	activeCache := newActiveBackupCache()
+	activeCache.add(backup)
+
+	runBackupControllerTest(t, testCaseBackupController{
+		backups:     []*operatorv1alpha1.EtcdBackup{},
+		activeCache: &activeCache,
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			// Expect get request to verify backup is deleted before removing from backup cache
+			action, ok := testutils.GetAction[k8stesting.GetActionImpl](operatorFake.Actions())
+			require.True(t, ok, "Expected get action")
+			require.Equal(t, backup.Name, action.Name)
+
+			require.Len(t, activeCache.backups, 0)
+			require.Len(t, activeCache.local, 0)
+			require.Len(t, activeCache.pvc, 0)
+		},
+	})
+}
+
 func TestIsJobComplete(t *testing.T) {
 	tests := map[string]struct {
 		condition batchv1.JobConditionType
@@ -548,6 +813,34 @@ func TestNoFeatureGateDisablesController(t *testing.T) {
 
 		_ = controller.sync(context.TODO(), nil)
 	})
+}
+
+// fakeRunningBackup returns a running backup and its job. Local backup jobs are pinned to nodeName.
+func fakeRunningBackup(name, nodeName string, storage operatorv1alpha1.EtcdBackupStorage) (*operatorv1alpha1.EtcdBackup, *batchv1.Job) {
+	job := &batchv1.Job{
+		ObjectMeta: v1.ObjectMeta{
+			Name:       name,
+			Namespace:  operatorclient.TargetNamespace,
+			Labels:     map[string]string{"app": backupAppName, backuphelpers.LabelEtcdBackup: name},
+			Finalizers: []string{backuphelpers.FinalizerEtcdBackup},
+			OwnerReferences: []v1.OwnerReference{{
+				Kind: "EtcdBackup",
+				Name: name,
+				UID:  types.UID(name + "-uid"),
+			}}},
+		Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeName: nodeName}}}}
+	backup := testutils.FakeEtcdBackup(name, testutils.WithBackupStorage(storage), testutils.WithBackupRunning(job), testutils.WithBackupNodeName(nodeName))
+	return backup, job
+}
+
+func listCreatedJobs(client *k8sfakeclient.Clientset) []*batchv1.Job {
+	var jobs []*batchv1.Job
+	for _, action := range testutils.ListActions[k8stesting.CreateActionImpl](client.Actions()) {
+		if job, ok := action.Object.(*batchv1.Job); ok {
+			jobs = append(jobs, job)
+		}
+	}
+	return jobs
 }
 
 func requireNoBackupJobCreated(t *testing.T, client *k8sfakeclient.Clientset) {
@@ -623,8 +916,10 @@ func requireBackupStatusApplied(
 
 func requireJobPatched(t *testing.T, client *k8sfakeclient.Clientset, backupName string) {
 	t.Helper()
-	action, ok := testutils.GetStatusAction[k8stesting.PatchActionImpl](client.Fake.Actions())
-	require.Truef(t, ok, "expected to find at least one patchAction, but found %v", client.Fake.Actions())
+	action, ok := testutils.GetAction(client.Fake.Actions(), func(a k8stesting.PatchActionImpl) bool {
+		return a.GetResource().Resource == "jobs"
+	})
+	require.Truef(t, ok, "expected to find at least one job patchAction, but found %v", client.Fake.Actions())
 
 	job, err := client.BatchV1().Jobs(action.Namespace).Get(t.Context(), action.Name, metav1.GetOptions{})
 	require.NoError(t, err)
@@ -641,7 +936,7 @@ func requireBackupJob(t *testing.T, backup *operatorv1alpha1.EtcdBackup, job *ba
 	})
 	switch backup.Spec.Storage.Type {
 	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
-		// Local backups are pinned to the node chosen by the queue controller.
+		// Local backups are pinned to the node selected by the controller.
 		require.Equal(t, backup.Status.NodeName, job.Spec.Template.Spec.NodeName)
 		require.Empty(t, job.Spec.Template.Spec.NodeSelector)
 		require.Nil(t, job.Spec.Template.Spec.Affinity)

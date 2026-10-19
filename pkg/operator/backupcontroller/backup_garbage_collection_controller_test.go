@@ -435,7 +435,6 @@ func TestBackupGarbageCollectionActiveBackupsIgnored(t *testing.T) {
 	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
 		backups: []*operatorv1alpha1.EtcdBackup{
 			testutils.FakeEtcdBackup("test-new-backup"),
-			testutils.FakeEtcdBackup("test-pending-backup", testutils.WithBackupPending("test-node")),
 			testutils.FakeEtcdBackup("test-running-backup", testutils.WithBackupRunning(&batchv1.Job{ObjectMeta: v1.ObjectMeta{Name: "test-running-backup"}})),
 			testutils.FakeEtcdBackup("test-completed-backup", testutils.WithBackupCompleted()),
 			testutils.FakeEtcdBackup("test-failed-backup", testutils.WithBackupFailed()),
@@ -452,7 +451,7 @@ func TestBackupGarbageCollectionActiveBackupsIgnored(t *testing.T) {
 
 			backupList, err := operatorFake.OperatorV1alpha1().EtcdBackups().List(t.Context(), v1.ListOptions{})
 			require.NoError(t, err)
-			require.Len(t, backupList.Items, 5)
+			require.Len(t, backupList.Items, 4)
 			for _, backup := range backupList.Items {
 				require.Nil(t, backup.DeletionTimestamp)
 				if backuphelpers.IsBackupRunning(&backup) || backuphelpers.IsBackupFinished(&backup) {
