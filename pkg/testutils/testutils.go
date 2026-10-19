@@ -494,14 +494,14 @@ func WithBackupCompleted() func(backup *operatorv1alpha1.EtcdBackup) {
 	}
 }
 
-func WithBackupFailed() func(backup *operatorv1alpha1.EtcdBackup) {
+func WithBackupFailed(reason operatorv1alpha1.BackupConditionReason) func(backup *operatorv1alpha1.EtcdBackup) {
 	return func(backup *operatorv1alpha1.EtcdBackup) {
 		if !slices.Contains(backup.Finalizers, backuphelpers.FinalizerEtcdBackup) {
 			backup.Finalizers = append(backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
 		}
 		backup.Status.Conditions = append(backup.Status.Conditions, v1.Condition{
 			Type:               string(operatorv1alpha1.BackupFailed),
-			Reason:             string(operatorv1alpha1.BackupReasonJobFailed),
+			Reason:             string(reason),
 			Status:             v1.ConditionTrue,
 			LastTransitionTime: v1.Time{Time: backup.CreationTimestamp.Add(2 * time.Minute)},
 		})

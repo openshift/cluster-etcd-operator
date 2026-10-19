@@ -386,11 +386,6 @@ func TestBackupFailedRequiresGC(t *testing.T) {
 					Reason:  string(operatorv1alpha1.BackupReasonJobFailed),
 					Message: "snapshot failed: no disk space",
 					Status:  metav1.ConditionTrue,
-				}, {
-					Type:    string(operatorv1alpha1.BackupGarbageCollectionRequired),
-					Reason:  string(operatorv1alpha1.BackupReasonFilesPartiallyCreated),
-					Message: "backup job created some files before failing",
-					Status:  metav1.ConditionTrue,
 				}}, []operatorv1alpha1.EtcdBackupFile{{
 					Path:      "/my/broken/backup.db.part",
 					SizeBytes: 12345,
@@ -410,11 +405,6 @@ func TestBackupFailedRequiresGC(t *testing.T) {
 					Reason:  string(operatorv1alpha1.BackupReasonJobFailed),
 					Message: "backup job failed",
 					Status:  metav1.ConditionTrue,
-				}, {
-					Type:    string(operatorv1alpha1.BackupGarbageCollectionRequired),
-					Reason:  string(operatorv1alpha1.BackupReasonFileStateUnknown),
-					Message: "unable to determine if backup job created files",
-					Status:  metav1.ConditionTrue,
 				}}, nil)
 			},
 		})
@@ -428,11 +418,6 @@ func TestBackupFailedRequiresGC(t *testing.T) {
 					Type:    string(operatorv1alpha1.BackupFailed),
 					Reason:  string(operatorv1alpha1.BackupReasonJobFailed),
 					Message: fmt.Sprintf("unable to find job %q", job.Name),
-					Status:  metav1.ConditionTrue,
-				}, {
-					Type:    string(operatorv1alpha1.BackupGarbageCollectionRequired),
-					Reason:  string(operatorv1alpha1.BackupReasonFileStateUnknown),
-					Message: "unable to determine if backup job created files",
 					Status:  metav1.ConditionTrue,
 				}}, nil)
 			},
@@ -454,14 +439,9 @@ func TestBackupFailedNoGC(t *testing.T) {
 				requireNoBackupJobCreated(t, client)
 				requireBackupStatusApplied(t, operatorFake, []metav1.Condition{{
 					Type:    string(operatorv1alpha1.BackupFailed),
-					Reason:  string(operatorv1alpha1.BackupReasonPVCNotFound),
+					Reason:  string(operatorv1alpha1.BackupReasonSetupFailed),
 					Message: "unable to find PVC \"backup-pvc-that-doesnt-exist\"",
 					Status:  metav1.ConditionTrue,
-				}, {
-					Type:    string(operatorv1alpha1.BackupGarbageCollectionRequired),
-					Reason:  string(operatorv1alpha1.BackupReasonFilesNotCreated),
-					Message: "backup failed without creating files",
-					Status:  metav1.ConditionFalse,
 				}}, nil)
 			},
 		})
@@ -477,14 +457,9 @@ func TestBackupFailedNoGC(t *testing.T) {
 				requireNoBackupJobCreated(t, client)
 				requireBackupStatusApplied(t, operatorFake, []metav1.Condition{{
 					Type:    string(operatorv1alpha1.BackupFailed),
-					Reason:  string(operatorv1alpha1.BackupReasonNodeNotFound),
+					Reason:  string(operatorv1alpha1.BackupReasonSetupFailed),
 					Message: "unable to find a control plane Node matching the selector",
 					Status:  metav1.ConditionTrue,
-				}, {
-					Type:    string(operatorv1alpha1.BackupGarbageCollectionRequired),
-					Reason:  string(operatorv1alpha1.BackupReasonFilesNotCreated),
-					Message: "backup failed without creating files",
-					Status:  metav1.ConditionFalse,
 				}}, nil)
 			},
 		})
@@ -521,14 +496,9 @@ func TestBackupFailedNoGC(t *testing.T) {
 				requireNoBackupJobCreated(t, client)
 				requireBackupStatusApplied(t, operatorFake, []metav1.Condition{{
 					Type:    string(operatorv1alpha1.BackupFailed),
-					Reason:  string(operatorv1alpha1.BackupReasonJobFailed),
-					Message: "backup job failed",
+					Reason:  string(operatorv1alpha1.BackupReasonSetupFailed),
+					Message: "backup job failed without creating files",
 					Status:  metav1.ConditionTrue,
-				}, {
-					Type:    string(operatorv1alpha1.BackupGarbageCollectionRequired),
-					Reason:  string(operatorv1alpha1.BackupReasonFilesNotCreated),
-					Message: "backup failed without creating files",
-					Status:  metav1.ConditionFalse,
 				}}, nil)
 			},
 		})
@@ -720,7 +690,7 @@ func TestActiveCacheSyncedInformer(t *testing.T) {
 func TestActiveCacheRemoveFinished(t *testing.T) {
 	backups := []*operatorv1alpha1.EtcdBackup{
 		testutils.FakeEtcdBackup("completed", testutils.WithBackupNodeName("test-node-1"), testutils.WithBackupCompleted()),
-		testutils.FakeEtcdBackup("failed", testutils.WithBackupNodeName("test-node-2"), testutils.WithBackupFailed()),
+		testutils.FakeEtcdBackup("failed", testutils.WithBackupNodeName("test-node-2"), testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed)),
 	}
 	activeCache := newActiveBackupCache()
 	for _, backup := range backups {

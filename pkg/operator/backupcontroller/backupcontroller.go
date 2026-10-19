@@ -329,14 +329,20 @@ func (c *BackupController) startBackup(ctx context.Context, backup *operatorv1al
 		if backup.Status.NodeName == "" {
 			nodeName, matched := c.selectNode(backup, controlPlaneNodes)
 			if !matched {
-				return c.failBackup(ctx, backup, operatorv1alpha1.BackupReasonNodeNotFound, "unable to find a control plane Node matching the selector")
+				if _, err := applyBackupFinished(ctx, backupsClient, backup, nil, operatorv1alpha1.BackupFailed, operatorv1alpha1.BackupReasonSetupFailed, "unable to find a control plane Node matching the selector", nil); err != nil {
+					if apierrors.IsNotFound(err) {
+						return nil
+					}
+					return fmt.Errorf("BackupController failed to apply status on Local backup %q: %w", backup.Name, err)
+				}
+				return nil
 			} else if nodeName == "" {
 				klog.Infof("BackupController unable to start backup [%s]: all control plane nodes in use", backupName)
 				return nil
 			}
 
 			var err error
-			if backup, err = applyBackupStatus(ctx, c.operatorClient.EtcdBackups(), backup, func(status *applyconfigurationsoperatorv1alpha1.EtcdBackupStatusApplyConfiguration) {
+			if backup, err = applyBackupStatus(ctx, backupsClient, backup, func(status *applyconfigurationsoperatorv1alpha1.EtcdBackupStatusApplyConfiguration) {
 				status.NodeName = &nodeName
 			}); err != nil {
 				return fmt.Errorf("BackupController failed to assign node to Local backup: %w", err)
@@ -348,7 +354,13 @@ func (c *BackupController) startBackup(ctx context.Context, backup *operatorv1al
 		if validPVC, err := isValidPVC(ctx, pvcsClient, pvcName); err != nil {
 			return fmt.Errorf("BackupController failed to validate PVC %q for backup %q: %w", pvcName, backupName, err)
 		} else if !validPVC {
-			return c.failBackup(ctx, backup, operatorv1alpha1.BackupReasonPVCNotFound, fmt.Sprintf("unable to find PVC %q", pvcName))
+			if _, err := applyBackupFinished(ctx, backupsClient, backup, nil, operatorv1alpha1.BackupFailed, operatorv1alpha1.BackupReasonSetupFailed, fmt.Sprintf("unable to find PVC %q", pvcName), nil); err != nil {
+				if apierrors.IsNotFound(err) {
+					return nil
+				}
+				return fmt.Errorf("BackupController failed to apply status on PVC backup %q: %w", backup.Name, err)
+			}
+			return nil
 		}
 	}
 
@@ -392,18 +404,6 @@ func (c *BackupController) selectNode(backup *operatorv1alpha1.EtcdBackup, contr
 		}
 	}
 	return "", matched
-}
-
-// failBackup marks a backup that could not be started as failed
-func (c *BackupController) failBackup(ctx context.Context, backup *operatorv1alpha1.EtcdBackup, reason operatorv1alpha1.BackupConditionReason, message string) error {
-	if _, err := applyBackupFinished(ctx, c.operatorClient.EtcdBackups(), backup, nil, operatorv1alpha1.BackupFailed, reason, message, nil); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("BackupController failed to apply status on invalid backup %q: %w", backup.Name, err)
-	}
-	klog.Infof("BackupController failed backup %q: %s", backup.Name, message)
-	return nil
 }
 
 func backupExists(ctx context.Context, backupsClient operatorv1alpha1client.EtcdBackupInterface, name string) (bool, error) {
@@ -609,17 +609,23 @@ func reconcileJobStatus(ctx context.Context,
 			// Backup container started, expect to be able to parse termination message
 			if termLog, err := parseTerminationMessage(terminationMessage); err == nil {
 				message, files = termLog.Message, termLog.Files
+				if len(files) == 0 {
+					// Backup container reported graceful failure, no GC is required
+					conditionReason = operatorv1alpha1.BackupReasonSetupFailed
+					if message == "" {
+						message = "backup job failed without creating files"
+					}
+				}
 			} else {
 				klog.Infof("BackupController failed to read termination message for backup %q: %v", backup.Name, err)
 			}
 		} else {
 			// Backup container never started, most likely the init container failed or PVC was unable to mount
+			conditionReason = operatorv1alpha1.BackupReasonSetupFailed
 			message = terminationMessage
 			if message == "" {
 				message = "failed to verify storage"
 			}
-			// Zero length non-nil slice indicates that no files were created, and GC is not required.
-			files = make([]operatorv1alpha1.EtcdBackupFile, 0)
 		}
 
 		if _, err := applyBackupFinished(ctx, backupClient, backup, job, conditionType, conditionReason, message, files); err != nil {
@@ -856,35 +862,6 @@ func applyBackupFinished(
 			Status:             metav1.ConditionTrue,
 			LastTransitionTime: transitionTime,
 		})
-		switch {
-		case files == nil && reason == operatorv1alpha1.BackupReasonJobFailed:
-			// Job failed but was unable to report file state, so GC is required
-			conditions = append(conditions, metav1.Condition{
-				Type:               string(operatorv1alpha1.BackupGarbageCollectionRequired),
-				Reason:             string(operatorv1alpha1.BackupReasonFileStateUnknown),
-				Message:            "unable to determine if backup job created files",
-				Status:             metav1.ConditionTrue,
-				LastTransitionTime: transitionTime,
-			})
-		case len(files) > 0:
-			// Job failed and files were created
-			conditions = append(conditions, metav1.Condition{
-				Type:               string(operatorv1alpha1.BackupGarbageCollectionRequired),
-				Reason:             string(operatorv1alpha1.BackupReasonFilesPartiallyCreated),
-				Message:            "backup job created some files before failing",
-				Status:             metav1.ConditionTrue,
-				LastTransitionTime: transitionTime,
-			})
-		default:
-			// Job failed or didn't run, no files created
-			conditions = append(conditions, metav1.Condition{
-				Type:               string(operatorv1alpha1.BackupGarbageCollectionRequired),
-				Reason:             string(operatorv1alpha1.BackupReasonFilesNotCreated),
-				Message:            "backup failed without creating files",
-				Status:             metav1.ConditionFalse,
-				LastTransitionTime: transitionTime,
-			})
-		}
 	default:
 		return nil, fmt.Errorf("invalid finished condition %q", condition)
 	}

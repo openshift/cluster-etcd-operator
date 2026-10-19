@@ -195,7 +195,7 @@ func TestBackupPolicyActiveBackups(t *testing.T) {
 			}))},
 		backups: []*operatorv1alpha1.EtcdBackup{
 			testutils.FakeEtcdBackup("test-backup-completed", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupCompleted()),
-			testutils.FakeEtcdBackup("test-backup-failed", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupFailed()),
+			testutils.FakeEtcdBackup("test-backup-failed", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed)),
 			testutils.FakeEtcdBackup("test-backup-pending", testutils.WithBackupPolicy("test-backup-policy")),
 		},
 		nodes: []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
@@ -225,7 +225,7 @@ func TestBackupPolicyActiveBackupsAllFinished(t *testing.T) {
 			}))},
 		backups: []*operatorv1alpha1.EtcdBackup{
 			testutils.FakeEtcdBackup("test-backup-completed", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupCompleted()),
-			testutils.FakeEtcdBackup("test-backup-failed", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupFailed()),
+			testutils.FakeEtcdBackup("test-backup-failed", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed)),
 		},
 		nodes: []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {

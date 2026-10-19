@@ -376,10 +376,10 @@ func isGarbageCollectionRequired(
 
 	// Skip GC if backup failed gracefully and created no files
 	// If unknown, assume that GC should be run.
-	if backuphelpers.IsBackupFailed(backup) {
+	if len(backup.Status.Files) == 0 {
 		for _, condition := range backup.Status.Conditions {
-			if condition.Type == string(operatorv1alpha1.BackupGarbageCollectionRequired) {
-				if condition.Status == metav1.ConditionFalse {
+			if condition.Type == string(operatorv1alpha1.BackupFailed) {
+				if condition.Status == metav1.ConditionTrue && condition.Reason == string(operatorv1alpha1.BackupReasonSetupFailed) {
 					return storage, false, nil
 				}
 				break

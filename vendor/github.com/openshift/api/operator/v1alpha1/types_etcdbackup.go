@@ -237,47 +237,30 @@ type EtcdBackupFile struct {
 type BackupConditionType string
 
 var (
-	// BackupPending means the backup is ready to start.
-	BackupPending BackupConditionType = "Pending"
 	// BackupPending means the backup job has started.
 	BackupRunning BackupConditionType = "Running"
 	// BackupCompleted means the backup completed successfully.
 	BackupCompleted BackupConditionType = "Completed"
 	// BackupFailed means the backup failed.
 	BackupFailed BackupConditionType = "Failed"
-	// BackupGarbageCollectionRequired indicates whether or not garbage collection is required
-	// on a failed backup to cleanup partially created files.
-	BackupGarbageCollectionRequired BackupConditionType = "GarbageCollectionRequired"
 )
 
 // BackupConditionReason enumerates the Condition reasons associated with BackupConditionTypes
 type BackupConditionReason string
 
 var (
-	// BackupReasonReadyToStart means the backup has been queued to start.
-	BackupReasonReadyToStart BackupConditionReason = "ReadyToStart"
-
 	// BackupReasonJobStarted means the backup job is currently running.
 	BackupReasonJobStarted BackupConditionReason = "JobStarted"
 
 	// BackupReasonJobCompleted means the backup job completed successfully.
 	BackupReasonJobCompleted BackupConditionReason = "JobCompleted"
 
-	// BackupReasonPVCNotFound means the backup failed due to a missing PVC.
-	BackupReasonPVCNotFound BackupConditionReason = "PVCNotFound"
-	// BackupReasonNotNotFound means the backup failed due to a missing node.
-	BackupReasonNodeNotFound BackupConditionReason = "NodeNotFound"
-	// BackupReasonJobFailed means the backup job failed.
+	// BackupReasonSetupFailed means the backup during setup, and no files were created.
+	// Backup may have failed to schedule, failed to validate storage, or any error that occurred before the backup process began.
+	// Additional details on the failure will be provided in the condition message.
+	BackupReasonSetupFailed BackupConditionReason = "SetupFailed"
+	// BackupReasonJobFailed means the backup job failed after the backup process began.
 	BackupReasonJobFailed BackupConditionReason = "JobFailed"
-	// BackupReasonDeleted means the backup was deleted while in progress.
-	BackupReasonDeleted BackupConditionReason = "Deleted"
-
-	// BackupReasonFilesPartiallyCreated means the backup job failed after partially creating some files.
-	BackupReasonFilesPartiallyCreated BackupConditionReason = "FilesPartiallyCreated"
-	// BackupReasonFilesNotCreated means the backup job failed without creating any files.
-	BackupReasonFilesNotCreated BackupConditionReason = "FilesNotCreated"
-	// BackupReasonFileStateUnknown means the backup job failed without indicating if it had created any files.
-	BackupReasonFileStateUnknown BackupConditionReason = "FileStateUnknown"
 )
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

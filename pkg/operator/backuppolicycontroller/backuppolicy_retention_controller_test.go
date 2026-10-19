@@ -239,10 +239,10 @@ func TestBackupPolicyRetentionFailedBackups(t *testing.T) {
 				backup.Spec.FailedBackupsHistoryLimit = new(int32(1))
 			})},
 		backups: []*operatorv1alpha1.EtcdBackup{
-			testutils.FakeEtcdBackup("test-backup-1", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupFailed(), testutils.WithBackupAge(3*time.Hour)),
+			testutils.FakeEtcdBackup("test-backup-1", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed), testutils.WithBackupAge(3*time.Hour)),
 			testutils.FakeEtcdBackup("test-backup-2", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupCompleted(), testutils.WithBackupAge(2*time.Hour)),
-			testutils.FakeEtcdBackup("test-backup-3", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupFailed(), testutils.WithBackupAge(1*time.Hour)),
-			testutils.FakeEtcdBackup("test-backup-4", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupFailed(), testutils.WithBackupAge(0*time.Hour)),
+			testutils.FakeEtcdBackup("test-backup-3", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed), testutils.WithBackupAge(1*time.Hour)),
+			testutils.FakeEtcdBackup("test-backup-4", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed), testutils.WithBackupAge(0*time.Hour)),
 		},
 		validate: requireDeletedBackups("test-backup-1", "test-backup-3")})
 }
@@ -292,7 +292,7 @@ func TestBackupPolicyRetentionIgnoreFailedBackups(t *testing.T) {
 		backups: []*operatorv1alpha1.EtcdBackup{
 			testutils.FakeEtcdBackup("test-backup-1", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupCompleted(), testutils.WithBackupAge(2*time.Hour)),
 			testutils.FakeEtcdBackup("test-backup-2", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupCompleted(), testutils.WithBackupAge(1*time.Hour)),
-			testutils.FakeEtcdBackup("test-backup-3", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupFailed(), testutils.WithBackupAge(0*time.Hour)),
+			testutils.FakeEtcdBackup("test-backup-3", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed), testutils.WithBackupAge(0*time.Hour)),
 		},
 		validate: requireDeletedBackups()})
 }
