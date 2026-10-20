@@ -10,10 +10,51 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/yaml"
 )
+
+func TestArbiterNodeEnvVarsRejectUnknownRoleFromMergedLister(test *testing.T) {
+	for _, scenario := range []struct {
+		name   string
+		labels map[string]string
+	}{
+		{name: "nil labels"},
+		{name: "empty labels", labels: map[string]string{}},
+		{name: "worker only", labels: map[string]string{"node-role.kubernetes.io/worker": ""}},
+		{name: "noncanonical arbiter", labels: map[string]string{"arbiter": "true"}},
+	} {
+		test.Run(scenario.name, func(test *testing.T) {
+			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+			controlPlane := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "master-0", Labels: map[string]string{"node-role.kubernetes.io/master": ""}}}
+			unknown := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "unknown-node", Labels: scenario.labels}}
+			require.NoError(test, indexer.Add(controlPlane))
+			require.NoError(test, indexer.Add(unknown))
+			masterSelector, err := labels.Parse("node-role.kubernetes.io/master")
+			require.NoError(test, err)
+			arbiterSelector, err := labels.Parse("node-role.kubernetes.io/arbiter")
+			require.NoError(test, err)
+			lister := ceohelpers.NewMultiSelectorNodeLister(indexer, masterSelector, arbiterSelector)
+			selected, err := lister.List(labels.Everything())
+			require.NoError(test, err)
+			require.Equal(test, []*corev1.Node{controlPlane}, selected)
+			indexed, err := lister.Get(unknown.Name)
+			require.NoError(test, err)
+			require.Equal(test, unknown, indexed)
+			envVars, err := getArbiterNodeEnvVars(envVarContext{
+				status: operatorv1.StaticPodOperatorStatus{NodeStatuses: []operatorv1.NodeStatus{
+					{NodeName: controlPlane.Name},
+					{NodeName: unknown.Name},
+				}},
+				masterNodeLister: lister,
+			})
+			require.ErrorContains(test, err, `node "unknown-node" has no recognized arbiter or control-plane role label`)
+			require.Nil(test, envVars)
+		})
+	}
+}
 
 func TestGetArbiterNodeEnvVars(test *testing.T) {
 	scenarios := []struct {
@@ -47,18 +88,18 @@ func TestGetArbiterNodeEnvVars(test *testing.T) {
 			expectedEnv: map[string]string{"NODE_arbiter_0_example_com_IS_ARBITER": "true"},
 		},
 		{
-			name:        "nil labels",
-			expectedEnv: map[string]string{"NODE_node_0_IS_ARBITER": "false"},
+			name:          "nil labels",
+			expectedError: "node \"node-0\" has no recognized arbiter or control-plane role label",
 		},
 		{
-			name:        "empty labels",
-			labels:      map[string]string{},
-			expectedEnv: map[string]string{"NODE_node_0_IS_ARBITER": "false"},
+			name:          "empty labels",
+			labels:        map[string]string{},
+			expectedError: "node \"node-0\" has no recognized arbiter or control-plane role label",
 		},
 		{
-			name:        "noncanonical label",
-			labels:      map[string]string{"arbiter": "true"},
-			expectedEnv: map[string]string{"NODE_node_0_IS_ARBITER": "false"},
+			name:          "noncanonical label",
+			labels:        map[string]string{"arbiter": "true"},
+			expectedError: "node \"node-0\" has no recognized arbiter or control-plane role label",
 		},
 		{
 			name:        "master node",
@@ -68,6 +109,16 @@ func TestGetArbiterNodeEnvVars(test *testing.T) {
 		{
 			name:        "control-plane node",
 			labels:      map[string]string{"node-role.kubernetes.io/control-plane": ""},
+			expectedEnv: map[string]string{"NODE_node_0_IS_ARBITER": "false"},
+		},
+		{
+			name:        "master label value does not change presence",
+			labels:      map[string]string{"node-role.kubernetes.io/master": "false"},
+			expectedEnv: map[string]string{"NODE_node_0_IS_ARBITER": "false"},
+		},
+		{
+			name:        "control-plane label value does not change presence",
+			labels:      map[string]string{"node-role.kubernetes.io/control-plane": "false"},
 			expectedEnv: map[string]string{"NODE_node_0_IS_ARBITER": "false"},
 		},
 		{

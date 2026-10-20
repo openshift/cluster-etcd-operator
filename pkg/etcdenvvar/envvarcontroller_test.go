@@ -198,9 +198,9 @@ func TestEnvVarController(t *testing.T) {
 					Status: configv1.InfrastructureStatus{
 						ControlPlaneTopology: configv1.HighlyAvailableTopologyMode},
 				},
-				u.FakeNode("master-0", u.WithNodeInternalIP("192.168.2.0")),
-				u.FakeNode("master-1", u.WithNodeInternalIP("192.168.2.1")),
-				u.FakeNode("master-2", u.WithNodeInternalIP("192.168.2.2")),
+				u.FakeNode("master-0", u.WithMasterLabel(), u.WithNodeInternalIP("192.168.2.0")),
+				u.FakeNode("master-1", u.WithMasterLabel(), u.WithNodeInternalIP("192.168.2.1")),
+				u.FakeNode("master-2", u.WithMasterLabel(), u.WithNodeInternalIP("192.168.2.2")),
 				u.EndpointsConfigMap(
 					u.WithEndpoint(0, "https://192.168.2.0:2379"),
 					u.WithEndpoint(1, "https://192.168.2.1:2379"),
@@ -318,21 +318,34 @@ func TestEnvVarController(t *testing.T) {
 				}
 				publishedEnv := controller.GetEnvVars()
 				notificationCount := len(notifications)
-				for _, invalidRole := range []string{"conflicting labels", "missing node"} {
+				for _, invalidRole := range []string{"conflicting labels", "nil labels", "empty labels", "worker only", "missing node"} {
 					t.Run(invalidRole, func(test *testing.T) {
 						node, err := controller.masterNodeLister.Get("master-2")
 						require.NoError(test, err)
-						if invalidRole == "conflicting labels" {
-							conflictingNode := node.DeepCopy()
-							conflictingNode.Labels = map[string]string{
+						invalidNode := node.DeepCopy()
+						switch invalidRole {
+						case "conflicting labels":
+							invalidNode.Labels = map[string]string{
 								"node-role.kubernetes.io/arbiter": "",
 								"node-role.kubernetes.io/master":  "",
 							}
-							require.NoError(test, indexer.Update(conflictingNode))
-						} else {
-							require.NoError(test, indexer.Delete(node))
+						case "nil labels":
+							invalidNode.Labels = nil
+						case "empty labels":
+							invalidNode.Labels = map[string]string{}
+						case "worker only":
+							invalidNode.Labels = map[string]string{"node-role.kubernetes.io/worker": ""}
 						}
-						require.Error(test, controller.sync(context.Background()))
+						if invalidRole == "missing node" {
+							require.NoError(test, indexer.Delete(node))
+						} else {
+							require.NoError(test, indexer.Update(invalidNode))
+						}
+						err = controller.sync(context.Background())
+						require.Error(test, err)
+						if invalidRole == "nil labels" || invalidRole == "empty labels" || invalidRole == "worker only" {
+							require.ErrorContains(test, err, `node "master-2" has no recognized arbiter or control-plane role label`)
+						}
 						require.Equal(test, publishedEnv, controller.GetEnvVars())
 						require.Len(test, notifications, notificationCount)
 					})

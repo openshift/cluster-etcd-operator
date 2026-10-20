@@ -290,6 +290,9 @@ func getArbiterNodeEnvVars(envVarContext envVarContext) (map[string]string, erro
 		if isArbiter && (isMaster || isControlPlane) {
 			return nil, fmt.Errorf("node %q has conflicting arbiter and control-plane role labels", node.Name)
 		}
+		if !isArbiter && !isMaster && !isControlPlane {
+			return nil, fmt.Errorf("node %q has no recognized arbiter or control-plane role label", node.Name)
+		}
 		ret[fmt.Sprintf("NODE_%s_IS_ARBITER", envVarSafe(node.Name))] = strconv.FormatBool(isArbiter)
 	}
 	return ret, nil
