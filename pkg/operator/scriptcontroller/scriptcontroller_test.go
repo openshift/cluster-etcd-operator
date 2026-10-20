@@ -64,6 +64,14 @@ func TestManageScriptConfigMap(t *testing.T) {
 			expectedFencingScript:    false,
 		},
 		{
+			name:                     "Arbiter topology retains shared backup script",
+			topology:                 configv1.HighlyAvailableArbiterMode,
+			expectedRestoreContent:   "wait_for_containers_to_stop",
+			expectedDisableContent:   "mv_static_pods",
+			unexpectedRestoreContent: "crm_attribute",
+			unexpectedDisableContent: "pcs resource disable etcd",
+		},
+		{
 			name:                     "SingleReplica topology deploys standard scripts",
 			topology:                 configv1.SingleReplicaTopologyMode,
 			expectedRestoreContent:   "wait_for_containers_to_stop",

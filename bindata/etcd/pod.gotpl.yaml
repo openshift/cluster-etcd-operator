@@ -74,9 +74,28 @@ spec:
           #!/bin/sh
           set -euo pipefail
 
-          rm -f $(grep -l '^### Created by cluster-etcd-operator' /usr/local/bin/*)
-          cp -p /etc/kubernetes/static-pod-certs/configmaps/etcd-scripts/*.sh /usr/local/bin
+          node_is_arbiter="${NODE_NODE_ENVVAR_NAME_IS_ARBITER:-}"
+          case "${node_is_arbiter}" in
+            true|false) ;;
+            *) echo "Invalid or missing arbiter role for this node" >&2; exit 1 ;;
+          esac
 
+          rm -f $(grep -l '^### Created by cluster-etcd-operator' /usr/local/bin/*)
+          if [ "${node_is_arbiter}" = "true" ]; then
+            rm -f /usr/local/bin/cluster-backup.sh
+          fi
+          for script in /etc/kubernetes/static-pod-certs/configmaps/etcd-scripts/*.sh; do
+            if [ "${node_is_arbiter}" = "true" ] && [ "${script##*/}" = "cluster-backup.sh" ]; then
+              continue
+            fi
+            cp -p "${script}" /usr/local/bin
+          done
+
+      env:
+      {{ range $i, $k := .EnvVars -}}
+      - name: {{ $k.Name | quote }}
+        value: {{ $k.Value | quote }}
+      {{ end -}}
       resources:
         requests:
           memory: 60Mi

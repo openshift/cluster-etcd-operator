@@ -74,6 +74,7 @@ var envVarFns = []envVarFunc{
 	getEtcdURLHost,
 	getFixedEtcdEnvVars,
 	getEtcdName,
+	getArbiterNodeEnvVars,
 	getAllEtcdEndpoints,
 	getEtcdctlEnvVars,
 	getHardwareSpeedValues,
@@ -271,6 +272,27 @@ func getEtcdDBSize(envVarContext envVarContext) (map[string]string, error) {
 
 func envVarSafe(nodeName string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(nodeName, "-", "_"), ".", "_")
+}
+
+func getArbiterNodeEnvVars(envVarContext envVarContext) (map[string]string, error) {
+	if len(envVarContext.status.NodeStatuses) == 0 {
+		return nil, fmt.Errorf("empty NodeStatuses, can't generate environment for getArbiterNodeEnvVars")
+	}
+	ret := map[string]string{}
+	for _, nodeStatus := range envVarContext.status.NodeStatuses {
+		node, err := envVarContext.masterNodeLister.Get(nodeStatus.NodeName)
+		if err != nil {
+			return nil, fmt.Errorf("getting arbiter role for node %q: %w", nodeStatus.NodeName, err)
+		}
+		_, isArbiter := node.Labels["node-role.kubernetes.io/arbiter"]
+		_, isMaster := node.Labels["node-role.kubernetes.io/master"]
+		_, isControlPlane := node.Labels["node-role.kubernetes.io/control-plane"]
+		if isArbiter && (isMaster || isControlPlane) {
+			return nil, fmt.Errorf("node %q has conflicting arbiter and control-plane role labels", node.Name)
+		}
+		ret[fmt.Sprintf("NODE_%s_IS_ARBITER", envVarSafe(node.Name))] = strconv.FormatBool(isArbiter)
+	}
+	return ret, nil
 }
 
 func getUnsupportedArch(_ envVarContext) (map[string]string, error) {

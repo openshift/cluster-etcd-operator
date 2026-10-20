@@ -12,8 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const controlPlaneBackupGuidance = "Run this script on a control-plane node with a running kube-apiserver."
-
 var clusterBackupResources = []string{"kube-apiserver", "kube-controller-manager", "kube-scheduler", "etcd"}
 
 type clusterBackupFixture struct {
@@ -113,9 +111,7 @@ func TestClusterBackupMissingManifest(test *testing.T) {
 				diagnostic := fmt.Sprintf("error finding manifests for the %s pod. please check if it is running.\n", resource)
 				fixture.requireFailure(test, output, err, diagnostic)
 				if resource == "kube-apiserver" {
-					require.Equal(test, diagnostic+controlPlaneBackupGuidance+"\n", output)
-				} else {
-					require.NotContains(test, output, controlPlaneBackupGuidance)
+					require.Equal(test, diagnostic, output)
 				}
 			})
 		}
@@ -131,7 +127,6 @@ func TestClusterBackupMissingResourceReference(test *testing.T) {
 			output, err := fixture.run(test)
 			fixture.requireFailure(test, output, err,
 				fmt.Sprintf("error finding static-pod-resources for the %s pod. please check if it is running.\n", resource))
-			require.NotContains(test, output, controlPlaneBackupGuidance)
 		})
 	}
 }
@@ -143,7 +138,6 @@ func TestClusterBackupArchive(test *testing.T) {
 			fixture.forced = forced
 			output, err := fixture.run(test)
 			require.NoError(test, err, output)
-			require.NotContains(test, output, controlPlaneBackupGuidance)
 			archiveInfo, err := os.Stat(fixture.archive)
 			require.NoError(test, err)
 			require.Equal(test, os.FileMode(0600), archiveInfo.Mode().Perm())
@@ -196,7 +190,6 @@ func TestClusterBackupOperatorChecks(test *testing.T) {
 			}
 			output, err := fixture.run(test)
 			fixture.requireFailure(test, output, err, testCase.diagnostic+"\n")
-			require.NotContains(test, output, controlPlaneBackupGuidance)
 			fixture.forced = true
 			output, err = fixture.run(test)
 			require.NoError(test, err, output)
