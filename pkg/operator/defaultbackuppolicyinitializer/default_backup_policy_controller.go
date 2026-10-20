@@ -25,12 +25,12 @@ const (
 	// the policy still exists or must continue to be reconciled.
 	DefaultBackupPolicyInitializedCondition = "DefaultBackupPolicyInitialized"
 
-	defaultBackupPolicyCreatedReason  = "DefaultPolicyCreated"
-	existingDefaultBackupPolicyReason = "ExistingDefaultPolicyDetected"
-	existingBackupPolicyReason        = "ExistingPolicyDetected"
-	defaultPolicyRestoredReason       = "DefaultPolicyRestored"
-	defaultBackupPolicyManifestAsset  = "etcd/default-backup-policy.yaml"
-	defaultPolicyName                 = "default"
+	defaultBackupPolicyCreatedReason              = "DefaultPolicyCreated"
+	defaultBackupPolicyInitializationFailedReason = "InitializationFailed"
+	existingDefaultBackupPolicyReason             = "ExistingDefaultPolicyDetected"
+	defaultPolicyRestoredReason                   = "DefaultPolicyRestored"
+	defaultBackupPolicyManifestAsset              = "etcd/default-backup-policy.yaml"
+	defaultPolicyName                             = "default"
 )
 
 type defaultBackupPolicyInitController struct {
@@ -90,16 +90,21 @@ func (c *defaultBackupPolicyInitController) initialize(ctx context.Context) erro
 
 	switch {
 	case condition == nil:
-		reason, err = c.handleFirstInitialization(ctx)
+		reason, err = c.ensureDefaultBackupPolicy(ctx)
 	case condition.Status == operatorv1.ConditionTrue:
 		return nil
 	case condition.Status == operatorv1.ConditionFalse:
-		reason, err = c.handleReset(ctx)
+		reason, err = c.ensureDefaultBackupPolicy(ctx)
 	default:
 		return fmt.Errorf("unexpected initialization condition status: %s", condition.Status)
 	}
 
 	if err != nil {
+		// If condition is nil what is given to the function recordInitializationFailure?
+		errRecordingFailure := c.recordInitilaizationFailure(ctx, err)
+		if errRecordingFailure != nil {
+			return errRecordingFailure
+		}
 		return err
 	}
 
@@ -116,35 +121,31 @@ func (c *defaultBackupPolicyInitController) initialize(ctx context.Context) erro
 	return nil
 }
 
-func (c *defaultBackupPolicyInitController) handleFirstInitialization(ctx context.Context) (string, error) {
-	// List all the exisiting backup policies
-	policies, err := c.backupPolicyClient.List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return "", fmt.Errorf("failed to list EtcdBackupPolicies: %w", err)
-	}
-
-	if len(policies.Items) > 0 {
-		for _, policy := range policies.Items {
-			if policy.Name == defaultPolicyName {
-				// Found default policy with marker absent, set marker to TRUE
-				return existingDefaultBackupPolicyReason, nil
+func (c *defaultBackupPolicyInitController) recordInitilaizationFailure(ctx context.Context, initErr error) error {
+	_, _, err := v1helpers.UpdateStatus(
+		ctx, c.operatorClient,
+		func(status *operatorv1.OperatorStatus) error {
+			if v1helpers.IsOperatorConditionTrue(
+				status.Conditions,
+				DefaultBackupPolicyInitializedCondition,
+			) {
+				return nil
 			}
-		}
-		// No default backup policy found
-		return existingBackupPolicyReason, nil
-	}
 
-	// No policy found
-	err = c.createDefaultBackupPolicy(ctx)
+			v1helpers.SetOperatorCondition(&status.Conditions, operatorv1.OperatorCondition{
+				Type: DefaultBackupPolicyInitializedCondition,
+				Status: operatorv1.ConditionFalse,
+				Reason: defaultBackupPolicyInitializationFailedReason,
+				Message: initErr.Error(),
+			})
+			return nil
+		})
+	
+	return err
 
-	if err != nil {
-		return "", err
-	}
-
-	return defaultBackupPolicyCreatedReason, nil
 }
 
-func (c *defaultBackupPolicyInitController) handleReset(ctx context.Context) (string, error) {
+func (c *defaultBackupPolicyInitController) ensureDefaultBackupPolicy(ctx context.Context) (string, error) {
 	defaultPolicy, err := c.backupPolicyClient.Get(ctx, defaultPolicyName, metav1.GetOptions{})
 
 	if err != nil {
@@ -162,7 +163,6 @@ func (c *defaultBackupPolicyInitController) handleReset(ctx context.Context) (st
 		return defaultBackupPolicyCreatedReason, nil
 	}
 
-	// Found default policy with marker FALSE to reset
 	err = c.resetDefaultBackupPolicy(ctx, defaultPolicy)
 
 	if err != nil {
