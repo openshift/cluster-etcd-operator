@@ -91,9 +91,11 @@ export ETCD_IMAGE=fixture-image
 	backupFixtureWrite(test, fixture.kubeconfig(), "", 0600)
 	stubs := map[string]string{
 		"oc": `if [ "$1" = --kubeconfig=/dev/null ]; then
-  [ "$2" = --server=https://127.0.0.1:1 ] && [ "$3 $4 $5 $6 $8" = 'set env --local -f -o' ] || exit 8
+  [ "$#" -eq 9 ] && [ "$2" = --server=https://127.0.0.1:1 ] && [ "$3 $4 $5 $6 $8" = 'set env --local -f -o' ] &&
+    [ "${9}" = 'jsonpath={.apiVersion}{"\n"}{.kind}{"\n"}{range .spec.volumes[*]}{.hostPath.path}{"\n"}{end}' ] || exit 8
   if [ "${OC_MANIFEST_FAILURE:-}" = true ] && [[ "$7" = *kube-apiserver-pod.yaml ]]; then exit 2; fi
   if [ -n "${REAL_OC:-}" ]; then exec "$REAL_OC" "$@"; fi
+  if [ "${OC_EMPTY_OUTPUT:-}" = true ]; then exit 0; fi
   CLUSTER_BACKUP_MANIFEST_DECODER=1 GORACE=atexit_sleep_ms=0 exec "$FIXTURE_TEST_BINARY" -test.run='^TestClusterBackupManifestDecoderStub$' -- "$7"
 fi
 printf '%s\n' "$3" >> "$FIXTURE_ROOT/operator-calls"
@@ -297,10 +299,16 @@ func TestClusterBackupPartialRequiresHardLinks(test *testing.T) {
 
 func TestClusterBackupFullPublicationFailure(test *testing.T) {
 	test.Parallel()
-	for _, name := range []string{"static_kuberesources_2026-01-01_000000.tar.gz", "snapshot_2026-01-01_000000.db"} {
-		test.Run(name, func(test *testing.T) {
+	for _, scenario := range []struct {
+		name     string
+		filename string
+	}{
+		{name: "archive", filename: "static_kuberesources_2026-01-01_000000.tar.gz"},
+		{name: "snapshot", filename: "snapshot_2026-01-01_000000.db"},
+	} {
+		test.Run(scenario.name, func(test *testing.T) {
 			fixture := newClusterBackupFixture(test)
-			existing := filepath.Join(fixture.out, name)
+			existing := filepath.Join(fixture.out, scenario.filename)
 			require.NoError(test, os.MkdirAll(existing, 0700))
 			output, err := fixture.run(test, fixture.out)
 			require.Error(test, err, output)
@@ -599,23 +607,74 @@ func TestClusterBackupOfflineOCParsing(test *testing.T) {
 	if err != nil {
 		test.Skip("optional offline smoke test requires oc; deterministic decoder fixtures still run")
 	}
-	for _, malformed := range []bool{false, true} {
-		test.Run(fmt.Sprintf("malformed=%t", malformed), func(test *testing.T) {
+	test.Logf("real parser executable: %s", realOC)
+	for _, scenario := range []struct {
+		name      string
+		populated bool
+		malformed bool
+	}{
+		{name: "unchanged Pod"},
+		{name: "unchanged Pod with environment and Secret reference", populated: true},
+		{name: "malformed Pod", malformed: true},
+	} {
+		test.Run(scenario.name, func(test *testing.T) {
 			fixture := newClusterBackupFixture(test)
 			fixture.removeOptional(test)
 			fixture.env = append(fixture.env, "REAL_OC="+realOC)
-			if malformed {
+			manifests := []string{fixture.manifest("etcd"), filepath.Join(fixture.root, "static-pod-resources/etcd-pod-1/etcd-pod.yaml")}
+			if scenario.populated {
+				manifest, err := os.ReadFile(manifests[0])
+				require.NoError(test, err)
+				populated := strings.Replace(string(manifest), "    image: fixture\n", `    image: fixture
+    env:
+    - name: EXISTING
+      value: unchanged
+    - name: FROM_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: never-resolved
+          key: fixture
+`, 1)
+				for _, path := range manifests {
+					backupFixtureWrite(test, path, populated, 0600)
+				}
+			}
+			if scenario.malformed {
 				backupFixtureWrite(test, fixture.manifest("etcd"), "# "+fixture.root+"/static-pod-resources/etcd-pod-1\n", 0600)
 			}
+			originals := map[string][]byte{}
+			for _, path := range manifests {
+				original, err := os.ReadFile(path)
+				require.NoError(test, err)
+				originals[path] = original
+			}
 			output, err := fixture.run(test, "--available-static-resources", "--force", fixture.out)
-			if malformed {
+			if scenario.malformed {
 				require.Error(test, err, output)
 				fixture.requireNoArtifacts(test)
 			} else {
 				require.NoError(test, err, output)
+				require.Contains(test, output, "PARTIAL snapshot and available local resources saved")
+			}
+			for path, original := range originals {
+				unchanged, err := os.ReadFile(path)
+				require.NoError(test, err)
+				require.Equal(test, original, unchanged)
 			}
 		})
 	}
+}
+
+func TestClusterBackupRejectsEmptyRendererOutput(test *testing.T) {
+	test.Parallel()
+	fixture := newClusterBackupFixture(test)
+	fixture.env = append(fixture.env, "OC_EMPTY_OUTPUT=true")
+	output, err := fixture.run(test, "--available-static-resources", "--force", fixture.out)
+	require.Error(test, err, output)
+	require.Contains(test, output, "Invalid Pod manifest or missing hostPath volumes")
+	require.NotContains(test, output, "saved to")
+	require.NoFileExists(test, filepath.Join(fixture.root, "snapshot-calls"))
+	fixture.requireNoArtifacts(test)
 }
 
 func TestClusterBackupPublicationFailure(test *testing.T) {
