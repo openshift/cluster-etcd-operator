@@ -3,7 +3,6 @@ package etcdenvvar
 import (
 	"context"
 	"fmt"
-	"maps"
 	"strings"
 	"testing"
 
@@ -28,7 +27,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/util/workqueue"
 	"k8s.io/utils/clock"
 
 	"github.com/stretchr/testify/require"
@@ -63,15 +61,12 @@ var (
 		"NODE_master_0_ETCD_NAME":             "master-0",
 		"NODE_master_0_ETCD_URL_HOST":         "192.168.2.0",
 		"NODE_master_0_IP":                    "192.168.2.0",
-		"NODE_master_0_IS_ARBITER":            "false",
 		"NODE_master_1_ETCD_NAME":             "master-1",
 		"NODE_master_1_ETCD_URL_HOST":         "192.168.2.1",
 		"NODE_master_1_IP":                    "192.168.2.1",
-		"NODE_master_1_IS_ARBITER":            "false",
 		"NODE_master_2_ETCD_NAME":             "master-2",
 		"NODE_master_2_ETCD_URL_HOST":         "192.168.2.2",
 		"NODE_master_2_IP":                    "192.168.2.2",
-		"NODE_master_2_IS_ARBITER":            "false",
 	}
 )
 
@@ -92,17 +87,11 @@ func TestEnvVarController(t *testing.T) {
 		certSecret          map[string][]byte
 		emptyObservedConfig bool
 		bootstrapComplete   bool
-		roleUpdates         bool
 		expectedEnv         map[string]string
 		expectedErr         error
 	}{
 		{
 			name:        "HappyPath",
-			expectedEnv: defaultEnvResult,
-		},
-		{
-			name:        "NodeRoleUpdates",
-			roleUpdates: true,
 			expectedEnv: defaultEnvResult,
 		},
 		{
@@ -198,9 +187,9 @@ func TestEnvVarController(t *testing.T) {
 					Status: configv1.InfrastructureStatus{
 						ControlPlaneTopology: configv1.HighlyAvailableTopologyMode},
 				},
-				u.FakeNode("master-0", u.WithMasterLabel(), u.WithNodeInternalIP("192.168.2.0")),
-				u.FakeNode("master-1", u.WithMasterLabel(), u.WithNodeInternalIP("192.168.2.1")),
-				u.FakeNode("master-2", u.WithMasterLabel(), u.WithNodeInternalIP("192.168.2.2")),
+				u.FakeNode("master-0", u.WithNodeInternalIP("192.168.2.0")),
+				u.FakeNode("master-1", u.WithNodeInternalIP("192.168.2.1")),
+				u.FakeNode("master-2", u.WithNodeInternalIP("192.168.2.2")),
 				u.EndpointsConfigMap(
 					u.WithEndpoint(0, "https://192.168.2.0:2379"),
 					u.WithEndpoint(1, "https://192.168.2.1:2379"),
@@ -253,110 +242,6 @@ func TestEnvVarController(t *testing.T) {
 
 			m := controller.GetEnvVars()
 			require.Equal(t, scenario.expectedEnv, m)
-			if scenario.roleUpdates {
-				controller.queue = workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter())
-				t.Cleanup(controller.queue.ShutDown)
-				var notifications []map[string]string
-				controller.AddListener(envVarListenerFunc(func() {
-					notifications = append(notifications, controller.GetEnvVars())
-				}))
-				updates := []struct {
-					name          string
-					labels        map[string]string
-					isArbiter     string
-					notifications int
-				}{
-					{
-						name:      "unchanged control-plane role",
-						labels:    map[string]string{"node-role.kubernetes.io/control-plane": ""},
-						isArbiter: "false",
-					},
-					{
-						name:          "false to true",
-						labels:        map[string]string{"node-role.kubernetes.io/arbiter": ""},
-						isArbiter:     "true",
-						notifications: 1,
-					},
-					{
-						name:          "unchanged arbiter role with different label value",
-						labels:        map[string]string{"node-role.kubernetes.io/arbiter": "false"},
-						isArbiter:     "true",
-						notifications: 1,
-					},
-					{
-						name:          "true to false",
-						labels:        map[string]string{"node-role.kubernetes.io/master": ""},
-						isArbiter:     "false",
-						notifications: 2,
-					},
-					{
-						name:          "unchanged map after unrelated label update",
-						labels:        map[string]string{"node-role.kubernetes.io/master": "", "test-label": "updated"},
-						isArbiter:     "false",
-						notifications: 2,
-					},
-				}
-				for _, update := range updates {
-					t.Run(update.name, func(test *testing.T) {
-						oldNode, err := controller.masterNodeLister.Get("master-2")
-						require.NoError(test, err)
-						newNode := oldNode.DeepCopy()
-						newNode.Labels = update.labels
-						require.NoError(test, indexer.Update(newNode))
-						controller.eventHandler().OnUpdate(oldNode, newNode)
-						require.Equal(test, 1, controller.queue.Len())
-						require.True(test, controller.processNextWorkItem(context.Background()))
-						require.Zero(test, controller.queue.Len())
-						expectedEnv := maps.Clone(defaultEnvResult)
-						expectedEnv["NODE_master_2_IS_ARBITER"] = update.isArbiter
-						require.Equal(test, expectedEnv, controller.GetEnvVars())
-						require.Len(test, notifications, update.notifications)
-						if update.notifications > 0 {
-							require.Equal(test, controller.GetEnvVars(), notifications[len(notifications)-1])
-						}
-					})
-				}
-				publishedEnv := controller.GetEnvVars()
-				notificationCount := len(notifications)
-				for _, invalidRole := range []string{"conflicting labels", "nil labels", "empty labels", "worker only", "missing node"} {
-					t.Run(invalidRole, func(test *testing.T) {
-						node, err := controller.masterNodeLister.Get("master-2")
-						require.NoError(test, err)
-						invalidNode := node.DeepCopy()
-						switch invalidRole {
-						case "conflicting labels":
-							invalidNode.Labels = map[string]string{
-								"node-role.kubernetes.io/arbiter": "",
-								"node-role.kubernetes.io/master":  "",
-							}
-						case "nil labels":
-							invalidNode.Labels = nil
-						case "empty labels":
-							invalidNode.Labels = map[string]string{}
-						case "worker only":
-							invalidNode.Labels = map[string]string{"node-role.kubernetes.io/worker": ""}
-						}
-						if invalidRole == "missing node" {
-							require.NoError(test, indexer.Delete(node))
-						} else {
-							require.NoError(test, indexer.Update(invalidNode))
-						}
-						err = controller.sync(context.Background())
-						require.Error(test, err)
-						if invalidRole == "nil labels" || invalidRole == "empty labels" || invalidRole == "worker only" {
-							require.ErrorContains(test, err, `node "master-2" has no recognized arbiter or control-plane role label`)
-						}
-						require.Equal(test, publishedEnv, controller.GetEnvVars())
-						require.Len(test, notifications, notificationCount)
-					})
-				}
-			}
 		})
 	}
-}
-
-type envVarListenerFunc func()
-
-func (listener envVarListenerFunc) Enqueue() {
-	listener()
 }

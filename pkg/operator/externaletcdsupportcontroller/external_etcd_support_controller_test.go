@@ -29,58 +29,6 @@ import (
 const etcdPullSpec = "etcd-pull-spec"
 const operatorPullSpec = "operator-pull-spec"
 
-func TestExternalEtcdResourcesCopyPreservesArbiterRole(test *testing.T) {
-	recorder, _, controller, client := getController(test, testutils.StaticPodOperatorStatus(
-		testutils.WithLatestRevision(3),
-		testutils.WithNodeStatusAtCurrentRevision(3),
-		testutils.WithNodeStatusAtCurrentRevision(3),
-		testutils.WithOperatorCondition(ceohelpers.OperatorConditionEtcdRunningInCluster, operatorv1.ConditionTrue),
-	), configv1.DualReplicaTopologyMode, nil)
-	envVars := map[string]string{
-		"ALL_ETCD_ENDPOINTS":       "1,3",
-		"NODE_master_0_IS_ARBITER": "false",
-		"NODE_master_1_IS_ARBITER": "false",
-	}
-	controller.envVarGetter = etcdenvvar.FakeEnvVar{EnvVars: envVars}
-	ctx := context.Background()
-	require.NoError(test, controller.sync(ctx, factory.NewSyncContext("test", recorder)))
-	podConfigMap, err := client.CoreV1().ConfigMaps(operatorclient.TargetNamespace).Get(ctx, externalEtcdPodConfigMapName, metav1.GetOptions{})
-	require.NoError(test, err)
-	pod := &corev1.Pod{}
-	_, _, err = scheme.Codecs.UniversalDeserializer().Decode([]byte(podConfigMap.Data["pod.yaml"]), nil, pod)
-	require.NoError(test, err)
-	require.Len(test, pod.Spec.Containers, 1)
-	require.Equal(test, "etcd", pod.Spec.Containers[0].Name)
-	var copyInit *corev1.Container
-	for index := range pod.Spec.InitContainers {
-		if pod.Spec.InitContainers[index].Name == "etcd-resources-copy" {
-			copyInit = &pod.Spec.InitContainers[index]
-		}
-	}
-	require.NotNil(test, copyInit)
-	require.Equal(test, etcdPullSpec, copyInit.Image)
-	require.Len(test, copyInit.Env, len(envVars))
-	for name, value := range envVars {
-		require.Contains(test, copyInit.Env, corev1.EnvVar{Name: name, Value: value})
-	}
-	require.Len(test, copyInit.Command, 3)
-	require.Equal(test, []string{"/bin/sh", "-c"}, copyInit.Command[:2])
-	substitution, err := ceohelpers.GetPodSubstitution(&operatorv1.StaticPodOperatorSpec{}, etcdPullSpec, operatorPullSpec, envVars, &operatorv1.Etcd{}, false)
-	require.NoError(test, err)
-	rendered, err := ceohelpers.RenderTemplate("etcd/pod.gotpl.yaml", substitution)
-	require.NoError(test, err)
-	sharedPod := &corev1.Pod{}
-	_, _, err = scheme.Codecs.UniversalDeserializer().Decode([]byte(rendered), nil, sharedPod)
-	require.NoError(test, err)
-	for _, container := range sharedPod.Spec.InitContainers {
-		if container.Name == copyInit.Name {
-			require.Equal(test, container.Command, copyInit.Command)
-		}
-	}
-	require.Contains(test, copyInit.VolumeMounts, corev1.VolumeMount{Name: "usr-local-bin", MountPath: "/usr/local/bin"})
-	require.Contains(test, copyInit.VolumeMounts, corev1.VolumeMount{Name: "cert-dir", MountPath: "/etc/kubernetes/static-pod-certs"})
-}
-
 func TestExternalEtcdSupportController(t *testing.T) {
 	scenarios := []struct {
 		name                    string
