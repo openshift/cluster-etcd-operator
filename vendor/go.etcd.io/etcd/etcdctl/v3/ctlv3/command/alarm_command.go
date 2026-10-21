@@ -26,8 +26,10 @@ import (
 // NewAlarmCommand returns the cobra command for "alarm".
 func NewAlarmCommand() *cobra.Command {
 	ac := &cobra.Command{
-		Use:   "alarm <subcommand>",
-		Short: "Alarm related commands",
+		Use:     "alarm <subcommand>",
+		Short:   "Alarm related commands. Use `etcdctl alarm --help` to see subcommands",
+		Long:    "Alarm related commands",
+		GroupID: groupClusterMaintenanceID,
 	}
 
 	ac.AddCommand(NewAlarmDisarmCommand())
@@ -56,7 +58,7 @@ func alarmDisarmCommandFunc(cmd *cobra.Command, args []string) {
 	if err != nil {
 		cobrautl.ExitWithError(cobrautl.ExitError, err)
 	}
-	display.Alarm(*resp)
+	display.Alarm(resp)
 }
 
 func NewAlarmListCommand() *cobra.Command {
@@ -79,5 +81,5 @@ func alarmListCommandFunc(cmd *cobra.Command, args []string) {
 	if err != nil {
 		cobrautl.ExitWithError(cobrautl.ExitError, err)
 	}
-	display.Alarm(*resp)
+	display.Alarm(resp)
 }
