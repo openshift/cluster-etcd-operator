@@ -127,19 +127,22 @@ func TestSyncLoopHappyPath(t *testing.T) {
 	})
 
 	t.Run("pvc", func(t *testing.T) {
-		backup := testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPending("test-node"))
+		// PVC backups progress without a preassigned node; the scheduler places the job.
+		backup := testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPending(""))
 		runBackupControllerTest(t, testCaseBackupController{
 			backups: []*operatorv1alpha1.EtcdBackup{backup},
-			nodes:   []*corev1.Node{testutils.FakeNode("test-node")},
 			pvcs:    []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				job := requireBackupJobCreated(t, client, backup)
+				require.Empty(t, backup.Status.NodeName)
+				require.Empty(t, job.Spec.Template.Spec.NodeName)
 
 				action, ok := testutils.GetAction[k8stesting.PatchActionImpl](operatorFake.Actions())
 				require.True(t, ok, "Expected patch action")
 				updatedBackup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), action.Name, metav1.GetOptions{})
 				require.NoError(t, err)
 				require.Equal(t, job.Name, updatedBackup.Status.JobName)
+				requireBackupJob(t, updatedBackup, job)
 			},
 		})
 	})
@@ -416,13 +419,13 @@ func TestBackupFailedRequiresGC(t *testing.T) {
 func TestBackupFailedNoGC(t *testing.T) {
 	// EtcdBackups that failed gracefully without creating any files
 	t.Run("pvc-not-found", func(t *testing.T) {
+		// Pending PVC backups have no nodeName; missing PVC must still reach Failed/PVCNotFound.
 		runBackupControllerTest(t, testCaseBackupController{
 			backups: []*operatorv1alpha1.EtcdBackup{
-				testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPending("test-node"), testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
+				testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPending(""), testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
 					Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
 					PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "backup-pvc-that-doesnt-exist"},
 				}))},
-			nodes: []*corev1.Node{testutils.FakeNode("test-node")},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				requireNoBackupJobCreated(t, client)
 				requireBackupStatusApplied(t, operatorFake, []metav1.Condition{{

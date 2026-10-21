@@ -672,13 +672,18 @@ func applyBackupPending(
 	backup *operatorv1alpha1.EtcdBackup,
 	nodeName string,
 ) (*operatorv1alpha1.EtcdBackup, error) {
+	// Omit empty nodeName: the CRD allows the field to be absent, but rejects nodeName:"".
+	var assignedNode *string
+	if nodeName != "" {
+		assignedNode = &nodeName
+	}
 	return applyBackupStatusConditions(ctx, backupClient, backup, nil, []metav1.Condition{{
 		Type:               string(operatorv1alpha1.BackupPending),
 		Reason:             string(operatorv1alpha1.BackupReasonReadyToStart),
 		Message:            "backup assigned to node",
 		Status:             metav1.ConditionTrue,
 		LastTransitionTime: metav1.Now(),
-	}}, nil, &nodeName)
+	}}, nil, assignedNode)
 }
 
 func applyBackupRunning(

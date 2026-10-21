@@ -1,6 +1,11 @@
 package backupcontroller
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,12 +16,17 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/informers"
 	k8sfakeclient "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
+	"sigs.k8s.io/yaml"
 )
 
 type testCaseBackupQueueController struct {
@@ -26,7 +36,10 @@ type testCaseBackupQueueController struct {
 	activeCache         *activeBackupCache
 	populateActiveCache bool
 	expectError         bool
-	validate            func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset)
+	// crdValidateStatus rejects status patches that violate EtcdBackup CRD nodeName rules
+	// (empty string present). Used to catch the applyBackupPending &"" defect.
+	crdValidateStatus bool
+	validate          func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset)
 }
 
 func runBackupQueueControllerTest(t *testing.T, tc testCaseBackupQueueController) {
@@ -39,6 +52,9 @@ func runBackupQueueControllerTest(t *testing.T, tc testCaseBackupQueueController
 
 	client := k8sfakeclient.NewSimpleClientset(k8sObjs...)
 	operatorFake := operatorfake.NewSimpleClientset(operatorObjs...)
+	if tc.crdValidateStatus {
+		prependEtcdBackupStatusCRDValidation(t, operatorFake)
+	}
 
 	sharedFactory := informers.NewSharedInformerFactory(client, 0)
 	var operatorSharedFactory operatorinformers.SharedInformerFactory
@@ -108,6 +124,7 @@ func TestBackupQueueLocalSelectAvailableNode(t *testing.T) {
 		nodes: []*corev1.Node{
 			testutils.FakeNode("test-node-1", testutils.WithMasterLabel()),
 			testutils.FakeNode("test-node-2", testutils.WithMasterLabel())},
+		crdValidateStatus: true,
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			action, ok := testutils.GetStatusAction[k8stesting.PatchActionImpl](operatorFake.Actions())
 			require.True(t, ok, "Expected patch action")
@@ -117,18 +134,26 @@ func TestBackupQueueLocalSelectAvailableNode(t *testing.T) {
 			require.Equal(t, backup.Name, "new")
 			require.True(t, backuphelpers.IsBackupPending(backup), "Expected backup to be pending")
 			require.Equal(t, backup.Status.NodeName, "test-node-2", "Expected backup to be assigned to an available node")
+
+			var patch map[string]any
+			require.NoError(t, json.Unmarshal(action.GetPatch(), &patch))
+			status, ok := patch["status"].(map[string]any)
+			require.True(t, ok)
+			require.Equal(t, "test-node-2", status["nodeName"], "Local Pending status apply must include nodeName")
 		},
 	})
 }
 
 func TestBackupQueuePVCNotAssignedNode(t *testing.T) {
 	// PVC backups must not be pinned to a node; the scheduler places them based on volume topology.
+	// The status apply must omit nodeName entirely: the CRD rejects nodeName:"" (minLength=1).
 	runBackupQueueControllerTest(t, testCaseBackupQueueController{
 		backups: []*operatorv1alpha1.EtcdBackup{
 			testutils.FakeEtcdBackup("new")},
 		nodes: []*corev1.Node{
 			testutils.FakeNode("test-node-1", testutils.WithMasterLabel()),
 			testutils.FakeNode("test-node-2", testutils.WithMasterLabel())},
+		crdValidateStatus: true,
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			action, ok := testutils.GetStatusAction[k8stesting.PatchActionImpl](operatorFake.Actions())
 			require.True(t, ok, "Expected patch action")
@@ -138,6 +163,13 @@ func TestBackupQueuePVCNotAssignedNode(t *testing.T) {
 			require.Equal(t, backup.Name, "new")
 			require.True(t, backuphelpers.IsBackupPending(backup), "Expected backup to be pending")
 			require.Empty(t, backup.Status.NodeName, "Expected no node to be assigned to a PVC backup")
+
+			var patch map[string]any
+			require.NoError(t, json.Unmarshal(action.GetPatch(), &patch))
+			status, ok := patch["status"].(map[string]any)
+			require.True(t, ok)
+			_, hasNodeName := status["nodeName"]
+			require.False(t, hasNodeName, "PVC Pending status apply must omit nodeName, got %#v", status)
 		},
 	})
 }
@@ -377,4 +409,147 @@ func TestBackupQueueRemoveDeletedFromActive(t *testing.T) {
 			require.Len(t, activeCache.pvcs, 0)
 		},
 	})
+}
+
+func TestApplyBackupPendingOmitsEmptyNodeName(t *testing.T) {
+	backup := testutils.FakeEtcdBackup("pvc-backup")
+	operatorFake := operatorfake.NewSimpleClientset([]runtime.Object{backup}...)
+	prependEtcdBackupStatusCRDValidation(t, operatorFake)
+
+	updated, err := applyBackupPending(t.Context(), operatorFake.OperatorV1alpha1().EtcdBackups(), backup, "")
+	require.NoError(t, err, "empty nodeName must be omitted so the status apply passes CRD validation")
+	require.Empty(t, updated.Status.NodeName)
+	require.True(t, backuphelpers.IsBackupPending(updated))
+
+	status := requireStatusPatch(t, operatorFake)
+	_, hasNodeName := status["nodeName"]
+	require.False(t, hasNodeName, "PVC Pending apply must omit status.nodeName, got patch status %#v", status)
+}
+
+func TestApplyBackupPendingRetainsAssignedNodeName(t *testing.T) {
+	backup := testutils.FakeEtcdBackup("local-backup", testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
+		Type:  operatorv1alpha1.EtcdBackupStorageTypeLocal,
+		Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/backups"},
+	}))
+	operatorFake := operatorfake.NewSimpleClientset([]runtime.Object{backup}...)
+	prependEtcdBackupStatusCRDValidation(t, operatorFake)
+
+	updated, err := applyBackupPending(t.Context(), operatorFake.OperatorV1alpha1().EtcdBackups(), backup, "master-0")
+	require.NoError(t, err)
+	require.Equal(t, "master-0", updated.Status.NodeName)
+	require.True(t, backuphelpers.IsBackupPending(updated))
+
+	status := requireStatusPatch(t, operatorFake)
+	require.Equal(t, "master-0", status["nodeName"], "Local Pending apply must retain status.nodeName")
+}
+
+func TestEmptyNodeNameRejectedByEtcdBackupCRDSchema(t *testing.T) {
+	// Mirrors the apiserver rejection seen when applyBackupPending passed &"" for PVC backups:
+	// status.nodeName is optional, but when present must satisfy CRD minLength=1.
+	schema, err := loadEtcdBackupNodeNameSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema.MinLength)
+	require.Equal(t, int64(1), *schema.MinLength)
+
+	require.Error(t, validateEtcdBackupStatusNodeNameAgainstCRD(""))
+	require.NoError(t, validateEtcdBackupStatusNodeNameAgainstCRD("master-0"))
+}
+
+func requireStatusPatch(t *testing.T, operatorFake *operatorfake.Clientset) map[string]any {
+	t.Helper()
+	action, ok := testutils.GetStatusAction[k8stesting.PatchActionImpl](operatorFake.Actions())
+	require.True(t, ok, "expected status patch, actions=%v", operatorFake.Actions())
+
+	var patch map[string]any
+	require.NoError(t, json.Unmarshal(action.GetPatch(), &patch))
+	status, ok := patch["status"].(map[string]any)
+	require.True(t, ok, "expected status in patch: %#v", patch)
+	return status
+}
+
+// prependEtcdBackupStatusCRDValidation rejects status patches that would fail EtcdBackup CRD
+// OpenAPI validation for status.nodeName (optional, but minLength=1 when present).
+func prependEtcdBackupStatusCRDValidation(t *testing.T, operatorFake *operatorfake.Clientset) {
+	t.Helper()
+	operatorFake.PrependReactor("patch", "etcdbackups", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		pa, ok := action.(k8stesting.PatchAction)
+		if !ok || pa.GetSubresource() != "status" {
+			return false, nil, nil
+		}
+		var patch map[string]any
+		if err := json.Unmarshal(pa.GetPatch(), &patch); err != nil {
+			return true, nil, err
+		}
+		status, _ := patch["status"].(map[string]any)
+		if status == nil {
+			return false, nil, nil
+		}
+		nodeName, present := status["nodeName"]
+		if !present {
+			return false, nil, nil
+		}
+		nodeNameStr, _ := nodeName.(string)
+		if err := validateEtcdBackupStatusNodeNameAgainstCRD(nodeNameStr); err != nil {
+			return true, nil, apierrors.NewInvalid(
+				schema.GroupKind{Group: operatorv1alpha1.GroupName, Kind: "EtcdBackup"},
+				pa.GetName(),
+				field.ErrorList{field.Invalid(field.NewPath("status", "nodeName"), nodeNameStr, err.Error())},
+			)
+		}
+		return false, nil, nil
+	})
+}
+
+var (
+	etcdBackupNodeNameSchemaOnce sync.Once
+	etcdBackupNodeNameSchema     *apiextensionsv1.JSONSchemaProps
+	etcdBackupNodeNameSchemaErr  error
+)
+
+func loadEtcdBackupNodeNameSchema() (*apiextensionsv1.JSONSchemaProps, error) {
+	etcdBackupNodeNameSchemaOnce.Do(func() {
+		crdPath := filepath.Join("..", "..", "..", "vendor", "github.com", "openshift", "api",
+			"operator", "v1alpha1", "zz_generated.crd-manifests", "0000_10_etcd_01_etcdbackups.crd.yaml")
+		raw, err := os.ReadFile(crdPath)
+		if err != nil {
+			etcdBackupNodeNameSchemaErr = fmt.Errorf("read EtcdBackup CRD: %w", err)
+			return
+		}
+		var crd apiextensionsv1.CustomResourceDefinition
+		if err := yaml.Unmarshal(raw, &crd); err != nil {
+			etcdBackupNodeNameSchemaErr = fmt.Errorf("decode EtcdBackup CRD: %w", err)
+			return
+		}
+		if len(crd.Spec.Versions) == 0 || crd.Spec.Versions[0].Schema == nil || crd.Spec.Versions[0].Schema.OpenAPIV3Schema == nil {
+			etcdBackupNodeNameSchemaErr = fmt.Errorf("EtcdBackup CRD missing OpenAPI schema")
+			return
+		}
+		props := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties
+		status, ok := props["status"]
+		if !ok {
+			etcdBackupNodeNameSchemaErr = fmt.Errorf("EtcdBackup CRD missing status schema")
+			return
+		}
+		nodeName, ok := status.Properties["nodeName"]
+		if !ok {
+			etcdBackupNodeNameSchemaErr = fmt.Errorf("EtcdBackup CRD missing status.nodeName schema")
+			return
+		}
+		etcdBackupNodeNameSchema = &nodeName
+	})
+	return etcdBackupNodeNameSchema, etcdBackupNodeNameSchemaErr
+}
+
+func validateEtcdBackupStatusNodeNameAgainstCRD(nodeName string) error {
+	schema, err := loadEtcdBackupNodeNameSchema()
+	if err != nil {
+		return err
+	}
+	if schema.MinLength != nil && int64(len(nodeName)) < *schema.MinLength {
+		return fmt.Errorf("status.nodeName must be at least %d characters (CRD minLength); got %q", *schema.MinLength, nodeName)
+	}
+	if schema.MaxLength != nil && int64(len(nodeName)) > *schema.MaxLength {
+		return fmt.Errorf("status.nodeName must be at most %d characters (CRD maxLength); got length %d", *schema.MaxLength, len(nodeName))
+	}
+	return nil
 }
