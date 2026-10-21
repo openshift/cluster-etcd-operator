@@ -4582,6 +4582,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupStorage
       default: {}
+    - name: timeZone
+      type:
+        scalar: string
 - name: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyStatus
   map:
     fields:

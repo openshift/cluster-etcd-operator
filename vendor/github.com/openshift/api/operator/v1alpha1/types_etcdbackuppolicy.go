@@ -57,6 +57,13 @@ type EtcdBackupPolicySpec struct {
 	// +required
 	Schedule string `json:"schedule,omitempty"`
 
+	// timeZone name for the given schedule, see https://en.wikipedia.org/wiki/List_of_tz_database_time_zones.
+	// If not specified, this will default to the time zone of the cluster-etcd-operator process.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	// +optional
+	TimeZone string `json:"timeZone,omitempty"`
+
 	// nodeSelector specifies which control plane nodes to select from for running backup jobs.
 	// The default node-role.kubernetes.io/control-plane label will always be required in addition to any labels set here.
 	// If no nodes are matched, then no EtcdBackups will be created.
@@ -150,7 +157,7 @@ type EtcdBackupPolicyStatus struct {
 	// If LastSuccessfulTime is true, the most recently completed EtcdBackup finished at the condition's lastTransitionTime.
 	// This field is optional.
 	// +kubebuilder:validation:MinItems=1
-	// +kubebuilder:validation:MaxItems=3
+	// +kubebuilder:validation:MaxItems=15
 	// +listType=map
 	// +listMapKey=type
 	// +optional

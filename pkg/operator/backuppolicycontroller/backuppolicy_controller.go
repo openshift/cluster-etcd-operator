@@ -143,7 +143,11 @@ func (c *BackupPolicyController) sync(ctx context.Context, syncCtx factory.SyncC
 		}
 	}
 
-	schedule, err := c.cronParser.Parse(backupPolicy.Spec.Schedule)
+	cronSched := backupPolicy.Spec.Schedule
+	if backupPolicy.Spec.TimeZone != "" {
+		cronSched = fmt.Sprintf("TZ=%s %s", backupPolicy.Spec.TimeZone, cronSched)
+	}
+	schedule, err := c.cronParser.Parse(cronSched)
 	if err != nil {
 		return fmt.Errorf("BackupPolicyController failed to parse %s schedule: %w", backupPolicyName, err)
 	}

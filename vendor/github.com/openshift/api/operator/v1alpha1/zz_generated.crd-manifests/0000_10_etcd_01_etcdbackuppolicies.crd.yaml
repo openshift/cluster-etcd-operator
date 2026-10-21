@@ -246,6 +246,13 @@ spec:
                   rule: 'self.type == ''PVC'' ? has(self.pvc) : !has(self.pvc)'
                 - message: local is required when type is Local, and forbidden otherwise
                   rule: 'self.type == ''Local'' ? has(self.local) : !has(self.local)'
+              timeZone:
+                description: |-
+                  timeZone name for the given schedule, see https://en.wikipedia.org/wiki/List_of_tz_database_time_zones.
+                  If not specified, this will default to the time zone of the cluster-etcd-operator process.
+                maxLength: 64
+                minLength: 1
+                type: string
             required:
             - schedule
             - storage
@@ -359,7 +366,7 @@ spec:
                   - status
                   - type
                   type: object
-                maxItems: 3
+                maxItems: 15
                 minItems: 1
                 type: array
                 x-kubernetes-list-map-keys:

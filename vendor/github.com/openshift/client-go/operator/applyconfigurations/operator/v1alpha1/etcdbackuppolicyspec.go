@@ -19,6 +19,9 @@ type EtcdBackupPolicySpecApplyConfiguration struct {
 	// Must be between 1 and 1024 characters long.
 	// This field is required.
 	Schedule *string `json:"schedule,omitempty"`
+	// timeZone name for the given schedule, see https://en.wikipedia.org/wiki/List_of_tz_database_time_zones.
+	// If not specified, this will default to the time zone of the cluster-etcd-operator process.
+	TimeZone *string `json:"timeZone,omitempty"`
 	// nodeSelector specifies which control plane nodes to select from for running backup jobs.
 	// The default node-role.kubernetes.io/control-plane label will always be required in addition to any labels set here.
 	// If no nodes are matched, then no EtcdBackups will be created.
@@ -58,6 +61,14 @@ func EtcdBackupPolicySpec() *EtcdBackupPolicySpecApplyConfiguration {
 // If called multiple times, the Schedule field is set to the value of the last call.
 func (b *EtcdBackupPolicySpecApplyConfiguration) WithSchedule(value string) *EtcdBackupPolicySpecApplyConfiguration {
 	b.Schedule = &value
+	return b
+}
+
+// WithTimeZone sets the TimeZone field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the TimeZone field is set to the value of the last call.
+func (b *EtcdBackupPolicySpecApplyConfiguration) WithTimeZone(value string) *EtcdBackupPolicySpecApplyConfiguration {
+	b.TimeZone = &value
 	return b
 }
 

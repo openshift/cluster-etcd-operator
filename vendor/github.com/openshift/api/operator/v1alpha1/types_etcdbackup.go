@@ -141,15 +141,13 @@ type EtcdBackupStatus struct {
 	// conditions provide details on the status of the etcd backup job.
 	// When specified, must contain between 1 and 5 entries, with no more than 1 of each type.
 	//
-	// Supported conditions include Pending, Running, Completed, Failed, and GarbageCollectionRequired.
-	// If Pending is true, the backup is ready to be started.
+	// Supported conditions include Running, Completed, and Failed.
 	// If Running is true, the backup job is currently active.
 	// If Completed is true, the backup job succeeded and has saved backup files to its storage location.
 	// If Failed is true, the backup job failed and did not create valid backup files.
-	// If GarbageCollectionRequired is true or unset, then files may exist which require cleanup when the EtcdBackup is deleted.
 	// This field is optional.
 	// +kubebuilder:validation:MinItems=1
-	// +kubebuilder:validation:MaxItems=5
+	// +kubebuilder:validation:MaxItems=15
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -165,7 +163,8 @@ type EtcdBackupStatus struct {
 	// +optional
 	JobName string `json:"jobName,omitempty"`
 
-	// nodeName is used for Local backups to bind the control plane node where the snapshot will be taken.
+	// nodeName is used for Local EtcdBackups to bind the control plane node where the snapshot will be taken.
+	// It is set by the cluster-etcd-operator before the Local backup runs to ensure the file location is known for garbage collection.
 	// Must be between 1 and 63 characters and conform to RFC 1123 subdomain format:
 	// lowercase alphanumeric characters, '-' or '.', starting and ending with alphanumeric characters.
 	// This field is optional.
@@ -237,7 +236,7 @@ type EtcdBackupFile struct {
 type BackupConditionType string
 
 var (
-	// BackupPending means the backup job has started.
+	// BackupRunning means the backup job has started.
 	BackupRunning BackupConditionType = "Running"
 	// BackupCompleted means the backup completed successfully.
 	BackupCompleted BackupConditionType = "Completed"
