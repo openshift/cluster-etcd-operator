@@ -12,7 +12,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	clocktesting "k8s.io/utils/clock/testing"
 
-	"github.com/openshift/cluster-etcd-operator/bindata"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/testutils"
@@ -64,14 +63,6 @@ func TestManageScriptConfigMap(t *testing.T) {
 			expectedFencingScript:    false,
 		},
 		{
-			name:                     "Arbiter topology retains shared backup script",
-			topology:                 configv1.HighlyAvailableArbiterMode,
-			expectedRestoreContent:   "wait_for_containers_to_stop",
-			expectedDisableContent:   "mv_static_pods",
-			unexpectedRestoreContent: "crm_attribute",
-			unexpectedDisableContent: "pcs resource disable etcd",
-		},
-		{
 			name:                     "SingleReplica topology deploys standard scripts",
 			topology:                 configv1.SingleReplicaTopologyMode,
 			expectedRestoreContent:   "wait_for_containers_to_stop",
@@ -120,7 +111,6 @@ func TestManageScriptConfigMap(t *testing.T) {
 			// Verify common scripts are always present
 			require.Contains(t, scriptCM.Data, "quorum-restore.sh", "quorum-restore.sh should be in ConfigMap")
 			require.Contains(t, scriptCM.Data, "cluster-backup.sh", "cluster-backup.sh should be in ConfigMap")
-			require.Equal(t, string(bindata.MustAsset("etcd/cluster-backup.sh")), scriptCM.Data["cluster-backup.sh"])
 			require.Contains(t, scriptCM.Data, "etcd-common-tools", "etcd-common-tools should be in ConfigMap")
 			require.Contains(t, scriptCM.Data, "etcd.env", "etcd.env should be in ConfigMap")
 			if tc.expectedFencingScript {

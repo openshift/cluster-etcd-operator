@@ -15,49 +15,30 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 function usage {
-  echo 'Usage: ./cluster-backup.sh [--force] [--available-static-resources] <path-to-backup-dir>'
-  echo '--available-static-resources: save partial local resources, NOT a full control-plane recovery backup.'
-  echo '--force: skip operator rollout checks; the backup may be inconsistent.'
+  echo 'Path to backup dir required: ./cluster-backup.sh [--force] <path-to-backup-dir>'
   exit 1
 }
 
 IS_DIRTY=""
-AVAILABLE_STATIC_RESOURCES=false
-BACKUP_DIR=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --force) IS_DIRTY="__POSSIBLY_DIRTY__" ;;
-    --available-static-resources) AVAILABLE_STATIC_RESOURCES=true ;;
-    --)
-      shift
-      if [ "$#" -ne 1 ] || [ -n "${BACKUP_DIR}" ]; then
-        usage
-      fi
-      BACKUP_DIR="$1"
-      shift
-      break
-      ;;
-    -*) usage ;;
-    *) [ -z "${BACKUP_DIR}" ] || usage; BACKUP_DIR="$1" ;;
-  esac
+if [ "$1" == "--force" ]; then
+  IS_DIRTY="__POSSIBLY_DIRTY__"
   shift
-done
+fi
 
 # If the first argument is missing, or it is an existing file, then print usage and exit
-if [ -z "${BACKUP_DIR}" ] || [ -f "${BACKUP_DIR}" ]; then
+if [ -z "$1" ] || [ -f "$1" ]; then
   usage
 fi
 
-if [ ! -d "${BACKUP_DIR}" ]; then
-  mkdir -p "${BACKUP_DIR}"
+if [ ! -d "$1" ]; then
+  mkdir -p "$1"
 fi
-BACKUP_DIR=$(cd -- "${BACKUP_DIR}" && pwd -P)
 
 function check_if_operator_is_progressing {
    local operator="$1"
 
    if [ ! -f "${KUBECONFIG}" ]; then
-      echo "Valid kubeconfig is not found in kube-apiserver-certs. Exiting! Pass --force only to explicitly skip rollout checks."
+      echo "Valid kubeconfig is not found in kube-apiserver-certs. Exiting!"
       exit 1
    fi
 
@@ -69,38 +50,6 @@ function check_if_operator_is_progressing {
       echo "Currently the $operator operator is progressing. A reliable backup requires that a rollout is not in progress.  Aborting!"
       exit 1
    fi
-}
-
-# backup latest static pod resources
-function backup_latest_kube_static_resources {
-  local backup_tar_file="$1"
-  local backup_resource_list=("kube-apiserver" "kube-controller-manager" "kube-scheduler" "etcd")
-  local latest_resource_dirs=()
-
-  for resource in "${backup_resource_list[@]}"; do
-    if [ ! -f "/etc/kubernetes/manifests/${resource}-pod.yaml" ]; then
-      echo "error finding manifests for the ${resource} pod. please check if it is running."
-      exit 1
-    fi
-
-    local latest_resource
-    latest_resource=$(grep -o -m 1 "/etc/kubernetes/static-pod-resources/${resource}-pod-[0-9]*" "/etc/kubernetes/manifests/${resource}-pod.yaml") || true
-
-    if [ -z "${latest_resource}" ]; then
-      echo "error finding static-pod-resources for the ${resource} pod. please check if it is running."
-      exit 1
-    fi
-    if [ "${IS_DIRTY}" == "" ]; then
-      check_if_operator_is_progressing "${resource}"
-    fi
-
-    echo "found latest ${resource}: ${latest_resource}"
-    latest_resource_dirs+=("${latest_resource#"${CONFIG_FILE_DIR}/"}")
-  done
-
-  # tar latest resources with the path relative to CONFIG_FILE_DIR
-  tar -cpzf "$backup_tar_file" -C "${CONFIG_FILE_DIR}" "${latest_resource_dirs[@]}"
-  chmod 600 "$backup_tar_file"
 }
 
 function manifest_resource_revision {
@@ -140,61 +89,59 @@ function manifest_resource_revision {
   printf '%s\n' "${references}"
 }
 
-function backup_available_kube_static_resources {
-  local resource manifest revision archived_revision
-  local resource_dirs=()
-  local metadata="${WORK_DIR}/PARTIAL_BACKUP.txt"
-  printf '%s\n' 'PARTIAL local backup: NOT qualified for full control-plane recovery.' \
-    "Rollout checks skipped: ${IS_DIRTY:-no}" > "${metadata}"
-  if [ ! -d "${MANIFEST_DIR}" ] || [ ! -r "${MANIFEST_DIR}" ] || [ ! -x "${MANIFEST_DIR}" ] || \
-     [ ! -d "${CONFIG_FILE_DIR}/static-pod-resources" ] || \
+# backup latest static pod resources
+function backup_latest_kube_static_resources {
+  local backup_resource_list=("kube-apiserver" "kube-controller-manager" "kube-scheduler" "etcd")
+  local latest_resource_dirs=()
+  local resource manifest latest_resource incomplete=""
+
+  if [ ! -r "${MANIFEST_DIR}" ] || [ ! -x "${MANIFEST_DIR}" ] || \
      [ ! -r "${CONFIG_FILE_DIR}/static-pod-resources" ] || [ ! -x "${CONFIG_FILE_DIR}/static-pod-resources" ]; then
-    echo 'Required manifest/resource parent directories are missing or unreadable' >&2
+    echo "Required manifest/resource directories are missing or unreadable" >&2
     exit 1
   fi
 
-  for resource in etcd kube-apiserver kube-controller-manager kube-scheduler; do
-    if [ "${IS_DIRTY}" == "" ]; then
-      check_if_operator_is_progressing "${resource}"
-    fi
+  for resource in "${backup_resource_list[@]}"; do
     manifest="${MANIFEST_DIR}/${resource}-pod.yaml"
     if [ ! -e "${manifest}" ] && [ ! -L "${manifest}" ]; then
       if [ "${resource}" == "etcd" ]; then
         echo "Required etcd manifest is missing: ${manifest}" >&2
         exit 1
       fi
-      printf 'OMITTED %s: local manifest is absent\n' "${resource}" | tee -a "${metadata}"
+      echo "WARNING: omitting ${resource}: local Pod manifest is absent" >&2
+      incomplete="partial_"
       continue
     fi
     if [ ! -f "${manifest}" ] || [ ! -r "${manifest}" ]; then
-      echo "Invalid or unreadable manifest: ${manifest}" >&2
+      echo "Invalid or unreadable Pod manifest: ${manifest}" >&2
       exit 1
     fi
-    revision=$(manifest_resource_revision "${manifest}" "${resource}")
-    if [ ! -e "${revision}" ] && [ ! -L "${revision}" ]; then
-      if [ "${resource}" == "etcd" ]; then
-        echo "Required etcd revision is missing: ${revision}" >&2
-        exit 1
-      fi
-      printf 'OMITTED %s: referenced local revision is absent: %s\n' "${resource}" "${revision}" | tee -a "${metadata}"
+    latest_resource=$(manifest_resource_revision "${manifest}" "${resource}")
+    if [ ! -e "${latest_resource}" ] && [ ! -L "${latest_resource}" ] && [ "${resource}" != "etcd" ]; then
+      echo "WARNING: omitting ${resource}: installed static resources are absent (${latest_resource})" >&2
+      incomplete="partial_"
       continue
     fi
-    if [ -L "${revision}" ] || [ ! -d "${revision}" ] || [ ! -r "${revision}" ] || [ ! -x "${revision}" ] || \
-       [ ! -f "${revision}/${resource}-pod.yaml" ] || [ ! -r "${revision}/${resource}-pod.yaml" ]; then
-      echo "Invalid or unreadable revision resources: ${revision}" >&2
+    if [ ! -d "${latest_resource}" ] || [ ! -r "${latest_resource}" ] || [ ! -x "${latest_resource}" ]; then
+      echo "Installed static resources are missing or unreadable: ${latest_resource}" >&2
       exit 1
     fi
-    archived_revision=$(manifest_resource_revision "${revision}/${resource}-pod.yaml" "${resource}")
-    if [ "${archived_revision}" != "${revision}" ]; then
-      echo "Installed and revision manifests disagree: ${manifest}" >&2
-      exit 1
+    if [ "${IS_DIRTY}" == "" ]; then
+      check_if_operator_is_progressing "${resource}"
     fi
-    printf 'INCLUDED %s: %s\n' "${resource}" "${revision}" >> "${metadata}"
-    resource_dirs+=("${revision#"${CONFIG_FILE_DIR}/"}")
+
+    echo "found latest ${resource}: ${latest_resource}"
+    latest_resource_dirs+=("${latest_resource#"${CONFIG_FILE_DIR}/"}")
   done
 
-  tar -cpzf "${BACKUP_TAR_FILE}" -C "${CONFIG_FILE_DIR}" "${resource_dirs[@]}" -C "${WORK_DIR}" PARTIAL_BACKUP.txt
-  [ -s "${BACKUP_TAR_FILE}" ]
+  if [ -n "${incomplete}" ]; then
+    BACKUP_TAR_FILE="${BACKUP_DIR}/partial_static_kuberesources_${DATESTRING}${IS_DIRTY}.tar.gz"
+    SNAPSHOT_FILE="${BACKUP_DIR}/partial_snapshot_${DATESTRING}${IS_DIRTY}.db"
+    echo "WARNING: partial local backup; NOT qualified for full control-plane restore. Do not rename or mix these artifacts with full backups." >&2
+  fi
+
+  # tar latest resources with the path relative to CONFIG_FILE_DIR
+  tar -cpzf "${BACKUP_TAR_FILE}" -C "${CONFIG_FILE_DIR}" "${latest_resource_dirs[@]}"
   chmod 600 "${BACKUP_TAR_FILE}"
 }
 
@@ -208,35 +155,12 @@ function source_required_dependency {
   source "${src_path}"
 }
 
+BACKUP_DIR="$1"
 DATESTRING=$(date "+%F_%H%M%S")
-WORK_DIR=$(mktemp -d "${BACKUP_DIR}/.cluster-backup.XXXXXXXX")
-FINAL_BACKUP_TAR_FILE="${BACKUP_DIR}/static_kuberesources_${DATESTRING}${IS_DIRTY}.tar.gz"
-FINAL_SNAPSHOT_FILE="${BACKUP_DIR}/snapshot_${DATESTRING}${IS_DIRTY}.db"
-if [ "${AVAILABLE_STATIC_RESOURCES}" == "true" ]; then
-  echo 'WARNING: PARTIAL local backup requested. This is NOT a full control-plane recovery backup.' >&2
-  FINAL_BACKUP_TAR_FILE="${BACKUP_DIR}/partial_static_kuberesources_${DATESTRING}${IS_DIRTY}_${WORK_DIR##*.}.tar.gz"
-  FINAL_SNAPSHOT_FILE="${BACKUP_DIR}/partial_snapshot_${DATESTRING}${IS_DIRTY}_${WORK_DIR##*.}.db"
-fi
-BACKUP_TAR_FILE="${WORK_DIR}/resources.tar.gz"
-SNAPSHOT_FILE="${WORK_DIR}/snapshot.db"
-PUBLISHED_ARCHIVE=false
-PUBLISHED_SNAPSHOT=false
+BACKUP_TAR_FILE=${BACKUP_DIR}/static_kuberesources_${DATESTRING}${IS_DIRTY}.tar.gz
+SNAPSHOT_FILE="${BACKUP_DIR}/snapshot_${DATESTRING}${IS_DIRTY}.db"
 
-function cleanup {
-  local status=$?
-  if [ "${status}" -ne 0 ]; then
-    if [ "${PUBLISHED_ARCHIVE}" == "true" ]; then
-      rm -f -- "${FINAL_BACKUP_TAR_FILE}"
-    fi
-    if [ "${PUBLISHED_SNAPSHOT}" == "true" ]; then
-      rm -f -- "${FINAL_SNAPSHOT_FILE}"
-    fi
-  fi
-  if [ -n "${WORK_DIR}" ]; then
-    rm -rf -- "${WORK_DIR}"
-  fi
-}
-trap cleanup EXIT
+trap 'rm -f -- "${BACKUP_TAR_FILE}" "${SNAPSHOT_FILE}"' ERR
 
 source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd.env
 source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-scripts/etcd-common-tools
@@ -244,9 +168,9 @@ source_required_dependency /etc/kubernetes/static-pod-resources/etcd-certs/confi
 # replacing the value of variables sourced form etcd.env to use the local node folders if the script is not running into the cluster-backup pod
 if [ ! -f "${ETCDCTL_CACERT}" ]; then
   echo "Certificate ${ETCDCTL_CACERT} is missing. Checking in different directory"
-  export ETCDCTL_CACERT=$(echo ${ETCDCTL_CACERT} | sed -e "s|static-pod-certs|static-pod-resources/etcd-certs|")
-  export ETCDCTL_CERT=$(echo ${ETCDCTL_CERT} | sed -e "s|static-pod-certs|static-pod-resources/etcd-certs|")
-  export ETCDCTL_KEY=$(echo ${ETCDCTL_KEY} | sed -e "s|static-pod-certs|static-pod-resources/etcd-certs|")
+  export ETCDCTL_CACERT="${ETCDCTL_CACERT/static-pod-certs/static-pod-resources\/etcd-certs}"
+  export ETCDCTL_CERT="${ETCDCTL_CERT/static-pod-certs/static-pod-resources\/etcd-certs}"
+  export ETCDCTL_KEY="${ETCDCTL_KEY/static-pod-certs/static-pod-resources\/etcd-certs}"
   if [ ! -f "${ETCDCTL_CACERT}" ]; then
     echo "Certificate ${ETCDCTL_CACERT} is also missing in the second directory. Exiting!"
     exit 1
@@ -255,19 +179,25 @@ if [ ! -f "${ETCDCTL_CACERT}" ]; then
   fi
 fi
 
-if [ "${AVAILABLE_STATIC_RESOURCES}" == "true" ]; then
-  backup_available_kube_static_resources
-else
-  backup_latest_kube_static_resources "${BACKUP_TAR_FILE}"
-fi
+for certificate in "${ETCDCTL_CACERT}" "${ETCDCTL_CERT}" "${ETCDCTL_KEY}"; do
+  if [ ! -s "${certificate}" ] || [ ! -r "${certificate}" ]; then
+    echo "Required etcd certificate/key is missing, empty or unreadable: ${certificate}" >&2
+    exit 1
+  fi
+done
+
+backup_latest_kube_static_resources
 
 # Download etcdctl and get the etcd snapshot
 dl_etcdctl
 
 # snapshot save will continue to stay in etcdctl
 ETCDCTL_ENDPOINTS="https://${NODE_NODE_ENVVAR_NAME_IP}:2379" etcdctl snapshot save "${SNAPSHOT_FILE}"
-[ -s "${SNAPSHOT_FILE}" ]
-chmod 600 "${SNAPSHOT_FILE}"
+
+if [ ! -s "${SNAPSHOT_FILE}" ]; then
+  echo "Snapshot is missing or empty" >&2
+  false
+fi
 
 # Check the integrity of the snapshot
 check_snapshot_status "${SNAPSHOT_FILE}"
@@ -279,24 +209,4 @@ if [[ $snapshot_failed -eq 1 ]]; then
   exit 1
 fi
 
-if [ "${AVAILABLE_STATIC_RESOURCES}" == "true" ]; then
-  ln -T -- "${BACKUP_TAR_FILE}" "${FINAL_BACKUP_TAR_FILE}"
-  PUBLISHED_ARCHIVE=true
-  ln -T -- "${SNAPSHOT_FILE}" "${FINAL_SNAPSHOT_FILE}"
-  PUBLISHED_SNAPSHOT=true
-else
-  mv -fT -- "${BACKUP_TAR_FILE}" "${FINAL_BACKUP_TAR_FILE}"
-  PUBLISHED_ARCHIVE=true
-  mv -fT -- "${SNAPSHOT_FILE}" "${FINAL_SNAPSHOT_FILE}"
-  PUBLISHED_SNAPSHOT=true
-fi
-rm -rf -- "${WORK_DIR}"
-WORK_DIR=""
-
-if [ "${AVAILABLE_STATIC_RESOURCES}" == "true" ]; then
-  echo "WARNING: PARTIAL snapshot and available local resources saved to ${BACKUP_DIR}; NOT qualified for full control-plane recovery."
-  echo "${FINAL_SNAPSHOT_FILE}"
-  echo "${FINAL_BACKUP_TAR_FILE}"
-else
-  echo "snapshot db and kube resources are successfully saved to ${BACKUP_DIR}"
-fi
+echo "snapshot db and kube resources are successfully saved to ${BACKUP_DIR}"
