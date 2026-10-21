@@ -279,10 +279,17 @@ if [[ $snapshot_failed -eq 1 ]]; then
   exit 1
 fi
 
-ln -T -- "${BACKUP_TAR_FILE}" "${FINAL_BACKUP_TAR_FILE}"
-PUBLISHED_ARCHIVE=true
-ln -T -- "${SNAPSHOT_FILE}" "${FINAL_SNAPSHOT_FILE}"
-PUBLISHED_SNAPSHOT=true
+if [ "${AVAILABLE_STATIC_RESOURCES}" == "true" ]; then
+  ln -T -- "${BACKUP_TAR_FILE}" "${FINAL_BACKUP_TAR_FILE}"
+  PUBLISHED_ARCHIVE=true
+  ln -T -- "${SNAPSHOT_FILE}" "${FINAL_SNAPSHOT_FILE}"
+  PUBLISHED_SNAPSHOT=true
+else
+  mv -fT -- "${BACKUP_TAR_FILE}" "${FINAL_BACKUP_TAR_FILE}"
+  PUBLISHED_ARCHIVE=true
+  mv -fT -- "${SNAPSHOT_FILE}" "${FINAL_SNAPSHOT_FILE}"
+  PUBLISHED_SNAPSHOT=true
+fi
 rm -rf -- "${WORK_DIR}"
 WORK_DIR=""
 

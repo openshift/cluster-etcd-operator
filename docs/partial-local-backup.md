@@ -42,10 +42,13 @@ report success. As with other backup files, protect and restrict access to the
 output: static-pod resources can contain sensitive configuration.
 
 Both modes stage files in a private temporary directory on the destination
-filesystem and publish only after snapshot verification. Publishing uses hard
-links and never overwrites existing names; the filesystem must support hard
-links. A normal full backup repeated within the same timestamp second fails
-rather than replacing the previous backup. Partial runs use unique suffixes.
+filesystem and publish only after snapshot verification. Normal full backups
+replace existing same-timestamp output names, as before, and do not require
+hard-link support. Only partial publication uses hard links and refuses to
+overwrite existing names; the destination filesystem must support hard links
+for this opt-in mode. Partial runs use unique suffixes. Publication of the two
+files is not transactional; use a separate directory for each full backup if
+previous outputs must be preserved during publication failures.
 
 ## Rollout checks and credentials
 
@@ -90,6 +93,8 @@ discover `partial_` filenames. Do not rename partial artifacts to normal backup
 names or mix them into a standard restore workflow. This option does not add
 partial-cluster restore support or change any restore validation. Even a partial
 invocation with no omissions is deliberately kept separate from that contract.
+The metadata is informational, not a destructive-restore guard: manually
+renaming or mixing artifacts defeats the filename separation and is unsupported.
 Use a separate backup directory to avoid confusing partial output with older
 complete backups. Successful fixture tests do not constitute live restore
 qualification.

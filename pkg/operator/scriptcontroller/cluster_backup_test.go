@@ -125,7 +125,7 @@ if [ "$2" = save ]; then
     [ -f "$name" ] || exit 8
     [[ "$name" = "$FIXTURE_ROOT"/static-pod-resources/etcd-certs/* ]] || exit 8
   done
-  echo snapshot > "$3"
+  echo "${SNAPSHOT_CONTENT:-snapshot}" > "$3"
   echo save >> "$FIXTURE_ROOT/snapshot-calls"
   if [ "${EMPTY_SNAPSHOT:-}" = true ]; then truncate -s 0 "$3"; fi
   exit "${SNAPSHOT_EXIT:-0}"
@@ -245,6 +245,72 @@ func TestClusterBackupFullEntryPoint(test *testing.T) {
 				require.NoError(test, err)
 				require.Equal(test, strings.Join(clusterBackupResources, "\n")+"\n", string(calls))
 			}
+		})
+	}
+}
+
+func TestClusterBackupFullRepeatedWithoutHardLinks(test *testing.T) {
+	test.Parallel()
+	for _, forced := range []bool{false, true} {
+		test.Run(fmt.Sprintf("force=%t", forced), func(test *testing.T) {
+			fixture := newClusterBackupFixture(test)
+			backupFixtureWrite(test, filepath.Join(fixture.root, "bin/ln"), "#!/bin/bash\necho attempted > \"$FIXTURE_ROOT/hard-link-attempt\"\nexit 1\n", 0700)
+			args := []string{fixture.out}
+			suffix := ""
+			if forced {
+				args = append([]string{"--force"}, args...)
+				suffix = "__POSSIBLY_DIRTY__"
+			}
+			for _, content := range []string{"first backup", "second backup"} {
+				fixture.env = append(fixture.env, "SNAPSHOT_CONTENT="+content)
+				backupFixtureWrite(test, filepath.Join(fixture.root, "static-pod-resources/etcd-pod-1/fixture"), content, 0600)
+				output, err := fixture.run(test, args...)
+				require.NoError(test, err, output)
+				require.Contains(test, output, "snapshot db and kube resources are successfully saved")
+				require.NotContains(test, output, "PARTIAL")
+				archive := filepath.Join(fixture.out, "static_kuberesources_2026-01-01_000000"+suffix+".tar.gz")
+				contents := backupArchiveContents(test, archive)
+				require.Len(test, contents, 12)
+				require.Equal(test, content, contents["static-pod-resources/etcd-pod-1/fixture"])
+				snapshot, err := os.ReadFile(filepath.Join(fixture.out, "snapshot_2026-01-01_000000"+suffix+".db"))
+				require.NoError(test, err)
+				require.Equal(test, content+"\n", string(snapshot))
+				entries, err := os.ReadDir(fixture.out)
+				require.NoError(test, err)
+				require.Len(test, entries, 2)
+			}
+			require.NoFileExists(test, filepath.Join(fixture.root, "hard-link-attempt"))
+		})
+	}
+}
+
+func TestClusterBackupPartialRequiresHardLinks(test *testing.T) {
+	test.Parallel()
+	fixture := newClusterBackupFixture(test)
+	backupFixtureWrite(test, filepath.Join(fixture.root, "bin/ln"), "#!/bin/bash\necho 'hard links unavailable' >&2\nexit 1\n", 0700)
+	output, err := fixture.run(test, "--available-static-resources", "--force", fixture.out)
+	require.Error(test, err, output)
+	require.Contains(test, output, "hard links unavailable")
+	require.NotContains(test, output, "saved to")
+	fixture.requireNoArtifacts(test)
+}
+
+func TestClusterBackupFullPublicationFailure(test *testing.T) {
+	test.Parallel()
+	for _, name := range []string{"static_kuberesources_2026-01-01_000000.tar.gz", "snapshot_2026-01-01_000000.db"} {
+		test.Run(name, func(test *testing.T) {
+			fixture := newClusterBackupFixture(test)
+			existing := filepath.Join(fixture.out, name)
+			require.NoError(test, os.MkdirAll(existing, 0700))
+			output, err := fixture.run(test, fixture.out)
+			require.Error(test, err, output)
+			require.NotContains(test, output, "saved to")
+			entries, err := os.ReadDir(existing)
+			require.NoError(test, err)
+			require.Empty(test, entries)
+			entries, err = os.ReadDir(fixture.out)
+			require.NoError(test, err)
+			require.Len(test, entries, 1)
 		})
 	}
 }
@@ -511,11 +577,6 @@ func TestClusterBackupPreservesPreviousOutputs(test *testing.T) {
 				previous[entry.Name()], err = os.ReadFile(filepath.Join(fixture.out, entry.Name()))
 				require.NoError(test, err)
 			}
-			if !partial {
-				output, err = fixture.run(test, args...)
-				require.Error(test, err, output)
-				require.NotContains(test, output, "saved to")
-			}
 			fixture.env = append(fixture.env, "SNAPSHOT_EXIT=2")
 			output, err = fixture.run(test, args...)
 			require.Error(test, err, output)
@@ -562,8 +623,13 @@ func TestClusterBackupPublicationFailure(test *testing.T) {
 	for _, kind := range []string{"archive", "snapshot", "directory"} {
 		test.Run(kind, func(test *testing.T) {
 			fixture := newClusterBackupFixture(test)
-			archive := filepath.Join(fixture.out, "static_kuberesources_2026-01-01_000000__POSSIBLY_DIRTY__.tar.gz")
-			snapshot := filepath.Join(fixture.out, "snapshot_2026-01-01_000000__POSSIBLY_DIRTY__.db")
+			backupFixtureWrite(test, filepath.Join(fixture.root, "bin/mktemp"), `#!/bin/bash
+work_dir="${2%/*}/.cluster-backup.collision"
+mkdir -m 700 "$work_dir" || exit 1
+printf '%s\n' "$work_dir"
+`, 0700)
+			archive := filepath.Join(fixture.out, "partial_static_kuberesources_2026-01-01_000000__POSSIBLY_DIRTY___collision.tar.gz")
+			snapshot := filepath.Join(fixture.out, "partial_snapshot_2026-01-01_000000__POSSIBLY_DIRTY___collision.db")
 			existing := archive
 			if kind == "snapshot" {
 				existing = snapshot
@@ -573,7 +639,7 @@ func TestClusterBackupPublicationFailure(test *testing.T) {
 			} else {
 				backupFixtureWrite(test, existing, "previous output", 0600)
 			}
-			output, err := fixture.run(test, "--force", fixture.out)
+			output, err := fixture.run(test, "--available-static-resources", "--force", fixture.out)
 			require.Error(test, err, output)
 			require.NotContains(test, output, "saved to")
 			if kind == "directory" {
