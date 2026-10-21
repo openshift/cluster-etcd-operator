@@ -642,7 +642,7 @@ func reconcileJobStatus(ctx context.Context,
 		}
 	}
 
-	if err := finalizeJob(ctx, jobClient, job, false); err != nil {
+	if _, err := finalizeJob(ctx, jobClient, job, false); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return err
 		}

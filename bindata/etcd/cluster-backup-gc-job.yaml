@@ -29,7 +29,7 @@ spec:
                 if [ -d ${BACKUP_FILE} ]; then
                   for FILE in ${BACKUP_FILE}/snapshot_*.db ${BACKUP_FILE}/snapshot_*.db.part ${BACKUP_FILE}/static_kuberesources_*.tar.gz; do
                     if [ -f ${FILE} ]; then
-                      echo "Deleting {FILE}"
+                      echo "Deleting ${FILE}"
                       rm ${FILE} || true
                     fi
                   done

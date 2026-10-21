@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +34,7 @@ import (
 	batchv1listers "k8s.io/client-go/listers/batch/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 )
@@ -59,6 +58,10 @@ type BackupGarbageCollectionController struct {
 	kubeClient            kubernetes.Interface
 	featureGateAccessor   featuregates.FeatureGateAccess
 	operatorImagePullSpec string
+
+	// retryQueue tracks failed GC jobs per storage backend for exponential backoff on retries
+	// Backoff is in-memory only, so retries may happen earlier than expected after an operator restart.
+	retryQueue gcRetryQueue
 }
 
 func NewBackupGarbageCollectionController(
@@ -86,6 +89,7 @@ func NewBackupGarbageCollectionController(
 		kubeClient:            kubeClient,
 		operatorImagePullSpec: operatorImagePullSpec,
 		featureGateAccessor:   accessor,
+		retryQueue:            newGCRetryQueue(),
 	}
 
 	syncer := health.NewCheckingSyncWrapper(c.sync, 30*time.Minute) // GC runs infrequently if no backups are deleted
@@ -120,7 +124,7 @@ func (c *BackupGarbageCollectionController) sync(ctx context.Context, syncCtx fa
 		return nil
 	}
 
-	finishedJobs, activeBackupGC, err := c.collectJobs()
+	jobsByStorage, activeBackupGC, err := c.collectJobs()
 	if err != nil {
 		return err
 	}
@@ -130,17 +134,20 @@ func (c *BackupGarbageCollectionController) sync(ctx context.Context, syncCtx fa
 		return err
 	}
 
-	// Finalize completed jobs. Failed jobs are left with finalizer for exponential backoff on retries.
+	// Finalize completed jobs so their TTL can clean them up. Failed jobs keep the finalizer until a retry replaces them.
 	jobsClient := c.kubeClient.BatchV1().Jobs(operatorclient.TargetNamespace)
-	for key, job := range finishedJobs {
+	for key, job := range jobsByStorage {
 		if isJobCompleted(job) {
-			if err := finalizeJob(ctx, jobsClient, job, true); err != nil {
+			c.retryQueue.Forget(key)
+			finalizedJob, err := finalizeJob(ctx, jobsClient, job, true)
+			if err != nil {
 				if apierrors.IsNotFound(err) {
-					delete(finishedJobs, key)
-				} else {
-					return fmt.Errorf("BackupGarbageCollectionController error: %w", err)
+					delete(jobsByStorage, key)
+					continue
 				}
+				return fmt.Errorf("BackupGarbageCollectionController error: %w", err)
 			}
+			jobsByStorage[key] = finalizedJob
 		}
 	}
 
@@ -154,56 +161,66 @@ func (c *BackupGarbageCollectionController) sync(ctx context.Context, syncCtx fa
 			backups = backups[:gcMaxBackupsPerJob]
 		}
 
-		retry := 0
-		if job, ok := finishedJobs[storage.String()]; ok {
+		storageKey := storage.String()
+		if job, ok := jobsByStorage[storageKey]; ok {
 			// Only one GC job is allowed on a storage backend at a time using deterministically generated name.
-			// If job is finished and doesn't require backoff delete it before creating a new one.
-			var duration time.Duration
-			if retry, duration = gcJobBackoff(job); duration > 0 {
-				klog.Infof("BackupGarbageCollectionController backoff failed job %s, retry in %s", job.Name, duration.String())
-				syncCtx.Queue().AddAfter(syncCtx.QueueKey(), duration)
+			if !isJobFinished(job) {
+				// Remaining backups will be garbage collected after the active job completes
 				continue
 			}
+			if isJobFailed(job) {
+				// Exponential backoff on failed GC jobs
+				if duration := c.retryQueue.backoffDuration(storageKey, job); duration > 0 {
+					klog.Infof("BackupGarbageCollectionController backoff failed job %s, retry in %s", job.Name, duration.String())
+					syncCtx.Queue().AddAfter(syncCtx.QueueKey(), duration)
+					continue
+				}
+			}
+			// Job is finished and no backoff required, delete before creating a new one
 			if err := deleteJob(ctx, jobsClient, job); err != nil {
 				return fmt.Errorf("BackupGarbageCollectionController error: %w", err)
 			}
-			klog.Infof("BackupGarbageCollectionController deleted job %s for storage backend %s", job.Name, storage.String())
+			klog.Infof("BackupGarbageCollectionController deleted job %s for storage backend %s", job.Name, storageKey)
 		}
 
-		if err := createGarbageCollectionJob(ctx, c.operatorImagePullSpec, jobsClient, storage, backups, retry); err != nil {
+		if err := createGarbageCollectionJob(ctx, c.operatorImagePullSpec, jobsClient, storage, backups); err != nil {
 			return err
+		}
+	}
+
+	// Drop backoff state for storage backends that no longer have any GC job
+	for key := range c.retryQueue.backoffs {
+		if _, ok := jobsByStorage[key]; !ok {
+			c.retryQueue.Forget(key)
 		}
 	}
 	return nil
 }
 
-func (c *BackupGarbageCollectionController) collectJobs() (finishedJobs map[string]*batchv1.Job, activeBackupGC map[types.UID]bool, err error) {
+// collectJobs indexes GC jobs by storage backend, and reports whether GC of each backup in a completed or active job
+// has completed. Job names are deterministic per storage backend, so there is at most one job per backend.
+func (c *BackupGarbageCollectionController) collectJobs() (jobsByStorage map[string]*batchv1.Job, activeBackupGC map[types.UID]bool, err error) {
 	jobs, err := c.jobsLister.List(labels.Set{"app": backupGCAppName}.AsSelector())
 	if err != nil {
 		return nil, nil, fmt.Errorf("BackupGarbageCollectionController could not list jobs: %w", err)
 	}
 
-	finishedJobs = map[string]*batchv1.Job{}
+	jobsByStorage = make(map[string]*batchv1.Job, len(jobs))
 	activeBackupGC = map[types.UID]bool{}
 	for _, job := range jobs {
-		if isJobCompleted(job) {
-			for _, ownerRef := range job.OwnerReferences {
-				if ownerRef.Kind == "EtcdBackup" {
-					activeBackupGC[ownerRef.UID] = true
-				}
-			}
-			finishedJobs[job.Annotations[backuphelpers.AnnotationBackupStorage]] = job
-		} else if isJobFailed(job) {
-			finishedJobs[job.Annotations[backuphelpers.AnnotationBackupStorage]] = job
-		} else {
-			for _, ownerRef := range job.OwnerReferences {
-				if ownerRef.Kind == "EtcdBackup" {
-					activeBackupGC[ownerRef.UID] = false
-				}
+		jobsByStorage[job.Annotations[backuphelpers.AnnotationBackupStorage]] = job
+		if isJobFailed(job) {
+			// Backups in a failed job are queued for GC again
+			continue
+		}
+		completed := isJobCompleted(job)
+		for _, ownerRef := range job.OwnerReferences {
+			if ownerRef.Kind == "EtcdBackup" {
+				activeBackupGC[ownerRef.UID] = completed
 			}
 		}
 	}
-	return finishedJobs, activeBackupGC, nil
+	return jobsByStorage, activeBackupGC, nil
 }
 
 func (c *BackupGarbageCollectionController) syncBackups(ctx context.Context, activeGC map[types.UID]bool) (map[storageBackend][]*operatorv1alpha1.EtcdBackup, error) {
@@ -243,8 +260,7 @@ func createGarbageCollectionJob(ctx context.Context,
 	operatorImagePullSpec string,
 	jobsClient batchv1client.JobInterface,
 	storage storageBackend,
-	backups []*operatorv1alpha1.EtcdBackup,
-	retry int) error {
+	backups []*operatorv1alpha1.EtcdBackup) error {
 
 	scheme := runtime.NewScheme()
 	codec := serializer.NewCodecFactory(scheme)
@@ -278,14 +294,10 @@ func createGarbageCollectionJob(ctx context.Context,
 			UID:        backup.UID,
 		})
 	}
-	if retry > 0 {
-		job.Annotations[backuphelpers.AnnotationBackupGCRetry] = strconv.Itoa(retry)
-	}
 	job.Finalizers = append(job.Finalizers, backuphelpers.FinalizerEtcdBackup)
 	job.Spec.TTLSecondsAfterFinished = new(gcTtlSecondsAfterFinished)
 	job.Spec.Template.Spec.Containers[0].Image = operatorImagePullSpec
 
-	// TODO(bhperry): If backup is missing files but GC is requested, infer files by directory
 	gcFiles := make([]string, 0, 2*len(backups))
 	switch storage.storageType {
 	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
@@ -416,7 +428,8 @@ func isGarbageCollectionRequired(
 	return storage, true, nil
 }
 
-func finalizeJob(ctx context.Context, jobsClient batchv1client.JobInterface, job *batchv1.Job, removeOwnerRefs bool) error {
+// finalizeJob removes the backup finalizer from the job, returning the patched job.
+func finalizeJob(ctx context.Context, jobsClient batchv1client.JobInterface, job *batchv1.Job, removeOwnerRefs bool) (*batchv1.Job, error) {
 	if slices.Contains(job.Finalizers, backuphelpers.FinalizerEtcdBackup) {
 		metadata := map[string]any{
 			"$deleteFromPrimitiveList/finalizers": []string{backuphelpers.FinalizerEtcdBackup},
@@ -438,17 +451,19 @@ func finalizeJob(ctx context.Context, jobsClient batchv1client.JobInterface, job
 
 		patchData, err := json.Marshal(map[string]any{"metadata": metadata})
 		if err != nil {
-			return fmt.Errorf("error marshalling job %q patch: %w", job.Name, err)
+			return nil, fmt.Errorf("error marshalling job %q patch: %w", job.Name, err)
 		}
-		if _, err := jobsClient.Patch(ctx, job.Name, types.StrategicMergePatchType, patchData, metav1.PatchOptions{}); err != nil {
-			return fmt.Errorf("error finalizing job: %w", err)
+		patchedJob, err := jobsClient.Patch(ctx, job.Name, types.StrategicMergePatchType, patchData, metav1.PatchOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("error finalizing job: %w", err)
 		}
+		return patchedJob, nil
 	}
-	return nil
+	return job, nil
 }
 
 func deleteJob(ctx context.Context, jobsClient batchv1client.JobInterface, job *batchv1.Job) (err error) {
-	if err := finalizeJob(ctx, jobsClient, job, true); err != nil {
+	if _, err := finalizeJob(ctx, jobsClient, job, true); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
@@ -481,6 +496,60 @@ func isJobFailed(job *batchv1.Job) bool {
 	return false
 }
 
+// jobFailedTime returns when the job failed, falling back to the creation time if unknown.
+func jobFailedTime(job *batchv1.Job) time.Time {
+	for _, condition := range job.Status.Conditions {
+		if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue && !condition.LastTransitionTime.IsZero() {
+			return condition.LastTransitionTime.Time
+		}
+	}
+	return job.CreationTimestamp.Time
+}
+
+func newGCRetryQueue() gcRetryQueue {
+	return gcRetryQueue{
+		TypedRateLimiter: workqueue.NewTypedItemExponentialFailureRateLimiter[string](gcBackoffBase, gcBackoffMax),
+		backoffs:         map[string]gcBackoff{},
+	}
+}
+
+type gcRetryQueue struct {
+	workqueue.TypedRateLimiter[string]
+	// backoffs is keyed by storage backend. Access is not synchronized, the controller runs a single worker.
+	backoffs map[string]gcBackoff
+}
+
+func (grq *gcRetryQueue) Forget(storageKey string) {
+	grq.TypedRateLimiter.Forget(storageKey)
+	delete(grq.backoffs, storageKey)
+}
+
+func (grq *gcRetryQueue) add(storageKey string, job *batchv1.Job) gcBackoff {
+	backoff := gcBackoff{
+		jobUID:  job.UID,
+		retryAt: jobFailedTime(job).Add(grq.When(storageKey)),
+	}
+	grq.backoffs[storageKey] = backoff
+	return backoff
+}
+
+// backoffDuration returns the remaining backoff before a failed GC job on the storage backend may be replaced.
+// Each failed job is counted against the rate limiter once, identified by UID.
+func (grq *gcRetryQueue) backoffDuration(storageKey string, job *batchv1.Job) time.Duration {
+	backoff, ok := grq.backoffs[storageKey]
+	if !ok || backoff.jobUID != job.UID {
+		backoff = grq.add(storageKey, job)
+	}
+	return time.Until(backoff.retryAt)
+}
+
+// gcBackoff records the failed GC job that was counted against the rate limiter, so that a failed job is only
+// counted once no matter how many times it is observed.
+type gcBackoff struct {
+	jobUID  types.UID
+	retryAt time.Time
+}
+
 type storageBackend struct {
 	storageType operatorv1alpha1.EtcdBackupStorageType
 	nodeName    string
@@ -496,32 +565,6 @@ func (sb storageBackend) String() string {
 	default:
 		return "unknown"
 	}
-}
-
-func gcJobBackoff(job *batchv1.Job) (retry int, duration time.Duration) {
-	if !isJobFailed(job) {
-		return 0, 0
-	}
-	retry, err := strconv.Atoi(job.Annotations[backuphelpers.AnnotationBackupGCRetry])
-	if err != nil {
-		retry = 1
-	} else {
-		retry++
-	}
-	since := time.Since(job.CreationTimestamp.Time)
-	backoffDuration := gcBackoffDuration(retry)
-	return retry, backoffDuration - since
-}
-
-func gcBackoffDuration(retry int) time.Duration {
-	if retry <= 0 {
-		return 0
-	}
-	backoff := float64(gcBackoffBase.Nanoseconds()) * math.Pow(2, float64(retry))
-	if backoff > math.MaxInt64 { // overflow guard, matches upstream
-		return gcBackoffMax
-	}
-	return min(time.Duration(backoff), gcBackoffMax)
 }
 
 // generateBackupGCJobName creates a hash-based name for deduplication

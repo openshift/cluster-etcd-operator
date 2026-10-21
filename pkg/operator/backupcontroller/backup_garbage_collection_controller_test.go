@@ -20,6 +20,7 @@ import (
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/informers"
 	k8sfakeclient "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
@@ -33,6 +34,7 @@ type testCaseBackupGarbageCollectionController struct {
 	nodes       []*corev1.Node
 	pvcs        []*corev1.PersistentVolumeClaim
 	expectError bool
+	retryQueue  *gcRetryQueue
 	validate    func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset)
 }
 
@@ -62,6 +64,12 @@ func runBackupGarbageCollectionControllerTest(t *testing.T, tc testCaseBackupGar
 	pvcvsInformerHasSynced := pvcsInformer.Informer().HasSynced
 	backupsInformerHasSynced := backupsInformer.Informer().HasSynced
 
+	var retryQueue gcRetryQueue
+	if tc.retryQueue != nil {
+		retryQueue = *tc.retryQueue
+	} else {
+		retryQueue = newGCRetryQueue()
+	}
 	controller := BackupGarbageCollectionController{
 		backupsLister:         backupsInformer.Lister(),
 		jobsLister:            jobInformer.Lister().Jobs(operatorclient.TargetNamespace),
@@ -71,8 +79,8 @@ func runBackupGarbageCollectionControllerTest(t *testing.T, tc testCaseBackupGar
 		kubeClient:            client,
 		operatorImagePullSpec: "operator-pullspec-image",
 		featureGateAccessor:   backupFeatureGateAccessor,
+		retryQueue:            retryQueue,
 	}
-
 	ctx := t.Context()
 	sharedFactory.Start(ctx.Done())
 	operatorSharedFactory.Start(ctx.Done())
@@ -178,8 +186,8 @@ func TestBackupGarbageCollectionExistingJob(t *testing.T) {
 	})
 }
 
-func TestBackupGarbageCollectionNewAndExistingJob(t *testing.T) {
-	// Create a new GC Job for the newly deleted EtcdBackup, but not for the one with an existing GC Job
+func TestBackupGarbageCollectionActiveJobOnStorageSkipsCreate(t *testing.T) {
+	// Do not create a GC Job for a newly deleted EtcdBackup while another GC Job is active on the same storage backend
 	storage := operatorv1alpha1.EtcdBackupStorage{
 		Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
 		PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-backup-pvc"},
@@ -192,7 +200,7 @@ func TestBackupGarbageCollectionNewAndExistingJob(t *testing.T) {
 		pvcs: []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
 		jobs: []*batchv1.Job{{
 			ObjectMeta: v1.ObjectMeta{
-				Name:        "existing-backup-gc-job",
+				Name:        generateBackupGCJobName(storageBackend{storageType: operatorv1alpha1.EtcdBackupStorageTypePVC, pvcName: "test-backup-pvc"}),
 				Namespace:   operatorclient.TargetNamespace,
 				Annotations: map[string]string{backuphelpers.AnnotationBackupStorage: "pvc/test-backup-pvc"},
 				Labels:      map[string]string{"app": backupGCAppName},
@@ -202,17 +210,67 @@ func TestBackupGarbageCollectionNewAndExistingJob(t *testing.T) {
 				}}},
 		}},
 		validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			for _, action := range client.Actions() {
+				require.False(t, action.Matches("create", "jobs"), "No GC Job should be created while one is active on the storage backend")
+			}
 			jobList, err := client.BatchV1().Jobs(operatorclient.TargetNamespace).List(t.Context(), v1.ListOptions{
 				LabelSelector: labels.Set{"app": backupGCAppName}.String(),
 			})
 			require.NoError(t, err)
-			require.Len(t, jobList.Items, 2)
-			require.ElementsMatch(t,
-				[][]v1.OwnerReference{
-					{{APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup-1", UID: "test-backup-1-uid"}},
-					{{APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup-2", UID: "test-backup-2-uid"}},
-				},
-				[][]v1.OwnerReference{jobList.Items[0].OwnerReferences, jobList.Items[1].OwnerReferences})
+			require.Len(t, jobList.Items, 1)
+			require.ElementsMatch(t, jobList.Items[0].OwnerReferences, []v1.OwnerReference{{
+				APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup-1", UID: "test-backup-1-uid",
+			}})
+		},
+	})
+}
+
+func TestBackupGarbageCollectionCompletedJobReplaced(t *testing.T) {
+	// Replace a completed GC Job when another EtcdBackup on the same storage backend requires GC.
+	// The completed job is finalized once, and not patched again before deletion.
+	storage := operatorv1alpha1.EtcdBackupStorage{
+		Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+		PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-backup-pvc"},
+	}
+	jobName := generateBackupGCJobName(storageBackend{storageType: operatorv1alpha1.EtcdBackupStorageTypePVC, pvcName: "test-backup-pvc"})
+	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
+		backups: []*operatorv1alpha1.EtcdBackup{
+			testutils.FakeEtcdBackup("test-backup-2", testutils.WithBackupCompleted(), testutils.WithBackupDeleted(), testutils.WithBackupStorage(storage)),
+		},
+		pvcs: []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
+		jobs: []*batchv1.Job{{
+			ObjectMeta: v1.ObjectMeta{
+				Name:        jobName,
+				Namespace:   operatorclient.TargetNamespace,
+				Annotations: map[string]string{backuphelpers.AnnotationBackupStorage: "pvc/test-backup-pvc"},
+				Labels:      map[string]string{"app": backupGCAppName},
+				Finalizers:  []string{backuphelpers.FinalizerEtcdBackup},
+				OwnerReferences: []v1.OwnerReference{{
+					APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup-1", UID: "test-backup-1-uid",
+				}}},
+			Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
+				Type: batchv1.JobComplete, Status: corev1.ConditionTrue,
+			}}},
+		}},
+		validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			patches := 0
+			for _, action := range client.Actions() {
+				if action.Matches("patch", "jobs") {
+					patches++
+				}
+			}
+			require.Equal(t, 1, patches, "Completed GC Job should only be finalized once")
+
+			jobList, err := client.BatchV1().Jobs(operatorclient.TargetNamespace).List(t.Context(), v1.ListOptions{
+				LabelSelector: labels.Set{"app": backupGCAppName}.String(),
+			})
+			require.NoError(t, err)
+			require.Len(t, jobList.Items, 1)
+			job := jobList.Items[0]
+			require.False(t, isJobFinished(&job), "Completed job should have been replaced")
+			require.ElementsMatch(t, job.OwnerReferences, []v1.OwnerReference{{
+				APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup-2", UID: "test-backup-2-uid",
+			}})
 		},
 	})
 }
@@ -460,6 +518,7 @@ func TestBackupGarbageCollectionFailedJobRetry(t *testing.T) {
 				OwnerReferences: []v1.OwnerReference{{
 					APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup", UID: "test-backup-uid",
 				}},
+				UID:               "failed-gc-job-uid",
 				CreationTimestamp: v1.Time{Time: time.Now().Add(-time.Hour)},
 			},
 			Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
@@ -492,12 +551,13 @@ func TestBackupGarbageCollectionFailedJobBackoff(t *testing.T) {
 			ObjectMeta: v1.ObjectMeta{
 				Name:        generateBackupGCJobName(storageBackend{storageType: operatorv1alpha1.EtcdBackupStorageTypePVC, pvcName: "test-backup-pvc"}),
 				Namespace:   operatorclient.TargetNamespace,
-				Annotations: map[string]string{backuphelpers.AnnotationBackupStorage: "pvc/test-backup-pvc", backuphelpers.AnnotationBackupGCRetry: "5"},
+				Annotations: map[string]string{backuphelpers.AnnotationBackupStorage: "pvc/test-backup-pvc"},
 				Labels:      map[string]string{"app": backupGCAppName},
 				Finalizers:  []string{backuphelpers.FinalizerEtcdBackup},
 				OwnerReferences: []v1.OwnerReference{{
 					APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup", UID: "test-backup-uid",
 				}},
+				UID:               "failed-gc-job-uid",
 				CreationTimestamp: v1.Now(),
 			},
 			Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
@@ -521,8 +581,56 @@ func TestBackupGarbageCollectionFailedJobBackoff(t *testing.T) {
 	})
 }
 
+func TestBackupGarbageCollectionFailedJobBackoffEscalates(t *testing.T) {
+	// Previous failed jobs on this storage backend
+	retryQueue := newGCRetryQueue()
+	for range 3 {
+		retryQueue.When("pvc/test-backup-pvc")
+	}
+	retryQueue.backoffs["pvc/test-backup-pvc"] = gcBackoff{jobUID: "failed-gc-job-uid-1"}
+
+	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
+		backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupCompleted(), testutils.WithBackupDeleted())},
+		pvcs:    []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
+		jobs: []*batchv1.Job{{
+			ObjectMeta: v1.ObjectMeta{
+				Name:        generateBackupGCJobName(storageBackend{storageType: operatorv1alpha1.EtcdBackupStorageTypePVC, pvcName: "test-backup-pvc"}),
+				Namespace:   operatorclient.TargetNamespace,
+				Annotations: map[string]string{backuphelpers.AnnotationBackupStorage: "pvc/test-backup-pvc"},
+				Labels:      map[string]string{"app": backupGCAppName},
+				Finalizers:  []string{backuphelpers.FinalizerEtcdBackup},
+				OwnerReferences: []v1.OwnerReference{{
+					APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup", UID: "test-backup-uid",
+				}},
+				UID:               "failed-gc-job-uid-2",
+				CreationTimestamp: v1.Time{Time: time.Now().Add(-2 * gcBackoffBase)},
+			},
+			Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
+				Type:   batchv1.JobFailed,
+				Status: corev1.ConditionTrue,
+			}}},
+		}},
+		retryQueue: &retryQueue,
+		validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			jobList, err := client.BatchV1().Jobs(operatorclient.TargetNamespace).List(t.Context(), v1.ListOptions{
+				LabelSelector: labels.Set{"app": backupGCAppName}.String(),
+			})
+			require.NoError(t, err)
+			require.Len(t, jobList.Items, 1)
+			require.True(t, isJobFailed(&jobList.Items[0]), "Job should not have been replaced yet, expected to wait for backoff")
+			require.Equal(t, 4, retryQueue.NumRequeues("pvc/test-backup-pvc"))
+			require.Equal(t, types.UID("failed-gc-job-uid-2"), retryQueue.backoffs["pvc/test-backup-pvc"].jobUID)
+		},
+	})
+}
+
 func TestBackupGarbageCollectionCompletedJobsFinalized(t *testing.T) {
 	// Finalize GC Jobs that have completed
+	retryQueue := newGCRetryQueue()
+	retryQueue.When("pvc/completed")
+	retryQueue.backoffs["pvc/completed"] = gcBackoff{jobUID: "old-failed-job-uid"}
+	retryQueue.When("pvc/missing")
+	retryQueue.backoffs["pvc/missing"] = gcBackoff{jobUID: "old-failed-job-uid"}
 	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
 		jobs: []*batchv1.Job{
 			{
@@ -539,10 +647,11 @@ func TestBackupGarbageCollectionCompletedJobsFinalized(t *testing.T) {
 			},
 			{
 				ObjectMeta: v1.ObjectMeta{
-					Name:       "completed-backup-gc-job",
-					Namespace:  operatorclient.TargetNamespace,
-					Labels:     map[string]string{"app": backupGCAppName},
-					Finalizers: []string{backuphelpers.FinalizerEtcdBackup},
+					Name:        "completed-backup-gc-job",
+					Namespace:   operatorclient.TargetNamespace,
+					Annotations: map[string]string{backuphelpers.AnnotationBackupStorage: "pvc/completed"},
+					Labels:      map[string]string{"app": backupGCAppName},
+					Finalizers:  []string{backuphelpers.FinalizerEtcdBackup},
 				},
 				Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
 					Type: batchv1.JobComplete, Status: corev1.ConditionTrue,
@@ -550,6 +659,12 @@ func TestBackupGarbageCollectionCompletedJobsFinalized(t *testing.T) {
 			},
 		},
 		validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			// Backoff is reset for storage backends with a completed job, or without any job
+			require.Zero(t, retryQueue.NumRequeues("pvc/completed"))
+			require.NotContains(t, retryQueue.backoffs, "pvc/completed")
+			require.Zero(t, retryQueue.NumRequeues("pvc/missing"))
+			require.NotContains(t, retryQueue.backoffs, "pvc/missing")
+
 			jobList, err := client.BatchV1().Jobs(operatorclient.TargetNamespace).List(t.Context(), v1.ListOptions{
 				LabelSelector: labels.Set{"app": backupGCAppName}.String(),
 			})
@@ -565,6 +680,61 @@ func TestBackupGarbageCollectionCompletedJobsFinalized(t *testing.T) {
 			}
 		},
 	})
+}
+
+func TestGCJobBackoff(t *testing.T) {
+	c := &BackupGarbageCollectionController{retryQueue: newGCRetryQueue()}
+	failedJob := func(uid types.UID, failedAt time.Time) *batchv1.Job {
+		return &batchv1.Job{
+			ObjectMeta: v1.ObjectMeta{UID: uid},
+			Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
+				Type: batchv1.JobFailed, Status: corev1.ConditionTrue, LastTransitionTime: v1.Time{Time: failedAt},
+			}}},
+		}
+	}
+	completedJob := &batchv1.Job{Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
+		Type: batchv1.JobComplete, Status: corev1.ConditionTrue,
+	}}}}
+
+	now := time.Now()
+	require.Zero(t, c.retryQueue.backoffDuration("local/a", completedJob), "completed jobs do not back off")
+	require.Zero(t, c.retryQueue.NumRequeues("local/a"))
+
+	// Same failed job observed repeatedly is only counted once
+	job1 := failedJob("job-1", now)
+	first := c.retryQueue.backoffDuration("local/a", job1)
+	require.InDelta(t, gcBackoffBase, first, float64(time.Second))
+	require.LessOrEqual(t, c.retryQueue.backoffDuration("local/a", job1), first)
+	require.Equal(t, 1, c.retryQueue.NumRequeues("local/a"))
+
+	// A new failed job on the same storage backend escalates
+	require.InDelta(t, 2*gcBackoffBase, c.retryQueue.backoffDuration("local/a", failedJob("job-2", now)), float64(time.Second))
+	require.Equal(t, 2, c.retryQueue.NumRequeues("local/a"))
+
+	// Storage backends back off independently
+	require.InDelta(t, gcBackoffBase, c.retryQueue.backoffDuration("local/b", failedJob("job-3", now)), float64(time.Second))
+
+	// Backoff is measured from when the job failed
+	require.LessOrEqual(t, c.retryQueue.backoffDuration("local/c", failedJob("job-4", now.Add(-time.Hour))), time.Duration(0))
+
+	c.retryQueue.Forget("local/a")
+	require.Zero(t, c.retryQueue.NumRequeues("local/a"))
+	require.NotContains(t, c.retryQueue.backoffs, "local/a")
+	require.Contains(t, c.retryQueue.backoffs, "local/b")
+}
+
+func TestJobFailedTime(t *testing.T) {
+	created := time.Now().Add(-time.Hour).Truncate(time.Second)
+	failed := time.Now().Truncate(time.Second)
+
+	job := &batchv1.Job{ObjectMeta: v1.ObjectMeta{CreationTimestamp: v1.Time{Time: created}}}
+	require.Equal(t, created, jobFailedTime(job), "falls back to creation time without failed condition")
+
+	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
+	require.Equal(t, created, jobFailedTime(job), "falls back to creation time without transition time")
+
+	job.Status.Conditions[0].LastTransitionTime = v1.Time{Time: failed}
+	require.Equal(t, failed, jobFailedTime(job))
 }
 
 func requireFind[T any](t *testing.T, items []T, find func(T) bool) (result T) {

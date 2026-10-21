@@ -20,7 +20,6 @@ const (
 	LabelEtcdBackupPolicy = "operator.openshift.io/etcd-backup-policy"
 
 	AnnotationBackupStorage = "operator.openshift.io/etcd-backup-storage"
-	AnnotationBackupGCRetry = "operator.openshift.io/etcd-backup-gc-retry"
 
 	FinalizerEtcdBackup = "operator.openshift.io/etcd-backup"
 
