@@ -261,28 +261,6 @@ func startRuntimeJobControllers(
 	// Start common job controllers (auth, after-setup, setup, fencing)
 	startCommonJobControllers(ctx, controlPlaneNodeList, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, lifecycleManager)
 
-	// Update-setup job: ensures pacemaker cluster configuration is current
-	// Runs post-transition only (not needed during bootstrap)
-	// Only runs when exactly 2 control plane nodes exist (pacemaker limitation)
-	if len(controlPlaneNodeList) == 2 {
-		// schedulableNodesFunc: returns ready nodes where job can run (K8s ∩ Pacemaker intersection)
-		schedulableNodesFunc := func() ([]*corev1.Node, error) {
-			return lifecycleManager.getActivePacemakerNodes()
-		}
-
-		// affectedNodesFunc for update-setup: K8s ∩ Pacemaker active nodes (ready only)
-		// Only blocks on nodes that are actually in the Pacemaker cluster configuration.
-		// This prevents deadlock when a node is removed from Pacemaker but can't become Ready
-		// without update-setup re-adding it (kubelet is a Pacemaker resource).
-		updateSetupAffectedNodesFunc := func() ([]*corev1.Node, error) {
-			return lifecycleManager.getActivePacemakerNodes()
-		}
-
-		jobs.RunClusterJobController(ctx, tools.JobTypeUpdateSetup, schedulableNodesFunc, updateSetupAffectedNodesFunc, nil, 3, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
-	} else {
-		klog.V(4).Infof("Skipping update-setup job controller: requires exactly 2 control plane nodes, have %d", len(controlPlaneNodeList))
-	}
-
 	// Start status collector (only after transition is complete, when Pacemaker exists)
 	lifecycleManager.runPacemakerStatusCollectorCronJob(ctx)
 

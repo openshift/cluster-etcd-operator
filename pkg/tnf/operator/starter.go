@@ -92,8 +92,7 @@ func HandleDualReplicaClusters(
 		return false, err
 	}
 	// Start pacemaker controllers (lifecycle manager, status collector)
-	// PacemakerLifecycleManager registers UpdateFunc handler for node Ready transitions
-	// to trigger update-setup job restart during initial bootstrap.
+	// Node and Pacemaker informer events enqueue lifecycle reconciliation.
 	runPacemakerControllers(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer, controlPlaneNodeInformer, dynamicClient)
 
 	return true, nil

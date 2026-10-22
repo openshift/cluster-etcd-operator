@@ -190,9 +190,6 @@ func (s Snapshot) MembershipChanges(configured map[string]string) (remove, add [
 
 // DeferDuringUpgrade permits only real membership repair while MCO/CVO progresses.
 func (s Snapshot) DeferDuringUpgrade(progressing bool, configured map[string]string) bool {
-	if s.Repair {
-		return false
-	}
 	remove, add := s.MembershipChanges(configured)
 	if len(remove)+len(add) > 0 {
 		return false
