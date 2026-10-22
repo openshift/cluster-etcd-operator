@@ -10,10 +10,10 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
-	configclient "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
@@ -25,17 +25,18 @@ import (
 )
 
 type recordedRunner struct {
+	reconciled       bool // This generation previously completed membership reconciliation.
 	continuingRepair bool
+	repairClaim      string
 	fencing          func(context.Context, kubernetes.Interface, []string) error
 	alerts           func(context.Context) error
 	kube             kubernetes.Interface
-	config           configclient.ConfigV1Interface
 	snapshot         generation.Snapshot
 	current          string
 	execute          func(context.Context, string) (string, string, error)
 }
 
-func runRecordedGeneration(ctx context.Context, kube kubernetes.Interface, config configclient.ConfigV1Interface, current string) error {
+func runRecordedGeneration(ctx context.Context, kube kubernetes.Interface, current string) error {
 	name, uid := os.Getenv(generation.ConfigMapEnv), os.Getenv(generation.ConfigMapUIDEnv)
 	if name == "" || uid == "" {
 		return fmt.Errorf("update-setup requires an explicit recorded generation and ConfigMap UID")
@@ -51,7 +52,7 @@ func runRecordedGeneration(ctx context.Context, kube kubernetes.Interface, confi
 	if err != nil {
 		return err
 	}
-	r := recordedRunner{kube: kube, config: config, snapshot: snapshot, current: current, execute: exec.Execute, fencing: pcs.ConfigureFencing, alerts: pcs.ConfigureAlertsWithRetry}
+	r := recordedRunner{reconciled: cm.Annotations[generation.CompletedAt] != "", kube: kube, snapshot: snapshot, current: current, execute: exec.Execute, fencing: pcs.ConfigureFencing, alerts: pcs.ConfigureAlertsWithRetry}
 	return r.run(ctx)
 }
 
@@ -84,7 +85,7 @@ func (r *recordedRunner) guard(ctx context.Context) error {
 	if err := r.snapshot.MatchesCurrent(ctx, r.kube); err != nil {
 		return err
 	}
-	progressing, err := generation.UpgradeInProgress(ctx, r.kube, r.config)
+	mcoUpdating, err := generation.MCOUpdateInProgress(ctx, r.kube)
 	if err != nil {
 		return err
 	}
@@ -92,8 +93,16 @@ func (r *recordedRunner) guard(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if r.snapshot.DeferDuringUpgrade(progressing, configured) && !r.continuingRepair {
-		return fmt.Errorf("deferring generation %d during upgrade/MCO reboot", r.snapshot.Generation)
+	policySnapshot := r.snapshot
+	if r.reconciled {
+		remove, add := r.snapshot.MembershipChanges(configured)
+		if len(remove)+len(add) > 0 {
+			return fmt.Errorf("membership drift after completion requires a new recorded generation")
+		}
+		policySnapshot.Previous = nil
+	}
+	if policySnapshot.DeferDuringMCO(mcoUpdating, configured) && !r.continuingRepair {
+		return fmt.Errorf("deferring generation %d during control-plane MCO activity", r.snapshot.Generation)
 	}
 	return nil
 }
@@ -110,9 +119,19 @@ func (r *recordedRunner) command(ctx context.Context, command string) error {
 }
 
 func (r *recordedRunner) run(ctx context.Context) error {
-	marker, _, markerErr := r.execute(ctx, "crm_attribute --type crm_config --name tnf_reconciliation_generation --query --quiet")
-	r.continuingRepair = markerErr == nil && strings.TrimSpace(marker) == fmt.Sprint(r.snapshot.Generation) && r.snapshot.Repair
-
+	properties, err := r.properties(ctx)
+	if err != nil {
+		return err
+	}
+	r.continuingRepair = !r.reconciled && properties["tnf_reconciliation_generation"] == fmt.Sprint(r.snapshot.Generation)
+	r.repairClaim = ""
+	if r.continuingRepair {
+		r.repairClaim = properties["tnf_reconciliation_force_new_cluster"]
+		claim, err := strconv.ParseInt(r.repairClaim, 10, 64)
+		if err != nil || claim <= 0 {
+			return fmt.Errorf("repair generation %d has no valid recovery claim", r.snapshot.Generation)
+		}
+	}
 	if err := r.guard(ctx); err != nil {
 		return err
 	}
@@ -133,9 +152,9 @@ func (r *recordedRunner) run(ctx context.Context) error {
 		if _, ok := configured[n.Name]; !ok {
 			continue
 		}
-		uid, _, queryErr := r.execute(ctx, fmt.Sprintf("crm_attribute --type nodes --node %s --name kubernetes_node_uid --query --quiet", n.Name))
+		uid := properties["tnf_node_uid_"+n.Name]
 		replaced := false
-		if queryErr == nil && strings.TrimSpace(uid) != "" {
+		if strings.TrimSpace(uid) != "" {
 			replaced = strings.TrimSpace(uid) != string(n.UID)
 		} else {
 			for _, old := range r.snapshot.Previous {
@@ -154,8 +173,19 @@ func (r *recordedRunner) run(ctx context.Context) error {
 	sort.Strings(remove)
 	sort.Strings(add)
 	if len(remove)+len(add) > 0 {
-		if err := r.command(ctx, fmt.Sprintf("crm_attribute --type crm_config --name tnf_reconciliation_generation --update %d", r.snapshot.Generation)); err != nil {
-			return err
+		if r.reconciled {
+			return fmt.Errorf("identity drift after completion requires a new recorded generation")
+		}
+		if !r.continuingRepair {
+			// Persist one timestamp before changing membership. Retrying a partial
+			// repair must not issue a new force_new_cluster claim each time.
+			r.repairClaim = strconv.FormatInt(time.Now().Unix(), 10)
+			if err := r.command(ctx, "crm_attribute --type crm_config --name tnf_reconciliation_force_new_cluster --update "+r.repairClaim); err != nil {
+				return err
+			}
+			if err := r.command(ctx, fmt.Sprintf("crm_attribute --type crm_config --name tnf_reconciliation_generation --update %d", r.snapshot.Generation)); err != nil {
+				return err
+			}
 		}
 		r.continuingRepair = true
 	}
@@ -182,6 +212,15 @@ func (r *recordedRunner) run(ctx context.Context) error {
 		if err := r.command(ctx, fmt.Sprintf("/usr/sbin/pcs cluster node add %s addr=%s --force", name, ip)); err != nil {
 			return err
 		}
+		// Checkpoint the added identity before fencing/resource work can fail.
+		// The generation claim above keeps the remaining repair work retryable.
+		for _, n := range r.snapshot.Nodes {
+			if n.Name == name {
+				if err := r.command(ctx, fmt.Sprintf("crm_attribute --type crm_config --name tnf_node_uid_%s --update %s", n.Name, n.UID)); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	if err := r.guard(ctx); err != nil {
 		return err
@@ -195,6 +234,14 @@ func (r *recordedRunner) run(ctx context.Context) error {
 	if err := r.fencing(ctx, r.kube, names); err != nil {
 		return err
 	}
+	if r.continuingRepair {
+		if err := r.removeUnstartedMembers(ctx); err != nil {
+			return err
+		}
+		if err := r.command(ctx, fmt.Sprintf("crm_attribute --lifetime reboot --node %s --name force_new_cluster --update %s", r.current, r.repairClaim)); err != nil {
+			return err
+		}
+	}
 	currentMapping, err := r.nodeIPMap(ctx)
 	if err != nil {
 		return err
@@ -204,16 +251,8 @@ func (r *recordedRunner) run(ctx context.Context) error {
 			return err
 		}
 	}
-	if len(remove)+len(add) > 0 {
-		if err := r.removeUnstartedMembers(ctx); err != nil {
-			return err
-		}
-		if err := r.command(ctx, fmt.Sprintf("crm_attribute --lifetime reboot --node %s --name force_new_cluster --update %d", r.current, time.Now().Unix())); err != nil {
-			return err
-		}
-	}
 	for _, n := range r.snapshot.Nodes {
-		if err := r.command(ctx, fmt.Sprintf("crm_attribute --type nodes --node %s --name kubernetes_node_uid --update %s", n.Name, n.UID)); err != nil {
+		if err := r.command(ctx, fmt.Sprintf("crm_attribute --type crm_config --name tnf_node_uid_%s --update %s", n.Name, n.UID)); err != nil {
 			return err
 		}
 	}
@@ -361,4 +400,36 @@ func (r *recordedRunner) nodeIPMap(ctx context.Context) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("etcd node_ip_map is absent from CIB")
+}
+
+func (r *recordedRunner) properties(ctx context.Context) (map[string]string, error) {
+	stdout, _, err := r.execute(ctx, "/usr/sbin/pcs cluster cib")
+	if err != nil {
+		return nil, err
+	}
+	var cib struct {
+		XMLName xml.Name `xml:"cib"`
+		Sets    []struct {
+			Pairs []struct {
+				Name  string `xml:"name,attr"`
+				Value string `xml:"value,attr"`
+			} `xml:"nvpair"`
+		} `xml:"configuration>crm_config>cluster_property_set"`
+	}
+	if err := xml.Unmarshal([]byte(stdout), &cib); err != nil {
+		return nil, err
+	}
+	values := map[string]string{}
+	for _, set := range cib.Sets {
+		for _, pair := range set.Pairs {
+			if !strings.HasPrefix(pair.Name, "tnf_") {
+				continue
+			}
+			if _, exists := values[pair.Name]; exists {
+				return nil, fmt.Errorf("ambiguous CIB property %s", pair.Name)
+			}
+			values[pair.Name] = pair.Value
+		}
+	}
+	return values, nil
 }

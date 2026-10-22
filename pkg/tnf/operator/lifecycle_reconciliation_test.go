@@ -6,10 +6,8 @@ import (
 	"testing"
 	"time"
 
-	configv1 "github.com/openshift/api/config/v1"
 	pacmkrv1 "github.com/openshift/api/etcd/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
-	configfake "github.com/openshift/client-go/config/clientset/versioned/fake"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
@@ -47,7 +45,7 @@ func generationManager(t *testing.T) *pacemakerLifecycleManager {
 	pmIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
 	require.NoError(t, pmIndexer.Add(&pacmkrv1.PacemakerCluster{ObjectMeta: metav1.ObjectMeta{Name: pacemaker.PacemakerClusterResourceName}, Status: pacmkrv1.PacemakerClusterStatus{Nodes: &pmNodes, LastUpdated: metav1.Now()}}))
 	op := v1helpers.NewFakeStaticPodOperatorClient(&operatorv1.StaticPodOperatorSpec{OperatorSpec: operatorv1.OperatorSpec{ManagementState: operatorv1.Managed}}, &operatorv1.StaticPodOperatorStatus{OperatorStatus: operatorv1.OperatorStatus{Conditions: []operatorv1.OperatorCondition{{Type: ceohelpers.OperatorConditionExternalEtcdHasCompletedTransition, Status: operatorv1.ConditionTrue}}}}, nil, nil)
-	return &pacemakerLifecycleManager{kubeClient: client, operatorClient: op, controlPlaneNodeInformer: &mockNodeInformer{indexer: indexer, synced: true}, pacemakerInformer: &mockPacemakerInformer{indexer: pmIndexer}, configClient: configfake.NewSimpleClientset(&configv1.ClusterVersion{ObjectMeta: metav1.ObjectMeta{Name: "version"}}).ConfigV1()}
+	return &pacemakerLifecycleManager{kubeClient: client, operatorClient: op, controlPlaneNodeInformer: &mockNodeInformer{indexer: indexer, synced: true}, pacemakerInformer: &mockPacemakerInformer{indexer: pmIndexer}}
 }
 
 func TestGenerationPersistsAcrossRestartAndReplacement(t *testing.T) {
@@ -57,7 +55,7 @@ func TestGenerationPersistsAcrossRestartAndReplacement(t *testing.T) {
 	records, err := generation.Records(ctx, c.kubeClient)
 	require.NoError(t, err)
 	require.Len(t, records, 1)
-	copy := pacemakerLifecycleManager{kubeClient: c.kubeClient, operatorClient: c.operatorClient, controlPlaneNodeInformer: c.controlPlaneNodeInformer, pacemakerInformer: c.pacemakerInformer, configClient: c.configClient} // Simulate restart.
+	copy := pacemakerLifecycleManager{kubeClient: c.kubeClient, operatorClient: c.operatorClient, controlPlaneNodeInformer: c.controlPlaneNodeInformer, pacemakerInformer: c.pacemakerInformer} // Simulate restart.
 	require.NoError(t, copy.reconcileGeneration(ctx))
 	job, err := c.kubeClient.BatchV1().Jobs(generation.Namespace).Get(ctx, generation.JobName(1, 1), metav1.GetOptions{})
 	require.NoError(t, err)
@@ -75,6 +73,21 @@ func TestGenerationPersistsAcrossRestartAndReplacement(t *testing.T) {
 	require.Equal(t, job.Name, records[0].Annotations[generation.CompletedJob])
 	node, err := c.kubeClient.CoreV1().Nodes().Get(ctx, "master-1", metav1.GetOptions{})
 	require.NoError(t, err)
+
+	node.Status.Conditions[0].Status = corev1.ConditionFalse
+	_, err = c.kubeClient.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	require.NoError(t, c.controlPlaneNodeInformer.GetIndexer().Update(node))
+	require.NoError(t, copy.reconcileGeneration(ctx))
+	list, err := c.kubeClient.BatchV1().Jobs(generation.Namespace).List(ctx, metav1.ListOptions{})
+	require.NoError(t, err)
+	require.Len(t, list.Items, 1, "readiness changes must not rerun a completed generation")
+	require.NoError(t, c.kubeClient.BatchV1().Jobs(generation.Namespace).Delete(ctx, job.Name, metav1.DeleteOptions{}))
+	require.NoError(t, copy.reconcileGeneration(ctx))
+	list, err = c.kubeClient.BatchV1().Jobs(generation.Namespace).List(ctx, metav1.ListOptions{})
+	require.NoError(t, err)
+	require.Empty(t, list.Items, "recorded completion survives Job cleanup")
+	node.Status.Conditions[0].Status = corev1.ConditionTrue
 	node.UID = "replacement"
 	_, err = c.kubeClient.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
 	require.NoError(t, err)
@@ -89,40 +102,13 @@ func TestGenerationPersistsAcrossRestartAndReplacement(t *testing.T) {
 	require.Equal(t, types.UID("uid-1"), s.Previous[1].UID)
 }
 
-func TestGenerationWaitsForFailedPodsAndRetriesOnPeer(t *testing.T) {
-	ctx := context.Background()
-	c := generationManager(t)
-	require.NoError(t, c.reconcileGeneration(ctx))
-	require.NoError(t, c.reconcileGeneration(ctx))
-	job, err := c.kubeClient.BatchV1().Jobs(generation.Namespace).Get(ctx, generation.JobName(1, 1), metav1.GetOptions{})
-	require.NoError(t, err)
-	job.UID = "attempt-1"
-	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue}}
-	_, err = c.kubeClient.BatchV1().Jobs(generation.Namespace).UpdateStatus(ctx, job, metav1.UpdateOptions{})
-	require.NoError(t, err)
-	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "terminating", Namespace: generation.Namespace, Labels: map[string]string{"batch.kubernetes.io/controller-uid": string(job.UID)}}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
-	_, err = c.kubeClient.CoreV1().Pods(generation.Namespace).Create(ctx, pod, metav1.CreateOptions{})
-	require.NoError(t, err)
-	require.NoError(t, c.reconcileGeneration(ctx))
-	list, err := c.kubeClient.BatchV1().Jobs(generation.Namespace).List(ctx, metav1.ListOptions{})
-	require.NoError(t, err)
-	require.Len(t, list.Items, 1)
-	pod.Status.Phase = corev1.PodFailed
-	_, err = c.kubeClient.CoreV1().Pods(generation.Namespace).UpdateStatus(ctx, pod, metav1.UpdateOptions{})
-	require.NoError(t, err)
-	require.NoError(t, c.reconcileGeneration(ctx))
-	peer, err := c.kubeClient.BatchV1().Jobs(generation.Namespace).Get(ctx, generation.JobName(1, 2), metav1.GetOptions{})
-	require.NoError(t, err)
-	require.Equal(t, "master-1", peer.Spec.Template.Spec.NodeName)
-}
-
 func TestGenerationDefersRebootButPermitsMissingMember(t *testing.T) {
 	ctx := context.Background()
 	c := generationManager(t)
-	cv, err := c.configClient.ClusterVersions().Get(ctx, "version", metav1.GetOptions{})
+	node, err := c.kubeClient.CoreV1().Nodes().Get(ctx, "master-1", metav1.GetOptions{})
 	require.NoError(t, err)
-	cv.Status.Conditions = []configv1.ClusterOperatorStatusCondition{{Type: configv1.OperatorProgressing, Status: configv1.ConditionTrue}}
-	_, err = c.configClient.ClusterVersions().UpdateStatus(ctx, cv, metav1.UpdateOptions{})
+	node.Annotations = map[string]string{"machineconfiguration.openshift.io/currentConfig": "old", "machineconfiguration.openshift.io/desiredConfig": "new"}
+	_, err = c.kubeClient.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
 	require.NoError(t, err)
 	require.NoError(t, c.reconcileGeneration(ctx))
 	records, err := generation.Records(ctx, c.kubeClient)
@@ -196,7 +182,7 @@ func TestFailedGenerationRemainsDegradedUntilSuccess(t *testing.T) {
 	_, status, _, err = c.operatorClient.GetOperatorState()
 	require.NoError(t, err)
 	require.True(t, v1helpers.IsOperatorConditionTrue(status.Conditions, "TNFUpdateSetupJobDegraded"))
-	job, err := c.kubeClient.BatchV1().Jobs(generation.Namespace).Get(ctx, generation.JobName(2, 1), metav1.GetOptions{})
+	job, err := c.kubeClient.BatchV1().Jobs(generation.Namespace).Get(ctx, generation.JobName(1, generationAttempts+1), metav1.GetOptions{})
 	require.NoError(t, err)
 	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
 	_, err = c.kubeClient.BatchV1().Jobs(generation.Namespace).UpdateStatus(ctx, job, metav1.UpdateOptions{})
@@ -205,4 +191,40 @@ func TestFailedGenerationRemainsDegradedUntilSuccess(t *testing.T) {
 	_, status, _, err = c.operatorClient.GetOperatorState()
 	require.NoError(t, err)
 	require.True(t, v1helpers.IsOperatorConditionFalse(status.Conditions, "TNFUpdateSetupJobDegraded"))
+}
+
+func TestGenerationRetiresLegacyJobBeforeRecording(t *testing.T) {
+	ctx := context.Background()
+	c := generationManager(t)
+	legacy := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "tnf-update-setup-job", Namespace: generation.Namespace, Labels: map[string]string{"app.kubernetes.io/name": "tnf-update-setup-job"}}}
+	_, err := c.kubeClient.BatchV1().Jobs(generation.Namespace).Create(ctx, legacy, metav1.CreateOptions{})
+	require.NoError(t, err)
+	require.NoError(t, c.reconcileGeneration(ctx))
+	records, err := generation.Records(ctx, c.kubeClient)
+	require.NoError(t, err)
+	require.Empty(t, records, "legacy execution must stop first")
+	legacy.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+	_, err = c.kubeClient.BatchV1().Jobs(generation.Namespace).UpdateStatus(ctx, legacy, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	require.NoError(t, c.reconcileGeneration(ctx))
+	list, err := c.kubeClient.BatchV1().Jobs(generation.Namespace).List(ctx, metav1.ListOptions{})
+	require.NoError(t, err)
+	require.Empty(t, list.Items)
+	records, err = generation.Records(ctx, c.kubeClient)
+	require.NoError(t, err)
+	require.Empty(t, records, "legacy success cannot prove a recorded generation")
+	require.NoError(t, c.reconcileGeneration(ctx))
+	records, err = generation.Records(ctx, c.kubeClient)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+}
+
+func mustListGenerationNodes(t *testing.T, c *pacemakerLifecycleManager) []*corev1.Node {
+	t.Helper()
+	objects := c.controlPlaneNodeInformer.GetIndexer().List()
+	nodes := make([]*corev1.Node, 0, len(objects))
+	for _, obj := range objects {
+		nodes = append(nodes, obj.(*corev1.Node))
+	}
+	return nodes
 }

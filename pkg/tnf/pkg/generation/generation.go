@@ -16,19 +16,21 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
 
 const (
-	Namespace       = "openshift-etcd"
-	Label           = "tnf.etcd.openshift.io/generation"
-	ComponentLabel  = "app.kubernetes.io/component"
-	Component       = "tnf-update-setup"
-	ConfigMapEnv    = "TNF_UPDATE_SETUP_CONFIGMAP"
-	ConfigMapUIDEnv = "TNF_UPDATE_SETUP_CONFIGMAP_UID"
-	CompletedJob    = "tnf.etcd.openshift.io/completed-job"
-	CompletedAt     = "tnf.etcd.openshift.io/completed-at"
-	DataKey         = "config.json"
+	Namespace          = operatorclient.TargetNamespace
+	Label              = "tnf.etcd.openshift.io/generation"
+	ComponentLabel     = "app.kubernetes.io/component"
+	Component          = "tnf-update-setup"
+	ConfigMapEnv       = "TNF_UPDATE_SETUP_CONFIGMAP"
+	ConfigMapUIDEnv    = "TNF_UPDATE_SETUP_CONFIGMAP_UID"
+	CompletedJob       = "tnf.etcd.openshift.io/completed-job"
+	CompletedAt        = "tnf.etcd.openshift.io/completed-at"
+	CompletedRecordUID = "tnf.etcd.openshift.io/completed-record-uid"
+	DataKey            = "config.json"
 )
 
 // Node records identity independently of readiness or Pacemaker's online state.
@@ -188,18 +190,23 @@ func (s Snapshot) MembershipChanges(configured map[string]string) (remove, add [
 	return
 }
 
-// DeferDuringUpgrade permits only real membership repair while MCO/CVO progresses.
-func (s Snapshot) DeferDuringUpgrade(progressing bool, configured map[string]string) bool {
+// NeedsMembershipRepair includes identity replacement even when name and IP are reused.
+func (s Snapshot) NeedsMembershipRepair(configured map[string]string) bool {
 	remove, add := s.MembershipChanges(configured)
 	if len(remove)+len(add) > 0 {
-		return false
+		return true
 	}
 	for _, old := range s.Previous {
 		for _, n := range s.Nodes {
 			if old.Name == n.Name && old.UID != n.UID {
-				return false
+				return true
 			}
 		}
 	}
-	return progressing
+	return false
+}
+
+// DeferDuringMCO permits necessary membership repair while control-plane MCO work progresses.
+func (s Snapshot) DeferDuringMCO(mcoUpdating bool, configured map[string]string) bool {
+	return mcoUpdating && !s.NeedsMembershipRepair(configured)
 }

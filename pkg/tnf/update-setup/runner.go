@@ -3,12 +3,12 @@ package updatesetup
 import (
 	"context"
 	"fmt"
-	configclient "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1"
+	"os"
+
 	"k8s.io/apiserver/pkg/server"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
-	"os"
 )
 
 func RunTnfUpdateSetup() error {
@@ -39,9 +39,5 @@ func RunTnfUpdateSetup() error {
 		return fmt.Errorf("MY_NODE_NAME environment variable not set")
 	}
 
-	configClient, err := configclient.NewForConfig(clientConfig)
-	if err != nil {
-		return err
-	}
-	return runRecordedGeneration(ctx, kubeClient, configClient, currentNodeName)
+	return runRecordedGeneration(ctx, kubeClient, currentNodeName)
 }

@@ -2,6 +2,8 @@ package operator
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -15,6 +17,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 
 	"github.com/openshift/cluster-etcd-operator/bindata"
@@ -24,7 +27,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
 
-const generationAttempts = 6 // Three rounds across a two-node cluster.
+const generationAttempts = 6 // Per execution configuration.
 
 func (c *pacemakerLifecycleManager) reconcileGeneration(ctx context.Context) error {
 	spec, _, _, err := c.operatorClient.GetOperatorState()
@@ -54,10 +57,12 @@ func (c *pacemakerLifecycleManager) reconcileGeneration(ctx context.Context) err
 	if err != nil {
 		return err
 	}
+	waitReason, waitJob := "", ""
+	runningPods := map[types.UID]bool{}
 	// A failed Job can still have terminating pods. Never overlap their mutations.
 	for _, job := range list.Items {
 		if !jobs.IsStopped(job) || job.Status.Active > 0 {
-			return c.generationStatus(ctx, "Running", job.Name, false, true)
+			waitReason, waitJob = "Running", job.Name
 		}
 		pods, err := c.kubeClient.CoreV1().Pods(generation.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "batch.kubernetes.io/controller-uid=" + string(job.UID)})
 		if err != nil {
@@ -65,13 +70,26 @@ func (c *pacemakerLifecycleManager) reconcileGeneration(ctx context.Context) err
 		}
 		for _, pod := range pods.Items {
 			if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
-				return c.generationStatus(ctx, "Terminating", job.Name, false, true)
+				waitReason, waitJob = "Terminating", job.Name
+				runningPods[job.UID] = true
 			}
+		}
+	}
+	pods, err := c.kubeClient.CoreV1().Pods(generation.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=" + tools.JobTypeUpdateSetup.GetNameLabelValue()})
+	if err != nil {
+		return err
+	}
+	for _, pod := range pods.Items {
+		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
+			waitReason, waitJob = "Terminating", pod.Name
 		}
 	}
 	// Old fixed-name jobs have no generation. Once stopped they cannot prove completion.
 	for _, job := range list.Items {
 		if job.Labels[generation.Label] == "" {
+			if waitReason != "" {
+				return c.generationStatus(ctx, waitReason, waitJob, false, true)
+			}
 			if err := c.kubeClient.BatchV1().Jobs(generation.Namespace).Delete(ctx, job.Name, metav1.DeleteOptions{PropagationPolicy: ptr.To(metav1.DeletePropagationForeground)}); err != nil && !apierrors.IsNotFound(err) {
 				return err
 			}
@@ -101,7 +119,7 @@ func (c *pacemakerLifecycleManager) reconcileGeneration(ctx context.Context) err
 			return fmt.Errorf("invalid Pacemaker member address %q", ip)
 		}
 	}
-	progressing, err := generation.UpgradeInProgress(ctx, c.kubeClient, c.configClient)
+	mcoUpdating, err := generation.MCOUpdateInProgress(ctx, c.kubeClient)
 	if err != nil {
 		return err
 	}
@@ -110,29 +128,43 @@ func (c *pacemakerLifecycleManager) reconcileGeneration(ctx context.Context) err
 		return fmt.Errorf("OPERATOR_IMAGE is not set")
 	}
 	changed := record == nil || !generation.SameNodes(snapshot.Nodes, desired) || snapshot.Image != image
-	var latest *batchv1.Job
-	attempt := 0
-	for i := range list.Items {
-		job := &list.Items[i]
-		if record == nil || job.Labels[generation.Label] != strconv.FormatInt(snapshot.Generation, 10) {
-			continue
-		}
-		n, err := strconv.Atoi(job.Labels[jobs.LabelAttempt])
-		if err != nil || n < 1 {
-			return fmt.Errorf("invalid generation attempt on %s", job.Name)
-		}
-		if n > attempt {
-			attempt = n
-			latest = job
-		}
+	targets, err := c.getActivePacemakerNodes()
+	if err != nil && !errors.Is(err, errNoReadyControlPlaneNodes) {
+		return err
 	}
-	if !changed && latest != nil && jobs.IsComplete(*latest) {
-		if record.Annotations[generation.CompletedJob] == "" {
+	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
+	config, err := executorConfig(targets)
+	if err != nil {
+		return err
+	}
+	state := executionState{FirstAttempt: 1}
+	var latest *batchv1.Job
+	retries := 0
+	deferRepair := false
+	if record != nil {
+		state, err = readExecution(record)
+		if err != nil {
+			return err
+		}
+		latest, retries, err = executionAttempts(record, snapshot, &state, list.Items)
+		if err != nil {
+			return err
+		}
+		if state.Config == "" {
+			state.Config = config
+		}
+		record, err = c.saveExecution(ctx, record, state, false)
+		if err != nil {
+			return err
+		}
+		if waitReason == "" && !changed && latest != nil && jobs.IsComplete(*latest) &&
+			(record.Annotations[generation.CompletedJob] == "" || record.Annotations[generation.CompletedRecordUID] != string(record.UID)) {
 			copy := record.DeepCopy()
 			if copy.Annotations == nil {
 				copy.Annotations = map[string]string{}
 			}
 			copy.Annotations[generation.CompletedJob] = latest.Name
+			copy.Annotations[generation.CompletedRecordUID] = string(record.UID)
 			completed := time.Now()
 			if latest.Status.CompletionTime != nil {
 				completed = latest.Status.CompletionTime.Time
@@ -143,24 +175,69 @@ func (c *pacemakerLifecycleManager) reconcileGeneration(ctx context.Context) err
 			}
 			return c.generationStatus(ctx, "Completed", latest.Name, false, false)
 		}
-		remove, add := snapshot.MembershipChanges(configured)
-		if len(remove)+len(add) == 0 {
-			return c.cleanupGenerations(ctx, records)
+		// Completion belongs to the membership generation, not its executor
+		// set or the continued existence of the successful Job. Fresh membership
+		// drift after success needs a new repair claim/generation.
+		if !changed && record.Annotations[generation.CompletedAt] != "" && record.Annotations[generation.CompletedRecordUID] == string(record.UID) {
+			remove, add := snapshot.MembershipChanges(configured)
+			if len(remove)+len(add) == 0 && waitReason == "" {
+				return c.cleanupGenerations(ctx, records)
+			}
+			if len(remove)+len(add) > 0 {
+				completed, err := time.Parse(time.RFC3339, record.Annotations[generation.CompletedAt])
+				if err != nil {
+					return err
+				}
+				if cr.Status.LastUpdated.Time.Before(completed) || time.Since(completed) < 2*time.Minute {
+					deferRepair = true
+				} else {
+					changed = true
+				}
+			}
 		}
-		completed, err := time.Parse(time.RFC3339, record.Annotations[generation.CompletedAt])
+
+		reset := !changed && state.Config != "" && state.Config != config
+		if reset {
+			state.FirstAttempt = state.LastAttempt + 1
+			latest, retries = nil, 0
+		}
+		state.Config = config
+		record, err = c.saveExecution(ctx, record, state, reset)
 		if err != nil {
 			return err
 		}
-		if cr.Status.LastUpdated.Time.Before(completed) || time.Since(completed) < 2*time.Minute {
-			return nil
+		// Persist the new retry boundary BEFORE deleting an old attempt. This
+		// survives restart even when the cancelled Job has already disappeared.
+		for _, job := range list.Items {
+			n, _ := strconv.Atoi(job.Labels[jobs.LabelAttempt])
+			stale := changed || (job.Labels[generation.Label] == strconv.FormatInt(snapshot.Generation, 10) && n < state.FirstAttempt)
+			if stale && (!jobs.IsStopped(job) || job.Status.Active > 0 || runningPods[job.UID]) {
+				if job.DeletionTimestamp == nil {
+					err := c.kubeClient.BatchV1().Jobs(generation.Namespace).Delete(ctx, job.Name, metav1.DeleteOptions{PropagationPolicy: ptr.To(metav1.DeletePropagationForeground), Preconditions: &metav1.Preconditions{UID: &job.UID}})
+					if err != nil && !apierrors.IsNotFound(err) {
+						return err
+					}
+				}
+				return c.generationStatus(ctx, "Terminating", job.Name, false, true)
+			}
 		}
-		changed = true // Observed drift recurred after success; record a new repair, not an old success.
 	}
-	if !changed && attempt >= generationAttempts {
+	if waitReason != "" {
+		return c.generationStatus(ctx, waitReason, waitJob, false, true)
+	}
+	if deferRepair {
+		return c.generationStatus(ctx, "Deferred", "Waiting for fresh membership after the convergence window", false, false)
+	}
+	if !changed && retries >= generationAttempts {
 		if latest == nil || time.Since(finishedTime(latest)) < 10*time.Minute {
 			return c.generationStatus(ctx, "MaxRetriesExceeded", jobs.DegradedMessageMaxRetries, true, false)
 		}
-		changed = true
+		state.FirstAttempt = state.LastAttempt + 1
+		record, err = c.saveExecution(ctx, record, state, true)
+		if err != nil {
+			return err
+		}
+		retries = 0
 	}
 	if changed {
 		next := generation.Snapshot{Version: 1, Generation: 1, Nodes: desired, Image: image}
@@ -168,15 +245,19 @@ func (c *pacemakerLifecycleManager) reconcileGeneration(ctx context.Context) err
 			next.Generation = snapshot.Generation + 1
 			next.Previous = snapshot.Nodes
 		}
-		remove, add := next.MembershipChanges(configured)
-		next.Repair = len(remove)+len(add) > 0
-		if next.DeferDuringUpgrade(progressing, configured) {
-			return c.generationStatus(ctx, "Deferred", "Waiting for upgrade/MCO activity to finish", false, false)
+		next.Repair = next.NeedsMembershipRepair(configured)
+		if next.DeferDuringMCO(mcoUpdating, configured) {
+			return c.generationStatus(ctx, "Deferred", "Waiting for control-plane MCO activity to finish", false, false)
 		}
 		cm, err := next.ConfigMap()
 		if err != nil {
 			return err
 		}
+		executionData, err := json.Marshal(executionState{Config: config, FirstAttempt: 1})
+		if err != nil {
+			return err
+		}
+		cm.Annotations = map[string]string{executionAnnotation: string(executionData)}
 		created, err := c.kubeClient.CoreV1().ConfigMaps(generation.Namespace).Create(ctx, cm, metav1.CreateOptions{})
 		if err != nil {
 			return err
@@ -184,19 +265,27 @@ func (c *pacemakerLifecycleManager) reconcileGeneration(ctx context.Context) err
 		// Re-read the persisted record and its UID before starting any job.
 		return c.pruneGenerations(ctx, append(records, *created))
 	}
-	if snapshot.DeferDuringUpgrade(progressing, configured) && !(snapshot.Repair && attempt > 0) {
-		return c.generationStatus(ctx, "Deferred", "Waiting for upgrade/MCO activity to finish", false, false)
+	if len(targets) == 0 {
+		return c.generationStatus(ctx, "Deferred", "Waiting for an eligible execution node", false, false)
 	}
-	if err := snapshot.MatchesCurrent(ctx, c.kubeClient); err != nil {
-		return err
-	}
-	targets, err := c.getActivePacemakerNodes()
+	target := targets[retries%len(targets)]
+	job := generationJob(record, snapshot, target.Name, state.LastAttempt+1)
+	job.Labels[retryAttemptLabel] = strconv.Itoa(retries + 1)
+	admitted, err := c.updateSetupAdmission(record, snapshot)(ctx, job)
 	if err != nil {
 		return err
 	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
-	target := targets[attempt%len(targets)]
-	job := generationJob(record, snapshot, target.Name, attempt+1)
+	if !admitted {
+		return c.generationStatus(ctx, "Deferred", "Waiting for control-plane MCO activity to finish", false, false)
+	}
+	// Reserve the sequence only after admission. API failures may leave gaps in
+	// names, but only actual Jobs consume the retry budget.
+	state.LastAttempt++
+	record, err = c.saveExecution(ctx, record, state, false)
+	if err != nil {
+		return err
+	}
+
 	if _, err := c.kubeClient.BatchV1().Jobs(generation.Namespace).Create(ctx, job, metav1.CreateOptions{}); err != nil {
 		return err
 	}
@@ -213,6 +302,7 @@ func generationJob(record *corev1.ConfigMap, snapshot generation.Snapshot, targe
 	job.Spec.BackoffLimit = ptr.To(int32(0))
 	job.Spec.ActiveDeadlineSeconds = ptr.To(int64(900))
 	job.Spec.Template.Spec.NodeName = target
+	job.Spec.Template.Labels["app.kubernetes.io/name"] = tools.JobTypeUpdateSetup.GetNameLabelValue()
 	container := &job.Spec.Template.Spec.Containers[0]
 	container.Image = snapshot.Image
 	container.Command[1] = tools.JobTypeUpdateSetup.GetSubCommand()
@@ -240,7 +330,12 @@ func (c *pacemakerLifecycleManager) generationStatus(ctx context.Context, reason
 			degradedCondition = *old
 		}
 	}
-	_, _, err := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(degradedCondition), v1helpers.UpdateConditionFn(condition("Progressing", progressing)))
+	progressingCondition := condition("Progressing", progressing)
+	if progressing {
+		progressingCondition.Reason = "JobRunning"
+		progressingCondition.Message = fmt.Sprintf("%s: %s", reason, message)
+	}
+	_, _, err := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(degradedCondition), v1helpers.UpdateConditionFn(progressingCondition))
 	return err
 }
 

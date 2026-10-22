@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -18,6 +19,8 @@ const (
 	// Status collector runs every minute, so 5 minutes means we've missed ~5 consecutive updates.
 	pacemakerCRStalenessThreshold = 5 * time.Minute
 )
+
+var errNoReadyControlPlaneNodes = errors.New("no ready control plane nodes found")
 
 // getActivePacemakerNodes returns nodes eligible for job scheduling.
 // Returns K8s ∩ Pacemaker intersection (ready nodes only) if CR is fresh.
@@ -40,7 +43,7 @@ func (c *pacemakerLifecycleManager) getActivePacemakerNodes() ([]*corev1.Node, e
 	}
 
 	if len(readyNodes) == 0 {
-		return nil, fmt.Errorf("no ready control plane nodes found")
+		return nil, errNoReadyControlPlaneNodes
 	}
 
 	pacemakerNodes, pacemakerCR, err := c.getPacemakerNodesWithCR()

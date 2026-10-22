@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	configclient "github.com/openshift/client-go/config/clientset/versioned/typed/config/v1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/controller/factory"
@@ -18,6 +17,7 @@ import (
 	"k8s.io/klog/v2"
 
 	pacmkrv1 "github.com/openshift/api/etcd/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/pacemaker"
 )
 
@@ -32,7 +32,6 @@ const (
 type pacemakerLifecycleManager struct {
 	operatorClient    v1helpers.StaticPodOperatorClient
 	kubeClient        kubernetes.Interface
-	configClient      configclient.ConfigV1Interface
 	eventRecorder     events.Recorder
 	pacemakerInformer cache.SharedIndexInformer
 
@@ -77,15 +76,9 @@ func newPacemakerLifecycleManager(
 		return nil, nil, nil, err
 	}
 
-	configClient, err := configclient.NewForConfig(restConfig)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
 	c := &pacemakerLifecycleManager{
 		operatorClient:             operatorClient,
 		kubeClient:                 kubeClient,
-		configClient:               configClient,
 		eventRecorder:              eventRecorder,
 		pacemakerInformer:          informer,
 		controlPlaneNodeInformer:   controlPlaneNodeInformer,
@@ -109,6 +102,13 @@ func newPacemakerLifecycleManager(
 			operatorClient.Informer(),
 			informer,
 			controlPlaneNodeInformer,
+			etcdInformer.Informer(),
+			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer(),
+			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer(),
+			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Informer(),
+			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs().Informer(),
+			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().CronJobs().Informer(),
+			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Apps().V1().DaemonSets().Informer(),
 		).ToController(controllerNamePacemakerLifecycle, syncCtx.Recorder())
 
 	// PacemakerCluster informer is started in runPacemakerControllers (pkg/tnf/operator/starter.go)
