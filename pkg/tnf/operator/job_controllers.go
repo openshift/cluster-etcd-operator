@@ -12,6 +12,7 @@ import (
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
@@ -45,7 +46,7 @@ var (
 	retryBackoffConfig = wait.Backoff{
 		Duration: 5 * time.Second,
 		Factor:   2.0,
-		Steps:    9, // ~10 minutes total: 5s + 10s + 20s + 40s + 80s + 120s + 120s + 120s + 120s
+		Steps:    9, // Eight retry delays total about ten minutes; prerequisite waits are separate.
 		Cap:      2 * time.Minute,
 	}
 )
@@ -54,15 +55,15 @@ var (
 //
 // Before ExternalEtcdTransitionCompleted:
 //   - Requires exactly 2 ready control plane nodes
-//   - Uses exponential backoff retry (5s to 2min, ~10 min total)
+//   - Uses exponential backoff retry (5s to 2min, ~10 min of retry delays)
 //   - Sets TNFJobControllersDegraded condition on failure
 //   - Mutex protects concurrent retry attempts
 //
 // After ExternalEtcdTransitionCompleted:
-//   - Accepts any number of ready control plane nodes (handles single-node case)
+//   - Requires a nonempty registered node set; readiness is checked at Job admission
 //   - Idempotent (safe to call repeatedly, handles operator restarts)
 //   - No retry logic (controller framework retries sync() on error)
-//   - No mutex needed (job-level locking provides adequate protection)
+//   - Startup mutex and framework duplicate prevention serialize controller creation
 //
 // The job controllers are idempotent and will not create duplicate jobs.
 func (c *pacemakerLifecycleManager) startJobControllers(ctx context.Context) error {
@@ -211,33 +212,29 @@ func startCommonJobControllers(
 		return lifecycleManager.getActivePacemakerNodes()
 	}
 
-	// affectedNodesFunc for setup: all control plane nodes (ready or not)
-	// Job waits for these nodes to become ready before proceeding
-	// Query dynamically from informer to avoid stale node list
-	setupAffectedNodesFunc := func() ([]*corev1.Node, error) {
-		return tools.ListNodesFromInformer(lifecycleManager.controlPlaneNodeInformer)
-	}
-
-	// affectedNodesFunc for fencing: all control plane nodes (ready or not) that have fencing secrets
-	// Job waits for these nodes to become ready before proceeding
-	// Nodes without secrets won't block the job; when secret is added, drift detection triggers restart
-	// Query dynamically from informer to avoid stale node list
-	fencingAffectedNodesFunc := func() ([]*corev1.Node, error) {
+	setupAdmission := lifecycleManager.admitSetupJob
+	fencingAdmission := func(_ context.Context, job *batchv1.Job) (bool, error) {
 		nodes, err := tools.ListNodesFromInformer(lifecycleManager.controlPlaneNodeInformer)
 		if err != nil {
-			return nil, err
+			return false, err
 		}
-		return getNodesWithFencingSecrets(nodes, kubeInformersForNamespaces)
+		affected, err := getNodesWithFencingSecrets(nodes, kubeInformersForNamespaces)
+		if err != nil {
+			return false, err
+		}
+		return jobs.AdmitReadyNodes(affected, job.Name)
 	}
 
-	// Setup job controller: maintains conditions for completed setup job
-	// Even though setup is one-time only, the controller must run to keep conditions current
-	// (fencing/auth/after-setup jobs wait for setup job completion status)
-	jobs.RunClusterJobController(ctx, tools.JobTypeSetup, schedulableNodesFunc, setupAffectedNodesFunc, nil, 3, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.AllConditions)
+	jobs.RunClusterJobController(ctx, tools.JobTypeSetup, schedulableNodesFunc, setupAdmission, func() (string, error) {
+		targets, err := lifecycleManager.getActivePacemakerNodes()
+		if err != nil {
+			return "", err
+		}
+		return executorConfig(targets)
+	}, 3, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.AllConditions, lifecycleManager.controlPlaneNodeInformer, lifecycleManager.pacemakerInformer)
 
-	// Fencing job with drift detection: captures node UIDs + fencing secret UIDs
 	fencingJobConfigFunc := createFencingJobConfigFunc(lifecycleManager, kubeInformersForNamespaces)
-	jobs.RunClusterJobController(ctx, tools.JobTypeFencing, schedulableNodesFunc, fencingAffectedNodesFunc, fencingJobConfigFunc, 3, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
+	jobs.RunClusterJobController(ctx, tools.JobTypeFencing, schedulableNodesFunc, fencingAdmission, fencingJobConfigFunc, 3, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions, lifecycleManager.controlPlaneNodeInformer, lifecycleManager.pacemakerInformer, kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Informer())
 
 	// Clear legacy condition names from upgrades (controllers recreate with new names)
 	clearLegacyConditions(ctx, operatorClient)
@@ -245,7 +242,8 @@ func startCommonJobControllers(
 
 // startRuntimeJobControllers creates TNF job controllers after transition is complete.
 // Ensures controllers are running (idempotent restart safe).
-// Also starts update-setup job (if 2 nodes), status collector CronJob, and health check controller.
+// Also starts the status collector, health controller, and certificate watcher.
+// The lifecycle sync reconciles recorded update-setup generations separately.
 func startRuntimeJobControllers(
 	ctx context.Context,
 	controlPlaneNodeList []*corev1.Node,
@@ -260,28 +258,6 @@ func startRuntimeJobControllers(
 
 	// Start common job controllers (auth, after-setup, setup, fencing)
 	startCommonJobControllers(ctx, controlPlaneNodeList, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, lifecycleManager)
-
-	// Update-setup job: ensures pacemaker cluster configuration is current
-	// Runs post-transition only (not needed during bootstrap)
-	// Only runs when exactly 2 control plane nodes exist (pacemaker limitation)
-	if len(controlPlaneNodeList) == 2 {
-		// schedulableNodesFunc: returns ready nodes where job can run (K8s ∩ Pacemaker intersection)
-		schedulableNodesFunc := func() ([]*corev1.Node, error) {
-			return lifecycleManager.getActivePacemakerNodes()
-		}
-
-		// affectedNodesFunc for update-setup: K8s ∩ Pacemaker active nodes (ready only)
-		// Only blocks on nodes that are actually in the Pacemaker cluster configuration.
-		// This prevents deadlock when a node is removed from Pacemaker but can't become Ready
-		// without update-setup re-adding it (kubelet is a Pacemaker resource).
-		updateSetupAffectedNodesFunc := func() ([]*corev1.Node, error) {
-			return lifecycleManager.getActivePacemakerNodes()
-		}
-
-		jobs.RunClusterJobController(ctx, tools.JobTypeUpdateSetup, schedulableNodesFunc, updateSetupAffectedNodesFunc, nil, 3, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, jobs.DefaultConditions)
-	} else {
-		klog.V(4).Infof("Skipping update-setup job controller: requires exactly 2 control plane nodes, have %d", len(controlPlaneNodeList))
-	}
 
 	// Start status collector (only after transition is complete, when Pacemaker exists)
 	lifecycleManager.runPacemakerStatusCollectorCronJob(ctx)
@@ -506,4 +482,17 @@ func waitForEtcdBootstrapCompleted(ctx context.Context, operatorClient v1helpers
 	}
 
 	return nil
+}
+
+// admitSetupJob makes the durable transition condition authoritative for creation.
+func (c *pacemakerLifecycleManager) admitSetupJob(ctx context.Context, job *batchv1.Job) (bool, error) {
+	completed, err := ceohelpers.HasExternalEtcdCompletedTransition(ctx, c.operatorClient)
+	if err != nil || completed {
+		return false, err
+	}
+	nodes, err := tools.ListNodesFromInformer(c.controlPlaneNodeInformer)
+	if err != nil {
+		return false, err
+	}
+	return jobs.AdmitReadyNodes(nodes, job.Name)
 }
