@@ -54,19 +54,21 @@ sync
         +-- validate desired node identities
         +-- wait for old Jobs and Pods to stop
         +-- retire stopped legacy update-setup Jobs
-        +-- read recorded generations and fresh Pacemaker membership
+        +-- read records; use fresh membership or discover through Ready candidates
         +-- reevaluate control-plane MCO policy
         +-- record generation / create attempt / observe completion / prune
 ```
 
 Bootstrap startup uses exponential backoff from five seconds to a two-minute
-cap, for roughly ten minutes overall. A persistent startup failure sets
-`TNFJobControllersDegraded`. Runtime startup is idempotent and retried through the
+cap, for roughly ten minutes of retry delays. Prerequisite waits have their own
+timeouts; this is not an overall ten-minute setup deadline. Exhausting startup
+retries sets `TNFJobControllersDegraded`. Job execution is asynchronous after
+controller startup. Runtime startup is idempotent and retried through the
 controller framework. Node readiness is checked at admission to an individual
 Job; runtime controller startup itself does not require every node Ready.
 
 The lifecycle resync interval is one minute. The health controller has its own
-30-second resync. The collector's normal CronJob schedule is every two minutes.
+30-second resync. The collector's normal CronJob schedule is every minute.
 These are independent mechanisms and are not interchangeable.
 
 Cleanup uses live Node reads and runs only while Managed with a nonempty
@@ -113,7 +115,7 @@ reconciliation mutex are unnecessary here. API records hold generation state.
 
 ## Cancellation and shutdown
 
-1. Cancellation stops future controller work and signals informer shutdown.
+1. Cancellation stops PLM and its health-controller loop and signals informer shutdown.
 2. Bootstrap polls, retry loops, and API operations observe the cancelled context.
 3. No detached Node-handler goroutine remains to start new reconciliation.
 4. An already submitted Kubernetes Job remains an independent workload until
@@ -121,13 +123,23 @@ reconciliation mutex are unnecessary here. API records hold generation state.
 5. The next CEO process reconstructs generation/attempt state and waits for any
    earlier active or terminating execution before creating another Job.
 
-Cancelling CEO is not a mechanism for pausing TNF recovery. Deliberately holding
-a node offline needs the separately tracked PHC pause contract.
+Cancelling CEO does not pause submitted Jobs. For held-offline PHC tests, first
+wait for generation completion and for all attempts to stop. Matching discovery
+leaves a stopped member alone; unfinished application or repair may start it.
+Pause support remains deferred pending that cluster validation.
 
 ## Health monitoring
 
-The lifecycle manager starts the existing health controller after transition.
-It shares the PacemakerCluster informer but owns its own sync and status logic.
+PLM creates and starts the existing health controller after transition, with
+duplicate-start protection. It supplies the shared operator/Kubernetes clients,
+event recorder, PacemakerCluster informer, and lifecycle context; health does
+not start another Pacemaker watch. Cancelling that context stops the controller.
+
+Health owns its own work queue, 30-second resync, status evaluation, event
+deduplication, and disruption tracking. PLM's one-minute generation loop owns
+membership recovery. Recovery errors, retries, and MCD deferrals do not prevent
+the health controller from evaluating observations on its own queue. The PHC
+condition does not gate update-setup admission.
 
 ```text
 PacemakerCluster observation
@@ -166,17 +178,17 @@ introduce a general monitor suppression.
 
 | Signal | Owner and interpretation |
 | --- | --- |
-| `PacemakerLifecycleManagerDegraded` | Lifecycle construction failure. |
+| `PacemakerLifecycleManagerDegraded` | Lifecycle construction failure (`StartupFailed`) or factory-reported runtime sync error (`SyncError`). |
 | `TNFJobControllersDegraded` | Bootstrap job-controller startup failure. |
-| `TNFSetupJobAvailable` | Initial setup completion; remains true after durable transition. |
+| `TNFSetupJobAvailable` | Initial setup Job completion; deferred post-transition replacement preserves existing status. |
 | `TNFUpdateSetupJobProgressing` | A recorded attempt is running or old execution is terminating. |
 | `TNFUpdateSetupJobDegraded` | Execution configuration exhausted its six attempts; preserved until successful reconciliation. |
 | `PacemakerHealthCheckDegraded` | Independent observed Pacemaker health. |
 | Pacemaker events and metrics | Independent health/disruption history and current CR-derived metrics. |
 
 Generation deferral is reported with reason `Deferred`. Retry exhaustion uses
-`MaxRetriesExceeded`; a fresh generation may retry after ten minutes. Generic
-lifecycle sync errors use factory error handling and are distinct from the
+`MaxRetriesExceeded`; a fresh attempt budget may retry the same generation after
+ten minutes. Generic lifecycle sync errors use factory error handling and are distinct from the
 explicit retry-exhaustion policy.
 
 Use CEO logs to establish which decision was made, Job/Pod status to establish
@@ -207,8 +219,9 @@ and assuming it was the input to an older Job.
 bootstrap, and stable revision prerequisites.
 
 **No runtime attempt:** check transition and Managed state; validate node
-identities, fresh CR membership, MCO node annotations, and an eligible
-executor. Look for earlier Jobs with active or terminating Pods.
+identities, MCO node annotations, and an eligible executor. Missing or stale CR
+membership uses discovery, which waits for MCD before new work. Look for earlier
+Jobs with active or terminating Pods.
 
 **After-setup waits:** check the scheduled node UID, newest record, completion
 annotations, and completed Job owner/UID/generation binding. A completed legacy

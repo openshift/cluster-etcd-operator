@@ -8,6 +8,11 @@ Node handlers do not launch reconciliation goroutines. See the [documentation
 index](README.md) for architecture, controller lifetime, detailed reconciliation,
 and the [comment-by-comment review](review-criteria.md).
 
+PLM also manages health-controller startup after transition and supplies its
+shared clients, informer, and lifecycle context. Health evaluation and reporting
+run on that controller's own queue, independently of generation reconciliation.
+See [runtime controller ownership](architecture-overview.md#independent-runtime-controllers).
+
 ## Bootstrap and setup completion
 
 Bootstrap still requires two Ready control-plane nodes, completed etcd bootstrap,
@@ -38,18 +43,19 @@ NotReady nodes. A snapshot records each node's name, UID, and canonical IP. Miss
 identity data, an unsynced node cache, or zero/more than two nodes is an error,
 not an instruction to remove members.
 
-Execution targets remain Ready nodes in the Kubernetes/Pacemaker intersection.
-The existing fallback and status-collector rotation behavior are unchanged. A
-fresh PacemakerCluster observation is required before recording reconciliation.
-The runner independently reads live configured membership before mutations.
+Execution targets prefer Ready nodes in the Kubernetes/Pacemaker intersection.
+When Pacemaker status is unavailable, discovery tries Ready Kubernetes candidates
+and the runner reads live PCS membership before deciding on changes. The collector
+retains its independent fallback and rotation; PHC does not gate update-setup.
 An offline registered member is not removed merely because it is offline.
 
 ## Generation records and jobs
 
 The controller creates immutable `tnf-update-setup-N` ConfigMaps in
 `openshift-etcd`. `config.json` contains schema version, generation number,
-operator image, desired node identities, previous identities, and whether the
-observation required membership repair. ConfigMap metadata holds completion and executor/retry state;
+operator image, desired node identities, previous identities, and optional repair
+and discovery flags. Discovery rechecks unchanged completed input when Pacemaker
+observation is unavailable. ConfigMap metadata holds completion and executor/retry state;
 immutable data never doubles as mutable execution status.
 
 Jobs are named `tnf-update-setup-N-A`, where A is the unique execution sequence. Their owner reference
@@ -76,6 +82,8 @@ deletion. This decision belongs to reconciliation; creation admission checks
 whether an unfinished attempt may run now. Completed generations do not hide
 later membership drift: after a two-minute
 convergence window and a newer status observation, drift records another repair.
+Unavailable observations can instead record discovery of unchanged completed
+input; matching discovery completes without mutation, even if a member is offline.
 The five newest records are retained. Older records and their owned Jobs are
 pruned only after reconciliation has verified that all executions have stopped.
 
@@ -97,9 +105,13 @@ Deferral rereads live state rather than preserving an earlier decision.
 Membership repair is the exception: removing a deleted/replaced identity or
 re-adding a missing registered member may be necessary for an MCO reboot to
 finish. A blanket wait for MCO or all nodes to become Ready would deadlock that
-repair. The runner does not wait for global revision stability on the repair
-path. It validates the configured member set and all desired nodes online before
-reporting success, so missing auth/manifests remain retryable failures.
+repair. Replacements that remove and add members retain main's
+`WaitForStableRevision` before claiming recovery, stopping, or removing a member.
+Add-only recovery of an already-missing member skips that wait, as on main.
+Read-only discovery also requires no revision wait. Normal application and repair validate the configured member
+set and all desired nodes online before reporting success, so missing
+auth/manifests remain retryable failures. Matching read-only discovery has no
+online requirement and does not start a stopped member.
 
 A Pacemaker `tnf_reconciliation_generation` attribute records when a repair has
 actually started. A retry of a recorded repair can inspect that claim during MCO activity; an old
@@ -130,9 +142,12 @@ Before merging, run TNF recovery 1/3, 2/3, 3/3, degraded, certrotation, and upgr
 payload lanes on the exact candidate SHA. QE must verify initial transition,
 MCO-induced reboot, actual replacement, and CEO restart with recorded evidence.
 
-A mechanism to pause automatic recovery for held-offline PHC tests remains
-separate future work in
-[OCPBUGS-129429](https://redhat.atlassian.net/browse/OCPBUGS-129429). This patch does
-not restore the temporarily relaxed PHC assertions or claim API-driven membership
-alone satisfies that test contract. Health, metrics, notifications, certificate
-watching, and status collection remain separate controllers.
+For held-offline PHC tests, wait for the current generation to complete and for
+all attempts to stop before stopping the member. Matching read-only discovery
+then leaves it stopped; an unfinished normal application or repair may still
+start it. Restoring and validating the relaxed Origin assertions is tracked in
+[OCPBUGS-129429](https://redhat.atlassian.net/browse/OCPBUGS-129429). Pause support
+is deferred unless cluster validation demonstrates a remaining need. This patch
+does not change those assertions. Health remains a separate controller managed
+by PLM; metrics, notifications, certificate watching, and status collection keep
+their own responsibilities.

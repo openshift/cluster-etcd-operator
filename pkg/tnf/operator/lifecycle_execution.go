@@ -126,12 +126,7 @@ func (c *pacemakerLifecycleManager) updateSetupAdmission(record *corev1.ConfigMa
 			return false, err
 		}
 		configured, cr, err := c.getPacemakerNodesWithCR()
-		if err != nil {
-			return false, err
-		}
-		if isPacemakerCRStale(cr) {
-			return false, fmt.Errorf("waiting for fresh Pacemaker membership")
-		}
+		membershipKnown := err == nil && !isPacemakerCRStale(cr)
 		execution, err := readExecution(record)
 		if err != nil {
 			return false, err
@@ -144,6 +139,9 @@ func (c *pacemakerLifecycleManager) updateSetupAdmission(record *corev1.ConfigMa
 		}
 		// Only unfinished recorded repairs may inspect a local durable claim.
 		continuingRepair := snapshot.Repair && execution.LastAttempt > 0 && !completed
+		if !membershipKnown {
+			return !mcoUpdating || continuingRepair, nil
+		}
 		return !policySnapshot.DeferDuringMCO(mcoUpdating, configured) || continuingRepair, nil
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"sort"
 	"strconv"
@@ -79,6 +78,13 @@ func (c *pacemakerLifecycleManager) reconcileGeneration(ctx context.Context) err
 	if err != nil {
 		return err
 	}
+	// Legacy Pods lack the application label. Keep observing them by Job name
+	// even after their fixed-name Job has been deleted.
+	legacyPods, err := c.kubeClient.CoreV1().Pods(generation.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "batch.kubernetes.io/job-name=" + tools.JobTypeUpdateSetup.GetNameLabelValue()})
+	if err != nil {
+		return err
+	}
+	pods.Items = append(pods.Items, legacyPods.Items...)
 	for _, pod := range pods.Items {
 		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
 			waitReason, waitJob = "Terminating", pod.Name
@@ -106,18 +112,9 @@ func (c *pacemakerLifecycleManager) reconcileGeneration(ctx context.Context) err
 		}
 	}
 	configured, cr, err := c.getPacemakerNodesWithCR()
-	if err != nil || isPacemakerCRStale(cr) {
-		return fmt.Errorf("waiting for fresh Pacemaker membership before reconciliation: %v", err)
-	}
-
-	if len(configured) != len(*cr.Status.Nodes) {
-		return fmt.Errorf("incomplete Pacemaker member identities")
-	}
-	for _, ip := range configured {
-		parsed := net.ParseIP(ip)
-		if parsed == nil || !parsed.IsGlobalUnicast() {
-			return fmt.Errorf("invalid Pacemaker member address %q", ip)
-		}
+	membershipKnown := err == nil && !isPacemakerCRStale(cr)
+	if !membershipKnown {
+		configured = nil // Unknown membership is not evidence of missing members.
 	}
 	mcoUpdating, err := generation.MCOUpdateInProgress(ctx, c.kubeClient)
 	if err != nil {
@@ -141,6 +138,7 @@ func (c *pacemakerLifecycleManager) reconcileGeneration(ctx context.Context) err
 	var latest *batchv1.Job
 	retries := 0
 	deferRepair := false
+	discovery := false
 	if record != nil {
 		state, err = readExecution(record)
 		if err != nil {
@@ -179,19 +177,31 @@ func (c *pacemakerLifecycleManager) reconcileGeneration(ctx context.Context) err
 		// set or the continued existence of the successful Job. Fresh membership
 		// drift after success needs a new repair claim/generation.
 		if !changed && record.Annotations[generation.CompletedAt] != "" && record.Annotations[generation.CompletedRecordUID] == string(record.UID) {
-			remove, add := snapshot.MembershipChanges(configured)
-			if len(remove)+len(add) == 0 && waitReason == "" {
-				return c.cleanupGenerations(ctx, records)
+			completed, err := time.Parse(time.RFC3339, record.Annotations[generation.CompletedAt])
+			if err != nil {
+				return err
 			}
-			if len(remove)+len(add) > 0 {
-				completed, err := time.Parse(time.RFC3339, record.Annotations[generation.CompletedAt])
-				if err != nil {
-					return err
+			if !membershipKnown {
+				if waitReason != "" {
+					return c.generationStatus(ctx, waitReason, waitJob, false, true)
 				}
-				if cr.Status.LastUpdated.Time.Before(completed) || time.Since(completed) < 2*time.Minute {
-					deferRepair = true
-				} else {
-					changed = true
+				// Retry discovery periodically during a collector outage without
+				// rerunning a completed generation or creating a Job every sync.
+				if snapshot.Discovery && time.Since(completed) < 2*time.Minute {
+					return c.cleanupGenerations(ctx, records)
+				}
+				changed, discovery = true, true
+			} else {
+				remove, add := snapshot.MembershipChanges(configured)
+				if len(remove)+len(add) == 0 && waitReason == "" {
+					return c.cleanupGenerations(ctx, records)
+				}
+				if len(remove)+len(add) > 0 {
+					if cr.Status.LastUpdated.Time.Before(completed) || time.Since(completed) < 2*time.Minute {
+						deferRepair = true
+					} else {
+						changed = true
+					}
 				}
 			}
 		}
@@ -240,13 +250,13 @@ func (c *pacemakerLifecycleManager) reconcileGeneration(ctx context.Context) err
 		retries = 0
 	}
 	if changed {
-		next := generation.Snapshot{Version: 1, Generation: 1, Nodes: desired, Image: image}
+		next := generation.Snapshot{Version: 1, Generation: 1, Nodes: desired, Image: image, Discovery: discovery}
 		if record != nil {
 			next.Generation = snapshot.Generation + 1
 			next.Previous = snapshot.Nodes
 		}
-		next.Repair = next.NeedsMembershipRepair(configured)
-		if next.DeferDuringMCO(mcoUpdating, configured) {
+		next.Repair = membershipKnown && next.NeedsMembershipRepair(configured)
+		if mcoUpdating && !next.Repair {
 			return c.generationStatus(ctx, "Deferred", "Waiting for control-plane MCO activity to finish", false, false)
 		}
 		cm, err := next.ConfigMap()

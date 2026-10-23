@@ -42,6 +42,7 @@ type Node struct {
 
 // Snapshot is immutable. Completion is recorded separately on the ConfigMap metadata.
 type Snapshot struct {
+	Discovery  bool   `json:"discovery,omitempty"` // Verify unchanged desired state; do nothing if membership already matches.
 	Repair     bool   `json:"repair,omitempty"`
 	Version    int    `json:"version"`
 	Generation int64  `json:"generation"`

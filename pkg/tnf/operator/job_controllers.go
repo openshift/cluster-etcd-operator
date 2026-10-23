@@ -46,7 +46,7 @@ var (
 	retryBackoffConfig = wait.Backoff{
 		Duration: 5 * time.Second,
 		Factor:   2.0,
-		Steps:    9, // ~10 minutes total: 5s + 10s + 20s + 40s + 80s + 120s + 120s + 120s + 120s
+		Steps:    9, // Eight retry delays total about ten minutes; prerequisite waits are separate.
 		Cap:      2 * time.Minute,
 	}
 )
@@ -55,15 +55,15 @@ var (
 //
 // Before ExternalEtcdTransitionCompleted:
 //   - Requires exactly 2 ready control plane nodes
-//   - Uses exponential backoff retry (5s to 2min, ~10 min total)
+//   - Uses exponential backoff retry (5s to 2min, ~10 min of retry delays)
 //   - Sets TNFJobControllersDegraded condition on failure
 //   - Mutex protects concurrent retry attempts
 //
 // After ExternalEtcdTransitionCompleted:
-//   - Accepts any number of ready control plane nodes (handles single-node case)
+//   - Requires a nonempty registered node set; readiness is checked at Job admission
 //   - Idempotent (safe to call repeatedly, handles operator restarts)
 //   - No retry logic (controller framework retries sync() on error)
-//   - No mutex needed (job-level locking provides adequate protection)
+//   - Startup mutex and framework duplicate prevention serialize controller creation
 //
 // The job controllers are idempotent and will not create duplicate jobs.
 func (c *pacemakerLifecycleManager) startJobControllers(ctx context.Context) error {
@@ -242,7 +242,8 @@ func startCommonJobControllers(
 
 // startRuntimeJobControllers creates TNF job controllers after transition is complete.
 // Ensures controllers are running (idempotent restart safe).
-// Also starts update-setup job (if 2 nodes), status collector CronJob, and health check controller.
+// Also starts the status collector, health controller, and certificate watcher.
+// The lifecycle sync reconciles recorded update-setup generations separately.
 func startRuntimeJobControllers(
 	ctx context.Context,
 	controlPlaneNodeList []*corev1.Node,

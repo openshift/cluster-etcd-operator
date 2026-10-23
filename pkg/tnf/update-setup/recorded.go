@@ -17,6 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/klog/v2"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/exec"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/generation"
@@ -30,13 +31,14 @@ type recordedRunner struct {
 	repairClaim      string
 	fencing          func(context.Context, kubernetes.Interface, []string) error
 	alerts           func(context.Context) error
+	waitForRevision  func(context.Context) error
 	kube             kubernetes.Interface
 	snapshot         generation.Snapshot
 	current          string
 	execute          func(context.Context, string) (string, string, error)
 }
 
-func runRecordedGeneration(ctx context.Context, kube kubernetes.Interface, current string) error {
+func runRecordedGeneration(ctx context.Context, kube kubernetes.Interface, current string, waitForRevision func(context.Context) error) error {
 	name, uid := os.Getenv(generation.ConfigMapEnv), os.Getenv(generation.ConfigMapUIDEnv)
 	if name == "" || uid == "" {
 		return fmt.Errorf("update-setup requires an explicit recorded generation and ConfigMap UID")
@@ -52,7 +54,7 @@ func runRecordedGeneration(ctx context.Context, kube kubernetes.Interface, curre
 	if err != nil {
 		return err
 	}
-	r := recordedRunner{reconciled: cm.Annotations[generation.CompletedAt] != "", kube: kube, snapshot: snapshot, current: current, execute: exec.Execute, fencing: pcs.ConfigureFencing, alerts: pcs.ConfigureAlertsWithRetry}
+	r := recordedRunner{reconciled: cm.Annotations[generation.CompletedAt] != "", kube: kube, snapshot: snapshot, current: current, execute: exec.Execute, fencing: pcs.ConfigureFencing, alerts: pcs.ConfigureAlertsWithRetry, waitForRevision: waitForRevision}
 	return r.run(ctx)
 }
 
@@ -172,9 +174,21 @@ func (r *recordedRunner) run(ctx context.Context) error {
 	}
 	sort.Strings(remove)
 	sort.Strings(add)
+	if r.snapshot.Discovery && len(remove)+len(add) == 0 && !r.continuingRepair {
+		// The observation path may be unavailable while membership is correct.
+		// In particular, do not restart an intentionally stopped registered node.
+		return r.snapshot.MatchesCurrent(ctx, r.kube)
+	}
 	if len(remove)+len(add) > 0 {
 		if r.reconciled {
 			return fmt.Errorf("identity drift after completion requires a new recorded generation")
+		}
+		// Match main: replacements wait for manifests before removing a member;
+		// adding back an already-missing member must remain able to recover.
+		if len(remove) > 0 && len(add) > 0 {
+			if err := r.waitForRevision(ctx); err != nil {
+				return fmt.Errorf("waiting for stable etcd revision before replacement: %w", err)
+			}
 		}
 		if !r.continuingRepair {
 			// Persist one timestamp before changing membership. Retrying a partial
@@ -197,6 +211,14 @@ func (r *recordedRunner) run(ctx context.Context) error {
 		// Configured names are not shell-safe input until validated.
 		if !validCommandNode(name) {
 			return fmt.Errorf("invalid configured node name %q", name)
+		}
+		if err := r.guard(ctx); err != nil {
+			return err
+		}
+		// The departing node may already be stopped or unreachable.
+		stdout, stderr, stopErr := r.execute(ctx, fmt.Sprintf("/usr/sbin/pcs cluster stop %s --force --request-timeout=300", name))
+		if stopErr != nil {
+			klog.Infof("Best-effort cluster stop for node %q returned an error; continuing with removal: stdout: %s, stderr: %s, err: %v", name, stdout, stderr, stopErr)
 		}
 		if err := r.command(ctx, fmt.Sprintf("/usr/sbin/pcs cluster node remove %s --force --skip-offline", name)); err != nil {
 			return err

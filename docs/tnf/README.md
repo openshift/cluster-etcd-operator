@@ -46,8 +46,11 @@ it does not decide which registered node deserves membership.
 - Update-setup reconciles an explicitly recorded set of node names, UIDs, and IPs.
 - After-setup disables the kubelet systemd service once its setup dependency is
   satisfied; it does not start Pacemaker.
-- The status collector, health controller, metrics controller, console
-  notifications, and certificate watcher keep their separate responsibilities.
+- PLM starts the health controller after transition and supplies its shared
+  clients, PacemakerCluster informer, and lifecycle context. Health keeps its own
+  work queue and health-reporting logic.
+- Status collection, metrics, console notifications, and certificate watching
+  keep their separate responsibilities.
 
 ## Common workflows
 
@@ -76,7 +79,8 @@ a different UID still represents replacement.
 2. Revalidate live node identity and MCO admission before mutation.
 3. Keep only one update-setup execution active, including during migration from
    legacy fixed-name Jobs.
-4. Treat incomplete observations as reasons to wait or fail safely.
+4. Never infer desired removals from incomplete observations; use generation-bound
+   discovery and live PCS validation when Pacemaker status is unavailable.
 5. Preserve current upstream health, certificate, template, retry, and status
    collection behavior while changing membership reconciliation.
 6. Distinguish unit-test evidence from cluster acceptance. The remaining QE and

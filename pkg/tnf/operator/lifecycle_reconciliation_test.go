@@ -128,6 +128,16 @@ func TestGenerationDefersRebootButPermitsMissingMember(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, s.Repair)
 	require.NoError(t, c.reconcileGeneration(ctx))
+	jobClient := c.kubeClient.BatchV1().Jobs(generation.Namespace)
+	job, err := jobClient.Get(ctx, generation.JobName(1, 1), metav1.GetOptions{})
+	require.NoError(t, err)
+	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
+	_, err = jobClient.UpdateStatus(ctx, job, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	require.NoError(t, c.pacemakerInformer.GetIndexer().Delete(cr))
+	require.NoError(t, c.reconcileGeneration(ctx))
+	_, err = jobClient.Get(ctx, generation.JobName(1, 2), metav1.GetOptions{})
+	require.NoError(t, err, "a previously started recorded repair can inspect PCS even if status disappears during MCD")
 }
 
 func TestSuccessfulGenerationDoesNotHideNewDrift(t *testing.T) {
@@ -156,6 +166,76 @@ func TestSuccessfulGenerationDoesNotHideNewDrift(t *testing.T) {
 	s, err := generation.Decode(&records[1])
 	require.NoError(t, err)
 	require.True(t, s.Repair)
+}
+
+func TestGenerationDiscoveryWithoutPacemakerStatus(t *testing.T) {
+	ctx := context.Background()
+	c := generationManager(t)
+	indexer := c.pacemakerInformer.GetIndexer()
+	cr, _, err := indexer.GetByKey(pacemaker.PacemakerClusterResourceName)
+	require.NoError(t, err)
+	require.NoError(t, indexer.Delete(cr))
+	require.NoError(t, c.reconcileGeneration(ctx))
+	records, err := generation.Records(ctx, c.kubeClient)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	snapshot, err := generation.Decode(&records[0])
+	require.NoError(t, err)
+	require.False(t, snapshot.Repair, "missing status does not prove membership drift")
+
+	node, err := c.kubeClient.CoreV1().Nodes().Get(ctx, "master-0", metav1.GetOptions{})
+	require.NoError(t, err)
+	node.Annotations = map[string]string{"machineconfiguration.openshift.io/state": "Working"}
+	_, err = c.kubeClient.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	emptyCR := cr.(*pacmkrv1.PacemakerCluster).DeepCopy()
+	emptyMembers := []pacmkrv1.PacemakerClusterNodeStatus{}
+	emptyCR.Status.Nodes = &emptyMembers
+	require.NoError(t, indexer.Add(emptyCR))
+	require.NoError(t, c.reconcileGeneration(ctx))
+	jobClient := c.kubeClient.BatchV1().Jobs(generation.Namespace)
+	list, err := jobClient.List(ctx, metav1.ListOptions{})
+	require.NoError(t, err)
+	require.Empty(t, list.Items, "unknown membership must not bypass MCD admission")
+	require.NoError(t, indexer.Delete(emptyCR))
+	node.Annotations = nil
+	_, err = c.kubeClient.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	require.NoError(t, c.reconcileGeneration(ctx))
+	job, err := jobClient.Get(ctx, generation.JobName(1, 1), metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, "master-0", job.Spec.Template.Spec.NodeName)
+	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
+	_, err = jobClient.UpdateStatus(ctx, job, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	require.NoError(t, c.reconcileGeneration(ctx))
+	job, err = jobClient.Get(ctx, generation.JobName(1, 2), metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, "master-1", job.Spec.Template.Spec.NodeName, "try the next Ready candidate after failure")
+	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+	job.Status.CompletionTime = &metav1.Time{Time: time.Now()}
+	_, err = jobClient.UpdateStatus(ctx, job, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	require.NoError(t, c.reconcileGeneration(ctx))
+	require.NoError(t, c.reconcileGeneration(ctx))
+	records, err = generation.Records(ctx, c.kubeClient)
+	require.NoError(t, err)
+	require.Len(t, records, 2)
+	snapshot, err = generation.Decode(&records[1])
+	require.NoError(t, err)
+	require.True(t, snapshot.Discovery, "verify unchanged desired state in a new generation")
+	require.NoError(t, c.reconcileGeneration(ctx))
+	job, err = jobClient.Get(ctx, generation.JobName(2, 1), metav1.GetOptions{})
+	require.NoError(t, err)
+	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+	job.Status.CompletionTime = &metav1.Time{Time: time.Now()}
+	_, err = jobClient.UpdateStatus(ctx, job, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	require.NoError(t, c.reconcileGeneration(ctx))
+	require.NoError(t, c.reconcileGeneration(ctx))
+	records, err = generation.Records(ctx, c.kubeClient)
+	require.NoError(t, err)
+	require.Len(t, records, 2, "a collector outage must not create a new discovery job every sync")
 }
 
 func TestFailedGenerationRemainsDegradedUntilSuccess(t *testing.T) {
@@ -213,6 +293,14 @@ func TestGenerationRetiresLegacyJobBeforeRecording(t *testing.T) {
 	records, err = generation.Records(ctx, c.kubeClient)
 	require.NoError(t, err)
 	require.Empty(t, records, "legacy success cannot prove a recorded generation")
+	legacyPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "legacy-orphan", Namespace: generation.Namespace, Labels: map[string]string{"app": "tnf-job", "batch.kubernetes.io/job-name": legacy.Name}}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
+	_, err = c.kubeClient.CoreV1().Pods(generation.Namespace).Create(ctx, legacyPod, metav1.CreateOptions{})
+	require.NoError(t, err)
+	require.NoError(t, c.reconcileGeneration(ctx))
+	records, err = generation.Records(ctx, c.kubeClient)
+	require.NoError(t, err)
+	require.Empty(t, records, "a legacy Pod without the newer application label must stop before migration")
+	require.NoError(t, c.kubeClient.CoreV1().Pods(generation.Namespace).Delete(ctx, legacyPod.Name, metav1.DeleteOptions{}))
 	require.NoError(t, c.reconcileGeneration(ctx))
 	records, err = generation.Records(ctx, c.kubeClient)
 	require.NoError(t, err)

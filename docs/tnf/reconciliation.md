@@ -15,8 +15,8 @@ valid registered control-plane identities?
        v
 observe existing Jobs/Pods; retire stopped legacy fixed-name Jobs
        v
-load persisted records + fresh complete Pacemaker observation
-       | missing/stale/invalid -> wait/error; no discovery mutation
+load persisted records + Pacemaker observation when usable
+       | missing/stale/incomplete -> try Ready candidates; inspect PCS directly
        v
 compare desired identity/image, executor configuration, completion and drift
        | stale execution -> persist fresh retry boundary, request deletion
@@ -31,6 +31,7 @@ compare desired identity/image, executor configuration, completion and drift
        |     +-- converged? retain five newest records, clear retry status
        |     +-- recurring drift? wait for convergence window + fresh CR,
        |                         then record a new generation
+       |     +-- observation unavailable? record a discovery generation
        |
        +-- pending or failed generation
              +-- exhausted? report Degraded; allow fresh retry budget after 10m
@@ -64,7 +65,8 @@ targets.
 | Same name/IP returns with a new UID | Record replacement; compare persistent CIB UID and previous identity. |
 | Node IP changes | Record the new canonical address; reconcile old configured address. |
 | Operator image changes | Record a new application generation, subject to routine upgrade deferral. |
-| Invalid/empty input or stale observation | Stop; do not translate uncertainty into an empty desired set. |
+| Invalid/empty desired input | Stop; do not translate uncertainty into an empty desired set. |
+| Missing/stale/incomplete Pacemaker observation | Try Ready candidates; the runner must read valid live PCS membership before mutation. |
 
 ## Immutable ConfigMap format
 
@@ -124,6 +126,13 @@ generation can be superseded by changed identities/image or recurring observed
 membership drift. Executor changes and renewed retry budgets for unfinished work
 retain the same membership generation and its durable repair checkpoint.
 
+If unchanged desired state needs verification because the CR is unavailable,
+the next record has `discovery: true`. Matching live membership completes that
+discovery without host mutations, including when a configured member is offline.
+While status remains unavailable, another completed discovery is revisited after
+two minutes, rather than creating a new Job on every sync. Desired identity or
+image changes still create ordinary application generations.
+
 ## Binding an attempt to its input
 
 Attempt A of generation N is named `tnf-update-setup-N-A`. It carries:
@@ -149,11 +158,19 @@ change the input to an already running Job.
    error, rather than evidence that an identity attribute is absent.
 3. Check live Kubernetes identity, control-plane MCO policy, configured membership, and a
    running local Pacemaker cluster. Refuse an unconfigured executor.
-4. Compare configured names/IPs and persistent UID properties. For actual
-   membership work, persist a recovery timestamp followed by its generation
-   marker before removing or adding members.
-5. Remove obsolete/replaced members and add desired members. Checkpoint each
-   successfully added UID before unrelated fencing/resource work can fail.
+4. Compare configured names/IPs and persistent UID properties, falling back to
+   previous recorded identities when a UID property is absent. A discovery with
+   matching membership returns without host mutations, unless a durable claim
+   shows this generation must finish an already-started repair. Before a
+   replacement that removes and adds members, use main's `WaitForStableRevision`
+   helper so manifests are delivered before disruption. Add-only recovery of an
+   already-missing member skips this wait, matching main. Actual membership work
+   persists a recovery timestamp followed by its generation marker before
+   removing or adding members.
+5. Attempt a best-effort stop of each obsolete/replaced member, then remove it
+   and add desired members. Stop failures are logged; removal failures fail the
+   attempt. Checkpoint each successfully added UID before unrelated
+   fencing/resource work can fail.
 6. Configure fencing with the existing idempotent helper.
 7. For a started repair, remove only unstarted etcd members whose peer addresses
    do not belong to desired nodes, and apply the persisted timestamp-based
@@ -222,8 +239,9 @@ controller rebuilds the decision from current state. The runner applies the
 same node-level gate before mutation.
 
 Actual missing/deleted/replaced membership is an exception: a Pacemaker re-add
-may be necessary before MCO can finish. A global wait for all Nodes Ready or a
-stable revision on this path could deadlock recovery.
+may be necessary before MCO can finish. Main's add-only recovery path does not
+wait for a stable revision. Replacements that remove and add members retain
+main's revision wait before stopping or removing the existing member.
 
 Every creation, including retries, passes a job-specific admission hook. Only
 retries of a recorded repair may inspect a local durable repair claim when the
@@ -241,6 +259,11 @@ Consequently this policy is not a blanket prohibition on Job creation while
 MCO progresses. It implements the recovery caveat in the collected PR comment.
 Its cluster-level behavior and any required TNF-specific monitor exception still
 need upgrade-lane and QE evidence; no general monitor suppression is introduced.
+
+When Pacemaker status is unavailable, routine work and new discovery wait for
+MCD activity to finish. Missing status is not proof that a repair exception
+applies. An unfinished generation already recorded as repair can retain its
+existing retry exception, with live PCS/CIB checks still required by the runner.
 
 ## Attempts, completion, and history
 
@@ -280,10 +303,21 @@ of every old node-specific workload.
 
 ## Discovery, errors, and restart
 
-Missing/stale Pacemaker status stops generation decisions. The old full-refactor
-branch's direct discovery-mode mutation was not carried over. Existing collector
-fallback/rotation remains the means to recover the observation path; a prolonged
-collector failure is visible through the independent health controller.
+The PHC condition is not an admission dependency. Fresh, complete Pacemaker
+status supplies observed membership when available. Missing, stale, or incomplete
+status falls back to Ready Kubernetes candidates and the normal retry rotation.
+The runner must find a running local Pacemaker cluster and read valid PCS/CIB
+configuration before deciding what to change; unknown status is never interpreted
+as an empty configured member set. The collector continues its own fallback and
+rotation independently.
+
+After a completed unchanged generation, discovery gets a new recorded generation.
+If live configured membership matches and UID checks find no replacement, discovery finishes
+without fencing, resource updates, or `pcs cluster start`. PHC degradation by
+itself does not trigger repair: an intentionally stopped registered member stays
+stopped. Actual membership drift discovered locally uses the normal repair and
+checkpoint flow. A prolonged collector failure remains visible through PHC even
+when update-setup can still reconcile independently.
 
 API, CIB, fencing, or command failures remain retryable execution failures.
 Invalid identity and input-binding failures stop the runner before destructive
@@ -325,8 +359,13 @@ mutations; the controller records a newer generation after old execution stops.
 ## Relationship to health tests
 
 Reconciliation changes configuration; health monitoring reports observed health.
-Keeping registered membership avoids reboot-driven force removal, but
-update-setup can still start a deliberately stopped cluster. That does not
-establish a contract for holding a PHC test node offline. Pause support and
-restoring the temporarily relaxed Origin assertions remain separately tracked in
-[OCPBUGS-129429](https://redhat.atlassian.net/browse/OCPBUGS-129429).
+A completed unchanged generation is not rerun because a member goes offline.
+Matching read-only discovery also leaves a stopped registered member alone.
+An unfinished normal application or repair can still start it, so held-offline
+PHC tests must first wait for generation completion and no active attempts.
+
+Restore and validate the relaxed Origin assertions under those prerequisites
+before deciding whether a pause mechanism is needed. That cluster validation
+remains tracked in
+[OCPBUGS-129429](https://redhat.atlassian.net/browse/OCPBUGS-129429); this patch
+neither implements pause support nor changes the Origin assertions.

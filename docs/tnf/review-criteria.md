@@ -16,7 +16,7 @@ are not validation of this patch.
 | [CEO #1729](https://github.com/openshift/cluster-etcd-operator/pull/1729#issuecomment-6341729899) / [OCPBUGS-132800](https://redhat.atlassian.net/browse/OCPBUGS-132800) | Never trigger initial setup after transition, including scheduling drift or deleted completed Jobs; avoid the associated Available blip. | Implemented through setup-specific creation admission and unit covered. Completed Job deletion remains permitted; missing-Job, image/spec, and executor-driven replacements are refused after transition. Deferred creation preserves availability. Cluster/QE acceptance remains open. |
 | [CEO #1729](https://github.com/openshift/cluster-etcd-operator/pull/1729#issuecomment-6341729899) / [OCPBUGS-132819](https://redhat.atlassian.net/browse/OCPBUGS-132819) | Defer routine update-setup during upgrade/MCO, reevaluate afterward, allow re-addition needed for MCO completion. | Implemented using control-plane Node MCO activity, with an explicit recovery exception and unit evidence. Global ClusterVersion progression and worker-only rollouts do not block admission; only retries of a recorded repair may inspect durable local repair state; routine retries are deferred. Live upgrade/QE acceptance and any TNF monitor exception remain open. |
 | [CEO #1729: QE request](https://github.com/openshift/cluster-etcd-operator/pull/1729#issuecomment-6341729899) | Obtain QE verification because of patch size and preserve stable recovery/certrotation behavior. | Outstanding. Local tests/builds cannot substitute for QE and candidate-payload results. |
-| [OCPBUGS-129429](https://redhat.atlassian.net/browse/OCPBUGS-129429) | Future mechanism to pause recovery while PHC tests deliberately hold a node offline. | Explicitly deferred to that follow-up. No pause or restoration of relaxed Origin assertions is included. API membership alone does not fulfill this contract. |
+| [OCPBUGS-129429](https://redhat.atlassian.net/browse/OCPBUGS-129429) | Preserve a deliberately stopped member during PHC checks; assess whether a pause is still needed. | Completed unchanged work is not rerun for readiness alone, and matching discovery does not start stopped members. Restore and validate strict assertions after generation completion with no active attempts. No Origin assertion changes or live PHC validation are included; pause support remains deferred pending that evidence. |
 | [OCPBUGS-90558](https://redhat.atlassian.net/browse/OCPBUGS-90558) | Avoid mistaking an MCO-triggered reboot for permanent node replacement and causing split-brain. | Root-cause policy addressed by registered identity membership and upgrade gating. Actual performance-profile/MCO reboot validation remains required. |
 
 ## Regression evidence
@@ -40,6 +40,10 @@ matrix or separate helper-policy tests.
 - `TestPartialReplacementResumesWithoutRemovingNodeAgain`: one injected IP-map
   failure after replacement verifies durable recovery claims, claim-before-resource
   ordering, and restart without repeating membership changes during MCD activity.
+  A failed best-effort stop still permits removal, with stop-before-removal ordering.
+  Revision deferral prevents host mutation before replacement begins.
+- `TestMissingMemberDoesNotWaitForStableRevision`: add-only recovery retains
+  main's direct repair path without waiting for revision convergence.
 - `TestLiveStateChangesStopFurtherMutation`: a Kubernetes UID change during
   reconciliation stops subsequent membership mutations.
 - `TestGenerationNeverFallsBackToLatest`: a runner needs explicit recorded input
@@ -48,10 +52,14 @@ matrix or separate helper-policy tests.
   generation/node identity and valid completion proof, including after Job cleanup.
 - `TestSuccessfulGenerationDoesNotHideNewDrift`: confirmed Pacemaker membership
   mismatch after success records new repair work against the Kubernetes desired set.
+- `TestGenerationDiscoveryWithoutPacemakerStatus`: missing CR data still permits
+  candidate rotation and new discovery generations; MCD deferral consumes no
+  attempt, and completed discovery is not retriggered on every sync.
 - `TestFailedGenerationRemainsDegradedUntilSuccess`: exhausted recovery stays
   degraded through renewed attempts until the Job succeeds.
 - `TestGenerationRetiresLegacyJobBeforeRecording`: old fixed-name execution must
-  stop before migration; its success cannot certify a recorded generation.
+  stop before migration, including surviving legacy Pods without the newer
+  application label; its success cannot certify a recorded generation.
 - `TestSetupCreationAdmissionUsesTransitionAndReadiness`: completed transition
   blocks setup creation; manual reset and readiness determine bootstrap admission.
 - `TestDeferredCreationPreservesCompletedStatus`: deletion followed by denied
@@ -80,29 +88,41 @@ same paths, rewritten against the final implementation:
 | Startup, informer events/resync, framework, context/shutdown | [Controller lifecycle](controller-lifecycle.md). Queue-driven events replace custom side-effect handlers. Submitted Jobs survive CEO cancellation. |
 | Health states, unknown grace, events, metrics, troubleshooting | [Controller lifecycle](controller-lifecycle.md#health-monitoring). Current independent health/disruption implementation is authoritative. |
 | Drift examples, ConfigMap format, generation algorithm, job walkthrough | [Reconciliation](reconciliation.md). Explicit immutable JSON name/UID binding replaces latest-record selection. |
-| Reconciliation concurrency, errors, discovery, replacement, health integration | [Reconciliation](reconciliation.md). Persisted serialization replaces two-phase local locking; fresh observation replaces direct discovery mutation. |
+| Reconciliation concurrency, errors, discovery, replacement, health integration | [Reconciliation](reconciliation.md). Persisted serialization replaces two-phase local locking; unavailable observation uses generation-bound discovery with live PCS validation. |
 | Job framework state machines, retries, job configuration/drift | [Job controllers](job-controllers.md), preserving current framework behavior and documenting setup's durable completion exception. |
 
 General orphan-node-job and Pod cleanup is retained in a separate change, using
 live identity/ownership checks. `TestCleanupRetiresNodeJobsAndOrphanPods` covers
 retired UIDs, Pod ownership, collector preservation, and failed Node reads.
-In-controller health relocation, old generation
-locks, latest-ConfigMap discovery, and a post-transition stable-revision wait
-were not carried forward. These omissions are explicit, rather than
+Runtime replacements retain main's stable-revision wait; add-only recovery
+retains main's direct path. Health deliberately retains its separate controller
+and queue, with startup, shared dependencies, and lifetime managed by PLM.
+Moving health evaluation into the PLM loop, old generation locks, and globally
+selected latest-ConfigMap input were not carried forward.
+These omissions are explicit, rather than
 undocumented claims that every historical branch behavior remains present.
 
 ## Local validation
 
-The candidate source tree passed these checks on October 22, 2026, before the
-final commit was amended:
+The source tree passed these checks on October 23, 2026, including the final
+legacy-Pod serialization fix:
 
 - `go test ./pkg/tnf/... ./pkg/operator/ceohelpers`
 - Race detector for `pkg/tnf/operator`, `pkg/tnf/pkg/generation`,
   `pkg/tnf/update-setup`, and `pkg/tnf/pkg/jobs`, using the local validation
   container's C toolchain.
 - `make verify` and `make build` (all four binaries).
-- Relative documentation file links, named regression references, and
-  `git diff --check`.
+- All seven TNF docs: 41 relative file/anchor links, 18 named regression
+  references, and `git diff --check`.
+- The documented ConfigMap example decoded and round-tripped through the actual
+  generation writer and decoder.
+
+The bidirectional source/documentation review covered startup and controller
+ownership, setup deletion/admission, generation schema and binding, executor
+invalidation, retry/status behavior, discovery and MCD admission, revision waits,
+repair checkpoints, dependencies, and cleanup/serialization. The existing legacy
+migration test reproduced the orphan-Pod gap before the fix and passed afterward;
+no additional test function or MCO condition matrix was added.
 
 These are local source-tree results, not candidate-payload or QE results.
 
@@ -113,10 +133,11 @@ Before merge, record the exact candidate SHA, payload, job URL, result, and logs
 for each of the following:
 
 1. TNF recovery 1/3, 2/3, 3/3, degraded, certrotation, and upgrade payload lanes.
-2. Initial transition followed by execution-node eligibility changes: no
-   scheduling-triggered setup recreation or associated Available blip. Verify
-   manual reset/deletion and distinguish image/config-driven executions from
-   executor-driven changes. Post-transition creation must be denied in every case.
+2. Initial transition followed by execution-node eligibility changes: no new
+   setup execution or associated Available blip. Config drift may delete the
+   completed Job, but post-transition replacement must be denied for executor,
+   image, and other config changes. Verify deliberate rerun after manual
+   condition reset and Job deletion.
 3. Ordinary MCO/performance-profile reboot: registered identity retained, routine
    update-setup deferred, eventual recovery, and no forced removal/split-brain.
 4. A genuinely missing member during MCO: necessary re-addition progresses rather
@@ -125,6 +146,10 @@ for each of the following:
    active and partially completed reconciliation.
 6. QE sign-off on OCPBUGS-132800 / OCPBUGS-132819 and the final part-3 PR. Resolve
    any TNF-specific monitor exception from actual evidence.
+7. Restore and validate strict PHC assertions after the current generation
+   completes and all attempts stop. Confirm matching discovery leaves a
+   deliberately stopped member alone; decide from live results whether pause
+   support is still necessary.
 
-PHC pause ownership remains with the OCPBUGS-129429 follow-up; this patch neither
-adds that mechanism nor claims its previously relaxed assertions are restored.
+PHC validation remains with the OCPBUGS-129429 follow-up; this patch adds neither
+pause support nor changes to the relaxed Origin assertions.

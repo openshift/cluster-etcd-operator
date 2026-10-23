@@ -13,12 +13,15 @@ durable boundary between initial installation and runtime reconciliation.
 Startup of runtime controllers does not require every node to be Ready. That
 would prevent the recovery those controllers are intended to provide.
 
-The initial setup controller remains registered in both phases. Completed setup
-keeps its normal JobComplete status when eligible execution nodes change: those
-changes update placement/retry state and do not delete running or completed Jobs.
-The shared JobController has no setup-specific transition branch. The setup
-runner keeps its defensive transition check. Ordinary spec/configuration drift
-and creation of a missing Job retain the existing framework behavior.
+The initial setup controller remains registered in both phases. Placement changes
+alone refresh the shared framework's execution targets without deleting Jobs.
+Setup explicitly includes eligible executor identities in its configuration, so
+changes can delete even a completed setup Job. Its creation admission hook refuses
+replacement after the durable transition, preserving existing Available and
+Progressing status while creation is deferred. The shared JobController has no
+setup-specific transition branch, and the setup runner retains its defensive
+transition check. Resetting the transition condition and deleting the Job permits
+a deliberate bootstrap rerun.
 
 ## Component architecture
 
@@ -95,6 +98,19 @@ current node's matching recorded-generation completion.
 
 ### Independent runtime controllers
 
+PLM manages health-controller startup and lifetime. After transition,
+[`runPacemakerHealthCheckController`](../../pkg/tnf/operator/lifecycle_manager.go)
+creates the existing health controller with PLM's operator/Kubernetes clients,
+event recorder, and PacemakerCluster informer, then starts it with the shared
+lifecycle context. It does not create another Pacemaker informer or API watch.
+Context cancellation stops both controller loops.
+
+The health controller retains its own factory work queue and 30-second resync;
+PLM's generation reconciliation uses a separate queue and one-minute resync.
+Health reporting does not wait for a successful repair or run inside generation
+reconciliation. PHC condition evaluation is not an admission dependency for
+update-setup. Sharing dependencies does not require merging those control loops.
+
 ```text
 Pacemaker on a selected Ready node
        |
@@ -122,7 +138,7 @@ There are three deliberately different inputs:
 | Input | Meaning | Safety boundary |
 | --- | --- | --- |
 | Registered control-plane Nodes | Desired members, including NotReady nodes | Validate name, UID, and canonical IP; reject incomplete or unsupported sets. |
-| PacemakerCluster CR | Observed membership and health | Reconciliation waits for a fresh, complete observation. Offline members remain configured members. |
+| PacemakerCluster CR | Observed membership and health | Use a fresh, complete observation when available; otherwise discover through Ready candidates. Offline members remain configured members. |
 | Runner's local PCS/CIB reads | Membership and progress at execution time | Check live configuration and durable repair attributes before mutation. |
 
 The controller records both desired and previous identities. That lets it detect
@@ -170,6 +186,14 @@ the runner requires either current membership repair or a durable claim proving
 that this generation already started repair before it permits routine steps.
 A `repair` flag in a ConfigMap alone does not grant that exception.
 
+Runtime replacements use main's `WaitForStableRevision` helper before stopping
+or removing members, ensuring the latest manifests are delivered first.
+Add-only recovery of an already-missing member skips that wait, as it does on main.
+
+Without usable Pacemaker status, new work waits until MCD finishes. Previously
+recorded repair retries retain their existing exception. Discovery itself never
+treats missing status as proof of membership drift.
+
 Dependencies include the PacemakerCluster CRD, working Kubernetes/config APIs,
 current node identities, an eligible executor, the operator image, host PCS/CIB
 commands, fencing credentials, and the existing etcd resource-agent contract.
@@ -180,11 +204,14 @@ that members should be deleted.
 
 General cleanup removes auth/after-setup Jobs for retired node identities and
 orphan TNF Pods. Generation reconciliation also retires stopped legacy
-update-setup Jobs and prunes recorded history. Direct "discovery-mode"
-reconciliation has not been extracted: reconciliation waits for fresh Pacemaker
-status, while collector recovery retains its existing fallback.
+update-setup Jobs and prunes recorded history. When Pacemaker status is unavailable,
+recorded attempts try Ready candidates and inspect live PCS membership. Discovery
+of unchanged desired state does not mutate a matching cluster. The collector
+retains its independent fallback and rotation.
 
 Health evaluation, metrics, notifications, certificate watching, and collector
-rotation remain separate. Pausing automatic recovery for deliberately held-offline
-PHC tests remains a follow-up in
-[OCPBUGS-129429](https://redhat.atlassian.net/browse/OCPBUGS-129429).
+rotation remain separate. For deliberately held-offline PHC tests, first wait for
+generation completion with no active attempts: matching discovery does not restart
+a stopped member. Restoring and validating the relaxed assertions remains work in
+[OCPBUGS-129429](https://redhat.atlassian.net/browse/OCPBUGS-129429); pause support
+is deferred unless cluster testing demonstrates a remaining need.

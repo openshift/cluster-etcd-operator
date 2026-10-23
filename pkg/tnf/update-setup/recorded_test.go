@@ -29,7 +29,7 @@ func runnerForTest(t *testing.T, progressing bool) (*recordedRunner, *[]string) 
 	client := fake.NewClientset(nodes[0], nodes[1])
 	setMCOUpdating(t, client, progressing)
 	commands := []string{}
-	r := &recordedRunner{kube: client, snapshot: generation.Snapshot{Version: 1, Generation: 1, Nodes: desired}, current: "master-0", fencing: func(context.Context, kubernetes.Interface, []string) error { return nil }, alerts: func(context.Context) error { return nil }}
+	r := &recordedRunner{kube: client, snapshot: generation.Snapshot{Version: 1, Generation: 1, Nodes: desired}, current: "master-0", fencing: func(context.Context, kubernetes.Interface, []string) error { return nil }, alerts: func(context.Context) error { return nil }, waitForRevision: func(context.Context) error { return nil }}
 	r.execute = func(ctx context.Context, command string) (string, string, error) {
 		commands = append(commands, command)
 		switch {
@@ -68,6 +68,15 @@ func TestRegisteredOfflineNodeIsNotRemoved(t *testing.T) {
 		require.NotContains(t, command, "cluster node add")
 		require.NotContains(t, command, "force_new_cluster")
 	}
+	r.snapshot.Discovery = true
+	*commands = nil
+	require.NoError(t, r.run(context.Background()))
+	for _, command := range *commands {
+		require.NotContains(t, command, "cluster start")
+		require.NotContains(t, command, "cluster enable")
+		require.NotContains(t, command, "crm_attribute")
+		require.NotContains(t, command, "resource update")
+	}
 }
 
 func TestLiveStateChangesStopFurtherMutation(t *testing.T) {
@@ -99,7 +108,7 @@ func TestGenerationNeverFallsBackToLatest(t *testing.T) {
 	r, _ := runnerForTest(t, false)
 	t.Setenv(generation.ConfigMapEnv, "")
 	t.Setenv(generation.ConfigMapUIDEnv, "")
-	require.ErrorContains(t, runRecordedGeneration(context.Background(), r.kube, "master-0"), "explicit recorded generation")
+	require.ErrorContains(t, runRecordedGeneration(context.Background(), r.kube, "master-0", r.waitForRevision), "explicit recorded generation")
 	cm, err := r.snapshot.ConfigMap()
 	require.NoError(t, err)
 	cm.UID = "new-uid"
@@ -107,12 +116,21 @@ func TestGenerationNeverFallsBackToLatest(t *testing.T) {
 	require.NoError(t, err)
 	t.Setenv(generation.ConfigMapEnv, cm.Name)
 	t.Setenv(generation.ConfigMapUIDEnv, "old-uid")
-	require.ErrorContains(t, runRecordedGeneration(context.Background(), r.kube, "master-0"), "UID changed")
+	require.ErrorContains(t, runRecordedGeneration(context.Background(), r.kube, "master-0", r.waitForRevision), "UID changed")
 }
 
 func TestPartialReplacementResumesWithoutRemovingNodeAgain(t *testing.T) {
 	ctx := context.Background()
 	r, commands := runnerForTest(t, false)
+	r.snapshot.Discovery = true
+	waits, revisionReady := 0, false
+	r.waitForRevision = func(context.Context) error {
+		waits++
+		if !revisionReady {
+			return fmt.Errorf("revision is not stable")
+		}
+		return nil
+	}
 	// Model a replacement discovered from the CIB before a baseline
 	// generation has recorded previous identities.
 	properties := map[string]string{"tnf_node_uid_master-1": "old-uid"}
@@ -120,6 +138,9 @@ func TestPartialReplacementResumesWithoutRemovingNodeAgain(t *testing.T) {
 	execute := r.execute
 	r.execute = func(ctx context.Context, command string) (string, string, error) {
 		stdout, stderr, err := execute(ctx, command)
+		if strings.Contains(command, "pcs cluster stop master-1 --force --request-timeout=300") {
+			return "", "node unreachable", fmt.Errorf("injected stop failure")
+		}
 		if strings.Contains(command, "pcs cluster cib") {
 			stdout = strings.ReplaceAll(stdout, `name="tnf_node_uid_master-1" value="uid-1"`, `name="tnf_node_uid_master-1" value="`+properties["tnf_node_uid_master-1"]+`"`)
 			for _, key := range []string{"tnf_reconciliation_generation", "tnf_reconciliation_force_new_cluster"} {
@@ -144,6 +165,13 @@ func TestPartialReplacementResumesWithoutRemovingNodeAgain(t *testing.T) {
 		}
 		return stdout, stderr, err
 	}
+	require.ErrorContains(t, r.run(ctx), "revision is not stable")
+	for _, command := range *commands {
+		require.NotContains(t, command, "cluster stop")
+		require.NotContains(t, command, "cluster node")
+		require.NotContains(t, command, "crm_attribute")
+	}
+	revisionReady = true
 	require.ErrorContains(t, r.run(ctx), "injected ip-map failure")
 	require.Equal(t, "uid-1", properties["tnf_node_uid_master-1"])
 	claim := properties["tnf_reconciliation_force_new_cluster"]
@@ -153,11 +181,18 @@ func TestPartialReplacementResumesWithoutRemovingNodeAgain(t *testing.T) {
 	retry := *r
 	retry.continuingRepair, retry.repairClaim = false, ""
 	require.NoError(t, retry.run(ctx))
-	removes, adds, claims := 0, 0, 0
+	require.Equal(t, 2, waits, "a retry after completed membership changes must not wait again")
+	stops, removes, adds, claims := 0, 0, 0, 0
+	firstStop, firstRemove := -1, -1
 	firstClaim, firstUpdate := -1, -1
 	for i, command := range *commands {
+		if strings.Contains(command, "pcs cluster stop master-1 --force --request-timeout=300") {
+			stops++
+			firstStop = i
+		}
 		if strings.Contains(command, "cluster node remove master-1") {
 			removes++
+			firstRemove = i
 		}
 		if strings.Contains(command, "cluster node add master-1") {
 			adds++
@@ -173,11 +208,35 @@ func TestPartialReplacementResumesWithoutRemovingNodeAgain(t *testing.T) {
 			require.True(t, strings.HasSuffix(command, "--update "+claim))
 		}
 	}
+	require.Equal(t, 1, stops)
 	require.Equal(t, 1, removes)
 	require.Equal(t, 1, adds)
+	require.Greater(t, firstRemove, firstStop, "attempt the best-effort stop before removing the node")
 	require.GreaterOrEqual(t, claims, 1)
 	require.True(t, mapUpdated)
 	require.Greater(t, firstUpdate, firstClaim, "record the recovery claim before changing etcd resources")
+}
+
+func TestMissingMemberDoesNotWaitForStableRevision(t *testing.T) {
+	r, _ := runnerForTest(t, false)
+	r.waitForRevision = func(context.Context) error {
+		t.Fatal("adding back a missing member must not wait for revision stability")
+		return nil
+	}
+	missing := true
+	execute := r.execute
+	r.execute = func(ctx context.Context, command string) (string, string, error) {
+		stdout, stderr, err := execute(ctx, command)
+		if missing && strings.Contains(command, "cluster config show") {
+			return `{"nodes":[{"name":"master-0","addrs":[{"addr":"10.0.0.1"}]}]}`, "", nil
+		}
+		if strings.Contains(command, "cluster node add master-1") {
+			missing = false
+		}
+		return stdout, stderr, err
+	}
+	require.NoError(t, r.run(context.Background()))
+	require.False(t, missing)
 }
 
 func setMCOUpdating(t *testing.T, kube kubernetes.Interface, updating bool) {

@@ -19,12 +19,11 @@ Initial cluster setup during first-time installation:
   - etcd bootstrap must complete
   - All nodes must reach latest static pod revision
 - **Behavior:**
-  - Exponential backoff retry (5s → 2min cap) with 10-minute timeout
+  - Exponential backoff retry (5s → 2min cap), with roughly ten minutes of retry delays; prerequisite waits have their own timeouts
   - Blocks until etcd bootstrap completes and all nodes at stable revision
-  - Creates auth jobs (per-node), setup job (cluster-wide), fencing job (cluster-wide)
-  - Waits for setup job to complete before marking transition complete
-  - Sets `TNFJobControllersDegraded` condition if setup fails after 10-minute retry
-- **Exit:** Marks external etcd transition complete when setup job succeeds
+  - Starts auth, setup, fencing, and after-setup controllers; Job execution proceeds asynchronously
+  - Sets `TNFJobControllersDegraded` if controller startup exhausts its backoff
+- **Exit:** The setup runner marks the transition complete after static-container removal reaches a stable revision, before the Job reports completion
 
 ### Runtime Mode (Post-Transition)
 
@@ -34,22 +33,26 @@ Operations after initial setup is complete (operator restart, upgrade, node repl
 - **Requirements:** A nonempty registered control-plane node set to start controllers; each Job checks readiness/eligible execution targets at admission.
 - **Behavior:**
   - Idempotent restart support - safe to call repeatedly
-  - Completed setup is preserved across executor-list changes; the controller continues ordinary configuration/status reconciliation
+  - Setup configuration drift may delete its Job; creation admission denies replacement after transition and preserves existing completion status
   - Ensures auth/after-setup controllers running for each node
   - Ensures fencing controller running
 - **Use Cases:** Operator restart, upgrade, node replacement, degraded node scenarios
 
-**Key Difference:** Bootstrap mode blocks until setup completes (initial cluster creation), while runtime mode is non-blocking and assumes cluster already exists.
+Bootstrap controller startup waits for installation prerequisites. After startup,
+both modes run Jobs asynchronously; the durable transition selects the runtime
+dependencies and generation reconciliation.
 
 ## Condition Model
 
-Job controllers use a three-condition model to track lifecycle and health status. All conditions are set on the etcd Operator CR and propagate to the ClusterOperator CR:
+The shared job framework supports three condition types, enabled per controller.
+Setup enables all three; other framework jobs enable Progressing and Degraded.
+Conditions are set on the etcd Operator CR and propagate to the ClusterOperator CR:
 
 **Available Condition**:
 - Type format: `<JobName>Available` (e.g., `TNFSetupJobAvailable`)
 - Indicates the job has **successfully completed**
 - Set when job reaches Complete status
-- Cleared when the Job is restarted or deleted; completed Jobs retain Available when only their eligible executor set changes.
+- Set false when an incomplete or failed Job is observed. Job deletion alone does not clear it; skipped application or deferred creation preserves existing status.
 - Reason: `JobComplete`
 
 **Progressing Condition**:
@@ -62,17 +65,20 @@ Job controllers use a three-condition model to track lifecycle and health status
 **Degraded Condition**:
 - Type format: `<JobName>Degraded` (e.g., `TNFSetupJobDegraded`)
 - Indicates a job has **failed OR is blocked** from running
-- Reasons:
-  - `SyncError`: Job blocked (nodes not ready or no schedulable nodes) for >10 minutes
-  - `MaxRetriesExceeded`: Job exhausted all retry attempts in current cycle (e.g., 6 tries across 2 nodes × 3 attempts)
-- **Blocked jobs** (SyncError):
-  - Set after 10-minute timeout when blocking condition persists
-  - Automatically cleared when condition resolves (nodes become ready, schedulable nodes available)
+- Reason: `SyncError`, set by the controller factory when sync returns an error
+- **Readiness or no-target blocks**:
+  - Set after the blocking condition persists for ten minutes
+  - Cleared when the blocking condition resolves, unless retry exhaustion must be preserved
   - Message contains details: "Affected nodes not ready: [master-0]" or "No schedulable nodes available"
-- **Failed jobs** (MaxRetriesExceeded):
-  - Set immediately when max retry attempts exhausted in a cycle
-  - **Retry cycles continue** - after setting Degraded, state resets to attempt 1 and retries resume
-  - Remains set until the job succeeds
+- **Execution and controller errors**: failed Jobs, API errors, and configuration-drift deletion errors can report `SyncError` immediately; the readiness timeout does not apply to them
+- **Retry exhaustion**:
+  - Returns `SyncError` with message "Job failed after maximum retry attempts" immediately when a cycle is exhausted (e.g., two nodes × three attempts)
+  - State resets to attempt 1 and retry cycles continue; this shared framework has no exhaustion cooldown
+  - The exhaustion message is preserved through retries and deferrals until the Job succeeds
+
+Recorded update-setup uses its own persisted retry state: it reports reason
+`MaxRetriesExceeded` after six attempts and allows a renewed budget after ten
+minutes. It does not use the shared framework's in-memory retry cycle.
 
 All conditions are set on the **etcd Operator CR** and propagate to the **ClusterOperator CR** via the cluster status controller. This allows per-job granularity on the Operator CR while the ClusterOperator shows overall health state to cluster administrators.
 
@@ -109,12 +115,12 @@ RunClusterJobController(ctx, jobType, schedulableNodesFunc, createAdmissionHook,
 
 ### RestartClusterJobOrRunController
 
-Handles job restart logic with blocking cleanup:
+This retained cluster-job helper provides blocking restart behavior; the current
+lifecycle manager does not call it:
 
-- Deletes existing job and waits for deletion (blocking)
-- Starts new job controller after cleanup completes
-- Used when job config changes or manual restart needed
-- Only used for cluster-wide jobs (node jobs use drift detection instead)
+- Waits for an existing Job to stop, then deletes it and waits for deletion
+- Resets retry state and ensures its controller is running after cleanup
+- Starts the controller directly when no Job exists
 
 ## Job Types and Characteristics
 
@@ -252,7 +258,9 @@ executor changes cancel stale attempts immediately and give the replacement a fr
 changing the membership generation or partial-repair checkpoint. The replacement
 still waits for old Pods to stop and must pass control-plane MCO creation admission.
 Completed matching generations keep their completion across executor changes or
-Job deletion; new desired input or confirmed membership drift records a new generation.
+Job deletion. New desired input or confirmed membership drift records a new
+generation; unavailable observations after unchanged completed work can instead
+record a read-only discovery generation.
 
 Auth and after-setup retain their existing per-node UID/spec behavior. Auth also
 consumes peer addresses at runtime; explicit peer-input invalidation remains a
@@ -263,11 +271,16 @@ Job definitions provide creation admission; no pre-delete hook is needed.
 
 ## Recorded update-setup validation
 
-Recorded update-setup jobs require an explicit snapshot name and UID, revalidate
-live node identities before mutation, and validate the exact configured member
-set with every desired node online. They use generation-specific persisted
-attempts rather than this framework's in-memory retry state. The existing
-framework continues to manage auth, initial setup, after-setup, and fencing.
+Recorded update-setup jobs require an explicit snapshot name and UID and revalidate
+live node identities before mutation. Normal application and repair validate the
+exact configured member set with every desired node online. A discovery of
+unchanged completed input returns without mutation or an online requirement when
+live membership matches, UID checks find no replacement, and no repair remains
+in progress.
+Actual drift found during discovery uses the normal repair path. These Jobs use
+generation-specific persisted attempts rather than this framework's in-memory
+retry state. The existing framework continues to manage auth, initial setup,
+after-setup, and fencing.
 
 ## Related Files
 
