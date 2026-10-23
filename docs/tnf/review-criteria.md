@@ -83,11 +83,13 @@ same paths, rewritten against the final implementation:
 | Reconciliation concurrency, errors, discovery, replacement, health integration | [Reconciliation](reconciliation.md). Persisted serialization replaces two-phase local locking; fresh observation replaces direct discovery mutation. |
 | Job framework state machines, retries, job configuration/drift | [Job controllers](job-controllers.md), preserving current framework behavior and documenting setup's durable completion exception. |
 
-Obsolete implementation descriptions are not represented as features: general
-orphan-node-job cleanup, in-controller health relocation, old generation locks,
-latest-ConfigMap discovery, and a post-transition stable-revision wait were not
-carried forward. These omissions are explicit, rather than undocumented claims
-that every historical branch behavior remains present.
+General orphan-node-job and Pod cleanup is retained in a separate change, using
+live identity/ownership checks. `TestCleanupRetiresNodeJobsAndOrphanPods` covers
+retired UIDs, Pod ownership, collector preservation, and failed Node reads.
+In-controller health relocation, old generation
+locks, latest-ConfigMap discovery, and a post-transition stable-revision wait
+were not carried forward. These omissions are explicit, rather than
+undocumented claims that every historical branch behavior remains present.
 
 ## Local validation
 

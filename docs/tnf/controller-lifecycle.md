@@ -45,6 +45,10 @@ sync
   |           +-- ensure existing per-node and cluster controllers
   |           +-- ensure collector, health, and certificate watcher
   |
+  +-- cleanupOrphanedJobs
+  |     +-- remove auth/after-setup Jobs for retired node identities
+  |     +-- remove orphan TNF Pods
+  |
   +-- reconcileGeneration
         +-- Managed and transition complete?
         +-- validate desired node identities
@@ -64,6 +68,15 @@ Job; runtime controller startup itself does not require every node Ready.
 The lifecycle resync interval is one minute. The health controller has its own
 30-second resync. The collector's normal CronJob schedule is every two minutes.
 These are independent mechanisms and are not interchangeable.
+
+Cleanup uses live Node reads and runs only while Managed with a nonempty
+control-plane node set. It removes node-specific Jobs whose recorded UID has
+retired, including same-name replacements. Legacy unlabeled Jobs are removed
+only when their scheduled node is gone. Pod cleanup verifies the owning Job's
+UID through the API, including collector Jobs; it removes missing-owner Pods
+and terminal Pods without owners, while preserving running unowned Pods.
+Deletions carry UID preconditions, and cleanup errors are logged without
+blocking membership recovery. At most 50 orphan Pods are deleted per sync.
 
 ## Events and queue behavior
 

@@ -128,6 +128,9 @@ func (c *pacemakerLifecycleManager) sync(ctx context.Context, syncCtx factory.Sy
 		klog.Errorf("Failed to start job controllers: %v", err)
 		return fmt.Errorf("failed to start job controllers: %w", err)
 	}
+	if err := c.cleanupOrphanedJobs(ctx); err != nil {
+		klog.Warningf("Failed to clean up stale TNF jobs and orphan pods: %v", err)
+	}
 
 	return c.reconcileGeneration(ctx)
 }

@@ -178,11 +178,11 @@ that members should be deleted.
 
 ## Scope boundaries
 
-The former full-refactor branch's general orphan-job cleanup and direct
-"discovery-mode" reconciliation were not extracted. This implementation retires
-stopped legacy update-setup Jobs and prunes recorded history; it does not claim to
-clean up all old auth or after-setup resources. Reconciliation waits for fresh
-Pacemaker status, while collector recovery retains its existing fallback.
+General cleanup removes auth/after-setup Jobs for retired node identities and
+orphan TNF Pods. Generation reconciliation also retires stopped legacy
+update-setup Jobs and prunes recorded history. Direct "discovery-mode"
+reconciliation has not been extracted: reconciliation waits for fresh Pacemaker
+status, while collector recovery retains its existing fallback.
 
 Health evaluation, metrics, notifications, certificate watching, and collector
 rotation remain separate. Pausing automatic recovery for deliberately held-offline
