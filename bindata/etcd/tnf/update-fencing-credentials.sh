@@ -225,20 +225,31 @@ echo "Pre-flight validation passed: new credentials are valid"
 
 echo "Updating stonith device ${DEVICE_ID}"
 # matches getStonithCommand() format from fencing.go
-STDERR=$(/usr/sbin/pcs stonith update "${DEVICE_ID}" \
+# pcs 0.12 deprecated --wait; create/update then verify with status query.
+if ! STDERR=$(/usr/sbin/pcs stonith update "${DEVICE_ID}" \
     username="${USERNAME}" \
     password="${PASSWORD}" \
     ip="${REDFISH_IP}" \
     ipport="${REDFISH_PORT}" \
     systems_uri="${REDFISH_PATH}" \
-    ssl_insecure="${SSL_INSECURE_VAL}" \
-    --wait=120 2>&1 > /dev/null) || true
-
-# stderr must contain "is running"
-if [[ "${STDERR}" != *"is running"* ]]; then
+    ssl_insecure="${SSL_INSECURE_VAL}" 2>&1); then
     echo "Failed to update stonith device ${DEVICE_ID}: $(echo "${STDERR}" | redact_credentials)"
     exit 1
 fi
+
+# Poll the specific stonith resource so unrelated pending actions do not block us.
+deadline=$((SECONDS + 120))
+while true; do
+    if QUERY_OUT=$(/usr/sbin/pcs status query resource "${DEVICE_ID}" is-state started 2>/dev/null) \
+        && [[ "${QUERY_OUT}" == *[Tt]rue* ]]; then
+        break
+    fi
+    if (( SECONDS >= deadline )); then
+        echo "Timed out waiting for stonith device ${DEVICE_ID} to reach started state"
+        exit 1
+    fi
+    sleep 2
+done
 echo "Stonith device ${DEVICE_ID} updated successfully"
 
 echo "Updating secret ${SECRET_NAME} in namespace ${NAMESPACE}"
