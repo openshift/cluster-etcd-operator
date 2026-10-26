@@ -10,6 +10,7 @@ import (
 	"github.com/openshift/library-go/pkg/crypto"
 
 	configv1 "github.com/openshift/api/config/v1"
+	"github.com/openshift/api/features"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
@@ -37,7 +38,7 @@ import (
 var (
 	backendQuotaFeatureGateAccessor = featuregates.NewHardcodedFeatureGateAccess(
 		[]configv1.FeatureGateName{backendquotahelpers.BackendQuotaFeatureGateName},
-		[]configv1.FeatureGateName{})
+		[]configv1.FeatureGateName{features.FeatureGateTLSGroupPreferences})
 
 	defaultEnvResult = map[string]string{
 		"ALL_ETCD_ENDPOINTS":                  "https://192.168.2.0:2379,https://192.168.2.1:2379,https://192.168.2.2:2379",
