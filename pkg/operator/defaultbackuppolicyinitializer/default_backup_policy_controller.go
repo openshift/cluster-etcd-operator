@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/klog/v2"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
@@ -20,14 +21,13 @@ import (
 )
 
 const (
-	// DefaultBackupPolicyInitializedCondition records that the CEO has made its
-	// one-time decision about the default backup policy. It does not mean that
-	// the policy still exists or must continue to be reconciled.
+	// DefaultBackupPolicyInitializedCondition records whether one-time
+	// initialization has completed successfully. True does not require the
+	// policy to continue to exist or match the default manifest.
 	DefaultBackupPolicyInitializedCondition = "DefaultBackupPolicyInitialized"
 
 	defaultBackupPolicyCreatedReason              = "DefaultPolicyCreated"
 	defaultBackupPolicyInitializationFailedReason = "InitializationFailed"
-	existingDefaultBackupPolicyReason             = "ExistingDefaultPolicyDetected"
 	defaultPolicyRestoredReason                   = "DefaultPolicyRestored"
 	defaultBackupPolicyManifestAsset              = "etcd/default-backup-policy.yaml"
 	defaultPolicyName                             = "default"
@@ -46,7 +46,6 @@ func NewDefaultBackupPolicyInitController(
 	recorder events.Recorder,
 	stop context.CancelFunc,
 ) factory.Controller {
-
 	c := &defaultBackupPolicyInitController{
 		operatorClient:     operatorClient,
 		backupPolicyClient: backupPolicyClient,
@@ -63,9 +62,7 @@ func (c *defaultBackupPolicyInitController) sync(
 	ctx context.Context,
 	_ factory.SyncContext,
 ) error {
-
 	err := c.initialize(ctx)
-
 	if err != nil {
 		return err
 	}
@@ -74,10 +71,9 @@ func (c *defaultBackupPolicyInitController) sync(
 	return nil
 }
 
-// initialize performs the one-time default policy
-// initialization. It intentionally does not reconcile the policy after the
-// initialization marker has been recorded, so an administrator can edit or
-// delete it without the CEO restoring it.
+// initialize creates or restores the default policy until initialization
+// succeeds. After the success marker has been recorded, administrator edits
+// and deletion are left untouched.
 func (c *defaultBackupPolicyInitController) initialize(ctx context.Context) error {
 	_, status, _, err := c.operatorClient.GetStaticPodOperatorStateWithQuorum(ctx)
 	if err != nil {
@@ -87,23 +83,24 @@ func (c *defaultBackupPolicyInitController) initialize(ctx context.Context) erro
 	condition := v1helpers.FindOperatorCondition(status.Conditions, DefaultBackupPolicyInitializedCondition)
 
 	var reason string
-
 	switch {
-	case condition == nil:
+	case condition == nil || condition.Status == operatorv1.ConditionFalse:
 		reason, err = c.ensureDefaultBackupPolicy(ctx)
 	case condition.Status == operatorv1.ConditionTrue:
 		return nil
-	case condition.Status == operatorv1.ConditionFalse:
-		reason, err = c.ensureDefaultBackupPolicy(ctx)
 	default:
 		return fmt.Errorf("unexpected initialization condition status: %s", condition.Status)
 	}
 
 	if err != nil {
-		// If condition is nil what is given to the function recordInitializationFailure?
-		errRecordingFailure := c.recordInitilaizationFailure(ctx, err)
-		if errRecordingFailure != nil {
-			return errRecordingFailure
+		_, _, updateErr := v1helpers.UpdateStatus(ctx, c.operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
+			Type:    DefaultBackupPolicyInitializedCondition,
+			Status:  operatorv1.ConditionFalse,
+			Reason:  defaultBackupPolicyInitializationFailedReason,
+			Message: err.Error(),
+		}))
+		if updateErr != nil {
+			klog.Errorf("failed to record default backup policy initialization failure: %v (initialization error: %v)", updateErr, err)
 		}
 		return err
 	}
@@ -121,33 +118,8 @@ func (c *defaultBackupPolicyInitController) initialize(ctx context.Context) erro
 	return nil
 }
 
-func (c *defaultBackupPolicyInitController) recordInitilaizationFailure(ctx context.Context, initErr error) error {
-	_, _, err := v1helpers.UpdateStatus(
-		ctx, c.operatorClient,
-		func(status *operatorv1.OperatorStatus) error {
-			if v1helpers.IsOperatorConditionTrue(
-				status.Conditions,
-				DefaultBackupPolicyInitializedCondition,
-			) {
-				return nil
-			}
-
-			v1helpers.SetOperatorCondition(&status.Conditions, operatorv1.OperatorCondition{
-				Type: DefaultBackupPolicyInitializedCondition,
-				Status: operatorv1.ConditionFalse,
-				Reason: defaultBackupPolicyInitializationFailedReason,
-				Message: initErr.Error(),
-			})
-			return nil
-		})
-	
-	return err
-
-}
-
 func (c *defaultBackupPolicyInitController) ensureDefaultBackupPolicy(ctx context.Context) (string, error) {
 	defaultPolicy, err := c.backupPolicyClient.Get(ctx, defaultPolicyName, metav1.GetOptions{})
-
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
 			return "", err
@@ -155,7 +127,6 @@ func (c *defaultBackupPolicyInitController) ensureDefaultBackupPolicy(ctx contex
 
 		// No policy found
 		err = c.createDefaultBackupPolicy(ctx)
-
 		if err != nil {
 			return "", err
 		}
@@ -164,7 +135,6 @@ func (c *defaultBackupPolicyInitController) ensureDefaultBackupPolicy(ctx contex
 	}
 
 	err = c.resetDefaultBackupPolicy(ctx, defaultPolicy)
-
 	if err != nil {
 		return "", err
 	}
@@ -179,17 +149,11 @@ func (c *defaultBackupPolicyInitController) createDefaultBackupPolicy(ctx contex
 	}
 
 	_, err = c.backupPolicyClient.Create(ctx, defaultPolicy, metav1.CreateOptions{})
-
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }
 
 func (c *defaultBackupPolicyInitController) resetDefaultBackupPolicy(ctx context.Context, existingDefaultPolicy *operatorv1alpha1.EtcdBackupPolicy) error {
 	desiredDefaultPolicy, err := decodeDefaultBackupPolicy()
-
 	if err != nil {
 		return err
 	}
@@ -202,12 +166,7 @@ func (c *defaultBackupPolicyInitController) resetDefaultBackupPolicy(ctx context
 		updatedDefaultPolicy,
 		metav1.UpdateOptions{},
 	)
-
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }
 
 func decodeDefaultBackupPolicy() (*operatorv1alpha1.EtcdBackupPolicy, error) {
