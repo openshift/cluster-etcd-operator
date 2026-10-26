@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"go.etcd.io/etcd/client/pkg/v3/tlsutil"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	corev1listers "k8s.io/client-go/listers/core/v1"
@@ -81,6 +83,7 @@ var envVarFns = []envVarFunc{
 	getUnsupportedArch,
 	getCipherSuites,
 	getTLSMinVersion,
+	getCurvePreferences,
 	getMaxLearners,
 }
 
@@ -94,6 +97,7 @@ var envVarFns = []envVarFunc{
 //	ETCD_INITIAL_CLUSTER_STATE
 //	ETCD_UNSUPPORTED_ARCH
 //	ETCD_CIPHER_SUITES
+//	ETCD_CURVE_PREFERENCES
 //	ETCD_MAX_LEARNERS
 //	NODE_%s_IP
 //	NODE_%s_ETCD_URL_HOST
@@ -374,6 +378,211 @@ func getCipherSuites(envVarContext envVarContext) (map[string]string, error) {
 	return map[string]string{
 		envName: strings.Join(actualCipherSuites, ","),
 	}, nil
+}
+
+// getCurvePreferences sets ETCD_CURVE_PREFERENCES from observedConfig servingInfo.groups.
+// etcd maps that variable onto --curve-preferences for client and peer listeners.
+// The variable is left unset when TLSGroupPreferences is disabled, and when a
+// custom profile omits groups: etcd then keeps Go's default curve selection.
+//
+// Members roll one at a time. When the requested curves share nothing with a
+// revision that is still current, the next revision also keeps those running
+// curves. The requested list is applied alone once every current revision
+// shares a group with it.
+func getCurvePreferences(envVarContext envVarContext) (map[string]string, error) {
+	enabled, err := tlshelpers.TLSGroupPreferencesEnabled(envVarContext.featureGateAccessor)
+	if err != nil {
+		return nil, fmt.Errorf("unable to compute ETCD_CURVE_PREFERENCES: %w", err)
+	}
+	if !enabled {
+		return nil, nil
+	}
+
+	var observedConfig map[string]any
+	if err := yaml.Unmarshal(envVarContext.spec.ObservedConfig.Raw, &observedConfig); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal the observedConfig: %w", err)
+	}
+	observedGroups, found, err := unstructured.NestedStringSlice(observedConfig, "servingInfo", "groups")
+	if err != nil {
+		return nil, fmt.Errorf("couldn't get groups from observedConfig: %w", err)
+	}
+	var groups []string
+	switch {
+	case !found:
+		bootstrapComplete, err := bootstrap.IsBootstrapComplete(envVarContext.bootstrapConfigMapLister)
+		if err != nil {
+			return nil, fmt.Errorf("unable to determine bootstrap status for TLS groups fallback: %w", err)
+		}
+		if bootstrapComplete {
+			return nil, fmt.Errorf("servingInfo.groups not found in observedConfig")
+		}
+		klog.Warning("getCurvePreferences: observedConfig has no groups during bootstrap, falling back to TLSProfileIntermediateType groups")
+		groups = intermediateTLSGroupNames()
+	case len(observedGroups) == 0:
+		return nil, nil
+	default:
+		groups = observedGroups
+	}
+
+	env, err := curvePreferencesEnv(groups)
+	if err != nil || env == nil {
+		return env, err
+	}
+	requested := strings.Split(env[curvePreferencesEnvName], ",")
+	widened, err := curvesForPeerRollout(envVarContext, requested)
+	if err != nil {
+		return nil, fmt.Errorf("unable to keep etcd peer TLS curves overlapping during rollout: %w", err)
+	}
+	env[curvePreferencesEnvName] = strings.Join(widened, ",")
+	return env, nil
+}
+
+const curvePreferencesEnvName = "ETCD_CURVE_PREFERENCES"
+
+// curvesForPeerRollout widens requested when a current static-pod revision
+// would otherwise have no key exchange in common with the next revision.
+// --curve-preferences filters both the peer server and the peer client, so
+// both directions of the handshake fail when the two lists are disjoint.
+// Curves from such a revision are kept, in sorted order after the requested
+// list, until that revision is no longer current.
+func curvesForPeerRollout(envVarContext envVarContext, requested []string) ([]string, error) {
+	deployed, err := deployedCurveSets(envVarContext)
+	if err != nil {
+		return nil, err
+	}
+
+	extras := map[string]struct{}{}
+	var extraOrder []string
+	for _, running := range deployed {
+		if len(running) == 0 || curveSetsOverlap(running, requested) {
+			continue
+		}
+		for _, curve := range running {
+			if slices.Contains(requested, curve) {
+				continue
+			}
+			if _, seen := extras[curve]; seen {
+				continue
+			}
+			extras[curve] = struct{}{}
+			extraOrder = append(extraOrder, curve)
+		}
+	}
+	if len(extraOrder) == 0 {
+		return requested, nil
+	}
+	slices.Sort(extraOrder)
+	widened := append(append([]string{}, requested...), extraOrder...)
+	klog.Warningf("getCurvePreferences: requested curves %s do not overlap curves still current on a member; keeping %s so the next revision uses %s",
+		strings.Join(requested, ","), strings.Join(extraOrder, ","), strings.Join(widened, ","))
+	return widened, nil
+}
+
+func curveSetsOverlap(a, b []string) bool {
+	for _, curve := range a {
+		if slices.Contains(b, curve) {
+			return true
+		}
+	}
+	return false
+}
+
+// deployedCurveSets returns the explicit ETCD_CURVE_PREFERENCES of each
+// current static-pod revision. A nil inner slice means that revision does not
+// set the variable and still uses Go's default curves, which intersect every
+// curve etcd accepts.
+func deployedCurveSets(envVarContext envVarContext) ([][]string, error) {
+	if len(envVarContext.status.NodeStatuses) == 0 {
+		return nil, nil
+	}
+	byRevision := map[int32][]string{}
+	var sets [][]string
+	for _, node := range envVarContext.status.NodeStatuses {
+		if node.CurrentRevision == 0 {
+			continue
+		}
+		curves, ok := byRevision[node.CurrentRevision]
+		if !ok {
+			var err error
+			curves, err = curvesFromRevision(envVarContext, node.CurrentRevision)
+			if err != nil {
+				return nil, fmt.Errorf("node %s revision %d: %w", node.NodeName, node.CurrentRevision, err)
+			}
+			byRevision[node.CurrentRevision] = curves
+		}
+		sets = append(sets, curves)
+	}
+	return sets, nil
+}
+
+func curvesFromRevision(envVarContext envVarContext, revision int32) ([]string, error) {
+	if envVarContext.configmapLister == nil {
+		return nil, fmt.Errorf("configmap lister unavailable, cannot read etcd-pod-%d", revision)
+	}
+	name := fmt.Sprintf("etcd-pod-%d", revision)
+	cm, err := envVarContext.configmapLister.ConfigMaps(operatorclient.TargetNamespace).Get(name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get configmap %s/%s: %w", operatorclient.TargetNamespace, name, err)
+	}
+	raw, ok := cm.Data["pod.yaml"]
+	if !ok {
+		return nil, fmt.Errorf("configmap %s/%s is missing pod.yaml", operatorclient.TargetNamespace, name)
+	}
+	var pod corev1.Pod
+	if err := yaml.Unmarshal([]byte(raw), &pod); err != nil {
+		return nil, fmt.Errorf("failed to parse pod.yaml from %s: %w", name, err)
+	}
+	for _, container := range pod.Spec.Containers {
+		if container.Name != "etcd" {
+			continue
+		}
+		for _, env := range container.Env {
+			if env.Name == curvePreferencesEnvName {
+				return parseDeployedCurves(env.Value)
+			}
+		}
+		return nil, nil
+	}
+	return nil, fmt.Errorf("pod.yaml in %s has no etcd container", name)
+}
+
+func parseDeployedCurves(value string) ([]string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	parts := strings.Split(value, ",")
+	curves := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		curves = append(curves, part)
+	}
+	if _, err := tlshelpers.ParseEtcdCurveNames(curves); err != nil {
+		return nil, fmt.Errorf("running %s %q: %w", curvePreferencesEnvName, value, err)
+	}
+	return curves, nil
+}
+
+func curvePreferencesEnv(groups []string) (map[string]string, error) {
+	curves := tlshelpers.SupportedEtcdCurves(groups)
+	if len(curves) == 0 {
+		return nil, fmt.Errorf("no etcd-supported TLS curves remain from groups %v", groups)
+	}
+	return map[string]string{
+		curvePreferencesEnvName: strings.Join(curves, ","),
+	}, nil
+}
+
+func intermediateTLSGroupNames() []string {
+	groups := v1.TLSProfiles[v1.TLSProfileIntermediateType].Groups
+	names := make([]string, len(groups))
+	for i, group := range groups {
+		names[i] = string(group)
+	}
+	return names
 }
 
 // getMaxLearners reads the control-plane replicas from the install-config. We tolerate max learners equal to the

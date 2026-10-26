@@ -2,7 +2,11 @@ package render
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+
+	configv1 "github.com/openshift/api/config/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 
 	"github.com/ghodss/yaml"
 )
@@ -160,5 +164,43 @@ func TestEtcdEnv(t *testing.T) {
 				t.Errorf("getEtcdEnv(%q, %q) =  want %q = %q got %q = %q", tt.platform, tt.arch, tt.wantKey, tt.wantValue, tt.wantKey, env[tt.wantKey])
 			}
 		})
+	}
+}
+
+func TestTLSCurvePreferencesEnv(t *testing.T) {
+	var installConfig map[string]any
+	installConfigJSON, err := yaml.YAMLToJSON([]byte(installConfigHA))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(installConfigJSON, &installConfig); err != nil {
+		t.Fatal(err)
+	}
+
+	disabled, err := getEtcdEnv(&envVarData{platform: "None", arch: "amd64", installConfig: installConfig})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := disabled["ETCD_CURVE_PREFERENCES"]; ok {
+		t.Fatalf("ETCD_CURVE_PREFERENCES = %q, want unset when TLSGroupPreferences is disabled", disabled["ETCD_CURVE_PREFERENCES"])
+	}
+
+	groups := configv1.TLSProfiles[configv1.TLSProfileIntermediateType].Groups
+	names := make([]string, len(groups))
+	for i, group := range groups {
+		names[i] = string(group)
+	}
+	want := strings.Join(tlshelpers.SupportedEtcdCurves(names), ",")
+	enabled, err := getEtcdEnv(&envVarData{
+		platform:            "None",
+		arch:                "amd64",
+		installConfig:       installConfig,
+		tlsGroupPreferences: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enabled["ETCD_CURVE_PREFERENCES"] != want {
+		t.Fatalf("ETCD_CURVE_PREFERENCES = %q, want %q", enabled["ETCD_CURVE_PREFERENCES"], want)
 	}
 }

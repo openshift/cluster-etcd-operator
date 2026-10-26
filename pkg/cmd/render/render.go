@@ -266,7 +266,12 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 		return nil, err
 	}
 
-	if err := templateData.setComputedEnvVars(templateData.Platform, templateData.PlatformData, installConfig); err != nil {
+	enabledFeatureGates, disabledFeatureGates, err := opts.getFeatureGates(installConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get feature gates: %w", err)
+	}
+
+	if err := templateData.setComputedEnvVars(templateData.Platform, templateData.PlatformData, installConfig, enabledFeatureGates.Has(features.FeatureGateTLSGroupPreferences)); err != nil {
 		return nil, err
 	}
 
@@ -283,11 +288,6 @@ func newTemplateData(opts *renderOpts) (*TemplateData, error) {
 		// base64 encode the ip address and use it as unique data key to emulate endpoint controller
 		templateData.EtcdEndpointConfigmapData = fmt.Sprintf("%s: %s",
 			base64.StdEncoding.WithPadding(base64.NoPadding).EncodeToString([]byte(templateData.BootstrapIP)), templateData.BootstrapIP)
-	}
-
-	enabledFeatureGates, disabledFeatureGates, err := opts.getFeatureGates(installConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get feature gates: %w", err)
 	}
 
 	var pkiProfileProvider pki.PKIProfileProvider
@@ -606,14 +606,15 @@ func (t *TemplateData) setPreferIPv6(serviceCIDR []string) error {
 	return nil
 }
 
-func (t *TemplateData) setComputedEnvVars(platform, platformData string, installConfig map[string]any) error {
+func (t *TemplateData) setComputedEnvVars(platform, platformData string, installConfig map[string]any, tlsGroupPreferences bool) error {
 	envVarData := &envVarData{
-		platform:         platform,
-		platformData:     platformData,
-		arch:             runtime.GOARCH,
-		installConfig:    installConfig,
-		hostname:         t.Hostname,
-		inPlaceBootstrap: t.BootstrapScalingStrategy == ceohelpers.BootstrapInPlaceStrategy,
+		platform:            platform,
+		platformData:        platformData,
+		arch:                runtime.GOARCH,
+		installConfig:       installConfig,
+		hostname:            t.Hostname,
+		inPlaceBootstrap:    t.BootstrapScalingStrategy == ceohelpers.BootstrapInPlaceStrategy,
+		tlsGroupPreferences: tlsGroupPreferences,
 	}
 	envVarMap, err := getEtcdEnv(envVarData)
 	if err != nil {

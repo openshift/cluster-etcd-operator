@@ -1,6 +1,7 @@
 package ceohelpers
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -87,4 +88,32 @@ func TestCalculateFailureThresholdMinimum(t *testing.T) {
 	// Ensure that the function always returns at least 1
 	result := calculateFailureThreshold(0, 8)
 	require.Equal(t, 1, result, "calculateFailureThreshold should return at least 1")
+}
+
+func TestRenderCurvePreferences(t *testing.T) {
+	curves := "X25519MLKEM768,X25519,CurveP256"
+	rendered, err := RenderTemplate("etcd/pod.gotpl.yaml", &PodSubstitutionTemplate{
+		ListenAddress:       "0.0.0.0",
+		LocalhostAddress:    "127.0.0.1",
+		LogLevel:            "info",
+		CipherSuites:        "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+		CurvePreferences:    curves,
+		EnableEtcdContainer: true,
+		EnvVars:             []NameValue{{Name: "ETCD_CURVE_PREFERENCES", Value: curves}},
+	})
+	require.NoError(t, err)
+	// grpc-proxy and readyz take an explicit flag. The etcd container itself
+	// reads ETCD_CURVE_PREFERENCES from the environment.
+	require.Equal(t, 2, strings.Count(rendered, "--listen-curve-preferences "+curves))
+	require.Contains(t, rendered, "name: \"ETCD_CURVE_PREFERENCES\"")
+
+	withoutCurves, err := RenderTemplate("etcd/pod.gotpl.yaml", &PodSubstitutionTemplate{
+		ListenAddress:       "0.0.0.0",
+		LocalhostAddress:    "127.0.0.1",
+		LogLevel:            "info",
+		CipherSuites:        "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+		EnableEtcdContainer: true,
+	})
+	require.NoError(t, err)
+	require.NotContains(t, withoutCurves, "curve-preferences")
 }
