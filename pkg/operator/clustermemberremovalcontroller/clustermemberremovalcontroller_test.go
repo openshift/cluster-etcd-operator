@@ -1292,6 +1292,144 @@ func wellKnownMasterMachines() []runtime.Object {
 	}
 }
 
+func TestIsEtcdEndpointsUpdated(t *testing.T) {
+	scenarios := []struct {
+		name                                     string
+		initialObjectsForConfigMapTargetNSLister []runtime.Object
+		initialEtcdMemberList                    []*etcdserverpb.Member
+		expectedResult                           bool
+		expectError                              bool
+		expectedErrorMsg                         string
+	}{
+		{
+			name: "live membership equals configmap membership",
+			initialObjectsForConfigMapTargetNSLister: []runtime.Object{
+				&corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{Name: "etcd-endpoints", Namespace: "openshift-etcd"},
+					Data: map[string]string{
+						"m-1": "10.0.139.78",
+						"m-2": "10.0.139.79",
+						"m-3": "10.0.139.80",
+					},
+				},
+			},
+			initialEtcdMemberList: []*etcdserverpb.Member{
+				{Name: "m-1", ID: 1, PeerURLs: []string{"https://10.0.139.78:1234"}},
+				{Name: "m-2", ID: 2, PeerURLs: []string{"https://10.0.139.79:1234"}},
+				{Name: "m-3", ID: 3, PeerURLs: []string{"https://10.0.139.80:1234"}},
+			},
+			expectedResult: true,
+			expectError:    false,
+		},
+		{
+			name: "live membership has more members than configmap (scaling up)",
+			initialObjectsForConfigMapTargetNSLister: []runtime.Object{
+				&corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{Name: "etcd-endpoints", Namespace: "openshift-etcd"},
+					Data: map[string]string{
+						"m-1": "10.0.139.78",
+						"m-2": "10.0.139.79",
+						"m-3": "10.0.139.80",
+					},
+				},
+			},
+			initialEtcdMemberList: []*etcdserverpb.Member{
+				{Name: "m-1", ID: 1, PeerURLs: []string{"https://10.0.139.78:1234"}},
+				{Name: "m-2", ID: 2, PeerURLs: []string{"https://10.0.139.79:1234"}},
+				{Name: "m-3", ID: 3, PeerURLs: []string{"https://10.0.139.80:1234"}},
+				{Name: "m-4", ID: 4, PeerURLs: []string{"https://10.0.139.81:1234"}},
+			},
+			expectedResult: false,
+			expectError:    false,
+		},
+		{
+			name: "live membership has fewer members than configmap (scaling down)",
+			initialObjectsForConfigMapTargetNSLister: []runtime.Object{
+				&corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{Name: "etcd-endpoints", Namespace: "openshift-etcd"},
+					Data: map[string]string{
+						"m-1": "10.0.139.78",
+						"m-2": "10.0.139.79",
+						"m-3": "10.0.139.80",
+						"m-4": "10.0.139.81",
+					},
+				},
+			},
+			initialEtcdMemberList: []*etcdserverpb.Member{
+				{Name: "m-1", ID: 1, PeerURLs: []string{"https://10.0.139.78:1234"}},
+				{Name: "m-2", ID: 2, PeerURLs: []string{"https://10.0.139.79:1234"}},
+				{Name: "m-3", ID: 3, PeerURLs: []string{"https://10.0.139.80:1234"}},
+			},
+			expectedResult: false,
+			expectError:    false,
+		},
+		{
+			name: "live membership differs from configmap (different IPs)",
+			initialObjectsForConfigMapTargetNSLister: []runtime.Object{
+				&corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{Name: "etcd-endpoints", Namespace: "openshift-etcd"},
+					Data: map[string]string{
+						"m-1": "10.0.139.78",
+						"m-2": "10.0.139.79",
+						"m-3": "10.0.139.80",
+					},
+				},
+			},
+			initialEtcdMemberList: []*etcdserverpb.Member{
+				{Name: "m-1", ID: 1, PeerURLs: []string{"https://10.0.139.78:1234"}},
+				{Name: "m-2", ID: 2, PeerURLs: []string{"https://10.0.139.79:1234"}},
+				{Name: "m-4", ID: 4, PeerURLs: []string{"https://10.0.139.81:1234"}},
+			},
+			expectedResult: false,
+			expectError:    false,
+		},
+		{
+			name:                                     "configmap not found",
+			initialObjectsForConfigMapTargetNSLister: []runtime.Object{},
+			initialEtcdMemberList: []*etcdserverpb.Member{
+				{Name: "m-1", ID: 1, PeerURLs: []string{"https://10.0.139.78:1234"}},
+			},
+			expectedResult:   false,
+			expectError:      true,
+			expectedErrorMsg: "failed to get etcd-endpoints configmap",
+		},
+	}
+
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			// setup test data
+			configMapTargetNSIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+			for _, initialObj := range scenario.initialObjectsForConfigMapTargetNSLister {
+				configMapTargetNSIndexer.Add(initialObj)
+			}
+			configMapTargetNSLister := corev1listers.NewConfigMapLister(configMapTargetNSIndexer).ConfigMaps("openshift-etcd")
+
+			fakeEtcdClient, err := etcdcli.NewFakeEtcdClient(scenario.initialEtcdMemberList)
+			require.NoError(t, err)
+
+			// create controller instance
+			target := clusterMemberRemovalController{
+				etcdClient:                        fakeEtcdClient,
+				configMapListerForTargetNamespace: configMapTargetNSLister,
+			}
+
+			// act
+			result, err := target.isEtcdEndpointsUpdated(context.TODO())
+
+			// assert
+			if scenario.expectError {
+				require.Error(t, err)
+				if scenario.expectedErrorMsg != "" {
+					require.Contains(t, err.Error(), scenario.expectedErrorMsg)
+				}
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, scenario.expectedResult, result, "isEtcdEndpointsUpdated returned unexpected result")
+			}
+		})
+	}
+}
+
 var wellKnownReplicasCountSet = `
 {
  "controlPlane": {"replicas": 3}
