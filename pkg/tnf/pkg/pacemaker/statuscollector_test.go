@@ -1852,6 +1852,77 @@ func TestFilterRecentFencingEvents(t *testing.T) {
 				ExitReason: "Connection timed out",
 			},
 		},
+		{
+			name: "pending_fencing_event_with_empty_completed",
+			result: &PacemakerResult{
+				FenceHistory: FenceHistory{
+					FenceEvent: []FenceEvent{
+						{
+							Action:     "reboot",
+							Target:     "master-1",
+							Status:     "pending",
+							Completed:  "",
+							LastUpdate: formatPacemakerFenceTimestamp(now.Add(-30 * time.Second)),
+						},
+					},
+				},
+			},
+			cutoffTime:    now.Add(-24 * time.Hour),
+			expectedCount: 1,
+			expectedFirst: &RecentFencingEvent{
+				Action: "reboot",
+				Target: "master-1",
+				Status: "pending",
+			},
+		},
+		{
+			name: "pending_fencing_event_outside_window",
+			result: &PacemakerResult{
+				FenceHistory: FenceHistory{
+					FenceEvent: []FenceEvent{
+						{
+							Action:     "reboot",
+							Target:     "master-1",
+							Status:     "pending",
+							Completed:  "",
+							LastUpdate: formatPacemakerFenceTimestamp(now.Add(-48 * time.Hour)),
+						},
+					},
+				},
+			},
+			cutoffTime:    now.Add(-24 * time.Hour),
+			expectedCount: 0,
+			expectedFirst: nil,
+		},
+		{
+			name: "pending_and_completed_events_both_returned",
+			result: &PacemakerResult{
+				FenceHistory: FenceHistory{
+					FenceEvent: []FenceEvent{
+						{
+							Action:    "reboot",
+							Target:    "master-0",
+							Status:    "success",
+							Completed: formatPacemakerFenceTimestamp(now.Add(-2 * time.Hour)),
+						},
+						{
+							Action:     "reboot",
+							Target:     "master-1",
+							Status:     "pending",
+							Completed:  "",
+							LastUpdate: formatPacemakerFenceTimestamp(now.Add(-10 * time.Second)),
+						},
+					},
+				},
+			},
+			cutoffTime:    now.Add(-24 * time.Hour),
+			expectedCount: 2,
+			expectedFirst: &RecentFencingEvent{
+				Action: "reboot",
+				Target: "master-0",
+				Status: "success",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -2228,4 +2299,281 @@ func TestFilterRecentFailedActions_FencingAgentStartFailure(t *testing.T) {
 			require.NotEqual(t, "0", failure.RC, "Return code should be non-zero (failure)")
 		}
 	})
+}
+
+// =============================================================================
+// Unit Tests - CIB Fail-Count Fields
+// =============================================================================
+
+func TestParseOptionalInt32(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		expect *int32
+	}{
+		{"empty string", "", nil},
+		{"zero", "0", int32Ptr(0)},
+		{"positive", "3", int32Ptr(3)},
+		{"large value", "1000000", int32Ptr(1000000)},
+		{"invalid", "not-a-number", nil},
+		{"overflow", "9999999999999", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := parseOptionalInt32(tt.input)
+			if tt.expect == nil {
+				require.Nil(t, result)
+			} else {
+				require.NotNil(t, result)
+				require.Equal(t, *tt.expect, *result)
+			}
+		})
+	}
+}
+
+func TestParsePacemakerTimestamp(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		expectNil bool
+	}{
+		{"empty string", "", true},
+		{"valid timestamp", "Fri Jan 23 20:45:00 2026", false},
+		{"invalid format", "2026-01-23T20:45:00Z", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := parsePacemakerTimestamp(tt.input)
+			if tt.expectNil {
+				require.Nil(t, result)
+			} else {
+				require.NotNil(t, result)
+				require.False(t, result.IsZero())
+			}
+		})
+	}
+}
+
+func TestFindLatestOperationTime(t *testing.T) {
+	t.Run("finds latest start", func(t *testing.T) {
+		ops := []OperationHistory{
+			{Call: "10", Task: "start", RC: "0", LastRCChange: "Fri Jan 23 20:10:00 2026"},
+			{Call: "20", Task: "monitor", RC: "0", LastRCChange: "Fri Jan 23 20:15:00 2026"},
+			{Call: "30", Task: "start", RC: "0", LastRCChange: "Fri Jan 23 20:43:00 2026"},
+		}
+		result := findLatestOperationTime(ops, "start")
+		require.NotNil(t, result)
+		expected, _ := time.Parse(pacemakerTimeFormat, "Fri Jan 23 20:43:00 2026")
+		require.Equal(t, expected, result.Time)
+	})
+
+	t.Run("finds latest stop", func(t *testing.T) {
+		ops := []OperationHistory{
+			{Call: "10", Task: "stop", RC: "0", LastRCChange: "Fri Jan 23 20:30:00 2026"},
+			{Call: "20", Task: "stop", RC: "0", LastRCChange: "Fri Jan 23 20:42:00 2026"},
+		}
+		result := findLatestOperationTime(ops, "stop")
+		require.NotNil(t, result)
+		expected, _ := time.Parse(pacemakerTimeFormat, "Fri Jan 23 20:42:00 2026")
+		require.Equal(t, expected, result.Time)
+	})
+
+	t.Run("no matching task", func(t *testing.T) {
+		ops := []OperationHistory{
+			{Call: "10", Task: "monitor", RC: "0", LastRCChange: "Fri Jan 23 20:15:00 2026"},
+		}
+		result := findLatestOperationTime(ops, "start")
+		require.Nil(t, result)
+	})
+
+	t.Run("empty history", func(t *testing.T) {
+		result := findLatestOperationTime(nil, "start")
+		require.Nil(t, result)
+	})
+}
+
+func TestPopulateCIBFields(t *testing.T) {
+	rh := &ResourceHistory{
+		ID:                 "etcd",
+		FailCount:          "3",
+		MigrationThreshold: "5",
+		LastFailure:        "Fri Jan 23 20:45:00 2026",
+		OperationHistory: []OperationHistory{
+			{Call: "20", Task: "start", RC: "0", LastRCChange: "Fri Jan 23 20:20:00 2026"},
+			{Call: "30", Task: "stop", RC: "0", LastRCChange: "Fri Jan 23 20:42:00 2026"},
+			{Call: "35", Task: "start", RC: "0", LastRCChange: "Fri Jan 23 20:43:00 2026"},
+		},
+	}
+
+	status := &pacmkrv1.PacemakerClusterResourceStatus{}
+	populateCIBFields(status, rh)
+
+	require.NotNil(t, status.FailCount)
+	require.Equal(t, int32(3), *status.FailCount)
+
+	require.NotNil(t, status.MigrationThreshold)
+	require.Equal(t, int32(5), *status.MigrationThreshold)
+
+	require.NotNil(t, status.LastFailureTime)
+	expectedFailure, _ := time.Parse(pacemakerTimeFormat, "Fri Jan 23 20:45:00 2026")
+	require.Equal(t, expectedFailure, status.LastFailureTime.Time)
+
+	require.NotNil(t, status.LastStopTime)
+	expectedStop, _ := time.Parse(pacemakerTimeFormat, "Fri Jan 23 20:42:00 2026")
+	require.Equal(t, expectedStop, status.LastStopTime.Time)
+
+	require.NotNil(t, status.LastStartTime)
+	expectedStart, _ := time.Parse(pacemakerTimeFormat, "Fri Jan 23 20:43:00 2026")
+	require.Equal(t, expectedStart, status.LastStartTime.Time)
+}
+
+func TestPopulateCIBFields_NoFailure(t *testing.T) {
+	rh := &ResourceHistory{
+		ID:                 "kubelet",
+		FailCount:          "0",
+		MigrationThreshold: "1000000",
+		OperationHistory: []OperationHistory{
+			{Call: "10", Task: "start", RC: "0", LastRCChange: "Fri Jan 23 20:10:00 2026"},
+		},
+	}
+
+	status := &pacmkrv1.PacemakerClusterResourceStatus{}
+	populateCIBFields(status, rh)
+
+	require.NotNil(t, status.FailCount)
+	require.Equal(t, int32(0), *status.FailCount)
+
+	require.NotNil(t, status.MigrationThreshold)
+	require.Equal(t, int32(1000000), *status.MigrationThreshold)
+
+	require.Nil(t, status.LastFailureTime)
+	require.Nil(t, status.LastStopTime)
+
+	require.NotNil(t, status.LastStartTime)
+}
+
+func TestBuildNodeHistoryIndex(t *testing.T) {
+	result := &PacemakerResult{
+		NodeHistory: NodeHistory{
+			Node: []NodeHistoryNode{
+				{
+					Name: "master-0",
+					ResourceHistory: []ResourceHistory{
+						{ID: "etcd", FailCount: "3"},
+						{ID: "kubelet", FailCount: "0"},
+					},
+				},
+				{
+					Name: "master-1",
+					ResourceHistory: []ResourceHistory{
+						{ID: "etcd", FailCount: "0"},
+					},
+				},
+			},
+		},
+	}
+
+	index := buildNodeHistoryIndex(result)
+
+	require.Len(t, index, 2)
+	require.NotNil(t, index["master-0"]["etcd"])
+	require.Equal(t, "3", index["master-0"]["etcd"].FailCount)
+	require.NotNil(t, index["master-0"]["kubelet"])
+	require.Equal(t, "0", index["master-0"]["kubelet"].FailCount)
+	require.NotNil(t, index["master-1"]["etcd"])
+	require.Equal(t, "0", index["master-1"]["etcd"].FailCount)
+	require.Nil(t, index["master-1"]["kubelet"])
+}
+
+func TestBuildClusterStatus_CIBFields(t *testing.T) {
+	cibXML := loadTestXML(t, "cib_fail_count.xml")
+	var result PacemakerResult
+	err := xml.Unmarshal([]byte(cibXML), &result)
+	require.NoError(t, err)
+
+	status := buildClusterStatus(&result, createTestClusterConfig())
+	require.NotNil(t, status.Nodes)
+	nodes := *status.Nodes
+
+	// master-0: etcd has fail-count=3, migration-threshold=5, last-failure set
+	master0 := findNodeByName(nodes, "master-0")
+	require.NotNil(t, master0, "master-0 should be in status")
+
+	etcd0 := findResourceInList(master0.Resources, pacmkrv1.PacemakerClusterResourceNameEtcd)
+	require.NotNil(t, etcd0)
+	require.NotNil(t, etcd0.FailCount, "etcd on master-0 should have FailCount")
+	require.Equal(t, int32(3), *etcd0.FailCount)
+	require.NotNil(t, etcd0.MigrationThreshold, "etcd on master-0 should have MigrationThreshold")
+	require.Equal(t, int32(5), *etcd0.MigrationThreshold)
+	require.NotNil(t, etcd0.LastFailureTime, "etcd on master-0 should have LastFailureTime")
+	require.NotNil(t, etcd0.LastStopTime, "etcd on master-0 should have LastStopTime")
+	require.NotNil(t, etcd0.LastStartTime, "etcd on master-0 should have LastStartTime")
+
+	// master-0: kubelet has fail-count=0, no failure
+	kubelet0 := findResourceInList(master0.Resources, pacmkrv1.PacemakerClusterResourceNameKubelet)
+	require.NotNil(t, kubelet0)
+	require.NotNil(t, kubelet0.FailCount)
+	require.Equal(t, int32(0), *kubelet0.FailCount)
+	require.Nil(t, kubelet0.LastFailureTime, "kubelet on master-0 should not have LastFailureTime")
+	require.Nil(t, kubelet0.LastStopTime, "kubelet on master-0 should not have LastStopTime")
+
+	// master-1: etcd has fail-count=0
+	master1 := findNodeByName(nodes, "master-1")
+	require.NotNil(t, master1, "master-1 should be in status")
+
+	etcd1 := findResourceInList(master1.Resources, pacmkrv1.PacemakerClusterResourceNameEtcd)
+	require.NotNil(t, etcd1)
+	require.NotNil(t, etcd1.FailCount)
+	require.Equal(t, int32(0), *etcd1.FailCount)
+	require.Nil(t, etcd1.LastFailureTime)
+}
+
+func TestBuildClusterStatus_NilNodeHistory(t *testing.T) {
+	result := createBasicPacemakerResult([]Node{
+		{Name: "master-0", Online: "true", Maintenance: "false", Type: "member"},
+		{Name: "master-1", Online: "true", Maintenance: "false", Type: "member"},
+	})
+	result.Resources = Resources{
+		Clone: []Clone{
+			{Resource: []Resource{
+				{ID: "kubelet", ResourceAgent: ResourceAgentKubelet, Role: "Started", Active: "true", Managed: "true", Node: NodeRef{Name: "master-0"}},
+				{ID: "kubelet", ResourceAgent: ResourceAgentKubelet, Role: "Started", Active: "true", Managed: "true", Node: NodeRef{Name: "master-1"}},
+			}},
+			{Resource: []Resource{
+				{ID: "etcd", ResourceAgent: ResourceAgentEtcd, Role: "Started", Active: "true", Managed: "true", Node: NodeRef{Name: "master-0"}},
+				{ID: "etcd", ResourceAgent: ResourceAgentEtcd, Role: "Started", Active: "true", Managed: "true", Node: NodeRef{Name: "master-1"}},
+			}},
+		},
+		Resource: []Resource{
+			{ID: "master-0_redfish", ResourceAgent: "stonith:fence_redfish", Role: "Started", Active: "true", Managed: "true", Node: NodeRef{Name: "master-1"}},
+			{ID: "master-1_redfish", ResourceAgent: "stonith:fence_redfish", Role: "Started", Active: "true", Managed: "true", Node: NodeRef{Name: "master-0"}},
+		},
+	}
+
+	status := buildClusterStatus(result, createTestClusterConfig())
+	require.NotNil(t, status.Nodes)
+	nodes := *status.Nodes
+
+	for _, node := range nodes {
+		for _, resource := range node.Resources {
+			require.Nil(t, resource.FailCount, "FailCount should be nil without node history for %s on %s", resource.Name, node.NodeName)
+			require.Nil(t, resource.MigrationThreshold, "MigrationThreshold should be nil without node history")
+			require.Nil(t, resource.LastFailureTime, "LastFailureTime should be nil without node history")
+		}
+	}
+}
+
+func findNodeByName(nodes []pacmkrv1.PacemakerClusterNodeStatus, name string) *pacmkrv1.PacemakerClusterNodeStatus {
+	for i := range nodes {
+		if nodes[i].NodeName == name {
+			return &nodes[i]
+		}
+	}
+	return nil
+}
+
+func int32Ptr(v int32) *int32 {
+	return &v
 }
