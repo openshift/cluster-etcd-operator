@@ -259,6 +259,39 @@ func TestInitializeRetriesAfterCreateFailure(t *testing.T) {
 	}
 }
 
+// TestInitializePreservesCreateErrorWhenStatusUpdateFails verifies that a failed status update does not replace the original initialization error.
+func TestInitializePreservesCreateErrorWhenStatusUpdateFails(t *testing.T) {
+	controller, client := newInitTestController(t, nil)
+	createErr := errors.New("create temporarily unavailable")
+	statusErr := errors.New("status temporarily unavailable")
+	client.PrependReactor("create", "etcdbackuppolicies", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, createErr
+	})
+
+	statusUpdateAttempted := false
+	controller.operatorClient = v1helpers.NewFakeStaticPodOperatorClient(
+		&operatorv1.StaticPodOperatorSpec{}, &operatorv1.StaticPodOperatorStatus{},
+		func(_ string, status *operatorv1.StaticPodOperatorStatus) error {
+			statusUpdateAttempted = true
+			condition := v1helpers.FindOperatorCondition(status.Conditions, DefaultBackupPolicyInitializedCondition)
+			if condition == nil {
+				t.Fatal("status update did not include the initialization condition")
+			}
+			if condition.Status != operatorv1.ConditionFalse || condition.Reason != defaultBackupPolicyInitializationFailedReason || condition.Message != createErr.Error() {
+				t.Fatalf("unexpected initialization failure condition: %+v", condition)
+			}
+			return statusErr
+		}, nil,
+	)
+
+	if err := controller.initialize(t.Context()); !errors.Is(err, createErr) {
+		t.Fatalf("initialization error is %v, expected the original create error %v", err, createErr)
+	}
+	if !statusUpdateAttempted {
+		t.Fatal("initialization did not attempt to record the failure")
+	}
+}
+
 // TestInitializeRetriesWhenCreateAlreadyExists verifies a concurrently created default policy is reconciled on retry.
 func TestInitializeRetriesWhenCreateAlreadyExists(t *testing.T) {
 	controller, client := newInitTestController(t, nil)
