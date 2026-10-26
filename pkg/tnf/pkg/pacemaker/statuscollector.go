@@ -788,7 +788,7 @@ func updatePacemakerStatusCR(ctx context.Context, status *pacmkrv1.PacemakerClus
 		return err
 	}
 
-	restClient, err := createPacemakerRESTClient(config)
+	restClient, err := CreatePacemakerRESTClient(config)
 	if err != nil {
 		return err
 	}

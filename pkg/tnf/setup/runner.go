@@ -18,6 +18,7 @@ import (
 	"k8s.io/utils/clock"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/config"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/etcd"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/jobs"
@@ -54,6 +55,17 @@ func RunTnfSetup() error {
 
 	dynamicInformers.Start(ctx.Done())
 	dynamicInformers.WaitForCacheSync(ctx.Done())
+
+	// Check if transition already complete (e.g., setup job recreated due to drift detection)
+	// If complete, nothing to do - update-setup handles all post-transition configuration changes
+	transitionComplete, err := ceohelpers.HasExternalEtcdCompletedTransition(ctx, operatorClient)
+	if err != nil {
+		return fmt.Errorf("failed to check external etcd transition status: %w", err)
+	}
+	if transitionComplete {
+		klog.Info("External etcd transition already complete - setup already ran successfully, nothing to do")
+		return nil
+	}
 
 	klog.Info("Waiting for completed auth jobs")
 	authDone := func(context.Context) (done bool, err error) {

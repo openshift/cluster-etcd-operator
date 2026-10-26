@@ -128,37 +128,33 @@ type HealthCheck struct {
 	previous   *HealthStatus
 }
 
-// NewHealthCheck creates a new HealthCheck for monitoring pacemaker status
-// in clusters that use ExternalEtcd clusters.
-// Returns the controller and the PacemakerCluster informer (which must be started separately).
-func NewHealthCheck(
-	operatorClient v1helpers.StaticPodOperatorClient,
-	kubeClient kubernetes.Interface,
-	eventRecorder events.Recorder,
-	restConfig *rest.Config,
-) (factory.Controller, cache.SharedIndexInformer, error) {
-	// Create REST client for PacemakerStatus CRs
-	restClient, err := createPacemakerRESTClient(restConfig)
+// NewPacemakerClusterInformer creates a PacemakerCluster informer with standard configuration.
+// Returns a SharedIndexInformer ready to be started and used by controllers.
+// The caller is responsible for starting the informer (via informer.Run(stopCh)).
+func NewPacemakerClusterInformer(restConfig *rest.Config) (cache.SharedIndexInformer, error) {
+	// Create REST client for PacemakerCluster CRs
+	restClient, err := CreatePacemakerRESTClient(restConfig)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create REST client: %w", err)
+		return nil, fmt.Errorf("failed to create REST client: %w", err)
 	}
 
 	// Create scheme for the parameter codec
 	scheme := runtime.NewScheme()
 	if err := pacmkrv1.AddToScheme(scheme); err != nil {
-		return nil, nil, fmt.Errorf("failed to add scheme for informer: %w", err)
+		return nil, fmt.Errorf("failed to add scheme for informer: %w", err)
 	}
 
 	// Create informer for PacemakerCluster
 	klog.Infof("Creating PacemakerCluster informer for group %s, resource %s", pacmkrv1.SchemeGroupVersion.String(), PacemakerResourceName)
 	informer := cache.NewSharedIndexInformer(
-		&cache.ListWatch{
+		&PacemakerListWatch{ListWatch: cache.ListWatch{
 			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
 				klog.V(4).Infof("PacemakerCluster informer ListFunc called for resource %s", PacemakerResourceName)
+				sanitizedOptions := SanitizeListOptions(options)
 				result := &pacmkrv1.PacemakerClusterList{}
 				err := restClient.Get().
 					Resource(PacemakerResourceName).
-					VersionedParams(&options, runtime.NewParameterCodec(scheme)).
+					VersionedParams(&sanitizedOptions, runtime.NewParameterCodec(scheme)).
 					Do(context.Background()).
 					Into(result)
 				if err != nil {
@@ -170,26 +166,56 @@ func NewHealthCheck(
 			},
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 				klog.V(4).Infof("PacemakerCluster informer WatchFunc called for resource %s", PacemakerResourceName)
+				sanitizedOptions := SanitizeListOptions(options)
 				watcher, err := restClient.Get().
 					Resource(PacemakerResourceName).
-					VersionedParams(&options, runtime.NewParameterCodec(scheme)).
+					VersionedParams(&sanitizedOptions, runtime.NewParameterCodec(scheme)).
 					Watch(context.Background())
 				if err != nil {
 					klog.Errorf("Failed to watch PacemakerCluster resources (%s): %v", PacemakerResourceName, err)
 				}
 				return watcher, err
 			},
-		},
+		}},
 		&pacmkrv1.PacemakerCluster{},
 		HealthCheckResyncInterval,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
 	)
 
+	return informer, nil
+}
+
+// NewHealthCheck creates a new HealthCheck for monitoring pacemaker status
+// in clusters that use ExternalEtcd clusters.
+// Returns the controller and the PacemakerCluster informer (which must be started separately).
+func NewHealthCheck(
+	operatorClient v1helpers.StaticPodOperatorClient,
+	kubeClient kubernetes.Interface,
+	eventRecorder events.Recorder,
+	restConfig *rest.Config,
+) (factory.Controller, cache.SharedIndexInformer, error) {
+	// Create PacemakerCluster informer
+	informer, err := NewPacemakerClusterInformer(restConfig)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return NewHealthCheckWithInformer(operatorClient, kubeClient, eventRecorder, informer)
+}
+
+// NewHealthCheckWithInformer creates a new HealthCheck using an existing PacemakerCluster informer.
+// Use this when the informer is already created and managed by another controller (e.g., lifecycle manager).
+func NewHealthCheckWithInformer(
+	operatorClient v1helpers.StaticPodOperatorClient,
+	kubeClient kubernetes.Interface,
+	eventRecorder events.Recorder,
+	pacemakerInformer cache.SharedIndexInformer,
+) (factory.Controller, cache.SharedIndexInformer, error) {
 	c := &HealthCheck{
 		operatorClient:    operatorClient,
 		kubeClient:        kubeClient,
 		eventRecorder:     eventRecorder,
-		pacemakerInformer: informer,
+		pacemakerInformer: pacemakerInformer,
 		recordedEvents:    make(map[string]time.Time),
 		// previous starts as nil - first sync will be treated as "from Unknown"
 	}
@@ -207,14 +233,14 @@ func NewHealthCheck(
 		WithSync(c.sync).
 		WithInformers(
 			operatorClient.Informer(),
-			informer,
+			pacemakerInformer,
 		).ToController("PacemakerHealthCheck", syncCtx.Recorder())
 
 	klog.Infof("PacemakerHealthCheck controller successfully created and ready to start")
 	klog.Infof("PacemakerHealthCheck informers to sync: 1) operatorClient.Informer(), 2) PacemakerCluster informer")
 	klog.Infof("PacemakerCluster informer must be started separately before controller.Run() is called")
 	klog.Infof("factory.Controller will wait up to 10 minutes for informers to sync, then exit if they fail to sync")
-	return controller, informer, nil
+	return controller, pacemakerInformer, nil
 }
 
 // sync is the main sync function that gets called periodically to check pacemaker status
@@ -236,7 +262,7 @@ func (c *HealthCheck) sync(ctx context.Context, syncCtx factory.SyncContext) err
 	}
 
 	// Log the determined status for visibility
-	klog.V(2).Infof("Pacemaker health status: %s (errors: %d, warnings: %d)",
+	klog.V(4).Infof("Pacemaker health status: %s (errors: %d, warnings: %d)",
 		currentStatus.OverallStatus, len(currentStatus.Errors), len(currentStatus.Warnings))
 
 	if err := c.updateOperatorStatus(ctx, currentStatus, previousStatus); err != nil {

@@ -1,7 +1,49 @@
 package jobs
 
+/*
+TEST COVERAGE SUMMARY - jobcontroller_test.go
+==============================================
+
+This file tests TNF job controller sync logic and MaxRetriesExceeded condition handling.
+
+WHAT'S TESTED
+-------------
+
+Job Controller Sync:
+├── TestSync - Job controller sync loop and job lifecycle
+│   ├── Job not created without sync
+│   ├── Initial sync will create job
+│   ├── Job completed -> clears degraded condition
+│   ├── Job running -> no-op
+│   ├── Job failed -> updates retry state
+│   └── Job failed stuck -> auto-deleted after 10 minutes
+├── TestSyncWithAvailableCondition - Available condition management
+│   ├── Job completed with available condition -> Available=True
+│   ├── Job running with available condition -> Available=False
+│   └── Job failed with available condition -> Available=False
+└── TestJobModificationRecreation - Job drift detection and recreation
+    └── Job spec modified -> detected and recreated
+
+MaxRetriesExceeded Condition Handling:
+├── TestIsJobMaxRetriesExceeded - Detection via Message field
+│   ├── No degraded condition -> false
+│   ├── Degraded false -> false
+│   ├── Degraded true with exact MaxRetries message -> true
+│   ├── Degraded true with concatenated MaxRetries message -> true
+│   ├── Degraded true with SyncError but different message -> false
+│   └── Degraded true with different reason and no MaxRetries -> false
+└── TestPreserveMaxRetriesOnReturn - Preservation for both nil and error returns
+    ├── err=nil, MaxRetriesExceeded not set -> returns nil
+    ├── err=nil, degraded false -> returns nil
+    ├── err=nil, MaxRetriesExceeded set -> returns wrapped error with reason
+    ├── err!=nil, MaxRetriesExceeded not set -> returns original error
+    ├── err!=nil, MaxRetriesExceeded set -> returns wrapped error
+    └── err=nil, different degraded reason -> returns nil
+*/
+
 import (
 	"context"
+	"errors"
 	"slices"
 	"sort"
 	"strings"
@@ -14,6 +56,7 @@ import (
 	fakeconfig "github.com/openshift/client-go/config/clientset/versioned/fake"
 	configinformers "github.com/openshift/client-go/config/informers/externalversions"
 	applyoperatorv1 "github.com/openshift/client-go/operator/applyconfigurations/operator/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/management"
@@ -22,7 +65,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	coreinformers "k8s.io/client-go/informers"
@@ -43,9 +86,9 @@ const (
 )
 
 var (
-	conditionAvailable   = controllerName + opv1.OperatorStatusTypeAvailable
-	conditionProgressing = controllerName + opv1.OperatorStatusTypeProgressing
-	conditionDegraded    = controllerName + opv1.OperatorStatusTypeDegraded
+	conditionAvailable   = tools.ToPascalCase(controllerName) + opv1.OperatorStatusTypeAvailable
+	conditionProgressing = tools.ToPascalCase(controllerName) + opv1.OperatorStatusTypeProgressing
+	conditionDegraded    = tools.ToPascalCase(controllerName) + opv1.OperatorStatusTypeDegraded
 	allConditions        = []string{conditionAvailable, conditionProgressing, conditionDegraded}
 	availableCondition   = []string{conditionAvailable}
 )
@@ -167,6 +210,30 @@ func TestSync(t *testing.T) {
 			},
 			expectErr: true, // Job failure should return an error
 		},
+		{
+			// Job stuck in failed state for >10 minutes - auto-delete and succeed (will recreate next sync)
+			name: "job failed stuck auto-deleted",
+			initialObjects: testObjects{
+				job: makeJob(
+					withJobGeneration(1),
+					withJobStatus(0, 0, 1),
+					withJobFailedStuck()),
+				operator: makeFakeOperatorInstance(
+					withGenerations(1),
+					withTrueConditions(conditionAvailable),
+					withFalseConditions(conditionProgressing, conditionDegraded),
+				),
+			},
+			expectedObjects: testObjects{
+				job: nil, // Job should be deleted
+				operator: makeFakeOperatorInstance(
+					withGenerations(1),
+					withTrueConditions(conditionAvailable),
+					withFalseConditions(conditionProgressing, conditionDegraded),
+				),
+			},
+			expectErr: false, // Auto-deletion succeeds (will recreate next sync)
+		},
 	}
 
 	for _, test := range testCases {
@@ -220,7 +287,7 @@ func TestSync(t *testing.T) {
 				if err == nil {
 					t.Errorf("Expected Job to be deleted, found generation %d", actualJob.Generation)
 				}
-				if !errors.IsNotFound(err) {
+				if !apierrors.IsNotFound(err) {
 					t.Errorf("Expected error to be NotFound, got %s", err)
 				}
 			}
@@ -429,7 +496,7 @@ func TestJobModificationRecreation(t *testing.T) {
 	if err == nil {
 		t.Errorf("Job should have been deleted after first sync")
 	}
-	if !errors.IsNotFound(err) {
+	if !apierrors.IsNotFound(err) {
 		t.Errorf("Expected NotFound error, got: %v", err)
 	}
 
@@ -720,9 +787,26 @@ func withJobComplete() jobModifier {
 
 func withJobFailed() jobModifier {
 	return func(instance *batchv1.Job) *batchv1.Job {
+		// Set LastTransitionTime to recent time (1 minute ago) to avoid auto-deletion
+		// Timestamp will be cleared by sanitizeJob() for deterministic comparison
 		instance.Status.Conditions = append(instance.Status.Conditions, batchv1.JobCondition{
-			Type:   batchv1.JobFailed,
-			Status: v1.ConditionTrue,
+			Type:               batchv1.JobFailed,
+			Status:             v1.ConditionTrue,
+			LastTransitionTime: metav1.NewTime(time.Now().Add(-1 * time.Minute)),
+		})
+		return instance
+	}
+}
+
+func withJobFailedStuck() jobModifier {
+	return func(instance *batchv1.Job) *batchv1.Job {
+		// Set LastTransitionTime to fixed old time (>10 minutes ago) to trigger auto-deletion
+		// Using time way in the past to ensure auto-deletion threshold is met
+		stuckTime := time.Date(2020, time.January, 1, 12, 0, 0, 0, time.UTC)
+		instance.Status.Conditions = append(instance.Status.Conditions, batchv1.JobCondition{
+			Type:               batchv1.JobFailed,
+			Status:             v1.ConditionTrue,
+			LastTransitionTime: metav1.NewTime(stuckTime),
 		})
 		return instance
 	}
@@ -755,6 +839,11 @@ func sanitizeJob(job *batchv1.Job) {
 	}
 	// Remove random annotations set by ApplyJob
 	delete(job.Annotations, specHashAnnotation)
+	// Clear condition timestamps for deterministic comparison
+	for i := range job.Status.Conditions {
+		job.Status.Conditions[i].LastTransitionTime = metav1.Time{}
+		job.Status.Conditions[i].LastProbeTime = metav1.Time{}
+	}
 }
 
 func sanitizeInstanceStatus(status *opv1.OperatorStatus, testedConditions []string) {
@@ -783,5 +872,200 @@ func sanitizeObjectMeta(meta *metav1.ObjectMeta) {
 	// Treat empty array as nil for easier comparison.
 	if len(meta.Finalizers) == 0 {
 		meta.Finalizers = nil
+	}
+}
+
+func TestIsJobMaxRetriesExceeded(t *testing.T) {
+	tests := []struct {
+		name              string
+		degradedCondition *opv1.OperatorCondition
+		expectedResult    bool
+	}{
+		{
+			name:              "no degraded condition",
+			degradedCondition: nil,
+			expectedResult:    false,
+		},
+		{
+			name: "degraded false",
+			degradedCondition: &opv1.OperatorCondition{
+				Type:   conditionDegraded,
+				Status: opv1.ConditionFalse,
+			},
+			expectedResult: false,
+		},
+		{
+			name: "degraded true with exact MaxRetries message",
+			degradedCondition: &opv1.OperatorCondition{
+				Type:    conditionDegraded,
+				Status:  opv1.ConditionTrue,
+				Reason:  "SyncError",
+				Message: DegradedMessageMaxRetries,
+			},
+			expectedResult: true,
+		},
+		{
+			name: "degraded true with concatenated MaxRetries message",
+			degradedCondition: &opv1.OperatorCondition{
+				Type:    conditionDegraded,
+				Status:  opv1.ConditionTrue,
+				Reason:  "SyncError",
+				Message: DegradedMessageMaxRetries + "; job spec was modified, old job is deleted",
+			},
+			expectedResult: true,
+		},
+		{
+			name: "degraded true with SyncError reason and message does not contain MaxRetries",
+			degradedCondition: &opv1.OperatorCondition{
+				Type:    conditionDegraded,
+				Status:  opv1.ConditionTrue,
+				Reason:  "SyncError",
+				Message: "some other error",
+			},
+			expectedResult: false,
+		},
+		{
+			name: "degraded true with different reason and no MaxRetries in message",
+			degradedCondition: &opv1.OperatorCondition{
+				Type:    conditionDegraded,
+				Status:  opv1.ConditionTrue,
+				Reason:  "SomeOtherReason",
+				Message: "different error",
+			},
+			expectedResult: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create fake operator client with the condition
+			var conditions []opv1.OperatorCondition
+			if tt.degradedCondition != nil {
+				conditions = append(conditions, *tt.degradedCondition)
+			}
+
+			opStatus := &opv1.StaticPodOperatorStatus{
+				OperatorStatus: opv1.OperatorStatus{
+					Conditions: conditions,
+				},
+			}
+
+			result := isJobMaxRetriesExceeded(controllerName, &opStatus.OperatorStatus)
+			if result != tt.expectedResult {
+				t.Errorf("isJobMaxRetriesExceeded() = %v, want %v", result, tt.expectedResult)
+			}
+		})
+	}
+}
+
+func TestPreserveMaxRetriesOnReturn(t *testing.T) {
+	// Sentinel error for testing error wrapping and identity preservation
+	sentinelErr := errors.New("ApplyJob failed")
+
+	tests := []struct {
+		name                string
+		degradedCondition   *opv1.OperatorCondition
+		inputErr            error
+		reason              string
+		expectError         bool
+		expectedErrContains string
+	}{
+		{
+			name:              "err=nil, MaxRetriesExceeded not set - returns nil",
+			degradedCondition: nil,
+			inputErr:          nil,
+			reason:            "waiting for success",
+			expectError:       false,
+		},
+		{
+			name: "err=nil, degraded false - returns nil",
+			degradedCondition: &opv1.OperatorCondition{
+				Type:   conditionDegraded,
+				Status: opv1.ConditionFalse,
+			},
+			inputErr:    nil,
+			reason:      "waiting for success",
+			expectError: false,
+		},
+		{
+			name: "err=nil, MaxRetriesExceeded set - returns wrapped error with reason",
+			degradedCondition: &opv1.OperatorCondition{
+				Type:    conditionDegraded,
+				Status:  opv1.ConditionTrue,
+				Reason:  "SyncError",
+				Message: DegradedMessageMaxRetries,
+			},
+			inputErr:            nil,
+			reason:              "waiting for success",
+			expectError:         true,
+			expectedErrContains: DegradedMessageMaxRetries + "; waiting for success",
+		},
+		{
+			name:                "err!=nil, MaxRetriesExceeded not set - returns original error",
+			degradedCondition:   nil,
+			inputErr:            sentinelErr,
+			reason:              "",
+			expectError:         true,
+			expectedErrContains: "ApplyJob failed",
+		},
+		{
+			name: "err!=nil, MaxRetriesExceeded set - returns wrapped error",
+			degradedCondition: &opv1.OperatorCondition{
+				Type:    conditionDegraded,
+				Status:  opv1.ConditionTrue,
+				Reason:  "SyncError",
+				Message: DegradedMessageMaxRetries,
+			},
+			inputErr:            sentinelErr,
+			reason:              "",
+			expectError:         true,
+			expectedErrContains: DegradedMessageMaxRetries + "; ApplyJob failed",
+		},
+		{
+			name: "err=nil, different degraded reason - returns nil",
+			degradedCondition: &opv1.OperatorCondition{
+				Type:    conditionDegraded,
+				Status:  opv1.ConditionTrue,
+				Reason:  "SomeOtherReason",
+				Message: "some other error",
+			},
+			inputErr:    nil,
+			reason:      "waiting for success",
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create fake operator status with the condition
+			var conditions []opv1.OperatorCondition
+			if tt.degradedCondition != nil {
+				conditions = append(conditions, *tt.degradedCondition)
+			}
+
+			opStatus := &opv1.OperatorStatus{
+				Conditions: conditions,
+			}
+
+			err := preserveMaxRetriesOnReturn(controllerName, tt.inputErr, tt.reason, opStatus)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("preserveMaxRetriesOnReturn() expected error, got nil")
+				} else {
+					if !strings.Contains(err.Error(), tt.expectedErrContains) {
+						t.Errorf("preserveMaxRetriesOnReturn() error = %v, want to contain %v", err.Error(), tt.expectedErrContains)
+					}
+					// Verify error wrapping preserves identity when inputErr is non-nil
+					if tt.inputErr != nil && !errors.Is(err, tt.inputErr) {
+						t.Errorf("preserveMaxRetriesOnReturn() error does not wrap inputErr: errors.Is(err, inputErr) = false")
+					}
+				}
+			} else {
+				if err != nil {
+					t.Errorf("preserveMaxRetriesOnReturn() expected nil, got error: %v", err)
+				}
+			}
+		})
 	}
 }
