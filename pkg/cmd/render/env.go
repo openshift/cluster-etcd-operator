@@ -5,10 +5,12 @@ import (
 	"strings"
 
 	configv1 "github.com/openshift/api/config/v1"
+	features "github.com/openshift/api/features"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/hwspeedhelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 	"github.com/openshift/library-go/pkg/crypto"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 var envVarFns = []envVarFunc{
@@ -17,16 +19,18 @@ var envVarFns = []envVarFunc{
 	getUnsupportedArch,
 	getEtcdName,
 	getTLSCipherSuites,
+	getTLSCurvePreferences,
 	getMaxLearners,
 }
 
 type envVarData struct {
-	platform         string
-	arch             string
-	installConfig    map[string]any
-	platformData     string
-	hostname         string
-	inPlaceBootstrap bool
+	platform            string
+	arch                string
+	installConfig       map[string]any
+	platformData        string
+	hostname            string
+	inPlaceBootstrap    bool
+	enabledFeatureGates sets.Set[configv1.FeatureGateName]
 }
 
 type envVarFunc func(e *envVarData) (map[string]string, error)
@@ -107,6 +111,29 @@ func getTLSCipherSuites(_ *envVarData) (map[string]string, error) {
 	cipherSuites = tlshelpers.SupportedEtcdCiphers(cipherSuites)
 	return map[string]string{
 		"ETCD_CIPHER_SUITES": strings.Join(cipherSuites, ","),
+	}, nil
+}
+
+// getTLSCurvePreferences returns the curves used by the bootstrap etcd member.
+// The list is the Intermediate profile, translated to etcd --listen-curve-preferences
+// names. It is returned only when TLSGroupPreferences is enabled so default
+// installs keep etcd's built-in curve selection. etcd applies the list to
+// listeners only.
+func getTLSCurvePreferences(e *envVarData) (map[string]string, error) {
+	if !e.enabledFeatureGates.Has(features.FeatureGateTLSGroupPreferences) {
+		return nil, nil
+	}
+	profileSpec := configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
+	groups := make([]string, len(profileSpec.Groups))
+	for i, group := range profileSpec.Groups {
+		groups[i] = string(group)
+	}
+	curves := tlshelpers.SupportedEtcdCurves(groups)
+	if len(curves) == 0 {
+		return nil, fmt.Errorf("no etcd-supported TLS curves in TLSProfileIntermediateType")
+	}
+	return map[string]string{
+		"ETCD_LISTEN_CURVE_PREFERENCES": strings.Join(curves, ","),
 	}, nil
 }
 

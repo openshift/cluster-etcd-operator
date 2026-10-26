@@ -282,7 +282,10 @@ spec:
           --trusted-ca-file /etc/kubernetes/static-pod-certs/configmaps/etcd-all-bundles/metrics-ca-bundle.crt \
         {{- if .CipherSuites }}
           --listen-cipher-suites {{ .CipherSuites }} \
-          {{ end -}}
+        {{- end }}
+        {{- if .CurvePreferences }}
+          --listen-curve-preferences {{ .CurvePreferences }} \
+        {{- end }}
           --tls-min-version $(ETCD_TLS_MIN_VERSION)
     ports:
     - containerPort: 9979
@@ -332,7 +335,10 @@ spec:
           --client-cacert-file=$(ETCDCTL_CACERT) \
         {{- if .CipherSuites }}
           --listen-cipher-suites {{ .CipherSuites }} \
-          {{ end -}}
+        {{- end }}
+        {{- if .CurvePreferences }}
+          --listen-curve-preferences {{ .CurvePreferences }} \
+        {{- end }}
           --listen-tls-min-version=$(ETCD_TLS_MIN_VERSION)
     securityContext:
       privileged: true

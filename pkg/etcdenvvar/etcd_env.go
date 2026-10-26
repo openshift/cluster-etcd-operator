@@ -81,6 +81,7 @@ var envVarFns = []envVarFunc{
 	getUnsupportedArch,
 	getCipherSuites,
 	getTLSMinVersion,
+	getCurvePreferences,
 	getMaxLearners,
 }
 
@@ -94,6 +95,7 @@ var envVarFns = []envVarFunc{
 //	ETCD_INITIAL_CLUSTER_STATE
 //	ETCD_UNSUPPORTED_ARCH
 //	ETCD_CIPHER_SUITES
+//	ETCD_LISTEN_CURVE_PREFERENCES
 //	ETCD_MAX_LEARNERS
 //	NODE_%s_IP
 //	NODE_%s_ETCD_URL_HOST
@@ -374,6 +376,73 @@ func getCipherSuites(envVarContext envVarContext) (map[string]string, error) {
 	return map[string]string{
 		envName: strings.Join(actualCipherSuites, ","),
 	}, nil
+}
+
+// getCurvePreferences sets ETCD_LISTEN_CURVE_PREFERENCES from observedConfig servingInfo.groups.
+// etcd maps that variable onto --listen-curve-preferences for the client and peer listeners.
+// Dialing peers keep Go's default curves, so the rendered list does not have to overlap a
+// revision that is still current.
+// The variable is left unset when TLSGroupPreferences is disabled, and when a
+// custom profile omits groups: etcd then keeps Go's default curve selection.
+func getCurvePreferences(envVarContext envVarContext) (map[string]string, error) {
+	enabled, err := tlshelpers.TLSGroupPreferencesEnabled(envVarContext.featureGateAccessor)
+	if err != nil {
+		return nil, fmt.Errorf("unable to determine whether TLS group preferences are enabled: %w", err)
+	}
+	if !enabled {
+		return nil, nil
+	}
+
+	var observedConfig map[string]any
+	if err := yaml.Unmarshal(envVarContext.spec.ObservedConfig.Raw, &observedConfig); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal the observedConfig: %w", err)
+	}
+	observedGroups, found, err := unstructured.NestedStringSlice(observedConfig, "servingInfo", "groups")
+	if err != nil {
+		return nil, fmt.Errorf("couldn't get groups from observedConfig: %w", err)
+	}
+	var groups []string
+	switch {
+	case !found:
+		bootstrapComplete, err := bootstrap.IsBootstrapComplete(envVarContext.bootstrapConfigMapLister)
+		if err != nil {
+			return nil, fmt.Errorf("unable to determine bootstrap status for TLS groups fallback: %w", err)
+		}
+		if bootstrapComplete {
+			return nil, fmt.Errorf("servingInfo.groups not found in observedConfig")
+		}
+		klog.Warning("getCurvePreferences: observedConfig has no groups during bootstrap, falling back to TLSProfileIntermediateType groups")
+		groups = intermediateTLSGroupNames()
+	case len(observedGroups) == 0:
+		return nil, nil
+	default:
+		groups = observedGroups
+	}
+
+	return curvePreferencesEnv(groups)
+}
+
+// curvePreferencesEnvName is the etcd environment variable for --listen-curve-preferences.
+// etcd derives it with FlagToEnv("ETCD", "listen-curve-preferences").
+const curvePreferencesEnvName = "ETCD_LISTEN_CURVE_PREFERENCES"
+
+func curvePreferencesEnv(groups []string) (map[string]string, error) {
+	curves := tlshelpers.SupportedEtcdCurves(groups)
+	if len(curves) == 0 {
+		return nil, fmt.Errorf("no etcd-supported TLS curves remain from groups %v", groups)
+	}
+	return map[string]string{
+		curvePreferencesEnvName: strings.Join(curves, ","),
+	}, nil
+}
+
+func intermediateTLSGroupNames() []string {
+	groups := v1.TLSProfiles[v1.TLSProfileIntermediateType].Groups
+	names := make([]string, len(groups))
+	for i, group := range groups {
+		names[i] = string(group)
+	}
+	return names
 }
 
 // getMaxLearners reads the control-plane replicas from the install-config. We tolerate max learners equal to the

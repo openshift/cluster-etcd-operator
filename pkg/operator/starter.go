@@ -232,6 +232,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controlPlaneNodeLister,
 		resourceSyncController,
 		controllerContext.EventRecorder,
+		featureGateAccessor,
 	)
 
 	staticResourceController := staticresourcecontroller.NewStaticResourceController(
