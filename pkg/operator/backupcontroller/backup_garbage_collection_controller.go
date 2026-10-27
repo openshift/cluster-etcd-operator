@@ -40,12 +40,12 @@ import (
 )
 
 const (
-	backupGCAppName           = "cluster-backup-gc-job"
-	backupGCFilesEnvName      = "CLUSTER_BACKUP_GC_FILES"
-	gcTtlSecondsAfterFinished = int32(2 * 60 * 60)
-	gcMaxBackupsPerJob        = 100
-	gcBackoffBase             = 30 * time.Second
-	gcBackoffMax              = 30 * time.Minute
+	backupGCAppName      = "cluster-backup-gc-job"
+	backupGCFilesEnvName = "CLUSTER_BACKUP_GC_FILES"
+	gcJobFinishedTTL     = 2 * time.Hour
+	gcMaxBackupsPerJob   = 100
+	gcBackoffBase        = 30 * time.Second
+	gcBackoffMax         = 30 * time.Minute
 )
 
 // BackupGarbageCollectionController cleans up files associated with deleted EtcdBackup objects
@@ -295,7 +295,7 @@ func createGarbageCollectionJob(ctx context.Context,
 		})
 	}
 	job.Finalizers = append(job.Finalizers, backuphelpers.FinalizerEtcdBackup)
-	job.Spec.TTLSecondsAfterFinished = new(gcTtlSecondsAfterFinished)
+	job.Spec.TTLSecondsAfterFinished = new(int32(gcJobFinishedTTL.Seconds()))
 	job.Spec.Template.Spec.Containers[0].Image = operatorImagePullSpec
 
 	gcFiles := make([]string, 0, 2*len(backups))

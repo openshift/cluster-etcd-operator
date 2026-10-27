@@ -24,6 +24,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -283,21 +284,23 @@ func (c *BackupPolicyController) executeBackup(ctx context.Context, backupPolicy
 		})
 	} else {
 		for _, node := range controlPlaneNodes {
-			toCreate = append(toCreate, &operatorv1alpha1.EtcdBackup{
-				ObjectMeta: v1.ObjectMeta{
-					Name: generateEtcdBackupName(backupPolicy.Name, node.UID, scheduleTime),
-					Labels: map[string]string{
-						backuphelpers.LabelEtcdBackupPolicy: backupPolicy.Name,
+			if hostname, ok := node.Labels[corev1.LabelHostname]; ok {
+				toCreate = append(toCreate, &operatorv1alpha1.EtcdBackup{
+					ObjectMeta: v1.ObjectMeta{
+						Name: generateEtcdBackupName(backupPolicy.Name, node.UID, scheduleTime),
+						Labels: map[string]string{
+							backuphelpers.LabelEtcdBackupPolicy: backupPolicy.Name,
+						},
 					},
-				},
-				Spec: operatorv1alpha1.EtcdBackupSpec{
-					NodeSelector: backupPolicy.Spec.NodeSelector,
-					Storage:      backupPolicy.Spec.Storage,
-				},
-				Status: operatorv1alpha1.EtcdBackupStatus{
-					NodeName: node.Name,
-				},
-			})
+					Spec: operatorv1alpha1.EtcdBackupSpec{
+						NodeSelector: map[string]string{corev1.LabelHostname: hostname},
+						Storage:      backupPolicy.Spec.Storage,
+					},
+					Status: operatorv1alpha1.EtcdBackupStatus{
+						NodeName: node.Name,
+					},
+				})
+			}
 		}
 	}
 

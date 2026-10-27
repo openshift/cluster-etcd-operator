@@ -48,7 +48,7 @@ func (abc activeBackupCache) isActive(backupName string) bool {
 	return ok
 }
 
-func (abc activeBackupCache) add(backup *operatorv1alpha1.EtcdBackup) {
+func (abc *activeBackupCache) add(backup *operatorv1alpha1.EtcdBackup) {
 	backupName := backup.Name
 	active := newActiveBackup(backup)
 	if existing, ok := abc.backups[backupName]; ok {
@@ -80,7 +80,7 @@ func (abc activeBackupCache) add(backup *operatorv1alpha1.EtcdBackup) {
 	abc.backups[backupName] = active
 }
 
-func (abc activeBackupCache) remove(backupName string) {
+func (abc *activeBackupCache) remove(backupName string) {
 	if activeBackup, ok := abc.backups[backupName]; ok {
 		if activeBackup.nodeName != "" {
 			abc.local.remove(activeBackup.nodeName, backupName)

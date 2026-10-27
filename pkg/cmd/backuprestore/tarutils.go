@@ -10,17 +10,18 @@ import (
 	"strings"
 	"time"
 
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
 )
 
 func createTarball(tarballFilePath string, filePaths []string, prefixTrim string) (size int64, err error) {
 	file, err := os.OpenFile(tarballFilePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		return 0, fmt.Errorf("Could not create tarball file '%s', got error '%s'", tarballFilePath, err.Error())
+		return -1, fmt.Errorf("Could not create tarball file '%s', got error '%s'", tarballFilePath, err.Error())
 	}
 	defer func() {
-		if e := file.Close(); e != nil && err == nil {
-			err = e
+		if e := file.Close(); e != nil {
+			err = utilerrors.NewAggregate([]error{err, e})
 		}
 	}()
 
@@ -30,7 +31,7 @@ func createTarball(tarballFilePath string, filePaths []string, prefixTrim string
 
 	stat, err := file.Stat()
 	if err != nil {
-		return 0, fmt.Errorf("Could not stat tarball file '%s', go error '%s'", tarballFilePath, err.Error())
+		return -1, fmt.Errorf("Could not stat tarball file '%s', go error '%s'", tarballFilePath, err.Error())
 	}
 	return stat.Size(), nil
 }
@@ -38,15 +39,15 @@ func createTarball(tarballFilePath string, filePaths []string, prefixTrim string
 func writeTarballToFile(file *os.File, filePaths []string, prefixTrim string) (err error) {
 	gzipWriter := gzip.NewWriter(file)
 	defer func() {
-		if e := gzipWriter.Close(); e != nil && err == nil {
-			err = e
+		if e := gzipWriter.Close(); e != nil {
+			err = utilerrors.NewAggregate([]error{err, e})
 		}
 	}()
 
 	tarWriter := tar.NewWriter(gzipWriter)
 	defer func() {
-		if e := tarWriter.Close(); e != nil && err == nil {
-			err = e
+		if e := tarWriter.Close(); e != nil {
+			err = utilerrors.NewAggregate([]error{err, e})
 		}
 	}()
 

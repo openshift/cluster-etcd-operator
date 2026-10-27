@@ -48,10 +48,10 @@ const (
 	backupStatusFieldManager    = "etcd-backup-status"
 	backupFinalizerFieldManager = "etcd-backup-finalizer"
 
-	backupAppName           = "cluster-backup-job"
-	backupPathMount         = "/etc/kubernetes/cluster-backup"
-	backupDirEnvName        = "CLUSTER_BACKUP_PATH"
-	ttlSecondsAfterFinished = int32(4 * 60 * 60)
+	backupAppName    = "cluster-backup-job"
+	backupPathMount  = "/etc/kubernetes/cluster-backup"
+	backupDirEnvName = "CLUSTER_BACKUP_PATH"
+	jobFinishedTTL   = 4 * time.Hour
 
 	jobNotFoundGracePeriod   = 2 * time.Minute
 	backupDeletedGracePeriod = 1 * time.Minute
@@ -472,7 +472,7 @@ func createBackupJob(ctx context.Context,
 		UID:        backup.UID,
 	})
 	job.Finalizers = append(job.Finalizers, backuphelpers.FinalizerEtcdBackup)
-	job.Spec.TTLSecondsAfterFinished = ptr.To(ttlSecondsAfterFinished)
+	job.Spec.TTLSecondsAfterFinished = new(int32(jobFinishedTTL.Seconds()))
 	job.Spec.Template.Spec.InitContainers[0].Image = operatorImagePullSpec
 	job.Spec.Template.Spec.Containers[0].Image = operatorImagePullSpec
 
@@ -493,10 +493,12 @@ func createBackupJob(ctx context.Context,
 		// HostPath is appended to mount so that path handling is always consistent between local and pvc storage backend
 		volumeMount.MountPath = filepath.Join(volumeMount.MountPath, storageLocal.HostPath)
 	case operatorv1alpha1.EtcdBackupStorageTypePVC:
-		// PVC backups are not pinned to a node. Instead the job is constrained to eligible master nodes and
-		// the scheduler picks a node that satisfies the volume's topology (e.g. WaitForFirstConsumer). A
+		// PVC backups are not pinned to a node. Instead the job is constrained to eligible control plane nodes and
+		// the scheduler picks one that satisfies the volume's topology (e.g. WaitForFirstConsumer). A
 		// preferred pod anti-affinity spreads backup pods across nodes without hard-pinning.
-		job.Spec.Template.Spec.NodeSelector = pvcNodeSelector(backup.Spec.NodeSelector)
+		nodeSelector := map[string]string{backuphelpers.ControlPlaneNodeLabelSelector: ""}
+		maps.Copy(nodeSelector, backup.Spec.NodeSelector)
+		job.Spec.Template.Spec.NodeSelector = nodeSelector
 		job.Spec.Template.Spec.Affinity = backupSpreadAffinity()
 
 		storagePVC := backup.Spec.Storage.PVC
@@ -529,15 +531,6 @@ func createBackupJob(ctx context.Context,
 	}
 	klog.Infof("BackupController started backup %q job %q", backup.Name, jobName)
 	return job, nil
-}
-
-// pvcNodeSelector constrains a PVC backup job to eligible master nodes, merging the backup's node selector
-// on top of the master role label. The master label always applies since the backup job reads etcd's data
-// from the host and must run on a control-plane node.
-func pvcNodeSelector(backupSelector map[string]string) map[string]string {
-	selector := map[string]string{backuphelpers.ControlPlaneNodeLabelSelector: ""}
-	maps.Copy(selector, backupSelector)
-	return selector
 }
 
 // backupSpreadAffinity prefers scheduling backup pods onto different nodes so that concurrent backups
