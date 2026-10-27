@@ -100,6 +100,70 @@ func countPolicyActions(client *operatorfake.Clientset, verb string) int {
 	return count
 }
 
+// TestSyncStopsOnlyAfterInitializationCompletes verifies failures leave the controller running until success is recorded.
+func TestSyncStopsOnlyAfterInitializationCompletes(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		conditions       []operatorv1.OperatorCondition
+		failCreate       bool
+		failStatusUpdate bool
+		expectedReason   string
+	}{
+		{name: "first initialization", expectedReason: defaultBackupPolicyCreatedReason},
+		{name: "already initialized", conditions: []operatorv1.OperatorCondition{{Type: DefaultBackupPolicyInitializedCondition, Status: operatorv1.ConditionTrue, Reason: defaultBackupPolicyCreatedReason}}, expectedReason: defaultBackupPolicyCreatedReason},
+		{name: "create failure then retry", failCreate: true, expectedReason: defaultBackupPolicyCreatedReason},
+		{name: "status failure then retry", failStatusUpdate: true, expectedReason: defaultPolicyRestoredReason},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			controller, client := newInitTestController(t, tc.conditions)
+			initErr := errors.New("API temporarily unavailable")
+			failFirst := true
+			if tc.failCreate {
+				client.PrependReactor("create", "etcdbackuppolicies", func(k8stesting.Action) (bool, runtime.Object, error) {
+					if failFirst {
+						failFirst = false
+						return true, nil, initErr
+					}
+					return false, nil, nil
+				})
+			}
+			if tc.failStatusUpdate {
+				controller.operatorClient = v1helpers.NewFakeStaticPodOperatorClient(
+					&operatorv1.StaticPodOperatorSpec{}, &operatorv1.StaticPodOperatorStatus{},
+					func(string, *operatorv1.StaticPodOperatorStatus) error {
+						if failFirst {
+							failFirst = false
+							return initErr
+						}
+						return nil
+					}, nil,
+				)
+			}
+
+			stopCalls := 0
+			controller.stop = func() {
+				requireInitCondition(t, controller, operatorv1.ConditionTrue, tc.expectedReason)
+				stopCalls++
+			}
+			if tc.failCreate || tc.failStatusUpdate {
+				if err := controller.sync(t.Context(), nil); !errors.Is(err, initErr) {
+					t.Fatalf("first sync error is %v, expected %v", err, initErr)
+				}
+				if stopCalls != 0 {
+					t.Fatal("controller stopped after unsuccessful initialization")
+				}
+			}
+
+			if err := controller.sync(t.Context(), nil); err != nil {
+				t.Fatalf("sync default backup policy: %v", err)
+			}
+			if stopCalls != 1 {
+				t.Fatalf("controller stop called %d times, expected once after successful initialization", stopCalls)
+			}
+		})
+	}
+}
+
 // TestInitializeCreatesDefaultPolicy verifies first-time creation and the persistent success marker.
 func TestInitializeCreatesDefaultPolicy(t *testing.T) {
 	controller, client := newInitTestController(t, nil)
@@ -169,6 +233,46 @@ func TestInitializeReconcilesDefaultPolicyBeforeCompletion(t *testing.T) {
 			requireInitCondition(t, controller, operatorv1.ConditionTrue, tc.expectedReason)
 		})
 	}
+}
+
+// TestInitializePreservesPolicyStatusOnReset verifies restoring the spec preserves scheduling history and active backup references.
+func TestInitializePreservesPolicyStatusOnReset(t *testing.T) {
+	existing := testutils.FakeEtcdBackupPolicy(defaultPolicyName, "@hourly", testutils.WithBackupPolicyStatus(operatorv1alpha1.EtcdBackupPolicyStatus{
+		Conditions: []metav1.Condition{{
+			Type:               string(operatorv1alpha1.BackupPolicyLastScheduled),
+			Status:             metav1.ConditionTrue,
+			Reason:             string(operatorv1alpha1.BackupPolicyLastScheduled),
+			LastTransitionTime: metav1.Now(),
+		}},
+		Active: []operatorv1alpha1.EtcdBackupReference{{
+			Name: "default-backup-in-progress",
+			UID:  "9a14d177-8ee6-4a47-8746-5d58ebd49371",
+		}},
+	}))
+	before := existing.DeepCopy()
+	controller, client := newInitTestController(t, nil, existing)
+	if err := controller.initialize(t.Context()); err != nil {
+		t.Fatalf("initialize existing default policy: %v", err)
+	}
+
+	after, err := controller.backupPolicyClient.Get(t.Context(), defaultPolicyName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get restored default policy: %v", err)
+	}
+	expectedDefaultPolicy, err := decodeDefaultBackupPolicy()
+	if err != nil {
+		t.Fatalf("decode expected default policy: %v", err)
+	}
+	if !reflect.DeepEqual(after.Spec, expectedDefaultPolicy.Spec) {
+		t.Fatalf("default policy spec is %+v, expected %+v", after.Spec, expectedDefaultPolicy.Spec)
+	}
+	if !reflect.DeepEqual(after.Status, before.Status) {
+		t.Fatalf("policy status changed during reset: got %+v, expected %+v", after.Status, before.Status)
+	}
+	if got := countPolicyActions(client, "update"); got != 1 {
+		t.Fatalf("updated %d policies, expected one restore", got)
+	}
+	requireInitCondition(t, controller, operatorv1.ConditionTrue, defaultPolicyRestoredReason)
 }
 
 // TestInitializeDoesNotReconcileAfterCompletion verifies that administrator edits and deletion persist after initialization.
@@ -256,6 +360,55 @@ func TestInitializeRetriesAfterCreateFailure(t *testing.T) {
 	requireInitCondition(t, controller, operatorv1.ConditionTrue, defaultBackupPolicyCreatedReason)
 	if got := countPolicyActions(client, "create"); got != 2 {
 		t.Fatalf("attempted %d policy creates, expected two", got)
+	}
+}
+
+// TestInitializeRetriesAfterUpdateFailure verifies a failed reset records False and restores the policy on retry.
+func TestInitializeRetriesAfterUpdateFailure(t *testing.T) {
+	existing := testutils.FakeEtcdBackupPolicy(defaultPolicyName, "@hourly")
+	before := existing.DeepCopy()
+	controller, client := newInitTestController(t, nil, existing)
+	updateErr := errors.New("update temporarily unavailable")
+	failFirst := true
+	client.PrependReactor("update", "etcdbackuppolicies", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if failFirst {
+			failFirst = false
+			return true, nil, updateErr
+		}
+		return false, nil, nil
+	})
+	if err := controller.initialize(t.Context()); !errors.Is(err, updateErr) {
+		t.Fatalf("first initialization error is %v, expected %v", err, updateErr)
+	}
+	requireInitCondition(t, controller, operatorv1.ConditionFalse, defaultBackupPolicyInitializationFailedReason)
+	policy, err := controller.backupPolicyClient.Get(t.Context(), defaultPolicyName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get policy after failed reset: %v", err)
+	}
+	if !reflect.DeepEqual(policy.Spec, before.Spec) {
+		t.Fatalf("policy spec changed despite update failure: got %+v, expected %+v", policy.Spec, before.Spec)
+	}
+
+	if err := controller.initialize(t.Context()); err != nil {
+		t.Fatalf("retry initialization: %v", err)
+	}
+	requireInitCondition(t, controller, operatorv1.ConditionTrue, defaultPolicyRestoredReason)
+	policy, err = controller.backupPolicyClient.Get(t.Context(), defaultPolicyName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get policy after retry: %v", err)
+	}
+	expectedDefaultPolicy, err := decodeDefaultBackupPolicy()
+	if err != nil {
+		t.Fatalf("decode expected default policy: %v", err)
+	}
+	if !reflect.DeepEqual(policy.Spec, expectedDefaultPolicy.Spec) {
+		t.Fatalf("default policy spec is %+v, expected %+v", policy.Spec, expectedDefaultPolicy.Spec)
+	}
+	if got := countPolicyActions(client, "update"); got != 2 {
+		t.Fatalf("attempted %d policy updates, expected failure and retry", got)
+	}
+	if got := countPolicyActions(client, "create"); got != 0 {
+		t.Fatalf("created %d policies while restoring an existing policy, expected none", got)
 	}
 }
 
