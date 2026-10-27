@@ -147,9 +147,10 @@ func TestSyncLoopHappyPath(t *testing.T) {
 
 	t.Run("pvc", func(t *testing.T) {
 		// PVC backups progress without a preassigned node; the scheduler places the job.
-		backup := testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPending(""))
+		backup := testutils.FakeEtcdBackup("test-backup")
 		runBackupControllerTest(t, testCaseBackupController{
 			backups: []*operatorv1alpha1.EtcdBackup{backup},
+			nodes:   []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
 			pvcs:    []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				job := requireBackupJobCreated(t, client, backup)
@@ -438,13 +439,14 @@ func TestBackupFailedRequiresGC(t *testing.T) {
 func TestBackupFailedNoGC(t *testing.T) {
 	// EtcdBackups that failed gracefully without creating any files
 	t.Run("pvc-not-found", func(t *testing.T) {
-		// Pending PVC backups have no nodeName; missing PVC must still reach Failed/PVCNotFound.
+		// Missing PVC must reach Failed with SetupFailed; PVC backups are not pinned to a node.
 		runBackupControllerTest(t, testCaseBackupController{
 			backups: []*operatorv1alpha1.EtcdBackup{
-				testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPending(""), testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
+				testutils.FakeEtcdBackup("test-backup", testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
 					Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
 					PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "backup-pvc-that-doesnt-exist"},
 				}))},
+			nodes: []*corev1.Node{testutils.FakeNode("test-node")},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				requireNoBackupJobCreated(t, client)
 				requireBackupStatusApplied(t, operatorFake, []metav1.Condition{{

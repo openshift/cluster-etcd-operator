@@ -25,7 +25,6 @@ const (
 	storageTypePVC   = "PVC"
 	storageTypeLocal = "Local"
 
-	statusPending   = "Pending"
 	statusRunning   = "Running"
 	statusCompleted = "Completed"
 	statusFailed    = "Failed"
@@ -198,8 +197,6 @@ func extractCurrentStatus(backup operatorv1alpha1.EtcdBackup) string {
 			continue
 		}
 		switch condition.Type {
-		case string(operatorv1alpha1.BackupPending):
-			return statusPending
 		case string(operatorv1alpha1.BackupRunning):
 			return statusRunning
 		case string(operatorv1alpha1.BackupCompleted):
