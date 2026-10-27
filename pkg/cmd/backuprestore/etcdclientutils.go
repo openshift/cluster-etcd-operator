@@ -47,7 +47,7 @@ func getEtcdClient(endpoints []string) (*clientv3.Client, error) {
 	return cli, nil
 }
 
-func saveSnapshot(cli *clientv3.Client, partPath, dbPath string) (int64, error) {
+func saveSnapshot(ctx context.Context, cli *clientv3.Client, partPath, dbPath string) (int64, error) {
 	defer os.RemoveAll(partPath)
 
 	f, err := os.OpenFile(partPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
@@ -57,7 +57,7 @@ func saveSnapshot(cli *clientv3.Client, partPath, dbPath string) (int64, error) 
 
 	opBegin := time.Now()
 	var rd io.ReadCloser
-	rd, err = cli.Snapshot(context.Background())
+	rd, err = cli.Snapshot(ctx)
 	if err != nil {
 		return -1, fmt.Errorf("saveSnapshot failed: %w", err)
 	}

@@ -64,7 +64,7 @@ func (r *backupOptions) Validate() error {
 }
 
 func (r *backupOptions) Run() error {
-	if err := backup(r); err != nil {
+	if err := backup(context.Background(), r); err != nil {
 		return fmt.Errorf("run: backup failed: %w", err)
 	}
 	return nil

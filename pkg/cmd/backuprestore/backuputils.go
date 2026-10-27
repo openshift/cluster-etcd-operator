@@ -1,6 +1,7 @@
 package backuprestore
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,7 +44,7 @@ func archiveLatestResources(configDir, backupFile string) (int64, error) {
 	return size, nil
 }
 
-func backup(r *backupOptions) (err error) {
+func backup(ctx context.Context, r *backupOptions) (err error) {
 	cli, err := getEtcdClient(r.endpoints)
 	if err != nil {
 		return fmt.Errorf("backup: failed to get etcd client: %w", err)
@@ -77,7 +78,7 @@ func backup(r *backupOptions) (err error) {
 	// Save snapshot
 	var snapshotSize int64
 	snapshotPartialPath := snapshotFilepath + ".part"
-	if snapshotSize, err = saveSnapshot(cli, snapshotPartialPath, snapshotFilepath); err != nil {
+	if snapshotSize, err = saveSnapshot(ctx, cli, snapshotPartialPath, snapshotFilepath); err != nil {
 		// Record partial snapshot path for GC, if present
 		message = "snapshot failed"
 		if msg, ok := isDiskFull(err); ok {
