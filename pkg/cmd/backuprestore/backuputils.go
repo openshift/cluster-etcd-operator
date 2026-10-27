@@ -12,6 +12,7 @@ import (
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
 )
 
@@ -39,7 +40,7 @@ func archiveLatestResources(configDir, backupFile string) (int64, error) {
 
 	size, err := createTarball(backupFile, paths, configDir)
 	if err != nil {
-		return 0, fmt.Errorf("Got error creating the tar archive: %w", err)
+		return -1, fmt.Errorf("Got error creating the tar archive: %w", err)
 	}
 	return size, nil
 }
@@ -68,9 +69,7 @@ func backup(ctx context.Context, r *backupOptions) (err error) {
 	defer func() {
 		if r.terminationLog != "" {
 			if logErr := writeTerminationLog(r.terminationLog, message, files); logErr != nil {
-				if err == nil {
-					err = fmt.Errorf("terminationLog failed: %w", logErr)
-				}
+				err = utilerrors.NewAggregate([]error{err, logErr})
 			}
 		}
 	}()
@@ -112,7 +111,7 @@ func backup(ctx context.Context, r *backupOptions) (err error) {
 }
 
 func statBackupFile(path string) (file operatorv1alpha1.EtcdBackupFile, ok bool) {
-	if info, err := os.Stat(path); err != nil {
+	if info, err := os.Stat(path); err == nil {
 		return operatorv1alpha1.EtcdBackupFile{Path: path, SizeBytes: info.Size()}, true
 	}
 	return
