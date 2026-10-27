@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
+	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/component-base/metrics"
@@ -97,14 +98,7 @@ func TestBackupMetricsFailed(t *testing.T) {
 			Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
 			PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "backup-pvc"},
 		}),
-		testutils.WithBackupFailed(),
-		func(b *operatorv1alpha1.EtcdBackup) {
-			b.Status.Conditions = append(b.Status.Conditions, metav1.Condition{
-				Type:   string(operatorv1alpha1.BackupGarbageCollectionRequired),
-				Status: metav1.ConditionTrue,
-				Reason: string(operatorv1alpha1.BackupReasonFilesPartiallyCreated),
-			})
-		},
+		testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed),
 	)
 
 	collector := setupCollectorWithBackups(t, backup)
@@ -450,13 +444,6 @@ func TestExtractCurrentStatus(t *testing.T) {
 			want:       "",
 		},
 		{
-			name: "pending",
-			conditions: []metav1.Condition{
-				{Type: string(operatorv1alpha1.BackupPending), Status: metav1.ConditionTrue},
-			},
-			want: statusPending,
-		},
-		{
 			name: "running",
 			conditions: []metav1.Condition{
 				{Type: string(operatorv1alpha1.BackupRunning), Status: metav1.ConditionTrue},
@@ -478,18 +465,10 @@ func TestExtractCurrentStatus(t *testing.T) {
 			want: statusFailed,
 		},
 		{
-			name: "failed-with-garbage-collection-required",
-			conditions: []metav1.Condition{
-				{Type: string(operatorv1alpha1.BackupFailed), Status: metav1.ConditionTrue},
-				{Type: string(operatorv1alpha1.BackupGarbageCollectionRequired), Status: metav1.ConditionTrue},
-			},
-			want: statusFailed,
-		},
-		{
 			name: "all-false",
 			conditions: []metav1.Condition{
-				{Type: string(operatorv1alpha1.BackupPending), Status: metav1.ConditionFalse},
 				{Type: string(operatorv1alpha1.BackupRunning), Status: metav1.ConditionFalse},
+				{Type: string(operatorv1alpha1.BackupCompleted), Status: metav1.ConditionFalse},
 			},
 			want: "",
 		},
@@ -557,18 +536,21 @@ func TestBackupMetricsScrapeSafety(t *testing.T) {
 
 func TestBackupMetricsRealLister(t *testing.T) {
 	backup1 := testutils.FakeEtcdBackup("real-lister-backup-1", testutils.WithBackupCompleted())
-	backup2 := testutils.FakeEtcdBackup("real-lister-backup-2", testutils.WithBackupPending(""))
+	// Unstarted backups have no conditions and emit no etcd_backup_status sample.
+	backup2 := testutils.FakeEtcdBackup("real-lister-backup-2")
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "real-lister-backup-3-job"}}
+	backup3 := testutils.FakeEtcdBackup("real-lister-backup-3", testutils.WithBackupRunning(job))
 
-	collector := setupCollectorWithBackups(t, backup1, backup2)
+	collector := setupCollectorWithBackups(t, backup1, backup2, backup3)
 
-	require.GreaterOrEqual(t, testutil.CollectAndCount(collector), 4,
-		"expected at least 2 info + 2 status metrics")
+	require.GreaterOrEqual(t, testutil.CollectAndCount(collector), 5,
+		"expected at least 3 info + 2 status metrics")
 
 	expected := `
 		# HELP etcd_backup_status The current status of the backup. Value of 1 indicates the labeled status is active.
 		# TYPE etcd_backup_status gauge
 		etcd_backup_status{etcd_backup="real-lister-backup-1",status="Completed",uid="real-lister-backup-1-uid"} 1
-		etcd_backup_status{etcd_backup="real-lister-backup-2",status="Pending",uid="real-lister-backup-2-uid"} 1
+		etcd_backup_status{etcd_backup="real-lister-backup-3",status="Running",uid="real-lister-backup-3-uid"} 1
 	`
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expected), backupStatusMetricName))
 }

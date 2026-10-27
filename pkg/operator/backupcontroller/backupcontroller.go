@@ -339,25 +339,6 @@ func (c *BackupController) reconcileBackupState(ctx context.Context, jobsClient 
 			return backupActive, 0, fmt.Errorf("BackupController failed to remove finalizer from deleted backup %q: %w", backupName, err)
 		}
 		return backupFinished, 0, nil
-	} else if !backuphelpers.IsBackupActive(backup) {
-		// Ignore inactive backups
-		return backupFinished, 0, nil
-	}
-
-	// Backup has just been promoted to Pending by the queue controller
-	pvcsClient := c.kubeClient.CoreV1().PersistentVolumeClaims(operatorclient.TargetNamespace)
-	nodesClient := c.kubeClient.CoreV1().Nodes()
-	if reason, message, ok, err := validatePendingBackup(ctx, nodesClient, pvcsClient, backup); err != nil {
-		return backupActive, 0, fmt.Errorf("BackupController failed to validate backup %q: %w", backup.Name, err)
-	} else if !ok {
-		if _, err := applyBackupFinished(ctx, backupsClient, backup, nil, operatorv1alpha1.BackupFailed, reason, message, nil); err != nil {
-			if apierrors.IsNotFound(err) {
-				return backupFinished, 0, nil
-			}
-			return backupActive, 0, fmt.Errorf("BackupController failed to apply status on invalid backup: %w", err)
-		}
-		klog.Infof("BackupController failed backup %q: %s", backup.Name, message)
-		return backupFinished, 0, nil
 	}
 
 	return backupQueued, 0, nil
