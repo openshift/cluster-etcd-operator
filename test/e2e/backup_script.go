@@ -77,7 +77,8 @@ func TestBackupScript(t testing.TB) {
 	output, err = exec.Command("oc", getOcArgs(debugPodName, cmdAsStr)...).CombinedOutput()
 	require.NoError(t, err)
 	files := strings.Split(string(output), "\n")
-	requireBackupFilesFound(t, "backup-happy-path", trimFilesPrefix(files))
+	expectedDirectory := strings.TrimPrefix(backupPath, "/etc/kubernetes/")
+	requireBackupFilesFound(t, expectedDirectory, trimFilesPrefix(files))
 
 	t.Cleanup(func() {
 		// clean up
@@ -101,7 +102,7 @@ func trimFilesPrefix(files []string) []string {
 	trimmedFiles := make([]string, len(files))
 	for i, f := range files {
 		trimmedFiles[i], _ = strings.CutPrefix(f, "/host/etc/kubernetes/")
-		trimmedFiles[i] = "./backup-" + trimmedFiles[i]
+		trimmedFiles[i] = "./" + trimmedFiles[i]
 	}
 	return trimmedFiles
 }

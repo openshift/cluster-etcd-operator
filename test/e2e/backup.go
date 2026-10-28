@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"path"
 	"regexp"
 	"strings"
 	"sync"
@@ -110,7 +111,8 @@ func TestBackupHappyPath(t testing.TB) {
 	require.NoError(t, err)
 
 	foundFiles := collectFilesInPVCAcrossAllNodes(t, pvcName)
-	requireBackupFilesFound(t, backup.Name, foundFiles)
+	expectedDirectory := path.Join(backup.Spec.Storage.PVC.Path, backup.Name)
+	requireBackupFilesFound(t, expectedDirectory, foundFiles)
 }
 
 func TestPeriodicBackupHappyPath(t testing.TB) {
@@ -163,9 +165,11 @@ func TestPeriodicBackupHappyPath(t testing.TB) {
 		"expected 5 or 6 backup groups, but found %d. Groups: %v", len(grouped), grouped)
 	// each group individually must be a valid backup
 	// TODO(thomas): this might flake when an ongoing backup is not entirely done yet?
-	for k, v := range grouped {
-		t.Logf("testing backup group %s = %v", k, v)
-		requireBackupFilesFound(t, backupPolicy.Name, v)
+	for directory, files := range grouped {
+		t.Logf("testing backup group %s = %v", directory, files)
+
+		expectedDirectory := strings.TrimPrefix(directory, "./")
+		requireBackupFilesFound(t, expectedDirectory, files)
 	}
 }
 
@@ -216,9 +220,11 @@ func TestRetentionBySize(t testing.TB) {
 		"expected 4 or 5 backup groups, but found %d. Groups: %v", len(grouped), grouped)
 	// each group individually must be a valid backup
 	// TODO(thomas): this might flake when an ongoing backup is not entirely done yet?
-	for k, v := range grouped {
-		t.Logf("testing backup group %s = %v", k, v)
-		requireBackupFilesFound(t, backupPolicy.Name, v)
+	for directory, files := range grouped {
+		t.Logf("testing backup group %s = %v", directory, files)
+
+		expectedDirectory := strings.TrimPrefix(directory, "./")
+		requireBackupFilesFound(t, expectedDirectory, files)
 	}
 }
 
@@ -729,24 +735,24 @@ func listFilesInPVC(t testing.TB, pvcName string, node corev1.Node) []string {
 	return files
 }
 
-func requireBackupFilesFound(t testing.TB, name string, files []string) {
-	// a successful backup will look like this:
-	// ./backup-backup-happy-path-2023-08-03_152313
-	// ./backup-backup-happy-path-2023-08-03_152313/static_kuberesources_2023-08-03_152316__POSSIBLY_DIRTY__.tar.gz
-	// ./backup-backup-happy-path-2023-08-03_152313/snapshot_2023-08-03_152316__POSSIBLY_DIRTY__.db ]
+func requireBackupFilesFound(t testing.TB, expectedDirectory string, files []string) {
+	// expectedDirectory is relative to the inspected storage root, without a leading "./".
+	// Example files:
+	// ./backup-happy-path/static_kuberesources_2023-08-03_152316.tar.gz
+	// ./backup-happy-path/snapshot_2023-08-03_152316.db
 
 	// we assert that there are always at least two files:
 	tarMatchFound := false
 	snapMatchFound := false
 	for _, file := range files {
-		matchesTar, err := regexp.MatchString(`\./backup-`+name+`-.*.tar.gz`, file)
+		matchesTar, err := regexp.MatchString(`^\./`+regexp.QuoteMeta(expectedDirectory)+`/static_kuberesources_.*\.tar\.gz$`, file)
 		require.NoError(t, err)
 		if matchesTar {
 			klog.Infof("Found matching kube resources: %s", file)
 			tarMatchFound = true
 		}
 
-		matchesSnap, err := regexp.MatchString(`\./backup-`+name+`-.*/snapshot_.*.db`, file)
+		matchesSnap, err := regexp.MatchString(`^\./`+regexp.QuoteMeta(expectedDirectory)+`/snapshot_.*\.db$`, file)
 		require.NoError(t, err)
 		if matchesSnap {
 			klog.Infof("Found matching snapshot: %s", file)
@@ -754,8 +760,8 @@ func requireBackupFilesFound(t testing.TB, name string, files []string) {
 		}
 	}
 
-	require.Truef(t, tarMatchFound, "expected tarfile for backup: %s, found files: %v ", name, files)
-	require.Truef(t, snapMatchFound, "expected snapshot for backup: %s, found files: %v ", name, files)
+	require.Truef(t, tarMatchFound, "expected tarfile for backup: %s, found files: %v ", expectedDirectory, files)
+	require.Truef(t, snapMatchFound, "expected snapshot for backup: %s, found files: %v ", expectedDirectory, files)
 }
 
 func groupBackupFilesByRunPrefix(t testing.TB, files []string) map[string][]string {
