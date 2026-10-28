@@ -7,9 +7,11 @@ import (
 	configinformers "github.com/openshift/client-go/config/informers/externalversions"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/controlplanereplicascount"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/configobservation/tlssecurityprofile"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/configobserver"
 	libgoapiserver "github.com/openshift/library-go/pkg/operator/configobserver/apiserver"
+	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resourcesynccontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -31,6 +33,7 @@ func NewConfigObserver(
 	masterNodeLister corev1listers.NodeLister,
 	resourceSyncer resourcesynccontroller.ResourceSyncer,
 	eventRecorder events.Recorder,
+	featureGateAccessor featuregates.FeatureGateAccess,
 ) *ConfigObserver {
 	interestingNamespaces := []string{
 		operatorclient.GlobalUserSpecifiedConfigNamespace,
@@ -86,6 +89,7 @@ func NewConfigObserver(
 			},
 			informers,
 			libgoapiserver.ObserveTLSSecurityProfile,
+			tlssecurityprofile.ObserveTLSGroups(featureGateAccessor),
 			controlplanereplicascount.ObserveControlPlaneReplicas,
 		),
 	}

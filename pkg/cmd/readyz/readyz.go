@@ -15,6 +15,7 @@ import (
 	"go.etcd.io/etcd/client/pkg/v3/tlsutil"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 
 	"github.com/spf13/cobra"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
@@ -46,6 +47,7 @@ type readyzOpts struct {
 	clientKeyFile    string
 	clientCACertFile string
 	cipherSuites     []string
+	curvePreferences []string
 	tlsMinVersion    string
 
 	clientPool *etcdcli.EtcdClientPool
@@ -94,6 +96,7 @@ func (r *readyzOpts) AddFlags(cmd *cobra.Command) {
 	fs := cmd.Flags()
 	fs.Uint16Var(&r.listenPort, "listen-port", r.listenPort, "Listen on this port. Default 9980")
 	fs.StringSliceVar(&r.cipherSuites, "listen-cipher-suites", r.cipherSuites, "readyZ server TLS cipher suites.")
+	fs.StringSliceVar(&r.curvePreferences, "listen-curve-preferences", r.curvePreferences, "readyZ server TLS curve preferences. Names match etcd --curve-preferences.")
 	fs.StringVar(&r.tlsMinVersion, "listen-tls-min-version", r.tlsMinVersion, "Minimum TLS version supported by readyZ server. Possible values: TLS1.2, TLS1.3.")
 	fs.DurationVar(&r.dialTimeout, "dial-timeout", r.dialTimeout, "Dial timeout for the client. Default 2s")
 	fs.StringVar(&r.targetEndpoint, "target", r.targetEndpoint, "Target endpoint to perform health check against. Default https://localhost:2379")
@@ -132,6 +135,9 @@ func (r *readyzOpts) Validate() error {
 	_, err := tlsutil.GetCipherSuites(r.cipherSuites)
 	if err != nil {
 		return fmt.Errorf("invalid TLS cipher suites passed via --listen-cipher-suites: %v, err=%w", r.cipherSuites, err)
+	}
+	if _, err := tlshelpers.ParseEtcdCurveNames(r.curvePreferences); err != nil {
+		return fmt.Errorf("invalid TLS curves passed via --listen-curve-preferences: %v, err=%w", r.curvePreferences, err)
 	}
 
 	return nil
@@ -192,12 +198,17 @@ func (r *readyzOpts) Run() error {
 		cancel()
 		return err
 	}
+	curves, err := tlshelpers.ParseEtcdCurveNames(r.curvePreferences)
+	if err != nil {
+		cancel()
+		return err
+	}
 
 	httpServer := &http.Server{
 		Addr:        addr,
 		Handler:     mux,
 		BaseContext: func(_ net.Listener) context.Context { return shutdownCtx },
-		TLSConfig:   &tls.Config{CipherSuites: suites, MinVersion: tlsMinVersion},
+		TLSConfig:   &tls.Config{CipherSuites: suites, MinVersion: tlsMinVersion, CurvePreferences: curves},
 	}
 
 	go func() {

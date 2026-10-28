@@ -35,6 +35,7 @@ type PodSubstitutionTemplate struct {
 	EnvVars             []NameValue
 	BackupArgs          []string
 	CipherSuites        string
+	CurvePreferences    string
 	EnableEtcdContainer bool
 	ReadinessProbe      ProbeConfig
 	LivenessProbe       ProbeConfig
@@ -119,6 +120,7 @@ func GetPodSubstitution(
 		SnapshotCount:       5000,
 		EnvVars:             nameValues,
 		CipherSuites:        envVarMap["ETCD_CIPHER_SUITES"],
+		CurvePreferences:    envVarMap["ETCD_CURVE_PREFERENCES"],
 		EnableEtcdContainer: !shouldRemoveEtcdContainer,
 		ReadinessProbe:      defaultReadinessProbeConfig,
 		LivenessProbe:       defaultLivenessProbeConfig,

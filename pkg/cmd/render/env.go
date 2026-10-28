@@ -17,16 +17,18 @@ var envVarFns = []envVarFunc{
 	getUnsupportedArch,
 	getEtcdName,
 	getTLSCipherSuites,
+	getTLSCurvePreferences,
 	getMaxLearners,
 }
 
 type envVarData struct {
-	platform         string
-	arch             string
-	installConfig    map[string]any
-	platformData     string
-	hostname         string
-	inPlaceBootstrap bool
+	platform            string
+	arch                string
+	installConfig       map[string]any
+	platformData        string
+	hostname            string
+	inPlaceBootstrap    bool
+	tlsGroupPreferences bool
 }
 
 type envVarFunc func(e *envVarData) (map[string]string, error)
@@ -107,6 +109,28 @@ func getTLSCipherSuites(_ *envVarData) (map[string]string, error) {
 	cipherSuites = tlshelpers.SupportedEtcdCiphers(cipherSuites)
 	return map[string]string{
 		"ETCD_CIPHER_SUITES": strings.Join(cipherSuites, ","),
+	}, nil
+}
+
+// getTLSCurvePreferences sets the curves used by the bootstrap etcd member.
+// The list is the Intermediate profile, translated to etcd --curve-preferences
+// names. It is set only when TLSGroupPreferences is enabled so default
+// installs keep etcd's built-in curve selection.
+func getTLSCurvePreferences(e *envVarData) (map[string]string, error) {
+	if !e.tlsGroupPreferences {
+		return nil, nil
+	}
+	profileSpec := configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
+	groups := make([]string, len(profileSpec.Groups))
+	for i, group := range profileSpec.Groups {
+		groups[i] = string(group)
+	}
+	curves := tlshelpers.SupportedEtcdCurves(groups)
+	if len(curves) == 0 {
+		return nil, fmt.Errorf("no etcd-supported TLS curves in TLSProfileIntermediateType")
+	}
+	return map[string]string{
+		"ETCD_CURVE_PREFERENCES": strings.Join(curves, ","),
 	}, nil
 }
 

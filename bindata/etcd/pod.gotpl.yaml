@@ -283,6 +283,9 @@ spec:
         {{- if .CipherSuites }}
           --listen-cipher-suites {{ .CipherSuites }} \
           {{ end -}}
+        {{- if .CurvePreferences }}
+          --listen-curve-preferences {{ .CurvePreferences }} \
+          {{ end -}}
           --tls-min-version $(ETCD_TLS_MIN_VERSION)
     ports:
     - containerPort: 9979
@@ -332,6 +335,9 @@ spec:
           --client-cacert-file=$(ETCDCTL_CACERT) \
         {{- if .CipherSuites }}
           --listen-cipher-suites {{ .CipherSuites }} \
+          {{ end -}}
+        {{- if .CurvePreferences }}
+          --listen-curve-preferences {{ .CurvePreferences }} \
           {{ end -}}
           --listen-tls-min-version=$(ETCD_TLS_MIN_VERSION)
     securityContext:
