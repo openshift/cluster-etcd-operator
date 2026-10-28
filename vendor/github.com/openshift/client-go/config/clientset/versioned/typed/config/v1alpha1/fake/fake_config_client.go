@@ -12,10 +12,6 @@ type FakeConfigV1alpha1 struct {
 	*testing.Fake
 }
 
-func (c *FakeConfigV1alpha1) CRIOCredentialProviderConfigs() v1alpha1.CRIOCredentialProviderConfigInterface {
-	return newFakeCRIOCredentialProviderConfigs(c)
-}
-
 func (c *FakeConfigV1alpha1) ClusterMonitorings() v1alpha1.ClusterMonitoringInterface {
 	return newFakeClusterMonitorings(c)
 }

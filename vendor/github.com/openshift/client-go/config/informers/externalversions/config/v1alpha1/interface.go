@@ -8,8 +8,6 @@ import (
 
 // Interface provides access to all the informers in this group version.
 type Interface interface {
-	// CRIOCredentialProviderConfigs returns a CRIOCredentialProviderConfigInformer.
-	CRIOCredentialProviderConfigs() TypedCRIOCredentialProviderConfigInformer
 	// ClusterMonitorings returns a ClusterMonitoringInformer.
 	ClusterMonitorings() TypedClusterMonitoringInformer
 	// ControllerManagers returns a ControllerManagerInformer.
@@ -29,11 +27,6 @@ type version struct {
 // New returns a new Interface.
 func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakListOptions internalinterfaces.TweakListOptionsFunc) Interface {
 	return &version{factory: f, namespace: namespace, tweakListOptions: tweakListOptions}
-}
-
-// CRIOCredentialProviderConfigs returns a TypedCRIOCredentialProviderConfigInformer.
-func (v *version) CRIOCredentialProviderConfigs() TypedCRIOCredentialProviderConfigInformer {
-	return &cRIOCredentialProviderConfigInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
 }
 
 // ClusterMonitorings returns a TypedClusterMonitoringInformer.

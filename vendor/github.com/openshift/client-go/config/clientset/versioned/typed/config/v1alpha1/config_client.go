@@ -12,7 +12,6 @@ import (
 
 type ConfigV1alpha1Interface interface {
 	RESTClient() rest.Interface
-	CRIOCredentialProviderConfigsGetter
 	ClusterMonitoringsGetter
 	ControllerManagersGetter
 	InsightsDataGathersGetter
@@ -22,10 +21,6 @@ type ConfigV1alpha1Interface interface {
 // ConfigV1alpha1Client is used to interact with features provided by the config.openshift.io group.
 type ConfigV1alpha1Client struct {
 	restClient rest.Interface
-}
-
-func (c *ConfigV1alpha1Client) CRIOCredentialProviderConfigs() CRIOCredentialProviderConfigInterface {
-	return newCRIOCredentialProviderConfigs(c)
 }
 
 func (c *ConfigV1alpha1Client) ClusterMonitorings() ClusterMonitoringInterface {

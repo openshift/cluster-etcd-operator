@@ -2,10 +2,6 @@
 
 package v1alpha1
 
-// CRIOCredentialProviderConfigListerExpansion allows custom methods to be added to
-// CRIOCredentialProviderConfigLister.
-type CRIOCredentialProviderConfigListerExpansion interface{}
-
 // ClusterMonitoringListerExpansion allows custom methods to be added to
 // ClusterMonitoringLister.
 type ClusterMonitoringListerExpansion interface{}

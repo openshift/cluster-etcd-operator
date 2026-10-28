@@ -2,8 +2,6 @@
 
 package v1alpha1
 
-type CRIOCredentialProviderConfigExpansion interface{}
-
 type ClusterMonitoringExpansion interface{}
 
 type ControllerManagerExpansion interface{}
