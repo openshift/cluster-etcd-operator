@@ -992,12 +992,29 @@ func shouldDelay(since time.Time, gracePeriod time.Duration) (time.Duration, boo
 
 // generateBackupJobName creates a deterministic job name for deduplication
 func generateBackupJobName(backup *operatorv1alpha1.EtcdBackup) string {
-	// TODO: Consider hash-based name
-	return backup.Name
+	prefix := "backup"
+	suffix := shortHash(backup.Name)
+	return joinName(prefix, backup.Name, suffix)
 }
 
 func shortHash(parts ...string) string {
 	hash := sha256.Sum256([]byte(strings.Join(parts, "")))
 	shortHash := hex.EncodeToString(hash[:])[:10]
 	return shortHash
+}
+
+// joinName joins the parts of name with "-" and ensures the total length is less than maxNameLength.
+// The prefix and suffix stay fixed length, with the middle "name" component shortened to fit within the length requirements.
+func joinName(prefix, name, suffix string) string {
+	if !strings.HasSuffix(prefix, "-") {
+		prefix = prefix + "-"
+	}
+	if !strings.HasPrefix(suffix, "-") {
+		suffix = "-" + suffix
+	}
+	remaining := maxNameLength - len(prefix) - len(suffix)
+	if len(name) > remaining {
+		name = strings.TrimRight(name[:remaining], "-")
+	}
+	return prefix + name + suffix
 }

@@ -4,18 +4,21 @@ metadata:
   name: system:openshift:operator:etcd-backup-role
 rules:
   - apiGroups:
+      - ""
+    resources:
+      - "nodes"
+    verbs:
+      - "list"
+  - apiGroups:
       - "operator.openshift.io"
     resources:
       - "etcdbackups"
-      - "etcdbackups/status"
-      - "etcdbackups/finalizers"
     verbs:
+      - "list"
       - "create"
-      - "update"
-      - "delete"
   - apiGroups:
-      - "batch"
+      - "operator.openshift.io"
     resources:
-      - "jobs/finalizers"
+      - "etcdbackuppolicies"
     verbs:
-      - "update"
+      - "get"

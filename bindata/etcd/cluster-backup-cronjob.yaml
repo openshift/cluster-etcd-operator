@@ -1,0 +1,44 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: templated
+  namespace: openshift-etcd
+  labels:
+    app: cluster-backup-cronjob
+spec:
+  schedule: "templated"
+  concurrencyPolicy: "Forbid"
+  failedJobsHistoryLimit: 10
+  successfulJobsHistoryLimit: 5
+  jobTemplate:
+    metadata:
+      labels:
+        app: cluster-backup-cronjob
+    spec:
+      template:
+        metadata:
+          annotations:
+            target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
+          labels:
+            app: cluster-backup-cronjob
+        spec:
+          containers:
+            - name: cluster-backup
+              imagePullPolicy: IfNotPresent
+              terminationMessagePolicy: FallbackToLogsOnError
+              command: [ "cluster-etcd-operator" ]
+              args:
+                - request-backup
+                - --name=$(JOB_NAME)
+                - --policy=$(ETCD_BACKUP_POLICY_NAME)
+              env:
+                - name: JOB_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.labels['batch.kubernetes.io/job-name']
+          serviceAccountName: etcd-backup-sa
+          nodeSelector:
+            node-role.kubernetes.io/control-plane: ""
+          tolerations:
+            - operator: "Exists"
+          restartPolicy: OnFailure

@@ -496,12 +496,14 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	if enabledAutoBackupFeature {
 		etcdBackupInformer := operatorInformers.Operator().V1alpha1().EtcdBackups()
 		etcdBackupPoliciesInformer := operatorInformers.Operator().V1alpha1().EtcdBackupPolicies()
+		cronJobsInformer := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().CronJobs()
 		jobsInformer := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs()
 		podsInformer := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods()
 		pvcsInformer := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().PersistentVolumeClaims()
 
 		backupsLister := etcdBackupInformer.Lister()
 		backupPoliciesLister := etcdBackupPoliciesInformer.Lister()
+		cronJobsLister := cronJobsInformer.Lister().CronJobs(operatorclient.TargetNamespace)
 		jobsLister := jobsInformer.Lister().Jobs(operatorclient.TargetNamespace)
 		podsLister := podsInformer.Lister().Pods(operatorclient.TargetNamespace)
 		pvcsLister := pvcsInformer.Lister().PersistentVolumeClaims(operatorclient.TargetNamespace)
@@ -527,17 +529,16 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 		backupPolicyController := backuppolicycontroller.NewBackupPolicyController(
 			AlivenessChecker,
-			backupsLister,
 			backupPoliciesLister,
-			controlPlaneNodeLister,
+			cronJobsLister,
 			operatorConfigClientv1Alpha1,
+			kubeClient,
 			operatorClient,
 			controllerContext.EventRecorder,
 			os.Getenv("OPERATOR_IMAGE"),
 			featureGateAccessor,
 			etcdBackupPoliciesInformer.Informer(),
-			etcdBackupInformer.Informer(),
-			controlPlaneNodeInformer)
+			cronJobsInformer.Informer())
 
 		backupPolicyRetentionController, err := backuppolicycontroller.NewBackupPolicyRetentionController(
 			AlivenessChecker,
