@@ -112,7 +112,10 @@ func FakeNode(name string, configs ...func(node *corev1.Node)) *corev1.Node {
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
-			UID:  uuid.NewUUID(),
+			Labels: map[string]string{
+				corev1.LabelHostname: name,
+			},
+			UID: uuid.NewUUID(),
 		},
 	}
 	for _, config := range configs {

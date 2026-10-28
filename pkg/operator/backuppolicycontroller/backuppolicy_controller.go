@@ -3,45 +3,47 @@ package backuppolicycontroller
 import (
 	"context"
 	"fmt"
-	"slices"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/robfig/cron/v3"
+	"k8s.io/apimachinery/pkg/api/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorv1alpha1client "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
 	operatorv1alpha1listers "github.com/openshift/client-go/operator/listers/operator/v1alpha1"
+	"github.com/openshift/cluster-etcd-operator/bindata"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
-	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/kubernetes"
+	batchv1listers "k8s.io/client-go/listers/batch/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 )
 
 const (
-	maxNameLength = 63
+	jobFinishedTTL = 4 * time.Hour
 )
 
 type BackupPolicyController struct {
-	backupsLister         operatorv1alpha1listers.EtcdBackupLister
 	backupPoliciesLister  operatorv1alpha1listers.EtcdBackupPolicyLister
-	nodeLister            corev1listers.NodeLister
+	cronJobLister         batchv1listers.CronJobNamespaceLister
 	operatorClient        operatorv1alpha1client.OperatorV1alpha1Interface
+	kubeClient            kubernetes.Interface
 	operatorImagePullSpec string
 	featureGateAccessor   featuregates.FeatureGateAccess
 	eventRecorder         events.Recorder
@@ -50,23 +52,22 @@ type BackupPolicyController struct {
 
 func NewBackupPolicyController(
 	livenessChecker *health.MultiAlivenessChecker,
-	backupsLister operatorv1alpha1listers.EtcdBackupLister,
 	backupPoliciesLister operatorv1alpha1listers.EtcdBackupPolicyLister,
-	nodeLister corev1listers.NodeLister,
+	cronJobLister batchv1listers.CronJobNamespaceLister,
 	operatorClient operatorv1alpha1client.OperatorV1alpha1Interface,
+	kubeClient kubernetes.Interface,
 	staticPodOperatorClient v1helpers.OperatorClient,
 	eventRecorder events.Recorder,
 	operatorImagePullSpec string,
 	accessor featuregates.FeatureGateAccess,
 	etcdBackupPolicyInformer factory.Informer,
-	etcdBackupInformer factory.Informer,
-	nodeInformer cache.SharedIndexInformer) factory.Controller {
+	cronJobInformer cache.SharedIndexInformer) factory.Controller {
 
 	c := &BackupPolicyController{
-		backupsLister:         backupsLister,
 		backupPoliciesLister:  backupPoliciesLister,
-		nodeLister:            nodeLister,
+		cronJobLister:         cronJobLister,
 		operatorClient:        operatorClient,
+		kubeClient:            kubeClient,
 		operatorImagePullSpec: operatorImagePullSpec,
 		featureGateAccessor:   accessor,
 		eventRecorder:         eventRecorder.WithComponentSuffix("backup-policy-controller"),
@@ -82,19 +83,15 @@ func NewBackupPolicyController(
 				if backupPolicy, ok := o.(*operatorv1alpha1.EtcdBackupPolicy); ok {
 					return []string{backupPolicy.Name}
 				}
-				if backup, ok := o.(*operatorv1alpha1.EtcdBackup); ok {
-					// Only trigger sync from backups when they are completed or failed
-					if backupPolicyName := backup.Labels[backuphelpers.LabelEtcdBackupPolicy]; backupPolicyName != "" && backuphelpers.IsBackupFinished(backup) {
+				if cronJob, ok := o.(*batchv1.CronJob); ok && cronJob.Labels != nil {
+					if backupPolicyName := cronJob.Labels[backuphelpers.LabelEtcdBackupPolicy]; backupPolicyName != "" {
 						return []string{backupPolicyName}
 					}
 				}
 				return nil
 			},
 			etcdBackupPolicyInformer,
-			etcdBackupInformer,
-		).
-		WithBareInformers(
-			nodeInformer,
+			cronJobInformer,
 		).
 		WithSync(syncer.Sync).
 		WithPostStartHooks(func(ctx context.Context, syncCtx factory.SyncContext) error {
@@ -134,49 +131,54 @@ func (c *BackupPolicyController) sync(ctx context.Context, syncCtx factory.SyncC
 	} else if backupPolicy.DeletionTimestamp != nil {
 		return nil
 	}
+	return c.reconcileCronJob(ctx, backupPolicy)
+}
 
-	if len(backupPolicy.Status.Active) > 0 {
-		backupPolicy, err = c.syncActive(ctx, backupPolicy)
+func (c *BackupPolicyController) reconcileCronJob(ctx context.Context, backupPolicy *operatorv1alpha1.EtcdBackupPolicy) error {
+	create := false
+	currentCronJob, err := c.cronJobLister.Get(backupPolicy.Name)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			create = true
+		} else {
+			return fmt.Errorf("BackupPolicyController could not get cronjob %s: %w", backupPolicy.Name, err)
+		}
+	}
+
+	cronJob, err := newCronJob(backupPolicy, c.operatorImagePullSpec)
+	if err != nil {
+		return err
+	}
+
+	cronJobClient := c.kubeClient.BatchV1().CronJobs(operatorclient.TargetNamespace)
+	if create {
+		_, err := cronJobClient.Create(ctx, cronJob, v1.CreateOptions{})
 		if err != nil {
-			return err
-		} else if len(backupPolicy.Status.Active) > 0 {
-			return nil
+			return fmt.Errorf("BackupPolicyController could not create cronjob %s: %w", cronJob.Name, err)
+		}
+	} else {
+		if cronSpecDiffers(cronJob.Spec, currentCronJob.Spec) {
+			klog.V(4).Infof("detected diff in cronjob specs, updating cronjob: %s", cronJob.Name)
+			_, err := cronJobClient.Update(ctx, cronJob, v1.UpdateOptions{})
+			if err != nil {
+				return fmt.Errorf("BackupPolicyController could not update cronjob %s: %w", cronJob.Name, err)
+			}
 		}
 	}
 
-	cronSched := backupPolicy.Spec.Schedule
-	if backupPolicy.Spec.TimeZone != "" {
-		cronSched = fmt.Sprintf("TZ=%s %s", backupPolicy.Spec.TimeZone, cronSched)
-	}
-	schedule, err := c.cronParser.Parse(cronSched)
-	if err != nil {
-		return fmt.Errorf("BackupPolicyController failed to parse %s schedule: %w", backupPolicyName, err)
-	}
-	scheduleTime, err := nextScheduleTime(backupPolicy, time.Now(), schedule)
-	if err != nil {
-		return fmt.Errorf("BackupPolicyController failed to calculate next schedule time for EtcdBackupPolicy %s: %w", backupPolicy.Name, err)
-	}
-
-	if scheduleTime != nil {
-		if err := c.executeBackup(ctx, backupPolicy, *scheduleTime); err != nil {
-			return fmt.Errorf("BackupPolicyController failed to execute backup for EtcdBackupPolicy %s: %w", backupPolicy.Name, err)
-		}
-	}
 	return nil
 }
 
-func (c *BackupPolicyController) hasActiveBackup(ctx context.Context, backupPolicy *operatorv1alpha1.EtcdBackupPolicy) bool {
-	// Live API call to ensure no EtcdBackups are missed
-	backupList, err := c.operatorClient.EtcdBackups().List(ctx, v1.ListOptions{
-		LabelSelector: backuphelpers.LabelEtcdBackupPolicy + "=" + backupPolicy.Name,
-	})
-	if err != nil {
-		klog.V(4).Infof("BackupPolicyController failed to list EtcdBackups for EtcdBackupPolicy %s: %s", backupPolicy.Name, err)
+func cronSpecDiffers(l batchv1.CronJobSpec, r batchv1.CronJobSpec) bool {
+	lBytes, _ := l.Marshal()
+	rBytes, _ := r.Marshal()
+
+	if len(lBytes) != len(rBytes) {
 		return true
 	}
 
-	for _, backup := range backupList.Items {
-		if !backuphelpers.IsBackupFinished(&backup) {
+	for i := range lBytes {
+		if lBytes[i] != rBytes[i] {
 			return true
 		}
 	}
@@ -184,174 +186,44 @@ func (c *BackupPolicyController) hasActiveBackup(ctx context.Context, backupPoli
 	return false
 }
 
-func (c *BackupPolicyController) syncActive(ctx context.Context, backupPolicy *operatorv1alpha1.EtcdBackupPolicy) (*operatorv1alpha1.EtcdBackupPolicy, error) {
-	backups, err := c.backupsLister.List(labels.SelectorFromSet(labels.Set{backuphelpers.LabelEtcdBackupPolicy: backupPolicy.Name}))
+func newCronJob(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, operatorImagePullSpec string) (*batchv1.CronJob, error) {
+	scheme := runtime.NewScheme()
+	codec := serializer.NewCodecFactory(scheme)
+	err := batchv1.AddToScheme(scheme)
 	if err != nil {
-		return backupPolicy, fmt.Errorf("BackupPolicyController failed to list EtcdBackups: %w", err)
-	}
-	backupPolicy = backupPolicy.DeepCopy()
-
-	updateStatus := false
-	activeMap := map[types.UID]string{}
-	lastSuccessfulTime, _ := getConditionTimestamp(backupPolicy.Status.Conditions, string(operatorv1alpha1.BackupPolicyLastSuccessfulTime))
-	for _, backup := range backups {
-		if !backuphelpers.IsBackupFinished(backup) {
-			activeMap[backup.UID] = backup.Name
-		} else {
-			for _, condition := range backup.Status.Conditions {
-				if condition.Status == v1.ConditionTrue && condition.Type == string(operatorv1alpha1.BackupCompleted) && condition.LastTransitionTime.After(lastSuccessfulTime) {
-					lastSuccessfulTime = condition.LastTransitionTime.Time
-					updateStatus = true
-				}
-			}
-		}
-	}
-	if updateStatus {
-		updateCondition(backupPolicy.Status.Conditions, v1.Condition{
-			Type:               string(operatorv1alpha1.BackupPolicyLastSuccessfulTime),
-			Reason:             string(operatorv1alpha1.BackupPolicyLastSuccessfulTime),
-			LastTransitionTime: v1.Time{Time: lastSuccessfulTime},
-			Status:             v1.ConditionTrue,
-		})
+		return nil, fmt.Errorf("BackupPolicyController could not add batchv1 scheme: %w", err)
 	}
 
-	active := backupPolicy.Status.Active[:0]
-	for _, backupRef := range backupPolicy.Status.Active {
-		uid := types.UID(backupRef.UID)
-		if activeMap[uid] == backupRef.Name {
-			delete(activeMap, uid)
-			active = append(active, backupRef)
-		}
-	}
-
-	if len(active) != len(backupPolicy.Status.Active) || len(activeMap) > 0 {
-		updateStatus = true
-	}
-	for uid, name := range activeMap {
-		klog.Warningf("BackupPolicyController saw unexepected backup that the controller didn't create or it forgot: %s", name)
-		active = append(active, operatorv1alpha1.EtcdBackupReference{Name: name, UID: string(uid)})
-	}
-	backupPolicy.Status.Active = active
-
-	if updateStatus {
-		if backupPolicy, err = c.operatorClient.EtcdBackupPolicies().UpdateStatus(ctx, backupPolicy, v1.UpdateOptions{}); err != nil {
-			return backupPolicy, fmt.Errorf("BackupPolicyController failed to update EtcdBackupPolicy active backups: %w", err)
-		}
-	}
-
-	return backupPolicy, nil
-}
-
-// executeBackup creates EtcdBackup resources the current schedule execution
-func (c *BackupPolicyController) executeBackup(ctx context.Context, backupPolicy *operatorv1alpha1.EtcdBackupPolicy, scheduleTime time.Time) error {
-	// If any backups for this policy are currently active, then we skip this execution
-	if c.hasActiveBackup(ctx, backupPolicy) {
-		return nil
-	}
-
-	// Get control plane nodes
-	var selector labels.Selector
-	if len(backupPolicy.Spec.NodeSelector) != 0 {
-		selector = labels.SelectorFromSet(backupPolicy.Spec.NodeSelector)
-	}
-	controlPlaneNodes, err := backuphelpers.SelectBackupNodes(c.nodeLister, selector)
+	obj, err := runtime.Decode(codec.UniversalDecoder(batchv1.SchemeGroupVersion), bindata.MustAsset("etcd/cluster-backup-cronjob.yaml"))
 	if err != nil {
-		return fmt.Errorf("BackupPolicyController failed to select control plane nodes for backup: %w", err)
+		return nil, fmt.Errorf("BackupPolicyController could not decode batchv1 job scheme: %w", err)
 	}
-	if len(controlPlaneNodes) == 0 {
-		c.eventRecorder.Warningf("BackupExecutionSkipped",
-			"No control plane nodes found for backup %s, skipping this execution", backupPolicy.Name)
-		// TODO: Retry backoff?
-		return nil
-	}
+	cronJob := obj.(*batchv1.CronJob)
 
-	// Build the set of EtcdBackups to create. Local backups are taken once per control plane node and pinned to that
-	// node (the hostPath is node-specific). PVC backups are node-independent: a single backup is created and
-	// the scheduler decides placement based on the volume's topology.
-	var toCreate []*operatorv1alpha1.EtcdBackup
-	if backupPolicy.Spec.Storage.Type == operatorv1alpha1.EtcdBackupStorageTypePVC {
-		toCreate = append(toCreate, &operatorv1alpha1.EtcdBackup{
-			ObjectMeta: v1.ObjectMeta{
-				Name: generatePVCEtcdBackupName(backupPolicy.Name, scheduleTime),
-				Labels: map[string]string{
-					backuphelpers.LabelEtcdBackupPolicy: backupPolicy.Name,
-				},
-			},
-			Spec: operatorv1alpha1.EtcdBackupSpec{
-				NodeSelector: backupPolicy.Spec.NodeSelector,
-				Storage:      backupPolicy.Spec.Storage,
-			},
-		})
-	} else {
-		for _, node := range controlPlaneNodes {
-			if hostname, ok := node.Labels[corev1.LabelHostname]; ok {
-				toCreate = append(toCreate, &operatorv1alpha1.EtcdBackup{
-					ObjectMeta: v1.ObjectMeta{
-						Name: generateEtcdBackupName(backupPolicy.Name, node.UID, scheduleTime),
-						Labels: map[string]string{
-							backuphelpers.LabelEtcdBackupPolicy: backupPolicy.Name,
-						},
-					},
-					Spec: operatorv1alpha1.EtcdBackupSpec{
-						NodeSelector: map[string]string{corev1.LabelHostname: hostname},
-						Storage:      backupPolicy.Spec.Storage,
-					},
-				})
-			}
-		}
-	}
-
-	// Track failed creations
-	failedCreations := []string{}
-
-	etcdBackupsClient := c.operatorClient.EtcdBackups()
-	active := make([]operatorv1alpha1.EtcdBackupReference, 0, len(toCreate))
-	for _, etcdBackup := range toCreate {
-		backupName := etcdBackup.Name
-		nodeName := etcdBackup.Status.NodeName
-		if backup, err := etcdBackupsClient.Create(ctx, etcdBackup, v1.CreateOptions{}); err != nil {
-			if apierrors.IsAlreadyExists(err) {
-				backup, err = etcdBackupsClient.Get(ctx, backupName, v1.GetOptions{})
-				if err != nil {
-					return fmt.Errorf("BackupPolicyController failed to retrieve duplicate backup %s: %w", backupName, err)
-				}
-				if backup.Labels[backuphelpers.LabelEtcdBackupPolicy] == backupPolicy.Name {
-					active = append(active, operatorv1alpha1.EtcdBackupReference{Name: backup.Name, UID: string(backup.UID)})
-				}
-
-			} else {
-				failedCreations = append(failedCreations, backupName)
-				klog.Warningf("Failed to create EtcdBackup %s (node %q): %v", backupName, nodeName, err)
-			}
-		} else {
-			active = append(active, operatorv1alpha1.EtcdBackupReference{Name: backup.Name, UID: string(backup.UID)})
-			klog.V(2).Infof("BackupPolicyController created EtcdBackup %s (node %q)", backupName, nodeName)
-		}
-	}
-
-	// Update Backup status with last execution time
-	backupPolicy = backupPolicy.DeepCopy()
-	backupPolicy.Status.Active = active
-	backupPolicy.Status.Conditions = updateCondition(backupPolicy.Status.Conditions, v1.Condition{
-		Type:               string(operatorv1alpha1.BackupPolicyLastScheduled),
-		Reason:             string(operatorv1alpha1.BackupPolicyLastScheduled),
-		LastTransitionTime: v1.Time{Time: time.Now()},
-		Status:             v1.ConditionTrue,
+	cronJob.Name = backupPolicy.Name
+	cronJob.Labels[backuphelpers.LabelEtcdBackupPolicy] = backupPolicy.Name
+	cronJob.OwnerReferences = append(cronJob.OwnerReferences, v1.OwnerReference{
+		APIVersion: operatorv1alpha1.GroupVersion.String(),
+		Kind:       "EtcdBackupPolicy",
+		Name:       backupPolicy.Name,
+		UID:        backupPolicy.UID,
 	})
-	if _, err := c.operatorClient.EtcdBackupPolicies().UpdateStatus(ctx, backupPolicy, v1.UpdateOptions{}); err != nil {
-		// Don't fail the backup execution if status update fails
-		klog.Warningf("Failed to update backup status: %v", err)
+
+	cronJob.Spec.Schedule = backupPolicy.Spec.Schedule
+	if backupPolicy.Spec.TimeZone != "" {
+		cronJob.Spec.TimeZone = &backupPolicy.Spec.TimeZone
 	}
 
-	if len(failedCreations) > 0 {
-		c.eventRecorder.Warningf("PartialBackupFailure",
-			"Failed to create backups: %v", failedCreations)
-	} else if len(active) > 0 {
-		c.eventRecorder.Eventf("BackupScheduled",
-			"Created %d EtcdBackup resources for scheduled backup", len(active))
-	}
+	cronJob.Spec.JobTemplate.Spec.TTLSecondsAfterFinished = new(int32(jobFinishedTTL.Seconds()))
+	cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Image = operatorImagePullSpec
+	cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Env = append(cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Env,
+		corev1.EnvVar{
+			Name:  "ETCD_BACKUP_POLICY_NAME",
+			Value: backupPolicy.Name,
+		},
+	)
 
-	return nil
+	return obj.(*batchv1.CronJob), nil
 }
 
 func updateControllerDegradedCondition(ctx context.Context, operatorClient v1helpers.OperatorClient, status operatorv1.ConditionStatus, reason string) {
@@ -363,112 +235,4 @@ func updateControllerDegradedCondition(ctx context.Context, operatorClient v1hel
 	if updateErr != nil {
 		klog.V(4).Infof("BackupPolicyController error during UpdateStatus: %v", updateErr)
 	}
-}
-
-// generatePVCEtcdBackupName produces a deterministic name for a node-independent PVC backup. Only one PVC
-// backup is created per policy execution, so the node UID is not part of the name.
-// TODO(bhperry): follow up with a hash-based naming scheme shared across both backup types.
-func generatePVCEtcdBackupName(backupPolicyName string, scheduleTime time.Time) string {
-	minutesHash := strconv.FormatInt(scheduleTime.Unix()/60, 10)
-
-	maxLen := maxNameLength - len(minutesHash) - 1
-	if len(backupPolicyName) > maxLen {
-		backupPolicyName = backupPolicyName[:maxLen]
-	}
-	return backupPolicyName + "-" + minutesHash
-}
-
-func generateEtcdBackupName(backupPolicyName string, nodeUID types.UID, scheduleTime time.Time) string {
-	// Use a "minute hash" to generate backup names from a policy. Schedules can't fire more
-	// than once per minute, and this ensures backups aren't duplicated.
-	minutesHash := strconv.FormatInt(scheduleTime.Unix()/60, 10)
-
-	uid := strings.ReplaceAll(string(nodeUID), "-", "")
-	maxLen := maxNameLength - len(uid) - len(minutesHash) - 2
-	if len(backupPolicyName) > maxLen {
-		backupPolicyName = backupPolicyName[:maxLen]
-	}
-	return backupPolicyName + "-" + uid + "-" + minutesHash
-}
-
-func nextScheduleTime(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, now time.Time, schedule cron.Schedule) (*time.Time, error) {
-	_, mostRecentTime, missedSchedules, err := mostRecentScheduleTime(backupPolicy, now, schedule)
-
-	if mostRecentTime == nil || mostRecentTime.After(now) {
-		return nil, err
-	}
-
-	if missedSchedules > 100 {
-		klog.Warningf("BackupPolicyController missed %d backup start times", missedSchedules)
-	}
-	return mostRecentTime, err
-}
-
-func mostRecentScheduleTime(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, now time.Time, schedule cron.Schedule) (time.Time, *time.Time, int64, error) {
-	earliestTime := backupPolicy.CreationTimestamp.Time
-	if lastScheduled, ok := getConditionTimestamp(backupPolicy.Status.Conditions, string(operatorv1alpha1.BackupPolicyLastScheduled)); ok {
-		earliestTime = lastScheduled
-	}
-
-	t1 := schedule.Next(earliestTime)
-	t2 := schedule.Next(t1)
-
-	if now.Before(t1) {
-		return earliestTime, nil, 0, nil
-	}
-	if now.Before(t2) {
-		return earliestTime, &t1, 0, nil
-	}
-
-	// It is possible for cron.ParseStandard("59 23 31 2 *") to return an invalid schedule
-	// minute - 59, hour - 23, dom - 31, month - 2, and dow is optional, clearly 31 is invalid
-	// In this case the timeBetweenTwoSchedules will be 0, and we error out the invalid schedule
-	timeBetweenTwoSchedules := int64(t2.Sub(t1).Round(time.Second).Seconds())
-	if timeBetweenTwoSchedules < 1 {
-		return earliestTime, nil, 0, fmt.Errorf("time difference between two schedules is less than 1 second")
-	}
-	// this logic used for calculating number of missed schedules does a rough
-	// approximation, by calculating a diff between two schedules (t1 and t2),
-	// and counting how many of these will fit in between last schedule and now
-	timeElapsed := int64(now.Sub(t1).Seconds())
-	numberOfMissedSchedules := (timeElapsed / timeBetweenTwoSchedules) + 1
-
-	var mostRecentTime time.Time
-	// to get the most recent time accurate for regular schedules and the ones
-	// specified with @every form, we first need to calculate the potential earliest
-	// time by multiplying the initial number of missed schedules by its interval,
-	// this is critical to ensure @every starts at the correct time, this explains
-	// the numberOfMissedSchedules-1, the additional -1 serves there to go back
-	// in time one more time unit, and let the cron library calculate a proper
-	// schedule, for case where the schedule is not consistent, for example
-	// something like  30 6-16/4 * * 1-5
-	potentialEarliest := t1.Add(time.Duration((numberOfMissedSchedules-1-1)*timeBetweenTwoSchedules) * time.Second)
-	for t := schedule.Next(potentialEarliest); !t.After(now); t = schedule.Next(t) {
-		mostRecentTime = t
-	}
-
-	if mostRecentTime.IsZero() {
-		return earliestTime, nil, numberOfMissedSchedules, nil
-	}
-	return earliestTime, &mostRecentTime, numberOfMissedSchedules, nil
-}
-
-func getConditionTimestamp(conditions []v1.Condition, conditionType string) (time.Time, bool) {
-	for _, condition := range conditions {
-		if condition.Type == conditionType {
-			return condition.LastTransitionTime.Time, true
-		}
-	}
-	return time.Time{}, false
-}
-
-func updateCondition(conditions []v1.Condition, updated v1.Condition) []v1.Condition {
-	i := slices.IndexFunc(conditions, func(c v1.Condition) bool {
-		return c.Type == updated.Type
-	})
-	if i < 0 {
-		return append(conditions, updated)
-	}
-	conditions[i] = updated
-	return conditions
 }

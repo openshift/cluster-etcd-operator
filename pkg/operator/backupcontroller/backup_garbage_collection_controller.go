@@ -569,22 +569,18 @@ func (sb storageBackend) String() string {
 
 // generateBackupGCJobName creates a hash-based name for deduplication
 func generateBackupGCJobName(storage storageBackend) string {
-	prefix := "backup-gc-"
+	prefix := "backup-gc"
 	var name, suffix string
 	switch storage.storageType {
 	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
 		name = "local-" + strings.ReplaceAll(storage.nodeName, ".", "-")
-		suffix = "-" + shortHash(string(storage.storageType), storage.nodeName)
+		suffix = shortHash(string(storage.storageType), storage.nodeName)
 	case operatorv1alpha1.EtcdBackupStorageTypePVC:
 		name = "pvc-" + storage.pvcName
-		suffix = "-" + shortHash(string(storage.storageType), storage.pvcName)
+		suffix = shortHash(string(storage.storageType), storage.pvcName)
 	default:
 		name = "unknown"
-		suffix = "-" + shortHash("unknown")
+		suffix = shortHash("unknown")
 	}
-	remaining := maxNameLength - len(prefix) - len(suffix)
-	if len(name) > remaining {
-		name = strings.TrimRight(name[:remaining], "-")
-	}
-	return prefix + name + suffix
+	return joinName(prefix, name, suffix)
 }

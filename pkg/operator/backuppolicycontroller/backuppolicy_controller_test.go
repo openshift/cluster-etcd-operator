@@ -1,7 +1,6 @@
 package backuppolicycontroller
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -10,12 +9,13 @@ import (
 	operatorfake "github.com/openshift/client-go/operator/clientset/versioned/fake"
 	operatorinformers "github.com/openshift/client-go/operator/informers/externalversions"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/robfig/cron/v3"
 	"github.com/stretchr/testify/require"
-	corev1 "k8s.io/api/core/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
@@ -31,20 +31,20 @@ var backupFeatureGateAccessor = featuregates.NewHardcodedFeatureGateAccess(
 
 type testCaseBackupPolicyController struct {
 	backupPolicies []*operatorv1alpha1.EtcdBackupPolicy
-	backups        []*operatorv1alpha1.EtcdBackup
-	nodes          []*corev1.Node
+	cronJobs       []*batchv1.CronJob
 	expectError    bool
 	validate       func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset)
 }
 
+const fakeOperatorImagePullSpec = "pullspec-image"
+
 func runBackupPolicyControllerTest(t *testing.T, tc testCaseBackupPolicyController) {
 	t.Helper()
-	operatorObjs := make([]runtime.Object, 0, len(tc.backupPolicies)+len(tc.backups))
+	operatorObjs := make([]runtime.Object, 0, len(tc.backupPolicies))
 	operatorObjs = testutils.AppendRuntimeObjects(operatorObjs, tc.backupPolicies)
-	operatorObjs = testutils.AppendRuntimeObjects(operatorObjs, tc.backups)
 
-	k8sObjs := make([]runtime.Object, 0, len(tc.nodes))
-	k8sObjs = testutils.AppendRuntimeObjects(k8sObjs, tc.nodes)
+	k8sObjs := make([]runtime.Object, 0, len(tc.cronJobs))
+	k8sObjs = testutils.AppendRuntimeObjects(k8sObjs, tc.cronJobs)
 
 	client := k8sfakeclient.NewSimpleClientset(k8sObjs...)
 	operatorFake := operatorfake.NewSimpleClientset(operatorObjs...)
@@ -52,29 +52,27 @@ func runBackupPolicyControllerTest(t *testing.T, tc testCaseBackupPolicyControll
 	sharedFactory := informers.NewSharedInformerFactory(client, 0)
 	operatorSharedFactory := operatorinformers.NewSharedInformerFactory(operatorFake, 0)
 
-	backupsInformer := operatorSharedFactory.Operator().V1alpha1().EtcdBackups()
 	backupPoliciesInformer := operatorSharedFactory.Operator().V1alpha1().EtcdBackupPolicies()
-	nodesInformer := sharedFactory.Core().V1().Nodes()
+	cronJobsInformer := sharedFactory.Batch().V1().CronJobs()
 
-	backupsInformerHasSynced := backupsInformer.Informer().HasSynced
 	backupPoliciesInformerHasSynced := backupPoliciesInformer.Informer().HasSynced
-	nodesInformerHasSynced := nodesInformer.Informer().HasSynced
+	cronJobsInformerHasSynced := cronJobsInformer.Informer().HasSynced
 
 	ctx := t.Context()
 	sharedFactory.Start(ctx.Done())
 	operatorSharedFactory.Start(ctx.Done())
-	cache.WaitForCacheSync(ctx.Done(), nodesInformerHasSynced, backupsInformerHasSynced, backupPoliciesInformerHasSynced)
+	cache.WaitForCacheSync(ctx.Done(), cronJobsInformerHasSynced, backupPoliciesInformerHasSynced)
 
 	fakeClock := testingclock.NewFakeClock(time.Now())
 	eventRecorder := events.NewInMemoryRecorder("test", fakeClock)
 	t.Cleanup(eventRecorder.Shutdown)
 
 	controller := &BackupPolicyController{
-		backupsLister:         backupsInformer.Lister(),
 		backupPoliciesLister:  backupPoliciesInformer.Lister(),
-		nodeLister:            nodesInformer.Lister(),
+		cronJobLister:         cronJobsInformer.Lister().CronJobs(operatorclient.TargetNamespace),
 		operatorClient:        operatorFake.OperatorV1alpha1(),
-		operatorImagePullSpec: "pullspec-image",
+		kubeClient:            client,
+		operatorImagePullSpec: fakeOperatorImagePullSpec,
 		featureGateAccessor:   backupFeatureGateAccessor,
 		eventRecorder:         eventRecorder,
 		cronParser:            cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
@@ -95,262 +93,78 @@ func runBackupPolicyControllerTest(t *testing.T, tc testCaseBackupPolicyControll
 	}
 }
 
-func TestBackupPolicyCreateBackup(t *testing.T) {
+func TestBackupPolicyCreateCronJob(t *testing.T) {
 	runBackupPolicyControllerTest(t, testCaseBackupPolicyController{
 		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
 			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour))},
-		nodes: []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
-			// Verify new backup was created
-			backups, err := operatorFake.OperatorV1alpha1().EtcdBackups().List(context.TODO(), v1.ListOptions{})
-			require.NoError(t, err)
-			require.Len(t, backups.Items, 1)
+			// Verify new cronjob was created
+			action, ok := testutils.GetAction[k8stesting.CreateActionImpl](client.Fake.Actions())
+			require.True(t, ok, "expected create action")
+			cronJob, ok := action.Object.(*batchv1.CronJob)
+			require.True(t, ok, "expected cronjob to be created")
 
-			backup := backups.Items[0]
-			require.Equal(t, "test-backup-policy", backup.Labels[backuphelpers.LabelEtcdBackupPolicy])
-			// PVC backups are node-independent; the queue controller / scheduler decides placement.
-			require.Empty(t, backup.Status.NodeName)
-
-			// Verify LastScheduleTime and LastScheduleNodes are set
-			backupPolicy, err := operatorFake.OperatorV1alpha1().EtcdBackupPolicies().Get(context.TODO(), "test-backup-policy", v1.GetOptions{})
-			require.NoError(t, err)
-			require.Len(t, backupPolicy.Status.Active, 1)
-			requireHasLastScheduled(t, backupPolicy)
+			require.Equal(t, "test-backup-policy", cronJob.Labels[backuphelpers.LabelEtcdBackupPolicy])
+			require.Equal(t, "@daily", cronJob.Spec.Schedule)
 		},
 	})
 }
 
-func TestBackupPolicyCreateMultipleLocalBackupsWithSelector(t *testing.T) {
-	withSpecialLabel := func(node *corev1.Node) {
-		node.Labels["special"] = "label"
-	}
-	runBackupPolicyControllerTest(t, testCaseBackupPolicyController{
-		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
-			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour), func(backup *operatorv1alpha1.EtcdBackupPolicy) {
-				backup.Spec.Storage = operatorv1alpha1.EtcdBackupStorage{
-					Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
-					Local: operatorv1alpha1.EtcdBackupStorageLocal{
-						HostPath: "/etc/backups",
-					},
-				}
-				backup.Spec.NodeSelector = map[string]string{"special": "label"}
-			})},
-		nodes: []*corev1.Node{
-			testutils.FakeNode("test-node-1", testutils.WithMasterLabel()),
-			testutils.FakeNode("test-node-2", testutils.WithMasterLabel(), withSpecialLabel),
-			testutils.FakeNode("test-node-3", testutils.WithMasterLabel(), withSpecialLabel)},
-		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
-			// Verify new backups were created
-			backups, err := operatorFake.OperatorV1alpha1().EtcdBackups().List(context.TODO(), v1.ListOptions{})
-			require.NoError(t, err)
-			require.Len(t, backups.Items, 2)
-
-			expectedNodes := []string{"test-node-2", "test-node-3"}
-			backupNodes := make([]string, 2)
-			for i, backup := range backups.Items {
-				require.Equal(t, "test-backup-policy", backup.Labels[backuphelpers.LabelEtcdBackupPolicy])
-				backupNodes[i] = backup.Status.NodeName
-			}
-			require.ElementsMatch(t, backupNodes, expectedNodes)
-
-			backupPolicy, err := operatorFake.OperatorV1alpha1().EtcdBackupPolicies().Get(context.TODO(), "test-backup-policy", v1.GetOptions{})
-			require.NoError(t, err)
-			require.Len(t, backupPolicy.Status.Active, len(expectedNodes))
-			requireHasLastScheduled(t, backupPolicy)
-		},
-	})
-}
-
-func TestBackupPolicyBackupExists(t *testing.T) {
-	runBackupPolicyControllerTest(t, testCaseBackupPolicyController{
-		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
-			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour))},
-		backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPolicy("test-backup-policy"))},
-		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
-			requireCreatedBackups(t, operatorFake, 0)
-			backups, err := operatorFake.OperatorV1alpha1().EtcdBackups().List(context.TODO(), v1.ListOptions{})
-			require.NoError(t, err)
-			require.Len(t, backups.Items, 1)
-			require.Equal(t, backups.Items[0].Name, "test-backup")
-		},
-	})
-}
-
-func TestBackupPolicyActiveBackups(t *testing.T) {
-	runBackupPolicyControllerTest(t, testCaseBackupPolicyController{
-		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
-			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@hourly", testutils.WithBackupPolicyStatus(operatorv1alpha1.EtcdBackupPolicyStatus{
-				Conditions: []v1.Condition{{
-					Type:               string(operatorv1alpha1.BackupPolicyLastScheduled),
-					Reason:             string(operatorv1alpha1.BackupPolicyLastScheduled),
-					LastTransitionTime: v1.Time{Time: time.Now().Add(-2 * time.Hour)},
-					Status:             v1.ConditionTrue,
-				}},
-				Active: []operatorv1alpha1.EtcdBackupReference{
-					{Name: "test-backup-completed", UID: "test-backup-completed-uid"},
-					{Name: "test-backup-failed", UID: "test-backup-failed-uid"},
-					{Name: "test-backup-deleted", UID: "test-backup-deleted-uid"},
-					{Name: "test-backup-pending", UID: "test-backup-pending-uid"},
-				},
-			}))},
-		backups: []*operatorv1alpha1.EtcdBackup{
-			testutils.FakeEtcdBackup("test-backup-completed", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupCompleted()),
-			testutils.FakeEtcdBackup("test-backup-failed", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed)),
-			testutils.FakeEtcdBackup("test-backup-pending", testutils.WithBackupPolicy("test-backup-policy")),
-		},
-		nodes: []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
-		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
-			backupPolicy, err := operatorFake.OperatorV1alpha1().EtcdBackupPolicies().Get(t.Context(), "test-backup-policy", v1.GetOptions{})
-			require.NoError(t, err)
-			require.ElementsMatch(t, []operatorv1alpha1.EtcdBackupReference{{Name: "test-backup-pending", UID: "test-backup-pending-uid"}}, backupPolicy.Status.Active)
-			requireCreatedBackups(t, operatorFake, 0)
-		},
-	})
-}
-
-func TestBackupPolicyActiveBackupsAllFinished(t *testing.T) {
-	runBackupPolicyControllerTest(t, testCaseBackupPolicyController{
-		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
-			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@hourly", testutils.WithBackupPolicyStatus(operatorv1alpha1.EtcdBackupPolicyStatus{
-				Conditions: []v1.Condition{{
-					Type:               string(operatorv1alpha1.BackupPolicyLastScheduled),
-					Reason:             string(operatorv1alpha1.BackupPolicyLastScheduled),
-					LastTransitionTime: v1.Time{Time: time.Now().Add(-2 * time.Hour)},
-					Status:             v1.ConditionTrue,
-				}},
-				Active: []operatorv1alpha1.EtcdBackupReference{
-					{Name: "test-backup-completed", UID: "test-backup-completed-uid"},
-					{Name: "test-backup-failed", UID: "test-backup-failed-uid"},
-				},
-			}))},
-		backups: []*operatorv1alpha1.EtcdBackup{
-			testutils.FakeEtcdBackup("test-backup-completed", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupCompleted()),
-			testutils.FakeEtcdBackup("test-backup-failed", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed)),
-		},
-		nodes: []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
-		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
-			backupPolicy, err := operatorFake.OperatorV1alpha1().EtcdBackupPolicies().Get(t.Context(), "test-backup-policy", v1.GetOptions{})
-			require.NoError(t, err)
-			require.Len(t, backupPolicy.Status.Active, 1)
-			backups := requireCreatedBackups(t, operatorFake, 1)
-			require.Equal(t, operatorv1alpha1.EtcdBackupReference{Name: backups[0].Name, UID: string(backups[0].UID)}, backupPolicy.Status.Active[0])
-		},
-	})
-}
-
-func TestBackupPolicyMissedBackupSchedules(t *testing.T) {
-	runBackupPolicyControllerTest(t, testCaseBackupPolicyController{
-		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
-			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@hourly", testutils.WithBackupPolicyAge(25*time.Hour), testutils.WithBackupPolicyStatus(operatorv1alpha1.EtcdBackupPolicyStatus{
-				Conditions: []v1.Condition{{
-					Type:               string(operatorv1alpha1.BackupPolicyLastScheduled),
-					Reason:             string(operatorv1alpha1.BackupPolicyLastScheduled),
-					LastTransitionTime: v1.Time{Time: time.Now().Add(-4 * time.Hour)},
-					Status:             v1.ConditionTrue,
-				}},
-			}))},
-		nodes: []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
-		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
-			requireCreatedBackups(t, operatorFake, 1)
-			backups, err := operatorFake.OperatorV1alpha1().EtcdBackups().List(context.TODO(), v1.ListOptions{})
-			require.NoError(t, err)
-			require.Len(t, backups.Items, 1)
-		},
-	})
-}
-
-func TestBackupPolicyIgnoreDeleted(t *testing.T) {
-	runBackupPolicyControllerTest(t, testCaseBackupPolicyController{
-		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
-			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour), testutils.WithBackupPolicyDeleted())},
-		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
-			requireCreatedBackups(t, operatorFake, 0)
-			backups, err := operatorFake.OperatorV1alpha1().EtcdBackups().List(context.TODO(), v1.ListOptions{})
-			require.NoError(t, err)
-			require.Len(t, backups.Items, 0)
-		},
-	})
-}
-
-func TestBackupPolicyScheduleParsing(t *testing.T) {
-	testCases := map[string]testCaseBackupPolicyController{
-		"valid schedule": {
-			backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
-				testutils.FakeEtcdBackupPolicy("test-backup-policy", "0 4 * * *")},
-			expectError: false,
-		},
-		"valid named schedule": {
-			backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
-				testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily")},
-			expectError: false,
-		},
-		"invalid schedule": {
-			backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
-				testutils.FakeEtcdBackupPolicy("test-backup-policy", "invalid cron")},
-			expectError: true,
-		},
-		"invalid named schedule": {
-			backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
-				testutils.FakeEtcdBackupPolicy("test-backup-policy", "@invalidcron")},
-			expectError: true,
-		},
-	}
-
-	for name, tc := range testCases {
-		t.Run(name, func(t *testing.T) {
-			runBackupPolicyControllerTest(t, tc)
-		})
-	}
-}
-
-func TestNextScheduleTime(t *testing.T) {
-	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
-	backupPolicy := testutils.FakeEtcdBackupPolicy("test-backup-policy", "@hourly", testutils.WithBackupPolicyStatus(operatorv1alpha1.EtcdBackupPolicyStatus{
-		Conditions: []v1.Condition{{
-			Type:               string(operatorv1alpha1.BackupPolicyLastScheduled),
-			Reason:             string(operatorv1alpha1.BackupPolicyLastScheduled),
-			LastTransitionTime: v1.Time{Time: now.Add(-4 * time.Hour)},
-			Status:             v1.ConditionTrue,
-		}},
-	}))
-	schedule, err := cron.NewParser(cron.Descriptor).Parse(backupPolicy.Spec.Schedule)
+func TestBackupPolicyExistingCronJob(t *testing.T) {
+	backupPolicy := testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour))
+	cronJob, err := newCronJob(backupPolicy, fakeOperatorImagePullSpec)
 	require.NoError(t, err)
+	runBackupPolicyControllerTest(t, testCaseBackupPolicyController{
+		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{backupPolicy},
+		cronJobs:       []*batchv1.CronJob{cronJob},
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			// Verify no cronjob was created or updated
+			_, ok := testutils.GetAction[k8stesting.CreateActionImpl](client.Fake.Actions())
+			require.False(t, ok, "expected no create action")
+			_, ok = testutils.GetAction[k8stesting.UpdateActionImpl](client.Fake.Actions())
+			require.False(t, ok, "expected no update action")
 
-	nextSchedule, err := nextScheduleTime(backupPolicy, now, schedule)
+			// Verify cronjob still exists
+			_, err := client.BatchV1().CronJobs(operatorclient.TargetNamespace).Get(t.Context(), "test-backup-policy", v1.GetOptions{})
+			require.NoError(t, err)
+		},
+	})
+}
+
+func TestBackupPolicyUpdateCronJob(t *testing.T) {
+	backupPolicy := testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour))
+	runBackupPolicyControllerTest(t, testCaseBackupPolicyController{
+		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{backupPolicy},
+		cronJobs: []*batchv1.CronJob{{ObjectMeta: v1.ObjectMeta{
+			Name:      backupPolicy.Name,
+			Namespace: operatorclient.TargetNamespace,
+		}}},
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			// Verify no cronjob was created or updated
+			_, ok := testutils.GetAction[k8stesting.CreateActionImpl](client.Fake.Actions())
+			require.False(t, ok, "expected no create action")
+			action, ok := testutils.GetAction[k8stesting.UpdateActionImpl](client.Fake.Actions())
+			require.True(t, ok, "expected update action")
+			cronJob, ok := action.Object.(*batchv1.CronJob)
+			require.True(t, ok, "expected cronjob to be updated")
+
+			expectedCronJob, err := newCronJob(backupPolicy, fakeOperatorImagePullSpec)
+			require.NoError(t, err)
+			require.Equal(t, expectedCronJob, cronJob)
+
+			require.Equal(t, "test-backup-policy", cronJob.Labels[backuphelpers.LabelEtcdBackupPolicy])
+			require.Equal(t, "@daily", cronJob.Spec.Schedule)
+		},
+	})
+}
+
+func TestCronJobSpecDiffs(t *testing.T) {
+	backupPolicy := testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour))
+	job, err := newCronJob(backupPolicy, fakeOperatorImagePullSpec)
 	require.NoError(t, err)
-	require.NotNil(t, nextSchedule)
+	require.False(t, cronSpecDiffers(job.Spec, job.Spec))
 
-	require.WithinDuration(t, now, *nextSchedule, time.Minute)
-}
-
-func requireCreatedBackups(t *testing.T, operatorFake *operatorfake.Clientset, count int) []*operatorv1alpha1.EtcdBackup {
-	t.Helper()
-	createdBackups := getCreatedBackups(t, operatorFake)
-	require.Len(t, createdBackups, count)
-	return createdBackups
-}
-
-func getCreatedBackups(t *testing.T, operatorFake *operatorfake.Clientset) []*operatorv1alpha1.EtcdBackup {
-	t.Helper()
-	var createdBackups []*operatorv1alpha1.EtcdBackup
-	for _, action := range operatorFake.Actions() {
-		if action, ok := action.(k8stesting.CreateAction); ok {
-			if backup, ok := action.GetObject().(*operatorv1alpha1.EtcdBackup); ok {
-				createdBackups = append(createdBackups, backup)
-			}
-		}
-	}
-	return createdBackups
-}
-
-func requireHasLastScheduled(t *testing.T, backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
-	t.Helper()
-	require.Condition(t, func() bool {
-		for _, condition := range backupPolicy.Status.Conditions {
-			if condition.Type == string(operatorv1alpha1.BackupPolicyLastScheduled) {
-				return true
-			}
-		}
-		return false
-	}, "Expected to find LastScheduled condition")
+	job2 := job.DeepCopy()
+	job2.Spec.Schedule = "something else"
+	require.True(t, cronSpecDiffers(job.Spec, job2.Spec))
 }
