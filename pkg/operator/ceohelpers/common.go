@@ -79,7 +79,7 @@ func MemberToNodeInternalIP(member *etcdserverpb.Member) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return host, nil
+	return dnshelpers.TryCanonicalizeIP(host), nil
 }
 
 // FilterMachinesWithMachineDeletionHook a convenience function for filtering only machines with the machine deletion hook present
@@ -131,12 +131,9 @@ func HasMachineDeletionHook(machine *machinev1beta1.Machine) bool {
 func IndexMachinesByNodeInternalIP(machines []*machinev1beta1.Machine) map[string]*machinev1beta1.Machine {
 	index := map[string]*machinev1beta1.Machine{}
 	for _, machine := range machines {
-		for _, addr := range machine.Status.Addresses {
-			if addr.Type == corev1.NodeInternalIP {
-				index[addr.Address] = machine
-				// do not stop on first match
-				// machines can have multiple network interfaces
-			}
+		// do not stop on first match, machines can have multiple network interfaces
+		for _, ip := range dnshelpers.GetCanonicalInternalIPAddresses(machine.Status.Addresses) {
+			index[ip] = machine
 		}
 	}
 	return index
@@ -165,12 +162,8 @@ func FindMachineByNodeInternalIP(nodeInternalIP string, machineSelector labels.S
 	}
 
 	for _, machine := range machines {
-		for _, addr := range machine.Status.Addresses {
-			if addr.Type == corev1.NodeInternalIP {
-				if addr.Address == nodeInternalIP {
-					return machine, nil
-				}
-			}
+		if HasCanonicalInternalIP(machine.Status.Addresses, nodeInternalIP) {
+			return machine, nil
 		}
 	}
 	return nil, nil
@@ -196,6 +189,7 @@ func VotingMemberIPListSet(ctx context.Context, cli etcdcli.EtcdClient) (sets.St
 		if err != nil {
 			return sets.NewString(), err
 		}
+		// GetIPFromAddress returns canonical IP, insert directly for consistent set membership
 		currentVotingMemberIPListSet.Insert(ip)
 	}
 
@@ -207,7 +201,9 @@ func VotingMemberIPListSet(ctx context.Context, cli etcdcli.EtcdClient) (sets.St
 func MemberIPSetFromConfigMap(cm *corev1.ConfigMap) sets.String {
 	memberIPs := sets.NewString()
 	for _, ip := range cm.Data {
-		memberIPs.Insert(ip)
+		// Canonicalize to ensure consistent comparison with VotingMemberIPListSet
+		// Configmap may contain non-canonical IPs from legacy etcd members
+		memberIPs.Insert(dnshelpers.TryCanonicalizeIP(ip))
 	}
 	return memberIPs
 }

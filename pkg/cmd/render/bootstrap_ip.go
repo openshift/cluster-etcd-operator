@@ -7,6 +7,8 @@ import (
 
 	"github.com/vishvananda/netlink"
 	"k8s.io/klog/v2"
+
+	"github.com/openshift/cluster-etcd-operator/pkg/dnshelpers"
 )
 
 var defaultBootstrapIPLocator BootstrapIPLocator = NetlinkBootstrapIPLocator()
@@ -139,7 +141,18 @@ func ContainedByCIDR(cidr string) AddressFilter {
 
 func AddressNotIn(ips ...string) AddressFilter {
 	return func(addr netlink.Addr) bool {
-		return !slices.Contains(ips, addr.IP.String())
+		canonicalAddr := addr.IP.String()
+		for _, ip := range ips {
+			canonicalIP := dnshelpers.TryCanonicalizeIP(ip)
+			if net.ParseIP(canonicalIP) == nil {
+				klog.Warningf("ignoring unparseable excluded IP %q", ip)
+				continue
+			}
+			if canonicalAddr == canonicalIP {
+				return false
+			}
+		}
+		return true
 	}
 }
 
