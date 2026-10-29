@@ -393,8 +393,8 @@ func (t *RunTracker) determineRunOutcome(backups []*operatorv1alpha1.EtcdBackup,
 	// All visible members are finished and failed
 	// If we have expected member count, verify we have all members
 	if expectedMembers > 0 {
-		if len(backups) < expectedMembers {
-			// Missing members - run is in progress
+		if len(backups) < expectedMembers && !hasNewerRun {
+			// Missing members - run is in progress and no newer run has been finalized
 			return runInProgress
 		}
 		// All expected members are finished and all failed
