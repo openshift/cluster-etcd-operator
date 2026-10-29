@@ -127,7 +127,12 @@ function backup_latest_kube_static_resources {
       exit 1
     fi
     if [ "${IS_DIRTY}" == "" ]; then
-      check_if_operator_is_progressing "${resource}"
+      # Partial etcd collection may lack the local kube-apiserver kubeconfig.
+      if [ "${resource}" == "etcd" ] && [ -n "${incomplete}" ] && [ ! -e "${KUBECONFIG}" ] && [ ! -L "${KUBECONFIG}" ]; then
+        echo "WARNING: skipping etcd operator-progressing check because the local kubeconfig is absent; rollout consistency could not be verified" >&2
+      else
+        check_if_operator_is_progressing "${resource}"
+      fi
     fi
 
     echo "found latest ${resource}: ${latest_resource}"
