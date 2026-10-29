@@ -376,6 +376,10 @@ func (c *BackupController) startBackup(ctx context.Context, backup *operatorv1al
 	}
 	// The job exists from this point, so hold its resources even if the status update fails
 	c.activeCache.add(backup)
+	if job == nil {
+		// Job already exists; it will be reconciled once observed by the informer
+		return nil
+	}
 
 	if _, err := applyBackupRunning(ctx, backupsClient, backup, job); err != nil {
 		if apierrors.IsNotFound(err) {

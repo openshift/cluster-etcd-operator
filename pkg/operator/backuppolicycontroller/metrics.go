@@ -156,7 +156,10 @@ func (c *policyCollector) collectPolicyMetrics(ch chan<- prometheus.Metric, poli
 	name := policy.Name
 	uid := string(policy.UID)
 	schedule := policy.Spec.Schedule
-	timezone := "UTC"
+	timezone := policy.Spec.TimeZone
+	if timezone == "" {
+		timezone = "UTC"
+	}
 	storageType, storageLocation := extractPolicyStorageInfo(policy)
 
 	ch <- prometheus.MustNewConstMetric(
@@ -211,7 +214,7 @@ func extractPolicyStorageInfo(policy *operatorv1alpha1.EtcdBackupPolicy) (string
 		storageType = storageTypePVC
 		storageLocation = policy.Spec.Storage.PVC.Name
 		if policy.Spec.Storage.PVC.Path != "" {
-			storageLocation = filepath.Join(policy.Spec.Storage.PVC.Name, policy.Spec.Storage.PVC.Path)
+			storageLocation = policy.Spec.Storage.PVC.Name + ":" + policy.Spec.Storage.PVC.Path
 		}
 	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
 		storageType = storageTypeLocal
