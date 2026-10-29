@@ -721,7 +721,7 @@ func GetCAFromBytes(certBytes, keyBytes []byte) (*CA, error) {
 func MakeSelfSignedCA(certFile, keyFile, serialFile, name string, lifetime time.Duration) (*CA, error) {
 	klog.V(2).Infof("Generating new CA for %s cert, and key in %s, %s", name, certFile, keyFile)
 
-	caConfig, err := MakeSelfSignedCAConfig(name, lifetime)
+	caConfig, err := NewSigningCertificate(name, RSAKeyPairGenerator{Bits: keyBits}, WithLifetime(lifetime))
 	if err != nil {
 		return nil, err
 	}
@@ -749,11 +749,13 @@ func MakeSelfSignedCA(certFile, keyFile, serialFile, name string, lifetime time.
 	}, nil
 }
 
+// Deprecated: Use NewSigningCertificate instead.
 func MakeSelfSignedCAConfig(name string, lifetime time.Duration) (*TLSCertificateConfig, error) {
 	subject := pkix.Name{CommonName: name}
 	return MakeSelfSignedCAConfigForSubject(subject, lifetime)
 }
 
+// Deprecated: Use NewSigningCertificate instead.
 func MakeSelfSignedCAConfigForSubject(subject pkix.Name, lifetime time.Duration) (*TLSCertificateConfig, error) {
 	if lifetime <= 0 {
 		lifetime = DefaultCACertificateLifetimeDuration
@@ -766,11 +768,13 @@ func MakeSelfSignedCAConfigForSubject(subject pkix.Name, lifetime time.Duration)
 	return makeSelfSignedCAConfigForSubjectAndDuration(subject, time.Now, lifetime)
 }
 
+// Deprecated: Use NewSigningCertificate instead.
 func MakeSelfSignedCAConfigForDuration(name string, caLifetime time.Duration) (*TLSCertificateConfig, error) {
 	subject := pkix.Name{CommonName: name}
 	return makeSelfSignedCAConfigForSubjectAndDuration(subject, time.Now, caLifetime)
 }
 
+// Deprecated: Use NewSigningCertificate instead.
 func UnsafeMakeSelfSignedCAConfigForDurationAtTime(name string, currentTime func() time.Time, caLifetime time.Duration) (*TLSCertificateConfig, error) {
 	subject := pkix.Name{CommonName: name}
 	return makeSelfSignedCAConfigForSubjectAndDuration(subject, currentTime, caLifetime)
@@ -797,6 +801,7 @@ func makeSelfSignedCAConfigForSubjectAndDuration(subject pkix.Name, currentTime 
 	return caConfig, nil
 }
 
+// Deprecated: use NewSigningCertificate instead.
 func MakeCAConfigForDuration(name string, caLifetime time.Duration, issuer *CA) (*TLSCertificateConfig, error) {
 	// Create CA cert
 	signerPublicKey, signerPrivateKey, publicKeyHash, err := newKeyPairWithHash()
@@ -835,7 +840,7 @@ func (ca *CA) EnsureSubCA(certFile, keyFile, serialFile, name string, lifetime t
 func (ca *CA) MakeAndWriteSubCA(certFile, keyFile, serialFile, name string, lifetime time.Duration) (*CA, error) {
 	klog.V(4).Infof("Generating sub-CA certificate in %s, key in %s, serial in %s", certFile, keyFile, serialFile)
 
-	subCAConfig, err := MakeCAConfigForDuration(name, lifetime, ca)
+	subCAConfig, err := NewSigningCertificate(name, RSAKeyPairGenerator{Bits: keyBits}, WithLifetime(lifetime), WithSigner(ca))
 	if err != nil {
 		return nil, err
 	}
@@ -898,7 +903,7 @@ func GetServerCert(certFile, keyFile string, hostnames sets.Set[string]) (*TLSCe
 func (ca *CA) MakeAndWriteServerCert(certFile, keyFile string, hostnames sets.Set[string], lifetime time.Duration) (*TLSCertificateConfig, error) {
 	klog.V(4).Infof("Generating server certificate in %s, key in %s", certFile, keyFile)
 
-	server, err := ca.MakeServerCert(hostnames, lifetime)
+	server, err := ca.NewServerCertificate(hostnames, RSAKeyPairGenerator{Bits: keyBits}, WithLifetime(lifetime))
 	if err != nil {
 		return nil, err
 	}
@@ -912,6 +917,7 @@ func (ca *CA) MakeAndWriteServerCert(certFile, keyFile string, hostnames sets.Se
 // if the extension attempt failed.
 type CertificateExtensionFunc func(*x509.Certificate) error
 
+// Deprecated: use CA.NewServerCertificate instead
 func (ca *CA) MakeServerCert(hostnames sets.Set[string], lifetime time.Duration, fns ...CertificateExtensionFunc) (*TLSCertificateConfig, error) {
 	serverPublicKey, serverPrivateKey, publicKeyHash, _ := newKeyPairWithHash()
 	authorityKeyId := ca.Config.Certs[0].SubjectKeyId
@@ -933,6 +939,7 @@ func (ca *CA) MakeServerCert(hostnames sets.Set[string], lifetime time.Duration,
 	return server, nil
 }
 
+// Deprecated: use CA.NewServerCertificate instead
 func (ca *CA) MakeServerCertForDuration(hostnames sets.Set[string], lifetime time.Duration, fns ...CertificateExtensionFunc) (*TLSCertificateConfig, error) {
 	serverPublicKey, serverPrivateKey, publicKeyHash, _ := newKeyPairWithHash()
 	authorityKeyId := ca.Config.Certs[0].SubjectKeyId
@@ -996,18 +1003,16 @@ func (ca *CA) MakeClientCertificate(certFile, keyFile string, u user.Info, lifet
 		return nil, err
 	}
 
-	clientPublicKey, clientPrivateKey, _ := NewKeyPair()
-	clientTemplate := NewClientCertificateTemplate(UserToSubject(u), lifetime, time.Now)
-	clientCrt, err := ca.SignCertificate(clientTemplate, clientPublicKey)
+	cfg, err := ca.NewClientCertificate(u, RSAKeyPairGenerator{Bits: keyBits}, WithLifetime(lifetime))
 	if err != nil {
 		return nil, err
 	}
 
-	certData, err := EncodeCertificates(clientCrt)
+	certData, err := EncodeCertificates(cfg.Certs...)
 	if err != nil {
 		return nil, err
 	}
-	keyData, err := EncodeKey(clientPrivateKey)
+	keyData, err := EncodeKey(cfg.Key)
 	if err != nil {
 		return nil, err
 	}
@@ -1022,6 +1027,7 @@ func (ca *CA) MakeClientCertificate(certFile, keyFile string, u user.Info, lifet
 	return GetTLSCertificateConfig(certFile, keyFile)
 }
 
+// Deprecated: use CA.NewClientCertificate instead.
 func (ca *CA) MakeClientCertificateForDuration(u user.Info, lifetime time.Duration) (*TLSCertificateConfig, error) {
 	clientPublicKey, clientPrivateKey, _ := NewKeyPair()
 	clientTemplate := NewClientCertificateTemplateForDuration(UserToSubject(u), lifetime, time.Now)
@@ -1123,8 +1129,6 @@ func newSigningCertificateTemplateForDuration(subject pkix.Name, caLifetime time
 	return &x509.Certificate{
 		Subject: subject,
 
-		SignatureAlgorithm: x509.SHA256WithRSA,
-
 		NotBefore: currentTime().Add(-1 * time.Second),
 		NotAfter:  currentTime().Add(caLifetime),
 
@@ -1160,8 +1164,6 @@ func newServerCertificateTemplate(subject pkix.Name, hosts []string, lifetime ti
 func newServerCertificateTemplateForDuration(subject pkix.Name, hosts []string, lifetime time.Duration, currentTime func() time.Time, authorityKeyId, subjectKeyId []byte) *x509.Certificate {
 	template := &x509.Certificate{
 		Subject: subject,
-
-		SignatureAlgorithm: x509.SHA256WithRSA,
 
 		NotBefore:    currentTime().Add(-1 * time.Second),
 		NotAfter:     currentTime().Add(lifetime),
@@ -1248,8 +1250,6 @@ func NewClientCertificateTemplateForDuration(subject pkix.Name, lifetime time.Du
 	return &x509.Certificate{
 		Subject: subject,
 
-		SignatureAlgorithm: x509.SHA256WithRSA,
-
 		NotBefore:    currentTime().Add(-1 * time.Second),
 		NotAfter:     currentTime().Add(lifetime),
 		SerialNumber: big.NewInt(1),
@@ -1333,4 +1333,18 @@ func writeKeyFile(f io.Writer, key crypto.PrivateKey) error {
 	}
 
 	return nil
+}
+
+// KeyAlgorithmForPrivateKey returns a string representation of the key algorithm.
+// It panics if an unknown key type is provided.
+// Currently supports RSA and ECDSA keys.
+func KeyAlgorithmForPrivateKey(privKey crypto.PrivateKey) string {
+	switch key := privKey.(type) {
+	case *rsa.PrivateKey:
+		return fmt.Sprintf("RSA-%d", key.N.BitLen())
+	case *ecdsa.PrivateKey:
+		return fmt.Sprintf("ECDSA-P%d", key.Curve.Params().BitSize)
+	default:
+		panic(fmt.Sprintf("unknown private key type %T", privKey))
+	}
 }
