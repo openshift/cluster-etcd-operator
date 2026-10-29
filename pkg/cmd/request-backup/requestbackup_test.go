@@ -277,3 +277,35 @@ func TestRequestBackupForDeletedPolicy(t *testing.T) {
 		expectError: true,
 	})
 }
+
+func TestRequestBackupForPolicyWithAssets(t *testing.T) {
+	runRequestBackupTest(t, testCaseRequestBackup{
+		opts: requestBackupOpts{
+			etcdBackupPolicyName: "test-backup-policy",
+		},
+		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
+			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour), func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
+				backupPolicy.Spec.Storage = operatorv1alpha1.EtcdBackupPolicyStorage{
+					Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
+					Local: operatorv1alpha1.EtcdBackupPolicyStorageLocal{
+						EtcdBackupStorageLocal: operatorv1alpha1.EtcdBackupStorageLocal{
+							HostPath: "/etc/etcdbackups",
+						},
+					},
+				}
+				backupPolicy.Spec.Assets = []operatorv1alpha1.EtcdBackupAssetType{operatorv1alpha1.EtcdBackupAssetTypeSnapshot}
+			})},
+		nodes: []*corev1.Node{
+			testutils.FakeNode("test-node", testutils.WithMasterLabel())},
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			// Verify new backup was created with assets from policy
+			backups, err := operatorFake.OperatorV1alpha1().EtcdBackups().List(context.TODO(), v1.ListOptions{})
+			require.NoError(t, err)
+			require.Len(t, backups.Items, 1)
+
+			backup := backups.Items[0]
+			require.Equal(t, "test-backup-policy", backup.Labels[backuphelpers.LabelEtcdBackupPolicy])
+			require.Equal(t, []operatorv1alpha1.EtcdBackupAssetType{operatorv1alpha1.EtcdBackupAssetTypeSnapshot}, backup.Spec.Assets)
+		},
+	})
+}

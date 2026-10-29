@@ -7,7 +7,7 @@ package v1alpha1
 type EtcdBackupPolicyStorageLocalApplyConfiguration struct {
 	EtcdBackupStorageLocalApplyConfiguration `json:""`
 	// nodeCount enables creating multiple local backups per schedule distributed across control plane nodes.
-	// Control plane nodes will be iterated in alphanumeric order when backups are created, with preference for nodes that already have backups for this policy.
+	// Control plane nodes will be iterated in lexicographical order when backups are created, with preference for nodes that already have backups for this policy.
 	// The number of created EtcdBackups may be less than nodeCount if there are fewer control plane nodes selected.
 	// When specified, must be an integer between 1 and 10.
 	// If omitted, defaults to 1.

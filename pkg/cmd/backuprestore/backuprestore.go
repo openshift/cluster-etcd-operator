@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"k8s.io/klog/v2"
@@ -18,6 +19,7 @@ type backupOptions struct {
 	configDir      string
 	dataDir        string
 	backupDir      string
+	assets         []string
 	terminationLog string
 	errOut         io.Writer
 }
@@ -53,12 +55,22 @@ func (r *backupOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&r.configDir, "config-dir", "/etc/kubernetes", "Path to the kubernetes config directory")
 	fs.StringVar(&r.dataDir, "data-dir", "/var/lib/etcd", "Path to the data directory")
 	fs.StringVar(&r.backupDir, "backup-dir", "", "Path to the directory where the backup is generated")
+	fs.StringSliceVar(&r.assets, "assets", nil, "Asset types to backup. Allowed values are Snapshot, and StaticKubeResources. By default, all assets will be backed up.")
 	fs.StringVar(&r.terminationLog, "termination-log", "", "Path to file where status is reported on termination")
 }
 
 func (r *backupOptions) Validate() error {
 	if len(r.backupDir) == 0 {
 		return errors.New("missing required flag: --backup-dir")
+	}
+	var unknownAssets []string
+	for _, asset := range r.assets {
+		if asset != string(operatorv1alpha1.EtcdBackupAssetTypeSnapshot) && asset != string(operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources) {
+			unknownAssets = append(unknownAssets, asset)
+		}
+	}
+	if len(unknownAssets) > 0 {
+		return fmt.Errorf("unknown --assets: %v", unknownAssets)
 	}
 	return nil
 }

@@ -74,37 +74,55 @@ func backup(ctx context.Context, r *backupOptions) (err error) {
 		}
 	}()
 
-	// Save snapshot
-	var snapshotSize int64
-	snapshotPartialPath := snapshotFilepath + ".part"
-	if snapshotSize, err = saveSnapshot(ctx, cli, snapshotPartialPath, snapshotFilepath); err != nil {
-		// Record partial snapshot path for GC, if present
-		message = "snapshot failed"
-		if msg, ok := isDiskFull(err); ok {
-			message = fmt.Sprintf("%s: %s", message, msg)
-		}
-		if backupFile, ok := statBackupFile(snapshotPartialPath); ok {
-			files = append(files, backupFile)
-		}
-		return fmt.Errorf("saveSnapshot failed: %w", err)
+	var backupSnapshot, backupStaticKubeResources bool
+	if r.assets == nil {
+		backupSnapshot, backupStaticKubeResources = true, true
 	} else {
-		files = append(files, operatorv1alpha1.EtcdBackupFile{Path: snapshotFilepath, SizeBytes: snapshotSize})
+		for _, asset := range r.assets {
+			switch asset {
+			case string(operatorv1alpha1.EtcdBackupAssetTypeSnapshot):
+				backupSnapshot = true
+			case string(operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources):
+				backupStaticKubeResources = true
+			}
+		}
 	}
 
-	// Save the corresponding static pod resources
-	var archiveSize int64
-	if archiveSize, err = archiveLatestResources(r.configDir, archiveFilepath); err != nil {
-		// Record partial archive path for GC, if present
-		message = "static pod archive failed"
-		if msg, ok := isDiskFull(err); ok {
-			message = fmt.Sprintf("%s: %s", message, msg)
+	if backupSnapshot {
+		// Save snapshot
+		var snapshotSize int64
+		snapshotPartialPath := snapshotFilepath + ".part"
+		if snapshotSize, err = saveSnapshot(ctx, cli, snapshotPartialPath, snapshotFilepath); err != nil {
+			// Record partial snapshot path for GC, if present
+			message = "snapshot failed"
+			if msg, ok := isDiskFull(err); ok {
+				message = fmt.Sprintf("%s: %s", message, msg)
+			}
+			if backupFile, ok := statBackupFile(snapshotPartialPath); ok {
+				files = append(files, backupFile)
+			}
+			return fmt.Errorf("saveSnapshot failed: %w", err)
+		} else {
+			files = append(files, operatorv1alpha1.EtcdBackupFile{Path: snapshotFilepath, SizeBytes: snapshotSize})
 		}
-		if backupFile, ok := statBackupFile(archiveFilepath); ok {
-			files = append(files, backupFile)
+	}
+
+	if backupStaticKubeResources {
+		// Save the corresponding static pod resources
+		var archiveSize int64
+		if archiveSize, err = archiveLatestResources(r.configDir, archiveFilepath); err != nil {
+			// Record partial archive path for GC, if present
+			message = "static pod archive failed"
+			if msg, ok := isDiskFull(err); ok {
+				message = fmt.Sprintf("%s: %s", message, msg)
+			}
+			if backupFile, ok := statBackupFile(archiveFilepath); ok {
+				files = append(files, backupFile)
+			}
+			return fmt.Errorf("archiveLatestResources failed: %w", err)
+		} else {
+			files = append(files, operatorv1alpha1.EtcdBackupFile{Path: archiveFilepath, SizeBytes: archiveSize})
 		}
-		return fmt.Errorf("archiveLatestResources failed: %w", err)
-	} else {
-		files = append(files, operatorv1alpha1.EtcdBackupFile{Path: archiveFilepath, SizeBytes: archiveSize})
 	}
 
 	return

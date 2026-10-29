@@ -519,6 +519,16 @@ func createBackupJob(ctx context.Context,
 		{Name: "ETCDCTL_KEY", Value: "/var/run/secrets/etcd-client/tls.key"},
 		{Name: "ETCDCTL_CACERT", Value: "/var/run/configmaps/etcd-ca/ca-bundle.crt"},
 	}
+	if backup.Spec.Assets != nil {
+		assetsArg := "--assets="
+		for i, asset := range backup.Spec.Assets {
+			if i > 0 {
+				assetsArg += ","
+			}
+			assetsArg += string(asset)
+		}
+		job.Spec.Template.Spec.Containers[0].Args = append(job.Spec.Template.Spec.Containers[0].Args, assetsArg)
+	}
 
 	job, err = jobClient.Create(ctx, job, metav1.CreateOptions{})
 	if err != nil {

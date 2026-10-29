@@ -234,6 +234,7 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 				},
 			},
 			Spec: operatorv1alpha1.EtcdBackupSpec{
+				Assets:       backupPolicy.Spec.Assets,
 				NodeSelector: backupPolicy.Spec.NodeSelector,
 				Storage:      backuphelpers.EtcdBackupStorageFromPolicy(backupPolicy),
 			},
@@ -248,6 +249,7 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 					},
 				},
 				Spec: operatorv1alpha1.EtcdBackupSpec{
+					Assets:       backupPolicy.Spec.Assets,
 					NodeSelector: map[string]string{corev1.LabelHostname: node.Labels[corev1.LabelHostname]},
 					Storage:      backuphelpers.EtcdBackupStorageFromPolicy(backupPolicy),
 				},

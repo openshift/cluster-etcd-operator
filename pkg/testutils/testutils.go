@@ -441,6 +441,12 @@ func WithBackupStorage(storage operatorv1alpha1.EtcdBackupStorage) func(backup *
 	}
 }
 
+func WithBackupAssets(assets ...operatorv1alpha1.EtcdBackupAssetType) func(backup *operatorv1alpha1.EtcdBackup) {
+	return func(backup *operatorv1alpha1.EtcdBackup) {
+		backup.Spec.Assets = assets
+	}
+}
+
 func WithBackupStatus(status operatorv1alpha1.EtcdBackupStatus) func(backup *operatorv1alpha1.EtcdBackup) {
 	return func(backup *operatorv1alpha1.EtcdBackup) {
 		backup.Status = status

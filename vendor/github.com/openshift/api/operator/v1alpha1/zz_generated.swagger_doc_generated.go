@@ -422,7 +422,7 @@ func (EtcdBackupPolicyStorage) SwaggerDoc() map[string]string {
 }
 
 var map_EtcdBackupPolicyStorageLocal = map[string]string{
-	"nodeCount": "nodeCount enables creating multiple local backups per schedule distributed across control plane nodes. Control plane nodes will be iterated in alphanumeric order when backups are created, with preference for nodes that already have backups for this policy. The number of created EtcdBackups may be less than nodeCount if there are fewer control plane nodes selected. When specified, must be an integer between 1 and 10. If omitted, defaults to 1. This field is optional.",
+	"nodeCount": "nodeCount enables creating multiple local backups per schedule distributed across control plane nodes. Control plane nodes will be iterated in lexicographical order when backups are created, with preference for nodes that already have backups for this policy. The number of created EtcdBackups may be less than nodeCount if there are fewer control plane nodes selected. When specified, must be an integer between 1 and 10. If omitted, defaults to 1. This field is optional.",
 }
 
 func (EtcdBackupPolicyStorageLocal) SwaggerDoc() map[string]string {

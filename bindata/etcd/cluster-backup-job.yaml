@@ -36,14 +36,11 @@ spec:
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           command:
-            - /bin/sh
-            - -c
-            - |
-              #!/bin/sh
-              set -exuo pipefail
-
-              cluster-etcd-operator cluster-backup --backup-dir "${CLUSTER_BACKUP_PATH}" --termination-log /dev/termination-log
-
+            - cluster-etcd-operator
+          args:
+            - cluster-backup
+            - --backup-dir=$(CLUSTER_BACKUP_PATH)
+            - --termination-log=/dev/termination-log
           resources:
             requests:
               memory: 80Mi

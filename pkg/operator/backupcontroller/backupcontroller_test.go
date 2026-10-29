@@ -166,6 +166,59 @@ func TestSyncLoopHappyPath(t *testing.T) {
 	})
 }
 
+func TestBackupWithAssets(t *testing.T) {
+	// Create a backup job for an EtcdBackup
+	t.Run("snapshot", func(t *testing.T) {
+		backup := testutils.FakeEtcdBackup("test-backup", testutils.WithBackupStorage(localStorage), testutils.WithBackupAssets(operatorv1alpha1.EtcdBackupAssetTypeSnapshot))
+		runBackupControllerTest(t, testCaseBackupController{
+			backups: []*operatorv1alpha1.EtcdBackup{backup},
+			nodes:   []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
+			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+				job := requireBackupJobCreated(t, client, backup)
+				require.Contains(t, job.Spec.Template.Spec.Containers[0].Args, "--assets=Snapshot")
+			},
+		})
+	})
+
+	t.Run("statickuberesources", func(t *testing.T) {
+		backup := testutils.FakeEtcdBackup("test-backup", testutils.WithBackupStorage(localStorage), testutils.WithBackupAssets(operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources))
+		runBackupControllerTest(t, testCaseBackupController{
+			backups: []*operatorv1alpha1.EtcdBackup{backup},
+			nodes:   []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
+			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+				job := requireBackupJobCreated(t, client, backup)
+				require.Contains(t, job.Spec.Template.Spec.Containers[0].Args, "--assets=StaticKubeResources")
+			},
+		})
+	})
+
+	t.Run("snapshot-and-statickuberesources", func(t *testing.T) {
+		backup := testutils.FakeEtcdBackup("test-backup", testutils.WithBackupStorage(localStorage), testutils.WithBackupAssets(operatorv1alpha1.EtcdBackupAssetTypeSnapshot, operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources))
+		runBackupControllerTest(t, testCaseBackupController{
+			backups: []*operatorv1alpha1.EtcdBackup{backup},
+			nodes:   []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
+			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+				job := requireBackupJobCreated(t, client, backup)
+				require.Contains(t, job.Spec.Template.Spec.Containers[0].Args, "--assets=Snapshot,StaticKubeResources")
+			},
+		})
+	})
+
+	t.Run("default-assets", func(t *testing.T) {
+		backup := testutils.FakeEtcdBackup("test-backup", testutils.WithBackupStorage(localStorage))
+		runBackupControllerTest(t, testCaseBackupController{
+			backups: []*operatorv1alpha1.EtcdBackup{backup},
+			nodes:   []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
+			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+				job := requireBackupJobCreated(t, client, backup)
+				for _, arg := range job.Spec.Template.Spec.Containers[0].Args {
+					require.False(t, strings.HasPrefix(arg, "--assets="), "Expected no --assets arg")
+				}
+			},
+		})
+	})
+}
+
 func TestJobAlreadyRunning(t *testing.T) {
 	// Don't create a new backup job when one already exists
 	job := &batchv1.Job{
@@ -517,7 +570,7 @@ func TestConcurrencyLocalSelectAvailableNode(t *testing.T) {
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			jobs := listCreatedJobs(client)
 			require.Len(t, jobs, 1)
-			require.Equal(t, "new", jobs[0].Name)
+			require.True(t, strings.HasPrefix("backup-new-", jobs[0].Name))
 			require.Equal(t, "test-node-2", jobs[0].Spec.Template.Spec.NodeName, "Expected backup to be assigned to an available node")
 
 			backup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), "new", metav1.GetOptions{})
@@ -827,7 +880,7 @@ func requireBackupJobCreated(t *testing.T, client *k8sfakeclient.Clientset, back
 	require.Equal(t, "create", createAction.GetVerb())
 	createdJob := createAction.Object.(*batchv1.Job)
 
-	require.Truef(t, strings.HasPrefix(createdJob.Name, backup.Name), "expected job.name [%s] to have prefix [%s]", createdJob.Name, backup.Name)
+	require.Truef(t, strings.HasPrefix(createdJob.Name, "backup-"+backup.Name), "expected job.name [%s] to have prefix [%s]", createdJob.Name, "backup-"+backup.Name)
 	require.Equal(t, operatorclient.TargetNamespace, createdJob.Namespace)
 	require.Equal(t, backup.Name, createdJob.Labels[backuphelpers.LabelEtcdBackup])
 	require.Equal(t, "operator-pullspec-image", createdJob.Spec.Template.Spec.InitContainers[0].Image)
