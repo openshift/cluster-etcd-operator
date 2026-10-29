@@ -514,7 +514,7 @@ func WithBackupFailed(reason operatorv1alpha1.BackupConditionReason) func(backup
 	}
 }
 
-func FakeEtcdBackupPolicy(name, schedule string, configs ...func(backup *operatorv1alpha1.EtcdBackupPolicy)) *operatorv1alpha1.EtcdBackupPolicy {
+func FakeEtcdBackupPolicy(name, schedule string, configs ...func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy)) *operatorv1alpha1.EtcdBackupPolicy {
 	backupPolicy := &operatorv1alpha1.EtcdBackupPolicy{
 		ObjectMeta: v1.ObjectMeta{
 			Name:              name,

@@ -4,9 +4,12 @@ import (
 	"context"
 	goflag "flag"
 	"fmt"
+	"iter"
 	"maps"
 	"os"
 	"os/signal"
+	"slices"
+	"strings"
 	"syscall"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
@@ -184,7 +187,7 @@ func createBackup(ctx context.Context, name, pvcName, pvcPath, hostPath string, 
 	return nil
 }
 
-// executeBackup creates EtcdBackup resources the current schedule execution
+// createBackupsForPolicy creates EtcdBackup resources for the current schedule execution of an EtcdBackupPolicy
 func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *operatorv1alpha1.EtcdBackupPolicy, backupClient operatorversionedclientv1alpha1.EtcdBackupInterface, nodeClient corev1client.NodeInterface) error {
 	// Check for active backups that belong to the policy
 	backupList, err := backupClient.List(ctx, v1.ListOptions{
@@ -210,7 +213,7 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 	})
 
 	if err != nil {
-		return fmt.Errorf("BackupPolicyController failed to select control plane nodes for backup: %w", err)
+		return fmt.Errorf("failed to select control plane nodes for backup: %w", err)
 	}
 	if len(nodeList.Items) == 0 {
 		klog.Warningf("No control plane nodes found for backup %s, skipping this execution", backupPolicy.Name)
@@ -221,7 +224,8 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 	// node (the hostPath is node-specific). PVC backups are node-independent: a single backup is created and
 	// the scheduler decides placement based on the volume's topology.
 	var toCreate []*operatorv1alpha1.EtcdBackup
-	if backupPolicy.Spec.Storage.Type == operatorv1alpha1.EtcdBackupStorageTypePVC {
+	switch backupPolicy.Spec.Storage.Type {
+	case operatorv1alpha1.EtcdBackupStorageTypePVC:
 		toCreate = append(toCreate, &operatorv1alpha1.EtcdBackup{
 			ObjectMeta: v1.ObjectMeta{
 				Name: name,
@@ -234,23 +238,23 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 				Storage:      backuphelpers.EtcdBackupStorageFromPolicy(backupPolicy),
 			},
 		})
-	} else {
-		for _, node := range nodeList.Items {
-			if hostname, ok := node.Labels[corev1.LabelHostname]; ok {
-				toCreate = append(toCreate, &operatorv1alpha1.EtcdBackup{
-					ObjectMeta: v1.ObjectMeta{
-						Name: name + "-" + string(node.UID),
-						Labels: map[string]string{
-							backuphelpers.LabelEtcdBackupPolicy: backupPolicy.Name,
-						},
+	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
+		for node := range iterLocalNodes(backupPolicy, backupList, nodeList) {
+			toCreate = append(toCreate, &operatorv1alpha1.EtcdBackup{
+				ObjectMeta: v1.ObjectMeta{
+					Name: name + "-" + string(node.UID),
+					Labels: map[string]string{
+						backuphelpers.LabelEtcdBackupPolicy: backupPolicy.Name,
 					},
-					Spec: operatorv1alpha1.EtcdBackupSpec{
-						NodeSelector: map[string]string{corev1.LabelHostname: hostname},
-						Storage:      backuphelpers.EtcdBackupStorageFromPolicy(backupPolicy),
-					},
-				})
-			}
+				},
+				Spec: operatorv1alpha1.EtcdBackupSpec{
+					NodeSelector: map[string]string{corev1.LabelHostname: node.Labels[corev1.LabelHostname]},
+					Storage:      backuphelpers.EtcdBackupStorageFromPolicy(backupPolicy),
+				},
+			})
 		}
+	default:
+		return fmt.Errorf("unknown EtcdBackupStorageType: %q", backupPolicy.Spec.Storage.Type)
 	}
 
 	for _, etcdBackup := range toCreate {
@@ -260,8 +264,58 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 				klog.Warningf("Failed to create EtcdBackup %q: %v", backupName, err)
 			}
 		} else {
-			klog.Infof("BackupPolicyController created EtcdBackup %q", backupName)
+			klog.Infof("created EtcdBackup %q", backupName)
 		}
 	}
 	return nil
+}
+
+func iterLocalNodes(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, backupList *operatorv1alpha1.EtcdBackupList, nodeList *corev1.NodeList) iter.Seq[corev1.Node] {
+	return func(yield func(corev1.Node) bool) {
+		nodeCount := int(backupPolicy.Spec.Storage.Local.NodeCount)
+		if nodeCount <= 0 {
+			nodeCount = 1
+		}
+
+		if nodeCount >= len(nodeList.Items) {
+			for _, node := range nodeList.Items {
+				if hostname := node.Labels[corev1.LabelHostname]; hostname != "" {
+					if !yield(node) {
+						return
+					}
+				}
+			}
+		} else {
+			// If there are more nodes than nodeCount, give preference to nodes with existing backups. Otherwise iterate in lexicographical order.
+			existingNodes := map[string]struct{}{}
+			for _, backup := range backupList.Items {
+				if backup.Status.NodeName != "" && backuphelpers.IsBackupCompleted(&backup) {
+					existingNodes[backup.Status.NodeName] = struct{}{}
+				}
+			}
+			slices.SortFunc(nodeList.Items, func(a, b corev1.Node) int {
+				_, aHasExisting := existingNodes[a.Name]
+				_, bHasExisting := existingNodes[b.Name]
+				if aHasExisting && !bHasExisting {
+					return -1
+				} else if bHasExisting && !aHasExisting {
+					return 1
+				}
+				return strings.Compare(a.Name, b.Name)
+			})
+
+			count := 0
+			for _, node := range nodeList.Items {
+				if hostName := node.Labels[corev1.LabelHostname]; hostName != "" {
+					if !yield(node) {
+						return
+					}
+					count++
+					if count == nodeCount {
+						return
+					}
+				}
+			}
+		}
+	}
 }
