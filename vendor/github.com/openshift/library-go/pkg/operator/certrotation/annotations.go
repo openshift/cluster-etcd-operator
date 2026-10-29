@@ -23,6 +23,8 @@ const (
 	CertificateAutoRegenerateAfterOfflineExpiryAnnotation string = "certificates.openshift.io/auto-regenerate-after-offline-expiry"
 	// CertificateRefreshPeriodAnnotation is the interval at which the certificate should be refreshed.
 	CertificateRefreshPeriodAnnotation string = "certificates.openshift.io/refresh-period"
+	// CertificateKeyAlgorithm is the key algorithm of the private key used to sign the certificate
+	CertificateKeyAlgorithm string = "certificates.openshift.io/key-algorithm"
 )
 
 type AdditionalAnnotations struct {
@@ -40,6 +42,8 @@ type AdditionalAnnotations struct {
 	NotAfter string
 	// RefreshPeriod contains the interval at which the certificate should be refreshed.
 	RefreshPeriod string
+	// KeyAlgorithm contains the key algorithm of the private key used to sign the certificate.
+	KeyAlgorithm string
 }
 
 func (a AdditionalAnnotations) EnsureTLSMetadataUpdate(meta *metav1.ObjectMeta) bool {
@@ -87,6 +91,12 @@ func (a AdditionalAnnotations) EnsureTLSMetadataUpdate(meta *metav1.ObjectMeta) 
 		diff := cmp.Diff(meta.Annotations[CertificateRefreshPeriodAnnotation], a.RefreshPeriod)
 		klog.V(2).Infof("Updating %q annotation for %s/%s, diff: %s", CertificateRefreshPeriodAnnotation, meta.Name, meta.Namespace, diff)
 		meta.Annotations[CertificateRefreshPeriodAnnotation] = a.RefreshPeriod
+		modified = true
+	}
+	if len(a.KeyAlgorithm) > 0 && meta.Annotations[CertificateKeyAlgorithm] != a.KeyAlgorithm {
+		diff := cmp.Diff(meta.Annotations[CertificateKeyAlgorithm], a.KeyAlgorithm)
+		klog.V(2).Infof("Updating %q annotation for %s/%s, diff: %s", CertificateKeyAlgorithm, meta.Name, meta.Namespace, diff)
+		meta.Annotations[CertificateKeyAlgorithm] = a.KeyAlgorithm
 		modified = true
 	}
 	return modified
