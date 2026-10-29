@@ -297,6 +297,7 @@ func (EtcdBackupList) SwaggerDoc() map[string]string {
 }
 
 var map_EtcdBackupSpec = map[string]string{
+	"assets":       "assets specifies the type of files to be backed up. If Snapshot is present, the etcd database will be snapshotted and saved to the storage backend. If StaticKubeResources is present, static pod manifests for the control plane will be bundled and saved to the storage backend. If etcd is encrypted, this will include the encryption keys. When specified, must contain between 1 and 2 entries, with at most 1 of each type. When omitted, all assets types will be backed up. This field is optional.",
 	"nodeSelector": "nodeSelector specifies which control plane nodes to select from for running the backup job. Only one backup job is run per EtcdBackup. The default node-role.kubernetes.io/control-plane label will always be selected for in addition to any labels set here. If no nodes are matched, then the backup will be marked failed. For Local storage type, this may be used to target a specific node to take and store the backup. For PVC storage type, this may be used to control where the backup is taken from. When specified, must contain between 1 and 10 entries. This field is optional.",
 	"storage":      "storage specifies the location where etcd backup files will be saved. This field is required.",
 }
@@ -362,23 +363,40 @@ func (EtcdBackupPolicyList) SwaggerDoc() map[string]string {
 	return map_EtcdBackupPolicyList
 }
 
+var map_EtcdBackupPolicyRetentionQuantity = map[string]string{
+	"maxQuantity": "maxQuantity enforces the deletion of backups that exceed the total count. Must be between 1 and 1000. Thius field is required.",
+}
+
+func (EtcdBackupPolicyRetentionQuantity) SwaggerDoc() map[string]string {
+	return map_EtcdBackupPolicyRetentionQuantity
+}
+
 var map_EtcdBackupPolicyRetentionRule = map[string]string{
-	"type":           "type defined which rule field is set Allowed values are MaxQuantity and MaxTotalSizeGb. When set to MaxQuantity, this rule deletes old EtcdBackups when the quantity is exceeded. When set to MaxTotalSizeGb, this rule deletes old EtcdBackups when the total aggregate size of backup files exceeds the value. This field is required.",
-	"maxQuantity":    "maxQuantity enforces the deletion of backups that exceed the given count. Must be between 1 and 1000. This field is required when the rule type is \"MaxQuantity\", and forbidden otherwise.",
-	"maxTotalSizeGb": "maxTotalSizeGb enforces the deletion of backups by the total size of backups on the storage backend (in GB). This is a soft threshold. The total size of backups may temporarily exceed the limit when new backups are created. Must be between 1 and 10000. This field is required when the rule type is \"MaxTotalSizeGb\", and forbidden otherwise.",
+	"type":     "type defined which rule field is set Allowed values are Quantity and Size. When set to Quantity, this rule deletes old EtcdBackups based on the total count. When set to Size, this rule deletes old EtcdBackups based on the total aggregate size of backup files. This field is required.",
+	"quantity": "quantity enforces the deletion of EtcdBackups belonging to the EtcdBackupPolicy based on total count. This field is required when the rule type is \"Quantity\", and forbidden otherwise.",
+	"size":     "size enforces the deletion of EtcdBackups belonging to the EtcdBackupPolicy based on total backup file size. This field is required when the rule type is \"Size\", and forbidden otherwise.",
 }
 
 func (EtcdBackupPolicyRetentionRule) SwaggerDoc() map[string]string {
 	return map_EtcdBackupPolicyRetentionRule
 }
 
+var map_EtcdBackupPolicyRetentionSize = map[string]string{
+	"maxTotalSizeGiB": "maxTotalSizeGiB enforces the deletion of backups by the total size of backups on the storage backend (in GiB). This is a soft threshold. The total size of backups may temporarily exceed the limit when new backups are created. Must be between 1 and 10240 (10 TiB). This field is required.",
+}
+
+func (EtcdBackupPolicyRetentionSize) SwaggerDoc() map[string]string {
+	return map_EtcdBackupPolicyRetentionSize
+}
+
 var map_EtcdBackupPolicySpec = map[string]string{
 	"schedule":                  "schedule sets the backup schedule in Cron format, see https://en.wikipedia.org/wiki/Cron. The value must be one of the following forms: a predefined macro \"@yearly\", \"@annually\", \"@monthly\", \"@weekly\", \"@daily\" or \"@hourly\"; an \"@every <duration>\" expression where duration is a sequence of decimal numbers each with a unit of \"ns\", \"us\", \"ms\", \"s\", \"m\" or \"h\" (for example \"@every 2h\" or \"@every 1h30m\"); or a standard cron expression of five space separated fields (minute, hour, day-of-month, month and day-of-week), where each field may only contain digits, the names used for months and days of the week, and the cron special characters \"*\", \"/\", \"-\" and \",\". This validation only checks the overall shape of the value; the individual field values are validated when the schedule is parsed by the controller, which reports parsing failures via the schedule's status condition. Must be between 1 and 1024 characters long. This field is required.",
 	"timeZone":                  "timeZone name for the given schedule, see https://en.wikipedia.org/wiki/List_of_tz_database_time_zones. If not specified, this will default to the time zone of the cluster-etcd-operator process.",
-	"nodeSelector":              "nodeSelector specifies which control plane nodes to select from for running backup jobs. The default node-role.kubernetes.io/control-plane label will always be required in addition to any labels set here. If no nodes are matched, then no EtcdBackups will be created. For Local storage type, an EtcdBackup will be created for each selected control plane node every time the schedule is triggered. This is a special case to provide some resiliancy in the event of control plane node loss. For PVC storage type, a single EtcdBackup will be created with the given nodeSelector every time the schedule is triggered. When specified, must contain between 1 and 10 entries. This field is optional.",
+	"assets":                    "assets specifies the type of files to be backed up. If Snapshot is present, the etcd database will be snapshotted and saved to the storage backend. If StaticKubeResources is present, static pod manifests for the control plane will be bundled and saved to the storage backend. If etcd is encrypted, this will include the encryption keys. When specified, must contain between 1 and 2 entries, with at most 1 of each type. When omitted, all assets types will be backed up. This field is optional.",
+	"nodeSelector":              "nodeSelector specifies which control plane nodes to select from for running backup jobs. The default node-role.kubernetes.io/control-plane label will always be required in addition to any labels set here. If no nodes are matched, then no EtcdBackups will be created. When specified, must contain between 1 and 10 entries. This field is optional.",
 	"storage":                   "storage specifies the location where etcd backup files will be saved. This field is required.",
 	"retentionRules":            "retentionRules defines the policy for retaining and deleting existing backups. Backups are deleted from the oldest first until all rules are satisfied. If no rules are specified then backups created by this policy will not be automatically deleted. When an EtcdBackup is deleted the files created by it will be deleted as well, as long as the storage backend is still accessible. When specified, must contain between 1 and 2 entries. Must not have more than 1 entry of each rule type. This field is optional.",
-	"failedBackupsHistoryLimit": "failedBackupsHistoryLimit defined the number of failed etcdbackups to retain. Failed backups are deleted from the oldest first. Must be non-negative integer. If set to to 0, then failed backups will be deleted immediately. If unset, defaults to 1. Must be a positive integer no greater than 1000. This field is optional.",
+	"failedBackupsHistoryLimit": "failedBackupsHistoryLimit defined the number of failed etcdbackups to retain. Failed backups are deleted from the oldest first. Must be non-negative integer. If set to to 0, then failed backups will be deleted immediately. If unset, defaults to 1. Must be a positive integer no greater than 100. This field is optional.",
 }
 
 func (EtcdBackupPolicySpec) SwaggerDoc() map[string]string {
@@ -386,21 +404,29 @@ func (EtcdBackupPolicySpec) SwaggerDoc() map[string]string {
 }
 
 var map_EtcdBackupPolicyStatus = map[string]string{
-	"conditions": "conditions provide details on the status of the etcd backup policy. When specified, must contain between 1 and 3 entries, with no more than 1 of each type.\n\nSupported conditions include Error, LastScheduled, and LastSuccessfulTime. If Error is true, the EtcdBackupPolicy is invalid and the condition reason and message will include details on the error. If LastScheduled is true, the most recently scheduled EtcdBackup was created at the condition's lastTransitionTime. If LastSuccessfulTime is true, the most recently completed EtcdBackup finished at the condition's lastTransitionTime. This field is optional.",
-	"active":     "active is a list of references to in progress backups controlled by this policy When specified, must contain between 1 and 20 entries. This field is optional.",
+	"conditions": "conditions provide details on the status of the etcd backup policy. When specified, must contain between 1 and 10 entries, with no more than 1 of each type.\n\nSupported conditions include Error. If Error is true, the EtcdBackupPolicy is invalid and the condition reason and message will include details on the error. This field is optional.",
 }
 
 func (EtcdBackupPolicyStatus) SwaggerDoc() map[string]string {
 	return map_EtcdBackupPolicyStatus
 }
 
-var map_EtcdBackupReference = map[string]string{
-	"name": "name of the backup Must be between 1 and 253 characters and conform to RFC 1123 subdomain format: lowercase alphanumeric characters, '-' or '.', starting and ending with alphanumeric characters. This field is required.",
-	"uid":  "uid of the backup. Must be a valid UUID formatted string with 36 characters. This field is required.",
+var map_EtcdBackupPolicyStorage = map[string]string{
+	"type":  "type of storage backend to use for storing the etcd backup. Allowed values are Local and PVC. When set to Local, the backup will be saved to a host path directory on the control plane node it was taken on. When set to PVC, the backup will be saved to a volume bound by a PersistentVolumeClaim. This field is required.",
+	"pvc":   "pvc specifies the PersistentVolumeClaim (PVC) which binds a PersistentVolume where the etcd backup file will be saved. The PVC must always be created in the \"openshift-etcd\" namespace. This field is required when the storage type is \"PVC\", and forbidden otherwise.",
+	"local": "local specifies a host path directory on the control plane node where the etcd backup file will be saved. This field is required when storage type is \"Local\", and forbidden otherwise.",
 }
 
-func (EtcdBackupReference) SwaggerDoc() map[string]string {
-	return map_EtcdBackupReference
+func (EtcdBackupPolicyStorage) SwaggerDoc() map[string]string {
+	return map_EtcdBackupPolicyStorage
+}
+
+var map_EtcdBackupPolicyStorageLocal = map[string]string{
+	"nodeCount": "nodeCount enables creating multiple local backups per schedule distributed across control plane nodes. Control plane nodes will be iterated in alphanumeric order when backups are created, with preference for nodes that already have backups for this policy. The number of created EtcdBackups may be less than nodeCount if there are fewer control plane nodes selected. When specified, must be an integer between 1 and 10. If omitted, defaults to 1. This field is optional.",
+}
+
+func (EtcdBackupPolicyStorageLocal) SwaggerDoc() map[string]string {
+	return map_EtcdBackupPolicyStorageLocal
 }
 
 var map_ImageContentSourcePolicy = map[string]string{

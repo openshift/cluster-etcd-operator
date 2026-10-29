@@ -2,6 +2,10 @@
 
 package v1alpha1
 
+import (
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+)
+
 // EtcdBackupPolicySpecApplyConfiguration represents a declarative configuration of the EtcdBackupPolicySpec type for use
 // with apply.
 type EtcdBackupPolicySpecApplyConfiguration struct {
@@ -22,17 +26,22 @@ type EtcdBackupPolicySpecApplyConfiguration struct {
 	// timeZone name for the given schedule, see https://en.wikipedia.org/wiki/List_of_tz_database_time_zones.
 	// If not specified, this will default to the time zone of the cluster-etcd-operator process.
 	TimeZone *string `json:"timeZone,omitempty"`
+	// assets specifies the type of files to be backed up.
+	// If Snapshot is present, the etcd database will be snapshotted and saved to the storage backend.
+	// If StaticKubeResources is present, static pod manifests for the control plane will be bundled and saved to the storage backend. If etcd is encrypted, this will include the encryption keys.
+	// When specified, must contain between 1 and 2 entries, with at most 1 of each type.
+	// When omitted, all assets types will be backed up.
+	// This field is optional.
+	Assets []operatorv1alpha1.EtcdBackupAssetType `json:"assets,omitempty"`
 	// nodeSelector specifies which control plane nodes to select from for running backup jobs.
 	// The default node-role.kubernetes.io/control-plane label will always be required in addition to any labels set here.
 	// If no nodes are matched, then no EtcdBackups will be created.
-	// For Local storage type, an EtcdBackup will be created for each selected control plane node every time the schedule is triggered. This is a special case to provide some resiliancy in the event of control plane node loss.
-	// For PVC storage type, a single EtcdBackup will be created with the given nodeSelector every time the schedule is triggered.
 	// When specified, must contain between 1 and 10 entries.
 	// This field is optional.
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 	// storage specifies the location where etcd backup files will be saved.
 	// This field is required.
-	Storage *EtcdBackupStorageApplyConfiguration `json:"storage,omitempty"`
+	Storage *EtcdBackupPolicyStorageApplyConfiguration `json:"storage,omitempty"`
 	// retentionRules defines the policy for retaining and deleting existing backups.
 	// Backups are deleted from the oldest first until all rules are satisfied.
 	// If no rules are specified then backups created by this policy will not be automatically deleted.
@@ -45,7 +54,7 @@ type EtcdBackupPolicySpecApplyConfiguration struct {
 	// Must be non-negative integer.
 	// If set to to 0, then failed backups will be deleted immediately.
 	// If unset, defaults to 1.
-	// Must be a positive integer no greater than 1000.
+	// Must be a positive integer no greater than 100.
 	// This field is optional.
 	FailedBackupsHistoryLimit *int32 `json:"failedBackupsHistoryLimit,omitempty"`
 }
@@ -72,6 +81,16 @@ func (b *EtcdBackupPolicySpecApplyConfiguration) WithTimeZone(value string) *Etc
 	return b
 }
 
+// WithAssets adds the given value to the Assets field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Assets field.
+func (b *EtcdBackupPolicySpecApplyConfiguration) WithAssets(values ...operatorv1alpha1.EtcdBackupAssetType) *EtcdBackupPolicySpecApplyConfiguration {
+	for i := range values {
+		b.Assets = append(b.Assets, values[i])
+	}
+	return b
+}
+
 // WithNodeSelector puts the entries into the NodeSelector field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, the entries provided by each call will be put on the NodeSelector field,
@@ -89,7 +108,7 @@ func (b *EtcdBackupPolicySpecApplyConfiguration) WithNodeSelector(entries map[st
 // WithStorage sets the Storage field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Storage field is set to the value of the last call.
-func (b *EtcdBackupPolicySpecApplyConfiguration) WithStorage(value *EtcdBackupStorageApplyConfiguration) *EtcdBackupPolicySpecApplyConfiguration {
+func (b *EtcdBackupPolicySpecApplyConfiguration) WithStorage(value *EtcdBackupPolicyStorageApplyConfiguration) *EtcdBackupPolicySpecApplyConfiguration {
 	b.Storage = value
 	return b
 }

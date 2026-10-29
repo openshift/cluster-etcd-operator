@@ -106,8 +106,18 @@ func (in EtcdBackupPolicyList) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
+func (in EtcdBackupPolicyRetentionQuantity) OpenAPIModelName() string {
+	return "com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyRetentionQuantity"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in EtcdBackupPolicyRetentionRule) OpenAPIModelName() string {
 	return "com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyRetentionRule"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in EtcdBackupPolicyRetentionSize) OpenAPIModelName() string {
+	return "com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyRetentionSize"
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
@@ -121,8 +131,18 @@ func (in EtcdBackupPolicyStatus) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
-func (in EtcdBackupReference) OpenAPIModelName() string {
-	return "com.github.openshift.api.operator.v1alpha1.EtcdBackupReference"
+func (in EtcdBackupPolicyStorage) OpenAPIModelName() string {
+	return "com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyStorage"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in EtcdBackupPolicyStorageLocal) OpenAPIModelName() string {
+	return "com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyStorageLocal"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
+func (in EtcdBackupPolicyStoragePvc) OpenAPIModelName() string {
+	return "com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyStoragePvc"
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.

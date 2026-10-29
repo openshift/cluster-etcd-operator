@@ -127,13 +127,16 @@ func TestPeriodicBackupHappyPath(t testing.TB) {
 			Schedule: "* * * * *",
 			RetentionRules: []operatorv1alpha1.EtcdBackupPolicyRetentionRule{
 				{
-					Type:        operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxQuantity,
-					MaxQuantity: 5,
+					Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeQuantity,
+					Quantity: operatorv1alpha1.EtcdBackupPolicyRetentionQuantity{
+						MaxQuantity: 5,
+					},
 				},
 			},
-			Storage: operatorv1alpha1.EtcdBackupStorage{
+			Storage: operatorv1alpha1.EtcdBackupPolicyStorage{
 				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: pvcName},
+				PVC: operatorv1alpha1.EtcdBackupPolicyStoragePvc{
+					EtcdBackupStoragePvc: operatorv1alpha1.EtcdBackupStoragePvc{Name: pvcName}},
 			},
 		},
 	}
@@ -182,13 +185,16 @@ func TestRetentionBySize(t testing.TB) {
 			Schedule: "* * * * *",
 			RetentionRules: []operatorv1alpha1.EtcdBackupPolicyRetentionRule{
 				{
-					Type:           operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxTotalSizeGb,
-					MaxTotalSizeGb: 5,
+					Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeQuantity,
+					Quantity: operatorv1alpha1.EtcdBackupPolicyRetentionQuantity{
+						MaxQuantity: 5,
+					},
 				},
 			},
-			Storage: operatorv1alpha1.EtcdBackupStorage{
+			Storage: operatorv1alpha1.EtcdBackupPolicyStorage{
 				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: pvcName},
+				PVC: operatorv1alpha1.EtcdBackupPolicyStoragePvc{
+					EtcdBackupStoragePvc: operatorv1alpha1.EtcdBackupStoragePvc{Name: pvcName}},
 			},
 		},
 	}
@@ -354,13 +360,16 @@ func TestWrongScheduleDegradesOperator(t testing.TB) {
 			Schedule: "*/5 */0 * * *",
 			RetentionRules: []operatorv1alpha1.EtcdBackupPolicyRetentionRule{
 				{
-					Type:        operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxQuantity,
-					MaxQuantity: 5,
+					Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeQuantity,
+					Quantity: operatorv1alpha1.EtcdBackupPolicyRetentionQuantity{
+						MaxQuantity: 5,
+					},
 				},
 			},
-			Storage: operatorv1alpha1.EtcdBackupStorage{
+			Storage: operatorv1alpha1.EtcdBackupPolicyStorage{
 				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "not-existing-pvc"},
+				PVC: operatorv1alpha1.EtcdBackupPolicyStoragePvc{
+					EtcdBackupStoragePvc: operatorv1alpha1.EtcdBackupStoragePvc{Name: "not-existing-pvc"}},
 			},
 		},
 	}

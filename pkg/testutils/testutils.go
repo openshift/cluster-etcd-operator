@@ -523,9 +523,10 @@ func FakeEtcdBackupPolicy(name, schedule string, configs ...func(backup *operato
 		},
 		Spec: operatorv1alpha1.EtcdBackupPolicySpec{
 			Schedule: schedule,
-			Storage: operatorv1alpha1.EtcdBackupStorage{
+			Storage: operatorv1alpha1.EtcdBackupPolicyStorage{
 				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: name + "-pvc"},
+				PVC: operatorv1alpha1.EtcdBackupPolicyStoragePvc{
+					EtcdBackupStoragePvc: operatorv1alpha1.EtcdBackupStoragePvc{Name: name + "-pvc"}},
 			},
 			FailedBackupsHistoryLimit: new(int32(1)),
 		},
@@ -548,7 +549,7 @@ func WithBackupPolicyDeleted() func(backupPolicy *operatorv1alpha1.EtcdBackupPol
 	}
 }
 
-func WithBackupPolicyStorage(storage operatorv1alpha1.EtcdBackupStorage) func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
+func WithBackupPolicyStorage(storage operatorv1alpha1.EtcdBackupPolicyStorage) func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
 	return func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
 		backupPolicy.Spec.Storage = storage
 	}

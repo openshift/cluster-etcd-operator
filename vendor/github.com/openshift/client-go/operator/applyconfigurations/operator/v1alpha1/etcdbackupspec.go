@@ -2,9 +2,20 @@
 
 package v1alpha1
 
+import (
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+)
+
 // EtcdBackupSpecApplyConfiguration represents a declarative configuration of the EtcdBackupSpec type for use
 // with apply.
 type EtcdBackupSpecApplyConfiguration struct {
+	// assets specifies the type of files to be backed up.
+	// If Snapshot is present, the etcd database will be snapshotted and saved to the storage backend.
+	// If StaticKubeResources is present, static pod manifests for the control plane will be bundled and saved to the storage backend. If etcd is encrypted, this will include the encryption keys.
+	// When specified, must contain between 1 and 2 entries, with at most 1 of each type.
+	// When omitted, all assets types will be backed up.
+	// This field is optional.
+	Assets []operatorv1alpha1.EtcdBackupAssetType `json:"assets,omitempty"`
 	// nodeSelector specifies which control plane nodes to select from for running the backup job. Only one backup job is run per EtcdBackup.
 	// The default node-role.kubernetes.io/control-plane label will always be selected for in addition to any labels set here.
 	// If no nodes are matched, then the backup will be marked failed.
@@ -22,6 +33,16 @@ type EtcdBackupSpecApplyConfiguration struct {
 // apply.
 func EtcdBackupSpec() *EtcdBackupSpecApplyConfiguration {
 	return &EtcdBackupSpecApplyConfiguration{}
+}
+
+// WithAssets adds the given value to the Assets field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Assets field.
+func (b *EtcdBackupSpecApplyConfiguration) WithAssets(values ...operatorv1alpha1.EtcdBackupAssetType) *EtcdBackupSpecApplyConfiguration {
+	for i := range values {
+		b.Assets = append(b.Assets, values[i])
+	}
+	return b
 }
 
 // WithNodeSelector puts the entries into the NodeSelector field in the declarative configuration

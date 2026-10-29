@@ -73,6 +73,20 @@ spec:
           spec:
             description: spec holds user settable values for configuration
             properties:
+              assets:
+                description: |-
+                  assets specifies the type of files to be backed up.
+                  If Snapshot is present, the etcd database will be snapshotted and saved to the storage backend.
+                  If StaticKubeResources is present, static pod manifests for the control plane will be bundled and saved to the storage backend. If etcd is encrypted, this will include the encryption keys.
+                  When specified, must contain between 1 and 2 entries, with at most 1 of each type.
+                  When omitted, all assets types will be backed up.
+                  This field is optional.
+                items:
+                  type: string
+                maxItems: 2
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: set
               nodeSelector:
                 additionalProperties:
                   type: string
@@ -321,6 +335,9 @@ spec:
         - metadata
         - spec
         type: object
+        x-kubernetes-validations:
+        - message: name cannot exceed 63 characters
+          rule: self.metadata.name.size() <= 63
     served: true
     storage: true
     subresources:

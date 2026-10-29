@@ -4566,28 +4566,48 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyStatus
       default: {}
-- name: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyRetentionRule
+- name: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyRetentionQuantity
   map:
     fields:
     - name: maxQuantity
       type:
         scalar: numeric
-    - name: maxTotalSizeGb
+- name: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyRetentionRule
+  map:
+    fields:
+    - name: quantity
       type:
-        scalar: numeric
+        namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyRetentionQuantity
+      default: {}
+    - name: size
+      type:
+        namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyRetentionSize
+      default: {}
     - name: type
       type:
         scalar: string
     unions:
     - discriminator: type
       fields:
-      - fieldName: maxQuantity
-        discriminatorValue: MaxQuantity
-      - fieldName: maxTotalSizeGb
-        discriminatorValue: MaxTotalSizeGb
+      - fieldName: quantity
+        discriminatorValue: Quantity
+      - fieldName: size
+        discriminatorValue: Size
+- name: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyRetentionSize
+  map:
+    fields:
+    - name: maxTotalSizeGiB
+      type:
+        scalar: numeric
 - name: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicySpec
   map:
     fields:
+    - name: assets
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: associative
     - name: failedBackupsHistoryLimit
       type:
         scalar: numeric
@@ -4609,7 +4629,7 @@ var schemaYAML = typed.YAMLObject(`types:
         scalar: string
     - name: storage
       type:
-        namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupStorage
+        namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyStorage
       default: {}
     - name: timeZone
       type:
@@ -4617,14 +4637,6 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyStatus
   map:
     fields:
-    - name: active
-      type:
-        list:
-          elementType:
-            namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupReference
-          elementRelationship: associative
-          keys:
-          - name
     - name: conditions
       type:
         list:
@@ -4633,18 +4645,55 @@ var schemaYAML = typed.YAMLObject(`types:
           elementRelationship: associative
           keys:
           - type
-- name: com.github.openshift.api.operator.v1alpha1.EtcdBackupReference
+- name: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyStorage
+  map:
+    fields:
+    - name: local
+      type:
+        namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyStorageLocal
+      default: {}
+    - name: pvc
+      type:
+        namedType: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyStoragePvc
+      default: {}
+    - name: type
+      type:
+        scalar: string
+    unions:
+    - discriminator: type
+      fields:
+      - fieldName: local
+        discriminatorValue: Local
+      - fieldName: pvc
+        discriminatorValue: PVC
+- name: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyStorageLocal
+  map:
+    fields:
+    - name: hostPath
+      type:
+        scalar: string
+    - name: nodeCount
+      type:
+        scalar: numeric
+      default: 0
+- name: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyStoragePvc
   map:
     fields:
     - name: name
       type:
         scalar: string
-    - name: uid
+    - name: path
       type:
         scalar: string
 - name: com.github.openshift.api.operator.v1alpha1.EtcdBackupSpec
   map:
     fields:
+    - name: assets
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: associative
     - name: nodeSelector
       type:
         map:

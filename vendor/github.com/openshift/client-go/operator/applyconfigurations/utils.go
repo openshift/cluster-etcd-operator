@@ -504,14 +504,22 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &operatorv1alpha1.EtcdBackupFileApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("EtcdBackupPolicy"):
 		return &operatorv1alpha1.EtcdBackupPolicyApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("EtcdBackupPolicyRetentionQuantity"):
+		return &operatorv1alpha1.EtcdBackupPolicyRetentionQuantityApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("EtcdBackupPolicyRetentionRule"):
 		return &operatorv1alpha1.EtcdBackupPolicyRetentionRuleApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("EtcdBackupPolicyRetentionSize"):
+		return &operatorv1alpha1.EtcdBackupPolicyRetentionSizeApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("EtcdBackupPolicySpec"):
 		return &operatorv1alpha1.EtcdBackupPolicySpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("EtcdBackupPolicyStatus"):
 		return &operatorv1alpha1.EtcdBackupPolicyStatusApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("EtcdBackupReference"):
-		return &operatorv1alpha1.EtcdBackupReferenceApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("EtcdBackupPolicyStorage"):
+		return &operatorv1alpha1.EtcdBackupPolicyStorageApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("EtcdBackupPolicyStorageLocal"):
+		return &operatorv1alpha1.EtcdBackupPolicyStorageLocalApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("EtcdBackupPolicyStoragePvc"):
+		return &operatorv1alpha1.EtcdBackupPolicyStoragePvcApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("EtcdBackupSpec"):
 		return &operatorv1alpha1.EtcdBackupSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("EtcdBackupStatus"):

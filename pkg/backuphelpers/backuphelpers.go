@@ -62,6 +62,23 @@ func IsBackupFinished(backup *operatorv1alpha1.EtcdBackup) bool {
 	return false
 }
 
+func IsBackupPolicyScheduled(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) bool {
+	for _, condition := range backupPolicy.Status.Conditions {
+		if condition.Status == metav1.ConditionTrue && condition.Type == string(operatorv1alpha1.BackupPolicyScheduled) {
+			return true
+		}
+	}
+	return false
+}
+
+func EtcdBackupStorageFromPolicy(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) operatorv1alpha1.EtcdBackupStorage {
+	return operatorv1alpha1.EtcdBackupStorage{
+		Type:  backupPolicy.Spec.Storage.Type,
+		PVC:   backupPolicy.Spec.Storage.PVC.EtcdBackupStoragePvc,
+		Local: backupPolicy.Spec.Storage.Local.EtcdBackupStorageLocal,
+	}
+}
+
 // TODO(bhperry): Ideally this would be aware of the health of etcd on nodes so it selects the nodes most likely to succeed
 func SelectBackupNodes(nodeLister corev1listers.NodeLister, selector labels.Selector) ([]*corev1.Node, error) {
 	if selector == nil {

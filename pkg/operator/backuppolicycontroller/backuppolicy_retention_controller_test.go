@@ -83,11 +83,15 @@ func TestBackupPolicyRetentionPruneByQuantity(t *testing.T) {
 		runBackupPolicyRetentionControllerTest(t, testCaseBackupPolicyRetentionController{
 			backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
 				testutils.FakeEtcdBackupPolicy("test-backup-policy", "@hourly",
-					testutils.WithBackupPolicyStorage(operatorv1alpha1.EtcdBackupStorage{
-						Type: operatorv1alpha1.EtcdBackupStorageTypeLocal, Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"},
+					testutils.WithBackupPolicyStorage(operatorv1alpha1.EtcdBackupPolicyStorage{
+						Type: operatorv1alpha1.EtcdBackupStorageTypeLocal, Local: operatorv1alpha1.EtcdBackupPolicyStorageLocal{
+							EtcdBackupStorageLocal: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"}},
 					}),
 					testutils.WithBackupPolicyRetentionRules(operatorv1alpha1.EtcdBackupPolicyRetentionRule{
-						Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxQuantity, MaxQuantity: 1,
+						Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeQuantity,
+						Quantity: operatorv1alpha1.EtcdBackupPolicyRetentionQuantity{
+							MaxQuantity: 1,
+						},
 					}))},
 			backups: []*operatorv1alpha1.EtcdBackup{
 				testutils.FakeEtcdBackup("test-backup-1",
@@ -122,11 +126,16 @@ func TestBackupPolicyRetentionPruneByQuantity(t *testing.T) {
 		runBackupPolicyRetentionControllerTest(t, testCaseBackupPolicyRetentionController{
 			backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
 				testutils.FakeEtcdBackupPolicy("test-backup-policy", "@hourly",
-					testutils.WithBackupPolicyStorage(operatorv1alpha1.EtcdBackupStorage{
-						Type: operatorv1alpha1.EtcdBackupStorageTypePVC, PVC: operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-backup-pvc"},
+					testutils.WithBackupPolicyStorage(operatorv1alpha1.EtcdBackupPolicyStorage{
+						Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+						PVC: operatorv1alpha1.EtcdBackupPolicyStoragePvc{
+							EtcdBackupStoragePvc: operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-backup-pvc"}},
 					}),
 					testutils.WithBackupPolicyRetentionRules(operatorv1alpha1.EtcdBackupPolicyRetentionRule{
-						Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxQuantity, MaxQuantity: 1,
+						Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeQuantity,
+						Quantity: operatorv1alpha1.EtcdBackupPolicyRetentionQuantity{
+							MaxQuantity: 1,
+						},
 					}))},
 			backups: []*operatorv1alpha1.EtcdBackup{
 				testutils.FakeEtcdBackup("test-backup-1", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupCompleted(), testutils.WithBackupAge(2*time.Hour)),
@@ -144,11 +153,16 @@ func TestBackupPolicyRetentionPruneBySize(t *testing.T) {
 		runBackupPolicyRetentionControllerTest(t, testCaseBackupPolicyRetentionController{
 			backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
 				testutils.FakeEtcdBackupPolicy("test-backup-policy", "@hourly",
-					testutils.WithBackupPolicyStorage(operatorv1alpha1.EtcdBackupStorage{
-						Type: operatorv1alpha1.EtcdBackupStorageTypeLocal, Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"},
+					testutils.WithBackupPolicyStorage(operatorv1alpha1.EtcdBackupPolicyStorage{
+						Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
+						Local: operatorv1alpha1.EtcdBackupPolicyStorageLocal{
+							EtcdBackupStorageLocal: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"}},
 					}),
 					testutils.WithBackupPolicyRetentionRules(operatorv1alpha1.EtcdBackupPolicyRetentionRule{
-						Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxTotalSizeGb, MaxTotalSizeGb: 1,
+						Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeSize,
+						Size: operatorv1alpha1.EtcdBackupPolicyRetentionSize{
+							MaxTotalSizeGiB: 1,
+						},
 					}))},
 			backups: []*operatorv1alpha1.EtcdBackup{
 				testutils.FakeEtcdBackup("test-backup-1",
@@ -195,11 +209,16 @@ func TestBackupPolicyRetentionPruneBySize(t *testing.T) {
 		runBackupPolicyRetentionControllerTest(t, testCaseBackupPolicyRetentionController{
 			backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
 				testutils.FakeEtcdBackupPolicy("test-backup-policy", "@hourly",
-					testutils.WithBackupPolicyStorage(operatorv1alpha1.EtcdBackupStorage{
-						Type: operatorv1alpha1.EtcdBackupStorageTypePVC, PVC: operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-backup-pvc"},
+					testutils.WithBackupPolicyStorage(operatorv1alpha1.EtcdBackupPolicyStorage{
+						Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+						PVC: operatorv1alpha1.EtcdBackupPolicyStoragePvc{
+							EtcdBackupStoragePvc: operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-backup-pvc"}},
 					}),
 					testutils.WithBackupPolicyRetentionRules(operatorv1alpha1.EtcdBackupPolicyRetentionRule{
-						Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxTotalSizeGb, MaxTotalSizeGb: 1,
+						Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeSize,
+						Size: operatorv1alpha1.EtcdBackupPolicyRetentionSize{
+							MaxTotalSizeGiB: 1,
+						},
 					}))},
 			backups: []*operatorv1alpha1.EtcdBackup{
 				testutils.FakeEtcdBackup("test-backup-1",
@@ -253,7 +272,10 @@ func TestBackupPolicyRetentionIgnoreStandaloneBackups(t *testing.T) {
 		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
 			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@hourly",
 				testutils.WithBackupPolicyRetentionRules(operatorv1alpha1.EtcdBackupPolicyRetentionRule{
-					Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxQuantity, MaxQuantity: 2,
+					Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeQuantity,
+					Quantity: operatorv1alpha1.EtcdBackupPolicyRetentionQuantity{
+						MaxQuantity: 2,
+					},
 				}))},
 		backups: []*operatorv1alpha1.EtcdBackup{
 			testutils.FakeEtcdBackup("test-backup-1", testutils.WithBackupCompleted(), testutils.WithBackupAge(2*time.Hour)),
@@ -269,7 +291,10 @@ func TestBackupPolicyRetentionIgnoreDeletedPolicy(t *testing.T) {
 		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
 			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@hourly",
 				testutils.WithBackupPolicyRetentionRules(operatorv1alpha1.EtcdBackupPolicyRetentionRule{
-					Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxQuantity, MaxQuantity: 1,
+					Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeQuantity,
+					Quantity: operatorv1alpha1.EtcdBackupPolicyRetentionQuantity{
+						MaxQuantity: 1,
+					},
 				}),
 				testutils.WithBackupPolicyDeleted())},
 		backups: []*operatorv1alpha1.EtcdBackup{
@@ -287,7 +312,10 @@ func TestBackupPolicyRetentionIgnoreFailedBackups(t *testing.T) {
 		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
 			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@hourly",
 				testutils.WithBackupPolicyRetentionRules(operatorv1alpha1.EtcdBackupPolicyRetentionRule{
-					Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxQuantity, MaxQuantity: 2,
+					Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeQuantity,
+					Quantity: operatorv1alpha1.EtcdBackupPolicyRetentionQuantity{
+						MaxQuantity: 2,
+					},
 				}))},
 		backups: []*operatorv1alpha1.EtcdBackup{
 			testutils.FakeEtcdBackup("test-backup-1", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupCompleted(), testutils.WithBackupAge(2*time.Hour)),

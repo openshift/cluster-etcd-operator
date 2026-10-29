@@ -10,20 +10,17 @@ import (
 // with apply.
 type EtcdBackupPolicyRetentionRuleApplyConfiguration struct {
 	// type defined which rule field is set
-	// Allowed values are MaxQuantity and MaxTotalSizeGb.
-	// When set to MaxQuantity, this rule deletes old EtcdBackups when the quantity is exceeded.
-	// When set to MaxTotalSizeGb, this rule deletes old EtcdBackups when the total aggregate size of backup files exceeds the value.
+	// Allowed values are Quantity and Size.
+	// When set to Quantity, this rule deletes old EtcdBackups based on the total count.
+	// When set to Size, this rule deletes old EtcdBackups based on the total aggregate size of backup files.
 	// This field is required.
 	Type *operatorv1alpha1.EtcdBackupPolicyRetentionRuleType `json:"type,omitempty"`
-	// maxQuantity enforces the deletion of backups that exceed the given count.
-	// Must be between 1 and 1000.
-	// This field is required when the rule type is "MaxQuantity", and forbidden otherwise.
-	MaxQuantity *int32 `json:"maxQuantity,omitempty"`
-	// maxTotalSizeGb enforces the deletion of backups by the total size of backups on the storage backend (in GB).
-	// This is a soft threshold. The total size of backups may temporarily exceed the limit when new backups are created.
-	// Must be between 1 and 10000.
-	// This field is required when the rule type is "MaxTotalSizeGb", and forbidden otherwise.
-	MaxTotalSizeGb *int32 `json:"maxTotalSizeGb,omitempty"`
+	// quantity enforces the deletion of EtcdBackups belonging to the EtcdBackupPolicy based on total count.
+	// This field is required when the rule type is "Quantity", and forbidden otherwise.
+	Quantity *EtcdBackupPolicyRetentionQuantityApplyConfiguration `json:"quantity,omitempty"`
+	// size enforces the deletion of EtcdBackups belonging to the EtcdBackupPolicy based on total backup file size.
+	// This field is required when the rule type is "Size", and forbidden otherwise.
+	Size *EtcdBackupPolicyRetentionSizeApplyConfiguration `json:"size,omitempty"`
 }
 
 // EtcdBackupPolicyRetentionRuleApplyConfiguration constructs a declarative configuration of the EtcdBackupPolicyRetentionRule type for use with
@@ -40,18 +37,18 @@ func (b *EtcdBackupPolicyRetentionRuleApplyConfiguration) WithType(value operato
 	return b
 }
 
-// WithMaxQuantity sets the MaxQuantity field in the declarative configuration to the given value
+// WithQuantity sets the Quantity field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the MaxQuantity field is set to the value of the last call.
-func (b *EtcdBackupPolicyRetentionRuleApplyConfiguration) WithMaxQuantity(value int32) *EtcdBackupPolicyRetentionRuleApplyConfiguration {
-	b.MaxQuantity = &value
+// If called multiple times, the Quantity field is set to the value of the last call.
+func (b *EtcdBackupPolicyRetentionRuleApplyConfiguration) WithQuantity(value *EtcdBackupPolicyRetentionQuantityApplyConfiguration) *EtcdBackupPolicyRetentionRuleApplyConfiguration {
+	b.Quantity = value
 	return b
 }
 
-// WithMaxTotalSizeGb sets the MaxTotalSizeGb field in the declarative configuration to the given value
+// WithSize sets the Size field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the MaxTotalSizeGb field is set to the value of the last call.
-func (b *EtcdBackupPolicyRetentionRuleApplyConfiguration) WithMaxTotalSizeGb(value int32) *EtcdBackupPolicyRetentionRuleApplyConfiguration {
-	b.MaxTotalSizeGb = &value
+// If called multiple times, the Size field is set to the value of the last call.
+func (b *EtcdBackupPolicyRetentionRuleApplyConfiguration) WithSize(value *EtcdBackupPolicyRetentionSizeApplyConfiguration) *EtcdBackupPolicyRetentionRuleApplyConfiguration {
+	b.Size = value
 	return b
 }

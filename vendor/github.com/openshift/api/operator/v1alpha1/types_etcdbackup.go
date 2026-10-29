@@ -22,6 +22,7 @@ import (
 // +kubebuilder:printcolumn:name=Age,JSONPath=.metadata.creationTimestamp,type=date,description="Age of the EtcdBackup"
 // +kubebuilder:printcolumn:name=Node,JSONPath=.status.nodeName,type=string,description="Name of the node where the backup was executed",priority=1
 // +kubebuilder:printcolumn:name=PVC,JSONPath=.spec.storage.pvc.name,type=string,description="Name of the PVC where the backup is stored",priority=1
+// +kubebuilder:validation:XValidation:rule="self.metadata.name.size() <= 63",message="name cannot exceed 63 characters"
 // +openshift:api-approved.openshift.io=https://github.com/openshift/api/pull/2952
 // +openshift:file-pattern=cvoRunLevel=0000_10,operatorName=etcd,operatorOrdering=01
 // +openshift:enable:FeatureGate=AutomatedEtcdBackup
@@ -42,6 +43,18 @@ type EtcdBackup struct {
 }
 
 type EtcdBackupSpec struct {
+	// assets specifies the type of files to be backed up.
+	// If Snapshot is present, the etcd database will be snapshotted and saved to the storage backend.
+	// If StaticKubeResources is present, static pod manifests for the control plane will be bundled and saved to the storage backend. If etcd is encrypted, this will include the encryption keys.
+	// When specified, must contain between 1 and 2 entries, with at most 1 of each type.
+	// When omitted, all assets types will be backed up.
+	// This field is optional.
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=2
+	// +listType=set
+	// +optional
+	Assets []EtcdBackupAssetType `json:"assets,omitempty"`
+
 	// nodeSelector specifies which control plane nodes to select from for running the backup job. Only one backup job is run per EtcdBackup.
 	// The default node-role.kubernetes.io/control-plane label will always be selected for in addition to any labels set here.
 	// If no nodes are matched, then the backup will be marked failed.
@@ -67,6 +80,13 @@ type EtcdBackupSpec struct {
 	// +optional
 	// PVCName string `json:"pvcName"`
 }
+
+type EtcdBackupAssetType string
+
+const (
+	EtcdBackupAssetTypeSnapshot            EtcdBackupAssetType = "Snapshot"
+	EtcdBackupAssetTypeStaticKubeResources EtcdBackupAssetType = "StaticKubeResources"
+)
 
 // +kubebuilder:validation:XValidation:rule="self.type == 'PVC' ? has(self.pvc) : !has(self.pvc)",message="pvc is required when type is PVC, and forbidden otherwise"
 // +kubebuilder:validation:XValidation:rule="self.type == 'Local' ? has(self.local) : !has(self.local)",message="local is required when type is Local, and forbidden otherwise"

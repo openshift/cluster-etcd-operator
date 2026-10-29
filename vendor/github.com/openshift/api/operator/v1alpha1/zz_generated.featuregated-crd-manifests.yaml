@@ -119,10 +119,10 @@ etcdbackuppolicies.operator.openshift.io:
     jsonPath: .spec.schedule
     name: Schedule
     type: string
-  - description: Last time the schedule was executed
-    jsonPath: .status.conditions[?(@.type=="LastScheduled")].lastTransitionTime
-    name: Last Schedule
-    type: date
+  - description: Cron time zone for executing backups
+    jsonPath: .spec.timeZone
+    name: TimeZone
+    type: string
   - description: Age of the EtcdBackupPolicy
     jsonPath: .metadata.creationTimestamp
     name: Age

@@ -208,30 +208,24 @@ func filterPruneableBackups(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, bac
 		pruneBackup := false
 		for _, rule := range backupPolicy.Spec.RetentionRules {
 			switch rule.Type {
-			case operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxQuantity:
-				if rule.MaxQuantity > 0 {
+			case operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeQuantity:
+				if rule.Quantity.MaxQuantity > 0 {
 					group.quantity++
-					if rule.MaxQuantity < group.quantity {
+					if rule.Quantity.MaxQuantity < group.quantity {
 						backups[n] = backup
 						pruneBackup = true
 					}
 				}
-			case operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxTotalSizeGb:
-				if rule.MaxTotalSizeGb > 0 {
+			case operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeSize:
+				if rule.Size.MaxTotalSizeGiB > 0 {
 					for _, file := range backup.Status.Files {
 						group.sizeBytes += file.SizeBytes
 					}
-					if int64(rule.MaxTotalSizeGb)*1024*1024*1024 < group.sizeBytes {
+					if int64(rule.Size.MaxTotalSizeGiB)*1024*1024*1024 < group.sizeBytes {
 						backups[n] = backup
 						pruneBackup = true
 					}
 				}
-				// case operatorv1alpha1.MaxAge:
-				// 	if rule.MaxAge.Duration > 0 && rule.MaxAge.Duration < time.Since(backup.CreationTimestamp.Time) {
-				// 		backups[n] = backup
-				//		pruneBackup = true
-				// 	}
-				// }
 			}
 		}
 		if pruneBackup {

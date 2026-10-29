@@ -3,6 +3,7 @@ package backuppolicycontroller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -135,6 +136,37 @@ func (c *BackupPolicyController) sync(ctx context.Context, syncCtx factory.SyncC
 }
 
 func (c *BackupPolicyController) reconcileCronJob(ctx context.Context, backupPolicy *operatorv1alpha1.EtcdBackupPolicy) error {
+	cronJobClient := c.kubeClient.BatchV1().CronJobs(operatorclient.TargetNamespace)
+
+	schedule := backupPolicy.Spec.Schedule
+	if backupPolicy.Spec.TimeZone != "" {
+		schedule = "TZ=" + backupPolicy.Spec.TimeZone + " " + schedule
+	}
+	_, err := c.cronParser.Parse(schedule)
+	if err != nil {
+		// Invalid schedule
+		if backuphelpers.IsBackupPolicyScheduled(backupPolicy) {
+			if deleteErr := cronJobClient.Delete(ctx, backupPolicy.Name, v1.DeleteOptions{}); deleteErr != nil {
+				if !apierrors.IsNotFound(deleteErr) {
+					return fmt.Errorf("BackupPolicyController failed to delete cronjob %s for invalid schedule: %w", backupPolicy.Name, deleteErr)
+				}
+			}
+
+			backupPolicy = backupPolicy.DeepCopy()
+			backupPolicy.Status.Conditions = updateCondition(backupPolicy.Status.Conditions, v1.Condition{
+				Type:               string(operatorv1alpha1.BackupPolicyScheduled),
+				Reason:             string(operatorv1alpha1.BackupPolicyInvalidSchedule),
+				Message:            err.Error(),
+				LastTransitionTime: v1.Now(),
+				Status:             v1.ConditionFalse,
+			})
+			if _, err := c.operatorClient.EtcdBackupPolicies().UpdateStatus(ctx, backupPolicy, v1.UpdateOptions{}); err != nil {
+				return fmt.Errorf("BackupPolicyController failed to update status for policy %q with invalid schedule: %w", backupPolicy.Name, err)
+			}
+		}
+		return nil
+	}
+
 	create := false
 	currentCronJob, err := c.cronJobLister.Get(backupPolicy.Name)
 	if err != nil {
@@ -150,7 +182,6 @@ func (c *BackupPolicyController) reconcileCronJob(ctx context.Context, backupPol
 		return err
 	}
 
-	cronJobClient := c.kubeClient.BatchV1().CronJobs(operatorclient.TargetNamespace)
 	if create {
 		_, err := cronJobClient.Create(ctx, cronJob, v1.CreateOptions{})
 		if err != nil {
@@ -163,6 +194,20 @@ func (c *BackupPolicyController) reconcileCronJob(ctx context.Context, backupPol
 			if err != nil {
 				return fmt.Errorf("BackupPolicyController could not update cronjob %s: %w", cronJob.Name, err)
 			}
+		}
+	}
+
+	if !backuphelpers.IsBackupPolicyScheduled(backupPolicy) {
+		backupPolicy = backupPolicy.DeepCopy()
+		backupPolicy.Status.Conditions = updateCondition(backupPolicy.Status.Conditions, v1.Condition{
+			Type:               string(operatorv1alpha1.BackupPolicyScheduled),
+			Reason:             string(operatorv1alpha1.BackupPolicyScheduled),
+			Message:            "backup policy successfully scheduled",
+			LastTransitionTime: v1.Now(),
+			Status:             v1.ConditionTrue,
+		})
+		if _, err := c.operatorClient.EtcdBackupPolicies().UpdateStatus(ctx, backupPolicy, v1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("BackupPolicyController failed to update status for policy %q: %w", backupPolicy.Name, err)
 		}
 	}
 
@@ -235,4 +280,16 @@ func updateControllerDegradedCondition(ctx context.Context, operatorClient v1hel
 	if updateErr != nil {
 		klog.V(4).Infof("BackupPolicyController error during UpdateStatus: %v", updateErr)
 	}
+}
+
+func updateCondition(conditions []v1.Condition, updated v1.Condition) []v1.Condition {
+	idx := slices.IndexFunc(conditions, func(c v1.Condition) bool {
+		return c.Type == updated.Type
+	})
+	if idx >= 0 {
+		conditions[idx] = updated
+	} else {
+		conditions = append(conditions, updated)
+	}
+	return conditions
 }

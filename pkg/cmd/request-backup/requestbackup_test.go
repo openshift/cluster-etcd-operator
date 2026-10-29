@@ -108,10 +108,12 @@ func TestRequestBackupForPolicyMultipleLocalBackupsWithSelector(t *testing.T) {
 		},
 		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
 			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour), func(backup *operatorv1alpha1.EtcdBackupPolicy) {
-				backup.Spec.Storage = operatorv1alpha1.EtcdBackupStorage{
+				backup.Spec.Storage = operatorv1alpha1.EtcdBackupPolicyStorage{
 					Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
-					Local: operatorv1alpha1.EtcdBackupStorageLocal{
-						HostPath: "/etc/backups",
+					Local: operatorv1alpha1.EtcdBackupPolicyStorageLocal{
+						EtcdBackupStorageLocal: operatorv1alpha1.EtcdBackupStorageLocal{
+							HostPath: "/etc/backups",
+						},
 					},
 				}
 				backup.Spec.NodeSelector = map[string]string{"special": "label"}
