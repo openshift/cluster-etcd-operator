@@ -127,7 +127,6 @@ func (c *ControllerCommandConfig) WithEventRecorderOptions(eventRecorderOptions 
 // Deprecated: Use the NewCommandWithContext instead, this is here to be less disturbing for existing usages.
 func (c *ControllerCommandConfig) NewCommand() *cobra.Command {
 	return c.NewCommandWithContext(context.TODO())
-
 }
 
 // NewCommandWithContext returns a new command that a caller must set the Use and Descriptions on.  It wires default log, profiling,
@@ -288,7 +287,7 @@ func (c *ControllerCommandConfig) AddDefaultRotationToConfig(config *operatorv1a
 			config.ServingInfo.CertFile = filepath.Join(temporaryCertDir, "tls.crt")
 			config.ServingInfo.KeyFile = filepath.Join(temporaryCertDir, "tls.key")
 			// nothing can trust this, so we don't really care about hostnames
-			servingCert, err := ca.MakeServerCert(sets.New("localhost"), time.Hour*24*30)
+			servingCert, err := ca.NewServerCertificate(sets.New("localhost"), crypto.RSAKeyPairGenerator{Bits: 2048}, crypto.WithLifetime(time.Hour*24*30))
 			if err != nil {
 				return nil, nil, err
 			}
