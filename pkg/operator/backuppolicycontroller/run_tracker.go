@@ -220,12 +220,14 @@ func (t *RunTracker) ProcessBackupsForPolicy(
 	// each finalized failure advances the durable streak exactly once.
 	newlyFinalizedFailures := 0
 
-	for _, runHash := range sortedRuns {
+	for i, runHash := range sortedRuns {
 		runBackups := runs[runHash]
 
 		// Get expected member count from backup annotations (stored atomically with backup creation)
 		expectedMembers := t.getExpectedMembersFromBackups(runBackups)
-		outcome := t.determineRunOutcome(runBackups, expectedMembers)
+		// A later scheduled run in sortedRuns means missing members for this run will never appear.
+		hasNewerRun := i < len(sortedRuns)-1
+		outcome := t.determineRunOutcome(runBackups, expectedMembers, hasNewerRun)
 
 		// Only record finalized outcomes (skip in-progress)
 		if outcome == runInProgress {
@@ -365,9 +367,11 @@ const (
 
 // determineRunOutcome determines if a run succeeded, failed, or is still in progress.
 // Success: ANY backup in the run completed successfully
-// Failure: ALL EXPECTED backups in the run failed
-// In Progress: Not all expected members are finished
-func (t *RunTracker) determineRunOutcome(backups []*operatorv1alpha1.EtcdBackup, expectedMembers int) runOutcome {
+// Failure: ALL EXPECTED backups in the run failed, or all visible members failed and a newer
+// run exists (so missing members can no longer appear)
+// In Progress: Not all expected members are finished and no newer run exists yet
+// hasNewerRun is true when a later scheduled run is already visible for this policy.
+func (t *RunTracker) determineRunOutcome(backups []*operatorv1alpha1.EtcdBackup, expectedMembers int, hasNewerRun bool) runOutcome {
 	allFinished := true
 	anySucceeded := false
 

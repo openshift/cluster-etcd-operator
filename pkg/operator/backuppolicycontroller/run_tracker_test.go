@@ -432,6 +432,39 @@ func TestRunTracker_FirstReconcileBeforeAllMembersKnown(t *testing.T) {
 	require.Equal(t, 1, state2.ConsecutiveFailures, "should count run as failed once all members failed")
 }
 
+func TestRunTracker_IncompleteRunFailsWhenNewerRunExists(t *testing.T) {
+	// When expected members are missing but a newer run is already visible,
+	// the incomplete older run must count as failed (members can no longer appear).
+	ctx := context.Background()
+	tracker, _ := setupRunTracker(t)
+
+	policy := testPolicy("test-policy", "uid-1")
+
+	// Older run 1000: only 2 of 3 expected members visible, both failed
+	backup1 := testFailedBackup("test-policy-node1-1000", policy, "1000", time.Now())
+	backup1.Annotations = map[string]string{
+		backuphelpers.AnnotationBackupExpectedMembers: "3",
+	}
+	backup2 := testFailedBackup("test-policy-node2-1000", policy, "1000", time.Now())
+	backup2.Annotations = map[string]string{
+		backuphelpers.AnnotationBackupExpectedMembers: "3",
+	}
+
+	// Newer run 1001 exists, so missing members of run 1000 will never appear
+	backup3 := testFailedBackup("test-policy-node1-1001", policy, "1001", time.Now())
+	backup3.Annotations = map[string]string{
+		backuphelpers.AnnotationBackupExpectedMembers: "1",
+	}
+
+	backups := []*operatorv1alpha1.EtcdBackup{backup1, backup2, backup3}
+	state, err := tracker.ProcessBackupsForPolicy(ctx, policy, backups)
+	require.NoError(t, err)
+
+	require.Equal(t, "failure", state.RunOutcomes["1000"], "incomplete older run should fail once a newer run exists")
+	require.Equal(t, "failure", state.RunOutcomes["1001"])
+	require.Equal(t, 2, state.ConsecutiveFailures, "both the incomplete older run and newer run should count as failures")
+}
+
 func TestRunTracker_LateSuccessAfterRetention(t *testing.T) {
 	ctx := context.Background()
 	tracker, _ := setupRunTracker(t)
@@ -765,7 +798,7 @@ func testPendingBackup(name string, policy *operatorv1alpha1.EtcdBackupPolicy, m
 		Status: operatorv1alpha1.EtcdBackupStatus{
 			Conditions: []metav1.Condition{
 				{
-					Type:   string(operatorv1alpha1.BackupPending),
+					Type:   string(operatorv1alpha1.BackupRunning),
 					Status: metav1.ConditionTrue,
 				},
 			},

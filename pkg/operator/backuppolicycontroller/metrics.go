@@ -1,8 +1,6 @@
 package backuppolicycontroller
 
 import (
-	"path/filepath"
-
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorv1alpha1listers "github.com/openshift/client-go/operator/listers/operator/v1alpha1"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
