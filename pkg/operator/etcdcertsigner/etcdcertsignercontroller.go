@@ -40,8 +40,10 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 )
 
-const BundleRolloutRevisionAnnotation = "openshift.io/ceo-bundle-rollout-revision"
-const signerExpirationMetricName = "openshift_etcd_operator_signer_expiration_days"
+const (
+	BundleRolloutRevisionAnnotation = "openshift.io/ceo-bundle-rollout-revision"
+	signerExpirationMetricName      = "openshift_etcd_operator_signer_expiration_days"
+)
 
 type certConfig struct {
 	// configmap name: "etcd-ca-bundle"
@@ -119,20 +121,14 @@ func NewEtcdCertSignerController(
 	eventRecorder = eventRecorder.WithComponentSuffix("etcd-cert-signer-controller")
 	cmInformer := kubeInformers.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps()
 	cmGetter := kubeClient.CoreV1()
-	cmLister := &tlshelpers.ConfigMapClientLister{
-		ConfigMapClient: cmGetter.ConfigMaps(operatorclient.TargetNamespace),
-		Namespace:       operatorclient.TargetNamespace,
-	}
 	signerCaBundle := tlshelpers.CreateSignerCertRotationBundleConfigMap(
 		cmInformer,
-		cmLister,
 		cmGetter,
 		eventRecorder,
 	)
 
 	metricsSignerCaBundle := tlshelpers.CreateMetricsSignerCertRotationBundleConfigMap(
 		cmInformer,
-		cmLister,
 		cmGetter,
 		eventRecorder,
 	)
@@ -167,22 +163,13 @@ func NewEtcdCertSignerController(
 		}
 	}
 
-	signerCert := tlshelpers.CreateSignerCert(secretInformer, secretLister, secretClient, eventRecorder, signerValidity)
-	signerCert.CertificateName = "etcd.etcd-signer"
-	signerCert.PKIProfileProvider = pkiProfileProvider
+	signerCert := tlshelpers.CreateSignerCert(secretInformer, secretClient, eventRecorder, signerValidity, pkiProfileProvider)
 
-	etcdClientCert := tlshelpers.CreateEtcdClientCert(secretInformer, secretLister, secretClient, eventRecorder, certValidity)
-	etcdClientCert.CertificateName = "etcd.etcd-client"
-	etcdClientCert.PKIProfileProvider = pkiProfileProvider
+	etcdClientCert := tlshelpers.CreateEtcdClientCert(secretInformer, secretClient, eventRecorder, certValidity, pkiProfileProvider)
 
-	metricsSignerCert := tlshelpers.CreateMetricsSignerCert(secretInformer, secretLister, secretClient, eventRecorder, signerValidity)
-	metricsSignerCert.CertificateName = "etcd.etcd-metric-signer"
-	metricsSignerCert.PKIProfileProvider = pkiProfileProvider
+	metricsSignerCert := tlshelpers.CreateMetricsSignerCert(secretInformer, secretClient, eventRecorder, signerValidity, pkiProfileProvider)
 
-	metricsClientCert := tlshelpers.CreateMetricsClientCert(secretInformer, secretLister, secretClient, eventRecorder, certValidity)
-	metricsClientCert.CertificateName = "etcd.etcd-metric-client"
-	metricsClientCert.PKIProfileProvider = pkiProfileProvider
-
+	metricsClientCert := tlshelpers.CreateMetricsClientCert(secretInformer, secretClient, eventRecorder, certValidity, pkiProfileProvider)
 	certCfg := &certConfig{
 		signerCaBundle: signerCaBundle,
 		signerCert:     signerCert,
@@ -329,7 +316,8 @@ func (c *EtcdCertSignerController) sync(ctx context.Context, syncCtx factory.Syn
 }
 
 func (c *EtcdCertSignerController) syncAllMasterCertificates(
-	ctx context.Context, recorder events.Recorder, forceSkipRollout bool, lastRotationRevision int32, currentRevision int32) error {
+	ctx context.Context, recorder events.Recorder, forceSkipRollout bool, lastRotationRevision int32, currentRevision int32,
+) error {
 	signerCaPair, _, err := c.certConfig.signerCert.EnsureSigningCertKeyPair(ctx)
 	if err != nil {
 		return fmt.Errorf("error on ensuring etcd-signer cert: %w", err)
@@ -395,8 +383,8 @@ func (c *EtcdCertSignerController) syncLeafCertificates(
 	signerCaPair *crypto.CA,
 	signerBundle []*x509.Certificate,
 	metricsSignerCaPair *crypto.CA,
-	metricsSignerBundle []*x509.Certificate) error {
-
+	metricsSignerBundle []*x509.Certificate,
+) error {
 	_, err := c.certConfig.etcdClientCert.EnsureTargetCertKeyPair(ctx, signerCaPair, signerBundle)
 	if err != nil {
 		return fmt.Errorf("error on ensuring etcd client cert: %w", err)
@@ -538,39 +526,36 @@ func (c *EtcdCertSignerController) createNodeCertConfigs() ([]*nodeCertConfigs, 
 	for _, node := range nodes {
 		peerCert, err := tlshelpers.CreatePeerCertificate(node,
 			c.secretInformer,
-			c.secretLister,
 			c.secretClient,
 			c.eventRecorder,
-			c.certValidity)
+			c.certValidity,
+			c.pkiProfileProvider,
+		)
 		if err != nil {
 			return cfgs, fmt.Errorf("error creating peer cert for node [%s]: %w", node.Name, err)
 		}
-		peerCert.CertificateName = "etcd.etcd-peer"
-		peerCert.PKIProfileProvider = c.pkiProfileProvider
 
 		servingCert, err := tlshelpers.CreateServingCertificate(node,
 			c.secretInformer,
-			c.secretLister,
 			c.secretClient,
 			c.eventRecorder,
-			c.certValidity)
+			c.certValidity,
+			c.pkiProfileProvider,
+		)
 		if err != nil {
 			return cfgs, fmt.Errorf("error creating serving cert for node [%s]: %w", node.Name, err)
 		}
-		servingCert.CertificateName = "etcd.etcd-serving"
-		servingCert.PKIProfileProvider = c.pkiProfileProvider
 
 		metricsCert, err := tlshelpers.CreateMetricsServingCertificate(node,
 			c.secretInformer,
-			c.secretLister,
 			c.secretClient,
 			c.eventRecorder,
-			c.certValidity)
+			c.certValidity,
+			c.pkiProfileProvider,
+		)
 		if err != nil {
 			return cfgs, fmt.Errorf("error creating metrics cert for node [%s]: %w", node.Name, err)
 		}
-		metricsCert.CertificateName = "etcd.etcd-serving-metrics"
-		metricsCert.PKIProfileProvider = c.pkiProfileProvider
 
 		cfgs = append(cfgs, &nodeCertConfigs{
 			node:        node.DeepCopy(),
