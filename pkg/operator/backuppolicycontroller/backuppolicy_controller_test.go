@@ -140,7 +140,6 @@ func TestBackupPolicyUpdateCronJob(t *testing.T) {
 			Namespace: operatorclient.TargetNamespace,
 		}}},
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
-			// Verify no cronjob was created or updated
 			_, ok := testutils.GetAction[k8stesting.CreateActionImpl](client.Fake.Actions())
 			require.False(t, ok, "expected no create action")
 			action, ok := testutils.GetAction[k8stesting.UpdateActionImpl](client.Fake.Actions())
@@ -158,13 +157,115 @@ func TestBackupPolicyUpdateCronJob(t *testing.T) {
 	})
 }
 
-func TestCronJobSpecDiffs(t *testing.T) {
+func TestBackupPolicyCronJobSpecHash(t *testing.T) {
 	backupPolicy := testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour))
-	job, err := newCronJob(backupPolicy, fakeOperatorImagePullSpec)
+	expectedCronJob, err := newCronJob(backupPolicy, fakeOperatorImagePullSpec)
 	require.NoError(t, err)
-	require.False(t, cronSpecDiffers(job.Spec, job.Spec))
 
-	job2 := job.DeepCopy()
-	job2.Spec.Schedule = "something else"
-	require.True(t, cronSpecDiffers(job.Spec, job2.Spec))
+	t.Run("matching-spec-hash", func(t *testing.T) {
+		runBackupPolicyControllerTest(t, testCaseBackupPolicyController{
+			backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{backupPolicy},
+			cronJobs: []*batchv1.CronJob{{ObjectMeta: v1.ObjectMeta{
+				Name:      backupPolicy.Name,
+				Namespace: operatorclient.TargetNamespace,
+				Annotations: map[string]string{
+					specHashAnnotation: expectedCronJob.Annotations[specHashAnnotation],
+				},
+			}}},
+			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+				_, ok := testutils.GetAction[k8stesting.UpdateActionImpl](client.Fake.Actions())
+				require.False(t, ok, "expected no update action")
+			},
+		})
+	})
+	t.Run("different-spec-hash", func(t *testing.T) {
+		runBackupPolicyControllerTest(t, testCaseBackupPolicyController{
+			backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{backupPolicy},
+			cronJobs: []*batchv1.CronJob{{ObjectMeta: v1.ObjectMeta{
+				Name:      backupPolicy.Name,
+				Namespace: operatorclient.TargetNamespace,
+				Annotations: map[string]string{
+					specHashAnnotation: "asdfasdf",
+				},
+			}}},
+			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+				action, ok := testutils.GetAction[k8stesting.UpdateActionImpl](client.Fake.Actions())
+				require.True(t, ok, "expected update action")
+				cronJob, ok := action.Object.(*batchv1.CronJob)
+				require.True(t, ok, "expected cronjob to be updated")
+				require.Equal(t, expectedCronJob.Annotations[specHashAnnotation], cronJob.Annotations[specHashAnnotation])
+			},
+		})
+	})
+}
+
+func TestBackupPolicyScheduledCondition(t *testing.T) {
+	testCases := []struct {
+		schedule, timeZone string
+		expectError        bool
+	}{
+		// Valid schedules
+		{schedule: "@daily"},
+		{schedule: "@daily", timeZone: "Etc/GMT-8"},
+		{schedule: "@every 12h"},
+		{schedule: "@every 12h", timeZone: "Etc/UTC"},
+		{schedule: "0 * * * *"},
+		{schedule: "0 * * * *", timeZone: "Etc/GMT-8"},
+		{schedule: "0 * * * *", timeZone: "Africa/Banjul"},
+		// Invalid schedules
+		{schedule: "@invalid", expectError: true},
+		{schedule: "@daily", timeZone: "invalid", expectError: true},
+		{schedule: "@invalid", timeZone: "Etc/GMT-8", expectError: true},
+		{schedule: "* * * * * *", expectError: true},
+		{schedule: "100 * * * *", expectError: true},
+	}
+
+	for _, tc := range testCases {
+		name := tc.schedule
+		if tc.timeZone != "" {
+			name += " " + tc.timeZone
+		}
+		t.Run(name, func(t *testing.T) {
+			backupPolicy := testutils.FakeEtcdBackupPolicy("test-backup-policy", tc.schedule, func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
+				backupPolicy.Spec.TimeZone = tc.timeZone
+			})
+			runBackupPolicyControllerTest(t, testCaseBackupPolicyController{
+				backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{backupPolicy},
+				validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+					createAction, ok := testutils.GetAction[k8stesting.CreateActionImpl](client.Fake.Actions())
+					if tc.expectError {
+						require.False(t, ok, "expected no create action")
+					} else {
+						require.True(t, ok, "expected cronjob to be created")
+						require.IsType(t, &batchv1.CronJob{}, createAction.Object)
+					}
+
+					// Verify policy status was updated
+					updateAction, ok := testutils.GetStatusAction[k8stesting.UpdateActionImpl](operatorFake.Actions())
+					require.True(t, ok, "expected update action")
+					backupPolicy, ok := updateAction.Object.(*operatorv1alpha1.EtcdBackupPolicy)
+					require.True(t, ok, "expected EtcdBackupPolicy status to be updated")
+
+					var condition v1.Condition
+					var found bool
+					for _, c := range backupPolicy.Status.Conditions {
+						if c.Type == string(operatorv1alpha1.BackupPolicyScheduled) {
+							condition = c
+							found = true
+							break
+						}
+					}
+					require.True(t, found, "expected to find Scheduled condition")
+					if tc.expectError {
+						require.Equal(t, condition.Status, v1.ConditionFalse)
+						require.Equal(t, condition.Reason, string(operatorv1alpha1.BackupPolicyInvalidSchedule))
+					} else {
+						require.Equal(t, condition.Status, v1.ConditionTrue)
+						require.Equal(t, condition.Reason, string(operatorv1alpha1.BackupPolicySchedulingSucceeded))
+					}
+				},
+			})
+		})
+	}
+
 }

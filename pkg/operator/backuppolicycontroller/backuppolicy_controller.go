@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -23,6 +24,7 @@ import (
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/events"
+	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -37,7 +39,8 @@ import (
 )
 
 const (
-	jobFinishedTTL = 4 * time.Hour
+	jobFinishedTTL     = 4 * time.Hour
+	specHashAnnotation = "operator.openshift.io/spec-hash"
 )
 
 type BackupPolicyController struct {
@@ -137,44 +140,28 @@ func (c *BackupPolicyController) sync(ctx context.Context, syncCtx factory.SyncC
 
 func (c *BackupPolicyController) reconcileCronJob(ctx context.Context, backupPolicy *operatorv1alpha1.EtcdBackupPolicy) error {
 	cronJobClient := c.kubeClient.BatchV1().CronJobs(operatorclient.TargetNamespace)
+	currentCronJob, err := c.cronJobLister.Get(backupPolicy.Name)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("BackupPolicyController could not get cronjob %s: %w", backupPolicy.Name, err)
+		}
+	}
 
 	schedule := backupPolicy.Spec.Schedule
 	if backupPolicy.Spec.TimeZone != "" {
 		schedule = "TZ=" + backupPolicy.Spec.TimeZone + " " + schedule
 	}
-	_, err := c.cronParser.Parse(schedule)
-	if err != nil {
+	if _, err := c.cronParser.Parse(schedule); err != nil {
 		// Invalid schedule
-		if backuphelpers.IsBackupPolicyScheduled(backupPolicy) {
+		if currentCronJob != nil {
 			if deleteErr := cronJobClient.Delete(ctx, backupPolicy.Name, v1.DeleteOptions{}); deleteErr != nil {
 				if !apierrors.IsNotFound(deleteErr) {
-					return fmt.Errorf("BackupPolicyController failed to delete cronjob %s for invalid schedule: %w", backupPolicy.Name, deleteErr)
+					deleteErr = fmt.Errorf("BackupPolicyController failed to delete cronjob %s for invalid schedule: %w", backupPolicy.Name, deleteErr)
+					return utilerrors.NewAggregate([]error{err, deleteErr})
 				}
 			}
-
-			backupPolicy = backupPolicy.DeepCopy()
-			backupPolicy.Status.Conditions = updateCondition(backupPolicy.Status.Conditions, v1.Condition{
-				Type:               string(operatorv1alpha1.BackupPolicyScheduled),
-				Reason:             string(operatorv1alpha1.BackupPolicyInvalidSchedule),
-				Message:            err.Error(),
-				LastTransitionTime: v1.Now(),
-				Status:             v1.ConditionFalse,
-			})
-			if _, err := c.operatorClient.EtcdBackupPolicies().UpdateStatus(ctx, backupPolicy, v1.UpdateOptions{}); err != nil {
-				return fmt.Errorf("BackupPolicyController failed to update status for policy %q with invalid schedule: %w", backupPolicy.Name, err)
-			}
 		}
-		return nil
-	}
-
-	create := false
-	currentCronJob, err := c.cronJobLister.Get(backupPolicy.Name)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			create = true
-		} else {
-			return fmt.Errorf("BackupPolicyController could not get cronjob %s: %w", backupPolicy.Name, err)
-		}
+		return c.updateScheduledCondition(ctx, backupPolicy, operatorv1alpha1.BackupPolicyInvalidSchedule, err.Error(), v1.ConditionFalse)
 	}
 
 	cronJob, err := newCronJob(backupPolicy, c.operatorImagePullSpec)
@@ -182,53 +169,45 @@ func (c *BackupPolicyController) reconcileCronJob(ctx context.Context, backupPol
 		return err
 	}
 
-	if create {
+	if currentCronJob == nil {
 		_, err := cronJobClient.Create(ctx, cronJob, v1.CreateOptions{})
 		if err != nil {
-			return fmt.Errorf("BackupPolicyController could not create cronjob %s: %w", cronJob.Name, err)
+			var updateErr error
+			if !apierrors.IsConflict(err) {
+				updateErr = c.updateScheduledCondition(ctx, backupPolicy, operatorv1alpha1.BackupPolicySchedulingFailed, "failed to create CronJob", v1.ConditionFalse)
+			}
+			return utilerrors.NewAggregate([]error{fmt.Errorf("BackupPolicyController failed to create cronjob %s: %w", cronJob.Name, err), updateErr})
 		}
 	} else {
-		if cronSpecDiffers(cronJob.Spec, currentCronJob.Spec) {
+		if cronSpecHashDiffers(cronJob, currentCronJob) {
 			klog.V(4).Infof("detected diff in cronjob specs, updating cronjob: %s", cronJob.Name)
 			_, err := cronJobClient.Update(ctx, cronJob, v1.UpdateOptions{})
 			if err != nil {
-				return fmt.Errorf("BackupPolicyController could not update cronjob %s: %w", cronJob.Name, err)
+				return fmt.Errorf("BackupPolicyController failed to update cronjob %s: %w", cronJob.Name, err)
 			}
 		}
 	}
 
-	if !backuphelpers.IsBackupPolicyScheduled(backupPolicy) {
+	return c.updateScheduledCondition(ctx, backupPolicy, operatorv1alpha1.BackupPolicySchedulingSucceeded, "backup policy successfully scheduled", v1.ConditionTrue)
+}
+
+func (c *BackupPolicyController) updateScheduledCondition(ctx context.Context, backupPolicy *operatorv1alpha1.EtcdBackupPolicy, reason operatorv1alpha1.EtcdBackupPolicyConditionReason, message string, status v1.ConditionStatus) error {
+	conditions, requireUpdate := updateCondition(backupPolicy.Status.Conditions, v1.Condition{
+		Type:               string(operatorv1alpha1.BackupPolicyScheduled),
+		Reason:             string(reason),
+		Message:            message,
+		Status:             status,
+		LastTransitionTime: v1.Now(),
+		ObservedGeneration: backupPolicy.Generation,
+	})
+	if requireUpdate {
 		backupPolicy = backupPolicy.DeepCopy()
-		backupPolicy.Status.Conditions = updateCondition(backupPolicy.Status.Conditions, v1.Condition{
-			Type:               string(operatorv1alpha1.BackupPolicyScheduled),
-			Reason:             string(operatorv1alpha1.BackupPolicyScheduled),
-			Message:            "backup policy successfully scheduled",
-			LastTransitionTime: v1.Now(),
-			Status:             v1.ConditionTrue,
-		})
+		backupPolicy.Status.Conditions = conditions
 		if _, err := c.operatorClient.EtcdBackupPolicies().UpdateStatus(ctx, backupPolicy, v1.UpdateOptions{}); err != nil {
 			return fmt.Errorf("BackupPolicyController failed to update status for policy %q: %w", backupPolicy.Name, err)
 		}
 	}
-
 	return nil
-}
-
-func cronSpecDiffers(l batchv1.CronJobSpec, r batchv1.CronJobSpec) bool {
-	lBytes, _ := l.Marshal()
-	rBytes, _ := r.Marshal()
-
-	if len(lBytes) != len(rBytes) {
-		return true
-	}
-
-	for i := range lBytes {
-		if lBytes[i] != rBytes[i] {
-			return true
-		}
-	}
-
-	return false
 }
 
 func newCronJob(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, operatorImagePullSpec string) (*batchv1.CronJob, error) {
@@ -268,7 +247,8 @@ func newCronJob(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, operatorImagePu
 		},
 	)
 
-	return obj.(*batchv1.CronJob), nil
+	resourceapply.SetSpecHashAnnotation(&cronJob.ObjectMeta, cronJob.Spec)
+	return cronJob, nil
 }
 
 func updateControllerDegradedCondition(ctx context.Context, operatorClient v1helpers.OperatorClient, status operatorv1.ConditionStatus, reason string) {
@@ -282,14 +262,30 @@ func updateControllerDegradedCondition(ctx context.Context, operatorClient v1hel
 	}
 }
 
-func updateCondition(conditions []v1.Condition, updated v1.Condition) []v1.Condition {
+func updateCondition(conditions []v1.Condition, updated v1.Condition) ([]v1.Condition, bool) {
 	idx := slices.IndexFunc(conditions, func(c v1.Condition) bool {
 		return c.Type == updated.Type
 	})
 	if idx >= 0 {
-		conditions[idx] = updated
-	} else {
-		conditions = append(conditions, updated)
+		if conditionsDiffer(conditions[idx], updated) {
+			conditions[idx] = updated
+			return conditions, true
+		}
+		return conditions, false
 	}
-	return conditions
+	conditions = append(conditions, updated)
+	return conditions, true
+}
+
+func conditionsDiffer(a, b v1.Condition) bool {
+	a.LastTransitionTime = v1.Time{}
+	b.LastTransitionTime = v1.Time{}
+	return a != b
+}
+
+func cronSpecHashDiffers(l *batchv1.CronJob, r *batchv1.CronJob) bool {
+	if l.Annotations == nil || r.Annotations == nil {
+		return true
+	}
+	return l.Annotations[specHashAnnotation] != r.Annotations[specHashAnnotation]
 }
