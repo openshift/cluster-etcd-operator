@@ -181,7 +181,7 @@ type backupRunnerMock struct {
 	delay   time.Duration
 }
 
-func (b *backupRunnerMock) runBackup(backupOpts *backupOptions, pruneOpts *prune.PruneOpts) error {
+func (b *backupRunnerMock) runBackup(_ context.Context, backupOpts *backupOptions, pruneOpts *prune.PruneOpts) error {
 	if b.slow {
 		time.Sleep(b.delay)
 	}
