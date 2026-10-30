@@ -632,6 +632,7 @@ func TestBackupGarbageCollectionCompletedJobsFinalized(t *testing.T) {
 	retryQueue.When("pvc/missing")
 	retryQueue.backoffs["pvc/missing"] = gcBackoff{jobUID: "old-failed-job-uid"}
 	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
+		retryQueue: &retryQueue,
 		jobs: []*batchv1.Job{
 			{
 				ObjectMeta: v1.ObjectMeta{

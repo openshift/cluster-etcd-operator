@@ -78,16 +78,6 @@ etcdbackups.operator.openshift.io:
     jsonPath: .metadata.creationTimestamp
     name: Age
     type: date
-  - description: Name of the node where the backup was executed
-    jsonPath: .status.nodeName
-    name: Node
-    priority: 1
-    type: string
-  - description: Name of the PVC where the backup is stored
-    jsonPath: .spec.storage.pvc.name
-    name: PVC
-    priority: 1
-    type: string
   Scope: Cluster
   ShortNames: null
   TopLevelFeatureGates:
@@ -122,6 +112,10 @@ etcdbackuppolicies.operator.openshift.io:
   - description: Cron time zone for executing backups
     jsonPath: .spec.timeZone
     name: TimeZone
+    type: string
+  - description: Status of the EtcdBackupPolicy
+    jsonPath: .status.conditions[?(@.type=="Scheduled")].reason
+    name: Status
     type: string
   - description: Age of the EtcdBackupPolicy
     jsonPath: .metadata.creationTimestamp

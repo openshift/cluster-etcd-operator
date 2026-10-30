@@ -10,10 +10,11 @@ import (
 // with apply.
 type EtcdBackupPolicyStatusApplyConfiguration struct {
 	// conditions provide details on the status of the etcd backup policy.
-	// When specified, must contain between 1 and 10 entries, with no more than 1 of each type.
+	// Supported conditions include Scheduled.
+	// If Scheduled is true, scheduling the policy succeeded.
+	// If Scheduled is false, an error occurred while attempting to schedule the policy. The condition reason and message will provide addition details.
 	//
-	// Supported conditions include Error.
-	// If Error is true, the EtcdBackupPolicy is invalid and the condition reason and message will include details on the error.
+	// When specified, must contain between 1 and 10 entries, with no more than 1 of each type.
 	// This field is optional.
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 }

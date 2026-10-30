@@ -20,8 +20,6 @@ import (
 // +kubebuilder:printcolumn:name=Status,JSONPath=.status.conditions[?(@.status=="True")].type,type=string,description="Status of the EtcdBackup"
 // +kubebuilder:printcolumn:name=Completed At,JSONPath=.status.conditions[?(@.type=="Completed")].lastTransitionTime,type=date,description="Completion time of the EtcdBackup"
 // +kubebuilder:printcolumn:name=Age,JSONPath=.metadata.creationTimestamp,type=date,description="Age of the EtcdBackup"
-// +kubebuilder:printcolumn:name=Node,JSONPath=.status.nodeName,type=string,description="Name of the node where the backup was executed",priority=1
-// +kubebuilder:printcolumn:name=PVC,JSONPath=.spec.storage.pvc.name,type=string,description="Name of the PVC where the backup is stored",priority=1
 // +kubebuilder:validation:XValidation:rule="self.metadata.name.size() <= 63",message="name cannot exceed 63 characters"
 // +openshift:api-approved.openshift.io=https://github.com/openshift/api/pull/2952
 // +openshift:file-pattern=cvoRunLevel=0000_10,operatorName=etcd,operatorOrdering=01
@@ -81,6 +79,7 @@ type EtcdBackupSpec struct {
 	// PVCName string `json:"pvcName"`
 }
 
+// +kubebuilder:validation:Enum=Snapshot;StaticKubeResources
 type EtcdBackupAssetType string
 
 const (
@@ -159,12 +158,12 @@ type EtcdBackupStorageLocal struct {
 // +kubebuilder:validation:MinProperties=1
 type EtcdBackupStatus struct {
 	// conditions provide details on the status of the etcd backup job.
-	// When specified, must contain between 1 and 5 entries, with no more than 1 of each type.
-	//
 	// Supported conditions include Running, Completed, and Failed.
 	// If Running is true, the backup job is currently active.
 	// If Completed is true, the backup job succeeded and has saved backup files to its storage location.
 	// If Failed is true, the backup job failed and did not create valid backup files.
+	//
+	// When specified, must contain between 1 and 5 entries, with no more than 1 of each type.
 	// This field is optional.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=15

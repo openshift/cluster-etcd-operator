@@ -570,7 +570,7 @@ func TestConcurrencyLocalSelectAvailableNode(t *testing.T) {
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			jobs := listCreatedJobs(client)
 			require.Len(t, jobs, 1)
-			require.True(t, strings.HasPrefix("backup-new-", jobs[0].Name))
+			require.True(t, strings.HasPrefix(jobs[0].Name, "backup-new-"), "expected job to have prefix %q, got %q", "backup-new-", jobs[0].Name)
 			require.Equal(t, "test-node-2", jobs[0].Spec.Template.Spec.NodeName, "Expected backup to be assigned to an available node")
 
 			backup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), "new", metav1.GetOptions{})
@@ -647,7 +647,7 @@ func TestConcurrencyPVCDifferentPVC(t *testing.T) {
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			jobs := listCreatedJobs(client)
 			require.Len(t, jobs, 1)
-			require.Equal(t, "new", jobs[0].Name)
+			require.True(t, strings.HasPrefix(jobs[0].Name, "backup-new-"), "expected job to have prefix %q, got %q", "backup-new-", jobs[0].Name)
 		},
 	})
 }
@@ -666,7 +666,7 @@ func TestConcurrencyFinishedJobReleasesNode(t *testing.T) {
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			jobs := listCreatedJobs(client)
 			require.Len(t, jobs, 1)
-			require.Equal(t, "new", jobs[0].Name)
+			require.True(t, strings.HasPrefix(jobs[0].Name, "backup-new-"), "expected job to have prefix %q, got %q", "backup-new-", jobs[0].Name)
 			require.Equal(t, "test-node", jobs[0].Spec.Template.Spec.NodeName)
 
 			backup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), "finished", metav1.GetOptions{})
@@ -690,13 +690,13 @@ func TestConcurrencyOrderByAge(t *testing.T) {
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			jobs := listCreatedJobs(client)
 			require.Len(t, jobs, 2)
-			nodes := map[string]string{}
+			backups := map[string]string{}
 			for _, job := range jobs {
-				nodes[job.Name] = job.Spec.Template.Spec.NodeName
+				backups[job.Labels[backuphelpers.LabelEtcdBackup]] = job.Spec.Template.Spec.NodeName
 			}
-			require.Contains(t, nodes, "test-backup-1")
-			require.Contains(t, nodes, "test-backup-2")
-			require.NotEqual(t, nodes["test-backup-1"], nodes["test-backup-2"], "Expected backups to be started on different nodes")
+			require.Contains(t, backups, "test-backup-1")
+			require.Contains(t, backups, "test-backup-2")
+			require.NotEqual(t, backups["test-backup-1"], backups["test-backup-2"], "Expected backups to be started on different nodes")
 		},
 	})
 }

@@ -34,16 +34,6 @@ spec:
       jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
-    - description: Name of the node where the backup was executed
-      jsonPath: .status.nodeName
-      name: Node
-      priority: 1
-      type: string
-    - description: Name of the PVC where the backup is stored
-      jsonPath: .spec.storage.pvc.name
-      name: PVC
-      priority: 1
-      type: string
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -82,6 +72,9 @@ spec:
                   When omitted, all assets types will be backed up.
                   This field is optional.
                 items:
+                  enum:
+                  - Snapshot
+                  - StaticKubeResources
                   type: string
                 maxItems: 2
                 minItems: 1
@@ -196,12 +189,12 @@ spec:
               conditions:
                 description: |-
                   conditions provide details on the status of the etcd backup job.
-                  When specified, must contain between 1 and 5 entries, with no more than 1 of each type.
-
                   Supported conditions include Running, Completed, and Failed.
                   If Running is true, the backup job is currently active.
                   If Completed is true, the backup job succeeded and has saved backup files to its storage location.
                   If Failed is true, the backup job failed and did not create valid backup files.
+
+                  When specified, must contain between 1 and 5 entries, with no more than 1 of each type.
                   This field is optional.
                 items:
                   description: Condition contains details for one aspect of the current

@@ -168,13 +168,11 @@ func (c *BackupGarbageCollectionController) sync(ctx context.Context, syncCtx fa
 				// Remaining backups will be garbage collected after the active job completes
 				continue
 			}
-			if isJobFailed(job) {
-				// Exponential backoff on failed GC jobs
-				if duration := c.retryQueue.backoffDuration(storageKey, job); duration > 0 {
-					klog.Infof("BackupGarbageCollectionController backoff failed job %s, retry in %s", job.Name, duration.String())
-					syncCtx.Queue().AddAfter(syncCtx.QueueKey(), duration)
-					continue
-				}
+			// Exponential backoff on failed GC jobs
+			if duration := c.retryQueue.backoffDuration(storageKey, job); duration > 0 {
+				klog.Infof("BackupGarbageCollectionController backoff failed job %s, retry in %s", job.Name, duration.String())
+				syncCtx.Queue().AddAfter(syncCtx.QueueKey(), duration)
+				continue
 			}
 			// Job is finished and no backoff required, delete before creating a new one
 			if err := deleteJob(ctx, jobsClient, job); err != nil {
@@ -536,6 +534,9 @@ func (grq *gcRetryQueue) add(storageKey string, job *batchv1.Job) gcBackoff {
 // backoffDuration returns the remaining backoff before a failed GC job on the storage backend may be replaced.
 // Each failed job is counted against the rate limiter once, identified by UID.
 func (grq *gcRetryQueue) backoffDuration(storageKey string, job *batchv1.Job) time.Duration {
+	if !isJobFailed(job) {
+		return 0
+	}
 	backoff, ok := grq.backoffs[storageKey]
 	if !ok || backoff.jobUID != job.UID {
 		backoff = grq.add(storageKey, job)

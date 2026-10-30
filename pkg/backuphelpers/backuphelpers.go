@@ -89,9 +89,9 @@ func SelectBackupNodes(nodeLister corev1listers.NodeLister, selector labels.Sele
 		}
 	}
 
-	controlPlaneNodess, err := nodeLister.List(selector)
+	controlPlaneNodes, err := nodeLister.List(selector)
 	if err != nil {
 		return nil, fmt.Errorf("error listing nodes: %w", err)
 	}
-	return controlPlaneNodess, nil
+	return controlPlaneNodes, nil
 }

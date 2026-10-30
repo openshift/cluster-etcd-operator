@@ -4675,7 +4675,6 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: nodeCount
       type:
         scalar: numeric
-      default: 0
 - name: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyStoragePvc
   map:
     fields:

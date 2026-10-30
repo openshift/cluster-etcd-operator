@@ -18,6 +18,7 @@ import (
 // +kubebuilder:printcolumn:name=Storage Type,JSONPath=.spec.storage.type,type=string,description="Type of storage used for the backup"
 // +kubebuilder:printcolumn:name=Schedule,JSONPath=.spec.schedule,type=string,description="Cron schedule for executing backups"
 // +kubebuilder:printcolumn:name=TimeZone,JSONPath=.spec.timeZone,type=string,description="Cron time zone for executing backups"
+// +kubebuilder:printcolumn:name=Status,JSONPath=.status.conditions[?(@.type=="Scheduled")].reason,type=string,description="Status of the EtcdBackupPolicy"
 // +kubebuilder:printcolumn:name=Age,JSONPath=.metadata.creationTimestamp,type=date,description="Age of the EtcdBackupPolicy"
 // +kubebuilder:validation:XValidation:rule="self.metadata.name.size() <= 52",message="name cannot exceed 52 characters"
 // +openshift:api-approved.openshift.io=https://github.com/openshift/api/pull/2952
@@ -147,10 +148,12 @@ type EtcdBackupPolicyStorage struct {
 }
 
 type EtcdBackupPolicyStoragePvc struct {
+	// +required
 	EtcdBackupStoragePvc `json:",inline"`
 }
 
 type EtcdBackupPolicyStorageLocal struct {
+	// +required
 	EtcdBackupStorageLocal `json:",inline"`
 
 	// nodeCount enables creating multiple local backups per schedule distributed across control plane nodes.
@@ -162,7 +165,7 @@ type EtcdBackupPolicyStorageLocal struct {
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=10
 	// +optional
-	NodeCount int32 `json:"nodeCount,omitzero"`
+	NodeCount int32 `json:"nodeCount,omitempty"`
 }
 
 // +union
@@ -187,7 +190,7 @@ type EtcdBackupPolicyRetentionRule struct {
 	// size enforces the deletion of EtcdBackups belonging to the EtcdBackupPolicy based on total backup file size.
 	// This field is required when the rule type is "Size", and forbidden otherwise.
 	// +optional
-	Size EtcdBackupPolicyRetentionSize `json:"size,omitempty"`
+	Size EtcdBackupPolicyRetentionSize `json:"size,omitzero"`
 }
 
 type EtcdBackupPolicyRetentionRuleType string
@@ -221,10 +224,11 @@ type EtcdBackupPolicyRetentionSize struct {
 // +kubebuilder:validation:MinProperties=1
 type EtcdBackupPolicyStatus struct {
 	// conditions provide details on the status of the etcd backup policy.
-	// When specified, must contain between 1 and 10 entries, with no more than 1 of each type.
+	// Supported conditions include Scheduled.
+	// If Scheduled is true, scheduling the policy succeeded.
+	// If Scheduled is false, an error occurred while attempting to schedule the policy. The condition reason and message will provide addition details.
 	//
-	// Supported conditions include Error.
-	// If Error is true, the EtcdBackupPolicy is invalid and the condition reason and message will include details on the error.
+	// When specified, must contain between 1 and 10 entries, with no more than 1 of each type.
 	// This field is optional.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=10
@@ -246,6 +250,10 @@ type EtcdBackupPolicyConditionReason string
 const (
 	// BackupPolicyInvalidSchedule is set when parsing the schedule or timeZone fails.
 	BackupPolicyInvalidSchedule EtcdBackupPolicyConditionReason = "InvalidSchedule"
+	// BackupPolicySchedulingFailed is set when there was an error applying a valid schedule.
+	BackupPolicySchedulingFailed EtcdBackupPolicyConditionReason = "SchedulingFailed"
+	// BackupPolicySchedulingSucceeded is set when the policy has been successfully scheduled.
+	BackupPolicySchedulingSucceeded EtcdBackupPolicyConditionReason = "SchedulingSucceeded"
 )
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
