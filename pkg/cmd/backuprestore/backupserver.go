@@ -22,15 +22,15 @@ const backupVolume = "/var/lib/etcd-auto-backup"
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
 
 type backupRunner interface {
-	runBackup(*backupOptions, *prune.PruneOpts) error
+	runBackup(context.Context, *backupOptions, *prune.PruneOpts) error
 }
 
 type backupRunnerImpl struct{}
 
-func (b backupRunnerImpl) runBackup(backupOpts *backupOptions, pruneOpts *prune.PruneOpts) error {
+func (b backupRunnerImpl) runBackup(ctx context.Context, backupOpts *backupOptions, pruneOpts *prune.PruneOpts) error {
 	dateString := time.Now().Format("2006-01-02_150405")
 	backupOpts.backupDir = path.Join(backupVolume, dateString)
-	err := backup(backupOpts)
+	err := backup(ctx, backupOpts)
 	if err != nil {
 		return err
 	}
@@ -140,7 +140,7 @@ func (b *backupServer) scheduleBackup(ctx context.Context, bck backupRunner) err
 	for {
 		select {
 		case <-ticker.C:
-			err := bck.runBackup(&b.backupOptions, &b.PruneOpts)
+			err := bck.runBackup(ctx, &b.backupOptions, &b.PruneOpts)
 			if err != nil {
 				klog.Errorf("error running backup: %v", err)
 				return err
