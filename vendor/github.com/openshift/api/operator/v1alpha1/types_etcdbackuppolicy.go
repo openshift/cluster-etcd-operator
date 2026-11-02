@@ -44,7 +44,7 @@ type EtcdBackupPolicySpec struct {
 	// The value must be one of the following forms:
 	// a predefined macro "@yearly", "@annually", "@monthly", "@weekly", "@daily" or "@hourly";
 	// an "@every <duration>" expression where duration is a sequence of decimal numbers each with
-	// a unit of "ns", "us", "ms", "s", "m" or "h" (for example "@every 2h" or "@every 1h30m");
+	// a unit of "s", "m" or "h" (for example "@every 2h" or "@every 1h30m");
 	// or a standard cron expression of five space separated fields (minute, hour, day-of-month,
 	// month and day-of-week), where each field may only contain digits, the names used for months
 	// and days of the week, and the cron special characters "*", "/", "-" and ",".
@@ -55,12 +55,15 @@ type EtcdBackupPolicySpec struct {
 	// This field is required.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
-	// +kubebuilder:XValidation:rule="self.matches('^(@(annually|yearly|monthly|weekly|daily|hourly)|@every (\d+(\.\d+)?(s|m|h))+|(([-0-9*/,A-Za-z]+ ){4}[-0-9*/,A-Za-z]+))$')",message="must be a valid cron expression, or macro"
+	// +kubebuilder:validation:XValidation:rule=`self.matches("^(@(annually|yearly|monthly|weekly|daily|hourly)|@every ([0-9]+([.][0-9]+)?(s|m|h))+|(([-0-9*/,A-Za-z]+ ){4}[-0-9*/,A-Za-z]+))$")`,message="must be a valid cron expression, or macro"
 	// +required
 	Schedule string `json:"schedule,omitempty"`
 
-	// timeZone name for the given schedule, see https://en.wikipedia.org/wiki/List_of_tz_database_time_zones.
-	// If not specified, this will default to the time zone of the cluster-etcd-operator process.
+	// timeZone is an IANA time zone database name used to interpret the schedule, see https://en.wikipedia.org/wiki/List_of_tz_database_time_zones.
+	// The accepted values are the same as the timeZone field of a CronJob.
+	// If not specified, this will default to the time zone of the cluster.
+	// Must be between 1 and 64 characters long.
+	// This field is optional.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=64
 	// +optional
@@ -148,12 +151,10 @@ type EtcdBackupPolicyStorage struct {
 }
 
 type EtcdBackupPolicyStoragePvc struct {
-	// +required
 	EtcdBackupStoragePvc `json:",inline"`
 }
 
 type EtcdBackupPolicyStorageLocal struct {
-	// +required
 	EtcdBackupStorageLocal `json:",inline"`
 
 	// nodeCount enables creating multiple local backups per schedule distributed across control plane nodes.
