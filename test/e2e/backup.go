@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/rand"
@@ -283,7 +284,7 @@ func TestBackupFailureOnMissingPVC(t testing.TB) {
 		Spec: operatorv1alpha1.EtcdBackupSpec{
 			Storage: operatorv1alpha1.EtcdBackupStorage{
 				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "something that does not exist"},
+				PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "missing-backup-pvc"},
 			},
 		},
 	}
@@ -291,6 +292,12 @@ func TestBackupFailureOnMissingPVC(t testing.TB) {
 	c := framework.NewOperatorClient(t)
 	_, err := c.OperatorV1alpha1().EtcdBackups().Create(context.Background(), &backup, metav1.CreateOptions{})
 	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		err := c.OperatorV1alpha1().EtcdBackups().Delete(context.Background(), backup.Name, metav1.DeleteOptions{})
+		require.NoError(t, err)
+		ensureEtcdBackupsRemoved(t, backup.Name)
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -305,7 +312,32 @@ func TestBackupFailureOnMissingPVC(t testing.TB) {
 			klog.Infof("current backup job: %v", b.Status.JobName)
 			klog.Infof("current backup conditions: %v", b.Status.Conditions)
 
-			return backupHasCondition(b, operatorv1alpha1.BackupFailed, metav1.ConditionTrue), nil
+			condition := meta.FindStatusCondition(
+				b.Status.Conditions,
+				string(operatorv1alpha1.BackupFailed),
+			)
+
+			// Specific condition missing or it has not failed, let's keep waiting
+			if condition == nil || condition.Status != metav1.ConditionTrue {
+				return false, nil
+			}
+
+			// Condition exists and backup has failed, but the reason is wrong. Test fails
+			if condition.Reason != string(operatorv1alpha1.BackupReasonSetupFailed) {
+				return false, fmt.Errorf(
+					"expected SetupFailed, got %q: %s",
+					condition.Reason, condition.Message,
+				)
+			}
+
+			// PVC is missing: no Job should have been created
+			if b.Status.JobName != "" {
+				return false, fmt.Errorf(
+					"expected no backup Job, got %q", b.Status.JobName,
+				)
+			}
+
+			return true, nil
 		})
 	require.NoError(t, err)
 }
