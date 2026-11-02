@@ -20,7 +20,7 @@ type EtcdBackupSpecApplyConfiguration struct {
 	// The default node-role.kubernetes.io/control-plane label will always be selected for in addition to any labels set here.
 	// If no nodes are matched, then the backup will be marked failed.
 	// For Local storage type, this may be used to target a specific node to take and store the backup.
-	// For PVC storage type, this may be used to control where the backup is taken from.
+	// For PVC storage type, this may be used to control where the backup is taken from. If multiple nodes are selected, the scheduler is responsible for placing the backup job based on volume topology and any other scheduling constraints.
 	// When specified, must contain between 1 and 10 entries.
 	// This field is optional.
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`

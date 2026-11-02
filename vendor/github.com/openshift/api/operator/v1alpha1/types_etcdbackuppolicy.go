@@ -84,6 +84,8 @@ type EtcdBackupPolicySpec struct {
 	// nodeSelector specifies which control plane nodes to select from for running backup jobs.
 	// The default node-role.kubernetes.io/control-plane label will always be required in addition to any labels set here.
 	// If no nodes are matched, then no EtcdBackups will be created.
+	// For Local storage type, this may be used to target a specific node to take and store the backup. If multiple nodes are selected then up to spec.storage.local.nodeCount backups are taken with nodes sorted in lexicographical order.
+	// For PVC storage type, this may be used to control where the backup is taken from. If multiple nodes are selected, the scheduler is responsible for placing the backup job based on volume topology and any other scheduling constraints.
 	// When specified, must contain between 1 and 10 entries.
 	// This field is optional.
 	// +kubebuilder:validation:MinProperties=1
@@ -96,8 +98,8 @@ type EtcdBackupPolicySpec struct {
 	// +required
 	Storage EtcdBackupPolicyStorage `json:"storage,omitzero"`
 
-	// retentionRules defines the policy for retaining and deleting existing backups.
-	// Backups are deleted from the oldest first until all rules are satisfied.
+	// retentionRules defines the policy for retaining and deleting completed backups.
+	// Completed backups are deleted from the oldest first until all rules are satisfied.
 	// If no rules are specified then backups created by this policy will not be automatically deleted.
 	// When an EtcdBackup is deleted the files created by it will be deleted as well, as long as the storage backend is still accessible.
 	// When specified, must contain between 1 and 2 entries.
@@ -175,8 +177,8 @@ type EtcdBackupPolicyStorageLocal struct {
 type EtcdBackupPolicyRetentionRule struct {
 	// type defined which rule field is set
 	// Allowed values are Quantity and Size.
-	// When set to Quantity, this rule deletes old EtcdBackups based on the total count.
-	// When set to Size, this rule deletes old EtcdBackups based on the total aggregate size of backup files.
+	// When set to Quantity, this rule deletes completed EtcdBackups based on the total count.
+	// When set to Size, this rule deletes completed EtcdBackups based on the total aggregate size of backup files.
 	// This field is required.
 	// +unionDiscriminator
 	// +kubebuilder:validation:Enum:=Quantity;Size
@@ -202,7 +204,8 @@ const (
 )
 
 type EtcdBackupPolicyRetentionQuantity struct {
-	// maxQuantity enforces the deletion of backups that exceed the total count.
+	// maxQuantity enforces the deletion of completed backups that exceed the total count.
+	// The total count of completed backups may temporarily exceed the limit when new backups are completed. Older backups are not deleted until a new one has succeeded.
 	// Must be between 1 and 1000.
 	// Thius field is required.
 	// +kubebuilder:validation:Minimum=1
@@ -212,8 +215,8 @@ type EtcdBackupPolicyRetentionQuantity struct {
 }
 
 type EtcdBackupPolicyRetentionSize struct {
-	// maxTotalSizeGiB enforces the deletion of backups by the total size of backups on the storage backend (in GiB).
-	// This is a soft threshold. The total size of backups may temporarily exceed the limit when new backups are created.
+	// maxTotalSizeGiB enforces the deletion of completed backups by the total size of backups on the storage backend (in GiB).
+	// This is a soft threshold. The total size of backups may temporarily exceed the limit when new backups are completed. Older backups are not deleted until a new one has succeeded.
 	// Must be between 1 and 10240 (10 TiB).
 	// This field is required.
 	// +kubebuilder:validation:Minimum=1
@@ -243,6 +246,7 @@ type EtcdBackupPolicyConditionType string
 
 const (
 	// BackupPolicyScheduled is True if the EtcdBackupPolicy was successfully scheduled, or False if there is an error.
+	// Typically will remain True once set, but will be set False if schedule or timeZone are changed to invalid values, or CronJob is manually deleted and fails to recreate.
 	BackupPolicyScheduled EtcdBackupPolicyConditionType = "Scheduled"
 )
 

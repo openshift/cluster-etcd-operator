@@ -5,7 +5,8 @@ package v1alpha1
 // EtcdBackupPolicyRetentionQuantityApplyConfiguration represents a declarative configuration of the EtcdBackupPolicyRetentionQuantity type for use
 // with apply.
 type EtcdBackupPolicyRetentionQuantityApplyConfiguration struct {
-	// maxQuantity enforces the deletion of backups that exceed the total count.
+	// maxQuantity enforces the deletion of completed backups that exceed the total count.
+	// The total count of completed backups may temporarily exceed the limit when new backups are completed. Older backups are not deleted until a new one has succeeded.
 	// Must be between 1 and 1000.
 	// Thius field is required.
 	MaxQuantity *int32 `json:"maxQuantity,omitempty"`

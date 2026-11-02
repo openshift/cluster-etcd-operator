@@ -11,8 +11,8 @@ import (
 type EtcdBackupPolicyRetentionRuleApplyConfiguration struct {
 	// type defined which rule field is set
 	// Allowed values are Quantity and Size.
-	// When set to Quantity, this rule deletes old EtcdBackups based on the total count.
-	// When set to Size, this rule deletes old EtcdBackups based on the total aggregate size of backup files.
+	// When set to Quantity, this rule deletes completed EtcdBackups based on the total count.
+	// When set to Size, this rule deletes completed EtcdBackups based on the total aggregate size of backup files.
 	// This field is required.
 	Type *operatorv1alpha1.EtcdBackupPolicyRetentionRuleType `json:"type,omitempty"`
 	// quantity enforces the deletion of EtcdBackups belonging to the EtcdBackupPolicy based on total count.

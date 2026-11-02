@@ -39,14 +39,16 @@ type EtcdBackupPolicySpecApplyConfiguration struct {
 	// nodeSelector specifies which control plane nodes to select from for running backup jobs.
 	// The default node-role.kubernetes.io/control-plane label will always be required in addition to any labels set here.
 	// If no nodes are matched, then no EtcdBackups will be created.
+	// For Local storage type, this may be used to target a specific node to take and store the backup. If multiple nodes are selected then up to spec.storage.local.nodeCount backups are taken with nodes sorted in lexicographical order.
+	// For PVC storage type, this may be used to control where the backup is taken from. If multiple nodes are selected, the scheduler is responsible for placing the backup job based on volume topology and any other scheduling constraints.
 	// When specified, must contain between 1 and 10 entries.
 	// This field is optional.
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 	// storage specifies the location where etcd backup files will be saved.
 	// This field is required.
 	Storage *EtcdBackupPolicyStorageApplyConfiguration `json:"storage,omitempty"`
-	// retentionRules defines the policy for retaining and deleting existing backups.
-	// Backups are deleted from the oldest first until all rules are satisfied.
+	// retentionRules defines the policy for retaining and deleting completed backups.
+	// Completed backups are deleted from the oldest first until all rules are satisfied.
 	// If no rules are specified then backups created by this policy will not be automatically deleted.
 	// When an EtcdBackup is deleted the files created by it will be deleted as well, as long as the storage backend is still accessible.
 	// When specified, must contain between 1 and 2 entries.

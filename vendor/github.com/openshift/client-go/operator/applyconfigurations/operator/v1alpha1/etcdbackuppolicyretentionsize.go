@@ -5,8 +5,8 @@ package v1alpha1
 // EtcdBackupPolicyRetentionSizeApplyConfiguration represents a declarative configuration of the EtcdBackupPolicyRetentionSize type for use
 // with apply.
 type EtcdBackupPolicyRetentionSizeApplyConfiguration struct {
-	// maxTotalSizeGiB enforces the deletion of backups by the total size of backups on the storage backend (in GiB).
-	// This is a soft threshold. The total size of backups may temporarily exceed the limit when new backups are created.
+	// maxTotalSizeGiB enforces the deletion of completed backups by the total size of backups on the storage backend (in GiB).
+	// This is a soft threshold. The total size of backups may temporarily exceed the limit when new backups are completed. Older backups are not deleted until a new one has succeeded.
 	// Must be between 1 and 10240 (10 TiB).
 	// This field is required.
 	MaxTotalSizeGiB *int32 `json:"maxTotalSizeGiB,omitempty"`
