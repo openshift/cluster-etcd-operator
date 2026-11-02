@@ -535,7 +535,7 @@ func createBackupJob(ctx context.Context,
 		if apierrors.IsAlreadyExists(err) {
 			// Job name is deterministic from backup name, assume informer cache is stale and job will be reconciled on a future sync
 			klog.V(2).Infof("BackupController name conflict for backup %q on job %q", backup.Name, jobName)
-			return nil, nil
+			return nil, fmt.Errorf("stale cache, job for backup %q already exists: %w", backup.Name, err)
 		}
 		return nil, fmt.Errorf("failed to create job: %w", err)
 	}
