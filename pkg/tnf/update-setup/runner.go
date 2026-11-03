@@ -238,7 +238,7 @@ func addNodeBackToCluster(ctx context.Context, kubeClient kubernetes.Interface, 
 	klog.Infof("Adding node %q back to Pacemaker cluster", missingNodeName)
 
 	// Validate node name before constructing command (defense-in-depth against bad data in PacemakerCluster CR)
-	if errs := validation.IsDNS1123Label(missingNodeName); len(errs) > 0 {
+	if errs := validation.IsDNS1123Subdomain(missingNodeName); len(errs) > 0 {
 		return fmt.Errorf("invalid node name %q: %v", missingNodeName, errs)
 	}
 
