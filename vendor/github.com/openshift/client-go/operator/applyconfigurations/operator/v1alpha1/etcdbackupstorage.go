@@ -20,7 +20,7 @@ type EtcdBackupStorageApplyConfiguration struct {
 	// This field is required when the storage type is "PVC", and forbidden otherwise.
 	PVC *EtcdBackupStoragePvcApplyConfiguration `json:"pvc,omitempty"`
 	// local specifies a host path directory on the control plane node where the etcd backup file will be saved.
-	// This field is required when storage type is "Local", and forbidden otherwise.
+	// This field is optional when storage type is "Local", and forbidden otherwise.
 	Local *EtcdBackupStorageLocalApplyConfiguration `json:"local,omitempty"`
 }
 

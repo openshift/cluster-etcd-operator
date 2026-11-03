@@ -185,9 +185,9 @@ func TestRetentionBySize(t testing.TB) {
 			Schedule: "* * * * *",
 			RetentionRules: []operatorv1alpha1.EtcdBackupPolicyRetentionRule{
 				{
-					Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeQuantity,
-					Quantity: operatorv1alpha1.EtcdBackupPolicyRetentionQuantity{
-						MaxQuantity: 5,
+					Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeSize,
+					Size: operatorv1alpha1.EtcdBackupPolicyRetentionSize{
+						MaxTotalSizeGiB: 1,
 					},
 				},
 			},

@@ -2,9 +2,9 @@ module github.com/openshift/cluster-etcd-operator
 
 go 1.26.0
 
-replace github.com/openshift/api => github.com/bhperry/openshift-api v0.0.0-20261103190003-84305dd24916
+replace github.com/openshift/api => github.com/bhperry/openshift-api v0.0.0-20261103220150-124fa4feca87
 
-replace github.com/openshift/client-go => github.com/bhperry/openshift-client-go v0.0.0-20261103190532-97bd08e52bbe
+replace github.com/openshift/client-go => github.com/bhperry/openshift-client-go v0.0.0-20261103222316-3ca1877d24fb
 
 require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc

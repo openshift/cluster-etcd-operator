@@ -250,6 +250,51 @@ func TestBackupPolicyRetentionPruneBySize(t *testing.T) {
 	})
 }
 
+func TestBackupPolicyRetentionPruneBySizeNewExceedsLimit(t *testing.T) {
+	// Prune all older backups, but retain the newest even though it exceeds the limit
+	runBackupPolicyRetentionControllerTest(t, testCaseBackupPolicyRetentionController{
+		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
+			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@hourly",
+				testutils.WithBackupPolicyStorage(operatorv1alpha1.EtcdBackupPolicyStorage{
+					Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+					PVC: operatorv1alpha1.EtcdBackupPolicyStoragePvc{
+						EtcdBackupStoragePvc: operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-backup-pvc"}},
+				}),
+				testutils.WithBackupPolicyRetentionRules(operatorv1alpha1.EtcdBackupPolicyRetentionRule{
+					Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeSize,
+					Size: operatorv1alpha1.EtcdBackupPolicyRetentionSize{
+						MaxTotalSizeGiB: 1,
+					},
+				}))},
+		backups: []*operatorv1alpha1.EtcdBackup{
+			testutils.FakeEtcdBackup("test-backup-1",
+				testutils.WithBackupPolicy("test-backup-policy"),
+				testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
+					Files: []operatorv1alpha1.EtcdBackupFile{
+						{Path: "1.db", SizeBytes: 300 * 1024 * 1024},
+					}}),
+				testutils.WithBackupCompleted(),
+				testutils.WithBackupAge(2*time.Hour)),
+			testutils.FakeEtcdBackup("test-backup-2",
+				testutils.WithBackupPolicy("test-backup-policy"),
+				testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
+					Files: []operatorv1alpha1.EtcdBackupFile{
+						{Path: "2.db", SizeBytes: 400 * 1024 * 1024},
+					}}),
+				testutils.WithBackupCompleted(),
+				testutils.WithBackupAge(1*time.Hour)),
+			testutils.FakeEtcdBackup("test-backup-3",
+				testutils.WithBackupPolicy("test-backup-policy"),
+				testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
+					Files: []operatorv1alpha1.EtcdBackupFile{
+						{Path: "3.db", SizeBytes: 2 * 1024 * 1024 * 1024},
+					}}),
+				testutils.WithBackupCompleted(),
+				testutils.WithBackupAge(0*time.Hour)),
+		},
+		validate: requireDeletedBackups("test-backup-1", "test-backup-2")})
+}
+
 func TestBackupPolicyRetentionFailedBackups(t *testing.T) {
 	// Delete failed backups that exceed FailedBackupsHistoryLimit
 	runBackupPolicyRetentionControllerTest(t, testCaseBackupPolicyRetentionController{

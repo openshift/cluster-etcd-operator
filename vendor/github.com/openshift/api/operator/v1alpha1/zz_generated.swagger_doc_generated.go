@@ -320,7 +320,7 @@ func (EtcdBackupStatus) SwaggerDoc() map[string]string {
 var map_EtcdBackupStorage = map[string]string{
 	"type":  "type of storage backend to use for storing the etcd backup. Allowed values are Local and PVC. When set to Local, the backup will be saved to a host path directory on the control plane node it was taken on. When set to PVC, the backup will be saved to a volume bound by a PersistentVolumeClaim. This field is required.",
 	"pvc":   "pvc specifies the PersistentVolumeClaim (PVC) which binds a PersistentVolume where the etcd backup file will be saved. The PVC must always be created in the \"openshift-etcd\" namespace. This field is required when the storage type is \"PVC\", and forbidden otherwise.",
-	"local": "local specifies a host path directory on the control plane node where the etcd backup file will be saved. This field is required when storage type is \"Local\", and forbidden otherwise.",
+	"local": "local specifies a host path directory on the control plane node where the etcd backup file will be saved. This field is optional when storage type is \"Local\", and forbidden otherwise.",
 }
 
 func (EtcdBackupStorage) SwaggerDoc() map[string]string {
@@ -328,7 +328,7 @@ func (EtcdBackupStorage) SwaggerDoc() map[string]string {
 }
 
 var map_EtcdBackupStorageLocal = map[string]string{
-	"hostPath": "hostPath is a local directory on the control plane node where the etcd backup file will be saved. hostPath must be an absolute filepath between 1 and 2048 characters containing only alphanumeric characters, '/', '.', '_', or '-', starting with a '/'. This field is required.",
+	"hostPath": "hostPath is a local directory on the control plane node where the etcd backup file will be saved. hostPath must be an absolute filepath between 1 and 2048 characters containing only alphanumeric characters, '/', '.', '_', or '-', starting with a '/'. When omitted, hostPath defaults to \"/etc/kubernetes/cluster-backup\". This field is optional.",
 }
 
 func (EtcdBackupStorageLocal) SwaggerDoc() map[string]string {
@@ -382,7 +382,7 @@ func (EtcdBackupPolicyRetentionRule) SwaggerDoc() map[string]string {
 }
 
 var map_EtcdBackupPolicyRetentionSize = map[string]string{
-	"maxTotalSizeGiB": "maxTotalSizeGiB enforces the deletion of completed backups by the total size of backups on the storage backend (in GiB). This is a soft threshold. The total size of backups may temporarily exceed the limit when new backups are completed. Older backups are not deleted until a new one has succeeded. Must be between 1 and 10240 (10 TiB). This field is required.",
+	"maxTotalSizeGiB": "maxTotalSizeGiB enforces the deletion of completed backups by the total size of backups on the storage backend (in GiB). This is a soft threshold. The total size of backups may temporarily exceed the limit when new backups are completed. Older backups are not deleted until a new one has succeeded. If the newest backup exceeds the limit on its own, it will be retained with all older backups being pruned to ensure at least one valid backup exists. Must be between 1 and 10240 (10 TiB). This field is required.",
 }
 
 func (EtcdBackupPolicyRetentionSize) SwaggerDoc() map[string]string {
@@ -414,7 +414,7 @@ func (EtcdBackupPolicyStatus) SwaggerDoc() map[string]string {
 var map_EtcdBackupPolicyStorage = map[string]string{
 	"type":  "type of storage backend to use for storing the etcd backup. Allowed values are Local and PVC. When set to Local, the backup will be saved to a host path directory on the control plane node it was taken on. When set to PVC, the backup will be saved to a volume bound by a PersistentVolumeClaim. This field is required.",
 	"pvc":   "pvc specifies the PersistentVolumeClaim (PVC) which binds a PersistentVolume where the etcd backup file will be saved. The PVC must always be created in the \"openshift-etcd\" namespace. This field is required when the storage type is \"PVC\", and forbidden otherwise.",
-	"local": "local specifies a host path directory on the control plane node where the etcd backup file will be saved. This field is required when storage type is \"Local\", and forbidden otherwise.",
+	"local": "local specifies a host path directory on the control plane node where the etcd backup file will be saved. This field is optional when storage type is \"Local\", and forbidden otherwise.",
 }
 
 func (EtcdBackupPolicyStorage) SwaggerDoc() map[string]string {

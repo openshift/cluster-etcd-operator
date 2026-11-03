@@ -7,7 +7,8 @@ package v1alpha1
 type EtcdBackupStorageLocalApplyConfiguration struct {
 	// hostPath is a local directory on the control plane node where the etcd backup file will be saved.
 	// hostPath must be an absolute filepath between 1 and 2048 characters containing only alphanumeric characters, '/', '.', '_', or '-', starting with a '/'.
-	// This field is required.
+	// When omitted, hostPath defaults to "/etc/kubernetes/cluster-backup".
+	// This field is optional.
 	HostPath *string `json:"hostPath,omitempty"`
 }
 

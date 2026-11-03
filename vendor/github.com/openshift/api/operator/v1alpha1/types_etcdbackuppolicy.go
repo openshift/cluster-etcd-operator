@@ -125,7 +125,7 @@ type EtcdBackupPolicySpec struct {
 }
 
 // +kubebuilder:validation:XValidation:rule="self.type == 'PVC' ? has(self.pvc) : !has(self.pvc)",message="pvc is required when type is PVC, and forbidden otherwise"
-// +kubebuilder:validation:XValidation:rule="self.type == 'Local' ? has(self.local) : !has(self.local)",message="local is required when type is Local, and forbidden otherwise"
+// +kubebuilder:validation:XValidation:rule="self.type == 'Local' ? true : !has(self.local)",message="local is optional when type is Local, and forbidden otherwise"
 // +union
 type EtcdBackupPolicyStorage struct {
 	// type of storage backend to use for storing the etcd backup.
@@ -146,7 +146,7 @@ type EtcdBackupPolicyStorage struct {
 	PVC EtcdBackupPolicyStoragePvc `json:"pvc,omitzero"`
 
 	// local specifies a host path directory on the control plane node where the etcd backup file will be saved.
-	// This field is required when storage type is "Local", and forbidden otherwise.
+	// This field is optional when storage type is "Local", and forbidden otherwise.
 	// +optional
 	// +unionMember
 	Local EtcdBackupPolicyStorageLocal `json:"local,omitzero"`
@@ -156,6 +156,7 @@ type EtcdBackupPolicyStoragePvc struct {
 	EtcdBackupStoragePvc `json:",inline"`
 }
 
+// +kubebuilder:validation:MinProperties=1
 type EtcdBackupPolicyStorageLocal struct {
 	EtcdBackupStorageLocal `json:",inline"`
 
@@ -217,6 +218,7 @@ type EtcdBackupPolicyRetentionQuantity struct {
 type EtcdBackupPolicyRetentionSize struct {
 	// maxTotalSizeGiB enforces the deletion of completed backups by the total size of backups on the storage backend (in GiB).
 	// This is a soft threshold. The total size of backups may temporarily exceed the limit when new backups are completed. Older backups are not deleted until a new one has succeeded.
+	// If the newest backup exceeds the limit on its own, it will be retained with all older backups being pruned to ensure at least one valid backup exists.
 	// Must be between 1 and 10240 (10 TiB).
 	// This field is required.
 	// +kubebuilder:validation:Minimum=1

@@ -20,7 +20,6 @@ import (
 // +kubebuilder:printcolumn:name=Status,JSONPath=.status.conditions[?(@.status=="True")].type,type=string,description="Status of the EtcdBackup"
 // +kubebuilder:printcolumn:name=Completed At,JSONPath=.status.conditions[?(@.type=="Completed")].lastTransitionTime,type=date,description="Completion time of the EtcdBackup"
 // +kubebuilder:printcolumn:name=Age,JSONPath=.metadata.creationTimestamp,type=date,description="Age of the EtcdBackup"
-// +kubebuilder:validation:XValidation:rule="self.metadata.name.size() <= 63",message="name cannot exceed 63 characters"
 // +openshift:api-approved.openshift.io=https://github.com/openshift/api/pull/2952
 // +openshift:file-pattern=cvoRunLevel=0000_10,operatorName=etcd,operatorOrdering=01
 // +openshift:enable:FeatureGate=AutomatedEtcdBackup
@@ -88,7 +87,7 @@ const (
 )
 
 // +kubebuilder:validation:XValidation:rule="self.type == 'PVC' ? has(self.pvc) : !has(self.pvc)",message="pvc is required when type is PVC, and forbidden otherwise"
-// +kubebuilder:validation:XValidation:rule="self.type == 'Local' ? has(self.local) : !has(self.local)",message="local is required when type is Local, and forbidden otherwise"
+// +kubebuilder:validation:XValidation:rule="self.type == 'Local' ? true : !has(self.local)",message="local is optional when type is Local, and forbidden otherwise"
 // +union
 type EtcdBackupStorage struct {
 	// type of storage backend to use for storing the etcd backup.
@@ -109,7 +108,7 @@ type EtcdBackupStorage struct {
 	PVC EtcdBackupStoragePvc `json:"pvc,omitzero"`
 
 	// local specifies a host path directory on the control plane node where the etcd backup file will be saved.
-	// This field is required when storage type is "Local", and forbidden otherwise.
+	// This field is optional when storage type is "Local", and forbidden otherwise.
 	// +optional
 	// +unionMember
 	Local EtcdBackupStorageLocal `json:"local,omitzero"`
@@ -144,14 +143,16 @@ type EtcdBackupStoragePvc struct {
 	Path string `json:"path,omitempty"`
 }
 
+// +kubebuilder:validation:MinProperties=1
 type EtcdBackupStorageLocal struct {
 	// hostPath is a local directory on the control plane node where the etcd backup file will be saved.
 	// hostPath must be an absolute filepath between 1 and 2048 characters containing only alphanumeric characters, '/', '.', '_', or '-', starting with a '/'.
-	// This field is required.
+	// When omitted, hostPath defaults to "/etc/kubernetes/cluster-backup".
+	// This field is optional.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=2048
 	// +kubebuilder:validation:XValidation:rule=`self.matches('^/[a-zA-Z0-9/._-]+$')`,message="hostPath must be a valid absolute filepath containing only alphanumeric characters, '/', '.', '_', or '-', starting with a '/'"
-	// +required
+	// +optional
 	HostPath string `json:"hostPath,omitempty"`
 }
 

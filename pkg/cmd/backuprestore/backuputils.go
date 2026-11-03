@@ -141,8 +141,8 @@ func writeTerminationLog(terminationLog string, message string, files []operator
 		return fmt.Errorf("Error opening termination log: %w", err)
 	}
 	defer func() {
-		if err := f.Close(); err != nil && retErr != nil {
-			retErr = fmt.Errorf("Error closing termination log: %w", err)
+		if err := f.Close(); err != nil {
+			retErr = utilerrors.NewAggregate([]error{retErr, fmt.Errorf("Error closing termination log: %w", err)})
 		}
 	}()
 

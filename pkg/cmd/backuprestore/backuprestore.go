@@ -42,7 +42,9 @@ func NewBackupCommand(errOut io.Writer) *cobra.Command {
 			}
 
 			must(backupOpts.Validate)
-			must(backupOpts.Run)
+			must(func() error {
+				return backupOpts.Run(cmd.Context())
+			})
 		},
 	}
 	backupOpts.AddFlags(cmd.Flags())
@@ -75,8 +77,8 @@ func (r *backupOptions) Validate() error {
 	return nil
 }
 
-func (r *backupOptions) Run() error {
-	if err := backup(context.Background(), r); err != nil {
+func (r *backupOptions) Run(ctx context.Context) error {
+	if err := backup(ctx, r); err != nil {
 		return fmt.Errorf("run: backup failed: %w", err)
 	}
 	return nil

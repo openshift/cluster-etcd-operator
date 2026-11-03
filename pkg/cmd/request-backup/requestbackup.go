@@ -22,6 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/kubernetes"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/clientcmd"
@@ -259,17 +260,19 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 		return fmt.Errorf("unknown EtcdBackupStorageType: %q", backupPolicy.Spec.Storage.Type)
 	}
 
+	var errs []error
 	for _, etcdBackup := range toCreate {
 		backupName := etcdBackup.Name
 		if _, err := backupClient.Create(ctx, etcdBackup, v1.CreateOptions{}); err != nil {
 			if !apierrors.IsAlreadyExists(err) {
 				klog.Warningf("Failed to create EtcdBackup %q: %v", backupName, err)
+				errs = append(errs, err)
 			}
 		} else {
 			klog.Infof("created EtcdBackup %q", backupName)
 		}
 	}
-	return nil
+	return utilerrors.NewAggregate(errs)
 }
 
 func iterLocalNodes(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, backupList *operatorv1alpha1.EtcdBackupList, nodeList *corev1.NodeList) iter.Seq[corev1.Node] {

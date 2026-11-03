@@ -168,7 +168,7 @@ func (c *BackupPolicyRetentionController) listFinishedBackups(backupPolicyName s
 func filterPruneableBackups(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, backups []*operatorv1alpha1.EtcdBackup) []*operatorv1alpha1.EtcdBackup {
 	pruneGroups := map[string]*pruneGroup{}
 
-	// Sort by creation descending so oldest are deleted first
+	// Sort by creation descending so newest backups are retained and older backups are deleted once threshold is passed
 	slices.SortStableFunc(backups, func(a, b *operatorv1alpha1.EtcdBackup) int {
 		return b.CreationTimestamp.Compare(a.CreationTimestamp.Time)
 	})
@@ -205,12 +205,16 @@ func filterPruneableBackups(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, bac
 			pruneGroups[groupName] = group
 		}
 
+		group.quantity++
+		for _, file := range backup.Status.Files {
+			group.sizeBytes += file.SizeBytes
+		}
+
 		pruneBackup := false
 		for _, rule := range backupPolicy.Spec.RetentionRules {
 			switch rule.Type {
 			case operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeQuantity:
 				if rule.Quantity.MaxQuantity > 0 {
-					group.quantity++
 					if rule.Quantity.MaxQuantity < group.quantity {
 						backups[n] = backup
 						pruneBackup = true
@@ -218,10 +222,9 @@ func filterPruneableBackups(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, bac
 				}
 			case operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeSize:
 				if rule.Size.MaxTotalSizeGiB > 0 {
-					for _, file := range backup.Status.Files {
-						group.sizeBytes += file.SizeBytes
-					}
-					if int64(rule.Size.MaxTotalSizeGiB)*1024*1024*1024 < group.sizeBytes {
+					// If the newest backup exceeds MaxTotalSizeGiB on its own, retain it to ensure the latest valid
+					// backup is kept despite exceeding the rule. All older backups in this group will be pruned.
+					if group.quantity > 1 && int64(rule.Size.MaxTotalSizeGiB)*1024*1024*1024 < group.sizeBytes {
 						backups[n] = backup
 						pruneBackup = true
 					}

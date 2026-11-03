@@ -147,6 +147,7 @@ spec:
                           description: |-
                             maxTotalSizeGiB enforces the deletion of completed backups by the total size of backups on the storage backend (in GiB).
                             This is a soft threshold. The total size of backups may temporarily exceed the limit when new backups are completed. Older backups are not deleted until a new one has succeeded.
+                            If the newest backup exceeds the limit on its own, it will be retained with all older backups being pruned to ensure at least one valid backup exists.
                             Must be between 1 and 10240 (10 TiB).
                             This field is required.
                           format: int32
@@ -212,13 +213,15 @@ spec:
                   local:
                     description: |-
                       local specifies a host path directory on the control plane node where the etcd backup file will be saved.
-                      This field is required when storage type is "Local", and forbidden otherwise.
+                      This field is optional when storage type is "Local", and forbidden otherwise.
+                    minProperties: 1
                     properties:
                       hostPath:
                         description: |-
                           hostPath is a local directory on the control plane node where the etcd backup file will be saved.
                           hostPath must be an absolute filepath between 1 and 2048 characters containing only alphanumeric characters, '/', '.', '_', or '-', starting with a '/'.
-                          This field is required.
+                          When omitted, hostPath defaults to "/etc/kubernetes/cluster-backup".
+                          This field is optional.
                         maxLength: 2048
                         minLength: 1
                         type: string
@@ -239,8 +242,6 @@ spec:
                         maximum: 10
                         minimum: 1
                         type: integer
-                    required:
-                    - hostPath
                     type: object
                   pvc:
                     description: |-
@@ -295,8 +296,8 @@ spec:
                 x-kubernetes-validations:
                 - message: pvc is required when type is PVC, and forbidden otherwise
                   rule: 'self.type == ''PVC'' ? has(self.pvc) : !has(self.pvc)'
-                - message: local is required when type is Local, and forbidden otherwise
-                  rule: 'self.type == ''Local'' ? has(self.local) : !has(self.local)'
+                - message: local is optional when type is Local, and forbidden otherwise
+                  rule: 'self.type == ''Local'' ? true : !has(self.local)'
               timeZone:
                 description: |-
                   timeZone is an IANA time zone database name used to interpret the schedule, see https://en.wikipedia.org/wiki/List_of_tz_database_time_zones.
