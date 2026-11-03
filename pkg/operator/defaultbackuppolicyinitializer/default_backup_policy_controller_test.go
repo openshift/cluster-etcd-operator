@@ -49,12 +49,12 @@ func TestDecodeDefaultBackupPolicy(t *testing.T) {
 		t.Fatalf("default backup policy: retention rules items number is %d, expected %d", len(defaultPolicy.Spec.RetentionRules), 1)
 	}
 
-	if defaultPolicy.Spec.RetentionRules[0].Type != operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxQuantity {
-		t.Fatalf("default backup policy: retention rules type is %s, expected %s", defaultPolicy.Spec.RetentionRules[0].Type, operatorv1alpha1.EtcdBackupPolicyRetentionRuleMaxQuantity)
+	if defaultPolicy.Spec.RetentionRules[0].Type != operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeQuantity {
+		t.Fatalf("default backup policy: retention rules type is %s, expected %s", defaultPolicy.Spec.RetentionRules[0].Type, operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeQuantity)
 	}
 
-	if defaultPolicy.Spec.RetentionRules[0].MaxQuantity != 2 {
-		t.Fatalf("default backup policy: retention rules max quantity is %d, expected %d", defaultPolicy.Spec.RetentionRules[0].MaxQuantity, 2)
+	if defaultPolicy.Spec.RetentionRules[0].Quantity.MaxQuantity != 2 {
+		t.Fatalf("default backup policy: retention rules max quantity is %d, expected %d", defaultPolicy.Spec.RetentionRules[0].Quantity.MaxQuantity, 2)
 	}
 
 	if defaultPolicy.Spec.Storage.Type != operatorv1alpha1.EtcdBackupStorageTypeLocal {
@@ -63,6 +63,10 @@ func TestDecodeDefaultBackupPolicy(t *testing.T) {
 
 	if defaultPolicy.Spec.Storage.Local.HostPath != "/etc/kubernetes/cluster-backup" {
 		t.Fatalf("default backup policy: storage local host path is %s, expected %s", defaultPolicy.Spec.Storage.Local.HostPath, "/etc/kubernetes/cluster-backup")
+	}
+
+	if defaultPolicy.Spec.Storage.Local.NodeCount != 5 {
+		t.Fatalf("default backup policy: storage local node count is %d, expected %d", defaultPolicy.Spec.Storage.Local.NodeCount, 5)
 	}
 }
 
@@ -235,18 +239,14 @@ func TestInitializeReconcilesDefaultPolicyBeforeCompletion(t *testing.T) {
 	}
 }
 
-// TestInitializePreservesPolicyStatusOnReset verifies restoring the spec preserves scheduling history and active backup references.
+// TestInitializePreservesPolicyStatusOnReset verifies restoring the spec preserves the policy's scheduling status.
 func TestInitializePreservesPolicyStatusOnReset(t *testing.T) {
 	existing := testutils.FakeEtcdBackupPolicy(defaultPolicyName, "@hourly", testutils.WithBackupPolicyStatus(operatorv1alpha1.EtcdBackupPolicyStatus{
 		Conditions: []metav1.Condition{{
-			Type:               string(operatorv1alpha1.BackupPolicyLastScheduled),
+			Type:               string(operatorv1alpha1.BackupPolicyScheduled),
 			Status:             metav1.ConditionTrue,
-			Reason:             string(operatorv1alpha1.BackupPolicyLastScheduled),
+			Reason:             string(operatorv1alpha1.BackupPolicySchedulingSucceeded),
 			LastTransitionTime: metav1.Now(),
-		}},
-		Active: []operatorv1alpha1.EtcdBackupReference{{
-			Name: "default-backup-in-progress",
-			UID:  "9a14d177-8ee6-4a47-8746-5d58ebd49371",
 		}},
 	}))
 	before := existing.DeepCopy()

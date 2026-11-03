@@ -6,9 +6,11 @@ spec:
   schedule: "@daily"
   failedBackupsHistoryLimit: 1
   retentionRules:
-  - type: MaxQuantity
-    maxQuantity: 2
+  - type: Quantity
+    quantity:
+      maxQuantity: 2
   storage:
     type: Local
     local:
       hostPath: /etc/kubernetes/cluster-backup
+      nodeCount: 5
