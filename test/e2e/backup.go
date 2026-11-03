@@ -12,6 +12,7 @@ import (
 
 	g "github.com/onsi/ginkgo/v2"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/test/e2e/framework"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -28,7 +29,6 @@ import (
 )
 
 const (
-	CronJobKindName        = "CronJob"
 	OpenShiftEtcdNamespace = "openshift-etcd"
 	HostPathBasePath       = "/etc/kubernetes/cluster-backup/"
 
@@ -44,7 +44,7 @@ var _ = g.Describe("[sig-etcd] cluster-etcd-operator", func() {
 	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestPeriodicBackupHappyPath [Timeout:30m]", func() {
 		TestPeriodicBackupHappyPath(g.GinkgoTB())
 	})
-	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestRetentionBySize", func() {
+	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestRetentionBySize [Timeout:30m]", func() {
 		TestRetentionBySize(g.GinkgoTB())
 	})
 	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestMultipleBackupsAreSkipped", func() {
@@ -53,8 +53,8 @@ var _ = g.Describe("[sig-etcd] cluster-etcd-operator", func() {
 	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestBackupFailureOnMissingPVC", func() {
 		TestBackupFailureOnMissingPVC(g.GinkgoTB())
 	})
-	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestWrongScheduleDegradesOperator", func() {
-		TestWrongScheduleDegradesOperator(g.GinkgoTB())
+	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestInvalidBackupPolicySchedule", func() {
+		TestInvalidBackupPolicySchedule(g.GinkgoTB())
 	})
 })
 
@@ -149,29 +149,20 @@ func TestPeriodicBackupHappyPath(t testing.TB) {
 
 	t.Cleanup(func() {
 		err := operatorClient.OperatorV1alpha1().EtcdBackupPolicies().Delete(context.Background(), backupPolicy.Name, metav1.DeleteOptions{})
-		require.NoError(t, err)
+		if !errors.IsNotFound(err) {
+			require.NoError(t, err)
+		}
 
-		// deleting the CRD should delete all its cronjobs/jobs, etcdbackups and their pods as well
 		ensureCronJobRemoved(t, backupPolicy.Name)
-		ensureEtcdBackupsRemoved(t, backupPolicy.Name)
+		deleteBackupsForPolicy(t, backupPolicy.Name)
 		ensureAllBackupPodsAreRemoved(t)
 	})
 
-	awaitBackupInvocations(t, backupPolicy)
-
-	foundFiles := collectFilesInPVCAcrossAllNodes(t, pvcName)
-	grouped := groupBackupFilesByRunPrefix(t, foundFiles)
-	// we expect either 5 or 6 backups, depending on whether there's currently an invocation ongoing
-	require.Truef(t, len(grouped) == 5 || len(grouped) == 6,
-		"expected 5 or 6 backup groups, but found %d. Groups: %v", len(grouped), grouped)
-	// each group individually must be a valid backup
-	// TODO(thomas): this might flake when an ongoing backup is not entirely done yet?
-	for directory, files := range grouped {
-		t.Logf("testing backup group %s = %v", directory, files)
-
-		expectedDirectory := strings.TrimPrefix(directory, "./")
-		requireBackupFilesFound(t, expectedDirectory, files)
-	}
+	retained, pruned := awaitBackupRetention(t, backupPolicy)
+	require.Len(t, retained, 5, "quantity retention should keep five completed backups")
+	// Stop future scheduled runs before inspecting the PVC.
+	stopBackupPolicy(t, backupPolicy.Name)
+	requireBackupFilesMatchRetention(t, pvcName, backupPolicy.Spec.Storage.PVC.Path, retained, pruned)
 }
 
 func TestRetentionBySize(t testing.TB) {
@@ -209,24 +200,18 @@ func TestRetentionBySize(t testing.TB) {
 
 	t.Cleanup(func() {
 		err := operatorClient.OperatorV1alpha1().EtcdBackupPolicies().Delete(context.Background(), backupPolicy.Name, metav1.DeleteOptions{})
-		require.NoError(t, err)
+		if !errors.IsNotFound(err) {
+			require.NoError(t, err)
+		}
+		ensureCronJobRemoved(t, backupPolicy.Name)
+		deleteBackupsForPolicy(t, backupPolicy.Name)
+		ensureAllBackupPodsAreRemoved(t)
 	})
 
-	awaitBackupInvocations(t, backupPolicy)
-	// this is the state after five job invocations
-	foundFiles := collectFilesInPVCAcrossAllNodes(t, pvcName)
-	grouped := groupBackupFilesByRunPrefix(t, foundFiles)
-	// we expect either 4 or 5 backups, depending on whether there's currently an invocation ongoing
-	require.Truef(t, len(grouped) == 4 || len(grouped) == 5,
-		"expected 4 or 5 backup groups, but found %d. Groups: %v", len(grouped), grouped)
-	// each group individually must be a valid backup
-	// TODO(thomas): this might flake when an ongoing backup is not entirely done yet?
-	for directory, files := range grouped {
-		t.Logf("testing backup group %s = %v", directory, files)
-
-		expectedDirectory := strings.TrimPrefix(directory, "./")
-		requireBackupFilesFound(t, expectedDirectory, files)
-	}
+	retained, pruned := awaitBackupRetention(t, backupPolicy)
+	// Stop future scheduled runs before inspecting the PVC.
+	stopBackupPolicy(t, backupPolicy.Name)
+	requireBackupFilesMatchRetention(t, pvcName, backupPolicy.Spec.Storage.PVC.Path, retained, pruned)
 }
 
 func TestMultipleBackupsAreSkipped(t testing.TB) {
@@ -386,8 +371,10 @@ func pushRandomConfigMaps(t testing.TB) {
 	t.Logf("done pushng %d configmaps at 1mb!", kn*n)
 }
 
-func TestWrongScheduleDegradesOperator(t testing.TB) {
+func TestInvalidBackupPolicySchedule(t testing.TB) {
 	operatorClient := framework.NewOperatorClient(t)
+	backupPolicies := operatorClient.OperatorV1alpha1().EtcdBackupPolicies()
+	cronJobs := framework.NewBatchClient(t).CronJobs(OpenShiftEtcdNamespace)
 
 	backupPolicy := operatorv1alpha1.EtcdBackupPolicy{
 		ObjectMeta: metav1.ObjectMeta{
@@ -412,110 +399,164 @@ func TestWrongScheduleDegradesOperator(t testing.TB) {
 		},
 	}
 
-	_, err := operatorClient.OperatorV1alpha1().EtcdBackupPolicies().Create(context.Background(), &backupPolicy, metav1.CreateOptions{})
+	createdPolicy, err := backupPolicies.Create(context.Background(), &backupPolicy, metav1.CreateOptions{})
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		_ = operatorClient.OperatorV1alpha1().EtcdBackupPolicies().Delete(context.Background(), backupPolicy.Name, metav1.DeleteOptions{})
-
+		err := backupPolicies.Delete(context.Background(), backupPolicy.Name, metav1.DeleteOptions{})
+		require.NoError(t, err)
+		ensureCronJobRemoved(t, backupPolicy.Name)
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	err = wait.PollUntilContextCancel(ctx, 10*time.Second, false,
-		func(ctx context.Context) (done bool, err error) {
-			operatorStatus, err := operatorClient.OperatorV1().Etcds().Get(ctx, "cluster", metav1.GetOptions{})
+	err = wait.PollUntilContextCancel(ctx, 5*time.Second, true,
+		func(ctx context.Context) (bool, error) {
+			policy, err := backupPolicies.Get(ctx, backupPolicy.Name, metav1.GetOptions{})
 			if err != nil {
-				klog.Infof("error while getting operator status: %v", err)
+				return false, err
+			}
+			condition := meta.FindStatusCondition(policy.Status.Conditions, string(operatorv1alpha1.BackupPolicyScheduled))
+			if condition == nil || condition.ObservedGeneration != createdPolicy.Generation {
 				return false, nil
 			}
-
-			klog.Infof("current conditions: %v", operatorStatus.Status.Conditions)
-
-			for _, condition := range operatorStatus.Status.Conditions {
-				if condition.Type == "PeriodicBackupControllerDegraded" &&
-					condition.Reason == "Error" &&
-					string(condition.Status) == string(metav1.ConditionTrue) &&
-					strings.Contains(condition.Message,
-						"CronJob.batch \"periodic-backup-wrong-schedule\" is invalid: spec.schedule:") {
-					return true, nil
-				}
+			if condition.Status != metav1.ConditionFalse || condition.Reason != string(operatorv1alpha1.BackupPolicyInvalidSchedule) {
+				return false, fmt.Errorf("expected Scheduled=False with reason InvalidSchedule, got %s with reason %s", condition.Status, condition.Reason)
 			}
 
-			return false, nil
-		})
-	require.NoError(t, err, "expected operator to degrade")
-
-	// deleting the offending backup policy should recover the operator condition again
-	err = operatorClient.OperatorV1alpha1().EtcdBackupPolicies().Delete(context.Background(), backupPolicy.Name, metav1.DeleteOptions{})
-	require.NoError(t, err)
-
-	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	err = wait.PollUntilContextCancel(ctx, 10*time.Second, false,
-		func(ctx context.Context) (done bool, err error) {
-			operatorStatus, err := operatorClient.OperatorV1().Etcds().Get(ctx, "cluster", metav1.GetOptions{})
-			if err != nil {
-				klog.Infof("error while getting operator status: %v", err)
-				return false, nil
-			}
-
-			klog.Infof("current conditions: %v", operatorStatus.Status.Conditions)
-
-			for _, condition := range operatorStatus.Status.Conditions {
-				if condition.Type == "PeriodicBackupControllerDegraded" &&
-					condition.Reason == "AsExpected" &&
-					string(condition.Status) == string(metav1.ConditionFalse) {
-					return true, nil
-				}
-			}
-
-			return false, nil
-		})
-	require.NoError(t, err, "expected operator to recover after degrade")
-}
-
-func awaitBackupInvocations(t testing.TB, backupPolicy operatorv1alpha1.EtcdBackupPolicy) {
-	batchClient := framework.NewBatchClient(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-	defer cancel()
-	err := wait.PollUntilContextCancel(ctx, 30*time.Second, false,
-		func(ctx context.Context) (done bool, err error) {
-			jobList, err := batchClient.Jobs(backupPolicy.Namespace).List(context.Background(), metav1.ListOptions{})
-			if err != nil {
-				klog.Infof("error while getting job list: %v", err)
-				return false, nil
-			}
-
-			// the cronjob will keep at most 5 successful runs, we're waiting until the list has that many jobs completed
-			const required = 5
-			succeededJobs := 0
-			for _, j := range jobList.Items {
-				ownedByOurCron := false
-				for _, reference := range j.OwnerReferences {
-					if reference.Kind == CronJobKindName && reference.Name == backupPolicy.Name {
-						ownedByOurCron = true
-						break
-					}
-				}
-
-				if ownedByOurCron {
-					klog.Infof("Found job invocation: %s with status %s", j.Name, j.Status.String())
-					if j.Status.Succeeded > 0 {
-						succeededJobs++
-					}
-				}
-			}
-
-			if succeededJobs >= required {
-				klog.Infof("found enough succeeded jobs")
+			cronJob, err := cronJobs.Get(ctx, backupPolicy.Name, metav1.GetOptions{})
+			if errors.IsNotFound(err) {
 				return true, nil
 			}
-
-			klog.Infof("found %d/%d succeeded jobs, retrying...", succeededJobs, required)
-			return false, nil
+			if err != nil {
+				return false, err
+			}
+			return false, fmt.Errorf("unexpected CronJob %q for invalid schedule", cronJob.Name)
 		})
 	require.NoError(t, err)
+
+	currentPolicy, err := backupPolicies.Get(context.Background(), backupPolicy.Name, metav1.GetOptions{})
+	require.NoError(t, err)
+	currentPolicy.Spec.Schedule = "@daily"
+	updatedPolicy, err := backupPolicies.Update(context.Background(), currentPolicy, metav1.UpdateOptions{})
+	require.NoError(t, err)
+
+	recoveryCtx, recoveryCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer recoveryCancel()
+	err = wait.PollUntilContextCancel(recoveryCtx, 5*time.Second, true,
+		func(ctx context.Context) (bool, error) {
+			policy, err := backupPolicies.Get(ctx, backupPolicy.Name, metav1.GetOptions{})
+			if err != nil {
+				return false, err
+			}
+			condition := meta.FindStatusCondition(policy.Status.Conditions, string(operatorv1alpha1.BackupPolicyScheduled))
+			return condition != nil &&
+				condition.ObservedGeneration == updatedPolicy.Generation &&
+				condition.Status == metav1.ConditionTrue &&
+				condition.Reason == string(operatorv1alpha1.BackupPolicySchedulingSucceeded), nil
+		})
+	require.NoError(t, err, "expected Scheduled=True with reason SchedulingSucceeded after correcting the schedule")
+
+	cronJob, err := cronJobs.Get(context.Background(), backupPolicy.Name, metav1.GetOptions{})
+	require.NoError(t, err, "expected CronJob after correcting the schedule")
+	require.Equal(t, "@daily", cronJob.Spec.Schedule)
+}
+
+func awaitBackupRetention(t testing.TB, backupPolicy operatorv1alpha1.EtcdBackupPolicy) ([]operatorv1alpha1.EtcdBackup, []string) {
+	backups := framework.NewOperatorClient(t).OperatorV1alpha1().EtcdBackups()
+	selector := backuphelpers.LabelEtcdBackupPolicy + "=" + backupPolicy.Name
+	rule := backupPolicy.Spec.RetentionRules[0]
+	// Remember completed backups across polls: pruning removes them from later lists.
+	completedSeen := map[string]struct{}{}
+	var retained []operatorv1alpha1.EtcdBackup
+	var pruned []string
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+	err := wait.PollUntilContextCancel(ctx, 5*time.Second, false, func(ctx context.Context) (bool, error) {
+		list, err := backups.List(ctx, metav1.ListOptions{LabelSelector: selector})
+		if err != nil {
+			klog.Infof("error while listing backups for policy %s: %v", backupPolicy.Name, err)
+			return false, nil
+		}
+
+		retained = nil
+		pruned = nil
+		current := make(map[string]struct{}, len(list.Items))
+		var retainedSize int64
+		for _, backup := range list.Items {
+			current[backup.Name] = struct{}{}
+			if backupHasCondition(&backup, operatorv1alpha1.BackupFailed, metav1.ConditionTrue) {
+				return false, fmt.Errorf("backup %s failed: %v", backup.Name, backup.Status.Conditions)
+			}
+			if backup.DeletionTimestamp != nil || !backupHasCondition(&backup, operatorv1alpha1.BackupCompleted, metav1.ConditionTrue) {
+				continue
+			}
+			completedSeen[backup.Name] = struct{}{}
+			retained = append(retained, backup)
+			for _, file := range backup.Status.Files {
+				retainedSize += file.SizeBytes
+			}
+		}
+		for name := range completedSeen {
+			if _, present := current[name]; !present {
+				pruned = append(pruned, name)
+			}
+		}
+		if len(pruned) == 0 {
+			return false, nil
+		}
+
+		switch rule.Type {
+		case operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeQuantity:
+			return len(completedSeen) > int(rule.Quantity.MaxQuantity) && len(retained) == int(rule.Quantity.MaxQuantity), nil
+		case operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeSize:
+			maxBytes := int64(rule.Size.MaxTotalSizeGiB) * 1024 * 1024 * 1024
+			return retainedSize <= maxBytes, nil
+		default:
+			return false, fmt.Errorf("unsupported retention rule %q", rule.Type)
+		}
+	})
+	require.NoErrorf(t, err, "waiting for %s retention: saw %d completed backups and %d pruned backups", rule.Type, len(completedSeen), len(pruned))
+	return retained, pruned
+}
+
+func requireBackupFilesMatchRetention(t testing.TB, pvcName, pvcPath string, retained []operatorv1alpha1.EtcdBackup, pruned []string) {
+	files := collectFilesInPVCAcrossAllNodes(t, pvcName)
+	for _, backup := range retained {
+		requireBackupFilesFound(t, path.Join(pvcPath, backup.Name), files)
+	}
+	for _, name := range pruned {
+		prefix := "./" + path.Join(pvcPath, name) + "/"
+		for _, file := range files {
+			require.Falsef(t, strings.HasPrefix(file, prefix), "files from pruned backup %s remain: %s", name, file)
+		}
+	}
+}
+
+func stopBackupPolicy(t testing.TB, policyName string) {
+	policies := framework.NewOperatorClient(t).OperatorV1alpha1().EtcdBackupPolicies()
+	err := policies.Delete(context.Background(), policyName, metav1.DeleteOptions{})
+	require.NoError(t, err)
+	ensureCronJobRemoved(t, policyName)
+}
+
+func deleteBackupsForPolicy(t testing.TB, policyName string) {
+	backups := framework.NewOperatorClient(t).OperatorV1alpha1().EtcdBackups()
+	selector := backuphelpers.LabelEtcdBackupPolicy + "=" + policyName
+	err := backups.DeleteCollection(context.Background(), metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: selector})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	err = wait.PollUntilContextCancel(ctx, 10*time.Second, false, func(ctx context.Context) (bool, error) {
+		list, err := backups.List(ctx, metav1.ListOptions{LabelSelector: selector})
+		if err != nil {
+			return false, err
+		}
+		return len(list.Items) == 0, nil
+	})
+	require.NoErrorf(t, err, "waiting for backups of policy %s to be deleted", policyName)
 }
 
 func ensureHostPathPVC(t testing.TB, pvcName string) {
@@ -794,28 +835,4 @@ func requireBackupFilesFound(t testing.TB, expectedDirectory string, files []str
 
 	require.Truef(t, tarMatchFound, "expected tarfile for backup: %s, found files: %v ", expectedDirectory, files)
 	require.Truef(t, snapMatchFound, "expected snapshot for backup: %s, found files: %v ", expectedDirectory, files)
-}
-
-func groupBackupFilesByRunPrefix(t testing.TB, files []string) map[string][]string {
-	// find will return a dir prefix always before any files like this:
-	// ./backup-backup-happy-path-2023-08-03_152313
-	// which is what we're going to use to group on
-	groupingPrefixes := make(map[string][]string)
-
-	for _, file := range files {
-		if strings.Count(file, "/") == 1 {
-			groupingPrefixes[file] = []string{}
-		}
-	}
-
-	for _, file := range files {
-		for k := range groupingPrefixes {
-			if strings.HasPrefix(file, k) {
-				groupingPrefixes[k] = append(groupingPrefixes[k], file)
-				break
-			}
-		}
-	}
-
-	return groupingPrefixes
 }
