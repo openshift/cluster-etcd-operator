@@ -140,8 +140,8 @@ function backup_latest_kube_static_resources {
   done
 
   if [ -n "${incomplete}" ]; then
-    BACKUP_TAR_FILE="${BACKUP_DIR}/partial_static_kuberesources_${DATESTRING}${IS_DIRTY}.tar.gz"
-    SNAPSHOT_FILE="${BACKUP_DIR}/partial_snapshot_${DATESTRING}${IS_DIRTY}.db"
+    BACKUP_TAR_FILE="${BACKUP_DIR%/}/partial_static_kuberesources_${DATESTRING}${IS_DIRTY}.tar.gz"
+    SNAPSHOT_FILE="${BACKUP_DIR%/}/partial_snapshot_${DATESTRING}${IS_DIRTY}.db"
     echo "WARNING: partial local backup; NOT qualified for full control-plane restore. Do not rename or mix these artifacts with full backups." >&2
   fi
 
@@ -161,9 +161,12 @@ function source_required_dependency {
 }
 
 BACKUP_DIR="$1"
+while [[ "${BACKUP_DIR}" != / && "${BACKUP_DIR}" == */ ]]; do
+  BACKUP_DIR="${BACKUP_DIR%/}"
+done
 DATESTRING=$(date "+%F_%H%M%S")
-BACKUP_TAR_FILE=${BACKUP_DIR}/static_kuberesources_${DATESTRING}${IS_DIRTY}.tar.gz
-SNAPSHOT_FILE="${BACKUP_DIR}/snapshot_${DATESTRING}${IS_DIRTY}.db"
+BACKUP_TAR_FILE="${BACKUP_DIR%/}/static_kuberesources_${DATESTRING}${IS_DIRTY}.tar.gz"
+SNAPSHOT_FILE="${BACKUP_DIR%/}/snapshot_${DATESTRING}${IS_DIRTY}.db"
 
 trap 'rm -f -- "${BACKUP_TAR_FILE}" "${SNAPSHOT_FILE}"' ERR
 
