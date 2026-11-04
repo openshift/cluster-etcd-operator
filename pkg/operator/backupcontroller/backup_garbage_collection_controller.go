@@ -535,7 +535,11 @@ func (grq *gcRetryQueue) add(storageKey string, job *batchv1.Job) gcBackoff {
 
 // backoffDuration returns the remaining backoff before a failed GC job on the storage backend may be replaced.
 // Each failed job is counted against the rate limiter once, identified by UID.
+// Non-failed jobs (e.g. Complete) never back off and must not touch the rate limiter.
 func (grq *gcRetryQueue) backoffDuration(storageKey string, job *batchv1.Job) time.Duration {
+	if !isJobFailed(job) {
+		return 0
+	}
 	backoff, ok := grq.backoffs[storageKey]
 	if !ok || backoff.jobUID != job.UID {
 		backoff = grq.add(storageKey, job)

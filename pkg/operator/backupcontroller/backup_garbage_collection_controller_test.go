@@ -659,6 +659,7 @@ func TestBackupGarbageCollectionCompletedJobsFinalized(t *testing.T) {
 				}}},
 			},
 		},
+		retryQueue: &retryQueue,
 		validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			// Backoff is reset for storage backends with a completed job, or without any job
 			require.Zero(t, retryQueue.NumRequeues("pvc/completed"))

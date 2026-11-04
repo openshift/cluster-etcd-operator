@@ -63,7 +63,7 @@ type RunMetadata struct {
 
 // RunTracker manages durable tracking of backup run failures per policy.
 type RunTracker struct {
-	namespace      string
+	namespace       string
 	configMapClient corev1client.ConfigMapInterface
 }
 
@@ -76,7 +76,7 @@ const (
 // NewRunTracker creates a new RunTracker
 func NewRunTracker(namespace string, configMapClient corev1client.ConfigMapInterface) *RunTracker {
 	return &RunTracker{
-		namespace:      namespace,
+		namespace:       namespace,
 		configMapClient: configMapClient,
 	}
 }
@@ -252,8 +252,14 @@ func (t *RunTracker) ProcessBackupsForPolicy(
 			klog.Warningf("BackupRunTracker: policy %s run %s failed", policy.Name, runHash)
 		}
 
-		// Record outcome if new or changed
+		// Record outcome if new or changed. Never downgrade a durable success to
+		// failure: retention can remove the successful member and leave only
+		// failed siblings, which would otherwise inflate the failure streak.
 		if !exists || previousOutcome != currentOutcomeStr {
+			if exists && previousOutcome == "success" && currentOutcomeStr == "failure" {
+				klog.V(4).Infof("BackupRunTracker: policy %s run %s keeping durable success after retention", policy.Name, runHash)
+				continue
+			}
 			if currentOutcomeStr == "success" && previousOutcome != "success" {
 				successReset = true
 			}

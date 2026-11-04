@@ -313,7 +313,7 @@ func (c *BackupPolicyController) executeBackup(ctx context.Context, backupPolicy
 					ObjectMeta: v1.ObjectMeta{
 						Name: generateEtcdBackupName(backupPolicy.Name, node.UID, scheduleTime),
 						Labels: map[string]string{
-							backuphelpers.LabelEtcdBackupPolicy: backupPolicy.Name,
+							backuphelpers.LabelEtcdBackupPolicy:    backupPolicy.Name,
 							backuphelpers.LabelEtcdBackupPolicyUID: string(backupPolicy.UID),
 						},
 					},

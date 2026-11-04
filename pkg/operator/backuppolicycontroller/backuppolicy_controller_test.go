@@ -128,6 +128,9 @@ func TestBackupPolicyCreateMultipleLocalBackupsWithSelector(t *testing.T) {
 	withSpecialLabel := func(node *corev1.Node) {
 		node.Labels["special"] = "label"
 	}
+	withHostname := func(node *corev1.Node) {
+		node.Labels[corev1.LabelHostname] = node.Name
+	}
 	runBackupPolicyControllerTest(t, testCaseBackupPolicyController{
 		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
 			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour), func(backup *operatorv1alpha1.EtcdBackupPolicy) {
@@ -140,9 +143,9 @@ func TestBackupPolicyCreateMultipleLocalBackupsWithSelector(t *testing.T) {
 				backup.Spec.NodeSelector = map[string]string{"special": "label"}
 			})},
 		nodes: []*corev1.Node{
-			testutils.FakeNode("test-node-1", testutils.WithMasterLabel()),
-			testutils.FakeNode("test-node-2", testutils.WithMasterLabel(), withSpecialLabel),
-			testutils.FakeNode("test-node-3", testutils.WithMasterLabel(), withSpecialLabel)},
+			testutils.FakeNode("test-node-1", testutils.WithMasterLabel(), withHostname),
+			testutils.FakeNode("test-node-2", testutils.WithMasterLabel(), withHostname, withSpecialLabel),
+			testutils.FakeNode("test-node-3", testutils.WithMasterLabel(), withHostname, withSpecialLabel)},
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			// Verify new backups were created
 			backups, err := operatorFake.OperatorV1alpha1().EtcdBackups().List(context.TODO(), v1.ListOptions{})
