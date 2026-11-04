@@ -484,14 +484,17 @@ func createBackupJob(ctx context.Context,
 		// Local backups write to a hostPath, so the job is pinned to the selected node.
 		job.Spec.Template.Spec.NodeName = backup.Status.NodeName
 
-		storageLocal := backup.Spec.Storage.Local
-		backupDir = filepath.Join(backupDir, storageLocal.HostPath)
+		hostPath := backup.Spec.Storage.Local.HostPath
+		if hostPath == "" {
+			hostPath = backupPathMount
+		}
+		backupDir = filepath.Join(backupDir, hostPath)
 		volume.HostPath = &corev1.HostPathVolumeSource{
-			Path: storageLocal.HostPath,
+			Path: hostPath,
 			Type: ptr.To(corev1.HostPathDirectoryOrCreate),
 		}
 		// HostPath is appended to mount so that path handling is always consistent between local and pvc storage backend
-		volumeMount.MountPath = filepath.Join(volumeMount.MountPath, storageLocal.HostPath)
+		volumeMount.MountPath = filepath.Join(volumeMount.MountPath, hostPath)
 	case operatorv1alpha1.EtcdBackupStorageTypePVC:
 		// PVC backups are not pinned to a node. Instead the job is constrained to eligible control plane nodes and
 		// the scheduler picks one that satisfies the volume's topology (e.g. WaitForFirstConsumer). A

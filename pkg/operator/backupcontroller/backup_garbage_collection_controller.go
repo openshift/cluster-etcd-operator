@@ -306,6 +306,9 @@ func createGarbageCollectionJob(ctx context.Context,
 		paths := map[string]struct{}{}
 		for _, backup := range backups {
 			hostPath := backup.Spec.Storage.Local.HostPath
+			if hostPath == "" {
+				hostPath = backupPathMount
+			}
 			if len(backup.Status.Files) > 0 {
 				for _, file := range backup.Status.Files {
 					gcFiles = append(gcFiles, filepath.Join(backupPathMount, file.Path))
