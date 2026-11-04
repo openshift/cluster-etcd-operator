@@ -66,3 +66,11 @@ rules:
     verbs:
       - use
 
+  - apiGroups:
+      - config.openshift.io
+    resources:
+      - featuregates
+    resourceNames:
+      - cluster
+    verbs:
+      - get

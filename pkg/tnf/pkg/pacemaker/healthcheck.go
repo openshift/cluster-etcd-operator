@@ -95,7 +95,8 @@ var errorPatternsByPriority = []struct {
 //
 // Warning vs Error Philosophy:
 //   - Errors: Conditions requiring immediate action or causing downstream degradation.
-//     Examples: node offline, fencing unavailable, etcd/kubelet unhealthy, maintenance mode.
+//     Examples: node offline, fencing unavailable, etcd/kubelet unhealthy, maintenance mode,
+//     alert agent missing/misconfigured in the CIB or its script missing on a node.
 //   - Warnings: Degraded redundancy where the cluster remains functional but should be investigated.
 //     Examples: FencingHealthy=False with FencingAvailable=True (can still fence, but redundancy lost).
 //
@@ -533,8 +534,12 @@ func getNodeConditionErrors(conditions []metav1.Condition) []string {
 	return errors
 }
 
-// getNodeResourceSummaries returns summaries of unhealthy resources on a node.
-// Each summary includes the resource name and its specific issue.
+// getNodeResourceSummaries returns summaries of unhealthy resources and alert agents on a node.
+// Each summary includes the resource/agent name and its specific issue. This is only called once the
+// node's own Healthy condition is already False - for alert agents that already reflects the fold
+// described in mergeCondition/refreshHealthAfterAlertAgents (alertAgents[].Healthy -> node's optional
+// AlertAgentsHealthy -> node.Healthy), so a confirmed alert-agent failure is reported as part of the
+// same node-unhealthy error rather than as an independent one.
 func getNodeResourceSummaries(node pacmkrv1.PacemakerClusterNodeStatus) []string {
 	var summaries []string
 
@@ -544,7 +549,34 @@ func getNodeResourceSummaries(node pacmkrv1.PacemakerClusterNodeStatus) []string
 		}
 	}
 
+	for _, agent := range node.AlertAgents {
+		if cond := FindCondition(agent.Conditions, pacmkrv1.AlertAgentHealthyConditionType); cond != nil && cond.Status == metav1.ConditionFalse {
+			summaries = append(summaries, fmt.Sprintf("alert agent %s %s", agent.Name, getAlertAgentIssue(agent.Conditions)))
+		}
+	}
+
 	return summaries
+}
+
+// getAlertAgentIssue returns a human-readable, actionable issue for an unhealthy alert-agent entry,
+// prioritizing the CIB-registration problem (Configured) over the per-node availability problem
+// (Available). It surfaces the condition's own Message when set, since the status collector populates
+// it with the specific diagnostic (which agent, expected vs. observed path/event filter, or the MCO
+// degraded reason) rather than a generic description.
+func getAlertAgentIssue(conditions []metav1.Condition) string {
+	if cond := FindCondition(conditions, pacmkrv1.AlertAgentConfiguredConditionType); cond != nil && cond.Status == metav1.ConditionFalse {
+		if cond.Message != "" {
+			return cond.Message
+		}
+		return "is not correctly registered in the CIB"
+	}
+	if cond := FindCondition(conditions, pacmkrv1.AlertAgentAvailableConditionType); cond != nil && cond.Status == metav1.ConditionFalse {
+		if cond.Message != "" {
+			return cond.Message
+		}
+		return "script is missing or not executable on this node"
+	}
+	return "is unhealthy"
 }
 
 // getResourceIssue returns a human-readable issue for an unhealthy resource, prioritized by severity.

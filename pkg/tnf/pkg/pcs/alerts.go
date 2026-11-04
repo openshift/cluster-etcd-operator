@@ -19,23 +19,44 @@ import (
 // it from other, unexpected failures.
 var ErrAlertScriptNotPresent = errors.New("alert script not yet present")
 
-type alertConfig struct {
-	id        string
-	path      string
-	selectXML string // CIB <select> element content to filter event types
+// AlertConfig describes the expected CIB registration of a single pacemaker alert agent.
+// It is exported so the status collector (pacemaker package) can compare observed CIB state
+// against the expected path and event filter for each known alert agent.
+type AlertConfig struct {
+	ID        string
+	Path      string
+	SelectXML string // CIB <select> element content to filter event types
+	// ExpectFencing is true when the alert is expected to subscribe to fencing events
+	// (i.e. its <select> contains <select_fencing/>).
+	ExpectFencing bool
+	// ExpectNodes is true when the alert is expected to subscribe to node events
+	// (i.e. its <select> contains <select_nodes/>).
+	ExpectNodes bool
 }
 
-var alertConfigs = []alertConfig{
+// AlertConfigs is the set of pacemaker alert agents TNF manages.
+var AlertConfigs = []AlertConfig{
 	{
-		id:        "tnf-taint-alert",
-		path:      "/var/lib/pacemaker/alerts/tnf-taint-alert.sh",
-		selectXML: "<select_fencing/>",
+		ID:            "tnf-taint-alert",
+		Path:          "/var/lib/pacemaker/alerts/tnf-taint-alert.sh",
+		SelectXML:     "<select_fencing/>",
+		ExpectFencing: true,
 	},
 	{
-		id:        "tnf-untaint-alert",
-		path:      "/var/lib/pacemaker/alerts/tnf-untaint-alert.sh",
-		selectXML: "<select_nodes/>",
+		ID:          "tnf-untaint-alert",
+		Path:        "/var/lib/pacemaker/alerts/tnf-untaint-alert.sh",
+		SelectXML:   "<select_nodes/>",
+		ExpectNodes: true,
 	},
+}
+
+// ObservedAlertConfig is the subset of an alert's CIB registration that the status collector
+// inspects to decide Configured vs Misconfigured: the script path and the event-filter booleans
+// that `pcs alert config --output-format json` reports under "select".
+type ObservedAlertConfig struct {
+	Path          string
+	SelectFencing bool
+	SelectNodes   bool
 }
 
 // ConfigureAlerts registers pacemaker alert agents for fencing taint/untaint.
@@ -46,7 +67,7 @@ var alertConfigs = []alertConfig{
 func ConfigureAlerts(ctx context.Context) error {
 	klog.Info("Configuring pacemaker alert agents")
 
-	for _, ac := range alertConfigs {
+	for _, ac := range AlertConfigs {
 		if err := configureAlert(ctx, ac); err != nil {
 			return err
 		}
@@ -59,10 +80,10 @@ func ConfigureAlerts(ctx context.Context) error {
 // AllAlertsConfigured returns true if every known pacemaker alert agent is
 // already registered in the CIB.
 func AllAlertsConfigured(ctx context.Context) (bool, error) {
-	for _, ac := range alertConfigs {
-		exists, err := alertExists(ctx, ac.id)
+	for _, ac := range AlertConfigs {
+		exists, err := alertExists(ctx, ac.ID)
 		if err != nil {
-			return false, fmt.Errorf("failed to check existing alert %q: %w", ac.id, err)
+			return false, fmt.Errorf("failed to check existing alert %q: %w", ac.ID, err)
 		}
 		if !exists {
 			return false, nil
@@ -98,60 +119,60 @@ func ConfigureAlertsWithRetry(ctx context.Context) error {
 	})
 }
 
-func configureAlert(ctx context.Context, ac alertConfig) error {
-	scriptPresent, err := fileExistsOnHost(ctx, ac.path)
+func configureAlert(ctx context.Context, ac AlertConfig) error {
+	scriptPresent, err := fileExistsOnHost(ctx, ac.Path)
 	if err != nil {
-		return fmt.Errorf("failed to check for alert script %s: %w", ac.path, err)
+		return fmt.Errorf("failed to check for alert script %s: %w", ac.Path, err)
 	}
 	if !scriptPresent {
-		return fmt.Errorf("%w: %s (MCO rollout pending)", ErrAlertScriptNotPresent, ac.path)
+		return fmt.Errorf("%w: %s (MCO rollout pending)", ErrAlertScriptNotPresent, ac.Path)
 	}
 
-	exists, err := alertExists(ctx, ac.id)
+	exists, err := alertExists(ctx, ac.ID)
 	if err != nil {
-		return fmt.Errorf("failed to check existing alert %q: %w", ac.id, err)
+		return fmt.Errorf("failed to check existing alert %q: %w", ac.ID, err)
 	}
 
 	if exists {
-		klog.Infof("Alert %q already exists, updating in-place", ac.id)
+		klog.Infof("Alert %q already exists, updating in-place", ac.ID)
 		if err := modifyAlert(ctx, ac); err != nil {
-			return fmt.Errorf("failed to update alert %q in-place: %w", ac.id, err)
+			return fmt.Errorf("failed to update alert %q in-place: %w", ac.ID, err)
 		}
 	} else {
-		createCmd := fmt.Sprintf("/usr/sbin/pcs alert create id=%s path=%s meta timeout=30s", ac.id, ac.path)
+		createCmd := fmt.Sprintf("/usr/sbin/pcs alert create id=%s path=%s meta timeout=30s", ac.ID, ac.Path)
 		stdOut, stdErr, err := exec.Execute(ctx, createCmd)
 		if err != nil {
-			return fmt.Errorf("failed to create alert %q: stdout=%s stderr=%s: %w", ac.id, stdOut, stdErr, err)
+			return fmt.Errorf("failed to create alert %q: stdout=%s stderr=%s: %w", ac.ID, stdOut, stdErr, err)
 		}
-		if ac.selectXML != "" {
-			if err := applyAlertSelectFilter(ctx, ac.id, ac.path, ac.selectXML); err != nil {
-				return fmt.Errorf("failed to apply select filter for alert %q: %w", ac.id, err)
+		if ac.SelectXML != "" {
+			if err := applyAlertSelectFilter(ctx, ac.ID, ac.Path, ac.SelectXML); err != nil {
+				return fmt.Errorf("failed to apply select filter for alert %q: %w", ac.ID, err)
 			}
 		}
 	}
 
-	klog.Infof("Successfully configured pacemaker alert %q", ac.id)
+	klog.Infof("Successfully configured pacemaker alert %q", ac.ID)
 	return nil
 }
 
 // modifyAlert atomically updates an existing alert via cibadmin --modify,
 // setting path, meta timeout, and select filter in a single CIB write.
-func modifyAlert(ctx context.Context, ac alertConfig) error {
+func modifyAlert(ctx context.Context, ac AlertConfig) error {
 	metaXML := fmt.Sprintf(
 		`<meta_attributes id="%s-meta_attributes">`+
 			`<nvpair id="%s-meta_attributes-timeout" name="timeout" value="30s"/>`+
 			`</meta_attributes>`,
-		ac.id, ac.id,
+		ac.ID, ac.ID,
 	)
 	selectXML := ""
-	if ac.selectXML != "" {
-		selectXML = fmt.Sprintf("<select>%s</select>", ac.selectXML)
+	if ac.SelectXML != "" {
+		selectXML = fmt.Sprintf("<select>%s</select>", ac.SelectXML)
 	}
-	alertXML := fmt.Sprintf(`<alert id="%s" path="%s">%s%s</alert>`, ac.id, ac.path, metaXML, selectXML)
+	alertXML := fmt.Sprintf(`<alert id="%s" path="%s">%s%s</alert>`, ac.ID, ac.Path, metaXML, selectXML)
 	cmd := fmt.Sprintf("/usr/sbin/cibadmin --modify --xml-text '%s'", alertXML)
 	_, stdErr, err := exec.Execute(ctx, cmd)
 	if err != nil {
-		return fmt.Errorf("cibadmin modify for alert %q failed: %s: %w", ac.id, stdErr, err)
+		return fmt.Errorf("cibadmin modify for alert %q failed: %s: %w", ac.ID, stdErr, err)
 	}
 	return nil
 }
@@ -162,9 +183,13 @@ func modifyAlert(ctx context.Context, ac alertConfig) error {
 // rather than --xpath, because --xpath with a child xml-text that doesn't match
 // the target element type fails with "No such device or address" on Pacemaker 2.1.x.
 func applyAlertSelectFilter(ctx context.Context, alertID, alertPath, selectContent string) error {
+	return applyAlertSelectFilterWithExecutor(ctx, alertID, alertPath, selectContent, exec.Execute)
+}
+
+func applyAlertSelectFilterWithExecutor(ctx context.Context, alertID, alertPath, selectContent string, execute alertCommandExecutor) error {
 	alertXML := fmt.Sprintf(`<alert id="%s" path="%s"><select>%s</select></alert>`, alertID, alertPath, selectContent)
 	cmd := fmt.Sprintf("/usr/sbin/cibadmin --modify --xml-text '%s'", alertXML)
-	_, stdErr, err := exec.Execute(ctx, cmd)
+	_, stdErr, err := execute(ctx, cmd)
 	if err != nil {
 		return fmt.Errorf("cibadmin modify for alert %q failed: %s: %w", alertID, stdErr, err)
 	}
@@ -173,10 +198,51 @@ func applyAlertSelectFilter(ctx context.Context, alertID, alertPath, selectConte
 }
 
 // pcsAlertConfigOutput represents the JSON output of `pcs alert config --output-format json`.
+// The path and select fields are already emitted by pcs; the collector unmarshals them to
+// distinguish a correctly-registered alert from a Misconfigured one (wrong path/event filter).
 type pcsAlertConfigOutput struct {
 	Alerts []struct {
-		ID string `json:"id"`
+		ID     string `json:"id"`
+		Path   string `json:"path"`
+		Select struct {
+			Nodes   bool `json:"nodes"`
+			Fencing bool `json:"fencing"`
+		} `json:"select"`
 	} `json:"alerts"`
+}
+
+// CollectAlertConfig runs `pcs alert config --output-format json` once and returns the observed
+// configuration for every currently-registered alert, keyed by alert id. It returns a nil map and
+// a non-nil error if the command itself fails or its output cannot be parsed - "not observed this
+// run", which the status collector treats as carry-forward/Pending rather than "confirmed missing".
+func CollectAlertConfig(ctx context.Context) (map[string]ObservedAlertConfig, error) {
+	return collectAlertConfig(ctx, exec.Execute)
+}
+
+func collectAlertConfig(ctx context.Context, execute alertCommandExecutor) (map[string]ObservedAlertConfig, error) {
+	cmd := "/usr/sbin/pcs alert config --output-format json"
+	stdOut, stdErr, err := execute(ctx, cmd)
+	if err != nil {
+		return nil, fmt.Errorf("pcs alert config failed: stderr=%s: %w", stdErr, err)
+	}
+
+	var config pcsAlertConfigOutput
+	if err := json.Unmarshal([]byte(stdOut), &config); err != nil {
+		return nil, fmt.Errorf("failed to parse pcs alert config JSON: %w", err)
+	}
+	if config.Alerts == nil {
+		return nil, fmt.Errorf("pcs alert config JSON does not contain an alerts array")
+	}
+
+	observed := make(map[string]ObservedAlertConfig, len(config.Alerts))
+	for _, alert := range config.Alerts {
+		observed[alert.ID] = ObservedAlertConfig{
+			Path:          alert.Path,
+			SelectFencing: alert.Select.Fencing,
+			SelectNodes:   alert.Select.Nodes,
+		}
+	}
+	return observed, nil
 }
 
 func alertExists(ctx context.Context, alertID string) (bool, error) {
@@ -200,8 +266,12 @@ func alertExists(ctx context.Context, alertID string) (bool, error) {
 }
 
 func fileExistsOnHost(ctx context.Context, path string) (bool, error) {
+	return fileExistsOnHostWithExecutor(ctx, path, exec.Execute)
+}
+
+func fileExistsOnHostWithExecutor(ctx context.Context, path string, execute alertCommandExecutor) (bool, error) {
 	cmd := fmt.Sprintf("test -x %s", path)
-	_, _, err := exec.Execute(ctx, cmd)
+	_, _, err := execute(ctx, cmd)
 	if err != nil {
 		var exitErr *osexec.ExitError
 		if errors.As(err, &exitErr) {

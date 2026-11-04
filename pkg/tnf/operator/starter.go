@@ -13,6 +13,7 @@ import (
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions/operator/v1"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/controller/factory"
+	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
 	"github.com/openshift/library-go/pkg/operator/staticresourcecontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -68,7 +69,8 @@ func HandleDualReplicaClusters(
 	controlPlaneNodeInformer cache.SharedIndexInformer,
 	etcdInformer operatorv1informers.EtcdInformer,
 	kubeClient kubernetes.Interface,
-	dynamicClient dynamic.Interface) (bool, error) {
+	dynamicClient dynamic.Interface,
+	featureGate featuregates.FeatureGate) (bool, error) {
 
 	// Since HandleDualReplicaClusters isn't a controller, we need to ensure that the Infrastructure
 	// informer is synced before we use it.
@@ -84,17 +86,18 @@ func HandleDualReplicaClusters(
 		return false, nil
 	}
 
-	klog.Infof("starting Two Node Fencing controllers")
+	alertAgentStatusEnabled := pacemaker.AlertAgentStatusEnabled(featureGate)
+	klog.Infof("starting Two Node Fencing controllers (TNFObservability=%t)", alertAgentStatusEnabled)
 
 	runExternalEtcdSupportController(ctx, controllerContext, operatorClient, envVarGetter, kubeInformersForNamespaces,
 		infrastructureInformer, networkInformer, controlPlaneNodeInformer, etcdInformer, kubeClient)
-	if err := runTnfResourceController(ctx, controllerContext, kubeClient, dynamicClient, operatorClient, kubeInformersForNamespaces); err != nil {
+	if err := runTnfResourceController(ctx, controllerContext, kubeClient, dynamicClient, operatorClient, kubeInformersForNamespaces, alertAgentStatusEnabled); err != nil {
 		return false, err
 	}
 	// Start pacemaker controllers (lifecycle manager, status collector)
 	// PacemakerLifecycleManager registers UpdateFunc handler for node Ready transitions
 	// to trigger update-setup job restart during initial bootstrap.
-	runPacemakerControllers(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer, controlPlaneNodeInformer, dynamicClient)
+	runPacemakerControllers(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer, controlPlaneNodeInformer, dynamicClient, alertAgentStatusEnabled)
 
 	return true, nil
 }
@@ -128,7 +131,7 @@ func runExternalEtcdSupportController(ctx context.Context,
 	go externalEtcdSupportController.Run(ctx, 1)
 }
 
-func runTnfResourceController(ctx context.Context, controllerContext *controllercmd.ControllerContext, kubeClient kubernetes.Interface, dynamicClient dynamic.Interface, operatorClient v1helpers.StaticPodOperatorClient, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces) error {
+func runTnfResourceController(ctx context.Context, controllerContext *controllercmd.ControllerContext, kubeClient kubernetes.Interface, dynamicClient dynamic.Interface, operatorClient v1helpers.StaticPodOperatorClient, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces, alertAgentStatusEnabled bool) error {
 	klog.Infof("starting Two Node Fencing static resources controller")
 
 	// Get the apiextensions client for CRD management
@@ -146,7 +149,7 @@ func runTnfResourceController(ctx context.Context, controllerContext *controller
 			"tnfdeployment/role-binding.yaml",
 			"tnfdeployment/clusterrole.yaml",
 			"tnfdeployment/clusterrole-binding.yaml",
-			"etcd/pacemakercluster-crd.yaml",
+			pacemakerCRDAsset(alertAgentStatusEnabled),
 		},
 		(&resourceapply.ClientHolder{}).WithKubernetes(kubeClient).WithDynamicClient(dynamicClient).WithAPIExtensionsClient(apiextClient),
 		operatorClient,
@@ -156,7 +159,7 @@ func runTnfResourceController(ctx context.Context, controllerContext *controller
 	return nil
 }
 
-func runPacemakerControllers(ctx context.Context, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces, etcdInformer operatorv1informers.EtcdInformer, controlPlaneNodeInformer cache.SharedIndexInformer, dynamicClient dynamic.Interface) {
+func runPacemakerControllers(ctx context.Context, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces, etcdInformer operatorv1informers.EtcdInformer, controlPlaneNodeInformer cache.SharedIndexInformer, dynamicClient dynamic.Interface, alertAgentStatusEnabled bool) {
 	// Pacemaker controllers start after PacemakerCluster CRD is established.
 	// The lifecycle manager's sync() handles bootstrap vs post-transition modes internally.
 	// This runs in a background goroutine to avoid blocking the main thread.
@@ -178,12 +181,10 @@ func runPacemakerControllers(ctx context.Context, controllerContext *controllerc
 				klog.V(2).Infof("waiting for PacemakerCluster CRD: %v", getErr)
 				return false, nil
 			}
-			for _, cond := range crd.Status.Conditions {
-				if cond.Type == apiextensionsv1.Established && cond.Status == apiextensionsv1.ConditionTrue {
-					return true, nil
-				}
+			if pacemakerCRDReady(crd, alertAgentStatusEnabled) {
+				return true, nil
 			}
-			klog.V(2).Infof("PacemakerCluster CRD not yet established")
+			klog.V(2).Infof("Waiting for established PacemakerCluster CRD with TNFObservability=%t", alertAgentStatusEnabled)
 			return false, nil
 		})
 		if err != nil {
@@ -279,4 +280,38 @@ func runPacemakerControllers(ctx context.Context, controllerContext *controllerc
 
 		klog.Infof("started Pacemaker controllers (lifecycle manager, metrics controller, console notification)")
 	}()
+}
+
+// Select by the resolved gate, including CustomNoUpgrade overrides, rather than the feature-set name.
+func pacemakerCRDAsset(alertAgentStatusEnabled bool) string {
+	if alertAgentStatusEnabled {
+		return "etcd/pacemakercluster-alert-agent-status-crd.yaml"
+	}
+	return "etcd/pacemakercluster-crd.yaml"
+}
+
+// Established may still describe the previous release's schema during an upgrade.
+// Start the controllers only after the served v1 schema matches the resolved gate.
+func pacemakerCRDReady(crd *apiextensionsv1.CustomResourceDefinition, alertAgentStatusEnabled bool) bool {
+	established := false
+	for _, condition := range crd.Status.Conditions {
+		if condition.Type == apiextensionsv1.Established && condition.Status == apiextensionsv1.ConditionTrue {
+			established = true
+		}
+	}
+	if !established {
+		return false
+	}
+	for _, version := range crd.Spec.Versions {
+		if version.Name != "v1" || !version.Served || version.Schema == nil || version.Schema.OpenAPIV3Schema == nil {
+			continue
+		}
+		nodes := version.Schema.OpenAPIV3Schema.Properties["status"].Properties["nodes"]
+		if nodes.Items == nil || nodes.Items.Schema == nil {
+			return false
+		}
+		_, hasAlertAgents := nodes.Items.Schema.Properties["alertAgents"]
+		return hasAlertAgents == alertAgentStatusEnabled
+	}
+	return false
 }

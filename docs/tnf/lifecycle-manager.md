@@ -158,7 +158,30 @@ CR exists and fresh (age <= 5min)?
 
 ### Overview
 
-The PacemakerCluster CR is populated by a status collector CronJob that runs every minute:
+The PacemakerCluster CR is populated by a status collector CronJob that runs every minute.
+CEO uses the resolved `TNFObservability` feature gate to select the embedded CRD schema.
+The PacemakerCluster CRD itself is available independently of this gate; the gate controls
+the additional alert-agent status fields and their contribution to health. CEO waits for the
+established, served schema to match the gate before starting Pacemaker controllers.
+The collector reads `FeatureGate/cluster.status.featureGates` at the start of each run, using the
+`OPERATOR_IMAGE_VERSION` supplied alongside its image in the CronJob template. Jobs already running
+across an upgrade retain their own release version rather than taking the desired version of the
+new release. Manual/development runs without a release version use ClusterVersion's desired version
+(or its latest history entry when desired is empty).
+
+An unknown gate in a valid release entry is disabled, preserving behavior on older payloads. An API
+read failure or a missing release entry fails collection without overwriting the previous status;
+the next scheduled run retries. Status writes use strict field validation, so an API server still
+serving an older schema rejects new fields rather than silently pruning their diagnostic details.
+
+The gate is enabled in `TechPreviewNoUpgrade` and `DevPreviewNoUpgrade` for self-managed clusters.
+When enabled, the collector reports `nodes[].alertAgents`, the `AlertAgentsHealthy` node condition,
+and includes alert-agent failures in node and cluster health. When disabled, those observations
+are omitted, including any previously
+reported alert-agent status, and do not affect aggregate health. Alert-agent reconciliation is
+independent of this status-reporting gate. There is no separate collector flag to override the gate.
+
+The collection flow is:
 
 ```text
 Every 1 minute:

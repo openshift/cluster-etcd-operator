@@ -9,6 +9,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/jobs"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
+	operatorstatus "github.com/openshift/library-go/pkg/operator/status"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -77,7 +78,7 @@ func (c *pacemakerLifecycleManager) runPacemakerStatusCollectorCronJob(ctx conte
 			cronJob.Spec.JobTemplate.Spec.Template.Labels["app.kubernetes.io/name"] = pacemakerStatusCollectorName
 
 			cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Image = os.Getenv("OPERATOR_IMAGE")
-			cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Command = []string{"tnf-monitor", "collect"}
+			configureStatusCollectorCommand(cronJob)
 
 			// Get schedulable nodes (K8s ∩ Pacemaker intersection, ready only)
 			// Nodes are already sorted by getActivePacemakerNodes()
@@ -228,4 +229,20 @@ func checkLastJobFailedWithJob(ctx context.Context, kubeClient kubernetes.Interf
 	}
 
 	return false, nil, nil
+}
+
+// The image and its release version are reconciled together in the Job template.
+// Jobs already running during an upgrade retain the version of their own image.
+func configureStatusCollectorCommand(cronJob *batchv1.CronJob) {
+	container := &cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0]
+	container.Command = []string{"tnf-monitor", "collect"}
+	container.Args = nil
+	env := corev1.EnvVar{Name: "OPERATOR_IMAGE_VERSION", Value: operatorstatus.VersionForOperatorFromEnv()}
+	for i := range container.Env {
+		if container.Env[i].Name == env.Name {
+			container.Env[i] = env
+			return
+		}
+	}
+	container.Env = append(container.Env, env)
 }
