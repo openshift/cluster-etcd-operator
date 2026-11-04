@@ -273,7 +273,7 @@ func (c *BackupController) reconcileBackupState(ctx context.Context, backup *ope
 			return backupActive, requeueAfter, nil
 		}
 
-		if _, err := applyBackupFinalizer(ctx, backupsClient, backup, false); err != nil {
+		if _, err := applyBackupFinalizer(ctx, backupsClient, backup, false); err != nil && !apierrors.IsNotFound(err) {
 			return backupActive, 0, fmt.Errorf("BackupController failed to remove finalizer from deleted backup %q: %w", backupName, err)
 		}
 		return backupFinished, 0, nil
