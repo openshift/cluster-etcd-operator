@@ -56,6 +56,40 @@ func TestRunTracker_MixedNodeOutcomes(t *testing.T) {
 	require.NotNil(t, state.LastSuccessTime, "should record success time")
 }
 
+func TestRunTracker_SuccessNotOverwrittenAfterRetention(t *testing.T) {
+	// Once a run is recorded as success, retention must not rewrite it to failure
+	// when the successful member is deleted and only failed siblings remain.
+	ctx := context.Background()
+	tracker, _ := setupRunTracker(t)
+
+	policy := testPolicy("test-policy", "uid-1")
+	successTime := time.Unix(1700001000, 0)
+
+	mixedRun := []*operatorv1alpha1.EtcdBackup{
+		testFailedBackup("test-policy-node1-1000", policy, "1000", successTime),
+		testSuccessfulBackup("test-policy-node2-1000", policy, "1000", successTime),
+	}
+	state, err := tracker.ProcessBackupsForPolicy(ctx, policy, mixedRun)
+	require.NoError(t, err)
+	require.Equal(t, "success", state.RunOutcomes["1000"])
+	require.Equal(t, 0, state.ConsecutiveFailures)
+	require.NotNil(t, state.LastSuccessTime)
+
+	// Retention removed the successful member; only a failed sibling remains.
+	// A newer failed run is also visible (typical post-retention reconcile).
+	retained := []*operatorv1alpha1.EtcdBackup{
+		testFailedBackup("test-policy-node1-1000", policy, "1000", successTime),
+		testFailedBackup("test-policy-node1-1001", policy, "1001", successTime.Add(time.Hour)),
+	}
+	state, err = tracker.ProcessBackupsForPolicy(ctx, policy, retained)
+	require.NoError(t, err)
+	require.Equal(t, "success", state.RunOutcomes["1000"], "durable success must not be overwritten after retention")
+	require.Equal(t, "failure", state.RunOutcomes["1001"])
+	require.Equal(t, 1, state.ConsecutiveFailures, "only the newer failed run should advance the streak")
+	require.NotNil(t, state.LastSuccessTime)
+	require.Equal(t, successTime.Unix(), state.LastSuccessTime.Unix())
+}
+
 func TestRunTracker_AllNodeFailure(t *testing.T) {
 	// If ALL backups in a run fail, increment counter ONCE
 	ctx := context.Background()
@@ -486,7 +520,7 @@ func TestRunTracker_LateSuccessAfterRetention(t *testing.T) {
 	// BUT we discover run 1002 actually had a late success
 	retainedBackups := []*operatorv1alpha1.EtcdBackup{
 		testSuccessfulBackup("test-policy-1000", policy, "1000", time.Now()),
-		testSuccessfulBackup("test-policy-1002", policy, "1002", time.Now().Add(1 * time.Hour)), // Late success
+		testSuccessfulBackup("test-policy-1002", policy, "1002", time.Now().Add(1*time.Hour)), // Late success
 		testFailedBackup("test-policy-1003", policy, "1003", time.Now()),
 	}
 	state2, err := tracker.ProcessBackupsForPolicy(ctx, policy, retainedBackups)

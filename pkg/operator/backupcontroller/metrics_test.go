@@ -142,12 +142,17 @@ func TestBackupMetricsCompleted(t *testing.T) {
 }
 
 func TestBackupMetricsFailed(t *testing.T) {
+	failedAt := metav1.NewTime(time.Unix(1700000400, 0))
+
 	backup := testutils.FakeEtcdBackup("pvc-backup-failed",
 		testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
 			Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
 			PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "backup-pvc"},
 		}),
 		testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed),
+		func(b *operatorv1alpha1.EtcdBackup) {
+			b.Status.Conditions[0].LastTransitionTime = failedAt
+		},
 	)
 
 	collector := setupCollectorWithBackups(t, backup)
@@ -476,7 +481,7 @@ func TestGetCompletionTime(t *testing.T) {
 				Status:             metav1.ConditionTrue,
 				LastTransitionTime: failedAt,
 			}},
-			want: 0, // getCompletionTime only considers Completed today
+			want: float64(failedAt.Unix()), // Failed timestamps power high-failure-rate alerts
 		},
 		{
 			name:       "missing-completed",
