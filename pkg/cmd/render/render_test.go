@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/ghodss/yaml"
@@ -403,6 +404,44 @@ func TestRenderIpv4(t *testing.T) {
 	}
 
 	testRender(t, config)
+}
+
+func TestRenderLeaseCheckpointing(t *testing.T) {
+	for _, scenario := range []struct {
+		name      string
+		network   string
+		bootstrap string
+	}{
+		{name: "IPv4", network: networkConfigIpv4, bootstrap: "10.0.0.1"},
+		{name: "IPv6", network: networkConfigIPv6SingleStack, bootstrap: "2001:db8::1"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			dir := testRender(t, &testConfig{
+				clusterNetworkConfig: scenario.network,
+				infraConfig:          infraConfig,
+				clusterConfigMap:     clusterConfigMap,
+				bootstrapIP:          net.ParseIP(scenario.bootstrap),
+			})
+			podBytes, err := os.ReadFile(filepath.Join(dir, "etc-kubernetes", "manifests", "etcd-member-pod.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			pod := &corev1.Pod{}
+			if err := yaml.Unmarshal(podBytes, pod); err != nil {
+				t.Fatal(err)
+			}
+			for _, container := range pod.Spec.Containers {
+				if container.Name == "etcd" {
+					command := strings.Join(container.Command, " ")
+					if !strings.Contains(command, "--feature-gates=InitialCorruptCheck=true,LeaseCheckpoint=true,LeaseCheckpointPersist=true") {
+						t.Errorf("etcd command does not enable lease checkpointing and persistence: %s", command)
+					}
+					return
+				}
+			}
+			t.Fatal("rendered pod does not contain an etcd container")
+		})
+	}
 }
 
 func TestRenderIpv6(t *testing.T) {
