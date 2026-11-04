@@ -106,8 +106,8 @@ func TestRequestBackupForPolicy(t *testing.T) {
 
 				backup := backups.Items[0]
 				require.Equal(t, "test-backup-policy", backup.Labels[backuphelpers.LabelEtcdBackupPolicy])
-				// Local backup is assigned to a specific node, selected in lexicographical order
-				require.Equal(t, "test-node-1", backup.Spec.NodeSelector[corev1.LabelHostname])
+				// Local backup is assigned to a specific node, selected randomly from available nodes
+				require.Contains(t, []string{"test-node-1", "test-node-2"}, backup.Spec.NodeSelector[corev1.LabelHostname])
 			},
 		})
 	})

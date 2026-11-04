@@ -137,7 +137,22 @@ func (c *BackupGarbageCollectionController) sync(ctx context.Context, syncCtx fa
 	// Finalize completed jobs so their TTL can clean them up. Failed jobs keep the finalizer until a retry replaces them.
 	jobsClient := c.kubeClient.BatchV1().Jobs(operatorclient.TargetNamespace)
 	for key, job := range jobsByStorage {
+		var shouldFinalize bool
 		if isJobCompleted(job) {
+			shouldFinalize = true
+		} else if isJobFailed(job) {
+			if storage, ok := parseStorageKey(key); ok {
+				storageExists, err := storageBackendExists(c.nodesLister, c.pvcsLister, storage)
+				if err != nil {
+					return err
+				}
+				shouldFinalize = !storageExists
+			} else {
+				shouldFinalize = true
+			}
+		}
+
+		if shouldFinalize {
 			c.retryQueue.Forget(key)
 			finalizedJob, err := finalizeJob(ctx, jobsClient, job, true)
 			if err != nil {
@@ -315,7 +330,7 @@ func createGarbageCollectionJob(ctx context.Context,
 				}
 			} else {
 				// Infer file directory from host path and backup name
-				gcFiles = append(gcFiles, filepath.Join(backupPathMount, hostPath, backup.Name))
+				gcFiles = append(gcFiles, filepath.Join(backupPathMount, filepath.Clean(hostPath), backup.Name))
 			}
 
 			if _, ok := paths[hostPath]; !ok {
@@ -344,7 +359,7 @@ func createGarbageCollectionJob(ctx context.Context,
 				}
 			} else {
 				// Infer file directory from pvc path and backup name
-				gcFiles = append(gcFiles, filepath.Join(backupPathMount, backup.Spec.Storage.PVC.Path, backup.Name))
+				gcFiles = append(gcFiles, filepath.Join(backupPathMount, filepath.Clean(backup.Spec.Storage.PVC.Path), backup.Name))
 			}
 		}
 
@@ -402,31 +417,43 @@ func isGarbageCollectionRequired(
 
 	switch backup.Spec.Storage.Type {
 	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
-		// Check if node still exists
-		if _, err := nodesLister.Get(backup.Status.NodeName); err != nil {
-			if apierrors.IsNotFound(err) {
-				klog.Infof("BackupGarbageCollectionController node %s not found, ignoring GC for etcdbackup %s", backup.Status.NodeName, backup.Name)
-				err = nil
-			}
-			return storage, false, err
-		}
 		storage.nodeName = backup.Status.NodeName
 	case operatorv1alpha1.EtcdBackupStorageTypePVC:
-		// Check if PVC still exists
-		if _, err := pvcsLister.Get(backup.Spec.Storage.PVC.Name); err != nil {
-			if apierrors.IsNotFound(err) {
-				klog.Infof("BackupGarbageCollectionController PVC %s not found, ignoring GC for etcdbackup %s", backup.Spec.Storage.PVC.Name, backup.Name)
-				err = nil
-			}
-			return storage, false, err
-		}
 		storage.pvcName = backup.Spec.Storage.PVC.Name
-	default:
-		klog.Infof("BackupGarbageCollectionController unknown storage type %s, ignoring GC for etcdbackup %s", backup.Spec.Storage.Type, backup.Name)
-		return storage, false, nil
 	}
 
-	return storage, true, nil
+	gcRequired, err := storageBackendExists(nodesLister, pvcsLister, storage)
+	return storage, gcRequired, err
+}
+
+func storageBackendExists(
+	nodesLister corev1listers.NodeLister,
+	pvcsLister corev1listers.PersistentVolumeClaimNamespaceLister,
+	storage storageBackend) (bool, error) {
+	switch storage.storageType {
+	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
+		// Check if node still exists
+		if _, err := nodesLister.Get(storage.nodeName); err != nil {
+			if apierrors.IsNotFound(err) {
+				klog.Infof("BackupGarbageCollectionController node %s not found, no GC required", storage.nodeName)
+				err = nil
+			}
+			return false, err
+		}
+	case operatorv1alpha1.EtcdBackupStorageTypePVC:
+		// Check if PVC still exists
+		if _, err := pvcsLister.Get(storage.pvcName); err != nil {
+			if apierrors.IsNotFound(err) {
+				klog.Infof("BackupGarbageCollectionController PVC %s not found, no GC required", storage.pvcName)
+				err = nil
+			}
+			return false, err
+		}
+	default:
+		klog.Infof("BackupGarbageCollectionController unknown storage type %s, no GC required", storage.storageType)
+		return false, nil
+	}
+	return true, nil
 }
 
 // finalizeJob removes the backup finalizer from the job, returning the patched job.
@@ -552,6 +579,25 @@ func (grq *gcRetryQueue) backoffDuration(storageKey string, job *batchv1.Job) ti
 type gcBackoff struct {
 	jobUID  types.UID
 	retryAt time.Time
+}
+
+func parseStorageKey(storageKey string) (storageBackend, bool) {
+	parts := strings.SplitN(storageKey, "/", 2)
+	if len(parts) == 2 {
+		switch parts[0] {
+		case "local":
+			return storageBackend{
+				storageType: operatorv1alpha1.EtcdBackupStorageTypeLocal,
+				nodeName:    parts[1],
+			}, true
+		case "pvc":
+			return storageBackend{
+				storageType: operatorv1alpha1.EtcdBackupStorageTypePVC,
+				pvcName:     parts[1],
+			}, true
+		}
+	}
+	return storageBackend{}, false
 }
 
 type storageBackend struct {

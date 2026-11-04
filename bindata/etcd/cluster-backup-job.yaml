@@ -12,6 +12,8 @@ spec:
     metadata:
       annotations:
         target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
+      labels:
+        app: cluster-backup-job
     spec:
       initContainers:
         - name: verify-storage

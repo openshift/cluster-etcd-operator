@@ -224,18 +224,24 @@ func (c *BackupController) sync(ctx context.Context, syncCtx factory.SyncContext
 // are returned as queued. A non-zero delay is returned when the backup should be reconciled again after a grace
 // period. On error, the backup is reported as active so that its resources are not handed to another backup.
 func (c *BackupController) reconcileBackupState(ctx context.Context, backup *operatorv1alpha1.EtcdBackup) (backupState, time.Duration, error) {
-	if backuphelpers.IsBackupFinished(backup) {
-		return backupFinished, 0, nil
-	}
-
 	backupName := backup.Name
-	backupsClient := c.operatorClient.EtcdBackups()
 	jobsClient := c.kubeClient.BatchV1().Jobs(operatorclient.TargetNamespace)
 	job, err := c.getJob(backup)
 	if err != nil {
 		return backupActive, 0, fmt.Errorf("BackupController failed to get job for backup %q: %w", backupName, err)
 	}
+	if backuphelpers.IsBackupFinished(backup) {
+		if job != nil {
+			if _, err := finalizeJob(ctx, jobsClient, job, false); err != nil {
+				if !apierrors.IsNotFound(err) {
+					return backupFinished, 0, err
+				}
+			}
+		}
+		return backupFinished, 0, nil
+	}
 
+	backupsClient := c.operatorClient.EtcdBackups()
 	if job != nil {
 		klog.V(4).Infof("BackupController job %q found for backup %q, reconciling status", job.Name, backupName)
 		if err := reconcileJobStatus(ctx, jobsClient, c.podsLister, backupsClient, job, backup); err != nil {
@@ -488,7 +494,7 @@ func createBackupJob(ctx context.Context,
 		if hostPath == "" {
 			hostPath = backupPathMount
 		}
-		backupDir = filepath.Join(backupDir, hostPath)
+		backupDir = filepath.Join(backupDir, filepath.Clean(hostPath))
 		volume.HostPath = &corev1.HostPathVolumeSource{
 			Path: hostPath,
 			Type: ptr.To(corev1.HostPathDirectoryOrCreate),
@@ -505,7 +511,7 @@ func createBackupJob(ctx context.Context,
 		job.Spec.Template.Spec.Affinity = backupSpreadAffinity()
 
 		storagePVC := backup.Spec.Storage.PVC
-		backupDir = filepath.Join(backupDir, storagePVC.Path)
+		backupDir = filepath.Join(backupDir, filepath.Clean(storagePVC.Path))
 		volume.PersistentVolumeClaim = &corev1.PersistentVolumeClaimVolumeSource{
 			ClaimName: storagePVC.Name,
 		}
@@ -677,7 +683,7 @@ func reconcileJobNotFound(
 			if ownerRef.Kind == "EtcdBackup" && ownerRef.Name == backup.Name && ownerRef.UID == backup.UID {
 				// Correct job exists, make sure it is labeled appropriately. Otherwise assume it will be handled on a future sync.
 				if job.Labels == nil || job.Labels[backuphelpers.LabelEtcdBackup] != backup.Name {
-					patchBody, err := json.Marshal(metav1.ObjectMeta{Labels: map[string]string{backuphelpers.LabelEtcdBackup: backup.Name}})
+					patchBody, err := json.Marshal(batchv1.Job{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{backuphelpers.LabelEtcdBackup: backup.Name}}})
 					if err != nil {
 						return fmt.Errorf("error marshalling job %q patch: %w", job.Name, err)
 					}

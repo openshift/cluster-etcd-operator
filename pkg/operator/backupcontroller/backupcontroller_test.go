@@ -274,7 +274,7 @@ func TestJobAlreadyRunning(t *testing.T) {
 				})
 				require.True(t, ok, "Expected job patch action")
 
-				patchBody, err := json.Marshal(metav1.ObjectMeta{Labels: map[string]string{backuphelpers.LabelEtcdBackup: "test-backup"}})
+				patchBody, err := json.Marshal(batchv1.Job{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{backuphelpers.LabelEtcdBackup: "test-backup"}}})
 				require.NoError(t, err)
 				require.Equal(t, patchBody, action.Patch)
 			},

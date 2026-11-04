@@ -192,6 +192,7 @@ func (c *BackupPolicyController) reconcileCronJob(ctx context.Context, backupPol
 }
 
 func (c *BackupPolicyController) updateScheduledCondition(ctx context.Context, backupPolicy *operatorv1alpha1.EtcdBackupPolicy, reason operatorv1alpha1.EtcdBackupPolicyConditionReason, message string, status v1.ConditionStatus) error {
+	backupPolicy = backupPolicy.DeepCopy()
 	conditions, requireUpdate := updateCondition(backupPolicy.Status.Conditions, v1.Condition{
 		Type:               string(operatorv1alpha1.BackupPolicyScheduled),
 		Reason:             string(reason),
@@ -201,7 +202,6 @@ func (c *BackupPolicyController) updateScheduledCondition(ctx context.Context, b
 		ObservedGeneration: backupPolicy.Generation,
 	})
 	if requireUpdate {
-		backupPolicy = backupPolicy.DeepCopy()
 		backupPolicy.Status.Conditions = conditions
 		if _, err := c.operatorClient.EtcdBackupPolicies().UpdateStatus(ctx, backupPolicy, v1.UpdateOptions{}); err != nil {
 			return fmt.Errorf("BackupPolicyController failed to update status for policy %q: %w", backupPolicy.Name, err)

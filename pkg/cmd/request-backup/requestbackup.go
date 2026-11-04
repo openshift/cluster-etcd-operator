@@ -2,6 +2,8 @@ package requestbackup
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	goflag "flag"
 	"fmt"
 	"iter"
@@ -9,6 +11,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
@@ -27,6 +30,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 )
+
+const maxNameLength = 63
 
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
 
@@ -241,9 +246,17 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 		})
 	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
 		for node := range iterLocalNodes(backupPolicy, nodeList) {
+			backupName := name
+			suffix := "-" + shortHash(name, node.Name)
+			remaining := maxNameLength - len(suffix)
+			if len(backupName) > remaining {
+				backupName = strings.TrimSuffix(backupName[:remaining], "-")
+			}
+			backupName += suffix
+
 			toCreate = append(toCreate, &operatorv1alpha1.EtcdBackup{
 				ObjectMeta: v1.ObjectMeta{
-					Name: name + "-" + string(node.UID),
+					Name: backupName,
 					Labels: map[string]string{
 						backuphelpers.LabelEtcdBackupPolicy: backupPolicy.Name,
 					},
@@ -294,4 +307,10 @@ func iterLocalNodes(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, nodeList *c
 			}
 		}
 	}
+}
+
+func shortHash(parts ...string) string {
+	hash := sha256.Sum256([]byte(strings.Join(parts, "")))
+	shortHash := hex.EncodeToString(hash[:])[:10]
+	return shortHash
 }

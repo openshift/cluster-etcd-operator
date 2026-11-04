@@ -6,6 +6,7 @@ metadata:
   labels:
     app: cluster-backup-gc-job
 spec:
+  activeDeadlineSeconds: 1800
   backoffLimit: 2
   template:
     metadata:

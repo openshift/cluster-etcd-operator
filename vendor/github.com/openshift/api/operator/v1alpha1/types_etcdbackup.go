@@ -20,6 +20,7 @@ import (
 // +kubebuilder:printcolumn:name=Status,JSONPath=.status.conditions[?(@.status=="True")].type,type=string,description="Status of the EtcdBackup"
 // +kubebuilder:printcolumn:name=Completed At,JSONPath=.status.conditions[?(@.type=="Completed")].lastTransitionTime,type=date,description="Completion time of the EtcdBackup"
 // +kubebuilder:printcolumn:name=Age,JSONPath=.metadata.creationTimestamp,type=date,description="Age of the EtcdBackup"
+// +kubebuilder:validation:XValidation:rule="self.metadata.name.size() <= 63",message="name cannot exceed 63 characters"
 // +openshift:api-approved.openshift.io=https://github.com/openshift/api/pull/2952
 // +openshift:file-pattern=cvoRunLevel=0000_10,operatorName=etcd,operatorOrdering=01
 // +openshift:enable:FeatureGate=AutomatedEtcdBackup
