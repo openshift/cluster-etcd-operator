@@ -4669,12 +4669,12 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyStorageLocal
   map:
     fields:
+    - name: distribution
+      type:
+        scalar: string
     - name: hostPath
       type:
         scalar: string
-    - name: nodeCount
-      type:
-        scalar: numeric
 - name: com.github.openshift.api.operator.v1alpha1.EtcdBackupPolicyStoragePvc
   map:
     fields:

@@ -2,17 +2,21 @@
 
 package v1alpha1
 
+import (
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+)
+
 // EtcdBackupPolicyStorageLocalApplyConfiguration represents a declarative configuration of the EtcdBackupPolicyStorageLocal type for use
 // with apply.
 type EtcdBackupPolicyStorageLocalApplyConfiguration struct {
 	EtcdBackupStorageLocalApplyConfiguration `json:""`
-	// nodeCount enables creating multiple local backups per schedule distributed across control plane nodes.
-	// Control plane nodes will be iterated in lexicographical order when backups are created, with preference for nodes that already have backups for this policy.
-	// The number of created EtcdBackups may be less than nodeCount if there are fewer control plane nodes selected.
-	// When specified, must be an integer between 1 and 10.
-	// If omitted, defaults to 1.
+	// distribution controls whether or not scheduled local backups are only taken on a single node or fan out to all control plane nodes.
+	// Allowed values are SingleNode and AllNodes
+	// When set to SingleNode, a single EtcdBackup will be created at each schedule execution on one of the selected control plane nodes, chosen at random if multiple nodes are matched by nodeSelector.
+	// When set to AllNodes, EtcdBackups will be created for all selected control plane nodes at each schedule execution. Retention rules will be applied to EtcdBackups grouped by Node (e.g. MaxQuantity 2 results in 2 backups per node).
+	// If omitted, defaults to SingleNode.
 	// This field is optional.
-	NodeCount *int32 `json:"nodeCount,omitempty"`
+	Distribution *operatorv1alpha1.EtcdBackupPolicyLocalDistributionType `json:"distribution,omitempty"`
 }
 
 // EtcdBackupPolicyStorageLocalApplyConfiguration constructs a declarative configuration of the EtcdBackupPolicyStorageLocal type for use with
@@ -29,10 +33,10 @@ func (b *EtcdBackupPolicyStorageLocalApplyConfiguration) WithHostPath(value stri
 	return b
 }
 
-// WithNodeCount sets the NodeCount field in the declarative configuration to the given value
+// WithDistribution sets the Distribution field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the NodeCount field is set to the value of the last call.
-func (b *EtcdBackupPolicyStorageLocalApplyConfiguration) WithNodeCount(value int32) *EtcdBackupPolicyStorageLocalApplyConfiguration {
-	b.NodeCount = &value
+// If called multiple times, the Distribution field is set to the value of the last call.
+func (b *EtcdBackupPolicyStorageLocalApplyConfiguration) WithDistribution(value operatorv1alpha1.EtcdBackupPolicyLocalDistributionType) *EtcdBackupPolicyStorageLocalApplyConfiguration {
+	b.Distribution = &value
 	return b
 }

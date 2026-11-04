@@ -6,10 +6,9 @@ import (
 	"fmt"
 	"iter"
 	"maps"
+	"math/rand/v2"
 	"os"
 	"os/signal"
-	"slices"
-	"strings"
 	"syscall"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
@@ -241,7 +240,7 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 			},
 		})
 	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
-		for node := range iterLocalNodes(backupPolicy, backupList, nodeList) {
+		for node := range iterLocalNodes(backupPolicy, nodeList) {
 			toCreate = append(toCreate, &operatorv1alpha1.EtcdBackup{
 				ObjectMeta: v1.ObjectMeta{
 					Name: name + "-" + string(node.UID),
@@ -275,48 +274,20 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 	return utilerrors.NewAggregate(errs)
 }
 
-func iterLocalNodes(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, backupList *operatorv1alpha1.EtcdBackupList, nodeList *corev1.NodeList) iter.Seq[corev1.Node] {
+func iterLocalNodes(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, nodeList *corev1.NodeList) iter.Seq[corev1.Node] {
 	return func(yield func(corev1.Node) bool) {
-		nodeCount := int(backupPolicy.Spec.Storage.Local.NodeCount)
-		if nodeCount <= 0 {
-			nodeCount = 1
-		}
-
-		if nodeCount >= len(nodeList.Items) {
+		switch backupPolicy.Spec.Storage.Local.Distribution {
+		case "", operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeSingleNode:
+			if len(nodeList.Items) > 0 {
+				i := rand.IntN(len(nodeList.Items))
+				if !yield(nodeList.Items[i]) {
+					return
+				}
+			}
+		case operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeAllNodes:
 			for _, node := range nodeList.Items {
 				if hostname := node.Labels[corev1.LabelHostname]; hostname != "" {
 					if !yield(node) {
-						return
-					}
-				}
-			}
-		} else {
-			// If there are more nodes than nodeCount, give preference to nodes with existing backups. Otherwise iterate in lexicographical order.
-			existingNodes := map[string]struct{}{}
-			for _, backup := range backupList.Items {
-				if backup.Status.NodeName != "" && backuphelpers.IsBackupCompleted(&backup) {
-					existingNodes[backup.Status.NodeName] = struct{}{}
-				}
-			}
-			slices.SortFunc(nodeList.Items, func(a, b corev1.Node) int {
-				_, aHasExisting := existingNodes[a.Name]
-				_, bHasExisting := existingNodes[b.Name]
-				if aHasExisting && !bHasExisting {
-					return -1
-				} else if bHasExisting && !aHasExisting {
-					return 1
-				}
-				return strings.Compare(a.Name, b.Name)
-			})
-
-			count := 0
-			for _, node := range nodeList.Items {
-				if hostName := node.Labels[corev1.LabelHostname]; hostName != "" {
-					if !yield(node) {
-						return
-					}
-					count++
-					if count == nodeCount {
 						return
 					}
 				}
