@@ -55,6 +55,13 @@ type ControllerCommandConfig struct {
 	// DisableLeaderElection allows leader election to be suspended
 	DisableLeaderElection bool
 
+	// SkipInClusterAuthenticationLookup skips the synchronous read of the
+	// extension-apiserver-authentication configmap during serving setup.
+	// Use this for sidecar controllers that serve metrics/health but don't
+	// need request-header (front-proxy) authentication from the aggregation layer.
+	// Bearer-token authentication via TokenReview is preserved.
+	SkipInClusterAuthenticationLookup bool
+
 	// LeaseDuration is the duration that non-leader candidates will
 	// wait to force acquire leadership. This is measured against time of
 	// last observed ack.
@@ -280,7 +287,7 @@ func (c *ControllerCommandConfig) AddDefaultRotationToConfig(config *operatorv1a
 			config.ServingInfo.CertFile = filepath.Join(temporaryCertDir, "tls.crt")
 			config.ServingInfo.KeyFile = filepath.Join(temporaryCertDir, "tls.key")
 			// nothing can trust this, so we don't really care about hostnames
-			servingCert, err := ca.MakeServerCert(sets.New("localhost"), 30)
+			servingCert, err := ca.MakeServerCert(sets.New("localhost"), time.Hour*24*30)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -339,6 +346,9 @@ func (c *ControllerCommandConfig) StartController(ctx context.Context) error {
 		builder = builder.WithServer(config.ServingInfo, config.Authentication, config.Authorization)
 		if c.EnableHTTP2 {
 			builder = builder.WithHTTP2()
+		}
+		if c.SkipInClusterAuthenticationLookup {
+			builder = builder.WithSkipInClusterAuthenticationLookup()
 		}
 	}
 
