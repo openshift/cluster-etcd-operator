@@ -723,6 +723,35 @@ func TestActiveCacheStaleInformer(t *testing.T) {
 	})
 }
 
+func TestActiveCacheStaleLocalNodeName(t *testing.T) {
+	// Backup was started on a node by a previous sync and its job is observed, but the informer still has the backup
+	// without a node. The node reservation must be kept so a queued backup isn't started on the same node.
+	running, runningJob := fakeRunningBackup("running", "test-node-1", localStorage)
+	queued := testutils.FakeEtcdBackup("queued", testutils.WithBackupStorage(localStorage))
+	staleRunning := testutils.FakeEtcdBackup("running", testutils.WithBackupStorage(localStorage), testutils.WithBackupRunning(runningJob), testutils.WithBackupNodeName(""))
+
+	for name, cached := range map[string]bool{"cached": true, "not cached": false} {
+		t.Run(name, func(t *testing.T) {
+			activeCache := newActiveBackupCache()
+			if cached {
+				activeCache.add(running)
+			}
+			runBackupControllerTest(t, testCaseBackupController{
+				backups:      []*operatorv1alpha1.EtcdBackup{running, queued},
+				staleBackups: []*operatorv1alpha1.EtcdBackup{staleRunning, queued},
+				jobs:         []*batchv1.Job{runningJob},
+				nodes:        []*corev1.Node{testutils.FakeNode("test-node-1", testutils.WithMasterLabel())},
+				activeCache:  &activeCache,
+				validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+					requireNoBackupJobCreated(t, client)
+					require.True(t, activeCache.local.inUse("test-node-1"), "Expected node reservation to be kept")
+					require.Equal(t, "test-node-1", activeCache.backups["running"].nodeName)
+				},
+			})
+		})
+	}
+}
+
 func TestActiveCacheSyncedInformer(t *testing.T) {
 	running, runningJob := fakeRunningBackup("running", "test-node-1", localStorage)
 	activeCache := newActiveBackupCache()

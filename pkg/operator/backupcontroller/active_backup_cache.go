@@ -28,6 +28,7 @@ type activeBackupCache struct {
 }
 
 type activeBackup struct {
+	storageType       operatorv1alpha1.EtcdBackupStorageType
 	nodeName, pvcName string
 }
 
@@ -40,7 +41,7 @@ func newActiveBackup(backup *operatorv1alpha1.EtcdBackup) activeBackup {
 	case operatorv1alpha1.EtcdBackupStorageTypePVC:
 		pvcName = backup.Spec.Storage.PVC.Name
 	}
-	return activeBackup{nodeName: nodeName, pvcName: pvcName}
+	return activeBackup{storageType: backup.Spec.Storage.Type, nodeName: nodeName, pvcName: pvcName}
 }
 
 func (abc activeBackupCache) isActive(backupName string) bool {
@@ -52,6 +53,11 @@ func (abc *activeBackupCache) add(backup *operatorv1alpha1.EtcdBackup) {
 	backupName := backup.Name
 	active := newActiveBackup(backup)
 	if existing, ok := abc.backups[backupName]; ok {
+		// A Local backup's node is assigned once and never cleared. An empty node name means the backup object is
+		// stale (informer lag), so keep the existing reservation rather than releasing a node that may still be in use.
+		if active.storageType == operatorv1alpha1.EtcdBackupStorageTypeLocal && existing.storageType == active.storageType && active.nodeName == "" {
+			active.nodeName = existing.nodeName
+		}
 		// Backup already cached. Make sure nothing has changed.
 		if existing.nodeName != active.nodeName {
 			if existing.nodeName != "" {

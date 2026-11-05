@@ -182,7 +182,7 @@ func (c *BackupController) sync(ctx context.Context, syncCtx factory.SyncContext
 	observedActive := map[string]struct{}{}
 	queue := make([]*operatorv1alpha1.EtcdBackup, 0, len(backups))
 	for _, backup := range backups {
-		state, delay, err := c.reconcileBackupState(ctx, backup)
+		state, job, delay, err := c.reconcileBackupState(ctx, backup)
 		if err != nil {
 			errs = append(errs, err)
 		}
@@ -193,6 +193,12 @@ func (c *BackupController) sync(ctx context.Context, syncCtx factory.SyncContext
 		switch state {
 		case backupActive:
 			observedActive[backup.Name] = struct{}{}
+			if backup.Spec.Storage.Type == operatorv1alpha1.EtcdBackupStorageTypeLocal && backup.Status.NodeName == "" &&
+				job != nil && job.Spec.Template.Spec.NodeName != "" {
+				// If local backup is missing nodeName (informer lag) derive node name from the job
+				backup = backup.DeepCopy()
+				backup.Status.NodeName = job.Spec.Template.Spec.NodeName
+			}
 			c.activeCache.add(backup)
 		case backupFinished:
 			c.activeCache.remove(backup.Name)
@@ -223,69 +229,69 @@ func (c *BackupController) sync(ctx context.Context, syncCtx factory.SyncContext
 // reconcileBackupState reconciles the status of a backup. Backups that have not been started
 // are returned as queued. A non-zero delay is returned when the backup should be reconciled again after a grace
 // period. On error, the backup is reported as active so that its resources are not handed to another backup.
-func (c *BackupController) reconcileBackupState(ctx context.Context, backup *operatorv1alpha1.EtcdBackup) (backupState, time.Duration, error) {
+func (c *BackupController) reconcileBackupState(ctx context.Context, backup *operatorv1alpha1.EtcdBackup) (backupState, *batchv1.Job, time.Duration, error) {
 	backupName := backup.Name
 	jobsClient := c.kubeClient.BatchV1().Jobs(operatorclient.TargetNamespace)
 	job, err := c.getJob(backup)
 	if err != nil {
-		return backupActive, 0, fmt.Errorf("BackupController failed to get job for backup %q: %w", backupName, err)
+		return backupActive, nil, 0, fmt.Errorf("BackupController failed to get job for backup %q: %w", backupName, err)
 	}
 	if backuphelpers.IsBackupFinished(backup) {
 		if job != nil {
 			if _, err := finalizeJob(ctx, jobsClient, job, false); err != nil {
 				if !apierrors.IsNotFound(err) {
-					return backupFinished, 0, err
+					return backupFinished, job, 0, err
 				}
 			}
 		}
-		return backupFinished, 0, nil
+		return backupFinished, job, 0, nil
 	}
 
 	backupsClient := c.operatorClient.EtcdBackups()
 	if job != nil {
 		klog.V(4).Infof("BackupController job %q found for backup %q, reconciling status", job.Name, backupName)
 		if err := reconcileJobStatus(ctx, jobsClient, c.podsLister, backupsClient, job, backup); err != nil {
-			return backupActive, 0, fmt.Errorf("BackupController could not reconcile job status for backup %q: %w", backupName, err)
+			return backupActive, job, 0, fmt.Errorf("BackupController could not reconcile job status for backup %q: %w", backupName, err)
 		}
 		if isJobFinished(job) {
-			return backupFinished, 0, nil
+			return backupFinished, job, 0, nil
 		}
-		return backupActive, 0, nil
+		return backupActive, job, 0, nil
 	} else if backup.Status.JobName != "" {
 		// Give informers some time to catch up. Will reconcile sooner if the job is observed.
 		jobName := backup.Status.JobName
 		if requeueAfter, ok := shouldDelay(backupStartTime(backup), jobNotFoundGracePeriod); ok {
 			klog.Infof("BackupController requeueing backup %q with missing job %q", backupName, jobName)
-			return backupActive, requeueAfter, nil
+			return backupActive, job, requeueAfter, nil
 		}
 
 		if err := reconcileJobNotFound(ctx, backupsClient, jobsClient, backup); err != nil {
-			return backupActive, 0, fmt.Errorf("BackupController failed to reconcile missing job %q for backup %q: %w", jobName, backupName, err)
+			return backupActive, job, 0, fmt.Errorf("BackupController failed to reconcile missing job %q for backup %q: %w", jobName, backupName, err)
 		}
 		// Either the backup was failed, or the job was relabeled and will be reconciled on the next sync
-		return backupActive, 0, nil
+		return backupActive, job, 0, nil
 	}
 
 	if backup.DeletionTimestamp != nil {
 		if !slices.Contains(backup.Finalizers, backuphelpers.FinalizerEtcdBackup) {
 			// Backup deleted before it was started
-			return backupFinished, 0, nil
+			return backupFinished, job, 0, nil
 		}
 
 		// The finalizer is added just before the job is created. Short grace period in case the backup job was
 		// started, but the backup status update failed and the job has not been observed yet.
 		if requeueAfter, ok := shouldDelay(backup.DeletionTimestamp.Time, backupDeletedGracePeriod); ok {
 			klog.Infof("BackupController requeueing deleted backup %q", backupName)
-			return backupActive, requeueAfter, nil
+			return backupActive, job, requeueAfter, nil
 		}
 
 		if _, err := applyBackupFinalizer(ctx, backupsClient, backup, false); err != nil && !apierrors.IsNotFound(err) {
-			return backupActive, 0, fmt.Errorf("BackupController failed to remove finalizer from deleted backup %q: %w", backupName, err)
+			return backupActive, job, 0, fmt.Errorf("BackupController failed to remove finalizer from deleted backup %q: %w", backupName, err)
 		}
-		return backupFinished, 0, nil
+		return backupFinished, job, 0, nil
 	}
 
-	return backupQueued, 0, nil
+	return backupQueued, job, 0, nil
 }
 
 // pruneActiveCache removes backups from the active cache that are no longer active. Any cached backups that were not
