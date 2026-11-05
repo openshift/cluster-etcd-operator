@@ -31,7 +31,6 @@ import (
 	"time"
 
 	"github.com/openshift/cluster-etcd-operator/bindata"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/pacemaker"
 	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -64,7 +63,6 @@ func TestStatusCollectorReleaseVersionDuringUpgrade(t *testing.T) {
 	require.Equal(t, []corev1.EnvVar{{Name: "OTHER", Value: "preserved"}, {Name: "OPERATOR_IMAGE_VERSION", Value: "5.2.0"}}, newContainer.Env)
 	require.Equal(t, []string{"tnf-monitor", "collect"}, newContainer.Command)
 	require.Empty(t, newContainer.Args)
-	require.NoError(t, pacemaker.NewPacemakerStatusCollectorCommand().ParseFlags(newContainer.Args))
 }
 
 func TestCheckLastJobFailed(t *testing.T) {

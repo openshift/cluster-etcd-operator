@@ -34,9 +34,10 @@ const (
 	pcsStatusXMLCommand     = "sudo -n pcs status xml"
 	pcsClusterConfigCommand = "sudo -n pcs cluster config show --output-format json"
 
-	execTimeout      = 10 * time.Second
-	collectorTimeout = 30 * time.Second
-	maxXMLSize       = 10 * 1024 * 1024 // Prevents XML bombs
+	execTimeout              = 10 * time.Second
+	collectorTimeout         = 30 * time.Second
+	featureGateLookupTimeout = 5 * time.Second
+	maxXMLSize               = 10 * 1024 * 1024 // Prevents XML bombs
 
 	statusSubresource = "status"
 
@@ -96,10 +97,20 @@ func runCollector() error {
 	if err != nil {
 		return fmt.Errorf("failed to create config client: %w", err)
 	}
-	alertAgentStatusEnabled, err := alertAgentStatusEnabledForRelease(ctx, configClient, operatorstatus.VersionForOperatorFromEnv())
+	gateCtx, gateCancel := context.WithTimeout(ctx, featureGateLookupTimeout)
+	alertAgentStatusEnabled, err := alertAgentStatusEnabledForRelease(gateCtx, configClient, operatorstatus.VersionForOperatorFromEnv())
+	gateCancel()
 	if err != nil {
-		// A failed lookup is not a disabled gate: leave existing status intact and retry next run.
-		return err
+		gateErr := err
+		restClient, clientErr := CreatePacemakerRESTClient(restConfig)
+		if clientErr != nil {
+			return fmt.Errorf("%w; cannot check base-status fallback: %v", gateErr, clientErr)
+		}
+		if fallbackErr := checkBaseStatusFallback(ctx, restClient); fallbackErr != nil {
+			return fmt.Errorf("%w; cannot collect base status: %v", gateErr, fallbackErr)
+		}
+		alertAgentStatusEnabled = false
+		klog.Warningf("Failed to resolve TNFObservability; collecting base Pacemaker status without alert-agent observations or repairs: %v", gateErr)
 	}
 	klog.Infof("TNFObservability=%t", alertAgentStatusEnabled)
 
@@ -140,6 +151,27 @@ func runCollector() error {
 	// Persist observations before attempting repairs so a slow or failed CIB
 	// write cannot prevent health reporting. The next collection confirms recovery.
 	reconcileAlertAgentsIfEnabled(ctx, alertAgentStatusEnabled, pcs.ReconcileAlerts)
+	return nil
+}
+
+// checkBaseStatusFallback permits collection without alert-agent status only when it has not
+// already been reported. The enabled CRD forbids removing existing alertAgents entries.
+func checkBaseStatusFallback(ctx context.Context, restClient rest.Interface) error {
+	var existing pacmkrv1.PacemakerCluster
+	err := restClient.Get().Resource(PacemakerResourceName).Name(PacemakerClusterResourceName).Do(ctx).Into(&existing)
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("get PacemakerCluster for base-status fallback: %w", err)
+	}
+	if existing.Status.Nodes != nil {
+		for _, node := range *existing.Status.Nodes {
+			if len(node.AlertAgents) > 0 {
+				return fmt.Errorf("alert-agent status was previously reported; refusing to discard it after a failed gate lookup")
+			}
+		}
+	}
 	return nil
 }
 

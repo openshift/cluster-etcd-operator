@@ -220,7 +220,7 @@ func CollectAlertConfig(ctx context.Context) (map[string]ObservedAlertConfig, er
 }
 
 func collectAlertConfig(ctx context.Context, execute alertCommandExecutor) (map[string]ObservedAlertConfig, error) {
-	cmd := "/usr/sbin/pcs alert config --output-format json"
+	cmd := "sudo -n /usr/sbin/pcs alert config --output-format json"
 	stdOut, stdErr, err := execute(ctx, cmd)
 	if err != nil {
 		return nil, fmt.Errorf("pcs alert config failed: stderr=%s: %w", stdErr, err)

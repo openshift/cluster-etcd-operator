@@ -486,7 +486,7 @@ func TestApplyAlertAgentStatus_PartialFailureReachesHealthCheck(t *testing.T) {
 				if previouslyHealthy {
 					existing = newStatus(old)
 					applyAlertAgentStatus(existing, nil, alertAgentStatusesFromObserved(observedAll()), goodScripts, old, true)
-					require.Equal(t, StatusHealthy, BuildHealthStatusFromCR(&pacmkrv1.PacemakerCluster{Status: *existing}).OverallStatus)
+					require.Equal(t, StatusHealthy, BuildHealthStatusFromCR(&pacmkrv1.PacemakerCluster{Status: *existing}, true).OverallStatus)
 				}
 
 				status := newStatus(now)
@@ -511,7 +511,7 @@ func TestApplyAlertAgentStatus_PartialFailureReachesHealthCheck(t *testing.T) {
 					require.Equal(t, now, nodeHealthy.LastTransitionTime)
 					require.Equal(t, metav1.ConditionFalse, getConditionStatus(node.Conditions, pacmkrv1.NodeHealthyConditionType), phase)
 					require.Equal(t, metav1.ConditionFalse, getConditionStatus(status.Conditions, pacmkrv1.ClusterHealthyConditionType), phase)
-					health := BuildHealthStatusFromCR(&pacmkrv1.PacemakerCluster{Status: *status})
+					health := BuildHealthStatusFromCR(&pacmkrv1.PacemakerCluster{Status: *status}, true)
 					require.Equal(t, StatusError, health.OverallStatus, phase)
 					require.Len(t, health.Errors, tc.wantErrors)
 					for _, issue := range health.Errors {
@@ -533,7 +533,7 @@ func TestApplyAlertAgentStatus_PartialFailureReachesHealthCheck(t *testing.T) {
 					}
 					applyAlertAgentStatus(recovered, status, configured, scripts, recovered.LastUpdated, true)
 					require.Equal(t, metav1.ConditionTrue, getConditionStatus(recovered.Conditions, pacmkrv1.ClusterHealthyConditionType))
-					health := BuildHealthStatusFromCR(&pacmkrv1.PacemakerCluster{Status: *recovered})
+					health := BuildHealthStatusFromCR(&pacmkrv1.PacemakerCluster{Status: *recovered}, true)
 					require.Equal(t, StatusHealthy, health.OverallStatus)
 					require.Empty(t, health.Errors)
 				}

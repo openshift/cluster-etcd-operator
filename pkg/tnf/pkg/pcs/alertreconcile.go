@@ -60,9 +60,9 @@ func reconcileAlert(ctx context.Context, ac AlertConfig, observed ObservedAlertC
 	// from the observed CIB paths or Kubernetes status.
 	var cmd string
 	if !exists {
-		cmd = fmt.Sprintf("/usr/sbin/pcs alert create id=%s path=%s meta timeout=30s", ac.ID, ac.Path)
+		cmd = fmt.Sprintf("sudo -n /usr/sbin/pcs alert create id=%s path=%s meta timeout=30s", ac.ID, ac.Path)
 	} else if pathMismatch {
-		cmd = fmt.Sprintf("/usr/sbin/pcs alert update %s path=%s", ac.ID, ac.Path)
+		cmd = fmt.Sprintf("sudo -n /usr/sbin/pcs alert update %s path=%s", ac.ID, ac.Path)
 	}
 	if cmd != "" {
 		stdout, stderr, err := execute(ctx, cmd)
@@ -80,13 +80,17 @@ func reconcileAlert(ctx context.Context, ac AlertConfig, observed ObservedAlertC
 }
 
 func reconcileAlertSelectFilter(ctx context.Context, ac AlertConfig, existed bool, execute alertCommandExecutor) error {
+	// Setup shares the filter helper but runs its commands without sudo.
+	modify := func(ctx context.Context, command string) (string, string, error) {
+		return execute(ctx, "sudo -n "+command)
+	}
 	if !existed {
-		return applyAlertSelectFilterWithExecutor(ctx, ac.ID, ac.Path, ac.SelectXML, execute)
+		return applyAlertSelectFilterWithExecutor(ctx, ac.ID, ac.Path, ac.SelectXML, modify)
 	}
 
 	// pcs reports effective event selection, including defaults when <select> is
 	// absent. Inspect the XML to distinguish adding a filter from replacing one.
-	stdout, stderr, err := execute(ctx, "/usr/sbin/cibadmin --query --scope alerts")
+	stdout, stderr, err := execute(ctx, "sudo -n /usr/sbin/cibadmin --query --scope alerts")
 	if err != nil {
 		return fmt.Errorf("failed to query alert filters: stderr=%s: %w", stderr, err)
 	}
@@ -105,11 +109,11 @@ func reconcileAlertSelectFilter(ctx context.Context, ac AlertConfig, existed boo
 			continue
 		}
 		if alert.Select == nil {
-			return applyAlertSelectFilterWithExecutor(ctx, ac.ID, ac.Path, ac.SelectXML, execute)
+			return applyAlertSelectFilterWithExecutor(ctx, ac.ID, ac.Path, ac.SelectXML, modify)
 		}
 		// --modify merges children and could retain an incorrect event selector.
 		// Replace just <select>, preserving the alert's metadata and recipients.
-		cmd := fmt.Sprintf(`/usr/sbin/cibadmin --replace --xpath '/cib/configuration/alerts/alert[@id="%s"]/select' --xml-text '<select>%s</select>'`, ac.ID, ac.SelectXML)
+		cmd := fmt.Sprintf(`sudo -n /usr/sbin/cibadmin --replace --xpath '/cib/configuration/alerts/alert[@id="%s"]/select' --xml-text '<select>%s</select>'`, ac.ID, ac.SelectXML)
 		_, stderr, err := execute(ctx, cmd)
 		if err != nil {
 			return fmt.Errorf("failed to replace alert filter: stderr=%s: %w", stderr, err)

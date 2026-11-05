@@ -84,11 +84,12 @@ func isDegradedProblem(msg string) bool {
 }
 
 type consoleNotificationController struct {
-	dynamicClient        dynamic.Interface
-	recorder             events.Recorder
-	pacemakerInformer    cache.SharedIndexInformer
-	clusterVersionLister configv1listers.ClusterVersionLister
-	consoleUnavailable   bool
+	alertAgentStatusEnabled bool
+	dynamicClient           dynamic.Interface
+	recorder                events.Recorder
+	pacemakerInformer       cache.SharedIndexInformer
+	clusterVersionLister    configv1listers.ClusterVersionLister
+	consoleUnavailable      bool
 }
 
 func NewConsoleNotificationController(
@@ -96,12 +97,14 @@ func NewConsoleNotificationController(
 	dynamicClient dynamic.Interface,
 	clusterVersionLister configv1listers.ClusterVersionLister,
 	eventRecorder events.Recorder,
+	alertAgentStatusEnabled bool,
 ) factory.Controller {
 	c := &consoleNotificationController{
-		dynamicClient:        dynamicClient,
-		recorder:             eventRecorder,
-		pacemakerInformer:    pacemakerInformer,
-		clusterVersionLister: clusterVersionLister,
+		alertAgentStatusEnabled: alertAgentStatusEnabled,
+		dynamicClient:           dynamicClient,
+		recorder:                eventRecorder,
+		pacemakerInformer:       pacemakerInformer,
+		clusterVersionLister:    clusterVersionLister,
 	}
 
 	return factory.New().
@@ -148,7 +151,7 @@ func (c *consoleNotificationController) sync(ctx context.Context, _ factory.Sync
 		return c.deleteAllNotifications(ctx)
 	}
 
-	status := BuildHealthStatusFromCR(cr)
+	status := BuildHealthStatusFromCR(cr, c.alertAgentStatusEnabled)
 	degradedProblems, troubleshootingProblems := classifyProblems(status)
 
 	if err := c.manageNotification(ctx, categoryDegraded, degradedProblems); err != nil {

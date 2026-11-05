@@ -112,10 +112,11 @@ type HealthStatus struct {
 
 // HealthCheck monitors pacemaker status in ExternalEtcd topology clusters
 type HealthCheck struct {
-	operatorClient    v1helpers.StaticPodOperatorClient
-	kubeClient        kubernetes.Interface
-	eventRecorder     events.Recorder
-	pacemakerInformer cache.SharedIndexInformer
+	alertAgentStatusEnabled bool
+	operatorClient          v1helpers.StaticPodOperatorClient
+	kubeClient              kubernetes.Interface
+	eventRecorder           events.Recorder
+	pacemakerInformer       cache.SharedIndexInformer
 
 	// Event deduplication: tracks recently recorded events to avoid duplicates
 	recordedEventsMu sync.Mutex
@@ -198,6 +199,7 @@ func NewHealthCheck(
 	kubeClient kubernetes.Interface,
 	eventRecorder events.Recorder,
 	restConfig *rest.Config,
+	alertAgentStatusEnabled bool,
 ) (factory.Controller, cache.SharedIndexInformer, error) {
 	// Create PacemakerCluster informer
 	informer, err := NewPacemakerClusterInformer(restConfig)
@@ -205,7 +207,7 @@ func NewHealthCheck(
 		return nil, nil, err
 	}
 
-	return NewHealthCheckWithInformer(operatorClient, kubeClient, eventRecorder, informer)
+	return NewHealthCheckWithInformer(operatorClient, kubeClient, eventRecorder, informer, alertAgentStatusEnabled)
 }
 
 // NewHealthCheckWithInformer creates a new HealthCheck using an existing PacemakerCluster informer.
@@ -215,14 +217,16 @@ func NewHealthCheckWithInformer(
 	kubeClient kubernetes.Interface,
 	eventRecorder events.Recorder,
 	pacemakerInformer cache.SharedIndexInformer,
+	alertAgentStatusEnabled bool,
 ) (factory.Controller, cache.SharedIndexInformer, error) {
 	c := &HealthCheck{
-		operatorClient:    operatorClient,
-		kubeClient:        kubeClient,
-		eventRecorder:     eventRecorder,
-		pacemakerInformer: pacemakerInformer,
-		recordedEvents:    make(map[string]time.Time),
-		disruptionTracker: NewDisruptionTracker(),
+		alertAgentStatusEnabled: alertAgentStatusEnabled,
+		operatorClient:          operatorClient,
+		kubeClient:              kubeClient,
+		eventRecorder:           eventRecorder,
+		pacemakerInformer:       pacemakerInformer,
+		recordedEvents:          make(map[string]time.Time),
+		disruptionTracker:       NewDisruptionTracker(),
 		// previous starts as nil - first sync will be treated as "from Unknown"
 	}
 
@@ -325,7 +329,7 @@ func (c *HealthCheck) getPacemakerStatus(ctx context.Context) (*HealthStatus, *H
 	}
 
 	// Build health status from the CRD status fields
-	currentStatus := BuildHealthStatusFromCR(pacemakerCR)
+	currentStatus := BuildHealthStatusFromCR(pacemakerCR, c.alertAgentStatusEnabled)
 	currentStatus.CRLastUpdated = pacemakerCR.Status.LastUpdated.Time
 
 	return currentStatus, previous, nil
@@ -340,7 +344,8 @@ func unknownHealthStatus(msg string) *HealthStatus {
 }
 
 // BuildHealthStatusFromCR evaluates a PacemakerCluster CR and returns its complete health status.
-func BuildHealthStatusFromCR(cr *pacmkrv1.PacemakerCluster) *HealthStatus {
+// Alert-agent entries are only read when the caller's resolved TNFObservability gate is enabled.
+func BuildHealthStatusFromCR(cr *pacmkrv1.PacemakerCluster, alertAgentStatusEnabled bool) *HealthStatus {
 	status := &HealthStatus{
 		OverallStatus: StatusUnknown,
 		Warnings:      []string{},
@@ -361,7 +366,7 @@ func BuildHealthStatusFromCR(cr *pacmkrv1.PacemakerCluster) *HealthStatus {
 	}
 
 	checkClusterConditions(cr, status)
-	checkNodeStatuses(cr, status)
+	checkNodeStatuses(cr, status, alertAgentStatusEnabled)
 
 	if len(status.Errors) > 0 {
 		status.OverallStatus = StatusError
@@ -419,7 +424,7 @@ func getClusterConditionIssues(conditions []metav1.Condition, cr *pacmkrv1.Pacem
 }
 
 // checkNodeStatuses checks if all nodes have healthy conditions and resources
-func checkNodeStatuses(cr *pacmkrv1.PacemakerCluster, status *HealthStatus) {
+func checkNodeStatuses(cr *pacmkrv1.PacemakerCluster, status *HealthStatus, alertAgentStatusEnabled bool) {
 	// Nil-guard for Nodes field - missing node data is an error (cannot verify cluster health)
 	if cr.Status.Nodes == nil {
 		klog.V(2).Infof("Pacemaker.Status.Nodes is nil, cannot determine node status")
@@ -438,14 +443,14 @@ func checkNodeStatuses(cr *pacmkrv1.PacemakerCluster, status *HealthStatus) {
 
 	// Check each node's conditions and resource health (consolidated into single error per node)
 	for _, node := range nodes {
-		checkNodeConditions(node, status)
+		checkNodeConditions(node, status, alertAgentStatusEnabled)
 	}
 }
 
 // checkNodeConditions checks the conditions of a single node and its resources,
 // routing issues to errors or warnings based on severity.
 // Errors degrade the operator; warnings are informational (e.g., fencing redundancy lost).
-func checkNodeConditions(node pacmkrv1.PacemakerClusterNodeStatus, status *HealthStatus) {
+func checkNodeConditions(node pacmkrv1.PacemakerClusterNodeStatus, status *HealthStatus, alertAgentStatusEnabled bool) {
 	conditions := node.Conditions
 	if len(conditions) == 0 {
 		klog.V(2).Infof("Node %s has no conditions", node.NodeName)
@@ -467,7 +472,7 @@ func checkNodeConditions(node pacmkrv1.PacemakerClusterNodeStatus, status *Healt
 		return
 	}
 
-	allErrors := slices.Concat(getNodeConditionErrors(conditions), getNodeResourceSummaries(node))
+	allErrors := slices.Concat(getNodeConditionErrors(conditions), getNodeResourceSummaries(node, alertAgentStatusEnabled))
 	if len(allErrors) > 0 {
 		status.Errors = append(status.Errors, fmt.Sprintf(msgNodeUnhealthy, node.NodeName, strings.Join(allErrors, ", ")))
 	} else if len(fencingWarnings) == 0 {
@@ -540,7 +545,7 @@ func getNodeConditionErrors(conditions []metav1.Condition) []string {
 // described in mergeCondition/refreshHealthAfterAlertAgents (alertAgents[].Healthy -> node's optional
 // AlertAgentsHealthy -> node.Healthy), so a confirmed alert-agent failure is reported as part of the
 // same node-unhealthy error rather than as an independent one.
-func getNodeResourceSummaries(node pacmkrv1.PacemakerClusterNodeStatus) []string {
+func getNodeResourceSummaries(node pacmkrv1.PacemakerClusterNodeStatus, alertAgentStatusEnabled bool) []string {
 	var summaries []string
 
 	for _, resource := range node.Resources {
@@ -549,6 +554,11 @@ func getNodeResourceSummaries(node pacmkrv1.PacemakerClusterNodeStatus) []string
 		}
 	}
 
+	// Do not consume alert-agent entries from an older CR or informer cache when
+	// TNFObservability is disabled. Keep the original resource health evaluation.
+	if !alertAgentStatusEnabled {
+		return summaries
+	}
 	for _, agent := range node.AlertAgents {
 		if cond := FindCondition(agent.Conditions, pacmkrv1.AlertAgentHealthyConditionType); cond != nil && cond.Status == metav1.ConditionFalse {
 			summaries = append(summaries, fmt.Sprintf("alert agent %s %s", agent.Name, getAlertAgentIssue(agent.Conditions)))

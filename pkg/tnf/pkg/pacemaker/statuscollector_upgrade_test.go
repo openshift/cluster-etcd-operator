@@ -3,6 +3,7 @@ package pacemaker
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -121,6 +122,77 @@ func TestCollectorStatusWritesDuringUpgrade(t *testing.T) {
 			} else {
 				require.Equal(t, 1, writes)
 			}
+		})
+	}
+}
+
+func TestCollectorBaseStatusFallback(t *testing.T) {
+	for _, tt := range []struct {
+		name              string
+		missing           bool
+		previouslyEnabled bool
+		readFails         bool
+		wantErr           string
+	}{
+		{name: "existing base status continues"},
+		{name: "missing CR can be initialized", missing: true},
+		{name: "previous alert-agent status is preserved", previouslyEnabled: true, wantErr: "previously reported"},
+		{name: "unreadable CR must not be overwritten", readFails: true, wantErr: "get PacemakerCluster"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			now := metav1.NewTime(time.Now().Truncate(time.Second))
+			status := healthyClusterStatus(now, []pacmkrv1.PacemakerClusterNodeStatus{
+				{NodeName: "master-0", Conditions: []metav1.Condition{{Type: pacmkrv1.NodeHealthyConditionType, Status: metav1.ConditionTrue}}},
+			})
+			existing := &pacmkrv1.PacemakerCluster{
+				TypeMeta:   metav1.TypeMeta{APIVersion: pacmkrv1.GroupVersion.String(), Kind: "PacemakerCluster"},
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster", ResourceVersion: "42"},
+				Status:     *status.DeepCopy(),
+			}
+			existing.Status.LastUpdated = metav1.NewTime(now.Add(-time.Minute))
+			if tt.previouslyEnabled {
+				applyAlertAgentStatus(&existing.Status, nil, alertAgentStatusesFromObserved(nil), nil, existing.Status.LastUpdated, true)
+			}
+			writes := 0
+			var submitted pacmkrv1.PacemakerCluster
+			client, err := CreatePacemakerRESTClient(&rest.Config{
+				Host: "https://collector-fallback-test.invalid",
+				Transport: collectorRoundTripper(func(req *http.Request) (*http.Response, error) {
+					code, body := http.StatusOK, any(existing)
+					if req.Method == http.MethodGet {
+						if tt.readFails {
+							return nil, fmt.Errorf("API unavailable")
+						}
+						if tt.missing {
+							code = http.StatusNotFound
+							body = metav1.Status{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Status"}, Status: metav1.StatusFailure, Reason: metav1.StatusReasonNotFound, Code: http.StatusNotFound}
+						}
+					} else {
+						writes++
+						require.NoError(t, json.NewDecoder(req.Body).Decode(&submitted))
+						if req.Method == http.MethodPost {
+							code = http.StatusCreated
+						}
+					}
+					data, err := json.Marshal(body)
+					require.NoError(t, err)
+					return &http.Response{StatusCode: code, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(string(data)))}, nil
+				}),
+			})
+			require.NoError(t, err)
+
+			err = checkBaseStatusFallback(context.Background(), client)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				require.Zero(t, writes)
+				return
+			}
+			require.NoError(t, err)
+			require.NoError(t, updatePacemakerStatusCRWithClient(context.Background(), client, status, nil, nil, false))
+			require.Positive(t, writes)
+			require.Equal(t, now, submitted.Status.LastUpdated)
+			require.Empty(t, (*submitted.Status.Nodes)[0].AlertAgents)
+			require.Equal(t, metav1.ConditionTrue, getConditionStatus(submitted.Status.Conditions, pacmkrv1.ClusterHealthyConditionType))
 		})
 	}
 }

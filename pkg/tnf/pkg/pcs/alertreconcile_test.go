@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const alertConfigCommand = "/usr/sbin/pcs alert config --output-format json"
+const alertConfigCommand = "sudo -n /usr/sbin/pcs alert config --output-format json"
 
 type alertCommandResult struct {
 	command string
@@ -64,8 +64,8 @@ func TestReconcileAlertsMissing(t *testing.T) {
 			execute := alertExecutor(t, []alertCommandResult{
 				{command: alertConfigCommand, stdout: alertConfigJSON(t, observed)},
 				{command: "test -x " + ac.Path},
-				{command: fmt.Sprintf("/usr/sbin/pcs alert create id=%s path=%s meta timeout=30s", ac.ID, ac.Path)},
-				{command: fmt.Sprintf(`/usr/sbin/cibadmin --modify --xml-text '<alert id="%s" path="%s"><select>%s</select></alert>'`, ac.ID, ac.Path, ac.SelectXML)},
+				{command: fmt.Sprintf("sudo -n /usr/sbin/pcs alert create id=%s path=%s meta timeout=30s", ac.ID, ac.Path)},
+				{command: fmt.Sprintf(`sudo -n /usr/sbin/cibadmin --modify --xml-text '<alert id="%s" path="%s"><select>%s</select></alert>'`, ac.ID, ac.Path, ac.SelectXML)},
 			})
 			require.NoError(t, reconcileAlerts(context.Background(), execute))
 		})
@@ -83,7 +83,7 @@ func TestReconcileAlertsPaths(t *testing.T) {
 			execute := alertExecutor(t, []alertCommandResult{
 				{command: alertConfigCommand, stdout: alertConfigJSON(t, observed)},
 				{command: "test -x " + ac.Path},
-				{command: fmt.Sprintf("/usr/sbin/pcs alert update %s path=%s", ac.ID, ac.Path)},
+				{command: fmt.Sprintf("sudo -n /usr/sbin/pcs alert update %s path=%s", ac.ID, ac.Path)},
 			})
 			require.NoError(t, reconcileAlerts(context.Background(), execute))
 		})
@@ -106,7 +106,7 @@ func TestReconcileAlertsSwappedPaths(t *testing.T) {
 	for _, ac := range AlertConfigs {
 		commands = append(commands,
 			alertCommandResult{command: "test -x " + ac.Path},
-			alertCommandResult{command: fmt.Sprintf("/usr/sbin/pcs alert update %s path=%s", ac.ID, ac.Path)},
+			alertCommandResult{command: fmt.Sprintf("sudo -n /usr/sbin/pcs alert update %s path=%s", ac.ID, ac.Path)},
 		)
 	}
 	require.NoError(t, reconcileAlerts(context.Background(), alertExecutor(t, commands)))
@@ -124,14 +124,14 @@ func TestReconcileAlertsFilters(t *testing.T) {
 						filter = "<select><select_nodes/><select_fencing/></select>"
 					}
 					alertXML := fmt.Sprintf(`<alerts><alert id="%s" path="%s">%s<recipient id="keep-me" value="keep-me"/></alert></alerts>`, ac.ID, ac.Path, filter)
-					repairCommand := fmt.Sprintf(`/usr/sbin/cibadmin --modify --xml-text '<alert id="%s" path="%s"><select>%s</select></alert>'`, ac.ID, ac.Path, ac.SelectXML)
+					repairCommand := fmt.Sprintf(`sudo -n /usr/sbin/cibadmin --modify --xml-text '<alert id="%s" path="%s"><select>%s</select></alert>'`, ac.ID, ac.Path, ac.SelectXML)
 					if hasSelect {
-						repairCommand = fmt.Sprintf(`/usr/sbin/cibadmin --replace --xpath '/cib/configuration/alerts/alert[@id="%s"]/select' --xml-text '<select>%s</select>'`, ac.ID, ac.SelectXML)
+						repairCommand = fmt.Sprintf(`sudo -n /usr/sbin/cibadmin --replace --xpath '/cib/configuration/alerts/alert[@id="%s"]/select' --xml-text '<select>%s</select>'`, ac.ID, ac.SelectXML)
 					}
 					execute := alertExecutor(t, []alertCommandResult{
 						{command: alertConfigCommand, stdout: alertConfigJSON(t, observed)},
 						{command: "test -x " + ac.Path},
-						{command: "/usr/sbin/cibadmin --query --scope alerts", stdout: alertXML},
+						{command: "sudo -n /usr/sbin/cibadmin --query --scope alerts", stdout: alertXML},
 						{command: repairCommand},
 					})
 					require.NoError(t, reconcileAlerts(context.Background(), execute))
@@ -157,10 +157,10 @@ func TestReconcileAlertFilterFailures(t *testing.T) {
 		{name: "replace failed", queryXML: `<alerts><alert id="tnf-taint-alert"><select/></alert></alerts>`, replace: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			commands := []alertCommandResult{{command: "/usr/sbin/cibadmin --query --scope alerts", stdout: tc.queryXML, err: tc.queryError}}
+			commands := []alertCommandResult{{command: "sudo -n /usr/sbin/cibadmin --query --scope alerts", stdout: tc.queryXML, err: tc.queryError}}
 			if tc.replace {
 				commands = append(commands, alertCommandResult{
-					command: fmt.Sprintf(`/usr/sbin/cibadmin --replace --xpath '/cib/configuration/alerts/alert[@id="%s"]/select' --xml-text '<select>%s</select>'`, ac.ID, ac.SelectXML),
+					command: fmt.Sprintf(`sudo -n /usr/sbin/cibadmin --replace --xpath '/cib/configuration/alerts/alert[@id="%s"]/select' --xml-text '<select>%s</select>'`, ac.ID, ac.SelectXML),
 					err:     failure,
 				})
 			}
@@ -205,15 +205,15 @@ func TestReconcileAlertsRepairFailures(t *testing.T) {
 			case "script missing":
 				commands[1].err = &osexec.ExitError{}
 			case "create", "path update", "filter":
-				cmd := fmt.Sprintf("/usr/sbin/pcs alert create id=%s path=%s meta timeout=30s", ac.ID, ac.Path)
+				cmd := fmt.Sprintf("sudo -n /usr/sbin/pcs alert create id=%s path=%s meta timeout=30s", ac.ID, ac.Path)
 				if stage == "path update" {
-					cmd = fmt.Sprintf("/usr/sbin/pcs alert update %s path=%s", ac.ID, ac.Path)
+					cmd = fmt.Sprintf("sudo -n /usr/sbin/pcs alert update %s path=%s", ac.ID, ac.Path)
 				}
 				commands = append(commands, alertCommandResult{command: cmd, stderr: "failed", err: failure})
 				if stage == "filter" {
 					commands[2].err = nil
 					commands = append(commands, alertCommandResult{
-						command: fmt.Sprintf(`/usr/sbin/cibadmin --modify --xml-text '<alert id="%s" path="%s"><select>%s</select></alert>'`, ac.ID, ac.Path, ac.SelectXML),
+						command: fmt.Sprintf(`sudo -n /usr/sbin/cibadmin --modify --xml-text '<alert id="%s" path="%s"><select>%s</select></alert>'`, ac.ID, ac.Path, ac.SelectXML),
 						stderr:  "failed", err: failure,
 					})
 				}
@@ -235,17 +235,17 @@ func TestReconcileAlertsRetriesPartialCreation(t *testing.T) {
 	delete(missing, ac.ID)
 	partial := healthyAlertConfig()
 	partial[ac.ID] = ObservedAlertConfig{Path: ac.Path, SelectNodes: true}
-	filterCommand := fmt.Sprintf(`/usr/sbin/cibadmin --modify --xml-text '<alert id="%s" path="%s"><select>%s</select></alert>'`, ac.ID, ac.Path, ac.SelectXML)
+	filterCommand := fmt.Sprintf(`sudo -n /usr/sbin/cibadmin --modify --xml-text '<alert id="%s" path="%s"><select>%s</select></alert>'`, ac.ID, ac.Path, ac.SelectXML)
 	failure := errors.New("temporary filter failure")
 	execute := alertExecutor(t, []alertCommandResult{
 		{command: alertConfigCommand, stdout: alertConfigJSON(t, missing)},
 		{command: "test -x " + ac.Path},
-		{command: fmt.Sprintf("/usr/sbin/pcs alert create id=%s path=%s meta timeout=30s", ac.ID, ac.Path)},
+		{command: fmt.Sprintf("sudo -n /usr/sbin/pcs alert create id=%s path=%s meta timeout=30s", ac.ID, ac.Path)},
 		{command: filterCommand, err: failure},
 		// On the next run, creation has persisted but the filter is still absent.
 		{command: alertConfigCommand, stdout: alertConfigJSON(t, partial)},
 		{command: "test -x " + ac.Path},
-		{command: "/usr/sbin/cibadmin --query --scope alerts", stdout: fmt.Sprintf(`<alerts><alert id="%s" path="%s"/></alerts>`, ac.ID, ac.Path)},
+		{command: "sudo -n /usr/sbin/cibadmin --query --scope alerts", stdout: fmt.Sprintf(`<alerts><alert id="%s" path="%s"/></alerts>`, ac.ID, ac.Path)},
 		{command: filterCommand},
 		// Once the CIB confirms recovery, reconciliation becomes read-only.
 		{command: alertConfigCommand, stdout: alertConfigJSON(t, healthyAlertConfig())},

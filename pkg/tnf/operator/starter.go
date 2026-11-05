@@ -175,16 +175,22 @@ func runPacemakerControllers(ctx context.Context, controllerContext *controllerc
 		}
 
 		// Wait for CRD to be established.
+		lastWaitWarning := time.Now()
 		err = wait.PollUntilContextCancel(ctx, 5*time.Second, true, func(ctx context.Context) (bool, error) {
 			crd, getErr := apiextClient.ApiextensionsV1().CustomResourceDefinitions().Get(ctx, "pacemakerclusters.etcd.openshift.io", metav1.GetOptions{})
-			if getErr != nil {
-				klog.V(2).Infof("waiting for PacemakerCluster CRD: %v", getErr)
-				return false, nil
-			}
-			if pacemakerCRDReady(crd, alertAgentStatusEnabled) {
+			if getErr == nil && pacemakerCRDReady(crd, alertAgentStatusEnabled) {
 				return true, nil
 			}
-			klog.V(2).Infof("Waiting for established PacemakerCluster CRD with TNFObservability=%t", alertAgentStatusEnabled)
+			message := fmt.Sprintf("waiting for established PacemakerCluster CRD with TNFObservability=%t", alertAgentStatusEnabled)
+			if getErr != nil {
+				message = fmt.Sprintf("waiting for PacemakerCluster CRD: %v", getErr)
+			}
+			klog.V(2).Info(message)
+			// Allow normal CRD convergence before warning, then repeat at most every five minutes.
+			if time.Since(lastWaitWarning) >= 5*time.Minute {
+				klog.Warningf("Pacemaker controllers have not started: %s; check TnfStaticResources controller errors and the PacemakerCluster CRD", message)
+				lastWaitWarning = time.Now()
+			}
 			return false, nil
 		})
 		if err != nil {
@@ -210,6 +216,7 @@ func runPacemakerControllers(ctx context.Context, controllerContext *controllerc
 				controllerContext,
 				kubeInformersForNamespaces,
 				etcdInformer,
+				alertAgentStatusEnabled,
 			)
 			if createErr != nil {
 				klog.Errorf("Failed to create Pacemaker lifecycle manager, will retry: %v", createErr)
@@ -271,6 +278,7 @@ func runPacemakerControllers(ctx context.Context, controllerContext *controllerc
 			dynamicClient,
 			clusterVersionLister,
 			controllerContext.EventRecorder,
+			alertAgentStatusEnabled,
 		)
 		klog.Infof("starting Pacemaker console notification controller")
 		go notificationController.Run(ctx, 1)
@@ -285,7 +293,7 @@ func runPacemakerControllers(ctx context.Context, controllerContext *controllerc
 // Select by the resolved gate, including CustomNoUpgrade overrides, rather than the feature-set name.
 func pacemakerCRDAsset(alertAgentStatusEnabled bool) string {
 	if alertAgentStatusEnabled {
-		return "etcd/pacemakercluster-alert-agent-status-crd.yaml"
+		return "etcd/pacemakercluster-tnf-observability-crd.yaml"
 	}
 	return "etcd/pacemakercluster-crd.yaml"
 }

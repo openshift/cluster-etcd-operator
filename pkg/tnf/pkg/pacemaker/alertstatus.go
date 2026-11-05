@@ -200,7 +200,7 @@ func alertAgentScriptObservationFromMCOState(scriptPath, state, reason string) *
 	return &alertAgentObservation{
 		ok:     true,
 		reason: pacmkrv1.AlertAgentAvailableReasonAvailable,
-		msg:    fmt.Sprintf("%s is present and executable with the expected permissions; no MachineConfig drift reported (node state=%q, reason=%q)", scriptPath, state, reason),
+		msg:    fmt.Sprintf("no MCO drift reported for %s (node state=%q, reason=%q)", scriptPath, state, reason),
 	}
 }
 
@@ -273,7 +273,7 @@ func alertHealthyReason(ok bool) string {
 
 func alertHealthyMessage(ok bool, configured, available metav1.Condition) string {
 	if ok {
-		return "alert agent is registered in the CIB and its script is present on this node"
+		return "alert agent is registered in the CIB and no MCO drift is reported for its script on this node"
 	}
 	var problems []string
 	if configured.Status == metav1.ConditionFalse {

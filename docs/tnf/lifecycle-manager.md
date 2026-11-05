@@ -71,6 +71,7 @@ The lifecycle manager ([pkg/tnf/operator/lifecycle_manager.go](../../pkg/tnf/ope
 - Lifecycle manager starts regardless of external etcd transition state
 - The `sync()` function handles both bootstrap and runtime modes internally
 - CRD must be established before informers can start
+- If the CRD is unreadable, unestablished, or its served schema does not match the gate, CEO logs a warning after five minutes and every five minutes thereafter until it is ready.
 - Controller syncs every 1 minute to ensure job controllers are running
 - Lifecycle-manager construction failures set `PacemakerLifecycleManagerDegraded` while startup retries every 30 seconds; the condition clears after construction succeeds. The ClusterOperator's Degraded condition applies its existing 10-minute inertia.
 
@@ -163,11 +164,20 @@ The PacemakerCluster CR is populated by a status collector CronJob that runs eve
 When disabled, the collector omits alert-agent status (including previous entries) and skips repairs.
 The PacemakerCluster CRD remains available; CEO selects its schema to match the gate and waits for
 that schema before starting Pacemaker controllers. Strict field validation rejects unsupported fields.
+CRD selection and controller wiring are fixed at CEO startup; a resolved gate change (including a
+`CustomNoUpgrade` override) makes CEO exit and restart to apply the new selection.
+The static-resource controller creates or updates the same CRD in place, replacing its schema
+with the enabled or disabled variant during updates and upgrades as well as initial installation.
+The healthcheck and console notification readers use the same resolved gate and skip alert-agent
+entries when it is disabled. Existing setup-time alert registration remains independent of this gate.
 
 Each run resolves the gate from `FeatureGate/cluster.status.featureGates` for its own
 `OPERATOR_IMAGE_VERSION`, preserving release-specific behavior during upgrades. Manual/development
 runs fall back to ClusterVersion's desired version or latest history entry. An unknown gate is
-disabled; API errors or a missing release entry fail collection without overwriting status.
+disabled. API errors or a missing release entry log a warning and allow base-status collection when
+the current CR has no alert-agent entries (or does not exist). If alert-agent entries already exist,
+or the CR cannot be read, collection fails without overwriting status. Gate lookups have a five-second
+timeout within the collector's deadline so a lookup failure leaves time for base-status collection.
 
 The collection flow is:
 
@@ -234,6 +244,12 @@ Periodic repairs do not correct timeout-only drift, validate script execution, o
 Repairs share a 10-second timeout within the collector's 30-second deadline. Errors are logged and
 retried on the next collection without failing the Job or triggering node rotation; the next
 collection also confirms recovery in status. Earlier collection failures skip repairs.
+
+The collector CronJob uses `concurrencyPolicy: Forbid`, including across image or target-node
+updates. Repairs have no cluster-wide lease or transaction spanning the CIB read and repair
+commands, so setup jobs or independently launched collectors can still race with them. A failed
+command, including a conflicting write, is logged and retried from fresh CIB state on the next
+collection. Convergence assumes concurrent writers agree on the desired alert registrations.
 
 Initial setup and update-setup register alerts independently of this gate; see
 [Alert-Agent Registration](job-controllers.md#alert-agent-registration).

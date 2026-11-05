@@ -33,10 +33,11 @@ const (
 // PacemakerLifecycleManager manages job controller startup for TNF clusters.
 // Starts job controllers when conditions are met (bootstrap or runtime mode).
 type pacemakerLifecycleManager struct {
-	operatorClient    v1helpers.StaticPodOperatorClient
-	kubeClient        kubernetes.Interface
-	eventRecorder     events.Recorder
-	pacemakerInformer cache.SharedIndexInformer
+	alertAgentStatusEnabled bool
+	operatorClient          v1helpers.StaticPodOperatorClient
+	kubeClient              kubernetes.Interface
+	eventRecorder           events.Recorder
+	pacemakerInformer       cache.SharedIndexInformer
 
 	// For node lifecycle management
 	controlPlaneNodeInformer   cache.SharedIndexInformer
@@ -76,6 +77,7 @@ func newPacemakerLifecycleManager(
 	controllerContext *controllercmd.ControllerContext,
 	kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces,
 	etcdInformer operatorv1informers.EtcdInformer,
+	alertAgentStatusEnabled bool,
 ) (factory.Controller, *pacemakerLifecycleManager, cache.SharedIndexInformer, error) {
 	// Create PacemakerCluster informer
 	informer, err := pacemaker.NewPacemakerClusterInformer(restConfig)
@@ -84,6 +86,7 @@ func newPacemakerLifecycleManager(
 	}
 
 	c := &pacemakerLifecycleManager{
+		alertAgentStatusEnabled:    alertAgentStatusEnabled,
 		operatorClient:             operatorClient,
 		kubeClient:                 kubeClient,
 		eventRecorder:              eventRecorder,
@@ -205,6 +208,7 @@ func (c *pacemakerLifecycleManager) runPacemakerHealthCheckController(ctx contex
 		c.kubeClient,
 		c.eventRecorder,
 		c.pacemakerInformer,
+		c.alertAgentStatusEnabled,
 	)
 	if err != nil {
 		klog.Errorf("Failed to create health check controller: %v", err)

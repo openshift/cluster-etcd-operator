@@ -24,6 +24,8 @@ func AlertAgentStatusEnabled(gates featuregates.FeatureGate) bool {
 // release's entry even when ClusterVersion already desires the next release.
 // Only development/manual runs without a release version use the desired version.
 func alertAgentStatusEnabledForRelease(ctx context.Context, client configclient.Interface, releaseVersion string) (bool, error) {
+	// VersionForOperatorFromEnv returns "" when unset; "0.0.1-snapshot" matches
+	// CEO's development missingVersion sentinel in pkg/operator/starter.go.
 	if releaseVersion == "" || releaseVersion == "0.0.1-snapshot" {
 		version, err := client.ConfigV1().ClusterVersions().Get(ctx, "version", metav1.GetOptions{})
 		if err != nil {

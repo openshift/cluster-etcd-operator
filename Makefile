@@ -44,7 +44,7 @@ test-e2e: test-unit
 PACEMAKER_CRD_SOURCE := vendor/github.com/openshift/api/etcd/v1/zz_generated.crd-manifests/0000_25_etcd_01_pacemakerclusters-SelfManagedHA-Default.crd.yaml
 PACEMAKER_CRD_TARGET := bindata/etcd/pacemakercluster-crd.yaml
 PACEMAKER_ALERT_AGENT_CRD_SOURCE := vendor/github.com/openshift/api/etcd/v1/zz_generated.crd-manifests/0000_25_etcd_01_pacemakerclusters-SelfManagedHA-TechPreviewNoUpgrade.crd.yaml
-PACEMAKER_ALERT_AGENT_CRD_TARGET := bindata/etcd/pacemakercluster-alert-agent-status-crd.yaml
+PACEMAKER_ALERT_AGENT_CRD_TARGET := bindata/etcd/pacemakercluster-tnf-observability-crd.yaml
 update-bindata: $(PACEMAKER_CRD_TARGET) $(PACEMAKER_ALERT_AGENT_CRD_TARGET)
 $(PACEMAKER_CRD_TARGET): $(PACEMAKER_CRD_SOURCE)
 	cp $< $@
