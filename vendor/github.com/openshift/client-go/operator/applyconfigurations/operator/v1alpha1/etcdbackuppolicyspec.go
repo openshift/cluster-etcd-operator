@@ -48,6 +48,7 @@ type EtcdBackupPolicySpecApplyConfiguration struct {
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 	// storage specifies the location where etcd backup files will be saved.
 	// EtcdBackup storage is derived from this field.
+	// In rare cases, where storage type is changed from PVC to Local with AllNodes distribution on an existing policy, old backups on the PVC may need to be manually pruned. Make sure to check that new valid backups exist before deleting old ones.
 	// This field is required.
 	Storage *EtcdBackupPolicyStorageApplyConfiguration `json:"storage,omitempty"`
 	// retentionRules defines the policy for retaining and deleting completed backups.

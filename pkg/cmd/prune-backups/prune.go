@@ -77,7 +77,7 @@ func (r *PruneOpts) AddFlags(cmd *cobra.Command) {
 	// the defaults are zero for validation, we inject the real defaults from the periodic backup controller
 	flagSet.IntVar(&r.MaxNumberOfBackups, "maxNumberOfBackups", 0, "how many backups to keep when type=RetentionNumber")
 	flagSet.IntVar(&r.MaxSizeOfBackupsGb, "maxSizeOfBackupsGb", 0, "how many gigabytes of backups to keep when type=RetentionSize")
-	flagSet.StringSliceVar(&r.Files, "files", r.Files, "the name of files to delete when type=Files")
+	flagSet.StringSliceVar(&r.Files, "files", r.Files, "the name of files to delete when type=Files. If directory is passed, only directly nested backup files will be deleted.")
 	flagSet.StringVar(&r.BackupPath, "backupPath", BasePath, "path for backups to be pruned")
 
 	// adding klog flags to tune verbosity better
@@ -255,13 +255,16 @@ func deleteByName(files []string, backupPath string) error {
 
 func listBackupFiles(dirName string) ([]string, error) {
 	var files []string
-	err := fs.WalkDir(os.DirFS(dirName), ".", func(path string, d fs.DirEntry, err error) error {
-		if !d.IsDir() && backupFilePattern.MatchString(path) {
-			files = append(files, path)
+	entries, err := os.ReadDir(dirName)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && backupFilePattern.MatchString(entry.Name()) {
+			files = append(files, path.Join(dirName, entry.Name()))
 		}
-		return nil
-	})
-	return files, err
+	}
+	return files, nil
 }
 
 func listAllBackupFolders(backupPath string) (backupDirStats, error) {

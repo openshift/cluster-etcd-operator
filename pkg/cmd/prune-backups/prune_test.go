@@ -1,7 +1,6 @@
 package prune_backups
 
 import (
-	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -139,6 +138,23 @@ func TestDeleteByName(t *testing.T) {
 		require.NoError(t, err)
 		requireFoldersExist(t, temp, []string{})
 	})
+}
+
+func TestDeleteByNameNested(t *testing.T) {
+	temp, err := os.MkdirTemp("", "TestDeleteByName")
+	t.Cleanup(func() {
+		_ = os.RemoveAll(temp)
+	})
+	require.NoError(t, err)
+	parentDir, parentFile := makefile(t, temp, "backup-parent", randBytes(5))
+	_, childFile := makefile(t, temp, "backup-parent/backup-child", randBytes(5))
+
+	requireFiles(t, []string{parentFile, childFile}, true)
+
+	err = deleteByName([]string{parentDir}, temp)
+	require.NoError(t, err)
+	requireFiles(t, []string{childFile}, true)
+	requireFiles(t, []string{parentFile}, false)
 }
 
 func TestValidateFileNames(t *testing.T) {
@@ -289,6 +305,7 @@ func randBytes(n int) []byte {
 }
 
 func requireFoldersExist(t *testing.T, basePath string, expectedFolders []string) {
+	t.Helper()
 	dir, err := os.ReadDir(basePath)
 	require.NoError(t, err)
 	require.Equal(t, len(expectedFolders), len(dir), "unexpected amount of directories found")
@@ -305,9 +322,7 @@ func requireFiles(t *testing.T, files []string, exist bool) {
 	var actualFiles []string
 	for _, fileName := range files {
 		if _, err := os.Stat(fileName); err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
-				require.NoError(t, err)
-			}
+			require.ErrorIs(t, err, os.ErrNotExist)
 		} else {
 			actualFiles = append(actualFiles, fileName)
 		}
@@ -323,7 +338,7 @@ func requireFiles(t *testing.T, files []string, exist bool) {
 func makefile(t *testing.T, temp, dir string, data []byte) (dirName, fileName string) {
 	t.Helper()
 	dirName = path.Join(temp, dir)
-	fileName = path.Join(temp, dir, "snapshot.snap")
+	fileName = path.Join(temp, dir, "snapshot_"+time.Now().Format("2006-01-02_150405")+".db")
 	require.NoError(t, os.MkdirAll(dirName, 0750))
 	require.NoError(t, os.WriteFile(fileName, data, 0600))
 	return dirName, fileName

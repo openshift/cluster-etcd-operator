@@ -97,6 +97,7 @@ type EtcdBackupPolicySpec struct {
 
 	// storage specifies the location where etcd backup files will be saved.
 	// EtcdBackup storage is derived from this field.
+	// In rare cases, where storage type is changed from PVC to Local with AllNodes distribution on an existing policy, old backups on the PVC may need to be manually pruned. Make sure to check that new valid backups exist before deleting old ones.
 	// This field is required.
 	// +required
 	Storage EtcdBackupPolicyStorage `json:"storage,omitzero"`
@@ -222,7 +223,7 @@ type EtcdBackupPolicyRetentionQuantity struct {
 	// maxQuantity enforces the deletion of completed backups that exceed the total count.
 	// The total count of completed backups may temporarily exceed the limit when new backups are completed. Older backups are not deleted until a new one has succeeded.
 	// Must be between 1 and 1000.
-	// Thius field is required.
+	// This field is required.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=1000
 	// +required

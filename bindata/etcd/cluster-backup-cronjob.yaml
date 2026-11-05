@@ -15,6 +15,7 @@ spec:
       labels:
         app: cluster-backup-cronjob
     spec:
+      activeDeadlineSeconds: 1800
       template:
         metadata:
           annotations:

@@ -110,6 +110,10 @@ func NewBackupPolicyController(
 				for _, backupPolicy := range backupPolicies {
 					syncCtx.Queue().Add(backupPolicy.Name)
 				}
+				if len(backupPolicies) == 0 {
+					// Sync on empty string to satisfy liveness checker
+					syncCtx.Queue().Add("")
+				}
 				updateControllerDegradedCondition(ctx, staticPodOperatorClient, operatorv1.ConditionFalse, "AsExpected")
 			}, 1*time.Minute)
 			return nil
@@ -126,6 +130,9 @@ func (c *BackupPolicyController) sync(ctx context.Context, syncCtx factory.SyncC
 	}
 
 	backupPolicyName := syncCtx.QueueKey()
+	if backupPolicyName == "" {
+		return nil
+	}
 	backupPolicy, err := c.backupPoliciesLister.Get(backupPolicyName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
