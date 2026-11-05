@@ -238,15 +238,15 @@ func mergeAlertAgentResource(name pacmkrv1.PacemakerClusterAlertAgentName, confi
 		now,
 	)
 
-	// Healthy is the aggregate of the two sub-signals. It can only be decided when both were observed
-	// this run; otherwise it is carried forward (or reported Pending) like the sub-conditions.
+	// Aggregate the merged conditions so a confirmed failure overrides an unobserved signal.
+	// Success requires both conditions to be True, including any carried-forward observations.
 	var healthyFresh *alertAgentObservation
-	if configured != nil && available != nil {
-		ok := configured.ok && available.ok
+	ok := configuredCond.Status == metav1.ConditionTrue && availableCond.Status == metav1.ConditionTrue
+	if ok || configuredCond.Status == metav1.ConditionFalse || availableCond.Status == metav1.ConditionFalse {
 		healthyFresh = &alertAgentObservation{
 			ok:     ok,
 			reason: alertHealthyReason(ok),
-			msg:    alertHealthyMessage(ok, configured, available),
+			msg:    alertHealthyMessage(ok, configuredCond, availableCond),
 		}
 	}
 	healthyCond := mergeCondition(
@@ -271,16 +271,16 @@ func alertHealthyReason(ok bool) string {
 	return pacmkrv1.AlertAgentHealthyReasonUnhealthy
 }
 
-func alertHealthyMessage(ok bool, configured, available *alertAgentObservation) string {
+func alertHealthyMessage(ok bool, configured, available metav1.Condition) string {
 	if ok {
 		return "alert agent is registered in the CIB and its script is present on this node"
 	}
 	var problems []string
-	if configured != nil && !configured.ok {
-		problems = append(problems, configured.msg)
+	if configured.Status == metav1.ConditionFalse {
+		problems = append(problems, configured.Message)
 	}
-	if available != nil && !available.ok {
-		problems = append(problems, available.msg)
+	if available.Status == metav1.ConditionFalse {
+		problems = append(problems, available.Message)
 	}
 	return strings.Join(problems, "; ")
 }
@@ -355,17 +355,16 @@ func applyAlertAgentStatus(
 // applyAlertAgentEntries builds the merged alertAgents[] entries for a single node and, alongside
 // them, an aggregate observation for the node's AlertAgentsHealthy condition. To avoid synthesizing a
 // phantom all-Pending entry before any signal has ever been observed, an agent is skipped entirely
-// when it has neither a fresh signal this run nor a carried-forward entry. The aggregate is only
-// decided (non-nil) when every entry that does exist for this node has a freshly-decided Healthy value
-// this run; otherwise it is nil ("not decided this run"), so the node condition carries forward or
-// reports Pending rather than flip-flopping on a partial observation.
+// when it has neither a fresh signal this run nor a carried-forward entry. The aggregate uses the
+// merged Healthy conditions: any False makes the node aggregate unhealthy, and all True makes it
+// healthy. Otherwise it is nil, so the node condition carries forward or remains absent.
 func applyAlertAgentEntries(agents, existing []pacmkrv1.PacemakerClusterAlertAgentStatus, freshAgents, freshScripts map[pacmkrv1.PacemakerClusterAlertAgentName]*alertAgentObservation, now metav1.Time) ([]pacmkrv1.PacemakerClusterAlertAgentStatus, *alertAgentObservation) {
 	existingByName := make(map[pacmkrv1.PacemakerClusterAlertAgentName]*pacmkrv1.PacemakerClusterAlertAgentStatus, len(existing))
 	for i := range existing {
 		existingByName[existing[i].Name] = &existing[i]
 	}
 
-	var appended, freshDecided, healthyCount int
+	var appended, unhealthyCount, healthyCount int
 	for _, ac := range pcs.AlertConfigs {
 		name, known := alertAgentNameByID[ac.ID]
 		if !known {
@@ -384,19 +383,20 @@ func applyAlertAgentEntries(agents, existing []pacmkrv1.PacemakerClusterAlertAge
 		if configuredObs == nil && availableObs == nil && existingEntry == nil {
 			continue
 		}
-		agents = append(agents, mergeAlertAgentResource(name, configuredObs, availableObs, existingEntry, now))
+		agent := mergeAlertAgentResource(name, configuredObs, availableObs, existingEntry, now)
+		agents = append(agents, agent)
 		appended++
 
-		if configuredObs != nil && availableObs != nil {
-			freshDecided++
-			if configuredObs.ok && availableObs.ok {
-				healthyCount++
-			}
+		switch getConditionStatus(agent.Conditions, pacmkrv1.AlertAgentHealthyConditionType) {
+		case metav1.ConditionTrue:
+			healthyCount++
+		case metav1.ConditionFalse:
+			unhealthyCount++
 		}
 	}
 
 	var nodeHealthy *alertAgentObservation
-	if appended > 0 && freshDecided == appended {
+	if unhealthyCount > 0 || (appended > 0 && healthyCount == appended) {
 		ok := healthyCount == appended
 		nodeHealthy = &alertAgentObservation{
 			ok:     ok,

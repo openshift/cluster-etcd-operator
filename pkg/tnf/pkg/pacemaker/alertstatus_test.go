@@ -426,6 +426,122 @@ func TestApplyAlertAgentStatus_UnhealthyAlertAgentFoldsIntoNodeAndClusterHealthy
 		"one unhealthy node must fold into cluster.Healthy")
 }
 
+func TestApplyAlertAgentStatus_PartialFailureReachesHealthCheck(t *testing.T) {
+	taint := pacmkrv1.PacemakerClusterAlertAgentNameTaint
+	missingConfig := observedAll()
+	delete(missingConfig, pcs.AlertConfigs[0].ID)
+	misconfigured := observedAll()
+	wrongPath := misconfigured[pcs.AlertConfigs[0].ID]
+	wrongPath.Path = "/wrong/path.sh"
+	misconfigured[pcs.AlertConfigs[0].ID] = wrongPath
+	goodScripts := map[string]map[pacmkrv1.PacemakerClusterAlertAgentName]*alertAgentObservation{
+		"master-0": alertAgentScriptObservationsFromMCOState("Done", ""),
+		"master-1": alertAgentScriptObservationsFromMCOState("Done", ""),
+	}
+
+	for _, tc := range []struct {
+		name       string
+		configured map[pacmkrv1.PacemakerClusterAlertAgentName]*alertAgentObservation
+		scripts    map[string]map[pacmkrv1.PacemakerClusterAlertAgentName]*alertAgentObservation
+		failedType string
+		issue      string
+		wantErrors int
+	}{
+		{
+			name:       "missing registration while node list fails",
+			configured: alertAgentStatusesFromObserved(missingConfig),
+			failedType: pacmkrv1.AlertAgentConfiguredConditionType,
+			issue:      "not registered in the CIB",
+			wantErrors: 2,
+		},
+		{
+			name:       "misconfigured registration while node list fails",
+			configured: alertAgentStatusesFromObserved(misconfigured),
+			failedType: pacmkrv1.AlertAgentConfiguredConditionType,
+			issue:      "misconfigured",
+			wantErrors: 2,
+		},
+		{
+			name: "missing script while registration query fails",
+			scripts: map[string]map[pacmkrv1.PacemakerClusterAlertAgentName]*alertAgentObservation{
+				"master-0": alertAgentScriptObservationsFromMCOState(mcoStateDegraded, "missing "+pcs.AlertConfigs[0].Path),
+				"master-1": goodScripts["master-1"],
+			},
+			failedType: pacmkrv1.AlertAgentAvailableConditionType,
+			issue:      "missing " + pcs.AlertConfigs[0].Path,
+			wantErrors: 1,
+		},
+	} {
+		for _, previouslyHealthy := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/previouslyHealthy=%t", tc.name, previouslyHealthy), func(t *testing.T) {
+				now := metav1.Now()
+				old := metav1.NewTime(now.Add(-time.Minute))
+				newStatus := func(at metav1.Time) *pacmkrv1.PacemakerClusterStatus {
+					return healthyClusterStatus(at, []pacmkrv1.PacemakerClusterNodeStatus{
+						createHealthyNodeStatus("master-0", []string{"192.168.1.10"}),
+						createHealthyNodeStatus("master-1", []string{"192.168.1.11"}),
+					})
+				}
+				var existing *pacmkrv1.PacemakerClusterStatus
+				if previouslyHealthy {
+					existing = newStatus(old)
+					applyAlertAgentStatus(existing, nil, alertAgentStatusesFromObserved(observedAll()), goodScripts, old, true)
+					require.Equal(t, StatusHealthy, BuildHealthStatusFromCR(&pacmkrv1.PacemakerCluster{Status: *existing}).OverallStatus)
+				}
+
+				status := newStatus(now)
+				applyAlertAgentStatus(status, existing, tc.configured, tc.scripts, now, true)
+				for _, phase := range []string{"failure observed", "both queries unavailable"} {
+					if phase == "both queries unavailable" {
+						existing = status
+						status = newStatus(metav1.NewTime(now.Add(time.Second)))
+						applyAlertAgentStatus(status, existing, nil, nil, status.LastUpdated, true)
+					}
+					node := (*status.Nodes)[0]
+					agent := alertEntry(node, taint)
+					require.NotNil(t, agent)
+					require.Equal(t, metav1.ConditionFalse, getConditionStatus(agent.Conditions, tc.failedType), phase)
+					healthy := FindCondition(agent.Conditions, pacmkrv1.AlertAgentHealthyConditionType)
+					require.Equal(t, metav1.ConditionFalse, healthy.Status, phase)
+					require.Contains(t, healthy.Message, tc.issue)
+					require.Equal(t, now, healthy.LastTransitionTime)
+					nodeHealthy := FindCondition(node.Conditions, pacmkrv1.NodeAlertAgentsHealthyConditionType)
+					require.NotNil(t, nodeHealthy)
+					require.Equal(t, metav1.ConditionFalse, nodeHealthy.Status, phase)
+					require.Equal(t, now, nodeHealthy.LastTransitionTime)
+					require.Equal(t, metav1.ConditionFalse, getConditionStatus(node.Conditions, pacmkrv1.NodeHealthyConditionType), phase)
+					require.Equal(t, metav1.ConditionFalse, getConditionStatus(status.Conditions, pacmkrv1.ClusterHealthyConditionType), phase)
+					health := BuildHealthStatusFromCR(&pacmkrv1.PacemakerCluster{Status: *status})
+					require.Equal(t, StatusError, health.OverallStatus, phase)
+					require.Len(t, health.Errors, tc.wantErrors)
+					for _, issue := range health.Errors {
+						require.Contains(t, issue, string(taint))
+						require.Contains(t, issue, tc.issue)
+					}
+				}
+
+				if previouslyHealthy {
+					// Recovery needs only the failed source to refresh: the other source's
+					// previously healthy condition remains valid under the carry-forward policy.
+					recovered := newStatus(metav1.NewTime(now.Add(2 * time.Second)))
+					var configured map[pacmkrv1.PacemakerClusterAlertAgentName]*alertAgentObservation
+					var scripts map[string]map[pacmkrv1.PacemakerClusterAlertAgentName]*alertAgentObservation
+					if tc.configured != nil {
+						configured = alertAgentStatusesFromObserved(observedAll())
+					} else {
+						scripts = goodScripts
+					}
+					applyAlertAgentStatus(recovered, status, configured, scripts, recovered.LastUpdated, true)
+					require.Equal(t, metav1.ConditionTrue, getConditionStatus(recovered.Conditions, pacmkrv1.ClusterHealthyConditionType))
+					health := BuildHealthStatusFromCR(&pacmkrv1.PacemakerCluster{Status: *recovered})
+					require.Equal(t, StatusHealthy, health.OverallStatus)
+					require.Empty(t, health.Errors)
+				}
+			})
+		}
+	}
+}
+
 func TestApplyAlertAgentStatus_FeatureGateControlsCarryForwardAndHealth(t *testing.T) {
 	now := metav1.Now()
 	base := healthyClusterStatus(now, []pacmkrv1.PacemakerClusterNodeStatus{
