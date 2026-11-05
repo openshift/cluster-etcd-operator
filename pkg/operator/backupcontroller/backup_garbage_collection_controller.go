@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/types"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/kubernetes"
 	batchv1client "k8s.io/client-go/kubernetes/typed/batch/v1"
 	batchv1listers "k8s.io/client-go/listers/batch/v1"
@@ -129,9 +130,10 @@ func (c *BackupGarbageCollectionController) sync(ctx context.Context, syncCtx fa
 		return err
 	}
 
-	newGC, err := c.syncBackups(ctx, activeBackupGC)
+	var errs []error
+	newGC, pendingFinalizers, err := c.syncBackups(ctx, activeBackupGC)
 	if err != nil {
-		return err
+		errs = append(errs, err)
 	}
 
 	// Finalize completed jobs so their TTL can clean them up. Failed jobs keep the finalizer until a retry replaces them.
@@ -139,12 +141,15 @@ func (c *BackupGarbageCollectionController) sync(ctx context.Context, syncCtx fa
 	for key, job := range jobsByStorage {
 		var shouldFinalize bool
 		if isJobCompleted(job) {
-			shouldFinalize = true
+			// Finalizing drops the job's owner references, which record the backups it collected. Keep them until every
+			// owning backup's finalizer is removed, otherwise those backups would be garbage collected again.
+			shouldFinalize = !ownsAnyBackup(job, pendingFinalizers)
 		} else if isJobFailed(job) {
 			if storage, ok := parseStorageKey(key); ok {
 				storageExists, err := storageBackendExists(c.nodesLister, c.pvcsLister, storage)
 				if err != nil {
-					return err
+					errs = append(errs, err)
+					continue
 				}
 				shouldFinalize = !storageExists
 			} else {
@@ -160,7 +165,8 @@ func (c *BackupGarbageCollectionController) sync(ctx context.Context, syncCtx fa
 					delete(jobsByStorage, key)
 					continue
 				}
-				return fmt.Errorf("BackupGarbageCollectionController error: %w", err)
+				errs = append(errs, fmt.Errorf("BackupGarbageCollectionController error: %w", err))
+				continue
 			}
 			jobsByStorage[key] = finalizedJob
 		}
@@ -189,15 +195,20 @@ func (c *BackupGarbageCollectionController) sync(ctx context.Context, syncCtx fa
 				syncCtx.Queue().AddAfter(syncCtx.QueueKey(), duration)
 				continue
 			}
+			if ownsAnyBackup(job, pendingFinalizers) {
+				// Completed job still records backups whose finalizer has not been removed, replace it once they are
+				continue
+			}
 			// Job is finished and no backoff required, delete before creating a new one
 			if err := deleteJob(ctx, jobsClient, job); err != nil {
-				return fmt.Errorf("BackupGarbageCollectionController error: %w", err)
+				errs = append(errs, fmt.Errorf("BackupGarbageCollectionController error: %w", err))
+				continue
 			}
 			klog.Infof("BackupGarbageCollectionController deleted job %s for storage backend %s", job.Name, storageKey)
 		}
 
 		if err := createGarbageCollectionJob(ctx, c.operatorImagePullSpec, jobsClient, storage, backups); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
 
@@ -207,7 +218,7 @@ func (c *BackupGarbageCollectionController) sync(ctx context.Context, syncCtx fa
 			c.retryQueue.Forget(key)
 		}
 	}
-	return nil
+	return utilerrors.NewAggregate(errs)
 }
 
 // collectJobs indexes GC jobs by storage backend, and reports whether GC of each backup in a completed or active job
@@ -236,14 +247,19 @@ func (c *BackupGarbageCollectionController) collectJobs() (jobsByStorage map[str
 	return jobsByStorage, activeBackupGC, nil
 }
 
-func (c *BackupGarbageCollectionController) syncBackups(ctx context.Context, activeGC map[types.UID]bool) (map[storageBackend][]*operatorv1alpha1.EtcdBackup, error) {
-	newGC := map[storageBackend][]*operatorv1alpha1.EtcdBackup{}
+// syncBackups removes the finalizer from deleted backups that need no further garbage collection, and returns the
+// backups that require a new GC job grouped by storage backend. pendingFinalizers holds the UIDs of backups whose GC
+// completed, but whose finalizer could not be removed.
+func (c *BackupGarbageCollectionController) syncBackups(ctx context.Context, activeGC map[types.UID]bool) (newGC map[storageBackend][]*operatorv1alpha1.EtcdBackup, pendingFinalizers map[types.UID]struct{}, err error) {
+	newGC = map[storageBackend][]*operatorv1alpha1.EtcdBackup{}
+	pendingFinalizers = map[types.UID]struct{}{}
 	backupsClient := c.operatorClient.EtcdBackups()
 	backups, err := c.backupsLister.List(labels.Everything())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
+	var errs []error
 	for _, backup := range backups {
 		if backup.DeletionTimestamp == nil || !slices.Contains(backup.Finalizers, backuphelpers.FinalizerEtcdBackup) {
 			continue
@@ -253,20 +269,31 @@ func (c *BackupGarbageCollectionController) syncBackups(ctx context.Context, act
 			// Remove backup finalizer if GC completed successfully
 			if completed {
 				if _, err := applyBackupFinalizer(ctx, backupsClient, backup, false); err != nil && !apierrors.IsNotFound(err) {
-					return nil, fmt.Errorf("BackupGarbageCollectionController failed to remove backup finalizer after GC completed: %w", err)
+					errs = append(errs, fmt.Errorf("BackupGarbageCollectionController failed to remove backup finalizer after GC completed: %w", err))
+					pendingFinalizers[backup.UID] = struct{}{}
 				}
 			}
 		} else if backuphelpers.IsBackupFinished(backup) {
 			if storage, requiresGC, err := isGarbageCollectionRequired(c.nodesLister, c.pvcsLister, backup); err != nil {
-				return nil, err
+				errs = append(errs, err)
 			} else if requiresGC {
 				newGC[storage] = append(newGC[storage], backup)
 			} else if _, err := applyBackupFinalizer(ctx, backupsClient, backup, false); err != nil && !apierrors.IsNotFound(err) {
-				return nil, fmt.Errorf("BackupGarbageCollectionController failed to remove backup finalizer: %w", err)
+				errs = append(errs, fmt.Errorf("BackupGarbageCollectionController failed to remove backup finalizer: %w", err))
 			}
 		}
 	}
-	return newGC, nil
+	return newGC, pendingFinalizers, utilerrors.NewAggregate(errs)
+}
+
+// ownsAnyBackup reports whether any of the job's EtcdBackup owner references is in backupUIDs.
+func ownsAnyBackup(job *batchv1.Job, pendingBackupFinalizers map[types.UID]struct{}) bool {
+	for _, ownerRef := range job.OwnerReferences {
+		if _, ok := pendingBackupFinalizers[ownerRef.UID]; ok && ownerRef.Kind == "EtcdBackup" {
+			return true
+		}
+	}
+	return false
 }
 
 func createGarbageCollectionJob(ctx context.Context,
@@ -320,7 +347,7 @@ func createGarbageCollectionJob(ctx context.Context,
 
 		paths := map[string]struct{}{}
 		for _, backup := range backups {
-			hostPath := backup.Spec.Storage.Local.HostPath
+			hostPath := filepath.Clean(backup.Spec.Storage.Local.HostPath)
 			if hostPath == "" {
 				hostPath = backupPathMount
 			}
@@ -330,7 +357,7 @@ func createGarbageCollectionJob(ctx context.Context,
 				}
 			} else {
 				// Infer file directory from host path and backup name
-				gcFiles = append(gcFiles, filepath.Join(backupPathMount, filepath.Clean(hostPath), backup.Name))
+				gcFiles = append(gcFiles, filepath.Join(backupPathMount, hostPath, backup.Name))
 			}
 
 			if _, ok := paths[hostPath]; !ok {

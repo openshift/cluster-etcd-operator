@@ -25,7 +25,7 @@ type EtcdBackupStatusApplyConfiguration struct {
 	JobName *string `json:"jobName,omitempty"`
 	// nodeName is used for Local EtcdBackups to bind the control plane node where the snapshot will be taken.
 	// It is set by the cluster-etcd-operator before the Local backup runs to ensure the file location is known for garbage collection.
-	// Must be between 1 and 63 characters and conform to RFC 1123 subdomain format:
+	// Must be between 1 and 253 characters and conform to RFC 1123 subdomain format:
 	// lowercase alphanumeric characters, '-' or '.', starting and ending with alphanumeric characters.
 	// This field is optional.
 	NodeName *string `json:"nodeName,omitempty"`

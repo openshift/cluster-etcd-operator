@@ -2,6 +2,7 @@ package backupcontroller
 
 import (
 	"fmt"
+	"time"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 )
@@ -30,6 +31,8 @@ type activeBackupCache struct {
 type activeBackup struct {
 	storageType       operatorv1alpha1.EtcdBackupStorageType
 	nodeName, pvcName string
+	// addedAt is when the backup was first cached as active
+	addedAt time.Time
 }
 
 // newActiveBackup returns the resources held by a backup.
@@ -41,7 +44,7 @@ func newActiveBackup(backup *operatorv1alpha1.EtcdBackup) activeBackup {
 	case operatorv1alpha1.EtcdBackupStorageTypePVC:
 		pvcName = backup.Spec.Storage.PVC.Name
 	}
-	return activeBackup{storageType: backup.Spec.Storage.Type, nodeName: nodeName, pvcName: pvcName}
+	return activeBackup{storageType: backup.Spec.Storage.Type, nodeName: nodeName, pvcName: pvcName, addedAt: time.Now()}
 }
 
 func (abc activeBackupCache) isActive(backupName string) bool {
@@ -49,10 +52,17 @@ func (abc activeBackupCache) isActive(backupName string) bool {
 	return ok
 }
 
+// isStale reports whether the backup has been cached as active for longer than the given duration.
+func (abc activeBackupCache) isStale(backupName string, d time.Duration) bool {
+	active, ok := abc.backups[backupName]
+	return ok && time.Since(active.addedAt) > d
+}
+
 func (abc *activeBackupCache) add(backup *operatorv1alpha1.EtcdBackup) {
 	backupName := backup.Name
 	active := newActiveBackup(backup)
 	if existing, ok := abc.backups[backupName]; ok {
+		active.addedAt = existing.addedAt
 		// A Local backup's node is assigned once and never cleared. An empty node name means the backup object is
 		// stale (informer lag), so keep the existing reservation rather than releasing a node that may still be in use.
 		if active.storageType == operatorv1alpha1.EtcdBackupStorageTypeLocal && existing.storageType == active.storageType && active.nodeName == "" {

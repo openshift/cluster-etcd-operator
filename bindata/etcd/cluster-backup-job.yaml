@@ -5,8 +5,8 @@ metadata:
   namespace: openshift-etcd
   labels:
     app: cluster-backup-job
-    backup-name: templated
 spec:
+  activeDeadlineSeconds: 1800
   backoffLimit: 2
   template:
     metadata:

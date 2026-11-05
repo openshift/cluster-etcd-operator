@@ -1,6 +1,7 @@
 package backupcontroller
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -35,7 +36,9 @@ type testCaseBackupGarbageCollectionController struct {
 	pvcs        []*corev1.PersistentVolumeClaim
 	expectError bool
 	retryQueue  *gcRetryQueue
-	validate    func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset)
+	// operatorReactors are prepended to the fake operator client before the controller syncs
+	operatorReactors []k8stesting.SimpleReactor
+	validate         func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset)
 }
 
 func runBackupGarbageCollectionControllerTest(t *testing.T, tc testCaseBackupGarbageCollectionController) {
@@ -50,6 +53,10 @@ func runBackupGarbageCollectionControllerTest(t *testing.T, tc testCaseBackupGar
 
 	client := k8sfakeclient.NewSimpleClientset(k8sObjs...)
 	operatorFake := fake.NewSimpleClientset(operatorObjs...)
+
+	for _, reactor := range tc.operatorReactors {
+		operatorFake.PrependReactor(reactor.Verb, reactor.Resource, reactor.Reaction)
+	}
 
 	sharedFactory := informers.NewSharedInformerFactory(client, 0)
 	operatorSharedFactory := operatorinformers.NewSharedInformerFactory(operatorFake, 0)
@@ -680,6 +687,62 @@ func TestBackupGarbageCollectionCompletedJobsFinalized(t *testing.T) {
 					require.Contains(t, job.Finalizers, backuphelpers.FinalizerEtcdBackup)
 				}
 			}
+		},
+	})
+}
+
+func TestBackupGarbageCollectionCompletedJobKeptUntilFinalizersRemoved(t *testing.T) {
+	// GC completed for a backup, but removing its finalizer fails. The completed job must keep its owner references
+	// (and must not be replaced by a new job), otherwise the backup would be garbage collected again.
+	collected := testutils.FakeEtcdBackup("collected", testutils.WithBackupCompleted(), testutils.WithBackupDeleted(),
+		testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
+			Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+			PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-pvc"},
+		}))
+	queued := testutils.FakeEtcdBackup("queued", testutils.WithBackupCompleted(), testutils.WithBackupDeleted(),
+		testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
+			Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+			PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-pvc"},
+		}))
+	completedJob := &batchv1.Job{
+		ObjectMeta: v1.ObjectMeta{
+			Name:        "completed-backup-gc-job",
+			Namespace:   operatorclient.TargetNamespace,
+			Annotations: map[string]string{backuphelpers.AnnotationBackupStorage: "pvc/test-pvc"},
+			Labels:      map[string]string{"app": backupGCAppName},
+			Finalizers:  []string{backuphelpers.FinalizerEtcdBackup},
+			OwnerReferences: []v1.OwnerReference{{
+				APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: collected.Name, UID: collected.UID,
+			}},
+		},
+		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
+			Type: batchv1.JobComplete, Status: corev1.ConditionTrue,
+		}}},
+	}
+
+	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
+		backups: []*operatorv1alpha1.EtcdBackup{collected, queued},
+		jobs:    []*batchv1.Job{completedJob},
+		pvcs:    []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-pvc")},
+		operatorReactors: []k8stesting.SimpleReactor{{
+			Verb:     "patch",
+			Resource: "etcdbackups",
+			Reaction: func(action k8stesting.Action) (bool, runtime.Object, error) {
+				return true, nil, fmt.Errorf("injected finalizer removal failure")
+			},
+		}},
+		expectError: true,
+		validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			job, err := client.BatchV1().Jobs(operatorclient.TargetNamespace).Get(t.Context(), completedJob.Name, v1.GetOptions{})
+			require.NoError(t, err)
+			require.Contains(t, job.Finalizers, backuphelpers.FinalizerEtcdBackup)
+			require.Equal(t, completedJob.OwnerReferences, job.OwnerReferences)
+
+			jobList, err := client.BatchV1().Jobs(operatorclient.TargetNamespace).List(t.Context(), v1.ListOptions{
+				LabelSelector: labels.Set{"app": backupGCAppName}.String(),
+			})
+			require.NoError(t, err)
+			require.Len(t, jobList.Items, 1, "expected completed job to not be replaced")
 		},
 	})
 }

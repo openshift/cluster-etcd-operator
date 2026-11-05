@@ -298,18 +298,17 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 	for _, backup := range toCreate {
 		backupName := backup.Name
 		if _, err := backupClient.Create(ctx, backup, v1.CreateOptions{}); err != nil {
-			if !apierrors.IsAlreadyExists(err) {
-				klog.Warningf("Failed to create EtcdBackup %q: %v", backupName, err)
-				errs = append(errs, err)
-			} else {
+			if apierrors.IsAlreadyExists(err) {
 				// Check existing during name conflict. If it belongs to this policy run, then ignore the error.
 				existingBackup, getErr := backupClient.Get(ctx, backup.Name, v1.GetOptions{})
 				if getErr != nil {
 					errs = append(errs, fmt.Errorf("failed to fetch backup with conflicting name %q: %w", backup.Name, getErr))
-				}
-				if existingBackup.Labels[backuphelpers.LabelEtcdBackupPolicy] != backupPolicy.Name || existingBackup.Labels[backuphelpers.LabelEtcdBackupPolicyRun] != name {
+				} else if existingBackup.Labels[backuphelpers.LabelEtcdBackupPolicy] != backupPolicy.Name || existingBackup.Labels[backuphelpers.LabelEtcdBackupPolicyRun] != name {
 					errs = append(errs, fmt.Errorf("etcdbackup name conflict on %q: existing backup does not belong to this policy run: %w", backup.Name, err))
 				}
+			} else {
+				klog.Warningf("Failed to create EtcdBackup %q: %v", backupName, err)
+				errs = append(errs, err)
 			}
 		} else {
 			klog.Infof("created EtcdBackup %q", backupName)

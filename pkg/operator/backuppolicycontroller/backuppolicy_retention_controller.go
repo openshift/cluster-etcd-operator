@@ -95,6 +95,10 @@ func NewBackupPolicyRetentionController(
 				for _, backupPolicy := range backupPolicies {
 					syncCtx.Queue().AddAfter(backupPolicy.Name, pruneDebounce)
 				}
+				if len(backupPolicies) == 0 {
+					// Sync on empty string to satisfy liveness checker
+					syncCtx.Queue().Add("")
+				}
 			}, 5*time.Minute)
 			return nil
 		}).
@@ -110,6 +114,9 @@ func (c *BackupPolicyRetentionController) sync(ctx context.Context, syncCtx fact
 	}
 
 	backupPolicyName := syncCtx.QueueKey()
+	if backupPolicyName == "" {
+		return nil
+	}
 	backupPolicy, err := c.backupPoliciesLister.Get(backupPolicyName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {

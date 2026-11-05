@@ -13,7 +13,6 @@ import (
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorv1alpha1client "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
 	operatorv1alpha1listers "github.com/openshift/client-go/operator/listers/operator/v1alpha1"
@@ -25,7 +24,6 @@ import (
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/resource/resourceapply"
-	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -60,7 +58,6 @@ func NewBackupPolicyController(
 	cronJobLister batchv1listers.CronJobNamespaceLister,
 	operatorClient operatorv1alpha1client.OperatorV1alpha1Interface,
 	kubeClient kubernetes.Interface,
-	staticPodOperatorClient v1helpers.OperatorClient,
 	eventRecorder events.Recorder,
 	operatorImagePullSpec string,
 	accessor featuregates.FeatureGateAccess,
@@ -103,14 +100,16 @@ func NewBackupPolicyController(
 				backupPolicies, err := c.backupPoliciesLister.List(labels.Everything())
 				if err != nil {
 					klog.Warningf("BackupPolicyController failed to list EtcdBackupPolicies for queueing: %s", err)
-					updateControllerDegradedCondition(ctx, staticPodOperatorClient, operatorv1.ConditionTrue, "Error")
 					return
 				}
 
 				for _, backupPolicy := range backupPolicies {
 					syncCtx.Queue().Add(backupPolicy.Name)
 				}
-				updateControllerDegradedCondition(ctx, staticPodOperatorClient, operatorv1.ConditionFalse, "AsExpected")
+				if len(backupPolicies) == 0 {
+					// Sync on empty string to satisfy liveness checker
+					syncCtx.Queue().Add("")
+				}
 			}, 1*time.Minute)
 			return nil
 		}).
@@ -126,6 +125,9 @@ func (c *BackupPolicyController) sync(ctx context.Context, syncCtx factory.SyncC
 	}
 
 	backupPolicyName := syncCtx.QueueKey()
+	if backupPolicyName == "" {
+		return nil
+	}
 	backupPolicy, err := c.backupPoliciesLister.Get(backupPolicyName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -173,7 +175,7 @@ func (c *BackupPolicyController) reconcileCronJob(ctx context.Context, backupPol
 		_, err := cronJobClient.Create(ctx, cronJob, v1.CreateOptions{})
 		if err != nil {
 			var updateErr error
-			if !apierrors.IsConflict(err) {
+			if !apierrors.IsAlreadyExists(err) {
 				updateErr = c.updateScheduledCondition(ctx, backupPolicy, operatorv1alpha1.BackupPolicySchedulingFailed, "failed to create CronJob", v1.ConditionFalse)
 			}
 			return utilerrors.NewAggregate([]error{fmt.Errorf("BackupPolicyController failed to create cronjob %s: %w", cronJob.Name, err), updateErr})
@@ -251,23 +253,16 @@ func newCronJob(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, operatorImagePu
 	return cronJob, nil
 }
 
-func updateControllerDegradedCondition(ctx context.Context, operatorClient v1helpers.OperatorClient, status operatorv1.ConditionStatus, reason string) {
-	_, _, updateErr := v1helpers.UpdateStatus(ctx, operatorClient, v1helpers.UpdateConditionFn(operatorv1.OperatorCondition{
-		Type:   "BackupPolicyControllerDegraded",
-		Status: status,
-		Reason: reason,
-	}))
-	if updateErr != nil {
-		klog.V(4).Infof("BackupPolicyController error during UpdateStatus: %v", updateErr)
-	}
-}
-
 func updateCondition(conditions []v1.Condition, updated v1.Condition) ([]v1.Condition, bool) {
 	idx := slices.IndexFunc(conditions, func(c v1.Condition) bool {
 		return c.Type == updated.Type
 	})
 	if idx >= 0 {
 		if conditionsDiffer(conditions[idx], updated) {
+			if conditions[idx].Status == updated.Status {
+				// Transition time only changes when the status changes
+				updated.LastTransitionTime = conditions[idx].LastTransitionTime
+			}
 			conditions[idx] = updated
 			return conditions, true
 		}

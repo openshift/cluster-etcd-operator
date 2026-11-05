@@ -14,6 +14,7 @@ rules:
     resources:
       - "etcdbackups"
     verbs:
+      - "get"
       - "list"
       - "create"
   - apiGroups:

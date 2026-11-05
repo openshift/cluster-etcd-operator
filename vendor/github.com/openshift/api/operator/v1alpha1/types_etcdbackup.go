@@ -186,11 +186,11 @@ type EtcdBackupStatus struct {
 
 	// nodeName is used for Local EtcdBackups to bind the control plane node where the snapshot will be taken.
 	// It is set by the cluster-etcd-operator before the Local backup runs to ensure the file location is known for garbage collection.
-	// Must be between 1 and 63 characters and conform to RFC 1123 subdomain format:
+	// Must be between 1 and 253 characters and conform to RFC 1123 subdomain format:
 	// lowercase alphanumeric characters, '-' or '.', starting and ending with alphanumeric characters.
 	// This field is optional.
 	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:XValidation:rule="!format.dns1123Subdomain().validate(self).hasValue()",message="nodeName must be a lowercase RFC 1123 subdomain consisting of lowercase alphanumeric characters, '-' or '.', and must start and end with an alphanumeric character"
 	// +optional
 	NodeName string `json:"nodeName,omitempty"`

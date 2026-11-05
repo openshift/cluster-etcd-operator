@@ -514,6 +514,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			backupsLister,
 			podsLister,
 			controlPlaneNodeLister,
+			pvcsLister,
 			operatorConfigClientv1Alpha1,
 			kubeClient,
 			controllerContext.EventRecorder,
@@ -522,7 +523,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			etcdBackupInformer.Informer(),
 			jobsInformer.Informer(),
 			podsInformer.Informer(),
-			controlPlaneNodeInformer)
+			controlPlaneNodeInformer,
+			pvcsInformer.Informer())
 		if err != nil {
 			return fmt.Errorf("could not start backupController, aborting controller start: %w", err)
 		}
@@ -533,7 +535,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			cronJobsLister,
 			operatorConfigClientv1Alpha1,
 			kubeClient,
-			operatorClient,
 			controllerContext.EventRecorder,
 			os.Getenv("OPERATOR_IMAGE"),
 			featureGateAccessor,
