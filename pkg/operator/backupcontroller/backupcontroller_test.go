@@ -462,6 +462,73 @@ func TestBackupFailedRequiresGC(t *testing.T) {
 			},
 		})
 	})
+	unknownExecution := func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+		requireNoBackupJobCreated(t, client)
+		requireBackupStatusApplied(t, operatorFake, []metav1.Condition{{
+			Type:    string(operatorv1alpha1.BackupFailed),
+			Reason:  string(operatorv1alpha1.BackupReasonJobFailed),
+			Message: "unable to determine backup job outcome",
+			Status:  metav1.ConditionTrue,
+		}}, nil)
+	}
+	t.Run("pod-missing", func(t *testing.T) {
+		// Job counted a failed pod that is absent from the cache, the backup container may have written files
+		jobCountedPod := job.DeepCopy()
+		jobCountedPod.Status.Failed = 1
+		runBackupControllerTest(t, testCaseBackupController{
+			backups:  []*operatorv1alpha1.EtcdBackup{backup},
+			jobs:     []*batchv1.Job{jobCountedPod},
+			validate: unknownExecution,
+		})
+	})
+	t.Run("pod-uncounted-missing", func(t *testing.T) {
+		// Pod terminated but is not yet counted and is absent from the cache
+		jobUncountedPod := job.DeepCopy()
+		jobUncountedPod.Status.UncountedTerminatedPods = &batchv1.UncountedTerminatedPods{Failed: []types.UID{"pod-uid"}}
+		runBackupControllerTest(t, testCaseBackupController{
+			backups:  []*operatorv1alpha1.EtcdBackup{backup},
+			jobs:     []*batchv1.Job{jobUncountedPod},
+			validate: unknownExecution,
+		})
+	})
+	t.Run("pod-terminating", func(t *testing.T) {
+		// Job still has a terminating pod that is absent from the cache
+		jobTerminatingPod := job.DeepCopy()
+		jobTerminatingPod.Status.Terminating = new(int32(1))
+		runBackupControllerTest(t, testCaseBackupController{
+			backups:  []*operatorv1alpha1.EtcdBackup{backup},
+			jobs:     []*batchv1.Job{jobTerminatingPod},
+			validate: unknownExecution,
+		})
+	})
+	t.Run("pod-stale-pre-start", func(t *testing.T) {
+		// Cached pod predates the backup container starting, even though the job has already failed
+		runBackupControllerTest(t, testCaseBackupController{
+			backups: []*operatorv1alpha1.EtcdBackup{backup},
+			jobs:    []*batchv1.Job{job},
+			pods: []*corev1.Pod{testutils.FakePod("failed-backup-job-pod-stale",
+				testutils.WithPodLabels(map[string]string{labelJobName: job.Name}),
+				testutils.WithPodOwner(v1.OwnerReference{Kind: "Job", Name: job.Name, UID: job.UID}),
+				testutils.WithCreationTimestamp(v1.Now()),
+				testutils.WithPodStatus(corev1.PodPending))},
+			validate: unknownExecution,
+		})
+	})
+	t.Run("pod-history-incomplete", func(t *testing.T) {
+		// Job accounted for more pods than are observable, a missing pod may have written files
+		jobWithRetries := job.DeepCopy()
+		jobWithRetries.Status.Failed = 2
+		runBackupControllerTest(t, testCaseBackupController{
+			backups: []*operatorv1alpha1.EtcdBackup{backup},
+			jobs:    []*batchv1.Job{jobWithRetries},
+			pods: []*corev1.Pod{testutils.FakePod("failed-backup-job-pod-init",
+				testutils.WithPodLabels(map[string]string{labelJobName: job.Name}),
+				testutils.WithPodOwner(v1.OwnerReference{Kind: "Job", Name: job.Name, UID: job.UID}),
+				testutils.WithCreationTimestamp(v1.Now()),
+				testutils.WithPodStatus(corev1.PodFailed))},
+			validate: unknownExecution,
+		})
+	})
 	t.Run("job-deleted", func(t *testing.T) {
 		runBackupControllerTest(t, testCaseBackupController{
 			backups: []*operatorv1alpha1.EtcdBackup{backup},
@@ -551,6 +618,69 @@ func TestBackupFailedNoGC(t *testing.T) {
 					Type:    string(operatorv1alpha1.BackupFailed),
 					Reason:  string(operatorv1alpha1.BackupReasonSetupFailed),
 					Message: "backup job failed without creating files",
+					Status:  metav1.ConditionTrue,
+				}}, nil)
+			},
+		})
+	})
+	t.Run("job-failed-without-pods", func(t *testing.T) {
+		// Job failed without ever accounting for a pod, so no backup container can have run
+		job := &batchv1.Job{
+			ObjectMeta: v1.ObjectMeta{
+				Name:       "failed-backup-job",
+				Namespace:  operatorclient.TargetNamespace,
+				Labels:     map[string]string{"app": backupAppName, backuphelpers.LabelEtcdBackup: "test-backup"},
+				Finalizers: []string{backuphelpers.FinalizerEtcdBackup}},
+			Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+				NodeName: "test-node"}}},
+			Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
+				Type:   batchv1.JobFailed,
+				Status: corev1.ConditionTrue}}}}
+		runBackupControllerTest(t, testCaseBackupController{
+			backups: []*operatorv1alpha1.EtcdBackup{
+				testutils.FakeEtcdBackup("test-backup", testutils.WithBackupRunning(job))},
+			jobs: []*batchv1.Job{job},
+			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+				requireNoBackupJobCreated(t, client)
+				requireBackupStatusApplied(t, operatorFake, []metav1.Condition{{
+					Type:    string(operatorv1alpha1.BackupFailed),
+					Reason:  string(operatorv1alpha1.BackupReasonSetupFailed),
+					Message: "backup job failed without creating pods",
+					Status:  metav1.ConditionTrue,
+				}}, nil)
+			},
+		})
+	})
+	t.Run("backup-container-never-started", func(t *testing.T) {
+		// All pods are terminal and none started the backup container, e.g. init container failed
+		job := &batchv1.Job{
+			ObjectMeta: v1.ObjectMeta{
+				Name:       "failed-backup-job",
+				Namespace:  operatorclient.TargetNamespace,
+				Labels:     map[string]string{"app": backupAppName, backuphelpers.LabelEtcdBackup: "test-backup"},
+				Finalizers: []string{backuphelpers.FinalizerEtcdBackup}},
+			Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+				NodeName: "test-node"}}},
+			Status: batchv1.JobStatus{Failed: 1, Conditions: []batchv1.JobCondition{{
+				Type:   batchv1.JobFailed,
+				Status: corev1.ConditionTrue}}}}
+		runBackupControllerTest(t, testCaseBackupController{
+			backups: []*operatorv1alpha1.EtcdBackup{
+				testutils.FakeEtcdBackup("test-backup", testutils.WithBackupRunning(job))},
+			jobs: []*batchv1.Job{job},
+			pods: []*corev1.Pod{
+				testutils.FakePod("failed-backup-job-pod",
+					testutils.WithPodLabels(map[string]string{labelJobName: job.Name}),
+					testutils.WithPodOwner(v1.OwnerReference{Kind: "Job", Name: job.Name, UID: job.UID}),
+					testutils.WithCreationTimestamp(v1.Now()),
+					testutils.WithPodStatus(corev1.PodFailed)),
+			},
+			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+				requireNoBackupJobCreated(t, client)
+				requireBackupStatusApplied(t, operatorFake, []metav1.Condition{{
+					Type:    string(operatorv1alpha1.BackupFailed),
+					Reason:  string(operatorv1alpha1.BackupReasonSetupFailed),
+					Message: "failed to verify storage",
 					Status:  metav1.ConditionTrue,
 				}}, nil)
 			},

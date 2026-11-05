@@ -622,8 +622,9 @@ func reconcileJobStatus(ctx context.Context,
 
 		var message string
 		var files []operatorv1alpha1.EtcdBackupFile
-		terminationMessage, started := findBackupTerminationMessage(pods)
-		if started {
+		terminationMessage, execution := findBackupTerminationMessage(job, pods)
+		switch execution {
+		case backupExecutionStarted:
 			// Backup container started, expect to be able to parse termination message
 			if termLog, err := parseTerminationMessage(terminationMessage); err == nil {
 				message, files = termLog.Message, termLog.Files
@@ -637,13 +638,19 @@ func reconcileJobStatus(ctx context.Context,
 			} else {
 				klog.Infof("BackupController failed to read termination message for backup %q: %v", backup.Name, err)
 			}
-		} else {
-			// Backup container never started, most likely the init container failed or PVC was unable to mount
+		case backupExecutionNotStarted:
+			// Every pod of the job is terminal and none started the backup container, most likely the init
+			// container failed or PVC was unable to mount. No files can have been written.
 			conditionReason = operatorv1alpha1.BackupReasonSetupFailed
 			message = terminationMessage
 			if message == "" {
 				message = "failed to verify storage"
 			}
+		default:
+			// Pod history is missing or stale, so the backup container may have run and written partial files.
+			// Keep the generic job reason so that garbage collection is not skipped.
+			klog.Infof("BackupController unable to determine execution state of backup %q from job %q pods", backup.Name, job.Name)
+			message = "unable to determine backup job outcome"
 		}
 
 		if _, err := applyBackupFinished(ctx, backupClient, backup, job, conditionType, conditionReason, message, files); err != nil {
@@ -757,10 +764,27 @@ func listJobPods(podLister corev1listers.PodNamespaceLister, job *batchv1.Job) (
 	return pods[:n], nil
 }
 
-func findBackupTerminationMessage(pods []*corev1.Pod) (message string, started bool) {
+// backupExecution describes what is known about whether the backup container of a job ever ran.
+type backupExecution int
+
+const (
+	// backupExecutionUnknown means pod history is missing or stale; the backup container may have run.
+	backupExecutionUnknown backupExecution = iota
+	// backupExecutionNotStarted means every pod of the job is terminal and none started the backup container.
+	backupExecutionNotStarted
+	// backupExecutionStarted means at least one pod started the backup container.
+	backupExecutionStarted
+)
+
+// findBackupTerminationMessage returns the most relevant termination message of the job's pods and whether
+// the backup container is known to have started. Absence of evidence that the container started is not
+// treated as proof that it never ran: that requires every pod the job accounted for to be observed in a
+// terminal phase.
+func findBackupTerminationMessage(job *batchv1.Job, pods []*corev1.Pod) (message string, execution backupExecution) {
 	slices.SortFunc(pods, func(a, b *corev1.Pod) int {
 		return a.CreationTimestamp.Compare(b.CreationTimestamp.Time)
 	})
+	started := false
 	for _, pod := range pods {
 		if pod.Status.Phase == corev1.PodSucceeded {
 			// Prefer termination message of successful pod
@@ -774,7 +798,35 @@ func findBackupTerminationMessage(pods []*corev1.Pod) (message string, started b
 			}
 		}
 	}
-	return message, started
+	if started {
+		return message, backupExecutionStarted
+	}
+
+	// No observed pod started the backup container. Only conclude that it never ran if the pod history is complete.
+	// Job pods are tracked with finalizers, so every pod that terminated is counted in the job status (or listed as
+	// uncounted) before it can be removed. A job that counted no pods therefore never ran one to termination.
+	if job.Status.Active > 0 || ptr.Deref(job.Status.Terminating, 0) > 0 {
+		// Job still accounts for non-terminal pods that must be observed first
+		return message, backupExecutionUnknown
+	}
+	expectedPods := int64(job.Status.Failed) + int64(job.Status.Succeeded)
+	if uncounted := job.Status.UncountedTerminatedPods; uncounted != nil {
+		expectedPods += int64(len(uncounted.Failed)) + int64(len(uncounted.Succeeded))
+	}
+	if int64(len(pods)) < expectedPods {
+		// Some pods the job accounted for are not observable, either deleted or not yet in the cache
+		return message, backupExecutionUnknown
+	}
+	for _, pod := range pods {
+		if pod.Status.Phase != corev1.PodFailed && pod.Status.Phase != corev1.PodSucceeded {
+			// The job is finished, so a non-terminal pod means the cached pod status is stale
+			return message, backupExecutionUnknown
+		}
+	}
+	if len(pods) == 0 {
+		message = "backup job failed without creating pods"
+	}
+	return message, backupExecutionNotStarted
 }
 
 func podTerminationMessage(pod *corev1.Pod) (message string, started bool) {
