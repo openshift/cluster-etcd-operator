@@ -6,9 +6,14 @@
 // The package consists of two main components:
 //
 //  1. Status Collector (statuscollector.go): Collects raw Pacemaker cluster status by executing
-//     "pcs status xml" and storing the results in a Pacemaker custom resource. The collector
-//     operates on a "collect everything" principle - it writes all data as-is without validation,
-//     allowing the health check to make informed decisions based on available data.
+//     "pcs status xml" and storing the results in a Pacemaker custom resource. With
+//     TNFObservability enabled, it also reports alert-agent registration and per-node MCO
+//     availability signals, including their contribution to node and cluster health. With
+//     the same gate enabled, after a successful status write it uses fresh CIB observations
+//     to repair missing TNF alert registrations, script paths, and fencing/node event filters
+//     through pcs.ReconcileAlerts. Repairs require executable local scripts and leave script
+//     delivery to MCO. Repair errors are logged without failing collection;
+//     the next collection retries and confirms recovery in status.
 //
 //  2. Health Check Controller (healthcheck.go): Monitors the Pacemaker CR and evaluates
 //     cluster health. It is hardened to handle missing or incomplete data gracefully, treating

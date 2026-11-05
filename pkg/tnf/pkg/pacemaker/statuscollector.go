@@ -139,13 +139,23 @@ func runCollector() error {
 
 	// Persist observations before attempting repairs so a slow or failed CIB
 	// write cannot prevent health reporting. The next collection confirms recovery.
+	reconcileAlertAgentsIfEnabled(ctx, alertAgentStatusEnabled, pcs.ReconcileAlerts)
+	return nil
+}
+
+// reconcileAlertAgentsIfEnabled gates periodic self healing with TNFObservability,
+// using the same resolved value as alert-agent observations and health aggregation.
+func reconcileAlertAgentsIfEnabled(ctx context.Context, enabled bool, reconcile func(context.Context) error) {
+	if !enabled {
+		return
+	}
+
 	// Reconciliation reads the CIB again rather than acting on carried-forward status.
 	repairCtx, repairCancel := context.WithTimeout(ctx, execTimeout)
 	defer repairCancel()
-	if err := pcs.ReconcileAlerts(repairCtx); err != nil {
+	if err := reconcile(repairCtx); err != nil {
 		klog.Warningf("Failed to reconcile pacemaker alert agents; will retry on the next collection: %v", err)
 	}
-	return nil
 }
 
 // fetchClusterConfig returns the authoritative node list with IP addresses.

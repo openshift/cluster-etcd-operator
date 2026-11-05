@@ -127,6 +127,31 @@ Handles job restart logic with blocking cleanup:
 - **fencing:** Configures STONITH for BMC power control
 - **update-setup:** Handles node replacements (removes offline node, adds new node, updates IPs). Validates: (1) Pacemaker cluster running on scheduled node, (2) exactly 2 nodes online after operations complete. Returns error to trigger retry if validation fails (e.g., auth hasn't run on new node yet)
 
+### Alert-Agent Registration
+
+The setup and update-setup jobs register `tnf-taint-alert` for fencing events and `tnf-untaint-alert`
+for node events. Their scripts are delivered asynchronously by MCO under
+`/var/lib/pacemaker/alerts/`; registration requires the expected local script to be executable.
+
+- **Initial setup:** Calls `pcs.ConfigureAlerts()` after configuring fencing. If a script is missing
+  or not executable, it logs a warning and continues setup, allowing later registration once MCO
+  delivers the scripts. Other configuration errors fail the job and use the normal job retry path.
+- **Update-setup:** Calls `pcs.ConfigureAlertsWithRetry()` on each invocation, including invocations
+  during upgrades, before node replacement handling. If both alert IDs already exist in the CIB,
+  registration is skipped. Otherwise it attempts configuration immediately and polls every 15 seconds
+  for up to 60 minutes while scripts are missing or not executable. Other errors return immediately;
+  errors and timeout failures use the normal cluster-job retry path.
+
+Configuration creates missing registrations with a `30s` execution timeout and the expected event
+filter. Existing registrations reached during configuration are updated in place, avoiding a
+delete/recreate gap. Update-setup's initial existence check does not validate paths or filters;
+the status collector's [periodic reconciliation](lifecycle-manager.md#alert-agent-reconciliation)
+repairs those fields and handles registrations deferred during setup when `TNFObservability` is
+enabled. The setup and update-setup registration paths predate this feature and remain available
+when the gate is disabled. The new alert-agent status reporting, health aggregation, and periodic
+repair all require `TNFObservability`. Neither path restores script files; that remains MCO's
+responsibility.
+
 ## Single-Node Job Pattern
 
 Single-node jobs run on a specific target node with Kubernetes-native retry (backoffLimit). Used for node-specific operations like setting auth credentials.

@@ -45,6 +45,17 @@ func TestAlertAgentStatusEnabledForReleaseDuringUpgrade(t *testing.T) {
 			enabled, err := alertAgentStatusEnabledForRelease(context.Background(), client, tt.version)
 			require.NoError(t, err)
 			require.Equal(t, tt.want, enabled)
+			repairs := 0
+			reconcileAlertAgentsIfEnabled(context.Background(), enabled, func(ctx context.Context) error {
+				repairs++
+				require.NoError(t, ctx.Err())
+				return nil
+			})
+			if tt.want {
+				require.Equal(t, 1, repairs)
+			} else {
+				require.Zero(t, repairs, "disabled or unknown gates must not query or modify alert configuration")
+			}
 			if tt.version != "" && tt.version != "0.0.1-snapshot" {
 				require.Len(t, client.Actions(), 1, "release Jobs must not consult the newer desired version")
 				require.Equal(t, "featuregates", client.Actions()[0].GetResource().Resource)

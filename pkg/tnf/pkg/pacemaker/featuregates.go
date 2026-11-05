@@ -11,8 +11,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// AlertAgentStatusEnabled is shared by the operator and the collector. An older
-// payload that does not know this gate retains the pre-feature behavior.
+// AlertAgentStatusEnabled is shared by the operator and the collector. The gate
+// controls alert-agent status, its contribution to health, and periodic self healing.
+// An older payload that does not know this gate retains the pre-feature behavior.
 func AlertAgentStatusEnabled(gates featuregates.FeatureGate) bool {
 	return slices.Contains(gates.KnownFeatures(), features.FeatureGateTNFObservability) &&
 		gates.Enabled(features.FeatureGateTNFObservability)
