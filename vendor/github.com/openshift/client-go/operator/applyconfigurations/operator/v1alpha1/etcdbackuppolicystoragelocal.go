@@ -12,7 +12,7 @@ type EtcdBackupPolicyStorageLocalApplyConfiguration struct {
 	EtcdBackupStorageLocalApplyConfiguration `json:""`
 	// distribution controls whether or not scheduled local backups are only taken on a single node or fan out to all control plane nodes.
 	// Allowed values are SingleNode and AllNodes
-	// When set to SingleNode, a single EtcdBackup will be created at each schedule execution on one of the selected control plane nodes, chosen at random if multiple nodes are matched by nodeSelector.
+	// When set to SingleNode, a single EtcdBackup will be created at each schedule execution on one of the selected control plane nodes. If multiple nodes are matched by nodeSelector, then backups round robin the nodes in lexicographical order.
 	// When set to AllNodes, EtcdBackups will be created for all selected control plane nodes at each schedule execution. Retention rules will be applied to EtcdBackups grouped by Node (e.g. MaxQuantity 2 results in 2 backups per node).
 	// If omitted, defaults to SingleNode.
 	// This field is optional.

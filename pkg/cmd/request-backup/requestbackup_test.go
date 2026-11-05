@@ -88,6 +88,7 @@ func TestRequestBackupForPolicy(t *testing.T) {
 	t.Run("local", func(t *testing.T) {
 		runRequestBackupTest(t, testCaseRequestBackup{
 			opts: requestBackupOpts{
+				etcdBackupName:       "test-backup-policy-12345",
 				etcdBackupPolicyName: "test-backup-policy",
 			},
 			backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
@@ -120,6 +121,7 @@ func TestRequestBackupForPolicy(t *testing.T) {
 	t.Run("pvc", func(t *testing.T) {
 		runRequestBackupTest(t, testCaseRequestBackup{
 			opts: requestBackupOpts{
+				etcdBackupName:       "test-backup-policy-12345",
 				etcdBackupPolicyName: "test-backup-policy",
 			},
 			backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
@@ -148,6 +150,7 @@ func TestRequestBackupForPolicyMultipleLocalBackupsWithSelector(t *testing.T) {
 	}
 	runRequestBackupTest(t, testCaseRequestBackup{
 		opts: requestBackupOpts{
+			etcdBackupName:       "test-backup-policy-12345",
 			etcdBackupPolicyName: "test-backup-policy",
 		},
 		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
@@ -188,6 +191,7 @@ func TestRequestBackupForPolicyMultipleLocalBackupsWithSelector(t *testing.T) {
 func TestRequestBackupForPolicyWithActiveBackup(t *testing.T) {
 	runRequestBackupTest(t, testCaseRequestBackup{
 		opts: requestBackupOpts{
+			etcdBackupName:       "test-backup-policy-12345",
 			etcdBackupPolicyName: "test-backup-policy",
 		},
 		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
@@ -209,6 +213,7 @@ func TestRequestBackupForPolicyWithActiveBackup(t *testing.T) {
 func TestRequestBackupForPolicyWithFinishedBackups(t *testing.T) {
 	runRequestBackupTest(t, testCaseRequestBackup{
 		opts: requestBackupOpts{
+			etcdBackupName:       "test-backup-policy-12345",
 			etcdBackupPolicyName: "test-backup-policy",
 		},
 		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
@@ -232,6 +237,7 @@ func TestRequestBackupForPolicyWithFinishedBackups(t *testing.T) {
 func TestRequestBackupForDeletedPolicy(t *testing.T) {
 	runRequestBackupTest(t, testCaseRequestBackup{
 		opts: requestBackupOpts{
+			etcdBackupName:       "policy-not-found-12345",
 			etcdBackupPolicyName: "policy-not-found",
 		},
 		expectError: true,
@@ -241,6 +247,7 @@ func TestRequestBackupForDeletedPolicy(t *testing.T) {
 func TestRequestBackupForPolicyWithAssets(t *testing.T) {
 	runRequestBackupTest(t, testCaseRequestBackup{
 		opts: requestBackupOpts{
+			etcdBackupName:       "test-backup-policy-12345",
 			etcdBackupPolicyName: "test-backup-policy",
 		},
 		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{

@@ -41,7 +41,7 @@ test-e2e: test-unit
 .PHONY: test-e2e
 
 # ensure the pacemakercluster CRD is included in bindata
-PACEMAKER_CRD_SOURCE := vendor/github.com/openshift/api/etcd/v1/zz_generated.crd-manifests/0000_25_etcd_01_pacemakerclusters.crd.yaml
+PACEMAKER_CRD_SOURCE := vendor/github.com/openshift/api/etcd/v1/zz_generated.crd-manifests/0000_25_etcd_01_pacemakerclusters-SelfManagedHA-Default.crd.yaml
 PACEMAKER_CRD_TARGET := bindata/etcd/pacemakercluster-crd.yaml
 update-bindata: $(PACEMAKER_CRD_TARGET)
 $(PACEMAKER_CRD_TARGET): $(PACEMAKER_CRD_SOURCE)

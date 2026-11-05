@@ -72,6 +72,7 @@ type EtcdBackupPolicySpec struct {
 	// assets specifies the type of files to be backed up.
 	// If Snapshot is present, the etcd database will be snapshotted and saved to the storage backend.
 	// If StaticKubeResources is present, static pod manifests for the control plane will be bundled and saved to the storage backend. If etcd is encrypted, this will include the encryption keys.
+	// Copied to EtcdBackups created by this policy.
 	// When specified, must contain between 1 and 2 entries, with at most 1 of each type.
 	// When omitted, all assets types will be backed up.
 	// This field is optional.
@@ -84,8 +85,9 @@ type EtcdBackupPolicySpec struct {
 	// nodeSelector specifies which control plane nodes to select from for running backup jobs.
 	// The default node-role.kubernetes.io/control-plane label will always be required in addition to any labels set here.
 	// If no nodes are matched, then no EtcdBackups will be created.
-	// For Local storage type, this may be used to target a specific node to take and store the backup. If spec.storage.local.distribution is AllNodes, then backups are taken on all selected nodes.
+	// For Local storage type, this may be used to target a specific node to take and store the backup. If distribution is AllNodes, then backups are taken on all selected nodes. If distribution is SingleNode, then backups will round robin selected nodes.
 	// For PVC storage type, this may be used to control where the backup is taken from. If multiple nodes are selected, the scheduler is responsible for placing the backup job based on volume topology and any other scheduling constraints.
+	// EtcdBackup nodeSelector is derived from this field.
 	// When specified, must contain between 1 and 10 entries.
 	// This field is optional.
 	// +kubebuilder:validation:MinProperties=1
@@ -94,6 +96,7 @@ type EtcdBackupPolicySpec struct {
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
 	// storage specifies the location where etcd backup files will be saved.
+	// EtcdBackup storage is derived from this field.
 	// This field is required.
 	// +required
 	Storage EtcdBackupPolicyStorage `json:"storage,omitzero"`
@@ -153,6 +156,7 @@ type EtcdBackupPolicyStorage struct {
 	Local EtcdBackupPolicyStorageLocal `json:"local,omitzero"`
 }
 
+// +kubebuilder:validation:MinProperties=1
 type EtcdBackupPolicyStoragePvc struct {
 	EtcdBackupStoragePvc `json:",inline"`
 }
@@ -163,10 +167,11 @@ type EtcdBackupPolicyStorageLocal struct {
 
 	// distribution controls whether or not scheduled local backups are only taken on a single node or fan out to all control plane nodes.
 	// Allowed values are SingleNode and AllNodes
-	// When set to SingleNode, a single EtcdBackup will be created at each schedule execution on one of the selected control plane nodes, chosen at random if multiple nodes are matched by nodeSelector.
+	// When set to SingleNode, a single EtcdBackup will be created at each schedule execution on one of the selected control plane nodes. If multiple nodes are matched by nodeSelector, then backups round robin the nodes in lexicographical order.
 	// When set to AllNodes, EtcdBackups will be created for all selected control plane nodes at each schedule execution. Retention rules will be applied to EtcdBackups grouped by Node (e.g. MaxQuantity 2 results in 2 backups per node).
 	// If omitted, defaults to SingleNode.
 	// This field is optional.
+	// +kubebuilder:validation:Enum:=SingleNode;AllNodes
 	// +optional
 	Distribution EtcdBackupPolicyLocalDistributionType `json:"distribution,omitempty"`
 }
@@ -175,8 +180,10 @@ type EtcdBackupPolicyStorageLocal struct {
 type EtcdBackupPolicyLocalDistributionType string
 
 const (
+	// EtcdBackupPolicyLocalDistributionTypeSingleNode creates a single EtcdBackup at each schedule execution on one of the selected control plane nodes. If multiple nodes are matched by nodeSelector, then backups round robin the nodes in lexicographical order.
 	EtcdBackupPolicyLocalDistributionTypeSingleNode EtcdBackupPolicyLocalDistributionType = "SingleNode"
-	EtcdBackupPolicyLocalDistributionTypeAllNodes   EtcdBackupPolicyLocalDistributionType = "AllNodes"
+	// EtcdBackupPolicyLocalDistributionTypeAllNodes creates EtcdBackups for all selected control plane nodes at each schedule execution. Retention rules will be applied to EtcdBackups grouped by Node (e.g. MaxQuantity 2 results in 2 backups per node).
+	EtcdBackupPolicyLocalDistributionTypeAllNodes EtcdBackupPolicyLocalDistributionType = "AllNodes"
 )
 
 // +union

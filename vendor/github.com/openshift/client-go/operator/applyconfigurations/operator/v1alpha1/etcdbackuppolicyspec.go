@@ -32,6 +32,7 @@ type EtcdBackupPolicySpecApplyConfiguration struct {
 	// assets specifies the type of files to be backed up.
 	// If Snapshot is present, the etcd database will be snapshotted and saved to the storage backend.
 	// If StaticKubeResources is present, static pod manifests for the control plane will be bundled and saved to the storage backend. If etcd is encrypted, this will include the encryption keys.
+	// Copied to EtcdBackups created by this policy.
 	// When specified, must contain between 1 and 2 entries, with at most 1 of each type.
 	// When omitted, all assets types will be backed up.
 	// This field is optional.
@@ -39,12 +40,14 @@ type EtcdBackupPolicySpecApplyConfiguration struct {
 	// nodeSelector specifies which control plane nodes to select from for running backup jobs.
 	// The default node-role.kubernetes.io/control-plane label will always be required in addition to any labels set here.
 	// If no nodes are matched, then no EtcdBackups will be created.
-	// For Local storage type, this may be used to target a specific node to take and store the backup. If spec.storage.local.distribution is AllNodes, then backups are taken on all selected nodes.
+	// For Local storage type, this may be used to target a specific node to take and store the backup. If distribution is AllNodes, then backups are taken on all selected nodes. If distribution is SingleNode, then backups will round robin selected nodes.
 	// For PVC storage type, this may be used to control where the backup is taken from. If multiple nodes are selected, the scheduler is responsible for placing the backup job based on volume topology and any other scheduling constraints.
+	// EtcdBackup nodeSelector is derived from this field.
 	// When specified, must contain between 1 and 10 entries.
 	// This field is optional.
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 	// storage specifies the location where etcd backup files will be saved.
+	// EtcdBackup storage is derived from this field.
 	// This field is required.
 	Storage *EtcdBackupPolicyStorageApplyConfiguration `json:"storage,omitempty"`
 	// retentionRules defines the policy for retaining and deleting completed backups.
