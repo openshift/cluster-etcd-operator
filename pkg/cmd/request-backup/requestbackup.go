@@ -68,7 +68,7 @@ func NewRequestBackupCommand(ctx context.Context) *cobra.Command {
 func (r *requestBackupOpts) AddFlags(cmd *cobra.Command) {
 	flagSet := cmd.Flags()
 
-	flagSet.StringVar(&r.etcdBackupName, "name", "", "name specifies the name of the EtcdBackup CR.")
+	flagSet.StringVar(&r.etcdBackupName, "name", "", "name specifies the name of the EtcdBackup CR. Must be 63 characters or less.")
 	flagSet.StringVar(&r.etcdBackupPolicyName, "policy", "", "policy specifies the name of the EtcdBackupPolicy CR that the EtcdBackup is created for. It is incompatible with the storage arguments pvc-name, pvc-path, and host-path.")
 	flagSet.StringVar(&r.pvcName, "pvc-name", "", "pvc-name specifies the name of the PersistentVolumeClaim (PVC) which binds a PersistentVolume where the etcd backup file would be saved")
 	flagSet.StringVar(&r.pvcPath, "pvc-path", "", "pvc-path specifies the directory on the PVC where the etcd backup file would be saved")
@@ -85,6 +85,9 @@ func (r *requestBackupOpts) AddFlags(cmd *cobra.Command) {
 }
 
 func (r *requestBackupOpts) Validate() error {
+	if len(r.etcdBackupName) > maxNameLength {
+		return fmt.Errorf("--name length must be 63 characters or less")
+	}
 	if r.etcdBackupPolicyName != "" && (r.pvcName != "" || r.hostPath != "") {
 		return fmt.Errorf("--pvc-name and --host-path are incompatible with --policy")
 	}
@@ -194,20 +197,6 @@ func createBackup(ctx context.Context, name, pvcName, pvcPath, hostPath string, 
 
 // createBackupsForPolicy creates EtcdBackup resources for the current schedule execution of an EtcdBackupPolicy
 func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *operatorv1alpha1.EtcdBackupPolicy, backupClient operatorversionedclientv1alpha1.EtcdBackupInterface, nodeClient corev1client.NodeInterface) error {
-	// Check for active backups that belong to the policy
-	backupList, err := backupClient.List(ctx, v1.ListOptions{
-		LabelSelector: backuphelpers.LabelEtcdBackupPolicy + "=" + backupPolicy.Name,
-	})
-	if err != nil {
-		return err
-	}
-	for _, backup := range backupList.Items {
-		if !backuphelpers.IsBackupFinished(&backup) {
-			klog.Infof("skipping schedule execution for EtcdBackupPolicy %s: active backups found", backupPolicy.Name)
-			return nil
-		}
-	}
-
 	// Get control plane nodes
 	nodeSelector := labels.Set{backuphelpers.ControlPlaneNodeLabelSelector: ""}
 	if len(backupPolicy.Spec.NodeSelector) > 0 {
@@ -225,6 +214,29 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 		return nil
 	}
 
+	// Check for active backups that belong to the policy
+	backupList, err := backupClient.List(ctx, v1.ListOptions{
+		LabelSelector: backuphelpers.LabelEtcdBackupPolicy + "=" + backupPolicy.Name,
+	})
+	if err != nil {
+		return err
+	}
+	existingHostnames := map[string]struct{}{}
+	for _, backup := range backupList.Items {
+		// In Local AllNodes mode, check if active backups are from the current run and ensure a backup exists for each selected node.
+		// If backups are partially created and then a transient error occurs, this ensures we retry idempotently.
+		//
+		// If at least one active backup from a different run is found, exit early.
+		if backupPolicy.Spec.Storage.Type == operatorv1alpha1.EtcdBackupStorageTypeLocal &&
+			backupPolicy.Spec.Storage.Local.Distribution == operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeAllNodes &&
+			backup.Labels[backuphelpers.LabelEtcdBackupPolicyRun] == name {
+			existingHostnames[backup.Spec.NodeSelector[corev1.LabelHostname]] = struct{}{}
+		} else if !backuphelpers.IsBackupFinished(&backup) {
+			klog.Infof("skipping schedule execution for EtcdBackupPolicy %s: active backups found", backupPolicy.Name)
+			return nil
+		}
+	}
+
 	// Build the set of EtcdBackups to create. Local backups are taken once per control plane node and pinned to that
 	// node (the hostPath is node-specific). PVC backups are node-independent: a single backup is created and
 	// the scheduler decides placement based on the volume's topology.
@@ -235,7 +247,8 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 			ObjectMeta: v1.ObjectMeta{
 				Name: name,
 				Labels: map[string]string{
-					backuphelpers.LabelEtcdBackupPolicy: backupPolicy.Name,
+					backuphelpers.LabelEtcdBackupPolicy:    backupPolicy.Name,
+					backuphelpers.LabelEtcdBackupPolicyRun: name,
 				},
 			},
 			Spec: operatorv1alpha1.EtcdBackupSpec{
@@ -246,6 +259,11 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 		})
 	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
 		for node := range iterLocalNodes(backupPolicy, nodeList) {
+			hostName := node.Labels[corev1.LabelHostname]
+			if _, ok := existingHostnames[hostName]; ok {
+				continue
+			}
+
 			backupName := name
 			suffix := "-" + shortHash(name, node.Name)
 			remaining := maxNameLength - len(suffix)
@@ -258,7 +276,8 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 				ObjectMeta: v1.ObjectMeta{
 					Name: backupName,
 					Labels: map[string]string{
-						backuphelpers.LabelEtcdBackupPolicy: backupPolicy.Name,
+						backuphelpers.LabelEtcdBackupPolicy:    backupPolicy.Name,
+						backuphelpers.LabelEtcdBackupPolicyRun: name,
 					},
 				},
 				Spec: operatorv1alpha1.EtcdBackupSpec{

@@ -2,6 +2,7 @@ package requestbackup
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -28,6 +29,7 @@ type testCaseRequestBackup struct {
 	backups        []*operatorv1alpha1.EtcdBackup
 	nodes          []*corev1.Node
 	expectError    bool
+	setup          func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset)
 	validate       func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset)
 }
 
@@ -65,6 +67,10 @@ func runRequestBackupTest(t *testing.T, tc testCaseRequestBackup) {
 	fakeClock := testingclock.NewFakeClock(time.Now())
 	eventRecorder := events.NewInMemoryRecorder("test", fakeClock)
 	t.Cleanup(eventRecorder.Shutdown)
+
+	if tc.setup != nil {
+		tc.setup(t, client, operatorFake)
+	}
 
 	err = tc.opts.requestBackups(ctx, client, operatorFake.OperatorV1alpha1())
 	if tc.expectError {
@@ -260,6 +266,125 @@ func TestRequestBackupForPolicyWithAssets(t *testing.T) {
 			backup := backups.Items[0]
 			require.Equal(t, "test-backup-policy", backup.Labels[backuphelpers.LabelEtcdBackupPolicy])
 			require.Equal(t, []operatorv1alpha1.EtcdBackupAssetType{operatorv1alpha1.EtcdBackupAssetTypeSnapshot}, backup.Spec.Assets)
+		},
+	})
+}
+
+// TestRequestBackupForPolicyAllNodesRetryAfterPartialCreate verifies that when a schedule execution in Local AllNodes
+// mode fails after creating only some of its backups, retrying the same execution creates the missing backups instead
+// of treating its own active backups as an overlapping execution.
+func TestRequestBackupForPolicyAllNodesRetryAfterPartialCreate(t *testing.T) {
+	const (
+		policyName = "test-backup-policy"
+		runName    = "test-backup-policy-29000000"
+	)
+	opts := requestBackupOpts{etcdBackupPolicyName: policyName, etcdBackupName: runName}
+	createCount := 0
+
+	runRequestBackupTest(t, testCaseRequestBackup{
+		opts: opts,
+		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
+			testutils.FakeEtcdBackupPolicy(policyName, "@daily", testutils.WithBackupPolicyAge(25*time.Hour), func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
+				backupPolicy.Spec.Storage = operatorv1alpha1.EtcdBackupPolicyStorage{
+					Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
+					Local: operatorv1alpha1.EtcdBackupPolicyStorageLocal{
+						EtcdBackupStorageLocal: operatorv1alpha1.EtcdBackupStorageLocal{
+							HostPath: "/etc/etcdbackups",
+						},
+						Distribution: operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeAllNodes,
+					},
+				}
+			})},
+		nodes: []*corev1.Node{
+			testutils.FakeNode("test-node-1", testutils.WithMasterLabel()),
+			testutils.FakeNode("test-node-2", testutils.WithMasterLabel()),
+			testutils.FakeNode("test-node-3", testutils.WithMasterLabel())},
+		setup: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			// Fail the third create of the first execution attempt to simulate a transient API error.
+			operatorFake.PrependReactor("create", "etcdbackups", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				createCount++
+				if createCount == 3 {
+					return true, nil, errors.New("transient create error")
+				}
+				return false, nil, nil
+			})
+		},
+		// The first execution attempt fails after a partial create.
+		expectError: true,
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			backupsClient := operatorFake.OperatorV1alpha1().EtcdBackups()
+			backups, err := backupsClient.List(t.Context(), v1.ListOptions{})
+			require.NoError(t, err)
+			require.Len(t, backups.Items, 2, "expected only a partial set of backups after the failed attempt")
+			createActions := testutils.ListActions[k8stesting.CreateActionImpl](operatorFake.Actions())
+			require.Len(t, createActions, 3)
+
+			// Mark one of the existing backups as finished, it should not be recreated on retry.
+			finishedBackup := &backups.Items[0]
+			finishedBackup.Status.Conditions = append(finishedBackup.Status.Conditions, v1.Condition{
+				Type:               string(operatorv1alpha1.BackupCompleted),
+				Reason:             string(operatorv1alpha1.BackupReasonJobCompleted),
+				Status:             v1.ConditionTrue,
+				LastTransitionTime: v1.Now(),
+			})
+			_, err = backupsClient.Update(t.Context(), finishedBackup, v1.UpdateOptions{})
+			require.NoError(t, err)
+
+			// Retry the same execution: the missing backup must be created.
+			operatorFake.ClearActions()
+			err = opts.requestBackups(t.Context(), client, operatorFake.OperatorV1alpha1())
+			require.NoError(t, err)
+
+			createActions = testutils.ListActions[k8stesting.CreateActionImpl](operatorFake.Actions())
+			require.Len(t, createActions, 1)
+			backups, err = backupsClient.List(t.Context(), v1.ListOptions{})
+			require.NoError(t, err)
+			require.Len(t, backups.Items, 3)
+
+			backupNodes := make([]string, 0, len(backups.Items))
+			for _, backup := range backups.Items {
+				require.Equal(t, policyName, backup.Labels[backuphelpers.LabelEtcdBackupPolicy])
+				require.Equal(t, runName, backup.Labels[backuphelpers.LabelEtcdBackupPolicyRun])
+				backupNodes = append(backupNodes, backup.Spec.NodeSelector[corev1.LabelHostname])
+			}
+			require.ElementsMatch(t, []string{"test-node-1", "test-node-2", "test-node-3"}, backupNodes)
+			require.Equal(t, 4, createCount, "expected the retry to create only the missing backup")
+		},
+	})
+}
+
+// TestRequestBackupForPolicyAllNodesWithActiveBackupFromOtherRun verifies that in Local AllNodes mode an active backup
+// from a different schedule execution still causes the current execution to be skipped.
+func TestRequestBackupForPolicyAllNodesWithActiveBackupFromOtherRun(t *testing.T) {
+	runRequestBackupTest(t, testCaseRequestBackup{
+		opts: requestBackupOpts{
+			etcdBackupPolicyName: "test-backup-policy",
+			etcdBackupName:       "test-backup-policy-29000060",
+		},
+		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
+			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour), func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
+				backupPolicy.Spec.Storage = operatorv1alpha1.EtcdBackupPolicyStorage{
+					Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
+					Local: operatorv1alpha1.EtcdBackupPolicyStorageLocal{
+						EtcdBackupStorageLocal: operatorv1alpha1.EtcdBackupStorageLocal{
+							HostPath: "/etc/etcdbackups",
+						},
+						Distribution: operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeAllNodes,
+					},
+				}
+			})},
+		backups: []*operatorv1alpha1.EtcdBackup{
+			testutils.FakeEtcdBackup("test-backup-policy-29000000-abc", testutils.WithBackupPolicy("test-backup-policy"), func(backup *operatorv1alpha1.EtcdBackup) {
+				backup.Labels[backuphelpers.LabelEtcdBackupPolicyRun] = "test-backup-policy-29000000"
+				backup.Spec.NodeSelector = map[string]string{corev1.LabelHostname: "test-node-1"}
+			}),
+		},
+		nodes: []*corev1.Node{
+			testutils.FakeNode("test-node-1", testutils.WithMasterLabel()),
+			testutils.FakeNode("test-node-2", testutils.WithMasterLabel())},
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			_, ok := testutils.GetAction[k8stesting.CreateActionImpl](operatorFake.Fake.Actions())
+			require.False(t, ok, "expected no create action")
 		},
 	})
 }

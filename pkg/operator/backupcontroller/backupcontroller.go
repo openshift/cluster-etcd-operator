@@ -688,7 +688,7 @@ func reconcileJobNotFound(
 		for _, ownerRef := range job.OwnerReferences {
 			if ownerRef.Kind == "EtcdBackup" && ownerRef.Name == backup.Name && ownerRef.UID == backup.UID {
 				// Correct job exists, make sure it is labeled appropriately. Otherwise assume it will be handled on a future sync.
-				if job.Labels == nil || job.Labels[backuphelpers.LabelEtcdBackup] != backup.Name {
+				if job.Labels[backuphelpers.LabelEtcdBackup] != backup.Name {
 					patchBody, err := json.Marshal(batchv1.Job{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{backuphelpers.LabelEtcdBackup: backup.Name}}})
 					if err != nil {
 						return fmt.Errorf("error marshalling job %q patch: %w", job.Name, err)
