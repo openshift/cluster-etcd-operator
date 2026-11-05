@@ -180,6 +180,8 @@ func filterPruneableBackups(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, bac
 	} else {
 		maxFailed = 1
 	}
+	// Backups are grouped by NodeName for retention limits only in Local storage with AllNodes distribution
+	groupedLimits := backupPolicy.Spec.Storage.Type == operatorv1alpha1.EtcdBackupStorageTypeLocal && backupPolicy.Spec.Storage.Local.Distribution == operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeAllNodes
 	for _, backup := range backups {
 		// Prune failed backups by total history limit
 		if backuphelpers.IsBackupFailed(backup) {
@@ -192,11 +194,8 @@ func filterPruneableBackups(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, bac
 			continue
 		}
 
-		// Prune completed backups by storage backend
-		// 	Local backups are pruned per-node
-		//  PVC backups are pruned per-pvc (there is only 1 per etcdbackuppolicy)
 		groupName := ""
-		if backup.Spec.Storage.Type == operatorv1alpha1.EtcdBackupStorageTypeLocal {
+		if groupedLimits {
 			groupName = backup.Status.NodeName
 		}
 		group := pruneGroups[groupName]
