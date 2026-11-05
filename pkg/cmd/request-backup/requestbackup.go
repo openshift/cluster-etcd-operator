@@ -292,12 +292,21 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 	}
 
 	var errs []error
-	for _, etcdBackup := range toCreate {
-		backupName := etcdBackup.Name
-		if _, err := backupClient.Create(ctx, etcdBackup, v1.CreateOptions{}); err != nil {
+	for _, backup := range toCreate {
+		backupName := backup.Name
+		if _, err := backupClient.Create(ctx, backup, v1.CreateOptions{}); err != nil {
 			if !apierrors.IsAlreadyExists(err) {
 				klog.Warningf("Failed to create EtcdBackup %q: %v", backupName, err)
 				errs = append(errs, err)
+			} else {
+				// Check existing during name conflict. If it belongs to this policy run, then ignore the error.
+				existingBackup, getErr := backupClient.Get(ctx, backup.Name, v1.GetOptions{})
+				if getErr != nil {
+					errs = append(errs, fmt.Errorf("failed to fetch backup with conflicting name %q: %w", backup.Name, getErr))
+				}
+				if existingBackup.Labels[backuphelpers.LabelEtcdBackupPolicy] != backupPolicy.Name || existingBackup.Labels[backuphelpers.LabelEtcdBackupPolicyRun] != name {
+					errs = append(errs, fmt.Errorf("etcdbackup name conflict on %q: existing backup does not belong to this policy run: %w", backup.Name, err))
+				}
 			}
 		} else {
 			klog.Infof("created EtcdBackup %q", backupName)
@@ -346,12 +355,12 @@ func nextRoundRobinNode(backupList *operatorv1alpha1.EtcdBackupList, nodeList *c
 		return strings.Compare(a.Name, b.Name)
 	})
 
-	lastNodeName := latestLocalBackupNodeName(backupList, nodes)
-	if lastNodeName == "" {
+	latestNodeName := latestLocalBackupNodeName(backupList, nodes)
+	if latestNodeName == "" {
 		return nodes[0], true
 	}
 	for _, node := range nodes {
-		if node.Name > lastNodeName {
+		if node.Name > latestNodeName {
 			return node, true
 		}
 	}
