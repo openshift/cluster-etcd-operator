@@ -234,6 +234,9 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 		} else if !backuphelpers.IsBackupFinished(&backup) {
 			klog.Infof("skipping schedule execution for EtcdBackupPolicy %s: active backups found", backupPolicy.Name)
 			return nil
+		} else if backup.Labels[backuphelpers.LabelEtcdBackupPolicyRun] == name {
+			klog.Infof("skipping schedule execution for EtcdBackupPolicy %s: existing backup found for this run", backupPolicy.Name)
+			return nil
 		}
 	}
 

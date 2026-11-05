@@ -539,3 +539,97 @@ func TestRequestBackupForPolicySingleNodeRoundRobin(t *testing.T) {
 		})
 	}
 }
+
+// TestRequestBackupForPolicySkipsExistingRun verifies that in Local SingleNode and PVC modes, a schedule execution
+// does not create a new backup if any backup already exists for that run, regardless of whether it is still active,
+// completed, or failed.
+func TestRequestBackupForPolicySkipsExistingRun(t *testing.T) {
+	const (
+		policyName = "test-backup-policy"
+		runName    = "test-backup-policy-29000000"
+	)
+	localStorage := operatorv1alpha1.EtcdBackupStorage{
+		Type:  operatorv1alpha1.EtcdBackupStorageTypeLocal,
+		Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"},
+	}
+	pvcStorage := operatorv1alpha1.EtcdBackupStorage{
+		Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+		PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "etcd-backup-pvc"},
+	}
+
+	for _, storage := range []struct {
+		name       string
+		policyOpt  func(*operatorv1alpha1.EtcdBackupPolicy)
+		backupOpts []func(*operatorv1alpha1.EtcdBackup)
+	}{
+		{
+			name: "local single node",
+			policyOpt: func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
+				backupPolicy.Spec.Storage = operatorv1alpha1.EtcdBackupPolicyStorage{
+					Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
+					Local: operatorv1alpha1.EtcdBackupPolicyStorageLocal{
+						EtcdBackupStorageLocal: localStorage.Local,
+						Distribution:           operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeSingleNode,
+					},
+				}
+			},
+			backupOpts: []func(*operatorv1alpha1.EtcdBackup){
+				testutils.WithBackupStorage(localStorage),
+				func(backup *operatorv1alpha1.EtcdBackup) {
+					backup.Spec.NodeSelector = map[string]string{corev1.LabelHostname: "test-node-1"}
+				},
+			},
+		},
+		{
+			name: "pvc",
+			policyOpt: func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
+				backupPolicy.Spec.Storage = operatorv1alpha1.EtcdBackupPolicyStorage{
+					Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+					PVC:  operatorv1alpha1.EtcdBackupPolicyStoragePvc{EtcdBackupStoragePvc: pvcStorage.PVC},
+				}
+			},
+			backupOpts: []func(*operatorv1alpha1.EtcdBackup){
+				testutils.WithBackupStorage(pvcStorage),
+			},
+		},
+	} {
+		for _, state := range []struct {
+			name   string
+			status func(*operatorv1alpha1.EtcdBackup)
+		}{
+			{name: "active", status: func(*operatorv1alpha1.EtcdBackup) {}},
+			{name: "completed", status: testutils.WithBackupCompleted()},
+			{name: "failed", status: testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed)},
+		} {
+			t.Run(storage.name+"/"+state.name, func(t *testing.T) {
+				backupOpts := append([]func(*operatorv1alpha1.EtcdBackup){
+					testutils.WithBackupPolicy(policyName),
+					testutils.WithBackupAge(time.Minute),
+					func(backup *operatorv1alpha1.EtcdBackup) {
+						backup.Labels[backuphelpers.LabelEtcdBackupPolicyRun] = runName
+					},
+				}, storage.backupOpts...)
+				backupOpts = append(backupOpts, state.status)
+
+				runRequestBackupTest(t, testCaseRequestBackup{
+					opts: requestBackupOpts{etcdBackupPolicyName: policyName, etcdBackupName: runName},
+					backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
+						testutils.FakeEtcdBackupPolicy(policyName, "@daily", testutils.WithBackupPolicyAge(25*time.Hour), storage.policyOpt)},
+					backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup(runName, backupOpts...)},
+					nodes: []*corev1.Node{
+						testutils.FakeNode("test-node-1", testutils.WithMasterLabel()),
+						testutils.FakeNode("test-node-2", testutils.WithMasterLabel())},
+					validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+						_, ok := testutils.GetAction[k8stesting.CreateActionImpl](operatorFake.Fake.Actions())
+						require.False(t, ok, "expected no create action")
+
+						backups, err := operatorFake.OperatorV1alpha1().EtcdBackups().List(t.Context(), v1.ListOptions{})
+						require.NoError(t, err)
+						require.Len(t, backups.Items, 1)
+						require.Equal(t, runName, backups.Items[0].Name)
+					},
+				})
+			})
+		}
+	}
+}
