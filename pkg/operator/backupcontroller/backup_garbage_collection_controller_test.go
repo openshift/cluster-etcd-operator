@@ -125,7 +125,7 @@ func TestBackupGarbageCollectionNewJob(t *testing.T) {
 				backupDir := backupPathMount + "/etcdbackups/test-backup/"
 				require.Contains(t, job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{
 					Name:  backupGCFilesEnvName,
-					Value: strings.Join([]string{backupDir + "snapshot.db", backupDir + "archive.tar.gz"}, " "),
+					Value: strings.Join([]string{backupDir + "snapshot.db", backupDir + "archive.tar.gz"}, ","),
 				})
 			},
 		})
@@ -149,7 +149,7 @@ func TestBackupGarbageCollectionNewJob(t *testing.T) {
 				backupDir := backupPathMount + "/test-backup/"
 				require.Contains(t, job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{
 					Name:  backupGCFilesEnvName,
-					Value: strings.Join([]string{backupDir + "snapshot.db", backupDir + "archive.tar.gz"}, " "),
+					Value: strings.Join([]string{backupDir + "snapshot.db", backupDir + "archive.tar.gz"}, ","),
 				})
 			},
 		})
@@ -371,13 +371,13 @@ func TestBackupGarbageCollectionMultipleBackupsPerJob(t *testing.T) {
 			backupDir2 := backupPathMount + "/test-backup-2/"
 			backupDir3 := backupPathMount + "/test-backup-3/"
 			require.Equal(t,
-				corev1.EnvVar{Name: backupGCFilesEnvName, Value: strings.Join([]string{backupDir1 + "snapshot.db", backupDir1 + "archive.tar.gz", backupDir2 + "snapshot.db", backupDir2 + "archive.tar.gz"}, " ")},
+				corev1.EnvVar{Name: backupGCFilesEnvName, Value: strings.Join([]string{backupDir1 + "snapshot.db", backupDir1 + "archive.tar.gz", backupDir2 + "snapshot.db", backupDir2 + "archive.tar.gz"}, ",")},
 				requireFind(t, job1.Spec.Template.Spec.Containers[0].Env, func(env corev1.EnvVar) bool {
 					return env.Name == backupGCFilesEnvName
 				}),
 			)
 			require.Equal(t,
-				corev1.EnvVar{Name: backupGCFilesEnvName, Value: strings.Join([]string{backupDir3 + "snapshot.db", backupDir3 + "archive.tar.gz"}, " ")},
+				corev1.EnvVar{Name: backupGCFilesEnvName, Value: strings.Join([]string{backupDir3 + "snapshot.db", backupDir3 + "archive.tar.gz"}, ",")},
 				requireFind(t, job2.Spec.Template.Spec.Containers[0].Env, func(env corev1.EnvVar) bool {
 					return env.Name == backupGCFilesEnvName
 				}),

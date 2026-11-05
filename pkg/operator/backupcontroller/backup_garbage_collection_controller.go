@@ -379,7 +379,7 @@ func createGarbageCollectionJob(ctx context.Context,
 		return fmt.Errorf("unknown storage backend: %s", storage.storageType)
 	}
 
-	job.Spec.Template.Spec.Containers[0].Env = []corev1.EnvVar{{Name: backupGCFilesEnvName, Value: strings.Join(gcFiles, " ")}}
+	job.Spec.Template.Spec.Containers[0].Env = []corev1.EnvVar{{Name: backupGCFilesEnvName, Value: strings.Join(gcFiles, ",")}}
 
 	klog.Infof("BackupGarbageCollectionController starts backup GC as job [%s]", job.Name)
 	_, err = jobsClient.Create(ctx, job, v1.CreateOptions{})
