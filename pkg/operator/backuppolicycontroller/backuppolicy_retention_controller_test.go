@@ -85,7 +85,7 @@ func TestBackupPolicyRetentionPruneByQuantity(t *testing.T) {
 				testutils.FakeEtcdBackupPolicy("test-backup-policy", "@hourly",
 					testutils.WithBackupPolicyStorage(operatorv1alpha1.EtcdBackupPolicyStorage{
 						Type: operatorv1alpha1.EtcdBackupStorageTypeLocal, Local: operatorv1alpha1.EtcdBackupPolicyStorageLocal{
-							EtcdBackupStorageLocal: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"}},
+							Distribution: operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeAllNodes},
 					}),
 					testutils.WithBackupPolicyRetentionRules(operatorv1alpha1.EtcdBackupPolicyRetentionRule{
 						Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeQuantity,
@@ -97,7 +97,7 @@ func TestBackupPolicyRetentionPruneByQuantity(t *testing.T) {
 				testutils.FakeEtcdBackup("test-backup-1",
 					testutils.WithBackupPolicy("test-backup-policy"),
 					testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-						Type: operatorv1alpha1.EtcdBackupStorageTypeLocal, Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"},
+						Type: operatorv1alpha1.EtcdBackupStorageTypeLocal, Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/kubernetes/cluster-backups"},
 					}),
 					testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{NodeName: "test-node-1"}),
 					testutils.WithBackupCompleted(),
@@ -105,7 +105,7 @@ func TestBackupPolicyRetentionPruneByQuantity(t *testing.T) {
 				testutils.FakeEtcdBackup("test-backup-2",
 					testutils.WithBackupPolicy("test-backup-policy"),
 					testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-						Type: operatorv1alpha1.EtcdBackupStorageTypeLocal, Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"},
+						Type: operatorv1alpha1.EtcdBackupStorageTypeLocal, Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/kubernetes/cluster-backups"},
 					}),
 					testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{NodeName: "test-node-2"}),
 					testutils.WithBackupCompleted(),
@@ -113,7 +113,7 @@ func TestBackupPolicyRetentionPruneByQuantity(t *testing.T) {
 				testutils.FakeEtcdBackup("test-backup-3",
 					testutils.WithBackupPolicy("test-backup-policy"),
 					testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-						Type: operatorv1alpha1.EtcdBackupStorageTypeLocal, Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"},
+						Type: operatorv1alpha1.EtcdBackupStorageTypeLocal, Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/kubernetes/cluster-backups"},
 					}),
 					testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{NodeName: "test-node-2"}),
 					testutils.WithBackupCompleted(),
@@ -156,7 +156,7 @@ func TestBackupPolicyRetentionPruneBySize(t *testing.T) {
 					testutils.WithBackupPolicyStorage(operatorv1alpha1.EtcdBackupPolicyStorage{
 						Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
 						Local: operatorv1alpha1.EtcdBackupPolicyStorageLocal{
-							EtcdBackupStorageLocal: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"}},
+							Distribution: operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeAllNodes},
 					}),
 					testutils.WithBackupPolicyRetentionRules(operatorv1alpha1.EtcdBackupPolicyRetentionRule{
 						Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeSize,
@@ -168,7 +168,7 @@ func TestBackupPolicyRetentionPruneBySize(t *testing.T) {
 				testutils.FakeEtcdBackup("test-backup-1",
 					testutils.WithBackupPolicy("test-backup-policy"),
 					testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-						Type: operatorv1alpha1.EtcdBackupStorageTypeLocal, Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"},
+						Type: operatorv1alpha1.EtcdBackupStorageTypeLocal, Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/kubernetes/cluster-backups"},
 					}),
 					testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
 						NodeName: "test-node-1",
@@ -180,7 +180,7 @@ func TestBackupPolicyRetentionPruneBySize(t *testing.T) {
 				testutils.FakeEtcdBackup("test-backup-2",
 					testutils.WithBackupPolicy("test-backup-policy"),
 					testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-						Type: operatorv1alpha1.EtcdBackupStorageTypeLocal, Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"},
+						Type: operatorv1alpha1.EtcdBackupStorageTypeLocal, Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/kubernetes/cluster-backups"},
 					}),
 					testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
 						NodeName: "test-node-2",
@@ -192,7 +192,7 @@ func TestBackupPolicyRetentionPruneBySize(t *testing.T) {
 				testutils.FakeEtcdBackup("test-backup-3",
 					testutils.WithBackupPolicy("test-backup-policy"),
 					testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-						Type: operatorv1alpha1.EtcdBackupStorageTypeLocal, Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"},
+						Type: operatorv1alpha1.EtcdBackupStorageTypeLocal, Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/kubernetes/cluster-backups"},
 					}),
 					testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
 						NodeName: "test-node-2",

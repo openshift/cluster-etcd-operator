@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"iter"
 	"maps"
-	"math/rand/v2"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -258,7 +258,7 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 			},
 		})
 	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
-		for node := range iterLocalNodes(backupPolicy, nodeList) {
+		for node := range iterLocalNodes(backupPolicy, backupList, nodeList) {
 			hostName := node.Labels[corev1.LabelHostname]
 			if _, ok := existingHostnames[hostName]; ok {
 				continue
@@ -306,15 +306,12 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 	return utilerrors.NewAggregate(errs)
 }
 
-func iterLocalNodes(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, nodeList *corev1.NodeList) iter.Seq[corev1.Node] {
+func iterLocalNodes(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, backupList *operatorv1alpha1.EtcdBackupList, nodeList *corev1.NodeList) iter.Seq[corev1.Node] {
 	return func(yield func(corev1.Node) bool) {
 		switch backupPolicy.Spec.Storage.Local.Distribution {
 		case "", operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeSingleNode:
-			if len(nodeList.Items) > 0 {
-				i := rand.IntN(len(nodeList.Items))
-				if !yield(nodeList.Items[i]) {
-					return
-				}
+			if node, ok := nextRoundRobinNode(backupList, nodeList); ok {
+				yield(node)
 			}
 		case operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeAllNodes:
 			for _, node := range nodeList.Items {
@@ -326,6 +323,74 @@ func iterLocalNodes(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, nodeList *c
 			}
 		}
 	}
+}
+
+// nextRoundRobinNode selects the node for a Local SingleNode backup. Nodes are ordered lexicographically by name, and
+// the node following the one targeted by the policy's most recently created backup is selected, wrapping around to
+// the first node. Comparing by name (rather than by index) keeps the rotation stable when nodes are added or removed:
+// if the previously targeted node no longer exists, the next node name after it is still selected.
+//
+// The most recent backup is used regardless of outcome so that a node which persistently fails backups does not
+// prevent the remaining nodes from being rotated through.
+func nextRoundRobinNode(backupList *operatorv1alpha1.EtcdBackupList, nodeList *corev1.NodeList) (corev1.Node, bool) {
+	nodes := make([]corev1.Node, 0, len(nodeList.Items))
+	for _, node := range nodeList.Items {
+		if node.Labels[corev1.LabelHostname] != "" {
+			nodes = append(nodes, node)
+		}
+	}
+	if len(nodes) == 0 {
+		return corev1.Node{}, false
+	}
+	slices.SortFunc(nodes, func(a, b corev1.Node) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+
+	lastNodeName := latestLocalBackupNodeName(backupList, nodes)
+	if lastNodeName == "" {
+		return nodes[0], true
+	}
+	for _, node := range nodes {
+		if node.Name > lastNodeName {
+			return node, true
+		}
+	}
+	return nodes[0], true
+}
+
+// latestLocalBackupNodeName returns the name of the node targeted by the most recently created node-pinned backup in
+// the list, or an empty string if there is none. Ties on creation timestamp (which has second granularity) are broken
+// by backup name so the result is deterministic.
+//
+// Backups are pinned by hostname label, and the node name is only recorded in status once the backup job has been
+// scheduled. If the status is not yet populated, the node name is resolved from the hostname via the given nodes,
+// falling back to the hostname itself when the node no longer exists (node name and hostname typically match).
+func latestLocalBackupNodeName(backupList *operatorv1alpha1.EtcdBackupList, nodes []corev1.Node) string {
+	var latest *operatorv1alpha1.EtcdBackup
+	for i := range backupList.Items {
+		backup := &backupList.Items[i]
+		if backup.Spec.Storage.Type != operatorv1alpha1.EtcdBackupStorageTypeLocal || backup.Spec.NodeSelector[corev1.LabelHostname] == "" {
+			continue
+		}
+		if latest == nil ||
+			backup.CreationTimestamp.After(latest.CreationTimestamp.Time) ||
+			(backup.CreationTimestamp.Equal(&latest.CreationTimestamp) && backup.Name > latest.Name) {
+			latest = backup
+		}
+	}
+	if latest == nil {
+		return ""
+	}
+	if latest.Status.NodeName != "" {
+		return latest.Status.NodeName
+	}
+	hostname := latest.Spec.NodeSelector[corev1.LabelHostname]
+	for _, node := range nodes {
+		if node.Labels[corev1.LabelHostname] == hostname {
+			return node.Name
+		}
+	}
+	return hostname
 }
 
 func shortHash(parts ...string) string {

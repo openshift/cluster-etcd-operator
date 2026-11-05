@@ -112,8 +112,8 @@ func TestRequestBackupForPolicy(t *testing.T) {
 
 				backup := backups.Items[0]
 				require.Equal(t, "test-backup-policy", backup.Labels[backuphelpers.LabelEtcdBackupPolicy])
-				// Local backup is assigned to a specific node, selected randomly from available nodes
-				require.Contains(t, []string{"test-node-1", "test-node-2"}, backup.Spec.NodeSelector[corev1.LabelHostname])
+				// Local backup is assigned to a specific node. With no previous backups, round robin starts at the first node.
+				require.Equal(t, "test-node-1", backup.Spec.NodeSelector[corev1.LabelHostname])
 			},
 		})
 	})
@@ -387,4 +387,155 @@ func TestRequestBackupForPolicyAllNodesWithActiveBackupFromOtherRun(t *testing.T
 			require.False(t, ok, "expected no create action")
 		},
 	})
+}
+
+// TestRequestBackupForPolicySingleNodeRoundRobin verifies that Local SingleNode backups rotate through the selected
+// control plane nodes, ordered lexicographically by node name, based on the node targeted by the policy's most recent backup.
+func TestRequestBackupForPolicySingleNodeRoundRobin(t *testing.T) {
+	const policyName = "test-backup-policy"
+	localStorage := operatorv1alpha1.EtcdBackupStorage{
+		Type:  operatorv1alpha1.EtcdBackupStorageTypeLocal,
+		Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"},
+	}
+	// localBackup creates a Local backup pinned to hostname. statusNodeName is the node name recorded in status once
+	// the backup job is scheduled, empty if it was never scheduled.
+	localBackup := func(name, hostname, statusNodeName string, age time.Duration, status func(*operatorv1alpha1.EtcdBackup)) *operatorv1alpha1.EtcdBackup {
+		return testutils.FakeEtcdBackup(name,
+			testutils.WithBackupPolicy(policyName),
+			testutils.WithBackupStorage(localStorage),
+			testutils.WithBackupAge(age),
+			func(backup *operatorv1alpha1.EtcdBackup) {
+				backup.Spec.NodeSelector = map[string]string{corev1.LabelHostname: hostname}
+			},
+			status,
+			// Override the default node name set by the status helpers
+			func(backup *operatorv1alpha1.EtcdBackup) {
+				backup.Status.NodeName = statusNodeName
+			},
+		)
+	}
+	completed := testutils.WithBackupCompleted()
+
+	for _, tc := range []struct {
+		name  string
+		nodes []string
+		// hostnames overrides the hostname label of a node, by node name. Defaults to the node name.
+		hostnames    map[string]string
+		backups      []*operatorv1alpha1.EtcdBackup
+		expectedNode string
+	}{
+		{
+			name:         "no previous backups selects first node",
+			nodes:        []string{"test-node-3", "test-node-1", "test-node-2"},
+			expectedNode: "test-node-1",
+		},
+		{
+			name:         "selects node after most recent backup",
+			nodes:        []string{"test-node-3", "test-node-1", "test-node-2"},
+			backups:      []*operatorv1alpha1.EtcdBackup{localBackup("b1", "test-node-1", "test-node-1", time.Hour, completed)},
+			expectedNode: "test-node-2",
+		},
+		{
+			name:         "wraps around after last node",
+			nodes:        []string{"test-node-3", "test-node-1", "test-node-2"},
+			backups:      []*operatorv1alpha1.EtcdBackup{localBackup("b1", "test-node-3", "test-node-3", time.Hour, completed)},
+			expectedNode: "test-node-1",
+		},
+		{
+			name:  "uses most recently created backup",
+			nodes: []string{"test-node-3", "test-node-1", "test-node-2"},
+			backups: []*operatorv1alpha1.EtcdBackup{
+				localBackup("b1", "test-node-1", "test-node-1", 3*time.Hour, completed),
+				localBackup("b2", "test-node-2", "test-node-2", 1*time.Hour, completed),
+				localBackup("b3", "test-node-3", "test-node-3", 2*time.Hour, completed),
+			},
+			expectedNode: "test-node-3",
+		},
+		{
+			name:  "failed backup still advances rotation",
+			nodes: []string{"test-node-3", "test-node-1", "test-node-2"},
+			backups: []*operatorv1alpha1.EtcdBackup{
+				localBackup("b1", "test-node-1", "test-node-1", 2*time.Hour, completed),
+				localBackup("b2", "test-node-2", "test-node-2", 1*time.Hour, testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed)),
+			},
+			expectedNode: "test-node-3",
+		},
+		{
+			name:         "previous node removed selects next node name",
+			nodes:        []string{"test-node-3", "test-node-1"},
+			backups:      []*operatorv1alpha1.EtcdBackup{localBackup("b1", "test-node-2", "test-node-2", time.Hour, completed)},
+			expectedNode: "test-node-3",
+		},
+		{
+			name:  "ignores backups not pinned to a node",
+			nodes: []string{"test-node-3", "test-node-1", "test-node-2"},
+			backups: []*operatorv1alpha1.EtcdBackup{
+				localBackup("b1", "test-node-1", "test-node-1", 2*time.Hour, completed),
+				testutils.FakeEtcdBackup("pvc", testutils.WithBackupPolicy(policyName), testutils.WithBackupAge(time.Hour), testutils.WithBackupCompleted()),
+			},
+			expectedNode: "test-node-2",
+		},
+		{
+			// By hostname the order would be node-c, node-b, node-a, selecting node-c after host-3.
+			name:         "orders by node name rather than hostname",
+			nodes:        []string{"node-c", "node-a", "node-b"},
+			hostnames:    map[string]string{"node-a": "host-3", "node-b": "host-2", "node-c": "host-1"},
+			backups:      []*operatorv1alpha1.EtcdBackup{localBackup("b1", "host-3", "", time.Hour, completed)},
+			expectedNode: "node-b",
+		},
+		{
+			name:      "prefers node name from backup status",
+			nodes:     []string{"node-c", "node-a", "node-b"},
+			hostnames: map[string]string{"node-a": "host-3", "node-b": "host-2", "node-c": "host-1"},
+			backups: []*operatorv1alpha1.EtcdBackup{
+				localBackup("b1", "host-removed", "node-b", time.Hour, completed),
+			},
+			expectedNode: "node-c",
+		},
+		{
+			name:         "previous node removed without status falls back to hostname",
+			nodes:        []string{"node-c", "node-a"},
+			backups:      []*operatorv1alpha1.EtcdBackup{localBackup("b1", "node-b", "", time.Hour, completed)},
+			expectedNode: "node-c",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			nodes := make([]*corev1.Node, 0, len(tc.nodes))
+			expectedHostname := tc.expectedNode
+			for _, name := range tc.nodes {
+				hostname, ok := tc.hostnames[name]
+				if !ok {
+					hostname = name
+				}
+				if name == tc.expectedNode {
+					expectedHostname = hostname
+				}
+				nodes = append(nodes, testutils.FakeNode(name, testutils.WithMasterLabel(), func(node *corev1.Node) {
+					node.Labels[corev1.LabelHostname] = hostname
+				}))
+			}
+			runRequestBackupTest(t, testCaseRequestBackup{
+				opts: requestBackupOpts{etcdBackupPolicyName: policyName, etcdBackupName: "test-backup-policy-29000000"},
+				backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
+					testutils.FakeEtcdBackupPolicy(policyName, "@daily", testutils.WithBackupPolicyAge(25*time.Hour), func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
+						backupPolicy.Spec.Storage = operatorv1alpha1.EtcdBackupPolicyStorage{
+							Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
+							Local: operatorv1alpha1.EtcdBackupPolicyStorageLocal{
+								EtcdBackupStorageLocal: localStorage.Local,
+								Distribution:           operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeSingleNode,
+							},
+						}
+					})},
+				backups: tc.backups,
+				nodes:   nodes,
+				validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+					createActions := testutils.ListActions[k8stesting.CreateActionImpl](operatorFake.Actions())
+					require.Len(t, createActions, 1)
+					backup, ok := createActions[0].Object.(*operatorv1alpha1.EtcdBackup)
+					require.True(t, ok, "expected EtcdBackup to be created")
+					require.Equal(t, expectedHostname, backup.Spec.NodeSelector[corev1.LabelHostname])
+				},
+			})
+		})
+	}
 }
