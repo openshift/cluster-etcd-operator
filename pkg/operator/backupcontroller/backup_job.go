@@ -39,7 +39,9 @@ var batchv1Decoder = func() runtime.Decoder {
 }()
 
 // createBackupJob adds the backup finalizer and creates the job for a backup. It returns the latest version of the
-// backup, even on error, since adding the finalizer updates it. An error is returned if the job already exists.
+// backup, even on error, since adding the finalizer updates it. Job names are deterministic, so if the job already
+// exists (i.e. it was created by an earlier sync that the informer cache hasn't caught up with), the existing job is
+// returned.
 func createBackupJob(ctx context.Context,
 	backup *operatorv1alpha1.EtcdBackup,
 	operatorImagePullSpec string,
@@ -125,15 +127,22 @@ func createBackupJob(ctx context.Context,
 		job.Spec.Template.Spec.Containers[0].Args = append(job.Spec.Template.Spec.Containers[0].Args, "--assets="+strings.Join(assets, ","))
 	}
 
-	job, err = jobClient.Create(ctx, job, metav1.CreateOptions{})
+	created, err := jobClient.Create(ctx, job, metav1.CreateOptions{})
 	if err != nil {
-		if apierrors.IsAlreadyExists(err) {
-			// Job name is deterministic from backup name, assume informer cache is stale and job will be reconciled on a future sync
-			klog.V(2).Infof("BackupController name conflict for backup %q on job %q", backup.Name, jobName)
-			return nil, backup, fmt.Errorf("stale cache, job for backup %q already exists: %w", backup.Name, err)
+		if !apierrors.IsAlreadyExists(err) {
+			return nil, backup, fmt.Errorf("failed to create job: %w", err)
 		}
-		return nil, backup, fmt.Errorf("failed to create job: %w", err)
+		existing, getErr := jobClient.Get(ctx, jobName, metav1.GetOptions{})
+		if getErr != nil {
+			return nil, backup, fmt.Errorf("failed to get existing job %q: %w", jobName, getErr)
+		}
+		if ownerUID, ok := jobOwnerUID(existing); !ok || ownerUID != backup.UID {
+			return nil, backup, fmt.Errorf("job %q already exists and is not owned by backup %q", jobName, backup.Name)
+		}
+		klog.V(2).Infof("BackupController job %q for backup %q already exists", jobName, backup.Name)
+		return existing, backup, nil
 	}
+	job = created
 	klog.Infof("BackupController started backup %q job %q", backup.Name, jobName)
 	return job, backup, nil
 }
@@ -158,10 +167,11 @@ func backupSpreadAffinity() *corev1.Affinity {
 	}
 }
 
-// generateBackupJobName creates a deterministic job name for deduplication
+// generateBackupJobName creates a deterministic job name for deduplication. The backup UID is included so that a backup
+// recreated with the same name never collides with the job of the previous backup.
 func generateBackupJobName(backup *operatorv1alpha1.EtcdBackup) string {
 	prefix := "backup"
-	suffix := shortHash(backup.Name)
+	suffix := shortHash(backup.Name, string(backup.UID))
 	return joinName(prefix, backup.Name, suffix)
 }
 

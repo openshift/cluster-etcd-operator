@@ -36,9 +36,8 @@ import (
 )
 
 const (
-	// SSA field managers used by backup controller to set status and finalizer on EtcdBackup.
-	backupStatusFieldManager    = "etcd-backup-status"
-	backupFinalizerFieldManager = "etcd-backup-finalizer"
+	// SSA field manager used by backup controller to set status on EtcdBackup.
+	backupStatusFieldManager = "etcd-backup-status"
 
 	backupAppName    = "cluster-backup-job"
 	backupDirEnvName = "CLUSTER_BACKUP_PATH"
@@ -50,6 +49,11 @@ const (
 	podStatusGracePeriod     = 1 * time.Minute
 	backupDeletedGracePeriod = 1 * time.Minute
 	conflictRequeueDelay     = 5 * time.Second
+
+	// pendingStartTTL bounds how long a started backup is assumed to hold its resources before its job is observed in the
+	// informer cache. Once expired, the backup is treated as queued again. Restarting it is safe, since job names are
+	// deterministic and creating the job is idempotent.
+	pendingStartTTL = 2 * time.Minute
 
 	labelJobName = "batch.kubernetes.io/job-name"
 
@@ -68,7 +72,9 @@ type BackupController struct {
 	kubeClient            kubernetes.Interface
 	operatorImagePullSpec string
 	featureGateAccessor   featuregates.FeatureGateAccess
-	activeCache           activeBackupCache
+	// pending tracks backups started by this controller whose jobs haven't been observed by the job informer yet.
+	// Syncs are serialized (single worker), so no locking is required.
+	pending pendingStarts
 }
 
 // NewBackupController creates a controller that runs EtcdBackups. Each sync reconciles every EtcdBackup: the status
@@ -100,7 +106,7 @@ func NewBackupController(
 		kubeClient:            kubeClient,
 		operatorImagePullSpec: operatorImagePullSpec,
 		featureGateAccessor:   accessor,
-		activeCache:           newActiveBackupCache(),
+		pending:               pendingStarts{},
 	}
 	if err := c.addIndexers(); err != nil {
 		return nil, err
@@ -170,69 +176,74 @@ func (c *BackupController) sync(ctx context.Context, syncCtx factory.SyncContext
 	var errs []error
 	var requeueAfter time.Duration
 
+	// Expire pending starts whose job was never observed, so that the backup is treated as queued again
+	for uid, pending := range c.pending {
+		if time.Since(pending.startedAt) > pendingStartTTL {
+			klog.V(2).Infof("BackupController job for started backup %q was not observed within %v", pending.backupName, pendingStartTTL)
+			delete(c.pending, uid)
+		}
+	}
+
 	// Reconcile backups that have already been started, so that the resources held by active backups are known
 	// before any new backups are started.
-	observedActive := map[string]struct{}{}
+	backupUIDs := make(map[types.UID]struct{}, len(backups))
+	held := newHeldResources()
 	queue := make([]*operatorv1alpha1.EtcdBackup, 0, len(backups))
 	jobsClient := c.kubeClient.BatchV1().Jobs(operatorclient.TargetNamespace)
 	for _, backup := range backups {
+		backupUIDs[backup.UID] = struct{}{}
+
 		var state backupState
 		var delay time.Duration
 		job, err := c.getJob(backup)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("BackupController failed to get job for backup %q: %w", backup.Name, err))
-			// Assume active to hold reservations
+			// Assume active to hold its resources
 			state = backupActive
-		} else if state, delay, err = c.reconcileBackupState(ctx, jobsClient, backup, job); err != nil {
-			errs = append(errs, err)
+		} else {
+			if job != nil || backuphelpers.IsBackupFinished(backup) {
+				// The informer has caught up with the start of this backup
+				delete(c.pending, backup.UID)
+			}
+			if state, delay, err = c.reconcileBackupState(ctx, jobsClient, backup, job); err != nil {
+				errs = append(errs, err)
+			}
 		}
 		requeueAfter = minDelay(requeueAfter, delay)
 
 		switch state {
 		case backupActive:
-			observedActive[backup.Name] = struct{}{}
-			c.activeCache.add(withJobNodeName(backup, job))
-		case backupFinished:
-			c.activeCache.remove(backup.Name)
+			held.hold(backup.Name, resourcesOf(backup, job))
 		case backupQueued:
-			if c.activeCache.isReplaced(backup.Name, backup.UID) {
-				// The cached backup was deleted and recreated with the same name, so the cache entry doesn't apply to
-				// this backup. Release the reservation of the deleted backup.
-				c.activeCache.remove(backup.Name)
-			}
-			// Check cache in case of informer lag on a backup that was started by a previous sync
-			if !c.activeCache.isActive(backup.Name) {
+			// Backups started by a previous sync appear queued until the informer observes their job
+			if _, ok := c.pending[backup.UID]; !ok {
 				queue = append(queue, backup)
-			} else if c.activeCache.isStale(backup.Name, jobNotFoundGracePeriod) {
-				// The backup was started long enough ago that its job should have been observed. If the job no longer
-				// exists (and its running status was never recorded), the backup has failed. This is the counterpart
-				// of reconcileJobNotFound, for backups whose job name was never recorded in their status.
-				if exists, err := c.backupJobExists(ctx, backup); err != nil {
-					errs = append(errs, err)
-				} else if !exists {
-					if delay, err := c.failBackupWithMissingJob(ctx, backup); err != nil {
-						errs = append(errs, err)
-					} else {
-						requeueAfter = minDelay(requeueAfter, delay)
-					}
-				}
 			}
 		}
 	}
 
-	if err := c.pruneActiveCache(ctx, observedActive); err != nil {
-		errs = append(errs, err)
+	// Hold the resources of started backups whose jobs haven't been observed yet
+	for uid, pending := range c.pending {
+		if _, ok := backupUIDs[uid]; !ok {
+			// The backup was not observed this sync, so it was deleted. Its job (if any) is handled by
+			// reconcileOrphanedJobs.
+			delete(c.pending, uid)
+			continue
+		}
+		held.hold(pending.backupName, pending.resources)
+		remaining, _ := shouldDelay(pending.startedAt, pendingStartTTL)
+		requeueAfter = minDelay(requeueAfter, remaining)
 	}
 
 	if len(queue) > 0 {
-		if err := c.startQueuedBackups(ctx, queue); err != nil {
+		if err := c.startQueuedBackups(ctx, queue, held); err != nil {
 			errs = append(errs, err)
 		}
 	}
 
 	// Jobs whose EtcdBackup no longer exists are not reached by the loop above. Release their finalizers so they can be
 	// deleted.
-	if err := c.reconcileOrphanedJobs(ctx, backups); err != nil {
+	if err := c.reconcileOrphanedJobs(ctx, backupUIDs); err != nil {
 		errs = append(errs, err)
 	}
 
@@ -318,7 +329,7 @@ func (c *BackupController) reconcileBackupState(ctx context.Context, jobsClient 
 			return backupActive, requeueAfter, nil
 		}
 
-		if _, err := applyBackupFinalizer(ctx, backupsClient, backup, false); err != nil && !apierrors.IsNotFound(err) {
+		if _, err := removeBackupFinalizer(ctx, backupsClient, backup); err != nil && !apierrors.IsNotFound(err) {
 			return backupActive, 0, fmt.Errorf("BackupController failed to remove finalizer from deleted backup %q: %w", backupName, err)
 		}
 		return backupFinished, 0, nil
@@ -327,38 +338,9 @@ func (c *BackupController) reconcileBackupState(ctx context.Context, jobsClient 
 	return backupQueued, 0, nil
 }
 
-// withJobNodeName returns the backup with the node name of its job, if it is a Local backup whose status is missing
-// the node name due to informer lag. Otherwise the backup is returned unchanged.
-func withJobNodeName(backup *operatorv1alpha1.EtcdBackup, job *batchv1.Job) *operatorv1alpha1.EtcdBackup {
-	if backup.Spec.Storage.Type != operatorv1alpha1.EtcdBackupStorageTypeLocal || backup.Status.NodeName != "" ||
-		job == nil || job.Spec.Template.Spec.NodeName == "" {
-		return backup
-	}
-	backup = backup.DeepCopy()
-	backup.Status.NodeName = job.Spec.Template.Spec.NodeName
-	return backup
-}
-
-// pruneActiveCache removes backups from the active cache that are no longer active. Any cached backups that were not
-// observed as active this sync are either new entries that haven't synced to the informer cache yet, or no longer
-// exist. Compare against source of truth (k8s API).
-func (c *BackupController) pruneActiveCache(ctx context.Context, observedActive map[string]struct{}) error {
-	backupsClient := c.operatorClient.EtcdBackups()
-	for backupName, active := range c.activeCache.backups {
-		if _, ok := observedActive[backupName]; ok {
-			continue
-		}
-		if exists, err := backupExists(ctx, backupsClient, backupName, active.uid); err != nil {
-			return err
-		} else if !exists {
-			c.activeCache.remove(backupName)
-		}
-	}
-	return nil
-}
-
 // startQueuedBackups starts as many of the queued backups as the concurrency limits allow, in order.
-func (c *BackupController) startQueuedBackups(ctx context.Context, queue []*operatorv1alpha1.EtcdBackup) error {
+// held is updated as backups are started.
+func (c *BackupController) startQueuedBackups(ctx context.Context, queue []*operatorv1alpha1.EtcdBackup, held heldResources) error {
 	controlPlaneNodes, err := backuphelpers.ListBackupNodes(c.nodesLister, nil)
 	if err != nil {
 		return fmt.Errorf("BackupController failed to select control plane nodes for backup: %w", err)
@@ -366,14 +348,14 @@ func (c *BackupController) startQueuedBackups(ctx context.Context, queue []*oper
 
 	var errs []error
 	for _, backup := range queue {
-		if err := c.startBackup(ctx, backup, controlPlaneNodes); err != nil {
+		if err := c.startBackup(ctx, backup, controlPlaneNodes, held); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return utilerrors.NewAggregate(errs)
 }
 
-func (c *BackupController) startBackup(ctx context.Context, backup *operatorv1alpha1.EtcdBackup, controlPlaneNodes []*corev1.Node) error {
+func (c *BackupController) startBackup(ctx context.Context, backup *operatorv1alpha1.EtcdBackup, controlPlaneNodes []*corev1.Node, held heldResources) error {
 	backupName := backup.Name
 	backupsClient := c.operatorClient.EtcdBackups()
 	jobsClient := c.kubeClient.BatchV1().Jobs(operatorclient.TargetNamespace)
@@ -382,7 +364,7 @@ func (c *BackupController) startBackup(ctx context.Context, backup *operatorv1al
 	var err error
 	switch backup.Spec.Storage.Type {
 	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
-		backup, ok, err = c.prepareLocalBackup(ctx, backup, controlPlaneNodes)
+		backup, ok, err = c.prepareLocalBackup(ctx, backup, controlPlaneNodes, held)
 	case operatorv1alpha1.EtcdBackupStorageTypePVC:
 		ok, err = c.preparePVCBackup(ctx, backup)
 	default:
@@ -393,7 +375,7 @@ func (c *BackupController) startBackup(ctx context.Context, backup *operatorv1al
 		return err
 	}
 
-	if ok, reason := c.activeCache.canStart(backup); !ok {
+	if ok, reason := held.canStart(backup); !ok {
 		klog.V(2).Infof("BackupController unable to start backup [%s]: %s", backupName, reason)
 		return nil
 	}
@@ -401,6 +383,12 @@ func (c *BackupController) startBackup(ctx context.Context, backup *operatorv1al
 	klog.V(4).Infof("BackupController starting backup %q", backupName)
 	job, backup, err := createBackupJob(ctx, backup, c.operatorImagePullSpec, jobsClient, backupsClient)
 	if err != nil {
+		if apierrors.IsNotFound(err) || apierrors.IsConflict(err) {
+			// The backup was deleted or changed since it was read, so the finalizer was not added and no job was
+			// created. Re-evaluate on the next sync.
+			klog.V(2).Infof("BackupController backup %q changed before it could be started, requeueing: %v", backupName, err)
+			return nil
+		}
 		if apierrors.IsInvalid(err) {
 			// The job will never be accepted by the API server, so retrying can't succeed.
 			// No job was created, so no files can have been written.
@@ -408,8 +396,11 @@ func (c *BackupController) startBackup(ctx context.Context, backup *operatorv1al
 		}
 		return fmt.Errorf("BackupController failed to start backup %q: %w", backupName, err)
 	}
-	// The job exists from this point, so hold its resources even if the status update fails
-	c.activeCache.add(backup)
+	// The job exists from this point, so hold its resources even if the status update fails, until the job is
+	// observed by the informer
+	resources := resourcesOf(backup, job)
+	held.hold(backupName, resources)
+	c.pending[backup.UID] = pendingStart{backupName: backupName, resources: resources, startedAt: time.Now()}
 
 	if _, err := applyBackupRunning(ctx, backupsClient, backup, job); err != nil {
 		if apierrors.IsNotFound(err) || apierrors.IsConflict(err) {
@@ -424,7 +415,7 @@ func (c *BackupController) startBackup(ctx context.Context, backup *operatorv1al
 // prepareLocalBackup ensures a Local backup is assigned to an eligible control plane node that is not running another
 // backup, and returns the updated backup. Local backups write to a hostPath, so they are pinned to a single node. ok is
 // false if the backup can't be started this sync.
-func (c *BackupController) prepareLocalBackup(ctx context.Context, backup *operatorv1alpha1.EtcdBackup, controlPlaneNodes []*corev1.Node) (*operatorv1alpha1.EtcdBackup, bool, error) {
+func (c *BackupController) prepareLocalBackup(ctx context.Context, backup *operatorv1alpha1.EtcdBackup, controlPlaneNodes []*corev1.Node, held heldResources) (*operatorv1alpha1.EtcdBackup, bool, error) {
 	if assignedNode := backup.Status.NodeName; assignedNode != "" {
 		if !isEligibleNode(backup, assignedNode, controlPlaneNodes) {
 			// Queued backups have no job, so no files can have been written to the assigned node and no GC is required.
@@ -433,7 +424,7 @@ func (c *BackupController) prepareLocalBackup(ctx context.Context, backup *opera
 		return backup, true, nil
 	}
 
-	nodeName, matched := c.selectNode(backup, controlPlaneNodes)
+	nodeName, matched := selectNode(backup, controlPlaneNodes, held)
 	if !matched {
 		return backup, false, c.failBackupSetup(ctx, backup, "unable to find a control plane Node matching the selector")
 	} else if nodeName == "" {
@@ -495,14 +486,14 @@ func nodeSelectorFor(backup *operatorv1alpha1.EtcdBackup) labels.Selector {
 // selectNode picks the first available control plane node matching the backup's node selector that isn't already
 // running a backup. matched reports whether any control plane node matched the node selector, regardless of whether it
 // is in use or available.
-func (c *BackupController) selectNode(backup *operatorv1alpha1.EtcdBackup, controlPlaneNodes []*corev1.Node) (nodeName string, matched bool) {
+func selectNode(backup *operatorv1alpha1.EtcdBackup, controlPlaneNodes []*corev1.Node, held heldResources) (nodeName string, matched bool) {
 	selector := nodeSelectorFor(backup)
 	for _, node := range controlPlaneNodes {
 		if !selector.Matches(labels.Set(node.Labels)) {
 			continue
 		}
 		matched = true
-		if isNodeAvailable(node) && !c.activeCache.local.inUse(node.Name) {
+		if isNodeAvailable(node) && !held.nodeInUse(node.Name) {
 			return node.Name, true
 		}
 	}
@@ -538,12 +529,7 @@ func isEligibleNode(backup *operatorv1alpha1.EtcdBackup, nodeName string, contro
 // exists. This can happen if the EtcdBackup finalizer is removed while its job exists (e.g. manually, or a deleted
 // backup's job was not yet observed when its grace period expired). Kubernetes garbage collection deletes such jobs,
 // but they can't be removed until the backup finalizer is released, and nothing else would reconcile them.
-func (c *BackupController) reconcileOrphanedJobs(ctx context.Context, backups []*operatorv1alpha1.EtcdBackup) error {
-	backupUIDs := make(map[types.UID]struct{}, len(backups))
-	for _, backup := range backups {
-		backupUIDs[backup.UID] = struct{}{}
-	}
-
+func (c *BackupController) reconcileOrphanedJobs(ctx context.Context, backupUIDs map[types.UID]struct{}) error {
 	jobsClient := c.kubeClient.BatchV1().Jobs(operatorclient.TargetNamespace)
 	var errs []error
 	for _, obj := range c.jobInformer.GetIndexer().List() {
@@ -571,61 +557,6 @@ func (c *BackupController) reconcileOrphanedJobs(ctx context.Context, backups []
 		klog.Infof("BackupController finalized job %q without an owning backup", job.Name)
 	}
 	return utilerrors.NewAggregate(errs)
-}
-
-// failBackupWithMissingJob fails a backup that was started by this controller, but whose job no longer exists and was
-// never recorded in the backup status. The backup container may have run and written files, so the generic job failure
-// reason is used to ensure that garbage collection is not skipped. A non-zero delay is returned if the backup changed
-// since it was read, and must be re-evaluated.
-func (c *BackupController) failBackupWithMissingJob(ctx context.Context, backup *operatorv1alpha1.EtcdBackup) (time.Duration, error) {
-	message := fmt.Sprintf("unable to find job %q", generateBackupJobName(backup))
-	if _, err := applyBackupFinished(ctx, c.operatorClient.EtcdBackups(), backup, nil, operatorv1alpha1.BackupFailed, operatorv1alpha1.BackupReasonJobFailed, message, nil); err != nil {
-		if apierrors.IsConflict(err) {
-			// Keep the reservation until the latest version of the backup is observed
-			klog.V(2).Infof("BackupController backup %q changed while reconciling missing job, requeueing", backup.Name)
-			return conflictRequeueDelay, nil
-		}
-		if !apierrors.IsNotFound(err) {
-			return 0, fmt.Errorf("BackupController failed to apply failed status on backup %q with missing job: %w", backup.Name, err)
-		}
-	}
-	klog.Infof("BackupController failed backup %q: %s", backup.Name, message)
-	c.activeCache.remove(backup.Name)
-	return 0, nil
-}
-
-// backupJobExists checks the API for the backup's job, bypassing the informer cache. Jobs owned by a previous EtcdBackup
-// with the same name are ignored.
-func (c *BackupController) backupJobExists(ctx context.Context, backup *operatorv1alpha1.EtcdBackup) (bool, error) {
-	jobName := generateBackupJobName(backup)
-	job, err := c.kubeClient.BatchV1().Jobs(operatorclient.TargetNamespace).Get(ctx, jobName, metav1.GetOptions{})
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("BackupController failed to get job %q for backup %q: %w", jobName, backup.Name, err)
-	}
-	if ownerUID, ok := jobOwnerUID(job); ok && ownerUID != backup.UID {
-		// Job belongs to a previous EtcdBackup with the same name
-		return false, nil
-	}
-	return true, nil
-}
-
-// backupExists checks the API for the backup. If uid is set, a backup with the same name but a different UID (i.e. the
-// backup was deleted and recreated) is reported as not existing.
-func backupExists(ctx context.Context, backupsClient operatorv1alpha1client.EtcdBackupInterface, name string, uid types.UID) (bool, error) {
-	backup, err := backupsClient.Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		if !apierrors.IsNotFound(err) {
-			return true, fmt.Errorf("BackupController failed to get backup [%s]: %w", name, err)
-		}
-		return false, nil
-	}
-	if uid != "" && backup.UID != "" && backup.UID != uid {
-		return false, nil
-	}
-	return true, nil
 }
 
 func (c *BackupController) getJob(backup *operatorv1alpha1.EtcdBackup) (*batchv1.Job, error) {
@@ -712,8 +643,8 @@ func reconcileJobStatus(ctx context.Context,
 }
 
 // reconcileJobNotFound reconciles a started backup whose recorded job (Status.JobName) has not been observed in the
-// informer cache after a grace period. Backups whose job name was never recorded are handled in sync, using the active
-// cache (see failBackupWithMissingJob).
+// informer cache after a grace period. Backups whose job name was never recorded are treated as queued once their
+// pending start expires, and are restarted (job creation is idempotent).
 func reconcileJobNotFound(
 	ctx context.Context,
 	backupClient operatorv1alpha1client.EtcdBackupInterface,
@@ -928,4 +859,73 @@ func shouldDelay(since time.Time, gracePeriod time.Duration) (time.Duration, boo
 		return remaining, true
 	}
 	return 0, false
+}
+
+// backupResources are the resources held by an active backup. Local backups hold their node, PVC backups hold their PVC.
+type backupResources struct {
+	nodeName, pvcName string
+}
+
+// resourcesOf returns the resources held by a backup. The node of a Local backup's job is preferred over the node in
+// its status, since the cached backup may lag behind the node assignment.
+func resourcesOf(backup *operatorv1alpha1.EtcdBackup, job *batchv1.Job) backupResources {
+	switch backup.Spec.Storage.Type {
+	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
+		if job != nil && job.Spec.Template.Spec.NodeName != "" {
+			return backupResources{nodeName: job.Spec.Template.Spec.NodeName}
+		}
+		return backupResources{nodeName: backup.Status.NodeName}
+	case operatorv1alpha1.EtcdBackupStorageTypePVC:
+		return backupResources{pvcName: backup.Spec.Storage.PVC.Name}
+	}
+	return backupResources{}
+}
+
+// pendingStart is a backup started by this controller whose job has not been observed in the informer cache yet
+// (the expectations pattern). It bridges informer lag, so that the resources of a just started backup are not handed to
+// another backup on the next sync.
+type pendingStart struct {
+	backupName string
+	resources  backupResources
+	startedAt  time.Time
+}
+
+// pendingStarts maps backup UID to the backup's pending start.
+type pendingStarts map[types.UID]pendingStart
+
+// heldResources maps the nodes and PVCs held by active backups to the name of the backup holding them. It is rebuilt
+// from the informer caches (plus pending starts) on every sync.
+type heldResources struct {
+	nodes map[string]string
+	pvcs  map[string]string
+}
+
+func newHeldResources() heldResources {
+	return heldResources{nodes: map[string]string{}, pvcs: map[string]string{}}
+}
+
+func (h *heldResources) hold(backupName string, resources backupResources) {
+	if resources.nodeName != "" {
+		h.nodes[resources.nodeName] = backupName
+	}
+	if resources.pvcName != "" {
+		h.pvcs[resources.pvcName] = backupName
+	}
+}
+
+func (h heldResources) nodeInUse(nodeName string) bool {
+	_, ok := h.nodes[nodeName]
+	return ok
+}
+
+// canStart reports whether the resources required by a queued backup are free.
+func (h heldResources) canStart(backup *operatorv1alpha1.EtcdBackup) (ok bool, reason string) {
+	resources := resourcesOf(backup, nil)
+	if holder, ok := h.nodes[resources.nodeName]; ok && resources.nodeName != "" {
+		return false, fmt.Sprintf("Node %s has active backup %q", resources.nodeName, holder)
+	}
+	if holder, ok := h.pvcs[resources.pvcName]; ok && resources.pvcName != "" {
+		return false, fmt.Sprintf("PVC %s in use by backup %q", resources.pvcName, holder)
+	}
+	return true, ""
 }
