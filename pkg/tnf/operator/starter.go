@@ -92,8 +92,7 @@ func HandleDualReplicaClusters(
 		return false, err
 	}
 	// Start pacemaker controllers (lifecycle manager, status collector)
-	// PacemakerLifecycleManager registers UpdateFunc handler for node Ready transitions
-	// to trigger update-setup job restart during initial bootstrap.
+	// Node and Pacemaker informer events enqueue lifecycle reconciliation.
 	runPacemakerControllers(ctx, controllerContext, operatorClient, kubeClient, kubeInformersForNamespaces, etcdInformer, controlPlaneNodeInformer, dynamicClient)
 
 	return true, nil
@@ -193,6 +192,18 @@ func runPacemakerControllers(ctx context.Context, controllerContext *controllerc
 
 		klog.Infof("PacemakerCluster CRD is established")
 
+		// ClusterVersion notifications feed the console controller; lifecycle
+		// admission uses control-plane Node MCO annotations.
+		configClient, err := configv1client.NewForConfig(controllerContext.KubeConfig)
+		if err != nil {
+			klog.Errorf("failed to create config client: %v", err)
+			return
+		}
+		configInformers := configv1informersfactory.NewSharedInformerFactory(configClient, 10*time.Minute)
+		clusterVersions := configInformers.Config().V1().ClusterVersions()
+		clusterVersionLister := clusterVersions.Lister()
+		configInformers.Start(ctx.Done())
+
 		// Prerequisites met: create and start lifecycle manager controller.
 		// Retry with backoff to handle transient errors (e.g., API server unavailable).
 		var lifecycleController factory.Controller
@@ -226,11 +237,14 @@ func runPacemakerControllers(ctx context.Context, controllerContext *controllerc
 
 		// Start the PacemakerCluster informer (controller waits for sync before processing events).
 		go pacemakerInformer.Run(ctx.Done())
+		// The lifecycle constructor may register additional namespace informers
+		// after the main operator has started the shared factory.
+		kubeInformersForNamespaces.Start(ctx.Done())
 
 		// Start the lifecycle manager controller.
 		// PacemakerLifecycleManager.sync() handles both bootstrap and post-transition:
 		// - Bootstrap: StartJobControllers() drives external etcd transition
-		// - Post-transition: MonitorHealth(), ReconcilePacemakerConfig(), CleanupOrphanedJobs()
+		// - Post-transition: start runtime controllers and reconcile recorded generations
 		go lifecycleController.Run(ctx, 1)
 		go func() {
 			_ = wait.PollUntilContextCancel(ctx, 30*time.Second, true, func(ctx context.Context) (bool, error) {
@@ -252,15 +266,6 @@ func runPacemakerControllers(ctx context.Context, controllerContext *controllerc
 		klog.Infof("starting Pacemaker metrics controller")
 		go metricsController.Run(ctx, 1)
 
-		// Create a config client for ClusterVersion access (console notification docs URL).
-		configClient, err := configv1client.NewForConfig(controllerContext.KubeConfig)
-		if err != nil {
-			klog.Errorf("failed to create config client: %v", err)
-			return
-		}
-		configInformers := configv1informersfactory.NewSharedInformerFactory(configClient, 10*time.Minute)
-		clusterVersionLister := configInformers.Config().V1().ClusterVersions().Lister()
-		configInformers.Start(ctx.Done())
 		configInformers.WaitForCacheSync(ctx.Done())
 
 		// Create and start the console notification controller, sharing the same informer

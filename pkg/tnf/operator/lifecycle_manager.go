@@ -11,17 +11,14 @@ import (
 	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
 	pacmkrv1 "github.com/openshift/api/etcd/v1"
-	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/jobs"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/pacemaker"
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
 
 // Local constants for lifecycle controller
@@ -56,10 +53,6 @@ type pacemakerLifecycleManager struct {
 	// Health check controller startup protection: prevents duplicate health check starts
 	healthCheckMu      sync.Mutex
 	healthCheckStarted bool
-
-	// Controller context for goroutines (set on first sync, cancelled on shutdown)
-	controllerCtx   context.Context
-	controllerCtxMu sync.Mutex
 }
 
 // newPacemakerLifecycleManager creates a new PacemakerLifecycleManager for monitoring pacemaker status
@@ -92,7 +85,6 @@ func newPacemakerLifecycleManager(
 		controllerContext:          controllerContext,
 		kubeInformersForNamespaces: kubeInformersForNamespaces,
 		etcdInformer:               etcdInformer,
-		controllerCtx:              ctx,
 	}
 
 	syncCtx := factory.NewSyncContext(controllerNamePacemakerLifecycle, eventRecorder.WithComponentSuffix("pacemaker-lifecycle-manager"))
@@ -100,77 +92,30 @@ func newPacemakerLifecycleManager(
 	klog.Infof("%s controller created, waiting for informers to sync before starting", controllerNamePacemakerLifecycle)
 	klog.Infof("PacemakerLifecycleManager will watch: operatorClient and %s/%s resource", pacmkrv1.SchemeGroupVersion.String(), pacemaker.PacemakerResourceName)
 
-	// ResyncEvery ensures the sync function is called every minute with fresh cache data.
-	// We use WithBareInformers to keep caches synced without triggering sync on every event.
-	// Custom event handlers (registered below) handle specific cases like node Ready transitions.
+	// All informer events enqueue reconciliation; side effects run only in sync.
 	controller := factory.New().
 		WithSyncContext(syncCtx).
 		ResyncEvery(time.Minute).
 		WithSync(c.sync).
-		WithBareInformers(
+		WithSyncDegradedOnError(operatorClient).
+		WithInformers(
 			operatorClient.Informer(),
 			informer,
 			controlPlaneNodeInformer,
+			etcdInformer.Informer(),
+			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().ConfigMaps().Informer(),
+			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods().Informer(),
+			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Secrets().Informer(),
+			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs().Informer(),
+			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().CronJobs().Informer(),
+			kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Apps().V1().DaemonSets().Informer(),
 		).ToController(controllerNamePacemakerLifecycle, syncCtx.Recorder())
 
 	// PacemakerCluster informer is started in runPacemakerControllers (pkg/tnf/operator/starter.go)
 	// Node informer is started in RunOperator (pkg/operator/starter.go)
 	klog.Infof("PacemakerLifecycleManager controller created, will wait up to 10 minutes for informers to sync")
 
-	// Register node event handlers for drift-triggered reconciliation
-	if err := c.registerNodeEventHandlers(); err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to register node event handlers: %w", err)
-	}
-
 	return controller, c, informer, nil
-}
-
-// registerNodeEventHandlers registers Update event handler on the node informer.
-// Returns an error if registration fails, as the lifecycle manager cannot function without
-// receiving node events for update-setup job restarts.
-// UpdateFunc handles Ready transitions to trigger update-setup job restart (post-transition only).
-func (c *pacemakerLifecycleManager) registerNodeEventHandlers() error {
-	if c.controlPlaneNodeInformer == nil {
-		return fmt.Errorf("controlPlaneNodeInformer is nil")
-	}
-
-	_, err := c.controlPlaneNodeInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		UpdateFunc: func(oldObj, newObj any) {
-			oldNode, oldOk := oldObj.(*corev1.Node)
-			newNode, newOk := newObj.(*corev1.Node)
-			if !oldOk || !newOk {
-				klog.Warningf("failed to convert updated object to Node, old=%+v, new=%+v", oldObj, newObj)
-				return
-			}
-
-			// Check for Ready transition - triggers update-setup restart post-transition
-			oldReady := tools.IsNodeReady(oldNode)
-			newReady := tools.IsNodeReady(newNode)
-			if !oldReady && newReady {
-				klog.Infof("node %s transitioned to ready state - restarting update-setup job", newNode.GetName())
-				go func() {
-					// Use controller context (cancelled on shutdown)
-					// Context is initialized in constructor, so always available
-					c.controllerCtxMu.Lock()
-					ctx := c.controllerCtx
-					c.controllerCtxMu.Unlock()
-
-					// Restart update-setup job when nodes become ready (e.g., after replacement)
-					// This ensures update-setup reruns if it completed before auth ran on new node
-					if err := c.restartUpdateSetupJob(ctx); err != nil {
-						klog.Errorf("Failed to restart update-setup job on node ready: %v", err)
-					}
-				}()
-			}
-		},
-	})
-
-	if err != nil {
-		return fmt.Errorf("failed to add event handler to node informer: %w", err)
-	}
-
-	klog.Infof("Registered Update event handler for node lifecycle management")
-	return nil
 }
 
 // sync is the main sync function that gets called periodically to check pacemaker status
@@ -183,8 +128,11 @@ func (c *pacemakerLifecycleManager) sync(ctx context.Context, syncCtx factory.Sy
 		klog.Errorf("Failed to start job controllers: %v", err)
 		return fmt.Errorf("failed to start job controllers: %w", err)
 	}
+	if err := c.cleanupOrphanedJobs(ctx); err != nil {
+		klog.Warningf("Failed to clean up stale TNF jobs and orphan pods: %v", err)
+	}
 
-	return nil
+	return c.reconcileGeneration(ctx)
 }
 
 // runPacemakerHealthCheckController starts the health check controller.
@@ -218,67 +166,4 @@ func (c *pacemakerLifecycleManager) runPacemakerHealthCheckController(ctx contex
 
 	go healthCheckController.Run(ctx, 1)
 	klog.Infof("Health check controller started")
-}
-
-// restartUpdateSetupJob restarts the update-setup job controller when nodes become ready.
-// Only runs post-transition when exactly 2 control plane nodes exist.
-func (c *pacemakerLifecycleManager) restartUpdateSetupJob(ctx context.Context) error {
-	// Check if transition is complete - update-setup only runs post-transition
-	transitionComplete, err := ceohelpers.HasExternalEtcdCompletedTransition(ctx, c.operatorClient)
-	if err != nil {
-		return fmt.Errorf("failed to check external etcd transition status: %w", err)
-	}
-	if !transitionComplete {
-		klog.V(4).Infof("Skipping update-setup restart - transition not yet complete")
-		return nil
-	}
-
-	// Get control plane nodes
-	if c.controlPlaneNodeInformer == nil || !c.controlPlaneNodeInformer.HasSynced() {
-		klog.V(4).Infof("Skipping update-setup restart - node informer not synced yet")
-		return nil
-	}
-	controlPlaneNodes, err := tools.ListNodesFromInformer(c.controlPlaneNodeInformer)
-	if err != nil {
-		return fmt.Errorf("failed to list control plane nodes: %w", err)
-	}
-
-	// Update-setup requires exactly 2 nodes (pacemaker limitation)
-	if len(controlPlaneNodes) != 2 {
-		klog.V(4).Infof("Skipping update-setup restart: requires exactly 2 control plane nodes, have %d", len(controlPlaneNodes))
-		return nil
-	}
-
-	// schedulableNodesFunc: returns ready nodes where job can run (K8s ∩ Pacemaker intersection)
-	schedulableNodesFunc := func() ([]*corev1.Node, error) {
-		return c.getActivePacemakerNodes()
-	}
-
-	// affectedNodesFunc: K8s ∩ Pacemaker active nodes (ready only)
-	// Only blocks on nodes that are actually in the Pacemaker cluster configuration.
-	// This prevents deadlock when a node is removed from Pacemaker but can't become Ready
-	// without update-setup re-adding it (kubelet is a Pacemaker resource).
-	updateSetupAffectedNodesFunc := func() ([]*corev1.Node, error) {
-		return c.getActivePacemakerNodes()
-	}
-
-	klog.Infof("Restarting update-setup job controller after node ready event")
-	if err := jobs.RestartClusterJobOrRunController(
-		ctx,
-		tools.JobTypeUpdateSetup,
-		schedulableNodesFunc,
-		updateSetupAffectedNodesFunc,
-		nil, // no jobConfigFunc for update-setup
-		3,   // retries
-		c.controllerContext,
-		c.operatorClient,
-		c.kubeClient,
-		c.kubeInformersForNamespaces,
-		jobs.DefaultConditions,
-		10*time.Second, // existingJobCompletionTimeout
-	); err != nil {
-		return fmt.Errorf("failed to restart update-setup job controller: %w", err)
-	}
-
-	return nil
 }
