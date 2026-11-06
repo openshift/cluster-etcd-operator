@@ -66,6 +66,12 @@ func TestBackupScript(t testing.TB) {
 	cmdAsStr := fmt.Sprintf("ls -l /host%s", backupPath)
 	output, err := exec.Command("oc", getOcArgs(debugPodName, cmdAsStr)...).CombinedOutput()
 	require.Errorf(t, err, string(output))
+	t.Cleanup(func() {
+		// clean up
+		cmdAsStr = fmt.Sprintf("rm -rf /host%s", backupPath)
+		output, err = exec.Command("oc", getOcArgs(debugPodName, cmdAsStr)...).CombinedOutput()
+		require.NoError(t, err, fmt.Errorf("cleanup failed: %s", string(output)))
+	})
 
 	// run backup
 	cmdAsStr = fmt.Sprintf("chroot /host /bin/bash -euxo pipefail /usr/local/bin/cluster-backup.sh --force %s", backupPath)
@@ -79,13 +85,6 @@ func TestBackupScript(t testing.TB) {
 	files := strings.Split(string(output), "\n")
 	expectedDirectory := strings.TrimPrefix(backupPath, "/etc/kubernetes/")
 	requireBackupFilesFound(t, expectedDirectory, trimFilesPrefix(files))
-
-	t.Cleanup(func() {
-		// clean up
-		cmdAsStr = fmt.Sprintf("rm -rf /host%s", backupPath)
-		output, err = exec.Command("oc", getOcArgs(debugPodName, cmdAsStr)...).CombinedOutput()
-		require.NoError(t, err, fmt.Errorf("cleanup failed: %s", string(output)))
-	})
 }
 
 func getOcArgs(podName, cmdAsStr string) []string {
