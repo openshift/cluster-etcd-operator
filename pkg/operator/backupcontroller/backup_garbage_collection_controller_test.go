@@ -129,10 +129,10 @@ func TestBackupGarbageCollectionNewJob(t *testing.T) {
 				require.ElementsMatch(t, job.OwnerReferences, []v1.OwnerReference{{
 					APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup", UID: "test-backup-uid",
 				}})
-				backupDir := backupPathMount + "/etcdbackups/test-backup/"
+				backupDir := backuphelpers.BackupPathMount + "/etcdbackups/test-backup"
 				require.Contains(t, job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{
 					Name:  backupGCFilesEnvName,
-					Value: strings.Join([]string{backupDir + "snapshot.db", backupDir + "archive.tar.gz"}, ","),
+					Value: strings.Join([]string{backupDir + "/snapshot.db", backupDir + "/archive.tar.gz"}, ","),
 				})
 			},
 		})
@@ -153,10 +153,10 @@ func TestBackupGarbageCollectionNewJob(t *testing.T) {
 				require.ElementsMatch(t, job.OwnerReferences, []v1.OwnerReference{{
 					APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup", UID: "test-backup-uid",
 				}})
-				backupDir := backupPathMount + "/test-backup/"
+				backupDir := backuphelpers.BackupPathMount + "/test-backup"
 				require.Contains(t, job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{
 					Name:  backupGCFilesEnvName,
-					Value: strings.Join([]string{backupDir + "snapshot.db", backupDir + "archive.tar.gz"}, ","),
+					Value: strings.Join([]string{backupDir + "/snapshot.db", backupDir + "/archive.tar.gz"}, ","),
 				})
 			},
 		})
@@ -374,17 +374,19 @@ func TestBackupGarbageCollectionMultipleBackupsPerJob(t *testing.T) {
 				job2.OwnerReferences,
 			)
 
-			backupDir1 := backupPathMount + "/test-backup-1/"
-			backupDir2 := backupPathMount + "/test-backup-2/"
-			backupDir3 := backupPathMount + "/test-backup-3/"
+			backupDir1 := backuphelpers.BackupPathMount + "/test-backup-1"
+			backupDir2 := backuphelpers.BackupPathMount + "/test-backup-2"
+			backupDir3 := backuphelpers.BackupPathMount + "/test-backup-3"
 			require.Equal(t,
-				corev1.EnvVar{Name: backupGCFilesEnvName, Value: strings.Join([]string{backupDir1 + "snapshot.db", backupDir1 + "archive.tar.gz", backupDir2 + "snapshot.db", backupDir2 + "archive.tar.gz"}, ",")},
+				corev1.EnvVar{Name: backupGCFilesEnvName, Value: strings.Join([]string{
+					backupDir1 + "/snapshot.db", backupDir1 + "/archive.tar.gz",
+					backupDir2 + "/snapshot.db", backupDir2 + "/archive.tar.gz"}, ",")},
 				requireFind(t, job1.Spec.Template.Spec.Containers[0].Env, func(env corev1.EnvVar) bool {
 					return env.Name == backupGCFilesEnvName
 				}),
 			)
 			require.Equal(t,
-				corev1.EnvVar{Name: backupGCFilesEnvName, Value: strings.Join([]string{backupDir3 + "snapshot.db", backupDir3 + "archive.tar.gz"}, ",")},
+				corev1.EnvVar{Name: backupGCFilesEnvName, Value: strings.Join([]string{backupDir3 + "/snapshot.db", backupDir3 + "/archive.tar.gz"}, ",")},
 				requireFind(t, job2.Spec.Template.Spec.Containers[0].Env, func(env corev1.EnvVar) bool {
 					return env.Name == backupGCFilesEnvName
 				}),
@@ -584,6 +586,7 @@ func TestBackupGarbageCollectionFailedJobBackoff(t *testing.T) {
 				APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup", UID: "test-backup-uid",
 			}})
 			require.True(t, isJobFailed(&job), "Job should not have been replaced yet, expected to wait for backoff")
+			require.Contains(t, job.Finalizers, backuphelpers.FinalizerEtcdBackup, "Failed job awaiting retry should keep its finalizer")
 		},
 	})
 }
@@ -632,7 +635,8 @@ func TestBackupGarbageCollectionFailedJobBackoffEscalates(t *testing.T) {
 }
 
 func TestBackupGarbageCollectionCompletedJobsFinalized(t *testing.T) {
-	// Finalize GC Jobs that have completed
+	// Finalize GC Jobs that have completed, and failed GC Jobs without any backups that still require GC, since they
+	// will never be retried
 	retryQueue := newGCRetryQueue()
 	retryQueue.When("pvc/completed")
 	retryQueue.backoffs["pvc/completed"] = gcBackoff{jobUID: "old-failed-job-uid"}
@@ -680,12 +684,7 @@ func TestBackupGarbageCollectionCompletedJobsFinalized(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, jobList.Items, 2)
 			for _, job := range jobList.Items {
-				if isJobCompleted(&job) {
-					require.NotContains(t, job.Finalizers, backuphelpers.FinalizerEtcdBackup)
-				} else {
-					require.True(t, isJobFailed(&job), "Expected job to be failed")
-					require.Contains(t, job.Finalizers, backuphelpers.FinalizerEtcdBackup)
-				}
+				require.NotContains(t, job.Finalizers, backuphelpers.FinalizerEtcdBackup, "Expected job %q to be finalized", job.Name)
 			}
 		},
 	})
@@ -743,6 +742,49 @@ func TestBackupGarbageCollectionCompletedJobKeptUntilFinalizersRemoved(t *testin
 			})
 			require.NoError(t, err)
 			require.Len(t, jobList.Items, 1, "expected completed job to not be replaced")
+		},
+	})
+}
+
+func TestBackupGarbageCollectionCompletedJobKeptUntilFinalizerRemovalObserved(t *testing.T) {
+	// GC completed and the backup finalizer is removed, but the informer has not observed the removal yet. The
+	// completed job must keep its owner references until it does, otherwise a stale backup would be collected again.
+	// The sync is requeued to finalize the job once the removal is observed.
+	defaultDelay := gcFinalizeRequeueDelay
+	gcFinalizeRequeueDelay = 100 * time.Millisecond
+	t.Cleanup(func() { gcFinalizeRequeueDelay = defaultDelay })
+	collected := testutils.FakeEtcdBackup("collected", testutils.WithBackupCompleted(), testutils.WithBackupDeleted())
+	completedJob := &batchv1.Job{
+		ObjectMeta: v1.ObjectMeta{
+			Name:        "completed-backup-gc-job",
+			Namespace:   operatorclient.TargetNamespace,
+			Annotations: map[string]string{backuphelpers.AnnotationBackupStorage: "pvc/test-backup-pvc"},
+			Labels:      map[string]string{"app": backupGCAppName},
+			Finalizers:  []string{backuphelpers.FinalizerEtcdBackup},
+			OwnerReferences: []v1.OwnerReference{{
+				APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: collected.Name, UID: collected.UID,
+			}},
+		},
+		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
+			Type: batchv1.JobComplete, Status: corev1.ConditionTrue,
+		}}},
+	}
+	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
+		backups: []*operatorv1alpha1.EtcdBackup{collected},
+		jobs:    []*batchv1.Job{completedJob},
+		pvcs:    []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
+		validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			backup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), collected.Name, v1.GetOptions{})
+			require.NoError(t, err)
+			require.NotContains(t, backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
+
+			job, err := client.BatchV1().Jobs(operatorclient.TargetNamespace).Get(t.Context(), completedJob.Name, v1.GetOptions{})
+			require.NoError(t, err)
+			require.Contains(t, job.Finalizers, backuphelpers.FinalizerEtcdBackup)
+			require.Equal(t, completedJob.OwnerReferences, job.OwnerReferences)
+
+			require.Eventually(t, func() bool { return syncCtx.Queue().Len() == 1 }, time.Second, 10*time.Millisecond,
+				"expected sync to be requeued")
 		},
 	})
 }
@@ -810,4 +852,32 @@ func requireFind[T any](t *testing.T, items []T, find func(T) bool) (result T) {
 	}
 	require.Fail(t, "Unable to find expected item")
 	return
+}
+
+func TestBackupGarbageCollectionDefaultHostPath(t *testing.T) {
+	// Local backups without a hostPath are stored under the default hostPath, and GC must resolve the same location
+	backup := testutils.FakeEtcdBackup("test-backup",
+		testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{Type: operatorv1alpha1.EtcdBackupStorageTypeLocal}),
+		testutils.WithBackupNodeName("test-node"), testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed), testutils.WithBackupDeleted())
+	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
+		backups: []*operatorv1alpha1.EtcdBackup{backup},
+		nodes:   []*corev1.Node{testutils.FakeNode("test-node")},
+		validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			jobList, err := client.BatchV1().Jobs(operatorclient.TargetNamespace).List(t.Context(), v1.ListOptions{
+				LabelSelector: labels.Set{"app": backupGCAppName}.String(),
+			})
+			require.NoError(t, err)
+			require.Len(t, jobList.Items, 1)
+			podSpec := jobList.Items[0].Spec.Template.Spec
+
+			volume := requireFind(t, podSpec.Volumes, func(v corev1.Volume) bool { return v.HostPath != nil })
+			require.Equal(t, backuphelpers.BackupPathMount, volume.HostPath.Path)
+			mount := requireFind(t, podSpec.Containers[0].VolumeMounts, func(m corev1.VolumeMount) bool { return m.Name == volume.Name })
+			require.Equal(t, backuphelpers.BackupPathMount+backuphelpers.BackupPathMount, mount.MountPath)
+			require.Contains(t, podSpec.Containers[0].Env, corev1.EnvVar{
+				Name:  backupGCFilesEnvName,
+				Value: backuphelpers.BackupPathMount + backuphelpers.BackupPathMount + "/test-backup",
+			})
+		},
+	})
 }

@@ -310,6 +310,8 @@ func TestBackupJobCompleted(t *testing.T) {
 		Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
 			NodeName: "test-node"}}},
 		Status: batchv1.JobStatus{
+			Failed:         1,
+			Succeeded:      1,
 			CompletionTime: &now,
 			Conditions: []batchv1.JobCondition{{
 				Type:   batchv1.JobComplete,
@@ -319,7 +321,8 @@ func TestBackupJobCompleted(t *testing.T) {
 		testutils.FakePod("failed-backup-job-pod-1",
 			testutils.WithPodLabels(map[string]string{labelJobName: job.Name}),
 			testutils.WithPodOwner(v1.OwnerReference{Kind: "Job", Name: job.Name, UID: job.UID}),
-			testutils.WithCreationTimestamp(v1.Time{Time: now.Add(-time.Minute)})),
+			testutils.WithCreationTimestamp(v1.Time{Time: now.Add(-time.Minute)}),
+			func(pod *corev1.Pod) { pod.Status.Phase = corev1.PodFailed }),
 		testutils.FakePod("failed-backup-job-pod-2",
 			testutils.WithPodLabels(map[string]string{labelJobName: job.Name}),
 			testutils.WithPodOwner(v1.OwnerReference{Kind: "Job", Name: job.Name, UID: job.UID}),
@@ -745,8 +748,57 @@ func TestBackupGracefulFailureAfterCrashRequiresGC(t *testing.T) {
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			requireNoBackupJobCreated(t, client)
 			requireBackupStatusApplied(t, operatorFake, []metav1.Condition{{
+				Type:   string(operatorv1alpha1.BackupFailed),
+				Reason: string(operatorv1alpha1.BackupReasonJobFailed),
+				// Not every attempt confirmed it created no files, so the message must not claim it
+				Message: "backup job failed",
+				Status:  metav1.ConditionTrue,
+			}}, nil)
+		},
+	})
+}
+
+func TestBackupOutcomeIgnoresPodsOfPreviousJob(t *testing.T) {
+	// Job names are derived from the backup name, so a recreated backup reuses its job name. Pods left over from the
+	// previous job carry the same job-name label and must not be used to determine the outcome of the current job.
+	job := &batchv1.Job{
+		ObjectMeta: v1.ObjectMeta{
+			Name:       "failed-backup-job",
+			Namespace:  operatorclient.TargetNamespace,
+			UID:        "current-job-uid",
+			Labels:     map[string]string{"app": backupAppName, backuphelpers.LabelEtcdBackup: "test-backup"},
+			Finalizers: []string{backuphelpers.FinalizerEtcdBackup}},
+		Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+			NodeName: "test-node"}}},
+		Status: batchv1.JobStatus{Failed: 1, Conditions: []batchv1.JobCondition{{
+			Type:   batchv1.JobFailed,
+			Status: corev1.ConditionTrue}}}}
+	jobPod := func(name string, ownerUID types.UID, phase corev1.PodPhase, message string) *corev1.Pod {
+		return testutils.FakePod(name,
+			testutils.WithPodLabels(map[string]string{labelJobName: job.Name}),
+			testutils.WithPodOwner(v1.OwnerReference{Kind: "Job", Name: job.Name, UID: ownerUID}),
+			testutils.WithCreationTimestamp(v1.Now()),
+			testutils.WithPodStatus(phase),
+			func(pod *corev1.Pod) {
+				pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+					State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Message: message}}}}
+			})
+	}
+
+	runBackupControllerTest(t, testCaseBackupController{
+		backups: []*operatorv1alpha1.EtcdBackup{
+			testutils.FakeEtcdBackup("test-backup", testutils.WithBackupRunning(job))},
+		jobs: []*batchv1.Job{job},
+		pods: []*corev1.Pod{
+			jobPod("failed-backup-job-pod", job.UID, corev1.PodFailed, `{"files": []}`),
+			jobPod("previous-backup-job-pod", "previous-job-uid", corev1.PodSucceeded,
+				`{"message": "previous backup", "files": [{"path": "/etc/kubernetes/cluster-backup/test-backup/snapshot.db", "sizeBytes": 10}]}`),
+		},
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			requireNoBackupJobCreated(t, client)
+			requireBackupStatusApplied(t, operatorFake, []metav1.Condition{{
 				Type:    string(operatorv1alpha1.BackupFailed),
-				Reason:  string(operatorv1alpha1.BackupReasonJobFailed),
+				Reason:  string(operatorv1alpha1.BackupReasonSetupFailed),
 				Message: "backup job failed without creating files",
 				Status:  metav1.ConditionTrue,
 			}}, nil)
@@ -880,7 +932,7 @@ func TestFinishedStatusConflictRequeues(t *testing.T) {
 	})
 }
 
-func TestApplyBackupFinishedRequiresResourceVersion(t *testing.T) {
+func TestApplyBackupStatusRequiresResourceVersion(t *testing.T) {
 	backup := testutils.FakeEtcdBackup("test-backup", func(backup *operatorv1alpha1.EtcdBackup) {
 		backup.ResourceVersion = "42"
 	})
@@ -902,7 +954,8 @@ func TestApplyBackupFinishedRequiresResourceVersion(t *testing.T) {
 	require.Equal(t, "42", appliedResourceVersion(t, func(client operatorv1alpha1client.EtcdBackupInterface) {
 		_, _ = applyBackupFinished(t.Context(), client, backup, nil, operatorv1alpha1.BackupFailed, operatorv1alpha1.BackupReasonJobFailed, "", nil)
 	}))
-	require.Empty(t, appliedResourceVersion(t, func(client operatorv1alpha1client.EtcdBackupInterface) {
+	// Running must not replace a finished status applied since the backup was read
+	require.Equal(t, "42", appliedResourceVersion(t, func(client operatorv1alpha1client.EtcdBackupInterface) {
 		_, _ = applyBackupRunning(t.Context(), client, backup, job)
 	}))
 }
@@ -1473,7 +1526,7 @@ func requireBackupJob(t *testing.T, backup *operatorv1alpha1.EtcdBackup, job *ba
 		})
 		require.Contains(t, job.Spec.Template.Spec.Containers[0].VolumeMounts, corev1.VolumeMount{
 			Name:      "etc-kubernetes-cluster-backup",
-			MountPath: filepath.Join(backupPathMount, backup.Spec.Storage.Local.HostPath),
+			MountPath: filepath.Join(backuphelpers.BackupPathMount, backup.Spec.Storage.Local.HostPath),
 		})
 	case operatorv1alpha1.EtcdBackupStorageTypePVC:
 		// PVC backups are not pinned to a node; they are constrained to master nodes and placed by the scheduler.
@@ -1492,7 +1545,7 @@ func requireBackupJob(t *testing.T, backup *operatorv1alpha1.EtcdBackup, job *ba
 		})
 		require.Contains(t, job.Spec.Template.Spec.Containers[0].VolumeMounts, corev1.VolumeMount{
 			Name:      "etc-kubernetes-cluster-backup",
-			MountPath: backupPathMount,
+			MountPath: backuphelpers.BackupPathMount,
 		})
 
 	}
@@ -1511,4 +1564,472 @@ func removeTransitionTime(conditions []v1.Condition) []v1.Condition {
 		})
 	}
 	return timelessConditions
+}
+
+func TestApplyBackupStatusOmitsEmptyFileSize(t *testing.T) {
+	// sizeBytes must be at least 1 when set, so empty (e.g. partial) files must omit it or the apply is rejected
+	backup := testutils.FakeEtcdBackup("test-backup")
+	operatorFake := operatorfake.NewSimpleClientset(backup)
+	_, err := applyBackupFinished(t.Context(), operatorFake.OperatorV1alpha1().EtcdBackups(), backup, nil,
+		operatorv1alpha1.BackupFailed, operatorv1alpha1.BackupReasonJobFailed, "", []operatorv1alpha1.EtcdBackupFile{
+			{Path: "/backups/test-backup/snapshot.db", SizeBytes: 100},
+			{Path: "/backups/test-backup/static_kuberesources.tar.gz", SizeBytes: 0},
+		})
+	require.NoError(t, err)
+
+	action, ok := testutils.GetStatusAction[k8stesting.PatchActionImpl](operatorFake.Actions())
+	require.True(t, ok, "expected status patch, found %v", operatorFake.Actions())
+	patch := struct {
+		Status struct {
+			Files []map[string]any `json:"files"`
+		} `json:"status"`
+	}{}
+	require.NoError(t, json.Unmarshal(action.GetPatch(), &patch))
+	require.Equal(t, []map[string]any{
+		{"path": "/backups/test-backup/snapshot.db", "sizeBytes": float64(100)},
+		{"path": "/backups/test-backup/static_kuberesources.tar.gz"},
+	}, patch.Status.Files)
+}
+
+func TestBackupJobMissingFinalizerReconciled(t *testing.T) {
+	// A job without the finalizer is not indexed, so its status must be reconciled from the API rather than waiting for
+	// the job to be deleted and failing the backup.
+	backup, job := fakeRunningBackup("test-backup", "test-node", localStorage)
+	backup.Status.Conditions[0].LastTransitionTime = metav1.NewTime(time.Now().Add(-2 * jobNotFoundGracePeriod))
+	job.Finalizers = nil
+	job.Status = batchv1.JobStatus{
+		CompletionTime: ptr.To(metav1.Now()),
+		Conditions:     []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}},
+	}
+	runBackupControllerTest(t, testCaseBackupController{
+		backups: []*operatorv1alpha1.EtcdBackup{backup},
+		jobs:    []*batchv1.Job{job},
+		nodes:   []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			requireNoBackupJobCreated(t, client)
+			updated, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), backup.Name, metav1.GetOptions{})
+			require.NoError(t, err)
+			require.True(t, backuphelpers.IsBackupCompleted(updated), "expected backup to be completed, got %v", updated.Status.Conditions)
+			require.False(t, backuphelpers.IsBackupFailed(updated))
+		},
+	})
+}
+
+func TestBackupJobCompletedWithoutFiles(t *testing.T) {
+	// A completed job that reports no files keeps completed semantics rather than a failure message
+	backup, job := fakeRunningBackup("test-backup", "test-node", localStorage)
+	job.Status = batchv1.JobStatus{
+		Succeeded:      1,
+		CompletionTime: ptr.To(metav1.Now()),
+		Conditions:     []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}},
+	}
+	pod := testutils.FakePod("backup-pod",
+		testutils.WithPodLabels(map[string]string{labelJobName: job.Name}),
+		testutils.WithPodOwner(v1.OwnerReference{Kind: "Job", Name: job.Name, UID: job.UID}),
+		func(pod *corev1.Pod) {
+			pod.Status.Phase = corev1.PodSucceeded
+			pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+				Name:  "backup",
+				State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Message: `{"files": []}`}},
+			}}
+		})
+	runBackupControllerTest(t, testCaseBackupController{
+		backups: []*operatorv1alpha1.EtcdBackup{backup},
+		jobs:    []*batchv1.Job{job},
+		pods:    []*corev1.Pod{pod},
+		nodes:   []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			requireBackupStatusApplied(t, operatorFake, []metav1.Condition{{
+				Type:    string(operatorv1alpha1.BackupCompleted),
+				Reason:  string(operatorv1alpha1.BackupReasonJobCompleted),
+				Message: "backup job completed",
+				Status:  metav1.ConditionTrue,
+			}}, nil)
+		},
+	})
+}
+
+func TestLocalBackupAssignedNodeIneligible(t *testing.T) {
+	// A queued backup whose assigned node no longer exists fails. No job ran, so no GC is required.
+	backup := testutils.FakeEtcdBackup("test-backup", testutils.WithBackupStorage(localStorage), testutils.WithBackupNodeName("removed-node"))
+	runBackupControllerTest(t, testCaseBackupController{
+		backups: []*operatorv1alpha1.EtcdBackup{backup},
+		nodes:   []*corev1.Node{testutils.FakeNode("test-node-1", testutils.WithMasterLabel())},
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			requireNoBackupJobCreated(t, client)
+			requireBackupStatusApplied(t, operatorFake, []metav1.Condition{{
+				Type:    string(operatorv1alpha1.BackupFailed),
+				Reason:  string(operatorv1alpha1.BackupReasonSetupFailed),
+				Message: `assigned node "removed-node" is no longer an eligible control plane node`,
+				Status:  metav1.ConditionTrue,
+			}}, nil)
+		},
+	})
+}
+
+func TestBackupJobExistsIgnoresPreviousOwner(t *testing.T) {
+	backup := testutils.FakeEtcdBackup("test-backup")
+	jobFor := func(ownerUID types.UID) *batchv1.Job {
+		return &batchv1.Job{ObjectMeta: v1.ObjectMeta{
+			Name:            generateBackupJobName(backup),
+			Namespace:       operatorclient.TargetNamespace,
+			OwnerReferences: []v1.OwnerReference{{Kind: "EtcdBackup", Name: backup.Name, UID: ownerUID}},
+		}}
+	}
+	for _, tc := range []struct {
+		name     string
+		ownerUID types.UID
+		expected bool
+	}{
+		{name: "same-owner", ownerUID: backup.UID, expected: true},
+		{name: "previous-owner", ownerUID: "previous-uid", expected: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &BackupController{kubeClient: k8sfakeclient.NewSimpleClientset(jobFor(tc.ownerUID))}
+			exists, err := c.backupJobExists(t.Context(), backup)
+			require.NoError(t, err)
+			require.Equal(t, tc.expected, exists)
+		})
+	}
+}
+
+func TestBackupJobFinishedWaitsForPodStatus(t *testing.T) {
+	// The job is complete, but the cached pod is still running without its termination message. Recording the outcome
+	// now would lose the reported files, so wait for the pod status until the grace period expires.
+	newCase := func(completedAgo time.Duration) (*operatorv1alpha1.EtcdBackup, *batchv1.Job, *corev1.Pod) {
+		backup, job := fakeRunningBackup("test-backup", "test-node", localStorage)
+		job.Status = batchv1.JobStatus{
+			Succeeded:      1,
+			CompletionTime: ptr.To(metav1.NewTime(time.Now().Add(-completedAgo))),
+			Conditions:     []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}},
+		}
+		pod := testutils.FakePod("backup-pod",
+			testutils.WithPodLabels(map[string]string{labelJobName: job.Name}),
+			testutils.WithPodOwner(v1.OwnerReference{Kind: "Job", Name: job.Name, UID: job.UID}),
+			func(pod *corev1.Pod) {
+				pod.Status.Phase = corev1.PodRunning
+				pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+					Name:    "backup",
+					Started: ptr.To(true),
+					State:   corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+				}}
+			})
+		return backup, job, pod
+	}
+
+	t.Run("within-grace-period", func(t *testing.T) {
+		backup, job, pod := newCase(0)
+		runBackupControllerTest(t, testCaseBackupController{
+			backups: []*operatorv1alpha1.EtcdBackup{backup},
+			jobs:    []*batchv1.Job{job},
+			pods:    []*corev1.Pod{pod},
+			nodes:   []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
+			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+				_, ok := testutils.GetStatusAction[k8stesting.PatchActionImpl](operatorFake.Actions())
+				require.False(t, ok, "expected no status patch while waiting for pod status, found %v", operatorFake.Actions())
+				updatedJob, err := client.BatchV1().Jobs(operatorclient.TargetNamespace).Get(t.Context(), job.Name, metav1.GetOptions{})
+				require.NoError(t, err)
+				require.Contains(t, updatedJob.Finalizers, backuphelpers.FinalizerEtcdBackup, "job must not be finalized")
+			},
+		})
+	})
+
+	t.Run("holds-resources", func(t *testing.T) {
+		// The waiting backup still holds its node
+		backup, job, pod := newCase(0)
+		runBackupControllerTest(t, testCaseBackupController{
+			backups: []*operatorv1alpha1.EtcdBackup{backup, testutils.FakeEtcdBackup("new", testutils.WithBackupStorage(localStorage))},
+			jobs:    []*batchv1.Job{job},
+			pods:    []*corev1.Pod{pod},
+			nodes:   []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
+			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+				requireNoBackupJobCreated(t, client)
+			},
+		})
+	})
+
+	t.Run("grace-period-expired", func(t *testing.T) {
+		backup, job, pod := newCase(2 * podStatusGracePeriod)
+		runBackupControllerTest(t, testCaseBackupController{
+			backups: []*operatorv1alpha1.EtcdBackup{backup},
+			jobs:    []*batchv1.Job{job},
+			pods:    []*corev1.Pod{pod},
+			nodes:   []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
+			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+				updated, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), backup.Name, metav1.GetOptions{})
+				require.NoError(t, err)
+				require.True(t, backuphelpers.IsBackupCompleted(updated))
+				updatedJob, err := client.BatchV1().Jobs(operatorclient.TargetNamespace).Get(t.Context(), job.Name, metav1.GetOptions{})
+				require.NoError(t, err)
+				require.NotContains(t, updatedJob.Finalizers, backuphelpers.FinalizerEtcdBackup)
+			},
+		})
+	})
+}
+
+func outcomeTestJob(condition batchv1.JobConditionType, succeeded, failed int32) *batchv1.Job {
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "backup-job"},
+		Status: batchv1.JobStatus{
+			Succeeded:  succeeded,
+			Failed:     failed,
+			Conditions: []batchv1.JobCondition{{Type: condition, Status: corev1.ConditionTrue}},
+		},
+	}
+}
+
+// outcomeTestPod returns a terminal pod. started reports whether the backup container started, and message is its
+// termination message.
+func outcomeTestPod(name string, age time.Duration, phase corev1.PodPhase, started bool, message string) *corev1.Pod {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: name, CreationTimestamp: metav1.NewTime(time.Now().Add(-age))},
+		Status:     corev1.PodStatus{Phase: phase},
+	}
+	if started {
+		pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Message: message}},
+		}}
+	} else {
+		pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "PodInitializing"}},
+		}}
+	}
+	return pod
+}
+
+func TestDetermineBackupOutcome(t *testing.T) {
+	const filesMessage = `{"message": "backup done", "files": [{"path": "/etc/kubernetes/cluster-backup/b/snapshot.db", "sizeBytes": 10}]}`
+	const noFilesMessage = `{"message": "etcd unavailable", "files": []}`
+
+	tests := []struct {
+		name     string
+		job      *batchv1.Job
+		pods     []*corev1.Pod
+		expected backupOutcome
+	}{
+		{
+			name: "completed with files",
+			job:  outcomeTestJob(batchv1.JobComplete, 1, 0),
+			pods: []*corev1.Pod{outcomeTestPod("p1", time.Minute, corev1.PodSucceeded, true, filesMessage)},
+			expected: backupOutcome{
+				condition: operatorv1alpha1.BackupCompleted,
+				reason:    operatorv1alpha1.BackupReasonJobCompleted,
+				message:   "backup done",
+				files:     []operatorv1alpha1.EtcdBackupFile{{Path: "/b/snapshot.db", SizeBytes: 10}},
+			},
+		},
+		{
+			name: "failed with partial files requires GC",
+			job:  outcomeTestJob(batchv1.JobFailed, 0, 1),
+			pods: []*corev1.Pod{outcomeTestPod("p1", time.Minute, corev1.PodFailed, true, filesMessage)},
+			expected: backupOutcome{
+				condition: operatorv1alpha1.BackupFailed,
+				reason:    operatorv1alpha1.BackupReasonJobFailed,
+				message:   "backup done",
+				files:     []operatorv1alpha1.EtcdBackupFile{{Path: "/b/snapshot.db", SizeBytes: 10}},
+			},
+		},
+		{
+			name: "failed gracefully on every attempt skips GC",
+			job:  outcomeTestJob(batchv1.JobFailed, 0, 2),
+			pods: []*corev1.Pod{
+				outcomeTestPod("p1", 2*time.Minute, corev1.PodFailed, true, noFilesMessage),
+				outcomeTestPod("p2", time.Minute, corev1.PodFailed, true, `{"files": []}`),
+			},
+			expected: backupOutcome{
+				condition: operatorv1alpha1.BackupFailed,
+				reason:    operatorv1alpha1.BackupReasonSetupFailed,
+				message:   "backup job failed without creating files",
+				files:     []operatorv1alpha1.EtcdBackupFile{},
+			},
+		},
+		{
+			name: "crash then graceful failure requires GC",
+			job:  outcomeTestJob(batchv1.JobFailed, 0, 2),
+			pods: []*corev1.Pod{
+				outcomeTestPod("p1", 2*time.Minute, corev1.PodFailed, true, ""),
+				outcomeTestPod("p2", time.Minute, corev1.PodFailed, true, noFilesMessage),
+			},
+			expected: backupOutcome{
+				condition: operatorv1alpha1.BackupFailed,
+				reason:    operatorv1alpha1.BackupReasonJobFailed,
+				message:   "etcd unavailable",
+				files:     []operatorv1alpha1.EtcdBackupFile{},
+			},
+		},
+		{
+			name: "backup container never started skips GC",
+			job:  outcomeTestJob(batchv1.JobFailed, 0, 1),
+			pods: []*corev1.Pod{outcomeTestPod("p1", time.Minute, corev1.PodFailed, false, "")},
+			expected: backupOutcome{
+				condition: operatorv1alpha1.BackupFailed,
+				reason:    operatorv1alpha1.BackupReasonSetupFailed,
+				message:   "failed to verify storage",
+			},
+		},
+		{
+			name: "no pods created skips GC",
+			job:  outcomeTestJob(batchv1.JobFailed, 0, 0),
+			expected: backupOutcome{
+				condition: operatorv1alpha1.BackupFailed,
+				reason:    operatorv1alpha1.BackupReasonSetupFailed,
+				message:   "backup job failed without creating pods",
+			},
+		},
+		{
+			name: "missing pod history requires GC",
+			job:  outcomeTestJob(batchv1.JobFailed, 0, 2),
+			pods: []*corev1.Pod{outcomeTestPod("p2", time.Minute, corev1.PodFailed, false, "")},
+			expected: backupOutcome{
+				condition: operatorv1alpha1.BackupFailed,
+				reason:    operatorv1alpha1.BackupReasonJobFailed,
+				message:   "unable to determine backup job outcome",
+			},
+		},
+		{
+			name: "completed without observable pods keeps completed message",
+			job:  outcomeTestJob(batchv1.JobComplete, 1, 0),
+			expected: backupOutcome{
+				condition: operatorv1alpha1.BackupCompleted,
+				reason:    operatorv1alpha1.BackupReasonJobCompleted,
+			},
+		},
+		{
+			name: "unparseable termination message keeps job reason",
+			job:  outcomeTestJob(batchv1.JobFailed, 0, 1),
+			pods: []*corev1.Pod{outcomeTestPod("p1", time.Minute, corev1.PodFailed, true, "not json")},
+			expected: backupOutcome{
+				condition: operatorv1alpha1.BackupFailed,
+				reason:    operatorv1alpha1.BackupReasonJobFailed,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.expected, determineBackupOutcome("test-backup", tc.job, tc.pods))
+		})
+	}
+}
+
+func TestActiveCacheRecreatedBackup(t *testing.T) {
+	// A backup was force removed while active and recreated with the same name. The stale cache entry of the deleted
+	// backup must not cause the new backup to be failed as if its job went missing.
+	backup := testutils.FakeEtcdBackup("recreated", testutils.WithBackupStorage(localStorage))
+	activeCache := newActiveBackupCache()
+	activeCache.add(testutils.FakeEtcdBackup("recreated", testutils.WithBackupStorage(localStorage), testutils.WithBackupNodeName("test-node-1"),
+		func(b *operatorv1alpha1.EtcdBackup) { b.UID = "deleted-uid" }))
+	active := activeCache.backups[backup.Name]
+	active.addedAt = time.Now().Add(-2 * jobNotFoundGracePeriod)
+	activeCache.backups[backup.Name] = active
+
+	runBackupControllerTest(t, testCaseBackupController{
+		backups:     []*operatorv1alpha1.EtcdBackup{backup},
+		nodes:       []*corev1.Node{testutils.FakeNode("test-node-1", testutils.WithMasterLabel())},
+		activeCache: &activeCache,
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			jobs := listCreatedJobs(client)
+			require.Len(t, jobs, 1, "Expected recreated backup to be started")
+			require.Equal(t, "test-node-1", jobs[0].Spec.Template.Spec.NodeName)
+
+			updated, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), backup.Name, metav1.GetOptions{})
+			require.NoError(t, err)
+			require.False(t, backuphelpers.IsBackupFailed(updated), "Expected recreated backup to not be failed")
+			require.Equal(t, backup.UID, activeCache.backups[backup.Name].uid)
+		},
+	})
+}
+
+func TestActiveCachePruneRecreatedBackup(t *testing.T) {
+	// The cached backup is gone from the informer, and a backup with the same name but a different UID exists in the
+	// API. The reservation of the deleted backup is released.
+	activeCache := newActiveBackupCache()
+	deleted, _ := fakeRunningBackup("recreated", "test-node-1", localStorage)
+	deleted.UID = "deleted-uid"
+	activeCache.add(deleted)
+
+	recreated := testutils.FakeEtcdBackup("recreated", testutils.WithBackupStorage(localStorage))
+	runBackupControllerTest(t, testCaseBackupController{
+		backups:      []*operatorv1alpha1.EtcdBackup{recreated},
+		staleBackups: []*operatorv1alpha1.EtcdBackup{},
+		activeCache:  &activeCache,
+		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+			require.False(t, activeCache.isActive("recreated"))
+			require.False(t, activeCache.local.inUse("test-node-1"))
+		},
+	})
+}
+
+func TestConcurrencyLocalSkipsUnavailableNodes(t *testing.T) {
+	notReady := func(node *corev1.Node) {
+		node.Status.Conditions = []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionUnknown}}
+	}
+	ready := func(node *corev1.Node) {
+		node.Status.Conditions = []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}
+	}
+	cordoned := func(node *corev1.Node) { node.Spec.Unschedulable = true }
+
+	t.Run("available-node-selected", func(t *testing.T) {
+		runBackupControllerTest(t, testCaseBackupController{
+			backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("new", testutils.WithBackupStorage(localStorage))},
+			nodes: []*corev1.Node{
+				testutils.FakeNode("test-node-1", testutils.WithMasterLabel(), notReady),
+				testutils.FakeNode("test-node-2", testutils.WithMasterLabel(), ready, cordoned),
+				testutils.FakeNode("test-node-3", testutils.WithMasterLabel(), ready)},
+			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+				jobs := listCreatedJobs(client)
+				require.Len(t, jobs, 1)
+				require.Equal(t, "test-node-3", jobs[0].Spec.Template.Spec.NodeName, "Expected backup to skip unavailable nodes")
+			},
+		})
+	})
+	t.Run("no-available-node-waits", func(t *testing.T) {
+		runBackupControllerTest(t, testCaseBackupController{
+			backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("new", testutils.WithBackupStorage(localStorage))},
+			nodes: []*corev1.Node{
+				testutils.FakeNode("test-node-1", testutils.WithMasterLabel(), notReady),
+				testutils.FakeNode("test-node-2", testutils.WithMasterLabel(), ready, cordoned)},
+			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
+				requireNoBackupJobCreated(t, client)
+				_, ok := testutils.GetStatusAction[k8stesting.PatchActionImpl](operatorFake.Actions())
+				require.False(t, ok, "Expected backup to wait for an available node, not be failed")
+			},
+		})
+	})
+}
+
+func TestApplyBackupFinalizerCoOwned(t *testing.T) {
+	// Another field manager co-owns the finalizer, so releasing ownership with apply leaves it in place. The finalizer
+	// must be removed with a JSON patch instead.
+	backup := testutils.FakeEtcdBackup("test-backup", func(b *operatorv1alpha1.EtcdBackup) {
+		b.Finalizers = []string{"other", backuphelpers.FinalizerEtcdBackup}
+		b.ManagedFields = []metav1.ManagedFieldsEntry{{
+			Manager:    backupFinalizerFieldManager,
+			Operation:  metav1.ManagedFieldsOperationApply,
+			APIVersion: operatorv1alpha1.GroupVersion.String(),
+			FieldsType: "FieldsV1",
+			FieldsV1:   &metav1.FieldsV1{Raw: []byte(`{"f:metadata":{"f:finalizers":{"v:\"` + backuphelpers.FinalizerEtcdBackup + `\"":{}}}}`)},
+		}}
+	})
+	operatorFake := operatorfake.NewSimpleClientset(backup)
+	var jsonPatch []byte
+	operatorFake.PrependReactor("patch", "etcdbackups", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		patch := action.(k8stesting.PatchAction)
+		switch patch.GetPatchType() {
+		case types.ApplyPatchType:
+			// Co-owned finalizer is kept
+			return true, backup.DeepCopy(), nil
+		case types.JSONPatchType:
+			jsonPatch = patch.GetPatch()
+			updated := backup.DeepCopy()
+			updated.Finalizers = []string{"other"}
+			return true, updated, nil
+		}
+		return false, nil, nil
+	})
+
+	updated, err := applyBackupFinalizer(t.Context(), operatorFake.OperatorV1alpha1().EtcdBackups(), backup, false)
+	require.NoError(t, err)
+	require.NotContains(t, updated.Finalizers, backuphelpers.FinalizerEtcdBackup)
+	require.JSONEq(t, `[{"op":"test","path":"/metadata/finalizers/1","value":"`+backuphelpers.FinalizerEtcdBackup+`"},{"op":"remove","path":"/metadata/finalizers/1"}]`, string(jsonPatch))
 }

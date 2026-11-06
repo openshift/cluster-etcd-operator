@@ -5,6 +5,7 @@ import (
 	"time"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 func newActiveBackupCache() activeBackupCache {
@@ -29,6 +30,8 @@ type activeBackupCache struct {
 }
 
 type activeBackup struct {
+	// uid identifies the backup instance, since a backup may be deleted and recreated with the same name
+	uid               types.UID
 	storageType       operatorv1alpha1.EtcdBackupStorageType
 	nodeName, pvcName string
 	// addedAt is when the backup was first cached as active
@@ -44,12 +47,19 @@ func newActiveBackup(backup *operatorv1alpha1.EtcdBackup) activeBackup {
 	case operatorv1alpha1.EtcdBackupStorageTypePVC:
 		pvcName = backup.Spec.Storage.PVC.Name
 	}
-	return activeBackup{storageType: backup.Spec.Storage.Type, nodeName: nodeName, pvcName: pvcName, addedAt: time.Now()}
+	return activeBackup{uid: backup.UID, storageType: backup.Spec.Storage.Type, nodeName: nodeName, pvcName: pvcName, addedAt: time.Now()}
 }
 
 func (abc activeBackupCache) isActive(backupName string) bool {
 	_, ok := abc.backups[backupName]
 	return ok
+}
+
+// isReplaced reports whether the backup with the given name is cached as active for a different backup instance
+// (UID) than uid, i.e. the cached backup was deleted and a new backup was created with the same name.
+func (abc activeBackupCache) isReplaced(backupName string, uid types.UID) bool {
+	active, ok := abc.backups[backupName]
+	return ok && active.uid != "" && uid != "" && active.uid != uid
 }
 
 // isStale reports whether the backup has been cached as active for longer than the given duration.
@@ -60,6 +70,10 @@ func (abc activeBackupCache) isStale(backupName string, d time.Duration) bool {
 
 func (abc *activeBackupCache) add(backup *operatorv1alpha1.EtcdBackup) {
 	backupName := backup.Name
+	if abc.isReplaced(backupName, backup.UID) {
+		// The cached backup was deleted and recreated with the same name. Release the old reservation.
+		abc.remove(backupName)
+	}
 	active := newActiveBackup(backup)
 	if existing, ok := abc.backups[backupName]; ok {
 		active.addedAt = existing.addedAt
