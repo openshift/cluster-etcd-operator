@@ -81,6 +81,9 @@ func TestBackupHappyPath(t testing.TB) {
 
 		ensureEtcdBackupsRemoved(t, backupCrd.Name)
 		ensureAllBackupPodsAreRemoved(t)
+
+		// Clean up backup files from PVC to prevent accumulation across test runs
+		cleanupBackupFilesFromPVC(t, pvcName, backupCrd.Name)
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -145,6 +148,9 @@ func TestPeriodicBackupHappyPath(t testing.TB) {
 		ensureCronJobRemoved(t, backupCrd.Name)
 		ensureEtcdBackupsRemoved(t, backupCrd.Name)
 		ensureAllBackupPodsAreRemoved(t)
+
+		// Clean up backup files from PVC to prevent accumulation across test runs
+		cleanupBackupFilesFromPVC(t, pvcName, backupCrd.Name)
 	})
 
 	awaitBackupInvocations(t, backupCrd)
@@ -193,6 +199,14 @@ func TestRetentionBySize(t testing.TB) {
 	t.Cleanup(func() {
 		err := configClient.Backups().Delete(context.Background(), backupCrd.Name, metav1.DeleteOptions{})
 		require.NoError(t, err)
+
+		// Wait for resources to be cleaned up
+		ensureCronJobRemoved(t, backupCrd.Name)
+		ensureEtcdBackupsRemoved(t, backupCrd.Name)
+		ensureAllBackupPodsAreRemoved(t)
+
+		// Clean up backup files from PVC to prevent accumulation across test runs
+		cleanupBackupFilesFromPVC(t, pvcName, backupCrd.Name)
 	})
 
 	awaitBackupInvocations(t, backupCrd)
@@ -229,6 +243,24 @@ func TestMultipleBackupsAreSkipped(t testing.TB) {
 		_, err := c.OperatorV1alpha1().EtcdBackups().Create(context.Background(), &backupCrd, metav1.CreateOptions{})
 		require.NoError(t, err)
 	}
+
+	t.Cleanup(func() {
+		// Delete all the multi-backup EtcdBackup resources first
+		for i := range 5 {
+			backupName := fmt.Sprintf("multi-backup-%d", i)
+			err := c.OperatorV1alpha1().EtcdBackups().Delete(context.Background(), backupName, metav1.DeleteOptions{})
+			if err != nil && !errors.IsNotFound(err) {
+				klog.Warningf("failed to delete EtcdBackup %s: %v", backupName, err)
+			}
+		}
+
+		// Then wait for them to be removed
+		ensureEtcdBackupsRemoved(t, "multi-backup")
+		ensureAllBackupPodsAreRemoved(t)
+
+		// Clean up backup files from PVC - use a wildcard pattern for all multi-backup files
+		cleanupBackupFilesFromPVC(t, pvcName, "multi-backup")
+	})
 
 	// this is highly reliant on the sync interval of the backup controller, we expect at least one of the five to have condition "skipped"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -267,6 +299,15 @@ func TestBackupFailureOnMissingPVC(t testing.TB) {
 	_, err := c.OperatorV1alpha1().EtcdBackups().Create(context.Background(), &backupCrd, metav1.CreateOptions{})
 	require.NoError(t, err)
 
+	t.Cleanup(func() {
+		err := c.OperatorV1alpha1().EtcdBackups().Delete(context.Background(), backupCrd.Name, metav1.DeleteOptions{})
+		if err != nil && !errors.IsNotFound(err) {
+			klog.Warningf("failed to delete EtcdBackup %s: %v", backupCrd.Name, err)
+		}
+		ensureEtcdBackupsRemoved(t, backupCrd.Name)
+		ensureAllBackupPodsAreRemoved(t)
+	})
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	err = wait.PollUntilContextCancel(ctx, 5*time.Second, true,
@@ -295,6 +336,10 @@ func pushRandomConfigMaps(t testing.TB) {
 	kn := 5
 	n := 25
 
+	// Track created configmaps for cleanup
+	var createdConfigMaps []string
+	var mu sync.Mutex
+
 	wg := sync.WaitGroup{}
 	wg.Add(kn)
 
@@ -313,9 +358,13 @@ func pushRandomConfigMaps(t testing.TB) {
 					},
 				}
 
-				_, err := coreClient.ConfigMaps(OpenShiftEtcdNamespace).Create(context.Background(), &cm, metav1.CreateOptions{})
+				created, err := coreClient.ConfigMaps(OpenShiftEtcdNamespace).Create(context.Background(), &cm, metav1.CreateOptions{})
 				if err != nil {
 					klog.Errorf("[%d] got an error while creating filler configmap no. %d/%d: %v", k, i, n, err)
+				} else {
+					mu.Lock()
+					createdConfigMaps = append(createdConfigMaps, created.Name)
+					mu.Unlock()
 				}
 
 				if i%5 == 0 {
@@ -327,6 +376,17 @@ func pushRandomConfigMaps(t testing.TB) {
 
 	wg.Wait()
 	t.Logf("done pushng %d configmaps at 1mb!", kn*n)
+
+	// Register cleanup to delete all created configmaps
+	t.Cleanup(func() {
+		klog.Infof("Cleaning up %d retention test configmaps", len(createdConfigMaps))
+		for _, cmName := range createdConfigMaps {
+			err := coreClient.ConfigMaps(OpenShiftEtcdNamespace).Delete(context.Background(), cmName, metav1.DeleteOptions{})
+			if err != nil && !errors.IsNotFound(err) {
+				klog.Warningf("failed to delete configmap %s: %v", cmName, err)
+			}
+		}
+	})
 }
 
 func TestWrongScheduleDegradesOperator(t testing.TB) {
@@ -355,8 +415,10 @@ func TestWrongScheduleDegradesOperator(t testing.TB) {
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		_ = configClient.Backups().Delete(context.Background(), backupCrd.Name, metav1.DeleteOptions{})
-
+		err := configClient.Backups().Delete(context.Background(), backupCrd.Name, metav1.DeleteOptions{})
+		if err != nil && !errors.IsNotFound(err) {
+			klog.Warningf("failed to delete Backup %s: %v", backupCrd.Name, err)
+		}
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -487,6 +549,32 @@ func ensureHostPathPVC(t testing.TB, pvcName string) {
 		if errors.IsNotFound(err) {
 			_, err = c.PersistentVolumes().Create(context.Background(), &pv, metav1.CreateOptions{})
 			require.NoErrorf(t, err, "could not create PV")
+
+			// Register PV cleanup immediately after creation
+			t.Cleanup(func() {
+				klog.Infof("Cleaning up PV %s", pv.Name)
+				err := c.PersistentVolumes().Delete(context.Background(), pv.Name, metav1.DeleteOptions{})
+				if err != nil && !errors.IsNotFound(err) {
+					klog.Warningf("failed to delete PV %s: %v", pv.Name, err)
+				}
+
+				// Wait for PV to be completely removed
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				defer cancel()
+				err = wait.PollUntilContextCancel(ctx, 2*time.Second, false, func(ctx context.Context) (bool, error) {
+					_, err := c.PersistentVolumes().Get(ctx, pv.Name, metav1.GetOptions{})
+					if errors.IsNotFound(err) {
+						return true, nil
+					}
+					if err == nil {
+						klog.Infof("Waiting for PV %s to be deleted", pv.Name)
+					}
+					return false, nil
+				})
+				if err != nil {
+					klog.Warningf("PV %s did not disappear within timeout: %v", pv.Name, err)
+				}
+			})
 		} else {
 			require.NoErrorf(t, err, "could not retrieve PV")
 		}
@@ -514,6 +602,56 @@ func ensureHostPathPVC(t testing.TB, pvcName string) {
 		if errors.IsNotFound(err) {
 			_, err = c.PersistentVolumeClaims(pvc.Namespace).Create(context.Background(), &pvc, metav1.CreateOptions{})
 			require.NoErrorf(t, err, "could not create PVC")
+
+			// Register PVC cleanup immediately after creation
+			t.Cleanup(func() {
+				klog.Infof("Cleaning up PVC %s", pvcName)
+
+				// First, delete all backup-finder pods that might be using this PVC
+				// Otherwise the PVC will be stuck in Terminating due to pvc-protection finalizer
+				podClient, err := corev1client.NewForConfig(kubeConfig)
+				if err == nil {
+					pods, err := podClient.Pods(OpenShiftEtcdNamespace).List(context.Background(), metav1.ListOptions{})
+					if err == nil {
+						gracePeriod := int64(0)
+						for _, pod := range pods.Items {
+							// Check if this pod uses the PVC we're trying to delete
+							for _, vol := range pod.Spec.Volumes {
+								if vol.PersistentVolumeClaim != nil && vol.PersistentVolumeClaim.ClaimName == pvcName {
+									klog.Infof("Force-deleting pod %s that is using PVC %s", pod.Name, pvcName)
+									_ = podClient.Pods(OpenShiftEtcdNamespace).Delete(context.Background(), pod.Name, metav1.DeleteOptions{
+										GracePeriodSeconds: &gracePeriod,
+									})
+									break
+								}
+							}
+						}
+					}
+				}
+
+				// Delete PVC
+				err = c.PersistentVolumeClaims(OpenShiftEtcdNamespace).Delete(context.Background(), pvcName, metav1.DeleteOptions{})
+				if err != nil && !errors.IsNotFound(err) {
+					klog.Warningf("failed to delete PVC %s: %v", pvcName, err)
+				}
+
+				// Wait for PVC to be completely removed
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				defer cancel()
+				err = wait.PollUntilContextCancel(ctx, 2*time.Second, false, func(ctx context.Context) (bool, error) {
+					_, err := c.PersistentVolumeClaims(OpenShiftEtcdNamespace).Get(ctx, pvcName, metav1.GetOptions{})
+					if errors.IsNotFound(err) {
+						return true, nil
+					}
+					if err == nil {
+						klog.Infof("Waiting for PVC %s to be deleted", pvcName)
+					}
+					return false, nil
+				})
+				if err != nil {
+					klog.Warningf("PVC %s did not disappear within timeout: %v", pvcName, err)
+				}
+			})
 		} else {
 			require.NoErrorf(t, err, "could not retrieve PVC")
 		}
@@ -683,6 +821,17 @@ func listFilesInPVC(t testing.TB, pvcName string, node corev1.Node) []string {
 	_, err := client.Pods(OpenShiftEtcdNamespace).Create(context.Background(), &pod, metav1.CreateOptions{})
 	require.NoError(t, err)
 
+	// Register cleanup immediately after pod creation, in case polling fails
+	t.Cleanup(func() {
+		gracePeriod := int64(0)
+		err := client.Pods(OpenShiftEtcdNamespace).Delete(context.Background(), pod.Name, metav1.DeleteOptions{
+			GracePeriodSeconds: &gracePeriod,
+		})
+		if err != nil && !errors.IsNotFound(err) {
+			klog.Warningf("failed to delete finder pod %s: %v", pod.Name, err)
+		}
+	})
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	err = wait.PollUntilContextCancel(ctx, 10*time.Second, false, func(ctx context.Context) (done bool, err error) {
@@ -703,6 +852,16 @@ func listFilesInPVC(t testing.TB, pvcName string, node corev1.Node) []string {
 	logBytes, err := client.Pods(OpenShiftEtcdNamespace).GetLogs(pod.Name, &corev1.PodLogOptions{}).Do(ctx).Raw()
 	files := strings.Split(string(logBytes), "\n")
 	klog.Infof("found files on node [%s]: %v", node.Name, files)
+
+	// Clean up the finder pod immediately after getting the file list
+	gracePeriod := int64(0)
+	deleteErr := client.Pods(OpenShiftEtcdNamespace).Delete(context.Background(), pod.Name, metav1.DeleteOptions{
+		GracePeriodSeconds: &gracePeriod,
+	})
+	if deleteErr != nil && !errors.IsNotFound(deleteErr) {
+		klog.Warningf("failed to delete finder pod %s: %v", pod.Name, deleteErr)
+	}
+
 	return files
 }
 
@@ -757,4 +916,101 @@ func groupBackupFilesByRunPrefix(t testing.TB, files []string) map[string][]stri
 	}
 
 	return groupingPrefixes
+}
+
+// cleanupBackupFilesFromPVC removes backup files matching the given backup name from the PVC across all nodes
+func cleanupBackupFilesFromPVC(t testing.TB, pvcName string, backupName string) {
+	client := framework.NewCoreClient(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	list, err := client.Nodes().List(ctx, metav1.ListOptions{LabelSelector: "node-role.kubernetes.io/master"})
+	require.NoErrorf(t, err, "error while listing nodes for cleanup")
+
+	for _, node := range list.Items {
+		cleanupBackupFilesOnNode(t, pvcName, backupName, node)
+	}
+}
+
+// cleanupBackupFilesOnNode removes backup files on a specific node
+func cleanupBackupFilesOnNode(t testing.TB, pvcName string, backupName string, node corev1.Node) {
+	client := framework.NewCoreClient(t)
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      names.SimpleNameGenerator.GenerateName("backup-cleanup-pod" + "-"),
+			Namespace: OpenShiftEtcdNamespace,
+		},
+		Spec: corev1.PodSpec{
+			Volumes: []corev1.Volume{
+				{
+					Name: "backup-dir",
+					VolumeSource: corev1.VolumeSource{
+						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: pvcName,
+						},
+					},
+				},
+			},
+			Containers: []corev1.Container{
+				{
+					Name:  "cleanup",
+					Image: ShellImage,
+					// Remove all backup directories matching this backup name
+					Command:                  []string{"sh", "-c", fmt.Sprintf("rm -rf ./backup-%s-*", backupName)},
+					WorkingDir:               HostPathBasePath,
+					Resources:                corev1.ResourceRequirements{},
+					TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
+					VolumeMounts: []corev1.VolumeMount{
+						{
+							Name:      "backup-dir",
+							ReadOnly:  false,
+							MountPath: HostPathBasePath,
+						},
+					},
+					SecurityContext: &corev1.SecurityContext{},
+				},
+			},
+			RestartPolicy: corev1.RestartPolicyNever,
+			NodeSelector: map[string]string{
+				"kubernetes.io/hostname": node.Name,
+			},
+			Tolerations: []corev1.Toleration{{Operator: "Exists"}},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	_, err := client.Pods(OpenShiftEtcdNamespace).Create(ctx, &pod, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	err = wait.PollUntilContextCancel(ctx, 5*time.Second, false, func(ctx context.Context) (done bool, err error) {
+		p, err := client.Pods(OpenShiftEtcdNamespace).Get(ctx, pod.Name, metav1.GetOptions{})
+		if err != nil {
+			klog.Infof("error while getting cleanup pod: %v", err)
+			return false, nil
+		}
+
+		if p.Status.Phase == corev1.PodFailed {
+			klog.Warningf("cleanup pod failed with status: %s, but continuing", p.Status.String())
+			return true, nil
+		}
+
+		return p.Status.Phase == corev1.PodSucceeded, nil
+	})
+	if err != nil {
+		klog.Warningf("cleanup pod did not complete successfully: %v", err)
+	}
+
+	// Best effort cleanup of the pod itself - use separate context in case polling ctx is canceled
+	gracePeriod := int64(0)
+	deleteCtx, deleteCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer deleteCancel()
+	err = client.Pods(OpenShiftEtcdNamespace).Delete(deleteCtx, pod.Name, metav1.DeleteOptions{
+		GracePeriodSeconds: &gracePeriod,
+	})
+	if err != nil && !errors.IsNotFound(err) {
+		klog.Warningf("failed to delete cleanup pod %s: %v", pod.Name, err)
+	}
 }
