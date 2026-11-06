@@ -289,6 +289,52 @@ func alertHealthyMessage(ok bool, configured, available metav1.Condition) string
 // Applying the merged alert-agent entries onto a freshly-built PacemakerClusterStatus
 // =============================================================================
 
+// This optional condition distinguishes retained alert-agent observations from the
+// fresh base status. Its transition time records when gate resolution first failed,
+// not when the agents were last observed. It does not affect aggregate health.
+const nodeAlertAgentsObservedConditionType = "AlertAgentsObserved"
+
+func applyAlertAgentStatusForGate(
+	status, existing *pacmkrv1.PacemakerClusterStatus,
+	freshAgents map[pacmkrv1.PacemakerClusterAlertAgentName]*alertAgentObservation,
+	freshScripts map[string]map[pacmkrv1.PacemakerClusterAlertAgentName]*alertAgentObservation,
+	now metav1.Time,
+	gate alertAgentGateState,
+) {
+	if gate == alertAgentGateDisabled {
+		return
+	}
+	if gate == alertAgentGateEnabled {
+		applyAlertAgentStatus(status, existing, freshAgents, freshScripts, now, true)
+		return
+	}
+
+	// The gate is unresolved. Retain observations from the CR read for this update,
+	// without authorizing fresh observations or synthesizing entries for new nodes.
+	applyAlertAgentStatus(status, existing, nil, nil, now, true)
+	if status.Nodes == nil {
+		return
+	}
+	existingConditions := make(map[string][]metav1.Condition)
+	if existing != nil && existing.Nodes != nil {
+		for _, node := range *existing.Nodes {
+			existingConditions[node.NodeName] = node.Conditions
+		}
+	}
+	for i := range *status.Nodes {
+		node := &(*status.Nodes)[i]
+		if len(node.AlertAgents) == 0 {
+			continue
+		}
+		condition := mergeCondition(nodeAlertAgentsObservedConditionType, &alertAgentObservation{
+			ok:     false,
+			reason: "FeatureGateUnresolved",
+			msg:    "TNFObservability could not be resolved; alert-agent observations are retained from previous collections and have not been refreshed",
+		}, FindCondition(existingConditions[node.NodeName], nodeAlertAgentsObservedConditionType), "", "", now)
+		node.Conditions = append(node.Conditions, condition)
+	}
+}
+
 // nodeNamesFromStatus returns the node names present in a freshly-built status, used to scope the
 // MCO node lookup to the nodes that will actually appear in the CR.
 func nodeNamesFromStatus(status *pacmkrv1.PacemakerClusterStatus) []string {

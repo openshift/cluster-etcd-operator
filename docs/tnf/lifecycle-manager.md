@@ -173,11 +173,23 @@ entries when it is disabled. Existing setup-time alert registration remains inde
 
 Each run resolves the gate from `FeatureGate/cluster.status.featureGates` for its own
 `OPERATOR_IMAGE_VERSION`, preserving release-specific behavior during upgrades. Manual/development
-runs fall back to ClusterVersion's desired version or latest history entry. An unknown gate is
-disabled. API errors or a missing release entry log a warning and allow base-status collection when
-the current CR has no alert-agent entries (or does not exist). If alert-agent entries already exist,
-or the CR cannot be read, collection fails without overwriting status. Gate lookups have a five-second
-timeout within the collector's deadline so a lookup failure leaves time for base-status collection.
+runs fall back to ClusterVersion's desired version or latest history entry. A gate absent from a
+resolved release entry is disabled. API errors or a missing release entry leave the gate unresolved:
+the collector logs a warning and refreshes base status while retaining existing alert-agent
+observations and their contribution to node and cluster health. It skips new alert-agent observations
+and repairs until the gate can be resolved. Nodes without previous alert-agent entries continue to
+report base status only. If the CR cannot be read, collection fails without overwriting status.
+Gate lookups have a five-second timeout within the collector's deadline so a lookup failure leaves
+time for base-status collection.
+
+When gate resolution fails, nodes with retained alert-agent observations also report
+`AlertAgentsObserved=False` with reason `FeatureGateUnresolved`. This optional condition is a
+freshness signal, not a health failure: it shows that the updated `status.lastUpdated` describes
+base Pacemaker status, not refreshed alert-agent observations. Its transition time records the
+start of the unresolved period and is preserved across repeated failures. Agent conditions and their
+transition times are retained; those times describe health transitions, not observation freshness.
+The freshness condition is omitted once the gate resolves. Individual observation failures then
+use the normal carry-forward/Pending behavior.
 
 The collection flow is:
 

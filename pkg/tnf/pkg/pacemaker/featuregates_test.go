@@ -14,7 +14,7 @@ import (
 	clienttesting "k8s.io/client-go/testing"
 )
 
-func TestAlertAgentStatusEnabledForReleaseDuringUpgrade(t *testing.T) {
+func TestAlertAgentGateForReleaseDuringUpgrade(t *testing.T) {
 	gate := features.FeatureGateTNFObservability
 	for _, tt := range []struct {
 		name    string
@@ -42,11 +42,15 @@ func TestAlertAgentStatusEnabledForReleaseDuringUpgrade(t *testing.T) {
 					Status:     configv1.ClusterVersionStatus{Desired: configv1.Release{Version: "5.2.0"}},
 				},
 			)
-			enabled, err := alertAgentStatusEnabledForRelease(context.Background(), client, tt.version)
+			gate, err := alertAgentGateForRelease(context.Background(), client, tt.version)
 			require.NoError(t, err)
-			require.Equal(t, tt.want, enabled)
+			wantGate := alertAgentGateDisabled
+			if tt.want {
+				wantGate = alertAgentGateEnabled
+			}
+			require.Equal(t, wantGate, gate)
 			repairs := 0
-			reconcileAlertAgentsIfEnabled(context.Background(), enabled, func(ctx context.Context) error {
+			reconcileAlertAgentsIfEnabled(context.Background(), gate, func(ctx context.Context) error {
 				repairs++
 				require.NoError(t, ctx.Err())
 				return nil
@@ -91,8 +95,13 @@ func TestAlertAgentStatusGateLookupErrors(t *testing.T) {
 					return true, nil, fmt.Errorf("API unavailable")
 				})
 			}
-			_, err := alertAgentStatusEnabledForRelease(context.Background(), client, tt.version)
+			gate, err := alertAgentGateForRelease(context.Background(), client, tt.version)
 			require.ErrorContains(t, err, tt.wantErr, "lookup failure must not be treated as a disabled gate")
+			require.Equal(t, alertAgentGateUnresolved, gate)
+			reconcileAlertAgentsIfEnabled(context.Background(), gate, func(context.Context) error {
+				t.Fatal("unresolved gate must not authorize CIB repairs")
+				return nil
+			})
 			for _, action := range client.Actions() {
 				require.Equal(t, "get", action.GetVerb())
 			}
@@ -100,7 +109,7 @@ func TestAlertAgentStatusGateLookupErrors(t *testing.T) {
 	}
 }
 
-func TestAlertAgentStatusGateManualRunUsesHistoryFallback(t *testing.T) {
+func TestAlertAgentGateManualRunUsesHistoryFallback(t *testing.T) {
 	client := configfake.NewSimpleClientset(
 		&configv1.ClusterVersion{ObjectMeta: metav1.ObjectMeta{Name: "version"}, Status: configv1.ClusterVersionStatus{
 			History: []configv1.UpdateHistory{{Version: "5.2.0"}},
@@ -111,7 +120,7 @@ func TestAlertAgentStatusGateManualRunUsesHistoryFallback(t *testing.T) {
 			}}},
 		}},
 	)
-	enabled, err := alertAgentStatusEnabledForRelease(context.Background(), client, "")
+	gate, err := alertAgentGateForRelease(context.Background(), client, "")
 	require.NoError(t, err)
-	require.True(t, enabled)
+	require.Equal(t, alertAgentGateEnabled, gate)
 }
