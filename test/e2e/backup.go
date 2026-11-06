@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	"github.com/openshift/cluster-etcd-operator/test/e2e/framework"
 	"github.com/stretchr/testify/require"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -45,8 +47,8 @@ var _ = g.Describe("[sig-etcd] cluster-etcd-operator", func() {
 	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestRetentionBySize", func() {
 		TestRetentionBySize(g.GinkgoTB())
 	})
-	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestMultipleBackupsAreSkipped", func() {
-		TestMultipleBackupsAreSkipped(g.GinkgoTB())
+	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestMultipleBackupsAreQueued [Timeout:30m]", func() {
+		TestMultipleBackupsAreQueued(g.GinkgoTB())
 	})
 	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestBackupFailureOnMissingPVC", func() {
 		TestBackupFailureOnMissingPVC(g.GinkgoTB())
@@ -222,11 +224,12 @@ func TestRetentionBySize(t testing.TB) {
 	}
 }
 
-func TestMultipleBackupsAreSkipped(t testing.TB) {
-	t.Skip("Multiple backups are no longer skipped, they are queued and processed one at a time (per master node)")
+func TestMultipleBackupsAreQueued(t testing.TB) {
 	pvcName := "multi-backups"
 	ensureHostPathPVC(t, pvcName)
 	c := framework.NewOperatorClient(t)
+	backupsClient := c.OperatorV1alpha1().EtcdBackups()
+	jobsClient := framework.NewBatchClient(t).Jobs(OpenShiftEtcdNamespace)
 
 	backup := operatorv1alpha1.EtcdBackup{
 		ObjectMeta: metav1.ObjectMeta{
@@ -240,32 +243,57 @@ func TestMultipleBackupsAreSkipped(t testing.TB) {
 		},
 	}
 
+	backupNames := make([]string, 0, 5)
+	t.Cleanup(func() {
+		for _, name := range backupNames {
+			require.NoError(t, backupsClient.Delete(context.Background(), name, metav1.DeleteOptions{}))
+		}
+		ensureEtcdBackupsRemoved(t, "multi-backup-")
+	})
+
 	for i := range 5 {
 		backup.Name = fmt.Sprintf("multi-backup-%d", i)
-		_, err := c.OperatorV1alpha1().EtcdBackups().Create(context.Background(), &backup, metav1.CreateOptions{})
+		_, err := backupsClient.Create(context.Background(), &backup, metav1.CreateOptions{})
 		require.NoError(t, err)
+		backupNames = append(backupNames, backup.Name)
 	}
 
-	// this is highly reliant on the sync interval of the backup controller, we expect at least one of the five to have condition "skipped"
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	err := wait.PollUntilContextCancel(ctx, 5*time.Second, true,
-		func(ctx context.Context) (done bool, err error) {
-			list, err := c.OperatorV1alpha1().EtcdBackups().List(context.Background(), metav1.ListOptions{})
-			if err != nil {
-				klog.Infof("error while listing backup: %v", err)
-				return false, nil
-			}
-
-			for _, b := range list.Items {
-				if backupHasCondition(&b, operatorv1alpha1.BackupConditionType("BackupSkipped"), metav1.ConditionTrue) {
+	jobs := make([]batchv1.Job, 0, len(backupNames))
+	for _, name := range backupNames {
+		var jobName string
+		err := wait.PollUntilContextCancel(ctx, 5*time.Second, true,
+			func(ctx context.Context) (done bool, err error) {
+				b, err := backupsClient.Get(ctx, name, metav1.GetOptions{})
+				if err != nil {
+					return false, err
+				}
+				if backupHasCondition(b, operatorv1alpha1.BackupFailed, metav1.ConditionTrue) {
+					return false, fmt.Errorf("backup %s failed: %v", name, b.Status.Conditions)
+				}
+				if backupHasCondition(b, operatorv1alpha1.BackupCompleted, metav1.ConditionTrue) {
+					jobName = b.Status.JobName
 					return true, nil
 				}
-			}
+				return false, nil
+			})
+		require.NoErrorf(t, err, "backup %s did not complete", name)
+		require.NotEmpty(t, jobName, "completed backup %s has no Job", name)
+		job, err := jobsClient.Get(ctx, jobName, metav1.GetOptions{})
+		require.NoError(t, err)
+		jobs = append(jobs, *job)
+	}
 
-			return false, nil
-		})
-	require.NoError(t, err)
+	sort.Slice(jobs, func(i, j int) bool {
+		return jobs[i].CreationTimestamp.Before(&jobs[j].CreationTimestamp)
+	})
+	for i := 1; i < len(jobs); i++ {
+		previous, next := jobs[i-1], jobs[i]
+		require.NotNil(t, previous.Status.CompletionTime, "Job %s has no completion time", previous.Name)
+		require.Falsef(t, next.CreationTimestamp.Before(previous.Status.CompletionTime),
+			"Job %s was created before Job %s finished", next.Name, previous.Name)
+	}
 }
 
 func TestBackupFailureOnMissingPVC(t testing.TB) {
