@@ -32,7 +32,7 @@ spec:
         severity: warning
     - alert: etcdHighNumberOfFailedProposals
       annotations:
-        description: 'etcd cluster "{{ $labels.job }}": {{ $value }} proposal failures within the last 30 minutes on etcd instance {{ $labels.instance }}.'
+        description: 'etcd cluster "{{ $labels.job }}": {{ $value }} proposal failures within the last 15 minutes on etcd instance {{ $labels.instance }}.'
         summary: etcd cluster has high number of proposal failures.
       expr: |
         rate(etcd_server_proposals_failed_total{job=~".*etcd.*"}[15m]) > 5
@@ -213,6 +213,145 @@ spec:
       for: 1h
       labels:
         severity: critical
+    - alert: etcdBackupFailed
+      annotations:
+        description: etcd backup "{{ $labels.etcd_backup }}" has failed. Check the EtcdBackup resource status for details.
+        summary: etcd backup has failed.
+      expr: etcd_backup_status{status="Failed"} == 1
+      for: 5m
+      labels:
+        severity: warning
+    - alert: etcdBackupHighFailureRate
+      annotations:
+        description: More than 50% of etcd backups finished in the last 24 hours have failed. This indicates a persistent issue with backup configuration or storage that requires investigation.
+        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupHighFailureRate.md
+        summary: etcd backup failure rate is high.
+      expr: |
+        (
+          count(
+            (etcd_backup_status{status="Failed"} == 1)
+            and on(etcd_backup, uid)
+            ((time() - etcd_backup_completion_time) < 86400)
+          )
+          /
+          count(
+            (
+              (etcd_backup_status{status="Failed"} == 1)
+              or
+              (etcd_backup_status{status="Completed"} == 1)
+            )
+            and on(etcd_backup, uid)
+            ((time() - etcd_backup_completion_time) < 86400)
+          )
+        ) > 0.5
+      for: 30m
+      labels:
+        severity: warning
+    - alert: etcdBackupHighFailureRate
+      annotations:
+        description: More than 75% of etcd backups finished in the last 24 hours have failed. This is a critical issue that may prevent disaster recovery and requires immediate investigation.
+        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupHighFailureRate.md
+        summary: etcd backup failure rate is critically high.
+      expr: |
+        (
+          count(
+            (etcd_backup_status{status="Failed"} == 1)
+            and on(etcd_backup, uid)
+            ((time() - etcd_backup_completion_time) < 86400)
+          )
+          /
+          count(
+            (
+              (etcd_backup_status{status="Failed"} == 1)
+              or
+              (etcd_backup_status{status="Completed"} == 1)
+            )
+            and on(etcd_backup, uid)
+            ((time() - etcd_backup_completion_time) < 86400)
+          )
+        ) >= 0.75
+      for: 30m
+      labels:
+        severity: critical
+    - alert: etcdBackupPolicyConsecutiveFailures
+      annotations:
+        description: Backup policy "{{ $labels.policy }}" has {{ $value }} consecutive backup run failures. Check the EtcdBackup resources for error details.
+        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyConsecutiveFailures.md
+        summary: Backup policy has consecutive failures.
+      expr: |
+        etcd_backup_policy_consecutive_failures >= 2
+        and
+        etcd_backup_policy_consecutive_failures < 3
+      labels:
+        severity: warning
+    - alert: etcdBackupPolicyConsecutiveFailures
+      annotations:
+        description: Backup policy "{{ $labels.policy }}" has {{ $value }} consecutive backup run failures. Immediate investigation required to restore backup capability.
+        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyConsecutiveFailures.md
+        summary: Backup policy has critical consecutive failures.
+      expr: |
+        etcd_backup_policy_consecutive_failures >= 3
+      labels:
+        severity: critical
+    - alert: etcdBackupNoPolicyConfigured
+      annotations:
+        description: AutomatedEtcdBackup feature is enabled but no EtcdBackupPolicy is configured. Configure an EtcdBackupPolicy resource to ensure regular backups are taken.
+        summary: No automated etcd backup policy is configured.
+      expr: |
+        etcd_automated_backup_enabled == 1
+        and on()
+        absent(etcd_backup_policy_info)
+      for: 15m
+      labels:
+        severity: warning
+    - alert: etcdBackupPolicyTrackerError
+      annotations:
+        description: The etcd backup failure tracker ConfigMap could not be read (missing data or corrupt). Backup success freshness is unknown until tracking is restored; etcdBackupPolicyNoRecentSuccess is suppressed while this alert fires.
+        summary: etcd backup policy tracker state is unhealthy.
+      expr: etcd_backup_policy_tracker_error == 1
+      for: 5m
+      labels:
+        severity: warning
+    - alert: etcdBackupPolicyNoRecentSuccess
+      annotations:
+        description: Backup policy "{{ $labels.policy }}" has not completed a successful backup in over 24 hours. This is a critical issue that may prevent disaster recovery.
+        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyNoRecentSuccess.md
+        summary: Backup policy has no successful backup in over 24 hours.
+      expr: |
+        (
+          (
+            etcd_backup_policy_last_success_time == 0
+            and on(policy, uid)
+            (time() - etcd_backup_policy_creation_time > 86400)
+          )
+          or
+          (
+            etcd_backup_policy_last_success_time > 0
+            and on(policy, uid)
+            (time() - etcd_backup_policy_last_success_time > 86400)
+          )
+        )
+        and on()
+        (etcd_backup_policy_tracker_error == 0)
+      labels:
+        severity: critical
+    - alert: etcdBackupDurationHigh
+      annotations:
+        description: etcd backup "{{ $labels.etcd_backup }}" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.
+        summary: etcd backup duration is high.
+      expr: |
+        (
+          etcd_backup_completion_time - on(etcd_backup, uid) etcd_backup_start_time
+        ) > 1800
+        or
+        (
+          (etcd_backup_status{status="Running"} == 1)
+          and on(etcd_backup, uid)
+          (time() - etcd_backup_start_time > 1800)
+        )
+      for: 5m
+      labels:
+        severity: warning
   - name: tnf-pacemaker.rules
     rules:
     - alert: TNFNodeCountMismatch
