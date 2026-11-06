@@ -62,10 +62,17 @@ func TestBackupScript(t testing.TB) {
 	})
 	require.NoError(t, err)
 
-	// verify no backup exist
-	cmdAsStr := fmt.Sprintf("ls -l /host%s", backupPath)
+	// verify no backup exists before registering its cleanup
+	cmdAsStr := fmt.Sprintf("test ! -e /host%s", backupPath)
 	output, err := exec.Command("oc", getOcArgs(debugPodName, cmdAsStr)...).CombinedOutput()
-	require.Errorf(t, err, string(output))
+	require.NoErrorf(t, err, "backup path already exists or could not be checked: %s", output)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		cleanupCmd := fmt.Sprintf("rm -rf /host%s", backupPath)
+		output, err := exec.CommandContext(ctx, "oc", getOcArgs(debugPodName, cleanupCmd)...).CombinedOutput()
+		require.NoErrorf(t, err, "cleanup failed: %s", output)
+	})
 
 	// run backup
 	cmdAsStr = fmt.Sprintf("chroot /host /bin/bash -euxo pipefail /usr/local/bin/cluster-backup.sh --force %s", backupPath)
@@ -77,14 +84,8 @@ func TestBackupScript(t testing.TB) {
 	output, err = exec.Command("oc", getOcArgs(debugPodName, cmdAsStr)...).CombinedOutput()
 	require.NoError(t, err)
 	files := strings.Split(string(output), "\n")
-	requireBackupFilesFound(t, "backup-happy-path", trimFilesPrefix(files))
-
-	t.Cleanup(func() {
-		// clean up
-		cmdAsStr = fmt.Sprintf("rm -rf /host%s", backupPath)
-		output, err = exec.Command("oc", getOcArgs(debugPodName, cmdAsStr)...).CombinedOutput()
-		require.NoError(t, err, fmt.Errorf("cleanup failed: %s", string(output)))
-	})
+	expectedDirectory := strings.TrimPrefix(backupPath, "/etc/kubernetes/")
+	requireBackupFilesFound(t, expectedDirectory, trimFilesPrefix(files))
 }
 
 func getOcArgs(podName, cmdAsStr string) []string {
@@ -101,7 +102,7 @@ func trimFilesPrefix(files []string) []string {
 	trimmedFiles := make([]string, len(files))
 	for i, f := range files {
 		trimmedFiles[i], _ = strings.CutPrefix(f, "/host/etc/kubernetes/")
-		trimmedFiles[i] = "./backup-" + trimmedFiles[i]
+		trimmedFiles[i] = "./" + trimmedFiles[i]
 	}
 	return trimmedFiles
 }
