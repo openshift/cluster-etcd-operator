@@ -119,7 +119,7 @@ Started only for DualReplica topology clusters (Two-Node OpenShift with Fencing)
 
 - **PacemakerHealthCheck** (`pkg/tnf/pkg/pacemaker/healthcheck.go`, instantiated in `pkg/tnf/operator/starter.go`) — Monitors the PacemakerCluster CR for health status. Only starts after external etcd transition is complete.
 
-- **PacemakerStatusCollectorCronJob** (`CronJobController` from `pkg/tnf/pkg/jobs/cronjob_controller.go`) — Runs `tnf-monitor collect` every minute to update the PacemakerCluster CR with Pacemaker state.
+- **PacemakerStatusCollectorCronJob** (`CronJobController` from `pkg/tnf/pkg/jobs/cronjob_controller.go`) — Runs `tnf-monitor collect` every minute to update the PacemakerCluster CR with Pacemaker state. `TNFObservability` gates alert-agent status, its contribution to health, and periodic reconciliation of the TNF taint/untaint alert registrations in the CIB. Reconciliation repairs missing registrations, incorrect script paths, and fencing/node event filters after the status update. CEO owns CIB configuration; MCO delivers the scripts. See [Alert-Agent Reconciliation](docs/tnf/lifecycle-manager.md#alert-agent-reconciliation) for prerequisites, retries, and limits.
 
 See `pkg/operator/starter.go` `RunOperator()` for the full initialization order and wiring.
 

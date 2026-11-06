@@ -18,10 +18,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 
 	pacmkrv1 "github.com/openshift/api/etcd/v1"
+	configclient "github.com/openshift/client-go/config/clientset/versioned"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/exec"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/pcs"
+	operatorstatus "github.com/openshift/library-go/pkg/operator/status"
 )
 
 const (
@@ -30,9 +34,10 @@ const (
 	pcsStatusXMLCommand     = "sudo -n pcs status xml"
 	pcsClusterConfigCommand = "sudo -n pcs cluster config show --output-format json"
 
-	execTimeout      = 10 * time.Second
-	collectorTimeout = 30 * time.Second
-	maxXMLSize       = 10 * 1024 * 1024 // Prevents XML bombs
+	execTimeout              = 10 * time.Second
+	collectorTimeout         = 30 * time.Second
+	featureGateLookupTimeout = 5 * time.Second
+	maxXMLSize               = 10 * 1024 * 1024 // Prevents XML bombs
 
 	statusSubresource = "status"
 
@@ -80,10 +85,25 @@ func runCollector() error {
 
 	klog.Info("Starting pacemaker status collection...")
 
-	kubeClient, err := createKubeClient()
+	restConfig, err := getKubeConfig()
+	if err != nil {
+		return err
+	}
+	kubeClient, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create kube client: %w", err)
 	}
+	configClient, err := configclient.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create config client: %w", err)
+	}
+	gateCtx, gateCancel := context.WithTimeout(ctx, featureGateLookupTimeout)
+	alertAgentGate, err := alertAgentGateForRelease(gateCtx, configClient, operatorstatus.VersionForOperatorFromEnv())
+	gateCancel()
+	if err != nil {
+		klog.Warningf("Failed to resolve TNFObservability; collecting base Pacemaker status and retaining previous alert-agent observations without refreshing them or attempting repairs: %v", err)
+	}
+	klog.Infof("TNFObservability=%s", alertAgentGate)
 
 	// Cluster config provides authoritative node list with IPs
 	clusterConfig, err := fetchClusterConfig(ctx)
@@ -101,26 +121,43 @@ func runCollector() error {
 	recordFencingEvents(ctx, kubeClient, result)
 	recordFailedActionEvents(ctx, kubeClient, result)
 
-	if err := updatePacemakerStatusCR(ctx, clusterStatus); err != nil {
+	// OCPEDGE-2914: gather the two alert-agent signals separately from pacemaker status so each node's
+	// alertAgents[] can be populated - Configured from cluster-wide CIB registration and Available
+	// from per-node MCO delivery state. Both builders return nil on failure, which the merge layer
+	// treats as carry-forward/Pending, so a transient pcs or API hiccup never clobbers a previously-good
+	// status with a spurious "missing".
+	var freshAlertAgents map[pacmkrv1.PacemakerClusterAlertAgentName]*alertAgentObservation
+	var freshAlertAgentScripts map[string]map[pacmkrv1.PacemakerClusterAlertAgentName]*alertAgentObservation
+	if alertAgentGate == alertAgentGateEnabled {
+		freshAlertAgents = buildAlertAgentStatuses(ctx)
+		freshAlertAgentScripts = buildAlertAgentScriptStatusesFromMCO(ctx, kubeClient, nodeNamesFromStatus(clusterStatus))
+	}
+
+	if err := updatePacemakerStatusCR(ctx, clusterStatus, freshAlertAgents, freshAlertAgentScripts, alertAgentGate); err != nil {
 		return fmt.Errorf("failed to update Pacemaker CR: %w", err)
 	}
 
 	klog.Info("Successfully updated Pacemaker CR")
+
+	// Persist observations before attempting repairs so a slow or failed CIB
+	// write cannot prevent health reporting. The next collection confirms recovery.
+	reconcileAlertAgentsIfEnabled(ctx, alertAgentGate, pcs.ReconcileAlerts)
 	return nil
 }
 
-func createKubeClient() (kubernetes.Interface, error) {
-	restConfig, err := getKubeConfig()
-	if err != nil {
-		return nil, err
+// reconcileAlertAgentsIfEnabled gates periodic self healing with TNFObservability,
+// using the same resolved value as alert-agent observations and health aggregation.
+func reconcileAlertAgentsIfEnabled(ctx context.Context, gate alertAgentGateState, reconcile func(context.Context) error) {
+	if gate != alertAgentGateEnabled {
+		return
 	}
 
-	kubeClient, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create kube client: %w", err)
+	// Reconciliation reads the CIB again rather than acting on carried-forward status.
+	repairCtx, repairCancel := context.WithTimeout(ctx, execTimeout)
+	defer repairCancel()
+	if err := reconcile(repairCtx); err != nil {
+		klog.Warningf("Failed to reconcile pacemaker alert agents; will retry on the next collection: %v", err)
 	}
-
-	return kubeClient, nil
 }
 
 // fetchClusterConfig returns the authoritative node list with IP addresses.
@@ -792,7 +829,18 @@ func recordEvent(ctx context.Context, kubeClient kubernetes.Interface, reason, m
 }
 
 // updatePacemakerStatusCR creates or updates the singleton "cluster" PacemakerCluster CR.
-func updatePacemakerStatusCR(ctx context.Context, status *pacmkrv1.PacemakerClusterStatus) error {
+// freshAlertAgents and freshAlertAgentScripts carry the alert-agent observations gathered this run
+// (nil when a signal could not be observed); they are merged against the existing CR's alert-agent
+// status so LastTransitionTime is preserved and a missed observation carries forward instead of
+// clobbering a previously-good value. An unresolved gate retains only existing observations;
+// a resolved disabled gate omits alert-agent status.
+func updatePacemakerStatusCR(
+	ctx context.Context,
+	status *pacmkrv1.PacemakerClusterStatus,
+	freshAlertAgents map[pacmkrv1.PacemakerClusterAlertAgentName]*alertAgentObservation,
+	freshAlertAgentScripts map[string]map[pacmkrv1.PacemakerClusterAlertAgentName]*alertAgentObservation,
+	alertAgentGate alertAgentGateState,
+) error {
 	config, err := getKubeConfig()
 	if err != nil {
 		return err
@@ -803,8 +851,24 @@ func updatePacemakerStatusCR(ctx context.Context, status *pacmkrv1.PacemakerClus
 		return err
 	}
 
+	return updatePacemakerStatusCRWithClient(ctx, restClient, status, freshAlertAgents, freshAlertAgentScripts, alertAgentGate)
+}
+
+func updatePacemakerStatusCRWithClient(
+	ctx context.Context,
+	restClient rest.Interface,
+	status *pacmkrv1.PacemakerClusterStatus,
+	freshAlertAgents map[pacmkrv1.PacemakerClusterAlertAgentName]*alertAgentObservation,
+	freshAlertAgentScripts map[string]map[pacmkrv1.PacemakerClusterAlertAgentName]*alertAgentObservation,
+	alertAgentGate alertAgentGateState,
+) error {
+	now := status.LastUpdated
+	if now.IsZero() {
+		now = metav1.Now()
+	}
+
 	var existing pacmkrv1.PacemakerCluster
-	err = restClient.Get().
+	err := restClient.Get().
 		Resource(PacemakerResourceName).
 		Name(PacemakerClusterResourceName).
 		Do(ctx).
@@ -824,6 +888,9 @@ func updatePacemakerStatusCR(ctx context.Context, status *pacmkrv1.PacemakerClus
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			klog.Infof("PacemakerCluster CR not found, creating new one")
+			// No existing CR: existing.Status is zero-valued, so the merge synthesizes fresh
+			// alert-agent status (or Pending when a signal was not observed this run).
+			applyAlertAgentStatusForGate(status, &existing.Status, freshAlertAgents, freshAlertAgentScripts, now, alertAgentGate)
 			newPacemakerCluster := &pacmkrv1.PacemakerCluster{
 				TypeMeta: metav1.TypeMeta{
 					APIVersion: pacmkrv1.SchemeGroupVersion.String(),
@@ -838,6 +905,7 @@ func updatePacemakerStatusCR(ctx context.Context, status *pacmkrv1.PacemakerClus
 			// Capture the server response to get the resourceVersion populated by the API server
 			createdPacemakerCluster := &pacmkrv1.PacemakerCluster{}
 			err = restClient.Post().
+				Param("fieldValidation", metav1.FieldValidationStrict).
 				Resource(PacemakerResourceName).
 				Body(newPacemakerCluster).
 				Do(ctx).
@@ -851,6 +919,7 @@ func updatePacemakerStatusCR(ctx context.Context, status *pacmkrv1.PacemakerClus
 			// Use the created object which has the server-populated resourceVersion.
 			createdPacemakerCluster.Status = *status
 			statusResult := restClient.Put().
+				Param("fieldValidation", metav1.FieldValidationStrict).
 				Resource(PacemakerResourceName).
 				Name(PacemakerClusterResourceName).
 				SubResource(statusSubresource).
@@ -872,9 +941,16 @@ func updatePacemakerStatusCR(ctx context.Context, status *pacmkrv1.PacemakerClus
 		return nil
 	}
 
+	// Merge the fresh alert-agent observations against the alert-agent status already on the CR,
+	// preserving LastTransitionTime and carrying forward any signal not observed this run.
+	applyAlertAgentStatusForGate(status, &existing.Status, freshAlertAgents, freshAlertAgentScripts, now, alertAgentGate)
+
 	existing.Status = *status
 
+	// Reject fields that an API server has not begun serving yet instead of silently
+	// pruning alert-agent details while accepting their aggregate health.
 	result := restClient.Put().
+		Param("fieldValidation", metav1.FieldValidationStrict).
 		Resource(PacemakerResourceName).
 		Name(PacemakerClusterResourceName).
 		SubResource(statusSubresource).

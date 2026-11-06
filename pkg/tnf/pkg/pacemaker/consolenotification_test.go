@@ -219,7 +219,7 @@ func TestBuildHealthStatusFromCR_ConsoleScenarios(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			status := BuildHealthStatusFromCR(tt.cr)
+			status := BuildHealthStatusFromCR(tt.cr, false)
 			problems := slices.Concat(status.Errors, status.Warnings)
 			require.Equal(t, tt.wantProblems, len(problems), "problems: %v", problems)
 			joined := strings.Join(problems, " | ")
@@ -361,6 +361,27 @@ func TestSync_NodeOffline_CreatesDegradedNotification(t *testing.T) {
 	err := ctrl.sync(context.Background(), nil)
 	require.NoError(t, err)
 	require.Equal(t, categoryDegraded.name, getCreatedName(t, dynClient))
+}
+
+func TestSync_AlertAgentFeatureGate(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("enabled=%t", enabled), func(t *testing.T) {
+			node := testNode("master-0", "192.168.111.20", unhealthyEtcd())
+			node.AlertAgents = []pacmkrv1.PacemakerClusterAlertAgentStatus{
+				unhealthyAlertAgentEntry(pacmkrv1.PacemakerClusterAlertAgentNameTaint),
+			}
+			cr := testCluster(withNodes(node, testNode("master-1", "192.168.111.21")))
+			ctrl, client := newTestController(t, cr)
+			ctrl.alertAgentStatusEnabled = enabled
+			require.NoError(t, ctrl.sync(context.Background(), nil))
+			notification, err := client.Resource(consoleNotificationGVR).Get(context.Background(), categoryDegraded.name, metav1.GetOptions{})
+			require.NoError(t, err)
+			text, _, err := unstructured.NestedString(notification.Object, "spec", "text")
+			require.NoError(t, err)
+			require.Contains(t, text, string(pacmkrv1.PacemakerClusterResourceNameEtcd), "base failures must still reach the console")
+			require.Equal(t, enabled, strings.Contains(text, "alert agent"))
+		})
+	}
 }
 
 func TestSync_StaleStatus_CreatesTroubleshootingNotification(t *testing.T) {

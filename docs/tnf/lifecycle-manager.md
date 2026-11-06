@@ -71,6 +71,7 @@ The lifecycle manager ([pkg/tnf/operator/lifecycle_manager.go](../../pkg/tnf/ope
 - Lifecycle manager starts regardless of external etcd transition state
 - The `sync()` function handles both bootstrap and runtime modes internally
 - CRD must be established before informers can start
+- If the CRD is unreadable, unestablished, or its served schema does not match the gate, CEO logs a warning after five minutes and every five minutes thereafter until it is ready.
 - Controller syncs every 1 minute to ensure job controllers are running
 - Lifecycle-manager construction failures set `PacemakerLifecycleManagerDegraded` while startup retries every 30 seconds; the condition clears after construction succeeds. The ClusterOperator's Degraded condition applies its existing 10-minute inertia.
 
@@ -158,7 +159,39 @@ CR exists and fresh (age <= 5min)?
 
 ### Overview
 
-The PacemakerCluster CR is populated by a status collector CronJob that runs every minute:
+The PacemakerCluster CR is populated by a status collector CronJob that runs every minute.
+`TNFObservability` controls alert-agent status, its contribution to health, and periodic repairs.
+When disabled, the collector omits alert-agent status (including previous entries) and skips repairs.
+The PacemakerCluster CRD remains available; CEO selects its schema to match the gate and waits for
+that schema before starting Pacemaker controllers. Strict field validation rejects unsupported fields.
+CRD selection and controller wiring are fixed at CEO startup; a resolved gate change (including a
+`CustomNoUpgrade` override) makes CEO exit and restart to apply the new selection.
+The static-resource controller creates or updates the same CRD in place, replacing its schema
+with the enabled or disabled variant during updates and upgrades as well as initial installation.
+The healthcheck and console notification readers use the same resolved gate and skip alert-agent
+entries when it is disabled. Existing setup-time alert registration remains independent of this gate.
+
+Each run resolves the gate from `FeatureGate/cluster.status.featureGates` for its own
+`OPERATOR_IMAGE_VERSION`, preserving release-specific behavior during upgrades. Manual/development
+runs fall back to ClusterVersion's desired version or latest history entry. A gate absent from a
+resolved release entry is disabled. API errors or a missing release entry leave the gate unresolved:
+the collector logs a warning and refreshes base status while retaining existing alert-agent
+observations and their contribution to node and cluster health. It skips new alert-agent observations
+and repairs until the gate can be resolved. Nodes without previous alert-agent entries continue to
+report base status only. If the CR cannot be read, collection fails without overwriting status.
+Gate lookups have a five-second timeout within the collector's deadline so a lookup failure leaves
+time for base-status collection.
+
+When gate resolution fails, nodes with retained alert-agent observations also report
+`AlertAgentsObserved=False` with reason `FeatureGateUnresolved`. This optional condition is a
+freshness signal, not a health failure: it shows that the updated `status.lastUpdated` describes
+base Pacemaker status, not refreshed alert-agent observations. Its transition time records the
+start of the unresolved period and is preserved across repeated failures. Agent conditions and their
+transition times are retained; those times describe health transitions, not observation freshness.
+The freshness condition is omitted once the gate resolves. Individual observation failures then
+use the normal carry-forward/Pending behavior.
+
+The collection flow is:
 
 ```text
 Every 1 minute:
@@ -176,11 +209,62 @@ Run: sudo -n pcs status xml
 Parse XML into structured data
         │
         ▼
+Observe alert registration and per-node MCO state
+(when TNFObservability is enabled)
+        │
+        ▼
 Update PacemakerCluster CR .status:
 - state (online/offline/standby)
 - lastUpdated (timestamp)
 - nodes[] (name, status, IP)
+- alert-agent conditions (when enabled)
+        │
+        ▼
+Read fresh CIB configuration and reconcile alerts
+(when TNFObservability is enabled)
+        │
+        ▼
+Next collection confirms recovery in status
 ```
+
+### Alert-Agent Reconciliation
+
+With `TNFObservability` enabled, the collector reports `nodes[].alertAgents` and the
+`AlertAgentsHealthy` node condition. Each agent has:
+
+- `Configured`: CIB registration matches the expected script path and fencing/node selectors.
+- `Available`: False only when the node's Machine Config Operator (MCO) state is `Degraded` and
+  its reason names the script path; otherwise True for a successfully read node. This is an
+  indirect signal, not a filesystem check.
+- `Healthy`: combines these signals. Confirmed failures affect node and cluster health;
+  unknown observations alone do not. Failed observations retain previous conditions or become
+  Unknown/Pending; agents with no observations or previous entry remain omitted.
+
+After updating status, [`pcs.ReconcileAlerts()`](../../pkg/tnf/pkg/pcs/alertreconcile.go) reads fresh
+configuration from Pacemaker's Cluster Information Base (CIB) and repairs these registrations:
+
+| Alert ID | Expected script under `/var/lib/pacemaker/alerts/` | Expected event selection |
+| --- | --- | --- |
+| `tnf-taint-alert` | `tnf-taint-alert.sh` | Fencing events (`<select_fencing/>`) |
+| `tnf-untaint-alert` | `tnf-untaint-alert.sh` | Node events (`<select_nodes/>`) |
+
+Repairs recreate missing registrations with a `30s` execution timeout, correct script paths in place,
+and add or replace event filters. Before each repair, the expected script must be executable on the
+collector's host (`test -x`). MCO remains responsible for script delivery, contents, and permissions.
+Periodic repairs do not correct timeout-only drift, validate script execution, or replay missed events.
+
+Repairs share a 10-second timeout within the collector's 30-second deadline. Errors are logged and
+retried on the next collection without failing the Job or triggering node rotation; the next
+collection also confirms recovery in status. Earlier collection failures skip repairs.
+
+The collector CronJob uses `concurrencyPolicy: Forbid`, including across image or target-node
+updates. Repairs have no cluster-wide lease or transaction spanning the CIB read and repair
+commands, so setup jobs or independently launched collectors can still race with them. A failed
+command, including a conflicting write, is logged and retried from fresh CIB state on the next
+collection. Convergence assumes concurrent writers agree on the desired alert registrations.
+
+Initial setup and update-setup register alerts independently of this gate; see
+[Alert-Agent Registration](job-controllers.md#alert-agent-registration).
 
 ### Node Rotation Strategy
 
