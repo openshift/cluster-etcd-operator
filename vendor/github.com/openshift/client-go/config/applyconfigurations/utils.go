@@ -470,6 +470,12 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &configv1.TokenRequiredClaimApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("TokenUserValidationRule"):
 		return &configv1.TokenUserValidationRuleApplyConfiguration{}
+	case v1.SchemeGroupVersion.WithKind("TopologyState"):
+		return &configv1.TopologyStateApplyConfiguration{}
+	case v1.SchemeGroupVersion.WithKind("TopologyTransition"):
+		return &configv1.TopologyTransitionApplyConfiguration{}
+	case v1.SchemeGroupVersion.WithKind("TopologyTransitionStatus"):
+		return &configv1.TopologyTransitionStatusApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("Update"):
 		return &configv1.UpdateApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("UpdateHistory"):
@@ -514,10 +520,6 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &configv1alpha1.AuditApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("AuthorizationConfig"):
 		return &configv1alpha1.AuthorizationConfigApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("Backup"):
-		return &configv1alpha1.BackupApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("BackupSpec"):
-		return &configv1alpha1.BackupSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("BasicAuth"):
 		return &configv1alpha1.BasicAuthApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("CertificateConfig"):
@@ -532,12 +534,6 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &configv1alpha1.ControllerManagerApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ControllerManagerSpec"):
 		return &configv1alpha1.ControllerManagerSpecApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("CRIOCredentialProviderConfig"):
-		return &configv1alpha1.CRIOCredentialProviderConfigApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("CRIOCredentialProviderConfigSpec"):
-		return &configv1alpha1.CRIOCredentialProviderConfigSpecApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("CRIOCredentialProviderConfigStatus"):
-		return &configv1alpha1.CRIOCredentialProviderConfigStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("CustomPKIPolicy"):
 		return &configv1alpha1.CustomPKIPolicyApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DefaultCertificateConfig"):
@@ -546,8 +542,6 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &configv1alpha1.DropEqualActionConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ECDSAKeyConfig"):
 		return &configv1alpha1.ECDSAKeyConfigApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("EtcdBackupSpec"):
-		return &configv1alpha1.EtcdBackupSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("GatherConfig"):
 		return &configv1alpha1.GatherConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("HashModActionConfig"):
@@ -658,12 +652,6 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &configv1alpha1.ReplaceActionConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Retention"):
 		return &configv1alpha1.RetentionApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("RetentionNumberConfig"):
-		return &configv1alpha1.RetentionNumberConfigApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("RetentionPolicy"):
-		return &configv1alpha1.RetentionPolicyApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("RetentionSizeConfig"):
-		return &configv1alpha1.RetentionSizeConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("RSAKeyConfig"):
 		return &configv1alpha1.RSAKeyConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("SecretKeySelector"):

@@ -2189,6 +2189,10 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: platformStatus
       type:
         namedType: com.github.openshift.api.config.v1.PlatformStatus
+    - name: topologyTransitionStatus
+      type:
+        namedType: com.github.openshift.api.config.v1.TopologyTransitionStatus
+      default: {}
 - name: com.github.openshift.api.config.v1.Ingress
   map:
     fields:
@@ -3995,6 +3999,51 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: message
       type:
         scalar: string
+- name: com.github.openshift.api.config.v1.TopologyState
+  map:
+    fields:
+    - name: controlPlaneTopology
+      type:
+        scalar: string
+    - name: infrastructureTopology
+      type:
+        scalar: string
+- name: com.github.openshift.api.config.v1.TopologyTransition
+  map:
+    fields:
+    - name: evaluations
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Condition
+          elementRelationship: associative
+          keys:
+          - type
+    - name: source
+      type:
+        namedType: com.github.openshift.api.config.v1.TopologyState
+      default: {}
+    - name: target
+      type:
+        namedType: com.github.openshift.api.config.v1.TopologyState
+      default: {}
+- name: com.github.openshift.api.config.v1.TopologyTransitionStatus
+  map:
+    fields:
+    - name: conditions
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Condition
+          elementRelationship: associative
+          keys:
+          - type
+    - name: transitions
+      type:
+        list:
+          elementType:
+            namedType: com.github.openshift.api.config.v1.TopologyTransition
+          elementRelationship: atomic
 - name: com.github.openshift.api.config.v1.Update
   map:
     fields:
@@ -4427,46 +4476,6 @@ var schemaYAML = typed.YAMLObject(`types:
       fields:
       - fieldName: bearerToken
         discriminatorValue: BearerToken
-- name: com.github.openshift.api.config.v1alpha1.Backup
-  map:
-    fields:
-    - name: apiVersion
-      type:
-        scalar: string
-    - name: kind
-      type:
-        scalar: string
-    - name: metadata
-      type:
-        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta
-      default: {}
-    - name: spec
-      type:
-        namedType: com.github.openshift.api.config.v1alpha1.BackupSpec
-      default: {}
-    - name: status
-      type:
-        namedType: com.github.openshift.api.config.v1alpha1.BackupStatus
-      default: {}
-- name: com.github.openshift.api.config.v1alpha1.BackupSpec
-  map:
-    fields:
-    - name: etcd
-      type:
-        namedType: com.github.openshift.api.config.v1alpha1.EtcdBackupSpec
-      default: {}
-- name: com.github.openshift.api.config.v1alpha1.BackupStatus
-  map:
-    elementType:
-      scalar: untyped
-      list:
-        elementType:
-          namedType: __untyped_atomic_
-        elementRelationship: atomic
-      map:
-        elementType:
-          namedType: __untyped_deduced_
-        elementRelationship: separable
 - name: com.github.openshift.api.config.v1alpha1.BasicAuth
   map:
     fields:
@@ -4478,46 +4487,6 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         namedType: com.github.openshift.api.config.v1alpha1.SecretKeySelector
       default: {}
-- name: com.github.openshift.api.config.v1alpha1.CRIOCredentialProviderConfig
-  map:
-    fields:
-    - name: apiVersion
-      type:
-        scalar: string
-    - name: kind
-      type:
-        scalar: string
-    - name: metadata
-      type:
-        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta
-      default: {}
-    - name: spec
-      type:
-        namedType: com.github.openshift.api.config.v1alpha1.CRIOCredentialProviderConfigSpec
-    - name: status
-      type:
-        namedType: com.github.openshift.api.config.v1alpha1.CRIOCredentialProviderConfigStatus
-      default: {}
-- name: com.github.openshift.api.config.v1alpha1.CRIOCredentialProviderConfigSpec
-  map:
-    fields:
-    - name: matchImages
-      type:
-        list:
-          elementType:
-            scalar: string
-          elementRelationship: associative
-- name: com.github.openshift.api.config.v1alpha1.CRIOCredentialProviderConfigStatus
-  map:
-    fields:
-    - name: conditions
-      type:
-        list:
-          elementType:
-            namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Condition
-          elementRelationship: associative
-          keys:
-          - type
 - name: com.github.openshift.api.config.v1alpha1.CertificateConfig
   map:
     fields:
@@ -4681,25 +4650,6 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: curve
       type:
         scalar: string
-- name: com.github.openshift.api.config.v1alpha1.EtcdBackupSpec
-  map:
-    fields:
-    - name: pvcName
-      type:
-        scalar: string
-      default: ""
-    - name: retentionPolicy
-      type:
-        namedType: com.github.openshift.api.config.v1alpha1.RetentionPolicy
-      default: {}
-    - name: schedule
-      type:
-        scalar: string
-      default: ""
-    - name: timeZone
-      type:
-        scalar: string
-      default: ""
 - name: com.github.openshift.api.config.v1alpha1.GatherConfig
   map:
     fields:
@@ -5647,40 +5597,6 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: size
       type:
         scalar: string
-- name: com.github.openshift.api.config.v1alpha1.RetentionNumberConfig
-  map:
-    fields:
-    - name: maxNumberOfBackups
-      type:
-        scalar: numeric
-      default: 0
-- name: com.github.openshift.api.config.v1alpha1.RetentionPolicy
-  map:
-    fields:
-    - name: retentionNumber
-      type:
-        namedType: com.github.openshift.api.config.v1alpha1.RetentionNumberConfig
-    - name: retentionSize
-      type:
-        namedType: com.github.openshift.api.config.v1alpha1.RetentionSizeConfig
-    - name: retentionType
-      type:
-        scalar: string
-      default: ""
-    unions:
-    - discriminator: retentionType
-      fields:
-      - fieldName: retentionNumber
-        discriminatorValue: RetentionNumber
-      - fieldName: retentionSize
-        discriminatorValue: RetentionSize
-- name: com.github.openshift.api.config.v1alpha1.RetentionSizeConfig
-  map:
-    fields:
-    - name: maxSizeOfBackupsGb
-      type:
-        scalar: numeric
-      default: 0
 - name: com.github.openshift.api.config.v1alpha1.SecretKeySelector
   map:
     fields:
