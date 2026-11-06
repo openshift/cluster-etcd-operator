@@ -62,15 +62,16 @@ func TestBackupScript(t testing.TB) {
 	})
 	require.NoError(t, err)
 
-	// verify no backup exist
-	cmdAsStr := fmt.Sprintf("ls -l /host%s", backupPath)
+	// verify no backup exists before registering its cleanup
+	cmdAsStr := fmt.Sprintf("test ! -e /host%s", backupPath)
 	output, err := exec.Command("oc", getOcArgs(debugPodName, cmdAsStr)...).CombinedOutput()
-	require.Errorf(t, err, string(output))
+	require.NoErrorf(t, err, "backup path already exists or could not be checked: %s", output)
 	t.Cleanup(func() {
-		// clean up
-		cmdAsStr = fmt.Sprintf("rm -rf /host%s", backupPath)
-		output, err = exec.Command("oc", getOcArgs(debugPodName, cmdAsStr)...).CombinedOutput()
-		require.NoError(t, err, fmt.Errorf("cleanup failed: %s", string(output)))
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		cleanupCmd := fmt.Sprintf("rm -rf /host%s", backupPath)
+		output, err := exec.CommandContext(ctx, "oc", getOcArgs(debugPodName, cleanupCmd)...).CombinedOutput()
+		require.NoErrorf(t, err, "cleanup failed: %s", output)
 	})
 
 	// run backup
