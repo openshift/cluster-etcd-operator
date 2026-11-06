@@ -94,6 +94,14 @@ ${COMPUTED_ENV_VARS}
         #!/bin/sh
         set -euo pipefail
         
+        readyz_cipher_arg=
+        if [ -n "${ETCD_CIPHER_SUITES:-}" ]; then
+          readyz_cipher_arg="--listen-cipher-suites=${ETCD_CIPHER_SUITES}"
+        fi
+        readyz_curve_arg=
+        if [ -n "${ETCD_LISTEN_CURVE_PREFERENCES:-}" ]; then
+          readyz_curve_arg="--listen-curve-preferences=${ETCD_LISTEN_CURVE_PREFERENCES}"
+        fi
         exec nice -n -18 cluster-etcd-operator readyz \
           --target=https://localhost:2379 \
           --listen-port=9980 \
@@ -102,7 +110,8 @@ ${COMPUTED_ENV_VARS}
           --client-cert-file=$(ETCDCTL_CERT) \
           --client-key-file=$(ETCDCTL_KEY) \
           --client-cacert-file=$(ETCDCTL_CACERT) \
-          --listen-cipher-suites=$(ETCD_CIPHER_SUITES)
+          ${readyz_cipher_arg} \
+          ${readyz_curve_arg}
     securityContext:
       privileged: true
     ports:

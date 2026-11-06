@@ -5,9 +5,11 @@ import (
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
+	"github.com/openshift/api/features"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/tlshelpers"
 	"github.com/openshift/library-go/pkg/crypto"
+	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"go.etcd.io/etcd/client/pkg/v3/tlsutil"
 
 	"github.com/stretchr/testify/assert"
@@ -173,4 +175,94 @@ func TestGetObservedTLSMinVersionEmptyObservedConfig(t *testing.T) {
 	v, err := getObservedTLSMinVersion(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, tlsutil.TLSVersion12, v)
+}
+
+func TestGetCurvePreferences(t *testing.T) {
+	enabled := featuregates.NewHardcodedFeatureGateAccess(
+		[]configv1.FeatureGateName{features.FeatureGateTLSGroupPreferences}, nil)
+	disabled := featuregates.NewHardcodedFeatureGateAccess(
+		nil, []configv1.FeatureGateName{features.FeatureGateTLSGroupPreferences})
+	intermediate := tlshelpers.SupportedEtcdCurves(intermediateTLSGroupNames())
+	require.NotEmpty(t, intermediate)
+
+	testCases := []struct {
+		name              string
+		accessor          featuregates.FeatureGateAccess
+		observedConfig    []byte
+		bootstrapComplete bool
+		wantErr           string
+		wantCurves        []string
+	}{
+		{
+			name:           "feature gate disabled leaves etcd curve selection alone",
+			accessor:       disabled,
+			observedConfig: []byte(`{"servingInfo":{"groups":["X25519"]}}`),
+		},
+		{
+			name:           "bootstrap in progress falls back to intermediate groups",
+			accessor:       enabled,
+			observedConfig: []byte(`{}`),
+			wantCurves:     intermediate,
+		},
+		{
+			name:              "bootstrap complete without groups is an error",
+			accessor:          enabled,
+			observedConfig:    []byte(`{}`),
+			bootstrapComplete: true,
+			wantErr:           "servingInfo.groups not found in observedConfig",
+		},
+		{
+			name:              "observed groups are translated to etcd curve names",
+			accessor:          enabled,
+			observedConfig:    []byte(`{"servingInfo":{"groups":["secp384r1","X25519","SecP256r1MLKEM768"]}}`),
+			bootstrapComplete: true,
+			wantCurves:        tlshelpers.SupportedEtcdCurves([]string{"secp384r1", "X25519", "SecP256r1MLKEM768"}),
+		},
+		{
+			name:              "omitted custom groups leave the env var unset",
+			accessor:          enabled,
+			observedConfig:    []byte(`{"servingInfo":{"groups":[]}}`),
+			bootstrapComplete: true,
+		},
+		{
+			name:              "hybrid groups etcd accepts are rendered",
+			accessor:          enabled,
+			observedConfig:    []byte(`{"servingInfo":{"groups":["SecP256r1MLKEM768","SecP384r1MLKEM1024"]}}`),
+			bootstrapComplete: true,
+			wantCurves:        []string{"SecP256r1MLKEM768", "SecP384r1MLKEM1024"},
+		},
+		{
+			name:              "groups with no etcd-supported curve fail closed",
+			accessor:          enabled,
+			observedConfig:    []byte(`{"servingInfo":{"groups":["not-a-group"]}}`),
+			bootstrapComplete: true,
+			wantErr:           "no etcd-supported TLS curves",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := envVarContext{
+				spec: operatorv1.StaticPodOperatorSpec{
+					OperatorSpec: operatorv1.OperatorSpec{
+						ObservedConfig: runtime.RawExtension{Raw: tc.observedConfig},
+					},
+				},
+				bootstrapConfigMapLister: bootstrapConfigMapLister(tc.bootstrapComplete),
+				featureGateAccessor:      tc.accessor,
+			}
+			got, err := getCurvePreferences(ctx)
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			if len(tc.wantCurves) == 0 {
+				assert.Nil(t, got)
+				return
+			}
+			assert.Equal(t, strings.Join(tc.wantCurves, ","), got[curvePreferencesEnvName])
+		})
+	}
 }
