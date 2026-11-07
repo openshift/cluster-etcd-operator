@@ -724,7 +724,7 @@ func TestBackupGarbageCollectionCompletedJobKeptUntilFinalizersRemoved(t *testin
 		jobs:    []*batchv1.Job{completedJob},
 		pvcs:    []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-pvc")},
 		operatorReactors: []k8stesting.SimpleReactor{{
-			Verb:     "patch",
+			Verb:     "update",
 			Resource: "etcdbackups",
 			Reaction: func(action k8stesting.Action) (bool, runtime.Object, error) {
 				return true, nil, fmt.Errorf("injected finalizer removal failure")

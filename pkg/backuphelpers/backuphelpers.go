@@ -160,11 +160,8 @@ func ParseTerminationMessage(message string) (BackupTerminationLog, error) {
 	}
 
 	for i, file := range data.Files {
-		filePath, _ := strings.CutPrefix(file.Path, BackupPathMount)
-		data.Files[i] = operatorv1alpha1.EtcdBackupFile{
-			Path:      filePath,
-			SizeBytes: file.SizeBytes,
-		}
+		file.Path, _ = strings.CutPrefix(file.Path, BackupPathMount)
+		data.Files[i] = file
 	}
 	return data, nil
 }

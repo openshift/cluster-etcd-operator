@@ -19,6 +19,7 @@ type EtcdBackupPolicyRetentionRuleApplyConfiguration struct {
 	// This field is required when the rule type is "Quantity", and forbidden otherwise.
 	Quantity *EtcdBackupPolicyRetentionQuantityApplyConfiguration `json:"quantity,omitempty"`
 	// size enforces the deletion of EtcdBackups belonging to the EtcdBackupPolicy based on total backup file size.
+	// At least one backup will always be retained, even if it exceeds the size limit.
 	// This field is required when the rule type is "Size", and forbidden otherwise.
 	Size *EtcdBackupPolicyRetentionSizeApplyConfiguration `json:"size,omitempty"`
 }

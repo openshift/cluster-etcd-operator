@@ -85,7 +85,7 @@ spec:
                   type: string
                 description: |-
                   nodeSelector specifies which control plane nodes to select from for running the backup job. Only one backup job is run per EtcdBackup.
-                  The default node-role.kubernetes.io/control-plane label will always be selected for in addition to any labels set here.
+                  The default node-role.kubernetes.io/control-plane label will always be added on top of any labels set on nodeSelector.
                   If no nodes are matched, then the backup will be marked failed.
                   For Local storage type, this may be used to target a specific node to take and store the backup.
                   For PVC storage type, this may be used to control where the backup is taken from. If multiple nodes are selected, the scheduler is responsible for placing the backup job based on volume topology and any other scheduling constraints.
@@ -194,7 +194,7 @@ spec:
                   If Completed is true, the backup job succeeded and has saved backup files to its storage location.
                   If Failed is true, the backup job failed and did not create valid backup files.
 
-                  When specified, must contain between 1 and 5 entries, with no more than 1 of each type.
+                  When specified, must contain between 1 and 15 entries, with no more than 1 of each type.
                   This field is optional.
                 items:
                   description: Condition contains details for one aspect of the current
@@ -264,6 +264,15 @@ spec:
                   This field is optional.
                 items:
                   properties:
+                    assetType:
+                      description: |-
+                        assetType specifies the type of the backup file.
+                        If set to Snapshot, the file is an etcd database snapshot.
+                        If set to StaticKubeResources, the file is a bundle of static pod manifests for the control plane. If etcd is encrypted, this will include the encryption keys.
+                      enum:
+                      - Snapshot
+                      - StaticKubeResources
+                      type: string
                     path:
                       description: |-
                         path to the backup file on the storage backend.
@@ -286,6 +295,7 @@ spec:
                       minimum: 1
                       type: integer
                   required:
+                  - assetType
                   - path
                   type: object
                 maxItems: 10

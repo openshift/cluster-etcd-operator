@@ -54,7 +54,7 @@ type EtcdBackupSpec struct {
 	Assets []EtcdBackupAssetType `json:"assets,omitempty"`
 
 	// nodeSelector specifies which control plane nodes to select from for running the backup job. Only one backup job is run per EtcdBackup.
-	// The default node-role.kubernetes.io/control-plane label will always be selected for in addition to any labels set here.
+	// The default node-role.kubernetes.io/control-plane label will always be added on top of any labels set on nodeSelector.
 	// If no nodes are matched, then the backup will be marked failed.
 	// For Local storage type, this may be used to target a specific node to take and store the backup.
 	// For PVC storage type, this may be used to control where the backup is taken from. If multiple nodes are selected, the scheduler is responsible for placing the backup job based on volume topology and any other scheduling constraints.
@@ -83,7 +83,9 @@ type EtcdBackupSpec struct {
 type EtcdBackupAssetType string
 
 const (
-	EtcdBackupAssetTypeSnapshot            EtcdBackupAssetType = "Snapshot"
+	// EtcdBackupAssetTypeSnapshot is used to request an etcd database snapshot.
+	EtcdBackupAssetTypeSnapshot EtcdBackupAssetType = "Snapshot"
+	// EtcdBackupAssetTypeStaticKubeResources is used to request a static pod manifests bundle.
 	EtcdBackupAssetTypeStaticKubeResources EtcdBackupAssetType = "StaticKubeResources"
 )
 
@@ -119,7 +121,9 @@ type EtcdBackupStorage struct {
 type EtcdBackupStorageType string
 
 const (
-	EtcdBackupStorageTypePVC   EtcdBackupStorageType = "PVC"
+	// EtcdBackupStorageTypePVC configures backups to be stored on a PersistenVolumeClaim.
+	EtcdBackupStorageTypePVC EtcdBackupStorageType = "PVC"
+	// EtcdBackupStorageTypePVC configures backups to be stored locally on control plane nodes.
 	EtcdBackupStorageTypeLocal EtcdBackupStorageType = "Local"
 )
 
@@ -165,7 +169,7 @@ type EtcdBackupStatus struct {
 	// If Completed is true, the backup job succeeded and has saved backup files to its storage location.
 	// If Failed is true, the backup job failed and did not create valid backup files.
 	//
-	// When specified, must contain between 1 and 5 entries, with no more than 1 of each type.
+	// When specified, must contain between 1 and 15 entries, with no more than 1 of each type.
 	// This field is optional.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=15
@@ -216,6 +220,12 @@ type EtcdBackupStatus struct {
 }
 
 type EtcdBackupFile struct {
+	// assetType specifies the type of the backup file.
+	// If set to Snapshot, the file is an etcd database snapshot.
+	// If set to StaticKubeResources, the file is a bundle of static pod manifests for the control plane. If etcd is encrypted, this will include the encryption keys.
+	// +required
+	AssetType EtcdBackupAssetType `json:"assetType,omitempty"`
+
 	// path to the backup file on the storage backend.
 	// Must be an absolute filepath between 1 and 4096 characters containing only alphanumeric characters, '/', '.', '_', or '-', starting with a '/'.
 	// This field is required.

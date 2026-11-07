@@ -15,7 +15,7 @@ type EtcdBackupStatusApplyConfiguration struct {
 	// If Completed is true, the backup job succeeded and has saved backup files to its storage location.
 	// If Failed is true, the backup job failed and did not create valid backup files.
 	//
-	// When specified, must contain between 1 and 5 entries, with no more than 1 of each type.
+	// When specified, must contain between 1 and 15 entries, with no more than 1 of each type.
 	// This field is optional.
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 	// jobName is a reference to the Job created for the backup. It always runs in the openshift-etcd namespace.

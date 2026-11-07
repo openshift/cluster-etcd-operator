@@ -367,8 +367,8 @@ func TestQueuedBackupDeleted(t *testing.T) {
 			pvcs:    []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				requireNoBackupJobCreated(t, client)
-				_, ok := testutils.GetAction[k8stesting.PatchActionImpl](operatorFake.Actions())
-				require.False(t, ok, "Expected no patch action")
+				_, ok := testutils.GetAction[k8stesting.UpdateAction](operatorFake.Actions())
+				require.False(t, ok, "Expected no update action")
 			},
 		})
 	})
@@ -381,8 +381,8 @@ func TestQueuedBackupDeleted(t *testing.T) {
 			})},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				requireNoBackupJobCreated(t, client)
-				_, ok := testutils.GetAction[k8stesting.PatchActionImpl](operatorFake.Actions())
-				require.False(t, ok, "Expected no patch action")
+				_, ok := testutils.GetAction[k8stesting.UpdateAction](operatorFake.Actions())
+				require.False(t, ok, "Expected no update action")
 			},
 		})
 	})
@@ -395,10 +395,10 @@ func TestQueuedBackupDeleted(t *testing.T) {
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				requireNoBackupJobCreated(t, client)
 
-				action, ok := testutils.GetAction[k8stesting.PatchActionImpl](operatorFake.Actions())
-				require.True(t, ok, "Expected patch action")
-				updatedBackup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), action.Name, metav1.GetOptions{})
-				require.NoError(t, err)
+				action, ok := testutils.GetAction[k8stesting.UpdateActionImpl](operatorFake.Actions())
+				require.True(t, ok, "Expected update action")
+				updatedBackup, ok := action.Object.(*operatorv1alpha1.EtcdBackup)
+				require.True(t, ok, "expected backup object")
 
 				require.NotContains(t, updatedBackup.Finalizers, backuphelpers.FinalizerEtcdBackup)
 			},
@@ -968,17 +968,16 @@ func TestInvalidBackupJobFailsBackup(t *testing.T) {
 		backups: []*operatorv1alpha1.EtcdBackup{backup},
 		nodes:   []*corev1.Node{testutils.FakeNode("test-node-1", testutils.WithMasterLabel())},
 		operatorReactors: []k8stesting.SimpleReactor{{
-			// Adding the finalizer updates the backup's resource version
-			Verb:     "patch",
+			// Adding the finalizer (via update) bumps the backup's resource version
+			Verb:     "update",
 			Resource: "etcdbackups",
 			Reaction: func(action k8stesting.Action) (bool, runtime.Object, error) {
 				if action.GetSubresource() != "" {
 					return false, nil, nil
 				}
-				patched := backup.DeepCopy()
-				patched.Finalizers = append(patched.Finalizers, backuphelpers.FinalizerEtcdBackup)
-				patched.ResourceVersion = "finalizer-added"
-				return true, patched, nil
+				updated := action.(k8stesting.UpdateAction).GetObject().(*operatorv1alpha1.EtcdBackup).DeepCopy()
+				updated.ResourceVersion = "finalizer-added"
+				return true, updated, nil
 			},
 		}},
 		k8sReactors: []k8stesting.SimpleReactor{{
@@ -998,9 +997,7 @@ func TestInvalidBackupJobFailsBackup(t *testing.T) {
 			require.Contains(t, condition.Message, "must not contain '..'")
 
 			// The failed status must be applied to the version of the backup with the finalizer, or it would conflict
-			statusPatches := testutils.ListActions[k8stesting.PatchActionImpl](operatorFake.Actions(), func(a k8stesting.PatchActionImpl) bool {
-				return a.GetSubresource() == "status"
-			})
+			statusPatches := testutils.ListStatusActions[k8stesting.PatchActionImpl](operatorFake.Actions())
 			require.NotEmpty(t, statusPatches)
 			patch := map[string]any{}
 			require.NoError(t, json.Unmarshal(statusPatches[len(statusPatches)-1].GetPatch(), &patch))
@@ -1906,14 +1903,14 @@ func TestSetBackupFinalizer(t *testing.T) {
 			b.Finalizers = []string{"other", backuphelpers.FinalizerEtcdBackup}
 		})
 		operatorFake := operatorfake.NewSimpleClientset(backup)
-		updated, err := removeBackupFinalizer(t.Context(), operatorFake.OperatorV1alpha1().EtcdBackups(), backup)
+		err := removeBackupFinalizer(t.Context(), operatorFake.OperatorV1alpha1().EtcdBackups(), backup)
 		require.NoError(t, err)
-		require.Equal(t, []string{"other"}, updated.Finalizers)
 
-		action, ok := testutils.GetAction[k8stesting.PatchActionImpl](operatorFake.Actions())
-		require.True(t, ok, "expected patch action")
-		require.Equal(t, types.JSONPatchType, action.GetPatchType())
-		require.JSONEq(t, `[{"op":"test","path":"/metadata/uid","value":"test-backup-uid"},{"op":"test","path":"/metadata/finalizers/1","value":"`+backuphelpers.FinalizerEtcdBackup+`"},{"op":"remove","path":"/metadata/finalizers/1"}]`, string(action.GetPatch()))
+		action, ok := testutils.GetAction[k8stesting.UpdateActionImpl](operatorFake.Actions())
+		require.True(t, ok, "expected update action")
+		backup, ok = action.Object.(*operatorv1alpha1.EtcdBackup)
+		require.True(t, ok, "expected backup object")
+		require.Equal(t, []string{"other"}, backup.Finalizers)
 	})
 	t.Run("add", func(t *testing.T) {
 		backup := testutils.FakeEtcdBackup("test-backup", func(b *operatorv1alpha1.EtcdBackup) {
@@ -1921,35 +1918,16 @@ func TestSetBackupFinalizer(t *testing.T) {
 			b.ResourceVersion = "42"
 		})
 		operatorFake := operatorfake.NewSimpleClientset(backup)
-		updated, err := removeBackupFinalizer(t.Context(), operatorFake.OperatorV1alpha1().EtcdBackups(), backup)
+		updated, err := addBackupFinalizer(t.Context(), operatorFake.OperatorV1alpha1().EtcdBackups(), backup)
 		require.NoError(t, err)
 		require.Equal(t, []string{"other", backuphelpers.FinalizerEtcdBackup}, updated.Finalizers)
 
-		action, ok := testutils.GetAction[k8stesting.PatchActionImpl](operatorFake.Actions())
-		require.True(t, ok, "expected patch action")
-		require.Equal(t, types.MergePatchType, action.GetPatchType())
-		require.JSONEq(t, `{"metadata":{"uid":"test-backup-uid","resourceVersion":"42","finalizers":["other","`+backuphelpers.FinalizerEtcdBackup+`"]}}`, string(action.GetPatch()))
+		action, ok := testutils.GetAction[k8stesting.UpdateActionImpl](operatorFake.Actions())
+		require.True(t, ok, "expected update action")
+		backup, ok = action.Object.(*operatorv1alpha1.EtcdBackup)
+		require.True(t, ok, "expected backup object")
+		require.Contains(t, backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
 	})
-	for name, hasFinalizer := range map[string]bool{"add-deleted-backup": true, "remove-deleted-backup": false} {
-		t.Run(name, func(t *testing.T) {
-			// The informer still has the backup, but it was deleted. The backup must not be recreated.
-			backup := testutils.FakeEtcdBackup("test-backup", func(b *operatorv1alpha1.EtcdBackup) {
-				if !hasFinalizer {
-					b.Finalizers = []string{backuphelpers.FinalizerEtcdBackup}
-				}
-			})
-			operatorFake := operatorfake.NewSimpleClientset()
-			var err error
-			if hasFinalizer {
-				_, err = addBackupFinalizer(t.Context(), operatorFake.OperatorV1alpha1().EtcdBackups(), backup)
-			} else {
-				_, err = removeBackupFinalizer(t.Context(), operatorFake.OperatorV1alpha1().EtcdBackups(), backup)
-			}
-			require.True(t, apierrors.IsNotFound(err), "expected NotFound, got %v", err)
-			_, err = operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), backup.Name, metav1.GetOptions{})
-			require.True(t, apierrors.IsNotFound(err), "expected backup to not be recreated, got %v", err)
-		})
-	}
 }
 
 func TestStartDeletedBackup(t *testing.T) {

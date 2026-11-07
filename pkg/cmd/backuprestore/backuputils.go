@@ -98,12 +98,12 @@ func backup(ctx context.Context, r *backupOptions) (err error) {
 			if msg, ok := isDiskFull(err); ok {
 				message = fmt.Sprintf("%s: %s", message, msg)
 			}
-			if backupFile, ok := statBackupFile(snapshotPartialPath); ok {
+			if backupFile, ok := statBackupFile(snapshotPartialPath, operatorv1alpha1.EtcdBackupAssetTypeSnapshot); ok {
 				files = append(files, backupFile)
 			}
 			return fmt.Errorf("saveSnapshot failed: %w", err)
 		} else {
-			files = append(files, operatorv1alpha1.EtcdBackupFile{Path: snapshotFilepath, SizeBytes: snapshotSize})
+			files = append(files, operatorv1alpha1.EtcdBackupFile{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: snapshotFilepath, SizeBytes: snapshotSize})
 		}
 	}
 
@@ -116,21 +116,21 @@ func backup(ctx context.Context, r *backupOptions) (err error) {
 			if msg, ok := isDiskFull(err); ok {
 				message = fmt.Sprintf("%s: %s", message, msg)
 			}
-			if backupFile, ok := statBackupFile(archiveFilepath); ok {
+			if backupFile, ok := statBackupFile(archiveFilepath, operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources); ok {
 				files = append(files, backupFile)
 			}
 			return fmt.Errorf("archiveLatestResources failed: %w", err)
 		} else {
-			files = append(files, operatorv1alpha1.EtcdBackupFile{Path: archiveFilepath, SizeBytes: archiveSize})
+			files = append(files, operatorv1alpha1.EtcdBackupFile{AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources, Path: archiveFilepath, SizeBytes: archiveSize})
 		}
 	}
 
 	return
 }
 
-func statBackupFile(path string) (file operatorv1alpha1.EtcdBackupFile, ok bool) {
+func statBackupFile(path string, assetType operatorv1alpha1.EtcdBackupAssetType) (file operatorv1alpha1.EtcdBackupFile, ok bool) {
 	if info, err := os.Stat(path); err == nil {
-		return operatorv1alpha1.EtcdBackupFile{Path: path, SizeBytes: info.Size()}, true
+		return operatorv1alpha1.EtcdBackupFile{AssetType: assetType, Path: path, SizeBytes: info.Size()}, true
 	}
 	return
 }

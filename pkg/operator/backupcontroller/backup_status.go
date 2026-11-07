@@ -9,6 +9,7 @@ import (
 	applyconfigurationsoperatorv1alpha1 "github.com/openshift/client-go/operator/applyconfigurations/operator/v1alpha1"
 	operatorv1alpha1client "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
 	batchv1 "k8s.io/api/batch/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	applyconfigurationsmetav1 "k8s.io/client-go/applyconfigurations/meta/v1"
 
@@ -160,6 +161,7 @@ func addBackupFinalizer(ctx context.Context, backupClient operatorv1alpha1client
 	if slices.Contains(backup.Finalizers, backuphelpers.FinalizerEtcdBackup) {
 		return backup, nil
 	}
+	backup = backup.DeepCopy()
 	backup.Finalizers = append(backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
 	updated, err := backupClient.Update(ctx, backup, metav1.UpdateOptions{})
 	if err != nil {
@@ -168,19 +170,20 @@ func addBackupFinalizer(ctx context.Context, backupClient operatorv1alpha1client
 	return updated, nil
 }
 
-func removeBackupFinalizer(ctx context.Context, backupClient operatorv1alpha1client.EtcdBackupInterface, backup *operatorv1alpha1.EtcdBackup) (*operatorv1alpha1.EtcdBackup, error) {
-	finalizers := slices.DeleteFunc(backup.Finalizers, func(finalizer string) bool {
-		return finalizer == backuphelpers.FinalizerEtcdBackup
-	})
-	if len(backup.Finalizers) == len(finalizers) {
-		// No finalizer found
-		return backup, nil
+func removeBackupFinalizer(ctx context.Context, backupClient operatorv1alpha1client.EtcdBackupInterface, backup *operatorv1alpha1.EtcdBackup) error {
+	idx := slices.Index(backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
+	if idx < 0 {
+		return nil
 	}
-	backup.Finalizers = finalizers
 
-	updated, err := backupClient.Update(ctx, backup, metav1.UpdateOptions{})
+	backup = backup.DeepCopy()
+	backup.Finalizers = slices.Delete(backup.Finalizers, idx, idx+1)
+	_, err := backupClient.Update(ctx, backup, metav1.UpdateOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("error removing backup %q finalizer: %w", backup.Name, err)
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("error removing backup %q finalizer: %w", backup.Name, err)
 	}
-	return updated, nil
+	return nil
 }

@@ -285,7 +285,7 @@ func (c *BackupGarbageCollectionController) syncBackups(ctx context.Context, act
 		if completed, ok := activeGC[backup.UID]; ok {
 			// Remove backup finalizer if GC completed successfully
 			if completed {
-				if _, err := removeBackupFinalizer(ctx, backupsClient, backup); err != nil && !apierrors.IsNotFound(err) {
+				if err := removeBackupFinalizer(ctx, backupsClient, backup); err != nil && !apierrors.IsNotFound(err) {
 					errs = append(errs, fmt.Errorf("BackupGarbageCollectionController failed to remove backup finalizer after GC completed: %w", err))
 				}
 			}
@@ -294,7 +294,7 @@ func (c *BackupGarbageCollectionController) syncBackups(ctx context.Context, act
 				errs = append(errs, err)
 			} else if requiresGC {
 				newGC[storage] = append(newGC[storage], backup)
-			} else if _, err := removeBackupFinalizer(ctx, backupsClient, backup); err != nil && !apierrors.IsNotFound(err) {
+			} else if err := removeBackupFinalizer(ctx, backupsClient, backup); err != nil && !apierrors.IsNotFound(err) {
 				errs = append(errs, fmt.Errorf("BackupGarbageCollectionController failed to remove backup finalizer: %w", err))
 			}
 		}

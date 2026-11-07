@@ -72,7 +72,7 @@ type EtcdBackupPolicySpec struct {
 	// assets specifies the type of files to be backed up.
 	// If Snapshot is present, the etcd database will be snapshotted and saved to the storage backend.
 	// If StaticKubeResources is present, static pod manifests for the control plane will be bundled and saved to the storage backend. If etcd is encrypted, this will include the encryption keys.
-	// Copied to EtcdBackups created by this policy.
+	// This field is copied to EtcdBackups created by this policy.
 	// When specified, must contain between 1 and 2 entries, with at most 1 of each type.
 	// When omitted, all assets types will be backed up.
 	// This field is optional.
@@ -83,9 +83,9 @@ type EtcdBackupPolicySpec struct {
 	Assets []EtcdBackupAssetType `json:"assets,omitempty"`
 
 	// nodeSelector specifies which control plane nodes to select from for running backup jobs.
-	// The default node-role.kubernetes.io/control-plane label will always be required in addition to any labels set here.
+	// The default node-role.kubernetes.io/control-plane label will always be added on top of any labels set on nodeSelector.
 	// If no nodes are matched, then no EtcdBackups will be created.
-	// For Local storage type, this may be used to target a specific node to take and store the backup. If distribution is AllNodes, then backups are taken on all selected nodes. If distribution is SingleNode, then backups will round robin selected nodes.
+	// For Local storage type, this may be used to target a specific node to take and store the backup. If distribution is AllNodes, then backups are taken on all selected nodes. If distribution is SingleNode, then backups will round robin selected nodes in lexicographical order starting from the last created backup for the policy.
 	// For PVC storage type, this may be used to control where the backup is taken from. If multiple nodes are selected, the scheduler is responsible for placing the backup job based on volume topology and any other scheduling constraints.
 	// EtcdBackup nodeSelector is derived from this field.
 	// When specified, must contain between 1 and 10 entries.
@@ -106,7 +106,7 @@ type EtcdBackupPolicySpec struct {
 	// Completed backups are deleted from the oldest first until all rules are satisfied.
 	// If no rules are specified then backups created by this policy will not be automatically deleted.
 	// When an EtcdBackup is deleted the files created by it will be deleted as well, as long as the storage backend is still accessible.
-	// For Local storage with distribution AllNodes, retention is calculated for EtcdBackups grouped by Node (e.g. MaxQuantity 2 results in 2 backups per node). In all other cases retention is calculated across all EtcdBackups belonging to the policy.
+	// For Local storage with distribution AllNodes, retention is calculated for EtcdBackups grouped by Node (e.g. MaxQuantity 2 results in 2 backups per node, MaxTotalSizeGiB 5 results in 5GiB of backups per node). In all other cases retention is calculated across all EtcdBackups belonging to the policy.
 	// When specified, must contain between 1 and 2 entries.
 	// Must not have more than 1 entry of each rule type.
 	// This field is optional.
@@ -169,7 +169,7 @@ type EtcdBackupPolicyStorageLocal struct {
 	// distribution controls whether or not scheduled local backups are only taken on a single node or fan out to all control plane nodes.
 	// Allowed values are SingleNode and AllNodes
 	// When set to SingleNode, a single EtcdBackup will be created at each schedule execution on one of the selected control plane nodes. If multiple nodes are matched by nodeSelector, then backups round robin the nodes in lexicographical order.
-	// When set to AllNodes, EtcdBackups will be created for all selected control plane nodes at each schedule execution. Retention rules will be applied to EtcdBackups grouped by Node (e.g. MaxQuantity 2 results in 2 backups per node).
+	// When set to AllNodes, EtcdBackups will be created for all selected control plane nodes at each schedule execution. Retention rules will be applied to EtcdBackups grouped by Node (e.g. MaxQuantity 2 results in 2 backups per node, MaxTotalSizeGiB 5 results in 5GiB of backups per node).
 	// If omitted, defaults to SingleNode.
 	// This field is optional.
 	// +kubebuilder:validation:Enum:=SingleNode;AllNodes
@@ -183,7 +183,7 @@ type EtcdBackupPolicyLocalDistributionType string
 const (
 	// EtcdBackupPolicyLocalDistributionTypeSingleNode creates a single EtcdBackup at each schedule execution on one of the selected control plane nodes. If multiple nodes are matched by nodeSelector, then backups round robin the nodes in lexicographical order.
 	EtcdBackupPolicyLocalDistributionTypeSingleNode EtcdBackupPolicyLocalDistributionType = "SingleNode"
-	// EtcdBackupPolicyLocalDistributionTypeAllNodes creates EtcdBackups for all selected control plane nodes at each schedule execution. Retention rules will be applied to EtcdBackups grouped by Node (e.g. MaxQuantity 2 results in 2 backups per node).
+	// EtcdBackupPolicyLocalDistributionTypeAllNodes creates EtcdBackups for all selected control plane nodes at each schedule execution. Retention rules will be applied to EtcdBackups grouped by Node (e.g. MaxQuantity 2 results in 2 backups per node, MaxTotalSizeGiB 5 results in 5GiB of backups per node).
 	EtcdBackupPolicyLocalDistributionTypeAllNodes EtcdBackupPolicyLocalDistributionType = "AllNodes"
 )
 
@@ -207,6 +207,7 @@ type EtcdBackupPolicyRetentionRule struct {
 	Quantity EtcdBackupPolicyRetentionQuantity `json:"quantity,omitzero"`
 
 	// size enforces the deletion of EtcdBackups belonging to the EtcdBackupPolicy based on total backup file size.
+	// At least one backup will always be retained, even if it exceeds the size limit.
 	// This field is required when the rule type is "Size", and forbidden otherwise.
 	// +optional
 	Size EtcdBackupPolicyRetentionSize `json:"size,omitzero"`
@@ -215,8 +216,10 @@ type EtcdBackupPolicyRetentionRule struct {
 type EtcdBackupPolicyRetentionRuleType string
 
 const (
+	// EtcdBackupPolicyRetentionRuleTypeQuantity deletes completed EtcdBackups based on the total count.
 	EtcdBackupPolicyRetentionRuleTypeQuantity EtcdBackupPolicyRetentionRuleType = "Quantity"
-	EtcdBackupPolicyRetentionRuleTypeSize     EtcdBackupPolicyRetentionRuleType = "Size"
+	// EtcdBackupPolicyRetentionRuleTypeSize deletes completed EtcdBackups based on the total aggregate size of backup files.
+	EtcdBackupPolicyRetentionRuleTypeSize EtcdBackupPolicyRetentionRuleType = "Size"
 )
 
 type EtcdBackupPolicyRetentionQuantity struct {

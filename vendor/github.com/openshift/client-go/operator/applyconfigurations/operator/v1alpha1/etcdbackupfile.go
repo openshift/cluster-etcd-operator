@@ -2,9 +2,17 @@
 
 package v1alpha1
 
+import (
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+)
+
 // EtcdBackupFileApplyConfiguration represents a declarative configuration of the EtcdBackupFile type for use
 // with apply.
 type EtcdBackupFileApplyConfiguration struct {
+	// assetType specifies the type of the backup file.
+	// If set to Snapshot, the file is an etcd database snapshot.
+	// If set to StaticKubeResources, the file is a bundle of static pod manifests for the control plane. If etcd is encrypted, this will include the encryption keys.
+	AssetType *operatorv1alpha1.EtcdBackupAssetType `json:"assetType,omitempty"`
 	// path to the backup file on the storage backend.
 	// Must be an absolute filepath between 1 and 4096 characters containing only alphanumeric characters, '/', '.', '_', or '-', starting with a '/'.
 	// This field is required.
@@ -20,6 +28,14 @@ type EtcdBackupFileApplyConfiguration struct {
 // apply.
 func EtcdBackupFile() *EtcdBackupFileApplyConfiguration {
 	return &EtcdBackupFileApplyConfiguration{}
+}
+
+// WithAssetType sets the AssetType field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the AssetType field is set to the value of the last call.
+func (b *EtcdBackupFileApplyConfiguration) WithAssetType(value operatorv1alpha1.EtcdBackupAssetType) *EtcdBackupFileApplyConfiguration {
+	b.AssetType = &value
+	return b
 }
 
 // WithPath sets the Path field in the declarative configuration to the given value

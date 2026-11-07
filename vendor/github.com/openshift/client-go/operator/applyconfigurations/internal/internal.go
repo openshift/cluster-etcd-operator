@@ -4539,6 +4539,9 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: com.github.openshift.api.operator.v1alpha1.EtcdBackupFile
   map:
     fields:
+    - name: assetType
+      type:
+        scalar: string
     - name: path
       type:
         scalar: string
