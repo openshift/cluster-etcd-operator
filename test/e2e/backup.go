@@ -4,16 +4,17 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	g "github.com/onsi/ginkgo/v2"
-	configv1alpha1 "github.com/openshift/api/config/v1alpha1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	"github.com/openshift/cluster-etcd-operator/test/e2e/framework"
 	"github.com/stretchr/testify/require"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -46,8 +47,8 @@ var _ = g.Describe("[sig-etcd] cluster-etcd-operator", func() {
 	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestRetentionBySize", func() {
 		TestRetentionBySize(g.GinkgoTB())
 	})
-	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestMultipleBackupsAreSkipped", func() {
-		TestMultipleBackupsAreSkipped(g.GinkgoTB())
+	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestMultipleBackupsAreQueued [Timeout:30m]", func() {
+		TestMultipleBackupsAreQueued(g.GinkgoTB())
 	})
 	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestBackupFailureOnMissingPVC", func() {
 		TestBackupFailureOnMissingPVC(g.GinkgoTB())
@@ -60,26 +61,29 @@ var _ = g.Describe("[sig-etcd] cluster-etcd-operator", func() {
 func TestBackupHappyPath(t testing.TB) {
 	pvcName := "backup-happy-path-pvc"
 	ensureHostPathPVC(t, pvcName)
-	c := framework.NewOperatorClient(t)
+	c := framework.NewOperatorClient(t).OperatorV1alpha1()
 
-	backupCrd := operatorv1alpha1.EtcdBackup{
+	backup := operatorv1alpha1.EtcdBackup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "backup-happy-path",
 			Namespace: OpenShiftEtcdNamespace,
 		},
 		Spec: operatorv1alpha1.EtcdBackupSpec{
-			PVCName: pvcName,
+			Storage: operatorv1alpha1.EtcdBackupStorage{
+				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+				PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: pvcName},
+			},
 		},
 	}
 
-	_, err := c.OperatorV1alpha1().EtcdBackups().Create(context.Background(), &backupCrd, metav1.CreateOptions{})
+	_, err := c.EtcdBackups().Create(context.Background(), &backup, metav1.CreateOptions{})
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		err := c.OperatorV1alpha1().EtcdBackups().Delete(context.Background(), backupCrd.Name, metav1.DeleteOptions{})
+		err := c.EtcdBackups().Delete(context.Background(), backup.Name, metav1.DeleteOptions{})
 		require.NoError(t, err)
 
-		ensureEtcdBackupsRemoved(t, backupCrd.Name)
+		ensureEtcdBackupsRemoved(t, backup.Name)
 		ensureAllBackupPodsAreRemoved(t)
 	})
 
@@ -87,13 +91,13 @@ func TestBackupHappyPath(t testing.TB) {
 	defer cancel()
 	err = wait.PollUntilContextCancel(ctx, 30*time.Second, false,
 		func(ctx context.Context) (done bool, err error) {
-			b, err := c.OperatorV1alpha1().EtcdBackups().Get(ctx, backupCrd.Name, metav1.GetOptions{})
+			b, err := c.EtcdBackups().Get(ctx, backup.Name, metav1.GetOptions{})
 			if err != nil {
 				klog.Infof("error while getting backup: %v", err)
 				return false, nil
 			}
 
-			klog.Infof("current backup job: %v", b.Status.BackupJob)
+			klog.Infof("current backup job: %v", b.Status.JobName)
 			klog.Infof("current backup conditions: %v", b.Status.Conditions)
 
 			backupSuccess := backupHasCondition(b, operatorv1alpha1.BackupCompleted, metav1.ConditionTrue)
@@ -108,46 +112,51 @@ func TestBackupHappyPath(t testing.TB) {
 	require.NoError(t, err)
 
 	foundFiles := collectFilesInPVCAcrossAllNodes(t, pvcName)
-	requireBackupFilesFound(t, backupCrd.Name, foundFiles)
+	requireBackupFilesFound(t, backup.Name, foundFiles)
 }
 
 func TestPeriodicBackupHappyPath(t testing.TB) {
 	pvcName := "periodic-backup-happy-path-pvc"
 	ensureHostPathPVC(t, pvcName)
-	configClient := framework.NewConfigClient(t)
+	operatorClient := framework.NewOperatorClient(t)
 
-	backupCrd := configv1alpha1.Backup{
+	backupPolicy := operatorv1alpha1.EtcdBackupPolicy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "periodic-backup-happy-path",
 			Namespace: OpenShiftEtcdNamespace,
 		},
-		Spec: configv1alpha1.BackupSpec{
-			EtcdBackupSpec: configv1alpha1.EtcdBackupSpec{
-				Schedule: "* * * * *",
-				TimeZone: "UTC",
-				RetentionPolicy: configv1alpha1.RetentionPolicy{
-					RetentionType:   configv1alpha1.RetentionTypeNumber,
-					RetentionNumber: &configv1alpha1.RetentionNumberConfig{MaxNumberOfBackups: 5},
+		Spec: operatorv1alpha1.EtcdBackupPolicySpec{
+			Schedule: "* * * * *",
+			RetentionRules: []operatorv1alpha1.EtcdBackupPolicyRetentionRule{
+				{
+					Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeQuantity,
+					Quantity: operatorv1alpha1.EtcdBackupPolicyRetentionQuantity{
+						MaxQuantity: 5,
+					},
 				},
-				PVCName: pvcName,
+			},
+			Storage: operatorv1alpha1.EtcdBackupPolicyStorage{
+				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+				PVC: operatorv1alpha1.EtcdBackupPolicyStoragePvc{
+					EtcdBackupStoragePvc: operatorv1alpha1.EtcdBackupStoragePvc{Name: pvcName}},
 			},
 		},
 	}
 
-	_, err := configClient.Backups().Create(context.Background(), &backupCrd, metav1.CreateOptions{})
+	_, err := operatorClient.OperatorV1alpha1().EtcdBackupPolicies().Create(context.Background(), &backupPolicy, metav1.CreateOptions{})
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		err := configClient.Backups().Delete(context.Background(), backupCrd.Name, metav1.DeleteOptions{})
+		err := operatorClient.OperatorV1alpha1().EtcdBackupPolicies().Delete(context.Background(), backupPolicy.Name, metav1.DeleteOptions{})
 		require.NoError(t, err)
 
 		// deleting the CRD should delete all its cronjobs/jobs, etcdbackups and their pods as well
-		ensureCronJobRemoved(t, backupCrd.Name)
-		ensureEtcdBackupsRemoved(t, backupCrd.Name)
+		ensureCronJobRemoved(t, backupPolicy.Name)
+		ensureEtcdBackupsRemoved(t, backupPolicy.Name)
 		ensureAllBackupPodsAreRemoved(t)
 	})
 
-	awaitBackupInvocations(t, backupCrd)
+	awaitBackupInvocations(t, backupPolicy)
 
 	foundFiles := collectFilesInPVCAcrossAllNodes(t, pvcName)
 	grouped := groupBackupFilesByRunPrefix(t, foundFiles)
@@ -158,44 +167,49 @@ func TestPeriodicBackupHappyPath(t testing.TB) {
 	// TODO(thomas): this might flake when an ongoing backup is not entirely done yet?
 	for k, v := range grouped {
 		t.Logf("testing backup group %s = %v", k, v)
-		requireBackupFilesFound(t, backupCrd.Name, v)
+		requireBackupFilesFound(t, backupPolicy.Name, v)
 	}
 }
 
 func TestRetentionBySize(t testing.TB) {
 	pvcName := "retention-by-size"
 	ensureHostPathPVC(t, pvcName)
-	configClient := framework.NewConfigClient(t)
+	operatorClient := framework.NewOperatorClient(t)
 
 	pushRandomConfigMaps(t)
 
-	backupCrd := configv1alpha1.Backup{
+	backupPolicy := operatorv1alpha1.EtcdBackupPolicy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "retention-by-size",
 			Namespace: OpenShiftEtcdNamespace,
 		},
-		Spec: configv1alpha1.BackupSpec{
-			EtcdBackupSpec: configv1alpha1.EtcdBackupSpec{
-				Schedule: "* * * * *",
-				TimeZone: "UTC",
-				RetentionPolicy: configv1alpha1.RetentionPolicy{
-					RetentionType: configv1alpha1.RetentionTypeSize,
-					RetentionSize: &configv1alpha1.RetentionSizeConfig{MaxSizeOfBackupsGb: 1},
+		Spec: operatorv1alpha1.EtcdBackupPolicySpec{
+			Schedule: "* * * * *",
+			RetentionRules: []operatorv1alpha1.EtcdBackupPolicyRetentionRule{
+				{
+					Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeSize,
+					Size: operatorv1alpha1.EtcdBackupPolicyRetentionSize{
+						MaxTotalSizeGiB: 1,
+					},
 				},
-				PVCName: pvcName,
+			},
+			Storage: operatorv1alpha1.EtcdBackupPolicyStorage{
+				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+				PVC: operatorv1alpha1.EtcdBackupPolicyStoragePvc{
+					EtcdBackupStoragePvc: operatorv1alpha1.EtcdBackupStoragePvc{Name: pvcName}},
 			},
 		},
 	}
 
-	_, err := configClient.Backups().Create(context.Background(), &backupCrd, metav1.CreateOptions{})
+	_, err := operatorClient.OperatorV1alpha1().EtcdBackupPolicies().Create(context.Background(), &backupPolicy, metav1.CreateOptions{})
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		err := configClient.Backups().Delete(context.Background(), backupCrd.Name, metav1.DeleteOptions{})
+		err := operatorClient.OperatorV1alpha1().EtcdBackupPolicies().Delete(context.Background(), backupPolicy.Name, metav1.DeleteOptions{})
 		require.NoError(t, err)
 	})
 
-	awaitBackupInvocations(t, backupCrd)
+	awaitBackupInvocations(t, backupPolicy)
 	// this is the state after five job invocations
 	foundFiles := collectFilesInPVCAcrossAllNodes(t, pvcName)
 	grouped := groupBackupFilesByRunPrefix(t, foundFiles)
@@ -206,78 +220,111 @@ func TestRetentionBySize(t testing.TB) {
 	// TODO(thomas): this might flake when an ongoing backup is not entirely done yet?
 	for k, v := range grouped {
 		t.Logf("testing backup group %s = %v", k, v)
-		requireBackupFilesFound(t, backupCrd.Name, v)
+		requireBackupFilesFound(t, backupPolicy.Name, v)
 	}
 }
 
-func TestMultipleBackupsAreSkipped(t testing.TB) {
+func TestMultipleBackupsAreQueued(t testing.TB) {
 	pvcName := "multi-backups"
 	ensureHostPathPVC(t, pvcName)
 	c := framework.NewOperatorClient(t)
+	backupsClient := c.OperatorV1alpha1().EtcdBackups()
+	jobsClient := framework.NewBatchClient(t).Jobs(OpenShiftEtcdNamespace)
 
-	backupCrd := operatorv1alpha1.EtcdBackup{
+	backup := operatorv1alpha1.EtcdBackup{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: OpenShiftEtcdNamespace,
 		},
 		Spec: operatorv1alpha1.EtcdBackupSpec{
-			PVCName: pvcName,
+			Storage: operatorv1alpha1.EtcdBackupStorage{
+				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+				PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: pvcName},
+			},
 		},
 	}
 
+	backupNames := make([]string, 0, 5)
+	t.Cleanup(func() {
+		for _, name := range backupNames {
+			require.NoError(t, backupsClient.Delete(context.Background(), name, metav1.DeleteOptions{}))
+		}
+		ensureEtcdBackupsRemoved(t, "multi-backup-")
+	})
+
 	for i := range 5 {
-		backupCrd.Name = fmt.Sprintf("multi-backup-%d", i)
-		_, err := c.OperatorV1alpha1().EtcdBackups().Create(context.Background(), &backupCrd, metav1.CreateOptions{})
+		backup.Name = fmt.Sprintf("multi-backup-%d", i)
+		_, err := backupsClient.Create(context.Background(), &backup, metav1.CreateOptions{})
 		require.NoError(t, err)
+		backupNames = append(backupNames, backup.Name)
 	}
 
-	// this is highly reliant on the sync interval of the backup controller, we expect at least one of the five to have condition "skipped"
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	err := wait.PollUntilContextCancel(ctx, 5*time.Second, true,
-		func(ctx context.Context) (done bool, err error) {
-			list, err := c.OperatorV1alpha1().EtcdBackups().List(context.Background(), metav1.ListOptions{})
-			if err != nil {
-				klog.Infof("error while listing backup: %v", err)
-				return false, nil
-			}
-
-			for _, b := range list.Items {
-				if backupHasCondition(&b, operatorv1alpha1.BackupSkipped, metav1.ConditionTrue) {
+	jobs := make([]batchv1.Job, 0, len(backupNames))
+	for _, name := range backupNames {
+		var jobName string
+		err := wait.PollUntilContextCancel(ctx, 5*time.Second, true,
+			func(ctx context.Context) (done bool, err error) {
+				b, err := backupsClient.Get(ctx, name, metav1.GetOptions{})
+				if err != nil {
+					return false, err
+				}
+				if backupHasCondition(b, operatorv1alpha1.BackupFailed, metav1.ConditionTrue) {
+					return false, fmt.Errorf("backup %s failed: %v", name, b.Status.Conditions)
+				}
+				if backupHasCondition(b, operatorv1alpha1.BackupCompleted, metav1.ConditionTrue) {
+					jobName = b.Status.JobName
 					return true, nil
 				}
-			}
+				return false, nil
+			})
+		require.NoErrorf(t, err, "backup %s did not complete", name)
+		require.NotEmpty(t, jobName, "completed backup %s has no Job", name)
+		job, err := jobsClient.Get(ctx, jobName, metav1.GetOptions{})
+		require.NoError(t, err)
+		jobs = append(jobs, *job)
+	}
 
-			return false, nil
-		})
-	require.NoError(t, err)
+	sort.Slice(jobs, func(i, j int) bool {
+		return jobs[i].CreationTimestamp.Before(&jobs[j].CreationTimestamp)
+	})
+	for i := 1; i < len(jobs); i++ {
+		previous, next := jobs[i-1], jobs[i]
+		require.NotNil(t, previous.Status.CompletionTime, "Job %s has no completion time", previous.Name)
+		require.Falsef(t, next.CreationTimestamp.Before(previous.Status.CompletionTime),
+			"Job %s was created before Job %s finished", next.Name, previous.Name)
+	}
 }
 
 func TestBackupFailureOnMissingPVC(t testing.TB) {
-	backupCrd := operatorv1alpha1.EtcdBackup{
+	backup := operatorv1alpha1.EtcdBackup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "failing-backup-missing-pvc",
 			Namespace: OpenShiftEtcdNamespace,
 		},
 		Spec: operatorv1alpha1.EtcdBackupSpec{
-			PVCName: "something that does not exist",
+			Storage: operatorv1alpha1.EtcdBackupStorage{
+				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+				PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "something that does not exist"},
+			},
 		},
 	}
 
 	c := framework.NewOperatorClient(t)
-	_, err := c.OperatorV1alpha1().EtcdBackups().Create(context.Background(), &backupCrd, metav1.CreateOptions{})
+	_, err := c.OperatorV1alpha1().EtcdBackups().Create(context.Background(), &backup, metav1.CreateOptions{})
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	err = wait.PollUntilContextCancel(ctx, 5*time.Second, true,
 		func(ctx context.Context) (done bool, err error) {
-			b, err := c.OperatorV1alpha1().EtcdBackups().Get(ctx, backupCrd.Name, metav1.GetOptions{})
+			b, err := c.OperatorV1alpha1().EtcdBackups().Get(ctx, backup.Name, metav1.GetOptions{})
 			if err != nil {
 				klog.Infof("error while getting backup: %v", err)
 				return false, nil
 			}
 
-			klog.Infof("current backup job: %v", b.Status.BackupJob)
+			klog.Infof("current backup job: %v", b.Status.JobName)
 			klog.Infof("current backup conditions: %v", b.Status.Conditions)
 
 			return backupHasCondition(b, operatorv1alpha1.BackupFailed, metav1.ConditionTrue), nil
@@ -331,31 +378,35 @@ func pushRandomConfigMaps(t testing.TB) {
 
 func TestWrongScheduleDegradesOperator(t testing.TB) {
 	operatorClient := framework.NewOperatorClient(t)
-	configClient := framework.NewConfigClient(t)
 
-	backupCrd := configv1alpha1.Backup{
+	backupPolicy := operatorv1alpha1.EtcdBackupPolicy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "periodic-backup-wrong-schedule",
 			Namespace: OpenShiftEtcdNamespace,
 		},
-		Spec: configv1alpha1.BackupSpec{
-			EtcdBackupSpec: configv1alpha1.EtcdBackupSpec{
-				Schedule: "*/5 */0 * * *",
-				TimeZone: "UTC",
-				RetentionPolicy: configv1alpha1.RetentionPolicy{
-					RetentionType:   configv1alpha1.RetentionTypeNumber,
-					RetentionNumber: &configv1alpha1.RetentionNumberConfig{MaxNumberOfBackups: 5},
+		Spec: operatorv1alpha1.EtcdBackupPolicySpec{
+			Schedule: "*/5 */0 * * *",
+			RetentionRules: []operatorv1alpha1.EtcdBackupPolicyRetentionRule{
+				{
+					Type: operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeQuantity,
+					Quantity: operatorv1alpha1.EtcdBackupPolicyRetentionQuantity{
+						MaxQuantity: 5,
+					},
 				},
-				PVCName: "not-existing-pvc",
+			},
+			Storage: operatorv1alpha1.EtcdBackupPolicyStorage{
+				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+				PVC: operatorv1alpha1.EtcdBackupPolicyStoragePvc{
+					EtcdBackupStoragePvc: operatorv1alpha1.EtcdBackupStoragePvc{Name: "not-existing-pvc"}},
 			},
 		},
 	}
 
-	_, err := configClient.Backups().Create(context.Background(), &backupCrd, metav1.CreateOptions{})
+	_, err := operatorClient.OperatorV1alpha1().EtcdBackupPolicies().Create(context.Background(), &backupPolicy, metav1.CreateOptions{})
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		_ = configClient.Backups().Delete(context.Background(), backupCrd.Name, metav1.DeleteOptions{})
+		_ = operatorClient.OperatorV1alpha1().EtcdBackupPolicies().Delete(context.Background(), backupPolicy.Name, metav1.DeleteOptions{})
 
 	})
 
@@ -385,8 +436,8 @@ func TestWrongScheduleDegradesOperator(t testing.TB) {
 		})
 	require.NoError(t, err, "expected operator to degrade")
 
-	// deleting the offending backup should recover the operator condition again
-	err = configClient.Backups().Delete(context.Background(), backupCrd.Name, metav1.DeleteOptions{})
+	// deleting the offending backup policy should recover the operator condition again
+	err = operatorClient.OperatorV1alpha1().EtcdBackupPolicies().Delete(context.Background(), backupPolicy.Name, metav1.DeleteOptions{})
 	require.NoError(t, err)
 
 	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Minute)
@@ -414,13 +465,13 @@ func TestWrongScheduleDegradesOperator(t testing.TB) {
 	require.NoError(t, err, "expected operator to recover after degrade")
 }
 
-func awaitBackupInvocations(t testing.TB, backupCrd configv1alpha1.Backup) {
+func awaitBackupInvocations(t testing.TB, backupPolicy operatorv1alpha1.EtcdBackupPolicy) {
 	batchClient := framework.NewBatchClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	err := wait.PollUntilContextCancel(ctx, 30*time.Second, false,
 		func(ctx context.Context) (done bool, err error) {
-			jobList, err := batchClient.Jobs(backupCrd.Namespace).List(context.Background(), metav1.ListOptions{})
+			jobList, err := batchClient.Jobs(backupPolicy.Namespace).List(context.Background(), metav1.ListOptions{})
 			if err != nil {
 				klog.Infof("error while getting job list: %v", err)
 				return false, nil
@@ -432,7 +483,7 @@ func awaitBackupInvocations(t testing.TB, backupCrd configv1alpha1.Backup) {
 			for _, j := range jobList.Items {
 				ownedByOurCron := false
 				for _, reference := range j.OwnerReferences {
-					if reference.Kind == CronJobKindName && reference.Name == backupCrd.Name {
+					if reference.Kind == CronJobKindName && reference.Name == backupPolicy.Name {
 						ownedByOurCron = true
 						break
 					}
@@ -546,14 +597,14 @@ func ensureEtcdBackupsRemoved(t testing.TB, name string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	err := wait.PollUntilContextCancel(ctx, 10*time.Second, false, func(ctx context.Context) (bool, error) {
-		backupsList, err := c.OperatorV1alpha1().EtcdBackups().List(ctx, metav1.ListOptions{})
+		backupPoliciesList, err := c.OperatorV1alpha1().EtcdBackups().List(ctx, metav1.ListOptions{})
 		if err != nil {
 			klog.Infof("error while getting cronjob, waiting for its deletion: %v", err)
 			return false, nil
 		}
 
-		for _, b := range backupsList.Items {
-			klog.Infof("EnsureBackupRemoval found backup with name: %s", b.Name)
+		for _, b := range backupPoliciesList.Items {
+			klog.Infof("EnsureBackupRemoval found backup policy with name: %s", b.Name)
 			if strings.Contains(b.Name, name) {
 				return false, nil
 			}
@@ -603,7 +654,7 @@ func ensureAllBackupPodsAreRemoved(t testing.TB) {
 }
 
 func backupHasCondition(backup *operatorv1alpha1.EtcdBackup,
-	conditionType operatorv1alpha1.BackupConditionReason,
+	conditionType operatorv1alpha1.BackupConditionType,
 	status metav1.ConditionStatus) bool {
 
 	for _, condition := range backup.Status.Conditions {
