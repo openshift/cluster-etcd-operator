@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: backup-gc
+  namespace: openshift-etcd
+  labels:
+    app: cluster-backup-gc-job
+spec:
+  activeDeadlineSeconds: 1800
+  backoffLimit: 2
+  template:
+    metadata:
+      annotations:
+        target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
+    spec:
+      containers:
+        - name: cluster-backup-gc
+          imagePullPolicy: IfNotPresent
+          terminationMessagePolicy: FallbackToLogsOnError
+          command:
+            - cluster-etcd-operator
+          args:
+            - prune-backups
+            - --type=Files
+            - --files=$(CLUSTER_BACKUP_GC_FILES)
+          resources:
+            requests:
+              memory: 20Mi
+              cpu: 10m
+          securityContext:
+            privileged: true
+      priorityClassName: system-node-critical
+      activeDeadlineSeconds: 900
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      restartPolicy: Never
+      tolerations:
+        - operator: "Exists"
