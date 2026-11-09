@@ -124,13 +124,19 @@ func (c *backupCollector) collectBackupMetrics(ch chan<- prometheus.Metric, back
 		name, uid, node, storageType, storageLocation, policyName,
 	)
 
-	// Emit status metric (only the active one)
-	if currentStatus != "" {
+	// Emit status metrics for all possible statuses
+	for _, status := range []string{
+		statusRunning, statusCompleted, statusFailed,
+	} {
+		value := float64(0)
+		if status == currentStatus {
+			value = 1
+		}
 		ch <- prometheus.MustNewConstMetric(
 			c.statusDesc,
 			prometheus.GaugeValue,
-			1,
-			name, uid, currentStatus,
+			value,
+			name, uid, status,
 		)
 	}
 
