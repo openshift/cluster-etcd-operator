@@ -165,7 +165,7 @@ func checkAndCreateBackupDir(dirName string) error {
 	// checkAndCreateDir will delete the contents of the directory if not empty.
 	// validate that all files are backup files first, otherwise error.
 	_, otherFiles, err := backuphelpers.ListBackupFiles(dirName)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("checkAndCreateBackupDir failed: %w", err)
 	}
 	if len(otherFiles) > 0 {

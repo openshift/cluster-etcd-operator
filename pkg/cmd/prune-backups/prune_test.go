@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"os"
 	"path"
+	"runtime"
 	"sort"
 	"testing"
 	"time"
@@ -47,8 +48,7 @@ func TestRetainByNumber(t *testing.T) {
 	require.NoError(t, err)
 	expectedFolders := []string{"backup-1", "backup-2", "backup-3", "backup-4", "backup-5"}
 	for _, folder := range expectedFolders {
-		require.NoError(t, os.MkdirAll(path.Join(temp, folder), 0750))
-		require.NoError(t, os.WriteFile(path.Join(temp, folder, "snapshot.snap"), randBytes(5), 0600))
+		makefile(t, temp, folder, randBytes(5))
 		// the creation is fairly quick, so the mod time doesn't reflect as it otherwise would
 		time.Sleep(1 * time.Second)
 	}
@@ -76,8 +76,7 @@ func TestRetainBySize(t *testing.T) {
 	// using a zeroed slice here, being much faster than generating a random gigabyte of bytes
 	zeroGig := make([]byte, 1024*1024*1024*1)
 	for _, folder := range expectedFolders {
-		require.NoError(t, os.MkdirAll(path.Join(temp, folder), 0750))
-		require.NoError(t, os.WriteFile(path.Join(temp, folder, "snapshot.snap"), zeroGig, 0600))
+		makefile(t, temp, folder, zeroGig)
 	}
 
 	requireFoldersExist(t, temp, expectedFolders)
@@ -92,6 +91,144 @@ func TestRetainBySize(t *testing.T) {
 	requireFoldersExist(t, temp, []string{})
 	require.NoError(t, retainBySizeGb(0, temp))
 	requireFoldersExist(t, temp, []string{})
+}
+
+func TestDeleteByName(t *testing.T) {
+	t.Run("dirs", func(t *testing.T) {
+		temp, err := os.MkdirTemp("", "TestDeleteByName")
+		t.Cleanup(func() {
+			_ = os.RemoveAll(temp)
+		})
+		require.NoError(t, err)
+		expectedFolders := []string{"backup-1", "backup-2", "backup-3", "backup-4", "backup-5"}
+		for _, folder := range expectedFolders {
+			makefile(t, temp, folder, randBytes(5))
+		}
+		requireFoldersExist(t, temp, expectedFolders)
+
+		err = deleteByName(expectedFolders[:2], temp)
+		require.NoError(t, err)
+		requireFoldersExist(t, temp, expectedFolders[2:])
+
+		err = deleteByName(expectedFolders, temp)
+		require.NoError(t, err)
+		requireFoldersExist(t, temp, []string{})
+	})
+	t.Run("files", func(t *testing.T) {
+		temp, err := os.MkdirTemp("", "TestDeleteByName")
+		t.Cleanup(func() {
+			_ = os.RemoveAll(temp)
+		})
+		require.NoError(t, err)
+		expectedFolders := []string{"backup-1", "backup-2", "backup-3", "backup-4", "backup-5"}
+		expectedFiles := make([]string, len(expectedFolders))
+		for i, folder := range expectedFolders {
+			_, fileName := makefile(t, temp, folder, randBytes(5))
+			expectedFiles[i] = fileName
+		}
+		requireFiles(t, expectedFiles, true)
+
+		err = deleteByName(expectedFiles[:2], temp)
+		require.NoError(t, err)
+		requireFiles(t, expectedFiles[2:], true)
+		requireFiles(t, expectedFiles[:2], false)
+		requireFoldersExist(t, temp, expectedFolders[2:])
+
+		err = deleteByName(expectedFiles, temp)
+		require.NoError(t, err)
+		requireFoldersExist(t, temp, []string{})
+	})
+}
+
+func TestDeleteByNameNested(t *testing.T) {
+	temp, err := os.MkdirTemp("", "TestDeleteByName")
+	t.Cleanup(func() {
+		_ = os.RemoveAll(temp)
+	})
+	require.NoError(t, err)
+	parentDir, parentFile := makefile(t, temp, "backup-parent", randBytes(5))
+	_, childFile := makefile(t, temp, "backup-parent/backup-child", randBytes(5))
+
+	requireFiles(t, []string{parentFile, childFile}, true)
+
+	err = deleteByName([]string{parentDir}, temp)
+	require.NoError(t, err)
+	requireFiles(t, []string{childFile}, true)
+	requireFiles(t, []string{parentFile}, false)
+}
+
+func TestValidateFileNames(t *testing.T) {
+	datetime := time.Now().Format("2006-01-02_150405")
+	testCases := []struct {
+		name      string
+		fileNames []string
+		isValid   bool
+	}{
+		{
+			name: "valid-files",
+			fileNames: []string{
+				"/etc/kubernetes/cluster-backup/snapshot_" + datetime + ".db",
+				"/etc/kubernetes/cluster-backup/snapshot_" + datetime + ".db.part",
+				"/etc/kubernetes/cluster-backup/static_kuberesources_" + datetime + ".tar.gz",
+			},
+			isValid: true,
+		},
+		{
+			name: "valid-files-on-custom-path",
+			fileNames: []string{
+				"/some/random/dir/snapshot_" + datetime + ".db",
+				"/some/random/dir/static_kuberesources_" + datetime + ".tar.gz",
+			},
+			isValid: true,
+		},
+		{
+			name: "some-valid-one-invalid-file",
+			fileNames: []string{
+				"/etc/kubernetes/cluster-backup/snapshot_" + datetime + ".db",
+				"/etc/kubernetes/cluster-backup/snapshot_" + datetime + ".db.part",
+				"/etc/kubernetes/cluster-backup/static_kuberesources_" + datetime + ".db",
+			},
+			isValid: false,
+		},
+		{
+			name: "invalid-file",
+			fileNames: []string{
+				"/etc/secrets/dont-delete-me",
+			},
+			isValid: false,
+		},
+		{
+			name: "invalid-file-prefix",
+			fileNames: []string{
+				"/etc/kubernetes/cluster-backup/different_snapshot_" + datetime + ".db",
+			},
+			isValid: false,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			temp, err := os.MkdirTemp("", "TestValidateFileNames")
+			t.Cleanup(func() {
+				_ = os.RemoveAll(temp)
+			})
+			require.NoError(t, err)
+			filePaths := make([]string, 0, len(tc.fileNames))
+			for _, fileName := range tc.fileNames {
+				fileName = path.Join(temp, fileName)
+				require.NoError(t, os.MkdirAll(path.Dir(fileName), 0750))
+				require.NoError(t, os.WriteFile(fileName, randBytes(5), 0600))
+				filePaths = append(filePaths, fileName)
+			}
+			requireFiles(t, filePaths, true)
+
+			err = deleteByName(filePaths, temp)
+			if tc.isValid {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
 }
 
 func TestBackupFolderLister(t *testing.T) {
@@ -168,6 +305,7 @@ func randBytes(n int) []byte {
 }
 
 func requireFoldersExist(t *testing.T, basePath string, expectedFolders []string) {
+	t.Helper()
 	dir, err := os.ReadDir(basePath)
 	require.NoError(t, err)
 	require.Equal(t, len(expectedFolders), len(dir), "unexpected amount of directories found")
@@ -177,4 +315,45 @@ func requireFoldersExist(t *testing.T, basePath string, expectedFolders []string
 	}
 	require.ElementsMatchf(t, actualFolders, expectedFolders, "unexpected folders found")
 
+}
+
+func requireFiles(t *testing.T, files []string, exist bool) {
+	t.Helper()
+	var actualFiles []string
+	for _, fileName := range files {
+		if _, err := os.Stat(fileName); err != nil {
+			require.ErrorIs(t, err, os.ErrNotExist)
+		} else {
+			actualFiles = append(actualFiles, fileName)
+		}
+	}
+
+	if exist {
+		require.ElementsMatchf(t, actualFiles, files, "expected files to exist")
+	} else {
+		require.Len(t, actualFiles, 0, "expected files to not exist")
+	}
+}
+
+func makefile(t *testing.T, temp, dir string, data []byte) (dirName, fileName string) {
+	t.Helper()
+	dirName = path.Join(temp, dir)
+	fileName = path.Join(temp, dir, "snapshot_"+time.Now().Format("2006-01-02_150405")+".db")
+	require.NoError(t, os.MkdirAll(dirName, 0750))
+	require.NoError(t, os.WriteFile(fileName, data, 0600))
+	return dirName, fileName
+}
+
+func preventDeletion(t *testing.T, dirName, fileName string) (deferred func() error) {
+	t.Helper()
+	// Prevent deletion of file in backup-1 dir
+	if runtime.GOOS == "windows" {
+		file, err := os.Open(fileName)
+		require.NoError(t, err)
+		return file.Close
+	}
+	os.Chmod(dirName, 0550)
+	return func() error {
+		return os.Chmod(dirName, 0750)
+	}
 }
