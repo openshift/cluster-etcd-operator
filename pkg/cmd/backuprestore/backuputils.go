@@ -1,10 +1,18 @@
 package backuprestore
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
 )
 
@@ -17,51 +25,152 @@ var backupResourcePodList = []string{
 	"etcd-pod",
 }
 
-func archiveLatestResources(configDir, backupFile string) error {
+func archiveLatestResources(configDir, backupFile string) (int64, error) {
 	klog.Info("Static Pod Resources are being stored in: ", backupFile)
 
 	paths := []string{}
 	for _, podName := range backupResourcePodList {
 		latestPod, err := findTheLatestRevision(filepath.Join(configDir, "static-pod-resources"), podName, true)
 		if err != nil {
-			return fmt.Errorf("findTheLatestRevision failed: %w", err)
+			return -1, fmt.Errorf("findTheLatestRevision failed: %w", err)
 		}
 		paths = append(paths, latestPod)
 		klog.Info("\tAdding the latest revision for podName ", podName, ": ", latestPod)
 	}
 
-	err := createTarball(backupFile, paths, configDir)
+	size, err := createTarball(backupFile, paths, configDir)
 	if err != nil {
-		return fmt.Errorf("Got error creating the tar archive: %w", err)
+		return -1, fmt.Errorf("Got error creating the tar archive: %w", err)
 	}
-	return nil
+	return size, nil
 }
 
-func backup(r *backupOptions) error {
+func backup(ctx context.Context, r *backupOptions) (err error) {
 	cli, err := getEtcdClient(r.endpoints)
 	if err != nil {
 		return fmt.Errorf("backup: failed to get etcd client: %w", err)
 	}
 	defer cli.Close()
 
-	if err := checkAndCreateDir(r.backupDir); err != nil {
-		return fmt.Errorf("backup: checkAndCreateDir failed: %w", err)
+	if err := checkAndCreateBackupDir(r.backupDir); err != nil {
+		return fmt.Errorf("backup: %w", err)
 	}
 
 	// Trying to match the output file formats with the formats of the current cluster-backup.sh script
 	dateString := time.Now().Format("2006-01-02_150405")
 	outputArchive := "static_kuberesources_" + dateString + ".tar.gz"
 	snapshotOutFile := "snapshot_" + dateString + ".db"
+	snapshotFilepath := filepath.Join(r.backupDir, snapshotOutFile)
+	archiveFilepath := filepath.Join(r.backupDir, outputArchive)
 
-	// Save snapshot
-	if err := saveSnapshot(cli, filepath.Join(r.backupDir, snapshotOutFile)); err != nil {
-		return fmt.Errorf("saveSnapshot failed: %w", err)
+	var message string
+	var files []operatorv1alpha1.EtcdBackupFile
+
+	defer func() {
+		if r.terminationLog != "" {
+			if logErr := writeTerminationLog(r.terminationLog, message, files); logErr != nil {
+				err = utilerrors.NewAggregate([]error{err, logErr})
+			}
+		}
+	}()
+
+	var backupSnapshot, backupStaticKubeResources bool
+	if r.assets == nil {
+		backupSnapshot, backupStaticKubeResources = true, true
+	} else {
+		for _, asset := range r.assets {
+			switch asset {
+			case string(operatorv1alpha1.EtcdBackupAssetTypeSnapshot):
+				backupSnapshot = true
+			case string(operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources):
+				backupStaticKubeResources = true
+			}
+		}
 	}
 
-	// Save the corresponding static pod resources
-	if err := archiveLatestResources(r.configDir, filepath.Join(r.backupDir, outputArchive)); err != nil {
-		return fmt.Errorf("archiveLatestResources failed: %w", err)
+	if backupSnapshot {
+		// Save snapshot
+		var snapshotSize int64
+		snapshotPartialPath := snapshotFilepath + ".part"
+		if snapshotSize, err = saveSnapshot(ctx, cli, snapshotPartialPath, snapshotFilepath); err != nil {
+			// Record partial snapshot path for GC, if present
+			message = "snapshot failed"
+			if msg, ok := isDiskFull(err); ok {
+				message = fmt.Sprintf("%s: %s", message, msg)
+			}
+			if backupFile, ok := statBackupFile(snapshotPartialPath, operatorv1alpha1.EtcdBackupAssetTypeSnapshot); ok {
+				files = append(files, backupFile)
+			}
+			return fmt.Errorf("saveSnapshot failed: %w", err)
+		} else {
+			files = append(files, operatorv1alpha1.EtcdBackupFile{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: snapshotFilepath, SizeBytes: snapshotSize})
+		}
+	}
+
+	if backupStaticKubeResources {
+		// Save the corresponding static pod resources
+		var archiveSize int64
+		if archiveSize, err = archiveLatestResources(r.configDir, archiveFilepath); err != nil {
+			// Record partial archive path for GC, if present
+			message = "static pod archive failed"
+			if msg, ok := isDiskFull(err); ok {
+				message = fmt.Sprintf("%s: %s", message, msg)
+			}
+			if backupFile, ok := statBackupFile(archiveFilepath, operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources); ok {
+				files = append(files, backupFile)
+			}
+			return fmt.Errorf("archiveLatestResources failed: %w", err)
+		} else {
+			files = append(files, operatorv1alpha1.EtcdBackupFile{AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources, Path: archiveFilepath, SizeBytes: archiveSize})
+		}
+	}
+
+	return
+}
+
+func statBackupFile(path string, assetType operatorv1alpha1.EtcdBackupAssetType) (file operatorv1alpha1.EtcdBackupFile, ok bool) {
+	if info, err := os.Stat(path); err == nil {
+		return operatorv1alpha1.EtcdBackupFile{AssetType: assetType, Path: path, SizeBytes: info.Size()}, true
+	}
+	return
+}
+
+func writeTerminationLog(terminationLog string, message string, files []operatorv1alpha1.EtcdBackupFile) (retErr error) {
+	f, err := os.OpenFile(terminationLog, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return fmt.Errorf("Error opening termination log: %w", err)
+	}
+	defer func() {
+		if err := f.Close(); err != nil {
+			retErr = utilerrors.NewAggregate([]error{retErr, fmt.Errorf("Error closing termination log: %w", err)})
+		}
+	}()
+
+	termLog := backuphelpers.BackupTerminationLog{Message: message, Files: files}
+	if err := json.NewEncoder(f).Encode(termLog); err != nil {
+		return fmt.Errorf("Error writing termination log: %w", err)
 	}
 
 	return nil
+}
+
+func isDiskFull(err error) (string, bool) {
+	if errors.Is(err, syscall.ENOSPC) {
+		return "no disk space", true
+	}
+	return "", false
+}
+
+func checkAndCreateBackupDir(dirName string) error {
+	// checkAndCreateDir will delete the contents of the directory if not empty.
+	// validate that all files are backup files first, otherwise error.
+	_, otherFiles, err := backuphelpers.ListBackupFiles(dirName)
+	if err != nil {
+		return fmt.Errorf("checkAndCreateBackupDir failed: %w", err)
+	}
+	if len(otherFiles) > 0 {
+		return fmt.Errorf("checkAndCreateBackupDir failed: directory is not empty, and contains non-backup files")
+	}
+
+	return checkAndCreateDir(dirName)
 }
