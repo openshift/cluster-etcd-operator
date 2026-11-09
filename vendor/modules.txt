@@ -749,7 +749,7 @@ golang.org/x/crypto/salsa20/salsa
 ## explicit; go 1.20
 golang.org/x/exp/constraints
 golang.org/x/exp/slices
-# golang.org/x/net v0.49.0 => github.com/openshift-sustaining/net v0.43.0-sec.4
+# golang.org/x/net v1.26.9 => github.com/openshift-sustaining/net v0.43.0-sec.4
 ## explicit; go 1.23.0
 golang.org/x/net/context
 golang.org/x/net/http/httpguts
