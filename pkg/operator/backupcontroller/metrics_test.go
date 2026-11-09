@@ -16,6 +16,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/component-base/metrics"
 )
 
@@ -29,17 +30,65 @@ func TestMetricsRegistration(t *testing.T) {
 	require.NotNil(t, c.sizeBytesDesc)
 }
 
-func TestBackupMetricsNeverRun(t *testing.T) {
-	backup := testutils.FakeEtcdBackup("never-started",
-		testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-			Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-			PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-pvc"},
-		}),
-	)
-	collector := setupCollectorWithBackups(t, backup)
+func TestBackupMetricsInactiveStatusAllZero(t *testing.T) {
+	tests := []struct {
+		name   string
+		backup *operatorv1alpha1.EtcdBackup
+	}{
+		{
+			name: "absent-conditions",
+			backup: testutils.FakeEtcdBackup("never-started",
+				testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
+					Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+					PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-pvc"},
+				}),
+			),
+		},
+		{
+			name: "pending-unrecognized",
+			backup: testutils.FakeEtcdBackup("pending-backup",
+				testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
+					Conditions: []metav1.Condition{{
+						// Pending was removed from the API; an unrecognized True
+						// condition must not activate Running/Completed/Failed.
+						Type:   "Pending",
+						Status: metav1.ConditionTrue,
+					}},
+				}),
+			),
+		},
+		{
+			name: "all-false",
+			backup: testutils.FakeEtcdBackup("false-conditions",
+				testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
+					Conditions: []metav1.Condition{
+						{Type: string(operatorv1alpha1.BackupRunning), Status: metav1.ConditionFalse},
+						{Type: string(operatorv1alpha1.BackupCompleted), Status: metav1.ConditionFalse},
+						{Type: string(operatorv1alpha1.BackupFailed), Status: metav1.ConditionFalse},
+					},
+				}),
+			),
+		},
+		{
+			name: "all-unknown",
+			backup: testutils.FakeEtcdBackup("unknown-conditions",
+				testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
+					Conditions: []metav1.Condition{
+						{Type: string(operatorv1alpha1.BackupRunning), Status: metav1.ConditionUnknown},
+						{Type: string(operatorv1alpha1.BackupCompleted), Status: metav1.ConditionUnknown},
+						{Type: string(operatorv1alpha1.BackupFailed), Status: metav1.ConditionUnknown},
+					},
+				}),
+			),
+		},
+	}
 
-	require.Equal(t, 0, testutil.CollectAndCount(collector, backupStatusMetricName),
-		"expected 0 status metrics for never-run backup")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			collector := setupCollectorWithBackups(t, tt.backup)
+			requireStatusMetrics(t, collector, tt.backup.Name, string(tt.backup.UID), "")
+		})
+	}
 }
 
 func TestBackupMetricsCompleted(t *testing.T) {
@@ -66,13 +115,7 @@ func TestBackupMetricsCompleted(t *testing.T) {
 	collector := setupCollectorWithBackups(t, backup)
 
 	requireInfoMetric(t, collector, "pvc-backup", "pvc-backup-uid", "node-1", storageTypePVC, "backup-pvc", "")
-
-	expectedStatus := `
-		# HELP etcd_backup_status The current status of the backup. Value of 1 indicates the labeled status is active.
-		# TYPE etcd_backup_status gauge
-		etcd_backup_status{etcd_backup="pvc-backup",status="Completed",uid="pvc-backup-uid"} 1
-	`
-	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expectedStatus), backupStatusMetricName))
+	requireStatusMetrics(t, collector, "pvc-backup", "pvc-backup-uid", statusCompleted)
 
 	expectedCompletionTime := fmt.Sprintf(`
 		# HELP etcd_backup_completion_time Unix timestamp when the backup completed.
@@ -103,12 +146,7 @@ func TestBackupMetricsFailed(t *testing.T) {
 
 	collector := setupCollectorWithBackups(t, backup)
 
-	expectedStatus := `
-		# HELP etcd_backup_status The current status of the backup. Value of 1 indicates the labeled status is active.
-		# TYPE etcd_backup_status gauge
-		etcd_backup_status{etcd_backup="pvc-backup-failed",status="Failed",uid="pvc-backup-failed-uid"} 1
-	`
-	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expectedStatus), backupStatusMetricName))
+	requireStatusMetrics(t, collector, "pvc-backup-failed", "pvc-backup-failed-uid", statusFailed)
 
 	// Failed backups do not emit completion_time today (only Completed does).
 	require.Equal(t, 0, testutil.CollectAndCount(collector, backupCompletionTimeMetricName),
@@ -136,13 +174,7 @@ func TestBackupMetricsRunning(t *testing.T) {
 	collector := setupCollectorWithBackups(t, backup)
 
 	requireInfoMetric(t, collector, "pvc-backup-running", "pvc-backup-running-uid", "node-1", storageTypePVC, "backup-pvc", "")
-
-	expectedStatus := `
-		# HELP etcd_backup_status The current status of the backup. Value of 1 indicates the labeled status is active.
-		# TYPE etcd_backup_status gauge
-		etcd_backup_status{etcd_backup="pvc-backup-running",status="Running",uid="pvc-backup-running-uid"} 1
-	`
-	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expectedStatus), backupStatusMetricName))
+	requireStatusMetrics(t, collector, "pvc-backup-running", "pvc-backup-running-uid", statusRunning)
 
 	expectedStartTime := fmt.Sprintf(`
 		# HELP etcd_backup_start_time Unix timestamp when the backup started.
@@ -227,20 +259,57 @@ func TestBackupMetricsMultipleBackups(t *testing.T) {
 		# HELP etcd_backup_status The current status of the backup. Value of 1 indicates the labeled status is active.
 		# TYPE etcd_backup_status gauge
 		etcd_backup_status{etcd_backup="backup-1",status="Completed",uid="backup-1-uid"} 1
+		etcd_backup_status{etcd_backup="backup-1",status="Failed",uid="backup-1-uid"} 0
+		etcd_backup_status{etcd_backup="backup-1",status="Running",uid="backup-1-uid"} 0
+		etcd_backup_status{etcd_backup="backup-2",status="Completed",uid="backup-2-uid"} 0
+		etcd_backup_status{etcd_backup="backup-2",status="Failed",uid="backup-2-uid"} 0
 		etcd_backup_status{etcd_backup="backup-2",status="Running",uid="backup-2-uid"} 1
 	`
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expected), backupStatusMetricName))
 }
 
+func TestBackupMetricsStatusTransition(t *testing.T) {
+	backup := testutils.FakeEtcdBackup("transition-backup",
+		testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
+			Conditions: []metav1.Condition{{
+				Type:   string(operatorv1alpha1.BackupRunning),
+				Status: metav1.ConditionTrue,
+			}},
+		}),
+	)
+
+	collector, indexer := setupCollectorWithIndexer(t, backup)
+	requireStatusMetrics(t, collector, "transition-backup", "transition-backup-uid", statusRunning)
+
+	backup.Status.Conditions = []metav1.Condition{{
+		Type:   string(operatorv1alpha1.BackupCompleted),
+		Status: metav1.ConditionTrue,
+	}}
+	require.NoError(t, indexer.Update(backup))
+
+	requireStatusMetrics(t, collector, "transition-backup", "transition-backup-uid", statusCompleted)
+}
+
 func TestBackupMetricsDeletion(t *testing.T) {
-	backup := testutils.FakeEtcdBackup("to-delete")
+	backup := testutils.FakeEtcdBackup("to-delete",
+		testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
+			Conditions: []metav1.Condition{{
+				Type:   string(operatorv1alpha1.BackupRunning),
+				Status: metav1.ConditionTrue,
+			}},
+		}),
+	)
 
-	collector := setupCollectorWithBackups(t, backup)
+	collector, indexer := setupCollectorWithIndexer(t, backup)
 	require.Equal(t, 1, testutil.CollectAndCount(collector, backupInfoMetricName))
+	requireStatusMetrics(t, collector, "to-delete", "to-delete-uid", statusRunning)
 
-	collectorAfterDelete := setupCollectorWithBackups(t)
-	require.Equal(t, 0, testutil.CollectAndCount(collectorAfterDelete, backupInfoMetricName),
+	require.NoError(t, indexer.Delete(backup))
+
+	require.Equal(t, 0, testutil.CollectAndCount(collector, backupInfoMetricName),
 		"expected 0 backup info metrics after deletion")
+	require.Equal(t, 0, testutil.CollectAndCount(collector, backupStatusMetricName),
+		"expected all status samples to disappear after deletion")
 }
 
 func TestGetSizeBytes(t *testing.T) {
@@ -472,6 +541,20 @@ func TestExtractCurrentStatus(t *testing.T) {
 			},
 			want: "",
 		},
+		{
+			name: "unknown",
+			conditions: []metav1.Condition{
+				{Type: string(operatorv1alpha1.BackupRunning), Status: metav1.ConditionUnknown},
+			},
+			want: "",
+		},
+		{
+			name: "pending-unrecognized",
+			conditions: []metav1.Condition{
+				{Type: "Pending", Status: metav1.ConditionTrue},
+			},
+			want: "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -536,26 +619,39 @@ func TestBackupMetricsScrapeSafety(t *testing.T) {
 
 func TestBackupMetricsRealLister(t *testing.T) {
 	backup1 := testutils.FakeEtcdBackup("real-lister-backup-1", testutils.WithBackupCompleted())
-	// Unstarted backups have no conditions and emit no etcd_backup_status sample.
+	// Unstarted backups emit all three status samples at 0.
 	backup2 := testutils.FakeEtcdBackup("real-lister-backup-2")
 	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "real-lister-backup-3-job"}}
 	backup3 := testutils.FakeEtcdBackup("real-lister-backup-3", testutils.WithBackupRunning(job))
 
 	collector := setupCollectorWithBackups(t, backup1, backup2, backup3)
 
-	require.GreaterOrEqual(t, testutil.CollectAndCount(collector), 5,
-		"expected at least 3 info + 2 status metrics")
+	require.GreaterOrEqual(t, testutil.CollectAndCount(collector), 12,
+		"expected at least 3 info + 9 status metrics")
 
 	expected := `
 		# HELP etcd_backup_status The current status of the backup. Value of 1 indicates the labeled status is active.
 		# TYPE etcd_backup_status gauge
 		etcd_backup_status{etcd_backup="real-lister-backup-1",status="Completed",uid="real-lister-backup-1-uid"} 1
+		etcd_backup_status{etcd_backup="real-lister-backup-1",status="Failed",uid="real-lister-backup-1-uid"} 0
+		etcd_backup_status{etcd_backup="real-lister-backup-1",status="Running",uid="real-lister-backup-1-uid"} 0
+		etcd_backup_status{etcd_backup="real-lister-backup-2",status="Completed",uid="real-lister-backup-2-uid"} 0
+		etcd_backup_status{etcd_backup="real-lister-backup-2",status="Failed",uid="real-lister-backup-2-uid"} 0
+		etcd_backup_status{etcd_backup="real-lister-backup-2",status="Running",uid="real-lister-backup-2-uid"} 0
+		etcd_backup_status{etcd_backup="real-lister-backup-3",status="Completed",uid="real-lister-backup-3-uid"} 0
+		etcd_backup_status{etcd_backup="real-lister-backup-3",status="Failed",uid="real-lister-backup-3-uid"} 0
 		etcd_backup_status{etcd_backup="real-lister-backup-3",status="Running",uid="real-lister-backup-3-uid"} 1
 	`
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expected), backupStatusMetricName))
 }
 
 func setupCollectorWithBackups(t *testing.T, backups ...*operatorv1alpha1.EtcdBackup) *backupCollector {
+	t.Helper()
+	collector, _ := setupCollectorWithIndexer(t, backups...)
+	return collector
+}
+
+func setupCollectorWithIndexer(t *testing.T, backups ...*operatorv1alpha1.EtcdBackup) (*backupCollector, cache.Indexer) {
 	t.Helper()
 
 	objects := make([]runtime.Object, 0, len(backups))
@@ -570,7 +666,34 @@ func setupCollectorWithBackups(t *testing.T, backups ...*operatorv1alpha1.EtcdBa
 		require.NoError(t, indexer.Add(backup))
 	}
 
-	return NewBackupMetrics(metrics.NewKubeRegistry(), backupInformer.Lister())
+	return NewBackupMetrics(metrics.NewKubeRegistry(), backupInformer.Lister()), indexer
+}
+
+func requireStatusMetrics(t *testing.T, collector prometheus.Collector, name, uid, activeStatus string) {
+	t.Helper()
+
+	completed, failed, running := float64(0), float64(0), float64(0)
+	switch activeStatus {
+	case statusCompleted:
+		completed = 1
+	case statusFailed:
+		failed = 1
+	case statusRunning:
+		running = 1
+	case "":
+		// no recognized status active — all zeros
+	default:
+		t.Fatalf("unexpected active status %q", activeStatus)
+	}
+
+	expected := fmt.Sprintf(`
+		# HELP etcd_backup_status The current status of the backup. Value of 1 indicates the labeled status is active.
+		# TYPE etcd_backup_status gauge
+		etcd_backup_status{etcd_backup="%s",status="Completed",uid="%s"} %g
+		etcd_backup_status{etcd_backup="%s",status="Failed",uid="%s"} %g
+		etcd_backup_status{etcd_backup="%s",status="Running",uid="%s"} %g
+	`, name, uid, completed, name, uid, failed, name, uid, running)
+	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expected), backupStatusMetricName))
 }
 
 func requireInfoMetric(t *testing.T, collector prometheus.Collector, name, uid, node, storageType, storageLocation, policyName string) {
