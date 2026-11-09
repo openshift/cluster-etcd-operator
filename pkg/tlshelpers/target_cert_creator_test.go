@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/openshift/library-go/pkg/operator/certrotation"
+	"github.com/openshift/library-go/pkg/pki"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 
@@ -32,7 +33,11 @@ type testEmbed struct {
 	result string
 }
 
-func (t *testEmbed) NewCertificate(_ *crypto.CA, _ time.Duration) (*crypto.TLSCertificateConfig, error) {
+func (t *testEmbed) NewCertificate(_ *crypto.CA, _ time.Duration, _ crypto.KeyPairGenerator) (*crypto.TLSCertificateConfig, error) {
+	panic("implement me")
+}
+
+func (*testEmbed) CertificateType() pki.CertificateType {
 	panic("implement me")
 }
 
