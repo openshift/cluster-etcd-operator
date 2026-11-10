@@ -227,7 +227,7 @@ CEO's etcd client (`pkg/etcdcli/interfaces.go`) composes 10+ interfaces (MemberA
 
 **Deployment:** Single-replica Deployment (strategy: Recreate) managed by CVO.
 
-**Resources:** 50Mi memory / 10m CPU requests (no limits).
+**Resources:** 170Mi memory / 10m CPU requests (no limits).
 
 **Security:**
 - `priorityClassName: system-cluster-critical`
