@@ -120,9 +120,11 @@ type NodeHistoryNode struct {
 }
 
 type ResourceHistory struct {
-	ID               string             `xml:"id,attr"`
-	FailCount        string             `xml:"fail-count,attr"`
-	OperationHistory []OperationHistory `xml:"operation_history"`
+	ID                 string             `xml:"id,attr"`
+	FailCount          string             `xml:"fail-count,attr"`
+	MigrationThreshold string             `xml:"migration-threshold,attr"`
+	LastFailure        string             `xml:"last-failure,attr"`
+	OperationHistory   []OperationHistory `xml:"operation_history"`
 }
 
 // OperationHistory tracks resource operation results for failure detection.
@@ -148,9 +150,10 @@ type FenceEvent struct {
 	Delegate   string `xml:"delegate,attr"`
 	Client     string `xml:"client,attr"`
 	Origin     string `xml:"origin,attr"`
-	Status     string `xml:"status,attr"`      // "success", "failed", etc.
+	Status     string `xml:"status,attr"`      // "success", "failed", "pending"
 	ExitReason string `xml:"exit-reason,attr"` // Populated on failure
-	Completed  string `xml:"completed,attr"`   // Timestamp: "2006-01-02 15:04:05.000000Z"
+	Completed  string `xml:"completed,attr"`   // Timestamp: "2006-01-02 15:04:05.000000Z"; empty while pending
+	LastUpdate string `xml:"last-update,attr"` // Always present per fence-event-2.15.rng schema
 }
 
 // JSON structures for parsing "pcs cluster config show --output-format json".

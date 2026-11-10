@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,6 +41,12 @@ const (
 	pacemakerTimeFormat      = "Mon Jan 2 15:04:05 2006"
 	pacemakerFenceTimeFormat = "2006-01-02 15:04:05.000000Z"
 )
+
+// resourceCIBIDs maps API resource names to CIB resource IDs in node_history.
+var resourceCIBIDs = map[pacmkrv1.PacemakerClusterResourceName]string{
+	pacmkrv1.PacemakerClusterResourceNameKubelet: "kubelet",
+	pacmkrv1.PacemakerClusterResourceNameEtcd:    "etcd",
+}
 
 // ResourceStatePerNode tracks resource state per node for condition building.
 type ResourceStatePerNode struct {
@@ -186,6 +193,9 @@ func buildClusterStatus(result *PacemakerResult, clusterConfig *ClusterConfig) *
 
 	fencingAgentsByTarget := processFencingAgents(result)
 
+	// Build resource history index for CIB-sourced fields (fail-count, timestamps)
+	nodeHistory := buildNodeHistoryIndex(result)
+
 	xmlNodeMap := make(map[string]*Node)
 	for i := range result.Nodes.Node {
 		xmlNodeMap[result.Nodes.Node[i].Name] = &result.Nodes.Node[i]
@@ -216,7 +226,7 @@ func buildClusterStatus(result *PacemakerResult, clusterConfig *ClusterConfig) *
 			}
 			fencingAgents := fencingAgentsByTarget[configNode.Name]
 
-			nodeStatus := buildNodeStatus(configNode.Name, addresses, xmlNode, state, fencingAgents, now)
+			nodeStatus := buildNodeStatus(configNode.Name, addresses, xmlNode, state, fencingAgents, nodeHistory[configNode.Name], now)
 			nodes = append(nodes, nodeStatus)
 		}
 	} else {
@@ -236,7 +246,7 @@ func buildClusterStatus(result *PacemakerResult, clusterConfig *ClusterConfig) *
 			fencingAgents := fencingAgentsByTarget[xmlNode.Name]
 
 			placeholderAddresses := []pacmkrv1.PacemakerNodeAddress{{Type: pacmkrv1.PacemakerNodeInternalIP, Address: "0.0.0.0"}}
-			nodeStatus := buildNodeStatus(xmlNode.Name, placeholderAddresses, &xmlNode, state, fencingAgents, now)
+			nodeStatus := buildNodeStatus(xmlNode.Name, placeholderAddresses, &xmlNode, state, fencingAgents, nodeHistory[xmlNode.Name], now)
 			nodes = append(nodes, nodeStatus)
 		}
 	}
@@ -251,10 +261,10 @@ func buildClusterStatus(result *PacemakerResult, clusterConfig *ClusterConfig) *
 	}
 }
 
-func buildNodeStatus(name string, addresses []pacmkrv1.PacemakerNodeAddress, xmlNode *Node, state *ResourceStatePerNode, fencingAgents []FencingAgentInfo, now metav1.Time) pacmkrv1.PacemakerClusterNodeStatus {
+func buildNodeStatus(name string, addresses []pacmkrv1.PacemakerNodeAddress, xmlNode *Node, state *ResourceStatePerNode, fencingAgents []FencingAgentInfo, resourceHistory map[string]*ResourceHistory, now metav1.Time) pacmkrv1.PacemakerClusterNodeStatus {
 	fencingAgentStatuses := buildFencingAgentStatuses(fencingAgents, now)
 	nodeConditions := buildNodeConditions(xmlNode, state, fencingAgentStatuses, now)
-	resources := buildResourceStatuses(state, now)
+	resources := buildResourceStatuses(state, resourceHistory, now)
 
 	return pacmkrv1.PacemakerClusterNodeStatus{
 		Conditions:    nodeConditions,
@@ -379,10 +389,10 @@ func isAgentHealthy(agent pacmkrv1.PacemakerClusterFencingAgentStatus) bool {
 	return getConditionStatus(agent.Conditions, pacmkrv1.ResourceHealthyConditionType) == metav1.ConditionTrue
 }
 
-func buildResourceStatuses(state *ResourceStatePerNode, now metav1.Time) []pacmkrv1.PacemakerClusterResourceStatus {
+func buildResourceStatuses(state *ResourceStatePerNode, resourceHistory map[string]*ResourceHistory, now metav1.Time) []pacmkrv1.PacemakerClusterResourceStatus {
 	return []pacmkrv1.PacemakerClusterResourceStatus{
-		buildResourceStatus(pacmkrv1.PacemakerClusterResourceNameKubelet, state.KubeletResource, state.KubeletRunning, now),
-		buildResourceStatus(pacmkrv1.PacemakerClusterResourceNameEtcd, state.EtcdResource, state.EtcdRunning, now),
+		buildResourceStatus(pacmkrv1.PacemakerClusterResourceNameKubelet, state.KubeletResource, state.KubeletRunning, resourceHistory, now),
+		buildResourceStatus(pacmkrv1.PacemakerClusterResourceNameEtcd, state.EtcdResource, state.EtcdRunning, resourceHistory, now),
 	}
 }
 
@@ -417,11 +427,19 @@ func methodStringToEnum(method string) pacmkrv1.FencingMethod {
 	}
 }
 
-func buildResourceStatus(name pacmkrv1.PacemakerClusterResourceName, resource *Resource, running bool, now metav1.Time) pacmkrv1.PacemakerClusterResourceStatus {
-	return pacmkrv1.PacemakerClusterResourceStatus{
+func buildResourceStatus(name pacmkrv1.PacemakerClusterResourceName, resource *Resource, running bool, resourceHistory map[string]*ResourceHistory, now metav1.Time) pacmkrv1.PacemakerClusterResourceStatus {
+	status := pacmkrv1.PacemakerClusterResourceStatus{
 		Conditions: buildResourceConditions(resource, running, now),
 		Name:       name,
 	}
+
+	if cibID, ok := resourceCIBIDs[name]; ok && resourceHistory != nil {
+		if rh := resourceHistory[cibID]; rh != nil {
+			populateCIBFields(&status, rh)
+		}
+	}
+
+	return status
 }
 
 func buildResourceConditions(resource *Resource, running bool, now metav1.Time) []metav1.Condition {
@@ -604,6 +622,23 @@ func filterRecentFencingEvents(result *PacemakerResult, cutoffTime time.Time) []
 			continue
 		}
 
+		if fenceEvent.Status == "pending" {
+			t, err := time.Parse(pacemakerFenceTimeFormat, fenceEvent.LastUpdate)
+			if err != nil {
+				klog.V(4).Infof("Skipping pending fencing event due to last-update parse error: %v", err)
+				continue
+			}
+			if !t.After(cutoffTime) {
+				continue
+			}
+			events = append(events, RecentFencingEvent{
+				Action: fenceEvent.Action,
+				Target: fenceEvent.Target,
+				Status: fenceEvent.Status,
+			})
+			continue
+		}
+
 		t, err := time.Parse(pacemakerFenceTimeFormat, fenceEvent.Completed)
 		if err != nil {
 			klog.V(4).Infof("Skipping fencing event due to timestamp parse error: %v", err)
@@ -632,10 +667,14 @@ func recordFencingEvents(ctx context.Context, kubeClient kubernetes.Interface, r
 
 	for _, event := range events {
 		var message string
-		if event.Status != "success" && event.ExitReason != "" {
+		switch {
+		case event.Status == "pending":
+			message = fmt.Sprintf("Fencing event: %s of %s is in progress",
+				event.Action, event.Target)
+		case event.Status != "success" && event.ExitReason != "":
 			message = fmt.Sprintf("Fencing event: %s of %s completed with status %s (%s) at %s",
 				event.Action, event.Target, event.Status, event.ExitReason, event.Completed)
-		} else {
+		default:
 			message = fmt.Sprintf("Fencing event: %s of %s completed with status %s at %s",
 				event.Action, event.Target, event.Status, event.Completed)
 		}
@@ -789,6 +828,78 @@ func recordEvent(ctx context.Context, kubeClient kubernetes.Interface, reason, m
 		window = FencingEventTimeWindow
 	}
 	recordEventWithDeduplication(ctx, kubeClient, reason, message, eventType, window)
+}
+
+// buildNodeHistoryIndex indexes ResourceHistory by node name and resource ID.
+func buildNodeHistoryIndex(result *PacemakerResult) map[string]map[string]*ResourceHistory {
+	m := make(map[string]map[string]*ResourceHistory)
+	for i := range result.NodeHistory.Node {
+		node := &result.NodeHistory.Node[i]
+		rhMap := make(map[string]*ResourceHistory)
+		for j := range node.ResourceHistory {
+			rh := &node.ResourceHistory[j]
+			rhMap[rh.ID] = rh
+		}
+		m[node.Name] = rhMap
+	}
+	return m
+}
+
+func populateCIBFields(status *pacmkrv1.PacemakerClusterResourceStatus, rh *ResourceHistory) {
+	status.FailCount = parseOptionalInt32(rh.FailCount)
+	status.MigrationThreshold = parseOptionalInt32(rh.MigrationThreshold)
+	status.LastFailureTime = parsePacemakerTimestamp(rh.LastFailure)
+	status.LastStopTime = findLatestOperationTime(rh.OperationHistory, "stop")
+	status.LastStartTime = findLatestOperationTime(rh.OperationHistory, "start")
+}
+
+func parseOptionalInt32(s string) *int32 {
+	if s == "" {
+		return nil
+	}
+	val, err := strconv.ParseInt(s, 10, 32)
+	if err != nil {
+		klog.V(4).Infof("Failed to parse int32 from %q: %v", s, err)
+		return nil
+	}
+	v := int32(val)
+	return &v
+}
+
+func parsePacemakerTimestamp(s string) *metav1.Time {
+	if s == "" {
+		return nil
+	}
+	t, err := time.Parse(pacemakerTimeFormat, s)
+	if err != nil {
+		klog.V(4).Infof("Failed to parse pacemaker timestamp %q: %v", s, err)
+		return nil
+	}
+	mt := metav1.NewTime(t)
+	return &mt
+}
+
+func findLatestOperationTime(ops []OperationHistory, task string) *metav1.Time {
+	var latest time.Time
+	found := false
+	for _, op := range ops {
+		if op.Task != task {
+			continue
+		}
+		t, err := time.Parse(pacemakerTimeFormat, op.LastRCChange)
+		if err != nil {
+			continue
+		}
+		if !found || t.After(latest) {
+			latest = t
+			found = true
+		}
+	}
+	if !found {
+		return nil
+	}
+	mt := metav1.NewTime(latest)
+	return &mt
 }
 
 // updatePacemakerStatusCR creates or updates the singleton "cluster" PacemakerCluster CR.

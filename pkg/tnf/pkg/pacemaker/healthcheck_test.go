@@ -13,6 +13,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
+	"k8s.io/component-base/metrics/legacyregistry"
+	metricstestutil "k8s.io/component-base/metrics/testutil"
 	"k8s.io/utils/clock"
 
 	pacmkrv1 "github.com/openshift/api/etcd/v1"
@@ -1325,4 +1327,68 @@ func TestHealthCheck_WarningsClearedEvent(t *testing.T) {
 				"PacemakerWarningsCleared event expectation mismatch")
 		})
 	}
+}
+
+func TestUpdateFailCountGauge(t *testing.T) {
+	registerFailCountGauge.Do(func() {
+		legacyregistry.MustRegister(resourceFailCountGauge)
+	})
+
+	failCount3 := int32(3)
+	failCount0 := int32(0)
+
+	cr := &pacmkrv1.PacemakerCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: PacemakerClusterResourceName},
+		Status: pacmkrv1.PacemakerClusterStatus{
+			LastUpdated: metav1.Now(),
+			Conditions:  createHealthyClusterConditions(),
+			Nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
+				{
+					NodeName: "gauge-node-0",
+					Resources: []pacmkrv1.PacemakerClusterResourceStatus{
+						{Name: pacmkrv1.PacemakerClusterResourceNameEtcd, Conditions: createHealthyResourceConditions(), FailCount: &failCount3},
+						{Name: pacmkrv1.PacemakerClusterResourceNameKubelet, Conditions: createHealthyResourceConditions(), FailCount: &failCount0},
+					},
+				},
+			},
+		},
+	}
+
+	hc := &HealthCheck{
+		pacemakerInformer: testutil.CreateFakeInformer(cr),
+	}
+
+	hc.updateFailCountGauge()
+
+	etcdVal, err := metricstestutil.GetGaugeMetricValue(resourceFailCountGauge.WithLabelValues("gauge-node-0", "Etcd"))
+	require.NoError(t, err)
+	require.Equal(t, float64(3), etcdVal)
+
+	kubeletVal, err := metricstestutil.GetGaugeMetricValue(resourceFailCountGauge.WithLabelValues("gauge-node-0", "Kubelet"))
+	require.NoError(t, err)
+	require.Equal(t, float64(0), kubeletVal)
+
+	// After cleanup (FailCount reverts to nil), stale values must not persist.
+	crCleared := &pacmkrv1.PacemakerCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: PacemakerClusterResourceName},
+		Status: pacmkrv1.PacemakerClusterStatus{
+			LastUpdated: metav1.Now(),
+			Conditions:  createHealthyClusterConditions(),
+			Nodes: &[]pacmkrv1.PacemakerClusterNodeStatus{
+				{
+					NodeName: "gauge-node-0",
+					Resources: []pacmkrv1.PacemakerClusterResourceStatus{
+						{Name: pacmkrv1.PacemakerClusterResourceNameEtcd, Conditions: createHealthyResourceConditions()},
+						{Name: pacmkrv1.PacemakerClusterResourceNameKubelet, Conditions: createHealthyResourceConditions()},
+					},
+				},
+			},
+		},
+	}
+	hc.pacemakerInformer = testutil.CreateFakeInformer(crCleared)
+	hc.updateFailCountGauge()
+
+	etcdAfter, err := metricstestutil.GetGaugeMetricValue(resourceFailCountGauge.WithLabelValues("gauge-node-0", "Etcd"))
+	require.NoError(t, err)
+	require.Equal(t, float64(0), etcdAfter, "stale fail count should be cleared after FailCount becomes nil")
 }
