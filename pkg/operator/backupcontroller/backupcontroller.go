@@ -75,7 +75,6 @@ type BackupController struct {
 	// pending tracks backups started by this controller whose jobs haven't been observed by the job informer yet.
 	// Syncs are serialized (single worker), so no locking is required.
 	pending pendingStarts
-	metrics               *backupMetrics
 }
 
 // NewBackupController creates a controller that runs EtcdBackups. Each sync reconciles every EtcdBackup: the status
@@ -108,7 +107,6 @@ func NewBackupController(
 		operatorImagePullSpec: operatorImagePullSpec,
 		featureGateAccessor:   accessor,
 		pending:               pendingStarts{},
-		metrics:               metrics,
 	}
 	if err := c.addIndexers(); err != nil {
 		return nil, err
@@ -314,12 +312,8 @@ func (c *BackupController) reconcileBackupState(ctx context.Context, jobsClient 
 			}
 			return backupActive, 0, fmt.Errorf("BackupController failed reconciling missing job %q for backup %q: %w", jobName, backupName, err)
 		}
-		
-		if updated, err := c.backupsLister.Get(backupName); err == nil {
-			c.metrics.recordBackup(*updated)
-		}
 		// Either the backup was finished, or the job was relabeled and will be reconciled on the next sync
-		return nil
+		return backupActive, delay, nil
 	}
 
 	if backup.DeletionTimestamp != nil {

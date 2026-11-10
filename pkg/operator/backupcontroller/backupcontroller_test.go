@@ -120,7 +120,6 @@ func runBackupControllerTest(t *testing.T, tc testCaseBackupController) {
 		operatorImagePullSpec: "operator-pullspec-image",
 		featureGateAccessor:   backupFeatureGateAccessor,
 		pending:               pending,
-		metrics:               testMetrics,
 	}
 	err := controller.addIndexers()
 	require.NoError(t, err)
