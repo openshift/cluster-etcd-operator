@@ -30,11 +30,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/bindata"
 	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+	"sigs.k8s.io/yaml"
 
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 )
@@ -42,6 +44,25 @@ import (
 type jobSetup struct {
 	timestamp  time.Time
 	conditions []batchv1.JobCondition
+}
+
+func TestStatusCollectorReleaseVersionDuringUpgrade(t *testing.T) {
+	var cronJob batchv1.CronJob
+	require.NoError(t, yaml.Unmarshal(bindata.MustAsset("tnfdeployment/cronjob.yaml"), &cronJob))
+	cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Env = []corev1.EnvVar{{Name: "OTHER", Value: "preserved"}}
+	t.Setenv("OPERATOR_IMAGE_VERSION", "5.1.0")
+	configureStatusCollectorCommand(&cronJob)
+	oldJob := &batchv1.Job{Spec: *cronJob.Spec.JobTemplate.Spec.DeepCopy()}
+
+	// Updating the CronJob must not change the release lookup used by an already-running Job.
+	t.Setenv("OPERATOR_IMAGE_VERSION", "5.2.0")
+	configureStatusCollectorCommand(&cronJob)
+	oldContainer := oldJob.Spec.Template.Spec.Containers[0]
+	newContainer := cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0]
+	require.Contains(t, oldContainer.Env, corev1.EnvVar{Name: "OPERATOR_IMAGE_VERSION", Value: "5.1.0"})
+	require.Equal(t, []corev1.EnvVar{{Name: "OTHER", Value: "preserved"}, {Name: "OPERATOR_IMAGE_VERSION", Value: "5.2.0"}}, newContainer.Env)
+	require.Equal(t, []string{"tnf-monitor", "collect"}, newContainer.Command)
+	require.Empty(t, newContainer.Args)
 }
 
 func TestCheckLastJobFailed(t *testing.T) {

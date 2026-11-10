@@ -2,6 +2,7 @@ package pacemaker
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -71,6 +72,7 @@ func TestNewHealthCheck(t *testing.T) {
 		fake.NewSimpleClientset(),
 		events.NewInMemoryRecorder("test", clock.RealClock{}),
 		&rest.Config{Host: "https://localhost:6443"},
+		false,
 	)
 
 	require.NoError(t, err, "NewHealthCheck should not return an error")
@@ -578,7 +580,7 @@ func TestBuildHealthStatusFromCR(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			status := BuildHealthStatusFromCR(tt.cr)
+			status := BuildHealthStatusFromCR(tt.cr, false)
 
 			require.NotNil(t, status, "HealthStatus should not be nil")
 			require.Equal(t, tt.expectedStatus, status.OverallStatus)
@@ -736,7 +738,7 @@ func TestCheckNodeStatuses(t *testing.T) {
 			}
 
 			status := &HealthStatus{Warnings: []string{}, Errors: []string{}}
-			checkNodeStatuses(cr, status)
+			checkNodeStatuses(cr, status, false)
 
 			if tt.expectErrors {
 				require.NotEmpty(t, status.Errors, "Should have errors")
@@ -782,7 +784,7 @@ func TestCheckNodeStatuses_MultipleUnhealthyResources(t *testing.T) {
 	}
 
 	status := &HealthStatus{Warnings: []string{}, Errors: []string{}}
-	checkNodeStatuses(pacemakerStatus, status)
+	checkNodeStatuses(pacemakerStatus, status, false)
 	require.Len(t, status.Errors, 1, "Should have 1 consolidated error for unhealthy node")
 
 	// Verify the single error mentions both resources
@@ -1208,7 +1210,7 @@ func TestCheckNodeConditions_FencingRedundancyWarning(t *testing.T) {
 			}
 
 			status := &HealthStatus{Warnings: []string{}, Errors: []string{}}
-			checkNodeConditions(node, status)
+			checkNodeConditions(node, status, false)
 
 			// Check warnings
 			if tt.expectWarnings {
@@ -1323,6 +1325,114 @@ func TestHealthCheck_WarningsClearedEvent(t *testing.T) {
 				"PacemakerHealthy event expectation mismatch")
 			require.Equal(t, tt.expectWarningsCleared, warningsClearedFound,
 				"PacemakerWarningsCleared event expectation mismatch")
+		})
+	}
+}
+
+// unhealthyAlertAgentEntry builds an alert-agent entry with the three alert-agent conditions
+// (Healthy False, Configured True, Available False) representing a missing script on this node.
+func unhealthyAlertAgentEntry(name pacmkrv1.PacemakerClusterAlertAgentName) pacmkrv1.PacemakerClusterAlertAgentStatus {
+	now := metav1.Now()
+	return pacmkrv1.PacemakerClusterAlertAgentStatus{
+		Name: name,
+		Conditions: []metav1.Condition{
+			{Type: pacmkrv1.AlertAgentHealthyConditionType, Status: metav1.ConditionFalse, Reason: pacmkrv1.AlertAgentHealthyReasonUnhealthy, LastTransitionTime: now},
+			{Type: pacmkrv1.AlertAgentConfiguredConditionType, Status: metav1.ConditionTrue, Reason: pacmkrv1.AlertAgentConfiguredReasonConfigured, LastTransitionTime: now},
+			{Type: pacmkrv1.AlertAgentAvailableConditionType, Status: metav1.ConditionFalse, Reason: pacmkrv1.AlertAgentAvailableReasonUnavailable, LastTransitionTime: now},
+		},
+	}
+}
+
+// TestCheckNodeConditions_AlertAgentDegradesOperator verifies that a confirmed alert-agent failure
+// produces an error (and therefore degrades the operator). Unlike the resources[]-reuse design this
+// replaced, alert-agent health is expected to have already been folded by the status collector into
+// the node's AlertAgentsHealthy and Healthy conditions (see refreshHealthAfterAlertAgents in
+// alertstatus.go) before checkNodeConditions ever sees the CR, so these fixtures set node.Healthy=False
+// themselves to reflect a CR the collector actually would have produced.
+func TestCheckNodeConditions_AlertAgentDegradesOperator(t *testing.T) {
+	t.Run("node unhealthy solely due to a bad alert agent degrades and names it", func(t *testing.T) {
+		node := createHealthyNodeStatus("master-0", []string{"192.168.1.10"})
+		for i := range node.Conditions {
+			if node.Conditions[i].Type == pacmkrv1.NodeHealthyConditionType {
+				node.Conditions[i].Status = metav1.ConditionFalse
+				node.Conditions[i].Reason = pacmkrv1.NodeHealthyReasonUnhealthy
+			}
+		}
+		node.Conditions = append(node.Conditions, metav1.Condition{Type: pacmkrv1.NodeAlertAgentsHealthyConditionType, Status: metav1.ConditionFalse})
+		node.AlertAgents = append(node.AlertAgents, unhealthyAlertAgentEntry(pacmkrv1.PacemakerClusterAlertAgentNameTaint))
+
+		status := &HealthStatus{Warnings: []string{}, Errors: []string{}}
+		checkNodeConditions(node, status, true)
+
+		require.Empty(t, status.Warnings, "a bad alert agent is reported as an error, not a warning")
+		require.Len(t, status.Errors, 1, "a bad alert agent must produce exactly one node-unhealthy error")
+		require.Contains(t, status.Errors[0], "master-0")
+		require.Contains(t, status.Errors[0], "alert agent")
+		require.Contains(t, status.Errors[0], string(pacmkrv1.PacemakerClusterAlertAgentNameTaint))
+	})
+
+	t.Run("node unhealthy for both a core reason and a bad alert agent names both in one error", func(t *testing.T) {
+		node := createHealthyNodeStatus("master-0", []string{"192.168.1.10"})
+		for i := range node.Conditions {
+			switch node.Conditions[i].Type {
+			case pacmkrv1.NodeHealthyConditionType:
+				node.Conditions[i].Status = metav1.ConditionFalse
+				node.Conditions[i].Reason = pacmkrv1.NodeHealthyReasonUnhealthy
+			case pacmkrv1.NodeInServiceConditionType:
+				node.Conditions[i].Status = metav1.ConditionFalse
+				node.Conditions[i].Reason = pacmkrv1.NodeInServiceReasonInMaintenance
+			}
+		}
+		node.Conditions = append(node.Conditions, metav1.Condition{Type: pacmkrv1.NodeAlertAgentsHealthyConditionType, Status: metav1.ConditionFalse})
+		node.AlertAgents = append(node.AlertAgents, unhealthyAlertAgentEntry(pacmkrv1.PacemakerClusterAlertAgentNameUntaint))
+
+		status := &HealthStatus{Warnings: []string{}, Errors: []string{}}
+		checkNodeConditions(node, status, true)
+
+		require.Empty(t, status.Warnings)
+		require.Len(t, status.Errors, 1, "both problems are folded into a single node-unhealthy error")
+		require.Contains(t, status.Errors[0], "alert agent")
+		require.Contains(t, status.Errors[0], string(pacmkrv1.PacemakerClusterAlertAgentNameUntaint))
+		require.Contains(t, status.Errors[0], "maintenance mode")
+	})
+
+	t.Run("Pending AlertAgentsHealthy never degrades an otherwise-healthy node", func(t *testing.T) {
+		node := createHealthyNodeStatus("master-0", []string{"192.168.1.10"})
+		node.Conditions = append(node.Conditions, metav1.Condition{Type: pacmkrv1.NodeAlertAgentsHealthyConditionType, Status: metav1.ConditionUnknown, Reason: "Pending"})
+
+		status := &HealthStatus{Warnings: []string{}, Errors: []string{}}
+		checkNodeConditions(node, status, true)
+
+		require.Empty(t, status.Warnings)
+		require.Empty(t, status.Errors, "Unknown/Pending alert-agent health must never degrade the operator")
+	})
+}
+
+func TestHealthCheck_AlertAgentFeatureGate(t *testing.T) {
+	// Retained alert-agent entries must not change the base resource diagnostics
+	// when the reader's gate is disabled, even before the next collector update.
+	base := testCluster(withNodes(
+		testNode("master-0", "192.168.111.20", unhealthyEtcd()),
+		testNode("master-1", "192.168.111.21"),
+	))
+	withAgents := base.DeepCopy()
+	(*withAgents.Status.Nodes)[0].AlertAgents = []pacmkrv1.PacemakerClusterAlertAgentStatus{
+		unhealthyAlertAgentEntry(pacmkrv1.PacemakerClusterAlertAgentNameTaint),
+	}
+	original := withAgents.DeepCopy()
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("enabled=%t", enabled), func(t *testing.T) {
+			controller := createTestHealthCheckWithMockStatus(t, withAgents)
+			controller.alertAgentStatusEnabled = enabled
+			status, _, err := controller.getPacemakerStatus(context.Background())
+			require.NoError(t, err)
+			require.Equal(t, StatusError, status.OverallStatus, "base resource failures must still be reported")
+			if enabled {
+				require.Contains(t, strings.Join(status.Errors, " "), "alert agent")
+			} else {
+				require.Equal(t, BuildHealthStatusFromCR(base, false), status)
+			}
+			require.Equal(t, original, withAgents, "reading health must not mutate the informer cache")
 		})
 	}
 }

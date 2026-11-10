@@ -41,10 +41,15 @@ test-e2e: test-unit
 .PHONY: test-e2e
 
 # ensure the pacemakercluster CRD is included in bindata
-PACEMAKER_CRD_SOURCE := vendor/github.com/openshift/api/etcd/v1/zz_generated.crd-manifests/0000_25_etcd_01_pacemakerclusters.crd.yaml
+PACEMAKER_CRD_SOURCE := vendor/github.com/openshift/api/etcd/v1/zz_generated.crd-manifests/0000_25_etcd_01_pacemakerclusters-SelfManagedHA-Default.crd.yaml
 PACEMAKER_CRD_TARGET := bindata/etcd/pacemakercluster-crd.yaml
-update-bindata: $(PACEMAKER_CRD_TARGET)
+PACEMAKER_ALERT_AGENT_CRD_SOURCE := vendor/github.com/openshift/api/etcd/v1/zz_generated.crd-manifests/0000_25_etcd_01_pacemakerclusters-SelfManagedHA-TechPreviewNoUpgrade.crd.yaml
+PACEMAKER_ALERT_AGENT_CRD_TARGET := bindata/etcd/pacemakercluster-tnf-observability-crd.yaml
+update-bindata: $(PACEMAKER_CRD_TARGET) $(PACEMAKER_ALERT_AGENT_CRD_TARGET)
 $(PACEMAKER_CRD_TARGET): $(PACEMAKER_CRD_SOURCE)
+	cp $< $@
+
+$(PACEMAKER_ALERT_AGENT_CRD_TARGET): $(PACEMAKER_ALERT_AGENT_CRD_SOURCE)
 	cp $< $@
 
 verify-bindata: verify-pacemaker-crd
@@ -52,3 +57,4 @@ verify-bindata: verify-pacemaker-crd
 
 verify-pacemaker-crd:
 	diff -Naup $(PACEMAKER_CRD_SOURCE) $(PACEMAKER_CRD_TARGET)
+	diff -Naup $(PACEMAKER_ALERT_AGENT_CRD_SOURCE) $(PACEMAKER_ALERT_AGENT_CRD_TARGET)

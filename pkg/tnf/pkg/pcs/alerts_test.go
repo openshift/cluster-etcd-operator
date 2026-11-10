@@ -5,24 +5,30 @@ import (
 )
 
 func TestAlertConfigs(t *testing.T) {
-	if len(alertConfigs) != 2 {
-		t.Fatalf("expected 2 alert configs, got %d", len(alertConfigs))
+	if len(AlertConfigs) != 2 {
+		t.Fatalf("expected 2 alert configs, got %d", len(AlertConfigs))
 	}
 
-	expectedConfigs := []alertConfig{
-		{id: "tnf-taint-alert", path: "/var/lib/pacemaker/alerts/tnf-taint-alert.sh", selectXML: "<select_fencing/>"},
-		{id: "tnf-untaint-alert", path: "/var/lib/pacemaker/alerts/tnf-untaint-alert.sh", selectXML: "<select_nodes/>"},
+	expectedConfigs := []AlertConfig{
+		{ID: "tnf-taint-alert", Path: "/var/lib/pacemaker/alerts/tnf-taint-alert.sh", SelectXML: "<select_fencing/>", ExpectFencing: true},
+		{ID: "tnf-untaint-alert", Path: "/var/lib/pacemaker/alerts/tnf-untaint-alert.sh", SelectXML: "<select_nodes/>", ExpectNodes: true},
 	}
 
 	for i, expected := range expectedConfigs {
-		if alertConfigs[i].id != expected.id {
-			t.Errorf("alertConfigs[%d].id = %q, want %q", i, alertConfigs[i].id, expected.id)
+		if AlertConfigs[i].ID != expected.ID {
+			t.Errorf("AlertConfigs[%d].ID = %q, want %q", i, AlertConfigs[i].ID, expected.ID)
 		}
-		if alertConfigs[i].path != expected.path {
-			t.Errorf("alertConfigs[%d].path = %q, want %q", i, alertConfigs[i].path, expected.path)
+		if AlertConfigs[i].Path != expected.Path {
+			t.Errorf("AlertConfigs[%d].Path = %q, want %q", i, AlertConfigs[i].Path, expected.Path)
 		}
-		if alertConfigs[i].selectXML != expected.selectXML {
-			t.Errorf("alertConfigs[%d].selectXML = %q, want %q", i, alertConfigs[i].selectXML, expected.selectXML)
+		if AlertConfigs[i].SelectXML != expected.SelectXML {
+			t.Errorf("AlertConfigs[%d].SelectXML = %q, want %q", i, AlertConfigs[i].SelectXML, expected.SelectXML)
+		}
+		if AlertConfigs[i].ExpectFencing != expected.ExpectFencing {
+			t.Errorf("AlertConfigs[%d].ExpectFencing = %v, want %v", i, AlertConfigs[i].ExpectFencing, expected.ExpectFencing)
+		}
+		if AlertConfigs[i].ExpectNodes != expected.ExpectNodes {
+			t.Errorf("AlertConfigs[%d].ExpectNodes = %v, want %v", i, AlertConfigs[i].ExpectNodes, expected.ExpectNodes)
 		}
 	}
 }

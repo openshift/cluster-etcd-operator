@@ -630,7 +630,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		controlPlaneNodeInformer,
 		etcdsInformer,
 		kubeClient,
-		dynamicClient)
+		dynamicClient,
+		fg)
 	if err != nil {
 		return err
 	}

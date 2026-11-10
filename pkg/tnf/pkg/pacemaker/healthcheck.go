@@ -95,7 +95,8 @@ var errorPatternsByPriority = []struct {
 //
 // Warning vs Error Philosophy:
 //   - Errors: Conditions requiring immediate action or causing downstream degradation.
-//     Examples: node offline, fencing unavailable, etcd/kubelet unhealthy, maintenance mode.
+//     Examples: node offline, fencing unavailable, etcd/kubelet unhealthy, maintenance mode,
+//     alert agent missing/misconfigured in the CIB or its script missing on a node.
 //   - Warnings: Degraded redundancy where the cluster remains functional but should be investigated.
 //     Examples: FencingHealthy=False with FencingAvailable=True (can still fence, but redundancy lost).
 //
@@ -111,10 +112,11 @@ type HealthStatus struct {
 
 // HealthCheck monitors pacemaker status in ExternalEtcd topology clusters
 type HealthCheck struct {
-	operatorClient    v1helpers.StaticPodOperatorClient
-	kubeClient        kubernetes.Interface
-	eventRecorder     events.Recorder
-	pacemakerInformer cache.SharedIndexInformer
+	alertAgentStatusEnabled bool
+	operatorClient          v1helpers.StaticPodOperatorClient
+	kubeClient              kubernetes.Interface
+	eventRecorder           events.Recorder
+	pacemakerInformer       cache.SharedIndexInformer
 
 	// Event deduplication: tracks recently recorded events to avoid duplicates
 	recordedEventsMu sync.Mutex
@@ -197,6 +199,7 @@ func NewHealthCheck(
 	kubeClient kubernetes.Interface,
 	eventRecorder events.Recorder,
 	restConfig *rest.Config,
+	alertAgentStatusEnabled bool,
 ) (factory.Controller, cache.SharedIndexInformer, error) {
 	// Create PacemakerCluster informer
 	informer, err := NewPacemakerClusterInformer(restConfig)
@@ -204,7 +207,7 @@ func NewHealthCheck(
 		return nil, nil, err
 	}
 
-	return NewHealthCheckWithInformer(operatorClient, kubeClient, eventRecorder, informer)
+	return NewHealthCheckWithInformer(operatorClient, kubeClient, eventRecorder, informer, alertAgentStatusEnabled)
 }
 
 // NewHealthCheckWithInformer creates a new HealthCheck using an existing PacemakerCluster informer.
@@ -214,14 +217,16 @@ func NewHealthCheckWithInformer(
 	kubeClient kubernetes.Interface,
 	eventRecorder events.Recorder,
 	pacemakerInformer cache.SharedIndexInformer,
+	alertAgentStatusEnabled bool,
 ) (factory.Controller, cache.SharedIndexInformer, error) {
 	c := &HealthCheck{
-		operatorClient:    operatorClient,
-		kubeClient:        kubeClient,
-		eventRecorder:     eventRecorder,
-		pacemakerInformer: pacemakerInformer,
-		recordedEvents:    make(map[string]time.Time),
-		disruptionTracker: NewDisruptionTracker(),
+		alertAgentStatusEnabled: alertAgentStatusEnabled,
+		operatorClient:          operatorClient,
+		kubeClient:              kubeClient,
+		eventRecorder:           eventRecorder,
+		pacemakerInformer:       pacemakerInformer,
+		recordedEvents:          make(map[string]time.Time),
+		disruptionTracker:       NewDisruptionTracker(),
 		// previous starts as nil - first sync will be treated as "from Unknown"
 	}
 
@@ -324,7 +329,7 @@ func (c *HealthCheck) getPacemakerStatus(ctx context.Context) (*HealthStatus, *H
 	}
 
 	// Build health status from the CRD status fields
-	currentStatus := BuildHealthStatusFromCR(pacemakerCR)
+	currentStatus := BuildHealthStatusFromCR(pacemakerCR, c.alertAgentStatusEnabled)
 	currentStatus.CRLastUpdated = pacemakerCR.Status.LastUpdated.Time
 
 	return currentStatus, previous, nil
@@ -339,7 +344,8 @@ func unknownHealthStatus(msg string) *HealthStatus {
 }
 
 // BuildHealthStatusFromCR evaluates a PacemakerCluster CR and returns its complete health status.
-func BuildHealthStatusFromCR(cr *pacmkrv1.PacemakerCluster) *HealthStatus {
+// Alert-agent entries are only read when the caller's resolved TNFObservability gate is enabled.
+func BuildHealthStatusFromCR(cr *pacmkrv1.PacemakerCluster, alertAgentStatusEnabled bool) *HealthStatus {
 	status := &HealthStatus{
 		OverallStatus: StatusUnknown,
 		Warnings:      []string{},
@@ -360,7 +366,7 @@ func BuildHealthStatusFromCR(cr *pacmkrv1.PacemakerCluster) *HealthStatus {
 	}
 
 	checkClusterConditions(cr, status)
-	checkNodeStatuses(cr, status)
+	checkNodeStatuses(cr, status, alertAgentStatusEnabled)
 
 	if len(status.Errors) > 0 {
 		status.OverallStatus = StatusError
@@ -418,7 +424,7 @@ func getClusterConditionIssues(conditions []metav1.Condition, cr *pacmkrv1.Pacem
 }
 
 // checkNodeStatuses checks if all nodes have healthy conditions and resources
-func checkNodeStatuses(cr *pacmkrv1.PacemakerCluster, status *HealthStatus) {
+func checkNodeStatuses(cr *pacmkrv1.PacemakerCluster, status *HealthStatus, alertAgentStatusEnabled bool) {
 	// Nil-guard for Nodes field - missing node data is an error (cannot verify cluster health)
 	if cr.Status.Nodes == nil {
 		klog.V(2).Infof("Pacemaker.Status.Nodes is nil, cannot determine node status")
@@ -437,14 +443,14 @@ func checkNodeStatuses(cr *pacmkrv1.PacemakerCluster, status *HealthStatus) {
 
 	// Check each node's conditions and resource health (consolidated into single error per node)
 	for _, node := range nodes {
-		checkNodeConditions(node, status)
+		checkNodeConditions(node, status, alertAgentStatusEnabled)
 	}
 }
 
 // checkNodeConditions checks the conditions of a single node and its resources,
 // routing issues to errors or warnings based on severity.
 // Errors degrade the operator; warnings are informational (e.g., fencing redundancy lost).
-func checkNodeConditions(node pacmkrv1.PacemakerClusterNodeStatus, status *HealthStatus) {
+func checkNodeConditions(node pacmkrv1.PacemakerClusterNodeStatus, status *HealthStatus, alertAgentStatusEnabled bool) {
 	conditions := node.Conditions
 	if len(conditions) == 0 {
 		klog.V(2).Infof("Node %s has no conditions", node.NodeName)
@@ -466,7 +472,7 @@ func checkNodeConditions(node pacmkrv1.PacemakerClusterNodeStatus, status *Healt
 		return
 	}
 
-	allErrors := slices.Concat(getNodeConditionErrors(conditions), getNodeResourceSummaries(node))
+	allErrors := slices.Concat(getNodeConditionErrors(conditions), getNodeResourceSummaries(node, alertAgentStatusEnabled))
 	if len(allErrors) > 0 {
 		status.Errors = append(status.Errors, fmt.Sprintf(msgNodeUnhealthy, node.NodeName, strings.Join(allErrors, ", ")))
 	} else if len(fencingWarnings) == 0 {
@@ -533,9 +539,13 @@ func getNodeConditionErrors(conditions []metav1.Condition) []string {
 	return errors
 }
 
-// getNodeResourceSummaries returns summaries of unhealthy resources on a node.
-// Each summary includes the resource name and its specific issue.
-func getNodeResourceSummaries(node pacmkrv1.PacemakerClusterNodeStatus) []string {
+// getNodeResourceSummaries returns summaries of unhealthy resources and alert agents on a node.
+// Each summary includes the resource/agent name and its specific issue. This is only called once the
+// node's own Healthy condition is already False - for alert agents that already reflects the fold
+// described in mergeCondition/refreshHealthAfterAlertAgents (alertAgents[].Healthy -> node's optional
+// AlertAgentsHealthy -> node.Healthy), so a confirmed alert-agent failure is reported as part of the
+// same node-unhealthy error rather than as an independent one.
+func getNodeResourceSummaries(node pacmkrv1.PacemakerClusterNodeStatus, alertAgentStatusEnabled bool) []string {
 	var summaries []string
 
 	for _, resource := range node.Resources {
@@ -544,7 +554,39 @@ func getNodeResourceSummaries(node pacmkrv1.PacemakerClusterNodeStatus) []string
 		}
 	}
 
+	// Do not consume alert-agent entries from an older CR or informer cache when
+	// TNFObservability is disabled. Keep the original resource health evaluation.
+	if !alertAgentStatusEnabled {
+		return summaries
+	}
+	for _, agent := range node.AlertAgents {
+		if cond := FindCondition(agent.Conditions, pacmkrv1.AlertAgentHealthyConditionType); cond != nil && cond.Status == metav1.ConditionFalse {
+			summaries = append(summaries, fmt.Sprintf("alert agent %s %s", agent.Name, getAlertAgentIssue(agent.Conditions)))
+		}
+	}
+
 	return summaries
+}
+
+// getAlertAgentIssue returns a human-readable, actionable issue for an unhealthy alert-agent entry,
+// prioritizing the CIB-registration problem (Configured) over the per-node availability problem
+// (Available). It surfaces the condition's own Message when set, since the status collector populates
+// it with the specific diagnostic (which agent, expected vs. observed path/event filter, or the MCO
+// degraded reason) rather than a generic description.
+func getAlertAgentIssue(conditions []metav1.Condition) string {
+	if cond := FindCondition(conditions, pacmkrv1.AlertAgentConfiguredConditionType); cond != nil && cond.Status == metav1.ConditionFalse {
+		if cond.Message != "" {
+			return cond.Message
+		}
+		return "is not correctly registered in the CIB"
+	}
+	if cond := FindCondition(conditions, pacmkrv1.AlertAgentAvailableConditionType); cond != nil && cond.Status == metav1.ConditionFalse {
+		if cond.Message != "" {
+			return cond.Message
+		}
+		return "script is missing or not executable on this node"
+	}
+	return "is unhealthy"
 }
 
 // getResourceIssue returns a human-readable issue for an unhealthy resource, prioritized by severity.
