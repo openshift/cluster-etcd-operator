@@ -21,6 +21,7 @@ const (
 	backupCompletionTimeMetricName = "etcd_backup_completion_time"
 	backupStartTimeMetricName      = "etcd_backup_start_time"
 	backupSizeBytesMetricName      = "etcd_backup_size_bytes"
+	backupAssetMetricName          = "etcd_backup_asset"
 
 	storageTypePVC   = "PVC"
 	storageTypeLocal = "Local"
@@ -28,6 +29,9 @@ const (
 	statusRunning   = "Running"
 	statusCompleted = "Completed"
 	statusFailed    = "Failed"
+
+	assetTypeSnapshot            = "Snapshot"
+	assetTypeStaticKubeResources = "StaticKubeResources"
 )
 
 // backupCollector implements prometheus.Collector and generates metrics
@@ -40,6 +44,7 @@ type backupCollector struct {
 	completionTimeDesc *prometheus.Desc
 	startTimeDesc      *prometheus.Desc
 	sizeBytesDesc      *prometheus.Desc
+	assetDesc          *prometheus.Desc
 }
 
 // NewBackupMetrics creates and registers a backup collector with the provided registry.
@@ -77,6 +82,12 @@ func NewBackupMetrics(metricsRegistry metrics.KubeRegistry, backupsLister operat
 			[]string{"etcd_backup", "uid"},
 			nil,
 		),
+		assetDesc: prometheus.NewDesc(
+			backupAssetMetricName,
+			"The asset type(s) saved by the backup. Value of 1 indicates the asset type is included in the etcd backup.",
+			[]string{"etcd_backup", "uid", "asset_type"},
+			nil,
+		),
 	}
 
 	metricsRegistry.RawMustRegister(c)
@@ -90,6 +101,7 @@ func (c *backupCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.completionTimeDesc
 	ch <- c.startTimeDesc
 	ch <- c.sizeBytesDesc
+	ch <- c.assetDesc
 }
 
 // Collect implements prometheus.Collector
@@ -137,6 +149,20 @@ func (c *backupCollector) collectBackupMetrics(ch chan<- prometheus.Metric, back
 			prometheus.GaugeValue,
 			value,
 			name, uid, status,
+		)
+	}
+
+	includedAssets := extractIncludedAssets(backup)
+	for _, assetType := range []string{assetTypeSnapshot, assetTypeStaticKubeResources} {
+		value := float64(0)
+		if includedAssets[assetType] {
+			value = 1
+		}
+		ch <- prometheus.MustNewConstMetric(
+			c.assetDesc,
+			prometheus.GaugeValue,
+			value,
+			name, uid, assetType,
 		)
 	}
 
@@ -212,6 +238,27 @@ func extractCurrentStatus(backup operatorv1alpha1.EtcdBackup) string {
 		}
 	}
 	return ""
+}
+
+func extractIncludedAssets(backup operatorv1alpha1.EtcdBackup) map[string]bool {
+	included := map[string]bool{
+		assetTypeSnapshot:            false,
+		assetTypeStaticKubeResources: false,
+	}
+	if len(backup.Spec.Assets) == 0 {
+		included[assetTypeSnapshot] = true
+		included[assetTypeStaticKubeResources] = true
+		return included
+	}
+	for _, asset := range backup.Spec.Assets {
+		switch asset {
+		case operatorv1alpha1.EtcdBackupAssetTypeSnapshot:
+			included[assetTypeSnapshot] = true
+		case operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources:
+			included[assetTypeStaticKubeResources] = true
+		}
+	}
+	return included
 }
 
 func getStartTime(backup operatorv1alpha1.EtcdBackup) float64 {
