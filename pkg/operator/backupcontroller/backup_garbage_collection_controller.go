@@ -241,8 +241,6 @@ func (c *BackupGarbageCollectionController) syncBackups(ctx context.Context, bac
 				newGC[storage] = append(newGC[storage], backup)
 			} else if err := removeBackupFinalizer(ctx, backupsClient, backup); err != nil && !apierrors.IsNotFound(err) {
 				errs = append(errs, fmt.Errorf("BackupGarbageCollectionController failed to remove backup finalizer: %w", err))
-			} else {
-				c.metrics.deleteBackup(*backup)
 			}
 		}
 	}
