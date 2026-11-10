@@ -27,8 +27,6 @@ const (
 	LabelEtcdBackupPolicy    = "operator.openshift.io/etcd-backup-policy"
 	LabelEtcdBackupPolicyRun = "operator.openshift.io/etcd-backup-policy-run"
 
-	AnnotationBackupStorage = "operator.openshift.io/etcd-backup-storage"
-
 	FinalizerEtcdBackup = "operator.openshift.io/etcd-backup"
 
 	ControlPlaneNodeLabelSelector = "node-role.kubernetes.io/control-plane"

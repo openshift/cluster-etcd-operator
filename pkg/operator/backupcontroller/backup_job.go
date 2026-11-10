@@ -266,12 +266,15 @@ func jobFinishedTime(job *batchv1.Job) time.Time {
 	return job.CreationTimestamp.Time
 }
 
-// jobFailedTime returns when the job failed, falling back to the creation time if unknown.
-func jobFailedTime(job *batchv1.Job) time.Time {
-	if c := jobFinishedCondition(job); c != nil && c.Type == batchv1.JobFailed && !c.LastTransitionTime.IsZero() {
-		return c.LastTransitionTime.Time
+// jobFailedTime returns when the job failed
+func jobFailedTime(job *batchv1.Job) (time.Time, bool) {
+	if c := jobFinishedCondition(job); c != nil && c.Type == batchv1.JobFailed {
+		if c.LastTransitionTime.IsZero() {
+			return job.CreationTimestamp.Time, true
+		}
+		return c.LastTransitionTime.Time, true
 	}
-	return job.CreationTimestamp.Time
+	return time.Time{}, false
 }
 
 // finalizeJob removes the backup finalizer from the job, returning the patched job.
