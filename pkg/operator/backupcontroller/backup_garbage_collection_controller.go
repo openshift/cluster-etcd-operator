@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,8 +45,11 @@ const (
 	backupGCFilesEnvName = "CLUSTER_BACKUP_GC_FILES"
 	gcJobFinishedTTL     = 2 * time.Hour
 	gcMaxBackupsPerJob   = 100
-	gcBackoffBase        = 30 * time.Second
-	gcBackoffMax         = 30 * time.Minute
+	// MAX_ARG_STRLEN in linux is 128KiB, limiting the max length of a singel argument/env.
+	// Limit GC files to 64KiB to ensure it stays well under the single arg limit, and that all args are within the total ARG_MAX limit (min 128KiB, max 6MiB depending on the system)
+	gcMaxFileArgBytes = 64 * 1024
+	gcBackoffBase     = 30 * time.Second
+	gcBackoffMax      = 30 * time.Minute
 )
 
 // gcFinalizeRequeueDelay is how soon to re-check a completed GC job that is kept until the removal of its owning
@@ -188,29 +192,26 @@ func (c *BackupGarbageCollectionController) sync(ctx context.Context, syncCtx fa
 		slices.SortFunc(backups, func(a, b *operatorv1alpha1.EtcdBackup) int {
 			return strings.Compare(a.Name, b.Name)
 		})
-		if len(backups) > gcMaxBackupsPerJob {
-			// Remaining backups will be garbage collected after the current job completes
-			backups = backups[:gcMaxBackupsPerJob]
-		}
 
 		storageKey := storage.String()
 		if job, ok := jobsByStorage[storageKey]; ok {
-			// Only one GC job is allowed on a storage backend at a time using deterministically generated name.
-			if !isJobFinished(job) {
-				// Remaining backups will be garbage collected after the active job completes
+			if isJobCompleted(job) {
+				if ownsAnyBackup(job, awaitingFinalizer) {
+					// Completed job still records backups whose finalizer removal has not been observed, replace it once it is
+					continue
+				}
+			} else if isJobFailed(job) {
+				// Exponential backoff on failed GC jobs
+				if duration := c.retryQueue.backoffDuration(storageKey, job); duration > 0 {
+					klog.Infof("BackupGarbageCollectionController backoff failed job %s, retry in %s", job.Name, duration.String())
+					syncCtx.Queue().AddAfter(syncCtx.QueueKey(), duration)
+					continue
+				}
+			} else {
+				// Job is still active. Only one GC job is allowed on a storage backend at a time using deterministically generated name.
 				continue
 			}
-			// Exponential backoff on failed GC jobs
-			if duration := c.retryQueue.backoffDuration(storageKey, job); duration > 0 {
-				klog.Infof("BackupGarbageCollectionController backoff failed job %s, retry in %s", job.Name, duration.String())
-				syncCtx.Queue().AddAfter(syncCtx.QueueKey(), duration)
-				continue
-			}
-			if isJobCompleted(job) && ownsAnyBackup(job, awaitingFinalizer) {
-				// Completed job still records backups whose finalizer removal has not been observed, replace it once
-				// it is
-				continue
-			}
+
 			// Job is finished and no backoff required, delete before creating a new one
 			if err := deleteJob(ctx, jobsClient, job); err != nil {
 				errs = append(errs, fmt.Errorf("BackupGarbageCollectionController error: %w", err))
@@ -342,6 +343,23 @@ func createGarbageCollectionJob(ctx context.Context,
 		job.Labels = map[string]string{}
 	}
 	job.Labels["app"] = backupGCAppName
+	job.Finalizers = append(job.Finalizers, backuphelpers.FinalizerEtcdBackup)
+	job.Spec.TTLSecondsAfterFinished = new(int32(gcJobFinishedTTL.Seconds()))
+	job.Spec.Template.Spec.Containers[0].Image = operatorImagePullSpec
+	job.Spec.Template.Spec.Containers[0].Args = append(job.Spec.Template.Spec.Containers[0].Args, "--backupPath="+backuphelpers.BackupPathMount)
+
+	if len(backups) > gcMaxBackupsPerJob {
+		// Remaining backups will be garbage collected after the current job completes
+		backups = backups[:gcMaxBackupsPerJob]
+	}
+
+	var env corev1.EnvVar
+	var volumes []corev1.Volume
+	var volumeMounts []corev1.VolumeMount
+	backups, env, volumes, volumeMounts = backupFileMounts(storage, backups)
+	job.Spec.Template.Spec.Containers[0].Env = append(job.Spec.Template.Spec.Containers[0].Env, env)
+	job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, volumes...)
+	job.Spec.Template.Spec.Containers[0].VolumeMounts = append(job.Spec.Template.Spec.Containers[0].VolumeMounts, volumeMounts...)
 	for _, backup := range backups {
 		job.OwnerReferences = append(job.OwnerReferences, v1.OwnerReference{
 			APIVersion: operatorv1alpha1.GroupVersion.String(),
@@ -350,76 +368,6 @@ func createGarbageCollectionJob(ctx context.Context,
 			UID:        backup.UID,
 		})
 	}
-	job.Finalizers = append(job.Finalizers, backuphelpers.FinalizerEtcdBackup)
-	job.Spec.TTLSecondsAfterFinished = new(int32(gcJobFinishedTTL.Seconds()))
-	job.Spec.Template.Spec.Containers[0].Image = operatorImagePullSpec
-
-	gcFiles := make([]string, 0, 2*len(backups))
-	switch storage.storageType {
-	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
-		job.Spec.Template.Spec.NodeName = storage.nodeName
-		delete(job.Spec.Template.Spec.NodeSelector, backuphelpers.ControlPlaneNodeLabelSelector)
-		klog.V(4).Infof("BackupGarbageCollectionController assigned job [%s] to node [%s]", job.Name, storage.nodeName)
-
-		paths := map[string]struct{}{}
-		for _, backup := range backups {
-			hostPath := backuphelpers.LocalBackupHostPath(backup.Spec.Storage.Local)
-			if len(backup.Status.Files) > 0 {
-				for _, file := range backup.Status.Files {
-					gcFiles = append(gcFiles, filepath.Join(backuphelpers.BackupPathMount, file.Path))
-				}
-			} else {
-				// Infer file directory from host path and backup name
-				gcFiles = append(gcFiles, filepath.Join(backuphelpers.BackupPathMount, hostPath, backup.Name))
-			}
-
-			if _, ok := paths[hostPath]; !ok {
-				name := fmt.Sprintf("etc-kubernetes-cluster-backup-%d", len(paths))
-				paths[hostPath] = struct{}{}
-				job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, corev1.Volume{
-					Name: name,
-					VolumeSource: corev1.VolumeSource{
-						HostPath: &corev1.HostPathVolumeSource{
-							Path: hostPath,
-							Type: ptr.To(corev1.HostPathDirectoryOrCreate),
-						},
-					},
-				})
-				job.Spec.Template.Spec.Containers[0].VolumeMounts = append(job.Spec.Template.Spec.Containers[0].VolumeMounts, corev1.VolumeMount{
-					Name:      name,
-					MountPath: filepath.Join(backuphelpers.BackupPathMount, hostPath),
-				})
-			}
-		}
-	case operatorv1alpha1.EtcdBackupStorageTypePVC:
-		for _, backup := range backups {
-			if len(backup.Status.Files) > 0 {
-				for _, file := range backup.Status.Files {
-					gcFiles = append(gcFiles, filepath.Join(backuphelpers.BackupPathMount, file.Path))
-				}
-			} else {
-				// Infer file directory from pvc path and backup name
-				gcFiles = append(gcFiles, filepath.Join(backuphelpers.BackupPathMount, filepath.Clean(backup.Spec.Storage.PVC.Path), backup.Name))
-			}
-		}
-
-		job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, corev1.Volume{
-			Name: "etc-kubernetes-cluster-backup",
-			VolumeSource: corev1.VolumeSource{
-				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: storage.pvcName,
-				},
-			},
-		})
-		job.Spec.Template.Spec.Containers[0].VolumeMounts = append(job.Spec.Template.Spec.Containers[0].VolumeMounts, corev1.VolumeMount{
-			Name:      "etc-kubernetes-cluster-backup",
-			MountPath: backuphelpers.BackupPathMount,
-		})
-	default:
-		return fmt.Errorf("unknown storage backend: %s", storage.storageType)
-	}
-
-	job.Spec.Template.Spec.Containers[0].Env = []corev1.EnvVar{{Name: backupGCFilesEnvName, Value: strings.Join(gcFiles, ",")}}
 
 	klog.Infof("BackupGarbageCollectionController starts backup GC as job [%s]", job.Name)
 	_, err = jobsClient.Create(ctx, job, v1.CreateOptions{})
@@ -432,6 +380,93 @@ func createGarbageCollectionJob(ctx context.Context,
 	}
 
 	return nil
+}
+
+func backupFileMounts(storage storageBackend, backups []*operatorv1alpha1.EtcdBackup) ([]*operatorv1alpha1.EtcdBackup, corev1.EnvVar, []corev1.Volume, []corev1.VolumeMount) {
+	env := corev1.EnvVar{Name: backupGCFilesEnvName}
+	var volumes []corev1.Volume
+	var volumeMounts []corev1.VolumeMount
+	// Add 1 to max arg bytes since leading "," is trimmmed at the end.
+	maxArgLen := gcMaxFileArgBytes + 1
+
+	mountedHostPaths := map[string]int{}
+	var hostPaths []string
+	for i, backup := range backups {
+		var dir, hostPath string
+		switch backup.Spec.Storage.Type {
+		case operatorv1alpha1.EtcdBackupStorageTypeLocal:
+			hostPath = backuphelpers.LocalBackupHostPath(backup.Spec.Storage.Local)
+			idx, ok := mountedHostPaths[hostPath]
+			if !ok {
+				// hostPath is added to mountedHostPaths after verifying this backup's files fit in maxArgLen
+				idx = len(hostPaths)
+			}
+			dir = filepath.Join(strconv.Itoa(idx), backup.Name)
+		case operatorv1alpha1.EtcdBackupStorageTypePVC:
+			dir = filepath.Join(filepath.Clean(backup.Spec.Storage.PVC.Path), backup.Name)
+		}
+
+		backupFiles := ""
+		if len(backup.Status.Files) > 0 {
+			for _, file := range backup.Status.Files {
+				filePath := filepath.Join(dir, filepath.Base(file.Path))
+				backupFiles += "," + filePath
+			}
+		} else {
+			// Backup files will be discovered inside dir
+			backupFiles = "," + dir
+		}
+
+		if i > 0 && len(env.Value)+len(backupFiles) > maxArgLen {
+			backups = backups[:i]
+			break
+		} else {
+			env.Value += backupFiles
+			if hostPath != "" {
+				if _, ok := mountedHostPaths[hostPath]; !ok {
+					mountedHostPaths[hostPath] = len(hostPaths)
+					hostPaths = append(hostPaths, hostPath)
+				}
+			}
+		}
+	}
+
+	switch storage.storageType {
+	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
+		for i, hostPath := range hostPaths {
+			strIdx := strconv.Itoa(i)
+			name := "etc-kubernetes-cluster-backup-" + strIdx
+			volumes = append(volumes, corev1.Volume{
+				Name: name,
+				VolumeSource: corev1.VolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: hostPath,
+						Type: ptr.To(corev1.HostPathDirectoryOrCreate),
+					},
+				},
+			})
+			volumeMounts = append(volumeMounts, corev1.VolumeMount{
+				Name:      name,
+				MountPath: filepath.Join(backuphelpers.BackupPathMount, strIdx),
+			})
+		}
+	case operatorv1alpha1.EtcdBackupStorageTypePVC:
+		volumes = append(volumes, corev1.Volume{
+			Name: "etc-kubernetes-cluster-backup",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: storage.pvcName,
+				},
+			},
+		})
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "etc-kubernetes-cluster-backup",
+			MountPath: backuphelpers.BackupPathMount,
+		})
+	}
+
+	env.Value = strings.TrimPrefix(env.Value, ",")
+	return backups, env, volumes, volumeMounts
 }
 
 func isGarbageCollectionRequired(
