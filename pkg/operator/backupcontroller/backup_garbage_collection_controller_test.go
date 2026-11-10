@@ -2,6 +2,8 @@ package backupcontroller
 
 import (
 	"fmt"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -129,7 +131,7 @@ func TestBackupGarbageCollectionNewJob(t *testing.T) {
 				require.ElementsMatch(t, job.OwnerReferences, []v1.OwnerReference{{
 					APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup", UID: "test-backup-uid",
 				}})
-				backupDir := backuphelpers.BackupPathMount + "/etcdbackups/test-backup"
+				backupDir := "0/test-backup"
 				require.Contains(t, job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{
 					Name:  backupGCFilesEnvName,
 					Value: strings.Join([]string{backupDir + "/snapshot.db", backupDir + "/archive.tar.gz"}, ","),
@@ -153,7 +155,7 @@ func TestBackupGarbageCollectionNewJob(t *testing.T) {
 				require.ElementsMatch(t, job.OwnerReferences, []v1.OwnerReference{{
 					APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup", UID: "test-backup-uid",
 				}})
-				backupDir := backuphelpers.BackupPathMount + "/test-backup"
+				backupDir := "test-backup"
 				require.Contains(t, job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{
 					Name:  backupGCFilesEnvName,
 					Value: strings.Join([]string{backupDir + "/snapshot.db", backupDir + "/archive.tar.gz"}, ","),
@@ -374,9 +376,9 @@ func TestBackupGarbageCollectionMultipleBackupsPerJob(t *testing.T) {
 				job2.OwnerReferences,
 			)
 
-			backupDir1 := backuphelpers.BackupPathMount + "/test-backup-1"
-			backupDir2 := backuphelpers.BackupPathMount + "/test-backup-2"
-			backupDir3 := backuphelpers.BackupPathMount + "/test-backup-3"
+			backupDir1 := "test-backup-1"
+			backupDir2 := "test-backup-2"
+			backupDir3 := "test-backup-3"
 			require.Equal(t,
 				corev1.EnvVar{Name: backupGCFilesEnvName, Value: strings.Join([]string{
 					backupDir1 + "/snapshot.db", backupDir1 + "/archive.tar.gz",
@@ -844,16 +846,6 @@ func TestJobFailedTime(t *testing.T) {
 	require.Equal(t, failed, jobFailedTime(job))
 }
 
-func requireFind[T any](t *testing.T, items []T, find func(T) bool) (result T) {
-	for _, item := range items {
-		if ok := find(item); ok {
-			return item
-		}
-	}
-	require.Fail(t, "Unable to find expected item")
-	return
-}
-
 func TestBackupGarbageCollectionDefaultHostPath(t *testing.T) {
 	// Local backups without a hostPath are stored under the default hostPath, and GC must resolve the same location
 	backup := testutils.FakeEtcdBackup("test-backup",
@@ -873,11 +865,53 @@ func TestBackupGarbageCollectionDefaultHostPath(t *testing.T) {
 			volume := requireFind(t, podSpec.Volumes, func(v corev1.Volume) bool { return v.HostPath != nil })
 			require.Equal(t, backuphelpers.BackupPathMount, volume.HostPath.Path)
 			mount := requireFind(t, podSpec.Containers[0].VolumeMounts, func(m corev1.VolumeMount) bool { return m.Name == volume.Name })
-			require.Equal(t, backuphelpers.BackupPathMount+backuphelpers.BackupPathMount, mount.MountPath)
+			require.Equal(t, filepath.Join(backuphelpers.BackupPathMount, "0"), mount.MountPath)
 			require.Contains(t, podSpec.Containers[0].Env, corev1.EnvVar{
 				Name:  backupGCFilesEnvName,
-				Value: backuphelpers.BackupPathMount + backuphelpers.BackupPathMount + "/test-backup",
+				Value: "0/test-backup",
 			})
 		},
 	})
+}
+
+func TestBackupFileMounts(t *testing.T) {
+	// Generate backups with files such that 5 backups will fill the max arg length
+	numBackups := 10
+	filePathLen := gcMaxFileArgBytes/5 - 20
+	backups := make([]*operatorv1alpha1.EtcdBackup, numBackups)
+	for i := range backups {
+		backups[i] = testutils.FakeEtcdBackup(fmt.Sprintf("test-backup-%d", i), func(backup *operatorv1alpha1.EtcdBackup) {
+			backup.Spec.Storage = operatorv1alpha1.EtcdBackupStorage{Type: operatorv1alpha1.EtcdBackupStorageTypeLocal, Local: operatorv1alpha1.EtcdBackupStorageLocal{
+				HostPath: fmt.Sprintf("/hostpath-%d", i%2),
+			}}
+			backup.Status.NodeName = "test-node"
+			backup.Status.Files = []operatorv1alpha1.EtcdBackupFile{
+				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: strings.Repeat("a", filePathLen)},
+			}
+		})
+	}
+	backups, env, volumes, volumeMounts := backupFileMounts(storageBackend{storageType: operatorv1alpha1.EtcdBackupStorageTypeLocal, nodeName: "test-node"}, backups)
+	require.Len(t, backups, 5)
+	require.LessOrEqual(t, len(env.Value), gcMaxFileArgBytes)
+	// Host paths are split into 2 groups, so there should be 2 volumes/volumeMounts
+	require.Len(t, volumes, 2)
+	require.Len(t, volumeMounts, 2)
+
+	for i, backup := range backups {
+		volumeIdx := i % 2
+		require.Equal(t, backup.Spec.Storage.Local.HostPath, volumes[volumeIdx].HostPath.Path)
+		require.Equal(t, fmt.Sprintf("etc-kubernetes-cluster-backup-%d", volumeIdx), volumes[volumeIdx].Name)
+		require.Equal(t, fmt.Sprintf("etc-kubernetes-cluster-backup-%d", volumeIdx), volumeMounts[volumeIdx].Name)
+		require.Equal(t, filepath.Join(backuphelpers.BackupPathMount, strconv.Itoa(volumeIdx)), volumeMounts[volumeIdx].MountPath)
+	}
+}
+
+func requireFind[T any](t *testing.T, items []T, find func(T) bool) (result T) {
+	for _, item := range items {
+		if ok := find(item); ok {
+			return item
+		}
+	}
+	require.Fail(t, "Unable to find expected item")
+	return
 }
