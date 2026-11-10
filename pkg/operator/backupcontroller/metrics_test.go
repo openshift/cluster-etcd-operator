@@ -28,6 +28,7 @@ func TestMetricsRegistration(t *testing.T) {
 	require.NotNil(t, c.completionTimeDesc)
 	require.NotNil(t, c.startTimeDesc)
 	require.NotNil(t, c.sizeBytesDesc)
+	require.NotNil(t, c.assetDesc)
 }
 
 func TestBackupMetricsInactiveStatusAllZero(t *testing.T) {
@@ -694,6 +695,83 @@ func requireStatusMetrics(t *testing.T, collector prometheus.Collector, name, ui
 		etcd_backup_status{etcd_backup="%s",status="Running",uid="%s"} %g
 	`, name, uid, completed, name, uid, failed, name, uid, running)
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expected), backupStatusMetricName))
+}
+
+func TestBackupMetricsAssets(t *testing.T) {
+	tests := []struct {
+		name                    string
+		assets                  []operatorv1alpha1.EtcdBackupAssetType
+		wantSnapshot            float64
+		wantStaticKubeResources float64
+	}{
+		{
+			name:                    "omitted-means-both",
+			assets:                  nil,
+			wantSnapshot:            1,
+			wantStaticKubeResources: 1,
+		},
+		{
+			name:                    "empty-means-both",
+			assets:                  []operatorv1alpha1.EtcdBackupAssetType{},
+			wantSnapshot:            1,
+			wantStaticKubeResources: 1,
+		},
+		{
+			name:                    "snapshot-only",
+			assets:                  []operatorv1alpha1.EtcdBackupAssetType{operatorv1alpha1.EtcdBackupAssetTypeSnapshot},
+			wantSnapshot:            1,
+			wantStaticKubeResources: 0,
+		},
+		{
+			name:                    "static-kube-resources-only",
+			assets:                  []operatorv1alpha1.EtcdBackupAssetType{operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources},
+			wantSnapshot:            0,
+			wantStaticKubeResources: 1,
+		},
+		{
+			name: "both-explicit",
+			assets: []operatorv1alpha1.EtcdBackupAssetType{
+				operatorv1alpha1.EtcdBackupAssetTypeSnapshot,
+				operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources,
+			},
+			wantSnapshot:            1,
+			wantStaticKubeResources: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := []func(*operatorv1alpha1.EtcdBackup){
+				testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
+					Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+					PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-pvc"},
+				}),
+			}
+			switch tt.name {
+			case "omitted-means-both":
+				// leave Spec.Assets unset
+			case "empty-means-both":
+				opts = append(opts, testutils.WithBackupAssets())
+			default:
+				opts = append(opts, testutils.WithBackupAssets(tt.assets...))
+			}
+			backup := testutils.FakeEtcdBackup("asset-backup", opts...)
+			collector := setupCollectorWithBackups(t, backup)
+			requireAssetMetrics(t, collector, "asset-backup", "asset-backup-uid", tt.wantSnapshot, tt.wantStaticKubeResources)
+		})
+	}
+}
+
+func requireAssetMetrics(t *testing.T, collector prometheus.Collector, name, uid string, snapshot, staticKubeResources float64) {
+	t.Helper()
+
+	expected := fmt.Sprintf(`
+		# HELP etcd_backup_asset The asset type(s) saved by the backup. Value of 1 indicates the asset type is included in the etcd backup.
+		# TYPE etcd_backup_asset gauge
+		etcd_backup_asset{asset_type="Snapshot",etcd_backup="%s",uid="%s"} %g
+		etcd_backup_asset{asset_type="StaticKubeResources",etcd_backup="%s",uid="%s"} %g
+	`, name, uid, snapshot, name, uid, staticKubeResources)
+	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expected), backupAssetMetricName))
 }
 
 func requireInfoMetric(t *testing.T, collector prometheus.Collector, name, uid, node, storageType, storageLocation, policyName string) {
