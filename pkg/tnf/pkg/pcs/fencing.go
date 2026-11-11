@@ -122,13 +122,16 @@ func ConfigureFencing(ctx context.Context, kubeClient kubernetes.Interface, node
 		}
 		klog.Info(fmt.Sprintf("Fencing credentials for node %s are valid, status command returned %q", fc.NodeName, stdOut))
 
-		// configure stonith devices
+		// configure stonith devices (no --wait; pcs 0.12 deprecated it in favor of status wait/query)
 		klog.Infof("Configuring pacemaker fencing for node %s", fc.NodeName)
 		cmd := getStonithCommand(stonithConfig, fc)
-		_, stdErr, err = exec.Execute(ctx, cmd)
-		// we use --wait in the stonith create / update command, which makes stdErr to contain "is running" in case the device successfully started
-		if err != nil || !strings.Contains(stdErr, "is running") {
-			klog.Error(err, "Failed to configure stonith device", "node", fc.NodeName, "stderr", stdErr)
+		stdOut, stdErr, err = exec.Execute(ctx, cmd)
+		if err != nil {
+			klog.Error(err, "Failed to configure stonith device", "node", fc.NodeName, "stdout", tools.RedactPasswords(stdOut), "stderr", tools.RedactPasswords(stdErr))
+			return fmt.Errorf("failed to configure pacemaker fencing for node %s: %v", fc.NodeName, err)
+		}
+		if err := WaitForResourceStarted(ctx, fc.FencingID, DefaultResourceWaitTimeout); err != nil {
+			klog.Error(err, "Stonith device did not reach started state", "node", fc.NodeName)
 			return fmt.Errorf("failed to configure pacemaker fencing for node %s: %v", fc.NodeName, err)
 		}
 		klog.Info(fmt.Sprintf("Pacemaker fencing for node %s configured", fc.NodeName))
@@ -245,9 +248,6 @@ func getStonithCommand(sc StonithConfig, fc fencingConfig) string {
 	} else {
 		cmd += ` ssl_insecure="0"`
 	}
-
-	// wait for command execution, so we can check if the device is running
-	cmd += " --wait=120"
 
 	return cmd
 }
