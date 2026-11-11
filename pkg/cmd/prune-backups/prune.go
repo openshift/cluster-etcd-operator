@@ -1,8 +1,10 @@
 package prune_backups
 
 import (
+	"errors"
 	goflag "flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -10,7 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/spf13/cobra"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
 )
 
@@ -18,11 +22,12 @@ const (
 	// BasePath for Backups we assume we have full ownership over the root folder at /etc/kubernetes/cluster-backup
 	// for backup-server we use another path for storing backups (i.e. /var/lib/etcd-auto-backup)
 	// for tests we will change this to a tmp directory
-	BasePath = "/etc/kubernetes/cluster-backup/"
+	BasePath = backuphelpers.BackupPathMount
 
 	RetentionTypeNone   = "None"
 	RetentionTypeSize   = "RetentionSize"
 	RetentionTypeNumber = "RetentionNumber"
+	RetentionTypeFiles  = "Files"
 )
 
 type backupDirStats []backupDirStat
@@ -37,6 +42,7 @@ type PruneOpts struct {
 	RetentionType      string
 	MaxNumberOfBackups int
 	MaxSizeOfBackupsGb int
+	Files              []string
 	BackupPath         string
 }
 
@@ -65,10 +71,11 @@ func NewPruneCommand() *cobra.Command {
 
 func (r *PruneOpts) AddFlags(cmd *cobra.Command) {
 	flagSet := cmd.Flags()
-	flagSet.StringVar(&r.RetentionType, "type", r.RetentionType, "Which kind of retention to execute, can either be None, RetentionNumber or RetentionSize.")
+	flagSet.StringVar(&r.RetentionType, "type", r.RetentionType, "Which kind of retention to execute, can either be None, RetentionNumber, RetentionSize, or Files.")
 	// the defaults are zero for validation, we inject the real defaults from the periodic backup controller
 	flagSet.IntVar(&r.MaxNumberOfBackups, "maxNumberOfBackups", 0, "how many backups to keep when type=RetentionNumber")
 	flagSet.IntVar(&r.MaxSizeOfBackupsGb, "maxSizeOfBackupsGb", 0, "how many gigabytes of backups to keep when type=RetentionSize")
+	flagSet.StringSliceVar(&r.Files, "files", r.Files, "the name of files to delete when type=Files. If directory is passed, only directly nested backup files will be deleted.")
 	flagSet.StringVar(&r.BackupPath, "backupPath", BasePath, "path for backups to be pruned")
 
 	// adding klog flags to tune verbosity better
@@ -78,11 +85,8 @@ func (r *PruneOpts) AddFlags(cmd *cobra.Command) {
 }
 
 func (r *PruneOpts) Validate() error {
-	if r.RetentionType != RetentionTypeNone && r.RetentionType != RetentionTypeNumber && r.RetentionType != RetentionTypeSize {
-		return fmt.Errorf("unknown retention type: [%s]", r.RetentionType)
-	}
-
-	if r.RetentionType == RetentionTypeNumber {
+	switch r.RetentionType {
+	case RetentionTypeNumber:
 		if r.MaxNumberOfBackups < 1 {
 			return fmt.Errorf("unexpected amount of backups [%d] found, expected at least 1", r.MaxNumberOfBackups)
 		}
@@ -91,7 +95,7 @@ func (r *PruneOpts) Validate() error {
 			return fmt.Errorf("unexpected argument [MaxSizeOfBackupsGb] found while using %s", RetentionTypeNumber)
 		}
 
-	} else if r.RetentionType == RetentionTypeSize {
+	case RetentionTypeSize:
 		if r.MaxSizeOfBackupsGb < 1 {
 			return fmt.Errorf("unexpected size of backups [%d]gb found, expected at least 1", r.MaxSizeOfBackupsGb)
 		}
@@ -99,19 +103,30 @@ func (r *PruneOpts) Validate() error {
 		if r.MaxNumberOfBackups != 0 {
 			return fmt.Errorf("unexpected argument [MaxNumberOfBackups] found while using %s", RetentionTypeSize)
 		}
+	case RetentionTypeFiles:
+		if len(r.Files) == 0 {
+			return fmt.Errorf("expected at least 1 file to be specified for type=Files")
+		}
+	case RetentionTypeNone:
+		return nil
+	default:
+		return fmt.Errorf("unknown retention type: [%s]", r.RetentionType)
 	}
 
 	return nil
 }
 
 func (r *PruneOpts) Run() error {
-	if r.RetentionType == RetentionTypeNone {
+	switch r.RetentionType {
+	case RetentionTypeNone:
 		klog.Infof("nothing to do, retention type is none")
 		return nil
-	} else if r.RetentionType == RetentionTypeSize {
+	case RetentionTypeSize:
 		return retainBySizeGb(r.MaxSizeOfBackupsGb, r.BackupPath)
-	} else if r.RetentionType == RetentionTypeNumber {
+	case RetentionTypeNumber:
 		return retainByNumber(r.MaxNumberOfBackups, r.BackupPath)
+	case RetentionTypeFiles:
+		return deleteByName(r.Files, r.BackupPath)
 	}
 
 	return nil
@@ -177,6 +192,65 @@ func retainByNumber(maxNumBackups int, backupPath string) error {
 	return nil
 }
 
+func deleteByName(files []string, backupPath string) error {
+	errs := []error{}
+	parentDirs := map[string]struct{}{}
+
+	// Iterate files, validating they match expected backup files and expanding directories into the backup files they contain.
+	backupFiles := make([]string, 0, len(files))
+	for _, file := range files {
+		if !strings.HasPrefix(file, "/") {
+			file = path.Join(backupPath, file)
+		}
+
+		fileInfo, err := os.Stat(file)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				errs = append(errs, fmt.Errorf("error while checking [%s]: %w", file, err))
+			}
+			continue
+		}
+
+		if !backuphelpers.IsBackupFilePath(file) {
+			if !fileInfo.IsDir() {
+				errs = append(errs, fmt.Errorf("expected file matching one of [snapshot_<datetime>.db, snapshot_<datetime>.db.part, static_kuberesources_<datetime>.tar.gz], got: %v", file))
+				continue
+			}
+		}
+
+		if fileInfo.IsDir() {
+			files, _, err := backuphelpers.ListBackupFiles(file)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("error walking directory [%s]: %w", file, err))
+			}
+			backupFiles = append(backupFiles, files...)
+		} else {
+			backupFiles = append(backupFiles, file)
+		}
+	}
+
+	// Delete backup files
+	for _, file := range backupFiles {
+		if err := os.Remove(file); err != nil {
+			errs = append(errs, fmt.Errorf("error while removing file [%s]: %w", file, err))
+		}
+		parentDirs[path.Dir(file)] = struct{}{}
+	}
+
+	// Delete empty backup dirs
+	for dir := range parentDirs {
+		if empty, err := isEmpty(dir); err != nil {
+			errs = append(errs, fmt.Errorf("error checking if parent dir [%s] is empty: %w", dir, err))
+		} else if empty {
+			if err := os.Remove(dir); err != nil {
+				errs = append(errs, fmt.Errorf("error while removing empty parent dir [%s]: %w", dir, err))
+			}
+		}
+	}
+
+	return utilerrors.NewAggregate(errs)
+}
+
 func listAllBackupFolders(backupPath string) (backupDirStats, error) {
 	var stats []backupDirStat
 
@@ -233,7 +307,7 @@ func (b backupDirStats) Len() int {
 // Less causes the slice to be sorted descending by modtime, the newest comes first
 // in case the mod times are equal, we compare on the names in the same order.
 func (b backupDirStats) Less(i, j int) bool {
-	if b[j].modTime == b[i].modTime {
+	if b[j].modTime.Equal(b[i].modTime) {
 		return strings.Compare(b[j].name, b[i].name) < 0
 	}
 	return b[j].modTime.Before(b[i].modTime)
@@ -243,4 +317,24 @@ func (b backupDirStats) Swap(i, j int) {
 	tmp := b[i]
 	b[i] = b[j]
 	b[j] = tmp
+}
+
+func isEmpty(dir string) (bool, error) {
+	f, err := os.Open(dir)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+
+	// Read up to 1 entry names from the directory.
+	_, err = f.Readdirnames(1)
+
+	// If the error is EOF, it means there are 0 entries (the directory is empty).
+	if errors.Is(err, io.EOF) {
+		return true, nil
+	}
+
+	// If err is nil, it means at least one entry was read (not empty).
+	// If err is another error, return it.
+	return false, err
 }
