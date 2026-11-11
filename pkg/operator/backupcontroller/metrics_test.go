@@ -28,7 +28,6 @@ func TestMetricsRegistration(t *testing.T) {
 	require.NotNil(t, c.completionTimeDesc)
 	require.NotNil(t, c.startTimeDesc)
 	require.NotNil(t, c.sizeBytesDesc)
-	require.NotNil(t, c.assetDesc)
 }
 
 func TestBackupMetricsInactiveStatusAllZero(t *testing.T) {
@@ -95,6 +94,7 @@ func TestBackupMetricsInactiveStatusAllZero(t *testing.T) {
 func TestBackupMetricsCompleted(t *testing.T) {
 	completedAt := metav1.NewTime(time.Unix(1700000300, 0))
 	snapshotSize := int64(100 * 1024 * 1024)
+	staticSize := int64(50 * 1024 * 1024)
 
 	backup := testutils.FakeEtcdBackup("pvc-backup",
 		testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
@@ -105,10 +105,9 @@ func TestBackupMetricsCompleted(t *testing.T) {
 		func(b *operatorv1alpha1.EtcdBackup) {
 			b.Status.NodeName = "node-1"
 			b.Status.Conditions[0].LastTransitionTime = completedAt
-			// Override default fixture files so the snapshot matches getSizeBytes naming rules.
 			b.Status.Files = []operatorv1alpha1.EtcdBackupFile{
-				{Path: "/backups/snapshot_2026-09-28_120000.db", SizeBytes: snapshotSize},
-				{Path: "/backups/static_kuberesources_2026-09-28_120000.tar.gz", SizeBytes: 50 * 1024 * 1024},
+				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot_2026-09-28_120000.db", SizeBytes: snapshotSize},
+				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources, Path: "/backups/static_kuberesources_2026-09-28_120000.tar.gz", SizeBytes: staticSize},
 			}
 		},
 	)
@@ -126,10 +125,11 @@ func TestBackupMetricsCompleted(t *testing.T) {
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expectedCompletionTime), backupCompletionTimeMetricName))
 
 	expectedSize := fmt.Sprintf(`
-		# HELP etcd_backup_size_bytes The file size of the backup snapshot.
+		# HELP etcd_backup_size_bytes Total recorded backup file size in bytes, by asset type.
 		# TYPE etcd_backup_size_bytes gauge
-		etcd_backup_size_bytes{etcd_backup="pvc-backup",uid="pvc-backup-uid"} %d
-	`, snapshotSize)
+		etcd_backup_size_bytes{asset_type="Snapshot",etcd_backup="pvc-backup",uid="pvc-backup-uid"} %d
+		etcd_backup_size_bytes{asset_type="StaticKubeResources",etcd_backup="pvc-backup",uid="pvc-backup-uid"} %d
+	`, snapshotSize, staticSize)
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expectedSize), backupSizeBytesMetricName))
 
 	require.Equal(t, 0, testutil.CollectAndCount(collector, backupStartTimeMetricName),
@@ -220,7 +220,7 @@ func TestBackupMetricsLocalStorage(t *testing.T) {
 	requireInfoMetric(t, collector, "local-backup", "local-backup-uid", "node-2", storageTypeLocal, "/var/lib/etcd-backup", "")
 }
 
-func TestBackupMetricsCreatedByPolicy(t *testing.T) {
+func TestBackupMetricsPolicyName(t *testing.T) {
 	backup := testutils.FakeEtcdBackup("policy-backup",
 		testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
 			Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
@@ -313,93 +313,81 @@ func TestBackupMetricsDeletion(t *testing.T) {
 		"expected all status samples to disappear after deletion")
 }
 
-func TestGetSizeBytes(t *testing.T) {
+func TestSizeBytesByAssetType(t *testing.T) {
 	tests := []struct {
-		name     string
-		files    []operatorv1alpha1.EtcdBackupFile
-		wantSize float64
-		wantOk   bool
+		name  string
+		files []operatorv1alpha1.EtcdBackupFile
+		want  map[string]float64
 	}{
 		{
-			name:     "no-files",
-			files:    []operatorv1alpha1.EtcdBackupFile{},
-			wantSize: 0,
-			wantOk:   false,
+			name:  "no-files",
+			files: []operatorv1alpha1.EtcdBackupFile{},
+			want:  map[string]float64{},
 		},
 		{
-			name: "valid-snapshot-with-archive",
+			name: "both-assets",
 			files: []operatorv1alpha1.EtcdBackupFile{
-				{Path: "/backups/snapshot_2026-09-28_120000.db", SizeBytes: 100 * 1024 * 1024},
-				{Path: "/backups/static_kuberesources_2026-09-28_120000.tar.gz", SizeBytes: 50 * 1024 * 1024},
+				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db", SizeBytes: 100 * 1024 * 1024},
+				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources, Path: "/backups/static.tar.gz", SizeBytes: 50 * 1024 * 1024},
 			},
-			wantSize: float64(100 * 1024 * 1024),
-			wantOk:   true,
+			want: map[string]float64{
+				assetTypeSnapshot:            float64(100 * 1024 * 1024),
+				assetTypeStaticKubeResources: float64(50 * 1024 * 1024),
+			},
 		},
 		{
-			name: "partial-snapshot-excluded",
+			name: "snapshot-only",
 			files: []operatorv1alpha1.EtcdBackupFile{
-				{Path: "/backups/snapshot_2026-09-28_120000.db.part", SizeBytes: 100 * 1024 * 1024},
-				{Path: "/backups/static_kuberesources_2026-09-28_120000.tar.gz", SizeBytes: 50 * 1024 * 1024},
+				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db", SizeBytes: 200 * 1024 * 1024},
 			},
-			wantSize: 0,
-			wantOk:   false,
+			want: map[string]float64{
+				assetTypeSnapshot: float64(200 * 1024 * 1024),
+			},
 		},
 		{
-			name: "nested-path-matches-basename",
+			name: "static-only",
 			files: []operatorv1alpha1.EtcdBackupFile{
-				{Path: "/var/lib/etcd/backups/deep/path/snapshot_2026-09-28_120000.db", SizeBytes: 200 * 1024 * 1024},
+				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources, Path: "/backups/static.tar.gz", SizeBytes: 50 * 1024 * 1024},
 			},
-			wantSize: float64(200 * 1024 * 1024),
-			wantOk:   true,
+			want: map[string]float64{
+				assetTypeStaticKubeResources: float64(50 * 1024 * 1024),
+			},
 		},
 		{
-			name: "duplicate-snapshots-rejected",
+			name: "recorded-empty-file-is-zero",
 			files: []operatorv1alpha1.EtcdBackupFile{
-				{Path: "/backups/snapshot_2026-09-28_120000.db", SizeBytes: 100 * 1024 * 1024},
-				{Path: "/backups/snapshot_2026-09-28_130000.db", SizeBytes: 100 * 1024 * 1024},
+				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db"},
 			},
-			wantSize: 0,
-			wantOk:   false,
+			want: map[string]float64{
+				assetTypeSnapshot: 0,
+			},
 		},
 		{
-			name: "invalid-size-zero-rejected",
+			name: "sum-same-asset-type",
 			files: []operatorv1alpha1.EtcdBackupFile{
-				{Path: "/backups/snapshot_2026-09-28_120000.db", SizeBytes: 0},
+				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot-a.db", SizeBytes: 10},
+				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot-b.db", SizeBytes: 15},
 			},
-			wantSize: 0,
-			wantOk:   false,
+			want: map[string]float64{
+				assetTypeSnapshot: 25,
+			},
 		},
 		{
-			name: "invalid-size-negative-rejected",
+			name: "missing-asset-type-skipped",
 			files: []operatorv1alpha1.EtcdBackupFile{
-				{Path: "/backups/snapshot_2026-09-28_120000.db", SizeBytes: -100 * 1024 * 1024},
+				{Path: "/backups/snapshot.db", SizeBytes: 100 * 1024 * 1024},
+				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources, Path: "/backups/static.tar.gz", SizeBytes: 50},
 			},
-			wantSize: 0,
-			wantOk:   false,
+			want: map[string]float64{
+				assetTypeStaticKubeResources: 50,
+			},
 		},
 		{
-			name: "only-archive-no-snapshot",
+			name: "negative-size-skipped",
 			files: []operatorv1alpha1.EtcdBackupFile{
-				{Path: "/backups/static_kuberesources_2026-09-28_120000.tar.gz", SizeBytes: 50 * 1024 * 1024},
+				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db", SizeBytes: -1},
 			},
-			wantSize: 0,
-			wantOk:   false,
-		},
-		{
-			name: "wrong-prefix-not-matched",
-			files: []operatorv1alpha1.EtcdBackupFile{
-				{Path: "/backups/backup_2026-09-28_120000.db", SizeBytes: 100 * 1024 * 1024},
-			},
-			wantSize: 0,
-			wantOk:   false,
-		},
-		{
-			name: "wrong-suffix-not-matched",
-			files: []operatorv1alpha1.EtcdBackupFile{
-				{Path: "/backups/snapshot_2026-09-28_120000.txt", SizeBytes: 100 * 1024 * 1024},
-			},
-			wantSize: 0,
-			wantOk:   false,
+			want: map[string]float64{},
 		},
 	}
 
@@ -408,9 +396,7 @@ func TestGetSizeBytes(t *testing.T) {
 			backup := operatorv1alpha1.EtcdBackup{
 				Status: operatorv1alpha1.EtcdBackupStatus{Files: tt.files},
 			}
-			gotSize, gotOk := getSizeBytes(backup)
-			require.Equal(t, tt.wantSize, gotSize)
-			require.Equal(t, tt.wantOk, gotOk)
+			require.Equal(t, tt.want, sizeBytesByAssetType(backup))
 		})
 	}
 }
@@ -697,7 +683,7 @@ func requireStatusMetrics(t *testing.T, collector prometheus.Collector, name, ui
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expected), backupStatusMetricName))
 }
 
-func TestBackupMetricsAssets(t *testing.T) {
+func TestBackupMetricsSizeByAsset(t *testing.T) {
 	tests := []struct {
 		name                    string
 		assets                  []operatorv1alpha1.EtcdBackupAssetType
@@ -705,37 +691,79 @@ func TestBackupMetricsAssets(t *testing.T) {
 		wantStaticKubeResources float64
 	}{
 		{
-			name:                    "omitted-means-both",
-			assets:                  nil,
-			wantSnapshot:            1,
-			wantStaticKubeResources: 1,
+			name: "both-recorded",
+			files: []operatorv1alpha1.EtcdBackupFile{
+				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db", SizeBytes: 64675872},
+				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources, Path: "/backups/static.tar.gz", SizeBytes: 54228},
+			},
+			expectedSizes: `
+				# HELP etcd_backup_size_bytes Total recorded backup file size in bytes, by asset type.
+				# TYPE etcd_backup_size_bytes gauge
+				etcd_backup_size_bytes{asset_type="Snapshot",etcd_backup="size-backup",uid="size-backup-uid"} 64675872
+				etcd_backup_size_bytes{asset_type="StaticKubeResources",etcd_backup="size-backup",uid="size-backup-uid"} 54228
+			`,
+			wantCount: 2,
 		},
 		{
-			name:                    "empty-means-both",
-			assets:                  []operatorv1alpha1.EtcdBackupAssetType{},
-			wantSnapshot:            1,
-			wantStaticKubeResources: 1,
+			name: "snapshot-only",
+			files: []operatorv1alpha1.EtcdBackupFile{
+				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db", SizeBytes: 100},
+			},
+			expectedSizes: `
+				# HELP etcd_backup_size_bytes Total recorded backup file size in bytes, by asset type.
+				# TYPE etcd_backup_size_bytes gauge
+				etcd_backup_size_bytes{asset_type="Snapshot",etcd_backup="size-backup",uid="size-backup-uid"} 100
+			`,
+			wantCount: 1,
 		},
 		{
-			name:                    "snapshot-only",
-			assets:                  []operatorv1alpha1.EtcdBackupAssetType{operatorv1alpha1.EtcdBackupAssetTypeSnapshot},
-			wantSnapshot:            1,
-			wantStaticKubeResources: 0,
+			name: "static-only",
+			files: []operatorv1alpha1.EtcdBackupFile{
+				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources, Path: "/backups/static.tar.gz", SizeBytes: 50},
+			},
+			expectedSizes: `
+				# HELP etcd_backup_size_bytes Total recorded backup file size in bytes, by asset type.
+				# TYPE etcd_backup_size_bytes gauge
+				etcd_backup_size_bytes{asset_type="StaticKubeResources",etcd_backup="size-backup",uid="size-backup-uid"} 50
+			`,
+			wantCount: 1,
 		},
 		{
-			name:                    "static-kube-resources-only",
-			assets:                  []operatorv1alpha1.EtcdBackupAssetType{operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources},
-			wantSnapshot:            0,
-			wantStaticKubeResources: 1,
+			name: "recorded-empty-file",
+			files: []operatorv1alpha1.EtcdBackupFile{
+				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db"},
+			},
+			expectedSizes: `
+				# HELP etcd_backup_size_bytes Total recorded backup file size in bytes, by asset type.
+				# TYPE etcd_backup_size_bytes gauge
+				etcd_backup_size_bytes{asset_type="Snapshot",etcd_backup="size-backup",uid="size-backup-uid"} 0
+			`,
+			wantCount: 1,
 		},
 		{
-			name: "both-explicit",
-			assets: []operatorv1alpha1.EtcdBackupAssetType{
+			name: "partial-recorded",
+			requested: []operatorv1alpha1.EtcdBackupAssetType{
 				operatorv1alpha1.EtcdBackupAssetTypeSnapshot,
 				operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources,
 			},
-			wantSnapshot:            1,
-			wantStaticKubeResources: 1,
+			files: []operatorv1alpha1.EtcdBackupFile{
+				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db", SizeBytes: 10},
+			},
+			expectedSizes: `
+				# HELP etcd_backup_size_bytes Total recorded backup file size in bytes, by asset type.
+				# TYPE etcd_backup_size_bytes gauge
+				etcd_backup_size_bytes{asset_type="Snapshot",etcd_backup="size-backup",uid="size-backup-uid"} 10
+			`,
+			wantCount: 1,
+		},
+		{
+			name: "requested-but-not-recorded",
+			requested: []operatorv1alpha1.EtcdBackupAssetType{
+				operatorv1alpha1.EtcdBackupAssetTypeSnapshot,
+				operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources,
+			},
+			files:     nil,
+			wantCount: 0,
 		},
 	}
 
@@ -746,32 +774,21 @@ func TestBackupMetricsAssets(t *testing.T) {
 					Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
 					PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-pvc"},
 				}),
+				testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{Files: tt.files}),
 			}
-			switch tt.name {
-			case "omitted-means-both":
-				// leave Spec.Assets unset
-			case "empty-means-both":
-				opts = append(opts, testutils.WithBackupAssets())
-			default:
-				opts = append(opts, testutils.WithBackupAssets(tt.assets...))
+			if tt.requested != nil {
+				opts = append(opts, testutils.WithBackupAssets(tt.requested...))
 			}
-			backup := testutils.FakeEtcdBackup("asset-backup", opts...)
+			backup := testutils.FakeEtcdBackup("size-backup", opts...)
 			collector := setupCollectorWithBackups(t, backup)
-			requireAssetMetrics(t, collector, "asset-backup", "asset-backup-uid", tt.wantSnapshot, tt.wantStaticKubeResources)
+
+			require.Equal(t, tt.wantCount, testutil.CollectAndCount(collector, backupSizeBytesMetricName))
+			if tt.wantCount == 0 {
+				return
+			}
+			require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(tt.expectedSizes), backupSizeBytesMetricName))
 		})
 	}
-}
-
-func requireAssetMetrics(t *testing.T, collector prometheus.Collector, name, uid string, snapshot, staticKubeResources float64) {
-	t.Helper()
-
-	expected := fmt.Sprintf(`
-		# HELP etcd_backup_asset The asset type(s) saved by the backup. Value of 1 indicates the asset type is included in the etcd backup.
-		# TYPE etcd_backup_asset gauge
-		etcd_backup_asset{asset_type="Snapshot",etcd_backup="%s",uid="%s"} %g
-		etcd_backup_asset{asset_type="StaticKubeResources",etcd_backup="%s",uid="%s"} %g
-	`, name, uid, snapshot, name, uid, staticKubeResources)
-	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expected), backupAssetMetricName))
 }
 
 func requireInfoMetric(t *testing.T, collector prometheus.Collector, name, uid, node, storageType, storageLocation, policyName string) {
@@ -780,7 +797,7 @@ func requireInfoMetric(t *testing.T, collector prometheus.Collector, name, uid, 
 	expected := `
 		# HELP etcd_backup_info Information about etcd backup
 		# TYPE etcd_backup_info gauge
-		etcd_backup_info{created_by_policy="` + policyName + `",etcd_backup="` + name + `",node="` + node + `",storage_location="` + storageLocation + `",storage_type="` + storageType + `",uid="` + uid + `"} 1
+		etcd_backup_info{etcd_backup="` + name + `",etcd_backup_policy="` + policyName + `",node="` + node + `",storage_location="` + storageLocation + `",storage_type="` + storageType + `",uid="` + uid + `"} 1
 	`
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expected), backupInfoMetricName))
 }

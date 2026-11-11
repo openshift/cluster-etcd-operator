@@ -491,9 +491,11 @@ func WithBackupCompleted() func(backup *operatorv1alpha1.EtcdBackup) {
 				dir = backup.Spec.Storage.PVC.Path
 			}
 			backup.Status.Files = append(backup.Status.Files, operatorv1alpha1.EtcdBackupFile{
+				AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot,
 				Path:      path.Join(dir, backup.Name, "snapshot.db"),
 				SizeBytes: 100000,
 			}, operatorv1alpha1.EtcdBackupFile{
+				AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources,
 				Path:      path.Join(dir, backup.Name, "archive.tar.gz"),
 				SizeBytes: 100,
 			})

@@ -1,8 +1,7 @@
 package backupcontroller
 
 import (
-	"path/filepath"
-	"strings"
+	"sort"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorv1alpha1listers "github.com/openshift/client-go/operator/listers/operator/v1alpha1"
@@ -21,7 +20,6 @@ const (
 	backupCompletionTimeMetricName = "etcd_backup_completion_time"
 	backupStartTimeMetricName      = "etcd_backup_start_time"
 	backupSizeBytesMetricName      = "etcd_backup_size_bytes"
-	backupAssetMetricName          = "etcd_backup_asset"
 
 	storageTypePVC   = "PVC"
 	storageTypeLocal = "Local"
@@ -44,7 +42,6 @@ type backupCollector struct {
 	completionTimeDesc *prometheus.Desc
 	startTimeDesc      *prometheus.Desc
 	sizeBytesDesc      *prometheus.Desc
-	assetDesc          *prometheus.Desc
 }
 
 // NewBackupMetrics creates and registers a backup collector with the provided registry.
@@ -55,7 +52,7 @@ func NewBackupMetrics(metricsRegistry metrics.KubeRegistry, backupsLister operat
 		infoDesc: prometheus.NewDesc(
 			backupInfoMetricName,
 			"Information about etcd backup",
-			[]string{"etcd_backup", "uid", "node", "storage_type", "storage_location", "created_by_policy"},
+			[]string{"etcd_backup", "uid", "node", "storage_type", "storage_location", "etcd_backup_policy"},
 			nil,
 		),
 		statusDesc: prometheus.NewDesc(
@@ -78,13 +75,7 @@ func NewBackupMetrics(metricsRegistry metrics.KubeRegistry, backupsLister operat
 		),
 		sizeBytesDesc: prometheus.NewDesc(
 			backupSizeBytesMetricName,
-			"The file size of the backup snapshot.",
-			[]string{"etcd_backup", "uid"},
-			nil,
-		),
-		assetDesc: prometheus.NewDesc(
-			backupAssetMetricName,
-			"The asset type(s) saved by the backup. Value of 1 indicates the asset type is included in the etcd backup.",
+			"Total recorded backup file size in bytes, by asset type.",
 			[]string{"etcd_backup", "uid", "asset_type"},
 			nil,
 		),
@@ -101,7 +92,6 @@ func (c *backupCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.completionTimeDesc
 	ch <- c.startTimeDesc
 	ch <- c.sizeBytesDesc
-	ch <- c.assetDesc
 }
 
 // Collect implements prometheus.Collector
@@ -152,20 +142,6 @@ func (c *backupCollector) collectBackupMetrics(ch chan<- prometheus.Metric, back
 		)
 	}
 
-	includedAssets := extractIncludedAssets(backup)
-	for _, assetType := range []string{assetTypeSnapshot, assetTypeStaticKubeResources} {
-		value := float64(0)
-		if includedAssets[assetType] {
-			value = 1
-		}
-		ch <- prometheus.MustNewConstMetric(
-			c.assetDesc,
-			prometheus.GaugeValue,
-			value,
-			name, uid, assetType,
-		)
-	}
-
 	// Emit start time if available
 	if startTime := getStartTime(backup); startTime > 0 {
 		ch <- prometheus.MustNewConstMetric(
@@ -186,13 +162,15 @@ func (c *backupCollector) collectBackupMetrics(ch chan<- prometheus.Metric, back
 		)
 	}
 
-	// Emit size if available
-	if sizeBytes, ok := getSizeBytes(backup); ok {
+	// Emit recorded file sizes by asset type. Samples are omitted until Status.Files
+	// records the asset; Spec.Assets alone does not produce a size sample.
+	sizes := sizeBytesByAssetType(backup)
+	for _, assetType := range sortedAssetTypes(sizes) {
 		ch <- prometheus.MustNewConstMetric(
 			c.sizeBytesDesc,
 			prometheus.GaugeValue,
-			sizeBytes,
-			name, uid,
+			sizes[assetType],
+			name, uid, assetType,
 		)
 	}
 }
@@ -240,27 +218,6 @@ func extractCurrentStatus(backup operatorv1alpha1.EtcdBackup) string {
 	return ""
 }
 
-func extractIncludedAssets(backup operatorv1alpha1.EtcdBackup) map[string]bool {
-	included := map[string]bool{
-		assetTypeSnapshot:            false,
-		assetTypeStaticKubeResources: false,
-	}
-	if len(backup.Spec.Assets) == 0 {
-		included[assetTypeSnapshot] = true
-		included[assetTypeStaticKubeResources] = true
-		return included
-	}
-	for _, asset := range backup.Spec.Assets {
-		switch asset {
-		case operatorv1alpha1.EtcdBackupAssetTypeSnapshot:
-			included[assetTypeSnapshot] = true
-		case operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources:
-			included[assetTypeStaticKubeResources] = true
-		}
-	}
-	return included
-}
-
 func getStartTime(backup operatorv1alpha1.EtcdBackup) float64 {
 	for _, condition := range backup.Status.Conditions {
 		if condition.Status == metav1.ConditionTrue && condition.Type == string(operatorv1alpha1.BackupRunning) {
@@ -279,21 +236,28 @@ func getCompletionTime(backup operatorv1alpha1.EtcdBackup) float64 {
 	return 0
 }
 
-func getSizeBytes(backup operatorv1alpha1.EtcdBackup) (float64, bool) {
-	var size float64
-	found := false
+// sizeBytesByAssetType aggregates Status.Files by AssetType.
+// Omitted SizeBytes means an empty recorded file (0). Negative sizes are skipped.
+// Files without AssetType are skipped. Requested-but-unrecorded assets are omitted.
+func sizeBytesByAssetType(backup operatorv1alpha1.EtcdBackup) map[string]float64 {
+	sizes := map[string]float64{}
 	for _, file := range backup.Status.Files {
-		name := filepath.Base(file.Path)
-		if !strings.HasPrefix(name, "snapshot_") || !strings.HasSuffix(name, ".db") {
-			continue // Excludes the archive and .db.part files.
+		assetType := string(file.AssetType)
+		if assetType == "" || file.SizeBytes < 0 {
+			continue
 		}
-		if found || file.SizeBytes <= 0 {
-			return 0, false // Ambiguous or invalid snapshot size.
-		}
-		size = float64(file.SizeBytes)
-		found = true
+		sizes[assetType] += float64(file.SizeBytes)
 	}
-	return size, found
+	return sizes
+}
+
+func sortedAssetTypes(sizes map[string]float64) []string {
+	assetTypes := make([]string, 0, len(sizes))
+	for assetType := range sizes {
+		assetTypes = append(assetTypes, assetType)
+	}
+	sort.Strings(assetTypes)
+	return assetTypes
 }
 
 // MustRegisterDefaultBackupMetrics creates backup metrics using the default registry.
