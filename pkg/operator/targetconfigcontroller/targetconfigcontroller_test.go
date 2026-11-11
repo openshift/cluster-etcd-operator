@@ -2,6 +2,7 @@ package targetconfigcontroller
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
@@ -200,6 +201,7 @@ func TestTargetConfigController(t *testing.T) {
 
 				if container.Name == "etcd" {
 					etcdContainerFound = true
+					require.Contains(t, strings.Join(container.Command, " "), "--feature-gates=InitialCorruptCheck=true,StopGRPCServiceOnDefrag=true,NonBlockingDefrag=true,LeaseCheckpoint=true,LeaseCheckpointPersist=true")
 				}
 			}
 
