@@ -31,8 +31,12 @@ func ShouldHonorClusterTLSProfile(tlsAdherence configv1.TLSAdherencePolicy) bool
 // before conversion so consuming components receive an already-safe list.
 // See tls_fips.go for the allowlist and the removal TODO (Go 1.27 without OpenSSL FIPS).
 func GetSecurityProfileGroups(profileSpec *configv1.TLSProfileSpec) []string {
+	return getSecurityProfileGroups(profileSpec, IsFIPSEnabled())
+}
+
+func getSecurityProfileGroups(profileSpec *configv1.TLSProfileSpec, fipsEnabled bool) []string {
 	src := profileSpec.Groups
-	if IsFIPSEnabled() {
+	if fipsEnabled {
 		src = FIPSApprovedTLSGroups(src)
 	}
 	groups := make([]string, 0, len(src))
