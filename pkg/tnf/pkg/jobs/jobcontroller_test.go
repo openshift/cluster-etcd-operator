@@ -476,6 +476,7 @@ func TestJobModificationRecreation(t *testing.T) {
 		coreInformerFactory.Batch().V1().Jobs(),
 		DefaultConditions,
 		optionalInformers,
+		nil,
 		optionalJobHooks...,
 	)
 
@@ -606,6 +607,7 @@ func newTestContext(test testCase, t *testing.T, conditions []string) *testConte
 		coreInformerFactory.Batch().V1().Jobs(),
 		conditions,
 		optionalInformers,
+		nil,
 		optionalJobHooks...,
 	)
 

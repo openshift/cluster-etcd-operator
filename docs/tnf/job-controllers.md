@@ -13,43 +13,44 @@ The job controller system operates in two distinct modes based on whether the ex
 Initial cluster setup during first-time installation:
 
 - **Entry Point:** Operator sync loop during startup
-- **Requirements:** 
+- **Requirements:**
   - Exactly 2 ready control plane nodes (Pacemaker limitation - errors if > 2, waits if < 2)
   - Both nodes must report Ready status
   - etcd bootstrap must complete
   - All nodes must reach latest static pod revision
 - **Behavior:**
-  - Exponential backoff retry (5s → 2min cap) with 10-minute timeout
+  - Exponential backoff retry (5s → 2min cap), with about ten minutes of retry delays; prerequisite waits have separate timeouts
   - Blocks until etcd bootstrap completes and all nodes at stable revision
-  - Creates auth jobs (per-node), setup job (cluster-wide), fencing job (cluster-wide)
-  - Waits for setup job to complete before marking transition complete
-  - Sets `TNFJobControllersDegraded` condition if setup fails after 10-minute retry
-- **Exit:** Marks external etcd transition complete when setup job succeeds
+  - Starts auth, setup, fencing, and after-setup controllers; Jobs run asynchronously
+  - Sets `TNFJobControllersDegraded` if controller startup exhausts its retries
+- **Exit:** The setup runner marks transition complete after static-container removal reaches a stable revision, before the Job completes
 
 ### Runtime Mode (Post-Transition)
 
 Operations after initial setup is complete (operator restart, upgrade, node replacement):
 
 - **Entry Point:** Operator sync loop detects transition already complete
-- **Requirements:** At least 1 ready control plane node
+- **Requirements:** A nonempty registered control-plane node set; individual Jobs check execution readiness
 - **Behavior:**
   - Idempotent restart support - safe to call repeatedly
-  - Setup job is one-time execution (not recreated), but controller runs to maintain conditions
+  - Setup creation is refused after transition, including after Job deletion or image/spec drift; deferred creation preserves completion status
   - Ensures auth/after-setup controllers running for each node
   - Ensures fencing controller running
 - **Use Cases:** Operator restart, upgrade, node replacement, degraded node scenarios
 
-**Key Difference:** Bootstrap mode blocks until setup completes (initial cluster creation), while runtime mode is non-blocking and assumes cluster already exists.
+Bootstrap controller startup waits for installation prerequisites. After startup, both modes run Jobs asynchronously.
 
 ## Condition Model
 
-Job controllers use a three-condition model to track lifecycle and health status. All conditions are set on the etcd Operator CR and propagate to the ClusterOperator CR:
+The shared job framework supports three condition types, enabled per controller.
+Setup enables all three; other framework jobs enable Progressing and Degraded.
+Conditions are set on the etcd Operator CR and propagate to the ClusterOperator CR:
 
 **Available Condition**:
 - Type format: `<JobName>Available` (e.g., `TNFSetupJobAvailable`)
 - Indicates the job has **successfully completed**
 - Set when job reaches Complete status
-- Cleared when job is restarted or deleted
+- Set false when an incomplete or failed Job is observed. Job deletion alone does not clear it; skipped application or deferred creation preserves existing status.
 - Reason: `JobComplete`
 
 **Progressing Condition**:
@@ -62,17 +63,16 @@ Job controllers use a three-condition model to track lifecycle and health status
 **Degraded Condition**:
 - Type format: `<JobName>Degraded` (e.g., `TNFSetupJobDegraded`)
 - Indicates a job has **failed OR is blocked** from running
-- Reasons:
-  - `SyncError`: Job blocked (nodes not ready or no schedulable nodes) for >10 minutes
-  - `MaxRetriesExceeded`: Job exhausted all retry attempts in current cycle (e.g., 6 tries across 2 nodes × 3 attempts)
-- **Blocked jobs** (SyncError):
-  - Set after 10-minute timeout when blocking condition persists
-  - Automatically cleared when condition resolves (nodes become ready, schedulable nodes available)
+- Reason: `SyncError`, set by the controller factory when sync returns an error
+- **Readiness or no-target blocks**:
+  - Set after the blocking condition persists for ten minutes
+  - Cleared when the blocking condition resolves, unless retry exhaustion must be preserved
   - Message contains details: "Affected nodes not ready: [master-0]" or "No schedulable nodes available"
-- **Failed jobs** (MaxRetriesExceeded):
-  - Set immediately when max retry attempts exhausted in a cycle
-  - **Retry cycles continue** - after setting Degraded, state resets to attempt 1 and retries resume
-  - Remains set until the job succeeds
+- **Execution and controller errors**: failed Jobs, API errors, and configuration-drift deletion errors can report `SyncError` immediately; the readiness timeout does not apply to them
+- **Retry exhaustion**:
+  - Returns `SyncError` with message "Job failed after maximum retry attempts" immediately when a cycle is exhausted (e.g., two nodes × three attempts)
+  - State resets to attempt 1 and retry cycles continue; this shared framework has no exhaustion cooldown
+  - The exhaustion message is preserved through retries and deferrals until the Job succeeds
 
 All conditions are set on the **etcd Operator CR** and propagate to the **ClusterOperator CR** via the cluster status controller. This allows per-job granularity on the Operator CR while the ClusterOperator shows overall health state to cluster administrators.
 
@@ -104,28 +104,24 @@ Entry point for starting cluster-wide job controllers with multi-node retry logi
 
 **Signature:**
 ```go
-RunClusterJobController(ctx, jobType, schedulableNodesFunc, affectedNodesFunc, jobConfigFunc, retries, ...)
+RunClusterJobController(ctx, jobType, schedulableNodesFunc, createAdmissionHook, jobConfigFunc, retries, ...)
 ```
 
 ### RestartClusterJobOrRunController
 
-Handles job restart logic with blocking cleanup:
-
-- Deletes existing job and waits for deletion (blocking)
-- Starts new job controller after cleanup completes
-- Used when job config changes or manual restart needed
-- Only used for cluster-wide jobs (node jobs use drift detection instead)
+Retained helper for restarting cluster Jobs; the lifecycle manager no longer calls it.
+It waits for old execution/deletion, resets retry state, and ensures the controller is running.
 
 ## Job Types and Characteristics
 
 **Node-Specific (single-node pattern):**
 - **auth:** Sets hacluster password (required before Pacemaker operations)
-- **after-setup:** Disables kubelet systemd service (Pacemaker owns it now)
+- **after-setup:** Disables kubelet systemd service (Pacemaker owns it now). After transition, it requires its live node UID and the newest matching generation's completion, bound to that record's UID after Job cleanup.
 
 **Cluster-Wide (multi-node pattern):**
-- **setup:** Creates Pacemaker cluster, marks transition complete. Returns success immediately if transition already complete (e.g., job recreated due to drift detection)
+- **setup:** Creates Pacemaker cluster and marks transition complete. Creation admission refuses new Jobs afterward; executor changes preserve running/completed setup. Resetting transition and deleting the Job permits a deliberate rerun. The runner also checks transition.
 - **fencing:** Configures STONITH for BMC power control
-- **update-setup:** Handles node replacements (removes offline node, adds new node, updates IPs). Validates: (1) Pacemaker cluster running on scheduled node, (2) exactly 2 nodes online after operations complete. Returns error to trigger retry if validation fails (e.g., auth hasn't run on new node yet)
+- **update-setup:** Reconciles Kubernetes membership through recorded attempts outside this shared framework. See [reconciliation.md](reconciliation.md) for its execution, validation, and retry rules.
 
 ### Alert-Agent Registration
 
@@ -136,11 +132,10 @@ for node events. Their scripts are delivered asynchronously by MCO under
 - **Initial setup:** Calls `pcs.ConfigureAlerts()` after configuring fencing. If a script is missing
   or not executable, it logs a warning and continues setup, allowing later registration once MCO
   delivers the scripts. Other configuration errors fail the job and use the normal job retry path.
-- **Update-setup:** Calls `pcs.ConfigureAlertsWithRetry()` on each invocation, including invocations
-  during upgrades, before node replacement handling. If both alert IDs already exist in the CIB,
-  registration is skipped. Otherwise it attempts configuration immediately and polls every 15 seconds
-  for up to 60 minutes while scripts are missing or not executable. Other errors return immediately;
-  errors and timeout failures use the normal cluster-job retry path.
+- **Update-setup:** Application and repair call `pcs.ConfigureAlertsWithRetry()` after cluster
+  startup and before validation. Matching read-only discovery skips registration. Existing alert IDs
+  are skipped; missing scripts are polled every 15 seconds for up to 60 minutes, bounded by the Job's
+  15-minute deadline. Other errors return immediately and use the recorded-attempt retry path.
 
 Configuration creates missing registrations with a `30s` execution timeout and the expected event
 filter. Existing registrations reached during configuration are updated in place, avoiding a
@@ -165,16 +160,16 @@ RunNodeJobController(jobType, node, retries, ...)
  │  │
  │  └─ getJob hook (runs on every sync):
  │     │
- │     ├─ Check node readiness via checkNodesReadinessAndSetCondition
- │     │  ├─ Not ready < 10min → Return (skip job, retry on next sync)
- │     │  ├─ Not ready ≥ 10min → Return error (triggers Degraded via WithSyncDegradedOnError)
- │     │  └─ Ready → Continue (Degraded clears naturally when job succeeds/completes)
- │     │
  │     └─ Create job spec:
  │        - Fetch fresh node from informer (handles node replacement)
  │        - Pin to target node (NodeName fixed assignment)
  │        - Label with node UID (job.Labels["node"] = string(node.UID))
  │        - Set backoffLimit=retries (Kubernetes handles retries)
+ │
+ ├─ ApplyJob reconciles existing Jobs and waits for earlier Pods
+ ├─ Before creation, admission checks the current target's readiness
+ │  - Not ready < 10min → Defer creation, preserving status
+ │  - Not ready ≥ 10min → Return error (Degraded)
  │
  └─ JobController syncs every minute
     - Complete → Clear conditions, done
@@ -216,24 +211,20 @@ This ensures:
 Multi-node jobs implement round-robin retry across schedulable nodes with drift detection. Used for cluster-wide operations like setup and fencing.
 
 **Function Roles:**
-- `schedulableNodesFunc`: Returns nodes where job can run (intersection of K8s Ready nodes and Pacemaker members). Changes trigger retry reset. See [Lifecycle Manager](lifecycle-manager.md#node-selection-logic) for implementation details.
-- `affectedNodesFunc`: Returns nodes that must be ready before job runs (can include nodes being added). Job blocked if any not ready.
+- `schedulableNodesFunc`: Returns nodes where job can run (intersection of K8s Ready nodes and Pacemaker members). Changes refresh placement without invalidating running/completed Jobs. See [Lifecycle Manager](lifecycle-manager.md#node-selection-logic) for implementation details.
+- `createAdmissionHook`: Called before every create, including replacement/retry. Returns `(false, nil)` to defer without consuming retries or changing status. Setup checks transition/all-node readiness; fencing checks nodes with fencing Secrets.
 - `jobConfigFunc`: Returns config string for drift detection (generation, secret ResourceVersions). Changes trigger retry reset.
 
 **Execution Flow:**
 
 ```text
-RunClusterJobController(jobType, schedulableNodesFunc, affectedNodesFunc, jobConfigFunc, retries, ...)
+RunClusterJobController(jobType, schedulableNodesFunc, createAdmissionHook, jobConfigFunc, retries, ...)
  │
  ├─ Create JobController with getJob hook
  │  │
  │  └─ getJob hook (runs on every sync):
  │     │
  │     ├─ Call syncMultiNodeJobState (manages retry state):
- │     │  │
- │     │  ├─ Check affectedNodesFunc() → any nodes not ready?
- │     │  │  ├─ YES → Return error after 10min (triggers Degraded via WithSyncDegradedOnError)
- │     │  │  └─ NO → Continue (Degraded clears naturally when job succeeds/completes)
  │     │  │
  │     │  ├─ Check schedulableNodesFunc() → any nodes available?
  │     │  │  ├─ NO → Return error after 10min (triggers Degraded via WithSyncDegradedOnError)
@@ -242,7 +233,7 @@ RunClusterJobController(jobType, schedulableNodesFunc, affectedNodesFunc, jobCon
  │     │  ├─ Get or initialize retry state (AttemptNumber, NodeIndex, config)
  │     │  │
  │     │  ├─ Check schedulableNodesFunc() → nodes changed?
- │     │  │  └─ YES → Reset state (attempt=1, index=0), delete job, return
+ │     │  │  └─ YES → Refresh executors and retry cursor; keep running/completed Job
  │     │  │
  │     │  ├─ Check jobConfigFunc() → config changed?
  │     │  │  └─ YES → Reset state (attempt=1, index=0), delete job, return
@@ -259,7 +250,7 @@ RunClusterJobController(jobType, schedulableNodesFunc, affectedNodesFunc, jobCon
  │     │  │
  │     │  └─ ApplyJob detects drift (NodeName, node-index, or attempt labels changed) → Deletes and recreates job
  │     │
- │     ├─ Check if retry state exists (skipped if nodes not ready)
+ │     ├─ Check if retry state exists (skipped if no execution target)
  │     │  └─ NO → Return nil (skip job creation, retry on next sync)
  │     │
  │     └─ Call configureMultiNodeJob (configures job with retry state):
@@ -270,6 +261,9 @@ RunClusterJobController(jobType, schedulableNodesFunc, affectedNodesFunc, jobCon
  │        └─ Create job spec:
  │           - Schedule on selected node (nodeSelector)
  │           - Set backoffLimit=0 (manual retry only)
+ │
+ ├─ ApplyJob reconciles existing Jobs, then waits for earlier Pods before creation
+ ├─ Before every create: createAdmissionHook → allow, defer, or error
  │
  └─ JobController syncs every minute
     - Complete → Clear conditions, done
@@ -283,18 +277,9 @@ RunClusterJobController(jobType, schedulableNodesFunc, affectedNodesFunc, jobCon
 - **Total:** 6 tries (2 nodes × 3 attempts) with maxRetryAttempts=3
 - **After Degraded:** Reset to attempt 1, retry continues (allows recovery)
 
-**Job-Specific Validation:**
-Cluster jobs may perform node-specific validation before and after executing their operations. For example, update-setup validates:
-1. **Pre-execution:** Pacemaker cluster is running on the scheduled node (`pcs cluster status`). If not, returns error to trigger round-robin retry to find the node where cluster is running.
-2. **Post-execution:** Exactly 2 nodes are online in the cluster (`pcs status xml`). If not, returns error to trigger retry, ensuring the job doesn't succeed until the new node is fully online (i.e., auth job has run and node joined cluster).
-
-This allows cluster-wide jobs to find the correct execution context and validate complete state without requiring explicit knowledge at scheduling time.
-
 **Drift Detection:**
-When infrastructure changes (nodes added/removed, config updated), retry state resets:
-- `schedulableNodesFunc` returns different nodes → Reset (Pacemaker membership changed)
-- `jobConfigFunc` returns different config → Reset (infrastructure changed, e.g., secret rotation)
-- Old job deleted, new job starts on first node with attempt 1
+- Changed `schedulableNodesFunc` output refreshes executors and rebases the retry cursor, retaining its node when still eligible; it does not delete running/completed work or reset the retry budget.
+- Changed `jobConfigFunc` output deletes stale work and resets retries. Setup has no configuration callback; fencing includes node/Secret identities.
 
 **ApplyJob Drift Handling:**
 `ApplyJob` detects drift between existing and required job specs and handles recreation:
@@ -303,7 +288,6 @@ When infrastructure changes (nodes added/removed, config updated), retry state r
 - **Failed cluster jobs:** Any drift (including NodeName from retry) triggers delete/recreate for round-robin retry
 
 **Config String Components:**
-- Generation counters (detect config changes)
 - Node UIDs (detect node replacements)
 - Secret ResourceVersions (detect credential rotation and data updates)
 
@@ -326,11 +310,11 @@ Cluster jobs use round-robin retry **only on failure**. Once a job succeeds, it'
 
 **Lifecycle Manager:**
 - **[lifecycle-manager.md](lifecycle-manager.md)** - PacemakerLifecycleManager, node selection, status collector
-- **[pkg/tnf/operator/lifecycle_manager.go](../../pkg/tnf/operator/lifecycle_manager.go)** - Lifecycle controller sync loop, node event handlers
+- **[pkg/tnf/operator/lifecycle_manager.go](../../pkg/tnf/operator/lifecycle_manager.go)** - Lifecycle controller sync loop and informer work queue
 - **[pkg/tnf/operator/helpers.go](../../pkg/tnf/operator/helpers.go)** - getActivePacemakerNodes(), intersection logic
 - **[pkg/tnf/operator/status_collector.go](../../pkg/tnf/operator/status_collector.go)** - Status collector CronJob
 - **[pkg/tnf/operator/job_controllers.go](../../pkg/tnf/operator/job_controllers.go)** - Job controller startup logic
 
 **Job Implementations:**
 - **[pkg/tnf/setup/runner.go](../../pkg/tnf/setup/runner.go)** - Setup job implementation (creates Pacemaker cluster)
-- **[pkg/tnf/update-setup/runner.go](../../pkg/tnf/update-setup/runner.go)** - Update-setup job implementation (node replacement orchestration). Validates Pacemaker cluster running on scheduled node before proceeding, and validates exactly 2 nodes online after completion; returns error to trigger retry otherwise
+- **[pkg/tnf/update-setup/runner.go](../../pkg/tnf/update-setup/runner.go)** - Update-setup entry point; [recorded.go](../../pkg/tnf/update-setup/recorded.go) implements recorded reconciliation
