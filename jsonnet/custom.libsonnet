@@ -281,24 +281,9 @@
               summary: 'Backup policy has critical consecutive failures.',
             },
           },
-          {
-            alert: 'etcdBackupNoPolicyConfigured',
-            // Cluster-wide check: enabled has scrape labels (job/instance); absent()
-            // yields an empty-label vector. Default and matching would fail to join.
-            expr: |||
-              etcd_automated_backup_enabled == 1
-              and on()
-              absent(etcd_backup_policy_info)
-            |||,
-            'for': '15m',
-            labels: {
-              severity: 'warning',
-            },
-            annotations: {
-              description: 'AutomatedEtcdBackup feature is enabled but no EtcdBackupPolicy is configured. Configure an EtcdBackupPolicy resource to ensure regular backups are taken.',
-              summary: 'No automated etcd backup policy is configured.',
-            },
-          },
+          // etcdBackupNoPolicyConfigured deferred until AutomatedEtcdBackup GA:
+          // it needs a feature-gate presence signal (e.g. etcd_automated_backup_enabled)
+          // so absent(etcd_backup_policy_info) does not fire on Default clusters.
           {
             alert: 'etcdBackupPolicyTrackerError',
             expr: 'etcd_backup_policy_tracker_error == 1',

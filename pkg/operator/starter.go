@@ -570,7 +570,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			metricsRegistry,
 			backupPoliciesLister,
 			operatorConfigMapsInformer.Lister().ConfigMaps(operatorclient.OperatorNamespace),
-			featureGateAccessor,
 		)
 
 		backupPolicyRetentionController, err := backuppolicycontroller.NewBackupPolicyRetentionController(

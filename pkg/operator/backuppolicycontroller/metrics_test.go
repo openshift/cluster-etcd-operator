@@ -197,6 +197,5 @@ func setupPolicyCollector(t *testing.T, policies []*operatorv1alpha1.EtcdBackupP
 		metrics.NewKubeRegistry(),
 		policyInformer.Lister(),
 		cmInformer.Lister().ConfigMaps("openshift-etcd-operator"),
-		backupFeatureGateAccessor,
 	)
 }

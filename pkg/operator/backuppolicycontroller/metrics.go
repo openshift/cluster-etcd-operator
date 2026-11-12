@@ -3,8 +3,6 @@ package backuppolicycontroller
 import (
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorv1alpha1listers "github.com/openshift/client-go/operator/listers/operator/v1alpha1"
-	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
-	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/prometheus/client_golang/prometheus"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
@@ -15,7 +13,6 @@ import (
 )
 
 const (
-	automatedBackupEnabledMetricName          = "etcd_automated_backup_enabled"
 	backupPolicyInfoMetricName                = "etcd_backup_policy_info"
 	backupPolicyConsecutiveFailuresMetricName = "etcd_backup_policy_consecutive_failures"
 	backupPolicyLastSuccessTimeMetricName     = "etcd_backup_policy_last_success_time"
@@ -29,11 +26,9 @@ const (
 // policyCollector implements prometheus.Collector and generates metrics
 // on-demand at scrape time from cached EtcdBackupPolicy and ConfigMap listers.
 type policyCollector struct {
-	policiesLister      operatorv1alpha1listers.EtcdBackupPolicyLister
-	trackerConfigMaps   corev1listers.ConfigMapNamespaceLister
-	featureGateAccessor featuregates.FeatureGateAccess
+	policiesLister    operatorv1alpha1listers.EtcdBackupPolicyLister
+	trackerConfigMaps corev1listers.ConfigMapNamespaceLister
 
-	enabledDesc             *prometheus.Desc
 	infoDesc                *prometheus.Desc
 	consecutiveFailuresDesc *prometheus.Desc
 	lastSuccessTimeDesc     *prometheus.Desc
@@ -47,18 +42,10 @@ func NewBackupPolicyMetrics(
 	metricsRegistry metrics.KubeRegistry,
 	policiesLister operatorv1alpha1listers.EtcdBackupPolicyLister,
 	trackerConfigMaps corev1listers.ConfigMapNamespaceLister,
-	featureGateAccessor featuregates.FeatureGateAccess,
 ) *policyCollector {
 	c := &policyCollector{
-		policiesLister:      policiesLister,
-		trackerConfigMaps:   trackerConfigMaps,
-		featureGateAccessor: featureGateAccessor,
-		enabledDesc: prometheus.NewDesc(
-			automatedBackupEnabledMetricName,
-			"Whether AutomatedEtcdBackup feature gate is enabled (1) or disabled (0)",
-			nil,
-			nil,
-		),
+		policiesLister:    policiesLister,
+		trackerConfigMaps: trackerConfigMaps,
 		infoDesc: prometheus.NewDesc(
 			backupPolicyInfoMetricName,
 			"Information about etcd backup policy",
@@ -97,7 +84,6 @@ func NewBackupPolicyMetrics(
 
 // Describe implements prometheus.Collector
 func (c *policyCollector) Describe(ch chan<- *prometheus.Desc) {
-	ch <- c.enabledDesc
 	ch <- c.infoDesc
 	ch <- c.consecutiveFailuresDesc
 	ch <- c.lastSuccessTimeDesc
@@ -107,17 +93,6 @@ func (c *policyCollector) Describe(ch chan<- *prometheus.Desc) {
 
 // Collect implements prometheus.Collector
 func (c *policyCollector) Collect(ch chan<- prometheus.Metric) {
-	// Emit feature gate enabled metric
-	enabled := float64(0)
-	if isEnabled, err := backuphelpers.AutoBackupFeatureGateEnabled(c.featureGateAccessor); err == nil && isEnabled {
-		enabled = 1
-	}
-	ch <- prometheus.MustNewConstMetric(
-		c.enabledDesc,
-		prometheus.GaugeValue,
-		enabled,
-	)
-
 	policies, err := c.policiesLister.List(labels.Everything())
 	if err != nil {
 		klog.Errorf("policyCollector failed to list backup policies: %v", err)
@@ -227,7 +202,6 @@ func extractPolicyStorageInfo(policy *operatorv1alpha1.EtcdBackupPolicy) (string
 func MustRegisterDefaultBackupPolicyMetrics(
 	policiesLister operatorv1alpha1listers.EtcdBackupPolicyLister,
 	trackerConfigMaps corev1listers.ConfigMapNamespaceLister,
-	featureGateAccessor featuregates.FeatureGateAccess,
 ) *policyCollector {
-	return NewBackupPolicyMetrics(legacyregistry.DefaultGatherer.(metrics.KubeRegistry), policiesLister, trackerConfigMaps, featureGateAccessor)
+	return NewBackupPolicyMetrics(legacyregistry.DefaultGatherer.(metrics.KubeRegistry), policiesLister, trackerConfigMaps)
 }

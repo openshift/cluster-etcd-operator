@@ -293,17 +293,6 @@ spec:
         etcd_backup_policy_consecutive_failures >= 3
       labels:
         severity: critical
-    - alert: etcdBackupNoPolicyConfigured
-      annotations:
-        description: AutomatedEtcdBackup feature is enabled but no EtcdBackupPolicy is configured. Configure an EtcdBackupPolicy resource to ensure regular backups are taken.
-        summary: No automated etcd backup policy is configured.
-      expr: |
-        etcd_automated_backup_enabled == 1
-        and on()
-        absent(etcd_backup_policy_info)
-      for: 15m
-      labels:
-        severity: warning
     - alert: etcdBackupPolicyTrackerError
       annotations:
         description: The etcd backup failure tracker ConfigMap could not be read (missing data or corrupt). Backup success freshness is unknown until tracking is restored; etcdBackupPolicyNoRecentSuccess is suppressed while this alert fires.
