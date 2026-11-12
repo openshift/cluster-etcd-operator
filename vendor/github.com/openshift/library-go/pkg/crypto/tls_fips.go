@@ -2,9 +2,13 @@ package crypto
 
 import (
 	"crypto/fips140"
+	"os"
+	"strings"
 
 	configv1 "github.com/openshift/api/config/v1"
 )
+
+const hostFIPSEnabledPath = "/proc/sys/crypto/fips_enabled"
 
 // fipsTLSGroups is the allowlist of TLSGroup values approved under FIPS 186-5.
 // Only the NIST P-curves qualify. An allowlist is used rather than a blocklist
@@ -41,9 +45,30 @@ var fipsTLSGroups = map[configv1.TLSGroup]struct{}{
 	configv1.TLSGroupSecP521r1: {},
 }
 
-// IsFIPSEnabled reports whether the Go runtime is operating in FIPS 140 mode.
+// IsFIPSEnabled reports whether TLS groups should be treated as FIPS-restricted.
+//
+// The native Go FIPS 140 mode is controlled by crypto/fips140. Red Hat Go
+// builds can use a host FIPS crypto backend whose mode is not exposed through
+// a public Go API. The Linux kernel exposes its FIPS policy state through
+// /proc/sys/crypto/fips_enabled, so a host FIPS signal also restricts groups.
+// This policy-level signal does not identify a particular process's crypto
+// backend. If it is unavailable or malformed, this function preserves the
+// native Go result.
 func IsFIPSEnabled() bool {
-	return fips140.Enabled()
+	return isFIPSEnabled(fips140.Enabled(), os.ReadFile)
+}
+
+func isFIPSEnabled(nativeFIPSEnabled bool, readFile func(string) ([]byte, error)) bool {
+	return nativeFIPSEnabled || isHostFIPSEnabled(readFile)
+}
+
+func isHostFIPSEnabled(readFile func(string) ([]byte, error)) bool {
+	data, err := readFile(hostFIPSEnabledPath)
+	if err != nil {
+		return false
+	}
+
+	return strings.TrimSpace(string(data)) == "1"
 }
 
 // FIPSApprovedTLSGroups returns the subset of groups that are FIPS-approved,
