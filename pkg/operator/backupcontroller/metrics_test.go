@@ -685,11 +685,11 @@ func requireStatusMetrics(t *testing.T, collector prometheus.Collector, name, ui
 
 func TestBackupMetricsSizeByAsset(t *testing.T) {
 	tests := []struct {
-		name                    string
-		files                   []operatorv1alpha1.EtcdBackupFile
-		requested               []operatorv1alpha1.EtcdBackupAssetType
-		expectedSizes           string
-		wantCount               int
+		name          string
+		files         []operatorv1alpha1.EtcdBackupFile
+		requested     []operatorv1alpha1.EtcdBackupAssetType
+		expectedSizes string
+		wantCount     int
 	}{
 		{
 			name: "both-recorded",
