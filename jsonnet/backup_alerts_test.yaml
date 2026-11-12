@@ -32,47 +32,9 @@ tests:
               summary: etcd backup duration is high.
               description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
 
-  # Tracker-health alert (for:5m) — use a 1m interval so samples stay within lookback.
-  - interval: 1m
-    input_series:
-      - series: 'etcd_backup_policy_tracker_error{job="cluster-etcd-operator",instance="10.0.0.1:9090"}'
-        values: "1+0x20"
-    alert_rule_test:
-      - eval_time: 10m
-        alertname: etcdBackupPolicyTrackerError
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              job: cluster-etcd-operator
-              instance: "10.0.0.1:9090"
-            exp_annotations:
-              summary: etcd backup policy tracker state is unhealthy.
-              description: The etcd backup failure tracker ConfigMap could not be read (missing data or corrupt). Backup success freshness is unknown until tracking is restored; etcdBackupPolicyNoRecentSuccess is suppressed while this alert fires.
-
-  # Unhealthy tracker suppresses NoRecentSuccess even for an old never-succeeded policy.
-  # Daily interval=86400 → threshold 2*interval = 48h; age at 50h exceeds that.
+  # Never-succeeded daily policy: age must exceed 2*interval (48h) before firing.
   - interval: 1h
     input_series:
-      - series: 'etcd_backup_policy_tracker_error{job="cluster-etcd-operator",instance="10.0.0.1:9090"}'
-        values: "1+0x55"
-      - series: 'etcd_backup_policy_last_success_time{job="cluster-etcd-operator",instance="10.0.0.1:9090",policy="daily",uid="uid-1"}'
-        values: "0+0x55"
-      - series: 'etcd_backup_policy_creation_time{job="cluster-etcd-operator",instance="10.0.0.1:9090",policy="daily",uid="uid-1"}'
-        values: "1+0x55"
-      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",policy="daily",uid="uid-1"}'
-        values: "86400+0x55"
-    alert_rule_test:
-      - eval_time: 50h
-        alertname: etcdBackupPolicyNoRecentSuccess
-        exp_alerts: []
-
-  # Healthy tracker + never-succeeded daily policy past 2*interval → NoRecentSuccess fires.
-  - interval: 1h
-    input_series:
-      - series: 'etcd_backup_policy_tracker_error{job="cluster-etcd-operator",instance="10.0.0.1:9090"}'
-        values: "0+0x55"
-      - series: 'etcd_backup_policy_last_success_time{job="cluster-etcd-operator",instance="10.0.0.1:9090",policy="daily",uid="uid-1"}'
-        values: "0+0x55"
       - series: 'etcd_backup_policy_creation_time{job="cluster-etcd-operator",instance="10.0.0.1:9090",policy="daily",uid="uid-1"}'
         values: "1+0x55"
       - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",policy="daily",uid="uid-1"}'
@@ -96,17 +58,58 @@ tests:
               summary: Backup policy has no successful backup within two schedule intervals.
               description: 'Backup policy "daily" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.'
               runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyNoRecentSuccess.md
+
+  # Recent Completed backup suppresses NoRecentSuccess for an old policy.
+  - interval: 1h
+    input_series:
+      - series: 'etcd_backup_policy_creation_time{job="cluster-etcd-operator",instance="10.0.0.1:9090",policy="daily",uid="uid-1"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",policy="daily",uid="uid-1"}'
+        values: "86400+0x55"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
+        values: "1+0x55"
+      # completion near the end of the series window (≈49h) so age at 50h is ~1h.
+      - series: 'etcd_backup_completion_time{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="b1",uid="b-uid-1"}'
+        values: "176400+0x55"
+    alert_rule_test:
       - eval_time: 50h
-        alertname: etcdBackupPolicyTrackerError
+        alertname: etcdBackupPolicyNoRecentSuccess
         exp_alerts: []
+
+  # Stale Completed backup: last success older than 2*interval → fire.
+  - interval: 1h
+    input_series:
+      - series: 'etcd_backup_policy_creation_time{job="cluster-etcd-operator",instance="10.0.0.1:9090",policy="daily",uid="uid-1"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",policy="daily",uid="uid-1"}'
+        values: "86400+0x55"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
+        values: "1+0x55"
+      # success at t=100s; at 50h age ≈50h > 48h threshold.
+      - series: 'etcd_backup_completion_time{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="b1",uid="b-uid-1"}'
+        values: "100+0x55"
+    alert_rule_test:
+      - eval_time: 50h
+        alertname: etcdBackupPolicyNoRecentSuccess
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: cluster-etcd-operator
+              instance: "10.0.0.1:9090"
+              policy: daily
+              uid: uid-1
+            exp_annotations:
+              summary: Backup policy has no successful backup within two schedule intervals.
+              description: 'Backup policy "daily" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.'
+              runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyNoRecentSuccess.md
 
   # Weekly policy (interval=7d): at 13d still within 2*interval (14d); at 15d fires.
   - interval: 12h
     input_series:
-      - series: 'etcd_backup_policy_tracker_error{job="cluster-etcd-operator",instance="10.0.0.1:9090"}'
-        values: "0+0x35"
-      - series: 'etcd_backup_policy_last_success_time{job="cluster-etcd-operator",instance="10.0.0.1:9090",policy="weekly",uid="uid-2"}'
-        values: "0+0x35"
       - series: 'etcd_backup_policy_creation_time{job="cluster-etcd-operator",instance="10.0.0.1:9090",policy="weekly",uid="uid-2"}'
         values: "1+0x35"
       - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",policy="weekly",uid="uid-2"}'

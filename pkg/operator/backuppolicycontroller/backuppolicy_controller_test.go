@@ -65,28 +65,22 @@ func runBackupPolicyControllerTest(t *testing.T, tc testCaseBackupPolicyControll
 	operatorSharedFactory := operatorinformers.NewSharedInformerFactory(operatorFake, 0)
 
 	backupPoliciesInformer := operatorSharedFactory.Operator().V1alpha1().EtcdBackupPolicies()
-	backupsInformer := operatorSharedFactory.Operator().V1alpha1().EtcdBackups()
 	cronJobsInformer := sharedFactory.Batch().V1().CronJobs()
 
 	backupPoliciesInformerHasSynced := backupPoliciesInformer.Informer().HasSynced
-	backupsInformerHasSynced := backupsInformer.Informer().HasSynced
 	cronJobsInformerHasSynced := cronJobsInformer.Informer().HasSynced
 
 	ctx := t.Context()
 	sharedFactory.Start(ctx.Done())
 	operatorSharedFactory.Start(ctx.Done())
-	cache.WaitForCacheSync(ctx.Done(), cronJobsInformerHasSynced, backupPoliciesInformerHasSynced, backupsInformerHasSynced)
+	cache.WaitForCacheSync(ctx.Done(), cronJobsInformerHasSynced, backupPoliciesInformerHasSynced)
 
 	fakeClock := testingclock.NewFakeClock(time.Now())
 	eventRecorder := events.NewInMemoryRecorder("test", fakeClock)
 	t.Cleanup(eventRecorder.Shutdown)
 
-	// Create RunTracker for failure tracking
-	runTracker := NewRunTracker("test-namespace", client.CoreV1().ConfigMaps("test-namespace"))
-
 	controller := &BackupPolicyController{
 		backupPoliciesLister:  backupPoliciesInformer.Lister(),
-		backupsLister:         backupsInformer.Lister(),
 		cronJobLister:         cronJobsInformer.Lister().CronJobs(operatorclient.TargetNamespace),
 		operatorClient:        operatorFake.OperatorV1alpha1(),
 		kubeClient:            client,
@@ -94,7 +88,6 @@ func runBackupPolicyControllerTest(t *testing.T, tc testCaseBackupPolicyControll
 		featureGateAccessor:   backupFeatureGateAccessor,
 		eventRecorder:         eventRecorder,
 		cronParser:            cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
-		RunTracker:            runTracker,
 	}
 
 	for _, backupPolicy := range tc.backupPolicies {

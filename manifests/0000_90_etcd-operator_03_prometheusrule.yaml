@@ -273,34 +273,6 @@ spec:
       for: 30m
       labels:
         severity: critical
-    - alert: etcdBackupPolicyConsecutiveFailures
-      annotations:
-        description: Backup policy "{{ $labels.policy }}" has {{ $value }} consecutive backup run failures. Check the EtcdBackup resources for error details.
-        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyConsecutiveFailures.md
-        summary: Backup policy has consecutive failures.
-      expr: |
-        etcd_backup_policy_consecutive_failures >= 2
-        and
-        etcd_backup_policy_consecutive_failures < 3
-      labels:
-        severity: warning
-    - alert: etcdBackupPolicyConsecutiveFailures
-      annotations:
-        description: Backup policy "{{ $labels.policy }}" has {{ $value }} consecutive backup run failures. Immediate investigation required to restore backup capability.
-        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyConsecutiveFailures.md
-        summary: Backup policy has critical consecutive failures.
-      expr: |
-        etcd_backup_policy_consecutive_failures >= 3
-      labels:
-        severity: critical
-    - alert: etcdBackupPolicyTrackerError
-      annotations:
-        description: The etcd backup failure tracker ConfigMap could not be read (missing data or corrupt). Backup success freshness is unknown until tracking is restored; etcdBackupPolicyNoRecentSuccess is suppressed while this alert fires.
-        summary: etcd backup policy tracker state is unhealthy.
-      expr: etcd_backup_policy_tracker_error == 1
-      for: 5m
-      labels:
-        severity: warning
     - alert: etcdBackupPolicyNoRecentSuccess
       annotations:
         description: Backup policy "{{ $labels.policy }}" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.
@@ -309,27 +281,53 @@ spec:
       expr: |
         (
           (
-            etcd_backup_policy_last_success_time == 0
-            and on(policy, uid)
             (
-              (time() - etcd_backup_policy_creation_time)
-              > on(policy, uid)
-              (2 * etcd_backup_policy_schedule_interval_seconds)
+              etcd_backup_policy_creation_time
+              and on(policy, uid)
+              (
+                (time() - etcd_backup_policy_creation_time)
+                > on(policy, uid)
+                (2 * etcd_backup_policy_schedule_interval_seconds)
+              )
+            )
+            unless on(policy)
+            label_replace(
+              (
+                etcd_backup_info
+                and on(etcd_backup, uid)
+                (etcd_backup_status{status="Completed"} == 1)
+              ),
+              "policy", "$1", "etcd_backup_policy", "(.*)"
             )
           )
           or
           (
-            etcd_backup_policy_last_success_time > 0
-            and on(policy, uid)
+            etcd_backup_policy_schedule_interval_seconds
+            and on(policy)
             (
-              (time() - etcd_backup_policy_last_success_time)
-              > on(policy, uid)
+              (
+                time()
+                -
+                max by (policy) (
+                  label_replace(
+                    (
+                      etcd_backup_completion_time
+                      * on(etcd_backup, uid) group_left(etcd_backup_policy)
+                        (
+                          etcd_backup_info
+                          and on(etcd_backup, uid)
+                          (etcd_backup_status{status="Completed"} == 1)
+                        )
+                    ),
+                    "policy", "$1", "etcd_backup_policy", "(.*)"
+                  )
+                )
+              )
+              > on(policy)
               (2 * etcd_backup_policy_schedule_interval_seconds)
             )
           )
         )
-        and on()
-        (etcd_backup_policy_tracker_error == 0)
       labels:
         severity: critical
     - alert: etcdBackupDurationHigh

@@ -1,7 +1,6 @@
 package backuppolicycontroller
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -14,169 +13,41 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/informers"
-	k8sfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/component-base/metrics"
 )
 
-func TestBackupPolicyMetricsMissingStateEmitsLastSuccessZero(t *testing.T) {
+func TestBackupPolicyMetrics(t *testing.T) {
 	createdAt := metav1.NewTime(time.Unix(1700000000, 0))
 	policy := testutils.FakeEtcdBackupPolicy("daily", "0 1 * * *", func(p *operatorv1alpha1.EtcdBackupPolicy) {
 		p.CreationTimestamp = createdAt
 	})
 
-	collector := setupPolicyCollector(t, []*operatorv1alpha1.EtcdBackupPolicy{policy}, nil)
+	collector := setupPolicyCollector(t, []*operatorv1alpha1.EtcdBackupPolicy{policy})
 
-	expectedLastSuccess := `
-		# HELP etcd_backup_policy_last_success_time Unix timestamp of last successful backup run (0 if never succeeded). When etcd_backup_policy_tracker_error is 1 this value is unknown and also emitted as 0; alerts must gate on tracker_error.
-		# TYPE etcd_backup_policy_last_success_time gauge
-		etcd_backup_policy_last_success_time{policy="daily",uid="daily-uid"} 0
-	`
-	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expectedLastSuccess), backupPolicyLastSuccessTimeMetricName))
-
-	expectedCreation := fmt.Sprintf(`
+	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(fmt.Sprintf(`
 		# HELP etcd_backup_policy_creation_time Unix timestamp when policy was created
 		# TYPE etcd_backup_policy_creation_time gauge
 		etcd_backup_policy_creation_time{policy="daily",uid="daily-uid"} %d
-	`, createdAt.Unix())
-	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expectedCreation), backupPolicyCreationTimeMetricName))
+	`, createdAt.Unix())), backupPolicyCreationTimeMetricName))
 
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(`
 		# HELP etcd_backup_policy_schedule_interval_seconds Estimated maximum seconds between scheduled backup runs for the policy. Used by freshness alerts as the schedule interval; omitted when the schedule cannot be parsed.
 		# TYPE etcd_backup_policy_schedule_interval_seconds gauge
 		etcd_backup_policy_schedule_interval_seconds{policy="daily",uid="daily-uid"} 86400
 	`), backupPolicyScheduleIntervalSecondsMetricName))
-
-	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(`
-		# HELP etcd_backup_policy_tracker_error Whether reading backup failure tracker state failed (1) or succeeded (0). 1 covers corrupt JSON or a present ConfigMap missing tracker data (lost state). A missing ConfigMap is first initialization and yields 0.
-		# TYPE etcd_backup_policy_tracker_error gauge
-		etcd_backup_policy_tracker_error 0
-	`), backupPolicyTrackerErrorMetricName))
 }
 
-func TestBackupPolicyMetricsCorruptTrackerEmitsErrorAndLastSuccessZero(t *testing.T) {
-	policy := testutils.FakeEtcdBackupPolicy("daily", "0 1 * * *")
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: failureTrackerConfigMapName, Namespace: "openshift-etcd-operator"},
-		Data:       map[string]string{failureTrackerDataKey: "invalid json {"},
-	}
+func TestBackupPolicyMetricsInvalidScheduleOmitsInterval(t *testing.T) {
+	policy := testutils.FakeEtcdBackupPolicy("broken", "not a cron")
+	collector := setupPolicyCollector(t, []*operatorv1alpha1.EtcdBackupPolicy{policy})
 
-	collector := setupPolicyCollector(t, []*operatorv1alpha1.EtcdBackupPolicy{policy}, cm)
-
-	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(`
-		# HELP etcd_backup_policy_tracker_error Whether reading backup failure tracker state failed (1) or succeeded (0). 1 covers corrupt JSON or a present ConfigMap missing tracker data (lost state). A missing ConfigMap is first initialization and yields 0.
-		# TYPE etcd_backup_policy_tracker_error gauge
-		etcd_backup_policy_tracker_error 1
-	`), backupPolicyTrackerErrorMetricName))
-
-	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(`
-		# HELP etcd_backup_policy_last_success_time Unix timestamp of last successful backup run (0 if never succeeded). When etcd_backup_policy_tracker_error is 1 this value is unknown and also emitted as 0; alerts must gate on tracker_error.
-		# TYPE etcd_backup_policy_last_success_time gauge
-		etcd_backup_policy_last_success_time{policy="daily",uid="daily-uid"} 0
-	`), backupPolicyLastSuccessTimeMetricName))
+	count := testutil.CollectAndCount(collector, backupPolicyScheduleIntervalSecondsMetricName)
+	require.Equal(t, 0, count, "unparseable schedules must omit interval metric")
 }
 
-func TestBackupPolicyMetricsWithState(t *testing.T) {
-	successAt := metav1.NewTime(time.Unix(1700001000, 0))
-	createdAt := metav1.NewTime(time.Unix(1700000000, 0))
-	policy := testutils.FakeEtcdBackupPolicy("daily", "0 1 * * *")
-
-	states := map[string]*PolicyRunState{
-		string(policy.UID): {
-			PolicyUID:           policy.UID,
-			ConsecutiveFailures: 2,
-			LastSuccessTime:     &successAt,
-			PolicyCreationTime:  createdAt,
-		},
-	}
-	data, err := json.Marshal(states)
-	require.NoError(t, err)
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: failureTrackerConfigMapName, Namespace: "openshift-etcd-operator"},
-		Data:       map[string]string{failureTrackerDataKey: string(data)},
-	}
-
-	collector := setupPolicyCollector(t, []*operatorv1alpha1.EtcdBackupPolicy{policy}, cm)
-
-	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(`
-		# HELP etcd_backup_policy_tracker_error Whether reading backup failure tracker state failed (1) or succeeded (0). 1 covers corrupt JSON or a present ConfigMap missing tracker data (lost state). A missing ConfigMap is first initialization and yields 0.
-		# TYPE etcd_backup_policy_tracker_error gauge
-		etcd_backup_policy_tracker_error 0
-	`), backupPolicyTrackerErrorMetricName))
-
-	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(fmt.Sprintf(`
-		# HELP etcd_backup_policy_last_success_time Unix timestamp of last successful backup run (0 if never succeeded). When etcd_backup_policy_tracker_error is 1 this value is unknown and also emitted as 0; alerts must gate on tracker_error.
-		# TYPE etcd_backup_policy_last_success_time gauge
-		etcd_backup_policy_last_success_time{policy="daily",uid="daily-uid"} %d
-	`, successAt.Unix())), backupPolicyLastSuccessTimeMetricName))
-
-	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(`
-		# HELP etcd_backup_policy_consecutive_failures Number of consecutive backup run failures since last success
-		# TYPE etcd_backup_policy_consecutive_failures gauge
-		etcd_backup_policy_consecutive_failures{policy="daily",uid="daily-uid"} 2
-	`), backupPolicyConsecutiveFailuresMetricName))
-}
-
-func TestParseAllPolicyStates(t *testing.T) {
-	t.Run("nil-configmap", func(t *testing.T) {
-		states, err := parseAllPolicyStates(nil)
-		require.NoError(t, err)
-		require.Empty(t, states)
-	})
-	t.Run("missing-key-is-lost-state", func(t *testing.T) {
-		_, err := parseAllPolicyStates(&corev1.ConfigMap{Data: map[string]string{}})
-		require.Error(t, err, "present ConfigMap without tracker key is lost state")
-	})
-	t.Run("empty-key-is-lost-state", func(t *testing.T) {
-		_, err := parseAllPolicyStates(&corev1.ConfigMap{
-			Data: map[string]string{failureTrackerDataKey: ""},
-		})
-		require.Error(t, err)
-	})
-	t.Run("corrupt", func(t *testing.T) {
-		_, err := parseAllPolicyStates(&corev1.ConfigMap{
-			Data: map[string]string{failureTrackerDataKey: "{"},
-		})
-		require.Error(t, err)
-	})
-}
-
-func TestBackupPolicyMetricsMissingConfigMapIsFirstInit(t *testing.T) {
-	policy := testutils.FakeEtcdBackupPolicy("daily", "0 1 * * *")
-	collector := setupPolicyCollector(t, []*operatorv1alpha1.EtcdBackupPolicy{policy}, nil)
-
-	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(`
-		# HELP etcd_backup_policy_tracker_error Whether reading backup failure tracker state failed (1) or succeeded (0). 1 covers corrupt JSON or a present ConfigMap missing tracker data (lost state). A missing ConfigMap is first initialization and yields 0.
-		# TYPE etcd_backup_policy_tracker_error gauge
-		etcd_backup_policy_tracker_error 0
-	`), backupPolicyTrackerErrorMetricName))
-}
-
-func TestBackupPolicyMetricsMissingTrackerKeyEmitsError(t *testing.T) {
-	policy := testutils.FakeEtcdBackupPolicy("daily", "0 1 * * *")
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: failureTrackerConfigMapName, Namespace: "openshift-etcd-operator"},
-		Data:       map[string]string{},
-	}
-	collector := setupPolicyCollector(t, []*operatorv1alpha1.EtcdBackupPolicy{policy}, cm)
-
-	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(`
-		# HELP etcd_backup_policy_tracker_error Whether reading backup failure tracker state failed (1) or succeeded (0). 1 covers corrupt JSON or a present ConfigMap missing tracker data (lost state). A missing ConfigMap is first initialization and yields 0.
-		# TYPE etcd_backup_policy_tracker_error gauge
-		etcd_backup_policy_tracker_error 1
-	`), backupPolicyTrackerErrorMetricName))
-
-	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(`
-		# HELP etcd_backup_policy_last_success_time Unix timestamp of last successful backup run (0 if never succeeded). When etcd_backup_policy_tracker_error is 1 this value is unknown and also emitted as 0; alerts must gate on tracker_error.
-		# TYPE etcd_backup_policy_last_success_time gauge
-		etcd_backup_policy_last_success_time{policy="daily",uid="daily-uid"} 0
-	`), backupPolicyLastSuccessTimeMetricName))
-}
-
-func setupPolicyCollector(t *testing.T, policies []*operatorv1alpha1.EtcdBackupPolicy, trackerCM *corev1.ConfigMap) prometheus.Collector {
+func setupPolicyCollector(t *testing.T, policies []*operatorv1alpha1.EtcdBackupPolicy) prometheus.Collector {
 	t.Helper()
 
 	policyObjs := make([]runtime.Object, 0, len(policies))
@@ -188,20 +59,8 @@ func setupPolicyCollector(t *testing.T, policies []*operatorv1alpha1.EtcdBackupP
 		require.NoError(t, policyInformer.Informer().GetIndexer().Add(policy))
 	}
 
-	var cmObjs []runtime.Object
-	if trackerCM != nil {
-		cmObjs = append(cmObjs, trackerCM)
-	}
-	kubeClient := k8sfake.NewSimpleClientset(cmObjs...)
-	kubeInformers := informers.NewSharedInformerFactory(kubeClient, 0)
-	cmInformer := kubeInformers.Core().V1().ConfigMaps()
-	if trackerCM != nil {
-		require.NoError(t, cmInformer.Informer().GetIndexer().Add(trackerCM))
-	}
-
 	return NewBackupPolicyMetrics(
 		metrics.NewKubeRegistry(),
 		policyInformer.Lister(),
-		cmInformer.Lister().ConfigMaps("openshift-etcd-operator"),
 	)
 }

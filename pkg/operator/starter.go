@@ -550,26 +550,18 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 		_, backupPolicyController := backuppolicycontroller.NewBackupPolicyController(
 			AlivenessChecker,
 			backupPoliciesLister,
-			backupsLister,
 			cronJobsLister,
 			operatorConfigClientv1Alpha1,
 			kubeClient,
 			controllerContext.EventRecorder,
 			os.Getenv("OPERATOR_IMAGE"),
 			featureGateAccessor,
-			operatorclient.OperatorNamespace,
 			etcdBackupPoliciesInformer.Informer(),
-			etcdBackupInformer.Informer(),
 			cronJobsInformer.Informer())
 
-		// Register policy metrics from cached policy + failure-tracker ConfigMap listers.
-		// Ensure the operator-namespace ConfigMap informer is registered before Start().
-		operatorConfigMapsInformer := kubeInformersForNamespaces.InformersFor(operatorclient.OperatorNamespace).Core().V1().ConfigMaps()
-		_ = operatorConfigMapsInformer.Informer()
 		_ = backuppolicycontroller.NewBackupPolicyMetrics(
 			metricsRegistry,
 			backupPoliciesLister,
-			operatorConfigMapsInformer.Lister().ConfigMaps(operatorclient.OperatorNamespace),
 		)
 
 		backupPolicyRetentionController, err := backuppolicycontroller.NewBackupPolicyRetentionController(

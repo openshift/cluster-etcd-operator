@@ -4,9 +4,7 @@ import (
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorv1alpha1listers "github.com/openshift/client-go/operator/listers/operator/v1alpha1"
 	"github.com/prometheus/client_golang/prometheus"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
-	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/component-base/metrics"
 	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/klog/v2"
@@ -14,56 +12,34 @@ import (
 
 const (
 	backupPolicyInfoMetricName                    = "etcd_backup_policy_info"
-	backupPolicyConsecutiveFailuresMetricName     = "etcd_backup_policy_consecutive_failures"
-	backupPolicyLastSuccessTimeMetricName         = "etcd_backup_policy_last_success_time"
 	backupPolicyCreationTimeMetricName            = "etcd_backup_policy_creation_time"
 	backupPolicyScheduleIntervalSecondsMetricName = "etcd_backup_policy_schedule_interval_seconds"
-	backupPolicyTrackerErrorMetricName            = "etcd_backup_policy_tracker_error"
 
 	storageTypePVC   = "PVC"
 	storageTypeLocal = "Local"
 )
 
 // policyCollector implements prometheus.Collector and generates metrics
-// on-demand at scrape time from cached EtcdBackupPolicy and ConfigMap listers.
+// on-demand at scrape time from the cached EtcdBackupPolicy lister.
 type policyCollector struct {
-	policiesLister    operatorv1alpha1listers.EtcdBackupPolicyLister
-	trackerConfigMaps corev1listers.ConfigMapNamespaceLister
+	policiesLister operatorv1alpha1listers.EtcdBackupPolicyLister
 
-	infoDesc                *prometheus.Desc
-	consecutiveFailuresDesc *prometheus.Desc
-	lastSuccessTimeDesc     *prometheus.Desc
-	creationTimeDesc        *prometheus.Desc
-	scheduleIntervalDesc    *prometheus.Desc
-	trackerErrorDesc        *prometheus.Desc
+	infoDesc             *prometheus.Desc
+	creationTimeDesc     *prometheus.Desc
+	scheduleIntervalDesc *prometheus.Desc
 }
 
 // NewBackupPolicyMetrics creates and registers a policy collector with the provided registry.
-// Tracker state is read from the ConfigMap informer cache (no live API calls on scrape).
 func NewBackupPolicyMetrics(
 	metricsRegistry metrics.KubeRegistry,
 	policiesLister operatorv1alpha1listers.EtcdBackupPolicyLister,
-	trackerConfigMaps corev1listers.ConfigMapNamespaceLister,
 ) *policyCollector {
 	c := &policyCollector{
-		policiesLister:    policiesLister,
-		trackerConfigMaps: trackerConfigMaps,
+		policiesLister: policiesLister,
 		infoDesc: prometheus.NewDesc(
 			backupPolicyInfoMetricName,
 			"Information about etcd backup policy",
 			[]string{"policy", "uid", "schedule", "timezone", "storage_type", "storage_location"},
-			nil,
-		),
-		consecutiveFailuresDesc: prometheus.NewDesc(
-			backupPolicyConsecutiveFailuresMetricName,
-			"Number of consecutive backup run failures since last success",
-			[]string{"policy", "uid"},
-			nil,
-		),
-		lastSuccessTimeDesc: prometheus.NewDesc(
-			backupPolicyLastSuccessTimeMetricName,
-			"Unix timestamp of last successful backup run (0 if never succeeded). When etcd_backup_policy_tracker_error is 1 this value is unknown and also emitted as 0; alerts must gate on tracker_error.",
-			[]string{"policy", "uid"},
 			nil,
 		),
 		creationTimeDesc: prometheus.NewDesc(
@@ -78,12 +54,6 @@ func NewBackupPolicyMetrics(
 			[]string{"policy", "uid"},
 			nil,
 		),
-		trackerErrorDesc: prometheus.NewDesc(
-			backupPolicyTrackerErrorMetricName,
-			"Whether reading backup failure tracker state failed (1) or succeeded (0). 1 covers corrupt JSON or a present ConfigMap missing tracker data (lost state). A missing ConfigMap is first initialization and yields 0.",
-			nil,
-			nil,
-		),
 	}
 
 	metricsRegistry.RawMustRegister(c)
@@ -93,11 +63,8 @@ func NewBackupPolicyMetrics(
 // Describe implements prometheus.Collector
 func (c *policyCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.infoDesc
-	ch <- c.consecutiveFailuresDesc
-	ch <- c.lastSuccessTimeDesc
 	ch <- c.creationTimeDesc
 	ch <- c.scheduleIntervalDesc
-	ch <- c.trackerErrorDesc
 }
 
 // Collect implements prometheus.Collector
@@ -105,36 +72,15 @@ func (c *policyCollector) Collect(ch chan<- prometheus.Metric) {
 	policies, err := c.policiesLister.List(labels.Everything())
 	if err != nil {
 		klog.Errorf("policyCollector failed to list backup policies: %v", err)
-		ch <- prometheus.MustNewConstMetric(c.trackerErrorDesc, prometheus.GaugeValue, 1)
 		return
 	}
 
-	allStates, trackerErr := c.loadTrackerStates()
-	trackerErrorValue := float64(0)
-	if trackerErr != nil {
-		klog.Errorf("policyCollector failed to get policy states: %v", trackerErr)
-		trackerErrorValue = 1
-		allStates = make(map[string]*PolicyRunState)
-	}
-	ch <- prometheus.MustNewConstMetric(c.trackerErrorDesc, prometheus.GaugeValue, trackerErrorValue)
-
 	for _, policy := range policies {
-		c.collectPolicyMetrics(ch, policy, allStates)
+		c.collectPolicyMetrics(ch, policy)
 	}
 }
 
-func (c *policyCollector) loadTrackerStates() (map[string]*PolicyRunState, error) {
-	cm, err := c.trackerConfigMaps.Get(failureTrackerConfigMapName)
-	if apierrors.IsNotFound(err) {
-		return make(map[string]*PolicyRunState), nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return parseAllPolicyStates(cm)
-}
-
-func (c *policyCollector) collectPolicyMetrics(ch chan<- prometheus.Metric, policy *operatorv1alpha1.EtcdBackupPolicy, allStates map[string]*PolicyRunState) {
+func (c *policyCollector) collectPolicyMetrics(ch chan<- prometheus.Metric, policy *operatorv1alpha1.EtcdBackupPolicy) {
 	name := policy.Name
 	uid := string(policy.UID)
 	schedule := policy.Spec.Schedule
@@ -150,40 +96,10 @@ func (c *policyCollector) collectPolicyMetrics(ch chan<- prometheus.Metric, poli
 		1,
 		name, uid, schedule, timezone, storageType, storageLocation,
 	)
-
-	state, hasState := allStates[uid]
-
-	// Always emit last_success_time so alert rules that require the series
-	// (e.g. last_success_time == 0) remain evaluable when tracking is missing.
-	lastSuccessTime := float64(0)
-	creationTime := float64(policy.CreationTimestamp.Unix())
-	if hasState {
-		if state.LastSuccessTime != nil {
-			lastSuccessTime = float64(state.LastSuccessTime.Unix())
-		}
-		if !state.PolicyCreationTime.IsZero() {
-			creationTime = float64(state.PolicyCreationTime.Unix())
-		}
-		if state.ConsecutiveFailures > 0 {
-			ch <- prometheus.MustNewConstMetric(
-				c.consecutiveFailuresDesc,
-				prometheus.GaugeValue,
-				float64(state.ConsecutiveFailures),
-				name, uid,
-			)
-		}
-	}
-
-	ch <- prometheus.MustNewConstMetric(
-		c.lastSuccessTimeDesc,
-		prometheus.GaugeValue,
-		lastSuccessTime,
-		name, uid,
-	)
 	ch <- prometheus.MustNewConstMetric(
 		c.creationTimeDesc,
 		prometheus.GaugeValue,
-		creationTime,
+		float64(policy.CreationTimestamp.Unix()),
 		name, uid,
 	)
 	if intervalSeconds, ok := estimateScheduleIntervalSeconds(schedule); ok {
@@ -218,7 +134,6 @@ func extractPolicyStorageInfo(policy *operatorv1alpha1.EtcdBackupPolicy) (string
 // Deprecated: Use NewBackupPolicyMetrics with an explicit registry for production code.
 func MustRegisterDefaultBackupPolicyMetrics(
 	policiesLister operatorv1alpha1listers.EtcdBackupPolicyLister,
-	trackerConfigMaps corev1listers.ConfigMapNamespaceLister,
 ) *policyCollector {
-	return NewBackupPolicyMetrics(legacyregistry.DefaultGatherer.(metrics.KubeRegistry), policiesLister, trackerConfigMaps)
+	return NewBackupPolicyMetrics(legacyregistry.DefaultGatherer.(metrics.KubeRegistry), policiesLister)
 }

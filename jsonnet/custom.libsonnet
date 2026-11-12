@@ -253,80 +253,67 @@
               summary: 'etcd backup failure rate is critically high.',
             },
           },
-          {
-            alert: 'etcdBackupPolicyConsecutiveFailures',
-            expr: |||
-              etcd_backup_policy_consecutive_failures >= 2
-              and
-              etcd_backup_policy_consecutive_failures < 3
-            |||,
-            labels: {
-              severity: 'warning',
-            },
-            annotations: {
-              description: 'Backup policy "{{ $labels.policy }}" has {{ $value }} consecutive backup run failures. Check the EtcdBackup resources for error details.',
-              summary: 'Backup policy has consecutive failures.',
-            },
-          },
-          {
-            alert: 'etcdBackupPolicyConsecutiveFailures',
-            expr: |||
-              etcd_backup_policy_consecutive_failures >= 3
-            |||,
-            labels: {
-              severity: 'critical',
-            },
-            annotations: {
-              description: 'Backup policy "{{ $labels.policy }}" has {{ $value }} consecutive backup run failures. Immediate investigation required to restore backup capability.',
-              summary: 'Backup policy has critical consecutive failures.',
-            },
-          },
           // etcdBackupNoPolicyConfigured deferred until AutomatedEtcdBackup GA:
           // it needs a feature-gate presence signal (e.g. etcd_automated_backup_enabled)
           // so absent(etcd_backup_policy_info) does not fire on Default clusters.
           {
-            alert: 'etcdBackupPolicyTrackerError',
-            expr: 'etcd_backup_policy_tracker_error == 1',
-            'for': '5m',
-            labels: {
-              severity: 'warning',
-            },
-            annotations: {
-              description: 'The etcd backup failure tracker ConfigMap could not be read (missing data or corrupt). Backup success freshness is unknown until tracking is restored; etcdBackupPolicyNoRecentSuccess is suppressed while this alert fires.',
-              summary: 'etcd backup policy tracker state is unhealthy.',
-            },
-          },
-          {
             alert: 'etcdBackupPolicyNoRecentSuccess',
-            // Threshold is 2*schedule interval so weekly/monthly policies do not
-            // permanently fire. Gate on tracker health: last_success_time==0 means
-            // "never succeeded" only when tracking is healthy. Put policy series on
-            // the left of `and on()` / comparisons so policy/uid labels are preserved.
-            // Interval series absence (unparseable schedule) suppresses this alert.
+            // Last success is derived from live Completed EtcdBackup metrics (no
+            // ConfigMap tracker). Threshold is 2*schedule interval so weekly/monthly
+            // policies do not permanently fire. Interval series absence (unparseable
+            // schedule) suppresses this alert. Matching is by policy name
+            // (etcd_backup_info.etcd_backup_policy ↔ policy metrics.policy).
+            // Put policy series on the left of `and on()` so policy/uid labels remain.
             expr: |||
               (
                 (
-                  etcd_backup_policy_last_success_time == 0
-                  and on(policy, uid)
                   (
-                    (time() - etcd_backup_policy_creation_time)
-                    > on(policy, uid)
-                    (2 * etcd_backup_policy_schedule_interval_seconds)
+                    etcd_backup_policy_creation_time
+                    and on(policy, uid)
+                    (
+                      (time() - etcd_backup_policy_creation_time)
+                      > on(policy, uid)
+                      (2 * etcd_backup_policy_schedule_interval_seconds)
+                    )
+                  )
+                  unless on(policy)
+                  label_replace(
+                    (
+                      etcd_backup_info
+                      and on(etcd_backup, uid)
+                      (etcd_backup_status{status="Completed"} == 1)
+                    ),
+                    "policy", "$1", "etcd_backup_policy", "(.*)"
                   )
                 )
                 or
                 (
-                  etcd_backup_policy_last_success_time > 0
-                  and on(policy, uid)
+                  etcd_backup_policy_schedule_interval_seconds
+                  and on(policy)
                   (
-                    (time() - etcd_backup_policy_last_success_time)
-                    > on(policy, uid)
+                    (
+                      time()
+                      -
+                      max by (policy) (
+                        label_replace(
+                          (
+                            etcd_backup_completion_time
+                            * on(etcd_backup, uid) group_left(etcd_backup_policy)
+                              (
+                                etcd_backup_info
+                                and on(etcd_backup, uid)
+                                (etcd_backup_status{status="Completed"} == 1)
+                              )
+                          ),
+                          "policy", "$1", "etcd_backup_policy", "(.*)"
+                        )
+                      )
+                    )
+                    > on(policy)
                     (2 * etcd_backup_policy_schedule_interval_seconds)
                   )
                 )
               )
-              and on()
-              (etcd_backup_policy_tracker_error == 0)
             |||,
             labels: {
               severity: 'critical',

@@ -43,7 +43,6 @@ const (
 
 type BackupPolicyController struct {
 	backupPoliciesLister  operatorv1alpha1listers.EtcdBackupPolicyLister
-	backupsLister         operatorv1alpha1listers.EtcdBackupLister
 	cronJobLister         batchv1listers.CronJobNamespaceLister
 	operatorClient        operatorv1alpha1client.OperatorV1alpha1Interface
 	kubeClient            kubernetes.Interface
@@ -51,32 +50,21 @@ type BackupPolicyController struct {
 	featureGateAccessor   featuregates.FeatureGateAccess
 	eventRecorder         events.Recorder
 	cronParser            cron.Parser
-	RunTracker            *RunTracker
 }
 
 func NewBackupPolicyController(
 	livenessChecker *health.MultiAlivenessChecker,
 	backupPoliciesLister operatorv1alpha1listers.EtcdBackupPolicyLister,
-	backupsLister operatorv1alpha1listers.EtcdBackupLister,
 	cronJobLister batchv1listers.CronJobNamespaceLister,
 	operatorClient operatorv1alpha1client.OperatorV1alpha1Interface,
 	kubeClient kubernetes.Interface,
 	eventRecorder events.Recorder,
 	operatorImagePullSpec string,
 	accessor featuregates.FeatureGateAccess,
-	operatorNamespace string,
 	etcdBackupPolicyInformer factory.Informer,
-	etcdBackupInformer factory.Informer,
 	cronJobInformer cache.SharedIndexInformer) (*BackupPolicyController, factory.Controller) {
 
-	runTracker := NewRunTracker(
-		operatorNamespace,
-		kubeClient.CoreV1().ConfigMaps(operatorNamespace),
-	)
-
-
 	c := &BackupPolicyController{
-		backupsLister:         backupsLister,
 		backupPoliciesLister:  backupPoliciesLister,
 		cronJobLister:         cronJobLister,
 		operatorClient:        operatorClient,
@@ -85,7 +73,6 @@ func NewBackupPolicyController(
 		featureGateAccessor:   accessor,
 		eventRecorder:         eventRecorder.WithComponentSuffix("backup-policy-controller"),
 		cronParser:            cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
-		RunTracker:            runTracker,
 	}
 
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
@@ -97,12 +84,6 @@ func NewBackupPolicyController(
 				if backupPolicy, ok := o.(*operatorv1alpha1.EtcdBackupPolicy); ok {
 					return []string{backupPolicy.Name}
 				}
-				if backup, ok := o.(*operatorv1alpha1.EtcdBackup); ok {
-					// Requeue the owning policy when a backup finishes so failure tracking updates promptly
-					if backupPolicyName := backup.Labels[backuphelpers.LabelEtcdBackupPolicy]; backupPolicyName != "" && backuphelpers.IsBackupFinished(backup) {
-						return []string{backupPolicyName}
-					}
-				}
 				if cronJob, ok := o.(*batchv1.CronJob); ok && cronJob.Labels != nil {
 					if backupPolicyName := cronJob.Labels[backuphelpers.LabelEtcdBackupPolicy]; backupPolicyName != "" {
 						return []string{backupPolicyName}
@@ -111,7 +92,6 @@ func NewBackupPolicyController(
 				return nil
 			},
 			etcdBackupPolicyInformer,
-			etcdBackupInformer,
 			cronJobInformer,
 		).
 		WithSync(syncer.Sync).
@@ -158,9 +138,6 @@ func (c *BackupPolicyController) sync(ctx context.Context, syncCtx factory.SyncC
 		return fmt.Errorf("BackupPolicyController could not get EtcdBackupPolicy %s: %w", backupPolicyName, err)
 	} else if backupPolicy.DeletionTimestamp != nil {
 		return nil
-	}
-	if err := c.updateFailureTracking(ctx, backupPolicy); err != nil {
-		klog.Warningf("BackupPolicyController failed to update failure tracking for policy %s: %v", backupPolicy.Name, err)
 	}
 	return c.reconcileCronJob(ctx, backupPolicy)
 }
@@ -308,25 +285,4 @@ func cronSpecHashDiffers(l *batchv1.CronJob, r *batchv1.CronJob) bool {
 		return true
 	}
 	return l.Annotations[specHashAnnotation] != r.Annotations[specHashAnnotation]
-}
-
-// updateFailureTracking processes all backups for a policy and updates the run-based failure counter.
-// This uses durable ConfigMap storage so state persists across operator restarts.
-func (c *BackupPolicyController) updateFailureTracking(ctx context.Context, policy *operatorv1alpha1.EtcdBackupPolicy) error {
-	// List all backups for this policy
-	selector := labels.SelectorFromSet(map[string]string{
-		backuphelpers.LabelEtcdBackupPolicy: policy.Name,
-	})
-	backupList, err := c.backupsLister.List(selector)
-	if err != nil {
-		return fmt.Errorf("failed to list backups for policy %s: %w", policy.Name, err)
-	}
-
-	// Convert to slice of pointers (RunTracker expects []*EtcdBackup)
-	backups := make([]*operatorv1alpha1.EtcdBackup, len(backupList))
-	copy(backups, backupList)
-
-	// Process backups and update state
-	_, err = c.RunTracker.ProcessBackupsForPolicy(ctx, policy, backups)
-	return err
 }
