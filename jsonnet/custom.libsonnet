@@ -298,21 +298,31 @@
           },
           {
             alert: 'etcdBackupPolicyNoRecentSuccess',
-            // Gate on tracker health: last_success_time==0 means "never succeeded" only
-            // when tracking is healthy. Put policy series on the left of `and on()` so
-            // policy/uid labels are preserved (on() keeps left-hand labels).
+            // Threshold is 2*schedule interval so weekly/monthly policies do not
+            // permanently fire. Gate on tracker health: last_success_time==0 means
+            // "never succeeded" only when tracking is healthy. Put policy series on
+            // the left of `and on()` / comparisons so policy/uid labels are preserved.
+            // Interval series absence (unparseable schedule) suppresses this alert.
             expr: |||
               (
                 (
                   etcd_backup_policy_last_success_time == 0
                   and on(policy, uid)
-                  (time() - etcd_backup_policy_creation_time > 86400)
+                  (
+                    (time() - etcd_backup_policy_creation_time)
+                    > on(policy, uid)
+                    (2 * etcd_backup_policy_schedule_interval_seconds)
+                  )
                 )
                 or
                 (
                   etcd_backup_policy_last_success_time > 0
                   and on(policy, uid)
-                  (time() - etcd_backup_policy_last_success_time > 86400)
+                  (
+                    (time() - etcd_backup_policy_last_success_time)
+                    > on(policy, uid)
+                    (2 * etcd_backup_policy_schedule_interval_seconds)
+                  )
                 )
               )
               and on()
@@ -322,8 +332,8 @@
               severity: 'critical',
             },
             annotations: {
-              description: 'Backup policy "{{ $labels.policy }}" has not completed a successful backup in over 24 hours. This is a critical issue that may prevent disaster recovery.',
-              summary: 'Backup policy has no successful backup in over 24 hours.',
+              description: 'Backup policy "{{ $labels.policy }}" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.',
+              summary: 'Backup policy has no successful backup within two schedule intervals.',
             },
           },
           {

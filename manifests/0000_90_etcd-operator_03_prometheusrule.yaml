@@ -303,21 +303,29 @@ spec:
         severity: warning
     - alert: etcdBackupPolicyNoRecentSuccess
       annotations:
-        description: Backup policy "{{ $labels.policy }}" has not completed a successful backup in over 24 hours. This is a critical issue that may prevent disaster recovery.
+        description: Backup policy "{{ $labels.policy }}" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.
         runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyNoRecentSuccess.md
-        summary: Backup policy has no successful backup in over 24 hours.
+        summary: Backup policy has no successful backup within two schedule intervals.
       expr: |
         (
           (
             etcd_backup_policy_last_success_time == 0
             and on(policy, uid)
-            (time() - etcd_backup_policy_creation_time > 86400)
+            (
+              (time() - etcd_backup_policy_creation_time)
+              > on(policy, uid)
+              (2 * etcd_backup_policy_schedule_interval_seconds)
+            )
           )
           or
           (
             etcd_backup_policy_last_success_time > 0
             and on(policy, uid)
-            (time() - etcd_backup_policy_last_success_time > 86400)
+            (
+              (time() - etcd_backup_policy_last_success_time)
+              > on(policy, uid)
+              (2 * etcd_backup_policy_schedule_interval_seconds)
+            )
           )
         )
         and on()

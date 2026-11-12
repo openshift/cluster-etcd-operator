@@ -45,6 +45,12 @@ func TestBackupPolicyMetricsMissingStateEmitsLastSuccessZero(t *testing.T) {
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expectedCreation), backupPolicyCreationTimeMetricName))
 
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(`
+		# HELP etcd_backup_policy_schedule_interval_seconds Estimated maximum seconds between scheduled backup runs for the policy. Used by freshness alerts as the schedule interval; omitted when the schedule cannot be parsed.
+		# TYPE etcd_backup_policy_schedule_interval_seconds gauge
+		etcd_backup_policy_schedule_interval_seconds{policy="daily",uid="daily-uid"} 86400
+	`), backupPolicyScheduleIntervalSecondsMetricName))
+
+	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(`
 		# HELP etcd_backup_policy_tracker_error Whether reading backup failure tracker state failed (1) or succeeded (0). 1 covers corrupt JSON or a present ConfigMap missing tracker data (lost state). A missing ConfigMap is first initialization and yields 0.
 		# TYPE etcd_backup_policy_tracker_error gauge
 		etcd_backup_policy_tracker_error 0

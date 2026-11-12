@@ -13,11 +13,12 @@ import (
 )
 
 const (
-	backupPolicyInfoMetricName                = "etcd_backup_policy_info"
-	backupPolicyConsecutiveFailuresMetricName = "etcd_backup_policy_consecutive_failures"
-	backupPolicyLastSuccessTimeMetricName     = "etcd_backup_policy_last_success_time"
-	backupPolicyCreationTimeMetricName        = "etcd_backup_policy_creation_time"
-	backupPolicyTrackerErrorMetricName        = "etcd_backup_policy_tracker_error"
+	backupPolicyInfoMetricName                    = "etcd_backup_policy_info"
+	backupPolicyConsecutiveFailuresMetricName     = "etcd_backup_policy_consecutive_failures"
+	backupPolicyLastSuccessTimeMetricName         = "etcd_backup_policy_last_success_time"
+	backupPolicyCreationTimeMetricName            = "etcd_backup_policy_creation_time"
+	backupPolicyScheduleIntervalSecondsMetricName = "etcd_backup_policy_schedule_interval_seconds"
+	backupPolicyTrackerErrorMetricName            = "etcd_backup_policy_tracker_error"
 
 	storageTypePVC   = "PVC"
 	storageTypeLocal = "Local"
@@ -33,6 +34,7 @@ type policyCollector struct {
 	consecutiveFailuresDesc *prometheus.Desc
 	lastSuccessTimeDesc     *prometheus.Desc
 	creationTimeDesc        *prometheus.Desc
+	scheduleIntervalDesc    *prometheus.Desc
 	trackerErrorDesc        *prometheus.Desc
 }
 
@@ -70,6 +72,12 @@ func NewBackupPolicyMetrics(
 			[]string{"policy", "uid"},
 			nil,
 		),
+		scheduleIntervalDesc: prometheus.NewDesc(
+			backupPolicyScheduleIntervalSecondsMetricName,
+			"Estimated maximum seconds between scheduled backup runs for the policy. Used by freshness alerts as the schedule interval; omitted when the schedule cannot be parsed.",
+			[]string{"policy", "uid"},
+			nil,
+		),
 		trackerErrorDesc: prometheus.NewDesc(
 			backupPolicyTrackerErrorMetricName,
 			"Whether reading backup failure tracker state failed (1) or succeeded (0). 1 covers corrupt JSON or a present ConfigMap missing tracker data (lost state). A missing ConfigMap is first initialization and yields 0.",
@@ -88,6 +96,7 @@ func (c *policyCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.consecutiveFailuresDesc
 	ch <- c.lastSuccessTimeDesc
 	ch <- c.creationTimeDesc
+	ch <- c.scheduleIntervalDesc
 	ch <- c.trackerErrorDesc
 }
 
@@ -177,6 +186,14 @@ func (c *policyCollector) collectPolicyMetrics(ch chan<- prometheus.Metric, poli
 		creationTime,
 		name, uid,
 	)
+	if intervalSeconds, ok := estimateScheduleIntervalSeconds(schedule); ok {
+		ch <- prometheus.MustNewConstMetric(
+			c.scheduleIntervalDesc,
+			prometheus.GaugeValue,
+			intervalSeconds,
+			name, uid,
+		)
+	}
 }
 
 func extractPolicyStorageInfo(policy *operatorv1alpha1.EtcdBackupPolicy) (string, string) {
