@@ -160,7 +160,7 @@ func TestBackupMetricsFailed(t *testing.T) {
 	requireStatusMetrics(t, collector, "pvc-backup-failed", "pvc-backup-failed-uid", statusFailed)
 
 	expectedCompletionTime := fmt.Sprintf(`
-		# HELP etcd_backup_completion_timestamp_seconds Unix timestamp when the backup failed.
+		# HELP etcd_backup_completion_timestamp_seconds Unix timestamp when the backup completed.
 		# TYPE etcd_backup_completion_timestamp_seconds gauge
 		etcd_backup_completion_timestamp_seconds{etcd_backup="pvc-backup-failed",uid="pvc-backup-failed-uid"} %d
 	`, failedAt.Unix())
