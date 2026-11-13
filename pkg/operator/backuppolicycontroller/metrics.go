@@ -12,7 +12,7 @@ import (
 
 const (
 	backupPolicyInfoMetricName                    = "etcd_backup_policy_info"
-	backupPolicyCreationTimeMetricName            = "etcd_backup_policy_creation_time"
+	backupPolicyCreationTimeMetricName            = "etcd_backup_policy_creation_timestamp_seconds"
 	backupPolicyScheduleIntervalSecondsMetricName = "etcd_backup_policy_schedule_interval_seconds"
 
 	storageTypePVC   = "PVC"

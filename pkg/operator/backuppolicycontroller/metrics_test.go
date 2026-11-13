@@ -27,9 +27,9 @@ func TestBackupPolicyMetrics(t *testing.T) {
 	collector := setupPolicyCollector(t, []*operatorv1alpha1.EtcdBackupPolicy{policy})
 
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(fmt.Sprintf(`
-		# HELP etcd_backup_policy_creation_time Unix timestamp when policy was created
-		# TYPE etcd_backup_policy_creation_time gauge
-		etcd_backup_policy_creation_time{etcd_backup_policy="daily",uid="daily-uid"} %d
+		# HELP etcd_backup_policy_creation_timestamp_seconds Unix timestamp when policy was created
+		# TYPE etcd_backup_policy_creation_timestamp_seconds gauge
+		etcd_backup_policy_creation_timestamp_seconds{etcd_backup_policy="daily",uid="daily-uid"} %d
 	`, createdAt.Unix())), backupPolicyCreationTimeMetricName))
 
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(`
