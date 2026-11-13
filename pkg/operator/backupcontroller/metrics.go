@@ -69,7 +69,7 @@ func NewBackupMetrics(metricsRegistry metrics.KubeRegistry, backupsLister operat
 		),
 		startTimeDesc: prometheus.NewDesc(
 			backupStartTimeMetricName,
-			"Unix timestamp when the backup started.",
+			"Unix timestamp when the backup was created.",
 			[]string{"etcd_backup", "uid"},
 			nil,
 		),
@@ -219,12 +219,10 @@ func extractCurrentStatus(backup operatorv1alpha1.EtcdBackup) string {
 }
 
 func getStartTime(backup operatorv1alpha1.EtcdBackup) float64 {
-	for _, condition := range backup.Status.Conditions {
-		if condition.Status == metav1.ConditionTrue && condition.Type == string(operatorv1alpha1.BackupRunning) {
-			return float64(condition.LastTransitionTime.Unix())
-		}
+	if backup.CreationTimestamp.IsZero() {
+		return 0
 	}
-	return 0
+	return float64(backup.CreationTimestamp.Unix())
 }
 
 func getCompletionTime(backup operatorv1alpha1.EtcdBackup) float64 {

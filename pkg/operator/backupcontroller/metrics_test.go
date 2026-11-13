@@ -132,8 +132,12 @@ func TestBackupMetricsCompleted(t *testing.T) {
 	`, snapshotSize, staticSize)
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expectedSize), backupSizeBytesMetricName))
 
-	require.Equal(t, 0, testutil.CollectAndCount(collector, backupStartTimeMetricName),
-		"expected 0 start time metrics for completed backup")
+	expectedStartTime := fmt.Sprintf(`
+		# HELP etcd_backup_start_time Unix timestamp when the backup was created.
+		# TYPE etcd_backup_start_time gauge
+		etcd_backup_start_time{etcd_backup="pvc-backup",uid="pvc-backup-uid"} %d
+	`, backup.CreationTimestamp.Unix())
+	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expectedStartTime), backupStartTimeMetricName))
 }
 
 func TestBackupMetricsFailed(t *testing.T) {
@@ -155,7 +159,7 @@ func TestBackupMetricsFailed(t *testing.T) {
 }
 
 func TestBackupMetricsRunning(t *testing.T) {
-	startedAt := metav1.NewTime(time.Unix(1700000000, 0))
+	createdAt := metav1.NewTime(time.Unix(1700000000, 0))
 
 	backup := testutils.FakeEtcdBackup("pvc-backup-running",
 		testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
@@ -165,11 +169,13 @@ func TestBackupMetricsRunning(t *testing.T) {
 		testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
 			NodeName: "node-1",
 			Conditions: []metav1.Condition{{
-				Type:               string(operatorv1alpha1.BackupRunning),
-				Status:             metav1.ConditionTrue,
-				LastTransitionTime: startedAt,
+				Type:   string(operatorv1alpha1.BackupRunning),
+				Status: metav1.ConditionTrue,
 			}},
 		}),
+		func(b *operatorv1alpha1.EtcdBackup) {
+			b.CreationTimestamp = createdAt
+		},
 	)
 
 	collector := setupCollectorWithBackups(t, backup)
@@ -178,10 +184,10 @@ func TestBackupMetricsRunning(t *testing.T) {
 	requireStatusMetrics(t, collector, "pvc-backup-running", "pvc-backup-running-uid", statusRunning)
 
 	expectedStartTime := fmt.Sprintf(`
-		# HELP etcd_backup_start_time Unix timestamp when the backup started.
+		# HELP etcd_backup_start_time Unix timestamp when the backup was created.
 		# TYPE etcd_backup_start_time gauge
 		etcd_backup_start_time{etcd_backup="pvc-backup-running",uid="pvc-backup-running-uid"} %d
-	`, startedAt.Unix())
+	`, createdAt.Unix())
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expectedStartTime), backupStartTimeMetricName))
 
 	require.Equal(t, 0, testutil.CollectAndCount(collector, backupCompletionTimeMetricName),
@@ -402,42 +408,29 @@ func TestSizeBytesByAssetType(t *testing.T) {
 }
 
 func TestGetStartTime(t *testing.T) {
-	startedAt := metav1.NewTime(time.Unix(1700000000, 0))
+	createdAt := metav1.NewTime(time.Unix(1700000000, 0))
 
 	tests := []struct {
-		name       string
-		conditions []metav1.Condition
-		want       float64
+		name              string
+		creationTimestamp metav1.Time
+		want              float64
 	}{
 		{
-			name: "running-true",
-			conditions: []metav1.Condition{{
-				Type:               string(operatorv1alpha1.BackupRunning),
-				Status:             metav1.ConditionTrue,
-				LastTransitionTime: startedAt,
-			}},
-			want: float64(startedAt.Unix()),
+			name:              "with-creation-timestamp",
+			creationTimestamp: createdAt,
+			want:              float64(createdAt.Unix()),
 		},
 		{
-			name: "running-false",
-			conditions: []metav1.Condition{{
-				Type:               string(operatorv1alpha1.BackupRunning),
-				Status:             metav1.ConditionFalse,
-				LastTransitionTime: startedAt,
-			}},
-			want: 0,
-		},
-		{
-			name:       "missing-running",
-			conditions: []metav1.Condition{},
-			want:       0,
+			name:              "zero-creation-timestamp",
+			creationTimestamp: metav1.Time{},
+			want:              0,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backup := operatorv1alpha1.EtcdBackup{
-				Status: operatorv1alpha1.EtcdBackupStatus{Conditions: tt.conditions},
+				ObjectMeta: metav1.ObjectMeta{CreationTimestamp: tt.creationTimestamp},
 			}
 			require.Equal(t, tt.want, getStartTime(backup))
 		})
