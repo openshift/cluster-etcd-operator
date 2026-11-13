@@ -58,7 +58,7 @@ spec:
         - "--terminate-on-files=/var/run/configmaps/etcd-service-ca/service-ca.crt"
         resources:
           requests:
-            memory: 50Mi
+            memory: 170Mi
             cpu: 10m
         livenessProbe:
           httpGet:
