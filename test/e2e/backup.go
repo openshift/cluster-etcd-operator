@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/test/e2e/framework"
 	"github.com/stretchr/testify/require"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -48,6 +50,9 @@ var _ = g.Describe("[sig-etcd] cluster-etcd-operator", func() {
 	})
 	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestRetentionBySize [Timeout:30m]", func() {
 		TestRetentionBySize(g.GinkgoTB())
+	})
+	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestMultipleBackupsAreQueued [Timeout:30m]", func() {
+		TestMultipleBackupsAreQueued(g.GinkgoTB())
 	})
 	g.It("[Operator][Serial][Disruptive][OCPFeatureGate:AutomatedEtcdBackup] TestBackupFailureOnMissingPVC", func() {
 		TestBackupFailureOnMissingPVC(g.GinkgoTB())
@@ -194,6 +199,158 @@ func TestRetentionBySize(t testing.TB) {
 
 	retained, pruned := awaitBackupRetention(t, backupPolicy)
 	requireBackupFilesMatchRetention(t, pvcName, backupPolicy.Spec.Storage.PVC.Path, retained, pruned)
+}
+
+func TestMultipleBackupsAreQueued(t testing.TB) {
+	pvcName := names.SimpleNameGenerator.GenerateName("multi-backups-")
+	c := framework.NewOperatorClient(t)
+	coreClient := framework.NewCoreClient(t)
+	backupsClient := c.OperatorV1alpha1().EtcdBackups()
+	jobsClient := framework.NewBatchClient(t).Jobs(OpenShiftEtcdNamespace)
+	podsClient := coreClient.Pods(OpenShiftEtcdNamespace)
+	pvcsClient := coreClient.PersistentVolumeClaims(OpenShiftEtcdNamespace)
+	backupsRemoved := true
+	// Register first so this runs after backup cleanup, including on partial setup failure.
+	t.Cleanup(func() {
+		if !backupsRemoved {
+			t.Log("keeping the test volume because backup cleanup did not finish")
+			return
+		}
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cleanupCancel()
+		if err := pvcsClient.Delete(cleanupCtx, pvcName, metav1.DeleteOptions{}); !errors.IsNotFound(err) {
+			require.NoError(t, err, "deleting test PVC")
+		}
+		if err := coreClient.PersistentVolumes().Delete(cleanupCtx, pvcName+"-pv", metav1.DeleteOptions{}); !errors.IsNotFound(err) {
+			require.NoError(t, err, "deleting test PV")
+		}
+		err := wait.PollUntilContextCancel(cleanupCtx, 5*time.Second, true, func(ctx context.Context) (bool, error) {
+			if _, err := pvcsClient.Get(ctx, pvcName, metav1.GetOptions{}); !errors.IsNotFound(err) {
+				return false, err
+			}
+			_, err := coreClient.PersistentVolumes().Get(ctx, pvcName+"-pv", metav1.GetOptions{})
+			if errors.IsNotFound(err) {
+				return true, nil
+			}
+			return false, err
+		})
+		require.NoError(t, err, "waiting for test PVC and PV to be removed")
+	})
+	ensureHostPathPVC(t, pvcName)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	backup := operatorv1alpha1.EtcdBackup{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: OpenShiftEtcdNamespace,
+		},
+		Spec: operatorv1alpha1.EtcdBackupSpec{
+			Storage: operatorv1alpha1.EtcdBackupStorage{
+				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+				PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: pvcName},
+			},
+		},
+	}
+
+	backupNames := make([]string, 0, 5)
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cleanupCancel()
+		for _, name := range backupNames {
+			deleteEtcdBackup(t, cleanupCtx, c.OperatorV1alpha1(), &operatorv1alpha1.EtcdBackup{ObjectMeta: metav1.ObjectMeta{Name: name}})
+		}
+		for _, name := range backupNames {
+			ensureEtcdBackupRemoved(t, name)
+		}
+		if len(backupNames) == 0 {
+			return
+		}
+		// Backup deletion is asynchronous: wait for its Jobs and Pods as well.
+		err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
+			jobs, err := jobsClient.List(ctx, metav1.ListOptions{
+				LabelSelector: backuphelpers.LabelEtcdBackup + " in (" + strings.Join(backupNames, ",") + ")",
+			})
+			if errors.IsTimeout(err) || errors.IsServerTimeout(err) || errors.IsTooManyRequests(err) || errors.IsServiceUnavailable(err) {
+				klog.Infof("temporary error while listing backup Jobs, retrying: %v", err)
+				return false, nil
+			}
+			if err != nil || len(jobs.Items) > 0 {
+				return false, err
+			}
+			pods, err := podsClient.List(ctx, metav1.ListOptions{})
+			if errors.IsTimeout(err) || errors.IsServerTimeout(err) || errors.IsTooManyRequests(err) || errors.IsServiceUnavailable(err) {
+				klog.Infof("temporary error while listing backup Pods, retrying: %v", err)
+				return false, nil
+			}
+			if err != nil {
+				return false, err
+			}
+			for _, pod := range pods.Items {
+				for _, volume := range pod.Spec.Volumes {
+					if volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == pvcName {
+						// Completed GC Pods can still prevent PVC deletion until their Job's TTL expires.
+						err := podsClient.Delete(ctx, pod.Name, metav1.DeleteOptions{})
+						if errors.IsNotFound(err) || errors.IsTimeout(err) || errors.IsServerTimeout(err) || errors.IsTooManyRequests(err) || errors.IsServiceUnavailable(err) {
+							return false, nil
+						}
+						return false, err
+					}
+				}
+			}
+			return true, nil
+		})
+		require.NoError(t, err, "waiting for backup Jobs and Pods to be removed")
+		backupsRemoved = true
+	})
+
+	for i := range 5 {
+		backup.Name = fmt.Sprintf("%s-%d", pvcName, i)
+		// Include attempted creates: a timed-out request may still create the backup.
+		backupNames = append(backupNames, backup.Name)
+		backupsRemoved = false
+		_, err := backupsClient.Create(ctx, &backup, metav1.CreateOptions{})
+		require.NoError(t, err)
+	}
+
+	jobs := make([]batchv1.Job, 0, len(backupNames))
+	for _, name := range backupNames {
+		var jobName string
+		err := wait.PollUntilContextCancel(ctx, 5*time.Second, true,
+			func(ctx context.Context) (done bool, err error) {
+				b, err := backupsClient.Get(ctx, name, metav1.GetOptions{})
+				if err != nil {
+					if errors.IsTimeout(err) || errors.IsServerTimeout(err) || errors.IsTooManyRequests(err) || errors.IsServiceUnavailable(err) {
+						klog.Infof("temporary error while getting backup %s, retrying: %v", name, err)
+						return false, nil
+					}
+					return false, err
+				}
+				if backuphelpers.IsBackupFailed(b) {
+					return false, fmt.Errorf("backup %s failed: %v", name, b.Status.Conditions)
+				}
+				if backuphelpers.IsBackupCompleted(b) {
+					jobName = b.Status.JobName
+					return true, nil
+				}
+				return false, nil
+			})
+		require.NoErrorf(t, err, "backup %s did not complete", name)
+		require.NotEmpty(t, jobName, "completed backup %s has no Job", name)
+		job, err := jobsClient.Get(ctx, jobName, metav1.GetOptions{})
+		require.NoError(t, err)
+		jobs = append(jobs, *job)
+	}
+
+	sort.Slice(jobs, func(i, j int) bool {
+		return jobs[i].CreationTimestamp.Before(&jobs[j].CreationTimestamp)
+	})
+	for i := 1; i < len(jobs); i++ {
+		previous, next := jobs[i-1], jobs[i]
+		require.NotNil(t, previous.Status.CompletionTime, "Job %s has no completion time", previous.Name)
+		require.Falsef(t, next.CreationTimestamp.Before(previous.Status.CompletionTime),
+			"Job %s was created before Job %s finished", next.Name, previous.Name)
+	}
 }
 
 func TestBackupFailureOnMissingPVC(t testing.TB) {
