@@ -187,18 +187,14 @@ func extractStorageInfo(backup operatorv1alpha1.EtcdBackup) (string, string) {
 		}
 	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
 		storageType = storageTypeLocal
-		storageLocation = backup.Spec.Storage.Local.HostPath
+		storageLocation = backuphelpers.LocalBackupHostPath(backup.Spec.Storage.Local)
 	}
 
 	return storageType, storageLocation
 }
 
 func extractPolicyName(backup operatorv1alpha1.EtcdBackup) string {
-	policyName := backup.Labels[backuphelpers.LabelEtcdBackupPolicy]
-	if policyName == "" {
-		return ""
-	}
-	return policyName
+	return backup.Labels[backuphelpers.LabelEtcdBackupPolicy]
 }
 
 func extractCurrentStatus(backup operatorv1alpha1.EtcdBackup) string {
