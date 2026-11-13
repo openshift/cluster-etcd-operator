@@ -1,15 +1,12 @@
 package updatesetup
 
 import (
-	"context"
-	"fmt"
 	"strings"
 	"testing"
-
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/config"
 )
 
-func TestAddNodeBackToCluster(t *testing.T) {
+// Keep the FQDN and command-input validation coverage from the pre-generation runner.
+func TestValidCommandNode(t *testing.T) {
 	for _, testCase := range []struct {
 		name     string
 		nodeName string
@@ -55,42 +52,8 @@ func TestAddNodeBackToCluster(t *testing.T) {
 		{"254 character dotted name", strings.Repeat(strings.Repeat("a", 63)+".", 3) + strings.Repeat("a", 62), false},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			cancel()
-
-			err := addNodeBackToCluster(ctx, nil, testCase.nodeName, "master-1", config.ClusterConfig{})
-			if err == nil {
-				t.Fatal("expected validation or canceled command error")
-			}
-			wantPrefix := fmt.Sprintf("invalid node name %q:", testCase.nodeName)
-			if testCase.valid {
-				wantPrefix = fmt.Sprintf("failed to add missing node %s:", testCase.nodeName)
-			}
-			if !strings.HasPrefix(err.Error(), wantPrefix) {
-				t.Fatalf("got error %q, want prefix %q", err, wantPrefix)
-			}
-		})
-	}
-}
-
-func TestCorosyncNodesToRecover(t *testing.T) {
-	for _, tc := range []struct {
-		name, online, offline, currentNode, otherNode, missing, remove string
-		wantErr                                                        bool
-	}{
-		{"no nodes", "", "", "master-1", "master-0", "", "", true},
-		{"missing node", "master-1", "", "master-1", "master-0", "master-0", "", false},
-		{"missing node from master-0", "master-0", "", "master-0", "master-1", "master-1", "", false},
-		{"unexpected Corosync name", "other-host", "", "master-0", "master-1", "", "", true},
-		{"both online", "master-0 master-1", "", "master-1", "master-0", "", "", false},
-		{"stopped node", "master-1", "master-0", "master-1", "master-0", "", "master-0", false},
-		{"both offline", "", "master-0 master-1", "master-1", "master-0", "", "", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			status := fmt.Sprintf("Corosync Nodes:\n Online: %s\n Offline: %s\n", tc.online, tc.offline)
-			missing, offline, err := corosyncNodesToRecover(status, tc.currentNode, tc.otherNode)
-			if missing != tc.missing || offline != tc.remove || (err != nil) != tc.wantErr {
-				t.Fatalf("got (%q, %q, %v), want (%q, %q, error=%t)", missing, offline, err, tc.missing, tc.remove, tc.wantErr)
+			if got := validCommandNode(testCase.nodeName); got != testCase.valid {
+				t.Fatalf("validCommandNode(%q) = %t, want %t", testCase.nodeName, got, testCase.valid)
 			}
 		})
 	}

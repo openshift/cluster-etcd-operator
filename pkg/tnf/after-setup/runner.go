@@ -2,17 +2,17 @@ package after_setup
 
 import (
 	"context"
-	"fmt"
+	"k8s.io/apimachinery/pkg/types"
+	"os"
 
-	batchv1 "k8s.io/api/batch/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/server"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 
-	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/jobs"
+	operatorclient "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
+	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/generation"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/kubelet"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/tools"
 )
@@ -46,26 +46,12 @@ func RunTnfAfterSetup() error {
 
 	klog.Info("Running TNF after setup")
 
-	klog.Info("Waiting for completed setup job")
-	setupDone := func(context.Context) (done bool, err error) {
-		setupJobs, err := kubeClient.BatchV1().Jobs("openshift-etcd").List(ctx, metav1.ListOptions{
-			LabelSelector: fmt.Sprintf("app.kubernetes.io/name=%s", tools.JobTypeSetup.GetNameLabelValue()),
-		})
-		if err != nil {
-			klog.Warningf("Failed to list setupJobs: %v", err)
-			return false, nil
-		}
-		if setupJobs.Items == nil || len(setupJobs.Items) != 1 {
-			klog.Warningf("Expected 1 job, got %d", len(setupJobs.Items))
-			return false, nil
-		}
-		job := setupJobs.Items[0]
-		if !jobs.IsConditionTrue(job.Status.Conditions, batchv1.JobComplete) {
-			klog.Warningf("Job %s not complete", job.Name)
-			return false, nil
-		}
-		klog.Info("Setup job completed successfully")
-		return true, nil
+	operatorClient, err := operatorclient.NewForConfig(clientConfig)
+	if err != nil {
+		return err
+	}
+	setupDone := func(ctx context.Context) (bool, error) {
+		return generation.SetupReady(ctx, kubeClient, operatorClient.Etcds(), os.Getenv("MY_NODE_NAME"), types.UID(os.Getenv(generation.NodeUIDEnv)))
 	}
 	err = wait.PollUntilContextTimeout(ctx, tools.JobPollInterval, tools.SetupJobCompletedTimeout, true, setupDone)
 	if err != nil {
