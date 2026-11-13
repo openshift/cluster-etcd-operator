@@ -361,7 +361,7 @@ func TestRequestBackupForPolicyAllNodesRetryAfterPartialCreate(t *testing.T) {
 }
 
 // TestRequestBackupForPolicyAllNodesWithActiveBackupFromOtherRun verifies that in Local AllNodes mode an active backup
-// from a different schedule execution still causes the current execution to be skipped.
+// on one node from a different schedule run will not prevent backups from being created on other available nodes.
 func TestRequestBackupForPolicyAllNodesWithActiveBackupFromOtherRun(t *testing.T) {
 	runRequestBackupTest(t, testCaseRequestBackup{
 		opts: requestBackupOpts{
@@ -383,6 +383,7 @@ func TestRequestBackupForPolicyAllNodesWithActiveBackupFromOtherRun(t *testing.T
 		backups: []*operatorv1alpha1.EtcdBackup{
 			testutils.FakeEtcdBackup("test-backup-policy-29000000-abc", testutils.WithBackupPolicy("test-backup-policy"), func(backup *operatorv1alpha1.EtcdBackup) {
 				backup.Labels[backuphelpers.LabelEtcdBackupPolicyRun] = "test-backup-policy-29000000"
+				backup.Spec.Storage = operatorv1alpha1.EtcdBackupStorage{Type: operatorv1alpha1.EtcdBackupStorageTypeLocal}
 				backup.Spec.NodeSelector = map[string]string{corev1.LabelHostname: "test-node-1"}
 			}),
 		},
@@ -390,8 +391,13 @@ func TestRequestBackupForPolicyAllNodesWithActiveBackupFromOtherRun(t *testing.T
 			testutils.FakeNode("test-node-1", testutils.WithMasterLabel()),
 			testutils.FakeNode("test-node-2", testutils.WithMasterLabel())},
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
-			_, ok := testutils.GetAction[k8stesting.CreateActionImpl](operatorFake.Fake.Actions())
-			require.False(t, ok, "expected no create action")
+			actions := testutils.ListActions[k8stesting.CreateActionImpl](operatorFake.Fake.Actions())
+			require.Len(t, actions, 1, "expected one create action")
+			backup, ok := actions[0].Object.(*operatorv1alpha1.EtcdBackup)
+			require.True(t, ok, "expected EtcdBackup object")
+
+			require.Equal(t, "test-backup-policy", backup.Labels[backuphelpers.LabelEtcdBackupPolicy])
+			require.Equal(t, "test-node-2", backup.Spec.NodeSelector[corev1.LabelHostname])
 		},
 	})
 }

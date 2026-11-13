@@ -222,16 +222,20 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 	if err != nil {
 		return err
 	}
-	existingHostnames := map[string]struct{}{}
+	isAllNodes := backupPolicy.Spec.Storage.Type == operatorv1alpha1.EtcdBackupStorageTypeLocal && backupPolicy.Spec.Storage.Local.Distribution == operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeAllNodes
+	existingLocalBackupHostnames := map[string]struct{}{}
 	for _, backup := range backupList.Items {
-		// In Local AllNodes mode, check if active backups are from the current run and ensure a backup exists for each selected node.
-		// If backups are partially created and then a transient error occurs, this ensures we retry idempotently.
-		//
-		// If at least one active backup from a different run is found, exit early.
-		if backupPolicy.Spec.Storage.Type == operatorv1alpha1.EtcdBackupStorageTypeLocal &&
-			backupPolicy.Spec.Storage.Local.Distribution == operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeAllNodes &&
-			backup.Labels[backuphelpers.LabelEtcdBackupPolicyRun] == name {
-			existingHostnames[backup.Spec.NodeSelector[corev1.LabelHostname]] = struct{}{}
+		if isAllNodes {
+			// In Local AllNodes mode, ensure a backup exists for each selected node even if previously running backups exist for some nodes.
+			// If backups are partially created and then a transient error occurs, the LabelEtcdBackupPolicyRun check ensures we retry idempotently.
+			// If backups on a single node are indefinitely stuck, this ensures backups are still taken on other nodes.
+			if backup.Labels[backuphelpers.LabelEtcdBackupPolicyRun] == name || !backuphelpers.IsBackupFinished(&backup) {
+				// Only check for local backups in case the policy switched from PVC -> Local AllNodes.
+				// Even if the PVC backup was assigned to a specific node, it should not count against the backups to be created for the Local policy.
+				if hostname := backup.Spec.NodeSelector[corev1.LabelHostname]; backup.Spec.Storage.Type == operatorv1alpha1.EtcdBackupStorageTypeLocal && hostname != "" {
+					existingLocalBackupHostnames[hostname] = struct{}{}
+				}
+			}
 		} else if !backuphelpers.IsBackupFinished(&backup) {
 			klog.Infof("skipping schedule execution for EtcdBackupPolicy %s: active backups found", backupPolicy.Name)
 			return nil
@@ -264,7 +268,7 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
 		for node := range iterLocalNodes(backupPolicy, backupList, nodeList) {
 			hostName := node.Labels[corev1.LabelHostname]
-			if _, ok := existingHostnames[hostName]; ok {
+			if _, ok := existingLocalBackupHostnames[hostName]; ok {
 				continue
 			}
 
