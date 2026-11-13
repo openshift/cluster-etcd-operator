@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/clock"
 
 	"github.com/openshift/library-go/pkg/certs"
 	"github.com/openshift/library-go/pkg/crypto"
@@ -71,6 +72,13 @@ type RotatedSelfSignedCertKeySecret struct {
 	// PKIProfileProvider, when non-nil, enables ConfigurablePKI certificate
 	// key algorithm resolution. When nil, legacy certificate generation is used.
 	PKIProfileProvider pki.PKIProfileProvider
+
+	// Clock, when set, is used for the remaining-signer-validity read. The
+	// rotation decision and certificate generation use the CertCreator's own
+	// Clock. When nil, the real system clock is used. To drive a whole
+	// controller with a fake clock, set Clock on all rotation components
+	// (signer, CA bundle, target, and target cert creator).
+	Clock clock.PassiveClock
 
 	// Plumbing:
 	Informer      corev1informers.SecretInformer
@@ -165,13 +173,13 @@ func (c RotatedSelfSignedCertKeySecret) EnsureTargetCertKeyPair(ctx context.Cont
 	return targetCertKeyPairSecret, nil
 }
 
-func needNewTargetCertKeyPair(secret *corev1.Secret, signer *crypto.CA, caBundleCerts []*x509.Certificate, refresh time.Duration, refreshOnlyWhenExpired, creationRequired bool) string {
+func needNewTargetCertKeyPair(secret *corev1.Secret, signer *crypto.CA, caBundleCerts []*x509.Certificate, refresh time.Duration, refreshOnlyWhenExpired, creationRequired bool, clk clock.PassiveClock) string {
 	if creationRequired {
 		return "secret doesn't exist"
 	}
 
 	annotations := secret.Annotations
-	if reason := needNewTargetCertKeyPairForTime(annotations, signer, refresh, refreshOnlyWhenExpired); len(reason) > 0 {
+	if reason := needNewTargetCertKeyPairForTime(annotations, signer, refresh, refreshOnlyWhenExpired, clk); len(reason) > 0 {
 		return reason
 	}
 
@@ -213,14 +221,15 @@ func needNewTargetCertKeyPair(secret *corev1.Secret, signer *crypto.CA, caBundle
 // Hence, if the CAs are rotated too fast (like CA percentage around 10% or smaller), we will not hit the time to make use of the CA. Or if the cert renewal percentage is at 90%, there is not much time either.
 //
 // So with a cert percentage of 75% and equally long CA and cert validities at the worst case we start at 85% of the cert to renew, trying again every minute.
-func needNewTargetCertKeyPairForTime(annotations map[string]string, signer *crypto.CA, refresh time.Duration, refreshOnlyWhenExpired bool) string {
+func needNewTargetCertKeyPairForTime(annotations map[string]string, signer *crypto.CA, refresh time.Duration, refreshOnlyWhenExpired bool, clk clock.PassiveClock) string {
+	now := certrotationClock(clk).Now()
 	notBefore, notAfter, reason := getValidityFromAnnotations(annotations)
 	if len(reason) > 0 {
 		return reason
 	}
 
 	// Is cert expired?
-	if time.Now().After(notAfter) {
+	if now.After(notAfter) {
 		return "already expired"
 	}
 
@@ -231,16 +240,16 @@ func needNewTargetCertKeyPairForTime(annotations map[string]string, signer *cryp
 	// Are we at 80% of validity?
 	validity := notAfter.Sub(notBefore)
 	at80Percent := notAfter.Add(-validity / 5)
-	if time.Now().After(at80Percent) {
+	if now.After(at80Percent) {
 		return fmt.Sprintf("past refresh time (80%% of validity): %v", at80Percent)
 	}
 
 	// If Certificate is past its refresh time, we may have action to take. We only do this if the signer is old enough.
 	refreshTime := notBefore.Add(refresh)
-	if time.Now().After(refreshTime) {
+	if now.After(refreshTime) {
 		// make sure the signer has been valid for more than 10% of the target's refresh time.
 		timeToWaitForTrustRotation := refresh / 10
-		if time.Now().After(signer.Config.Certs[0].NotBefore.Add(time.Duration(timeToWaitForTrustRotation))) {
+		if now.After(signer.Config.Certs[0].NotBefore.Add(time.Duration(timeToWaitForTrustRotation))) {
 			return fmt.Sprintf("past its refresh time %v", refreshTime)
 		}
 	}
@@ -272,7 +281,7 @@ func (c RotatedSelfSignedCertKeySecret) setTargetCertKeyPairSecret(targetCertKey
 
 	// our annotation is based on our cert validity, so we want to make sure that we don't specify something past our signer
 	targetValidity := c.Validity
-	remainingSignerValidity := signer.Config.Certs[0].NotAfter.Sub(time.Now())
+	remainingSignerValidity := signer.Config.Certs[0].NotAfter.Sub(certrotationClock(c.Clock).Now())
 	if remainingSignerValidity < targetValidity {
 		targetValidity = remainingSignerValidity
 	}
@@ -320,6 +329,9 @@ func (c RotatedSelfSignedCertKeySecret) resolveKeyPairGenerator() (crypto.KeyPai
 
 type ClientRotation struct {
 	UserInfo user.Info
+	// Clock, when set, is used for rotation decisions and certificate
+	// validity. When nil, the real system clock is used.
+	Clock clock.PassiveClock
 }
 
 func (r *ClientRotation) CertificateType() pki.CertificateType {
@@ -328,13 +340,13 @@ func (r *ClientRotation) CertificateType() pki.CertificateType {
 
 func (r *ClientRotation) NewCertificate(signer *crypto.CA, validity time.Duration, keyGen crypto.KeyPairGenerator) (*crypto.TLSCertificateConfig, error) {
 	if keyGen == nil {
-		return signer.MakeClientCertificateForDuration(r.UserInfo, validity)
+		return signer.MakeClientCertificateForDurationAtTime(r.UserInfo, validity, certrotationClock(r.Clock).Now)
 	}
-	return signer.NewClientCertificate(r.UserInfo, keyGen, crypto.WithLifetime(validity))
+	return signer.NewClientCertificate(r.UserInfo, keyGen, crypto.WithLifetime(validity), crypto.WithClock(certrotationClock(r.Clock)))
 }
 
 func (r *ClientRotation) NeedNewTargetCertKeyPair(currentCertSecret *corev1.Secret, signer *crypto.CA, caBundleCerts []*x509.Certificate, refresh time.Duration, refreshOnlyWhenExpired, exists bool) string {
-	return needNewTargetCertKeyPair(currentCertSecret, signer, caBundleCerts, refresh, refreshOnlyWhenExpired, exists)
+	return needNewTargetCertKeyPair(currentCertSecret, signer, caBundleCerts, refresh, refreshOnlyWhenExpired, exists, r.Clock)
 }
 
 func (r *ClientRotation) SetAnnotations(cert *crypto.TLSCertificateConfig, annotations map[string]string) map[string]string {
@@ -345,6 +357,9 @@ type ServingRotation struct {
 	Hostnames              ServingHostnameFunc
 	CertificateExtensionFn []crypto.CertificateExtensionFunc
 	HostnamesChanged       <-chan struct{}
+	// Clock, when set, is used for rotation decisions and certificate
+	// validity. When nil, the real system clock is used.
+	Clock clock.PassiveClock
 }
 
 func (r *ServingRotation) CertificateType() pki.CertificateType {
@@ -357,11 +372,12 @@ func (r *ServingRotation) NewCertificate(signer *crypto.CA, validity time.Durati
 		return nil, fmt.Errorf("no hostnames set")
 	}
 	if keyGen == nil {
-		return signer.MakeServerCertForDuration(sets.New(hostnames...), validity, r.CertificateExtensionFn...)
+		return signer.MakeServerCertForDurationAtTime(sets.New(hostnames...), validity, certrotationClock(r.Clock).Now, r.CertificateExtensionFn...)
 	}
 	return signer.NewServerCertificate(sets.New(hostnames...), keyGen,
 		crypto.WithLifetime(validity),
 		crypto.WithExtensions(r.CertificateExtensionFn...),
+		crypto.WithClock(certrotationClock(r.Clock)),
 	)
 }
 
@@ -370,7 +386,7 @@ func (r *ServingRotation) RecheckChannel() <-chan struct{} {
 }
 
 func (r *ServingRotation) NeedNewTargetCertKeyPair(currentCertSecret *corev1.Secret, signer *crypto.CA, caBundleCerts []*x509.Certificate, refresh time.Duration, refreshOnlyWhenExpired, creationRequired bool) string {
-	reason := needNewTargetCertKeyPair(currentCertSecret, signer, caBundleCerts, refresh, refreshOnlyWhenExpired, creationRequired)
+	reason := needNewTargetCertKeyPair(currentCertSecret, signer, caBundleCerts, refresh, refreshOnlyWhenExpired, creationRequired, r.Clock)
 	if len(reason) > 0 {
 		return reason
 	}
@@ -414,6 +430,9 @@ type ServingHostnameFunc func() []string
 
 type SignerRotation struct {
 	SignerName string
+	// Clock, when set, is used for rotation decisions and certificate
+	// validity. When nil, the real system clock is used.
+	Clock clock.PassiveClock
 }
 
 func (r *SignerRotation) CertificateType() pki.CertificateType {
@@ -421,13 +440,15 @@ func (r *SignerRotation) CertificateType() pki.CertificateType {
 }
 
 func (r *SignerRotation) NewCertificate(signer *crypto.CA, validity time.Duration, keyGen crypto.KeyPairGenerator) (*crypto.TLSCertificateConfig, error) {
-	signerName := fmt.Sprintf("%s_@%d", r.SignerName, time.Now().Unix())
+	clk := certrotationClock(r.Clock)
+	signerName := fmt.Sprintf("%s_@%d", r.SignerName, clk.Now().Unix())
 	if keyGen == nil {
-		return crypto.MakeCAConfigForDuration(signerName, validity, signer)
+		return crypto.MakeCAConfigForDurationAtTime(signerName, validity, clk.Now, signer)
 	}
 	return crypto.NewSigningCertificate(signerName, keyGen,
 		crypto.WithSigner(signer),
 		crypto.WithLifetime(validity),
+		crypto.WithClock(clk),
 	)
 }
 
@@ -446,6 +467,9 @@ type PeerRotation struct {
 	UserInfo               user.Info
 	CertificateExtensionFn []crypto.CertificateExtensionFunc
 	HostnamesChanged       <-chan struct{}
+	// Clock, when set, is used for rotation decisions and certificate
+	// validity. When nil, the real system clock is used.
+	Clock clock.PassiveClock
 }
 
 func (r *PeerRotation) CertificateType() pki.CertificateType {
@@ -472,12 +496,13 @@ func (r *PeerRotation) NewCertificate(signer *crypto.CA, validity time.Duration,
 			return nil
 		}
 		extensions := append(append([]crypto.CertificateExtensionFunc{}, r.CertificateExtensionFn...), peerExtFn)
-		return signer.MakeServerCertForDuration(sets.New(hostnames...), validity, extensions...)
+		return signer.MakeServerCertForDurationAtTime(sets.New(hostnames...), validity, certrotationClock(r.Clock).Now, extensions...)
 	}
 	return signer.NewPeerCertificate(
 		sets.New(hostnames...), r.UserInfo, keyGen,
 		crypto.WithLifetime(validity),
 		crypto.WithExtensions(r.CertificateExtensionFn...),
+		crypto.WithClock(certrotationClock(r.Clock)),
 	)
 }
 
@@ -486,7 +511,7 @@ func (r *PeerRotation) RecheckChannel() <-chan struct{} {
 }
 
 func (r *PeerRotation) NeedNewTargetCertKeyPair(currentCertSecret *corev1.Secret, signer *crypto.CA, caBundleCerts []*x509.Certificate, refresh time.Duration, refreshOnlyWhenExpired, creationRequired bool) string {
-	reason := needNewTargetCertKeyPair(currentCertSecret, signer, caBundleCerts, refresh, refreshOnlyWhenExpired, creationRequired)
+	reason := needNewTargetCertKeyPair(currentCertSecret, signer, caBundleCerts, refresh, refreshOnlyWhenExpired, creationRequired, r.Clock)
 	if len(reason) > 0 {
 		return reason
 	}
@@ -498,7 +523,7 @@ func (r *PeerRotation) SetAnnotations(cert *crypto.TLSCertificateConfig, annotat
 }
 
 func (r *SignerRotation) NeedNewTargetCertKeyPair(currentCertSecret *corev1.Secret, signer *crypto.CA, caBundleCerts []*x509.Certificate, refresh time.Duration, refreshOnlyWhenExpired, exists bool) string {
-	return needNewTargetCertKeyPair(currentCertSecret, signer, caBundleCerts, refresh, refreshOnlyWhenExpired, exists)
+	return needNewTargetCertKeyPair(currentCertSecret, signer, caBundleCerts, refresh, refreshOnlyWhenExpired, exists, r.Clock)
 }
 
 func (r *SignerRotation) SetAnnotations(cert *crypto.TLSCertificateConfig, annotations map[string]string) map[string]string {

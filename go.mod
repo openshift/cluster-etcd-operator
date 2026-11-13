@@ -169,3 +169,5 @@ replace (
 	github.com/onsi/ginkgo/v2 => github.com/openshift/onsi-ginkgo/v2 v2.6.1-0.20241205171354-8006f302fd12
 	vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787
 )
+
+replace github.com/openshift/library-go => github.com/sanchezl/library-go v0.0.0-20261113201714-48ca45270817
