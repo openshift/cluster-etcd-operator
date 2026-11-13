@@ -9,6 +9,7 @@ import (
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorfake "github.com/openshift/client-go/operator/clientset/versioned/fake"
 	operatorinformers "github.com/openshift/client-go/operator/informers/externalversions"
+	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -224,6 +225,19 @@ func TestBackupMetricsLocalStorage(t *testing.T) {
 
 	collector := setupCollectorWithBackups(t, backup)
 	requireInfoMetric(t, collector, "local-backup", "local-backup-uid", "node-2", storageTypeLocal, "/var/lib/etcd-backup", "")
+}
+
+func TestBackupMetricsLocalStorageEmptyHostPath(t *testing.T) {
+	backup := testutils.FakeEtcdBackup("local-default-path",
+		testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
+			Type:  operatorv1alpha1.EtcdBackupStorageTypeLocal,
+			Local: operatorv1alpha1.EtcdBackupStorageLocal{},
+		}),
+		testutils.WithBackupNodeName("node-2"),
+	)
+
+	collector := setupCollectorWithBackups(t, backup)
+	requireInfoMetric(t, collector, "local-default-path", "local-default-path-uid", "node-2", storageTypeLocal, backuphelpers.BackupPathMount, "")
 }
 
 func TestBackupMetricsPolicyName(t *testing.T) {
