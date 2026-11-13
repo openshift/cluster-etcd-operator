@@ -261,55 +261,47 @@
             // Last success is derived from live Completed EtcdBackup metrics (no
             // ConfigMap tracker). Threshold is 2*schedule interval so weekly/monthly
             // policies do not permanently fire. Interval series absence (unparseable
-            // schedule) suppresses this alert. Matching is by policy name
-            // (etcd_backup_info.etcd_backup_policy ↔ policy metrics.policy).
-            // Put policy series on the left of `and on()` so policy/uid labels remain.
+            // schedule) suppresses this alert. Matching is by policy name on the
+            // shared etcd_backup_policy label.
+            // Put policy series on the left of `and on()` so etcd_backup_policy/uid labels remain.
             expr: |||
               (
                 (
                   (
                     etcd_backup_policy_creation_time
-                    and on(policy, uid)
+                    and on(etcd_backup_policy, uid)
                     (
                       (time() - etcd_backup_policy_creation_time)
-                      > on(policy, uid)
+                      > on(etcd_backup_policy, uid)
                       (2 * etcd_backup_policy_schedule_interval_seconds)
                     )
                   )
-                  unless on(policy)
-                  label_replace(
-                    (
-                      etcd_backup_info
-                      and on(etcd_backup, uid)
-                      (etcd_backup_status{status="Completed"} == 1)
-                    ),
-                    "policy", "$1", "etcd_backup_policy", "(.*)"
+                  unless on(etcd_backup_policy)
+                  (
+                    etcd_backup_info
+                    and on(etcd_backup, uid)
+                    (etcd_backup_status{status="Completed"} == 1)
                   )
                 )
                 or
                 (
                   etcd_backup_policy_schedule_interval_seconds
-                  and on(policy)
+                  and on(etcd_backup_policy)
                   (
                     (
                       time()
                       -
-                      max by (policy) (
-                        label_replace(
+                      max by (etcd_backup_policy) (
+                        etcd_backup_completion_time
+                        * on(etcd_backup, uid) group_left(etcd_backup_policy)
                           (
-                            etcd_backup_completion_time
-                            * on(etcd_backup, uid) group_left(etcd_backup_policy)
-                              (
-                                etcd_backup_info
-                                and on(etcd_backup, uid)
-                                (etcd_backup_status{status="Completed"} == 1)
-                              )
-                          ),
-                          "policy", "$1", "etcd_backup_policy", "(.*)"
-                        )
+                            etcd_backup_info
+                            and on(etcd_backup, uid)
+                            (etcd_backup_status{status="Completed"} == 1)
+                          )
                       )
                     )
-                    > on(policy)
+                    > on(etcd_backup_policy)
                     (2 * etcd_backup_policy_schedule_interval_seconds)
                   )
                 )
@@ -319,7 +311,7 @@
               severity: 'critical',
             },
             annotations: {
-              description: 'Backup policy "{{ $labels.policy }}" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.',
+              description: 'Backup policy "{{ $labels.etcd_backup_policy }}" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.',
               summary: 'Backup policy has no successful backup within two schedule intervals.',
             },
           },

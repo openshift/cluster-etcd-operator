@@ -29,13 +29,13 @@ func TestBackupPolicyMetrics(t *testing.T) {
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(fmt.Sprintf(`
 		# HELP etcd_backup_policy_creation_time Unix timestamp when policy was created
 		# TYPE etcd_backup_policy_creation_time gauge
-		etcd_backup_policy_creation_time{policy="daily",uid="daily-uid"} %d
+		etcd_backup_policy_creation_time{etcd_backup_policy="daily",uid="daily-uid"} %d
 	`, createdAt.Unix())), backupPolicyCreationTimeMetricName))
 
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(`
 		# HELP etcd_backup_policy_schedule_interval_seconds Estimated maximum seconds between scheduled backup runs for the policy. Used by freshness alerts as the schedule interval; omitted when the schedule cannot be parsed.
 		# TYPE etcd_backup_policy_schedule_interval_seconds gauge
-		etcd_backup_policy_schedule_interval_seconds{policy="daily",uid="daily-uid"} 86400
+		etcd_backup_policy_schedule_interval_seconds{etcd_backup_policy="daily",uid="daily-uid"} 86400
 	`), backupPolicyScheduleIntervalSecondsMetricName))
 }
 

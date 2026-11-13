@@ -275,7 +275,7 @@ spec:
         severity: critical
     - alert: etcdBackupPolicyNoRecentSuccess
       annotations:
-        description: Backup policy "{{ $labels.policy }}" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.
+        description: Backup policy "{{ $labels.etcd_backup_policy }}" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.
         runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyNoRecentSuccess.md
         summary: Backup policy has no successful backup within two schedule intervals.
       expr: |
@@ -283,47 +283,39 @@ spec:
           (
             (
               etcd_backup_policy_creation_time
-              and on(policy, uid)
+              and on(etcd_backup_policy, uid)
               (
                 (time() - etcd_backup_policy_creation_time)
-                > on(policy, uid)
+                > on(etcd_backup_policy, uid)
                 (2 * etcd_backup_policy_schedule_interval_seconds)
               )
             )
-            unless on(policy)
-            label_replace(
-              (
-                etcd_backup_info
-                and on(etcd_backup, uid)
-                (etcd_backup_status{status="Completed"} == 1)
-              ),
-              "policy", "$1", "etcd_backup_policy", "(.*)"
+            unless on(etcd_backup_policy)
+            (
+              etcd_backup_info
+              and on(etcd_backup, uid)
+              (etcd_backup_status{status="Completed"} == 1)
             )
           )
           or
           (
             etcd_backup_policy_schedule_interval_seconds
-            and on(policy)
+            and on(etcd_backup_policy)
             (
               (
                 time()
                 -
-                max by (policy) (
-                  label_replace(
+                max by (etcd_backup_policy) (
+                  etcd_backup_completion_time
+                  * on(etcd_backup, uid) group_left(etcd_backup_policy)
                     (
-                      etcd_backup_completion_time
-                      * on(etcd_backup, uid) group_left(etcd_backup_policy)
-                        (
-                          etcd_backup_info
-                          and on(etcd_backup, uid)
-                          (etcd_backup_status{status="Completed"} == 1)
-                        )
-                    ),
-                    "policy", "$1", "etcd_backup_policy", "(.*)"
-                  )
+                      etcd_backup_info
+                      and on(etcd_backup, uid)
+                      (etcd_backup_status{status="Completed"} == 1)
+                    )
                 )
               )
-              > on(policy)
+              > on(etcd_backup_policy)
               (2 * etcd_backup_policy_schedule_interval_seconds)
             )
           )
