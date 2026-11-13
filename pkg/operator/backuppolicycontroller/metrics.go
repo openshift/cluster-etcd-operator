@@ -39,19 +39,19 @@ func NewBackupPolicyMetrics(
 		infoDesc: prometheus.NewDesc(
 			backupPolicyInfoMetricName,
 			"Information about etcd backup policy",
-			[]string{"policy", "uid", "schedule", "timezone", "storage_type", "storage_location"},
+			[]string{"etcd_backup_policy", "uid", "schedule", "timezone", "storage_type", "storage_location"},
 			nil,
 		),
 		creationTimeDesc: prometheus.NewDesc(
 			backupPolicyCreationTimeMetricName,
 			"Unix timestamp when policy was created",
-			[]string{"policy", "uid"},
+			[]string{"etcd_backup_policy", "uid"},
 			nil,
 		),
 		scheduleIntervalDesc: prometheus.NewDesc(
 			backupPolicyScheduleIntervalSecondsMetricName,
 			"Estimated maximum seconds between scheduled backup runs for the policy. Used by freshness alerts as the schedule interval; omitted when the schedule cannot be parsed.",
-			[]string{"policy", "uid"},
+			[]string{"etcd_backup_policy", "uid"},
 			nil,
 		),
 	}
