@@ -17,8 +17,8 @@ import (
 const (
 	backupInfoMetricName           = "etcd_backup_info"
 	backupStatusMetricName         = "etcd_backup_status"
-	backupCompletionTimeMetricName = "etcd_backup_completion_time"
-	backupStartTimeMetricName      = "etcd_backup_start_time"
+	backupCompletionTimeMetricName = "etcd_backup_completion_timestamp_seconds"
+	backupStartTimeMetricName      = "etcd_backup_start_timestamp_seconds"
 	backupSizeBytesMetricName      = "etcd_backup_size_bytes"
 
 	storageTypePVC   = "PVC"

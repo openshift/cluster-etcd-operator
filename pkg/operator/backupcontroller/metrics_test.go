@@ -119,9 +119,9 @@ func TestBackupMetricsCompleted(t *testing.T) {
 	requireStatusMetrics(t, collector, "pvc-backup", "pvc-backup-uid", statusCompleted)
 
 	expectedCompletionTime := fmt.Sprintf(`
-		# HELP etcd_backup_completion_time Unix timestamp when the backup completed.
-		# TYPE etcd_backup_completion_time gauge
-		etcd_backup_completion_time{etcd_backup="pvc-backup",uid="pvc-backup-uid"} %d
+		# HELP etcd_backup_completion_timestamp_seconds Unix timestamp when the backup completed.
+		# TYPE etcd_backup_completion_timestamp_seconds gauge
+		etcd_backup_completion_timestamp_seconds{etcd_backup="pvc-backup",uid="pvc-backup-uid"} %d
 	`, completedAt.Unix())
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expectedCompletionTime), backupCompletionTimeMetricName))
 
@@ -134,9 +134,9 @@ func TestBackupMetricsCompleted(t *testing.T) {
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expectedSize), backupSizeBytesMetricName))
 
 	expectedStartTime := fmt.Sprintf(`
-		# HELP etcd_backup_start_time Unix timestamp when the backup was created.
-		# TYPE etcd_backup_start_time gauge
-		etcd_backup_start_time{etcd_backup="pvc-backup",uid="pvc-backup-uid"} %d
+		# HELP etcd_backup_start_timestamp_seconds Unix timestamp when the backup was created.
+		# TYPE etcd_backup_start_timestamp_seconds gauge
+		etcd_backup_start_timestamp_seconds{etcd_backup="pvc-backup",uid="pvc-backup-uid"} %d
 	`, backup.CreationTimestamp.Unix())
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expectedStartTime), backupStartTimeMetricName))
 }
@@ -154,7 +154,7 @@ func TestBackupMetricsFailed(t *testing.T) {
 
 	requireStatusMetrics(t, collector, "pvc-backup-failed", "pvc-backup-failed-uid", statusFailed)
 
-	// Failed backups do not emit completion_time today (only Completed does).
+	// Failed backups do not emit completion_timestamp_seconds today (only Completed does).
 	require.Equal(t, 0, testutil.CollectAndCount(collector, backupCompletionTimeMetricName),
 		"expected 0 completion time metrics for failed backup")
 }
@@ -185,9 +185,9 @@ func TestBackupMetricsRunning(t *testing.T) {
 	requireStatusMetrics(t, collector, "pvc-backup-running", "pvc-backup-running-uid", statusRunning)
 
 	expectedStartTime := fmt.Sprintf(`
-		# HELP etcd_backup_start_time Unix timestamp when the backup was created.
-		# TYPE etcd_backup_start_time gauge
-		etcd_backup_start_time{etcd_backup="pvc-backup-running",uid="pvc-backup-running-uid"} %d
+		# HELP etcd_backup_start_timestamp_seconds Unix timestamp when the backup was created.
+		# TYPE etcd_backup_start_timestamp_seconds gauge
+		etcd_backup_start_timestamp_seconds{etcd_backup="pvc-backup-running",uid="pvc-backup-running-uid"} %d
 	`, createdAt.Unix())
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expectedStartTime), backupStartTimeMetricName))
 
