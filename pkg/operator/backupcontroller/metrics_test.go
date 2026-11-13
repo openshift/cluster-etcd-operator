@@ -159,9 +159,12 @@ func TestBackupMetricsFailed(t *testing.T) {
 
 	requireStatusMetrics(t, collector, "pvc-backup-failed", "pvc-backup-failed-uid", statusFailed)
 
-	// Failed backups do not emit completion_timestamp_seconds today (only Completed does).
-	require.Equal(t, 0, testutil.CollectAndCount(collector, backupCompletionTimeMetricName),
-		"expected 0 completion time metrics for failed backup")
+	expectedCompletionTime := fmt.Sprintf(`
+		# HELP etcd_backup_completion_timestamp_seconds Unix timestamp when the backup failed.
+		# TYPE etcd_backup_completion_timestamp_seconds gauge
+		etcd_backup_completion_timestamp_seconds{etcd_backup="pvc-backup-failed",uid="pvc-backup-failed-uid"} %d
+	`, failedAt.Unix())
+	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expectedCompletionTime), backupCompletionTimeMetricName))
 }
 
 func TestBackupMetricsRunning(t *testing.T) {

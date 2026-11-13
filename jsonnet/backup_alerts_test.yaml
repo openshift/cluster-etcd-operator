@@ -11,7 +11,7 @@ tests:
   # In promtool tests, time() equals eval_time seconds from epoch 0.
   - interval: 1m
     input_series:
-      - series: 'etcd_backup_start_time{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="backup-1",uid="backup-uid-1"}'
+      - series: 'etcd_backup_start_timestamp_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="backup-1",uid="backup-uid-1"}'
         values: "0+0x40"
       - series: 'etcd_backup_status{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="backup-1",uid="backup-uid-1",status="Running"}'
         values: "1+0x40"
@@ -35,7 +35,7 @@ tests:
   # Never-succeeded daily policy: age must exceed 2*interval (48h) before firing.
   - interval: 1h
     input_series:
-      - series: 'etcd_backup_policy_creation_time{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup_policy="daily",uid="uid-1"}'
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup_policy="daily",uid="uid-1"}'
         values: "1+0x55"
       - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup_policy="daily",uid="uid-1"}'
         values: "86400+0x55"
@@ -62,7 +62,7 @@ tests:
   # Recent Completed backup suppresses NoRecentSuccess for an old policy.
   - interval: 1h
     input_series:
-      - series: 'etcd_backup_policy_creation_time{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup_policy="daily",uid="uid-1"}'
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup_policy="daily",uid="uid-1"}'
         values: "1+0x55"
       - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup_policy="daily",uid="uid-1"}'
         values: "86400+0x55"
@@ -71,7 +71,7 @@ tests:
       - series: 'etcd_backup_status{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
         values: "1+0x55"
       # completion near the end of the series window (≈49h) so age at 50h is ~1h.
-      - series: 'etcd_backup_completion_time{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="b1",uid="b-uid-1"}'
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="b1",uid="b-uid-1"}'
         values: "176400+0x55"
     alert_rule_test:
       - eval_time: 50h
@@ -81,7 +81,7 @@ tests:
   # Stale Completed backup: last success older than 2*interval → fire.
   - interval: 1h
     input_series:
-      - series: 'etcd_backup_policy_creation_time{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup_policy="daily",uid="uid-1"}'
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup_policy="daily",uid="uid-1"}'
         values: "1+0x55"
       - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup_policy="daily",uid="uid-1"}'
         values: "86400+0x55"
@@ -90,7 +90,7 @@ tests:
       - series: 'etcd_backup_status{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
         values: "1+0x55"
       # success at t=100s; at 50h age ≈50h > 48h threshold.
-      - series: 'etcd_backup_completion_time{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="b1",uid="b-uid-1"}'
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="b1",uid="b-uid-1"}'
         values: "100+0x55"
     alert_rule_test:
       - eval_time: 50h
@@ -110,7 +110,7 @@ tests:
   # Weekly policy (interval=7d): at 13d still within 2*interval (14d); at 15d fires.
   - interval: 12h
     input_series:
-      - series: 'etcd_backup_policy_creation_time{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup_policy="weekly",uid="uid-2"}'
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup_policy="weekly",uid="uid-2"}'
         values: "1+0x35"
       - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup_policy="weekly",uid="uid-2"}'
         values: "604800+0x35"
