@@ -14,11 +14,8 @@ func FilterExpiredCerts(certs ...*x509.Certificate) []*x509.Certificate {
 
 // FilterExpiredCertsWithClock accepts a list of x509.Certificates and a clock.PassiveClock.
 // It returns a list of x509.Certificates whose NotAfter is still after the clock.PassiveClock.Now() value.
-// A nil clock means the real system clock.
+// The clock must be non-nil.
 func FilterExpiredCertsWithClock(clk clock.PassiveClock, certs ...*x509.Certificate) []*x509.Certificate {
-	if clk == nil {
-		clk = clock.RealClock{}
-	}
 	currentTime := clk.Now()
 	var validCerts []*x509.Certificate
 	for _, c := range certs {

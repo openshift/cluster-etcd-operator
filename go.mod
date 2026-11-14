@@ -170,4 +170,4 @@ replace (
 	vbom.ml/util => github.com/fvbommel/util v0.0.0-20180919145318-efcd4e0f9787
 )
 
-replace github.com/openshift/library-go => github.com/sanchezl/library-go v0.0.0-20261113201714-48ca45270817
+replace github.com/openshift/library-go => github.com/sanchezl/library-go v0.0.0-20261114051443-c3d28291c3a5
