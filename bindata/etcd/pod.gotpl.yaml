@@ -209,7 +209,7 @@ spec:
       value: "REVISION"
     resources:
       requests:
-        memory: 600Mi
+        memory: 1688Mi
         cpu: 300m
     readinessProbe:
       httpGet:
