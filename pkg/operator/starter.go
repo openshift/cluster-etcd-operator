@@ -525,7 +525,6 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 		metricsRegistry := legacyregistry.DefaultGatherer.(metrics.KubeRegistry)
 		_ = backupcontroller.NewBackupMetrics(metricsRegistry, backupsLister)
-		// Policy metrics are registered after controller creation (need runTracker reference)
 
 		backupController, err := backupcontroller.NewBackupController(
 			AlivenessChecker,
