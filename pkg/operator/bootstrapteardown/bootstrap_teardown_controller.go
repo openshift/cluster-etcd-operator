@@ -60,7 +60,8 @@ func NewBootstrapTeardownController(
 }
 
 func (c *BootstrapTeardownController) sync(ctx context.Context, _ factory.SyncContext) error {
-	timeoutCtx, cancelFunc := context.WithTimeout(ctx, 1*time.Minute)
+	// TEST ONLY (OCPBUGS-105240): extend timeout from 1m to 10m to accommodate the 4m sleep. DO NOT MERGE.
+	timeoutCtx, cancelFunc := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancelFunc()
 
 	scalingStrategy, err := ceohelpers.GetBootstrapScalingStrategy(c.operatorClient, c.namespaceLister, c.infrastructureLister)
@@ -147,6 +148,13 @@ func (c *BootstrapTeardownController) removeBootstrap(ctx context.Context, safeT
 	if isBootstrapComplete, err := bootstrap.IsBootstrapComplete(c.configmapLister); !isBootstrapComplete || err != nil {
 		return err
 	}
+
+	// TEST ONLY (OCPBUGS-105240): delay bootstrap member removal by 3 minutes
+	// to hold the race window open between EtcdRunningInCluster=True and MemberRemove().
+	// DO NOT MERGE.
+	klog.Warningf("TEST ONLY (OCPBUGS-105240): delaying bootstrap member removal by 3 minutes")
+	time.Sleep(3 * time.Minute)
+
 	klog.Warningf("Removing bootstrap member [%x]", bootstrapID)
 	c.eventRecorder.Eventf("Removing bootstrap member", "attempting to remove bootstrap member [%x]", bootstrapID)
 
