@@ -16,6 +16,9 @@ import (
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdcli"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
+	"github.com/openshift/library-go/pkg/controller/factory"
 	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
@@ -1061,7 +1064,10 @@ func TestAttemptToScaleDown(t *testing.T) {
 			eventRecorder := events.NewRecorder(fake.NewSimpleClientset().CoreV1().Events("operator"), "test-cluster-member-removal-controller", &corev1.ObjectReference{}, clock.RealClock{})
 			configMapTargetNSIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
 			for _, initialObj := range scenario.initialObjectsForConfigMapTargetNSLister {
-				configMapTargetNSIndexer.Add(initialObj)
+				require.NoError(t, configMapTargetNSIndexer.Add(initialObj))
+				snapshot := initialObj.(*corev1.ConfigMap).DeepCopy()
+				snapshot.Name = "etcd-endpoints-24"
+				require.NoError(t, configMapTargetNSIndexer.Add(snapshot))
 			}
 			configMapTargetNSLister := corev1listers.NewConfigMapLister(configMapTargetNSIndexer).ConfigMaps("openshift-etcd")
 
@@ -1091,7 +1097,7 @@ func TestAttemptToScaleDown(t *testing.T) {
 				OperatorSpec: operatorv1.OperatorSpec{
 					ObservedConfig: runtime.RawExtension{Raw: []byte(scenario.initialObservedConfigInput)},
 				},
-			}, u.StaticPodOperatorStatus(), nil, nil)
+			}, u.StaticPodOperatorStatus(u.WithLatestRevision(24), u.WithNodeStatusAtCurrentRevision(24)), nil, nil)
 
 			// act
 			target := clusterMemberRemovalController{
@@ -1435,3 +1441,171 @@ var wellKnownReplicasCountSet = `
  "controlPlane": {"replicas": 3}
 }
 `
+
+func TestSyncWaitsForEndpointRevision(t *testing.T) {
+	ctx := context.Background()
+	configMaps := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	require.NoError(t, configMaps.Add(bootstrapComplete.DeepCopy()))
+	machines := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	nodes := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	network := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	require.NoError(t, network.Add(&configv1.Network{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Status: configv1.NetworkStatus{ServiceNetwork: []string{"172.30.0.0/16"}}}))
+	infra := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	require.NoError(t, infra.Add(&configv1.Infrastructure{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Status: configv1.InfrastructureStatus{ControlPlaneTopology: configv1.HighlyAvailableTopologyMode}}))
+	status := &operatorv1.StaticPodOperatorStatus{OperatorStatus: operatorv1.OperatorStatus{LatestAvailableRevision: 24}}
+	endpoints := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "etcd-endpoints", Namespace: operatorclient.TargetNamespace}, Data: map[string]string{}}
+	var members []*etcdserverpb.Member
+	for i := 0; i < 6; i++ {
+		name := fmt.Sprintf("master-%d", i)
+		ip := fmt.Sprintf("10.0.0.%d", i+1)
+		machine := machineWithHooksFor(name, ip)
+		machine.Status.NodeRef = &corev1.ObjectReference{Name: name}
+		if i < 3 {
+			deletionTime := metav1.Now()
+			machine.DeletionTimestamp = &deletionTime
+		}
+		require.NoError(t, machines.Add(machine))
+		node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"node-role.kubernetes.io/master": ""}}, Status: corev1.NodeStatus{Addresses: machine.Status.Addresses, Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+		require.NoError(t, nodes.Add(node))
+		status.NodeStatuses = append(status.NodeStatuses, operatorv1.NodeStatus{NodeName: name, CurrentRevision: 24})
+		members = append(members, &etcdserverpb.Member{Name: name, ID: uint64(i + 1), PeerURLs: []string{fmt.Sprintf("https://%s:2380", ip)}})
+		endpoints.Data[fmt.Sprintf("%x", i+1)] = ip
+	}
+	require.NoError(t, configMaps.Add(endpoints))
+	snapshot := endpoints.DeepCopy()
+	snapshot.Name = "etcd-endpoints-24"
+	require.NoError(t, configMaps.Add(snapshot))
+	etcdClient, err := etcdcli.NewFakeEtcdClient(members, etcdcli.WithFakeClusterHealth(&etcdcli.FakeMemberHealth{Healthy: 6}))
+	require.NoError(t, err)
+	operatorClient := v1helpers.NewFakeStaticPodOperatorClient(&operatorv1.StaticPodOperatorSpec{OperatorSpec: operatorv1.OperatorSpec{ObservedConfig: runtime.RawExtension{Raw: []byte(wellKnownReplicasCountSet)}}}, status, nil, nil)
+	target := &clusterMemberRemovalController{
+		operatorClient:                    operatorClient,
+		etcdClient:                        etcdClient,
+		masterMachineLister:               machinelistersv1beta1.NewMachineLister(machines),
+		masterMachineSelector:             labels.SelectorFromSet(labels.Set{"machine.openshift.io/cluster-api-machine-role": "master"}),
+		masterNodeLister:                  corev1listers.NewNodeLister(nodes),
+		masterNodeSelector:                labels.SelectorFromSet(labels.Set{"node-role.kubernetes.io/master": ""}),
+		networkLister:                     configv1listers.NewNetworkLister(network),
+		infraLister:                       configv1listers.NewInfrastructureLister(infra),
+		configMapLister:                   corev1listers.NewConfigMapLister(configMaps),
+		configMapListerForTargetNamespace: corev1listers.NewConfigMapLister(configMaps).ConfigMaps(operatorclient.TargetNamespace),
+		machineAPIChecker:                 &fakeMachineAPI{isMachineAPIFunctional: func() (bool, error) { return true, nil }},
+	}
+	syncContext := factory.NewSyncContext("test", events.NewInMemoryRecorder("test", clock.RealClock{}))
+	syncAndExpectMembers := func(want int, message string) {
+		t.Helper()
+		require.NoError(t, target.sync(ctx, syncContext))
+		currentMembers, err := etcdClient.MemberList(ctx)
+		require.NoError(t, err)
+		require.Len(t, currentMembers, want, message)
+		t.Logf("%s: %d members", message, len(currentMembers))
+	}
+	syncAndExpectMembers(5, "the first removal must proceed on a stable revision")
+	liveIPs, err := ceohelpers.VotingMemberIPListSet(ctx, etcdClient)
+	require.NoError(t, err)
+	removedNodeName := ""
+	for _, member := range members {
+		ip, err := ceohelpers.MemberToNodeInternalIP(member)
+		require.NoError(t, err)
+		if !liveIPs.Has(ip) {
+			removedNodeName = member.Name
+		}
+	}
+	require.NotEmpty(t, removedNodeName)
+	endpoints = endpoints.DeepCopy()
+	for id, ip := range endpoints.Data {
+		if !liveIPs.Has(ip) {
+			delete(endpoints.Data, id)
+		}
+	}
+	require.NoError(t, configMaps.Update(endpoints))
+	syncAndExpectMembers(5, "mutable endpoints catching up must not allow a second removal before the revision is published")
+	snapshot = endpoints.DeepCopy()
+	snapshot.Name = "etcd-endpoints-25"
+	require.NoError(t, configMaps.Add(snapshot))
+	_, _, err = v1helpers.UpdateStaticPodStatus(ctx, operatorClient, func(status *operatorv1.StaticPodOperatorStatus) error {
+		status.LatestAvailableRevision = 25
+		return nil
+	})
+	require.NoError(t, err)
+	syncAndExpectMembers(5, "publishing the endpoint revision must not bypass rollout")
+	_, _, err = v1helpers.UpdateStaticPodStatus(ctx, operatorClient, func(status *operatorv1.StaticPodOperatorStatus) error {
+		for i := range status.NodeStatuses {
+			if status.NodeStatuses[i].NodeName != removedNodeName {
+				status.NodeStatuses[i].CurrentRevision = 25
+			}
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	syncAndExpectMembers(5, "the removed member node still holds the revision rollout until deletion")
+	removedNode, exists, err := nodes.GetByKey(removedNodeName)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.NoError(t, nodes.Delete(removedNode))
+	removedMachine, exists, err := machines.GetByKey(removedNodeName)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.NoError(t, machines.Delete(removedMachine))
+	_, _, err = v1helpers.UpdateStaticPodStatus(ctx, operatorClient, func(status *operatorv1.StaticPodOperatorStatus) error {
+		var remaining []operatorv1.NodeStatus
+		for _, nodeStatus := range status.NodeStatuses {
+			if nodeStatus.NodeName != removedNodeName {
+				remaining = append(remaining, nodeStatus)
+			}
+		}
+		status.NodeStatuses = remaining
+		return nil
+	})
+	require.NoError(t, err)
+	syncAndExpectMembers(4, "the next removal may proceed after node deletion and endpoint revision rollout")
+}
+
+func TestIsEtcdEndpointRevisionUpdated(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		snapshotIPs     map[string]string
+		missingSnapshot bool
+		nodeStatuses    []operatorv1.NodeStatus
+		ipv6            bool
+		want            bool
+		wantError       string
+	}{
+		{name: "stable snapshot matches", snapshotIPs: map[string]string{"member": "10.0.139.78"}, nodeStatuses: []operatorv1.NodeStatus{{CurrentRevision: 24}}, want: true},
+		{name: "snapshot still includes removed member", snapshotIPs: map[string]string{"member": "10.0.139.78", "removed": "10.0.139.79"}, nodeStatuses: []operatorv1.NodeStatus{{CurrentRevision: 24}}},
+		{name: "snapshot missing", missingSnapshot: true, nodeStatuses: []operatorv1.NodeStatus{{CurrentRevision: 24}}, wantError: "failed to get etcd-endpoints-24 configmap"},
+		{name: "revision rollout pending", snapshotIPs: map[string]string{"member": "10.0.139.78"}, nodeStatuses: []operatorv1.NodeStatus{{CurrentRevision: 23, TargetRevision: 24}}, wantError: "revision rollout in progress"},
+		{name: "target revision advances before latest available", snapshotIPs: map[string]string{"member": "10.0.139.78"}, nodeStatuses: []operatorv1.NodeStatus{{CurrentRevision: 24, TargetRevision: 25}}, wantError: "revision rollout in progress"},
+		{name: "no node status", wantError: "no node status"},
+		{name: "IPv6 voting membership ignores learner", ipv6: true, snapshotIPs: map[string]string{"member": "fd2e:6f44:5dd8:c956::16"}, nodeStatuses: []operatorv1.NodeStatus{{CurrentRevision: 24}}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ip := "10.0.139.78"
+			peerURL := "https://10.0.139.78:2380"
+			if tc.ipv6 {
+				ip = "fd2e:6f44:5dd8:c956::16"
+				peerURL = "https://[fd2e:6f44:5dd8:c956::16]:2380"
+			}
+			members := []*etcdserverpb.Member{{Name: "member", ID: 1, PeerURLs: []string{peerURL}}, {Name: "learner", ID: 2, IsLearner: true, PeerURLs: []string{"https://10.0.139.80:2380"}}}
+			etcdClient, err := etcdcli.NewFakeEtcdClient(members)
+			require.NoError(t, err)
+			configMaps := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+			require.NoError(t, configMaps.Add(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "etcd-endpoints", Namespace: operatorclient.TargetNamespace}, Data: map[string]string{"member": ip}}))
+			if !tc.missingSnapshot {
+				require.NoError(t, configMaps.Add(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "etcd-endpoints-24", Namespace: operatorclient.TargetNamespace}, Data: tc.snapshotIPs}))
+			}
+			target := &clusterMemberRemovalController{
+				operatorClient:                    v1helpers.NewFakeStaticPodOperatorClient(nil, &operatorv1.StaticPodOperatorStatus{OperatorStatus: operatorv1.OperatorStatus{LatestAvailableRevision: 24}, NodeStatuses: tc.nodeStatuses}, nil, nil),
+				etcdClient:                        etcdClient,
+				configMapListerForTargetNamespace: corev1listers.NewConfigMapLister(configMaps).ConfigMaps(operatorclient.TargetNamespace),
+			}
+			updated, err := target.isEtcdEndpointRevisionUpdated(context.Background())
+			if tc.wantError != "" {
+				require.ErrorContains(t, err, tc.wantError)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, tc.want, updated)
+		})
+	}
+}
