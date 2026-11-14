@@ -523,6 +523,9 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			stopInit,
 		)
 
+		metricsRegistry := legacyregistry.DefaultGatherer.(metrics.KubeRegistry)
+		_ = backupcontroller.NewBackupMetrics(metricsRegistry, backupsLister)
+
 		backupController, err := backupcontroller.NewBackupController(
 			AlivenessChecker,
 			backupsLister,

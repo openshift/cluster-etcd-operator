@@ -79,6 +79,7 @@ func runBackupGarbageCollectionControllerTest(t *testing.T, tc testCaseBackupGar
 	} else {
 		retryQueue = newGCRetryQueue()
 	}
+
 	controller := BackupGarbageCollectionController{
 		backupsLister:         backupsInformer.Lister(),
 		jobsLister:            jobInformer.Lister().Jobs(operatorclient.TargetNamespace),

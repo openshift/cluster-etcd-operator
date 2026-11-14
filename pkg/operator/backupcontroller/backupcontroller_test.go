@@ -108,6 +108,7 @@ func runBackupControllerTest(t *testing.T, tc testCaseBackupController) {
 	if pending == nil {
 		pending = pendingStarts{}
 	}
+
 	controller := BackupController{
 		backupsLister:         backupsInformer.Lister(),
 		podsLister:            podsInformer.Lister().Pods(operatorclient.TargetNamespace),
@@ -160,6 +161,7 @@ func TestSyncLoopHappyPath(t *testing.T) {
 	})
 
 	t.Run("pvc", func(t *testing.T) {
+		// PVC backups progress without a preassigned node; the scheduler places the job.
 		backup := testutils.FakeEtcdBackup("test-backup")
 		runBackupControllerTest(t, testCaseBackupController{
 			backups: []*operatorv1alpha1.EtcdBackup{backup},
@@ -167,6 +169,8 @@ func TestSyncLoopHappyPath(t *testing.T) {
 			pvcs:    []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				job := requireBackupJobCreated(t, client, backup)
+				require.Empty(t, backup.Status.NodeName)
+				require.Empty(t, job.Spec.Template.Spec.NodeName)
 
 				action, ok := testutils.GetStatusAction[k8stesting.UpdateActionImpl](operatorFake.Actions())
 				require.True(t, ok, "expected status update action")
@@ -175,6 +179,7 @@ func TestSyncLoopHappyPath(t *testing.T) {
 
 				require.True(t, backuphelpers.IsBackupRunning(updatedBackup), "Expected backup to be running")
 				require.Empty(t, updatedBackup.Status.NodeName, "Expected no node to be assigned to a PVC backup")
+				require.Equal(t, job.Name, updatedBackup.Status.JobName)
 				requireBackupJob(t, updatedBackup, job)
 			},
 		})
@@ -278,8 +283,15 @@ func TestJobAlreadyRunning(t *testing.T) {
 	t.Run("job-missing-backup-label", func(t *testing.T) {
 		job := job.DeepCopy()
 		delete(job.Labels, backuphelpers.LabelEtcdBackup)
+		backup := testutils.FakeEtcdBackup("test-backup", testutils.WithBackupAge(time.Hour), testutils.WithBackupRunning(job))
+		job.OwnerReferences = append(job.OwnerReferences, metav1.OwnerReference{
+			APIVersion: operatorv1alpha1.GroupVersion.String(),
+			Kind:       "EtcdBackup",
+			Name:       backup.Name,
+			UID:        backup.UID,
+		})
 		runBackupControllerTest(t, testCaseBackupController{
-			backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupAge(time.Hour), testutils.WithBackupRunning(job))},
+			backups: []*operatorv1alpha1.EtcdBackup{backup},
 			jobs:    []*batchv1.Job{job},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				requireNoBackupJobCreated(t, client)
@@ -551,6 +563,7 @@ func TestBackupFailedRequiresGC(t *testing.T) {
 func TestBackupFailedNoGC(t *testing.T) {
 	// EtcdBackups that failed gracefully without creating any files
 	t.Run("pvc-not-found", func(t *testing.T) {
+		// Missing PVC must reach Failed with SetupFailed; PVC backups are not pinned to a node.
 		runBackupControllerTest(t, testCaseBackupController{
 			backups: []*operatorv1alpha1.EtcdBackup{
 				testutils.FakeEtcdBackup("test-backup", testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{

@@ -129,6 +129,7 @@ func WithMasterLabel() func(*corev1.Node) {
 		if node.Labels == nil {
 			node.Labels = map[string]string{}
 		}
+		// Add both labels for compatibility - real clusters often have both during transition
 		node.Labels["node-role.kubernetes.io/master"] = ""
 		node.Labels["node-role.kubernetes.io/control-plane"] = ""
 	}
@@ -490,9 +491,11 @@ func WithBackupCompleted() func(backup *operatorv1alpha1.EtcdBackup) {
 				dir = backup.Spec.Storage.PVC.Path
 			}
 			backup.Status.Files = append(backup.Status.Files, operatorv1alpha1.EtcdBackupFile{
+				AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot,
 				Path:      path.Join(dir, backup.Name, "snapshot.db"),
 				SizeBytes: 100000,
 			}, operatorv1alpha1.EtcdBackupFile{
+				AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources,
 				Path:      path.Join(dir, backup.Name, "archive.tar.gz"),
 				SizeBytes: 100,
 			})
