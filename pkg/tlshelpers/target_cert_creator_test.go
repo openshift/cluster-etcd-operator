@@ -137,7 +137,7 @@ func TestSignerSignatureRotation(t *testing.T) {
 			}
 
 			// need to ensure the client returns the created secret now
-			_ = indexer.Add(secret)
+			require.NoError(t, indexer.Add(secret))
 
 			if !test.matchingLeaf {
 				ca, err = test.caFn()
@@ -184,7 +184,6 @@ func TestSignerSignatureRotation(t *testing.T) {
 	}
 }
 
-
 func TestTargetCertTimeBasedRotation(t *testing.T) {
 	fakeClock := clocktesting.NewFakePassiveClock(time.Now().Truncate(time.Second))
 
@@ -218,7 +217,7 @@ func TestTargetCertTimeBasedRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	// need to ensure the client returns the created secret now
-	_ = indexer.Add(secret)
+	require.NoError(t, indexer.Add(secret))
 
 	// Advance past 75% of the 2h validity: rotation must trigger without
 	// real time having passed.
@@ -254,7 +253,7 @@ func TestTargetCertTimeBasedRotation(t *testing.T) {
 	}
 
 	// Steady state: without advancing the clock, another sync must not rotate.
-	_ = indexer.Add(newSecret)
+	require.NoError(t, indexer.Add(newSecret))
 	steadySecret, err := c.EnsureTargetCertKeyPair(context.TODO(), ca, ca.Config.Certs)
 	if err != nil {
 		t.Fatal(err)
