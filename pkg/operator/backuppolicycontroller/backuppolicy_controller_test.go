@@ -31,6 +31,7 @@ var backupFeatureGateAccessor = featuregates.NewHardcodedFeatureGateAccess(
 
 type testCaseBackupPolicyController struct {
 	backupPolicies []*operatorv1alpha1.EtcdBackupPolicy
+	backups        []*operatorv1alpha1.EtcdBackup
 	cronJobs       []*batchv1.CronJob
 	expectError    bool
 	validate       func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset)
@@ -38,10 +39,21 @@ type testCaseBackupPolicyController struct {
 
 const fakeOperatorImagePullSpec = "pullspec-image"
 
+func isCronJobCreate(a k8stesting.CreateActionImpl) bool {
+	_, ok := a.GetObject().(*batchv1.CronJob)
+	return ok
+}
+
+func isCronJobUpdate(a k8stesting.UpdateActionImpl) bool {
+	_, ok := a.GetObject().(*batchv1.CronJob)
+	return ok
+}
+
 func runBackupPolicyControllerTest(t *testing.T, tc testCaseBackupPolicyController) {
 	t.Helper()
-	operatorObjs := make([]runtime.Object, 0, len(tc.backupPolicies))
+	operatorObjs := make([]runtime.Object, 0, len(tc.backupPolicies)+len(tc.backups))
 	operatorObjs = testutils.AppendRuntimeObjects(operatorObjs, tc.backupPolicies)
+	operatorObjs = testutils.AppendRuntimeObjects(operatorObjs, tc.backups)
 
 	k8sObjs := make([]runtime.Object, 0, len(tc.cronJobs))
 	k8sObjs = testutils.AppendRuntimeObjects(k8sObjs, tc.cronJobs)
@@ -99,10 +111,9 @@ func TestBackupPolicyCreateCronJob(t *testing.T) {
 			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour))},
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			// Verify new cronjob was created
-			action, ok := testutils.GetAction[k8stesting.CreateActionImpl](client.Fake.Actions())
-			require.True(t, ok, "expected create action")
-			cronJob, ok := action.Object.(*batchv1.CronJob)
-			require.True(t, ok, "expected cronjob to be created")
+			action, ok := testutils.GetAction[k8stesting.CreateActionImpl](client.Fake.Actions(), isCronJobCreate)
+			require.True(t, ok, "expected cronjob create action")
+			cronJob := action.GetObject().(*batchv1.CronJob)
 
 			require.Equal(t, "test-backup-policy", cronJob.Labels[backuphelpers.LabelEtcdBackupPolicy])
 			require.Equal(t, "@daily", cronJob.Spec.Schedule)
@@ -118,11 +129,11 @@ func TestBackupPolicyExistingCronJob(t *testing.T) {
 		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{backupPolicy},
 		cronJobs:       []*batchv1.CronJob{cronJob},
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
-			// Verify no cronjob was created or updated
-			_, ok := testutils.GetAction[k8stesting.CreateActionImpl](client.Fake.Actions())
-			require.False(t, ok, "expected no create action")
-			_, ok = testutils.GetAction[k8stesting.UpdateActionImpl](client.Fake.Actions())
-			require.False(t, ok, "expected no update action")
+			// Verify no cronjob was created or updated (ConfigMap creates from the run tracker are expected)
+			_, ok := testutils.GetAction[k8stesting.CreateActionImpl](client.Fake.Actions(), isCronJobCreate)
+			require.False(t, ok, "expected no cronjob create action")
+			_, ok = testutils.GetAction[k8stesting.UpdateActionImpl](client.Fake.Actions(), isCronJobUpdate)
+			require.False(t, ok, "expected no cronjob update action")
 
 			// Verify cronjob still exists
 			_, err := client.BatchV1().CronJobs(operatorclient.TargetNamespace).Get(t.Context(), "test-backup-policy", v1.GetOptions{})
@@ -140,12 +151,11 @@ func TestBackupPolicyUpdateCronJob(t *testing.T) {
 			Namespace: operatorclient.TargetNamespace,
 		}}},
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
-			_, ok := testutils.GetAction[k8stesting.CreateActionImpl](client.Fake.Actions())
-			require.False(t, ok, "expected no create action")
-			action, ok := testutils.GetAction[k8stesting.UpdateActionImpl](client.Fake.Actions())
-			require.True(t, ok, "expected update action")
-			cronJob, ok := action.Object.(*batchv1.CronJob)
-			require.True(t, ok, "expected cronjob to be updated")
+			_, ok := testutils.GetAction[k8stesting.CreateActionImpl](client.Fake.Actions(), isCronJobCreate)
+			require.False(t, ok, "expected no cronjob create action")
+			action, ok := testutils.GetAction[k8stesting.UpdateActionImpl](client.Fake.Actions(), isCronJobUpdate)
+			require.True(t, ok, "expected cronjob update action")
+			cronJob := action.GetObject().(*batchv1.CronJob)
 
 			expectedCronJob, err := newCronJob(backupPolicy, fakeOperatorImagePullSpec)
 			require.NoError(t, err)
@@ -173,8 +183,8 @@ func TestBackupPolicyCronJobSpecHash(t *testing.T) {
 				},
 			}}},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
-				_, ok := testutils.GetAction[k8stesting.UpdateActionImpl](client.Fake.Actions())
-				require.False(t, ok, "expected no update action")
+				_, ok := testutils.GetAction[k8stesting.UpdateActionImpl](client.Fake.Actions(), isCronJobUpdate)
+				require.False(t, ok, "expected no cronjob update action")
 			},
 		})
 	})
@@ -189,10 +199,9 @@ func TestBackupPolicyCronJobSpecHash(t *testing.T) {
 				},
 			}}},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
-				action, ok := testutils.GetAction[k8stesting.UpdateActionImpl](client.Fake.Actions())
-				require.True(t, ok, "expected update action")
-				cronJob, ok := action.Object.(*batchv1.CronJob)
-				require.True(t, ok, "expected cronjob to be updated")
+				action, ok := testutils.GetAction[k8stesting.UpdateActionImpl](client.Fake.Actions(), isCronJobUpdate)
+				require.True(t, ok, "expected cronjob update action")
+				cronJob := action.GetObject().(*batchv1.CronJob)
 				require.Equal(t, expectedCronJob.Annotations[specHashAnnotation], cronJob.Annotations[specHashAnnotation])
 			},
 		})
@@ -232,12 +241,12 @@ func TestBackupPolicyScheduledCondition(t *testing.T) {
 			runBackupPolicyControllerTest(t, testCaseBackupPolicyController{
 				backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{backupPolicy},
 				validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
-					createAction, ok := testutils.GetAction[k8stesting.CreateActionImpl](client.Fake.Actions())
+					createAction, ok := testutils.GetAction[k8stesting.CreateActionImpl](client.Fake.Actions(), isCronJobCreate)
 					if tc.expectError {
-						require.False(t, ok, "expected no create action")
+						require.False(t, ok, "expected no cronjob create action")
 					} else {
 						require.True(t, ok, "expected cronjob to be created")
-						require.IsType(t, &batchv1.CronJob{}, createAction.Object)
+						require.IsType(t, &batchv1.CronJob{}, createAction.GetObject())
 					}
 
 					// Verify policy status was updated

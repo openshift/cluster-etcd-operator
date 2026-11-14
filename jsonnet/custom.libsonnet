@@ -181,6 +181,164 @@
               severity: 'critical',
             },
           },
+          {
+            alert: 'etcdBackupFailed',
+            expr: 'etcd_backup_status{status="Failed"} == 1',
+            'for': '5m',
+            labels: {
+              severity: 'warning',
+            },
+            annotations: {
+              description: 'etcd backup "{{ $labels.etcd_backup }}" has failed. Check the EtcdBackup resource status for details.',
+              summary: 'etcd backup has failed.',
+            },
+          },
+          {
+            alert: 'etcdBackupHighFailureRate',
+            expr: |||
+              (
+                count(
+                  (etcd_backup_status{status="Failed"} == 1)
+                  and on(etcd_backup, uid)
+                  ((time() - etcd_backup_completion_timestamp_seconds) < 86400)
+                )
+                /
+                count(
+                  (
+                    (etcd_backup_status{status="Failed"} == 1)
+                    or
+                    (etcd_backup_status{status="Completed"} == 1)
+                  )
+                  and on(etcd_backup, uid)
+                  ((time() - etcd_backup_completion_timestamp_seconds) < 86400)
+                )
+              ) > 0.5
+            |||,
+            'for': '30m',
+            labels: {
+              severity: 'warning',
+            },
+            annotations: {
+              description: 'More than 50% of etcd backups finished in the last 24 hours have failed. This indicates a persistent issue with backup configuration or storage that requires investigation.',
+              summary: 'etcd backup failure rate is high.',
+            },
+          },
+          {
+            alert: 'etcdBackupHighFailureRate',
+            expr: |||
+              (
+                count(
+                  (etcd_backup_status{status="Failed"} == 1)
+                  and on(etcd_backup, uid)
+                  ((time() - etcd_backup_completion_timestamp_seconds) < 86400)
+                )
+                /
+                count(
+                  (
+                    (etcd_backup_status{status="Failed"} == 1)
+                    or
+                    (etcd_backup_status{status="Completed"} == 1)
+                  )
+                  and on(etcd_backup, uid)
+                  ((time() - etcd_backup_completion_timestamp_seconds) < 86400)
+                )
+              ) >= 0.75
+            |||,
+            'for': '30m',
+            labels: {
+              severity: 'critical',
+            },
+            annotations: {
+              description: 'More than 75% of etcd backups finished in the last 24 hours have failed. This is a critical issue that may prevent disaster recovery and requires immediate investigation.',
+              summary: 'etcd backup failure rate is critically high.',
+            },
+          },
+          // etcdBackupNoPolicyConfigured deferred until AutomatedEtcdBackup GA:
+          // it needs a feature-gate presence signal (e.g. etcd_automated_backup_enabled)
+          // so absent(etcd_backup_policy_info) does not fire on Default clusters.
+          {
+            alert: 'etcdBackupPolicyNoRecentSuccess',
+            // Last success is derived from live Completed EtcdBackup metrics (no
+            // ConfigMap tracker). Threshold is 2*schedule interval so weekly/monthly
+            // policies do not permanently fire. Interval series absence (unparseable
+            // schedule) suppresses this alert. Matching is by policy name on the
+            // shared etcd_backup_policy label.
+            // Put policy series on the left of `and on()` so etcd_backup_policy/uid labels remain.
+            expr: |||
+              (
+                (
+                  (
+                    etcd_backup_policy_creation_timestamp_seconds
+                    and on(etcd_backup_policy, uid)
+                    (
+                      (time() - etcd_backup_policy_creation_timestamp_seconds)
+                      > on(etcd_backup_policy, uid)
+                      (2 * etcd_backup_policy_schedule_interval_seconds)
+                    )
+                  )
+                  unless on(etcd_backup_policy)
+                  (
+                    etcd_backup_info
+                    and on(etcd_backup, uid)
+                    (etcd_backup_status{status="Completed"} == 1)
+                  )
+                )
+                or
+                (
+                  etcd_backup_policy_schedule_interval_seconds
+                  and on(etcd_backup_policy)
+                  (
+                    (
+                      time()
+                      -
+                      max by (etcd_backup_policy) (
+                        etcd_backup_completion_timestamp_seconds
+                        * on(etcd_backup, uid) group_left(etcd_backup_policy)
+                          (
+                            etcd_backup_info
+                            and on(etcd_backup, uid)
+                            (etcd_backup_status{status="Completed"} == 1)
+                          )
+                      )
+                    )
+                    > on(etcd_backup_policy)
+                    (2 * etcd_backup_policy_schedule_interval_seconds)
+                  )
+                )
+              )
+            |||,
+            labels: {
+              severity: 'critical',
+            },
+            annotations: {
+              description: 'Backup policy "{{ $labels.etcd_backup_policy }}" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.',
+              summary: 'Backup policy has no successful backup within two schedule intervals.',
+            },
+          },
+          {
+            alert: 'etcdBackupDurationHigh',
+            // Running status carries an extra status label; match on backup identity.
+            // Put the status series on the left of `and on()` so identity labels remain.
+            expr: |||
+              (
+                etcd_backup_completion_timestamp_seconds - on(etcd_backup, uid) etcd_backup_start_timestamp_seconds
+              ) > 1800
+              or
+              (
+                (etcd_backup_status{status="Running"} == 1)
+                and on(etcd_backup, uid)
+                (time() - etcd_backup_start_timestamp_seconds > 1800)
+              )
+            |||,
+            'for': '5m',
+            labels: {
+              severity: 'warning',
+            },
+            annotations: {
+              description: 'etcd backup "{{ $labels.etcd_backup }}" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.',
+              summary: 'etcd backup duration is high.',
+            },
+          },
         ],
       },
     ],

@@ -62,7 +62,7 @@ func NewBackupPolicyController(
 	operatorImagePullSpec string,
 	accessor featuregates.FeatureGateAccess,
 	etcdBackupPolicyInformer factory.Informer,
-	cronJobInformer cache.SharedIndexInformer) factory.Controller {
+	cronJobInformer cache.SharedIndexInformer) (*BackupPolicyController, factory.Controller) {
 
 	c := &BackupPolicyController{
 		backupPoliciesLister:  backupPoliciesLister,
@@ -78,7 +78,7 @@ func NewBackupPolicyController(
 	syncer := health.NewDefaultCheckingSyncWrapper(c.sync)
 	livenessChecker.Add("BackupPolicyController", syncer)
 
-	return factory.New().
+	controller := factory.New().
 		WithInformersQueueKeysFunc(
 			func(o runtime.Object) []string {
 				if backupPolicy, ok := o.(*operatorv1alpha1.EtcdBackupPolicy); ok {
@@ -114,6 +114,8 @@ func NewBackupPolicyController(
 			return nil
 		}).
 		ToController("BackupPolicyController", eventRecorder.WithComponentSuffix("backup-policy-controller"))
+
+	return c, controller
 }
 
 func (c *BackupPolicyController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
