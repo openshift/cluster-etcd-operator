@@ -27,6 +27,7 @@ import (
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/clock"
+	clocktesting "k8s.io/utils/clock/testing"
 )
 
 type testEmbed struct {
@@ -55,6 +56,10 @@ func TestEmbeddedStructHasPriority(t *testing.T) {
 }
 
 func TestSignerSignatureRotation(t *testing.T) {
+	// One fake clock anchors certificate validity to a fixed time; it is
+	// never advanced here, so behavior is identical to time.Now.
+	fakeClock := clocktesting.NewFakePassiveClock(time.Now())
+
 	newCaWithAuthority := func() (*crypto.CA, error) {
 		ski := make([]byte, 32)
 		_, err := rand.Read(ski)
@@ -62,7 +67,7 @@ func TestSignerSignatureRotation(t *testing.T) {
 			return nil, err
 		}
 
-		return newTestCACertificateWithAuthority(pkix.Name{CommonName: "signer-tests"}, int64(1), metav1.Duration{Duration: time.Hour * 24 * 60}, time.Now, ski)
+		return newTestCACertificateWithAuthority(pkix.Name{CommonName: "signer-tests"}, int64(1), metav1.Duration{Duration: time.Hour * 24 * 60}, fakeClock.Now, ski)
 	}
 
 	tests := []struct {
@@ -76,7 +81,7 @@ func TestSignerSignatureRotation(t *testing.T) {
 			matchingLeaf:   true,
 			expectRotation: false,
 			caFn: func() (*crypto.CA, error) {
-				return newTestCACertificate(pkix.Name{CommonName: "signer-tests"}, int64(1), metav1.Duration{Duration: time.Hour * 24 * 60}, time.Now)
+				return newTestCACertificate(pkix.Name{CommonName: "signer-tests"}, int64(1), metav1.Duration{Duration: time.Hour * 24 * 60}, fakeClock.Now)
 			},
 		},
 		{
@@ -96,7 +101,7 @@ func TestSignerSignatureRotation(t *testing.T) {
 			matchingLeaf:   false,
 			expectRotation: true,
 			caFn: func() (*crypto.CA, error) {
-				return newTestCACertificate(pkix.Name{CommonName: "signer-tests"}, int64(1), metav1.Duration{Duration: time.Hour * 24 * 60}, time.Now)
+				return newTestCACertificate(pkix.Name{CommonName: "signer-tests"}, int64(1), metav1.Duration{Duration: time.Hour * 24 * 60}, fakeClock.Now)
 			},
 		},
 	}
@@ -112,12 +117,13 @@ func TestSignerSignatureRotation(t *testing.T) {
 				Refresh:   12 * time.Hour,
 				Name:      "target-secret",
 				CertCreator: &CARotatingTargetCertCreator{
-					&certrotation.SignerRotation{SignerName: "lower-signer"},
+					&certrotation.SignerRotation{SignerName: "lower-signer", Clock: fakeClock},
 				},
 
 				Client:        client.CoreV1(),
 				Lister:        corev1listers.NewSecretLister(indexer),
 				EventRecorder: events.NewInMemoryRecorder("test", clock.RealClock{}),
+				Clock:         fakeClock,
 			}
 
 			ca, err := test.caFn()
@@ -131,7 +137,7 @@ func TestSignerSignatureRotation(t *testing.T) {
 			}
 
 			// need to ensure the client returns the created secret now
-			_ = indexer.Add(secret)
+			require.NoError(t, indexer.Add(secret))
 
 			if !test.matchingLeaf {
 				ca, err = test.caFn()
@@ -175,6 +181,85 @@ func TestSignerSignatureRotation(t *testing.T) {
 			}
 
 		})
+	}
+}
+
+func TestTargetCertTimeBasedRotation(t *testing.T) {
+	fakeClock := clocktesting.NewFakePassiveClock(time.Now().Truncate(time.Second))
+
+	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	client := kubefake.NewSimpleClientset()
+
+	// The signer outlives the target so the refresh/10 signer-age gate never trips.
+	ca, err := newTestCACertificate(pkix.Name{CommonName: "signer-tests"}, int64(1), metav1.Duration{Duration: 24 * time.Hour}, fakeClock.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Refresh of a quarter of validity makes the refresh window open at 75%.
+	c := &certrotation.RotatedSelfSignedCertKeySecret{
+		Namespace: "ns",
+		Validity:  2 * time.Hour,
+		Refresh:   30 * time.Minute,
+		Name:      "target-secret",
+		CertCreator: &CARotatingTargetCertCreator{
+			&certrotation.SignerRotation{SignerName: "lower-signer", Clock: fakeClock},
+		},
+
+		Client:        client.CoreV1(),
+		Lister:        corev1listers.NewSecretLister(indexer),
+		EventRecorder: events.NewInMemoryRecorder("test", clock.RealClock{}),
+		Clock:         fakeClock,
+	}
+
+	secret, err := c.EnsureTargetCertKeyPair(context.TODO(), ca, ca.Config.Certs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// need to ensure the client returns the created secret now
+	require.NoError(t, indexer.Add(secret))
+
+	// Advance past 75% of the 2h validity: rotation must trigger without
+	// real time having passed.
+	fakeClock.SetTime(fakeClock.Now().Add(100 * time.Minute))
+
+	newSecret, err := c.EnsureTargetCertKeyPair(context.TODO(), ca, ca.Config.Certs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if bytes.Equal(newSecret.Data["tls.crt"], secret.Data["tls.crt"]) {
+		t.Error("expected the certificate to rotate after advancing the clock")
+	}
+	secretUpdated := false
+	for _, action := range client.Actions() {
+		if action.Matches("update", "secrets") {
+			secretUpdated = true
+		}
+	}
+	if !secretUpdated {
+		t.Errorf("expected secret to get updated, but only found actions: %s", spew.Sdump(client.Actions()))
+	}
+
+	// The new certificate must be stamped at the fake clock's time, proving
+	// generation (not just the rotation decision) honors the injected clock.
+	newCA, err := crypto.GetCAFromBytes(newSecret.Data["tls.crt"], newSecret.Data["tls.key"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantNotBefore := fakeClock.Now().Add(-time.Second)
+	if !newCA.Config.Certs[0].NotBefore.Equal(wantNotBefore) {
+		t.Errorf("rotated NotBefore = %v, want %v (generation must use the fake clock)", newCA.Config.Certs[0].NotBefore, wantNotBefore)
+	}
+
+	// Steady state: without advancing the clock, another sync must not rotate.
+	require.NoError(t, indexer.Add(newSecret))
+	steadySecret, err := c.EnsureTargetCertKeyPair(context.TODO(), ca, ca.Config.Certs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(steadySecret.Data["tls.crt"], newSecret.Data["tls.crt"]) {
+		t.Error("expected the certificate to be unchanged in steady state")
 	}
 }
 

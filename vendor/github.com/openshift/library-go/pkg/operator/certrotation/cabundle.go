@@ -17,6 +17,7 @@ import (
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/util/cert"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/clock"
 
 	"github.com/openshift/library-go/pkg/certs"
 	"github.com/openshift/library-go/pkg/crypto"
@@ -38,6 +39,11 @@ type CABundleConfigMap struct {
 	Owner *metav1.OwnerReference
 	// AdditionalAnnotations is a collection of annotations set for the secret
 	AdditionalAnnotations AdditionalAnnotations
+	// Clock, when set, is used to prune expired certificates from the bundle.
+	// When nil, the real system clock is used. To drive a whole controller with
+	// a fake clock, set Clock on all rotation components (signer, CA bundle,
+	// target, and target cert creator).
+	Clock clock.PassiveClock
 	// Plumbing:
 	Informer      corev1informers.ConfigMapInformer
 	Lister        corev1listers.ConfigMapLister
@@ -76,7 +82,7 @@ func (c CABundleConfigMap) EnsureConfigMapCABundle(ctx context.Context, signingC
 		updateRequired = needsOwnerUpdate || needsMetadataUpdate
 	}
 
-	updatedCerts, err := manageCABundleConfigMap(caBundleConfigMap, signingCertKeyPair.Config.Certs[0])
+	updatedCerts, err := manageCABundleConfigMap(caBundleConfigMap, signingCertKeyPair.Config.Certs[0], certrotationClock(c.Clock))
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +137,7 @@ func (c CABundleConfigMap) EnsureConfigMapCABundle(ctx context.Context, signingC
 
 // manageCABundleConfigMap adds the new certificate to the list of cabundles, eliminates duplicates, and prunes the list of expired
 // certs to trust as signers
-func manageCABundleConfigMap(caBundleConfigMap *corev1.ConfigMap, currentSigner *x509.Certificate) ([]*x509.Certificate, error) {
+func manageCABundleConfigMap(caBundleConfigMap *corev1.ConfigMap, currentSigner *x509.Certificate, clk clock.PassiveClock) ([]*x509.Certificate, error) {
 	if caBundleConfigMap.Data == nil {
 		caBundleConfigMap.Data = map[string]string{}
 	}
@@ -146,7 +152,7 @@ func manageCABundleConfigMap(caBundleConfigMap *corev1.ConfigMap, currentSigner 
 		}
 	}
 	certificates = append([]*x509.Certificate{currentSigner}, certificates...)
-	certificates = crypto.FilterExpiredCerts(certificates...)
+	certificates = crypto.FilterExpiredCertsWithClock(clk, certificates...)
 
 	finalCertificates := []*x509.Certificate{}
 	// now check for duplicates. n^2, but super simple
