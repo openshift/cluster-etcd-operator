@@ -14,8 +14,7 @@ import (
 	"k8s.io/klog/v2"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
-	operatorv1alpha1client "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
+	operatorv1client "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -35,7 +34,7 @@ const (
 
 type defaultBackupPolicyInitController struct {
 	operatorClient     v1helpers.StaticPodOperatorClient
-	backupPolicyClient operatorv1alpha1client.EtcdBackupPolicyInterface
+	backupPolicyClient operatorv1client.EtcdBackupPolicyInterface
 	stop               context.CancelFunc
 }
 
@@ -46,7 +45,7 @@ type defaultBackupPolicyInitController struct {
 // reconcile subsequent administrator edits or deletion.
 func NewDefaultBackupPolicyInitController(
 	operatorClient v1helpers.StaticPodOperatorClient,
-	backupPolicyClient operatorv1alpha1client.EtcdBackupPolicyInterface,
+	backupPolicyClient operatorv1client.EtcdBackupPolicyInterface,
 	backupPolicyInformer cache.SharedIndexInformer,
 	recorder events.Recorder,
 	stop context.CancelFunc,
@@ -142,7 +141,7 @@ func (c *defaultBackupPolicyInitController) createDefaultBackupPolicy(ctx contex
 	return err
 }
 
-func (c *defaultBackupPolicyInitController) resetDefaultBackupPolicy(ctx context.Context, existingDefaultPolicy *operatorv1alpha1.EtcdBackupPolicy) error {
+func (c *defaultBackupPolicyInitController) resetDefaultBackupPolicy(ctx context.Context, existingDefaultPolicy *operatorv1.EtcdBackupPolicy) error {
 	desiredDefaultPolicy, err := decodeDefaultBackupPolicy()
 	if err != nil {
 		return err
@@ -159,19 +158,19 @@ func (c *defaultBackupPolicyInitController) resetDefaultBackupPolicy(ctx context
 	return err
 }
 
-func decodeDefaultBackupPolicy() (*operatorv1alpha1.EtcdBackupPolicy, error) {
+func decodeDefaultBackupPolicy() (*operatorv1.EtcdBackupPolicy, error) {
 	scheme := runtime.NewScheme()
-	if err := operatorv1alpha1.AddToScheme(scheme); err != nil {
+	if err := operatorv1.AddToScheme(scheme); err != nil {
 		return nil, fmt.Errorf("failed to add EtcdBackupPolicy scheme: %w", err)
 	}
 
 	codec := serializer.NewCodecFactory(scheme)
-	obj, err := runtime.Decode(codec.UniversalDecoder(operatorv1alpha1.GroupVersion), bindata.MustAsset(defaultBackupPolicyManifestAsset))
+	obj, err := runtime.Decode(codec.UniversalDecoder(operatorv1.GroupVersion), bindata.MustAsset(defaultBackupPolicyManifestAsset))
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode default EtcdBackupPolicy manifest: %w", err)
 	}
 
-	policy, ok := obj.(*operatorv1alpha1.EtcdBackupPolicy)
+	policy, ok := obj.(*operatorv1.EtcdBackupPolicy)
 	if !ok {
 		return nil, fmt.Errorf("default backup policy manifest decoded as %T", obj)
 	}

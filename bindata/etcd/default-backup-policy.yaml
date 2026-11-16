@@ -1,4 +1,4 @@
-apiVersion: operator.openshift.io/v1alpha1
+apiVersion: operator.openshift.io/v1
 kind: EtcdBackupPolicy
 metadata:
   name: default

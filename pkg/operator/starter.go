@@ -17,7 +17,7 @@ import (
 	machinelistersv1beta1 "github.com/openshift/client-go/machine/listers/machine/v1beta1"
 	applyoperatorv1 "github.com/openshift/client-go/operator/applyconfigurations/operator/v1"
 	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
-	operatorversionedclientv1alpha1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
+	operatorversionedclientv1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
 	operatorv1informers "github.com/openshift/client-go/operator/informers/externalversions"
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/controller/factory"
@@ -104,7 +104,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	if err != nil {
 		return err
 	}
-	operatorConfigClientv1Alpha1, err := operatorversionedclientv1alpha1.NewForConfig(controllerContext.KubeConfig)
+	operatorConfigClientv1, err := operatorversionedclientv1.NewForConfig(controllerContext.KubeConfig)
 	if err != nil {
 		return err
 	}
@@ -496,8 +496,8 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 	}
 
 	if enabledAutoBackupFeature {
-		etcdBackupInformer := operatorInformers.Operator().V1alpha1().EtcdBackups()
-		etcdBackupPoliciesInformer := operatorInformers.Operator().V1alpha1().EtcdBackupPolicies()
+		etcdBackupInformer := operatorInformers.Operator().V1().EtcdBackups()
+		etcdBackupPoliciesInformer := operatorInformers.Operator().V1().EtcdBackupPolicies()
 		cronJobsInformer := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().CronJobs()
 		jobsInformer := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs()
 		podsInformer := kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Core().V1().Pods()
@@ -517,7 +517,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 
 		defaultBackupPolicyInitializerController := defaultbackuppolicyinitializer.NewDefaultBackupPolicyInitController(
 			operatorClient,
-			operatorConfigClientv1Alpha1.EtcdBackupPolicies(),
+			operatorConfigClientv1.EtcdBackupPolicies(),
 			etcdBackupPoliciesInformer.Informer(),
 			controllerContext.EventRecorder,
 			stopInit,
@@ -532,7 +532,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			podsLister,
 			controlPlaneNodeLister,
 			pvcsLister,
-			operatorConfigClientv1Alpha1,
+			operatorConfigClientv1,
 			kubeClient,
 			controllerContext.EventRecorder,
 			os.Getenv("OPERATOR_IMAGE"),
@@ -546,11 +546,11 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			return fmt.Errorf("could not start backupController, aborting controller start: %w", err)
 		}
 
-		_, backupPolicyController := backuppolicycontroller.NewBackupPolicyController(
+		backupPolicyController := backuppolicycontroller.NewBackupPolicyController(
 			AlivenessChecker,
 			backupPoliciesLister,
 			cronJobsLister,
-			operatorConfigClientv1Alpha1,
+			operatorConfigClientv1,
 			kubeClient,
 			controllerContext.EventRecorder,
 			os.Getenv("OPERATOR_IMAGE"),
@@ -558,7 +558,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			etcdBackupPoliciesInformer.Informer(),
 			cronJobsInformer.Informer())
 
-		_ = backuppolicycontroller.NewBackupPolicyMetrics(
+		backuppolicycontroller.NewBackupPolicyMetrics(
 			metricsRegistry,
 			backupPoliciesLister,
 		)
@@ -567,7 +567,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			AlivenessChecker,
 			backupsLister,
 			backupPoliciesLister,
-			operatorConfigClientv1Alpha1,
+			operatorConfigClientv1,
 			controllerContext.EventRecorder,
 			featureGateAccessor,
 			etcdBackupPoliciesInformer.Informer(),
@@ -582,7 +582,7 @@ func RunOperator(ctx context.Context, controllerContext *controllercmd.Controlle
 			jobsLister,
 			controlPlaneNodeLister,
 			pvcsLister,
-			operatorConfigClientv1Alpha1,
+			operatorConfigClientv1,
 			kubeClient,
 			controllerContext.EventRecorder,
 			os.Getenv("OPERATOR_IMAGE"),

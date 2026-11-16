@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorfake "github.com/openshift/client-go/operator/clientset/versioned/fake"
 	operatorinformers "github.com/openshift/client-go/operator/informers/externalversions"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
@@ -34,21 +34,21 @@ func TestMetricsRegistration(t *testing.T) {
 func TestBackupMetricsInactiveStatusAllZero(t *testing.T) {
 	tests := []struct {
 		name   string
-		backup *operatorv1alpha1.EtcdBackup
+		backup *operatorv1.EtcdBackup
 	}{
 		{
 			name: "absent-conditions",
 			backup: testutils.FakeEtcdBackup("never-started",
-				testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-					Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-					PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-pvc"},
+				testutils.WithBackupStorage(operatorv1.EtcdBackupStorage{
+					Type: operatorv1.EtcdBackupStorageTypePVC,
+					PVC:  operatorv1.EtcdBackupStoragePvc{Name: "test-pvc"},
 				}),
 			),
 		},
 		{
 			name: "pending-unrecognized",
 			backup: testutils.FakeEtcdBackup("pending-backup",
-				testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
+				testutils.WithBackupStatus(operatorv1.EtcdBackupStatus{
 					Conditions: []metav1.Condition{{
 						// Pending was removed from the API; an unrecognized True
 						// condition must not activate Running/Completed/Failed.
@@ -61,11 +61,11 @@ func TestBackupMetricsInactiveStatusAllZero(t *testing.T) {
 		{
 			name: "all-false",
 			backup: testutils.FakeEtcdBackup("false-conditions",
-				testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
+				testutils.WithBackupStatus(operatorv1.EtcdBackupStatus{
 					Conditions: []metav1.Condition{
-						{Type: string(operatorv1alpha1.BackupRunning), Status: metav1.ConditionFalse},
-						{Type: string(operatorv1alpha1.BackupCompleted), Status: metav1.ConditionFalse},
-						{Type: string(operatorv1alpha1.BackupFailed), Status: metav1.ConditionFalse},
+						{Type: string(operatorv1.BackupRunning), Status: metav1.ConditionFalse},
+						{Type: string(operatorv1.BackupCompleted), Status: metav1.ConditionFalse},
+						{Type: string(operatorv1.BackupFailed), Status: metav1.ConditionFalse},
 					},
 				}),
 			),
@@ -73,11 +73,11 @@ func TestBackupMetricsInactiveStatusAllZero(t *testing.T) {
 		{
 			name: "all-unknown",
 			backup: testutils.FakeEtcdBackup("unknown-conditions",
-				testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
+				testutils.WithBackupStatus(operatorv1.EtcdBackupStatus{
 					Conditions: []metav1.Condition{
-						{Type: string(operatorv1alpha1.BackupRunning), Status: metav1.ConditionUnknown},
-						{Type: string(operatorv1alpha1.BackupCompleted), Status: metav1.ConditionUnknown},
-						{Type: string(operatorv1alpha1.BackupFailed), Status: metav1.ConditionUnknown},
+						{Type: string(operatorv1.BackupRunning), Status: metav1.ConditionUnknown},
+						{Type: string(operatorv1.BackupCompleted), Status: metav1.ConditionUnknown},
+						{Type: string(operatorv1.BackupFailed), Status: metav1.ConditionUnknown},
 					},
 				}),
 			),
@@ -98,17 +98,17 @@ func TestBackupMetricsCompleted(t *testing.T) {
 	staticSize := int64(50 * 1024 * 1024)
 
 	backup := testutils.FakeEtcdBackup("pvc-backup",
-		testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-			Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-			PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "backup-pvc"},
+		testutils.WithBackupStorage(operatorv1.EtcdBackupStorage{
+			Type: operatorv1.EtcdBackupStorageTypePVC,
+			PVC:  operatorv1.EtcdBackupStoragePvc{Name: "backup-pvc"},
 		}),
 		testutils.WithBackupCompleted(),
-		func(b *operatorv1alpha1.EtcdBackup) {
+		func(b *operatorv1.EtcdBackup) {
 			b.Status.NodeName = "node-1"
 			b.Status.Conditions[0].LastTransitionTime = completedAt
-			b.Status.Files = []operatorv1alpha1.EtcdBackupFile{
-				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot_2026-09-28_120000.db", SizeBytes: snapshotSize},
-				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources, Path: "/backups/static_kuberesources_2026-09-28_120000.tar.gz", SizeBytes: staticSize},
+			b.Status.Files = []operatorv1.EtcdBackupFile{
+				{AssetType: operatorv1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot_2026-09-28_120000.db", SizeBytes: snapshotSize},
+				{AssetType: operatorv1.EtcdBackupAssetTypeStaticKubeResources, Path: "/backups/static_kuberesources_2026-09-28_120000.tar.gz", SizeBytes: staticSize},
 			}
 		},
 	)
@@ -145,12 +145,12 @@ func TestBackupMetricsFailed(t *testing.T) {
 	failedAt := metav1.NewTime(time.Unix(1700000400, 0))
 
 	backup := testutils.FakeEtcdBackup("pvc-backup-failed",
-		testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-			Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-			PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "backup-pvc"},
+		testutils.WithBackupStorage(operatorv1.EtcdBackupStorage{
+			Type: operatorv1.EtcdBackupStorageTypePVC,
+			PVC:  operatorv1.EtcdBackupStoragePvc{Name: "backup-pvc"},
 		}),
-		testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed),
-		func(b *operatorv1alpha1.EtcdBackup) {
+		testutils.WithBackupFailed(operatorv1.BackupReasonJobFailed),
+		func(b *operatorv1.EtcdBackup) {
 			b.Status.Conditions[0].LastTransitionTime = failedAt
 		},
 	)
@@ -171,18 +171,18 @@ func TestBackupMetricsRunning(t *testing.T) {
 	createdAt := metav1.NewTime(time.Unix(1700000000, 0))
 
 	backup := testutils.FakeEtcdBackup("pvc-backup-running",
-		testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-			Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-			PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "backup-pvc"},
+		testutils.WithBackupStorage(operatorv1.EtcdBackupStorage{
+			Type: operatorv1.EtcdBackupStorageTypePVC,
+			PVC:  operatorv1.EtcdBackupStoragePvc{Name: "backup-pvc"},
 		}),
-		testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
+		testutils.WithBackupStatus(operatorv1.EtcdBackupStatus{
 			NodeName: "node-1",
 			Conditions: []metav1.Condition{{
-				Type:   string(operatorv1alpha1.BackupRunning),
+				Type:   string(operatorv1.BackupRunning),
 				Status: metav1.ConditionTrue,
 			}},
 		}),
-		func(b *operatorv1alpha1.EtcdBackup) {
+		func(b *operatorv1.EtcdBackup) {
 			b.CreationTimestamp = createdAt
 		},
 	)
@@ -207,9 +207,9 @@ func TestBackupMetricsRunning(t *testing.T) {
 
 func TestBackupMetricsPVCWithPath(t *testing.T) {
 	backup := testutils.FakeEtcdBackup("pvc-path-backup",
-		testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-			Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-			PVC: operatorv1alpha1.EtcdBackupStoragePvc{
+		testutils.WithBackupStorage(operatorv1.EtcdBackupStorage{
+			Type: operatorv1.EtcdBackupStorageTypePVC,
+			PVC: operatorv1.EtcdBackupStoragePvc{
 				Name: "backup-pvc",
 				Path: "/custom/path",
 			},
@@ -222,9 +222,9 @@ func TestBackupMetricsPVCWithPath(t *testing.T) {
 
 func TestBackupMetricsLocalStorage(t *testing.T) {
 	backup := testutils.FakeEtcdBackup("local-backup",
-		testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-			Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
-			Local: operatorv1alpha1.EtcdBackupStorageLocal{
+		testutils.WithBackupStorage(operatorv1.EtcdBackupStorage{
+			Type: operatorv1.EtcdBackupStorageTypeLocal,
+			Local: operatorv1.EtcdBackupStorageLocal{
 				HostPath: "/var/lib/etcd-backup",
 			},
 		}),
@@ -237,9 +237,9 @@ func TestBackupMetricsLocalStorage(t *testing.T) {
 
 func TestBackupMetricsLocalStorageEmptyHostPath(t *testing.T) {
 	backup := testutils.FakeEtcdBackup("local-default-path",
-		testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-			Type:  operatorv1alpha1.EtcdBackupStorageTypeLocal,
-			Local: operatorv1alpha1.EtcdBackupStorageLocal{},
+		testutils.WithBackupStorage(operatorv1.EtcdBackupStorage{
+			Type:  operatorv1.EtcdBackupStorageTypeLocal,
+			Local: operatorv1.EtcdBackupStorageLocal{},
 		}),
 		testutils.WithBackupNodeName("node-2"),
 	)
@@ -250,9 +250,9 @@ func TestBackupMetricsLocalStorageEmptyHostPath(t *testing.T) {
 
 func TestBackupMetricsPolicyName(t *testing.T) {
 	backup := testutils.FakeEtcdBackup("policy-backup",
-		testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-			Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-			PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "backup-pvc"},
+		testutils.WithBackupStorage(operatorv1.EtcdBackupStorage{
+			Type: operatorv1.EtcdBackupStorageTypePVC,
+			PVC:  operatorv1.EtcdBackupStoragePvc{Name: "backup-pvc"},
 		}),
 		testutils.WithBackupPolicy("daily-policy"),
 	)
@@ -263,20 +263,20 @@ func TestBackupMetricsPolicyName(t *testing.T) {
 
 func TestBackupMetricsMultipleBackups(t *testing.T) {
 	backup1 := testutils.FakeEtcdBackup("backup-1",
-		testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-			Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-			PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "pvc-1"},
+		testutils.WithBackupStorage(operatorv1.EtcdBackupStorage{
+			Type: operatorv1.EtcdBackupStorageTypePVC,
+			PVC:  operatorv1.EtcdBackupStoragePvc{Name: "pvc-1"},
 		}),
 		testutils.WithBackupCompleted(),
 	)
 	backup2 := testutils.FakeEtcdBackup("backup-2",
-		testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-			Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-			PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "pvc-2"},
+		testutils.WithBackupStorage(operatorv1.EtcdBackupStorage{
+			Type: operatorv1.EtcdBackupStorageTypePVC,
+			PVC:  operatorv1.EtcdBackupStoragePvc{Name: "pvc-2"},
 		}),
-		testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
+		testutils.WithBackupStatus(operatorv1.EtcdBackupStatus{
 			Conditions: []metav1.Condition{{
-				Type:   string(operatorv1alpha1.BackupRunning),
+				Type:   string(operatorv1.BackupRunning),
 				Status: metav1.ConditionTrue,
 			}},
 		}),
@@ -299,9 +299,9 @@ func TestBackupMetricsMultipleBackups(t *testing.T) {
 
 func TestBackupMetricsStatusTransition(t *testing.T) {
 	backup := testutils.FakeEtcdBackup("transition-backup",
-		testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
+		testutils.WithBackupStatus(operatorv1.EtcdBackupStatus{
 			Conditions: []metav1.Condition{{
-				Type:   string(operatorv1alpha1.BackupRunning),
+				Type:   string(operatorv1.BackupRunning),
 				Status: metav1.ConditionTrue,
 			}},
 		}),
@@ -311,7 +311,7 @@ func TestBackupMetricsStatusTransition(t *testing.T) {
 	requireStatusMetrics(t, collector, "transition-backup", "transition-backup-uid", statusRunning)
 
 	backup.Status.Conditions = []metav1.Condition{{
-		Type:   string(operatorv1alpha1.BackupCompleted),
+		Type:   string(operatorv1.BackupCompleted),
 		Status: metav1.ConditionTrue,
 	}}
 	require.NoError(t, indexer.Update(backup))
@@ -321,9 +321,9 @@ func TestBackupMetricsStatusTransition(t *testing.T) {
 
 func TestBackupMetricsDeletion(t *testing.T) {
 	backup := testutils.FakeEtcdBackup("to-delete",
-		testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{
+		testutils.WithBackupStatus(operatorv1.EtcdBackupStatus{
 			Conditions: []metav1.Condition{{
-				Type:   string(operatorv1alpha1.BackupRunning),
+				Type:   string(operatorv1.BackupRunning),
 				Status: metav1.ConditionTrue,
 			}},
 		}),
@@ -344,19 +344,19 @@ func TestBackupMetricsDeletion(t *testing.T) {
 func TestSizeBytesByAssetType(t *testing.T) {
 	tests := []struct {
 		name  string
-		files []operatorv1alpha1.EtcdBackupFile
+		files []operatorv1.EtcdBackupFile
 		want  map[string]float64
 	}{
 		{
 			name:  "no-files",
-			files: []operatorv1alpha1.EtcdBackupFile{},
+			files: []operatorv1.EtcdBackupFile{},
 			want:  map[string]float64{},
 		},
 		{
 			name: "both-assets",
-			files: []operatorv1alpha1.EtcdBackupFile{
-				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db", SizeBytes: 100 * 1024 * 1024},
-				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources, Path: "/backups/static.tar.gz", SizeBytes: 50 * 1024 * 1024},
+			files: []operatorv1.EtcdBackupFile{
+				{AssetType: operatorv1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db", SizeBytes: 100 * 1024 * 1024},
+				{AssetType: operatorv1.EtcdBackupAssetTypeStaticKubeResources, Path: "/backups/static.tar.gz", SizeBytes: 50 * 1024 * 1024},
 			},
 			want: map[string]float64{
 				assetTypeSnapshot:            float64(100 * 1024 * 1024),
@@ -365,8 +365,8 @@ func TestSizeBytesByAssetType(t *testing.T) {
 		},
 		{
 			name: "snapshot-only",
-			files: []operatorv1alpha1.EtcdBackupFile{
-				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db", SizeBytes: 200 * 1024 * 1024},
+			files: []operatorv1.EtcdBackupFile{
+				{AssetType: operatorv1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db", SizeBytes: 200 * 1024 * 1024},
 			},
 			want: map[string]float64{
 				assetTypeSnapshot: float64(200 * 1024 * 1024),
@@ -374,8 +374,8 @@ func TestSizeBytesByAssetType(t *testing.T) {
 		},
 		{
 			name: "static-only",
-			files: []operatorv1alpha1.EtcdBackupFile{
-				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources, Path: "/backups/static.tar.gz", SizeBytes: 50 * 1024 * 1024},
+			files: []operatorv1.EtcdBackupFile{
+				{AssetType: operatorv1.EtcdBackupAssetTypeStaticKubeResources, Path: "/backups/static.tar.gz", SizeBytes: 50 * 1024 * 1024},
 			},
 			want: map[string]float64{
 				assetTypeStaticKubeResources: float64(50 * 1024 * 1024),
@@ -383,8 +383,8 @@ func TestSizeBytesByAssetType(t *testing.T) {
 		},
 		{
 			name: "recorded-empty-file-is-zero",
-			files: []operatorv1alpha1.EtcdBackupFile{
-				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db"},
+			files: []operatorv1.EtcdBackupFile{
+				{AssetType: operatorv1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db"},
 			},
 			want: map[string]float64{
 				assetTypeSnapshot: 0,
@@ -392,9 +392,9 @@ func TestSizeBytesByAssetType(t *testing.T) {
 		},
 		{
 			name: "sum-same-asset-type",
-			files: []operatorv1alpha1.EtcdBackupFile{
-				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot-a.db", SizeBytes: 10},
-				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot-b.db", SizeBytes: 15},
+			files: []operatorv1.EtcdBackupFile{
+				{AssetType: operatorv1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot-a.db", SizeBytes: 10},
+				{AssetType: operatorv1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot-b.db", SizeBytes: 15},
 			},
 			want: map[string]float64{
 				assetTypeSnapshot: 25,
@@ -402,9 +402,9 @@ func TestSizeBytesByAssetType(t *testing.T) {
 		},
 		{
 			name: "missing-asset-type-skipped",
-			files: []operatorv1alpha1.EtcdBackupFile{
+			files: []operatorv1.EtcdBackupFile{
 				{Path: "/backups/snapshot.db", SizeBytes: 100 * 1024 * 1024},
-				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources, Path: "/backups/static.tar.gz", SizeBytes: 50},
+				{AssetType: operatorv1.EtcdBackupAssetTypeStaticKubeResources, Path: "/backups/static.tar.gz", SizeBytes: 50},
 			},
 			want: map[string]float64{
 				assetTypeStaticKubeResources: 50,
@@ -412,8 +412,8 @@ func TestSizeBytesByAssetType(t *testing.T) {
 		},
 		{
 			name: "negative-size-skipped",
-			files: []operatorv1alpha1.EtcdBackupFile{
-				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db", SizeBytes: -1},
+			files: []operatorv1.EtcdBackupFile{
+				{AssetType: operatorv1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db", SizeBytes: -1},
 			},
 			want: map[string]float64{},
 		},
@@ -421,8 +421,8 @@ func TestSizeBytesByAssetType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			backup := operatorv1alpha1.EtcdBackup{
-				Status: operatorv1alpha1.EtcdBackupStatus{Files: tt.files},
+			backup := operatorv1.EtcdBackup{
+				Status: operatorv1.EtcdBackupStatus{Files: tt.files},
 			}
 			require.Equal(t, tt.want, sizeBytesByAssetType(backup))
 		})
@@ -451,7 +451,7 @@ func TestGetCreationTime(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			backup := operatorv1alpha1.EtcdBackup{
+			backup := operatorv1.EtcdBackup{
 				ObjectMeta: metav1.ObjectMeta{CreationTimestamp: tt.creationTimestamp},
 			}
 			require.Equal(t, tt.want, getCreationTime(backup))
@@ -471,7 +471,7 @@ func TestGetCompletionTime(t *testing.T) {
 		{
 			name: "completed-true",
 			conditions: []metav1.Condition{{
-				Type:               string(operatorv1alpha1.BackupCompleted),
+				Type:               string(operatorv1.BackupCompleted),
 				Status:             metav1.ConditionTrue,
 				LastTransitionTime: completedAt,
 			}},
@@ -480,7 +480,7 @@ func TestGetCompletionTime(t *testing.T) {
 		{
 			name: "failed-only",
 			conditions: []metav1.Condition{{
-				Type:               string(operatorv1alpha1.BackupFailed),
+				Type:               string(operatorv1.BackupFailed),
 				Status:             metav1.ConditionTrue,
 				LastTransitionTime: failedAt,
 			}},
@@ -495,8 +495,8 @@ func TestGetCompletionTime(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			backup := operatorv1alpha1.EtcdBackup{
-				Status: operatorv1alpha1.EtcdBackupStatus{Conditions: tt.conditions},
+			backup := operatorv1.EtcdBackup{
+				Status: operatorv1.EtcdBackupStatus{Conditions: tt.conditions},
 			}
 			require.Equal(t, tt.want, getCompletionTime(backup))
 		})
@@ -517,36 +517,36 @@ func TestExtractCurrentStatus(t *testing.T) {
 		{
 			name: "running",
 			conditions: []metav1.Condition{
-				{Type: string(operatorv1alpha1.BackupRunning), Status: metav1.ConditionTrue},
+				{Type: string(operatorv1.BackupRunning), Status: metav1.ConditionTrue},
 			},
 			want: statusRunning,
 		},
 		{
 			name: "completed",
 			conditions: []metav1.Condition{
-				{Type: string(operatorv1alpha1.BackupCompleted), Status: metav1.ConditionTrue},
+				{Type: string(operatorv1.BackupCompleted), Status: metav1.ConditionTrue},
 			},
 			want: statusCompleted,
 		},
 		{
 			name: "failed",
 			conditions: []metav1.Condition{
-				{Type: string(operatorv1alpha1.BackupFailed), Status: metav1.ConditionTrue},
+				{Type: string(operatorv1.BackupFailed), Status: metav1.ConditionTrue},
 			},
 			want: statusFailed,
 		},
 		{
 			name: "all-false",
 			conditions: []metav1.Condition{
-				{Type: string(operatorv1alpha1.BackupRunning), Status: metav1.ConditionFalse},
-				{Type: string(operatorv1alpha1.BackupCompleted), Status: metav1.ConditionFalse},
+				{Type: string(operatorv1.BackupRunning), Status: metav1.ConditionFalse},
+				{Type: string(operatorv1.BackupCompleted), Status: metav1.ConditionFalse},
 			},
 			want: "",
 		},
 		{
 			name: "unknown",
 			conditions: []metav1.Condition{
-				{Type: string(operatorv1alpha1.BackupRunning), Status: metav1.ConditionUnknown},
+				{Type: string(operatorv1.BackupRunning), Status: metav1.ConditionUnknown},
 			},
 			want: "",
 		},
@@ -561,8 +561,8 @@ func TestExtractCurrentStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			backup := operatorv1alpha1.EtcdBackup{
-				Status: operatorv1alpha1.EtcdBackupStatus{Conditions: tt.conditions},
+			backup := operatorv1.EtcdBackup{
+				Status: operatorv1.EtcdBackupStatus{Conditions: tt.conditions},
 			}
 			require.Equal(t, tt.want, extractCurrentStatus(backup))
 		})
@@ -647,13 +647,13 @@ func TestBackupMetricsRealLister(t *testing.T) {
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expected), backupStatusMetricName))
 }
 
-func setupCollectorWithBackups(t *testing.T, backups ...*operatorv1alpha1.EtcdBackup) *backupCollector {
+func setupCollectorWithBackups(t *testing.T, backups ...*operatorv1.EtcdBackup) *backupCollector {
 	t.Helper()
 	collector, _ := setupCollectorWithIndexer(t, backups...)
 	return collector
 }
 
-func setupCollectorWithIndexer(t *testing.T, backups ...*operatorv1alpha1.EtcdBackup) (*backupCollector, cache.Indexer) {
+func setupCollectorWithIndexer(t *testing.T, backups ...*operatorv1.EtcdBackup) (*backupCollector, cache.Indexer) {
 	t.Helper()
 
 	objects := make([]runtime.Object, 0, len(backups))
@@ -661,7 +661,7 @@ func setupCollectorWithIndexer(t *testing.T, backups ...*operatorv1alpha1.EtcdBa
 
 	fakeClient := operatorfake.NewSimpleClientset(objects...)
 	informerFactory := operatorinformers.NewSharedInformerFactory(fakeClient, 0)
-	backupInformer := informerFactory.Operator().V1alpha1().EtcdBackups()
+	backupInformer := informerFactory.Operator().V1().EtcdBackups()
 
 	indexer := backupInformer.Informer().GetIndexer()
 	for _, backup := range backups {
@@ -701,16 +701,16 @@ func requireStatusMetrics(t *testing.T, collector prometheus.Collector, name, ui
 func TestBackupMetricsSizeByAsset(t *testing.T) {
 	tests := []struct {
 		name          string
-		files         []operatorv1alpha1.EtcdBackupFile
-		requested     []operatorv1alpha1.EtcdBackupAssetType
+		files         []operatorv1.EtcdBackupFile
+		requested     []operatorv1.EtcdBackupAssetType
 		expectedSizes string
 		wantCount     int
 	}{
 		{
 			name: "both-recorded",
-			files: []operatorv1alpha1.EtcdBackupFile{
-				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db", SizeBytes: 64675872},
-				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources, Path: "/backups/static.tar.gz", SizeBytes: 54228},
+			files: []operatorv1.EtcdBackupFile{
+				{AssetType: operatorv1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db", SizeBytes: 64675872},
+				{AssetType: operatorv1.EtcdBackupAssetTypeStaticKubeResources, Path: "/backups/static.tar.gz", SizeBytes: 54228},
 			},
 			expectedSizes: `
 				# HELP etcd_backup_size_bytes Total recorded backup file size in bytes, by asset type.
@@ -722,8 +722,8 @@ func TestBackupMetricsSizeByAsset(t *testing.T) {
 		},
 		{
 			name: "snapshot-only",
-			files: []operatorv1alpha1.EtcdBackupFile{
-				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db", SizeBytes: 100},
+			files: []operatorv1.EtcdBackupFile{
+				{AssetType: operatorv1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db", SizeBytes: 100},
 			},
 			expectedSizes: `
 				# HELP etcd_backup_size_bytes Total recorded backup file size in bytes, by asset type.
@@ -734,8 +734,8 @@ func TestBackupMetricsSizeByAsset(t *testing.T) {
 		},
 		{
 			name: "static-only",
-			files: []operatorv1alpha1.EtcdBackupFile{
-				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources, Path: "/backups/static.tar.gz", SizeBytes: 50},
+			files: []operatorv1.EtcdBackupFile{
+				{AssetType: operatorv1.EtcdBackupAssetTypeStaticKubeResources, Path: "/backups/static.tar.gz", SizeBytes: 50},
 			},
 			expectedSizes: `
 				# HELP etcd_backup_size_bytes Total recorded backup file size in bytes, by asset type.
@@ -746,8 +746,8 @@ func TestBackupMetricsSizeByAsset(t *testing.T) {
 		},
 		{
 			name: "recorded-empty-file",
-			files: []operatorv1alpha1.EtcdBackupFile{
-				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db"},
+			files: []operatorv1.EtcdBackupFile{
+				{AssetType: operatorv1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db"},
 			},
 			expectedSizes: `
 				# HELP etcd_backup_size_bytes Total recorded backup file size in bytes, by asset type.
@@ -758,12 +758,12 @@ func TestBackupMetricsSizeByAsset(t *testing.T) {
 		},
 		{
 			name: "partial-recorded",
-			requested: []operatorv1alpha1.EtcdBackupAssetType{
-				operatorv1alpha1.EtcdBackupAssetTypeSnapshot,
-				operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources,
+			requested: []operatorv1.EtcdBackupAssetType{
+				operatorv1.EtcdBackupAssetTypeSnapshot,
+				operatorv1.EtcdBackupAssetTypeStaticKubeResources,
 			},
-			files: []operatorv1alpha1.EtcdBackupFile{
-				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db", SizeBytes: 10},
+			files: []operatorv1.EtcdBackupFile{
+				{AssetType: operatorv1.EtcdBackupAssetTypeSnapshot, Path: "/backups/snapshot.db", SizeBytes: 10},
 			},
 			expectedSizes: `
 				# HELP etcd_backup_size_bytes Total recorded backup file size in bytes, by asset type.
@@ -774,9 +774,9 @@ func TestBackupMetricsSizeByAsset(t *testing.T) {
 		},
 		{
 			name: "requested-but-not-recorded",
-			requested: []operatorv1alpha1.EtcdBackupAssetType{
-				operatorv1alpha1.EtcdBackupAssetTypeSnapshot,
-				operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources,
+			requested: []operatorv1.EtcdBackupAssetType{
+				operatorv1.EtcdBackupAssetTypeSnapshot,
+				operatorv1.EtcdBackupAssetTypeStaticKubeResources,
 			},
 			files:     nil,
 			wantCount: 0,
@@ -785,12 +785,12 @@ func TestBackupMetricsSizeByAsset(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			opts := []func(*operatorv1alpha1.EtcdBackup){
-				testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-					Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-					PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-pvc"},
+			opts := []func(*operatorv1.EtcdBackup){
+				testutils.WithBackupStorage(operatorv1.EtcdBackupStorage{
+					Type: operatorv1.EtcdBackupStorageTypePVC,
+					PVC:  operatorv1.EtcdBackupStoragePvc{Name: "test-pvc"},
 				}),
-				testutils.WithBackupStatus(operatorv1alpha1.EtcdBackupStatus{Files: tt.files}),
+				testutils.WithBackupStatus(operatorv1.EtcdBackupStatus{Files: tt.files}),
 			}
 			if tt.requested != nil {
 				opts = append(opts, testutils.WithBackupAssets(tt.requested...))

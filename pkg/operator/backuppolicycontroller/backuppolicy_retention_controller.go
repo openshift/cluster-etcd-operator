@@ -11,9 +11,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/cache"
 
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
-	operatorv1alpha1client "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
-	operatorv1alpha1listers "github.com/openshift/client-go/operator/listers/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
+	operatorv1client "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
+	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/library-go/pkg/controller/factory"
@@ -30,17 +30,17 @@ const (
 )
 
 type BackupPolicyRetentionController struct {
-	backupsLister        operatorv1alpha1listers.EtcdBackupLister
-	backupPoliciesLister operatorv1alpha1listers.EtcdBackupPolicyLister
-	operatorClient       operatorv1alpha1client.OperatorV1alpha1Interface
+	backupsLister        operatorv1listers.EtcdBackupLister
+	backupPoliciesLister operatorv1listers.EtcdBackupPolicyLister
+	operatorClient       operatorv1client.OperatorV1Interface
 	featureGateAccessor  featuregates.FeatureGateAccess
 }
 
 func NewBackupPolicyRetentionController(
 	livenessChecker *health.MultiAlivenessChecker,
-	backupsLister operatorv1alpha1listers.EtcdBackupLister,
-	backupPoliciesLister operatorv1alpha1listers.EtcdBackupPolicyLister,
-	operatorClient operatorv1alpha1client.OperatorV1alpha1Interface,
+	backupsLister operatorv1listers.EtcdBackupLister,
+	backupPoliciesLister operatorv1listers.EtcdBackupPolicyLister,
+	operatorClient operatorv1client.OperatorV1Interface,
 	eventRecorder events.Recorder,
 	accessor featuregates.FeatureGateAccess,
 	etcdBackupPolicyInformer factory.Informer,
@@ -61,10 +61,10 @@ func NewBackupPolicyRetentionController(
 	// cause prune to fire multiple times on stale informer cache.
 	syncCtx := factory.NewSyncContext("BackupPolicyRetentionController", eventRecorder)
 	handler := newResourceEventDebounceHandler(syncCtx, pruneDebounce, func(o runtime.Object) []string {
-		if backupPolicy, ok := o.(*operatorv1alpha1.EtcdBackupPolicy); ok {
+		if backupPolicy, ok := o.(*operatorv1.EtcdBackupPolicy); ok {
 			return []string{backupPolicy.Name}
 		}
-		if backup, ok := o.(*operatorv1alpha1.EtcdBackup); ok && backup.Labels != nil {
+		if backup, ok := o.(*operatorv1.EtcdBackup); ok && backup.Labels != nil {
 			// Only trigger sync on backups owned by an EtcdBackupPolicy when they are not deleted and have complfailed
 			backupPolicyName := backup.Labels[backuphelpers.LabelEtcdBackupPolicy]
 			if backupPolicyName != "" && backup.DeletionTimestamp == nil && backuphelpers.IsBackupFinished(backup) {
@@ -133,7 +133,7 @@ func (c *BackupPolicyRetentionController) sync(ctx context.Context, syncCtx fact
 	return nil
 }
 
-func (c *BackupPolicyRetentionController) pruneBackups(ctx context.Context, backupPolicy *operatorv1alpha1.EtcdBackupPolicy) error {
+func (c *BackupPolicyRetentionController) pruneBackups(ctx context.Context, backupPolicy *operatorv1.EtcdBackupPolicy) error {
 	backups, err := c.listFinishedBackups(backupPolicy.Name)
 	if err != nil {
 		return err
@@ -153,7 +153,7 @@ func (c *BackupPolicyRetentionController) pruneBackups(ctx context.Context, back
 	return nil
 }
 
-func (c *BackupPolicyRetentionController) listFinishedBackups(backupPolicyName string) ([]*operatorv1alpha1.EtcdBackup, error) {
+func (c *BackupPolicyRetentionController) listFinishedBackups(backupPolicyName string) ([]*operatorv1.EtcdBackup, error) {
 	backups, err := c.backupsLister.List(labels.SelectorFromSet(labels.Set{backuphelpers.LabelEtcdBackupPolicy: backupPolicyName}))
 	if err != nil {
 		return nil, err
@@ -172,11 +172,11 @@ func (c *BackupPolicyRetentionController) listFinishedBackups(backupPolicyName s
 
 // filterPruneableBackups sorts backups slice and returns only the items that should be pruned.
 // The slice is modified in place.
-func filterPruneableBackups(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, backups []*operatorv1alpha1.EtcdBackup) []*operatorv1alpha1.EtcdBackup {
+func filterPruneableBackups(backupPolicy *operatorv1.EtcdBackupPolicy, backups []*operatorv1.EtcdBackup) []*operatorv1.EtcdBackup {
 	pruneGroups := map[string]*pruneGroup{}
 
 	// Sort by creation descending so newest backups are retained and older backups are deleted once threshold is passed
-	slices.SortStableFunc(backups, func(a, b *operatorv1alpha1.EtcdBackup) int {
+	slices.SortStableFunc(backups, func(a, b *operatorv1.EtcdBackup) int {
 		return b.CreationTimestamp.Compare(a.CreationTimestamp.Time)
 	})
 
@@ -188,7 +188,7 @@ func filterPruneableBackups(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, bac
 		maxFailed = 1
 	}
 	// Backups are grouped by NodeName for retention limits only in Local storage with AllNodes distribution
-	groupedLimits := backupPolicy.Spec.Storage.Type == operatorv1alpha1.EtcdBackupStorageTypeLocal && backupPolicy.Spec.Storage.Local.Distribution == operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeAllNodes
+	groupedLimits := backupPolicy.Spec.Storage.Type == operatorv1.EtcdBackupStorageTypeLocal && backupPolicy.Spec.Storage.Local.Distribution == operatorv1.EtcdBackupPolicyLocalDistributionTypeAllNodes
 	for _, backup := range backups {
 		// Prune failed backups by total history limit
 		if backuphelpers.IsBackupFailed(backup) {
@@ -219,14 +219,14 @@ func filterPruneableBackups(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, bac
 		pruneBackup := false
 		for _, rule := range backupPolicy.Spec.RetentionRules {
 			switch rule.Type {
-			case operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeQuantity:
+			case operatorv1.EtcdBackupPolicyRetentionRuleTypeQuantity:
 				if rule.Quantity.MaxQuantity > 0 {
 					if rule.Quantity.MaxQuantity < group.quantity {
 						backups[n] = backup
 						pruneBackup = true
 					}
 				}
-			case operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeSize:
+			case operatorv1.EtcdBackupPolicyRetentionRuleTypeSize:
 				if rule.Size.MaxTotalSizeGiB > 0 {
 					// If the newest backup exceeds MaxTotalSizeGiB on its own, retain it to ensure the latest valid
 					// backup is kept despite exceeding the rule. All older backups in this group will be pruned.

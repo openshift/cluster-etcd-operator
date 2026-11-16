@@ -16,8 +16,8 @@ import (
 
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
-	operatorversionedclientv1alpha1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
+	operatorversionedclientv1 "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -49,7 +49,7 @@ func NewRequestBackupCommand(ctx context.Context) *cobra.Command {
 	opts := requestBackupOpts{}
 	cmd := &cobra.Command{
 		Use:   "request-backup",
-		Short: "Requests a one time etcd backup by creating an operator.openshift.io/v1alpha1 EtcdBackup CustomResource",
+		Short: "Requests a one time etcd backup by creating an operator.openshift.io/v1 EtcdBackup CustomResource",
 		Run: func(cmd *cobra.Command, args []string) {
 			defer klog.Flush()
 
@@ -137,7 +137,7 @@ func (r *requestBackupOpts) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	operatorClient, err := operatorversionedclientv1alpha1.NewForConfig(kubeConfig)
+	operatorClient, err := operatorversionedclientv1.NewForConfig(kubeConfig)
 	if err != nil {
 		return err
 	}
@@ -145,7 +145,7 @@ func (r *requestBackupOpts) Run(ctx context.Context) error {
 	return r.requestBackups(ctx, kubeClient, operatorClient)
 }
 
-func (r *requestBackupOpts) requestBackups(ctx context.Context, kubeClient kubernetes.Interface, operatorClient operatorversionedclientv1alpha1.OperatorV1alpha1Interface) error {
+func (r *requestBackupOpts) requestBackups(ctx context.Context, kubeClient kubernetes.Interface, operatorClient operatorversionedclientv1.OperatorV1Interface) error {
 	etcdBackupClient := operatorClient.EtcdBackups()
 
 	if r.etcdBackupPolicyName != "" {
@@ -164,25 +164,25 @@ func (r *requestBackupOpts) requestBackups(ctx context.Context, kubeClient kuber
 	return createBackup(ctx, r.etcdBackupName, r.pvcName, r.pvcPath, r.hostPath, etcdBackupClient)
 }
 
-func createBackup(ctx context.Context, name, pvcName, pvcPath, hostPath string, backupClient operatorversionedclientv1alpha1.EtcdBackupInterface) error {
+func createBackup(ctx context.Context, name, pvcName, pvcPath, hostPath string, backupClient operatorversionedclientv1.EtcdBackupInterface) error {
 	// Create the EtcdBackup CR
-	etcdBackup := &operatorv1alpha1.EtcdBackup{
+	etcdBackup := &operatorv1.EtcdBackup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
 	}
 	if pvcName != "" {
-		etcdBackup.Spec.Storage = operatorv1alpha1.EtcdBackupStorage{
-			Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-			PVC: operatorv1alpha1.EtcdBackupStoragePvc{
+		etcdBackup.Spec.Storage = operatorv1.EtcdBackupStorage{
+			Type: operatorv1.EtcdBackupStorageTypePVC,
+			PVC: operatorv1.EtcdBackupStoragePvc{
 				Name: pvcName,
 				Path: pvcPath,
 			},
 		}
 	} else {
-		etcdBackup.Spec.Storage = operatorv1alpha1.EtcdBackupStorage{
-			Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
-			Local: operatorv1alpha1.EtcdBackupStorageLocal{
+		etcdBackup.Spec.Storage = operatorv1.EtcdBackupStorage{
+			Type: operatorv1.EtcdBackupStorageTypeLocal,
+			Local: operatorv1.EtcdBackupStorageLocal{
 				HostPath: hostPath,
 			},
 		}
@@ -197,7 +197,7 @@ func createBackup(ctx context.Context, name, pvcName, pvcPath, hostPath string, 
 }
 
 // createBackupsForPolicy creates EtcdBackup resources for the current schedule execution of an EtcdBackupPolicy
-func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *operatorv1alpha1.EtcdBackupPolicy, backupClient operatorversionedclientv1alpha1.EtcdBackupInterface, nodeClient corev1client.NodeInterface) error {
+func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *operatorv1.EtcdBackupPolicy, backupClient operatorversionedclientv1.EtcdBackupInterface, nodeClient corev1client.NodeInterface) error {
 	// Get control plane nodes
 	nodeSelector := labels.Set{backuphelpers.ControlPlaneNodeLabelSelector: ""}
 	if len(backupPolicy.Spec.NodeSelector) > 0 {
@@ -222,7 +222,7 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 	if err != nil {
 		return err
 	}
-	isAllNodes := backupPolicy.Spec.Storage.Type == operatorv1alpha1.EtcdBackupStorageTypeLocal && backupPolicy.Spec.Storage.Local.Distribution == operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeAllNodes
+	isAllNodes := backupPolicy.Spec.Storage.Type == operatorv1.EtcdBackupStorageTypeLocal && backupPolicy.Spec.Storage.Local.Distribution == operatorv1.EtcdBackupPolicyLocalDistributionTypeAllNodes
 	existingLocalBackupHostnames := map[string]struct{}{}
 	for _, backup := range backupList.Items {
 		if isAllNodes {
@@ -232,7 +232,7 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 			if backup.Labels[backuphelpers.LabelEtcdBackupPolicyRun] == name || !backuphelpers.IsBackupFinished(&backup) {
 				// Only check for local backups in case the policy switched from PVC -> Local AllNodes.
 				// Even if the PVC backup was assigned to a specific node, it should not count against the backups to be created for the Local policy.
-				if hostname := backup.Spec.NodeSelector[corev1.LabelHostname]; backup.Spec.Storage.Type == operatorv1alpha1.EtcdBackupStorageTypeLocal && hostname != "" {
+				if hostname := backup.Spec.NodeSelector[corev1.LabelHostname]; backup.Spec.Storage.Type == operatorv1.EtcdBackupStorageTypeLocal && hostname != "" {
 					existingLocalBackupHostnames[hostname] = struct{}{}
 				}
 			}
@@ -248,10 +248,10 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 	// Build the set of EtcdBackups to create. Local backups are taken once per control plane node and pinned to that
 	// node (the hostPath is node-specific). PVC backups are node-independent: a single backup is created and
 	// the scheduler decides placement based on the volume's topology.
-	var toCreate []*operatorv1alpha1.EtcdBackup
+	var toCreate []*operatorv1.EtcdBackup
 	switch backupPolicy.Spec.Storage.Type {
-	case operatorv1alpha1.EtcdBackupStorageTypePVC:
-		toCreate = append(toCreate, &operatorv1alpha1.EtcdBackup{
+	case operatorv1.EtcdBackupStorageTypePVC:
+		toCreate = append(toCreate, &operatorv1.EtcdBackup{
 			ObjectMeta: v1.ObjectMeta{
 				Name: name,
 				Labels: map[string]string{
@@ -259,13 +259,13 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 					backuphelpers.LabelEtcdBackupPolicyRun: name,
 				},
 			},
-			Spec: operatorv1alpha1.EtcdBackupSpec{
+			Spec: operatorv1.EtcdBackupSpec{
 				Assets:       backupPolicy.Spec.Assets,
 				NodeSelector: backupPolicy.Spec.NodeSelector,
 				Storage:      backuphelpers.EtcdBackupStorageFromPolicy(backupPolicy),
 			},
 		})
-	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
+	case operatorv1.EtcdBackupStorageTypeLocal:
 		for node := range iterLocalNodes(backupPolicy, backupList, nodeList) {
 			hostName := node.Labels[corev1.LabelHostname]
 			if _, ok := existingLocalBackupHostnames[hostName]; ok {
@@ -280,7 +280,7 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 			}
 			backupName += suffix
 
-			toCreate = append(toCreate, &operatorv1alpha1.EtcdBackup{
+			toCreate = append(toCreate, &operatorv1.EtcdBackup{
 				ObjectMeta: v1.ObjectMeta{
 					Name: backupName,
 					Labels: map[string]string{
@@ -288,7 +288,7 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 						backuphelpers.LabelEtcdBackupPolicyRun: name,
 					},
 				},
-				Spec: operatorv1alpha1.EtcdBackupSpec{
+				Spec: operatorv1.EtcdBackupSpec{
 					Assets:       backupPolicy.Spec.Assets,
 					NodeSelector: map[string]string{corev1.LabelHostname: node.Labels[corev1.LabelHostname]},
 					Storage:      backuphelpers.EtcdBackupStorageFromPolicy(backupPolicy),
@@ -322,14 +322,14 @@ func createBackupsForPolicy(ctx context.Context, name string, backupPolicy *oper
 	return utilerrors.NewAggregate(errs)
 }
 
-func iterLocalNodes(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, backupList *operatorv1alpha1.EtcdBackupList, nodeList *corev1.NodeList) iter.Seq[corev1.Node] {
+func iterLocalNodes(backupPolicy *operatorv1.EtcdBackupPolicy, backupList *operatorv1.EtcdBackupList, nodeList *corev1.NodeList) iter.Seq[corev1.Node] {
 	return func(yield func(corev1.Node) bool) {
 		switch backupPolicy.Spec.Storage.Local.Distribution {
-		case "", operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeSingleNode:
+		case "", operatorv1.EtcdBackupPolicyLocalDistributionTypeSingleNode:
 			if node, ok := nextRoundRobinNode(backupList, nodeList); ok {
 				yield(node)
 			}
-		case operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeAllNodes:
+		case operatorv1.EtcdBackupPolicyLocalDistributionTypeAllNodes:
 			for _, node := range nodeList.Items {
 				if hostname := node.Labels[corev1.LabelHostname]; hostname != "" {
 					if !yield(node) {
@@ -348,7 +348,7 @@ func iterLocalNodes(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, backupList 
 //
 // The most recent backup is used regardless of outcome so that a node which persistently fails backups does not
 // prevent the remaining nodes from being rotated through.
-func nextRoundRobinNode(backupList *operatorv1alpha1.EtcdBackupList, nodeList *corev1.NodeList) (corev1.Node, bool) {
+func nextRoundRobinNode(backupList *operatorv1.EtcdBackupList, nodeList *corev1.NodeList) (corev1.Node, bool) {
 	nodes := make([]corev1.Node, 0, len(nodeList.Items))
 	for _, node := range nodeList.Items {
 		if node.Labels[corev1.LabelHostname] != "" {
@@ -381,11 +381,11 @@ func nextRoundRobinNode(backupList *operatorv1alpha1.EtcdBackupList, nodeList *c
 // Backups are pinned by hostname label, and the node name is only recorded in status once the backup job has been
 // scheduled. If the status is not yet populated, the node name is resolved from the hostname via the given nodes,
 // falling back to the hostname itself when the node no longer exists (node name and hostname typically match).
-func latestLocalBackupNodeName(backupList *operatorv1alpha1.EtcdBackupList, nodes []corev1.Node) string {
-	var latest *operatorv1alpha1.EtcdBackup
+func latestLocalBackupNodeName(backupList *operatorv1.EtcdBackupList, nodes []corev1.Node) string {
+	var latest *operatorv1.EtcdBackup
 	for i := range backupList.Items {
 		backup := &backupList.Items[i]
-		if backup.Spec.Storage.Type != operatorv1alpha1.EtcdBackupStorageTypeLocal || backup.Spec.NodeSelector[corev1.LabelHostname] == "" {
+		if backup.Spec.Storage.Type != operatorv1.EtcdBackupStorageTypeLocal || backup.Spec.NodeSelector[corev1.LabelHostname] == "" {
 			continue
 		}
 		if latest == nil ||

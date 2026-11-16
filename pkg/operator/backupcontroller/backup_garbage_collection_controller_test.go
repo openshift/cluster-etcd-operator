@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	fake "github.com/openshift/client-go/operator/clientset/versioned/fake"
 	operatorfake "github.com/openshift/client-go/operator/clientset/versioned/fake"
 	operatorinformers "github.com/openshift/client-go/operator/informers/externalversions"
@@ -32,7 +32,7 @@ import (
 )
 
 type testCaseBackupGarbageCollectionController struct {
-	backups     []*operatorv1alpha1.EtcdBackup
+	backups     []*operatorv1.EtcdBackup
 	jobs        []*batchv1.Job
 	nodes       []*corev1.Node
 	pvcs        []*corev1.PersistentVolumeClaim
@@ -66,7 +66,7 @@ func runBackupGarbageCollectionControllerTest(t *testing.T, tc testCaseBackupGar
 	jobInformer := sharedFactory.Batch().V1().Jobs()
 	nodesInformer := sharedFactory.Core().V1().Nodes()
 	pvcsInformer := sharedFactory.Core().V1().PersistentVolumeClaims()
-	backupsInformer := operatorSharedFactory.Operator().V1alpha1().EtcdBackups()
+	backupsInformer := operatorSharedFactory.Operator().V1().EtcdBackups()
 
 	jobInformerHasSynced := jobInformer.Informer().HasSynced
 	nodesInformerHasSynced := nodesInformer.Informer().HasSynced
@@ -85,7 +85,7 @@ func runBackupGarbageCollectionControllerTest(t *testing.T, tc testCaseBackupGar
 		jobsLister:            jobInformer.Lister().Jobs(operatorclient.TargetNamespace),
 		nodesLister:           nodesInformer.Lister(),
 		pvcsLister:            pvcsInformer.Lister().PersistentVolumeClaims(operatorclient.TargetNamespace),
-		operatorClient:        operatorFake.OperatorV1alpha1(),
+		operatorClient:        operatorFake.OperatorV1(),
 		kubeClient:            client,
 		operatorImagePullSpec: "operator-pullspec-image",
 		featureGateAccessor:   backupFeatureGateAccessor,
@@ -113,11 +113,11 @@ func TestBackupGarbageCollectionNewJob(t *testing.T) {
 	// Create a new GC Job for a completed/deleted EtcdBackup
 	t.Run("local", func(t *testing.T) {
 		runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
-			backups: []*operatorv1alpha1.EtcdBackup{
+			backups: []*operatorv1.EtcdBackup{
 				testutils.FakeEtcdBackup("test-backup",
-					testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-						Type:  operatorv1alpha1.EtcdBackupStorageTypeLocal,
-						Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etcdbackups"},
+					testutils.WithBackupStorage(operatorv1.EtcdBackupStorage{
+						Type:  operatorv1.EtcdBackupStorageTypeLocal,
+						Local: operatorv1.EtcdBackupStorageLocal{HostPath: "/etcdbackups"},
 					}), testutils.WithBackupNodeName("test-node"), testutils.WithBackupCompleted(), testutils.WithBackupDeleted())},
 			nodes: []*corev1.Node{testutils.FakeNode("test-node")},
 			validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
@@ -130,7 +130,7 @@ func TestBackupGarbageCollectionNewJob(t *testing.T) {
 				job := jobList.Items[0]
 				require.Equal(t, job.Labels["app"], backupGCAppName)
 				require.ElementsMatch(t, job.OwnerReferences, []v1.OwnerReference{{
-					APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup", UID: "test-backup-uid",
+					APIVersion: operatorv1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup", UID: "test-backup-uid",
 				}})
 				backupDir := "0/test-backup"
 				require.Contains(t, job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{
@@ -142,7 +142,7 @@ func TestBackupGarbageCollectionNewJob(t *testing.T) {
 	})
 	t.Run("pvc", func(t *testing.T) {
 		runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
-			backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupCompleted(), testutils.WithBackupDeleted())},
+			backups: []*operatorv1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupCompleted(), testutils.WithBackupDeleted())},
 			pvcs:    []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
 			validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				jobList, err := client.BatchV1().Jobs(operatorclient.TargetNamespace).List(t.Context(), v1.ListOptions{
@@ -154,7 +154,7 @@ func TestBackupGarbageCollectionNewJob(t *testing.T) {
 				job := jobList.Items[0]
 				require.Equal(t, job.Labels["app"], backupGCAppName)
 				require.ElementsMatch(t, job.OwnerReferences, []v1.OwnerReference{{
-					APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup", UID: "test-backup-uid",
+					APIVersion: operatorv1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup", UID: "test-backup-uid",
 				}})
 				backupDir := "test-backup"
 				require.Contains(t, job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{
@@ -169,7 +169,7 @@ func TestBackupGarbageCollectionNewJob(t *testing.T) {
 func TestBackupGarbageCollectionExistingJob(t *testing.T) {
 	// Do not create a new GC job when one already exists for the EtcdBackup
 	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
-		backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupCompleted(), testutils.WithBackupDeleted())},
+		backups: []*operatorv1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupCompleted(), testutils.WithBackupDeleted())},
 		pvcs:    []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
 		jobs: []*batchv1.Job{{
 			ObjectMeta: v1.ObjectMeta{
@@ -178,7 +178,7 @@ func TestBackupGarbageCollectionExistingJob(t *testing.T) {
 				Labels:     map[string]string{"app": backupGCAppName},
 				Finalizers: []string{backuphelpers.FinalizerEtcdBackup},
 				OwnerReferences: []v1.OwnerReference{{
-					APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup", UID: "test-backup-uid",
+					APIVersion: operatorv1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup", UID: "test-backup-uid",
 				}}},
 		}},
 		validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
@@ -197,24 +197,24 @@ func TestBackupGarbageCollectionExistingJob(t *testing.T) {
 
 func TestBackupGarbageCollectionActiveJobOnStorageSkipsCreate(t *testing.T) {
 	// Do not create a GC Job for a newly deleted EtcdBackup while another GC Job is active on the same storage backend
-	storage := operatorv1alpha1.EtcdBackupStorage{
-		Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-		PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-backup-pvc"},
+	storage := operatorv1.EtcdBackupStorage{
+		Type: operatorv1.EtcdBackupStorageTypePVC,
+		PVC:  operatorv1.EtcdBackupStoragePvc{Name: "test-backup-pvc"},
 	}
 	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
-		backups: []*operatorv1alpha1.EtcdBackup{
+		backups: []*operatorv1.EtcdBackup{
 			testutils.FakeEtcdBackup("test-backup-1", testutils.WithBackupCompleted(), testutils.WithBackupDeleted(), testutils.WithBackupStorage(storage)),
 			testutils.FakeEtcdBackup("test-backup-2", testutils.WithBackupCompleted(), testutils.WithBackupDeleted(), testutils.WithBackupStorage(storage)),
 		},
 		pvcs: []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
 		jobs: []*batchv1.Job{{
 			ObjectMeta: v1.ObjectMeta{
-				Name:       generateBackupGCJobName(storageBackend{storageType: operatorv1alpha1.EtcdBackupStorageTypePVC, pvcName: "test-backup-pvc"}),
+				Name:       generateBackupGCJobName(storageBackend{storageType: operatorv1.EtcdBackupStorageTypePVC, pvcName: "test-backup-pvc"}),
 				Namespace:  operatorclient.TargetNamespace,
 				Labels:     map[string]string{"app": backupGCAppName},
 				Finalizers: []string{backuphelpers.FinalizerEtcdBackup},
 				OwnerReferences: []v1.OwnerReference{{
-					APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup-1", UID: "test-backup-1-uid",
+					APIVersion: operatorv1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup-1", UID: "test-backup-1-uid",
 				}}},
 		}},
 		validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
@@ -227,7 +227,7 @@ func TestBackupGarbageCollectionActiveJobOnStorageSkipsCreate(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, jobList.Items, 1)
 			require.ElementsMatch(t, jobList.Items[0].OwnerReferences, []v1.OwnerReference{{
-				APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup-1", UID: "test-backup-1-uid",
+				APIVersion: operatorv1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup-1", UID: "test-backup-1-uid",
 			}})
 		},
 	})
@@ -236,13 +236,13 @@ func TestBackupGarbageCollectionActiveJobOnStorageSkipsCreate(t *testing.T) {
 func TestBackupGarbageCollectionCompletedJobReplaced(t *testing.T) {
 	// Replace a completed GC Job when another EtcdBackup on the same storage backend requires GC.
 	// The completed job is finalized once, and not patched again before deletion.
-	storage := operatorv1alpha1.EtcdBackupStorage{
-		Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-		PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-backup-pvc"},
+	storage := operatorv1.EtcdBackupStorage{
+		Type: operatorv1.EtcdBackupStorageTypePVC,
+		PVC:  operatorv1.EtcdBackupStoragePvc{Name: "test-backup-pvc"},
 	}
-	jobName := generateBackupGCJobName(storageBackend{storageType: operatorv1alpha1.EtcdBackupStorageTypePVC, pvcName: "test-backup-pvc"})
+	jobName := generateBackupGCJobName(storageBackend{storageType: operatorv1.EtcdBackupStorageTypePVC, pvcName: "test-backup-pvc"})
 	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
-		backups: []*operatorv1alpha1.EtcdBackup{
+		backups: []*operatorv1.EtcdBackup{
 			testutils.FakeEtcdBackup("test-backup-2", testutils.WithBackupCompleted(), testutils.WithBackupDeleted(), testutils.WithBackupStorage(storage)),
 		},
 		pvcs: []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
@@ -253,7 +253,7 @@ func TestBackupGarbageCollectionCompletedJobReplaced(t *testing.T) {
 				Labels:     map[string]string{"app": backupGCAppName},
 				Finalizers: []string{backuphelpers.FinalizerEtcdBackup},
 				OwnerReferences: []v1.OwnerReference{{
-					APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup-1", UID: "test-backup-1-uid",
+					APIVersion: operatorv1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup-1", UID: "test-backup-1-uid",
 				}}},
 			Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
 				Type: batchv1.JobComplete, Status: corev1.ConditionTrue,
@@ -276,7 +276,7 @@ func TestBackupGarbageCollectionCompletedJobReplaced(t *testing.T) {
 			job := jobList.Items[0]
 			require.False(t, isJobFinished(&job), "Completed job should have been replaced")
 			require.ElementsMatch(t, job.OwnerReferences, []v1.OwnerReference{{
-				APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup-2", UID: "test-backup-2-uid",
+				APIVersion: operatorv1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup-2", UID: "test-backup-2-uid",
 			}})
 		},
 	})
@@ -287,11 +287,11 @@ func TestBackupGarbageCollectionFinalizeOnMissingStorageBackend(t *testing.T) {
 	t.Run("local", func(t *testing.T) {
 		// Node with local storage not found
 		runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
-			backups: []*operatorv1alpha1.EtcdBackup{
+			backups: []*operatorv1.EtcdBackup{
 				testutils.FakeEtcdBackup("test-backup",
-					testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-						Type:  operatorv1alpha1.EtcdBackupStorageTypeLocal,
-						Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etcdbackups"},
+					testutils.WithBackupStorage(operatorv1.EtcdBackupStorage{
+						Type:  operatorv1.EtcdBackupStorageTypeLocal,
+						Local: operatorv1.EtcdBackupStorageLocal{HostPath: "/etcdbackups"},
 					}), testutils.WithBackupNodeName("test-node"), testutils.WithBackupCompleted(), testutils.WithBackupDeleted())},
 			validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				jobList, err := client.BatchV1().Jobs(operatorclient.TargetNamespace).List(t.Context(), v1.ListOptions{
@@ -300,7 +300,7 @@ func TestBackupGarbageCollectionFinalizeOnMissingStorageBackend(t *testing.T) {
 				require.NoError(t, err)
 				require.Len(t, jobList.Items, 0)
 
-				backup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), "test-backup", v1.GetOptions{})
+				backup, err := operatorFake.OperatorV1().EtcdBackups().Get(t.Context(), "test-backup", v1.GetOptions{})
 				require.NoError(t, err)
 				require.NotContains(t, backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
 			},
@@ -309,7 +309,7 @@ func TestBackupGarbageCollectionFinalizeOnMissingStorageBackend(t *testing.T) {
 	t.Run("pvc", func(t *testing.T) {
 		// PVC storage not found
 		runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
-			backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupCompleted(), testutils.WithBackupDeleted())},
+			backups: []*operatorv1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupCompleted(), testutils.WithBackupDeleted())},
 			validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				jobList, err := client.BatchV1().Jobs(operatorclient.TargetNamespace).List(t.Context(), v1.ListOptions{
 					LabelSelector: labels.Set{"app": backupGCAppName}.String(),
@@ -317,7 +317,7 @@ func TestBackupGarbageCollectionFinalizeOnMissingStorageBackend(t *testing.T) {
 				require.NoError(t, err)
 				require.Len(t, jobList.Items, 0)
 
-				backup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), "test-backup", v1.GetOptions{})
+				backup, err := operatorFake.OperatorV1().EtcdBackups().Get(t.Context(), "test-backup", v1.GetOptions{})
 				require.NoError(t, err)
 				require.NotContains(t, backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
 			},
@@ -327,20 +327,20 @@ func TestBackupGarbageCollectionFinalizeOnMissingStorageBackend(t *testing.T) {
 
 func TestBackupGarbageCollectionMultipleBackupsPerJob(t *testing.T) {
 	// Combine muliple deleted EtcdBackups on the same sharedStorage backend into one GC Job
-	sharedStorage := operatorv1alpha1.EtcdBackupStorage{
-		Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-		PVC: operatorv1alpha1.EtcdBackupStoragePvc{
+	sharedStorage := operatorv1.EtcdBackupStorage{
+		Type: operatorv1.EtcdBackupStorageTypePVC,
+		PVC: operatorv1.EtcdBackupStoragePvc{
 			Name: "test-backup-pvc",
 		},
 	}
 	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
-		backups: []*operatorv1alpha1.EtcdBackup{
+		backups: []*operatorv1.EtcdBackup{
 			testutils.FakeEtcdBackup("test-backup-1", testutils.WithBackupCompleted(), testutils.WithBackupDeleted(), testutils.WithBackupStorage(sharedStorage)),
 			testutils.FakeEtcdBackup("test-backup-2", testutils.WithBackupCompleted(), testutils.WithBackupDeleted(), testutils.WithBackupStorage(sharedStorage)),
 			testutils.FakeEtcdBackup("test-backup-3", testutils.WithBackupCompleted(), testutils.WithBackupDeleted(),
-				testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-					Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-					PVC: operatorv1alpha1.EtcdBackupStoragePvc{
+				testutils.WithBackupStorage(operatorv1.EtcdBackupStorage{
+					Type: operatorv1.EtcdBackupStorageTypePVC,
+					PVC: operatorv1.EtcdBackupStoragePvc{
 						Name: "test-different-pvc",
 					},
 				})),
@@ -362,14 +362,14 @@ func TestBackupGarbageCollectionMultipleBackupsPerJob(t *testing.T) {
 
 			require.ElementsMatch(t,
 				[]v1.OwnerReference{
-					{APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup-1", UID: "test-backup-1-uid"},
-					{APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup-2", UID: "test-backup-2-uid"},
+					{APIVersion: operatorv1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup-1", UID: "test-backup-1-uid"},
+					{APIVersion: operatorv1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup-2", UID: "test-backup-2-uid"},
 				},
 				job1.OwnerReferences,
 			)
 			require.ElementsMatch(t,
 				[]v1.OwnerReference{
-					{APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup-3", UID: "test-backup-3-uid"},
+					{APIVersion: operatorv1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup-3", UID: "test-backup-3-uid"},
 				},
 				job2.OwnerReferences,
 			)
@@ -403,7 +403,7 @@ func TestBackupGarbageCollectionFailedBackupFinalizedWithoutGC(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, jobList.Items, 0)
 
-		backup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), "test-backup", v1.GetOptions{})
+		backup, err := operatorFake.OperatorV1().EtcdBackups().Get(t.Context(), "test-backup", v1.GetOptions{})
 		require.NoError(t, err)
 		require.Empty(t, backup.Finalizers)
 	}
@@ -411,7 +411,7 @@ func TestBackupGarbageCollectionFailedBackupFinalizedWithoutGC(t *testing.T) {
 	t.Run("no files", func(t *testing.T) {
 		// Finalize a failed EtcdBackup without creating a GC Job
 		runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
-			backups:  []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupFailed(operatorv1alpha1.BackupReasonSetupFailed), testutils.WithBackupDeleted())},
+			backups:  []*operatorv1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupFailed(operatorv1.BackupReasonSetupFailed), testutils.WithBackupDeleted())},
 			pvcs:     []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
 			validate: validate,
 		})
@@ -419,9 +419,9 @@ func TestBackupGarbageCollectionFailedBackupFinalizedWithoutGC(t *testing.T) {
 	t.Run("deleted node", func(t *testing.T) {
 		// Finalize a successful Local EtcdBackup that references a deleted node
 		runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
-			backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupCompleted(), testutils.WithBackupDeleted(), testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-				Type:  operatorv1alpha1.EtcdBackupStorageTypeLocal,
-				Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/backups"},
+			backups: []*operatorv1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupCompleted(), testutils.WithBackupDeleted(), testutils.WithBackupStorage(operatorv1.EtcdBackupStorage{
+				Type:  operatorv1.EtcdBackupStorageTypeLocal,
+				Local: operatorv1.EtcdBackupStorageLocal{HostPath: "/backups"},
 			}))},
 			validate: validate,
 		})
@@ -429,7 +429,7 @@ func TestBackupGarbageCollectionFailedBackupFinalizedWithoutGC(t *testing.T) {
 	t.Run("deleted pvc", func(t *testing.T) {
 		// Finalize a successful EtcdBackup that references a deleted PVC
 		runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
-			backups:  []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupCompleted(), testutils.WithBackupDeleted())},
+			backups:  []*operatorv1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupCompleted(), testutils.WithBackupDeleted())},
 			validate: validate,
 		})
 	})
@@ -443,7 +443,7 @@ func TestBackupGarbageCollectionFailedBackupRequireGC(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, jobList.Items, 1)
 
-		backup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), "test-backup", v1.GetOptions{})
+		backup, err := operatorFake.OperatorV1().EtcdBackups().Get(t.Context(), "test-backup", v1.GetOptions{})
 		require.NoError(t, err)
 		require.Contains(t, backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
 	}
@@ -451,8 +451,8 @@ func TestBackupGarbageCollectionFailedBackupRequireGC(t *testing.T) {
 	t.Run("files partially created", func(t *testing.T) {
 		// Create GC job for failed EtcdBackup that created some files but didn't complete
 		runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
-			backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed), testutils.WithBackupDeleted(), func(backup *operatorv1alpha1.EtcdBackup) {
-				backup.Status.Files = []operatorv1alpha1.EtcdBackupFile{{
+			backups: []*operatorv1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupFailed(operatorv1.BackupReasonJobFailed), testutils.WithBackupDeleted(), func(backup *operatorv1.EtcdBackup) {
+				backup.Status.Files = []operatorv1.EtcdBackupFile{{
 					Path: "/backups/backup.db.part", SizeBytes: 100,
 				}}
 			})},
@@ -464,7 +464,7 @@ func TestBackupGarbageCollectionFailedBackupRequireGC(t *testing.T) {
 	t.Run("files state unknown", func(t *testing.T) {
 		// Create GC job for failed EtcdBackup that created some files but didn't complete
 		runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
-			backups:  []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed), testutils.WithBackupDeleted())},
+			backups:  []*operatorv1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupFailed(operatorv1.BackupReasonJobFailed), testutils.WithBackupDeleted())},
 			pvcs:     []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
 			validate: validate,
 		})
@@ -473,7 +473,7 @@ func TestBackupGarbageCollectionFailedBackupRequireGC(t *testing.T) {
 	t.Run("no gc condition", func(t *testing.T) {
 		// Create GC job for failed EtcdBackup that created some files but didn't complete
 		runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
-			backups:  []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed), testutils.WithBackupDeleted())},
+			backups:  []*operatorv1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupFailed(operatorv1.BackupReasonJobFailed), testutils.WithBackupDeleted())},
 			pvcs:     []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
 			validate: validate,
 		})
@@ -483,11 +483,11 @@ func TestBackupGarbageCollectionFailedBackupRequireGC(t *testing.T) {
 func TestBackupGarbageCollectionActiveBackupsIgnored(t *testing.T) {
 	// Backups that haven't been deleted are ignored by the garbage collection controller
 	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
-		backups: []*operatorv1alpha1.EtcdBackup{
+		backups: []*operatorv1.EtcdBackup{
 			testutils.FakeEtcdBackup("test-new-backup"),
 			testutils.FakeEtcdBackup("test-running-backup", testutils.WithBackupRunning(&batchv1.Job{ObjectMeta: v1.ObjectMeta{Name: "test-running-backup"}})),
 			testutils.FakeEtcdBackup("test-completed-backup", testutils.WithBackupCompleted()),
-			testutils.FakeEtcdBackup("test-failed-backup", testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed)),
+			testutils.FakeEtcdBackup("test-failed-backup", testutils.WithBackupFailed(operatorv1.BackupReasonJobFailed)),
 		},
 		validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			jobList, err := client.BatchV1().Jobs(operatorclient.TargetNamespace).List(t.Context(), v1.ListOptions{
@@ -499,7 +499,7 @@ func TestBackupGarbageCollectionActiveBackupsIgnored(t *testing.T) {
 			_, ok := testutils.GetAction[k8stesting.PatchActionImpl](operatorFake.Actions())
 			require.False(t, ok, "Expected no patch actions")
 
-			backupList, err := operatorFake.OperatorV1alpha1().EtcdBackups().List(t.Context(), v1.ListOptions{})
+			backupList, err := operatorFake.OperatorV1().EtcdBackups().List(t.Context(), v1.ListOptions{})
 			require.NoError(t, err)
 			require.Len(t, backupList.Items, 4)
 			for _, backup := range backupList.Items {
@@ -515,16 +515,16 @@ func TestBackupGarbageCollectionActiveBackupsIgnored(t *testing.T) {
 func TestBackupGarbageCollectionFailedJobRetry(t *testing.T) {
 	// Retry a failed GC Job
 	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
-		backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupCompleted(), testutils.WithBackupDeleted())},
+		backups: []*operatorv1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupCompleted(), testutils.WithBackupDeleted())},
 		pvcs:    []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
 		jobs: []*batchv1.Job{{
 			ObjectMeta: v1.ObjectMeta{
-				Name:       generateBackupGCJobName(storageBackend{storageType: operatorv1alpha1.EtcdBackupStorageTypePVC, pvcName: "test-backup-pvc"}),
+				Name:       generateBackupGCJobName(storageBackend{storageType: operatorv1.EtcdBackupStorageTypePVC, pvcName: "test-backup-pvc"}),
 				Namespace:  operatorclient.TargetNamespace,
 				Labels:     map[string]string{"app": backupGCAppName},
 				Finalizers: []string{backuphelpers.FinalizerEtcdBackup},
 				OwnerReferences: []v1.OwnerReference{{
-					APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup", UID: "test-backup-uid",
+					APIVersion: operatorv1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup", UID: "test-backup-uid",
 				}},
 				UID:               "failed-gc-job-uid",
 				CreationTimestamp: v1.Time{Time: time.Now().Add(-time.Hour)},
@@ -543,7 +543,7 @@ func TestBackupGarbageCollectionFailedJobRetry(t *testing.T) {
 
 			job := jobList.Items[0]
 			require.ElementsMatch(t, job.OwnerReferences, []v1.OwnerReference{{
-				APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup", UID: "test-backup-uid",
+				APIVersion: operatorv1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup", UID: "test-backup-uid",
 			}})
 			require.False(t, isJobFailed(&job), "Job should have been replaced")
 		},
@@ -553,16 +553,16 @@ func TestBackupGarbageCollectionFailedJobRetry(t *testing.T) {
 func TestBackupGarbageCollectionFailedJobBackoff(t *testing.T) {
 	// Use exponential backoff when retrying failed GC Jobs
 	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
-		backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupCompleted(), testutils.WithBackupDeleted())},
+		backups: []*operatorv1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupCompleted(), testutils.WithBackupDeleted())},
 		pvcs:    []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
 		jobs: []*batchv1.Job{{
 			ObjectMeta: v1.ObjectMeta{
-				Name:       generateBackupGCJobName(storageBackend{storageType: operatorv1alpha1.EtcdBackupStorageTypePVC, pvcName: "test-backup-pvc"}),
+				Name:       generateBackupGCJobName(storageBackend{storageType: operatorv1.EtcdBackupStorageTypePVC, pvcName: "test-backup-pvc"}),
 				Namespace:  operatorclient.TargetNamespace,
 				Labels:     map[string]string{"app": backupGCAppName},
 				Finalizers: []string{backuphelpers.FinalizerEtcdBackup},
 				OwnerReferences: []v1.OwnerReference{{
-					APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup", UID: "test-backup-uid",
+					APIVersion: operatorv1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup", UID: "test-backup-uid",
 				}},
 				UID:               "failed-gc-job-uid",
 				CreationTimestamp: v1.Now(),
@@ -581,7 +581,7 @@ func TestBackupGarbageCollectionFailedJobBackoff(t *testing.T) {
 
 			job := jobList.Items[0]
 			require.ElementsMatch(t, job.OwnerReferences, []v1.OwnerReference{{
-				APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup", UID: "test-backup-uid",
+				APIVersion: operatorv1.GroupVersion.String(), Kind: "EtcdBackup", Name: "test-backup", UID: "test-backup-uid",
 			}})
 			require.True(t, isJobFailed(&job), "Job should not have been replaced yet, expected to wait for backoff")
 			require.Contains(t, job.Finalizers, backuphelpers.FinalizerEtcdBackup, "Failed job awaiting retry should keep its finalizer")
@@ -653,24 +653,24 @@ func TestBackupGarbageCollectionCompletedJobKeptUntilFinalizersRemoved(t *testin
 	// GC completed for a backup, but removing its finalizer fails. The completed job must keep its owner references
 	// (and must not be replaced by a new job), otherwise the backup would be garbage collected again.
 	collected := testutils.FakeEtcdBackup("collected", testutils.WithBackupCompleted(), testutils.WithBackupDeleted(),
-		testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-			Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-			PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-pvc"},
+		testutils.WithBackupStorage(operatorv1.EtcdBackupStorage{
+			Type: operatorv1.EtcdBackupStorageTypePVC,
+			PVC:  operatorv1.EtcdBackupStoragePvc{Name: "test-pvc"},
 		}))
 	queued := testutils.FakeEtcdBackup("queued", testutils.WithBackupCompleted(), testutils.WithBackupDeleted(),
-		testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-			Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-			PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-pvc"},
+		testutils.WithBackupStorage(operatorv1.EtcdBackupStorage{
+			Type: operatorv1.EtcdBackupStorageTypePVC,
+			PVC:  operatorv1.EtcdBackupStoragePvc{Name: "test-pvc"},
 		}))
 	completedJob := &batchv1.Job{
 		ObjectMeta: v1.ObjectMeta{
 			// GC jobs are looked up by their deterministic per-storage name
-			Name:       generateBackupGCJobName(storageBackend{storageType: operatorv1alpha1.EtcdBackupStorageTypePVC, pvcName: "test-pvc"}),
+			Name:       generateBackupGCJobName(storageBackend{storageType: operatorv1.EtcdBackupStorageTypePVC, pvcName: "test-pvc"}),
 			Namespace:  operatorclient.TargetNamespace,
 			Labels:     map[string]string{"app": backupGCAppName},
 			Finalizers: []string{backuphelpers.FinalizerEtcdBackup},
 			OwnerReferences: []v1.OwnerReference{{
-				APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: collected.Name, UID: collected.UID,
+				APIVersion: operatorv1.GroupVersion.String(), Kind: "EtcdBackup", Name: collected.Name, UID: collected.UID,
 			}},
 		},
 		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
@@ -679,7 +679,7 @@ func TestBackupGarbageCollectionCompletedJobKeptUntilFinalizersRemoved(t *testin
 	}
 
 	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
-		backups: []*operatorv1alpha1.EtcdBackup{collected, queued},
+		backups: []*operatorv1.EtcdBackup{collected, queued},
 		jobs:    []*batchv1.Job{completedJob},
 		pvcs:    []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-pvc")},
 		operatorReactors: []k8stesting.SimpleReactor{{
@@ -720,7 +720,7 @@ func TestBackupGarbageCollectionCompletedJobKeptUntilFinalizerRemovalObserved(t 
 			Labels:     map[string]string{"app": backupGCAppName},
 			Finalizers: []string{backuphelpers.FinalizerEtcdBackup},
 			OwnerReferences: []v1.OwnerReference{{
-				APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: collected.Name, UID: collected.UID,
+				APIVersion: operatorv1.GroupVersion.String(), Kind: "EtcdBackup", Name: collected.Name, UID: collected.UID,
 			}},
 		},
 		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
@@ -728,11 +728,11 @@ func TestBackupGarbageCollectionCompletedJobKeptUntilFinalizerRemovalObserved(t 
 		}}},
 	}
 	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
-		backups: []*operatorv1alpha1.EtcdBackup{collected},
+		backups: []*operatorv1.EtcdBackup{collected},
 		jobs:    []*batchv1.Job{completedJob},
 		pvcs:    []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
 		validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
-			backup, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), collected.Name, v1.GetOptions{})
+			backup, err := operatorFake.OperatorV1().EtcdBackups().Get(t.Context(), collected.Name, v1.GetOptions{})
 			require.NoError(t, err)
 			require.NotContains(t, backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
 
@@ -749,9 +749,9 @@ func TestBackupGarbageCollectionCompletedJobKeptUntilFinalizerRemovalObserved(t 
 
 func TestBackupGarbageCollectionBackoffRetry(t *testing.T) {
 	// Backups in a failed GC job back off, while new GC on the same storage backend proceeds without them
-	storage := testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{
-		Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-		PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "test-backup-pvc"},
+	storage := testutils.WithBackupStorage(operatorv1.EtcdBackupStorage{
+		Type: operatorv1.EtcdBackupStorageTypePVC,
+		PVC:  operatorv1.EtcdBackupStoragePvc{Name: "test-backup-pvc"},
 	})
 	completedGC := testutils.FakeEtcdBackup("completed-gc", storage, testutils.WithBackupCompleted(), testutils.WithBackupDeleted())
 	failedGC := testutils.FakeEtcdBackup("failed-gc", storage, testutils.WithBackupCompleted(), testutils.WithBackupDeleted())
@@ -763,7 +763,7 @@ func TestBackupGarbageCollectionBackoffRetry(t *testing.T) {
 			Labels:     map[string]string{"app": backupGCAppName},
 			Finalizers: []string{backuphelpers.FinalizerEtcdBackup},
 			OwnerReferences: []v1.OwnerReference{{
-				APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: completedGC.Name, UID: completedGC.UID,
+				APIVersion: operatorv1.GroupVersion.String(), Kind: "EtcdBackup", Name: completedGC.Name, UID: completedGC.UID,
 			}},
 		},
 		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
@@ -777,7 +777,7 @@ func TestBackupGarbageCollectionBackoffRetry(t *testing.T) {
 			Labels:     map[string]string{"app": backupGCAppName},
 			Finalizers: []string{backuphelpers.FinalizerEtcdBackup},
 			OwnerReferences: []v1.OwnerReference{{
-				APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "EtcdBackup", Name: failedGC.Name, UID: failedGC.UID,
+				APIVersion: operatorv1.GroupVersion.String(), Kind: "EtcdBackup", Name: failedGC.Name, UID: failedGC.UID,
 			}},
 		},
 		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
@@ -786,20 +786,20 @@ func TestBackupGarbageCollectionBackoffRetry(t *testing.T) {
 	}
 	retryQueue := newGCRetryQueue()
 	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
-		backups:    []*operatorv1alpha1.EtcdBackup{completedGC, failedGC, newGC},
+		backups:    []*operatorv1.EtcdBackup{completedGC, failedGC, newGC},
 		jobs:       []*batchv1.Job{completedJob, failedJob},
 		pvcs:       []*corev1.PersistentVolumeClaim{testutils.FakePVC(operatorclient.TargetNamespace, "test-backup-pvc")},
 		retryQueue: &retryQueue,
 		validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
-			completedGC, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), completedGC.Name, v1.GetOptions{})
+			completedGC, err := operatorFake.OperatorV1().EtcdBackups().Get(t.Context(), completedGC.Name, v1.GetOptions{})
 			require.NoError(t, err)
 			require.NotContains(t, completedGC.Finalizers, backuphelpers.FinalizerEtcdBackup)
 
-			failedGC, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), failedGC.Name, v1.GetOptions{})
+			failedGC, err := operatorFake.OperatorV1().EtcdBackups().Get(t.Context(), failedGC.Name, v1.GetOptions{})
 			require.NoError(t, err)
 			require.Contains(t, failedGC.Finalizers, backuphelpers.FinalizerEtcdBackup)
 
-			newGC, err := operatorFake.OperatorV1alpha1().EtcdBackups().Get(t.Context(), newGC.Name, v1.GetOptions{})
+			newGC, err := operatorFake.OperatorV1().EtcdBackups().Get(t.Context(), newGC.Name, v1.GetOptions{})
 			require.NoError(t, err)
 			require.Contains(t, newGC.Finalizers, backuphelpers.FinalizerEtcdBackup)
 
@@ -866,7 +866,7 @@ func TestGCRetryQueueBackoff(t *testing.T) {
 
 func TestFilterBackupsForGC(t *testing.T) {
 	now := time.Now()
-	backup := func(name string, deletedAgo time.Duration) *operatorv1alpha1.EtcdBackup {
+	backup := func(name string, deletedAgo time.Duration) *operatorv1.EtcdBackup {
 		b := testutils.FakeEtcdBackup(name, testutils.WithBackupCompleted(), testutils.WithBackupDeleted())
 		b.DeletionTimestamp = &v1.Time{Time: now.Add(-deletedAgo)}
 		return b
@@ -879,42 +879,42 @@ func TestFilterBackupsForGC(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		backups  []*operatorv1alpha1.EtcdBackup
+		backups  []*operatorv1.EtcdBackup
 		failures map[string]failure
 		expected []string
 	}{
 		{
 			name:     "new backups batched oldest deletion first, then by name",
-			backups:  []*operatorv1alpha1.EtcdBackup{backup("c", time.Minute), backup("b", time.Hour), backup("a", time.Minute)},
+			backups:  []*operatorv1.EtcdBackup{backup("c", time.Minute), backup("b", time.Hour), backup("a", time.Minute)},
 			expected: []string{"b", "a", "c"},
 		},
 		{
 			name:     "new backups batched without previously failed backups",
-			backups:  []*operatorv1alpha1.EtcdBackup{backup("failed", time.Hour), backup("new-1", time.Minute), backup("new-2", time.Minute)},
+			backups:  []*operatorv1.EtcdBackup{backup("failed", time.Hour), backup("new-1", time.Minute), backup("new-2", time.Minute)},
 			failures: map[string]failure{"failed": {count: 1, expired: true}},
 			expected: []string{"new-1", "new-2"},
 		},
 		{
 			name:     "previously failed backups retried individually",
-			backups:  []*operatorv1alpha1.EtcdBackup{backup("failed-1", time.Minute), backup("failed-2", time.Hour)},
+			backups:  []*operatorv1.EtcdBackup{backup("failed-1", time.Minute), backup("failed-2", time.Hour)},
 			failures: map[string]failure{"failed-1": {count: 1, expired: true}, "failed-2": {count: 1, expired: true}},
 			expected: []string{"failed-2"},
 		},
 		{
 			name:     "fewest failures retried first",
-			backups:  []*operatorv1alpha1.EtcdBackup{backup("failed-twice", time.Hour), backup("failed-once", time.Minute)},
+			backups:  []*operatorv1.EtcdBackup{backup("failed-twice", time.Hour), backup("failed-once", time.Minute)},
 			failures: map[string]failure{"failed-twice": {count: 2, expired: true}, "failed-once": {count: 1, expired: true}},
 			expected: []string{"failed-once"},
 		},
 		{
 			name:     "backups in backoff excluded",
-			backups:  []*operatorv1alpha1.EtcdBackup{backup("waiting", time.Hour), backup("ready", time.Minute)},
+			backups:  []*operatorv1.EtcdBackup{backup("waiting", time.Hour), backup("ready", time.Minute)},
 			failures: map[string]failure{"waiting": {count: 1}, "ready": {count: 3, expired: true}},
 			expected: []string{"ready"},
 		},
 		{
 			name:     "all backups in backoff",
-			backups:  []*operatorv1alpha1.EtcdBackup{backup("waiting", time.Hour)},
+			backups:  []*operatorv1.EtcdBackup{backup("waiting", time.Hour)},
 			failures: map[string]failure{"waiting": {count: 1}},
 			expected: nil,
 		},
@@ -944,7 +944,7 @@ func TestFilterBackupsForGC(t *testing.T) {
 
 	t.Run("new backups capped per job", func(t *testing.T) {
 		c := &BackupGarbageCollectionController{retryQueue: newGCRetryQueue()}
-		var backups []*operatorv1alpha1.EtcdBackup
+		var backups []*operatorv1.EtcdBackup
 		for i := range gcMaxBackupsPerJob + 5 {
 			backups = append(backups, backup(fmt.Sprintf("backup-%03d", i), time.Minute))
 		}
@@ -957,10 +957,10 @@ func TestFilterBackupsForGC(t *testing.T) {
 func TestBackupGarbageCollectionDefaultHostPath(t *testing.T) {
 	// Local backups without a hostPath are stored under the default hostPath, and GC must resolve the same location
 	backup := testutils.FakeEtcdBackup("test-backup",
-		testutils.WithBackupStorage(operatorv1alpha1.EtcdBackupStorage{Type: operatorv1alpha1.EtcdBackupStorageTypeLocal}),
-		testutils.WithBackupNodeName("test-node"), testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed), testutils.WithBackupDeleted())
+		testutils.WithBackupStorage(operatorv1.EtcdBackupStorage{Type: operatorv1.EtcdBackupStorageTypeLocal}),
+		testutils.WithBackupNodeName("test-node"), testutils.WithBackupFailed(operatorv1.BackupReasonJobFailed), testutils.WithBackupDeleted())
 	runBackupGarbageCollectionControllerTest(t, testCaseBackupGarbageCollectionController{
-		backups: []*operatorv1alpha1.EtcdBackup{backup},
+		backups: []*operatorv1.EtcdBackup{backup},
 		nodes:   []*corev1.Node{testutils.FakeNode("test-node")},
 		validate: func(t *testing.T, syncCtx factory.SyncContext, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			jobList, err := client.BatchV1().Jobs(operatorclient.TargetNamespace).List(t.Context(), v1.ListOptions{
@@ -986,19 +986,19 @@ func TestBackupFileMounts(t *testing.T) {
 	// Generate backups with files such that 5 backups will fill the max arg length
 	numBackups := 10
 	filePathLen := gcMaxFileArgBytes/5 - 20
-	backups := make([]*operatorv1alpha1.EtcdBackup, numBackups)
+	backups := make([]*operatorv1.EtcdBackup, numBackups)
 	for i := range backups {
-		backups[i] = testutils.FakeEtcdBackup(fmt.Sprintf("test-backup-%d", i), func(backup *operatorv1alpha1.EtcdBackup) {
-			backup.Spec.Storage = operatorv1alpha1.EtcdBackupStorage{Type: operatorv1alpha1.EtcdBackupStorageTypeLocal, Local: operatorv1alpha1.EtcdBackupStorageLocal{
+		backups[i] = testutils.FakeEtcdBackup(fmt.Sprintf("test-backup-%d", i), func(backup *operatorv1.EtcdBackup) {
+			backup.Spec.Storage = operatorv1.EtcdBackupStorage{Type: operatorv1.EtcdBackupStorageTypeLocal, Local: operatorv1.EtcdBackupStorageLocal{
 				HostPath: fmt.Sprintf("/hostpath-%d", i%2),
 			}}
 			backup.Status.NodeName = "test-node"
-			backup.Status.Files = []operatorv1alpha1.EtcdBackupFile{
-				{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: strings.Repeat("a", filePathLen)},
+			backup.Status.Files = []operatorv1.EtcdBackupFile{
+				{AssetType: operatorv1.EtcdBackupAssetTypeSnapshot, Path: strings.Repeat("a", filePathLen)},
 			}
 		})
 	}
-	backups, env, volumes, volumeMounts := backupFileMounts(storageBackend{storageType: operatorv1alpha1.EtcdBackupStorageTypeLocal, nodeName: "test-node"}, backups)
+	backups, env, volumes, volumeMounts := backupFileMounts(storageBackend{storageType: operatorv1.EtcdBackupStorageTypeLocal, nodeName: "test-node"}, backups)
 	require.Len(t, backups, 5)
 	require.LessOrEqual(t, len(env.Value), gcMaxFileArgBytes)
 	// Host paths are split into 2 groups, so there should be 2 volumes/volumeMounts

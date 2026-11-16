@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/stretchr/testify/require"
 )
@@ -15,14 +15,14 @@ func TestTerminationLogMaxLength(t *testing.T) {
 	dateString := time.Now().Format("2006-01-02_150405")
 	outputArchive := "static_kuberesources_" + dateString + ".tar.gz"
 	snapshotOutFile := "snapshot_" + dateString + ".db"
-	files := []operatorv1alpha1.EtcdBackupFile{
+	files := []operatorv1.EtcdBackupFile{
 		{
-			AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot,
+			AssetType: operatorv1.EtcdBackupAssetTypeSnapshot,
 			Path:      snapshotOutFile,
 			SizeBytes: 1000000000000,
 		},
 		{
-			AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources,
+			AssetType: operatorv1.EtcdBackupAssetTypeStaticKubeResources,
 			Path:      outputArchive,
 			SizeBytes: 1000000000000,
 		},

@@ -13,9 +13,9 @@ import (
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
-	operatorv1alpha1client "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
-	operatorv1alpha1listers "github.com/openshift/client-go/operator/listers/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
+	operatorv1client "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
+	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/bindata"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
@@ -42,9 +42,9 @@ const (
 )
 
 type BackupPolicyController struct {
-	backupPoliciesLister  operatorv1alpha1listers.EtcdBackupPolicyLister
+	backupPoliciesLister  operatorv1listers.EtcdBackupPolicyLister
 	cronJobLister         batchv1listers.CronJobNamespaceLister
-	operatorClient        operatorv1alpha1client.OperatorV1alpha1Interface
+	operatorClient        operatorv1client.OperatorV1Interface
 	kubeClient            kubernetes.Interface
 	operatorImagePullSpec string
 	featureGateAccessor   featuregates.FeatureGateAccess
@@ -54,15 +54,15 @@ type BackupPolicyController struct {
 
 func NewBackupPolicyController(
 	livenessChecker *health.MultiAlivenessChecker,
-	backupPoliciesLister operatorv1alpha1listers.EtcdBackupPolicyLister,
+	backupPoliciesLister operatorv1listers.EtcdBackupPolicyLister,
 	cronJobLister batchv1listers.CronJobNamespaceLister,
-	operatorClient operatorv1alpha1client.OperatorV1alpha1Interface,
+	operatorClient operatorv1client.OperatorV1Interface,
 	kubeClient kubernetes.Interface,
 	eventRecorder events.Recorder,
 	operatorImagePullSpec string,
 	accessor featuregates.FeatureGateAccess,
 	etcdBackupPolicyInformer factory.Informer,
-	cronJobInformer cache.SharedIndexInformer) (*BackupPolicyController, factory.Controller) {
+	cronJobInformer cache.SharedIndexInformer) factory.Controller {
 
 	c := &BackupPolicyController{
 		backupPoliciesLister:  backupPoliciesLister,
@@ -81,7 +81,7 @@ func NewBackupPolicyController(
 	controller := factory.New().
 		WithInformersQueueKeysFunc(
 			func(o runtime.Object) []string {
-				if backupPolicy, ok := o.(*operatorv1alpha1.EtcdBackupPolicy); ok {
+				if backupPolicy, ok := o.(*operatorv1.EtcdBackupPolicy); ok {
 					return []string{backupPolicy.Name}
 				}
 				if cronJob, ok := o.(*batchv1.CronJob); ok && cronJob.Labels != nil {
@@ -115,7 +115,7 @@ func NewBackupPolicyController(
 		}).
 		ToController("BackupPolicyController", eventRecorder.WithComponentSuffix("backup-policy-controller"))
 
-	return c, controller
+	return controller
 }
 
 func (c *BackupPolicyController) sync(ctx context.Context, syncCtx factory.SyncContext) error {
@@ -142,7 +142,7 @@ func (c *BackupPolicyController) sync(ctx context.Context, syncCtx factory.SyncC
 	return c.reconcileCronJob(ctx, backupPolicy)
 }
 
-func (c *BackupPolicyController) reconcileCronJob(ctx context.Context, backupPolicy *operatorv1alpha1.EtcdBackupPolicy) error {
+func (c *BackupPolicyController) reconcileCronJob(ctx context.Context, backupPolicy *operatorv1.EtcdBackupPolicy) error {
 	cronJobClient := c.kubeClient.BatchV1().CronJobs(operatorclient.TargetNamespace)
 	currentCronJob, err := c.cronJobLister.Get(backupPolicy.Name)
 	if err != nil {
@@ -165,7 +165,7 @@ func (c *BackupPolicyController) reconcileCronJob(ctx context.Context, backupPol
 				}
 			}
 		}
-		return c.updateScheduledCondition(ctx, backupPolicy, operatorv1alpha1.BackupPolicyInvalidSchedule, err.Error(), v1.ConditionFalse)
+		return c.updateScheduledCondition(ctx, backupPolicy, operatorv1.BackupPolicyInvalidSchedule, err.Error(), v1.ConditionFalse)
 	}
 
 	cronJob, err := newCronJob(backupPolicy, c.operatorImagePullSpec)
@@ -178,7 +178,7 @@ func (c *BackupPolicyController) reconcileCronJob(ctx context.Context, backupPol
 		if err != nil {
 			var updateErr error
 			if !apierrors.IsAlreadyExists(err) {
-				updateErr = c.updateScheduledCondition(ctx, backupPolicy, operatorv1alpha1.BackupPolicySchedulingFailed, "failed to create CronJob", v1.ConditionFalse)
+				updateErr = c.updateScheduledCondition(ctx, backupPolicy, operatorv1.BackupPolicySchedulingFailed, "failed to create CronJob", v1.ConditionFalse)
 			}
 			return utilerrors.NewAggregate([]error{fmt.Errorf("BackupPolicyController failed to create cronjob %s: %w", cronJob.Name, err), updateErr})
 		}
@@ -192,13 +192,13 @@ func (c *BackupPolicyController) reconcileCronJob(ctx context.Context, backupPol
 		}
 	}
 
-	return c.updateScheduledCondition(ctx, backupPolicy, operatorv1alpha1.BackupPolicySchedulingSucceeded, "backup policy successfully scheduled", v1.ConditionTrue)
+	return c.updateScheduledCondition(ctx, backupPolicy, operatorv1.BackupPolicySchedulingSucceeded, "backup policy successfully scheduled", v1.ConditionTrue)
 }
 
-func (c *BackupPolicyController) updateScheduledCondition(ctx context.Context, backupPolicy *operatorv1alpha1.EtcdBackupPolicy, reason operatorv1alpha1.EtcdBackupPolicyConditionReason, message string, status v1.ConditionStatus) error {
+func (c *BackupPolicyController) updateScheduledCondition(ctx context.Context, backupPolicy *operatorv1.EtcdBackupPolicy, reason operatorv1.EtcdBackupPolicyConditionReason, message string, status v1.ConditionStatus) error {
 	backupPolicy = backupPolicy.DeepCopy()
 	conditions, requireUpdate := updateCondition(backupPolicy.Status.Conditions, v1.Condition{
-		Type:               string(operatorv1alpha1.BackupPolicyScheduled),
+		Type:               string(operatorv1.BackupPolicyScheduled),
 		Reason:             string(reason),
 		Message:            message,
 		Status:             status,
@@ -214,7 +214,7 @@ func (c *BackupPolicyController) updateScheduledCondition(ctx context.Context, b
 	return nil
 }
 
-func newCronJob(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, operatorImagePullSpec string) (*batchv1.CronJob, error) {
+func newCronJob(backupPolicy *operatorv1.EtcdBackupPolicy, operatorImagePullSpec string) (*batchv1.CronJob, error) {
 	scheme := runtime.NewScheme()
 	codec := serializer.NewCodecFactory(scheme)
 	err := batchv1.AddToScheme(scheme)
@@ -231,7 +231,7 @@ func newCronJob(backupPolicy *operatorv1alpha1.EtcdBackupPolicy, operatorImagePu
 	cronJob.Name = backupPolicy.Name
 	cronJob.Labels[backuphelpers.LabelEtcdBackupPolicy] = backupPolicy.Name
 	cronJob.OwnerReferences = append(cronJob.OwnerReferences, v1.OwnerReference{
-		APIVersion: operatorv1alpha1.GroupVersion.String(),
+		APIVersion: operatorv1.GroupVersion.String(),
 		Kind:       "EtcdBackupPolicy",
 		Name:       backupPolicy.Name,
 		UID:        backupPolicy.UID,

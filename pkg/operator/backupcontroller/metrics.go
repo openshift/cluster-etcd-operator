@@ -3,8 +3,8 @@ package backupcontroller
 import (
 	"sort"
 
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
-	operatorv1alpha1listers "github.com/openshift/client-go/operator/listers/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
+	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/prometheus/client_golang/prometheus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,7 +35,7 @@ const (
 // backupCollector implements prometheus.Collector and generates metrics
 // on-demand at scrape time by reading current EtcdBackup objects from the lister.
 type backupCollector struct {
-	backupsLister operatorv1alpha1listers.EtcdBackupLister
+	backupsLister operatorv1listers.EtcdBackupLister
 
 	infoDesc           *prometheus.Desc
 	statusDesc         *prometheus.Desc
@@ -46,7 +46,7 @@ type backupCollector struct {
 
 // NewBackupMetrics creates and registers a backup collector with the provided registry.
 // The collector dynamically generates metrics at scrape time from the EtcdBackupLister.
-func NewBackupMetrics(metricsRegistry metrics.KubeRegistry, backupsLister operatorv1alpha1listers.EtcdBackupLister) *backupCollector {
+func NewBackupMetrics(metricsRegistry metrics.KubeRegistry, backupsLister operatorv1listers.EtcdBackupLister) *backupCollector {
 	c := &backupCollector{
 		backupsLister: backupsLister,
 		infoDesc: prometheus.NewDesc(
@@ -110,7 +110,7 @@ func (c *backupCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-func (c *backupCollector) collectBackupMetrics(ch chan<- prometheus.Metric, backup operatorv1alpha1.EtcdBackup) {
+func (c *backupCollector) collectBackupMetrics(ch chan<- prometheus.Metric, backup operatorv1.EtcdBackup) {
 	name := backup.Name
 	uid := string(backup.UID)
 	node := backup.Status.NodeName
@@ -175,17 +175,17 @@ func (c *backupCollector) collectBackupMetrics(ch chan<- prometheus.Metric, back
 	}
 }
 
-func extractStorageInfo(backup operatorv1alpha1.EtcdBackup) (string, string) {
+func extractStorageInfo(backup operatorv1.EtcdBackup) (string, string) {
 	var storageType, storageLocation string = "", ""
 
 	switch backup.Spec.Storage.Type {
-	case operatorv1alpha1.EtcdBackupStorageTypePVC:
+	case operatorv1.EtcdBackupStorageTypePVC:
 		storageType = storageTypePVC
 		storageLocation = backup.Spec.Storage.PVC.Name
 		if backup.Spec.Storage.PVC.Path != "" {
 			storageLocation = backup.Spec.Storage.PVC.Name + ":" + backup.Spec.Storage.PVC.Path
 		}
-	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
+	case operatorv1.EtcdBackupStorageTypeLocal:
 		storageType = storageTypeLocal
 		storageLocation = backuphelpers.LocalBackupHostPath(backup.Spec.Storage.Local)
 	}
@@ -193,41 +193,41 @@ func extractStorageInfo(backup operatorv1alpha1.EtcdBackup) (string, string) {
 	return storageType, storageLocation
 }
 
-func extractPolicyName(backup operatorv1alpha1.EtcdBackup) string {
+func extractPolicyName(backup operatorv1.EtcdBackup) string {
 	return backup.Labels[backuphelpers.LabelEtcdBackupPolicy]
 }
 
-func extractCurrentStatus(backup operatorv1alpha1.EtcdBackup) string {
+func extractCurrentStatus(backup operatorv1.EtcdBackup) string {
 	for _, condition := range backup.Status.Conditions {
 		if condition.Status != "True" {
 			continue
 		}
 		switch condition.Type {
-		case string(operatorv1alpha1.BackupRunning):
+		case string(operatorv1.BackupRunning):
 			return statusRunning
-		case string(operatorv1alpha1.BackupCompleted):
+		case string(operatorv1.BackupCompleted):
 			return statusCompleted
-		case string(operatorv1alpha1.BackupFailed):
+		case string(operatorv1.BackupFailed):
 			return statusFailed
 		}
 	}
 	return ""
 }
 
-func getCreationTime(backup operatorv1alpha1.EtcdBackup) float64 {
+func getCreationTime(backup operatorv1.EtcdBackup) float64 {
 	if backup.CreationTimestamp.IsZero() {
 		return 0
 	}
 	return float64(backup.CreationTimestamp.Unix())
 }
 
-func getCompletionTime(backup operatorv1alpha1.EtcdBackup) float64 {
+func getCompletionTime(backup operatorv1.EtcdBackup) float64 {
 	for _, condition := range backup.Status.Conditions {
 		if condition.Status != metav1.ConditionTrue {
 			continue
 		}
 		switch condition.Type {
-		case string(operatorv1alpha1.BackupCompleted), string(operatorv1alpha1.BackupFailed):
+		case string(operatorv1.BackupCompleted), string(operatorv1.BackupFailed):
 			return float64(condition.LastTransitionTime.Unix())
 		}
 	}
@@ -237,7 +237,7 @@ func getCompletionTime(backup operatorv1alpha1.EtcdBackup) float64 {
 // sizeBytesByAssetType aggregates Status.Files by AssetType.
 // Omitted SizeBytes means an empty recorded file (0). Negative sizes are skipped.
 // Files without AssetType are skipped. Requested-but-unrecorded assets are omitted.
-func sizeBytesByAssetType(backup operatorv1alpha1.EtcdBackup) map[string]float64 {
+func sizeBytesByAssetType(backup operatorv1.EtcdBackup) map[string]float64 {
 	sizes := map[string]float64{}
 	for _, file := range backup.Status.Files {
 		assetType := string(file.AssetType)
@@ -261,6 +261,6 @@ func sortedAssetTypes(sizes map[string]float64) []string {
 // MustRegisterDefaultBackupMetrics creates backup metrics using the default registry.
 // Deprecated: Use NewBackupMetrics with an explicit registry for production code.
 // This function remains for test compatibility.
-func MustRegisterDefaultBackupMetrics(backupsLister operatorv1alpha1listers.EtcdBackupLister) *backupCollector {
+func MustRegisterDefaultBackupMetrics(backupsLister operatorv1listers.EtcdBackupLister) *backupCollector {
 	return NewBackupMetrics(legacyregistry.DefaultGatherer.(metrics.KubeRegistry), backupsLister)
 }
