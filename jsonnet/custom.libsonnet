@@ -321,13 +321,13 @@
             // Put the status series on the left of `and on()` so identity labels remain.
             expr: |||
               (
-                etcd_backup_completion_timestamp_seconds - on(etcd_backup, uid) etcd_backup_start_timestamp_seconds
+                etcd_backup_completion_timestamp_seconds - on(etcd_backup, uid) etcd_backup_creation_timestamp_seconds
               ) > 1800
               or
               (
                 (etcd_backup_status{status="Running"} == 1)
                 and on(etcd_backup, uid)
-                (time() - etcd_backup_start_timestamp_seconds > 1800)
+                (time() - etcd_backup_creation_timestamp_seconds > 1800)
               )
             |||,
             'for': '5m',

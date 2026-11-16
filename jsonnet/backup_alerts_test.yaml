@@ -11,12 +11,12 @@ tests:
   # In promtool tests, time() equals eval_time seconds from epoch 0.
   - interval: 1m
     input_series:
-      - series: 'etcd_backup_start_timestamp_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="backup-1",uid="backup-uid-1"}'
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="backup-1",uid="backup-uid-1"}'
         values: "0+0x40"
       - series: 'etcd_backup_status{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="backup-1",uid="backup-uid-1",status="Running"}'
         values: "1+0x40"
     alert_rule_test:
-      # time()=2400 at 40m; start_time=0 → age>1800 since ~31m; for:5m → firing by 40m.
+      # time()=2400 at 40m; creation_time=0 → age>1800 since ~31m; for:5m → firing by 40m.
       # Expected labels include status from the left-hand Running series.
       - eval_time: 40m
         alertname: etcdBackupDurationHigh

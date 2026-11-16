@@ -18,7 +18,7 @@ const (
 	backupInfoMetricName           = "etcd_backup_info"
 	backupStatusMetricName         = "etcd_backup_status"
 	backupCompletionTimeMetricName = "etcd_backup_completion_timestamp_seconds"
-	backupStartTimeMetricName      = "etcd_backup_start_timestamp_seconds"
+	backupCreationTimeMetricName   = "etcd_backup_creation_timestamp_seconds"
 	backupSizeBytesMetricName      = "etcd_backup_size_bytes"
 
 	storageTypePVC   = "PVC"
@@ -40,7 +40,7 @@ type backupCollector struct {
 	infoDesc           *prometheus.Desc
 	statusDesc         *prometheus.Desc
 	completionTimeDesc *prometheus.Desc
-	startTimeDesc      *prometheus.Desc
+	creationTimeDesc   *prometheus.Desc
 	sizeBytesDesc      *prometheus.Desc
 }
 
@@ -67,8 +67,8 @@ func NewBackupMetrics(metricsRegistry metrics.KubeRegistry, backupsLister operat
 			[]string{"etcd_backup", "uid"},
 			nil,
 		),
-		startTimeDesc: prometheus.NewDesc(
-			backupStartTimeMetricName,
+		creationTimeDesc: prometheus.NewDesc(
+			backupCreationTimeMetricName,
 			"Unix timestamp when the backup was created.",
 			[]string{"etcd_backup", "uid"},
 			nil,
@@ -90,7 +90,7 @@ func (c *backupCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.infoDesc
 	ch <- c.statusDesc
 	ch <- c.completionTimeDesc
-	ch <- c.startTimeDesc
+	ch <- c.creationTimeDesc
 	ch <- c.sizeBytesDesc
 }
 
@@ -142,12 +142,12 @@ func (c *backupCollector) collectBackupMetrics(ch chan<- prometheus.Metric, back
 		)
 	}
 
-	// Emit start time if available
-	if startTime := getStartTime(backup); startTime > 0 {
+	// Emit creation time if available
+	if creationTime := getCreationTime(backup); creationTime > 0 {
 		ch <- prometheus.MustNewConstMetric(
-			c.startTimeDesc,
+			c.creationTimeDesc,
 			prometheus.GaugeValue,
-			startTime,
+			creationTime,
 			name, uid,
 		)
 	}
@@ -214,7 +214,7 @@ func extractCurrentStatus(backup operatorv1alpha1.EtcdBackup) string {
 	return ""
 }
 
-func getStartTime(backup operatorv1alpha1.EtcdBackup) float64 {
+func getCreationTime(backup operatorv1alpha1.EtcdBackup) float64 {
 	if backup.CreationTimestamp.IsZero() {
 		return 0
 	}

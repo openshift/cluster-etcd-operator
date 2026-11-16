@@ -27,7 +27,7 @@ func TestMetricsRegistration(t *testing.T) {
 	require.NotNil(t, c.infoDesc)
 	require.NotNil(t, c.statusDesc)
 	require.NotNil(t, c.completionTimeDesc)
-	require.NotNil(t, c.startTimeDesc)
+	require.NotNil(t, c.creationTimeDesc)
 	require.NotNil(t, c.sizeBytesDesc)
 }
 
@@ -133,12 +133,12 @@ func TestBackupMetricsCompleted(t *testing.T) {
 	`, snapshotSize, staticSize)
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expectedSize), backupSizeBytesMetricName))
 
-	expectedStartTime := fmt.Sprintf(`
-		# HELP etcd_backup_start_timestamp_seconds Unix timestamp when the backup was created.
-		# TYPE etcd_backup_start_timestamp_seconds gauge
-		etcd_backup_start_timestamp_seconds{etcd_backup="pvc-backup",uid="pvc-backup-uid"} %d
+	expectedCreationTime := fmt.Sprintf(`
+		# HELP etcd_backup_creation_timestamp_seconds Unix timestamp when the backup was created.
+		# TYPE etcd_backup_creation_timestamp_seconds gauge
+		etcd_backup_creation_timestamp_seconds{etcd_backup="pvc-backup",uid="pvc-backup-uid"} %d
 	`, backup.CreationTimestamp.Unix())
-	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expectedStartTime), backupStartTimeMetricName))
+	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expectedCreationTime), backupCreationTimeMetricName))
 }
 
 func TestBackupMetricsFailed(t *testing.T) {
@@ -192,12 +192,12 @@ func TestBackupMetricsRunning(t *testing.T) {
 	requireInfoMetric(t, collector, "pvc-backup-running", "pvc-backup-running-uid", "node-1", storageTypePVC, "backup-pvc", "")
 	requireStatusMetrics(t, collector, "pvc-backup-running", "pvc-backup-running-uid", statusRunning)
 
-	expectedStartTime := fmt.Sprintf(`
-		# HELP etcd_backup_start_timestamp_seconds Unix timestamp when the backup was created.
-		# TYPE etcd_backup_start_timestamp_seconds gauge
-		etcd_backup_start_timestamp_seconds{etcd_backup="pvc-backup-running",uid="pvc-backup-running-uid"} %d
+	expectedCreationTime := fmt.Sprintf(`
+		# HELP etcd_backup_creation_timestamp_seconds Unix timestamp when the backup was created.
+		# TYPE etcd_backup_creation_timestamp_seconds gauge
+		etcd_backup_creation_timestamp_seconds{etcd_backup="pvc-backup-running",uid="pvc-backup-running-uid"} %d
 	`, createdAt.Unix())
-	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expectedStartTime), backupStartTimeMetricName))
+	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(expectedCreationTime), backupCreationTimeMetricName))
 
 	require.Equal(t, 0, testutil.CollectAndCount(collector, backupCompletionTimeMetricName),
 		"expected 0 completion time metrics for running backup")
@@ -429,7 +429,7 @@ func TestSizeBytesByAssetType(t *testing.T) {
 	}
 }
 
-func TestGetStartTime(t *testing.T) {
+func TestGetCreationTime(t *testing.T) {
 	createdAt := metav1.NewTime(time.Unix(1700000000, 0))
 
 	tests := []struct {
@@ -454,7 +454,7 @@ func TestGetStartTime(t *testing.T) {
 			backup := operatorv1alpha1.EtcdBackup{
 				ObjectMeta: metav1.ObjectMeta{CreationTimestamp: tt.creationTimestamp},
 			}
-			require.Equal(t, tt.want, getStartTime(backup))
+			require.Equal(t, tt.want, getCreationTime(backup))
 		})
 	}
 }
@@ -574,7 +574,7 @@ func TestMetricNamesMatchConstants(t *testing.T) {
 		backupInfoMetricName:           false,
 		backupStatusMetricName:         false,
 		backupCompletionTimeMetricName: false,
-		backupStartTimeMetricName:      false,
+		backupCreationTimeMetricName:   false,
 		backupSizeBytesMetricName:      false,
 	}
 
