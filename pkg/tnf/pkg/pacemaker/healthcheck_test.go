@@ -310,13 +310,17 @@ func TestHealthCheck_getPacemakerStatus_UnchangedTimestamp(t *testing.T) {
 }
 
 func TestHealthCheck_updateOperatorStatus(t *testing.T) {
+	// expectedCondition captures the asserted state of an operator condition after the call.
+	// An empty Status ("") means the condition is expected to be absent (untouched).
 	tests := []struct {
-		name     string
-		status   *HealthStatus
-		previous *HealthStatus
+		name                string
+		status              *HealthStatus
+		previous            *HealthStatus
+		expectedDegraded    operatorv1.ConditionStatus
+		expectedUpgradeable operatorv1.ConditionStatus
 	}{
 		{
-			name: "error_status_sets_degraded",
+			name: "error_status_sets_degraded_and_blocks_upgrade",
 			status: &HealthStatus{
 				OverallStatus: StatusError,
 				Warnings:      []string{"Test warning"},
@@ -326,9 +330,11 @@ func TestHealthCheck_updateOperatorStatus(t *testing.T) {
 				OverallStatus: StatusHealthy,
 				CRLastUpdated: time.Now().Add(-1 * time.Minute),
 			},
+			expectedDegraded:    operatorv1.ConditionTrue,
+			expectedUpgradeable: operatorv1.ConditionFalse,
 		},
 		{
-			name: "healthy_status_clears_degraded",
+			name: "healthy_status_clears_degraded_and_allows_upgrade",
 			status: &HealthStatus{
 				OverallStatus: StatusHealthy,
 				Warnings:      []string{},
@@ -338,9 +344,11 @@ func TestHealthCheck_updateOperatorStatus(t *testing.T) {
 				OverallStatus: StatusHealthy,
 				CRLastUpdated: time.Now().Add(-1 * time.Minute),
 			},
+			expectedDegraded:    operatorv1.ConditionFalse,
+			expectedUpgradeable: operatorv1.ConditionTrue,
 		},
 		{
-			name: "warning_status_clears_degraded",
+			name: "warning_status_clears_degraded_and_allows_upgrade",
 			status: &HealthStatus{
 				OverallStatus: StatusWarning,
 				Warnings:      []string{"Test warning"},
@@ -350,6 +358,38 @@ func TestHealthCheck_updateOperatorStatus(t *testing.T) {
 				OverallStatus: StatusHealthy,
 				CRLastUpdated: time.Now().Add(-1 * time.Minute),
 			},
+			expectedDegraded:    operatorv1.ConditionFalse,
+			expectedUpgradeable: operatorv1.ConditionTrue,
+		},
+		{
+			name: "unknown_within_grace_leaves_conditions_untouched",
+			status: &HealthStatus{
+				OverallStatus: StatusUnknown,
+				Warnings:      []string{},
+				Errors:        []string{"CR not found"},
+			},
+			previous: &HealthStatus{
+				OverallStatus: StatusHealthy,
+				// Recent enough to stay within StatusUnknownDegradedThreshold.
+				CRLastUpdated: time.Now().Add(-1 * time.Minute),
+			},
+			expectedDegraded:    "",
+			expectedUpgradeable: "",
+		},
+		{
+			name: "unknown_past_threshold_sets_degraded_and_blocks_upgrade",
+			status: &HealthStatus{
+				OverallStatus: StatusUnknown,
+				Warnings:      []string{},
+				Errors:        []string{"CR not found"},
+			},
+			previous: &HealthStatus{
+				OverallStatus: StatusHealthy,
+				// Older than StatusUnknownDegradedThreshold (5m) so the grace period has elapsed.
+				CRLastUpdated: time.Now().Add(-10 * time.Minute),
+			},
+			expectedDegraded:    operatorv1.ConditionTrue,
+			expectedUpgradeable: operatorv1.ConditionFalse,
 		},
 	}
 
@@ -360,6 +400,30 @@ func TestHealthCheck_updateOperatorStatus(t *testing.T) {
 
 			err := controller.updateOperatorStatus(ctx, tt.status, tt.previous)
 			require.NoError(t, err, "updateOperatorStatus should not return an error")
+
+			degraded, err := controller.getCurrentPacemakerCondition(conditionTypePacemakerDegraded)
+			require.NoError(t, err)
+			if tt.expectedDegraded == "" {
+				require.Nil(t, degraded, "degraded condition should be untouched")
+			} else {
+				require.NotNil(t, degraded, "degraded condition should be set")
+				require.Equal(t, tt.expectedDegraded, degraded.Status, "degraded condition status")
+			}
+
+			upgradeable, err := controller.getCurrentPacemakerCondition(conditionTypePacemakerUpgradeable)
+			require.NoError(t, err)
+			if tt.expectedUpgradeable == "" {
+				require.Nil(t, upgradeable, "upgradeable condition should be untouched")
+			} else {
+				require.NotNil(t, upgradeable, "upgradeable condition should be set")
+				require.Equal(t, tt.expectedUpgradeable, upgradeable.Status, "upgradeable condition status")
+				if tt.expectedUpgradeable == operatorv1.ConditionFalse {
+					require.NotEmpty(t, upgradeable.Message, "blocking upgradeable condition should carry a message")
+					require.Equal(t, reasonPacemakerUnhealthy, upgradeable.Reason)
+				} else {
+					require.Equal(t, "AsExpected", upgradeable.Reason)
+				}
+			}
 		})
 	}
 }

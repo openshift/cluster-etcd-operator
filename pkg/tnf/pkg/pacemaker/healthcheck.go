@@ -41,6 +41,9 @@ const (
 
 	// Operator condition types
 	conditionTypePacemakerDegraded = "PacemakerHealthCheckDegraded"
+	// conditionTypePacemakerUpgradeable blocks minor-version upgrades (Status=False) while the
+	// pacemaker cluster is unhealthy, mirroring the Degraded condition with inverted polarity.
+	conditionTypePacemakerUpgradeable = "PacemakerHealthCheckUpgradeable"
 
 	// Event key prefixes
 	eventKeyPrefixWarning = "warning:"
@@ -624,12 +627,20 @@ func (c *HealthCheck) updateOperatorStatus(ctx context.Context, status *HealthSt
 	// Update operator conditions based on pacemaker status
 	switch status.OverallStatus {
 	case StatusError:
+		// Error degrades the operator and blocks upgrades: CVO must not roll a new version
+		// onto a cluster whose pacemaker fencing/membership is broken.
+		if err := c.setPacemakerUpgradeableCondition(ctx, false, status); err != nil {
+			return err
+		}
 		return c.setPacemakerDegradedCondition(ctx, status)
 	case StatusHealthy, StatusWarning:
-		// Both healthy and warning states should clear degraded condition
+		// Both healthy and warning states should clear degraded condition and allow upgrades.
 		// Warnings are informational (e.g. recent fencing, node count mismatch) and don't indicate degradation
 		if status.OverallStatus == StatusWarning {
 			klog.V(2).Infof("Pacemaker health check has warnings but cluster is operational: %v", status.Warnings)
+		}
+		if err := c.setPacemakerUpgradeableCondition(ctx, true, status); err != nil {
+			return err
 		}
 		return c.clearPacemakerDegradedCondition(ctx, status)
 	case StatusUnknown:
@@ -647,10 +658,15 @@ func (c *HealthCheck) updateOperatorStatus(ctx context.Context, status *HealthSt
 		if timeSinceLastValid > StatusUnknownDegradedThreshold {
 			klog.Warningf("Pacemaker health check cannot determine status for %v (threshold: %v), marking as degraded: %v",
 				timeSinceLastValid, StatusUnknownDegradedThreshold, status.Errors)
+			// Prolonged Unknown degrades the operator; block upgrades for the same reason we
+			// block on Error, since we can no longer confirm the cluster is safe to upgrade.
+			if err := c.setPacemakerUpgradeableCondition(ctx, false, status); err != nil {
+				return err
+			}
 			return c.setPacemakerDegradedCondition(ctx, status)
 		}
 
-		// Still within grace period, just log
+		// Still within grace period, just log (leave both conditions untouched)
 		klog.V(2).Infof("Pacemaker health check cannot determine status for %v (threshold: %v), not marking degraded yet: %v",
 			timeSinceLastValid, StatusUnknownDegradedThreshold, status.Errors)
 		return nil
@@ -669,7 +685,7 @@ func (c *HealthCheck) setPacemakerDegradedCondition(ctx context.Context, status 
 	}
 
 	// Check if the condition is already set with the same message
-	currentCondition, err := c.getCurrentPacemakerCondition()
+	currentCondition, err := c.getCurrentPacemakerCondition(conditionTypePacemakerDegraded)
 	if err != nil {
 		return err
 	}
@@ -694,7 +710,7 @@ func (c *HealthCheck) setPacemakerDegradedCondition(ctx context.Context, status 
 
 func (c *HealthCheck) clearPacemakerDegradedCondition(ctx context.Context, status *HealthStatus) error {
 	// Check the current condition state
-	currentCondition, err := c.getCurrentPacemakerCondition()
+	currentCondition, err := c.getCurrentPacemakerCondition(conditionTypePacemakerDegraded)
 	if err != nil {
 		return err
 	}
@@ -726,16 +742,60 @@ func (c *HealthCheck) clearPacemakerDegradedCondition(ctx context.Context, statu
 	return nil
 }
 
-// getCurrentPacemakerCondition retrieves the current PacemakerHealthCheckDegraded condition
-func (c *HealthCheck) getCurrentPacemakerCondition() (*operatorv1.OperatorCondition, error) {
+// setPacemakerUpgradeableCondition sets the PacemakerHealthCheckUpgradeable operator condition.
+//
+// This mirrors setPacemakerDegradedCondition with inverted polarity:
+//   - upgradeable=true  -> Status=True  (AsExpected): cluster is healthy/warning, upgrades allowed
+//   - upgradeable=false -> Status=False (PacemakerUnhealthy): cluster is in error or prolonged
+//     unknown, so the cluster-version-operator blocks minor-version upgrades.
+//
+// The message, when blocking, is the joined set of current errors (same as Degraded) so operators
+// see why upgrades are blocked. The update is idempotent: it is skipped when the existing condition
+// already has the same Status and Message.
+func (c *HealthCheck) setPacemakerUpgradeableCondition(ctx context.Context, upgradeable bool, status *HealthStatus) error {
+	condition := operatorv1.OperatorCondition{
+		Type:   conditionTypePacemakerUpgradeable,
+		Status: operatorv1.ConditionTrue,
+		// "AsExpected" matches the library-go convention for the healthy/good state and the
+		// value the ClusterOperator Upgradeable union produces when nothing is blocking.
+		Reason: "AsExpected",
+	}
+	if !upgradeable {
+		message := strings.Join(status.Errors, "; ")
+		if message == "" {
+			message = msgPacemakerDegraded
+		}
+		condition.Status = operatorv1.ConditionFalse
+		condition.Reason = reasonPacemakerUnhealthy
+		condition.Message = message
+	}
+
+	// Skip the update if the condition already matches (idempotent, same as the degraded path).
+	currentCondition, err := c.getCurrentPacemakerCondition(conditionTypePacemakerUpgradeable)
+	if err != nil {
+		return err
+	}
+	if currentCondition != nil &&
+		currentCondition.Status == condition.Status &&
+		currentCondition.Message == condition.Message {
+		klog.V(4).Infof("Pacemaker upgradeable condition already set to %s with same message, skipping update", condition.Status)
+		return nil
+	}
+
+	return c.updateOperatorCondition(ctx, condition)
+}
+
+// getCurrentPacemakerCondition retrieves the current operator condition of the given type,
+// or (nil, nil) if no such condition is present.
+func (c *HealthCheck) getCurrentPacemakerCondition(conditionType string) (*operatorv1.OperatorCondition, error) {
 	_, currentStatus, _, err := c.operatorClient.GetStaticPodOperatorState()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current operator status: %w", err)
 	}
 
-	// Find the current pacemaker degraded condition
+	// Find the requested pacemaker condition
 	for i := range currentStatus.Conditions {
-		if currentStatus.Conditions[i].Type == conditionTypePacemakerDegraded {
+		if currentStatus.Conditions[i].Type == conditionType {
 			return &currentStatus.Conditions[i], nil
 		}
 	}
