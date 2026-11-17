@@ -32,6 +32,7 @@ import (
 	"github.com/openshift/cluster-etcd-operator/pkg/etcdenvvar"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/ceohelpers"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/externaletcdsupportcontroller"
+	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/metriccontroller"
 	"github.com/openshift/cluster-etcd-operator/pkg/tnf/pkg/pacemaker"
 )
@@ -160,6 +161,13 @@ func runTnfResourceController(ctx context.Context, controllerContext *controller
 }
 
 func runPacemakerControllers(ctx context.Context, controllerContext *controllercmd.ControllerContext, operatorClient v1helpers.StaticPodOperatorClient, kubeClient kubernetes.Interface, kubeInformersForNamespaces v1helpers.KubeInformersForNamespaces, etcdInformer operatorv1informers.EtcdInformer, controlPlaneNodeInformer cache.SharedIndexInformer, dynamicClient dynamic.Interface, alertAgentStatusEnabled bool) {
+	// The TNF job controllers are created asynchronously by the lifecycle manager that the
+	// goroutine below starts, so they can be created after RunOperator has started
+	// kubeInformersForNamespaces. Start only runs informers registered before it is called,
+	// so register the Jobs informer they use now. Do not rely on other controllers, such as
+	// the feature-gated backup controllers, to register it.
+	kubeInformersForNamespaces.InformersFor(operatorclient.TargetNamespace).Batch().V1().Jobs().Informer()
+
 	// Pacemaker controllers start after PacemakerCluster CRD is established.
 	// The lifecycle manager's sync() handles bootstrap vs post-transition modes internally.
 	// This runs in a background goroutine to avoid blocking the main thread.
