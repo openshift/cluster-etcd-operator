@@ -26,6 +26,7 @@ _output
 junit.xml
 report.json
 test-results/
+jsonnet/backup_alerts_rules_for_test.yaml
 
 # OpenShift Tests Extension metadata
 .openshift-tests-extension/openshift_payload_*.json
