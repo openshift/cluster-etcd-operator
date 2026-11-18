@@ -76,7 +76,6 @@ func createBackupJob(ctx context.Context,
 	job.Spec.Template.Spec.InitContainers[0].Image = operatorImagePullSpec
 	job.Spec.Template.Spec.Containers[0].Image = operatorImagePullSpec
 
-	backupDir := backuphelpers.BackupPathMount
 	volume := corev1.Volume{Name: backupVolumeName}
 	volumeMount := corev1.VolumeMount{Name: backupVolumeName, MountPath: backuphelpers.BackupPathMount}
 	switch backup.Spec.Storage.Type {
@@ -85,7 +84,6 @@ func createBackupJob(ctx context.Context,
 		job.Spec.Template.Spec.NodeName = backup.Status.NodeName
 
 		hostPath := backuphelpers.LocalBackupHostPath(backup.Spec.Storage.Local)
-		backupDir = filepath.Join(backupDir, hostPath)
 		volume.HostPath = &corev1.HostPathVolumeSource{
 			Path: hostPath,
 			Type: ptr.To(corev1.HostPathDirectoryOrCreate),
@@ -102,7 +100,6 @@ func createBackupJob(ctx context.Context,
 		job.Spec.Template.Spec.Affinity = backupSpreadAffinity()
 
 		storagePVC := backup.Spec.Storage.PVC
-		backupDir = filepath.Join(backupDir, filepath.Clean(storagePVC.Path))
 		volume.PersistentVolumeClaim = &corev1.PersistentVolumeClaimVolumeSource{
 			ClaimName: storagePVC.Name,
 		}
@@ -110,7 +107,7 @@ func createBackupJob(ctx context.Context,
 		return nil, backup, fmt.Errorf("unknown storage backend: %s", backup.Spec.Storage.Type)
 	}
 
-	backupDir = filepath.Join(backupDir, backup.Name)
+	backupDir := backuphelpers.BackupDir(backup, backuphelpers.BackupPathMount)
 	job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, volume)
 	job.Spec.Template.Spec.Containers[0].VolumeMounts = append(job.Spec.Template.Spec.Containers[0].VolumeMounts, volumeMount)
 	job.Spec.Template.Spec.Containers[0].Env = []corev1.EnvVar{

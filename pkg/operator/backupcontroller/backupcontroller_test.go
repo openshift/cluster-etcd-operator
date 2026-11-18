@@ -328,7 +328,9 @@ func TestBackupJobCompleted(t *testing.T) {
 			Conditions: []batchv1.JobCondition{{
 				Type:   batchv1.JobComplete,
 				Status: corev1.ConditionTrue}}}}
-	backup := testutils.FakeEtcdBackup("test-backup", testutils.WithBackupRunning(job))
+	backup := testutils.FakeEtcdBackup("test-backup", testutils.WithBackupRunning(job), func(backup *operatorv1alpha1.EtcdBackup) {
+		backup.Spec.Storage.PVC.Path = "/my/backups"
+	})
 	pods := []*corev1.Pod{
 		testutils.FakePod("failed-backup-job-pod-1",
 			testutils.WithPodLabels(map[string]string{labelJobName: job.Name}),
@@ -346,7 +348,7 @@ func TestBackupJobCompleted(t *testing.T) {
 					State: corev1.ContainerState{
 						Terminated: &corev1.ContainerStateTerminated{
 							ExitCode: 0,
-							Message:  `{"files": [{"path": "/my/successful/backup.db", "sizeBytes": 104857600}, {"path": "/my/successful/static_kuberesources.tar.gz", "sizeBytes": 4321}]}`,
+							Message:  `{"files": [{"path": "backup.db", "sizeBytes": 104857600}, {"path": "static_kuberesources.tar.gz", "sizeBytes": 4321}]}`,
 						},
 					},
 				}}
@@ -364,8 +366,8 @@ func TestBackupJobCompleted(t *testing.T) {
 				Message: "backup job completed",
 				Status:  metav1.ConditionTrue,
 			}}, []operatorv1alpha1.EtcdBackupFile{
-				{Path: "/my/successful/backup.db", SizeBytes: 100 * 1024 * 1024},
-				{Path: "/my/successful/static_kuberesources.tar.gz", SizeBytes: 4321}})
+				{Path: "/my/backups/test-backup/backup.db", SizeBytes: 100 * 1024 * 1024},
+				{Path: "/my/backups/test-backup/static_kuberesources.tar.gz", SizeBytes: 4321}})
 			requireJobPatched(t, client, "test-backup")
 		},
 	})
@@ -452,7 +454,7 @@ func TestBackupFailedRequiresGC(t *testing.T) {
 				Started: new(true),
 				State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
 					ExitCode: 1,
-					Message:  `{"message": "snapshot failed: no disk space", "files": [{"path": "/my/broken/backup.db.part", "sizeBytes": 12345}]}`,
+					Message:  `{"message": "snapshot failed: no disk space", "files": [{"path": "backup.db.part", "sizeBytes": 12345}]}`,
 				}}}}
 		})
 
@@ -470,7 +472,7 @@ func TestBackupFailedRequiresGC(t *testing.T) {
 					Message: "snapshot failed: no disk space",
 					Status:  metav1.ConditionTrue,
 				}}, []operatorv1alpha1.EtcdBackupFile{{
-					Path:      "/my/broken/backup.db.part",
+					Path:      "/test-backup/backup.db.part",
 					SizeBytes: 12345,
 				}})
 			},
@@ -739,7 +741,7 @@ func TestBackupOutcomeIgnoresPodsOfPreviousJob(t *testing.T) {
 		pods: []*corev1.Pod{
 			jobPod("failed-backup-job-pod", job.UID, corev1.PodFailed, `{"files": []}`),
 			jobPod("previous-backup-job-pod", "previous-job-uid", corev1.PodSucceeded,
-				`{"message": "previous backup", "files": [{"path": "/etc/kubernetes/cluster-backup/test-backup/snapshot.db", "sizeBytes": 10}]}`),
+				`{"message": "previous backup", "files": [{"path": "snapshot.db", "sizeBytes": 10}]}`),
 		},
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			requireNoBackupJobCreated(t, client)
@@ -1386,40 +1388,69 @@ func outcomeTestPod(name string, age time.Duration, phase corev1.PodPhase, start
 }
 
 func TestDetermineBackupOutcome(t *testing.T) {
-	const filesMessage = `{"message": "backup done", "files": [{"path": "/etc/kubernetes/cluster-backup/b/snapshot.db", "sizeBytes": 10}]}`
+	const filesMessage = `{"message": "backup done", "files": [{"path": "snapshot.db", "sizeBytes": 10}]}`
 	const noFilesMessage = `{"message": "etcd unavailable", "files": []}`
+
+	localBackup := testutils.FakeEtcdBackup("test-backup", func(backup *operatorv1alpha1.EtcdBackup) {
+		backup.Spec.Storage = operatorv1alpha1.EtcdBackupStorage{Type: operatorv1alpha1.EtcdBackupStorageTypeLocal}
+	})
+	pvcBackup := testutils.FakeEtcdBackup("test-backup", func(backup *operatorv1alpha1.EtcdBackup) {
+		backup.Spec.Storage = operatorv1alpha1.EtcdBackupStorage{
+			Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
+			PVC: operatorv1alpha1.EtcdBackupStoragePvc{
+				Name: "test-pvc",
+				Path: "/pvcpath",
+			},
+		}
+	})
 
 	tests := []struct {
 		name     string
+		backup   *operatorv1alpha1.EtcdBackup
 		job      *batchv1.Job
 		pods     []*corev1.Pod
 		expected backupOutcome
 	}{
 		{
-			name: "completed with files",
-			job:  outcomeTestJob(batchv1.JobComplete, 1, 0),
-			pods: []*corev1.Pod{outcomeTestPod("p1", time.Minute, corev1.PodSucceeded, true, filesMessage)},
+			name:   "local completed with files",
+			backup: localBackup,
+			job:    outcomeTestJob(batchv1.JobComplete, 1, 0),
+			pods:   []*corev1.Pod{outcomeTestPod("p1", time.Minute, corev1.PodSucceeded, true, filesMessage)},
 			expected: backupOutcome{
 				condition: operatorv1alpha1.BackupCompleted,
 				reason:    operatorv1alpha1.BackupReasonJobCompleted,
 				message:   "backup done",
-				files:     []operatorv1alpha1.EtcdBackupFile{{Path: "/b/snapshot.db", SizeBytes: 10}},
+				files:     []operatorv1alpha1.EtcdBackupFile{{Path: "/etc/kubernetes/cluster-backup/test-backup/snapshot.db", SizeBytes: 10}},
 			},
 		},
 		{
-			name: "failed with partial files requires GC",
-			job:  outcomeTestJob(batchv1.JobFailed, 0, 1),
-			pods: []*corev1.Pod{outcomeTestPod("p1", time.Minute, corev1.PodFailed, true, filesMessage)},
+			name:   "pvc completed with files",
+			backup: pvcBackup,
+			job:    outcomeTestJob(batchv1.JobComplete, 1, 0),
+			pods:   []*corev1.Pod{outcomeTestPod("p1", time.Minute, corev1.PodSucceeded, true, filesMessage)},
+			expected: backupOutcome{
+				condition: operatorv1alpha1.BackupCompleted,
+				reason:    operatorv1alpha1.BackupReasonJobCompleted,
+				message:   "backup done",
+				files:     []operatorv1alpha1.EtcdBackupFile{{Path: "/pvcpath/test-backup/snapshot.db", SizeBytes: 10}},
+			},
+		},
+		{
+			name:   "failed with partial files requires GC",
+			backup: pvcBackup,
+			job:    outcomeTestJob(batchv1.JobFailed, 0, 1),
+			pods:   []*corev1.Pod{outcomeTestPod("p1", time.Minute, corev1.PodFailed, true, filesMessage)},
 			expected: backupOutcome{
 				condition: operatorv1alpha1.BackupFailed,
 				reason:    operatorv1alpha1.BackupReasonJobFailed,
 				message:   "backup done",
-				files:     []operatorv1alpha1.EtcdBackupFile{{Path: "/b/snapshot.db", SizeBytes: 10}},
+				files:     []operatorv1alpha1.EtcdBackupFile{{Path: "/pvcpath/test-backup/snapshot.db", SizeBytes: 10}},
 			},
 		},
 		{
-			name: "failed gracefully on every attempt skips GC",
-			job:  outcomeTestJob(batchv1.JobFailed, 0, 2),
+			name:   "failed gracefully on every attempt skips GC",
+			backup: pvcBackup,
+			job:    outcomeTestJob(batchv1.JobFailed, 0, 2),
 			pods: []*corev1.Pod{
 				outcomeTestPod("p1", 2*time.Minute, corev1.PodFailed, true, noFilesMessage),
 				outcomeTestPod("p2", time.Minute, corev1.PodFailed, true, `{"files": []}`),
@@ -1432,8 +1463,9 @@ func TestDetermineBackupOutcome(t *testing.T) {
 			},
 		},
 		{
-			name: "crash then graceful failure requires GC",
-			job:  outcomeTestJob(batchv1.JobFailed, 0, 2),
+			name:   "crash then graceful failure requires GC",
+			backup: pvcBackup,
+			job:    outcomeTestJob(batchv1.JobFailed, 0, 2),
 			pods: []*corev1.Pod{
 				outcomeTestPod("p1", 2*time.Minute, corev1.PodFailed, true, ""),
 				outcomeTestPod("p2", time.Minute, corev1.PodFailed, true, noFilesMessage),
@@ -1446,9 +1478,10 @@ func TestDetermineBackupOutcome(t *testing.T) {
 			},
 		},
 		{
-			name: "backup container never started skips GC",
-			job:  outcomeTestJob(batchv1.JobFailed, 0, 1),
-			pods: []*corev1.Pod{outcomeTestPod("p1", time.Minute, corev1.PodFailed, false, "")},
+			name:   "backup container never started skips GC",
+			backup: pvcBackup,
+			job:    outcomeTestJob(batchv1.JobFailed, 0, 1),
+			pods:   []*corev1.Pod{outcomeTestPod("p1", time.Minute, corev1.PodFailed, false, "")},
 			expected: backupOutcome{
 				condition: operatorv1alpha1.BackupFailed,
 				reason:    operatorv1alpha1.BackupReasonSetupFailed,
@@ -1456,8 +1489,9 @@ func TestDetermineBackupOutcome(t *testing.T) {
 			},
 		},
 		{
-			name: "no pods created skips GC",
-			job:  outcomeTestJob(batchv1.JobFailed, 0, 0),
+			name:   "no pods created skips GC",
+			backup: pvcBackup,
+			job:    outcomeTestJob(batchv1.JobFailed, 0, 0),
 			expected: backupOutcome{
 				condition: operatorv1alpha1.BackupFailed,
 				reason:    operatorv1alpha1.BackupReasonSetupFailed,
@@ -1465,9 +1499,10 @@ func TestDetermineBackupOutcome(t *testing.T) {
 			},
 		},
 		{
-			name: "missing pod history requires GC",
-			job:  outcomeTestJob(batchv1.JobFailed, 0, 2),
-			pods: []*corev1.Pod{outcomeTestPod("p2", time.Minute, corev1.PodFailed, false, "")},
+			name:   "missing pod history requires GC",
+			backup: pvcBackup,
+			job:    outcomeTestJob(batchv1.JobFailed, 0, 2),
+			pods:   []*corev1.Pod{outcomeTestPod("p2", time.Minute, corev1.PodFailed, false, "")},
 			expected: backupOutcome{
 				condition: operatorv1alpha1.BackupFailed,
 				reason:    operatorv1alpha1.BackupReasonJobFailed,
@@ -1475,17 +1510,19 @@ func TestDetermineBackupOutcome(t *testing.T) {
 			},
 		},
 		{
-			name: "completed without observable pods keeps completed message",
-			job:  outcomeTestJob(batchv1.JobComplete, 1, 0),
+			name:   "completed without observable pods keeps completed message",
+			backup: pvcBackup,
+			job:    outcomeTestJob(batchv1.JobComplete, 1, 0),
 			expected: backupOutcome{
 				condition: operatorv1alpha1.BackupCompleted,
 				reason:    operatorv1alpha1.BackupReasonJobCompleted,
 			},
 		},
 		{
-			name: "unparseable termination message keeps job reason",
-			job:  outcomeTestJob(batchv1.JobFailed, 0, 1),
-			pods: []*corev1.Pod{outcomeTestPod("p1", time.Minute, corev1.PodFailed, true, "not json")},
+			name:   "unparseable termination message keeps job reason",
+			backup: pvcBackup,
+			job:    outcomeTestJob(batchv1.JobFailed, 0, 1),
+			pods:   []*corev1.Pod{outcomeTestPod("p1", time.Minute, corev1.PodFailed, true, "not json")},
 			expected: backupOutcome{
 				condition: operatorv1alpha1.BackupFailed,
 				reason:    operatorv1alpha1.BackupReasonJobFailed,
@@ -1495,7 +1532,7 @@ func TestDetermineBackupOutcome(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.expected, determineBackupOutcome("test-backup", tc.job, tc.pods))
+			require.Equal(t, tc.expected, determineBackupOutcome(tc.backup, tc.job, tc.pods))
 		})
 	}
 }
