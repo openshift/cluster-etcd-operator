@@ -1,6 +1,9 @@
 package etcdenvvar
 
 import (
+	"crypto/tls"
+	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -33,6 +36,26 @@ func bootstrapConfigMapLister(complete bool) corev1listers.ConfigMapLister {
 		})
 	}
 	return corev1listers.NewConfigMapLister(indexer)
+}
+
+// observedConfigWithCurvePreferences generates an observedConfig JSON with the given curve IDs.
+// If curveIDs is empty, returns an empty observedConfig "{}".
+// If curveIDs is nil, returns nil.
+func observedConfigWithCurvePreferences(curveIDs []tls.CurveID) []byte {
+	if curveIDs == nil {
+		return nil
+	}
+	if len(curveIDs) == 0 {
+		return []byte("{}")
+	}
+
+	// Build the JSON manually to have full control over the format
+	var curveIDStrings []string
+	for _, id := range curveIDs {
+		curveIDStrings = append(curveIDStrings, fmt.Sprintf("%d", id))
+	}
+
+	return []byte(fmt.Sprintf(`{"servingInfo":{"curvePreferences":[%s]}}`, strings.Join(curveIDStrings, ", ")))
 }
 
 func TestConvertDBSize(t *testing.T) {
@@ -196,47 +219,89 @@ func TestGetCurvePreferences(t *testing.T) {
 		{
 			name:           "feature gate disabled leaves etcd curve selection alone",
 			accessor:       disabled,
-			observedConfig: []byte(`{"servingInfo":{"groups":["X25519"]}}`),
+			observedConfig: observedConfigWithCurvePreferences([]tls.CurveID{29}),
 		},
 		{
 			name:           "bootstrap in progress falls back to intermediate groups",
 			accessor:       enabled,
-			observedConfig: []byte(`{}`),
+			observedConfig: observedConfigWithCurvePreferences(nil),
 			wantCurves:     intermediate,
 		},
 		{
-			name:              "bootstrap complete without groups is an error",
+			name:              "bootstrap complete without curvePreferences is an error",
 			accessor:          enabled,
-			observedConfig:    []byte(`{}`),
+			observedConfig:    observedConfigWithCurvePreferences(nil),
 			bootstrapComplete: true,
-			wantErr:           "servingInfo.groups not found in observedConfig",
+			wantErr:           "servingInfo.curvePreferences not found in observedConfig",
 		},
 		{
-			name:              "observed groups are translated to etcd curve names",
+			name:              "omitted custom curvePreferences leave the env var unset",
 			accessor:          enabled,
-			observedConfig:    []byte(`{"servingInfo":{"groups":["secp384r1","X25519","SecP256r1MLKEM768"]}}`),
-			bootstrapComplete: true,
-			wantCurves:        tlshelpers.SupportedEtcdCurves([]string{"secp384r1", "X25519", "SecP256r1MLKEM768"}),
-		},
-		{
-			name:              "omitted custom groups leave the env var unset",
-			accessor:          enabled,
-			observedConfig:    []byte(`{"servingInfo":{"groups":[]}}`),
+			observedConfig:    []byte(`{"servingInfo":{"curvePreferences":[]}}`),
 			bootstrapComplete: true,
 		},
 		{
-			name:              "hybrid groups etcd accepts are rendered",
+			name:              "hybrid curve IDs etcd accepts are rendered",
 			accessor:          enabled,
-			observedConfig:    []byte(`{"servingInfo":{"groups":["SecP256r1MLKEM768","SecP384r1MLKEM1024"]}}`),
+			observedConfig:    observedConfigWithCurvePreferences([]tls.CurveID{tls.X25519, tls.X25519MLKEM768}),
 			bootstrapComplete: true,
-			wantCurves:        []string{"SecP256r1MLKEM768", "SecP384r1MLKEM1024"},
+			wantCurves:        []string{tls.X25519.String(), tls.X25519MLKEM768.String()},
 		},
 		{
 			name:              "groups with no etcd-supported curve fail closed",
 			accessor:          enabled,
-			observedConfig:    []byte(`{"servingInfo":{"groups":["not-a-group"]}}`),
+			observedConfig:    observedConfigWithCurvePreferences([]tls.CurveID{0}),
 			bootstrapComplete: true,
-			wantErr:           "no etcd-supported TLS curves",
+			wantErr:           "unable to convert an unrecognized curve ID 0 to a group name",
+		},
+		{
+			name:              "curvePreferences with float64 IDs are converted to int64",
+			accessor:          enabled,
+			observedConfig:    []byte(fmt.Sprintf(`{"servingInfo":{"curvePreferences":[%.1f, %.1f, %.1f]}}`, float64(tls.X25519), float64(tls.CurveP256), float64(tls.CurveP384))),
+			bootstrapComplete: true,
+			wantCurves:        []string{tls.X25519.String(), tls.CurveP256.String(), tls.CurveP384.String()},
+		},
+		{
+			name:              "curvePreferences with only int64 IDs",
+			accessor:          enabled,
+			observedConfig:    []byte(fmt.Sprintf(`{"servingInfo":{"curvePreferences":[%.1d, %.1d, %.1d]}}`, int64(tls.X25519), int64(tls.CurveP256), int64(tls.CurveP384))),
+			bootstrapComplete: true,
+			wantCurves:        []string{tls.X25519.String(), tls.CurveP256.String(), tls.CurveP384.String()},
+		},
+		{
+			name:              "curvePreferences with mixed int64 and float64 IDs",
+			accessor:          enabled,
+			observedConfig:    []byte(fmt.Sprintf(`{"servingInfo":{"curvePreferences":[%.1d, %.1f, %.1d]}}`, int64(tls.X25519), float64(tls.CurveP256), int64(tls.CurveP384))),
+			bootstrapComplete: true,
+			wantCurves:        []string{tls.X25519.String(), tls.CurveP256.String(), tls.CurveP384.String()},
+		},
+		{
+			name:              "curvePreferences with string IDs returns error",
+			accessor:          enabled,
+			observedConfig:    []byte(fmt.Sprintf(`{"servingInfo":{"curvePreferences":[%q, %.1d]}}`, strconv.Itoa(int(tls.X25519)), int64(tls.CurveP384))),
+			bootstrapComplete: true,
+			wantErr:           "invalid curve preference type at index 0: expected int64, got string",
+		},
+		{
+			name:              "curvePreferences with non-integral float64 returns error",
+			accessor:          enabled,
+			observedConfig:    []byte(`{"servingInfo":{"curvePreferences":[29.5, 23.0]}}`),
+			bootstrapComplete: true,
+			wantErr:           "invalid curve preference: non-integral float64 value 29.5",
+		},
+		{
+			name:              "curvePreferences with negative value returns error",
+			accessor:          enabled,
+			observedConfig:    []byte(`{"servingInfo":{"curvePreferences":[-1]}}`),
+			bootstrapComplete: true,
+			wantErr:           "curve preference value -1 is out of range for uint16 (0-65535)",
+		},
+		{
+			name:              "curvePreferences with value exceeding uint16 range returns error",
+			accessor:          enabled,
+			observedConfig:    []byte(`{"servingInfo":{"curvePreferences":[65536]}}`),
+			bootstrapComplete: true,
+			wantErr:           "curve preference value 65536 is out of range for uint16 (0-65535)",
 		},
 	}
 
