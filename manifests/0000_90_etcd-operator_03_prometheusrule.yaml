@@ -229,19 +229,19 @@ spec:
       expr: |
         (
           count(
-            (etcd_backup_status{status="Failed"} == 1)
+            (max by (etcd_backup, uid, status) (etcd_backup_status{status="Failed"}) == 1)
             and on(etcd_backup, uid)
-            ((time() - etcd_backup_completion_timestamp_seconds) < 86400)
+            ((time() - max by (etcd_backup, uid) (etcd_backup_completion_timestamp_seconds)) < 86400)
           )
           /
           count(
             (
-              (etcd_backup_status{status="Failed"} == 1)
+              (max by (etcd_backup, uid, status) (etcd_backup_status{status="Failed"}) == 1)
               or
-              (etcd_backup_status{status="Completed"} == 1)
+              (max by (etcd_backup, uid, status) (etcd_backup_status{status="Completed"}) == 1)
             )
             and on(etcd_backup, uid)
-            ((time() - etcd_backup_completion_timestamp_seconds) < 86400)
+            ((time() - max by (etcd_backup, uid) (etcd_backup_completion_timestamp_seconds)) < 86400)
           )
         ) > 0.5
       for: 30m
@@ -255,19 +255,19 @@ spec:
       expr: |
         (
           count(
-            (etcd_backup_status{status="Failed"} == 1)
+            (max by (etcd_backup, uid, status) (etcd_backup_status{status="Failed"}) == 1)
             and on(etcd_backup, uid)
-            ((time() - etcd_backup_completion_timestamp_seconds) < 86400)
+            ((time() - max by (etcd_backup, uid) (etcd_backup_completion_timestamp_seconds)) < 86400)
           )
           /
           count(
             (
-              (etcd_backup_status{status="Failed"} == 1)
+              (max by (etcd_backup, uid, status) (etcd_backup_status{status="Failed"}) == 1)
               or
-              (etcd_backup_status{status="Completed"} == 1)
+              (max by (etcd_backup, uid, status) (etcd_backup_status{status="Completed"}) == 1)
             )
             and on(etcd_backup, uid)
-            ((time() - etcd_backup_completion_timestamp_seconds) < 86400)
+            ((time() - max by (etcd_backup, uid) (etcd_backup_completion_timestamp_seconds)) < 86400)
           )
         ) >= 0.75
       for: 30m
@@ -282,12 +282,12 @@ spec:
         (
           (
             (
-              etcd_backup_policy_creation_timestamp_seconds
+              max by (etcd_backup_policy, uid) (etcd_backup_policy_creation_timestamp_seconds)
               and on(etcd_backup_policy, uid)
               (
-                (time() - etcd_backup_policy_creation_timestamp_seconds)
+                (time() - max by (etcd_backup_policy, uid) (etcd_backup_policy_creation_timestamp_seconds))
                 > on(etcd_backup_policy, uid)
-                (2 * etcd_backup_policy_schedule_interval_seconds)
+                (2 * max by (etcd_backup_policy, uid) (etcd_backup_policy_schedule_interval_seconds))
               )
             )
             unless on(etcd_backup_policy)
@@ -299,7 +299,7 @@ spec:
           )
           or
           (
-            etcd_backup_policy_schedule_interval_seconds
+            max by (etcd_backup_policy, uid) (etcd_backup_policy_schedule_interval_seconds)
             and on(etcd_backup_policy)
             (
               (
@@ -316,7 +316,7 @@ spec:
                 )
               )
               > on(etcd_backup_policy)
-              (2 * etcd_backup_policy_schedule_interval_seconds)
+              (2 * max by (etcd_backup_policy, uid) (etcd_backup_policy_schedule_interval_seconds))
             )
           )
         )
@@ -328,13 +328,13 @@ spec:
         summary: etcd backup duration is high.
       expr: |
         (
-          etcd_backup_completion_timestamp_seconds - on(etcd_backup, uid) etcd_backup_creation_timestamp_seconds
+          max by (etcd_backup, uid) (etcd_backup_completion_timestamp_seconds) - on(etcd_backup, uid) max by (etcd_backup, uid) (etcd_backup_creation_timestamp_seconds)
         ) > 1800
         or
         (
-          (etcd_backup_status{status="Running"} == 1)
+          (max by (etcd_backup, uid, status) (etcd_backup_status{status="Running"}) == 1)
           and on(etcd_backup, uid)
-          (time() - etcd_backup_creation_timestamp_seconds > 1800)
+          (time() - max by (etcd_backup, uid) (etcd_backup_creation_timestamp_seconds) > 1800)
         )
       for: 5m
       labels:
