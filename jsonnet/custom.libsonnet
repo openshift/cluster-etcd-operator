@@ -198,19 +198,19 @@
             expr: |||
               (
                 count(
-                  (etcd_backup_status{status="Failed"} == 1)
+                  (max by (etcd_backup, uid, status) (etcd_backup_status{status="Failed"}) == 1)
                   and on(etcd_backup, uid)
-                  ((time() - etcd_backup_completion_timestamp_seconds) < 86400)
+                  ((time() - max by (etcd_backup, uid) (etcd_backup_completion_timestamp_seconds)) < 86400)
                 )
                 /
                 count(
                   (
-                    (etcd_backup_status{status="Failed"} == 1)
+                    (max by (etcd_backup, uid, status) (etcd_backup_status{status="Failed"}) == 1)
                     or
-                    (etcd_backup_status{status="Completed"} == 1)
+                    (max by (etcd_backup, uid, status) (etcd_backup_status{status="Completed"}) == 1)
                   )
                   and on(etcd_backup, uid)
-                  ((time() - etcd_backup_completion_timestamp_seconds) < 86400)
+                  ((time() - max by (etcd_backup, uid) (etcd_backup_completion_timestamp_seconds)) < 86400)
                 )
               ) > 0.5
             |||,
@@ -228,19 +228,19 @@
             expr: |||
               (
                 count(
-                  (etcd_backup_status{status="Failed"} == 1)
+                  (max by (etcd_backup, uid, status) (etcd_backup_status{status="Failed"}) == 1)
                   and on(etcd_backup, uid)
-                  ((time() - etcd_backup_completion_timestamp_seconds) < 86400)
+                  ((time() - max by (etcd_backup, uid) (etcd_backup_completion_timestamp_seconds)) < 86400)
                 )
                 /
                 count(
                   (
-                    (etcd_backup_status{status="Failed"} == 1)
+                    (max by (etcd_backup, uid, status) (etcd_backup_status{status="Failed"}) == 1)
                     or
-                    (etcd_backup_status{status="Completed"} == 1)
+                    (max by (etcd_backup, uid, status) (etcd_backup_status{status="Completed"}) == 1)
                   )
                   and on(etcd_backup, uid)
-                  ((time() - etcd_backup_completion_timestamp_seconds) < 86400)
+                  ((time() - max by (etcd_backup, uid) (etcd_backup_completion_timestamp_seconds)) < 86400)
                 )
               ) >= 0.75
             |||,
@@ -258,22 +258,23 @@
           // so absent(etcd_backup_policy_info) does not fire on Default clusters.
           {
             alert: 'etcdBackupPolicyNoRecentSuccess',
-            // Last success is derived from live Completed EtcdBackup metrics (no
-            // ConfigMap tracker). Threshold is 2*schedule interval so weekly/monthly
+            // Last success is derived from live Completed EtcdBackup metrics. 
+            // Threshold is 2*schedule interval so weekly/monthly
             // policies do not permanently fire. Interval series absence (unparseable
             // schedule) suppresses this alert. Matching is by policy name on the
             // shared etcd_backup_policy label.
             // Put policy series on the left of `and on()` so etcd_backup_policy/uid labels remain.
+            // Policy metrics are aggregated with max by() to deduplicate series from multiple operator pods.
             expr: |||
               (
                 (
                   (
-                    etcd_backup_policy_creation_timestamp_seconds
+                    max by (etcd_backup_policy, uid) (etcd_backup_policy_creation_timestamp_seconds)
                     and on(etcd_backup_policy, uid)
                     (
-                      (time() - etcd_backup_policy_creation_timestamp_seconds)
+                      (time() - max by (etcd_backup_policy, uid) (etcd_backup_policy_creation_timestamp_seconds))
                       > on(etcd_backup_policy, uid)
-                      (2 * etcd_backup_policy_schedule_interval_seconds)
+                      (2 * max by (etcd_backup_policy, uid) (etcd_backup_policy_schedule_interval_seconds))
                     )
                   )
                   unless on(etcd_backup_policy)
@@ -285,7 +286,7 @@
                 )
                 or
                 (
-                  etcd_backup_policy_schedule_interval_seconds
+                  max by (etcd_backup_policy, uid) (etcd_backup_policy_schedule_interval_seconds)
                   and on(etcd_backup_policy)
                   (
                     (
@@ -302,7 +303,7 @@
                       )
                     )
                     > on(etcd_backup_policy)
-                    (2 * etcd_backup_policy_schedule_interval_seconds)
+                    (2 * max by (etcd_backup_policy, uid) (etcd_backup_policy_schedule_interval_seconds))
                   )
                 )
               )
@@ -319,15 +320,16 @@
             alert: 'etcdBackupDurationHigh',
             // Running status carries an extra status label; match on backup identity.
             // Put the status series on the left of `and on()` so identity labels remain.
+            // Backup metrics are aggregated with max by() to deduplicate series from multiple operator pods.
             expr: |||
               (
-                etcd_backup_completion_timestamp_seconds - on(etcd_backup, uid) etcd_backup_creation_timestamp_seconds
+                max by (etcd_backup, uid) (etcd_backup_completion_timestamp_seconds) - on(etcd_backup, uid) max by (etcd_backup, uid) (etcd_backup_creation_timestamp_seconds)
               ) > 1800
               or
               (
-                (etcd_backup_status{status="Running"} == 1)
+                (max by (etcd_backup, uid, status) (etcd_backup_status{status="Running"}) == 1)
                 and on(etcd_backup, uid)
-                (time() - etcd_backup_creation_timestamp_seconds > 1800)
+                (time() - max by (etcd_backup, uid) (etcd_backup_creation_timestamp_seconds) > 1800)
               )
             |||,
             'for': '5m',
