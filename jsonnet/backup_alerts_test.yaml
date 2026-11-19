@@ -390,19 +390,26 @@ tests:
         exp_alerts: []
 
   # Completed-branch duration alert, single target: the branch reports only
-  # backup identity labels (etcd_backup, uid). backup-2 finished in 10m → silent.
+  # backup identity labels (etcd_backup, uid). Both backups complete at 2400s
+  # (40m), so the result depends on elapsed duration rather than on the
+  # completion timestamp: backup-1 (created 0s) ran 40m → fires once the 5m hold
+  # elapses; backup-2 (created 1800s) ran 10m → silent.
   - interval: 1m
     input_series:
       - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="backup-1",uid="backup-uid-1"}'
-        values: "0+0x20"
+        values: "0+0x50"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="backup-1",uid="backup-uid-1"}'
-        values: "2400+0x20"
+        values: "_x40 2400+0x10"
       - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="backup-2",uid="backup-uid-2"}'
-        values: "0+0x20"
+        values: "_x30 1800+0x20"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="backup-2",uid="backup-uid-2"}'
-        values: "600+0x20"
+        values: "_x40 2400+0x10"
     alert_rule_test:
-      - eval_time: 10m
+      # Completion series appear at 40m; the 5m hold has not elapsed at 44m.
+      - eval_time: 44m
+        alertname: etcdBackupDurationHigh
+        exp_alerts: []
+      - eval_time: 50m
         alertname: etcdBackupDurationHigh
         exp_alerts:
           - exp_labels:
@@ -414,27 +421,32 @@ tests:
               description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
 
   # Completed-branch duration alert, duplicate targets: timestamp arithmetic
-  # must deduplicate by backup identity and alert once.
+  # must deduplicate by backup identity and alert once. Same timestamps as the
+  # single-target case: backup-1 ran 40m → fires; backup-2 ran 10m → silent.
   - interval: 1m
     input_series:
       - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1"}'
-        values: "0+0x20"
+        values: "0+0x50"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1"}'
-        values: "2400+0x20"
+        values: "_x40 2400+0x10"
       - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1"}'
-        values: "0+0x20"
+        values: "0+0x50"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1"}'
-        values: "2400+0x20"
+        values: "_x40 2400+0x10"
       - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2"}'
-        values: "0+0x20"
+        values: "_x30 1800+0x20"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2"}'
-        values: "600+0x20"
+        values: "_x40 2400+0x10"
       - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-2",uid="backup-uid-2"}'
-        values: "0+0x20"
+        values: "_x30 1800+0x20"
       - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-2",uid="backup-uid-2"}'
-        values: "600+0x20"
+        values: "_x40 2400+0x10"
     alert_rule_test:
-      - eval_time: 10m
+      # Completion series appear at 40m; the 5m hold has not elapsed at 44m.
+      - eval_time: 44m
+        alertname: etcdBackupDurationHigh
+        exp_alerts: []
+      - eval_time: 50m
         alertname: etcdBackupDurationHigh
         exp_alerts:
           - exp_labels:
