@@ -317,18 +317,38 @@
           },
           {
             alert: 'etcdBackupDurationHigh',
-            // Running status carries an extra status label; match on backup identity.
-            // Put the status series on the left of `and on()` so identity labels remain.
+            // Fires only while a backup is actively Running and more than 30 minutes
+            // have passed since the EtcdBackup was created (as before, this includes
+            // any time spent queued before the job started). Completed and Failed
+            // backups do not keep this alert firing: success clears it, and failures
+            // are reported by etcdBackupFailed / etcdBackupHighFailureRate.
+            //
+            // The collector exports etcd_backup_status for Running, Completed and
+            // Failed on every scrape, with value 1 only for the current lifecycle
+            // condition, so == 1 is required and a zero-valued Running series is not
+            // active. Every scraped operator target exports the same series for a
+            // backup, differing only in target labels (instance, pod, ...). Status is
+            // reduced to one series per (namespace, etcd_backup, uid) and the creation
+            // timestamp per (etcd_backup, uid) before joining, so the alert has one
+            // stable identity across operator pod changes.
+            //
+            // If exporters disagree while their series overlap (one cache still shows
+            // Running after the backup finished), any exporter reporting Completed or
+            // Failed suppresses the alert, since those statuses replace Running.
+            // Resolution is bounded by what the metrics show: once no exporter reports
+            // the terminal status, an exporter that still reports Running raises the
+            // alert again after a new 5m hold, until it observes the terminal status
+            // itself or its series go stale. With a single operator replica a restart
+            // can leave a gap instead of an overlap; while no exporter reports the
+            // backup the alert resolves, and it fires again after a new 5m hold.
             expr: |||
               (
-                etcd_backup_completion_timestamp_seconds - on(etcd_backup, uid) etcd_backup_creation_timestamp_seconds
-              ) > 1800
-              or
-              (
-                (etcd_backup_status{status="Running"} == 1)
-                and on(etcd_backup, uid)
-                (time() - etcd_backup_creation_timestamp_seconds > 1800)
+                max by (namespace, etcd_backup, uid) (etcd_backup_status{status="Running"} == 1)
+                unless on(etcd_backup, uid)
+                (etcd_backup_status{status=~"Completed|Failed"} == 1)
               )
+              and on(etcd_backup, uid)
+              (time() - max by (etcd_backup, uid) (etcd_backup_creation_timestamp_seconds) > 1800)
             |||,
             'for': '5m',
             labels: {
