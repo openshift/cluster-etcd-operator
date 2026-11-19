@@ -261,50 +261,54 @@
             // Last success is derived from live Completed EtcdBackup metrics (no
             // ConfigMap tracker). Threshold is 2*schedule interval so weekly/monthly
             // policies do not permanently fire. Interval series absence (unparseable
-            // schedule) suppresses this alert. Matching is by policy name on the
-            // shared etcd_backup_policy label.
-            // Put policy series on the left of `and on()` so etcd_backup_policy/uid labels remain.
+            // schedule) suppresses this alert. Backups are associated with policies
+            // by name on the shared etcd_backup_policy label.
+            //
+            // More than one scrape target can export the same object, e.g. an
+            // outgoing and an incoming operator pod whose series are both within
+            // the lookback window. Their series differ only in target labels
+            // (instance, pod), so every operand that must be unique on its side of
+            // a join is first reduced with max: policy series by policy name+uid,
+            // backup timestamps by backup name+uid, and the last success by policy
+            // name. Creation timestamps are identical across targets; max of the
+            // schedule interval picks the larger threshold if targets briefly
+            // disagree after a schedule change. Raw etcd_backup_info is only used on
+            // the "many" side of group_left or inside set operators.
+            // The alert keeps etcd_backup_policy, uid and namespace, carried on the
+            // "many" side of group_left/group_right. The last success is compared
+            // per policy object, so two UIDs sharing a name (a recreated policy seen
+            // through an outgoing pod) are evaluated against their own interval.
             expr: |||
               (
                 (
-                  (
-                    etcd_backup_policy_creation_timestamp_seconds
-                    and on(etcd_backup_policy, uid)
+                  (time() - max by (namespace, etcd_backup_policy, uid) (etcd_backup_policy_creation_timestamp_seconds))
+                  > on(etcd_backup_policy, uid) group_left()
+                  (2 * max by (etcd_backup_policy, uid) (etcd_backup_policy_schedule_interval_seconds))
+                )
+                unless on(etcd_backup_policy)
+                (
+                  etcd_backup_info
+                  and on(etcd_backup, uid)
+                  (etcd_backup_status{status="Completed"} == 1)
+                )
+              )
+              or
+              (
+                (
+                  time()
+                  -
+                  max by (etcd_backup_policy) (
                     (
-                      (time() - etcd_backup_policy_creation_timestamp_seconds)
-                      > on(etcd_backup_policy, uid)
-                      (2 * etcd_backup_policy_schedule_interval_seconds)
+                      etcd_backup_info
+                      * on(etcd_backup, uid) group_left()
+                      max by (etcd_backup, uid) (etcd_backup_completion_timestamp_seconds)
                     )
-                  )
-                  unless on(etcd_backup_policy)
-                  (
-                    etcd_backup_info
                     and on(etcd_backup, uid)
                     (etcd_backup_status{status="Completed"} == 1)
                   )
                 )
-                or
-                (
-                  etcd_backup_policy_schedule_interval_seconds
-                  and on(etcd_backup_policy)
-                  (
-                    (
-                      time()
-                      -
-                      max by (etcd_backup_policy) (
-                        etcd_backup_completion_timestamp_seconds
-                        * on(etcd_backup, uid) group_left(etcd_backup_policy)
-                          (
-                            etcd_backup_info
-                            and on(etcd_backup, uid)
-                            (etcd_backup_status{status="Completed"} == 1)
-                          )
-                      )
-                    )
-                    > on(etcd_backup_policy)
-                    (2 * etcd_backup_policy_schedule_interval_seconds)
-                  )
-                )
+                > on(etcd_backup_policy) group_right()
+                (2 * max by (namespace, etcd_backup_policy, uid) (etcd_backup_policy_schedule_interval_seconds))
               )
             |||,
             labels: {
@@ -319,9 +323,16 @@
             alert: 'etcdBackupDurationHigh',
             // Running status carries an extra status label; match on backup identity.
             // Put the status series on the left of `and on()` so identity labels remain.
+            // Timestamps are reduced with max by backup identity before the
+            // one-to-one subtraction so duplicate scrape targets exporting the
+            // same backup do not cause a duplicate-series evaluation error.
+            // The Running branch only uses set operators and scalar arithmetic, so
+            // it evaluates with duplicate targets; it keeps per-target labels.
             expr: |||
               (
-                etcd_backup_completion_timestamp_seconds - on(etcd_backup, uid) etcd_backup_creation_timestamp_seconds
+                max by (etcd_backup, uid) (etcd_backup_completion_timestamp_seconds)
+                - on(etcd_backup, uid)
+                max by (etcd_backup, uid) (etcd_backup_creation_timestamp_seconds)
               ) > 1800
               or
               (

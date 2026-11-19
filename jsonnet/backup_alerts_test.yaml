@@ -33,6 +33,9 @@ tests:
               description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
 
   # Never-succeeded daily policy: age must exceed 2*interval (48h) before firing.
+  # NoRecentSuccess labels are the policy identity (etcd_backup_policy, uid) plus
+  # namespace when present; per-target labels (job, instance, pod) are dropped
+  # by deduplication so overlapping targets yield a single alert.
   - interval: 1h
     input_series:
       - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup_policy="daily",uid="uid-1"}'
@@ -50,8 +53,6 @@ tests:
         exp_alerts:
           - exp_labels:
               severity: critical
-              job: cluster-etcd-operator
-              instance: "10.0.0.1:9090"
               etcd_backup_policy: daily
               uid: uid-1
             exp_annotations:
@@ -98,8 +99,6 @@ tests:
         exp_alerts:
           - exp_labels:
               severity: critical
-              job: cluster-etcd-operator
-              instance: "10.0.0.1:9090"
               etcd_backup_policy: daily
               uid: uid-1
             exp_annotations:
@@ -123,11 +122,525 @@ tests:
         exp_alerts:
           - exp_labels:
               severity: critical
-              job: cluster-etcd-operator
-              instance: "10.0.0.1:9090"
               etcd_backup_policy: weekly
               uid: uid-2
             exp_annotations:
               summary: Backup policy has no successful backup within two schedule intervals.
               description: 'Backup policy "weekly" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.'
+              runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyNoRecentSuccess.md
+
+  # Duplicate targets: two operator pods export the same policy (same UID) while
+  # both are visible in the lookback window. Joins must deduplicate by logical
+  # object instead of failing with many-to-many / duplicate-series errors, and
+  # the policy must alert once (not once per target).
+  - interval: 1h
+    input_series:
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "86400+0x55"
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "86400+0x55"
+    alert_rule_test:
+      - eval_time: 26h
+        alertname: etcdBackupPolicyNoRecentSuccess
+        exp_alerts: []
+      - eval_time: 50h
+        alertname: etcdBackupPolicyNoRecentSuccess
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              namespace: openshift-etcd-operator
+              etcd_backup_policy: daily
+              uid: uid-1
+            exp_annotations:
+              summary: Backup policy has no successful backup within two schedule intervals.
+              description: 'Backup policy "daily" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.'
+              runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyNoRecentSuccess.md
+
+  # Rollout overlap: the outgoing pod's series stop (stale) at 52h, the incoming
+  # pod's series start at 46h. The alert evaluates during the overlap and keeps
+  # the same identity once only the new pod reports.
+  - interval: 1h
+    input_series:
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "1+0x51 stale"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "86400+0x51 stale"
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "_x46 1+0x9"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "_x46 86400+0x9"
+    alert_rule_test:
+      # Overlap, age < 48h → silent.
+      - eval_time: 47h
+        alertname: etcdBackupPolicyNoRecentSuccess
+        exp_alerts: []
+      # Overlap, age > 48h → one alert.
+      - eval_time: 50h
+        alertname: etcdBackupPolicyNoRecentSuccess
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              namespace: openshift-etcd-operator
+              etcd_backup_policy: daily
+              uid: uid-1
+            exp_annotations:
+              summary: Backup policy has no successful backup within two schedule intervals.
+              description: 'Backup policy "daily" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.'
+              runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyNoRecentSuccess.md
+      # Only the new pod reports → same alert identity.
+      - eval_time: 54h
+        alertname: etcdBackupPolicyNoRecentSuccess
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              namespace: openshift-etcd-operator
+              etcd_backup_policy: daily
+              uid: uid-1
+            exp_annotations:
+              summary: Backup policy has no successful backup within two schedule intervals.
+              description: 'Backup policy "daily" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.'
+              runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyNoRecentSuccess.md
+
+  # Duplicate targets with a recent Completed backup → silent.
+  - interval: 1h
+    input_series:
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "86400+0x55"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1"}'
+        values: "176400+0x55"
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "86400+0x55"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1"}'
+        values: "176400+0x55"
+    alert_rule_test:
+      - eval_time: 50h
+        alertname: etcdBackupPolicyNoRecentSuccess
+        exp_alerts: []
+
+  # Duplicate targets with a stale Completed backup → one alert.
+  - interval: 1h
+    input_series:
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "86400+0x55"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1"}'
+        values: "100+0x55"
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "86400+0x55"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1"}'
+        values: "100+0x55"
+    alert_rule_test:
+      - eval_time: 50h
+        alertname: etcdBackupPolicyNoRecentSuccess
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              namespace: openshift-etcd-operator
+              etcd_backup_policy: daily
+              uid: uid-1
+            exp_annotations:
+              summary: Backup policy has no successful backup within two schedule intervals.
+              description: 'Backup policy "daily" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.'
+              runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyNoRecentSuccess.md
+
+  # Duplicate targets, distinct policies: deduplication must not merge objects.
+  # daily/uid-1 has a stale success → fires; twice-daily/uid-2 has a recent
+  # success → silent; weekly/uid-3 never succeeded but is younger than 2*7d → silent.
+  - interval: 1h
+    input_series:
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "86400+0x55"
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "86400+0x55"
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup_policy="twice-daily",uid="uid-2"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup_policy="twice-daily",uid="uid-2"}'
+        values: "43200+0x55"
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="twice-daily",uid="uid-2"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="twice-daily",uid="uid-2"}'
+        values: "43200+0x55"
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup_policy="weekly",uid="uid-3"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup_policy="weekly",uid="uid-3"}'
+        values: "604800+0x55"
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="weekly",uid="uid-3"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="weekly",uid="uid-3"}'
+        values: "604800+0x55"
+      # daily: stale success at t=100s.
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1"}'
+        values: "100+0x55"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1"}'
+        values: "100+0x55"
+      # twice-daily: recent success at ≈49h.
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b2",uid="b-uid-2",etcd_backup_policy="twice-daily",node="master-1",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b2",uid="b-uid-2",status="Completed"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b2",uid="b-uid-2"}'
+        values: "176400+0x55"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b2",uid="b-uid-2",etcd_backup_policy="twice-daily",node="master-1",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b2",uid="b-uid-2",status="Completed"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b2",uid="b-uid-2"}'
+        values: "176400+0x55"
+    alert_rule_test:
+      - eval_time: 50h
+        alertname: etcdBackupPolicyNoRecentSuccess
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              namespace: openshift-etcd-operator
+              etcd_backup_policy: daily
+              uid: uid-1
+            exp_annotations:
+              summary: Backup policy has no successful backup within two schedule intervals.
+              description: 'Backup policy "daily" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.'
+              runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyNoRecentSuccess.md
+
+  # Policy recreated with the same name: an outgoing pod still exports the old
+  # UID while the new pod exports the new UID. Backups associate with policies
+  # by name, so a recent Completed backup suppresses both UIDs; matching by name
+  # must not fail because two policy UIDs share it.
+  - interval: 1h
+    input_series:
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup_policy="daily",uid="uid-old"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup_policy="daily",uid="uid-old"}'
+        values: "86400+0x55"
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup_policy="daily",uid="uid-new"}'
+        values: "3600+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup_policy="daily",uid="uid-new"}'
+        values: "86400+0x55"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1"}'
+        values: "176400+0x55"
+    alert_rule_test:
+      - eval_time: 50h
+        alertname: etcdBackupPolicyNoRecentSuccess
+        exp_alerts: []
+
+  # Duplicate targets, schedule interval missing (unparseable schedule): the
+  # alert stays suppressed even with a stale Completed backup.
+  - interval: 1h
+    input_series:
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup_policy="custom",uid="uid-4"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="custom",uid="uid-4"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b4",uid="b-uid-4",etcd_backup_policy="custom",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b4",uid="b-uid-4",status="Completed"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b4",uid="b-uid-4"}'
+        values: "100+0x55"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b4",uid="b-uid-4",etcd_backup_policy="custom",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b4",uid="b-uid-4",status="Completed"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b4",uid="b-uid-4"}'
+        values: "100+0x55"
+    alert_rule_test:
+      - eval_time: 50h
+        alertname: etcdBackupPolicyNoRecentSuccess
+        exp_alerts: []
+
+  # Completed-branch duration alert, single target: the branch reports only
+  # backup identity labels (etcd_backup, uid). backup-2 finished in 10m → silent.
+  - interval: 1m
+    input_series:
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="backup-1",uid="backup-uid-1"}'
+        values: "0+0x20"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="backup-1",uid="backup-uid-1"}'
+        values: "2400+0x20"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="backup-2",uid="backup-uid-2"}'
+        values: "0+0x20"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="backup-2",uid="backup-uid-2"}'
+        values: "600+0x20"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: etcdBackupDurationHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              etcd_backup: backup-1
+              uid: backup-uid-1
+            exp_annotations:
+              summary: etcd backup duration is high.
+              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+
+  # Completed-branch duration alert, duplicate targets: timestamp arithmetic
+  # must deduplicate by backup identity and alert once.
+  - interval: 1m
+    input_series:
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1"}'
+        values: "0+0x20"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1"}'
+        values: "2400+0x20"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1"}'
+        values: "0+0x20"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1"}'
+        values: "2400+0x20"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2"}'
+        values: "0+0x20"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2"}'
+        values: "600+0x20"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-2",uid="backup-uid-2"}'
+        values: "0+0x20"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-2",uid="backup-uid-2"}'
+        values: "600+0x20"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: etcdBackupDurationHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              etcd_backup: backup-1
+              uid: backup-uid-1
+            exp_annotations:
+              summary: etcd backup duration is high.
+              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+
+  # Duplicate targets, Completed filtering: a recent Failed backup (which also
+  # exports a completion timestamp) must not count as a success. The last
+  # Completed backup is stale → fires.
+  - interval: 1h
+    input_series:
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "86400+0x55"
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "86400+0x55"
+      # b1: stale Completed at t=100s.
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1"}'
+        values: "100+0x55"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1"}'
+        values: "100+0x55"
+      # b2: recent Failed at ≈49h.
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b2",uid="b-uid-2",etcd_backup_policy="daily",node="master-1",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b2",uid="b-uid-2",status="Completed"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b2",uid="b-uid-2",status="Failed"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b2",uid="b-uid-2"}'
+        values: "176400+0x55"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b2",uid="b-uid-2",etcd_backup_policy="daily",node="master-1",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b2",uid="b-uid-2",status="Completed"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b2",uid="b-uid-2",status="Failed"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b2",uid="b-uid-2"}'
+        values: "176400+0x55"
+    alert_rule_test:
+      - eval_time: 50h
+        alertname: etcdBackupPolicyNoRecentSuccess
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              namespace: openshift-etcd-operator
+              etcd_backup_policy: daily
+              uid: uid-1
+            exp_annotations:
+              summary: Backup policy has no successful backup within two schedule intervals.
+              description: 'Backup policy "daily" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.'
+              runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyNoRecentSuccess.md
+
+  # Rollout cache skew: the outgoing pod still sees backup b1 as Running (no
+  # completion timestamp) while the incoming pod sees it Completed at ≈49h.
+  # The Completed view counts as a recent success → silent.
+  - interval: 1h
+    input_series:
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "86400+0x55"
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "86400+0x55"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup="b1",uid="b-uid-1",status="Running"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1",status="Running"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1"}'
+        values: "176400+0x55"
+    alert_rule_test:
+      - eval_time: 50h
+        alertname: etcdBackupPolicyNoRecentSuccess
+        exp_alerts: []
+
+  # Recreated policy, per-UID thresholds: the outgoing pod exports the old UID
+  # (weekly), the incoming pod exports the new UID (daily). The last success for
+  # the policy name is ≈50h old: only the daily UID exceeds its 2*interval.
+  - interval: 1h
+    input_series:
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup_policy="daily",uid="uid-old"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup_policy="daily",uid="uid-old"}'
+        values: "604800+0x55"
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup_policy="daily",uid="uid-new"}'
+        values: "3600+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup_policy="daily",uid="uid-new"}'
+        values: "86400+0x55"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-old",etcd_backup="b1",uid="b-uid-1"}'
+        values: "100+0x55"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-new",etcd_backup="b1",uid="b-uid-1"}'
+        values: "100+0x55"
+    alert_rule_test:
+      - eval_time: 50h
+        alertname: etcdBackupPolicyNoRecentSuccess
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              namespace: openshift-etcd-operator
+              etcd_backup_policy: daily
+              uid: uid-new
+            exp_annotations:
+              summary: Backup policy has no successful backup within two schedule intervals.
+              description: 'Backup policy "daily" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.'
+              runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyNoRecentSuccess.md
+
+  # Duplicate targets disagree on the schedule interval (schedule changed from
+  # daily to every two days; one target's cache is behind). The larger interval
+  # is used: silent at 50h (< 2*48h), fires at 100h.
+  - interval: 1h
+    input_series:
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "1+0x105"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "86400+0x105"
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "1+0x105"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "172800+0x105"
+    alert_rule_test:
+      - eval_time: 50h
+        alertname: etcdBackupPolicyNoRecentSuccess
+        exp_alerts: []
+      - eval_time: 100h
+        alertname: etcdBackupPolicyNoRecentSuccess
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              namespace: openshift-etcd-operator
+              etcd_backup_policy: daily
+              uid: uid-1
+            exp_annotations:
+              summary: Backup policy has no successful backup within two schedule intervals.
+              description: 'Backup policy "daily" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.'
+              runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyNoRecentSuccess.md
+
+  # Duplicate targets, only Failed backups (with completion timestamps): the
+  # policy has never succeeded → fires once age exceeds 2*interval.
+  - interval: 1h
+    input_series:
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "86400+0x55"
+      - series: 'etcd_backup_policy_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_policy_schedule_interval_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup_policy="daily",uid="uid-1"}'
+        values: "86400+0x55"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1",status="Failed"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="b1",uid="b-uid-1"}'
+        values: "176400+0x55"
+      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",etcd_backup_policy="daily",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",status="Completed"}'
+        values: "0+0x55"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1",status="Failed"}'
+        values: "1+0x55"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="b1",uid="b-uid-1"}'
+        values: "176400+0x55"
+    alert_rule_test:
+      - eval_time: 50h
+        alertname: etcdBackupPolicyNoRecentSuccess
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              namespace: openshift-etcd-operator
+              etcd_backup_policy: daily
+              uid: uid-1
+            exp_annotations:
+              summary: Backup policy has no successful backup within two schedule intervals.
+              description: 'Backup policy "daily" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.'
               runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyNoRecentSuccess.md
