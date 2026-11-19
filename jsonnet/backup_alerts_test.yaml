@@ -17,7 +17,9 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
-  # Running-branch duration alert: status has an extra status label; must match on backup identity.
+  # Duration alert for a Running backup: matches status and creation series on
+  # backup identity. Alert labels are the backup identity (etcd_backup, uid, plus
+  # namespace when present); scrape-target labels and the status label are dropped.
   # In promtool tests, time() equals eval_time seconds from epoch 0.
   - interval: 1m
     input_series:
@@ -27,17 +29,367 @@ tests:
         values: "1+0x40"
     alert_rule_test:
       # time()=2400 at 40m; creation_time=0 → age>1800 since ~31m; for:5m → firing by 40m.
-      # Expected labels include status from the left-hand Running series.
       - eval_time: 40m
         alertname: etcdBackupDurationHigh
         exp_alerts:
           - exp_labels:
               severity: warning
-              job: cluster-etcd-operator
-              instance: "10.0.0.1:9090"
               etcd_backup: backup-1
               uid: backup-uid-1
-              status: Running
+            exp_annotations:
+              summary: etcd backup duration is high.
+              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+
+  # Threshold and hold: age must exceed 1800s (true from 31m), then the alert is
+  # pending for 5m and fires at 36m.
+  - interval: 1m
+    input_series:
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1"}'
+        values: "0+0x40"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Running"}'
+        values: "1+0x40"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: etcdBackupDurationHigh
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: etcdBackupDurationHigh
+        exp_alerts: []
+      - eval_time: 36m
+        alertname: etcdBackupDurationHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: openshift-etcd-operator
+              etcd_backup: backup-1
+              uid: backup-uid-1
+            exp_annotations:
+              summary: etcd backup duration is high.
+              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+
+  # Duplicate scrape targets export the same Running backup: one alert per
+  # (etcd_backup, uid), without per-target labels.
+  - interval: 1m
+    input_series:
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1"}'
+        values: "0+0x40"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Running"}'
+        values: "1+0x40"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1"}'
+        values: "0+0x40"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1",status="Running"}'
+        values: "1+0x40"
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: etcdBackupDurationHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: openshift-etcd-operator
+              etcd_backup: backup-1
+              uid: backup-uid-1
+            exp_annotations:
+              summary: etcd backup duration is high.
+              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+
+  # Rollout overlap: the outgoing pod's series stop (stale) at 46m and the
+  # incoming pod's series start at 44m. The alert keeps the same identity, so it
+  # stays firing at 47m instead of restarting the 5m hold for the new pod.
+  - interval: 1m
+    input_series:
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1"}'
+        values: "0+0x45 stale"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Running"}'
+        values: "1+0x45 stale"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1"}'
+        values: "_x44 0+0x16"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1",status="Running"}'
+        values: "_x44 1+0x16"
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: etcdBackupDurationHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: openshift-etcd-operator
+              etcd_backup: backup-1
+              uid: backup-uid-1
+            exp_annotations:
+              summary: etcd backup duration is high.
+              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+      - eval_time: 47m
+        alertname: etcdBackupDurationHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: openshift-etcd-operator
+              etcd_backup: backup-1
+              uid: backup-uid-1
+            exp_annotations:
+              summary: etcd backup duration is high.
+              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+
+  # Running -> Completed at 45m after a slow run: the alert fires while Running and
+  # clears once Completed is observed. A slow backup that has finished does not
+  # keep the alert firing (checked well after the hold at 90m).
+  - interval: 1m
+    input_series:
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1"}'
+        values: "0+0x90"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Running"}'
+        values: "1+0x44 0+0x45"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Completed"}'
+        values: "0+0x44 1+0x45"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Failed"}'
+        values: "0+0x90"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1"}'
+        values: "_x45 2700+0x45"
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: etcdBackupDurationHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: openshift-etcd-operator
+              etcd_backup: backup-1
+              uid: backup-uid-1
+            exp_annotations:
+              summary: etcd backup duration is high.
+              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+      - eval_time: 45m
+        alertname: etcdBackupDurationHigh
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: etcdBackupDurationHigh
+        exp_alerts: []
+
+  # Running -> Failed at 45m after a slow run: the alert fires while Running and
+  # clears once Failed is observed. A slow backup that has finished does not
+  # keep the alert firing (checked well after the hold at 90m).
+  - interval: 1m
+    input_series:
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1"}'
+        values: "0+0x90"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Running"}'
+        values: "1+0x44 0+0x45"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Failed"}'
+        values: "0+0x44 1+0x45"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Completed"}'
+        values: "0+0x90"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1"}'
+        values: "_x45 2700+0x45"
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: etcdBackupDurationHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: openshift-etcd-operator
+              etcd_backup: backup-1
+              uid: backup-uid-1
+            exp_annotations:
+              summary: etcd backup duration is high.
+              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+      - eval_time: 45m
+        alertname: etcdBackupDurationHigh
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: etcdBackupDurationHigh
+        exp_alerts: []
+
+  # Exporter cache skew: the outgoing pod's cache still shows backup-1 and
+  # backup-2 as Running while the incoming pod already reports backup-1
+  # Completed and backup-2 Failed from 40m. Completed and Failed replace Running,
+  # so each alert clears once any exporter reports the terminal status.
+  - interval: 1m
+    input_series:
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1"}'
+        values: "0+0x60"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Running"}'
+        values: "1+0x60"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Completed"}'
+        values: "0+0x60"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Failed"}'
+        values: "0+0x60"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1"}'
+        values: "_x40 0+0x20"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1",status="Running"}'
+        values: "_x40 0+0x20"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1",status="Completed"}'
+        values: "_x40 1+0x20"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1",status="Failed"}'
+        values: "_x40 0+0x20"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1"}'
+        values: "_x40 2400+0x20"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2"}'
+        values: "0+0x60"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2",status="Running"}'
+        values: "1+0x60"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2",status="Failed"}'
+        values: "0+0x60"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2",status="Completed"}'
+        values: "0+0x60"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-2",uid="backup-uid-2"}'
+        values: "_x40 0+0x20"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-2",uid="backup-uid-2",status="Running"}'
+        values: "_x40 0+0x20"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-2",uid="backup-uid-2",status="Failed"}'
+        values: "_x40 1+0x20"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-2",uid="backup-uid-2",status="Completed"}'
+        values: "_x40 0+0x20"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-2",uid="backup-uid-2"}'
+        values: "_x40 2400+0x20"
+    alert_rule_test:
+      - eval_time: 38m
+        alertname: etcdBackupDurationHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: openshift-etcd-operator
+              etcd_backup: backup-1
+              uid: backup-uid-1
+            exp_annotations:
+              summary: etcd backup duration is high.
+              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+          - exp_labels:
+              severity: warning
+              namespace: openshift-etcd-operator
+              etcd_backup: backup-2
+              uid: backup-uid-2
+            exp_annotations:
+              summary: etcd backup duration is high.
+              description: 'etcd backup "backup-2" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+      - eval_time: 40m
+        alertname: etcdBackupDurationHigh
+        exp_alerts: []
+
+  # Zero-valued Running is not active: backup-1 has no lifecycle status yet (all
+  # status series 0) and backup-2 completed quickly; both are older than 1800s.
+  - interval: 1m
+    input_series:
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1"}'
+        values: "0+0x40"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Running"}'
+        values: "0+0x40"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Completed"}'
+        values: "0+0x40"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Failed"}'
+        values: "0+0x40"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2"}'
+        values: "0+0x40"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2",status="Running"}'
+        values: "0+0x40"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2",status="Completed"}'
+        values: "1+0x40"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2",status="Failed"}'
+        values: "0+0x40"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2"}'
+        values: "600+0x40"
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: etcdBackupDurationHigh
+        exp_alerts: []
+
+  # Distinct backups with duplicate scrape targets are evaluated independently:
+  # backup-a (created 0s) fires by 40m; backup-b (created 1200s) exceeds 1800s at
+  # 51m and fires from 56m.
+  - interval: 1m
+    input_series:
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-a",uid="backup-uid-a"}'
+        values: "0+0x60"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-a",uid="backup-uid-a",status="Running"}'
+        values: "1+0x60"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-b",uid="backup-uid-b"}'
+        values: "_x20 1200+0x40"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-b",uid="backup-uid-b",status="Running"}'
+        values: "_x20 1+0x40"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-a",uid="backup-uid-a"}'
+        values: "0+0x60"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-a",uid="backup-uid-a",status="Running"}'
+        values: "1+0x60"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-b",uid="backup-uid-b"}'
+        values: "_x20 1200+0x40"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-b",uid="backup-uid-b",status="Running"}'
+        values: "_x20 1+0x40"
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: etcdBackupDurationHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: openshift-etcd-operator
+              etcd_backup: backup-a
+              uid: backup-uid-a
+            exp_annotations:
+              summary: etcd backup duration is high.
+              description: 'etcd backup "backup-a" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+      - eval_time: 55m
+        alertname: etcdBackupDurationHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: openshift-etcd-operator
+              etcd_backup: backup-a
+              uid: backup-uid-a
+            exp_annotations:
+              summary: etcd backup duration is high.
+              description: 'etcd backup "backup-a" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+      - eval_time: 56m
+        alertname: etcdBackupDurationHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: openshift-etcd-operator
+              etcd_backup: backup-a
+              uid: backup-uid-a
+            exp_annotations:
+              summary: etcd backup duration is high.
+              description: 'etcd backup "backup-a" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+          - exp_labels:
+              severity: warning
+              namespace: openshift-etcd-operator
+              etcd_backup: backup-b
+              uid: backup-uid-b
+            exp_annotations:
+              summary: etcd backup duration is high.
+              description: 'etcd backup "backup-b" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
+
+  # Recreated backup reusing a name: a lagging exporter still reports the old
+  # object (backup-uid-1) as Completed while the other exporter reports the new
+  # object (backup-uid-2, created at 600s) as Running. Matching on uid keeps the
+  # new object alerting once it exceeds 1800s at 41m (fires from 46m).
+  - interval: 1m
+    input_series:
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1"}'
+        values: "0+0x60"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Running"}'
+        values: "0+0x60"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Completed"}'
+        values: "1+0x60"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Failed"}'
+        values: "0+0x60"
+      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1"}'
+        values: "300+0x60"
+      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-2"}'
+        values: "_x10 600+0x50"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-2",status="Running"}'
+        values: "_x10 1+0x50"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-2",status="Completed"}'
+        values: "_x10 0+0x50"
+      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-2",status="Failed"}'
+        values: "_x10 0+0x50"
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: etcdBackupDurationHigh
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: etcdBackupDurationHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              namespace: openshift-etcd-operator
+              etcd_backup: backup-1
+              uid: backup-uid-2
             exp_annotations:
               summary: etcd backup duration is high.
               description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
@@ -507,110 +859,6 @@ tests:
       - eval_time: 50h
         alertname: etcdBackupPolicyNoRecentSuccess
         exp_alerts: []
-
-  # Completed-branch duration alert, single target: the branch reports only
-  # backup identity labels (etcd_backup, uid). Both backups complete at 2400s
-  # (40m), so the result depends on elapsed duration rather than on the
-  # completion timestamp: backup-1 (created 0s) ran 40m → fires once the 5m hold
-  # elapses; backup-2 (created 1800s) ran 10m → silent.
-  - interval: 1m
-    input_series:
-      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="backup-1",uid="backup-uid-1"}'
-        values: "0+0x50"
-      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="backup-1",uid="backup-uid-1"}'
-        values: "_x40 2400+0x10"
-      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="backup-2",uid="backup-uid-2"}'
-        values: "_x30 1800+0x20"
-      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",instance="10.0.0.1:9090",etcd_backup="backup-2",uid="backup-uid-2"}'
-        values: "_x40 2400+0x10"
-    alert_rule_test:
-      # Completion series appear at 40m; the 5m hold has not elapsed at 44m.
-      - eval_time: 44m
-        alertname: etcdBackupDurationHigh
-        exp_alerts: []
-      - eval_time: 50m
-        alertname: etcdBackupDurationHigh
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              etcd_backup: backup-1
-              uid: backup-uid-1
-            exp_annotations:
-              summary: etcd backup duration is high.
-              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
-
-  # Completed-branch duration alert, duplicate targets: timestamp arithmetic
-  # must deduplicate by backup identity and alert once. Same timestamps as the
-  # single-target case: backup-1 ran 40m → fires; backup-2 ran 10m → silent.
-  # Both backups report Running until they complete at 40m, then Completed.
-  # While backup-1 is Running past 1800s, the Running branch also matches and
-  # fires once per target from 36m. It resolves at 40m, when Completed replaces
-  # Running, so it is not active at 44m or 50m.
-  - interval: 1m
-    input_series:
-      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1"}'
-        values: "0+0x50"
-      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1"}'
-        values: "_x40 2400+0x10"
-      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
-        values: "1+0x50"
-      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Running"}'
-        values: "1+0x39 0+0x10"
-      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Completed"}'
-        values: "0+0x39 1+0x10"
-      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-1",uid="backup-uid-1",status="Failed"}'
-        values: "0+0x50"
-      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1"}'
-        values: "0+0x50"
-      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1"}'
-        values: "_x40 2400+0x10"
-      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1",node="master-0",storage_type="PVC",storage_location="backup-pvc"}'
-        values: "1+0x50"
-      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1",status="Running"}'
-        values: "1+0x39 0+0x10"
-      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1",status="Completed"}'
-        values: "0+0x39 1+0x10"
-      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-1",uid="backup-uid-1",status="Failed"}'
-        values: "0+0x50"
-      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2"}'
-        values: "_x30 1800+0x20"
-      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2"}'
-        values: "_x40 2400+0x10"
-      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2",node="master-1",storage_type="PVC",storage_location="backup-pvc"}'
-        values: "_x30 1+0x20"
-      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2",status="Running"}'
-        values: "_x30 1+0x9 0+0x10"
-      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2",status="Completed"}'
-        values: "_x30 0+0x9 1+0x10"
-      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.1:9090",pod="etcd-operator-a",etcd_backup="backup-2",uid="backup-uid-2",status="Failed"}'
-        values: "_x30 0+0x20"
-      - series: 'etcd_backup_creation_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-2",uid="backup-uid-2"}'
-        values: "_x30 1800+0x20"
-      - series: 'etcd_backup_completion_timestamp_seconds{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-2",uid="backup-uid-2"}'
-        values: "_x40 2400+0x10"
-      - series: 'etcd_backup_info{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-2",uid="backup-uid-2",node="master-1",storage_type="PVC",storage_location="backup-pvc"}'
-        values: "_x30 1+0x20"
-      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-2",uid="backup-uid-2",status="Running"}'
-        values: "_x30 1+0x9 0+0x10"
-      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-2",uid="backup-uid-2",status="Completed"}'
-        values: "_x30 0+0x9 1+0x10"
-      - series: 'etcd_backup_status{job="cluster-etcd-operator",namespace="openshift-etcd-operator",instance="10.0.0.2:9090",pod="etcd-operator-b",etcd_backup="backup-2",uid="backup-uid-2",status="Failed"}'
-        values: "_x30 0+0x20"
-    alert_rule_test:
-      # Completion series appear at 40m; the 5m hold has not elapsed at 44m.
-      - eval_time: 44m
-        alertname: etcdBackupDurationHigh
-        exp_alerts: []
-      - eval_time: 50m
-        alertname: etcdBackupDurationHigh
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              etcd_backup: backup-1
-              uid: backup-uid-1
-            exp_annotations:
-              summary: etcd backup duration is high.
-              description: 'etcd backup "backup-1" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.'
 
   # Duplicate targets, Completed filtering: a recent Failed backup (which also
   # exports a completion timestamp) must not count as a success. The last
