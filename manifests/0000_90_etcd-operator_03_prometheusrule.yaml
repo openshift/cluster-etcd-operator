@@ -220,6 +220,7 @@ spec:
       expr: etcd_backup_status{status="Failed"} == 1
       for: 5m
       labels:
+        namespace: openshift-etcd-operator
         severity: warning
     - alert: etcdBackupHighFailureRate
       annotations:
@@ -246,6 +247,7 @@ spec:
         ) > 0.5
       for: 30m
       labels:
+        namespace: openshift-etcd-operator
         severity: warning
     - alert: etcdBackupHighFailureRate
       annotations:
@@ -272,16 +274,16 @@ spec:
         ) >= 0.75
       for: 30m
       labels:
+        namespace: openshift-etcd-operator
         severity: critical
     - alert: etcdBackupPolicyNoRecentSuccess
       annotations:
-        description: Backup policy "{{ $labels.etcd_backup_policy }}" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.
-        runbook_url: https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdBackupPolicyNoRecentSuccess.md
+        description: Backup policy "{{ $labels.etcd_backup_policy }}" has not completed a successful backup within two schedule intervals. This may prevent disaster recovery.
         summary: Backup policy has no successful backup within two schedule intervals.
       expr: |
         (
           (
-            (time() - max by (namespace, etcd_backup_policy, uid) (etcd_backup_policy_creation_timestamp_seconds))
+            (time() - max by (etcd_backup_policy, uid) (etcd_backup_policy_creation_timestamp_seconds))
             > on(etcd_backup_policy, uid) group_left()
             (2 * max by (etcd_backup_policy, uid) (etcd_backup_policy_schedule_interval_seconds))
           )
@@ -308,17 +310,19 @@ spec:
             )
           )
           > on(etcd_backup_policy) group_right()
-          (2 * max by (namespace, etcd_backup_policy, uid) (etcd_backup_policy_schedule_interval_seconds))
+          (2 * max by (etcd_backup_policy, uid) (etcd_backup_policy_schedule_interval_seconds))
         )
+      for: 5m
       labels:
-        severity: critical
+        namespace: openshift-etcd-operator
+        severity: warning
     - alert: etcdBackupDurationHigh
       annotations:
         description: etcd backup "{{ $labels.etcd_backup }}" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.
         summary: etcd backup duration is high.
       expr: |
         (
-          max by (namespace, etcd_backup, uid) (etcd_backup_status{status="Running"} == 1)
+          max by (etcd_backup, uid) (etcd_backup_status{status="Running"} == 1)
           unless on(etcd_backup, uid)
           (etcd_backup_status{status=~"Completed|Failed"} == 1)
         )
@@ -326,6 +330,7 @@ spec:
         (time() - max by (etcd_backup, uid) (etcd_backup_creation_timestamp_seconds) > 1800)
       for: 5m
       labels:
+        namespace: openshift-etcd-operator
         severity: warning
   - name: tnf-pacemaker.rules
     rules:

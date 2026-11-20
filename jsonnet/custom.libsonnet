@@ -1,3 +1,14 @@
+// EtcdBackup and EtcdBackupPolicy are cluster-scoped, and the backup collectors
+// export no namespace label, so any namespace on their series comes from the
+// scrape target. Following the alerting style guide for cluster-scoped components
+// (https://github.com/openshift/enhancements/blob/master/enhancements/monitoring/alerting-consistency.md#style-guide),
+// the backup alerts carry a static namespace label: the namespace of this
+// PrometheusRule (see main.jsonnet), where the operator that reconciles these
+// resources and exports their metrics runs. The backup Jobs, CronJobs and PVCs
+// live in openshift-etcd, but these alerts report on the cluster-scoped
+// EtcdBackup and EtcdBackupPolicy objects.
+local backupAlertNamespace = 'openshift-etcd-operator';
+
 {
   prometheusRules:: {
     groups: [
@@ -187,6 +198,7 @@
             'for': '5m',
             labels: {
               severity: 'warning',
+              namespace: backupAlertNamespace,
             },
             annotations: {
               description: 'etcd backup "{{ $labels.etcd_backup }}" has failed. Check the EtcdBackup resource status for details.',
@@ -217,6 +229,7 @@
             'for': '30m',
             labels: {
               severity: 'warning',
+              namespace: backupAlertNamespace,
             },
             annotations: {
               description: 'More than 50% of etcd backups finished in the last 24 hours have failed. This indicates a persistent issue with backup configuration or storage that requires investigation.',
@@ -247,6 +260,7 @@
             'for': '30m',
             labels: {
               severity: 'critical',
+              namespace: backupAlertNamespace,
             },
             annotations: {
               description: 'More than 75% of etcd backups finished in the last 24 hours have failed. This is a critical issue that may prevent disaster recovery and requires immediate investigation.',
@@ -274,14 +288,15 @@
             // schedule interval picks the larger threshold if targets briefly
             // disagree after a schedule change. Raw etcd_backup_info is only used on
             // the "many" side of group_left or inside set operators.
-            // The alert keeps etcd_backup_policy, uid and namespace, carried on the
-            // "many" side of group_left/group_right. The last success is compared
+            // The alert keeps etcd_backup_policy and uid, carried on the "many" side of
+            // group_left/group_right; namespace comes from the static backup alert
+            // label. The last success is compared
             // per policy object, so two UIDs sharing a name (a recreated policy seen
             // through an outgoing pod) are evaluated against their own interval.
             expr: |||
               (
                 (
-                  (time() - max by (namespace, etcd_backup_policy, uid) (etcd_backup_policy_creation_timestamp_seconds))
+                  (time() - max by (etcd_backup_policy, uid) (etcd_backup_policy_creation_timestamp_seconds))
                   > on(etcd_backup_policy, uid) group_left()
                   (2 * max by (etcd_backup_policy, uid) (etcd_backup_policy_schedule_interval_seconds))
                 )
@@ -308,14 +323,18 @@
                   )
                 )
                 > on(etcd_backup_policy) group_right()
-                (2 * max by (namespace, etcd_backup_policy, uid) (etcd_backup_policy_schedule_interval_seconds))
+                (2 * max by (etcd_backup_policy, uid) (etcd_backup_policy_schedule_interval_seconds))
               )
             |||,
+            // 5m hold before firing (a policy choice, matching etcdBackupFailed and
+            // etcdBackupDurationHigh).
+            'for': '5m',
             labels: {
-              severity: 'critical',
+              severity: 'warning',
+              namespace: backupAlertNamespace,
             },
             annotations: {
-              description: 'Backup policy "{{ $labels.etcd_backup_policy }}" has not completed a successful backup within two schedule intervals. This is a critical issue that may prevent disaster recovery.',
+              description: 'Backup policy "{{ $labels.etcd_backup_policy }}" has not completed a successful backup within two schedule intervals. This may prevent disaster recovery.',
               summary: 'Backup policy has no successful backup within two schedule intervals.',
             },
           },
@@ -331,10 +350,10 @@
             // Failed on every scrape, with value 1 only for the current lifecycle
             // condition, so == 1 is required and a zero-valued Running series is not
             // active. Every scraped operator target exports the same series for a
-            // backup, differing only in target labels (instance, pod, ...). Status is
-            // reduced to one series per (namespace, etcd_backup, uid) and the creation
-            // timestamp per (etcd_backup, uid) before joining, so the alert has one
-            // stable identity across operator pod changes.
+            // backup, differing only in target labels (instance, pod, ...). Status and
+            // the creation timestamp are reduced to one series per (etcd_backup, uid)
+            // before joining, so the alert has one stable identity across operator pod
+            // changes; namespace comes from the static backup alert label.
             //
             // If exporters disagree while their series overlap (one cache still shows
             // Running after the backup finished), any exporter reporting Completed or
@@ -347,7 +366,7 @@
             // backup the alert resolves, and it fires again after a new 5m hold.
             expr: |||
               (
-                max by (namespace, etcd_backup, uid) (etcd_backup_status{status="Running"} == 1)
+                max by (etcd_backup, uid) (etcd_backup_status{status="Running"} == 1)
                 unless on(etcd_backup, uid)
                 (etcd_backup_status{status=~"Completed|Failed"} == 1)
               )
@@ -357,6 +376,7 @@
             'for': '5m',
             labels: {
               severity: 'warning',
+              namespace: backupAlertNamespace,
             },
             annotations: {
               description: 'etcd backup "{{ $labels.etcd_backup }}" has been running for longer than expected (30 minutes). This may indicate storage performance issues or an issue with the backup process.',
