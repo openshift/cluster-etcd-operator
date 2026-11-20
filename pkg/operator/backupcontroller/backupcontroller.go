@@ -616,7 +616,7 @@ func reconcileJobStatus(ctx context.Context,
 			klog.Infof("BackupController job %q for backup %q is finished, but not all pods were observed in a terminal state", job.Name, backup.Name)
 		}
 
-		outcome := determineBackupOutcome(backup.Name, job, pods)
+		outcome := determineBackupOutcome(backup, job, pods)
 		if _, err := updateBackupFinished(ctx, backupClient, backup, job, outcome.condition, outcome.reason, outcome.message, outcome.files); err != nil {
 			if apierrors.IsNotFound(err) {
 				return 0, nil

@@ -1,10 +1,12 @@
 package backuprestore
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -17,6 +19,9 @@ import (
 )
 
 //This backup mimics the functionality of cluster-backup.sh
+
+// Termination log is capped at 4096 bytes by the kubelet
+const maxTerminationMessageBytes = 4096
 
 var backupResourcePodList = []string{
 	"kube-apiserver-pod",
@@ -58,10 +63,12 @@ func backup(ctx context.Context, r *backupOptions) (err error) {
 
 	// Trying to match the output file formats with the formats of the current cluster-backup.sh script
 	dateString := time.Now().Format("2006-01-02_150405")
-	outputArchive := "static_kuberesources_" + dateString + ".tar.gz"
-	snapshotOutFile := "snapshot_" + dateString + ".db"
-	snapshotFilepath := filepath.Join(r.backupDir, snapshotOutFile)
-	archiveFilepath := filepath.Join(r.backupDir, outputArchive)
+	snapshotFile := "snapshot_" + dateString + ".db"
+	snapshotPartialFile := snapshotFile + ".part"
+	archiveFile := "static_kuberesources_" + dateString + ".tar.gz"
+	snapshotFilepath := filepath.Join(r.backupDir, snapshotFile)
+	snapshotPartialFilepath := filepath.Join(r.backupDir, snapshotPartialFile)
+	archiveFilepath := filepath.Join(r.backupDir, archiveFile)
 
 	var message string
 	var files []operatorv1alpha1.EtcdBackupFile
@@ -90,47 +97,60 @@ func backup(ctx context.Context, r *backupOptions) (err error) {
 
 	if backupSnapshot {
 		// Save snapshot
-		var snapshotSize int64
-		snapshotPartialPath := snapshotFilepath + ".part"
-		if snapshotSize, err = saveSnapshot(ctx, cli, snapshotPartialPath, snapshotFilepath); err != nil {
+		if snapshotSize, err := saveSnapshot(ctx, cli, snapshotPartialFilepath, snapshotFilepath); err != nil {
 			// Record partial snapshot path for GC, if present
 			message = "snapshot failed"
 			if msg, ok := isDiskFull(err); ok {
 				message = fmt.Sprintf("%s: %s", message, msg)
 			}
-			if backupFile, ok := statBackupFile(snapshotPartialPath, operatorv1alpha1.EtcdBackupAssetTypeSnapshot); ok {
-				files = append(files, backupFile)
+			if snapshotPartialSize, ok := statBackupFile(snapshotPartialFilepath); ok {
+				files = append(files, operatorv1alpha1.EtcdBackupFile{
+					AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot,
+					Path:      snapshotPartialFile, // stored relative to backup dir
+					SizeBytes: snapshotPartialSize,
+				})
 			}
 			return fmt.Errorf("saveSnapshot failed: %w", err)
 		} else {
-			files = append(files, operatorv1alpha1.EtcdBackupFile{AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot, Path: snapshotFilepath, SizeBytes: snapshotSize})
+			files = append(files, operatorv1alpha1.EtcdBackupFile{
+				AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot,
+				Path:      snapshotFile, // stored relative to backup dir
+				SizeBytes: snapshotSize,
+			})
 		}
 	}
 
 	if backupStaticKubeResources {
 		// Save the corresponding static pod resources
-		var archiveSize int64
-		if archiveSize, err = archiveLatestResources(r.configDir, archiveFilepath); err != nil {
+		if archiveSize, err := archiveLatestResources(r.configDir, archiveFilepath); err != nil {
 			// Record partial archive path for GC, if present
 			message = "static pod archive failed"
 			if msg, ok := isDiskFull(err); ok {
 				message = fmt.Sprintf("%s: %s", message, msg)
 			}
-			if backupFile, ok := statBackupFile(archiveFilepath, operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources); ok {
-				files = append(files, backupFile)
+			if archivePartialSize, ok := statBackupFile(archiveFilepath); ok {
+				files = append(files, operatorv1alpha1.EtcdBackupFile{
+					AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources,
+					Path:      archiveFile, // stored relative to backup dir
+					SizeBytes: archivePartialSize,
+				})
 			}
 			return fmt.Errorf("archiveLatestResources failed: %w", err)
 		} else {
-			files = append(files, operatorv1alpha1.EtcdBackupFile{AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources, Path: archiveFilepath, SizeBytes: archiveSize})
+			files = append(files, operatorv1alpha1.EtcdBackupFile{
+				AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources,
+				Path:      archiveFile, // stored relative to backup dir
+				SizeBytes: archiveSize,
+			})
 		}
 	}
 
 	return
 }
 
-func statBackupFile(path string, assetType operatorv1alpha1.EtcdBackupAssetType) (file operatorv1alpha1.EtcdBackupFile, ok bool) {
+func statBackupFile(path string) (sizeBytes int64, ok bool) {
 	if info, err := os.Stat(path); err == nil {
-		return operatorv1alpha1.EtcdBackupFile{AssetType: assetType, Path: path, SizeBytes: info.Size()}, true
+		return info.Size(), true
 	}
 	return
 }
@@ -146,11 +166,29 @@ func writeTerminationLog(terminationLog string, message string, files []operator
 		}
 	}()
 
+	return encodeTerminationLog(f, message, files)
+}
+
+func encodeTerminationLog(w io.Writer, message string, files []operatorv1alpha1.EtcdBackupFile) error {
 	termLog := backuphelpers.BackupTerminationLog{Message: message, Files: files}
-	if err := json.NewEncoder(f).Encode(termLog); err != nil {
-		return fmt.Errorf("Error writing termination log: %w", err)
+	buf := bytes.Buffer{}
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+
+	if err := enc.Encode(termLog); err != nil || buf.Len() > maxTerminationMessageBytes {
+		// Strip message if max length is exceeded or encoding failed.
+		// Retaining files in term log is the most critical, message is a nice-to-have.
+		klog.Warningf("Dropping message from termination log (encoded %d bytes, err: %v): %s", buf.Len(), err, message)
+		termLog.Message = ""
+		buf.Reset()
+		if err := enc.Encode(termLog); err != nil {
+			return fmt.Errorf("error encoding termination log: %w", err)
+		}
 	}
 
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		return fmt.Errorf("error writing termination log: %w", err)
+	}
 	return nil
 }
 

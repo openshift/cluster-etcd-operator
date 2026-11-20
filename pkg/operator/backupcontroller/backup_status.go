@@ -3,6 +3,7 @@ package backupcontroller
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"slices"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
@@ -133,7 +134,7 @@ type backupOutcome struct {
 // determineBackupOutcome derives the finished status of a backup from its finished job and the job's pods. The reason
 // is only downgraded from the generic JobFailed to SetupFailed when it is certain that no backup files were written,
 // since SetupFailed skips garbage collection.
-func determineBackupOutcome(backupName string, job *batchv1.Job, pods []*corev1.Pod) backupOutcome {
+func determineBackupOutcome(backup *operatorv1alpha1.EtcdBackup, job *batchv1.Job, pods []*corev1.Pod) backupOutcome {
 	outcome := backupOutcome{
 		condition: operatorv1alpha1.BackupCompleted,
 		reason:    operatorv1alpha1.BackupReasonJobCompleted,
@@ -150,9 +151,9 @@ func determineBackupOutcome(backupName string, job *batchv1.Job, pods []*corev1.
 		// Backup container started, expect to be able to parse termination message
 		termLog, err := backuphelpers.ParseTerminationMessage(terminationMessage)
 		if err != nil {
-			klog.Infof("BackupController failed to read termination message for backup %q: %v", backupName, err)
+			klog.Infof("BackupController failed to read termination message for backup %q: %v", backup.Name, err)
 		}
-		outcome.message, outcome.files = termLog.Message, termLog.Files
+		outcome.message, outcome.files = termLog.Message, absoluteBackupFilePaths(backup, termLog)
 		if len(outcome.files) == 0 && outcome.condition == operatorv1alpha1.BackupFailed {
 			if startedPodsCreatedNoFiles(job, pods) {
 				// Every attempt reported graceful failure, no GC is required
@@ -163,12 +164,12 @@ func determineBackupOutcome(backupName string, job *batchv1.Job, pods []*corev1.
 			} else {
 				// An earlier attempt may have written partial files. Keep the generic job reason so that
 				// garbage collection is not skipped.
-				klog.Infof("BackupController backup %q reported no files, but not every attempt confirmed it created no files", backupName)
+				klog.Infof("BackupController backup %q reported no files, but not every attempt confirmed it created no files", backup.Name)
 			}
 		}
 	} else if outcome.condition != operatorv1alpha1.BackupFailed {
 		// Job completed, but its pods are no longer observable. Keep the default completed message.
-		klog.Infof("BackupController unable to read termination message of completed backup %q from job %q pods", backupName, job.Name)
+		klog.Infof("BackupController unable to read termination message of completed backup %q from job %q pods", backup.Name, job.Name)
 	} else if podHistoryComplete(job, pods) {
 		// Every pod of the job is terminal and none started the backup container, most likely the init
 		// container failed or PVC was unable to mount. No files can have been written.
@@ -183,7 +184,7 @@ func determineBackupOutcome(backupName string, job *batchv1.Job, pods []*corev1.
 	} else {
 		// Pod history is missing or stale, so the backup container may have run and written partial files.
 		// Keep the generic job reason so that garbage collection is not skipped.
-		klog.Infof("BackupController unable to determine execution state of backup %q from job %q pods", backupName, job.Name)
+		klog.Infof("BackupController unable to determine execution state of backup %q from job %q pods", backup.Name, job.Name)
 		outcome.message = "unable to determine backup job outcome"
 	}
 	return outcome
@@ -232,4 +233,19 @@ func startedPodsCreatedNoFiles(job *batchv1.Job, pods []*corev1.Pod) bool {
 		}
 	}
 	return true
+}
+
+func absoluteBackupFilePaths(backup *operatorv1alpha1.EtcdBackup, termLog backuphelpers.BackupTerminationLog) []operatorv1alpha1.EtcdBackupFile {
+	// Term log stores backup file paths relative to backup dir in order to save space and stay under the 4096 byte limit.
+	if termLog.Files == nil {
+		return nil
+	}
+
+	backupDir := backuphelpers.BackupDir(backup, "")
+	files := make([]operatorv1alpha1.EtcdBackupFile, len(termLog.Files))
+	for i, file := range termLog.Files {
+		file.Path = filepath.Join(backupDir, file.Path)
+		files[i] = file
+	}
+	return files
 }

@@ -43,8 +43,9 @@ const (
 var backupFilePattern = regexp.MustCompile(`^(.*\/)?(` + snapshotFilename + `_[0-9a-zA-Z_-]+\.db(\.part)?|` + staticKubeResourcesFilename + `_[0-9a-zA-Z_-]+\.tar\.gz)$`)
 
 type BackupTerminationLog struct {
-	Message string                            `json:"message,omitempty"`
-	Files   []operatorv1alpha1.EtcdBackupFile `json:"files"`
+	Message string `json:"message,omitempty"`
+	// Files use paths relative to the backup dir to ensure termination message stays under 4096 byte limit.
+	Files []operatorv1alpha1.EtcdBackupFile `json:"files"`
 }
 
 func AutoBackupFeatureGateEnabled(featureGateAccessor featuregates.FeatureGateAccess) (bool, error) {
@@ -102,6 +103,21 @@ func LocalBackupHostPath(local operatorv1alpha1.EtcdBackupStorageLocal) string {
 		return BackupPathMount
 	}
 	return filepath.Clean(local.HostPath)
+}
+
+func BackupDir(backup *operatorv1alpha1.EtcdBackup, mountPath string) string {
+	backupDir := mountPath
+	if backupDir == "" {
+		backupDir = "/"
+	}
+	switch backup.Spec.Storage.Type {
+	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
+		hostPath := LocalBackupHostPath(backup.Spec.Storage.Local)
+		backupDir = filepath.Join(backupDir, hostPath)
+	case operatorv1alpha1.EtcdBackupStorageTypePVC:
+		backupDir = filepath.Join(backupDir, filepath.Clean(backup.Spec.Storage.PVC.Path))
+	}
+	return filepath.Join(backupDir, backup.Name)
 }
 
 func ListBackupNodes(nodeLister corev1listers.NodeLister, selector labels.Selector) ([]*corev1.Node, error) {
@@ -166,10 +182,6 @@ func ParseTerminationMessage(message string) (BackupTerminationLog, error) {
 	data := BackupTerminationLog{}
 	if err := json.Unmarshal([]byte(message), &data); err != nil {
 		return BackupTerminationLog{}, fmt.Errorf("error reading termination message: %w", err)
-	}
-
-	for i, file := range data.Files {
-		data.Files[i].Path, _ = strings.CutPrefix(file.Path, BackupPathMount)
 	}
 	return data, nil
 }
