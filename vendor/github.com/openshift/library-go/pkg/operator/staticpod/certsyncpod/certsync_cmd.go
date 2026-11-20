@@ -2,9 +2,10 @@ package certsyncpod
 
 import (
 	"context"
-	"k8s.io/utils/clock"
 	"os"
 	"time"
+
+	"k8s.io/utils/clock"
 
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
@@ -118,6 +119,8 @@ func (o *CertSyncControllerOptions) Complete() error {
 	if err != nil {
 		return err
 	}
+
+	rest.AddUserAgent(kubeConfig, "cert-syncer")
 
 	if len(o.Namespace) == 0 && len(os.Getenv("POD_NAMESPACE")) > 0 {
 		o.Namespace = os.Getenv("POD_NAMESPACE")

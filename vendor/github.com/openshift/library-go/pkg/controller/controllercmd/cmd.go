@@ -82,6 +82,10 @@ type ControllerCommandConfig struct {
 	ComponentOwnerReference *corev1.ObjectReference
 	healthChecks            []healthz.HealthChecker
 	eventRecorderOptions    record.CorrelatorOptions
+
+	// UserAgentSuffix is appended to the default UserAgent on REST clients,
+	// making requests from this component distinguishable.
+	UserAgentSuffix string
 }
 
 // NewControllerConfig returns a new ControllerCommandConfig which can be used to wire up all the boiler plate of a controller
@@ -341,7 +345,8 @@ func (c *ControllerCommandConfig) StartController(ctx context.Context) error {
 		WithHealthChecks(c.healthChecks...).
 		WithEventRecorderOptions(c.eventRecorderOptions).
 		WithRestartOnChange(exitOnChangeReactorCh, startingFileContent, observedFiles...).
-		WithComponentOwnerReference(c.ComponentOwnerReference)
+		WithComponentOwnerReference(c.ComponentOwnerReference).
+		WithUserAgentSuffix(c.UserAgentSuffix)
 
 	if !c.DisableServing {
 		builder = builder.WithServer(config.ServingInfo, config.Authentication, config.Authorization)
