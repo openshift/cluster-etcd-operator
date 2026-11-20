@@ -2037,7 +2037,6 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: imageStreamImportMode
       type:
         scalar: string
-      default: ""
     - name: registrySources
       type:
         namedType: com.github.openshift.api.config.v1.RegistrySources
@@ -4395,7 +4394,7 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             scalar: string
           elementRelationship: associative
-    - name: timeoutSeconds
+    - name: timeoutMilliseconds
       type:
         scalar: numeric
     - name: tlsConfig

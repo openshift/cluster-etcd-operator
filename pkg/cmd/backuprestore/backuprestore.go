@@ -8,7 +8,7 @@ import (
 	"os"
 	"os/signal"
 
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"k8s.io/klog/v2"
@@ -67,7 +67,7 @@ func (r *backupOptions) Validate() error {
 	}
 	var unknownAssets []string
 	for _, asset := range r.assets {
-		if asset != string(operatorv1alpha1.EtcdBackupAssetTypeSnapshot) && asset != string(operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources) {
+		if asset != string(operatorv1.EtcdBackupAssetTypeSnapshot) && asset != string(operatorv1.EtcdBackupAssetTypeStaticKubeResources) {
 			unknownAssets = append(unknownAssets, asset)
 		}
 	}

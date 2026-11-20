@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
@@ -71,7 +71,7 @@ func backup(ctx context.Context, r *backupOptions) (err error) {
 	archiveFilepath := filepath.Join(r.backupDir, archiveFile)
 
 	var message string
-	var files []operatorv1alpha1.EtcdBackupFile
+	var files []operatorv1.EtcdBackupFile
 
 	defer func() {
 		if r.terminationLog != "" {
@@ -87,9 +87,9 @@ func backup(ctx context.Context, r *backupOptions) (err error) {
 	} else {
 		for _, asset := range r.assets {
 			switch asset {
-			case string(operatorv1alpha1.EtcdBackupAssetTypeSnapshot):
+			case string(operatorv1.EtcdBackupAssetTypeSnapshot):
 				backupSnapshot = true
-			case string(operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources):
+			case string(operatorv1.EtcdBackupAssetTypeStaticKubeResources):
 				backupStaticKubeResources = true
 			}
 		}
@@ -104,16 +104,16 @@ func backup(ctx context.Context, r *backupOptions) (err error) {
 				message = fmt.Sprintf("%s: %s", message, msg)
 			}
 			if snapshotPartialSize, ok := statBackupFile(snapshotPartialFilepath); ok {
-				files = append(files, operatorv1alpha1.EtcdBackupFile{
-					AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot,
+				files = append(files, operatorv1.EtcdBackupFile{
+					AssetType: operatorv1.EtcdBackupAssetTypeSnapshot,
 					Path:      snapshotPartialFile, // stored relative to backup dir
 					SizeBytes: snapshotPartialSize,
 				})
 			}
 			return fmt.Errorf("saveSnapshot failed: %w", err)
 		} else {
-			files = append(files, operatorv1alpha1.EtcdBackupFile{
-				AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot,
+			files = append(files, operatorv1.EtcdBackupFile{
+				AssetType: operatorv1.EtcdBackupAssetTypeSnapshot,
 				Path:      snapshotFile, // stored relative to backup dir
 				SizeBytes: snapshotSize,
 			})
@@ -129,16 +129,16 @@ func backup(ctx context.Context, r *backupOptions) (err error) {
 				message = fmt.Sprintf("%s: %s", message, msg)
 			}
 			if archivePartialSize, ok := statBackupFile(archiveFilepath); ok {
-				files = append(files, operatorv1alpha1.EtcdBackupFile{
-					AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources,
+				files = append(files, operatorv1.EtcdBackupFile{
+					AssetType: operatorv1.EtcdBackupAssetTypeStaticKubeResources,
 					Path:      archiveFile, // stored relative to backup dir
 					SizeBytes: archivePartialSize,
 				})
 			}
 			return fmt.Errorf("archiveLatestResources failed: %w", err)
 		} else {
-			files = append(files, operatorv1alpha1.EtcdBackupFile{
-				AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources,
+			files = append(files, operatorv1.EtcdBackupFile{
+				AssetType: operatorv1.EtcdBackupAssetTypeStaticKubeResources,
 				Path:      archiveFile, // stored relative to backup dir
 				SizeBytes: archiveSize,
 			})
@@ -155,7 +155,7 @@ func statBackupFile(path string) (sizeBytes int64, ok bool) {
 	return
 }
 
-func writeTerminationLog(terminationLog string, message string, files []operatorv1alpha1.EtcdBackupFile) (retErr error) {
+func writeTerminationLog(terminationLog string, message string, files []operatorv1.EtcdBackupFile) (retErr error) {
 	f, err := os.OpenFile(terminationLog, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("Error opening termination log: %w", err)
@@ -169,7 +169,7 @@ func writeTerminationLog(terminationLog string, message string, files []operator
 	return encodeTerminationLog(f, message, files)
 }
 
-func encodeTerminationLog(w io.Writer, message string, files []operatorv1alpha1.EtcdBackupFile) error {
+func encodeTerminationLog(w io.Writer, message string, files []operatorv1.EtcdBackupFile) error {
 	termLog := backuphelpers.BackupTerminationLog{Message: message, Files: files}
 	buf := bytes.Buffer{}
 	enc := json.NewEncoder(&buf)

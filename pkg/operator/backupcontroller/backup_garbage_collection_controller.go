@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/bindata"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 
-	operatorv1alpha1client "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
-	operatorv1alpha1listers "github.com/openshift/client-go/operator/listers/operator/v1alpha1"
+	operatorv1client "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
+	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/health"
 	"github.com/openshift/cluster-etcd-operator/pkg/operator/operatorclient"
 	"github.com/openshift/library-go/pkg/controller/factory"
@@ -58,11 +58,11 @@ var gcFinalizeRequeueDelay = 10 * time.Second
 
 // BackupGarbageCollectionController cleans up files associated with deleted EtcdBackup objects
 type BackupGarbageCollectionController struct {
-	backupsLister         operatorv1alpha1listers.EtcdBackupLister
+	backupsLister         operatorv1listers.EtcdBackupLister
 	jobsLister            batchv1listers.JobNamespaceLister
 	nodesLister           corev1listers.NodeLister
 	pvcsLister            corev1listers.PersistentVolumeClaimNamespaceLister
-	operatorClient        operatorv1alpha1client.OperatorV1alpha1Interface
+	operatorClient        operatorv1client.OperatorV1Interface
 	kubeClient            kubernetes.Interface
 	featureGateAccessor   featuregates.FeatureGateAccess
 	operatorImagePullSpec string
@@ -74,11 +74,11 @@ type BackupGarbageCollectionController struct {
 
 func NewBackupGarbageCollectionController(
 	livenessChecker *health.MultiAlivenessChecker,
-	backupsLister operatorv1alpha1listers.EtcdBackupLister,
+	backupsLister operatorv1listers.EtcdBackupLister,
 	jobsLister batchv1listers.JobNamespaceLister,
 	nodesLister corev1listers.NodeLister,
 	pvcsLister corev1listers.PersistentVolumeClaimNamespaceLister,
-	operatorClient operatorv1alpha1client.OperatorV1alpha1Interface,
+	operatorClient operatorv1client.OperatorV1Interface,
 	kubeClient kubernetes.Interface,
 	eventRecorder events.Recorder,
 	operatorImagePullSpec string,
@@ -105,7 +105,7 @@ func NewBackupGarbageCollectionController(
 
 	return factory.New().
 		WithFilteredEventsInformers(func(o any) bool {
-			if backup, ok := o.(*operatorv1alpha1.EtcdBackup); ok {
+			if backup, ok := o.(*operatorv1.EtcdBackup); ok {
 				return backup.DeletionTimestamp != nil && slices.Contains(backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
 			}
 			if job, ok := o.(*batchv1.Job); ok {
@@ -204,8 +204,8 @@ func (c *BackupGarbageCollectionController) sync(ctx context.Context, syncCtx fa
 // backups that require a new GC job grouped by storage backend. awaitingFinalizer holds the UIDs of every deleted
 // backup observed with the backup finalizer, including those whose finalizer was removed by this sync, since the
 // removal has not been observed yet.
-func (c *BackupGarbageCollectionController) syncBackups(ctx context.Context, backups []*operatorv1alpha1.EtcdBackup, jobs []*batchv1.Job) (newGC map[storageBackend][]*operatorv1alpha1.EtcdBackup, awaitingFinalizer map[types.UID]struct{}, errs []error) {
-	newGC = map[storageBackend][]*operatorv1alpha1.EtcdBackup{}
+func (c *BackupGarbageCollectionController) syncBackups(ctx context.Context, backups []*operatorv1.EtcdBackup, jobs []*batchv1.Job) (newGC map[storageBackend][]*operatorv1.EtcdBackup, awaitingFinalizer map[types.UID]struct{}, errs []error) {
+	newGC = map[storageBackend][]*operatorv1.EtcdBackup{}
 	awaitingFinalizer = map[types.UID]struct{}{}
 	backupsClient := c.operatorClient.EtcdBackups()
 	activeBackupGC := map[types.UID]bool{}
@@ -309,7 +309,7 @@ func (c *BackupGarbageCollectionController) backoffFailedBackupGC(jobUID types.U
 // filterBackupsForGC removes backups that are in backoff, and separates the backups that have tried and failed GC from those that haven't.
 // New unattempted GC is always prioritized as a batch, so that many files can be deleted on the same storage backend together.
 // If the only backups remaining previously failed GC, they are attempted one at a time to reduce the scope of failure.
-func (c *BackupGarbageCollectionController) filterBackupsForGC(backups []*operatorv1alpha1.EtcdBackup) []*operatorv1alpha1.EtcdBackup {
+func (c *BackupGarbageCollectionController) filterBackupsForGC(backups []*operatorv1.EtcdBackup) []*operatorv1.EtcdBackup {
 	n := 0
 	for _, backup := range backups {
 		if c.retryQueue.backoffDuration(backup.UID) <= 0 {
@@ -324,7 +324,7 @@ func (c *BackupGarbageCollectionController) filterBackupsForGC(backups []*operat
 
 	// Sort backups by number of requeues, so backups that have never attempted GC run first.
 	// Fallback to deletion time, then name for deterministic sort order.
-	slices.SortFunc(backups, func(a, b *operatorv1alpha1.EtcdBackup) int {
+	slices.SortFunc(backups, func(a, b *operatorv1.EtcdBackup) int {
 		aRequeues := c.retryQueue.NumRequeues(a.UID)
 		bRequeues := c.retryQueue.NumRequeues(b.UID)
 		if aRequeues < bRequeues {
@@ -370,7 +370,7 @@ func createGarbageCollectionJob(ctx context.Context,
 	jobsClient batchv1client.JobInterface,
 	name string,
 	storage storageBackend,
-	backups []*operatorv1alpha1.EtcdBackup) error {
+	backups []*operatorv1.EtcdBackup) error {
 	scheme := runtime.NewScheme()
 	codec := serializer.NewCodecFactory(scheme)
 	err := batchv1.AddToScheme(scheme)
@@ -393,7 +393,7 @@ func createGarbageCollectionJob(ctx context.Context,
 	job.Spec.TTLSecondsAfterFinished = new(int32(gcJobFinishedTTL.Seconds()))
 	job.Spec.Template.Spec.Containers[0].Image = operatorImagePullSpec
 	job.Spec.Template.Spec.Containers[0].Args = append(job.Spec.Template.Spec.Containers[0].Args, "--backupPath="+backuphelpers.BackupPathMount)
-	if storage.storageType == operatorv1alpha1.EtcdBackupStorageTypeLocal {
+	if storage.storageType == operatorv1.EtcdBackupStorageTypeLocal {
 		job.Spec.Template.Spec.NodeName = storage.nodeName
 	}
 
@@ -406,7 +406,7 @@ func createGarbageCollectionJob(ctx context.Context,
 	job.Spec.Template.Spec.Containers[0].VolumeMounts = append(job.Spec.Template.Spec.Containers[0].VolumeMounts, volumeMounts...)
 	for _, backup := range backups {
 		job.OwnerReferences = append(job.OwnerReferences, v1.OwnerReference{
-			APIVersion: operatorv1alpha1.GroupVersion.String(),
+			APIVersion: operatorv1.GroupVersion.String(),
 			Kind:       "EtcdBackup",
 			Name:       backup.Name,
 			UID:        backup.UID,
@@ -426,7 +426,7 @@ func createGarbageCollectionJob(ctx context.Context,
 	return nil
 }
 
-func backupFileMounts(storage storageBackend, backups []*operatorv1alpha1.EtcdBackup) ([]*operatorv1alpha1.EtcdBackup, corev1.EnvVar, []corev1.Volume, []corev1.VolumeMount) {
+func backupFileMounts(storage storageBackend, backups []*operatorv1.EtcdBackup) ([]*operatorv1.EtcdBackup, corev1.EnvVar, []corev1.Volume, []corev1.VolumeMount) {
 	env := corev1.EnvVar{Name: backupGCFilesEnvName}
 	var volumes []corev1.Volume
 	var volumeMounts []corev1.VolumeMount
@@ -438,7 +438,7 @@ func backupFileMounts(storage storageBackend, backups []*operatorv1alpha1.EtcdBa
 	for i, backup := range backups {
 		var dir, hostPath string
 		switch backup.Spec.Storage.Type {
-		case operatorv1alpha1.EtcdBackupStorageTypeLocal:
+		case operatorv1.EtcdBackupStorageTypeLocal:
 			hostPath = backuphelpers.LocalBackupHostPath(backup.Spec.Storage.Local)
 			idx, ok := mountedHostPaths[hostPath]
 			if !ok {
@@ -446,7 +446,7 @@ func backupFileMounts(storage storageBackend, backups []*operatorv1alpha1.EtcdBa
 				idx = len(hostPaths)
 			}
 			dir = filepath.Join(strconv.Itoa(idx), backup.Name)
-		case operatorv1alpha1.EtcdBackupStorageTypePVC:
+		case operatorv1.EtcdBackupStorageTypePVC:
 			dir = filepath.Join(filepath.Clean(backup.Spec.Storage.PVC.Path), backup.Name)
 		}
 
@@ -476,7 +476,7 @@ func backupFileMounts(storage storageBackend, backups []*operatorv1alpha1.EtcdBa
 	}
 
 	switch storage.storageType {
-	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
+	case operatorv1.EtcdBackupStorageTypeLocal:
 		for i, hostPath := range hostPaths {
 			strIdx := strconv.Itoa(i)
 			name := "etc-kubernetes-cluster-backup-" + strIdx
@@ -494,7 +494,7 @@ func backupFileMounts(storage storageBackend, backups []*operatorv1alpha1.EtcdBa
 				MountPath: filepath.Join(backuphelpers.BackupPathMount, strIdx),
 			})
 		}
-	case operatorv1alpha1.EtcdBackupStorageTypePVC:
+	case operatorv1.EtcdBackupStorageTypePVC:
 		volumes = append(volumes, corev1.Volume{
 			Name: "etc-kubernetes-cluster-backup",
 			VolumeSource: corev1.VolumeSource{
@@ -516,7 +516,7 @@ func backupFileMounts(storage storageBackend, backups []*operatorv1alpha1.EtcdBa
 func isGarbageCollectionRequired(
 	nodesLister corev1listers.NodeLister,
 	pvcsLister corev1listers.PersistentVolumeClaimNamespaceLister,
-	backup *operatorv1alpha1.EtcdBackup,
+	backup *operatorv1.EtcdBackup,
 ) (storageBackend, bool, error) {
 	// Check if new GC Job should be created
 	storage := storageBackend{storageType: backup.Spec.Storage.Type}
@@ -525,8 +525,8 @@ func isGarbageCollectionRequired(
 	// If unknown, assume that GC should be run.
 	if len(backup.Status.Files) == 0 {
 		for _, condition := range backup.Status.Conditions {
-			if condition.Type == string(operatorv1alpha1.BackupFailed) {
-				if condition.Status == metav1.ConditionTrue && condition.Reason == string(operatorv1alpha1.BackupReasonSetupFailed) {
+			if condition.Type == string(operatorv1.BackupFailed) {
+				if condition.Status == metav1.ConditionTrue && condition.Reason == string(operatorv1.BackupReasonSetupFailed) {
 					return storage, false, nil
 				}
 				break
@@ -535,9 +535,9 @@ func isGarbageCollectionRequired(
 	}
 
 	switch backup.Spec.Storage.Type {
-	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
+	case operatorv1.EtcdBackupStorageTypeLocal:
 		storage.nodeName = backup.Status.NodeName
-	case operatorv1alpha1.EtcdBackupStorageTypePVC:
+	case operatorv1.EtcdBackupStorageTypePVC:
 		storage.pvcName = backup.Spec.Storage.PVC.Name
 	}
 
@@ -550,7 +550,7 @@ func storageBackendExists(
 	pvcsLister corev1listers.PersistentVolumeClaimNamespaceLister,
 	storage storageBackend) (bool, error) {
 	switch storage.storageType {
-	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
+	case operatorv1.EtcdBackupStorageTypeLocal:
 		// Check if node still exists
 		if _, err := nodesLister.Get(storage.nodeName); err != nil {
 			if apierrors.IsNotFound(err) {
@@ -559,7 +559,7 @@ func storageBackendExists(
 			}
 			return false, err
 		}
-	case operatorv1alpha1.EtcdBackupStorageTypePVC:
+	case operatorv1.EtcdBackupStorageTypePVC:
 		// Check if PVC still exists
 		if _, err := pvcsLister.Get(storage.pvcName); err != nil {
 			if apierrors.IsNotFound(err) {
@@ -615,16 +615,16 @@ type gcBackoff struct {
 }
 
 type storageBackend struct {
-	storageType operatorv1alpha1.EtcdBackupStorageType
+	storageType operatorv1.EtcdBackupStorageType
 	nodeName    string
 	pvcName     string
 }
 
 func (sb storageBackend) String() string {
 	switch sb.storageType {
-	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
+	case operatorv1.EtcdBackupStorageTypeLocal:
 		return "local/" + sb.nodeName
-	case operatorv1alpha1.EtcdBackupStorageTypePVC:
+	case operatorv1.EtcdBackupStorageTypePVC:
 		return "pvc/" + sb.pvcName
 	default:
 		return "unknown"
@@ -636,10 +636,10 @@ func generateBackupGCJobName(storage storageBackend) string {
 	prefix := "backup-gc"
 	var name, suffix string
 	switch storage.storageType {
-	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
+	case operatorv1.EtcdBackupStorageTypeLocal:
 		name = "local-" + strings.ReplaceAll(storage.nodeName, ".", "-")
 		suffix = shortHash(string(storage.storageType), storage.nodeName)
-	case operatorv1alpha1.EtcdBackupStorageTypePVC:
+	case operatorv1.EtcdBackupStorageTypePVC:
 		name = "pvc-" + storage.pvcName
 		suffix = shortHash(string(storage.storageType), storage.pvcName)
 	default:

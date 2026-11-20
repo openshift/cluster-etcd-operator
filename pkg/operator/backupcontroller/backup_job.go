@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
-	operatorv1alpha1client "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
+	operatorv1client "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -43,10 +43,10 @@ var batchv1Decoder = func() runtime.Decoder {
 // exists (i.e. it was created by an earlier sync that the informer cache hasn't caught up with), the existing job is
 // returned.
 func createBackupJob(ctx context.Context,
-	backup *operatorv1alpha1.EtcdBackup,
+	backup *operatorv1.EtcdBackup,
 	operatorImagePullSpec string,
 	jobClient batchv1client.JobInterface,
-	backupClient operatorv1alpha1client.EtcdBackupInterface) (*batchv1.Job, *operatorv1alpha1.EtcdBackup, error) {
+	backupClient operatorv1client.EtcdBackupInterface) (*batchv1.Job, *operatorv1.EtcdBackup, error) {
 
 	if !slices.Contains(backup.ObjectMeta.Finalizers, backuphelpers.FinalizerEtcdBackup) {
 		patchedBackup, err := addBackupFinalizer(ctx, backupClient, backup)
@@ -66,7 +66,7 @@ func createBackupJob(ctx context.Context,
 	job.Name = jobName
 	job.Labels[backuphelpers.LabelEtcdBackup] = backup.Name
 	job.OwnerReferences = append(job.OwnerReferences, metav1.OwnerReference{
-		APIVersion: operatorv1alpha1.GroupVersion.String(),
+		APIVersion: operatorv1.GroupVersion.String(),
 		Kind:       "EtcdBackup",
 		Name:       backup.Name,
 		UID:        backup.UID,
@@ -79,7 +79,7 @@ func createBackupJob(ctx context.Context,
 	volume := corev1.Volume{Name: backupVolumeName}
 	volumeMount := corev1.VolumeMount{Name: backupVolumeName, MountPath: backuphelpers.BackupPathMount}
 	switch backup.Spec.Storage.Type {
-	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
+	case operatorv1.EtcdBackupStorageTypeLocal:
 		// Local backups write to a hostPath, so the job is pinned to the selected node.
 		job.Spec.Template.Spec.NodeName = backup.Status.NodeName
 
@@ -90,7 +90,7 @@ func createBackupJob(ctx context.Context,
 		}
 		// HostPath is appended to mount so that path handling is always consistent between local and pvc storage backend
 		volumeMount.MountPath = filepath.Join(volumeMount.MountPath, hostPath)
-	case operatorv1alpha1.EtcdBackupStorageTypePVC:
+	case operatorv1.EtcdBackupStorageTypePVC:
 		// PVC backups are not pinned to a node. Instead the job is constrained to eligible control plane nodes and
 		// the scheduler picks one that satisfies the volume's topology (e.g. WaitForFirstConsumer). A
 		// preferred pod anti-affinity spreads backup pods across nodes without hard-pinning.
@@ -166,7 +166,7 @@ func backupSpreadAffinity() *corev1.Affinity {
 
 // generateBackupJobName creates a deterministic job name for deduplication. The backup UID is included so that a backup
 // recreated with the same name never collides with the job of the previous backup.
-func generateBackupJobName(backup *operatorv1alpha1.EtcdBackup) string {
+func generateBackupJobName(backup *operatorv1.EtcdBackup) string {
 	prefix := "backup"
 	suffix := shortHash(backup.Name, string(backup.UID))
 	return joinName(prefix, backup.Name, suffix)

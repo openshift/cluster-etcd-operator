@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorfake "github.com/openshift/client-go/operator/clientset/versioned/fake"
 	"github.com/openshift/cluster-etcd-operator/pkg/testutils"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
@@ -49,24 +48,24 @@ func TestDecodeDefaultBackupPolicy(t *testing.T) {
 		t.Fatalf("default backup policy: retention rules items number is %d, expected %d", len(defaultPolicy.Spec.RetentionRules), 1)
 	}
 
-	if defaultPolicy.Spec.RetentionRules[0].Type != operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeQuantity {
-		t.Fatalf("default backup policy: retention rules type is %s, expected %s", defaultPolicy.Spec.RetentionRules[0].Type, operatorv1alpha1.EtcdBackupPolicyRetentionRuleTypeQuantity)
+	if defaultPolicy.Spec.RetentionRules[0].Type != operatorv1.EtcdBackupPolicyRetentionRuleTypeQuantity {
+		t.Fatalf("default backup policy: retention rules type is %s, expected %s", defaultPolicy.Spec.RetentionRules[0].Type, operatorv1.EtcdBackupPolicyRetentionRuleTypeQuantity)
 	}
 
 	if defaultPolicy.Spec.RetentionRules[0].Quantity.MaxQuantity != 2 {
 		t.Fatalf("default backup policy: retention rules max quantity is %d, expected %d", defaultPolicy.Spec.RetentionRules[0].Quantity.MaxQuantity, 2)
 	}
 
-	if defaultPolicy.Spec.Storage.Type != operatorv1alpha1.EtcdBackupStorageTypeLocal {
-		t.Fatalf("default backup policy: storage type is %s, expected %s", defaultPolicy.Spec.Storage.Type, operatorv1alpha1.EtcdBackupStorageTypeLocal)
+	if defaultPolicy.Spec.Storage.Type != operatorv1.EtcdBackupStorageTypeLocal {
+		t.Fatalf("default backup policy: storage type is %s, expected %s", defaultPolicy.Spec.Storage.Type, operatorv1.EtcdBackupStorageTypeLocal)
 	}
 
 	if defaultPolicy.Spec.Storage.Local.HostPath != "/etc/kubernetes/cluster-backup" {
 		t.Fatalf("default backup policy: storage local host path is %s, expected %s", defaultPolicy.Spec.Storage.Local.HostPath, "/etc/kubernetes/cluster-backup")
 	}
 
-	if defaultPolicy.Spec.Storage.Local.Distribution != operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeAllNodes {
-		t.Fatalf("default backup policy: storage local distribution is %s, expected %s", defaultPolicy.Spec.Storage.Local.Distribution, operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeAllNodes)
+	if defaultPolicy.Spec.Storage.Local.Distribution != operatorv1.EtcdBackupPolicyLocalDistributionTypeAllNodes {
+		t.Fatalf("default backup policy: storage local distribution is %s, expected %s", defaultPolicy.Spec.Storage.Local.Distribution, operatorv1.EtcdBackupPolicyLocalDistributionTypeAllNodes)
 	}
 }
 
@@ -75,7 +74,7 @@ func newInitTestController(t *testing.T, conditions []operatorv1.OperatorConditi
 	operatorFake := operatorfake.NewSimpleClientset(policies...)
 	return &defaultBackupPolicyInitController{
 		operatorClient:     testutils.FakeStaticPodOperatorClient(t, conditions),
-		backupPolicyClient: operatorFake.OperatorV1alpha1().EtcdBackupPolicies(),
+		backupPolicyClient: operatorFake.OperatorV1().EtcdBackupPolicies(),
 	}, operatorFake
 }
 
@@ -192,7 +191,7 @@ func TestInitializeCreatesDefaultPolicy(t *testing.T) {
 func TestInitializeReconcilesDefaultPolicyBeforeCompletion(t *testing.T) {
 	for _, tc := range []struct {
 		name                string
-		policy              *operatorv1alpha1.EtcdBackupPolicy
+		policy              *operatorv1.EtcdBackupPolicy
 		conditions          []operatorv1.OperatorCondition
 		expectedCreateCount int
 		expectedUpdateCount int
@@ -241,11 +240,11 @@ func TestInitializeReconcilesDefaultPolicyBeforeCompletion(t *testing.T) {
 
 // TestInitializePreservesPolicyStatusOnReset verifies restoring the spec preserves the policy's scheduling status.
 func TestInitializePreservesPolicyStatusOnReset(t *testing.T) {
-	existing := testutils.FakeEtcdBackupPolicy(defaultPolicyName, "@hourly", testutils.WithBackupPolicyStatus(operatorv1alpha1.EtcdBackupPolicyStatus{
+	existing := testutils.FakeEtcdBackupPolicy(defaultPolicyName, "@hourly", testutils.WithBackupPolicyStatus(operatorv1.EtcdBackupPolicyStatus{
 		Conditions: []metav1.Condition{{
-			Type:               string(operatorv1alpha1.BackupPolicyScheduled),
+			Type:               string(operatorv1.BackupPolicyScheduled),
 			Status:             metav1.ConditionTrue,
-			Reason:             string(operatorv1alpha1.BackupPolicySchedulingSucceeded),
+			Reason:             string(operatorv1.BackupPolicySchedulingSucceeded),
 			LastTransitionTime: metav1.Now(),
 		}},
 	}))

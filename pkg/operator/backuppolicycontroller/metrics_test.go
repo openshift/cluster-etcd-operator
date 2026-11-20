@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorfake "github.com/openshift/client-go/operator/clientset/versioned/fake"
 	operatorinformers "github.com/openshift/client-go/operator/informers/externalversions"
 	"github.com/openshift/cluster-etcd-operator/pkg/testutils"
@@ -20,11 +20,11 @@ import (
 
 func TestBackupPolicyMetrics(t *testing.T) {
 	createdAt := metav1.NewTime(time.Unix(1700000000, 0))
-	policy := testutils.FakeEtcdBackupPolicy("daily", "0 1 * * *", func(p *operatorv1alpha1.EtcdBackupPolicy) {
+	policy := testutils.FakeEtcdBackupPolicy("daily", "0 1 * * *", func(p *operatorv1.EtcdBackupPolicy) {
 		p.CreationTimestamp = createdAt
 	})
 
-	collector := setupPolicyCollector(t, []*operatorv1alpha1.EtcdBackupPolicy{policy})
+	collector := setupPolicyCollector(t, []*operatorv1.EtcdBackupPolicy{policy})
 
 	require.NoError(t, testutil.CollectAndCompare(collector, strings.NewReader(fmt.Sprintf(`
 		# HELP etcd_backup_policy_creation_timestamp_seconds Unix timestamp when policy was created
@@ -41,20 +41,20 @@ func TestBackupPolicyMetrics(t *testing.T) {
 
 func TestBackupPolicyMetricsInvalidScheduleOmitsInterval(t *testing.T) {
 	policy := testutils.FakeEtcdBackupPolicy("broken", "not a cron")
-	collector := setupPolicyCollector(t, []*operatorv1alpha1.EtcdBackupPolicy{policy})
+	collector := setupPolicyCollector(t, []*operatorv1.EtcdBackupPolicy{policy})
 
 	count := testutil.CollectAndCount(collector, backupPolicyScheduleIntervalSecondsMetricName)
 	require.Equal(t, 0, count, "unparseable schedules must omit interval metric")
 }
 
-func setupPolicyCollector(t *testing.T, policies []*operatorv1alpha1.EtcdBackupPolicy) prometheus.Collector {
+func setupPolicyCollector(t *testing.T, policies []*operatorv1.EtcdBackupPolicy) prometheus.Collector {
 	t.Helper()
 
 	policyObjs := make([]runtime.Object, 0, len(policies))
 	policyObjs = testutils.AppendRuntimeObjects(policyObjs, policies)
 	policyClient := operatorfake.NewSimpleClientset(policyObjs...)
 	policyInformers := operatorinformers.NewSharedInformerFactory(policyClient, 0)
-	policyInformer := policyInformers.Operator().V1alpha1().EtcdBackupPolicies()
+	policyInformer := policyInformers.Operator().V1().EtcdBackupPolicies()
 	for _, policy := range policies {
 		require.NoError(t, policyInformer.Informer().GetIndexer().Add(policy))
 	}

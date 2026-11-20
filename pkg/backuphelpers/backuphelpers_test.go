@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -50,7 +50,7 @@ func TestListBackupNodesSorted(t *testing.T) {
 }
 
 func TestLocalBackupHostPath(t *testing.T) {
-	require.Equal(t, BackupPathMount, LocalBackupHostPath(operatorv1alpha1.EtcdBackupStorageLocal{}))
-	require.Equal(t, "/backups", LocalBackupHostPath(operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/backups/"}))
-	require.Equal(t, "/backups", LocalBackupHostPath(operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/var/../backups"}))
+	require.Equal(t, BackupPathMount, LocalBackupHostPath(operatorv1.EtcdBackupStorageLocal{}))
+	require.Equal(t, "/backups", LocalBackupHostPath(operatorv1.EtcdBackupStorageLocal{HostPath: "/backups/"}))
+	require.Equal(t, "/backups", LocalBackupHostPath(operatorv1.EtcdBackupStorageLocal{HostPath: "/var/../backups"}))
 }

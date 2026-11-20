@@ -14,6 +14,8 @@ type Interface interface {
 	CSISnapshotControllers() TypedCSISnapshotControllerInformer
 	// CloudCredentials returns a CloudCredentialInformer.
 	CloudCredentials() TypedCloudCredentialInformer
+	// ClusterAPIs returns a ClusterAPIInformer.
+	ClusterAPIs() TypedClusterAPIInformer
 	// ClusterCSIDrivers returns a ClusterCSIDriverInformer.
 	ClusterCSIDrivers() TypedClusterCSIDriverInformer
 	// Configs returns a ConfigInformer.
@@ -24,6 +26,10 @@ type Interface interface {
 	DNSes() TypedDNSInformer
 	// Etcds returns a EtcdInformer.
 	Etcds() TypedEtcdInformer
+	// EtcdBackups returns a EtcdBackupInformer.
+	EtcdBackups() TypedEtcdBackupInformer
+	// EtcdBackupPolicies returns a EtcdBackupPolicyInformer.
+	EtcdBackupPolicies() TypedEtcdBackupPolicyInformer
 	// Ingresses returns a IngressInformer.
 	Ingresses() TypedIngressInformer
 	// IngressControllers returns a IngressControllerInformer.
@@ -84,6 +90,11 @@ func (v *version) CloudCredentials() TypedCloudCredentialInformer {
 	return &cloudCredentialInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
 }
 
+// ClusterAPIs returns a TypedClusterAPIInformer.
+func (v *version) ClusterAPIs() TypedClusterAPIInformer {
+	return &clusterAPIInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
+}
+
 // ClusterCSIDrivers returns a TypedClusterCSIDriverInformer.
 func (v *version) ClusterCSIDrivers() TypedClusterCSIDriverInformer {
 	return &clusterCSIDriverInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
@@ -107,6 +118,16 @@ func (v *version) DNSes() TypedDNSInformer {
 // Etcds returns a TypedEtcdInformer.
 func (v *version) Etcds() TypedEtcdInformer {
 	return &etcdInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
+}
+
+// EtcdBackups returns a TypedEtcdBackupInformer.
+func (v *version) EtcdBackups() TypedEtcdBackupInformer {
+	return &etcdBackupInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
+}
+
+// EtcdBackupPolicies returns a TypedEtcdBackupPolicyInformer.
+func (v *version) EtcdBackupPolicies() TypedEtcdBackupPolicyInformer {
+	return &etcdBackupPolicyInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
 }
 
 // Ingresses returns a TypedIngressInformer.

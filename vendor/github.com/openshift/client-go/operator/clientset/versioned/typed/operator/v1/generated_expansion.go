@@ -8,6 +8,8 @@ type CSISnapshotControllerExpansion interface{}
 
 type CloudCredentialExpansion interface{}
 
+type ClusterAPIExpansion interface{}
+
 type ClusterCSIDriverExpansion interface{}
 
 type ConfigExpansion interface{}
@@ -17,6 +19,10 @@ type ConsoleExpansion interface{}
 type DNSExpansion interface{}
 
 type EtcdExpansion interface{}
+
+type EtcdBackupExpansion interface{}
+
+type EtcdBackupPolicyExpansion interface{}
 
 type IngressExpansion interface{}
 

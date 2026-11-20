@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"slices"
 
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
-	operatorv1alpha1client "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
+	operatorv1client "github.com/openshift/client-go/operator/clientset/versioned/typed/operator/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -20,17 +20,17 @@ import (
 
 func updateBackupRunning(
 	ctx context.Context,
-	backupClient operatorv1alpha1client.EtcdBackupInterface,
-	backup *operatorv1alpha1.EtcdBackup,
+	backupClient operatorv1client.EtcdBackupInterface,
+	backup *operatorv1.EtcdBackup,
 	job *batchv1.Job,
-) (*operatorv1alpha1.EtcdBackup, error) {
+) (*operatorv1.EtcdBackup, error) {
 	backup = backup.DeepCopy()
 	if job != nil {
 		backup.Status.JobName = job.Name
 	}
 	setBackupStatusCondition(backup, metav1.Condition{
-		Type:               string(operatorv1alpha1.BackupRunning),
-		Reason:             string(operatorv1alpha1.BackupReasonJobStarted),
+		Type:               string(operatorv1.BackupRunning),
+		Reason:             string(operatorv1.BackupReasonJobStarted),
 		Message:            "backup job is running",
 		Status:             metav1.ConditionTrue,
 		LastTransitionTime: job.CreationTimestamp,
@@ -40,24 +40,24 @@ func updateBackupRunning(
 
 func updateBackupFinished(
 	ctx context.Context,
-	backupClient operatorv1alpha1client.EtcdBackupInterface,
-	backup *operatorv1alpha1.EtcdBackup,
+	backupClient operatorv1client.EtcdBackupInterface,
+	backup *operatorv1.EtcdBackup,
 	job *batchv1.Job,
-	conditionType operatorv1alpha1.BackupConditionType,
-	reason operatorv1alpha1.BackupConditionReason,
+	conditionType operatorv1.BackupConditionType,
+	reason operatorv1.BackupConditionReason,
 	message string,
-	files []operatorv1alpha1.EtcdBackupFile,
-) (*operatorv1alpha1.EtcdBackup, error) {
+	files []operatorv1.EtcdBackupFile,
+) (*operatorv1.EtcdBackup, error) {
 	transitionTime := metav1.Now()
 	switch conditionType {
-	case operatorv1alpha1.BackupCompleted:
+	case operatorv1.BackupCompleted:
 		if message == "" {
 			message = "backup job completed"
 		}
 		if job != nil && job.Status.CompletionTime != nil {
 			transitionTime = *job.Status.CompletionTime
 		}
-	case operatorv1alpha1.BackupFailed:
+	case operatorv1.BackupFailed:
 		if message == "" {
 			message = "backup job failed"
 		}
@@ -85,7 +85,7 @@ func updateBackupFinished(
 	return backupClient.UpdateStatus(ctx, backup, metav1.UpdateOptions{})
 }
 
-func addBackupFinalizer(ctx context.Context, backupClient operatorv1alpha1client.EtcdBackupInterface, backup *operatorv1alpha1.EtcdBackup) (*operatorv1alpha1.EtcdBackup, error) {
+func addBackupFinalizer(ctx context.Context, backupClient operatorv1client.EtcdBackupInterface, backup *operatorv1.EtcdBackup) (*operatorv1.EtcdBackup, error) {
 	if slices.Contains(backup.Finalizers, backuphelpers.FinalizerEtcdBackup) {
 		return backup, nil
 	}
@@ -98,7 +98,7 @@ func addBackupFinalizer(ctx context.Context, backupClient operatorv1alpha1client
 	return updated, nil
 }
 
-func removeBackupFinalizer(ctx context.Context, backupClient operatorv1alpha1client.EtcdBackupInterface, backup *operatorv1alpha1.EtcdBackup) error {
+func removeBackupFinalizer(ctx context.Context, backupClient operatorv1client.EtcdBackupInterface, backup *operatorv1.EtcdBackup) error {
 	idx := slices.Index(backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
 	if idx < 0 {
 		return nil
@@ -116,32 +116,32 @@ func removeBackupFinalizer(ctx context.Context, backupClient operatorv1alpha1cli
 	return nil
 }
 
-func setBackupStatusCondition(backup *operatorv1alpha1.EtcdBackup, condition metav1.Condition) {
+func setBackupStatusCondition(backup *operatorv1.EtcdBackup, condition metav1.Condition) {
 	backup.Status.Conditions = slices.DeleteFunc(backup.Status.Conditions, func(c metav1.Condition) bool {
-		return c.Type == string(operatorv1alpha1.BackupRunning) || c.Type == string(operatorv1alpha1.BackupCompleted) || c.Type == string(operatorv1alpha1.BackupFailed)
+		return c.Type == string(operatorv1.BackupRunning) || c.Type == string(operatorv1.BackupCompleted) || c.Type == string(operatorv1.BackupFailed)
 	})
 	backup.Status.Conditions = append(backup.Status.Conditions, condition)
 }
 
 // backupOutcome is the finished status recorded on a backup from its job.
 type backupOutcome struct {
-	condition operatorv1alpha1.BackupConditionType
-	reason    operatorv1alpha1.BackupConditionReason
+	condition operatorv1.BackupConditionType
+	reason    operatorv1.BackupConditionReason
 	message   string
-	files     []operatorv1alpha1.EtcdBackupFile
+	files     []operatorv1.EtcdBackupFile
 }
 
 // determineBackupOutcome derives the finished status of a backup from its finished job and the job's pods. The reason
 // is only downgraded from the generic JobFailed to SetupFailed when it is certain that no backup files were written,
 // since SetupFailed skips garbage collection.
-func determineBackupOutcome(backup *operatorv1alpha1.EtcdBackup, job *batchv1.Job, pods []*corev1.Pod) backupOutcome {
+func determineBackupOutcome(backup *operatorv1.EtcdBackup, job *batchv1.Job, pods []*corev1.Pod) backupOutcome {
 	outcome := backupOutcome{
-		condition: operatorv1alpha1.BackupCompleted,
-		reason:    operatorv1alpha1.BackupReasonJobCompleted,
+		condition: operatorv1.BackupCompleted,
+		reason:    operatorv1.BackupReasonJobCompleted,
 	}
 	if isJobFailed(job) {
-		outcome.condition = operatorv1alpha1.BackupFailed
-		outcome.reason = operatorv1alpha1.BackupReasonJobFailed
+		outcome.condition = operatorv1.BackupFailed
+		outcome.reason = operatorv1.BackupReasonJobFailed
 	}
 
 	// Parse termination message from most recently completed/failed pod that self-reported its status.
@@ -154,10 +154,10 @@ func determineBackupOutcome(backup *operatorv1alpha1.EtcdBackup, job *batchv1.Jo
 			klog.Infof("BackupController failed to read termination message for backup %q: %v", backup.Name, err)
 		}
 		outcome.message, outcome.files = termLog.Message, absoluteBackupFilePaths(backup, termLog)
-		if len(outcome.files) == 0 && outcome.condition == operatorv1alpha1.BackupFailed {
+		if len(outcome.files) == 0 && outcome.condition == operatorv1.BackupFailed {
 			if startedPodsCreatedNoFiles(job, pods) {
 				// Every attempt reported graceful failure, no GC is required
-				outcome.reason = operatorv1alpha1.BackupReasonSetupFailed
+				outcome.reason = operatorv1.BackupReasonSetupFailed
 				if outcome.message == "" {
 					outcome.message = "backup job failed without creating files"
 				}
@@ -167,7 +167,7 @@ func determineBackupOutcome(backup *operatorv1alpha1.EtcdBackup, job *batchv1.Jo
 				klog.Infof("BackupController backup %q reported no files, but not every attempt confirmed it created no files", backup.Name)
 			}
 		}
-	} else if outcome.condition != operatorv1alpha1.BackupFailed {
+	} else if outcome.condition != operatorv1.BackupFailed {
 		// Job completed, but its pods are no longer observable. Keep the default completed message.
 		klog.Infof("BackupController unable to read termination message of completed backup %q from job %q pods", backup.Name, job.Name)
 	} else if podHistoryComplete(job, pods) {
@@ -176,7 +176,7 @@ func determineBackupOutcome(backup *operatorv1alpha1.EtcdBackup, job *batchv1.Jo
 		if terminationMessage == "" && len(pods) == 0 {
 			terminationMessage = "backup job failed without creating pods"
 		}
-		outcome.reason = operatorv1alpha1.BackupReasonSetupFailed
+		outcome.reason = operatorv1.BackupReasonSetupFailed
 		outcome.message = terminationMessage
 		if outcome.message == "" {
 			outcome.message = "failed to verify storage"
@@ -235,14 +235,14 @@ func startedPodsCreatedNoFiles(job *batchv1.Job, pods []*corev1.Pod) bool {
 	return true
 }
 
-func absoluteBackupFilePaths(backup *operatorv1alpha1.EtcdBackup, termLog backuphelpers.BackupTerminationLog) []operatorv1alpha1.EtcdBackupFile {
+func absoluteBackupFilePaths(backup *operatorv1.EtcdBackup, termLog backuphelpers.BackupTerminationLog) []operatorv1.EtcdBackupFile {
 	// Term log stores backup file paths relative to backup dir in order to save space and stay under the 4096 byte limit.
 	if termLog.Files == nil {
 		return nil
 	}
 
 	backupDir := backuphelpers.BackupDir(backup, "")
-	files := make([]operatorv1alpha1.EtcdBackupFile, len(termLog.Files))
+	files := make([]operatorv1.EtcdBackupFile, len(termLog.Files))
 	for i, file := range termLog.Files {
 		file.Path = filepath.Join(backupDir, file.Path)
 		files[i] = file

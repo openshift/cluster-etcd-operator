@@ -10,7 +10,7 @@ import (
 	"slices"
 	"strings"
 
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	corev1 "k8s.io/api/core/v1"
@@ -45,7 +45,7 @@ var backupFilePattern = regexp.MustCompile(`^(.*\/)?(` + snapshotFilename + `_[0
 type BackupTerminationLog struct {
 	Message string `json:"message,omitempty"`
 	// Files use paths relative to the backup dir to ensure termination message stays under 4096 byte limit.
-	Files []operatorv1alpha1.EtcdBackupFile `json:"files"`
+	Files []operatorv1.EtcdBackupFile `json:"files"`
 }
 
 func AutoBackupFeatureGateEnabled(featureGateAccessor featuregates.FeatureGateAccess) (bool, error) {
@@ -57,39 +57,39 @@ func AutoBackupFeatureGateEnabled(featureGateAccessor featuregates.FeatureGateAc
 	return gates.Enabled(AutomatedEtcdBackupFeatureGateName), nil
 }
 
-func IsBackupRunning(backup *operatorv1alpha1.EtcdBackup) bool {
-	return v1helpers.IsConditionTrue(backup.Status.Conditions, string(operatorv1alpha1.BackupRunning))
+func IsBackupRunning(backup *operatorv1.EtcdBackup) bool {
+	return v1helpers.IsConditionTrue(backup.Status.Conditions, string(operatorv1.BackupRunning))
 }
 
-func IsBackupCompleted(backup *operatorv1alpha1.EtcdBackup) bool {
-	return v1helpers.IsConditionTrue(backup.Status.Conditions, string(operatorv1alpha1.BackupCompleted))
+func IsBackupCompleted(backup *operatorv1.EtcdBackup) bool {
+	return v1helpers.IsConditionTrue(backup.Status.Conditions, string(operatorv1.BackupCompleted))
 }
 
-func IsBackupFailed(backup *operatorv1alpha1.EtcdBackup) bool {
-	return v1helpers.IsConditionTrue(backup.Status.Conditions, string(operatorv1alpha1.BackupFailed))
+func IsBackupFailed(backup *operatorv1.EtcdBackup) bool {
+	return v1helpers.IsConditionTrue(backup.Status.Conditions, string(operatorv1.BackupFailed))
 }
 
-func IsBackupFinished(backup *operatorv1alpha1.EtcdBackup) bool {
+func IsBackupFinished(backup *operatorv1.EtcdBackup) bool {
 	for _, condition := range backup.Status.Conditions {
 		if condition.Status == metav1.ConditionTrue &&
-			(condition.Type == string(operatorv1alpha1.BackupCompleted) || condition.Type == string(operatorv1alpha1.BackupFailed)) {
+			(condition.Type == string(operatorv1.BackupCompleted) || condition.Type == string(operatorv1.BackupFailed)) {
 			return true
 		}
 	}
 	return false
 }
 
-func IsBackupPolicyScheduled(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) bool {
+func IsBackupPolicyScheduled(backupPolicy *operatorv1.EtcdBackupPolicy) bool {
 	for _, condition := range backupPolicy.Status.Conditions {
-		if condition.Status == metav1.ConditionTrue && condition.Type == string(operatorv1alpha1.BackupPolicyScheduled) {
+		if condition.Status == metav1.ConditionTrue && condition.Type == string(operatorv1.BackupPolicyScheduled) {
 			return true
 		}
 	}
 	return false
 }
 
-func EtcdBackupStorageFromPolicy(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) operatorv1alpha1.EtcdBackupStorage {
-	return operatorv1alpha1.EtcdBackupStorage{
+func EtcdBackupStorageFromPolicy(backupPolicy *operatorv1.EtcdBackupPolicy) operatorv1.EtcdBackupStorage {
+	return operatorv1.EtcdBackupStorage{
 		Type:  backupPolicy.Spec.Storage.Type,
 		PVC:   backupPolicy.Spec.Storage.PVC.EtcdBackupStoragePvc,
 		Local: backupPolicy.Spec.Storage.Local.EtcdBackupStorageLocal,
@@ -98,23 +98,23 @@ func EtcdBackupStorageFromPolicy(backupPolicy *operatorv1alpha1.EtcdBackupPolicy
 
 // LocalBackupHostPath returns the host directory where a Local backup is stored. The path is cleaned so that the
 // backup job and the garbage collection job always resolve the same location, and defaults to BackupPathMount.
-func LocalBackupHostPath(local operatorv1alpha1.EtcdBackupStorageLocal) string {
+func LocalBackupHostPath(local operatorv1.EtcdBackupStorageLocal) string {
 	if local.HostPath == "" {
 		return BackupPathMount
 	}
 	return filepath.Clean(local.HostPath)
 }
 
-func BackupDir(backup *operatorv1alpha1.EtcdBackup, mountPath string) string {
+func BackupDir(backup *operatorv1.EtcdBackup, mountPath string) string {
 	backupDir := mountPath
 	if backupDir == "" {
 		backupDir = "/"
 	}
 	switch backup.Spec.Storage.Type {
-	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
+	case operatorv1.EtcdBackupStorageTypeLocal:
 		hostPath := LocalBackupHostPath(backup.Spec.Storage.Local)
 		backupDir = filepath.Join(backupDir, hostPath)
-	case operatorv1alpha1.EtcdBackupStorageTypePVC:
+	case operatorv1.EtcdBackupStorageTypePVC:
 		backupDir = filepath.Join(backupDir, filepath.Clean(backup.Spec.Storage.PVC.Path))
 	}
 	return filepath.Join(backupDir, backup.Name)

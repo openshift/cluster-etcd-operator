@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorfake "github.com/openshift/client-go/operator/clientset/versioned/fake"
 	operatorinformers "github.com/openshift/client-go/operator/informers/externalversions"
 	"github.com/openshift/cluster-etcd-operator/pkg/backuphelpers"
@@ -25,8 +25,8 @@ import (
 
 type testCaseRequestBackup struct {
 	opts           requestBackupOpts
-	backupPolicies []*operatorv1alpha1.EtcdBackupPolicy
-	backups        []*operatorv1alpha1.EtcdBackup
+	backupPolicies []*operatorv1.EtcdBackupPolicy
+	backups        []*operatorv1.EtcdBackup
 	nodes          []*corev1.Node
 	expectError    bool
 	setup          func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset)
@@ -51,8 +51,8 @@ func runRequestBackupTest(t *testing.T, tc testCaseRequestBackup) {
 	sharedFactory := informers.NewSharedInformerFactory(client, 0)
 	operatorSharedFactory := operatorinformers.NewSharedInformerFactory(operatorFake, 0)
 
-	backupsInformer := operatorSharedFactory.Operator().V1alpha1().EtcdBackups()
-	backupPoliciesInformer := operatorSharedFactory.Operator().V1alpha1().EtcdBackupPolicies()
+	backupsInformer := operatorSharedFactory.Operator().V1().EtcdBackups()
+	backupPoliciesInformer := operatorSharedFactory.Operator().V1().EtcdBackupPolicies()
 	nodesInformer := sharedFactory.Core().V1().Nodes()
 
 	backupsInformerHasSynced := backupsInformer.Informer().HasSynced
@@ -72,7 +72,7 @@ func runRequestBackupTest(t *testing.T, tc testCaseRequestBackup) {
 		tc.setup(t, client, operatorFake)
 	}
 
-	err = tc.opts.requestBackups(ctx, client, operatorFake.OperatorV1alpha1())
+	err = tc.opts.requestBackups(ctx, client, operatorFake.OperatorV1())
 	if tc.expectError {
 		require.Error(t, err)
 	} else {
@@ -91,12 +91,12 @@ func TestRequestBackupForPolicy(t *testing.T) {
 				etcdBackupName:       "test-backup-policy-12345",
 				etcdBackupPolicyName: "test-backup-policy",
 			},
-			backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
-				testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour), func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
-					backupPolicy.Spec.Storage = operatorv1alpha1.EtcdBackupPolicyStorage{
-						Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
-						Local: operatorv1alpha1.EtcdBackupPolicyStorageLocal{
-							EtcdBackupStorageLocal: operatorv1alpha1.EtcdBackupStorageLocal{
+			backupPolicies: []*operatorv1.EtcdBackupPolicy{
+				testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour), func(backupPolicy *operatorv1.EtcdBackupPolicy) {
+					backupPolicy.Spec.Storage = operatorv1.EtcdBackupPolicyStorage{
+						Type: operatorv1.EtcdBackupStorageTypeLocal,
+						Local: operatorv1.EtcdBackupPolicyStorageLocal{
+							EtcdBackupStorageLocal: operatorv1.EtcdBackupStorageLocal{
 								HostPath: "/etc/etcdbackups",
 							},
 						},
@@ -107,7 +107,7 @@ func TestRequestBackupForPolicy(t *testing.T) {
 				testutils.FakeNode("test-node-1", testutils.WithMasterLabel())},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				// Verify new backup was created (nodeCount = 1 by default)
-				backups, err := operatorFake.OperatorV1alpha1().EtcdBackups().List(context.TODO(), v1.ListOptions{})
+				backups, err := operatorFake.OperatorV1().EtcdBackups().List(context.TODO(), v1.ListOptions{})
 				require.NoError(t, err)
 				require.Len(t, backups.Items, 1)
 
@@ -124,14 +124,14 @@ func TestRequestBackupForPolicy(t *testing.T) {
 				etcdBackupName:       "test-backup-policy-12345",
 				etcdBackupPolicyName: "test-backup-policy",
 			},
-			backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
+			backupPolicies: []*operatorv1.EtcdBackupPolicy{
 				testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour))},
 			nodes: []*corev1.Node{
 				testutils.FakeNode("test-node-2", testutils.WithMasterLabel()),
 				testutils.FakeNode("test-node-1", testutils.WithMasterLabel())},
 			validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 				// Verify new backup was created
-				backups, err := operatorFake.OperatorV1alpha1().EtcdBackups().List(context.TODO(), v1.ListOptions{})
+				backups, err := operatorFake.OperatorV1().EtcdBackups().List(context.TODO(), v1.ListOptions{})
 				require.NoError(t, err)
 				require.Len(t, backups.Items, 1)
 
@@ -153,15 +153,15 @@ func TestRequestBackupForPolicyMultipleLocalBackupsWithSelector(t *testing.T) {
 			etcdBackupName:       "test-backup-policy-12345",
 			etcdBackupPolicyName: "test-backup-policy",
 		},
-		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
-			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour), func(backup *operatorv1alpha1.EtcdBackupPolicy) {
-				backup.Spec.Storage = operatorv1alpha1.EtcdBackupPolicyStorage{
-					Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
-					Local: operatorv1alpha1.EtcdBackupPolicyStorageLocal{
-						EtcdBackupStorageLocal: operatorv1alpha1.EtcdBackupStorageLocal{
+		backupPolicies: []*operatorv1.EtcdBackupPolicy{
+			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour), func(backup *operatorv1.EtcdBackupPolicy) {
+				backup.Spec.Storage = operatorv1.EtcdBackupPolicyStorage{
+					Type: operatorv1.EtcdBackupStorageTypeLocal,
+					Local: operatorv1.EtcdBackupPolicyStorageLocal{
+						EtcdBackupStorageLocal: operatorv1.EtcdBackupStorageLocal{
 							HostPath: "/etc/backups",
 						},
-						Distribution: operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeAllNodes,
+						Distribution: operatorv1.EtcdBackupPolicyLocalDistributionTypeAllNodes,
 					},
 				}
 				backup.Spec.NodeSelector = map[string]string{"special": "label"}
@@ -172,7 +172,7 @@ func TestRequestBackupForPolicyMultipleLocalBackupsWithSelector(t *testing.T) {
 			testutils.FakeNode("test-node-3", testutils.WithMasterLabel(), withSpecialLabel)},
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			// Verify new backups were created
-			backups, err := operatorFake.OperatorV1alpha1().EtcdBackups().List(context.TODO(), v1.ListOptions{})
+			backups, err := operatorFake.OperatorV1().EtcdBackups().List(context.TODO(), v1.ListOptions{})
 			require.NoError(t, err)
 			require.Len(t, backups.Items, 2)
 
@@ -194,15 +194,15 @@ func TestRequestBackupForPolicyWithActiveBackup(t *testing.T) {
 			etcdBackupName:       "test-backup-policy-12345",
 			etcdBackupPolicyName: "test-backup-policy",
 		},
-		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
+		backupPolicies: []*operatorv1.EtcdBackupPolicy{
 			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour))},
-		backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPolicy("test-backup-policy"))},
+		backups: []*operatorv1.EtcdBackup{testutils.FakeEtcdBackup("test-backup", testutils.WithBackupPolicy("test-backup-policy"))},
 		nodes:   []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			_, ok := testutils.GetAction[k8stesting.CreateActionImpl](operatorFake.Fake.Actions())
 			require.False(t, ok, "expected no create action")
 
-			backups, err := operatorFake.OperatorV1alpha1().EtcdBackups().List(context.TODO(), v1.ListOptions{})
+			backups, err := operatorFake.OperatorV1().EtcdBackups().List(context.TODO(), v1.ListOptions{})
 			require.NoError(t, err)
 			require.Len(t, backups.Items, 1)
 			require.Equal(t, backups.Items[0].Name, "test-backup")
@@ -216,17 +216,17 @@ func TestRequestBackupForPolicyWithFinishedBackups(t *testing.T) {
 			etcdBackupName:       "test-backup-policy-12345",
 			etcdBackupPolicyName: "test-backup-policy",
 		},
-		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
+		backupPolicies: []*operatorv1.EtcdBackupPolicy{
 			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour))},
-		backups: []*operatorv1alpha1.EtcdBackup{
+		backups: []*operatorv1.EtcdBackup{
 			testutils.FakeEtcdBackup("test-backup-completed", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupCompleted()),
-			testutils.FakeEtcdBackup("test-backup-failed", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed)),
+			testutils.FakeEtcdBackup("test-backup-failed", testutils.WithBackupPolicy("test-backup-policy"), testutils.WithBackupFailed(operatorv1.BackupReasonJobFailed)),
 		},
 		nodes: []*corev1.Node{testutils.FakeNode("test-node", testutils.WithMasterLabel())},
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			action, ok := testutils.GetAction[k8stesting.CreateActionImpl](operatorFake.Fake.Actions())
 			require.True(t, ok, "expected create action")
-			backup, ok := action.Object.(*operatorv1alpha1.EtcdBackup)
+			backup, ok := action.Object.(*operatorv1.EtcdBackup)
 			require.True(t, ok, "expected EtcdBackup to be created")
 
 			require.Equal(t, "test-backup-policy", backup.Labels[backuphelpers.LabelEtcdBackupPolicy])
@@ -250,29 +250,29 @@ func TestRequestBackupForPolicyWithAssets(t *testing.T) {
 			etcdBackupName:       "test-backup-policy-12345",
 			etcdBackupPolicyName: "test-backup-policy",
 		},
-		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
-			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour), func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
-				backupPolicy.Spec.Storage = operatorv1alpha1.EtcdBackupPolicyStorage{
-					Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
-					Local: operatorv1alpha1.EtcdBackupPolicyStorageLocal{
-						EtcdBackupStorageLocal: operatorv1alpha1.EtcdBackupStorageLocal{
+		backupPolicies: []*operatorv1.EtcdBackupPolicy{
+			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour), func(backupPolicy *operatorv1.EtcdBackupPolicy) {
+				backupPolicy.Spec.Storage = operatorv1.EtcdBackupPolicyStorage{
+					Type: operatorv1.EtcdBackupStorageTypeLocal,
+					Local: operatorv1.EtcdBackupPolicyStorageLocal{
+						EtcdBackupStorageLocal: operatorv1.EtcdBackupStorageLocal{
 							HostPath: "/etc/etcdbackups",
 						},
 					},
 				}
-				backupPolicy.Spec.Assets = []operatorv1alpha1.EtcdBackupAssetType{operatorv1alpha1.EtcdBackupAssetTypeSnapshot}
+				backupPolicy.Spec.Assets = []operatorv1.EtcdBackupAssetType{operatorv1.EtcdBackupAssetTypeSnapshot}
 			})},
 		nodes: []*corev1.Node{
 			testutils.FakeNode("test-node", testutils.WithMasterLabel())},
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			// Verify new backup was created with assets from policy
-			backups, err := operatorFake.OperatorV1alpha1().EtcdBackups().List(context.TODO(), v1.ListOptions{})
+			backups, err := operatorFake.OperatorV1().EtcdBackups().List(context.TODO(), v1.ListOptions{})
 			require.NoError(t, err)
 			require.Len(t, backups.Items, 1)
 
 			backup := backups.Items[0]
 			require.Equal(t, "test-backup-policy", backup.Labels[backuphelpers.LabelEtcdBackupPolicy])
-			require.Equal(t, []operatorv1alpha1.EtcdBackupAssetType{operatorv1alpha1.EtcdBackupAssetTypeSnapshot}, backup.Spec.Assets)
+			require.Equal(t, []operatorv1.EtcdBackupAssetType{operatorv1.EtcdBackupAssetTypeSnapshot}, backup.Spec.Assets)
 		},
 	})
 }
@@ -290,15 +290,15 @@ func TestRequestBackupForPolicyAllNodesRetryAfterPartialCreate(t *testing.T) {
 
 	runRequestBackupTest(t, testCaseRequestBackup{
 		opts: opts,
-		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
-			testutils.FakeEtcdBackupPolicy(policyName, "@daily", testutils.WithBackupPolicyAge(25*time.Hour), func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
-				backupPolicy.Spec.Storage = operatorv1alpha1.EtcdBackupPolicyStorage{
-					Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
-					Local: operatorv1alpha1.EtcdBackupPolicyStorageLocal{
-						EtcdBackupStorageLocal: operatorv1alpha1.EtcdBackupStorageLocal{
+		backupPolicies: []*operatorv1.EtcdBackupPolicy{
+			testutils.FakeEtcdBackupPolicy(policyName, "@daily", testutils.WithBackupPolicyAge(25*time.Hour), func(backupPolicy *operatorv1.EtcdBackupPolicy) {
+				backupPolicy.Spec.Storage = operatorv1.EtcdBackupPolicyStorage{
+					Type: operatorv1.EtcdBackupStorageTypeLocal,
+					Local: operatorv1.EtcdBackupPolicyStorageLocal{
+						EtcdBackupStorageLocal: operatorv1.EtcdBackupStorageLocal{
 							HostPath: "/etc/etcdbackups",
 						},
-						Distribution: operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeAllNodes,
+						Distribution: operatorv1.EtcdBackupPolicyLocalDistributionTypeAllNodes,
 					},
 				}
 			})},
@@ -319,7 +319,7 @@ func TestRequestBackupForPolicyAllNodesRetryAfterPartialCreate(t *testing.T) {
 		// The first execution attempt fails after a partial create.
 		expectError: true,
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
-			backupsClient := operatorFake.OperatorV1alpha1().EtcdBackups()
+			backupsClient := operatorFake.OperatorV1().EtcdBackups()
 			backups, err := backupsClient.List(t.Context(), v1.ListOptions{})
 			require.NoError(t, err)
 			require.Len(t, backups.Items, 2, "expected only a partial set of backups after the failed attempt")
@@ -329,8 +329,8 @@ func TestRequestBackupForPolicyAllNodesRetryAfterPartialCreate(t *testing.T) {
 			// Mark one of the existing backups as finished, it should not be recreated on retry.
 			finishedBackup := &backups.Items[0]
 			finishedBackup.Status.Conditions = append(finishedBackup.Status.Conditions, v1.Condition{
-				Type:               string(operatorv1alpha1.BackupCompleted),
-				Reason:             string(operatorv1alpha1.BackupReasonJobCompleted),
+				Type:               string(operatorv1.BackupCompleted),
+				Reason:             string(operatorv1.BackupReasonJobCompleted),
 				Status:             v1.ConditionTrue,
 				LastTransitionTime: v1.Now(),
 			})
@@ -339,7 +339,7 @@ func TestRequestBackupForPolicyAllNodesRetryAfterPartialCreate(t *testing.T) {
 
 			// Retry the same execution: the missing backup must be created.
 			operatorFake.ClearActions()
-			err = opts.requestBackups(t.Context(), client, operatorFake.OperatorV1alpha1())
+			err = opts.requestBackups(t.Context(), client, operatorFake.OperatorV1())
 			require.NoError(t, err)
 
 			createActions = testutils.ListActions[k8stesting.CreateActionImpl](operatorFake.Actions())
@@ -368,22 +368,22 @@ func TestRequestBackupForPolicyAllNodesWithActiveBackupFromOtherRun(t *testing.T
 			etcdBackupPolicyName: "test-backup-policy",
 			etcdBackupName:       "test-backup-policy-29000060",
 		},
-		backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
-			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour), func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
-				backupPolicy.Spec.Storage = operatorv1alpha1.EtcdBackupPolicyStorage{
-					Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
-					Local: operatorv1alpha1.EtcdBackupPolicyStorageLocal{
-						EtcdBackupStorageLocal: operatorv1alpha1.EtcdBackupStorageLocal{
+		backupPolicies: []*operatorv1.EtcdBackupPolicy{
+			testutils.FakeEtcdBackupPolicy("test-backup-policy", "@daily", testutils.WithBackupPolicyAge(25*time.Hour), func(backupPolicy *operatorv1.EtcdBackupPolicy) {
+				backupPolicy.Spec.Storage = operatorv1.EtcdBackupPolicyStorage{
+					Type: operatorv1.EtcdBackupStorageTypeLocal,
+					Local: operatorv1.EtcdBackupPolicyStorageLocal{
+						EtcdBackupStorageLocal: operatorv1.EtcdBackupStorageLocal{
 							HostPath: "/etc/etcdbackups",
 						},
-						Distribution: operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeAllNodes,
+						Distribution: operatorv1.EtcdBackupPolicyLocalDistributionTypeAllNodes,
 					},
 				}
 			})},
-		backups: []*operatorv1alpha1.EtcdBackup{
-			testutils.FakeEtcdBackup("test-backup-policy-29000000-abc", testutils.WithBackupPolicy("test-backup-policy"), func(backup *operatorv1alpha1.EtcdBackup) {
+		backups: []*operatorv1.EtcdBackup{
+			testutils.FakeEtcdBackup("test-backup-policy-29000000-abc", testutils.WithBackupPolicy("test-backup-policy"), func(backup *operatorv1.EtcdBackup) {
 				backup.Labels[backuphelpers.LabelEtcdBackupPolicyRun] = "test-backup-policy-29000000"
-				backup.Spec.Storage = operatorv1alpha1.EtcdBackupStorage{Type: operatorv1alpha1.EtcdBackupStorageTypeLocal}
+				backup.Spec.Storage = operatorv1.EtcdBackupStorage{Type: operatorv1.EtcdBackupStorageTypeLocal}
 				backup.Spec.NodeSelector = map[string]string{corev1.LabelHostname: "test-node-1"}
 			}),
 		},
@@ -393,7 +393,7 @@ func TestRequestBackupForPolicyAllNodesWithActiveBackupFromOtherRun(t *testing.T
 		validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 			actions := testutils.ListActions[k8stesting.CreateActionImpl](operatorFake.Fake.Actions())
 			require.Len(t, actions, 1, "expected one create action")
-			backup, ok := actions[0].Object.(*operatorv1alpha1.EtcdBackup)
+			backup, ok := actions[0].Object.(*operatorv1.EtcdBackup)
 			require.True(t, ok, "expected EtcdBackup object")
 
 			require.Equal(t, "test-backup-policy", backup.Labels[backuphelpers.LabelEtcdBackupPolicy])
@@ -406,23 +406,23 @@ func TestRequestBackupForPolicyAllNodesWithActiveBackupFromOtherRun(t *testing.T
 // control plane nodes, ordered lexicographically by node name, based on the node targeted by the policy's most recent backup.
 func TestRequestBackupForPolicySingleNodeRoundRobin(t *testing.T) {
 	const policyName = "test-backup-policy"
-	localStorage := operatorv1alpha1.EtcdBackupStorage{
-		Type:  operatorv1alpha1.EtcdBackupStorageTypeLocal,
-		Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"},
+	localStorage := operatorv1.EtcdBackupStorage{
+		Type:  operatorv1.EtcdBackupStorageTypeLocal,
+		Local: operatorv1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"},
 	}
 	// localBackup creates a Local backup pinned to hostname. statusNodeName is the node name recorded in status once
 	// the backup job is scheduled, empty if it was never scheduled.
-	localBackup := func(name, hostname, statusNodeName string, age time.Duration, status func(*operatorv1alpha1.EtcdBackup)) *operatorv1alpha1.EtcdBackup {
+	localBackup := func(name, hostname, statusNodeName string, age time.Duration, status func(*operatorv1.EtcdBackup)) *operatorv1.EtcdBackup {
 		return testutils.FakeEtcdBackup(name,
 			testutils.WithBackupPolicy(policyName),
 			testutils.WithBackupStorage(localStorage),
 			testutils.WithBackupAge(age),
-			func(backup *operatorv1alpha1.EtcdBackup) {
+			func(backup *operatorv1.EtcdBackup) {
 				backup.Spec.NodeSelector = map[string]string{corev1.LabelHostname: hostname}
 			},
 			status,
 			// Override the default node name set by the status helpers
-			func(backup *operatorv1alpha1.EtcdBackup) {
+			func(backup *operatorv1.EtcdBackup) {
 				backup.Status.NodeName = statusNodeName
 			},
 		)
@@ -434,7 +434,7 @@ func TestRequestBackupForPolicySingleNodeRoundRobin(t *testing.T) {
 		nodes []string
 		// hostnames overrides the hostname label of a node, by node name. Defaults to the node name.
 		hostnames    map[string]string
-		backups      []*operatorv1alpha1.EtcdBackup
+		backups      []*operatorv1.EtcdBackup
 		expectedNode string
 	}{
 		{
@@ -445,19 +445,19 @@ func TestRequestBackupForPolicySingleNodeRoundRobin(t *testing.T) {
 		{
 			name:         "selects node after most recent backup",
 			nodes:        []string{"test-node-3", "test-node-1", "test-node-2"},
-			backups:      []*operatorv1alpha1.EtcdBackup{localBackup("b1", "test-node-1", "test-node-1", time.Hour, completed)},
+			backups:      []*operatorv1.EtcdBackup{localBackup("b1", "test-node-1", "test-node-1", time.Hour, completed)},
 			expectedNode: "test-node-2",
 		},
 		{
 			name:         "wraps around after last node",
 			nodes:        []string{"test-node-3", "test-node-1", "test-node-2"},
-			backups:      []*operatorv1alpha1.EtcdBackup{localBackup("b1", "test-node-3", "test-node-3", time.Hour, completed)},
+			backups:      []*operatorv1.EtcdBackup{localBackup("b1", "test-node-3", "test-node-3", time.Hour, completed)},
 			expectedNode: "test-node-1",
 		},
 		{
 			name:  "uses most recently created backup",
 			nodes: []string{"test-node-3", "test-node-1", "test-node-2"},
-			backups: []*operatorv1alpha1.EtcdBackup{
+			backups: []*operatorv1.EtcdBackup{
 				localBackup("b1", "test-node-1", "test-node-1", 3*time.Hour, completed),
 				localBackup("b2", "test-node-2", "test-node-2", 1*time.Hour, completed),
 				localBackup("b3", "test-node-3", "test-node-3", 2*time.Hour, completed),
@@ -467,22 +467,22 @@ func TestRequestBackupForPolicySingleNodeRoundRobin(t *testing.T) {
 		{
 			name:  "failed backup still advances rotation",
 			nodes: []string{"test-node-3", "test-node-1", "test-node-2"},
-			backups: []*operatorv1alpha1.EtcdBackup{
+			backups: []*operatorv1.EtcdBackup{
 				localBackup("b1", "test-node-1", "test-node-1", 2*time.Hour, completed),
-				localBackup("b2", "test-node-2", "test-node-2", 1*time.Hour, testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed)),
+				localBackup("b2", "test-node-2", "test-node-2", 1*time.Hour, testutils.WithBackupFailed(operatorv1.BackupReasonJobFailed)),
 			},
 			expectedNode: "test-node-3",
 		},
 		{
 			name:         "previous node removed selects next node name",
 			nodes:        []string{"test-node-3", "test-node-1"},
-			backups:      []*operatorv1alpha1.EtcdBackup{localBackup("b1", "test-node-2", "test-node-2", time.Hour, completed)},
+			backups:      []*operatorv1.EtcdBackup{localBackup("b1", "test-node-2", "test-node-2", time.Hour, completed)},
 			expectedNode: "test-node-3",
 		},
 		{
 			name:  "ignores backups not pinned to a node",
 			nodes: []string{"test-node-3", "test-node-1", "test-node-2"},
-			backups: []*operatorv1alpha1.EtcdBackup{
+			backups: []*operatorv1.EtcdBackup{
 				localBackup("b1", "test-node-1", "test-node-1", 2*time.Hour, completed),
 				testutils.FakeEtcdBackup("pvc", testutils.WithBackupPolicy(policyName), testutils.WithBackupAge(time.Hour), testutils.WithBackupCompleted()),
 			},
@@ -493,14 +493,14 @@ func TestRequestBackupForPolicySingleNodeRoundRobin(t *testing.T) {
 			name:         "orders by node name rather than hostname",
 			nodes:        []string{"node-c", "node-a", "node-b"},
 			hostnames:    map[string]string{"node-a": "host-3", "node-b": "host-2", "node-c": "host-1"},
-			backups:      []*operatorv1alpha1.EtcdBackup{localBackup("b1", "host-3", "", time.Hour, completed)},
+			backups:      []*operatorv1.EtcdBackup{localBackup("b1", "host-3", "", time.Hour, completed)},
 			expectedNode: "node-b",
 		},
 		{
 			name:      "prefers node name from backup status",
 			nodes:     []string{"node-c", "node-a", "node-b"},
 			hostnames: map[string]string{"node-a": "host-3", "node-b": "host-2", "node-c": "host-1"},
-			backups: []*operatorv1alpha1.EtcdBackup{
+			backups: []*operatorv1.EtcdBackup{
 				localBackup("b1", "host-removed", "node-b", time.Hour, completed),
 			},
 			expectedNode: "node-c",
@@ -508,7 +508,7 @@ func TestRequestBackupForPolicySingleNodeRoundRobin(t *testing.T) {
 		{
 			name:         "previous node removed without status falls back to hostname",
 			nodes:        []string{"node-c", "node-a"},
-			backups:      []*operatorv1alpha1.EtcdBackup{localBackup("b1", "node-b", "", time.Hour, completed)},
+			backups:      []*operatorv1.EtcdBackup{localBackup("b1", "node-b", "", time.Hour, completed)},
 			expectedNode: "node-c",
 		},
 	} {
@@ -529,13 +529,13 @@ func TestRequestBackupForPolicySingleNodeRoundRobin(t *testing.T) {
 			}
 			runRequestBackupTest(t, testCaseRequestBackup{
 				opts: requestBackupOpts{etcdBackupPolicyName: policyName, etcdBackupName: "test-backup-policy-29000000"},
-				backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
-					testutils.FakeEtcdBackupPolicy(policyName, "@daily", testutils.WithBackupPolicyAge(25*time.Hour), func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
-						backupPolicy.Spec.Storage = operatorv1alpha1.EtcdBackupPolicyStorage{
-							Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
-							Local: operatorv1alpha1.EtcdBackupPolicyStorageLocal{
+				backupPolicies: []*operatorv1.EtcdBackupPolicy{
+					testutils.FakeEtcdBackupPolicy(policyName, "@daily", testutils.WithBackupPolicyAge(25*time.Hour), func(backupPolicy *operatorv1.EtcdBackupPolicy) {
+						backupPolicy.Spec.Storage = operatorv1.EtcdBackupPolicyStorage{
+							Type: operatorv1.EtcdBackupStorageTypeLocal,
+							Local: operatorv1.EtcdBackupPolicyStorageLocal{
 								EtcdBackupStorageLocal: localStorage.Local,
-								Distribution:           operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeSingleNode,
+								Distribution:           operatorv1.EtcdBackupPolicyLocalDistributionTypeSingleNode,
 							},
 						}
 					})},
@@ -544,7 +544,7 @@ func TestRequestBackupForPolicySingleNodeRoundRobin(t *testing.T) {
 				validate: func(t *testing.T, client *k8sfakeclient.Clientset, operatorFake *operatorfake.Clientset) {
 					createActions := testutils.ListActions[k8stesting.CreateActionImpl](operatorFake.Actions())
 					require.Len(t, createActions, 1)
-					backup, ok := createActions[0].Object.(*operatorv1alpha1.EtcdBackup)
+					backup, ok := createActions[0].Object.(*operatorv1.EtcdBackup)
 					require.True(t, ok, "expected EtcdBackup to be created")
 					require.Equal(t, expectedHostname, backup.Spec.NodeSelector[corev1.LabelHostname])
 				},
@@ -561,64 +561,64 @@ func TestRequestBackupForPolicySkipsExistingRun(t *testing.T) {
 		policyName = "test-backup-policy"
 		runName    = "test-backup-policy-29000000"
 	)
-	localStorage := operatorv1alpha1.EtcdBackupStorage{
-		Type:  operatorv1alpha1.EtcdBackupStorageTypeLocal,
-		Local: operatorv1alpha1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"},
+	localStorage := operatorv1.EtcdBackupStorage{
+		Type:  operatorv1.EtcdBackupStorageTypeLocal,
+		Local: operatorv1.EtcdBackupStorageLocal{HostPath: "/etc/etcdbackups"},
 	}
-	pvcStorage := operatorv1alpha1.EtcdBackupStorage{
-		Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-		PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: "etcd-backup-pvc"},
+	pvcStorage := operatorv1.EtcdBackupStorage{
+		Type: operatorv1.EtcdBackupStorageTypePVC,
+		PVC:  operatorv1.EtcdBackupStoragePvc{Name: "etcd-backup-pvc"},
 	}
 
 	for _, storage := range []struct {
 		name       string
-		policyOpt  func(*operatorv1alpha1.EtcdBackupPolicy)
-		backupOpts []func(*operatorv1alpha1.EtcdBackup)
+		policyOpt  func(*operatorv1.EtcdBackupPolicy)
+		backupOpts []func(*operatorv1.EtcdBackup)
 	}{
 		{
 			name: "local single node",
-			policyOpt: func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
-				backupPolicy.Spec.Storage = operatorv1alpha1.EtcdBackupPolicyStorage{
-					Type: operatorv1alpha1.EtcdBackupStorageTypeLocal,
-					Local: operatorv1alpha1.EtcdBackupPolicyStorageLocal{
+			policyOpt: func(backupPolicy *operatorv1.EtcdBackupPolicy) {
+				backupPolicy.Spec.Storage = operatorv1.EtcdBackupPolicyStorage{
+					Type: operatorv1.EtcdBackupStorageTypeLocal,
+					Local: operatorv1.EtcdBackupPolicyStorageLocal{
 						EtcdBackupStorageLocal: localStorage.Local,
-						Distribution:           operatorv1alpha1.EtcdBackupPolicyLocalDistributionTypeSingleNode,
+						Distribution:           operatorv1.EtcdBackupPolicyLocalDistributionTypeSingleNode,
 					},
 				}
 			},
-			backupOpts: []func(*operatorv1alpha1.EtcdBackup){
+			backupOpts: []func(*operatorv1.EtcdBackup){
 				testutils.WithBackupStorage(localStorage),
-				func(backup *operatorv1alpha1.EtcdBackup) {
+				func(backup *operatorv1.EtcdBackup) {
 					backup.Spec.NodeSelector = map[string]string{corev1.LabelHostname: "test-node-1"}
 				},
 			},
 		},
 		{
 			name: "pvc",
-			policyOpt: func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
-				backupPolicy.Spec.Storage = operatorv1alpha1.EtcdBackupPolicyStorage{
-					Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-					PVC:  operatorv1alpha1.EtcdBackupPolicyStoragePvc{EtcdBackupStoragePvc: pvcStorage.PVC},
+			policyOpt: func(backupPolicy *operatorv1.EtcdBackupPolicy) {
+				backupPolicy.Spec.Storage = operatorv1.EtcdBackupPolicyStorage{
+					Type: operatorv1.EtcdBackupStorageTypePVC,
+					PVC:  operatorv1.EtcdBackupPolicyStoragePvc{EtcdBackupStoragePvc: pvcStorage.PVC},
 				}
 			},
-			backupOpts: []func(*operatorv1alpha1.EtcdBackup){
+			backupOpts: []func(*operatorv1.EtcdBackup){
 				testutils.WithBackupStorage(pvcStorage),
 			},
 		},
 	} {
 		for _, state := range []struct {
 			name   string
-			status func(*operatorv1alpha1.EtcdBackup)
+			status func(*operatorv1.EtcdBackup)
 		}{
-			{name: "active", status: func(*operatorv1alpha1.EtcdBackup) {}},
+			{name: "active", status: func(*operatorv1.EtcdBackup) {}},
 			{name: "completed", status: testutils.WithBackupCompleted()},
-			{name: "failed", status: testutils.WithBackupFailed(operatorv1alpha1.BackupReasonJobFailed)},
+			{name: "failed", status: testutils.WithBackupFailed(operatorv1.BackupReasonJobFailed)},
 		} {
 			t.Run(storage.name+"/"+state.name, func(t *testing.T) {
-				backupOpts := append([]func(*operatorv1alpha1.EtcdBackup){
+				backupOpts := append([]func(*operatorv1.EtcdBackup){
 					testutils.WithBackupPolicy(policyName),
 					testutils.WithBackupAge(time.Minute),
-					func(backup *operatorv1alpha1.EtcdBackup) {
+					func(backup *operatorv1.EtcdBackup) {
 						backup.Labels[backuphelpers.LabelEtcdBackupPolicyRun] = runName
 					},
 				}, storage.backupOpts...)
@@ -626,9 +626,9 @@ func TestRequestBackupForPolicySkipsExistingRun(t *testing.T) {
 
 				runRequestBackupTest(t, testCaseRequestBackup{
 					opts: requestBackupOpts{etcdBackupPolicyName: policyName, etcdBackupName: runName},
-					backupPolicies: []*operatorv1alpha1.EtcdBackupPolicy{
+					backupPolicies: []*operatorv1.EtcdBackupPolicy{
 						testutils.FakeEtcdBackupPolicy(policyName, "@daily", testutils.WithBackupPolicyAge(25*time.Hour), storage.policyOpt)},
-					backups: []*operatorv1alpha1.EtcdBackup{testutils.FakeEtcdBackup(runName, backupOpts...)},
+					backups: []*operatorv1.EtcdBackup{testutils.FakeEtcdBackup(runName, backupOpts...)},
 					nodes: []*corev1.Node{
 						testutils.FakeNode("test-node-1", testutils.WithMasterLabel()),
 						testutils.FakeNode("test-node-2", testutils.WithMasterLabel())},
@@ -636,7 +636,7 @@ func TestRequestBackupForPolicySkipsExistingRun(t *testing.T) {
 						_, ok := testutils.GetAction[k8stesting.CreateActionImpl](operatorFake.Fake.Actions())
 						require.False(t, ok, "expected no create action")
 
-						backups, err := operatorFake.OperatorV1alpha1().EtcdBackups().List(t.Context(), v1.ListOptions{})
+						backups, err := operatorFake.OperatorV1().EtcdBackups().List(t.Context(), v1.ListOptions{})
 						require.NoError(t, err)
 						require.Len(t, backups.Items, 1)
 						require.Equal(t, runName, backups.Items[0].Name)

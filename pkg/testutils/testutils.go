@@ -32,7 +32,6 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	configv1listers "github.com/openshift/client-go/config/listers/config/v1"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/v3/mock/mockserver"
@@ -390,17 +389,17 @@ func FakePVC(namespace, name string) *corev1.PersistentVolumeClaim {
 	}
 }
 
-func FakeEtcdBackup(name string, configs ...func(backup *operatorv1alpha1.EtcdBackup)) *operatorv1alpha1.EtcdBackup {
-	backup := &operatorv1alpha1.EtcdBackup{
+func FakeEtcdBackup(name string, configs ...func(backup *operatorv1.EtcdBackup)) *operatorv1.EtcdBackup {
+	backup := &operatorv1.EtcdBackup{
 		ObjectMeta: v1.ObjectMeta{
 			Name:              name,
 			UID:               types.UID(name + "-uid"),
 			CreationTimestamp: v1.Now(),
 		},
-		Spec: operatorv1alpha1.EtcdBackupSpec{
-			Storage: operatorv1alpha1.EtcdBackupStorage{
-				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC:  operatorv1alpha1.EtcdBackupStoragePvc{Name: name + "-pvc"},
+		Spec: operatorv1.EtcdBackupSpec{
+			Storage: operatorv1.EtcdBackupStorage{
+				Type: operatorv1.EtcdBackupStorageTypePVC,
+				PVC:  operatorv1.EtcdBackupStoragePvc{Name: name + "-pvc"},
 			},
 		},
 	}
@@ -410,8 +409,8 @@ func FakeEtcdBackup(name string, configs ...func(backup *operatorv1alpha1.EtcdBa
 	return backup
 }
 
-func WithBackupPolicy(backupPolicyName string) func(backup *operatorv1alpha1.EtcdBackup) {
-	return func(backup *operatorv1alpha1.EtcdBackup) {
+func WithBackupPolicy(backupPolicyName string) func(backup *operatorv1.EtcdBackup) {
+	return func(backup *operatorv1.EtcdBackup) {
 		if backup.Labels == nil {
 			backup.Labels = map[string]string{}
 		}
@@ -419,44 +418,44 @@ func WithBackupPolicy(backupPolicyName string) func(backup *operatorv1alpha1.Etc
 	}
 }
 
-func WithBackupNodeName(nodeName string) func(backup *operatorv1alpha1.EtcdBackup) {
-	return func(backup *operatorv1alpha1.EtcdBackup) {
+func WithBackupNodeName(nodeName string) func(backup *operatorv1.EtcdBackup) {
+	return func(backup *operatorv1.EtcdBackup) {
 		backup.Status.NodeName = nodeName
 	}
 }
 
-func WithBackupAge(d time.Duration) func(backup *operatorv1alpha1.EtcdBackup) {
-	return func(backup *operatorv1alpha1.EtcdBackup) {
+func WithBackupAge(d time.Duration) func(backup *operatorv1.EtcdBackup) {
+	return func(backup *operatorv1.EtcdBackup) {
 		backup.CreationTimestamp = v1.Time{Time: time.Now().Add(-d)}
 	}
 }
 
-func WithBackupDeleted() func(backup *operatorv1alpha1.EtcdBackup) {
-	return func(backup *operatorv1alpha1.EtcdBackup) {
+func WithBackupDeleted() func(backup *operatorv1.EtcdBackup) {
+	return func(backup *operatorv1.EtcdBackup) {
 		backup.DeletionTimestamp = ptr.To(v1.Now())
 	}
 }
 
-func WithBackupStorage(storage operatorv1alpha1.EtcdBackupStorage) func(backup *operatorv1alpha1.EtcdBackup) {
-	return func(backup *operatorv1alpha1.EtcdBackup) {
+func WithBackupStorage(storage operatorv1.EtcdBackupStorage) func(backup *operatorv1.EtcdBackup) {
+	return func(backup *operatorv1.EtcdBackup) {
 		backup.Spec.Storage = storage
 	}
 }
 
-func WithBackupAssets(assets ...operatorv1alpha1.EtcdBackupAssetType) func(backup *operatorv1alpha1.EtcdBackup) {
-	return func(backup *operatorv1alpha1.EtcdBackup) {
+func WithBackupAssets(assets ...operatorv1.EtcdBackupAssetType) func(backup *operatorv1.EtcdBackup) {
+	return func(backup *operatorv1.EtcdBackup) {
 		backup.Spec.Assets = assets
 	}
 }
 
-func WithBackupStatus(status operatorv1alpha1.EtcdBackupStatus) func(backup *operatorv1alpha1.EtcdBackup) {
-	return func(backup *operatorv1alpha1.EtcdBackup) {
+func WithBackupStatus(status operatorv1.EtcdBackupStatus) func(backup *operatorv1.EtcdBackup) {
+	return func(backup *operatorv1.EtcdBackup) {
 		backup.Status = status
 	}
 }
 
-func WithBackupRunning(job *batchv1.Job) func(backup *operatorv1alpha1.EtcdBackup) {
-	return func(backup *operatorv1alpha1.EtcdBackup) {
+func WithBackupRunning(job *batchv1.Job) func(backup *operatorv1.EtcdBackup) {
+	return func(backup *operatorv1.EtcdBackup) {
 		if !slices.Contains(backup.Finalizers, backuphelpers.FinalizerEtcdBackup) {
 			backup.Finalizers = append(backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
 		}
@@ -466,37 +465,37 @@ func WithBackupRunning(job *batchv1.Job) func(backup *operatorv1alpha1.EtcdBacku
 		}
 		backup.Status.JobName = job.Name
 		backup.Status.Conditions = append(backup.Status.Conditions, v1.Condition{
-			Type:               string(operatorv1alpha1.BackupRunning),
+			Type:               string(operatorv1.BackupRunning),
 			Status:             v1.ConditionTrue,
 			LastTransitionTime: v1.Time{Time: backup.CreationTimestamp.Add(time.Minute)},
 		})
 	}
 }
 
-func WithBackupCompleted() func(backup *operatorv1alpha1.EtcdBackup) {
-	return func(backup *operatorv1alpha1.EtcdBackup) {
+func WithBackupCompleted() func(backup *operatorv1.EtcdBackup) {
+	return func(backup *operatorv1.EtcdBackup) {
 		if !slices.Contains(backup.Finalizers, backuphelpers.FinalizerEtcdBackup) {
 			backup.Finalizers = append(backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
 		}
 		backup.Status.Conditions = append(backup.Status.Conditions, v1.Condition{
-			Type:               string(operatorv1alpha1.BackupCompleted),
+			Type:               string(operatorv1.BackupCompleted),
 			Status:             v1.ConditionTrue,
 			LastTransitionTime: v1.Time{Time: backup.CreationTimestamp.Add(2 * time.Minute)},
 		})
 		if backup.Status.Files == nil {
 			dir := ""
 			switch backup.Spec.Storage.Type {
-			case operatorv1alpha1.EtcdBackupStorageTypeLocal:
+			case operatorv1.EtcdBackupStorageTypeLocal:
 				dir = backup.Spec.Storage.Local.HostPath
-			case operatorv1alpha1.EtcdBackupStorageTypePVC:
+			case operatorv1.EtcdBackupStorageTypePVC:
 				dir = backup.Spec.Storage.PVC.Path
 			}
-			backup.Status.Files = append(backup.Status.Files, operatorv1alpha1.EtcdBackupFile{
-				AssetType: operatorv1alpha1.EtcdBackupAssetTypeSnapshot,
+			backup.Status.Files = append(backup.Status.Files, operatorv1.EtcdBackupFile{
+				AssetType: operatorv1.EtcdBackupAssetTypeSnapshot,
 				Path:      path.Join(dir, backup.Name, "snapshot.db"),
 				SizeBytes: 100000,
-			}, operatorv1alpha1.EtcdBackupFile{
-				AssetType: operatorv1alpha1.EtcdBackupAssetTypeStaticKubeResources,
+			}, operatorv1.EtcdBackupFile{
+				AssetType: operatorv1.EtcdBackupAssetTypeStaticKubeResources,
 				Path:      path.Join(dir, backup.Name, "archive.tar.gz"),
 				SizeBytes: 100,
 			})
@@ -507,13 +506,13 @@ func WithBackupCompleted() func(backup *operatorv1alpha1.EtcdBackup) {
 	}
 }
 
-func WithBackupFailed(reason operatorv1alpha1.BackupConditionReason) func(backup *operatorv1alpha1.EtcdBackup) {
-	return func(backup *operatorv1alpha1.EtcdBackup) {
+func WithBackupFailed(reason operatorv1.BackupConditionReason) func(backup *operatorv1.EtcdBackup) {
+	return func(backup *operatorv1.EtcdBackup) {
 		if !slices.Contains(backup.Finalizers, backuphelpers.FinalizerEtcdBackup) {
 			backup.Finalizers = append(backup.Finalizers, backuphelpers.FinalizerEtcdBackup)
 		}
 		backup.Status.Conditions = append(backup.Status.Conditions, v1.Condition{
-			Type:               string(operatorv1alpha1.BackupFailed),
+			Type:               string(operatorv1.BackupFailed),
 			Reason:             string(reason),
 			Status:             v1.ConditionTrue,
 			LastTransitionTime: v1.Time{Time: backup.CreationTimestamp.Add(2 * time.Minute)},
@@ -524,19 +523,19 @@ func WithBackupFailed(reason operatorv1alpha1.BackupConditionReason) func(backup
 	}
 }
 
-func FakeEtcdBackupPolicy(name, schedule string, configs ...func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy)) *operatorv1alpha1.EtcdBackupPolicy {
-	backupPolicy := &operatorv1alpha1.EtcdBackupPolicy{
+func FakeEtcdBackupPolicy(name, schedule string, configs ...func(backupPolicy *operatorv1.EtcdBackupPolicy)) *operatorv1.EtcdBackupPolicy {
+	backupPolicy := &operatorv1.EtcdBackupPolicy{
 		ObjectMeta: v1.ObjectMeta{
 			Name:              name,
 			UID:               types.UID(name + "-uid"),
 			CreationTimestamp: v1.Now(),
 		},
-		Spec: operatorv1alpha1.EtcdBackupPolicySpec{
+		Spec: operatorv1.EtcdBackupPolicySpec{
 			Schedule: schedule,
-			Storage: operatorv1alpha1.EtcdBackupPolicyStorage{
-				Type: operatorv1alpha1.EtcdBackupStorageTypePVC,
-				PVC: operatorv1alpha1.EtcdBackupPolicyStoragePvc{
-					EtcdBackupStoragePvc: operatorv1alpha1.EtcdBackupStoragePvc{Name: name + "-pvc"}},
+			Storage: operatorv1.EtcdBackupPolicyStorage{
+				Type: operatorv1.EtcdBackupStorageTypePVC,
+				PVC: operatorv1.EtcdBackupPolicyStoragePvc{
+					EtcdBackupStoragePvc: operatorv1.EtcdBackupStoragePvc{Name: name + "-pvc"}},
 			},
 			FailedBackupsHistoryLimit: new(int32(1)),
 		},
@@ -547,32 +546,32 @@ func FakeEtcdBackupPolicy(name, schedule string, configs ...func(backupPolicy *o
 	return backupPolicy
 }
 
-func WithBackupPolicyAge(age time.Duration) func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
-	return func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
+func WithBackupPolicyAge(age time.Duration) func(backupPolicy *operatorv1.EtcdBackupPolicy) {
+	return func(backupPolicy *operatorv1.EtcdBackupPolicy) {
 		backupPolicy.CreationTimestamp = v1.Time{Time: time.Now().Add(-age)}
 	}
 }
 
-func WithBackupPolicyDeleted() func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
-	return func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
+func WithBackupPolicyDeleted() func(backupPolicy *operatorv1.EtcdBackupPolicy) {
+	return func(backupPolicy *operatorv1.EtcdBackupPolicy) {
 		backupPolicy.DeletionTimestamp = ptr.To(v1.Now())
 	}
 }
 
-func WithBackupPolicyStorage(storage operatorv1alpha1.EtcdBackupPolicyStorage) func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
-	return func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
+func WithBackupPolicyStorage(storage operatorv1.EtcdBackupPolicyStorage) func(backupPolicy *operatorv1.EtcdBackupPolicy) {
+	return func(backupPolicy *operatorv1.EtcdBackupPolicy) {
 		backupPolicy.Spec.Storage = storage
 	}
 }
 
-func WithBackupPolicyRetentionRules(rules ...operatorv1alpha1.EtcdBackupPolicyRetentionRule) func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
-	return func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
+func WithBackupPolicyRetentionRules(rules ...operatorv1.EtcdBackupPolicyRetentionRule) func(backupPolicy *operatorv1.EtcdBackupPolicy) {
+	return func(backupPolicy *operatorv1.EtcdBackupPolicy) {
 		backupPolicy.Spec.RetentionRules = rules
 	}
 }
 
-func WithBackupPolicyStatus(status operatorv1alpha1.EtcdBackupPolicyStatus) func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
-	return func(backupPolicy *operatorv1alpha1.EtcdBackupPolicy) {
+func WithBackupPolicyStatus(status operatorv1.EtcdBackupPolicyStatus) func(backupPolicy *operatorv1.EtcdBackupPolicy) {
+	return func(backupPolicy *operatorv1.EtcdBackupPolicy) {
 		backupPolicy.Status = status
 	}
 }

@@ -1,8 +1,8 @@
 package backuppolicycontroller
 
 import (
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
-	operatorv1alpha1listers "github.com/openshift/client-go/operator/listers/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
+	operatorv1listers "github.com/openshift/client-go/operator/listers/operator/v1"
 	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/component-base/metrics"
@@ -22,7 +22,7 @@ const (
 // policyCollector implements prometheus.Collector and generates metrics
 // on-demand at scrape time from the cached EtcdBackupPolicy lister.
 type policyCollector struct {
-	policiesLister operatorv1alpha1listers.EtcdBackupPolicyLister
+	policiesLister operatorv1listers.EtcdBackupPolicyLister
 
 	infoDesc             *prometheus.Desc
 	creationTimeDesc     *prometheus.Desc
@@ -32,7 +32,7 @@ type policyCollector struct {
 // NewBackupPolicyMetrics creates and registers a policy collector with the provided registry.
 func NewBackupPolicyMetrics(
 	metricsRegistry metrics.KubeRegistry,
-	policiesLister operatorv1alpha1listers.EtcdBackupPolicyLister,
+	policiesLister operatorv1listers.EtcdBackupPolicyLister,
 ) *policyCollector {
 	c := &policyCollector{
 		policiesLister: policiesLister,
@@ -80,7 +80,7 @@ func (c *policyCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-func (c *policyCollector) collectPolicyMetrics(ch chan<- prometheus.Metric, policy *operatorv1alpha1.EtcdBackupPolicy) {
+func (c *policyCollector) collectPolicyMetrics(ch chan<- prometheus.Metric, policy *operatorv1.EtcdBackupPolicy) {
 	name := policy.Name
 	uid := string(policy.UID)
 	schedule := policy.Spec.Schedule
@@ -112,17 +112,17 @@ func (c *policyCollector) collectPolicyMetrics(ch chan<- prometheus.Metric, poli
 	}
 }
 
-func extractPolicyStorageInfo(policy *operatorv1alpha1.EtcdBackupPolicy) (string, string) {
+func extractPolicyStorageInfo(policy *operatorv1.EtcdBackupPolicy) (string, string) {
 	var storageType, storageLocation string
 
 	switch policy.Spec.Storage.Type {
-	case operatorv1alpha1.EtcdBackupStorageTypePVC:
+	case operatorv1.EtcdBackupStorageTypePVC:
 		storageType = storageTypePVC
 		storageLocation = policy.Spec.Storage.PVC.Name
 		if policy.Spec.Storage.PVC.Path != "" {
 			storageLocation = policy.Spec.Storage.PVC.Name + ":" + policy.Spec.Storage.PVC.Path
 		}
-	case operatorv1alpha1.EtcdBackupStorageTypeLocal:
+	case operatorv1.EtcdBackupStorageTypeLocal:
 		storageType = storageTypeLocal
 		storageLocation = policy.Spec.Storage.Local.HostPath
 	}
@@ -133,7 +133,7 @@ func extractPolicyStorageInfo(policy *operatorv1alpha1.EtcdBackupPolicy) (string
 // MustRegisterDefaultBackupPolicyMetrics creates policy metrics using the default registry.
 // Deprecated: Use NewBackupPolicyMetrics with an explicit registry for production code.
 func MustRegisterDefaultBackupPolicyMetrics(
-	policiesLister operatorv1alpha1listers.EtcdBackupPolicyLister,
+	policiesLister operatorv1listers.EtcdBackupPolicyLister,
 ) *policyCollector {
 	return NewBackupPolicyMetrics(legacyregistry.DefaultGatherer.(metrics.KubeRegistry), policiesLister)
 }
